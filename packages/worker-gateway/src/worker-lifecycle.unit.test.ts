@@ -30,6 +30,13 @@ afterEach(() => {
 });
 
 describe('workerLifecycle', () => {
+	it('retains the direct process lifecycle', () => {
+		expect(workerLifecycle.executionModel).toBe('direct-process');
+		expect(workerLifecycle).toEqual(
+			expect.objectContaining({ buildProcessSpec: expect.any(Function) }),
+		);
+	});
+
 	it('does not support interactive auth', () => {
 		expect(workerLifecycle.authConfig).toBeUndefined();
 	});
@@ -49,8 +56,8 @@ describe('workerLifecycle', () => {
 		});
 
 		expect(vmRequirements.mounts['/state']).toEqual({
-			hostPath: '/host/state/shravan',
 			access: 'read-write',
+			hostPath: '/host/state/shravan',
 			kind: 'host-directory',
 		});
 		expect(vmRequirements.mounts['/work']).toBeUndefined();
@@ -270,6 +277,11 @@ describe('workerLifecycle', () => {
 		expect(processSpec.startCommand).toContain('cd /work');
 		expect(processSpec.startCommand).toContain('serve --port 18789');
 		expect(processSpec.healthCheck).toEqual({ type: 'http', port: 18789, path: '/health' });
+		expect(processSpec.serviceHealthCheck).toEqual({
+			type: 'http',
+			port: 18789,
+			path: '/health',
+		});
 		expect(processSpec.guestListenPort).toBe(18789);
 		expect(processSpec.logPath).toBe('/tmp/agent-vm-worker.log');
 	});

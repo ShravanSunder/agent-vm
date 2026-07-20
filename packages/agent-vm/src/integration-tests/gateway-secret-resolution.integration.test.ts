@@ -14,9 +14,17 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import { createSecretResolverFromSystemConfig } from '../controller/controller-runtime-support.js';
+import {
+	createControllerStateRoot,
+	resolveControllerGatewayStateRoot,
+} from '../controller/durable-state/controller-state-paths.js';
+import { resolveControllerWorkerTaskRuntimeRecordTarget } from '../controller/durable-state/controller-state-record-paths.js';
 import type { GatewayVmLifecycleAuthority } from '../controller/vm-ownership/gateway-vm-lifecycle-authority.js';
 import { resolveZoneSecrets } from '../gateway/credential-manager.js';
-import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
+import {
+	startGatewayZone,
+	type GatewayManagerDependencies,
+} from '../gateway/gateway-zone-orchestrator.js';
 import {
 	TEST_SSH_SERVER_HOST_KEY,
 	createManagedExecProcessStub,
@@ -54,6 +62,9 @@ function createExactVmOwnershipStub(vmId: string): GatewayVmLifecycleAuthority {
 	};
 	const gatewayIdentity = { ...gatewaySeed, gatewayVmId: vmId };
 	return {
+		abandonUnattachedGatewaySeedAfter: async (cleanupOwnedResources) => {
+			await cleanupOwnedResources();
+		},
 		attachGatewayVm: () => gatewayIdentity,
 		containPendingCreate: async () => {},
 		destroyLive: async (destroyVm) => await destroyVm(),
@@ -79,6 +90,7 @@ describe('smoke: gateway startup secret resolution', () => {
 		const systemConfig = {
 			schemaVersion: 1,
 			cacheDir,
+			controllerStateDir: path.join(tempRoot, 'controller-state'),
 			runtimeDir,
 			host: {
 				controllerPort: 18800,
@@ -172,6 +184,7 @@ describe('smoke: gateway startup secret resolution', () => {
 		process.env.SECRET_SMOKE_ENV_ONLY_TOKEN = 'env-only-token';
 
 		const lifecycle: GatewayLifecycle = {
+			executionModel: 'direct-process',
 			buildProcessSpec: () => ({
 				bootstrapCommand: 'true',
 				startCommand: 'true',
@@ -212,17 +225,39 @@ describe('smoke: gateway startup secret resolution', () => {
 				imageReference: path.join(tempRoot, 'image'),
 			}),
 		} satisfies ManagedVmImageCapability;
+		const controllerStateRoot = createControllerStateRoot({
+			controllerStateDirectoryPath: systemConfig.controllerStateDir,
+		});
+		const gatewayStateRoot = resolveControllerGatewayStateRoot({
+			controllerStateRoot,
+			zoneId: 'secret-smoke',
+		});
+		const testTaskId = 'gateway-secret-resolution-integration-task';
+		const runtimeRecordTarget = resolveControllerWorkerTaskRuntimeRecordTarget({
+			gatewayStateRoot,
+			taskId: testTaskId,
+		});
+		const writeGatewayRuntimeRecord = vi.fn<
+			NonNullable<GatewayManagerDependencies['writeGatewayRuntimeRecord']>
+		>(async () => {});
 
 		try {
 			await startGatewayZone(
 				{
 					createVmOwnership: async () =>
 						createExactVmOwnershipStub('gateway-secret-resolution-smoke-vm'),
+					runtimeRecordTarget,
 					secretResolver,
 					systemConfig,
 					zoneId: 'secret-smoke',
 				},
 				{
+					managedVmExactProcessTermination: {
+						terminateRecordedHostProcess: async ({ identity }) => ({
+							hostProcessId: identity.hostProcessId,
+							kind: 'already-absent',
+						}),
+					},
 					managedVmFactory,
 					managedVmImages,
 					loadGatewayLifecycle: () => lifecycle,
@@ -230,7 +265,7 @@ describe('smoke: gateway startup secret resolution', () => {
 						command: 'qemu-system-aarch64 -m 2G',
 						lstart: 'Fri May 22 10:00:00 2026',
 					}),
-					writeGatewayRuntimeRecord: async () => {},
+					writeGatewayRuntimeRecord,
 				},
 			);
 		} finally {
@@ -268,6 +303,15 @@ describe('smoke: gateway startup secret resolution', () => {
 			},
 		]);
 		expect(capturedCreateRequest?.imageReference).not.toContain('resolved:');
+		expect(writeGatewayRuntimeRecord).toHaveBeenCalledTimes(2);
+		for (const [writtenTarget, writtenRecord] of writeGatewayRuntimeRecord.mock.calls) {
+			expect(writtenTarget).toBe(runtimeRecordTarget);
+			expect(writtenRecord).toMatchObject({
+				runtimeKind: 'worker-direct-process',
+				taskId: testTaskId,
+				zoneId: 'secret-smoke',
+			});
+		}
 
 		await expect(
 			resolveZoneSecrets({

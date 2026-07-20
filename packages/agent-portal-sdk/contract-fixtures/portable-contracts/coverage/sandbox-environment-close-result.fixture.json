@@ -1,0 +1,31 @@
+{
+	"caseId": "coverage-sandbox-environment-close-result",
+	"schemaId": "sandbox.environment.close.result",
+	"tags": [
+		"accepted",
+		"coverage"
+	],
+	"input": {
+		"environment": {
+			"handleId": "environment-a",
+			"kind": "environment",
+			"owningGeneration": "generation-a"
+		},
+		"kind": "closed"
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"environment": {
+				"handleId": "environment-a",
+				"kind": "environment",
+				"owningGeneration": "generation-a"
+			},
+			"kind": "closed"
+		},
+		"canonicalJson": "{\"environment\":{\"handleId\":\"environment-a\",\"kind\":\"environment\",\"owningGeneration\":\"generation-a\"},\"kind\":\"closed\"}",
+		"refinementIdentities": [
+			"sandbox.path.work-relative"
+		]
+	}
+}

@@ -219,8 +219,8 @@ OpenClaw raw env secrets are intentionally narrow. The configured
 `gateway.controlAuth.secret` is allowed by default; additional gateway env
 secrets must be listed in `gateway.rawEnvSecrets`. Provider API tokens should
 use Gondolin `http-mediation` unless the integration cannot be mediated at the
-HTTP boundary. Generated runtime env secrets, such as zone-git capability env
-vars, must also be listed when enabled.
+HTTP boundary. Controller-owned workspace Git credentials never enter the
+Gateway VM environment.
 
 Bundled OpenClaw plugin runtime dependencies are staged under
 `OPENCLAW_PLUGIN_STAGE_DIR`. Target state is image/rootfs-local staging at

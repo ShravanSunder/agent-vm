@@ -3,12 +3,18 @@ import { describe, expect, it, vi } from 'vitest';
 import type { LoadedSystemConfig, SystemConfig } from '../../config/system-config.js';
 import { ManagedVmTerminationUnprovenError } from '../../shared/controller-managed-vm-termination.js';
 import type { ActiveWorkerTask } from '../active-task-registry.js';
+import {
+	createControllerStateRoot,
+	resolveControllerGatewayStateRoot,
+} from '../durable-state/controller-state-paths.js';
+import { resolveControllerWorkerTaskRuntimeRecordTarget } from '../durable-state/controller-state-record-paths.js';
 import type { PreparedWorkerTask } from '../worker-task-runner.js';
 import { createWorkerZoneRuntime as createWorkerZoneRuntimeImpl } from './worker-zone-runtime.js';
 
 const systemConfig = {
 	schemaVersion: 1,
 	cacheDir: './cache',
+	controllerStateDir: '/controller-state-test',
 	runtimeDir: './runtime',
 	host: {
 		controllerPort: 18800,
@@ -48,11 +54,20 @@ const loadedSystemConfig = {
 function createWorkerZoneRuntime(
 	options: Omit<
 		Parameters<typeof createWorkerZoneRuntimeImpl>[0],
-		'managedVmFactory' | 'managedVmImages'
+		| 'managedVmExactProcessTermination'
+		| 'managedVmFactory'
+		| 'managedVmImages'
+		| 'workerRuntimeRecordTargetFor'
 	>,
 ): ReturnType<typeof createWorkerZoneRuntimeImpl> {
 	return createWorkerZoneRuntimeImpl({
 		...options,
+		managedVmExactProcessTermination: {
+			terminateRecordedHostProcess: async ({ identity }) => ({
+				hostProcessId: identity.hostProcessId,
+				kind: 'already-absent',
+			}),
+		},
 		managedVmFactory: {
 			createManagedVm: async () => {
 				throw new Error('worker unit test must inject executeWorkerTask');
@@ -65,6 +80,16 @@ function createWorkerZoneRuntime(
 				imageReference: '/tmp/test-image',
 			}),
 		},
+		workerRuntimeRecordTargetFor: (taskId) =>
+			resolveControllerWorkerTaskRuntimeRecordTarget({
+				gatewayStateRoot: resolveControllerGatewayStateRoot({
+					controllerStateRoot: createControllerStateRoot({
+						controllerStateDirectoryPath: options.systemConfig.controllerStateDir,
+					}),
+					zoneId: options.zone.id,
+				}),
+				taskId,
+			}),
 	});
 }
 
@@ -226,6 +251,13 @@ describe('createWorkerZoneRuntime destroy orchestration', () => {
 			expect.objectContaining({
 				controllerEpoch: workerControllerEpoch,
 				controlSession: expect.objectContaining({ controllerEpoch: workerControllerEpoch }),
+				workerRuntimeRecordTarget: {
+					filePath:
+						'/controller-state-test/zones/worker-zone/worker-tasks/task-owner-unsafe/gateway-runtime.json',
+					kind: 'controller-worker-task-runtime-record',
+					taskId: 'task-owner-unsafe',
+					zoneId: 'worker-zone',
+				},
 			}),
 		);
 		expect(runtime.getSnapshot()).toEqual({ lifecycleState: 'running' });

@@ -53,6 +53,7 @@ export type ToolVmMembershipState =
 	| 'provisional'
 	| 'current'
 	| 'destroying'
+	| 'retiring'
 	| 'destroyed'
 	| 'owner-unsafe';
 

@@ -1,0 +1,472 @@
+"""Generated portable Tool Portal contract projection.
+
+The authored contract source remains the TypeScript/Zod package. Runtime
+validation, defaults, normalization, and named refinements are generated from
+the portable schema manifest and executable refinement descriptors.
+"""
+
+import copy
+import json
+import math
+import re
+import typing as t
+
+from pydantic import BeforeValidator, RootModel, TypeAdapter
+from pydantic_core import PydanticCustomError
+
+PORTABLE_REFINEMENT_IDENTITIES: tuple[str, ...] = (
+__GENERATED_PORTABLE_REFINEMENT_IDENTITIES__
+)
+
+_GENERATED_PORTABLE_SCHEMA_IDS: tuple[str, ...] = (
+__GENERATED_PORTABLE_SCHEMA_IDS__
+)
+
+PORTABLE_REFINEMENT_DESCRIPTORS: tuple[dict[str, object], ...] = tuple(
+    t.cast(
+        "list[dict[str, object]]",
+        json.loads(r'''__GENERATED_PORTABLE_REFINEMENT_DESCRIPTORS_JSON__''',),
+    ),
+)
+_PORTABLE_REFINEMENT_DESCRIPTOR_BY_IDENTITY = {
+    t.cast("str", descriptor["identity"]): descriptor
+    for descriptor in PORTABLE_REFINEMENT_DESCRIPTORS
+}
+_GENERATED_PORTABLE_SCHEMA_MANIFEST = t.cast(
+    "dict[str, object]",
+    json.loads(r'''__GENERATED_PORTABLE_SCHEMA_MANIFEST_JSON__''',),
+)
+
+
+def _portable_error(error_code: str, message: str) -> PydanticCustomError:
+    return PydanticCustomError(
+        t.cast("t.LiteralString", error_code),
+        t.cast("t.LiteralString", message),
+    )
+
+
+class _GeneratedSchemaMismatchError(Exception):
+    def __init__(self, error_code: str) -> None:
+        super().__init__(error_code)
+        self.error_code = error_code
+
+
+class _GeneratedContractModel(RootModel[object]):
+    """Validated normalized payload returned by every generated adapter."""
+
+
+def _require_mapping(value: object, *, error_code: str = "portable.object.required") -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise _GeneratedSchemaMismatchError(error_code)
+    object_mapping = t.cast("dict[object, object]", value)
+    if not all(isinstance(key, str) for key in object_mapping):
+        raise _GeneratedSchemaMismatchError("portable.object.invalid-key")
+    return t.cast("dict[str, object]", object_mapping)
+
+
+def _walk(value: object) -> t.Iterator[object]:
+    yield value
+    if isinstance(value, list):
+        for child in t.cast("list[object]", value):
+            yield from _walk(child)
+    elif isinstance(value, dict):
+        for child in t.cast("dict[object, object]", value).values():
+            yield from _walk(child)
+
+
+def _resolve_reference(root_schema: dict[str, object], reference: str) -> dict[str, object]:
+    if reference == "#":
+        return root_schema
+    if not reference.startswith("#/"):
+        raise _GeneratedSchemaMismatchError("portable.schema.unsupported-reference")
+    current: object = root_schema
+    for encoded_segment in reference[2:].split("/"):
+        segment = encoded_segment.replace("~1", "/").replace("~0", "~")
+        current = _require_mapping(current).get(segment)
+    return _require_mapping(current)
+
+
+def _validate_union(
+    value: object,
+    union_schemas: list[object],
+    *,
+    root_schema: dict[str, object],
+) -> object:
+    for candidate_schema in union_schemas:
+        try:
+            return _validate_json_schema(
+                value,
+                _require_mapping(candidate_schema),
+                root_schema=root_schema,
+            )
+        except _GeneratedSchemaMismatchError:
+            continue
+    raise _GeneratedSchemaMismatchError("portable.schema.invalid-union")
+
+
+def _validate_object(  # noqa: PLR0912
+    value: object,
+    schema: dict[str, object],
+    *,
+    root_schema: dict[str, object],
+) -> object:
+    object_value = _require_mapping(value)
+    properties = _require_mapping(schema.get("properties", {}))
+    required_input = schema.get("required", [])
+    required = set(t.cast("list[str]", required_input)) if isinstance(required_input, list) else set()
+    if required - object_value.keys():
+        raise _GeneratedSchemaMismatchError("portable.object.missing-field")
+    additional_properties = schema.get("additionalProperties", True)
+    if additional_properties is False and any(key not in properties for key in object_value):
+        raise _GeneratedSchemaMismatchError("portable.object.unknown-field")
+    minimum_properties = schema.get("minProperties")
+    maximum_properties = schema.get("maxProperties")
+    if isinstance(minimum_properties, int) and len(object_value) < minimum_properties:
+        raise _GeneratedSchemaMismatchError("portable.object.below-minimum")
+    if isinstance(maximum_properties, int) and len(object_value) > maximum_properties:
+        raise _GeneratedSchemaMismatchError("portable.object.above-maximum")
+    property_names_input = schema.get("propertyNames")
+    if isinstance(property_names_input, dict):
+        property_names_schema = t.cast("dict[str, object]", property_names_input)
+        for property_name in object_value:
+            _validate_json_schema(property_name, property_names_schema, root_schema=root_schema)
+    normalized: dict[str, object] = {}
+    for property_name, property_value in object_value.items():
+        property_schema_input = properties.get(property_name)
+        if isinstance(property_schema_input, dict):
+            normalized[property_name] = _validate_json_schema(
+                property_value,
+                t.cast("dict[str, object]", property_schema_input),
+                root_schema=root_schema,
+            )
+        elif isinstance(additional_properties, dict):
+            normalized[property_name] = _validate_json_schema(
+                property_value,
+                t.cast("dict[str, object]", additional_properties),
+                root_schema=root_schema,
+            )
+        else:
+            normalized[property_name] = property_value
+    for property_name, property_schema_input in properties.items():
+        if property_name not in normalized and isinstance(property_schema_input, dict):
+            property_schema = t.cast("dict[str, object]", property_schema_input)
+            if "default" in property_schema:
+                normalized[property_name] = copy.deepcopy(property_schema["default"])
+    return normalized
+
+
+def _validate_array(
+    value: object,
+    schema: dict[str, object],
+    *,
+    root_schema: dict[str, object],
+) -> object:
+    if not isinstance(value, list):
+        raise _GeneratedSchemaMismatchError("portable.array.required")
+    object_list = t.cast("list[object]", value)
+    minimum_items = schema.get("minItems")
+    maximum_items = schema.get("maxItems")
+    if isinstance(minimum_items, int) and len(object_list) < minimum_items:
+        raise _GeneratedSchemaMismatchError("portable.array.below-minimum")
+    if isinstance(maximum_items, int) and len(object_list) > maximum_items:
+        raise _GeneratedSchemaMismatchError("portable.array.above-maximum")
+    item_schema = _require_mapping(schema.get("items", {}))
+    return [
+        _validate_json_schema(item, item_schema, root_schema=root_schema)
+        for item in object_list
+    ]
+
+
+def _validate_string(value: object, schema: dict[str, object]) -> object:
+    if not isinstance(value, str):
+        raise _GeneratedSchemaMismatchError("portable.string.required")
+    minimum_length = schema.get("minLength")
+    maximum_length = schema.get("maxLength")
+    pattern = schema.get("pattern")
+    if isinstance(minimum_length, int) and len(value) < minimum_length:
+        raise _GeneratedSchemaMismatchError("portable.string.below-minimum")
+    if isinstance(maximum_length, int) and len(value) > maximum_length:
+        raise _GeneratedSchemaMismatchError("portable.string.above-maximum")
+    if isinstance(pattern, str) and re.fullmatch(pattern, value) is None:
+        raise _GeneratedSchemaMismatchError("portable.string.pattern")
+    return value
+
+
+def _validate_number(value: object, schema: dict[str, object], *, integer: bool) -> object:
+    if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value):
+        raise _GeneratedSchemaMismatchError("portable.number.required")
+    if integer and not isinstance(value, int):
+        raise _GeneratedSchemaMismatchError("portable.number.integer-required")
+    minimum = schema.get("minimum")
+    maximum = schema.get("maximum")
+    exclusive_minimum = schema.get("exclusiveMinimum")
+    if isinstance(minimum, int | float) and value < minimum:
+        raise _GeneratedSchemaMismatchError("portable.number.below-minimum")
+    if isinstance(maximum, int | float) and value > maximum:
+        raise _GeneratedSchemaMismatchError("portable.number.above-maximum")
+    if isinstance(exclusive_minimum, int | float) and value <= exclusive_minimum:
+        raise _GeneratedSchemaMismatchError("portable.number.below-minimum")
+    return value
+
+
+def _validate_json_schema(  # noqa: PLR0911, PLR0912
+    value: object,
+    schema: dict[str, object],
+    *,
+    root_schema: dict[str, object],
+) -> object:
+    reference = schema.get("$ref")
+    if isinstance(reference, str):
+        return _validate_json_schema(
+            value,
+            _resolve_reference(root_schema, reference),
+            root_schema=root_schema,
+        )
+    union_schemas = schema.get("anyOf", schema.get("oneOf"))
+    if isinstance(union_schemas, list):
+        return _validate_union(value, t.cast("list[object]", union_schemas), root_schema=root_schema)
+    if "const" in schema and value != schema["const"]:
+        raise _GeneratedSchemaMismatchError("portable.schema.invalid-literal")
+    enum_values = schema.get("enum")
+    if isinstance(enum_values, list) and value not in enum_values:
+        raise _GeneratedSchemaMismatchError("portable.schema.invalid-enum")
+    schema_type = schema.get("type")
+    if schema_type == "object":
+        return _validate_object(value, schema, root_schema=root_schema)
+    if schema_type == "array":
+        return _validate_array(value, schema, root_schema=root_schema)
+    if schema_type == "string":
+        return _validate_string(value, schema)
+    if schema_type == "integer":
+        return _validate_number(value, schema, integer=True)
+    if schema_type == "number":
+        return _validate_number(value, schema, integer=False)
+    if schema_type == "boolean":
+        if not isinstance(value, bool):
+            raise _GeneratedSchemaMismatchError("portable.boolean.required")
+        return value
+    if schema_type == "null":
+        if value is not None:
+            raise _GeneratedSchemaMismatchError("portable.null.required")
+        return value
+    return value
+
+
+def _apply_default_path(root: object, path: str, default_value: object) -> None:
+    segments = path.removeprefix("/").split("/")
+
+    def _apply(current: object, remaining: list[str]) -> None:
+        if not remaining:
+            return
+        segment, *tail = remaining
+        if segment == "*":
+            if isinstance(current, list):
+                for child in t.cast("list[object]", current):
+                    _apply(child, tail)
+            return
+        if not isinstance(current, dict):
+            return
+        mapping = t.cast("dict[str, object]", current)
+        if not tail:
+            mapping.setdefault(segment, copy.deepcopy(default_value))
+            return
+        child = mapping.get(segment)
+        if child is not None:
+            _apply(child, tail)
+
+    _apply(root, segments)
+
+
+def _canonicalize_json(value: object, operation: dict[str, object]) -> object:
+    if isinstance(value, str):
+        maximum = t.cast("int", operation["maximumStringCharacters"])
+        if len(value) > maximum:
+            raise _portable_error("portable.string.above-maximum", "String exceeds portable maximum.")
+        return value
+    if isinstance(value, float) and value == 0:
+        return 0
+    if isinstance(value, list):
+        maximum = t.cast("int", operation["maximumArrayItems"])
+        if len(value) > maximum:
+            raise _portable_error("portable.array.above-maximum", "Array exceeds portable maximum.")
+        return [_canonicalize_json(item, operation) for item in t.cast("list[object]", value)]
+    if isinstance(value, dict):
+        mapping = t.cast("dict[str, object]", value)
+        maximum_entries = t.cast("int", operation["maximumObjectEntries"])
+        maximum_key_characters = t.cast("int", operation["maximumObjectKeyCharacters"])
+        if len(mapping) > maximum_entries:
+            raise _portable_error("portable.object.above-maximum", "Object exceeds portable maximum.")
+        if any(not key or len(key) > maximum_key_characters for key in mapping):
+            raise _portable_error("portable.object.invalid-key", "Object key is outside portable bounds.")
+        return {key: _canonicalize_json(mapping[key], operation) for key in sorted(mapping)}
+    return value
+
+
+def _terminal_outcome_is_valid(outcome: dict[str, object]) -> bool:  # noqa: PLR0911
+    kind = outcome.get("kind")
+    if kind == "not-dispatched":
+        return outcome == {"certainty": "proven", "kind": kind, "retryClass": "safe-before-dispatch"}
+    if kind == "completed":
+        completion = outcome.get("completion")
+        retry_class = outcome.get("retryClass")
+        if completion == "succeeded":
+            return outcome == {"certainty": "proven", "completion": completion, "kind": kind, "retryClass": "forbidden"}
+        return completion == "failed" and retry_class in {"forbidden", "policy-gated"} and outcome == {"certainty": "proven", "completion": completion, "kind": kind, "retryClass": retry_class}
+    if kind in {"cancelled-proven", "timed-out-proven"}:
+        return outcome == {"certainty": "proven-terminated", "kind": kind, "retryClass": "manual-only"}
+    if kind == "replaced-proven":
+        return outcome == {"certainty": "proven-terminated", "kind": kind, "priorSideEffects": "possible", "retryClass": "manual-only"}
+    if kind == "ambiguous":
+        return outcome == {"certainty": "side-effects-and-termination-unknown", "kind": kind, "retryClass": "forbidden"}
+    return False
+
+
+def _execute_refinements(  # noqa: PLR0912
+    value: object,
+    refinement_identities: tuple[str, ...],
+) -> object:
+    normalized_value = copy.deepcopy(value)
+    executable_identities = tuple(dict.fromkeys((*refinement_identities, "portal.number.safe-integer")))
+    for refinement_identity in executable_identities:
+        descriptor = _PORTABLE_REFINEMENT_DESCRIPTOR_BY_IDENTITY[refinement_identity]
+        operation = _require_mapping(descriptor.get("operation"))
+        operation_kind = operation.get("kind")
+        error_code = t.cast("str", descriptor.get("errorCode", "portable.refinement.rejected"))
+        if operation_kind == "default-values":
+            defaults = _require_mapping(operation.get("values"))
+            for path, default_value in defaults.items():
+                _apply_default_path(normalized_value, path, default_value)
+        elif operation_kind == "canonical-json":
+            normalized_value = _canonicalize_json(normalized_value, operation)
+        elif operation_kind == "maximum-object-entries":
+            maximum = t.cast("int", operation["maximum"])
+            if isinstance(normalized_value, dict) and len(normalized_value) > maximum:
+                raise _portable_error(error_code, "Object exceeds portable maximum.")
+        elif operation_kind == "safe-integer":
+            minimum = t.cast("int", operation["minimum"])
+            maximum = t.cast("int", operation["maximum"])
+            if any(isinstance(item, int) and not isinstance(item, bool) and not minimum <= item <= maximum for item in _walk(normalized_value)):
+                raise _portable_error(error_code, "Integer exceeds portable safe range.")
+        elif operation_kind == "reject-reserved-values":
+            field_names = set(t.cast("list[str]", operation["fieldNames"]))
+            reserved_values = set(t.cast("list[str]", operation["values"]))
+            for item in _walk(normalized_value):
+                if isinstance(item, dict) and any(t.cast("dict[str, object]", item).get(field_name) in reserved_values for field_name in field_names):
+                    raise _portable_error(error_code, "Reserved value is forbidden.")
+        elif operation_kind == "unique-field":
+            field_name = t.cast("str", operation["fieldName"])
+            for collection_path in t.cast("list[str]", operation["collectionPaths"]):
+                collection = _require_mapping(normalized_value).get(collection_path)
+                if isinstance(collection, list):
+                    field_values = [_require_mapping(item).get(field_name) for item in t.cast("list[object]", collection)]
+                    if len(field_values) != len(set(field_values)):
+                        raise _portable_error(error_code, "Batch item values must be unique.")
+        elif operation_kind == "aggregate-status":
+            mapping = _require_mapping(normalized_value)
+            items = mapping.get(t.cast("str", operation["itemsField"]))
+            ok = mapping.get(t.cast("str", operation["okField"]))
+            if isinstance(items, list) and isinstance(ok, bool):
+                all_succeeded = all(_require_mapping(item).get("status") == "ok" for item in t.cast("list[object]", items))
+                if ok != all_succeeded:
+                    raise _portable_error(error_code, "Aggregate status does not match items.")
+        elif operation_kind == "terminal-outcome-algebra":
+            for item in _walk(normalized_value):
+                if not isinstance(item, dict):
+                    continue
+                mapping = t.cast("dict[str, object]", item)
+                status = mapping.get("status")
+                if status in {"ok", "error", "approval_required"} and not all(
+                    field_name in mapping
+                    for field_name in ("operationId", "owningGeneration", "outcome")
+                ):
+                    raise _portable_error(error_code, "Terminal outcome is outside the normative algebra.")
+                if "outcome" not in mapping:
+                    continue
+                outcome = _require_mapping(mapping.get("outcome"))
+                if not _terminal_outcome_is_valid(outcome):
+                    raise _portable_error(error_code, "Terminal outcome is outside the normative algebra.")
+                if status == "ok" and not (outcome.get("kind") == "completed" and outcome.get("completion") == "succeeded"):
+                    raise _portable_error(error_code, "Successful result requires completed succeeded outcome.")
+                if status == "error" and outcome.get("kind") == "completed" and outcome.get("completion") == "succeeded":
+                    raise _portable_error(error_code, "Error result cannot carry completed succeeded outcome.")
+        elif operation_kind == "unique-string-items":
+            items = _require_mapping(normalized_value).get(t.cast("str", operation["path"]))
+            if isinstance(items, list) and len(items) != len(set(t.cast("list[str]", items))):
+                raise _portable_error(error_code, "String items must be unique.")
+        elif operation_kind == "work-relative-path":
+            field_names = set(t.cast("list[str]", operation["fieldNames"]))
+            for item in _walk(normalized_value):
+                if not isinstance(item, dict):
+                    continue
+                for field_name, field_value in t.cast("dict[str, object]", item).items():
+                    if field_name not in field_names or not isinstance(field_value, str):
+                        continue
+                    segments = field_value.split("/")
+                    if not field_value or field_value.startswith("/") or field_value.endswith("/") or "\0" in field_value or any(segment in {"", ".", ".."} for segment in segments):
+                        raise _portable_error(error_code, "Path is not normalized work-relative form.")
+        elif operation_kind == "decoded-base64-byte-length":
+            for item in _walk(normalized_value):
+                if not isinstance(item, dict):
+                    continue
+                chunk = t.cast("dict[str, object]", item)
+                content_base64 = chunk.get("contentBase64")
+                byte_length = chunk.get("byteLength")
+                if chunk.get("encoding") != "base64" or not isinstance(content_base64, str) or not isinstance(byte_length, int):
+                    continue
+                padding = 2 if content_base64.endswith("==") else 1 if content_base64.endswith("=") else 0
+                if byte_length != (len(content_base64) // 4) * 3 - padding:
+                    raise _portable_error(error_code, "Binary chunk byte length does not match content.")
+    return normalized_value
+
+
+def _schema_error_code(schema_id: str, value: object, mismatch_code: str) -> str:
+    if schema_id == "portal.call.item-result" and isinstance(value, dict):
+        item = t.cast("dict[str, object]", value)
+        if (item.get("status") == "ok" and "error" in item) or (item.get("status") == "error" and "value" in item):
+            return "portal.result.status-shape"
+    return mismatch_code
+
+
+def _create_contract_adapter(schema_id: str) -> TypeAdapter[object]:
+    manifest_schemas = _require_mapping(_GENERATED_PORTABLE_SCHEMA_MANIFEST.get("schemas"))
+    definition = _require_mapping(manifest_schemas.get(schema_id))
+    root_schema = _require_mapping(definition.get("jsonSchema"))
+    refinement_identities_input = definition.get("refinementIdentities", [])
+    refinement_identities = tuple(t.cast("list[str]", refinement_identities_input))
+
+    def _validate(value: object) -> object:
+        if schema_id == "portal.call.item-result" and isinstance(value, dict):
+            item = t.cast("dict[str, object]", value)
+            if (item.get("status") == "ok" and "error" in item) or (
+                item.get("status") == "error" and "value" in item
+            ):
+                raise _portable_error(
+                    "portal.result.status-shape",
+                    "Call result fields conflict with the status discriminant.",
+                )
+        normalized_value = _execute_refinements(value, refinement_identities)
+        try:
+            return _validate_json_schema(normalized_value, root_schema, root_schema=root_schema)
+        except _GeneratedSchemaMismatchError as mismatch:
+            error_code = _schema_error_code(schema_id, normalized_value, mismatch.error_code)
+            raise _portable_error(error_code, "Generated portable contract validation failed.") from mismatch
+
+    generated_contract = t.Annotated[_GeneratedContractModel, BeforeValidator(_validate)]
+    return TypeAdapter[object](generated_contract)
+
+
+PORTABLE_CONTRACT_ADAPTERS: t.Mapping[str, TypeAdapter[object]] = {
+    schema_id: _create_contract_adapter(schema_id)
+    for schema_id in _GENERATED_PORTABLE_SCHEMA_IDS
+}
+
+
+def encode_canonical_json(value: object) -> str:
+    """Encode one normalized portable value with stable UTF-8 JSON semantics."""
+    return json.dumps(
+        value,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )

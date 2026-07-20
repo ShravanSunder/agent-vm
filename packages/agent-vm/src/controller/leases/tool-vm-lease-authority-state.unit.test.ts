@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { GatewayEpochIdentity } from '../vm-ownership/vm-ownership-contracts.js';
+import { stablePrincipalKey } from './tool-vm-lease-authority-state-helpers.js';
 import {
 	authorizeCurrentToolVmLeafBinding,
 	createEmptyToolVmLeaseAuthorityState,
@@ -32,19 +33,23 @@ const GATEWAY_TWO = {
 
 const PRINCIPAL_MAIN = {
 	agentId: 'main',
-	zoneId: 'shravan',
+	frameworkIdentity: { agentId: 'main', kind: 'openclaw' },
+	profileAssignmentRevision: 'assignment-main',
+	toolPortalProfileId: 'standard',
 } satisfies StableToolVmLeasePrincipal;
 
 const PRINCIPAL_SIBLING = {
+	...PRINCIPAL_MAIN,
 	agentId: 'sibling',
-	zoneId: 'shravan',
+	frameworkIdentity: { agentId: 'sibling', kind: 'openclaw' },
+	profileAssignmentRevision: 'assignment-sibling',
 } satisfies StableToolVmLeasePrincipal;
 
 const COMPATIBILITY = {
 	policyFingerprint: 'policy-a',
 	profileId: 'standard',
+	profileAssignmentRevision: 'assignment-main',
 	purpose: 'coding',
-	workMountDir: '/home/openclaw/work',
 } satisfies ToolVmLeaseCompatibility;
 
 const AUTHORITY_REFERENCE_EXCLUDES_IDLE_EXPIRY: 'idleExpiresAtMs' extends keyof ToolVmLeafAuthorityReference
@@ -180,6 +185,564 @@ describe('Tool VM lease authority state', () => {
 		});
 	});
 
+	it('admits one non-routable B while retaining access-fencing A by exact generation', () => {
+		// Arrange
+		const principalRevisionA = {
+			...PRINCIPAL_MAIN,
+			profileAssignmentRevision: 'assignment-a',
+		} as const;
+		const principalRevisionB = {
+			...principalRevisionA,
+			profileAssignmentRevision: 'assignment-b',
+		} as const;
+		const authorityA = authorityReference({ principal: principalRevisionA });
+		const authorityB = authorityReference({
+			leaseId: 'lease-b',
+			leafGeneration: 'leaf-generation-b',
+			principal: principalRevisionB,
+		});
+		const currentA = commitCurrent(
+			beginProvisioning(registerGateway(), { principal: principalRevisionA }),
+			{ principal: principalRevisionA },
+		);
+		const accessFencingA = reduceToolVmLeaseAuthorityState(currentA, {
+			ambiguousAtMs: 200,
+			authority: authorityA,
+			kind: 'begin-destruction',
+			reason: 'profile-revision-rollover',
+		});
+
+		// Act
+		const provisioningB = beginProvisioning(accessFencingA, {
+			leaseId: authorityB.leaseId,
+			leafGeneration: authorityB.leafGeneration,
+			principal: principalRevisionB,
+		});
+
+		// Assert
+		expect(accessFencingA.currentPrincipalKeyByAgentId.has(PRINCIPAL_MAIN.agentId)).toBe(false);
+		expect(accessFencingA.leavesByPrincipal.has(stablePrincipalKey(principalRevisionA))).toBe(
+			false,
+		);
+		expect(
+			accessFencingA.accessFencingLeavesByGeneration.get(authorityA.leafGeneration),
+		).toMatchObject({ kind: 'destroying', leaseId: authorityA.leaseId });
+		expect(
+			provisioningB.leavesByPrincipal.get(stablePrincipalKey(principalRevisionB)),
+		).toMatchObject({ kind: 'provisioning', leaseId: authorityB.leaseId });
+		expectTransitionError(
+			() =>
+				authorizeCurrentToolVmLeafBinding(provisioningB, {
+					authority: authorityB,
+					compatibility: COMPATIBILITY,
+					nowMs: 100,
+					sshBindingId: 'ssh-leaf-generation-b',
+				}),
+			'leaf-not-current',
+		);
+		expectTransitionError(
+			() =>
+				commitCurrent(provisioningB, {
+					leaseId: authorityB.leaseId,
+					leafGeneration: authorityB.leafGeneration,
+					principal: principalRevisionB,
+				}),
+			'predecessor-access-not-fenced',
+		);
+		expectTransitionError(
+			() =>
+				beginProvisioning(provisioningB, {
+					leaseId: 'lease-c',
+					leafGeneration: 'leaf-generation-c',
+					principal: principalRevisionB,
+				}),
+			'leaf-already-exists',
+		);
+
+		// Act
+		const retiringA = reduceToolVmLeaseAuthorityState(provisioningB, {
+			authority: authorityA,
+			kind: 'access-fenced',
+		});
+		const currentB = commitCurrent(retiringA, {
+			leaseId: authorityB.leaseId,
+			leafGeneration: authorityB.leafGeneration,
+			principal: principalRevisionB,
+		});
+
+		// Assert
+		expect(currentB.retiringLeavesByGeneration.get(authorityA.leafGeneration)).toMatchObject({
+			kind: 'retiring',
+			leaseId: authorityA.leaseId,
+		});
+		expect(currentB.leavesByPrincipal.get(stablePrincipalKey(principalRevisionB))).toMatchObject({
+			kind: 'current',
+			leaseId: authorityB.leaseId,
+		});
+		expect(currentB.currentPrincipalKeyByAgentId.get(PRINCIPAL_MAIN.agentId)).toBe(
+			stablePrincipalKey(principalRevisionB),
+		);
+		expectTransitionError(
+			() =>
+				authorizeCurrentToolVmLeafBinding(currentB, {
+					authority: authorityA,
+					compatibility: COMPATIBILITY,
+					nowMs: 100,
+					sshBindingId: 'ssh-leaf-generation-1',
+				}),
+			'leaf-not-current',
+		);
+
+		// Act
+		const cleanupDebtA = reduceToolVmLeaseAuthorityState(currentB, {
+			authority: authorityA,
+			kind: 'destruction-incomplete',
+			reason: 'provider-cleanup-incomplete-after-containment',
+		});
+		const cleanedA = reduceToolVmLeaseAuthorityState(cleanupDebtA, {
+			authority: authorityA,
+			destroyedAtMs: 300,
+			kind: 'destruction-completed',
+			reason: 'cleanup-retried',
+		});
+
+		// Assert
+		expect(cleanupDebtA.parent).toEqual({ gateway: GATEWAY_ONE, kind: 'registered' });
+		expect(cleanupDebtA.retiringLeavesByGeneration.get(authorityA.leafGeneration)).toMatchObject({
+			cleanupIncompleteReason: 'provider-cleanup-incomplete-after-containment',
+			kind: 'retiring',
+		});
+		expect(cleanedA.retiringLeavesByGeneration.has(authorityA.leafGeneration)).toBe(false);
+		expect(cleanedA.leavesByPrincipal.get(stablePrincipalKey(principalRevisionB))).toMatchObject({
+			kind: 'current',
+			leaseId: authorityB.leaseId,
+		});
+	});
+
+	it.each(['running', 'observation-gap'] as const)(
+		'classifies %s work ambiguous during rollover and preserves evidence after cleanup',
+		(activeUseKind) => {
+			const authority = authorityReference();
+			const activeUse = activeUseInput({
+				correlation: {
+					runId: 'run-rollover',
+					traceId: '0123456789abcdef0123456789abcdef',
+				},
+				latestOperationReport: {
+					observedAtMs: 125,
+					phase: 'running',
+				},
+			});
+			const latestReport = {
+				reportedAtMs: 125,
+				sequence: 1,
+				status: 'running' as const,
+				summary: 'rollover evidence',
+			};
+			let state = reduceToolVmLeaseAuthorityState(createCurrentLeaf(), {
+				authority,
+				kind: 'start-active-use',
+				use: activeUse,
+			});
+			state = reduceToolVmLeaseAuthorityState(state, {
+				authority,
+				heartbeatAtMs: latestReport.reportedAtMs,
+				kind: 'heartbeat-active-use',
+				processEpoch: activeUse.processEpoch,
+				report: latestReport,
+				sessionAttachmentGeneration: activeUse.sessionAttachmentGeneration,
+				useId: activeUse.useId,
+			});
+			if (activeUseKind === 'observation-gap') {
+				state = reduceToolVmLeaseAuthorityState(state, {
+					gateway: GATEWAY_ONE,
+					kind: 'session-disconnected',
+					observedAtMs: 150,
+					processEpoch: 'process-1',
+					sessionAttachmentGeneration: 7,
+				});
+			}
+
+			const destroying = reduceToolVmLeaseAuthorityState(state, {
+				ambiguousAtMs: 200,
+				authority,
+				kind: 'begin-destruction',
+				reason: 'health-rollover',
+			});
+			const retiring = reduceToolVmLeaseAuthorityState(destroying, {
+				authority,
+				kind: 'access-fenced',
+			});
+			const destroyed = reduceToolVmLeaseAuthorityState(retiring, {
+				authority,
+				destroyedAtMs: 300,
+				kind: 'destruction-completed',
+				reason: 'health-rollover',
+				vmId: 'tool-vm-leaf-generation-1',
+			});
+
+			expect(
+				destroying.accessFencingLeavesByGeneration.get(authority.leafGeneration),
+			).toMatchObject({
+				activeUses: new Map([
+					[
+						'use-1',
+						expect.objectContaining({
+							ambiguousAtMs: 200,
+							kind: 'ambiguous',
+							reason: 'leaf-rollover',
+						}),
+					],
+				]),
+				kind: 'destroying',
+			});
+			expect([...destroyed.terminalUseTombstones.values()]).toEqual([
+				expect.objectContaining({
+					endedAtMs: 300,
+					leafGeneration: authority.leafGeneration,
+					outcome: 'ambiguous-rollover',
+					ambiguousAtMs: 200,
+					ambiguityReason: 'leaf-rollover',
+					correlation: activeUse.correlation,
+					latestOperationReport: activeUse.latestOperationReport,
+					latestReport,
+					operationPayloadDigest: activeUse.operationPayloadDigest,
+					principal: PRINCIPAL_MAIN,
+					processEpoch: activeUse.processEpoch,
+					semanticOperationId: activeUse.semanticOperationId,
+					startedAtMs: activeUse.startedAtMs,
+					useId: 'use-1',
+				}),
+			]);
+		},
+	);
+
+	it('evicts the oldest terminal-use evidence instead of blocking physical destruction', () => {
+		const authority = authorityReference();
+		const boundedState = createEmptyToolVmLeaseAuthorityState({
+			retentionPolicy: { maxTerminalUseTombstones: 1 },
+		});
+		const current = commitCurrent(beginProvisioning(registerGateway(boundedState)));
+		const firstUseId = '0190a5f1-1234-7abc-8def-1234567890ab';
+		const rolloverUseId = '0190a5f1-1235-7abc-8def-1234567890ab';
+		const firstRunning = reduceToolVmLeaseAuthorityState(current, {
+			authority,
+			kind: 'start-active-use',
+			use: activeUseInput({ useId: firstUseId }),
+		});
+		const firstTerminal = reduceToolVmLeaseAuthorityState(firstRunning, {
+			authority,
+			endedAtMs: 150,
+			kind: 'end-active-use',
+			outcome: 'completed',
+			processEpoch: 'process-1',
+			sessionAttachmentGeneration: 7,
+			useId: firstUseId,
+		});
+		const rolloverRunning = reduceToolVmLeaseAuthorityState(firstTerminal, {
+			authority,
+			kind: 'start-active-use',
+			use: activeUseInput({
+				operationPayloadDigest: 'rollover-payload',
+				semanticOperationId: 'rollover-operation',
+				useId: rolloverUseId,
+			}),
+		});
+		const destroying = reduceToolVmLeaseAuthorityState(rolloverRunning, {
+			ambiguousAtMs: 200,
+			authority,
+			kind: 'begin-destruction',
+			reason: 'health-rollover',
+		});
+		const retiring = reduceToolVmLeaseAuthorityState(destroying, {
+			authority,
+			kind: 'access-fenced',
+		});
+
+		const destroyed = reduceToolVmLeaseAuthorityState(retiring, {
+			authority,
+			destroyedAtMs: 300,
+			kind: 'destruction-completed',
+			reason: 'health-rollover',
+			vmId: 'tool-vm-leaf-generation-1',
+		});
+
+		expect(destroyed.tombstonesByGeneration.has(authority.leafGeneration)).toBe(true);
+		expect([...destroyed.terminalUseTombstones.values()]).toEqual([
+			expect.objectContaining({
+				outcome: 'ambiguous-rollover',
+				useId: rolloverUseId,
+			}),
+		]);
+	});
+
+	it('refuses an ambiguous A useId on B and admits genuinely new B work', () => {
+		const principalRevisionA = {
+			...PRINCIPAL_MAIN,
+			profileAssignmentRevision: 'assignment-a',
+		} as const;
+		const principalRevisionB = {
+			...principalRevisionA,
+			profileAssignmentRevision: 'assignment-b',
+		} as const;
+		const authorityA = authorityReference({ principal: principalRevisionA });
+		const authorityB = authorityReference({
+			leaseId: 'lease-b',
+			leafGeneration: 'leaf-generation-b',
+			principal: principalRevisionB,
+		});
+		const retiredUseId = '0190a5f1-1234-7abc-8def-1234567890ab';
+		const freshUseId = '0190a5f1-1235-7abc-8def-1234567890ab';
+		const retiredUse = activeUseInput({ useId: retiredUseId });
+		const currentA = commitCurrent(
+			beginProvisioning(registerGateway(), { principal: principalRevisionA }),
+			{ principal: principalRevisionA },
+		);
+		const runningA = reduceToolVmLeaseAuthorityState(currentA, {
+			authority: authorityA,
+			kind: 'start-active-use',
+			use: retiredUse,
+		});
+		const destroyingA = reduceToolVmLeaseAuthorityState(runningA, {
+			ambiguousAtMs: 200,
+			authority: authorityA,
+			kind: 'begin-destruction',
+			reason: 'profile-revision-rollover',
+		});
+		const retiringA = reduceToolVmLeaseAuthorityState(destroyingA, {
+			authority: authorityA,
+			kind: 'access-fenced',
+		});
+		const destroyedA = reduceToolVmLeaseAuthorityState(retiringA, {
+			authority: authorityA,
+			destroyedAtMs: 300,
+			kind: 'destruction-completed',
+			reason: 'profile-revision-rollover',
+			vmId: 'tool-vm-leaf-generation-1',
+		});
+		const currentB = commitCurrent(
+			beginProvisioning(destroyedA, {
+				leaseId: authorityB.leaseId,
+				leafGeneration: authorityB.leafGeneration,
+				principal: principalRevisionB,
+			}),
+			{
+				leaseId: authorityB.leaseId,
+				leafGeneration: authorityB.leafGeneration,
+				principal: principalRevisionB,
+			},
+		);
+
+		expectTransitionError(
+			() =>
+				reduceToolVmLeaseAuthorityState(currentB, {
+					authority: authorityB,
+					kind: 'start-active-use',
+					use: retiredUse,
+				}),
+			'active-use-not-resumable',
+		);
+		expectTransitionError(
+			() =>
+				reduceToolVmLeaseAuthorityState(currentB, {
+					authority: authorityB,
+					kind: 'start-active-use',
+					use: {
+						...retiredUse,
+						processEpoch: 'process-b',
+						semanticOperationId: 'operation-b',
+					},
+				}),
+			'active-use-semantic-collision',
+		);
+		const freshB = reduceToolVmLeaseAuthorityState(currentB, {
+			authority: authorityB,
+			kind: 'start-active-use',
+			use: activeUseInput({
+				operationPayloadDigest: 'payload-b',
+				processEpoch: 'process-b',
+				semanticOperationId: 'operation-b',
+				useId: freshUseId,
+			}),
+		});
+		expect(freshB.leavesByPrincipal.get(stablePrincipalKey(principalRevisionB))).toMatchObject({
+			activeUses: new Map([[freshUseId, expect.objectContaining({ kind: 'running' })]]),
+			kind: 'current',
+		});
+	});
+
+	it('refuses ambiguous A work on current B while A cleanup remains pending', () => {
+		// Arrange
+		const principalRevisionA = {
+			...PRINCIPAL_MAIN,
+			profileAssignmentRevision: 'assignment-a',
+		} as const;
+		const principalRevisionB = {
+			...principalRevisionA,
+			profileAssignmentRevision: 'assignment-b',
+		} as const;
+		const authorityA = authorityReference({ principal: principalRevisionA });
+		const authorityB = authorityReference({
+			leaseId: 'lease-b',
+			leafGeneration: 'leaf-generation-b',
+			principal: principalRevisionB,
+		});
+		const ambiguousUseId = '0190a5f1-1234-7abc-8def-1234567890ab';
+		const freshUseId = '0190a5f1-1235-7abc-8def-1234567890ab';
+		const ambiguousUse = activeUseInput({ useId: ambiguousUseId });
+		const currentA = commitCurrent(
+			beginProvisioning(registerGateway(), { principal: principalRevisionA }),
+			{ principal: principalRevisionA },
+		);
+		const runningA = reduceToolVmLeaseAuthorityState(currentA, {
+			authority: authorityA,
+			kind: 'start-active-use',
+			use: ambiguousUse,
+		});
+		const destroyingA = reduceToolVmLeaseAuthorityState(runningA, {
+			ambiguousAtMs: 200,
+			authority: authorityA,
+			kind: 'begin-destruction',
+			reason: 'profile-revision-rollover',
+		});
+		const retiringA = reduceToolVmLeaseAuthorityState(destroyingA, {
+			authority: authorityA,
+			kind: 'access-fenced',
+		});
+		const currentB = commitCurrent(
+			beginProvisioning(retiringA, {
+				leaseId: authorityB.leaseId,
+				leafGeneration: authorityB.leafGeneration,
+				principal: principalRevisionB,
+			}),
+			{
+				leaseId: authorityB.leaseId,
+				leafGeneration: authorityB.leafGeneration,
+				principal: principalRevisionB,
+			},
+		);
+
+		// Act / Assert
+		expect(currentB.retiringLeavesByGeneration.get(authorityA.leafGeneration)).toMatchObject({
+			kind: 'retiring',
+		});
+		expectTransitionError(
+			() =>
+				reduceToolVmLeaseAuthorityState(currentB, {
+					authority: authorityB,
+					kind: 'start-active-use',
+					use: ambiguousUse,
+				}),
+			'active-use-not-resumable',
+		);
+		expectTransitionError(
+			() =>
+				reduceToolVmLeaseAuthorityState(currentB, {
+					authority: authorityB,
+					kind: 'start-active-use',
+					use: {
+						...ambiguousUse,
+						operationPayloadDigest: 'payload-b',
+						processEpoch: 'process-b',
+						semanticOperationId: 'operation-b',
+					},
+				}),
+			'active-use-semantic-collision',
+		);
+		const freshB = reduceToolVmLeaseAuthorityState(currentB, {
+			authority: authorityB,
+			kind: 'start-active-use',
+			use: activeUseInput({
+				operationPayloadDigest: 'payload-b',
+				processEpoch: 'process-b',
+				semanticOperationId: 'operation-b',
+				useId: freshUseId,
+			}),
+		});
+		expect(freshB.leavesByPrincipal.get(stablePrincipalKey(principalRevisionB))).toMatchObject({
+			activeUses: new Map([[freshUseId, expect.objectContaining({ kind: 'running' })]]),
+			kind: 'current',
+		});
+	});
+
+	it('retains containment-unproven A by generation while one successor B remains provisional', () => {
+		// Arrange
+		const authorityA = authorityReference();
+		const accessFencingA = reduceToolVmLeaseAuthorityState(createCurrentLeaf(), {
+			ambiguousAtMs: 200,
+			authority: authorityA,
+			kind: 'begin-destruction',
+			reason: 'health-rollover',
+		});
+
+		// Assert
+		expect(accessFencingA.currentPrincipalKeyByAgentId.has(PRINCIPAL_MAIN.agentId)).toBe(false);
+		expect(accessFencingA.leavesByPrincipal.has(stablePrincipalKey(PRINCIPAL_MAIN))).toBe(false);
+		expect(
+			accessFencingA.accessFencingLeavesByGeneration.get(authorityA.leafGeneration),
+		).toMatchObject({ kind: 'destroying' });
+		expectTransitionError(
+			() =>
+				authorizeCurrentToolVmLeafBinding(accessFencingA, {
+					authority: authorityA,
+					compatibility: COMPATIBILITY,
+					nowMs: 100,
+					sshBindingId: 'ssh-leaf-generation-1',
+				}),
+			'leaf-not-current',
+		);
+		const provisionalB = beginProvisioning(accessFencingA, {
+			leaseId: 'lease-b',
+			leafGeneration: 'leaf-generation-b',
+		});
+
+		// Act
+		const containmentUnprovenA = reduceToolVmLeaseAuthorityState(provisionalB, {
+			authority: authorityA,
+			kind: 'destruction-incomplete',
+			reason: 'managed-vm-close-unproven',
+		});
+
+		// Assert
+		expect(
+			containmentUnprovenA.accessFencingLeavesByGeneration.get(authorityA.leafGeneration),
+		).toMatchObject({ kind: 'owner-unsafe' });
+		expect(
+			containmentUnprovenA.leavesByPrincipal.get(stablePrincipalKey(PRINCIPAL_MAIN)),
+		).toMatchObject({ kind: 'provisioning', leaseId: 'lease-b' });
+		expectTransitionError(
+			() => beginProvisioning(containmentUnprovenA, { leafGeneration: 'leaf-generation-b' }),
+			'leaf-already-exists',
+		);
+	});
+
+	it('refuses parent retirement while an access-fenced predecessor still has cleanup debt', () => {
+		// Arrange
+		const authority = authorityReference();
+		const retiring = reduceToolVmLeaseAuthorityState(
+			reduceToolVmLeaseAuthorityState(
+				reduceToolVmLeaseAuthorityState(createCurrentLeaf(), {
+					ambiguousAtMs: 200,
+					authority,
+					kind: 'begin-destruction',
+					reason: 'gateway-shutdown',
+				}),
+				{ authority, kind: 'access-fenced' },
+			),
+			{ gateway: GATEWAY_ONE, kind: 'seal-parent' },
+		);
+
+		// Act / Assert
+		expectTransitionError(
+			() =>
+				reduceToolVmLeaseAuthorityState(retiring, {
+					gateway: GATEWAY_ONE,
+					kind: 'retire-parent',
+				}),
+			'parent-has-live-leaves',
+		);
+	});
+
 	it('serializes provisional/current authority and rejects stale asynchronous commits', () => {
 		const registered = registerGateway();
 		const provisional = beginProvisioning(registered);
@@ -194,7 +757,7 @@ describe('Tool VM lease authority state', () => {
 		);
 
 		const current = commitCurrent(provisional);
-		expect(current.leavesByPrincipal.get('shravan\0main')).toMatchObject({
+		expect(current.leavesByPrincipal.get(stablePrincipalKey(PRINCIPAL_MAIN))).toMatchObject({
 			kind: 'current',
 			leafGeneration: 'leaf-generation-1',
 		});
@@ -238,7 +801,9 @@ describe('Tool VM lease authority state', () => {
 		const committedAfterSeal = commitCurrent(sealed);
 
 		expect(committedAfterSeal.parent).toEqual({ gateway: GATEWAY_ONE, kind: 'sealed' });
-		expect(committedAfterSeal.leavesByPrincipal.get('shravan\0main')).toMatchObject({
+		expect(
+			committedAfterSeal.leavesByPrincipal.get(stablePrincipalKey(PRINCIPAL_MAIN)),
+		).toMatchObject({
 			kind: 'current',
 			leafGeneration: 'leaf-generation-1',
 		});
@@ -269,7 +834,7 @@ describe('Tool VM lease authority state', () => {
 			reason: 'containment-uncertain',
 		});
 
-		expect(quarantined.leavesByPrincipal.get('shravan\0main')).toMatchObject({
+		expect(quarantined.leavesByPrincipal.get(stablePrincipalKey(PRINCIPAL_MAIN))).toMatchObject({
 			kind: 'quarantined',
 			quarantineReason: 'containment-uncertain',
 		});
@@ -282,7 +847,7 @@ describe('Tool VM lease authority state', () => {
 	it('restores one suspect leaf without rotating its stable runtime or SSH binding', () => {
 		const authority = authorityReference();
 		const current = createCurrentLeaf();
-		const currentLeaf = current.leavesByPrincipal.get('shravan\0main');
+		const currentLeaf = current.leavesByPrincipal.get(stablePrincipalKey(PRINCIPAL_MAIN));
 		if (currentLeaf?.kind !== 'current') {
 			throw new Error('Expected current Tool VM lease leaf fixture.');
 		}
@@ -296,7 +861,7 @@ describe('Tool VM lease authority state', () => {
 			kind: 'restore-current',
 		});
 
-		expect(restored.leavesByPrincipal.get('shravan\0main')).toMatchObject({
+		expect(restored.leavesByPrincipal.get(stablePrincipalKey(PRINCIPAL_MAIN))).toMatchObject({
 			kind: 'current',
 			runtimeBinding: currentLeaf.runtimeBinding,
 			sshBinding: currentLeaf.sshBinding,
@@ -339,7 +904,7 @@ describe('Tool VM lease authority state', () => {
 			() =>
 				authorizeCurrentToolVmLeafBinding(state, {
 					authority: authorityReference(),
-					compatibility: { ...COMPATIBILITY, workMountDir: '/other/work' },
+					compatibility: { ...COMPATIBILITY, policyFingerprint: 'policy-b' },
 					nowMs: 100,
 					sshBindingId: 'ssh-leaf-generation-1',
 				}),
@@ -412,7 +977,7 @@ describe('Tool VM lease authority state', () => {
 			nowMs: 400,
 		});
 
-		expect(renewed.leavesByPrincipal.get('shravan\0main')).toMatchObject({
+		expect(renewed.leavesByPrincipal.get(stablePrincipalKey(PRINCIPAL_MAIN))).toMatchObject({
 			idleExpiresAtMs: 1_000,
 			kind: 'current',
 		});
@@ -499,7 +1064,7 @@ describe('Tool VM lease authority state', () => {
 				nowMs: 600,
 			});
 
-			expect(renewed.leavesByPrincipal.get('shravan\0main')).toMatchObject({
+			expect(renewed.leavesByPrincipal.get(stablePrincipalKey(PRINCIPAL_MAIN))).toMatchObject({
 				activeUses: new Map([['use-1', expect.objectContaining({ kind: activeUseKind })]]),
 				idleExpiresAtMs: 1_100,
 				kind: 'current',
@@ -548,7 +1113,7 @@ describe('Tool VM lease authority state', () => {
 			nowMs: 600,
 		});
 
-		expect(renewed.leavesByPrincipal.get('shravan\0main')).toMatchObject({
+		expect(renewed.leavesByPrincipal.get(stablePrincipalKey(PRINCIPAL_MAIN))).toMatchObject({
 			activeUses: new Map([
 				['use-1', expect.objectContaining({ kind: 'running', lastHeartbeatAtMs: 600 })],
 			]),
@@ -583,7 +1148,7 @@ describe('Tool VM lease authority state', () => {
 		);
 	});
 
-	it('blocks conflicting use through a disconnect observation gap and allows exact-process resume', () => {
+	it('tracks concurrent uses through a disconnect observation gap and allows exact-process resume', () => {
 		const authority = authorityReference();
 		const running = reduceToolVmLeaseAuthorityState(createCurrentLeaf(), {
 			authority,
@@ -598,35 +1163,51 @@ describe('Tool VM lease authority state', () => {
 				useId: 'use-1',
 			},
 		});
-		expectTransitionError(
-			() =>
-				reduceToolVmLeaseAuthorityState(running, {
-					authority,
-					kind: 'start-active-use',
-					use: {
-						lastHeartbeatAtMs: 101,
-						operationPayloadDigest: 'payload-digest-2',
-						processEpoch: 'process-1',
-						semanticOperationId: 'operation-2',
-						sessionAttachmentGeneration: 7,
-						startedAtMs: 101,
-						useId: 'use-2',
-					},
-				}),
-			'active-use-conflict',
-		);
+		const concurrent = reduceToolVmLeaseAuthorityState(running, {
+			authority,
+			kind: 'start-active-use',
+			use: {
+				lastHeartbeatAtMs: 101,
+				operationPayloadDigest: 'payload-digest-2',
+				processEpoch: 'process-1',
+				semanticOperationId: 'operation-2',
+				sessionAttachmentGeneration: 7,
+				startedAtMs: 101,
+				useId: 'use-2',
+			},
+		});
+		expect(
+			concurrent.leavesByPrincipal.get(stablePrincipalKey(PRINCIPAL_MAIN))?.activeUses.size,
+		).toBe(2);
 
-		const disconnected = reduceToolVmLeaseAuthorityState(running, {
+		const disconnected = reduceToolVmLeaseAuthorityState(concurrent, {
 			gateway: GATEWAY_ONE,
 			kind: 'session-disconnected',
 			observedAtMs: 120,
 			processEpoch: 'process-1',
 			sessionAttachmentGeneration: 7,
 		});
-		expect(disconnected.leavesByPrincipal.get('shravan\0main')).toMatchObject({
-			activeUses: new Map([['use-1', expect.objectContaining({ kind: 'observation-gap' })]]),
-			kind: 'current',
-		});
+		expect(
+			disconnected.leavesByPrincipal.get(stablePrincipalKey(PRINCIPAL_MAIN))?.activeUses,
+		).toEqual(
+			new Map([
+				['use-1', expect.objectContaining({ kind: 'observation-gap' })],
+				['use-2', expect.objectContaining({ kind: 'observation-gap' })],
+			]),
+		);
+		expectTransitionError(
+			() =>
+				reduceToolVmLeaseAuthorityState(disconnected, {
+					authority,
+					kind: 'start-active-use',
+					use: activeUseInput({
+						operationPayloadDigest: 'payload-digest-3',
+						semanticOperationId: 'operation-3',
+						useId: 'use-3',
+					}),
+				}),
+			'active-use-conflict',
+		);
 		expectTransitionError(
 			() =>
 				reduceToolVmLeaseAuthorityState(disconnected, {
@@ -649,8 +1230,11 @@ describe('Tool VM lease authority state', () => {
 			sessionAttachmentGeneration: 8,
 			useId: 'use-1',
 		});
-		expect(resumed.leavesByPrincipal.get('shravan\0main')).toMatchObject({
-			activeUses: new Map([['use-1', expect.objectContaining({ kind: 'running' })]]),
+		expect(resumed.leavesByPrincipal.get(stablePrincipalKey(PRINCIPAL_MAIN))).toMatchObject({
+			activeUses: new Map([
+				['use-1', expect.objectContaining({ kind: 'running' })],
+				['use-2', expect.objectContaining({ kind: 'observation-gap' })],
+			]),
 			kind: 'current',
 		});
 		expectTransitionError(
@@ -675,15 +1259,15 @@ describe('Tool VM lease authority state', () => {
 			sessionAttachmentGeneration: 8,
 			useId: 'use-1',
 		});
-		expect(terminal.leavesByPrincipal.get('shravan\0main')).toMatchObject({
-			activeUses: new Map(),
+		expect(terminal.leavesByPrincipal.get(stablePrincipalKey(PRINCIPAL_MAIN))).toMatchObject({
+			activeUses: new Map([['use-2', expect.objectContaining({ kind: 'observation-gap' })]]),
 		});
 		expect([...terminal.terminalUseTombstones.values()]).toEqual([
 			expect.objectContaining({ processEpoch: 'process-1' }),
 		]);
 	});
 
-	it('makes exact-P running retries idempotent and changed-P or changed-meaning retries collide', () => {
+	it('makes exact-P running retries idempotent while distinct uses run concurrently', () => {
 		const authority = authorityReference();
 		const use = activeUseInput();
 		const running = reduceToolVmLeaseAuthorityState(createCurrentLeaf(), {
@@ -718,10 +1302,46 @@ describe('Tool VM lease authority state', () => {
 				reduceToolVmLeaseAuthorityState(running, {
 					authority,
 					kind: 'start-active-use',
-					use: activeUseInput({ useId: 'use-2' }),
+					use: { ...use, sessionAttachmentGeneration: 8 },
 				}),
 			'active-use-conflict',
 		);
+		for (const staleConcurrentUse of [
+			activeUseInput({
+				operationPayloadDigest: 'payload-digest-2',
+				processEpoch: 'process-2',
+				semanticOperationId: 'operation-2',
+				useId: 'use-2',
+			}),
+			activeUseInput({
+				operationPayloadDigest: 'payload-digest-2',
+				semanticOperationId: 'operation-2',
+				sessionAttachmentGeneration: 8,
+				useId: 'use-2',
+			}),
+		]) {
+			expectTransitionError(
+				() =>
+					reduceToolVmLeaseAuthorityState(running, {
+						authority,
+						kind: 'start-active-use',
+						use: staleConcurrentUse,
+					}),
+				'active-use-conflict',
+			);
+		}
+		const concurrent = reduceToolVmLeaseAuthorityState(running, {
+			authority,
+			kind: 'start-active-use',
+			use: activeUseInput({
+				operationPayloadDigest: 'payload-digest-2',
+				semanticOperationId: 'operation-2',
+				useId: 'use-2',
+			}),
+		});
+		expect(
+			concurrent.leavesByPrincipal.get(stablePrincipalKey(PRINCIPAL_MAIN))?.activeUses.size,
+		).toBe(2);
 	});
 
 	it.each([
@@ -768,7 +1388,7 @@ describe('Tool VM lease authority state', () => {
 					sessionAttachmentGeneration: 7,
 				});
 			}
-			const siblingBefore = state.leavesByPrincipal.get('shravan\0sibling');
+			const siblingBefore = state.leavesByPrincipal.get(stablePrincipalKey(PRINCIPAL_SIBLING));
 			const parentBefore = state.parent;
 
 			const transitioned =
@@ -788,11 +1408,13 @@ describe('Tool VM lease authority state', () => {
 							processEpoch: 'process-1',
 						});
 
-			expect(transitioned.leavesByPrincipal.get('shravan\0main')).toMatchObject({
+			expect(transitioned.leavesByPrincipal.get(stablePrincipalKey(PRINCIPAL_MAIN))).toMatchObject({
 				activeUses: new Map([['use-1', expect.objectContaining({ kind: 'ambiguous', reason })]]),
 				kind: 'quarantined',
 			});
-			expect(transitioned.leavesByPrincipal.get('shravan\0sibling')).toBe(siblingBefore);
+			expect(transitioned.leavesByPrincipal.get(stablePrincipalKey(PRINCIPAL_SIBLING))).toBe(
+				siblingBefore,
+			);
 			expect(transitioned.parent).toBe(parentBefore);
 			expect(
 				authorizeCurrentToolVmLeafBinding(transitioned, {
@@ -837,7 +1459,7 @@ describe('Tool VM lease authority state', () => {
 				useId: 'use-process-2',
 			}),
 		});
-		const siblingBefore = state.leavesByPrincipal.get('shravan\0sibling');
+		const siblingBefore = state.leavesByPrincipal.get(stablePrincipalKey(PRINCIPAL_SIBLING));
 
 		const transitioned = reduceToolVmLeaseAuthorityState(state, {
 			ambiguousAtMs: 200,
@@ -846,7 +1468,7 @@ describe('Tool VM lease authority state', () => {
 			processEpoch: 'process-1',
 		});
 
-		expect(transitioned.leavesByPrincipal.get('shravan\0main')).toMatchObject({
+		expect(transitioned.leavesByPrincipal.get(stablePrincipalKey(PRINCIPAL_MAIN))).toMatchObject({
 			activeUses: new Map([
 				[
 					'use-process-1',
@@ -859,7 +1481,9 @@ describe('Tool VM lease authority state', () => {
 			]),
 			kind: 'quarantined',
 		});
-		expect(transitioned.leavesByPrincipal.get('shravan\0sibling')).toBe(siblingBefore);
+		expect(transitioned.leavesByPrincipal.get(stablePrincipalKey(PRINCIPAL_SIBLING))).toBe(
+			siblingBefore,
+		);
 		expect(
 			authorizeCurrentToolVmLeafBinding(transitioned, {
 				authority: siblingAuthority,

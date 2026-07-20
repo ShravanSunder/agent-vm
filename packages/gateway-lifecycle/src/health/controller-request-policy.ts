@@ -1,5 +1,5 @@
 export const gatewayInternalControllerRequestOperations = [
-	'zone-git-push',
+	'workspace-git-push',
 	'lease-create',
 	'lease-get',
 	'lease-peek',
@@ -46,7 +46,6 @@ export const externalControllerRoutes = [
 	'GET /controller-status',
 	'GET /zones/:zoneId/status',
 	'GET /zones/:zoneId/health',
-	'GET /zones/:zoneId/zone-git/status',
 	'GET /zones/:zoneId/logs',
 	'POST /zones/:zoneId/credentials/refresh',
 	'POST /zones/:zoneId/destroy',
@@ -231,7 +230,7 @@ export async function fetchControllerWithPolicy(
 }
 
 export const controllerRequestPolicies = {
-	'zone-git-push': {
+	'workspace-git-push': {
 		idempotency: 'unsafe-mutation',
 		maxAttempts: 1,
 		retryBaseDelayMs: 0,

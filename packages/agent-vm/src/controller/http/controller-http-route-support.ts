@@ -65,7 +65,6 @@ export interface ControllerRouteOperations {
 		zoneId: string,
 	) => Promise<{ readonly ok: boolean } & Record<string, unknown>>;
 	readonly getZoneLogs: (zoneId: string) => Promise<unknown>;
-	readonly getZoneGitStatus?: (zoneId: string) => Promise<unknown>;
 	readonly getZoneStatus: (zoneId: string) => Promise<unknown>;
 	readonly refreshZoneCredentials: (zoneId: string) => Promise<unknown>;
 	readonly prepareWorkerTask?: (
@@ -86,10 +85,6 @@ export interface ControllerRouteOperations {
 				readonly branchName: string;
 			}[];
 		},
-	) => Promise<unknown>;
-	readonly pushZoneGit?: (
-		zoneId: string,
-		input: { readonly expectedHead: string },
 	) => Promise<unknown>;
 	readonly pullDefaultForTask?: (
 		zoneId: string,
@@ -114,8 +109,10 @@ export type ControllerLeaseManager = Pick<
 			LeaseManager,
 			| 'endActiveUse'
 			| 'getActiveUseCount'
+			| 'getCurrentLeaseBinding'
 			| 'getLeaseAuthority'
 			| 'heartbeatActiveUse'
+			| 'reacquireLease'
 			| 'startActiveUse'
 			| 'subscribeLeaseRetirement'
 		>

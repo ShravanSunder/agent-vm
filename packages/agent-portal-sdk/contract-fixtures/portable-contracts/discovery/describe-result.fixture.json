@@ -1,0 +1,18 @@
+{
+	"caseId": "portal-describe-result-valid",
+	"schemaId": "portal.describe.result",
+	"tags": ["accepted", "discovery", "result"],
+	"input": {
+		"items": [{ "id": "describe-1", "status": "ok", "value": { "tools": [] } }],
+		"ok": true
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"items": [{ "id": "describe-1", "status": "ok", "value": { "tools": [] } }],
+			"ok": true
+		},
+		"canonicalJson": "{\"items\":[{\"id\":\"describe-1\",\"status\":\"ok\",\"value\":{\"tools\":[]}}],\"ok\":true}",
+		"refinementIdentities": ["portal.request-id.not-reserved", "portal.result.aggregate-status"]
+	}
+}

@@ -1,8 +1,9 @@
 import type {
 	BuildGatewayVmRequirementsOptions,
-	GatewayLifecycle,
+	DirectProcessGatewayLifecycle,
 	GatewayProcessSpec,
 	GatewayVmRequirements,
+	GatewayZoneConfig,
 } from '@agent-vm/gateway-lifecycle';
 import {
 	buildGatewaySessionLabel,
@@ -46,7 +47,8 @@ function createManagedGitReadOnlySshEgressOptions(options: {
 	};
 }
 
-export const workerLifecycle: GatewayLifecycle = {
+export const workerLifecycle: DirectProcessGatewayLifecycle = {
+	executionModel: 'direct-process',
 	buildVmRequirements({
 		projectNamespace,
 		resolvedSecrets,
@@ -108,7 +110,10 @@ export const workerLifecycle: GatewayLifecycle = {
 		};
 	},
 
-	buildProcessSpec(): GatewayProcessSpec {
+	buildProcessSpec(
+		_zone: GatewayZoneConfig,
+		_resolvedSecrets: Record<string, string>,
+	): GatewayProcessSpec {
 		return {
 			bootstrapCommand: buildWorkerBootstrapCommand(),
 			// printf NODE_OPTIONS into the boot log so an env-loss regression

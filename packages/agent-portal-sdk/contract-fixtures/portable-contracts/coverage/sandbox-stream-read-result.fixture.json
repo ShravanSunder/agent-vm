@@ -1,0 +1,47 @@
+{
+	"caseId": "coverage-sandbox-stream-read-result",
+	"schemaId": "sandbox.stream.read.result",
+	"tags": [
+		"accepted",
+		"coverage"
+	],
+	"input": {
+		"chunk": {
+			"byteLength": 0,
+			"contentBase64": "",
+			"encoding": "base64"
+		},
+		"eof": true,
+		"kind": "read",
+		"sequence": 0,
+		"stream": {
+			"channel": "stdout",
+			"handleId": "stream-output",
+			"kind": "stream",
+			"owningGeneration": "generation-a"
+		}
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"chunk": {
+				"byteLength": 0,
+				"contentBase64": "",
+				"encoding": "base64"
+			},
+			"eof": true,
+			"kind": "read",
+			"sequence": 0,
+			"stream": {
+				"channel": "stdout",
+				"handleId": "stream-output",
+				"kind": "stream",
+				"owningGeneration": "generation-a"
+			}
+		},
+		"canonicalJson": "{\"chunk\":{\"byteLength\":0,\"contentBase64\":\"\",\"encoding\":\"base64\"},\"eof\":true,\"kind\":\"read\",\"sequence\":0,\"stream\":{\"channel\":\"stdout\",\"handleId\":\"stream-output\",\"kind\":\"stream\",\"owningGeneration\":\"generation-a\"}}",
+		"refinementIdentities": [
+			"sandbox.binary-chunk.byte-length"
+		]
+	}
+}

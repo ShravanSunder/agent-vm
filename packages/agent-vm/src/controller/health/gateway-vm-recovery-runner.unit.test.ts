@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import type { GatewayExpectedAdmissionCohort } from '../../gateway/gateway-aggregate-admission-state.js';
+import { createManagedGatewayBootContract } from '../../gateway/managed-gateway-boot-contract.js';
 import {
 	TEST_SSH_SERVER_HOST_KEY,
 	createManagedExecProcessStub,
 } from '../../testing/managed-vm-test-helpers.js';
-import type { GatewayVmLifecycleAuthority } from '../vm-ownership/gateway-vm-lifecycle-authority.js';
 import type { GatewayZoneLifecycleState } from '../zone-runtimes/gateway-zone-state-machine.js';
 import { ControllerZoneRuntimeStartError } from '../zone-runtimes/zone-runtime-errors.js';
 import type { GatewayZoneRuntimeHandle } from '../zone-runtimes/zone-runtime-types.js';
@@ -17,6 +18,46 @@ import {
 
 type RecoveryWriteLog = (message: string) => void;
 type RecoveryWriteLogSpy = ReturnType<typeof vi.fn<RecoveryWriteLog>>;
+
+const testManagedGatewayBootContract = createManagedGatewayBootContract({
+	bootEntry: 'openclaw-gateway',
+	configurationInputPath: '/run/agent-vm/managed-gateway/framework-service.json',
+	environmentInputPath: '/run/agent-vm/managed-gateway/framework.environment.sh',
+	framework: 'openclaw',
+	ingress: { guestPort: 18_789, kind: 'framework-http' },
+	logIdentity: {
+		guestPath: '/var/log/agent-vm/openclaw-service.log',
+		serviceName: 'agent-vm-openclaw-test',
+	},
+	readiness: { guestPort: 18_789, kind: 'framework-http', path: '/readyz' },
+	role: 'framework-service',
+});
+
+const testOpenClawZone = {
+	agentToolVmProfiles: {},
+	defaultToolVmProfile: 'standard',
+	egressHosts: [],
+	gateway: {
+		config: '/config/openclaw.json',
+		controlAuth: { mode: 'token', secret: 'OPENCLAW_GATEWAY_TOKEN' },
+		cpus: 2,
+		imageProfile: 'openclaw',
+		memory: '2G',
+		port: 18_791,
+		stateDir: '/state/sunfam',
+		type: 'openclaw',
+		zoneFilesDir: '/zone-files/sunfam',
+	},
+	id: 'sunfam',
+	secrets: {
+		OPENCLAW_GATEWAY_TOKEN: {
+			audience: 'gateway',
+			envVar: 'OPENCLAW_GATEWAY_TOKEN',
+			injection: 'env',
+			source: 'environment',
+		},
+	},
+} satisfies GatewayZoneRuntimeHandle['zone'];
 
 describe('createGatewayVmRecoveryRunner', () => {
 	it('observes only when the controller is stopping', async () => {
@@ -196,83 +237,88 @@ describe('createGatewayVmRecoveryRunner', () => {
 		expectRecoveryLogToBeCredentialSafe(writeLog);
 	});
 
-	it('passes auto-recovery trigger to cold-start and restart runtime actions', async () => {
-		const restart = vi.fn(async () => ({
-			leaseReleaseFailureCount: 0,
-			operationId: 'restart-op',
-		}));
-		const coldStart = vi.fn(async () => ({
-			leaseReleaseFailureCount: 0,
-			operationId: 'cold-start-op',
-		}));
-		const runningRuntime = createRuntime({
-			getLifecycleState: () => ({
-				gateway: createGatewayHandle('old-gateway', 111),
-				kind: 'running',
-			}),
-			getSnapshot: () => ({
-				bootedAt: '2026-06-07T10:00:00.000Z',
-				gateway: {
-					ingress: { host: '127.0.0.1', port: 18_791 },
-					vm: { hostPid: 111, id: 'old-gateway' },
-				},
-				lifecycleState: 'running',
-			}),
-			restart,
-		});
-		const failedRuntime = createRuntime({
-			coldStart,
-			getLifecycleState: () => ({
-				coldStartEligible: true,
-				error: { code: 'vm-process-missing', message: 'missing' },
-				kind: 'failed',
-			}),
-			getSnapshot: () => ({
-				bootedAt: '2026-06-07T10:01:00.000Z',
-				gateway: {
-					ingress: { host: '127.0.0.1', port: 18_791 },
-					vm: { hostPid: 222, id: 'new-gateway' },
-				},
-				lifecycleState: 'running',
-			}),
-		});
+	it.each(['hermes', 'openclaw'] as const)(
+		'passes auto-recovery trigger to $gatewayType runtime actions',
+		async (gatewayType) => {
+			const restart = vi.fn(async () => ({
+				leaseReleaseFailureCount: 0,
+				operationId: 'restart-op',
+			}));
+			const coldStart = vi.fn(async () => ({
+				leaseReleaseFailureCount: 0,
+				operationId: 'cold-start-op',
+			}));
+			const runningRuntime = createRuntime({
+				gatewayType,
+				getLifecycleState: () => ({
+					gateway: createGatewayHandle('old-gateway', 111),
+					kind: 'running',
+				}),
+				getSnapshot: () => ({
+					bootedAt: '2026-06-07T10:00:00.000Z',
+					gateway: {
+						ingress: { host: '127.0.0.1', port: 18_791 },
+						vm: { hostPid: 111, id: 'old-gateway' },
+					},
+					lifecycleState: 'running',
+				}),
+				restart,
+			});
+			const failedRuntime = createRuntime({
+				coldStart,
+				gatewayType,
+				getLifecycleState: () => ({
+					coldStartEligible: true,
+					error: { code: 'vm-process-missing', message: 'missing' },
+					kind: 'failed',
+				}),
+				getSnapshot: () => ({
+					bootedAt: '2026-06-07T10:01:00.000Z',
+					gateway: {
+						ingress: { host: '127.0.0.1', port: 18_791 },
+						vm: { hostPid: 222, id: 'new-gateway' },
+					},
+					lifecycleState: 'running',
+				}),
+			});
 
-		const recoverRunningGateway = createGatewayVmRecoveryRunner({
-			getRecoverableGatewayRuntime: () => runningRuntime,
-			getRuntimeReadiness: () => ({ ready: true, state: 'ready' }),
-			now: () => 1_000,
-			restartTimeoutMs: 5_000,
-			writeLog: vi.fn(),
-		});
-		await recoverRunningGateway({
-			consecutiveFailures: 1,
-			reason: 'gateway-service-unhealthy',
-			sourceKey: createGatewayRecoverySourceKey('old-gateway'),
-			zoneId: 'sunfam',
-		});
+			const recoverRunningGateway = createGatewayVmRecoveryRunner({
+				getRecoverableGatewayRuntime: () => runningRuntime,
+				getRuntimeReadiness: () => ({ ready: true, state: 'ready' }),
+				now: () => 1_000,
+				restartTimeoutMs: 5_000,
+				writeLog: vi.fn(),
+			});
+			await recoverRunningGateway({
+				consecutiveFailures: 1,
+				reason: 'gateway-service-unhealthy',
+				sourceKey: createGatewayRecoverySourceKey('old-gateway'),
+				zoneId: 'sunfam',
+			});
 
-		const recoverFailedGateway = createGatewayVmRecoveryRunner({
-			getRecoverableGatewayRuntime: () => failedRuntime,
-			getRuntimeReadiness: () => ({ ready: true, state: 'ready' }),
-			now: () => 1_000,
-			restartTimeoutMs: 5_000,
-			writeLog: vi.fn(),
-		});
-		await recoverFailedGateway({
-			consecutiveFailures: 1,
-			reason: 'gateway-service-unhealthy',
-			zoneId: 'sunfam',
-		});
+			const recoverFailedGateway = createGatewayVmRecoveryRunner({
+				getRecoverableGatewayRuntime: () => failedRuntime,
+				getRuntimeReadiness: () => ({ ready: true, state: 'ready' }),
+				now: () => 1_000,
+				restartTimeoutMs: 5_000,
+				writeLog: vi.fn(),
+			});
+			await recoverFailedGateway({
+				consecutiveFailures: 1,
+				reason: 'gateway-service-unhealthy',
+				zoneId: 'sunfam',
+			});
 
-		expect(restart).toHaveBeenCalledWith({
-			operationTrigger: 'auto-recovery',
-			timeoutMs: 5_000,
-		});
-		expect(coldStart).toHaveBeenCalledWith({
-			operationTrigger: 'auto-recovery',
-			timeoutMs: 5_000,
-		});
-	});
+			expect(restart).toHaveBeenCalledWith({
+				operationTrigger: 'auto-recovery',
+				timeoutMs: 5_000,
+			});
+			expect(coldStart).toHaveBeenCalledWith({
+				operationTrigger: 'auto-recovery',
+				timeoutMs: 5_000,
+			});
+		},
+	);
 
 	it('fails cold-start verification when the new snapshot lacks running VM identity', async () => {
 		const runtime = createRuntime({
@@ -499,6 +545,43 @@ describe('createGatewayVmRecoveryRunner', () => {
 		expect(restart).not.toHaveBeenCalled();
 	});
 
+	it('refuses recovery when the request omits the required current Gateway source identity', async () => {
+		const restart = vi.fn(async () => ({ leaseReleaseFailureCount: 0 }));
+		const runtime = createRuntime({
+			getLifecycleState: () => ({
+				gateway: createGatewayHandle('gateway-vm-1', 111),
+				kind: 'running',
+			}),
+			getSnapshot: () => ({
+				bootedAt: '2026-07-11T18:00:00.000Z',
+				gateway: { vm: { hostPid: 111, id: 'gateway-vm-1' } },
+				lifecycleState: 'running',
+			}),
+			restart,
+		});
+		const recoverGatewayVm = createGatewayVmRecoveryRunner({
+			getRecoverableGatewayRuntime: () => runtime,
+			getRuntimeReadiness: () => ({ ready: true, state: 'ready' }),
+			now: () => 1_000,
+			restartTimeoutMs: 5_000,
+			writeLog: vi.fn(),
+		});
+
+		await expect(
+			recoverGatewayVm({
+				consecutiveFailures: 1,
+				reason: 'gateway-service-unhealthy',
+				zoneId: 'sunfam',
+			}),
+		).resolves.toEqual({
+			action: 'observe-only',
+			elapsedMs: 0,
+			errorCode: 'stale-recovery-source',
+			result: 'failed',
+		});
+		expect(restart).not.toHaveBeenCalled();
+	});
+
 	it('bounds a never-resolving credential refresh with an injected deadline', async () => {
 		let nowMs = 0;
 		let refreshSignal: AbortSignal | undefined;
@@ -607,6 +690,7 @@ function expectRecoveryLogToBeCredentialSafe(writeLog: RecoveryWriteLogSpy): voi
 function createRuntime(overrides: Partial<RecoverableGatewayRuntime>): RecoverableGatewayRuntime {
 	return {
 		coldStart: async () => ({ leaseReleaseFailureCount: 0 }),
+		gatewayType: 'openclaw',
 		getLifecycleState: () => ({ kind: 'stopped' }),
 		getSnapshot: () => ({ lifecycleState: 'stopped' }),
 		refreshCredentials: async () => ({ ok: true, zoneId: 'sunfam' }),
@@ -617,18 +701,18 @@ function createRuntime(overrides: Partial<RecoverableGatewayRuntime>): Recoverab
 
 function createGatewayHandle(vmId: string, hostPid: number): GatewayZoneRuntimeHandle {
 	return {
-		controlSessionRecoverySourceKey: createGatewayRecoverySourceKey(vmId),
-		ingress: { host: '127.0.0.1', port: 18_791 },
-		processSpec: {
-			bootstrapCommand: 'bootstrap',
-			guestListenPort: 18_789,
-			healthCheck: { path: '/readyz', port: 18_789, type: 'http' },
-			logPath: '/agent-vm/logs/gateway.log',
-			startCommand: 'start',
+		bootContract: testManagedGatewayBootContract,
+		executionModel: 'managed-gateway',
+		expectedCohort: createExpectedAdmissionCohort(vmId),
+		destroyGateway: async () => ({ kind: 'destroyed-clean' }),
+		gatewayIdentity: createGatewayIdentity(vmId),
+		image: {
+			built: false,
+			fingerprint: 'gateway-image-fingerprint',
+			imageReference: '/images/openclaw-gateway',
 		},
-		terminateVm: async () => {},
+		ingress: { host: '127.0.0.1', port: 18_791 },
 		vm: {
-			close: async () => {},
 			enableSsh: async () => ({
 				close: async () => {},
 				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
@@ -642,7 +726,63 @@ function createGatewayHandle(vmId: string, hostPid: number): GatewayZoneRuntimeH
 			getHostProcessId: () => hostPid,
 			id: vmId,
 		},
-		vmOwnership: createGatewayVmOwnershipStub(vmId),
+		zone: testOpenClawZone,
+	};
+}
+
+function createExpectedAdmissionCohort(vmId: string): GatewayExpectedAdmissionCohort {
+	return {
+		controlIdentity: {
+			controllerEpoch: 'controller-test',
+			generationId: 'generation-test',
+			peerId: 'tool-portal-control',
+			processEpoch: 'tool-portal-process-test',
+		},
+		fence: {
+			controllerEpoch: 'controller-test',
+			gatewayEpoch: 'generation-test',
+			vmId,
+			zoneId: 'sunfam',
+		},
+		frameworkIdentity: {
+			attachmentGeneration: 1,
+			clientKind: 'openclaw-managed-plugin',
+			configuredAgentIds: ['main'],
+			frameworkEpoch: 'framework-epoch-test',
+			frameworkKind: 'openclaw',
+			projectionCohortDigest:
+				'projection-cohort:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+		},
+		ingressIntent: {
+			controlRoute: {
+				audience: 'gateway-control',
+				guestPort: 18_790,
+				kind: 'tool-portal-control',
+				prefix: '/_agent-vm/control',
+				stripPrefix: true,
+			},
+			frameworkRootRoute: {
+				guestPort: 18_789,
+				kind: 'framework-root',
+				prefix: '/',
+				stripPrefix: true,
+			},
+		},
+		providerRevision: 'provider-revision-test',
+		requiredBackendRevision: 'required-backend-revision-test',
+		semanticRevision: 'semantic-revision-test',
+		toolPortalIdentity: {
+			processEpoch: 'tool-portal-process-test',
+			role: 'tool-portal',
+			runtimeEpoch: 'runtime-epoch-test',
+			serviceId: 'tool-portal-service-test',
+		},
+		udsIdentity: {
+			frameworkEpoch: 'framework-epoch-test',
+			gatewayEpoch: 'generation-test',
+			runtimeEpoch: 'runtime-epoch-test',
+			socketPath: '/run/agent-vm/gateway-runtime/managed-plugin.sock',
+		},
 	};
 }
 
@@ -656,20 +796,13 @@ function createGatewayRecoverySourceKey(vmId: string): GatewayVmRecoverySourceKe
 	};
 }
 
-function createGatewayVmOwnershipStub(vmId: string): GatewayVmLifecycleAuthority {
-	const gatewaySeed = {
+function createGatewayIdentity(vmId: string): GatewayZoneRuntimeHandle['gatewayIdentity'] {
+	return {
 		bootId: 'boot-test',
 		controllerEpoch: 'controller-test',
 		gatewayEpochId: 'gateway-epoch-test',
+		gatewayVmId: vmId,
 		generationId: 'generation-test',
-		zoneId: 'zone-test',
-	};
-	const gatewayIdentity = { ...gatewaySeed, gatewayVmId: vmId };
-	return {
-		gatewayIdentity,
-		gatewaySeed,
-		attachGatewayVm: () => gatewayIdentity,
-		containPendingCreate: async () => {},
-		destroyLive: async (destroyVm) => await destroyVm(),
+		zoneId: 'sunfam',
 	};
 }

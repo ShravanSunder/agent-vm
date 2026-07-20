@@ -31,6 +31,7 @@ const authConfig: GatewayAuthConfig = {
 const systemConfig = {
 	schemaVersion: 1,
 	cacheDir: './cache',
+	controllerStateDir: '/controller-state-test',
 	runtimeDir: './runtime',
 	host: { controllerPort: 18800, projectNamespace: 'claw-tests-a1b2c3d4' },
 	imageProfiles: {

@@ -11,18 +11,23 @@ import {
 import os from 'node:os';
 import path from 'node:path';
 
-import type { ManagedVm, ManagedVmCreateRequest, OwnedHostDirectory } from '@agent-vm/managed-vm';
+import type {
+	ManagedVm,
+	ManagedVmCreateRequest,
+	ManagedVmExactProcessTerminationCapability,
+	OwnedHostDirectory,
+} from '@agent-vm/managed-vm';
 import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
-import type { ManagedVmKillDependencies } from '../shared/managed-vm-process.js';
 import {
 	TEST_SSH_SERVER_HOST_KEY,
 	createManagedExecProcessStub,
 } from '../testing/managed-vm-test-helpers.js';
 import {
 	createToolVm as createToolVmWithManagedProvider,
+	type StartedToolVmLifecycleDependencies,
 	type ToolVmLifecycleDependencies,
 } from './tool-vm-lifecycle.js';
 
@@ -37,6 +42,7 @@ interface OwnedDirectoryBackingFixture {
 }
 
 interface ToolVmTestProviderOverrides {
+	readonly managedAgentRootMountDependencies?: ToolVmLifecycleDependencies['managedAgentRootMountDependencies'];
 	readonly prepareImage?: () => Promise<{
 		readonly built: boolean;
 		readonly fingerprint: string;
@@ -44,19 +50,29 @@ interface ToolVmTestProviderOverrides {
 	}>;
 	readonly closeOwnedDirectoryBacking?: (root: OwnedDirectoryBackingFixture) => void;
 	readonly createManagedVm?: (request: ManagedVmCreateRequest) => Promise<ManagedVm>;
-	readonly managedVmKillDependencies?: ManagedVmKillDependencies;
+	readonly managedVmExactProcessTermination?: ManagedVmExactProcessTerminationCapability;
 	readonly openOwnedDirectoryBacking?: (hostPath: string) => OwnedDirectoryBackingFixture;
-	readonly validateResolvedToolWorkMountDir?: ToolVmLifecycleDependencies['validateResolvedToolWorkMountDir'];
+	readonly readProcessIdentity?: StartedToolVmLifecycleDependencies['readProcessIdentity'];
+	readonly validateControllerSelectedToolVmDirectory?: ToolVmLifecycleDependencies['validateControllerSelectedToolVmDirectory'];
 }
 
 function createToolVmTestDependencies(
 	options: ToolVmTestProviderOverrides,
-): ToolVmLifecycleDependencies {
+): StartedToolVmLifecycleDependencies {
 	return {
+		managedAgentRootMountDependencies: options.managedAgentRootMountDependencies ?? {
+			readDirectoryIdentity: async (hostPath) => ({
+				canonicalPath: hostPath,
+				device: 1,
+				inode: hostPath.includes('/gitdirs/') ? 2 : 1,
+			}),
+		},
 		managedVmFactory: {
 			async createManagedVm(request): Promise<ManagedVm> {
 				const transfers = Object.values(request.mounts).flatMap((mount) =>
-					mount.kind === 'owned-host-directory' ? [mount.directory.consume()] : [],
+					mount.kind === 'owned-host-directory' || mount.kind === 'owned-filtered-workspace'
+						? [mount.directory.consume()]
+						: [],
 				);
 				try {
 					return await (
@@ -129,19 +145,41 @@ function createToolVmTestDependencies(
 				};
 			},
 		},
-		managedVmKillDependencies:
-			options.managedVmKillDependencies ?? createManagedVmKillDependencies(),
-		...(options.validateResolvedToolWorkMountDir
-			? { validateResolvedToolWorkMountDir: options.validateResolvedToolWorkMountDir }
+		managedVmExactProcessTermination:
+			options.managedVmExactProcessTermination ?? createManagedVmExactProcessTermination(),
+		managedVmTerminationSleep: async () => {},
+		readProcessIdentity: options.readProcessIdentity ?? (async () => testToolVmProcessIdentity),
+		...(options.validateControllerSelectedToolVmDirectory
+			? {
+					validateControllerSelectedToolVmDirectory:
+						options.validateControllerSelectedToolVmDirectory,
+				}
 			: {}),
 	};
 }
 
 async function createToolVm(
-	options: Parameters<typeof createToolVmWithManagedProvider>[0],
+	options: Omit<Parameters<typeof createToolVmWithManagedProvider>[0], 'rootBinding'> & {
+		readonly hostWorkspaceRoot: string;
+	},
 	dependencies: ToolVmTestProviderOverrides,
 ): Promise<ManagedVm> {
-	return await createToolVmWithManagedProvider(options, createToolVmTestDependencies(dependencies));
+	const hostGitDirectoryRoot = await createAgentGitDirectoryRoot({
+		agentId: options.agentId,
+		systemConfig: options.systemConfig,
+		zoneId: options.zoneId,
+	});
+	return await createToolVmWithManagedProvider(
+		{
+			...options,
+			rootBinding: {
+				hostGitDirectoryRoot,
+				hostWorkspaceRoot: options.hostWorkspaceRoot,
+				kind: 'managed-agent-workspace',
+			},
+		},
+		createToolVmTestDependencies(dependencies),
+	);
 }
 
 const createdDirectories: string[] = [];
@@ -150,21 +188,21 @@ const testToolVmProcessIdentity = {
 	lstart: 'Sat Jul 11 18:00:00 2026',
 } as const;
 
-function createManagedVmKillDependencies(
-	overrides: Partial<ManagedVmKillDependencies> = {},
-): ManagedVmKillDependencies {
+function createManagedVmExactProcessTermination(
+	overrides: Partial<ManagedVmExactProcessTerminationCapability> = {},
+): ManagedVmExactProcessTerminationCapability {
 	return {
-		isProcessAlive: () => false,
-		killProcess: vi.fn(),
-		readProcessCommand: async () => testToolVmProcessIdentity.command,
-		readProcessIdentity: async () => testToolVmProcessIdentity,
-		sleep: async () => {},
+		terminateRecordedHostProcess: async ({ identity }) => ({
+			hostProcessId: identity.hostProcessId,
+			kind: 'already-absent',
+		}),
 		...overrides,
 	};
 }
 
 afterEach(async () => {
 	vi.restoreAllMocks();
+	vi.unstubAllEnvs();
 	await Promise.all(
 		createdDirectories
 			.splice(0)
@@ -187,6 +225,7 @@ async function createToolVmSystemConfig(): Promise<LoadedSystemConfig> {
 	return createLoadedSystemConfig(
 		{
 			cacheDir: path.join(temporaryDirectory, 'cache'),
+			controllerStateDir: path.join(temporaryDirectory, 'controller-state'),
 			runtimeDir: path.join(temporaryDirectory, 'runtime'),
 			host: {
 				controllerPort: 18800,
@@ -267,12 +306,50 @@ async function createWorkMountDirectory(
 	name: string,
 ): Promise<string> {
 	const zone = systemConfig.zones.find((configuredZone) => configuredZone.id === 'shravan');
-	if (zone?.gateway.type !== 'openclaw') {
-		throw new Error('Expected shravan OpenClaw zone');
+	if (zone === undefined || zone.gateway.type === 'worker') {
+		throw new Error('Expected shravan managed framework zone');
 	}
-	const hostWorkMountDir = path.join(zone.gateway.zoneFilesDir, name);
+	const hostWorkMountDir = path.join(
+		zone.gateway.zoneFilesDir,
+		name.startsWith('agents/') ? name : 'agents/sun',
+	);
 	await mkdir(hostWorkMountDir, { recursive: true });
 	return hostWorkMountDir;
+}
+
+function configureToolVmFixtureAsHermes(systemConfig: LoadedSystemConfig): void {
+	const zone = systemConfig.zones.find((configuredZone) => configuredZone.id === 'shravan');
+	if (zone === undefined || zone.gateway.type !== 'openclaw') {
+		throw new Error('Expected shravan OpenClaw fixture zone');
+	}
+	zone.gateway = {
+		config: './config/shravan/hermes.yaml',
+		cpus: zone.gateway.cpus,
+		imageProfile: 'hermes',
+		memory: zone.gateway.memory,
+		port: zone.gateway.port,
+		profilesByAgent: { sun: 'researcher' },
+		stateDir: zone.gateway.stateDir,
+		type: 'hermes',
+		zoneFilesDir: zone.gateway.zoneFilesDir,
+	};
+}
+
+async function createAgentGitDirectoryRoot(options: {
+	readonly agentId: string;
+	readonly systemConfig: LoadedSystemConfig;
+	readonly zoneId: string;
+}): Promise<string> {
+	const hostGitDirectoryRoot = path.join(
+		options.systemConfig.runtimeDir,
+		'zones',
+		options.zoneId,
+		'gitdirs',
+		'agents',
+		options.agentId,
+	);
+	await mkdir(hostGitDirectoryRoot, { recursive: true });
+	return await realpath(hostGitDirectoryRoot);
 }
 
 function createOwnedDirectoryBackingFixture(hostPath: string): OwnedDirectoryBackingFixture {
@@ -280,7 +357,7 @@ function createOwnedDirectoryBackingFixture(hostPath: string): OwnedDirectoryBac
 		device: 1,
 		fd: -1,
 		hostPath,
-		inode: 1,
+		inode: hostPath.includes('/gitdirs/') ? 2 : 1,
 		realPath: hostPath,
 	};
 }
@@ -346,6 +423,7 @@ describe('createToolVm', () => {
 	function createOwnedDirectoryFixture(options: {
 		readonly canonicalPath: string;
 		readonly closeError?: Error;
+		readonly inode?: number;
 	}): { readonly close: ReturnType<typeof vi.fn>; readonly directory: OwnedHostDirectory } {
 		let state: OwnedHostDirectory['state'] = 'acquired';
 		const close = vi.fn(() => {
@@ -362,13 +440,21 @@ describe('createToolVm', () => {
 					state = 'adapter-owned';
 					return {
 						close,
-						identity: { canonicalPath: options.canonicalPath, device: 1, inode: 1 },
+						identity: {
+							canonicalPath: options.canonicalPath,
+							device: 1,
+							inode: options.inode ?? 1,
+						},
 						get state() {
 							return state === 'closed' ? ('closed' as const) : ('adapter-owned' as const);
 						},
 					};
 				},
-				identity: { canonicalPath: options.canonicalPath, device: 1, inode: 1 },
+				identity: {
+					canonicalPath: options.canonicalPath,
+					device: 1,
+					inode: options.inode ?? 1,
+				},
 				get state() {
 					return state;
 				},
@@ -376,14 +462,25 @@ describe('createToolVm', () => {
 		};
 	}
 
-	it('closes an acquired owned directory when the factory rejects before consumption', async () => {
+	it('closes the acquired agent workspace when the factory rejects before consumption', async () => {
 		const systemConfig = await createToolVmSystemConfig();
 		const profile = systemConfig.toolVmProfiles.standard;
 		if (!profile) throw new Error('Expected standard Tool VM profile.');
-		const hostWorkMountDir = await realpath(
+		const hostWorkspaceRoot = await realpath(
 			await createWorkMountDirectory(systemConfig, 'reject-before-consume'),
 		);
-		const ownedDirectory = createOwnedDirectoryFixture({ canonicalPath: hostWorkMountDir });
+		const hostGitDirectoryRoot = await createAgentGitDirectoryRoot({
+			agentId: 'sun',
+			systemConfig,
+			zoneId: 'shravan',
+		});
+		const workspaceDirectory = createOwnedDirectoryFixture({
+			canonicalPath: hostWorkspaceRoot,
+		});
+		const gitDirectory = createOwnedDirectoryFixture({
+			canonicalPath: hostGitDirectoryRoot,
+			inode: 2,
+		});
 		const createError = new Error('factory rejected before consuming mounts');
 
 		await expect(
@@ -391,14 +488,19 @@ describe('createToolVm', () => {
 				{
 					agentId: 'sun',
 					cacheDir: systemConfig.cacheDir,
-					hostWorkMountDir,
 					profile,
+					rootBinding: {
+						hostGitDirectoryRoot,
+						hostWorkspaceRoot,
+						kind: 'managed-agent-workspace',
+					},
 					secretResolver: createSecretResolver({}),
 					systemConfig,
 					tcpSlot: 0,
 					zoneId: 'shravan',
 				},
 				{
+					managedVmExactProcessTermination: createManagedVmExactProcessTermination(),
 					managedVmFactory: {
 						createManagedVm: async () => {
 							throw createError;
@@ -411,24 +513,46 @@ describe('createToolVm', () => {
 							imageReference: '/image',
 						}),
 					},
-					managedVmOwnedDirectories: { openHostDirectory: () => ownedDirectory.directory },
+					managedAgentRootMountDependencies: {
+						readDirectoryIdentity: async (hostPath) => ({
+							canonicalPath: hostPath,
+							device: 1,
+							inode: hostPath === hostGitDirectoryRoot ? 2 : 1,
+						}),
+					},
+					managedVmOwnedDirectories: {
+						openHostDirectory: (hostPath) =>
+							hostPath === hostGitDirectoryRoot
+								? gitDirectory.directory
+								: workspaceDirectory.directory,
+					},
 				},
 			),
 		).rejects.toBe(createError);
-		expect(ownedDirectory.close).toHaveBeenCalledOnce();
+		expect(workspaceDirectory.close).toHaveBeenCalledOnce();
+		expect(gitDirectory.close).toHaveBeenCalledOnce();
 	});
 
 	it('aggregates an acquired-directory close failure with factory rejection', async () => {
 		const systemConfig = await createToolVmSystemConfig();
 		const profile = systemConfig.toolVmProfiles.standard;
 		if (!profile) throw new Error('Expected standard Tool VM profile.');
-		const hostWorkMountDir = await realpath(
+		const hostWorkspaceRoot = await realpath(
 			await createWorkMountDirectory(systemConfig, 'reject-close-failure'),
 		);
+		const hostGitDirectoryRoot = await createAgentGitDirectoryRoot({
+			agentId: 'sun',
+			systemConfig,
+			zoneId: 'shravan',
+		});
 		const closeError = new Error('owned directory close failed');
-		const ownedDirectory = createOwnedDirectoryFixture({
-			canonicalPath: hostWorkMountDir,
+		const workspaceDirectory = createOwnedDirectoryFixture({
+			canonicalPath: hostWorkspaceRoot,
 			closeError,
+		});
+		const gitDirectory = createOwnedDirectoryFixture({
+			canonicalPath: hostGitDirectoryRoot,
+			inode: 2,
 		});
 		const createError = new Error('factory rejected before consuming mounts');
 
@@ -436,14 +560,19 @@ describe('createToolVm', () => {
 			{
 				agentId: 'sun',
 				cacheDir: systemConfig.cacheDir,
-				hostWorkMountDir,
 				profile,
+				rootBinding: {
+					hostGitDirectoryRoot,
+					hostWorkspaceRoot,
+					kind: 'managed-agent-workspace',
+				},
 				secretResolver: createSecretResolver({}),
 				systemConfig,
 				tcpSlot: 0,
 				zoneId: 'shravan',
 			},
 			{
+				managedVmExactProcessTermination: createManagedVmExactProcessTermination(),
 				managedVmFactory: {
 					createManagedVm: async () => {
 						throw createError;
@@ -456,76 +585,28 @@ describe('createToolVm', () => {
 						imageReference: '/image',
 					}),
 				},
-				managedVmOwnedDirectories: { openHostDirectory: () => ownedDirectory.directory },
+				managedAgentRootMountDependencies: {
+					readDirectoryIdentity: async (hostPath) => ({
+						canonicalPath: hostPath,
+						device: 1,
+						inode: hostPath === hostGitDirectoryRoot ? 2 : 1,
+					}),
+				},
+				managedVmOwnedDirectories: {
+					openHostDirectory: (hostPath) =>
+						hostPath === hostGitDirectoryRoot
+							? gitDirectory.directory
+							: workspaceDirectory.directory,
+				},
 			},
 		);
-		await expect(creation).rejects.toEqual(
-			expect.objectContaining({ errors: [createError, closeError] }),
-		);
+		await expect(creation).rejects.toMatchObject({
+			errors: [createError, expect.objectContaining({ errors: [closeError] })],
+		});
+		expect(gitDirectory.close).toHaveBeenCalledOnce();
 	});
 
-	it('closes only the still-acquired directory when the factory consumes one mount then rejects', async () => {
-		const systemConfig = await createToolVmSystemConfig();
-		const profile = systemConfig.toolVmProfiles.standard;
-		const zone = systemConfig.zones[0];
-		if (!profile || zone?.gateway.type !== 'openclaw') throw new Error('Expected Tool VM fixture.');
-		const hostWorkMountDir = await realpath(
-			await createWorkMountDirectory(systemConfig, 'agents/sun'),
-		);
-		const hostZoneFilesDir = await realpath(zone.gateway.zoneFilesDir);
-		const hostZoneGitRoot = path.join(systemConfig.runtimeDir, 'zones', 'shravan', 'zone-git');
-		await mkdir(hostZoneGitRoot, { recursive: true });
-		const canonicalZoneGitRoot = await realpath(hostZoneGitRoot);
-		const zoneFilesDirectory = createOwnedDirectoryFixture({ canonicalPath: hostZoneFilesDir });
-		const zoneGitDirectory = createOwnedDirectoryFixture({ canonicalPath: canonicalZoneGitRoot });
-		const directories = [zoneFilesDirectory.directory, zoneGitDirectory.directory];
-
-		await expect(
-			createToolVmWithManagedProvider(
-				{
-					agentId: 'sun',
-					cacheDir: systemConfig.cacheDir,
-					hostWorkMountDir,
-					profile,
-					secretResolver: createSecretResolver({}),
-					systemConfig,
-					tcpSlot: 0,
-					zoneGitMount: { hostZoneFilesDir, hostZoneGitRoot: canonicalZoneGitRoot },
-					zoneId: 'shravan',
-				},
-				{
-					managedVmFactory: {
-						createManagedVm: async (request) => {
-							const firstOwnedMount = Object.values(request.mounts).find(
-								(mount) => mount.kind === 'owned-host-directory',
-							);
-							if (firstOwnedMount?.kind !== 'owned-host-directory')
-								throw new Error('missing owned mount');
-							firstOwnedMount.directory.consume();
-							throw new Error('factory rejected after partial consumption');
-						},
-					},
-					managedVmImages: {
-						prepareImage: async () => ({
-							built: true,
-							fingerprint: 'image',
-							imageReference: '/image',
-						}),
-					},
-					managedVmOwnedDirectories: {
-						openHostDirectory: () => {
-							const directory = directories.shift();
-							if (!directory) throw new Error('unexpected directory open');
-							return directory;
-						},
-					},
-				},
-			),
-		).rejects.toThrow('factory rejected after partial consumption');
-		expect(zoneFilesDirectory.close).toHaveBeenCalledOnce();
-		expect(zoneGitDirectory.close).not.toHaveBeenCalled();
-	});
-	it('mounts the lease host work mount directory at /workspace and leaves /work ephemeral', async () => {
+	it('mounts one filtered agent workspace at /workspace and leaves /work in rootfs', async () => {
 		const exec = vi.fn(() => createManagedExecProcessStub());
 		const managedVm = createManagedVmStub({ exec });
 		let capturedCreateVmOptions: CreateVmOptions | undefined;
@@ -538,11 +619,8 @@ describe('createToolVm', () => {
 		if (!standardProfile) {
 			throw new Error('Expected standard tool VM profile');
 		}
-		const requestedWorkMountDir = await createWorkMountDirectory(
-			systemConfig,
-			'openclaw-session-work-mount',
-		);
-		const realWorkMountDir = await realpath(requestedWorkMountDir);
+		const requestedWorkspaceRoot = await createWorkMountDirectory(systemConfig, 'agents/sun');
+		const realWorkspaceRoot = await realpath(requestedWorkspaceRoot);
 
 		await createToolVm(
 			{
@@ -551,7 +629,7 @@ describe('createToolVm', () => {
 				profile: standardProfile,
 				systemConfig,
 				tcpSlot: 0,
-				hostWorkMountDir: requestedWorkMountDir,
+				hostWorkspaceRoot: requestedWorkspaceRoot,
 				zoneId: 'shravan',
 				secretResolver: createSecretResolver({}),
 			},
@@ -563,32 +641,49 @@ describe('createToolVm', () => {
 				}),
 				createManagedVm,
 				closeOwnedDirectoryBacking: () => {},
-				managedVmKillDependencies: createManagedVmKillDependencies(),
+				managedVmExactProcessTermination: createManagedVmExactProcessTermination(),
 				openOwnedDirectoryBacking: createOwnedDirectoryBackingFixture,
 			},
 		);
 
 		expect(createManagedVm).toHaveBeenCalledWith(
 			expect.objectContaining({
-				mounts: {
-					'/workspace': {
+				mounts: expect.objectContaining({
+					'/gitdirs': {
 						access: 'read-write',
-						kind: 'owned-host-directory',
 						directory: expect.objectContaining({
-							identity: expect.objectContaining({ canonicalPath: realWorkMountDir }),
+							identity: expect.objectContaining({
+								canonicalPath: expect.stringContaining('/gitdirs/agents/sun'),
+							}),
 						}),
+						kind: 'owned-host-directory',
 					},
-				},
+					'/workspace': {
+						kind: 'owned-filtered-workspace',
+						directory: expect.objectContaining({
+							identity: expect.objectContaining({ canonicalPath: realWorkspaceRoot }),
+						}),
+						policy: {
+							hiddenPaths: [],
+							readonlyInputs: [],
+							temporaryPaths: [],
+							visibility: { kind: 'whole-root-writable' },
+						},
+					},
+				}),
 			}),
 		);
 		expect(capturedCreateVmOptions?.mounts['/workspace']).toEqual(
 			expect.objectContaining({
+				kind: 'owned-filtered-workspace',
 				directory: expect.objectContaining({
-					identity: expect.objectContaining({ canonicalPath: realWorkMountDir }),
+					identity: expect.objectContaining({ canonicalPath: realWorkspaceRoot }),
 				}),
 			}),
 		);
 		expect(capturedCreateVmOptions?.mounts).not.toHaveProperty('/work');
+		expect(capturedCreateVmOptions?.mounts).not.toHaveProperty('/agent');
+		expect(capturedCreateVmOptions?.mounts).not.toHaveProperty('/scratch');
 		// IPv4-preference egress for Node consumers inside the Tool VM
 		// to defeat Happy Eyeballs racing on gondolin's synthetic AAAA.
 		// See FORCE_IPV4_EGRESS_NODE_OPTIONS in @agent-vm/gateway-lifecycle.
@@ -596,6 +691,105 @@ describe('createToolVm', () => {
 			'--dns-result-order=ipv4first --no-network-family-autoselection',
 		);
 		expect(capturedCreateVmOptions?.runtimeRootfsSize).toBe('16G');
+	});
+
+	it.each(['openclaw', 'hermes'] as const)(
+		'attaches read-only Git SSH egress for a selected %s managed workspace repository',
+		async (gatewayType) => {
+			// Arrange
+			vi.stubEnv('SSH_AUTH_SOCK', '/tmp/agent-vm-test-agent.sock');
+			const managedVm = createManagedVmStub();
+			let capturedCreateVmOptions: CreateVmOptions | undefined;
+			const systemConfig = await createToolVmSystemConfig();
+			if (gatewayType === 'hermes') {
+				configureToolVmFixtureAsHermes(systemConfig);
+			}
+			const zone = systemConfig.zones[0];
+			const standardProfile = systemConfig.toolVmProfiles.standard;
+			if (zone === undefined || standardProfile === undefined) {
+				throw new Error('Expected Tool VM lifecycle test zone and profile.');
+			}
+			zone.agents = [
+				{
+					id: 'sun',
+					workspaceGit: {
+						mode: 'remote',
+						remote: {
+							branch: 'agent/sun',
+							defaultBranch: 'main',
+							repoUrl: 'https://github.com/shravan/sun-workspace.git',
+						},
+					},
+				},
+			];
+			const requestedWorkspaceRoot = await createWorkMountDirectory(systemConfig, 'agents/sun');
+
+			// Act
+			await createToolVm(
+				{
+					agentId: 'sun',
+					cacheDir: systemConfig.cacheDir,
+					hostWorkspaceRoot: requestedWorkspaceRoot,
+					profile: standardProfile,
+					secretResolver: createSecretResolver({}),
+					systemConfig,
+					tcpSlot: 0,
+					zoneId: 'shravan',
+				},
+				{
+					createManagedVm: async (createVmOptions) => {
+						capturedCreateVmOptions = createVmOptions;
+						return managedVm;
+					},
+					openOwnedDirectoryBacking: createOwnedDirectoryBackingFixture,
+				},
+			);
+
+			// Assert
+			expect(capturedCreateVmOptions?.sshEgress).toEqual({
+				agentSocket: '/tmp/agent-vm-test-agent.sock',
+				allowedHosts: ['github.com'],
+				allowedRepositories: ['shravan/sun-workspace'],
+				kind: 'git-read-only',
+			});
+		},
+	);
+
+	it('does not attach Git SSH egress without remote workspace Git', async () => {
+		// Arrange
+		vi.stubEnv('SSH_AUTH_SOCK', '/tmp/agent-vm-test-agent.sock');
+		const managedVm = createManagedVmStub();
+		let capturedCreateVmOptions: CreateVmOptions | undefined;
+		const systemConfig = await createToolVmSystemConfig();
+		const standardProfile = systemConfig.toolVmProfiles.standard;
+		if (standardProfile === undefined) {
+			throw new Error('Expected standard Tool VM profile.');
+		}
+		const requestedWorkspaceRoot = await createWorkMountDirectory(systemConfig, 'agents/sun');
+
+		// Act
+		await createToolVm(
+			{
+				agentId: 'sun',
+				cacheDir: systemConfig.cacheDir,
+				hostWorkspaceRoot: requestedWorkspaceRoot,
+				profile: standardProfile,
+				secretResolver: createSecretResolver({}),
+				systemConfig,
+				tcpSlot: 0,
+				zoneId: 'shravan',
+			},
+			{
+				createManagedVm: async (createVmOptions) => {
+					capturedCreateVmOptions = createVmOptions;
+					return managedVm;
+				},
+				openOwnedDirectoryBacking: createOwnedDirectoryBackingFixture,
+			},
+		);
+
+		// Assert
+		expect(capturedCreateVmOptions?.sshEgress).toBeUndefined();
 	});
 
 	it('starts the constructed Tool VM before bootstrap exec and SSH work', async () => {
@@ -638,7 +832,7 @@ describe('createToolVm', () => {
 			{
 				agentId: 'sun',
 				cacheDir: systemConfig.cacheDir,
-				hostWorkMountDir: requestedWorkMountDir,
+				hostWorkspaceRoot: requestedWorkMountDir,
 				profile: standardProfile,
 				secretResolver: createSecretResolver({ TOOL_TOKEN: 'real-secret' }),
 				systemConfig,
@@ -653,12 +847,10 @@ describe('createToolVm', () => {
 				}),
 				closeOwnedDirectoryBacking: () => {},
 				createManagedVm: async () => managedVm,
-				managedVmKillDependencies: createManagedVmKillDependencies({
-					readProcessIdentity: async () => {
-						orderedEvents.push('capture-process-identity');
-						return testToolVmProcessIdentity;
-					},
-				}),
+				readProcessIdentity: async () => {
+					orderedEvents.push('capture-process-identity');
+					return testToolVmProcessIdentity;
+				},
 				openOwnedDirectoryBacking: createOwnedDirectoryBackingFixture,
 			},
 		);
@@ -668,6 +860,7 @@ describe('createToolVm', () => {
 		expect(orderedEvents).toEqual([
 			'start',
 			'capture-process-identity',
+			'exec',
 			'exec',
 			'exec',
 			'enable-ssh',
@@ -699,7 +892,7 @@ describe('createToolVm', () => {
 			{
 				agentId: 'sun',
 				cacheDir: systemConfig.cacheDir,
-				hostWorkMountDir: requestedWorkMountDir,
+				hostWorkspaceRoot: requestedWorkMountDir,
 				profile: standardProfile,
 				secretResolver: createSecretResolver({}),
 				systemConfig,
@@ -750,7 +943,7 @@ describe('createToolVm', () => {
 			{
 				agentId: 'sun',
 				cacheDir: systemConfig.cacheDir,
-				hostWorkMountDir: requestedWorkMountDir,
+				hostWorkspaceRoot: requestedWorkMountDir,
 				profile: standardProfile,
 				secretResolver: createSecretResolver({}),
 				systemConfig,
@@ -781,7 +974,7 @@ describe('createToolVm', () => {
 		expect(close).not.toHaveBeenCalled();
 	});
 
-	it('does not double-close adapter-owned pinned roots when construction fails', async () => {
+	it('closes the adapter-owned workspace backing once when construction fails', async () => {
 		// Arrange
 		const systemConfig = await createToolVmSystemConfig();
 		const standardProfile = systemConfig.toolVmProfiles.standard;
@@ -800,7 +993,7 @@ describe('createToolVm', () => {
 			{
 				agentId: 'sun',
 				cacheDir: systemConfig.cacheDir,
-				hostWorkMountDir: requestedWorkMountDir,
+				hostWorkspaceRoot: requestedWorkMountDir,
 				profile: standardProfile,
 				secretResolver: createSecretResolver({}),
 				systemConfig,
@@ -816,8 +1009,8 @@ describe('createToolVm', () => {
 				closeOwnedDirectoryBacking,
 				createManagedVm: async (createVmOptions) => {
 					const workspaceMount = createVmOptions.mounts['/workspace'];
-					if (workspaceMount?.kind !== 'owned-host-directory') {
-						throw new Error('Expected provider-owned workspace directory.');
+					if (workspaceMount?.kind !== 'owned-filtered-workspace') {
+						throw new Error('Expected provider-owned filtered workspace.');
 					}
 					throw createError;
 				},
@@ -827,7 +1020,7 @@ describe('createToolVm', () => {
 
 		// Assert
 		await expect(creation).rejects.toBe(createError);
-		expect(closeOwnedDirectoryBacking).toHaveBeenCalledOnce();
+		expect(closeOwnedDirectoryBacking).toHaveBeenCalledTimes(2);
 	});
 
 	it('passes only Tool VM egress hosts and mediated secrets into the Tool VM', async () => {
@@ -931,7 +1124,7 @@ describe('createToolVm', () => {
 				profile: standardProfile,
 				systemConfig,
 				tcpSlot: 0,
-				hostWorkMountDir: requestedWorkMountDir,
+				hostWorkspaceRoot: requestedWorkMountDir,
 				zoneId: 'shravan',
 				secretResolver,
 			},
@@ -979,9 +1172,17 @@ describe('createToolVm', () => {
 		expect(resolveSecret).not.toHaveBeenCalledWith(
 			expect.objectContaining({ ref: 'GATEWAY_ONLY_TOKEN' }),
 		);
-		expect(exec).toHaveBeenCalledTimes(2);
+		expect(exec).toHaveBeenCalledTimes(3);
 		expect(exec.mock.calls[0]?.[0]).toBe('rm -f /etc/ssh/ssh_host_*');
-		const bootstrapCommand = exec.mock.calls[1]?.[0];
+		expect(exec.mock.calls[1]?.[0]).toEqual([
+			'git',
+			'config',
+			'--system',
+			'--replace-all',
+			'safe.directory',
+			'/workspace',
+		]);
+		const bootstrapCommand = exec.mock.calls[2]?.[0];
 		if (typeof bootstrapCommand !== 'string') {
 			throw new Error('Expected mediated placeholder bootstrap to use a shell command string.');
 		}
@@ -1049,7 +1250,7 @@ describe('createToolVm', () => {
 				profile: standardProfile,
 				systemConfig,
 				tcpSlot: 0,
-				hostWorkMountDir: requestedWorkMountDir,
+				hostWorkspaceRoot: requestedWorkMountDir,
 				zoneId: 'shravan',
 				secretResolver: createSecretResolver({}),
 			},
@@ -1125,7 +1326,7 @@ describe('createToolVm', () => {
 						profile: standardProfile,
 						systemConfig,
 						tcpSlot: 0,
-						hostWorkMountDir: requestedWorkMountDir,
+						hostWorkspaceRoot: requestedWorkMountDir,
 						zoneId: 'shravan',
 						secretResolver: createSecretResolver({ [reservedSecretName]: 'real-secret' }),
 					},
@@ -1186,7 +1387,7 @@ describe('createToolVm', () => {
 			exec: () => {
 				execCount += 1;
 				return createManagedExecProcessStub(
-					execCount === 1
+					execCount < 3
 						? {}
 						: {
 								exitCode: 1,
@@ -1207,7 +1408,7 @@ describe('createToolVm', () => {
 					profile: standardProfile,
 					systemConfig,
 					tcpSlot: 0,
-					hostWorkMountDir: requestedWorkMountDir,
+					hostWorkspaceRoot: requestedWorkMountDir,
 					zoneId: 'shravan',
 					secretResolver: createSecretResolver({ TOOL_TOKEN: 'real-secret' }),
 				},
@@ -1220,18 +1421,22 @@ describe('createToolVm', () => {
 					createManagedVm: async (createVmOptions) => {
 						const workspaceMount = createVmOptions.mounts['/workspace'];
 						adapterOwnedDirectory =
-							workspaceMount?.kind === 'owned-host-directory'
+							workspaceMount?.kind === 'owned-filtered-workspace'
 								? workspaceMount.directory
 								: undefined;
 						return managedVm;
 					},
 					closeOwnedDirectoryBacking,
-					managedVmKillDependencies: createManagedVmKillDependencies({
-						isProcessAlive: () => runnerAttached,
-						killProcess: (_pid, _signal) => {
+					managedVmExactProcessTermination: createManagedVmExactProcessTermination({
+						terminateRecordedHostProcess: async ({ identity }) => {
+							if (!runnerAttached) {
+								return { hostProcessId: identity.hostProcessId, kind: 'already-absent' };
+							}
 							runnerAttached = false;
+							return { hostProcessId: identity.hostProcessId, kind: 'terminated' };
 						},
 					}),
+					readProcessIdentity: async () => (runnerAttached ? testToolVmProcessIdentity : null),
 					openOwnedDirectoryBacking: createOwnedDirectoryBackingFixture,
 				},
 			);
@@ -1255,136 +1460,7 @@ describe('createToolVm', () => {
 		expect(closeOwnedDirectoryBacking).toHaveBeenCalledOnce();
 	});
 
-	it('mounts zone Git leases at /zone and /agent-vm/zone-git', async () => {
-		const exec = vi.fn(() => createManagedExecProcessStub());
-		const managedVm = createManagedVmStub({ exec });
-		let capturedCreateVmOptions: CreateVmOptions | undefined;
-		const createManagedVm = vi.fn(async (createVmOptions: CreateVmOptions) => {
-			capturedCreateVmOptions = createVmOptions;
-			return managedVm;
-		});
-		const systemConfig = await createToolVmSystemConfig();
-		const zone = systemConfig.zones.find((configuredZone) => configuredZone.id === 'shravan');
-		if (zone?.gateway.type !== 'openclaw') {
-			throw new Error('Expected shravan OpenClaw zone');
-		}
-		const standardProfile = systemConfig.toolVmProfiles.standard;
-		if (!standardProfile) {
-			throw new Error('Expected standard tool VM profile');
-		}
-		const requestedWorkMountDir = await createWorkMountDirectory(systemConfig, 'agents/shravan');
-		const hostZoneGitRoot = path.join(systemConfig.runtimeDir, 'zones', 'shravan', 'zone-git');
-		await mkdir(hostZoneGitRoot, { recursive: true });
-		const realWorkMountDir = await realpath(requestedWorkMountDir);
-		const realZoneFilesDir = await realpath(zone.gateway.zoneFilesDir);
-		const realZoneGitRoot = await realpath(hostZoneGitRoot);
-
-		await createToolVm(
-			{
-				cacheDir: systemConfig.cacheDir,
-				agentId: 'sun',
-				profile: standardProfile,
-				systemConfig,
-				tcpSlot: 0,
-				hostWorkMountDir: requestedWorkMountDir,
-				zoneGitMount: {
-					hostZoneFilesDir: zone.gateway.zoneFilesDir,
-					hostZoneGitRoot,
-				},
-				zoneId: 'shravan',
-				secretResolver: createSecretResolver({}),
-			},
-			{
-				prepareImage: async () => ({
-					built: true,
-					fingerprint: 'tool-fingerprint',
-					imageReference: '/cache/tool-fingerprint',
-				}),
-				createManagedVm,
-				closeOwnedDirectoryBacking: () => {},
-				openOwnedDirectoryBacking: createOwnedDirectoryBackingFixture,
-			},
-		);
-
-		expect(capturedCreateVmOptions?.mounts).not.toHaveProperty('/work');
-		expect(createManagedVm).toHaveBeenCalledWith(
-			expect.objectContaining({
-				mounts: {
-					'/agent-vm/zone-git': {
-						access: 'read-write',
-						kind: 'owned-host-directory',
-						directory: expect.objectContaining({
-							identity: expect.objectContaining({ canonicalPath: realZoneGitRoot }),
-						}),
-					},
-					'/zone': {
-						access: 'read-write',
-						kind: 'owned-host-directory',
-						directory: expect.objectContaining({
-							identity: expect.objectContaining({ canonicalPath: realZoneFilesDir }),
-						}),
-					},
-				},
-			}),
-		);
-		expect(realWorkMountDir).toBe(path.join(realZoneFilesDir, 'agents', 'shravan'));
-		expect(exec).toHaveBeenCalledWith('git config --global --add safe.directory /zone');
-	});
-
-	it('rejects zone git mounts outside the configured runtime zone git root', async () => {
-		const createManagedVm = vi.fn(async () => {
-			throw new Error('createManagedVm should not be called for an invalid zone git root.');
-		});
-		const systemConfig = await createToolVmSystemConfig();
-		const zone = systemConfig.zones.find((configuredZone) => configuredZone.id === 'shravan');
-		if (zone?.gateway.type !== 'openclaw') {
-			throw new Error('Expected shravan OpenClaw zone');
-		}
-		const standardProfile = systemConfig.toolVmProfiles.standard;
-		if (!standardProfile) {
-			throw new Error('Expected standard tool VM profile');
-		}
-		const requestedWorkMountDir = await createWorkMountDirectory(systemConfig, 'agents/shravan');
-		const expectedHostZoneGitRoot = path.join(
-			systemConfig.runtimeDir,
-			'zones',
-			'shravan',
-			'zone-git',
-		);
-		const wrongHostZoneGitRoot = path.join(systemConfig.runtimeDir, 'zones', 'other', 'zone-git');
-		await mkdir(expectedHostZoneGitRoot, { recursive: true });
-		await mkdir(wrongHostZoneGitRoot, { recursive: true });
-
-		await expect(
-			createToolVm(
-				{
-					cacheDir: systemConfig.cacheDir,
-					agentId: 'sun',
-					profile: standardProfile,
-					systemConfig,
-					tcpSlot: 0,
-					hostWorkMountDir: requestedWorkMountDir,
-					zoneGitMount: {
-						hostZoneFilesDir: zone.gateway.zoneFilesDir,
-						hostZoneGitRoot: wrongHostZoneGitRoot,
-					},
-					zoneId: 'shravan',
-					secretResolver: createSecretResolver({}),
-				},
-				{
-					prepareImage: async () => ({
-						built: true,
-						fingerprint: 'tool-fingerprint',
-						imageReference: '/cache/tool-fingerprint',
-					}),
-					createManagedVm,
-				},
-			),
-		).rejects.toThrow(/does not match expected runtime path/u);
-		expect(createManagedVm).not.toHaveBeenCalled();
-	});
-
-	it('persists tool writes through the owned /workspace backing directory', async () => {
+	it('persists agent edits through the owned filtered /workspace backing directory', async () => {
 		const managedVm = createManagedVmStub();
 		const systemConfig = await createToolVmSystemConfig();
 		const standardProfile = systemConfig.toolVmProfiles.standard;
@@ -1404,7 +1480,7 @@ describe('createToolVm', () => {
 				profile: standardProfile,
 				systemConfig,
 				tcpSlot: 0,
-				hostWorkMountDir: requestedWorkMountDir,
+				hostWorkspaceRoot: requestedWorkMountDir,
 				zoneId: 'shravan',
 				secretResolver: createSecretResolver({}),
 			},
@@ -1416,11 +1492,14 @@ describe('createToolVm', () => {
 				}),
 				createManagedVm: async (createVmOptions) => {
 					const workspaceMount = createVmOptions.mounts['/workspace'];
-					if (!workspaceMount || workspaceMount.kind !== 'owned-host-directory') {
-						throw new Error('Expected Tool VM /workspace to be an owned host mount.');
+					if (workspaceMount?.kind !== 'owned-filtered-workspace') {
+						throw new Error('Expected Tool VM /workspace to be an owned filtered mount.');
 					}
 					if (createVmOptions.mounts['/work']) {
-						throw new Error('Expected Tool VM /work to remain rootfs/COW, not a host mount.');
+						throw new Error('Expected Tool VM /work to remain rootfs/COW.');
+					}
+					if (createVmOptions.mounts['/scratch']) {
+						throw new Error('Expected Tool VM /scratch to remain rootfs/COW, not a host mount.');
 					}
 					await writeFile(
 						path.join(requestedWorkMountDir, 'notes.md'),
@@ -1436,7 +1515,7 @@ describe('createToolVm', () => {
 		await expect(readFile(persistedFilePath, 'utf8')).resolves.toBe('persisted through /workspace');
 	});
 
-	it('creates the tool VM without running redundant runtime setup commands', async () => {
+	it('configures only /workspace as the safe Git directory in the started Tool VM', async () => {
 		const exec = vi.fn(() => createManagedExecProcessStub());
 		const managedVm = createManagedVmStub({ exec });
 
@@ -1462,7 +1541,7 @@ describe('createToolVm', () => {
 				profile: standardProfile,
 				systemConfig,
 				tcpSlot: 0,
-				hostWorkMountDir: requestedWorkMountDir,
+				hostWorkspaceRoot: requestedWorkMountDir,
 				zoneId: 'shravan',
 				secretResolver: createSecretResolver({}),
 			},
@@ -1476,8 +1555,16 @@ describe('createToolVm', () => {
 
 		expect(result).toBe(managedVm);
 		expect(prepareImage).toHaveBeenCalledOnce();
-		expect(exec).toHaveBeenCalledOnce();
-		expect(exec).toHaveBeenCalledWith('rm -f /etc/ssh/ssh_host_*');
+		expect(exec).toHaveBeenCalledTimes(2);
+		expect(exec).toHaveBeenNthCalledWith(1, 'rm -f /etc/ssh/ssh_host_*');
+		expect(exec).toHaveBeenNthCalledWith(2, [
+			'git',
+			'config',
+			'--system',
+			'--replace-all',
+			'safe.directory',
+			'/workspace',
+		]);
 	});
 
 	it('uses the image reference returned by the managed VM image capability', async () => {
@@ -1506,7 +1593,7 @@ describe('createToolVm', () => {
 				profile: standardProfile,
 				systemConfig,
 				tcpSlot: 0,
-				hostWorkMountDir: requestedWorkMountDir,
+				hostWorkspaceRoot: requestedWorkMountDir,
 				zoneId: 'shravan',
 				secretResolver: createSecretResolver({}),
 			},
@@ -1547,7 +1634,7 @@ describe('createToolVm', () => {
 					secretResolver: createSecretResolver({}),
 					systemConfig,
 					tcpSlot: 0,
-					hostWorkMountDir: '/etc',
+					hostWorkspaceRoot: '/etc',
 					zoneId: 'shravan',
 				},
 				{
@@ -1555,7 +1642,7 @@ describe('createToolVm', () => {
 					createManagedVm,
 				},
 			),
-		).rejects.toThrow(/outside allowed OpenClaw tool work mount roots/u);
+		).rejects.toThrow(/could not be inspected/u);
 		expect(prepareImage).not.toHaveBeenCalled();
 		expect(createManagedVm).not.toHaveBeenCalled();
 	});
@@ -1592,7 +1679,7 @@ describe('createToolVm', () => {
 					secretResolver: createSecretResolver({}),
 					systemConfig,
 					tcpSlot: 0,
-					hostWorkMountDir: requestedWorkMountDir,
+					hostWorkspaceRoot: requestedWorkMountDir,
 					zoneId: 'shravan',
 				},
 				{
@@ -1600,13 +1687,13 @@ describe('createToolVm', () => {
 					createManagedVm,
 				},
 			),
-		).rejects.toThrow(/outside allowed OpenClaw tool work mount roots/u);
+		).rejects.toThrow(/must be a real directory/u);
 
 		expect(prepareImage).toHaveBeenCalledOnce();
 		expect(createManagedVm).not.toHaveBeenCalled();
 	});
 
-	it('closes the pinned work mount root when post-pin revalidation fails', async () => {
+	it('closes the pinned workspace when post-acquisition revalidation fails', async () => {
 		const systemConfig = await createToolVmSystemConfig();
 		const standardProfile = systemConfig.toolVmProfiles.standard;
 		if (!standardProfile) {
@@ -1616,18 +1703,7 @@ describe('createToolVm', () => {
 			systemConfig,
 			'openclaw-work-mount',
 		);
-		const ownedWorkMountBacking = {
-			device: 1,
-			fd: 123,
-			hostPath: requestedWorkMountDir,
-			inode: 456,
-			realPath: requestedWorkMountDir,
-		} satisfies OwnedDirectoryBackingFixture;
-		const validateResolvedToolWorkMountDir = vi
-			.fn()
-			.mockResolvedValueOnce(requestedWorkMountDir)
-			.mockResolvedValueOnce(requestedWorkMountDir)
-			.mockRejectedValueOnce(new Error('post-pin validation failed'));
+		let workspaceIdentityReadCount = 0;
 		const closeOwnedDirectoryBacking = vi.fn();
 		const createManagedVm = vi.fn();
 
@@ -1640,7 +1716,7 @@ describe('createToolVm', () => {
 					secretResolver: createSecretResolver({}),
 					systemConfig,
 					tcpSlot: 0,
-					hostWorkMountDir: requestedWorkMountDir,
+					hostWorkspaceRoot: requestedWorkMountDir,
 					zoneId: 'shravan',
 				},
 				{
@@ -1651,14 +1727,28 @@ describe('createToolVm', () => {
 					}),
 					closeOwnedDirectoryBacking,
 					createManagedVm,
-					openOwnedDirectoryBacking: () => ownedWorkMountBacking,
-					validateResolvedToolWorkMountDir,
+					managedAgentRootMountDependencies: {
+						readDirectoryIdentity: async (hostPath) => {
+							const isGitDirectory = hostPath.includes('/gitdirs/');
+							if (!isGitDirectory) {
+								workspaceIdentityReadCount += 1;
+							}
+							return {
+								canonicalPath:
+									!isGitDirectory && workspaceIdentityReadCount === 2
+										? `${hostPath}-stale`
+										: hostPath,
+								device: 1,
+								inode: isGitDirectory ? 2 : 1,
+							};
+						},
+					},
+					openOwnedDirectoryBacking: createOwnedDirectoryBackingFixture,
 				},
 			),
-		).rejects.toThrow('post-pin validation failed');
+		).rejects.toThrow(/stale canonical path/u);
 
-		expect(validateResolvedToolWorkMountDir).toHaveBeenCalledTimes(3);
-		expect(closeOwnedDirectoryBacking).toHaveBeenCalledWith(ownedWorkMountBacking);
+		expect(closeOwnedDirectoryBacking).toHaveBeenCalledTimes(2);
 		expect(createManagedVm).not.toHaveBeenCalled();
 	});
 });

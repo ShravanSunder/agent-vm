@@ -1,0 +1,27 @@
+{
+	"caseId": "coverage-sandbox-exec-wait-request",
+	"schemaId": "sandbox.exec.wait.request",
+	"tags": [
+		"accepted",
+		"coverage"
+	],
+	"input": {
+		"operation": {
+			"operationId": "operation-a",
+			"owningGeneration": "generation-a"
+		},
+		"timeoutMs": 1000
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"operation": {
+				"operationId": "operation-a",
+				"owningGeneration": "generation-a"
+			},
+			"timeoutMs": 1000
+		},
+		"canonicalJson": "{\"operation\":{\"operationId\":\"operation-a\",\"owningGeneration\":\"generation-a\"},\"timeoutMs\":1000}",
+		"refinementIdentities": []
+	}
+}

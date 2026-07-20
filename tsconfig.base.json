@@ -27,6 +27,12 @@
 		"types": ["node"],
 		"paths": {
 			"@agent-vm/agent-portal-sdk": ["./packages/agent-portal-sdk/src/index.ts"],
+			"@agent-vm/agent-portal-sdk/gateway-runtime-client": [
+				"./packages/agent-portal-sdk/src/gateway-runtime-client/index.ts"
+			],
+			"@agent-vm/agent-portal-sdk/tool-portal-mcp-client": [
+				"./packages/agent-portal-sdk/src/tool-portal-mcp-client/index.ts"
+			],
 			"@agent-vm/agent-portal-sdk/adapter-boundary": [
 				"./packages/agent-portal-sdk/src/adapter-boundary/index.ts"
 			],
@@ -45,6 +51,9 @@
 			"@agent-vm/agent-portal-sdk/portal-event-surface": [
 				"./packages/agent-portal-sdk/src/portal-event-surface/index.ts"
 			],
+			"@agent-vm/agent-portal-sdk/portable-contracts": [
+				"./packages/agent-portal-sdk/src/portable-contracts/index.ts"
+			],
 			"@agent-vm/agent-portal-sdk/testing": ["./packages/agent-portal-sdk/src/testing/index.ts"],
 			"@agent-vm/agent-vm": ["./packages/agent-vm/src/index.ts"],
 			"@agent-vm/config-contracts": ["./packages/config-contracts/src/index.ts"],
@@ -56,6 +65,9 @@
 			],
 			"@agent-vm/controller-execution-contracts/controller-dispatch-boundary": [
 				"./packages/controller-execution-contracts/src/controller-dispatch-boundary/index.ts"
+			],
+			"@agent-vm/controller-execution-contracts/controller-execution-data-boundary": [
+				"./packages/controller-execution-contracts/src/controller-execution-data-boundary/index.ts"
 			],
 			"@agent-vm/controller-execution-contracts/controller-host-action-boundary": [
 				"./packages/controller-execution-contracts/src/controller-host-action-boundary/index.ts"
@@ -70,6 +82,14 @@
 			"@agent-vm/agent-vm-worker": ["./packages/agent-vm-worker/src/index.ts"],
 			"@agent-vm/gateway-control-contracts": ["./packages/gateway-control-contracts/src/index.ts"],
 			"@agent-vm/gateway-lifecycle": ["./packages/gateway-lifecycle/src/index.ts"],
+			"@agent-vm/gateway-runtime": ["./packages/gateway-runtime/src/index.ts"],
+			"@agent-vm/hermes-gateway": ["./packages/hermes-gateway/src/index.ts"],
+			"@agent-vm/gateway-runtime/flow-control": [
+				"./packages/gateway-runtime/src/uds/gateway-runtime-flow-control.ts"
+			],
+			"@agent-vm/gateway-runtime/protocol": [
+				"./packages/gateway-runtime/src/uds/gateway-runtime-protocol.ts"
+			],
 			"@agent-vm/managed-vm": ["./packages/managed-vm/src/index.ts"],
 			"@agent-vm/openclaw-agent-vm-plugin": ["./packages/openclaw-agent-vm-plugin/src/index.ts"],
 			"@agent-vm/mcp-portal": ["./packages/mcp-portal/src/index.ts"],
@@ -95,9 +115,6 @@
 			"@agent-vm/openclaw-gateway": ["./packages/openclaw-gateway/src/index.ts"],
 			"@agent-vm/secret-management": ["./packages/secret-management/src/index.ts"],
 			"@agent-vm/tool-portal": ["./packages/tool-portal/src/index.ts"],
-			"@agent-vm/tool-portal/in-process-entrypoint": [
-				"./packages/tool-portal/src/in-process-entrypoint/index.ts"
-			],
 			"@agent-vm/tool-portal/testing": ["./packages/tool-portal/src/testing/index.ts"],
 			"@agent-vm/worker-control-contracts": ["./packages/worker-control-contracts/src/index.ts"],
 			"@agent-vm/worker-gateway": ["./packages/worker-gateway/src/index.ts"]

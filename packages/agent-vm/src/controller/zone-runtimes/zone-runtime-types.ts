@@ -1,10 +1,14 @@
 import type { TaskState } from '@agent-vm/agent-vm-worker';
-import type { GatewayProcessSpec } from '@agent-vm/gateway-lifecycle';
-import type { ManagedVm } from '@agent-vm/managed-vm';
+import type { ManagedGatewayBootContract } from '@agent-vm/gateway-lifecycle';
+import type { ManagedVm, ManagedVmImageBuildResult } from '@agent-vm/managed-vm';
 import type { SecretResolver } from '@agent-vm/secret-management';
 
 import type { LoadedSystemConfig, SystemConfig } from '../../config/system-config.js';
-import type { GatewayZoneStartResult } from '../../gateway/gateway-zone-support.js';
+import type { GatewayExpectedAdmissionCohort } from '../../gateway/gateway-aggregate-admission-state.js';
+import type {
+	GatewayZoneDestroyResult,
+	GatewayZoneVmOperations,
+} from '../../gateway/gateway-zone-support.js';
 import type { ControllerRuntimeZoneStatus } from '../../operations/controller-status.js';
 import type { RunTaskFn } from '../../shared/run-task.js';
 import type { ActiveTaskRegistry } from '../active-task-registry.js';
@@ -12,14 +16,13 @@ import type { GatewayDisposableControlSessionClient } from '../control-session/i
 import type { PullDefaultRequest, PullDefaultResult } from '../git-pull-default-operations.js';
 import type { PushBranchRequest, PushBranchResult } from '../git-push-operations.js';
 import type { LeaseManager, ToolVmProfile } from '../leases/lease-manager.js';
-import type { OpenClawProcessSupervisor } from '../process-supervisor/openclaw-process-supervisor.js';
 import type { RequestHeartbeatRegistry } from '../request-heartbeat-registry.js';
+import type { GatewayEpochIdentity } from '../vm-ownership/vm-ownership-contracts.js';
 import type {
 	PreparedWorkerTask,
 	WorkerTaskInput,
 	WorkerTaskResult,
 } from '../worker-task-runner.js';
-import type { ZoneGitToolVmMount } from '../zone-git/zone-git-paths.js';
 import type { GatewayLifecycleOperationTrigger } from './gateway-lifecycle-operation-record.js';
 import type {
 	GatewayDiagnosisSnapshot,
@@ -30,15 +33,18 @@ export type ControllerZoneConfig = SystemConfig['zones'][number];
 
 export interface GatewayZoneRuntimeHandle {
 	readonly controlSession?: GatewayDisposableControlSessionClient | undefined;
-	readonly controlSessionRecoverySourceKey?: GatewayZoneStartResult['controlSessionRecoverySourceKey'];
-	readonly ingress: GatewayZoneStartResult['ingress'];
-	readonly openClawProcessSupervisor?: OpenClawProcessSupervisor | undefined;
-	readonly openClawProcessEpochOwner?: GatewayZoneStartResult['openClawProcessEpochOwner'];
-	readonly processEpoch?: string | undefined;
-	readonly processSpec: GatewayProcessSpec;
-	readonly terminateVm: GatewayZoneStartResult['terminateVm'];
-	readonly vm: Pick<ManagedVm, 'close' | 'enableSsh' | 'exec' | 'getHostProcessId' | 'id'>;
-	readonly vmOwnership: GatewayZoneStartResult['vmOwnership'];
+	readonly bootContract: ManagedGatewayBootContract;
+	destroyGateway(): Promise<GatewayZoneDestroyResult>;
+	readonly executionModel: 'managed-gateway';
+	readonly expectedCohort: GatewayExpectedAdmissionCohort;
+	readonly gatewayIdentity: GatewayEpochIdentity;
+	readonly image: ManagedVmImageBuildResult;
+	readonly ingress: {
+		readonly host: string;
+		readonly port: number;
+	};
+	readonly vm: GatewayZoneVmOperations;
+	readonly zone: ControllerZoneConfig;
 }
 
 export type ControllerZoneRuntimeSnapshot = ControllerRuntimeZoneStatus;
@@ -55,9 +61,9 @@ export interface ControllerZoneRuntimeBase {
 	shutdown(): Promise<void>;
 }
 
-export interface OpenClawZoneRuntime extends ControllerZoneRuntimeBase {
-	readonly gatewayType: 'openclaw';
-	coldStart(options?: OpenClawZoneRestartOptions): Promise<OpenClawZoneRestartResult>;
+export interface ManagedGatewayZoneRuntime extends ControllerZoneRuntimeBase {
+	readonly gatewayType: 'hermes' | 'openclaw';
+	coldStart(options?: ManagedGatewayZoneRestartOptions): Promise<ManagedGatewayZoneRestartResult>;
 	enableSsh(): ReturnType<ManagedVm['enableSsh']>;
 	exec(command: string): Promise<{
 		readonly exitCode: number;
@@ -87,23 +93,18 @@ export interface OpenClawZoneRuntime extends ControllerZoneRuntimeBase {
 		readonly signal?: AbortSignal | undefined;
 		readonly timeoutMs?: number | undefined;
 	}): Promise<{ readonly ok: true; readonly zoneId: string }>;
-	requestControlSessionRecovery?:
-		| ((request: {
-				readonly sourceKey: NonNullable<GatewayZoneStartResult['controlSessionRecoverySourceKey']>;
-		  }) => Promise<void>)
-		| undefined;
-	restart(options?: OpenClawZoneRestartOptions): Promise<OpenClawZoneRestartResult>;
+	restart(options?: ManagedGatewayZoneRestartOptions): Promise<ManagedGatewayZoneRestartResult>;
 	start(): Promise<void>;
 	stop(): Promise<void>;
 	upgrade(): Promise<{ readonly ok: true; readonly zoneId: string }>;
 }
 
-export interface OpenClawZoneRestartResult {
+export interface ManagedGatewayZoneRestartResult {
 	readonly leaseReleaseFailureCount: number;
 	readonly operationId?: string | undefined;
 }
 
-export interface OpenClawZoneRestartOptions {
+export interface ManagedGatewayZoneRestartOptions {
 	readonly operationTrigger?: GatewayLifecycleOperationTrigger | undefined;
 	readonly timeoutMs?: number | undefined;
 }
@@ -121,7 +122,7 @@ export interface WorkerZoneRuntime extends ControllerZoneRuntimeBase {
 	): Promise<{ readonly results: readonly PushBranchResult[] }>;
 }
 
-export type ControllerZoneRuntime = OpenClawZoneRuntime | WorkerZoneRuntime;
+export type ControllerZoneRuntime = ManagedGatewayZoneRuntime | WorkerZoneRuntime;
 
 export interface SharedZoneRuntimeDependencies {
 	readonly activeTaskRegistry: ActiveTaskRegistry;
@@ -130,11 +131,9 @@ export interface SharedZoneRuntimeDependencies {
 		readonly agentId: string;
 		readonly profile: ToolVmProfile;
 		readonly tcpSlot: number;
-		readonly hostWorkMountDir: string;
-		readonly zoneGitMount?: ZoneGitToolVmMount;
+		readonly hostWorkspaceRoot: string;
 		readonly zoneId: string;
 	}) => Promise<ManagedVm>;
-	readonly deleteGatewayRuntimeRecord: (stateDirectory: string) => Promise<void>;
 	readonly leaseManager: LeaseManager;
 	readonly now: () => number;
 	readonly requestHeartbeatRegistry: RequestHeartbeatRegistry;

@@ -13,9 +13,9 @@ import {
 	GatewayControlRpcCommandResultMessageSchema,
 	gatewayControlDeliveryPolicyByOperation,
 } from '@agent-vm/gateway-control-contracts';
-import type { ManagedVm } from '@agent-vm/managed-vm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import type { GatewayZoneVmOperations } from '../gateway/gateway-zone-support.js';
 import {
 	canRunManagedVmE2e,
 	currentE2eArchitecture,
@@ -32,6 +32,10 @@ import {
 import { waitForProtocolRetryInterval } from './e2e-protocol-wait.js';
 
 const architecture = currentE2eArchitecture();
+type GatewayVmObservationOperations = Pick<
+	GatewayZoneVmOperations,
+	'enableSsh' | 'exec' | 'getHostProcessId' | 'id'
+>;
 const runOpenClawControlSession =
 	process.env.AGENT_VM_OPENCLAW_E2E === '1' && (await canRunManagedVmE2e({ architecture }));
 const describeOpenClawControlSession = runOpenClawControlSession ? describe : describe.skip;
@@ -39,6 +43,11 @@ const agentId = 'control-session';
 const gatewayToken = 'openclaw-control-session-gateway-token';
 const zoneId = 'openclaw-control-session';
 const gatewayControlPath = '/__agent-vm/gateway-control';
+
+type ManagedGatewayStartResult = Extract<
+	Awaited<ReturnType<typeof startGatewayZone>>,
+	{ readonly executionModel: 'managed-gateway' }
+>;
 
 function waitForNodeEvent(emitter: NodeJS.EventEmitter, eventName: string): Promise<void> {
 	return new Promise((resolve) => {
@@ -80,7 +89,7 @@ interface OpenClawProcessIdentity {
 }
 
 async function readOpenClawGatewayProcessIdentity(
-	gatewayVm: ManagedVm,
+	gatewayVm: GatewayVmObservationOperations,
 ): Promise<OpenClawProcessIdentity> {
 	const result = await gatewayVm.exec(`
 set -eu
@@ -119,22 +128,17 @@ printf '%s %s\\n' "$gateway_pid" "$start_time_ticks"
 }
 
 async function sendControllerOriginatedGatewayControlPing(options: {
-	readonly gatewayStart: Awaited<ReturnType<typeof startGatewayZone>>;
+	readonly gatewayStart: ManagedGatewayStartResult;
 	readonly sequence: number;
 }): Promise<{
 	readonly requestMessageId: string;
 	readonly response: unknown;
 }> {
 	const controlSession = options.gatewayStart.controlSession;
-	const recoverySourceKey = options.gatewayStart.controlSessionRecoverySourceKey;
-	const processEpoch = options.gatewayStart.processEpoch;
-	if (
-		controlSession === undefined ||
-		recoverySourceKey === undefined ||
-		processEpoch === undefined
-	) {
+	if (controlSession === undefined) {
 		throw new Error('Expected OpenClaw gateway start to expose a control session.');
 	}
+	const controlIdentity = options.gatewayStart.expectedCohort.controlIdentity;
 	const diagnostics = controlSession.getDiagnostics();
 	const helloResponse = diagnostics.lastHelloResponse;
 	if (helloResponse === undefined || helloResponse.outcome !== 'accepted') {
@@ -143,7 +147,7 @@ async function sendControllerOriginatedGatewayControlPing(options: {
 		);
 	}
 	const envelope: ControlEnvelope = ControlEnvelopeSchema.parse({
-		bootId: processEpoch,
+		bootId: controlIdentity.processEpoch,
 		connectionId: helloResponse.connectionId,
 		controllerEpoch: helloResponse.controllerEpoch,
 		createdAtMs: Date.now(),
@@ -152,11 +156,11 @@ async function sendControllerOriginatedGatewayControlPing(options: {
 		kind: 'command',
 		messageId: randomUUID(),
 		operation: 'control_ping',
-		peerId: `gateway-${recoverySourceKey.zoneId}`,
+		peerId: controlIdentity.peerId,
 		protocolVersion: CONTROL_PROTOCOL_VERSION,
 		sequence: options.sequence,
 		sessionId: helloResponse.sessionId,
-		zoneId: recoverySourceKey.zoneId,
+		zoneId: options.gatewayStart.expectedCohort.fence.zoneId,
 	});
 	return {
 		requestMessageId: envelope.messageId,
@@ -173,9 +177,7 @@ async function sendControllerOriginatedGatewayControlPing(options: {
 }
 
 async function waitForControlSessionReconnected(options: {
-	readonly controlSession: NonNullable<
-		Awaited<ReturnType<typeof startGatewayZone>>['controlSession']
-	>;
+	readonly controlSession: NonNullable<ManagedGatewayStartResult['controlSession']>;
 	readonly minimumHelloCount: number;
 	readonly timeoutMs: number;
 }): Promise<void> {
@@ -202,7 +204,7 @@ describeOpenClawControlSession(
 	() => {
 		let harness: E2eHarnessRuntime | undefined;
 		let project: OpenClawE2eProject | undefined;
-		let gatewayStart: Awaited<ReturnType<typeof startGatewayZone>> | undefined;
+		let gatewayStart: ManagedGatewayStartResult | undefined;
 
 		beforeAll(async () => {
 			const repoRoot = path.resolve(process.cwd());
@@ -235,6 +237,9 @@ describeOpenClawControlSession(
 				},
 				startGatewayZone: async (startGatewayOptions) => {
 					const result = await startGatewayZone(startGatewayOptions);
+					if (result.executionModel !== 'managed-gateway') {
+						throw new Error('OpenClaw control-session proof requires managed Gateway image boot.');
+					}
 					gatewayStart = result;
 					return result;
 				},
@@ -284,7 +289,7 @@ describeOpenClawControlSession(
 
 			const helloCountBeforeFlap = connectedDiagnostics.helloCount;
 			const gatewayIdentityBefore = {
-				generationId: gatewayStart.controlSessionRecoverySourceKey?.generationId,
+				generationId: gatewayStart.expectedCohort.controlIdentity.generationId,
 				vmId: gatewayStart.vm.id,
 			};
 			const processIdentityBefore = await readOpenClawGatewayProcessIdentity(gatewayStart.vm);
@@ -323,7 +328,7 @@ describeOpenClawControlSession(
 			expect(reconnectDiagnostics.attachmentGeneration).toBeGreaterThan(attachmentGenerationBefore);
 			expect(reconnectDiagnostics.lastHelloResponse?.sessionId).not.toBe(sessionIdBefore);
 			expect({
-				generationId: gatewayStart.controlSessionRecoverySourceKey?.generationId,
+				generationId: gatewayStart.expectedCohort.controlIdentity.generationId,
 				vmId: gatewayStart.vm.id,
 			}).toEqual(gatewayIdentityBefore);
 			expect(await readOpenClawGatewayProcessIdentity(gatewayStart.vm)).toEqual(

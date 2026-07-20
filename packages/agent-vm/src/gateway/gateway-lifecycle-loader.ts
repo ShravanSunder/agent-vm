@@ -1,12 +1,16 @@
 import type { GatewayLifecycle, GatewayZoneConfig } from '@agent-vm/gateway-lifecycle';
+import { hermesLifecycle } from '@agent-vm/hermes-gateway';
 import { openclawLifecycle } from '@agent-vm/openclaw-gateway';
 import { workerLifecycle } from '@agent-vm/worker-gateway';
 
 const lifecycleByType = {
-	worker: workerLifecycle,
 	openclaw: openclawLifecycle,
-} satisfies Record<string, GatewayLifecycle>;
+	hermes: hermesLifecycle,
+	worker: workerLifecycle,
+} satisfies Record<GatewayZoneConfig['gateway']['type'], GatewayLifecycle>;
 
-export function loadGatewayLifecycle(type: GatewayZoneConfig['gateway']['type']): GatewayLifecycle {
+export function loadGatewayLifecycle<TGatewayType extends GatewayZoneConfig['gateway']['type']>(
+	type: TGatewayType,
+): (typeof lifecycleByType)[TGatewayType] {
 	return lifecycleByType[type];
 }

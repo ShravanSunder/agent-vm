@@ -44,6 +44,9 @@ importers:
 
   packages/agent-portal-sdk:
     dependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.29.0(zod@4.4.3)
       zod:
         specifier: ^4.4.3
         version: 4.4.3
@@ -54,6 +57,9 @@ importers:
 
   packages/agent-vm:
     dependencies:
+      '@agent-vm/agent-portal-sdk':
+        specifier: workspace:*
+        version: link:../agent-portal-sdk
       '@agent-vm/agent-vm-worker':
         specifier: workspace:*
         version: link:../agent-vm-worker
@@ -63,15 +69,24 @@ importers:
       '@agent-vm/control-protocol-contracts':
         specifier: workspace:*
         version: link:../control-protocol-contracts
+      '@agent-vm/controller-execution-contracts':
+        specifier: workspace:*
+        version: link:../controller-execution-contracts
       '@agent-vm/gateway-control-contracts':
         specifier: workspace:*
         version: link:../gateway-control-contracts
       '@agent-vm/gateway-lifecycle':
         specifier: workspace:*
         version: link:../gateway-lifecycle
+      '@agent-vm/gateway-runtime':
+        specifier: workspace:*
+        version: link:../gateway-runtime
       '@agent-vm/gondolin-vm-adapter':
         specifier: workspace:*
         version: link:../gondolin-vm-adapter
+      '@agent-vm/hermes-gateway':
+        specifier: workspace:*
+        version: link:../hermes-gateway
       '@agent-vm/managed-vm':
         specifier: workspace:*
         version: link:../managed-vm
@@ -147,10 +162,16 @@ importers:
       tasuku:
         specifier: ^2.3.0
         version: 2.3.0
+      ws:
+        specifier: ^8.21.0
+        version: 8.21.0
       zod:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@types/ws':
+        specifier: ^8.18.1
+        version: 8.18.1
       socket.io:
         specifier: 4.8.1
         version: 4.8.1
@@ -245,6 +266,12 @@ importers:
 
   packages/gateway-control-contracts:
     dependencies:
+      '@agent-vm/agent-portal-sdk':
+        specifier: workspace:*
+        version: link:../agent-portal-sdk
+      '@agent-vm/config-contracts':
+        specifier: workspace:*
+        version: link:../config-contracts
       '@agent-vm/control-protocol-contracts':
         specifier: workspace:*
         version: link:../control-protocol-contracts
@@ -275,6 +302,91 @@ importers:
         specifier: ^4.1.5
         version: 4.1.5(@opentelemetry/api@1.9.1)(@types/node@25.6.2)(msw@2.13.4(@types/node@25.6.2)(typescript@6.0.3))(vite@8.0.11(@types/node@25.6.2)(esbuild@0.27.7)(jiti@2.7.0)(tsx@4.21.0)(yaml@2.9.0))
 
+  packages/gateway-runtime:
+    dependencies:
+      '@agent-vm/agent-portal-sdk':
+        specifier: workspace:*
+        version: link:../agent-portal-sdk
+      '@agent-vm/config-contracts':
+        specifier: workspace:*
+        version: link:../config-contracts
+      '@agent-vm/control-protocol-contracts':
+        specifier: workspace:*
+        version: link:../control-protocol-contracts
+      '@agent-vm/controller-execution-contracts':
+        specifier: workspace:*
+        version: link:../controller-execution-contracts
+      '@agent-vm/gateway-control-contracts':
+        specifier: workspace:*
+        version: link:../gateway-control-contracts
+      '@agent-vm/mcp-portal':
+        specifier: workspace:*
+        version: link:../mcp-portal
+      '@agent-vm/tool-portal':
+        specifier: workspace:*
+        version: link:../tool-portal
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.29.0(zod@4.4.3)
+      '@opentelemetry/api':
+        specifier: 1.9.1
+        version: 1.9.1
+      '@opentelemetry/api-logs':
+        specifier: 0.219.0
+        version: 0.219.0
+      '@opentelemetry/exporter-logs-otlp-proto':
+        specifier: 0.219.0
+        version: 0.219.0(@opentelemetry/api@1.9.1)
+      '@opentelemetry/exporter-metrics-otlp-proto':
+        specifier: 0.219.0
+        version: 0.219.0(@opentelemetry/api@1.9.1)
+      '@opentelemetry/exporter-trace-otlp-proto':
+        specifier: 0.219.0
+        version: 0.219.0(@opentelemetry/api@1.9.1)
+      '@opentelemetry/resources':
+        specifier: 2.8.0
+        version: 2.8.0(@opentelemetry/api@1.9.1)
+      '@opentelemetry/sdk-logs':
+        specifier: 0.219.0
+        version: 0.219.0(@opentelemetry/api@1.9.1)
+      '@opentelemetry/sdk-metrics':
+        specifier: 2.8.0
+        version: 2.8.0(@opentelemetry/api@1.9.1)
+      '@opentelemetry/sdk-trace-base':
+        specifier: 2.8.0
+        version: 2.8.0(@opentelemetry/api@1.9.1)
+      engine.io:
+        specifier: 6.6.9
+        version: 6.6.9
+      socket.io:
+        specifier: 4.8.1
+        version: 4.8.1
+      ssh2:
+        specifier: ^1.17.0
+        version: 1.17.0
+      uuid:
+        specifier: ^11.1.1
+        version: 11.1.1
+      ws:
+        specifier: ^8.21.0
+        version: 8.21.0
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@types/ssh2':
+        specifier: ^1.15.5
+        version: 1.15.5
+      '@types/ws':
+        specifier: ^8.18.1
+        version: 8.18.1
+      socket.io-client:
+        specifier: 4.8.1
+        version: 4.8.1
+      vitest:
+        specifier: ^4.1.5
+        version: 4.1.5(@opentelemetry/api@1.9.1)(@types/node@25.6.2)(msw@2.13.4(@types/node@25.6.2)(typescript@6.0.3))(vite@8.0.11(@types/node@25.6.2)(esbuild@0.27.7)(jiti@2.7.0)(tsx@4.21.0)(yaml@2.9.0))
+
   packages/gondolin-vm-adapter:
     dependencies:
       '@agent-vm/managed-vm':
@@ -292,6 +404,15 @@ importers:
       zod:
         specifier: ^4.4.3
         version: 4.4.3
+
+  packages/hermes-gateway:
+    dependencies:
+      '@agent-vm/gateway-lifecycle':
+        specifier: workspace:*
+        version: link:../gateway-lifecycle
+      yaml:
+        specifier: ^2.9.0
+        version: 2.9.0
 
   packages/managed-vm:
     devDependencies:
@@ -347,9 +468,6 @@ importers:
       '@agent-vm/gateway-lifecycle':
         specifier: workspace:*
         version: link:../gateway-lifecycle
-      '@agent-vm/tool-portal':
-        specifier: workspace:*
-        version: link:../tool-portal
       engine.io:
         specifier: 6.6.9
         version: 6.6.9
@@ -412,9 +530,15 @@ importers:
       '@agent-vm/controller-execution-contracts':
         specifier: workspace:*
         version: link:../controller-execution-contracts
+      '@agent-vm/gateway-control-contracts':
+        specifier: workspace:*
+        version: link:../gateway-control-contracts
       '@agent-vm/mcp-portal':
         specifier: workspace:*
         version: link:../mcp-portal
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.29.0(zod@4.4.3)
       zod:
         specifier: ^4.4.3
         version: 4.4.3
@@ -1557,6 +1681,9 @@ packages:
   '@types/jsesc@2.5.1':
     resolution: {integrity: sha512-9VN+6yxLOPLOav+7PwjZbxiID2bVaeq0ED4qSQmdQTdjnXJSaCVKTR58t15oqH1H5t8Ng2ZX1SabJVoN9Q34bw==}
 
+  '@types/node@18.19.130':
+    resolution: {integrity: sha512-GRaXQx6jGfL8sKfaIDD6OupbIHBr9jv7Jnaml9tB7l4v068PAOXqfcujMMo5PhbIs6ggR1XODELqahT2R8v0fg==}
+
   '@types/node@25.6.2':
     resolution: {integrity: sha512-sokuT28dxf9JT5Kady1fsXOvI4HVpjZa95NKT5y9PNTIrs2AsobR4GFAA90ZG8M+nxVRLysCXsVj6eGC7Vbrlw==}
 
@@ -1565,6 +1692,9 @@ packages:
 
   '@types/set-cookie-parser@2.4.10':
     resolution: {integrity: sha512-GGmQVGpQWUe5qglJozEjZV/5dyxbOOZ0LHe/lqyWssB88Y4svNfst0uqBVscdDeIKl5Jy5+aPSvy7mI9tYRguw==}
+
+  '@types/ssh2@1.15.5':
+    resolution: {integrity: sha512-N1ASjp/nXH3ovBHddRJpli4ozpk6UdDYIX4RJWFa9L1YKnzdhTlVmiGHm4DZnj/jLbqZpes4aeR30EFGQtvhQQ==}
 
   '@types/statuses@2.0.6':
     resolution: {integrity: sha512-xMAgYwceFhRA2zY+XbEA7mxYbA093wdiW8Vu6gZPGWy9cmOyU9XesH1tNcEWsKFd5Vzrqx5T3D38PWx1FIIXkA==}
@@ -3085,6 +3215,9 @@ packages:
   unconfig-core@7.5.0:
     resolution: {integrity: sha512-Su3FauozOGP44ZmKdHy2oE6LPjk51M/TRRjHv2HNCWiDvfvCoxC2lno6jevMA91MYAdCdwP05QnWdWpSbncX/w==}
 
+  undici-types@5.26.5:
+    resolution: {integrity: sha512-JlCMO+ehdEIKqlFxk6IfVoAUVmgz7cU7zD/h9XZ0qzeosSHmUJVOzSQvvYSYWXkFXC+IfLKSIffhv0sVZup6pA==}
+
   undici-types@7.19.2:
     resolution: {integrity: sha512-qYVnV5OEm2AW8cJMCpdV20CDyaN3g0AjDlOGf1OW4iaDEx8MwdtChUp4zu4H0VP3nDRF/8RKWH+IPp9uW0YGZg==}
 
@@ -4116,6 +4249,10 @@ snapshots:
 
   '@types/jsesc@2.5.1': {}
 
+  '@types/node@18.19.130':
+    dependencies:
+      undici-types: 5.26.5
+
   '@types/node@25.6.2':
     dependencies:
       undici-types: 7.19.2
@@ -4126,6 +4263,10 @@ snapshots:
     dependencies:
       '@types/node': 25.6.2
     optional: true
+
+  '@types/ssh2@1.15.5':
+    dependencies:
+      '@types/node': 18.19.130
 
   '@types/statuses@2.0.6':
     optional: true
@@ -5762,6 +5903,8 @@ snapshots:
     dependencies:
       '@quansync/fs': 1.0.0
       quansync: 1.0.0
+
+  undici-types@5.26.5: {}
 
   undici-types@7.19.2: {}
 

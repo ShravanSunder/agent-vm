@@ -1,0 +1,33 @@
+{
+	"caseId": "coverage-sandbox-terminal-attach-request",
+	"schemaId": "sandbox.terminal.attach.request",
+	"tags": [
+		"accepted",
+		"coverage"
+	],
+	"input": {
+		"operation": {
+			"operationId": "operation-a",
+			"owningGeneration": "generation-a"
+		},
+		"size": {
+			"columns": 80,
+			"rows": 24
+		}
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"operation": {
+				"operationId": "operation-a",
+				"owningGeneration": "generation-a"
+			},
+			"size": {
+				"columns": 80,
+				"rows": 24
+			}
+		},
+		"canonicalJson": "{\"operation\":{\"operationId\":\"operation-a\",\"owningGeneration\":\"generation-a\"},\"size\":{\"columns\":80,\"rows\":24}}",
+		"refinementIdentities": []
+	}
+}

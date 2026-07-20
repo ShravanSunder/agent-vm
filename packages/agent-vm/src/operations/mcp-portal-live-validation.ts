@@ -2,11 +2,11 @@ import path from 'node:path';
 
 import {
 	loadMcpConfig,
-	loadMcpPortalConfig,
-	type PortalToolSelector,
-	resolveMcpPortalProfile,
-	type ResolvedMcpPortalProfile,
+	loadToolPortalConfig,
 	type SecretValue,
+	type ToolPortalConfig,
+	type ToolPortalProfileDefinition,
+	type ToolPortalToolSelector,
 } from '@agent-vm/config-contracts';
 import {
 	assertJsonObject,
@@ -45,56 +45,41 @@ async function resolveProviderSecret(
 	return await secretResolver.resolve(secretRefFromSecretValue(secret));
 }
 
-function profileNamespaces(profile: ResolvedMcpPortalProfile): readonly string[] {
-	return Array.from(
-		new Set([
-			...profile.enabledNamespaces,
-			...Object.keys(profile.enabledToolsByNamespace),
-			...Object.keys(profile.hiddenToolsByNamespace),
-			...Object.keys(profile.approval.callPoliciesByNamespace),
-			...profile.approval.allowWithoutApprovalTools.map((tool) => tool.namespace),
-			...profile.approval.alwaysAskTools.map((tool) => tool.namespace),
-			...profile.approval.writeTools.map((tool) => tool.namespace),
-		]),
-	).toSorted();
+function requireToolPortalProfile(
+	config: ToolPortalConfig,
+	profileId: string,
+): ToolPortalProfileDefinition {
+	const profile = config.profiles[profileId];
+	if (profile === undefined) {
+		throw new Error(`Tool Portal profile '${profileId}' is not configured.`);
+	}
+	return profile;
 }
 
-function isControllerBackedToolPortalNamespace(zone: LoadedZoneConfig, namespace: string): boolean {
-	return (
-		namespace === 'controller_host_action' &&
-		zone.gateway.type === 'openclaw' &&
-		zone.toolPortal !== undefined
-	);
+function profileNamespaces(profile: ToolPortalProfileDefinition): readonly string[] {
+	return Object.entries(profile.namespaces)
+		.filter(([, namespacePolicy]) => namespacePolicy.backend.kind === 'mcp_provider')
+		.map(([namespace]) => namespace)
+		.toSorted();
 }
 
-function selectorToolNames(selector: PortalToolSelector): readonly string[] {
+function selectorToolNames(selector: ToolPortalToolSelector): readonly string[] {
 	return selector.allow === '*' ? selector.deny : [...selector.allow, ...selector.deny];
 }
 
 function profileToolNamesForNamespace(
-	profile: ResolvedMcpPortalProfile,
+	profile: ToolPortalProfileDefinition,
 	namespace: string,
 ): readonly string[] {
-	const callPolicy = profile.approval.callPoliciesByNamespace[namespace];
+	const namespacePolicy = profile.namespaces[namespace];
+	if (namespacePolicy === undefined || namespacePolicy.backend.kind !== 'mcp_provider') {
+		return [];
+	}
 	return Array.from(
 		new Set([
-			...(profile.enabledToolsByNamespace[namespace] ?? []),
-			...(profile.hiddenToolsByNamespace[namespace] ?? []),
-			...(callPolicy === undefined
-				? []
-				: [
-						...selectorToolNames(callPolicy.requiresApproval),
-						...selectorToolNames(callPolicy.withoutApproval),
-					]),
-			...profile.approval.allowWithoutApprovalTools
-				.filter((tool) => tool.namespace === namespace)
-				.map((tool) => tool.toolName),
-			...profile.approval.alwaysAskTools
-				.filter((tool) => tool.namespace === namespace)
-				.map((tool) => tool.toolName),
-			...profile.approval.writeTools
-				.filter((tool) => tool.namespace === namespace)
-				.map((tool) => tool.toolName),
+			...selectorToolNames(namespacePolicy.tools),
+			...selectorToolNames(namespacePolicy.calls.requiresApproval),
+			...selectorToolNames(namespacePolicy.calls.withoutApproval),
 		]),
 	).toSorted();
 }
@@ -171,8 +156,8 @@ function zoneConfigFailure(zoneId: string, error: unknown): readonly ConfigValid
 async function validateMcpPortalNamespace(props: {
 	readonly agentScopeId: string;
 	readonly namespace: string;
-	readonly portalConfig: Awaited<ReturnType<typeof loadMcpPortalConfig>>;
 	readonly runtime: ReturnType<typeof createUpstreamMcpClientRuntime>;
+	readonly toolPortalConfig: Awaited<ReturnType<typeof loadToolPortalConfig>>;
 	readonly zoneId: string;
 }): Promise<readonly ConfigValidationCheck[]> {
 	try {
@@ -182,9 +167,9 @@ async function validateMcpPortalNamespace(props: {
 		});
 		const actualToolNames = new Set(tools.map((tool) => tool.name));
 		const actualToolNameList = tools.map((tool) => tool.name).toSorted();
-		const profileToolChecks = Object.entries(props.portalConfig.agents).flatMap(
+		const profileToolChecks = Object.entries(props.toolPortalConfig.agents).flatMap(
 			([agentId, agent]) => {
-				const profile = resolveMcpPortalProfile(props.portalConfig, agent.profile);
+				const profile = requireToolPortalProfile(props.toolPortalConfig, agent.profile);
 				const configuredTools = profileToolNamesForNamespace(profile, props.namespace);
 				const missingTools = configuredTools.filter((toolName) => !actualToolNames.has(toolName));
 				if (missingTools.length === 0) {
@@ -229,17 +214,17 @@ async function validateMcpPortalZone(
 	options: RunLiveMcpPortalValidationOptions,
 	zone: LoadedZoneConfig,
 ): Promise<readonly ConfigValidationCheck[]> {
-	if (zone.gateway.type !== 'openclaw' || zone.toolPortal === undefined) {
+	if (zone.gateway.type === 'worker' || zone.toolPortal === undefined) {
 		return [];
 	}
 	let mcpConfig: Awaited<ReturnType<typeof loadMcpConfig>>;
-	let portalConfig: Awaited<ReturnType<typeof loadMcpPortalConfig>>;
 	let servers: Awaited<ReturnType<typeof resolveUpstreamServers>>;
+	let toolPortalConfig: Awaited<ReturnType<typeof loadToolPortalConfig>>;
 	try {
 		const configDir = resolveProjectCheckoutPath(options.systemConfig, zone.toolPortal.configDir);
-		[mcpConfig, portalConfig] = await Promise.all([
+		[mcpConfig, toolPortalConfig] = await Promise.all([
 			loadMcpConfig(path.join(configDir, 'mcp.config.jsonc')),
-			loadMcpPortalConfig(path.join(configDir, 'mcp-portal.config.jsonc')),
+			loadToolPortalConfig(path.join(configDir, 'tool-portal.config.jsonc')),
 		]);
 		servers = await resolveUpstreamServers({
 			config: mcpConfig,
@@ -252,19 +237,16 @@ async function validateMcpPortalZone(
 	const referencedNamespaces = new Set<string>();
 	let namespaceChecks: readonly ConfigValidationCheck[];
 	try {
-		namespaceChecks = Object.entries(portalConfig.agents).flatMap(([agentId, agent]) => {
-			const profile = resolveMcpPortalProfile(portalConfig, agent.profile);
+		namespaceChecks = Object.entries(toolPortalConfig.agents).flatMap(([agentId, agent]) => {
+			const profile = requireToolPortalProfile(toolPortalConfig, agent.profile);
 			return profileNamespaces(profile).flatMap((namespace) => {
-				if (isControllerBackedToolPortalNamespace(zone, namespace)) {
-					return [];
-				}
 				referencedNamespaces.add(namespace);
 				if (serverNamespaces.has(namespace)) {
 					return [];
 				}
 				return [
 					{
-						hint: `Agent '${agentId}' profile '${agent.profile}' references MCP namespace '${namespace}', but no provider with that namespace exists in mcp.config.jsonc.`,
+						hint: `Tool Portal agent '${agentId}' profile '${agent.profile}' references MCP namespace '${namespace}', but no provider with that namespace exists in mcp.config.jsonc.`,
 						name: `mcp-live-profile-namespace-${zone.id}-${agentId}-${namespace}`,
 						ok: false,
 					} satisfies ConfigValidationCheck,
@@ -287,8 +269,8 @@ async function validateMcpPortalZone(
 					await validateMcpPortalNamespace({
 						agentScopeId,
 						namespace,
-						portalConfig,
 						runtime,
+						toolPortalConfig,
 						zoneId: zone.id,
 					}),
 			),

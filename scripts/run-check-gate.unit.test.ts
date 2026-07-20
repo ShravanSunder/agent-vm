@@ -69,6 +69,9 @@ describe('check gate plan', () => {
 			'type-aware-lint',
 			'typecheck',
 		]);
+		expect(
+			plan[1]?.commands.find((command) => command.id === 'managed-vm-contracts')?.args,
+		).toEqual(['exec', 'tsx', 'scripts/verify-managed-vm-contracts.ts', '--skip-workspace-build']);
 	});
 
 	it('does not define duplicate command ids', () => {

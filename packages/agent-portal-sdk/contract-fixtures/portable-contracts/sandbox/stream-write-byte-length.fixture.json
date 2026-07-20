@@ -1,0 +1,21 @@
+{
+	"caseId": "sandbox-stream-write-byte-length-mismatch",
+	"schemaId": "sandbox.stream.write.request",
+	"tags": ["byte-bound", "rejected", "stream"],
+	"input": {
+		"content": { "byteLength": 4, "contentBase64": "aGVsbG8=", "encoding": "base64" },
+		"contentDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"sequence": 0,
+		"stream": {
+			"channel": "stdin",
+			"handleId": "stream-a",
+			"kind": "stream",
+			"owningGeneration": "generation-a"
+		}
+	},
+	"expectation": {
+		"kind": "rejected",
+		"errorCodes": ["sandbox.binary-chunk.byte-length-mismatch"],
+		"refinementIdentities": ["sandbox.binary-chunk.byte-length"]
+	}
+}

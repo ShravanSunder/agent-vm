@@ -1,0 +1,32 @@
+{
+	"caseId": "gateway-attachment-valid",
+	"schemaId": "gateway.attachment.metadata",
+	"tags": ["accepted", "attachment", "boundary"],
+	"input": {
+		"attachmentGeneration": 7,
+		"clientKind": "hermes-managed-plugin",
+		"configuredAgentIds": ["agent-a", "agent-b"],
+		"frameworkEpoch": "framework-3",
+		"gatewayEpoch": "gateway-7",
+		"projectionCohortDigest": "projection-cohort:0000000000000000000000000000000000000000000000000000000000000000",
+		"protocolVersion": 1,
+		"runtimeEpoch": "runtime-4",
+		"schemaVersion": 1
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"attachmentGeneration": 7,
+			"clientKind": "hermes-managed-plugin",
+			"configuredAgentIds": ["agent-a", "agent-b"],
+			"frameworkEpoch": "framework-3",
+			"gatewayEpoch": "gateway-7",
+			"projectionCohortDigest": "projection-cohort:0000000000000000000000000000000000000000000000000000000000000000",
+			"protocolVersion": 1,
+			"runtimeEpoch": "runtime-4",
+			"schemaVersion": 1
+		},
+		"canonicalJson": "{\"attachmentGeneration\":7,\"clientKind\":\"hermes-managed-plugin\",\"configuredAgentIds\":[\"agent-a\",\"agent-b\"],\"frameworkEpoch\":\"framework-3\",\"gatewayEpoch\":\"gateway-7\",\"projectionCohortDigest\":\"projection-cohort:0000000000000000000000000000000000000000000000000000000000000000\",\"protocolVersion\":1,\"runtimeEpoch\":\"runtime-4\",\"schemaVersion\":1}",
+		"refinementIdentities": ["gateway.attachment.unique-agent-ids"]
+	}
+}

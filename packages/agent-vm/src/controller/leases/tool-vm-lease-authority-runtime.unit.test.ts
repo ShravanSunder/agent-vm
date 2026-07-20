@@ -158,16 +158,24 @@ describe('createToolVmLeaseAuthorityRuntime', () => {
 	it('runs the controller destroy callback once and retires only after completion', async () => {
 		const runtime = createToolVmLeaseAuthorityRuntime<TestLease>();
 		const authority = createAuthority();
-		const destroy = vi.fn(async () => {});
+		const cleanup = vi.fn(async () => {});
+		const fenceAccess = vi.fn(async () => {});
 		runtime.registerGateway(GATEWAY_ONE);
 		runtime.beginProvisioning({ authority, compatibility: COMPATIBILITY, idleExpiresAtMs: 10_000 });
 		runtime.sealGateway(GATEWAY_ONE);
 
 		await expectTransitionError(() => runtime.retireGateway(GATEWAY_ONE), 'parent-has-live-leaves');
-		await runtime.destroyExact({ authority, destroy, destroyedAtMs: 20_000, reason: 'shutdown' });
+		await runtime.destroyExact({
+			authority,
+			cleanup,
+			destroyedAtMs: 20_000,
+			fenceAccess,
+			reason: 'shutdown',
+		}).completion;
 		runtime.retireGateway(GATEWAY_ONE);
 
-		expect(destroy).toHaveBeenCalledOnce();
+		expect(fenceAccess).toHaveBeenCalledOnce();
+		expect(cleanup).toHaveBeenCalledOnce();
 		expect(runtime.authorityForLease(authority.leaseId)).toBeUndefined();
 	});
 });

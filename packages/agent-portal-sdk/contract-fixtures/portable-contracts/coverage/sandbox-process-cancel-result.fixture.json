@@ -1,0 +1,27 @@
+{
+	"caseId": "coverage-sandbox-process-cancel-result",
+	"schemaId": "sandbox.process.cancel.result",
+	"tags": [
+		"accepted",
+		"coverage"
+	],
+	"input": {
+		"kind": "running",
+		"operation": {
+			"operationId": "operation-a",
+			"owningGeneration": "generation-a"
+		}
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"kind": "running",
+			"operation": {
+				"operationId": "operation-a",
+				"owningGeneration": "generation-a"
+			}
+		},
+		"canonicalJson": "{\"kind\":\"running\",\"operation\":{\"operationId\":\"operation-a\",\"owningGeneration\":\"generation-a\"}}",
+		"refinementIdentities": []
+	}
+}

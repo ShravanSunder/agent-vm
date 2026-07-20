@@ -15,6 +15,7 @@ import {
 import {
 	hasManagedVmImageAssets,
 	managedVmImageAssetFileNames,
+	type ManagedGatewayImageBootProjection,
 } from '../build/gondolin-managed-vm-build-tooling.js';
 
 interface ManagedVmBackendImageBuildResult {
@@ -45,6 +46,13 @@ import {
 } from '../build/zig-compatibility.js';
 import { loadJsonConfigFile } from '../config/json-config-file.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
+import {
+	createControllerStateRoot,
+	resolveControllerGatewayStateRoot,
+} from '../controller/durable-state/controller-state-paths.js';
+import { resolveControllerGatewayRecordTargets } from '../controller/durable-state/controller-state-record-paths.js';
+import { scanLegacyControllerRecordEvidence as scanGatewayStateAuthorityEvidenceDefault } from '../controller/durable-state/legacy-controller-record-evidence.js';
+import { listWorkerRuntimeRecordTargets as listWorkerRuntimeRecordTargetsDefault } from '../gateway/worker-runtime-record.js';
 import { createObservabilityRuntimeConfig } from '../observability/observability-config.js';
 import {
 	prepareObservabilityStack as prepareObservabilityStackDefault,
@@ -74,11 +82,13 @@ export interface BuildCommandDependencies {
 		readonly cacheDir: string;
 		readonly fingerprintInput?: unknown;
 		readonly fullReset?: boolean;
+		readonly managedGatewayBoot?: ManagedGatewayImageBootProjection;
 		readonly streamPreview?: TaskOutput;
 	}) => Promise<ManagedVmBackendImageBuildResult>;
 	readonly computeManagedVmFingerprint?: (options: {
 		readonly buildConfigPath: string;
 		readonly fingerprintInput?: unknown;
+		readonly managedGatewayBoot?: ManagedGatewayImageBootProjection;
 	}) => Promise<string>;
 	readonly deleteStaleImageDirectories?: (entries: readonly StaleImageEntry[]) => Promise<void>;
 	readonly findPrunableImageDirectories?: (options: {
@@ -113,6 +123,8 @@ export interface BuildCommandDependencies {
 	readonly prepareObservabilityStack?: (
 		options: PrepareObservabilityStackOptions,
 	) => Promise<PrepareObservabilityStackResult>;
+	readonly scanGatewayStateAuthorityEvidence?: typeof scanGatewayStateAuthorityEvidenceDefault;
+	readonly listWorkerRuntimeRecordTargets?: typeof listWorkerRuntimeRecordTargetsDefault;
 }
 
 const ociImageTagSchema = z.object({
@@ -127,7 +139,6 @@ const GONDOLIN_BUILD_CONCURRENCY = 2;
 const BUILD_DETAIL_MAX_LENGTH = 512;
 const GONDOLIN_BUILD_SANDBOX_HELPERS_FROM_SOURCE_ENV = 'GONDOLIN_BUILD_SANDBOX_HELPERS_FROM_SOURCE';
 const TASK_OUTPUT_BUFFER_MAX_LENGTH = 4_096;
-const gatewayRuntimeRecordFileName = 'gateway-runtime.json';
 const openClawManagedPackageConfigSchema = z
 	.object({
 		channels: z
@@ -158,10 +169,12 @@ interface ImageTarget {
 	readonly cacheDirectory: string;
 	readonly dockerfile: string | undefined;
 	readonly family: 'gateway' | 'toolVm';
-	readonly gatewayType?: 'worker' | 'openclaw';
+	readonly gatewayType?: ManagedGatewayBootGatewayType;
 	readonly name: string;
 	readonly source: ManagedImageSource | undefined;
 }
+
+type ManagedGatewayBootGatewayType = 'hermes' | 'openclaw' | 'worker';
 
 interface BuiltImageCacheEntry {
 	readonly imageTarget: ImageTarget;
@@ -192,6 +205,7 @@ interface GondolinTargetPlan {
 	readonly imageTarget: ImageTarget;
 	readonly fingerprintInput?: unknown;
 	readonly key: string;
+	readonly managedGatewayBoot?: ManagedGatewayImageBootProjection;
 	sharedDedupeKey: boolean;
 	shouldResetGondolinCache: boolean;
 }
@@ -212,8 +226,36 @@ function imageTargetDedupeKey(options: {
 function imageTargetFingerprintInputKey(options: {
 	readonly buildConfigPath: string;
 	readonly fingerprintInput?: unknown;
+	readonly managedGatewayBoot?: ManagedGatewayImageBootProjection;
 }): string {
-	return `${path.resolve(options.buildConfigPath)}${imageTargetKeySeparator}${JSON.stringify(options.fingerprintInput ?? null)}`;
+	return `${path.resolve(options.buildConfigPath)}${imageTargetKeySeparator}${JSON.stringify({ fingerprintInput: options.fingerprintInput ?? null, managedGatewayBoot: options.managedGatewayBoot ?? null })}`;
+}
+
+export function managedGatewayBootProjectionForGatewayType(
+	gatewayType: ManagedGatewayBootGatewayType,
+): ManagedGatewayImageBootProjection | undefined {
+	switch (gatewayType) {
+		case 'hermes':
+			return {
+				frameworkBootEntry: 'hermes-framework-service',
+				kind: 'managed-gateway-exact-two-role',
+			};
+		case 'openclaw':
+			return {
+				frameworkBootEntry: 'openclaw-framework-service',
+				kind: 'managed-gateway-exact-two-role',
+			};
+		case 'worker':
+			return undefined;
+	}
+}
+
+function managedGatewayBootProjectionForImageTarget(
+	imageTarget: ImageTarget,
+): ManagedGatewayImageBootProjection | undefined {
+	return imageTarget.family === 'gateway' && imageTarget.gatewayType !== undefined
+		? managedGatewayBootProjectionForGatewayType(imageTarget.gatewayType)
+		: undefined;
 }
 
 async function runWithConcurrency<TItem>(
@@ -348,16 +390,62 @@ async function materializePreparedTargetImage(options: {
 	return await materializeGondolinImageAlias(options);
 }
 
-async function findZoneIdsWithGatewayRuntimeRecords(
+type GatewayStateAuthorityEvidence = Awaited<
+	ReturnType<typeof scanGatewayStateAuthorityEvidenceDefault>
+>[number];
+
+function formatGatewayStateAuthorityEvidence(evidence: GatewayStateAuthorityEvidence): string {
+	return `${evidence.family}:${evidence.kind}:${evidence.absolutePath}`;
+}
+
+async function assertGatewayStateAuthorityIsCurrent(
 	systemConfig: LoadedSystemConfig,
+	scanGatewayStateAuthorityEvidence: typeof scanGatewayStateAuthorityEvidenceDefault,
+): Promise<void> {
+	const evidenceByZone: {
+		readonly evidence: readonly GatewayStateAuthorityEvidence[];
+		readonly zoneId: string;
+	}[] = [];
+	for (const zone of systemConfig.zones) {
+		// oxlint-disable-next-line no-await-in-loop -- scan every zone in stable configuration order before any build mutation.
+		const evidence = await scanGatewayStateAuthorityEvidence({
+			gatewayStateDirectoryPath: zone.gateway.stateDir,
+		});
+		if (evidence.length > 0) {
+			evidenceByZone.push({ evidence, zoneId: zone.id });
+		}
+	}
+	if (evidenceByZone.length === 0) {
+		return;
+	}
+	throw new Error(
+		evidenceByZone
+			.map(
+				({ evidence, zoneId }) =>
+					`Legacy controller record evidence exists under Gateway state for zone '${zoneId}': ${evidence.map(formatGatewayStateAuthorityEvidence).join('; ')}`,
+			)
+			.join('\n'),
+	);
+}
+
+async function findZoneIdsWithCurrentGatewayRuntimeRecords(
+	systemConfig: LoadedSystemConfig,
+	listWorkerRuntimeRecordTargets: typeof listWorkerRuntimeRecordTargetsDefault,
 ): Promise<readonly string[]> {
+	const controllerStateRoot = createControllerStateRoot({
+		controllerStateDirectoryPath: systemConfig.controllerStateDir,
+	});
 	const zoneIds: string[] = [];
 	for (const zone of systemConfig.zones) {
-		const runtimeRecordPath = path.join(zone.gateway.stateDir, gatewayRuntimeRecordFileName);
+		const gatewayStateRoot = resolveControllerGatewayStateRoot({
+			controllerStateRoot,
+			zoneId: zone.id,
+		});
+		const recordTargets = resolveControllerGatewayRecordTargets({ gatewayStateRoot });
 		let runtimeRecordExists = false;
 		try {
-			// oxlint-disable-next-line no-await-in-loop -- state dirs are zone-local and errors should point at one zone
-			await fs.access(runtimeRecordPath);
+			// oxlint-disable-next-line no-await-in-loop -- controller record targets are zone-local and errors should point at one zone.
+			await fs.access(recordTargets.managedGatewayRuntimeRecord.filePath);
 			runtimeRecordExists = true;
 		} catch (error) {
 			if (
@@ -370,6 +458,12 @@ async function findZoneIdsWithGatewayRuntimeRecords(
 			}
 		}
 		if (runtimeRecordExists) {
+			zoneIds.push(zone.id);
+			continue;
+		}
+		// oxlint-disable-next-line no-await-in-loop -- current Worker collections are zone-local and validated before prune admission.
+		const workerRuntimeRecordTargets = await listWorkerRuntimeRecordTargets({ gatewayStateRoot });
+		if (workerRuntimeRecordTargets.length > 0) {
 			zoneIds.push(zone.id);
 		}
 	}
@@ -752,11 +846,14 @@ export async function runBuildCommand(
 	const computeManagedVmFingerprint =
 		dependencies.computeManagedVmFingerprint ??
 		(async (fingerprintOptions): Promise<string> =>
-			fingerprintOptions.fingerprintInput === undefined
-				? await computeFingerprintFromConfigPath(fingerprintOptions.buildConfigPath)
-				: await computeFingerprintFromConfigPath(fingerprintOptions.buildConfigPath, {
-						fingerprintInput: fingerprintOptions.fingerprintInput,
-					}));
+			await computeFingerprintFromConfigPath(fingerprintOptions.buildConfigPath, {
+				...(fingerprintOptions.fingerprintInput === undefined
+					? {}
+					: { fingerprintInput: fingerprintOptions.fingerprintInput }),
+				...(fingerprintOptions.managedGatewayBoot === undefined
+					? {}
+					: { managedGatewayBoot: fingerprintOptions.managedGatewayBoot }),
+			}));
 	const deleteStaleImageDirectories =
 		dependencies.deleteStaleImageDirectories ?? deleteStaleImageDirectoriesDefault;
 	const findPrunableImageDirectories =
@@ -777,6 +874,15 @@ export async function runBuildCommand(
 		dependencies.syncBundledOpenClawPlugin ?? syncBundledOpenClawPluginBundle;
 	const prepareObservabilityStack =
 		dependencies.prepareObservabilityStack ?? prepareObservabilityStackDefault;
+	const scanGatewayStateAuthorityEvidence =
+		dependencies.scanGatewayStateAuthorityEvidence ?? scanGatewayStateAuthorityEvidenceDefault;
+	const listWorkerRuntimeRecordTargets =
+		dependencies.listWorkerRuntimeRecordTargets ?? listWorkerRuntimeRecordTargetsDefault;
+
+	await assertGatewayStateAuthorityIsCurrent(
+		options.systemConfig,
+		scanGatewayStateAuthorityEvidence,
+	);
 
 	if (shouldAssertZigBuildPrerequisite()) {
 		await assertZigBuildPrerequisite(resolveRequiredZigVersion, resolveZigVersion);
@@ -928,9 +1034,11 @@ export async function runBuildCommand(
 	for (const imageTarget of imageTargets) {
 		const key = imageTargetKey(imageTarget);
 		const fingerprintInput = dockerFingerprintInputByTargetKey.get(key);
+		const managedGatewayBoot = managedGatewayBootProjectionForImageTarget(imageTarget);
 		const fingerprintInputKey = imageTargetFingerprintInputKey({
 			buildConfigPath: imageTarget.buildConfigPath,
 			fingerprintInput,
+			...(managedGatewayBoot === undefined ? {} : { managedGatewayBoot }),
 		});
 		let fingerprint = fingerprintByInputKey.get(fingerprintInputKey);
 		if (fingerprint === undefined) {
@@ -938,6 +1046,7 @@ export async function runBuildCommand(
 			fingerprint = await computeManagedVmFingerprint({
 				buildConfigPath: imageTarget.buildConfigPath,
 				...(fingerprintInput === undefined ? {} : { fingerprintInput }),
+				...(managedGatewayBoot === undefined ? {} : { managedGatewayBoot }),
 			});
 			fingerprintByInputKey.set(fingerprintInputKey, fingerprint);
 		}
@@ -952,6 +1061,7 @@ export async function runBuildCommand(
 			fingerprintInput,
 			imageTarget,
 			key,
+			...(managedGatewayBoot === undefined ? {} : { managedGatewayBoot }),
 			sharedDedupeKey: false,
 			shouldResetGondolinCache,
 		};
@@ -992,6 +1102,9 @@ export async function runBuildCommand(
 							...(targetPlan.fingerprintInput === undefined
 								? {}
 								: { fingerprintInput: targetPlan.fingerprintInput }),
+							...(targetPlan.managedGatewayBoot === undefined
+								? {}
+								: { managedGatewayBoot: targetPlan.managedGatewayBoot }),
 							...(targetPlan.shouldResetGondolinCache ? { fullReset: true } : {}),
 							...(gondolinTaskOutput ? { streamPreview: gondolinTaskOutput } : {}),
 						});
@@ -1041,6 +1154,9 @@ export async function runBuildCommand(
 			fingerprint: existingBuild.result.fingerprint,
 			fingerprintInput: targetPlan.fingerprintInput,
 			imagePath,
+			...(targetPlan.managedGatewayBoot === undefined
+				? {}
+				: { managedGatewayBoot: targetPlan.managedGatewayBoot }),
 		});
 		setCurrentImageFingerprint(
 			currentFingerprints,
@@ -1052,8 +1168,9 @@ export async function runBuildCommand(
 	await runTaskStep('Cache auto-prune', async (taskContext) => {
 		taskContext?.setStatus('checking old image generations');
 		try {
-			const activeGatewayRuntimeZoneIds = await findZoneIdsWithGatewayRuntimeRecords(
+			const activeGatewayRuntimeZoneIds = await findZoneIdsWithCurrentGatewayRuntimeRecords(
 				options.systemConfig,
+				listWorkerRuntimeRecordTargets,
 			);
 			if (activeGatewayRuntimeZoneIds.length > 0) {
 				taskContext?.setOutput({

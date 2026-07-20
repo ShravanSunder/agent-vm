@@ -1,0 +1,29 @@
+{
+	"caseId": "list-request-default-limit",
+	"schemaId": "portal.list.request",
+	"tags": ["accepted", "default", "request"],
+	"input": {
+		"requests": [
+			{
+				"id": "list-1"
+			}
+		]
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"requests": [
+				{
+					"id": "list-1",
+					"limit": 20
+				}
+			]
+		},
+		"canonicalJson": "{\"requests\":[{\"id\":\"list-1\",\"limit\":20}]}",
+		"refinementIdentities": [
+			"portal.batch.unique-item-ids",
+			"portal.list.default-limit",
+			"portal.request-id.not-reserved"
+		]
+	}
+}

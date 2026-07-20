@@ -1,0 +1,23 @@
+[project]
+name = "agent-vm-agent-portal-sdk"
+version = "0.0.114"
+description = "Portable Python contracts and clients for the agent-vm Tool Portal."
+requires-python = ">=3.13"
+authors = [{ name = "Shravan Sunder", email = "ShravanSunder@users.noreply.github.com" }]
+license = "MIT"
+dependencies = [
+	"httpx>=0.27.1,<1",
+	"mcp>=1.28.1,<2",
+	"pydantic>=2.12.0,<3",
+	"pydantic-core>=2.41.5,<3",
+]
+
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.sdist]
+include = ["src/agent_vm_agent_portal_sdk"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agent_vm_agent_portal_sdk"]

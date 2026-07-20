@@ -1,0 +1,42 @@
+{
+	"caseId": "call-request-canonical",
+	"schemaId": "portal.call.request",
+	"tags": ["accepted", "canonical-json", "request"],
+	"input": {
+		"requestId": "request-1",
+		"calls": [
+			{
+				"name": "get_issue",
+				"namespace": "github",
+				"id": "call-1",
+				"arguments": {
+					"z": "last",
+					"a": 1
+				}
+			}
+		]
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"calls": [
+				{
+					"arguments": {
+						"a": 1,
+						"z": "last"
+					},
+					"id": "call-1",
+					"name": "get_issue",
+					"namespace": "github"
+				}
+			],
+			"requestId": "request-1"
+		},
+		"canonicalJson": "{\"calls\":[{\"arguments\":{\"a\":1,\"z\":\"last\"},\"id\":\"call-1\",\"name\":\"get_issue\",\"namespace\":\"github\"}],\"requestId\":\"request-1\"}",
+		"refinementIdentities": [
+			"portal.batch.unique-item-ids",
+			"portal.json.canonical",
+			"portal.request-id.not-reserved"
+		]
+	}
+}

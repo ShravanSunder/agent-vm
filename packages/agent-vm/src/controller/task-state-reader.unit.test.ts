@@ -22,6 +22,7 @@ function makeSystemConfig(): SystemConfig {
 	return {
 		schemaVersion: 1,
 		cacheDir: '/tmp/cache',
+		controllerStateDir: '/controller-state-test',
 		runtimeDir: '/tmp/runtime',
 		host: {
 			controllerPort: 18800,

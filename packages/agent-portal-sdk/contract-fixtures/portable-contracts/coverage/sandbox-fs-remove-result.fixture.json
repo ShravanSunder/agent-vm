@@ -1,0 +1,23 @@
+{
+	"caseId": "coverage-sandbox-fs-remove-result",
+	"schemaId": "sandbox.fs.remove.result",
+	"tags": [
+		"accepted",
+		"coverage"
+	],
+	"input": {
+		"kind": "removed",
+		"path": "tmp/file.txt",
+		"removed": true
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"kind": "removed",
+			"path": "tmp/file.txt",
+			"removed": true
+		},
+		"canonicalJson": "{\"kind\":\"removed\",\"path\":\"tmp/file.txt\",\"removed\":true}",
+		"refinementIdentities": []
+	}
+}

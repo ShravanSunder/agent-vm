@@ -7,6 +7,8 @@ import {
 import {
 	buildGatewayControlCallerContextAgentAuthorityPayload,
 	buildGatewayControlCallerContextProofPayload,
+	deriveGatewayControlStablePrincipal,
+	type GatewayControlCallerContextProofPayloadInput,
 	type GatewayControlCallerContextRegisterPayload,
 	type GatewayControlLeaseSnapshot,
 	type GatewayControlLeaseUseSnapshot,
@@ -17,10 +19,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { TEST_SSH_SERVER_HOST_KEY } from '../../testing/managed-vm-test-helpers.js';
 import type { GatewayEpochIdentity } from '../vm-ownership/vm-ownership-contracts.js';
 import { createControlSessionDispatcher } from './control-session-dispatcher.js';
-import {
-	createGatewayControlCallerContextRegistry,
-	deriveGatewayControlStablePrincipal,
-} from './gateway-control-caller-context.js';
+import { createGatewayControlCallerContextRegistry } from './gateway-control-caller-context.js';
 import {
 	createGatewayControlDomainHandler,
 	type GatewayControlLeaseRpcOperations,
@@ -52,9 +51,14 @@ const acceptedSession = {
 const callerContextId = '44444444-4444-4444-8444-444444444444';
 const callerContextProofKey = 'test-caller-context-proof-key-with-enough-length';
 const agentAuthorityKey = 'test-main-agent-authority-key-with-enough-length';
-const stablePrincipal = deriveGatewayControlStablePrincipal({
+const invocationPrincipal = {
 	agentId: 'main',
-	zoneId: gateway.zoneId,
+	frameworkIdentity: { agentId: 'main', kind: 'openclaw' },
+	profileAssignmentRevision: 'assignment-main',
+	toolPortalProfileId: 'standard',
+} as const;
+const stablePrincipal = deriveGatewayControlStablePrincipal({
+	principal: invocationPrincipal,
 });
 
 type ExpectedLeaseRpcSurface = 'getLease' | 'prepareSemanticMutation';
@@ -75,6 +79,7 @@ const leaseRpcHasEveryHardCutMethod: Exclude<
 const leaseSnapshot = {
 	agentId: 'main',
 	idleTtlMs: 120_000,
+	leafGeneration: 'leaf-generation-main',
 	leaseId: 'lease-main',
 	ssh: {
 		host: 'tool-7.vm.host',
@@ -84,9 +89,10 @@ const leaseSnapshot = {
 		user: 'root',
 	},
 	state: 'idle',
+	sshBindingId: 'ssh-binding-main',
 	tcpSlot: 7,
 	transport: 'ssh-sandbox',
-	workdir: '/workspace',
+	workdir: '/work',
 	zoneId: gateway.zoneId,
 } satisfies GatewayControlLeaseSnapshot;
 
@@ -99,10 +105,7 @@ const activeUseSnapshot = {
 } satisfies GatewayControlLeaseUseSnapshot;
 
 function signCallerContextEvidence(
-	evidence: Omit<
-		GatewayControlCallerContextRegisterPayload['adapterEvidence'],
-		'agentAuthority' | 'proof'
-	>,
+	evidence: GatewayControlCallerContextProofPayloadInput,
 ): GatewayControlCallerContextRegisterPayload['adapterEvidence'] {
 	return {
 		...evidence,
@@ -111,7 +114,7 @@ function signCallerContextEvidence(
 			digest: createHmac('sha256', agentAuthorityKey)
 				.update(buildGatewayControlCallerContextAgentAuthorityPayload(evidence), 'utf8')
 				.digest('base64url'),
-			keyId: evidence.agentId,
+			keyId: evidence.principal.agentId,
 		},
 		proof: {
 			algorithm: 'hmac-sha256',
@@ -129,14 +132,12 @@ function createRegisteredCallerContexts(
 		agentAuthorityKeys: { main: agentAuthorityKey },
 		callerContextProofKey,
 		createCallerContextId: () => callerContextId,
+		validateRegistration: () => {},
 	});
 	callerContexts.register({
 		payload: {
 			adapterEvidence: signCallerContextEvidence({
-				agentId: 'main',
-				agentWorkspaceDir: '/home/openclaw/workspace',
-				sessionKey: 'agent:main:test-session',
-				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
+				principal: invocationPrincipal,
 				zoneId: gateway.zoneId,
 			}),
 		},

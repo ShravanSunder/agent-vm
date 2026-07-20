@@ -101,6 +101,9 @@ export function createAuthSubcommands(io: CliIo, dependencies: CliDependencies) 
 						}) => {
 							const systemConfig = await loadSystemConfigFromOption(config, dependencies);
 							const selectedZone = requireZone(systemConfig, zone);
+							if (selectedZone.gateway.type !== 'openclaw') {
+								throw new Error(`Zone '${selectedZone.id}' does not support OpenClaw auth login.`);
+							}
 							const lifecycle = loadGatewayLifecycle(selectedZone.gateway.type);
 
 							await runOpenClawAuthCommand({

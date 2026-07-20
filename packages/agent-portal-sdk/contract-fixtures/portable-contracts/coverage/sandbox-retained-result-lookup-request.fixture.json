@@ -1,0 +1,25 @@
+{
+	"caseId": "coverage-sandbox-retained-result-lookup-request",
+	"schemaId": "sandbox.retained-result.lookup-request",
+	"tags": [
+		"accepted",
+		"coverage"
+	],
+	"input": {
+		"operation": {
+			"operationId": "operation-a",
+			"owningGeneration": "generation-a"
+		}
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"operation": {
+				"operationId": "operation-a",
+				"owningGeneration": "generation-a"
+			}
+		},
+		"canonicalJson": "{\"operation\":{\"operationId\":\"operation-a\",\"owningGeneration\":\"generation-a\"}}",
+		"refinementIdentities": []
+	}
+}

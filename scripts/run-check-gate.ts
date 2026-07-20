@@ -115,7 +115,7 @@ export function createCheckGatePlan(): readonly CheckGatePhase[] {
 					label: 'managed VM package boundary audit',
 				},
 				{
-					args: ['run', 'test:managed-vm-contracts'],
+					args: ['exec', 'tsx', 'scripts/verify-managed-vm-contracts.ts', '--skip-workspace-build'],
 					command: 'pnpm',
 					id: 'managed-vm-contracts',
 					label: 'managed VM contract and declaration verifier',

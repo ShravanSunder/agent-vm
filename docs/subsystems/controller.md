@@ -86,14 +86,19 @@ The `stopController` operation (exposed via `POST /stop-controller`) follows the
 
 Offline cleanup is the broken-controller path. `agent-vm controller cleanup --config <system-config> --zone <zone>` first acquires the same deployment-wide ownership lock held for the controller's full lifetime, then refuses to run while the configured controller health endpoint is reachable. `--force` skips only that advisory health probe; it never bypasses the ownership lock or exact-evidence validation. The lock is mutual exclusion, not destruction evidence.
 
-Cleanup reads schema-v2 Tool records from `<stateDir>/tool-leases/<recordId>.json` before the zone's `<stateDir>/gateway-runtime.json`. Each record must match the canonical config path, controller port, project namespace, zone, session label, full Gateway parent identity, VM id, pid, and process command/start identity as applicable. Cleanup revalidates the live process and endpoint before signaling, deletes records only after the recorded process and relevant endpoint are absent, and never adopts an old VM. Old, malformed, mismatched, or otherwise unproven evidence fails closed and remains for operator diagnosis. This is the supported replacement for deployment-local broad `pkill -f qemu-system-*` commands.
+`controllerStateDir` is one system/controller-owned durable root. Controller
+records for a zone live beneath `<controllerStateDir>/zones/<zoneId>/`:
+`approvals/`, `gateway-runtime.json`, `tool-leases/<recordId>.json`, and
+`worker-tasks/<taskId>/gateway-runtime.json`. This root is never mounted into a
+Gateway or Tool VM. Existing Gateway-visible paths under `stateDir` remain
+unchanged and contain no controller lifecycle authority.
+
+Cleanup reads schema-v2 Tool records from `<controllerStateDir>/zones/<zoneId>/tool-leases/<recordId>.json` before the zone's `<controllerStateDir>/zones/<zoneId>/gateway-runtime.json`. Each record must match the canonical config path, controller port, project namespace, zone, session label, full Gateway parent identity, VM id, pid, and process command/start identity as applicable. Cleanup revalidates the live process and endpoint before signaling, deletes records only after the recorded process and relevant endpoint are absent, and never adopts an old VM. Old, malformed, mismatched, or otherwise unproven evidence fails closed and remains for operator diagnosis. This is the supported replacement for deployment-local broad `pkill -f qemu-system-*` commands.
 
 Gateway subtree destruction runs at most four child dispositions concurrently.
 When the bounded subtree attempt aborts or any exact child disposition remains
 unproven, queued children do not start, the Gateway is not closed, and a
 successor Gateway is refused until recorded cleanup evidence is resolved.
-
----
 
 ## HTTP API Routes
 
@@ -244,7 +249,7 @@ the zone runtime.
 `startGatewayZone()` in `gateway-zone-orchestrator.ts` is the boot sequence for any gateway VM. The controller calls it once at startup for OpenClaw zones, and once per task for Worker zones. The full 15-step sequence is documented in the [gateway zone orchestrator architecture](../architecture/overview.md#gateway-zone-orchestrator). Key points for controller integration:
 
 - Before a fresh OpenClaw tree is published, controller recovery adopts nothing: it validates v2 Tool and Gateway records, destroys verified old Tool runners before their Gateway parent, and refuses a successor when identity or endpoint absence is unproven.
-- Gateway startup allocates an epoch seed before stock VM construction, attaches the returned VM id, starts the VM, captures pid/process identity, and persists `<stateDir>/gateway-runtime.json` before publishing the runtime. The ingress port is added when available.
+- Gateway startup allocates an epoch seed before stock VM construction, attaches the returned VM id, starts the VM, captures pid/process identity, and persists `<controllerStateDir>/zones/<zoneId>/gateway-runtime.json` before publishing the runtime. The ingress port is added when available.
 - The controller holds the returned live VM handle for the zone lifetime. Normal teardown fences admission, destroys Tool children, terminates the exact recorded Gateway process, observes runner absence, calls stock `VM.close()`, verifies endpoint absence, and only then deletes the runtime record.
 - Gateway-to-Tool command and file bytes stay on direct SSH. Socket.IO carries bounded control; health events and telemetry are not lifecycle authority.
 
@@ -259,34 +264,40 @@ not by VM-facing public HTTP lease routes.
 ### Lease Lifecycle
 
 ```
-  gateway_control_rpc lease_create { callerContextId, profileId, agentWorkspaceDir, workMountDir, idleTtlMs? }
+  gateway_control_rpc lease_create { callerContext: { callerContextId }, correlation?, idleTtlHintMs? }
     |
     v
-  resolveLeaseWorkMountDir()
-    |-- 1. Require OpenClaw gateway path under /zone/<child> or
-    |      /home/openclaw/.openclaw/state/sandboxes/<child>
-    |-- 2. Reject the allowed-root boundaries themselves as too broad
-    |-- 3. Translate workMountDir to hostWorkMountDir under <stateDir>/sandboxes or <zoneFilesDir>
-    |-- 4. realpath + containment check
-    |-- 5. For agent sandbox work mounts, seed first-boot files by agentId
+  resolveOpenClawToolVmLeaseCreateOptions()
+    |-- 1. Resolve the controller-vetted caller context
+    |      to its configured zone and agent
+    |-- 2. Select agentToolVmProfiles[agentId]
+    |      or defaultToolVmProfile
+    |-- 3. Derive and realpath controller-owned capabilities:
+    |      workspace  = <zoneFilesDir>/agents/<agentId>
+    |      Git root  = <runtimeDir>/zones/<zoneId>/gitdirs/agents/<agentId>
+    |-- 4. Set the Tool VM default cwd to rootfs/COW /work
+    |-- 5. Validate the optional requested idle TTL hint
     |
     v
   createLease()
     |-- 1. Lock on (zoneId, agentId)
     |-- 2. Existing same-agent lease?
-    |       |-- profile/hostWorkMountDir/agentWorkspace mismatch -> 409 conflict
+    |       |-- profile/workspace/Git-root/revision mismatch -> conflict
     |       |-- VM live -> reuse lease
-    |       |-- VM dead -> close/evict/release TCP slot
-    |-- 3. tcpPool.allocate()          Claim next free slot
-    |-- 4. selectToolVmProfileForAgent()
-    |       |-- zone.agentToolVmProfiles[agentId]
-    |       |-- otherwise zone.defaultToolVmProfile
-    |-- 5. Begin provisional Tool membership under the exact Gateway epoch
-    |-- 6. createManagedVm(...)        Construct an unstarted ManagedVm via the injected factory
-    |-- 7. Attach vm.id, vm.start(), capture pid + process-start identity
-    |-- 8. Persist <stateDir>/tool-leases/<recordId>.json (schema v2)
-    |-- 9. vm.enableSsh({ port })      Start SSH listener, validate exact server identity
-    |-- 10. Commit membership + lease  Publish current lease only after durable evidence
+    |       |-- VM dead/stale -> retire from access and begin exact termination
+    |-- 3. tcpPool.allocate()          Claim a successor slot
+    |-- 4. Begin provisional Tool membership under the exact Gateway epoch
+    |-- 5. Create a Tool VM with controller-selected mounts:
+    |       |-- /workspace  filtered owned workspace capability
+    |       |-- /gitdirs    owned agent Git-directory root
+    |       |-- /work       rootfs/COW, never a host mount
+    |-- 6. Attach vm.id, start it, capture pid + process-start identity
+    |-- 7. Persist <controllerStateDir>/zones/<zoneId>/tool-leases/<recordId>.json (schema v2)
+    |-- 8. For replacement, wait until predecessor access is fenced
+    |       before persistent-state materialization or successor admission
+    |-- 9. Materialize the configured workspace Git state when enabled
+    |-- 10. vm.enableSsh({ port })     Start SSH listener, validate exact server identity
+    |-- 11. Commit membership + lease Publish only the current fenced generation
     |
     |   On failure:
     |     exact-terminate a recorded runner; otherwise close only an unstarted/absent runner
@@ -304,12 +315,14 @@ not by VM-facing public HTTP lease routes.
     |-- 5. tcpPool.release(slot)       Return slot only after absence proof
 ```
 
-Each lease holds: `id`, `zoneId`, `agentId`, `profileId`, `agentWorkspaceDir`,
-`hostWorkMountDir`, `tcpSlot`, `vm` (ManagedVm handle), `sshAccess` (host, port,
-client identity file, user, exact Ed25519 server identity), `createdAt`,
-`lastUsedAt`, and `effectiveIdleTtlMs`. The
-lease manager does not clean work mount files on release; OpenClaw-selected
-lease work mounts are owned by the caller that supplied `workMountDir`.
+Each lease internally binds `id`, `zoneId`, `agentId`, `profileId`, the exact
+controller-selected `hostWorkspaceRoot` and `hostGitDirectoryRoot`, rootfs/COW
+guest cwd `/work`, profile-assignment revision, TCP slot, VM handle, SSH access
+and server identity, runtime record, creation time, last-use time, and effective
+idle TTL. These host roots are controller-derived capabilities; they do not
+come from the Gateway, plugin, model, or lease request. Lease release destroys
+VM access but does not delete the durable agent workspace or its agent-lifetime
+workspace Git database.
 
 Operator-visible lease counts are exposed through controller status and health
 snapshot diagnostics. Managed gateway leases are otherwise created, renewed,
@@ -330,21 +343,23 @@ denial such as `lease_authority_absent`, `caller_context_absent`,
 kept only as correlation evidence for the tombstone window. It must not be used
 for later active-use, heartbeat, SSH, file, exec, or finalize work.
 
-`workMountDir` is a gateway VM path, not a host path and not a `system.json`
-field. It must name a concrete child path below `/zone` or
-`/home/openclaw/.openclaw/state/sandboxes`; those roots are validation
-boundaries and are rejected as mount targets. The controller resolves the
-gateway path to `hostWorkMountDir` before handing it to the lease manager.
-For the canonical name/location/storage vocabulary, see
-[Lease Path Vocabulary](../architecture/storage-model.md#lease-path-vocabulary).
+Managed-agent Tool VM leases no longer accept `workMountDir`,
+`hostWorkMountDir`, `agentWorkspaceDir`, or `profileId` as request authority.
+The strict Gateway Control payload contains only the registered caller-context
+reference, optional correlation, and optional idle-TTL hint. The controller
+uses the trusted context's `zoneId` and `agentId` to derive the workspace and
+Git roots and selects `agentToolVmProfiles[agentId]` or the zone fallback
+`defaultToolVmProfile`. Undeclared agents, mismatched session or Gateway
+authority, stale profile-assignment revisions, and cross-agent capability use
+fail closed.
 
-For OpenClaw leases, the route resolves `profileId` from the request `agentId`
-and the zone's Tool VM policy. During the Socket.IO control-plane hard cutover,
-managed OpenClaw zones may declare multiple trusted agents. The active policy is
-`agentToolVmProfiles[agentId]` when present, otherwise the zone fallback
-`defaultToolVmProfile`. Caller context must still be controller-vetted before a
-Tool VM lease is issued: undeclared agents, mismatched session keys, and
-cross-agent workspace/work-mount provenance fail closed.
+Inside the Tool VM, `/workspace` is the selected filtered durable agent
+workspace, `/gitdirs/workspace.git` is present only when workspace Git is
+enabled, and `/work` is disposable rootfs/COW execution data. The Gateway keeps
+its own independently authored mount view; it never lends `/zone`, framework
+state, controller state, sibling workspaces, or sibling Git databases to the
+Tool VM. See [Storage Model](../architecture/storage-model.md) for the canonical
+host and guest layout.
 
 ### TCP Pool
 

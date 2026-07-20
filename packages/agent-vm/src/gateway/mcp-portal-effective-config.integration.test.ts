@@ -16,7 +16,6 @@ type TestSecretResolver = SecretResolver & { readonly resolveAllMock: ReturnType
 
 interface TestEffectiveConfigManifest {
 	readonly mcpConfigFile: string;
-	readonly portalConfigFile: string;
 	readonly schemaVersion: 1;
 	readonly toolPortalConfigFile: string;
 }
@@ -29,16 +28,17 @@ afterAll(async () => {
 
 async function createAuthoredDir(props: {
 	readonly mcpConfig: unknown;
-	readonly portalConfig?: unknown;
+	readonly toolPortalConfig?: unknown;
 }): Promise<string> {
 	const dir = await mkdtemp(path.join(tmpdir(), 'agent-vm-mcp-portal-authored-'));
 	createdDirectories.push(dir);
 	await writeFile(path.join(dir, 'mcp.config.jsonc'), JSON.stringify(props.mcpConfig), 'utf8');
 	await writeFile(
-		path.join(dir, 'mcp-portal.config.jsonc'),
+		path.join(dir, 'tool-portal.config.jsonc'),
 		JSON.stringify(
-			props.portalConfig ?? {
+			props.toolPortalConfig ?? {
 				agents: { shravan: { profile: 'default' } },
+				mode: 'managed',
 				profiles: { default: { namespaces: {} } },
 				schemaVersion: 1,
 			},
@@ -59,24 +59,21 @@ async function readEffectiveConfigManifest(
 		manifest === null ||
 		!('schemaVersion' in manifest) ||
 		!('mcpConfigFile' in manifest) ||
-		!('portalConfigFile' in manifest) ||
 		!('toolPortalConfigFile' in manifest)
 	) {
 		throw new Error('test effective config manifest has unexpected shape');
 	}
 	const schemaVersion = manifest.schemaVersion;
 	const mcpConfigFile = manifest.mcpConfigFile;
-	const portalConfigFile = manifest.portalConfigFile;
 	const toolPortalConfigFile = manifest.toolPortalConfigFile;
 	if (
 		schemaVersion !== 1 ||
 		typeof mcpConfigFile !== 'string' ||
-		typeof portalConfigFile !== 'string' ||
 		typeof toolPortalConfigFile !== 'string'
 	) {
 		throw new Error('test effective config manifest has unexpected shape');
 	}
-	return { mcpConfigFile, portalConfigFile, schemaVersion, toolPortalConfigFile };
+	return { mcpConfigFile, schemaVersion, toolPortalConfigFile };
 }
 
 const emptySecretResolver = {
@@ -118,6 +115,35 @@ function createSecretResolver(values: Readonly<Record<string, string>>): TestSec
 }
 
 describe('MCP Portal effective config file materialization', () => {
+	it('rejects a managed config directory containing only standalone MCP Portal policy', async () => {
+		const authoredDir = await mkdtemp(path.join(tmpdir(), 'agent-vm-tool-portal-ownership-'));
+		createdDirectories.push(authoredDir);
+		await writeFile(
+			path.join(authoredDir, 'mcp.config.jsonc'),
+			JSON.stringify({ providers: {}, schemaVersion: 1 }),
+			'utf8',
+		);
+		await writeFile(
+			path.join(authoredDir, 'mcp-portal.config.jsonc'),
+			JSON.stringify({
+				agents: { shravan: { profile: 'default' } },
+				profiles: { default: { namespaces: {} } },
+				schemaVersion: 1,
+			}),
+			'utf8',
+		);
+
+		await expect(
+			resolveMcpPortalEffectiveConfig({
+				approvalAccessConfigured: false,
+				authoredConfigDir: authoredDir,
+				effectiveHostConfigDir: path.join(authoredDir, 'effective'),
+				secretResolver: emptySecretResolver,
+				zoneId: 'shravan',
+			}),
+		).rejects.toThrow(/tool-portal\.config\.jsonc/u);
+	});
+
 	it('resolves 1Password provider secrets without writing effective configs', async () => {
 		const authoredDir = await createAuthoredDir({
 			mcpConfig: {
@@ -152,9 +178,9 @@ describe('MCP Portal effective config file materialization', () => {
 		});
 
 		const result = await resolveMcpPortalEffectiveConfig({
+			approvalAccessConfigured: false,
 			authoredConfigDir: authoredDir,
 			effectiveHostConfigDir: effectiveDir,
-			effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/tool-portal-effective',
 			secretResolver,
 			zoneId: 'shravan',
 		});
@@ -181,12 +207,14 @@ describe('MCP Portal effective config file materialization', () => {
 				},
 				schemaVersion: 1,
 			},
-			portalConfig: {
+			toolPortalConfig: {
 				agents: { shravan: { profile: 'default' } },
+				mode: 'managed',
 				profiles: {
 					default: {
 						namespaces: {
 							linear: {
+								backend: { kind: 'mcp_provider' },
 								calls: {
 									requiresApproval: { allow: [], deny: [] },
 									withoutApproval: { allow: '*', deny: [] },
@@ -202,23 +230,19 @@ describe('MCP Portal effective config file materialization', () => {
 		const effectiveDir = path.join(authoredDir, 'effective');
 
 		await writeMcpPortalEffectiveConfig({
+			approvalAccessConfigured: false,
 			authoredConfigDir: authoredDir,
 			effectiveHostConfigDir: effectiveDir,
-			effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/tool-portal-effective',
 			secretResolver: emptySecretResolver,
 			zoneId: 'shravan',
 		});
 		const manifest = await readEffectiveConfigManifest(effectiveDir);
 
 		expect(manifest.mcpConfigFile).toMatch(/^mcp\.config\.[0-9a-f-]+\.jsonc$/u);
-		expect(manifest.portalConfigFile).toMatch(/^mcp-portal\.config\.[0-9a-f-]+\.jsonc$/u);
 		expect(manifest.toolPortalConfigFile).toMatch(/^tool-portal\.config\.[0-9a-f-]+\.jsonc$/u);
 		await expect(
 			readFile(path.join(effectiveDir, manifest.mcpConfigFile), 'utf8'),
 		).resolves.toContain('linear');
-		await expect(
-			readFile(path.join(effectiveDir, manifest.portalConfigFile), 'utf8'),
-		).resolves.toContain('shravan');
 		await expect(
 			readFile(path.join(effectiveDir, manifest.toolPortalConfigFile), 'utf8'),
 		).resolves.toContain('"backend"');

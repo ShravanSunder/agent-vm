@@ -1278,6 +1278,9 @@ export function createGatewayDisposableControlSessionClient(
 					id: envelope.messageId,
 					messageClass: classification.messageClass,
 					payload: message,
+					...(classification.stablePrincipal === undefined
+						? {}
+						: { stablePrincipal: classification.stablePrincipal }),
 				},
 			});
 			switch (submission.admission.status) {

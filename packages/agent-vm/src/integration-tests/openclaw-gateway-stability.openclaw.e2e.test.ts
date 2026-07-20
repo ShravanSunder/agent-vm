@@ -277,14 +277,10 @@ describeOpenClawStability('e2e: OpenClaw managed gateway stability', () => {
 			},
 			startGatewayZone: async (startGatewayOptions) => {
 				const result = await startGatewayZone(startGatewayOptions);
+				if (result.executionModel !== 'managed-gateway') {
+					throw new Error('OpenClaw stability proof requires managed Gateway image boot.');
+				}
 				gatewayVmIds.push(result.vm.id);
-				result.vm.configureIngressRoutes([
-					{
-						port: result.processSpec.guestListenPort,
-						prefix: '/',
-						stripPrefix: true,
-					},
-				]);
 				return result;
 			},
 			startOptions: {

@@ -376,6 +376,9 @@ export function createGatewayControlApplicationMessageRuntime(
 						id: envelope.messageId,
 						messageClass: classification.messageClass,
 						payload: gatewayPayload,
+						...(classification.stablePrincipal === undefined
+							? {}
+							: { stablePrincipal: classification.stablePrincipal }),
 					});
 					if (
 						submission.admission.status === 'admitted' ||

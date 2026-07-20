@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+import { GatewayControlWorkspaceGitPushControllerHostActionPayloadSchema } from '@agent-vm/gateway-control-contracts';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { LoadedSystemConfig } from '../../config/system-config.js';
@@ -37,19 +38,24 @@ const acceptedSession = {
 	zoneId: 'zone-a',
 } satisfies GatewayControlAcceptedSessionRef;
 
+const trustedPrincipal = {
+	agentId: 'main',
+	frameworkIdentity: { agentId: 'main', kind: 'openclaw' },
+	profileAssignmentRevision: 'assignment-main',
+	toolPortalProfileId: 'default',
+} as const;
+
 const trustedCallerContext = {
 	agentId: 'main',
-	agentWorkspaceDir: '/home/openclaw/workspace',
 	bootId: acceptedSession.bootId,
 	callerContextId: '44444444-4444-4444-8444-444444444444',
 	connectionId: '11111111-1111-4111-8111-111111111111',
 	controllerEpoch: acceptedSession.controllerEpoch,
 	peerId: acceptedSession.peerId,
+	principal: trustedPrincipal,
 	purpose: 'tool_portal_controller_host_action',
 	sessionId: '33333333-3333-4333-8333-333333333333',
-	sessionKeyDigest: 'digestdigestdigestdigestdigestdigestdigestdigest',
 	stablePrincipal: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-	workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
 	zoneId: acceptedSession.zoneId,
 } satisfies GatewayControlTrustedCallerContext;
 
@@ -63,19 +69,23 @@ const noSecretResolutionDuringTest = {
 async function writeToolPortalAuthoredConfig(
 	props: {
 		readonly agentId?: string;
-		readonly controllerHostActionTools?: readonly ('controller_host_probe' | 'zone_git_push')[];
+		readonly controllerHostActionTools?: readonly (
+			| 'controller_host_probe'
+			| 'workspace_git_push'
+		)[];
 		readonly controllerHostActionPolicy?: boolean;
 		readonly profileId?: string;
 	} = {},
 ): Promise<string> {
 	const configDir = path.join(testRoot, 'gateway-config');
 	const agentId = props.agentId ?? 'main';
-	const controllerHostActionTools = props.controllerHostActionTools ?? ['zone_git_push'];
+	const controllerHostActionTools = props.controllerHostActionTools ?? ['workspace_git_push'];
 	const controllerHostActionPolicy = props.controllerHostActionPolicy ?? true;
 	const profileId = props.profileId ?? 'default';
 	const namespaces = controllerHostActionPolicy
 		? {
 				controller_host_action: {
+					backend: { kind: 'controller_host_action' },
 					calls: {
 						requiresApproval: { allow: [] },
 						withoutApproval: { allow: controllerHostActionTools },
@@ -91,10 +101,11 @@ async function writeToolPortalAuthoredConfig(
 		'utf8',
 	);
 	await writeFile(
-		path.join(configDir, 'mcp-portal.config.jsonc'),
+		path.join(configDir, 'tool-portal.config.jsonc'),
 		`${JSON.stringify(
 			{
 				agents: { [agentId]: { profile: profileId } },
+				mode: 'managed',
 				profiles: {
 					[profileId]: {
 						namespaces,
@@ -113,13 +124,14 @@ async function writeToolPortalAuthoredConfig(
 async function createSystemConfigFixture(
 	options: {
 		readonly configDir?: string;
-		readonly zoneGit?: boolean;
+		readonly workspaceGit?: boolean;
 		readonly toolPortal?: boolean;
 	} = {},
 ): Promise<LoadedSystemConfig> {
 	const configDir = options.configDir ?? (await writeToolPortalAuthoredConfig());
 	return {
 		cacheDir: path.join(testRoot, 'cache'),
+		controllerStateDir: path.join(testRoot, 'controller-state'),
 		controller: {
 			health: {
 				controlSessionDeathGraceMs: 600_000,
@@ -169,6 +181,23 @@ async function createSystemConfigFixture(
 		toolVmProfiles: {},
 		zones: [
 			{
+				agents: [
+					{
+						id: trustedCallerContext.agentId,
+						...(options.workspaceGit === false
+							? {}
+							: {
+									workspaceGit: {
+										mode: 'remote' as const,
+										remote: {
+											branch: 'agent/workspace',
+											defaultBranch: 'main',
+											repoUrl: 'example/repo',
+										},
+									},
+								}),
+					},
+				],
 				egressHosts: [],
 				gateway: {
 					config: path.join(testRoot, 'config', 'zone-a', 'openclaw.json'),
@@ -183,19 +212,6 @@ async function createSystemConfigFixture(
 					stateDir: path.join(testRoot, 'state', 'zone-a'),
 					type: 'openclaw',
 					zoneFilesDir: path.join(testRoot, 'zone-files', 'zone-a'),
-					...(options.zoneGit === false
-						? {}
-						: {
-								zoneGit: {
-									remote: {
-										branch: 'agent/zone-files',
-										defaultBranch: 'main',
-										protectedBranches: ['main'],
-										protectedBranchPatterns: ['release/*'],
-										repoUrl: 'git@example.com:repo.git',
-									},
-								},
-							}),
 				},
 				id: 'zone-a',
 				secrets: {
@@ -206,13 +222,43 @@ async function createSystemConfigFixture(
 						source: 'environment',
 					},
 				},
-				...(options.toolPortal === false ? {} : { toolPortal: { configDir } }),
+				...(options.toolPortal === false
+					? {}
+					: {
+							toolPortal: {
+								configDir,
+								surfaceEligibilityByProfile: {
+									default: { controller_host_action: ['protected_uds'] },
+								},
+							},
+						}),
 			},
 		],
 	} satisfies LoadedSystemConfig;
 }
 
-async function writeEffectiveToolPortalSnapshot(systemConfig: LoadedSystemConfig): Promise<void> {
+function configureFixtureAsHermes(systemConfig: LoadedSystemConfig): void {
+	const zone = systemConfig.zones[0];
+	if (zone === undefined || zone.gateway.type !== 'openclaw') {
+		throw new Error('Expected OpenClaw fixture zone');
+	}
+	zone.gateway = {
+		config: path.join(testRoot, 'config', 'zone-a', 'hermes.yaml'),
+		cpus: zone.gateway.cpus,
+		imageProfile: 'hermes',
+		memory: zone.gateway.memory,
+		port: zone.gateway.port,
+		profilesByAgent: { main: 'researcher' },
+		stateDir: zone.gateway.stateDir,
+		type: 'hermes',
+		zoneFilesDir: zone.gateway.zoneFilesDir,
+	};
+}
+
+async function writeEffectiveToolPortalSnapshot(
+	systemConfig: LoadedSystemConfig,
+	options: { readonly eligibleAgentIds?: readonly string[] } = {},
+): Promise<void> {
 	const zone = systemConfig.zones.find(
 		(configuredZone) => configuredZone.id === acceptedSession.zoneId,
 	);
@@ -220,28 +266,35 @@ async function writeEffectiveToolPortalSnapshot(systemConfig: LoadedSystemConfig
 		throw new Error('test fixture expected a Tool Portal zone');
 	}
 	await writeMcpPortalEffectiveConfig({
+		approvalAccessConfigured: false,
 		allowedRawEnvSecretNames: ['OPENCLAW_GATEWAY_TOKEN'],
 		authoredConfigDir: zone.toolPortal.configDir,
+		declaredAgentIds: (zone.agents ?? []).map((agent) => agent.id),
 		effectiveHostConfigDir: path.join(
 			systemConfig.cacheDir,
 			'gateways',
 			acceptedSession.zoneId,
 			'tool-portal-effective',
 		),
-		effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/tool-portal-effective',
-		includeZoneGitControllerHostAction: true,
 		secretResolver: noSecretResolutionDuringTest,
+		workspaceGitPushAgentEligibility: {
+			eligibleAgentIds:
+				options.eligibleAgentIds ??
+				(zone.agents ?? []).flatMap((agent) =>
+					agent.workspaceGit?.mode === 'remote' ? [agent.id] : [],
+				),
+		},
 		zoneId: acceptedSession.zoneId,
 	});
 }
 
-function createZoneGitPushPayload(
+function createWorkspaceGitPushPayload(
 	overrides: {
 		readonly capabilityName?: string;
 		readonly capabilityNamespace?: string;
 	} = {},
 ): {
-	readonly actionId: 'zone_git_push';
+	readonly actionId: 'workspace_git_push';
 	readonly callerContext: {
 		readonly callerContextId: string;
 	};
@@ -254,17 +307,17 @@ function createZoneGitPushPayload(
 	readonly expectedHead: string;
 } {
 	return {
-		actionId: 'zone_git_push' as const,
+		actionId: 'workspace_git_push' as const,
 		callerContext: {
 			callerContextId: trustedCallerContext.callerContextId,
 		},
 		correlation: {
 			capability: {
-				name: overrides.capabilityName ?? 'zone_git_push',
+				name: overrides.capabilityName ?? 'workspace_git_push',
 				namespace: overrides.capabilityNamespace ?? 'controller_host_action',
 			},
 		},
-		expectedHead: 'abc123',
+		expectedHead: '0123456789abcdef0123456789abcdef01234567',
 	};
 }
 
@@ -300,27 +353,79 @@ function createControllerHostProbePayload(
 }
 
 describe('authorizeGatewayControlControllerHostAction', () => {
-	it('authorizes zone_git_push from the controller-derived Tool Portal projection', async () => {
+	it('authorizes workspace_git_push from the controller-derived Tool Portal projection', async () => {
 		const systemConfig = await createSystemConfigFixture();
 		await writeEffectiveToolPortalSnapshot(systemConfig);
 
 		await expect(
 			authorizeGatewayControlControllerHostAction({
 				callerContext: trustedCallerContext,
-				payload: createZoneGitPushPayload(),
+				payload: createWorkspaceGitPushPayload(),
 				session: acceptedSession,
 				systemConfig,
 			}),
 		).resolves.toEqual({ authorized: true });
 	});
 
+	it('authorizes the same controller-owned workspace_git_push for Hermes profiles', async () => {
+		const systemConfig = await createSystemConfigFixture();
+		configureFixtureAsHermes(systemConfig);
+		await writeEffectiveToolPortalSnapshot(systemConfig);
+		const hermesCallerContext = {
+			...trustedCallerContext,
+			principal: {
+				...trustedCallerContext.principal,
+				frameworkIdentity: { kind: 'hermes', profileName: 'researcher' },
+			},
+		} satisfies GatewayControlTrustedCallerContext;
+
+		await expect(
+			authorizeGatewayControlControllerHostAction({
+				callerContext: hermesCallerContext,
+				payload: createWorkspaceGitPushPayload(),
+				session: acceptedSession,
+				systemConfig,
+			}),
+		).resolves.toEqual({ authorized: true });
+	});
+
+	it('rejects controller host actions from Worker zones', async () => {
+		const systemConfig = await createSystemConfigFixture();
+		const zone = systemConfig.zones[0];
+		if (zone === undefined) {
+			throw new Error('Expected managed framework fixture zone');
+		}
+		zone.gateway = {
+			config: path.join(testRoot, 'config', 'zone-a', 'worker.json'),
+			cpus: 2,
+			imageProfile: 'worker',
+			memory: '2G',
+			port: 18_792,
+			stateDir: path.join(testRoot, 'state', 'zone-a'),
+			type: 'worker',
+		};
+
+		await expect(
+			authorizeGatewayControlControllerHostAction({
+				callerContext: trustedCallerContext,
+				payload: createWorkspaceGitPushPayload(),
+				session: acceptedSession,
+				systemConfig,
+			}),
+		).resolves.toEqual({
+			authorized: false,
+			errorClass: 'controller_host_action_zone_unsupported',
+			safeMessage: 'controller host action zone is not supported',
+		});
+	});
+
 	it('authorizes controller_host_probe from explicit policy when the e2e probe gate is enabled', async () => {
 		process.env.AGENT_VM_E2E_CONTROLLER_HOST_PROBE = '1';
 		const systemConfig = await createSystemConfigFixture({
 			configDir: await writeToolPortalAuthoredConfig({
-				controllerHostActionTools: ['zone_git_push', 'controller_host_probe'],
+				controllerHostActionTools: ['controller_host_probe'],
 			}),
-			zoneGit: false,
+			workspaceGit: false,
 		});
 		await writeEffectiveToolPortalSnapshot(systemConfig);
 
@@ -337,9 +442,9 @@ describe('authorizeGatewayControlControllerHostAction', () => {
 	it('rejects controller_host_probe when the e2e probe gate is disabled', async () => {
 		const systemConfig = await createSystemConfigFixture({
 			configDir: await writeToolPortalAuthoredConfig({
-				controllerHostActionTools: ['zone_git_push', 'controller_host_probe'],
+				controllerHostActionTools: ['controller_host_probe'],
 			}),
-			zoneGit: false,
+			workspaceGit: false,
 		});
 		await writeEffectiveToolPortalSnapshot(systemConfig);
 
@@ -364,7 +469,7 @@ describe('authorizeGatewayControlControllerHostAction', () => {
 		await expect(
 			authorizeGatewayControlControllerHostAction({
 				callerContext: trustedCallerContext,
-				payload: createControllerHostProbePayload({ capabilityName: 'zone_git_push' }),
+				payload: createControllerHostProbePayload({ capabilityName: 'workspace_git_push' }),
 				session: acceptedSession,
 				systemConfig,
 			}),
@@ -384,7 +489,7 @@ describe('authorizeGatewayControlControllerHostAction', () => {
 		await expect(
 			authorizeGatewayControlControllerHostAction({
 				callerContext: trustedCallerContext,
-				payload: createZoneGitPushPayload(),
+				payload: createWorkspaceGitPushPayload(),
 				session: acceptedSession,
 				systemConfig,
 			}),
@@ -395,13 +500,64 @@ describe('authorizeGatewayControlControllerHostAction', () => {
 		});
 	});
 
+	it('rejects workspace_git_push for an agent without remote workspace Git', async () => {
+		const systemConfig = await createSystemConfigFixture({ workspaceGit: false });
+		await writeEffectiveToolPortalSnapshot(systemConfig, {
+			eligibleAgentIds: [trustedCallerContext.agentId],
+		});
+
+		await expect(
+			authorizeGatewayControlControllerHostAction({
+				callerContext: trustedCallerContext,
+				payload: createWorkspaceGitPushPayload(),
+				session: acceptedSession,
+				systemConfig,
+			}),
+		).resolves.toEqual({
+			authorized: false,
+			errorClass: 'controller_host_action_not_configured',
+			safeMessage: 'controller host action is not configured for this agent',
+		});
+	});
+
+	it.each([
+		['agentId', 'forged-agent'],
+		['branch', 'forged/branch'],
+		['path', '/forged/path'],
+		['remote', { repoUrl: 'forged/repository' }],
+		['zoneId', 'forged-zone'],
+	] as const)(
+		'rejects workspace_git_push wire payload identity or routing field %s',
+		(forbiddenFieldName, forbiddenFieldValue) => {
+			const payloadWithForbiddenAuthority = {
+				...createWorkspaceGitPushPayload(),
+				[forbiddenFieldName]: forbiddenFieldValue,
+			};
+
+			expect(
+				GatewayControlWorkspaceGitPushControllerHostActionPayloadSchema.safeParse(
+					payloadWithForbiddenAuthority,
+				).success,
+			).toBe(false);
+		},
+	);
+
+	it('limits workspace_git_push action arguments to expectedHead', () => {
+		expect(Object.keys(createWorkspaceGitPushPayload()).toSorted()).toEqual([
+			'actionId',
+			'callerContext',
+			'correlation',
+			'expectedHead',
+		]);
+	});
+
 	it('rejects forged capability selectors before controller execution', async () => {
 		const systemConfig = await createSystemConfigFixture();
 
 		await expect(
 			authorizeGatewayControlControllerHostAction({
 				callerContext: trustedCallerContext,
-				payload: createZoneGitPushPayload({ capabilityNamespace: 'mcp_provider' }),
+				payload: createWorkspaceGitPushPayload({ capabilityNamespace: 'mcp_provider' }),
 				session: acceptedSession,
 				systemConfig,
 			}),
@@ -419,7 +575,7 @@ describe('authorizeGatewayControlControllerHostAction', () => {
 			authorizeGatewayControlControllerHostAction({
 				callerContext: trustedCallerContext,
 				payload: {
-					...createZoneGitPushPayload(),
+					...createWorkspaceGitPushPayload(),
 					correlation: {
 						toolCallId: 'tool-call-without-capability',
 					},
@@ -444,15 +600,19 @@ describe('authorizeGatewayControlControllerHostAction', () => {
 					...trustedCallerContext,
 					agentId: 'forged-agent',
 					callerContextId: '55555555-5555-4555-8555-555555555555',
+					principal: {
+						...trustedPrincipal,
+						agentId: 'forged-agent',
+					},
 				},
-				payload: createZoneGitPushPayload(),
+				payload: createWorkspaceGitPushPayload(),
 				session: acceptedSession,
 				systemConfig,
 			}),
 		).resolves.toEqual({
 			authorized: false,
-			errorClass: 'controller_host_action_policy_denied',
-			safeMessage: 'controller host action policy denied the requested capability',
+			errorClass: 'controller_host_action_not_configured',
+			safeMessage: 'controller host action is not configured for this agent',
 		});
 	});
 
@@ -462,7 +622,7 @@ describe('authorizeGatewayControlControllerHostAction', () => {
 		await expect(
 			authorizeGatewayControlControllerHostAction({
 				callerContext: trustedCallerContext,
-				payload: createZoneGitPushPayload(),
+				payload: createWorkspaceGitPushPayload(),
 				session: acceptedSession,
 				systemConfig,
 			}),
@@ -479,7 +639,7 @@ describe('authorizeGatewayControlControllerHostAction', () => {
 		await expect(
 			authorizeGatewayControlControllerHostAction({
 				callerContext: trustedCallerContext,
-				payload: createZoneGitPushPayload(),
+				payload: createWorkspaceGitPushPayload(),
 				session: acceptedSession,
 				systemConfig,
 			}),
@@ -499,7 +659,7 @@ describe('authorizeGatewayControlControllerHostAction', () => {
 		await expect(
 			authorizeGatewayControlControllerHostAction({
 				callerContext: trustedCallerContext,
-				payload: createZoneGitPushPayload(),
+				payload: createWorkspaceGitPushPayload(),
 				session: acceptedSession,
 				systemConfig,
 			}),

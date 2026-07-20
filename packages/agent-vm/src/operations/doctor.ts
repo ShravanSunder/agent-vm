@@ -1,4 +1,4 @@
-import { access } from 'node:fs/promises';
+import { access, lstat } from 'node:fs/promises';
 import path from 'node:path';
 
 import type {
@@ -21,7 +21,9 @@ import {
 } from '../build/package-overrides.js';
 import { buildZigInstallHint, checkManagedVmZigCompatibility } from '../build/zig-compatibility.js';
 import type { LoadedSystemConfig, SystemConfig } from '../config/system-config.js';
-import { buildOpenClawAgentSecretAccessChecks } from './agent-secret-access-checks.js';
+import { scanLegacyControllerRecordEvidence as scanGatewayStateAuthorityEvidenceDefault } from '../controller/durable-state/legacy-controller-record-evidence.js';
+import { resolveManagedAgentRootPaths } from '../gateway/managed-agent-root-storage.js';
+import { buildManagedAgentSecretAccessChecks } from './agent-secret-access-checks.js';
 import { hasRuntimeConfigReferences, isRuntimeSystemConfigPath } from './runtime-config-paths.js';
 
 export interface DoctorCheck {
@@ -39,6 +41,7 @@ export interface RunControllerDoctorOptions {
 	readonly occupiedPorts?: ReadonlySet<number>;
 	readonly nodeVersion: string;
 	readonly requiredZigVersion?: string;
+	readonly scanGatewayStateAuthorityEvidence?: typeof scanGatewayStateAuthorityEvidenceDefault;
 	readonly systemConfig: SystemConfig;
 	readonly totalMemoryBytes?: number;
 	readonly workerGatewayVmRequirementsBuilder?: (
@@ -246,6 +249,57 @@ export function buildRuntimePathIsolationCheck(systemConfig: SystemConfig): Doct
 	);
 }
 
+type ManagedAgentRootDirectoryObservation = 'missing' | 'real-directory' | 'unsafe';
+
+async function observeManagedAgentRootDirectory(
+	directoryPath: string,
+): Promise<ManagedAgentRootDirectoryObservation> {
+	try {
+		const status = await lstat(directoryPath);
+		return status.isDirectory() && !status.isSymbolicLink() ? 'real-directory' : 'unsafe';
+	} catch (error) {
+		if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+			return 'missing';
+		}
+		return 'unsafe';
+	}
+}
+
+export async function collectManagedAgentRootStorageChecks(
+	systemConfig: SystemConfig,
+): Promise<readonly DoctorCheck[]> {
+	const checksByZone = await Promise.all(
+		systemConfig.zones.map(async (zone): Promise<readonly DoctorCheck[]> => {
+			if (zone.gateway.type !== 'openclaw') {
+				return [];
+			}
+			const zoneFilesDir = zone.gateway.zoneFilesDir;
+			return await Promise.all(
+				(zone.agents ?? []).map(async (agent): Promise<DoctorCheck> => {
+					const rootPaths = resolveManagedAgentRootPaths({
+						agentId: agent.id,
+						zoneFilesDir,
+					});
+					const workspaceObservation = await observeManagedAgentRootDirectory(
+						rootPaths.hostWorkspaceRoot,
+					);
+					return {
+						name: `managed-agent-workspace-${zone.id}-${agent.id}`,
+						ok: workspaceObservation !== 'unsafe',
+						hint:
+							workspaceObservation === 'missing'
+								? 'pending controller materialization'
+								: workspaceObservation === 'real-directory'
+									? rootPaths.hostWorkspaceRoot
+									: `workspace=${workspaceObservation}; the workspace must be a real directory or absent before controller materialization`,
+					};
+				}),
+			);
+		}),
+	);
+	return checksByZone.flat();
+}
+
 function isWorkerRootfsWorkMountPath(guestPath: string): boolean {
 	return guestPath === '/work' || guestPath.startsWith('/work/');
 }
@@ -269,9 +323,6 @@ function buildWorkerWorkRootfsChecks(
 					port: zone.gateway.port,
 					ssh: zone.gateway.ssh ?? { secretEnv: 'explicit' },
 					stateDir: zone.gateway.stateDir,
-					...(zone.gateway.authProfilesRef
-						? { authProfilesRef: zone.gateway.authProfilesRef }
-						: {}),
 				},
 				secrets: zone.secrets,
 				egressHosts: zone.egressHosts,
@@ -344,18 +395,7 @@ function buildOpenClawAgentSetupChecks(systemConfig: SystemConfig): readonly Doc
 					hint: 'configured',
 				}) satisfies DoctorCheck,
 		);
-		const sandboxSeedChecks = Object.entries(zone.agentSandboxSeeds ?? {}).flatMap(
-			([agentId, seeds]) =>
-				seeds.map(
-					(seed, seedIndex) =>
-						({
-							name: `zone-agent-sandbox-seed-${zone.id}-${agentId}-${String(seedIndex)}`,
-							ok: true,
-							hint: seed.target,
-						}) satisfies DoctorCheck,
-				),
-		);
-		return [...authProfileChecks, ...sandboxSeedChecks];
+		return authProfileChecks;
 	});
 }
 
@@ -580,7 +620,59 @@ export async function collectVmHostSystemDoctorCheck(
 	};
 }
 
-export function runControllerDoctor(options: RunControllerDoctorOptions): ControllerDoctorResult {
+type GatewayStateAuthorityEvidence = Awaited<
+	ReturnType<typeof scanGatewayStateAuthorityEvidenceDefault>
+>[number];
+
+function buildGatewayStateAuthorityChecks(
+	evidenceByZone: readonly {
+		readonly evidence: readonly GatewayStateAuthorityEvidence[];
+		readonly zoneId: string;
+	}[],
+): readonly DoctorCheck[] {
+	const failedChecks = evidenceByZone.flatMap(({ evidence, zoneId }) =>
+		evidence.map(
+			(gatewayStateEvidence, evidenceIndex) =>
+				({
+					name: `legacy-controller-record-evidence-${zoneId}-${String(evidenceIndex)}`,
+					ok: false,
+					hint: `family=${gatewayStateEvidence.family} kind=${gatewayStateEvidence.kind} path=${gatewayStateEvidence.absolutePath}; move controller-owned records to controllerStateDir and remove legacy Gateway-state evidence`,
+				}) satisfies DoctorCheck,
+		),
+	);
+	return failedChecks.length > 0
+		? failedChecks
+		: [
+				{
+					name: 'legacy-controller-record-evidence',
+					ok: true,
+					hint: 'No legacy controller records exist under Gateway state directories.',
+				},
+			];
+}
+
+export async function runControllerDoctor(
+	options: RunControllerDoctorOptions,
+): Promise<ControllerDoctorResult> {
+	const scanGatewayStateAuthorityEvidence =
+		options.scanGatewayStateAuthorityEvidence ?? scanGatewayStateAuthorityEvidenceDefault;
+	const evidenceByZone: {
+		readonly evidence: readonly GatewayStateAuthorityEvidence[];
+		readonly zoneId: string;
+	}[] = [];
+	for (const zone of options.systemConfig.zones) {
+		// oxlint-disable-next-line no-await-in-loop -- stable zone ordering makes operator checks deterministic.
+		const evidence = await scanGatewayStateAuthorityEvidence({
+			gatewayStateDirectoryPath: path.resolve(zone.gateway.stateDir),
+		});
+		if (evidence.length > 0) {
+			evidenceByZone.push({ evidence, zoneId: zone.id });
+		}
+	}
+	const gatewayStateAuthorityChecks = buildGatewayStateAuthorityChecks(evidenceByZone);
+	const managedAgentRootStorageChecks = await collectManagedAgentRootStorageChecks(
+		options.systemConfig,
+	);
 	const nodeMajorVersion = Number.parseInt(
 		options.nodeVersion.replace(/^v/u, '').split('.')[0] ?? '0',
 		10,
@@ -694,6 +786,8 @@ export function runControllerDoctor(options: RunControllerDoctorOptions): Contro
 		),
 		...dockerChecks,
 		...openClawCliChecks,
+		...gatewayStateAuthorityChecks,
+		...managedAgentRootStorageChecks,
 		...buildRuntimePathIsolationChecks(options.systemConfig),
 		...workerWorkRootfsChecks,
 		{
@@ -728,7 +822,7 @@ export function runControllerDoctor(options: RunControllerDoctorOptions): Contro
 		),
 		...buildZoneToolVmProfileChecks(options.systemConfig),
 		...buildOpenClawAgentSetupChecks(options.systemConfig),
-		...buildOpenClawAgentSecretAccessChecks(options.systemConfig),
+		...buildManagedAgentSecretAccessChecks(options.systemConfig),
 		...buildLegacyDockerfileImageProfileChecks(options.systemConfig),
 		...options.systemConfig.zones.map(
 			(zone) =>

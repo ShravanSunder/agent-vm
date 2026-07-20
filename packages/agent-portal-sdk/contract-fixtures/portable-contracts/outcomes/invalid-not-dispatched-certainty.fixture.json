@@ -1,0 +1,25 @@
+{
+	"caseId": "invalid-not-dispatched-certainty",
+	"schemaId": "portal.call.item-result",
+	"tags": ["illegal-combination", "outcome", "rejected"],
+	"input": {
+		"error": {
+			"code": "capability_denied",
+			"message": "Protected work was not dispatched."
+		},
+		"id": "call-1",
+		"operationId": "operation-1",
+		"owningGeneration": "gateway-generation-1",
+		"outcome": {
+			"certainty": "proven-terminated",
+			"kind": "not-dispatched",
+			"retryClass": "safe-before-dispatch"
+		},
+		"status": "error"
+	},
+	"expectation": {
+		"kind": "rejected",
+		"errorCodes": ["portal.result.outcome-algebra"],
+		"refinementIdentities": ["portal.request-id.not-reserved", "portal.result.outcome-algebra"]
+	}
+}

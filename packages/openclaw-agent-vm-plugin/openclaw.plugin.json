@@ -1,8 +1,7 @@
 {
 	"id": "gondolin",
 	"name": "Gondolin VM Sandbox",
-	"description": "Sandbox backend powered by Gondolin micro-VMs, Tool Portal tools, and private agent-vm control sessions.",
-	"cliBackends": ["gondolin"],
+	"description": "Thin OpenClaw adapter for the agent-vm Gateway Runtime Tool Portal service.",
 	"activation": {
 		"onStartup": true
 	},
@@ -31,58 +30,123 @@
 				"type": "string",
 				"minLength": 1
 			},
-			"controlSession": {
-				"type": "object",
-				"additionalProperties": false,
-				"properties": {
-					"bootId": {
-						"type": "string",
-						"minLength": 1
-					},
-					"controllerEpoch": {
-						"type": "string",
-						"minLength": 1
-					},
-					"generationId": {
-						"type": "string",
-						"minLength": 1
-					},
-					"peerId": {
-						"type": "string",
-						"minLength": 1
-					},
-					"processEpoch": {
-						"type": "string",
-						"minLength": 1
-					},
-					"verifierPublicKeyPem": {
-						"type": "string",
-						"minLength": 1
-					}
-				},
-				"required": [
-					"bootId",
-					"controllerEpoch",
-					"generationId",
-					"peerId",
-					"processEpoch",
-					"verifierPublicKeyPem"
-				]
-			},
-			"profileId": {
-				"type": "string",
-				"minLength": 1
-			},
 			"toolPortal": {
 				"type": "object",
 				"additionalProperties": false,
 				"properties": {
-					"configDir": {
-						"type": "string",
-						"minLength": 1
+					"attachment": {
+						"type": "object",
+						"additionalProperties": false,
+						"properties": {
+							"attachmentGeneration": {
+								"type": "integer",
+								"minimum": 1,
+								"maximum": 9007199254740991
+							},
+							"clientKind": {
+								"const": "openclaw-managed-plugin"
+							},
+							"configuredAgentIds": {
+								"type": "array",
+								"minItems": 1,
+								"maxItems": 128,
+								"uniqueItems": true,
+								"items": {
+									"type": "string",
+									"minLength": 1,
+									"maxLength": 256
+								}
+							},
+							"frameworkEpoch": {
+								"type": "string",
+								"minLength": 1,
+								"maxLength": 256
+							},
+							"gatewayEpoch": {
+								"type": "string",
+								"minLength": 1,
+								"maxLength": 256
+							},
+							"protocolVersion": {
+								"type": "integer",
+								"minimum": 1,
+								"maximum": 9007199254740991
+							},
+							"projectionCohortDigest": {
+								"type": "string",
+								"pattern": "^projection-cohort:[a-f0-9]{64}$"
+							},
+							"runtimeEpoch": {
+								"type": "string",
+								"minLength": 1,
+								"maxLength": 256
+							},
+							"schemaVersion": {
+								"type": "integer",
+								"minimum": 1,
+								"maximum": 9007199254740991
+							}
+						},
+						"required": [
+							"attachmentGeneration",
+							"clientKind",
+							"configuredAgentIds",
+							"frameworkEpoch",
+							"gatewayEpoch",
+							"protocolVersion",
+							"projectionCohortDigest",
+							"runtimeEpoch",
+							"schemaVersion"
+						]
+					},
+					"agentProjections": {
+						"type": "object",
+						"minProperties": 1,
+						"additionalProperties": {
+							"type": "object",
+							"additionalProperties": false,
+							"properties": {
+								"agentId": {
+									"type": "string",
+									"minLength": 1,
+									"maxLength": 256
+								},
+								"frameworkIdentity": {
+									"type": "object",
+									"additionalProperties": false,
+									"properties": {
+										"agentId": {
+											"type": "string",
+											"minLength": 1,
+											"maxLength": 256
+										},
+										"kind": {
+											"const": "openclaw"
+										}
+									},
+									"required": ["agentId", "kind"]
+								},
+								"profileAssignmentRevision": {
+									"type": "string",
+									"minLength": 1,
+									"maxLength": 256
+								},
+								"toolPortalProfileId": {
+									"type": "string",
+									"minLength": 1,
+									"maxLength": 256
+								}
+							},
+							"required": [
+								"agentId",
+								"frameworkIdentity",
+								"profileAssignmentRevision",
+								"toolPortalProfileId"
+							]
+						}
 					}
 				},
-				"required": ["configDir"]
+				"required": ["agentProjections", "attachment"]
 			}
 		},
 		"required": ["zoneId"]

@@ -2,6 +2,8 @@ import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import ts from 'typescript';
+
 export interface PortalArchitectureSourceFile {
 	readonly filePath: string;
 	readonly sourceText: string;
@@ -15,6 +17,7 @@ const portalPackageNames = new Set([
 	'agent-portal-sdk',
 	'control-protocol-contracts',
 	'controller-execution-contracts',
+	'gateway-runtime',
 	'gateway-control-contracts',
 	'mcp-portal',
 	'tool-portal',
@@ -47,6 +50,38 @@ const runtimePortalImportPrefixes = [
 
 const harnessProcessBoundaryImports = new Set(['node:child_process', 'child_process', 'execa']);
 const harnessWallClockImports = new Set(['node:timers/promises', 'timers/promises']);
+
+const gatewayRuntimeForbiddenVmImportPrefixes = [
+	'@agent-vm/gondolin-vm-adapter',
+	'@agent-vm/managed-vm',
+	'@gondolin',
+] as const;
+
+const managedToolPortalAuthoredConfigOwnerFiles = new Set([
+	'packages/agent-vm/src/cli/init-command.ts',
+	'packages/agent-vm/src/gateway/mcp-portal-effective-config.ts',
+	'packages/agent-vm/src/operations/config-validation.ts',
+	'packages/agent-vm/src/operations/mcp-portal-live-validation.ts',
+]);
+
+const gatewayRuntimeToolPortalServiceCustodyOwnerFile =
+	'packages/gateway-runtime/src/managed-tool-portal-composition.ts';
+
+const retiredToolPortalInProcessRuntimeNames = [
+	'createManagedToolPortalInProcessRuntime',
+	'createToolPortalInProcessEntryPoint',
+] as const;
+
+const toolPortalSemanticRouterHelperNames = [
+	'mergePortalDescribe',
+	'mergePortalList',
+	'mergePortalSearch',
+	'mergeToolPortalDescribe',
+	'mergeToolPortalList',
+	'mergeToolPortalSearch',
+	'routePortalCall',
+	'routeToolPortalCall',
+] as const;
 
 const managedControlSourcePrefixes = [
 	'packages/agent-vm/src/controller/',
@@ -120,6 +155,51 @@ const managedControlDocumentationResiduePatterns = [
 	},
 ] as const;
 
+const managedOpenClawProcessSupervisorOwnedFiles = new Set([
+	'packages/agent-vm/src/controller/process-supervisor/openclaw-process-supervisor-contracts.ts',
+	'packages/agent-vm/src/controller/process-supervisor/openclaw-process-supervisor.integration.test.ts',
+	'packages/agent-vm/src/controller/process-supervisor/openclaw-process-supervisor.ts',
+	'packages/agent-vm/src/controller/process-supervisor/openclaw-process-supervisor.unit.test.ts',
+]);
+
+const managedOpenClawProcessReliabilityOwnedFiles = new Set([
+	'packages/agent-vm/src/controller/reliability/testing/openclaw-process-reliability-fault-handler.ts',
+	'packages/agent-vm/src/controller/reliability/testing/openclaw-process-reliability-fault-handler.unit.test.ts',
+	'packages/agent-vm/src/controller/reliability/testing/openclaw-process-reliability-fault-target-registry.ts',
+	'packages/agent-vm/src/controller/reliability/testing/openclaw-process-reliability-fault-target-registry.unit.test.ts',
+]);
+
+const managedOpenClawProcessRecoveryOwnedFiles = new Set([
+	'packages/agent-vm/src/controller/zone-runtimes/openclaw-process-recovery.ts',
+	'packages/agent-vm/src/controller/zone-runtimes/openclaw-process-recovery.unit.test.ts',
+]);
+
+const managedOpenClawProcessEpochOwnerFiles = new Set([
+	'packages/agent-vm/src/gateway/openclaw-gateway-process-epoch-owner.ts',
+	'packages/agent-vm/src/gateway/openclaw-gateway-process-epoch-owner.unit.test.ts',
+]);
+
+const managedOpenClawLocalProcessConsumerPatterns = [
+	{
+		message: 'managed OpenClaw must not retain controller-owned process supervisor consumers',
+		patterns: ['OpenClawProcessSupervisor', 'resolveOpenClawProcessSupervisorStateMount'],
+	},
+	{
+		message: 'managed OpenClaw must not retain same-VM process-epoch owner consumers',
+		patterns: ['OpenClawGatewayProcessEpochOwner', 'OpenClawProcessEpochLossBarrier'],
+	},
+	{
+		message:
+			'managed OpenClaw must not retain process-scoped recovery or local-successor consumers',
+		patterns: ['createOpenClawProcessRecoveryCoordinator', 'OpenClawProcessRecovery'],
+	},
+	{
+		message:
+			'managed OpenClaw reliability faults must target the Gateway VM, not an OpenClaw process',
+		patterns: ['OpenClawProcessReliabilityFault'],
+	},
+] as const;
+
 function normalizedFilePath(filePath: string): string {
 	return filePath.split(path.sep).join('/');
 }
@@ -147,6 +227,7 @@ function sourceFileNameWithoutTestSuffix(filePath: string): string {
 		.replace(/\.host\.e2e\.test$/u, '')
 		.replace(/\.vm\.e2e\.test$/u, '')
 		.replace(/\.openclaw\.e2e\.test$/u, '')
+		.replace(/\.hermes\.e2e\.test$/u, '')
 		.replace(/\.worker\.e2e\.test$/u, '')
 		.replace(/\.secrets\.e2e\.test$/u, '')
 		.replace(/\.llm\.e2e\.test$/u, '');
@@ -160,9 +241,11 @@ function isTestSourceFile(filePath: string): boolean {
 		filePath.endsWith('.host.e2e.test.ts') ||
 		filePath.endsWith('.vm.e2e.test.ts') ||
 		filePath.endsWith('.openclaw.e2e.test.ts') ||
+		filePath.endsWith('.hermes.e2e.test.ts') ||
 		filePath.endsWith('.worker.e2e.test.ts') ||
 		filePath.endsWith('.secrets.e2e.test.ts') ||
-		filePath.endsWith('.llm.e2e.test.ts')
+		filePath.endsWith('.llm.e2e.test.ts') ||
+		filePath.endsWith('-test-fixture.ts')
 	);
 }
 
@@ -281,6 +364,306 @@ function collectDependencyViolations(file: PortalArchitectureSourceFile): readon
 	return violations;
 }
 
+function collectAgentPortalSdkGatewayRuntimeImportViolations(
+	file: PortalArchitectureSourceFile,
+): readonly string[] {
+	const filePath = normalizedFilePath(file.filePath);
+	if (
+		isTestSourceFile(filePath) ||
+		!filePath.startsWith('packages/agent-portal-sdk/src/') ||
+		!filePath.endsWith('.ts')
+	) {
+		return [];
+	}
+	return importedModuleSpecifiers(file.sourceText)
+		.filter((specifier) => importStartsWithAny(specifier, ['@agent-vm/gateway-runtime']))
+		.map(
+			(specifier) => `${filePath}: Agent Portal SDK must not import Gateway runtime (${specifier})`,
+		);
+}
+
+function collectAgentPortalSdkPackageDependencyViolations(
+	file: PortalArchitectureSourceFile,
+): readonly string[] {
+	const filePath = normalizedFilePath(file.filePath);
+	if (filePath !== 'packages/agent-portal-sdk/package.json') {
+		return [];
+	}
+	let parsedPackageJson: unknown;
+	try {
+		parsedPackageJson = JSON.parse(file.sourceText);
+	} catch {
+		return [];
+	}
+	if (!isRecord(parsedPackageJson)) {
+		return [];
+	}
+	const violations: string[] = [];
+	for (const dependencyField of ['dependencies', 'devDependencies'] as const) {
+		const dependencies = parsedPackageJson[dependencyField];
+		if (isRecord(dependencies) && Object.hasOwn(dependencies, '@agent-vm/gateway-runtime')) {
+			violations.push(
+				`${filePath}: Agent Portal SDK must not declare @agent-vm/gateway-runtime in ${dependencyField}`,
+			);
+		}
+	}
+	return violations;
+}
+
+function moduleSpecifierText(moduleSpecifier: ts.Expression | undefined): string | null {
+	return moduleSpecifier !== undefined && ts.isStringLiteralLike(moduleSpecifier)
+		? moduleSpecifier.text
+		: null;
+}
+
+function hasExportModifier(node: ts.Node): boolean {
+	return (
+		ts.canHaveModifiers(node) &&
+		(ts.getModifiers(node)?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) ??
+			false)
+	);
+}
+
+function hasToolPortalServiceFactoryCustody(file: PortalArchitectureSourceFile): boolean {
+	const sourceFile = ts.createSourceFile(
+		file.filePath,
+		file.sourceText,
+		ts.ScriptTarget.Latest,
+		true,
+		ts.ScriptKind.TS,
+	);
+	const toolPortalNamespaceImports = new Set<string>();
+	let hasCustody = false;
+
+	for (const statement of sourceFile.statements) {
+		if (ts.isImportDeclaration(statement)) {
+			const importClause = statement.importClause;
+			if (importClause?.name?.text === 'createToolPortalService') {
+				hasCustody = true;
+			}
+			const namedBindings = importClause?.namedBindings;
+			if (namedBindings !== undefined && ts.isNamedImports(namedBindings)) {
+				hasCustody ||= namedBindings.elements.some(
+					(importSpecifier) =>
+						(importSpecifier.propertyName ?? importSpecifier.name).text ===
+						'createToolPortalService',
+				);
+			}
+			const importedModuleSpecifier = moduleSpecifierText(statement.moduleSpecifier);
+			if (
+				namedBindings !== undefined &&
+				ts.isNamespaceImport(namedBindings) &&
+				importedModuleSpecifier !== null &&
+				importStartsWithAny(importedModuleSpecifier, ['@agent-vm/tool-portal'])
+			) {
+				toolPortalNamespaceImports.add(namedBindings.name.text);
+			}
+		}
+		if (ts.isExportDeclaration(statement)) {
+			const exportedModuleSpecifier = moduleSpecifierText(statement.moduleSpecifier);
+			if (
+				exportedModuleSpecifier !== null &&
+				importStartsWithAny(exportedModuleSpecifier, ['@agent-vm/tool-portal']) &&
+				(statement.exportClause === undefined || ts.isNamespaceExport(statement.exportClause))
+			) {
+				hasCustody = true;
+			}
+			if (statement.exportClause !== undefined && ts.isNamedExports(statement.exportClause)) {
+				hasCustody ||= statement.exportClause.elements.some(
+					(exportSpecifier) =>
+						(exportSpecifier.propertyName ?? exportSpecifier.name).text ===
+						'createToolPortalService',
+				);
+			}
+		}
+	}
+
+	function visitNode(node: ts.Node): void {
+		if (hasCustody) {
+			return;
+		}
+		if (ts.isCallExpression(node)) {
+			if (ts.isIdentifier(node.expression) && node.expression.text === 'createToolPortalService') {
+				hasCustody = true;
+				return;
+			}
+			if (
+				ts.isPropertyAccessExpression(node.expression) &&
+				ts.isIdentifier(node.expression.expression) &&
+				toolPortalNamespaceImports.has(node.expression.expression.text) &&
+				node.expression.name.text === 'createToolPortalService'
+			) {
+				hasCustody = true;
+				return;
+			}
+		}
+		if (
+			ts.isExportAssignment(node) &&
+			ts.isIdentifier(node.expression) &&
+			node.expression.text === 'createToolPortalService'
+		) {
+			hasCustody = true;
+			return;
+		}
+		if (
+			hasExportModifier(node) &&
+			(ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) &&
+			node.name?.text === 'createToolPortalService'
+		) {
+			hasCustody = true;
+			return;
+		}
+		if (
+			hasExportModifier(node) &&
+			ts.isVariableStatement(node) &&
+			node.declarationList.declarations.some(
+				(declaration) =>
+					ts.isIdentifier(declaration.name) && declaration.name.text === 'createToolPortalService',
+			)
+		) {
+			hasCustody = true;
+			return;
+		}
+		ts.forEachChild(node, visitNode);
+	}
+
+	visitNode(sourceFile);
+	return hasCustody;
+}
+
+function collectToolPortalServiceCustodyViolations(
+	file: PortalArchitectureSourceFile,
+): readonly string[] {
+	const filePath = normalizedFilePath(file.filePath);
+	if (
+		isTestSourceFile(filePath) ||
+		!filePath.startsWith('packages/') ||
+		!filePath.includes('/src/') ||
+		!filePath.endsWith('.ts') ||
+		filePath === 'packages/tool-portal/src/tool-portal-service.ts' ||
+		!file.sourceText.includes('createToolPortalService')
+	) {
+		return [];
+	}
+	if (filePath.startsWith('packages/gateway-runtime/src/')) {
+		if (
+			filePath === gatewayRuntimeToolPortalServiceCustodyOwnerFile ||
+			!hasToolPortalServiceFactoryCustody(file)
+		) {
+			return [];
+		}
+		return [
+			`${filePath}: only ${gatewayRuntimeToolPortalServiceCustodyOwnerFile} may import, construct, or export createToolPortalService`,
+		];
+	}
+	return [`${filePath}: only Gateway runtime may construct ToolPortalService`];
+}
+
+function collectGatewayRuntimeVmImportViolations(
+	file: PortalArchitectureSourceFile,
+): readonly string[] {
+	const filePath = normalizedFilePath(file.filePath);
+	if (
+		isTestSourceFile(filePath) ||
+		!filePath.startsWith('packages/gateway-runtime/src/') ||
+		!filePath.endsWith('.ts')
+	) {
+		return [];
+	}
+	return importedModuleSpecifiers(file.sourceText)
+		.filter((specifier) => importStartsWithAny(specifier, gatewayRuntimeForbiddenVmImportPrefixes))
+		.map(
+			(specifier) =>
+				`${filePath}: Gateway runtime must not import managed VM or Gondolin packages (${specifier})`,
+		);
+}
+
+function collectManagedToolPortalConfigOwnershipViolations(
+	file: PortalArchitectureSourceFile,
+): readonly string[] {
+	const filePath = normalizedFilePath(file.filePath);
+	if (
+		!managedToolPortalAuthoredConfigOwnerFiles.has(filePath) ||
+		!file.sourceText.includes('mcp-portal.config.jsonc')
+	) {
+		return [];
+	}
+	return [
+		`${filePath}: managed Tool Portal paths must not consume or scaffold standalone mcp-portal.config.jsonc`,
+	];
+}
+
+function collectRetiredToolPortalInProcessRuntimeViolations(
+	file: PortalArchitectureSourceFile,
+): readonly string[] {
+	const filePath = normalizedFilePath(file.filePath);
+	if (filePath.startsWith('packages/tool-portal/src/in-process-entrypoint/')) {
+		return [`${filePath}: retired in-process Tool Portal runtime source and tests must not return`];
+	}
+	if (filePath === 'packages/tool-portal/package.json') {
+		let parsedPackageJson: unknown;
+		try {
+			parsedPackageJson = JSON.parse(file.sourceText);
+		} catch {
+			return [];
+		}
+		return isRecord(parsedPackageJson) &&
+			isRecord(parsedPackageJson.exports) &&
+			Object.hasOwn(parsedPackageJson.exports, './in-process-entrypoint')
+			? [`${filePath}: Tool Portal must not publish the retired ./in-process-entrypoint subpath`]
+			: [];
+	}
+	if (
+		filePath === 'packages/tool-portal/src/index.ts' &&
+		(file.sourceText.includes('in-process-entrypoint') ||
+			retiredToolPortalInProcessRuntimeNames.some((name) => file.sourceText.includes(name)))
+	) {
+		return [`${filePath}: Tool Portal root must not export the retired in-process runtime`];
+	}
+	if (
+		filePath === 'packages/tool-portal/tsdown.config.ts' &&
+		file.sourceText.includes('in-process-entrypoint')
+	) {
+		return [`${filePath}: Tool Portal must not build the retired in-process runtime entrypoint`];
+	}
+	if (
+		filePath.startsWith('packages/tool-portal/src/') &&
+		!isTestSourceFile(filePath) &&
+		retiredToolPortalInProcessRuntimeNames.some((name) => file.sourceText.includes(name))
+	) {
+		return [`${filePath}: Tool Portal must not restore retired in-process runtime declarations`];
+	}
+	return [];
+}
+
+function declaresNamedFunctionOrVariable(sourceText: string, name: string): boolean {
+	const escapedName = name.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+	return new RegExp(`(?:function\\s+|(?:const|let|var)\\s+)${escapedName}\\b`, 'u').test(
+		sourceText,
+	);
+}
+
+function collectToolPortalSemanticRouterViolations(
+	file: PortalArchitectureSourceFile,
+): readonly string[] {
+	const filePath = normalizedFilePath(file.filePath);
+	if (
+		isTestSourceFile(filePath) ||
+		!filePath.startsWith('packages/') ||
+		!filePath.includes('/src/') ||
+		!filePath.endsWith('.ts') ||
+		filePath === 'packages/tool-portal/src/tool-portal-result-router.ts'
+	) {
+		return [];
+	}
+	return toolPortalSemanticRouterHelperNames
+		.filter((helperName) => declaresNamedFunctionOrVariable(file.sourceText, helperName))
+		.map(
+			(helperName) =>
+				`${filePath}: Tool Portal semantic router helper ${helperName} must be declared only in packages/tool-portal/src/tool-portal-result-router.ts`,
+		);
+}
+
 function collectHarnessViolations(file: PortalArchitectureSourceFile): readonly string[] {
 	const filePath = normalizedFilePath(file.filePath);
 	if (!filePath.startsWith('tests/harness/agent-portal/') || !filePath.endsWith('.ts')) {
@@ -367,6 +750,33 @@ function collectExportEntryViolations(
 		}
 	}
 	return violations;
+}
+
+function collectPortalPackageOutputViolations(
+	file: PortalArchitectureSourceFile,
+): readonly string[] {
+	const filePath = normalizedFilePath(file.filePath);
+	if (filePath === 'packages/agent-portal-sdk/tsdown.config.ts') {
+		return /\bhash\s*:\s*false\b/u.test(file.sourceText)
+			? [
+					`${filePath}: Agent Portal SDK must retain content-hashed internal chunks so multi-entry declaration names cannot collide`,
+				]
+			: [];
+	}
+	const packageLabelByConfigPath: Readonly<Record<string, string>> = {
+		'packages/gateway-runtime/tsdown.config.ts': 'Gateway runtime',
+		'packages/tool-portal/tsdown.config.ts': 'Tool Portal',
+	};
+	const packageLabel = packageLabelByConfigPath[filePath];
+	if (packageLabel === undefined) {
+		return [];
+	}
+	if (/\bhash\s*:\s*false\b/u.test(file.sourceText)) {
+		return [];
+	}
+	return [
+		`${filePath}: ${packageLabel} builds must disable hashed chunk names so frozen declaration filenames stay stable`,
+	];
 }
 
 function collectOpenClawPluginToolSurfaceViolations(
@@ -470,17 +880,142 @@ function collectGatewayLifecyclePublicRawControlViolations(
 	return violations;
 }
 
+function collectManagedFrameworkChildTopologyViolations(
+	file: PortalArchitectureSourceFile,
+): readonly string[] {
+	const filePath = normalizedFilePath(file.filePath);
+	if (
+		filePath === 'packages/gateway-runtime/src/runtime/managed-framework-child-supervisor.ts' ||
+		filePath ===
+			'packages/gateway-runtime/src/runtime/managed-framework-child-supervisor.unit.test.ts'
+	) {
+		return [
+			`${filePath}: Gateway runtime must not own or test a managed framework child supervisor`,
+		];
+	}
+	if (isTestSourceFile(filePath)) {
+		return [];
+	}
+	if (
+		filePath.startsWith('packages/gateway-runtime/src/') &&
+		(file.sourceText.includes('ManagedFrameworkChild') ||
+			file.sourceText.includes('managed-framework-child-supervisor'))
+	) {
+		return [
+			`${filePath}: Gateway runtime must not expose managed framework child declarations or exports`,
+		];
+	}
+	if (
+		filePath.startsWith('packages/gateway-lifecycle/src/') &&
+		(file.sourceText.includes('ManagedFrameworkChildRecipe') ||
+			file.sourceText.includes("'managed-framework-runtime'") ||
+			file.sourceText.includes('childRecipe'))
+	) {
+		return [
+			`${filePath}: Gateway lifecycle must not declare a framework child recipe or runtime-parent variant`,
+		];
+	}
+	if (filePath === 'packages/gateway-runtime/package.json') {
+		const violations: string[] = [];
+		try {
+			const parsedManifest: unknown = JSON.parse(file.sourceText);
+			if (
+				isRecord(parsedManifest) &&
+				isRecord(parsedManifest.dependencies) &&
+				Object.hasOwn(parsedManifest.dependencies, '@agent-vm/gateway-lifecycle')
+			) {
+				violations.push(
+					`${filePath}: Gateway runtime must not depend on gateway-lifecycle for framework child ownership`,
+				);
+			}
+		} catch {
+			return [];
+		}
+		if (file.sourceText.includes('managed-framework runtime')) {
+			violations.push(
+				`${filePath}: Gateway runtime package metadata must not describe framework child ownership`,
+			);
+		}
+		return violations;
+	}
+	if (
+		filePath === 'packages/gateway-lifecycle/package.json' &&
+		file.sourceText.includes('runtime-contracts')
+	) {
+		return [
+			`${filePath}: Gateway lifecycle must not publish the rejected child runtime-contracts entry`,
+		];
+	}
+	if (
+		filePath === 'packages/gateway-lifecycle/tsdown.config.ts' &&
+		file.sourceText.includes('runtime-contracts')
+	) {
+		return [
+			`${filePath}: Gateway lifecycle must not build the rejected child runtime-contracts entry`,
+		];
+	}
+	return [];
+}
+
+function collectManagedOpenClawLocalProcessTopologyViolations(
+	file: PortalArchitectureSourceFile,
+): readonly string[] {
+	const filePath = normalizedFilePath(file.filePath);
+	if (managedOpenClawProcessSupervisorOwnedFiles.has(filePath)) {
+		return [
+			`${filePath}: managed OpenClaw must not retain controller-owned process supervisor source or proof`,
+		];
+	}
+	if (managedOpenClawProcessReliabilityOwnedFiles.has(filePath)) {
+		return [
+			`${filePath}: managed OpenClaw reliability faults must target the Gateway VM, not an OpenClaw process`,
+		];
+	}
+	if (managedOpenClawProcessRecoveryOwnedFiles.has(filePath)) {
+		return [
+			`${filePath}: managed OpenClaw must not retain process-scoped recovery or local-successor source or proof`,
+		];
+	}
+	if (managedOpenClawProcessEpochOwnerFiles.has(filePath)) {
+		return [
+			`${filePath}: managed OpenClaw must not retain same-VM process-epoch owner source or proof`,
+		];
+	}
+	if (
+		isTestSourceFile(filePath) ||
+		!filePath.startsWith('packages/agent-vm/src/') ||
+		!filePath.endsWith('.ts')
+	) {
+		return [];
+	}
+	return managedOpenClawLocalProcessConsumerPatterns
+		.filter((consumerPattern) =>
+			consumerPattern.patterns.some((pattern) => file.sourceText.includes(pattern)),
+		)
+		.map((consumerPattern) => `${filePath}: ${consumerPattern.message}`);
+}
+
 export function collectPortalArchitectureViolations(
 	props: CollectPortalArchitectureViolationsProps,
 ): readonly string[] {
 	const violations = [
 		...props.files.flatMap((file) => collectStructureViolations(normalizedFilePath(file.filePath))),
 		...props.files.flatMap(collectDependencyViolations),
+		...props.files.flatMap(collectAgentPortalSdkGatewayRuntimeImportViolations),
+		...props.files.flatMap(collectAgentPortalSdkPackageDependencyViolations),
+		...props.files.flatMap(collectToolPortalServiceCustodyViolations),
+		...props.files.flatMap(collectGatewayRuntimeVmImportViolations),
+		...props.files.flatMap(collectManagedToolPortalConfigOwnershipViolations),
+		...props.files.flatMap(collectRetiredToolPortalInProcessRuntimeViolations),
+		...props.files.flatMap(collectToolPortalSemanticRouterViolations),
 		...props.files.flatMap(collectHarnessViolations),
 		...collectExportEntryViolations(props.files),
+		...props.files.flatMap(collectPortalPackageOutputViolations),
 		...props.files.flatMap(collectOpenClawPluginToolSurfaceViolations),
 		...props.files.flatMap(collectManagedControlResidueViolations),
 		...props.files.flatMap(collectGatewayLifecyclePublicRawControlViolations),
+		...props.files.flatMap(collectManagedFrameworkChildTopologyViolations),
+		...props.files.flatMap(collectManagedOpenClawLocalProcessTopologyViolations),
 	];
 	return sortedStrings(violations);
 }
@@ -550,11 +1085,19 @@ async function loadRepositorySourceFiles(
 
 async function main(): Promise<void> {
 	const repositoryRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
-	const violations = collectPortalArchitectureViolations({
-		files: await loadRepositorySourceFiles(repositoryRoot),
-	});
+	const files = await loadRepositorySourceFiles(repositoryRoot);
+	const managedFrameworkChildTopologyOnly = process.argv.includes(
+		'--managed-framework-child-topology',
+	);
+	const violations = managedFrameworkChildTopologyOnly
+		? sortedStrings(files.flatMap(collectManagedFrameworkChildTopologyViolations))
+		: collectPortalArchitectureViolations({ files });
 	if (violations.length === 0) {
-		process.stdout.write('portal architecture audit: passed\n');
+		process.stdout.write(
+			managedFrameworkChildTopologyOnly
+				? 'managed framework child topology audit: passed\n'
+				: 'portal architecture audit: passed\n',
+		);
 		return;
 	}
 	for (const violation of violations) {

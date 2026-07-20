@@ -14,18 +14,13 @@ import {
 	terminateLiveManagedVm,
 	type ManagedVmProcessTarget,
 } from '../shared/controller-managed-vm-termination.js';
-import {
-	isProcessAlive,
-	killProcess,
-	readProcessCommand,
-	readProcessIdentity,
-	sleep,
-} from '../shared/managed-vm-process.js';
+import { readProcessIdentity, sleep } from '../shared/managed-vm-process.js';
 import { createToolVm } from '../tool-vm/tool-vm-lifecycle.js';
 import { shouldRunLiveVmE2e } from './live-vm-e2e-gates.js';
 
 const execFileAsync = promisify(execFile);
 const describeLiveVmIntegration = shouldRunLiveVmE2e() ? describe : describe.skip;
+const managedVmRuntimeComposition = createManagedVmRuntimeComposition();
 
 const rawGithubToken = 'real-github-token-for-mediated-env-live-test';
 
@@ -51,7 +46,8 @@ async function terminateVmRuntime(
 ): Promise<void> {
 	await terminateLiveManagedVm({
 		contextLabel: 'Tool VM mediated environment cleanup',
-		dependencies: { isProcessAlive, killProcess, readProcessCommand, readProcessIdentity, sleep },
+		exactProcessTermination: managedVmRuntimeComposition.managedVmExactProcessTermination,
+		sleep,
 		target,
 		vm: managedVm,
 	});
@@ -66,6 +62,7 @@ async function createMediatedEnvSystemConfig(
 	return createLoadedSystemConfig(
 		{
 			cacheDir: path.join(temporaryDirectory, 'cache'),
+			controllerStateDir: path.join(temporaryDirectory, 'controller-state'),
 			host: {
 				controllerPort: 18800,
 				projectNamespace: 'mediated-env-live',
@@ -190,15 +187,30 @@ describeLiveVmIntegration('live: Tool VM mediated placeholder environment', () =
 			throw new Error('Expected standard Tool VM profile.');
 		}
 
-		const hostWorkMountDir = path.join(zone.gateway.zoneFilesDir, 'agents', 'shravan');
-		await mkdir(hostWorkMountDir, { recursive: true });
-		const runtimeComposition = createManagedVmRuntimeComposition();
+		const hostAgentGitDirectoryRoot = path.join(
+			systemConfig.runtimeDir,
+			'zones',
+			zone.id,
+			'gitdirs',
+			'agents',
+			'shravan',
+		);
+		const hostAgentRoot = path.join(zone.gateway.zoneFilesDir, 'agents', 'shravan');
+		await Promise.all([
+			mkdir(hostAgentGitDirectoryRoot, { recursive: true }),
+			mkdir(hostAgentRoot, { recursive: true }),
+		]);
+		const runtimeComposition = managedVmRuntimeComposition;
 		const toolVm = await createToolVm(
 			{
 				agentId: 'shravan',
 				cacheDir: systemConfig.cacheDir,
-				hostWorkMountDir,
 				profile,
+				rootBinding: {
+					hostGitDirectoryRoot: hostAgentGitDirectoryRoot,
+					hostWorkspaceRoot: hostAgentRoot,
+					kind: 'managed-agent-workspace',
+				},
 				secretResolver: createStaticSecretResolver({}),
 				systemConfig,
 				tcpSlot: 0,

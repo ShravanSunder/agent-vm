@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
 	AGENT_VM_PACKAGE_NAMES,
+	HERMES_GATEWAY_TARBALL_PACKAGE_NAMES,
 	OPENCLAW_GATEWAY_TARBALL_PACKAGE_NAMES,
 	TOOL_VM_TARBALL_PACKAGE_NAMES,
 	createBetaTarballSyncPlan,
@@ -55,6 +56,9 @@ describe('beta tarball sync planning', () => {
 		expect(plan.gatewayPackages.map((packageEntry) => packageEntry.name)).toEqual(
 			OPENCLAW_GATEWAY_TARBALL_PACKAGE_NAMES,
 		);
+		expect(plan.hermesGatewayPackages.map((packageEntry) => packageEntry.name)).toEqual(
+			HERMES_GATEWAY_TARBALL_PACKAGE_NAMES,
+		);
 		expect(plan.toolVmPackages.map((packageEntry) => packageEntry.name)).toEqual(
 			TOOL_VM_TARBALL_PACKAGE_NAMES,
 		);
@@ -85,6 +89,24 @@ describe('beta tarball sync planning', () => {
 		);
 		expect(plan.packages.map((packageEntry) => packageEntry.name)).toContain(
 			'@agent-vm/tool-portal',
+		);
+		expect(plan.packages.map((packageEntry) => packageEntry.name)).toContain(
+			'@agent-vm/gateway-runtime',
+		);
+		expect(plan.packages.map((packageEntry) => packageEntry.name)).toContain(
+			'@agent-vm/hermes-gateway',
+		);
+		expect(plan.hermesGatewayPackages.map((packageEntry) => packageEntry.name)).toContain(
+			'@agent-vm/gateway-runtime',
+		);
+		expect(plan.hermesGatewayPackages.map((packageEntry) => packageEntry.name)).not.toContain(
+			'@agent-vm/openclaw-agent-vm-plugin',
+		);
+		expect(plan.gatewayPackages.map((packageEntry) => packageEntry.name)).toContain(
+			'@agent-vm/gateway-runtime',
+		);
+		expect(plan.toolVmPackages.map((packageEntry) => packageEntry.name)).not.toContain(
+			'@agent-vm/gateway-runtime',
 		);
 	});
 
@@ -244,6 +266,17 @@ describe('beta tarball deployment artifact refresh', () => {
 			'tool-vms',
 			'default',
 		);
+		const hermesImageDirectory = path.join(deploymentDirectory, 'vm-images', 'gateways', 'hermes');
+		const agentPortalSdkWheelPath = path.join(
+			workspaceDirectory,
+			'dist',
+			'agent_vm_agent_portal_sdk-0.0.110-py3-none-any.whl',
+		);
+		const hermesAdapterWheelPath = path.join(
+			workspaceDirectory,
+			'dist',
+			'agent_vm_hermes_adapter-0.0.110-py3-none-any.whl',
+		);
 		const plan = createBetaTarballSyncPlan({
 			cacheKey: 'newhash01',
 			tarballDirectoryReference: '../agent-vm/tmp/beta-tarballs-newhash01',
@@ -251,11 +284,14 @@ describe('beta tarball deployment artifact refresh', () => {
 		});
 
 		await mkdir(tarballDirectory, { recursive: true });
-		await Promise.all(
-			plan.packages.map((packageEntry) =>
+		await mkdir(path.dirname(agentPortalSdkWheelPath), { recursive: true });
+		await Promise.all([
+			...plan.packages.map((packageEntry) =>
 				writeFile(path.join(tarballDirectory, packageEntry.fileName), 'fake package'),
 			),
-		);
+			writeFile(agentPortalSdkWheelPath, 'fake sdk wheel'),
+			writeFile(hermesAdapterWheelPath, 'fake adapter wheel'),
+		]);
 		await writeJsonFixture(path.join(deploymentDirectory, 'package.json'), {
 			dependencies: {
 				'@agent-vm/agent-vm':
@@ -290,6 +326,7 @@ describe('beta tarball deployment artifact refresh', () => {
 		});
 		await mkdir(path.join(openClawOverlayDirectory, 'local-agent-vm'), { recursive: true });
 		await mkdir(path.join(toolVmOverlayDirectory, 'local-agent-vm'), { recursive: true });
+		await mkdir(path.join(hermesImageDirectory, 'local-agent-vm'), { recursive: true });
 		await writeFile(
 			path.join(
 				openClawOverlayDirectory,
@@ -306,9 +343,49 @@ describe('beta tarball deployment artifact refresh', () => {
 			),
 			'stale tool package',
 		);
+		await Promise.all([
+			writeFile(
+				path.join(
+					hermesImageDirectory,
+					'local-agent-vm',
+					'agent-vm-gateway-runtime-0.0.109-oldhash00.tgz',
+				),
+				'stale Hermes package',
+			),
+			writeFile(
+				path.join(
+					hermesImageDirectory,
+					'local-agent-vm',
+					'agent_vm_hermes_adapter-0.0.109-py3-none-any.whl',
+				),
+				'stale Hermes wheel',
+			),
+			writeFile(
+				path.join(hermesImageDirectory, 'local-agent-vm', 'agent-vm-custom-input.tgz'),
+				'deployment-owned Hermes input',
+			),
+		]);
 
 		await refreshBetaDeploymentTarballArtifacts({
 			deploymentDirectory,
+			hermesImage: {
+				buildTarget: {
+					architecture: 'x86_64',
+					kind: 'gondolin-custom-dockerfile',
+					ociImage: 'agent-vm-hermes:newhash01',
+					rootfsSizeMb: 4096,
+				},
+				pythonWheels: {
+					agentPortalSdk: {
+						fileName: path.basename(agentPortalSdkWheelPath),
+						sourcePath: agentPortalSdkWheelPath,
+					},
+					hermesAdapter: {
+						fileName: path.basename(hermesAdapterWheelPath),
+						sourcePath: hermesAdapterWheelPath,
+					},
+				},
+			},
 			managedOpenClawGatewayPackageOverrides: {
 				npm: [],
 				openclaw: [],
@@ -331,6 +408,20 @@ describe('beta tarball deployment artifact refresh', () => {
 			path.join(toolVmOverlayDirectory, 'overlay.jsonc'),
 			'utf8',
 		);
+		const hermesDockerfile = await readFile(path.join(hermesImageDirectory, 'Dockerfile'), 'utf8');
+		const hermesBuildConfig = await readFile(
+			path.join(hermesImageDirectory, 'build-config.jsonc'),
+			'utf8',
+		);
+		const hermesLocalPackageManifestText = await readFile(
+			path.join(hermesImageDirectory, 'local-agent-vm', 'package.json'),
+			'utf8',
+		);
+		const hermesLocalPackageManifest = JSON.parse(hermesLocalPackageManifestText) as {
+			readonly dependencies: Readonly<Record<string, string>>;
+			readonly pnpm: { readonly overrides: Readonly<Record<string, string>> };
+		};
+		const hermesLocalFileNames = await readdir(path.join(hermesImageDirectory, 'local-agent-vm'));
 		const openClawLocalFileNames = await readdir(
 			path.join(openClawOverlayDirectory, 'local-agent-vm'),
 		);
@@ -358,6 +449,24 @@ describe('beta tarball deployment artifact refresh', () => {
 		);
 		expect(toolVmLocalFileNames).toContain('agent-vm-mcp-portal-0.0.110-newhash01.tgz');
 		expect(toolVmLocalFileNames).not.toContain('agent-vm-mcp-portal-0.0.110-oldhash00.tgz');
+		expect(hermesDockerfile).toContain('/usr/local/bin/agent-vm-hermes-gateway');
+		expect(hermesDockerfile).toContain('/usr/local/bin/agent-vm-gateway-runtime');
+		expect(hermesDockerfile).toContain(
+			'local-agent-vm/agent-vm-gateway-runtime-0.0.110-newhash01.tgz',
+		);
+		expect(hermesBuildConfig).toContain('agent-vm-hermes:newhash01');
+		expect(hermesLocalPackageManifest.dependencies).toEqual({
+			'@agent-vm/gateway-runtime': 'file:./agent-vm-gateway-runtime-0.0.110-newhash01.tgz',
+		});
+		expect(Object.keys(hermesLocalPackageManifest.pnpm.overrides).toSorted()).toEqual(
+			HERMES_GATEWAY_TARBALL_PACKAGE_NAMES.toSorted(),
+		);
+		expect(hermesLocalFileNames).toContain('agent_vm_agent_portal_sdk-0.0.110-py3-none-any.whl');
+		expect(hermesLocalFileNames).toContain('agent_vm_hermes_adapter-0.0.110-py3-none-any.whl');
+		expect(hermesLocalFileNames).toContain('agent-vm-gateway-runtime-0.0.110-newhash01.tgz');
+		expect(hermesLocalFileNames).not.toContain('agent-vm-gateway-runtime-0.0.109-oldhash00.tgz');
+		expect(hermesLocalFileNames).not.toContain('agent_vm_hermes_adapter-0.0.109-py3-none-any.whl');
+		expect(hermesLocalFileNames).toContain('agent-vm-custom-input.tgz');
 	});
 });
 
@@ -444,6 +553,7 @@ describe('openclaw gateway overlay rendering', () => {
 			expect.stringContaining(
 				'ln -sfn /opt/agent-vm/local-packages/node_modules/@agent-vm/openclaw-agent-vm-plugin',
 			),
+			'test -f /opt/agent-vm/local-packages/node_modules/@agent-vm/gateway-runtime/dist/bin/gateway-runtime.js && chmod 755 /opt/agent-vm/local-packages/node_modules/@agent-vm/gateway-runtime/dist/bin/gateway-runtime.js && ln -sfn /opt/agent-vm/local-packages/node_modules/@agent-vm/gateway-runtime/dist/bin/gateway-runtime.js /usr/local/bin/agent-vm-gateway-runtime',
 			expect.any(String),
 		]);
 		expect(overlay.runAfterBase.at(-1)).toContain(

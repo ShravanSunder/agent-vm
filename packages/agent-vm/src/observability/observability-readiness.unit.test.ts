@@ -1,3 +1,8 @@
+import {
+	createGatewayTelemetryProducerSafetyContract,
+	gatewayFrameworkTelemetryServiceNames,
+	gatewayToolPortalTelemetryServiceName,
+} from '@agent-vm/gateway-lifecycle';
 import { describe, expect, test } from 'vitest';
 
 import type {
@@ -33,14 +38,25 @@ function createRuntimeConfig(): ManagedObservabilityRuntimeConfig {
 		startupCheckTimeoutMs: 500,
 		zones: [
 			{
+				framework: {
+					...createGatewayTelemetryProducerSafetyContract(),
+					serviceName: gatewayFrameworkTelemetryServiceNames.openclaw,
+					traces: true,
+					metrics: true,
+					logs: true,
+					sampleRate: 1,
+					flushIntervalMs: 10_000,
+				},
+				toolPortal: {
+					...createGatewayTelemetryProducerSafetyContract(),
+					serviceName: gatewayToolPortalTelemetryServiceName,
+					traces: true,
+					metrics: true,
+					logs: true,
+					sampleRate: 1,
+					flushIntervalMs: 10_000,
+				},
 				zoneId: 'shravan',
-				serviceName: 'agent-vm-openclaw-shravan',
-				traces: true,
-				metrics: true,
-				logs: true,
-				sampleRate: 1,
-				flushIntervalMs: 10_000,
-				diagnosticsFlags: [],
 			},
 		],
 	};

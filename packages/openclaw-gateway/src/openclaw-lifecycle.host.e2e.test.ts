@@ -1,6 +1,3 @@
-import { execFile, spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { once } from 'node:events';
 import {
 	access,
 	mkdir,
@@ -14,37 +11,53 @@ import {
 } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
 
 import {
+	createGatewayTelemetryProducerSafetyContract,
 	GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV,
+	gatewayFrameworkTelemetryServiceNames,
+	gatewayToolPortalTelemetryServiceName,
 	type GatewayZoneConfig,
 } from '@agent-vm/gateway-lifecycle';
 import type { SecretResolver } from '@agent-vm/secret-management';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { openclawLifecycle, processSupervisorHelperTestInternals } from './openclaw-lifecycle.js';
+import { openclawLifecycle } from './openclaw-lifecycle.js';
 
 const createdDirectories: string[] = [];
-const execFileAsync = promisify(execFile);
 type OpenClawGatewayConfig = Extract<GatewayZoneConfig['gateway'], { readonly type: 'openclaw' }>;
-type InvalidFinalManagedGondolinConfigTestCase =
-	| {
-			readonly error: RegExp;
-			readonly name: 'partial controlSession';
-			readonly runtimeConfig: {
-				readonly controlSession: {
-					readonly bootId: string;
-				};
-			};
-	  }
-	| {
-			readonly error: RegExp;
-			readonly name: 'empty toolPortal';
-			readonly runtimeConfig: {
-				readonly toolPortal: Record<never, never>;
-			};
-	  };
+
+function createManagedToolPortalPluginConfig(): Readonly<Record<string, unknown>> {
+	return {
+		agentProjections: {
+			'agent-a': {
+				agentId: 'agent-a',
+				frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
+				profileAssignmentRevision: 'profile-revision-a',
+				toolPortalProfileId: 'profile-a',
+			},
+			'agent-b': {
+				agentId: 'agent-b',
+				frameworkIdentity: { agentId: 'agent-b', kind: 'openclaw' },
+				profileAssignmentRevision: 'profile-revision-b',
+				toolPortalProfileId: 'profile-b',
+			},
+		},
+		attachment: {
+			attachmentGeneration: 7,
+			clientKind: 'openclaw-managed-plugin',
+			configuredAgentIds: ['agent-a', 'agent-b'],
+			frameworkEpoch: 'openclaw-epoch-4',
+			gatewayEpoch: 'gateway-epoch-3',
+			protocolVersion: 1,
+			projectionCohortDigest:
+				'projection-cohort:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+			runtimeEpoch: 'runtime-epoch-5',
+			schemaVersion: 1,
+		},
+	};
+}
 
 async function pathExists(filePath: string): Promise<boolean> {
 	try {
@@ -53,47 +66,6 @@ async function pathExists(filePath: string): Promise<boolean> {
 	} catch {
 		return false;
 	}
-}
-
-async function runNodeHelperWithStdin(
-	helperPath: string,
-	stdin: string,
-): Promise<{ readonly exitCode: number; readonly stderr: string; readonly stdout: string }> {
-	const child = spawn(process.execPath, [helperPath], {
-		stdio: ['pipe', 'pipe', 'pipe'],
-	});
-	let stderr = '';
-	let stdout = '';
-	child.stderr.setEncoding('utf8');
-	child.stdout.setEncoding('utf8');
-	child.stderr.on('data', (chunk: string) => {
-		stderr += chunk;
-	});
-	child.stdout.on('data', (chunk: string) => {
-		stdout += chunk;
-	});
-	child.stdin.end(stdin);
-	const [exitCode] = (await once(child, 'close')) as [number | null, NodeJS.Signals | null];
-	return { exitCode: exitCode ?? -1, stderr, stdout };
-}
-
-async function renderBootstrapFiles(
-	command: string,
-	rootDirectory: string,
-	env: NodeJS.ProcessEnv = process.env,
-): Promise<void> {
-	const rootedCommand = command
-		.replaceAll('/root', path.join(rootDirectory, 'root'))
-		.replaceAll('/etc/profile.d', path.join(rootDirectory, 'etc', 'profile.d'))
-		.replaceAll('/run/openclaw', path.join(rootDirectory, 'run', 'openclaw'))
-		.replaceAll('/usr/local/libexec', path.join(rootDirectory, 'usr', 'local', 'libexec'))
-		.replaceAll('/work', path.join(rootDirectory, 'work'))
-		.replace(`chown -R openclaw:openclaw ${path.join(rootDirectory, 'work')} && `, '');
-	await execFileAsync('sh', ['-lc', rootedCommand], { env });
-}
-
-function shellQuoteForTest(value: string): string {
-	return `'${value.replace(/'/gu, `'\\''`)}'`;
 }
 
 async function captureThrownError(promise: Promise<unknown> | undefined): Promise<Error> {
@@ -136,8 +108,8 @@ const resolvedSecrets: Record<string, string> = {
 	PERPLEXITY_API_KEY: 'perplexity-token',
 };
 
-function createZone(overrides?: {
-	readonly authProfilesRef?: GatewayZoneConfig['gateway']['authProfilesRef'];
+interface CreateZoneOverrides {
+	readonly authProfilesRef?: OpenClawGatewayConfig['authProfilesRef'];
 	readonly gateway?: Partial<OpenClawGatewayConfig>;
 	readonly toolPortal?: GatewayZoneConfig['toolPortal'];
 	readonly runtimeMcpServers?: GatewayZoneConfig['runtimeMcpServers'];
@@ -150,7 +122,81 @@ function createZone(overrides?: {
 	readonly withoutAuthProfilesRef?: boolean;
 	readonly secrets?: GatewayZoneConfig['secrets'];
 	readonly websocketUpgrades?: GatewayZoneConfig['websocketUpgrades'];
-}): GatewayZoneConfig {
+}
+
+interface AuthoredConfigurationTreeSnapshot {
+	readonly directoryEntries: readonly string[];
+	readonly directoryMetadata: {
+		readonly changedAtMs: number;
+		readonly deviceId: number;
+		readonly inode: number;
+		readonly mode: number;
+		readonly modifiedAtMs: number;
+		readonly ownerGid: number;
+		readonly ownerUid: number;
+	};
+	readonly files: Readonly<
+		Record<
+			string,
+			{
+				readonly changedAtMs: number;
+				readonly contents: string;
+				readonly deviceId: number;
+				readonly inode: number;
+				readonly mode: number;
+				readonly modifiedAtMs: number;
+				readonly ownerGid: number;
+				readonly ownerUid: number;
+				readonly size: number;
+			}
+		>
+	>;
+}
+
+async function captureAuthoredConfigurationTreeSnapshot(
+	directoryPath: string,
+): Promise<AuthoredConfigurationTreeSnapshot> {
+	const directoryEntries = (await readdir(directoryPath)).toSorted();
+	const directoryStatus = await stat(directoryPath);
+	const fileEntries = await Promise.all(
+		directoryEntries.map(async (fileName) => {
+			const filePath = path.join(directoryPath, fileName);
+			const [contents, fileStatus] = await Promise.all([
+				readFile(filePath, 'utf8'),
+				stat(filePath),
+			]);
+			return [
+				fileName,
+				{
+					changedAtMs: fileStatus.ctimeMs,
+					contents,
+					deviceId: fileStatus.dev,
+					inode: fileStatus.ino,
+					mode: fileStatus.mode & 0o777,
+					modifiedAtMs: fileStatus.mtimeMs,
+					ownerGid: fileStatus.gid,
+					ownerUid: fileStatus.uid,
+					size: fileStatus.size,
+				},
+			] as const;
+		}),
+	);
+	return {
+		directoryEntries,
+		directoryMetadata: {
+			changedAtMs: directoryStatus.ctimeMs,
+			deviceId: directoryStatus.dev,
+			inode: directoryStatus.ino,
+			mode: directoryStatus.mode & 0o777,
+			modifiedAtMs: directoryStatus.mtimeMs,
+			ownerGid: directoryStatus.gid,
+			ownerUid: directoryStatus.uid,
+		},
+		files: Object.fromEntries(fileEntries),
+	};
+}
+
+function createZone(overrides?: CreateZoneOverrides): GatewayZoneConfig {
 	const baseGateway: OpenClawGatewayConfig = {
 		controlAuth: {
 			mode: 'token',
@@ -228,6 +274,22 @@ function createZone(overrides?: {
 	};
 }
 
+async function createZoneWithTemporaryConfig(
+	overrides?: CreateZoneOverrides,
+): Promise<GatewayZoneConfig> {
+	const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-managed-boot-inputs-'));
+	createdDirectories.push(tempDirectory);
+	const configPath = path.join(tempDirectory, 'openclaw.json');
+	await writeFile(configPath, '{}\n', 'utf8');
+	return createZone({
+		...overrides,
+		gateway: {
+			...overrides?.gateway,
+			config: configPath,
+		},
+	});
+}
+
 function createObservabilityConfig(): NonNullable<GatewayZoneConfig['observability']> {
 	return {
 		mode: 'collector',
@@ -239,14 +301,26 @@ function createObservabilityConfig(): NonNullable<GatewayZoneConfig['observabili
 			targetGrpcPort: 24_317,
 			targetHttpPort: 24_318,
 		},
-		openclaw: {
-			serviceName: 'agent-vm-openclaw-shravan',
+		framework: {
+			...createGatewayTelemetryProducerSafetyContract(),
+			serviceName: gatewayFrameworkTelemetryServiceNames.openclaw,
 			traces: true,
 			metrics: true,
 			logs: true,
 			sampleRate: 1,
 			flushIntervalMs: 10_000,
+		},
+		openclaw: {
 			diagnosticsFlags: ['scheduler.debug'],
+		},
+		toolPortal: {
+			...createGatewayTelemetryProducerSafetyContract(),
+			serviceName: gatewayToolPortalTelemetryServiceName,
+			traces: false,
+			metrics: false,
+			logs: false,
+			sampleRate: 0,
+			flushIntervalMs: 1_000,
 		},
 	};
 }
@@ -260,7 +334,7 @@ describe('openclawLifecycle', () => {
 			);
 		});
 
-		it('writes effective auth and SSH admin token files from the default gateway token secret', async () => {
+		it('builds effective auth and protected service inputs from the default gateway token secret', async () => {
 			const tempDirectory = await mkdtemp(
 				path.join(os.tmpdir(), 'openclaw-lifecycle-gateway-token-'),
 			);
@@ -310,27 +384,32 @@ describe('openclawLifecycle', () => {
 				},
 			});
 
-			const processSpec = openclawLifecycle.buildProcessSpec(zone, {
-				OPENCLAW_GATEWAY_TOKEN: 'gateway-token',
-				DISCORD_BOT_TOKEN: 'discord-token',
+			const bootInputs = await openclawLifecycle.buildFrameworkServiceBootInputs({
+				zone,
+				resolvedSecrets: {
+					OPENCLAW_GATEWAY_TOKEN: 'gateway-token',
+					DISCORD_BOT_TOKEN: 'discord-token',
+				},
 			});
-			await renderBootstrapFiles(processSpec.bootstrapCommand, tempDirectory, {
-				...process.env,
-				OPENCLAW_GATEWAY_TOKEN: 'gateway-token',
+			expect(bootInputs.environment).toMatchObject({
 				DISCORD_BOT_TOKEN: 'discord-token',
+				OPENCLAW_GATEWAY_TOKEN: 'gateway-token',
 			});
-			const gatewayTokenEnvFilePath = path.join(
-				tempDirectory,
-				'run',
-				'openclaw',
-				'gateway-token.env',
-			);
-			const tokenEnvFile = await readFile(gatewayTokenEnvFilePath, 'utf8');
-			expect(tokenEnvFile).toContain('OPENCLAW_GATEWAY_TOKEN');
-			expect(tokenEnvFile).not.toContain('DISCORD_BOT_TOKEN');
+			expect(bootInputs.configuration).toMatchObject({
+				gateway: {
+					auth: {
+						token: {
+							id: 'OPENCLAW_GATEWAY_TOKEN',
+							provider: 'default',
+							source: 'env',
+						},
+					},
+				},
+			});
+			expect(JSON.stringify(bootInputs.configuration)).not.toContain('gateway-token');
 		});
 
-		it('writes effective auth and SSH admin token files from the configured control auth secret', async () => {
+		it('builds effective auth and protected service inputs from the configured control auth secret', async () => {
 			const tempDirectory = await mkdtemp(
 				path.join(os.tmpdir(), 'openclaw-lifecycle-custom-gateway-token-'),
 			);
@@ -392,22 +471,14 @@ describe('openclawLifecycle', () => {
 				},
 			});
 
-			const processSpec = openclawLifecycle.buildProcessSpec(zone, {
-				CUSTOM_GATEWAY_TOKEN: 'custom-gateway-token',
+			const bootInputs = await openclawLifecycle.buildFrameworkServiceBootInputs({
+				zone,
+				resolvedSecrets: {
+					CUSTOM_GATEWAY_TOKEN: 'custom-gateway-token',
+				},
 			});
-			await renderBootstrapFiles(processSpec.bootstrapCommand, tempDirectory, {
-				...process.env,
-				CUSTOM_GATEWAY_TOKEN: 'custom-gateway-token',
-			});
-			const gatewayTokenEnvFilePath = path.join(
-				tempDirectory,
-				'run',
-				'openclaw',
-				'gateway-token.env',
-			);
-			const tokenEnvFile = await readFile(gatewayTokenEnvFilePath, 'utf8');
-			expect(tokenEnvFile).toContain('CUSTOM_GATEWAY_TOKEN');
-			expect(tokenEnvFile).not.toContain('OPENCLAW_GATEWAY_TOKEN');
+			expect(bootInputs.environment.CUSTOM_GATEWAY_TOKEN).toBe('custom-gateway-token');
+			expect(bootInputs.environment.OPENCLAW_GATEWAY_TOKEN).toBeUndefined();
 		});
 
 		it('builds a login command for a given provider', () => {
@@ -453,7 +524,8 @@ describe('openclawLifecycle', () => {
 	});
 
 	describe('buildVmRequirements', () => {
-		it('splits environment and mediated secrets', () => {
+		it('keeps raw secrets service-scoped while preserving VM-wide mediation', async () => {
+			const zone = await createZoneWithTemporaryConfig();
 			const vmRequirements = openclawLifecycle.buildVmRequirements({
 				controllerPort: 18800,
 				gatewayCacheDir: '/host/cache/gateways/shravan',
@@ -464,17 +536,43 @@ describe('openclawLifecycle', () => {
 					basePort: 19000,
 					size: 3,
 				},
-				zone: createZone(),
+				zone,
 			});
 			expect(vmRequirements.mounts).not.toHaveProperty('/run/agent-vm/openclaw-process-supervisor');
 
-			expect(vmRequirements.environment.DISCORD_BOT_TOKEN).toBe('discord-token');
-			expect(vmRequirements.environment.OPENCLAW_GATEWAY_TOKEN).toBe("gateway'token");
+			expect(vmRequirements.environment.DISCORD_BOT_TOKEN).toBeUndefined();
+			expect(vmRequirements.environment.OPENCLAW_GATEWAY_TOKEN).toBeUndefined();
 			expect(vmRequirements.environment.PERPLEXITY_API_KEY).toBeUndefined();
 			expect(vmRequirements.mediatedSecrets.PERPLEXITY_API_KEY).toEqual({
 				hosts: ['api.perplexity.ai'],
 				value: 'perplexity-token',
 			});
+			const bootInputs = await openclawLifecycle.buildFrameworkServiceBootInputs({
+				resolvedSecrets,
+				zone,
+			});
+			expect(bootInputs.environment.DISCORD_BOT_TOKEN).toBe('discord-token');
+			expect(bootInputs.environment.OPENCLAW_GATEWAY_TOKEN).toBe("gateway'token");
+			expect(bootInputs.environment.PERPLEXITY_API_KEY).toBeUndefined();
+		});
+
+		it('preserves shell-sensitive framework secrets as protected data values', async () => {
+			const zone = await createZoneWithTemporaryConfig();
+			const gatewayToken = "gateway' $ ` token";
+			const discordToken = "discord' $ ` token";
+
+			const bootInputs = await openclawLifecycle.buildFrameworkServiceBootInputs({
+				resolvedSecrets: {
+					...resolvedSecrets,
+					DISCORD_BOT_TOKEN: discordToken,
+					OPENCLAW_GATEWAY_TOKEN: gatewayToken,
+				},
+				zone,
+			});
+
+			expect(bootInputs.environment.DISCORD_BOT_TOKEN).toBe(discordToken);
+			expect(bootInputs.environment.OPENCLAW_GATEWAY_TOKEN).toBe(gatewayToken);
+			expect(Object.isFrozen(bootInputs.environment)).toBe(true);
 		});
 
 		it('rejects authored env secrets that are not explicit raw-env exceptions', () => {
@@ -534,7 +632,15 @@ describe('openclawLifecycle', () => {
 			).toThrow(/OPENCLAW_DIAGNOSTICS/u);
 		});
 
-		it('injects explicitly allowlisted runtime environment without mediating or persisting it', () => {
+		it('materializes explicitly allowlisted runtime environment only for the framework service', async () => {
+			const zone = await createZoneWithTemporaryConfig({
+				gateway: {
+					rawEnvSecrets: ['DISCORD_BOT_TOKEN', 'OPENCLAW_TEST_RUNTIME_SECRET'],
+				},
+				runtimeEnvironment: {
+					OPENCLAW_TEST_RUNTIME_SECRET: 'runtime-test-secret',
+				},
+			});
 			const vmRequirements = openclawLifecycle.buildVmRequirements({
 				controllerPort: 18800,
 				gatewayCacheDir: '/host/cache/gateways/shravan',
@@ -545,21 +651,54 @@ describe('openclawLifecycle', () => {
 					basePort: 19000,
 					size: 3,
 				},
-				zone: createZone({
-					gateway: {
-						rawEnvSecrets: ['DISCORD_BOT_TOKEN', 'OPENCLAW_TEST_RUNTIME_SECRET'],
-					},
-					runtimeEnvironment: {
-						OPENCLAW_TEST_RUNTIME_SECRET: 'runtime-test-secret',
-					},
-				}),
+				zone,
 			});
 
-			expect(vmRequirements.environment.OPENCLAW_TEST_RUNTIME_SECRET).toBe('runtime-test-secret');
+			expect(vmRequirements.environment.OPENCLAW_TEST_RUNTIME_SECRET).toBeUndefined();
 			expect(vmRequirements.mediatedSecrets.OPENCLAW_TEST_RUNTIME_SECRET).toBeUndefined();
+			const bootInputs = await openclawLifecycle.buildFrameworkServiceBootInputs({
+				resolvedSecrets,
+				zone,
+			});
+			expect(bootInputs.environment.OPENCLAW_TEST_RUNTIME_SECRET).toBe('runtime-test-secret');
 		});
 
-		it('injects controller-owned private environment without runtime secret mediation', () => {
+		it('materializes controller-owned OpenTelemetry resource attributes for observable frameworks', async () => {
+			const resourceAttributes =
+				'dev.repo.hash=0123456789abcdef,dev.worktree.hash=fedcba9876543210';
+			const zone = await createZoneWithTemporaryConfig({
+				observability: createObservabilityConfig(),
+				runtimeEnvironment: {
+					OTEL_RESOURCE_ATTRIBUTES: resourceAttributes,
+				},
+			});
+
+			const bootInputs = await openclawLifecycle.buildFrameworkServiceBootInputs({
+				resolvedSecrets,
+				zone,
+			});
+
+			expect(bootInputs.environment.OTEL_RESOURCE_ATTRIBUTES).toBe(resourceAttributes);
+		});
+
+		it('rejects OpenTelemetry resource attributes when framework observability is disabled', async () => {
+			const zone = await createZoneWithTemporaryConfig({
+				runtimeEnvironment: {
+					OTEL_RESOURCE_ATTRIBUTES: 'dev.repo.hash=0123456789abcdef',
+				},
+			});
+
+			await expect(
+				openclawLifecycle.buildFrameworkServiceBootInputs({ resolvedSecrets, zone }),
+			).rejects.toThrow(/OTEL_RESOURCE_ATTRIBUTES/u);
+		});
+
+		it('materializes controller-owned private environment only for the framework service', async () => {
+			const zone = await createZoneWithTemporaryConfig({
+				runtimePrivateEnvironment: {
+					[GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV]: 'private-proof-key',
+				},
+			});
 			const vmRequirements = openclawLifecycle.buildVmRequirements({
 				controllerPort: 18800,
 				gatewayCacheDir: '/host/cache/gateways/shravan',
@@ -570,43 +709,36 @@ describe('openclawLifecycle', () => {
 					basePort: 19000,
 					size: 3,
 				},
-				zone: createZone({
-					runtimePrivateEnvironment: {
-						[GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV]: 'private-proof-key',
-					},
-				}),
+				zone,
 			});
 
-			expect(vmRequirements.environment[GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV]).toBe(
-				'private-proof-key',
-			);
+			expect(
+				vmRequirements.environment[GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV],
+			).toBeUndefined();
 			expect(
 				vmRequirements.mediatedSecrets[GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV],
 			).toBeUndefined();
+			const bootInputs = await openclawLifecycle.buildFrameworkServiceBootInputs({
+				resolvedSecrets,
+				zone,
+			});
+			expect(bootInputs.environment[GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV]).toBe(
+				'private-proof-key',
+			);
 		});
 
-		it('rejects user runtime environment that collides with controller-owned private names', () => {
-			expect(() =>
-				openclawLifecycle.buildVmRequirements({
-					controllerPort: 18800,
-					gatewayCacheDir: '/host/cache/gateways/shravan',
-					projectNamespace: 'claw-tests-a1b2c3d4',
-					resolvedSecrets,
-					runtimeDir: '/host/runtime',
-					tcpPool: {
-						basePort: 19000,
-						size: 3,
-					},
-					zone: createZone({
-						gateway: {
-							rawEnvSecrets: ['DISCORD_BOT_TOKEN', GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV],
-						},
-						runtimeEnvironment: {
-							[GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV]: 'user-proof-key',
-						},
-					}),
-				}),
-			).toThrow(/collides with a controller-owned private environment variable/u);
+		it('rejects user runtime environment that collides with controller-owned private names', async () => {
+			const zone = await createZoneWithTemporaryConfig({
+				gateway: {
+					rawEnvSecrets: ['DISCORD_BOT_TOKEN', GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV],
+				},
+				runtimeEnvironment: {
+					[GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV]: 'user-proof-key',
+				},
+			});
+			await expect(
+				openclawLifecycle.buildFrameworkServiceBootInputs({ resolvedSecrets, zone }),
+			).rejects.toThrow(/collides with a controller-owned private environment variable/u);
 		});
 
 		it('injects generated runtime mediated secrets without authored zone secret config entries', () => {
@@ -661,6 +793,42 @@ describe('openclawLifecycle', () => {
 			).toThrow(/PERPLEXITY_API_KEY.*authored http-mediation secret/u);
 		});
 
+		it('keeps the image and framework-owned mounts free of service-account identity projection', async () => {
+			const dockerfilePath = path.resolve(
+				path.dirname(fileURLToPath(import.meta.url)),
+				'../../../docker/base-images/openclaw-gateway/Dockerfile',
+			);
+			const dockerfile = await readFile(dockerfilePath, 'utf8');
+			expect(dockerfile).not.toMatch(/\b(?:groupadd|useradd)\b[^\n]*\bopenclaw\b/u);
+			expect(dockerfile).not.toMatch(/\bchown\b[^\n]*\bopenclaw(?::openclaw)?\b/u);
+
+			const vmRequirements = openclawLifecycle.buildVmRequirements({
+				controllerPort: 18800,
+				gatewayCacheDir: '/host/cache/gateways/shravan',
+				projectNamespace: 'claw-tests-a1b2c3d4',
+				resolvedSecrets,
+				runtimeDir: '/host/runtime',
+				tcpPool: {
+					basePort: 19000,
+					size: 2,
+				},
+				zone: createZone(),
+			});
+			const frameworkOwnedMountPaths = [
+				'/agent-vm/logs',
+				'/home/openclaw/.openclaw/cache',
+				'/home/openclaw/.openclaw/state',
+				'/zone',
+			] as const;
+			for (const mountPath of frameworkOwnedMountPaths) {
+				expect(Object.keys(vmRequirements.mounts[mountPath] ?? {}).toSorted()).toEqual([
+					'access',
+					'hostPath',
+					'kind',
+				]);
+			}
+		});
+
 		it('builds the expected OpenClaw environment, mounts, and tcp hosts', () => {
 			vi.stubEnv('PATH', '/host-only/bin');
 			const vmRequirements = openclawLifecycle.buildVmRequirements({
@@ -697,24 +865,25 @@ describe('openclawLifecycle', () => {
 				'--dns-result-order=ipv4first --no-network-family-autoselection',
 			);
 			expect(vmRequirements.allowedHosts).toEqual(['api.openai.com', 'api.perplexity.ai']);
-			expect(vmRequirements.mounts['/home/openclaw/.openclaw/config']).toEqual({
-				hostPath: '/host/config/shravan',
+			expect(vmRequirements.mounts['/home/openclaw/.openclaw/config']).toBeUndefined();
+			expect(vmRequirements.mounts['/home/openclaw/.openclaw/cache']).toEqual({
 				access: 'read-write',
+				hostPath: '/host/cache/gateways/shravan',
 				kind: 'host-directory',
 			});
-			expect(vmRequirements.mounts['/home/openclaw/.openclaw/cache']).toEqual({
-				hostPath: '/host/cache/gateways/shravan',
+			expect(vmRequirements.mounts['/home/openclaw/.openclaw/state']).toEqual({
 				access: 'read-write',
+				hostPath: '/host/state/shravan',
 				kind: 'host-directory',
 			});
 			expect(vmRequirements.mounts['/agent-vm/logs']).toEqual({
-				hostPath: '/host/runtime/zones/shravan/logs',
 				access: 'read-write',
+				hostPath: '/host/runtime/zones/shravan/logs',
 				kind: 'host-directory',
 			});
 			expect(vmRequirements.mounts['/zone']).toEqual({
-				hostPath: '/host/zone-files/shravan',
 				access: 'read-write',
+				hostPath: '/host/zone-files/shravan',
 				kind: 'host-directory',
 			});
 			expect(vmRequirements.mounts['/work']).toBeUndefined();
@@ -728,7 +897,93 @@ describe('openclawLifecycle', () => {
 			expect(vmRequirements.sessionLabel).toBe('claw-tests-a1b2c3d4:shravan:gateway');
 		});
 
-		it('mounts managed Tool Portal effective config read-only when configured', () => {
+		it('excludes host authority paths from managed inputs without mutating authored configuration', async () => {
+			const temporaryDirectory = await mkdtemp(
+				path.join(os.tmpdir(), 'openclaw-lifecycle-host-authority-exclusion-'),
+			);
+			createdDirectories.push(temporaryDirectory);
+			const authoredConfigurationDirectory = path.join(
+				temporaryDirectory,
+				'authored-configuration',
+			);
+			await mkdir(authoredConfigurationDirectory, { mode: 0o750, recursive: true });
+			const authoredConfigurationPath = path.join(authoredConfigurationDirectory, 'openclaw.json');
+			await Promise.all([
+				writeFile(
+					authoredConfigurationPath,
+					JSON.stringify({ gateway: { bind: 'loopback' } }, null, 2),
+					{ encoding: 'utf8', mode: 0o640 },
+				),
+				writeFile(
+					path.join(authoredConfigurationDirectory, 'operator-owned-note.txt'),
+					'operator-owned\n',
+					{ encoding: 'utf8', mode: 0o600 },
+				),
+			]);
+			const controllerStateDirectory = path.join(temporaryDirectory, 'controller-state-authority');
+			const zone = createZone({
+				gateway: {
+					config: authoredConfigurationPath,
+					stateDir: path.join(temporaryDirectory, 'gateway-state'),
+					zoneFilesDir: path.join(temporaryDirectory, 'zone-files'),
+				},
+				withoutAuthProfilesRef: true,
+			});
+			const beforeSnapshot = await captureAuthoredConfigurationTreeSnapshot(
+				authoredConfigurationDirectory,
+			);
+
+			const vmRequirements = openclawLifecycle.buildVmRequirements({
+				controllerPort: 18_800,
+				gatewayCacheDir: path.join(temporaryDirectory, 'gateway-cache'),
+				projectNamespace: 'claw-tests-a1b2c3d4',
+				resolvedSecrets,
+				runtimeDir: path.join(temporaryDirectory, 'runtime'),
+				tcpPool: { basePort: 19_000, size: 2 },
+				zone,
+			});
+			const frameworkBootInputs = await openclawLifecycle.buildFrameworkServiceBootInputs({
+				resolvedSecrets,
+				zone,
+			});
+			const afterSnapshot = await captureAuthoredConfigurationTreeSnapshot(
+				authoredConfigurationDirectory,
+			);
+			const managedInputInventory = JSON.stringify({
+				frameworkBootInputs,
+				vmEnvironment: vmRequirements.environment,
+				vmMounts: vmRequirements.mounts,
+			});
+
+			expect(vmRequirements.mounts).toEqual({
+				'/agent-vm/logs': {
+					access: 'read-write',
+					hostPath: path.join(temporaryDirectory, 'runtime', 'zones', 'shravan', 'logs'),
+					kind: 'host-directory',
+				},
+				'/home/openclaw/.openclaw/cache': {
+					access: 'read-write',
+					hostPath: path.join(temporaryDirectory, 'gateway-cache'),
+					kind: 'host-directory',
+				},
+				'/home/openclaw/.openclaw/state': {
+					access: 'read-write',
+					hostPath: path.join(temporaryDirectory, 'gateway-state'),
+					kind: 'host-directory',
+				},
+				'/zone': {
+					access: 'read-write',
+					hostPath: path.join(temporaryDirectory, 'zone-files'),
+					kind: 'host-directory',
+				},
+			});
+			expect(managedInputInventory).not.toContain(controllerStateDirectory);
+			expect(managedInputInventory).not.toContain(authoredConfigurationDirectory);
+			expect(managedInputInventory).not.toContain(authoredConfigurationPath);
+			expect(afterSnapshot).toEqual(beforeSnapshot);
+		});
+
+		it('does not mount legacy Tool Portal effective config directories', () => {
 			const vmRequirements = openclawLifecycle.buildVmRequirements({
 				controllerPort: 18800,
 				gatewayCacheDir: '/host/cache/gateways/shravan',
@@ -750,13 +1005,9 @@ describe('openclawLifecycle', () => {
 				}),
 			});
 
-			expect(vmRequirements.mounts['/home/openclaw/.openclaw/cache/tool-portal-effective']).toEqual(
-				{
-					hostPath: '/host/cache/gateways/shravan/tool-portal-effective',
-					access: 'read-only',
-					kind: 'host-directory',
-				},
-			);
+			expect(
+				vmRequirements.mounts['/home/openclaw/.openclaw/cache/tool-portal-effective'],
+			).toBeUndefined();
 		});
 
 		it('routes collector-mode observability through mediated HTTP instead of raw collector tcp hosts', () => {
@@ -880,12 +1131,12 @@ describe('openclawLifecycle', () => {
 			expect(vmRequirements.sshEgress).toBeUndefined();
 		});
 
-		it('preserves the forced IPv4-preference flags even when a zone secret supplies NODE_OPTIONS', () => {
+		it('keeps VM-wide NODE_OPTIONS structural and preserves authored flags in service inputs', async () => {
 			// Regression test for the merge-order bug surfaced in PR #93
 			// review: a zone secret named NODE_OPTIONS must NOT drop our
 			// forced flags, because Happy Eyeballs would race the
 			// synthetic AAAA again.
-			const baseZone = createZone({
+			const baseZone = await createZoneWithTemporaryConfig({
 				gateway: {
 					rawEnvSecrets: ['DISCORD_BOT_TOKEN', 'NODE_OPTIONS'],
 				},
@@ -919,987 +1170,19 @@ describe('openclawLifecycle', () => {
 				zone: zoneWithNodeOptions,
 			});
 
-			// Forced flags lead; user value follows.
+			// VM-wide inputs carry only the safe baseline.
 			expect(vmRequirements.environment.NODE_OPTIONS).toBe(
+				'--dns-result-order=ipv4first --no-network-family-autoselection',
+			);
+			const bootInputs = await openclawLifecycle.buildFrameworkServiceBootInputs({
+				resolvedSecrets: {
+					...resolvedSecrets,
+					NODE_OPTIONS: '--inspect=0.0.0.0:9229',
+				},
+				zone: zoneWithNodeOptions,
+			});
+			expect(bootInputs.environment.NODE_OPTIONS).toBe(
 				'--dns-result-order=ipv4first --no-network-family-autoselection --inspect=0.0.0.0:9229',
-			);
-		});
-	});
-
-	describe('buildProcessSpec', () => {
-		it('builds bootstrap and start commands with runtime-injected gateway token', () => {
-			const processSpec = openclawLifecycle.buildProcessSpec(createZone(), resolvedSecrets);
-
-			expect(processSpec.bootstrapCommand).toContain('/etc/profile.d/openclaw-env.sh');
-			expect(processSpec.bootstrapCommand).toContain('/run/openclaw/secrets.env');
-			expect(processSpec.bootstrapCommand).toContain("printf '%s\\n'");
-			expect(processSpec.bootstrapCommand).toContain('DISCORD_BOT_TOKEN');
-			expect(processSpec.bootstrapCommand).toContain('OPENCLAW_GATEWAY_TOKEN');
-			expect(processSpec.bootstrapCommand).not.toContain('AGENT_VM_ZONE_GIT_TOKEN');
-			expect(processSpec.bootstrapCommand).not.toContain('discord-token');
-			expect(processSpec.bootstrapCommand).not.toContain("gateway'token");
-			expect(processSpec.bootstrapCommand).not.toContain(
-				`cat > /run/openclaw/secrets.env << 'ENVEOF'`,
-			);
-			expect(processSpec.bootstrapCommand).not.toContain('/etc/profile.d/openclaw-admin.sh');
-			expect(processSpec.bootstrapCommand).not.toContain('/run/openclaw/gateway-auth.env');
-			expect(processSpec.bootstrapCommand).not.toContain('openclaw()');
-			expect(processSpec.bootstrapCommand).not.toContain('diagnostics-otel.tgz');
-			expect(processSpec.bootstrapCommand).toContain(
-				'OPENCLAW_CONFIG_PATH=/home/openclaw/.openclaw/state/effective-openclaw.json',
-			);
-			expect(processSpec.bootstrapCommand).not.toContain('OPENCLAW_PLUGIN_STAGE_DIR');
-			expect(processSpec.bootstrapCommand).toContain('/work/tmp /work/cache/npm');
-			expect(processSpec.bootstrapCommand).toContain('chown -R openclaw:openclaw /work');
-			expect(processSpec.bootstrapCommand).toContain('TMPDIR=/work/tmp');
-			expect(processSpec.bootstrapCommand).toContain('PNPM_HOME=/pnpm');
-			expect(processSpec.bootstrapCommand).toContain('PATH=/pnpm:$PATH');
-			expect(processSpec.bootstrapCommand).toContain('npm_config_cache=/work/cache/npm');
-			expect(processSpec.bootstrapCommand).toContain('/etc/profile.d/openclaw-env.sh');
-			expect(processSpec.bootstrapCommand).toContain('source /root/.bashrc');
-			expect(processSpec.bootstrapCommand).toContain(
-				'/usr/local/libexec/agent-vm-openclaw-process-supervisor',
-			);
-			expect(processSpec.startCommand).toContain(
-				'gateway-supervisor: controller-owned helper ready; awaiting typed request',
-			);
-			expect(processSpec.startCommand).not.toContain('while true');
-			expect(processSpec.startCommand).not.toContain('nohup');
-			expect(processSpec.startCommand).not.toContain('openclaw gateway --port');
-			expect(processSpec.healthCheck).toEqual({
-				type: 'http',
-				port: 18789,
-				path: '/readyz',
-			});
-			expect(processSpec.logPath).toBe('/agent-vm/logs/gateway-boot-latest.log');
-		});
-
-		it('installs a fixed non-network helper without autonomously launching a process', async () => {
-			const tempDirectory = await mkdtemp(
-				path.join(os.tmpdir(), 'openclaw-lifecycle-process-supervisor-helper-'),
-			);
-			createdDirectories.push(tempDirectory);
-			const processSpec = openclawLifecycle.buildProcessSpec(createZone(), resolvedSecrets);
-			const encodedHelper =
-				/printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d > \/usr\/local\/libexec\/agent-vm-openclaw-process-supervisor/u.exec(
-					processSpec.bootstrapCommand,
-				);
-			expect(encodedHelper?.[1]).toBeDefined();
-			const helperPath = path.join(tempDirectory, 'agent-vm-openclaw-process-supervisor');
-			const helperSource = Buffer.from(encodedHelper?.[1] ?? '', 'base64').toString('utf8');
-			await writeFile(helperPath, helperSource, 'utf8');
-			await expect(execFileAsync(process.execPath, ['--check', helperPath])).resolves.toMatchObject(
-				{
-					stderr: '',
-				},
-			);
-			expect(helperSource).toContain("refuse('process-overlap')");
-			expect(helperSource).toContain("path.join(groupPath, 'cgroup.kill')");
-			expect(helperSource).toContain("path.join(groupPath, 'cgroup.events')");
-			expect(helperSource).toContain('const maximumAttempts = 500;');
-			expect(helperSource).toContain('Atomics.wait(sleeper, 0, 0, 10);');
-			expect(helperSource).toContain('rmdirSync(groupPath)');
-			expect(helperSource).not.toContain('rmSync(groupPath, { recursive: false })');
-			expect(helperSource).toContain('emptyObserved: true');
-			expect(helperSource).toContain(
-				`set -a; . /run/openclaw/secrets.env; set +a; cd /home/openclaw; exec /usr/local/bin/openclaw gateway --port 18789`,
-			);
-			expect(helperSource).not.toContain('exec su ');
-			expect(processSpec.startCommand).not.toMatch(
-				/(?:openclaw gateway|while true|restart_delay_seconds|nohup)/u,
-			);
-		});
-
-		it.each([
-			{
-				failureStage: 'create-cgroup',
-				injectionTarget: 'mkdirSync(groupPath, { mode: 0o700 });',
-			},
-			{
-				failureStage: 'inspect-created-cgroup',
-				injectionTarget: "if (populated(groupPath)) refuse('process-overlap');",
-			},
-		] as const)(
-			'persists only the bounded $failureStage start marker when that pre-receipt stage fails',
-			async ({ failureStage, injectionTarget }) => {
-				const tempDirectory = await mkdtemp(
-					path.join(os.tmpdir(), `openclaw-process-supervisor-${failureStage}-`),
-				);
-				createdDirectories.push(tempDirectory);
-				const stateDirectory = path.join(tempDirectory, 'state');
-				const cgroupRoot = path.join(tempDirectory, 'cgroup');
-				const mountsPath = path.join(tempDirectory, 'mounts');
-				const helperPath = path.join(tempDirectory, 'helper');
-				const rawFailurePayload = `private-${failureStage}-failure:${tempDirectory}`;
-				await Promise.all([
-					mkdir(stateDirectory, { recursive: true, mode: 0o700 }),
-					mkdir(cgroupRoot, { recursive: true, mode: 0o700 }),
-					writeFile(mountsPath, `none ${cgroupRoot} cgroup2 rw 0 0\n`, 'utf8'),
-				]);
-				const helperSource = processSupervisorHelperTestInternals
-					.buildOpenClawProcessSupervisorHelperSource()
-					.replaceAll('/run/agent-vm/openclaw-process-supervisor', stateDirectory)
-					.replaceAll('/sys/fs/cgroup', cgroupRoot)
-					.replaceAll('/proc/mounts', mountsPath);
-				for (const expectedStage of [
-					'ensure-cgroup2',
-					'create-cgroup',
-					'inspect-created-cgroup',
-					'bind-process',
-				]) {
-					expect(helperSource.split(`recordOperationStage('${expectedStage}')`)).toHaveLength(2);
-				}
-				const injectedHelperSource = helperSource.replace(
-					injectionTarget,
-					`throw new Error(${JSON.stringify(rawFailurePayload)});`,
-				);
-				expect(injectedHelperSource).not.toBe(helperSource);
-				await writeFile(helperPath, injectedHelperSource, 'utf8');
-				const request = {
-					actionId: `action-fail-${failureStage}`,
-					contractVersion: 1,
-					expectedProcessEpoch: null,
-					gateway: {
-						controllerEpoch: 'controller-1',
-						gatewayEpochId: 'gateway-epoch-1',
-						gatewayVmId: 'gateway-vm-1',
-					},
-					kind: 'start',
-					selectedProcessEpoch: 'process-1',
-				};
-
-				const outcome = await runNodeHelperWithStdin(helperPath, `${JSON.stringify(request)}\n`);
-				expect(outcome).toMatchObject({
-					stderr: `agent-vm-process-supervisor-failure:${failureStage}\n`,
-				});
-				expect((outcome as { readonly stderr: string }).stderr).not.toContain(rawFailurePayload);
-				expect((outcome as { readonly stderr: string }).stderr).not.toContain(tempDirectory);
-				const persistedStateContent = await readFile(
-					path.join(stateDirectory, 'state-v1.json'),
-					'utf8',
-				);
-				expect(JSON.parse(persistedStateContent)).toMatchObject({
-					lastOperation: {
-						actionId: `action-fail-${failureStage}`,
-						kind: 'start',
-						stage: failureStage,
-					},
-				});
-				expect(persistedStateContent).not.toContain(rawFailurePayload);
-				expect(persistedStateContent).not.toContain(tempDirectory);
-				expect(
-					JSON.parse(await readFile(path.join(stateDirectory, 'request-v1.json'), 'utf8')),
-				).toEqual(request);
-			},
-		);
-
-		it('reads one exact stdin request and persists the guest audit before acting', async () => {
-			const tempDirectory = await mkdtemp(
-				path.join(os.tmpdir(), 'openclaw-process-supervisor-request-stdin-'),
-			);
-			createdDirectories.push(tempDirectory);
-			const stateDirectory = path.join(tempDirectory, 'state');
-			const cgroupRoot = path.join(tempDirectory, 'cgroup');
-			const mountsPath = path.join(tempDirectory, 'mounts');
-			const helperPath = path.join(tempDirectory, 'helper');
-			await Promise.all([
-				mkdir(stateDirectory, { recursive: true, mode: 0o700 }),
-				mkdir(cgroupRoot, { recursive: true, mode: 0o700 }),
-				writeFile(mountsPath, `none ${cgroupRoot} cgroup2 rw 0 0\n`, 'utf8'),
-			]);
-			const helperSource = processSupervisorHelperTestInternals
-				.buildOpenClawProcessSupervisorHelperSource()
-				.replaceAll('/run/agent-vm/openclaw-process-supervisor', stateDirectory)
-				.replaceAll('/sys/fs/cgroup', cgroupRoot)
-				.replaceAll('/proc/mounts', mountsPath);
-			await writeFile(helperPath, helperSource, 'utf8');
-			const request = {
-				actionId: 'action-stdin-request',
-				contractVersion: 1,
-				expectedProcessEpoch: null,
-				gateway: {
-					controllerEpoch: 'controller-1',
-					gatewayEpochId: 'gateway-epoch-1',
-					gatewayVmId: 'gateway-vm-1',
-				},
-				kind: 'observe',
-			};
-			const serializedRequest = `${JSON.stringify(request)}\n`;
-
-			await expect(runNodeHelperWithStdin(helperPath, serializedRequest)).resolves.toMatchObject({
-				exitCode: 0,
-				stderr: '',
-			});
-			expect(await readFile(path.join(stateDirectory, 'request-v1.json'), 'utf8')).toBe(
-				serializedRequest,
-			);
-			expect(
-				JSON.parse(await readFile(path.join(stateDirectory, 'receipt-v1.json'), 'utf8')),
-			).toMatchObject({
-				actionId: 'action-stdin-request',
-				expectedProcessEpoch: null,
-				kind: 'observe',
-				observedProcessEpoch: null,
-				status: 'completed',
-			});
-		});
-
-		it('bounds invalid stdin without persisting an audit or performing an action', async () => {
-			const tempDirectory = await mkdtemp(
-				path.join(os.tmpdir(), 'openclaw-process-supervisor-request-read-invalid-'),
-			);
-			createdDirectories.push(tempDirectory);
-			const stateDirectory = path.join(tempDirectory, 'state');
-			const cgroupRoot = path.join(tempDirectory, 'cgroup');
-			const mountsPath = path.join(tempDirectory, 'mounts');
-			const helperPath = path.join(tempDirectory, 'helper');
-			await Promise.all([
-				mkdir(stateDirectory, { recursive: true, mode: 0o700 }),
-				mkdir(cgroupRoot, { recursive: true, mode: 0o700 }),
-				writeFile(mountsPath, `none ${cgroupRoot} cgroup2 rw 0 0\n`, 'utf8'),
-			]);
-			const helperSource = processSupervisorHelperTestInternals
-				.buildOpenClawProcessSupervisorHelperSource()
-				.replaceAll('/run/agent-vm/openclaw-process-supervisor', stateDirectory)
-				.replaceAll('/sys/fs/cgroup', cgroupRoot)
-				.replaceAll('/proc/mounts', mountsPath);
-			await writeFile(helperPath, helperSource, 'utf8');
-
-			const outcome = await runNodeHelperWithStdin(helperPath, '{"contractVersion":');
-			expect(outcome).toMatchObject({
-				stderr: 'agent-vm-process-supervisor-failure:parse-request-json\n',
-			});
-			expect((outcome as { readonly stderr: string }).stderr).not.toContain(
-				'Unexpected end of JSON input',
-			);
-			expect((outcome as { readonly stderr: string }).stderr).not.toContain(tempDirectory);
-			expect(outcome.exitCode).not.toBe(0);
-			expect(await pathExists(path.join(stateDirectory, 'request-v1.json'))).toBe(false);
-			expect(await pathExists(path.join(stateDirectory, 'state-v1.json'))).toBe(false);
-			expect(await pathExists(path.join(stateDirectory, 'receipt-v1.json'))).toBe(false);
-			expect(await readdir(cgroupRoot)).toEqual([]);
-		});
-
-		it('executes the generated helper through start, reliability termination, containment, and successor start', async () => {
-			const tempDirectory = await mkdtemp(
-				path.join(os.tmpdir(), 'openclaw-process-supervisor-behavior-'),
-			);
-			createdDirectories.push(tempDirectory);
-			const stateDirectory = path.join(tempDirectory, 'state');
-			const cgroupRoot = path.join(tempDirectory, 'cgroup');
-			const mountsPath = path.join(tempDirectory, 'mounts');
-			const helperPath = path.join(tempDirectory, 'helper');
-			const watcherPath = path.join(tempDirectory, 'fixture-cgroup-watcher.mjs');
-			const watcherModePath = path.join(tempDirectory, 'fixture-cgroup-mode');
-			const cgroupRemovalMarkerPath = path.join(tempDirectory, 'fixture-cgroup-removed');
-			const bootLogPath = path.join(tempDirectory, 'gateway.log');
-			const gateway = {
-				controllerEpoch: 'controller-1',
-				gatewayEpochId: 'gateway-epoch-1',
-				gatewayVmId: 'gateway-vm-1',
-			} as const;
-			const processEpoch = 'process-1';
-			const successorProcessEpoch = 'process-2';
-			const cgroupName = `agent-vm-${createHash('sha256')
-				.update(`${gateway.gatewayEpochId}\0${processEpoch}`)
-				.digest('hex')
-				.slice(0, 24)}`;
-			const successorCgroupName = `agent-vm-${createHash('sha256')
-				.update(`${gateway.gatewayEpochId}\0${successorProcessEpoch}`)
-				.digest('hex')
-				.slice(0, 24)}`;
-			const cgroupPath = path.join(cgroupRoot, cgroupName);
-			const successorCgroupPath = path.join(cgroupRoot, successorCgroupName);
-			await mkdir(stateDirectory, { recursive: true, mode: 0o700 });
-			await Promise.all(
-				[cgroupPath, successorCgroupPath].map(async (fixtureCgroupPath) => {
-					await mkdir(fixtureCgroupPath, { recursive: true, mode: 0o700 });
-					await Promise.all([
-						writeFile(path.join(fixtureCgroupPath, 'cgroup.events'), 'populated 0\n', 'utf8'),
-						writeFile(path.join(fixtureCgroupPath, 'cgroup.kill'), '', 'utf8'),
-						writeFile(path.join(fixtureCgroupPath, 'cgroup.procs'), '', 'utf8'),
-					]);
-				}),
-			);
-			await writeFile(watcherModePath, 'normal', 'utf8');
-			await writeFile(mountsPath, `none ${cgroupRoot} cgroup2 rw 0 0\n`, 'utf8');
-			const helperSource = processSupervisorHelperTestInternals
-				.buildOpenClawProcessSupervisorHelperSource()
-				.replaceAll('/run/agent-vm/openclaw-process-supervisor', stateDirectory)
-				.replaceAll('/sys/fs/cgroup', cgroupRoot)
-				.replaceAll('/proc/mounts', mountsPath)
-				.replaceAll('/agent-vm/logs/gateway-boot-latest.log', bootLogPath)
-				.replace(
-					'mkdirSync(groupPath, { mode: 0o700 });',
-					'mkdirSync(groupPath, { mode: 0o700, recursive: true });',
-				)
-				.replace(
-					'rmdirSync(groupPath);',
-					"writeFileSync(path.join(groupPath, 'cgroup.kill'), ''); writeFileSync(path.join(groupPath, 'cgroup.procs'), '');",
-				);
-			await writeFile(
-				watcherPath,
-				`import { existsSync, readFileSync, watch, writeFileSync } from 'node:fs';
-const groupPaths = ${JSON.stringify([cgroupPath, successorCgroupPath])};
-const modePath = ${JSON.stringify(watcherModePath)};
-const cgroupWatches = groupPaths.flatMap((groupPath) => {
-  const processPath = groupPath + '/cgroup.procs';
-  const killPath = groupPath + '/cgroup.kill';
-  const eventsPath = groupPath + '/cgroup.events';
-  return [
-    watch(processPath, () => {
-      if (readFileSync(modePath, 'utf8').trim() === 'ignore-membership') return;
-      const pid = Number.parseInt(readFileSync(processPath, 'utf8').trim(), 10);
-      if (Number.isInteger(pid)) writeFileSync(eventsPath, 'populated 1\\n');
-    }),
-    watch(killPath, () => {
-      if (readFileSync(modePath, 'utf8').trim() === 'ignore-kill') return;
-      if (!existsSync(killPath) || readFileSync(killPath, 'utf8').trim() !== '1') return;
-      const pid = Number.parseInt(readFileSync(processPath, 'utf8').trim(), 10);
-      if (Number.isInteger(pid)) { try { process.kill(-pid, 'SIGKILL'); } catch {} }
-      writeFileSync(eventsPath, 'populated 0\\n');
-    }),
-  ];
-});
-process.stdout.write('ready\\n');
-await new Promise((resolve) => process.once('SIGTERM', resolve));
-for (const cgroupWatch of cgroupWatches) cgroupWatch.close();
-`,
-				'utf8',
-			);
-			const watcher = spawn(process.execPath, [watcherPath], {
-				stdio: ['ignore', 'pipe', 'pipe'],
-			});
-			try {
-				await once(watcher.stdout, 'data');
-				const invoke = async (
-					request: Record<string, unknown>,
-				): Promise<{
-					readonly outcome: {
-						readonly exitCode: number;
-						readonly stderr: string;
-						readonly stdout: string;
-					};
-					readonly receipt: unknown;
-				}> => {
-					await rm(path.join(stateDirectory, 'receipt-v1.json'), { force: true });
-					const outcome = await runNodeHelperWithStdin(helperPath, `${JSON.stringify(request)}\n`);
-					const receiptContent = await readFile(
-						path.join(stateDirectory, 'receipt-v1.json'),
-						'utf8',
-					).catch((error: unknown) => {
-						throw new Error(`Helper produced no receipt: ${JSON.stringify(outcome)}`, {
-							cause: error,
-						});
-					});
-					return {
-						outcome,
-						receipt: JSON.parse(receiptContent) as unknown,
-					};
-				};
-				const startRequest = {
-					actionId: 'action-a',
-					contractVersion: 1,
-					expectedProcessEpoch: null,
-					gateway,
-					kind: 'start',
-					selectedProcessEpoch: processEpoch,
-				};
-				const interruptedHelperSource = helperSource.replace(
-					"if (!waitForPopulation(groupPath, true)) throw new Error('cgroup-membership-unproven');",
-					"if (!waitForPopulation(groupPath, true)) throw new Error('cgroup-membership-unproven'); throw new Error('injected-after-launch-interruption');",
-				);
-				expect(interruptedHelperSource).not.toBe(helperSource);
-				await writeFile(helperPath, interruptedHelperSource, 'utf8');
-				const interruptedStart = await invoke({
-					...startRequest,
-					actionId: 'action-interrupted-start',
-				});
-				expect(interruptedStart).toMatchObject({
-					outcome: { exitCode: 2 },
-					receipt: {
-						actionId: 'action-interrupted-start',
-						cgroup: { name: cgroupName, populated: true },
-						observedProcessEpoch: processEpoch,
-						reason: 'helper-failed',
-						status: 'incomplete',
-					},
-				});
-				await writeFile(helperPath, helperSource, 'utf8');
-				await expect(
-					invoke({
-						actionId: 'action-interrupted-observe',
-						contractVersion: 1,
-						expectedProcessEpoch: processEpoch,
-						gateway,
-						kind: 'observe',
-					}),
-				).resolves.toMatchObject({
-					receipt: {
-						cgroup: { name: cgroupName },
-						observedProcessEpoch: processEpoch,
-					},
-				});
-				await expect(
-					invoke({
-						actionId: 'action-interrupted-contain',
-						contractVersion: 1,
-						expectedProcessEpoch: processEpoch,
-						gateway,
-						kind: 'contain',
-					}),
-				).resolves.toMatchObject({
-					receipt: {
-						cgroup: { emptyObserved: true, name: cgroupName, populated: false },
-						observedProcessEpoch: processEpoch,
-						status: 'completed',
-					},
-				});
-				await writeFile(watcherModePath, 'ignore-membership', 'utf8');
-				const membershipFailed = await invoke({
-					...startRequest,
-					actionId: 'action-membership-failed-start',
-				});
-				expect(membershipFailed).toMatchObject({
-					outcome: { exitCode: 2 },
-					receipt: {
-						actionId: 'action-membership-failed-start',
-						cgroup: { name: cgroupName, populated: false },
-						observedProcessEpoch: processEpoch,
-						reason: 'cgroup-unavailable',
-						status: 'incomplete',
-					},
-				});
-				await expect(
-					invoke({
-						actionId: 'action-membership-failed-observe',
-						contractVersion: 1,
-						expectedProcessEpoch: processEpoch,
-						gateway,
-						kind: 'observe',
-					}),
-				).resolves.toMatchObject({
-					receipt: {
-						cgroup: { name: cgroupName, populated: false },
-						observedProcessEpoch: processEpoch,
-					},
-				});
-				await expect(
-					invoke({
-						actionId: 'action-membership-failed-contain',
-						contractVersion: 1,
-						expectedProcessEpoch: processEpoch,
-						gateway,
-						kind: 'contain',
-					}),
-				).resolves.toMatchObject({
-					receipt: {
-						cgroup: { emptyObserved: true, name: cgroupName, populated: false },
-						observedProcessEpoch: processEpoch,
-						status: 'completed',
-					},
-				});
-				await writeFile(watcherModePath, 'normal', 'utf8');
-				const started = await invoke(startRequest);
-				expect(started).toMatchObject({
-					outcome: { exitCode: 0 },
-					receipt: {
-						actionId: 'action-a',
-						cgroup: { name: cgroupName, populated: true },
-						observedProcessEpoch: processEpoch,
-						status: 'completed',
-					},
-				});
-				await expect(invoke(startRequest)).resolves.toEqual(started);
-				await expect(
-					invoke({
-						...startRequest,
-						actionId: 'action-interrupted-start',
-						selectedProcessEpoch: 'process-changed-after-interruption',
-					}),
-				).resolves.toMatchObject({
-					outcome: { exitCode: 2 },
-					receipt: {
-						actionId: 'action-interrupted-start',
-						reason: 'action-reused',
-						status: 'refused',
-					},
-				});
-				const changedActionA = await invoke({
-					...startRequest,
-					selectedProcessEpoch: 'process-changed',
-				});
-				expect(changedActionA).toMatchObject({
-					outcome: { exitCode: 2 },
-					receipt: { actionId: 'action-a', reason: 'action-reused', status: 'refused' },
-				});
-				const observed = await invoke({
-					actionId: 'action-b',
-					contractVersion: 1,
-					expectedProcessEpoch: processEpoch,
-					gateway,
-					kind: 'observe',
-				});
-				expect(observed).toMatchObject({
-					outcome: { exitCode: 0 },
-					receipt: { observedProcessEpoch: processEpoch, status: 'completed' },
-				});
-				await expect(
-					invoke({ ...startRequest, selectedProcessEpoch: 'process-changed-after-b' }),
-				).resolves.toMatchObject({
-					outcome: { exitCode: 2 },
-					receipt: { actionId: 'action-a', reason: 'action-reused' },
-				});
-				const unavailableContainHelperSource = helperSource.replace(
-					"if (!existsSync(path.join(groupPath, 'cgroup.kill'))) throw new Error('cgroup-kill-unavailable');",
-					"throw new Error('cgroup-kill-unavailable');",
-				);
-				expect(unavailableContainHelperSource).not.toBe(helperSource);
-				await writeFile(helperPath, unavailableContainHelperSource, 'utf8');
-				await expect(
-					invoke({
-						actionId: 'action-contain-unavailable',
-						contractVersion: 1,
-						expectedProcessEpoch: processEpoch,
-						gateway,
-						kind: 'contain',
-					}),
-				).resolves.toMatchObject({
-					outcome: { exitCode: 2 },
-					receipt: {
-						actionId: 'action-contain-unavailable',
-						cgroup: { name: cgroupName, populated: true },
-						observedProcessEpoch: processEpoch,
-						reason: 'cgroup-unavailable',
-						status: 'incomplete',
-					},
-				});
-				await writeFile(helperPath, helperSource, 'utf8');
-				await writeFile(watcherModePath, 'ignore-kill', 'utf8');
-				await expect(
-					invoke({
-						actionId: 'action-contain-still-populated',
-						contractVersion: 1,
-						expectedProcessEpoch: processEpoch,
-						gateway,
-						kind: 'contain',
-					}),
-				).resolves.toMatchObject({
-					outcome: { exitCode: 2 },
-					receipt: {
-						actionId: 'action-contain-still-populated',
-						cgroup: { name: cgroupName, populated: true },
-						observedProcessEpoch: processEpoch,
-						reason: 'cgroup-empty-unproven',
-						status: 'incomplete',
-					},
-				});
-				await writeFile(path.join(cgroupPath, 'cgroup.kill'), '', 'utf8');
-				await writeFile(watcherModePath, 'normal', 'utf8');
-				await writeFile(path.join(stateDirectory, 'operation.lock'), 'stale', 'utf8');
-				await expect(
-					runNodeHelperWithStdin(helperPath, `${JSON.stringify(startRequest)}\n`),
-				).resolves.toMatchObject({ exitCode: 73 });
-				await rm(path.join(stateDirectory, 'operation.lock'), { force: true });
-				await expect(
-					invoke({
-						actionId: 'action-reliability-terminate-wrong-process',
-						contractVersion: 1,
-						expectedProcessEpoch: 'process-wrong',
-						gateway,
-						kind: 'terminate-for-reliability-test',
-					}),
-				).resolves.toMatchObject({
-					outcome: { exitCode: 2 },
-					receipt: {
-						cgroup: { name: cgroupName, populated: true },
-						observedProcessEpoch: processEpoch,
-						reason: 'process-fence-mismatch',
-						status: 'refused',
-					},
-				});
-				const reliabilityTerminationRequest = {
-					actionId: 'action-reliability-terminate',
-					contractVersion: 1,
-					expectedProcessEpoch: processEpoch,
-					gateway,
-					kind: 'terminate-for-reliability-test',
-				};
-				const reliabilityTermination = await invoke(reliabilityTerminationRequest);
-				expect(reliabilityTermination).toMatchObject({
-					outcome: { exitCode: 0 },
-					receipt: {
-						cgroup: { emptyObserved: true, name: cgroupName, populated: false },
-						observedProcessEpoch: processEpoch,
-						status: 'completed',
-					},
-				});
-				await expect(invoke(reliabilityTerminationRequest)).resolves.toEqual(
-					reliabilityTermination,
-				);
-				await expect(
-					invoke({
-						...reliabilityTerminationRequest,
-						expectedProcessEpoch: 'process-changed',
-					}),
-				).resolves.toMatchObject({
-					outcome: { exitCode: 2 },
-					receipt: {
-						actionId: 'action-reliability-terminate',
-						reason: 'action-reused',
-						status: 'refused',
-					},
-				});
-				await expect(
-					invoke({
-						actionId: 'action-observe-empty-bound-process',
-						contractVersion: 1,
-						expectedProcessEpoch: processEpoch,
-						gateway,
-						kind: 'observe',
-					}),
-				).resolves.toMatchObject({
-					outcome: { exitCode: 0 },
-					receipt: {
-						cgroup: { name: cgroupName, populated: false },
-						observedProcessEpoch: processEpoch,
-						status: 'completed',
-					},
-				});
-				expect(
-					JSON.parse(await readFile(path.join(stateDirectory, 'state-v1.json'), 'utf8')),
-				).toMatchObject({
-					cgroupName,
-					currentProcessEpoch: processEpoch,
-					status: 'exited',
-				});
-				const removeFixtureCgroupHelperSource = helperSource.replace(
-					"writeFileSync(path.join(groupPath, 'cgroup.kill'), ''); writeFileSync(path.join(groupPath, 'cgroup.procs'), '');",
-					`writeFileSync(${JSON.stringify(cgroupRemovalMarkerPath)}, groupPath); writeFileSync(path.join(groupPath, 'cgroup.kill'), ''); writeFileSync(path.join(groupPath, 'cgroup.procs'), '');`,
-				);
-				expect(removeFixtureCgroupHelperSource).not.toBe(helperSource);
-				await rm(path.join(cgroupPath, 'cgroup.kill'));
-				await writeFile(helperPath, removeFixtureCgroupHelperSource, 'utf8');
-				const contained = await invoke({
-					actionId: 'action-c',
-					contractVersion: 1,
-					expectedProcessEpoch: processEpoch,
-					gateway,
-					kind: 'contain',
-				});
-				expect(contained).toMatchObject({
-					outcome: { exitCode: 0 },
-					receipt: {
-						cgroup: { emptyObserved: true, name: cgroupName, populated: false },
-						observedProcessEpoch: processEpoch,
-						status: 'completed',
-					},
-				});
-				expect(await readFile(cgroupRemovalMarkerPath, 'utf8')).toBe(cgroupPath);
-				expect(
-					JSON.parse(await readFile(path.join(stateDirectory, 'state-v1.json'), 'utf8')),
-				).toMatchObject({
-					cgroupName: null,
-					currentProcessEpoch: null,
-					status: 'contained',
-				});
-				await writeFile(helperPath, helperSource, 'utf8');
-				const successorStarted = await invoke({
-					actionId: 'action-start-successor',
-					contractVersion: 1,
-					expectedProcessEpoch: null,
-					gateway,
-					kind: 'start',
-					selectedProcessEpoch: successorProcessEpoch,
-				});
-				expect(successorStarted).toMatchObject({
-					outcome: { exitCode: 0 },
-					receipt: {
-						cgroup: { name: successorCgroupName, populated: true },
-						observedProcessEpoch: successorProcessEpoch,
-						status: 'completed',
-					},
-				});
-				await expect(
-					invoke({
-						actionId: 'action-reliability-terminate-successor',
-						contractVersion: 1,
-						expectedProcessEpoch: successorProcessEpoch,
-						gateway,
-						kind: 'terminate-for-reliability-test',
-					}),
-				).resolves.toMatchObject({
-					outcome: { exitCode: 0 },
-					receipt: {
-						cgroup: { emptyObserved: true, name: successorCgroupName, populated: false },
-						observedProcessEpoch: successorProcessEpoch,
-						status: 'completed',
-					},
-				});
-				await rm(successorCgroupPath, { recursive: true });
-				await writeFile(helperPath, removeFixtureCgroupHelperSource, 'utf8');
-				await expect(
-					invoke({
-						actionId: 'action-contain-already-absent',
-						contractVersion: 1,
-						expectedProcessEpoch: successorProcessEpoch,
-						gateway,
-						kind: 'contain',
-					}),
-				).resolves.toMatchObject({
-					outcome: { exitCode: 0 },
-					receipt: {
-						cgroup: { emptyObserved: true, name: successorCgroupName, populated: false },
-						observedProcessEpoch: successorProcessEpoch,
-						status: 'completed',
-					},
-				});
-				expect(
-					JSON.parse(await readFile(path.join(stateDirectory, 'state-v1.json'), 'utf8')),
-				).toMatchObject({
-					cgroupName: null,
-					currentProcessEpoch: null,
-					status: 'contained',
-				});
-				const unprovenAbsentProcessEpoch = 'process-unproven-absent';
-				const unprovenAbsentCgroupName = 'agent-vm-unproven-absent';
-				const containedState = JSON.parse(
-					await readFile(path.join(stateDirectory, 'state-v1.json'), 'utf8'),
-				) as Record<string, unknown>;
-				await writeFile(
-					path.join(stateDirectory, 'state-v1.json'),
-					`${JSON.stringify({
-						...containedState,
-						cgroupName: unprovenAbsentCgroupName,
-						currentProcessEpoch: unprovenAbsentProcessEpoch,
-						status: 'running',
-					})}\n`,
-					'utf8',
-				);
-				await expect(
-					invoke({
-						actionId: 'action-contain-unproven-absent',
-						contractVersion: 1,
-						expectedProcessEpoch: unprovenAbsentProcessEpoch,
-						gateway,
-						kind: 'contain',
-					}),
-				).resolves.toMatchObject({
-					outcome: { exitCode: 2 },
-					receipt: {
-						cgroup: { name: unprovenAbsentCgroupName, populated: false },
-						observedProcessEpoch: unprovenAbsentProcessEpoch,
-						reason: 'cgroup-unavailable',
-						status: 'incomplete',
-					},
-				});
-				expect(
-					JSON.parse(await readFile(path.join(stateDirectory, 'state-v1.json'), 'utf8')),
-				).toMatchObject({
-					cgroupName: unprovenAbsentCgroupName,
-					currentProcessEpoch: unprovenAbsentProcessEpoch,
-					status: 'running',
-				});
-				const state = JSON.parse(
-					await readFile(path.join(stateDirectory, 'state-v1.json'), 'utf8'),
-				) as { actionOrder: string[]; actions: Record<string, unknown> };
-				expect(state.actionOrder).toEqual([
-					'action-interrupted-start',
-					'action-interrupted-observe',
-					'action-interrupted-contain',
-					'action-membership-failed-start',
-					'action-membership-failed-observe',
-					'action-membership-failed-contain',
-					'action-a',
-					'action-b',
-					'action-contain-unavailable',
-					'action-contain-still-populated',
-					'action-reliability-terminate-wrong-process',
-					'action-reliability-terminate',
-					'action-observe-empty-bound-process',
-					'action-c',
-					'action-start-successor',
-					'action-reliability-terminate-successor',
-					'action-contain-already-absent',
-					'action-contain-unproven-absent',
-				]);
-				expect(Object.keys(state.actions)).toEqual(state.actionOrder);
-			} finally {
-				if (watcher.exitCode === null && watcher.signalCode === null) {
-					watcher.kill('SIGKILL');
-					await once(watcher, 'exit').catch(() => undefined);
-				}
-			}
-		}, 60_000);
-
-		it('refreshes the managed diagnostics-otel registry before observable gateway startup', () => {
-			const processSpec = openclawLifecycle.buildProcessSpec(
-				createZone({
-					observability: createObservabilityConfig(),
-				}),
-				resolvedSecrets,
-			);
-
-			expect(processSpec.bootstrapCommand).toContain('openclaw plugins registry --refresh');
-			expect(processSpec.bootstrapCommand).not.toContain('node -e');
-			expect(processSpec.bootstrapCommand).not.toContain('const pluginId');
-			expect(processSpec.bootstrapCommand).not.toContain('installRecords');
-			expect(processSpec.bootstrapCommand).not.toContain(
-				'/home/openclaw/.openclaw/state/plugins/installs.json',
-			);
-			expect(processSpec.bootstrapCommand).not.toContain('npm-pack');
-			expect(processSpec.bootstrapCommand).not.toContain('openclaw plugins install');
-		});
-
-		it('rejects control bytes in env-injected secrets before building the bootstrap command', () => {
-			for (const secretValue of [
-				'gateway\nENVEOF\ncommand',
-				'gateway\rcommand',
-				`gateway${String.fromCharCode(0)}command`,
-				`gateway${String.fromCharCode(7)}command`,
-			]) {
-				expect(() =>
-					openclawLifecycle.buildProcessSpec(createZone(), {
-						...resolvedSecrets,
-						OPENCLAW_GATEWAY_TOKEN: secretValue,
-					}),
-				).toThrow(/single-line value without control bytes/u);
-			}
-		});
-
-		it('rejects unallowlisted authored env secrets before building the bootstrap command', () => {
-			expect(() =>
-				openclawLifecycle.buildProcessSpec(
-					createZone({
-						gateway: {
-							rawEnvSecrets: [],
-						},
-					}),
-					resolvedSecrets,
-				),
-			).toThrow(/DISCORD_BOT_TOKEN.*rawEnvSecrets/u);
-		});
-
-		it('renders an empty runtime secrets file when no env secrets are resolved', async () => {
-			const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-bootstrap-empty-'));
-			createdDirectories.push(tempDirectory);
-			const processSpec = openclawLifecycle.buildProcessSpec(createZone(), {});
-
-			await renderBootstrapFiles(processSpec.bootstrapCommand, tempDirectory, {
-				...process.env,
-				DISCORD_BOT_TOKEN: resolvedSecrets.DISCORD_BOT_TOKEN,
-				OPENCLAW_GATEWAY_TOKEN: resolvedSecrets.OPENCLAW_GATEWAY_TOKEN,
-			});
-
-			await expect(
-				readFile(path.join(tempDirectory, 'run', 'openclaw', 'secrets.env'), 'utf8'),
-			).resolves.toBe('');
-		});
-
-		it('round-trips shell-sensitive env secrets through the generated secrets file', async () => {
-			const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-bootstrap-secrets-'));
-			createdDirectories.push(tempDirectory);
-			const gatewayToken = "gateway' $ ` token";
-			const discordToken = "discord' $ ` token";
-			const processSpec = openclawLifecycle.buildProcessSpec(createZone(), {
-				...resolvedSecrets,
-				DISCORD_BOT_TOKEN: discordToken,
-				OPENCLAW_GATEWAY_TOKEN: gatewayToken,
-			});
-
-			expect(processSpec.bootstrapCommand).not.toContain(gatewayToken);
-			expect(processSpec.bootstrapCommand).not.toContain(discordToken);
-			await renderBootstrapFiles(processSpec.bootstrapCommand, tempDirectory, {
-				...process.env,
-				DISCORD_BOT_TOKEN: discordToken,
-				OPENCLAW_GATEWAY_TOKEN: gatewayToken,
-			});
-
-			const secretsFilePath = path.join(tempDirectory, 'run', 'openclaw', 'secrets.env');
-			const { stdout } = await execFileAsync(
-				'bash',
-				[
-					'-lc',
-					`set -eu; . ${shellQuoteForTest(secretsFilePath)}; printf '%s\\n%s' "$OPENCLAW_GATEWAY_TOKEN" "$DISCORD_BOT_TOKEN"`,
-				],
-				{
-					env: {
-						PATH: process.env.PATH,
-					},
-				},
-			);
-
-			expect(stdout).toBe(`${gatewayToken}\n${discordToken}`);
-		});
-
-		it('writes a token-only admin env file without requiring other raw gateway secrets for SSH', async () => {
-			const tempDirectory = await mkdtemp(
-				path.join(os.tmpdir(), 'openclaw-bootstrap-admin-token-'),
-			);
-			createdDirectories.push(tempDirectory);
-			const gatewayToken = "gateway' $ ` token";
-			const discordToken = "discord' $ ` token";
-			const processSpec = openclawLifecycle.buildProcessSpec(createZone(), {
-				...resolvedSecrets,
-				DISCORD_BOT_TOKEN: discordToken,
-				OPENCLAW_GATEWAY_TOKEN: gatewayToken,
-			});
-
-			await renderBootstrapFiles(processSpec.bootstrapCommand, tempDirectory, {
-				...process.env,
-				DISCORD_BOT_TOKEN: discordToken,
-				OPENCLAW_GATEWAY_TOKEN: gatewayToken,
-			});
-
-			const gatewayTokenEnvFilePath = path.join(
-				tempDirectory,
-				'run',
-				'openclaw',
-				'gateway-token.env',
-			);
-			const tokenEnvFile = await readFile(gatewayTokenEnvFilePath, 'utf8');
-			expect(tokenEnvFile).toContain('OPENCLAW_GATEWAY_TOKEN');
-			expect(tokenEnvFile).not.toContain('DISCORD_BOT_TOKEN');
-			expect(tokenEnvFile).not.toContain(discordToken);
-			const { stdout } = await execFileAsync(
-				'bash',
-				[
-					'-lc',
-					`set -eu; . ${shellQuoteForTest(gatewayTokenEnvFilePath)}; printf '%s' "$OPENCLAW_GATEWAY_TOKEN"`,
-				],
-				{ env: { PATH: process.env.PATH } },
-			);
-
-			expect(stdout).toBe(gatewayToken);
-		});
-
-		it('writes profile scripts without expanding runtime shell expressions', async () => {
-			const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-bootstrap-'));
-			createdDirectories.push(tempDirectory);
-			const processSpec = openclawLifecycle.buildProcessSpec(createZone(), resolvedSecrets);
-
-			await renderBootstrapFiles(processSpec.bootstrapCommand, tempDirectory, {
-				...process.env,
-				DISCORD_BOT_TOKEN: resolvedSecrets.DISCORD_BOT_TOKEN,
-				OPENCLAW_GATEWAY_TOKEN: resolvedSecrets.OPENCLAW_GATEWAY_TOKEN,
-			});
-
-			const environmentShellScript = await readFile(
-				path.join(tempDirectory, 'etc', 'profile.d', 'openclaw-env.sh'),
-				'utf8',
-			);
-			await expect(
-				readFile(path.join(tempDirectory, 'etc', 'profile.d', 'openclaw-admin.sh'), 'utf8'),
-			).rejects.toThrow();
-			expect(environmentShellScript).toContain('export PATH=/pnpm:$PATH');
-			// The NODE_OPTIONS profile export is idempotent so it keeps
-			// interactive shells safe without duplicating the forced flags
-			// that the VM env already provides.
-			expect(environmentShellScript).toContain(
-				'case " ${NODE_OPTIONS:-} " in *" --dns-result-order=ipv4first "*) ;; *) export NODE_OPTIONS="--dns-result-order=ipv4first${NODE_OPTIONS:+ ${NODE_OPTIONS}}";; esac',
-			);
-			expect(environmentShellScript).toContain(
-				'case " ${NODE_OPTIONS:-} " in *" --no-network-family-autoselection "*) ;; *) export NODE_OPTIONS="--no-network-family-autoselection${NODE_OPTIONS:+ ${NODE_OPTIONS}}";; esac',
 			);
 		});
 	});
@@ -2184,68 +1467,79 @@ for (const cgroupWatch of cgroupWatches) cgroupWatch.close();
 				name: 'zoneGitTokenEnv',
 			},
 			{
-				config: { controlSession: { callerContextProofKey: 'stale-proof-key' } },
-				error: /Gondolin plugin controlSession no longer accepts callerContextProofKey/u,
-				name: 'controlSession.callerContextProofKey',
+				config: { controlSession: { bootId: 'stale-boot' } },
+				error: /Gondolin plugin config does not accept field 'controlSession'/u,
+				name: 'controlSession',
+			},
+			{
+				config: { profileId: 'gpu' },
+				error: /Gondolin plugin config does not accept field 'profileId'/u,
+				name: 'profileId',
+			},
+			{
+				config: {
+					toolPortal: {
+						configDir: '/home/openclaw/.openclaw/cache/tool-portal-effective',
+					},
+				},
+				error: /Gondolin plugin toolPortal does not accept field 'configDir'/u,
+				name: 'toolPortal.configDir',
 			},
 		] satisfies readonly {
 			readonly config: Record<string, unknown>;
 			readonly error: RegExp;
 			readonly name: string;
-		}[])(
-			'rejects stale Gondolin raw-control $name in managed OpenClaw config',
-			async (testCase) => {
-				const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-lifecycle-raw-'));
-				createdDirectories.push(tempDirectory);
-				const configDirectory = path.join(tempDirectory, 'config');
-				await mkdir(configDirectory, { recursive: true });
-				await writeFile(
-					path.join(configDirectory, 'openclaw.json'),
-					JSON.stringify(
-						{
-							plugins: {
-								allow: ['gondolin'],
-								entries: {
-									gondolin: {
-										enabled: true,
-										config: {
-											...testCase.config,
-											zoneId: 'shravan',
-										},
+		}[])('rejects removed Gondolin $name in managed OpenClaw config', async (testCase) => {
+			const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-lifecycle-raw-'));
+			createdDirectories.push(tempDirectory);
+			const configDirectory = path.join(tempDirectory, 'config');
+			await mkdir(configDirectory, { recursive: true });
+			await writeFile(
+				path.join(configDirectory, 'openclaw.json'),
+				JSON.stringify(
+					{
+						plugins: {
+							allow: ['gondolin'],
+							entries: {
+								gondolin: {
+									enabled: true,
+									config: {
+										...testCase.config,
+										zoneId: 'shravan',
 									},
 								},
 							},
 						},
-						null,
-						2,
-					),
-					'utf8',
-				);
-				const zone = createZone({
-					gateway: {
-						config: path.join(configDirectory, 'openclaw.json'),
-						stateDir: path.join(tempDirectory, 'state'),
-						zoneFilesDir: path.join(tempDirectory, 'zone-files'),
 					},
-				});
-				const secretResolver: SecretResolver = {
-					resolve: async (secretRef) => {
-						if (secretRef.ref === 'op://vault/item/auth-profiles') {
-							return '{"profiles":["main"]}';
-						}
-						if (secretRef.ref === 'op://vault/item/openclaw-gateway-token') {
-							return 'resolved-gateway-token';
-						}
-						throw new Error(`Unexpected ref: ${secretRef.ref}`);
-					},
-					resolveAll: async () => ({}),
-				};
+					null,
+					2,
+				),
+				'utf8',
+			);
+			const zone = createZone({
+				gateway: {
+					config: path.join(configDirectory, 'openclaw.json'),
+					stateDir: path.join(tempDirectory, 'state'),
+					zoneFilesDir: path.join(tempDirectory, 'zone-files'),
+				},
+			});
+			const secretResolver: SecretResolver = {
+				resolve: async (secretRef) => {
+					if (secretRef.ref === 'op://vault/item/auth-profiles') {
+						return '{"profiles":["main"]}';
+					}
+					if (secretRef.ref === 'op://vault/item/openclaw-gateway-token') {
+						return 'resolved-gateway-token';
+					}
+					throw new Error(`Unexpected ref: ${secretRef.ref}`);
+				},
+				resolveAll: async () => ({}),
+			};
 
-				await expect(openclawLifecycle.prepareHostState?.(zone, secretResolver)).rejects.toThrow(
-					testCase.error,
-				);
-			},
-		);
+			await expect(openclawLifecycle.prepareHostState?.(zone, secretResolver)).rejects.toThrow(
+				testCase.error,
+			);
+		});
 
 		it('rejects non-object authored managed Gondolin config before writing the effective config', async () => {
 			const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-lifecycle-gondolin-'));
@@ -2296,15 +1590,9 @@ for (const cgroupWatch of cgroupWatches) cgroupWatch.close();
 			);
 		});
 
-		it.each([
-			{ fieldName: 'controlSession', value: true },
-			{ fieldName: 'toolPortal', value: true },
-		] satisfies readonly {
-			readonly fieldName: 'controlSession' | 'toolPortal';
-			readonly value: boolean;
-		}[])(
-			'rejects malformed managed Gondolin $fieldName config before writing the effective config',
-			async ({ fieldName, value }) => {
+		it.each([true, null, 'portal', ['portal']] satisfies readonly unknown[])(
+			'rejects malformed managed Gondolin toolPortal config before writing the effective config',
+			async (value) => {
 				const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-lifecycle-gondolin-'));
 				createdDirectories.push(tempDirectory);
 				const configDirectory = path.join(tempDirectory, 'config');
@@ -2319,7 +1607,7 @@ for (const cgroupWatch of cgroupWatches) cgroupWatch.close();
 									gondolin: {
 										enabled: true,
 										config: {
-											[fieldName]: value,
+											toolPortal: value,
 											zoneId: 'shravan',
 										},
 									},
@@ -2352,7 +1640,7 @@ for (const cgroupWatch of cgroupWatches) cgroupWatch.close();
 				};
 
 				await expect(openclawLifecycle.prepareHostState?.(zone, secretResolver)).rejects.toThrow(
-					`Gondolin plugin ${fieldName} must be an object when present.`,
+					'Gondolin plugin toolPortal must be an object when present.',
 				);
 			},
 		);
@@ -2361,36 +1649,37 @@ for (const cgroupWatch of cgroupWatches) cgroupWatch.close();
 			{
 				authoredConfig: {
 					toolPortal: {
-						configDir: 42,
+						configDir: '/home/openclaw/.openclaw/cache/tool-portal-effective',
 					},
 					zoneId: 'shravan',
 				},
-				error: /Gondolin plugin toolPortal requires string configDir/u,
+				error: /Gondolin plugin toolPortal does not accept field 'configDir'/u,
 				name: 'toolPortal.configDir',
 				runtimeConfig: {
-					toolPortal: {
-						configDir: '/home/openclaw/.openclaw/config',
-					},
+					toolPortal: createManagedToolPortalPluginConfig(),
 				},
 			},
 			{
 				authoredConfig: {
-					controlSession: {
-						bootId: 42,
+					toolPortal: {
+						...createManagedToolPortalPluginConfig(),
+						attachment: {
+							attachmentGeneration: 0,
+							clientKind: 'openclaw-managed-plugin',
+							configuredAgentIds: ['agent-a', 'agent-b'],
+							frameworkEpoch: 'openclaw-epoch-4',
+							gatewayEpoch: 'gateway-epoch-3',
+							protocolVersion: 1,
+							runtimeEpoch: 'runtime-epoch-5',
+							schemaVersion: 1,
+						},
 					},
 					zoneId: 'shravan',
 				},
-				error: /Gondolin plugin controlSession requires string bootId/u,
-				name: 'controlSession.bootId',
+				error: /Gondolin plugin toolPortal attachment is invalid/u,
+				name: 'toolPortal.attachment',
 				runtimeConfig: {
-					controlSession: {
-						bootId: 'boot-a',
-						controllerEpoch: 'epoch-a',
-						generationId: 'generation-a',
-						peerId: 'gateway-shravan',
-						processEpoch: 'process-a',
-						verifierPublicKeyPem: 'public-key',
-					},
+					toolPortal: createManagedToolPortalPluginConfig(),
 				},
 			},
 		] satisfies readonly {
@@ -2454,89 +1743,115 @@ for (const cgroupWatch of cgroupWatches) cgroupWatch.close();
 		);
 
 		it.each([
-			{ fieldName: 'controlSession', value: true },
-			{ fieldName: 'toolPortal', value: true },
-		] satisfies readonly {
-			readonly fieldName: 'controlSession' | 'toolPortal';
-			readonly value: boolean;
-		}[])(
-			'rejects malformed authored Gondolin $fieldName even when runtime config provides a managed object',
-			async ({ fieldName, value }) => {
-				const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-lifecycle-gondolin-'));
-				createdDirectories.push(tempDirectory);
-				const configDirectory = path.join(tempDirectory, 'config');
-				await mkdir(configDirectory, { recursive: true });
-				await writeFile(
-					path.join(configDirectory, 'openclaw.json'),
-					JSON.stringify(
-						{
-							plugins: {
-								allow: ['gondolin'],
-								entries: {
-									gondolin: {
-										enabled: true,
-										config: {
-											[fieldName]: value,
-											zoneId: 'shravan',
-										},
-									},
-								},
+			{
+				error: /Gondolin plugin toolPortal requires attachment/u,
+				name: 'missing attachment',
+				runtimeConfig: {
+					toolPortal: {
+						agentProjections: {
+							'agent-a': {
+								agentId: 'agent-a',
+								frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
+								profileAssignmentRevision: 'profile-revision-a',
+								toolPortalProfileId: 'profile-a',
 							},
 						},
-						null,
-						2,
-					),
-					'utf8',
-				);
-				const zone = createZone({
-					gateway: {
-						config: path.join(configDirectory, 'openclaw.json'),
-						stateDir: path.join(tempDirectory, 'state'),
-						zoneFilesDir: path.join(tempDirectory, 'zone-files'),
 					},
-					runtimePluginConfigs: {
-						gondolin: {
-							[fieldName]: { managed: true },
+				},
+			},
+			{
+				error: /agentProjections identity is invalid/u,
+				name: 'overlong projection identity',
+				runtimeConfig: {
+					toolPortal: {
+						...createManagedToolPortalPluginConfig(),
+						agentProjections: {
+							'agent-a': {
+								agentId: 'agent-a',
+								frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
+								profileAssignmentRevision: 'x'.repeat(257),
+								toolPortalProfileId: 'profile-a',
+							},
+							'agent-b': {
+								agentId: 'agent-b',
+								frameworkIdentity: { agentId: 'agent-b', kind: 'openclaw' },
+								profileAssignmentRevision: 'profile-revision-b',
+								toolPortalProfileId: 'profile-b',
+							},
 						},
 					},
-				});
-				const secretResolver: SecretResolver = {
-					resolve: async (secretRef) => {
-						if (secretRef.ref === 'op://vault/item/auth-profiles') {
-							return '{"profiles":["main"]}';
-						}
-						if (secretRef.ref === 'op://vault/item/openclaw-gateway-token') {
-							return 'resolved-gateway-token';
-						}
-						throw new Error(`Unexpected ref: ${secretRef.ref}`);
-					},
-					resolveAll: async () => ({}),
-				};
-
-				await expect(openclawLifecycle.prepareHostState?.(zone, secretResolver)).rejects.toThrow(
-					`Gondolin plugin ${fieldName} must be an object when present.`,
-				);
+				},
 			},
-		);
-
-		it.each([
 			{
-				error: /Gondolin plugin controlSession requires string controllerEpoch/u,
-				name: 'partial controlSession',
+				error: /does not accept field 'selfRoot'/u,
+				name: 'retired selfRoot path authority',
 				runtimeConfig: {
-					controlSession: {
-						bootId: 'boot-a',
+					toolPortal: {
+						...createManagedToolPortalPluginConfig(),
+						agentProjections: {
+							'agent-a': {
+								agentId: 'agent-a',
+								frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
+								profileAssignmentRevision: 'profile-revision-a',
+								selfRoot: '/zone/agents/agent-a/self',
+								toolPortalProfileId: 'profile-a',
+							},
+							'agent-b': {
+								agentId: 'agent-b',
+								frameworkIdentity: { agentId: 'agent-b', kind: 'openclaw' },
+								profileAssignmentRevision: 'profile-revision-b',
+								toolPortalProfileId: 'profile-b',
+							},
+						},
 					},
 				},
 			},
 			{
-				error: /Gondolin plugin toolPortal requires string configDir/u,
-				name: 'empty toolPortal',
+				error: /does not accept field 'workRoot'/u,
+				name: 'retired workRoot path authority',
 				runtimeConfig: {
-					toolPortal: {},
+					toolPortal: {
+						...createManagedToolPortalPluginConfig(),
+						agentProjections: {
+							'agent-a': {
+								agentId: 'agent-a',
+								frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
+								profileAssignmentRevision: 'profile-revision-a',
+								toolPortalProfileId: 'profile-a',
+								workRoot: '/zone/agents/agent-a/work',
+							},
+							'agent-b': {
+								agentId: 'agent-b',
+								frameworkIdentity: { agentId: 'agent-b', kind: 'openclaw' },
+								profileAssignmentRevision: 'profile-revision-b',
+								toolPortalProfileId: 'profile-b',
+							},
+						},
+					},
 				},
 			},
-		] satisfies readonly InvalidFinalManagedGondolinConfigTestCase[])(
+			{
+				error: /Gondolin plugin toolPortal agent sets must match exactly/u,
+				name: 'mismatched multi-agent projections',
+				runtimeConfig: {
+					toolPortal: {
+						...createManagedToolPortalPluginConfig(),
+						agentProjections: {
+							'agent-a': {
+								agentId: 'agent-a',
+								frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
+								profileAssignmentRevision: 'profile-revision-a',
+								toolPortalProfileId: 'profile-a',
+							},
+						},
+					},
+				},
+			},
+		] satisfies readonly {
+			readonly error: RegExp;
+			readonly name: string;
+			readonly runtimeConfig: Readonly<Record<string, unknown>>;
+		}[])(
 			'rejects final managed Gondolin $name config before writing the effective config',
 			async (testCase) => {
 				const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-lifecycle-gondolin-'));
@@ -2638,8 +1953,8 @@ for (const cgroupWatch of cgroupWatches) cgroupWatch.close();
 			);
 		});
 
-		it('does not serialize the gateway caller-context proof key into effective OpenClaw config', async () => {
-			const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-lifecycle-proof-'));
+		it('materializes the exact multi-agent thin-adapter plugin config', async () => {
+			const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-lifecycle-adapter-'));
 			createdDirectories.push(tempDirectory);
 			const configDirectory = path.join(tempDirectory, 'config');
 			await mkdir(configDirectory, { recursive: true });
@@ -2665,18 +1980,8 @@ for (const cgroupWatch of cgroupWatches) cgroupWatch.close();
 				},
 				runtimePluginConfigs: {
 					gondolin: {
-						controlSession: {
-							bootId: 'boot-a',
-							controllerEpoch: 'epoch-a',
-							generationId: 'generation-a',
-							peerId: 'gateway-shravan',
-							processEpoch: 'process-a',
-							verifierPublicKeyPem: 'public-key',
-						},
+						toolPortal: createManagedToolPortalPluginConfig(),
 					},
-				},
-				runtimePrivateEnvironment: {
-					[GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV]: 'private-proof-key',
 				},
 			});
 			const secretResolver: SecretResolver = {
@@ -2698,29 +2003,21 @@ for (const cgroupWatch of cgroupWatches) cgroupWatch.close();
 				path.join(zone.gateway.stateDir, 'effective-openclaw.json'),
 				'utf8',
 			);
-			expect(effectiveOpenClawConfigContent).not.toContain('private-proof-key');
-			expect(effectiveOpenClawConfigContent).not.toContain(
-				GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV,
-			);
-			expect(JSON.parse(effectiveOpenClawConfigContent)).toMatchObject({
-				plugins: {
-					entries: {
-						gondolin: {
-							config: {
-								controlSession: {
-									bootId: 'boot-a',
-									controllerEpoch: 'epoch-a',
-									generationId: 'generation-a',
-									peerId: 'gateway-shravan',
-									processEpoch: 'process-a',
-									verifierPublicKeyPem: 'public-key',
-								},
-								zoneId: 'shravan',
-							},
-						},
-					},
-				},
+			const effectiveOpenClawConfig = JSON.parse(effectiveOpenClawConfigContent) as {
+				readonly plugins: {
+					readonly entries: {
+						readonly gondolin: { readonly config: Readonly<Record<string, unknown>> };
+					};
+				};
+			};
+			expect(effectiveOpenClawConfig.plugins.entries.gondolin.config).toEqual({
+				toolPortal: createManagedToolPortalPluginConfig(),
+				zoneId: 'shravan',
 			});
+			expect(effectiveOpenClawConfigContent).not.toContain('controlSession');
+			expect(effectiveOpenClawConfigContent).not.toContain('controllerUrl');
+			expect(effectiveOpenClawConfigContent).not.toContain('zoneGit');
+			expect(effectiveOpenClawConfigContent).not.toContain('configDir');
 		});
 
 		it('resolves all per-agent auth profiles before writing files', async () => {
@@ -2989,7 +2286,7 @@ for (const cgroupWatch of cgroupWatches) cgroupWatch.close();
 					metrics: true,
 					protocol: 'http/protobuf',
 					sampleRate: 1,
-					serviceName: 'agent-vm-openclaw-shravan',
+					serviceName: 'agent-vm-openclaw',
 					traces: true,
 				},
 			});

@@ -1,20 +1,89 @@
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ManagedImageRelease } from '../build/managed-image-dockerfile.js';
 import { createLoadedSystemConfig, type SystemConfig } from '../config/system-config.js';
 import {
+	collectManagedAgentRootStorageChecks,
 	collectManagedImagePackageOverrideDoctorChecks,
 	collectVmHostSystemDoctorCheck,
 	runControllerDoctor,
 } from './doctor.js';
 
+describe('collectManagedAgentRootStorageChecks', () => {
+	const temporaryRoots: string[] = [];
+
+	afterEach(async () => {
+		await Promise.all(
+			temporaryRoots.splice(0).map(async (temporaryRoot) => {
+				await rm(temporaryRoot, { force: true, recursive: true });
+			}),
+		);
+	});
+
+	it('accepts both absent roots before controller materialization', async () => {
+		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'doctor-agent-roots-'));
+		temporaryRoots.push(temporaryDirectoryPath);
+		const firstZone = systemConfig.zones[0];
+		if (firstZone === undefined || firstZone.gateway.type !== 'openclaw') {
+			throw new Error('Test fixture must include an OpenClaw zone.');
+		}
+
+		const checks = await collectManagedAgentRootStorageChecks({
+			...systemConfig,
+			zones: [
+				{
+					...firstZone,
+					gateway: {
+						...firstZone.gateway,
+						zoneFilesDir: path.join(temporaryDirectoryPath, 'zone-files'),
+					},
+				},
+			],
+		});
+
+		expect(checks).toEqual([
+			expect.objectContaining({ hint: 'pending controller materialization', ok: true }),
+		]);
+	});
+
+	it('rejects an unsafe managed agent workspace root', async () => {
+		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'doctor-agent-roots-'));
+		temporaryRoots.push(temporaryDirectoryPath);
+		const zoneFilesDir = path.join(temporaryDirectoryPath, 'zone-files');
+		const firstZone = systemConfig.zones[0];
+		if (firstZone === undefined || firstZone.gateway.type !== 'openclaw') {
+			throw new Error('Test fixture must include an OpenClaw zone.');
+		}
+		await mkdir(path.join(zoneFilesDir, 'agents'), { recursive: true });
+		await writeFile(path.join(zoneFilesDir, 'agents', 'shravan'), 'not a directory');
+
+		const checks = await collectManagedAgentRootStorageChecks({
+			...systemConfig,
+			zones: [
+				{
+					...firstZone,
+					gateway: { ...firstZone.gateway, zoneFilesDir },
+				},
+			],
+		});
+
+		expect(checks).toEqual([
+			expect.objectContaining({
+				hint: expect.stringContaining('workspace=unsafe'),
+				ok: false,
+			}),
+		]);
+	});
+});
+
 const systemConfig = {
 	schemaVersion: 1,
 	cacheDir: './cache',
+	controllerStateDir: '/controller-state-test',
 	runtimeDir: './runtime',
 	host: {
 		controllerPort: 18800,
@@ -77,15 +146,6 @@ const systemConfig = {
 			egressHosts: ['api.anthropic.com'].map((host) => ({ host, audience: 'gateway' as const })),
 			defaultToolVmProfile: 'standard',
 			agentToolVmProfiles: {},
-			agentSandboxSeeds: {
-				shravan: [
-					{
-						source: { source: 'environment', envVar: 'SHRAVAN_GCLOUD_CONFIG' },
-						target: '.config/gcloud/configurations/config_default',
-						mode: 0o600,
-					},
-				],
-			},
 		},
 	],
 	toolVmProfiles: {
@@ -252,8 +312,93 @@ function createManagedObservabilitySystemConfig(): SystemConfig {
 }
 
 describe('runControllerDoctor', () => {
-	it('reports all checks passing when environment is complete', () => {
-		const result = runControllerDoctor({
+	it('reports deterministic failed legacy-controller-record checks for every affected zone', async () => {
+		const firstZone = systemConfig.zones[0];
+		if (!firstZone || firstZone.gateway.type !== 'openclaw') {
+			throw new Error('Expected an OpenClaw test zone.');
+		}
+		const secondStateDirectory = '/state/sun';
+		const firstStateDirectory = path.resolve(firstZone.gateway.stateDir);
+		const scanGatewayStateAuthorityEvidence = vi.fn(
+			async ({ gatewayStateDirectoryPath }: { readonly gatewayStateDirectoryPath: string }) =>
+				gatewayStateDirectoryPath === firstStateDirectory
+					? [
+							{
+								absolutePath: `${gatewayStateDirectoryPath}/tool-leases`,
+								family: 'tool-leases' as const,
+								kind: 'directory' as const,
+							},
+						]
+					: [
+							{
+								absolutePath: `${gatewayStateDirectoryPath}/gateway-runtime.json`,
+								family: 'gateway-runtime' as const,
+								kind: 'symbolic-link' as const,
+							},
+						],
+		);
+		const result = await runControllerDoctor({
+			availableBinaries: allBinaries,
+			diskFreeBytes: 50 * 1024 * 1024 * 1024,
+			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
+			occupiedPorts: new Set<number>(),
+			nodeVersion: 'v25.9.0',
+			scanGatewayStateAuthorityEvidence,
+			totalMemoryBytes: 16 * 1024 * 1024 * 1024,
+			systemConfig: {
+				...systemConfig,
+				zones: [
+					firstZone,
+					{
+						...firstZone,
+						gateway: {
+							...firstZone.gateway,
+							port: firstZone.gateway.port + 1,
+							stateDir: secondStateDirectory,
+							zoneFilesDir: '/zone-files/sun',
+						},
+						id: 'sun',
+					},
+				],
+			},
+		});
+
+		expect(scanGatewayStateAuthorityEvidence).toHaveBeenCalledTimes(2);
+		expect(result.ok).toBe(false);
+		expect(result.checks).toEqual(
+			expect.arrayContaining([
+				{
+					name: 'legacy-controller-record-evidence-shravan-0',
+					ok: false,
+					hint: `family=tool-leases kind=directory path=${firstStateDirectory}/tool-leases; move controller-owned records to controllerStateDir and remove legacy Gateway-state evidence`,
+				},
+				{
+					name: 'legacy-controller-record-evidence-sun-0',
+					ok: false,
+					hint: `family=gateway-runtime kind=symbolic-link path=${secondStateDirectory}/gateway-runtime.json; move controller-owned records to controllerStateDir and remove legacy Gateway-state evidence`,
+				},
+			]),
+		);
+	});
+
+	it('reports one green legacy-controller-record check when every zone is clean', async () => {
+		const result = await runControllerDoctor({
+			availableBinaries: allBinaries,
+			diskFreeBytes: 50 * 1024 * 1024 * 1024,
+			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
+			nodeVersion: 'v25.9.0',
+			scanGatewayStateAuthorityEvidence: async () => [],
+			systemConfig,
+		});
+
+		expect(result.checks).toContainEqual({
+			name: 'legacy-controller-record-evidence',
+			ok: true,
+			hint: 'No legacy controller records exist under Gateway state directories.',
+		});
+	});
+	it('reports all checks passing when environment is complete', async () => {
+		const result = await runControllerDoctor({
 			availableBinaries: allBinaries,
 			diskFreeBytes: 50 * 1024 * 1024 * 1024,
 			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
@@ -289,12 +434,6 @@ describe('runControllerDoctor', () => {
 			ok: true,
 			hint: 'configured',
 		});
-		expect(
-			result.checks.find((check) => check.name === 'zone-agent-sandbox-seed-shravan-shravan-0'),
-		).toMatchObject({
-			ok: true,
-			hint: '.config/gcloud/configurations/config_default',
-		});
 		expect(result.checks.find((check) => check.name === 'age')).toBeUndefined();
 		expect(result.checks.find((check) => check.name === '1password-cli')).toBeUndefined();
 		expect(result.checks.find((check) => check.name === 'observability-enabled')).toMatchObject({
@@ -304,7 +443,7 @@ describe('runControllerDoctor', () => {
 		expect(result.checks.find((check) => check.name === 'docker-cli')).toBeUndefined();
 	});
 
-	it('reports Tool VM mediated secret agent access', () => {
+	it('reports Tool VM mediated secret agent access', async () => {
 		const baseConfig = createExternalObservabilitySystemConfig();
 		const baseZone = baseConfig.zones[0];
 		if (!baseZone) {
@@ -345,7 +484,7 @@ describe('runControllerDoctor', () => {
 			],
 		} satisfies SystemConfig;
 
-		const result = runControllerDoctor({
+		const result = await runControllerDoctor({
 			availableBinaries: allBinaries,
 			diskFreeBytes: 50 * 1024 * 1024 * 1024,
 			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
@@ -369,8 +508,8 @@ describe('runControllerDoctor', () => {
 		});
 	});
 
-	it('recommends managed observability when host observability is omitted', () => {
-		const result = runControllerDoctor({
+	it('recommends managed observability when host observability is omitted', async () => {
+		const result = await runControllerDoctor({
 			availableBinaries: allBinaries,
 			diskFreeBytes: 50 * 1024 * 1024 * 1024,
 			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
@@ -392,8 +531,8 @@ describe('runControllerDoctor', () => {
 		);
 	});
 
-	it('requires Docker only for managed observability stacks', () => {
-		const missingDockerResult = runControllerDoctor({
+	it('requires Docker only for managed observability stacks', async () => {
+		const missingDockerResult = await runControllerDoctor({
 			availableBinaries: allBinaries,
 			diskFreeBytes: 50 * 1024 * 1024 * 1024,
 			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
@@ -404,7 +543,7 @@ describe('runControllerDoctor', () => {
 			zigVersion: '0.15.2',
 			systemConfig: createManagedObservabilitySystemConfig(),
 		});
-		const readyDockerResult = runControllerDoctor({
+		const readyDockerResult = await runControllerDoctor({
 			availableBinaries: new Set([...allBinaries, 'docker']),
 			diskFreeBytes: 50 * 1024 * 1024 * 1024,
 			dockerDaemonReady: true,
@@ -427,7 +566,7 @@ describe('runControllerDoctor', () => {
 		});
 	});
 
-	it('checks Docker CLI and daemon when Docker-backed images are configured', () => {
+	it('checks Docker CLI and daemon when Docker-backed images are configured', async () => {
 		const dockerBackedConfig = {
 			...systemConfig,
 			imageProfiles: {
@@ -442,7 +581,7 @@ describe('runControllerDoctor', () => {
 			},
 		} satisfies SystemConfig;
 
-		const missingDockerResult = runControllerDoctor({
+		const missingDockerResult = await runControllerDoctor({
 			availableBinaries: allBinaries,
 			diskFreeBytes: 50 * 1024 * 1024 * 1024,
 			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
@@ -453,7 +592,7 @@ describe('runControllerDoctor', () => {
 			zigVersion: '0.15.2',
 			systemConfig: dockerBackedConfig,
 		});
-		const readyDockerResult = runControllerDoctor({
+		const readyDockerResult = await runControllerDoctor({
 			availableBinaries: new Set([...allBinaries, 'docker']),
 			diskFreeBytes: 50 * 1024 * 1024 * 1024,
 			dockerDaemonReady: true,
@@ -486,7 +625,7 @@ describe('runControllerDoctor', () => {
 		});
 	});
 
-	it('checks Docker CLI and daemon when managed base images are configured', () => {
+	it('checks Docker CLI and daemon when managed base images are configured', async () => {
 		const managedBaseConfig = {
 			...systemConfig,
 			imageProfiles: {
@@ -504,7 +643,7 @@ describe('runControllerDoctor', () => {
 			},
 		} satisfies SystemConfig;
 
-		const result = runControllerDoctor({
+		const result = await runControllerDoctor({
 			availableBinaries: allBinaries,
 			diskFreeBytes: 50 * 1024 * 1024 * 1024,
 			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
@@ -637,7 +776,7 @@ describe('runControllerDoctor', () => {
 		expect(checks[0]?.hint).toContain('move openClawPackageOverrides to packageOverrides.openclaw');
 	});
 
-	it('flags legacy Dockerfile image profiles for migration', () => {
+	it('flags legacy Dockerfile image profiles for migration', async () => {
 		const dockerBackedConfig = {
 			...systemConfig,
 			imageProfiles: {
@@ -652,7 +791,7 @@ describe('runControllerDoctor', () => {
 			},
 		} satisfies SystemConfig;
 
-		const result = runControllerDoctor({
+		const result = await runControllerDoctor({
 			availableBinaries: new Set([...allBinaries, 'docker']),
 			diskFreeBytes: 50 * 1024 * 1024 * 1024,
 			dockerDaemonReady: true,
@@ -676,8 +815,8 @@ describe('runControllerDoctor', () => {
 		});
 	});
 
-	it('flags missing or too-old Zig versions', () => {
-		const missingResult = runControllerDoctor({
+	it('flags missing or too-old Zig versions', async () => {
+		const missingResult = await runControllerDoctor({
 			availableBinaries: allBinaries,
 			diskFreeBytes: 50 * 1024 * 1024 * 1024,
 			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
@@ -687,7 +826,7 @@ describe('runControllerDoctor', () => {
 			totalMemoryBytes: 16 * 1024 * 1024 * 1024,
 			systemConfig,
 		});
-		const outdatedResult = runControllerDoctor({
+		const outdatedResult = await runControllerDoctor({
 			availableBinaries: allBinaries,
 			diskFreeBytes: 50 * 1024 * 1024 * 1024,
 			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
@@ -712,8 +851,8 @@ describe('runControllerDoctor', () => {
 		});
 	});
 
-	it('does not require optional 1Password CLI or age binaries for env-backed configs', () => {
-		const result = runControllerDoctor({
+	it('does not require optional 1Password CLI or age binaries for env-backed configs', async () => {
+		const result = await runControllerDoctor({
 			availableBinaries: allBinaries,
 			diskFreeBytes: 50 * 1024 * 1024 * 1024,
 			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
@@ -728,8 +867,8 @@ describe('runControllerDoctor', () => {
 		expect(result.checks.find((check) => check.name === '1password-cli')).toBeUndefined();
 	});
 
-	it('flags missing qemu with an install hint', () => {
-		const result = runControllerDoctor({
+	it('flags missing qemu with an install hint', async () => {
+		const result = await runControllerDoctor({
 			availableBinaries: new Set<string>(),
 			diskFreeBytes: 50 * 1024 * 1024 * 1024,
 			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
@@ -745,8 +884,8 @@ describe('runControllerDoctor', () => {
 		expect(qemuCheck?.hint).toBe('Install QEMU (for example: brew install qemu).');
 	});
 
-	it('flags missing OpenClaw CLI for OpenClaw gateway configs', () => {
-		const result = runControllerDoctor({
+	it('flags missing OpenClaw CLI for OpenClaw gateway configs', async () => {
+		const result = await runControllerDoctor({
 			availableBinaries: new Set([...allBinaries].filter((binary) => binary !== 'openclaw')),
 			diskFreeBytes: 50 * 1024 * 1024 * 1024,
 			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
@@ -763,8 +902,8 @@ describe('runControllerDoctor', () => {
 		});
 	});
 
-	it('flags occupied ports and insufficient resources', () => {
-		const result = runControllerDoctor({
+	it('flags occupied ports and insufficient resources', async () => {
+		const result = await runControllerDoctor({
 			availableBinaries: allBinaries,
 			diskFreeBytes: 1,
 			env: {},
@@ -781,7 +920,7 @@ describe('runControllerDoctor', () => {
 		expect(result.checks.find((check) => check.name === 'disk-space')?.ok).toBe(false);
 	});
 
-	it('flags runtimeDir overlap with cache, state, and zone files paths', () => {
+	it('flags runtimeDir overlap with cache, state, and zone files paths', async () => {
 		const overlappingConfigs = [
 			{
 				runtimeDir: './cache/runtime',
@@ -814,7 +953,8 @@ describe('runControllerDoctor', () => {
 			if (firstZone === undefined || firstZone.gateway.type !== 'openclaw') {
 				throw new Error('Test fixture must include an OpenClaw zone.');
 			}
-			const result = runControllerDoctor({
+			// oxlint-disable-next-line no-await-in-loop -- each table case is asserted independently in declaration order.
+			const result = await runControllerDoctor({
 				availableBinaries: allBinaries,
 				diskFreeBytes: 50 * 1024 * 1024 * 1024,
 				env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
@@ -848,12 +988,12 @@ describe('runControllerDoctor', () => {
 		}
 	});
 
-	it('reports every runtimeDir overlap in one doctor run', () => {
+	it('reports every runtimeDir overlap in one doctor run', async () => {
 		const firstZone = systemConfig.zones[0];
 		if (firstZone === undefined || firstZone.gateway.type !== 'openclaw') {
 			throw new Error('Test fixture must include an OpenClaw zone.');
 		}
-		const result = runControllerDoctor({
+		const result = await runControllerDoctor({
 			availableBinaries: allBinaries,
 			diskFreeBytes: 50 * 1024 * 1024 * 1024,
 			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
@@ -886,8 +1026,8 @@ describe('runControllerDoctor', () => {
 		);
 	});
 
-	it('flags worker /work VFS mounts as a performance risk', () => {
-		const result = runControllerDoctor({
+	it('flags worker /work VFS mounts as a performance risk', async () => {
+		const result = await runControllerDoctor({
 			availableBinaries: allBinaries,
 			diskFreeBytes: 50 * 1024 * 1024 * 1024,
 			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },

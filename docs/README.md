@@ -11,6 +11,7 @@ directory is the deeper map.
 | Understand the Worker gateway | [architecture/agent-worker-gateway.md](architecture/agent-worker-gateway.md) |
 | Understand state/cache/backup boundaries | [architecture/storage-model.md](architecture/storage-model.md) |
 | Understand VM provider and package boundaries | [architecture/overview.md#package-dependency-graph](architecture/overview.md#package-dependency-graph) |
+| Review the accepted Gateway runtime and Tool Portal contract | [specs/2026-07-12-agent-vm-gateway-runtime/agent-vm-gateway-runtime.md](specs/2026-07-12-agent-vm-gateway-runtime/agent-vm-gateway-runtime.md) and its [glossary](specs/2026-07-12-agent-vm-gateway-runtime/glossary.md) |
 | Review concrete OpenClaw/Worker storage paths | [architecture/storage-matrix.md](architecture/storage-matrix.md) |
 | Understand Gondolin rootfs/VFS performance knobs | [reference/gondolin/vfs-rootfs-performance.md](reference/gondolin/vfs-rootfs-performance.md) |
 | Look up config fields | [reference/configuration/README.md](reference/configuration/README.md) |
@@ -41,6 +42,11 @@ docs/
     mcp-portal.md
     secrets-and-credentials.md
     worker-task-pipeline.md
+
+  specs/
+    2026-07-12-agent-vm-gateway-runtime/
+      agent-vm-gateway-runtime.md
+      glossary.md
 
   reference/
     gondolin/

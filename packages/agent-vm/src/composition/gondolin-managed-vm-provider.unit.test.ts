@@ -1,4 +1,5 @@
 import type {
+	ManagedVmExactProcessTerminationCapability,
 	ManagedVmFactory,
 	ManagedVmImageCapability,
 	ManagedVmOwnedDirectoryCapability,
@@ -32,12 +33,16 @@ describe('createManagedVmRuntimeComposition', () => {
 	it('constructs one provider and exposes only its neutral runtime projections', async () => {
 		// Arrange
 		const factory = { createManagedVm: vi.fn() } satisfies ManagedVmFactory;
+		const exactProcessTermination = {
+			terminateRecordedHostProcess: vi.fn(),
+		} satisfies ManagedVmExactProcessTerminationCapability;
 		const images = { prepareImage: vi.fn() } satisfies ManagedVmImageCapability;
 		const ownedDirectories = {
 			openHostDirectory: vi.fn(),
 		} satisfies ManagedVmOwnedDirectoryCapability;
 		createGondolinManagedVmProvider.mockReturnValue({
 			diagnostics: { checkCompatibility: vi.fn() },
+			exactProcessTermination,
 			factory,
 			images,
 			ownedDirectories,
@@ -50,6 +55,7 @@ describe('createManagedVmRuntimeComposition', () => {
 		expect(createGondolinManagedVmProvider).toHaveBeenCalledOnce();
 		expect(composition).toEqual({
 			configureManagedVmHostNetworkDefaults: configureHostNetworkDefaults,
+			managedVmExactProcessTermination: exactProcessTermination,
 			managedVmFactory: factory,
 			managedVmImages: expect.objectContaining({ prepareImage: expect.any(Function) }),
 			managedVmOwnedDirectories: ownedDirectories,
@@ -62,6 +68,7 @@ describe('createManagedVmRuntimeComposition', () => {
 		expect(images.prepareImage).toHaveBeenCalledOnce();
 		expect(Object.keys(composition)).toEqual([
 			'configureManagedVmHostNetworkDefaults',
+			'managedVmExactProcessTermination',
 			'managedVmFactory',
 			'managedVmImages',
 			'managedVmOwnedDirectories',
@@ -76,6 +83,7 @@ describe('createManagedVmRuntimeComposition', () => {
 		// Arrange
 		createGondolinManagedVmProvider.mockReturnValue({
 			diagnostics: { checkCompatibility: vi.fn() },
+			exactProcessTermination: { terminateRecordedHostProcess: vi.fn() },
 			factory: { createManagedVm: vi.fn() },
 			images: { prepareImage: vi.fn() },
 			ownedDirectories: { openHostDirectory: vi.fn() },

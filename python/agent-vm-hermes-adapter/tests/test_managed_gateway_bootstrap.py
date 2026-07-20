@@ -1,0 +1,1047 @@
+import json
+import os
+import sqlite3
+import tempfile
+import typing as t
+import unittest
+from collections.abc import Callable, Mapping
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import ANY, Mock, call, patch
+
+import hermes_constants
+from agent_vm_agent_portal_sdk.gateway_runtime_client import GatewayRuntimeClient
+from tools import file_tools as hermes_file_tools
+from tools.environments import local as local_environment_module
+from tools.environments import ssh as ssh_environment_module
+from tools.process_registry import ProcessSession
+from tools.process_registry import process_registry as hermes_process_registry
+
+import agent_vm_hermes_adapter.managed_gateway_bootstrap as managed_gateway_bootstrap
+from agent_vm_hermes_adapter.managed_gateway_bootstrap import (
+    HermesManagedEnvironmentHooks,
+    load_managed_adapter_material,
+)
+from agent_vm_hermes_adapter.managed_profile_adapter import (
+    HermesManagedAdapter,
+    HermesManagedAdapterConfig,
+)
+from agent_vm_hermes_adapter.managed_tool_portal_capability_tools import (
+    MANAGED_TOOL_PORTAL_TOOL_NAMES,
+)
+from agent_vm_hermes_adapter.managed_tool_portal_capability_tools import (
+    register as register_managed_tool_portal_plugin,
+)
+
+PROJECTION_COHORT_DIGEST = (
+    "projection-cohort:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+)
+PROTECTED_HERMES_HOME = Path("/home/hermes/.hermes")
+
+
+def build_projection(*, agent_id: str, profile_name: str) -> dict[str, object]:
+    return {
+        "agentId": agent_id,
+        "frameworkIdentity": {"kind": "hermes", "profileName": profile_name},
+        "profileAssignmentRevision": f"revision-{agent_id}",
+        "toolPortalProfileId": f"policy-{agent_id}",
+    }
+
+
+def build_attachment(*, client_kind: str = "hermes-managed-plugin") -> dict[str, object]:
+    return {
+        "attachmentGeneration": 7,
+        "clientKind": client_kind,
+        "configuredAgentIds": ["researcher", "reviewer"],
+        "frameworkEpoch": "framework-epoch-1",
+        "gatewayEpoch": "gateway-epoch-1",
+        "protocolVersion": 1,
+        "projectionCohortDigest": PROJECTION_COHORT_DIGEST,
+        "runtimeEpoch": "runtime-epoch-1",
+        "schemaVersion": 1,
+    }
+
+
+def build_material(
+    *,
+    client_kind: str = "hermes-managed-plugin",
+    profile_names: tuple[str, str] = ("researcher", "reviewer"),
+) -> dict[str, object]:
+    researcher_profile_name, reviewer_profile_name = profile_names
+    return {
+        "agentProjections": {
+            "researcher": build_projection(
+                agent_id="researcher",
+                profile_name=researcher_profile_name,
+            ),
+            "reviewer": build_projection(
+                agent_id="reviewer",
+                profile_name=reviewer_profile_name,
+            ),
+        },
+        "attachment": build_attachment(client_kind=client_kind),
+    }
+
+
+def materialize_profile_cohort(
+    protected_hermes_home: Path,
+    *,
+    profile_names: tuple[str, ...] = ("researcher", "reviewer"),
+) -> None:
+    profiles_root = protected_hermes_home / "profiles"
+    for profile_name in profile_names:
+        profile_home = profiles_root / profile_name
+        profile_home.mkdir(parents=True, exist_ok=True)
+        (profile_home / "existing-content.txt").write_text(
+            f"existing {profile_name} content",
+            encoding="utf-8",
+        )
+
+
+def managed_plugin_configuration() -> Mapping[str, object]:
+    return {
+        "plugins": {
+            "enabled": ["agent-vm-tool-portal"],
+            "disabled": [],
+        }
+    }
+
+
+class FakeGatewayRuntimeClient:
+    last_instance: t.ClassVar["FakeGatewayRuntimeClient | None"] = None
+
+    def __init__(self, *, attachment: object | None = None) -> None:
+        self.attachment = attachment
+        self.connect_calls = 0
+        self.disconnect_calls = 0
+        self.__class__.last_instance = self
+
+    async def connect(self) -> None:
+        self.connect_calls += 1
+
+    async def disconnect(self) -> None:
+        self.disconnect_calls += 1
+
+
+class FakeTerminalToolModule:
+    def __init__(self) -> None:
+        self._active_environments: dict[str, object] = {}
+        self._create_environment: Callable[..., object] = lambda *args, **kwargs: object()
+        self._resolve_container_task_id: Callable[[str | None], str] = lambda task_id: (
+            task_id or "default"
+        )
+
+    def replace_create_environment(self, value: Callable[..., object]) -> None:
+        self._create_environment = value
+
+    def replace_resolve_container_task_id(
+        self,
+        value: Callable[[str | None], str],
+    ) -> None:
+        self._resolve_container_task_id = value
+
+    def configured_environment_timeout(self) -> int:
+        return 120
+
+    def evict_environment_cache(
+        self,
+        cache_identity: str,
+        expected_environment: object,
+    ) -> None:
+        cached_environment = self._active_environments.get(cache_identity)
+        if cached_environment is not None and cached_environment is not expected_environment:
+            raise RuntimeError("unexpected managed environment cache replacement")
+        self._active_environments.pop(cache_identity, None)
+
+
+class FakeHermesPluginContext:
+    def __init__(self) -> None:
+        self.registered_hook_names: list[str] = []
+        self.registered_tool_names: list[str] = []
+
+    def register_hook(
+        self,
+        hook_name: str,
+        callback: Callable[..., object],
+    ) -> None:
+        del callback
+        self.registered_hook_names.append(hook_name)
+
+    def register_tool(
+        self,
+        name: str,
+        toolset: str,
+        schema: dict[str, object],
+        handler: Callable[..., str],
+        check_fn: Callable[..., bool] | None = None,
+        requires_env: list[object] | None = None,
+        is_async: bool = False,
+        description: str = "",
+        emoji: str = "",
+        override: bool = False,
+    ) -> None:
+        del (
+            toolset,
+            schema,
+            handler,
+            check_fn,
+            requires_env,
+            is_async,
+            description,
+            emoji,
+            override,
+        )
+        self.registered_tool_names.append(name)
+
+
+class FakeManagedEnvironment:
+    def __init__(self, *, owning_generation: str) -> None:
+        self.cwd = "/work"
+        self.owning_generation = owning_generation
+        self.bound_cache_identity: str | None = None
+        self.status_kind = "active"
+        self.retired = False
+
+    def bind_cache_identity(self, cache_identity: str) -> None:
+        self.bound_cache_identity = cache_identity
+
+    def resolve_status_kind(self) -> str:
+        return self.status_kind
+
+    def retire_locally(self) -> None:
+        self.retired = True
+
+    def execute(self, command: str, **kwargs: object) -> dict[str, object]:
+        del command, kwargs
+        return {"output": "", "returncode": 0}
+
+
+def build_adapter() -> HermesManagedAdapter:
+    return HermesManagedAdapter(
+        config=HermesManagedAdapterConfig(
+            profiles=t.cast(
+                "dict[str, dict[str, object]]",
+                build_material()["agentProjections"],
+            ).values(),
+            projection_cohort_digest=PROJECTION_COHORT_DIGEST,
+            protected_hermes_home=str(PROTECTED_HERMES_HOME),
+        ),
+        gateway_runtime_client=t.cast(
+            "GatewayRuntimeClient",
+            t.cast("object", FakeGatewayRuntimeClient()),
+        ),
+    )
+
+
+@t.final
+class ManagedGatewayBootstrapTests(unittest.TestCase):
+    def test_loads_exact_controller_material_and_rejects_other_frameworks(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            configuration_path = Path(temporary_directory) / "framework-service.json"
+            material = build_material()
+            configuration_path.write_text(json.dumps(material), encoding="utf-8")
+
+            loaded = load_managed_adapter_material(configuration_path)
+
+            self.assertEqual(dict(loaded.attachment), material["attachment"])
+            self.assertEqual(dict(loaded.agent_projections), material["agentProjections"])
+
+            configuration_path.write_text(
+                json.dumps(build_material(client_kind="openclaw-managed-plugin")),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "hermes-managed-plugin"):
+                load_managed_adapter_material(configuration_path)
+
+    def test_loaded_attachment_constructs_real_gateway_runtime_client(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            configuration_path = Path(temporary_directory) / "framework-service.json"
+            configuration_path.write_text(json.dumps(build_material()), encoding="utf-8")
+            loaded = load_managed_adapter_material(configuration_path)
+
+            gateway_runtime_client = GatewayRuntimeClient(attachment=loaded.attachment)
+
+            self.assertIsInstance(gateway_runtime_client, GatewayRuntimeClient)
+
+    def test_rejects_malformed_or_drifted_material(self) -> None:
+        malformed_materials = (
+            {**build_material(), "extra": True},
+            {
+                **build_material(),
+                "attachment": {
+                    **build_attachment(),
+                    "configuredAgentIds": ["researcher"],
+                },
+            },
+        )
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            configuration_path = Path(temporary_directory) / "framework-service.json"
+            for material in malformed_materials:
+                with self.subTest(material=material):
+                    configuration_path.write_text(json.dumps(material), encoding="utf-8")
+                    with self.assertRaises((TypeError, ValueError)):
+                        load_managed_adapter_material(configuration_path)
+
+    def test_installs_profile_aware_cache_keys_before_environment_use(self) -> None:
+        adapter = build_adapter()
+        terminal_tool_module = FakeTerminalToolModule()
+        hooks = HermesManagedEnvironmentHooks(
+            adapter=adapter,
+            attachment=build_attachment(),
+            protected_hermes_home=PROTECTED_HERMES_HOME,
+            terminal_tool_module=terminal_tool_module,
+        )
+        original_resolver = terminal_tool_module._resolve_container_task_id
+        original_factory = terminal_tool_module._create_environment
+
+        researcher_environment = FakeManagedEnvironment(
+            owning_generation="tool-vm-generation-researcher"
+        )
+        reviewer_environment = FakeManagedEnvironment(
+            owning_generation="tool-vm-generation-reviewer"
+        )
+
+        hooks.install()
+        try:
+            with patch.object(
+                hooks._environment_factory,
+                "create",
+                side_effect=(researcher_environment, reviewer_environment),
+            ):
+                with patch.object(
+                    hermes_constants,
+                    "get_hermes_home",
+                    return_value=PROTECTED_HERMES_HOME / "profiles" / "researcher",
+                ):
+                    researcher_key = terminal_tool_module._resolve_container_task_id("session-a")
+                with patch.object(
+                    hermes_constants,
+                    "get_hermes_home",
+                    return_value=PROTECTED_HERMES_HOME / "profiles" / "reviewer",
+                ):
+                    reviewer_key = terminal_tool_module._resolve_container_task_id("session-b")
+
+            self.assertNotEqual(researcher_key, reviewer_key)
+            self.assertNotEqual(researcher_key, "default")
+            self.assertNotEqual(reviewer_key, "default")
+        finally:
+            hooks.close()
+            adapter.close(disconnect_gateway_runtime=False)
+
+        self.assertIs(terminal_tool_module._resolve_container_task_id, original_resolver)
+        self.assertIs(terminal_tool_module._create_environment, original_factory)
+
+    def test_routes_stock_background_terminal_through_managed_environment(self) -> None:
+        adapter = build_adapter()
+        hooks = HermesManagedEnvironmentHooks(
+            adapter=adapter,
+            attachment=build_attachment(),
+            protected_hermes_home=PROTECTED_HERMES_HOME,
+            terminal_tool_module=managed_gateway_bootstrap._StockHermesTerminalToolAdapter(),
+        )
+        stock_terminal_tool = managed_gateway_bootstrap.hermes_terminal_tool
+        spawn_via_env = Mock(return_value=SimpleNamespace(id="managed-process", pid=4321))
+        spawn_local = Mock(side_effect=AssertionError("managed mode used Gateway-local spawn"))
+        managed_environment = FakeManagedEnvironment(
+            owning_generation="tool-vm-generation-background"
+        )
+
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "TERMINAL_ENV": "local",
+                    "TERMINAL_SSH_HOST": "previous-host",
+                    "TERMINAL_SSH_USER": "previous-user",
+                },
+                clear=False,
+            ),
+            patch.dict(stock_terminal_tool._active_environments, {}, clear=True),
+            patch.dict(stock_terminal_tool._last_activity, {}, clear=True),
+            patch.object(stock_terminal_tool, "_start_cleanup_thread", return_value=None),
+            patch.object(
+                managed_gateway_bootstrap.hermes_constants,
+                "get_hermes_home",
+                return_value=PROTECTED_HERMES_HOME / "profiles" / "researcher",
+            ),
+            patch.object(
+                hooks._environment_factory,
+                "create",
+                return_value=managed_environment,
+            ),
+            patch.object(
+                hermes_process_registry,
+                "spawn_via_env",
+                spawn_via_env,
+            ),
+            patch.object(
+                hermes_process_registry,
+                "spawn_local",
+                spawn_local,
+            ),
+        ):
+            hooks.install()
+            try:
+                self.assertEqual(os.environ["TERMINAL_ENV"], "ssh")
+                self.assertEqual(os.environ["TERMINAL_SSH_HOST"], "managed-tool-vm.invalid")
+                self.assertEqual(os.environ["TERMINAL_SSH_USER"], "agent-vm-managed")
+                result = stock_terminal_tool.terminal_tool(
+                    command="printf managed-background",
+                    background=True,
+                    force=True,
+                    task_id="session-a",
+                )
+            finally:
+                hooks.close()
+                adapter.close(disconnect_gateway_runtime=False)
+
+            self.assertEqual(os.environ["TERMINAL_ENV"], "local")
+            self.assertEqual(os.environ["TERMINAL_SSH_HOST"], "previous-host")
+            self.assertEqual(os.environ["TERMINAL_SSH_USER"], "previous-user")
+
+        spawn_via_env.assert_called_once()
+        spawn_local.assert_not_called()
+        self.assertEqual(json.loads(result)["session_id"], "managed-process")
+
+    def test_managed_factory_never_constructs_local_or_generic_ssh_environment(self) -> None:
+        adapter = build_adapter()
+        hooks = HermesManagedEnvironmentHooks(
+            adapter=adapter,
+            attachment=build_attachment(),
+            protected_hermes_home=PROTECTED_HERMES_HOME,
+            terminal_tool_module=managed_gateway_bootstrap._StockHermesTerminalToolAdapter(),
+        )
+        stock_terminal_tool = managed_gateway_bootstrap.hermes_terminal_tool
+        managed_environment = FakeManagedEnvironment(
+            owning_generation="tool-vm-generation-no-fallback"
+        )
+
+        with (
+            patch.dict(stock_terminal_tool._active_environments, {}, clear=True),
+            patch.dict(stock_terminal_tool._last_activity, {}, clear=True),
+            patch.object(stock_terminal_tool, "_start_cleanup_thread", return_value=None),
+            patch.object(
+                managed_gateway_bootstrap.hermes_constants,
+                "get_hermes_home",
+                return_value=PROTECTED_HERMES_HOME / "profiles" / "researcher",
+            ),
+            patch.object(
+                hooks._environment_factory,
+                "create",
+                return_value=managed_environment,
+            ),
+            patch.object(
+                local_environment_module,
+                "LocalEnvironment",
+                side_effect=AssertionError("managed mode constructed LocalEnvironment"),
+            ) as local_environment,
+            patch.object(
+                ssh_environment_module,
+                "SSHEnvironment",
+                side_effect=AssertionError("managed mode constructed SSHEnvironment"),
+            ) as ssh_environment,
+        ):
+            hooks.install()
+            try:
+                result = stock_terminal_tool.terminal_tool(
+                    command="printf managed",
+                    force=True,
+                    task_id="session-a",
+                )
+            finally:
+                hooks.close()
+                adapter.close(disconnect_gateway_runtime=False)
+
+        self.assertEqual(json.loads(result)["exit_code"], 0)
+        local_environment.assert_not_called()
+        ssh_environment.assert_not_called()
+
+    def test_reuses_one_preopened_environment_before_stock_cache_insertion(self) -> None:
+        adapter = build_adapter()
+        terminal_tool_module = FakeTerminalToolModule()
+        hooks = HermesManagedEnvironmentHooks(
+            adapter=adapter,
+            attachment=build_attachment(),
+            protected_hermes_home=PROTECTED_HERMES_HOME,
+            terminal_tool_module=terminal_tool_module,
+        )
+        managed_environment = FakeManagedEnvironment(
+            owning_generation="tool-vm-generation-single-open"
+        )
+
+        hooks.install()
+        try:
+            with (
+                patch.object(
+                    hermes_constants,
+                    "get_hermes_home",
+                    return_value=PROTECTED_HERMES_HOME / "profiles" / "researcher",
+                ),
+                patch.object(
+                    hooks._environment_factory,
+                    "create",
+                    return_value=managed_environment,
+                ) as create_environment,
+            ):
+                first_cache_identity = terminal_tool_module._resolve_container_task_id("session-a")
+                second_cache_identity = terminal_tool_module._resolve_container_task_id("session-b")
+                first_environment = terminal_tool_module._create_environment(
+                    env_type="ssh",
+                    image="",
+                    cwd="/work",
+                    timeout=120,
+                    task_id=first_cache_identity,
+                )
+                second_environment = terminal_tool_module._create_environment(
+                    env_type="ssh",
+                    image="",
+                    cwd="/work",
+                    timeout=120,
+                    task_id=second_cache_identity,
+                )
+        finally:
+            hooks.close()
+            adapter.close(disconnect_gateway_runtime=False)
+
+        self.assertEqual(first_cache_identity, second_cache_identity)
+        self.assertIs(first_environment, managed_environment)
+        self.assertIs(second_environment, managed_environment)
+        create_environment.assert_called_once()
+
+    def test_reopens_replaced_generation_without_retargeting_stale_processes(self) -> None:
+        adapter = build_adapter()
+        hooks = HermesManagedEnvironmentHooks(
+            adapter=adapter,
+            attachment=build_attachment(),
+            protected_hermes_home=PROTECTED_HERMES_HOME,
+            terminal_tool_module=managed_gateway_bootstrap._StockHermesTerminalToolAdapter(),
+        )
+        stock_terminal_tool = managed_gateway_bootstrap.hermes_terminal_tool
+        environment_a = FakeManagedEnvironment(owning_generation="tool-vm-generation-a")
+        environment_b = FakeManagedEnvironment(owning_generation="tool-vm-generation-b")
+
+        with (
+            patch.dict(stock_terminal_tool._active_environments, {}, clear=True),
+            patch.dict(stock_terminal_tool._last_activity, {}, clear=True),
+            patch.dict(stock_terminal_tool._creation_locks, {}, clear=True),
+            patch.dict(hermes_file_tools._file_ops_cache, {}, clear=True),
+            patch.dict(hermes_file_tools._last_known_cwd, {}, clear=True),
+            patch.object(stock_terminal_tool, "_start_cleanup_thread", return_value=None),
+            patch.object(
+                managed_gateway_bootstrap.hermes_constants,
+                "get_hermes_home",
+                return_value=PROTECTED_HERMES_HOME / "profiles" / "researcher",
+            ),
+            patch.object(
+                hooks._environment_factory,
+                "create",
+                side_effect=(environment_a, environment_b),
+            ) as create_environment,
+        ):
+            hooks.install()
+            try:
+                file_operations_a = hermes_file_tools._get_file_ops("session-a")
+                cache_identity_a = environment_a.bound_cache_identity
+                if cache_identity_a is None:
+                    self.fail("managed environment A did not receive a cache identity")
+                stale_process = ProcessSession(
+                    id="process-a",
+                    command="sleep 300",
+                    env_ref=environment_a,
+                )
+
+                environment_a.status_kind = "replaced"
+                file_operations_b = hermes_file_tools._get_file_ops("session-a")
+                cache_identity_b = environment_b.bound_cache_identity
+                if cache_identity_b is None:
+                    self.fail("managed environment B did not receive a cache identity")
+            finally:
+                hooks.close()
+                adapter.close(disconnect_gateway_runtime=False)
+
+        self.assertNotEqual(cache_identity_a, cache_identity_b)
+        self.assertIn("tool-vm-generation-a", cache_identity_a)
+        self.assertIn("tool-vm-generation-b", cache_identity_b)
+        self.assertIs(file_operations_a.env, environment_a)
+        self.assertIs(file_operations_b.env, environment_b)
+        self.assertIs(stale_process.env_ref, environment_a)
+        self.assertIsNot(stale_process.env_ref, environment_b)
+        self.assertTrue(environment_a.retired)
+        self.assertNotIn(cache_identity_a, stock_terminal_tool._active_environments)
+        self.assertNotIn(cache_identity_a, hermes_file_tools._file_ops_cache)
+        create_environment.assert_has_calls(
+            [
+                call(
+                    profile_name="researcher",
+                    task_id=ANY,
+                    cwd="/work",
+                    timeout=ANY,
+                ),
+                call(
+                    profile_name="researcher",
+                    task_id=ANY,
+                    cwd="/work",
+                    timeout=ANY,
+                ),
+            ]
+        )
+
+    def test_forces_managed_environment_initial_cwd_to_tool_vm_work(self) -> None:
+        adapter = build_adapter()
+        terminal_tool_module = FakeTerminalToolModule()
+        hooks = HermesManagedEnvironmentHooks(
+            adapter=adapter,
+            attachment=build_attachment(),
+            protected_hermes_home=PROTECTED_HERMES_HOME,
+            terminal_tool_module=terminal_tool_module,
+        )
+        managed_environment = FakeManagedEnvironment(
+            owning_generation="tool-vm-generation-forced-cwd"
+        )
+
+        hooks.install()
+        try:
+            with (
+                patch.object(
+                    hermes_constants,
+                    "get_hermes_home",
+                    return_value=PROTECTED_HERMES_HOME / "profiles" / "researcher",
+                ),
+                patch.object(
+                    hooks._environment_factory,
+                    "create",
+                    return_value=managed_environment,
+                ) as create_environment,
+            ):
+                managed_cache_key = terminal_tool_module._resolve_container_task_id("session-a")
+                result = terminal_tool_module._create_environment(
+                    env_type="local",
+                    image="",
+                    cwd="/gateway/process/cwd",
+                    timeout=120,
+                    task_id=managed_cache_key,
+                )
+        finally:
+            hooks.close()
+            adapter.close(disconnect_gateway_runtime=False)
+
+        self.assertIs(result, managed_environment)
+        create_environment.assert_called_once_with(
+            profile_name="researcher",
+            task_id=ANY,
+            cwd="/work",
+            timeout=120,
+        )
+
+    def test_rejects_default_scope_and_late_hook_installation(self) -> None:
+        adapter = build_adapter()
+        terminal_tool_module = FakeTerminalToolModule()
+        hooks = HermesManagedEnvironmentHooks(
+            adapter=adapter,
+            attachment=build_attachment(),
+            protected_hermes_home=PROTECTED_HERMES_HOME,
+            terminal_tool_module=terminal_tool_module,
+        )
+        hooks.install()
+        try:
+            with patch.object(
+                hermes_constants,
+                "get_hermes_home",
+                return_value=PROTECTED_HERMES_HOME,
+            ):
+                with self.assertRaisesRegex(Exception, "explicit admitted profile"):
+                    terminal_tool_module._resolve_container_task_id(None)
+        finally:
+            hooks.close()
+            adapter.close(disconnect_gateway_runtime=False)
+
+        late_terminal_tool_module = FakeTerminalToolModule()
+        late_terminal_tool_module._active_environments["default"] = object()
+        late_adapter = build_adapter()
+        late_hooks = HermesManagedEnvironmentHooks(
+            adapter=late_adapter,
+            attachment=build_attachment(),
+            protected_hermes_home=PROTECTED_HERMES_HOME,
+            terminal_tool_module=late_terminal_tool_module,
+        )
+        try:
+            with self.assertRaisesRegex(RuntimeError, "before environment use"):
+                late_hooks.install()
+        finally:
+            late_adapter.close(disconnect_gateway_runtime=False)
+
+    def test_connects_installs_hooks_before_stock_gateway_and_restores_on_exit(self) -> None:
+        terminal_tool_module = FakeTerminalToolModule()
+        plugin_context = FakeHermesPluginContext()
+        original_resolver = terminal_tool_module._resolve_container_task_id
+        original_factory = terminal_tool_module._create_environment
+        original_process_instance_methods = {
+            method_name: hermes_process_registry.__dict__.get(method_name)
+            for method_name in (
+                "spawn_via_env",
+                "poll",
+                "read_log",
+                "wait",
+                "kill_process",
+                "write_stdin",
+                "submit_stdin",
+                "close_stdin",
+                "list_sessions",
+                "kill_all",
+            )
+        }
+        runner_calls = 0
+
+        def stock_gateway_runner() -> None:
+            nonlocal runner_calls
+            runner_calls += 1
+            register_managed_tool_portal_plugin(plugin_context)
+            self.assertIsNot(terminal_tool_module._resolve_container_task_id, original_resolver)
+            self.assertIsNot(terminal_tool_module._create_environment, original_factory)
+            for method_name, original_value in original_process_instance_methods.items():
+                self.assertIsNot(
+                    hermes_process_registry.__dict__.get(method_name),
+                    original_value,
+                )
+            self.assertEqual(
+                tuple(plugin_context.registered_tool_names),
+                MANAGED_TOOL_PORTAL_TOOL_NAMES,
+            )
+            client = FakeGatewayRuntimeClient.last_instance
+            if client is None:
+                self.fail("managed bootstrap did not construct a Gateway Runtime client")
+            self.assertEqual(client.connect_calls, 1)
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            configuration_path = temporary_root / "framework-service.json"
+            protected_hermes_home = temporary_root / "protected-hermes-home"
+            profile_names = ("research-profile", "review-profile")
+            configuration_path.write_text(
+                json.dumps(build_material(profile_names=profile_names)),
+                encoding="utf-8",
+            )
+            materialize_profile_cohort(
+                protected_hermes_home,
+                profile_names=profile_names,
+            )
+            with patch.object(
+                managed_gateway_bootstrap,
+                "GatewayRuntimeClient",
+                FakeGatewayRuntimeClient,
+            ):
+                managed_gateway_bootstrap.run_managed_hermes_gateway(
+                    configuration_path=configuration_path,
+                    managed_configuration_loader=managed_plugin_configuration,
+                    protected_hermes_home=protected_hermes_home,
+                    stock_gateway_runner=stock_gateway_runner,
+                    terminal_tool_module=terminal_tool_module,
+                )
+
+            self.assertEqual(
+                (
+                    protected_hermes_home / "profiles/research-profile/existing-content.txt"
+                ).read_text(encoding="utf-8"),
+                "existing research-profile content",
+            )
+            self.assertEqual(
+                (protected_hermes_home / "profiles/review-profile/existing-content.txt").read_text(
+                    encoding="utf-8"
+                ),
+                "existing review-profile content",
+            )
+
+        self.assertEqual(runner_calls, 1)
+        self.assertIs(terminal_tool_module._resolve_container_task_id, original_resolver)
+        self.assertIs(terminal_tool_module._create_environment, original_factory)
+        self.assertEqual(
+            {
+                method_name: hermes_process_registry.__dict__.get(method_name)
+                for method_name in original_process_instance_methods
+            },
+            original_process_instance_methods,
+        )
+        client = FakeGatewayRuntimeClient.last_instance
+        if client is None:
+            self.fail("managed bootstrap did not retain the test client receipt")
+        self.assertEqual(client.disconnect_calls, 1)
+        with self.assertRaisesRegex(RuntimeError, "requires bootstrap runtime configuration"):
+            register_managed_tool_portal_plugin(FakeHermesPluginContext())
+
+    def test_clears_plugin_runtime_when_stock_gateway_fails(self) -> None:
+        terminal_tool_module = FakeTerminalToolModule()
+        plugin_context = FakeHermesPluginContext()
+
+        def failing_stock_gateway_runner() -> None:
+            register_managed_tool_portal_plugin(plugin_context)
+            raise RuntimeError("stock Hermes Gateway failed")
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            configuration_path = temporary_root / "framework-service.json"
+            protected_hermes_home = temporary_root / "protected-hermes-home"
+            configuration_path.write_text(json.dumps(build_material()), encoding="utf-8")
+            materialize_profile_cohort(protected_hermes_home)
+            with (
+                patch.object(
+                    managed_gateway_bootstrap,
+                    "GatewayRuntimeClient",
+                    FakeGatewayRuntimeClient,
+                ),
+                self.assertRaisesRegex(RuntimeError, "stock Hermes Gateway failed"),
+            ):
+                managed_gateway_bootstrap.run_managed_hermes_gateway(
+                    configuration_path=configuration_path,
+                    managed_configuration_loader=managed_plugin_configuration,
+                    protected_hermes_home=protected_hermes_home,
+                    stock_gateway_runner=failing_stock_gateway_runner,
+                    terminal_tool_module=terminal_tool_module,
+                )
+
+        self.assertEqual(
+            tuple(plugin_context.registered_tool_names),
+            MANAGED_TOOL_PORTAL_TOOL_NAMES,
+        )
+        with self.assertRaisesRegex(RuntimeError, "requires bootstrap runtime configuration"):
+            register_managed_tool_portal_plugin(FakeHermesPluginContext())
+        client = FakeGatewayRuntimeClient.last_instance
+        if client is None:
+            self.fail("managed bootstrap did not retain the failed test client receipt")
+        self.assertEqual(client.disconnect_calls, 1)
+
+    def test_rejects_drifted_profile_cohort_before_managed_or_stock_runtime_use(self) -> None:
+        def missing_protected_hermes_home(protected_hermes_home: Path) -> None:
+            del protected_hermes_home
+
+        def protected_hermes_home_file(protected_hermes_home: Path) -> None:
+            protected_hermes_home.write_text(
+                "not a protected Hermes home directory",
+                encoding="utf-8",
+            )
+
+        def protected_hermes_home_symlink(protected_hermes_home: Path) -> None:
+            symlink_target = protected_hermes_home.parent / "protected-hermes-home-target"
+            materialize_profile_cohort(symlink_target)
+            protected_hermes_home.symlink_to(
+                symlink_target,
+                target_is_directory=True,
+            )
+
+        def missing_profiles_root(protected_hermes_home: Path) -> None:
+            protected_hermes_home.mkdir()
+
+        def missing_expected_profile(protected_hermes_home: Path) -> None:
+            (protected_hermes_home / "profiles/researcher").mkdir(parents=True)
+
+        def extra_profile(protected_hermes_home: Path) -> None:
+            materialize_profile_cohort(protected_hermes_home)
+            (protected_hermes_home / "profiles/intruder").mkdir()
+
+        def default_profile(protected_hermes_home: Path) -> None:
+            materialize_profile_cohort(protected_hermes_home)
+            (protected_hermes_home / "profiles/default").mkdir()
+
+        def named_profile_file(protected_hermes_home: Path) -> None:
+            (protected_hermes_home / "profiles/researcher").mkdir(parents=True)
+            (protected_hermes_home / "profiles/reviewer").write_text(
+                "not a profile directory",
+                encoding="utf-8",
+            )
+
+        def named_profile_symlink(protected_hermes_home: Path) -> None:
+            (protected_hermes_home / "profiles/researcher").mkdir(parents=True)
+            symlink_target = protected_hermes_home / "reviewer-target"
+            symlink_target.mkdir()
+            (protected_hermes_home / "profiles/reviewer").symlink_to(
+                symlink_target,
+                target_is_directory=True,
+            )
+
+        def profiles_root_symlink(protected_hermes_home: Path) -> None:
+            protected_hermes_home.mkdir()
+            symlink_target = protected_hermes_home.parent / "profiles-target"
+            for profile_name in ("researcher", "reviewer"):
+                (symlink_target / profile_name).mkdir(parents=True, exist_ok=True)
+            (protected_hermes_home / "profiles").symlink_to(
+                symlink_target,
+                target_is_directory=True,
+            )
+
+        drift_cases: tuple[tuple[str, Callable[[Path], None]], ...] = (
+            ("missing protected Hermes home", missing_protected_hermes_home),
+            ("protected Hermes home file", protected_hermes_home_file),
+            ("protected Hermes home symlink", protected_hermes_home_symlink),
+            ("missing profiles root", missing_profiles_root),
+            ("missing expected profile", missing_expected_profile),
+            ("extra profile", extra_profile),
+            ("default profile", default_profile),
+            ("named profile file", named_profile_file),
+            ("named profile symlink", named_profile_symlink),
+            ("profiles root symlink", profiles_root_symlink),
+        )
+
+        for case_name, arrange_profile_tree in drift_cases:
+            with self.subTest(case_name=case_name), tempfile.TemporaryDirectory() as directory:
+                temporary_root = Path(directory)
+                configuration_path = temporary_root / "framework-service.json"
+                protected_hermes_home = temporary_root / "protected-hermes-home"
+                configuration_path.write_text(json.dumps(build_material()), encoding="utf-8")
+                arrange_profile_tree(protected_hermes_home)
+                sentinel_path = temporary_root / "existing-content.txt"
+                sentinel_path.write_text("must remain untouched", encoding="utf-8")
+                stock_gateway_runner = Mock()
+
+                with (
+                    patch.object(
+                        managed_gateway_bootstrap,
+                        "GatewayRuntimeClient",
+                    ) as gateway_runtime_client,
+                    patch.object(
+                        managed_gateway_bootstrap,
+                        "configure_managed_tool_portal_plugin",
+                    ) as configure_plugin,
+                    self.assertRaisesRegex(Exception, "profile|Hermes home"),
+                ):
+                    managed_gateway_bootstrap.run_managed_hermes_gateway(
+                        configuration_path=configuration_path,
+                        managed_configuration_loader=managed_plugin_configuration,
+                        protected_hermes_home=protected_hermes_home,
+                        stock_gateway_runner=stock_gateway_runner,
+                        terminal_tool_module=FakeTerminalToolModule(),
+                    )
+
+                gateway_runtime_client.assert_not_called()
+                configure_plugin.assert_not_called()
+                stock_gateway_runner.assert_not_called()
+                self.assertEqual(
+                    sentinel_path.read_text(encoding="utf-8"),
+                    "must remain untouched",
+                )
+
+    def test_rejects_missing_or_conflicting_managed_plugin_policy_before_runtime_use(self) -> None:
+        invalid_plugin_policies: tuple[tuple[str, Mapping[str, object]], ...] = (
+            ("missing plugin policy", {}),
+            ("missing enabled list", {"plugins": {"disabled": []}}),
+            (
+                "plugin not enabled",
+                {"plugins": {"enabled": [], "disabled": []}},
+            ),
+            (
+                "plugin explicitly disabled",
+                {
+                    "plugins": {
+                        "enabled": ["agent-vm-tool-portal"],
+                        "disabled": ["agent-vm-tool-portal"],
+                    }
+                },
+            ),
+        )
+
+        for case_name, invalid_plugin_policy in invalid_plugin_policies:
+            with self.subTest(case_name=case_name), tempfile.TemporaryDirectory() as directory:
+                temporary_root = Path(directory)
+                configuration_path = temporary_root / "framework-service.json"
+                protected_hermes_home = temporary_root / "protected-hermes-home"
+                configuration_path.write_text(json.dumps(build_material()), encoding="utf-8")
+                materialize_profile_cohort(protected_hermes_home)
+                stock_gateway_runner = Mock()
+
+                with (
+                    patch.object(
+                        managed_gateway_bootstrap,
+                        "GatewayRuntimeClient",
+                    ) as gateway_runtime_client,
+                    patch.object(
+                        managed_gateway_bootstrap,
+                        "configure_managed_tool_portal_plugin",
+                    ) as configure_plugin,
+                    self.assertRaisesRegex(Exception, "plugin|plugins"),
+                ):
+                    managed_gateway_bootstrap.run_managed_hermes_gateway(
+                        configuration_path=configuration_path,
+                        managed_configuration_loader=lambda: invalid_plugin_policy,
+                        protected_hermes_home=protected_hermes_home,
+                        stock_gateway_runner=stock_gateway_runner,
+                        terminal_tool_module=FakeTerminalToolModule(),
+                    )
+
+                gateway_runtime_client.assert_not_called()
+                configure_plugin.assert_not_called()
+                stock_gateway_runner.assert_not_called()
+
+    def test_durable_projection_consolidates_and_restores_profile_sqlite_state(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            temporary_root = Path(directory)
+            durable_hermes_home = temporary_root / "durable"
+            protected_hermes_home = temporary_root / "local"
+            profile_database = durable_hermes_home / "profiles/research/state.db"
+            profile_database.parent.mkdir(parents=True)
+            with sqlite3.connect(profile_database) as connection:
+                connection.execute("CREATE TABLE messages (content TEXT NOT NULL)")
+                connection.execute("INSERT INTO messages VALUES ('before restart')")
+            Path(f"{profile_database}-shm").write_text("stale", encoding="utf-8")
+            (durable_hermes_home / "config.yaml").write_text("theme: light\n", encoding="utf-8")
+
+            managed_gateway_bootstrap._restore_durable_hermes_home(
+                durable_hermes_home=durable_hermes_home,
+                protected_hermes_home=protected_hermes_home,
+            )
+
+            local_profile_database = protected_hermes_home / "profiles/research/state.db"
+            self.assertFalse(Path(f"{local_profile_database}-shm").exists())
+            with sqlite3.connect(local_profile_database) as connection:
+                connection.execute("INSERT INTO messages VALUES ('after restart')")
+            managed_gateway_bootstrap._persist_durable_hermes_home(
+                durable_hermes_home=durable_hermes_home,
+                protected_hermes_home=protected_hermes_home,
+            )
+
+            restored_hermes_home = temporary_root / "restored"
+            managed_gateway_bootstrap._restore_durable_hermes_home(
+                durable_hermes_home=durable_hermes_home,
+                protected_hermes_home=restored_hermes_home,
+            )
+            with sqlite3.connect(restored_hermes_home / "profiles/research/state.db") as connection:
+                contents = [row[0] for row in connection.execute("SELECT content FROM messages")]
+            self.assertEqual(contents, ["before restart", "after restart"])
+            self.assertEqual(
+                (restored_hermes_home / "config.yaml").read_text(encoding="utf-8"),
+                "theme: light\n",
+            )
+            self.assertFalse(Path(f"{profile_database}-shm").exists())
+            self.assertFalse(Path(f"{profile_database}-wal").exists())
+
+    def test_durable_projection_persists_state_when_stock_runtime_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            temporary_root = Path(directory)
+            durable_hermes_home = temporary_root / "durable"
+            protected_hermes_home = temporary_root / "local"
+
+            def failing_runtime(**_options: object) -> None:
+                with sqlite3.connect(protected_hermes_home / "state.db") as connection:
+                    connection.execute("CREATE TABLE sessions (session_id TEXT NOT NULL)")
+                    connection.execute("INSERT INTO sessions VALUES ('persisted-session')")
+                raise RuntimeError("stock runtime failed")
+
+            with (
+                patch.object(
+                    managed_gateway_bootstrap,
+                    "_run_managed_hermes_gateway_runtime",
+                    side_effect=failing_runtime,
+                ),
+                self.assertRaisesRegex(RuntimeError, "stock runtime failed"),
+            ):
+                managed_gateway_bootstrap.run_managed_hermes_gateway(
+                    durable_hermes_home=durable_hermes_home,
+                    protected_hermes_home=protected_hermes_home,
+                )
+
+            with sqlite3.connect(durable_hermes_home / "state.db") as connection:
+                session_ids = [
+                    row[0] for row in connection.execute("SELECT session_id FROM sessions")
+                ]
+            self.assertEqual(session_ids, ["persisted-session"])
+
+
+if __name__ == "__main__":
+    unittest.main()

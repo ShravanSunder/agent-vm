@@ -1,0 +1,33 @@
+{
+	"caseId": "search-request-defaults",
+	"schemaId": "portal.search.request",
+	"tags": ["accepted", "default", "request"],
+	"input": {
+		"requests": [
+			{
+				"id": "search-1",
+				"query": "issue"
+			}
+		]
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"requests": [
+				{
+					"id": "search-1",
+					"limit": 10,
+					"query": "issue",
+					"schemaDetail": "summary"
+				}
+			]
+		},
+		"canonicalJson": "{\"requests\":[{\"id\":\"search-1\",\"limit\":10,\"query\":\"issue\",\"schemaDetail\":\"summary\"}]}",
+		"refinementIdentities": [
+			"portal.batch.unique-item-ids",
+			"portal.request-id.not-reserved",
+			"portal.search.default-limit",
+			"portal.search.default-schema-detail"
+		]
+	}
+}

@@ -1,15 +1,14 @@
+import { GatewayRuntimeAttachmentMetadataSchema } from '@agent-vm/agent-portal-sdk';
+import {
+	ManagedAgentProjectionSchema,
+	type ManagedAgentProjection,
+} from '@agent-vm/agent-portal-sdk/contracts';
+import type { GatewayRuntimeAttachmentMetadata } from '@agent-vm/agent-portal-sdk/gateway-runtime-client';
+
 export interface ResolvedAgentVmPluginConfig {
-	readonly controlSession?: {
-		readonly bootId: string;
-		readonly controllerEpoch: string;
-		readonly generationId: string;
-		readonly peerId: string;
-		readonly processEpoch: string;
-		readonly verifierPublicKeyPem: string;
-	};
-	readonly profileId?: string;
 	readonly toolPortal?: {
-		readonly configDir: string;
+		readonly agentProjections: Readonly<Record<string, ManagedAgentProjection>>;
+		readonly attachment: GatewayRuntimeAttachmentMetadata;
 	};
 	readonly zoneId: string;
 }
@@ -60,99 +59,15 @@ function assertNoUnknownFields(options: {
 	}
 }
 
-function requireNonEmptyString(options: {
-	readonly fieldName: string;
-	readonly label: string;
-	readonly value: AgentVmPluginConfigJsonValue | undefined;
-}): string {
-	if (typeof options.value !== 'string') {
-		throw new Error(`Gondolin plugin ${options.label} requires string ${options.fieldName}.`);
-	}
-	if (options.value.trim() === '') {
-		throw new Error(`Gondolin plugin ${options.label} requires non-empty ${options.fieldName}.`);
-	}
-	return options.value;
-}
-
 const rootConfigFields = new Set([
-	'controlSession',
 	'controllerUrl',
-	'profileId',
 	'toolPortal',
 	'zoneGitToken',
 	'zoneGitTokenEnv',
 	'zoneId',
 ]);
 
-const controlSessionConfigFields = new Set([
-	'bootId',
-	'callerContextProofKey',
-	'controllerEpoch',
-	'generationId',
-	'peerId',
-	'processEpoch',
-	'verifierPublicKeyPem',
-]);
-
-const toolPortalConfigFields = new Set(['configDir']);
-
-function resolveControlSessionConfig(
-	config: AgentVmPluginConfigInput,
-): ResolvedAgentVmPluginConfig['controlSession'] {
-	const rawControlSession = optionalConfigObject({
-		fieldName: 'controlSession',
-		record: config,
-	});
-	if (rawControlSession === undefined) {
-		return undefined;
-	}
-	if (Object.hasOwn(rawControlSession, 'callerContextProofKey')) {
-		throw new Error('Gondolin plugin controlSession no longer accepts callerContextProofKey.');
-	}
-	assertNoUnknownFields({
-		allowedFields: controlSessionConfigFields,
-		label: 'controlSession',
-		record: rawControlSession,
-	});
-	const bootId = requireNonEmptyString({
-		fieldName: 'bootId',
-		label: 'controlSession',
-		value: rawControlSession.bootId,
-	});
-	const controllerEpoch = requireNonEmptyString({
-		fieldName: 'controllerEpoch',
-		label: 'controlSession',
-		value: rawControlSession.controllerEpoch,
-	});
-	const generationId = requireNonEmptyString({
-		fieldName: 'generationId',
-		label: 'controlSession',
-		value: rawControlSession.generationId,
-	});
-	const peerId = requireNonEmptyString({
-		fieldName: 'peerId',
-		label: 'controlSession',
-		value: rawControlSession.peerId,
-	});
-	const processEpoch = requireNonEmptyString({
-		fieldName: 'processEpoch',
-		label: 'controlSession',
-		value: rawControlSession.processEpoch,
-	});
-	const verifierPublicKeyPem = requireNonEmptyString({
-		fieldName: 'verifierPublicKeyPem',
-		label: 'controlSession',
-		value: rawControlSession.verifierPublicKeyPem,
-	});
-	return {
-		bootId,
-		controllerEpoch,
-		generationId,
-		peerId,
-		processEpoch,
-		verifierPublicKeyPem,
-	};
-}
+const toolPortalConfigFields = new Set(['agentProjections', 'attachment']);
 
 function resolveToolPortalConfig(
 	config: AgentVmPluginConfigInput,
@@ -169,13 +84,73 @@ function resolveToolPortalConfig(
 		label: 'toolPortal',
 		record: rawToolPortalConfig,
 	});
-	return {
-		configDir: requireNonEmptyString({
-			fieldName: 'configDir',
-			label: 'toolPortal',
-			value: rawToolPortalConfig.configDir,
-		}),
-	};
+	const rawAttachment = optionalConfigObject({
+		fieldName: 'attachment',
+		record: rawToolPortalConfig,
+	});
+	if (rawAttachment === undefined) {
+		throw new Error('Gondolin plugin toolPortal requires attachment.');
+	}
+	const parsedAttachment = GatewayRuntimeAttachmentMetadataSchema.safeParse(rawAttachment);
+	if (!parsedAttachment.success) {
+		throw new Error('Gondolin plugin toolPortal attachment is invalid.', {
+			cause: parsedAttachment.error,
+		});
+	}
+	if (parsedAttachment.data.clientKind !== 'openclaw-managed-plugin') {
+		throw new Error('Gondolin plugin toolPortal requires openclaw-managed-plugin clientKind.');
+	}
+	const rawAgentProjections = optionalConfigObject({
+		fieldName: 'agentProjections',
+		record: rawToolPortalConfig,
+	});
+	if (rawAgentProjections === undefined) {
+		throw new Error('Gondolin plugin toolPortal requires agentProjections.');
+	}
+	const agentProjectionEntries = Object.entries(rawAgentProjections).map(
+		([agentId, rawProjection]) => {
+			if (agentId.length === 0) {
+				throw new Error(
+					'Gondolin plugin toolPortal agentProjections requires non-empty agent ids.',
+				);
+			}
+			const parsedProjection = ManagedAgentProjectionSchema.safeParse(rawProjection);
+			if (!parsedProjection.success) {
+				throw new Error(
+					`Gondolin plugin toolPortal agentProjections requires a valid projection for agent '${agentId}'.`,
+					{ cause: parsedProjection.error },
+				);
+			}
+			const projection = parsedProjection.data;
+			if (
+				projection.agentId !== agentId ||
+				projection.frameworkIdentity.kind !== 'openclaw' ||
+				projection.frameworkIdentity.agentId !== agentId
+			) {
+				throw new Error(
+					`Gondolin plugin toolPortal agentProjections identity does not match agent '${agentId}'.`,
+				);
+			}
+			return [agentId, projection] as const;
+		},
+	);
+	const configuredAgentIds = [...parsedAttachment.data.configuredAgentIds].toSorted();
+	const projectionAgentIds = agentProjectionEntries.map(([agentId]) => agentId).toSorted();
+	if (
+		configuredAgentIds.length !== projectionAgentIds.length ||
+		configuredAgentIds.some((agentId, index) => projectionAgentIds[index] !== agentId)
+	) {
+		throw new Error('Gondolin plugin toolPortal agent sets must match exactly.');
+	}
+	const attachment = Object.freeze({
+		...parsedAttachment.data,
+		configuredAgentIds: Object.freeze([...parsedAttachment.data.configuredAgentIds]),
+	});
+	const agentProjections = Object.freeze(Object.fromEntries(agentProjectionEntries));
+	return Object.freeze({
+		agentProjections,
+		attachment,
+	});
 }
 
 export function resolveAgentVmPluginConfig(
@@ -198,20 +173,9 @@ export function resolveAgentVmPluginConfig(
 		label: 'config',
 		record: config,
 	});
-	const controlSession = resolveControlSessionConfig(config);
 	const toolPortal = resolveToolPortalConfig(config);
 
 	return {
-		...(controlSession === undefined ? {} : { controlSession }),
-		...(config.profileId === undefined
-			? {}
-			: {
-					profileId: requireNonEmptyString({
-						fieldName: 'profileId',
-						label: 'config',
-						value: config.profileId,
-					}),
-				}),
 		...(toolPortal === undefined ? {} : { toolPortal }),
 		zoneId: config.zoneId,
 	};

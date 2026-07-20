@@ -1,7 +1,11 @@
-import { access } from 'node:fs/promises';
+import { access, lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
 
 import { CONTROL_SESSION_TIMING_MS } from '@agent-vm/control-protocol-contracts';
+import {
+	GATEWAY_RUNTIME_APPROVAL_AUDIENCE,
+	GatewayRuntimePortalSurfaceClassSchema,
+} from '@agent-vm/gateway-control-contracts';
 import { targetsAudience, vmAudienceValues } from '@agent-vm/gateway-lifecycle';
 import type {
 	EgressHostConfig,
@@ -14,7 +18,7 @@ import { loadJsonConfigFile } from './json-config-file.js';
 import { resolveConfigPath } from './path-resolver.js';
 import { zoneResourcesPolicySchema } from './resource-contracts/index.js';
 
-const gatewayTypeValues = ['openclaw', 'worker'] as const;
+const gatewayTypeValues = ['openclaw', 'hermes', 'worker'] as const;
 export const agentIdSchema = z
 	.string()
 	.min(1)
@@ -31,10 +35,6 @@ export const zoneIdSchema = z
 		/^[a-z0-9][a-z0-9._-]*$/u,
 		'zone id must start with a lowercase letter or number and contain only lowercase letters, numbers, dots, underscores, or hyphens',
 	);
-
-function pathContainsParentTraversal(inputPath: string): boolean {
-	return inputPath.split(/[\\/]+/u).includes('..');
-}
 
 function escapeRegExpLiteral(value: string): string {
 	return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
@@ -236,23 +236,6 @@ const authProfilesSecretSchema = z.discriminatedUnion('source', [
 		.strict(),
 ]);
 
-const agentSandboxSeedSchema = z
-	.object({
-		source: authProfilesSecretSchema,
-		target: z.string().min(1),
-		mode: z.number().int().min(0).max(0o777).default(0o600),
-	})
-	.strict()
-	.superRefine((seed, context) => {
-		if (path.posix.isAbsolute(seed.target) || pathContainsParentTraversal(seed.target)) {
-			context.addIssue({
-				code: z.ZodIssueCode.custom,
-				message: 'agent sandbox seed target must be a relative path without parent traversal.',
-				path: ['target'],
-			});
-		}
-	});
-
 const hostSecretReferenceSchema = z.discriminatedUnion('source', [
 	z
 		.object({
@@ -288,6 +271,35 @@ const zoneAdminAccessSchema = z.discriminatedUnion('mode', [
 		.strict(),
 ]);
 
+const zoneApprovalAccessSchema = z
+	.object({
+		approvers: z
+			.array(
+				z
+					.object({
+						approverId: z.string().min(1).max(1024),
+						secret: hostSecretReferenceSchema,
+					})
+					.strict(),
+			)
+			.min(1),
+		audience: z.literal(GATEWAY_RUNTIME_APPROVAL_AUDIENCE),
+	})
+	.strict()
+	.superRefine((approvalAccess, context) => {
+		const seenApproverIds = new Set<string>();
+		for (const [index, approver] of approvalAccess.approvers.entries()) {
+			if (seenApproverIds.has(approver.approverId)) {
+				context.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: `approvalAccess approver id "${approver.approverId}" must be unique.`,
+					path: ['approvers', index, 'approverId'],
+				});
+			}
+			seenApproverIds.add(approver.approverId);
+		}
+	});
+
 const gatewaySshSecretEnvSchema = z.enum(['never', 'explicit']);
 
 const gatewaySshSchema = z
@@ -296,7 +308,7 @@ const gatewaySshSchema = z
 	})
 	.strict();
 
-const gitBranchNameSchema = z
+export const gitBranchNameSchema = z
 	.string()
 	.min(1)
 	.regex(
@@ -312,51 +324,38 @@ const gitBranchPatternSchema = z
 		'git branch pattern must be a safe branch pattern without spaces, control characters, traversal, refspec, or glob metacharacters',
 	);
 
-function escapeRegExp(value: string): string {
-	return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
-}
-
-function gitBranchPatternMatches(pattern: string, branch: string): boolean {
-	const regex = new RegExp(`^${pattern.split('*').map(escapeRegExp).join('.*')}$`, 'u');
-	return regex.test(branch);
-}
-
-const zoneGitRemoteSchema = z
+const workspaceGitRemoteSchema = z
 	.object({
 		repoUrl: z.string().min(1),
-		branch: gitBranchNameSchema.default('agent/zone-files'),
+		branch: gitBranchNameSchema.default('agent/workspace'),
 		defaultBranch: gitBranchNameSchema.default('main'),
-		protectedBranches: z.array(gitBranchNameSchema).default([]),
-		protectedBranchPatterns: z.array(gitBranchPatternSchema).default([]),
 	})
 	.strict()
 	.superRefine((remote, context) => {
-		const protectedBranches = new Set([
-			'main',
-			'master',
-			remote.defaultBranch,
-			...remote.protectedBranches,
-		]);
-		if (
-			protectedBranches.has(remote.branch) ||
-			remote.protectedBranchPatterns.some((pattern) =>
-				gitBranchPatternMatches(pattern, remote.branch),
-			)
-		) {
+		if (remote.branch === remote.defaultBranch) {
 			context.addIssue({
 				code: 'custom',
-				message:
-					'zoneGit.remote.branch must be a non-protected branch; choose a branch outside defaultBranch, protectedBranches, and protectedBranchPatterns',
+				message: 'workspaceGit.remote.branch must differ from defaultBranch',
 				path: ['branch'],
 			});
 		}
 	});
 
-const zoneGitSchema = z
-	.object({
-		remote: zoneGitRemoteSchema,
-	})
-	.strict();
+const workspaceGitSchema = z.discriminatedUnion('mode', [
+	z.object({ mode: z.literal('local') }).strict(),
+	z.object({ mode: z.literal('remote'), remote: workspaceGitRemoteSchema }).strict(),
+]);
+
+function normalizeWorkspaceGitRepositoryIdentity(repoUrl: string): string | undefined {
+	const cleaned = repoUrl.trim().replace(/\.git$/u, '');
+	const qualifiedMatch = /^(?:https?:\/\/)?github\.com\/([^/?#]+)\/([^/?#]+)$/iu.exec(cleaned);
+	const shortMatch = /^([^\s/?#]+)\/([^\s/?#]+)$/u.exec(cleaned);
+	const match = qualifiedMatch ?? shortMatch;
+	if (match?.[1] === undefined || match[2] === undefined) {
+		return undefined;
+	}
+	return `github.com/${match[1].toLowerCase()}/${match[2].toLowerCase()}`;
+}
 
 const openClawGatewayControlAuthSchema = z.discriminatedUnion('mode', [
 	z
@@ -396,7 +395,6 @@ const zoneGatewayBaseSchema = z.object({
 	stateDir: z.string().min(1),
 	runtimeRootfsSize: z.string().min(1).optional(),
 	backupDir: z.string().min(1).optional(),
-	authProfilesRef: authProfilesSecretSchema.optional(),
 	ssh: gatewaySshSchema.optional(),
 });
 
@@ -405,10 +403,61 @@ const openClawZoneGatewaySchema = zoneGatewayBaseSchema
 		type: z.literal('openclaw'),
 		controlAuth: openClawGatewayControlAuthSchema,
 		zoneFilesDir: z.string().min(1),
+		authProfilesRef: authProfilesSecretSchema.optional(),
 		authProfilesByAgent: z.record(agentIdSchema, authProfilesSecretSchema).optional(),
 		authLogin: openClawAuthLoginSchema.optional(),
 		rawEnvSecrets: z.array(secretNameSchema).optional(),
-		zoneGit: zoneGitSchema.optional(),
+	})
+	.strict();
+
+const hermesProfileNamePattern = /^[a-z0-9][a-z0-9_-]{0,63}$/u;
+
+function normalizeHermesProfileName(profileName: string): string {
+	return profileName.trim().toLowerCase();
+}
+
+const hermesProfilesByAgentSchema = z
+	.record(agentIdSchema, z.string().min(1))
+	.refine(
+		(profilesByAgent) => Object.keys(profilesByAgent).length > 0,
+		'gateway.profilesByAgent must declare at least one Hermes profile assignment',
+	)
+	.superRefine((profilesByAgent, context) => {
+		const agentByNormalizedProfileName = new Map<string, string>();
+		for (const [agentId, profileName] of Object.entries(profilesByAgent)) {
+			const normalizedProfileName = normalizeHermesProfileName(profileName);
+			if (profileName !== normalizedProfileName || !hermesProfileNamePattern.test(profileName)) {
+				context.addIssue({
+					code: 'custom',
+					message: `Hermes profile '${profileName}' must already be normalized and match [a-z0-9][a-z0-9_-]{0,63}`,
+					path: [agentId],
+				});
+			}
+			if (normalizedProfileName === 'default') {
+				context.addIssue({
+					code: 'custom',
+					message: "Hermes profile 'default' is not admitted in managed mode",
+					path: [agentId],
+				});
+			}
+			const existingAgentId = agentByNormalizedProfileName.get(normalizedProfileName);
+			if (existingAgentId !== undefined) {
+				context.addIssue({
+					code: 'custom',
+					message: `Hermes profile '${normalizedProfileName}' is assigned to multiple agents '${existingAgentId}' and '${agentId}'`,
+					path: [agentId],
+				});
+			} else {
+				agentByNormalizedProfileName.set(normalizedProfileName, agentId);
+			}
+		}
+	});
+
+const hermesZoneGatewaySchema = zoneGatewayBaseSchema
+	.extend({
+		type: z.literal('hermes'),
+		zoneFilesDir: z.string().min(1),
+		profilesByAgent: hermesProfilesByAgentSchema,
 	})
 	.strict();
 
@@ -430,6 +479,7 @@ const workerZoneGatewaySchema = zoneGatewayBaseSchema
 
 const zoneGatewaySchema = z.discriminatedUnion('type', [
 	openClawZoneGatewaySchema,
+	hermesZoneGatewaySchema,
 	workerZoneGatewaySchema,
 ]);
 
@@ -634,12 +684,17 @@ const zoneAgentSchema = z
 	.object({
 		id: agentIdSchema,
 		toolVmProfile: z.string().min(1).optional(),
+		workspaceGit: workspaceGitSchema.optional(),
 	})
 	.strict();
 
 const zoneToolPortalConfigSchema = z
 	.object({
 		configDir: z.string().min(1),
+		surfaceEligibilityByProfile: z.record(
+			z.string().min(1),
+			z.record(z.string().min(1), z.array(GatewayRuntimePortalSurfaceClassSchema).min(1)),
+		),
 	})
 	.strict();
 
@@ -791,20 +846,18 @@ const hostObservabilitySchema = z.union([
 	externalHostObservabilitySchema,
 ]);
 
-const zoneOpenClawObservabilitySchema = z
+const zoneTelemetryProducerSchema = z
 	.object({
-		serviceName: z.string().min(1),
 		traces: z.boolean().default(true),
 		metrics: z.boolean().default(true),
 		logs: z.boolean().default(true),
 		sampleRate: z.number().min(0).max(1).default(1),
 		flushIntervalMs: z.number().int().positive().default(10_000),
-		captureContent: z
-			.object({
-				enabled: z.literal(false).default(false),
-			})
-			.strict()
-			.default({ enabled: false }),
+	})
+	.strict();
+
+const zoneOpenClawObservabilityExtensionSchema = z
+	.object({
 		diagnosticsFlags: z.array(z.string().min(1)).default([]),
 	})
 	.strict();
@@ -818,7 +871,13 @@ const zoneObservabilitySchema = z.discriminatedUnion('enabled', [
 	z
 		.object({
 			enabled: z.literal(true),
-			openclaw: zoneOpenClawObservabilitySchema,
+			openclaw: zoneOpenClawObservabilityExtensionSchema.optional(),
+			services: z
+				.object({
+					framework: zoneTelemetryProducerSchema,
+					toolPortal: zoneTelemetryProducerSchema,
+				})
+				.strict(),
 		})
 		.strict(),
 ]);
@@ -848,6 +907,7 @@ const systemConfigSchema = z
 		}),
 		controller: controllerConfigSchema.default({ health: defaultControllerHealthConfig }),
 		cacheDir: z.string().min(1).default('./cache'),
+		controllerStateDir: z.string().min(1),
 		runtimeDir: z.string().min(1).default('./runtime'),
 		imageProfiles: imageProfilesSchema,
 		zones: z
@@ -857,6 +917,7 @@ const systemConfigSchema = z
 						id: zoneIdSchema,
 						agents: z.array(zoneAgentSchema).optional(),
 						adminAccess: zoneAdminAccessSchema.optional(),
+						approvalAccess: zoneApprovalAccessSchema.optional(),
 						gateway: zoneGatewaySchema,
 						toolPortal: zoneToolPortalConfigSchema.optional(),
 						resources: zoneResourcesPolicySchema.optional(),
@@ -867,7 +928,6 @@ const systemConfigSchema = z
 						websocketUpgrades: z.array(websocketUpgradeSchema).optional(),
 						defaultToolVmProfile: z.string().min(1).optional(),
 						agentToolVmProfiles: z.record(agentIdSchema, z.string().min(1)).optional(),
-						agentSandboxSeeds: z.record(agentIdSchema, z.array(agentSandboxSeedSchema)).optional(),
 					})
 					.strict(),
 			)
@@ -902,14 +962,14 @@ const systemConfigSchema = z
 			(zone) =>
 				Object.values(zone.secrets).some((secret) => secret.source === '1password') ||
 				(zone.adminAccess?.mode === 'secret' && zone.adminAccess.secret.source === '1password') ||
-				zone.gateway.authProfilesRef?.source === '1password' ||
+				zone.approvalAccess?.approvers.some(
+					(approver) => approver.secret.source === '1password',
+				) === true ||
 				(zone.gateway.type === 'openclaw' &&
-					Object.values(zone.gateway.authProfilesByAgent ?? {}).some(
-						(secret) => secret.source === '1password',
-					)) ||
-				Object.values(zone.agentSandboxSeeds ?? {}).some((seeds) =>
-					seeds.some((seed) => seed.source.source === '1password'),
-				),
+					(zone.gateway.authProfilesRef?.source === '1password' ||
+						Object.values(zone.gateway.authProfilesByAgent ?? {}).some(
+							(secret) => secret.source === '1password',
+						))),
 		);
 		const hasOnePasswordGithubToken = config.host.githubToken?.source === '1password';
 		if ((hasOnePasswordSecrets || hasOnePasswordGithubToken) && !config.host.secretsProvider) {
@@ -933,6 +993,14 @@ const systemConfigSchema = z
 			if (!profile.source) {
 				continue;
 			}
+			if (profile.type === 'hermes') {
+				context.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: `Gateway image profile '${profileName}' type 'hermes' must not declare a managed base.`,
+					path: ['imageProfiles', 'gateways', profileName, 'source'],
+				});
+				continue;
+			}
 			const expectedManagedBase =
 				profile.type === 'openclaw' ? 'openclaw-gateway' : 'worker-gateway';
 			if (profile.source.base !== expectedManagedBase) {
@@ -954,9 +1022,14 @@ const systemConfigSchema = z
 			}
 		}
 
+		const remoteWorkspaceOwnersByRepositoryBranch = new Map<
+			string,
+			{ readonly agentId: string; readonly zoneId: string }
+		>();
 		for (const [zoneIndex, zone] of config.zones.entries()) {
 			const zoneAgents = zone.agents ?? [];
 			const zoneAgentIds = new Set(zoneAgents.map((agent) => agent.id));
+			const isManagedAgentGateway = zone.gateway.type !== 'worker';
 			if (zone.observability?.enabled === true && config.host.observability?.enabled !== true) {
 				context.addIssue({
 					code: z.ZodIssueCode.custom,
@@ -964,11 +1037,22 @@ const systemConfigSchema = z
 					path: ['zones', zoneIndex, 'observability'],
 				});
 			}
-			if (zone.observability?.enabled === true && zone.gateway.type !== 'openclaw') {
+			if (zone.observability?.enabled === true && zone.gateway.type === 'worker') {
 				context.addIssue({
 					code: z.ZodIssueCode.custom,
-					message: `Zone '${zone.id}' observability is supported only for OpenClaw gateways in v1.`,
+					message: `Zone '${zone.id}' observability is supported only for managed OpenClaw or Hermes gateways.`,
 					path: ['zones', zoneIndex, 'observability'],
+				});
+			}
+			if (
+				zone.observability?.enabled === true &&
+				zone.gateway.type !== 'openclaw' &&
+				zone.observability.openclaw !== undefined
+			) {
+				context.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: `Zone '${zone.id}' OpenClaw observability extensions require an OpenClaw gateway.`,
+					path: ['zones', zoneIndex, 'observability', 'openclaw'],
 				});
 			}
 			if (zone.observability?.enabled === true && zone.gateway.type === 'openclaw') {
@@ -986,10 +1070,9 @@ const systemConfigSchema = z
 			if (zone.observability?.enabled === true) {
 				const forbiddenDiagnosticsFlagPattern =
 					/[*=]|^(?:1|all|everything)$|(?:body|content|payload|prompt|secret|token|authorization|cookie|transcript|query|header|url)/iu;
-				for (const [
-					flagIndex,
-					diagnosticsFlag,
-				] of zone.observability.openclaw.diagnosticsFlags.entries()) {
+				for (const [flagIndex, diagnosticsFlag] of (
+					zone.observability.openclaw?.diagnosticsFlags ?? []
+				).entries()) {
 					if (forbiddenDiagnosticsFlagPattern.test(diagnosticsFlag)) {
 						context.addIssue({
 							code: z.ZodIssueCode.custom,
@@ -1103,10 +1186,10 @@ const systemConfigSchema = z
 				) {
 					continue;
 				}
-				if (zone.gateway.type !== 'openclaw') {
+				if (!isManagedAgentGateway) {
 					context.addIssue({
 						code: z.ZodIssueCode.custom,
-						message: `Worker zone '${zone.id}' secret '${secretName}' must not declare agentAccess because worker zones do not boot OpenClaw Tool VMs.`,
+						message: `Worker zone '${zone.id}' secret '${secretName}' must not declare agentAccess because worker zones do not boot managed-agent Tool VMs.`,
 						path: ['zones', zoneIndex, 'secrets', secretName, 'agentAccess'],
 					});
 					continue;
@@ -1114,7 +1197,7 @@ const systemConfigSchema = z
 				if (zoneAgentIds.size === 0) {
 					context.addIssue({
 						code: z.ZodIssueCode.custom,
-						message: `OpenClaw zone '${zone.id}' secret '${secretName}' uses Tool VM agentAccess but zones[].agents is empty. Declare at least one zone agent so agentAccess can be evaluated.`,
+						message: `Managed-agent zone '${zone.id}' secret '${secretName}' uses Tool VM agentAccess but zones[].agents is empty. Declare at least one zone agent so agentAccess can be evaluated.`,
 						path: ['zones', zoneIndex, 'agents'],
 					});
 					continue;
@@ -1152,58 +1235,45 @@ const systemConfigSchema = z
 				});
 			}
 
-			if (zone.gateway.type !== 'openclaw' && zone.defaultToolVmProfile !== undefined) {
+			if (!isManagedAgentGateway && zone.defaultToolVmProfile !== undefined) {
 				context.addIssue({
 					code: z.ZodIssueCode.custom,
 					message: `Worker zone '${zone.id}' must not declare defaultToolVmProfile.`,
 					path: ['zones', zoneIndex, 'defaultToolVmProfile'],
 				});
 			}
-			if (
-				zone.gateway.type !== 'openclaw' &&
-				(zoneAgents.length > 0 || zone.toolPortal !== undefined)
-			) {
+			if (!isManagedAgentGateway && (zoneAgents.length > 0 || zone.toolPortal !== undefined)) {
 				context.addIssue({
 					code: z.ZodIssueCode.custom,
 					message: `Worker zone '${zone.id}' must not declare agents or toolPortal.`,
 					path: ['zones', zoneIndex],
 				});
 			}
-			if (zone.gateway.type !== 'openclaw' && zone.agentToolVmProfiles !== undefined) {
+			if (!isManagedAgentGateway && zone.agentToolVmProfiles !== undefined) {
 				context.addIssue({
 					code: z.ZodIssueCode.custom,
 					message: `Worker zone '${zone.id}' must not declare agentToolVmProfiles.`,
 					path: ['zones', zoneIndex, 'agentToolVmProfiles'],
 				});
 			}
-			if (
-				zone.gateway.type !== 'openclaw' &&
-				Object.keys(zone.agentSandboxSeeds ?? {}).length > 0
-			) {
+			if (isManagedAgentGateway && zone.defaultToolVmProfile === undefined) {
 				context.addIssue({
 					code: z.ZodIssueCode.custom,
-					message: `Worker zone '${zone.id}' must not declare agentSandboxSeeds.`,
-					path: ['zones', zoneIndex, 'agentSandboxSeeds'],
-				});
-			}
-			if (zone.gateway.type === 'openclaw' && zone.defaultToolVmProfile === undefined) {
-				context.addIssue({
-					code: z.ZodIssueCode.custom,
-					message: `OpenClaw zone '${zone.id}' must declare a defaultToolVmProfile.`,
+					message: `Managed-agent zone '${zone.id}' must declare a defaultToolVmProfile.`,
 					path: ['zones', zoneIndex, 'defaultToolVmProfile'],
 				});
 			}
-			if (zone.gateway.type === 'openclaw' && zone.agentToolVmProfiles === undefined) {
+			if (isManagedAgentGateway && zone.agentToolVmProfiles === undefined) {
 				context.addIssue({
 					code: z.ZodIssueCode.custom,
-					message: `OpenClaw zone '${zone.id}' must declare agentToolVmProfiles, even when it is empty.`,
+					message: `Managed-agent zone '${zone.id}' must declare agentToolVmProfiles, even when it is empty.`,
 					path: ['zones', zoneIndex, 'agentToolVmProfiles'],
 				});
 			}
-			if (zone.gateway.type === 'openclaw' && zoneAgentIds.size === 0) {
+			if (isManagedAgentGateway && zoneAgentIds.size === 0) {
 				context.addIssue({
 					code: z.ZodIssueCode.custom,
-					message: `OpenClaw zone '${zone.id}' must declare at least one trusted agent.`,
+					message: `Managed-agent zone '${zone.id}' must declare at least one trusted agent.`,
 					path: ['zones', zoneIndex, 'agents'],
 				});
 			}
@@ -1217,6 +1287,41 @@ const systemConfigSchema = z
 					});
 				}
 				seenAgentIds.add(agent.id);
+				if (zone.gateway.type === 'worker' && agent.workspaceGit !== undefined) {
+					context.addIssue({
+						code: z.ZodIssueCode.custom,
+						message: `Worker zone '${zone.id}' agent '${agent.id}' must not declare workspaceGit.`,
+						path: ['zones', zoneIndex, 'agents', agentIndex, 'workspaceGit'],
+					});
+				}
+				if (agent.workspaceGit?.mode === 'remote') {
+					const repositoryIdentity = normalizeWorkspaceGitRepositoryIdentity(
+						agent.workspaceGit.remote.repoUrl,
+					);
+					if (repositoryIdentity === undefined) {
+						context.addIssue({
+							code: z.ZodIssueCode.custom,
+							message: `Zone '${zone.id}' agent '${agent.id}' workspaceGit.remote.repoUrl must name a credential-free GitHub repository.`,
+							path: ['zones', zoneIndex, 'agents', agentIndex, 'workspaceGit', 'remote', 'repoUrl'],
+						});
+					} else {
+						const repositoryBranchIdentity = `${repositoryIdentity}\0${agent.workspaceGit.remote.branch}`;
+						const existingOwner =
+							remoteWorkspaceOwnersByRepositoryBranch.get(repositoryBranchIdentity);
+						if (existingOwner !== undefined) {
+							context.addIssue({
+								code: z.ZodIssueCode.custom,
+								message: `Zone '${zone.id}' agent '${agent.id}' workspaceGit duplicates normalized repository and branch owned by zone '${existingOwner.zoneId}' agent '${existingOwner.agentId}'.`,
+								path: ['zones', zoneIndex, 'agents', agentIndex, 'workspaceGit'],
+							});
+						} else {
+							remoteWorkspaceOwnersByRepositoryBranch.set(repositoryBranchIdentity, {
+								agentId: agent.id,
+								zoneId: zone.id,
+							});
+						}
+					}
+				}
 				if (
 					agent.toolVmProfile !== undefined &&
 					config.toolVmProfiles[agent.toolVmProfile] === undefined
@@ -1228,8 +1333,29 @@ const systemConfigSchema = z
 					});
 				}
 			}
+			if (zone.gateway.type === 'hermes') {
+				const configuredProfileAgentIds = new Set(Object.keys(zone.gateway.profilesByAgent));
+				for (const agentId of zoneAgentIds) {
+					if (!configuredProfileAgentIds.has(agentId)) {
+						context.addIssue({
+							code: z.ZodIssueCode.custom,
+							message: `Hermes zone '${zone.id}' profilesByAgent is missing configured agent '${agentId}'.`,
+							path: ['zones', zoneIndex, 'gateway', 'profilesByAgent'],
+						});
+					}
+				}
+				for (const agentId of configuredProfileAgentIds) {
+					if (!zoneAgentIds.has(agentId)) {
+						context.addIssue({
+							code: z.ZodIssueCode.custom,
+							message: `Hermes zone '${zone.id}' profilesByAgent references undeclared agent '${agentId}'.`,
+							path: ['zones', zoneIndex, 'gateway', 'profilesByAgent', agentId],
+						});
+					}
+				}
+			}
 			if (
-				zone.gateway.type === 'openclaw' &&
+				isManagedAgentGateway &&
 				zone.defaultToolVmProfile !== undefined &&
 				config.toolVmProfiles[zone.defaultToolVmProfile] === undefined
 			) {
@@ -1239,7 +1365,7 @@ const systemConfigSchema = z
 					path: ['zones', zoneIndex, 'defaultToolVmProfile'],
 				});
 			}
-			if (zone.gateway.type === 'openclaw') {
+			if (isManagedAgentGateway) {
 				for (const [agentId, toolVmProfileId] of Object.entries(zone.agentToolVmProfiles ?? {})) {
 					if (!zoneAgentIds.has(agentId)) {
 						context.addIssue({
@@ -1258,10 +1384,10 @@ const systemConfigSchema = z
 				}
 			}
 
-			if (zone.gateway.type === 'openclaw' && zone.runtimeAuthHints !== undefined) {
+			if (zone.gateway.type !== 'worker' && zone.runtimeAuthHints !== undefined) {
 				context.addIssue({
 					code: z.ZodIssueCode.custom,
-					message: `OpenClaw zone '${zone.id}' must not declare runtimeAuthHints because they are consumed only by worker gateway runtime instructions.`,
+					message: `Managed-agent zone '${zone.id}' must not declare runtimeAuthHints because they are consumed only by worker gateway runtime instructions.`,
 					path: ['zones', zoneIndex, 'runtimeAuthHints'],
 				});
 			}
@@ -1366,7 +1492,70 @@ function isManagedHostObservabilityConfig(
 	return observability?.enabled === true && observability.stack.mode === 'managed';
 }
 
-function assertResolvedRuntimePathIsolation(config: z.infer<typeof systemConfigSchema>): void {
+interface ControllerStateProtectedPath {
+	readonly label: string;
+	readonly path: string;
+}
+
+type ControllerStateProtectedPathConfig = Pick<
+	SystemConfig,
+	'cacheDir' | 'host' | 'runtimeDir' | 'zones'
+>;
+
+function collectControllerStateProtectedPaths(
+	config: ControllerStateProtectedPathConfig,
+	systemConfigPath: string,
+): readonly ControllerStateProtectedPath[] {
+	const protectedPaths: ControllerStateProtectedPath[] = [
+		{ label: 'system config file', path: systemConfigPath },
+		{ label: 'system config parent directory', path: path.dirname(systemConfigPath) },
+		{ label: 'cacheDir', path: config.cacheDir },
+		{ label: 'runtimeDir', path: config.runtimeDir },
+	];
+	const observability = config.host.observability;
+	if (isManagedHostObservabilityConfig(observability)) {
+		protectedPaths.push({ label: 'observability dataDir', path: observability.dataDir });
+	}
+	for (const zone of config.zones) {
+		protectedPaths.push(
+			{ label: `stateDir for zone '${zone.id}'`, path: zone.gateway.stateDir },
+			{
+				label: `backup output for zone '${zone.id}'`,
+				path: zone.gateway.backupDir ?? path.join(zone.gateway.stateDir, 'backups'),
+			},
+		);
+		if (zone.gateway.type !== 'worker') {
+			protectedPaths.push(
+				{ label: `zoneFilesDir for zone '${zone.id}'`, path: zone.gateway.zoneFilesDir },
+				{
+					label: `mounted gateway config directory for zone '${zone.id}'`,
+					path: path.dirname(zone.gateway.config),
+				},
+			);
+		}
+	}
+	return protectedPaths;
+}
+
+function assertControllerStatePathIsolation(options: {
+	readonly controllerStateDir: string;
+	readonly protectedPaths: readonly ControllerStateProtectedPath[];
+}): void {
+	for (const protectedPath of options.protectedPaths) {
+		if (pathsOverlap(options.controllerStateDir, protectedPath.path)) {
+			throw new Error(`controllerStateDir must not overlap ${protectedPath.label}.`);
+		}
+	}
+}
+
+function assertResolvedRuntimePathIsolation(
+	config: z.infer<typeof systemConfigSchema>,
+	systemConfigPath: string,
+): void {
+	assertControllerStatePathIsolation({
+		controllerStateDir: config.controllerStateDir,
+		protectedPaths: collectControllerStateProtectedPaths(config, systemConfigPath),
+	});
 	if (pathsOverlap(config.runtimeDir, config.cacheDir)) {
 		throw new Error('runtimeDir must not overlap cacheDir.');
 	}
@@ -1385,7 +1574,7 @@ function assertResolvedRuntimePathIsolation(config: z.infer<typeof systemConfigS
 			throw new Error(`runtimeDir must not overlap stateDir for zone '${zone.id}'.`);
 		}
 		if (
-			zone.gateway.type === 'openclaw' &&
+			zone.gateway.type !== 'worker' &&
 			pathsOverlap(config.runtimeDir, zone.gateway.zoneFilesDir)
 		) {
 			throw new Error(`runtimeDir must not overlap zoneFilesDir for zone '${zone.id}'.`);
@@ -1395,7 +1584,7 @@ function assertResolvedRuntimePathIsolation(config: z.infer<typeof systemConfigS
 			if (pathsOverlap(dataDir, zone.gateway.stateDir)) {
 				throw new Error(`observability dataDir must not overlap stateDir for zone '${zone.id}'.`);
 			}
-			if (zone.gateway.type === 'openclaw' && pathsOverlap(dataDir, zone.gateway.zoneFilesDir)) {
+			if (zone.gateway.type !== 'worker' && pathsOverlap(dataDir, zone.gateway.zoneFilesDir)) {
 				throw new Error(
 					`observability dataDir must not overlap zoneFilesDir for zone '${zone.id}'.`,
 				);
@@ -1409,7 +1598,7 @@ export function createLoadedSystemConfig(
 	options: { readonly systemConfigPath: string },
 ): LoadedSystemConfig {
 	const parsedConfig = systemConfigSchema.parse(config);
-	assertResolvedRuntimePathIsolation(parsedConfig);
+	assertResolvedRuntimePathIsolation(parsedConfig, options.systemConfigPath);
 	return {
 		...parsedConfig,
 		systemConfigPath: options.systemConfigPath,
@@ -1430,6 +1619,14 @@ function resolveRelativePaths(
 	): z.infer<typeof zoneGatewaySchema> => {
 		switch (gateway.type) {
 			case 'openclaw':
+				return {
+					...gateway,
+					config: resolvePath(gateway.config),
+					stateDir: resolvePath(gateway.stateDir),
+					...(gateway.backupDir ? { backupDir: resolvePath(gateway.backupDir) } : {}),
+					zoneFilesDir: resolvePath(gateway.zoneFilesDir),
+				};
+			case 'hermes':
 				return {
 					...gateway,
 					config: resolvePath(gateway.config),
@@ -1463,6 +1660,7 @@ function resolveRelativePaths(
 				}
 			: config.host,
 		cacheDir: resolvePath(config.cacheDir),
+		controllerStateDir: resolvePath(config.controllerStateDir),
 		runtimeDir: resolvePath(config.runtimeDir),
 		imageProfiles: {
 			gateways: Object.fromEntries(
@@ -1497,7 +1695,12 @@ function resolveRelativePaths(
 			gateway: resolveZoneGatewayPaths(zone.gateway),
 			...(zone.toolPortal === undefined
 				? {}
-				: { toolPortal: { configDir: resolvePath(zone.toolPortal.configDir) } }),
+				: {
+						toolPortal: {
+							...zone.toolPortal,
+							configDir: resolvePath(zone.toolPortal.configDir),
+						},
+					}),
 		})),
 		toolVmProfiles: Object.fromEntries(
 			Object.entries(config.toolVmProfiles).map(([profileId, profile]) => [
@@ -1510,6 +1713,79 @@ function resolveRelativePaths(
 
 function isMissingFileError(error: unknown): boolean {
 	return typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT';
+}
+
+function isMissingPathComponentError(error: unknown): boolean {
+	return (
+		typeof error === 'object' &&
+		error !== null &&
+		'code' in error &&
+		(error.code === 'ENOENT' || error.code === 'ENOTDIR')
+	);
+}
+
+async function resolveCanonicalPathFromExistingAncestor(options: {
+	readonly inputPath: string;
+	readonly candidatePath: string;
+	readonly missingPathSegments: readonly string[];
+}): Promise<string> {
+	try {
+		const canonicalExistingPath = await realpath(options.candidatePath);
+		return path.resolve(canonicalExistingPath, ...options.missingPathSegments);
+	} catch (error) {
+		if (!isMissingPathComponentError(error)) {
+			throw new Error(`Failed to canonicalize path '${options.inputPath}'.`, { cause: error });
+		}
+	}
+
+	try {
+		const candidateStatus = await lstat(options.candidatePath);
+		if (candidateStatus.isSymbolicLink()) {
+			throw new Error(
+				`Failed to canonicalize path '${options.inputPath}' through a broken symlink.`,
+			);
+		}
+	} catch (error) {
+		if (!isMissingPathComponentError(error)) {
+			throw error;
+		}
+	}
+
+	const parentPath = path.dirname(options.candidatePath);
+	if (parentPath === options.candidatePath) {
+		throw new Error(
+			`Failed to find an existing ancestor while canonicalizing path '${options.inputPath}'.`,
+		);
+	}
+	return resolveCanonicalPathFromExistingAncestor({
+		inputPath: options.inputPath,
+		candidatePath: parentPath,
+		missingPathSegments: [path.basename(options.candidatePath), ...options.missingPathSegments],
+	});
+}
+
+async function resolveCanonicalPathIdentity(inputPath: string): Promise<string> {
+	return resolveCanonicalPathFromExistingAncestor({
+		inputPath,
+		candidatePath: path.resolve(inputPath),
+		missingPathSegments: [],
+	});
+}
+
+async function canonicalizeControllerStatePath(
+	config: LoadedSystemConfig,
+): Promise<LoadedSystemConfig> {
+	const controllerStateDir = await resolveCanonicalPathIdentity(config.controllerStateDir);
+	const protectedPaths = await Promise.all(
+		collectControllerStateProtectedPaths(config, config.systemConfigPath).map(
+			async (protectedPath): Promise<ControllerStateProtectedPath> => ({
+				label: protectedPath.label,
+				path: await resolveCanonicalPathIdentity(protectedPath.path),
+			}),
+		),
+	);
+	assertControllerStatePathIsolation({ controllerStateDir, protectedPaths });
+	return { ...config, controllerStateDir };
 }
 
 async function resolveExistingSystemConfigPath(configPath: string): Promise<string> {
@@ -1533,7 +1809,8 @@ export async function loadSystemConfig(configPath: string): Promise<LoadedSystem
 	const configDir = path.dirname(absoluteConfigPath);
 	const parsedConfig = await loadJsonConfigFile(absoluteConfigPath);
 	const config = systemConfigSchema.parse(parsedConfig);
-	return createLoadedSystemConfig(resolveRelativePaths(config, configDir), {
+	const loadedConfig = createLoadedSystemConfig(resolveRelativePaths(config, configDir), {
 		systemConfigPath: absoluteConfigPath,
 	});
+	return await canonicalizeControllerStatePath(loadedConfig);
 }

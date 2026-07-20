@@ -1,0 +1,29 @@
+{
+	"caseId": "coverage-sandbox-process-wait-request",
+	"schemaId": "sandbox.process.wait.request",
+	"tags": [
+		"accepted",
+		"coverage"
+	],
+	"input": {
+		"process": {
+			"handleId": "process-a",
+			"kind": "process",
+			"owningGeneration": "generation-a"
+		},
+		"timeoutMs": 1000
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"process": {
+				"handleId": "process-a",
+				"kind": "process",
+				"owningGeneration": "generation-a"
+			},
+			"timeoutMs": 1000
+		},
+		"canonicalJson": "{\"process\":{\"handleId\":\"process-a\",\"kind\":\"process\",\"owningGeneration\":\"generation-a\"},\"timeoutMs\":1000}",
+		"refinementIdentities": []
+	}
+}

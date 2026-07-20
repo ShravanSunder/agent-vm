@@ -1,0 +1,17 @@
+{
+	"caseId": "coverage-sandbox-environment-open-request",
+	"schemaId": "sandbox.environment.open.request",
+	"tags": [
+		"accepted",
+		"coverage"
+	],
+	"input": {},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {},
+		"canonicalJson": "{}",
+		"refinementIdentities": [
+			"sandbox.path.work-relative"
+		]
+	}
+}

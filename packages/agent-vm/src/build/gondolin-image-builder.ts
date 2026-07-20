@@ -7,6 +7,7 @@ import { loadJsonConfigFile } from '../config/json-config-file.js';
 import type { TaskOutput } from '../shared/run-task.js';
 import {
 	createManagedVmBackendImageBuildTooling,
+	type ManagedGatewayImageBootProjection,
 	type ManagedVmBackendImageBuildOptions,
 	type ManagedVmBackendImageBuildResult,
 } from './gondolin-managed-vm-build-tooling.js';
@@ -20,6 +21,7 @@ export interface ManagedVmImageBuildRequest {
 	readonly cacheDir: string;
 	readonly fingerprintInput?: unknown;
 	readonly fullReset?: boolean;
+	readonly managedGatewayBoot?: ManagedGatewayImageBootProjection;
 	readonly previewOutput?: boolean;
 }
 
@@ -43,6 +45,7 @@ export interface ManagedVmImageBuilderDependencies {
 
 interface ComputeFingerprintFromConfigPathOptions {
 	readonly fingerprintInput?: unknown;
+	readonly managedGatewayBoot?: ManagedGatewayImageBootProjection;
 }
 
 interface ManagedVmBuildChildResultMessage {
@@ -115,6 +118,9 @@ export async function computeFingerprintFromConfigPath(
 		configDir: path.dirname(path.resolve(buildConfigPath)),
 		...(options.fingerprintInput === undefined ? {} : { fingerprintInput: options.fingerprintInput }),
 		gondolinVersion: runtimeBuildVersionTag,
+		...(options.managedGatewayBoot === undefined
+			? {}
+			: { managedGatewayBoot: options.managedGatewayBoot }),
 	});
 }
 
@@ -215,6 +221,9 @@ export async function runManagedVmImageBuildRequest(
 			...(request.fingerprintInput === undefined
 				? {}
 				: { fingerprintInput: request.fingerprintInput }),
+			...(request.managedGatewayBoot === undefined
+				? {}
+				: { managedGatewayBoot: request.managedGatewayBoot }),
 			...(request.fullReset ? { fullReset: true } : {}),
 			...(request.previewOutput ? { output: createProcessStderrOutput() } : {}),
 		},
@@ -313,6 +322,7 @@ export async function buildManagedVmImage(
 		readonly cacheDir: string;
 		readonly fingerprintInput?: unknown;
 		readonly fullReset?: boolean;
+		readonly managedGatewayBoot?: ManagedGatewayImageBootProjection;
 		readonly streamPreview?: TaskOutput;
 	},
 	dependencies: ManagedVmImageBuilderDependencies = {},
@@ -322,6 +332,9 @@ export async function buildManagedVmImage(
 		cacheDir: options.cacheDir,
 		...(options.fingerprintInput === undefined ? {} : { fingerprintInput: options.fingerprintInput }),
 		...(options.fullReset ? { fullReset: true } : {}),
+		...(options.managedGatewayBoot === undefined
+			? {}
+			: { managedGatewayBoot: options.managedGatewayBoot }),
 		...(options.streamPreview ? { previewOutput: true } : {}),
 	};
 

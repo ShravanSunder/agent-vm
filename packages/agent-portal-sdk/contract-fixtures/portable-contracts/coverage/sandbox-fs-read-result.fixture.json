@@ -1,0 +1,37 @@
+{
+	"caseId": "coverage-sandbox-fs-read-result",
+	"schemaId": "sandbox.fs.read.result",
+	"tags": [
+		"accepted",
+		"coverage"
+	],
+	"input": {
+		"chunk": {
+			"byteLength": 0,
+			"contentBase64": "",
+			"encoding": "base64"
+		},
+		"eof": true,
+		"kind": "read",
+		"nextOffsetBytes": 0,
+		"path": "file.txt"
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"chunk": {
+				"byteLength": 0,
+				"contentBase64": "",
+				"encoding": "base64"
+			},
+			"eof": true,
+			"kind": "read",
+			"nextOffsetBytes": 0,
+			"path": "file.txt"
+		},
+		"canonicalJson": "{\"chunk\":{\"byteLength\":0,\"contentBase64\":\"\",\"encoding\":\"base64\"},\"eof\":true,\"kind\":\"read\",\"nextOffsetBytes\":0,\"path\":\"file.txt\"}",
+		"refinementIdentities": [
+			"sandbox.binary-chunk.byte-length"
+		]
+	}
+}

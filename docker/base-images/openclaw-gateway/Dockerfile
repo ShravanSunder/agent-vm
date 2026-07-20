@@ -34,9 +34,6 @@ RUN apt-get update && \
     uvx --version && \
     rm -rf /root/.cache/uv && \
     mkdir -p /opt/openclaw-sdk && \
-    useradd -m -s /bin/bash openclaw && \
     mkdir -p /home/openclaw/.openclaw/extensions /pnpm/global/5/node_modules/@openclaw /zone /run/sshd /root /work/tmp /work/cache /var/log && \
     touch /var/log/lastlog /var/log/faillog && \
-    chown -R openclaw:openclaw /home/openclaw /work && \
-    chown -R root:root /home/openclaw/.openclaw/extensions && \
     (ln -sfn /proc/self/fd /dev/fd 2>/dev/null || true)

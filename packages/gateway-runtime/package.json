@@ -1,0 +1,71 @@
+{
+	"name": "@agent-vm/gateway-runtime",
+	"version": "0.0.114",
+	"description": "Gateway-local Tool Portal service, private UDS, and managed runtime backends.",
+	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
+	"bugs": {
+		"url": "https://github.com/ShravanSunder/agent-vm/issues"
+	},
+	"license": "MIT",
+	"author": "Shravan Sunder <ShravanSunder@users.noreply.github.com>",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ShravanSunder/agent-vm.git",
+		"directory": "packages/gateway-runtime"
+	},
+	"bin": {
+		"agent-vm-gateway-runtime": "./dist/bin/gateway-runtime.js"
+	},
+	"files": [
+		"dist"
+	],
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"scripts": {
+		"build": "tsdown",
+		"typecheck": "tsc -p tsconfig.json --noEmit",
+		"test": "pnpm test:unit",
+		"test:unit": "vitest run --root ../../ --config vitest.config.ts --project unit packages/gateway-runtime/src"
+	},
+	"dependencies": {
+		"@agent-vm/agent-portal-sdk": "workspace:*",
+		"@agent-vm/config-contracts": "workspace:*",
+		"@agent-vm/control-protocol-contracts": "workspace:*",
+		"@agent-vm/controller-execution-contracts": "workspace:*",
+		"@agent-vm/gateway-control-contracts": "workspace:*",
+		"@agent-vm/mcp-portal": "workspace:*",
+		"@agent-vm/tool-portal": "workspace:*",
+		"@modelcontextprotocol/sdk": "^1.29.0",
+		"@opentelemetry/api": "1.9.1",
+		"@opentelemetry/api-logs": "0.219.0",
+		"@opentelemetry/exporter-logs-otlp-proto": "0.219.0",
+		"@opentelemetry/exporter-metrics-otlp-proto": "0.219.0",
+		"@opentelemetry/exporter-trace-otlp-proto": "0.219.0",
+		"@opentelemetry/resources": "2.8.0",
+		"@opentelemetry/sdk-logs": "0.219.0",
+		"@opentelemetry/sdk-metrics": "2.8.0",
+		"@opentelemetry/sdk-trace-base": "2.8.0",
+		"engine.io": "6.6.9",
+		"socket.io": "4.8.1",
+		"ssh2": "^1.17.0",
+		"uuid": "^11.1.1",
+		"ws": "^8.21.0",
+		"zod": "^4.4.3"
+	},
+	"devDependencies": {
+		"@types/ssh2": "^1.15.5",
+		"@types/ws": "^8.18.1",
+		"socket.io-client": "4.8.1",
+		"vitest": "^4.1.5"
+	}
+}

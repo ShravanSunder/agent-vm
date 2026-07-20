@@ -2,10 +2,13 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { hasManagedVmImageAssets } from './gondolin-managed-vm-build-tooling.js';
+import {
+	hasManagedVmImageAssets,
+	type ManagedGatewayImageBootProjection,
+} from './gondolin-managed-vm-build-tooling.js';
 
 const preparedImageRecordFileName = 'prepared-image.json';
-const preparedImageRecordSchemaVersion = 1;
+const preparedImageRecordSchemaVersion = 2;
 
 interface PreparedImageBuildResult {
 	readonly built: boolean;
@@ -15,6 +18,7 @@ interface PreparedImageBuildResult {
 
 export interface PreparedManagedVmImage extends PreparedImageBuildResult {
 	readonly fingerprintInput?: unknown;
+	readonly managedGatewayBoot?: ManagedGatewayImageBootProjection;
 }
 
 export interface WritePreparedManagedVmImageOptions {
@@ -23,6 +27,7 @@ export interface WritePreparedManagedVmImageOptions {
 	readonly fingerprint: string;
 	readonly fingerprintInput?: unknown;
 	readonly imagePath: string;
+	readonly managedGatewayBoot?: ManagedGatewayImageBootProjection;
 }
 
 interface PreparedManagedVmImageRecord {
@@ -30,7 +35,25 @@ interface PreparedManagedVmImageRecord {
 	readonly fingerprint: string;
 	readonly fingerprintInput?: unknown;
 	readonly imagePath: string;
-	readonly schemaVersion: 1;
+	readonly managedGatewayBoot?: ManagedGatewayImageBootProjection;
+	readonly schemaVersion: 2;
+}
+
+function parseManagedGatewayBootProjection(
+	value: unknown,
+): ManagedGatewayImageBootProjection | undefined {
+	if (!isRecord(value) || value.kind !== 'managed-gateway-exact-two-role') return undefined;
+	if (
+		value.frameworkBootEntry !== 'openclaw-framework-service' &&
+		value.frameworkBootEntry !== 'hermes-framework-service'
+	) {
+		return undefined;
+	}
+	if (Object.keys(value).length !== 2) return undefined;
+	return {
+		frameworkBootEntry: value.frameworkBootEntry,
+		kind: value.kind,
+	};
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -57,11 +80,17 @@ function parsePreparedManagedVmImageRecord(value: unknown): PreparedManagedVmIma
 	if (typeof value.imagePath !== 'string' || value.imagePath.length === 0) {
 		return undefined;
 	}
+	const managedGatewayBoot =
+		value.managedGatewayBoot === undefined
+			? undefined
+			: parseManagedGatewayBootProjection(value.managedGatewayBoot);
+	if (value.managedGatewayBoot !== undefined && managedGatewayBoot === undefined) return undefined;
 	return {
 		buildConfigPath: value.buildConfigPath,
 		fingerprint: value.fingerprint,
 		...(value.fingerprintInput === undefined ? {} : { fingerprintInput: value.fingerprintInput }),
 		imagePath: value.imagePath,
+		...(managedGatewayBoot === undefined ? {} : { managedGatewayBoot }),
 		schemaVersion: preparedImageRecordSchemaVersion,
 	};
 }
@@ -104,6 +133,9 @@ export async function readPreparedManagedVmImage(options: {
 		fingerprint: record.fingerprint,
 		fingerprintInput: record.fingerprintInput,
 		imagePath,
+		...(record.managedGatewayBoot === undefined
+			? {}
+			: { managedGatewayBoot: record.managedGatewayBoot }),
 	};
 }
 
@@ -121,6 +153,9 @@ export async function writePreparedManagedVmImage(
 			? {}
 			: { fingerprintInput: options.fingerprintInput }),
 		imagePath: path.resolve(options.imagePath),
+		...(options.managedGatewayBoot === undefined
+			? {}
+			: { managedGatewayBoot: options.managedGatewayBoot }),
 		schemaVersion: preparedImageRecordSchemaVersion,
 	};
 	const recordPath = preparedImageRecordPath(options.cacheDir);

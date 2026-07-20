@@ -1,4 +1,3 @@
-import type { SecretResolver } from '@agent-vm/secret-management';
 import { Hono } from 'hono';
 
 import {
@@ -6,16 +5,12 @@ import {
 	type LoadedSystemConfig,
 } from '../../config/system-config.js';
 import { HealthEventStore } from '../health/health-event-store.js';
-import {
-	type AgentSandboxSeedResult,
-	seedAgentSandboxWorkspace,
-} from '../leases/agent-sandbox-seeding.js';
-import {
-	type ResolvedLeaseWorkMount,
-	resolveLeaseWorkMountDir as resolveLeaseWorkMountDirForZone,
-} from '../leases/lease-work-mount-paths.js';
 import type { ObservedControllerLeaseCreateRequest } from '../leases/observed-lease-create-request.js';
 import { OpenClawRuntimeStatusStore } from '../openclaw-runtime-status.js';
+import {
+	registerControllerApprovalRoutes,
+	type ControllerApprovalRoutePorts,
+} from './controller-approval-routes.js';
 import { registerControllerHealthEventRoutes } from './controller-health-event-routes.js';
 import {
 	type ControllerLeaseManager,
@@ -24,47 +19,11 @@ import {
 } from './controller-http-route-support.js';
 import { registerControllerZoneOperationRoutes } from './controller-zone-operation-routes.js';
 
-function writeControllerLeaseLog(message: string): void {
-	process.stderr.write(`[controller-http-routes] ${message}\n`);
-}
-
-function logAgentSandboxSeedResult(result: AgentSandboxSeedResult): void {
-	switch (result.kind) {
-		case 'seeded':
-			writeControllerLeaseLog(
-				`seeded sandbox for zone '${result.zoneId}' agent '${result.agentId}' workMountDir '${result.hostWorkMountDir}': ${String(result.written)} written, ${String(result.alreadyExisted)} already existed`,
-			);
-			return;
-		case 'malformed-agent-id':
-			writeControllerLeaseLog(
-				`skipped sandbox seeding for zone '${result.zoneId}' agent '${result.agentId}': ${result.reason}`,
-			);
-			return;
-		case 'sandbox-root-missing':
-			writeControllerLeaseLog(
-				`skipped sandbox seeding for zone '${result.zoneId}' agent '${result.agentId}': sandbox root '${result.sandboxRoot}' does not exist`,
-			);
-			return;
-		case 'work-mount-missing':
-			writeControllerLeaseLog(
-				`[WARN] skipped sandbox seeding for zone '${result.zoneId}' agent '${result.agentId}': work mount '${result.hostWorkMountDir}' does not exist`,
-			);
-			return;
-		case 'work-mount-outside-sandbox':
-			writeControllerLeaseLog(
-				`[WARN] skipped sandbox seeding for zone '${result.zoneId}' agent '${result.agentId}': work mount '${result.hostWorkMountDir}' is outside sandbox root '${result.sandboxRoot}'`,
-			);
-			return;
-		case 'no-seeds-configured':
-		case 'not-openclaw-zone':
-			return;
-	}
-}
-
 const defaultHealthEventHistoryLimit = 500;
 const defaultHealthEventStaleAfterMs = 30_000;
 
 export function createControllerApp(options: {
+	readonly approvalRoutes?: ControllerApprovalRoutePorts;
 	readonly controllerPort?: number;
 	readonly leaseManager: ControllerLeaseManager;
 	readonly readIdentityPem?: (identityFilePath: string) => Promise<string>;
@@ -86,12 +45,6 @@ export function createControllerApp(options: {
 	readonly now?: () => number;
 	readonly onLeaseCreateRequest?: (request: ObservedControllerLeaseCreateRequest) => void;
 	readonly operations?: Partial<ControllerRouteOperations>;
-	readonly validateToolVmLeaseRequirements?: (zoneId: string) => Promise<void>;
-	readonly resolveLeaseWorkMountDir: (options: {
-		readonly agentId: string;
-		readonly workMountDir: string;
-		readonly zoneId: string;
-	}) => Promise<ResolvedLeaseWorkMount>;
 }): Hono {
 	const app = new Hono();
 	const healthEventStore =
@@ -121,6 +74,9 @@ export function createControllerApp(options: {
 		store: healthEventStore,
 		...(options.zoneIds ? { zoneIds: options.zoneIds } : {}),
 	});
+	if (options.approvalRoutes !== undefined) {
+		registerControllerApprovalRoutes(app, options.approvalRoutes);
+	}
 
 	if (options.operations) {
 		const defaultOperations: ControllerRouteOperations = {
@@ -159,6 +115,7 @@ export function createControllerApp(options: {
 }
 
 export function createControllerService(options: {
+	readonly approvalRoutes?: ControllerApprovalRoutePorts;
 	readonly healthEventStore?: HealthEventStore;
 	readonly leaseManager: ControllerLeaseManager;
 	readonly now?: () => number;
@@ -167,14 +124,13 @@ export function createControllerService(options: {
 	readonly operations?: Partial<ControllerRouteOperations>;
 	readonly readIdentityPem?: (identityFilePath: string) => Promise<string>;
 	readonly runtimeReadiness?: () => ControllerRuntimeReadiness;
-	readonly secretResolver?: SecretResolver;
 	readonly systemConfig: LoadedSystemConfig;
 }): Hono {
-	const zonesById = new Map(options.systemConfig.zones.map((zone) => [zone.id, zone]));
 	const openClawRuntimeStatusStore =
 		options.openClawRuntimeStatusStore ?? new OpenClawRuntimeStatusStore();
 	const controllerHealthConfig = resolveControllerHealthConfig(options.systemConfig);
 	const app = createControllerApp({
+		...(options.approvalRoutes === undefined ? {} : { approvalRoutes: options.approvalRoutes }),
 		controllerPort: options.systemConfig.host.controllerPort,
 		healthEventStore:
 			options.healthEventStore ??
@@ -203,35 +159,6 @@ export function createControllerService(options: {
 		),
 		openClawRuntimeStatusStore,
 		...(options.operations ? { operations: options.operations } : {}),
-		validateToolVmLeaseRequirements: async (zoneId) => {
-			const zone = zonesById.get(zoneId);
-			if (!zone || zone.gateway.type !== 'openclaw') {
-				return;
-			}
-			openClawRuntimeStatusStore.assertAnyFreshOk(zoneId);
-		},
-		resolveLeaseWorkMountDir: async ({ agentId, workMountDir, zoneId }) => {
-			const zone = zonesById.get(zoneId);
-			if (!zone) {
-				throw new Error(`Unknown zone '${zoneId}'`);
-			}
-			const resolvedWorkMount = await resolveLeaseWorkMountDirForZone({
-				agentId,
-				runtimeDir: options.systemConfig.runtimeDir,
-				workMountDir,
-				zone,
-			});
-			if (options.secretResolver) {
-				const seedResult = await seedAgentSandboxWorkspace({
-					agentId,
-					secretResolver: options.secretResolver,
-					hostWorkMountDir: resolvedWorkMount.hostWorkMountDir,
-					zone,
-				});
-				logAgentSandboxSeedResult(seedResult);
-			}
-			return resolvedWorkMount;
-		},
 	});
 
 	return app;

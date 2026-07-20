@@ -2,6 +2,7 @@ import type { AgentVmHealthEvent } from '@agent-vm/gateway-lifecycle';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+	createGatewayTelemetryResourceAttributesEnvironmentValue,
 	startControllerTelemetry,
 	type ControllerTelemetryDriver,
 	type ControllerTelemetryDriverOptions,
@@ -85,6 +86,25 @@ describe('startControllerTelemetry', () => {
 		expect(driverOptions[0]?.resourceAttributes['dev.repo.hash']).toMatch(/^[a-f0-9]{16}$/u);
 		expect(driverOptions[0]?.resourceAttributes['dev.worktree.hash']).toMatch(/^[a-f0-9]{16}$/u);
 		expect(JSON.stringify(driverOptions[0]?.resourceAttributes)).not.toContain('shravan-claw-beta');
+		expect(
+			createGatewayTelemetryResourceAttributesEnvironmentValue({
+				identity: {
+					branchName: 'main',
+					repositoryIdentity: 'https://github.com/ShravanSunder/shravan-claw.git',
+					serviceVersion: '0.0.99',
+					worktreeIdentity: '/Users/shravansunder/Documents/dev/project-dev/shravan-claw-beta',
+				},
+				projectNamespace: 'shravan-claw-beta-25319b68',
+				stackMode: 'external',
+			}),
+		).toBe(
+			[
+				'dev.release.channel=beta',
+				`dev.repo.hash=${String(driverOptions[0]?.resourceAttributes['dev.repo.hash'])}`,
+				'dev.runtime.flavor=beta',
+				`dev.worktree.hash=${String(driverOptions[0]?.resourceAttributes['dev.worktree.hash'])}`,
+			].join(','),
+		);
 		expect(logs).toEqual([
 			expect.objectContaining({
 				attributes: expect.objectContaining({

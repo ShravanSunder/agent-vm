@@ -9,6 +9,7 @@ import {
 } from './vm-capability-lease.js';
 
 export const defaultToolVmLeaseAuthorityTombstoneTtlMs = 10 * 60 * 1000;
+export const TOOL_VM_WORK_GUEST_ROOT = '/work';
 
 export interface ToolVmSshLease extends VmSshLease<'ssh-sandbox'> {
 	readonly agentId: string;

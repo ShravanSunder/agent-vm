@@ -122,60 +122,48 @@ export function processIdentityMatches(
 	return recorded.lstart === current.lstart && recorded.command === current.command;
 }
 
-export function killProcess(pid: number, signal: NodeJS.Signals): void {
-	try {
-		process.kill(pid, signal);
-	} catch (error) {
-		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ESRCH') {
-			return;
-		}
-		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'EPERM') {
-			throw new Error(
-				`Permission denied while sending ${signal} to managed VM pid ${pid}. The process is still running and may require elevated privileges to terminate.`,
-				{ cause: error },
-			);
-		}
-		throw error;
-	}
-}
-
-export function isNoSuchProcessError(error: unknown): boolean {
-	return typeof error === 'object' && error !== null && 'code' in error && error.code === 'ESRCH';
-}
-
 export async function sleep(delayMs: number): Promise<void> {
 	await new Promise((resolve) => setTimeout(resolve, delayMs));
 }
 
-export async function waitForExit(options: {
-	readonly pid: number;
-	readonly processIsAlive: (pid: number) => boolean;
-	readonly sleep: (delayMs: number) => Promise<void>;
-	readonly timeoutMs: number;
-}): Promise<boolean> {
-	const deadline = Date.now() + options.timeoutMs;
-	while (Date.now() < deadline) {
-		if (!options.processIsAlive(options.pid)) {
-			return true;
-		}
-		// oxlint-disable-next-line no-await-in-loop -- polling loop must wait between liveness checks
-		await options.sleep(100);
+type RecordedProcessIdentityObservation =
+	| { readonly kind: 'absent' }
+	| { readonly currentIdentity: ProcessIdentity; readonly kind: 'exact' }
+	| { readonly currentIdentity: ProcessIdentity; readonly kind: 'inconsistent-command' }
+	| { readonly currentIdentity: ProcessIdentity; readonly kind: 'reused-pid' };
+
+function classifyRecordedProcessIdentity(
+	recordedIdentity: ProcessIdentity,
+	currentIdentity: ProcessIdentity | null,
+): RecordedProcessIdentityObservation {
+	if (currentIdentity === null) {
+		return { kind: 'absent' };
 	}
-	return !options.processIsAlive(options.pid);
+	if (currentIdentity.lstart !== recordedIdentity.lstart) {
+		return { currentIdentity, kind: 'reused-pid' };
+	}
+	if (currentIdentity.command !== recordedIdentity.command) {
+		return { currentIdentity, kind: 'inconsistent-command' };
+	}
+	return { currentIdentity, kind: 'exact' };
 }
 
-export interface ManagedVmKillDependencies {
-	readonly isProcessAlive: (pid: number) => boolean;
-	readonly killProcess: (pid: number, signal: NodeJS.Signals) => void;
-	readonly readProcessCommand: (pid: number) => Promise<string | null>;
-	readonly readProcessIdentity?: (pid: number) => Promise<ProcessIdentity | null>;
-	readonly sleep: (delayMs: number) => Promise<void>;
+function throwInconsistentRecordedProcessIdentity(options: {
+	readonly contextLabel: string;
+	readonly currentIdentity: ProcessIdentity;
+	readonly pid: number;
+	readonly recordedIdentity: ProcessIdentity;
+	readonly refusalAction: string;
+}): never {
+	throw new Error(
+		`${options.contextLabel} refusing ${options.refusalAction} pid ${options.pid}: same process start identity was observed but command changed (recorded ${JSON.stringify(options.recordedIdentity)}, current ${JSON.stringify(options.currentIdentity)}).`,
+	);
 }
 
 // Re-verify the recorded process identity (lstart + command) immediately before
-// sending a signal. Returns `null` if the process is gone (signal not needed),
-// otherwise either resolves to the matching identity or throws to refuse the
-// signal because PID was reused by an unrelated process.
+// sending a signal. A missing identity or different process start means the
+// recorded predecessor is absent. A same-start command inconsistency throws
+// and refuses the signal.
 export async function verifyRecordedManagedVmHostProcess(options: {
 	readonly contextLabel: string;
 	readonly currentSignalLabel?: string;
@@ -188,17 +176,22 @@ export async function verifyRecordedManagedVmHostProcess(options: {
 		options.currentSignalLabel === undefined ? 'cleanup of' : `${options.currentSignalLabel} to`;
 	if (options.recordedIdentity !== undefined && options.readProcessIdentity !== undefined) {
 		const currentIdentity = await options.readProcessIdentity(options.pid);
-		if (currentIdentity === null) {
+		const observation = classifyRecordedProcessIdentity(options.recordedIdentity, currentIdentity);
+		if (observation.kind === 'absent' || observation.kind === 'reused-pid') {
 			return { proceed: false };
 		}
-		if (!processIdentityMatches(options.recordedIdentity, currentIdentity)) {
-			throw new Error(
-				`${options.contextLabel} refusing ${refusalAction} pid ${options.pid}: process identity changed (recorded ${JSON.stringify(options.recordedIdentity)}, current ${JSON.stringify(currentIdentity)}). PID was likely reused.`,
-			);
+		if (observation.kind === 'inconsistent-command') {
+			throwInconsistentRecordedProcessIdentity({
+				contextLabel: options.contextLabel,
+				currentIdentity: observation.currentIdentity,
+				pid: options.pid,
+				recordedIdentity: options.recordedIdentity,
+				refusalAction,
+			});
 		}
-		if (!isManagedVmProcess(currentIdentity.command)) {
+		if (!isManagedVmProcess(observation.currentIdentity.command)) {
 			throw new Error(
-				`${options.contextLabel} refusing ${refusalAction} pid ${options.pid}: current command is not a managed VM process: ${currentIdentity.command}.`,
+				`${options.contextLabel} refusing ${refusalAction} pid ${options.pid}: current command is not a managed VM process: ${observation.currentIdentity.command}.`,
 			);
 		}
 		return { proceed: true };
@@ -206,111 +199,4 @@ export async function verifyRecordedManagedVmHostProcess(options: {
 	throw new Error(
 		`${options.contextLabel} refusing ${refusalAction} pid ${options.pid}: recorded process identity and a live identity reader are required before a destructive signal.`,
 	);
-}
-
-async function verifyIdentityBeforeSignal(options: {
-	readonly contextLabel: string;
-	readonly currentSignalLabel: string;
-	readonly pid: number;
-	readonly readProcessCommand: (pid: number) => Promise<string | null>;
-	readonly readProcessIdentity?: (pid: number) => Promise<ProcessIdentity | null>;
-	readonly recordedIdentity?: ProcessIdentity;
-}): Promise<{ readonly proceed: true } | { readonly proceed: false }> {
-	return await verifyRecordedManagedVmHostProcess(options);
-}
-
-// Terminate the process selected by a controller-owned runtime record with a
-// SIGTERM→2s→SIGKILL→2s
-// bounded sequence (total ≤ 4 s). The caller is responsible for owning the
-// runtime record (read + fence-check + delete after this returns).
-//
-// Strong PID identity defense: if `recordedIdentity` is supplied, the live
-// process identity (ps `lstart` + `command`) is re-read IMMEDIATELY before
-// each signal and must match exactly. This makes PID reuse during the
-// read-record → signal window detectable; we refuse rather than killing the
-// wrong process.
-//
-// Returns the PID that was signalled, or null if it was already dead before
-// the first signal landed.
-//
-// Throws if:
-//   - the recorded PID is alive but its identity does not match (PID reused)
-//   - the recorded PID is alive but its command is NOT a managed VM process
-//   - the process survives both SIGTERM and SIGKILL (a stuck D-state QEMU)
-export async function terminateRecordedManagedVmHostProcess(options: {
-	readonly contextLabel: string; // for error messages, e.g. "gateway runtime record for zone 'X'"
-	readonly dependencies: ManagedVmKillDependencies;
-	readonly pid: number;
-	readonly recordedIdentity?: ProcessIdentity;
-}): Promise<number | null> {
-	const { contextLabel, dependencies, pid, recordedIdentity } = options;
-	if (!dependencies.isProcessAlive(pid)) {
-		return null;
-	}
-
-	const beforeTerm = await verifyIdentityBeforeSignal({
-		contextLabel,
-		currentSignalLabel: 'SIGTERM',
-		pid,
-		readProcessCommand: dependencies.readProcessCommand,
-		...(dependencies.readProcessIdentity !== undefined
-			? { readProcessIdentity: dependencies.readProcessIdentity }
-			: {}),
-		...(recordedIdentity !== undefined ? { recordedIdentity } : {}),
-	});
-	if (!beforeTerm.proceed) {
-		return null;
-	}
-
-	try {
-		dependencies.killProcess(pid, 'SIGTERM');
-	} catch (error) {
-		if (!isNoSuchProcessError(error)) {
-			throw error;
-		}
-	}
-	if (
-		await waitForExit({
-			pid,
-			processIsAlive: dependencies.isProcessAlive,
-			sleep: dependencies.sleep,
-			timeoutMs: 2_000,
-		})
-	) {
-		return pid;
-	}
-
-	const beforeKill = await verifyIdentityBeforeSignal({
-		contextLabel,
-		currentSignalLabel: 'SIGKILL',
-		pid,
-		readProcessCommand: dependencies.readProcessCommand,
-		...(dependencies.readProcessIdentity !== undefined
-			? { readProcessIdentity: dependencies.readProcessIdentity }
-			: {}),
-		...(recordedIdentity !== undefined ? { recordedIdentity } : {}),
-	});
-	if (!beforeKill.proceed) {
-		return pid;
-	}
-
-	try {
-		dependencies.killProcess(pid, 'SIGKILL');
-	} catch (error) {
-		if (!isNoSuchProcessError(error)) {
-			throw error;
-		}
-	}
-	if (
-		await waitForExit({
-			pid,
-			processIsAlive: dependencies.isProcessAlive,
-			sleep: dependencies.sleep,
-			timeoutMs: 2_000,
-		})
-	) {
-		return pid;
-	}
-
-	throw new Error(`Failed to terminate recorded managed VM process ${pid} (${contextLabel}).`);
 }

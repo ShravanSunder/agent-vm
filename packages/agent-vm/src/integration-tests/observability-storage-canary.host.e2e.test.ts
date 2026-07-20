@@ -3,6 +3,11 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 
+import {
+	createGatewayTelemetryProducerSafetyContract,
+	gatewayFrameworkTelemetryServiceNames,
+	gatewayToolPortalTelemetryServiceName,
+} from '@agent-vm/gateway-lifecycle';
 import { execa } from 'execa';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -104,14 +109,25 @@ async function createRuntimeConfig(): Promise<ManagedObservabilityRuntimeConfig>
 		startupCheckTimeoutMs: storageCanaryStartupCheckTimeoutMs,
 		zones: [
 			{
+				framework: {
+					...createGatewayTelemetryProducerSafetyContract(),
+					serviceName: gatewayFrameworkTelemetryServiceNames.openclaw,
+					traces: true,
+					metrics: true,
+					logs: true,
+					sampleRate: 1,
+					flushIntervalMs: 1_000,
+				},
+				toolPortal: {
+					...createGatewayTelemetryProducerSafetyContract(),
+					serviceName: gatewayToolPortalTelemetryServiceName,
+					traces: true,
+					metrics: true,
+					logs: true,
+					sampleRate: 1,
+					flushIntervalMs: 1_000,
+				},
 				zoneId: 'sunfam',
-				serviceName: 'agent-vm-openclaw-sunfam',
-				traces: true,
-				metrics: true,
-				logs: true,
-				sampleRate: 1,
-				flushIntervalMs: 1_000,
-				diagnosticsFlags: ['gateway.lifecycle'],
 			},
 		],
 	};

@@ -98,6 +98,7 @@ const describeLiveModelRoundtrip = runLiveModelRoundtrip ? describe : describe.s
 const liveRoundtripFixtureSystemConfig = {
 	schemaVersion: 1,
 	cacheDir: './cache',
+	controllerStateDir: '/controller-state-test',
 	runtimeDir: './runtime',
 	systemConfigPath: './config/system.json',
 	host: {

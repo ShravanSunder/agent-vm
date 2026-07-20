@@ -2,31 +2,23 @@ import {
 	gatewayIdentitiesEqual,
 	type GatewayEpochIdentity,
 } from '../vm-ownership/vm-ownership-contracts.js';
-import type { AgentLeaseIdentity } from './agent-lease-operation-lock.js';
-
-interface InFlightToolVmLeaseCreation extends AgentLeaseIdentity {
-	readonly gatewayIdentity: GatewayEpochIdentity;
-}
+import type { AgentLeaseOperationIdentity } from './agent-lease-operation-lock.js';
 
 export interface ToolVmLeaseCreationRegistry {
-	trackCreation(creation: InFlightToolVmLeaseCreation): () => void;
+	trackCreation(creation: AgentLeaseOperationIdentity): () => void;
 	inFlightAgentIdentitiesForGateway(
 		expectedGateway: GatewayEpochIdentity,
-	): readonly AgentLeaseIdentity[];
-}
-
-function agentIdentityKey(identity: AgentLeaseIdentity): string {
-	return `${identity.zoneId}\0${identity.agentId}`;
+	): readonly AgentLeaseOperationIdentity[];
 }
 
 export function createToolVmLeaseCreationRegistry(): ToolVmLeaseCreationRegistry {
-	const inFlightCreations = new Set<InFlightToolVmLeaseCreation>();
+	const inFlightCreations = new Set<AgentLeaseOperationIdentity>();
 
 	return {
 		trackCreation(creation): () => void {
 			const trackedCreation = {
-				...creation,
-				gatewayIdentity: structuredClone(creation.gatewayIdentity),
+				agentId: creation.agentId,
+				gateway: structuredClone(creation.gateway),
 			};
 			inFlightCreations.add(trackedCreation);
 			let trackingFinished = false;
@@ -38,17 +30,17 @@ export function createToolVmLeaseCreationRegistry(): ToolVmLeaseCreationRegistry
 				inFlightCreations.delete(trackedCreation);
 			};
 		},
-		inFlightAgentIdentitiesForGateway(expectedGateway): readonly AgentLeaseIdentity[] {
-			const identitiesByKey = new Map<string, AgentLeaseIdentity>();
+		inFlightAgentIdentitiesForGateway(expectedGateway): readonly AgentLeaseOperationIdentity[] {
+			const identitiesByAgentId = new Map<string, AgentLeaseOperationIdentity>();
 			for (const creation of inFlightCreations) {
-				if (gatewayIdentitiesEqual(creation.gatewayIdentity, expectedGateway)) {
-					identitiesByKey.set(agentIdentityKey(creation), {
+				if (gatewayIdentitiesEqual(creation.gateway, expectedGateway)) {
+					identitiesByAgentId.set(creation.agentId, {
 						agentId: creation.agentId,
-						zoneId: creation.zoneId,
+						gateway: structuredClone(creation.gateway),
 					});
 				}
 			}
-			return [...identitiesByKey.values()];
+			return [...identitiesByAgentId.values()];
 		},
 	};
 }

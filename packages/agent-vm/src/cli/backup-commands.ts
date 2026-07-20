@@ -1,7 +1,4 @@
-import type { SystemConfig } from '../config/system-config.js';
-import { resolveControllerGithubToken } from '../controller/controller-runtime-support.js';
-import type { ZoneGitReadConfig } from '../controller/zone-git/zone-git-operations.js';
-import { isOpenClawZoneGitConfigured } from '../controller/zone-git/zone-git-paths.js';
+import type { LoadedSystemConfig } from '../config/system-config.js';
 import {
 	createResolverFromSystemConfig,
 	type CliDependencies,
@@ -15,7 +12,7 @@ interface RunBackupCommandOptions {
 	readonly dependencies: CliDependencies;
 	readonly io: CliIo;
 	readonly restArguments: readonly string[];
-	readonly systemConfig: SystemConfig;
+	readonly systemConfig: LoadedSystemConfig;
 }
 
 export async function runBackupCommand(options: RunBackupCommandOptions): Promise<void> {
@@ -47,26 +44,6 @@ export async function runBackupCommand(options: RunBackupCommandOptions): Promis
 	const backupManager = options.dependencies.createZoneBackupManager(backupEncryption);
 
 	if (backupSubcommand === 'create') {
-		let zoneGit: ZoneGitReadConfig | undefined;
-		if (isOpenClawZoneGitConfigured(zone)) {
-			const githubToken = await resolveControllerGithubToken(options.systemConfig, secretResolver);
-			if (!githubToken) {
-				throw new Error(
-					`zoneGit for zone '${zoneId}' requires host.githubToken so the controller can push without exposing credentials to VMs.`,
-				);
-			}
-			zoneGit = {
-				branch: zone.gateway.zoneGit.remote.branch,
-				defaultBranch: zone.gateway.zoneGit.remote.defaultBranch,
-				githubToken,
-				protectedBranches: zone.gateway.zoneGit.remote.protectedBranches,
-				protectedBranchPatterns: zone.gateway.zoneGit.remote.protectedBranchPatterns,
-				remoteUrl: zone.gateway.zoneGit.remote.repoUrl,
-				runtimeDir: options.systemConfig.runtimeDir,
-				zoneFilesDir: zone.gateway.zoneFilesDir,
-				zoneId,
-			};
-		}
 		writeJson(
 			options.io,
 			await backupManager.createBackup({
@@ -74,8 +51,7 @@ export async function runBackupCommand(options: RunBackupCommandOptions): Promis
 				cacheDir: options.systemConfig.cacheDir,
 				runtimeDir: options.systemConfig.runtimeDir,
 				stateDir: zone.gateway.stateDir,
-				...(zone.gateway.type === 'openclaw' ? { zoneFilesDir: zone.gateway.zoneFilesDir } : {}),
-				...(zoneGit ? { zoneGit } : {}),
+				...(zone.gateway.type !== 'worker' ? { zoneFilesDir: zone.gateway.zoneFilesDir } : {}),
 				zoneId,
 			}),
 		);
@@ -92,7 +68,7 @@ export async function runBackupCommand(options: RunBackupCommandOptions): Promis
 			await backupManager.restoreBackup({
 				backupPath,
 				stateDir: zone.gateway.stateDir,
-				...(zone.gateway.type === 'openclaw' ? { zoneFilesDir: zone.gateway.zoneFilesDir } : {}),
+				...(zone.gateway.type !== 'worker' ? { zoneFilesDir: zone.gateway.zoneFilesDir } : {}),
 			}),
 		);
 		return;

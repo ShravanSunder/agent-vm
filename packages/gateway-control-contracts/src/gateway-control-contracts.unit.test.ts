@@ -9,6 +9,7 @@ import {
 import { WorkerControlRpcOperationSchema } from '@agent-vm/worker-control-contracts';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
+import type * as GatewayControlContracts from './index.js';
 import {
 	GatewayControlDomainSchema,
 	GatewayControlCallerContextRegisterPayloadSchema,
@@ -16,15 +17,19 @@ import {
 	GatewayControlHealthEventPayloadSchema,
 	GatewayControlHelloSchema,
 	GatewayControlLeaseCreateIntentPayloadSchema,
+	GatewayControlPrivateLeaseSnapshotSchema,
 	GatewayControlLeaseRejectionReasonSchema,
 	GatewayControlLeaseSnapshotSchema,
 	GatewayControlRpcCommandResultMessageSchema,
 	GatewayControlRpcMessageSchema,
 	GatewayControlRpcOperationSchema,
+	GatewayControlToolVmBindingPublicationSchema,
 	GatewayControlToolPortalControllerHostActionPayloadSchema,
+	createGatewayRuntimeReadinessSnapshot,
 	buildGatewayControlJsonSchemas,
 	assertGatewayControlDomainRegistered,
 	assertGatewayControlEnvelopeDeliveryPolicy,
+	classifyGatewayControlAdmission,
 	deriveGatewayControlDeliveryPolicy,
 	gatewayControlCommandExecutionTimeoutMsByOperation,
 	gatewayControlDeliveryPolicyByKind,
@@ -58,6 +63,21 @@ const gatewayCommandEnvelope = ControlEnvelopeSchema.parse({
 });
 
 describe('gateway control contract', () => {
+	it('does not re-export the retired gateway-control principal schema name', () => {
+		expectTypeOf<typeof GatewayControlContracts>().not.toHaveProperty(
+			'GatewayControlAdmissionPrincipalSchema',
+		);
+	});
+
+	it('exports only workspace Git host-action vocabulary', () => {
+		expectTypeOf<typeof GatewayControlContracts>().toHaveProperty(
+			'GatewayControlWorkspaceGitPushControllerHostActionPayloadSchema',
+		);
+		expectTypeOf<typeof GatewayControlContracts>().toHaveProperty(
+			'GatewayControlWorkspaceGitPushResultSchema',
+		);
+	});
+
 	it('binds hello to C/G/P and a positive attachment generation without resync fields', () => {
 		const hello = {
 			attachmentGeneration: 7,
@@ -91,6 +111,7 @@ describe('gateway control contract', () => {
 		expect([...GatewayControlRpcOperationSchema.options].toSorted()).toEqual([
 			'caller_context_register',
 			'control_ping',
+			'gateway_runtime_readiness',
 			'health_event',
 			'lease_create',
 			'lease_get',
@@ -104,13 +125,194 @@ describe('gateway control contract', () => {
 			'operation_cancel',
 			'recovery_command',
 			'runtime_status',
+			'tool_portal_admission_reserve',
 			'tool_portal_controller_host_action',
+			'tool_portal_dispatch_arm',
+			'tool_vm_binding_publish',
+			'tool_vm_binding_request',
 		]);
 
 		expect(GatewayControlRpcOperationSchema.safeParse('git_push').success).toBe(false);
 		expect(GatewayControlRpcOperationSchema.safeParse('git_pull_default').success).toBe(false);
 		expect(GatewayControlRpcOperationSchema.safeParse('worker_runtime_status').success).toBe(false);
 		expect(WorkerControlRpcOperationSchema.safeParse('lease_create').success).toBe(false);
+	});
+
+	it('keeps controller-published Tool VM bindings active-use-free and exactly fenced', () => {
+		const publication = {
+			authority: {
+				attachmentGeneration: 3,
+				connectionId: '11111111-1111-4111-8111-111111111111',
+				controllerEpoch: 'controller-epoch-a',
+				gatewayEpoch: 'gateway-epoch-a',
+				processEpoch: 'process-epoch-a',
+				sessionId: '33333333-3333-4333-8333-333333333333',
+				zoneId: 'zone-a',
+			},
+			binding: {
+				agentId: 'agent-a',
+				idleTtlMs: 60_000,
+				leafGeneration: 'leaf-a',
+				leaseId: 'lease-a',
+				profileAssignmentRevision: 'assignment-a',
+				ssh: {
+					host: 'tool-0.vm.host',
+					identityPem: 'private-key',
+					knownHostsLine: 'tool-0.vm.host ssh-ed25519 AAAA',
+					port: 22,
+					user: 'root',
+				},
+				sshBindingId: 'ssh-a',
+				stablePrincipal: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+				tcpSlot: 0,
+				transport: 'ssh-sandbox',
+				workdir: '/work',
+				zoneId: 'zone-a',
+			},
+			kind: 'current',
+			observedAtMs: 1_000,
+		} as const;
+		const publishMessage = GatewayControlRpcMessageSchema.parse({
+			kind: 'command',
+			operation: 'tool_vm_binding_publish',
+			payload: publication,
+		});
+		const requestMessage = GatewayControlRpcMessageSchema.parse({
+			kind: 'command',
+			operation: 'tool_vm_binding_request',
+			payload: {
+				callerContext: { callerContextId: '44444444-4444-4444-8444-444444444444' },
+			},
+		});
+
+		expect(GatewayControlToolVmBindingPublicationSchema.parse(publication)).toEqual(publication);
+		expect(
+			GatewayControlToolVmBindingPublicationSchema.safeParse({
+				...publication,
+				binding: { ...publication.binding, activeUseId: 'use-a' },
+			}).success,
+		).toBe(false);
+		expect(
+			GatewayControlRpcMessageSchema.safeParse({
+				kind: 'command',
+				operation: 'tool_vm_binding_publish',
+				payload: publication,
+			}).success,
+		).toBe(true);
+		expect(
+			classifyGatewayControlAdmission({
+				direction: 'controller_to_gateway',
+				message: publishMessage,
+			}),
+		).toMatchObject({
+			messageClass: 'authority',
+			stablePrincipal: publication.binding.stablePrincipal,
+			status: 'classified',
+		});
+		expect(
+			classifyGatewayControlAdmission({
+				direction: 'gateway_to_controller',
+				message: publishMessage,
+			}),
+		).toEqual({ reason: 'direction_violation', status: 'fence' });
+		expect(
+			classifyGatewayControlAdmission({
+				direction: 'gateway_to_controller',
+				message: requestMessage,
+				stablePrincipal: publication.binding.stablePrincipal,
+			}),
+		).toMatchObject({ messageClass: 'authority', status: 'classified' });
+		expect(
+			classifyGatewayControlAdmission({
+				direction: 'controller_to_gateway',
+				message: requestMessage,
+			}),
+		).toEqual({ reason: 'direction_violation', status: 'fence' });
+	});
+
+	it('carries exact latest-wins Gateway runtime readiness snapshots as events', () => {
+		const readiness = createGatewayRuntimeReadinessSnapshot({
+			controlEndpoint: {
+				identity: {
+					bootId: 'boot-1',
+					controllerEpoch: 'controller-epoch-1',
+					generationId: 'generation-1',
+					peerId: 'peer-1',
+					processEpoch: 'process-epoch-1',
+					zoneId: 'zone-a',
+				},
+				listener: {
+					host: '127.0.0.1',
+					port: 18_790,
+					readyPath: '/__agent-vm/ready',
+					socketPath: '/__agent-vm/gateway-control',
+				},
+			},
+			kind: 'tool-portal-role-readiness',
+			providerRevision: 'provider-1',
+			requiredBackends: {
+				readyBackendKinds: ['mcp_provider'],
+				revision: 'bindings-1',
+				status: 'ready',
+			},
+			semanticRevision: 'semantic-1',
+			serviceIdentity: {
+				processEpoch: 'process-epoch-1',
+				role: 'tool-portal',
+				serviceId: 'tool-portal-zone-a',
+			},
+			snapshotVersion: 1,
+			uds: {
+				attachment: {
+					expected: {
+						attachmentGeneration: 1,
+						clientKind: 'openclaw-managed-plugin',
+						configuredAgentIds: ['main'],
+						frameworkEpoch: 'framework-epoch-1',
+						gatewayEpoch: 'gateway-epoch-1',
+						protocolVersion: 1,
+						projectionCohortDigest:
+							'projection-cohort:0000000000000000000000000000000000000000000000000000000000000000',
+						runtimeEpoch: 'runtime-epoch-1',
+						schemaVersion: 1,
+					},
+					observationSequence: 0,
+					snapshotVersion: 1,
+					status: 'awaiting-attachment',
+				},
+				publication: {
+					identity: 'managed-plugin-private-uds',
+					protocolVersion: 1,
+					schemaVersion: 1,
+					socketPath: '/run/agent-vm/gateway-runtime/managed-plugin.sock',
+					status: 'published',
+				},
+			},
+		});
+		const message = {
+			kind: 'event',
+			operation: 'gateway_runtime_readiness',
+			payload: readiness,
+		} as const;
+
+		expect(GatewayControlRpcMessageSchema.parse(message)).toEqual(message);
+		expect(
+			GatewayControlRpcMessageSchema.safeParse({
+				...message,
+				payload: { ...readiness, aggregateReady: true },
+			}).success,
+		).toBe(false);
+		expect(gatewayControlDeliveryPolicyByOperation.gateway_runtime_readiness).toBe('latest_wins');
+		expect(
+			classifyGatewayControlAdmission({
+				direction: 'gateway_to_controller',
+				message,
+			}),
+		).toEqual({
+			coalesceKey: 'gateway-runtime-readiness',
+			messageClass: 'liveness',
+			status: 'classified',
+		});
 	});
 
 	it('rejects removed controller request health vocabulary', () => {
@@ -230,41 +432,56 @@ describe('gateway control contract', () => {
 		);
 	});
 
-	it('allows caller-context registration evidence without weakening lease_create', () => {
+	it('allows caller-context registration without invocation-session authority', () => {
 		const agentAuthority = {
 			algorithm: 'hmac-sha256',
 			digest: 'authoritydigestauthoritydigestauthoritydigestauthoritydigest',
 			keyId: 'main',
 		};
-		expect(
-			GatewayControlCallerContextRegisterPayloadSchema.parse({
-				adapterEvidence: {
-					agentAuthority,
-					agentId: 'main',
-					agentWorkspaceDir: '/home/openclaw/workspace',
-					proof: {
-						algorithm: 'hmac-sha256',
-						digest: 'digestdigestdigestdigestdigestdigestdigestdigest',
-					},
-					sessionKey: 'agent:main:test-session',
-					workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
-					zoneId: 'zone-a',
-				},
-			}),
-		).toEqual({
+		const validPayload = {
 			adapterEvidence: {
 				agentAuthority,
-				agentId: 'main',
-				agentWorkspaceDir: '/home/openclaw/workspace',
+				principal: {
+					agentId: 'main',
+					frameworkIdentity: { agentId: 'main', kind: 'openclaw' },
+					profileAssignmentRevision: 'assignment-a',
+					toolPortalProfileId: 'engineering',
+				},
 				proof: {
 					algorithm: 'hmac-sha256',
 					digest: 'digestdigestdigestdigestdigestdigestdigestdigest',
 				},
-				sessionKey: 'agent:main:test-session',
-				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
 				zoneId: 'zone-a',
 			},
-		});
+		} as const;
+
+		expect(GatewayControlCallerContextRegisterPayloadSchema.parse(validPayload)).toEqual(
+			validPayload,
+		);
+		expect(
+			GatewayControlCallerContextRegisterPayloadSchema.safeParse({
+				adapterEvidence: {
+					...validPayload.adapterEvidence,
+					agentWorkspaceDir: '/home/openclaw/workspace',
+				},
+			}).success,
+		).toBe(false);
+		expect(
+			GatewayControlCallerContextRegisterPayloadSchema.safeParse({
+				adapterEvidence: {
+					...validPayload.adapterEvidence,
+					workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
+				},
+			}).success,
+		).toBe(false);
+		expect(
+			GatewayControlCallerContextRegisterPayloadSchema.safeParse({
+				adapterEvidence: {
+					...validPayload.adapterEvidence,
+					sessionKey: 'agent:main:test-session',
+				},
+			}).success,
+		).toBe(false);
 		expect(
 			GatewayControlCallerContextRegisterPayloadSchema.safeParse({
 				adapterEvidence: {
@@ -275,13 +492,41 @@ describe('gateway control contract', () => {
 						algorithm: 'hmac-sha256',
 						digest: 'digestdigestdigestdigestdigestdigestdigestdigest',
 					},
-					profileId: 'standard',
-					sessionKey: 'agent:main:test-session',
 					workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
 					zoneId: 'zone-a',
 				},
 			}).success,
 		).toBe(false);
+		for (const invalidPrincipal of [
+			{
+				agentId: 'main',
+				frameworkIdentity: { agentId: 'main', kind: 'openclaw' },
+				profileAssignmentRevision: 'assignment-a',
+			},
+			{
+				agentId: 'main',
+				frameworkIdentity: { agentId: 'main', kind: 'openclaw' },
+				profileAssignmentRevision: 'assignment-a',
+				toolPortalProfileId: 'engineering',
+				unexpectedAuthority: 'forbidden',
+			},
+		]) {
+			expect(
+				GatewayControlCallerContextRegisterPayloadSchema.safeParse({
+					adapterEvidence: {
+						agentAuthority,
+						agentWorkspaceDir: '/home/openclaw/workspace',
+						principal: invalidPrincipal,
+						proof: {
+							algorithm: 'hmac-sha256',
+							digest: 'digestdigestdigestdigestdigestdigestdigestdigest',
+						},
+						workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
+						zoneId: 'zone-a',
+					},
+				}).success,
+			).toBe(false);
+		}
 		expect(
 			GatewayControlLeaseCreateIntentPayloadSchema.safeParse({
 				agentId: 'main',
@@ -323,13 +568,13 @@ describe('gateway control contract', () => {
 				},
 				toolCallId: 'tool-call-123',
 			},
-			gatewayWorkspaceDir: '/workspace/sandbox',
 			idleTtlHintMs: 120_000,
 		};
 
 		expect(GatewayControlLeaseCreateIntentPayloadSchema.parse(validPayload)).toEqual(validPayload);
 
 		for (const invalidPayload of [
+			{ ...validPayload, gatewayWorkspaceDir: '/workspace/sandbox' },
 			{ ...validPayload, agentId: 'main' },
 			{ ...validPayload, profileId: 'standard' },
 			{ ...validPayload, sessionKey: 'raw-session-key' },
@@ -415,19 +660,19 @@ describe('gateway control contract', () => {
 	});
 
 	it('keeps controller_host_action payload narrow to reviewed host-action intents', () => {
-		const validZoneGitPayload = {
-			actionId: 'zone_git_push',
+		const validWorkspaceGitPayload = {
+			actionId: 'workspace_git_push',
 			callerContext: {
 				callerContextId: '44444444-4444-4444-8444-444444444444',
 			},
 			correlation: {
 				capability: {
-					name: 'zone_git_push',
+					name: 'workspace_git_push',
 					namespace: 'controller_host_action',
 				},
 				toolCallId: 'tool-call-123',
 			},
-			expectedHead: 'abc123',
+			expectedHead: '0123456789abcdef0123456789abcdef01234567',
 		};
 		const validHostProbePayload = {
 			actionId: 'controller_host_probe',
@@ -444,22 +689,26 @@ describe('gateway control contract', () => {
 		};
 
 		expect(
-			GatewayControlToolPortalControllerHostActionPayloadSchema.parse(validZoneGitPayload),
-		).toEqual(validZoneGitPayload);
+			GatewayControlToolPortalControllerHostActionPayloadSchema.parse(validWorkspaceGitPayload),
+		).toEqual(validWorkspaceGitPayload);
 		expect(
 			GatewayControlToolPortalControllerHostActionPayloadSchema.parse(validHostProbePayload),
 		).toEqual(validHostProbePayload);
 
 		for (const invalidPayload of [
-			{ ...validZoneGitPayload, argv: ['git', 'push'] },
-			{ ...validZoneGitPayload, cwd: '/work' },
-			{ ...validZoneGitPayload, env: { GITHUB_TOKEN: 'secret' } },
-			{ ...validZoneGitPayload, executablePath: '/usr/bin/git' },
-			{ ...validZoneGitPayload, hostWorkMountDir: '/Users/example/repo' },
-			{ ...validZoneGitPayload, correlation: undefined },
-			{ ...validZoneGitPayload, toolPortalAgentId: 'main' },
+			{ ...validWorkspaceGitPayload, agentId: 'main' },
+			{ ...validWorkspaceGitPayload, argv: ['git', 'push'] },
+			{ ...validWorkspaceGitPayload, branch: 'main' },
+			{ ...validWorkspaceGitPayload, cwd: '/work' },
+			{ ...validWorkspaceGitPayload, env: { GITHUB_TOKEN: 'secret' } },
+			{ ...validWorkspaceGitPayload, executablePath: '/usr/bin/git' },
+			{ ...validWorkspaceGitPayload, hostWorkMountDir: '/Users/example/repo' },
+			{ ...validWorkspaceGitPayload, path: '/workspace' },
+			{ ...validWorkspaceGitPayload, remote: 'origin' },
+			{ ...validWorkspaceGitPayload, correlation: undefined },
+			{ ...validWorkspaceGitPayload, toolPortalAgentId: 'main' },
 			{ ...validHostProbePayload, command: 'ls' },
-			{ ...validHostProbePayload, expectedHead: 'abc123' },
+			{ ...validHostProbePayload, expectedHead: '0123456789abcdef0123456789abcdef01234567' },
 			{ ...validHostProbePayload, path: '/Users/example' },
 			{ ...validHostProbePayload, actionId: 'host_shell_exec' },
 		]) {
@@ -475,6 +724,7 @@ describe('gateway control contract', () => {
 				agentId: 'main',
 				expiresAtMs: 120_000,
 				idleTtlMs: 120_000,
+				leafGeneration: 'leaf-generation-a',
 				leaseId: '01890f00-0000-7000-8000-000000000001',
 				ssh: {
 					host: 'tool-0.vm.host',
@@ -483,6 +733,7 @@ describe('gateway control contract', () => {
 					port: 22,
 					user: 'sandbox',
 				},
+				sshBindingId: 'ssh-binding-a',
 				state: 'idle',
 				tcpSlot: 0,
 				transport: 'ssh-sandbox',
@@ -493,6 +744,7 @@ describe('gateway control contract', () => {
 			agentId: 'main',
 			expiresAtMs: 120_000,
 			idleTtlMs: 120_000,
+			leafGeneration: 'leaf-generation-a',
 			leaseId: '01890f00-0000-7000-8000-000000000001',
 			ssh: {
 				host: 'tool-0.vm.host',
@@ -501,12 +753,110 @@ describe('gateway control contract', () => {
 				port: 22,
 				user: 'sandbox',
 			},
+			sshBindingId: 'ssh-binding-a',
 			state: 'idle',
 			tcpSlot: 0,
 			transport: 'ssh-sandbox',
 			workdir: '/workspace',
 			zoneId: 'zone-a',
 		});
+	});
+
+	it('requires controller-owned leaf and SSH binding identities on private lease snapshots', () => {
+		// Arrange
+		const privateLeaseSnapshot = {
+			agentId: 'main',
+			expiresAtMs: 120_000,
+			idleTtlMs: 120_000,
+			leafGeneration: 'leaf-generation-a',
+			leaseId: '01890f00-0000-7000-8000-000000000001',
+			ssh: {
+				host: 'tool-0.vm.host',
+				identityPem: 'pem',
+				knownHostsLine: 'tool-0.vm.host ssh-ed25519 AAAA',
+				port: 22,
+				user: 'sandbox',
+			},
+			sshBindingId: 'ssh-binding-a',
+			state: 'idle' as const,
+			tcpSlot: 0,
+			transport: 'ssh-sandbox' as const,
+			workdir: '/workspace',
+			zoneId: 'zone-a',
+		};
+
+		// Act
+		const parsedPrivateLease = GatewayControlPrivateLeaseSnapshotSchema.parse(privateLeaseSnapshot);
+		const missingLeafGeneration = GatewayControlPrivateLeaseSnapshotSchema.safeParse(
+			Object.fromEntries(
+				Object.entries(privateLeaseSnapshot).filter(([key]) => key !== 'leafGeneration'),
+			),
+		);
+		const missingSshBindingId = GatewayControlPrivateLeaseSnapshotSchema.safeParse(
+			Object.fromEntries(
+				Object.entries(privateLeaseSnapshot).filter(([key]) => key !== 'sshBindingId'),
+			),
+		);
+
+		// Assert
+		expect(parsedPrivateLease).toEqual(privateLeaseSnapshot);
+		expect(missingLeafGeneration.success).toBe(false);
+		expect(missingSshBindingId.success).toBe(false);
+	});
+
+	it('rejects private lease authority on public lease response operations', () => {
+		// Arrange
+		const privateLeaseResult = {
+			kind: 'command_result' as const,
+			payload: {
+				lease: {
+					agentId: 'main',
+					idleTtlMs: 120_000,
+					leafGeneration: 'leaf-generation-a',
+					leaseId: '01890f00-0000-7000-8000-000000000001',
+					ssh: {
+						host: 'tool-0.vm.host',
+						identityPem: 'pem',
+						knownHostsLine: 'tool-0.vm.host ssh-ed25519 AAAA',
+						port: 22,
+						user: 'sandbox',
+					},
+					sshBindingId: 'ssh-binding-a',
+					state: 'idle' as const,
+					tcpSlot: 0,
+					transport: 'ssh-sandbox' as const,
+					workdir: '/workspace',
+					zoneId: 'zone-a',
+				},
+				responseToMessageId: '44444444-4444-4444-8444-444444444444',
+				result: 'ok' as const,
+			},
+		};
+		const rootAuthorityLeaseResult = structuredClone(privateLeaseResult);
+		Reflect.deleteProperty(rootAuthorityLeaseResult.payload.lease.ssh, 'identityPem');
+		Reflect.deleteProperty(rootAuthorityLeaseResult.payload.lease.ssh, 'knownHostsLine');
+		const sshAuthorityLeaseResult = structuredClone(privateLeaseResult);
+		Reflect.deleteProperty(sshAuthorityLeaseResult.payload.lease, 'leafGeneration');
+		Reflect.deleteProperty(sshAuthorityLeaseResult.payload.lease, 'sshBindingId');
+
+		// Act
+		const privateRead = GatewayControlRpcCommandResultMessageSchema.safeParse({
+			...privateLeaseResult,
+			operation: 'lease_get',
+		});
+		const publicPeek = GatewayControlRpcCommandResultMessageSchema.safeParse({
+			...rootAuthorityLeaseResult,
+			operation: 'lease_peek',
+		});
+		const publicRelease = GatewayControlRpcCommandResultMessageSchema.safeParse({
+			...sshAuthorityLeaseResult,
+			operation: 'lease_release',
+		});
+
+		// Assert
+		expect(privateRead.success).toBe(true);
+		expect(publicPeek.success).toBe(false);
+		expect(publicRelease.success).toBe(false);
 	});
 
 	it('allows gateway commands and events but forbids event-only operations as command results', () => {
@@ -518,7 +868,6 @@ describe('gateway control contract', () => {
 					callerContext: {
 						callerContextId: '44444444-4444-4444-8444-444444444444',
 					},
-					gatewayWorkspaceDir: '/workspace/sandbox',
 				},
 			}).success,
 		).toBe(true);
@@ -675,12 +1024,14 @@ describe('gateway control contract', () => {
 				operation: 'tool_portal_controller_host_action',
 				payload: {
 					controllerHostAction: {
-						actionId: 'zone_git_push',
+						actionId: 'workspace_git_push',
 						result: {
 							branch: 'main',
-							localHead: 'abc123',
-							pushedCommits: [{ sha: 'abc123', subject: 'docs: update memory' }],
-							remoteHead: 'abc123',
+							localHead: '0123456789abcdef0123456789abcdef01234567',
+							pushedCommits: [
+								{ sha: '0123456789abcdef0123456789abcdef01234567', subject: 'docs: update memory' },
+							],
+							remoteHead: '0123456789abcdef0123456789abcdef01234567',
 						},
 					},
 					responseToMessageId: '22222222-2222-4222-8222-222222222222',
@@ -705,7 +1056,16 @@ describe('gateway control contract', () => {
 		const leaseResult = {
 			agentId: 'main',
 			idleTtlMs: 120_000,
+			leafGeneration: 'leaf-generation-a',
 			leaseId: '01890f00-0000-7000-8000-000000000001',
+			ssh: {
+				host: 'tool-0.vm.host',
+				identityPem: 'pem',
+				knownHostsLine: 'tool-0.vm.host ssh-ed25519 AAAA',
+				port: 22,
+				user: 'sandbox',
+			},
+			sshBindingId: 'ssh-binding-a',
 			state: 'idle',
 			tcpSlot: 0,
 			transport: 'ssh-sandbox',
@@ -714,12 +1074,14 @@ describe('gateway control contract', () => {
 		};
 
 		const controllerHostActionResult = {
-			actionId: 'zone_git_push',
+			actionId: 'workspace_git_push',
 			result: {
 				branch: 'main',
-				localHead: 'abc123',
-				pushedCommits: [{ sha: 'abc123', subject: 'docs: update memory' }],
-				remoteHead: 'abc123',
+				localHead: '0123456789abcdef0123456789abcdef01234567',
+				pushedCommits: [
+					{ sha: '0123456789abcdef0123456789abcdef01234567', subject: 'docs: update memory' },
+				],
+				remoteHead: '0123456789abcdef0123456789abcdef01234567',
 			},
 		};
 
@@ -808,12 +1170,14 @@ describe('gateway control contract', () => {
 			zoneId: 'zone-a',
 		};
 		const controllerHostActionResult = {
-			actionId: 'zone_git_push',
+			actionId: 'workspace_git_push',
 			result: {
 				branch: 'main',
-				localHead: 'abc123',
-				pushedCommits: [{ sha: 'abc123', subject: 'docs: update memory' }],
-				remoteHead: 'abc123',
+				localHead: '0123456789abcdef0123456789abcdef01234567',
+				pushedCommits: [
+					{ sha: '0123456789abcdef0123456789abcdef01234567', subject: 'docs: update memory' },
+				],
+				remoteHead: '0123456789abcdef0123456789abcdef01234567',
 			},
 		};
 

@@ -45,34 +45,40 @@ describe('Tool VM lease authority destruction admission', () => {
 				useId: 'use-1',
 			},
 		});
-		const destroy = vi.fn(async () => {});
+		const cleanup = vi.fn(async () => {});
+		const fenceAccess = vi.fn(async () => {});
 
 		expect(
 			runtime.admitExactDestruction({
 				authority,
-				destroy,
+				cleanup,
 				destroyedAtMs: 2_000,
+				fenceAccess,
 				policy: { kind: 'require-no-active-use' },
 				reason: 'idle',
 			}),
 		).toEqual({ kind: 'blocked-active-use' });
-		expect(destroy).not.toHaveBeenCalled();
+		expect(fenceAccess).not.toHaveBeenCalled();
+		expect(cleanup).not.toHaveBeenCalled();
 	});
 
 	it('skips conditional destruction after a more recent lease use', async () => {
 		const { authority, runtime } = await createCurrentRuntime(createLease({ lastUsedAt: 2_000 }));
-		const destroy = vi.fn(async () => {});
+		const cleanup = vi.fn(async () => {});
+		const fenceAccess = vi.fn(async () => {});
 
 		expect(
 			runtime.admitExactDestruction({
 				authority,
-				destroy,
+				cleanup,
 				destroyedAtMs: 3_000,
+				fenceAccess,
 				policy: { ifLastUsedAtBeforeOrAt: 1_999, kind: 'require-no-active-use' },
 				reason: 'idle',
 			}),
 		).toEqual({ kind: 'skip-recently-used' });
-		expect(destroy).not.toHaveBeenCalled();
+		expect(fenceAccess).not.toHaveBeenCalled();
+		expect(cleanup).not.toHaveBeenCalled();
 	});
 
 	it('force-admits destruction while active work exists', async () => {
@@ -90,28 +96,33 @@ describe('Tool VM lease authority destruction admission', () => {
 				useId: 'use-1',
 			},
 		});
-		const destroy = vi.fn(async () => {});
+		const cleanup = vi.fn(async () => {});
+		const fenceAccess = vi.fn(async () => {});
 
 		const admitted = runtime.admitExactDestruction({
 			authority,
-			destroy,
+			cleanup,
 			destroyedAtMs: 2_000,
+			fenceAccess,
 			policy: { kind: 'force' },
 			reason: 'gateway-lost',
 		});
 		expect(admitted.kind).toBe('started');
 		if (admitted.kind === 'started') await admitted.completion;
-		expect(destroy).toHaveBeenCalledOnce();
+		expect(fenceAccess).toHaveBeenCalledOnce();
+		expect(cleanup).toHaveBeenCalledOnce();
 	});
 
 	it('shares one callback completion across duplicate admitted calls', async () => {
 		const { authority, runtime } = await createCurrentRuntime();
 		const deferred = createDeferred<void>();
-		const destroy = vi.fn(() => deferred.promise);
+		const cleanup = vi.fn(() => deferred.promise);
+		const fenceAccess = vi.fn(async () => {});
 		const options = {
 			authority,
-			destroy,
+			cleanup,
 			destroyedAtMs: 2_000,
+			fenceAccess,
 			policy: { kind: 'force' } as const,
 			reason: 'gateway-lost',
 		};
@@ -122,9 +133,11 @@ describe('Tool VM lease authority destruction admission', () => {
 		expect(second.kind).toBe('started');
 		if (first.kind !== 'started' || second.kind !== 'started') throw new Error('not admitted');
 		expect(first.completion).toBe(second.completion);
+		expect(first.accessFenced).toBe(second.accessFenced);
 		deferred.resolve();
 		await Promise.all([first.completion, second.completion]);
-		expect(destroy).toHaveBeenCalledOnce();
+		expect(fenceAccess).toHaveBeenCalledOnce();
+		expect(cleanup).toHaveBeenCalledOnce();
 	});
 
 	it('retains owner-unsafe authority after callback failure and admits forced retry', async () => {
@@ -132,10 +145,11 @@ describe('Tool VM lease authority destruction admission', () => {
 		const failure = new Error('cleanup failed');
 		const first = runtime.admitExactDestruction({
 			authority,
-			destroy: async () => {
+			cleanup: async () => {},
+			destroyedAtMs: 2_000,
+			fenceAccess: async () => {
 				throw failure;
 			},
-			destroyedAtMs: 2_000,
 			policy: { kind: 'force' },
 			reason: 'gateway-lost',
 		});
@@ -143,16 +157,19 @@ describe('Tool VM lease authority destruction admission', () => {
 		await expect(first.completion).rejects.toBe(failure);
 		expect(runtime.leafSnapshotForLease(authority.leaseId)).toMatchObject({ kind: 'owner-unsafe' });
 
-		const retryDestroy = vi.fn(async () => {});
+		const retryCleanup = vi.fn(async () => {});
+		const retryFenceAccess = vi.fn(async () => {});
 		const retry = runtime.admitExactDestruction({
 			authority,
-			destroy: retryDestroy,
+			cleanup: retryCleanup,
 			destroyedAtMs: 3_000,
+			fenceAccess: retryFenceAccess,
 			policy: { kind: 'force' },
 			reason: 'retry',
 		});
 		if (retry.kind !== 'started') throw new Error('retry not admitted');
 		await retry.completion;
-		expect(retryDestroy).toHaveBeenCalledOnce();
+		expect(retryFenceAccess).toHaveBeenCalledOnce();
+		expect(retryCleanup).toHaveBeenCalledOnce();
 	});
 });

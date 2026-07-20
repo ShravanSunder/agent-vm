@@ -172,7 +172,7 @@ function optionalGatewayIdentity(value: unknown): boolean {
 }
 
 function isGatewayType(value: unknown): value is GatewayType {
-	return value === 'openclaw' || value === 'worker';
+	return value === 'hermes' || value === 'openclaw' || value === 'worker';
 }
 
 function isOneOf<TValue extends string>(

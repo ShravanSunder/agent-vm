@@ -1,0 +1,30 @@
+[project]
+name = "agent-vm-python-workspace"
+version = "0.0.0"
+description = "Python workspace for agent-vm portable SDK and managed framework adapters."
+requires-python = ">=3.13"
+dependencies = []
+
+[dependency-groups]
+dev = ["pytest>=8.0.0", "ruff>=0.9.0", "ty>=0.0.58"]
+
+[tool.uv]
+required-version = ">=0.9.0"
+
+[tool.uv.sources]
+agent-vm-agent-portal-sdk = { workspace = true }
+agent-vm-hermes-adapter = { workspace = true }
+
+[tool.uv.workspace]
+members = ["python/*"]
+
+[tool.pytest.ini_options]
+addopts = ["--strict-config", "--strict-markers"]
+python_files = ["test_*.py"]
+testpaths = ["python"]
+
+[tool.ty.environment]
+python-version = "3.13"
+
+[tool.ty.rules]
+all = "error"

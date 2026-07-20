@@ -19,6 +19,7 @@ import {
 	SYNTHETIC_DNS_IPV4_BENCHMARK,
 	SYNTHETIC_DNS_IPV6_IPV4_MAPPED_BENCHMARK,
 	createGitReadOnlySshEgressOptions,
+	createHardenedReadonlyProvider,
 	createManagedVm,
 	parseSshServerHostKey,
 	type ManagedVmDependencies,
@@ -132,6 +133,8 @@ function createBaseDependencies(options?: {
 	readonly createVm?: (vmOptions: VMOptions) => Promise<ManagedVmInstance>;
 	readonly closePinnedRealFsRoot?: (root: PinnedRealFsRoot) => void;
 	readonly createPinnedRealFsProvider?: (root: PinnedRealFsRoot) => VirtualProvider;
+	readonly createReadonlyProvider?: (provider: VirtualProvider) => VirtualProvider;
+	readonly createRealFsProvider?: (hostPath: string) => VirtualProvider;
 }): ManagedVmDependencies {
 	return {
 		configureHostNetworkDefaults: vi.fn(
@@ -151,8 +154,8 @@ function createBaseDependencies(options?: {
 		createPinnedRealFsProvider: vi.fn(
 			options?.createPinnedRealFsProvider ?? (() => createTestProvider()),
 		),
-		createReadonlyProvider: vi.fn(() => createTestProvider()),
-		createRealFsProvider: vi.fn(() => createTestProvider()),
+		createReadonlyProvider: vi.fn(options?.createReadonlyProvider ?? (() => createTestProvider())),
+		createRealFsProvider: vi.fn(options?.createRealFsProvider ?? (() => createTestProvider())),
 		createShadowPathPredicate: vi.fn(() => () => true),
 		createShadowProvider: vi.fn(() => createTestProvider()),
 		createVm: vi.fn(options?.createVm ?? (async () => createFakeVmInstance())),
@@ -335,7 +338,8 @@ describe('createManagedVm', () => {
 			syntheticHostMapping: 'per-host',
 		});
 		expect(createHttpHooksMock).toHaveBeenCalledWith({
-			allowedHosts: ['controller.vm.host'],
+			allowedHosts: [],
+			allowedInternalHosts: ['controller.vm.host'],
 			isIpAllowed: expect.any(Function),
 			secrets: {},
 		});
@@ -778,6 +782,60 @@ describe('createManagedVm', () => {
 		expect(capturedVmOptions?.httpHooks).toEqual({});
 	});
 
+	it('preserves explicit mediated secret placeholders for Gondolin', async () => {
+		let capturedVmOptions: VMOptions | undefined;
+		const guestPlaceholder = 'agent-vm-explicit-placeholder';
+		const rawSecretValue = 'host-only-secret';
+		const dependencies = {
+			...createBaseDependencies({
+				createVm: vi.fn(async (vmOptions: VMOptions): Promise<ManagedVmInstance> => {
+					capturedVmOptions = vmOptions;
+					return createFakeVmInstance();
+				}),
+			}),
+			createHttpHooks: vi.fn(() => ({
+				env: { API_TOKEN: guestPlaceholder },
+				httpHooks: {} satisfies HttpHooks,
+			})),
+		} satisfies ManagedVmDependencies;
+
+		await createManagedVm(
+			{
+				allowedHosts: ['api.example.com'],
+				cpus: 1,
+				env: { SAFE: 'guest-visible' },
+				imagePath: '/vm-images/tool-vm',
+				memory: '1G',
+				rootfsMode: 'memory',
+				secrets: {
+					API_TOKEN: {
+						hosts: ['api.example.com'],
+						placeholder: guestPlaceholder,
+						value: rawSecretValue,
+					},
+				},
+				vfsMounts: {},
+			},
+			dependencies,
+		);
+
+		expect(dependencies.createHttpHooks).toHaveBeenCalledWith({
+			allowedHosts: ['api.example.com'],
+			secrets: {
+				API_TOKEN: {
+					hosts: ['api.example.com'],
+					placeholder: guestPlaceholder,
+					value: rawSecretValue,
+				},
+			},
+		});
+		expect(capturedVmOptions?.env).toEqual({
+			API_TOKEN: guestPlaceholder,
+			SAFE: 'guest-visible',
+		});
+		expect(Object.values(capturedVmOptions?.env ?? {})).not.toContain(rawSecretValue);
+	});
+
 	it('applies managed ingress defaults when enabling ingress without explicit options', async () => {
 		const closeIngressMock = vi.fn(async () => {});
 		const enableIngressMock = vi.fn(async () => ({
@@ -1159,8 +1217,14 @@ describe('createManagedVm', () => {
 				rootfsMode: 'memory',
 				secrets: {},
 				vfsMounts: {
-					'/first': { kind: 'realfs', pinnedHostRoot: firstPinnedRoot },
-					'/second': { kind: 'realfs', pinnedHostRoot: secondPinnedRoot },
+					'/first': {
+						kind: 'realfs',
+						pinnedHostRoot: firstPinnedRoot,
+					},
+					'/second': {
+						kind: 'realfs',
+						pinnedHostRoot: secondPinnedRoot,
+					},
 				},
 			},
 			dependencies,
@@ -1172,5 +1236,119 @@ describe('createManagedVm', () => {
 			errors: [nativeCloseError, firstRootCloseError, secondRootCloseError],
 		});
 		expect(closePinnedRealFsRoot).toHaveBeenCalledTimes(2);
+	});
+
+	it('uses the raw RealFS provider for writable host directories', async () => {
+		const rawProvider = createTestProvider();
+		let capturedVmOptions: VMOptions | undefined;
+		const dependencies = createBaseDependencies({
+			createRealFsProvider: vi.fn(() => rawProvider),
+			createVm: async (vmOptions) => {
+				capturedVmOptions = vmOptions;
+				return createFakeVmInstance();
+			},
+		});
+
+		await createManagedVm(
+			{
+				allowedHosts: [],
+				cpus: 1,
+				imagePath: '/vm-images/tool',
+				memory: '1G',
+				rootfsMode: 'memory',
+				secrets: {},
+				vfsMounts: {
+					'/work': {
+						hostPath: '/tmp/work',
+						kind: 'realfs',
+					},
+				},
+			},
+			dependencies,
+		);
+
+		expect(capturedVmOptions?.vfs?.mounts?.['/work']).toBe(rawProvider);
+	});
+
+	it('applies readonly policy directly to the raw RealFS provider', async () => {
+		const rawProvider = createTestProvider();
+		const readonlyProvider = createTestProvider();
+		let capturedVmOptions: VMOptions | undefined;
+		const createReadonlyProvider = vi.fn(() => readonlyProvider);
+		const dependencies = createBaseDependencies({
+			createReadonlyProvider,
+			createRealFsProvider: vi.fn(() => rawProvider),
+			createVm: async (vmOptions) => {
+				capturedVmOptions = vmOptions;
+				return createFakeVmInstance();
+			},
+		});
+
+		await createManagedVm(
+			{
+				allowedHosts: [],
+				cpus: 1,
+				imagePath: '/vm-images/tool',
+				memory: '1G',
+				rootfsMode: 'memory',
+				secrets: {},
+				vfsMounts: {
+					'/work': {
+						hostPath: '/tmp/work',
+						kind: 'realfs-readonly',
+					},
+				},
+			},
+			dependencies,
+		);
+
+		expect(createReadonlyProvider).toHaveBeenCalledWith(rawProvider);
+		expect(capturedVmOptions?.vfs?.mounts?.['/work']).toBe(readonlyProvider);
+	});
+
+	it('preserves backend stats while rejecting provider and file-handle mutations', async () => {
+		const backendProvider = new MemoryProvider();
+		const writableHandle = backendProvider.openSync('/receipt.txt', 'w', 0o600);
+		writableHandle.writeFileSync('immutable');
+		writableHandle.closeSync();
+		const readonlyProvider = createHardenedReadonlyProvider(backendProvider);
+		const asynchronousHandle = await readonlyProvider.open('/receipt.txt', 'r');
+		const synchronousHandle = readonlyProvider.openSync('/receipt.txt', 'r');
+
+		expect(await readonlyProvider.stat('/receipt.txt')).toEqual(
+			await backendProvider.stat('/receipt.txt'),
+		);
+		expect(await asynchronousHandle.stat()).toEqual(await backendProvider.stat('/receipt.txt'));
+		await expect(readonlyProvider.open('/receipt.txt', 'a')).rejects.toMatchObject({
+			code: 'EROFS',
+		});
+		await expect(readonlyProvider.mkdir('/new-directory')).rejects.toMatchObject({ code: 'EROFS' });
+		await expect(readonlyProvider.rename('/receipt.txt', '/renamed.txt')).rejects.toMatchObject({
+			code: 'EROFS',
+		});
+		await expect(readonlyProvider.unlink('/receipt.txt')).rejects.toMatchObject({ code: 'EROFS' });
+		if (!readonlyProvider.appendFile) {
+			throw new Error('Readonly provider did not expose the standard appendFile operation.');
+		}
+		await expect(readonlyProvider.appendFile('/receipt.txt', '!')).rejects.toMatchObject({
+			code: 'EROFS',
+		});
+		await expect(asynchronousHandle.write(Buffer.from('x'), 0, 1, 0)).rejects.toMatchObject({
+			code: 'EROFS',
+		});
+		await expect(asynchronousHandle.writeFile('x')).rejects.toMatchObject({ code: 'EROFS' });
+		await expect(asynchronousHandle.truncate(0)).rejects.toMatchObject({ code: 'EROFS' });
+		expect(() => synchronousHandle.writeSync(Buffer.from('x'), 0, 1, 0)).toThrow(
+			expect.objectContaining({ code: 'EROFS' }),
+		);
+		expect(() => synchronousHandle.writeFileSync('x')).toThrow(
+			expect.objectContaining({ code: 'EROFS' }),
+		);
+		expect(() => synchronousHandle.truncateSync(0)).toThrow(
+			expect.objectContaining({ code: 'EROFS' }),
+		);
+		await asynchronousHandle.close();
+		synchronousHandle.closeSync();
+		expect(backendProvider.readFileSync?.('/receipt.txt', 'utf8')).toBe('immutable');
 	});
 });

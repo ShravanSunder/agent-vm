@@ -47,6 +47,7 @@ describe('requireZone', () => {
 			requireZone(
 				{
 					cacheDir: './cache',
+					controllerStateDir: '/controller-state-test',
 					runtimeDir: './runtime',
 					schemaVersion: 1,
 					host: {

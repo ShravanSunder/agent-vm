@@ -1,0 +1,35 @@
+{
+	"caseId": "coverage-sandbox-process-start-request",
+	"schemaId": "sandbox.process.start.request",
+	"tags": [
+		"accepted",
+		"coverage"
+	],
+	"input": {
+		"command": "pnpm test",
+		"cwd": "/work",
+		"environment": {
+			"handleId": "environment-a",
+			"kind": "environment",
+			"owningGeneration": "generation-a"
+		},
+		"maxRuntimeMs": 1000,
+		"retainOutputBytes": 1
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"command": "pnpm test",
+			"cwd": "/work",
+			"environment": {
+				"handleId": "environment-a",
+				"kind": "environment",
+				"owningGeneration": "generation-a"
+			},
+			"maxRuntimeMs": 1000,
+			"retainOutputBytes": 1
+		},
+		"canonicalJson": "{\"command\":\"pnpm test\",\"cwd\":\"/work\",\"environment\":{\"handleId\":\"environment-a\",\"kind\":\"environment\",\"owningGeneration\":\"generation-a\"},\"maxRuntimeMs\":1000,\"retainOutputBytes\":1}",
+		"refinementIdentities": ["sandbox.environment-variable.unique-names"]
+	}
+}

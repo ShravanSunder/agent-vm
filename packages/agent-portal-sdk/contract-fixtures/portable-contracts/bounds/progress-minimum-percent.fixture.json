@@ -1,0 +1,22 @@
+{
+	"caseId": "progress-minimum-percent",
+	"schemaId": "portal.progress.event",
+	"tags": ["accepted", "boundary", "numeric"],
+	"input": {
+		"id": "progress-minimum",
+		"kind": "progress",
+		"message": "Starting",
+		"percent": 0
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"id": "progress-minimum",
+			"kind": "progress",
+			"message": "Starting",
+			"percent": 0
+		},
+		"canonicalJson": "{\"id\":\"progress-minimum\",\"kind\":\"progress\",\"message\":\"Starting\",\"percent\":0}",
+		"refinementIdentities": ["portal.request-id.not-reserved"]
+	}
+}

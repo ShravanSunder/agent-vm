@@ -3,6 +3,16 @@ import { describe, expect, it } from 'vitest';
 import { createPortalAgentIdentity } from './portal-access-policy.js';
 
 describe('createPortalAgentIdentity', () => {
+	it('accepts Tool Portal service as a distinct upstream scope source', () => {
+		expect(
+			createPortalAgentIdentity({
+				agentId: 'agent-a',
+				agentScopeId: 'mcp-provider:agent-a',
+				source: 'tool-portal-service',
+			}),
+		).toMatchObject({ source: 'tool-portal-service' });
+	});
+
 	it('rejects empty and control-character identity segments', () => {
 		expect(() =>
 			createPortalAgentIdentity({

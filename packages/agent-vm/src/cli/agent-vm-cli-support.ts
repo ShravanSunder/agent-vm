@@ -18,6 +18,7 @@ import { createSecretResolver as createControllerSecretResolver } from '../contr
 import type {
 	ControllerRuntime,
 	ControllerRuntimeDependencies,
+	StartControllerRuntimeOptions,
 } from '../controller/controller-runtime-types.js';
 import { startControllerRuntime } from '../controller/controller-runtime.js';
 import { createControllerClient } from '../controller/http/controller-client.js';
@@ -25,7 +26,12 @@ import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import { runConfigValidation } from '../operations/config-validation.js';
 import { runControllerOfflineCleanup } from '../operations/controller-offline-cleanup.js';
 import { buildControllerStatus } from '../operations/controller-status.js';
-import { type DoctorCheck, runControllerDoctor } from '../operations/doctor.js';
+import {
+	type ControllerDoctorResult,
+	type DoctorCheck,
+	type RunControllerDoctorOptions,
+	runControllerDoctor,
+} from '../operations/doctor.js';
 import { runBuildCommand } from './build-command.js';
 import { runCacheCommand } from './cache-commands.js';
 import { resolveCliVersion } from './cli-version.js';
@@ -96,8 +102,12 @@ export interface CliDependencies {
 	) => Promise<void>;
 	readonly resolveServiceAccountToken: typeof resolveServiceAccountToken;
 	readonly resolveManagedVmMinimumZigVersion: typeof resolveManagedVmMinimumZigVersion;
-	readonly runControllerDoctor: typeof runControllerDoctor;
-	readonly runControllerOfflineCleanup?: typeof runControllerOfflineCleanup;
+	readonly runControllerDoctor: (
+		options: RunControllerDoctorOptions,
+	) => ControllerDoctorResult | Promise<ControllerDoctorResult>;
+	readonly runControllerOfflineCleanup: (
+		options: Parameters<typeof runControllerOfflineCleanup>[0],
+	) => ReturnType<typeof runControllerOfflineCleanup>;
 	readonly runConfigValidation?: typeof runConfigValidation;
 	readonly promptAndStoreServiceAccountToken?: (options?: {
 		readonly account?: string;
@@ -112,14 +122,12 @@ export interface CliDependencies {
 	) => Promise<ScaffoldAgentVmProjectResult>;
 	readonly storeServiceAccountToken?: typeof storeServiceAccountToken;
 	readonly startControllerRuntime: (
-		options: {
-			readonly systemConfig: LoadedSystemConfig;
-			readonly zoneId: string;
-		},
+		options: StartControllerRuntimeOptions,
 		runtimeDependencies?: Omit<
 			ControllerRuntimeDependencies,
 			| 'configureManagedVmHostNetworkDefaults'
 			| 'managedVmFactory'
+			| 'managedVmExactProcessTermination'
 			| 'managedVmImages'
 			| 'managedVmOwnedDirectories'
 		>,
@@ -146,7 +154,12 @@ export const defaultCliDependencies: CliDependencies = {
 	resolveManagedVmMinimumZigVersion: resolveManagedVmMinimumZigVersion,
 	resolveServiceAccountToken,
 	runControllerDoctor,
-	runControllerOfflineCleanup,
+	runControllerOfflineCleanup: async (options) => {
+		const managedVmRuntime = createManagedVmRuntimeComposition();
+		return await runControllerOfflineCleanup(options, {
+			exactProcessTermination: managedVmRuntime.managedVmExactProcessTermination,
+		});
+	},
 	runConfigValidation,
 	resetWorkerInstructions,
 	resolveCliVersion,
@@ -162,6 +175,7 @@ export const defaultCliDependencies: CliDependencies = {
 			...runtimeDependencies,
 			configureManagedVmHostNetworkDefaults: managedVmRuntime.configureManagedVmHostNetworkDefaults,
 			managedVmFactory: managedVmRuntime.managedVmFactory,
+			managedVmExactProcessTermination: managedVmRuntime.managedVmExactProcessTermination,
 			managedVmImages: managedVmRuntime.managedVmImages,
 			managedVmOwnedDirectories: managedVmRuntime.managedVmOwnedDirectories,
 		});

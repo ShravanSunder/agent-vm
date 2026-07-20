@@ -1,0 +1,26 @@
+{
+	"caseId": "call-request-duplicate-id",
+	"schemaId": "portal.call.request",
+	"tags": ["duplicate-id", "rejected", "request"],
+	"input": {
+		"calls": [
+			{
+				"arguments": {},
+				"id": "duplicate",
+				"name": "get_issue",
+				"namespace": "github"
+			},
+			{
+				"arguments": {},
+				"id": "duplicate",
+				"name": "get_issue",
+				"namespace": "github"
+			}
+		]
+	},
+	"expectation": {
+		"kind": "rejected",
+		"errorCodes": ["portal.batch.unique-item-ids"],
+		"refinementIdentities": ["portal.batch.unique-item-ids", "portal.request-id.not-reserved"]
+	}
+}

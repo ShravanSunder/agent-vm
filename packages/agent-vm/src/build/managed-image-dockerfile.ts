@@ -19,11 +19,13 @@ import {
 } from './package-overrides.js';
 
 const managedOpenClawAgentVmPluginPackageName = '@agent-vm/openclaw-agent-vm-plugin';
+const managedGatewayRuntimePackageName = '@agent-vm/gateway-runtime';
 const managedMcpPortalPackageName = '@agent-vm/mcp-portal';
 const managedOpenAiCodexCliPackageName = '@openai/codex';
 const managedCoreOpenClawPackageNames = ['openclaw', '@openclaw/codex'] as const;
 const managedOpenClawPackageNames = new Set([
 	managedOpenClawAgentVmPluginPackageName,
+	managedGatewayRuntimePackageName,
 	managedMcpPortalPackageName,
 ]);
 const managedOpenClawAgentVmPluginExtensionPath = '/home/openclaw/.openclaw/extensions/gondolin';
@@ -111,6 +113,7 @@ export interface ManagedDockerfilePlan {
 	readonly openClawAgentVmPluginPackage?: ManagedDockerfilePackagePlanEntry;
 	readonly mcpPortalPackage?: ManagedDockerfilePackagePlanEntry;
 	readonly directNpmPackages: readonly ManagedDockerfilePackagePlanEntry[];
+	readonly gatewayRuntimePackage?: ManagedDockerfilePackagePlanEntry;
 	readonly openClawDependencyOverrides: readonly ManagedDockerfileDependencyOverridePlanEntry[];
 	readonly openClawPackages: readonly ManagedDockerfilePackagePlanEntry[];
 	readonly warnings: readonly ManagedDockerfilePlanWarning[];
@@ -376,6 +379,7 @@ function renderManagedDockerfile(props: {
 	readonly baseImage: ManagedBaseImageReference;
 	readonly overlay: ManagedImageOverlay;
 	readonly directNpmPackages: readonly ManagedDockerfilePackagePlanEntry[];
+	readonly gatewayRuntimePackageSpec?: string;
 	readonly mcpPortalPackageSpec?: string;
 	readonly openClawAgentVmPackageInstallMode?: 'managed-packages' | 'local-overlay' | undefined;
 	readonly openClawAgentVmPluginPackageSpec?: string;
@@ -397,6 +401,7 @@ function renderManagedDockerfile(props: {
 		);
 	}
 	if (props.base === 'tool-vm') {
+		lines.push('RUN rm -rf /scratch && install -d -m 0755 /work /workspace');
 		lines.push(renderGitHubCliStableAptInstallCommand());
 	}
 	if (
@@ -465,13 +470,20 @@ function renderManagedDockerfile(props: {
 		let managedFinalStagePackageSpecs: readonly string[];
 		if (openClawAgentVmPackageInstallMode === 'managed-packages') {
 			const openClawAgentVmPluginPackageSpec = props.openClawAgentVmPluginPackageSpec;
+			const gatewayRuntimePackageSpec = props.gatewayRuntimePackageSpec;
 			if (!openClawAgentVmPluginPackageSpec) {
 				throw new Error(
 					'OpenClaw gateway managed Dockerfiles require the managed OpenClaw plugin package spec.',
 				);
 			}
+			if (!gatewayRuntimePackageSpec) {
+				throw new Error(
+					'OpenClaw gateway managed Dockerfiles require the Gateway runtime package spec.',
+				);
+			}
 			managedFinalStagePackageSpecs = [
 				openClawAgentVmPluginPackageSpec,
+				gatewayRuntimePackageSpec,
 			];
 		} else {
 			managedFinalStagePackageSpecs = [];
@@ -499,7 +511,15 @@ function renderManagedDockerfile(props: {
 			[
 				'RUN package_root="$(pnpm root -g)" && \\',
 				'    openclaw_package_root="$package_root/openclaw" && \\',
+				...(props.gatewayRuntimePackageSpec
+					? [
+							'    gateway_runtime_bin="$package_root/@agent-vm/gateway-runtime/dist/bin/gateway-runtime.js" && \\',
+							'    test -f "$gateway_runtime_bin" && chmod 755 "$gateway_runtime_bin" && \\',
+							'    ln -sfn "$gateway_runtime_bin" /usr/local/bin/agent-vm-gateway-runtime && \\',
+						]
+					: []),
 				'    mkdir -p /home/openclaw/.openclaw/extensions && \\',
+				'    ln -sfn "$openclaw_package_root/dist/plugin-sdk/diagnostic-runtime.js" /opt/openclaw-sdk/diagnostic-runtime.js && \\',
 				'    ln -sfn "$openclaw_package_root/dist/plugin-sdk/sandbox.js" /opt/openclaw-sdk/sandbox.js && \\',
 				'    ln -sfn "$openclaw_package_root/openclaw.mjs" /pnpm/openclaw && \\',
 				'    chmod 755 "$openclaw_package_root/openclaw.mjs" && \\',
@@ -653,6 +673,10 @@ export async function generateManagedDockerfile(
 		options.base === 'openclaw-gateway' && openClawAgentVmPackageInstallMode === 'managed-packages'
 			? await resolveManagedOpenClawAgentVmPluginPackageSpec()
 			: undefined;
+	const gatewayRuntimePackageSpec =
+		options.base === 'openclaw-gateway' && openClawAgentVmPackageInstallMode === 'managed-packages'
+			? await resolveManagedPackageSpec(managedGatewayRuntimePackageName)
+			: undefined;
 	const mcpPortalPackageSpec =
 		options.base === 'tool-vm' && !usesLocalAgentVmPackageOverlay
 			? await resolveManagedPackageSpec(managedMcpPortalPackageName)
@@ -698,6 +722,7 @@ export async function generateManagedDockerfile(
 			base: options.base,
 			baseImage,
 			directNpmPackages,
+			...(gatewayRuntimePackageSpec === undefined ? {} : { gatewayRuntimePackageSpec }),
 			...(mcpPortalPackageSpec === undefined ? {} : { mcpPortalPackageSpec }),
 			overlay,
 			openClawAgentVmPackageInstallMode,
@@ -732,6 +757,15 @@ export async function generateManagedDockerfile(
 						},
 					}),
 			...(mcpPortalPackagePlan === undefined ? {} : { mcpPortalPackage: mcpPortalPackagePlan }),
+			...(gatewayRuntimePackageSpec === undefined
+				? {}
+				: {
+						gatewayRuntimePackage: {
+							name: managedGatewayRuntimePackageName,
+							source: 'installed-package',
+							spec: gatewayRuntimePackageSpec,
+						},
+					}),
 			directNpmPackages,
 			openClawDependencyOverrides,
 			openClawPackages,

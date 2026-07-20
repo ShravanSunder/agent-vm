@@ -6,6 +6,7 @@ export default defineConfig({
 	entry: [
 		'src/index.ts',
 		'src/controller-dispatch-boundary/index.ts',
+		'src/controller-execution-data-boundary/index.ts',
 		'src/controller-host-action-boundary/index.ts',
 		'src/tool-vm-runner-boundary/index.ts',
 		'src/testing/index.ts',

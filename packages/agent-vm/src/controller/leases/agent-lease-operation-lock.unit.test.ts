@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-	createAgentLeaseOperationLock,
-	type AgentLeaseIdentity,
-} from './agent-lease-operation-lock.js';
+import type { GatewayEpochIdentity } from '../vm-ownership/vm-ownership-contracts.js';
+import { createAgentLeaseOperationLock } from './agent-lease-operation-lock.js';
+import type { StableToolVmLeasePrincipal } from './tool-vm-lease-authority-contracts.js';
 
 interface Deferred<TValue> {
 	readonly promise: Promise<TValue>;
@@ -23,116 +22,140 @@ function createDeferred<TValue>(): Deferred<TValue> {
 	};
 }
 
-const TEST_AGENT_IDENTITY = {
-	agentId: 'main',
+const GATEWAY_ONE = {
+	bootId: 'gateway-boot-1',
+	controllerEpoch: 'controller-epoch-1',
+	gatewayEpochId: 'gateway-epoch-1',
+	gatewayVmId: 'gateway-vm-1',
+	generationId: 'gateway-generation-1',
 	zoneId: 'shravan',
-} satisfies AgentLeaseIdentity;
+} satisfies GatewayEpochIdentity;
+
+const GATEWAY_TWO = {
+	...GATEWAY_ONE,
+	bootId: 'gateway-boot-2',
+	gatewayEpochId: 'gateway-epoch-2',
+	gatewayVmId: 'gateway-vm-2',
+	generationId: 'gateway-generation-2',
+} satisfies GatewayEpochIdentity;
+
+const PRINCIPAL_REVISION_A = {
+	agentId: 'main',
+	frameworkIdentity: { agentId: 'main', kind: 'openclaw' },
+	profileAssignmentRevision: 'assignment-main-a',
+	toolPortalProfileId: 'standard',
+} satisfies StableToolVmLeasePrincipal;
+
+const PRINCIPAL_REVISION_B = {
+	...PRINCIPAL_REVISION_A,
+	profileAssignmentRevision: 'assignment-main-b',
+} satisfies StableToolVmLeasePrincipal;
+
+function currentLeafTransitionIdentity(
+	gateway: GatewayEpochIdentity,
+	principal: StableToolVmLeasePrincipal,
+): { readonly agentId: string; readonly gateway: GatewayEpochIdentity } {
+	return { agentId: principal.agentId, gateway };
+}
 
 describe('createAgentLeaseOperationLock', () => {
-	it('serializes same-agent operations in FIFO order without overlap', async () => {
+	it('serializes profile-assignment revisions for one Gateway agent in FIFO order', async () => {
 		// Arrange
 		const operationLock = createAgentLeaseOperationLock();
 		const events: string[] = [];
 		const firstStarted = createDeferred<void>();
 		const releaseFirst = createDeferred<void>();
 		const secondStarted = createDeferred<void>();
-		const releaseSecond = createDeferred<void>();
-		const thirdStarted = createDeferred<void>();
-		const releaseThird = createDeferred<void>();
-		let activeOperationCount = 0;
-		let maximumActiveOperationCount = 0;
 		const runOperation = async (
 			label: string,
+			principal: StableToolVmLeasePrincipal,
 			started: Deferred<void>,
-			release: Deferred<void>,
+			release?: Deferred<void>,
 		): Promise<string> =>
-			await operationLock.runExclusive(TEST_AGENT_IDENTITY, async () => {
-				activeOperationCount += 1;
-				maximumActiveOperationCount = Math.max(maximumActiveOperationCount, activeOperationCount);
-				events.push(`${label}:start`);
-				started.resolve();
-				await release.promise;
-				events.push(`${label}:end`);
-				activeOperationCount -= 1;
-				return label;
-			});
+			await operationLock.runExclusive(
+				currentLeafTransitionIdentity({ ...GATEWAY_ONE }, principal),
+				async () => {
+					events.push(`${label}:start`);
+					started.resolve();
+					await release?.promise;
+					events.push(`${label}:end`);
+					return label;
+				},
+			);
 
 		// Act
-		const firstOperation = runOperation('first', firstStarted, releaseFirst);
-		const secondOperation = runOperation('second', secondStarted, releaseSecond);
-		const thirdOperation = runOperation('third', thirdStarted, releaseThird);
+		const firstOperation = runOperation(
+			'revision-a',
+			PRINCIPAL_REVISION_A,
+			firstStarted,
+			releaseFirst,
+		);
+		const secondOperation = runOperation('revision-b', PRINCIPAL_REVISION_B, secondStarted);
 		await firstStarted.promise;
+		await Promise.resolve();
+		await Promise.resolve();
 
 		// Assert
-		expect(events).toEqual(['first:start']);
-		expect(activeOperationCount).toBe(1);
+		expect(events).toEqual(['revision-a:start']);
 
 		// Act
 		releaseFirst.resolve();
 		await secondStarted.promise;
 
 		// Assert
-		expect(events).toEqual(['first:start', 'first:end', 'second:start']);
-		expect(activeOperationCount).toBe(1);
-
-		// Act
-		releaseSecond.resolve();
-		await thirdStarted.promise;
-
-		// Assert
-		expect(events).toEqual([
-			'first:start',
-			'first:end',
-			'second:start',
-			'second:end',
-			'third:start',
+		expect(events).toEqual(['revision-a:start', 'revision-a:end', 'revision-b:start']);
+		await expect(Promise.all([firstOperation, secondOperation])).resolves.toEqual([
+			'revision-a',
+			'revision-b',
 		]);
-		expect(activeOperationCount).toBe(1);
-
-		// Act
-		releaseThird.resolve();
-
-		// Assert
-		await expect(Promise.all([firstOperation, secondOperation, thirdOperation])).resolves.toEqual([
-			'first',
-			'second',
-			'third',
-		]);
-		expect(activeOperationCount).toBe(0);
-		expect(maximumActiveOperationCount).toBe(1);
 	});
 
-	it('allows sibling agents and the same agent in sibling zones to proceed independently', async () => {
+	it('allows different agents in one Gateway and one agent in different Gateway epochs to proceed independently', async () => {
 		// Arrange
 		const operationLock = createAgentLeaseOperationLock();
 		const blockedOperationStarted = createDeferred<void>();
 		const releaseBlockedOperation = createDeferred<void>();
-		const blockedOperation = operationLock.runExclusive(TEST_AGENT_IDENTITY, async () => {
-			blockedOperationStarted.resolve();
-			await releaseBlockedOperation.promise;
-			return 'blocked-main';
-		});
+		const independentStarts: string[] = [];
+		const blockedOperation = operationLock.runExclusive(
+			currentLeafTransitionIdentity(GATEWAY_ONE, PRINCIPAL_REVISION_A),
+			async () => {
+				blockedOperationStarted.resolve();
+				await releaseBlockedOperation.promise;
+				return 'blocked-main';
+			},
+		);
 		await blockedOperationStarted.promise;
 
 		// Act
-		const independentResults = await Promise.all([
+		const independentOperations = [
+			operationLock.runExclusive({ agentId: 'reviewer', gateway: GATEWAY_ONE }, async () => {
+				independentStarts.push('sibling-agent');
+				return 'sibling-agent';
+			}),
 			operationLock.runExclusive(
-				{ agentId: 'reviewer', zoneId: TEST_AGENT_IDENTITY.zoneId },
-				async () => 'sibling-agent',
+				currentLeafTransitionIdentity(GATEWAY_TWO, PRINCIPAL_REVISION_A),
+				async () => {
+					independentStarts.push('successor-gateway');
+					return 'successor-gateway';
+				},
 			),
-			operationLock.runExclusive(
-				{ agentId: TEST_AGENT_IDENTITY.agentId, zoneId: 'work' },
-				async () => 'sibling-zone',
-			),
+		] as const;
+		await Promise.resolve();
+		await Promise.resolve();
+
+		// Assert
+		try {
+			expect(independentStarts).toEqual(['sibling-agent', 'successor-gateway']);
+		} finally {
+			releaseBlockedOperation.resolve();
+			await Promise.allSettled([blockedOperation, ...independentOperations]);
+		}
+
+		// Assert
+		await expect(Promise.all(independentOperations)).resolves.toEqual([
+			'sibling-agent',
+			'successor-gateway',
 		]);
-
-		// Assert
-		expect(independentResults).toEqual(['sibling-agent', 'sibling-zone']);
-
-		// Act
-		releaseBlockedOperation.resolve();
-
-		// Assert
 		await expect(blockedOperation).resolves.toBe('blocked-main');
 	});
 
@@ -141,11 +164,12 @@ describe('createAgentLeaseOperationLock', () => {
 		async (failureMode) => {
 			// Arrange
 			const operationLock = createAgentLeaseOperationLock();
+			const identity = currentLeafTransitionIdentity(GATEWAY_ONE, PRINCIPAL_REVISION_A);
 			const failure = new Error(`first operation ${failureMode}`);
 			const firstOperationStarted = createDeferred<void>();
 			const releaseFirstOperation = createDeferred<void>();
 			const events: string[] = [];
-			const firstOperation = operationLock.runExclusive(TEST_AGENT_IDENTITY, async () => {
+			const firstOperation = operationLock.runExclusive(identity, async () => {
 				events.push('first:start');
 				firstOperationStarted.resolve();
 				await releaseFirstOperation.promise;
@@ -154,7 +178,7 @@ describe('createAgentLeaseOperationLock', () => {
 				}
 				return await Promise.reject(failure);
 			});
-			const queuedFollower = operationLock.runExclusive(TEST_AGENT_IDENTITY, async () => {
+			const queuedFollower = operationLock.runExclusive(identity, async () => {
 				events.push('follower:start');
 				return 'follower';
 			});
@@ -169,7 +193,7 @@ describe('createAgentLeaseOperationLock', () => {
 			expect(events).toEqual(['first:start', 'follower:start']);
 
 			// Act
-			const futureOperation = operationLock.runExclusive(TEST_AGENT_IDENTITY, async () => 'future');
+			const futureOperation = operationLock.runExclusive(identity, async () => 'future');
 
 			// Assert
 			await expect(futureOperation).resolves.toBe('future');

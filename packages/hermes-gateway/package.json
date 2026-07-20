@@ -1,0 +1,27 @@
+{
+	"name": "@agent-vm/hermes-gateway",
+	"version": "0.0.114",
+	"description": "Managed Hermes Gateway lifecycle and image contracts.",
+	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
+	"license": "MIT",
+	"files": [
+		"dist"
+	],
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"scripts": {
+		"build": "tsdown",
+		"typecheck": "tsc -p tsconfig.json --noEmit"
+	},
+	"dependencies": {
+		"@agent-vm/gateway-lifecycle": "workspace:*",
+		"yaml": "^2.9.0"
+	}
+}

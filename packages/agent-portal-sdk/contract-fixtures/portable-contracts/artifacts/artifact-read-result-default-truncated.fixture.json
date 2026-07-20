@@ -1,0 +1,35 @@
+{
+	"caseId": "artifact-read-result-default-truncated",
+	"schemaId": "portal.artifact.read-result",
+	"tags": ["accepted", "artifact", "default"],
+	"input": {
+		"contentBase64": "eyJvayI6dHJ1ZX0=",
+		"mediaType": "application/json",
+		"offsetBytes": 0,
+		"reference": {
+			"byteLength": 11,
+			"expiresAt": "2030-01-01T00:00:00.000Z",
+			"fingerprint": "sha256:4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+			"id": "artifact-1",
+			"mediaType": "application/json"
+		}
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"contentBase64": "eyJvayI6dHJ1ZX0=",
+			"mediaType": "application/json",
+			"offsetBytes": 0,
+			"reference": {
+				"byteLength": 11,
+				"expiresAt": "2030-01-01T00:00:00.000Z",
+				"fingerprint": "sha256:4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+				"id": "artifact-1",
+				"mediaType": "application/json"
+			},
+			"truncated": false
+		},
+		"canonicalJson": "{\"contentBase64\":\"eyJvayI6dHJ1ZX0=\",\"mediaType\":\"application/json\",\"offsetBytes\":0,\"reference\":{\"byteLength\":11,\"expiresAt\":\"2030-01-01T00:00:00.000Z\",\"fingerprint\":\"sha256:4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93\",\"id\":\"artifact-1\",\"mediaType\":\"application/json\"},\"truncated\":false}",
+		"refinementIdentities": ["portal.artifact-read.default-truncated"]
+	}
+}

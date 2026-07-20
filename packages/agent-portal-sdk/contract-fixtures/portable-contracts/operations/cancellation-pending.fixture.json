@@ -1,0 +1,18 @@
+{
+	"caseId": "sandbox-operation-cancellation-pending",
+	"schemaId": "sandbox.operation.control-result",
+	"tags": ["accepted", "cancellation", "outcome"],
+	"input": {
+		"kind": "cancellation-pending",
+		"operation": { "operationId": "operation-a", "owningGeneration": "generation-a" }
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"kind": "cancellation-pending",
+			"operation": { "operationId": "operation-a", "owningGeneration": "generation-a" }
+		},
+		"canonicalJson": "{\"kind\":\"cancellation-pending\",\"operation\":{\"operationId\":\"operation-a\",\"owningGeneration\":\"generation-a\"}}",
+		"refinementIdentities": ["portal.result.outcome-algebra"]
+	}
+}

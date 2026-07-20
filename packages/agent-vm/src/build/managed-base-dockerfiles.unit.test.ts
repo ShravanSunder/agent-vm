@@ -68,6 +68,7 @@ describe('managed base Dockerfiles', () => {
 		expect(dockerfile).toContain('ripgrep \\');
 		expect(dockerfile).toContain('fd-find \\');
 		expect(dockerfile).toContain('micro \\');
+		expect(dockerfile).toContain('mkdir -p /work /scratch /run/sshd /var/log');
 		expect(dockerfile).not.toContain('python3 \\');
 		expect(dockerfile).not.toContain('nano \\');
 		expect(dockerfile).not.toContain('vim-tiny');

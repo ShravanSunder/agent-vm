@@ -1,0 +1,32 @@
+{
+	"caseId": "sandbox-exec-start-duplicate-environment-name",
+	"schemaId": "sandbox.exec.start.request",
+	"tags": ["environment", "rejected"],
+	"input": {
+		"command": "printf '%s' \"$MODE\"",
+		"environment": {
+			"handleId": "environment-a",
+			"kind": "environment",
+			"owningGeneration": "generation-a"
+		},
+		"environmentVariables": [
+			{
+				"name": "MODE",
+				"value": "alpha"
+			},
+			{
+				"name": "MODE",
+				"value": "beta"
+			}
+		],
+		"mode": {
+			"kind": "direct"
+		},
+		"timeoutMs": 1000
+	},
+	"expectation": {
+		"kind": "rejected",
+		"errorCodes": ["sandbox.environment-variable.duplicate-name"],
+		"refinementIdentities": ["sandbox.environment-variable.unique-names"]
+	}
+}

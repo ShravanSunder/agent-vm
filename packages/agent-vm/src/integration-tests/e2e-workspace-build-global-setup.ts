@@ -45,6 +45,7 @@ export function shouldConfigureE2eCacheRoot(
 ): boolean {
 	return (
 		env.AGENT_VM_OPENCLAW_E2E === '1' ||
+		env.AGENT_VM_HERMES_E2E === '1' ||
 		env.AGENT_VM_WORKER_E2E === '1' ||
 		env.AGENT_VM_LLM_E2E === '1' ||
 		env.AGENT_VM_GONDOLIN_E2E === '1'

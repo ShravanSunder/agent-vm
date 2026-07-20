@@ -11,7 +11,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../../../agent-vm-worker/src/server.js';
 import type { ServerDeps } from '../../../agent-vm-worker/src/server.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
+import {
+	createControllerStateRoot,
+	resolveControllerGatewayStateRoot,
+} from '../controller/durable-state/controller-state-paths.js';
+import { resolveControllerWorkerTaskRuntimeRecordTarget } from '../controller/durable-state/controller-state-record-paths.js';
 import type { GatewayVmLifecycleAuthority } from '../controller/vm-ownership/gateway-vm-lifecycle-authority.js';
+import type { StartGatewayZoneOptions } from '../gateway/gateway-zone-support.js';
+import {
+	buildWorkerRuntimeRecord,
+	writeWorkerRuntimeRecord,
+} from '../gateway/worker-runtime-record.js';
 import {
 	TEST_SSH_SERVER_HOST_KEY,
 	createManagedExecProcessStub,
@@ -38,6 +48,7 @@ const managedVmImagesStub: ManagedVmImageCapability = {
 
 function createStandaloneVmOwnershipStub(): {
 	readonly destroyLiveMock: Mock<GatewayVmLifecycleAuthority['destroyLive']>;
+	readonly gatewayIdentity: NonNullable<GatewayVmLifecycleAuthority['gatewayIdentity']>;
 	readonly vmOwnership: GatewayVmLifecycleAuthority;
 } {
 	const gatewaySeed = {
@@ -53,7 +64,11 @@ function createStandaloneVmOwnershipStub(): {
 	);
 	return {
 		destroyLiveMock,
+		gatewayIdentity,
 		vmOwnership: {
+			abandonUnattachedGatewaySeedAfter: async (cleanupOwnedResources) => {
+				await cleanupOwnedResources();
+			},
 			attachGatewayVm: () => gatewayIdentity,
 			containPendingCreate: async () => {},
 			destroyLive: destroyLiveMock,
@@ -215,38 +230,75 @@ describe('worker-task-runner integration', () => {
 		server = serve({ fetch: app.fetch, port: workerPort });
 		const standaloneOwnership = createStandaloneVmOwnershipStub();
 		vmOwnershipDestroyLiveMock = standaloneOwnership.destroyLiveMock;
-		startGatewayZoneMock.mockResolvedValue({
-			image: { built: true, fingerprint: 'gateway', imagePath: '/tmp/gateway.img' },
-			ingress: { host: '127.0.0.1', port: workerPort },
-			processSpec: {
-				bootstrapCommand: 'true',
-				startCommand:
-					'agent-vm-worker serve --port 18789 --config /state/effective-worker.json --state-dir /state',
-				healthCheck: { type: 'http', port: 18789, path: '/health' },
-				guestListenPort: 18789,
-				logPath: '/tmp/worker.log',
-			},
-			terminateVm: async () => await closeVmMock(),
-			vm: {
-				id: workerVmId,
-				close: closeVmMock,
-				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: workerPort })),
-				enableSsh: vi.fn(async () => ({
-					close: async () => {},
-					command: 'ssh worker-vm',
-					identityFile: '/tmp/worker-vm-identity',
-					serverHostKey: TEST_SSH_SERVER_HOST_KEY,
-					host: '127.0.0.1',
-					port: 2222,
-					user: 'root',
-				})),
-				exec: vi.fn(() => createManagedExecProcessStub()),
-				configureIngressRoutes: vi.fn(),
-				getHostProcessId: () => null,
-				start: async () => {},
-			},
-			vmOwnership: standaloneOwnership.vmOwnership,
-			zone: systemConfig.zones[0],
+		const zone = systemConfig.zones[0];
+		if (zone === undefined) {
+			throw new Error('Expected Worker zone config.');
+		}
+		startGatewayZoneMock.mockImplementation(async (startOptions: StartGatewayZoneOptions) => {
+			const result = {
+				destroyGateway: async () => {
+					await standaloneOwnership.vmOwnership.destroyLive(closeVmMock);
+					return { kind: 'destroyed-clean' as const };
+				},
+				executionModel: 'direct-process' as const,
+				gatewayIdentity: standaloneOwnership.gatewayIdentity,
+				image: { built: true, fingerprint: 'gateway', imageReference: '/tmp/gateway.img' },
+				ingress: { host: '127.0.0.1', port: workerPort },
+				processTarget: {
+					hostPid: 42_424,
+					processIdentity: {
+						command: 'qemu-system-x86_64 -m 4G',
+						lstart: 'Tue Jul 14 22:45:00 2026',
+					},
+					vmId: workerVmId,
+				},
+				processSpec: {
+					bootstrapCommand: 'true',
+					startCommand:
+						'agent-vm-worker serve --port 18789 --config /state/effective-worker.json --state-dir /state',
+					healthCheck: { type: 'http', port: 18789, path: '/health' },
+					guestListenPort: 18789,
+					logPath: '/tmp/worker.log',
+				},
+				vm: {
+					id: workerVmId,
+					close: closeVmMock,
+					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: workerPort })),
+					enableSsh: vi.fn(async () => ({
+						close: async () => {},
+						command: 'ssh worker-vm',
+						identityFile: '/tmp/worker-vm-identity',
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+						host: '127.0.0.1',
+						port: 2222,
+						user: 'root',
+					})),
+					exec: vi.fn(() => createManagedExecProcessStub()),
+					configureIngressRoutes: vi.fn(),
+					getHostProcessId: () => 42_424,
+					start: async () => {},
+				},
+				zone,
+			} as const;
+			if (startOptions.runtimeRecordTarget.kind !== 'controller-worker-task-runtime-record') {
+				throw new Error('Worker host e2e requires a Worker runtime record target.');
+			}
+			await writeWorkerRuntimeRecord(
+				startOptions.runtimeRecordTarget,
+				await buildWorkerRuntimeRecord({
+					controllerPort: startOptions.systemConfig.host.controllerPort,
+					gatewayIdentity: result.gatewayIdentity,
+					ingressPort: result.ingress.port,
+					managedVm: result.vm,
+					processSpec: result.processSpec,
+					projectNamespace: startOptions.systemConfig.host.projectNamespace,
+					readProcessIdentity: async () => result.processTarget.processIdentity,
+					systemConfigPath: startOptions.systemConfig.systemConfigPath,
+					taskId: startOptions.runtimeRecordTarget.taskId,
+					zoneId: startOptions.runtimeRecordTarget.zoneId,
+				}),
+			);
+			return result;
 		});
 	});
 
@@ -270,6 +322,7 @@ describe('worker-task-runner integration', () => {
 	const systemConfig = {
 		schemaVersion: 1,
 		cacheDir: '/tmp/cache',
+		controllerStateDir: '/controller-state-test',
 		runtimeDir: '/tmp/runtime',
 		systemConfigPath: '/tmp/config/system.json',
 		host: {
@@ -327,6 +380,7 @@ describe('worker-task-runner integration', () => {
 		}
 		zone.gateway.config = path.join(tempDir, 'gateway-config.json');
 		zone.gateway.stateDir = path.join(tempDir, 'state');
+		systemConfig.controllerStateDir = path.join(tempDir, 'controller-state');
 		systemConfig.runtimeDir = path.join(tempDir, 'runtime');
 		await fs.writeFile(zone.gateway.config, JSON.stringify(buildWorkerConfigInput()));
 
@@ -344,11 +398,30 @@ describe('worker-task-runner integration', () => {
 		});
 		const result = await executeWorkerTask(prepared, {
 			controllerEpoch: workerControllerEpoch,
+			managedVmExactProcessTermination: {
+				terminateRecordedHostProcess: async (request) => ({
+					hostProcessId: request.identity.hostProcessId,
+					kind: 'terminated',
+				}),
+			},
 			managedVmFactory: managedVmFactoryStub,
 			managedVmImages: managedVmImagesStub,
+			readProcessIdentity: async () => ({
+				command: 'qemu-system-x86_64 -m 4G',
+				lstart: 'Tue Jul 14 22:45:00 2026',
+			}),
 			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
 			systemConfig,
 			timeoutMs: 2_000,
+			workerRuntimeRecordTarget: resolveControllerWorkerTaskRuntimeRecordTarget({
+				gatewayStateRoot: resolveControllerGatewayStateRoot({
+					controllerStateRoot: createControllerStateRoot({
+						controllerStateDirectoryPath: systemConfig.controllerStateDir,
+					}),
+					zoneId: prepared.zoneId,
+				}),
+				taskId: prepared.taskId,
+			}),
 		});
 
 		expect(result.finalState).toMatchObject({

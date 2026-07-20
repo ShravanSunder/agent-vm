@@ -1,16 +1,26 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { workerConfigSchema } from '@agent-vm/agent-vm-worker';
 import { CONTROL_SESSION_TIMING_MS } from '@agent-vm/control-protocol-contracts';
+import { deriveGatewayControlStablePrincipal } from '@agent-vm/gateway-control-contracts';
 import type { AgentVmHealthEvent } from '@agent-vm/gateway-lifecycle';
 import type { ManagedVm } from '@agent-vm/managed-vm';
 import type { SecretResolver } from '@agent-vm/secret-management';
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
-import type { ControllerTelemetry } from '../observability/controller-telemetry.js';
+import type { GatewayExpectedAdmissionCohort } from '../gateway/gateway-aggregate-admission-state.js';
+import type {
+	GatewayZoneDestroyResult,
+	ManagedGatewayZoneStartResult,
+} from '../gateway/gateway-zone-support.js';
+import { createManagedGatewayBootContract } from '../gateway/managed-gateway-boot-contract.js';
+import {
+	OTEL_RESOURCE_ATTRIBUTES_ENVIRONMENT_VARIABLE,
+	type ControllerTelemetry,
+} from '../observability/controller-telemetry.js';
 import { stableTelemetryHash } from '../observability/health-event-telemetry.js';
 import type { CheckObservabilityStackReadinessOptions } from '../observability/observability-readiness.js';
 import {
@@ -21,14 +31,20 @@ import type { GatewayControlTrustedCallerContext } from './control-session/gatew
 import type { GatewayControlPreparedLeaseSemanticMutation } from './control-session/gateway-control-domain-handler.js';
 import type { GatewaySemanticExecutionProof } from './control-session/gateway-semantic-result-ledger.js';
 import { createStopControllerOperation } from './controller-runtime-operations.js';
-import type {
-	ControllerRuntime,
-	ControllerRuntimeDependencies,
-} from './controller-runtime-types.js';
+import type { ControllerRuntimeDependencies } from './controller-runtime-types.js';
 import {
 	classifyGatewayRecoveryRestartError,
+	createGatewayRuntimeEnvironmentForZone,
 	startControllerRuntime as startControllerRuntimeProduction,
 } from './controller-runtime.js';
+import {
+	createControllerStateRoot,
+	resolveControllerGatewayStateRoot,
+} from './durable-state/controller-state-paths.js';
+import {
+	resolveControllerGatewayRecordTargets,
+	resolveControllerWorkerTaskRuntimeRecordTarget,
+} from './durable-state/controller-state-record-paths.js';
 import type { HealthEventSink, HealthEventStore } from './health/health-event-store.js';
 import type { OpenClawRuntimeStatusStore } from './openclaw-runtime-status.js';
 import { ControllerOwnershipLockError } from './vm-ownership/controller-ownership-lock.js';
@@ -137,8 +153,8 @@ async function createAttachedGatewayVmLifecycleAuthority(options: {
 	return vmOwnership;
 }
 
-function createGatewayVmLifecycleAuthorityStub(vmId: string): GatewayVmLifecycleAuthority {
-	const gatewayIdentity = {
+function createGatewayIdentityForStub(vmId: string): GatewayEpochIdentity {
+	return {
 		bootId: `${vmId}-boot`,
 		controllerEpoch: 'controller-runtime-test-epoch',
 		gatewayEpochId: `${vmId}-epoch`,
@@ -146,21 +162,109 @@ function createGatewayVmLifecycleAuthorityStub(vmId: string): GatewayVmLifecycle
 		generationId: `${vmId}-generation`,
 		zoneId: 'shravan',
 	} satisfies GatewayEpochIdentity;
+}
+
+function createGatewayDestructionContract(
+	vmId: string,
+	destroyGatewayVm: () => Promise<void> = async () => {},
+): Pick<ManagedGatewayZoneStartResult, 'destroyGateway' | 'gatewayIdentity'> {
 	return {
-		attachGatewayVm: (attachedVmId) => {
-			if (attachedVmId !== vmId) {
-				throw new Error(`Expected Gateway VM '${vmId}', received '${attachedVmId}'.`);
-			}
-			return structuredClone(gatewayIdentity);
-		},
-		containPendingCreate: async ({ closeLateCreatedVm, pendingCreate }) => {
-			await closeLateCreatedVm(await pendingCreate);
-		},
-		destroyLive: async (destroyGatewayVm) => {
+		destroyGateway: async (): Promise<GatewayZoneDestroyResult> => {
 			await destroyGatewayVm();
+			return { kind: 'destroyed-clean' };
 		},
-		gatewayIdentity: structuredClone(gatewayIdentity),
-		gatewaySeed: structuredClone(gatewayIdentity),
+		gatewayIdentity: createGatewayIdentityForStub(vmId),
+	};
+}
+
+function requireGatewayIdentity(
+	vmOwnership: Pick<GatewayVmLifecycleAuthority, 'gatewayIdentity'>,
+): GatewayEpochIdentity {
+	if (vmOwnership.gatewayIdentity === undefined) {
+		throw new Error('Expected attached Gateway VM lifecycle authority.');
+	}
+	return vmOwnership.gatewayIdentity;
+}
+
+const controllerRuntimeTestManagedGatewayBootContract = createManagedGatewayBootContract({
+	bootEntry: 'openclaw-gateway',
+	configurationInputPath: '/run/agent-vm/managed-gateway/framework-service.json',
+	environmentInputPath: '/run/agent-vm/managed-gateway/framework.environment.sh',
+	framework: 'openclaw',
+	ingress: { guestPort: 18_789, kind: 'framework-http' },
+	logIdentity: {
+		guestPath: '/var/log/agent-vm/openclaw-service.log',
+		serviceName: 'agent-vm-openclaw-test',
+	},
+	readiness: { guestPort: 18_789, kind: 'framework-http', path: '/readyz' },
+	role: 'framework-service',
+});
+
+function createManagedOpenClawGatewayResultContract(
+	gatewayIdentity: GatewayEpochIdentity,
+	zone: ManagedGatewayZoneStartResult['zone'],
+): Pick<ManagedGatewayZoneStartResult, 'bootContract' | 'executionModel' | 'expectedCohort'> {
+	const frameworkEpoch = `${gatewayIdentity.generationId}-openclaw-framework`;
+	const runtimeEpoch = `${gatewayIdentity.generationId}-tool-portal-runtime`;
+	const toolPortalProcessEpoch = `${gatewayIdentity.generationId}-tool-portal-process`;
+	const expectedCohort = {
+		controlIdentity: {
+			controllerEpoch: gatewayIdentity.controllerEpoch,
+			generationId: gatewayIdentity.generationId,
+			peerId: 'tool-portal-control',
+			processEpoch: toolPortalProcessEpoch,
+		},
+		fence: {
+			controllerEpoch: gatewayIdentity.controllerEpoch,
+			gatewayEpoch: gatewayIdentity.generationId,
+			vmId: gatewayIdentity.gatewayVmId,
+			zoneId: gatewayIdentity.zoneId,
+		},
+		frameworkIdentity: {
+			attachmentGeneration: 1,
+			clientKind: 'openclaw-managed-plugin',
+			configuredAgentIds: (zone.agents ?? []).map((agent) => agent.id),
+			frameworkEpoch,
+			frameworkKind: 'openclaw',
+			projectionCohortDigest:
+				'projection-cohort:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+		},
+		ingressIntent: {
+			controlRoute: {
+				audience: 'gateway-control',
+				guestPort: 18_790,
+				kind: 'tool-portal-control',
+				prefix: '/_agent-vm/control',
+				stripPrefix: true,
+			},
+			frameworkRootRoute: {
+				guestPort: 18_789,
+				kind: 'framework-root',
+				prefix: '/',
+				stripPrefix: true,
+			},
+		},
+		providerRevision: `${gatewayIdentity.generationId}-provider-revision`,
+		requiredBackendRevision: `${gatewayIdentity.generationId}-backend-revision`,
+		semanticRevision: `${gatewayIdentity.generationId}-semantic-revision`,
+		toolPortalIdentity: {
+			processEpoch: toolPortalProcessEpoch,
+			role: 'tool-portal',
+			runtimeEpoch,
+			serviceId: 'tool-portal-service',
+		},
+		udsIdentity: {
+			frameworkEpoch,
+			gatewayEpoch: gatewayIdentity.generationId,
+			runtimeEpoch,
+			socketPath: '/run/agent-vm/gateway-runtime/managed-plugin.sock',
+		},
+	} satisfies GatewayExpectedAdmissionCohort;
+
+	return {
+		bootContract: controllerRuntimeTestManagedGatewayBootContract,
+		executionModel: 'managed-gateway',
+		expectedCohort,
 	};
 }
 
@@ -193,14 +297,11 @@ const preflightGatewayZoneStart: NonNullable<
 	secretResolver: startOptions.secretResolver,
 });
 
-describe('controller private OpenClaw reliability composition', () => {
-	it('keeps the optional registry factory private from ControllerRuntime', () => {
-		expectTypeOf<'createOpenClawProcessReliabilityFaultTargetRegistry'>().toMatchTypeOf<
+describe('managed Gateway controller composition', () => {
+	it('does not expose the removed OpenClaw process reliability registry dependency', () => {
+		expectTypeOf<'createOpenClawProcessReliabilityFaultTargetRegistry'>().not.toMatchTypeOf<
 			keyof ControllerRuntimeDependencies
 		>();
-		expectTypeOf<ControllerRuntime>().not.toMatchTypeOf<{
-			readonly openClawProcessReliabilityFaultTargetRegistries: unknown;
-		}>();
 	});
 });
 
@@ -215,6 +316,7 @@ function startControllerRuntime(
 		| 'configureManagedVmHostNetworkDefaults'
 		| 'managedVmFactory'
 		| 'managedVmImages'
+		| 'managedVmExactProcessTermination'
 		| 'managedVmOwnedDirectories'
 	> &
 		Partial<
@@ -223,6 +325,7 @@ function startControllerRuntime(
 				| 'configureManagedVmHostNetworkDefaults'
 				| 'managedVmFactory'
 				| 'managedVmImages'
+				| 'managedVmExactProcessTermination'
 				| 'managedVmOwnedDirectories'
 			>
 		>,
@@ -238,6 +341,12 @@ function startControllerRuntime(
 		},
 		managedVmImages: {
 			prepareImage: async () => preflightedGatewayImage,
+		},
+		managedVmExactProcessTermination: {
+			terminateRecordedHostProcess: async ({ identity }) => ({
+				hostProcessId: identity.hostProcessId,
+				kind: 'already-absent',
+			}),
 		},
 		managedVmOwnedDirectories: {
 			openHostDirectory: (hostPath) => ({
@@ -355,7 +464,7 @@ describe('classifyGatewayRecoveryRestartError', () => {
 		expect(
 			classifyGatewayRecoveryRestartError(
 				Object.assign(new Error('restart timed out'), {
-					code: 'OPENCLAW_GATEWAY_RESTART_TIMEOUT',
+					code: 'MANAGED_GATEWAY_RESTART_TIMEOUT',
 				}),
 			),
 		).toBe('recovery-timeout');
@@ -371,6 +480,7 @@ function isPathInsideDirectory(candidatePath: string, directoryPath: string): bo
 const systemConfig = {
 	schemaVersion: 1,
 	cacheDir: path.join(controllerRuntimeTestRoot, 'cache'),
+	controllerStateDir: path.join(controllerRuntimeTestRoot, 'controller-state'),
 	runtimeDir: path.join(controllerRuntimeTestRoot, 'runtime'),
 	systemConfigPath: path.join(controllerRuntimeTestRoot, 'config', 'system.json'),
 	host: {
@@ -452,6 +562,37 @@ const systemConfig = {
 	},
 } satisfies LoadedSystemConfig;
 
+const controllerRuntimeTestControllerStateRoot = createControllerStateRoot({
+	controllerStateDirectoryPath: systemConfig.controllerStateDir,
+});
+
+function resolveControllerRuntimeTestGatewayStateRoot(
+	zoneId: string,
+): ReturnType<typeof resolveControllerGatewayStateRoot> {
+	return resolveControllerGatewayStateRoot({
+		controllerStateRoot: controllerRuntimeTestControllerStateRoot,
+		zoneId,
+	});
+}
+
+function resolveControllerRuntimeTestManagedGatewayRecordTarget(
+	zoneId: string,
+): ReturnType<typeof resolveControllerGatewayRecordTargets>['managedGatewayRuntimeRecord'] {
+	return resolveControllerGatewayRecordTargets({
+		gatewayStateRoot: resolveControllerRuntimeTestGatewayStateRoot(zoneId),
+	}).managedGatewayRuntimeRecord;
+}
+
+function resolveControllerRuntimeTestWorkerRecordTarget(
+	zoneId: string,
+	taskId: string,
+): ReturnType<typeof resolveControllerWorkerTaskRuntimeRecordTarget> {
+	return resolveControllerWorkerTaskRuntimeRecordTarget({
+		gatewayStateRoot: resolveControllerRuntimeTestGatewayStateRoot(zoneId),
+		taskId,
+	});
+}
+
 function createObservabilitySystemConfig(
 	controllerStartPolicy: 'degraded' | 'require-ready' | 'off',
 	stackMode: 'external' | 'managed' = 'managed',
@@ -464,16 +605,23 @@ function createObservabilitySystemConfig(
 		...zone,
 		observability: {
 			enabled: true,
-			openclaw: {
-				serviceName: 'agent-vm-openclaw-shravan',
-				traces: true,
-				metrics: true,
-				logs: true,
-				sampleRate: 1,
-				flushIntervalMs: 10_000,
-				captureContent: { enabled: false },
-				diagnosticsFlags: [],
+			services: {
+				framework: {
+					traces: true,
+					metrics: true,
+					logs: true,
+					sampleRate: 1,
+					flushIntervalMs: 10_000,
+				},
+				toolPortal: {
+					traces: true,
+					metrics: true,
+					logs: true,
+					sampleRate: 1,
+					flushIntervalMs: 10_000,
+				},
 			},
+			openclaw: { diagnosticsFlags: [] },
 		},
 	} satisfies LoadedSystemConfig['zones'][number];
 	const hostObservability =
@@ -559,14 +707,6 @@ describe('controller runtime test fixture paths', () => {
 		).toEqual([]);
 	});
 });
-
-const openClawProcessSpec = {
-	bootstrapCommand: 'bootstrap-openclaw',
-	guestListenPort: 18789,
-	healthCheck: { type: 'http', port: 18789, path: '/' } as const,
-	logPath: '/agent-vm/logs/gateway-boot-latest.log',
-	startCommand: 'start-openclaw',
-};
 
 const workerProcessSpec = {
 	bootstrapCommand: 'bootstrap-worker',
@@ -669,6 +809,41 @@ describe('createStopControllerOperation', () => {
 });
 
 describe('startControllerRuntime', () => {
+	it('admits controller-authored telemetry resource attributes only for observable zones', () => {
+		const controllerRuntimeEnvironment = {
+			[OTEL_RESOURCE_ATTRIBUTES_ENVIRONMENT_VARIABLE]: 'controller-authored',
+		};
+		const callerRuntimeEnvironment = {
+			CALLER_VARIABLE: 'preserved',
+			[OTEL_RESOURCE_ATTRIBUTES_ENVIRONMENT_VARIABLE]: 'caller-authored',
+		};
+
+		expect(
+			createGatewayRuntimeEnvironmentForZone({
+				callerRuntimeEnvironment,
+				controllerTelemetryRuntimeEnvironment: controllerRuntimeEnvironment,
+				zone: { observability: { enabled: true } },
+			}),
+		).toEqual({
+			CALLER_VARIABLE: 'preserved',
+			[OTEL_RESOURCE_ATTRIBUTES_ENVIRONMENT_VARIABLE]: 'controller-authored',
+		});
+		expect(
+			createGatewayRuntimeEnvironmentForZone({
+				callerRuntimeEnvironment: { CALLER_VARIABLE: 'preserved' },
+				controllerTelemetryRuntimeEnvironment: controllerRuntimeEnvironment,
+				zone: {},
+			}),
+		).toEqual({ CALLER_VARIABLE: 'preserved' });
+		expect(
+			createGatewayRuntimeEnvironmentForZone({
+				callerRuntimeEnvironment,
+				controllerTelemetryRuntimeEnvironment: controllerRuntimeEnvironment,
+				zone: {},
+			}),
+		).toEqual(callerRuntimeEnvironment);
+	});
+
 	it('refuses an active deployment ownership lock before secret resolution', async () => {
 		const lockConflict = new ControllerOwnershipLockError('controller-already-active');
 		const createSecretResolver = vi.fn(
@@ -703,6 +878,12 @@ describe('startControllerRuntime', () => {
 		const reconciliationFailure = new GatewayOwnershipCoordinatorError('owner-unsafe', {
 			cause: new Error('recorded VM tree reconciliation refused unsafe ownership evidence'),
 		});
+		const managedVmExactProcessTermination = {
+			terminateRecordedHostProcess: async ({ identity }) => ({
+				hostProcessId: identity.hostProcessId,
+				kind: 'already-absent' as const,
+			}),
+		} satisfies ControllerRuntimeDependencies['managedVmExactProcessTermination'];
 		const reconcileRecordedVmTree: NonNullable<
 			ControllerRuntimeDependencies['reconcileRecordedVmTree']
 		> = vi.fn(async ({ systemConfig: reconciledSystemConfig, zoneId }) => {
@@ -729,6 +910,7 @@ describe('startControllerRuntime', () => {
 					resolve: async () => '',
 					resolveAll: async () => ({}),
 				})),
+				managedVmExactProcessTermination,
 				preflightGatewayZoneStart,
 				reconcileRecordedVmTree,
 				startGatewayZone,
@@ -739,6 +921,8 @@ describe('startControllerRuntime', () => {
 		// Assert
 		expect(startupError).toBe(reconciliationFailure);
 		expect(reconcileRecordedVmTree).toHaveBeenCalledExactlyOnceWith({
+			controllerStateRoot: { directoryPath: systemConfig.controllerStateDir },
+			exactProcessTermination: managedVmExactProcessTermination,
 			systemConfig,
 			zoneId: 'shravan',
 		});
@@ -916,14 +1100,10 @@ describe('startControllerRuntime', () => {
 					host: '127.0.0.1',
 					port: 18791,
 				},
-				controlSessionRecoverySourceKey: {
-					bootId: 'gateway-boot-static',
-					domain: 'gateway_control' as const,
-					gatewayVmId: 'gateway-vm-same',
-					generationId: 'gateway-generation-static',
-					zoneId: 'shravan',
-				},
-				processSpec: openClawProcessSpec,
+				...createManagedOpenClawGatewayResultContract(
+					createGatewayIdentityForStub(gatewayVmId),
+					onePasswordGatewayZone,
+				),
 				vm: {
 					close: vi.fn(async () => {}),
 					enableIngress: vi.fn(async () => ({
@@ -946,8 +1126,7 @@ describe('startControllerRuntime', () => {
 					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
-				terminateVm: async () => {},
-				vmOwnership: createGatewayVmLifecycleAuthorityStub(gatewayVmId),
+				...createGatewayDestructionContract(gatewayVmId),
 				zone: onePasswordGatewayZone,
 			};
 		});
@@ -1015,8 +1194,16 @@ describe('startControllerRuntime', () => {
 		expect(refreshResponse.status).toBe(200);
 		expect(createSecretResolver).toHaveBeenCalledTimes(2);
 		expect(startGatewayZone).toHaveBeenCalledTimes(2);
-		expect(startGatewayZone.mock.calls[0]?.[0]).toMatchObject({ zoneId: 'shravan' });
-		expect(startGatewayZone.mock.calls[1]?.[0]).toMatchObject({ zoneId: 'shravan' });
+		const expectedManagedGatewayRuntimeRecordTarget =
+			resolveControllerRuntimeTestManagedGatewayRecordTarget('shravan');
+		expect(startGatewayZone.mock.calls[0]?.[0]).toMatchObject({
+			runtimeRecordTarget: expectedManagedGatewayRuntimeRecordTarget,
+			zoneId: 'shravan',
+		});
+		expect(startGatewayZone.mock.calls[1]?.[0]).toMatchObject({
+			runtimeRecordTarget: expectedManagedGatewayRuntimeRecordTarget,
+			zoneId: 'shravan',
+		});
 		expect(startGatewayZone.mock.calls[1]?.[0].gatewayControlProcessAdmissionCoordinator).toBe(
 			startGatewayZone.mock.calls[0]?.[0].gatewayControlProcessAdmissionCoordinator,
 		);
@@ -1035,15 +1222,15 @@ describe('startControllerRuntime', () => {
 		const absoluteLeaseRoot = await mkdtemp(
 			path.join(tmpdir(), 'agent-vm-controller-runtime-test-'),
 		);
-		await mkdir(path.join(absoluteLeaseRoot, 'state', zone.id, 'sandboxes', 'agent', 'work'), {
+		await mkdir(path.join(absoluteLeaseRoot, 'zone-files', zone.id, 'agents', 'main', 'self'), {
 			recursive: true,
 		});
-		await mkdir(path.join(absoluteLeaseRoot, 'state', zone.id, 'sandboxes', 'main', 'work'), {
+		await mkdir(path.join(absoluteLeaseRoot, 'zone-files', zone.id, 'agents', 'main', 'work'), {
 			recursive: true,
 		});
 		const absoluteLeaseZone = {
 			...zone,
-			agents: [{ id: 'main' }],
+			agents: [{ id: 'main', workspaceGit: { mode: 'local' } }],
 			gateway: {
 				...zone.gateway,
 				stateDir: path.join(absoluteLeaseRoot, 'state', zone.id),
@@ -1057,6 +1244,17 @@ describe('startControllerRuntime', () => {
 				...systemConfig.zones.filter((candidateZone) => candidateZone.id !== zone.id),
 			],
 		} satisfies LoadedSystemConfig;
+		await mkdir(
+			path.join(
+				absoluteLeaseSystemConfig.runtimeDir,
+				'zones',
+				zone.id,
+				'gitdirs',
+				'agents',
+				'main',
+			),
+			{ recursive: true },
+		);
 		const closeGatewayVm = vi.fn(async () => {});
 		let capturedHealthEventStore: HealthEventStore | undefined;
 		let capturedOpenClawRuntimeStatusStore: OpenClawRuntimeStatusStore | undefined;
@@ -1084,13 +1282,19 @@ describe('startControllerRuntime', () => {
 					host: '127.0.0.1',
 					port: 18791,
 				},
-				processSpec: openClawProcessSpec,
+				...createManagedOpenClawGatewayResultContract(
+					requireGatewayIdentity(vmOwnership),
+					absoluteLeaseZone,
+				),
 				vm: {
 					...managedGatewayVm,
 					close: closeGatewayVm,
 				},
-				terminateVm: closeGatewayVm,
-				vmOwnership,
+				destroyGateway: async (): Promise<GatewayZoneDestroyResult> => {
+					await vmOwnership.destroyLive(closeGatewayVm);
+					return { kind: 'destroyed-clean' };
+				},
+				gatewayIdentity: requireGatewayIdentity(vmOwnership),
 				zone: absoluteLeaseZone,
 			};
 		});
@@ -1131,6 +1335,26 @@ describe('startControllerRuntime', () => {
 				detachAfterFirstPidRead: true,
 			}),
 		);
+		const materializeWorkspaceGitRepository = vi.fn(
+			async (
+				options: Parameters<
+					NonNullable<ControllerRuntimeDependencies['materializeWorkspaceGitRepository']>
+				>[0],
+			) => ({
+				branch: 'agent/workspace',
+				hostGitDirectory: path.join(
+					absoluteLeaseSystemConfig.runtimeDir,
+					'zones',
+					options.zoneId,
+					'gitdirs',
+					'agents',
+					options.agentId,
+					'workspace.git',
+				),
+				hostWorkspaceDirectory: options.hostWorkspaceDirectory,
+				mode: options.policy.kind,
+			}),
+		);
 		const configureManagedVmHostNetworkDefaults = vi.fn(() => {
 			startupEvents.push('host-network-defaults');
 			return {
@@ -1156,6 +1380,7 @@ describe('startControllerRuntime', () => {
 				},
 				createManagedToolVm,
 				configureManagedVmHostNetworkDefaults,
+				materializeWorkspaceGitRepository,
 				createSecretResolver: async () => {
 					startupEvents.push('secrets');
 					return {
@@ -1185,6 +1410,7 @@ describe('startControllerRuntime', () => {
 		expect(startGatewayZone).toHaveBeenCalledWith(
 			expect.objectContaining({
 				runTask: expect.any(Function),
+				runtimeRecordTarget: resolveControllerRuntimeTestManagedGatewayRecordTarget('shravan'),
 				runtimeEnvironment: {},
 				runtimePluginConfigs: {},
 				gatewayControlProcessAdmissionCoordinator: expect.objectContaining({
@@ -1194,9 +1420,18 @@ describe('startControllerRuntime', () => {
 				zoneId: 'shravan',
 			}),
 			expect.objectContaining({
+				gatewayRuntimeArtifactLimits: {
+					maximumArtifactBytes: 1_024 * 1_024,
+					maximumArtifactCount: 32,
+					maximumLifetimeMs: 5 * 60 * 1_000,
+					maximumTotalBytes: 8 * 1_024 * 1_024,
+				},
 				managedVmFactory: expect.any(Object),
 				managedVmImages: expect.any(Object),
 			}),
+		);
+		expect(startGatewayZone.mock.calls[0]?.[0].systemConfig.zones[0]?.gateway.stateDir).toBe(
+			absoluteLeaseZone.gateway.stateDir,
 		);
 		expect(taskTitles).toEqual([
 			'Resolving 1Password secrets',
@@ -1273,19 +1508,25 @@ describe('startControllerRuntime', () => {
 		if (gatewayControlLeaseRpc === undefined) {
 			throw new Error('Expected gateway control lease RPC to be passed to gateway startup.');
 		}
+		const controllerLeasePrincipal = {
+			agentId: 'main',
+			frameworkIdentity: { agentId: 'main', kind: 'openclaw' },
+			profileAssignmentRevision: 'assignment-main',
+			toolPortalProfileId: 'standard',
+		} as const;
 		const controllerLeaseCallerContext = {
 			agentId: 'main',
-			agentWorkspaceDir: '/zone/agents/main',
 			bootId: 'gateway-boot-a',
 			callerContextId: '44444444-4444-4444-8444-444444444444',
 			connectionId: '11111111-1111-4111-8111-111111111111',
 			controllerEpoch: 'controller-epoch-a',
 			peerId: 'gateway-zone-a',
+			principal: controllerLeasePrincipal,
 			purpose: 'tool_vm_lease',
 			sessionId: '33333333-3333-4333-8333-333333333333',
-			sessionKeyDigest: '0123456789abcdef0123456789abcdef',
-			stablePrincipal: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-			workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
+			stablePrincipal: deriveGatewayControlStablePrincipal({
+				principal: controllerLeasePrincipal,
+			}),
 			zoneId: 'shravan',
 		} satisfies GatewayControlTrustedCallerContext;
 		if (capturedGatewayIdentity === undefined) {
@@ -1320,6 +1561,16 @@ describe('startControllerRuntime', () => {
 				zoneId: 'shravan',
 			}),
 		);
+		expect(materializeWorkspaceGitRepository).toHaveBeenCalledOnce();
+		expect(materializeWorkspaceGitRepository).toHaveBeenLastCalledWith({
+			agentId: 'main',
+			hostWorkspaceDirectory: await realpath(
+				path.join(absoluteLeaseZone.gateway.zoneFilesDir, 'agents', 'main'),
+			),
+			policy: { kind: 'local' },
+			runtimeDir: absoluteLeaseSystemConfig.runtimeDir,
+			zoneId: 'shravan',
+		});
 		const refreshedControllerLeaseCallerContext = {
 			...controllerLeaseCallerContext,
 			callerContextId: '99999999-9999-4999-8999-999999999999',
@@ -1357,6 +1608,7 @@ describe('startControllerRuntime', () => {
 			throw new Error(`Expected replacement lease, got ${JSON.stringify(replacementLease)}.`);
 		}
 		expect(replacementLease.leaseId).not.toBe(oldLease.leaseId);
+		expect(materializeWorkspaceGitRepository).toHaveBeenCalledTimes(2);
 		const lifecycleSnapshotResponse = await startHttpServerArgs.app.request(
 			'/zones/shravan/health-snapshot',
 		);
@@ -1508,7 +1760,10 @@ describe('startControllerRuntime', () => {
 					host: '127.0.0.1',
 					port: 18791,
 				},
-				processSpec: openClawProcessSpec,
+				...createManagedOpenClawGatewayResultContract(
+					createGatewayIdentityForStub('gateway-vm-1'),
+					observabilityZone,
+				),
 				vm: {
 					close: closeGatewayVm,
 					enableIngress: vi.fn(async () => ({
@@ -1531,8 +1786,7 @@ describe('startControllerRuntime', () => {
 					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
-				terminateVm: closeGatewayVm,
-				vmOwnership: createGatewayVmLifecycleAuthorityStub('gateway-vm-1'),
+				...createGatewayDestructionContract('gateway-vm-1', closeGatewayVm),
 				zone: observabilityZone,
 			};
 		});
@@ -1589,7 +1843,10 @@ describe('startControllerRuntime', () => {
 				host: '127.0.0.1',
 				port: 18791,
 			},
-			processSpec: openClawProcessSpec,
+			...createManagedOpenClawGatewayResultContract(
+				createGatewayIdentityForStub('gateway-vm-1'),
+				observabilityZone,
+			),
 			vm: {
 				close: vi.fn(async () => {}),
 				enableIngress: vi.fn(async () => ({
@@ -1612,8 +1869,7 @@ describe('startControllerRuntime', () => {
 				configureIngressRoutes: vi.fn(),
 				start: async () => {},
 			},
-			terminateVm: async () => {},
-			vmOwnership: createGatewayVmLifecycleAuthorityStub('gateway-vm-1'),
+			...createGatewayDestructionContract('gateway-vm-1'),
 			zone: observabilityZone,
 		}));
 		const checkObservabilityStackReadiness = vi.fn(
@@ -1736,7 +1992,10 @@ describe('startControllerRuntime', () => {
 					host: '127.0.0.1',
 					port: 18791,
 				},
-				processSpec: openClawProcessSpec,
+				...createManagedOpenClawGatewayResultContract(
+					createGatewayIdentityForStub('gateway-vm-telemetry'),
+					observabilityZone,
+				),
 				vm: {
 					close: vi.fn(async () => {}),
 					enableIngress: vi.fn(async () => ({
@@ -1761,8 +2020,7 @@ describe('startControllerRuntime', () => {
 					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
-				terminateVm: async () => {},
-				vmOwnership: createGatewayVmLifecycleAuthorityStub('gateway-vm-telemetry'),
+				...createGatewayDestructionContract('gateway-vm-telemetry'),
 				zone: observabilityZone,
 			};
 		});
@@ -1939,6 +2197,19 @@ describe('startControllerRuntime', () => {
 		}
 		expect(telemetryLifecycleEvents).toEqual(['controller-started', 'controller-stopping']);
 		expect(telemetryHealthEvents).toHaveLength(258);
+		expect(startGatewayZone).toHaveBeenCalledWith(
+			expect.objectContaining({
+				runtimeEnvironment: expect.objectContaining({
+					[OTEL_RESOURCE_ATTRIBUTES_ENVIRONMENT_VARIABLE]: [
+						'dev.release.channel=beta',
+						`dev.repo.hash=${stableTelemetryHash('repo')}`,
+						'dev.runtime.flavor=beta',
+						`dev.worktree.hash=${stableTelemetryHash('worktree')}`,
+					].join(','),
+				}),
+			}),
+			expect.anything(),
+		);
 		expect(telemetryHealthEvents[0]).toEqual(
 			expect.objectContaining({
 				kind: 'gateway-service-health',
@@ -2023,7 +2294,10 @@ describe('startControllerRuntime', () => {
 					host: '127.0.0.1',
 					port: 18791,
 				},
-				processSpec: openClawProcessSpec,
+				...createManagedOpenClawGatewayResultContract(
+					createGatewayIdentityForStub('gateway-vm-1'),
+					zone,
+				),
 				vm: {
 					close: vi.fn(async () => {}),
 					enableIngress: vi.fn(async () => ({
@@ -2046,8 +2320,7 @@ describe('startControllerRuntime', () => {
 					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
-				terminateVm: async () => {},
-				vmOwnership: createGatewayVmLifecycleAuthorityStub('gateway-vm-1'),
+				...createGatewayDestructionContract('gateway-vm-1'),
 				zone,
 			};
 		});
@@ -2248,7 +2521,10 @@ describe('startControllerRuntime', () => {
 			return {
 				image: { built: true, fingerprint: 'gateway-image', imageReference: '/tmp/gateway-image' },
 				ingress: { host: '127.0.0.1', port: 18791 },
-				processSpec: openClawProcessSpec,
+				...createManagedOpenClawGatewayResultContract(
+					createGatewayIdentityForStub('gateway-vm-1'),
+					zone,
+				),
 				vm: {
 					close: vi.fn(async () => {}),
 					enableIngress: vi.fn(async () => ({
@@ -2271,8 +2547,7 @@ describe('startControllerRuntime', () => {
 					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
-				terminateVm: async () => {},
-				vmOwnership: createGatewayVmLifecycleAuthorityStub('gateway-vm-1'),
+				...createGatewayDestructionContract('gateway-vm-1'),
 				zone,
 			};
 		});
@@ -2361,7 +2636,7 @@ describe('startControllerRuntime', () => {
 		}
 	});
 
-	it('auto restarts a running OpenClaw gateway VM after service failures corroborate a stale control session past death grace', async () => {
+	it('replaces the whole managed Gateway VM when framework readiness failures corroborate stale control evidence', async () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
 		process.env.OPENCLAW_GATEWAY_TOKEN = 'gateway-token';
 		const runtimeSystemConfig = {
@@ -2415,14 +2690,10 @@ describe('startControllerRuntime', () => {
 					host: '127.0.0.1',
 					port: 18791,
 				},
-				controlSessionRecoverySourceKey: {
-					bootId: `gateway-boot-${gatewayStartCount}`,
-					domain: 'gateway_control' as const,
-					gatewayVmId: `gateway-vm-${gatewayStartCount}`,
-					generationId: `gateway-generation-${gatewayStartCount}`,
-					zoneId: zone.id,
-				},
-				processSpec: openClawProcessSpec,
+				...createManagedOpenClawGatewayResultContract(
+					createGatewayIdentityForStub(gatewayVmId),
+					zone,
+				),
 				vm: {
 					close: gatewayStartCount === 1 ? firstGatewayClose : vi.fn(async () => {}),
 					enableIngress: vi.fn(async () => ({
@@ -2448,8 +2719,10 @@ describe('startControllerRuntime', () => {
 					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
-				terminateVm: gatewayStartCount === 1 ? firstGatewayClose : async (): Promise<void> => {},
-				vmOwnership: createGatewayVmLifecycleAuthorityStub(gatewayVmId),
+				...createGatewayDestructionContract(
+					gatewayVmId,
+					gatewayStartCount === 1 ? firstGatewayClose : async (): Promise<void> => {},
+				),
 				zone,
 			};
 		});
@@ -2540,6 +2813,7 @@ describe('startControllerRuntime', () => {
 		await monitorTick();
 
 		expect(healthProbeCommands).toHaveLength(3);
+		expect(healthProbeCommands.every((command) => command.includes('/readyz'))).toBe(true);
 		expect(startGatewayZone).toHaveBeenCalledTimes(2);
 		expect(startGatewayZone.mock.calls[1]?.[0].onPendingVmCreation).toEqual(expect.any(Function));
 		expect(firstGatewayClose).toHaveBeenCalledOnce();
@@ -2562,7 +2836,7 @@ describe('startControllerRuntime', () => {
 		await runtime.close();
 	});
 
-	it('does not auto restart when OpenClaw readiness is red but service liveness is healthy', async () => {
+	it('does not auto restart while managed framework readiness and control evidence remain healthy', async () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
 		process.env.OPENCLAW_GATEWAY_TOKEN = 'gateway-token';
 		const runtimeSystemConfig = {
@@ -2590,54 +2864,52 @@ describe('startControllerRuntime', () => {
 		}[] = [];
 		const fakeInterval = setTimeout(() => undefined, 0);
 		clearTimeout(fakeInterval);
-		const startGatewayZone = vi.fn(async () => ({
-			image: {
-				built: true,
-				fingerprint: 'gateway-image',
-				imageReference: '/tmp/gateway-image',
-			},
-			ingress: {
-				host: '127.0.0.1',
-				port: 18791,
-			},
-			processSpec: {
-				...openClawProcessSpec,
-				healthCheck: { type: 'http', port: 18789, path: '/readyz' } as const,
-				serviceHealthCheck: { type: 'http', port: 18789, path: '/health' } as const,
-			},
-			vm: {
-				close: closeGatewayVm,
-				enableIngress: vi.fn(async () => ({
-					close: vi.fn(async () => {}),
+		let capturedHealthEventStore: HealthEventStore | undefined;
+		const startGatewayZone = vi.fn(async (startOptions) => {
+			capturedHealthEventStore = startOptions.healthEventStore;
+			return {
+				image: {
+					built: true,
+					fingerprint: 'gateway-image',
+					imageReference: '/tmp/gateway-image',
+				},
+				ingress: {
 					host: '127.0.0.1',
 					port: 18791,
-				})),
-				enableSsh: vi.fn(async () => ({
-					close: async () => {},
-					serverHostKey: TEST_SSH_SERVER_HOST_KEY,
-					command: 'ssh ...',
-					host: '127.0.0.1',
-					identityFile: '/tmp/key',
-					port: 19000,
-					user: 'sandbox',
-				})),
-				exec: vi.fn((command: string) => {
-					healthProbeCommands.push(command);
-					return createManagedExecProcessStub({
-						exitCode: 0,
-						stderr: '',
-						stdout: command.includes('/health') ? '200' : '503',
-					});
-				}),
-				getHostProcessId: vi.fn(() => 48_000),
-				id: 'gateway-vm-readiness-red-service-green',
-				configureIngressRoutes: vi.fn(),
-				start: async () => {},
-			},
-			terminateVm: closeGatewayVm,
-			vmOwnership: createGatewayVmLifecycleAuthorityStub('gateway-vm-readiness-red-service-green'),
-			zone,
-		}));
+				},
+				...createManagedOpenClawGatewayResultContract(
+					createGatewayIdentityForStub('gateway-vm-healthy-cohort'),
+					zone,
+				),
+				vm: {
+					close: closeGatewayVm,
+					enableIngress: vi.fn(async () => ({
+						close: vi.fn(async () => {}),
+						host: '127.0.0.1',
+						port: 18791,
+					})),
+					enableSsh: vi.fn(async () => ({
+						close: async () => {},
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+						command: 'ssh ...',
+						host: '127.0.0.1',
+						identityFile: '/tmp/key',
+						port: 19000,
+						user: 'sandbox',
+					})),
+					exec: vi.fn((command: string) => {
+						healthProbeCommands.push(command);
+						return createManagedExecProcessStub({ exitCode: 0, stderr: '', stdout: '200' });
+					}),
+					getHostProcessId: vi.fn(() => 48_000),
+					id: 'gateway-vm-healthy-cohort',
+					configureIngressRoutes: vi.fn(),
+					start: async () => {},
+				},
+				...createGatewayDestructionContract('gateway-vm-healthy-cohort', closeGatewayVm),
+				zone,
+			};
+		});
 		const runtime = await startControllerRuntime(
 			{
 				systemConfig: runtimeSystemConfig,
@@ -2695,6 +2967,16 @@ describe('startControllerRuntime', () => {
 		if (!monitorTick) {
 			throw new Error('Expected gateway-service monitor interval callback.');
 		}
+		recordControllerHealthEvent(capturedHealthEventStore, {
+			domain: 'gateway_control',
+			elapsedMs: 1,
+			kind: 'gateway-control-session',
+			observedAtMs: nowMs,
+			operation: 'control-session-heartbeat',
+			peerId: 'gateway-shravan',
+			result: 'ok',
+			zoneId: 'shravan',
+		} satisfies AgentVmHealthEvent);
 
 		await monitorTick();
 		nowMs += 10_000;
@@ -2703,8 +2985,7 @@ describe('startControllerRuntime', () => {
 		expect(startGatewayZone).toHaveBeenCalledTimes(1);
 		expect(closeGatewayVm).not.toHaveBeenCalled();
 		expect(healthProbeCommands).toHaveLength(2);
-		expect(healthProbeCommands.every((command) => command.includes('/health'))).toBe(true);
-		expect(healthProbeCommands.some((command) => command.includes('/readyz'))).toBe(false);
+		expect(healthProbeCommands.every((command) => command.includes('/readyz'))).toBe(true);
 
 		await runtime.close();
 	});
@@ -2759,7 +3040,10 @@ describe('startControllerRuntime', () => {
 					host: '127.0.0.1',
 					port: 18791,
 				},
-				processSpec: openClawProcessSpec,
+				...createManagedOpenClawGatewayResultContract(
+					createGatewayIdentityForStub(gatewayVmId),
+					zone,
+				),
 				vm: {
 					close: vi.fn(async () => {}),
 					enableIngress: vi.fn(async () => ({
@@ -2784,8 +3068,7 @@ describe('startControllerRuntime', () => {
 					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
-				terminateVm: async () => {},
-				vmOwnership: createGatewayVmLifecycleAuthorityStub(gatewayVmId),
+				...createGatewayDestructionContract(gatewayVmId),
 				zone,
 			};
 		});
@@ -2937,7 +3220,10 @@ describe('startControllerRuntime', () => {
 					host: '127.0.0.1',
 					port: 18791,
 				},
-				processSpec: openClawProcessSpec,
+				...createManagedOpenClawGatewayResultContract(
+					createGatewayIdentityForStub('gateway-vm-secret-refresh'),
+					zone,
+				),
 				vm: {
 					close: vi.fn(async () => {}),
 					enableIngress: vi.fn(async () => ({
@@ -2962,8 +3248,7 @@ describe('startControllerRuntime', () => {
 					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
-				terminateVm: async () => {},
-				vmOwnership: createGatewayVmLifecycleAuthorityStub('gateway-vm-secret-refresh'),
+				...createGatewayDestructionContract('gateway-vm-secret-refresh'),
 				zone,
 			});
 		const runtime = await startControllerRuntime(
@@ -3051,7 +3336,7 @@ describe('startControllerRuntime', () => {
 		await runtime.close();
 	});
 
-	it('records failed gateway recovery when restart does not replace the VM identity', async () => {
+	it('records failed whole-VM recovery when the successor reuses the predecessor VM identity', async () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
 		process.env.OPENCLAW_GATEWAY_TOKEN = 'gateway-token';
 		const runtimeSystemConfig = {
@@ -3072,6 +3357,7 @@ describe('startControllerRuntime', () => {
 		}
 		let nowMs = Date.parse('2026-05-27T13:00:00.000Z');
 		let gatewayStartCount = 0;
+		const firstGatewayClose = vi.fn(async () => {});
 		const intervalCallbacks: {
 			readonly callback: () => void | Promise<void>;
 			readonly delayMs: number;
@@ -3101,9 +3387,12 @@ describe('startControllerRuntime', () => {
 					host: '127.0.0.1',
 					port: 18791,
 				},
-				processSpec: openClawProcessSpec,
+				...createManagedOpenClawGatewayResultContract(
+					createGatewayIdentityForStub('gateway-vm-same'),
+					zone,
+				),
 				vm: {
-					close: vi.fn(async () => {}),
+					close: gatewayStartCount === 1 ? firstGatewayClose : vi.fn(async () => {}),
 					enableIngress: vi.fn(async () => ({
 						close: vi.fn(async () => {}),
 						host: '127.0.0.1',
@@ -3126,15 +3415,10 @@ describe('startControllerRuntime', () => {
 					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
-				controlSessionRecoverySourceKey: {
-					bootId: `gateway-boot-${gatewayStartCount}`,
-					domain: 'gateway_control' as const,
-					gatewayVmId: 'gateway-vm-same',
-					generationId: `gateway-generation-${gatewayStartCount}`,
-					zoneId: zone.id,
-				},
-				terminateVm: async () => {},
-				vmOwnership: createGatewayVmLifecycleAuthorityStub('gateway-vm-same'),
+				...createGatewayDestructionContract(
+					'gateway-vm-same',
+					gatewayStartCount === 1 ? firstGatewayClose : async (): Promise<void> => {},
+				),
 				zone,
 			};
 		});
@@ -3222,6 +3506,7 @@ describe('startControllerRuntime', () => {
 		await monitorTick();
 
 		expect(startGatewayZone).toHaveBeenCalledTimes(2);
+		expect(firstGatewayClose).toHaveBeenCalledOnce();
 		const snapshotResponse = await startHttpServerArgs.app.request(
 			'/zones/shravan/health-snapshot',
 		);
@@ -3375,6 +3660,7 @@ describe('startControllerRuntime', () => {
 					lstart: 'Fri May 22 10:00:00 2026',
 				}),
 				startGatewayZone: vi.fn(async () => ({
+					executionModel: 'direct-process' as const,
 					image: {
 						built: true,
 						fingerprint: 'gateway-image',
@@ -3385,6 +3671,14 @@ describe('startControllerRuntime', () => {
 						port: 18791,
 					},
 					processSpec: workerProcessSpec,
+					processTarget: {
+						hostPid: 48_000,
+						processIdentity: {
+							command: 'qemu-system-x86_64 -m 1G',
+							lstart: 'Fri May 22 10:00:00 2026',
+						},
+						vmId: 'gateway-vm-worker',
+					},
 					vm: {
 						close: vi.fn(async () => {}),
 						enableIngress: vi.fn(async () => ({
@@ -3409,8 +3703,7 @@ describe('startControllerRuntime', () => {
 						start: async () => {},
 						getHostProcessId: () => 12345,
 					},
-					terminateVm: async () => {},
-					vmOwnership: createGatewayVmLifecycleAuthorityStub('gateway-vm-worker'),
+					...createGatewayDestructionContract('gateway-vm-worker'),
 					zone: workerZone,
 				})),
 				startHttpServer,
@@ -3543,206 +3836,23 @@ describe('startControllerRuntime', () => {
 					githubToken: 'controller-token',
 				}),
 			);
+			await vi.waitFor(() => {
+				expect(executeWorkerTask).toHaveBeenCalledWith(
+					expect.objectContaining({ taskId: 'worker-task-1', zoneId: 'shravan' }),
+					expect.objectContaining({
+						workerRuntimeRecordTarget: resolveControllerRuntimeTestWorkerRecordTarget(
+							'shravan',
+							'worker-task-1',
+						),
+					}),
+				);
+			});
 			await expect(runtime.close()).rejects.toThrow(/worker task reservation/u);
 		} finally {
 			if (previousGithubToken === undefined) {
 				delete process.env.GITHUB_TOKEN;
 			} else {
 				process.env.GITHUB_TOKEN = previousGithubToken;
-			}
-		}
-	});
-
-	it('exposes zone Git status through the controller using the host GitHub token', async () => {
-		const previousGithubToken = process.env.GITHUB_TOKEN;
-		const previousOpToken = process.env.OP_SERVICE_ACCOUNT_TOKEN;
-		process.env.GITHUB_TOKEN = 'controller-token';
-		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'op-token';
-		const tempDir = await mkdtemp(path.join(tmpdir(), 'agent-vm-zone-git-runtime-'));
-		const zoneFilesDir = path.join(tempDir, 'zone-files', 'shravan');
-		await mkdir(zoneFilesDir, { recursive: true });
-		const zoneGitSystemConfig: LoadedSystemConfig = {
-			...systemConfig,
-			runtimeDir: path.join(tempDir, 'runtime'),
-			zones: systemConfig.zones.map((zone) => ({
-				...zone,
-				gateway: {
-					...zone.gateway,
-					stateDir: path.join(tempDir, 'state', zone.id),
-					zoneFilesDir,
-					zoneGit: {
-						remote: {
-							repoUrl: 'https://github.com/shravansunder/zone-files.git',
-							branch: 'agent/zone-files',
-							defaultBranch: 'main',
-							protectedBranches: ['main'],
-							protectedBranchPatterns: ['release/*'],
-						},
-					},
-				},
-			})),
-		};
-		let startHttpServerArgs:
-			| {
-					app: {
-						request(path: string, init?: RequestInit): Response | Promise<Response>;
-					};
-					port: number;
-			  }
-			| undefined;
-		const startHttpServer = vi.fn(
-			async (options: {
-				app: { request(path: string, init?: RequestInit): Response | Promise<Response> };
-				port: number;
-			}) => {
-				startHttpServerArgs = options;
-				return {
-					close: async () => {},
-				};
-			},
-		);
-
-		try {
-			const runtime = await startControllerRuntime(
-				{
-					systemConfig: zoneGitSystemConfig,
-					zoneIds: [],
-				},
-				{
-					createSecretResolver: async () => ({
-						resolve: async () => 'controller-token',
-						resolveAll: async () => ({}),
-					}),
-					isProcessAlive: () => true,
-					readProcessIdentity: async () => ({
-						command: 'qemu-system-x86_64 -m 1G',
-						lstart: 'Fri May 22 10:00:00 2026',
-					}),
-					startGatewayZone: vi.fn(async () => {
-						throw new Error('zone git status should not require a booted gateway');
-					}),
-					startHttpServer,
-				},
-			);
-
-			if (!startHttpServerArgs) {
-				throw new Error('Expected startHttpServer to be called.');
-			}
-			const response = await startHttpServerArgs.app.request('/zones/shravan/zone-git/status');
-
-			expect(response.status).toBe(200);
-			await expect(response.json()).resolves.toMatchObject({
-				branch: 'agent/zone-files',
-				initialized: false,
-				localHead: null,
-				remoteHead: null,
-			});
-			await runtime.close();
-		} finally {
-			await rm(tempDir, { recursive: true, force: true });
-			if (previousGithubToken === undefined) {
-				delete process.env.GITHUB_TOKEN;
-			} else {
-				process.env.GITHUB_TOKEN = previousGithubToken;
-			}
-			if (previousOpToken === undefined) {
-				delete process.env.OP_SERVICE_ACCOUNT_TOKEN;
-			} else {
-				process.env.OP_SERVICE_ACCOUNT_TOKEN = previousOpToken;
-			}
-		}
-	});
-
-	it('reports a configuration error when zone Git is configured without a controller GitHub token', async () => {
-		const previousGithubToken = process.env.GITHUB_TOKEN;
-		const previousOpToken = process.env.OP_SERVICE_ACCOUNT_TOKEN;
-		delete process.env.GITHUB_TOKEN;
-		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'op-token';
-		const tempDir = await mkdtemp(path.join(tmpdir(), 'agent-vm-zone-git-runtime-'));
-		const zoneGitSystemConfig: LoadedSystemConfig = {
-			...systemConfig,
-			runtimeDir: path.join(tempDir, 'runtime'),
-			zones: systemConfig.zones.map((zone) => ({
-				...zone,
-				gateway: {
-					...zone.gateway,
-					stateDir: path.join(tempDir, 'state', zone.id),
-					zoneFilesDir: path.join(tempDir, 'zone-files', zone.id),
-					zoneGit: {
-						remote: {
-							repoUrl: 'https://github.com/shravansunder/zone-files.git',
-							branch: 'agent/zone-files',
-							defaultBranch: 'main',
-							protectedBranches: ['main'],
-							protectedBranchPatterns: ['release/*'],
-						},
-					},
-				},
-			})),
-		};
-		let startHttpServerArgs:
-			| {
-					app: {
-						request(path: string, init?: RequestInit): Response | Promise<Response>;
-					};
-					port: number;
-			  }
-			| undefined;
-		const startHttpServer = vi.fn(
-			async (options: {
-				app: { request(path: string, init?: RequestInit): Response | Promise<Response> };
-				port: number;
-			}) => {
-				startHttpServerArgs = options;
-				return {
-					close: async () => {},
-				};
-			},
-		);
-
-		try {
-			const runtime = await startControllerRuntime(
-				{
-					systemConfig: zoneGitSystemConfig,
-					zoneIds: [],
-				},
-				{
-					createSecretResolver: async () => ({
-						resolve: async () => '',
-						resolveAll: async () => ({}),
-					}),
-					isProcessAlive: () => true,
-					readProcessIdentity: async () => ({
-						command: 'qemu-system-x86_64 -m 1G',
-						lstart: 'Fri May 22 10:00:00 2026',
-					}),
-					startGatewayZone: vi.fn(async () => {
-						throw new Error('zone git status should not require a booted gateway');
-					}),
-					startHttpServer,
-				},
-			);
-
-			if (!startHttpServerArgs) {
-				throw new Error('Expected startHttpServer to be called.');
-			}
-			const response = await startHttpServerArgs.app.request('/zones/shravan/zone-git/status');
-
-			expect(response.status).toBe(412);
-			await expect(response.json()).resolves.toEqual({
-				error:
-					"zoneGit for zone 'shravan' requires host.githubToken so the controller can push without exposing credentials to VMs.",
-			});
-			await runtime.close();
-		} finally {
-			await rm(tempDir, { recursive: true, force: true });
-			if (previousGithubToken !== undefined) {
-				process.env.GITHUB_TOKEN = previousGithubToken;
-			}
-			if (previousOpToken === undefined) {
-				delete process.env.OP_SERVICE_ACCOUNT_TOKEN;
-			} else {
-				process.env.OP_SERVICE_ACCOUNT_TOKEN = previousOpToken;
 			}
 		}
 	});
@@ -3895,7 +4005,7 @@ describe('startControllerRuntime', () => {
 		}
 	});
 
-	it('deletes the runtime record on close after the gateway stops', async () => {
+	it('delegates ordered VM and runtime-record cleanup to the Gateway destruction transaction', async () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
 		const zone = systemConfig.zones[0];
 		if (!zone) {
@@ -3911,6 +4021,12 @@ describe('startControllerRuntime', () => {
 		const startGatewayZone = vi.fn(async () => {
 			callOrder.push('start-gateway');
 			return {
+				destroyGateway: async () => {
+					await closeGatewayVm();
+					await deleteGatewayRuntimeRecord();
+					return { kind: 'destroyed-clean' } as const;
+				},
+				gatewayIdentity: createGatewayIdentityForStub('gateway-vm-cleanup-test'),
 				image: {
 					built: true,
 					fingerprint: 'gateway-image',
@@ -3920,7 +4036,10 @@ describe('startControllerRuntime', () => {
 					host: '127.0.0.1',
 					port: 18791,
 				},
-				processSpec: openClawProcessSpec,
+				...createManagedOpenClawGatewayResultContract(
+					createGatewayIdentityForStub('gateway-vm-cleanup-test'),
+					zone,
+				),
 				vm: {
 					close: closeGatewayVm,
 					enableIngress: vi.fn(async () => ({
@@ -3943,8 +4062,6 @@ describe('startControllerRuntime', () => {
 					start: async () => {},
 					getHostProcessId: () => 12345,
 				},
-				terminateVm: closeGatewayVm,
-				vmOwnership: createGatewayVmLifecycleAuthorityStub('gateway-vm-cleanup-test'),
 				zone,
 			};
 		});
@@ -3986,7 +4103,6 @@ describe('startControllerRuntime', () => {
 					command: 'qemu-system-x86_64 -m 1G',
 					lstart: 'Fri May 22 10:00:00 2026',
 				}),
-				deleteGatewayRuntimeRecord,
 				preflightGatewayZoneStart,
 				startGatewayZone,
 				startHttpServer: vi.fn(async () => ({
@@ -4000,7 +4116,7 @@ describe('startControllerRuntime', () => {
 		await runtime.close();
 
 		expect(closeGatewayVm).toHaveBeenCalledTimes(1);
-		expect(deleteGatewayRuntimeRecord).toHaveBeenCalledWith(zone.gateway.stateDir);
+		expect(deleteGatewayRuntimeRecord).toHaveBeenCalledOnce();
 		expect(callOrder.slice(-2)).toEqual(['close-gateway', 'delete-record']);
 	});
 
@@ -4043,13 +4159,9 @@ describe('startControllerRuntime', () => {
 			{ cause: childDestructionFailure },
 		);
 		const closeGatewayVm = vi.fn(async () => {});
-		const destroyGatewayLive = vi.fn(async (): Promise<void> => {
+		const destroyGateway = vi.fn(async (): Promise<never> => {
 			throw gatewayDestructionFailure;
 		});
-		const gatewayVmOwnership = {
-			...createGatewayVmLifecycleAuthorityStub('gateway-vm-owner-unsafe'),
-			destroyLive: destroyGatewayLive,
-		} satisfies GatewayVmLifecycleAuthority;
 		const runtime = await startControllerRuntime(
 			{
 				systemConfig,
@@ -4070,6 +4182,8 @@ describe('startControllerRuntime', () => {
 					lstart: 'Fri May 22 10:00:00 2026',
 				}),
 				startGatewayZone: vi.fn(async () => ({
+					destroyGateway,
+					gatewayIdentity: createGatewayIdentityForStub('gateway-vm-owner-unsafe'),
 					image: {
 						built: true,
 						fingerprint: 'gateway-image',
@@ -4079,7 +4193,10 @@ describe('startControllerRuntime', () => {
 						host: '127.0.0.1',
 						port: 18791,
 					},
-					processSpec: openClawProcessSpec,
+					...createManagedOpenClawGatewayResultContract(
+						createGatewayIdentityForStub('gateway-vm-owner-unsafe'),
+						zone,
+					),
 					vm: {
 						close: closeGatewayVm,
 						enableIngress: vi.fn(async () => ({
@@ -4104,8 +4221,6 @@ describe('startControllerRuntime', () => {
 						start: async () => {},
 						getHostProcessId: () => 12345,
 					},
-					terminateVm: async () => {},
-					vmOwnership: gatewayVmOwnership,
 					zone,
 				})),
 				startHttpServer: vi.fn(async () => ({
@@ -4129,12 +4244,12 @@ describe('startControllerRuntime', () => {
 		expect(shutdownError).toMatchObject({ errors: [gatewayDestructionFailure] });
 		expect(ownershipIncomplete.cause).toBe(gatewayTerminationProofFailure);
 		expect(secondControllerError).toBe(lockConflict);
-		expect(destroyGatewayLive).toHaveBeenCalledOnce();
+		expect(destroyGateway).toHaveBeenCalledOnce();
 		expect(closeGatewayVm).not.toHaveBeenCalled();
 		expect(releaseControllerOwnershipLock).not.toHaveBeenCalled();
 	});
 
-	it('releases the controller ownership lock after proven destruction despite runtime record cleanup failure', async () => {
+	it('releases the controller ownership lock after proven destruction with typed cleanup debt', async () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
 		const zone = systemConfig.zones[0];
 		if (!zone) {
@@ -4174,15 +4289,22 @@ describe('startControllerRuntime', () => {
 					resolve: async () => '',
 					resolveAll: async () => ({}),
 				}),
-				deleteGatewayRuntimeRecord: async () => {
-					throw new Error('runtime record cleanup failed');
-				},
 				isProcessAlive: () => true,
 				readProcessIdentity: async () => ({
 					command: 'qemu-system-x86_64 -m 1G',
 					lstart: 'Fri May 22 10:00:00 2026',
 				}),
 				startGatewayZone: vi.fn(async () => ({
+					destroyGateway: async (): Promise<GatewayZoneDestroyResult> => ({
+						cleanupFailures: [
+							{
+								error: new Error('runtime record cleanup failed'),
+								stage: 'runtime-record-deletion',
+							},
+						],
+						kind: 'destroyed-cleanup-incomplete',
+					}),
+					gatewayIdentity: createGatewayIdentityForStub('gateway-vm-cleanup-failure'),
 					image: {
 						built: true,
 						fingerprint: 'gateway-image',
@@ -4192,7 +4314,10 @@ describe('startControllerRuntime', () => {
 						host: '127.0.0.1',
 						port: 18791,
 					},
-					processSpec: openClawProcessSpec,
+					...createManagedOpenClawGatewayResultContract(
+						createGatewayIdentityForStub('gateway-vm-cleanup-failure'),
+						zone,
+					),
 					vm: {
 						close: vi.fn(async () => {}),
 						enableIngress: vi.fn(async () => ({
@@ -4217,8 +4342,6 @@ describe('startControllerRuntime', () => {
 						start: async () => {},
 						getHostProcessId: () => 12345,
 					},
-					terminateVm: async () => {},
-					vmOwnership: createGatewayVmLifecycleAuthorityStub('gateway-vm-cleanup-failure'),
 					zone,
 				})),
 				startHttpServer: vi.fn(async () => ({
@@ -4227,14 +4350,14 @@ describe('startControllerRuntime', () => {
 			},
 		);
 
-		await expect(runtime.close()).rejects.toThrow('runtime record cleanup failed');
+		await expect(runtime.close()).resolves.toBeUndefined();
 		await expect(
 			startControllerRuntime({ systemConfig, zoneIds: [] }, { acquireControllerOwnershipLock }),
 		).rejects.toBe(secondControllerAcquired);
 		expect(releaseControllerOwnershipLock).toHaveBeenCalledOnce();
 	});
 
-	it('surfaces runtime record deletion failures during shutdown', async () => {
+	it('surfaces ownership-lock release failure without promoting typed cleanup debt to owner-unsafe', async () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
 		const zone = systemConfig.zones[0];
 		if (!zone) {
@@ -4285,10 +4408,20 @@ describe('startControllerRuntime', () => {
 					command: 'qemu-system-x86_64 -m 1G',
 					lstart: 'Fri May 22 10:00:00 2026',
 				}),
-				deleteGatewayRuntimeRecord: async () => {
-					throw new Error('permission denied');
-				},
 				startGatewayZone: vi.fn(async () => ({
+					destroyGateway: async () => {
+						await closeGatewayVm();
+						return {
+							cleanupFailures: [
+								{
+									error: new Error('permission denied'),
+									stage: 'runtime-record-deletion',
+								},
+							],
+							kind: 'destroyed-cleanup-incomplete',
+						} as const;
+					},
+					gatewayIdentity: createGatewayIdentityForStub('gateway-vm-clean'),
 					image: {
 						built: true,
 						fingerprint: 'gateway-image',
@@ -4298,7 +4431,10 @@ describe('startControllerRuntime', () => {
 						host: '127.0.0.1',
 						port: 18791,
 					},
-					processSpec: openClawProcessSpec,
+					...createManagedOpenClawGatewayResultContract(
+						createGatewayIdentityForStub('gateway-vm-clean'),
+						zone,
+					),
 					vm: {
 						close: closeGatewayVm,
 						enableIngress: vi.fn(async () => ({
@@ -4323,8 +4459,6 @@ describe('startControllerRuntime', () => {
 						start: async () => {},
 						getHostProcessId: () => 12345,
 					},
-					terminateVm: closeGatewayVm,
-					vmOwnership: createGatewayVmLifecycleAuthorityStub('gateway-vm-clean'),
 					zone,
 				})),
 				startHttpServer: vi.fn(async () => ({
@@ -4340,11 +4474,7 @@ describe('startControllerRuntime', () => {
 			thrownError = error;
 		}
 
-		expect(thrownError).toBeInstanceOf(AggregateError);
-		expect((thrownError as AggregateError).errors).toEqual([
-			expect.objectContaining({ message: expect.stringContaining('permission denied') }),
-			expect.objectContaining({ message: 'ownership lock release failed' }),
-		]);
+		expect(thrownError).toMatchObject({ message: 'ownership lock release failed' });
 		expect(closeGatewayVm).toHaveBeenCalledTimes(1);
 		expect(releaseControllerOwnershipLock).toHaveBeenCalledOnce();
 	});
@@ -4370,7 +4500,10 @@ describe('startControllerRuntime', () => {
 					host: '127.0.0.1',
 					port: 18791,
 				},
-				processSpec: openClawProcessSpec,
+				...createManagedOpenClawGatewayResultContract(
+					createGatewayIdentityForStub('gateway-vm-close-after-failed-restart'),
+					zone,
+				),
 				vm: {
 					close: closeGatewayVm,
 					enableIngress: vi.fn(async () => ({
@@ -4393,8 +4526,10 @@ describe('startControllerRuntime', () => {
 					start: async () => {},
 					getHostProcessId: () => 12345,
 				},
-				terminateVm: closeGatewayVm,
-				vmOwnership: createGatewayVmLifecycleAuthorityStub('gateway-vm-close-after-failed-restart'),
+				...createGatewayDestructionContract(
+					'gateway-vm-close-after-failed-restart',
+					closeGatewayVm,
+				),
 				zone,
 			})
 			.mockRejectedValueOnce(new Error('restart failed'));
@@ -4542,7 +4677,10 @@ describe('startControllerRuntime', () => {
 							host: '127.0.0.1',
 							port: 18791,
 						},
-						processSpec: openClawProcessSpec,
+						...createManagedOpenClawGatewayResultContract(
+							createGatewayIdentityForStub('gateway-vm-close-flush'),
+							zone,
+						),
 						vm: {
 							close: vi.fn(async () => {}),
 							enableIngress: vi.fn(async () => ({
@@ -4567,8 +4705,7 @@ describe('startControllerRuntime', () => {
 							start: async () => {},
 							getHostProcessId: () => 12345,
 						},
-						terminateVm: async () => {},
-						vmOwnership: createGatewayVmLifecycleAuthorityStub('gateway-vm-close-flush'),
+						...createGatewayDestructionContract('gateway-vm-close-flush'),
 						zone,
 					};
 				}),

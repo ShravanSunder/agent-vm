@@ -1,0 +1,16 @@
+{
+	"caseId": "progress-over-maximum-percent",
+	"schemaId": "portal.progress.event",
+	"tags": ["boundary", "numeric", "rejected"],
+	"input": {
+		"id": "progress-over-maximum",
+		"kind": "progress",
+		"message": "Impossible",
+		"percent": 100.01
+	},
+	"expectation": {
+		"kind": "rejected",
+		"errorCodes": ["portable.number.above-maximum"],
+		"refinementIdentities": ["portal.request-id.not-reserved"]
+	}
+}

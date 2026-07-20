@@ -50,7 +50,7 @@ RUN \
     rm -rf /root/.cache/uv && \
     ln -sf /usr/bin/fdfind /usr/local/bin/fd && \
     ln -sfn /proc/self/fd /dev/fd && \
-    mkdir -p /work /run/sshd /var/log && \
+    mkdir -p /work /scratch /run/sshd /var/log && \
     touch /var/log/lastlog /var/log/faillog
 
 WORKDIR /work

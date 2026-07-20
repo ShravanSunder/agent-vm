@@ -54,4 +54,4 @@ Do not create any `__init__.py` files unless the user asks. They are specificall
 
 ## Boundaries
 
-- Do not edit `tsconfig.json` or `ruff.toml` or `pyrightconfig.json` or `ruff.toml` without explicit permission.
+- Do not edit `tsconfig.json`, `ruff.toml`, or `pyproject.toml` without explicit permission.

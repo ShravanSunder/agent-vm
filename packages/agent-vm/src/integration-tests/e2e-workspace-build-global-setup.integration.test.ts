@@ -23,6 +23,7 @@ describe('shouldBuildWorkspaceForE2e', () => {
 
 	it('requires one workspace build before live VM e2e runs', () => {
 		expect(shouldBuildWorkspaceForE2e({ AGENT_VM_OPENCLAW_E2E: '1' })).toBe(true);
+		expect(shouldBuildWorkspaceForE2e({ AGENT_VM_HERMES_E2E: '1' })).toBe(true);
 		expect(shouldBuildWorkspaceForE2e({ AGENT_VM_WORKER_E2E: '1' })).toBe(true);
 		expect(shouldBuildWorkspaceForE2e({ AGENT_VM_GONDOLIN_E2E: '1' })).toBe(true);
 		expect(shouldBuildWorkspaceForE2e({ AGENT_VM_LLM_E2E: '1' })).toBe(true);

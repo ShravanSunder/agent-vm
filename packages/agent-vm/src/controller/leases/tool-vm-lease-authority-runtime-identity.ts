@@ -53,7 +53,7 @@ export function assertLeaseMatchesRuntime(options: {
 	if (
 		options.lease.id !== options.authority.leaseId ||
 		options.lease.agentId !== options.authority.principal.agentId ||
-		options.lease.zoneId !== options.authority.principal.zoneId ||
+		options.lease.zoneId !== options.authority.gateway.zoneId ||
 		options.lease.vm.id !== options.runtimeBinding.vmId
 	) {
 		throw new Error(

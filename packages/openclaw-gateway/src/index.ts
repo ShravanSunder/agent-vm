@@ -1,1 +1,4 @@
-export { openclawLifecycle } from './openclaw-lifecycle.js';
+export {
+	buildOpenClawFrameworkServiceBootMetadata,
+	openclawLifecycle,
+} from './openclaw-lifecycle.js';

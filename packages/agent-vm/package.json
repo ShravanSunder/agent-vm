@@ -38,12 +38,16 @@
 		"typecheck": "tsc -p tsconfig.json --noEmit"
 	},
 	"dependencies": {
+		"@agent-vm/agent-portal-sdk": "workspace:*",
 		"@agent-vm/agent-vm-worker": "workspace:*",
 		"@agent-vm/config-contracts": "workspace:*",
 		"@agent-vm/control-protocol-contracts": "workspace:*",
+		"@agent-vm/controller-execution-contracts": "workspace:*",
 		"@agent-vm/gateway-control-contracts": "workspace:*",
 		"@agent-vm/gateway-lifecycle": "workspace:*",
+		"@agent-vm/gateway-runtime": "workspace:*",
 		"@agent-vm/gondolin-vm-adapter": "workspace:*",
+		"@agent-vm/hermes-gateway": "workspace:*",
 		"@agent-vm/managed-vm": "workspace:*",
 		"@agent-vm/mcp-portal": "workspace:*",
 		"@agent-vm/openclaw-agent-vm-plugin": "workspace:*",
@@ -69,9 +73,11 @@
 		"jsonc-parser": "^3.3.1",
 		"socket.io-client": "4.8.1",
 		"tasuku": "^2.3.0",
+		"ws": "^8.21.0",
 		"zod": "^4.4.3"
 	},
 	"devDependencies": {
+		"@types/ws": "^8.18.1",
 		"socket.io": "4.8.1"
 	}
 }

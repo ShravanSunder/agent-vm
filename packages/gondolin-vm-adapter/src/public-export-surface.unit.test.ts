@@ -9,7 +9,7 @@ describe('gondolin-vm-adapter public export surface', () => {
 		expect(indexSource).not.toContain('export *');
 		expect(indexSource).not.toContain('@earendil-works/gondolin');
 		expect(indexSource).not.toMatch(
-			/BuildConfig|BuildImageOptions|BuildImageResult|getDefaultBuildConfig|PinnedRealFsRoot|ManagedVmInstance|getVmInstance/u,
+			/BuildConfig|BuildImageOptions|BuildImageResult|getDefaultBuildConfig|PinnedRealFsRoot|ManagedVmInstance|getVmInstance|FilteredWorkspaceProvider/u,
 		);
 		expect(indexSource).toContain('createGondolinManagedVmProvider');
 		expect(indexSource).toContain('configureHostNetworkDefaults');

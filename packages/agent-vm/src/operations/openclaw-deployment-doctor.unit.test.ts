@@ -39,7 +39,7 @@ function createSystemConfig(
 		| { readonly ref: string; readonly source: '1password' }
 		| { readonly source: 'config'; readonly value: string }
 	> = {},
-	mcpConfigDir?: string,
+	toolPortalConfigDir?: string,
 	stateDir = './state/shravan',
 	authLogin?: {
 		readonly defaultAgent?: string;
@@ -49,6 +49,7 @@ function createSystemConfig(
 	return createLoadedSystemConfig(
 		{
 			cacheDir: './cache',
+			controllerStateDir: '/controller-state-test',
 			runtimeDir: './runtime',
 			host: {
 				controllerPort: 18800,
@@ -102,7 +103,14 @@ function createSystemConfig(
 					},
 					id: 'shravan',
 					agents: [{ id: 'sun' }],
-					...(mcpConfigDir === undefined ? {} : { toolPortal: { configDir: mcpConfigDir } }),
+					...(toolPortalConfigDir === undefined
+						? {}
+						: {
+								toolPortal: {
+									configDir: toolPortalConfigDir,
+									surfaceEligibilityByProfile: { default: {} },
+								},
+							}),
 					secrets: {
 						OPENCLAW_GATEWAY_TOKEN: {
 							audience: 'gateway',
@@ -1270,15 +1278,16 @@ describe('collectOpenClawDeploymentDoctorChecks', () => {
 		}
 	});
 
-	it('accepts native Tool Portal when mcp-portal config is present', async () => {
+	it('accepts native Tool Portal when managed Tool Portal config is present', async () => {
 		const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-doctor-'));
 		const configDirectory = path.join(temporaryDirectory, 'config');
 		const openClawConfigPath = path.join(configDirectory, 'openclaw.json');
 		await mkdir(configDirectory, { recursive: true });
 		await writeFile(
-			path.join(configDirectory, 'mcp-portal.config.jsonc'),
+			path.join(configDirectory, 'tool-portal.config.jsonc'),
 			JSON.stringify({
 				agents: { sun: { profile: 'default' } },
+				mode: 'managed',
 				profiles: { default: { namespaces: {} } },
 				schemaVersion: 1,
 			}),
@@ -1325,15 +1334,16 @@ describe('collectOpenClawDeploymentDoctorChecks', () => {
 		}
 	});
 
-	it('accepts runtime-materialized MCP Portal endpoints when system mcp config is present', async () => {
+	it('accepts runtime-materialized Tool Portal endpoints when managed Tool Portal config is present', async () => {
 		const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-doctor-'));
 		const configDirectory = path.join(temporaryDirectory, 'config');
 		const openClawConfigPath = path.join(configDirectory, 'openclaw.json');
 		await mkdir(configDirectory, { recursive: true });
 		await writeFile(
-			path.join(configDirectory, 'mcp-portal.config.jsonc'),
+			path.join(configDirectory, 'tool-portal.config.jsonc'),
 			JSON.stringify({
 				agents: { sun: { profile: 'default' } },
+				mode: 'managed',
 				profiles: { default: { namespaces: {} } },
 				schemaVersion: 1,
 			}),

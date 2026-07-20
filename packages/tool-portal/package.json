@@ -1,7 +1,7 @@
 {
 	"name": "@agent-vm/tool-portal",
 	"version": "0.0.114",
-	"description": "Cross-backend capability portal contracts and MCP-backed in-process runtime.",
+	"description": "Cross-backend capability service and explicitly configured standalone projections.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {
 		"url": "https://github.com/ShravanSunder/agent-vm/issues"
@@ -24,9 +24,9 @@
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
 		},
-		"./in-process-entrypoint": {
-			"types": "./dist/in-process-entrypoint/index.d.ts",
-			"import": "./dist/in-process-entrypoint/index.js"
+		"./standalone-entrypoint": {
+			"types": "./dist/standalone-entrypoint/index.d.ts",
+			"import": "./dist/standalone-entrypoint/index.js"
 		},
 		"./testing": {
 			"types": "./dist/testing/index.d.ts",
@@ -47,7 +47,9 @@
 		"@agent-vm/agent-portal-sdk": "workspace:*",
 		"@agent-vm/config-contracts": "workspace:*",
 		"@agent-vm/controller-execution-contracts": "workspace:*",
+		"@agent-vm/gateway-control-contracts": "workspace:*",
 		"@agent-vm/mcp-portal": "workspace:*",
+		"@modelcontextprotocol/sdk": "^1.29.0",
 		"zod": "^4.4.3"
 	},
 	"devDependencies": {

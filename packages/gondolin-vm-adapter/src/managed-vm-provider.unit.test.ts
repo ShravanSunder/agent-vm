@@ -1,4 +1,8 @@
-import type { ManagedVmCreateRequest } from '@agent-vm/managed-vm';
+import type {
+	ManagedVmCreateRequest,
+	ManagedVmExecOptions,
+	ManagedVmExecStreamingOptions,
+} from '@agent-vm/managed-vm';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const createNativeManagedVmMock = vi.hoisted(() => vi.fn());
@@ -138,11 +142,12 @@ describe('createGondolinManagedVmProvider', () => {
 		createNativeManagedVmMock.mockReset();
 	});
 
-	it('exposes only the four neutral provider capabilities', () => {
+	it('exposes only the five neutral provider capabilities', () => {
 		const provider = createGondolinManagedVmProvider();
 
 		expect(Object.keys(provider).toSorted()).toEqual([
 			'diagnostics',
+			'exactProcessTermination',
 			'factory',
 			'images',
 			'ownedDirectories',
@@ -212,6 +217,146 @@ describe('createGondolinManagedVmProvider', () => {
 		expect(createNativeManagedVmMock).not.toHaveBeenCalled();
 	});
 
+	it('translates host-backed mounts without an identity policy', async () => {
+		createNativeManagedVmMock.mockResolvedValue(createLifecycleNativeVm(async () => {}));
+		const provider = createGondolinManagedVmProvider();
+
+		await provider.factory.createManagedVm({
+			...createBasicManagedVmRequest(),
+			mounts: {
+				'/writable': {
+					access: 'read-write',
+					hostPath: '/tmp/writable',
+					kind: 'host-directory',
+				},
+				'/readonly': {
+					access: 'read-only',
+					hostPath: '/tmp/readonly',
+					kind: 'host-directory',
+				},
+			},
+		});
+
+		expect(createNativeManagedVmMock).toHaveBeenCalledWith(
+			expect.objectContaining({
+				vfsMounts: {
+					'/writable': {
+						hostPath: '/tmp/writable',
+						kind: 'realfs',
+					},
+					'/readonly': {
+						hostPath: '/tmp/readonly',
+						kind: 'realfs-readonly',
+					},
+				},
+			}),
+		);
+	});
+
+	it('translates neutral pipe and discard output modes to stock Gondolin exec options', async () => {
+		const nativeVm = createLifecycleNativeVm(async () => {});
+		createNativeManagedVmMock.mockResolvedValue(nativeVm);
+		const vm = await createGondolinManagedVmProvider().factory.createManagedVm(
+			createBasicManagedVmRequest(),
+		);
+		const output = {
+			stderr: { kind: 'discard' },
+			stdout: { kind: 'pipe' },
+			windowBytes: 256 * 1024,
+		} as const satisfies ManagedVmExecStreamingOptions;
+
+		vm.exec(['/usr/local/bin/runner', 'status'], {
+			output,
+			stdin: 'fixed input',
+		});
+
+		expect(nativeVm.exec).toHaveBeenCalledWith(['/usr/local/bin/runner', 'status'], {
+			stderr: 'ignore',
+			stdin: 'fixed input',
+			stdout: 'pipe',
+			windowBytes: 256 * 1024,
+		});
+	});
+
+	it.each([0, 4 * 1024 - 1, 4 * 1024 + 0.5, 16 * 1024 * 1024 + 1, Number.NaN, Infinity])(
+		'rejects invalid neutral output window %s before Gondolin exec dispatch',
+		async (windowBytes) => {
+			const nativeVm = createLifecycleNativeVm(async () => {});
+			createNativeManagedVmMock.mockResolvedValue(nativeVm);
+			const provider = createGondolinManagedVmProvider();
+			const vm = await provider.factory.createManagedVm(createBasicManagedVmRequest());
+			const output = {
+				stderr: { kind: 'discard' },
+				stdout: { kind: 'pipe' },
+				windowBytes,
+			} as const satisfies ManagedVmExecStreamingOptions;
+
+			expect(() => vm.exec('/usr/local/bin/runner', { output })).toThrow(
+				/output window must be an integer between 4096 and 16777216 bytes/u,
+			);
+			expect(nativeVm.exec).not.toHaveBeenCalled();
+		},
+	);
+
+	it.each([4 * 1024, 16 * 1024 * 1024])(
+		'passes inclusive neutral output window bound %s directly to Gondolin',
+		async (windowBytes) => {
+			const nativeVm = createLifecycleNativeVm(async () => {});
+			createNativeManagedVmMock.mockResolvedValue(nativeVm);
+			const vm = await createGondolinManagedVmProvider().factory.createManagedVm(
+				createBasicManagedVmRequest(),
+			);
+			const output = {
+				stderr: { kind: 'discard' },
+				stdout: { kind: 'pipe' },
+				windowBytes,
+			} as const satisfies ManagedVmExecStreamingOptions;
+
+			vm.exec('/usr/local/bin/runner', { output });
+
+			expect(nativeVm.exec).toHaveBeenCalledWith('/usr/local/bin/runner', {
+				stderr: 'ignore',
+				stdout: 'pipe',
+				windowBytes,
+			});
+		},
+	);
+
+	it('rejects native-shaped output mode combinations before Gondolin exec dispatch', async () => {
+		const nativeVm = createLifecycleNativeVm(async () => {});
+		createNativeManagedVmMock.mockResolvedValue(nativeVm);
+		const vm = await createGondolinManagedVmProvider().factory.createManagedVm(
+			createBasicManagedVmRequest(),
+		);
+		const nativeShapedOutput = {
+			stderr: 'ignore',
+			stdout: { kind: 'pipe' },
+			windowBytes: 256 * 1024,
+		};
+
+		expect(() =>
+			vm.exec('/usr/local/bin/runner', {
+				output: nativeShapedOutput,
+			} as never),
+		).toThrow(/managed VM exec output mode/u);
+		expect(nativeVm.exec).not.toHaveBeenCalled();
+	});
+
+	it('preserves the existing buffered default when streaming output is omitted', async () => {
+		const nativeVm = createLifecycleNativeVm(async () => {});
+		createNativeManagedVmMock.mockResolvedValue(nativeVm);
+		const vm = await createGondolinManagedVmProvider().factory.createManagedVm(
+			createBasicManagedVmRequest(),
+		);
+		const bufferedOptions = { stdin: 'fixed input' } satisfies ManagedVmExecOptions;
+
+		vm.exec('/usr/local/bin/runner', bufferedOptions);
+
+		expect(nativeVm.exec).toHaveBeenCalledWith('/usr/local/bin/runner', {
+			stdin: 'fixed input',
+		});
+	});
+
 	it('translates neutral request fields without putting raw mediated values in guest env', async () => {
 		const nativeExecProcess = createFakeNativeExecProcess();
 		let nativeHostProcessId: number | null = 4321;
@@ -249,7 +394,13 @@ describe('createGondolinManagedVmProvider', () => {
 				{
 					allowedHosts: ['api.example.com'],
 					environmentVariable: 'API_TOKEN',
+					guestPlaceholder: 'agent-vm-explicit-placeholder',
 					value: 'host-only-secret',
+				},
+				{
+					allowedHosts: ['default.example.com'],
+					environmentVariable: 'DEFAULT_TOKEN',
+					value: 'second-host-only-secret',
 				},
 			],
 			mounts: { '/tmp': { kind: 'memory' } },
@@ -275,7 +426,15 @@ describe('createGondolinManagedVmProvider', () => {
 				rootfsMode: 'cow',
 				runtimeRootfsSize: '4G',
 				secrets: {
-					API_TOKEN: { hosts: ['api.example.com'], value: 'host-only-secret' },
+					API_TOKEN: {
+						hosts: ['api.example.com'],
+						placeholder: 'agent-vm-explicit-placeholder',
+						value: 'host-only-secret',
+					},
+					DEFAULT_TOKEN: {
+						hosts: ['default.example.com'],
+						value: 'second-host-only-secret',
+					},
 				},
 				sessionLabel: 'session-1',
 				tcpHosts: { 'controller.vm.host:18800': '127.0.0.1:18800' },
@@ -378,7 +537,11 @@ describe('createGondolinManagedVmProvider', () => {
 				imageReference: '/images/test',
 				mediatedSecrets: [],
 				mounts: {
-					'/work': { access: 'read-write', directory, kind: 'owned-host-directory' },
+					'/work': {
+						access: 'read-write',
+						directory,
+						kind: 'owned-host-directory',
+					},
 				},
 				resources: { cpuCount: 1, memory: '1G' },
 				rootfsMode: 'memory',
@@ -398,6 +561,167 @@ describe('createGondolinManagedVmProvider', () => {
 				directory.close();
 			}
 			await fs.rm(temporaryRoot, { recursive: true });
+		}
+	});
+
+	it('translates one owned filtered workspace and closes its authority with the VM', async () => {
+		const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'gondolin-filtered-workspace-'));
+		await fs.mkdir(path.join(temporaryRoot, 'reviewed', 'skill'), { recursive: true });
+		createNativeManagedVmMock.mockResolvedValue(createLifecycleNativeVm(async () => {}));
+		const provider = createGondolinManagedVmProvider();
+		const directory = provider.ownedDirectories.openHostDirectory(temporaryRoot);
+
+		try {
+			const vm = await provider.factory.createManagedVm({
+				...createBasicManagedVmRequest(),
+				mounts: {
+					'/workspace': {
+						directory,
+						kind: 'owned-filtered-workspace',
+						policy: {
+							hiddenPaths: ['.env', 'reviewed'],
+							readonlyInputs: [
+								{
+									destinationRelativePath: 'skills/managed',
+									sourceRelativePath: 'reviewed/skill',
+								},
+							],
+							temporaryPaths: ['node_modules'],
+							visibility: { kind: 'whole-root-writable' },
+						},
+					},
+				},
+			});
+
+			expect(directory.state).toBe('adapter-owned');
+			expect(createNativeManagedVmMock).toHaveBeenCalledWith(
+				expect.objectContaining({
+					vfsMounts: {
+						'/workspace': expect.objectContaining({
+							kind: 'filtered-workspace',
+							policy: expect.objectContaining({
+								visibility: { kind: 'whole-root-writable' },
+							}),
+						}),
+					},
+				}),
+			);
+			await vm.close();
+			expect(directory.state).toBe('closed');
+		} finally {
+			if (directory.state === 'acquired') {
+				directory.close();
+			}
+			await fs.rm(temporaryRoot, { recursive: true });
+		}
+	});
+
+	it('closes filtered workspace authority when native provider composition fails', async () => {
+		const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'gondolin-filtered-failure-'));
+		createNativeManagedVmMock.mockRejectedValue(new Error('filtered provider composition failed'));
+		const provider = createGondolinManagedVmProvider();
+		const directory = provider.ownedDirectories.openHostDirectory(temporaryRoot);
+
+		try {
+			await expect(
+				provider.factory.createManagedVm({
+					...createBasicManagedVmRequest(),
+					mounts: {
+						'/workspace': {
+							directory,
+							kind: 'owned-filtered-workspace',
+							policy: {
+								hiddenPaths: [],
+								readonlyInputs: [],
+								temporaryPaths: [],
+								visibility: { kind: 'whole-root-writable' },
+							},
+						},
+					},
+				}),
+			).rejects.toThrow('filtered provider composition failed');
+			expect(directory.state).toBe('closed');
+		} finally {
+			if (directory.state === 'acquired') {
+				directory.close();
+			}
+			await fs.rm(temporaryRoot, { recursive: true });
+		}
+	});
+
+	it('consumes and atomically closes filtered workspace authority when policy validation fails', async () => {
+		const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'gondolin-filtered-invalid-'));
+		const provider = createGondolinManagedVmProvider();
+		const directory = provider.ownedDirectories.openHostDirectory(temporaryRoot);
+
+		try {
+			await expect(
+				provider.factory.createManagedVm({
+					...createBasicManagedVmRequest(),
+					mounts: {
+						'/workspace': {
+							directory,
+							kind: 'owned-filtered-workspace',
+							policy: {
+								hiddenPaths: ['/absolute'],
+								readonlyInputs: [],
+								temporaryPaths: [],
+								visibility: { kind: 'whole-root-writable' },
+							},
+						},
+					},
+				}),
+			).rejects.toThrow('normalized workspace-relative path');
+			expect(directory.state).toBe('closed');
+			expect(createNativeManagedVmMock).not.toHaveBeenCalled();
+		} finally {
+			if (directory.state === 'acquired') {
+				directory.close();
+			}
+			await fs.rm(temporaryRoot, { recursive: true });
+		}
+	});
+
+	it('rejects readonly sources that resolve outside the owned root and closes authority', async () => {
+		const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'gondolin-filtered-boundary-'));
+		const outsideRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'gondolin-filtered-outside-'));
+		await fs.symlink(outsideRoot, path.join(temporaryRoot, 'outside-link'));
+		const provider = createGondolinManagedVmProvider();
+		const directory = provider.ownedDirectories.openHostDirectory(temporaryRoot);
+
+		try {
+			await expect(
+				provider.factory.createManagedVm({
+					...createBasicManagedVmRequest(),
+					mounts: {
+						'/workspace': {
+							directory,
+							kind: 'owned-filtered-workspace',
+							policy: {
+								hiddenPaths: ['outside-link'],
+								readonlyInputs: [
+									{
+										destinationRelativePath: 'managed',
+										sourceRelativePath: 'outside-link',
+									},
+								],
+								temporaryPaths: [],
+								visibility: { kind: 'whole-root-writable' },
+							},
+						},
+					},
+				}),
+			).rejects.toThrow('crosses the owned root boundary');
+			expect(directory.state).toBe('closed');
+			expect(createNativeManagedVmMock).not.toHaveBeenCalled();
+		} finally {
+			if (directory.state === 'acquired') {
+				directory.close();
+			}
+			await Promise.all([
+				fs.rm(temporaryRoot, { recursive: true }),
+				fs.rm(outsideRoot, { recursive: true }),
+			]);
 		}
 	});
 
@@ -436,7 +760,11 @@ describe('createGondolinManagedVmProvider', () => {
 					imageReference: '/images/test',
 					mediatedSecrets: [],
 					mounts: {
-						'/work': { access: 'read-only', directory, kind: 'owned-host-directory' },
+						'/work': {
+							access: 'read-only',
+							directory,
+							kind: 'owned-host-directory',
+						},
 					},
 					resources: { cpuCount: 1, memory: '1G' },
 					rootfsMode: 'memory',
@@ -467,7 +795,11 @@ describe('createGondolinManagedVmProvider', () => {
 					imageReference: '/images/test',
 					mediatedSecrets: [],
 					mounts: {
-						'/work': { access: 'read-write', directory, kind: 'owned-host-directory' },
+						'/work': {
+							access: 'read-write',
+							directory,
+							kind: 'owned-host-directory',
+						},
 					},
 					resources: { cpuCount: 1, memory: '1G' },
 					rootfsMode: 'memory',

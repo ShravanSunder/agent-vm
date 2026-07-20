@@ -10,6 +10,7 @@ import {
 	TEST_SSH_SERVER_HOST_KEY,
 	createManagedExecProcessStub,
 } from '../../testing/managed-vm-test-helpers.js';
+import type { ControllerToolLeaseRecordsTarget } from '../durable-state/controller-state-record-paths.js';
 import {
 	buildToolVmRuntimeRecord,
 	deleteToolVmRuntimeRecord,
@@ -42,10 +43,16 @@ afterEach(async () => {
 	);
 });
 
-async function createStateDirectory(): Promise<string> {
-	const directoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-tool-vm-record-'));
-	createdDirectories.push(directoryPath);
-	return directoryPath;
+async function createToolLeaseRecordsTarget(
+	zoneId: string = gatewayIdentity.zoneId,
+): Promise<ControllerToolLeaseRecordsTarget> {
+	const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-tool-vm-record-'));
+	createdDirectories.push(temporaryDirectoryPath);
+	return {
+		directoryPath: path.join(temporaryDirectoryPath, 'controller-tool-lease-records'),
+		kind: 'controller-tool-lease-records',
+		zoneId,
+	};
 }
 
 function createManagedVmStub(options: {
@@ -160,51 +167,51 @@ describe('tool-vm-runtime-record', () => {
 	});
 
 	it('round-trips write and load by recordId', async () => {
-		const stateDir = await createStateDirectory();
+		const recordsTarget = await createToolLeaseRecordsTarget();
 		const record = buildSampleRecord();
 
-		await writeToolVmRuntimeRecord(stateDir, record);
+		await writeToolVmRuntimeRecord(recordsTarget, record);
 
-		const loaded = await loadToolVmRuntimeRecord(stateDir, record.recordId);
+		const loaded = await loadToolVmRuntimeRecord(recordsTarget, record.recordId);
 		expect(loaded).toEqual(record);
 	});
 
-	it('write places the record at $stateDir/tool-leases/<recordId>.json with 0600 perms', async () => {
-		const stateDir = await createStateDirectory();
+	it('writes directly to the typed Tool lease collection with 0600 permissions', async () => {
+		const recordsTarget = await createToolLeaseRecordsTarget();
 		const record = buildSampleRecord();
 
-		await writeToolVmRuntimeRecord(stateDir, record);
+		await writeToolVmRuntimeRecord(recordsTarget, record);
 
-		const recordPath = path.join(stateDir, 'tool-leases', `${record.recordId}.json`);
+		const recordPath = path.join(recordsTarget.directoryPath, `${record.recordId}.json`);
 		const fileStat = await stat(recordPath);
 		expect(fileStat.mode & 0o777).toBe(0o600);
 		expect(JSON.parse(await readFile(recordPath, 'utf8')) as unknown).toEqual(record);
 	});
 
 	it('load returns null when the record file is missing', async () => {
-		const stateDir = await createStateDirectory();
+		const recordsTarget = await createToolLeaseRecordsTarget();
 
-		const loaded = await loadToolVmRuntimeRecord(stateDir, sampleRecordId);
+		const loaded = await loadToolVmRuntimeRecord(recordsTarget, sampleRecordId);
 
 		expect(loaded).toBeNull();
 	});
 
-	it('loadAll returns an empty array when the tool-leases directory is missing', async () => {
-		const stateDir = await createStateDirectory();
+	it('loadAll returns an empty array when the typed collection directory is missing', async () => {
+		const recordsTarget = await createToolLeaseRecordsTarget();
 
-		const records = await loadAllToolVmRuntimeRecords(stateDir);
+		const records = await loadAllToolVmRuntimeRecords(recordsTarget);
 
 		expect(records).toEqual([]);
 	});
 
 	it('loadAll returns parse errors without mutating malformed files', async () => {
-		const stateDir = await createStateDirectory();
-		const leasesDirectory = path.join(stateDir, 'tool-leases');
-		await writeToolVmRuntimeRecord(stateDir, buildSampleRecord());
+		const recordsTarget = await createToolLeaseRecordsTarget();
+		const leasesDirectory = recordsTarget.directoryPath;
+		await writeToolVmRuntimeRecord(recordsTarget, buildSampleRecord());
 		const malformedRecordPath = path.join(leasesDirectory, 'broken.json');
 		await writeFile(malformedRecordPath, '{not-json');
 
-		const results = await loadAllToolVmRuntimeRecords(stateDir);
+		const results = await loadAllToolVmRuntimeRecords(recordsTarget);
 
 		expect(results.map((result) => result.kind).toSorted()).toEqual(['loaded', 'parse-error']);
 		expect(results.find((result) => result.kind === 'parse-error')).toMatchObject({
@@ -214,7 +221,7 @@ describe('tool-vm-runtime-record', () => {
 	});
 
 	it('loadAll returns loaded records sorted by createdAt', async () => {
-		const stateDir = await createStateDirectory();
+		const recordsTarget = await createToolLeaseRecordsTarget();
 		const newer = buildSampleRecord({
 			createdAt: '2026-05-22T10:00:01.000Z',
 			leaseId: '01890f00-0000-7000-8000-000000000002',
@@ -225,24 +232,58 @@ describe('tool-vm-runtime-record', () => {
 			leaseId: '01890f00-0000-7000-8000-000000000001',
 			recordId: '01890f00-0000-7000-8000-000000000001',
 		});
-		await writeToolVmRuntimeRecord(stateDir, newer);
-		await writeToolVmRuntimeRecord(stateDir, older);
+		await writeToolVmRuntimeRecord(recordsTarget, newer);
+		await writeToolVmRuntimeRecord(recordsTarget, older);
 
-		const records = loadedRecords(await loadAllToolVmRuntimeRecords(stateDir));
+		const records = loadedRecords(await loadAllToolVmRuntimeRecords(recordsTarget));
 
 		expect(records.map((record) => record.leaseId)).toEqual([older.leaseId, newer.leaseId]);
 	});
 
 	it('delete removes the record file when present and is idempotent when absent', async () => {
-		const stateDir = await createStateDirectory();
+		const recordsTarget = await createToolLeaseRecordsTarget();
 		const record = buildSampleRecord();
-		await writeToolVmRuntimeRecord(stateDir, record);
+		await writeToolVmRuntimeRecord(recordsTarget, record);
 
-		await deleteToolVmRuntimeRecord(stateDir, record.recordId);
-		await deleteToolVmRuntimeRecord(stateDir, record.recordId);
+		await deleteToolVmRuntimeRecord(recordsTarget, record.recordId);
+		await deleteToolVmRuntimeRecord(recordsTarget, record.recordId);
 
-		const entries = await readdir(path.join(stateDir, 'tool-leases'));
+		const entries = await readdir(recordsTarget.directoryPath);
 		expect(entries).toEqual([]);
+	});
+
+	it('rejects malformed record ids before deriving a Tool lease record path', async () => {
+		const recordsTarget = await createToolLeaseRecordsTarget();
+
+		await expect(loadToolVmRuntimeRecord(recordsTarget, '../escape')).rejects.toThrow(ZodError);
+		await expect(deleteToolVmRuntimeRecord(recordsTarget, '../escape')).rejects.toThrow(ZodError);
+		await expect(readdir(recordsTarget.directoryPath)).rejects.toMatchObject({ code: 'ENOENT' });
+	});
+
+	it('rejects cross-zone records on write, direct load, and collection load', async () => {
+		const foreignRecordsTarget = await createToolLeaseRecordsTarget('zone-b');
+		const localRecordsTarget = {
+			...foreignRecordsTarget,
+			zoneId: gatewayIdentity.zoneId,
+		} satisfies ControllerToolLeaseRecordsTarget;
+		const foreignRecord = buildSampleRecord({
+			gateway: { ...gatewayIdentity, zoneId: 'zone-b' },
+			zoneId: 'zone-b',
+		});
+		await writeToolVmRuntimeRecord(foreignRecordsTarget, foreignRecord);
+
+		await expect(writeToolVmRuntimeRecord(localRecordsTarget, foreignRecord)).rejects.toThrow(
+			/record zone.*zone-b.*target zone.*sunfam/iu,
+		);
+		await expect(
+			loadToolVmRuntimeRecord(localRecordsTarget, foreignRecord.recordId),
+		).rejects.toThrow(/record zone.*zone-b.*target zone.*sunfam/iu);
+		const results = await loadAllToolVmRuntimeRecords(localRecordsTarget);
+		expect(results).toHaveLength(1);
+		expect(results[0]).toMatchObject({
+			kind: 'parse-error',
+			path: path.join(localRecordsTarget.directoryPath, `${foreignRecord.recordId}.json`),
+		});
 	});
 
 	it('buildToolVmRuntimeRecord computes labels and captures process identity', async () => {
@@ -350,15 +391,15 @@ describe('tool-vm-runtime-record', () => {
 	});
 
 	it('write rejects invalid records before touching disk', async () => {
-		const stateDir = await createStateDirectory();
+		const recordsTarget = await createToolLeaseRecordsTarget();
 		const invalidRecord = {
 			...buildSampleRecord(),
 			recordId: 'not-a-uuid',
 		};
 
-		await expect(writeToolVmRuntimeRecord(stateDir, invalidRecord)).rejects.toThrow(ZodError);
+		await expect(writeToolVmRuntimeRecord(recordsTarget, invalidRecord)).rejects.toThrow(ZodError);
 
-		await expect(readdir(path.join(stateDir, 'tool-leases'))).rejects.toMatchObject({
+		await expect(readdir(recordsTarget.directoryPath)).rejects.toMatchObject({
 			code: 'ENOENT',
 		});
 	});

@@ -1,0 +1,31 @@
+{
+	"caseId": "coverage-sandbox-fs-remove-request",
+	"schemaId": "sandbox.fs.remove.request",
+	"tags": [
+		"accepted",
+		"coverage"
+	],
+	"input": {
+		"environment": {
+			"handleId": "environment-a",
+			"kind": "environment",
+			"owningGeneration": "generation-a"
+		},
+		"path": "tmp/file.txt",
+		"recursive": false
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"environment": {
+				"handleId": "environment-a",
+				"kind": "environment",
+				"owningGeneration": "generation-a"
+			},
+			"path": "tmp/file.txt",
+			"recursive": false
+		},
+		"canonicalJson": "{\"environment\":{\"handleId\":\"environment-a\",\"kind\":\"environment\",\"owningGeneration\":\"generation-a\"},\"path\":\"tmp/file.txt\",\"recursive\":false}",
+		"refinementIdentities": []
+	}
+}

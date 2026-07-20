@@ -362,26 +362,6 @@ export function registerControllerZoneOperationRoutes(
 			return context.json(zoneRuntimeErrorBody(error), zoneRuntimeErrorStatus(error));
 		}
 	});
-	app.get('/zones/:zoneId/zone-git/status', async (context) => {
-		if (!operations.getZoneGitStatus) {
-			return context.json({ error: 'zone-git-status-unavailable' }, 405);
-		}
-		try {
-			return context.json(await operations.getZoneGitStatus(context.req.param('zoneId')));
-		} catch (error) {
-			const runtimeStatus = zoneRuntimeErrorStatus(error);
-			if (runtimeStatus !== 500) {
-				return context.json(zoneRuntimeErrorBody(error), runtimeStatus);
-			}
-			const responseBody = scrubErrorResponseBody(
-				buildErrorResponseBody(error, 'zone-git-status-failed'),
-			);
-			writeControllerRouteLog(
-				`zone-git-status failed for zone '${context.req.param('zoneId')}': ${responseBody.error}`,
-			);
-			return context.json(responseBody, 500);
-		}
-	});
 	app.get('/zones/:zoneId/logs', async (context) => {
 		try {
 			return context.json(await operations.getZoneLogs(context.req.param('zoneId')));

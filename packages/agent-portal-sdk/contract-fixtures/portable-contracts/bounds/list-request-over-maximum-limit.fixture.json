@@ -1,0 +1,22 @@
+{
+	"caseId": "list-request-over-maximum-limit",
+	"schemaId": "portal.list.request",
+	"tags": ["boundary", "numeric", "rejected"],
+	"input": {
+		"requests": [
+			{
+				"id": "list-over-maximum",
+				"limit": 101
+			}
+		]
+	},
+	"expectation": {
+		"kind": "rejected",
+		"errorCodes": ["portable.number.above-maximum"],
+		"refinementIdentities": [
+			"portal.batch.unique-item-ids",
+			"portal.list.default-limit",
+			"portal.request-id.not-reserved"
+		]
+	}
+}

@@ -173,7 +173,16 @@ function gatewayLeaseOkResponsePayloadFor(responseToMessageId: string): {
 	readonly lease: {
 		readonly agentId: string;
 		readonly idleTtlMs: number;
+		readonly leafGeneration: string;
 		readonly leaseId: string;
+		readonly ssh: {
+			readonly host: string;
+			readonly identityPem: string;
+			readonly knownHostsLine: string;
+			readonly port: number;
+			readonly user: string;
+		};
+		readonly sshBindingId: string;
 		readonly state: 'idle';
 		readonly tcpSlot: number;
 		readonly transport: 'ssh-sandbox';
@@ -187,11 +196,20 @@ function gatewayLeaseOkResponsePayloadFor(responseToMessageId: string): {
 		lease: {
 			agentId: 'main',
 			idleTtlMs: 120_000,
+			leafGeneration: 'leaf-generation-main',
 			leaseId: 'lease-main',
+			ssh: {
+				host: 'tool-7.vm.host',
+				identityPem: 'private-key',
+				knownHostsLine: 'tool-7.vm.host ssh-ed25519 AAAATEST',
+				port: 22,
+				user: 'root',
+			},
+			sshBindingId: 'ssh-binding-main',
 			state: 'idle',
 			tcpSlot: 7,
 			transport: 'ssh-sandbox',
-			workdir: '/workspace',
+			workdir: '/work',
 			zoneId: identity.zoneId,
 		},
 		responseToMessageId,

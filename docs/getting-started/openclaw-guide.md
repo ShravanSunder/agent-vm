@@ -187,7 +187,7 @@ over the private control session exposed through Gondolin ingress:
        | receives SSH lease capability only
        v
   Tool VM (Zone 3 — untrusted)
-       | /workspace mounted, no raw secrets, scoped mediated placeholders only
+       | filtered /workspace, rootfs/COW /work, no raw secrets
        | SSH access via tool-{slot}.vm.host:22
 ```
 
@@ -196,11 +196,10 @@ profile from the zone's `agentToolVmProfiles` map, falling back to
 `defaultToolVmProfile`. Idle leases are reaped by `leaseIdleTtl`, with a 100
 minute default when no policy is configured.
 
-The lease `workMountDir` is a gateway VM path, not a host path. It must name a
-concrete child path under `/zone` or
-`/home/openclaw/.openclaw/state/sandboxes`; the controller rejects those roots
-themselves as too broad. The controller resolves the selected path to the host
-directory that backs the Tool VM's `/workspace` mount.
+The plugin authenticates OpenClaw's native agent/workspace context, then the
+controller selects that configured agent's filtered durable `/workspace`,
+optional `/gitdirs/workspace.git`, and rootfs/COW `/work`. The lease request
+does not carry a host or Gateway mount path.
 
 For internals, see [architecture/openclaw-gateway.md](../architecture/openclaw-gateway.md#tool-vm-leases).
 

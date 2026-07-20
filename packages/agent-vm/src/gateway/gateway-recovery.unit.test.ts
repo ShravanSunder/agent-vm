@@ -1,42 +1,151 @@
+import type { ManagedVmExactProcessTerminationCapability } from '@agent-vm/managed-vm';
 import { describe, expect, it, vi } from 'vitest';
 
+import type { ControllerManagedGatewayRuntimeRecordTarget } from '../controller/durable-state/controller-state-record-paths.js';
 import type { GatewayOwnershipUnsafeError } from './gateway-ownership-evidence.js';
 import {
 	checkMissingGatewayRuntimeRecordPortPreflight,
 	cleanupRecordedGatewayRuntime,
 } from './gateway-recovery.js';
 import type {
-	GatewayRuntimeRecord,
-	GatewayRuntimeRecordLoadResult,
+	ManagedGatewayRuntimeRecord,
+	ManagedGatewayRuntimeRecordLoadResult,
 } from './gateway-runtime-record.js';
+import { createManagedGatewayBootContract } from './managed-gateway-boot-contract.js';
 
 const matchingProcessIdentity = {
 	command: 'qemu-system-aarch64 -m 4G -smp 4 -kernel /vm-images/gateway/kernel',
 	lstart: 'Mon Apr 13 12:34:56 2026',
 };
 
-function createGatewayRuntimeRecord(
-	overrides: Partial<GatewayRuntimeRecord> = {},
-): GatewayRuntimeRecord {
+const gatewayIdentity = {
+	bootId: 'boot-a',
+	controllerEpoch: 'controller-epoch-a',
+	gatewayEpochId: 'gateway-epoch-a',
+	gatewayVmId: 'gateway-vm-123',
+	generationId: 'generation-a',
+	zoneId: 'shravan',
+} as const;
+
+const gatewayRuntimeRecordTarget = {
+	filePath: '/state/shravan/gateway-runtime.json',
+	kind: 'controller-managed-gateway-runtime-record',
+	zoneId: 'shravan',
+} satisfies ControllerManagedGatewayRuntimeRecordTarget;
+
+function createGatewayRuntimeRecordTarget(
+	overrides: Partial<ControllerManagedGatewayRuntimeRecordTarget> = {},
+): ControllerManagedGatewayRuntimeRecordTarget {
 	return {
+		...gatewayRuntimeRecordTarget,
+		...overrides,
+	};
+}
+
+const expectedCohort: ManagedGatewayRuntimeRecord['expectedCohort'] = {
+	controlIdentity: {
+		controllerEpoch: gatewayIdentity.controllerEpoch,
+		generationId: gatewayIdentity.generationId,
+		peerId: 'tool-portal-control',
+		processEpoch: 'tool-portal-process-a',
+	},
+	fence: {
+		controllerEpoch: gatewayIdentity.controllerEpoch,
+		gatewayEpoch: gatewayIdentity.generationId,
+		vmId: gatewayIdentity.gatewayVmId,
+		zoneId: gatewayIdentity.zoneId,
+	},
+	frameworkIdentity: {
+		attachmentGeneration: 1,
+		clientKind: 'openclaw-managed-plugin',
+		configuredAgentIds: ['agent-a'],
+		frameworkEpoch: 'framework-epoch-a',
+		frameworkKind: 'openclaw',
+		projectionCohortDigest:
+			'projection-cohort:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+	},
+	ingressIntent: {
+		controlRoute: {
+			audience: 'gateway-control',
+			guestPort: 18_790,
+			kind: 'tool-portal-control',
+			prefix: '/__agent-vm',
+			stripPrefix: false,
+		},
+		frameworkRootRoute: {
+			guestPort: 18_789,
+			kind: 'framework-root',
+			prefix: '/',
+			stripPrefix: true,
+		},
+	},
+	providerRevision: 'provider-revision-a',
+	requiredBackendRevision: 'required-backends-a',
+	semanticRevision: 'semantic-revision-a',
+	toolPortalIdentity: {
+		processEpoch: 'tool-portal-process-a',
+		role: 'tool-portal',
+		runtimeEpoch: 'runtime-epoch-a',
+		serviceId: 'tool-portal-service-a',
+	},
+	udsIdentity: {
+		frameworkEpoch: 'framework-epoch-a',
+		gatewayEpoch: gatewayIdentity.generationId,
+		runtimeEpoch: 'runtime-epoch-a',
+		socketPath: '/run/agent-vm/gateway-runtime/managed-plugin.sock',
+	},
+};
+
+const bootContract = createManagedGatewayBootContract({
+	bootEntry: 'openclaw-gateway',
+	configurationInputPath: '/run/agent-vm/managed-gateway/framework-service.json',
+	environmentInputPath: '/run/agent-vm/managed-gateway/framework.environment.sh',
+	framework: 'openclaw',
+	ingress: { guestPort: 18_789, kind: 'framework-http' },
+	logIdentity: {
+		guestPath: '/var/log/agent-vm/openclaw-service.log',
+		serviceName: 'agent-vm-openclaw-test',
+	},
+	readiness: { guestPort: 18_789, kind: 'framework-http', path: '/readyz' },
+	role: 'framework-service',
+});
+
+const image = {
+	built: false,
+	fingerprint: 'gateway-recovery-test-image',
+	imageReference: 'openclaw-gateway:test',
+};
+
+const processTarget = {
+	hostPid: 48_282,
+	processIdentity: matchingProcessIdentity,
+	vmId: gatewayIdentity.gatewayVmId,
+};
+
+const appliedIngressRoutes: ManagedGatewayRuntimeRecord['appliedIngressRoutes'] = [
+	{ ...expectedCohort.ingressIntent.controlRoute, guestPort: 18_790 },
+	expectedCohort.ingressIntent.frameworkRootRoute,
+];
+
+function createGatewayRuntimeRecord(
+	overrides: Partial<ManagedGatewayRuntimeRecord> = {},
+): ManagedGatewayRuntimeRecord {
+	return {
+		appliedIngressRoutes,
+		bootContract,
 		configPath: '/deployments/shravan-claw/config/system.jsonc',
 		controllerPort: 18_800,
 		createdAt: '2026-04-13T12:34:56.000Z',
-		gateway: {
-			bootId: 'boot-a',
-			controllerEpoch: 'controller-epoch-a',
-			gatewayEpochId: 'gateway-epoch-a',
-			gatewayVmId: 'gateway-vm-123',
-			generationId: 'generation-a',
-			zoneId: 'shravan',
-		},
-		gatewayType: 'openclaw',
-		guestListenPort: 18_789,
+		expectedCohort,
+		gateway: gatewayIdentity,
+		image,
 		ingressPort: 18_791,
 		processIdentity: matchingProcessIdentity,
+		processTarget,
 		projectNamespace: 'claw-tests-a1b2c3d4',
 		qemuPid: 48_282,
-		schemaVersion: 2,
+		runtimeKind: 'managed-gateway',
+		schemaVersion: 4,
 		sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
 		vmId: 'gateway-vm-123',
 		zoneId: 'shravan',
@@ -44,7 +153,9 @@ function createGatewayRuntimeRecord(
 	};
 }
 
-function loadedGatewayRuntimeRecord(record: GatewayRuntimeRecord): GatewayRuntimeRecordLoadResult {
+function loadedGatewayRuntimeRecord(
+	record: ManagedGatewayRuntimeRecord,
+): ManagedGatewayRuntimeRecordLoadResult {
 	return {
 		kind: 'loaded',
 		path: `/state/${record.zoneId}/gateway-runtime.json`,
@@ -59,21 +170,56 @@ function createGatewayRecoveryOptions(
 		expectedConfigPath: '/deployments/shravan-claw/config/system.jsonc',
 		expectedControllerPort: 18_800,
 		projectNamespace: 'claw-tests-a1b2c3d4',
-		stateDir: '/state/shravan',
+		runtimeRecordTarget: gatewayRuntimeRecordTarget,
 		zoneId: 'shravan',
 		...overrides,
 	};
 }
 
-async function matchingIdentityResolver(): Promise<{ command: string; lstart: string }> {
-	return matchingProcessIdentity;
+function createTerminatingProcessIdentityFixture(): {
+	readonly exactProcessTermination: ManagedVmExactProcessTerminationCapability;
+	readonly readProcessIdentity: (pid: number) => Promise<typeof matchingProcessIdentity | null>;
+	readonly terminateRecordedHostProcess: ReturnType<typeof vi.fn>;
+} {
+	let currentIdentity: typeof matchingProcessIdentity | null = matchingProcessIdentity;
+	const terminateRecordedHostProcess = vi.fn(async ({ identity }) => {
+		if (currentIdentity === null) {
+			return { hostProcessId: identity.hostProcessId, kind: 'already-absent' as const };
+		}
+		currentIdentity = null;
+		return { hostProcessId: identity.hostProcessId, kind: 'terminated' as const };
+	});
+	return {
+		exactProcessTermination: { terminateRecordedHostProcess },
+		readProcessIdentity: async (_pid: number): Promise<typeof matchingProcessIdentity | null> =>
+			currentIdentity,
+		terminateRecordedHostProcess,
+	};
+}
+
+function createExactProcessTerminationFixture(
+	kind: 'already-absent' | 'terminated' = 'already-absent',
+): {
+	readonly exactProcessTermination: ManagedVmExactProcessTerminationCapability;
+	readonly terminateRecordedHostProcess: ReturnType<typeof vi.fn>;
+} {
+	const terminateRecordedHostProcess = vi.fn(async ({ identity }) => ({
+		hostProcessId: identity.hostProcessId,
+		kind,
+	}));
+	return {
+		exactProcessTermination: { terminateRecordedHostProcess },
+		terminateRecordedHostProcess,
+	};
 }
 
 describe('cleanupRecordedGatewayRuntime', () => {
 	it('returns no cleanup when no runtime record exists', async () => {
+		const processTermination = createExactProcessTerminationFixture();
 		await expect(
 			cleanupRecordedGatewayRuntime(createGatewayRecoveryOptions(), {
-				loadGatewayRuntimeRecordResult: async () => ({
+				...processTermination,
+				loadManagedGatewayRuntimeRecordResult: async () => ({
 					kind: 'missing',
 					path: '/state/shravan/gateway-runtime.json',
 				}),
@@ -124,7 +270,7 @@ describe('cleanupRecordedGatewayRuntime', () => {
 	});
 
 	it('blocks cold-start cleanup when the runtime record is missing and configured ingress port is occupied', async () => {
-		const killProcess = vi.fn();
+		const processTermination = createExactProcessTerminationFixture();
 
 		await expect(
 			cleanupRecordedGatewayRuntime(
@@ -133,8 +279,8 @@ describe('cleanupRecordedGatewayRuntime', () => {
 					mode: 'in-process-recovery',
 				}),
 				{
-					killProcess,
-					loadGatewayRuntimeRecordResult: async () => ({
+					...processTermination,
+					loadManagedGatewayRuntimeRecordResult: async () => ({
 						kind: 'missing',
 						path: '/state/shravan/gateway-runtime.json',
 					}),
@@ -152,15 +298,17 @@ describe('cleanupRecordedGatewayRuntime', () => {
 				port: 18_791,
 			},
 		} satisfies Pick<GatewayOwnershipUnsafeError, 'evidence'>);
-		expect(killProcess).not.toHaveBeenCalled();
+		expect(processTermination.terminateRecordedHostProcess).not.toHaveBeenCalled();
 	});
 
 	it('warns and skips malformed records during in-process recovery without mutating', async () => {
 		const logMessages: string[] = [];
+		const processTermination = createExactProcessTerminationFixture();
 
 		await expect(
 			cleanupRecordedGatewayRuntime(createGatewayRecoveryOptions({ mode: 'in-process-recovery' }), {
-				loadGatewayRuntimeRecordResult: async () => ({
+				...processTermination,
+				loadManagedGatewayRuntimeRecordResult: async () => ({
 					error: new Error('expected schemaVersion'),
 					kind: 'parse-error',
 					path: '/state/shravan/gateway-runtime.json',
@@ -183,9 +331,11 @@ describe('cleanupRecordedGatewayRuntime', () => {
 	});
 
 	it('throws on malformed records during offline cleanup', async () => {
+		const processTermination = createExactProcessTerminationFixture();
 		await expect(
 			cleanupRecordedGatewayRuntime(createGatewayRecoveryOptions({ mode: 'offline-cleanup' }), {
-				loadGatewayRuntimeRecordResult: async () => ({
+				...processTermination,
+				loadManagedGatewayRuntimeRecordResult: async () => ({
 					error: new Error('expected schemaVersion'),
 					kind: 'parse-error',
 					path: '/state/shravan/gateway-runtime.json',
@@ -197,10 +347,9 @@ describe('cleanupRecordedGatewayRuntime', () => {
 	it('refuses to clean up a runtime record from another project namespace', async () => {
 		await expect(
 			cleanupRecordedGatewayRuntime(createGatewayRecoveryOptions(), {
-				deleteGatewayRuntimeRecord: vi.fn(async () => {}),
-				isProcessAlive: () => true,
-				killProcess: vi.fn(),
-				loadGatewayRuntimeRecordResult: async () =>
+				...createExactProcessTerminationFixture(),
+				deleteManagedGatewayRuntimeRecord: vi.fn(async () => {}),
+				loadManagedGatewayRuntimeRecordResult: async () =>
 					loadedGatewayRuntimeRecord(
 						createGatewayRuntimeRecord({
 							projectNamespace: 'shravan-claw-463c3e5f',
@@ -208,28 +357,29 @@ describe('cleanupRecordedGatewayRuntime', () => {
 						}),
 					),
 				readTcpListenPortOwner: async () => ({ command: 'qemu-system-aarch64', pid: 48_282 }),
-				sleep: async () => {},
 			}),
 		).rejects.toThrow(/belongs to projectNamespace 'shravan-claw-463c3e5f'/u);
 	});
 
 	it('skips mismatched records during in-process recovery without signaling the process', async () => {
 		const logMessages: string[] = [];
-		const killProcess = vi.fn();
+		const processTermination = createExactProcessTerminationFixture();
 
 		await expect(
 			cleanupRecordedGatewayRuntime(
 				createGatewayRecoveryOptions({
 					mode: 'in-process-recovery',
 					projectNamespace: 'shravan-claw-beta-25319b68',
-					stateDir: '/state/beta',
+					runtimeRecordTarget: createGatewayRuntimeRecordTarget({
+						filePath: '/state/beta/gateway-runtime.json',
+						zoneId: 'beta',
+					}),
 					zoneId: 'beta',
 				}),
 				{
-					deleteGatewayRuntimeRecord: vi.fn(async () => {}),
-					isProcessAlive: () => true,
-					killProcess,
-					loadGatewayRuntimeRecordResult: async () =>
+					deleteManagedGatewayRuntimeRecord: vi.fn(async () => {}),
+					...processTermination,
+					loadManagedGatewayRuntimeRecordResult: async () =>
 						loadedGatewayRuntimeRecord(
 							createGatewayRuntimeRecord({
 								projectNamespace: 'shravan-claw-463c3e5f',
@@ -244,7 +394,6 @@ describe('cleanupRecordedGatewayRuntime', () => {
 						command: 'qemu-system-aarch64',
 						pid: 48_282,
 					}),
-					sleep: async () => {},
 				},
 			),
 		).resolves.toEqual({
@@ -258,7 +407,7 @@ describe('cleanupRecordedGatewayRuntime', () => {
 			},
 		});
 
-		expect(killProcess).not.toHaveBeenCalled();
+		expect(processTermination.terminateRecordedHostProcess).not.toHaveBeenCalled();
 		expect(logMessages.join('\n')).toContain('projectNamespace');
 	});
 
@@ -276,16 +425,16 @@ describe('cleanupRecordedGatewayRuntime', () => {
 	])(
 		'skips gateway cleanup on $label mismatch during in-process recovery',
 		async ({ expectedReason, fixture }) => {
-			const deleteGatewayRuntimeRecord = vi.fn(async () => {});
-			const killProcess = vi.fn();
+			const deleteManagedGatewayRuntimeRecord = vi.fn(async () => {});
+			const processTermination = createExactProcessTerminationFixture();
 
 			await expect(
 				cleanupRecordedGatewayRuntime(
 					createGatewayRecoveryOptions({ mode: 'in-process-recovery' }),
 					{
-						deleteGatewayRuntimeRecord,
-						killProcess,
-						loadGatewayRuntimeRecordResult: async () =>
+						deleteManagedGatewayRuntimeRecord,
+						...processTermination,
+						loadManagedGatewayRuntimeRecordResult: async () =>
 							loadedGatewayRuntimeRecord(createGatewayRuntimeRecord(fixture)),
 						readTcpListenPortOwner: async () => ({ command: 'qemu-system-aarch64', pid: 48_282 }),
 					},
@@ -298,19 +447,19 @@ describe('cleanupRecordedGatewayRuntime', () => {
 					kind: 'record-scope-mismatch',
 				}),
 			});
-			expect(killProcess).not.toHaveBeenCalled();
-			expect(deleteGatewayRuntimeRecord).not.toHaveBeenCalled();
+			expect(processTermination.terminateRecordedHostProcess).not.toHaveBeenCalled();
+			expect(deleteManagedGatewayRuntimeRecord).not.toHaveBeenCalled();
 		},
 	);
 
 	it('skips gateway recovery when the ingress port is held by a different pid during startup recovery', async () => {
-		const killProcess = vi.fn();
+		const processTermination = createExactProcessTerminationFixture();
 		const logMessages: string[] = [];
 
 		await expect(
 			cleanupRecordedGatewayRuntime(createGatewayRecoveryOptions({ mode: 'in-process-recovery' }), {
-				killProcess,
-				loadGatewayRuntimeRecordResult: async () =>
+				...processTermination,
+				loadManagedGatewayRuntimeRecordResult: async () =>
 					loadedGatewayRuntimeRecord(
 						createGatewayRuntimeRecord({ ingressPort: 18_891, qemuPid: 111 }),
 					),
@@ -330,37 +479,36 @@ describe('cleanupRecordedGatewayRuntime', () => {
 				port: 18_891,
 			},
 		});
-		expect(killProcess).not.toHaveBeenCalled();
+		expect(processTermination.terminateRecordedHostProcess).not.toHaveBeenCalled();
 		expect(logMessages.join('\n')).toContain('held by pid 222');
 	});
 
 	it('throws in offline cleanup when the gateway ingress port is held by a different pid', async () => {
-		const killProcess = vi.fn();
+		const processTermination = createExactProcessTerminationFixture();
 
 		await expect(
 			cleanupRecordedGatewayRuntime(createGatewayRecoveryOptions({ mode: 'offline-cleanup' }), {
-				killProcess,
-				loadGatewayRuntimeRecordResult: async () =>
+				...processTermination,
+				loadManagedGatewayRuntimeRecordResult: async () =>
 					loadedGatewayRuntimeRecord(
 						createGatewayRuntimeRecord({ ingressPort: 18_891, qemuPid: 111 }),
 					),
 				readTcpListenPortOwner: async () => ({ command: 'qemu-system-aarch64', pid: 222 }),
 			}),
 		).rejects.toThrow(/port 18891 is held by pid 222/u);
-		expect(killProcess).not.toHaveBeenCalled();
+		expect(processTermination.terminateRecordedHostProcess).not.toHaveBeenCalled();
 	});
 
 	it('deletes a stale gateway record during in-process recovery when the current controller owns ingress', async () => {
-		const deleteGatewayRuntimeRecord = vi.fn(async () => {});
-		const killProcess = vi.fn();
+		const deleteManagedGatewayRuntimeRecord = vi.fn(async () => {});
+		const processTermination = createExactProcessTerminationFixture();
 		const record = createGatewayRuntimeRecord({ ingressPort: 18_891, qemuPid: 111 });
 
 		await expect(
 			cleanupRecordedGatewayRuntime(createGatewayRecoveryOptions({ mode: 'in-process-recovery' }), {
-				deleteGatewayRuntimeRecord,
-				isProcessAlive: () => false,
-				killProcess,
-				loadGatewayRuntimeRecordResult: async () => loadedGatewayRuntimeRecord(record),
+				deleteManagedGatewayRuntimeRecord,
+				...processTermination,
+				loadManagedGatewayRuntimeRecordResult: async () => loadedGatewayRuntimeRecord(record),
 				readTcpListenPortOwner: async () => ({
 					command: 'node agent-vm controller start',
 					pid: process.pid,
@@ -370,130 +518,109 @@ describe('cleanupRecordedGatewayRuntime', () => {
 			cleanedUp: true,
 			killedPid: null,
 		});
-		expect(killProcess).not.toHaveBeenCalled();
-		expect(deleteGatewayRuntimeRecord).toHaveBeenCalledWith('/state/shravan');
+		expect(processTermination.terminateRecordedHostProcess).toHaveBeenCalledOnce();
+		expect(deleteManagedGatewayRuntimeRecord).toHaveBeenCalledWith(gatewayRuntimeRecordTarget);
 	});
 
 	it('kills the recorded gateway process before deleting when its ingress port is already free', async () => {
-		const deleteGatewayRuntimeRecord = vi.fn(async () => {});
-		const killProcess = vi.fn();
+		const deleteManagedGatewayRuntimeRecord = vi.fn(async () => {});
 		const record = createGatewayRuntimeRecord({ qemuPid: 111 });
-		const isProcessAlive = vi
-			.fn()
-			.mockReturnValueOnce(true)
-			.mockReturnValueOnce(true)
-			.mockReturnValueOnce(false);
+		const processFixture = createTerminatingProcessIdentityFixture();
 
 		await expect(
 			cleanupRecordedGatewayRuntime(createGatewayRecoveryOptions(), {
-				deleteGatewayRuntimeRecord,
-				isProcessAlive,
-				killProcess,
-				loadGatewayRuntimeRecordResult: async () => loadedGatewayRuntimeRecord(record),
-				readProcessCommand: async () => 'qemu-system-aarch64 -nodefaults',
-				readProcessIdentity: async () => record.processIdentity,
+				deleteManagedGatewayRuntimeRecord,
+				exactProcessTermination: processFixture.exactProcessTermination,
+				loadManagedGatewayRuntimeRecordResult: async () => loadedGatewayRuntimeRecord(record),
+				readProcessIdentity: processFixture.readProcessIdentity,
 				readTcpListenPortOwner: async () => null,
-				sleep: async () => {},
 			}),
 		).resolves.toEqual({
 			cleanedUp: true,
 			killedPid: 111,
 		});
-		expect(killProcess).toHaveBeenCalledWith(111, 'SIGTERM');
-		expect(deleteGatewayRuntimeRecord).toHaveBeenCalledWith('/state/shravan');
+		expect(processFixture.terminateRecordedHostProcess).toHaveBeenCalledWith(
+			expect.objectContaining({ identity: expect.objectContaining({ hostProcessId: 111 }) }),
+		);
+		expect(deleteManagedGatewayRuntimeRecord).toHaveBeenCalledWith(gatewayRuntimeRecordTarget);
 	});
 
 	it('kills an early persisted gateway process when ingress has not been established', async () => {
-		const deleteGatewayRuntimeRecord = vi.fn(async () => {});
-		const killProcess = vi.fn();
+		const deleteManagedGatewayRuntimeRecord = vi.fn(async () => {});
 		const record = createGatewayRuntimeRecord({ ingressPort: undefined, qemuPid: 111 });
-		const isProcessAlive = vi
-			.fn()
-			.mockReturnValueOnce(true)
-			.mockReturnValueOnce(true)
-			.mockReturnValueOnce(false);
+		const processFixture = createTerminatingProcessIdentityFixture();
 		const readTcpListenPortOwner = vi.fn();
 
 		await expect(
 			cleanupRecordedGatewayRuntime(createGatewayRecoveryOptions(), {
-				deleteGatewayRuntimeRecord,
-				isProcessAlive,
-				killProcess,
-				loadGatewayRuntimeRecordResult: async () => loadedGatewayRuntimeRecord(record),
-				readProcessCommand: async () => 'qemu-system-aarch64 -nodefaults',
-				readProcessIdentity: async () => record.processIdentity,
+				deleteManagedGatewayRuntimeRecord,
+				exactProcessTermination: processFixture.exactProcessTermination,
+				loadManagedGatewayRuntimeRecordResult: async () => loadedGatewayRuntimeRecord(record),
+				readProcessIdentity: processFixture.readProcessIdentity,
 				readTcpListenPortOwner,
-				sleep: async () => {},
 			}),
 		).resolves.toEqual({
 			cleanedUp: true,
 			killedPid: 111,
 		});
 		expect(readTcpListenPortOwner).not.toHaveBeenCalled();
-		expect(killProcess).toHaveBeenCalledWith(111, 'SIGTERM');
-		expect(deleteGatewayRuntimeRecord).toHaveBeenCalledWith('/state/shravan');
+		expect(processFixture.terminateRecordedHostProcess).toHaveBeenCalledWith(
+			expect.objectContaining({ identity: expect.objectContaining({ hostProcessId: 111 }) }),
+		);
+		expect(deleteManagedGatewayRuntimeRecord).toHaveBeenCalledWith(gatewayRuntimeRecordTarget);
 	});
 
-	it('refuses to delete a port-free gateway record when the recorded pid was reused', async () => {
-		const deleteGatewayRuntimeRecord = vi.fn(async () => {});
-		const killProcess = vi.fn();
+	it('deletes a port-free stale record without signaling when its recorded pid was reused', async () => {
+		const deleteManagedGatewayRuntimeRecord = vi.fn(async () => {});
+		const processTermination = createExactProcessTerminationFixture();
 
 		await expect(
 			cleanupRecordedGatewayRuntime(createGatewayRecoveryOptions(), {
-				deleteGatewayRuntimeRecord,
-				isProcessAlive: () => true,
-				killProcess,
-				loadGatewayRuntimeRecordResult: async () =>
+				deleteManagedGatewayRuntimeRecord,
+				...processTermination,
+				loadManagedGatewayRuntimeRecordResult: async () =>
 					loadedGatewayRuntimeRecord(createGatewayRuntimeRecord({ qemuPid: 111 })),
-				readProcessCommand: async () => 'node /tmp/not-gateway.js',
 				readProcessIdentity: async () => ({
 					command: 'node /tmp/not-gateway.js',
 					lstart: 'Tue Apr 14 15:00:00 2026',
 				}),
 				readTcpListenPortOwner: async () => null,
-				sleep: async () => {},
 			}),
-		).rejects.toThrow(/refusing SIGTERM to pid 111: process identity changed/u);
-		expect(killProcess).not.toHaveBeenCalled();
-		expect(deleteGatewayRuntimeRecord).not.toHaveBeenCalled();
+		).resolves.toEqual({ cleanedUp: true, killedPid: null });
+		expect(processTermination.terminateRecordedHostProcess).toHaveBeenCalledOnce();
+		expect(deleteManagedGatewayRuntimeRecord).toHaveBeenCalledWith(gatewayRuntimeRecordTarget);
 	});
 
 	it('terminates an owned recorded qemu process, deletes the runtime record, and reports cleanup', async () => {
 		const logMessages: string[] = [];
-		const readProcessCommand = vi.fn(async () => 'qemu-system-aarch64 -nodefaults');
-		const isProcessAlive = vi
-			.fn()
-			.mockReturnValueOnce(true)
-			.mockReturnValueOnce(true)
-			.mockReturnValueOnce(false);
-		const killProcess = vi.fn();
-		const deleteGatewayRuntimeRecord = vi.fn(async () => {});
+		const processFixture = createTerminatingProcessIdentityFixture();
+		const deleteManagedGatewayRuntimeRecord = vi.fn(async () => {});
 
 		await expect(
 			cleanupRecordedGatewayRuntime(createGatewayRecoveryOptions(), {
-				deleteGatewayRuntimeRecord,
-				isProcessAlive,
-				killProcess,
-				loadGatewayRuntimeRecordResult: async () =>
+				deleteManagedGatewayRuntimeRecord,
+				exactProcessTermination: processFixture.exactProcessTermination,
+				loadManagedGatewayRuntimeRecordResult: async () =>
 					loadedGatewayRuntimeRecord(createGatewayRuntimeRecord()),
 				log: (message) => {
 					logMessages.push(message);
 				},
-				readProcessCommand,
-				readProcessIdentity: matchingIdentityResolver,
+				readProcessIdentity: processFixture.readProcessIdentity,
 				readTcpListenPortOwner: async () => ({
 					command: 'qemu-system-aarch64',
 					pid: 48_282,
 				}),
-				sleep: async () => {},
 			}),
 		).resolves.toEqual({
 			cleanedUp: true,
 			killedPid: 48_282,
 		});
 
-		expect(killProcess).toHaveBeenNthCalledWith(1, 48_282, 'SIGTERM');
-		expect(deleteGatewayRuntimeRecord).toHaveBeenCalledWith('/state/shravan');
+		expect(processFixture.terminateRecordedHostProcess).toHaveBeenNthCalledWith(
+			1,
+			expect.objectContaining({ identity: expect.objectContaining({ hostProcessId: 48_282 }) }),
+		);
+		expect(deleteManagedGatewayRuntimeRecord).toHaveBeenCalledWith(gatewayRuntimeRecordTarget);
 		expect(logMessages).toEqual([
 			"Found persisted gateway runtime for zone 'shravan' (pid 48282, vm gateway-vm-123).",
 			"Removed stale gateway runtime record for zone 'shravan' after terminating recorded gateway pid 48282.",
@@ -501,12 +628,12 @@ describe('cleanupRecordedGatewayRuntime', () => {
 	});
 
 	it('warns and skips when the recorded pid owns the port but is not a managed VM command', async () => {
-		const killProcess = vi.fn();
+		const processTermination = createExactProcessTerminationFixture();
 
 		await expect(
 			cleanupRecordedGatewayRuntime(createGatewayRecoveryOptions({ mode: 'in-process-recovery' }), {
-				killProcess,
-				loadGatewayRuntimeRecordResult: async () =>
+				...processTermination,
+				loadManagedGatewayRuntimeRecordResult: async () =>
 					loadedGatewayRuntimeRecord(createGatewayRuntimeRecord({ qemuPid: 111 })),
 				readTcpListenPortOwner: async () => ({ command: '/usr/bin/python3', pid: 111 }),
 			}),
@@ -521,31 +648,32 @@ describe('cleanupRecordedGatewayRuntime', () => {
 				port: 18_791,
 			},
 		});
-		expect(killProcess).not.toHaveBeenCalled();
+		expect(processTermination.terminateRecordedHostProcess).not.toHaveBeenCalled();
 	});
 
-	it('fails fast when the recorded pid belongs to a different process', async () => {
-		const killProcess = vi.fn();
+	it('fails closed when the recorded pid has the same start but a different command', async () => {
+		const terminateRecordedHostProcess = vi.fn(async () => {
+			throw new Error(
+				'Gateway runtime record refusing SIGTERM to pid 48282: same process start identity was observed but command changed.',
+			);
+		});
 
 		await expect(
 			cleanupRecordedGatewayRuntime(createGatewayRecoveryOptions(), {
-				deleteGatewayRuntimeRecord: vi.fn(async () => {}),
-				isProcessAlive: () => true,
-				killProcess,
-				loadGatewayRuntimeRecordResult: async () =>
+				deleteManagedGatewayRuntimeRecord: vi.fn(async () => {}),
+				exactProcessTermination: { terminateRecordedHostProcess },
+				loadManagedGatewayRuntimeRecordResult: async () =>
 					loadedGatewayRuntimeRecord(createGatewayRuntimeRecord()),
-				readProcessCommand: async () => 'node /tmp/something-else.js',
 				readProcessIdentity: async () => ({
 					command: 'node /tmp/something-else.js',
-					lstart: 'Tue Apr 14 15:00:00 2026',
+					lstart: matchingProcessIdentity.lstart,
 				}),
 				readTcpListenPortOwner: async () => ({
 					command: 'qemu-system-aarch64',
 					pid: 48_282,
 				}),
-				sleep: async () => {},
 			}),
-		).rejects.toThrow(/refusing SIGTERM to pid 48282: process identity changed/u);
-		expect(killProcess).not.toHaveBeenCalled();
+		).rejects.toThrow(/same process start identity was observed but command changed/u);
+		expect(terminateRecordedHostProcess).toHaveBeenCalledOnce();
 	});
 });

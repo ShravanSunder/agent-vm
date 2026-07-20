@@ -1,6 +1,6 @@
 import net from 'node:net';
 
-import type { MediatedSecretSpec } from '@agent-vm/secret-management';
+import type { ManagedVmFilteredWorkspacePolicy } from '@agent-vm/managed-vm';
 import {
 	MemoryProvider,
 	ReadonlyProvider,
@@ -22,10 +22,14 @@ import {
 	type SshOptions,
 	type VMOptions,
 	type VmFs as GondolinVmFs,
+	type VirtualFileHandle,
 	type VirtualProvider,
+	ERRNO,
 	getInfoFromSshExecRequest,
+	isWriteFlag,
 } from '@earendil-works/gondolin';
 
+import { createFilteredWorkspaceProvider } from './filtered-workspace-provider.js';
 import {
 	configureHostNetworkDefaults,
 	type HostNetworkDefaultsResult,
@@ -58,6 +62,111 @@ export type ManagedVmFs = GondolinVmFs;
 export type ManagedSshEgressOptions = SshOptions;
 
 export type IngressRoute = GondolinIngressRoute;
+
+type VirtualProviderMethod = (...methodArguments: readonly unknown[]) => unknown;
+
+function createReadonlyMutationError(
+	syscall: string,
+	filePath: string | undefined,
+): Error & {
+	readonly code: 'EROFS';
+	readonly errno: number;
+	readonly path?: string;
+	readonly syscall: string;
+} {
+	const pathSuffix = filePath === undefined ? '' : ` '${filePath}'`;
+	return Object.assign(new Error(`EROFS: ${syscall}${pathSuffix}`), {
+		code: 'EROFS' as const,
+		errno: ERRNO.EROFS,
+		...(filePath === undefined ? {} : { path: filePath }),
+		syscall,
+	});
+}
+
+function createHardenedReadonlyFileHandle(handle: VirtualFileHandle): VirtualFileHandle {
+	return new Proxy(handle, {
+		get(target: VirtualFileHandle, property: string | symbol, receiver: unknown): unknown {
+			const value = Reflect.get(target, property, receiver) as unknown;
+			if (property === 'write' || property === 'writeFile' || property === 'truncate') {
+				return async (): Promise<never> => {
+					throw createReadonlyMutationError(String(property), target.path);
+				};
+			}
+			if (property === 'writeSync' || property === 'writeFileSync' || property === 'truncateSync') {
+				return (): never => {
+					throw createReadonlyMutationError(String(property), target.path);
+				};
+			}
+			return typeof value === 'function'
+				? (...methodArguments: readonly unknown[]): unknown =>
+						Reflect.apply(value as VirtualProviderMethod, target, methodArguments)
+				: value;
+		},
+	});
+}
+
+export function createHardenedReadonlyProvider(provider: VirtualProvider): VirtualProvider {
+	const readonlyProvider = new ReadonlyProvider(provider);
+	return new Proxy(readonlyProvider, {
+		get(target: VirtualProvider, property: string | symbol, receiver: unknown): unknown {
+			const value = Reflect.get(target, property, receiver) as unknown;
+			if (property === 'open') {
+				return async (
+					entryPath: string,
+					flags: string,
+					mode?: number,
+				): Promise<VirtualFileHandle> => {
+					if (isWriteFlag(flags)) {
+						throw createReadonlyMutationError('open', entryPath);
+					}
+					return createHardenedReadonlyFileHandle(await target.open(entryPath, flags, mode));
+				};
+			}
+			if (property === 'openSync') {
+				return (entryPath: string, flags: string, mode?: number): VirtualFileHandle => {
+					if (isWriteFlag(flags)) {
+						throw createReadonlyMutationError('openSync', entryPath);
+					}
+					return createHardenedReadonlyFileHandle(target.openSync(entryPath, flags, mode));
+				};
+			}
+			if (
+				property === 'mkdir' ||
+				property === 'rmdir' ||
+				property === 'unlink' ||
+				property === 'rename' ||
+				property === 'link' ||
+				property === 'writeFile' ||
+				property === 'appendFile' ||
+				property === 'copyFile' ||
+				property === 'symlink'
+			) {
+				return async (entryPath: string): Promise<never> => {
+					throw createReadonlyMutationError(String(property), entryPath);
+				};
+			}
+			if (
+				property === 'mkdirSync' ||
+				property === 'rmdirSync' ||
+				property === 'unlinkSync' ||
+				property === 'renameSync' ||
+				property === 'linkSync' ||
+				property === 'writeFileSync' ||
+				property === 'appendFileSync' ||
+				property === 'copyFileSync' ||
+				property === 'symlinkSync'
+			) {
+				return (entryPath: string): never => {
+					throw createReadonlyMutationError(String(property), entryPath);
+				};
+			}
+			return typeof value === 'function'
+				? (...methodArguments: readonly unknown[]): unknown =>
+						Reflect.apply(value as VirtualProviderMethod, target, methodArguments)
+				: value;
+		},
+	});
+}
 
 export interface GitReadOnlySshEgressOptions {
 	readonly allowedHosts: readonly string[];
@@ -197,8 +306,9 @@ export interface ManagedVmDependencies {
 	createVm(vmOptions: VMOptions): Promise<ManagedVmInstance>;
 	createHttpHooks(options: {
 		readonly allowedHosts: readonly string[];
+		readonly allowedInternalHosts?: readonly string[];
 		readonly isIpAllowed?: HttpHooks['isIpAllowed'];
-		readonly secrets: Record<string, MediatedSecretSpec>;
+		readonly secrets: Record<string, ManagedHttpMediatedSecretSpec>;
 		readonly onRequest?: (request: Request) => Promise<Request | Response | void>;
 		readonly onResponse?: (response: Response) => Promise<Response | void>;
 	}): Pick<CreateHttpHooksResult, 'env' | 'httpHooks'>;
@@ -211,15 +321,35 @@ export interface ManagedVmDependencies {
 	createShadowPathPredicate(paths: readonly string[]): ShadowPredicate;
 }
 
-export interface VfsMountSpec {
-	readonly kind: 'realfs' | 'realfs-readonly' | 'memory' | 'shadow';
-	readonly hostPath?: string;
-	readonly pinnedHostRoot?: PinnedRealFsRoot;
-	readonly shadowConfig?: {
-		readonly deny: readonly string[];
-		readonly tmpfs: readonly string[];
-	};
+interface ManagedHttpMediatedSecretSpec {
+	readonly hosts: readonly string[];
+	readonly placeholder?: string;
+	readonly value: string;
 }
+
+type RealFsVfsMountSpec = {
+	readonly hostPath?: string;
+	readonly kind: 'realfs' | 'realfs-readonly';
+	readonly pinnedHostRoot?: PinnedRealFsRoot;
+};
+
+export type VfsMountSpec =
+	| RealFsVfsMountSpec
+	| {
+			readonly kind: 'filtered-workspace';
+			readonly pinnedHostRoot: PinnedRealFsRoot;
+			readonly policy: ManagedVmFilteredWorkspacePolicy;
+	  }
+	| { readonly kind: 'memory' }
+	| {
+			readonly hostPath?: string;
+			readonly kind: 'shadow';
+			readonly pinnedHostRoot?: PinnedRealFsRoot;
+			readonly shadowConfig?: {
+				readonly deny: readonly string[];
+				readonly tmpfs: readonly string[];
+			};
+	  };
 
 export interface CreateVmOptions {
 	readonly imagePath: string;
@@ -228,7 +358,7 @@ export interface CreateVmOptions {
 	readonly rootfsMode: 'readonly' | 'memory' | 'cow';
 	readonly runtimeRootfsSize?: string;
 	readonly allowedHosts: readonly string[];
-	readonly secrets: Record<string, MediatedSecretSpec>;
+	readonly secrets: Record<string, ManagedHttpMediatedSecretSpec>;
 	readonly vfsMounts: Record<string, VfsMountSpec>;
 	readonly tcpHosts?: Record<string, string>;
 	readonly sshEgress?: ManagedSshEgressOptions;
@@ -264,14 +394,18 @@ function createDefaultDependencies(): ManagedVmDependencies {
 		createHttpHooks: (hookOptions) =>
 			createHttpHooks({
 				allowedHosts: [...hookOptions.allowedHosts],
-				...(hookOptions.isIpAllowed
-					? { blockInternalRanges: false, isIpAllowed: hookOptions.isIpAllowed }
-					: {}),
+				...(hookOptions.allowedInternalHosts === undefined
+					? {}
+					: { allowedInternalHosts: [...hookOptions.allowedInternalHosts] }),
+				...(hookOptions.isIpAllowed ? { isIpAllowed: hookOptions.isIpAllowed } : {}),
 				secrets: Object.fromEntries(
 					Object.entries(hookOptions.secrets).map(([secretName, secretSpec]) => [
 						secretName,
 						{
 							hosts: [...secretSpec.hosts],
+							...(secretSpec.placeholder === undefined
+								? {}
+								: { placeholder: secretSpec.placeholder }),
 							value: secretSpec.value,
 						},
 					]),
@@ -286,8 +420,7 @@ function createDefaultDependencies(): ManagedVmDependencies {
 				root,
 			}),
 		createRealFsProvider: createDefaultRealFsProvider,
-		createReadonlyProvider: (provider: VirtualProvider): VirtualProvider =>
-			new ReadonlyProvider(provider),
+		createReadonlyProvider: createHardenedReadonlyProvider,
 		createMemoryProvider: (): VirtualProvider => new MemoryProvider(),
 		createShadowProvider: (
 			provider: VirtualProvider,
@@ -310,7 +443,7 @@ function normalizeShadowPath(pathValue: string): string {
 }
 
 function createRealFsProviderForSpec(
-	mountSpec: VfsMountSpec,
+	mountSpec: RealFsVfsMountSpec | Extract<VfsMountSpec, { readonly kind: 'shadow' }>,
 	dependencies: ManagedVmDependencies,
 	mountKind: string,
 ): VirtualProvider {
@@ -338,6 +471,13 @@ function createProviderFromSpec(
 			return dependencies.createReadonlyProvider(
 				createRealFsProviderForSpec(mountSpec, dependencies, 'realfs-readonly'),
 			);
+		}
+		case 'filtered-workspace': {
+			return createFilteredWorkspaceProvider({
+				baseProvider: dependencies.createPinnedRealFsProvider(mountSpec.pinnedHostRoot),
+				dependencies,
+				policy: mountSpec.policy,
+			});
 		}
 		case 'shadow': {
 			const baseProvider =
@@ -369,7 +509,7 @@ function createProviderFromSpec(
 			return shadowProvider;
 		}
 		default: {
-			throw new Error(`Unsupported VFS mount kind: ${String(mountSpec.kind)}`);
+			throw new Error('Unsupported VFS mount kind.');
 		}
 	}
 }
@@ -392,7 +532,7 @@ function collectPinnedRealFsRoots(
 ): readonly PinnedRealFsRoot[] {
 	const roots = new Map<number, PinnedRealFsRoot>();
 	for (const mountSpec of Object.values(vfsMounts)) {
-		if (mountSpec.pinnedHostRoot) {
+		if ('pinnedHostRoot' in mountSpec && mountSpec.pinnedHostRoot) {
 			roots.set(mountSpec.pinnedHostRoot.fd, mountSpec.pinnedHostRoot);
 		}
 	}
@@ -670,8 +810,8 @@ export async function createManagedVm(
 	const hasTcpHosts = options.tcpHosts && Object.keys(options.tcpHosts).length > 0;
 	const hasSshEgress = options.sshEgress !== undefined && options.sshEgress.allowedHosts.length > 0;
 	const internalTcpHostRules = deriveInternalTcpHostRules(options.tcpHosts);
-	const allowedHosts = mergeUniqueHosts(
-		options.allowedHosts,
+	const allowedInternalHosts = mergeUniqueHosts(
+		[],
 		internalTcpHostRules.map((rule) => rule.hostname),
 	);
 	const isIpAllowed = createInternalTcpHostPolicy(internalTcpHostRules);
@@ -679,7 +819,8 @@ export async function createManagedVm(
 	let vmInstance: ManagedVmInstance;
 	try {
 		const hookBundle = dependencies.createHttpHooks({
-			allowedHosts,
+			allowedHosts: options.allowedHosts,
+			...(allowedInternalHosts.length > 0 ? { allowedInternalHosts } : {}),
 			...(isIpAllowed ? { isIpAllowed } : {}),
 			secrets: options.secrets,
 			...(options.onRequest ? { onRequest: options.onRequest } : {}),

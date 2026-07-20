@@ -1,10 +1,23 @@
 /** A command executed in the guest. */
 export type ManagedVmExecCommand = string | readonly string[];
 
+export type ManagedVmExecStreamMode = { readonly kind: 'discard' } | { readonly kind: 'pipe' };
+
+/**
+ * Explicit bounded streaming policy. Omitting this group preserves the
+ * backend's buffered execution behavior for existing non-streaming callers.
+ */
+export interface ManagedVmExecStreamingOptions {
+	readonly stderr: ManagedVmExecStreamMode;
+	readonly stdout: ManagedVmExecStreamMode;
+	readonly windowBytes: number;
+}
+
 export interface ManagedVmExecOptions {
 	readonly argv?: readonly string[];
 	readonly cwd?: string;
 	readonly env?: readonly string[] | Readonly<Record<string, string>>;
+	readonly output?: ManagedVmExecStreamingOptions;
 	readonly pty?: boolean;
 	readonly signal?: AbortSignal;
 	readonly stdin?: string | Uint8Array | AsyncIterable<Uint8Array>;
@@ -123,6 +136,27 @@ export interface OwnedHostDirectoryTransfer {
 	readonly state: 'adapter-owned' | 'closed';
 }
 
+export type ManagedVmFilteredWorkspaceVisibility =
+	| { readonly kind: 'whole-root-writable' }
+	| {
+			readonly kind: 'positive-paths';
+			readonly visiblePaths: readonly string[];
+			readonly writablePaths: readonly string[];
+	  };
+
+export interface ManagedVmFilteredWorkspaceReadonlyInput {
+	readonly destinationRelativePath: string;
+	readonly sourceRelativePath: string;
+}
+
+/** Controller-authored policy over one owned canonical workspace root. */
+export interface ManagedVmFilteredWorkspacePolicy {
+	readonly hiddenPaths: readonly string[];
+	readonly readonlyInputs: readonly ManagedVmFilteredWorkspaceReadonlyInput[];
+	readonly temporaryPaths: readonly string[];
+	readonly visibility: ManagedVmFilteredWorkspaceVisibility;
+}
+
 export type ManagedVmMount =
 	| {
 			readonly access: 'read-only' | 'read-write';
@@ -133,6 +167,11 @@ export type ManagedVmMount =
 			readonly access: 'read-only' | 'read-write';
 			readonly directory: OwnedHostDirectory;
 			readonly kind: 'owned-host-directory';
+	  }
+	| {
+			readonly directory: OwnedHostDirectory;
+			readonly kind: 'owned-filtered-workspace';
+			readonly policy: ManagedVmFilteredWorkspacePolicy;
 	  }
 	| { readonly kind: 'memory' }
 	| {
@@ -145,6 +184,8 @@ export type ManagedVmMount =
 export interface ManagedVmMediatedSecretDescriptor {
 	readonly allowedHosts: readonly string[];
 	readonly environmentVariable: string;
+	/** Opaque, non-secret token used to represent the mediated value inside the guest. */
+	readonly guestPlaceholder?: string;
 	/**
 	 * Resolved only at the trusted host/provider boundary. The provider must use
 	 * this value solely for outbound HTTP mediation and must never inject the raw
@@ -200,10 +241,25 @@ export interface ManagedVm {
 
 /** Durable controller identity captured before authority admission. */
 export interface ManagedVmHostProcessIdentity {
-	readonly command: readonly string[];
+	readonly command: string;
 	readonly hostProcessId: number;
 	readonly processStartIdentity: string;
 	readonly vmId: string;
+}
+
+export interface ManagedVmExactProcessTerminationRequest {
+	readonly contextLabel: string;
+	readonly identity: ManagedVmHostProcessIdentity;
+}
+
+export type ManagedVmExactProcessTerminationOutcome =
+	| { readonly hostProcessId: number; readonly kind: 'already-absent' }
+	| { readonly hostProcessId: number; readonly kind: 'terminated' };
+
+export interface ManagedVmExactProcessTerminationCapability {
+	terminateRecordedHostProcess(
+		request: ManagedVmExactProcessTerminationRequest,
+	): Promise<ManagedVmExactProcessTerminationOutcome>;
 }
 
 export interface ManagedVmFactory {
@@ -243,6 +299,7 @@ export interface ManagedVmOwnedDirectoryCapability {
 /** Aggregate available only at application composition boundaries. */
 export interface ManagedVmProvider {
 	readonly diagnostics: ManagedVmDiagnosticsCapability;
+	readonly exactProcessTermination: ManagedVmExactProcessTerminationCapability;
 	readonly factory: ManagedVmFactory;
 	readonly images: ManagedVmImageCapability;
 	readonly ownedDirectories: ManagedVmOwnedDirectoryCapability;

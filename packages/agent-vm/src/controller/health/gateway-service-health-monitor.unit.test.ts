@@ -446,7 +446,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 				kind: 'controller-request',
 				maxAttempts: 1,
 				observedAtMs: nowMs,
-				operation: 'zone-git-push',
+				operation: 'workspace-git-push',
 				result: 'failed',
 				zoneId: 'sunfam',
 			});

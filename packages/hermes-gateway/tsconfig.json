@@ -1,0 +1,10 @@
+{
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		"paths": {
+			"@agent-vm/gateway-lifecycle": ["../gateway-lifecycle/dist/index.d.ts"]
+		}
+	},
+	"include": ["src/**/*.ts"],
+	"exclude": ["dist"]
+}

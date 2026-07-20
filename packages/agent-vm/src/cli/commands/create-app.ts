@@ -15,7 +15,6 @@ import { createMigrateSubcommands } from './migrate-definition.js';
 import { createPathsSubcommands } from './paths-definition.js';
 import { createResourcesSubcommands } from './resources-definition.js';
 import { createValidateCommand } from './validate-definition.js';
-import { createZoneGitSubcommands } from './zone-git-definition.js';
 
 export function createAgentVmApp(io: CliIo, dependencies: CliDependencies, cliVersion: string) {
 	return subcommands({
@@ -36,7 +35,6 @@ export function createAgentVmApp(io: CliIo, dependencies: CliDependencies, cliVe
 			backup: createBackupSubcommands(io, dependencies),
 			auth: createAuthSubcommands(io, dependencies),
 			controller: createControllerSubcommands(io, dependencies),
-			'zone-git': createZoneGitSubcommands(io, dependencies),
 		},
 	});
 }

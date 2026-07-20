@@ -6,6 +6,7 @@ import { runControllerUpgrade } from './upgrade-zone.js';
 const systemConfig = {
 	schemaVersion: 1,
 	cacheDir: './cache',
+	controllerStateDir: '/controller-state-test',
 	runtimeDir: './runtime',
 	host: {
 		controllerPort: 18800,

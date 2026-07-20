@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { workerConfigSchema } from '@agent-vm/agent-vm-worker';
+import { TOOL_VM_WORK_GUEST_ROOT } from '@agent-vm/gateway-lifecycle';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -12,7 +13,6 @@ import {
 import { PullDefaultValidationError } from '../git-pull-default-operations.js';
 import { HealthEventStore } from '../health/health-event-store.js';
 import type { Lease, LeaseSnapshot } from '../leases/lease-manager.js';
-import { OPENCLAW_TOOL_VM_WORKSPACE_MOUNT } from '../leases/lease-work-mount-paths.js';
 import { OpenClawRuntimeStatusStore } from '../openclaw-runtime-status.js';
 import type { PreparedWorkerTask, WorkerTaskResult } from '../worker-task-runner.js';
 import {
@@ -31,21 +31,12 @@ import { createControllerApp } from './controller-http-routes.js';
 type ControllerAppOptions = Parameters<typeof createControllerApp>[0];
 
 function createControllerAppForTest(
-	options: Omit<ControllerAppOptions, 'resolveLeaseWorkMountDir'> &
-		Partial<Pick<ControllerAppOptions, 'resolveLeaseWorkMountDir'>>,
+	options: ControllerAppOptions,
 ): ReturnType<typeof createControllerApp> {
-	const {
-		readIdentityPem = async () => 'pem',
-		resolveLeaseWorkMountDir = async ({ workMountDir }) => ({
-			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
-			hostWorkMountDir: workMountDir,
-		}),
-		...rest
-	} = options;
+	const { readIdentityPem = async () => 'pem', ...rest } = options;
 	return createControllerApp({
 		...rest,
 		readIdentityPem,
-		resolveLeaseWorkMountDir,
 	});
 }
 
@@ -54,12 +45,15 @@ function createLeaseStub(
 	tcpSlot: number,
 	overrides: Partial<Pick<Lease, 'agentId' | 'profileId' | 'zoneId'>> = {},
 ): Lease {
+	const agentId = overrides.agentId ?? 'main';
+	const zoneId = overrides.zoneId ?? 'shravan';
 	const lease = {
-		agentId: overrides.agentId ?? 'main',
-		agentWorkspaceDir: '/host/agent-work',
+		agentId,
 		createdAt: tcpSlot,
 		effectiveIdleTtlMs: 100 * 60 * 1000,
-		guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
+		guestWorkdir: TOOL_VM_WORK_GUEST_ROOT,
+		hostGitDirectoryRoot: `/host/runtime/zones/${zoneId}/gitdirs/agents/${agentId}`,
+		hostWorkspaceRoot: `/host/zone-files/agents/${agentId}`,
 		id: leaseId,
 		lastUsedAt: tcpSlot,
 		profileId: overrides.profileId ?? 'standard',
@@ -95,8 +89,8 @@ function createLeaseStub(
 			getHostProcessId: () => null,
 			start: async () => {},
 		},
-		hostWorkMountDir: '/host/sandbox-work',
-		zoneId: overrides.zoneId ?? 'shravan',
+		profileAssignmentRevision: `profile-assignment:${agentId}:1`,
+		zoneId,
 	} satisfies Lease;
 	return lease;
 }
@@ -677,22 +671,7 @@ describe('createControllerApp', () => {
 		]);
 	});
 
-	it('keeps zone Git status diagnostic but deletes the old VM-facing push route', async () => {
-		const getZoneGitStatus = vi.fn(async () => ({
-			aheadOfRemote: 1,
-			behindRemote: 0,
-			branch: 'main',
-			dirty: false,
-			initialized: true,
-			localHead: 'abc123',
-			remoteHead: 'def456',
-		}));
-		const pushZoneGit = vi.fn(async () => ({
-			branch: 'main',
-			localHead: 'abc123',
-			remoteHead: 'abc123',
-			pushedCommits: [{ sha: 'abc123', subject: 'docs: update memory' }],
-		}));
+	it('does not expose retired whole-zone Git routes', async () => {
 		const app = createControllerAppForTest({
 			toolVmProfiles: {
 				standard: {
@@ -713,10 +692,8 @@ describe('createControllerApp', () => {
 			operations: {
 				destroyZone: vi.fn(async () => ({})),
 				getStatus: vi.fn(async () => ({})),
-				getZoneGitStatus,
 				getZoneLogs: vi.fn(async () => ({})),
 				getZoneStatus: vi.fn(async () => ({})),
-				pushZoneGit,
 				refreshZoneCredentials: vi.fn(async () => ({})),
 				upgradeZone: vi.fn(async () => ({})),
 			},
@@ -731,55 +708,7 @@ describe('createControllerApp', () => {
 			method: 'POST',
 		});
 
-		expect(statusResponse.status).toBe(200);
-		await expect(statusResponse.json()).resolves.toMatchObject({
-			branch: 'main',
-			aheadOfRemote: 1,
-		});
-		expect(pushResponse.status).toBe(404);
-		expect(getZoneGitStatus).toHaveBeenCalledWith('sunfam');
-		expect(pushZoneGit).not.toHaveBeenCalled();
-	});
-
-	it('returns 405 when zone Git status is unavailable while old push route remains deleted', async () => {
-		const app = createControllerAppForTest({
-			toolVmProfiles: {
-				standard: {
-					cpus: 1,
-					memory: '1G',
-					imageProfile: 'default',
-				},
-			},
-			leaseManager: {
-				createLease: vi.fn(async () => {
-					throw new Error('not used');
-				}),
-				renewLease: vi.fn(),
-				peekLease: vi.fn(),
-				listLeases: vi.fn(() => []),
-				releaseLease: vi.fn(async () => {}),
-			},
-			operations: {
-				destroyZone: vi.fn(async () => ({})),
-				getStatus: vi.fn(async () => ({})),
-				getZoneLogs: vi.fn(async () => ({})),
-				getZoneStatus: vi.fn(async () => ({})),
-				refreshZoneCredentials: vi.fn(async () => ({})),
-				upgradeZone: vi.fn(async () => ({})),
-			},
-		});
-
-		const statusResponse = await app.request('/zones/sunfam/zone-git/status');
-		const pushResponse = await app.request('/zones/sunfam/zone-git/push', {
-			body: JSON.stringify({}),
-			headers: { 'content-type': 'application/json' },
-			method: 'POST',
-		});
-
-		expect(statusResponse.status).toBe(405);
-		await expect(statusResponse.json()).resolves.toEqual({
-			error: 'zone-git-status-unavailable',
-		});
+		expect(statusResponse.status).toBe(404);
 		expect(pushResponse.status).toBe(404);
 	});
 

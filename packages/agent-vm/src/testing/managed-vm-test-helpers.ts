@@ -7,14 +7,12 @@ import type {
 	ManagedVmSshServerHostKey,
 } from '@agent-vm/managed-vm';
 
+import { createManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
 import { terminateLiveManagedVm } from '../shared/controller-managed-vm-termination.js';
-import {
-	isProcessAlive,
-	killProcess,
-	readProcessCommand,
-	readProcessIdentity,
-	sleep,
-} from '../shared/managed-vm-process.js';
+import { readProcessIdentity, sleep } from '../shared/managed-vm-process.js';
+
+const managedVmExactProcessTermination =
+	createManagedVmRuntimeComposition().managedVmExactProcessTermination;
 
 export const TEST_SSH_SERVER_HOST_KEY = {
 	algorithm: 'ssh-ed25519',
@@ -42,13 +40,8 @@ export async function captureManagedVmTermination(
 		async terminate(): Promise<void> {
 			await terminateLiveManagedVm({
 				contextLabel: `test VM '${managedVm.id}'`,
-				dependencies: {
-					isProcessAlive,
-					killProcess,
-					readProcessCommand,
-					readProcessIdentity,
-					sleep,
-				},
+				exactProcessTermination: managedVmExactProcessTermination,
+				sleep,
 				target: { hostPid, processIdentity, vmId: managedVm.id },
 				vm: {
 					close: async () => await managedVm.close(),

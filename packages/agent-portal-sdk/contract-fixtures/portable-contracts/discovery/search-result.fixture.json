@@ -1,0 +1,18 @@
+{
+	"caseId": "portal-search-result-valid",
+	"schemaId": "portal.search.result",
+	"tags": ["accepted", "discovery", "result"],
+	"input": {
+		"items": [{ "id": "search-1", "status": "ok", "value": { "tools": [] } }],
+		"ok": true
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"items": [{ "id": "search-1", "status": "ok", "value": { "tools": [] } }],
+			"ok": true
+		},
+		"canonicalJson": "{\"items\":[{\"id\":\"search-1\",\"status\":\"ok\",\"value\":{\"tools\":[]}}],\"ok\":true}",
+		"refinementIdentities": ["portal.request-id.not-reserved", "portal.result.aggregate-status"]
+	}
+}

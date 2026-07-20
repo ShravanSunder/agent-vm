@@ -85,6 +85,55 @@ function createBackendFixture(options?: {
 }
 
 describe('MCP provider capability backend', () => {
+	it('preserves direct OpenClaw scope identity while allowing Tool Portal service scope identity', () => {
+		// Arrange
+		const core = createPortalCore({
+			accessPolicy: {
+				defaultPolicy: 'allow-all',
+				enabledNamespacesByAgent: {},
+				hiddenToolsByAgent: {},
+			},
+			approval: (calls) => ({
+				decisionsByCallId: Object.fromEntries(calls.map((call) => [call.id, { kind: 'allow' }])),
+			}),
+			catalogTtlMs: 60_000,
+			runtime: {
+				callUpstreamTool: vi.fn(),
+				closeAgentScope: vi.fn(),
+				listTools: vi.fn(async () => githubTools),
+			},
+			upstreamNamespaces: ['github'],
+		});
+		const createAgentScope = vi.spyOn(core, 'createAgentScope');
+		const projection = ToolPortalMcpProjectionSchema.parse({
+			agentId: 'agent-a',
+			namespaces: {},
+			profile: 'code-builder',
+		});
+
+		// Act
+		createMcpProviderCapabilityBackend({ core, projection });
+		createMcpProviderCapabilityBackend({
+			core,
+			portalAgentScopeSource: 'tool-portal-service',
+			projection,
+			sessionKey: 'tool-portal-session',
+		});
+
+		// Assert
+		expect(createAgentScope).toHaveBeenNthCalledWith(
+			1,
+			expect.objectContaining({ source: 'openclaw-trusted' }),
+		);
+		expect(createAgentScope).toHaveBeenNthCalledWith(
+			2,
+			expect.objectContaining({
+				sessionKey: 'tool-portal-session',
+				source: 'tool-portal-service',
+			}),
+		);
+	});
+
 	it('includes managed session provenance in upstream MCP agent scope ids', async () => {
 		const observedAgentScopeIds: string[] = [];
 		const core = createPortalCore({
@@ -262,6 +311,14 @@ describe('MCP provider capability backend', () => {
 			items: [
 				{
 					id: 'read-issue',
+					operationId: expect.stringMatching(/\S+/u),
+					outcome: {
+						certainty: 'proven',
+						completion: 'succeeded',
+						kind: 'completed',
+						retryClass: 'forbidden',
+					},
+					owningGeneration: 'mcp-provider:agent-a',
 					status: 'ok',
 					value: {
 						namespace: 'github',
@@ -278,13 +335,109 @@ describe('MCP provider capability backend', () => {
 		});
 	});
 
-	it('maps upstream call failures to model-safe error codes', async () => {
-		const backend = createBackendFixture({
-			callUpstreamTool: async () => {
-				throw new Error(
-					'Missing environment secret PERPLEXITY_API_KEY at /Users/alice/.config/tool using https://api.example.test via /usr/local/bin/provider',
-				);
+	it('preserves service-owned operation identities supplied through private call options', async () => {
+		// Arrange
+		const backend = createBackendFixture();
+		const operationId = '60000000-0000-4000-8000-000000000006';
+
+		// Act
+		const result = PortalCallResultSchema.parse(
+			await Reflect.apply(backend.call, backend, [
+				{
+					calls: [
+						{
+							arguments: { number: 42 },
+							id: 'read-issue',
+							name: 'get_issue',
+							namespace: 'github',
+						},
+					],
+				},
+				{ operationIdsByCallId: { 'read-issue': operationId } },
+			]),
+		);
+
+		// Assert
+		expect(result.items[0]?.operationId).toBe(operationId);
+	});
+
+	it('preserves a complete private operation identity map for a standalone batch', async () => {
+		// Arrange
+		const backend = createBackendFixture();
+		const operationIdsByCallId = {
+			'read-first': '60000000-0000-4000-8000-000000000006',
+			'read-second': '70000000-0000-4000-8000-000000000007',
+		};
+
+		// Act
+		const result = PortalCallResultSchema.parse(
+			await Reflect.apply(backend.call, backend, [
+				{
+					calls: Object.keys(operationIdsByCallId).map((id, index) => ({
+						arguments: { number: index + 1 },
+						id,
+						name: 'get_issue',
+						namespace: 'github',
+					})),
+				},
+				{ operationIdsByCallId },
+			]),
+		);
+
+		// Assert
+		expect(Object.fromEntries(result.items.map((item) => [item.id, item.operationId]))).toEqual(
+			operationIdsByCallId,
+		);
+	});
+
+	it.each([
+		{
+			name: 'missing call id',
+			operationIdsByCallId: { other: '60000000-0000-4000-8000-000000000006' },
+		},
+		{
+			name: 'extra call id',
+			operationIdsByCallId: {
+				'read-issue': '60000000-0000-4000-8000-000000000006',
+				extra: '70000000-0000-4000-8000-000000000007',
 			},
+		},
+		{
+			name: 'invalid operation id',
+			operationIdsByCallId: { 'read-issue': 'not-an-operation-id' },
+		},
+	])('rejects a $name operation identity map before upstream dispatch', async (fixture) => {
+		// Arrange
+		const callUpstreamTool = vi.fn(async () => ({ ok: true }));
+		const backend = createBackendFixture({ callUpstreamTool });
+
+		// Act / Assert
+		await expect(
+			Reflect.apply(backend.call, backend, [
+				{
+					calls: [
+						{
+							arguments: { number: 42 },
+							id: 'read-issue',
+							name: 'get_issue',
+							namespace: 'github',
+						},
+					],
+				},
+				{ operationIdsByCallId: fixture.operationIdsByCallId },
+			]),
+		).rejects.toThrow('operation identity map');
+		expect(callUpstreamTool).not.toHaveBeenCalled();
+	});
+
+	it('maps upstream call failures to model-safe error codes', async () => {
+		const callUpstreamTool = vi.fn(async () => {
+			throw new Error(
+				'Missing environment secret PERPLEXITY_API_KEY at /Users/alice/.config/tool using https://api.example.test via /usr/local/bin/provider',
+			);
+		});
+		const backend = createBackendFixture({
+			callUpstreamTool,
 		});
 
 		const result = await backend.call({
@@ -306,11 +459,19 @@ describe('MCP provider capability backend', () => {
 						message: 'Capability execution failed.',
 					},
 					id: 'read-issue',
+					operationId: expect.stringMatching(/\S+/u),
+					outcome: {
+						certainty: 'side-effects-and-termination-unknown',
+						kind: 'ambiguous',
+						retryClass: 'forbidden',
+					},
+					owningGeneration: 'mcp-provider:agent-a',
 					status: 'error',
 				},
 			],
 			ok: false,
 		});
+		expect(callUpstreamTool).toHaveBeenCalledTimes(1);
 		const serializedResult = JSON.stringify(result);
 		expect(serializedResult).not.toContain('PERPLEXITY_API_KEY');
 		expect(serializedResult).not.toContain('/Users/alice');
@@ -319,7 +480,8 @@ describe('MCP provider capability backend', () => {
 	});
 
 	it('maps upstream input validation failures to schema errors on the capability surface', async () => {
-		const backend = createBackendFixture();
+		const callUpstreamTool = vi.fn(async () => ({ ok: true }));
+		const backend = createBackendFixture({ callUpstreamTool });
 
 		const result = await backend.call({
 			calls: [
@@ -340,6 +502,13 @@ describe('MCP provider capability backend', () => {
 						message: 'Capability input did not match the expected schema.',
 					},
 					id: 'read-issue',
+					operationId: expect.stringMatching(/\S+/u),
+					outcome: {
+						certainty: 'proven',
+						kind: 'not-dispatched',
+						retryClass: 'safe-before-dispatch',
+					},
+					owningGeneration: 'mcp-provider:agent-a',
 					status: 'error',
 				},
 			],
@@ -347,6 +516,7 @@ describe('MCP provider capability backend', () => {
 		});
 		expect(JSON.stringify(result)).toContain('validation_failed');
 		expect(JSON.stringify(result)).not.toContain('Capability execution failed');
+		expect(callUpstreamTool).not.toHaveBeenCalled();
 	});
 
 	it('maps degraded MCP namespaces to provider unavailable on the capability surface', async () => {
@@ -377,6 +547,13 @@ describe('MCP provider capability backend', () => {
 						message: 'Capability provider is unavailable.',
 					},
 					id: 'read-issue',
+					operationId: expect.stringMatching(/\S+/u),
+					outcome: {
+						certainty: 'proven',
+						kind: 'not-dispatched',
+						retryClass: 'safe-before-dispatch',
+					},
+					owningGeneration: 'mcp-provider:agent-a',
 					status: 'error',
 				},
 			],
@@ -386,31 +563,40 @@ describe('MCP provider capability backend', () => {
 	});
 
 	it('requires approval for projected write calls and rejects model-supplied tokens', async () => {
-		const backend = createBackendFixture();
+		const callUpstreamTool = vi.fn(async () => ({ ok: true }));
+		const backend = createBackendFixture({ callUpstreamTool });
 
-		await expect(
-			backend.call({
-				calls: [
-					{
-						arguments: { title: 'Write' },
-						id: 'create-issue',
-						namespace: 'github',
-						name: 'create_issue',
-					},
-				],
-			}),
-		).resolves.toMatchObject({
+		const result = await backend.call({
+			calls: [
+				{
+					arguments: { title: 'Write' },
+					id: 'create-issue',
+					namespace: 'github',
+					name: 'create_issue',
+				},
+			],
+		});
+
+		expect(PortalCallResultSchema.parse(result)).toMatchObject({
 			items: [
 				{
 					error: {
 						code: 'approval_required',
 					},
 					id: 'create-issue',
+					operationId: expect.stringMatching(/\S+/u),
+					outcome: {
+						certainty: 'proven',
+						kind: 'not-dispatched',
+						retryClass: 'safe-before-dispatch',
+					},
+					owningGeneration: 'mcp-provider:agent-a',
 					status: 'error',
 				},
 			],
 			ok: false,
 		});
+		expect(callUpstreamTool).not.toHaveBeenCalled();
 
 		await expect(
 			backend.call({
@@ -425,5 +611,6 @@ describe('MCP provider capability backend', () => {
 				portalApprovalToken: 'model-token',
 			}),
 		).rejects.toThrow();
+		expect(callUpstreamTool).not.toHaveBeenCalled();
 	});
 });

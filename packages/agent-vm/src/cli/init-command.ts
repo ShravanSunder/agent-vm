@@ -14,7 +14,11 @@ import {
 	createConfigContractSchemaArtifacts,
 	mcpPortalConfigSchemaPaths,
 } from '@agent-vm/config-contracts';
-import type { EgressHostConfig, GatewayType, VmAudience } from '@agent-vm/gateway-lifecycle';
+import type {
+	EgressHostConfig,
+	GatewayType as ConfiguredGatewayType,
+	VmAudience,
+} from '@agent-vm/gateway-lifecycle';
 import { z } from 'zod';
 
 import {
@@ -43,6 +47,7 @@ export type SecretsProvider = z.infer<typeof secretsProviderSchema>;
 export const imageArchitectureSchema = z.enum(['aarch64', 'x86_64']);
 export type ImageArchitecture = z.infer<typeof imageArchitectureSchema>;
 export type HostSystemType = 'bare-metal' | 'container';
+export type GatewayType = Extract<ConfiguredGatewayType, 'openclaw' | 'worker'>;
 
 export interface ScaffoldAgentVmProjectOptions {
 	readonly agents?: readonly string[];
@@ -83,12 +88,11 @@ export interface PromptAndStoreTokenDependencies {
 	readonly createReadlineInterface?: () => readline.Interface;
 }
 
-export type { GatewayType } from '@agent-vm/gateway-lifecycle';
-
 export type ScaffoldPathMode = 'local' | 'pod' | 'user-dir';
 
 interface ScaffoldPathProfile {
 	readonly cacheDir: string;
+	readonly controllerStateDir: string;
 	readonly runtimeDir: string;
 	readonly createLocalRuntimeDirectories: boolean;
 	readonly gatewayConfig: (zoneId: string, gatewayType: GatewayType) => string;
@@ -187,6 +191,7 @@ function resolveGatewayConfigFileName(gatewayType: GatewayType): 'worker.jsonc' 
 
 const localPathProfile: ScaffoldPathProfile = {
 	cacheDir: '../cache',
+	controllerStateDir: '../controller-state',
 	runtimeDir: '../runtime',
 	createLocalRuntimeDirectories: true,
 	gatewayConfig: (zoneId, gatewayType) =>
@@ -203,6 +208,7 @@ const localPathProfile: ScaffoldPathProfile = {
 
 const podPathProfile: ScaffoldPathProfile = {
 	cacheDir: '/var/agent-vm/cache',
+	controllerStateDir: '/var/agent-vm/controller-state',
 	runtimeDir: '/var/agent-vm/runtime',
 	createLocalRuntimeDirectories: false,
 	gatewayConfig: (zoneId, gatewayType) =>
@@ -226,6 +232,7 @@ const podPathProfile: ScaffoldPathProfile = {
  */
 const userDirPathProfile: ScaffoldPathProfile = {
 	cacheDir: '~/.agent-vm/cache',
+	controllerStateDir: '~/.agent-vm/controller-state',
 	runtimeDir: '~/.agent-vm/runtime',
 	createLocalRuntimeDirectories: true,
 	gatewayConfig: (zoneId, gatewayType) =>
@@ -273,6 +280,11 @@ function resolveConfigWritablePathProfile(
 	return {
 		...pathProfile,
 		cacheDir: resolveHomeRelativeScaffoldPath(pathProfile.cacheDir, configDir, homeDir),
+		controllerStateDir: resolveHomeRelativeScaffoldPath(
+			pathProfile.controllerStateDir,
+			configDir,
+			homeDir,
+		),
 		runtimeDir: resolveHomeRelativeScaffoldPath(pathProfile.runtimeDir, configDir, homeDir),
 		gatewayStateDir: (zoneId) =>
 			resolveHomeRelativeScaffoldPath(pathProfile.gatewayStateDir(zoneId), configDir, homeDir),
@@ -381,6 +393,7 @@ const defaultSystemConfig = (
 			: {}),
 	},
 	cacheDir: pathProfile.cacheDir,
+	controllerStateDir: pathProfile.controllerStateDir,
 	runtimeDir: pathProfile.runtimeDir,
 	imageProfiles: {
 		gateways: {
@@ -428,14 +441,17 @@ const defaultSystemConfig = (
 				: {}),
 			egressHosts: defaultEgressHostsForGatewayType(gatewayType),
 			...(gatewayType === 'openclaw'
-				? { defaultToolVmProfile: 'standard', agentToolVmProfiles: {}, agentSandboxSeeds: {} }
+				? { defaultToolVmProfile: 'standard', agentToolVmProfiles: {} }
 				: {}),
 			...(gatewayType === 'openclaw'
 				? {
 						agents: resolveOpenClawScaffoldAgentIds(agentIds).map((agentId) => ({
 							id: agentId,
 						})),
-						toolPortal: { configDir: pathProfile.gatewayConfigDir(zoneId) },
+						toolPortal: {
+							configDir: pathProfile.gatewayConfigDir(zoneId),
+							surfaceEligibilityByProfile: { default: {} },
+						},
 					}
 				: {}),
 		},
@@ -763,23 +779,21 @@ function defaultMcpProviderConfig(): object {
 	};
 }
 
-function defaultMcpPortalAgentAssignments(agentIds: readonly string[] | undefined): object {
+function defaultToolPortalAgentAssignments(agentIds: readonly string[] | undefined): object {
 	return Object.fromEntries(
 		resolveOpenClawScaffoldAgentIds(agentIds).map((agentId) => [agentId, { profile: 'default' }]),
 	);
 }
 
-function defaultMcpPortalConfig(agentIds: readonly string[] | undefined): object {
+function defaultToolPortalConfig(agentIds: readonly string[] | undefined): object {
 	return {
-		$schema: mcpPortalConfigSchemaPaths.mcpPortalFromGatewayConfig,
+		$schema: mcpPortalConfigSchemaPaths.toolPortalFromGatewayConfig,
 		schemaVersion: 1,
-		agents: defaultMcpPortalAgentAssignments(agentIds),
+		agents: defaultToolPortalAgentAssignments(agentIds),
+		mode: 'managed',
 		profiles: {
 			default: {
 				namespaces: {},
-				promptContext: { enabled: true, maxNamespaces: 12 },
-				cache: { catalogTtlMs: 60_000 },
-				logging: { enabled: false },
 			},
 		},
 	};
@@ -1162,23 +1176,23 @@ async function scaffoldAgentVmProjectInternal(
 			`config/gateways/${options.zoneId}/mcp.config.jsonc`,
 		);
 
-		const mcpPortalConfigPath = path.join(
+		const toolPortalConfigPath = path.join(
 			options.targetDir,
 			'config',
 			'gateways',
 			options.zoneId,
-			'mcp-portal.config.jsonc',
+			'tool-portal.config.jsonc',
 		);
-		const mcpPortalConfigStatus = await writeFileIfMissing(
-			mcpPortalConfigPath,
+		const toolPortalConfigStatus = await writeFileIfMissing(
+			toolPortalConfigPath,
 			formatJsoncConfig(
-				'Human-authored MCP Portal agent/profile policy config.',
-				defaultMcpPortalConfig(options.agents),
+				'Human-authored managed Tool Portal agent/profile and backend policy config.',
+				defaultToolPortalConfig(options.agents),
 			),
 			overwrite,
 		);
-		(mcpPortalConfigStatus === 'created' ? created : skipped).push(
-			`config/gateways/${options.zoneId}/mcp-portal.config.jsonc`,
+		(toolPortalConfigStatus === 'created' ? created : skipped).push(
+			`config/gateways/${options.zoneId}/tool-portal.config.jsonc`,
 		);
 	}
 	if (gatewayType === 'worker') {
@@ -1324,6 +1338,7 @@ async function scaffoldAgentVmProjectInternal(
 	if (pathProfile.createLocalRuntimeDirectories) {
 		const directoriesToCreate = [
 			pathProfile.cacheDir,
+			pathProfile.controllerStateDir,
 			pathProfile.runtimeDir,
 			pathProfile.gatewayStateDir(options.zoneId),
 			...(gatewayType === 'openclaw' ? [pathProfile.gatewayZoneFilesDir(options.zoneId)] : []),

@@ -13,8 +13,6 @@ import {
 } from '../build/managed-image-dockerfile.js';
 import { loadJsonConfigFile } from '../config/json-config-file.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
-import { resolveControllerGithubToken } from '../controller/controller-runtime-support.js';
-import { isOpenClawZoneGitConfigured } from '../controller/zone-git/zone-git-paths.js';
 import { resolveZoneSecrets } from '../gateway/credential-manager.js';
 import {
 	collectOpenClawConfigChecks,
@@ -27,7 +25,6 @@ import {
 	type DoctorCheck,
 } from '../operations/doctor.js';
 import { collectOpenClawDeploymentDoctorChecks } from '../operations/openclaw-deployment-doctor.js';
-import { collectZoneGitDoctorChecks } from '../operations/zone-git-doctor.js';
 import {
 	createResolverFromSystemConfig,
 	type CliDependencies,
@@ -69,7 +66,7 @@ interface ImageProfileDoctorTarget {
 	readonly checkName: string;
 	readonly dockerfile?: string;
 	readonly source?: ManagedImageSource;
-	readonly type: 'openclaw' | 'toolVm' | 'worker';
+	readonly type: 'hermes' | 'openclaw' | 'toolVm' | 'worker';
 }
 
 interface DoctorCommandResult {
@@ -91,8 +88,6 @@ export interface ControllerDoctorEnvironment {
 
 export interface CollectDynamicDoctorChecksOptions {
 	readonly availableBinaries: ReadonlySet<string>;
-	readonly controllerGithubToken: string | null;
-	readonly controllerGithubTokenResolutionError?: string | undefined;
 	readonly dependencies: CliDependencies;
 	readonly dockerDaemonReady: boolean;
 	readonly systemConfig: LoadedSystemConfig;
@@ -120,25 +115,6 @@ function redactDoctorErrorMessage(
 
 function formatDoctorSafeError(error: unknown): string {
 	return redactDoctorErrorMessage(error instanceof Error ? error.message : String(error));
-}
-
-async function resolveControllerGithubTokenForDoctor(options: {
-	readonly dependencies: CliDependencies;
-	readonly systemConfig: LoadedSystemConfig;
-}): Promise<{ readonly error?: string | undefined; readonly token: string | null }> {
-	try {
-		return {
-			token: await resolveControllerGithubToken(
-				options.systemConfig,
-				await createResolverFromSystemConfig(options.systemConfig, options.dependencies),
-			),
-		};
-	} catch (error) {
-		return {
-			error: formatDoctorSafeError(error),
-			token: null,
-		};
-	}
 }
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
@@ -343,13 +319,6 @@ export async function collectDynamicDoctorChecks(
 		dependencies: options.dependencies,
 		systemConfig: options.systemConfig,
 	});
-	const zoneGitChecks = await collectZoneGitDoctorChecks({
-		githubToken: options.controllerGithubToken,
-		...(options.controllerGithubTokenResolutionError !== undefined
-			? { githubTokenResolutionError: options.controllerGithubTokenResolutionError }
-			: {}),
-		systemConfig: options.systemConfig,
-	});
 	const imageProfileDockerfileChecks = await collectImageProfileDockerfileChecks(
 		options.systemConfig,
 		options.availableBinaries.has('docker') && options.dockerDaemonReady,
@@ -367,7 +336,6 @@ export async function collectDynamicDoctorChecks(
 		...openClawConfigChecks,
 		...openClawDeploymentChecks,
 		...onePasswordHeadlessChecks,
-		...zoneGitChecks,
 	] as const;
 }
 
@@ -593,7 +561,7 @@ export async function runControllerOperationCommand(
 			const doctorEnvironment = await (
 				options.collectDoctorEnvironment ?? collectControllerDoctorEnvironment
 			)(options.systemConfig, options.dependencies);
-			const doctorResult = options.dependencies.runControllerDoctor({
+			const doctorResult = await options.dependencies.runControllerDoctor({
 				availableBinaries: doctorEnvironment.availableBinaries,
 				dockerDaemonReady: doctorEnvironment.dockerDaemonReady,
 				env: doctorEnvironment.env,
@@ -602,21 +570,10 @@ export async function runControllerOperationCommand(
 				systemConfig: options.systemConfig,
 				...(doctorEnvironment.zigVersion ? { zigVersion: doctorEnvironment.zigVersion } : {}),
 			});
-			const hasZoneGitConfig = options.systemConfig.zones.some(isOpenClawZoneGitConfigured);
-			const controllerGithubTokenResolution = hasZoneGitConfig
-				? await resolveControllerGithubTokenForDoctor({
-						dependencies: options.dependencies,
-						systemConfig: options.systemConfig,
-					})
-				: { token: null };
 			const dynamicChecks = await (
 				options.collectDynamicDoctorChecks ?? collectDynamicDoctorChecks
 			)({
 				availableBinaries: doctorEnvironment.availableBinaries,
-				controllerGithubToken: controllerGithubTokenResolution.token,
-				...(controllerGithubTokenResolution.error !== undefined
-					? { controllerGithubTokenResolutionError: controllerGithubTokenResolution.error }
-					: {}),
 				dependencies: options.dependencies,
 				dockerDaemonReady: doctorEnvironment.dockerDaemonReady,
 				systemConfig: options.systemConfig,

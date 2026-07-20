@@ -1,602 +1,435 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
-
-import {
-	GatewayControlRpcCommandResultMessageSchema,
-	GatewayControlRpcMessageSchema,
-	type GatewayControlRpcMessage,
-} from '@agent-vm/gateway-control-contracts';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
-import { createGatewayControlCallerContextStore } from './gateway-control-service/gateway-control-caller-context-store.js';
 import type {
-	GatewayControlIdentity,
-	GatewayControlService,
-} from './gateway-control-service/gateway-control-service.js';
+	PortalCallRequest,
+	PortalCallResult,
+	PortalDescribeRequest,
+	PortalDescribeResult,
+	PortalListRequest,
+	PortalListResult,
+	PortalSearchRequest,
+	PortalSearchResult,
+} from '@agent-vm/agent-portal-sdk';
+import type { ManagedAgentProjection } from '@agent-vm/agent-portal-sdk/contracts';
+import type { GatewayRuntimePortalRequestOptions } from '@agent-vm/agent-portal-sdk/gateway-runtime-client';
+import { describe, expect, it, type Mock, vi } from 'vitest';
+
 import type {
 	OpenClawPluginToolContext,
 	OpenClawToolRegistration,
 	OpenClawToolRegistrationApi,
 } from './openclaw-sandbox-sdk-contract.js';
-import { registerToolPortalNativeTools } from './tool-portal-native-tools.js';
+import {
+	type OpenClawToolPortalClient,
+	registerToolPortalNativeTools,
+} from './tool-portal-native-tools.js';
 
-const identity = {
-	bootId: 'gateway-boot-a',
-	callerContextAgentAuthorityKeys: {
-		'agent-a': 'test-agent-a-authority-key-with-enough-length',
-	},
-	callerContextProofKey: 'test-caller-context-proof-key',
-	controllerEpoch: 'controller-epoch-a',
-	generationId: 'generation-a',
-	peerId: 'gateway-zone-a',
-	processEpoch: 'process-epoch-a',
-	zoneId: 'zone-a',
-} satisfies GatewayControlIdentity;
-
-const callerContextScope = {
-	agentId: 'agent-a',
-	agentWorkspaceDir: '/zone/agents/agent-a',
-	purpose: 'tool_portal_controller_host_action',
-	sessionKey: 'agent:agent-a:discord:channel:123',
-	workMountDir: '/zone/agents/agent-a',
-	zoneId: identity.zoneId,
-} as const;
-
-let testRoot: string;
-
-beforeEach(async () => {
-	testRoot = await mkdtemp(path.join(tmpdir(), 'agent-vm-tool-portal-native-'));
-});
-
-afterEach(async () => {
-	await rm(testRoot, { force: true, recursive: true });
-});
-
-async function writeToolPortalControllerHostActionConfig(): Promise<string> {
-	const configDir = path.join(testRoot, 'tool-portal');
-	await mkdir(configDir, { recursive: true });
-	await writeFile(
-		path.join(configDir, 'mcp.config.jsonc'),
-		`${JSON.stringify({ providers: {}, schemaVersion: 1 }, null, '\t')}\n`,
-		'utf8',
-	);
-	await writeFile(
-		path.join(configDir, 'tool-portal.config.jsonc'),
-		`${JSON.stringify(
-			{
-				agents: { 'agent-a': { profile: 'default' } },
-				profiles: {
-					default: {
-						capabilities: {
-							controller_host_action: {
-								backend: { kind: 'controller_host_action' },
-								calls: {
-									requiresApproval: { allow: [], deny: [] },
-									withoutApproval: { allow: ['zone_git_push'], deny: [] },
-								},
-								tools: { allow: ['zone_git_push'], deny: [] },
-							},
-						},
-					},
-				},
-				schemaVersion: 1,
-			},
-			null,
-			'\t',
-		)}\n`,
-		'utf8',
-	);
-	return configDir;
+interface ObservedPortalCalls {
+	readonly call: Mock<OpenClawToolPortalClient['portal']['call']>;
+	readonly describe: Mock<OpenClawToolPortalClient['portal']['describe']>;
+	readonly list: Mock<OpenClawToolPortalClient['portal']['list']>;
+	readonly search: Mock<OpenClawToolPortalClient['portal']['search']>;
 }
 
-function createFakeGatewayControlService(
-	observedMessages: GatewayControlRpcMessage[],
-): GatewayControlService {
-	let sequence = 0;
-	const acceptedSession = {
-		...identity,
-		bootId: identity.processEpoch,
-		attachmentGeneration: 1,
-		connectionId: '55555555-5555-4555-8555-555555555555',
-		gatewayEpoch: identity.generationId,
-		processEpoch: identity.processEpoch,
-		sessionId: '33333333-3333-4333-8333-333333333333',
-	};
+function createFakeGatewayRuntimeClient(): {
+	readonly client: OpenClawToolPortalClient;
+	readonly observed: ObservedPortalCalls;
+} {
+	const list = vi.fn(
+		async (
+			_request: PortalListRequest,
+			_options: GatewayRuntimePortalRequestOptions,
+		): Promise<PortalListResult> => ({ items: [], ok: true }),
+	);
+	const search = vi.fn(
+		async (
+			_request: PortalSearchRequest,
+			_options: GatewayRuntimePortalRequestOptions,
+		): Promise<PortalSearchResult> => ({ items: [], ok: true }),
+	);
+	const portalDescribe = vi.fn(
+		async (
+			_request: PortalDescribeRequest,
+			_options: GatewayRuntimePortalRequestOptions,
+		): Promise<PortalDescribeResult> => ({ items: [], ok: true }),
+	);
+	const call = vi.fn(
+		async (
+			_request: PortalCallRequest,
+			_options: GatewayRuntimePortalRequestOptions,
+		): Promise<PortalCallResult> => ({ items: [], ok: true }),
+	);
 	return {
-		close: vi.fn(async () => {}),
-		emitApplicationMessage: vi.fn(async (intent) => {
-			sequence += 1;
-			const envelope = intent.buildEnvelope({ acceptedSession, sequence });
-			const domainMessage = intent.domainMessage;
-			const message = GatewayControlRpcMessageSchema.parse(intent.payload);
-			observedMessages.push(message);
-			if (message.kind === 'command' && message.operation === 'caller_context_register') {
-				expect(domainMessage).toEqual({
-					kind: 'command',
-					operation: 'caller_context_register',
-				});
-				expect(message.payload.adapterEvidence).toEqual(
-					expect.objectContaining({
-						agentId: 'agent-a',
-						agentWorkspaceDir: '/zone/agents/agent-a',
-						proof: expect.objectContaining({
-							algorithm: 'hmac-sha256',
-						}),
-						purpose: 'tool_portal_controller_host_action',
-						sessionKey: 'agent:agent-a:discord:channel:123',
-						workMountDir: '/zone/agents/agent-a',
-						zoneId: identity.zoneId,
-					}),
-				);
-				return GatewayControlRpcCommandResultMessageSchema.parse({
-					kind: 'command_result',
-					operation: 'caller_context_register',
-					payload: {
-						callerContext: {
-							admissionPrincipal:
-								'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-							callerContextId: '44444444-4444-4444-8444-444444444444',
-						},
-						responseToMessageId: envelope.messageId,
-						result: 'ok',
-					},
-				});
-			}
-			expect(domainMessage).toEqual({
-				kind: 'command',
-				operation: 'tool_portal_controller_host_action',
-			});
-			if (
-				message.kind !== 'command' ||
-				message.operation !== 'tool_portal_controller_host_action'
-			) {
-				throw new Error(`Unexpected gateway control message ${message.operation}.`);
-			}
-			expect(message.payload).toMatchObject({
-				callerContext: {
-					callerContextId: '44444444-4444-4444-8444-444444444444',
-				},
-				expectedHead: 'abc123',
-			});
-			return GatewayControlRpcCommandResultMessageSchema.parse({
-				kind: 'command_result',
-				operation: 'tool_portal_controller_host_action',
-				payload: {
-					controllerHostAction: {
-						actionId: 'zone_git_push',
-						result: {
-							branch: 'main',
-							localHead: 'abc123',
-							pushedCommits: [],
-							remoteHead: 'abc123',
-						},
-					},
-					responseToMessageId: envelope.messageId,
-					result: 'ok',
-				},
-			});
-		}),
-		getCurrentAcceptedSession: vi.fn(() => acceptedSession),
-		waitForAcceptedSession: vi.fn(async () => acceptedSession),
-		getCredentialState: vi.fn(() => undefined),
-		handleReadyRequest: vi.fn(() => false),
-		handleUpgrade: vi.fn(() => false),
+		client: {
+			portal: {
+				call,
+				describe: portalDescribe,
+				list,
+				search,
+			},
+		},
+		observed: { call, describe: portalDescribe, list, search },
 	};
 }
 
-function registerNativeTools(
-	context: OpenClawPluginToolContext,
-	props: Omit<Parameters<typeof registerToolPortalNativeTools>[0], 'api'>,
-): readonly OpenClawToolRegistration[] {
+function registerNativeTools(options: {
+	readonly agentProjections?: Readonly<Record<string, ManagedAgentProjection>>;
+	readonly client: OpenClawToolPortalClient;
+	readonly context: OpenClawPluginToolContext;
+}): readonly OpenClawToolRegistration[] {
 	let registeredTools: readonly OpenClawToolRegistration[] = [];
 	const api: OpenClawToolRegistrationApi = {
 		registerTool: (tool) => {
-			registeredTools = typeof tool === 'function' ? tool(context) : [tool];
+			registeredTools = typeof tool === 'function' ? tool(options.context) : [tool];
 		},
 	};
-	registerToolPortalNativeTools({ ...props, api });
+	registerToolPortalNativeTools({
+		agentProjections: options.agentProjections ?? {
+			'agent-a': {
+				agentId: 'agent-a',
+				frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
+				profileAssignmentRevision: 'profile-revision-a',
+				toolPortalProfileId: 'profile-a',
+			},
+			'agent-b': {
+				agentId: 'agent-b',
+				frameworkIdentity: { agentId: 'agent-b', kind: 'openclaw' },
+				profileAssignmentRevision: 'profile-revision-b',
+				toolPortalProfileId: 'profile-b',
+			},
+		},
+		api,
+		clientProvider: () => options.client,
+	});
 	return registeredTools;
 }
 
+function requireRegisteredTool(
+	tools: readonly OpenClawToolRegistration[],
+	toolName: string,
+): OpenClawToolRegistration {
+	const tool = tools.find((candidate) => candidate.name === toolName);
+	if (tool === undefined) throw new Error(`Expected ${toolName} to be registered.`);
+	return tool;
+}
+
+function createTrustedOpenClawContext(
+	options: {
+		readonly omit?: 'agentId' | 'requesterSenderId' | 'sessionId' | 'workspaceDir';
+		readonly overrides?: Partial<OpenClawPluginToolContext>;
+	} = {},
+): OpenClawPluginToolContext {
+	const context = {
+		agentAccountId: 'provider-account-that-must-not-be-used-as-subject',
+		agentDir: '/state/openclaw/agents/agent-a',
+		agentId: 'agent-a',
+		requesterSenderId: 'discord-user-42',
+		sessionId: 'session-a',
+		sessionKey: 'agent:agent-a:discord:channel:123',
+		workspaceDir: '/zone/agents/agent-a',
+		...options.overrides,
+	};
+	if (options.omit === 'agentId') {
+		const { agentId: _omittedAgentId, ...contextWithoutAgentId } = context;
+		return contextWithoutAgentId;
+	}
+	if (options.omit === 'requesterSenderId') {
+		const { requesterSenderId: _omittedRequesterSenderId, ...contextWithoutRequesterSenderId } =
+			context;
+		return contextWithoutRequesterSenderId;
+	}
+	if (options.omit === 'sessionId') {
+		const { sessionId: _omittedSessionId, ...contextWithoutSessionId } = context;
+		return contextWithoutSessionId;
+	}
+	if (options.omit === 'workspaceDir') {
+		const { workspaceDir: _omittedWorkspaceDir, ...contextWithoutWorkspaceDir } = context;
+		return contextWithoutWorkspaceDir;
+	}
+	return context;
+}
+
 describe('registerToolPortalNativeTools', () => {
-	it('does not register controller-host-action caller context for discovery tools', async () => {
-		const observedMessages: GatewayControlRpcMessage[] = [];
-		const configDir = await writeToolPortalControllerHostActionConfig();
-		const registeredTools = registerNativeTools(
-			{
-				agentDir: '/zone/agents/agent-a',
-				agentId: 'agent-a',
-				sessionKey: 'agent:agent-a:discord:channel:123',
-				workspaceDir: '/zone/agents/agent-a',
-			},
-			{
-				configDir,
-				gatewayControl: {
-					callerContextStore: createGatewayControlCallerContextStore(),
-					identity,
-					service: createFakeGatewayControlService(observedMessages),
-				},
-			},
-		);
-		const listTool = registeredTools.find((tool) => tool.name === 'tool_portal_list');
-		const searchTool = registeredTools.find((tool) => tool.name === 'tool_portal_search');
-		const describeTool = registeredTools.find((tool) => tool.name === 'tool_portal_describe');
-		if (listTool === undefined || searchTool === undefined || describeTool === undefined) {
-			throw new Error('Expected Tool Portal discovery tools to be registered.');
-		}
-
-		await listTool.execute('tool-call-list', { requests: [{ id: 'list-all' }] });
-		await searchTool.execute('tool-call-search', {
-			requests: [{ id: 'search-zone-git', query: 'zone git' }],
+	it('routes all native tools through one GatewayRuntimeClient portal surface', async () => {
+		const { client, observed } = createFakeGatewayRuntimeClient();
+		const tools = registerNativeTools({
+			client,
+			context: createTrustedOpenClawContext(),
 		});
-		await describeTool.execute('tool-call-describe', {
-			requests: [
-				{
-					id: 'describe-zone-git',
-					tools: [
-						{
-							namespace: 'controller_host_action',
-							name: 'zone_git_push',
+		const cancellation = new AbortController();
+
+		await requireRegisteredTool(tools, 'tool_portal_list').execute(
+			'tool-call-list',
+			{ requests: [{ id: 'list-a' }] },
+			cancellation.signal,
+		);
+		await requireRegisteredTool(tools, 'tool_portal_search').execute(
+			'tool-call-search',
+			{ requests: [{ id: 'search-a', query: 'git' }] },
+			cancellation.signal,
+		);
+		await requireRegisteredTool(tools, 'tool_portal_describe').execute(
+			'tool-call-describe',
+			{ requests: [{ id: 'describe-a', tools: [] }] },
+			cancellation.signal,
+		);
+		await requireRegisteredTool(tools, 'tool_portal_call').execute(
+			'tool-call-call',
+			{
+				calls: [
+					{
+						arguments: {
+							agentId: 'model-injected',
+							authenticatedSubjectId: 'model-injected',
+							profileAssignmentRevision: 'model-injected',
+							profileId: 'model-injected',
+							sessionId: 'model-injected',
+							workspaceId: '/host',
 						},
-					],
-				},
-			],
-		});
-
-		expect(observedMessages).toEqual([]);
-	});
-
-	it('registers a fresh controller-host-action caller context before calling zone_git_push', async () => {
-		const observedMessages: GatewayControlRpcMessage[] = [];
-		const configDir = await writeToolPortalControllerHostActionConfig();
-		const callerContextStore = createGatewayControlCallerContextStore();
-		const registeredTools = registerNativeTools(
-			{
-				agentDir: '/zone/agents/agent-a',
-				agentId: 'agent-a',
-				sessionKey: 'agent:agent-a:discord:channel:123',
-				workspaceDir: '/zone/agents/agent-a',
+						id: 'call-a',
+						namespace: 'sandbox',
+						name: 'exec',
+					},
+				],
 			},
-			{
-				configDir,
-				gatewayControl: {
-					callerContextStore,
-					identity,
-					service: createFakeGatewayControlService(observedMessages),
-				},
-			},
+			cancellation.signal,
 		);
-		const callTool = registeredTools.find((tool) => tool.name === 'tool_portal_call');
-		if (callTool === undefined) {
-			throw new Error('Expected tool_portal_call to be registered.');
-		}
 
-		const result = await callTool.execute('tool-call-a', {
+		expect(observed.list).toHaveBeenCalledOnce();
+		expect(observed.search).toHaveBeenCalledOnce();
+		expect(observed.describe).toHaveBeenCalledOnce();
+		expect(observed.call).toHaveBeenCalledOnce();
+		for (const [operation, toolCallId] of [
+			[observed.list, 'tool-call-list'],
+			[observed.search, 'tool-call-search'],
+			[observed.describe, 'tool-call-describe'],
+			[observed.call, 'tool-call-call'],
+		] as const) {
+			expect(operation.mock.calls[0]?.[1]).toEqual({
+				signal: cancellation.signal,
+				trustedContext: {
+					correlation: {
+						sessionId: 'session-a',
+						sessionKey: 'agent:agent-a:discord:channel:123',
+						toolCallId,
+					},
+					principal: {
+						agentId: 'agent-a',
+						frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
+						profileAssignmentRevision: 'profile-revision-a',
+						toolPortalProfileId: 'profile-a',
+					},
+					requester: { authenticatedSubjectId: 'discord-user-42' },
+				},
+			});
+		}
+		expect(observed.call.mock.calls[0]?.[0]).toEqual({
 			calls: [
 				{
-					arguments: { expectedHead: 'abc123' },
-					id: 'push-zone',
-					namespace: 'controller_host_action',
-					name: 'zone_git_push',
+					arguments: {
+						agentId: 'model-injected',
+						authenticatedSubjectId: 'model-injected',
+						profileAssignmentRevision: 'model-injected',
+						profileId: 'model-injected',
+						sessionId: 'model-injected',
+						workspaceId: '/host',
+					},
+					id: 'call-a',
+					namespace: 'sandbox',
+					name: 'exec',
 				},
 			],
 		});
+	});
 
-		expect(result.content).toContain('"status":"ok"');
-		expect(observedMessages.map((message) => message.operation)).toEqual([
-			'caller_context_register',
-			'tool_portal_controller_host_action',
+	it('derives distinct profile revisions for multiple agents using the same client', async () => {
+		const { client, observed } = createFakeGatewayRuntimeClient();
+		const firstTools = registerNativeTools({
+			client,
+			context: createTrustedOpenClawContext(),
+		});
+		const secondTools = registerNativeTools({
+			client,
+			context: createTrustedOpenClawContext({
+				overrides: {
+					agentId: 'agent-b',
+					requesterSenderId: 'slack-user-7',
+					sessionId: 'session-b',
+					sessionKey: 'agent:agent-b:slack:channel:456',
+					workspaceDir: '/zone/agents/agent-b',
+				},
+			}),
+		});
+
+		await requireRegisteredTool(firstTools, 'tool_portal_list').execute('first-call', {
+			requests: [{ id: 'first' }],
+		});
+		await requireRegisteredTool(secondTools, 'tool_portal_list').execute('second-call', {
+			requests: [{ id: 'second' }],
+		});
+
+		expect(observed.list.mock.calls.map((call) => call[1]?.trustedContext)).toEqual([
+			{
+				correlation: {
+					sessionId: 'session-a',
+					sessionKey: 'agent:agent-a:discord:channel:123',
+					toolCallId: 'first-call',
+				},
+				principal: {
+					agentId: 'agent-a',
+					frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
+					profileAssignmentRevision: 'profile-revision-a',
+					toolPortalProfileId: 'profile-a',
+				},
+				requester: { authenticatedSubjectId: 'discord-user-42' },
+			},
+			{
+				correlation: {
+					sessionId: 'session-b',
+					sessionKey: 'agent:agent-b:slack:channel:456',
+					toolCallId: 'second-call',
+				},
+				principal: {
+					agentId: 'agent-b',
+					frameworkIdentity: { agentId: 'agent-b', kind: 'openclaw' },
+					profileAssignmentRevision: 'profile-revision-b',
+					toolPortalProfileId: 'profile-b',
+				},
+				requester: { authenticatedSubjectId: 'slack-user-7' },
+			},
 		]);
 	});
 
-	it('keeps controller-host-action caller contexts separate for same-agent sessions', async () => {
-		const observedMessages: GatewayControlRpcMessage[] = [];
-		const configDir = await writeToolPortalControllerHostActionConfig();
-		const callerContextStore = createGatewayControlCallerContextStore();
-		const controlService =
-			createFakeGatewayControlServiceForDistinctSessionContexts(observedMessages);
-		const firstRegisteredTools = registerNativeTools(
-			{
-				agentDir: '/zone/agents/agent-a',
-				agentId: 'agent-a',
-				sessionKey: 'agent:agent-a:discord:channel:123',
-				workspaceDir: '/zone/agents/agent-a',
-			},
-			{
-				configDir,
-				gatewayControl: {
-					callerContextStore,
-					identity,
-					service: controlService,
-				},
-			},
-		);
-		const secondRegisteredTools = registerNativeTools(
-			{
-				agentDir: '/zone/agents/agent-a-second',
-				agentId: 'agent-a',
-				sessionKey: 'agent:agent-a:discord:channel:456',
-				workspaceDir: '/zone/agents/agent-a-second',
-			},
-			{
-				configDir,
-				gatewayControl: {
-					callerContextStore,
-					identity,
-					service: controlService,
-				},
-			},
-		);
-		const firstCallTool = firstRegisteredTools.find((tool) => tool.name === 'tool_portal_call');
-		const secondCallTool = secondRegisteredTools.find((tool) => tool.name === 'tool_portal_call');
-		if (firstCallTool === undefined || secondCallTool === undefined) {
-			throw new Error('Expected tool_portal_call to be registered for both sessions.');
-		}
-
-		await firstCallTool.execute('tool-call-first', {
-			calls: [
-				{
-					arguments: { expectedHead: 'abc123' },
-					id: 'push-zone-first',
-					namespace: 'controller_host_action',
-					name: 'zone_git_push',
-				},
-			],
+	it('accepts trusted calls without requester or session metadata', async () => {
+		const { client, observed } = createFakeGatewayRuntimeClient();
+		const contextWithSessionMetadata = createTrustedOpenClawContext({
+			omit: 'requesterSenderId',
 		});
-		await secondCallTool.execute('tool-call-second', {
-			calls: [
-				{
-					arguments: { expectedHead: 'abc123' },
-					id: 'push-zone-second',
-					namespace: 'controller_host_action',
-					name: 'zone_git_push',
-				},
-			],
+		const {
+			sessionId: _omittedSessionId,
+			sessionKey: _omittedSessionKey,
+			...contextWithoutSessionMetadata
+		} = contextWithSessionMetadata;
+		const tools = registerNativeTools({
+			client,
+			context: contextWithoutSessionMetadata,
 		});
 
-		const registrationMessages = observedMessages.filter(
-			(message) => message.operation === 'caller_context_register',
-		);
-		const hostActionMessages = observedMessages.filter(
-			(message) => message.operation === 'tool_portal_controller_host_action',
-		);
-		expect(registrationMessages).toHaveLength(2);
-		expect(hostActionMessages).toHaveLength(2);
-		expect(
-			hostActionMessages.map((message) =>
-				message.kind === 'command'
-					? message.payload.callerContext.callerContextId
-					: '<not-command>',
-			),
-		).toEqual(['44444444-4444-4444-8444-444444444444', '55555555-5555-4555-8555-555555555555']);
+		await requireRegisteredTool(tools, 'tool_portal_list').execute('tool-call-list', {
+			requests: [{ id: 'list-a' }],
+		});
+
+		expect(observed.list.mock.calls[0]?.[1]?.trustedContext).toEqual({
+			correlation: { toolCallId: 'tool-call-list' },
+			principal: {
+				agentId: 'agent-a',
+				frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
+				profileAssignmentRevision: 'profile-revision-a',
+				toolPortalProfileId: 'profile-a',
+			},
+		});
 	});
 
-	it('refreshes a stale controller-host-action caller context and retries the same call', async () => {
-		const observedMessages: GatewayControlRpcMessage[] = [];
-		const configDir = await writeToolPortalControllerHostActionConfig();
-		const callerContextStore = createGatewayControlCallerContextStore();
-		callerContextStore.rememberCallerContextForAgent({
-			callerContextId: '44444444-4444-4444-8444-444444444444',
-			...callerContextScope,
+	it.each([
+		{
+			context: createTrustedOpenClawContext({ omit: 'agentId' }),
+			error: 'trusted agentId',
+			name: 'missing agent',
+		},
+		{
+			context: createTrustedOpenClawContext({ overrides: { agentId: 'agent-c' } }),
+			error: "agentId 'agent-c' is not configured",
+			name: 'unconfigured agent',
+		},
+	] satisfies readonly {
+		readonly context: OpenClawPluginToolContext;
+		readonly error: string;
+		readonly name: string;
+	}[])('rejects $name before client dispatch', async ({ context, error }) => {
+		const { client, observed } = createFakeGatewayRuntimeClient();
+		const tools = registerNativeTools({ client, context });
+
+		await expect(
+			requireRegisteredTool(tools, 'tool_portal_list').execute('tool-call-list', {
+				requests: [{ id: 'list-a' }],
+			}),
+		).rejects.toThrow(error);
+		expect(observed.list).not.toHaveBeenCalled();
+	});
+
+	it('does not use workspaceDir as principal or storage authority', async () => {
+		const { client, observed } = createFakeGatewayRuntimeClient();
+		const tools = registerNativeTools({
+			client,
+			context: createTrustedOpenClawContext({
+				overrides: { workspaceDir: '/zone/agents/agent-b' },
+			}),
 		});
-		const controlService = createFakeGatewayControlServiceForStaleRefresh(observedMessages);
-		const registeredTools = registerNativeTools(
-			{
-				agentDir: '/zone/agents/agent-a',
-				agentId: 'agent-a',
-				sessionKey: 'agent:agent-a:discord:channel:123',
-				workspaceDir: '/zone/agents/agent-a',
-			},
-			{
-				configDir,
-				gatewayControl: {
-					callerContextStore,
-					identity,
-					service: controlService,
+
+		await requireRegisteredTool(tools, 'tool_portal_list').execute('tool-call-list', {
+			requests: [{ id: 'list-a' }],
+		});
+
+		expect(observed.list.mock.calls[0]?.[1]?.trustedContext.principal.agentId).toBe('agent-a');
+	});
+
+	it('accepts an authenticated agent when OpenClaw omits workspaceDir', async () => {
+		const { client, observed } = createFakeGatewayRuntimeClient();
+		const tools = registerNativeTools({
+			client,
+			context: createTrustedOpenClawContext({ omit: 'workspaceDir' }),
+		});
+
+		await requireRegisteredTool(tools, 'tool_portal_list').execute('tool-call-list', {
+			requests: [{ id: 'list-a' }],
+		});
+
+		expect(observed.list).toHaveBeenCalledOnce();
+	});
+
+	it('rejects a projection whose framework identity mismatches the authenticated agent', async () => {
+		const { client, observed } = createFakeGatewayRuntimeClient();
+		const tools = registerNativeTools({
+			agentProjections: {
+				'agent-a': {
+					agentId: 'agent-a',
+					frameworkIdentity: { agentId: 'agent-b', kind: 'openclaw' },
+					profileAssignmentRevision: 'profile-revision-a',
+					toolPortalProfileId: 'profile-a',
 				},
 			},
+			client,
+			context: createTrustedOpenClawContext(),
+		});
+
+		await expect(
+			requireRegisteredTool(tools, 'tool_portal_list').execute('tool-call-list', {
+				requests: [{ id: 'list-a' }],
+			}),
+		).rejects.toThrow(
+			"tool-portal: OpenClaw projection identity does not match authenticated agentId 'agent-a'.",
 		);
-		const callTool = registeredTools.find((tool) => tool.name === 'tool_portal_call');
-		if (callTool === undefined) {
-			throw new Error('Expected tool_portal_call to be registered.');
-		}
+		expect(observed.list).not.toHaveBeenCalled();
+	});
 
-		const result = await callTool.execute('tool-call-stale', {
-			calls: [
-				{
-					arguments: { expectedHead: 'abc123' },
-					id: 'push-zone-stale',
-					namespace: 'controller_host_action',
-					name: 'zone_git_push',
+	it('registers no client-owned tools when OpenClaw does not expose registerTool', () => {
+		const { client } = createFakeGatewayRuntimeClient();
+		const warning = vi.fn();
+
+		registerToolPortalNativeTools({
+			agentProjections: {
+				'agent-a': {
+					agentId: 'agent-a',
+					frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
+					profileAssignmentRevision: 'revision-a',
+					toolPortalProfileId: 'profile-a',
 				},
-			],
+			},
+			api: {},
+			clientProvider: () => client,
+			logger: { warn: warning },
 		});
 
-		expect(result.content).toContain('"status":"ok"');
-		expect(observedMessages.map((message) => message.operation)).toEqual([
-			'caller_context_register',
-			'tool_portal_controller_host_action',
-		]);
-		expect(controlService.emitApplicationMessage).toHaveBeenCalledTimes(2);
+		expect(warning).toHaveBeenCalledWith(
+			'[tool-portal] skipped native tool registration; OpenClaw registerTool is absent.',
+		);
 	});
 });
-
-function createFakeGatewayControlServiceForStaleRefresh(
-	observedMessages: GatewayControlRpcMessage[],
-): GatewayControlService {
-	let sequence = 0;
-	const acceptedSession = {
-		...identity,
-		bootId: identity.processEpoch,
-		attachmentGeneration: 1,
-		connectionId: '55555555-5555-4555-8555-555555555555',
-		gatewayEpoch: identity.generationId,
-		processEpoch: identity.processEpoch,
-		sessionId: '33333333-3333-4333-8333-333333333333',
-	};
-	return {
-		close: vi.fn(async () => {}),
-		emitApplicationMessage: vi.fn(async (intent) => {
-			sequence += 1;
-			const envelope = intent.buildEnvelope({ acceptedSession, sequence });
-			const domainMessage = intent.domainMessage;
-			const message = GatewayControlRpcMessageSchema.parse(intent.payload);
-			observedMessages.push(message);
-			if (message.kind === 'command' && message.operation === 'caller_context_register') {
-				expect(domainMessage).toEqual({
-					kind: 'command',
-					operation: 'caller_context_register',
-				});
-				return GatewayControlRpcCommandResultMessageSchema.parse({
-					kind: 'command_result',
-					operation: 'caller_context_register',
-					payload: {
-						callerContext: {
-							admissionPrincipal:
-								'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-							callerContextId: '55555555-5555-4555-8555-555555555555',
-						},
-						responseToMessageId: envelope.messageId,
-						result: 'ok',
-					},
-				});
-			}
-			expect(domainMessage).toEqual({
-				kind: 'command',
-				operation: 'tool_portal_controller_host_action',
-			});
-			if (
-				message.kind !== 'command' ||
-				message.operation !== 'tool_portal_controller_host_action'
-			) {
-				throw new Error(`Unexpected gateway control message ${message.operation}.`);
-			}
-			if (
-				message.payload.callerContext.callerContextId === '44444444-4444-4444-8444-444444444444'
-			) {
-				return GatewayControlRpcCommandResultMessageSchema.parse({
-					kind: 'command_result',
-					operation: 'tool_portal_controller_host_action',
-					payload: {
-						error: {
-							errorClass: 'controller_host_action_caller_context_stale',
-							retryable: false,
-							safeMessage: 'controller host action caller context does not match session',
-						},
-						responseToMessageId: envelope.messageId,
-						result: 'rejected',
-					},
-				});
-			}
-			expect(message.payload).toMatchObject({
-				callerContext: {
-					callerContextId: '55555555-5555-4555-8555-555555555555',
-				},
-				expectedHead: 'abc123',
-			});
-			return GatewayControlRpcCommandResultMessageSchema.parse({
-				kind: 'command_result',
-				operation: 'tool_portal_controller_host_action',
-				payload: {
-					controllerHostAction: {
-						actionId: 'zone_git_push',
-						result: {
-							branch: 'main',
-							localHead: 'abc123',
-							pushedCommits: [],
-							remoteHead: 'abc123',
-						},
-					},
-					responseToMessageId: envelope.messageId,
-					result: 'ok',
-				},
-			});
-		}),
-		getCurrentAcceptedSession: vi.fn(() => acceptedSession),
-		waitForAcceptedSession: vi.fn(async () => acceptedSession),
-		getCredentialState: vi.fn(() => undefined),
-		handleReadyRequest: vi.fn(() => false),
-		handleUpgrade: vi.fn(() => false),
-	};
-}
-
-function createFakeGatewayControlServiceForDistinctSessionContexts(
-	observedMessages: GatewayControlRpcMessage[],
-): GatewayControlService {
-	let sequence = 0;
-	const acceptedSession = {
-		...identity,
-		bootId: identity.processEpoch,
-		attachmentGeneration: 1,
-		connectionId: '55555555-5555-4555-8555-555555555555',
-		gatewayEpoch: identity.generationId,
-		processEpoch: identity.processEpoch,
-		sessionId: '33333333-3333-4333-8333-333333333333',
-	};
-	return {
-		close: vi.fn(async () => {}),
-		emitApplicationMessage: vi.fn(async (intent) => {
-			sequence += 1;
-			const envelope = intent.buildEnvelope({ acceptedSession, sequence });
-			const domainMessage = intent.domainMessage;
-			const message = GatewayControlRpcMessageSchema.parse(intent.payload);
-			observedMessages.push(message);
-			if (message.kind === 'command' && message.operation === 'caller_context_register') {
-				expect(domainMessage).toEqual({
-					kind: 'command',
-					operation: 'caller_context_register',
-				});
-				const callerContextId =
-					message.payload.adapterEvidence.sessionKey === 'agent:agent-a:discord:channel:123'
-						? '44444444-4444-4444-8444-444444444444'
-						: '55555555-5555-4555-8555-555555555555';
-				return GatewayControlRpcCommandResultMessageSchema.parse({
-					kind: 'command_result',
-					operation: 'caller_context_register',
-					payload: {
-						callerContext: {
-							admissionPrincipal:
-								'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-							callerContextId,
-						},
-						responseToMessageId: envelope.messageId,
-						result: 'ok',
-					},
-				});
-			}
-			expect(domainMessage).toEqual({
-				kind: 'command',
-				operation: 'tool_portal_controller_host_action',
-			});
-			if (
-				message.kind !== 'command' ||
-				message.operation !== 'tool_portal_controller_host_action'
-			) {
-				throw new Error(`Unexpected gateway control message ${message.operation}.`);
-			}
-			return GatewayControlRpcCommandResultMessageSchema.parse({
-				kind: 'command_result',
-				operation: 'tool_portal_controller_host_action',
-				payload: {
-					controllerHostAction: {
-						actionId: 'zone_git_push',
-						result: {
-							branch: 'main',
-							localHead: 'abc123',
-							pushedCommits: [],
-							remoteHead: 'abc123',
-						},
-					},
-					responseToMessageId: envelope.messageId,
-					result: 'ok',
-				},
-			});
-		}),
-		getCurrentAcceptedSession: vi.fn(() => acceptedSession),
-		waitForAcceptedSession: vi.fn(async () => acceptedSession),
-		getCredentialState: vi.fn(() => undefined),
-		handleReadyRequest: vi.fn(() => false),
-		handleUpgrade: vi.fn(() => false),
-	};
-}

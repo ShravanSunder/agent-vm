@@ -1,0 +1,25 @@
+{
+	"caseId": "invalid-ambiguous-retry-class",
+	"schemaId": "portal.call.item-result",
+	"tags": ["ambiguity", "illegal-combination", "rejected"],
+	"input": {
+		"error": {
+			"code": "execution_failed",
+			"message": "Execution outcome is ambiguous."
+		},
+		"id": "call-1",
+		"operationId": "operation-1",
+		"owningGeneration": "runner-generation-1",
+		"outcome": {
+			"certainty": "side-effects-and-termination-unknown",
+			"kind": "ambiguous",
+			"retryClass": "policy-gated"
+		},
+		"status": "error"
+	},
+	"expectation": {
+		"kind": "rejected",
+		"errorCodes": ["portal.result.outcome-algebra"],
+		"refinementIdentities": ["portal.request-id.not-reserved", "portal.result.outcome-algebra"]
+	}
+}

@@ -17,6 +17,10 @@ export interface SignApprovalTokenProps {
 	readonly key: Buffer;
 }
 
+export interface SignAudienceScopedApprovalTokenProps extends SignApprovalTokenProps {
+	readonly audience: string;
+}
+
 export interface VerifyApprovalTokenProps {
 	readonly agentId: string;
 	readonly calls: readonly ApprovalTokenCallDigest[];
@@ -30,6 +34,10 @@ export interface VerifyApprovalTokenProps {
 	readonly maxLifetimeMs?: number;
 	readonly nowMs: number;
 	readonly token: string;
+}
+
+export interface VerifyAudienceScopedApprovalTokenProps extends VerifyApprovalTokenProps {
+	readonly audience: string;
 }
 
 export type VerifyApprovalTokenResult =
@@ -67,6 +75,8 @@ const approvalTokenPayloadSchema = z
 
 type ApprovalTokenPayload = z.infer<typeof approvalTokenPayloadSchema>;
 
+export const mcpPortalApprovalTokenAudience = 'mcp-portal:approval';
+
 function base64UrlEncode(value: Buffer | string): string {
 	const buffer = typeof value === 'string' ? Buffer.from(value, 'utf8') : value;
 	return buffer.toString('base64url');
@@ -91,6 +101,16 @@ export function hashCallArguments(args: unknown): string {
 }
 
 export function signApprovalToken(props: SignApprovalTokenProps): string {
+	return signAudienceScopedApprovalToken({
+		...props,
+		audience: mcpPortalApprovalTokenAudience,
+	});
+}
+
+export function signAudienceScopedApprovalToken(
+	props: SignAudienceScopedApprovalTokenProps,
+): string {
+	assertApprovalTokenAudience(props.audience);
 	const payload = {
 		agentId: props.agentId,
 		calls: [...props.calls],
@@ -99,7 +119,9 @@ export function signApprovalToken(props: SignApprovalTokenProps): string {
 		jti: props.jti ?? randomUUID(),
 	} satisfies ApprovalTokenPayload;
 	const payloadEncoded = base64UrlEncode(canonicalize(payload));
-	const signature = createHmac('sha256', props.key).update(payloadEncoded).digest('base64url');
+	const signature = createHmac('sha256', props.key)
+		.update(createApprovalTokenSignatureInput(props.audience, payloadEncoded))
+		.digest('base64url');
 	return `${payloadEncoded}.${signature}`;
 }
 
@@ -136,12 +158,24 @@ function callsMatch(
 }
 
 export function verifyApprovalToken(props: VerifyApprovalTokenProps): VerifyApprovalTokenResult {
+	return verifyAudienceScopedApprovalToken({
+		...props,
+		audience: mcpPortalApprovalTokenAudience,
+	});
+}
+
+export function verifyAudienceScopedApprovalToken(
+	props: VerifyAudienceScopedApprovalTokenProps,
+): VerifyApprovalTokenResult {
+	assertApprovalTokenAudience(props.audience);
 	const parts = props.token.split('.');
 	if (!isApprovalTokenParts(parts)) {
 		return { ok: false, reason: 'malformed' };
 	}
 	const [payloadEncoded, signatureEncoded] = parts;
-	const expectedSignature = createHmac('sha256', props.key).update(payloadEncoded).digest();
+	const expectedSignature = createHmac('sha256', props.key)
+		.update(createApprovalTokenSignatureInput(props.audience, payloadEncoded))
+		.digest();
 	const providedSignature = Buffer.from(signatureEncoded, 'base64url');
 	if (
 		providedSignature.length !== expectedSignature.length ||
@@ -173,4 +207,14 @@ export function verifyApprovalToken(props: VerifyApprovalTokenProps): VerifyAppr
 		}
 	}
 	return { ok: true };
+}
+
+function createApprovalTokenSignatureInput(audience: string, payloadEncoded: string): string {
+	return `${audience}\0${payloadEncoded}`;
+}
+
+function assertApprovalTokenAudience(audience: string): void {
+	if (audience.length === 0 || audience !== audience.trim() || audience.includes('\0')) {
+		throw new Error('Portal approval-token audience must be a non-empty canonical string.');
+	}
 }

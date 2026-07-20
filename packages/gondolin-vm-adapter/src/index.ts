@@ -5,6 +5,7 @@ export {
 	createGondolinImageBuildTooling,
 	hasBuiltImageAssets,
 } from './build-pipeline.js';
+export type { GondolinManagedGatewayBootProjection } from './rootfs-init-extra.js';
 export {
 	resolveGondolinMinimumZigVersion,
 	resolveGondolinPackageSpec,

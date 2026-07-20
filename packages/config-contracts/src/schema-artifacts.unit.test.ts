@@ -27,5 +27,27 @@ describe('schema artifacts', () => {
 		expect(schemas.mcp.$id).toBe('agent-vm:mcp:1');
 		expect(schemas.mcpPortal.$id).toBe('agent-vm:mcp-portal:1');
 		expect(schemas.toolPortal.$id).toBe('agent-vm:tool-portal:1');
+		expect(schemas.toolPortal).toMatchObject({
+			oneOf: [
+				{
+					properties: {
+						mode: { const: 'managed' },
+						profiles: {
+							additionalProperties: {
+								properties: { namespaces: { type: 'object' } },
+							},
+						},
+					},
+				},
+				{
+					properties: {
+						authentication: { type: 'object' },
+						entrypoints: { type: 'object' },
+						mode: { const: 'standalone' },
+					},
+				},
+			],
+		});
+		expect(JSON.stringify(schemas.toolPortal)).not.toContain('capabilities');
 	});
 });

@@ -1,0 +1,20 @@
+{
+	"caseId": "gateway-managed-agent-projection-work-root-rejected",
+	"schemaId": "gateway.managed-agent-projection",
+	"tags": ["managed-agent-projection", "rejected", "unknown-field"],
+	"input": {
+		"agentId": "agent-a",
+		"frameworkIdentity": {
+			"agentId": "agent-a",
+			"kind": "openclaw"
+		},
+		"profileAssignmentRevision": "profile-assignment-a",
+		"toolPortalProfileId": "engineering",
+		"workRoot": "/zone/agents/agent-a/work"
+	},
+	"expectation": {
+		"kind": "rejected",
+		"errorCodes": ["portable.object.unknown-field"],
+		"refinementIdentities": []
+	}
+}

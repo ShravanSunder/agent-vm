@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest';
 
 import {
 	TOOL_VM_SCRATCH_GUEST_ROOT,
-	TOOL_VM_WORKSPACE_GUEST_ROOT,
+	TOOL_VM_WORK_GUEST_ROOT,
 	translateRuntimePath,
 	type RuntimePathMapping,
 } from './runtime-path-mapping.js';
+import * as runtimePathMappingModule from './runtime-path-mapping.js';
 
 const mapping = {
 	id: 'test-tool-vm',
@@ -25,7 +26,7 @@ const mapping = {
 			locations: {
 				'controller-host': '/host/zone/agents/beta',
 				'openclaw-gateway': '/zone/agents/beta',
-				'tool-vm-guest': TOOL_VM_WORKSPACE_GUEST_ROOT,
+				'tool-vm-guest': TOOL_VM_WORK_GUEST_ROOT,
 			},
 			rootPathAllowed: true,
 			showInGuidance: {
@@ -111,7 +112,7 @@ const invalidHostlessRealfsMapping = {
 			guidanceLabel: 'invalid hostless realfs',
 			id: 'invalid-hostless',
 			locations: {
-				'tool-vm-guest': '/workspace',
+				'tool-vm-guest': '/work',
 			},
 			rootPathAllowed: true,
 		},
@@ -120,9 +121,15 @@ const invalidHostlessRealfsMapping = {
 void invalidHostlessRealfsMapping;
 
 describe('translateRuntimePath', () => {
-	it('maps Tool VM guest workspace subpaths to OpenClaw gateway paths', () => {
+	it('exports the persistent work and disposable scratch roots without the retired workspace root', () => {
+		expect(TOOL_VM_WORK_GUEST_ROOT).toBe('/work');
+		expect(TOOL_VM_SCRATCH_GUEST_ROOT).toBe('/scratch');
+		expect(runtimePathMappingModule).not.toHaveProperty('TOOL_VM_WORKSPACE_GUEST_ROOT');
+	});
+
+	it('maps Tool VM guest work subpaths to OpenClaw gateway paths', () => {
 		const result = translateRuntimePath({
-			inputPath: '/workspace/app',
+			inputPath: '/work/app',
 			mapping,
 			purpose: 'executionCwd',
 			sourceNamespace: 'tool-vm-guest',
@@ -142,7 +149,7 @@ describe('translateRuntimePath', () => {
 					leaseMount: true,
 				},
 				inputNamespace: 'tool-vm-guest',
-				inputPath: '/workspace/app',
+				inputPath: '/work/app',
 				mappingId: 'test-tool-vm',
 				outputNamespace: 'openclaw-gateway',
 				outputPath: '/zone/agents/beta/app',
@@ -152,7 +159,7 @@ describe('translateRuntimePath', () => {
 		});
 	});
 
-	it('maps OpenClaw gateway workspace subpaths back to Tool VM guest paths', () => {
+	it('maps OpenClaw gateway work subpaths back to Tool VM guest paths', () => {
 		const result = translateRuntimePath({
 			inputPath: '/zone/agents/beta/app',
 			mapping,
@@ -166,7 +173,7 @@ describe('translateRuntimePath', () => {
 			value: {
 				inputNamespace: 'openclaw-gateway',
 				outputNamespace: 'tool-vm-guest',
-				outputPath: '/workspace/app',
+				outputPath: '/work/app',
 				relativePath: 'app',
 				rootId: 'agent-workspace',
 			},
@@ -196,7 +203,7 @@ describe('translateRuntimePath', () => {
 
 	it('allows scratch paths as execution cwd without a lease mount target', () => {
 		const result = translateRuntimePath({
-			inputPath: '/work/tmp',
+			inputPath: '/scratch/tmp',
 			mapping,
 			purpose: 'executionCwd',
 			sourceNamespace: 'tool-vm-guest',
@@ -212,7 +219,7 @@ describe('translateRuntimePath', () => {
 				},
 				inputNamespace: 'tool-vm-guest',
 				outputNamespace: 'tool-vm-guest',
-				outputPath: '/work/tmp',
+				outputPath: '/scratch/tmp',
 				relativePath: 'tmp',
 				rootId: 'tool-vm-scratch',
 			},
@@ -221,7 +228,7 @@ describe('translateRuntimePath', () => {
 
 	it('rejects scratch paths for lease mounts with retry guidance', () => {
 		const result = translateRuntimePath({
-			inputPath: '/work/tmp',
+			inputPath: '/scratch/tmp',
 			mapping,
 			purpose: 'leaseMount',
 			sourceNamespace: 'tool-vm-guest',
@@ -230,14 +237,14 @@ describe('translateRuntimePath', () => {
 
 		expect(result).toEqual({
 			error: {
-				allowedPathForms: ['/workspace[/subpath]', '/zone/agents/beta[/subpath]'],
+				allowedPathForms: ['/work[/subpath]', '/zone/agents/beta[/subpath]'],
 				code: 'purpose-not-allowed',
-				inputPath: '/work/tmp',
+				inputPath: '/scratch/tmp',
 				mappingId: 'test-tool-vm',
-				message: "Path '/work/tmp' matched Tool VM scratch but cannot be used for leaseMount.",
+				message: "Path '/scratch/tmp' matched Tool VM scratch but cannot be used for leaseMount.",
 				purpose: 'leaseMount',
 				retryGuidance:
-					'Use one of the allowed path forms for test-tool-vm leaseMount: /workspace[/subpath], /zone/agents/beta[/subpath].',
+					'Use one of the allowed path forms for test-tool-vm leaseMount: /work[/subpath], /zone/agents/beta[/subpath].',
 			},
 			ok: false,
 		});
@@ -245,7 +252,7 @@ describe('translateRuntimePath', () => {
 
 	it('rejects target namespaces that are not available on the matched root', () => {
 		const result = translateRuntimePath({
-			inputPath: '/work/tmp',
+			inputPath: '/scratch/tmp',
 			mapping,
 			purpose: 'executionCwd',
 			sourceNamespace: 'tool-vm-guest',
@@ -255,7 +262,7 @@ describe('translateRuntimePath', () => {
 		expect(result).toMatchObject({
 			error: {
 				code: 'target-namespace-not-available',
-				inputPath: '/work/tmp',
+				inputPath: '/scratch/tmp',
 			},
 			ok: false,
 		});
@@ -281,7 +288,7 @@ describe('translateRuntimePath', () => {
 
 	it('rejects parent traversal before normalization', () => {
 		const result = translateRuntimePath({
-			inputPath: '/workspace/../secret',
+			inputPath: '/work/../secret',
 			mapping,
 			purpose: 'executionCwd',
 			sourceNamespace: 'tool-vm-guest',
@@ -291,15 +298,15 @@ describe('translateRuntimePath', () => {
 		expect(result).toMatchObject({
 			error: {
 				code: 'path-parent-traversal',
-				inputPath: '/workspace/../secret',
+				inputPath: '/work/../secret',
 			},
 			ok: false,
 		});
 	});
 
-	it('rejects unknown absolute paths with allowed forms', () => {
+	it('rejects the retired Tool VM workspace root with allowed forms', () => {
 		const result = translateRuntimePath({
-			inputPath: '/tmp/build',
+			inputPath: '/workspace/app',
 			mapping,
 			purpose: 'executionCwd',
 			sourceNamespace: 'tool-vm-guest',
@@ -309,19 +316,19 @@ describe('translateRuntimePath', () => {
 		expect(result).toEqual({
 			error: {
 				allowedPathForms: [
-					'/workspace[/subpath]',
-					'/zone/agents/beta[/subpath]',
 					'/work[/subpath]',
+					'/zone/agents/beta[/subpath]',
+					'/scratch[/subpath]',
 					'/workspace-cache[/subpath]',
 					'/cache/workspace[/subpath]',
 				],
 				code: 'unknown-runtime-path',
-				inputPath: '/tmp/build',
+				inputPath: '/workspace/app',
 				mappingId: 'test-tool-vm',
-				message: "Path '/tmp/build' is not part of runtime path mapping 'test-tool-vm'.",
+				message: "Path '/workspace/app' is not part of runtime path mapping 'test-tool-vm'.",
 				purpose: 'executionCwd',
 				retryGuidance:
-					'Use one of the allowed path forms for test-tool-vm executionCwd: /workspace[/subpath], /zone/agents/beta[/subpath], /work[/subpath], /workspace-cache[/subpath], /cache/workspace[/subpath].',
+					'Use one of the allowed path forms for test-tool-vm executionCwd: /work[/subpath], /zone/agents/beta[/subpath], /scratch[/subpath], /workspace-cache[/subpath], /cache/workspace[/subpath].',
 			},
 			ok: false,
 		});

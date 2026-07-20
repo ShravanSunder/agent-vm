@@ -1,64 +1,5 @@
-export interface SshSandboxSession {
-	readonly command: string;
-	readonly configPath: string;
-	readonly host: string;
-}
-
-export interface SshHelpers {
-	readonly buildExecRemoteCommand: (params: {
-		readonly command: string;
-		readonly env: Record<string, string>;
-		readonly workdir?: string;
-	}) => string;
-	readonly buildRemoteCommand: (argv: readonly string[]) => string;
-	readonly buildSshSandboxArgv: (params: {
-		readonly remoteCommand: string;
-		readonly session: SshSandboxSession;
-		readonly tty?: boolean;
-	}) => string[];
-	readonly createRemoteShellSandboxFsBridge: (params: {
-		readonly runtime: {
-			readonly remoteAgentWorkspaceDir: string;
-			readonly remoteWorkspaceDir: string;
-			readonly runRemoteShellScript: (shellParams: {
-				readonly allowFailure?: boolean;
-				readonly args?: string[];
-				readonly script: string;
-				readonly signal?: AbortSignal;
-				readonly stdin?: Buffer | string;
-			}) => Promise<{
-				readonly code: number;
-				readonly stderr: Buffer;
-				readonly stdout: Buffer;
-			}>;
-		};
-		readonly sandbox: unknown;
-	}) => import('./sandbox-backend-factory.js').OpenClawSandboxFsBridge;
-	readonly createSshSandboxSessionFromSettings: (settings: {
-		readonly command: string;
-		readonly identityData?: string;
-		readonly knownHostsData?: string;
-		readonly strictHostKeyChecking: boolean;
-		readonly target: string;
-		readonly updateHostKeys: boolean;
-		readonly workspaceRoot: string;
-	}) => Promise<SshSandboxSession>;
-	readonly disposeSshSandboxSession?: (session: SshSandboxSession) => Promise<void>;
-	readonly runSshSandboxCommand: (params: {
-		readonly allowFailure?: boolean;
-		readonly remoteCommand: string;
-		readonly session: SshSandboxSession;
-		readonly signal?: AbortSignal;
-		readonly stdin?: Buffer | string;
-	}) => Promise<{
-		readonly code: number;
-		readonly stderr: Buffer;
-		readonly stdout: Buffer;
-	}>;
-	readonly sanitizeEnvVars: (env: NodeJS.ProcessEnv) => {
-		readonly allowed: Record<string, string>;
-	};
-}
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { Duplex } from 'node:stream';
 
 export interface OpenClawToolRegistration {
 	readonly description: string;
@@ -85,11 +26,13 @@ export interface OpenClawToolResult {
 }
 
 export interface OpenClawPluginToolContext {
+	readonly agentAccountId?: string;
 	readonly agentDir?: string;
 	readonly agentId?: string;
-	readonly workspaceDir?: string;
+	readonly requesterSenderId?: string;
 	readonly sessionId?: string;
 	readonly sessionKey?: string;
+	readonly workspaceDir?: string;
 }
 
 export interface OpenClawToolRegistrationApi {
@@ -121,37 +64,47 @@ export interface OpenClawHttpRouteRegistrationApi {
 	readonly registerHttpRoute?: (route: OpenClawHttpRouteRegistration) => void;
 }
 
-export function assertSdkShape(value: unknown): asserts value is SshHelpers & {
-	registerSandboxBackend: (
+export interface OpenClawPluginLogger {
+	readonly debug?: (message: string) => void;
+	readonly error: (message: string) => void;
+	readonly info: (message: string) => void;
+	readonly warn: (message: string) => void;
+}
+
+export interface OpenClawPluginServiceContext {
+	readonly config: Readonly<Record<string, unknown>>;
+	readonly logger: OpenClawPluginLogger;
+	readonly stateDir: string;
+	readonly workspaceDir?: string;
+}
+
+export interface OpenClawPluginService {
+	readonly id: string;
+	readonly start: (context: OpenClawPluginServiceContext) => Promise<void> | void;
+	readonly stop?: (context: OpenClawPluginServiceContext) => Promise<void> | void;
+}
+
+export interface OpenClawPluginServiceRegistrationApi {
+	readonly registerService?: (service: OpenClawPluginService) => void;
+}
+
+export interface OpenClawSandboxBackendRegistrationApi {
+	readonly registerSandboxBackend: (
 		id: string,
-		registration: {
-			factory: ReturnType<
-				typeof import('./sandbox-backend-factory.js').createAgentVmSandboxBackendFactory
-			>;
-			manager?: ReturnType<
-				typeof import('./sandbox-backend-factory.js').createAgentVmSandboxBackendManager
-			>;
-		},
-	) => void;
-} {
+		registration: Readonly<Record<string, unknown>>,
+	) => () => void;
+}
+
+export function assertSdkShape(
+	value: unknown,
+): asserts value is OpenClawSandboxBackendRegistrationApi {
 	if (typeof value !== 'object' || value === null) {
 		throw new TypeError('OpenClaw SDK module is not an object');
 	}
 
-	for (const exportName of [
-		'buildExecRemoteCommand',
-		'buildRemoteCommand',
-		'buildSshSandboxArgv',
-		'createRemoteShellSandboxFsBridge',
-		'createSshSandboxSessionFromSettings',
-		'runSshSandboxCommand',
-		'sanitizeEnvVars',
-		'registerSandboxBackend',
-	] as const) {
+	for (const exportName of ['registerSandboxBackend'] as const) {
 		if (typeof (value as Record<string, unknown>)[exportName] !== 'function') {
 			throw new TypeError(`OpenClaw SDK missing required export: ${exportName}`);
 		}
 	}
 }
-import type { IncomingMessage, ServerResponse } from 'node:http';
-import type { Duplex } from 'node:stream';

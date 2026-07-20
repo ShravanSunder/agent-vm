@@ -2,10 +2,16 @@ import { describe, expect, it } from 'vitest';
 
 import {
 	auditManagedVmPublicDeclarations,
+	shouldRebuildManagedVmContractWorkspace,
 	verifyManagedVmContracts,
 } from './verify-managed-vm-contracts.js';
 
 describe('managed-vm compile contracts', () => {
+	it('skips the redundant workspace rebuild only for the built check-gate invocation', () => {
+		expect(shouldRebuildManagedVmContractWorkspace([])).toBe(true);
+		expect(shouldRebuildManagedVmContractWorkspace(['--skip-workspace-build'])).toBe(false);
+	});
+
 	it('accepts the neutral fake provider and rejects forbidden consumer access', () => {
 		const verification = verifyManagedVmContracts();
 
@@ -70,4 +76,30 @@ describe('managed-vm public declaration neutrality', () => {
 			packageName: '@agent-vm/managed-vm',
 		});
 	});
+
+	it.each([
+		['export type ManagedVmGuestOwnership = object;', 'ManagedVmGuestOwnership'],
+		['export interface Mount { guestOwnership: object; }', 'guestOwnership'],
+		[
+			'export declare const createGuestIdentityProjectedProvider: () => object;',
+			'createGuestIdentityProjectedProvider',
+		],
+	] as const)(
+		'rejects removed identity declaration token %s even from the concrete adapter',
+		(content, forbiddenToken) => {
+			const findings = auditManagedVmPublicDeclarations([
+				{
+					content,
+					filePath: 'packages/gondolin-vm-adapter/dist/index.d.ts',
+					packageName: '@agent-vm/gondolin-vm-adapter',
+				},
+			]);
+
+			expect(findings).toContainEqual({
+				filePath: 'packages/gondolin-vm-adapter/dist/index.d.ts',
+				forbiddenToken,
+				packageName: '@agent-vm/gondolin-vm-adapter',
+			});
+		},
+	);
 });

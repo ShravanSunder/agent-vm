@@ -7,6 +7,7 @@ function createCacheCommandSystemConfig(): LoadedSystemConfig {
 	return createLoadedSystemConfig(
 		{
 			cacheDir: '/cache',
+			controllerStateDir: '/controller-state-test',
 			runtimeDir: '/runtime',
 			host: {
 				controllerPort: 18800,

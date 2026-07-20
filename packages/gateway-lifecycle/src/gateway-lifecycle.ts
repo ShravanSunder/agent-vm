@@ -5,6 +5,7 @@ import type { GatewayControlPrivateEnvironmentName } from './gateway-control-pri
 import type { GatewayProcessSpec } from './gateway-process-spec.js';
 import type { GatewayType } from './gateway-runtime-contract.js';
 import type { GatewayVmRequirements } from './gateway-vm-spec.js';
+import type { ManagedFrameworkServiceBootMetadata } from './managed-gateway-boot-contract.js';
 import type { WebSocketUpgradeConfig } from './websocket-upgrade-policy.js';
 
 /**
@@ -97,17 +98,17 @@ interface GatewayZoneBaseGatewayConfig {
 	readonly stateDir: string;
 	readonly runtimeRootfsSize?: string;
 	readonly ssh: GatewaySshConfig;
-	readonly authProfilesRef?:
-		| ConfigGatewayAuthProfilesRef
-		| OnePasswordGatewayAuthProfilesRef
-		| EnvironmentGatewayAuthProfilesRef
-		| undefined;
 }
 
 interface OpenClawGatewayZoneGatewayConfig extends GatewayZoneBaseGatewayConfig {
 	readonly type: 'openclaw';
 	readonly controlAuth: OpenClawGatewayControlAuthConfig;
 	readonly zoneFilesDir: string;
+	readonly authProfilesRef?:
+		| ConfigGatewayAuthProfilesRef
+		| OnePasswordGatewayAuthProfilesRef
+		| EnvironmentGatewayAuthProfilesRef
+		| undefined;
 	readonly authProfilesByAgent?: Readonly<
 		Record<
 			string,
@@ -120,11 +121,20 @@ interface OpenClawGatewayZoneGatewayConfig extends GatewayZoneBaseGatewayConfig 
 	readonly rawEnvSecrets?: readonly string[];
 }
 
+interface HermesGatewayZoneGatewayConfig extends GatewayZoneBaseGatewayConfig {
+	readonly type: 'hermes';
+	readonly zoneFilesDir: string;
+	readonly profilesByAgent: Readonly<Record<string, string>>;
+}
+
 interface WorkerGatewayZoneGatewayConfig extends GatewayZoneBaseGatewayConfig {
 	readonly type: 'worker';
 }
 
-type GatewayZoneGatewayConfig = OpenClawGatewayZoneGatewayConfig | WorkerGatewayZoneGatewayConfig;
+type GatewayZoneGatewayConfig =
+	| OpenClawGatewayZoneGatewayConfig
+	| HermesGatewayZoneGatewayConfig
+	| WorkerGatewayZoneGatewayConfig;
 
 interface OnePasswordSecretSourceConfig {
 	readonly source: '1password';
@@ -159,6 +169,64 @@ export type HttpMediatedGatewaySecretConfig = SecretSourceConfig & {
 
 export type GatewaySecretConfig = EnvInjectedGatewaySecretConfig | HttpMediatedGatewaySecretConfig;
 
+export const gatewayToolPortalTelemetryServiceName = 'agent-vm-tool-portal' as const;
+export const gatewayFrameworkTelemetryServiceNames = Object.freeze({
+	hermes: 'agent-vm-hermes',
+	openclaw: 'agent-vm-openclaw',
+});
+
+export const gatewayTelemetrySourcePolicy = Object.freeze({
+	admitBaggage: false,
+	captureContent: false,
+});
+
+export const gatewayTelemetryAdmissionLimits = Object.freeze({
+	maxExportBatchRecords: 64,
+	maxQueuedRecordsPerSignal: 256,
+	maxRecordBytes: 65_536,
+});
+
+export type GatewayTelemetrySourcePolicy = typeof gatewayTelemetrySourcePolicy;
+export type GatewayTelemetryAdmissionLimits = typeof gatewayTelemetryAdmissionLimits;
+
+export interface GatewayTelemetrySignalPolicy {
+	readonly traces: boolean;
+	readonly metrics: boolean;
+	readonly logs: boolean;
+	readonly sampleRate: number;
+	readonly flushIntervalMs: number;
+}
+
+export interface GatewayTelemetryProducerSafetyContract {
+	readonly admissionLimits: GatewayTelemetryAdmissionLimits;
+	readonly sourcePolicy: GatewayTelemetrySourcePolicy;
+}
+
+export interface GatewayFrameworkTelemetryProducerConfig
+	extends GatewayTelemetrySignalPolicy, GatewayTelemetryProducerSafetyContract {
+	readonly serviceName: (typeof gatewayFrameworkTelemetryServiceNames)[keyof typeof gatewayFrameworkTelemetryServiceNames];
+}
+
+export interface GatewayToolPortalTelemetryProducerConfig
+	extends GatewayTelemetrySignalPolicy, GatewayTelemetryProducerSafetyContract {
+	readonly serviceName: typeof gatewayToolPortalTelemetryServiceName;
+}
+
+export function createGatewayTelemetryProducerSafetyContract(): GatewayTelemetryProducerSafetyContract {
+	if (
+		gatewayTelemetryAdmissionLimits.maxExportBatchRecords >
+		gatewayTelemetryAdmissionLimits.maxQueuedRecordsPerSignal
+	) {
+		throw new Error(
+			'Gateway telemetry maxExportBatchRecords must not exceed maxQueuedRecordsPerSignal.',
+		);
+	}
+	return {
+		admissionLimits: { ...gatewayTelemetryAdmissionLimits },
+		sourcePolicy: { ...gatewayTelemetrySourcePolicy },
+	};
+}
+
 export interface GatewayZoneObservabilityConfig {
 	readonly mode: 'collector';
 	readonly collector: {
@@ -169,15 +237,11 @@ export interface GatewayZoneObservabilityConfig {
 		readonly targetGrpcPort: number;
 		readonly targetHttpPort: number;
 	};
-	readonly openclaw: {
-		readonly serviceName: string;
-		readonly traces: boolean;
-		readonly metrics: boolean;
-		readonly logs: boolean;
-		readonly sampleRate: number;
-		readonly flushIntervalMs: number;
+	readonly framework: GatewayFrameworkTelemetryProducerConfig;
+	readonly openclaw?: {
 		readonly diagnosticsFlags: readonly string[];
 	};
+	readonly toolPortal: GatewayToolPortalTelemetryProducerConfig;
 }
 
 /**
@@ -232,7 +296,7 @@ export interface BuildGatewayVmRequirementsOptions {
 	readonly zone: GatewayZoneConfig;
 }
 
-export interface GatewayLifecycle {
+export interface GatewayLifecycleBase {
 	/**
 	 * How to run interactive auth for this gateway type.
 	 * Absent means the gateway type does not support interactive auth.
@@ -244,15 +308,6 @@ export interface GatewayLifecycle {
 	 * Pure data assembly — no side effects or controller authority.
 	 */
 	buildVmRequirements(options: BuildGatewayVmRequirementsOptions): GatewayVmRequirements;
-
-	/**
-	 * Build the process spec — everything about startup, health, and logging.
-	 * Pure data assembly — no side effects.
-	 */
-	buildProcessSpec(
-		zone: GatewayZoneConfig,
-		resolvedSecrets: Record<string, string>,
-	): GatewayProcessSpec;
 
 	/**
 	 * Optional hook to prepare host-side state before the VM boots.
@@ -267,3 +322,60 @@ export interface GatewayLifecycle {
 	 */
 	preflightHostState?(zone: GatewayZoneConfig, secretResolver: SecretResolver): Promise<void>;
 }
+
+export interface BuildManagedFrameworkServiceBootInputsOptions {
+	readonly resolvedSecrets: Record<string, string>;
+	readonly zone: GatewayZoneConfig;
+}
+
+/**
+ * Sensitive framework-service inputs that the controller materializes into
+ * the protected, immutable Managed Gateway boot-input directory.
+ *
+ * This contract intentionally contains no executable, argv, callback,
+ * process handle, or controller authority.
+ */
+interface ManagedFrameworkServiceBootInputsBase {
+	readonly configuration: unknown;
+	readonly environment: Readonly<Record<string, string>>;
+}
+
+interface ManagedFrameworkServiceConfigurationOnlyBootInputs extends ManagedFrameworkServiceBootInputsBase {
+	readonly kind: 'configuration-only';
+}
+
+interface ManagedHermesFrameworkServiceBootInputs extends ManagedFrameworkServiceBootInputsBase {
+	readonly kind: 'hermes-managed-scope';
+	readonly managedConfigurationSource: string;
+}
+
+export type ManagedFrameworkServiceBootInputs =
+	| ManagedFrameworkServiceConfigurationOnlyBootInputs
+	| ManagedHermesFrameworkServiceBootInputs;
+
+export interface ManagedGatewayLifecycle extends GatewayLifecycleBase {
+	readonly executionModel: 'managed-gateway';
+
+	/** Build the selected framework half of the exact managed boot contract. */
+	buildFrameworkServiceBootMetadata(zone: GatewayZoneConfig): ManagedFrameworkServiceBootMetadata;
+
+	/** Build service-scoped config and environment for protected materialization. */
+	buildFrameworkServiceBootInputs(
+		options: BuildManagedFrameworkServiceBootInputsOptions,
+	): Promise<ManagedFrameworkServiceBootInputs>;
+}
+
+export interface DirectProcessGatewayLifecycle extends GatewayLifecycleBase {
+	readonly executionModel: 'direct-process';
+
+	/**
+	 * Build the direct-process spec retained only by standalone Worker.
+	 * Pure data assembly — no side effects.
+	 */
+	buildProcessSpec(
+		zone: GatewayZoneConfig,
+		resolvedSecrets: Record<string, string>,
+	): GatewayProcessSpec;
+}
+
+export type GatewayLifecycle = ManagedGatewayLifecycle | DirectProcessGatewayLifecycle;

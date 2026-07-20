@@ -3,6 +3,7 @@ import {
 	createGondolinManagedVmProvider,
 } from '@agent-vm/gondolin-vm-adapter';
 import type {
+	ManagedVmExactProcessTerminationCapability,
 	ManagedVmFactory,
 	ManagedVmImageBuildRequest,
 	ManagedVmImageBuildResult,
@@ -22,6 +23,7 @@ export type ConfigureManagedVmHostNetworkDefaults = () => ManagedVmHostNetworkDe
 /** Neutral runtime capabilities selected by the application composition root. */
 export interface ManagedVmRuntimeComposition {
 	readonly configureManagedVmHostNetworkDefaults: ConfigureManagedVmHostNetworkDefaults;
+	readonly managedVmExactProcessTermination: ManagedVmExactProcessTerminationCapability;
 	readonly managedVmFactory: ManagedVmFactory;
 	readonly managedVmImages: ManagedVmImageCapability;
 	readonly managedVmOwnedDirectories: ManagedVmOwnedDirectoryCapability;
@@ -55,6 +57,7 @@ export function createManagedVmRuntimeComposition(): ManagedVmRuntimeComposition
 	const provider = createGondolinManagedVmProvider();
 	return {
 		configureManagedVmHostNetworkDefaults: configureHostNetworkDefaults,
+		managedVmExactProcessTermination: provider.exactProcessTermination,
 		managedVmFactory: provider.factory,
 		managedVmImages: createAuthoritativeManagedVmImageCapability(provider.images),
 		managedVmOwnedDirectories: provider.ownedDirectories,

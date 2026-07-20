@@ -13,6 +13,7 @@ import type { GatewayEpochIdentity, GatewayEpochSeed } from './vm-ownership-cont
 export interface GatewayVmLifecycleAuthority {
 	readonly gatewaySeed: GatewayEpochSeed;
 	readonly gatewayIdentity: GatewayEpochIdentity | undefined;
+	abandonUnattachedGatewaySeedAfter(cleanupOwnedResources: () => Promise<void>): Promise<void>;
 	attachGatewayVm(gatewayVmId: string): GatewayEpochIdentity;
 	containPendingCreate(options: {
 		readonly closeLateCreatedVm: (createdVm: ManagedVm) => Promise<void>;
@@ -39,6 +40,9 @@ export function createGatewayVmLifecycleAuthority(options: {
 	});
 	const destructionBudget = options.destructionBudget ?? createGatewayDestructionBudget();
 	let currentGatewayIdentity: GatewayEpochIdentity | undefined;
+	let seedAbandonmentInFlight: Promise<void> | undefined;
+	let seedAbandonmentRequested = false;
+	let seedAbandoned = false;
 	let pendingCreateContainment: Promise<void> | undefined;
 
 	return {
@@ -48,7 +52,38 @@ export function createGatewayVmLifecycleAuthority(options: {
 				? undefined
 				: structuredClone(currentGatewayIdentity);
 		},
+		abandonUnattachedGatewaySeedAfter(cleanupOwnedResources): Promise<void> {
+			if (currentGatewayIdentity !== undefined) {
+				return Promise.reject(
+					new Error(`Gateway VM lifecycle for zone '${options.zoneId}' is already attached.`),
+				);
+			}
+			if (seedAbandoned) {
+				return Promise.resolve();
+			}
+			if (seedAbandonmentInFlight !== undefined) {
+				return seedAbandonmentInFlight;
+			}
+			seedAbandonmentRequested = true;
+			const abandonmentAttempt = (async (): Promise<void> => {
+				await cleanupOwnedResources();
+				options.ownershipCoordinator.abandonUnattachedGatewaySeed(seedHandle.seed);
+				seedAbandoned = true;
+			})();
+			const trackedAbandonment = abandonmentAttempt.finally(() => {
+				if (seedAbandonmentInFlight === trackedAbandonment) {
+					seedAbandonmentInFlight = undefined;
+				}
+			});
+			seedAbandonmentInFlight = trackedAbandonment;
+			return trackedAbandonment;
+		},
 		attachGatewayVm(gatewayVmId): GatewayEpochIdentity {
+			if (seedAbandonmentRequested) {
+				throw new Error(
+					`Gateway VM lifecycle for zone '${options.zoneId}' has begun seed abandonment.`,
+				);
+			}
 			const identity = seedHandle.attachGatewayVm(gatewayVmId);
 			currentGatewayIdentity = identity;
 			return structuredClone(identity);

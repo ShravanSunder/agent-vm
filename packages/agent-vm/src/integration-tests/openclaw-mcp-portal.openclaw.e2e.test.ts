@@ -104,7 +104,6 @@ async function allowPortalNativeToolsInOpenClawConfig(configPath: string): Promi
 async function writeOpenClawMultiAgentMcpPortalE2eConfigs(options: {
 	readonly configDir: string;
 	readonly namespace: string;
-	readonly portalAccessHeaderName: string;
 	readonly unavailableNamespace: string;
 	readonly unavailableUpstreamUrl: string;
 	readonly upstreamUrl: string;
@@ -142,18 +141,20 @@ async function writeOpenClawMultiAgentMcpPortalE2eConfigs(options: {
 		'utf8',
 	);
 	await writeFile(
-		path.join(options.configDir, 'mcp-portal.config.jsonc'),
+		path.join(options.configDir, 'tool-portal.config.jsonc'),
 		`${JSON.stringify(
 			{
-				$schema: '../../schemas/mcp-portal.schema.json',
+				$schema: '../../schemas/tool-portal.schema.json',
 				agents: {
 					[mainAgentId]: { profile: 'reader' },
 					[betaAgentId]: { profile: 'writer' },
 				},
+				mode: 'managed',
 				profiles: {
 					reader: {
 						namespaces: {
 							[options.namespace]: {
+								backend: { kind: 'mcp_provider' },
 								calls: {
 									requiresApproval: { allow: [] },
 									withoutApproval: { allow: ['read_thing'] },
@@ -161,6 +162,7 @@ async function writeOpenClawMultiAgentMcpPortalE2eConfigs(options: {
 								tools: { allow: ['read_thing', 'write_thing'] },
 							},
 							[options.unavailableNamespace]: {
+								backend: { kind: 'mcp_provider' },
 								calls: {
 									requiresApproval: { allow: [] },
 									withoutApproval: { allow: ['read_thing'] },
@@ -168,11 +170,11 @@ async function writeOpenClawMultiAgentMcpPortalE2eConfigs(options: {
 								tools: { allow: ['read_thing'] },
 							},
 						},
-						promptContext: { enabled: true, maxNamespaces: 12 },
 					},
 					writer: {
 						namespaces: {
 							[options.namespace]: {
+								backend: { kind: 'mcp_provider' },
 								calls: {
 									requiresApproval: { allow: [] },
 									withoutApproval: { allow: ['write_thing'] },
@@ -180,7 +182,6 @@ async function writeOpenClawMultiAgentMcpPortalE2eConfigs(options: {
 								tools: { allow: ['read_thing', 'write_thing'] },
 							},
 						},
-						promptContext: { enabled: true, maxNamespaces: 12 },
 					},
 				},
 				schemaVersion: 1,
@@ -246,6 +247,19 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 			...systemZone.egressHosts,
 			{ audience: 'gateway', host: upstreamHost },
 		];
+		const toolPortalConfigDir = path.dirname(systemZone.gateway.config);
+		systemZone.toolPortal = {
+			configDir: toolPortalConfigDir,
+			surfaceEligibilityByProfile: {
+				reader: {
+					[fakeUpstreamNamespace]: ['mcp', 'protected_uds'],
+					[unavailableNamespace]: ['mcp', 'protected_uds'],
+				},
+				writer: {
+					[fakeUpstreamNamespace]: ['mcp', 'protected_uds'],
+				},
+			},
+		};
 		const zoneFilesDir = project.zone.gateway.zoneFilesDir;
 		await Promise.all(
 			agentIds.map(async (agentId) => {
@@ -256,9 +270,8 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 		);
 		await allowPortalNativeToolsInOpenClawConfig(systemZone.gateway.config);
 		await writeOpenClawMultiAgentMcpPortalE2eConfigs({
-			configDir: path.dirname(systemZone.gateway.config),
+			configDir: toolPortalConfigDir,
 			namespace: fakeUpstreamNamespace,
-			portalAccessHeaderName: 'unused-native-smoke-header',
 			unavailableNamespace,
 			unavailableUpstreamUrl,
 			upstreamUrl,
@@ -282,13 +295,9 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 			},
 			startGatewayZone: async (startGatewayOptions) => {
 				const result = await startGatewayZone(startGatewayOptions);
-				result.vm.configureIngressRoutes([
-					{
-						port: result.processSpec.guestListenPort,
-						prefix: '/',
-						stripPrefix: true,
-					},
-				]);
+				if (result.executionModel !== 'managed-gateway') {
+					throw new Error('OpenClaw MCP Portal proof requires managed Gateway image boot.');
+				}
 				return result;
 			},
 			tcpHostsOverride: {

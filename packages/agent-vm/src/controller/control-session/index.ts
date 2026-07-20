@@ -2,6 +2,7 @@ export * from './control-session-death-grace.js';
 export * from './control-session-client.js';
 export * from './control-session-dispatcher.js';
 export * from './gateway-control-caller-context.js';
+export * from './gateway-control-binding-publication.js';
 export * from './gateway-control-domain-handler.js';
 export * from './gateway-control-lease-rpc.js';
 export * from './gateway-control-process-admission-coordinator.js';

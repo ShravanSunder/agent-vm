@@ -9,6 +9,7 @@ function createBackupSystemConfig(): LoadedSystemConfig {
 	return createLoadedSystemConfig(
 		{
 			cacheDir: './cache',
+			controllerStateDir: '/controller-state-test',
 			runtimeDir: './runtime',
 			host: {
 				controllerPort: 18800,
@@ -168,7 +169,6 @@ describe('runBackupCommand', () => {
 			zoneId: 'shravan',
 		}));
 		const systemConfig = createBackupSystemConfig();
-
 		await runBackupCommand({
 			dependencies: {
 				...defaultCliDependencies,

@@ -11,18 +11,30 @@ import {
 	gatewayControlDeliveryPolicyByOperation,
 } from '@agent-vm/gateway-control-contracts';
 import type { AgentVmHealthEvent } from '@agent-vm/gateway-lifecycle';
-import type { ManagedVm } from '@agent-vm/managed-vm';
 import {
-	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV,
-	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_IDENTITIES_ENV,
-	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV,
-	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH,
-	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_SIGNATURE_HEADER,
-	testExports as toolVmWriteReadE2eToolTestExports,
+	AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_ENV,
+	AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_IDENTITIES_ENV,
+	AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_KEY_ENV,
+	AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_PATH,
+	AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_SIGNATURE_HEADER,
+	gatewayRuntimeSandboxWriteReadE2eTestExports,
 } from '@agent-vm/openclaw-agent-vm-plugin';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import {
+	createControllerStateRoot,
+	resolveControllerGatewayStateRoot,
+} from '../controller/durable-state/controller-state-paths.js';
+import {
+	resolveControllerGatewayRecordTargets,
+	type ControllerToolLeaseRecordsTarget,
+} from '../controller/durable-state/controller-state-record-paths.js';
 import type { HealthEventStore } from '../controller/health/health-event-store.js';
+import {
+	loadAllToolVmRuntimeRecords,
+	type ToolVmRuntimeRecord,
+} from '../controller/leases/tool-vm-runtime-record.js';
+import type { GatewayZoneVmOperations } from '../gateway/gateway-zone-support.js';
 import {
 	expectedControlLeaseReliabilityEvidenceWriteKind,
 	hashControlLeaseReliabilityArtifact,
@@ -43,6 +55,10 @@ import {
 import { withProtocolDeadline } from './e2e-protocol-wait.js';
 
 const architecture = currentE2eArchitecture();
+type GatewayVmObservationOperations = Pick<
+	GatewayZoneVmOperations,
+	'enableSsh' | 'exec' | 'getHostProcessId' | 'id'
+>;
 const runObservabilityPressureE2e =
 	process.env.AGENT_VM_OPENCLAW_E2E === '1' && (await canRunManagedVmE2e({ architecture }));
 const describeObservabilityPressureE2e = runObservabilityPressureE2e ? describe : describe.skip;
@@ -62,12 +78,16 @@ const configuredProbeIdentities = [
 	},
 ] as const;
 
+type ManagedGatewayStartResult = Extract<
+	Awaited<ReturnType<typeof startGatewayZone>>,
+	{ readonly executionModel: 'managed-gateway' }
+>;
+
 interface ToolVmWriteReadResult {
 	readonly agentId: string;
+	readonly kind: 'write-read';
 	readonly marker: string;
 	readonly readBack: string;
-	readonly runtimeId: string;
-	readonly sessionKey: string;
 	readonly status: 'ok';
 }
 
@@ -97,22 +117,49 @@ function parseToolVmWriteReadResult(value: unknown): ToolVmWriteReadResult {
 	const details = value.details;
 	if (
 		details.status !== 'ok' ||
+		details.kind !== 'write-read' ||
 		typeof details.agentId !== 'string' ||
 		typeof details.marker !== 'string' ||
-		typeof details.readBack !== 'string' ||
-		typeof details.runtimeId !== 'string' ||
-		typeof details.sessionKey !== 'string'
+		typeof details.readBack !== 'string'
 	) {
 		throw new Error('Tool VM write/read pressure probe returned malformed details.');
 	}
 	return {
 		agentId: details.agentId,
+		kind: details.kind,
 		marker: details.marker,
 		readBack: details.readBack,
-		runtimeId: details.runtimeId,
-		sessionKey: details.sessionKey,
 		status: details.status,
 	};
+}
+
+async function selectCurrentToolVmRuntimeRecord(options: {
+	readonly agentId: string;
+	readonly gatewayIdentity: ManagedGatewayStartResult['gatewayIdentity'];
+	readonly recordsTarget: ControllerToolLeaseRecordsTarget;
+}): Promise<ToolVmRuntimeRecord> {
+	const loadResults = await loadAllToolVmRuntimeRecords(options.recordsTarget);
+	const parseError = loadResults.find((result) => result.kind === 'parse-error');
+	if (parseError !== undefined) {
+		throw new Error(`Tool VM runtime record failed to parse: ${parseError.path}`);
+	}
+	const matches = loadResults
+		.filter((result) => result.kind === 'loaded')
+		.map((result) => result.record)
+		.filter(
+			(record) =>
+				record.zoneId === zoneId &&
+				record.agentId === options.agentId &&
+				record.gateway.zoneId === options.gatewayIdentity.zoneId &&
+				record.gateway.gatewayVmId === options.gatewayIdentity.gatewayVmId &&
+				record.gateway.generationId === options.gatewayIdentity.generationId,
+		);
+	if (matches.length !== 1 || matches[0] === undefined) {
+		throw new Error(
+			`Expected exactly one current Tool VM runtime record for agent '${options.agentId}', found ${String(matches.length)}.`,
+		);
+	}
+	return matches[0];
 }
 
 async function callSignedWriteReadProbe(options: {
@@ -126,24 +173,21 @@ async function callSignedWriteReadProbe(options: {
 	}
 	const bodyText = JSON.stringify({
 		agentId: options.identity.agentId,
-		filePath: `.agent-vm/observability-pressure-${options.identity.agentId}-${randomUUID()}.txt`,
+		filePath: `agent-vm-e2e-observability-pressure-${options.identity.agentId}-${randomUUID()}.txt`,
 		marker: options.marker,
-		scenario: 'write-read',
+		action: 'write-read',
 		sessionKey: options.identity.sessionKey,
 	});
 	const response = await withProtocolDeadline(
 		fetch(
-			`http://${ingress.host}:${String(ingress.port)}${AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH}`,
+			`http://${ingress.host}:${String(ingress.port)}${AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_PATH}`,
 			{
 				body: bodyText,
 				headers: {
 					authorization: `Bearer ${gatewayToken}`,
 					'content-type': 'application/json',
-					[AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_SIGNATURE_HEADER]:
-						toolVmWriteReadE2eToolTestExports.signToolVmWriteReadE2eRouteBody(
-							bodyText,
-							probeSigningKey,
-						),
+					[AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_SIGNATURE_HEADER]:
+						gatewayRuntimeSandboxWriteReadE2eTestExports.signBody(bodyText, probeSigningKey),
 				},
 				method: 'POST',
 			},
@@ -161,19 +205,14 @@ async function callSignedWriteReadProbe(options: {
 }
 
 async function sendControllerOriginatedControlPing(options: {
-	readonly gatewayStart: Awaited<ReturnType<typeof startGatewayZone>>;
+	readonly gatewayStart: ManagedGatewayStartResult;
 	readonly sequence: number;
 }): Promise<void> {
 	const controlSession = options.gatewayStart.controlSession;
-	const recoverySourceKey = options.gatewayStart.controlSessionRecoverySourceKey;
-	const processEpoch = options.gatewayStart.processEpoch;
-	if (
-		controlSession === undefined ||
-		recoverySourceKey === undefined ||
-		processEpoch === undefined
-	) {
+	if (controlSession === undefined) {
 		throw new Error('Expected observability pressure Gateway to expose its control session.');
 	}
+	const controlIdentity = options.gatewayStart.expectedCohort.controlIdentity;
 	const diagnostics = controlSession.getDiagnostics();
 	const helloResponse = diagnostics.lastHelloResponse;
 	if (helloResponse === undefined || helloResponse.outcome !== 'accepted') {
@@ -182,7 +221,7 @@ async function sendControllerOriginatedControlPing(options: {
 		);
 	}
 	const envelope = ControlEnvelopeSchema.parse({
-		bootId: processEpoch,
+		bootId: controlIdentity.processEpoch,
 		connectionId: helloResponse.connectionId,
 		controllerEpoch: helloResponse.controllerEpoch,
 		createdAtMs: Date.now(),
@@ -191,11 +230,11 @@ async function sendControllerOriginatedControlPing(options: {
 		kind: 'command',
 		messageId: randomUUID(),
 		operation: 'control_ping',
-		peerId: `gateway-${zoneId}`,
+		peerId: controlIdentity.peerId,
 		protocolVersion: CONTROL_PROTOCOL_VERSION,
 		sequence: options.sequence,
 		sessionId: helloResponse.sessionId,
-		zoneId,
+		zoneId: options.gatewayStart.expectedCohort.fence.zoneId,
 	});
 	const response = GatewayControlRpcCommandResultMessageSchema.parse(
 		await withProtocolDeadline(
@@ -260,7 +299,9 @@ async function queryControllerStatus(controllerUrl: string): Promise<unknown> {
 	return await response.json();
 }
 
-async function readOpenClawProcessIdentity(gatewayVm: ManagedVm): Promise<OpenClawProcessIdentity> {
+async function readOpenClawProcessIdentity(
+	gatewayVm: GatewayVmObservationOperations,
+): Promise<OpenClawProcessIdentity> {
 	const result = await gatewayVm.exec(`
 set -eu
 port_hex="$(printf '%04X' 18789)"
@@ -314,7 +355,7 @@ async function readAgentVmPackageIdentity(): Promise<{
 describeObservabilityPressureE2e(
 	'e2e: bounded observability pressure cannot impair control, Gateway, or Tool VM work',
 	() => {
-		let gatewayStart: Awaited<ReturnType<typeof startGatewayZone>> | undefined;
+		let gatewayStart: ManagedGatewayStartResult | undefined;
 		let harness: E2eHarnessRuntime | undefined;
 		let healthEventStore: HealthEventStore | undefined;
 		let project: OpenClawE2eProject | undefined;
@@ -333,9 +374,9 @@ describeObservabilityPressureE2e(
 			}
 			const systemGateway = systemZone.gateway;
 			for (const envName of [
-				AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV,
-				AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV,
-				AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_IDENTITIES_ENV,
+				AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_ENV,
+				AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_KEY_ENV,
+				AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_IDENTITIES_ENV,
 			]) {
 				systemZone.secrets[envName] = {
 					audience: 'gateway',
@@ -346,9 +387,9 @@ describeObservabilityPressureE2e(
 			}
 			systemGateway.rawEnvSecrets = [
 				...(systemGateway.rawEnvSecrets ?? []),
-				AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV,
-				AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV,
-				AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_IDENTITIES_ENV,
+				AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_ENV,
+				AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_KEY_ENV,
+				AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_IDENTITIES_ENV,
 			];
 			await Promise.all(
 				configuredProbeIdentities.map(async ({ agentId }) => {
@@ -367,10 +408,10 @@ describeObservabilityPressureE2e(
 			await prepareGatewayE2eProjectImages({ project });
 			harness = await startE2eControllerRuntime({
 				secrets: {
-					[AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV]: '1',
-					[AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_IDENTITIES_ENV]:
+					[AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_ENV]: '1',
+					[AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_IDENTITIES_ENV]:
 						JSON.stringify(configuredProbeIdentities),
-					[AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV]: probeSigningKey,
+					[AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_KEY_ENV]: probeSigningKey,
 					GITHUB_TOKEN: 'unused-observability-pressure-token',
 					OPENCLAW_GATEWAY_TOKEN: gatewayToken,
 					PERPLEXITY_API_KEY: 'unused-observability-pressure-token',
@@ -381,10 +422,10 @@ describeObservabilityPressureE2e(
 					}
 					healthEventStore = startOptions.healthEventStore;
 					const result = await startGatewayZone(startOptions);
+					if (result.executionModel !== 'managed-gateway') {
+						throw new Error('Observability pressure proof requires managed Gateway image boot.');
+					}
 					gatewayStart = result;
-					result.vm.configureIngressRoutes([
-						{ port: result.processSpec.guestListenPort, prefix: '/', stripPrefix: true },
-					]);
 					return result;
 				},
 				startOptions: { systemConfig: project.systemConfig, zoneIds: [zoneId] },
@@ -402,7 +443,12 @@ describeObservabilityPressureE2e(
 		});
 
 		it('sheds bounded evidence while concurrent product paths meet their deadlines without identity churn', async () => {
-			if (gatewayStart === undefined || harness === undefined || healthEventStore === undefined) {
+			if (
+				gatewayStart === undefined ||
+				harness === undefined ||
+				healthEventStore === undefined ||
+				project === undefined
+			) {
 				throw new Error('Expected observability pressure harness to be initialized.');
 			}
 			const activeGatewayStart = gatewayStart;
@@ -411,10 +457,7 @@ describeObservabilityPressureE2e(
 			const runMarker = `observability-pressure-${randomUUID()}`;
 			const faultWindowStartMs = Date.now();
 			const gatewayVmIdBefore = activeGatewayStart.vm.id;
-			const processEpochBefore = activeGatewayStart.processEpoch;
-			if (processEpochBefore === undefined) {
-				throw new Error('Gateway process epoch was unavailable before observability pressure.');
-			}
+			const processEpochBefore = activeGatewayStart.expectedCohort.controlIdentity.processEpoch;
 			const processIdentityBefore = await readOpenClawProcessIdentity(activeGatewayStart.vm);
 			const baselineResults = await Promise.all(
 				configuredProbeIdentities.map(
@@ -423,6 +466,27 @@ describeObservabilityPressureE2e(
 							harness: activeHarness,
 							identity,
 							marker: `${runMarker}-baseline-${identity.agentId}`,
+						}),
+				),
+			);
+			for (const baselineResult of baselineResults) {
+				expect(baselineResult.readBack).toBe(baselineResult.marker);
+			}
+			const recordsTarget = resolveControllerGatewayRecordTargets({
+				gatewayStateRoot: resolveControllerGatewayStateRoot({
+					controllerStateRoot: createControllerStateRoot({
+						controllerStateDirectoryPath: project.systemConfig.controllerStateDir,
+					}),
+					zoneId,
+				}),
+			}).toolLeaseRecords;
+			const baselineRuntimeRecords = await Promise.all(
+				configuredProbeIdentities.map(
+					async (identity) =>
+						await selectCurrentToolVmRuntimeRecord({
+							agentId: identity.agentId,
+							gatewayIdentity: activeGatewayStart.gatewayIdentity,
+							recordsTarget,
 						}),
 				),
 			);
@@ -467,6 +531,16 @@ describeObservabilityPressureE2e(
 				}),
 			]);
 			const pressureStatus = await queryControllerStatus(activeHarness.controllerUrl);
+			const pressureRuntimeRecords = await Promise.all(
+				configuredProbeIdentities.map(
+					async (identity) =>
+						await selectCurrentToolVmRuntimeRecord({
+							agentId: identity.agentId,
+							gatewayIdentity: activeGatewayStart.gatewayIdentity,
+							recordsTarget,
+						}),
+				),
+			);
 			const faultWindowEndMs = Date.now();
 			const pressureDiagnostics = durableQueueDiagnosticsFromControllerStatus(pressureStatus);
 
@@ -489,10 +563,12 @@ describeObservabilityPressureE2e(
 				readBack: `${runMarker}-pressure-beta`,
 				status: 'ok',
 			});
-			expect(pressureMain.runtimeId).toBe(baselineResults[0]?.runtimeId);
-			expect(pressureBeta.runtimeId).toBe(baselineResults[1]?.runtimeId);
+			expect(pressureRuntimeRecords[0]).toEqual(baselineRuntimeRecords[0]);
+			expect(pressureRuntimeRecords[1]).toEqual(baselineRuntimeRecords[1]);
 			expect(activeGatewayStart.vm.id).toBe(gatewayVmIdBefore);
-			expect(activeGatewayStart.processEpoch).toBe(processEpochBefore);
+			expect(activeGatewayStart.expectedCohort.controlIdentity.processEpoch).toBe(
+				processEpochBefore,
+			);
 			expect(await readOpenClawProcessIdentity(activeGatewayStart.vm)).toEqual(
 				processIdentityBefore,
 			);
@@ -504,12 +580,9 @@ describeObservabilityPressureE2e(
 				pressureDiagnostics,
 				productOperationDeadlineMs,
 				runMarker,
-				toolRuntimeIds: [pressureMain.runtimeId, pressureBeta.runtimeId],
+				toolRuntimeIds: pressureRuntimeRecords.map((record) => record.leaseId),
 			});
-			const gatewayIdentity = activeGatewayStart.vmOwnership.gatewayIdentity;
-			if (gatewayIdentity === undefined) {
-				throw new Error('Gateway identity was unavailable for reliability evidence.');
-			}
+			const gatewayIdentity = activeGatewayStart.gatewayIdentity;
 			const evidenceWriteResult = await writeControlLeaseReliabilityEvidence({
 				expectedOperationId: reliabilityOperationId,
 				payload: {
@@ -546,8 +619,16 @@ describeObservabilityPressureE2e(
 					runtimeIdentities: [
 						{ generation: 1, id: gatewayVmIdBefore, kind: 'gateway-vm' },
 						{ generation: 1, id: processEpochBefore, kind: 'openclaw-process' },
-						{ generation: 1, id: pressureMain.runtimeId, kind: 'tool-vm-main' },
-						{ generation: 1, id: pressureBeta.runtimeId, kind: 'tool-vm-beta' },
+						{
+							generation: 1,
+							id: pressureRuntimeRecords[0]?.vmId ?? 'missing-main-tool-vm',
+							kind: 'tool-vm-main',
+						},
+						{
+							generation: 1,
+							id: pressureRuntimeRecords[1]?.vmId ?? 'missing-beta-tool-vm',
+							kind: 'tool-vm-beta',
+						},
 					],
 				},
 			});

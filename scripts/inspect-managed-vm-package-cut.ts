@@ -12,6 +12,7 @@ const requiredAffectedPackageNames = [
 	'@agent-vm/managed-vm',
 	'@agent-vm/gateway-lifecycle',
 	'@agent-vm/gondolin-vm-adapter',
+	'@agent-vm/hermes-gateway',
 	'@agent-vm/openclaw-gateway',
 	'@agent-vm/worker-gateway',
 	'@agent-vm/openclaw-agent-vm-plugin',

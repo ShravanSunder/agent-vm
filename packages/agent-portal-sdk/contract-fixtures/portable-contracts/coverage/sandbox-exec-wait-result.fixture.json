@@ -1,0 +1,37 @@
+{
+	"caseId": "coverage-sandbox-exec-wait-result",
+	"schemaId": "sandbox.exec.wait.result",
+	"tags": [
+		"accepted",
+		"coverage"
+	],
+	"input": {
+		"operation": {
+			"operationId": "operation-a",
+			"owningGeneration": "generation-a"
+		},
+		"outcome": {
+			"certainty": "proven",
+			"completion": "succeeded",
+			"kind": "completed",
+			"retryClass": "forbidden"
+		}
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"operation": {
+				"operationId": "operation-a",
+				"owningGeneration": "generation-a"
+			},
+			"outcome": {
+				"certainty": "proven",
+				"completion": "succeeded",
+				"kind": "completed",
+				"retryClass": "forbidden"
+			}
+		},
+		"canonicalJson": "{\"operation\":{\"operationId\":\"operation-a\",\"owningGeneration\":\"generation-a\"},\"outcome\":{\"certainty\":\"proven\",\"completion\":\"succeeded\",\"kind\":\"completed\",\"retryClass\":\"forbidden\"}}",
+		"refinementIdentities": []
+	}
+}

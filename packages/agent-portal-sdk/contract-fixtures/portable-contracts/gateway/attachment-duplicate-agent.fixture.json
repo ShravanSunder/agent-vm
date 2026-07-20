@@ -1,0 +1,21 @@
+{
+	"caseId": "gateway-attachment-duplicate-agent",
+	"schemaId": "gateway.attachment.metadata",
+	"tags": ["attachment", "duplicate-id", "rejected"],
+	"input": {
+		"attachmentGeneration": 7,
+		"clientKind": "hermes-managed-plugin",
+		"configuredAgentIds": ["agent-a", "agent-a"],
+		"frameworkEpoch": "framework-3",
+		"gatewayEpoch": "gateway-7",
+		"projectionCohortDigest": "projection-cohort:0000000000000000000000000000000000000000000000000000000000000000",
+		"protocolVersion": 1,
+		"runtimeEpoch": "runtime-4",
+		"schemaVersion": 1
+	},
+	"expectation": {
+		"kind": "rejected",
+		"errorCodes": ["gateway.attachment.duplicate-agent-id"],
+		"refinementIdentities": ["gateway.attachment.unique-agent-ids"]
+	}
+}

@@ -1,0 +1,31 @@
+{
+	"caseId": "coverage-sandbox-stream-close-result",
+	"schemaId": "sandbox.stream.close.result",
+	"tags": [
+		"accepted",
+		"coverage"
+	],
+	"input": {
+		"kind": "closed",
+		"stream": {
+			"channel": "stdout",
+			"handleId": "stream-output",
+			"kind": "stream",
+			"owningGeneration": "generation-a"
+		}
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"kind": "closed",
+			"stream": {
+				"channel": "stdout",
+				"handleId": "stream-output",
+				"kind": "stream",
+				"owningGeneration": "generation-a"
+			}
+		},
+		"canonicalJson": "{\"kind\":\"closed\",\"stream\":{\"channel\":\"stdout\",\"handleId\":\"stream-output\",\"kind\":\"stream\",\"owningGeneration\":\"generation-a\"}}",
+		"refinementIdentities": []
+	}
+}

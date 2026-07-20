@@ -2,35 +2,7 @@ import { isToolVmActiveUseId } from '@agent-vm/gateway-lifecycle';
 import { z } from 'zod';
 
 import { workerTaskControllerRequestSchema } from '../../config/resource-contracts/index.js';
-import {
-	isAbsolutePosixPath,
-	isRootPosixPath,
-	pathContainsParentTraversal,
-} from '../leases/lease-path-helpers.js';
 import type { OpenClawRuntimeStatusReport } from '../openclaw-runtime-status.js';
-
-const controllerLeaseAgentWorkspacePathSchema = z
-	.string()
-	.min(1)
-	.refine(isAbsolutePosixPath, { message: 'path must be absolute.' })
-	.refine((value) => !isRootPosixPath(value), { message: 'path must not be root.' })
-	.refine((value) => !pathContainsParentTraversal(value), {
-		message: 'path must not contain parent traversal.',
-	});
-
-const controllerLeaseWorkMountPathSchema = z
-	.string()
-	.min(1)
-	.refine(isAbsolutePosixPath, { message: 'path must be absolute.' })
-	.refine((value) => !pathContainsParentTraversal(value), {
-		message: 'path must not contain parent traversal.',
-	});
-
-const openClawAgentIdPattern = /^[a-z0-9][a-z0-9_-]{0,63}$/iu;
-
-const controllerLeaseAgentIdSchema = z.string().min(1).regex(openClawAgentIdPattern, {
-	message: 'agentId must match /^[a-z0-9][a-z0-9_-]{0,63}$/i',
-});
 
 export const controllerToolVmSshFailureKindSchema = z.enum([
 	'active-use-refreshable-failure',
@@ -53,16 +25,6 @@ export const controllerToolVmActiveUseOperationReportSchema = z.strictObject({
 			probeSucceeded: z.boolean().optional(),
 		})
 		.optional(),
-});
-
-export const controllerLeaseCreateRequestSchema = z.strictObject({
-	agentId: controllerLeaseAgentIdSchema,
-	agentWorkspaceDir: controllerLeaseAgentWorkspacePathSchema,
-	idleTtlMs: z.number().int().positive().optional(),
-	profileId: z.string().min(1),
-	sessionKey: z.string().min(1),
-	workMountDir: controllerLeaseWorkMountPathSchema,
-	zoneId: z.string().min(1),
 });
 
 export const controllerStartActiveUseRequestSchema = z.strictObject({
@@ -180,12 +142,6 @@ export const controllerPullDefaultRequestSchema = z.object({
 	 */
 	worktreeDirty: z.boolean().optional(),
 });
-
-export const controllerZoneGitPushRequestSchema = z
-	.object({
-		expectedHead: z.string().min(1),
-	})
-	.strict();
 
 const currentBranchAheadSchema = z.object({
 	status: z.literal('ahead'),

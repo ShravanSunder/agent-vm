@@ -1,0 +1,42 @@
+{
+	"caseId": "replaced-proven",
+	"schemaId": "portal.call.item-result",
+	"tags": ["accepted", "outcome", "replacement"],
+	"input": {
+		"error": {
+			"code": "execution_failed",
+			"message": "The owning generation was replaced."
+		},
+		"id": "call-1",
+		"operationId": "operation-1",
+		"owningGeneration": "tool-vm-generation-1",
+		"outcome": {
+			"certainty": "proven-terminated",
+			"kind": "replaced-proven",
+			"priorSideEffects": "possible",
+			"retryClass": "manual-only"
+		},
+		"status": "error"
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"error": {
+				"code": "execution_failed",
+				"message": "The owning generation was replaced."
+			},
+			"id": "call-1",
+			"operationId": "operation-1",
+			"outcome": {
+				"certainty": "proven-terminated",
+				"kind": "replaced-proven",
+				"priorSideEffects": "possible",
+				"retryClass": "manual-only"
+			},
+			"owningGeneration": "tool-vm-generation-1",
+			"status": "error"
+		},
+		"canonicalJson": "{\"error\":{\"code\":\"execution_failed\",\"message\":\"The owning generation was replaced.\"},\"id\":\"call-1\",\"operationId\":\"operation-1\",\"outcome\":{\"certainty\":\"proven-terminated\",\"kind\":\"replaced-proven\",\"priorSideEffects\":\"possible\",\"retryClass\":\"manual-only\"},\"owningGeneration\":\"tool-vm-generation-1\",\"status\":\"error\"}",
+		"refinementIdentities": ["portal.request-id.not-reserved", "portal.result.outcome-algebra"]
+	}
+}

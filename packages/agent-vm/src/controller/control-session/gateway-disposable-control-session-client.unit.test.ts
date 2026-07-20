@@ -303,15 +303,15 @@ function toolPortalControllerHostActionMessage(): unknown {
 		kind: 'command',
 		operation: 'tool_portal_controller_host_action',
 		payload: {
-			actionId: 'zone_git_push',
+			actionId: 'workspace_git_push',
 			callerContext: { callerContextId: '77777777-7777-4777-8777-777777777777' },
 			correlation: {
 				capability: {
-					name: 'zone_git_push',
+					name: 'workspace_git_push',
 					namespace: 'controller_host_action',
 				},
 			},
-			expectedHead: 'abc123',
+			expectedHead: '0123456789abcdef0123456789abcdef01234567',
 		},
 	};
 }

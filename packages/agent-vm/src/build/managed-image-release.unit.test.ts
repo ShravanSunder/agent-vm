@@ -156,6 +156,36 @@ describe('managed image release', () => {
 		);
 	});
 
+	it('installs the common Gateway runtime executable beside the OpenClaw plugin', async () => {
+		// Arrange
+		const temporaryDirectory = await fs.mkdtemp(
+			path.join(os.tmpdir(), 'agent-vm-managed-gateway-runtime-'),
+		);
+
+		// Act
+		const result = await generateManagedDockerfile({
+			base: 'openclaw-gateway',
+			imageTargetFamily: 'gateway',
+			imageTargetName: 'openclaw',
+			managedImageRelease: createTestManagedImageRelease(),
+			outputDirectory: path.join(temporaryDirectory, 'generated'),
+			requiredOpenClawPackageNames: [],
+		});
+		const generatedDockerfile = await fs.readFile(result.dockerfilePath, 'utf8');
+
+		// Assert
+		expect(generatedDockerfile).toMatch(
+			/RUN pnpm add -g "@agent-vm\/openclaw-agent-vm-plugin@[^"]+" "@agent-vm\/gateway-runtime@[^"]+"/u,
+		);
+		expect(result.plan.gatewayRuntimePackage).toMatchObject({
+			name: '@agent-vm/gateway-runtime',
+			source: 'installed-package',
+		});
+		expect(generatedDockerfile).toContain(
+			'ln -sfn "$gateway_runtime_bin" /usr/local/bin/agent-vm-gateway-runtime',
+		);
+	});
+
 	it('keeps uv in the OpenClaw gateway base instead of generated Dockerfiles', async () => {
 		const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-managed-uv-'));
 		const outputDirectory = path.join(temporaryDirectory, 'generated');
@@ -258,7 +288,12 @@ describe('managed image release', () => {
 		expect(generatedDockerfile).toContain('"@openclaw/discord": "2026.5.7"');
 		expect(generatedDockerfile).toContain(`"@openai/codex@${managedOpenAiCodexCliVersion}"`);
 		expect(generatedDockerfile).toContain('openclaw doctor --fix --non-interactive');
-		expect(generatedDockerfile).toContain('/opt/openclaw-sdk/sandbox.js');
+		expect(generatedDockerfile).toContain(
+			'ln -sfn "$openclaw_package_root/dist/plugin-sdk/sandbox.js" /opt/openclaw-sdk/sandbox.js',
+		);
+		expect(generatedDockerfile).toContain(
+			'ln -sfn "$openclaw_package_root/dist/plugin-sdk/diagnostic-runtime.js" /opt/openclaw-sdk/diagnostic-runtime.js',
+		);
 		expect(generatedDockerfile).toContain('package_root="$(pnpm root -g)"');
 		expect(generatedDockerfile).toContain(
 			'ln -sfn "$package_root/@agent-vm/openclaw-agent-vm-plugin/dist" /home/openclaw/.openclaw/extensions/gondolin',
@@ -975,6 +1010,9 @@ describe('managed image release', () => {
 		});
 
 		const generatedDockerfile = await fs.readFile(result.dockerfilePath, 'utf8');
+		expect(generatedDockerfile).toContain(
+			'RUN rm -rf /scratch && install -d -m 0755 /work /workspace',
+		);
 		expectToolVmDockerfileToInstallGitHubCliFromStableApt(generatedDockerfile);
 		expect(generatedDockerfile).toContain('ENV PNPM_HOME=/pnpm');
 		expect(generatedDockerfile).toContain('ENV PATH=${PNPM_HOME}:${PATH}');

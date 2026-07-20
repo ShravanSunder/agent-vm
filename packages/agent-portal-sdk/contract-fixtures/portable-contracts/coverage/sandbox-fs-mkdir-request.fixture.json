@@ -1,0 +1,31 @@
+{
+	"caseId": "coverage-sandbox-fs-mkdir-request",
+	"schemaId": "sandbox.fs.mkdir.request",
+	"tags": [
+		"accepted",
+		"coverage"
+	],
+	"input": {
+		"environment": {
+			"handleId": "environment-a",
+			"kind": "environment",
+			"owningGeneration": "generation-a"
+		},
+		"path": "tmp",
+		"recursive": true
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"environment": {
+				"handleId": "environment-a",
+				"kind": "environment",
+				"owningGeneration": "generation-a"
+			},
+			"path": "tmp",
+			"recursive": true
+		},
+		"canonicalJson": "{\"environment\":{\"handleId\":\"environment-a\",\"kind\":\"environment\",\"owningGeneration\":\"generation-a\"},\"path\":\"tmp\",\"recursive\":true}",
+		"refinementIdentities": []
+	}
+}

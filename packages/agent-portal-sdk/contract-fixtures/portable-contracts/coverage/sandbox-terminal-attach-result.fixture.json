@@ -1,0 +1,53 @@
+{
+	"caseId": "coverage-sandbox-terminal-attach-result",
+	"schemaId": "sandbox.terminal.attach.result",
+	"tags": [
+		"accepted",
+		"coverage"
+	],
+	"input": {
+		"input": {
+			"channel": "stdin",
+			"handleId": "stream-input",
+			"kind": "stream",
+			"owningGeneration": "generation-a"
+		},
+		"kind": "attached",
+		"output": {
+			"channel": "pty",
+			"handleId": "stream-pty",
+			"kind": "stream",
+			"owningGeneration": "generation-a"
+		},
+		"terminal": {
+			"handleId": "terminal-a",
+			"kind": "terminal",
+			"owningGeneration": "generation-a"
+		}
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"input": {
+				"channel": "stdin",
+				"handleId": "stream-input",
+				"kind": "stream",
+				"owningGeneration": "generation-a"
+			},
+			"kind": "attached",
+			"output": {
+				"channel": "pty",
+				"handleId": "stream-pty",
+				"kind": "stream",
+				"owningGeneration": "generation-a"
+			},
+			"terminal": {
+				"handleId": "terminal-a",
+				"kind": "terminal",
+				"owningGeneration": "generation-a"
+			}
+		},
+		"canonicalJson": "{\"input\":{\"channel\":\"stdin\",\"handleId\":\"stream-input\",\"kind\":\"stream\",\"owningGeneration\":\"generation-a\"},\"kind\":\"attached\",\"output\":{\"channel\":\"pty\",\"handleId\":\"stream-pty\",\"kind\":\"stream\",\"owningGeneration\":\"generation-a\"},\"terminal\":{\"handleId\":\"terminal-a\",\"kind\":\"terminal\",\"owningGeneration\":\"generation-a\"}}",
+		"refinementIdentities": []
+	}
+}

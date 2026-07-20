@@ -24,6 +24,7 @@ function createCliBuildSystemConfig(): LoadedSystemConfig {
 	return {
 		schemaVersion: 1,
 		cacheDir: './cache',
+		controllerStateDir: '/controller-state-test',
 		runtimeDir: './runtime',
 		systemConfigPath: './config/system.json',
 		host: {
@@ -143,6 +144,33 @@ function createCliBuildWorkerSystemConfig(): LoadedSystemConfig {
 					config: './config/shravan/worker.json',
 					port: 18791,
 					stateDir: './state/shravan',
+				},
+			},
+		],
+	};
+}
+
+function createCliBuildHermesSystemConfig(): LoadedSystemConfig {
+	const systemConfig = createCliBuildSystemConfig();
+	const zone = systemConfig.zones[0];
+	if (!zone) {
+		throw new Error('Expected CLI test config to include a zone.');
+	}
+	return {
+		...systemConfig,
+		zones: [
+			{
+				...zone,
+				gateway: {
+					type: 'hermes',
+					imageProfile: 'hermes',
+					cpus: 2,
+					memory: '2G',
+					config: './config/shravan/hermes.yaml',
+					port: 18791,
+					stateDir: './state/shravan',
+					zoneFilesDir: './zone-files/shravan',
+					profilesByAgent: { shravan: 'main' },
 				},
 			},
 		],
@@ -1596,6 +1624,35 @@ describe('runAgentVmCli', () => {
 		).rejects.toThrow(/--zone is required/u);
 	});
 
+	it.each([
+		{ gatewayType: 'hermes', loadSystemConfig: createCliBuildHermesSystemConfig },
+		{ gatewayType: 'worker', loadSystemConfig: createCliBuildWorkerSystemConfig },
+	] as const)(
+		'rejects OpenClaw auth login for $gatewayType zones before opening SSH',
+		async ({ loadSystemConfig }) => {
+			const runInteractiveProcess: NonNullable<CliDependencies['runInteractiveProcess']> = vi.fn(
+				async (_command: string, _arguments_: readonly string[]): Promise<void> => {},
+			);
+
+			await expect(
+				runAgentVmCli(
+					['auth', 'openclaw', 'login', 'openai', '--zone', 'shravan'],
+					{
+						stderr: { write: () => true },
+						stdout: { write: () => true },
+					},
+					{
+						...defaultCliDependencies,
+						loadSystemConfig: vi.fn(async () => loadSystemConfig()),
+						runInteractiveProcess,
+					},
+				),
+			).rejects.toThrow("Zone 'shravan' does not support OpenClaw auth login.");
+
+			expect(runInteractiveProcess).not.toHaveBeenCalled();
+		},
+	);
+
 	it('prints top-level help instead of throwing on --help', async () => {
 		const stdoutChunks: string[] = [];
 
@@ -1630,6 +1687,19 @@ describe('runAgentVmCli', () => {
 				defaultCliDependencies,
 			),
 		).rejects.toThrow(/openclaw|worker/u);
+	});
+
+	it('rejects Hermes init until a Hermes scaffold contract exists', async () => {
+		await expect(
+			runAgentVmCli(
+				['init', 'test-zone', '--type', 'hermes', '--secrets', '1password'],
+				{
+					stderr: { write: () => true },
+					stdout: { write: () => true },
+				},
+				defaultCliDependencies,
+			),
+		).rejects.toThrow("Expected 'openclaw' or 'worker', got 'hermes'");
 	});
 
 	it('prints controller help instead of throwing on controller --help', async () => {
@@ -1825,6 +1895,7 @@ describe('runAgentVmCli', () => {
 				loadSystemConfig: async () => ({
 					schemaVersion: 1,
 					cacheDir: './cache',
+					controllerStateDir: '/controller-state-test',
 					runtimeDir: './runtime',
 					systemConfigPath,
 					host: {
@@ -1870,6 +1941,7 @@ describe('runAgentVmCli', () => {
 					checks: [],
 					ok: true,
 				}),
+				runControllerOfflineCleanup: defaultCliDependencies.runControllerOfflineCleanup,
 				startControllerRuntime: vi.fn(async () => createStartedControllerRuntime()),
 				startGatewayZone: vi.fn(async () => undefined as never),
 			},
@@ -1939,6 +2011,7 @@ describe('runAgentVmCli', () => {
 				loadSystemConfig: async () => ({
 					schemaVersion: 1,
 					cacheDir: './cache',
+					controllerStateDir: '/controller-state-test',
 					runtimeDir: './runtime',
 					systemConfigPath: './config/system.json',
 					host: {
@@ -1984,6 +2057,7 @@ describe('runAgentVmCli', () => {
 					checks: [],
 					ok: true,
 				}),
+				runControllerOfflineCleanup: defaultCliDependencies.runControllerOfflineCleanup,
 				startControllerRuntime: vi.fn(async () => createStartedControllerRuntime()),
 				startGatewayZone: vi.fn(async () => undefined as never),
 			},
@@ -2061,6 +2135,7 @@ describe('runAgentVmCli', () => {
 				loadSystemConfig: async () => ({
 					schemaVersion: 1,
 					cacheDir: './cache',
+					controllerStateDir: '/controller-state-test',
 					runtimeDir: './runtime',
 					systemConfigPath: './config/system.json',
 					host: {
@@ -2138,6 +2213,7 @@ describe('runAgentVmCli', () => {
 					checks: [],
 					ok: true,
 				}),
+				runControllerOfflineCleanup: defaultCliDependencies.runControllerOfflineCleanup,
 				startControllerRuntime,
 				startGatewayZone: vi.fn(async () => undefined as never),
 			},
@@ -2145,7 +2221,7 @@ describe('runAgentVmCli', () => {
 
 		expect(startControllerRuntime).toHaveBeenCalledWith(
 			expect.objectContaining({
-				zoneId: 'shravan',
+				zoneIds: ['shravan'],
 			}),
 			{
 				runTask: expect.any(Function),
@@ -2303,7 +2379,7 @@ describe('runAgentVmCli', () => {
 
 		expect(startControllerRuntime).toHaveBeenCalledWith(
 			expect.objectContaining({
-				zoneId: 'alevtina',
+				zoneIds: ['alevtina'],
 			}),
 			{
 				runTask: expect.any(Function),
@@ -2388,6 +2464,7 @@ describe('runAgentVmCli', () => {
 			loadSystemConfig: async (): Promise<LoadedSystemConfig> => ({
 				schemaVersion: 1,
 				cacheDir: './cache',
+				controllerStateDir: '/controller-state-test',
 				runtimeDir: './runtime',
 				systemConfigPath: './config/system.json',
 				host: {
@@ -2465,6 +2542,7 @@ describe('runAgentVmCli', () => {
 				checks: [],
 				ok: true,
 			}),
+			runControllerOfflineCleanup: defaultCliDependencies.runControllerOfflineCleanup,
 			startControllerRuntime: vi.fn(async () => createStartedControllerRuntime()),
 			startGatewayZone: vi.fn(async () => undefined as never),
 		};
@@ -3101,6 +3179,7 @@ describe('runAgentVmCli', () => {
 				loadSystemConfig: async () => ({
 					schemaVersion: 1,
 					cacheDir: './cache',
+					controllerStateDir: '/controller-state-test',
 					runtimeDir: './runtime',
 					systemConfigPath: './config/system.json',
 					host: {
@@ -3162,6 +3241,7 @@ describe('runAgentVmCli', () => {
 					],
 				}),
 				runControllerDoctor: () => ({ checks: [], ok: true }),
+				runControllerOfflineCleanup: defaultCliDependencies.runControllerOfflineCleanup,
 				startControllerRuntime: vi.fn(async () => createStartedControllerRuntime({ vmId: 'vm-1' })),
 				resolveManagedVmMinimumZigVersion: async () => '0.15.2',
 				probeOnePasswordServiceAccountHeadlessAuth: async () => ({ hint: 'ok', ok: true }),
@@ -3269,6 +3349,7 @@ describe('runAgentVmCli', () => {
 				loadSystemConfig: async () => ({
 					schemaVersion: 1,
 					cacheDir: './cache',
+					controllerStateDir: '/controller-state-test',
 					runtimeDir: './runtime',
 					systemConfigPath: './config/system.json',
 					host: {
@@ -3330,6 +3411,7 @@ describe('runAgentVmCli', () => {
 					],
 				}),
 				runControllerDoctor: () => ({ checks: [], ok: true }),
+				runControllerOfflineCleanup: defaultCliDependencies.runControllerOfflineCleanup,
 				startControllerRuntime: vi.fn(async () => createStartedControllerRuntime({ vmId: 'vm-1' })),
 				resolveManagedVmMinimumZigVersion: async () => '0.15.2',
 				probeOnePasswordServiceAccountHeadlessAuth: async () => ({ hint: 'ok', ok: true }),

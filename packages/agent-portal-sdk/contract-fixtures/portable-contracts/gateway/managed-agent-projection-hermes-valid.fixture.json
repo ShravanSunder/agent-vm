@@ -1,0 +1,28 @@
+{
+	"caseId": "gateway-managed-agent-projection-hermes-valid",
+	"schemaId": "gateway.managed-agent-projection",
+	"tags": ["accepted", "hermes", "managed-agent-projection"],
+	"input": {
+		"agentId": "agent-b",
+		"frameworkIdentity": {
+			"kind": "hermes",
+			"profileName": "reviewer"
+		},
+		"profileAssignmentRevision": "profile-assignment-b",
+		"toolPortalProfileId": "review"
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"agentId": "agent-b",
+			"frameworkIdentity": {
+				"kind": "hermes",
+				"profileName": "reviewer"
+			},
+			"profileAssignmentRevision": "profile-assignment-b",
+			"toolPortalProfileId": "review"
+		},
+		"canonicalJson": "{\"agentId\":\"agent-b\",\"frameworkIdentity\":{\"kind\":\"hermes\",\"profileName\":\"reviewer\"},\"profileAssignmentRevision\":\"profile-assignment-b\",\"toolPortalProfileId\":\"review\"}",
+		"refinementIdentities": []
+	}
+}

@@ -4,7 +4,10 @@ import { describe, expect, it } from 'vitest';
 
 import {
 	hashCallArguments,
+	mcpPortalApprovalTokenAudience,
+	signAudienceScopedApprovalToken,
 	signApprovalToken,
+	verifyAudienceScopedApprovalToken,
 	verifyApprovalToken,
 	type ApprovalTokenCallDigest,
 } from './hmac-token.js';
@@ -22,7 +25,9 @@ function base64UrlEncode(value: string): string {
 }
 
 function signPayload(payloadEncoded: string): string {
-	const signature = createHmac('sha256', testKey).update(payloadEncoded).digest('base64url');
+	const signature = createHmac('sha256', testKey)
+		.update(`${mcpPortalApprovalTokenAudience}\0${payloadEncoded}`)
+		.digest('base64url');
 	return `${payloadEncoded}.${signature}`;
 }
 
@@ -33,6 +38,53 @@ describe('hashCallArguments', () => {
 });
 
 describe('signApprovalToken / verifyApprovalToken', () => {
+	it('cryptographically separates product audiences', () => {
+		const token = signAudienceScopedApprovalToken({
+			agentId: 'shravan',
+			audience: 'mcp-portal:approval',
+			calls: [sampleCallDigest],
+			expiresAtMs: 20_000,
+			issuedAtMs: 10_000,
+			jti: 'approval-audience',
+			key: testKey,
+		});
+
+		expect(
+			verifyAudienceScopedApprovalToken({
+				agentId: 'shravan',
+				audience: 'tool-portal:approval',
+				calls: [sampleCallDigest],
+				key: testKey,
+				nowMs: 10_000,
+				token,
+			}),
+		).toEqual({ ok: false, reason: 'signature-mismatch' });
+		expect(
+			verifyAudienceScopedApprovalToken({
+				agentId: 'shravan',
+				audience: 'mcp-portal:approval',
+				calls: [sampleCallDigest],
+				key: testKey,
+				nowMs: 10_000,
+				token,
+			}),
+		).toEqual({ ok: true });
+	});
+
+	it('rejects an empty approval audience instead of falling back', () => {
+		expect(() =>
+			signAudienceScopedApprovalToken({
+				agentId: 'shravan',
+				audience: '',
+				calls: [sampleCallDigest],
+				expiresAtMs: 20_000,
+				issuedAtMs: 10_000,
+				jti: 'approval-empty-audience',
+				key: testKey,
+			}),
+		).toThrow(/audience/u);
+	});
+
 	it('verifies a freshly signed token', () => {
 		const token = signApprovalToken({
 			agentId: 'shravan',

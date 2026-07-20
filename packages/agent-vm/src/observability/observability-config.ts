@@ -1,5 +1,15 @@
 import path from 'node:path';
 
+import {
+	createGatewayTelemetryProducerSafetyContract,
+	gatewayFrameworkTelemetryServiceNames,
+	gatewayToolPortalTelemetryServiceName,
+} from '@agent-vm/gateway-lifecycle';
+import type {
+	GatewayFrameworkTelemetryProducerConfig,
+	GatewayToolPortalTelemetryProducerConfig,
+} from '@agent-vm/gateway-lifecycle';
+
 import type { LoadedSystemConfig } from '../config/system-config.js';
 
 export interface ObservabilityBaseRetentionPolicy {
@@ -26,14 +36,9 @@ export interface ObservabilityPortConfig {
 }
 
 export interface ObservabilityZoneRuntimeConfig {
+	readonly framework: GatewayFrameworkTelemetryProducerConfig;
+	readonly toolPortal: GatewayToolPortalTelemetryProducerConfig;
 	readonly zoneId: string;
-	readonly serviceName: string;
-	readonly traces: boolean;
-	readonly metrics: boolean;
-	readonly logs: boolean;
-	readonly sampleRate: number;
-	readonly flushIntervalMs: number;
-	readonly diagnosticsFlags: readonly string[];
 }
 
 interface ObservabilityEnabledRuntimeConfigBase {
@@ -108,17 +113,23 @@ export function createObservabilityRuntimeConfig(
 		if (zone.observability?.enabled !== true) {
 			return [];
 		}
-		const { openclaw } = zone.observability;
+		const frameworkServiceName =
+			zone.gateway.type === 'openclaw'
+				? gatewayFrameworkTelemetryServiceNames.openclaw
+				: gatewayFrameworkTelemetryServiceNames.hermes;
 		return [
 			{
+				framework: {
+					...zone.observability.services.framework,
+					...createGatewayTelemetryProducerSafetyContract(),
+					serviceName: frameworkServiceName,
+				},
+				toolPortal: {
+					...zone.observability.services.toolPortal,
+					...createGatewayTelemetryProducerSafetyContract(),
+					serviceName: gatewayToolPortalTelemetryServiceName,
+				},
 				zoneId: zone.id,
-				serviceName: openclaw.serviceName,
-				traces: openclaw.traces,
-				metrics: openclaw.metrics,
-				logs: openclaw.logs,
-				sampleRate: openclaw.sampleRate,
-				flushIntervalMs: openclaw.flushIntervalMs,
-				diagnosticsFlags: openclaw.diagnosticsFlags,
 			},
 		];
 	});

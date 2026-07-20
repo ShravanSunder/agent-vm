@@ -67,6 +67,7 @@ describe('isGatewayImageCached', () => {
 		const systemConfig = createLoadedSystemConfig(
 			{
 				cacheDir,
+				controllerStateDir: path.join(temporaryDirectoryPath, 'controller-state'),
 				host: {
 					controllerPort: 18800,
 					projectNamespace: 'cache-test',

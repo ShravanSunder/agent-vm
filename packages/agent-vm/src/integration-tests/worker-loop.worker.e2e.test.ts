@@ -10,6 +10,14 @@ import { z } from 'zod/v4';
 
 import { createManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
 import type { WorkerControlRpcOperations } from '../controller/control-session/worker-control-domain-handler.js';
+import {
+	createControllerStateRoot,
+	resolveControllerGatewayStateRoot,
+} from '../controller/durable-state/controller-state-paths.js';
+import {
+	resolveControllerWorkerTaskRuntimeRecordTarget,
+	type ControllerWorkerTaskRuntimeRecordTarget,
+} from '../controller/durable-state/controller-state-record-paths.js';
 import { executeWorkerTask, prepareWorkerTask } from '../controller/worker-task-runner.js';
 import {
 	currentE2eArchitecture,
@@ -36,6 +44,22 @@ const workerE2eFinalStateSchema = z
 	})
 	.passthrough();
 const managedVmRuntimeComposition = createManagedVmRuntimeComposition();
+
+function resolveWorkerRuntimeRecordTarget(options: {
+	readonly controllerStateDir: string;
+	readonly taskId: string;
+	readonly zoneId: string;
+}): ControllerWorkerTaskRuntimeRecordTarget {
+	return resolveControllerWorkerTaskRuntimeRecordTarget({
+		gatewayStateRoot: resolveControllerGatewayStateRoot({
+			controllerStateRoot: createControllerStateRoot({
+				controllerStateDirectoryPath: options.controllerStateDir,
+			}),
+			zoneId: options.zoneId,
+		}),
+		taskId: options.taskId,
+	});
+}
 
 async function createSampleRepo(baseDir: string): Promise<string> {
 	const repoDir = path.join(baseDir, 'sample-repo');
@@ -255,9 +279,16 @@ describeWorkerE2e('e2e: real agent-vm-worker loop', () => {
 			const result = await executeWorkerTask(prepared, {
 				controllerEpoch: 'worker-smoke-e2e-controller-epoch',
 				managedVmFactory: managedVmRuntimeComposition.managedVmFactory,
+				managedVmExactProcessTermination:
+					managedVmRuntimeComposition.managedVmExactProcessTermination,
 				managedVmImages: managedVmRuntimeComposition.managedVmImages,
 				secretResolver,
 				systemConfig: project.systemConfig,
+				workerRuntimeRecordTarget: resolveWorkerRuntimeRecordTarget({
+					controllerStateDir: project.systemConfig.controllerStateDir,
+					taskId: prepared.taskId,
+					zoneId: prepared.zoneId,
+				}),
 			});
 			expect(result.taskId).toBeTruthy();
 			const finalState = workerE2eFinalStateSchema.parse(result.finalState);
@@ -409,6 +440,8 @@ describeWorkerE2e('e2e: real agent-vm-worker loop', () => {
 			const result = await executeWorkerTask(prepared, {
 				controllerEpoch: 'worker-git-rpc-e2e-controller-epoch',
 				managedVmFactory: managedVmRuntimeComposition.managedVmFactory,
+				managedVmExactProcessTermination:
+					managedVmRuntimeComposition.managedVmExactProcessTermination,
 				managedVmImages: managedVmRuntimeComposition.managedVmImages,
 				controlSession: {
 					controllerEpoch: 'worker-git-rpc-e2e-controller-epoch',
@@ -416,6 +449,11 @@ describeWorkerE2e('e2e: real agent-vm-worker loop', () => {
 				},
 				secretResolver,
 				systemConfig: project.systemConfig,
+				workerRuntimeRecordTarget: resolveWorkerRuntimeRecordTarget({
+					controllerStateDir: project.systemConfig.controllerStateDir,
+					taskId: prepared.taskId,
+					zoneId: prepared.zoneId,
+				}),
 			});
 			expect(result.taskId).toBeTruthy();
 			const finalState = workerE2eFinalStateSchema.parse(result.finalState);

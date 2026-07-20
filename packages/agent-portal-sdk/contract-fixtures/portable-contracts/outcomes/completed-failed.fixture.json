@@ -1,0 +1,42 @@
+{
+	"caseId": "completed-failed",
+	"schemaId": "portal.call.item-result",
+	"tags": ["accepted", "outcome", "result-discriminant"],
+	"input": {
+		"error": {
+			"code": "execution_failed",
+			"message": "Execution failed safely."
+		},
+		"id": "call-1",
+		"operationId": "operation-1",
+		"owningGeneration": "runner-generation-1",
+		"outcome": {
+			"certainty": "proven",
+			"completion": "failed",
+			"kind": "completed",
+			"retryClass": "policy-gated"
+		},
+		"status": "error"
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"error": {
+				"code": "execution_failed",
+				"message": "Execution failed safely."
+			},
+			"id": "call-1",
+			"operationId": "operation-1",
+			"outcome": {
+				"certainty": "proven",
+				"completion": "failed",
+				"kind": "completed",
+				"retryClass": "policy-gated"
+			},
+			"owningGeneration": "runner-generation-1",
+			"status": "error"
+		},
+		"canonicalJson": "{\"error\":{\"code\":\"execution_failed\",\"message\":\"Execution failed safely.\"},\"id\":\"call-1\",\"operationId\":\"operation-1\",\"outcome\":{\"certainty\":\"proven\",\"completion\":\"failed\",\"kind\":\"completed\",\"retryClass\":\"policy-gated\"},\"owningGeneration\":\"runner-generation-1\",\"status\":\"error\"}",
+		"refinementIdentities": ["portal.request-id.not-reserved", "portal.result.outcome-algebra"]
+	}
+}

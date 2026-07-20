@@ -203,6 +203,7 @@ describe('auditVmOwnershipBoundaries', () => {
 			{
 				content: [
 					'await managedVm.close();',
+					'await exactManagedVm.close();',
 					'await lease.vm.close();',
 					'const destroyReceipt = await toolVm.close();',
 					'void destroyReceipt;',
@@ -220,11 +221,16 @@ describe('auditVmOwnershipBoundaries', () => {
 			{
 				filePath: 'packages/agent-vm/src/gateway/gateway-zone-orchestrator.ts',
 				line: 2,
-				reason: "ManagedVm close 'lease.vm.close()' has no lexical runner-absence proof",
+				reason: "ManagedVm close 'exactManagedVm.close()' has no lexical runner-absence proof",
 			},
 			{
 				filePath: 'packages/agent-vm/src/gateway/gateway-zone-orchestrator.ts',
 				line: 3,
+				reason: "ManagedVm close 'lease.vm.close()' has no lexical runner-absence proof",
+			},
+			{
+				filePath: 'packages/agent-vm/src/gateway/gateway-zone-orchestrator.ts',
+				line: 4,
 				reason: "ManagedVm close 'toolVm.close()' has no lexical runner-absence proof",
 			},
 		]);
@@ -260,9 +266,112 @@ describe('auditVmOwnershipBoundaries', () => {
 				].join('\n'),
 				filePath: 'packages/agent-vm/src/tool-vm/tool-vm-lifecycle.ts',
 			},
+			{
+				content: [
+					'async function createManagedVmWithFilteredAgentWorkspace(options) {',
+					'  const toolVm = await options.factory.createManagedVm(options.request);',
+					'  if (!ownershipTransferred()) { await toolVm.close(); }',
+					'  return toolVm;',
+					'}',
+				].join('\n'),
+				filePath: 'packages/agent-vm/src/tool-vm/managed-agent-tool-vm-mounts.ts',
+			},
 		]);
 
 		expect(findings).toEqual([]);
+	});
+
+	it('rejects filtered-workspace construction cleanup outside the exact owned module', () => {
+		const findings = auditVmOwnershipBoundaries([
+			{
+				content: [
+					'async function createManagedVmWithFilteredAgentWorkspace(options) {',
+					'  const toolVm = await options.factory.createManagedVm(options.request);',
+					'  await toolVm.close();',
+					'}',
+				].join('\n'),
+				filePath: 'packages/agent-vm/src/controller/fake-managed-agent-tool-vm-mounts.ts',
+			},
+		]);
+
+		expect(findings).toEqual([
+			{
+				filePath: 'packages/agent-vm/src/controller/fake-managed-agent-tool-vm-mounts.ts',
+				line: 3,
+				reason: "ManagedVm close 'toolVm.close()' has no lexical runner-absence proof",
+			},
+		]);
+	});
+
+	it('allows the exact LeaseManager access fence to await provider containment', () => {
+		const findings = auditVmOwnershipBoundaries([
+			{
+				content: [
+					'function fenceToolVmAccess(cleanupContext) {',
+					'  return cleanupContext.vm.close().then(() => {',
+					'    cleanupContext.membership?.recordAccessFenced();',
+					'  });',
+					'}',
+				].join('\n'),
+				filePath: 'packages/agent-vm/src/controller/leases/lease-manager.ts',
+			},
+		]);
+
+		expect(findings).toEqual([]);
+	});
+
+	it('allows the exact LeaseManager cleanup to verify provider containment after close', () => {
+		const findings = auditVmOwnershipBoundaries([
+			{
+				content: [
+					'async function completeToolVmResourceCleanup(cleanupContext) {',
+					'  const managedVm = cleanupContext.vm;',
+					'  await managedVm.close();',
+					'  const postCloseHostProcessId = managedVm.getHostProcessId();',
+					'  if (postCloseHostProcessId !== null) {',
+					"    throw new Error('runner remained attached');",
+					'  }',
+					'}',
+				].join('\n'),
+				filePath: 'packages/agent-vm/src/controller/leases/lease-manager.ts',
+			},
+			{
+				content: [
+					'async function completeToolVmResourceCleanup(cleanupContext) {',
+					'  const managedVm = cleanupContext.vm;',
+					'  await managedVm.close();',
+					'}',
+				].join('\n'),
+				filePath: 'packages/agent-vm/src/controller/leases/lease-manager.ts',
+			},
+			{
+				content: [
+					'async function completeToolVmResourceCleanup(cleanupContext) {',
+					'  const managedVm = cleanupContext.vm;',
+					'  const preCloseHostProcessId = managedVm.getHostProcessId();',
+					'  await managedVm.close();',
+					'  const unrelatedValue = 1;',
+					'  if (preCloseHostProcessId !== null) {',
+					"    throw new Error('runner remained attached');",
+					'  }',
+					'}',
+				].join('\n'),
+				filePath: 'packages/agent-vm/src/controller/leases/lease-manager.ts',
+			},
+		]);
+
+		expect(findings).toEqual([
+			{
+				filePath: 'packages/agent-vm/src/controller/leases/lease-manager.ts',
+				line: 3,
+				reason: "ManagedVm close 'managedVm.close()' has no lexical runner-absence proof",
+			},
+			{
+				filePath: 'packages/agent-vm/src/controller/leases/lease-manager.ts',
+				line: 4,
+				reason: "ManagedVm close 'managedVm.close()' has no lexical runner-absence proof",
+			},
+		]);
 	});
 
 	it('allows close projected into the exact controller-managed termination primitive', () => {

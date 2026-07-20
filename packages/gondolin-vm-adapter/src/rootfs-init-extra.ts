@@ -24,6 +24,19 @@ interface PrepareRootfsInitExtraOptions {
 interface ResolveRootfsInitExtraOptions {
 	readonly buildConfig: BuildConfig;
 	readonly configDir?: string;
+	readonly managedGatewayBoot?: GondolinManagedGatewayBootProjection;
+}
+
+/**
+ * Backend projection of the domain-owned managed Gateway boot contract.
+ *
+ * The projection is deliberately closed: callers select the framework image
+ * entry, while executable paths, arguments, environment-input paths, and log
+ * identities remain adapter-owned image behavior.
+ */
+export interface GondolinManagedGatewayBootProjection {
+	readonly frameworkBootEntry: 'hermes-framework-service' | 'openclaw-framework-service';
+	readonly kind: 'managed-gateway-exact-two-role';
 }
 
 export interface ResolvedRootfsInitExtra {
@@ -31,7 +44,66 @@ export interface ResolvedRootfsInitExtra {
 	readonly fingerprintInput: {
 		readonly agentVmRootfsInitExtra: string;
 		readonly deploymentRootfsInitExtra?: string;
+		readonly managedGatewayBoot?: GondolinManagedGatewayBootProjection;
 	};
+}
+
+const managedGatewayInputStagingRoot = '/run/agent-vm/managed-gateway-inputs';
+const managedGatewayInputRoot = '/run/agent-vm/managed-gateway';
+const managedGatewayRuntimeRoot = '/run/agent-vm/gateway-runtime';
+const managedGatewayLogRoot = '/var/log/agent-vm';
+
+function frameworkBootCommand(
+	frameworkBootEntry: GondolinManagedGatewayBootProjection['frameworkBootEntry'],
+): string {
+	switch (frameworkBootEntry) {
+		case 'hermes-framework-service':
+			return '/usr/local/bin/agent-vm-hermes-gateway';
+		case 'openclaw-framework-service':
+			return '/usr/local/bin/openclaw gateway --port 18789';
+	}
+}
+
+function frameworkLogFileName(
+	frameworkBootEntry: GondolinManagedGatewayBootProjection['frameworkBootEntry'],
+): string {
+	return frameworkBootEntry === 'openclaw-framework-service'
+		? 'openclaw-service.log'
+		: 'hermes-service.log';
+}
+
+export function renderManagedGatewayRootfsInitScript(
+	projection: GondolinManagedGatewayBootProjection,
+): string {
+	const selectedFrameworkBootCommand = frameworkBootCommand(projection.frameworkBootEntry);
+	const selectedFrameworkLogPath = `${managedGatewayLogRoot}/${frameworkLogFileName(projection.frameworkBootEntry)}`;
+	const frameworkBootInputFileNames =
+		projection.frameworkBootEntry === 'hermes-framework-service'
+			? 'framework.environment.sh framework-service.json config.yaml'
+			: 'framework.environment.sh framework-service.json';
+	return `# Fixed managed Gateway sibling boot entries.
+managed_gateway_input_staging_root=${managedGatewayInputStagingRoot}
+managed_gateway_input_root=${managedGatewayInputRoot}
+mkdir -p ${managedGatewayLogRoot}
+install -d -m 0700 "$managed_gateway_input_root"
+install -d -m 0700 ${managedGatewayRuntimeRoot}
+install -m 0600 /dev/null ${managedGatewayLogRoot}/tool-portal-service.log
+install -m 0600 /dev/null ${selectedFrameworkLogPath}
+(
+  for managed_gateway_input_name in tool-portal.environment.sh tool-portal-service.json mcp.config.json; do
+    if [ ! -f "$managed_gateway_input_staging_root/$managed_gateway_input_name" ]; then exit 78; fi
+    install -m 0600 "$managed_gateway_input_staging_root/$managed_gateway_input_name" "$managed_gateway_input_root/$managed_gateway_input_name" || exit 78
+  done
+  exec /bin/sh -c 'set -a; . ${managedGatewayInputRoot}/tool-portal.environment.sh; set +a; exec /usr/local/bin/agent-vm-gateway-runtime --config ${managedGatewayInputRoot}/tool-portal-service.json'
+) >> ${managedGatewayLogRoot}/tool-portal-service.log 2>&1 &
+(
+  for managed_gateway_input_name in ${frameworkBootInputFileNames}; do
+    if [ ! -f "$managed_gateway_input_staging_root/$managed_gateway_input_name" ]; then exit 78; fi
+    install -m 0600 "$managed_gateway_input_staging_root/$managed_gateway_input_name" "$managed_gateway_input_root/$managed_gateway_input_name" || exit 78
+  done
+  exec /bin/sh -c 'set -a; . ${managedGatewayInputRoot}/framework.environment.sh; set +a; exec ${selectedFrameworkBootCommand}'
+) >> ${selectedFrameworkLogPath} 2>&1 &
+`;
 }
 
 function resolveBuildConfigPath(filePath: string, configDir: string | undefined): string {
@@ -68,18 +140,34 @@ function composeRootfsInitExtra(existingRootfsInitExtra: string | undefined): st
 export async function resolveRootfsInitExtra(
 	options: ResolveRootfsInitExtraOptions,
 ): Promise<ResolvedRootfsInitExtra> {
+	if (options.managedGatewayBoot !== undefined && options.buildConfig.init?.rootfsInitExtra) {
+		throw new Error(
+			'Managed Gateway images cannot compose deployment-authored rootfs init authority.',
+		);
+	}
 	const existingRootfsInitExtra = await readExistingRootfsInitExtra(
 		options.buildConfig,
 		options.configDir,
 	);
+	const managedGatewayRootfsInitExtra =
+		options.managedGatewayBoot === undefined
+			? undefined
+			: renderManagedGatewayRootfsInitScript(options.managedGatewayBoot);
+	const composedRootfsInitExtra = composeRootfsInitExtra(existingRootfsInitExtra);
 
 	return {
-		content: composeRootfsInitExtra(existingRootfsInitExtra),
+		content:
+			managedGatewayRootfsInitExtra === undefined
+				? composedRootfsInitExtra
+				: `${composedRootfsInitExtra.trimEnd()}\n\n${managedGatewayRootfsInitExtra}`,
 		fingerprintInput: {
 			agentVmRootfsInitExtra: agentVmRootfsInitExtraScript,
 			...(existingRootfsInitExtra === undefined
 				? {}
 				: { deploymentRootfsInitExtra: existingRootfsInitExtra }),
+			...(options.managedGatewayBoot === undefined
+				? {}
+				: { managedGatewayBoot: options.managedGatewayBoot }),
 		},
 	};
 }

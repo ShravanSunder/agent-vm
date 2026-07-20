@@ -1,0 +1,28 @@
+{
+	"caseId": "sandbox-retained-result-ambiguous",
+	"schemaId": "sandbox.retained-result.lookup-result",
+	"tags": ["accepted", "ambiguity", "outcome", "retained-result"],
+	"input": {
+		"kind": "retained",
+		"operation": { "operationId": "operation-a", "owningGeneration": "generation-a" },
+		"outcome": {
+			"certainty": "side-effects-and-termination-unknown",
+			"kind": "ambiguous",
+			"retryClass": "forbidden"
+		}
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"kind": "retained",
+			"operation": { "operationId": "operation-a", "owningGeneration": "generation-a" },
+			"outcome": {
+				"certainty": "side-effects-and-termination-unknown",
+				"kind": "ambiguous",
+				"retryClass": "forbidden"
+			}
+		},
+		"canonicalJson": "{\"kind\":\"retained\",\"operation\":{\"operationId\":\"operation-a\",\"owningGeneration\":\"generation-a\"},\"outcome\":{\"certainty\":\"side-effects-and-termination-unknown\",\"kind\":\"ambiguous\",\"retryClass\":\"forbidden\"}}",
+		"refinementIdentities": ["portal.result.outcome-algebra"]
+	}
+}

@@ -1,0 +1,19 @@
+{
+	"caseId": "invalid-ok-result-with-error",
+	"schemaId": "portal.call.item-result",
+	"tags": ["rejected", "result-discriminant", "unknown-field"],
+	"input": {
+		"error": {
+			"code": "execution_failed",
+			"message": "An ok result cannot contain an error."
+		},
+		"id": "call-1",
+		"status": "ok",
+		"value": {}
+	},
+	"expectation": {
+		"kind": "rejected",
+		"errorCodes": ["portal.result.status-shape"],
+		"refinementIdentities": ["portal.request-id.not-reserved"]
+	}
+}

@@ -1,0 +1,27 @@
+{
+	"caseId": "coverage-sandbox-fs-write-result",
+	"schemaId": "sandbox.fs.write.result",
+	"tags": [
+		"accepted",
+		"coverage"
+	],
+	"input": {
+		"bytesWritten": 0,
+		"contentDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+		"kind": "written",
+		"path": "file.txt"
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"bytesWritten": 0,
+			"contentDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+			"kind": "written",
+			"path": "file.txt"
+		},
+		"canonicalJson": "{\"bytesWritten\":0,\"contentDigest\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\",\"kind\":\"written\",\"path\":\"file.txt\"}",
+		"refinementIdentities": [
+			"sandbox.binary-chunk.byte-length"
+		]
+	}
+}

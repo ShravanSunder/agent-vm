@@ -1,10 +1,16 @@
 import {
+	deriveGatewayControlStablePrincipal,
+	type GatewayRuntimeTrustedInvocationPrincipal,
+} from '@agent-vm/gateway-control-contracts';
+
+import {
 	gatewayIdentitiesEqual,
 	type GatewayEpochIdentity,
 } from '../vm-ownership/vm-ownership-contracts.js';
 import {
 	ToolVmLeaseAuthorityTransitionError,
 	type CurrentToolVmLeaseLeaf,
+	type AccessFencingToolVmLeaseLeaf,
 	type DestroyedToolVmLeaseLeafTombstone,
 	type QuarantinedToolVmLeaseLeaf,
 	type StableToolVmLeasePrincipal,
@@ -30,14 +36,16 @@ export function transitionError(
 }
 
 export function stablePrincipalKey(principal: StableToolVmLeasePrincipal): string {
-	return `${principal.zoneId}\0${principal.agentId}`;
+	return deriveGatewayControlStablePrincipal({
+		principal: principal satisfies GatewayRuntimeTrustedInvocationPrincipal,
+	});
 }
 
 export function terminalUseTombstoneKey(
 	authority: ToolVmLeafAuthorityReference,
 	useId: string,
 ): string {
-	return `${authority.gateway.gatewayEpochId}\0${stablePrincipalKey(authority.principal)}\0${authority.leafGeneration}\0${useId}`;
+	return `${authority.gateway.gatewayEpochId}\0${authority.principal.agentId}\0${useId}`;
 }
 
 export function validateRetentionPolicy(policy: ToolVmLeaseAuthorityRetentionPolicy): void {
@@ -60,11 +68,11 @@ export function validateLatestReport(report: ToolVmActiveUseLatestReport): void 
 	}
 }
 
-function stablePrincipalsEqual(
+export function stableToolVmLeasePrincipalsEqual(
 	left: StableToolVmLeasePrincipal,
 	right: StableToolVmLeasePrincipal,
 ): boolean {
-	return left.zoneId === right.zoneId && left.agentId === right.agentId;
+	return stablePrincipalKey(left) === stablePrincipalKey(right);
 }
 
 export function compatibilitiesEqual(
@@ -75,7 +83,7 @@ export function compatibilitiesEqual(
 		left.policyFingerprint === right.policyFingerprint &&
 		left.profileId === right.profileId &&
 		left.purpose === right.purpose &&
-		left.workMountDir === right.workMountDir
+		left.profileAssignmentRevision === right.profileAssignmentRevision
 	);
 }
 
@@ -117,7 +125,7 @@ function tombstoneForAuthority(
 	if (tombstone === undefined) {
 		return undefined;
 	}
-	if (!stablePrincipalsEqual(tombstone.principal, authority.principal)) {
+	if (!stableToolVmLeasePrincipalsEqual(tombstone.principal, authority.principal)) {
 		return transitionError(
 			'principal-mismatch',
 			'Leaf generation belongs to a different stable principal.',
@@ -140,10 +148,46 @@ export function requireLiveLeaf(
 	if (tombstoneForAuthority(state, authority) !== undefined) {
 		return transitionError('leaf-destroyed', 'Leaf generation has been positively destroyed.');
 	}
+	const accessFencingLeaf = state.accessFencingLeavesByGeneration.get(authority.leafGeneration);
+	if (accessFencingLeaf !== undefined) {
+		if (!stableToolVmLeasePrincipalsEqual(accessFencingLeaf.principal, authority.principal)) {
+			return transitionError(
+				'principal-mismatch',
+				'Leaf generation belongs to a different stable principal.',
+			);
+		}
+		if (accessFencingLeaf.leaseId !== authority.leaseId) {
+			return transitionError(
+				'lease-identity-mismatch',
+				'Access-fencing leaf belongs to a different controller-owned lease identity.',
+			);
+		}
+		return accessFencingLeaf;
+	}
+	const retiringLeaf = state.retiringLeavesByGeneration.get(authority.leafGeneration);
+	if (retiringLeaf !== undefined) {
+		if (!stableToolVmLeasePrincipalsEqual(retiringLeaf.principal, authority.principal)) {
+			return transitionError(
+				'principal-mismatch',
+				'Leaf generation belongs to a different stable principal.',
+			);
+		}
+		if (retiringLeaf.leaseId !== authority.leaseId) {
+			return transitionError(
+				'lease-identity-mismatch',
+				'Retiring leaf belongs to a different controller-owned lease identity.',
+			);
+		}
+		return retiringLeaf;
+	}
 	const principalKey = stablePrincipalKey(authority.principal);
 	const leaf = state.leavesByPrincipal.get(principalKey);
 	if (leaf === undefined) {
-		for (const candidateLeaf of state.leavesByPrincipal.values()) {
+		for (const candidateLeaf of [
+			...state.leavesByPrincipal.values(),
+			...state.accessFencingLeavesByGeneration.values(),
+			...state.retiringLeavesByGeneration.values(),
+		]) {
 			if (candidateLeaf.leafGeneration === authority.leafGeneration) {
 				return transitionError(
 					'principal-mismatch',
@@ -172,9 +216,60 @@ export function replaceLeaf(
 	state: ToolVmLeaseAuthorityState,
 	leaf: ToolVmLeaseLeafState,
 ): ToolVmLeaseAuthorityState {
+	if (leaf.kind === 'retiring' || state.retiringLeavesByGeneration.has(leaf.leafGeneration)) {
+		if (leaf.kind !== 'retiring') {
+			return transitionError(
+				'leaf-not-current',
+				'Retiring leaf cannot regain current-admission authority.',
+			);
+		}
+		const retiringLeavesByGeneration = new Map(state.retiringLeavesByGeneration);
+		retiringLeavesByGeneration.set(leaf.leafGeneration, leaf);
+		return { ...state, retiringLeavesByGeneration };
+	}
+	if (
+		leaf.kind === 'destroying' ||
+		leaf.kind === 'owner-unsafe' ||
+		state.accessFencingLeavesByGeneration.has(leaf.leafGeneration)
+	) {
+		if (leaf.kind !== 'destroying' && leaf.kind !== 'owner-unsafe') {
+			return transitionError(
+				'leaf-not-current',
+				'Access-fencing leaf cannot regain current-admission authority.',
+			);
+		}
+		const accessFencingLeavesByGeneration = new Map(state.accessFencingLeavesByGeneration);
+		accessFencingLeavesByGeneration.set(
+			leaf.leafGeneration,
+			leaf satisfies AccessFencingToolVmLeaseLeaf,
+		);
+		const principalKey = stablePrincipalKey(leaf.principal);
+		const leavesByPrincipal = new Map(state.leavesByPrincipal);
+		const removesCurrentLeaf =
+			leavesByPrincipal.get(principalKey)?.leafGeneration === leaf.leafGeneration;
+		if (removesCurrentLeaf) {
+			leavesByPrincipal.delete(principalKey);
+		}
+		const currentPrincipalKeyByAgentId = new Map(state.currentPrincipalKeyByAgentId);
+		if (
+			removesCurrentLeaf &&
+			currentPrincipalKeyByAgentId.get(leaf.principal.agentId) === principalKey
+		) {
+			currentPrincipalKeyByAgentId.delete(leaf.principal.agentId);
+		}
+		return {
+			...state,
+			accessFencingLeavesByGeneration,
+			currentPrincipalKeyByAgentId,
+			leavesByPrincipal,
+		};
+	}
+	const principalKey = stablePrincipalKey(leaf.principal);
 	const leavesByPrincipal = new Map(state.leavesByPrincipal);
-	leavesByPrincipal.set(stablePrincipalKey(leaf.principal), leaf);
-	return { ...state, leavesByPrincipal };
+	leavesByPrincipal.set(principalKey, leaf);
+	const currentPrincipalKeyByAgentId = new Map(state.currentPrincipalKeyByAgentId);
+	currentPrincipalKeyByAgentId.set(leaf.principal.agentId, principalKey);
+	return { ...state, currentPrincipalKeyByAgentId, leavesByPrincipal };
 }
 
 export function nonTerminalActiveUseExists(

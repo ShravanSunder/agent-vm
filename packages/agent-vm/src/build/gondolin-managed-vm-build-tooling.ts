@@ -4,7 +4,10 @@ import {
 	hasBuiltImageAssets as hasGondolinImageAssets,
 	resolveGondolinMinimumZigVersion as resolveMinimumZigVersion,
 	resolveGondolinPackageSpec as resolvePackageSpec,
+	type GondolinManagedGatewayBootProjection,
 } from '@agent-vm/gondolin-vm-adapter';
+
+export type ManagedGatewayImageBootProjection = GondolinManagedGatewayBootProjection;
 
 export interface ManagedVmBackendImageBuildOptions {
 	readonly buildConfig: unknown;
@@ -12,6 +15,7 @@ export interface ManagedVmBackendImageBuildOptions {
 	readonly configDir?: string;
 	readonly fullReset?: boolean;
 	readonly fingerprintInput?: unknown;
+	readonly managedGatewayBoot?: GondolinManagedGatewayBootProjection;
 	readonly output?: { write(chunk: string | Uint8Array): boolean };
 }
 
@@ -31,6 +35,7 @@ export interface ManagedVmBackendImageBuildTooling {
 		readonly configDir?: string;
 		readonly fingerprintInput?: unknown;
 		readonly gondolinVersion?: string;
+		readonly managedGatewayBoot?: GondolinManagedGatewayBootProjection;
 	}): Promise<string>;
 }
 

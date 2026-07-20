@@ -4,38 +4,42 @@ import path from 'node:path';
 
 import {
 	loadMcpConfig,
-	loadMcpPortalConfig,
+	loadToolPortalConfig,
+	mcpPortalConfigSchema,
 	toolPortalConfigSchema,
 	type FormattedSecretValue,
 	type McpConfig,
 	type McpPortalConfig,
-	type PortalToolSelector,
-	type ToolPortalCapabilityPolicy,
+	type ToolPortalNamespacePolicy,
 	type ToolPortalConfig,
 } from '@agent-vm/config-contracts';
 import type { MediatedSecretSpec, SecretRef, SecretResolver } from '@agent-vm/secret-management';
 
 export interface McpPortalEffectiveConfigProps {
+	readonly approvalAccessConfigured: boolean;
 	readonly allowedRawEnvSecretNames?: readonly string[];
 	readonly authoredConfigDir: string;
 	readonly declaredAgentIds?: readonly string[];
 	readonly effectiveHostConfigDir: string;
-	readonly effectiveVmConfigDir: string;
-	readonly includeZoneGitControllerHostAction?: boolean;
 	readonly secretResolver: SecretResolver;
+	readonly workspaceGitPushAgentEligibility?: WorkspaceGitPushAgentEligibility;
 	readonly zoneId: string;
 }
 
 export interface McpPortalEffectiveConfigFromConfigProps {
+	readonly approvalAccessConfigured: boolean;
 	readonly allowedRawEnvSecretNames?: readonly string[];
 	readonly declaredAgentIds?: readonly string[];
 	readonly effectiveHostConfigDir: string;
-	readonly effectiveVmConfigDir: string;
-	readonly includeZoneGitControllerHostAction?: boolean;
 	readonly mcpConfig: McpConfig;
-	readonly portalConfig: McpPortalConfig;
 	readonly secretResolver: SecretResolver;
+	readonly toolPortalConfig: ToolPortalConfig;
+	readonly workspaceGitPushAgentEligibility?: WorkspaceGitPushAgentEligibility;
 	readonly zoneId: string;
+}
+
+export interface WorkspaceGitPushAgentEligibility {
+	readonly eligibleAgentIds: readonly string[];
 }
 
 export interface McpPortalEffectiveConfigPlan {
@@ -43,23 +47,16 @@ export interface McpPortalEffectiveConfigPlan {
 	readonly effectiveMcpConfig: McpConfig;
 	readonly effectivePortalConfig: McpPortalConfig;
 	readonly effectiveToolPortalConfig: ToolPortalConfig;
-	readonly pluginConfig: { readonly configDir: string };
 	readonly requiredGatewayEgressHosts: readonly string[];
 	readonly resolvedSecretNames: readonly string[];
 	readonly runtimeEnvironment: Readonly<Record<string, string>>;
 	readonly runtimeMediatedSecrets: Readonly<Record<string, MediatedSecretSpec>>;
 }
 
-export type McpPortalEffectiveConfigWriteResult = Omit<
-	McpPortalEffectiveConfigPlan,
-	'effectiveMcpConfig' | 'effectivePortalConfig' | 'effectiveToolPortalConfig'
->;
+export type McpPortalEffectiveConfigWriteResult = McpPortalEffectiveConfigPlan;
 
 const effectiveConfigManifestFileName = 'tool-portal-effective-manifest.json';
-const managedOpenClawControllerHostActionTools = new Set([
-	'controller_host_probe',
-	'zone_git_push',
-]);
+const managedControllerHostActionTools = new Set(['controller_host_probe', 'workspace_git_push']);
 
 interface EffectiveConfigManifest {
 	readonly mcpConfigFile: string;
@@ -168,63 +165,27 @@ function providerSecrets(
 	return provider.transport.kind === 'stdio' ? provider.transport.env : provider.transport.headers;
 }
 
-function buildManagedEffectivePortalConfig(portalConfig: McpPortalConfig): McpPortalConfig {
-	const coreConfig = structuredClone(portalConfig);
-	delete coreConfig.externalAuth;
-	delete coreConfig.mcpProxy;
-	for (const agent of Object.values(coreConfig.agents)) {
-		delete agent.hmacKey;
-	}
-	return coreConfig;
-}
-
-function assertPortalAgentsMatchDeclaredAgents(props: {
-	readonly declaredAgentIds?: readonly string[];
-	readonly portalConfig: McpPortalConfig;
-	readonly zoneId: string;
-}): void {
-	if (props.declaredAgentIds === undefined) {
-		return;
-	}
-	const declaredAgentIds = new Set(props.declaredAgentIds);
-	for (const agentId of declaredAgentIds) {
-		if (props.portalConfig.agents[agentId] !== undefined) {
-			continue;
-		}
-		throw new Error(
-			`mcp-portal: zone "${props.zoneId}" declared agent "${agentId}" is missing from mcp-portal.config.jsonc agents.`,
-		);
-	}
-	for (const agentId of Object.keys(props.portalConfig.agents)) {
-		if (declaredAgentIds.has(agentId)) {
-			continue;
-		}
-		throw new Error(
-			`mcp-portal: zone "${props.zoneId}" mcp-portal.config.jsonc declares undeclared agent "${agentId}".`,
-		);
-	}
-}
-
-function buildManagedEffectiveToolPortalConfig(
-	portalConfig: McpPortalConfig,
-	options: { readonly includeZoneGitControllerHostAction?: boolean },
-): ToolPortalConfig {
-	return toolPortalConfigSchema.parse({
+function buildManagedEffectivePortalConfig(toolPortalConfig: ToolPortalConfig): McpPortalConfig {
+	return mcpPortalConfigSchema.parse({
 		agents: Object.fromEntries(
-			Object.entries(portalConfig.agents).map(([agentId, agent]) => [
+			Object.entries(toolPortalConfig.agents).map(([agentId, agent]) => [
 				agentId,
 				{ profile: agent.profile },
 			]),
 		),
 		profiles: Object.fromEntries(
-			Object.entries(portalConfig.profiles).map(([profileId, profile]) => [
+			Object.entries(toolPortalConfig.profiles).map(([profileId, profile]) => [
 				profileId,
 				{
-					capabilities: buildManagedToolPortalCapabilities({
-						includeZoneGitControllerHostAction: options.includeZoneGitControllerHostAction === true,
-						namespaces: profile.namespaces,
-						profileId,
-					}),
+					namespaces: Object.fromEntries(
+						Object.entries(profile.namespaces).map(([namespaceId, namespacePolicy]) => [
+							namespaceId,
+							{
+								calls: namespacePolicy.calls,
+								tools: namespacePolicy.tools,
+							},
+						]),
+					),
 				},
 			]),
 		),
@@ -232,91 +193,168 @@ function buildManagedEffectiveToolPortalConfig(
 	});
 }
 
-function selectorAllowsAnyTool(selector: PortalToolSelector): boolean {
-	return selector.allow === '*' || selector.allow.length > 0;
-}
-
-function assertManagedOpenClawAllowsDirectCallsOnly(props: {
-	readonly namespace: string;
-	readonly namespacePolicy: McpPortalConfig['profiles'][string]['namespaces'][string];
-	readonly profileId: string;
+function assertToolPortalAgentsMatchDeclaredAgents(props: {
+	readonly declaredAgentIds?: readonly string[];
+	readonly toolPortalConfig: ToolPortalConfig;
+	readonly zoneId: string;
 }): void {
-	if (!selectorAllowsAnyTool(props.namespacePolicy.calls.requiresApproval)) {
+	if (props.declaredAgentIds === undefined) {
 		return;
 	}
-	throw new Error(
-		`mcp-portal: managed OpenClaw Tool Portal profile "${props.profileId}" namespace "${props.namespace}" does not support calls.requiresApproval in this cutover. Move callable tools to calls.withoutApproval or remove the requiresApproval selector until an approval bridge exists.`,
-	);
+	const declaredAgentIds = new Set(props.declaredAgentIds);
+	for (const agentId of declaredAgentIds) {
+		if (props.toolPortalConfig.agents[agentId] !== undefined) {
+			continue;
+		}
+		throw new Error(
+			`tool-portal: zone "${props.zoneId}" declared agent "${agentId}" is missing from tool-portal.config.jsonc agents.`,
+		);
+	}
+	for (const agentId of Object.keys(props.toolPortalConfig.agents)) {
+		if (declaredAgentIds.has(agentId)) {
+			continue;
+		}
+		throw new Error(
+			`tool-portal: zone "${props.zoneId}" tool-portal.config.jsonc declares undeclared agent "${agentId}".`,
+		);
+	}
 }
 
-function assertManagedOpenClawControllerHostActionPolicy(props: {
-	readonly includeZoneGitControllerHostAction: boolean;
-	readonly namespacePolicy: McpPortalConfig['profiles'][string]['namespaces'][string];
+function assertManagedControllerHostActionPolicy(props: {
+	readonly namespaceId: string;
+	readonly namespacePolicy: ToolPortalNamespacePolicy;
 	readonly profileId: string;
 }): void {
 	if (props.namespacePolicy.tools.allow === '*') {
 		throw new Error(
-			`mcp-portal: managed OpenClaw Tool Portal profile "${props.profileId}" controller_host_action tools must explicitly allow reviewed controller host actions.`,
+			`tool-portal: managed profile "${props.profileId}" namespace "${props.namespaceId}" tools must explicitly allow reviewed controller host actions.`,
 		);
 	}
-	if (props.namespacePolicy.calls.withoutApproval.allow === '*') {
+	if (
+		props.namespacePolicy.calls.requiresApproval.allow === '*' ||
+		props.namespacePolicy.calls.withoutApproval.allow === '*'
+	) {
 		throw new Error(
-			`mcp-portal: managed OpenClaw Tool Portal profile "${props.profileId}" controller_host_action calls must explicitly allow reviewed controller host actions.`,
+			`tool-portal: managed profile "${props.profileId}" namespace "${props.namespaceId}" calls must explicitly allow reviewed controller host actions.`,
 		);
 	}
 	const allowedTools = new Set(props.namespacePolicy.tools.allow);
-	const allowedCalls = new Set(props.namespacePolicy.calls.withoutApproval.allow);
+	const allowedCalls = new Set([
+		...props.namespacePolicy.calls.requiresApproval.allow,
+		...props.namespacePolicy.calls.withoutApproval.allow,
+	]);
 	for (const toolName of [...allowedTools, ...allowedCalls]) {
-		if (!managedOpenClawControllerHostActionTools.has(toolName)) {
+		if (!managedControllerHostActionTools.has(toolName)) {
 			throw new Error(
-				`mcp-portal: managed OpenClaw Tool Portal profile "${props.profileId}" controller_host_action supports only reviewed controller host actions in this cutover.`,
+				`tool-portal: managed profile "${props.profileId}" namespace "${props.namespaceId}" supports only reviewed controller host actions.`,
 			);
 		}
 		if (!allowedTools.has(toolName) || !allowedCalls.has(toolName)) {
 			throw new Error(
-				`mcp-portal: managed OpenClaw Tool Portal profile "${props.profileId}" controller_host_action must include each reviewed controller host action in both tools and calls.withoutApproval.`,
-			);
-		}
-		if (toolName === 'zone_git_push' && !props.includeZoneGitControllerHostAction) {
-			throw new Error(
-				`mcp-portal: managed OpenClaw Tool Portal profile "${props.profileId}" controller_host_action cannot allow zone_git_push while zoneGit is disabled.`,
+				`tool-portal: managed profile "${props.profileId}" namespace "${props.namespaceId}" must include each reviewed controller host action in tools and exactly one call selector.`,
 			);
 		}
 	}
 }
 
-function buildManagedToolPortalCapabilities(props: {
-	readonly includeZoneGitControllerHostAction: boolean;
-	readonly namespaces: McpPortalConfig['profiles'][string]['namespaces'];
-	readonly profileId: string;
-}): ToolPortalConfig['profiles'][string]['capabilities'] {
-	const capabilities: Record<string, ToolPortalCapabilityPolicy> = {};
-	for (const [namespace, namespacePolicy] of Object.entries(props.namespaces)) {
-		assertManagedOpenClawAllowsDirectCallsOnly({
-			namespace,
-			namespacePolicy,
-			profileId: props.profileId,
-		});
-		if (namespace === 'controller_host_action') {
-			assertManagedOpenClawControllerHostActionPolicy({
-				includeZoneGitControllerHostAction: props.includeZoneGitControllerHostAction,
-				namespacePolicy,
-				profileId: props.profileId,
-			});
-			capabilities[namespace] = {
-				backend: { kind: 'controller_host_action' },
-				calls: namespacePolicy.calls,
-				tools: namespacePolicy.tools,
-			};
+function selectorAllowsTool(
+	selector: ToolPortalNamespacePolicy['tools'],
+	toolName: string,
+): boolean {
+	return (
+		!selector.deny.includes(toolName) &&
+		(selector.allow === '*' || selector.allow.includes(toolName))
+	);
+}
+
+function profileAllowsWorkspaceGitPush(profile: ToolPortalConfig['profiles'][string]): boolean {
+	return Object.values(profile.namespaces).some(
+		(namespacePolicy) =>
+			namespacePolicy.backend.kind === 'controller_host_action' &&
+			selectorAllowsTool(namespacePolicy.tools, 'workspace_git_push') &&
+			(selectorAllowsTool(namespacePolicy.calls.requiresApproval, 'workspace_git_push') ||
+				selectorAllowsTool(namespacePolicy.calls.withoutApproval, 'workspace_git_push')),
+	);
+}
+
+function assertWorkspaceGitPushAgentEligibility(props: {
+	readonly eligibility: WorkspaceGitPushAgentEligibility | undefined;
+	readonly toolPortalConfig: ToolPortalConfig;
+}): void {
+	const eligibleAgentIds = new Set<string>();
+	for (const agentId of props.eligibility?.eligibleAgentIds ?? []) {
+		if (eligibleAgentIds.has(agentId)) {
+			throw new Error(
+				`tool-portal: workspace Git push eligibility contains duplicate agent "${agentId}".`,
+			);
+		}
+		if (props.toolPortalConfig.agents[agentId] === undefined) {
+			throw new Error(
+				`tool-portal: workspace Git push eligibility contains unassigned agent "${agentId}".`,
+			);
+		}
+		eligibleAgentIds.add(agentId);
+	}
+
+	for (const [agentId, assignment] of Object.entries(props.toolPortalConfig.agents)) {
+		const profile = props.toolPortalConfig.profiles[assignment.profile];
+		if (profile === undefined || !profileAllowsWorkspaceGitPush(profile)) {
 			continue;
 		}
-		capabilities[namespace] = {
-			backend: { kind: 'mcp_provider' },
-			calls: namespacePolicy.calls,
-			tools: namespacePolicy.tools,
-		};
+		if (eligibleAgentIds.has(agentId)) {
+			continue;
+		}
+		throw new Error(
+			`tool-portal: managed agent "${agentId}" assigned profile "${assignment.profile}" cannot allow workspace_git_push because trusted workspace Git mode is not remote.`,
+		);
 	}
-	return capabilities;
+}
+
+function assertManagedToolPortalConfig(props: {
+	readonly approvalAccessConfigured: boolean;
+	readonly toolPortalConfig: ToolPortalConfig;
+	readonly workspaceGitPushAgentEligibility: WorkspaceGitPushAgentEligibility | undefined;
+}): void {
+	if (
+		!props.approvalAccessConfigured &&
+		managedToolPortalRequiresApprovalAccess(props.toolPortalConfig)
+	) {
+		throw new Error(
+			'tool-portal: managed calls requiring approval require zones[].approvalAccess with at least one authenticated approver.',
+		);
+	}
+	for (const [profileId, profile] of Object.entries(props.toolPortalConfig.profiles)) {
+		for (const [namespaceId, namespacePolicy] of Object.entries(profile.namespaces)) {
+			if (namespacePolicy.backend.kind !== 'controller_host_action') {
+				continue;
+			}
+			assertManagedControllerHostActionPolicy({
+				namespaceId,
+				namespacePolicy,
+				profileId,
+			});
+		}
+	}
+	assertWorkspaceGitPushAgentEligibility({
+		eligibility: props.workspaceGitPushAgentEligibility,
+		toolPortalConfig: props.toolPortalConfig,
+	});
+}
+
+function selectorEffectivelyAllowsAnyTool(
+	selector: ToolPortalNamespacePolicy['calls']['requiresApproval'],
+): boolean {
+	return (
+		selector.allow === '*' || selector.allow.some((toolName) => !selector.deny.includes(toolName))
+	);
+}
+
+export function managedToolPortalRequiresApprovalAccess(config: ToolPortalConfig): boolean {
+	return Object.values(config.profiles).some((profile) =>
+		Object.values(profile.namespaces).some((namespacePolicy) =>
+			selectorEffectivelyAllowsAnyTool(namespacePolicy.calls.requiresApproval),
+		),
+	);
 }
 
 function providerSecretRef(secret: FormattedSecretValue): SecretRef {
@@ -387,10 +425,15 @@ async function buildEffectivePlanFromConfig(
 	props: McpPortalEffectiveConfigFromConfigProps,
 	resolveSecrets: boolean,
 ): Promise<McpPortalEffectiveConfigPlan> {
-	assertPortalAgentsMatchDeclaredAgents({
+	assertToolPortalAgentsMatchDeclaredAgents({
 		...(props.declaredAgentIds === undefined ? {} : { declaredAgentIds: props.declaredAgentIds }),
-		portalConfig: props.portalConfig,
+		toolPortalConfig: props.toolPortalConfig,
 		zoneId: props.zoneId,
+	});
+	assertManagedToolPortalConfig({
+		approvalAccessConfigured: props.approvalAccessConfigured,
+		toolPortalConfig: props.toolPortalConfig,
+		workspaceGitPushAgentEligibility: props.workspaceGitPushAgentEligibility,
 	});
 	const requiredGatewayEgressHosts = new Set<string>();
 	const allowedRawEnvSecretNames = new Set(props.allowedRawEnvSecretNames ?? []);
@@ -468,14 +511,10 @@ async function buildEffectivePlanFromConfig(
 	return {
 		effectiveConfigDir: props.effectiveHostConfigDir,
 		effectiveMcpConfig: { ...props.mcpConfig, providers: effectiveProviders },
-		effectivePortalConfig: buildManagedEffectivePortalConfig(props.portalConfig),
-		effectiveToolPortalConfig: buildManagedEffectiveToolPortalConfig(
-			props.portalConfig,
-			props.includeZoneGitControllerHostAction === undefined
-				? {}
-				: { includeZoneGitControllerHostAction: props.includeZoneGitControllerHostAction },
+		effectivePortalConfig: buildManagedEffectivePortalConfig(props.toolPortalConfig),
+		effectiveToolPortalConfig: toolPortalConfigSchema.parse(
+			structuredClone(props.toolPortalConfig),
 		),
-		pluginConfig: { configDir: props.effectiveVmConfigDir },
 		requiredGatewayEgressHosts: [...requiredGatewayEgressHosts].toSorted(),
 		resolvedSecretNames: Object.keys(secretRefs).toSorted(),
 		runtimeEnvironment,
@@ -487,25 +526,25 @@ async function buildEffectivePlan(
 	props: McpPortalEffectiveConfigProps,
 	resolveSecrets: boolean,
 ): Promise<McpPortalEffectiveConfigPlan> {
-	const [mcpConfig, portalConfig] = await Promise.all([
+	const [mcpConfig, toolPortalConfig] = await Promise.all([
 		loadMcpConfig(path.join(props.authoredConfigDir, 'mcp.config.jsonc')),
-		loadMcpPortalConfig(path.join(props.authoredConfigDir, 'mcp-portal.config.jsonc')),
+		loadToolPortalConfig(path.join(props.authoredConfigDir, 'tool-portal.config.jsonc')),
 	]);
 	return await buildEffectivePlanFromConfig(
 		{
+			approvalAccessConfigured: props.approvalAccessConfigured,
 			effectiveHostConfigDir: props.effectiveHostConfigDir,
-			effectiveVmConfigDir: props.effectiveVmConfigDir,
 			mcpConfig,
-			portalConfig,
 			secretResolver: props.secretResolver,
+			toolPortalConfig,
 			zoneId: props.zoneId,
 			...(props.allowedRawEnvSecretNames === undefined
 				? {}
 				: { allowedRawEnvSecretNames: props.allowedRawEnvSecretNames }),
 			...(props.declaredAgentIds === undefined ? {} : { declaredAgentIds: props.declaredAgentIds }),
-			...(props.includeZoneGitControllerHostAction === undefined
+			...(props.workspaceGitPushAgentEligibility === undefined
 				? {}
-				: { includeZoneGitControllerHostAction: props.includeZoneGitControllerHostAction }),
+				: { workspaceGitPushAgentEligibility: props.workspaceGitPushAgentEligibility }),
 		},
 		resolveSecrets,
 	);
@@ -641,23 +680,10 @@ export async function resolveMcpPortalEffectiveConfigFromConfig(
 	return await buildEffectivePlanFromConfig(props, true);
 }
 
-function effectiveConfigWriteResultFromPlan(
-	plan: McpPortalEffectiveConfigPlan,
-): McpPortalEffectiveConfigWriteResult {
-	return {
-		effectiveConfigDir: plan.effectiveConfigDir,
-		pluginConfig: plan.pluginConfig,
-		requiredGatewayEgressHosts: plan.requiredGatewayEgressHosts,
-		resolvedSecretNames: plan.resolvedSecretNames,
-		runtimeEnvironment: plan.runtimeEnvironment,
-		runtimeMediatedSecrets: plan.runtimeMediatedSecrets,
-	};
-}
-
 export async function resolveMcpPortalEffectiveConfig(
 	props: McpPortalEffectiveConfigProps,
 ): Promise<McpPortalEffectiveConfigWriteResult> {
-	return effectiveConfigWriteResultFromPlan(await buildEffectivePlan(props, true));
+	return await buildEffectivePlan(props, true);
 }
 
 async function assertEffectiveConfigDirectoryWritable(directoryPath: string): Promise<void> {
@@ -686,7 +712,7 @@ export async function preflightMcpPortalEffectiveConfig(
 	const plan = await buildEffectivePlan(props, true);
 	await mkdir(props.effectiveHostConfigDir, { recursive: true, mode: 0o700 });
 	await assertEffectiveConfigDirectoryWritable(props.effectiveHostConfigDir);
-	return effectiveConfigWriteResultFromPlan(plan);
+	return plan;
 }
 
 export async function writeMcpPortalEffectiveConfig(
@@ -701,5 +727,5 @@ export async function writeMcpPortalEffectiveConfig(
 		toolPortalConfigContent: `${JSON.stringify(plan.effectiveToolPortalConfig, null, '\t')}\n`,
 	});
 
-	return effectiveConfigWriteResultFromPlan(plan);
+	return plan;
 }

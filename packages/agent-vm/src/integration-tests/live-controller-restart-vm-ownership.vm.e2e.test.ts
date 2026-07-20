@@ -3,25 +3,40 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import type { ManagedVm } from '@agent-vm/managed-vm';
+import type { ManagedVm, ManagedVmImageBuildResult } from '@agent-vm/managed-vm';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { createManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
 import { startControllerRuntime } from '../controller/controller-runtime.js';
 import {
+	createControllerStateRoot,
+	resolveControllerGatewayStateRoot,
+} from '../controller/durable-state/controller-state-paths.js';
+import {
+	resolveControllerGatewayRecordTargets,
+	type ControllerGatewayRecordTargets,
+	type ControllerManagedGatewayRuntimeRecordTarget,
+} from '../controller/durable-state/controller-state-record-paths.js';
+import {
 	buildToolVmRuntimeRecord,
 	loadToolVmRuntimeRecord,
 	writeToolVmRuntimeRecord,
 } from '../controller/leases/tool-vm-runtime-record.js';
+import type { GatewayVmLifecycleAuthority } from '../controller/vm-ownership/gateway-vm-lifecycle-authority.js';
 import type { GatewayEpochIdentity } from '../controller/vm-ownership/vm-ownership-contracts.js';
 import {
-	buildGatewayRuntimeRecord,
-	loadGatewayRuntimeRecord,
-	writeGatewayRuntimeRecord,
+	buildManagedGatewayRuntimeRecord,
+	deleteManagedGatewayRuntimeRecord,
+	loadManagedGatewayRuntimeRecord,
+	type ManagedGatewayRuntimeRecord,
+	writeManagedGatewayRuntimeRecord,
 } from '../gateway/gateway-runtime-record.js';
+import type { GatewayZoneDestroyResult } from '../gateway/gateway-zone-support.js';
+import { createManagedGatewayBootContract } from '../gateway/managed-gateway-boot-contract.js';
 import { runControllerOfflineCleanup } from '../operations/controller-offline-cleanup.js';
-import { isProcessAlive } from '../shared/managed-vm-process.js';
+import type { ManagedVmProcessTarget } from '../shared/controller-managed-vm-termination.js';
+import { isProcessAlive, readProcessIdentity } from '../shared/managed-vm-process.js';
 
 const managedVmRuntimeComposition = createManagedVmRuntimeComposition();
 const { managedVmFactory } = managedVmRuntimeComposition;
@@ -34,8 +49,28 @@ import { shouldRunLiveVmE2e } from './live-vm-e2e-gates.js';
 
 const describeLiveVmE2e = shouldRunLiveVmE2e() ? describe : describe.skip;
 const zoneId = 'ownership-restart';
+const testManagedGatewayBootContract = createManagedGatewayBootContract({
+	bootEntry: 'openclaw-gateway',
+	configurationInputPath: '/run/agent-vm/managed-gateway/framework-service.json',
+	environmentInputPath: '/run/agent-vm/managed-gateway/framework.environment.sh',
+	framework: 'openclaw',
+	ingress: { guestPort: 18_789, kind: 'framework-http' },
+	logIdentity: {
+		guestPath: '/var/log/agent-vm/openclaw-service.log',
+		serviceName: 'agent-vm-openclaw-test',
+	},
+	readiness: { guestPort: 18_789, kind: 'framework-http', path: '/readyz' },
+	role: 'framework-service',
+});
+
+const testManagedGatewayImage = {
+	built: false,
+	fingerprint: 'controller-restart-ownership-alpine-base',
+	imageReference: 'alpine-base:latest',
+} satisfies ManagedVmImageBuildResult;
 
 interface TestDeployment {
+	readonly controllerRecordTargets: ControllerGatewayRecordTargets;
 	readonly rootDirectory: string;
 	readonly stateDirectory: string;
 	readonly systemConfig: LoadedSystemConfig;
@@ -44,6 +79,50 @@ interface TestDeployment {
 const temporaryDeploymentRoots: string[] = [];
 const managedVmTerminationsForHarnessCleanup: CapturedManagedVmTermination[] = [];
 
+function createFixtureGatewayDestroyer(options: {
+	readonly destroyGatewayVm: () => Promise<void>;
+	readonly runtimeRecordTarget: ControllerManagedGatewayRuntimeRecordTarget;
+	readonly vmOwnership: GatewayVmLifecycleAuthority;
+}): () => Promise<GatewayZoneDestroyResult> {
+	let exactDestruction: Promise<void> | undefined;
+	let exactDestructionComplete = false;
+	let runtimeRecordDeleted = false;
+	let destroyAttemptInFlight: Promise<GatewayZoneDestroyResult> | undefined;
+
+	return (): Promise<GatewayZoneDestroyResult> => {
+		if (destroyAttemptInFlight !== undefined) {
+			return destroyAttemptInFlight;
+		}
+		const attempt = (async (): Promise<GatewayZoneDestroyResult> => {
+			if (!exactDestructionComplete) {
+				exactDestruction ??= options.vmOwnership.destroyLive(options.destroyGatewayVm);
+				await exactDestruction;
+				exactDestructionComplete = true;
+			}
+			if (runtimeRecordDeleted) {
+				return { kind: 'destroyed-clean' };
+			}
+			try {
+				await deleteManagedGatewayRuntimeRecord(options.runtimeRecordTarget);
+				runtimeRecordDeleted = true;
+				return { kind: 'destroyed-clean' };
+			} catch (error) {
+				return {
+					cleanupFailures: [{ error, stage: 'runtime-record-deletion' }],
+					kind: 'destroyed-cleanup-incomplete',
+				};
+			}
+		})();
+		const trackedAttempt = attempt.finally(() => {
+			if (destroyAttemptInFlight === trackedAttempt) {
+				destroyAttemptInFlight = undefined;
+			}
+		});
+		destroyAttemptInFlight = trackedAttempt;
+		return trackedAttempt;
+	};
+}
+
 function createTestSystemConfig(options: {
 	readonly rootDirectory: string;
 	readonly stateDirectory: string;
@@ -51,6 +130,7 @@ function createTestSystemConfig(options: {
 	return createLoadedSystemConfig(
 		{
 			cacheDir: path.join(options.rootDirectory, 'cache'),
+			controllerStateDir: path.join(options.rootDirectory, 'controller-state'),
 			host: {
 				controllerPort: 18_841,
 				projectNamespace: 'ownership-restart-e2e',
@@ -123,10 +203,19 @@ function createTestSystemConfig(options: {
 async function createTestDeployment(): Promise<TestDeployment> {
 	const rootDirectory = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-own-'));
 	const stateDirectory = path.join(rootDirectory, 'state');
+	const systemConfig = createTestSystemConfig({ rootDirectory, stateDirectory });
 	return {
+		controllerRecordTargets: resolveControllerGatewayRecordTargets({
+			gatewayStateRoot: resolveControllerGatewayStateRoot({
+				controllerStateRoot: createControllerStateRoot({
+					controllerStateDirectoryPath: systemConfig.controllerStateDir,
+				}),
+				zoneId,
+			}),
+		}),
 		rootDirectory,
 		stateDirectory,
-		systemConfig: createTestSystemConfig({ rootDirectory, stateDirectory }),
+		systemConfig,
 	};
 }
 
@@ -147,6 +236,22 @@ async function createStartedRealVm(sessionLabel: string): Promise<ManagedVm> {
 	return managedVm;
 }
 
+async function captureStartedManagedVmProcessTarget(
+	managedVm: ManagedVm,
+): Promise<ManagedVmProcessTarget> {
+	const hostPid = managedVm.getHostProcessId();
+	if (hostPid === null) {
+		throw new Error(`Managed VM '${managedVm.id}' has no live runner to capture.`);
+	}
+	const processIdentity = await readProcessIdentity(hostPid);
+	if (processIdentity === null) {
+		throw new Error(
+			`Managed VM '${managedVm.id}' pid ${String(hostPid)} disappeared before identity capture.`,
+		);
+	}
+	return { hostPid, processIdentity, vmId: managedVm.id };
+}
+
 function createGatewayIdentity(gatewayVm: ManagedVm): GatewayEpochIdentity {
 	return {
 		bootId: 'gateway-boot-before-restart',
@@ -158,25 +263,92 @@ function createGatewayIdentity(gatewayVm: ManagedVm): GatewayEpochIdentity {
 	};
 }
 
+function createManagedGatewayExpectedCohort(options: {
+	readonly configuredAgentIds: readonly string[];
+	readonly gatewayIdentity: GatewayEpochIdentity;
+}): ManagedGatewayRuntimeRecord['expectedCohort'] {
+	const identitySuffix = `${options.gatewayIdentity.zoneId}:${options.gatewayIdentity.generationId}`;
+	const frameworkEpoch = `openclaw-framework:${options.gatewayIdentity.bootId}`;
+	const processEpoch = `tool-portal-process:${options.gatewayIdentity.bootId}`;
+	const runtimeEpoch = `tool-portal-runtime:${options.gatewayIdentity.generationId}`;
+	return {
+		controlIdentity: {
+			controllerEpoch: options.gatewayIdentity.controllerEpoch,
+			generationId: options.gatewayIdentity.generationId,
+			peerId: `tool-portal-control:${options.gatewayIdentity.zoneId}`,
+			processEpoch,
+		},
+		fence: {
+			controllerEpoch: options.gatewayIdentity.controllerEpoch,
+			gatewayEpoch: options.gatewayIdentity.generationId,
+			vmId: options.gatewayIdentity.gatewayVmId,
+			zoneId: options.gatewayIdentity.zoneId,
+		},
+		frameworkIdentity: {
+			attachmentGeneration: 1,
+			clientKind: 'openclaw-managed-plugin',
+			configuredAgentIds: options.configuredAgentIds,
+			frameworkEpoch,
+			frameworkKind: 'openclaw',
+			projectionCohortDigest:
+				'projection-cohort:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+		},
+		ingressIntent: {
+			controlRoute: {
+				audience: 'gateway-control',
+				guestPort: 18_790,
+				kind: 'tool-portal-control',
+				prefix: '/__agent-vm',
+				stripPrefix: false,
+			},
+			frameworkRootRoute: {
+				guestPort: 18_789,
+				kind: 'framework-root',
+				prefix: '/',
+				stripPrefix: true,
+			},
+		},
+		providerRevision: `provider:${identitySuffix}`,
+		requiredBackendRevision: `required-backends:${identitySuffix}`,
+		semanticRevision: `semantic:${identitySuffix}`,
+		toolPortalIdentity: {
+			processEpoch,
+			role: 'tool-portal',
+			runtimeEpoch,
+			serviceId: `tool-portal-service:${identitySuffix}`,
+		},
+		udsIdentity: {
+			frameworkEpoch,
+			gatewayEpoch: options.gatewayIdentity.generationId,
+			runtimeEpoch,
+			socketPath: '/run/agent-vm/gateway-runtime/managed-plugin.sock',
+		},
+	};
+}
+
 async function persistGatewayRuntime(options: {
 	readonly deployment: TestDeployment;
 	readonly gatewayIdentity: GatewayEpochIdentity;
 	readonly gatewayVm: ManagedVm;
 }): Promise<void> {
-	await writeGatewayRuntimeRecord(
-		options.deployment.stateDirectory,
-		await buildGatewayRuntimeRecord({
+	const expectedCohort = createManagedGatewayExpectedCohort({
+		configuredAgentIds: ['current-agent', 'second-agent'],
+		gatewayIdentity: options.gatewayIdentity,
+	});
+	await writeManagedGatewayRuntimeRecord(
+		options.deployment.controllerRecordTargets.managedGatewayRuntimeRecord,
+		await buildManagedGatewayRuntimeRecord({
+			appliedIngressRoutes: [
+				expectedCohort.ingressIntent.controlRoute,
+				expectedCohort.ingressIntent.frameworkRootRoute,
+			],
+			bootContract: testManagedGatewayBootContract,
 			controllerPort: options.deployment.systemConfig.host.controllerPort,
+			expectedCohort,
 			gatewayIdentity: options.gatewayIdentity,
-			gatewayType: 'openclaw',
+			image: testManagedGatewayImage,
 			managedVm: options.gatewayVm,
-			processSpec: {
-				bootstrapCommand: 'true',
-				guestListenPort: 18_789,
-				healthCheck: { command: 'true', type: 'command' },
-				logPath: '/tmp/controller-restart-e2e.log',
-				startCommand: 'true',
-			},
+			processTarget: await captureStartedManagedVmProcessTarget(options.gatewayVm),
 			projectNamespace: options.deployment.systemConfig.host.projectNamespace,
 			systemConfigPath: options.deployment.systemConfig.systemConfigPath,
 			zoneId,
@@ -193,7 +365,7 @@ async function persistToolRuntime(options: {
 	readonly toolVm: ManagedVm;
 }): Promise<void> {
 	await writeToolVmRuntimeRecord(
-		options.deployment.stateDirectory,
+		options.deployment.controllerRecordTargets.toolLeaseRecords,
 		await buildToolVmRuntimeRecord({
 			agentId: options.agentId,
 			controllerPort: options.deployment.systemConfig.host.controllerPort,
@@ -332,12 +504,22 @@ describeLiveVmE2e('live e2e: controller restart runtime-record ownership', () =>
 					startGatewayZone: async (startOptions) => {
 						await oldTreeAbsence;
 						await expect(
-							loadToolVmRuntimeRecord(deployment.stateDirectory, firstToolRecordId),
+							loadToolVmRuntimeRecord(
+								deployment.controllerRecordTargets.toolLeaseRecords,
+								firstToolRecordId,
+							),
 						).resolves.toBeNull();
 						await expect(
-							loadToolVmRuntimeRecord(deployment.stateDirectory, secondToolRecordId),
+							loadToolVmRuntimeRecord(
+								deployment.controllerRecordTargets.toolLeaseRecords,
+								secondToolRecordId,
+							),
 						).resolves.toBeNull();
-						await expect(loadGatewayRuntimeRecord(deployment.stateDirectory)).resolves.toBeNull();
+						await expect(
+							loadManagedGatewayRuntimeRecord(
+								deployment.controllerRecordTargets.managedGatewayRuntimeRecord,
+							),
+						).resolves.toBeNull();
 						await assertVmMarker(unrelatedVm, 'unrelated-live-before-successor');
 
 						const vmOwnership = await startOptions.createVmOwnership({
@@ -374,24 +556,27 @@ describeLiveVmE2e('live e2e: controller restart runtime-record ownership', () =>
 							gatewayVm: successorGatewayVm,
 						});
 						return {
+							bootContract: testManagedGatewayBootContract,
+							destroyGateway: createFixtureGatewayDestroyer({
+								destroyGatewayVm: async () => {
+									await successorGatewayTermination?.terminate();
+								},
+								runtimeRecordTarget: deployment.controllerRecordTargets.managedGatewayRuntimeRecord,
+								vmOwnership,
+							}),
+							executionModel: 'managed-gateway',
+							expectedCohort: createManagedGatewayExpectedCohort({
+								configuredAgentIds: ['current-agent', 'second-agent'],
+								gatewayIdentity: successorGatewayIdentity,
+							}),
+							gatewayIdentity: successorGatewayIdentity,
 							image: {
 								built: false,
 								fingerprint: 'controller-restart-successor',
 								imageReference: 'alpine-base:latest',
 							},
 							ingress: { host: '127.0.0.1', port: 28_891 },
-							processSpec: {
-								bootstrapCommand: 'true',
-								guestListenPort: 18_789,
-								healthCheck: { command: 'true', type: 'command' },
-								logPath: '/tmp/controller-restart-e2e.log',
-								startCommand: 'true',
-							},
-							terminateVm: async () => {
-								await successorGatewayTermination?.terminate();
-							},
 							vm: successorGatewayVm,
-							vmOwnership,
 							zone,
 						};
 					},
@@ -408,7 +593,11 @@ describeLiveVmE2e('live e2e: controller restart runtime-record ownership', () =>
 			expect(runtime.zones).toEqual([
 				expect.objectContaining({ lifecycleState: 'running', zoneId }),
 			]);
-			await expect(loadGatewayRuntimeRecord(deployment.stateDirectory)).resolves.toMatchObject({
+			await expect(
+				loadManagedGatewayRuntimeRecord(
+					deployment.controllerRecordTargets.managedGatewayRuntimeRecord,
+				),
+			).resolves.toMatchObject({
 				vmId: successorGatewayIdentity?.gatewayVmId,
 			});
 			await assertVmMarker(unrelatedVm, 'unrelated-live-after-successor');
@@ -419,7 +608,11 @@ describeLiveVmE2e('live e2e: controller restart runtime-record ownership', () =>
 			await runtime?.close();
 		}
 
-		await expect(loadGatewayRuntimeRecord(deployment.stateDirectory)).resolves.toBeNull();
+		await expect(
+			loadManagedGatewayRuntimeRecord(
+				deployment.controllerRecordTargets.managedGatewayRuntimeRecord,
+			),
+		).resolves.toBeNull();
 	}, 180_000);
 
 	it('fails closed on changed Tool process identity and leaves the Gateway untouched', async () => {
@@ -441,7 +634,7 @@ describeLiveVmE2e('live e2e: controller restart runtime-record ownership', () =>
 			tcpSlot: 0,
 			zoneId,
 		});
-		await writeToolVmRuntimeRecord(deployment.stateDirectory, {
+		await writeToolVmRuntimeRecord(deployment.controllerRecordTargets.toolLeaseRecords, {
 			...toolRecord,
 			processIdentity: {
 				...toolRecord.processIdentity,
@@ -456,21 +649,30 @@ describeLiveVmE2e('live e2e: controller restart runtime-record ownership', () =>
 		}
 
 		await expect(
-			runControllerOfflineCleanup({
-				force: true,
-				systemConfig: deployment.systemConfig,
-				zoneId,
-			}),
+			runControllerOfflineCleanup(
+				{
+					force: true,
+					systemConfig: deployment.systemConfig,
+					zoneId,
+				},
+				{
+					exactProcessTermination: managedVmRuntimeComposition.managedVmExactProcessTermination,
+				},
+			),
 		).rejects.toThrow(/process identity changed/u);
 
 		expect(isProcessAlive(toolPid)).toBe(true);
 		expect(isProcessAlive(gatewayPid)).toBe(true);
 		await expect(
-			loadToolVmRuntimeRecord(deployment.stateDirectory, toolRecordId),
+			loadToolVmRuntimeRecord(deployment.controllerRecordTargets.toolLeaseRecords, toolRecordId),
 		).resolves.toMatchObject({
 			vmId: toolVm.id,
 		});
-		await expect(loadGatewayRuntimeRecord(deployment.stateDirectory)).resolves.toMatchObject({
+		await expect(
+			loadManagedGatewayRuntimeRecord(
+				deployment.controllerRecordTargets.managedGatewayRuntimeRecord,
+			),
+		).resolves.toMatchObject({
 			vmId: gatewayVm.id,
 		});
 		await Promise.all([

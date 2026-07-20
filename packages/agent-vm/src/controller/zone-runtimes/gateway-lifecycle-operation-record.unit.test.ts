@@ -74,6 +74,33 @@ describe('gateway lifecycle operation records', () => {
 		).resolves.toEqual(secondRecord);
 	});
 
+	it.each(['hermes', 'openclaw'] as const)(
+		'round-trips $gatewayType lifecycle records',
+		async (gatewayType) => {
+			await using tempDir = await createTemporaryDirectory();
+			const record = createOperationRecord({
+				gatewayType,
+				kind: 'start-requested',
+				operationId: `op-${gatewayType}`,
+				operationTrigger: 'controller-start',
+				observedAtMs: 100,
+			});
+
+			await appendGatewayLifecycleOperationRecord({
+				record,
+				runtimeDir: tempDir.path,
+				zoneId: 'sunfam',
+			});
+
+			await expect(
+				readLatestGatewayLifecycleOperationRecord({
+					runtimeDir: tempDir.path,
+					zoneId: 'sunfam',
+				}),
+			).resolves.toEqual(record);
+		},
+	);
+
 	it('ignores a corrupt latest line while preserving the previous valid latest record', async () => {
 		await using tempDir = await createTemporaryDirectory();
 		const validRecord = createOperationRecord({

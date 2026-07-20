@@ -1,35 +1,55 @@
-import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+import type { GatewayRuntimeFrameworkIdentity } from '@agent-vm/agent-portal-sdk/contracts';
+import { CONTROL_PROTOCOL_VERSION } from '@agent-vm/control-protocol-contracts';
 import {
 	buildGatewayControlCallerContextAgentAuthorityPayload,
 	buildGatewayControlCallerContextProofPayload,
+	GatewayControlRpcCommandResultMessageSchema,
+	GatewayControlRpcMessageSchema,
+	gatewayControlCommandExecutionTimeoutMsByOperation,
+	gatewayControlDeliveryPolicyByOperation,
+	type GatewayControlToolVmBindingPublication,
+	type GatewayControlToolVmBindingPublicationAuthority,
+	type GatewayRuntimePortalAdmissionMaterial,
+	type GatewayRuntimeReadinessSnapshot,
 	type GatewayControlCallerContextProof,
+	type ManagedAgentProjection,
 } from '@agent-vm/gateway-control-contracts';
 import type {
 	AgentVmHealthEvent,
 	GatewayHealthCheck,
 	GatewayLifecycle,
-	GatewayProcessSpec,
 	GatewayZoneConfig,
 } from '@agent-vm/gateway-lifecycle';
+import { createWebSocketUpgradeRequestGuard } from '@agent-vm/gateway-lifecycle';
+import type {
+	ManagedVm,
+	ManagedVmExactProcessTerminationCapability,
+	ManagedVmFactory,
+	ManagedVmImageBuildResult,
+	ManagedVmMediatedSecretDescriptor,
+	ManagedVmOwnedDirectoryCapability,
+} from '@agent-vm/managed-vm';
+import { redactCredentialText } from '@agent-vm/mcp-portal/core';
 import {
-	createWebSocketUpgradeRequestGuard,
-	translateRuntimePath,
-} from '@agent-vm/gateway-lifecycle';
-import type { ManagedVm, ManagedVmFactory, ManagedVmImageBuildResult } from '@agent-vm/managed-vm';
-import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
+	redactOnePasswordReferences,
+	type SecretRef,
+	type SecretResolver,
+} from '@agent-vm/secret-management';
 
 import {
 	buildGatewayControlPrivateEnvironment,
 	buildGatewayControlEndpoint,
-	buildGatewayControlRuntimePluginConfig,
 	connectGatewayControlSession,
 	createControlSessionDispatcher,
 	createControlSessionFenceRegistry,
 	createGatewayControlCallerContextRegistry,
+	createGatewayControlBindingPublicationCoordinator,
 	createGatewayControlDomainHandler,
+	deleteGatewayControlSessionMaterial,
 	resolveGatewayControlInboundStablePrincipal,
 	createGatewayControlSessionMaterial,
 	createGatewaySemanticResultLedger,
@@ -38,19 +58,6 @@ import {
 	type GatewayDisposableControlSessionClient,
 	type GatewayControlSessionMaterial,
 } from '../controller/control-session/index.js';
-import { findOpenClawLeaseWorkMountAgentMismatch } from '../controller/leases/lease-work-mount-paths.js';
-import { assertCanonicalOpenClawAgentWorkspaceDir } from '../controller/leases/openclaw-agent-workspace-paths.js';
-import { createOpenClawGatewayLeasePathMapping } from '../controller/leases/openclaw-gateway-lease-path-mapping.js';
-import { OPENCLAW_PROCESS_SUPERVISOR_GUEST_STATE_DIRECTORY } from '../controller/process-supervisor/openclaw-process-supervisor-contracts.js';
-import {
-	createManagedVmOpenClawProcessSupervisorPorts,
-	type OpenClawProcessReliabilityFaultActuator,
-	type OpenClawProcessSupervisor,
-} from '../controller/process-supervisor/openclaw-process-supervisor.js';
-import type {
-	GatewayEpochIdentity,
-	GatewayEpochSeed,
-} from '../controller/vm-ownership/vm-ownership-contracts.js';
 import {
 	createObservabilityRuntimeConfig,
 	type ObservabilityRuntimeConfig,
@@ -61,29 +68,37 @@ import {
 	terminateLiveManagedVm,
 	type ManagedVmProcessTarget,
 } from '../shared/controller-managed-vm-termination.js';
-import {
-	isProcessAlive,
-	killProcess,
-	readProcessCommand,
-	readProcessIdentity,
-	sleep,
-	type ManagedVmKillDependencies,
-} from '../shared/managed-vm-process.js';
+import { readProcessIdentity, sleep } from '../shared/managed-vm-process.js';
 import { runTaskWithResult, type RunTaskFn } from '../shared/run-task.js';
 import { resolveZoneSecrets } from './credential-manager.js';
+import type { GatewayIngressRouteIdentity } from './gateway-aggregate-admission-state.js';
+import {
+	createGatewayAggregateReadinessObserver,
+	type GatewayControlSessionReadinessEvidence,
+	type GatewayFrameworkNativeReadinessEvidence,
+	type GatewayVmLivenessEvidence,
+} from './gateway-aggregate-readiness-observer.js';
+import type { GatewayAtomicAdmissionCandidate } from './gateway-atomic-admission-contract.js';
+import { createGatewayAtomicAdmissionController } from './gateway-atomic-admission-controller.js';
 import { runGatewayHealthCheck } from './gateway-health-check.js';
 import {
 	buildGatewayImage,
 	type GatewayImageBuilderDependencies,
 } from './gateway-image-builder.js';
 import { loadGatewayLifecycle } from './gateway-lifecycle-loader.js';
+import { createGatewayObservabilityOtlpRequestMediation } from './gateway-observability-otlp-request-mediation.js';
+import { writeGatewayRuntimePortalAdmissionFile } from './gateway-runtime-portal-admission-file.js';
+import { materializeGatewayRuntimePortalAdmission } from './gateway-runtime-portal-admission-material.js';
+import type { GatewayRuntimeRoleReadinessEvidence } from './gateway-runtime-readiness-plane-mapper.js';
 import {
-	buildGatewayRuntimeRecord,
-	deleteGatewayRuntimeRecord,
-	writeGatewayRuntimeRecord,
-	type GatewayRuntimeRecord,
+	deleteManagedGatewayRuntimeRecord,
+	buildManagedGatewayRuntimeRecord,
+	writeManagedGatewayRuntimeRecord,
+	type ManagedGatewayRuntimeRecord,
 } from './gateway-runtime-record.js';
+import { createGatewayZoneDestructionTransaction } from './gateway-zone-destruction-transaction.js';
 import {
+	createGatewayZoneVmOperations,
 	findGatewayZone,
 	mapSystemGatewayZoneToLifecycleZone,
 	observabilityCollectorHost,
@@ -95,10 +110,35 @@ import {
 	type StartGatewayZoneOptions,
 } from './gateway-zone-support.js';
 import {
+	materializeManagedAgentGitDirectoryRoot,
+	materializeManagedAgentRootStorage,
+} from './managed-agent-root-storage.js';
+import { buildManagedFrameworkAgentProjectionInputs } from './managed-framework-agent-projections.js';
+import {
+	createManagedGatewayBootContract,
+	managedGatewayBootInputPaths,
+} from './managed-gateway-boot-contract.js';
+import {
+	finalizeManagedGatewayBootInputs,
+	releaseManagedGatewayBootInputDirectory,
+	reserveManagedGatewayBootInputDirectory,
+} from './managed-gateway-boot-input-materializer.js';
+import {
+	buildManagedGatewayExpectedAdmissionCohort,
+	buildManagedGatewayFrameworkAdapterMaterial,
+	buildManagedGatewayRuntimeServiceConfig,
+	type GatewayRuntimeArtifactLimits,
+} from './managed-gateway-runtime-input-builders.js';
+import {
 	preflightMcpPortalEffectiveConfig,
 	writeMcpPortalEffectiveConfig,
 } from './mcp-portal-effective-config.js';
-import { createOpenClawGatewayProcessEpochOwner } from './openclaw-gateway-process-epoch-owner.js';
+import {
+	buildWorkerRuntimeRecord,
+	deleteWorkerRuntimeRecord,
+	writeWorkerRuntimeRecord,
+	type WorkerRuntimeRecord,
+} from './worker-runtime-record.js';
 
 const defaultGatewayReadinessRetryDelayMs = 500;
 const defaultGatewayReadinessTimeoutMs = 60_000;
@@ -106,68 +146,14 @@ const defaultGatewayReadinessMaxAttempts = Math.ceil(
 	defaultGatewayReadinessTimeoutMs / defaultGatewayReadinessRetryDelayMs,
 );
 
-export function resolveOpenClawProcessSupervisorStateMount(options: {
-	readonly gatewaySeed: GatewayEpochSeed;
-	readonly runtimeDirectory: string;
-}): { readonly guestPath: string; readonly hostPath: string } {
-	const exactGatewayDigest = createHash('sha256')
-		.update(options.gatewaySeed.controllerEpoch, 'utf8')
-		.update('\0')
-		.update(options.gatewaySeed.gatewayEpochId, 'utf8')
-		.digest('hex');
-	return {
-		guestPath: OPENCLAW_PROCESS_SUPERVISOR_GUEST_STATE_DIRECTORY,
-		hostPath: path.join(
-			options.runtimeDirectory,
-			'zones',
-			options.gatewaySeed.zoneId,
-			'openclaw-process-supervisor',
-			exactGatewayDigest,
-		),
-	};
-}
-
-interface RequestInitWithDuplex extends RequestInit {
-	readonly duplex?: 'half';
-}
-
-function requestHasBody(request: Request): boolean {
-	return request.method !== 'GET' && request.method !== 'HEAD' && request.body !== null;
-}
-
-function cloneRequestToUrl(request: Request, url: URL): Request {
-	const init: RequestInitWithDuplex = {
-		headers: request.headers,
-		method: request.method,
-		...(requestHasBody(request) ? { body: request.body, duplex: 'half' } : {}),
-	};
-	return new Request(url, init);
-}
-
-function normalizeUrlHostname(hostname: string): string {
-	return hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname;
-}
-
-function createOpenClawObservabilityCollectorRequestRewrite(
+function createGatewayObservabilityCollectorRequestMediation(
 	zone: GatewayZoneConfig,
-): ((request: Request) => Promise<Request | void>) | undefined {
+): ((request: Request) => Promise<Response | undefined>) | undefined {
 	const observability = zone.observability;
 	if (observability?.mode !== 'collector') {
 		return undefined;
 	}
-	const { collector } = observability;
-	return async (request: Request): Promise<Request | void> => {
-		const url = new URL(request.url);
-		const requestPort = url.port.length === 0 ? '80' : url.port;
-		if (url.hostname !== collector.host || requestPort !== String(collector.httpPort)) {
-			return undefined;
-		}
-
-		url.protocol = 'http:';
-		url.hostname = normalizeUrlHostname(collector.targetHost);
-		url.port = String(collector.targetHttpPort);
-		return cloneRequestToUrl(request, url);
-	};
+	return createGatewayObservabilityOtlpRequestMediation({ collector: observability.collector });
 }
 
 function createGatewayVmRequestHook(options: {
@@ -180,7 +166,7 @@ function createGatewayVmRequestHook(options: {
 		rules: options.vmSpec.websocketUpgrades ?? [],
 		runtimeAudience: 'gateway',
 	});
-	const observabilityRewrite = createOpenClawObservabilityCollectorRequestRewrite(options.zone);
+	const observabilityRewrite = createGatewayObservabilityCollectorRequestMediation(options.zone);
 	return async (request: Request): Promise<Request | Response | void> => {
 		const websocketDecision = await websocketGuard(request);
 		if (websocketDecision !== undefined) {
@@ -190,11 +176,11 @@ function createGatewayVmRequestHook(options: {
 	};
 }
 
-function assertOpenClawTcpHostsOverrideDoesNotBypassObservabilityMediation(options: {
+function assertManagedGatewayTcpHostsOverrideDoesNotBypassObservabilityMediation(options: {
 	readonly tcpHostsOverride: Readonly<Record<string, string>> | undefined;
 	readonly zone: GatewayZone;
 }): void {
-	if (options.zone.gateway.type !== 'openclaw' || options.tcpHostsOverride === undefined) {
+	if (!isManagedGatewayZone(options.zone) || options.tcpHostsOverride === undefined) {
 		return;
 	}
 	for (const tcpHostKey of Object.keys(options.tcpHostsOverride)) {
@@ -203,7 +189,7 @@ function assertOpenClawTcpHostsOverrideDoesNotBypassObservabilityMediation(optio
 			tcpHostKey.startsWith(`${observabilityCollectorHost}:`)
 		) {
 			throw new Error(
-				`OpenClaw tcpHostsOverride cannot map observability collector host '${observabilityCollectorHost}'; use mediated OTLP HTTP observability instead.`,
+				`Managed Gateway tcpHostsOverride cannot map observability collector host '${observabilityCollectorHost}'; use mediated OTLP HTTP observability instead.`,
 			);
 		}
 	}
@@ -215,12 +201,12 @@ function assertGatewayVmOwnershipMatchesControlIdentity(options: {
 	readonly zone: GatewayZone;
 }): void {
 	const gatewaySeed = options.vmOwnership.gatewaySeed;
-	if (options.zone.gateway.type !== 'openclaw') {
+	if (!isManagedGatewayZone(options.zone)) {
 		return;
 	}
 	if (options.controlSessionMaterial === undefined) {
 		throw new Error(
-			`OpenClaw zone '${options.zone.id}' requires one shared Gateway and control identity.`,
+			`Managed Gateway zone '${options.zone.id}' requires one shared Gateway and control identity.`,
 		);
 	}
 	if (
@@ -230,25 +216,86 @@ function assertGatewayVmOwnershipMatchesControlIdentity(options: {
 		gatewaySeed.zoneId !== options.controlSessionMaterial.zoneId
 	) {
 		throw new Error(
-			`OpenClaw zone '${options.zone.id}' Gateway ownership identity does not match its control material.`,
+			`Managed Gateway zone '${options.zone.id}' ownership identity does not match its control material.`,
 		);
 	}
 }
 
+type ManagedGatewayZone = GatewayZone & {
+	readonly gateway: Extract<GatewayZone['gateway'], { readonly type: 'hermes' | 'openclaw' }>;
+};
+
+function isManagedGatewayZone(zone: GatewayZone): zone is ManagedGatewayZone {
+	return zone.gateway.type === 'openclaw' || zone.gateway.type === 'hermes';
+}
+
+function frameworkIdentitiesMatch(
+	leftIdentity: GatewayRuntimeFrameworkIdentity,
+	rightIdentity: GatewayRuntimeFrameworkIdentity,
+): boolean {
+	switch (leftIdentity.kind) {
+		case 'openclaw':
+			return rightIdentity.kind === 'openclaw' && leftIdentity.agentId === rightIdentity.agentId;
+		case 'hermes':
+			return (
+				rightIdentity.kind === 'hermes' && leftIdentity.profileName === rightIdentity.profileName
+			);
+	}
+}
+
+function requireConfiguredFrameworkIdentity(options: {
+	readonly agentId: string;
+	readonly zone: ManagedGatewayZone;
+}): GatewayRuntimeFrameworkIdentity {
+	if (options.zone.gateway.type === 'openclaw') {
+		return { agentId: options.agentId, kind: 'openclaw' };
+	}
+	const profileName = options.zone.gateway.profilesByAgent[options.agentId];
+	if (profileName === undefined) {
+		throw new Error(
+			`Gateway control caller context rejected Hermes agent '${options.agentId}' without an authored profile assignment.`,
+		);
+	}
+	return { kind: 'hermes', profileName };
+}
+
 export function validateGatewayControlCallerContextRegistration(options: {
 	readonly agentAuthorityKeys: Readonly<Record<string, string>>;
+	readonly agentProjections: Readonly<Record<string, ManagedAgentProjection>>;
 	readonly callerContextProofKey: string;
 	readonly payload: GatewayControlCallerContextRegisterPayload;
 	readonly zone: GatewayZone;
 }): void {
 	const evidence = options.payload.adapterEvidence;
-	if (options.zone.gateway.type !== 'openclaw') {
-		throw new Error('Gateway control caller context registration requires an OpenClaw zone.');
+	const principal = evidence.principal;
+	if (!isManagedGatewayZone(options.zone)) {
+		throw new Error('Gateway control caller context registration requires a managed Gateway zone.');
 	}
 	const configuredAgentIds = new Set((options.zone.agents ?? []).map((agent) => agent.id));
-	if (configuredAgentIds.size === 0 || !configuredAgentIds.has(evidence.agentId)) {
+	if (configuredAgentIds.size === 0 || !configuredAgentIds.has(principal.agentId)) {
 		throw new Error(
-			`Gateway control caller context rejected undeclared OpenClaw agent '${evidence.agentId}'.`,
+			`Gateway control caller context rejected undeclared managed agent '${principal.agentId}'.`,
+		);
+	}
+	const expectedFrameworkIdentity = requireConfiguredFrameworkIdentity({
+		agentId: principal.agentId,
+		zone: options.zone,
+	});
+	if (!frameworkIdentitiesMatch(principal.frameworkIdentity, expectedFrameworkIdentity)) {
+		throw new Error(
+			`Gateway control caller context rejected mismatched ${options.zone.gateway.type} framework identity for agent '${principal.agentId}'.`,
+		);
+	}
+	const expectedProjection = options.agentProjections[principal.agentId];
+	if (
+		expectedProjection === undefined ||
+		expectedProjection.agentId !== principal.agentId ||
+		!frameworkIdentitiesMatch(expectedProjection.frameworkIdentity, principal.frameworkIdentity) ||
+		expectedProjection.profileAssignmentRevision !== principal.profileAssignmentRevision ||
+		expectedProjection.toolPortalProfileId !== principal.toolPortalProfileId
+	) {
+		throw new Error(
+			`Gateway control caller context rejected principal outside the immutable projection for managed agent '${principal.agentId}'.`,
 		);
 	}
 	if (
@@ -260,19 +307,19 @@ export function validateGatewayControlCallerContextRegistration(options: {
 	) {
 		throw new Error('Gateway control caller context rejected invalid caller-context proof.');
 	}
-	const agentAuthorityKey = options.agentAuthorityKeys[evidence.agentId];
+	const agentAuthorityKey = options.agentAuthorityKeys[principal.agentId];
 	if (agentAuthorityKey === undefined) {
 		throw new Error(
-			`Gateway control caller context rejected missing agent authority for OpenClaw agent '${evidence.agentId}'.`,
+			`Gateway control caller context rejected missing agent authority for managed agent '${principal.agentId}'.`,
 		);
 	}
 	if (evidence.agentAuthority === undefined) {
 		throw new Error(
-			`Gateway control caller context rejected missing agent authority proof for OpenClaw agent '${evidence.agentId}'.`,
+			`Gateway control caller context rejected missing agent authority proof for managed agent '${principal.agentId}'.`,
 		);
 	}
 	if (
-		evidence.agentAuthority.keyId !== evidence.agentId ||
+		evidence.agentAuthority.keyId !== principal.agentId ||
 		!verifyGatewayControlCallerContextProof({
 			proof: evidence.agentAuthority,
 			proofKey: agentAuthorityKey,
@@ -280,37 +327,6 @@ export function validateGatewayControlCallerContextRegistration(options: {
 		})
 	) {
 		throw new Error('Gateway control caller context rejected invalid agent authority proof.');
-	}
-	assertCanonicalOpenClawAgentWorkspaceDir({
-		agentId: evidence.agentId,
-		agentWorkspaceDir: evidence.agentWorkspaceDir,
-		context: 'Gateway control caller context',
-	});
-	const workMountTranslation = translateRuntimePath({
-		inputPath: evidence.workMountDir,
-		mapping: createOpenClawGatewayLeasePathMapping({
-			stateDir: options.zone.gateway.stateDir,
-			zoneFilesDir: options.zone.gateway.zoneFilesDir,
-		}),
-		purpose: 'leaseMount',
-		sourceNamespace: 'openclaw-gateway',
-		targetNamespace: 'controller-host',
-	});
-	if (!workMountTranslation.ok) {
-		throw new Error(
-			`Gateway control caller context rejected invalid OpenClaw workMountDir '${evidence.workMountDir}': ${workMountTranslation.error.message}`,
-		);
-	}
-	const workMountAgentMismatch = findOpenClawLeaseWorkMountAgentMismatch({
-		agentId: evidence.agentId,
-		relativePath: workMountTranslation.value.relativePath,
-		rootId: workMountTranslation.value.rootId,
-		workMountDir: evidence.workMountDir,
-	});
-	if (workMountAgentMismatch !== undefined) {
-		throw new Error(
-			`Gateway control caller context rejected OpenClaw workMountDir '${evidence.workMountDir}': ${workMountAgentMismatch}`,
-		);
 	}
 	if (
 		evidence.purpose === 'tool_portal_controller_host_action' &&
@@ -344,13 +360,22 @@ function verifyGatewayControlCallerContextProof(options: {
 export interface GatewayManagerDependencies extends GatewayImageBuilderDependencies {
 	readonly checkObservabilityStackReadiness?: typeof checkObservabilityStackReadinessDefault;
 	readonly connectGatewayControlSession?: GatewayControlSessionConnector;
+	readonly gatewayRuntimeArtifactLimits?: GatewayRuntimeArtifactLimits;
 	readonly managedVmFactory: ManagedVmFactory;
+	readonly managedVmOwnedDirectories?: ManagedVmOwnedDirectoryCapability;
 	readonly createGatewayControlSessionMaterial?: GatewayControlSessionMaterialFactory;
-	readonly createOpenClawProcessSupervisorPorts?: typeof createManagedVmOpenClawProcessSupervisorPorts;
 	readonly gatewayReadinessMaxAttempts?: number;
 	readonly gatewayReadinessRetryDelayMs?: number;
 	readonly loadGatewayLifecycle?: (type: GatewayZoneConfig['gateway']['type']) => GatewayLifecycle;
-	readonly managedVmKillDependencies?: ManagedVmKillDependencies;
+	readonly managedVmExactProcessTermination: ManagedVmExactProcessTerminationCapability;
+	readonly managedVmTerminationSleep?: (delayMs: number) => Promise<void>;
+	/** Test-only crash-cut seam. Production leaves this unset. The callback runs
+	 * after the real host VM process starts and before its durable identity is
+	 * captured or published. */
+	readonly onManagedVmStartedBeforeIdentityPublication?: (target: {
+		readonly hostPid: number;
+		readonly vmId: string;
+	}) => Promise<void>;
 	// Injected by tests so the gateway record build doesn't shell out to ps
 	// against a fake pid. Production omits this; uses the real default.
 	readonly readProcessIdentity?: (
@@ -361,19 +386,14 @@ export interface GatewayManagerDependencies extends GatewayImageBuilderDependenc
 		material: GatewayControlSessionMaterial,
 	) => Promise<void>;
 	readonly writeGatewayRuntimeRecord?: (
-		stateDirectory: string,
-		record: GatewayRuntimeRecord,
+		target:
+			| import('../controller/durable-state/controller-state-record-paths.js').ControllerManagedGatewayRuntimeRecordTarget
+			| import('../controller/durable-state/controller-state-record-paths.js').ControllerWorkerTaskRuntimeRecordTarget,
+		record: ManagedGatewayRuntimeRecord | WorkerRuntimeRecord,
 	) => Promise<void>;
 }
 
-interface ControllerStartGatewayZoneOptions extends StartGatewayZoneOptions {
-	readonly onOpenClawProcessReliabilityFaultTarget?: (target: {
-		readonly controlSession?: GatewayDisposableControlSessionClient | undefined;
-		readonly gateway: GatewayEpochIdentity;
-		readonly processEpoch: string;
-		readonly reliabilityFaultActuator: OpenClawProcessReliabilityFaultActuator;
-	}) => void;
-}
+interface ControllerStartGatewayZoneOptions extends StartGatewayZoneOptions {}
 
 export interface GatewayZoneStartPreflightResult {
 	readonly image?: ManagedVmImageBuildResult | undefined;
@@ -411,6 +431,14 @@ function stableJson(value: unknown): string {
 	return JSON.stringify(value) ?? 'undefined';
 }
 
+function createAggregateErrorWithCause(options: {
+	readonly cause: unknown;
+	readonly errors: readonly unknown[];
+	readonly message: string;
+}): AggregateError {
+	return new AggregateError(options.errors, options.message, { cause: options.cause });
+}
+
 function mergeRuntimePluginConfigs(
 	base: Readonly<Record<string, Readonly<Record<string, unknown>>>> | undefined,
 	override: Readonly<Record<string, Readonly<Record<string, unknown>>>> | undefined,
@@ -429,16 +457,6 @@ function mergeRuntimePluginConfigs(
 		};
 	}
 	return mergedEntries;
-}
-
-function buildControlSessionRuntimePluginConfigs(options: {
-	readonly material: ReturnType<typeof createGatewayControlSessionMaterial>;
-}): Readonly<Record<string, Readonly<Record<string, unknown>>>> {
-	return {
-		gondolin: {
-			controlSession: buildGatewayControlRuntimePluginConfig(options.material),
-		},
-	};
 }
 
 function buildControlSessionRuntimePrivateEnvironment(options: {
@@ -653,15 +671,192 @@ interface GatewayCommandResult {
 }
 
 const MAX_GATEWAY_LOG_TAIL_CHARACTERS = 16 * 1024;
+const MAX_GATEWAY_PROCESS_IDENTITY_CHARACTERS = 8 * 1024;
+const MAX_GATEWAY_LISTENING_SOCKET_CHARACTERS = 8 * 1024;
+const MANAGED_GATEWAY_STARTUP_DIAGNOSTIC_TIMEOUT_MS = 2_000;
 const GATEWAY_LOG_TAIL_TRUNCATION_MARKER = '[gateway log tail truncated]\n';
+const GATEWAY_PROCESS_IDENTITY_TRUNCATION_MARKER =
+	'[gateway process identity diagnostics truncated]\n';
+const GATEWAY_LISTENING_SOCKET_TRUNCATION_MARKER =
+	'[gateway listening socket diagnostics truncated]\n';
+const onePasswordServiceAccountTokenPattern = /\bops_[A-Za-z0-9._=-]{16,}\b/gu;
+
+const managedGatewayProcessIdentityDiagnosticCommand = [
+	'sh',
+	'-c',
+	[
+		'for process_directory in /proc/[0-9]*; do',
+		'  [ -r "$process_directory/cmdline" ] || continue',
+		'  command_line="$(tr \'\\000\' \' \' < "$process_directory/cmdline" | head -c 2048)"',
+		'  case "$command_line" in',
+		'    *agent-vm-gateway-runtime*) process_role=tool-portal ;;',
+		'    *openclaw*) process_role=openclaw ;;',
+		'    *) continue ;;',
+		'  esac',
+		'  process_name="$(cat "$process_directory/comm" 2>/dev/null || true)"',
+		'  process_parent_id=',
+		'  process_user_id=',
+		"  while IFS=':' read -r status_key status_value; do",
+		'    case "$status_key" in',
+		'      PPid) set -- $status_value; process_parent_id=${1:-unknown} ;;',
+		'      Uid) set -- $status_value; process_user_id=${1:-unknown} ;;',
+		'    esac',
+		'  done < "$process_directory/status"',
+		'  printf \'role=%s pid=%s ppid=%s uid=%s name=%s\\n\' "$process_role" "${process_directory##*/}" "$process_parent_id" "$process_user_id" "$process_name"',
+		'done',
+	].join('\n'),
+] as const;
+
+const managedGatewayListeningSocketDiagnosticCommand = [
+	'sh',
+	'-c',
+	[
+		'for socket_table in /proc/net/tcp /proc/net/tcp6; do',
+		'  [ -r "$socket_table" ] || continue',
+		'  while read -r _ local_address _ socket_state _; do',
+		'    [ "$socket_state" = 0A ] || continue',
+		'    printf \'table=%s local=%s state=LISTEN\\n\' "$socket_table" "$local_address"',
+		'  done < "$socket_table"',
+		'done',
+	].join('\n'),
+] as const;
+
+function boundGatewayDiagnosticSection(options: {
+	readonly maximumCharacters: number;
+	readonly output: string;
+	readonly truncationMarker: string;
+}): string {
+	if (options.output.length <= options.maximumCharacters) {
+		return options.output;
+	}
+	return `${options.truncationMarker}${options.output.slice(
+		-(options.maximumCharacters - options.truncationMarker.length),
+	)}`;
+}
 
 function boundGatewayLogTail(logTail: string): string {
-	if (logTail.length <= MAX_GATEWAY_LOG_TAIL_CHARACTERS) {
-		return logTail;
+	return boundGatewayDiagnosticSection({
+		maximumCharacters: MAX_GATEWAY_LOG_TAIL_CHARACTERS,
+		output: logTail,
+		truncationMarker: GATEWAY_LOG_TAIL_TRUNCATION_MARKER,
+	});
+}
+
+function formatGatewayDiagnosticCommandOutput(result: GatewayCommandResult): string {
+	return [result.stdout.trim(), result.stderr.trim()]
+		.filter((outputChunk) => outputChunk.length > 0)
+		.join('\n');
+}
+
+function scrubGatewayDiagnosticOutput(options: {
+	readonly output: string;
+	readonly sensitiveValues: readonly string[];
+}): string {
+	return redactCredentialText(redactOnePasswordReferences(options.output), {
+		exactValues: options.sensitiveValues,
+	}).replaceAll(onePasswordServiceAccountTokenPattern, '[REDACTED]');
+}
+
+async function readManagedGatewayStartupDiagnosticSection(options: {
+	readonly command: readonly string[];
+	readonly managedVm: ManagedVm;
+	readonly maximumCharacters: number;
+	readonly sensitiveValues: readonly string[];
+	readonly signal: AbortSignal;
+	readonly truncationMarker: string;
+}): Promise<string | undefined> {
+	try {
+		const result = await options.managedVm.exec(options.command, { signal: options.signal });
+		const output = formatGatewayDiagnosticCommandOutput(result);
+		if (output.length === 0) {
+			return undefined;
+		}
+		return boundGatewayDiagnosticSection({
+			maximumCharacters: options.maximumCharacters,
+			output: scrubGatewayDiagnosticOutput({
+				output,
+				sensitiveValues: options.sensitiveValues,
+			}),
+			truncationMarker: options.truncationMarker,
+		});
+	} catch {
+		return undefined;
 	}
-	return `${GATEWAY_LOG_TAIL_TRUNCATION_MARKER}${logTail.slice(
-		-(MAX_GATEWAY_LOG_TAIL_CHARACTERS - GATEWAY_LOG_TAIL_TRUNCATION_MARKER.length),
-	)}`;
+}
+
+async function readManagedGatewayStartupDiagnostics(options: {
+	readonly evidenceFiles?: readonly {
+		readonly label: string;
+		readonly path: string;
+	}[];
+	readonly logFiles: readonly {
+		readonly label: string;
+		readonly path: string;
+	}[];
+	readonly managedVm: ManagedVm;
+	readonly sensitiveValues: readonly string[];
+}): Promise<string | undefined> {
+	const diagnosticSignal = AbortSignal.timeout(MANAGED_GATEWAY_STARTUP_DIAGNOSTIC_TIMEOUT_MS);
+	const diagnosticFileSections = await Promise.all([
+		...options.logFiles.map(async (logFile) => ({
+			label: logFile.label,
+			output: await readManagedGatewayStartupDiagnosticSection({
+				command: ['tail', '-c', String(MAX_GATEWAY_LOG_TAIL_CHARACTERS), '--', logFile.path],
+				managedVm: options.managedVm,
+				maximumCharacters: MAX_GATEWAY_LOG_TAIL_CHARACTERS,
+				sensitiveValues: options.sensitiveValues,
+				signal: diagnosticSignal,
+				truncationMarker: GATEWAY_LOG_TAIL_TRUNCATION_MARKER,
+			}),
+		})),
+		...(options.evidenceFiles ?? []).map(async (evidenceFile) => ({
+			label: evidenceFile.label,
+			output: await readManagedGatewayStartupDiagnosticSection({
+				command: [
+					'sh',
+					'-c',
+					'if [ -f "$1" ]; then cat -- "$1"; fi',
+					'managed-gateway-diagnostic',
+					evidenceFile.path,
+				],
+				managedVm: options.managedVm,
+				maximumCharacters: MAX_GATEWAY_LOG_TAIL_CHARACTERS,
+				sensitiveValues: options.sensitiveValues,
+				signal: diagnosticSignal,
+				truncationMarker: GATEWAY_LOG_TAIL_TRUNCATION_MARKER,
+			}),
+		})),
+	]);
+	const [frameworkProcessIdentities, listeningTcpSockets] = await Promise.all([
+		readManagedGatewayStartupDiagnosticSection({
+			command: managedGatewayProcessIdentityDiagnosticCommand,
+			managedVm: options.managedVm,
+			maximumCharacters: MAX_GATEWAY_PROCESS_IDENTITY_CHARACTERS,
+			sensitiveValues: options.sensitiveValues,
+			signal: diagnosticSignal,
+			truncationMarker: GATEWAY_PROCESS_IDENTITY_TRUNCATION_MARKER,
+		}),
+		readManagedGatewayStartupDiagnosticSection({
+			command: managedGatewayListeningSocketDiagnosticCommand,
+			managedVm: options.managedVm,
+			maximumCharacters: MAX_GATEWAY_LISTENING_SOCKET_CHARACTERS,
+			sensitiveValues: options.sensitiveValues,
+			signal: diagnosticSignal,
+			truncationMarker: GATEWAY_LISTENING_SOCKET_TRUNCATION_MARKER,
+		}),
+	]);
+	const diagnosticSections = [
+		...diagnosticFileSections.map(({ label, output }) =>
+			output === undefined ? undefined : `${label}:\n${output}`,
+		),
+		frameworkProcessIdentities === undefined
+			? undefined
+			: `Framework process identities:\n${frameworkProcessIdentities}`,
+		listeningTcpSockets === undefined
+			? undefined
+			: `Listening TCP sockets:\n${listeningTcpSockets}`,
+	].filter((section): section is string => section !== undefined);
+	return diagnosticSections.length === 0 ? undefined : diagnosticSections.join('\n');
 }
 
 function selectGatewayImageProfile(options: {
@@ -783,46 +978,127 @@ export async function waitForGatewayServiceHealth(options: {
 	});
 }
 
+interface ConfiguredRuntimeMcpPortalLifecycleMaterial {
+	readonly egressHosts: GatewayZoneConfig['egressHosts'];
+	readonly runtimeEnvironment: NonNullable<GatewayZoneConfig['runtimeEnvironment']>;
+	readonly runtimeMediatedSecrets: NonNullable<GatewayZoneConfig['runtimeMediatedSecrets']>;
+}
+
+interface ManagedGatewayMediatedSecretBootProjection {
+	readonly descriptors: readonly ManagedVmMediatedSecretDescriptor[];
+	readonly frameworkEnvironment: Readonly<Record<string, string>>;
+	readonly toolPortalEnvironment: Readonly<Record<string, string>>;
+}
+
+function createManagedGatewayMediatedSecretBootProjection(props: {
+	readonly mediatedSecrets: Readonly<
+		Record<string, { readonly hosts: readonly string[]; readonly value: string }>
+	>;
+	readonly toolPortalMediatedSecretNames: ReadonlySet<string>;
+}): ManagedGatewayMediatedSecretBootProjection {
+	const descriptors: ManagedVmMediatedSecretDescriptor[] = [];
+	const frameworkEnvironment: Record<string, string> = {};
+	const toolPortalEnvironment: Record<string, string> = {};
+	const generatedPlaceholders = new Set<string>();
+
+	for (const [environmentVariable, mediatedSecret] of Object.entries(props.mediatedSecrets)) {
+		let guestPlaceholder: string;
+		do {
+			guestPlaceholder = `GONDOLIN_SECRET_${randomBytes(24).toString('hex')}`;
+		} while (
+			generatedPlaceholders.has(guestPlaceholder) ||
+			guestPlaceholder === mediatedSecret.value
+		);
+		generatedPlaceholders.add(guestPlaceholder);
+		descriptors.push({
+			allowedHosts: mediatedSecret.hosts,
+			environmentVariable,
+			guestPlaceholder,
+			value: mediatedSecret.value,
+		});
+		if (props.toolPortalMediatedSecretNames.has(environmentVariable)) {
+			toolPortalEnvironment[environmentVariable] = guestPlaceholder;
+		} else {
+			frameworkEnvironment[environmentVariable] = guestPlaceholder;
+		}
+	}
+
+	return Object.freeze({
+		descriptors: Object.freeze(descriptors),
+		frameworkEnvironment: Object.freeze(frameworkEnvironment),
+		toolPortalEnvironment: Object.freeze(toolPortalEnvironment),
+	});
+}
+
+type RuntimeMcpPortalMaterialization =
+	| { readonly kind: 'disabled' }
+	| {
+			readonly kind: 'configured';
+			readonly lifecycle: ConfiguredRuntimeMcpPortalLifecycleMaterial;
+			readonly mcpConfig: unknown;
+			readonly mode: 'preflight';
+	  }
+	| {
+			readonly kind: 'configured';
+			readonly lifecycle: ConfiguredRuntimeMcpPortalLifecycleMaterial;
+			readonly mcpConfig: unknown;
+			readonly mode: 'runtime';
+			readonly portalAdmission: GatewayRuntimePortalAdmissionMaterial;
+	  };
+
+function applyRuntimeMcpPortalMaterialization(props: {
+	readonly lifecycleZone: GatewayZoneConfig;
+	readonly materialization: RuntimeMcpPortalMaterialization;
+}): GatewayZoneConfig {
+	if (props.materialization.kind === 'disabled') {
+		return props.lifecycleZone;
+	}
+	return {
+		...props.lifecycleZone,
+		...props.materialization.lifecycle,
+	};
+}
+
 async function buildRuntimeMcpPortalMaterialization(props: {
 	readonly cacheDir: string;
+	readonly controlSessionMaterial: GatewayControlSessionMaterial | undefined;
+	readonly mode: 'preflight' | 'write';
 	readonly secretResolver: StartGatewayZoneOptions['secretResolver'];
-	readonly writeEffectiveConfig?: boolean | undefined;
 	readonly zone: GatewayZone;
-}): Promise<
-	Partial<
-		Pick<
-			GatewayZoneConfig,
-			'egressHosts' | 'runtimeEnvironment' | 'runtimeMediatedSecrets' | 'runtimePluginConfigs'
-		>
-	>
-> {
+}): Promise<RuntimeMcpPortalMaterialization> {
 	const zone = props.zone;
-	if (zone.gateway.type !== 'openclaw' || zone.toolPortal === undefined) {
-		return {};
+	if (!isManagedGatewayZone(zone) || zone.toolPortal === undefined) {
+		return { kind: 'disabled' };
 	}
-	const allowedRawEnvSecretNames = [
-		'OPENCLAW_GATEWAY_TOKEN',
-		...(zone.gateway.rawEnvSecrets ?? []),
-	];
+	if (props.mode === 'write' && props.controlSessionMaterial === undefined) {
+		throw new Error(
+			`Managed Gateway zone '${zone.id}' requires controller-issued identity material before Tool Portal admission materialization.`,
+		);
+	}
+	const allowedRawEnvSecretNames =
+		zone.gateway.type === 'openclaw'
+			? ['OPENCLAW_GATEWAY_TOKEN', ...(zone.gateway.rawEnvSecrets ?? [])]
+			: [];
 	const effectiveHostConfigDir = path.join(
 		props.cacheDir,
 		'gateways',
 		zone.id,
 		'tool-portal-effective',
 	);
-	const effectiveVmConfigDir = '/home/openclaw/.openclaw/cache/tool-portal-effective';
 	const buildEffectiveConfig =
-		props.writeEffectiveConfig === false
-			? preflightMcpPortalEffectiveConfig
-			: writeMcpPortalEffectiveConfig;
+		props.mode === 'preflight' ? preflightMcpPortalEffectiveConfig : writeMcpPortalEffectiveConfig;
 	const materialization = await buildEffectiveConfig({
+		approvalAccessConfigured: zone.approvalAccess !== undefined,
 		authoredConfigDir: zone.toolPortal.configDir,
 		effectiveHostConfigDir,
-		effectiveVmConfigDir,
 		allowedRawEnvSecretNames,
 		declaredAgentIds: (zone.agents ?? []).map((agent) => agent.id),
-		includeZoneGitControllerHostAction: zone.gateway.zoneGit !== undefined,
 		secretResolver: props.secretResolver,
+		workspaceGitPushAgentEligibility: {
+			eligibleAgentIds: (zone.agents ?? [])
+				.filter((agent) => agent.workspaceGit?.mode === 'remote')
+				.map((agent) => agent.id),
+		},
 		zoneId: zone.id,
 	});
 	const declaredGatewayHosts = new Set(
@@ -833,13 +1109,53 @@ async function buildRuntimeMcpPortalMaterialization(props: {
 	const generatedGatewayEgressHosts = materialization.requiredGatewayEgressHosts
 		.filter((host) => !declaredGatewayHosts.has(host))
 		.map((host) => ({ audience: 'gateway' as const, host }));
-	return {
+	const configuredLifecycle = {
 		egressHosts: [...zone.egressHosts, ...generatedGatewayEgressHosts],
 		runtimeEnvironment: materialization.runtimeEnvironment,
 		runtimeMediatedSecrets: materialization.runtimeMediatedSecrets,
-		runtimePluginConfigs: {
-			gondolin: { toolPortal: materialization.pluginConfig },
-		},
+	} satisfies ConfiguredRuntimeMcpPortalLifecycleMaterial;
+	if (props.mode === 'preflight') {
+		return {
+			kind: 'configured',
+			lifecycle: configuredLifecycle,
+			mcpConfig: materialization.effectiveMcpConfig,
+			mode: 'preflight',
+		};
+	}
+	const controlSessionMaterial = props.controlSessionMaterial;
+	if (controlSessionMaterial === undefined) {
+		throw new Error(
+			`Managed Gateway zone '${zone.id}' requires controller-issued identity material before Tool Portal admission materialization.`,
+		);
+	}
+	const portalAdmission = materializeGatewayRuntimePortalAdmission({
+		agentProjections: buildManagedFrameworkAgentProjectionInputs(
+			zone.gateway.type === 'openclaw'
+				? {
+						configuredAgents: zone.agents ?? [],
+						frameworkKind: 'openclaw',
+						toolPortalAgents: materialization.effectiveToolPortalConfig.agents,
+					}
+				: {
+						configuredAgents: zone.agents ?? [],
+						frameworkKind: 'hermes',
+						profilesByAgent: zone.gateway.profilesByAgent,
+						toolPortalAgents: materialization.effectiveToolPortalConfig.agents,
+					},
+		),
+		effectivePlan: materialization,
+		surfaceEligibilityByProfile: zone.toolPortal.surfaceEligibilityByProfile,
+	});
+	await writeGatewayRuntimePortalAdmissionFile({
+		directoryPath: effectiveHostConfigDir,
+		material: portalAdmission,
+	});
+	return {
+		kind: 'configured',
+		lifecycle: configuredLifecycle,
+		mcpConfig: materialization.effectiveMcpConfig,
+		mode: 'runtime',
+		portalAdmission,
 	};
 }
 
@@ -907,28 +1223,27 @@ async function preflightGatewayZoneStartPrerequisites(
 		hostObservability: options.systemConfig.host.observability,
 	});
 	const controlSessionMaterial =
-		zone.gateway.type === 'openclaw' && options.controlSession !== undefined
+		isManagedGatewayZone(zone) && options.controlSession !== undefined
 			? createGatewayControlSessionMaterial({
 					agentIds: (zone.agents ?? []).map((agent) => agent.id),
 					controllerEpoch: options.controlSession.controllerEpoch,
 					zoneId: zone.id,
 				})
 			: undefined;
-	const controlSessionRuntimePluginConfigs =
-		controlSessionMaterial === undefined
-			? undefined
-			: buildControlSessionRuntimePluginConfigs({ material: controlSessionMaterial });
 	const controlSessionRuntimePrivateEnvironment =
 		controlSessionMaterial === undefined
 			? undefined
 			: buildControlSessionRuntimePrivateEnvironment({ material: controlSessionMaterial });
-	const lifecycle = (dependencies.loadGatewayLifecycle ?? loadGatewayLifecycle)(zone.gateway.type);
+	const lifecycle: GatewayLifecycle = (dependencies.loadGatewayLifecycle ?? loadGatewayLifecycle)(
+		zone.gateway.type,
+	);
 	const cachingSecretResolver = createPreflightCachingSecretResolver(options.secretResolver);
 	const [toolPortalMaterialization] = await Promise.all([
 		buildRuntimeMcpPortalMaterialization({
 			cacheDir: options.systemConfig.cacheDir,
+			controlSessionMaterial,
+			mode: 'preflight',
 			secretResolver: cachingSecretResolver.resolver,
-			writeEffectiveConfig: false,
 			zone,
 		}),
 		resolveZoneSecrets({
@@ -938,17 +1253,13 @@ async function preflightGatewayZoneStartPrerequisites(
 			zoneId: zone.id,
 		}),
 	]);
-	const runtimePluginConfigs = mergeRuntimePluginConfigs(
-		mergeRuntimePluginConfigs(
-			toolPortalMaterialization.runtimePluginConfigs,
-			options.runtimePluginConfigs,
-		),
-		controlSessionRuntimePluginConfigs,
-	);
+	const lifecycleZoneWithToolPortal = applyRuntimeMcpPortalMaterialization({
+		lifecycleZone: mappedLifecycleZone,
+		materialization: toolPortalMaterialization,
+	});
+	const runtimePluginConfigs = options.runtimePluginConfigs;
 	const lifecycleZone = {
-		...mappedLifecycleZone,
-		...toolPortalMaterialization,
-		egressHosts: toolPortalMaterialization.egressHosts ?? mappedLifecycleZone.egressHosts,
+		...lifecycleZoneWithToolPortal,
 		...(options.gitReadAllowlistRepos === undefined
 			? {}
 			: { gitReadAllowlistRepos: options.gitReadAllowlistRepos }),
@@ -956,12 +1267,13 @@ async function preflightGatewayZoneStartPrerequisites(
 			? {}
 			: {
 					runtimeEnvironment: {
-						...toolPortalMaterialization.runtimeEnvironment,
+						...lifecycleZoneWithToolPortal.runtimeEnvironment,
 						...options.runtimeEnvironment,
 					},
 				}),
 		...(runtimePluginConfigs === undefined ? {} : { runtimePluginConfigs }),
-		...(controlSessionRuntimePrivateEnvironment === undefined
+		...(controlSessionRuntimePrivateEnvironment === undefined ||
+		lifecycle.executionModel === 'managed-gateway'
 			? {}
 			: { runtimePrivateEnvironment: controlSessionRuntimePrivateEnvironment }),
 	};
@@ -983,17 +1295,12 @@ export async function startGatewayZoneForController(
 	options: ControllerStartGatewayZoneOptions,
 	dependencies: GatewayManagerDependencies,
 ): Promise<GatewayZoneStartResult> {
-	return await startGatewayZoneImplementation(
-		options,
-		dependencies,
-		options.onOpenClawProcessReliabilityFaultTarget,
-	);
+	return await startGatewayZoneImplementation(options, dependencies);
 }
 
 async function startGatewayZoneImplementation(
 	options: StartGatewayZoneOptions,
 	dependencies: GatewayManagerDependencies,
-	onOpenClawProcessReliabilityFaultTarget?: ControllerStartGatewayZoneOptions['onOpenClawProcessReliabilityFaultTarget'],
 ): Promise<GatewayZoneStartResult> {
 	const runTaskStep =
 		options.runTask ?? (async (_title: string, fn: () => Promise<void>) => await fn());
@@ -1002,7 +1309,7 @@ async function startGatewayZoneImplementation(
 		hostObservability: options.systemConfig.host.observability,
 	});
 	const controlSessionMaterial =
-		zone.gateway.type === 'openclaw' && options.controlSession !== undefined
+		isManagedGatewayZone(zone) && options.controlSession !== undefined
 			? (dependencies.createGatewayControlSessionMaterial ?? createGatewayControlSessionMaterial)({
 					agentIds: (zone.agents ?? []).map((agent) => agent.id),
 					controllerEpoch: options.controlSession.controllerEpoch,
@@ -1027,7 +1334,9 @@ async function startGatewayZoneImplementation(
 			);
 		}
 	};
-	const lifecycle = (dependencies.loadGatewayLifecycle ?? loadGatewayLifecycle)(zone.gateway.type);
+	const lifecycle: GatewayLifecycle = (dependencies.loadGatewayLifecycle ?? loadGatewayLifecycle)(
+		zone.gateway.type,
+	);
 
 	// Phase A: prove standalone Worker ownership before doing any other startup work.
 	if (options.observabilityStartupCheck !== 'skip') {
@@ -1051,30 +1360,19 @@ async function startGatewayZoneImplementation(
 	);
 	const startupSecretResolver = startupPreflight.secretResolver;
 
-	// Phase D: collect startup artifacts in parallel.
+	// Phase D: prove read-only and self-contained startup prerequisites in parallel.
 	//
-	// All four branches operate on disjoint host paths. Secret work is shared
+	// The three branches operate on disjoint resources. Secret work is shared
 	// through the preflight cache so overlapping refs await one in-flight
 	// underlying resolution:
-	//   - mcpPortalMaterialization writes $cacheDir/gateways/$zoneId/tool-portal-effective/
 	//   - assertions reads $zone.gateway.config (pure validation)
 	//   - resolveZoneSecrets reads zone.secrets
 	//   - image is the prebuilt Phase B image whenever protected preflight ran
 	//
-	// mcpPortalMaterialization and resolveZoneSecrets both call
-	// secretResolver.resolveAll concurrently. The
-	// @1password/sdk JS client is documented in its source to be concurrency-
-	// safe on a single Client instance (SharedCore WASM module handles
-	// concurrent invocations). The op-CLI fallback layer is intentionally
-	// two-tier only — SDK → op inject — with no further serial `op read`
-	// tier; see packages/secret-management/src/onepassword-secret-resolver.ts
-	// for the rationale (the previous third tier reintroduced a documented
-	// concurrent `op read` hazard at the outer-call layer).
-	const mcpPortalMaterializationPromise = buildRuntimeMcpPortalMaterialization({
-		cacheDir: options.systemConfig.cacheDir,
-		secretResolver: startupSecretResolver,
-		zone,
-	});
+	// Mutating Tool Portal materialization intentionally starts only after this
+	// group succeeds. If image preparation or validation fails, no writer may
+	// continue beneath a cache root that the caller is now free to tear down or
+	// reuse for a retry.
 	const assertionsPromise =
 		zone.gateway.type === 'openclaw'
 			? runTaskStep('Validating OpenClaw Tool VM requirements', async () => {
@@ -1117,37 +1415,43 @@ async function startGatewayZoneImplementation(
 	//   - Later phases create live QEMU resources and must keep narrower,
 	//     sequential cleanup rules.
 	//
-	// Cost of fail-fast: if multiple branches reject simultaneously, the
+	// Cost of fail-fast: if multiple prerequisites reject simultaneously, the
 	// other reasons are lost (only the first reaches the caller). Background
-	// completion of the other branches is harmless — no Phase B branch
-	// produces a host-visible resource that needs cleanup.
-	const [toolPortalMaterialization, , resolvedSecrets, image] = await Promise.all([
-		mcpPortalMaterializationPromise,
+	// completion of the other prerequisite branches is harmless because none
+	// writes Tool Portal runtime state.
+	const [, resolvedSecrets, image] = await Promise.all([
 		assertionsPromise,
 		resolvedSecretsPromise,
 		imagePromise,
 	]);
-	const {
-		runtimePrivateEnvironment: mappedRuntimePrivateEnvironment,
-		runtimePluginConfigs: mappedRuntimePluginConfigs,
-		...mappedLifecycleZoneBase
-	} = mappedLifecycleZone;
-	const baseRuntimePluginConfigs = mergeRuntimePluginConfigs(
-		mergeRuntimePluginConfigs(
-			mappedRuntimePluginConfigs,
-			toolPortalMaterialization.runtimePluginConfigs,
-		),
-		options.runtimePluginConfigs,
+	const toolPortalMaterialization = await runTaskWithResult(
+		runTaskStep,
+		'Materializing Tool Portal runtime',
+		async () =>
+			await buildRuntimeMcpPortalMaterialization({
+				cacheDir: options.systemConfig.cacheDir,
+				controlSessionMaterial,
+				mode: 'write',
+				secretResolver: startupSecretResolver,
+				zone,
+			}),
 	);
+	const mappedLifecycleZoneWithToolPortal = applyRuntimeMcpPortalMaterialization({
+		lifecycleZone: mappedLifecycleZone,
+		materialization: toolPortalMaterialization,
+	});
+	const {
+		runtimeEnvironment: mappedRuntimeEnvironment,
+		runtimePrivateEnvironment: mappedRuntimePrivateEnvironment,
+		...mappedLifecycleZoneBase
+	} = mappedLifecycleZoneWithToolPortal;
+	const baseRuntimePluginConfigs = options.runtimePluginConfigs;
 	const buildLifecycleZoneForControlMaterial = (
 		material: GatewayControlSessionMaterial | undefined,
 	): GatewayZoneConfig => {
-		const runtimePluginConfigs = mergeRuntimePluginConfigs(
-			baseRuntimePluginConfigs,
-			material === undefined ? undefined : buildControlSessionRuntimePluginConfigs({ material }),
-		);
+		const runtimePluginConfigs = mergeRuntimePluginConfigs(baseRuntimePluginConfigs, undefined);
 		const runtimePrivateEnvironment =
-			material === undefined
+			material === undefined || lifecycle.executionModel === 'managed-gateway'
 				? mappedRuntimePrivateEnvironment
 				: {
 						...mappedRuntimePrivateEnvironment,
@@ -1155,16 +1459,14 @@ async function startGatewayZoneImplementation(
 					};
 		return {
 			...mappedLifecycleZoneBase,
-			...toolPortalMaterialization,
-			egressHosts: toolPortalMaterialization.egressHosts ?? mappedLifecycleZone.egressHosts,
 			...(options.gitReadAllowlistRepos === undefined
 				? {}
 				: { gitReadAllowlistRepos: options.gitReadAllowlistRepos }),
-			...(options.runtimeEnvironment === undefined
+			...(mappedRuntimeEnvironment === undefined && options.runtimeEnvironment === undefined
 				? {}
 				: {
 						runtimeEnvironment: {
-							...toolPortalMaterialization.runtimeEnvironment,
+							...mappedRuntimeEnvironment,
 							...options.runtimeEnvironment,
 						},
 					}),
@@ -1174,12 +1476,34 @@ async function startGatewayZoneImplementation(
 	};
 	const lifecycleZone = buildLifecycleZoneForControlMaterial(controlSessionMaterial);
 	await fs.mkdir(zone.gateway.stateDir, { recursive: true });
-	if (zone.gateway.type === 'openclaw') {
+	if (isManagedGatewayZone(zone)) {
 		await fs.mkdir(zone.gateway.zoneFilesDir, { recursive: true });
+		if (lifecycle.executionModel === 'managed-gateway') {
+			const agentIds = (zone.agents ?? []).map((agent) => agent.id);
+			await materializeManagedAgentRootStorage({
+				agentIds,
+				controllerStateDir: options.systemConfig.controllerStateDir,
+				stateDir: zone.gateway.stateDir,
+				zoneFilesDir: zone.gateway.zoneFilesDir,
+			});
+			await fs.mkdir(path.join(options.systemConfig.runtimeDir, 'zones', zone.id), {
+				mode: 0o700,
+				recursive: true,
+			});
+			await Promise.all(
+				agentIds.map(async (agentId): Promise<void> => {
+					await materializeManagedAgentGitDirectoryRoot({
+						agentId,
+						runtimeDir: options.systemConfig.runtimeDir,
+						zoneId: zone.id,
+					});
+				}),
+			);
+		}
 	}
 	const gatewayCacheDir = path.join(options.systemConfig.cacheDir, 'gateways', zone.id);
 	await fs.mkdir(gatewayCacheDir, { recursive: true });
-	if (zone.gateway.type === 'openclaw') {
+	if (isManagedGatewayZone(zone)) {
 		const logDir = path.join(options.systemConfig.runtimeDir, 'zones', zone.id, 'logs');
 		await fs.mkdir(logDir, { recursive: true, mode: 0o700 });
 		await fs.chmod(logDir, 0o700);
@@ -1193,12 +1517,21 @@ async function startGatewayZoneImplementation(
 		tcpPool: options.systemConfig.tcpPool,
 		zone: lifecycleZone,
 	});
-	const processSpec = lifecycle.buildProcessSpec(lifecycleZone, resolvedSecrets);
+	const managedGatewayMediatedSecretBootProjection =
+		lifecycle.executionModel === 'managed-gateway' &&
+		toolPortalMaterialization.kind === 'configured'
+			? createManagedGatewayMediatedSecretBootProjection({
+					mediatedSecrets: vmSpec.mediatedSecrets,
+					toolPortalMediatedSecretNames: new Set(
+						Object.keys(toolPortalMaterialization.lifecycle.runtimeMediatedSecrets),
+					),
+				})
+			: undefined;
 	const environment = {
 		...vmSpec.environment,
 		...options.environmentOverride,
 	};
-	assertOpenClawTcpHostsOverrideDoesNotBypassObservabilityMediation({
+	assertManagedGatewayTcpHostsOverrideDoesNotBypassObservabilityMediation({
 		tcpHostsOverride: options.tcpHostsOverride,
 		zone,
 	});
@@ -1210,12 +1543,37 @@ async function startGatewayZoneImplementation(
 		...vmSpec.mounts,
 		...options.vfsMountsOverride,
 	};
-	// Phase E: write host state before creating a new VM. This is deliberately
-	// sequential: if the final write fails after orphan cleanup, startup aborts
-	// without creating a second gateway VM that then needs cleanup.
-	await runTaskStep('Preparing host state', async () => {
-		await lifecycle.prepareHostState?.(lifecycleZone, startupSecretResolver);
-	});
+	if (lifecycle.executionModel === 'managed-gateway') {
+		if (
+			toolPortalMaterialization.kind !== 'configured' ||
+			toolPortalMaterialization.mode !== 'runtime'
+		) {
+			throw new Error(
+				`Managed Gateway zone '${zone.id}' requires validated Tool Portal admission material.`,
+			);
+		}
+		if (controlSessionMaterial === undefined) {
+			throw new Error(
+				`Managed Gateway zone '${zone.id}' requires controller-issued control session material.`,
+			);
+		}
+		if (dependencies.managedVmOwnedDirectories === undefined) {
+			throw new Error(
+				`Managed Gateway zone '${zone.id}' requires the managed VM owned-directory capability.`,
+			);
+		}
+		if (dependencies.gatewayRuntimeArtifactLimits === undefined) {
+			throw new Error(
+				`Managed Gateway zone '${zone.id}' requires explicit Gateway Runtime artifact limits.`,
+			);
+		}
+	} else {
+		// Direct Worker host state remains fully prepared before VM ownership is
+		// reserved and before any guest process command can run.
+		await runTaskStep('Preparing host state', async () => {
+			await lifecycle.prepareHostState?.(lifecycleZone, startupSecretResolver);
+		});
+	}
 	const vmOwnership = await runTaskWithResult(
 		runTaskStep,
 		'Reserving gateway VM ownership',
@@ -1229,7 +1587,7 @@ async function startGatewayZoneImplementation(
 								generationId: controlSessionMaterial.generationId,
 							},
 						}),
-				kind: zone.gateway.type === 'openclaw' ? 'gateway-epoch' : 'standalone',
+				kind: lifecycle.executionModel === 'managed-gateway' ? 'gateway-epoch' : 'standalone',
 				sessionLabel: vmSpec.sessionLabel,
 				zoneId: zone.id,
 			}),
@@ -1239,292 +1597,683 @@ async function startGatewayZoneImplementation(
 		vmOwnership,
 		zone,
 	});
-	let exactGatewayVfsMounts = vfsMounts;
-	let openClawProcessSupervisorStateMount:
-		| { readonly guestPath: string; readonly hostPath: string }
-		| undefined;
-	if (zone.gateway.type === 'openclaw') {
-		const supervisorStateMount = resolveOpenClawProcessSupervisorStateMount({
-			gatewaySeed: vmOwnership.gatewaySeed,
-			runtimeDirectory: options.systemConfig.runtimeDir,
-		});
-		await fs.mkdir(supervisorStateMount.hostPath, { mode: 0o700, recursive: true });
-		await fs.chmod(supervisorStateMount.hostPath, 0o700);
-		openClawProcessSupervisorStateMount = supervisorStateMount;
-		exactGatewayVfsMounts = {
-			...vfsMounts,
-			[supervisorStateMount.guestPath]: {
-				access: 'read-write',
-				hostPath: supervisorStateMount.hostPath,
-				kind: 'host-directory',
-			},
-		};
-	}
-	let pendingCreateContainment: Promise<void> | undefined;
-	const createManagedVmPromise = runTaskWithResult(
-		runTaskStep,
-		'Booting gateway VM',
-		async () =>
-			await dependencies.managedVmFactory.createManagedVm({
-				allowedHosts: vmSpec.allowedHosts,
-				environment,
-				imageReference: image.imageReference,
-				mediatedSecrets: Object.entries(vmSpec.mediatedSecrets).map(
-					([environmentVariable, secret]) => ({
-						allowedHosts: secret.hosts,
-						environmentVariable,
-						value: secret.value,
-					}),
-				),
-				mediation: {
-					onRequest: createGatewayVmRequestHook({ vmSpec, zone: lifecycleZone }),
+	const createManagedVmForMounts = async (
+		mounts: Parameters<ManagedVmFactory['createManagedVm']>[0]['mounts'],
+		cleanupUnattachedResources: () => Promise<void>,
+	): Promise<ManagedVm> => {
+		let pendingCreateContainment: Promise<void> | undefined;
+		const createManagedVmPromise = runTaskWithResult(
+			runTaskStep,
+			'Booting gateway VM',
+			async () =>
+				await dependencies.managedVmFactory.createManagedVm({
+					allowedHosts: vmSpec.allowedHosts,
+					environment,
+					imageReference: image.imageReference,
+					mediatedSecrets:
+						managedGatewayMediatedSecretBootProjection?.descriptors ??
+						Object.entries(vmSpec.mediatedSecrets).map(([environmentVariable, secret]) => ({
+							allowedHosts: secret.hosts,
+							environmentVariable,
+							value: secret.value,
+						})),
+					mediation: {
+						onRequest: createGatewayVmRequestHook({ vmSpec, zone: lifecycleZone }),
+					},
+					mounts,
+					resources: {
+						cpuCount: zone.gateway.cpus,
+						memory: zone.gateway.memory,
+					},
+					rootfsMode: vmSpec.rootfsMode,
+					...(vmSpec.runtimeRootfsSize ? { runtimeRootfsSize: vmSpec.runtimeRootfsSize } : {}),
+					sessionLabel: vmSpec.sessionLabel,
+					...(vmSpec.sshEgress ? { sshEgress: vmSpec.sshEgress } : {}),
+					tcpHosts: Object.entries(tcpHosts).map(([guestHost, target]) => ({ guestHost, target })),
+				}),
+		);
+		if (options.onPendingVmCreation !== undefined) {
+			options.onPendingVmCreation({
+				contain(): Promise<void> {
+					pendingCreateContainment ??= vmOwnership.containPendingCreate({
+						closeLateCreatedVm: async (lateCreatedVm) => await lateCreatedVm.close(),
+						pendingCreate: createManagedVmPromise,
+					});
+					void pendingCreateContainment.catch(() => undefined);
+					return pendingCreateContainment;
 				},
-				mounts: exactGatewayVfsMounts,
-				resources: {
-					cpuCount: zone.gateway.cpus,
-					memory: zone.gateway.memory,
-				},
-				rootfsMode: vmSpec.rootfsMode,
-				...(vmSpec.runtimeRootfsSize ? { runtimeRootfsSize: vmSpec.runtimeRootfsSize } : {}),
-				sessionLabel: vmSpec.sessionLabel,
-				...(vmSpec.sshEgress ? { sshEgress: vmSpec.sshEgress } : {}),
-				tcpHosts: Object.entries(tcpHosts).map(([guestHost, target]) => ({ guestHost, target })),
-			}),
-	);
-	if (options.onPendingVmCreation !== undefined) {
-		options.onPendingVmCreation({
-			contain(): Promise<void> {
-				pendingCreateContainment ??= vmOwnership.containPendingCreate({
-					closeLateCreatedVm: async (lateCreatedVm) => await lateCreatedVm.close(),
-					pendingCreate: createManagedVmPromise,
-				});
-				void pendingCreateContainment.catch(() => undefined);
-				return pendingCreateContainment;
-			},
-		});
-	}
-	let managedVm: ManagedVm;
-	try {
-		managedVm = await createManagedVmPromise;
-		if (pendingCreateContainment !== undefined) {
-			await pendingCreateContainment;
-			throw new Error(`Pending Gateway VM creation was contained for zone '${zone.id}'.`);
+			});
 		}
-	} catch (createError) {
-		if (pendingCreateContainment !== undefined) {
-			await pendingCreateContainment;
+		try {
+			const managedVm = await createManagedVmPromise;
+			if (pendingCreateContainment !== undefined) {
+				await pendingCreateContainment;
+				throw new Error(`Pending Gateway VM creation was contained for zone '${zone.id}'.`);
+			}
+			return managedVm;
+		} catch (createError) {
+			try {
+				await vmOwnership.abandonUnattachedGatewaySeedAfter(async () => {
+					if (pendingCreateContainment !== undefined) {
+						await pendingCreateContainment;
+					}
+					await cleanupUnattachedResources();
+				});
+			} catch (cleanupError: unknown) {
+				throw createAggregateErrorWithCause({
+					cause: cleanupError,
+					errors: [createError, cleanupError],
+					message: `Gateway VM creation failed for zone '${zone.id}' and unattached cleanup did not complete.`,
+				});
+			}
 			throw createError;
 		}
-		throw createError;
-	}
-	let gatewayIdentity: GatewayEpochIdentity;
-	let startupRuntimeRecord: GatewayRuntimeRecord | undefined;
-	let startupProcessTarget: ManagedVmProcessTarget | undefined;
-	let gatewayIngressAccess: Awaited<ReturnType<ManagedVm['enableIngress']>> | undefined;
-	let gatewayIngressClosePromise: Promise<void> | undefined;
-	let gatewayTerminationPromise: Promise<void> | undefined;
-	const managedVmKillDependencies = dependencies.managedVmKillDependencies ?? {
-		isProcessAlive,
-		killProcess,
-		readProcessCommand,
-		readProcessIdentity,
-		sleep,
 	};
-	const captureGatewayProcessTarget = async (): Promise<ManagedVmProcessTarget> => {
-		const hostPid = managedVm.getHostProcessId();
-		if (hostPid === null || !Number.isInteger(hostPid) || hostPid <= 0) {
-			throw new Error(
-				`Gateway VM '${managedVm.id}' does not expose a valid live runner pid for controller-owned cleanup.`,
+	const managedVmTerminationSleep = dependencies.managedVmTerminationSleep ?? sleep;
+
+	if (lifecycle.executionModel === 'direct-process') {
+		if (options.runtimeRecordTarget.kind !== 'controller-worker-task-runtime-record') {
+			throw new Error(`Worker zone '${zone.id}' requires a Worker task runtime record target.`);
+		}
+		const workerRuntimeRecordTarget = options.runtimeRecordTarget;
+		const processSpec = lifecycle.buildProcessSpec(lifecycleZone, resolvedSecrets);
+		const managedVm = await createManagedVmForMounts(vfsMounts, async () => {});
+		let gatewayIdentity: ReturnType<typeof vmOwnership.attachGatewayVm>;
+		try {
+			gatewayIdentity = vmOwnership.attachGatewayVm(managedVm.id);
+		} catch (error: unknown) {
+			try {
+				await vmOwnership.abandonUnattachedGatewaySeedAfter(async () => {
+					const unattachedRunnerPid = managedVm.getHostProcessId();
+					if (unattachedRunnerPid !== null) {
+						throw new Error(
+							`Worker VM '${managedVm.id}' attachment failed after runner pid ${String(unattachedRunnerPid)} appeared; refusing raw close without exact process identity.`,
+							{ cause: error },
+						);
+					}
+					await managedVm.close();
+				});
+			} catch (cleanupError: unknown) {
+				throw createAggregateErrorWithCause({
+					cause: cleanupError,
+					errors: [error, cleanupError],
+					message: `Worker VM '${managedVm.id}' attachment failed and unattached cleanup did not complete.`,
+				});
+			}
+			throw error;
+		}
+		let startupProcessTarget: ManagedVmProcessTarget | undefined;
+		let gatewayIngressAccess: Awaited<ReturnType<ManagedVm['enableIngress']>> | undefined;
+		const captureProcessTarget = async (): Promise<ManagedVmProcessTarget> => {
+			const hostPid = managedVm.getHostProcessId();
+			if (hostPid === null || !Number.isInteger(hostPid) || hostPid <= 0) {
+				throw new Error(
+					`Worker VM '${managedVm.id}' does not expose a valid live runner pid for controller-owned cleanup.`,
+				);
+			}
+			const processIdentity = await (dependencies.readProcessIdentity ?? readProcessIdentity)(
+				hostPid,
 			);
-		}
-		const processIdentityReader = dependencies.readProcessIdentity ?? readProcessIdentity;
-		const processIdentity = await processIdentityReader(hostPid);
-		if (processIdentity === null) {
-			throw new Error(
-				`Gateway VM '${managedVm.id}' pid ${String(hostPid)} disappeared before process identity capture.`,
-			);
-		}
-		return { hostPid, processIdentity, vmId: managedVm.id };
-	};
-	const closeGatewayIngress = async (): Promise<void> => {
-		if (gatewayIngressAccess === undefined) {
-			return;
-		}
-		gatewayIngressClosePromise ??= gatewayIngressAccess.close();
-		await gatewayIngressClosePromise;
-	};
-	const terminateManagedGatewayVm = async (): Promise<void> => {
-		if (startupProcessTarget === undefined) {
-			if (managedVm.getHostProcessId() === null) {
+			if (processIdentity === null) {
+				throw new Error(
+					`Worker VM '${managedVm.id}' pid ${String(hostPid)} disappeared before process identity capture.`,
+				);
+			}
+			return { hostPid, processIdentity, vmId: managedVm.id };
+		};
+		const withdrawWorkerIngress = async (): Promise<void> => {
+			const withdrawalErrors: unknown[] = [];
+			try {
+				managedVm.configureIngressRoutes([]);
+			} catch (error: unknown) {
+				withdrawalErrors.push(error);
+			}
+			try {
+				await gatewayIngressAccess?.close();
+			} catch (error: unknown) {
+				withdrawalErrors.push(error);
+			}
+			if (withdrawalErrors.length > 1) {
+				throw new AggregateError(
+					withdrawalErrors,
+					`Worker ingress withdrawal failed for VM '${managedVm.id}'.`,
+				);
+			}
+			if (withdrawalErrors.length === 1) throw withdrawalErrors[0];
+		};
+		const terminateExactWorkerVm = async (): Promise<void> => {
+			if (startupProcessTarget === undefined && managedVm.getHostProcessId() !== null) {
+				startupProcessTarget = await captureProcessTarget();
+			}
+			if (startupProcessTarget === undefined) {
+				const unexpectedRunnerPid = managedVm.getHostProcessId();
+				if (unexpectedRunnerPid !== null) {
+					throw new Error(
+						`Worker VM '${managedVm.id}' runner pid ${String(unexpectedRunnerPid)} appeared without a captured process identity; refusing raw close.`,
+					);
+				}
 				await managedVm.close();
 				return;
 			}
-			startupProcessTarget = await captureGatewayProcessTarget();
-		}
-		await terminateLiveManagedVm({
-			contextLabel: `Gateway VM '${managedVm.id}' for zone '${zone.id}'`,
-			dependencies: managedVmKillDependencies,
-			target: startupProcessTarget,
-			vm: {
-				close: async () => await managedVm.close(),
-				getHostProcessId: () => managedVm.getHostProcessId(),
-				id: managedVm.id,
-			},
-		});
-	};
-	const performGatewayTermination = async (): Promise<void> => {
-		// Start draining ingress before terminating the runner so no new work is
-		// admitted. Do not await the drain yet: Node's server.close() waits for
-		// upgraded Socket.IO connections, and those connections settle when the
-		// Gateway runner is terminated below.
-		const ingressCloseOutcome = closeGatewayIngress().then(
-			() => undefined,
-			(error: unknown) => error,
-		);
-		let vmTerminationError: unknown;
-		try {
-			await terminateManagedGatewayVm();
-		} catch (error) {
-			vmTerminationError = error;
-		}
-		const ingressCloseError = await ingressCloseOutcome;
-		if (ingressCloseError !== undefined && vmTerminationError !== undefined) {
-			throw new AggregateError(
-				[ingressCloseError, vmTerminationError],
-				`Gateway ingress and VM '${managedVm.id}' teardown both failed.`,
-				{ cause: ingressCloseError },
-			);
-		}
-		if (ingressCloseError !== undefined) {
-			throw ingressCloseError;
-		}
-		if (vmTerminationError !== undefined) {
-			throw vmTerminationError;
-		}
-	};
-	const terminateGatewayVm = (): Promise<void> => {
-		gatewayTerminationPromise ??= performGatewayTermination();
-		return gatewayTerminationPromise;
-	};
-	try {
-		gatewayIdentity = vmOwnership.attachGatewayVm(managedVm.id);
-		await managedVm.start();
-		const capturedStartupProcessTarget = await captureGatewayProcessTarget();
-		startupProcessTarget = capturedStartupProcessTarget;
-		startupRuntimeRecord = await buildGatewayRuntimeRecord({
-			controllerPort: options.systemConfig.host.controllerPort,
-			gatewayIdentity,
-			gatewayType: zone.gateway.type,
-			managedVm,
-			processSpec,
-			projectNamespace: options.systemConfig.host.projectNamespace,
-			readProcessIdentity: async (hostPid) =>
-				hostPid === capturedStartupProcessTarget.hostPid
-					? capturedStartupProcessTarget.processIdentity
-					: null,
-			systemConfigPath: options.systemConfig.systemConfigPath,
-			zoneId: zone.id,
-		});
-		await (dependencies.writeGatewayRuntimeRecord ?? writeGatewayRuntimeRecord)(
-			zone.gateway.stateDir,
-			startupRuntimeRecord,
-		);
-		await runTaskStep('Configuring gateway', async () => {
-			await execGatewayCommand({
-				command: processSpec.bootstrapCommand,
-				managedVm,
-				stepName: 'Configuring gateway',
-			});
-		});
-		await runTaskStep('Starting gateway', async () => {
-			await execGatewayCommand({
-				command: processSpec.startCommand,
-				managedVm,
-				stepName: 'Starting gateway',
-			});
-		});
-		let openClawProcessSupervisor: OpenClawProcessSupervisor | undefined;
-		let openClawProcessReliabilityFaultActuator:
-			| OpenClawProcessReliabilityFaultActuator
-			| undefined;
-		const gatewaySemanticLedger = createGatewaySemanticResultLedger({
-			gateway: gatewayIdentity,
-			nowMs: Date.now,
-		});
-		const processEpoch = controlSessionMaterial?.processEpoch ?? randomUUID();
-		if (zone.gateway.type === 'openclaw') {
-			if (openClawProcessSupervisorStateMount === undefined) {
-				throw new Error(
-					`OpenClaw zone '${zone.id}' cannot start its process without exact Gateway supervisor state.`,
-				);
-			}
-			const processSupervisorPorts = (
-				dependencies.createOpenClawProcessSupervisorPorts ??
-				createManagedVmOpenClawProcessSupervisorPorts
-			)({
-				gateway: {
-					controllerEpoch: gatewayIdentity.controllerEpoch,
-					gatewayEpochId: gatewayIdentity.gatewayEpochId,
-					gatewayVmId: gatewayIdentity.gatewayVmId,
-				},
-				hostStateDirectory: openClawProcessSupervisorStateMount.hostPath,
+			await terminateLiveManagedVm({
+				contextLabel: `Worker VM '${managedVm.id}' for zone '${zone.id}'`,
+				exactProcessTermination: dependencies.managedVmExactProcessTermination,
+				sleep: managedVmTerminationSleep,
+				target: startupProcessTarget,
 				vm: managedVm,
 			});
-			const processSupervisor = processSupervisorPorts.supervisor;
-			openClawProcessSupervisor = processSupervisor;
-			openClawProcessReliabilityFaultActuator = processSupervisorPorts.reliabilityFaultActuator;
-			await runTaskStep('Starting OpenClaw process', async () => {
-				await processSupervisor.start({
-					actionId: `process-start-${randomUUID()}`,
-					expectedProcessEpoch: null,
-					selectedProcessEpoch: processEpoch,
-				});
+		};
+		const destructionTransaction = createGatewayZoneDestructionTransaction({
+			destroyExactGateway: async () => await vmOwnership.destroyLive(terminateExactWorkerVm),
+			gatewayLabel: `Worker VM '${managedVm.id}' for zone '${zone.id}'`,
+			postDestructionCleanup: [
+				{
+					cleanup: async () => await deleteWorkerRuntimeRecord(workerRuntimeRecordTarget),
+					stage: 'runtime-record-deletion',
+				},
+			],
+			withdrawAdmission: [{ cleanup: withdrawWorkerIngress, stage: 'ingress-withdrawal' }],
+		});
+		try {
+			await managedVm.start();
+			startupProcessTarget = await captureProcessTarget();
+			const startupRuntimeRecord = await buildWorkerRuntimeRecord({
+				controllerPort: options.systemConfig.host.controllerPort,
+				gatewayIdentity,
+				managedVm,
+				processSpec,
+				projectNamespace: options.systemConfig.host.projectNamespace,
+				readProcessIdentity: async (hostPid) =>
+					hostPid === startupProcessTarget?.hostPid ? startupProcessTarget.processIdentity : null,
+				systemConfigPath: options.systemConfig.systemConfigPath,
+				taskId: workerRuntimeRecordTarget.taskId,
+				zoneId: zone.id,
 			});
-			const processObservation = await runTaskWithResult(
-				runTaskStep,
-				'Observing OpenClaw process',
-				async () =>
-					await processSupervisor.observe({
-						actionId: `process-observe-${randomUUID()}`,
-						expectedProcessEpoch: processEpoch,
-					}),
-			);
-			if (
-				processObservation.kind !== 'observe' ||
-				processObservation.observedProcessEpoch !== processEpoch ||
-				!processObservation.cgroup.populated
-			) {
-				const logTail = await readGatewayLogTail({
-					logPath: processSpec.logPath,
-					managedVm,
-				});
-				throw new Error(
-					`OpenClaw process '${processEpoch}' was not positively observed in its exact cgroup.${logTail ? `\nGateway log tail (${processSpec.logPath}):\n${logTail}` : ''}`,
+			if (dependencies.writeGatewayRuntimeRecord === undefined) {
+				await writeWorkerRuntimeRecord(workerRuntimeRecordTarget, startupRuntimeRecord);
+			} else {
+				await dependencies.writeGatewayRuntimeRecord(
+					workerRuntimeRecordTarget,
+					startupRuntimeRecord,
 				);
 			}
-		}
-		const startupHealthCheck = processSpec.serviceHealthCheck ?? processSpec.healthCheck;
-		await runTaskStep('Waiting for service health', async () => {
-			await waitForGatewayServiceHealth({
-				healthCheck: startupHealthCheck,
-				logPath: processSpec.logPath,
-				managedVm,
-				...(dependencies.gatewayReadinessMaxAttempts !== undefined
-					? { maxAttempts: dependencies.gatewayReadinessMaxAttempts }
-					: {}),
-				...(dependencies.gatewayReadinessRetryDelayMs !== undefined
-					? { retryDelayMs: dependencies.gatewayReadinessRetryDelayMs }
-					: {}),
+			await runTaskStep('Configuring gateway', async () => {
+				await execGatewayCommand({
+					command: processSpec.bootstrapCommand,
+					managedVm,
+					stepName: 'Configuring gateway',
+				});
 			});
-		});
-		managedVm.configureIngressRoutes([
-			{
-				port: processSpec.guestListenPort,
-				prefix: '/',
-				stripPrefix: true,
+			await runTaskStep('Starting gateway', async () => {
+				await execGatewayCommand({
+					command: processSpec.startCommand,
+					managedVm,
+					stepName: 'Starting gateway',
+				});
+			});
+			await runTaskStep('Waiting for service health', async () => {
+				await waitForGatewayServiceHealth({
+					healthCheck: processSpec.serviceHealthCheck ?? processSpec.healthCheck,
+					logPath: processSpec.logPath,
+					managedVm,
+					...(dependencies.gatewayReadinessMaxAttempts === undefined
+						? {}
+						: { maxAttempts: dependencies.gatewayReadinessMaxAttempts }),
+					...(dependencies.gatewayReadinessRetryDelayMs === undefined
+						? {}
+						: { retryDelayMs: dependencies.gatewayReadinessRetryDelayMs }),
+				});
+			});
+			managedVm.configureIngressRoutes([
+				{ port: processSpec.guestListenPort, prefix: '/', stripPrefix: true },
+			]);
+			const ingress = await managedVm.enableIngress({
+				bufferResponseBody: false,
+				listenPort: zone.gateway.port,
+				...(zone.gateway.ingress?.upstreamHeaderTimeoutMs === undefined
+					? {}
+					: { upstreamHeaderTimeoutMs: zone.gateway.ingress.upstreamHeaderTimeoutMs }),
+				...(zone.gateway.ingress?.upstreamResponseTimeoutMs === undefined
+					? {}
+					: { upstreamResponseTimeoutMs: zone.gateway.ingress.upstreamResponseTimeoutMs }),
+			});
+			gatewayIngressAccess = ingress;
+			await runTaskStep('Recording gateway runtime', async () => {
+				const admittedRuntimeRecord = await buildWorkerRuntimeRecord({
+					controllerPort: options.systemConfig.host.controllerPort,
+					gatewayIdentity,
+					ingressPort: ingress.port,
+					managedVm,
+					processSpec,
+					projectNamespace: options.systemConfig.host.projectNamespace,
+					readProcessIdentity: async (hostPid) =>
+						hostPid === startupProcessTarget?.hostPid ? startupProcessTarget.processIdentity : null,
+					systemConfigPath: options.systemConfig.systemConfigPath,
+					taskId: workerRuntimeRecordTarget.taskId,
+					zoneId: zone.id,
+				});
+				if (dependencies.writeGatewayRuntimeRecord === undefined) {
+					await writeWorkerRuntimeRecord(workerRuntimeRecordTarget, admittedRuntimeRecord);
+				} else {
+					await dependencies.writeGatewayRuntimeRecord(
+						workerRuntimeRecordTarget,
+						admittedRuntimeRecord,
+					);
+				}
+			});
+			return {
+				destroyGateway: async () => await destructionTransaction.destroyGateway(),
+				executionModel: 'direct-process',
+				gatewayIdentity,
+				image,
+				ingress: { host: ingress.host, port: ingress.port },
+				processSpec,
+				processTarget: startupProcessTarget,
+				vm: createGatewayZoneVmOperations(managedVm),
+				zone,
+			};
+		} catch (error: unknown) {
+			let destroyResult: Awaited<ReturnType<typeof destructionTransaction.destroyGateway>>;
+			try {
+				destroyResult = await destructionTransaction.destroyGateway();
+			} catch (cleanupError: unknown) {
+				throw createAggregateErrorWithCause({
+					cause: cleanupError,
+					errors: [error, cleanupError],
+					message: `Worker startup failed and VM '${managedVm.id}' teardown was not proven complete.`,
+				});
+			}
+			if (destroyResult.kind === 'destroyed-cleanup-incomplete') {
+				throw createAggregateErrorWithCause({
+					cause: error,
+					errors: [error, ...destroyResult.cleanupFailures.map((failure) => failure.error)],
+					message: `Worker startup failed after VM '${managedVm.id}' destruction with incomplete ancillary cleanup.`,
+				});
+			}
+			throw error;
+		}
+	}
+	if (options.runtimeRecordTarget.kind !== 'controller-managed-gateway-runtime-record') {
+		throw new Error(`Managed Gateway zone '${zone.id}' requires a managed runtime record target.`);
+	}
+	const managedGatewayRuntimeRecordTarget = options.runtimeRecordTarget;
+
+	const managedPortalMaterialization = toolPortalMaterialization;
+	const managedControlSessionMaterial = controlSessionMaterial;
+	const managedVmOwnedDirectories = dependencies.managedVmOwnedDirectories;
+	const gatewayRuntimeArtifactLimits = dependencies.gatewayRuntimeArtifactLimits;
+	if (
+		managedPortalMaterialization.kind !== 'configured' ||
+		managedPortalMaterialization.mode !== 'runtime' ||
+		managedControlSessionMaterial === undefined ||
+		managedVmOwnedDirectories === undefined ||
+		gatewayRuntimeArtifactLimits === undefined
+	) {
+		throw new Error(`Managed Gateway zone '${zone.id}' lost validated startup prerequisites.`);
+	}
+	const bootInputReservation = await reserveManagedGatewayBootInputDirectory({
+		parentDirectory: path.join(
+			options.systemConfig.runtimeDir,
+			'zones',
+			zone.id,
+			'managed-gateway-boot-inputs',
+		),
+	});
+	let ownedBootInputDirectory:
+		| ReturnType<ManagedVmOwnedDirectoryCapability['openHostDirectory']>
+		| undefined;
+	const cleanupManagedBootInputs = async (): Promise<void> => {
+		const cleanupErrors: unknown[] = [];
+		try {
+			if (ownedBootInputDirectory?.state === 'acquired') {
+				ownedBootInputDirectory.close();
+			}
+		} catch (error: unknown) {
+			cleanupErrors.push(error);
+		}
+		try {
+			await releaseManagedGatewayBootInputDirectory(bootInputReservation);
+		} catch (error: unknown) {
+			cleanupErrors.push(error);
+		}
+		if (cleanupErrors.length > 1) {
+			throw new AggregateError(cleanupErrors, 'Managed Gateway boot input cleanup failed.');
+		}
+		if (cleanupErrors.length === 1) throw cleanupErrors[0];
+	};
+	try {
+		ownedBootInputDirectory = managedVmOwnedDirectories.openHostDirectory(
+			bootInputReservation.directoryPath,
+		);
+	} catch (error: unknown) {
+		try {
+			await vmOwnership.abandonUnattachedGatewaySeedAfter(cleanupManagedBootInputs);
+		} catch (cleanupError: unknown) {
+			throw createAggregateErrorWithCause({
+				cause: cleanupError,
+				errors: [error, cleanupError],
+				message: `Managed Gateway boot input acquisition failed for zone '${zone.id}' and cleanup did not complete.`,
+			});
+		}
+		throw error;
+	}
+	const exactManagedVm = await createManagedVmForMounts(
+		{
+			...vfsMounts,
+			[managedGatewayBootInputPaths.stagingRoot]: {
+				access: 'read-only',
+				directory: ownedBootInputDirectory,
+				kind: 'owned-host-directory',
 			},
-		]);
-		const ingress = await managedVm.enableIngress({
+		},
+		cleanupManagedBootInputs,
+	);
+	let gatewayIdentity: ReturnType<typeof vmOwnership.attachGatewayVm>;
+	try {
+		gatewayIdentity = vmOwnership.attachGatewayVm(exactManagedVm.id);
+	} catch (error: unknown) {
+		try {
+			await vmOwnership.abandonUnattachedGatewaySeedAfter(async () => {
+				const cleanupErrors: unknown[] = [];
+				try {
+					const unattachedRunnerPid = exactManagedVm.getHostProcessId();
+					if (unattachedRunnerPid !== null) {
+						throw new Error(
+							`Managed Gateway VM '${exactManagedVm.id}' attachment failed after runner pid ${String(unattachedRunnerPid)} appeared; refusing raw close without exact process identity.`,
+							{ cause: error },
+						);
+					}
+					await exactManagedVm.close();
+				} catch (cleanupError: unknown) {
+					cleanupErrors.push(cleanupError);
+				}
+				try {
+					await cleanupManagedBootInputs();
+				} catch (cleanupError: unknown) {
+					cleanupErrors.push(cleanupError);
+				}
+				if (cleanupErrors.length > 1) {
+					throw createAggregateErrorWithCause({
+						cause: cleanupErrors[0],
+						errors: cleanupErrors,
+						message: `Managed Gateway VM '${exactManagedVm.id}' unattached cleanup encountered multiple failures.`,
+					});
+				}
+				if (cleanupErrors.length === 1) throw cleanupErrors[0];
+			});
+		} catch (cleanupError: unknown) {
+			throw createAggregateErrorWithCause({
+				cause: cleanupError,
+				errors: [error, cleanupError],
+				message: `Managed Gateway VM '${exactManagedVm.id}' attachment failed and cleanup did not complete.`,
+			});
+		}
+		throw error;
+	}
+	let activeControlSession: GatewayDisposableControlSessionClient | undefined;
+	let currentBindingPublicationAuthority:
+		| GatewayControlToolVmBindingPublicationAuthority
+		| undefined;
+	let unsubscribeBindingRetirements: (() => void) | undefined;
+	let appliedIngressRoutes: readonly GatewayIngressRouteIdentity[] = [];
+	let frameworkReadinessEvidence: GatewayFrameworkNativeReadinessEvidence = { kind: 'pending' };
+	let runtimeReadinessEvidence: GatewayRuntimeRoleReadinessEvidence = { kind: 'pending' };
+	let vmLivenessEvidence: GatewayVmLivenessEvidence = { kind: 'pending' };
+	let startupProcessTarget: ManagedVmProcessTarget | undefined;
+	let gatewayIngressAccess: Awaited<ReturnType<ManagedVm['enableIngress']>> | undefined;
+	const captureProcessTarget = async (): Promise<ManagedVmProcessTarget> => {
+		const hostPid = exactManagedVm.getHostProcessId();
+		if (hostPid === null || !Number.isInteger(hostPid) || hostPid <= 0) {
+			throw new Error(
+				`Managed Gateway VM '${exactManagedVm.id}' does not expose a valid live runner pid.`,
+			);
+		}
+		const processIdentity = await (dependencies.readProcessIdentity ?? readProcessIdentity)(
+			hostPid,
+		);
+		if (processIdentity === null) {
+			throw new Error(
+				`Managed Gateway VM '${exactManagedVm.id}' pid ${String(hostPid)} disappeared before identity capture.`,
+			);
+		}
+		return { hostPid, processIdentity, vmId: exactManagedVm.id };
+	};
+	const disposeControlSession = async (): Promise<void> => {
+		unsubscribeBindingRetirements?.();
+		unsubscribeBindingRetirements = undefined;
+		currentBindingPublicationAuthority = undefined;
+		activeControlSession?.close();
+	};
+	const withdrawManagedGatewayIngress = async (): Promise<void> => {
+		const withdrawalErrors: unknown[] = [];
+		try {
+			exactManagedVm.configureIngressRoutes([]);
+			appliedIngressRoutes = [];
+		} catch (error: unknown) {
+			withdrawalErrors.push(error);
+		}
+		try {
+			await gatewayIngressAccess?.close();
+		} catch (error: unknown) {
+			withdrawalErrors.push(error);
+		}
+		if (withdrawalErrors.length > 1) {
+			throw new AggregateError(
+				withdrawalErrors,
+				`Managed Gateway ingress withdrawal failed for VM '${exactManagedVm.id}'.`,
+			);
+		}
+		if (withdrawalErrors.length === 1) throw withdrawalErrors[0];
+	};
+	const terminateExactManagedGatewayVm = async (): Promise<void> => {
+		if (startupProcessTarget === undefined && exactManagedVm.getHostProcessId() !== null) {
+			startupProcessTarget = await captureProcessTarget();
+		}
+		if (startupProcessTarget === undefined) {
+			const unexpectedRunnerPid = exactManagedVm.getHostProcessId();
+			if (unexpectedRunnerPid !== null) {
+				throw new Error(
+					`Managed Gateway VM '${exactManagedVm.id}' runner pid ${String(unexpectedRunnerPid)} appeared without a captured process identity; refusing raw close.`,
+				);
+			}
+			await exactManagedVm.close();
+			return;
+		}
+		await terminateLiveManagedVm({
+			contextLabel: `Managed Gateway VM '${exactManagedVm.id}' for zone '${zone.id}'`,
+			exactProcessTermination: dependencies.managedVmExactProcessTermination,
+			sleep: managedVmTerminationSleep,
+			target: startupProcessTarget,
+			vm: exactManagedVm,
+		});
+	};
+	const destructionTransaction = createGatewayZoneDestructionTransaction({
+		destroyExactGateway: async () => await vmOwnership.destroyLive(terminateExactManagedGatewayVm),
+		gatewayLabel: `Managed Gateway VM '${exactManagedVm.id}' for zone '${zone.id}'`,
+		postDestructionCleanup: [
+			{
+				cleanup: async () =>
+					await deleteManagedGatewayRuntimeRecord(managedGatewayRuntimeRecordTarget),
+				stage: 'runtime-record-deletion',
+			},
+			{
+				cleanup: async () =>
+					await deleteGatewayControlSessionMaterial(options.systemConfig.runtimeDir, zone.id),
+				stage: 'control-session-material-deletion',
+			},
+			{
+				cleanup: cleanupManagedBootInputs,
+				stage: 'managed-boot-input-release',
+			},
+		],
+		withdrawAdmission: [
+			{ cleanup: disposeControlSession, stage: 'control-session-disposal' },
+			{ cleanup: withdrawManagedGatewayIngress, stage: 'ingress-withdrawal' },
+		],
+	});
+	const containManagedGatewayVm = async (): Promise<void> => {
+		const result = await destructionTransaction.destroyGateway();
+		if (result.kind === 'destroyed-cleanup-incomplete') {
+			options.writeLog?.(
+				`Managed Gateway VM '${exactManagedVm.id}' was destroyed with incomplete cleanup stages: ${result.cleanupFailures.map((failure) => failure.stage).join(', ')}.`,
+			);
+		}
+	};
+
+	try {
+		const frameworkServiceMetadata = lifecycle.buildFrameworkServiceBootMetadata(lifecycleZone);
+		const bootContract = createManagedGatewayBootContract(frameworkServiceMetadata);
+		const generatedIdentity = {
+			attachmentGeneration: 1,
+			frameworkEpoch: randomUUID(),
+			runtimeEpoch: randomUUID(),
+		};
+		const expectedCohort = buildManagedGatewayExpectedAdmissionCohort({
+			bootContract,
+			controlSessionMaterial: managedControlSessionMaterial,
+			gatewayIdentity,
+			generatedIdentity,
+			portalAdmission: managedPortalMaterialization.portalAdmission,
+		});
+		const managedFrameworkAdapterMaterial = buildManagedGatewayFrameworkAdapterMaterial({
+			cohort: expectedCohort,
+			portalAdmission: managedPortalMaterialization.portalAdmission,
+		});
+		const managedFrameworkRuntimePluginConfigs = mergeRuntimePluginConfigs(
+			lifecycleZone.runtimePluginConfigs,
+			{
+				gondolin: {
+					toolPortal: managedFrameworkAdapterMaterial,
+				},
+			},
+		);
+		if (managedFrameworkRuntimePluginConfigs === undefined) {
+			throw new Error(`Managed Gateway zone '${zone.id}' failed to build framework plugin inputs.`);
+		}
+		const {
+			runtimeEnvironment: _toolPortalRuntimeEnvironment,
+			runtimeMediatedSecrets: _toolPortalRuntimeMediatedSecrets,
+			...frameworkLifecycleZoneBase
+		} = lifecycleZone;
+		const managedFrameworkLifecycleZone = {
+			...frameworkLifecycleZoneBase,
+			...(options.runtimeEnvironment === undefined
+				? {}
+				: { runtimeEnvironment: options.runtimeEnvironment }),
+			runtimePluginConfigs: managedFrameworkRuntimePluginConfigs,
+		} satisfies GatewayZoneConfig;
+		await runTaskStep('Preparing host state', async () => {
+			await lifecycle.prepareHostState?.(managedFrameworkLifecycleZone, startupSecretResolver);
+		});
+		const frameworkServiceInputs = await lifecycle.buildFrameworkServiceBootInputs({
+			resolvedSecrets,
+			zone: managedFrameworkLifecycleZone,
+		});
+		const toolPortalEnvironment: Record<string, string> = {
+			...options.runtimeEnvironment,
+			...managedPortalMaterialization.lifecycle.runtimeEnvironment,
+			...managedGatewayMediatedSecretBootProjection?.toolPortalEnvironment,
+		};
+		for (const environmentName of ['HOME', 'NODE_EXTRA_CA_CERTS', 'PATH'] as const) {
+			const environmentValue = vmSpec.environment[environmentName];
+			if (environmentValue !== undefined) {
+				toolPortalEnvironment[environmentName] = environmentValue;
+			}
+		}
+		const toolPortalServiceConfig = buildManagedGatewayRuntimeServiceConfig({
+			artifactLimits: gatewayRuntimeArtifactLimits,
+			cohort: expectedCohort,
+			controlSessionMaterial: managedControlSessionMaterial,
+			observability: lifecycleZone.observability,
+			portalAdmission: managedPortalMaterialization.portalAdmission,
+		});
+		await finalizeManagedGatewayBootInputs({
+			cohort: expectedCohort,
+			frameworkConfig: frameworkServiceInputs.configuration,
+			frameworkEnvironment: {
+				...frameworkServiceInputs.environment,
+				...managedGatewayMediatedSecretBootProjection?.frameworkEnvironment,
+			},
+			...(frameworkServiceInputs.kind === 'hermes-managed-scope'
+				? {
+						frameworkInputKind: frameworkServiceInputs.kind,
+						frameworkManagedConfigurationSource: frameworkServiceInputs.managedConfigurationSource,
+					}
+				: { frameworkInputKind: frameworkServiceInputs.kind }),
+			mcpConfig: managedPortalMaterialization.mcpConfig,
+			reservation: bootInputReservation,
+			toolPortalEnvironment,
+			toolPortalServiceConfig,
+		});
+
+		const candidate: GatewayAtomicAdmissionCandidate = {
+			containGatewayVm: containManagedGatewayVm,
+			expectedCohort,
+			replaceIngressRoutes: async (routes) => {
+				exactManagedVm.configureIngressRoutes(
+					routes.map((route) => ({
+						port: route.guestPort,
+						prefix: route.prefix,
+						stripPrefix: route.stripPrefix,
+					})),
+				);
+				appliedIngressRoutes = Object.freeze(routes.map((route) => Object.freeze({ ...route })));
+			},
+			startGatewayVm: async () => {
+				await exactManagedVm.start();
+				if (dependencies.onManagedVmStartedBeforeIdentityPublication !== undefined) {
+					const unpublishedHostPid = exactManagedVm.getHostProcessId();
+					if (
+						unpublishedHostPid === null ||
+						!Number.isInteger(unpublishedHostPid) ||
+						unpublishedHostPid <= 0
+					) {
+						throw new Error(
+							`Managed Gateway VM '${exactManagedVm.id}' did not expose a live host pid at the pre-identity crash cut.`,
+						);
+					}
+					await dependencies.onManagedVmStartedBeforeIdentityPublication({
+						hostPid: unpublishedHostPid,
+						vmId: exactManagedVm.id,
+					});
+				}
+				startupProcessTarget = await captureProcessTarget();
+				vmLivenessEvidence = { identity: expectedCohort.fence, kind: 'current' };
+			},
+		};
+		const admissionController = createGatewayAtomicAdmissionController({
+			createSuccessorCandidate: async () => {
+				throw new Error(
+					'Managed Gateway successor creation belongs to the zone recovery state machine.',
+				);
+			},
+		});
+		const readinessObserver = createGatewayAggregateReadinessObserver({
+			expectedCohort,
+			readAppliedIngressRoutes: () => appliedIngressRoutes,
+			readControlSessionEvidence: (): GatewayControlSessionReadinessEvidence | undefined =>
+				activeControlSession === undefined
+					? { kind: 'pending' }
+					: {
+							diagnostics: activeControlSession.getDiagnostics(),
+							identity: expectedCohort.controlIdentity,
+							kind: 'current',
+						},
+			readFatalEvidence: () => ({ kind: 'none' }),
+			readFrameworkNativeReadinessEvidence: () => frameworkReadinessEvidence,
+			readRuntimeReadinessEvidence: () => runtimeReadinessEvidence,
+			readVmLivenessEvidence: () => vmLivenessEvidence,
+		});
+
+		await admissionController.start(candidate);
+		const exactStartupProcessTarget = startupProcessTarget;
+		if (exactStartupProcessTarget === undefined) {
+			throw new Error(
+				`Managed Gateway VM '${exactManagedVm.id}' started without publishing its exact process target.`,
+			);
+		}
+		const ingress = await exactManagedVm.enableIngress({
+			allowWebSockets: true,
 			bufferResponseBody: false,
 			listenPort: zone.gateway.port,
 			...(zone.gateway.ingress?.upstreamHeaderTimeoutMs === undefined
@@ -1535,331 +2284,437 @@ async function startGatewayZoneImplementation(
 				: { upstreamResponseTimeoutMs: zone.gateway.ingress.upstreamResponseTimeoutMs }),
 		});
 		gatewayIngressAccess = ingress;
-		const connectControlSessionForMaterial = async (
-			material: GatewayControlSessionMaterial,
-			connectOptions: { readonly signal?: AbortSignal } = {},
-		): Promise<GatewayDisposableControlSessionClient> => {
-			if (gatewayIdentity === undefined || gatewaySemanticLedger === undefined) {
-				throw new Error(
-					`OpenClaw zone '${zone.id}' cannot bind semantic control authority without an exact Gateway identity.`,
-				);
-			}
-			const sessionFenceRegistry = createControlSessionFenceRegistry();
-			const dispatcher = createControlSessionDispatcher({
-				semanticLedger: gatewaySemanticLedger,
-				sessionFenceRegistry,
-			});
-			const callerContexts = createGatewayControlCallerContextRegistry({
-				agentAuthorityKeys: material.agentAuthorityKeys,
-				callerContextProofKey: material.callerContextProofKey,
-			});
-			const validateCallerContextRegistration = (
-				payload: GatewayControlCallerContextRegisterPayload,
-			): void => {
-				validateGatewayControlCallerContextRegistration({
-					agentAuthorityKeys: material.agentAuthorityKeys,
-					callerContextProofKey: material.callerContextProofKey,
-					payload,
-					zone,
-				});
-			};
-			let lastLoggedControlAttemptOutcome: string | undefined;
-			dispatcher.register(
-				'gateway_control',
-				createGatewayControlDomainHandler({
-					callerContexts,
-					gateway: gatewayIdentity,
-					...(options.gatewayControlControllerHostActions === undefined
-						? {}
-						: { controllerHostActions: options.gatewayControlControllerHostActions }),
-					...(options.gatewayControlLeaseRpc === undefined
-						? {}
-						: { leaseRpc: options.gatewayControlLeaseRpc }),
-					...(options.healthEventStore === undefined &&
-					options.onControlSessionHeartbeat === undefined
-						? {}
-						: {
-								recordHealthEvent: (event) => {
-									options.healthEventStore?.record(event);
-									if (
-										event.kind === 'gateway-control-session' &&
-										event.operation === 'control-session-heartbeat' &&
-										event.result === 'ok'
-									) {
-										options.onControlSessionHeartbeat?.({
-											gateway: gatewayIdentity,
-											observedAtMs: event.observedAtMs,
-											processEpoch: material.processEpoch,
-										});
-									}
-								},
-							}),
-					...(options.openClawRuntimeStatusStore === undefined
-						? {}
-						: {
-								recordRuntimeStatus: (report) => {
-									options.openClawRuntimeStatusStore?.record(report);
-								},
-							}),
-					session: {
-						bootId: material.processEpoch,
-						controllerEpoch: material.controllerEpoch,
-						peerId: material.peerId,
-						zoneId: material.zoneId,
-					},
-					validateCallerContextRegistration,
-				}),
-			);
-			return await (dependencies.connectGatewayControlSession ?? connectGatewayControlSession)({
-				dispatcher,
-				endpoint: buildGatewayControlEndpoint(ingress),
-				material,
-				onAttemptOutcome: (outcome) => {
-					const boundedOutcome =
-						outcome.kind === 'hello_response'
-							? `hello_response:${outcome.outcome}`
-							: 'connect_error';
-					if (lastLoggedControlAttemptOutcome !== boundedOutcome) {
-						lastLoggedControlAttemptOutcome = boundedOutcome;
-						process.stderr.write(
-							`[gateway-zone-orchestrator] control attachment for zone '${zone.id}' process '${material.processEpoch}': ${boundedOutcome}\n`,
-						);
-					}
-					options.onControlSessionAttemptOutcome?.({
-						...outcome,
-						gateway: gatewayIdentity,
-						processEpoch: material.processEpoch,
-					});
-				},
-				...(connectOptions.signal === undefined ? {} : { signal: connectOptions.signal }),
-				...(options.healthEventStore === undefined
-					? {}
-					: {
-							recordHealthEvent: (
-								event: Extract<AgentVmHealthEvent, { readonly kind: 'caller-context-rejection' }>,
-							): void => {
-								options.healthEventStore?.record(event);
-							},
-						}),
-				resolveInboundStablePrincipal: ({ envelope, message }) =>
-					resolveGatewayControlInboundStablePrincipal({
-						callerContexts,
-						envelope,
-						message,
-						validateCallerContextRegistration,
-					}),
-				...(options.onControlSessionAttachmentGap === undefined
-					? {}
-					: {
-							onAttachmentGap: (transition) => {
-								assertCurrentControlSessionTransition(material, transition);
-								options.onControlSessionAttachmentGap?.({
-									...transition,
-									gateway: gatewayIdentity,
-								});
-							},
-						}),
-				...(options.onControlSessionReconnectExhausted === undefined
-					? {}
-					: {
-							onReconnectExhausted: (transition) => {
-								assertCurrentControlSessionTransition(material, transition);
-								options.onControlSessionReconnectExhausted?.({
-									...transition,
-									gateway: gatewayIdentity,
-								});
-							},
-						}),
-				...(options.gatewayControlProcessAdmissionCoordinator === undefined
-					? {}
-					: {
-							processAdmissionCoordinator: options.gatewayControlProcessAdmissionCoordinator,
-						}),
-				sessionFenceRegistry,
-			});
-		};
-		const controlSession =
-			controlSessionMaterial === undefined
-				? undefined
-				: await runTaskWithResult(
-						runTaskStep,
-						'Connecting gateway control session',
-						async () => await connectControlSessionForMaterial(controlSessionMaterial),
-					);
-		let lastSuccessfullyPersistedControlMaterial: GatewayControlSessionMaterial | undefined;
-		const persistGatewayProcessBinding = async (
-			material: GatewayControlSessionMaterial | undefined,
-			bindingProcessSpec: GatewayProcessSpec,
-		): Promise<void> => {
-			const writeControlSessionMaterial =
-				dependencies.writeGatewayControlSessionMaterial ?? writeGatewayControlSessionMaterial;
-			const previousControlMaterial = lastSuccessfullyPersistedControlMaterial;
-			if (material !== undefined) {
-				await writeControlSessionMaterial(options.systemConfig.runtimeDir, material);
-			}
-			try {
-				await (dependencies.writeGatewayRuntimeRecord ?? writeGatewayRuntimeRecord)(
-					zone.gateway.stateDir,
-					await buildGatewayRuntimeRecord({
-						controllerPort: options.systemConfig.host.controllerPort,
-						gatewayIdentity,
-						gatewayType: zone.gateway.type,
-						ingressPort: ingress.port,
-						managedVm,
-						processSpec: bindingProcessSpec,
-						projectNamespace: options.systemConfig.host.projectNamespace,
-						...(dependencies.readProcessIdentity !== undefined
-							? { readProcessIdentity: dependencies.readProcessIdentity }
-							: {}),
-						systemConfigPath: options.systemConfig.systemConfigPath,
-						zoneId: zone.id,
-					}),
-				);
-			} catch (runtimeRecordError) {
-				if (material === undefined || previousControlMaterial === undefined) {
-					throw runtimeRecordError;
-				}
-				try {
-					await writeControlSessionMaterial(
-						options.systemConfig.runtimeDir,
-						previousControlMaterial,
-					);
-				} catch (materialRestorationError) {
-					const aggregateError = new AggregateError(
-						[runtimeRecordError, materialRestorationError],
-						`Gateway process binding for zone '${zone.id}' failed and its previous control material could not be restored.`,
-					);
-					aggregateError.cause = runtimeRecordError;
-					throw aggregateError;
-				}
-				throw runtimeRecordError;
-			}
-			lastSuccessfullyPersistedControlMaterial = material;
-		};
-		await runTaskStep('Recording gateway runtime', async () => {
-			await persistGatewayProcessBinding(controlSessionMaterial, processSpec);
+		const gatewaySemanticLedger = createGatewaySemanticResultLedger({
+			gateway: gatewayIdentity,
+			nowMs: Date.now,
 		});
-		const openClawProcessEpochOwner =
-			controlSessionMaterial === undefined ||
-			controlSession === undefined ||
-			gatewayIdentity === undefined ||
-			openClawProcessSupervisor === undefined ||
-			options.beginProcessEpochLoss === undefined
-				? undefined
-				: createOpenClawGatewayProcessEpochOwner({
-						beginProcessEpochLoss: options.beginProcessEpochLoss,
-						connectControlSession: async (material, connectOptions) =>
-							await runTaskWithResult(
-								runTaskStep,
-								'Connecting successor gateway control session',
-								async () =>
-									await connectControlSessionForMaterial(material, {
-										signal: connectOptions.signal,
-									}),
-							),
-						gateway: gatewayIdentity,
-						initialBinding: {
-							controlSession,
-							material: controlSessionMaterial,
-							processSpec,
-						},
-						persistBinding: async (binding) =>
-							await runTaskStep('Recording successor gateway runtime', async () => {
-								await persistGatewayProcessBinding(binding.material, binding.processSpec);
-							}),
-						prepareProcess: async (material) => {
-							const successorLifecycleZone = buildLifecycleZoneForControlMaterial(material);
-							await runTaskStep('Preparing successor OpenClaw host state', async () => {
-								await lifecycle.prepareHostState?.(successorLifecycleZone, startupSecretResolver);
-							});
-							const successorProcessSpec = lifecycle.buildProcessSpec(
-								successorLifecycleZone,
-								resolvedSecrets,
-							);
-							await runTaskStep('Configuring successor OpenClaw process', async () => {
-								await execGatewayCommand({
-									command: successorProcessSpec.bootstrapCommand,
-									managedVm,
-									stepName: 'Configuring successor OpenClaw process',
-								});
-							});
-							return successorProcessSpec;
-						},
-						rollbackPersistedBinding: async (binding) =>
-							await runTaskStep('Restoring previous gateway runtime', async () => {
-								await persistGatewayProcessBinding(binding.material, binding.processSpec);
-							}),
-						supervisor: openClawProcessSupervisor,
-						waitForServiceHealth: async (successorProcessSpec, healthOptions) => {
-							await waitForGatewayServiceHealth({
-								healthCheck:
-									successorProcessSpec.serviceHealthCheck ?? successorProcessSpec.healthCheck,
-								logPath: successorProcessSpec.logPath,
-								managedVm,
-								signal: healthOptions.signal,
-								...(dependencies.gatewayReadinessMaxAttempts === undefined
-									? {}
-									: { maxAttempts: dependencies.gatewayReadinessMaxAttempts }),
-								...(dependencies.gatewayReadinessRetryDelayMs === undefined
-									? {}
-									: { retryDelayMs: dependencies.gatewayReadinessRetryDelayMs }),
-							});
-						},
-					});
-		if (
-			controlSession !== undefined &&
-			gatewayIdentity !== undefined &&
-			openClawProcessReliabilityFaultActuator !== undefined
-		) {
-			onOpenClawProcessReliabilityFaultTarget?.({
-				controlSession,
-				gateway: gatewayIdentity,
-				processEpoch,
-				reliabilityFaultActuator: openClawProcessReliabilityFaultActuator,
+		const sessionFenceRegistry = createControlSessionFenceRegistry();
+		const dispatcher = createControlSessionDispatcher({
+			semanticLedger: gatewaySemanticLedger,
+			sessionFenceRegistry,
+		});
+		const validateCallerContextRegistration = (
+			payload: GatewayControlCallerContextRegisterPayload,
+		): void =>
+			validateGatewayControlCallerContextRegistration({
+				agentAuthorityKeys: managedControlSessionMaterial.agentAuthorityKeys,
+				agentProjections:
+					managedPortalMaterialization.portalAdmission.semanticSnapshot.agentProjections,
+				callerContextProofKey: managedControlSessionMaterial.callerContextProofKey,
+				payload,
+				zone,
 			});
-		}
-		return {
-			...(controlSession === undefined ? {} : { controlSession }),
-			...(openClawProcessSupervisor === undefined
-				? {}
-				: { openClawProcessSupervisor, processEpoch }),
-			...(openClawProcessEpochOwner === undefined ? {} : { openClawProcessEpochOwner }),
-			...(controlSessionMaterial === undefined
-				? {}
-				: {
-						controlSessionRecoverySourceKey: {
-							bootId: controlSessionMaterial.bootId,
-							domain: 'gateway_control',
-							gatewayVmId: managedVm.id,
-							generationId: controlSessionMaterial.generationId,
-							zoneId: controlSessionMaterial.zoneId,
+		const callerContexts = createGatewayControlCallerContextRegistry({
+			agentAuthorityKeys: managedControlSessionMaterial.agentAuthorityKeys,
+			callerContextProofKey: managedControlSessionMaterial.callerContextProofKey,
+			validateRegistration: validateCallerContextRegistration,
+		});
+		const managedGatewayStartupSensitiveValues = [
+			...Object.values(resolvedSecrets),
+			managedControlSessionMaterial.callerContextProofKey,
+			...Object.values(managedControlSessionMaterial.agentAuthorityKeys),
+		];
+		const bindingPublication =
+			options.gatewayControlBindingPublicationSource === undefined
+				? undefined
+				: createGatewayControlBindingPublicationCoordinator({
+						createBinding: options.gatewayControlBindingPublicationSource.createBinding,
+						publish: async (publication: GatewayControlToolVmBindingPublication) => {
+							const controlSession = activeControlSession;
+							if (controlSession === undefined) {
+								throw new Error('Gateway control binding publication has no active session.');
+							}
+							const messageId = randomUUID();
+							const message = GatewayControlRpcMessageSchema.parse({
+								kind: 'command',
+								operation: 'tool_vm_binding_publish',
+								payload: publication,
+							});
+							const response = GatewayControlRpcCommandResultMessageSchema.parse(
+								await controlSession.emitApplicationMessage(
+									{
+										bootId: publication.authority.processEpoch,
+										commandId: randomUUID(),
+										connectionId: publication.authority.connectionId,
+										controllerEpoch: publication.authority.controllerEpoch,
+										createdAtMs: publication.observedAtMs,
+										deliveryPolicy: gatewayControlDeliveryPolicyByOperation.tool_vm_binding_publish,
+										domain: 'gateway_control',
+										expiresAtMs:
+											publication.observedAtMs +
+											gatewayControlCommandExecutionTimeoutMsByOperation.tool_vm_binding_publish,
+										idempotencyKey: [
+											'tool-vm-binding-publication',
+											publication.kind,
+											publication.binding.leaseId,
+											publication.binding.leafGeneration,
+										].join(':'),
+										kind: 'command',
+										messageId,
+										operation: 'tool_vm_binding_publish',
+										peerId: managedControlSessionMaterial.peerId,
+										protocolVersion: CONTROL_PROTOCOL_VERSION,
+										sequence: 1,
+										sessionId: publication.authority.sessionId,
+										zoneId: publication.authority.zoneId,
+									},
+									{ kind: 'command', operation: 'tool_vm_binding_publish' },
+									message,
+									{
+										commandResultTimeoutMs:
+											gatewayControlCommandExecutionTimeoutMsByOperation.tool_vm_binding_publish,
+									},
+								),
+							);
+							if (
+								response.operation !== 'tool_vm_binding_publish' ||
+								response.payload.result !== 'ok'
+							) {
+								throw new Error('Gateway rejected the Tool VM binding publication.');
+							}
 						},
+						readCurrentAuthority: () => currentBindingPublicationAuthority,
+					});
+		dispatcher.register(
+			'gateway_control',
+			createGatewayControlDomainHandler({
+				...(options.gatewayControlApprovalLedger === undefined
+					? {}
+					: { approvalLedger: options.gatewayControlApprovalLedger }),
+				callerContexts,
+				...(bindingPublication === undefined ? {} : { bindingPublication }),
+				gateway: gatewayIdentity,
+				...(options.gatewayControlControllerHostActions === undefined
+					? {}
+					: { controllerHostActions: options.gatewayControlControllerHostActions }),
+				...(options.gatewayControlLeaseRpc === undefined
+					? {}
+					: { leaseRpc: options.gatewayControlLeaseRpc }),
+				recordGatewayRuntimeReadiness: (snapshot: GatewayRuntimeReadinessSnapshot): void => {
+					runtimeReadinessEvidence = { kind: 'current', snapshot };
+				},
+				...(options.healthEventStore === undefined &&
+				options.onControlSessionHeartbeat === undefined
+					? {}
+					: {
+							recordHealthEvent: (event) => {
+								options.healthEventStore?.record(event);
+								if (
+									event.kind === 'gateway-control-session' &&
+									event.operation === 'control-session-heartbeat' &&
+									event.result === 'ok'
+								) {
+									options.onControlSessionHeartbeat?.({
+										gateway: gatewayIdentity,
+										observedAtMs: event.observedAtMs,
+										processEpoch: managedControlSessionMaterial.processEpoch,
+									});
+								}
+							},
+						}),
+				...(options.openClawRuntimeStatusStore === undefined
+					? {}
+					: {
+							recordRuntimeStatus: (report) => {
+								options.openClawRuntimeStatusStore?.record(report);
+							},
+						}),
+				session: {
+					bootId: managedControlSessionMaterial.processEpoch,
+					controllerEpoch: managedControlSessionMaterial.controllerEpoch,
+					peerId: managedControlSessionMaterial.peerId,
+					zoneId: managedControlSessionMaterial.zoneId,
+				},
+			}),
+		);
+		let lastLoggedControlAttemptOutcome: string | undefined;
+		if (
+			bindingPublication !== undefined &&
+			options.gatewayControlBindingPublicationSource !== undefined
+		) {
+			unsubscribeBindingRetirements =
+				options.gatewayControlBindingPublicationSource.subscribeBindingRetirement((event) => {
+					const authority = currentBindingPublicationAuthority;
+					if (authority === undefined) return;
+					void bindingPublication
+						.retireBinding({ authority, leaseId: event.leaseId, reason: event.reason })
+						.catch((error: unknown) => {
+							options.writeLog?.(
+								`Gateway Tool VM binding retirement publication failed for zone '${zone.id}': ${error instanceof Error ? error.message : 'unknown error'}.`,
+							);
+						});
+				});
+		}
+		try {
+			activeControlSession = await runTaskWithResult(
+				runTaskStep,
+				'Connecting gateway control session',
+				async () =>
+					await (dependencies.connectGatewayControlSession ?? connectGatewayControlSession)({
+						dispatcher,
+						endpoint: buildGatewayControlEndpoint(ingress),
+						material: managedControlSessionMaterial,
+						onHelloResponse: (response) => {
+							currentBindingPublicationAuthority =
+								response.outcome === 'accepted'
+									? {
+											attachmentGeneration: response.attachmentGeneration,
+											connectionId: response.connectionId,
+											controllerEpoch: response.controllerEpoch,
+											gatewayEpoch: gatewayIdentity.generationId,
+											processEpoch: managedControlSessionMaterial.processEpoch,
+											sessionId: response.sessionId,
+											zoneId: managedControlSessionMaterial.zoneId,
+										}
+									: undefined;
+						},
+						onAttemptOutcome: (outcome) => {
+							const boundedOutcome =
+								outcome.kind === 'hello_response'
+									? `hello_response:${outcome.outcome}`
+									: 'connect_error';
+							if (lastLoggedControlAttemptOutcome !== boundedOutcome) {
+								lastLoggedControlAttemptOutcome = boundedOutcome;
+								options.writeLog?.(
+									`Gateway control attachment for zone '${zone.id}': ${boundedOutcome}.`,
+								);
+							}
+							options.onControlSessionAttemptOutcome?.({
+								...outcome,
+								gateway: gatewayIdentity,
+								processEpoch: managedControlSessionMaterial.processEpoch,
+							});
+						},
+						...(options.healthEventStore === undefined
+							? {}
+							: {
+									recordHealthEvent: (
+										event: Extract<
+											AgentVmHealthEvent,
+											{ readonly kind: 'caller-context-rejection' }
+										>,
+									): void => {
+										options.healthEventStore?.record(event);
+									},
+								}),
+						resolveInboundStablePrincipal: ({ envelope, message }) =>
+							resolveGatewayControlInboundStablePrincipal({
+								callerContexts,
+								envelope,
+								message,
+							}),
+						onAttachmentGap: (transition) => {
+							assertCurrentControlSessionTransition(managedControlSessionMaterial, transition);
+							if (
+								currentBindingPublicationAuthority?.attachmentGeneration ===
+								transition.attachmentGeneration
+							) {
+								currentBindingPublicationAuthority = undefined;
+							}
+							options.onControlSessionAttachmentGap?.({
+								...transition,
+								gateway: gatewayIdentity,
+							});
+						},
+						...(options.onControlSessionReconnectExhausted === undefined
+							? {}
+							: {
+									onReconnectExhausted: (transition) => {
+										assertCurrentControlSessionTransition(
+											managedControlSessionMaterial,
+											transition,
+										);
+										options.onControlSessionReconnectExhausted?.({
+											...transition,
+											gateway: gatewayIdentity,
+										});
+									},
+								}),
+						...(options.gatewayControlProcessAdmissionCoordinator === undefined
+							? {}
+							: {
+									processAdmissionCoordinator: options.gatewayControlProcessAdmissionCoordinator,
+								}),
+						sessionFenceRegistry,
 					}),
+			);
+			await activeControlSession.ready;
+		} catch (error: unknown) {
+			const toolPortalReadinessEvidencePath = bootContract.toolPortalService.readiness.evidencePath;
+			const startupDiagnostics = await readManagedGatewayStartupDiagnostics({
+				evidenceFiles: [
+					{
+						label: 'Tool Portal readiness evidence',
+						path: toolPortalReadinessEvidencePath,
+					},
+					{
+						label: 'Tool Portal fatal evidence',
+						path: path.join(
+							path.dirname(toolPortalReadinessEvidencePath),
+							'tool-portal.fatal.json',
+						),
+					},
+				],
+				logFiles: [
+					{
+						label: `Tool Portal log tail (${bootContract.toolPortalService.logIdentity.guestPath})`,
+						path: bootContract.toolPortalService.logIdentity.guestPath,
+					},
+				],
+				managedVm: exactManagedVm,
+				sensitiveValues: managedGatewayStartupSensitiveValues,
+			});
+			if (startupDiagnostics !== undefined && error instanceof Error) {
+				error.message = `${error.message}\nManaged Gateway pre-containment diagnostics:\n${startupDiagnostics}`;
+			}
+			throw error;
+		}
+
+		const maximumAttempts =
+			dependencies.gatewayReadinessMaxAttempts ?? defaultGatewayReadinessMaxAttempts;
+		const retryDelayMs =
+			dependencies.gatewayReadinessRetryDelayMs ?? defaultGatewayReadinessRetryDelayMs;
+		let admitted = false;
+		let lastFrameworkProbe: Awaited<ReturnType<typeof runGatewayHealthCheck>> | undefined;
+		let lastAdmissionObservation:
+			| Awaited<ReturnType<typeof admissionController.observe>>
+			| undefined;
+		for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
+			// The managed health probe is observation-only: it cannot launch,
+			// signal, adopt, or restart either image-owned sibling.
+			// oxlint-disable-next-line no-await-in-loop -- readiness samples must be sequential.
+			lastFrameworkProbe = await runGatewayHealthCheck({
+				exec: async (command) => {
+					const result = await exactManagedVm.exec(command);
+					return {
+						exitCode: result.exitCode,
+						stderr: result.stderr,
+						stdout: result.stdout,
+					};
+				},
+				healthCheck: {
+					path: bootContract.frameworkService.readiness.path,
+					port: bootContract.frameworkService.readiness.guestPort,
+					type: 'http',
+				},
+			});
+			frameworkReadinessEvidence = lastFrameworkProbe.ok
+				? {
+						identity: expectedCohort.frameworkIdentity,
+						kind: 'current',
+						probe: lastFrameworkProbe,
+					}
+				: { kind: 'pending' };
+			if (exactManagedVm.getHostProcessId() !== startupProcessTarget?.hostPid) {
+				vmLivenessEvidence = { identity: expectedCohort.fence, kind: 'lost' };
+			}
+			// oxlint-disable-next-line no-await-in-loop -- each atomic observation consumes one coherent snapshot.
+			lastAdmissionObservation = await admissionController.observe(readinessObserver.getSnapshot());
+			if (lastAdmissionObservation.kind === 'admitted') {
+				admitted = true;
+				break;
+			}
+			if (lastAdmissionObservation.kind === 'publishing-ingress') {
+				continue;
+			}
+			if (lastAdmissionObservation.kind !== 'waiting') {
+				const containmentReason =
+					lastAdmissionObservation.kind === 'startup-contained'
+						? `: ${lastAdmissionObservation.reason}`
+						: '';
+				throw new Error(
+					`Managed Gateway admission entered unexpected '${lastAdmissionObservation.kind}' state${containmentReason}.`,
+				);
+			}
+			if (attempt < maximumAttempts) {
+				// oxlint-disable-next-line no-await-in-loop -- bounded polling has no guest event source.
+				await sleep(retryDelayMs);
+			}
+		}
+		if (!admitted) {
+			let startupDiagnostics: string | undefined;
+			try {
+				startupDiagnostics = await readManagedGatewayStartupDiagnostics({
+					logFiles: [
+						{
+							label: `Framework log tail (${bootContract.frameworkService.logIdentity.guestPath})`,
+							path: bootContract.frameworkService.logIdentity.guestPath,
+						},
+					],
+					managedVm: exactManagedVm,
+					sensitiveValues: managedGatewayStartupSensitiveValues,
+				});
+			} finally {
+				await admissionController.expireStartupJoin('aggregate-readiness-timeout');
+			}
+			throw new Error(
+				`Managed Gateway aggregate readiness timed out after ${String(maximumAttempts)} attempts; last framework observation: ${lastFrameworkProbe?.observation ?? 'none'}; last admission state: ${lastAdmissionObservation?.kind ?? 'none'}.${startupDiagnostics ? `\nManaged Gateway pre-containment diagnostics:\n${startupDiagnostics}` : ''}`,
+			);
+		}
+		await (dependencies.writeGatewayControlSessionMaterial ?? writeGatewayControlSessionMaterial)(
+			options.systemConfig.runtimeDir,
+			managedControlSessionMaterial,
+		);
+		const startupRuntimeRecord = await buildManagedGatewayRuntimeRecord({
+			appliedIngressRoutes,
+			bootContract,
+			controllerPort: options.systemConfig.host.controllerPort,
+			expectedCohort,
+			gatewayIdentity,
+			image,
+			ingressPort: ingress.port,
+			managedVm: exactManagedVm,
+			processTarget: exactStartupProcessTarget,
+			projectNamespace: options.systemConfig.host.projectNamespace,
+			readProcessIdentity: async (hostPid) =>
+				hostPid === exactStartupProcessTarget.hostPid
+					? exactStartupProcessTarget.processIdentity
+					: null,
+			systemConfigPath: options.systemConfig.systemConfigPath,
+			zoneId: zone.id,
+		});
+		await runTaskStep('Recording gateway runtime', async () => {
+			if (dependencies.writeGatewayRuntimeRecord === undefined) {
+				await writeManagedGatewayRuntimeRecord(
+					managedGatewayRuntimeRecordTarget,
+					startupRuntimeRecord,
+				);
+			} else {
+				await dependencies.writeGatewayRuntimeRecord(
+					managedGatewayRuntimeRecordTarget,
+					startupRuntimeRecord,
+				);
+			}
+		});
+		return {
+			bootContract,
+			controlSession: activeControlSession,
+			destroyGateway: async () => await destructionTransaction.destroyGateway(),
+			executionModel: 'managed-gateway',
+			expectedCohort,
+			gatewayIdentity,
 			image,
 			ingress: { host: ingress.host, port: ingress.port },
-			processSpec,
-			terminateVm: terminateGatewayVm,
-			vm: managedVm,
-			vmOwnership,
+			vm: createGatewayZoneVmOperations(exactManagedVm),
 			zone,
 		};
-	} catch (error) {
-		let closeError: unknown;
+	} catch (error: unknown) {
+		let destroyResult: Awaited<ReturnType<typeof destructionTransaction.destroyGateway>>;
 		try {
-			await vmOwnership.destroyLive(terminateGatewayVm);
-			if (startupRuntimeRecord !== undefined) {
-				await deleteGatewayRuntimeRecord(zone.gateway.stateDir);
-			}
-		} catch (caughtCloseError) {
-			closeError = caughtCloseError;
+			destroyResult = await destructionTransaction.destroyGateway();
+		} catch (cleanupError: unknown) {
+			throw createAggregateErrorWithCause({
+				cause: cleanupError,
+				errors: [error, cleanupError],
+				message: `Managed Gateway startup failed and VM '${exactManagedVm.id}' teardown was not proven complete.`,
+			});
 		}
-		if (closeError !== undefined) {
-			const aggregateError = new AggregateError(
-				[error, closeError],
-				`Gateway startup failed and VM '${managedVm.id}' teardown was not proven complete.`,
-			);
-			aggregateError.cause = error;
-			throw aggregateError;
+		if (destroyResult.kind === 'destroyed-cleanup-incomplete') {
+			throw createAggregateErrorWithCause({
+				cause: error,
+				errors: [error, ...destroyResult.cleanupFailures.map((failure) => failure.error)],
+				message: `Managed Gateway startup failed after VM '${exactManagedVm.id}' destruction with incomplete ancillary cleanup.`,
+			});
 		}
 		throw error;
 	}

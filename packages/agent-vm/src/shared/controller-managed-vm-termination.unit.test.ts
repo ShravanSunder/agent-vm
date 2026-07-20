@@ -1,3 +1,7 @@
+import type {
+	ManagedVmExactProcessTerminationCapability,
+	ManagedVmExactProcessTerminationOutcome,
+} from '@agent-vm/managed-vm';
 import { describe, expect, it, vi, type Mock } from 'vitest';
 
 import {
@@ -19,25 +23,29 @@ const terminationTarget = {
 	vmId: 'controller-owned-vm',
 } as const;
 
-interface ProcessDependenciesHarness {
-	readonly isProcessAlive: Mock<(pid: number) => boolean>;
-	readonly killProcess: Mock<(pid: number, signal: NodeJS.Signals) => void>;
-	readonly readProcessCommand: Mock<(pid: number) => Promise<string | null>>;
-	readonly readProcessIdentity: Mock<(pid: number) => Promise<ProcessIdentity | null>>;
+interface TerminationDependenciesHarness {
+	readonly exactProcessTermination: ManagedVmExactProcessTerminationCapability;
+	readonly terminateRecordedHostProcess: Mock<
+		(
+			request: Parameters<
+				ManagedVmExactProcessTerminationCapability['terminateRecordedHostProcess']
+			>[0],
+		) => Promise<ManagedVmExactProcessTerminationOutcome>
+	>;
 	readonly sleep: Mock<(delayMs: number) => Promise<void>>;
 }
 
-function createProcessDependencies(
+function createTerminationDependencies(
 	options: {
-		readonly isProcessAlive?: (pid: number) => boolean;
-		readonly readProcessIdentity?: (pid: number) => Promise<ProcessIdentity | null>;
+		readonly outcome?: ManagedVmExactProcessTerminationOutcome;
 	} = {},
-): ProcessDependenciesHarness {
+): TerminationDependenciesHarness {
+	const terminateRecordedHostProcess = vi.fn(async () =>
+		Promise.resolve(options.outcome ?? { hostProcessId: hostPid, kind: 'terminated' as const }),
+	);
 	return {
-		isProcessAlive: vi.fn(options.isProcessAlive ?? (() => false)),
-		killProcess: vi.fn<(pid: number, signal: NodeJS.Signals) => void>(),
-		readProcessCommand: vi.fn(async () => processIdentity.command),
-		readProcessIdentity: vi.fn(options.readProcessIdentity ?? (async () => processIdentity)),
+		exactProcessTermination: { terminateRecordedHostProcess },
+		terminateRecordedHostProcess,
 		sleep: vi.fn(async () => {}),
 	};
 }
@@ -46,18 +54,10 @@ describe('controller-managed VM termination', () => {
 	it('observes exact TERM exit and cleared Gondolin runner ownership before closing live handles', async () => {
 		// Arrange
 		const orderedEvents: string[] = [];
-		let processAlive = true;
-		const dependencies = createProcessDependencies({
-			isProcessAlive: () => {
-				if (!processAlive) {
-					orderedEvents.push('os-absent');
-				}
-				return processAlive;
-			},
-		});
-		dependencies.killProcess.mockImplementation((_pid, signal) => {
-			orderedEvents.push(`signal-${signal}`);
-			processAlive = false;
+		const dependencies = createTerminationDependencies();
+		dependencies.terminateRecordedHostProcess.mockImplementation(async () => {
+			orderedEvents.push('adapter-exact-termination');
+			return { hostProcessId: hostPid, kind: 'terminated' };
 		});
 		const getHostProcessId = vi
 			.fn<() => number | null>()
@@ -72,88 +72,103 @@ describe('controller-managed VM termination', () => {
 
 		// Act
 		await terminateLiveManagedVm({
-			dependencies,
+			exactProcessTermination: dependencies.exactProcessTermination,
+			sleep: dependencies.sleep,
 			target: terminationTarget,
 			vm: { close, getHostProcessId, id: terminationTarget.vmId },
 		});
 
 		// Assert
 		expect(orderedEvents).toEqual([
-			'signal-SIGTERM',
-			'os-absent',
+			'adapter-exact-termination',
 			'gondolin-runner-absent',
 			'close-live-handles',
 		]);
-		expect(dependencies.killProcess).toHaveBeenCalledOnce();
-		expect(dependencies.killProcess).toHaveBeenCalledWith(hostPid, 'SIGTERM');
+		expect(dependencies.terminateRecordedHostProcess).toHaveBeenCalledWith({
+			contextLabel: "managed VM 'controller-owned-vm'",
+			identity: {
+				command: processIdentity.command,
+				hostProcessId: hostPid,
+				processStartIdentity: processIdentity.lstart,
+				vmId: terminationTarget.vmId,
+			},
+		});
 		expect(close).toHaveBeenCalledOnce();
 	});
 
 	it('closes live handles when the recorded process and Gondolin runner are already absent', async () => {
 		// Arrange
-		const dependencies = createProcessDependencies();
+		const dependencies = createTerminationDependencies({
+			outcome: { hostProcessId: hostPid, kind: 'already-absent' },
+		});
 		const close = vi.fn(async () => {});
 
 		// Act
 		await terminateLiveManagedVm({
-			dependencies,
+			exactProcessTermination: dependencies.exactProcessTermination,
+			sleep: dependencies.sleep,
 			target: terminationTarget,
 			vm: { close, getHostProcessId: () => null, id: terminationTarget.vmId },
 		});
 
 		// Assert
-		expect(dependencies.killProcess).not.toHaveBeenCalled();
+		expect(dependencies.terminateRecordedHostProcess).toHaveBeenCalledOnce();
 		expect(close).toHaveBeenCalledOnce();
 	});
 
 	it('terminates an exact recorded process without requiring a live Gondolin handle', async () => {
 		// Arrange
-		const dependencies = createProcessDependencies({
-			isProcessAlive: vi.fn().mockReturnValueOnce(true).mockReturnValueOnce(false),
-		});
+		const dependencies = createTerminationDependencies();
 
 		// Act
-		await terminateRecordedManagedVmProcess({ dependencies, target: terminationTarget });
+		await terminateRecordedManagedVmProcess({
+			exactProcessTermination: dependencies.exactProcessTermination,
+			target: terminationTarget,
+		});
 
 		// Assert
-		expect(dependencies.killProcess).toHaveBeenCalledOnce();
-		expect(dependencies.killProcess).toHaveBeenCalledWith(hostPid, 'SIGTERM');
+		expect(dependencies.terminateRecordedHostProcess).toHaveBeenCalledWith({
+			contextLabel: "managed VM 'controller-owned-vm'",
+			identity: {
+				command: processIdentity.command,
+				hostProcessId: hostPid,
+				processStartIdentity: processIdentity.lstart,
+				vmId: terminationTarget.vmId,
+			},
+		});
 	});
 
-	it('refuses an identity mismatch without signaling or closing live handles', async () => {
+	it('refuses a same-start command inconsistency without signaling or closing live handles', async () => {
 		// Arrange
-		const dependencies = createProcessDependencies({
-			isProcessAlive: () => true,
-			readProcessIdentity: async () => ({
-				command: 'node unrelated-process.js',
-				lstart: 'Tue Jul 11 12:05:00 2026',
-			}),
-		});
+		const dependencies = createTerminationDependencies();
+		dependencies.terminateRecordedHostProcess.mockRejectedValue(
+			new Error('same process start identity was observed but command changed'),
+		);
 		const close = vi.fn(async () => {});
 
 		// Act
 		const termination = terminateLiveManagedVm({
-			dependencies,
+			exactProcessTermination: dependencies.exactProcessTermination,
+			sleep: dependencies.sleep,
 			target: terminationTarget,
 			vm: { close, getHostProcessId: () => hostPid, id: terminationTarget.vmId },
 		});
 
 		// Assert
-		await expect(termination).rejects.toThrow(/process identity changed/u);
-		expect(dependencies.killProcess).not.toHaveBeenCalled();
+		await expect(termination).rejects.toThrow(/same process start.*command changed/iu);
+		expect(dependencies.terminateRecordedHostProcess).toHaveBeenCalledOnce();
 		expect(close).not.toHaveBeenCalled();
 	});
 
 	it('rejects without closing while Gondolin keeps a live runner reference after OS absence', async () => {
 		// Arrange
-		const dependencies = createProcessDependencies({
-			isProcessAlive: vi.fn().mockReturnValueOnce(true).mockReturnValueOnce(false),
-		});
+		const dependencies = createTerminationDependencies();
 		const close = vi.fn(async () => {});
 
 		// Act
 		const termination = terminateLiveManagedVm({
-			dependencies,
+			exactProcessTermination: dependencies.exactProcessTermination,
+			sleep: dependencies.sleep,
 			target: terminationTarget,
 			vm: { close, getHostProcessId: () => hostPid, id: terminationTarget.vmId },
 		});
@@ -166,25 +181,28 @@ describe('controller-managed VM termination', () => {
 
 	it('refuses a live VM id mismatch without signaling or closing', async () => {
 		// Arrange
-		const dependencies = createProcessDependencies({ isProcessAlive: () => true });
+		const dependencies = createTerminationDependencies();
 		const close = vi.fn(async () => {});
 
 		// Act
 		const termination = terminateLiveManagedVm({
-			dependencies,
+			exactProcessTermination: dependencies.exactProcessTermination,
+			sleep: dependencies.sleep,
 			target: terminationTarget,
 			vm: { close, getHostProcessId: () => hostPid, id: 'different-vm' },
 		});
 
 		// Assert
 		await expect(termination).rejects.toThrow(/VM id|vm id/iu);
-		expect(dependencies.killProcess).not.toHaveBeenCalled();
+		expect(dependencies.terminateRecordedHostProcess).not.toHaveBeenCalled();
 		expect(close).not.toHaveBeenCalled();
 	});
 
 	it('propagates a live-handle close error after proving runner absence', async () => {
 		// Arrange
-		const dependencies = createProcessDependencies();
+		const dependencies = createTerminationDependencies({
+			outcome: { hostProcessId: hostPid, kind: 'already-absent' },
+		});
 		const closeError = new Error('live handle close failed');
 		const close = vi.fn(async () => {
 			throw closeError;
@@ -192,7 +210,8 @@ describe('controller-managed VM termination', () => {
 
 		// Act
 		const termination = terminateLiveManagedVm({
-			dependencies,
+			exactProcessTermination: dependencies.exactProcessTermination,
+			sleep: dependencies.sleep,
 			target: terminationTarget,
 			vm: { close, getHostProcessId: () => null, id: terminationTarget.vmId },
 		});
@@ -202,7 +221,7 @@ describe('controller-managed VM termination', () => {
 			cause: closeError,
 			name: 'ManagedVmTerminationUnprovenError',
 		});
-		expect(dependencies.killProcess).not.toHaveBeenCalled();
+		expect(dependencies.terminateRecordedHostProcess).toHaveBeenCalledOnce();
 		expect(close).toHaveBeenCalledOnce();
 	});
 
