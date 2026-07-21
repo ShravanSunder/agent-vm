@@ -557,7 +557,15 @@ export async function startGatewayRuntimeProductionService(
 		telemetryRuntime = (
 			props.dependencies.createToolPortalTelemetryRuntime ??
 			createGatewayRuntimeToolPortalTelemetryRuntime
-		)({ config: props.config.observability });
+		)({
+			config: props.config.observability,
+			identity: {
+				frameworkKind:
+					props.config.attachment.clientKind === 'openclaw-managed-plugin' ? 'openclaw' : 'hermes',
+				gatewayEpoch: props.config.attachment.gatewayEpoch,
+				zoneId: props.config.controlEndpoint.identity.zoneId,
+			},
+		});
 		const startedTelemetryRuntime = telemetryRuntime;
 		providerFactory = await createProviderFactory({
 			mcpConfig,

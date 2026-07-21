@@ -57,6 +57,7 @@ export interface GatewayRuntimeTraceContextDispatchOptions {
 	readonly connectionId: string;
 	readonly method: string;
 	readonly traceContext: GatewayRuntimeTraceContext | undefined;
+	readonly trustedContext: GatewayRuntimeTrustedInvocationContext;
 }
 
 export type GatewayRuntimeTraceContextDispatch = <TResult>(
@@ -124,6 +125,7 @@ async function dispatchWithValidatedTraceContext<TResult>(props: {
 	readonly dispatcherProps: CreateGatewayRuntimePrivateUdsDispatcherProps;
 	readonly method: string;
 	readonly traceContext: GatewayRuntimeTraceContext | undefined;
+	readonly trustedContext: GatewayRuntimeTrustedInvocationContext;
 }): Promise<TResult> {
 	if (props.dispatcherProps.traceContextDispatch === undefined) return await props.dispatch();
 	return await props.dispatcherProps.traceContextDispatch(
@@ -131,6 +133,7 @@ async function dispatchWithValidatedTraceContext<TResult>(props: {
 			connectionId: props.connectionId,
 			method: props.method,
 			traceContext: props.traceContext,
+			trustedContext: props.trustedContext,
 		},
 		props.dispatch,
 	);
@@ -178,6 +181,7 @@ async function dispatchProjectionRequest<TPublicRequest, TResult>(props: {
 		dispatcherProps: props.dispatcherProps,
 		method: props.request.method,
 		traceContext: invocation.traceContext,
+		trustedContext: invocation.trustedContext,
 	});
 }
 

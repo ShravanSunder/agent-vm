@@ -1,6 +1,8 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { Buffer } from 'node:buffer';
+import { createHash } from 'node:crypto';
 
+import { PortalCallResultSchema, SANDBOX_METHOD_CONTRACTS } from '@agent-vm/agent-portal-sdk';
 import type { GatewayRuntimeTraceContext } from '@agent-vm/agent-portal-sdk/gateway-runtime-client';
 import type { ToolPortalBackendKind } from '@agent-vm/config-contracts';
 import type { ToolPortalBackendPort } from '@agent-vm/tool-portal';
@@ -117,6 +119,11 @@ export interface GatewayRuntimeToolPortalTelemetryRuntime {
 
 export interface CreateGatewayRuntimeToolPortalTelemetryRuntimeProps {
 	readonly config: GatewayRuntimeToolPortalObservabilityConfig;
+	readonly identity: {
+		readonly frameworkKind: 'hermes' | 'openclaw';
+		readonly gatewayEpoch: string;
+		readonly zoneId: string;
+	};
 	readonly now?: () => number;
 	readonly providerFactory?: GatewayRuntimeToolPortalTelemetryProviderFactory;
 }
@@ -130,6 +137,9 @@ interface MutableSignalAdmissionState {
 }
 
 interface ActiveUdsTelemetryContext {
+	readonly dynamicLogAndTraceAttributes: Record<string, string>;
+	readonly logAndTraceAttributes: Readonly<Record<string, string>>;
+	readonly metricAttributes: Readonly<Record<string, string>>;
 	readonly operationGroup: string;
 	readonly spanContext: Context;
 }
@@ -140,6 +150,8 @@ interface CompletionSignalOptions {
 	readonly operationGroup: string;
 	readonly resultClass: GatewayRuntimeToolPortalTelemetryResultClass;
 	readonly surface: 'backend' | 'uds';
+	readonly logAndTraceAttributes?: Readonly<Record<string, string>>;
+	readonly metricAttributes?: Readonly<Record<string, string>>;
 }
 
 const instrumentationName = 'agent-vm-tool-portal';
@@ -277,6 +289,7 @@ function snapshotSignalAdmission(
 
 function boundedAttributes(options: {
 	readonly backendKind: GatewayRuntimeToolPortalTelemetryBackendKind;
+	readonly correlationAttributes?: Readonly<Record<string, string>>;
 	readonly operationGroup: string;
 	readonly resultClass?: GatewayRuntimeToolPortalTelemetryResultClass;
 }): Readonly<Record<string, string>> {
@@ -284,6 +297,103 @@ function boundedAttributes(options: {
 		'agent_vm.backend_kind': options.backendKind,
 		'agent_vm.operation_group': options.operationGroup,
 		...(options.resultClass === undefined ? {} : { 'agent_vm.result_class': options.resultClass }),
+		...options.correlationAttributes,
+	});
+}
+
+function stableTelemetryHash(value: string): string {
+	return createHash('sha256').update(value, 'utf8').digest('hex').slice(0, 16);
+}
+
+function staticLogAndTraceAttributes(
+	identity: CreateGatewayRuntimeToolPortalTelemetryRuntimeProps['identity'],
+): Readonly<Record<string, string>> {
+	return Object.freeze({
+		'agent_vm.framework.kind': identity.frameworkKind,
+		'agent_vm.gateway.epoch_hash': stableTelemetryHash(identity.gatewayEpoch),
+		'agent_vm.zone.id': identity.zoneId,
+	});
+}
+
+function staticMetricAttributes(
+	identity: CreateGatewayRuntimeToolPortalTelemetryRuntimeProps['identity'],
+): Readonly<Record<string, string>> {
+	return Object.freeze({
+		'agent_vm.framework.kind': identity.frameworkKind,
+		'agent_vm.zone.id': identity.zoneId,
+	});
+}
+
+function invocationLogAndTraceAttributes(
+	options: Parameters<GatewayRuntimeTraceContextDispatch>[0],
+): Readonly<Record<string, string>> {
+	return Object.freeze({
+		'agent_vm.agent.id_hash': stableTelemetryHash(options.trustedContext.principal.agentId),
+		'agent_vm.operation.name': options.method,
+	});
+}
+
+function toolVmCallResultAttributes(result: unknown): Readonly<Record<string, string>> {
+	const parsed = PortalCallResultSchema.safeParse(result);
+	if (!parsed.success) return Object.freeze({});
+	const operationIds = new Set(parsed.data.items.map((item) => item.operationId));
+	const dispatchedItems = parsed.data.items.filter(
+		(item) => item.outcome.kind !== 'not-dispatched',
+	);
+	const owningGenerations = new Set(dispatchedItems.map((item) => item.owningGeneration));
+	return Object.freeze({
+		'agent_vm.tool_vm.generation_class':
+			dispatchedItems.length === 0 ? 'not-applicable' : 'observed',
+		...(operationIds.size === 1
+			? {
+					'agent_vm.operation.id_hash': stableTelemetryHash([...operationIds][0] ?? ''),
+				}
+			: {}),
+		...(owningGenerations.size === 1
+			? {
+					'agent_vm.tool_vm.generation_hash': stableTelemetryHash([...owningGenerations][0] ?? ''),
+				}
+			: {}),
+	});
+}
+
+function sandboxResultAttributes(
+	method: GatewayRuntimeSandboxDispatchRequest['method'],
+	result: unknown,
+): Readonly<Record<string, string>> {
+	const parsed = SANDBOX_METHOD_CONTRACTS[method].result.safeParse(result);
+	if (!parsed.success || typeof parsed.data !== 'object' || parsed.data === null) {
+		return Object.freeze({});
+	}
+	const resultRecord: Readonly<Record<string, unknown>> = parsed.data;
+	const identities = [
+		resultRecord.environment,
+		resultRecord.operation,
+		resultRecord.process,
+		resultRecord.terminal,
+		...(Array.isArray(resultRecord.streams) ? resultRecord.streams : []),
+	];
+	const owningGenerations = new Set(
+		identities.flatMap((identity) => {
+			if (typeof identity !== 'object' || identity === null) return [];
+			const owningGeneration = Reflect.get(identity, 'owningGeneration');
+			return typeof owningGeneration === 'string' ? [owningGeneration] : [];
+		}),
+	);
+	const operationId =
+		typeof resultRecord.operation === 'object' && resultRecord.operation !== null
+			? Reflect.get(resultRecord.operation, 'operationId')
+			: undefined;
+	return Object.freeze({
+		...(typeof operationId === 'string'
+			? { 'agent_vm.operation.id_hash': stableTelemetryHash(operationId) }
+			: {}),
+		...(owningGenerations.size === 1
+			? {
+					'agent_vm.tool_vm.generation_class': 'observed',
+					'agent_vm.tool_vm.generation_hash': stableTelemetryHash([...owningGenerations][0] ?? ''),
+				}
+			: {}),
 	});
 }
 
@@ -332,6 +442,8 @@ export function createGatewayRuntimeToolPortalTelemetryRuntime(
 
 	const config = props.config;
 	const now = props.now ?? Date.now;
+	const runtimeLogAndTraceAttributes = staticLogAndTraceAttributes(props.identity);
+	const runtimeMetricAttributes = staticMetricAttributes(props.identity);
 	const provider = (props.providerFactory ?? createDefaultTelemetryProvider)({
 		admissionLimits: config.admissionLimits,
 		config,
@@ -467,6 +579,7 @@ export function createGatewayRuntimeToolPortalTelemetryRuntime(
 	};
 	const startSpan = (options: {
 		readonly backendKind: GatewayRuntimeToolPortalTelemetryBackendKind;
+		readonly correlationAttributes?: Readonly<Record<string, string>>;
 		readonly kind: SpanKind;
 		readonly name: string;
 		readonly operationGroup: string;
@@ -476,6 +589,9 @@ export function createGatewayRuntimeToolPortalTelemetryRuntime(
 	}): Span | undefined => {
 		const attributes = boundedAttributes({
 			backendKind: options.backendKind,
+			...(options.correlationAttributes === undefined
+				? {}
+				: { correlationAttributes: options.correlationAttributes }),
 			operationGroup: options.operationGroup,
 		});
 		if (
@@ -506,25 +622,36 @@ export function createGatewayRuntimeToolPortalTelemetryRuntime(
 	};
 
 	const emitCompletionSignals = (options: CompletionSignalOptions): void => {
-		const attributes = boundedAttributes({
+		const logAttributes = boundedAttributes({
 			backendKind: options.backendKind,
+			...(options.logAndTraceAttributes === undefined
+				? {}
+				: { correlationAttributes: options.logAndTraceAttributes }),
+			operationGroup: options.operationGroup,
+			resultClass: options.resultClass,
+		});
+		const metricAttributes = boundedAttributes({
+			backendKind: options.backendKind,
+			...(options.metricAttributes === undefined
+				? {}
+				: { correlationAttributes: options.metricAttributes }),
 			operationGroup: options.operationGroup,
 			resultClass: options.resultClass,
 		});
 		const observedAtMs = now();
 		emitLog({
-			attributes,
+			attributes: logAttributes,
 			name: telemetryLogNames[options.surface],
 			observedAtMs,
 		});
 		emitMetric({
-			attributes,
+			attributes: metricAttributes,
 			name: 'agent_vm.tool_portal.operations_total',
 			observedAtMs,
 			value: 1,
 		});
 		emitMetric({
-			attributes,
+			attributes: metricAttributes,
 			name: 'agent_vm.tool_portal.operation.duration_ms',
 			observedAtMs,
 			value: Math.max(0, options.durationMs),
@@ -535,13 +662,19 @@ export function createGatewayRuntimeToolPortalTelemetryRuntime(
 		readonly backendKind: GatewayRuntimeToolPortalTelemetryBackendKind;
 		readonly dispatch: () => Promise<TResult>;
 		readonly kind: SpanKind;
+		readonly logAndTraceAttributes?: Readonly<Record<string, string>>;
+		readonly metricAttributes?: Readonly<Record<string, string>>;
 		readonly operationGroup: string;
 		readonly parentContext: Context | undefined;
+		readonly resultAttributes?: (result: TResult) => Readonly<Record<string, string>>;
 		readonly surface: 'backend' | 'uds';
 	}): Promise<TResult> => {
 		const startedAtMs = now();
 		const span = startSpan({
 			backendKind: options.backendKind,
+			...(options.logAndTraceAttributes === undefined
+				? {}
+				: { correlationAttributes: options.logAndTraceAttributes }),
 			kind: options.kind,
 			name: telemetrySpanNames[options.surface],
 			operationGroup: options.operationGroup,
@@ -550,8 +683,16 @@ export function createGatewayRuntimeToolPortalTelemetryRuntime(
 			surface: options.surface,
 		});
 		let resultClass: GatewayRuntimeToolPortalTelemetryResultClass = 'success';
+		let resultAttributes: Readonly<Record<string, string>> = Object.freeze({});
 		try {
-			return await options.dispatch();
+			const result = await options.dispatch();
+			resultAttributes = options.resultAttributes?.(result) ?? Object.freeze({});
+			if (span !== undefined) {
+				for (const [attributeName, attributeValue] of Object.entries(resultAttributes)) {
+					span.setAttribute(attributeName, attributeValue);
+				}
+			}
+			return result;
 		} catch (error: unknown) {
 			resultClass = 'failure';
 			throw error;
@@ -571,6 +712,13 @@ export function createGatewayRuntimeToolPortalTelemetryRuntime(
 			emitCompletionSignals({
 				backendKind: options.backendKind,
 				durationMs: finishedAtMs - startedAtMs,
+				logAndTraceAttributes: {
+					...options.logAndTraceAttributes,
+					...resultAttributes,
+				},
+				...(options.metricAttributes === undefined
+					? {}
+					: { metricAttributes: options.metricAttributes }),
 				operationGroup: options.operationGroup,
 				resultClass,
 				surface: options.surface,
@@ -581,14 +729,24 @@ export function createGatewayRuntimeToolPortalTelemetryRuntime(
 	const traceBackendDispatch = async <TResult>(
 		backendKind: ToolPortalBackendKind,
 		dispatch: () => Promise<TResult>,
+		resultAttributes?: (result: TResult) => Readonly<Record<string, string>>,
 	): Promise<TResult> => {
 		const udsContext = activeUdsContext.getStore();
 		return await traceDispatch({
 			backendKind,
 			dispatch,
 			kind: SpanKind.INTERNAL,
+			logAndTraceAttributes: udsContext?.logAndTraceAttributes ?? runtimeLogAndTraceAttributes,
+			metricAttributes: udsContext?.metricAttributes ?? runtimeMetricAttributes,
 			operationGroup: udsContext?.operationGroup ?? 'portal',
 			parentContext: udsContext?.spanContext,
+			resultAttributes: (result) => {
+				const attributes = resultAttributes?.(result) ?? Object.freeze({});
+				if (udsContext !== undefined) {
+					Object.assign(udsContext.dynamicLogAndTraceAttributes, attributes);
+				}
+				return attributes;
+			},
 			surface: 'backend',
 		});
 	};
@@ -596,9 +754,15 @@ export function createGatewayRuntimeToolPortalTelemetryRuntime(
 	const traceContextDispatch: GatewayRuntimeTraceContextDispatch = async (options, dispatch) => {
 		const operationGroup = resolveGatewayRuntimeOperationGroup(options.method) ?? 'unknown';
 		const parentContext = remoteParentContext(options.traceContext);
+		const invocationAttributes = invocationLogAndTraceAttributes(options);
+		const baseLogAndTraceAttributes = {
+			...runtimeLogAndTraceAttributes,
+			...invocationAttributes,
+		};
 		const startedAtMs = now();
 		const span = startSpan({
 			backendKind: 'none',
+			correlationAttributes: baseLogAndTraceAttributes,
 			kind: SpanKind.SERVER,
 			name: telemetrySpanNames.uds,
 			operationGroup,
@@ -608,9 +772,28 @@ export function createGatewayRuntimeToolPortalTelemetryRuntime(
 		});
 		const udsSpanContext =
 			span === undefined ? (parentContext ?? ROOT_CONTEXT) : trace.setSpan(ROOT_CONTEXT, span);
+		const traceId = trace.getSpanContext(udsSpanContext)?.traceId;
+		const dynamicLogAndTraceAttributes: Record<string, string> = {};
 		let resultClass: GatewayRuntimeToolPortalTelemetryResultClass = 'success';
 		try {
-			return await activeUdsContext.run({ operationGroup, spanContext: udsSpanContext }, dispatch);
+			const result = await activeUdsContext.run(
+				{
+					dynamicLogAndTraceAttributes,
+					logAndTraceAttributes: baseLogAndTraceAttributes,
+					metricAttributes: runtimeMetricAttributes,
+					operationGroup,
+					spanContext: udsSpanContext,
+				},
+				dispatch,
+			);
+			if (span !== undefined) {
+				for (const [attributeName, attributeValue] of Object.entries(
+					dynamicLogAndTraceAttributes,
+				)) {
+					span.setAttribute(attributeName, attributeValue);
+				}
+			}
+			return result;
 		} catch (error: unknown) {
 			resultClass = 'failure';
 			throw error;
@@ -630,6 +813,12 @@ export function createGatewayRuntimeToolPortalTelemetryRuntime(
 			emitCompletionSignals({
 				backendKind: 'none',
 				durationMs: finishedAtMs - startedAtMs,
+				logAndTraceAttributes: {
+					...baseLogAndTraceAttributes,
+					...dynamicLogAndTraceAttributes,
+					...(traceId === undefined ? {} : { 'agent_vm.trace.id': traceId }),
+				},
+				metricAttributes: runtimeMetricAttributes,
 				operationGroup,
 				resultClass,
 				surface: 'uds',
@@ -645,6 +834,9 @@ export function createGatewayRuntimeToolPortalTelemetryRuntime(
 			await traceBackendDispatch(
 				backendPort.backendKind,
 				async () => await backendPort.call(request, options),
+				backendPort.backendKind === 'tool_vm_runner'
+					? (result) => toolVmCallResultAttributes(result)
+					: undefined,
 			),
 		describe: async (request, options) =>
 			await traceBackendDispatch(
@@ -666,6 +858,7 @@ export function createGatewayRuntimeToolPortalTelemetryRuntime(
 	emitLog({
 		attributes: boundedAttributes({
 			backendKind: 'none',
+			correlationAttributes: runtimeLogAndTraceAttributes,
 			operationGroup: 'lifecycle',
 			resultClass: 'success',
 		}),
@@ -685,6 +878,7 @@ export function createGatewayRuntimeToolPortalTelemetryRuntime(
 				emitLog({
 					attributes: boundedAttributes({
 						backendKind: 'none',
+						correlationAttributes: runtimeLogAndTraceAttributes,
 						operationGroup: 'lifecycle',
 						resultClass: 'success',
 					}),
@@ -703,6 +897,10 @@ export function createGatewayRuntimeToolPortalTelemetryRuntime(
 		traceContextDispatch,
 		wrapBackendPort,
 		wrapSandboxDispatch: (dispatch) => async (request) =>
-			await traceBackendDispatch('tool_vm_runner', async () => await dispatch(request)),
+			await traceBackendDispatch(
+				'tool_vm_runner',
+				async () => await dispatch(request),
+				(result) => sandboxResultAttributes(request.method, result),
+			),
 	};
 }

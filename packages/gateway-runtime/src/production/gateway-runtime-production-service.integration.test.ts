@@ -879,6 +879,11 @@ describe('Gateway runtime production service', () => {
 			// Assert
 			expect(createToolPortalTelemetryRuntime).toHaveBeenCalledWith({
 				config: config.observability,
+				identity: {
+					frameworkKind: 'hermes',
+					gatewayEpoch: config.attachment.gatewayEpoch,
+					zoneId: config.controlEndpoint.identity.zoneId,
+				},
 			});
 			expect(telemetryProbe.backendPortKinds.toSorted()).toEqual([
 				'controller_host_action',

@@ -197,11 +197,17 @@ describe('Gateway runtime private UDS dispatcher', () => {
 
 		// Assert
 		expect(traceDispatches).toEqual([
-			{ connectionId: 'connection-1', method: 'portal.list', traceContext: sampledTraceContext },
+			{
+				connectionId: 'connection-1',
+				method: 'portal.list',
+				traceContext: sampledTraceContext,
+				trustedContext,
+			},
 			{
 				connectionId: 'connection-1',
 				method: 'sandbox.environment.open',
 				traceContext: unsampledTraceContext,
+				trustedContext,
 			},
 		]);
 		expect(list).toHaveBeenCalledWith({
@@ -247,7 +253,12 @@ describe('Gateway runtime private UDS dispatcher', () => {
 
 		// Assert
 		expect(traceDispatches).toEqual([
-			{ connectionId: 'connection-1', method: 'portal.list', traceContext: undefined },
+			{
+				connectionId: 'connection-1',
+				method: 'portal.list',
+				traceContext: undefined,
+				trustedContext,
+			},
 		]);
 	});
 

@@ -1,4 +1,9 @@
-import type { GatewayRuntimeTrustedInvocationContext } from '@agent-vm/agent-portal-sdk';
+import {
+	PortalCallRequestSchema,
+	PortalCallResultSchema,
+	type GatewayRuntimeTrustedInvocationContext,
+} from '@agent-vm/agent-portal-sdk';
+import type { ToolPortalBackendPort } from '@agent-vm/tool-portal';
 import { SpanKind, trace } from '@opentelemetry/api';
 import {
 	BasicTracerProvider,
@@ -47,6 +52,12 @@ const trustedContext = {
 	},
 	requester: { authenticatedSubjectId: 'sensitive-subject' },
 } satisfies GatewayRuntimeTrustedInvocationContext;
+
+const telemetryIdentity = {
+	frameworkKind: 'openclaw',
+	gatewayEpoch: 'sensitive-gateway-epoch',
+	zoneId: 'beta',
+} as const;
 
 interface RecordingTelemetryProviderFixture {
 	readonly logs: GatewayRuntimeToolPortalTelemetryLogRecord[];
@@ -108,6 +119,7 @@ describe('Gateway Runtime Tool Portal telemetry', () => {
 		const providerFactory = vi.fn<GatewayRuntimeToolPortalTelemetryProviderFactory>();
 		const runtime = createGatewayRuntimeToolPortalTelemetryRuntime({
 			config: { kind: 'disabled' },
+			identity: telemetryIdentity,
 			providerFactory,
 		});
 		const backendResult = { kind: 'sensitive-result' };
@@ -118,6 +130,7 @@ describe('Gateway Runtime Tool Portal telemetry', () => {
 				connectionId: 'sensitive-connection-id',
 				method: 'sandbox.exec.start',
 				traceContext: undefined,
+				trustedContext,
 			},
 			async () => backendResult,
 		);
@@ -135,10 +148,26 @@ describe('Gateway Runtime Tool Portal telemetry', () => {
 		let nowMs = 1_000;
 		const runtime = createGatewayRuntimeToolPortalTelemetryRuntime({
 			config: enabledObservability,
+			identity: telemetryIdentity,
 			now: () => nowMs++,
 			providerFactory: () => fixture.provider,
 		});
-		const privateResult = { content: 'sensitive-result-content' };
+		const privateResult = {
+			kind: 'started',
+			mode: 'direct',
+			operation: {
+				operationId: 'sensitive-sandbox-operation-id',
+				owningGeneration: 'sensitive-sandbox-tool-vm-generation',
+			},
+			streams: [
+				{
+					channel: 'stdout',
+					handleId: 'sensitive-stream-id',
+					kind: 'stream',
+					owningGeneration: 'sensitive-sandbox-tool-vm-generation',
+				},
+			],
+		} as const;
 		const sandboxDispatch = runtime.wrapSandboxDispatch(async () => privateResult);
 
 		// Act
@@ -150,6 +179,7 @@ describe('Gateway Runtime Tool Portal telemetry', () => {
 					traceparent: `00-${'11'.repeat(16)}-${'22'.repeat(8)}-01`,
 					tracestate: 'vendor=value',
 				},
+				trustedContext,
 			},
 			async () =>
 				await sandboxDispatch({
@@ -175,6 +205,11 @@ describe('Gateway Runtime Tool Portal telemetry', () => {
 		});
 		expect(backendSpan?.parentSpanContext?.spanId).toBe(udsSpan?.spanContext().spanId);
 		expect(backendSpan?.attributes['agent_vm.backend_kind']).toBe('tool_vm_runner');
+		expect(backendSpan?.attributes).toMatchObject({
+			'agent_vm.tool_vm.generation_class': 'observed',
+		});
+		expect(backendSpan?.attributes['agent_vm.operation.id_hash']).toMatch(/^[a-f0-9]{16}$/u);
+		expect(backendSpan?.attributes['agent_vm.tool_vm.generation_hash']).toMatch(/^[a-f0-9]{16}$/u);
 
 		const serializedTelemetry = JSON.stringify({
 			logs: fixture.logs,
@@ -184,10 +219,13 @@ describe('Gateway Runtime Tool Portal telemetry', () => {
 		for (const forbiddenValue of [
 			'sensitive-agent-id',
 			'sensitive-connection-id',
+			'sensitive-gateway-epoch',
 			'sensitive-profile-revision',
-			'sensitive-result-content',
+			'sensitive-sandbox-operation-id',
+			'sensitive-sandbox-tool-vm-generation',
 			'sensitive-shell-command',
 			'sensitive-subject',
+			'sensitive-stream-id',
 			'sensitive-tool-portal-profile',
 		]) {
 			expect(serializedTelemetry).not.toContain(forbiddenValue);
@@ -197,9 +235,148 @@ describe('Gateway Runtime Tool Portal telemetry', () => {
 		for (const metric of fixture.metrics) {
 			expect(Object.keys(metric.attributes).toSorted()).toEqual([
 				'agent_vm.backend_kind',
+				'agent_vm.framework.kind',
 				'agent_vm.operation_group',
 				'agent_vm.result_class',
+				'agent_vm.zone.id',
 			]);
+		}
+		expect(udsSpan?.attributes).toMatchObject({
+			'agent_vm.framework.kind': 'openclaw',
+			'agent_vm.operation.name': 'sandbox.exec.start',
+		});
+		expect(udsSpan?.attributes['agent_vm.agent.id_hash']).toMatch(/^[a-f0-9]{16}$/u);
+		expect(udsSpan?.attributes['agent_vm.gateway.epoch_hash']).toMatch(/^[a-f0-9]{16}$/u);
+		expect(udsSpan?.attributes['agent_vm.zone.id']).toBe('beta');
+		await runtime.shutdown();
+	});
+
+	it('correlates authoritative Tool VM call results without putting operation identities on metrics', async () => {
+		// Arrange
+		const fixture = createRecordingTelemetryProviderFixture();
+		const runtime = createGatewayRuntimeToolPortalTelemetryRuntime({
+			config: enabledObservability,
+			identity: telemetryIdentity,
+			providerFactory: () => fixture.provider,
+		});
+		let backendResult = PortalCallResultSchema.parse({
+			items: [
+				{
+					id: 'call-1',
+					operationId: 'sensitive-operation-id',
+					outcome: {
+						certainty: 'proven',
+						completion: 'succeeded',
+						kind: 'completed',
+						retryClass: 'forbidden',
+					},
+					owningGeneration: 'sensitive-tool-vm-generation',
+					status: 'ok',
+					value: { kind: 'completed' },
+				},
+			],
+			ok: true,
+		});
+		const backendPort: ToolPortalBackendPort<'tool_vm_runner'> = {
+			backendKind: 'tool_vm_runner',
+			call: async () => backendResult,
+			describe: async (): Promise<never> => {
+				throw new Error('not used');
+			},
+			list: async (): Promise<never> => {
+				throw new Error('not used');
+			},
+			search: async (): Promise<never> => {
+				throw new Error('not used');
+			},
+		};
+		const wrappedBackendPort = runtime.wrapBackendPort(backendPort);
+		const request = PortalCallRequestSchema.parse({
+			calls: [{ arguments: {}, id: 'call-1', name: 'run', namespace: 'sandbox' }],
+		});
+		const callOptions = {
+			dispatchAuthority: {
+				backendKind: 'tool_vm_runner',
+				fingerprint: `sha256:${'d'.repeat(64)}`,
+				kind: 'without-approval',
+				operationId: 'sensitive-operation-id',
+			},
+			surfaceClass: 'protected_uds',
+			trustedContext,
+		} as const;
+
+		// Act
+		await runtime.traceContextDispatch(
+			{
+				connectionId: 'sensitive-connection-id',
+				method: 'portal.call',
+				traceContext: undefined,
+				trustedContext,
+			},
+			async () => await wrappedBackendPort.call(request, callOptions),
+		);
+		backendResult = PortalCallResultSchema.parse({
+			items: [
+				{
+					error: {
+						code: 'capability_denied',
+						message: 'Sandbox binding is not current or authorized.',
+					},
+					id: 'call-1',
+					operationId: 'sensitive-denied-operation-id',
+					outcome: {
+						certainty: 'proven',
+						kind: 'not-dispatched',
+						retryClass: 'safe-before-dispatch',
+					},
+					owningGeneration: 'sensitive-profile-revision-not-a-tool-vm-generation',
+					status: 'error',
+				},
+			],
+			ok: false,
+		});
+		await runtime.traceContextDispatch(
+			{
+				connectionId: 'sensitive-connection-id',
+				method: 'portal.call',
+				traceContext: undefined,
+				trustedContext,
+			},
+			async () => await wrappedBackendPort.call(request, callOptions),
+		);
+
+		// Assert
+		const backendSpans = fixture.spanExporter
+			.getFinishedSpans()
+			.filter((span) => span.name === 'gateway_runtime.backend.request');
+		expect(backendSpans).toHaveLength(2);
+		expect(backendSpans[0]?.attributes).toMatchObject({
+			'agent_vm.tool_vm.generation_class': 'observed',
+		});
+		expect(backendSpans[0]?.attributes['agent_vm.operation.id_hash']).toMatch(/^[a-f0-9]{16}$/u);
+		expect(backendSpans[0]?.attributes['agent_vm.tool_vm.generation_hash']).toMatch(
+			/^[a-f0-9]{16}$/u,
+		);
+		expect(backendSpans[1]?.attributes).toMatchObject({
+			'agent_vm.tool_vm.generation_class': 'not-applicable',
+		});
+		expect(backendSpans[1]?.attributes).not.toHaveProperty('agent_vm.tool_vm.generation_hash');
+		for (const metric of fixture.metrics) {
+			expect(metric.attributes).not.toHaveProperty('agent_vm.operation.id_hash');
+			expect(metric.attributes).not.toHaveProperty('agent_vm.tool_vm.generation_hash');
+		}
+		const serializedTelemetry = JSON.stringify({
+			logs: fixture.logs,
+			metrics: fixture.metrics,
+			spans: backendSpans.map((span) => span.attributes),
+		});
+		for (const forbiddenValue of [
+			'sensitive-denied-operation-id',
+			'sensitive-operation-id',
+			'sensitive-profile-revision-not-a-tool-vm-generation',
+			'sensitive-tool-vm-generation',
+		]) {
+			expect(serializedTelemetry).not.toContain(forbiddenValue);
 		}
 		await runtime.shutdown();
 	});
@@ -209,6 +386,7 @@ describe('Gateway Runtime Tool Portal telemetry', () => {
 		const fixture = createRecordingTelemetryProviderFixture();
 		const runtime = createGatewayRuntimeToolPortalTelemetryRuntime({
 			config: enabledObservability,
+			identity: telemetryIdentity,
 			providerFactory: () => fixture.provider,
 		});
 
@@ -220,6 +398,7 @@ describe('Gateway Runtime Tool Portal telemetry', () => {
 				traceContext: {
 					traceparent: `00-${'33'.repeat(16)}-${'44'.repeat(8)}-00`,
 				},
+				trustedContext,
 			},
 			async () => undefined,
 		);
@@ -228,6 +407,7 @@ describe('Gateway Runtime Tool Portal telemetry', () => {
 				connectionId: 'connection-b',
 				method: 'portal.list',
 				traceContext: undefined,
+				trustedContext,
 			},
 			async () => undefined,
 		);
@@ -258,6 +438,7 @@ describe('Gateway Runtime Tool Portal telemetry', () => {
 		}));
 		const runtime = createGatewayRuntimeToolPortalTelemetryRuntime({
 			config: enabledObservability,
+			identity: telemetryIdentity,
 			providerFactory,
 		});
 		const expectedResult = { kind: 'backend-result' };
@@ -272,6 +453,7 @@ describe('Gateway Runtime Tool Portal telemetry', () => {
 							connectionId: `connection-${String(index)}`,
 							method: 'portal.list',
 							traceContext: undefined,
+							trustedContext,
 						},
 						async () => expectedResult,
 					),
@@ -306,6 +488,7 @@ describe('Gateway Runtime Tool Portal telemetry', () => {
 		const fixture = createRecordingTelemetryProviderFixture();
 		const runtime = createGatewayRuntimeToolPortalTelemetryRuntime({
 			config: enabledObservability,
+			identity: telemetryIdentity,
 			providerFactory: () => fixture.provider,
 		});
 		const backendFailure = new Error('sensitive backend failure detail');
@@ -317,6 +500,7 @@ describe('Gateway Runtime Tool Portal telemetry', () => {
 					connectionId: 'sensitive-connection-id',
 					method: 'portal.call',
 					traceContext: undefined,
+					trustedContext,
 				},
 				async (): Promise<never> => {
 					throw backendFailure;
@@ -340,6 +524,7 @@ describe('Gateway Runtime Tool Portal telemetry', () => {
 		};
 		const runtime = createGatewayRuntimeToolPortalTelemetryRuntime({
 			config: enabledObservability,
+			identity: telemetryIdentity,
 			providerFactory: () => provider,
 		});
 
