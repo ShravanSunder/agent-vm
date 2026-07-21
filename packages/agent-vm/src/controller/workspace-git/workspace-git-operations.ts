@@ -218,6 +218,40 @@ async function initializeWorkspaceGitDirectory(options: {
 			timeout: GIT_OPERATION_TIMEOUT_MS,
 		},
 	);
+	const workspaceGitArguments = [
+		`--git-dir=${options.hostGitDirectory}`,
+		`--work-tree=${options.hostWorkspaceDirectory}`,
+	];
+	const workspaceGitCommandOptions = {
+		env: CLOSED_GIT_ENVIRONMENT,
+		extendEnv: false,
+		reject: false,
+		timeout: GIT_OPERATION_TIMEOUT_MS,
+	};
+	const currentHeadReference = await execa(
+		GIT_EXECUTABLE_PATH,
+		[...workspaceGitArguments, 'symbolic-ref', '--quiet', 'HEAD'],
+		workspaceGitCommandOptions,
+	);
+	if (currentHeadReference.exitCode === 0) {
+		const repositoryHasRefs = await execa(
+			GIT_EXECUTABLE_PATH,
+			[...workspaceGitArguments, 'show-ref', '--quiet'],
+			workspaceGitCommandOptions,
+		);
+		if (repositoryHasRefs.exitCode !== 0 && repositoryHasRefs.exitCode !== 1) {
+			throw new Error('Workspace Git failed to inspect existing references.');
+		}
+		if (repositoryHasRefs.exitCode === 1) {
+			await execa(
+				GIT_EXECUTABLE_PATH,
+				[...workspaceGitArguments, 'symbolic-ref', 'HEAD', `refs/heads/${options.branch}`],
+				{ ...workspaceGitCommandOptions, reject: true },
+			);
+		}
+	} else if (currentHeadReference.exitCode !== 1) {
+		throw new Error('Workspace Git failed to inspect its current HEAD reference.');
+	}
 	const gitConfigLines = [
 		'[core]',
 		'\trepositoryformatversion = 0',

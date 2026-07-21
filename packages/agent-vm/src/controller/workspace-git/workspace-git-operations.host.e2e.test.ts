@@ -287,6 +287,196 @@ describe('workspace Git repository materialization', () => {
 		expect(gitConfig).toContain('[branch "agent/alice-workspace"]');
 	});
 
+	it('points a framework-initialized unborn repository at the configured workspace branch', async () => {
+		const hostWorkspaceDirectory = path.join(testRoot, 'zone-files', 'agents', 'alice');
+		await mkdir(hostWorkspaceDirectory, { recursive: true });
+		await execa('/usr/bin/git', ['init', '--initial-branch=master', hostWorkspaceDirectory]);
+		await writeFile(
+			path.join(hostWorkspaceDirectory, 'BOOTSTRAP.md'),
+			'framework bootstrap\n',
+			'utf8',
+		);
+
+		const materialized = await materializeWorkspaceGitRepository({
+			agentId: 'alice',
+			hostWorkspaceDirectory,
+			policy: {
+				branch: 'agent/alice-workspace',
+				kind: 'remote',
+				remoteUrl: 'https://github.com/example/alice-workspace.git',
+			},
+			runtimeDir: path.join(testRoot, 'runtime'),
+			zoneId: 'gateway',
+		});
+
+		await expect(
+			execa('/usr/bin/git', [
+				`--git-dir=${materialized.hostGitDirectory}`,
+				`--work-tree=${hostWorkspaceDirectory}`,
+				'symbolic-ref',
+				'HEAD',
+			]),
+		).resolves.toMatchObject({ stdout: 'refs/heads/agent/alice-workspace' });
+		await expect(readFile(path.join(hostWorkspaceDirectory, 'BOOTSTRAP.md'), 'utf8')).resolves.toBe(
+			'framework bootstrap\n',
+		);
+	});
+
+	it('does not repoint a framework repository that already has a commit', async () => {
+		const hostWorkspaceDirectory = path.join(testRoot, 'zone-files', 'agents', 'alice');
+		await mkdir(hostWorkspaceDirectory, { recursive: true });
+		await execa('/usr/bin/git', ['init', '--initial-branch=master', hostWorkspaceDirectory]);
+		await writeFile(
+			path.join(hostWorkspaceDirectory, 'BOOTSTRAP.md'),
+			'committed bootstrap\n',
+			'utf8',
+		);
+		await execa('/usr/bin/git', ['-C', hostWorkspaceDirectory, 'add', 'BOOTSTRAP.md']);
+		await execa('/usr/bin/git', [
+			'-C',
+			hostWorkspaceDirectory,
+			'-c',
+			'user.name=Framework',
+			'-c',
+			'user.email=framework@example.invalid',
+			'commit',
+			'-m',
+			'framework bootstrap',
+		]);
+		const originalHead = (
+			await execa('/usr/bin/git', ['-C', hostWorkspaceDirectory, 'rev-parse', 'HEAD'])
+		).stdout;
+
+		const materialized = await materializeWorkspaceGitRepository({
+			agentId: 'alice',
+			hostWorkspaceDirectory,
+			policy: {
+				branch: 'agent/alice-workspace',
+				kind: 'remote',
+				remoteUrl: 'https://github.com/example/alice-workspace.git',
+			},
+			runtimeDir: path.join(testRoot, 'runtime'),
+			zoneId: 'gateway',
+		});
+
+		const hostGitArguments = [
+			`--git-dir=${materialized.hostGitDirectory}`,
+			`--work-tree=${hostWorkspaceDirectory}`,
+		];
+		await expect(
+			execa('/usr/bin/git', [...hostGitArguments, 'symbolic-ref', 'HEAD']),
+		).resolves.toMatchObject({ stdout: 'refs/heads/master' });
+		await expect(
+			execa('/usr/bin/git', [...hostGitArguments, 'rev-parse', 'HEAD']),
+		).resolves.toMatchObject({ stdout: originalHead });
+	});
+
+	it('does not repoint an unborn HEAD when another committed ref exists', async () => {
+		const hostWorkspaceDirectory = path.join(testRoot, 'zone-files', 'agents', 'alice');
+		await mkdir(hostWorkspaceDirectory, { recursive: true });
+		await execa('/usr/bin/git', ['init', '--initial-branch=master', hostWorkspaceDirectory]);
+		await writeFile(
+			path.join(hostWorkspaceDirectory, 'BOOTSTRAP.md'),
+			'committed bootstrap\n',
+			'utf8',
+		);
+		await execa('/usr/bin/git', ['-C', hostWorkspaceDirectory, 'add', 'BOOTSTRAP.md']);
+		await execa('/usr/bin/git', [
+			'-C',
+			hostWorkspaceDirectory,
+			'-c',
+			'user.name=Framework',
+			'-c',
+			'user.email=framework@example.invalid',
+			'commit',
+			'-m',
+			'framework bootstrap',
+		]);
+		const committedHead = (
+			await execa('/usr/bin/git', ['-C', hostWorkspaceDirectory, 'rev-parse', 'HEAD'])
+		).stdout;
+		await execa('/usr/bin/git', [
+			'-C',
+			hostWorkspaceDirectory,
+			'checkout',
+			'--orphan',
+			'framework-unborn',
+		]);
+
+		const materialized = await materializeWorkspaceGitRepository({
+			agentId: 'alice',
+			hostWorkspaceDirectory,
+			policy: {
+				branch: 'agent/alice-workspace',
+				kind: 'remote',
+				remoteUrl: 'https://github.com/example/alice-workspace.git',
+			},
+			runtimeDir: path.join(testRoot, 'runtime'),
+			zoneId: 'gateway',
+		});
+
+		const hostGitArguments = [
+			`--git-dir=${materialized.hostGitDirectory}`,
+			`--work-tree=${hostWorkspaceDirectory}`,
+		];
+		await expect(
+			execa('/usr/bin/git', [...hostGitArguments, 'symbolic-ref', 'HEAD']),
+		).resolves.toMatchObject({ stdout: 'refs/heads/framework-unborn' });
+		await expect(
+			execa('/usr/bin/git', [...hostGitArguments, 'rev-parse', 'refs/heads/master']),
+		).resolves.toMatchObject({ stdout: committedHead });
+	});
+
+	it('does not repoint a detached committed HEAD', async () => {
+		const hostWorkspaceDirectory = path.join(testRoot, 'zone-files', 'agents', 'alice');
+		await mkdir(hostWorkspaceDirectory, { recursive: true });
+		await execa('/usr/bin/git', ['init', '--initial-branch=master', hostWorkspaceDirectory]);
+		await writeFile(
+			path.join(hostWorkspaceDirectory, 'BOOTSTRAP.md'),
+			'committed bootstrap\n',
+			'utf8',
+		);
+		await execa('/usr/bin/git', ['-C', hostWorkspaceDirectory, 'add', 'BOOTSTRAP.md']);
+		await execa('/usr/bin/git', [
+			'-C',
+			hostWorkspaceDirectory,
+			'-c',
+			'user.name=Framework',
+			'-c',
+			'user.email=framework@example.invalid',
+			'commit',
+			'-m',
+			'framework bootstrap',
+		]);
+		const committedHead = (
+			await execa('/usr/bin/git', ['-C', hostWorkspaceDirectory, 'rev-parse', 'HEAD'])
+		).stdout;
+		await execa('/usr/bin/git', ['-C', hostWorkspaceDirectory, 'checkout', '--detach']);
+
+		const materialized = await materializeWorkspaceGitRepository({
+			agentId: 'alice',
+			hostWorkspaceDirectory,
+			policy: {
+				branch: 'agent/alice-workspace',
+				kind: 'remote',
+				remoteUrl: 'https://github.com/example/alice-workspace.git',
+			},
+			runtimeDir: path.join(testRoot, 'runtime'),
+			zoneId: 'gateway',
+		});
+
+		const hostGitArguments = [
+			`--git-dir=${materialized.hostGitDirectory}`,
+			`--work-tree=${hostWorkspaceDirectory}`,
+		];
+		await expect(
+			execa('/usr/bin/git', [...hostGitArguments, 'symbolic-ref', '--quiet', 'HEAD']),
+		).rejects.toMatchObject({ exitCode: 1 });
+		await expect(
+			execa('/usr/bin/git', [...hostGitArguments, 'rev-parse', 'HEAD']),
+		).resolves.toMatchObject({ stdout: committedHead });
+	});
+
 	it('pushes one exact committed head through a sanitized local-remote view', async () => {
 		const hostWorkspaceDirectory = path.join(testRoot, 'zone-files', 'agents', 'alice');
 		const remoteGitDirectory = path.join(testRoot, 'remote.git');
