@@ -390,9 +390,11 @@ normal zone backups.
 
 ## zoneFilesDir
 
-`zoneFilesDir` is the long-lived OpenClaw household/user files directory. It is
-RealFS-mounted into the OpenClaw gateway VM at `/zone` and
-is included in OpenClaw zone backups.
+`zoneFilesDir` is the long-lived managed Gateway shared-files and per-agent
+workspace directory. OpenClaw RealFS-mounts the complete directory at `/zone`;
+for both OpenClaw and Hermes, the controller selects each agent workspace from
+`zoneFilesDir/agents/<agentId>` for its Tool VM. The complete directory is
+included in both OpenClaw and Hermes zone backups.
 
 Worker gateways do not use `zoneFilesDir`. Their repo files live in VM-local
 `/work/repos/<repoId>`, and their Git metadata lives under system-level

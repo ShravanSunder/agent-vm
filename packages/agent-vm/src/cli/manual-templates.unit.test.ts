@@ -55,6 +55,20 @@ describe('manual templates', () => {
 		expect(content).not.toContain('Discord is enabled by default');
 	});
 
+	it('describes managed Gateway zone files and backups without stale OpenClaw or Git admission claims', () => {
+		const files = buildManualTemplateFiles({
+			defaultZoneId: 'shravan',
+			systemConfigPath: 'config/system.jsonc',
+		});
+		const generatedManual = files.map((file) => file.content).join('\n');
+
+		expect(generatedManual).toContain(
+			'zoneFilesDir stores durable shared zone files and per-agent workspaces for managed Gateway zones.',
+		);
+		expect(generatedManual).not.toContain('per-agent workspaces for OpenClaw zones');
+		expect(generatedManual).not.toContain('clean and fully pushed before backup publication');
+	});
+
 	it('builds progressive manual files for agents helping end users', () => {
 		const files = buildManualTemplateFiles({
 			defaultZoneId: 'shravan',

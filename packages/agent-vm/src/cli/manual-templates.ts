@@ -90,7 +90,7 @@ config/gateways/<zone>/worker.jsonc is Agent Worker gateway config when the zone
 vm-images/ contains deployment-owned Gondolin build-config.jsonc files and small managed image overlays.
 agent-vm owns the gateway/tool base image recipes and pins the managed GHCR base layer version.
 stateDir stores durable gateway state.
-zoneFilesDir stores durable shared zone files and per-agent workspaces for OpenClaw zones. Each configured agent owns zoneFilesDir/agents/<agentId>.
+zoneFilesDir stores durable shared zone files and per-agent workspaces for managed Gateway zones. Each configured agent owns zoneFilesDir/agents/<agentId>.
 cacheDir stores rebuildable artifacts.
 controllerStateDir is required, stores host-controller-only durable authority, and has no default.
 controllerStateDir is never mounted into a Gateway or Tool VM and must remain disjoint from config, cache, runtime, Gateway state, backup, observability, and mount-source paths.
@@ -472,7 +472,7 @@ Per-agent workspace Git:
 - mode=remote creates the same isolated database and exposes the controller-owned workspace_git_push Tool Portal action for that agent.
 - Tool VM Git SSH remains read-only: fetch is allowed and direct push is denied.
 - The controller uses host-only HTTPS credentials, expected-head/CAS checks, and rejects a push to the configured default branch.
-- Backups include durable workspace files and exclude runtimeDir Git metadata. Remote mode requires the selected workspace repository to be clean and fully pushed before backup publication.
+- Backups include durable workspace files and exclude runtimeDir Git metadata.
 `,
 			),
 		},

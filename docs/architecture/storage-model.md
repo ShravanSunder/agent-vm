@@ -35,9 +35,8 @@ stateDir              per-zone              yes               yes       gateway 
 controllerStateDir    system/controller     yes               no        host-only controller approval,
                                                                            lifecycle, and cleanup authority
 
-zoneFilesDir          OpenClaw per-zone     yes               yes       long-lived user/agent files
-                                                                           mounted at
-                                                                           /zone
+zoneFilesDir          managed Gateway       yes               yes       long-lived shared/agent files;
+                      per-zone                                         OpenClaw mounts /zone
 
 backupDir             per-zone output       artifact          no        encrypted backup archives
 ```
