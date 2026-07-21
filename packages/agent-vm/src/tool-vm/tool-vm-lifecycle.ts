@@ -75,25 +75,45 @@ export interface UnstartedToolVmProvisioning {
 }
 
 export interface ToolVmRootBinding {
-	readonly hostGitDirectoryRoot: string;
+	readonly hostGitDirectoryRoot?: string | undefined;
 	readonly hostWorkspaceRoot: string;
 	readonly kind: 'managed-agent-workspace';
 }
 
 function managedAgentWorkspacePolicy(
+	agentId: string,
 	zone: LoadedSystemConfig['zones'][number],
 ): ManagedVmFilteredWorkspacePolicy {
-	if (zone.gateway.type === 'worker') {
-		throw new Error(
-			`Gateway type '${zone.gateway.type}' does not yet define a managed agent workspace policy.`,
-		);
+	const configuredAgent = zone.agents?.find((agent) => agent.id === agentId);
+	if (configuredAgent === undefined) {
+		throw new Error(`Zone '${zone.id}' does not declare managed agent '${agentId}'.`);
 	}
-	return {
-		hiddenPaths: [],
-		readonlyInputs: [],
+	const readOnlyGitPointer =
+		configuredAgent.workspaceGit === undefined
+			? { hiddenPaths: [], readonlyInputs: [] }
+			: {
+					hiddenPaths: [],
+					readonlyInputs: [
+						{
+							destinationRelativePath: '.git',
+							sourceRelativePath: '.git',
+						},
+					],
+				};
+	const selectedAgentSourceRootPolicy = {
+		...readOnlyGitPointer,
 		temporaryPaths: [],
 		visibility: { kind: 'whole-root-writable' },
-	};
+	} satisfies ManagedVmFilteredWorkspacePolicy;
+	switch (zone.gateway.type) {
+		case 'openclaw':
+		case 'hermes':
+			return selectedAgentSourceRootPolicy;
+		case 'worker':
+			throw new Error(
+				`Gateway type '${zone.gateway.type}' does not yet define a managed agent workspace policy.`,
+			);
+	}
 }
 
 function createManagedAgentGitReadOnlySshEgress(options: {
@@ -328,6 +348,27 @@ export async function createUnstartedToolVm(
 		throw new Error(`Tool VM image profile '${options.profile.imageProfile}' is not configured.`);
 	}
 	// Fail bad lease paths before doing any expensive image work.
+	const configuredAgent = zone.agents?.find((agent) => agent.id === options.agentId);
+	if (configuredAgent === undefined) {
+		throw new Error(`Zone '${zone.id}' does not declare managed agent '${options.agentId}'.`);
+	}
+	const configuredGitDirectoryRoot = options.rootBinding.hostGitDirectoryRoot;
+	const validateConfiguredGitDirectoryRoot = async (): Promise<string | undefined> => {
+		if (configuredAgent.workspaceGit === undefined) {
+			return undefined;
+		}
+		if (configuredGitDirectoryRoot === undefined) {
+			throw new Error(
+				`Managed agent '${options.agentId}' requires a controller-selected Git directory root.`,
+			);
+		}
+		return await validateControllerDerivedAgentGitDirectoryRoot({
+			agentId: options.agentId,
+			hostGitDirectoryRoot: configuredGitDirectoryRoot,
+			runtimeDir: options.systemConfig.runtimeDir,
+			zoneId: options.zoneId,
+		});
+	};
 	await Promise.all([
 		validateControllerSelectedToolVmDirectory({
 			agentId: options.agentId,
@@ -335,12 +376,7 @@ export async function createUnstartedToolVm(
 			kind: 'managed-agent-workspace',
 			zone,
 		}),
-		validateControllerDerivedAgentGitDirectoryRoot({
-			agentId: options.agentId,
-			hostGitDirectoryRoot: options.rootBinding.hostGitDirectoryRoot,
-			runtimeDir: options.systemConfig.runtimeDir,
-			zoneId: options.zoneId,
-		}),
+		validateConfiguredGitDirectoryRoot(),
 	]);
 	const toolVmSecretNames = selectToolVmMediatedSecretNamesForAgent({
 		agentId: options.agentId,
@@ -374,13 +410,9 @@ export async function createUnstartedToolVm(
 
 	// Internal createToolVm callers bypass the /lease route; validate and acquire
 	// host-directory authority immediately before handing it to the provider.
+	const hostGitDirectoryRoot = await validateConfiguredGitDirectoryRoot();
 	const managedAgentWorkspaceRoot = {
-		hostGitDirectoryRoot: await validateControllerDerivedAgentGitDirectoryRoot({
-			agentId: options.agentId,
-			hostGitDirectoryRoot: options.rootBinding.hostGitDirectoryRoot,
-			runtimeDir: options.systemConfig.runtimeDir,
-			zoneId: options.zoneId,
-		}),
+		...(hostGitDirectoryRoot === undefined ? {} : { hostGitDirectoryRoot }),
 		hostWorkspaceRoot: await validateControllerSelectedToolVmDirectory({
 			agentId: options.agentId,
 			hostDirectory: options.rootBinding.hostWorkspaceRoot,
@@ -423,11 +455,13 @@ export async function createUnstartedToolVm(
 		toolVm = await createManagedVmWithFilteredAgentWorkspace(
 			{
 				factory: dependencies.managedVmFactory,
-				hostGitDirectoryRoot: managedAgentWorkspaceRoot.hostGitDirectoryRoot,
+				...(managedAgentWorkspaceRoot.hostGitDirectoryRoot === undefined
+					? {}
+					: { hostGitDirectoryRoot: managedAgentWorkspaceRoot.hostGitDirectoryRoot }),
 				hostWorkspaceRoot: managedAgentWorkspaceRoot.hostWorkspaceRoot,
 				ownedDirectories: dependencies.managedVmOwnedDirectories,
 				request: managedVmRequest,
-				workspacePolicy: managedAgentWorkspacePolicy(zone),
+				workspacePolicy: managedAgentWorkspacePolicy(options.agentId, zone),
 			},
 			dependencies.managedAgentRootMountDependencies,
 		);

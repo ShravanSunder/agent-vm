@@ -98,7 +98,8 @@ name / path                         layer / location                  storage / 
 ────────────────────────────────    ───────────────────────────────   ─────────────────────────────
 
 zoneFilesDir                        system.json host config            durable RealFS, backed up
-	                                OpenClaw zones only                mounted in gateway at /zone
+	                                OpenClaw and Hermes zones          OpenClaw gateway mounts /zone;
+	                                                                     Tool VMs receive one agent child
 
 /zone                               OpenClaw gateway VM                RealFS -> zoneFilesDir
 	                                durable zone files                 shared, backed up

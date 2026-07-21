@@ -4,13 +4,7 @@ import { SANDBOX_MAXIMUM_BINARY_BYTES } from '@agent-vm/agent-portal-sdk';
 
 import type { StrictToolVmSshClient } from '../sandbox/strict-tool-vm-ssh-client.js';
 
-const SANDBOX_FILESYSTEM_READ_ROOTS = [
-	'/work',
-	'/workspace',
-	'/gitdirs',
-	'/agent-vm',
-	'/tmp',
-] as const;
+const SANDBOX_FILESYSTEM_READ_ROOTS = ['/work', '/workspace', '/gitdirs', '/tmp'] as const;
 const SANDBOX_FILESYSTEM_MUTATION_ROOTS = ['/work', '/workspace', '/gitdirs', '/tmp'] as const;
 const SANDBOX_RECURSIVE_REMOVE_MAXIMUM_DEPTH = 32;
 const SANDBOX_RECURSIVE_REMOVE_MAXIMUM_ENTRIES = 1_000;
@@ -78,9 +72,6 @@ export function resolveSandboxFilesystemPath(props: {
 	const admittedRoots =
 		props.operation === 'read' ? SANDBOX_FILESYSTEM_READ_ROOTS : SANDBOX_FILESYSTEM_MUTATION_ROOTS;
 	if (!admittedRoots.some((root) => pathIsWithinRoot(resolvedPath, root))) {
-		if (pathIsWithinRoot(resolvedPath, '/agent-vm')) {
-			throw new Error('Sandbox filesystem mutation cannot modify read-only /agent-vm inputs.');
-		}
 		throw new Error('Sandbox filesystem path is outside the operation-admitted guest roots.');
 	}
 	return resolvedPath;

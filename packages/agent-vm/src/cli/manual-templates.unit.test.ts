@@ -409,7 +409,7 @@ describe('manual templates', () => {
 			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
 		).toContain('message_tool_only');
 		expect(files.find((file) => file.relativePath.endsWith('README.md'))?.content).toContain(
-			'runtime-paths.md explains /workspace, /work, /gitdirs, /agent-vm, and other in-VM paths',
+			'runtime-paths.md explains /workspace, /work, optional /gitdirs, and other in-VM paths',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('README.md'))?.content).toContain(
 			'tool-vm-leases.md explains agent-keyed Tool VM lease identity and reuse',

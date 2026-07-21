@@ -83,12 +83,12 @@ class HermesGatewayRuntimeProcessHandle:
         *,
         operation_future: concurrent.futures.Future[int],
         cancel_operation: t.Callable[[], str],
+        close_stdout_write: t.Callable[[], None],
         stdout_read_fd: int,
-        stdout_write_fd: int,
     ) -> None:
         self._operation_future = operation_future
         self._cancel_operation = cancel_operation
-        self._stdout_write_fd = stdout_write_fd
+        self._close_stdout_write = close_stdout_write
         self._stdout = os.fdopen(
             stdout_read_fd,
             "r",
@@ -135,11 +135,8 @@ class HermesGatewayRuntimeProcessHandle:
             else:
                 self._outcome_error = HermesGatewayRuntimeOutcomeError(outcome_kind)
                 self._returncode = 125
+        self._close_stdout_write()
         self._operation_future.cancel()
-        try:
-            os.close(self._stdout_write_fd)
-        except OSError:
-            pass
 
     def wait(self, timeout: float | None = None) -> int:
         try:
@@ -449,6 +446,7 @@ class HermesGatewayRuntimeEnvironment(BaseEnvironment):
         timeout: int,
         stdin_data: str | None,
         write_fd: int,
+        close_stdout_write: t.Callable[[], None],
         operation_state: dict[str, t.Mapping[str, object]],
         operation_ready: threading.Event,
     ) -> int:
@@ -507,10 +505,7 @@ class HermesGatewayRuntimeEnvironment(BaseEnvironment):
             return exit_code
         finally:
             operation_ready.set()
-            try:
-                os.close(write_fd)
-            except OSError:
-                pass
+            close_stdout_write()
 
     @t.override
     def _run_bash(
@@ -523,6 +518,20 @@ class HermesGatewayRuntimeEnvironment(BaseEnvironment):
     ) -> HermesGatewayRuntimeProcessHandle:
         self._require_open()
         stdout_read_fd, stdout_write_fd = os.pipe()
+        stdout_write_lock = threading.Lock()
+        stdout_write_closed = False
+
+        def close_stdout_write() -> None:
+            nonlocal stdout_write_closed
+            with stdout_write_lock:
+                if stdout_write_closed:
+                    return
+                stdout_write_closed = True
+                try:
+                    os.close(stdout_write_fd)
+                except OSError:
+                    pass
+
         operation_state: dict[str, t.Mapping[str, object]] = {}
         operation_ready = threading.Event()
         future = self._adapter.submit_gateway_runtime_coroutine(
@@ -532,6 +541,7 @@ class HermesGatewayRuntimeEnvironment(BaseEnvironment):
                 timeout=timeout,
                 stdin_data=stdin_data,
                 write_fd=stdout_write_fd,
+                close_stdout_write=close_stdout_write,
                 operation_state=operation_state,
                 operation_ready=operation_ready,
             )
@@ -549,8 +559,19 @@ class HermesGatewayRuntimeEnvironment(BaseEnvironment):
                     trusted_context=self._trusted_context,
                 )
             )
+            cancellation = _model_mapping(result)
+            cancellation_kind = _require_string(
+                cancellation.get("kind"),
+                "cancellation result kind",
+            )
+            if cancellation_kind in {
+                "running",
+                "cancel-request-accepted",
+                "cancellation-pending",
+            }:
+                return cancellation_kind
             outcome = _require_mapping(
-                _model_mapping(result).get("outcome"),
+                cancellation.get("outcome"),
                 "cancellation outcome",
             )
             return _require_string(outcome.get("kind"), "cancellation outcome kind")
@@ -558,8 +579,8 @@ class HermesGatewayRuntimeEnvironment(BaseEnvironment):
         return HermesGatewayRuntimeProcessHandle(
             operation_future=future,
             cancel_operation=cancel_operation,
+            close_stdout_write=close_stdout_write,
             stdout_read_fd=stdout_read_fd,
-            stdout_write_fd=stdout_write_fd,
         )
 
     @t.override

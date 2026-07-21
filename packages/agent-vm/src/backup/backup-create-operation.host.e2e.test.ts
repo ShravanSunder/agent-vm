@@ -157,4 +157,123 @@ describe('createEncryptedBackup', () => {
 			readFile(path.join(restoredZoneFilesDir, 'agents', 'bob', 'NOTES.md'), 'utf8'),
 		).resolves.toBe('bob workspace\n');
 	});
+
+	it('creates and restores a Hermes zone archive with both profiles and agent workspaces', async () => {
+		const rootPath = await createTemporaryDirectory();
+		const cacheDir = path.join(rootPath, 'cache');
+		const controllerStateDir = path.join(rootPath, 'controller-state');
+		const observabilityDir = path.join(rootPath, 'observability');
+		const runtimeDir = path.join(rootPath, 'runtime');
+		const stateDir = path.join(rootPath, 'state', 'hermes-beta');
+		const backupDir = path.join(stateDir, 'backups');
+		const zoneFilesDir = path.join(rootPath, 'zone-files', 'hermes-beta');
+		const clawfestProfileDir = path.join(stateDir, 'profiles', 'clawfest');
+		const betaProfileDir = path.join(stateDir, 'profiles', 'beta');
+		const clawfestWorkspaceDir = path.join(zoneFilesDir, 'agents', 'clawfest');
+		const betaWorkspaceDir = path.join(zoneFilesDir, 'agents', 'beta');
+		const runtimeGitDir = path.join(
+			runtimeDir,
+			'zones',
+			'hermes-beta',
+			'gitdirs',
+			'agents',
+			'clawfest',
+			'workspace.git',
+		);
+		await Promise.all(
+			[
+				backupDir,
+				betaProfileDir,
+				betaWorkspaceDir,
+				cacheDir,
+				clawfestProfileDir,
+				clawfestWorkspaceDir,
+				controllerStateDir,
+				observabilityDir,
+				runtimeGitDir,
+			].map(async (directoryPath) => {
+				await mkdir(directoryPath, { recursive: true });
+			}),
+		);
+		await Promise.all([
+			writeFile(path.join(stateDir, 'state.db'), 'hermes sqlite bytes\n'),
+			writeFile(path.join(clawfestProfileDir, 'session.json'), '{"profile":"clawfest"}\n'),
+			writeFile(path.join(betaProfileDir, 'session.json'), '{"profile":"beta"}\n'),
+			writeFile(path.join(clawfestWorkspaceDir, '.git'), 'gitdir: /gitdirs/workspace.git\n'),
+			writeFile(path.join(clawfestWorkspaceDir, 'marker.txt'), 'clawfest workspace\n'),
+			writeFile(path.join(betaWorkspaceDir, '.git'), 'gitdir: /gitdirs/workspace.git\n'),
+			writeFile(path.join(betaWorkspaceDir, 'marker.txt'), 'beta workspace\n'),
+			writeFile(path.join(runtimeGitDir, 'HEAD'), 'ref: refs/heads/clawfest\n'),
+			writeFile(path.join(cacheDir, 'image.bin'), 'cache\n'),
+			writeFile(path.join(controllerStateDir, 'leases.json'), '{}\n'),
+			writeFile(path.join(observabilityDir, 'traces.bin'), 'otel\n'),
+			writeFile(path.join(backupDir, 'older.tar.age'), 'older backup\n'),
+		]);
+
+		const backup = await createEncryptedBackup({
+			backupDir,
+			cacheDir,
+			encryption: {
+				decrypt: async () => {},
+				encrypt: async (inputPath, outputPath) => {
+					await copyFile(inputPath, outputPath);
+				},
+			},
+			runtimeDir,
+			stateDir,
+			zoneFilesDir,
+			zoneId: 'hermes-beta',
+		});
+
+		const tarListing = (await execa('tar', ['tf', backup.backupPath])).stdout;
+		expect(tarListing).toContain('state/state.db');
+		expect(tarListing).toContain('state/profiles/clawfest/session.json');
+		expect(tarListing).toContain('state/profiles/beta/session.json');
+		expect(tarListing).toContain('zone-files/agents/clawfest/.git');
+		expect(tarListing).toContain('zone-files/agents/clawfest/marker.txt');
+		expect(tarListing).toContain('zone-files/agents/beta/.git');
+		expect(tarListing).toContain('zone-files/agents/beta/marker.txt');
+		expect(tarListing).not.toContain('state/backups/');
+		expect(tarListing).not.toContain('runtime/');
+		expect(tarListing).not.toContain('workspace.git/');
+		expect(tarListing).not.toContain('cache/');
+		expect(tarListing).not.toContain('controller-state/');
+		expect(tarListing).not.toContain('observability/');
+
+		const restoredRootPath = await createTemporaryDirectory();
+		const restoredStateDir = path.join(restoredRootPath, 'state');
+		const restoredZoneFilesDir = path.join(restoredRootPath, 'zone-files');
+		await Promise.all([
+			mkdir(restoredStateDir, { recursive: true }),
+			mkdir(restoredZoneFilesDir, { recursive: true }),
+		]);
+		const restoreResult = await restoreEncryptedBackup({
+			backupPath: backup.backupPath,
+			encryption: {
+				decrypt: async (inputPath, outputPath) => {
+					await copyFile(inputPath, outputPath);
+				},
+				encrypt: async () => {},
+			},
+			stateDir: restoredStateDir,
+			zoneFilesDir: restoredZoneFilesDir,
+		});
+
+		expect(restoreResult.zoneId).toBe('hermes-beta');
+		await expect(readFile(path.join(restoredStateDir, 'state.db'), 'utf8')).resolves.toBe(
+			'hermes sqlite bytes\n',
+		);
+		await expect(
+			readFile(path.join(restoredStateDir, 'profiles', 'clawfest', 'session.json'), 'utf8'),
+		).resolves.toBe('{"profile":"clawfest"}\n');
+		await expect(
+			readFile(path.join(restoredStateDir, 'profiles', 'beta', 'session.json'), 'utf8'),
+		).resolves.toBe('{"profile":"beta"}\n');
+		await expect(
+			readFile(path.join(restoredZoneFilesDir, 'agents', 'clawfest', 'marker.txt'), 'utf8'),
+		).resolves.toBe('clawfest workspace\n');
+		await expect(
+			readFile(path.join(restoredZoneFilesDir, 'agents', 'beta', 'marker.txt'), 'utf8'),
+		).resolves.toBe('beta workspace\n');
+	});
 });

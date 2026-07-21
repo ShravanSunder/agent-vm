@@ -3558,6 +3558,65 @@ describe('loadSystemConfig', () => {
 		);
 	});
 
+	test('rejects cacheDir overlap with zone stateDir after resolving paths', async () => {
+		const config = createValidSystemConfigInput();
+		config.cacheDir = '../state/shravan/cache';
+		const configPath = await writeSystemConfigForTest('agent-vm-system-cache-state-', config);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(
+			/cacheDir must not overlap stateDir/u,
+		);
+	});
+
+	test('rejects cacheDir overlap with managed zoneFilesDir after resolving paths', async () => {
+		const config = createValidSystemConfigInput();
+		config.cacheDir = '../zone-files/shravan/cache';
+		const configPath = await writeSystemConfigForTest('agent-vm-system-cache-zone-files-', config);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(
+			/cacheDir must not overlap zoneFilesDir/u,
+		);
+	});
+
+	test('rejects an explicit backupDir nested under stateDir', async () => {
+		const config = createValidSystemConfigInput();
+		config.zones[0].gateway.backupDir = '../state/shravan/explicit-backups';
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-explicit-backup-state-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(
+			/backupDir must not overlap stateDir/u,
+		);
+	});
+
+	test('rejects an explicit backupDir that contains managed zoneFilesDir', async () => {
+		const config = createValidSystemConfigInput();
+		config.zones[0].gateway.backupDir = '../zone-files';
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-explicit-backup-zone-files-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(
+			/backupDir must not overlap zoneFilesDir/u,
+		);
+	});
+
+	test('preserves the implicit stateDir backups default', async () => {
+		const config = createValidSystemConfigInput();
+		delete config.zones[0].gateway.backupDir;
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-implicit-backup-state-',
+			config,
+		);
+
+		const loadedConfig = await loadSystemConfig(configPath);
+
+		expect(loadedConfig.zones[0]?.gateway.backupDir).toBeUndefined();
+	});
+
 	const controllerStateProtectedPathCases = [
 		{
 			label: 'the system config file',

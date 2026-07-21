@@ -38,7 +38,7 @@ Use docs/manual/observability.md before changing host observability, Victoria st
 Use docs/manual/mcp-portal.md before changing MCP providers, managed Tool Portal profiles, standalone MCP Portal profiles, MCP package pins, or live MCP validation.
 Use docs/manual/tool-access.md before answering whether a tool binary, auth profile, or tool VM image should be agent-specific.
 Use docs/manual/channels.md before helping a human configure Discord, Slack, Telegram, or another OpenClaw channel.
-Use docs/manual/runtime-paths.md before answering where files appear inside VMs or how managed Tool VMs separate durable /workspace, disposable /work, optional /gitdirs, and read-only /agent-vm.
+Use docs/manual/runtime-paths.md before answering where files appear inside VMs or how managed Tool VMs separate durable /workspace, disposable /work, and optional /gitdirs.
 Use docs/manual/per-agent-setup.md before changing multi-agent layouts, OpenClaw scope=agent configuration, or per-agent tool/auth isolation.
 
 Do not assume Discord is enabled by the framework. Channels and channel secrets are deployment-owned.
@@ -69,7 +69,7 @@ Read in this order:
 8. mcp-portal.md explains managed Tool Portal policy, standalone MCP Portal policy, progressive MCP discovery, and gateway-owned MCP auth.
 9. tool-access.md explains binary, auth, OpenClaw tool, and zone/image isolation.
 10. channels.md explains how deployments add Discord or other channels.
-11. runtime-paths.md explains /workspace, /work, /gitdirs, /agent-vm, and other in-VM paths.
+11. runtime-paths.md explains /workspace, /work, optional /gitdirs, and other in-VM paths.
 12. per-agent-setup.md explains multi-agent layout and tool access choices.
 13. migration-discord.md explains how existing Discord deployments keep working.
 14. secrets.md explains runtime auth and HTTP mediation.
@@ -101,7 +101,7 @@ When zones[].agents[].workspaceGit is enabled, its isolated Git database lives a
 Author JSONC for human-owned agent-vm config. Runtime files such as /state/effective-worker.json, task event JSONL, runtime records, and API bodies stay strict JSON.
 OpenClaw gateway VMs mount zoneFilesDir at /zone.
 Managed OpenClaw Tool VMs expose only the selected agent's filtered durable workspace at /workspace. They do not mount the whole /zone tree.
-Managed Tool VMs use rootfs/COW /work for disposable execution, optionally expose only the selected workspace Git database at /gitdirs/workspace.git, and expose reviewed generated inputs read-only at /agent-vm.
+Managed Tool VMs use rootfs/COW /work for disposable execution and optionally expose only the selected workspace Git database at /gitdirs/workspace.git. No generic /agent-vm surface is mounted unless a future contract names its exact generated inventory and owner.
 Worker task VMs keep repo files on rootfs/COW at /work/repos.
 OpenClaw gateway VMs use /work/tmp and /work/cache for disposable runtime work.
 `,
@@ -456,7 +456,7 @@ Discord recipe:
 Managed OpenClaw Tool VMs run commands in rootfs/COW /work by default. /work is disposable execution space and is deleted with the Tool VM.
 /workspace is the current agent's filtered durable RealFS workspace selected by the controller from stable agent identity. It is the only durable agent workspace exposed to that Tool VM.
 /gitdirs/workspace.git is present only when the current agent enables zones[].agents[].workspaceGit. No parent Git directory or sibling agent Git database is exposed.
-/agent-vm contains reviewed generated agent-vm runtime instructions and is read-only.
+Managed Tool VMs do not currently expose a generic /agent-vm path. Worker task VMs retain their separately owned generated /agent-vm inputs.
 /state is controller/gateway plumbing, not the primary place for agent docs.
 worker repo edits live under /work/repos inside Worker gateway task VMs.
 Worker gateway task VMs use /work/tmp for temporary files and /work/cache for disposable package-manager cache.

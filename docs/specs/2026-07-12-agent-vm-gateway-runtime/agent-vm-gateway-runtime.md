@@ -2558,10 +2558,9 @@ Inventory or skipped tests do not prove a live VM, control, SSH, provider, or fr
   enabled transport set, bearer/HMAC field spelling, rotation mechanism, and
   Tool Portal CLI endpoint spelling; managed framework-facing API surfaces
   remain private-UDS-only and standalone version 1 remains MCP-provider-only.
-- Exact bounded self-revision manifest, cross-view readback retry, and atomic
-  file helper shapes, provided one per-projection mutation fence prevents
-  same-path concurrent writers and no framework prompt/memory/skill consumer
-  proceeds without positive current-content readback.
+- Superseded by the Tool Portal wrap-up hard cut: the unused self-revision
+  manifest, cross-view readback retry, and atomic manifest helper are removed
+  rather than retained as a production or proof surface.
 - Exact requester-context field names and correlation field set, provided the
   three-part principal/requester/correlation split and authority rules hold.
 - Exact portable-refinement descriptor/generator emitting TypeScript and Python

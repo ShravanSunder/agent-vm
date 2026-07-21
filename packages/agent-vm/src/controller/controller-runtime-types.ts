@@ -64,7 +64,7 @@ export interface ControllerRuntimeDependencies {
 	readonly createGatewayOwnershipCoordinator?: typeof createGatewayOwnershipCoordinator;
 	readonly createManagedToolVm?: (options: {
 		readonly agentId: string;
-		readonly hostGitDirectoryRoot: string;
+		readonly hostGitDirectoryRoot?: string | undefined;
 		readonly hostWorkspaceRoot: string;
 		readonly profile: ToolVmProfile;
 		readonly tcpSlot: number;

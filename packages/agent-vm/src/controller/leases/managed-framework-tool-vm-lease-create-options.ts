@@ -91,13 +91,15 @@ export function createManagedFrameworkToolVmLeaseCreateOptionsResolver(
 			throw new Error(`Unknown tool VM profile '${resolvedProfileId}'`);
 		}
 		const [hostGitDirectoryRoot, hostWorkspaceRoot] = await Promise.all([
-			realpath(
-				resolveManagedAgentGitDirectoryRoot({
-					agentId: authorityContext.agentId,
-					runtimeDir: options.systemConfig.runtimeDir,
-					zoneId: authorityContext.zoneId,
-				}),
-			),
+			configuredAgent.workspaceGit === undefined
+				? undefined
+				: realpath(
+						resolveManagedAgentGitDirectoryRoot({
+							agentId: authorityContext.agentId,
+							runtimeDir: options.systemConfig.runtimeDir,
+							zoneId: authorityContext.zoneId,
+						}),
+					),
 			realpath(rootPaths.hostWorkspaceRoot),
 		]);
 		const effectiveIdleTtl = resolveToolVmLeaseIdleTtlMs({
@@ -112,7 +114,7 @@ export function createManagedFrameworkToolVmLeaseCreateOptionsResolver(
 			effectiveIdleTtlMs: effectiveIdleTtl.value,
 			expectedGateway,
 			guestWorkdir: '/work',
-			hostGitDirectoryRoot,
+			...(hostGitDirectoryRoot === undefined ? {} : { hostGitDirectoryRoot }),
 			hostWorkspaceRoot,
 			profile,
 			profileId: resolvedProfileId,

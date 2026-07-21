@@ -260,7 +260,7 @@ describe('workerLifecycle', () => {
 		expect(processSpec.bootstrapCommand).not.toContain(' npm install');
 		expect(processSpec.bootstrapCommand).toContain('PNPM_HOME=/pnpm');
 		expect(processSpec.bootstrapCommand).toContain('PATH=/pnpm:$PATH');
-		expect(processSpec.bootstrapCommand).toContain('mkdir -p /work/repos /work/tmp');
+		expect(processSpec.bootstrapCommand).toContain('mkdir -p /workspace /work/repos /work/tmp');
 		expect(processSpec.bootstrapCommand).toContain('/work/cache/pnpm/store');
 		expect(processSpec.bootstrapCommand).toContain('/state/agent-vm-worker-packages/package.json');
 		expect(processSpec.bootstrapCommand).toContain('/state/agent-vm-worker-packages/node_modules');

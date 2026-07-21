@@ -19,7 +19,7 @@ const workerGatewayGuestPath = '/pnpm:/usr/local/sbin:/usr/local/bin:/usr/sbin:/
 function buildWorkerBootstrapCommand(): string {
 	return [
 		'export PNPM_HOME=/pnpm PATH=/pnpm:$PATH',
-		'mkdir -p /work/repos /work/tmp /work/cache/npm /work/cache/pnpm/store /work/cache/pip /work/cache/uv',
+		'mkdir -p /workspace /work/repos /work/tmp /work/cache/npm /work/cache/pnpm/store /work/cache/pip /work/cache/uv',
 		'if [ -f /state/agent-vm-worker-packages/package.json ]; then cd /state/agent-vm-worker-packages && pnpm install --prod --ignore-scripts && worker_package_root="/state/agent-vm-worker-packages/node_modules"; elif [ -f /state/agent-vm-worker.tgz ]; then pnpm add -g --ignore-scripts /state/agent-vm-worker.tgz && worker_package_root="$(pnpm root -g --silent)"; fi',
 		'if [ -n "${worker_package_root:-}" ]; then worker_bin_target="$worker_package_root/@agent-vm/agent-vm-worker/dist/main.js" && test -f "$worker_bin_target" && chmod 755 "$worker_bin_target" && ln -sfn "$worker_bin_target" /pnpm/agent-vm-worker; fi',
 	].join(' && ');

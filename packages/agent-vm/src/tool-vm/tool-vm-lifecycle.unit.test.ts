@@ -530,7 +530,7 @@ describe('createToolVm', () => {
 			),
 		).rejects.toBe(createError);
 		expect(workspaceDirectory.close).toHaveBeenCalledOnce();
-		expect(gitDirectory.close).toHaveBeenCalledOnce();
+		expect(gitDirectory.close).not.toHaveBeenCalled();
 	});
 
 	it('aggregates an acquired-directory close failure with factory rejection', async () => {
@@ -603,7 +603,7 @@ describe('createToolVm', () => {
 		await expect(creation).rejects.toMatchObject({
 			errors: [createError, expect.objectContaining({ errors: [closeError] })],
 		});
-		expect(gitDirectory.close).toHaveBeenCalledOnce();
+		expect(gitDirectory.close).not.toHaveBeenCalled();
 	});
 
 	it('mounts one filtered agent workspace at /workspace and leaves /work in rootfs', async () => {
@@ -649,15 +649,6 @@ describe('createToolVm', () => {
 		expect(createManagedVm).toHaveBeenCalledWith(
 			expect.objectContaining({
 				mounts: expect.objectContaining({
-					'/gitdirs': {
-						access: 'read-write',
-						directory: expect.objectContaining({
-							identity: expect.objectContaining({
-								canonicalPath: expect.stringContaining('/gitdirs/agents/sun'),
-							}),
-						}),
-						kind: 'owned-host-directory',
-					},
 					'/workspace': {
 						kind: 'owned-filtered-workspace',
 						directory: expect.objectContaining({
@@ -682,6 +673,7 @@ describe('createToolVm', () => {
 			}),
 		);
 		expect(capturedCreateVmOptions?.mounts).not.toHaveProperty('/work');
+		expect(capturedCreateVmOptions?.mounts).not.toHaveProperty('/gitdirs');
 		expect(capturedCreateVmOptions?.mounts).not.toHaveProperty('/agent');
 		expect(capturedCreateVmOptions?.mounts).not.toHaveProperty('/scratch');
 		// IPv4-preference egress for Node consumers inside the Tool VM
@@ -752,6 +744,27 @@ describe('createToolVm', () => {
 				allowedRepositories: ['shravan/sun-workspace'],
 				kind: 'git-read-only',
 			});
+			expect(capturedCreateVmOptions?.mounts['/workspace']).toEqual(
+				expect.objectContaining({
+					policy: {
+						hiddenPaths: [],
+						readonlyInputs: [
+							{
+								destinationRelativePath: '.git',
+								sourceRelativePath: '.git',
+							},
+						],
+						temporaryPaths: [],
+						visibility: { kind: 'whole-root-writable' },
+					},
+				}),
+			);
+			expect(capturedCreateVmOptions?.mounts['/gitdirs']).toEqual(
+				expect.objectContaining({
+					access: 'read-write',
+					kind: 'owned-host-directory',
+				}),
+			);
 		},
 	);
 
@@ -1020,7 +1033,7 @@ describe('createToolVm', () => {
 
 		// Assert
 		await expect(creation).rejects.toBe(createError);
-		expect(closeOwnedDirectoryBacking).toHaveBeenCalledTimes(2);
+		expect(closeOwnedDirectoryBacking).toHaveBeenCalledOnce();
 	});
 
 	it('passes only Tool VM egress hosts and mediated secrets into the Tool VM', async () => {
@@ -1748,7 +1761,7 @@ describe('createToolVm', () => {
 			),
 		).rejects.toThrow(/stale canonical path/u);
 
-		expect(closeOwnedDirectoryBacking).toHaveBeenCalledTimes(2);
+		expect(closeOwnedDirectoryBacking).toHaveBeenCalledOnce();
 		expect(createManagedVm).not.toHaveBeenCalled();
 	});
 });

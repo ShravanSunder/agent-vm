@@ -135,7 +135,7 @@ The backup command currently copies `stateDir` wholesale. Anything under worker
 `stateDir` silently becomes encrypted backup payload when a worker zone is
 backed up.
 
-The backup command also copies the OpenClaw `zoneFilesDir`. Worker gitdirs must
+The backup command also copies managed OpenClaw and Hermes `zoneFilesDir` roots. Worker gitdirs must
 not be placed there either unless backup gains a worker-specific exclusion
 policy. For the target design, gitdirs live in `runtimeDir`, a non-backup task
 runtime root, and are deleted during task teardown.

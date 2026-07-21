@@ -84,6 +84,37 @@ function createOwnedDirectoryHarness(options?: { readonly stalePath?: string }):
 }
 
 describe('managed agent Tool VM workspace mount', () => {
+	it('omits Git authority and /gitdirs when the selected agent has no workspace Git', async () => {
+		const ownedDirectories = createOwnedDirectoryHarness();
+		let capturedRequest: ManagedVmCreateRequest | undefined;
+		const factory: ManagedVmFactory = {
+			async createManagedVm(request): Promise<ManagedVm> {
+				capturedRequest = request;
+				const workspaceMount = request.mounts['/workspace'];
+				if (workspaceMount?.kind !== 'owned-filtered-workspace') {
+					throw new Error('Expected filtered workspace mount.');
+				}
+				workspaceMount.directory.consume();
+				return createManagedVm();
+			},
+		};
+
+		await expect(
+			createManagedVmWithFilteredAgentWorkspace(
+				{
+					factory,
+					hostWorkspaceRoot: '/host/zone/agents/alpha',
+					ownedDirectories: ownedDirectories.capability,
+					request: createRequest(),
+					workspacePolicy: WORKSPACE_POLICY,
+				},
+				{ readDirectoryIdentity: ownedDirectories.readDirectoryIdentity },
+			),
+		).resolves.toBeDefined();
+		expect(capturedRequest?.mounts).not.toHaveProperty('/gitdirs');
+		expect(ownedDirectories.openedPaths).toEqual(['/host/zone/agents/alpha']);
+	});
+
 	it('transfers filtered workspace and writable Git directories while leaving /work in rootfs', async () => {
 		const ownedDirectories = createOwnedDirectoryHarness();
 		const toolVm = createManagedVm();
@@ -296,49 +327,6 @@ describe('managed agent Tool VM workspace mount', () => {
 		]);
 	});
 
-	it('mounts managed skills only at the fixed read-only guest path', async () => {
-		const ownedDirectories = createOwnedDirectoryHarness();
-		let capturedRequest: ManagedVmCreateRequest | undefined;
-		const factory: ManagedVmFactory = {
-			async createManagedVm(request): Promise<ManagedVm> {
-				capturedRequest = request;
-				const workspaceMount = request.mounts['/workspace'];
-				const gitDirectoriesMount = request.mounts['/gitdirs'];
-				if (workspaceMount?.kind === 'owned-filtered-workspace') {
-					workspaceMount.directory.consume();
-				}
-				if (gitDirectoriesMount?.kind === 'owned-host-directory') {
-					gitDirectoriesMount.directory.consume();
-				}
-				return createManagedVm();
-			},
-		};
-
-		await createManagedVmWithFilteredAgentWorkspace(
-			{
-				factory,
-				hostGitDirectoryRoot: HOST_GIT_DIRECTORY_ROOT,
-				hostWorkspaceRoot: '/host/zone/agents/alpha',
-				managedSkillsHostPath: '/host/managed-skills',
-				ownedDirectories: ownedDirectories.capability,
-				request: createRequest(),
-				workspacePolicy: WORKSPACE_POLICY,
-			},
-			{ readDirectoryIdentity: ownedDirectories.readDirectoryIdentity },
-		);
-
-		expect(capturedRequest?.mounts['/agent-vm/managed-skills']).toEqual({
-			access: 'read-only',
-			hostPath: '/host/managed-skills',
-			kind: 'host-directory',
-		});
-		expect(Object.keys(capturedRequest?.mounts ?? {}).toSorted()).toEqual([
-			'/agent-vm/managed-skills',
-			'/gitdirs',
-			'/workspace',
-		]);
-	});
-
 	it('rejects retired arbitrary supplemental-mount APIs', async () => {
 		const ownedDirectories = createOwnedDirectoryHarness();
 		const factory = { createManagedVm: vi.fn() } satisfies ManagedVmFactory;
@@ -399,28 +387,5 @@ describe('managed agent Tool VM workspace mount', () => {
 			),
 		).rejects.toThrow(/must not provide additional mounts/u);
 		expect(factory.createManagedVm).not.toHaveBeenCalled();
-	});
-
-	it('rejects a relative managed-skills host source before acquiring workspace authority', async () => {
-		const ownedDirectories = createOwnedDirectoryHarness();
-		const factory = { createManagedVm: vi.fn() } satisfies ManagedVmFactory;
-
-		await expect(
-			createManagedVmWithFilteredAgentWorkspace(
-				{
-					factory,
-					hostGitDirectoryRoot: HOST_GIT_DIRECTORY_ROOT,
-					hostWorkspaceRoot: '/host/zone/agents/alpha',
-					managedSkillsHostPath: 'managed-skills',
-					ownedDirectories: ownedDirectories.capability,
-					request: createRequest(),
-					workspacePolicy: WORKSPACE_POLICY,
-				},
-				{ readDirectoryIdentity: ownedDirectories.readDirectoryIdentity },
-			),
-		).rejects.toThrow(/managed skills host path must be absolute/iu);
-		expect(factory.createManagedVm).not.toHaveBeenCalled();
-		expect(ownedDirectories.openedPaths).toEqual([]);
-		expect(ownedDirectories.closedPaths).toEqual([]);
 	});
 });

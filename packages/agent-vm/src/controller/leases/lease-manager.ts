@@ -74,7 +74,7 @@ export interface Lease {
 	readonly createdAt: number;
 	readonly effectiveIdleTtlMs: number;
 	readonly guestWorkdir: string;
-	readonly hostGitDirectoryRoot: string;
+	readonly hostGitDirectoryRoot?: string | undefined;
 	readonly hostWorkspaceRoot: string;
 	readonly id: string;
 	readonly lastUsedAt: number;
@@ -180,7 +180,7 @@ export interface ToolVmLeaseCreateOptions {
 	readonly effectiveIdleTtlMs?: number;
 	readonly expectedGateway: GatewayEpochIdentity;
 	readonly guestWorkdir: string;
-	readonly hostGitDirectoryRoot: string;
+	readonly hostGitDirectoryRoot?: string | undefined;
 	readonly hostWorkspaceRoot: string;
 	readonly profile: ToolVmProfile;
 	readonly profileId: string;
@@ -288,13 +288,14 @@ function assertValidLeaseAgentId(agentId: string): void {
 }
 
 function assertValidLeaseRootBinding(leaseOptions: ToolVmLeaseCreateOptions): void {
+	if (!path.isAbsolute(leaseOptions.hostWorkspaceRoot)) {
+		throw new Error('Tool VM lease requires an absolute controller-selected workspace root.');
+	}
 	if (
-		!path.isAbsolute(leaseOptions.hostGitDirectoryRoot) ||
-		!path.isAbsolute(leaseOptions.hostWorkspaceRoot)
+		leaseOptions.hostGitDirectoryRoot !== undefined &&
+		!path.isAbsolute(leaseOptions.hostGitDirectoryRoot)
 	) {
-		throw new Error(
-			'Tool VM lease requires absolute controller-selected workspace and Git directory roots.',
-		);
+		throw new Error('Tool VM lease requires an absolute controller-selected Git directory root.');
 	}
 	if (leaseOptions.guestWorkdir !== '/work') {
 		throw new Error("Managed Tool VM lease default cwd must be '/work'.");
@@ -326,7 +327,7 @@ function assertCompatibleAgentLeaseRequest(
 	requestedLease: {
 		readonly effectiveIdleTtlMs?: number;
 		readonly guestWorkdir: string;
-		readonly hostGitDirectoryRoot: string;
+		readonly hostGitDirectoryRoot?: string | undefined;
 		readonly hostWorkspaceRoot: string;
 		readonly principal: StableToolVmLeasePrincipal;
 		readonly profileId: string;
@@ -367,7 +368,7 @@ function assertCompatibleAgentLeaseRequest(
 function toolVmLeasePolicyFingerprint(options: {
 	readonly effectiveIdleTtlMs: number;
 	readonly guestWorkdir: string;
-	readonly hostGitDirectoryRoot: string;
+	readonly hostGitDirectoryRoot?: string | undefined;
 	readonly hostWorkspaceRoot: string;
 	readonly profileAssignmentRevision: string;
 	readonly profile: ToolVmProfile;
@@ -491,7 +492,7 @@ export function createLeaseManager(options: {
 		readonly profileId: string;
 		readonly tcpSlot: number;
 		readonly guestWorkdir: string;
-		readonly hostGitDirectoryRoot: string;
+		readonly hostGitDirectoryRoot?: string | undefined;
 		readonly hostWorkspaceRoot: string;
 		readonly zoneId: string;
 	}) => Promise<ManagedVm | ToolVmProvisioningHandle>;
@@ -930,6 +931,9 @@ export function createLeaseManager(options: {
 				membership: toolMembership,
 				tcpSlot,
 			});
+			if (creationOptions.admissionBarrier === undefined) {
+				await options.prepareLeasePersistentState?.(leaseOptions);
+			}
 			const createdToolVm = await options.createManagedVm({
 				...leaseOptions,
 				tcpSlot,
@@ -991,7 +995,9 @@ export function createLeaseManager(options: {
 				vm,
 			});
 			await creationOptions.admissionBarrier;
-			await options.prepareLeasePersistentState?.(leaseOptions);
+			if (creationOptions.admissionBarrier !== undefined) {
+				await options.prepareLeasePersistentState?.(leaseOptions);
+			}
 			await prepareStartedVm?.();
 			const sshAccess = await vm.enableSsh({
 				listenPort: options.tcpPool.portForSlot(tcpSlot),
@@ -1018,7 +1024,9 @@ export function createLeaseManager(options: {
 				createdAt,
 				effectiveIdleTtlMs,
 				guestWorkdir: leaseOptions.guestWorkdir,
-				hostGitDirectoryRoot: leaseOptions.hostGitDirectoryRoot,
+				...(leaseOptions.hostGitDirectoryRoot === undefined
+					? {}
+					: { hostGitDirectoryRoot: leaseOptions.hostGitDirectoryRoot }),
 				hostWorkspaceRoot: leaseOptions.hostWorkspaceRoot,
 				id: authority.leaseId,
 				lastUsedAt: createdAt,

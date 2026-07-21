@@ -202,6 +202,24 @@ function leaseResolutionInput(options?: {
 }
 
 describe('createManagedFrameworkToolVmLeaseCreateOptionsResolver', () => {
+	it('does not resolve or return a Git root when workspaceGit is absent', async () => {
+		const systemConfig = await createSystemConfigFixture();
+		await rm(path.join(testRoot, 'runtime', 'zones', 'zone-a', 'gitdirs'), {
+			force: true,
+			recursive: true,
+		});
+		const resolveLeaseCreateOptions = createManagedFrameworkToolVmLeaseCreateOptionsResolver({
+			systemConfig,
+		});
+
+		const options = await resolveLeaseCreateOptions(leaseResolutionInput());
+
+		expect(options).not.toHaveProperty('hostGitDirectoryRoot');
+		await expect(
+			realpath(path.join(testRoot, 'runtime', 'zones', 'zone-a', 'gitdirs')),
+		).rejects.toMatchObject({ code: 'ENOENT' });
+	});
+
 	it('uses the system leaseIdleTtl policy for gateway-control lease creation', async () => {
 		const systemConfig = await createSystemConfigFixture({
 			defaultMs: 42_000,
@@ -239,7 +257,7 @@ describe('createManagedFrameworkToolVmLeaseCreateOptionsResolver', () => {
 		await mkdir(path.join(testRoot, 'runtime', 'zones', 'zone-a', 'gitdirs', 'agents', 'second'), {
 			recursive: true,
 		});
-		zone.agents = [{ id: 'main' }, { id: 'second' }];
+		zone.agents = [{ id: 'main' }, { id: 'second', workspaceGit: { mode: 'local' } }];
 		zone.agentToolVmProfiles = { second: 'larger' };
 		systemConfig.toolVmProfiles.larger = {
 			cpus: 4,
@@ -287,6 +305,11 @@ describe('createManagedFrameworkToolVmLeaseCreateOptionsResolver', () => {
 			minRequestedMs: 5_000,
 		});
 		configureFixtureAsHermes(systemConfig);
+		const hermesZone = systemConfig.zones[0];
+		if (hermesZone === undefined) {
+			throw new Error('Expected Hermes fixture zone');
+		}
+		hermesZone.agents = [{ id: 'main', workspaceGit: { mode: 'local' } }];
 		const resolveLeaseCreateOptions = createManagedFrameworkToolVmLeaseCreateOptionsResolver({
 			systemConfig,
 		});

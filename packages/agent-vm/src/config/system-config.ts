@@ -1573,11 +1573,33 @@ function assertResolvedRuntimePathIsolation(
 		if (pathsOverlap(config.runtimeDir, zone.gateway.stateDir)) {
 			throw new Error(`runtimeDir must not overlap stateDir for zone '${zone.id}'.`);
 		}
+		if (pathsOverlap(config.cacheDir, zone.gateway.stateDir)) {
+			throw new Error(`cacheDir must not overlap stateDir for zone '${zone.id}'.`);
+		}
+		if (
+			zone.gateway.backupDir !== undefined &&
+			pathsOverlap(zone.gateway.backupDir, zone.gateway.stateDir)
+		) {
+			throw new Error(`backupDir must not overlap stateDir for zone '${zone.id}'.`);
+		}
 		if (
 			zone.gateway.type !== 'worker' &&
 			pathsOverlap(config.runtimeDir, zone.gateway.zoneFilesDir)
 		) {
 			throw new Error(`runtimeDir must not overlap zoneFilesDir for zone '${zone.id}'.`);
+		}
+		if (
+			zone.gateway.type !== 'worker' &&
+			pathsOverlap(config.cacheDir, zone.gateway.zoneFilesDir)
+		) {
+			throw new Error(`cacheDir must not overlap zoneFilesDir for zone '${zone.id}'.`);
+		}
+		if (
+			zone.gateway.type !== 'worker' &&
+			zone.gateway.backupDir !== undefined &&
+			pathsOverlap(zone.gateway.backupDir, zone.gateway.zoneFilesDir)
+		) {
+			throw new Error(`backupDir must not overlap zoneFilesDir for zone '${zone.id}'.`);
 		}
 		if (isManagedHostObservabilityConfig(observability)) {
 			const { dataDir } = observability;

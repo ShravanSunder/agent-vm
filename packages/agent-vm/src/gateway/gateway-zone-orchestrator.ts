@@ -1530,7 +1530,8 @@ async function startGatewayZoneImplementation(
 	if (isManagedGatewayZone(zone)) {
 		await fs.mkdir(zone.gateway.zoneFilesDir, { recursive: true });
 		if (lifecycle.executionModel === 'managed-gateway') {
-			const agentIds = (zone.agents ?? []).map((agent) => agent.id);
+			const configuredAgents = zone.agents ?? [];
+			const agentIds = configuredAgents.map((agent) => agent.id);
 			await materializeManagedAgentRootStorage({
 				agentIds,
 				controllerStateDir: options.systemConfig.controllerStateDir,
@@ -1542,13 +1543,15 @@ async function startGatewayZoneImplementation(
 				recursive: true,
 			});
 			await Promise.all(
-				agentIds.map(async (agentId): Promise<void> => {
-					await materializeManagedAgentGitDirectoryRoot({
-						agentId,
-						runtimeDir: options.systemConfig.runtimeDir,
-						zoneId: zone.id,
-					});
-				}),
+				configuredAgents
+					.filter((agent) => agent.workspaceGit !== undefined)
+					.map(async (agent): Promise<void> => {
+						await materializeManagedAgentGitDirectoryRoot({
+							agentId: agent.id,
+							runtimeDir: options.systemConfig.runtimeDir,
+							zoneId: zone.id,
+						});
+					}),
 			);
 		}
 	}

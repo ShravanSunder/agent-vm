@@ -13,6 +13,8 @@ import {
 	SandboxFsMkdirResultSchema,
 	SandboxFsRemoveResultSchema,
 	SandboxFsStatResultSchema,
+	SandboxRetainedResultLookupResultSchema,
+	SandboxTerminalAttachResultSchema,
 } from '@agent-vm/agent-portal-sdk';
 import { deriveGatewayControlStablePrincipal } from '@agent-vm/gateway-control-contracts';
 import type { FileEntry } from 'ssh2';
@@ -482,6 +484,7 @@ describe('Gateway Runtime production Sandbox dispatcher', () => {
 		// Act and assert
 		for (const rejectedPath of [
 			'/zone/private',
+			'/agent-vm/agents.md',
 			'/etc/passwd',
 			'/controller-state/leases.json',
 			'/workspace-sibling/private',
@@ -504,7 +507,7 @@ describe('Gateway Runtime production Sandbox dispatcher', () => {
 				environment: opened.environment,
 				path: '/agent-vm/agents.md',
 			}),
-		).rejects.toThrow(/read-only|mutation/i);
+		).rejects.toThrow(/outside|operation-admitted/i);
 		await expect(
 			dispatchRequest(fixture, 'sandbox.fs.rename', {
 				destinationPath: '/agent-vm/replaced.md',
@@ -512,15 +515,7 @@ describe('Gateway Runtime production Sandbox dispatcher', () => {
 				replace: false,
 				sourcePath: '/workspace/source.md',
 			}),
-		).rejects.toThrow(/read-only|mutation/i);
-		await expect(
-			dispatchRequest(fixture, 'sandbox.fs.read', {
-				environment: opened.environment,
-				maxBytes: 16,
-				offsetBytes: 0,
-				path: '/agent-vm/agents.md',
-			}),
-		).resolves.toMatchObject({ path: '/agent-vm/agents.md' });
+		).rejects.toThrow(/outside|operation-admitted/i);
 		expect(fixture.strictSshClient.guestWriteFile).not.toHaveBeenCalled();
 		expect(fixture.strictSshClient.guestRename).not.toHaveBeenCalled();
 	});
@@ -886,6 +881,135 @@ describe('Gateway Runtime production Sandbox dispatcher', () => {
 				timeoutMs: 1_000,
 			}),
 		).rejects.toThrow(/deadline expired.*running/i);
+	});
+
+	it('removes evicted process aliases while retaining authority for current records', async () => {
+		// Arrange
+		const fixture = createDispatcherFixture();
+		const opened = SandboxEnvironmentOpenResultSchema.parse(
+			await dispatchRequest(fixture, 'sandbox.environment.open', {}),
+		);
+		const evictedProcessHandleIds = new Set<string>();
+		vi.mocked(fixture.processRegistry.status).mockImplementation(({ process }) => {
+			if (evictedProcessHandleIds.has(process.handleId)) {
+				throw new Error('Strict SSH process handle is forged, stale, or unavailable.');
+			}
+			return {
+				kind: 'running',
+				operation: {
+					operationId: `operation-for-${process.handleId}`,
+					owningGeneration: process.owningGeneration,
+				},
+				process,
+			};
+		});
+		const startedRecords: Array<ReturnType<typeof processStartResult>> = [];
+
+		// Act
+		for (let index = 0; index < 16; index += 1) {
+			const previous = startedRecords.at(-1);
+			if (previous !== undefined) evictedProcessHandleIds.add(previous.process.handleId);
+			const started = SandboxExecStartResultSchema.parse(
+				// oxlint-disable-next-line no-await-in-loop -- Each successful start triggers reconciliation against the preceding simulated eviction.
+				await dispatchRequest(fixture, 'sandbox.exec.start', {
+					command: `printf ${String(index)}`,
+					environment: opened.environment,
+					mode: { kind: 'direct' },
+					timeoutMs: 5_000,
+				}),
+			);
+			if (started.kind !== 'started' || started.mode !== 'direct') {
+				throw new Error('Sandbox execution did not start directly.');
+			}
+			startedRecords.push({
+				kind: 'started',
+				operation: started.operation,
+				process: processStartResult(index + 1).process,
+				streams: started.streams,
+			});
+		}
+		const evictedRecords = startedRecords.slice(0, -1);
+		const oldest = evictedRecords[0];
+		const current = startedRecords.at(-1);
+		if (oldest === undefined || current === undefined)
+			throw new Error('Process records are missing.');
+		const statusCallCountBeforeRejectedAliases = vi.mocked(fixture.processRegistry.status).mock
+			.calls.length;
+
+		// Assert
+		await Promise.all(
+			evictedRecords.map(async (record) => {
+				await expect(
+					dispatchRequest(fixture, 'sandbox.process.status', { process: record.process }),
+				).rejects.toThrow(/stale|different environment group/i);
+				await expect(
+					dispatchRequest(fixture, 'sandbox.stream.read', {
+						maxBytes: 16,
+						stream: record.streams[1],
+					}),
+				).rejects.toThrow(/stale|different environment group/i);
+			}),
+		);
+		expect(vi.mocked(fixture.processRegistry.status)).toHaveBeenCalledTimes(
+			statusCallCountBeforeRejectedAliases,
+		);
+		const waitCallCountBeforeRejectedOperation = vi.mocked(fixture.processRegistry.wait).mock.calls
+			.length;
+		await expect(
+			dispatchRequest(fixture, 'sandbox.exec.wait', {
+				operation: oldest.operation,
+				timeoutMs: 1_000,
+			}),
+		).rejects.toThrow(/stale|different environment group/i);
+		expect(fixture.processRegistry.wait).toHaveBeenCalledTimes(
+			waitCallCountBeforeRejectedOperation,
+		);
+		const retained = await dispatchRequest(fixture, 'sandbox.retained-result.lookup', {
+			operation: oldest.operation,
+		});
+		expect(SandboxRetainedResultLookupResultSchema.parse(retained)).toEqual({
+			kind: 'unavailable',
+			reason: 'not-retained-or-not-authorized',
+		});
+		await expect(
+			dispatchRequest(fixture, 'sandbox.process.status', { process: current.process }),
+		).resolves.toMatchObject({ kind: 'running', process: current.process });
+
+		const reserved = SandboxExecStartResultSchema.parse(
+			await dispatchRequest(fixture, 'sandbox.exec.start', {
+				command: 'bash',
+				environment: opened.environment,
+				mode: { attachTimeoutMs: 10_000, kind: 'attachment-reserved', terminal: true },
+				timeoutMs: 60_000,
+			}),
+		);
+		if (reserved.kind !== 'started' || reserved.mode !== 'attachment-reserved') {
+			throw new Error('Sandbox terminal was not reserved.');
+		}
+		SandboxTerminalAttachResultSchema.parse(
+			await dispatchRequest(fixture, 'sandbox.terminal.attach', {
+				operation: reserved.operation,
+				size: { columns: 120, rows: 40 },
+			}),
+		);
+		evictedProcessHandleIds.add(processStartResult(17).process.handleId);
+		await dispatchRequest(fixture, 'sandbox.exec.start', {
+			command: 'printf current',
+			environment: opened.environment,
+			mode: { kind: 'direct' },
+			timeoutMs: 5_000,
+		});
+		const resizeCallCountBeforeRejectedTerminal = vi.mocked(fixture.processRegistry.resizeTerminal)
+			.mock.calls.length;
+		await expect(
+			dispatchRequest(fixture, 'sandbox.terminal.resize', {
+				size: { columns: 160, rows: 50 },
+				terminal: reserved.terminal,
+			}),
+		).rejects.toThrow(/stale|different environment group/i);
+		expect(fixture.processRegistry.resizeTerminal).toHaveBeenCalledTimes(
+			resizeCallCountBeforeRejectedTerminal,
+		);
 	});
 
 	it.each([1, 127])('returns the exact proven exec exit code %i', async (exitCode) => {

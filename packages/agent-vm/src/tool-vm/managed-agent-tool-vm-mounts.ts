@@ -13,13 +13,11 @@ import type {
 
 const MANAGED_AGENT_WORKSPACE_GUEST_ROOT = '/workspace';
 const MANAGED_AGENT_GIT_DIRECTORIES_GUEST_ROOT = '/gitdirs';
-export const MANAGED_TOOL_VM_SKILLS_GUEST_ROOT = '/agent-vm/managed-skills';
 
 const managedAgentToolVmOptionKeys = new Set([
 	'factory',
 	'hostGitDirectoryRoot',
 	'hostWorkspaceRoot',
-	'managedSkillsHostPath',
 	'ownedDirectories',
 	'request',
 	'workspacePolicy',
@@ -75,9 +73,8 @@ function assertNoUnsupportedOptions(options: object): void {
 export async function createManagedVmWithFilteredAgentWorkspace(
 	options: {
 		readonly factory: ManagedVmFactory;
-		readonly hostGitDirectoryRoot: string;
+		readonly hostGitDirectoryRoot?: string | undefined;
 		readonly hostWorkspaceRoot: string;
-		readonly managedSkillsHostPath?: string;
 		readonly ownedDirectories: ManagedVmOwnedDirectoryCapability;
 		readonly request: Omit<ManagedVmCreateRequest, 'mounts'>;
 		readonly workspacePolicy: ManagedVmFilteredWorkspacePolicy;
@@ -90,27 +87,30 @@ export async function createManagedVmWithFilteredAgentWorkspace(
 	if ('mounts' in options.request) {
 		throw new Error('Managed agent Tool VM request must not provide additional mounts.');
 	}
-	if (
-		!path.isAbsolute(options.hostGitDirectoryRoot) ||
-		!path.isAbsolute(options.hostWorkspaceRoot)
-	) {
-		throw new Error('Managed agent workspace and Git directory roots must be absolute.');
+	if (!path.isAbsolute(options.hostWorkspaceRoot)) {
+		throw new Error('Managed agent workspace root must be absolute.');
 	}
-	if (options.hostGitDirectoryRoot === options.hostWorkspaceRoot) {
+	if (
+		options.hostGitDirectoryRoot !== undefined &&
+		!path.isAbsolute(options.hostGitDirectoryRoot)
+	) {
+		throw new Error('Managed agent Git directory root must be absolute.');
+	}
+	if (
+		options.hostGitDirectoryRoot !== undefined &&
+		options.hostGitDirectoryRoot === options.hostWorkspaceRoot
+	) {
 		throw new Error('Managed agent workspace and Git directory roots must be distinct.');
 	}
-	if (
-		options.managedSkillsHostPath !== undefined &&
-		!path.isAbsolute(options.managedSkillsHostPath)
-	) {
-		throw new Error('Managed skills host path must be absolute.');
-	}
-
 	const readDirectoryIdentity =
 		dependencies.readDirectoryIdentity ?? readCanonicalDirectoryIdentity;
 	const expectedWorkspaceIdentity = await readDirectoryIdentity(options.hostWorkspaceRoot);
-	const expectedGitDirectoryIdentity = await readDirectoryIdentity(options.hostGitDirectoryRoot);
+	const expectedGitDirectoryIdentity =
+		options.hostGitDirectoryRoot === undefined
+			? undefined
+			: await readDirectoryIdentity(options.hostGitDirectoryRoot);
 	if (
+		expectedGitDirectoryIdentity !== undefined &&
 		expectedWorkspaceIdentity.device === expectedGitDirectoryIdentity.device &&
 		expectedWorkspaceIdentity.inode === expectedGitDirectoryIdentity.inode
 	) {
@@ -127,15 +127,19 @@ export async function createManagedVmWithFilteredAgentWorkspace(
 			expectedWorkspaceIdentity.canonicalPath,
 		);
 		openedDirectories.push(workspaceDirectory);
-		const gitDirectory = options.ownedDirectories.openHostDirectory(
-			expectedGitDirectoryIdentity.canonicalPath,
-		);
-		openedDirectories.push(gitDirectory);
+		const gitDirectory =
+			expectedGitDirectoryIdentity === undefined
+				? undefined
+				: options.ownedDirectories.openHostDirectory(expectedGitDirectoryIdentity.canonicalPath);
+		if (gitDirectory !== undefined) {
+			openedDirectories.push(gitDirectory);
+		}
 
 		const revalidatedWorkspaceIdentity = await readDirectoryIdentity(options.hostWorkspaceRoot);
-		const revalidatedGitDirectoryIdentity = await readDirectoryIdentity(
-			options.hostGitDirectoryRoot,
-		);
+		const revalidatedGitDirectoryIdentity =
+			options.hostGitDirectoryRoot === undefined
+				? undefined
+				: await readDirectoryIdentity(options.hostGitDirectoryRoot);
 		if (
 			!identitiesEqual(workspaceDirectory.identity, expectedWorkspaceIdentity) ||
 			!identitiesEqual(workspaceDirectory.identity, revalidatedWorkspaceIdentity)
@@ -145,8 +149,11 @@ export async function createManagedVmWithFilteredAgentWorkspace(
 			);
 		}
 		if (
-			!identitiesEqual(gitDirectory.identity, expectedGitDirectoryIdentity) ||
-			!identitiesEqual(gitDirectory.identity, revalidatedGitDirectoryIdentity)
+			gitDirectory !== undefined &&
+			expectedGitDirectoryIdentity !== undefined &&
+			revalidatedGitDirectoryIdentity !== undefined &&
+			(!identitiesEqual(gitDirectory.identity, expectedGitDirectoryIdentity) ||
+				!identitiesEqual(gitDirectory.identity, revalidatedGitDirectoryIdentity))
 		) {
 			throw new Error(
 				'Managed agent Git directory capability has a stale canonical path or directory identity.',
@@ -156,28 +163,26 @@ export async function createManagedVmWithFilteredAgentWorkspace(
 		toolVm = await options.factory.createManagedVm({
 			...options.request,
 			mounts: {
-				...(options.managedSkillsHostPath === undefined
-					? {}
-					: {
-							[MANAGED_TOOL_VM_SKILLS_GUEST_ROOT]: {
-								access: 'read-only' as const,
-								hostPath: options.managedSkillsHostPath,
-								kind: 'host-directory' as const,
-							},
-						}),
 				[MANAGED_AGENT_WORKSPACE_GUEST_ROOT]: {
 					directory: workspaceDirectory,
 					kind: 'owned-filtered-workspace',
 					policy: options.workspacePolicy,
 				},
-				[MANAGED_AGENT_GIT_DIRECTORIES_GUEST_ROOT]: {
-					access: 'read-write',
-					directory: gitDirectory,
-					kind: 'owned-host-directory',
-				},
+				...(gitDirectory === undefined
+					? {}
+					: {
+							[MANAGED_AGENT_GIT_DIRECTORIES_GUEST_ROOT]: {
+								access: 'read-write' as const,
+								directory: gitDirectory,
+								kind: 'owned-host-directory' as const,
+							},
+						}),
 			},
 		});
-		if (workspaceDirectory.state !== 'adapter-owned' || gitDirectory.state !== 'adapter-owned') {
+		if (
+			workspaceDirectory.state !== 'adapter-owned' ||
+			(gitDirectory !== undefined && gitDirectory.state !== 'adapter-owned')
+		) {
 			const unexpectedHostProcessId = toolVm.getHostProcessId();
 			if (unexpectedHostProcessId !== null) {
 				retainAcquiredDirectoriesOnFailure = true;
@@ -189,7 +194,9 @@ export async function createManagedVmWithFilteredAgentWorkspace(
 			toolVm = undefined;
 			closeAcquiredDirectories(openedDirectories);
 			throw new Error(
-				'Managed VM provider must transfer the managed agent workspace and Git directories.',
+				gitDirectory === undefined
+					? 'Managed VM provider must transfer the managed agent workspace directory.'
+					: 'Managed VM provider must transfer the managed agent workspace and Git directories.',
 			);
 		}
 		return toolVm;

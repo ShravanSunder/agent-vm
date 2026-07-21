@@ -30,6 +30,7 @@ import {
 	type SandboxOperationIdentity,
 	type SandboxProcessHandle,
 	type SandboxProcessStartResult,
+	type SandboxStreamHandle,
 	type SandboxTerminalHandle,
 } from '@agent-vm/agent-portal-sdk';
 import { deriveGatewayControlStablePrincipal } from '@agent-vm/gateway-control-contracts';
@@ -64,12 +65,20 @@ interface TerminalProcessAuthority extends ExecProcessAuthority {
 	readonly terminal: SandboxTerminalHandle;
 }
 
+interface IndexedProcessDescendants {
+	readonly operationKeys: Set<string>;
+	readonly process: SandboxProcessHandle;
+	readonly streams: readonly SandboxStreamHandle[];
+	readonly terminalKeys: Set<string>;
+}
+
 interface SandboxEnvironmentGroupRuntime {
 	activeDescendantDispatchCount: number;
 	readonly acquisition: GatewayRuntimeToolVmRunnerOperationGroup;
 	readonly descendantDrainWaiters: Set<() => void>;
 	readonly environments: ReturnType<typeof createGatewayRuntimeSandboxEnvironmentRuntime>;
 	readonly execProcessesByOperationId: Map<string, ExecProcessAuthority>;
+	readonly indexedProcessDescendantsByHandleId: Map<string, IndexedProcessDescendants>;
 	readonly pendingTerminalsByOperationId: Map<string, PendingTerminalReservation>;
 	readonly principalKey: string;
 	retirementPromise: Promise<void> | undefined;
@@ -117,6 +126,13 @@ function sandboxHandleKey(handle: {
 
 function sandboxOperationKey(operation: SandboxOperationIdentity): string {
 	return `${operation.owningGeneration}\0${operation.operationId}`;
+}
+
+function isUnavailableStrictProcessHandle(error: unknown): boolean {
+	return (
+		error instanceof Error &&
+		error.message === 'Strict SSH process handle is forged, stale, or unavailable.'
+	);
 }
 
 function deleteSandboxRuntimeIndexes(
@@ -293,7 +309,56 @@ export function createGatewayRuntimeProductionSandboxDispatcher(
 		}
 		runtime.pendingTerminalsByOperationId.clear();
 		runtime.execProcessesByOperationId.clear();
+		runtime.indexedProcessDescendantsByHandleId.clear();
 		runtime.terminalProcessesByHandleId.clear();
+	};
+
+	const removeIndexedProcessDescendants = (
+		runtime: SandboxEnvironmentGroupRuntime,
+		indexed: IndexedProcessDescendants,
+	): void => {
+		for (const operationKey of indexed.operationKeys) {
+			if (runtimesByOperationKey.get(operationKey) === runtime) {
+				runtimesByOperationKey.delete(operationKey);
+			}
+		}
+		const processKey = sandboxHandleKey(indexed.process);
+		if (runtimesByProcessKey.get(processKey) === runtime) {
+			runtimesByProcessKey.delete(processKey);
+		}
+		for (const stream of indexed.streams) {
+			const streamKey = sandboxHandleKey(stream);
+			if (runtimesByStreamKey.get(streamKey) === runtime) {
+				runtimesByStreamKey.delete(streamKey);
+			}
+		}
+		for (const terminalKey of indexed.terminalKeys) {
+			if (runtimesByTerminalKey.get(terminalKey) === runtime) {
+				runtimesByTerminalKey.delete(terminalKey);
+			}
+		}
+		for (const [operationId, authority] of runtime.execProcessesByOperationId) {
+			if (authority.process.handleId === indexed.process.handleId) {
+				runtime.execProcessesByOperationId.delete(operationId);
+			}
+		}
+		for (const [terminalHandleId, authority] of runtime.terminalProcessesByHandleId) {
+			if (authority.process.handleId === indexed.process.handleId) {
+				runtime.terminalProcessesByHandleId.delete(terminalHandleId);
+			}
+		}
+		runtime.indexedProcessDescendantsByHandleId.delete(indexed.process.handleId);
+	};
+
+	const reconcileIndexedProcessDescendants = (runtime: SandboxEnvironmentGroupRuntime): void => {
+		for (const indexed of runtime.indexedProcessDescendantsByHandleId.values()) {
+			try {
+				runtime.acquisition.processRegistry.status({ process: indexed.process });
+			} catch (error: unknown) {
+				if (!isUnavailableStrictProcessHandle(error)) throw error;
+				removeIndexedProcessDescendants(runtime, indexed);
+			}
+		}
 	};
 
 	const requireRuntimeAuthority = (options: {
@@ -332,6 +397,33 @@ export function createGatewayRuntimeProductionSandboxDispatcher(
 			trustedContext,
 		});
 
+	const runtimeForRetainedResultLookup = (
+		operation: SandboxOperationIdentity,
+		trustedContext: GatewayRuntimeTrustedInvocationContext,
+	): SandboxEnvironmentGroupRuntime | undefined => {
+		const indexedRuntime = runtimesByOperationKey.get(sandboxOperationKey(operation));
+		if (indexedRuntime !== undefined) {
+			return requireRuntimeAuthority({
+				allowRetired: false,
+				owningGeneration: operation.owningGeneration,
+				runtime: indexedRuntime,
+				trustedContext,
+			});
+		}
+		const principalKey = stablePrincipalKey(trustedContext);
+		for (const runtime of runtimesByActiveUseId.values()) {
+			if (
+				runtime.principalKey === principalKey &&
+				runtime.acquisition.environmentGeneration === operation.owningGeneration &&
+				runtime.retirementPromise === undefined &&
+				bindingIsCurrent(runtime.acquisition)
+			) {
+				return runtime;
+			}
+		}
+		return undefined;
+	};
+
 	const indexStartedProcess = (
 		runtime: SandboxEnvironmentGroupRuntime,
 		started: SandboxProcessStartResult,
@@ -344,11 +436,19 @@ export function createGatewayRuntimeProductionSandboxDispatcher(
 		) {
 			throw new Error('Sandbox process registry returned cross-generation descendant handles.');
 		}
-		runtimesByOperationKey.set(sandboxOperationKey(started.operation), runtime);
+		reconcileIndexedProcessDescendants(runtime);
+		const operationKey = sandboxOperationKey(started.operation);
+		runtimesByOperationKey.set(operationKey, runtime);
 		runtimesByProcessKey.set(sandboxHandleKey(started.process), runtime);
 		for (const stream of started.streams) {
 			runtimesByStreamKey.set(sandboxHandleKey(stream), runtime);
 		}
+		runtime.indexedProcessDescendantsByHandleId.set(started.process.handleId, {
+			operationKeys: new Set([operationKey]),
+			process: started.process,
+			streams: started.streams,
+			terminalKeys: new Set(),
+		});
 	};
 
 	const retireEnvironmentGroup = (
@@ -415,6 +515,7 @@ export function createGatewayRuntimeProductionSandboxDispatcher(
 				descendantDrainWaiters: new Set<() => void>(),
 				environments,
 				execProcessesByOperationId: new Map(),
+				indexedProcessDescendantsByHandleId: new Map(),
 				pendingTerminalsByOperationId: new Map(),
 				principalKey: stablePrincipalKey(request.trustedContext),
 				retirementPromise: undefined,
@@ -583,7 +684,20 @@ export function createGatewayRuntimeProductionSandboxDispatcher(
 			}
 			return result;
 		}
-		const runtime = runtimeForRequest(request);
+		const retainedLookupRuntime =
+			request.method === 'sandbox.retained-result.lookup'
+				? runtimeForRetainedResultLookup(
+						SandboxRetainedResultLookupRequestSchema.parse(request.publicRequest).operation,
+						request.trustedContext,
+					)
+				: undefined;
+		if (
+			request.method === 'sandbox.retained-result.lookup' &&
+			retainedLookupRuntime === undefined
+		) {
+			return { kind: 'unavailable', reason: 'not-retained-or-not-authorized' };
+		}
+		const runtime = retainedLookupRuntime ?? runtimeForRequest(request);
 		const processRegistry = runtime.acquisition.processRegistry;
 		const endDescendantDispatch = beginSandboxDescendantDispatch(runtime);
 		try {
@@ -683,7 +797,17 @@ export function createGatewayRuntimeProductionSandboxDispatcher(
 					) {
 						return { kind: 'unavailable', reason: 'not-retained-or-not-authorized' };
 					}
-					const status = processRegistry.status(operationProcessRequest(authority));
+					let status: ReturnType<typeof processRegistry.status>;
+					try {
+						status = processRegistry.status(operationProcessRequest(authority));
+					} catch (error: unknown) {
+						if (!isUnavailableStrictProcessHandle(error)) throw error;
+						const indexed = runtime.indexedProcessDescendantsByHandleId.get(
+							authority.process.handleId,
+						);
+						if (indexed !== undefined) removeIndexedProcessDescendants(runtime, indexed);
+						return { kind: 'unavailable', reason: 'not-retained-or-not-authorized' };
+					}
 					return status.kind === 'running'
 						? { kind: 'pending', operation: authority.publicOperation }
 						: { kind: 'retained', operation: authority.publicOperation, outcome: status.outcome };
@@ -1044,6 +1168,12 @@ export function createGatewayRuntimeProductionSandboxDispatcher(
 						terminalSize: parsed.size,
 					});
 					indexStartedProcess(runtime, started);
+					const indexed = runtime.indexedProcessDescendantsByHandleId.get(started.process.handleId);
+					if (indexed === undefined) {
+						throw new Error('Sandbox terminal process was not indexed.');
+					}
+					indexed.operationKeys.add(sandboxOperationKey(parsed.operation));
+					indexed.terminalKeys.add(sandboxHandleKey(reservation.terminal));
 					const authority = {
 						process: started.process,
 						publicOperation: parsed.operation,

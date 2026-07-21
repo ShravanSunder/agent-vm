@@ -183,7 +183,7 @@ const testGatewayRuntimeArtifactLimits = Object.freeze({
 }) satisfies GatewayRuntimeArtifactLimits;
 const expectedWorkerProcessSpec = Object.freeze({
 	bootstrapCommand:
-		'export PNPM_HOME=/pnpm PATH=/pnpm:$PATH && mkdir -p /work/repos /work/tmp /work/cache/npm /work/cache/pnpm/store /work/cache/pip /work/cache/uv && if [ -f /state/agent-vm-worker-packages/package.json ]; then cd /state/agent-vm-worker-packages && pnpm install --prod --ignore-scripts && worker_package_root="/state/agent-vm-worker-packages/node_modules"; elif [ -f /state/agent-vm-worker.tgz ]; then pnpm add -g --ignore-scripts /state/agent-vm-worker.tgz && worker_package_root="$(pnpm root -g --silent)"; fi && if [ -n "${worker_package_root:-}" ]; then worker_bin_target="$worker_package_root/@agent-vm/agent-vm-worker/dist/main.js" && test -f "$worker_bin_target" && chmod 755 "$worker_bin_target" && ln -sfn "$worker_bin_target" /pnpm/agent-vm-worker; fi',
+		'export PNPM_HOME=/pnpm PATH=/pnpm:$PATH && mkdir -p /workspace /work/repos /work/tmp /work/cache/npm /work/cache/pnpm/store /work/cache/pip /work/cache/uv && if [ -f /state/agent-vm-worker-packages/package.json ]; then cd /state/agent-vm-worker-packages && pnpm install --prod --ignore-scripts && worker_package_root="/state/agent-vm-worker-packages/node_modules"; elif [ -f /state/agent-vm-worker.tgz ]; then pnpm add -g --ignore-scripts /state/agent-vm-worker.tgz && worker_package_root="$(pnpm root -g --silent)"; fi && if [ -n "${worker_package_root:-}" ]; then worker_bin_target="$worker_package_root/@agent-vm/agent-vm-worker/dist/main.js" && test -f "$worker_bin_target" && chmod 755 "$worker_bin_target" && ln -sfn "$worker_bin_target" /pnpm/agent-vm-worker; fi',
 	guestListenPort: 18_789,
 	healthCheck: Object.freeze({ path: '/health', port: 18_789, type: 'http' as const }),
 	logPath: '/tmp/agent-vm-worker.log',
@@ -3310,6 +3310,9 @@ describe('startGatewayZone', () => {
 		expect(managedAgentWorkspaceStats.every((workspaceStats) => workspaceStats.isDirectory())).toBe(
 			true,
 		);
+		await expect(
+			stat(path.join(systemConfig.runtimeDir, 'zones', zone.id, 'gitdirs')),
+		).rejects.toMatchObject({ code: 'ENOENT' });
 		expect(await readFile(stateSentinelPath, 'utf8')).toBe('state-preserved\n');
 		expect(await readFile(controllerStateSentinelPath, 'utf8')).toBe(
 			'controller-state-preserved\n',
@@ -6574,6 +6577,11 @@ describe('startGatewayZone', () => {
 			throw new Error('Expected Hermes gateway test zone.');
 		}
 		const agentIds = ['main', 'second'] as const;
+		const mainAgent = zone.agents?.find((agent) => agent.id === 'main');
+		if (mainAgent === undefined) {
+			throw new Error('Expected Hermes main agent.');
+		}
+		mainAgent.workspaceGit = { mode: 'local' };
 		const zoneFilesDir = zone.gateway.zoneFilesDir;
 		let managedVmCreateRequest: ManagedVmCreateRequest | undefined;
 		const { exec, managedVm } = createHealthyGatewayVmStub('vm-managed-hermes', 28_402);
@@ -6660,21 +6668,20 @@ describe('startGatewayZone', () => {
 			clientKind: 'hermes-managed-plugin',
 			configuredAgentIds: agentIds,
 		});
-		const [workspaceRootStats, gitDirectoryRootStats] = await Promise.all([
-			Promise.all(
-				agentIds.map(async (agentId) => await stat(path.join(zoneFilesDir, 'agents', agentId))),
-			),
-			Promise.all(
-				agentIds.map(
-					async (agentId) =>
-						await stat(
-							path.join(systemConfig.runtimeDir, 'zones', zone.id, 'gitdirs', 'agents', agentId),
-						),
-				),
-			),
-		]);
+		const workspaceRootStats = await Promise.all(
+			agentIds.map(async (agentId) => await stat(path.join(zoneFilesDir, 'agents', agentId))),
+		);
 		expect(workspaceRootStats.every((rootStats) => rootStats.isDirectory())).toBe(true);
-		expect(gitDirectoryRootStats.every((rootStats) => rootStats.isDirectory())).toBe(true);
+		expect(
+			(
+				await stat(
+					path.join(systemConfig.runtimeDir, 'zones', zone.id, 'gitdirs', 'agents', 'main'),
+				)
+			).isDirectory(),
+		).toBe(true);
+		await expect(
+			stat(path.join(systemConfig.runtimeDir, 'zones', zone.id, 'gitdirs', 'agents', 'second')),
+		).rejects.toMatchObject({ code: 'ENOENT' });
 		expect(
 			(await stat(path.join(systemConfig.runtimeDir, 'zones', zone.id, 'logs'))).isDirectory(),
 		).toBe(true);

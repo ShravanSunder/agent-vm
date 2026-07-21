@@ -1,8 +1,16 @@
 # Agent VM Storage Layout And Agent Workspace Contract
 
-Status: Accepted for implementation
+Status: Accepted storage substrate; partially superseded for Tool VM `/agent-vm`, Hermes projection details, and backup/restore proof
 Date: 2026-07-17
 Scope: Host storage classes, per-agent durable workspaces, managed Tool VM and Worker guest paths, optional per-agent workspace Git, fresh Tool VM replacement, and framework-specific projections
+
+The focused completion contract in
+`docs/specs/2026-07-20-tool-portal-pr-wrapup/2026-07-20-tool-portal-pr-wrapup.md`
+supersedes this document where they differ. In particular, Hermes version 1
+selects the complete already-isolated per-agent source root without inventing a
+child-path allowlist; managed Tool VMs expose no generic `/agent-vm` surface
+until an exact generated inventory and owner exist; and simple backup plus
+additive restore are required beta proof without restore publication machinery.
 
 ## Decision Summary
 
@@ -171,7 +179,7 @@ zoneFilesDir/
   purpose      shared zone files plus agents/<agentId> durable workspaces
   durability   durable RealFS
   VM access    Gateway sees /zone; Tool VM sees one filtered agent child only
-  backup       included in normal OpenClaw-style zone backup
+  backup       included in normal OpenClaw and Hermes zone backup
 
 runtimeDir/
   owner        runtime subsystems
@@ -836,13 +844,11 @@ The agent may corrupt its own workspace or selected Git databases. Protecting an
 
 ## Existing Backup, Restore, And Legacy Data
 
-This contract does not redesign the backup engine, restore publication, archive format, legacy
-whole-zone Git migration, or destructive administrative commands. Those systems retain their
-current behavior and require a separate explicitly approved goal before they change.
-
-The beta delivery proves the live per-agent workspace, optional workspace Git, controller push,
-and fresh Tool VM replacement paths. Backup, restore, legacy conversion, migration perfection,
-repo-wide destructive-consumer cleanup, and exhaustive fault permutations are not beta gates.
+The later Tool Portal wrap-up contract supersedes this section for backup and
+restore. Backup remains a direct live copy of `stateDir` plus managed
+`zoneFilesDir`; restore remains a simple additive copy. Both are beta proof
+gates. Restore publication, transactional swap, runtime coordination, archive
+conversion, Git reconstruction, and migration remain excluded.
 
 ## Security Context
 
@@ -935,9 +941,11 @@ promise any `/work` recovery.
 
 R16. Controller Git operations derive all authority from trusted config and current principal binding, never from guest pointer content or caller paths.
 
-R17. Existing backup and restore behavior is unchanged by this contract.
+R17. Superseded for backup proof by the Tool Portal wrap-up contract; simple
+create/list/additive restore behavior remains unchanged.
 
-R18. Beta acceptance does not require backup, restore, archive conversion, or migration proof.
+R18. Superseded: beta acceptance requires simple backup and isolated additive
+restore proof, but not archive conversion, migration, or restore publication.
 
 R19. Existing `stateDir`, `controllerStateDir`, `runtimeDir`, `cacheDir`, `backupDir`, and config
 ownership meanings remain unchanged except for the named per-agent Git subtree under `runtimeDir`

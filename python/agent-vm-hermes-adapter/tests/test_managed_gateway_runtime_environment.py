@@ -505,6 +505,58 @@ class HermesGatewayRuntimeEnvironmentTests(unittest.TestCase):
         self.assertEqual(self.client.sandbox.execution.calls[-1][0], "cancel")
         environment.cleanup()
 
+    def test_kill_accepts_non_terminal_cancellation_results_without_outcome(self) -> None:
+        cancellation_kinds = (
+            "running",
+            "cancel-request-accepted",
+            "cancellation-pending",
+        )
+        environments = {
+            cancellation_kind: self.factory.create(
+                profile_name="researcher",
+                task_id=f"session-{cancellation_kind}",
+                cwd="/work",
+                timeout=60,
+            )
+            for cancellation_kind in cancellation_kinds
+        }
+
+        for cancellation_kind in cancellation_kinds:
+            with self.subTest(cancellation_kind=cancellation_kind):
+                wait_started = threading.Event()
+
+                async def blocked_wait(
+                    request: Mapping[str, object],
+                    *,
+                    trusted_context: Mapping[str, object],
+                ) -> PortableResult:
+                    self.client.sandbox.execution.calls.append(("wait", request, trusted_context))
+                    wait_started.set()
+                    await asyncio.Event().wait()
+                    raise AssertionError("unreachable")
+
+                environment = environments[cancellation_kind]
+                self.client.sandbox.execution.set_override("wait", blocked_wait)
+                self.client.sandbox.execution.set_result(
+                    "cancel",
+                    {
+                        "kind": cancellation_kind,
+                        "operation": {
+                            "operationId": "operation-1",
+                            "owningGeneration": "tool-vm-generation-7",
+                        },
+                    },
+                )
+                process = environment._run_bash("sleep 300", timeout=300)
+                self.assertTrue(wait_started.wait(timeout=2))
+
+                process.kill()
+
+                with self.assertRaises(HermesGatewayRuntimeOutcomeError) as error:
+                    process.wait(timeout=2)
+                self.assertEqual(error.exception.outcome_kind, cancellation_kind)
+                environment.cleanup()
+
     def test_adapter_close_stops_its_dedicated_client_loop_thread(self) -> None:
         loop_thread_ids_before_close = {
             thread.ident

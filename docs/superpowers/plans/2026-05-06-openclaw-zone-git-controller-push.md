@@ -1,5 +1,10 @@
 # OpenClaw Zone Git Controller Push Implementation Plan
 
+> **Superseded:** This historical whole-zone Git plan is not executable. The
+> accepted per-agent workspace Git and simple live-copy backup contracts in
+> `docs/specs/2026-07-20-tool-portal-pr-wrapup/2026-07-20-tool-portal-pr-wrapup.md`
+> replace its zone-wide mounts, Git authority, and clean/pushed backup admission.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add OpenClaw zone workspace Git support where agents can commit zone-file changes, while agent-vm performs authenticated push from the host/controller without leaking GitHub credentials into gateway or Tool VMs.

@@ -142,7 +142,9 @@ function resolveToolVmRootBinding(
 	toolVmOptions: ControllerManagedToolVmOptions,
 ): ToolVmRootBinding {
 	return {
-		hostGitDirectoryRoot: toolVmOptions.hostGitDirectoryRoot,
+		...(toolVmOptions.hostGitDirectoryRoot === undefined
+			? {}
+			: { hostGitDirectoryRoot: toolVmOptions.hostGitDirectoryRoot }),
 		hostWorkspaceRoot: toolVmOptions.hostWorkspaceRoot,
 		kind: 'managed-agent-workspace',
 	};
@@ -592,7 +594,9 @@ async function startControllerRuntimeWithOwnershipLock(
 		createManagedVm: async (leaseOptions) =>
 			await createManagedToolVm({
 				agentId: leaseOptions.agentId,
-				hostGitDirectoryRoot: leaseOptions.hostGitDirectoryRoot,
+				...(leaseOptions.hostGitDirectoryRoot === undefined
+					? {}
+					: { hostGitDirectoryRoot: leaseOptions.hostGitDirectoryRoot }),
 				profile: leaseOptions.profile,
 				tcpSlot: leaseOptions.tcpSlot,
 				hostWorkspaceRoot: leaseOptions.hostWorkspaceRoot,

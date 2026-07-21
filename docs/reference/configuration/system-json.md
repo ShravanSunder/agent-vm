@@ -942,8 +942,9 @@ Worker zones do not declare Tool VM profile fields. OpenClaw zones must declare
 empty. This makes the Tool VM image policy visible in generated configs instead
 of hiding it behind defaults.
 
-OpenClaw zones add `zoneFilesDir` because they own long-lived household/user
-files:
+Managed OpenClaw and Hermes zones add `zoneFilesDir` because they own durable
+per-agent workspaces. OpenClaw also mounts the zone root at `/zone`; Hermes does
+not expose a broad zone root to its Gateway:
 
 ```json
 {
