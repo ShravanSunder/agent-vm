@@ -1,4 +1,10 @@
-import { generateKeyPairSync, randomUUID, sign as signPayload, type KeyObject } from 'node:crypto';
+import {
+	createHmac,
+	generateKeyPairSync,
+	randomUUID,
+	sign as signPayload,
+	type KeyObject,
+} from 'node:crypto';
 import { once } from 'node:events';
 import net from 'node:net';
 
@@ -19,8 +25,16 @@ import {
 	type GatewayControlHello,
 } from '@agent-vm/gateway-control-contracts';
 import { io as createSocketIoClient, type Socket } from 'socket.io-client';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import {
+	GATEWAY_CONTROL_ADMISSION_PRESSURE_E2E_PATH,
+	GATEWAY_CONTROL_ADMISSION_PRESSURE_E2E_SIGNATURE_HEADER,
+} from './gateway-control-admission-pressure-e2e-route.js';
+import {
+	AGENT_VM_E2E_CONTROL_ADMISSION_PRESSURE_ENV,
+	AGENT_VM_E2E_CONTROL_ADMISSION_PRESSURE_KEY_ENV,
+} from './gateway-control-admission-pressure-e2e-testing.js';
 import {
 	GATEWAY_CONTROL_READY_PATH,
 	GATEWAY_CONTROL_SOCKET_PATH,
@@ -44,6 +58,7 @@ const activeEndpoints: GatewayControlEndpoint[] = [];
 afterEach(async () => {
 	for (const client of activeClients.splice(0)) client.close();
 	await Promise.all(activeEndpoints.splice(0).map(async (endpoint) => await endpoint.close()));
+	vi.unstubAllEnvs();
 });
 
 function readyHeadersFor(props: {
@@ -181,6 +196,78 @@ async function connectControlClient(props: {
 }
 
 describe('gateway control endpoint', () => {
+	it('hosts the signed pressure probe only when gated and dispatches to its real admission owner', async () => {
+		// Arrange
+		const pressureSigningKey = 'gateway-runtime-endpoint-pressure-key';
+		const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+		const disabledEndpoint = await startGatewayControlEndpoint({
+			identity,
+			listen: { host: '127.0.0.1', port: 0 },
+			nonceTtlMs: 1_000,
+			now: () => 1_000,
+			verifierPublicKeyPem: publicKey.export({ format: 'pem', type: 'spki' }),
+		});
+		activeEndpoints.push(disabledEndpoint);
+		const disabledBaseUrl = `http://${disabledEndpoint.readiness.host}:${String(disabledEndpoint.readiness.port)}`;
+
+		// Act / Assert: production-default route inventory stays absent.
+		const disabledResponse = await fetch(
+			`${disabledBaseUrl}${GATEWAY_CONTROL_ADMISSION_PRESSURE_E2E_PATH}`,
+			{ method: 'POST' },
+		);
+		expect(disabledResponse.status).toBe(404);
+
+		// Arrange: opt in the dedicated test process and establish a real accepted session.
+		vi.stubEnv(AGENT_VM_E2E_CONTROL_ADMISSION_PRESSURE_ENV, '1');
+		vi.stubEnv(AGENT_VM_E2E_CONTROL_ADMISSION_PRESSURE_KEY_ENV, pressureSigningKey);
+		const enabledEndpoint = await startGatewayControlEndpoint({
+			identity,
+			listen: { host: '127.0.0.1', port: 0 },
+			nonceTtlMs: 1_000,
+			now: () => 1_000,
+			verifierPublicKeyPem: publicKey.export({ format: 'pem', type: 'spki' }),
+		});
+		activeEndpoints.push(enabledEndpoint);
+		await connectControlClient({
+			attachmentGeneration: 7,
+			endpoint: enabledEndpoint,
+			privateKey,
+		});
+		const enabledBaseUrl = `http://${enabledEndpoint.readiness.host}:${String(enabledEndpoint.readiness.port)}`;
+		const bodyText = JSON.stringify({
+			action: 'snapshot',
+			attachmentGeneration: 7,
+			scenario: 'control-admission-pressure',
+		});
+
+		// Act / Assert: HMAC authentication is required before real actuator dispatch.
+		const unsignedResponse = await fetch(
+			`${enabledBaseUrl}${GATEWAY_CONTROL_ADMISSION_PRESSURE_E2E_PATH}`,
+			{ body: bodyText, method: 'POST' },
+		);
+		expect(unsignedResponse.status).toBe(401);
+		const signedResponse = await fetch(
+			`${enabledBaseUrl}${GATEWAY_CONTROL_ADMISSION_PRESSURE_E2E_PATH}`,
+			{
+				body: bodyText,
+				headers: {
+					[GATEWAY_CONTROL_ADMISSION_PRESSURE_E2E_SIGNATURE_HEADER]: createHmac(
+						'sha256',
+						pressureSigningKey,
+					)
+						.update(bodyText)
+						.digest('base64url'),
+				},
+				method: 'POST',
+			},
+		);
+		expect(signedResponse.status).toBe(200);
+		expect(await signedResponse.json()).toMatchObject({
+			details: { acceptedAttachmentGeneration: 7 },
+			ok: true,
+		});
+	});
+
 	it('observes only newly accepted current sessions with bounded unsubscribe lifetime', async () => {
 		// Arrange
 		const { privateKey, publicKey } = generateKeyPairSync('ed25519');

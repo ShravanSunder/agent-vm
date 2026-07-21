@@ -1290,25 +1290,10 @@ describe('Gateway runtime production service', () => {
 			});
 			replacementControlClient.close();
 			await controlDisconnected;
-			const attachedAfterDisconnectPromise = waitForReadinessEvidenceStatus({
-				evidencePath: service.evidencePaths.readiness,
-				minimumObservationSequence: 3,
-				status: 'attached',
+			await expect(frameworkClient.connect()).rejects.toMatchObject({
+				code: 'retired-attachment',
 			});
-			await frameworkClient.connect();
-			const attachedAfterDisconnect = await attachedAfterDisconnectPromise;
-			const lostAfterDisconnectPromise = waitForReadinessEvidenceStatus({
-				evidencePath: service.evidencePaths.readiness,
-				minimumObservationSequence: 4,
-				status: 'attachment-lost',
-			});
-			await frameworkClient.disconnect();
-			const lostAfterDisconnect = await lostAfterDisconnectPromise;
-			expect([
-				attachedAfterDisconnect.uds.attachment.observationSequence,
-				lostAfterDisconnect.uds.attachment.observationSequence,
-			]).toEqual([3, 4]);
-			expect(lostAfterDisconnect).toEqual(service.readiness);
+			expect(service.readiness).toEqual(replacementLostReadiness);
 			await expect(service.retire({ drainTimeoutMs: 100 })).resolves.toMatchObject({
 				controlEndpointClosed: true,
 				kind: 'retired',

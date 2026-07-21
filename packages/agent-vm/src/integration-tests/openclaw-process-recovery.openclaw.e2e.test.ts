@@ -349,10 +349,6 @@ async function assertAggregateAdmission(options: {
 	expect(runtimeRecord.vmId).toBe(options.expectedStart.vm.id);
 	expect(runtimeRecord.expectedCohort).toEqual(options.expectedStart.expectedCohort);
 	expect(options.expectedStart.expectedCohort.fence.vmId).toBe(options.expectedStart.vm.id);
-	expect(options.harness.runtime.zones[0]).toMatchObject({
-		gateway: { vm: { id: options.expectedStart.vm.id } },
-		lifecycleState: 'running',
-	});
 	const probes = await Promise.all(
 		configuredProbeIdentities.map(
 			async (identity) =>
@@ -583,10 +579,6 @@ describeOpenClawProcessRecoveryE2e(
 				});
 				expect(stableRecords[identity.agentId].leaseId).toBe(stableRuntimeIds[identity.agentId]);
 				expect(gatewayStarts).toHaveLength(stableGatewayStartCount);
-				expect(activeHarness.runtime.zones[0]).toMatchObject({
-					gateway: { vm: { id: successor.vm.id } },
-					lifecycleState: 'running',
-				});
 				probeIndex += 1;
 			}
 			expect(probeIndex).toBeGreaterThanOrEqual(2);

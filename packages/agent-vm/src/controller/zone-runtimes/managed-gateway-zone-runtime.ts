@@ -21,6 +21,7 @@ import type {
 	GatewayControlSessionAttemptOutcome,
 	GatewayControlSessionHeartbeat,
 	GatewayControlSessionReconnectExhausted,
+	GatewayRuntimeAttachmentLost,
 	GatewayZoneDestroyResult,
 	GatewayZoneStartResult,
 	ManagedGatewayZoneStartResult,
@@ -82,6 +83,7 @@ export interface CreateManagedGatewayZoneRuntimeOptions {
 	readonly managedVmImages?: ManagedVmImageCapability | undefined;
 	readonly managedVmOwnedDirectories?: ManagedVmOwnedDirectoryCapability | undefined;
 	readonly now: () => number;
+	readonly onGatewayRuntimeAttachmentLost?: (transition: GatewayRuntimeAttachmentLost) => void;
 	readonly runtimeRecordTarget: ControllerManagedGatewayRuntimeRecordTarget;
 	readonly preflightGatewayZoneStart?: typeof preflightGatewayZoneStartDefault;
 	readonly restartGatewayZone?: (
@@ -106,6 +108,7 @@ interface GatewayZoneStartOptions {
 	readonly onControlSessionReconnectExhausted?: (
 		transition: GatewayControlSessionReconnectExhausted,
 	) => void;
+	readonly onGatewayRuntimeAttachmentLost?: (transition: GatewayRuntimeAttachmentLost) => void;
 	readonly prebuiltImage?: ManagedVmImageBuildResult | undefined;
 	readonly runtimeEnvironment?: StartGatewayZoneRequestOptions['runtimeEnvironment'];
 	readonly runtimePluginConfigs?: StartGatewayZoneRequestOptions['runtimePluginConfigs'];
@@ -346,7 +349,12 @@ export function createManagedGatewayZoneRuntime(
 		startOptions: GatewayZoneStartOptions = {},
 	): Promise<GatewayZoneRuntimeHandle> => {
 		if (options.restartGatewayZone) {
-			return await options.restartGatewayZone(options.zone.id, startOptions);
+			return await options.restartGatewayZone(options.zone.id, {
+				...startOptions,
+				...(options.onGatewayRuntimeAttachmentLost === undefined
+					? {}
+					: { onGatewayRuntimeAttachmentLost: options.onGatewayRuntimeAttachmentLost }),
+			});
 		}
 
 		return await requireManagedGatewayStartResult(
@@ -367,6 +375,9 @@ export function createManagedGatewayZoneRuntime(
 					...(startOptions.onControlSessionHeartbeat
 						? { onControlSessionHeartbeat: startOptions.onControlSessionHeartbeat }
 						: {}),
+					...(options.onGatewayRuntimeAttachmentLost === undefined
+						? {}
+						: { onGatewayRuntimeAttachmentLost: options.onGatewayRuntimeAttachmentLost }),
 					...(startOptions.onControlSessionAttemptOutcome
 						? {
 								onControlSessionAttemptOutcome: startOptions.onControlSessionAttemptOutcome,

@@ -6,17 +6,13 @@ import {
 import { createHash, generateKeyPairSync } from 'node:crypto';
 import { once } from 'node:events';
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
-import net, { type Socket } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
 import {
 	GatewayRuntimeClient,
-	GatewayRuntimeFrameDecoder,
-	encodeGatewayRuntimeFrame,
 	type GatewayRuntimeAttachmentMetadata,
-	type GatewayRuntimeJsonRpcMessage,
 } from '@agent-vm/agent-portal-sdk/gateway-runtime-client';
 import { managedToolPortalConfigSchema, mcpConfigSchema } from '@agent-vm/config-contracts';
 import { deriveGatewayRuntimePortalSemanticSnapshot } from '@agent-vm/gateway-control-contracts';
@@ -358,80 +354,6 @@ async function waitForJsonLine(props: {
 	});
 }
 
-async function connectRawSocket(socketPath: string): Promise<Socket> {
-	const socket = net.createConnection(socketPath);
-	socket.on('error', () => undefined);
-	await once(socket, 'connect', { signal: AbortSignal.timeout(PROCESS_WAIT_MILLISECONDS) });
-	return socket;
-}
-
-async function sendRawRequest(props: {
-	readonly message: GatewayRuntimeJsonRpcMessage;
-	readonly socket: Socket;
-}): Promise<GatewayRuntimeJsonRpcMessage> {
-	const response = Promise.withResolvers<GatewayRuntimeJsonRpcMessage>();
-	const decoder = new GatewayRuntimeFrameDecoder();
-	const onData = (chunk: Buffer): void => {
-		for (const message of decoder.push(chunk)) {
-			if (message['id'] === props.message['id']) response.resolve(message);
-		}
-	};
-	props.socket.on('data', onData);
-	props.socket.write(encodeGatewayRuntimeFrame(props.message));
-	try {
-		return await Promise.race([
-			response.promise,
-			new Promise<never>((_resolve, reject) =>
-				AbortSignal.timeout(PROCESS_WAIT_MILLISECONDS).addEventListener(
-					'abort',
-					() => reject(new Error('Timed out waiting for packed JSON-RPC response.')),
-					{ once: true },
-				),
-			),
-		]);
-	} finally {
-		props.socket.off('data', onData);
-	}
-}
-
-async function waitForWritableDrain(socket: Socket): Promise<boolean> {
-	try {
-		await once(socket, 'drain', { signal: AbortSignal.timeout(2_000) });
-		return true;
-	} catch (error: unknown) {
-		if (error instanceof Error && error.name === 'AbortError') return false;
-		if (
-			error instanceof Error &&
-			'code' in error &&
-			typeof error.code === 'string' &&
-			['ECONNRESET', 'EPIPE'].includes(error.code)
-		) {
-			return false;
-		}
-		throw error;
-	}
-}
-
-async function waitForSocketCloseIgnoringExpectedWriteError(socket: Socket): Promise<void> {
-	const timeoutSignal = AbortSignal.timeout(PROCESS_WAIT_MILLISECONDS);
-	await new Promise<void>((resolve, reject) => {
-		const cleanup = (): void => {
-			socket.off('close', handleClose);
-			timeoutSignal.removeEventListener('abort', handleTimeout);
-		};
-		const handleClose = (): void => {
-			cleanup();
-			resolve();
-		};
-		const handleTimeout = (): void => {
-			cleanup();
-			reject(new Error('Timed out waiting for packed pressure socket close.'));
-		};
-		socket.once('close', handleClose);
-		timeoutSignal.addEventListener('abort', handleTimeout, { once: true });
-	});
-}
-
 async function stopStartedProcess(): Promise<void> {
 	if (startedProcess === undefined || startedProcess.child.exitCode !== null) return;
 	startedProcess.child.kill('SIGTERM');
@@ -490,67 +412,13 @@ describe('packed Gateway runtime executable', () => {
 		);
 		await client.disconnect();
 
-		const pressureSocket = await connectRawSocket(socketPath);
-		const pressureHandshake = await sendRawRequest({
-			message: {
-				id: 'pressure-handshake',
-				jsonrpc: '2.0',
-				method: 'managed-plugin.handshake',
-				params: runtime.attachment,
-			},
-			socket: pressureSocket,
-		});
-		expect(pressureHandshake).toMatchObject({ result: { kind: 'accepted' } });
-		pressureSocket.pause();
-		const pressureSocketErrors: Error[] = [];
-		pressureSocket.on('error', (error: Error) => pressureSocketErrors.push(error));
-		const pressureSocketClosed = waitForSocketCloseIgnoringExpectedWriteError(pressureSocket);
-		let clientWritePressureObserved = false;
-		for (let requestIndex = 0; requestIndex < 128; requestIndex += 1) {
-			if (pressureSocket.destroyed) {
-				clientWritePressureObserved = true;
-				break;
-			}
-			const acceptedImmediately = pressureSocket.write(
-				encodeGatewayRuntimeFrame({
-					id: `${String(requestIndex)}:${'x'.repeat(512 * 1_024)}`,
-					jsonrpc: '2.0',
-					method: 'unsupported.pressure',
-					params: {},
-				}),
-			);
-			if (acceptedImmediately) continue;
-			// oxlint-disable-next-line no-await-in-loop -- each write must observe the preceding socket pressure event before continuing.
-			if (!(await waitForWritableDrain(pressureSocket))) {
-				clientWritePressureObserved = true;
-				break;
-			}
-		}
-		if (!pressureSocket.destroyed) pressureSocket.destroy();
-		await pressureSocketClosed;
-
-		const recoveredClient = new GatewayRuntimeClient({
+		const replacementClient = new GatewayRuntimeClient({
 			attachment: runtime.attachment,
 			socketPath,
 			startupRetryPolicy: { maxAttempts: 1 },
 		});
-		await recoveredClient.connect();
-		const recoveredListResult = await recoveredClient.portal.list(
-			{ requests: [{ id: 'packed-recovered-list', limit: 20, namespaces: [] }] },
-			{
-				trustedContext: {
-					correlation: { sessionId: 'session-packed-recovered' },
-					principal: {
-						agentId: 'agent-a',
-						frameworkIdentity: { kind: 'hermes', profileName: 'agent-a-profile' },
-						profileAssignmentRevision: runtime.profileAssignmentRevision,
-						toolPortalProfileId: 'profile-a',
-					},
-					requester: { authenticatedSubjectId: 'subject-a' },
-				},
-			},
-		);
-		await recoveredClient.disconnect();
+		await expect(replacementClient.connect()).rejects.toMatchObject({ code: 'retired-attachment' });
+		await replacementClient.disconnect();
 		startedProcess.child.kill('SIGTERM');
 		const retirement = await waitForJsonLine({
 			predicate: (value) => value['kind'] === 'retired',
@@ -606,17 +474,6 @@ describe('packed Gateway runtime executable', () => {
 			},
 		});
 		expect(listResult).toMatchObject({ ok: true });
-		expect(clientWritePressureObserved).toBe(true);
-		expect(pressureSocket.destroyed).toBe(true);
-		expect(
-			pressureSocketErrors.every(
-				(error) =>
-					'code' in error &&
-					typeof error.code === 'string' &&
-					['ECONNRESET', 'EPIPE'].includes(error.code),
-			),
-		).toBe(true);
-		expect(recoveredListResult).toMatchObject({ ok: true });
 		expect(retirement).toMatchObject({
 			artifactEpochRetired: true,
 			controlEndpointClosed: true,

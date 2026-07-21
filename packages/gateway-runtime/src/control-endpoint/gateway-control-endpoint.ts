@@ -1,5 +1,9 @@
 import { createServer, type Server as HttpServer } from 'node:http';
 
+import {
+	GATEWAY_CONTROL_ADMISSION_PRESSURE_E2E_PATH,
+	createGatewayControlAdmissionPressureE2eRequestHandler,
+} from './gateway-control-admission-pressure-e2e-route.js';
 import { createGatewayRuntimeControlMessageHandler } from './gateway-control-default-message-handler.js';
 import {
 	GATEWAY_CONTROL_READY_PATH,
@@ -99,6 +103,8 @@ export async function startGatewayControlEndpoint(
 		...(options.now === undefined ? {} : { now: options.now }),
 		verifierPublicKeyPem: options.verifierPublicKeyPem,
 	});
+	const admissionPressureE2eRequestHandler =
+		createGatewayControlAdmissionPressureE2eRequestHandler();
 	const server = createServer((request, response) => {
 		const path = requestPath(request.url);
 		if (path === undefined) {
@@ -110,6 +116,13 @@ export async function startGatewayControlEndpoint(
 		}
 		if (path === GATEWAY_CONTROL_READY_PATH) {
 			service.handleReadyRequest(request, response);
+			return;
+		}
+		if (
+			path === GATEWAY_CONTROL_ADMISSION_PRESSURE_E2E_PATH &&
+			admissionPressureE2eRequestHandler !== undefined
+		) {
+			admissionPressureE2eRequestHandler(request, response);
 			return;
 		}
 		response.statusCode = 404;
@@ -156,9 +169,13 @@ export async function startGatewayControlEndpoint(
 			closePromise ??= (async () => {
 				const serverClose = closeHttpServer(server, drainTimeoutMs);
 				const cleanupResults = await Promise.allSettled([service.close(), serverClose]);
-				const failures = cleanupResults.flatMap((result) =>
-					result.status === 'rejected' ? [result.reason] : [],
-				);
+				const failures: unknown[] = [];
+				for (const result of cleanupResults) {
+					if (result.status === 'rejected') {
+						const failure: unknown = result.reason;
+						failures.push(failure);
+					}
+				}
 				if (failures.length > 0) {
 					throw new AggregateError(failures, 'gateway control endpoint retirement failed');
 				}

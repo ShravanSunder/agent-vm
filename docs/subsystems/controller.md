@@ -189,7 +189,7 @@ Tool VM SSH guard
         -> tool-vm-ssh
   |
 automatic gateway VM restart
-  |-- repeated gateway-service or control-session failures
+  |-- corroborated gateway-service/control-session failures, or exact current-cohort attachment loss
         -> gateway-recovery
 ```
 
@@ -205,26 +205,32 @@ aggressive. Health probes use short timeouts and no retry. Git push/pull and
 lease-create operations use longer timeouts because normal work can legitimately
 take longer. Unsafe mutations are not retried without an idempotency proof.
 
-For OpenClaw zones, the controller can automatically recover from repeated
-host-side gateway-service, control-session, or policy-enabled generic
-channel-provider degradation. Dead control while Gateway service remains live
-first requests bounded same-Gateway OpenClaw process recovery, replacing the
-process and disposable control session while preserving the Gateway VM and
-healthy Tool VMs. Gateway VM restart is outward escalation after process
-recovery is exhausted or Gateway service/lifecycle evidence requires
-replacement. The default Gateway-recovery budget has a 61 minute per-zone
-cooldown and a 10 minute recovery deadline.
+For managed Gateway zones (OpenClaw and Hermes), the controller can
+automatically recover from current-source-corroborated host-side gateway-service
+and control-session degradation, or policy-enabled generic channel-provider
+degradation. Dead control while the Gateway service remains live may first use
+the existing bounded control-session recovery path; it does not restart the
+OpenClaw or Hermes framework process. A failed framework health probe does not
+replace the Gateway while the current framework attachment and control session
+remain healthy.
+Exact current-cohort `attachment-lost` readiness evidence is terminal for that
+Gateway epoch and enters the existing whole-Gateway recovery path immediately
+without requiring a failed service probe. Existing recovery enablement,
+cooldown, in-flight, stabilization, failed-recovery suspension, stopping,
+source-key, and runner-revalidation fences still apply. The default
+Gateway-recovery budget has a 61 minute per-zone cooldown and a 10 minute
+recovery deadline.
 Generic channel-provider health has its own policy: `unhealthy-recoverable`
 degrades readiness/status by default and feeds recovery only when
 `restartGatewayOnRecoverable` is explicitly enabled, `transitioning` is observed
 until its timeout, and `unhealthy-unrecoverable` is surfaced without restart by
 default.
 
-Gateway recovery action selection comes from the internal Gateway lifecycle
-state after the same-Gateway process-recovery boundary has escalated. A running
-or degraded Gateway is restarted. A stopped or cold-start-eligible failed
-Gateway is cold-started after current ownership checks prove the old runtime
-record and ingress port are safe. An owner-unsafe or ambiguous failed runtime
+Gateway recovery action selection comes directly from the internal Gateway
+lifecycle state. A running or degraded Gateway is replaced through the existing
+restart path. A stopped or cold-start-eligible failed Gateway is cold-started
+after current ownership checks prove the old runtime record and ingress port are
+safe. An owner-unsafe or ambiguous failed runtime
 requires operator action. Failed or timed-out recovery attempts are recorded as
 failed `gateway-recovery` events and do not freeze the monitor loop. After 3
 consecutive failed automatic recoveries, the controller records

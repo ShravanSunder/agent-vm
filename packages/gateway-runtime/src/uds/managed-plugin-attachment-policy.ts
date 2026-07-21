@@ -329,7 +329,7 @@ export function reduceManagedPluginAttachmentState(
 			}
 			return {
 				decision: acceptedDecision(),
-				state: stateWithoutActiveConnection(state, 'awaiting-handshake'),
+				state: stateWithoutActiveConnection(state, 'retired'),
 			};
 		case 'retired':
 			return {

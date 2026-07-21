@@ -38,8 +38,16 @@ const commitWorkspaceThroughToolVmScript = [
 	'export HOME=/nonexistent/agent-vm-e2e-git-home',
 	'cd /workspace',
 	"printf '%s\\n' 'workspace git push through Tool Portal' > workspace-git-proof.txt",
-	'/usr/bin/git add -- workspace-git-proof.txt',
-	"/usr/bin/git -c user.name='Agent VM E2E' -c user.email='agent-vm-e2e@example.invalid' commit -m 'test: workspace Git Tool Portal push'",
+	"commit_log='.agent-vm-e2e-git-command.log'",
+	'set +e',
+	'{',
+	'  /usr/bin/git -c safe.directory=/workspace add -- workspace-git-proof.txt &&',
+	"  /usr/bin/git -c safe.directory=/workspace -c user.name='Agent VM E2E' -c user.email='agent-vm-e2e@example.invalid' commit -m 'test: workspace Git Tool Portal push'",
+	'} > "$commit_log" 2>&1',
+	'commit_exit_code=$?',
+	'set -e',
+	'if [ "$commit_exit_code" -ne 0 ]; then exit "$commit_exit_code"; fi',
+	'rm -f -- "$commit_log"',
 ].join('\n');
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
@@ -183,6 +191,10 @@ describeOpenClawWorkspaceGitSmoke('smoke: OpenClaw workspace Git through Tool Po
 			prefix: 'openclaw-workspace-git-e2e-',
 			zoneId: 'workspace-git-smoke',
 		});
+		const systemZone = project.systemConfig.zones[0];
+		if (!systemZone || systemZone.gateway.type !== 'openclaw') {
+			throw new Error('Expected workspace Git smoke system config to contain an OpenClaw zone.');
+		}
 		await useLocalOpenClawPluginGatewayImage({
 			profileName: project.zone.gateway.imageProfile,
 			projectRoot: project.tempRoot,
@@ -196,7 +208,7 @@ describeOpenClawWorkspaceGitSmoke('smoke: OpenClaw workspace Git through Tool Po
 			systemConfig: project.systemConfig,
 		});
 		const toolPortalConfigDir = path.dirname(project.zone.gateway.config);
-		project.zone.toolPortal = {
+		systemZone.toolPortal = {
 			configDir: toolPortalConfigDir,
 			surfaceEligibilityByProfile: {
 				smoke: {
@@ -217,7 +229,7 @@ describeOpenClawWorkspaceGitSmoke('smoke: OpenClaw workspace Git through Tool Po
 			source: 'environment',
 			envVar: 'AGENT_VM_TEST_ZONE_GIT_TOKEN',
 		};
-		project.zone.agents = (project.zone.agents ?? []).map((agent) =>
+		systemZone.agents = (systemZone.agents ?? []).map((agent) =>
 			agent.id === agentId
 				? {
 						...agent,
@@ -326,7 +338,28 @@ describeOpenClawWorkspaceGitSmoke('smoke: OpenClaw workspace Git through Tool Po
 				tool: 'tool_portal_call',
 			}),
 		);
-		expect(expectSingleItemStatusOk(commitResult)).toMatchObject({
+		const commitItem = expectSingleItemStatusOk(commitResult);
+		const commitValue = commitItem.value;
+		if (
+			!isObjectRecord(commitValue) ||
+			commitValue.kind !== 'exited' ||
+			commitValue.exitCode !== 0
+		) {
+			const commitDiagnosticPath = path.join(
+				systemZone.gateway.zoneFilesDir,
+				'agents',
+				agentId,
+				'.agent-vm-e2e-git-command.log',
+			);
+			const commitDiagnostic = await readFile(commitDiagnosticPath, 'utf8').catch(
+				(error: unknown) =>
+					`<unavailable: ${error instanceof Error ? error.message : String(error)}>`,
+			);
+			throw new Error(
+				`Tool VM workspace Git commit failed: ${JSON.stringify(commitItem)}\n${commitDiagnostic}`,
+			);
+		}
+		expect(commitItem).toMatchObject({
 			id: 'commit-workspace-in-tool-vm',
 			status: 'ok',
 			value: { exitCode: 0, kind: 'exited' },

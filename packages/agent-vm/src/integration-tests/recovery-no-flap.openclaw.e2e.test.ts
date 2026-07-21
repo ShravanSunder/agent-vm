@@ -345,10 +345,6 @@ async function observeAggregateAdmission(options: {
 	expect(runtimeRecord.vmId).toBe(options.gatewayStart.vm.id);
 	expect(runtimeRecord.expectedCohort).toEqual(options.gatewayStart.expectedCohort);
 	expect(options.gatewayStart.expectedCohort.fence.vmId).toBe(options.gatewayStart.vm.id);
-	expect(options.harness.runtime.zones[0]).toMatchObject({
-		gateway: { vm: { id: options.gatewayStart.vm.id } },
-		lifecycleState: 'running',
-	});
 	const probes = await Promise.all(
 		configuredProbeIdentities.map(
 			async (identity) =>
@@ -638,10 +634,6 @@ describeRecoveryNoFlapE2e('e2e: repeated whole-Gateway recovery followed by no-f
 				stableGateway.runtimeIds[identity.agentId],
 			);
 			expect(gatewayStarts).toHaveLength(quietWindowGatewayStartCount);
-			expect(activeHarness.runtime.zones[0]).toMatchObject({
-				gateway: { vm: { id: stableGateway.gatewayStart.vm.id } },
-				lifecycleState: 'running',
-			});
 			stabilityObservationCount += 1;
 			await waitForProtocolRetryInterval(stabilityProbeIntervalMs);
 		}

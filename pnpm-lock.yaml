@@ -460,28 +460,12 @@ importers:
       '@agent-vm/config-contracts':
         specifier: workspace:*
         version: link:../config-contracts
-      '@agent-vm/control-protocol-contracts':
-        specifier: workspace:*
-        version: link:../control-protocol-contracts
-      '@agent-vm/gateway-control-contracts':
-        specifier: workspace:*
-        version: link:../gateway-control-contracts
       '@agent-vm/gateway-lifecycle':
         specifier: workspace:*
         version: link:../gateway-lifecycle
-      engine.io:
-        specifier: 6.6.9
-        version: 6.6.9
-      socket.io:
-        specifier: 4.8.1
-        version: 4.8.1
       zod:
         specifier: ^4.4.3
         version: 4.4.3
-    devDependencies:
-      socket.io-client:
-        specifier: 4.8.1
-        version: 4.8.1
 
   packages/openclaw-gateway:
     dependencies:

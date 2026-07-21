@@ -4,6 +4,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import path from 'node:path';
 
+import type { AgentVmHealthEvent, ZoneHealthSnapshot } from '@agent-vm/gateway-lifecycle';
 import { afterAll, describe, expect, it } from 'vitest';
 
 import {
@@ -18,11 +19,19 @@ import {
 	type ToolVmRuntimeRecord,
 } from '../controller/leases/tool-vm-runtime-record.js';
 import {
+	readManagedGatewaySiblingProcessIdentity,
+	terminateManagedGatewaySibling,
+} from '../controller/reliability/testing/gateway-reliability-fault-adapter.js';
+import type { GatewayExpectedAdmissionCohort } from '../gateway/gateway-aggregate-admission-state.js';
+import { loadManagedGatewayRuntimeRecord } from '../gateway/gateway-runtime-record.js';
+import type { GatewayZoneVmOperations } from '../gateway/gateway-zone-support.js';
+import {
 	canRunManagedVmE2e,
 	currentE2eArchitecture,
 	prepareGatewayE2eProjectImages,
 	removeE2eTempRoot,
 	startE2eControllerRuntime,
+	startE2eGatewayZoneForController as startGatewayZone,
 	type E2eHarnessRuntime,
 } from './e2e-harness.js';
 import { waitForProtocolRetryInterval } from './e2e-protocol-wait.js';
@@ -82,6 +91,12 @@ interface ZoneExecResult {
 	readonly stdout: string;
 }
 
+interface ManagedGatewayStartObservation {
+	readonly expectedCohort: GatewayExpectedAdmissionCohort;
+	readonly qemuPid: number;
+	readonly vm: Pick<GatewayZoneVmOperations, 'exec' | 'getHostProcessId' | 'id'>;
+}
+
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -104,6 +119,10 @@ function requireZoneExecResult(value: unknown): ZoneExecResult {
 		stderr: value.stderr,
 		stdout: value.stdout,
 	};
+}
+
+function latestHealthEvents(snapshot: ZoneHealthSnapshot): readonly AgentVmHealthEvent[] {
+	return 'latestEvents' in snapshot ? snapshot.latestEvents : [];
 }
 
 async function readRequestBody(request: IncomingMessage): Promise<string> {
@@ -414,7 +433,7 @@ async function dispatchProfileWebhook(options: {
 	readonly agentId: AgentId;
 	readonly controllerUrl: string;
 	readonly zoneId: string;
-}): Promise<void> {
+}): Promise<string> {
 	const body = JSON.stringify({ profile: options.agentId });
 	const signature = createHmac('sha256', webhookSecret).update(body).digest('hex');
 	const requestId = `hermes-e2e-${options.agentId}-${randomUUID()}`;
@@ -442,12 +461,79 @@ async function dispatchProfileWebhook(options: {
 			`Hermes webhook dispatch failed for '${options.agentId}': ${JSON.stringify(result)}`,
 		);
 	}
+	const responseBody: unknown = JSON.parse(result.stdout);
+	if (
+		!isObjectRecord(responseBody) ||
+		responseBody.status !== 'accepted' ||
+		responseBody.delivery_id !== requestId
+	) {
+		throw new Error(
+			`Hermes webhook dispatch returned an unexpected receipt for '${options.agentId}': ${JSON.stringify(responseBody)}`,
+		);
+	}
+	return requestId;
+}
+
+async function waitForHermesWebhookTurnCompletion(options: {
+	readonly agentId: AgentId;
+	readonly controllerUrl: string;
+	readonly deliveryId: string;
+	readonly zoneId: string;
+}): Promise<void> {
+	const controllerClient = createControllerClient({ baseUrl: options.controllerUrl });
+	if (controllerClient.execInZone === undefined) {
+		throw new Error('Hermes E2E requires controller execute-command support.');
+	}
+	const sessionChatId = `webhook:${webhookRoute}:${options.deliveryId}`;
+	const gatewayStateDatabasePath = '/home/hermes/.hermes/state.db';
+	const expectedFinalMarker = `PROFILE_COMPLETE=${options.agentId}`;
+	const completionProbe = [
+		'python3 - "$@" <<\'PY\'',
+		'import sqlite3',
+		'import sys',
+		'database_path, chat_id, final_marker = sys.argv[1:]',
+		'try:',
+		'    connection = sqlite3.connect(f"file:{database_path}?mode=ro", uri=True)',
+		'except sqlite3.OperationalError:',
+		'    print("pending")',
+		'    raise SystemExit(0)',
+		'try:',
+		'    row = connection.execute(',
+		'        """SELECT sessions.ended_at, sessions.end_reason, EXISTS (',
+		'               SELECT 1 FROM messages',
+		'               WHERE messages.session_id = sessions.id',
+		"                 AND messages.role = 'assistant'",
+		'                 AND instr(messages.content, ?) > 0',
+		'           )',
+		'           FROM sessions',
+		'           WHERE sessions.chat_id = ?',
+		'           ORDER BY sessions.started_at DESC',
+		'           LIMIT 1""",',
+		'        (final_marker, chat_id),',
+		'    ).fetchone()',
+		'finally:',
+		'    connection.close()',
+		'print("complete" if row is not None and row[0] is not None and row[1] == "webhook_complete" and row[2] == 1 else "pending")',
+		'PY',
+	].join('\n');
+	const command = `set -- ${shellSingleQuote(gatewayStateDatabasePath)} ${shellSingleQuote(sessionChatId)} ${shellSingleQuote(expectedFinalMarker)}\n${completionProbe}`;
+	const deadlineMs = Date.now() + 120_000;
+	let lastResult: ZoneExecResult | undefined;
+	while (Date.now() < deadlineMs) {
+		lastResult = requireZoneExecResult(await controllerClient.execInZone(options.zoneId, command));
+		if (lastResult.exitCode === 0 && lastResult.stdout.trim() === 'complete') return;
+		await waitForProtocolRetryInterval(250);
+	}
+	throw new Error(
+		`Timed out waiting for completed Hermes webhook turn '${options.deliveryId}': ${JSON.stringify(lastResult)}`,
+	);
 }
 
 async function waitForHermesWebhookDispatchReady(options: {
 	readonly controllerUrl: string;
+	readonly minimumPostStartupMarkerCount?: number;
 	readonly zoneId: string;
-}): Promise<void> {
+}): Promise<number> {
 	const controllerClient = createControllerClient({ baseUrl: options.controllerUrl });
 	if (controllerClient.execInZone === undefined) {
 		throw new Error('Hermes E2E requires controller execute-command support.');
@@ -455,6 +541,8 @@ async function waitForHermesWebhookDispatchReady(options: {
 	const deadlineMs = Date.now() + 60_000;
 	let lastGatewayLogResult: ZoneExecResult | undefined;
 	let lastHealthResult: ZoneExecResult | undefined;
+	let lastPostStartupMarkerCount = 0;
+	const minimumPostStartupMarkerCount = options.minimumPostStartupMarkerCount ?? 1;
 	while (Date.now() < deadlineMs) {
 		lastHealthResult = requireZoneExecResult(
 			await controllerClient.execInZone(
@@ -463,14 +551,24 @@ async function waitForHermesWebhookDispatchReady(options: {
 			),
 		);
 		if (lastHealthResult.exitCode === 0 && lastHealthResult.stdout.startsWith('2')) {
+			const markerCountResult = requireZoneExecResult(
+				await controllerClient.execInZone(
+					options.zoneId,
+					`if [ -n "\${HERMES_HOME:-}" ]; then grep -F -c -- ${shellSingleQuote(hermesPostStartupLogMarker)} "$HERMES_HOME/logs/gateway.log" 2>/dev/null || true; else printf '0\\n'; fi`,
+				),
+			);
+			lastPostStartupMarkerCount = Number.parseInt(markerCountResult.stdout.trim(), 10) || 0;
 			lastGatewayLogResult = requireZoneExecResult(
 				await controllerClient.execInZone(
 					options.zoneId,
 					'if [ -n "${HERMES_HOME:-}" ]; then tail -n 200 "$HERMES_HOME/logs/gateway.log" 2>&1 || true; else printf "%s\\n" "HERMES_HOME is unset"; fi',
 				),
 			);
-			if (lastGatewayLogResult.stdout.includes(hermesPostStartupLogMarker)) {
-				return;
+			if (
+				lastPostStartupMarkerCount >= minimumPostStartupMarkerCount &&
+				lastGatewayLogResult.stdout.includes(hermesPostStartupLogMarker)
+			) {
+				return lastPostStartupMarkerCount;
 			}
 		}
 		await waitForProtocolRetryInterval(250);
@@ -484,7 +582,44 @@ async function waitForHermesWebhookDispatchReady(options: {
 			stdout: '',
 		}));
 	throw new Error(
-		`Timed out waiting for Hermes webhook and post-startup readiness: ${JSON.stringify({ lastGatewayLogResult, lastHealthResult, serviceLog })}`,
+		`Timed out waiting for Hermes webhook and post-startup readiness: ${JSON.stringify({ lastGatewayLogResult, lastHealthResult, lastPostStartupMarkerCount, minimumPostStartupMarkerCount, serviceLog })}`,
+	);
+}
+
+async function waitForGatewayReplacementEvent(options: {
+	readonly controllerUrl: string;
+	readonly oldVmId: string;
+	readonly timeoutMs: number;
+	readonly zoneId: string;
+}): Promise<
+	Extract<AgentVmHealthEvent, { readonly kind: 'gateway-recovery'; readonly result: 'ok' }>
+> {
+	const deadlineMs = Date.now() + options.timeoutMs;
+	let lastSnapshot: ZoneHealthSnapshot | undefined;
+	while (Date.now() < deadlineMs) {
+		const response = await fetch(
+			`${options.controllerUrl}/zones/${encodeURIComponent(options.zoneId)}/health-snapshot`,
+		);
+		if (response.ok) {
+			lastSnapshot = (await response.json()) as ZoneHealthSnapshot;
+			const event = latestHealthEvents(lastSnapshot).find(
+				(
+					candidate,
+				): candidate is Extract<
+					AgentVmHealthEvent,
+					{ readonly kind: 'gateway-recovery'; readonly result: 'ok' }
+				> =>
+					candidate.kind === 'gateway-recovery' &&
+					candidate.result === 'ok' &&
+					candidate.action === 'gateway-vm-restart' &&
+					candidate.oldVmId === options.oldVmId,
+			);
+			if (event !== undefined) return event;
+		}
+		await waitForProtocolRetryInterval(250);
+	}
+	throw new Error(
+		`Timed out waiting for Hermes Gateway replacement of '${options.oldVmId}': ${JSON.stringify(lastSnapshot)}`,
 	);
 }
 
@@ -578,6 +713,7 @@ describeHermesManagedEnvironmentE2e(
 		let harness: E2eHarnessRuntime | undefined;
 		let modelServer: FakeHermesModelServer | undefined;
 		let project: HermesE2eProject | undefined;
+		const gatewayStarts: ManagedGatewayStartObservation[] = [];
 		const observedLeaseRequests: ObservedControllerLeaseCreateRequest[] = [];
 
 		afterAll(async () => {
@@ -636,6 +772,17 @@ describeHermesManagedEnvironmentE2e(
 				secrets: {
 					GITHUB_TOKEN: 'unused-hermes-managed-environment-token',
 				},
+				startGatewayZone: async (startOptions) => {
+					const result = await startGatewayZone(startOptions);
+					if (result.executionModel !== 'managed-gateway') {
+						throw new Error('Hermes recovery proof requires managed Gateway image boot.');
+					}
+					const qemuPid = result.vm.getHostProcessId();
+					if (qemuPid === null)
+						throw new Error('Managed Hermes Gateway start omitted its QEMU pid.');
+					gatewayStarts.push({ expectedCohort: result.expectedCohort, qemuPid, vm: result.vm });
+					return result;
+				},
 				startOptions: {
 					systemConfig: project.systemConfig,
 					zoneIds: [project.zone.id],
@@ -644,7 +791,7 @@ describeHermesManagedEnvironmentE2e(
 					[`${fakeModelHost}:80`]: `127.0.0.1:${String(modelServer.port)}`,
 				},
 			});
-			await waitForHermesWebhookDispatchReady({
+			const predecessorPostStartupMarkerCount = await waitForHermesWebhookDispatchReady({
 				controllerUrl: harness.controllerUrl,
 				zoneId: project.zone.id,
 			});
@@ -722,6 +869,104 @@ describeHermesManagedEnvironmentE2e(
 					undefined,
 				);
 			}
+
+			const predecessor = gatewayStarts[0];
+			if (predecessor === undefined) {
+				throw new Error('Expected the initial managed Hermes Gateway.');
+			}
+			const frameworkIdentity = await readManagedGatewaySiblingProcessIdentity({
+				gatewayVm: predecessor.vm,
+				guestPort: predecessor.expectedCohort.ingressIntent.frameworkRootRoute.guestPort,
+				role: 'framework',
+			});
+			await terminateManagedGatewaySibling({
+				gatewayVm: predecessor.vm,
+				identity: frameworkIdentity,
+				role: 'framework',
+			});
+			const recoveryEvent = await waitForGatewayReplacementEvent({
+				controllerUrl: harness.controllerUrl,
+				oldVmId: predecessor.vm.id,
+				timeoutMs: 300_000,
+				zoneId: project.zone.id,
+			});
+			const successor = gatewayStarts.find((start) => start.vm.id === recoveryEvent.newVmId);
+			if (successor === undefined) {
+				throw new Error(`Hermes Gateway replacement '${recoveryEvent.newVmId}' was not observed.`);
+			}
+			expect(recoveryEvent).toMatchObject({
+				action: 'gateway-vm-restart',
+				oldVmId: predecessor.vm.id,
+				result: 'ok',
+				zoneId: project.zone.id,
+			});
+			expect(successor.vm.id).not.toBe(predecessor.vm.id);
+			expect(successor.qemuPid).not.toBe(predecessor.qemuPid);
+			expect(predecessor.vm.getHostProcessId()).toBeNull();
+			expect(successor.vm.getHostProcessId()).toBe(successor.qemuPid);
+			expect(successor.expectedCohort.frameworkIdentity.frameworkKind).toBe('hermes');
+			expect(successor.expectedCohort.fence.gatewayEpoch).not.toBe(
+				predecessor.expectedCohort.fence.gatewayEpoch,
+			);
+			expect(successor.expectedCohort.frameworkIdentity.frameworkEpoch).not.toBe(
+				predecessor.expectedCohort.frameworkIdentity.frameworkEpoch,
+			);
+			expect(successor.expectedCohort.toolPortalIdentity.processEpoch).not.toBe(
+				predecessor.expectedCohort.toolPortalIdentity.processEpoch,
+			);
+			expect(successor.expectedCohort.toolPortalIdentity.runtimeEpoch).not.toBe(
+				predecessor.expectedCohort.toolPortalIdentity.runtimeEpoch,
+			);
+			const successorRuntimeRecord = await loadManagedGatewayRuntimeRecord(
+				resolveControllerGatewayRecordTargets({
+					gatewayStateRoot: resolveControllerGatewayStateRoot({
+						controllerStateRoot: createControllerStateRoot({
+							controllerStateDirectoryPath: project.systemConfig.controllerStateDir,
+						}),
+						zoneId: project.zone.id,
+					}),
+				}).managedGatewayRuntimeRecord,
+			);
+			if (successorRuntimeRecord === null) {
+				throw new Error('Hermes Gateway replacement omitted its published runtime record.');
+			}
+			expect(successorRuntimeRecord.vmId).toBe(successor.vm.id);
+			expect(successorRuntimeRecord.expectedCohort).toEqual(successor.expectedCohort);
+			await waitForHermesWebhookDispatchReady({
+				controllerUrl: harness.controllerUrl,
+				minimumPostStartupMarkerCount: predecessorPostStartupMarkerCount + 1,
+				zoneId: project.zone.id,
+			});
+			const successorRequestCount = modelServer.requests.length;
+			const successorDeliveryId = await dispatchProfileWebhook({
+				agentId: 'main',
+				controllerUrl: harness.controllerUrl,
+				zoneId: project.zone.id,
+			});
+			const successorTurnDeadlineMs = Date.now() + 120_000;
+			while (Date.now() < successorTurnDeadlineMs) {
+				const successorRequests = modelServer.requests.slice(successorRequestCount);
+				if (
+					successorRequests.some(
+						(request) => request.agentId === 'main' && request.toolMessageCount === 6,
+					)
+				) {
+					break;
+				}
+				await waitForProtocolRetryInterval(250);
+			}
+			const successorRequests = modelServer.requests.slice(successorRequestCount);
+			expect(
+				successorRequests.some(
+					(request) => request.agentId === 'main' && request.toolMessageCount === 6,
+				),
+			).toBe(true);
+			await waitForHermesWebhookTurnCompletion({
+				agentId: 'main',
+				controllerUrl: harness.controllerUrl,
+				deliveryId: successorDeliveryId,
+				zoneId: project.zone.id,
+			});
 		}, 900_000);
 	},
 );

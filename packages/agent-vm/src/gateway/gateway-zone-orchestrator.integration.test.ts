@@ -15,6 +15,7 @@ import {
 	GatewayControlRpcMessageSchema,
 	GATEWAY_RUNTIME_PORTAL_ADMISSION_FILE_NAME,
 	GatewayRuntimePortalAdmissionMaterialSchema,
+	type GatewayRuntimeReadinessSnapshot,
 	type GatewayControlCallerContextRegisterPayload,
 	type GatewayControlCallerContextProof,
 	type GatewayControlPrivateLeaseSnapshot,
@@ -104,6 +105,10 @@ type TestStartGatewayZoneOptionsWithRuntimeRecordTarget = TestStartGatewayZoneOp
 
 interface TestGatewayStartHarnessOptions {
 	readonly dispatchRuntimeReadiness?: boolean;
+	readonly onRuntimeReadinessDispatched?: (props: {
+		readonly connectOptions: Parameters<GatewayControlSessionConnector>[0];
+		readonly snapshot: GatewayRuntimeReadinessSnapshot;
+	}) => void;
 	readonly runtimeReadinessSemanticRevision?: string;
 }
 
@@ -351,7 +356,7 @@ async function dispatchTestGatewayRuntimeReadiness(options: {
 	readonly bootInputDirectoryPath: string;
 	readonly connectOptions: Parameters<GatewayControlSessionConnector>[0];
 	readonly semanticRevision?: string;
-}): Promise<void> {
+}): Promise<GatewayRuntimeReadinessSnapshot> {
 	const serviceConfig = GatewayRuntimeServiceConfigSchema.parse(
 		JSON.parse(
 			await readFile(path.join(options.bootInputDirectoryPath, 'tool-portal-service.json'), 'utf8'),
@@ -432,6 +437,38 @@ async function dispatchTestGatewayRuntimeReadiness(options: {
 			payload: readiness,
 		}),
 	});
+	return readiness;
+}
+
+async function dispatchTestGatewayRuntimeReadinessSnapshot(options: {
+	readonly connectOptions: Parameters<GatewayControlSessionConnector>[0];
+	readonly sequence: number;
+	readonly snapshot: GatewayRuntimeReadinessSnapshot;
+}): Promise<void> {
+	await options.connectOptions.dispatcher?.dispatch({
+		attachmentGeneration: 1,
+		envelope: {
+			bootId: options.connectOptions.material.processEpoch,
+			connectionId: testControlConnectionId,
+			controllerEpoch: options.connectOptions.material.controllerEpoch,
+			createdAtMs: options.sequence,
+			deliveryPolicy: 'latest_wins',
+			domain: 'gateway_control',
+			kind: 'event',
+			messageId: `22222222-2222-4222-8222-${String(options.sequence).padStart(12, '0')}`,
+			operation: 'gateway_runtime_readiness',
+			peerId: options.connectOptions.material.peerId,
+			protocolVersion: CONTROL_PROTOCOL_VERSION,
+			sequence: options.sequence,
+			sessionId: testControlSessionId,
+			zoneId: options.connectOptions.material.zoneId,
+		} satisfies ControlEnvelope,
+		payload: GatewayControlRpcMessageSchema.parse({
+			kind: 'event',
+			operation: 'gateway_runtime_readiness',
+			payload: options.snapshot,
+		}),
+	});
 }
 
 function requireManagedGatewayResult(
@@ -495,7 +532,7 @@ function startGatewayZone(
 				harnessOptions.dispatchRuntimeReadiness !== false &&
 				managedGatewayBootInputDirectoryPath !== undefined
 			) {
-				await dispatchTestGatewayRuntimeReadiness({
+				const snapshot = await dispatchTestGatewayRuntimeReadiness({
 					bootInputDirectoryPath: managedGatewayBootInputDirectoryPath,
 					connectOptions,
 					...(harnessOptions.runtimeReadinessSemanticRevision === undefined
@@ -504,6 +541,7 @@ function startGatewayZone(
 								semanticRevision: harnessOptions.runtimeReadinessSemanticRevision,
 							}),
 				});
+				harnessOptions.onRuntimeReadinessDispatched?.({ connectOptions, snapshot });
 			}
 			return controlSession;
 		},
@@ -1251,6 +1289,124 @@ function createOpenClawSecretResolver(resolvedSecrets: Record<string, string>): 
 }
 
 describe('startGatewayZone', () => {
+	it.each(['openclaw', 'hermes'] as const)(
+		'reports exact current %s attachment loss once and ignores stale or wrong-kind readiness',
+		async (frameworkKind) => {
+			// Arrange
+			const systemConfig =
+				frameworkKind === 'openclaw'
+					? await createSystemConfig()
+					: await createHermesSystemConfig();
+			const zone = systemConfig.zones[0];
+			if (zone === undefined) {
+				throw new Error(`Expected ${frameworkKind} test zone.`);
+			}
+			const { managedVm } = createHealthyGatewayVmStub(
+				`vm-terminal-attachment-loss-${frameworkKind}`,
+				28_282,
+			);
+			const onGatewayRuntimeAttachmentLost = vi.fn();
+			let readinessDispatch:
+				| {
+						readonly connectOptions: Parameters<GatewayControlSessionConnector>[0];
+						readonly snapshot: GatewayRuntimeReadinessSnapshot;
+				  }
+				| undefined;
+
+			// Act
+			const result = await startGatewayZone(
+				{
+					onGatewayRuntimeAttachmentLost,
+					secretResolver: createOpenClawSecretResolver({}),
+					systemConfig,
+					zoneId: zone.id,
+				},
+				{
+					managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
+					managedVmImages: testManagedVmImages,
+				},
+				'controller-internal',
+				{
+					onRuntimeReadinessDispatched: (dispatched) => {
+						readinessDispatch = dispatched;
+					},
+				},
+			);
+			if (readinessDispatch === undefined) {
+				throw new Error('Expected the test harness to capture runtime readiness dispatch.');
+			}
+			const staleLoss = {
+				...readinessDispatch.snapshot,
+				semanticRevision: 'semantic-revision:stale',
+				uds: {
+					...readinessDispatch.snapshot.uds,
+					attachment: {
+						...readinessDispatch.snapshot.uds.attachment,
+						observationSequence: 2,
+						status: 'attachment-lost' as const,
+					},
+				},
+			} satisfies GatewayRuntimeReadinessSnapshot;
+			const currentLoss = {
+				...staleLoss,
+				semanticRevision: readinessDispatch.snapshot.semanticRevision,
+				uds: {
+					...staleLoss.uds,
+					attachment: {
+						...staleLoss.uds.attachment,
+						observationSequence: 4,
+					},
+				},
+			} satisfies GatewayRuntimeReadinessSnapshot;
+			const wrongFrameworkKindLoss = {
+				...currentLoss,
+				uds: {
+					...currentLoss.uds,
+					attachment: {
+						...currentLoss.uds.attachment,
+						expected: {
+							...currentLoss.uds.attachment.expected,
+							clientKind:
+								frameworkKind === 'openclaw'
+									? ('hermes-managed-plugin' as const)
+									: ('openclaw-managed-plugin' as const),
+						},
+						observationSequence: 3,
+					},
+				},
+			} satisfies GatewayRuntimeReadinessSnapshot;
+			await dispatchTestGatewayRuntimeReadinessSnapshot({
+				connectOptions: readinessDispatch.connectOptions,
+				sequence: 2,
+				snapshot: staleLoss,
+			});
+			await dispatchTestGatewayRuntimeReadinessSnapshot({
+				connectOptions: readinessDispatch.connectOptions,
+				sequence: 3,
+				snapshot: wrongFrameworkKindLoss,
+			});
+			await dispatchTestGatewayRuntimeReadinessSnapshot({
+				connectOptions: readinessDispatch.connectOptions,
+				sequence: 4,
+				snapshot: currentLoss,
+			});
+			await dispatchTestGatewayRuntimeReadinessSnapshot({
+				connectOptions: readinessDispatch.connectOptions,
+				sequence: 5,
+				snapshot: currentLoss,
+			});
+
+			// Assert
+			const managedResult = requireManagedGatewayResult(result);
+			expect(onGatewayRuntimeAttachmentLost).toHaveBeenCalledOnce();
+			expect(onGatewayRuntimeAttachmentLost).toHaveBeenCalledWith({
+				connectionId: testControlConnectionId,
+				gateway: managedResult.gatewayIdentity,
+				observationSequence: 4,
+			});
+		},
+	);
+
 	it('builds the image, resolves secrets, creates the vm, and enables ingress', async () => {
 		const taskTitles: string[] = [];
 		const closeMock = vi.fn(async () => {});

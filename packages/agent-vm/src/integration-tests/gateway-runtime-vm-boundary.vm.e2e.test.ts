@@ -10,7 +10,7 @@ interface GatewayRuntimeVmBoundaryEvidence {
 	readonly attachmentDecisions: {
 		readonly current: 'accepted';
 		readonly duplicate: 'duplicate-active-connection';
-		readonly staleGeneration: 'stale-attachment-generation';
+		readonly afterAttachmentLoss: 'retired-attachment';
 	};
 	readonly frameworkChildOwnershipAbsent: true;
 	readonly packageBinPath: string;
@@ -69,7 +69,7 @@ function parseGatewayRuntimeVmBoundaryEvidence(stdout: string): GatewayRuntimeVm
 	if (
 		attachmentDecisions.current !== 'accepted' ||
 		attachmentDecisions.duplicate !== 'duplicate-active-connection' ||
-		attachmentDecisions.staleGeneration !== 'stale-attachment-generation'
+		attachmentDecisions.afterAttachmentLoss !== 'retired-attachment'
 	) {
 		throw new Error(`Gateway runtime VM probe returned invalid contract evidence: ${evidenceLine}`);
 	}
@@ -300,9 +300,9 @@ async function waitForServiceLine(kind) {
 
 let activeClient;
 let duplicateClient;
-let staleClient;
+let postLossClient;
 let duplicateDecision;
-let staleDecision;
+let postLossDecision;
 let readiness;
 let retirement;
 try {
@@ -319,7 +319,7 @@ try {
 		socketPath: socketAddress,
 		startupRetryPolicy: { maxAttempts: 1 },
 	});
-	staleClient = new gatewayRuntimeClient.GatewayRuntimeClient({
+	postLossClient = new gatewayRuntimeClient.GatewayRuntimeClient({
 		attachment: { ...attachment, attachmentGeneration: 6 },
 		socketPath: socketAddress,
 		startupRetryPolicy: { maxAttempts: 1 },
@@ -361,11 +361,11 @@ try {
 	);
 	await activeClient.disconnect();
 	try {
-		await staleClient.connect();
+		await postLossClient.connect();
 	} catch (error) {
-		staleDecision = error?.code;
+		postLossDecision = error?.code;
 	}
-	assert.equal(staleDecision, 'stale-attachment-generation');
+	assert.equal(postLossDecision, 'retired-attachment');
 	serviceProcess.kill('SIGTERM');
 	retirement = await waitForServiceLine('retired');
 	if (serviceProcess.exitCode === null) {
@@ -377,7 +377,7 @@ try {
 	await Promise.allSettled([
 		activeClient?.disconnect(),
 		duplicateClient?.disconnect(),
-		staleClient?.disconnect(),
+		postLossClient?.disconnect(),
 	]);
 	if (serviceProcess.exitCode === null) serviceProcess.kill('SIGKILL');
 }
@@ -388,7 +388,7 @@ process.stdout.write(
 			attachmentDecisions: {
 				current: 'accepted',
 				duplicate: duplicateDecision,
-				staleGeneration: staleDecision,
+				afterAttachmentLoss: postLossDecision,
 			},
 			frameworkChildOwnershipAbsent:
 				!('createManagedFrameworkChildSupervisor' in gatewayRuntime),
@@ -458,9 +458,9 @@ describeLiveVmIntegration('live e2e: Gateway runtime stock-VM boundary', () => {
 			const evidence = parseGatewayRuntimeVmBoundaryEvidence(guestProbeResult.stdout);
 			expect(evidence).toMatchObject({
 				attachmentDecisions: {
+					afterAttachmentLoss: 'retired-attachment',
 					current: 'accepted',
 					duplicate: 'duplicate-active-connection',
-					staleGeneration: 'stale-attachment-generation',
 				},
 				frameworkChildOwnershipAbsent: true,
 				readinessRevision: expect.stringMatching(/^portal-admission:[a-f0-9]{64}$/u),

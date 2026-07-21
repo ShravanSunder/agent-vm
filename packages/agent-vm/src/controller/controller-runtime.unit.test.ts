@@ -2836,7 +2836,7 @@ describe('startControllerRuntime', () => {
 		await runtime.close();
 	});
 
-	it('does not auto restart while managed framework readiness and control evidence remain healthy', async () => {
+	it('keeps a healthy Gateway running until exact current attachment loss requests recovery', async () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
 		process.env.OPENCLAW_GATEWAY_TOKEN = 'gateway-token';
 		const runtimeSystemConfig = {
@@ -2986,6 +2986,25 @@ describe('startControllerRuntime', () => {
 		expect(closeGatewayVm).not.toHaveBeenCalled();
 		expect(healthProbeCommands).toHaveLength(2);
 		expect(healthProbeCommands.every((command) => command.includes('/readyz'))).toBe(true);
+		const onGatewayRuntimeAttachmentLost =
+			startGatewayZone.mock.calls[0]?.[0].onGatewayRuntimeAttachmentLost;
+		if (onGatewayRuntimeAttachmentLost === undefined) {
+			throw new Error('Expected Gateway runtime attachment-loss callback wiring.');
+		}
+		onGatewayRuntimeAttachmentLost({
+			connectionId: '55555555-5555-4555-8555-555555555555',
+			gateway: createGatewayIdentityForStub('gateway-vm-stale-predecessor'),
+			observationSequence: 2,
+		});
+		await Promise.resolve();
+		expect(startGatewayZone).toHaveBeenCalledOnce();
+		onGatewayRuntimeAttachmentLost({
+			connectionId: '55555555-5555-4555-8555-555555555555',
+			gateway: createGatewayIdentityForStub('gateway-vm-healthy-cohort'),
+			observationSequence: 2,
+		});
+		await vi.waitFor(() => expect(startGatewayZone).toHaveBeenCalledTimes(2));
+		expect(closeGatewayVm).toHaveBeenCalledOnce();
 
 		await runtime.close();
 	});

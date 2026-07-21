@@ -309,7 +309,7 @@ describe('managed-plugin attachment policy', () => {
 		expectRejectedTransition(transition, 'duplicate-active-connection');
 	});
 
-	it('rejects replay of a connection id observed before disconnect', () => {
+	it('rejects replay after disconnect retires the attachment authority', () => {
 		// Arrange
 		const attachedState = createAttachedState();
 		const disconnectedState = expectAcceptedTransition(
@@ -326,7 +326,7 @@ describe('managed-plugin attachment policy', () => {
 		);
 
 		// Assert
-		expectRejectedTransition(transition, 'replayed-connection');
+		expectRejectedTransition(transition, 'retired-attachment');
 	});
 
 	it('fails closed when unique handshake attempts exhaust connection history capacity', () => {
@@ -413,7 +413,7 @@ describe('managed-plugin attachment policy', () => {
 		expectRejectedTransition(otherConnectionTransition, 'wrong-connection');
 	});
 
-	it('allows the same valid generation to reattach after disconnect without new authority', () => {
+	it('makes accepted attachment loss terminal for the Gateway epoch', () => {
 		// Arrange
 		const firstHandshake = reduceManagedPluginAttachmentState(
 			createAttachmentState(),
@@ -434,11 +434,8 @@ describe('managed-plugin attachment policy', () => {
 		);
 
 		// Assert
-		expect(secondHandshake.decision).toEqual(firstHandshake.decision);
-		expect(secondHandshake.decision).toEqual({
-			authority: SERVER_AUTHORITY,
-			kind: 'accepted',
-		});
+		expect(disconnectedState.status).toBe('retired');
+		expectRejectedTransition(secondHandshake, 'retired-attachment');
 	});
 
 	it('makes retirement terminal for new handshakes and old-owner methods', () => {

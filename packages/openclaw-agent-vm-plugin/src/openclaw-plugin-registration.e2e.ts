@@ -1,4 +1,3 @@
-import { registerGatewayControlAdmissionPressureE2eRoute } from './gateway-control-service/gateway-control-admission-pressure-e2e-route.js';
 import {
 	assertOpenClawGatewayRuntimeSandboxE2eClient,
 	registerGatewayRuntimeSandboxWriteReadE2eRoute,
@@ -11,9 +10,6 @@ const plugin = {
 	description: 'E2E entrypoint for the thin agent-vm Gateway Runtime adapter.',
 
 	register(api: Parameters<typeof registerAgentVmPlugin>[0]): void {
-		const pressureRouteApi =
-			api.registerHttpRoute === undefined ? {} : { registerHttpRoute: api.registerHttpRoute };
-		registerGatewayControlAdmissionPressureE2eRoute({ api: pressureRouteApi });
 		registerAgentVmPlugin(api, {
 			onGatewayRuntimeClientCreated: ({ agentProjections, api: routeApi, client }) => {
 				assertOpenClawGatewayRuntimeSandboxE2eClient(client);

@@ -67,7 +67,10 @@ import type { PullDefaultRequest } from './git-pull-default-operations.js';
 import type { PushBranchRequest } from './git-push-operations.js';
 import { appendDurableHealthEvent } from './health/durable-health-event-log.js';
 import { classifyGatewayRecoveryAction } from './health/gateway-recovery-actions.js';
-import { createGatewayServiceHealthMonitor } from './health/gateway-service-health-monitor.js';
+import {
+	createGatewayServiceHealthMonitor,
+	type GatewayServiceHealthMonitor,
+} from './health/gateway-service-health-monitor.js';
 import type {
 	GatewayVmRecoveryBudgetClass,
 	GatewayVmRecoveryReason,
@@ -99,6 +102,7 @@ import {
 	createGatewayVmLifecycleAuthority,
 	type GatewayVmLifecycleAuthority,
 } from './vm-ownership/gateway-vm-lifecycle-authority.js';
+import { gatewayIdentitiesEqual } from './vm-ownership/vm-ownership-contracts.js';
 import type { PreparedWorkerTask, WorkerTaskInput } from './worker-task-runner.js';
 import { WorkspaceGitOperationLocks } from './workspace-git/workspace-git-operation-locks.js';
 import {
@@ -783,6 +787,7 @@ async function startControllerRuntimeWithOwnershipLock(
 	);
 	const clearReaperTimer = (): void =>
 		(dependencies.clearIntervalImpl ?? clearInterval)(reaperTimer);
+	const gatewayServiceHealthMonitorRef: { current?: GatewayServiceHealthMonitor | undefined } = {};
 	const registry = createZoneRuntimeRegistry({
 		createRuntimeForZone: (zone) =>
 			isManagedGatewayZone(zone)
@@ -795,6 +800,42 @@ async function startControllerRuntimeWithOwnershipLock(
 						managedVmOwnedDirectories: dependencies.managedVmOwnedDirectories,
 						...(dependencies.isProcessAlive ? { isProcessAlive: dependencies.isProcessAlive } : {}),
 						now,
+						onGatewayRuntimeAttachmentLost: (transition) => {
+							let lifecycleState;
+							try {
+								lifecycleState = registry
+									.getManagedGatewayRuntime(transition.gateway.zoneId)
+									.getLifecycleState();
+							} catch (error) {
+								writeControllerRuntimeLog(
+									`Ignoring Gateway runtime attachment loss for unavailable zone '${transition.gateway.zoneId}': ${formatUnknownError(error)}`,
+								);
+								return;
+							}
+							if (
+								(lifecycleState.kind !== 'running' && lifecycleState.kind !== 'running-degraded') ||
+								!gatewayIdentitiesEqual(lifecycleState.gateway.gatewayIdentity, transition.gateway)
+							) {
+								return;
+							}
+							const gatewayIdentity = lifecycleState.gateway.gatewayIdentity;
+							void gatewayServiceHealthMonitorRef.current
+								?.recoverFromTerminalAttachmentLoss({
+									sourceKey: {
+										bootId: gatewayIdentity.bootId,
+										domain: 'gateway_control',
+										gatewayVmId: gatewayIdentity.gatewayVmId,
+										generationId: gatewayIdentity.generationId,
+										zoneId: gatewayIdentity.zoneId,
+									},
+									zoneId: gatewayIdentity.zoneId,
+								})
+								.catch((error: unknown) => {
+									writeControllerRuntimeLog(
+										`Gateway runtime attachment-loss recovery failed for zone '${gatewayIdentity.zoneId}': ${formatUnknownError(error)}`,
+									);
+								});
+						},
 						preflightGatewayZoneStart: async (preflightOptions, preflightDependencies) => {
 							const runtimeEnvironment = createGatewayRuntimeEnvironmentForZone({
 								callerRuntimeEnvironment: preflightOptions.runtimeEnvironment,
@@ -849,6 +890,11 @@ async function startControllerRuntimeWithOwnershipLock(
 									: {}),
 								...(startOptions?.onControlSessionHeartbeat
 									? { onControlSessionHeartbeat: startOptions.onControlSessionHeartbeat }
+									: {}),
+								...(startOptions?.onGatewayRuntimeAttachmentLost
+									? {
+											onGatewayRuntimeAttachmentLost: startOptions.onGatewayRuntimeAttachmentLost,
+										}
 									: {}),
 								...(startOptions?.observabilityStartupCheck
 									? { observabilityStartupCheck: startOptions.observabilityStartupCheck }
@@ -1226,7 +1272,7 @@ async function startControllerRuntimeWithOwnershipLock(
 
 	await reapToolVmLeases();
 
-	const gatewayServiceHealthMonitor = controllerHealthConfig.enabled
+	gatewayServiceHealthMonitorRef.current = controllerHealthConfig.enabled
 		? createGatewayServiceHealthMonitor({
 				...(dependencies.clearIntervalImpl
 					? { clearIntervalImpl: dependencies.clearIntervalImpl }
@@ -1282,7 +1328,7 @@ async function startControllerRuntimeWithOwnershipLock(
 				}),
 			})
 		: undefined;
-	gatewayServiceHealthMonitor?.start();
+	gatewayServiceHealthMonitorRef.current?.start();
 
 	const snapshotByZone = registry.getSnapshotByZone();
 	return {
@@ -1293,7 +1339,7 @@ async function startControllerRuntimeWithOwnershipLock(
 				observedAtMs: now(),
 			});
 			clearReaperTimer();
-			await gatewayServiceHealthMonitor?.stop();
+			await gatewayServiceHealthMonitorRef.current?.stop();
 			requestHeartbeatRegistry.stopAll();
 			let stopError: Error | undefined;
 			let serverCloseError: Error | undefined;

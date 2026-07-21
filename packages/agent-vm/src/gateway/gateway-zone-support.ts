@@ -65,6 +65,12 @@ export interface GatewayControlSessionHeartbeat {
 	readonly processEpoch: string;
 }
 
+export interface GatewayRuntimeAttachmentLost {
+	readonly connectionId: string;
+	readonly gateway: GatewayEpochIdentity;
+	readonly observationSequence: number;
+}
+
 export type GatewayControlSessionAttemptOutcome = GatewayControlAttemptOutcome & {
 	readonly gateway: GatewayEpochIdentity;
 	readonly processEpoch: string;
@@ -100,6 +106,7 @@ export interface StartGatewayZoneOptions {
 	readonly onControlSessionReconnectExhausted?: (
 		transition: GatewayControlSessionReconnectExhausted,
 	) => void;
+	readonly onGatewayRuntimeAttachmentLost?: (transition: GatewayRuntimeAttachmentLost) => void;
 	readonly prebuiltImage?: ManagedVmImageBuildResult | undefined;
 	readonly runTask?: RunTaskFn;
 	readonly runtimeEnvironment?: Readonly<Record<string, string>>;

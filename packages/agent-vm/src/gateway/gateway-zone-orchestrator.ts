@@ -1,6 +1,7 @@
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 
 import type { GatewayRuntimeFrameworkIdentity } from '@agent-vm/agent-portal-sdk/contracts';
 import { CONTROL_PROTOCOL_VERSION } from '@agent-vm/control-protocol-contracts';
@@ -58,6 +59,7 @@ import {
 	type GatewayDisposableControlSessionClient,
 	type GatewayControlSessionMaterial,
 } from '../controller/control-session/index.js';
+import type { GatewayEpochIdentity } from '../controller/vm-ownership/vm-ownership-contracts.js';
 import {
 	createObservabilityRuntimeConfig,
 	type ObservabilityRuntimeConfig,
@@ -71,7 +73,10 @@ import {
 import { readProcessIdentity, sleep } from '../shared/managed-vm-process.js';
 import { runTaskWithResult, type RunTaskFn } from '../shared/run-task.js';
 import { resolveZoneSecrets } from './credential-manager.js';
-import type { GatewayIngressRouteIdentity } from './gateway-aggregate-admission-state.js';
+import type {
+	GatewayExpectedAdmissionCohort,
+	GatewayIngressRouteIdentity,
+} from './gateway-aggregate-admission-state.js';
 import {
 	createGatewayAggregateReadinessObserver,
 	type GatewayControlSessionReadinessEvidence,
@@ -126,6 +131,7 @@ import {
 import {
 	buildManagedGatewayExpectedAdmissionCohort,
 	buildManagedGatewayFrameworkAdapterMaterial,
+	buildManagedGatewayRuntimeAttachmentMetadata,
 	buildManagedGatewayRuntimeServiceConfig,
 	type GatewayRuntimeArtifactLimits,
 } from './managed-gateway-runtime-input-builders.js';
@@ -141,6 +147,51 @@ import {
 } from './worker-runtime-record.js';
 
 const defaultGatewayReadinessRetryDelayMs = 500;
+
+function isCurrentExpectedAttachmentLoss(props: {
+	readonly expectedCohort: GatewayExpectedAdmissionCohort;
+	readonly gatewayIdentity: GatewayEpochIdentity;
+	readonly snapshot: GatewayRuntimeReadinessSnapshot;
+}): boolean {
+	if (props.snapshot.uds.attachment.status !== 'attachment-lost') {
+		return false;
+	}
+	const expectedAttachment = buildManagedGatewayRuntimeAttachmentMetadata(props.expectedCohort);
+	const normalizedAttachment = {
+		...props.snapshot.uds.attachment.expected,
+		configuredAgentIds: [...props.snapshot.uds.attachment.expected.configuredAgentIds].toSorted(),
+	};
+	const normalizedExpectedAttachment = {
+		...expectedAttachment,
+		configuredAgentIds: [...expectedAttachment.configuredAgentIds].toSorted(),
+	};
+	return (
+		isDeepStrictEqual(normalizedAttachment, normalizedExpectedAttachment) &&
+		isDeepStrictEqual(props.snapshot.controlEndpoint.identity, {
+			bootId: props.gatewayIdentity.bootId,
+			controllerEpoch: props.expectedCohort.controlIdentity.controllerEpoch,
+			generationId: props.expectedCohort.controlIdentity.generationId,
+			peerId: props.expectedCohort.controlIdentity.peerId,
+			processEpoch: props.expectedCohort.controlIdentity.processEpoch,
+			zoneId: props.gatewayIdentity.zoneId,
+		}) &&
+		isDeepStrictEqual(props.snapshot.serviceIdentity, {
+			processEpoch: props.expectedCohort.toolPortalIdentity.processEpoch,
+			role: props.expectedCohort.toolPortalIdentity.role,
+			serviceId: props.expectedCohort.toolPortalIdentity.serviceId,
+		}) &&
+		props.snapshot.semanticRevision === props.expectedCohort.semanticRevision &&
+		props.snapshot.providerRevision === props.expectedCohort.providerRevision &&
+		props.snapshot.requiredBackends.revision === props.expectedCohort.requiredBackendRevision &&
+		isDeepStrictEqual(props.snapshot.uds.publication, {
+			identity: 'managed-plugin-private-uds',
+			protocolVersion: 1,
+			schemaVersion: 1,
+			socketPath: props.expectedCohort.udsIdentity.socketPath,
+			status: 'published',
+		})
+	);
+}
 const defaultGatewayReadinessTimeoutMs = 60_000;
 const defaultGatewayReadinessMaxAttempts = Math.ceil(
 	defaultGatewayReadinessTimeoutMs / defaultGatewayReadinessRetryDelayMs,
@@ -2018,6 +2069,7 @@ async function startGatewayZoneImplementation(
 	let appliedIngressRoutes: readonly GatewayIngressRouteIdentity[] = [];
 	let frameworkReadinessEvidence: GatewayFrameworkNativeReadinessEvidence = { kind: 'pending' };
 	let runtimeReadinessEvidence: GatewayRuntimeRoleReadinessEvidence = { kind: 'pending' };
+	let terminalAttachmentLossReported = false;
 	let vmLivenessEvidence: GatewayVmLivenessEvidence = { kind: 'pending' };
 	let startupProcessTarget: ManagedVmProcessTarget | undefined;
 	let gatewayIngressAccess: Awaited<ReturnType<ManagedVm['enableIngress']>> | undefined;
@@ -2392,6 +2444,18 @@ async function startGatewayZoneImplementation(
 					: { leaseRpc: options.gatewayControlLeaseRpc }),
 				recordGatewayRuntimeReadiness: (snapshot: GatewayRuntimeReadinessSnapshot): void => {
 					runtimeReadinessEvidence = { kind: 'current', snapshot };
+					if (
+						!terminalAttachmentLossReported &&
+						snapshot.uds.attachment.connectionId !== undefined &&
+						isCurrentExpectedAttachmentLoss({ expectedCohort, gatewayIdentity, snapshot })
+					) {
+						terminalAttachmentLossReported = true;
+						options.onGatewayRuntimeAttachmentLost?.({
+							connectionId: snapshot.uds.attachment.connectionId,
+							gateway: gatewayIdentity,
+							observationSequence: snapshot.uds.attachment.observationSequence,
+						});
+					}
 				},
 				...(options.healthEventStore === undefined &&
 				options.onControlSessionHeartbeat === undefined

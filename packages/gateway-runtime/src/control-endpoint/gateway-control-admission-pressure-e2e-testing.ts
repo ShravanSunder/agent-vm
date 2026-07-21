@@ -7,10 +7,12 @@ import {
 	type GatewayControlRpcMessage,
 } from '@agent-vm/gateway-control-contracts';
 
-import type { GatewayControlAcceptedSession } from './gateway-control-service-contracts.js';
+import type { GatewayControlAcceptedSession } from './gateway-control-endpoint-contracts.js';
 
 export const AGENT_VM_E2E_CONTROL_ADMISSION_PRESSURE_ENV =
 	'AGENT_VM_E2E_CONTROL_ADMISSION_PRESSURE';
+export const AGENT_VM_E2E_CONTROL_ADMISSION_PRESSURE_KEY_ENV =
+	'AGENT_VM_E2E_CONTROL_ADMISSION_PRESSURE_KEY';
 export const GATEWAY_CONTROL_ADMISSION_PRESSURE_BATCH_LIMIT = 80;
 
 type PressureDirection = 'egress' | 'ingress';
@@ -111,9 +113,7 @@ export function registerGatewayControlAdmissionPressureE2eActuator(
 	}
 	registeredActuator = actuator;
 	return () => {
-		if (registeredActuator === actuator) {
-			registeredActuator = undefined;
-		}
+		if (registeredActuator === actuator) registeredActuator = undefined;
 	};
 }
 
@@ -287,7 +287,7 @@ function pressurePayload(): GatewayControlRpcMessage {
 		payload: {
 			findings: [],
 			observedAtMs: 0,
-			statusKind: 'openclaw-runtime',
+			statusKind: 'gateway-runtime-e2e-pressure',
 		},
 	};
 }

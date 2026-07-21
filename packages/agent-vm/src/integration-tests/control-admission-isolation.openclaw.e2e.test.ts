@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import { mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -12,14 +12,11 @@ import {
 	gatewayControlDeliveryPolicyByOperation,
 } from '@agent-vm/gateway-control-contracts';
 import {
-	AGENT_VM_E2E_CONTROL_ADMISSION_PRESSURE_PATH,
-	AGENT_VM_E2E_CONTROL_ADMISSION_PRESSURE_SIGNATURE_HEADER,
 	AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_ENV,
 	AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_IDENTITIES_ENV,
 	AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_KEY_ENV,
 	AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_PATH,
 	AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_SIGNATURE_HEADER,
-	gatewayControlAdmissionPressureE2eRouteTestExports,
 	gatewayRuntimeSandboxWriteReadE2eTestExports,
 } from '@agent-vm/openclaw-agent-vm-plugin';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -71,6 +68,10 @@ const zoneId = 'control-admission-isolation';
 const gatewayToken = 'control-admission-isolation-gateway-token';
 const probeSigningKey = 'control-admission-isolation-proof-key';
 const controlAdmissionPressureEnv = 'AGENT_VM_E2E_CONTROL_ADMISSION_PRESSURE';
+const controlAdmissionPressureKeyEnv = 'AGENT_VM_E2E_CONTROL_ADMISSION_PRESSURE_KEY';
+const controlAdmissionPressurePath = '/__agent-vm/e2e/control-admission-pressure';
+const controlAdmissionPressureSignatureHeader =
+	'x-agent-vm-e2e-control-admission-pressure-signature';
 const reliabilityOperationId = 'control-admission-isolation';
 const mainIdentity = {
 	agentId: 'main',
@@ -193,13 +194,13 @@ async function callSignedRoute(options: {
 	const bodyText = JSON.stringify(options.body);
 	const controlPressureRoute = options.routeKind === 'control-pressure';
 	const routePath = controlPressureRoute
-		? AGENT_VM_E2E_CONTROL_ADMISSION_PRESSURE_PATH
+		? controlAdmissionPressurePath
 		: AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_PATH;
 	const signatureHeader = controlPressureRoute
-		? AGENT_VM_E2E_CONTROL_ADMISSION_PRESSURE_SIGNATURE_HEADER
+		? controlAdmissionPressureSignatureHeader
 		: AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_SIGNATURE_HEADER;
 	const signature = controlPressureRoute
-		? gatewayControlAdmissionPressureE2eRouteTestExports.signBody(bodyText, probeSigningKey)
+		? createHmac('sha256', probeSigningKey).update(bodyText).digest('base64url')
 		: gatewayRuntimeSandboxWriteReadE2eTestExports.signBody(bodyText, probeSigningKey);
 	const response = await withProtocolDeadline(
 		fetch(`http://${ingress.host}:${String(ingress.port)}${routePath}`, {
@@ -255,10 +256,8 @@ async function callAdmissionAction(options: {
 	return await callSignedRoute({
 		body: {
 			action: options.action,
-			agentId: mainIdentity.agentId,
 			attachmentGeneration: options.attachmentGeneration,
 			scenario: 'control-admission-pressure',
-			sessionKey: mainIdentity.sessionKey,
 			...options.fields,
 		},
 		harness: options.harness,
@@ -412,7 +411,6 @@ describeControlAdmissionIsolationE2e('e2e: control admission pressure isolation'
 			AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_ENV,
 			AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_KEY_ENV,
 			AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_IDENTITIES_ENV,
-			controlAdmissionPressureEnv,
 		]) {
 			systemZone.secrets[envName] = {
 				audience: 'gateway',
@@ -427,6 +425,7 @@ describeControlAdmissionIsolationE2e('e2e: control admission pressure isolation'
 			AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_KEY_ENV,
 			AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_IDENTITIES_ENV,
 			controlAdmissionPressureEnv,
+			controlAdmissionPressureKeyEnv,
 		];
 		await Promise.all(
 			configuredProbeIdentities.map(async ({ agentId }) => {
@@ -449,13 +448,19 @@ describeControlAdmissionIsolationE2e('e2e: control admission pressure isolation'
 				[AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_IDENTITIES_ENV]:
 					JSON.stringify(configuredProbeIdentities),
 				[AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_KEY_ENV]: probeSigningKey,
-				[controlAdmissionPressureEnv]: '1',
 				GITHUB_TOKEN: 'unused-control-admission-token',
 				OPENCLAW_GATEWAY_TOKEN: gatewayToken,
 				PERPLEXITY_API_KEY: 'unused-control-admission-token',
 			},
 			startGatewayZone: async (startOptions) => {
-				const result = await startGatewayZone(startOptions);
+				const result = await startGatewayZone({
+					...startOptions,
+					runtimeEnvironment: {
+						...startOptions.runtimeEnvironment,
+						[controlAdmissionPressureEnv]: '1',
+						[controlAdmissionPressureKeyEnv]: probeSigningKey,
+					},
+				});
 				if (result.executionModel !== 'managed-gateway') {
 					throw new Error('Control admission isolation proof requires managed Gateway image boot.');
 				}

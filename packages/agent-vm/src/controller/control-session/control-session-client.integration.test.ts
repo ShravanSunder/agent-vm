@@ -25,8 +25,7 @@ import {
 	GATEWAY_CONTROL_READY_PATH,
 	GATEWAY_CONTROL_SOCKET_PATH,
 	createGatewayControlService,
-	createGatewayControlEventPublisher,
-} from '@agent-vm/openclaw-agent-vm-plugin';
+} from '@agent-vm/gateway-runtime';
 import type { WorkerControlHello as ControlHello } from '@agent-vm/worker-control-contracts';
 import { Server as SocketIoServer, type Socket as SocketIoServerSocket } from 'socket.io';
 import { io as createSocketIoClient } from 'socket.io-client';
@@ -350,8 +349,6 @@ describe('control session client', () => {
 		const gatewayControlService = createGatewayControlService({
 			identity: {
 				bootId: material.bootId,
-				callerContextAgentAuthorityKeys: material.agentAuthorityKeys,
-				callerContextProofKey: material.callerContextProofKey,
 				controllerEpoch: material.controllerEpoch,
 				generationId: material.generationId,
 				peerId: material.peerId,
@@ -494,8 +491,6 @@ describe('control session client', () => {
 			},
 			identity: {
 				bootId: material.bootId,
-				callerContextAgentAuthorityKeys: material.agentAuthorityKeys,
-				callerContextProofKey: material.callerContextProofKey,
 				controllerEpoch: material.controllerEpoch,
 				generationId: material.generationId,
 				peerId: material.peerId,
@@ -685,8 +680,6 @@ describe('control session client', () => {
 		const gatewayControlService = createGatewayControlService({
 			identity: {
 				bootId: material.bootId,
-				callerContextAgentAuthorityKeys: material.agentAuthorityKeys,
-				callerContextProofKey: material.callerContextProofKey,
 				controllerEpoch: material.controllerEpoch,
 				generationId: material.generationId,
 				peerId: material.peerId,
@@ -910,8 +903,6 @@ describe('control session client', () => {
 		const gatewayControlService = createGatewayControlService({
 			identity: {
 				bootId: material.bootId,
-				callerContextAgentAuthorityKeys: material.agentAuthorityKeys,
-				callerContextProofKey: material.callerContextProofKey,
 				controllerEpoch: material.controllerEpoch,
 				generationId: material.generationId,
 				peerId: material.peerId,
@@ -976,25 +967,27 @@ describe('control session client', () => {
 		});
 
 		try {
-			const publisher = createGatewayControlEventPublisher({
-				controlService: gatewayControlService,
-				createId: () => 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-				identity: {
-					bootId: material.bootId,
-					callerContextAgentAuthorityKeys: material.agentAuthorityKeys,
-					callerContextProofKey: material.callerContextProofKey,
+			await gatewayControlService.emitApplicationMessage({
+				buildEnvelope: ({ acceptedSession, sequence }) => ({
+					bootId: acceptedSession.bootId,
+					connectionId: acceptedSession.connectionId,
 					controllerEpoch: material.controllerEpoch,
-					generationId: material.generationId,
+					createdAtMs: 10_000,
+					deliveryPolicy: gatewayControlDeliveryPolicyByKind.heartbeat,
+					domain: 'gateway_control',
+					kind: 'heartbeat',
+					messageId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
 					peerId: material.peerId,
-					processEpoch: material.processEpoch,
+					protocolVersion: CONTROL_PROTOCOL_VERSION,
+					sequence,
+					sessionId: acceptedSession.sessionId,
 					zoneId: material.zoneId,
-				},
-				now: () => 10_000,
-			});
-
-			await publisher.publishControlSessionHeartbeat({
-				elapsedMs: 4,
-				observedAtMs: 9_996,
+				}),
+				domainMessage: { kind: 'heartbeat' },
+				payload: GatewayControlRpcMessageSchema.parse({
+					kind: 'heartbeat',
+					payload: { elapsedMs: 4, observedAtMs: 9_996 },
+				}),
 			});
 
 			expect(recordedHealthEvents).toEqual([
@@ -1083,8 +1076,6 @@ describe('control session client', () => {
 			},
 			identity: {
 				bootId: materialA.bootId,
-				callerContextAgentAuthorityKeys: materialA.agentAuthorityKeys,
-				callerContextProofKey: materialA.callerContextProofKey,
 				controllerEpoch: materialA.controllerEpoch,
 				generationId: materialA.generationId,
 				peerId: materialA.peerId,
@@ -1111,8 +1102,6 @@ describe('control session client', () => {
 			},
 			identity: {
 				bootId: materialB.bootId,
-				callerContextAgentAuthorityKeys: materialB.agentAuthorityKeys,
-				callerContextProofKey: materialB.callerContextProofKey,
 				controllerEpoch: materialB.controllerEpoch,
 				generationId: materialB.generationId,
 				peerId: materialB.peerId,
@@ -2139,8 +2128,6 @@ describe('control session client', () => {
 		const service = createGatewayControlService({
 			identity: {
 				bootId: material.bootId,
-				callerContextAgentAuthorityKeys: material.agentAuthorityKeys,
-				callerContextProofKey: material.callerContextProofKey,
 				controllerEpoch: material.controllerEpoch,
 				generationId: material.generationId,
 				peerId: material.peerId,
@@ -2831,8 +2818,6 @@ describe('control session client', () => {
 			createGatewayControlService({
 				identity: {
 					bootId: material.bootId,
-					callerContextAgentAuthorityKeys: material.agentAuthorityKeys,
-					callerContextProofKey: material.callerContextProofKey,
 					controllerEpoch: material.controllerEpoch,
 					generationId: material.generationId,
 					peerId: material.peerId,

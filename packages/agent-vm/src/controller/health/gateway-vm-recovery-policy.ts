@@ -120,6 +120,9 @@ export interface GatewayVmRecoveryTracker {
 		readonly sourceKey: GatewayVmRecoverySourceKey;
 		readonly zoneId: string;
 	}) => void;
+	readonly requestTerminalGatewayRecovery: (
+		observation: GatewayVmRecoveryObservation & { readonly sourceKey: GatewayVmRecoverySourceKey },
+	) => GatewayVmRecoveryDecision;
 }
 
 interface GatewayVmRecoveryTrackerState {
@@ -455,6 +458,19 @@ export function createGatewayVmRecoveryTracker(
 		markRecoveryStarted(event): void {
 			const state = getStateForZone(event.zoneId);
 			state.recoveryInFlight = true;
+		},
+		requestTerminalGatewayRecovery(observation): GatewayVmRecoveryDecision {
+			const state = getStateForZone(observation.zoneId);
+			recordGatewayRecoverySource(state, observation.sourceKey);
+			return decideRecovery({
+				consecutiveFailures: options.policy.consecutiveFailureThreshold,
+				observedAtMs: observation.observedAtMs,
+				policy: options.policy,
+				reason: 'gateway-service-unhealthy',
+				recoveryBudgetClass: observation.recoveryBudgetClass ?? 'gateway-vm-restart',
+				state,
+				zoneId: observation.zoneId,
+			});
 		},
 		recordGatewaySourceChange(event): void {
 			recordGatewayRecoverySource(getStateForZone(event.zoneId), event.sourceKey);
