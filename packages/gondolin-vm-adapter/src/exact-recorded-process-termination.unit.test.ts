@@ -249,36 +249,39 @@ describe('Gondolin exact recorded process termination', () => {
 		expect(dependencies.sendSignal).toHaveBeenCalledWith(48_282, 'SIGTERM');
 	});
 
-	it('escalates a persistent same-incarnation Darwin uninterruptible process to SIGKILL', async () => {
-		let lastSignal: NodeJS.Signals | undefined;
-		const dependencies = createDependencies(
-			vi.fn(async () => {
-				if (lastSignal === undefined) {
-					return observedIdentity({ processState: 'S+' });
-				}
-				if (lastSignal === 'SIGKILL') {
-					return null;
-				}
-				return observedIdentity({
-					command: '(qemu-system-aarc)',
-					processState: 'U',
-				});
-			}),
-		);
-		vi.mocked(dependencies.sendSignal).mockImplementation((_processId, signal) => {
-			lastSignal = signal;
-		});
+	it.each(['U', 'R+'])(
+		'escalates a persistent same-incarnation Darwin fallback process in state %s to SIGKILL',
+		async (processState) => {
+			let lastSignal: NodeJS.Signals | undefined;
+			const dependencies = createDependencies(
+				vi.fn(async () => {
+					if (lastSignal === undefined) {
+						return observedIdentity({ processState: 'S+' });
+					}
+					if (lastSignal === 'SIGKILL') {
+						return null;
+					}
+					return observedIdentity({
+						command: '(qemu-system-aarc)',
+						processState,
+					});
+				}),
+			);
+			vi.mocked(dependencies.sendSignal).mockImplementation((_processId, signal) => {
+				lastSignal = signal;
+			});
 
-		await expect(
-			terminateExactRecordedManagedVmHostProcess({
-				contextLabel: 'lease predecessor',
-				dependencies,
-				identity: recordedIdentity,
-			}),
-		).resolves.toEqual({ hostProcessId: 48_282, kind: 'terminated' });
-		expect(dependencies.sendSignal).toHaveBeenNthCalledWith(1, 48_282, 'SIGTERM');
-		expect(dependencies.sendSignal).toHaveBeenNthCalledWith(2, 48_282, 'SIGKILL');
-	});
+			await expect(
+				terminateExactRecordedManagedVmHostProcess({
+					contextLabel: 'lease predecessor',
+					dependencies,
+					identity: recordedIdentity,
+				}),
+			).resolves.toEqual({ hostProcessId: 48_282, kind: 'terminated' });
+			expect(dependencies.sendSignal).toHaveBeenNthCalledWith(1, 48_282, 'SIGTERM');
+			expect(dependencies.sendSignal).toHaveBeenNthCalledWith(2, 48_282, 'SIGKILL');
+		},
+	);
 
 	it('refuses an initially observed Darwin uninterruptible process with changed command', async () => {
 		const dependencies = createDependencies(
@@ -300,29 +303,32 @@ describe('Gondolin exact recorded process termination', () => {
 		expect(dependencies.sendSignal).not.toHaveBeenCalled();
 	});
 
-	it('fails closed on post-SIGTERM uninterruptible state for an unrelated fallback command', async () => {
-		let signalSent = false;
-		const dependencies = createDependencies(
-			vi.fn(async () =>
-				signalSent
-					? observedIdentity({ command: '(unrelated-proces)', processState: 'U' })
-					: observedIdentity({ processState: 'S+' }),
-			),
-		);
-		vi.mocked(dependencies.sendSignal).mockImplementation(() => {
-			signalSent = true;
-		});
+	it.each(['U', 'R+'])(
+		'fails closed on post-SIGTERM state %s for an unrelated fallback command',
+		async (processState) => {
+			let signalSent = false;
+			const dependencies = createDependencies(
+				vi.fn(async () =>
+					signalSent
+						? observedIdentity({ command: '(unrelated-proces)', processState })
+						: observedIdentity({ processState: 'S+' }),
+				),
+			);
+			vi.mocked(dependencies.sendSignal).mockImplementation(() => {
+				signalSent = true;
+			});
 
-		await expect(
-			terminateExactRecordedManagedVmHostProcess({
-				contextLabel: 'lease predecessor',
-				dependencies,
-				identity: recordedIdentity,
-			}),
-		).rejects.toThrow(/same process start identity.*state "U".*command changed/iu);
-		expect(dependencies.sendSignal).toHaveBeenCalledOnce();
-		expect(dependencies.sendSignal).toHaveBeenCalledWith(48_282, 'SIGTERM');
-	});
+			await expect(
+				terminateExactRecordedManagedVmHostProcess({
+					contextLabel: 'lease predecessor',
+					dependencies,
+					identity: recordedIdentity,
+				}),
+			).rejects.toThrow(/same process start identity.*command changed/iu);
+			expect(dependencies.sendSignal).toHaveBeenCalledOnce();
+			expect(dependencies.sendSignal).toHaveBeenCalledWith(48_282, 'SIGTERM');
+		},
+	);
 
 	it('refuses an initially observed Darwin exiting process with changed command', async () => {
 		const dependencies = createDependencies(
@@ -414,7 +420,7 @@ describe('Gondolin exact recorded process termination', () => {
 		expect(dependencies.sendSignal).not.toHaveBeenCalled();
 	});
 
-	it.each(['X', '?'])(
+	it.each(['X', '?', 'R+'])(
 		'refuses a changed command for same-start non-zombie process state %s',
 		async (processState) => {
 			const dependencies = createDependencies(

@@ -193,7 +193,8 @@ async function observeRecordedProcess(options: {
 	}
 	if (
 		options.mode === 'after-signal' &&
-		currentIdentity.processState.startsWith('U') &&
+		(currentIdentity.processState.startsWith('U') ||
+			currentIdentity.processState.startsWith('R')) &&
 		isMatchingDarwinFallbackCommand({
 			currentCommand: currentIdentity.command,
 			recordedCommand: options.identity.command,
