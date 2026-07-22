@@ -959,6 +959,11 @@ not expose a broad zone root to its Gateway:
     "runtimeRootfsSize": "12G",
     "stateDir": "../state/shravan",
     "zoneFilesDir": "../zone-files/shravan",
+    "backupDir": "../backups/shravan",
+    "backupIdentity": {
+      "source": "environment",
+      "envVar": "AGE_BACKUP_IDENTITY"
+    },
     "authLogin": {
       "defaultAgent": "main",
       "providers": {
@@ -992,6 +997,15 @@ sharing the gateway VM.
 
 `agentToolVmProfiles` values must reference entries in top-level `toolVmProfiles`.
 Unmapped agents use the zone fallback `defaultToolVmProfile`.
+
+`zones[].gateway.backupDir` optionally selects the encrypted backup output
+directory. When omitted, backup output defaults to `<stateDir>/backups`.
+`zones[].gateway.backupIdentity` is an optional host secret reference using the
+same `1password`, `environment`, or `config` forms as other host-resolved
+secrets. It is required when running `backup create` or `backup restore` and is
+not resolved by `backup list`. There is no implicit backup identity fallback;
+new deployments must configure this field before creating or restoring a
+backup.
 
 ## zones[].observability
 

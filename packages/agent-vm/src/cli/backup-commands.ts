@@ -1,3 +1,5 @@
+import type { SecretRef } from '@agent-vm/secret-management';
+
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import {
 	createResolverFromSystemConfig,
@@ -15,6 +17,25 @@ interface RunBackupCommandOptions {
 	readonly systemConfig: LoadedSystemConfig;
 }
 
+type BackupIdentityReference = NonNullable<
+	LoadedSystemConfig['zones'][number]['gateway']['backupIdentity']
+>;
+
+function toSecretRef(reference: BackupIdentityReference): SecretRef {
+	switch (reference.source) {
+		case '1password':
+			return { source: reference.source, ref: reference.ref };
+		case 'environment':
+			return { source: reference.source, ref: reference.envVar };
+		case 'config':
+			return { source: reference.source, value: reference.value };
+		default: {
+			const exhaustiveReference: never = reference;
+			throw new Error(`Unsupported backup identity source: ${String(exhaustiveReference)}`);
+		}
+	}
+}
+
 export async function runBackupCommand(options: RunBackupCommandOptions): Promise<void> {
 	const backupSubcommand = options.restArguments[0];
 	const zone = requireZone(options.systemConfig, readZoneFlag(options.restArguments));
@@ -29,17 +50,30 @@ export async function runBackupCommand(options: RunBackupCommandOptions): Promis
 		writeJson(options.io, backupManager.listBackups({ backupDir, zoneId }));
 		return;
 	}
+	if (backupSubcommand !== 'create' && backupSubcommand !== 'restore') {
+		throw new Error(`Unknown backup subcommand '${backupSubcommand ?? 'undefined'}'.`);
+	}
+	const restoreBackupPath = backupSubcommand === 'restore' ? options.restArguments[1] : undefined;
+	if (
+		backupSubcommand === 'restore' &&
+		(!restoreBackupPath || restoreBackupPath.startsWith('--'))
+	) {
+		throw new Error('Usage: agent-vm backup restore <path> [--zone <id>]');
+	}
+
+	const backupIdentity = zone.gateway.backupIdentity;
+	if (backupIdentity === undefined) {
+		throw new Error(
+			`Zone '${zoneId}' must configure gateway.backupIdentity for backup ${backupSubcommand}.`,
+		);
+	}
 
 	const secretResolver = await createResolverFromSystemConfig(
 		options.systemConfig,
 		options.dependencies,
 	);
 	const backupEncryption = options.dependencies.createAgeBackupEncryption({
-		resolveIdentity: async () =>
-			await secretResolver.resolve({
-				source: '1password',
-				ref: `op://agent-vm/${zoneId}-gateway-backup/password`,
-			}),
+		resolveIdentity: async () => await secretResolver.resolve(toSecretRef(backupIdentity)),
 	});
 	const backupManager = options.dependencies.createZoneBackupManager(backupEncryption);
 
@@ -58,21 +92,15 @@ export async function runBackupCommand(options: RunBackupCommandOptions): Promis
 		return;
 	}
 
-	if (backupSubcommand === 'restore') {
-		const backupPath = options.restArguments[1];
-		if (!backupPath || backupPath.startsWith('--')) {
-			throw new Error('Usage: agent-vm backup restore <path> [--zone <id>]');
-		}
-		writeJson(
-			options.io,
-			await backupManager.restoreBackup({
-				backupPath,
-				stateDir: zone.gateway.stateDir,
-				...(zone.gateway.type !== 'worker' ? { zoneFilesDir: zone.gateway.zoneFilesDir } : {}),
-			}),
-		);
-		return;
+	if (restoreBackupPath === undefined) {
+		throw new Error('Backup restore path was not initialized.');
 	}
-
-	throw new Error(`Unknown backup subcommand '${backupSubcommand ?? 'undefined'}'.`);
+	writeJson(
+		options.io,
+		await backupManager.restoreBackup({
+			backupPath: restoreBackupPath,
+			stateDir: zone.gateway.stateDir,
+			...(zone.gateway.type !== 'worker' ? { zoneFilesDir: zone.gateway.zoneFilesDir } : {}),
+		}),
+	);
 }

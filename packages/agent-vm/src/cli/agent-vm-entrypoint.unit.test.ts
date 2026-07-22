@@ -3336,7 +3336,7 @@ describe('runAgentVmCli', () => {
 						if (ref.source === 'config') {
 							throw new Error('Unexpected config secret.');
 						}
-						expect(ref.ref).toBe('op://agent-vm/shravan-gateway-backup/password');
+						expect(ref.ref).toBe('op://test-vault/backup-identity/password');
 						return 'resolved-passphrase';
 					},
 					resolveAll: async () => ({}),
@@ -3395,6 +3395,10 @@ describe('runAgentVmCli', () => {
 								port: 18791,
 								stateDir: './state/shravan',
 								zoneFilesDir: './zone-files/shravan',
+								backupIdentity: {
+									source: '1password',
+									ref: 'op://test-vault/backup-identity/password',
+								},
 							},
 							id: 'shravan',
 							secrets: {

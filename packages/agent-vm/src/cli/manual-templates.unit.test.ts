@@ -67,6 +67,9 @@ describe('manual templates', () => {
 		);
 		expect(generatedManual).not.toContain('per-agent workspaces for OpenClaw zones');
 		expect(generatedManual).not.toContain('clean and fully pushed before backup publication');
+		expect(generatedManual).toContain(
+			'gateway.backupIdentity selects the host-resolved Age identity required by backup create and restore.',
+		);
 	});
 
 	it('builds progressive manual files for agents helping end users', () => {

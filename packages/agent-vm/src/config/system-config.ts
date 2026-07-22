@@ -395,6 +395,7 @@ const zoneGatewayBaseSchema = z.object({
 	stateDir: z.string().min(1),
 	runtimeRootfsSize: z.string().min(1).optional(),
 	backupDir: z.string().min(1).optional(),
+	backupIdentity: hostSecretReferenceSchema.optional(),
 	ssh: gatewaySshSchema.optional(),
 });
 
@@ -961,6 +962,7 @@ const systemConfigSchema = z
 		const hasOnePasswordSecrets = config.zones.some(
 			(zone) =>
 				Object.values(zone.secrets).some((secret) => secret.source === '1password') ||
+				zone.gateway.backupIdentity?.source === '1password' ||
 				(zone.adminAccess?.mode === 'secret' && zone.adminAccess.secret.source === '1password') ||
 				zone.approvalAccess?.approvers.some(
 					(approver) => approver.secret.source === '1password',

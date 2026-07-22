@@ -91,6 +91,7 @@ vm-images/ contains deployment-owned Gondolin build-config.jsonc files and small
 agent-vm owns the gateway/tool base image recipes and pins the managed GHCR base layer version.
 stateDir stores durable gateway state.
 zoneFilesDir stores durable shared zone files and per-agent workspaces for managed Gateway zones. Each configured agent owns zoneFilesDir/agents/<agentId>.
+gateway.backupIdentity selects the host-resolved Age identity required by backup create and restore. Backup list does not resolve it, and there is no implicit identity fallback.
 cacheDir stores rebuildable artifacts.
 controllerStateDir is required, stores host-controller-only durable authority, and has no default.
 controllerStateDir is never mounted into a Gateway or Tool VM and must remain disjoint from config, cache, runtime, Gateway state, backup, observability, and mount-source paths.

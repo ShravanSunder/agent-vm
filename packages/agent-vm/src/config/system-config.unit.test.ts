@@ -540,6 +540,22 @@ describe('loadSystemConfig', () => {
 		);
 	});
 
+	test('requires host secretsProvider for a 1Password backup identity', () => {
+		const config = createValidSystemConfigInput();
+		const firstZone = config.zones[0];
+		if (firstZone === undefined) {
+			throw new Error('Expected the valid system config fixture to contain a zone.');
+		}
+		firstZone.gateway.backupIdentity = {
+			source: '1password',
+			ref: 'op://test-vault/backup-identity/password',
+		};
+
+		expect(() => parseSystemConfigInputForTest(config)).toThrow(
+			/host\.secretsProvider is required/u,
+		);
+	});
+
 	test('loads an exact 1Password approval secret with a host secretsProvider', () => {
 		// Arrange
 		const config = createValidSystemConfigInput();
@@ -1625,10 +1641,30 @@ describe('loadSystemConfig', () => {
 		expect(() => parseSystemConfigInputForTest(input)).toThrow(/workspaceRoot/u);
 	});
 
-	test('accepts zones without an explicit backupDir (legacy fallback applies elsewhere)', async () => {
+	test('accepts zones without explicit backup configuration', async () => {
 		const config = parseSystemConfigInputForTest(createValidSystemConfigInput());
 
 		expect(config.zones[0]?.gateway.backupDir).toBeUndefined();
+		expect(config.zones[0]?.gateway.backupIdentity).toBeUndefined();
+	});
+
+	test('loads a per-zone backup identity without resolving it', async () => {
+		const config = createValidSystemConfigInput();
+		const firstZone = config.zones[0];
+		if (firstZone === undefined) {
+			throw new Error('Expected the valid system config fixture to contain a zone.');
+		}
+		firstZone.gateway.backupIdentity = {
+			source: 'environment',
+			envVar: 'AGE_BACKUP_IDENTITY',
+		};
+
+		const loadedConfig = parseSystemConfigInputForTest(config);
+
+		expect(loadedConfig.zones[0]?.gateway.backupIdentity).toEqual({
+			source: 'environment',
+			envVar: 'AGE_BACKUP_IDENTITY',
+		});
 	});
 
 	test('omits zone resource policy when not present', async () => {
