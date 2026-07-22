@@ -1,10 +1,10 @@
 [project]
 name = "agent-vm-hermes-adapter"
-version = "0.0.114"
+version = "0.0.115"
 description = "Partial managed Hermes profile adapter for agent-vm."
 requires-python = ">=3.13,<3.14"
 license = "MIT"
-dependencies = ["agent-vm-agent-portal-sdk==0.0.114", "hermes-agent==0.18.2", "pydantic>=2.12.0,<3"]
+dependencies = ["agent-vm-agent-portal-sdk==0.0.115", "hermes-agent==0.18.2", "pydantic>=2.12.0,<3"]
 
 [project.scripts]
 agent-vm-hermes-gateway = "agent_vm_hermes_adapter.managed_gateway_bootstrap:main"

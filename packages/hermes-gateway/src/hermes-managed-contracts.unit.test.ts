@@ -220,14 +220,14 @@ plugins:
 					executablePath:
 						'/opt/agent-vm/local-packages/node_modules/@agent-vm/gateway-runtime/dist/bin/gateway-runtime.js',
 					packageArchiveFiles: [
-						'local-agent-vm/agent-vm-gateway-runtime-0.0.114.tgz',
-						'local-agent-vm/agent-vm-tool-portal-0.0.114.tgz',
+						'local-agent-vm/agent-vm-gateway-runtime-0.0.115.tgz',
+						'local-agent-vm/agent-vm-tool-portal-0.0.115.tgz',
 					],
 					packageManifestFile: 'local-agent-vm/package.json',
 				},
 				pythonWheels: {
-					agentPortalSdk: 'local-agent-vm/agent_vm_agent_portal_sdk-0.0.114-py3-none-any.whl',
-					hermesAdapter: 'local-agent-vm/agent_vm_hermes_adapter-0.0.114-py3-none-any.whl',
+					agentPortalSdk: 'local-agent-vm/agent_vm_agent_portal_sdk-0.0.115-py3-none-any.whl',
+					hermesAdapter: 'local-agent-vm/agent_vm_hermes_adapter-0.0.115-py3-none-any.whl',
 				},
 			},
 			buildTarget: {
@@ -274,16 +274,16 @@ plugins:
 		);
 		expect(recipe.dockerfile).not.toContain('uv pip install --python /usr/local/bin/python3');
 		expect(recipe.dockerfile).toContain(
-			'COPY local-agent-vm/agent_vm_agent_portal_sdk-0.0.114-py3-none-any.whl /tmp/agent_vm_agent_portal_sdk-0.0.114-py3-none-any.whl',
+			'COPY local-agent-vm/agent_vm_agent_portal_sdk-0.0.115-py3-none-any.whl /tmp/agent_vm_agent_portal_sdk-0.0.115-py3-none-any.whl',
 		);
 		expect(recipe.dockerfile).toContain(
-			'COPY local-agent-vm/agent_vm_hermes_adapter-0.0.114-py3-none-any.whl /tmp/agent_vm_hermes_adapter-0.0.114-py3-none-any.whl',
+			'COPY local-agent-vm/agent_vm_hermes_adapter-0.0.115-py3-none-any.whl /tmp/agent_vm_hermes_adapter-0.0.115-py3-none-any.whl',
 		);
 		expect(recipe.dockerfile).toContain(
 			'COPY local-agent-vm/package.json /opt/agent-vm/local-packages/package.json',
 		);
 		expect(recipe.dockerfile).toContain(
-			'COPY local-agent-vm/agent-vm-gateway-runtime-0.0.114.tgz /opt/agent-vm/local-packages/agent-vm-gateway-runtime-0.0.114.tgz',
+			'COPY local-agent-vm/agent-vm-gateway-runtime-0.0.115.tgz /opt/agent-vm/local-packages/agent-vm-gateway-runtime-0.0.115.tgz',
 		);
 		expect(recipe.dockerfile).toContain("'hermes-agent[messaging]==0.18.2'");
 		expect(recipe.dockerfile).toContain('pnpm install --prod --ignore-scripts');
