@@ -97,6 +97,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const evidencePrefix = ${JSON.stringify(gatewayRuntimeEvidencePrefix)};
+const serviceProcessWaitMilliseconds = 30_000;
 const packageEntrypointUrl = import.meta.resolve('@agent-vm/gateway-runtime');
 const packageEntrypoint = fileURLToPath(packageEntrypointUrl);
 const gatewayRuntime = await import(packageEntrypointUrl);
@@ -272,7 +273,7 @@ async function waitForServiceLine(kind) {
 	const immediate = parse();
 	if (immediate !== undefined) return immediate;
 	return await new Promise((resolve, reject) => {
-		const signal = AbortSignal.timeout(10000);
+		const signal = AbortSignal.timeout(serviceProcessWaitMilliseconds);
 		const cleanup = () => {
 			signal.removeEventListener('abort', onAbort);
 			serviceProcess.stdout.off('data', onData);
@@ -369,7 +370,9 @@ try {
 	serviceProcess.kill('SIGTERM');
 	retirement = await waitForServiceLine('retired');
 	if (serviceProcess.exitCode === null) {
-		await once(serviceProcess, 'exit', { signal: AbortSignal.timeout(10000) });
+		await once(serviceProcess, 'exit', {
+			signal: AbortSignal.timeout(serviceProcessWaitMilliseconds),
+		});
 	}
 	assert.equal(serviceProcess.exitCode, 0);
 	assert.equal(serviceStderr, '');

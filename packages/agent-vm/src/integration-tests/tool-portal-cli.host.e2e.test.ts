@@ -234,7 +234,7 @@ async function preparePackedCliFixture(): Promise<PackedCliFixture> {
 			'--dir',
 			consumerDirectory,
 			'add',
-			'--offline',
+			'--prefer-offline',
 			'--config.ignore-scripts=true',
 			path.join(packDirectory, tarballNames[0] ?? ''),
 		],
