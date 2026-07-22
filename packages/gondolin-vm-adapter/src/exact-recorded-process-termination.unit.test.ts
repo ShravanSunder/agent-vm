@@ -249,6 +249,60 @@ describe('Gondolin exact recorded process termination', () => {
 		expect(dependencies.sendSignal).toHaveBeenCalledWith(48_282, 'SIGTERM');
 	});
 
+	it('keeps polling the exact Linux task-name fallback after SIGTERM', async () => {
+		const linuxQemuIdentity = {
+			...recordedIdentity,
+			command: 'qemu-system-x86_64 -name tool-vm',
+		} satisfies ManagedVmHostProcessIdentity;
+		let observationCount = 0;
+		const dependencies = createDependencies(
+			vi.fn(async () => {
+				observationCount += 1;
+				if (observationCount === 1) {
+					return observedIdentity({ command: linuxQemuIdentity.command, processState: 'S' });
+				}
+				if (observationCount === 2) {
+					return observedIdentity({ command: '[qemu-system-x86]', processState: 'R' });
+				}
+				return null;
+			}),
+		);
+
+		await expect(
+			terminateExactRecordedManagedVmHostProcess({
+				contextLabel: 'lease predecessor',
+				dependencies,
+				identity: linuxQemuIdentity,
+			}),
+		).resolves.toEqual({ hostProcessId: 48_282, kind: 'terminated' });
+		expect(dependencies.sendSignal).toHaveBeenCalledOnce();
+		expect(dependencies.sendSignal).toHaveBeenCalledWith(48_282, 'SIGTERM');
+	});
+
+	it('fails closed on an unrelated Linux task-name fallback after SIGTERM', async () => {
+		let signalSent = false;
+		const dependencies = createDependencies(
+			vi.fn(async () =>
+				signalSent
+					? observedIdentity({ command: '[unrelated-task]', processState: 'R' })
+					: observedIdentity({ processState: 'S' }),
+			),
+		);
+		vi.mocked(dependencies.sendSignal).mockImplementation(() => {
+			signalSent = true;
+		});
+
+		await expect(
+			terminateExactRecordedManagedVmHostProcess({
+				contextLabel: 'lease predecessor',
+				dependencies,
+				identity: recordedIdentity,
+			}),
+		).rejects.toThrow(/same process start identity.*command changed/iu);
+		expect(dependencies.sendSignal).toHaveBeenCalledOnce();
+		expect(dependencies.sendSignal).toHaveBeenCalledWith(48_282, 'SIGTERM');
+	});
+
 	it.each(['U', 'R+'])(
 		'escalates a persistent same-incarnation Darwin fallback process in state %s to SIGKILL',
 		async (processState) => {

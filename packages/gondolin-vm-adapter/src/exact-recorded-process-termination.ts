@@ -12,6 +12,7 @@ const execFileAsync = promisify(execFile);
 const terminationStageTimeoutMs = 2_000;
 const processIdentityPollIntervalMs = 100;
 const darwinProcessCommandNameLimit = 16;
+const linuxTaskCommandNameLimit = 15;
 
 export interface GondolinHostProcessIdentity {
 	readonly command: string;
@@ -53,6 +54,23 @@ function isMatchingDarwinFallbackCommand(options: {
 	}
 	return (
 		fallbackCommandMatch[1] === basename(recordedExecutable).slice(0, darwinProcessCommandNameLimit)
+	);
+}
+
+function isMatchingLinuxTaskFallbackCommand(options: {
+	readonly currentCommand: string;
+	readonly recordedCommand: string;
+}): boolean {
+	const fallbackCommandMatch = /^\[([^\r\n]+)\]$/u.exec(options.currentCommand);
+	if (fallbackCommandMatch === null) {
+		return false;
+	}
+	const recordedExecutable = options.recordedCommand.split(/[ \t]/u, 1)[0];
+	if (recordedExecutable === undefined || recordedExecutable.length === 0) {
+		return false;
+	}
+	return (
+		fallbackCommandMatch[1] === basename(recordedExecutable).slice(0, linuxTaskCommandNameLimit)
 	);
 }
 
@@ -195,10 +213,14 @@ async function observeRecordedProcess(options: {
 		options.mode === 'after-signal' &&
 		(currentIdentity.processState.startsWith('U') ||
 			currentIdentity.processState.startsWith('R')) &&
-		isMatchingDarwinFallbackCommand({
+		(isMatchingDarwinFallbackCommand({
 			currentCommand: currentIdentity.command,
 			recordedCommand: options.identity.command,
-		})
+		}) ||
+			isMatchingLinuxTaskFallbackCommand({
+				currentCommand: currentIdentity.command,
+				recordedCommand: options.identity.command,
+			}))
 	) {
 		return 'exact';
 	}
