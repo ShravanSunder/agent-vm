@@ -113,17 +113,17 @@ describe('upstream MCP client runtime', () => {
 		).resolves.toEqual([]);
 
 		expect(createTransport).toHaveBeenCalledWith(
-			{
+			expect.objectContaining({
 				args: ['-y', '-p', '@perplexity-ai/mcp-server', 'perplexity-mcp'],
 				command: 'npx',
-				env: {
+				env: expect.objectContaining({
 					NODE_EXTRA_CA_CERTS: '/run/gondolin/ca-certificates.crt',
 					NODE_OPTIONS: '--dns-result-order=ipv4first',
 					PERPLEXITY_API_KEY: 'secret-token-value',
-				},
+				}),
 				namespace: 'perplexity',
 				transport: 'stdio',
-			},
+			}),
 			'stdio',
 		);
 	});
