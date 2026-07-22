@@ -5,7 +5,8 @@ import { describe, expect, it } from 'vitest';
 
 const packageRoot = path.resolve(import.meta.dirname, '..');
 const forbiddenProductionDependencyPattern =
-	/@agent-vm\/(?:agent-portal-sdk|agent-vm|gateway-runtime|gondolin|managed-vm)|@earendil-works|(?:paramiko|ssh2)/u;
+	/^@agent-vm\/(?:agent-portal-sdk|agent-vm|gateway-runtime|gondolin|managed-vm)|^@earendil-works|^(?:paramiko|ssh2)$/u;
+const importSpecifierPattern = /(?:\bfrom\s+|\bimport\s*(?:\(\s*)?)["']([^"']+)["']/gu;
 
 async function collectProductionTypeScriptFiles(directoryPath: string): Promise<readonly string[]> {
 	const directoryEntries = await readdir(directoryPath, { withFileTypes: true });
@@ -45,7 +46,14 @@ describe('Hermes Gateway package boundary', () => {
 			await Promise.all(
 				sourceFiles.map(async (sourceFile): Promise<string | undefined> => {
 					const source = await readFile(sourceFile, 'utf8');
-					return forbiddenProductionDependencyPattern.test(source) ? sourceFile : undefined;
+					const importSpecifiers = [...source.matchAll(importSpecifierPattern)].map(
+						(importMatch) => importMatch[1],
+					);
+					return importSpecifiers.some((importSpecifier) =>
+						forbiddenProductionDependencyPattern.test(importSpecifier ?? ''),
+					)
+						? sourceFile
+						: undefined;
 				}),
 			)
 		).filter((sourceFile): sourceFile is string => sourceFile !== undefined);

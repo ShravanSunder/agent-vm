@@ -181,4 +181,55 @@ describe('publish workflow', () => {
 			publishScript.indexOf('pnpm -r publish'),
 		);
 	});
+
+	it('publishes Python packages from isolated explicit artifacts with optional 1Password auth', async () => {
+		const publishScript = await fs.readFile(
+			path.join(process.cwd(), 'scripts', 'publish-python-local.sh'),
+			'utf8',
+		);
+		const workspacePackageJson = JSON.parse(
+			await fs.readFile(path.join(process.cwd(), 'package.json'), 'utf8'),
+		) as { readonly scripts?: Readonly<Record<string, string>> };
+
+		expect(workspacePackageJson.scripts?.['python:publish']).toBe(
+			'bash scripts/publish-python-local.sh',
+		);
+		expect(publishScript).toContain('AGENT_VM_PYPI_TOKEN_OP_REF');
+		expect(publishScript).not.toMatch(/AGENT_VM_PYPI_TOKEN_OP_REF:-/u);
+		expect(publishScript).toContain('PYTHON_DIST_DIR="$(mktemp -d)"');
+		expect(publishScript).toContain('--out-dir "$PYTHON_DIST_DIR"');
+		expect(publishScript).not.toContain('dist/*');
+		expect(publishScript).toContain('--trusted-publishing never');
+		expect(publishScript).toContain('--check-url https://pypi.org/simple');
+
+		const sdkPublishIndex = publishScript.indexOf('"${SDK_ARTIFACTS[@]}"');
+		const adapterPublishIndex = publishScript.indexOf('"${ADAPTER_ARTIFACTS[@]}"');
+		expect(sdkPublishIndex).toBeGreaterThan(-1);
+		expect(adapterPublishIndex).toBeGreaterThan(sdkPublishIndex);
+
+		const dryRunExitIndex = publishScript.indexOf('exit 0');
+		const tokenReadIndex = publishScript.indexOf('op read');
+		expect(dryRunExitIndex).toBeGreaterThan(-1);
+		expect(tokenReadIndex).toBeGreaterThan(dryRunExitIndex);
+		expect(publishScript).toContain('export UV_PUBLISH_TOKEN');
+		expect(publishScript).toContain('unset PYPI_TOKEN');
+		expect(publishScript).not.toContain('.pypirc');
+	});
+
+	it('keeps npm and Python release versions synchronized', async () => {
+		const versionGuard = await fs.readFile(
+			path.join(process.cwd(), 'scripts', 'check-package-version-sync.sh'),
+			'utf8',
+		);
+
+		expect(versionGuard).toContain('agent-vm-agent-portal-sdk');
+		expect(versionGuard).toContain('agent-vm-hermes-adapter');
+		expect(versionGuard).toContain(
+			'uv version --output-format json --package "$python_package_name"',
+		);
+		expect(versionGuard).toContain(
+			'EXPECTED_ADAPTER_SDK_PIN="agent-vm-agent-portal-sdk==${PACKAGE_VERSION}"',
+		);
+		expect(versionGuard).toContain('if [[ "$ADAPTER_SDK_PIN" != "$EXPECTED_ADAPTER_SDK_PIN" ]]');
+	});
 });

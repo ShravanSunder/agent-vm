@@ -220,14 +220,14 @@ plugins:
 					executablePath:
 						'/opt/agent-vm/local-packages/node_modules/@agent-vm/gateway-runtime/dist/bin/gateway-runtime.js',
 					packageArchiveFiles: [
-						'local-agent-vm/agent-vm-gateway-runtime-0.0.115.tgz',
-						'local-agent-vm/agent-vm-tool-portal-0.0.115.tgz',
+						'local-agent-vm/agent-vm-gateway-runtime-0.0.116.tgz',
+						'local-agent-vm/agent-vm-tool-portal-0.0.116.tgz',
 					],
 					packageManifestFile: 'local-agent-vm/package.json',
 				},
 				pythonWheels: {
-					agentPortalSdk: 'local-agent-vm/agent_vm_agent_portal_sdk-0.0.115-py3-none-any.whl',
-					hermesAdapter: 'local-agent-vm/agent_vm_hermes_adapter-0.0.115-py3-none-any.whl',
+					agentPortalSdk: 'local-agent-vm/agent_vm_agent_portal_sdk-0.0.116-py3-none-any.whl',
+					hermesAdapter: 'local-agent-vm/agent_vm_hermes_adapter-0.0.116-py3-none-any.whl',
 				},
 			},
 			buildTarget: {
@@ -274,16 +274,16 @@ plugins:
 		);
 		expect(recipe.dockerfile).not.toContain('uv pip install --python /usr/local/bin/python3');
 		expect(recipe.dockerfile).toContain(
-			'COPY local-agent-vm/agent_vm_agent_portal_sdk-0.0.115-py3-none-any.whl /tmp/agent_vm_agent_portal_sdk-0.0.115-py3-none-any.whl',
+			'COPY local-agent-vm/agent_vm_agent_portal_sdk-0.0.116-py3-none-any.whl /tmp/agent_vm_agent_portal_sdk-0.0.116-py3-none-any.whl',
 		);
 		expect(recipe.dockerfile).toContain(
-			'COPY local-agent-vm/agent_vm_hermes_adapter-0.0.115-py3-none-any.whl /tmp/agent_vm_hermes_adapter-0.0.115-py3-none-any.whl',
+			'COPY local-agent-vm/agent_vm_hermes_adapter-0.0.116-py3-none-any.whl /tmp/agent_vm_hermes_adapter-0.0.116-py3-none-any.whl',
 		);
 		expect(recipe.dockerfile).toContain(
 			'COPY local-agent-vm/package.json /opt/agent-vm/local-packages/package.json',
 		);
 		expect(recipe.dockerfile).toContain(
-			'COPY local-agent-vm/agent-vm-gateway-runtime-0.0.115.tgz /opt/agent-vm/local-packages/agent-vm-gateway-runtime-0.0.115.tgz',
+			'COPY local-agent-vm/agent-vm-gateway-runtime-0.0.116.tgz /opt/agent-vm/local-packages/agent-vm-gateway-runtime-0.0.116.tgz',
 		);
 		expect(recipe.dockerfile).toContain("'hermes-agent[messaging]==0.18.2'");
 		expect(recipe.dockerfile).toContain('pnpm install --prod --ignore-scripts');
@@ -302,6 +302,61 @@ plugins:
 			/(?:ARG|ENV|RUN)\s+[^\n]*(?:TOKEN|SECRET|CREDENTIAL)|\.npmrc|\.docker\/config\.json|\.netrc|_authToken|_password|_secret/iu,
 		);
 		expect(JSON.stringify(recipe)).not.toMatch(/complete|missingRuntimeJoins/u);
+	});
+
+	it('renders a production Hermes image recipe from exact public registry versions', () => {
+		const recipe = renderHermesManagedImageRecipe({
+			artifactContext: {
+				agentVmVersion: '0.0.116',
+				kind: 'public-registry-context',
+			},
+			buildTarget: {
+				architecture: 'x86_64',
+				kind: 'gondolin-custom-dockerfile',
+				ociImage: 'agent-vm-hermes:latest',
+				rootfsSizeMb: 4096,
+			},
+		});
+
+		expect(recipe.dockerfile).toContain(
+			"pnpm add --prod --ignore-scripts --save-exact --registry=https://registry.npmjs.org/ '@agent-vm/gateway-runtime@0.0.116'",
+		);
+		expect(recipe.dockerfile).toContain("'agent-vm-agent-portal-sdk==0.0.116'");
+		expect(recipe.dockerfile).toContain("'agent-vm-hermes-adapter==0.0.116'");
+		expect(recipe.dockerfile).toContain("'hermes-agent[messaging]==0.18.2'");
+		expect(recipe.dockerfile).toContain('--default-index https://pypi.org/simple');
+		expect(recipe.dockerfile).toContain(
+			'gateway_runtime_bin="/opt/agent-vm/registry-packages/node_modules/@agent-vm/gateway-runtime/dist/bin/gateway-runtime.js"',
+		);
+		expect(recipe.dockerfile).toContain('/usr/local/bin/agent-vm-gateway-runtime');
+		expect(recipe.dockerfile).toContain('/usr/local/bin/agent-vm-hermes-gateway');
+		expect(recipe.dockerfile).toContain(
+			'metadata.version("agent-vm-agent-portal-sdk") == "0.0.116"',
+		);
+		expect(recipe.dockerfile).toContain('metadata.version("agent-vm-hermes-adapter") == "0.0.116"');
+		expect(recipe.dockerfile).not.toMatch(/COPY (?!--from=)/u);
+		expect(recipe.dockerfile).not.toMatch(/\.tgz|\.whl|file:|worktree/iu);
+		expect(recipe.dockerfile).not.toMatch(/local-(?:agent-vm|packages)/u);
+		expect(recipe.dockerfile).not.toMatch(
+			/(?:ARG|ENV|RUN)\s+[^\n]*(?:TOKEN|SECRET|CREDENTIAL)|\.npmrc|\.docker\/config\.json|\.netrc|_authToken|_password|_secret/iu,
+		);
+	});
+
+	it('rejects non-exact public registry package versions', () => {
+		expect(() =>
+			renderHermesManagedImageRecipe({
+				artifactContext: {
+					agentVmVersion: '^0.0.116',
+					kind: 'public-registry-context',
+				},
+				buildTarget: {
+					architecture: 'x86_64',
+					kind: 'gondolin-custom-dockerfile',
+					ociImage: 'agent-vm-hermes:latest',
+					rootfsSizeMb: 4096,
+				},
+			}),
+		).toThrow(/must use an exact numeric semantic version/u);
 	});
 
 	it('rejects artifact paths that escape the caller-owned Docker context', () => {

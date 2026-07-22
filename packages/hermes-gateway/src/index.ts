@@ -13,11 +13,13 @@ export {
 export type { HermesManagedConfiguration } from './hermes-managed-configuration.js';
 export { renderHermesManagedImageRecipe } from './hermes-managed-image-recipe.js';
 export type {
+	HermesManagedImageArtifactContext,
 	HermesManagedImageBuildConfig,
 	HermesManagedImageBuildNetworkAccess,
 	HermesManagedImageBuildTarget,
 	HermesManagedImageGatewayRuntimeArtifacts,
 	HermesManagedImageLocalArtifactContext,
+	HermesManagedImagePublicRegistryContext,
 	HermesManagedImagePythonWheelFiles,
 	HermesManagedImageRecipe,
 	RenderHermesManagedImageRecipeOptions,

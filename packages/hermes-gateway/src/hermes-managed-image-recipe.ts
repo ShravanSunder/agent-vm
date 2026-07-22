@@ -27,6 +27,15 @@ export interface HermesManagedImageLocalArtifactContext {
 	readonly pythonWheels: HermesManagedImagePythonWheelFiles;
 }
 
+export interface HermesManagedImagePublicRegistryContext {
+	readonly agentVmVersion: string;
+	readonly kind: 'public-registry-context';
+}
+
+export type HermesManagedImageArtifactContext =
+	| HermesManagedImageLocalArtifactContext
+	| HermesManagedImagePublicRegistryContext;
+
 export interface HermesManagedImageBuildTarget {
 	readonly architecture: 'aarch64' | 'x86_64';
 	readonly kind: 'gondolin-custom-dockerfile';
@@ -35,7 +44,7 @@ export interface HermesManagedImageBuildTarget {
 }
 
 export interface RenderHermesManagedImageRecipeOptions {
-	readonly artifactContext: HermesManagedImageLocalArtifactContext;
+	readonly artifactContext: HermesManagedImageArtifactContext;
 	readonly buildTarget: HermesManagedImageBuildTarget;
 }
 
@@ -114,9 +123,19 @@ function renderCopyLine(sourcePath: string, destinationDirectory: string): strin
 	return `COPY ${sourcePath} ${destinationDirectory}/${dockerContextFileName(sourcePath)}`;
 }
 
-function renderHermesManagedImageDockerfile(
+function requireExactPublicPackageVersion(packageVersion: string, packageName: string): string {
+	const exactVersionPattern = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/u;
+	if (!exactVersionPattern.test(packageVersion)) {
+		throw new Error(
+			`Hermes image public package '${packageName}' must use an exact numeric semantic version.`,
+		);
+	}
+	return packageVersion;
+}
+
+function renderHermesManagedImageLocalArtifactInstallLines(
 	artifactContext: HermesManagedImageLocalArtifactContext,
-): string {
+): readonly string[] {
 	const packageManifestFile = requireDockerContextFilePath(
 		artifactContext.gatewayRuntime.packageManifestFile,
 		'.json',
@@ -148,6 +167,79 @@ function renderHermesManagedImageDockerfile(
 	const hermesAdapterWheelFileName = dockerContextFileName(hermesAdapterWheel);
 
 	return [
+		renderCopyLine(packageManifestFile, '/opt/agent-vm/local-packages'),
+		...packageArchiveFiles.map((filePath) =>
+			renderCopyLine(filePath, '/opt/agent-vm/local-packages'),
+		),
+		'RUN test -f /opt/agent-vm/local-packages/' + packageManifestFileName + ' && \\',
+		'    cd /opt/agent-vm/local-packages && \\',
+		'    pnpm install --prod --ignore-scripts && \\',
+		`    gateway_runtime_bin="${gatewayRuntimeExecutablePath}" && \\`,
+		'    test -f "$gateway_runtime_bin" && chmod 755 "$gateway_runtime_bin" && \\',
+		'    ln -sfn "$gateway_runtime_bin" /usr/local/bin/agent-vm-gateway-runtime && \\',
+		'    command -v agent-vm-gateway-runtime',
+		'',
+		renderCopyLine(agentPortalSdkWheel, '/tmp'),
+		renderCopyLine(hermesAdapterWheel, '/tmp'),
+		'RUN uv venv --python /usr/local/bin/python3 /opt/agent-vm/hermes-venv && \\',
+		'    uv pip install --python /opt/agent-vm/hermes-venv/bin/python \\',
+		`      /tmp/${agentPortalSdkWheelFileName} \\`,
+		`      /tmp/${hermesAdapterWheelFileName} \\`,
+		`      '${HERMES_GATEWAY_INSTALL_SPECIFIER}' && \\`,
+		'    hermes_scripts="$(/opt/agent-vm/hermes-venv/bin/python -c \'import sysconfig; print(sysconfig.get_path("scripts"))\')" && \\',
+		'    test -x "$hermes_scripts/agent-vm-hermes-gateway" && \\',
+		'    ln -sfn "$hermes_scripts/agent-vm-hermes-gateway" /usr/local/bin/agent-vm-hermes-gateway && \\',
+		'    command -v agent-vm-hermes-gateway && \\',
+		`    /opt/agent-vm/hermes-venv/bin/python -c 'import importlib.metadata as metadata; assert metadata.version("${HERMES_AGENT_DISTRIBUTION.distributionName}") == "${HERMES_AGENT_DISTRIBUTION.projectVersion}"' && \\`,
+		`    rm -f /tmp/${agentPortalSdkWheelFileName} /tmp/${hermesAdapterWheelFileName}`,
+	];
+}
+
+function renderHermesManagedImagePublicRegistryInstallLines(
+	artifactContext: HermesManagedImagePublicRegistryContext,
+): readonly string[] {
+	const agentVmVersion = requireExactPublicPackageVersion(
+		artifactContext.agentVmVersion,
+		'Agent VM registry package set',
+	);
+	const gatewayRuntimeExecutablePath =
+		'/opt/agent-vm/registry-packages/node_modules/@agent-vm/gateway-runtime/dist/bin/gateway-runtime.js';
+
+	return [
+		'RUN mkdir -p /opt/agent-vm/registry-packages && \\',
+		'    cd /opt/agent-vm/registry-packages && \\',
+		'    pnpm init --bare && \\',
+		`    pnpm add --prod --ignore-scripts --save-exact --registry=https://registry.npmjs.org/ '@agent-vm/gateway-runtime@${agentVmVersion}' && \\`,
+		`    gateway_runtime_bin="${gatewayRuntimeExecutablePath}" && \\`,
+		'    test -f "$gateway_runtime_bin" && chmod 755 "$gateway_runtime_bin" && \\',
+		'    ln -sfn "$gateway_runtime_bin" /usr/local/bin/agent-vm-gateway-runtime && \\',
+		'    command -v agent-vm-gateway-runtime',
+		'',
+		'RUN uv venv --python /usr/local/bin/python3 /opt/agent-vm/hermes-venv && \\',
+		'    uv pip install --python /opt/agent-vm/hermes-venv/bin/python \\',
+		'      --default-index https://pypi.org/simple \\',
+		`      'agent-vm-agent-portal-sdk==${agentVmVersion}' \\`,
+		`      'agent-vm-hermes-adapter==${agentVmVersion}' \\`,
+		`      '${HERMES_GATEWAY_INSTALL_SPECIFIER}' && \\`,
+		'    hermes_scripts="$(/opt/agent-vm/hermes-venv/bin/python -c \'import sysconfig; print(sysconfig.get_path("scripts"))\')" && \\',
+		'    test -x "$hermes_scripts/agent-vm-hermes-gateway" && \\',
+		'    ln -sfn "$hermes_scripts/agent-vm-hermes-gateway" /usr/local/bin/agent-vm-hermes-gateway && \\',
+		'    command -v agent-vm-hermes-gateway && \\',
+		`    /opt/agent-vm/hermes-venv/bin/python -c 'import importlib.metadata as metadata; assert metadata.version("agent-vm-agent-portal-sdk") == "${agentVmVersion}"; assert metadata.version("agent-vm-hermes-adapter") == "${agentVmVersion}"; assert metadata.version("${HERMES_AGENT_DISTRIBUTION.distributionName}") == "${HERMES_AGENT_DISTRIBUTION.projectVersion}"'`,
+	];
+}
+
+function renderHermesManagedImageDockerfile(
+	artifactContext: HermesManagedImageArtifactContext,
+): string {
+	const managedPackageDirectories =
+		artifactContext.kind === 'local-artifact-context' ? '/opt/agent-vm/local-packages ' : '';
+	const artifactInstallLines =
+		artifactContext.kind === 'local-artifact-context'
+			? renderHermesManagedImageLocalArtifactInstallLines(artifactContext)
+			: renderHermesManagedImagePublicRegistryInstallLines(artifactContext);
+
+	return [
 		`FROM ${HERMES_GATEWAY_BASE_IMAGE}`,
 		'',
 		`COPY --from=${HERMES_GATEWAY_UV_IMAGE} /uv /uvx /usr/local/bin/`,
@@ -174,35 +266,11 @@ function renderHermesManagedImageDockerfile(
 		'    python3 --version && \\',
 		'    uv --version && \\',
 		'    rm -rf /root/.cache/uv && \\',
-		'    mkdir -p /opt/agent-vm/local-packages /home/hermes/.hermes /home/hermes/.cache /zone /run/sshd /root /work/tmp /work/cache /var/log && \\',
+		`    mkdir -p ${managedPackageDirectories}/home/hermes/.hermes /home/hermes/.cache /zone /run/sshd /root /work/tmp /work/cache /var/log && \\`,
 		'    touch /var/log/lastlog /var/log/faillog && \\',
 		'    (ln -sfn /proc/self/fd /dev/fd 2>/dev/null || true)',
 		'',
-		renderCopyLine(packageManifestFile, '/opt/agent-vm/local-packages'),
-		...packageArchiveFiles.map((filePath) =>
-			renderCopyLine(filePath, '/opt/agent-vm/local-packages'),
-		),
-		'RUN test -f /opt/agent-vm/local-packages/' + packageManifestFileName + ' && \\',
-		'    cd /opt/agent-vm/local-packages && \\',
-		'    pnpm install --prod --ignore-scripts && \\',
-		`    gateway_runtime_bin="${gatewayRuntimeExecutablePath}" && \\`,
-		'    test -f "$gateway_runtime_bin" && chmod 755 "$gateway_runtime_bin" && \\',
-		'    ln -sfn "$gateway_runtime_bin" /usr/local/bin/agent-vm-gateway-runtime && \\',
-		'    command -v agent-vm-gateway-runtime',
-		'',
-		renderCopyLine(agentPortalSdkWheel, '/tmp'),
-		renderCopyLine(hermesAdapterWheel, '/tmp'),
-		'RUN uv venv --python /usr/local/bin/python3 /opt/agent-vm/hermes-venv && \\',
-		'    uv pip install --python /opt/agent-vm/hermes-venv/bin/python \\',
-		`      /tmp/${agentPortalSdkWheelFileName} \\`,
-		`      /tmp/${hermesAdapterWheelFileName} \\`,
-		`      '${HERMES_GATEWAY_INSTALL_SPECIFIER}' && \\`,
-		'    hermes_scripts="$(/opt/agent-vm/hermes-venv/bin/python -c \'import sysconfig; print(sysconfig.get_path("scripts"))\')" && \\',
-		'    test -x "$hermes_scripts/agent-vm-hermes-gateway" && \\',
-		'    ln -sfn "$hermes_scripts/agent-vm-hermes-gateway" /usr/local/bin/agent-vm-hermes-gateway && \\',
-		'    command -v agent-vm-hermes-gateway && \\',
-		`    /opt/agent-vm/hermes-venv/bin/python -c 'import importlib.metadata as metadata; assert metadata.version("${HERMES_AGENT_DISTRIBUTION.distributionName}") == "${HERMES_AGENT_DISTRIBUTION.projectVersion}"' && \\`,
-		`    rm -f /tmp/${agentPortalSdkWheelFileName} /tmp/${hermesAdapterWheelFileName}`,
+		...artifactInstallLines,
 		'',
 	].join('\n');
 }

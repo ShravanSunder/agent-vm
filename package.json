@@ -18,6 +18,7 @@
 		"python:typecheck": "uv run ty check python",
 		"python:test": "uv run pytest",
 		"python:build": "uv build --all-packages",
+		"python:publish": "bash scripts/publish-python-local.sh",
 		"test:taxonomy": "tsx scripts/audit-test-taxonomy.ts",
 		"test:portal-architecture": "tsx scripts/audit-portal-architecture.ts",
 		"test:portal-exports": "tsx scripts/verify-portal-package-exports.ts",
