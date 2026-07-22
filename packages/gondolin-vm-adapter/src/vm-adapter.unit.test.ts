@@ -1314,11 +1314,27 @@ describe('createManagedVm', () => {
 		const readonlyProvider = createHardenedReadonlyProvider(backendProvider);
 		const asynchronousHandle = await readonlyProvider.open('/receipt.txt', 'r');
 		const synchronousHandle = readonlyProvider.openSync('/receipt.txt', 'r');
+		const backendStats = await backendProvider.stat('/receipt.txt');
+		const backendStat = vi.spyOn(backendProvider, 'stat').mockResolvedValue(backendStats);
+		const stableBackendStats = {
+			birthtimeMs: backendStats.birthtimeMs,
+			blksize: backendStats.blksize,
+			blocks: backendStats.blocks,
+			ctimeMs: backendStats.ctimeMs,
+			dev: backendStats.dev,
+			gid: backendStats.gid,
+			ino: backendStats.ino,
+			mode: backendStats.mode,
+			mtimeMs: backendStats.mtimeMs,
+			nlink: backendStats.nlink,
+			rdev: backendStats.rdev,
+			size: backendStats.size,
+			uid: backendStats.uid,
+		};
 
-		expect(await readonlyProvider.stat('/receipt.txt')).toEqual(
-			await backendProvider.stat('/receipt.txt'),
-		);
-		expect(await asynchronousHandle.stat()).toEqual(await backendProvider.stat('/receipt.txt'));
+		expect(await readonlyProvider.stat('/receipt.txt')).toBe(backendStats);
+		expect(backendStat).toHaveBeenCalledWith('/receipt.txt', undefined);
+		expect(await asynchronousHandle.stat()).toMatchObject(stableBackendStats);
 		await expect(readonlyProvider.open('/receipt.txt', 'a')).rejects.toMatchObject({
 			code: 'EROFS',
 		});
