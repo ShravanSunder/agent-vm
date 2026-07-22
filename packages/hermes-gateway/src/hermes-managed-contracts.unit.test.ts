@@ -243,7 +243,7 @@ plugins:
 		expect(recipe.frameworkBootEntry).toBe('hermes-gateway');
 		expect(recipe.buildNetworkAccess).toEqual({
 			aptPackages: 'public-debian-repositories',
-			containerImages: ['node:24-slim', 'ghcr.io/astral-sh/uv:0.11.16'],
+			containerImages: ['node:24-slim', 'ghcr.io/astral-sh/uv:0.11.31'],
 			kind: 'public-package-indexes-required',
 			npmPackages: 'public-npm-registry',
 			pythonPackages: 'public-python-package-index',
@@ -263,7 +263,7 @@ plugins:
 			rootfs: { label: 'gondolin-root', sizeMb: 4096 },
 		});
 		expect(recipe.dockerfile).toContain('FROM node:24-slim');
-		expect(recipe.dockerfile).toContain('COPY --from=ghcr.io/astral-sh/uv:0.11.16');
+		expect(recipe.dockerfile).toContain('COPY --from=ghcr.io/astral-sh/uv:0.11.31');
 		expect(recipe.dockerfile).toContain('npm install -g pnpm@10.33.0');
 		expect(recipe.dockerfile).toContain('uv python install 3.13');
 		expect(recipe.dockerfile).toContain(

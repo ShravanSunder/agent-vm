@@ -1,6 +1,6 @@
 FROM node:24-slim
 
-COPY --from=ghcr.io/astral-sh/uv:0.11.16 /uv /uvx /usr/local/bin/
+COPY --from=ghcr.io/astral-sh/uv:0.11.31 /uv /uvx /usr/local/bin/
 
 # Runtime auth must flow through controller HTTP mediation. Keep token env
 # names, registry auth files, and build args out of this image so a future

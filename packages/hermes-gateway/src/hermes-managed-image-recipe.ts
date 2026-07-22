@@ -1,11 +1,11 @@
 import { HERMES_AGENT_DISTRIBUTION } from './hermes-distribution.js';
 
 const HERMES_GATEWAY_BASE_IMAGE = 'node:24-slim';
-const HERMES_GATEWAY_UV_IMAGE = 'ghcr.io/astral-sh/uv:0.11.16';
+const HERMES_GATEWAY_UV_IMAGE = 'ghcr.io/astral-sh/uv:0.11.31';
 const HERMES_GATEWAY_PNPM_VERSION = '10.33.0';
 const HERMES_GATEWAY_PYTHON_VERSION = '3.13';
 const HERMES_GATEWAY_INSTALL_SPECIFIER = 'hermes-agent[messaging]==0.18.2';
-const HERMES_GATEWAY_CONTAINER_IMAGES: readonly ['node:24-slim', 'ghcr.io/astral-sh/uv:0.11.16'] = [
+const HERMES_GATEWAY_CONTAINER_IMAGES: readonly ['node:24-slim', 'ghcr.io/astral-sh/uv:0.11.31'] = [
 	HERMES_GATEWAY_BASE_IMAGE,
 	HERMES_GATEWAY_UV_IMAGE,
 ];
@@ -70,7 +70,7 @@ export interface HermesManagedImageBuildConfig {
 
 export interface HermesManagedImageBuildNetworkAccess {
 	readonly aptPackages: 'public-debian-repositories';
-	readonly containerImages: readonly ['node:24-slim', 'ghcr.io/astral-sh/uv:0.11.16'];
+	readonly containerImages: readonly ['node:24-slim', 'ghcr.io/astral-sh/uv:0.11.31'];
 	readonly kind: 'public-package-indexes-required';
 	readonly npmPackages: 'public-npm-registry';
 	readonly pythonPackages: 'public-python-package-index';

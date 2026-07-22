@@ -201,7 +201,7 @@ describe('managed image release', () => {
 
 		const generatedDockerfile = await fs.readFile(result.dockerfilePath, 'utf8');
 		expect(generatedDockerfile).not.toContain(
-			'COPY --from=ghcr.io/astral-sh/uv:0.11.16 /uv /uvx /usr/local/bin/',
+			'COPY --from=ghcr.io/astral-sh/uv:0.11.31 /uv /uvx /usr/local/bin/',
 		);
 		expect(generatedDockerfile).not.toContain('RUN uv --version && uvx --version');
 	});
