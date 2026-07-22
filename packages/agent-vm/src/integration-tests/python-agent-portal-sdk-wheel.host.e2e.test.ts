@@ -117,7 +117,6 @@ async function buildAndInstallPythonSdkWheel(
 		[
 			'pip',
 			'install',
-			'--offline',
 			'--no-python-downloads',
 			'--no-sources',
 			'--strict',
