@@ -186,6 +186,33 @@ describe('managed image release', () => {
 		);
 	});
 
+	it('creates the non-secret OpenClaw auth shell environment in the managed image', async () => {
+		const temporaryDirectory = await fs.mkdtemp(
+			path.join(os.tmpdir(), 'agent-vm-managed-openclaw-auth-shell-'),
+		);
+
+		const result = await generateManagedDockerfile({
+			base: 'openclaw-gateway',
+			imageTargetFamily: 'gateway',
+			imageTargetName: 'openclaw',
+			managedImageRelease: createTestManagedImageRelease(),
+			outputDirectory: path.join(temporaryDirectory, 'generated'),
+			requiredOpenClawPackageNames: [],
+		});
+		const generatedDockerfile = await fs.readFile(result.dockerfilePath, 'utf8');
+
+		expect(generatedDockerfile).toContain('install -d -m 0755 /etc/profile.d');
+		expect(generatedDockerfile).toContain(
+			"'export OPENCLAW_CONFIG_PATH=/run/agent-vm/managed-gateway/framework-service.json'",
+		);
+		expect(generatedDockerfile).toContain(
+			"'export OPENCLAW_STATE_DIR=/home/openclaw/.openclaw/state'",
+		);
+		expect(generatedDockerfile).toContain('> /etc/profile.d/openclaw-env.sh');
+		expect(generatedDockerfile).toContain('chmod 0644 /etc/profile.d/openclaw-env.sh');
+		expectManagedDockerfileToAvoidSecretMaterial(generatedDockerfile);
+	});
+
 	it('keeps uv in the OpenClaw gateway base instead of generated Dockerfiles', async () => {
 		const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-managed-uv-'));
 		const outputDirectory = path.join(temporaryDirectory, 'generated');

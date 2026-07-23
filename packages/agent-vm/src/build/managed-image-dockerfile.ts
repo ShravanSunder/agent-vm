@@ -29,6 +29,7 @@ const managedOpenClawPackageNames = new Set([
 	managedMcpPortalPackageName,
 ]);
 const managedOpenClawAgentVmPluginExtensionPath = '/home/openclaw/.openclaw/extensions/gondolin';
+const managedOpenClawAuthShellEnvironmentPath = '/etc/profile.d/openclaw-env.sh';
 const managedPnpmHomePath = '/pnpm';
 const managedPnpmGlobalDirectory = '/pnpm/global';
 const requiredManagedRuntimeDependencyPatchesByOpenClawVersion = new Map<
@@ -374,6 +375,36 @@ function renderGitHubCliStableAptInstallCommand(): string {
 	].join('\n');
 }
 
+function renderManagedOpenClawAuthShellEnvironmentInstallCommand(): string {
+	const environmentLines = [
+		'export HOME=/home/openclaw',
+		'export OPENCLAW_HOME=/home/openclaw',
+		'export OPENCLAW_CONFIG_PATH=/run/agent-vm/managed-gateway/framework-service.json',
+		'export OPENCLAW_STATE_DIR=/home/openclaw/.openclaw/state',
+		'export PNPM_HOME=/pnpm',
+		'export PATH=/pnpm:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+		'export TMPDIR=/work/tmp',
+		'export TMP=/work/tmp',
+		'export TEMP=/work/tmp',
+		'export npm_config_cache=/work/cache/npm',
+		'export pnpm_config_store_dir=/work/cache/pnpm/store',
+		'export PIP_CACHE_DIR=/work/cache/pip',
+		'export UV_CACHE_DIR=/work/cache/uv',
+		'export NODE_EXTRA_CA_CERTS=/run/gondolin/ca-certificates.crt',
+	];
+	return [
+		'RUN install -d -m 0755 /etc/profile.d && \\',
+		"    printf '%s\\n' \\",
+		...environmentLines.map(
+			(environmentLine, index) =>
+				`      ${shellSingleQuote(environmentLine)}${
+					index === environmentLines.length - 1 ? ` > ${managedOpenClawAuthShellEnvironmentPath} && \\` : ' \\'
+				}`,
+		),
+		`    chmod 0644 ${managedOpenClawAuthShellEnvironmentPath}`,
+	].join('\n');
+}
+
 function renderManagedDockerfile(props: {
 	readonly base: ManagedImageBase;
 	readonly baseImage: ManagedBaseImageReference;
@@ -498,6 +529,7 @@ function renderManagedDockerfile(props: {
 					shellJoin(props.directNpmPackages.map((packageEntry) => packageEntry.spec)),
 			);
 		}
+		lines.push(renderManagedOpenClawAuthShellEnvironmentInstallCommand());
 		lines.push('WORKDIR /');
 	}
 	for (const copy of props.overlay.copy) {

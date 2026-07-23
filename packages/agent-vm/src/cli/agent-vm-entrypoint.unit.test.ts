@@ -2717,6 +2717,9 @@ describe('runAgentVmCli', () => {
 		const remoteCommand = sshArguments?.at(-1);
 		expect(remoteCommand).toEqual(expect.stringContaining('shravan'));
 		expect(remoteCommand).toEqual(expect.stringContaining('source /etc/profile.d/openclaw-env.sh'));
+		expect(remoteCommand).not.toEqual(
+			expect.stringContaining('/run/agent-vm/managed-gateway/framework.environment.sh'),
+		);
 		expect(remoteCommand).not.toEqual(expect.stringContaining('/run/openclaw/secrets.env'));
 		expect(remoteCommand).not.toEqual(expect.stringContaining('/pnpm/global/5'));
 		expect(remoteCommand).toEqual(expect.stringContaining('pnpm root -g'));

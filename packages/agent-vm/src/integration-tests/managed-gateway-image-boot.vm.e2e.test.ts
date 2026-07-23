@@ -6,6 +6,7 @@ import type { ManagedVm } from '@agent-vm/managed-vm';
 import { describe, expect, it } from 'vitest';
 
 import { readPreparedManagedVmImage } from '../build/prepared-gondolin-image-cache.js';
+import { wrapWithOpenClawShellEnvironment } from '../cli/openclaw-shell-prefix.js';
 import { createManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
 import { isProcessAlive } from '../shared/managed-vm-process.js';
 import {
@@ -647,6 +648,18 @@ describeLiveVmIntegration('Managed Gateway image-owned sibling boot', () => {
 					attachment: { status: 'awaiting-attachment' },
 					publication: { status: 'published' },
 				},
+			});
+
+			const authShellResult = await fixture.vm.exec([
+				'/bin/sh',
+				'-c',
+				wrapWithOpenClawShellEnvironment(
+					'test "$OPENCLAW_CONFIG_PATH" = "/run/agent-vm/managed-gateway/framework-service.json" && command -v openclaw >/dev/null',
+				),
+			]);
+			expect(authShellResult).toMatchObject({
+				exitCode: 0,
+				ok: true,
 			});
 		} finally {
 			await fixture.close();

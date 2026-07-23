@@ -394,7 +394,9 @@ describe('runOpenClawAuthCommand', () => {
 	});
 
 	it('runs interactive SSH with the login command when provider is given', async () => {
-		const runInteractiveProcess = vi.fn(async () => {});
+		const runInteractiveProcess = vi.fn(
+			async (_command: string, _arguments: readonly string[]): Promise<void> => {},
+		);
 		const runCommand = createSuccessfulProfileListCommand();
 		const enableZoneSsh = vi.fn(async () => ({
 			host: '127.0.0.1',
@@ -431,6 +433,10 @@ describe('runOpenClawAuthCommand', () => {
 				'root@127.0.0.1',
 				expect.stringContaining('source /etc/profile.d/openclaw-env.sh'),
 			]),
+		);
+		const remoteCommand = vi.mocked(runInteractiveProcess).mock.calls[0]?.[1].at(-1);
+		expect(remoteCommand).not.toEqual(
+			expect.stringContaining('/run/agent-vm/managed-gateway/framework.environment.sh'),
 		);
 	});
 
