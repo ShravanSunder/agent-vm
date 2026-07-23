@@ -96,7 +96,7 @@ The hard-cut system configuration shape uses schema version 2:
 {
   "$schema": "./schemas/system.schema.json",
   "schemaVersion": 2,
-  "storageRootDir": "~/.agent-vm",
+  "storageRootDir": "~/.agent-vm/shravan-claw-463c3e5f",
   "zones": [
     {
       "id": "beta",
@@ -109,17 +109,21 @@ The hard-cut system configuration shape uses schema version 2:
 }
 ```
 
-`storageRootDir` supports the existing absolute, config-relative, and home-relative path syntax. When omitted, it defaults to `~/.agent-vm`. Generated scaffolds always emit the selected root explicitly so the deployment location is inspectable.
+`storageRootDir` is required and supports the existing absolute, config-relative, and home-relative path syntax. It stores the final full deployment root. Controller startup loads and canonicalizes that path; it does not append or recompute `projectNamespace`.
+
+Generated scaffolds use the same generated or explicitly authored `host.projectNamespace` for deployment identity and storage isolation:
 
 Scaffold path profiles remain convenience choices and emit one root:
 
 ```text
-local       storageRootDir resolves to <deploymentProjectRoot>/.agent-vm
-user-dir    storageRootDir resolves to ~/.agent-vm
-pod         storageRootDir resolves to /var/agent-vm
+local       storageRootDir resolves to <deploymentProjectRoot>/.agent-vm/<projectNamespace>
+user-dir    storageRootDir resolves to ~/.agent-vm/<projectNamespace>
+pod         storageRootDir resolves to /var/agent-vm/<projectNamespace>
 ```
 
-Independent controller deployments on one host must select distinct roots. A deployment-specific root such as `~/.agent-vm/shravan-claw-beta` is valid when multiple controllers coexist.
+The default namespace is derived deterministically from the canonical scaffold target path as `slug(basename(realpath(target))) + "-" + sha1(realpath(target)).slice(0, 8)`. An explicit `--namespace` replaces that generated value. Namespace generation is never conditional on discovering a collision.
+
+Independent controller deployments on one host therefore receive distinct generated roots. Operators authoring configuration without the scaffold must likewise select a distinct final root.
 
 The authored schema rejects these superseded fields as unknown:
 
@@ -331,7 +335,7 @@ System configuration schema version 2 accepts `storageRootDir` and rejects every
 
 R1. Schema version 2 authors only `storageRootDir` for standard operational storage and rejects the removed leaf fields.
 
-R2. The existing absolute, config-relative, and home-relative resolution behavior produces the selected root; scaffolds emit that root explicitly.
+R2. The existing absolute, config-relative, and home-relative resolution behavior produces the selected final root; every scaffold profile appends the generated or explicitly authored `projectNamespace` exactly once and emits that full root explicitly.
 
 R3. Cache, controller-state, controller-runtime, and every zone leaf derive exactly as shown in the decision tree, using only validated zone IDs and fixed segments.
 

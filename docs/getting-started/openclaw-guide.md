@@ -24,7 +24,11 @@ For the full OpenClaw architecture, see [architecture/openclaw-gateway.md](../ar
 ```json
 {
 	"schemaVersion": 2,
-	"storageRootDir": "../.agent-vm",
+	"storageRootDir": "../.agent-vm/my-openclaw",
+	"host": {
+		"controllerPort": 18900,
+		"projectNamespace": "my-openclaw"
+	},
   "zones": [{
     "id": "my-openclaw",
     "gateway": {

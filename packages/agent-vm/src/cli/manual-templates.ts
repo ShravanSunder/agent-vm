@@ -89,7 +89,7 @@ config/gateways/<zone>/openclaw.json is OpenClaw-owned gateway config.
 config/gateways/<zone>/worker.jsonc is Agent Worker gateway config when the zone type is worker.
 vm-images/ contains deployment-owned Gondolin build-config.jsonc files and small managed image overlays.
 agent-vm owns the gateway/tool base image recipes and pins the managed GHCR base layer version.
-storageRootDir is the sole authored standard operational storage root. Schema version 2 derives cacheDir, controllerStateDir, controllerRuntimeDir, and each zone's stateDir, optional zoneFilesDir, and zoneRuntimeDir from it.
+storageRootDir is the required, final deployment storage root. Generated local, user-dir, and pod scaffolds scope it by host.projectNamespace. The controller loads that full path and derives cacheDir, controllerStateDir, controllerRuntimeDir, and each zone's stateDir, optional zoneFilesDir, and zoneRuntimeDir without appending the namespace again.
 stateDir is <storageRootDir>/<zoneId>/state and stores durable gateway state.
 zoneFilesDir stores durable shared zone files and per-agent workspaces for managed Gateway zones. It is derived at <storageRootDir>/<zoneId>/zone-files. Each configured agent owns zoneFilesDir/agents/<agentId>. Worker zones have no active zoneFilesDir.
 gateway.backupIdentity selects the host-resolved Age identity required by backup create and restore. Backup list does not resolve it, and there is no implicit identity fallback.

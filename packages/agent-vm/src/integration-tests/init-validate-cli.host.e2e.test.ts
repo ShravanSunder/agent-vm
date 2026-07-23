@@ -59,7 +59,9 @@ describe('smoke: generated agent-vm config validation', () => {
 		);
 
 		// Assert
-		expect(generatedConfigText).toContain('"storageRootDir": "../.agent-vm"');
+		expect(generatedConfigText).toMatch(
+			/"storageRootDir": "\.\.\/\.agent-vm\/[a-z0-9][a-z0-9-]*-[a-f0-9]{8}"/u,
+		);
 		expect(validationResult.exitCode).toBe(0);
 	});
 });

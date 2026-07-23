@@ -30,7 +30,8 @@ agent-vm init coding-agent --type worker --preset macos-local
 
 `macos-local` expands to:
 
-- local relative paths
+- user-home paths with `storageRootDir` at
+  `~/.agent-vm/<projectNamespace>`
 - `aarch64` VM images
 - 1Password-backed secrets
 - `.env.local`
@@ -83,6 +84,9 @@ agent-vm init coding-agent --type worker --preset container-arm64 --namespace ag
 ```
 
 Container presets use environment-backed secrets and do not write `.env.local`.
+Their generated `storageRootDir` is
+`/var/agent-vm/<projectNamespace>`. `--namespace` sets the namespace explicitly;
+otherwise init derives it deterministically from the canonical project path.
 
 ### 5. Build images
 

@@ -27,7 +27,10 @@ import {
 } from '../build/managed-vm-build-tooling.js';
 import { loadJsonConfigFile } from '../config/json-config-file.js';
 import { resolveConfigPath } from '../config/path-resolver.js';
-import { createSystemConfigSchemaArtifact } from '../config/system-config.js';
+import {
+	createSystemConfigSchemaArtifact,
+	projectNamespaceSchema,
+} from '../config/system-config.js';
 import { buildDefaultProjectNamespace } from '../runtime/project-namespace.js';
 import {
 	getKeychainTokenSource,
@@ -213,7 +216,7 @@ const podPathProfile: ScaffoldPathProfile = {
 };
 
 /**
- * User-home profile: runtime state in ~/.agent-vm/, backups in
+ * User-home profile: runtime state in ~/.agent-vm/<projectNamespace>/, backups in
  * ~/.agent-vm-backups/ so a wipe of the runtime tree can't take
  * its own recovery archive with it.  Catalog files (gateway
  * config, image recipes) stay in-repo.
@@ -1044,9 +1047,14 @@ async function scaffoldAgentVmProjectInternal(
 	const gatewayType = options.gatewayType;
 	const architecture = options.architecture;
 	const overwrite = options.overwrite ?? false;
-	const pathProfile = resolveScaffoldPathProfile(options.paths);
-	const projectNamespace =
-		options.projectNamespace ?? (await buildDefaultProjectNamespace(options.targetDir));
+	const projectNamespace = projectNamespaceSchema.parse(
+		options.projectNamespace ?? (await buildDefaultProjectNamespace(options.targetDir)),
+	);
+	const basePathProfile = resolveScaffoldPathProfile(options.paths);
+	const pathProfile: ScaffoldPathProfile = {
+		...basePathProfile,
+		storageRootDir: path.join(basePathProfile.storageRootDir, projectNamespace),
+	};
 	const configDir = path.join(options.targetDir, 'config');
 	const homeDir = dependencies.getHomeDir?.();
 	const configWritablePathProfile = resolveConfigWritablePathProfile(

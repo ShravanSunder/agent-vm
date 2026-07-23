@@ -65,6 +65,9 @@ describe('manual templates', () => {
 		expect(generatedManual).toContain(
 			'zoneFilesDir stores durable shared zone files and per-agent workspaces for managed Gateway zones.',
 		);
+		expect(generatedManual).toContain(
+			'Generated local, user-dir, and pod scaffolds scope it by host.projectNamespace.',
+		);
 		expect(generatedManual).not.toContain('per-agent workspaces for OpenClaw zones');
 		expect(generatedManual).not.toContain('clean and fully pushed before backup publication');
 		expect(generatedManual).toContain(

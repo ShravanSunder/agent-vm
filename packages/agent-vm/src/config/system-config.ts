@@ -37,6 +37,14 @@ export const zoneIdSchema = z
 		'zone id must start with a lowercase letter or number and contain only lowercase letters, numbers, dots, underscores, or hyphens',
 	)
 	.refine((zoneId) => !reservedZoneIds.has(zoneId), 'zone id is reserved for global storage');
+export const projectNamespaceSchema = z
+	.string()
+	.min(1)
+	.max(1024)
+	.regex(
+		/^[a-z0-9][a-z0-9-]*$/u,
+		'projectNamespace must use lowercase letters, numbers, and hyphens only',
+	);
 
 function escapeRegExpLiteral(value: string): string {
 	return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
@@ -888,14 +896,7 @@ const systemConfigSchema = z
 		schemaVersion: z.literal(2).default(2),
 		host: z.object({
 			controllerPort: z.number().int().positive(),
-			projectNamespace: z
-				.string()
-				.min(1)
-				.max(1024)
-				.regex(
-					/^[a-z0-9][a-z0-9-]*$/u,
-					'projectNamespace must use lowercase letters, numbers, and hyphens only',
-				),
+			projectNamespace: projectNamespaceSchema,
 			secretsProvider: z
 				.object({
 					type: z.literal('1password'),
@@ -906,7 +907,7 @@ const systemConfigSchema = z
 			observability: hostObservabilitySchema.optional(),
 		}),
 		controller: controllerConfigSchema.default({ health: defaultControllerHealthConfig }),
-		storageRootDir: z.string().min(1).default('~/.agent-vm'),
+		storageRootDir: z.string().min(1),
 		imageProfiles: imageProfilesSchema,
 		zones: z
 			.array(

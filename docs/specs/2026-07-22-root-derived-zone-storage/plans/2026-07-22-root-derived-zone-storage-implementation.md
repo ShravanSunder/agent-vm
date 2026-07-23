@@ -17,7 +17,7 @@ This plan does not add migration, compatibility readers, discovery, copying, rec
 ### T1. Hard-cut the authored schema and derive loaded paths
 
 - Change schema version 1 to version 2.
-- Replace authored `cacheDir`, `controllerStateDir`, and `runtimeDir` with optional `storageRootDir` defaulting to `~/.agent-vm`.
+- Replace authored `cacheDir`, `controllerStateDir`, and `runtimeDir` with required `storageRootDir`.
 - Remove authored Gateway `stateDir` and managed-Gateway `zoneFilesDir`.
 - Reject `cache`, `controller-state`, and `controller-runtime` as zone IDs.
 - At the existing config-loading boundary, resolve/canonicalize the root and derive:
@@ -40,7 +40,7 @@ Proof: update existing focused path expectations and existing affected unit/inte
 
 ### T3. Cut over authored surfaces and maintained documentation
 
-- Make local, user-dir, and pod scaffolds emit one explicit `storageRootDir` with the roots fixed by the spec.
+- Make local, user-dir, and pod scaffolds append the generated or explicit `projectNamespace` exactly once and emit the final explicit `storageRootDir` fixed by the spec.
 - Update generated schema/config/manual fixtures and maintained configuration/storage documentation to the new authored shape and tree.
 - Mechanically update repo and beta configuration fixtures to schema version 2 and one storage root; keep `backupDir` and observability `dataDir` independent.
 

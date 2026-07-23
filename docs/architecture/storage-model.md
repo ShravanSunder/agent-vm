@@ -14,7 +14,10 @@ For the concrete OpenClaw and Worker gateway path matrix, see
 ## Config-Level Path Map
 
 `storageRootDir` is the sole authored standard operational storage path. The
-controller derives the remaining paths from that root and validated zone IDs.
+generated root is scoped by the deployment's `projectNamespace` for local,
+user-dir, and pod scaffolds. The controller loads that final root and derives
+the remaining paths from it and validated zone IDs; it does not append the
+namespace again.
 
 ```text
 path                  scope                 durable?          backup?   contains
@@ -293,14 +296,14 @@ catalog repo
   vm-images/gateways/openclaw/overlay.jsonc
 
 host stateDir
-  ~/.agent-vm/<zone>/state/
+  ~/.agent-vm/<projectNamespace>/<zone>/state/
     effective-openclaw.json
     agents/main/agent/auth-profiles.json
     agents/<agentId>/agent/auth-profiles.json
     sandboxes/<agentId>/work/
 
 host controllerStateDir
-	~/.agent-vm/controller-state/
+	~/.agent-vm/<projectNamespace>/controller-state/
 	  zones/<zone>/
       approvals/
       gateway-runtime.json
@@ -308,7 +311,7 @@ host controllerStateDir
       worker-tasks/<taskId>/gateway-runtime.json
 
 host cacheDir
-  ~/.agent-vm/cache/
+  ~/.agent-vm/<projectNamespace>/cache/
     gateway-images/<imageProfile>/
       prepared-image.json
     tool-vm-images/<imageProfile>/
@@ -317,13 +320,13 @@ host cacheDir
       plugin-runtime-deps/
 
 host controllerRuntimeDir
-  ~/.agent-vm/controller-runtime/
+  ~/.agent-vm/<projectNamespace>/controller-runtime/
     vm-ownership/
     controller-health/
     observability/<projectNamespace>/
 
 host zoneRuntimeDir
-  ~/.agent-vm/<zone>/runtime/
+  ~/.agent-vm/<projectNamespace>/<zone>/runtime/
     logs/
     gitdirs/agents/<agentId>/
       workspace.git
@@ -331,7 +334,7 @@ host zoneRuntimeDir
       gitdirs/<repo>.git
 
 host zoneFilesDir
-  ~/.agent-vm/<zone>/zone-files/
+  ~/.agent-vm/<projectNamespace>/<zone>/zone-files/
     agents/default/
 
 host backupDir

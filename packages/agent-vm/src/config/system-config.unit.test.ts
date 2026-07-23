@@ -307,7 +307,7 @@ describe('loadSystemConfig', () => {
 		});
 	});
 
-	test('defaults storageRootDir to the current user Agent VM root', async () => {
+	test('rejects a missing storageRootDir', async () => {
 		// Arrange
 		const { storageRootDir: _storageRootDir, ...input } = createValidSystemConfigInput();
 		const configPath = await writeSystemConfigForTest(
@@ -315,11 +315,8 @@ describe('loadSystemConfig', () => {
 			input,
 		);
 
-		// Act
-		const loadedConfig = await loadSystemConfig(configPath);
-
-		// Assert
-		expect(loadedConfig.storageRootDir).toBe(path.join(os.homedir(), '.agent-vm'));
+		// Act / Assert
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/storageRootDir/u);
 	});
 
 	test('loads system.jsonc with comments and trailing commas', async () => {
@@ -3950,8 +3947,10 @@ describe('loadSystemConfig', () => {
 		const artifact = createSystemConfigSchemaArtifact();
 		const artifactProperties = requireRecordProperty(artifact, 'properties');
 		expect(artifactProperties).toMatchObject({
-			storageRootDir: { default: '~/.agent-vm', minLength: 1, type: 'string' },
+			storageRootDir: { minLength: 1, type: 'string' },
 		});
+		expect(artifactProperties.storageRootDir).not.toHaveProperty('default');
+		expect(artifact.required).toEqual(expect.arrayContaining(['storageRootDir']));
 		expect(artifactProperties).not.toHaveProperty('cacheDir');
 		expect(artifactProperties).not.toHaveProperty('controllerStateDir');
 		expect(artifactProperties).not.toHaveProperty('runtimeDir');

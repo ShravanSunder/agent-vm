@@ -58,9 +58,9 @@ generic container host.
 
 | Preset | Use when | Expands to |
 | --- | --- | --- |
-| `macos-local` | Local Mac development | local paths, `aarch64`, 1Password secrets, writes `.env.local` |
-| `container-x86` | x86_64 Linux container runtime | runtime paths, `x86_64`, environment secrets, `vm-host-system/` |
-| `container-arm64` | arm64 Linux container runtime | runtime paths, `aarch64`, environment secrets, `vm-host-system/` |
+| `macos-local` | Local Mac development | `~/.agent-vm/<projectNamespace>`, `aarch64`, 1Password secrets, writes `.env.local` |
+| `container-x86` | x86_64 Linux container runtime | `/var/agent-vm/<projectNamespace>`, `x86_64`, environment secrets, `vm-host-system/` |
+| `container-arm64` | arm64 Linux container runtime | `/var/agent-vm/<projectNamespace>`, `aarch64`, environment secrets, `vm-host-system/` |
 
 Explicit flags like `--arch`, `--paths`, and `--secrets` override preset
 defaults.

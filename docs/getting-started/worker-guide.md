@@ -37,7 +37,11 @@ In your `system.jsonc`, add a zone with `gateway.type: "worker"`:
 ```json
 {
 	"schemaVersion": 2,
-	"storageRootDir": "~/.agent-vm",
+	"storageRootDir": "~/.agent-vm/coding-agent",
+	"host": {
+		"controllerPort": 18900,
+		"projectNamespace": "coding-agent"
+	},
   "zones": [{
     "id": "dev-worker",
     "gateway": {

@@ -72,7 +72,7 @@ leaseIdleTtl
 | Field | Required | Meaning |
 | --- | --- | --- |
 | `controllerPort` | yes | TCP port for the controller HTTP API. |
-| `projectNamespace` | yes | Lowercase namespace used for runtime labels and cache separation. |
+| `projectNamespace` | yes | Lowercase namespace used for deployment identity, generated storage isolation, runtime labels, and cache separation. |
 | `secretsProvider` | when using `source: "1password"` | How the host resolves 1Password-backed secrets. |
 | `githubToken` | no | Host-only token for clone and push. Never enters the VM. |
 | `observability` | no | Host-owned Victoria/OpenTelemetry stack used by opted-in OpenClaw zones. |
@@ -316,8 +316,19 @@ Example:
 ## storageRootDir
 
 `storageRootDir` is the sole authored standard operational storage path. It
-supports the existing absolute, config-relative, and home-relative syntax and
-defaults to `~/.agent-vm`. Schema version 2 rejects authored `cacheDir`,
+is required and supports the existing absolute, config-relative, and
+home-relative syntax. Generated scaffolds use the same `host.projectNamespace`
+for deployment identity and storage isolation:
+
+```text
+local      <project>/.agent-vm/<projectNamespace>
+user-dir   ~/.agent-vm/<projectNamespace>
+pod        /var/agent-vm/<projectNamespace>
+```
+
+`storageRootDir` stores that final full path. Controller startup loads and
+canonicalizes it, then derives the tree below without appending or recomputing
+`projectNamespace`. Schema version 2 rejects authored `cacheDir`,
 `controllerStateDir`, `runtimeDir`, `zones[].gateway.stateDir`, and
 `zones[].gateway.zoneFilesDir` fields.
 
