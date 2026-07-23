@@ -7,9 +7,7 @@ import { runBackupCommand } from './backup-commands.js';
 function createBackupSystemConfig(): LoadedSystemConfig {
 	return createLoadedSystemConfig(
 		{
-			cacheDir: './cache',
-			controllerStateDir: '/controller-state-test',
-			runtimeDir: './runtime',
+			storageRootDir: './storage',
 			host: {
 				controllerPort: 18800,
 				projectNamespace: 'claw-tests-a1b2c3d4',
@@ -64,8 +62,6 @@ function createBackupSystemConfig(): LoadedSystemConfig {
 						memory: '2G',
 						config: './config/shravan/openclaw.json',
 						port: 18791,
-						stateDir: './state/shravan',
-						zoneFilesDir: './zone-files/shravan',
 					},
 					id: 'shravan',
 					agents: [{ id: 'main' }],
@@ -176,7 +172,7 @@ describe('runBackupCommand', () => {
 		});
 
 		expect(listBackups).toHaveBeenCalledWith({
-			backupDir: './state/shravan/backups',
+			backupDir: 'storage/shravan/state/backups',
 			zoneId: 'shravan',
 		});
 		expect(outputs.join('')).toContain('shravan__2026-04-11.tar.age');
@@ -250,12 +246,12 @@ describe('runBackupCommand', () => {
 
 		await expect(identityPromise).resolves.toBe('test-environment-backup-identity');
 		expect(createBackup).toHaveBeenCalledWith({
-			backupDir: './state/shravan/backups',
-			cacheDir: './cache',
-			runtimeDir: './runtime',
-			stateDir: './state/shravan',
-			zoneFilesDir: './zone-files/shravan',
+			backupDir: 'storage/shravan/state/backups',
+			cacheDir: 'storage/cache',
+			stateDir: 'storage/shravan/state',
+			zoneFilesDir: 'storage/shravan/zone-files',
 			zoneId: 'shravan',
+			zoneRuntimeDir: 'storage/shravan/runtime',
 		});
 	});
 
@@ -416,8 +412,8 @@ describe('runBackupCommand', () => {
 		await expect(identityPromise).resolves.toBe('test-inline-backup-identity');
 		expect(restoreBackup).toHaveBeenCalledWith({
 			backupPath: '/tmp/backup.tar.age',
-			stateDir: './state/shravan',
-			zoneFilesDir: './zone-files/shravan',
+			stateDir: 'storage/shravan/state',
+			zoneFilesDir: 'storage/shravan/zone-files',
 		});
 		expect(outputs.join('')).toContain('"zoneId": "shravan"');
 	});

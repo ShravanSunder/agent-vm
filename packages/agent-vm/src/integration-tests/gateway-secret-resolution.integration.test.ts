@@ -76,22 +76,23 @@ function createExactVmOwnershipStub(vmId: string): GatewayVmLifecycleAuthority {
 describe('smoke: gateway startup secret resolution', () => {
 	it('batches gateway startup 1Password refs through the production composite resolver', async () => {
 		const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'gateway-secret-resolution-smoke-'));
-		const stateDir = path.join(tempRoot, 'state');
+		const stateDir = path.join(tempRoot, 'secret-smoke', 'state');
 		const cacheDir = path.join(tempRoot, 'cache');
-		const runtimeDir = path.join(tempRoot, 'runtime');
+		const zoneRuntimeDir = path.join(tempRoot, 'secret-smoke', 'runtime');
 		const buildConfigPath = path.join(tempRoot, 'gateway-build.json');
 		const gatewayConfigPath = path.join(tempRoot, 'worker-gateway.json');
 		await fs.mkdir(stateDir, { recursive: true });
 		await fs.mkdir(cacheDir, { recursive: true });
-		await fs.mkdir(runtimeDir, { recursive: true });
+		await fs.mkdir(zoneRuntimeDir, { recursive: true });
 		await fs.writeFile(buildConfigPath, '{}');
 		await fs.writeFile(gatewayConfigPath, '{}');
 
 		const systemConfig = {
-			schemaVersion: 1,
+			schemaVersion: 2,
+			storageRootDir: tempRoot,
 			cacheDir,
+			controllerRuntimeDir: path.join(tempRoot, 'controller-runtime'),
 			controllerStateDir: path.join(tempRoot, 'controller-state'),
-			runtimeDir,
 			host: {
 				controllerPort: 18800,
 				projectNamespace: 'claw-tests-a1b2c3d4',
@@ -120,6 +121,7 @@ describe('smoke: gateway startup secret resolution', () => {
 						port: 18791,
 						config: gatewayConfigPath,
 						stateDir,
+						zoneRuntimeDir,
 					},
 					secrets: {
 						ENV_ONLY_TOKEN: {

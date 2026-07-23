@@ -5,7 +5,11 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ManagedImageRelease } from '../build/managed-image-dockerfile.js';
-import { createLoadedSystemConfig, type SystemConfig } from '../config/system-config.js';
+import {
+	createLoadedSystemConfig,
+	type SystemConfig,
+	type SystemConfigInput,
+} from '../config/system-config.js';
 import {
 	collectManagedAgentRootStorageChecks,
 	collectManagedImagePackageOverrideDoctorChecks,
@@ -81,10 +85,11 @@ describe('collectManagedAgentRootStorageChecks', () => {
 });
 
 const systemConfig = {
-	schemaVersion: 1,
+	schemaVersion: 2,
+	storageRootDir: './storage',
 	cacheDir: './cache',
 	controllerStateDir: '/controller-state-test',
-	runtimeDir: './runtime',
+	controllerRuntimeDir: './runtime',
 	host: {
 		controllerPort: 18800,
 		projectNamespace: 'claw-tests-a1b2c3d4',
@@ -131,6 +136,7 @@ const systemConfig = {
 				config: './config/shravan/openclaw.json',
 				stateDir: './state/shravan',
 				zoneFilesDir: './zone-files/shravan',
+				zoneRuntimeDir: './runtime/shravan',
 				authProfilesByAgent: {
 					shravan: { source: 'environment', envVar: 'SHRAVAN_AUTH_PROFILES' },
 				},
@@ -210,10 +216,43 @@ function createManagedImageReleaseFixture(): ManagedImageRelease {
 
 interface RuntimePathOverlapCase {
 	readonly cacheDir?: string;
+	readonly controllerRuntimeDir?: string;
 	readonly expectedHint: string;
-	readonly runtimeDir?: string;
 	readonly stateDir?: string;
 	readonly zoneFilesDir?: string;
+}
+
+function createSystemConfigInputFromResolvedFixture(config: SystemConfig): SystemConfigInput {
+	const {
+		cacheDir: _cacheDir,
+		controllerRuntimeDir: _controllerRuntimeDir,
+		controllerStateDir: _controllerStateDir,
+		zones,
+		...configInput
+	} = config;
+	return {
+		...configInput,
+		zones: zones.map((zone) => ({
+			...zone,
+			gateway: stripResolvedGatewayStorage(zone.gateway),
+		})),
+	};
+}
+
+function stripResolvedGatewayStorage(
+	gateway: SystemConfig['zones'][number]['gateway'],
+): SystemConfigInput['zones'][number]['gateway'] {
+	if (gateway.type === 'worker') {
+		const { stateDir: _stateDir, zoneRuntimeDir: _zoneRuntimeDir, ...gatewayInput } = gateway;
+		return gatewayInput;
+	}
+	const {
+		stateDir: _stateDir,
+		zoneFilesDir: _zoneFilesDir,
+		zoneRuntimeDir: _zoneRuntimeDir,
+		...gatewayInput
+	} = gateway;
+	return gatewayInput;
 }
 
 function createWorkerOnlySystemConfig(): SystemConfig {
@@ -236,6 +275,7 @@ function createWorkerOnlySystemConfig(): SystemConfig {
 					port: 18791,
 					config: './config/worker/worker.json',
 					stateDir: './state/worker',
+					zoneRuntimeDir: './runtime/worker',
 				},
 				secrets: {},
 				egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),
@@ -920,31 +960,31 @@ describe('runControllerDoctor', () => {
 		expect(result.checks.find((check) => check.name === 'disk-space')?.ok).toBe(false);
 	});
 
-	it('flags runtimeDir overlap with cache, state, and zone files paths', async () => {
+	it('flags controllerRuntimeDir overlap with cache, state, and zone files paths', async () => {
 		const overlappingConfigs = [
 			{
-				runtimeDir: './cache/runtime',
-				expectedHint: 'runtimeDir must not overlap cacheDir',
+				controllerRuntimeDir: './cache/runtime',
+				expectedHint: 'controllerRuntimeDir must not overlap cacheDir',
 			},
 			{
 				cacheDir: './runtime/cache',
-				expectedHint: 'runtimeDir must not overlap cacheDir',
+				expectedHint: 'controllerRuntimeDir must not overlap cacheDir',
 			},
 			{
-				runtimeDir: './state/shravan/runtime',
-				expectedHint: "runtimeDir must not overlap stateDir for zone 'shravan'",
+				controllerRuntimeDir: './state/shravan/runtime',
+				expectedHint: "controllerRuntimeDir must not overlap stateDir for zone 'shravan'",
 			},
 			{
 				stateDir: './runtime/state/shravan',
-				expectedHint: "runtimeDir must not overlap stateDir for zone 'shravan'",
+				expectedHint: "controllerRuntimeDir must not overlap stateDir for zone 'shravan'",
 			},
 			{
-				runtimeDir: './zone-files/shravan/runtime',
-				expectedHint: "runtimeDir must not overlap zoneFilesDir for zone 'shravan'",
+				controllerRuntimeDir: './zone-files/shravan/runtime',
+				expectedHint: "controllerRuntimeDir must not overlap zoneFilesDir for zone 'shravan'",
 			},
 			{
 				zoneFilesDir: './runtime/zone-files/shravan',
-				expectedHint: "runtimeDir must not overlap zoneFilesDir for zone 'shravan'",
+				expectedHint: "controllerRuntimeDir must not overlap zoneFilesDir for zone 'shravan'",
 			},
 		] satisfies readonly RuntimePathOverlapCase[];
 
@@ -964,7 +1004,8 @@ describe('runControllerDoctor', () => {
 				systemConfig: {
 					...systemConfig,
 					cacheDir: overlappingConfig.cacheDir ?? systemConfig.cacheDir,
-					runtimeDir: overlappingConfig.runtimeDir ?? systemConfig.runtimeDir,
+					controllerRuntimeDir:
+						overlappingConfig.controllerRuntimeDir ?? systemConfig.controllerRuntimeDir,
 					zones: [
 						{
 							...firstZone,
@@ -988,7 +1029,7 @@ describe('runControllerDoctor', () => {
 		}
 	});
 
-	it('reports every runtimeDir overlap in one doctor run', async () => {
+	it('reports every controllerRuntimeDir overlap in one doctor run', async () => {
 		const firstZone = systemConfig.zones[0];
 		if (firstZone === undefined || firstZone.gateway.type !== 'openclaw') {
 			throw new Error('Test fixture must include an OpenClaw zone.');
@@ -1003,7 +1044,7 @@ describe('runControllerDoctor', () => {
 			systemConfig: {
 				...systemConfig,
 				cacheDir: './runtime/cache',
-				runtimeDir: './runtime',
+				controllerRuntimeDir: './runtime',
 				zones: [
 					{
 						...firstZone,
@@ -1065,7 +1106,9 @@ describe('collectVmHostSystemDoctorCheck', () => {
 		await mkdir(vmHostSystemPath, { recursive: true });
 
 		const check = await collectVmHostSystemDoctorCheck(
-			createLoadedSystemConfig(systemConfig, { systemConfigPath: configPath }),
+			createLoadedSystemConfig(createSystemConfigInputFromResolvedFixture(systemConfig), {
+				systemConfigPath: configPath,
+			}),
 		);
 
 		expect(check).toMatchObject({
@@ -1088,7 +1131,9 @@ describe('collectVmHostSystemDoctorCheck', () => {
 		);
 
 		const check = await collectVmHostSystemDoctorCheck(
-			createLoadedSystemConfig(systemConfig, { systemConfigPath: configPath }),
+			createLoadedSystemConfig(createSystemConfigInputFromResolvedFixture(systemConfig), {
+				systemConfigPath: configPath,
+			}),
 		);
 
 		expect(check).toMatchObject({
@@ -1100,7 +1145,7 @@ describe('collectVmHostSystemDoctorCheck', () => {
 
 	it('checks runtime host files inside /etc/agent-vm container configs', async () => {
 		const check = await collectVmHostSystemDoctorCheck({
-			...createLoadedSystemConfig(systemConfig, {
+			...createLoadedSystemConfig(createSystemConfigInputFromResolvedFixture(systemConfig), {
 				systemConfigPath: '/etc/agent-vm/system.json',
 			}),
 		});
@@ -1135,7 +1180,9 @@ describe('collectVmHostSystemDoctorCheck', () => {
 		} satisfies SystemConfig;
 
 		const check = await collectVmHostSystemDoctorCheck(
-			createLoadedSystemConfig(containerSystemConfig, { systemConfigPath: configPath }),
+			createLoadedSystemConfig(createSystemConfigInputFromResolvedFixture(containerSystemConfig), {
+				systemConfigPath: configPath,
+			}),
 		);
 
 		expect(check).toMatchObject({
@@ -1152,7 +1199,9 @@ describe('collectVmHostSystemDoctorCheck', () => {
 
 		await expect(
 			collectVmHostSystemDoctorCheck(
-				createLoadedSystemConfig(systemConfig, { systemConfigPath: configPath }),
+				createLoadedSystemConfig(createSystemConfigInputFromResolvedFixture(systemConfig), {
+					systemConfigPath: configPath,
+				}),
 			),
 		).resolves.toBeNull();
 	});

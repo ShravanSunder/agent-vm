@@ -22,32 +22,23 @@ type GatewayControlSessionMaterialRecord = z.infer<
 	typeof gatewayControlSessionMaterialRecordSchema
 >;
 
-function resolveGatewayControlSessionMaterialDirectory(
-	runtimeDirectory: string,
-	zoneId: string,
-): string {
-	return path.join(runtimeDirectory, 'control-sessions', 'gateway', zoneId);
+function resolveGatewayControlSessionMaterialDirectory(zoneRuntimeDirectory: string): string {
+	return path.join(zoneRuntimeDirectory, 'control-sessions', 'gateway');
 }
 
-export function resolveGatewayControlSessionMaterialPath(
-	runtimeDirectory: string,
-	zoneId: string,
-): string {
+export function resolveGatewayControlSessionMaterialPath(zoneRuntimeDirectory: string): string {
 	return path.join(
-		resolveGatewayControlSessionMaterialDirectory(runtimeDirectory, zoneId),
+		resolveGatewayControlSessionMaterialDirectory(zoneRuntimeDirectory),
 		gatewayControlSessionMaterialFileName,
 	);
 }
 
 export async function writeGatewayControlSessionMaterial(
-	runtimeDirectory: string,
+	zoneRuntimeDirectory: string,
 	material: GatewayControlSessionMaterial,
 ): Promise<void> {
-	const materialDirectory = resolveGatewayControlSessionMaterialDirectory(
-		runtimeDirectory,
-		material.zoneId,
-	);
-	const materialPath = resolveGatewayControlSessionMaterialPath(runtimeDirectory, material.zoneId);
+	const materialDirectory = resolveGatewayControlSessionMaterialDirectory(zoneRuntimeDirectory);
+	const materialPath = resolveGatewayControlSessionMaterialPath(zoneRuntimeDirectory);
 	const record: GatewayControlSessionMaterialRecord =
 		gatewayControlSessionMaterialRecordSchema.parse({
 			material: serializeGatewayControlSessionMaterial(material),
@@ -61,12 +52,11 @@ export async function writeGatewayControlSessionMaterial(
 }
 
 export async function loadGatewayControlSessionMaterial(
-	runtimeDirectory: string,
-	zoneId: string,
+	zoneRuntimeDirectory: string,
 ): Promise<GatewayControlSessionMaterial | null> {
 	try {
 		const rawRecord = await fs.readFile(
-			resolveGatewayControlSessionMaterialPath(runtimeDirectory, zoneId),
+			resolveGatewayControlSessionMaterialPath(zoneRuntimeDirectory),
 			'utf8',
 		);
 		const parsedRecord = gatewayControlSessionMaterialRecordSchema.parse(
@@ -82,8 +72,7 @@ export async function loadGatewayControlSessionMaterial(
 }
 
 export async function deleteGatewayControlSessionMaterial(
-	runtimeDirectory: string,
-	zoneId: string,
+	zoneRuntimeDirectory: string,
 ): Promise<void> {
-	await fs.rm(resolveGatewayControlSessionMaterialPath(runtimeDirectory, zoneId), { force: true });
+	await fs.rm(resolveGatewayControlSessionMaterialPath(zoneRuntimeDirectory), { force: true });
 }

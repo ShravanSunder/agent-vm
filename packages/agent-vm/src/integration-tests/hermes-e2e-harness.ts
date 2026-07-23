@@ -294,7 +294,9 @@ export async function scaffoldHermesE2eProject(options: {
 			type: 'hermes',
 		},
 	};
-	openClawProject.systemConfig.cacheDir = path.join(resolveE2eCacheRoot(), 'hermes');
+	Object.assign(openClawProject.systemConfig, {
+		cacheDir: path.join(resolveE2eCacheRoot(), 'hermes'),
+	});
 	openClawProject.systemConfig.host.projectNamespace = 'agent-vm-tests-hermes';
 	openClawProject.systemConfig.zones[0] = {
 		...openClawZone,
@@ -310,6 +312,7 @@ export async function scaffoldHermesE2eProject(options: {
 			stateDir: openClawZone.gateway.stateDir,
 			type: 'hermes',
 			zoneFilesDir: openClawZone.gateway.zoneFilesDir,
+			zoneRuntimeDir: openClawZone.gateway.zoneRuntimeDir,
 		},
 		secrets: {
 			API_SERVER_KEY: {

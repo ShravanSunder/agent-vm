@@ -44,6 +44,7 @@ const testOpenClawZone = {
 		stateDir: '/state/zone-test',
 		type: 'openclaw',
 		zoneFilesDir: '/zone-files/zone-test',
+		zoneRuntimeDir: '/runtime/zone-test',
 	},
 	id: 'zone-test',
 	secrets: {

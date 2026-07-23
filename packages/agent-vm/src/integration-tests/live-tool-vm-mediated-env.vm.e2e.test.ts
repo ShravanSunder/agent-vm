@@ -55,14 +55,10 @@ async function createMediatedEnvSystemConfig(options: {
 	readonly temporaryDirectory: string;
 	readonly toolVmBuildConfigPath: string;
 }): Promise<LoadedSystemConfig> {
-	const zoneFilesDir = path.join(options.temporaryDirectory, 'zone-files', 'shravan');
-	const stateDir = path.join(options.temporaryDirectory, 'state', 'shravan');
-
-	return createLoadedSystemConfig(
+	const systemConfig = createLoadedSystemConfig(
 		{
-			cacheDir: options.cacheDir,
-			controllerStateDir: path.join(options.temporaryDirectory, 'controller-state'),
-			runtimeDir: path.join(options.temporaryDirectory, 'runtime'),
+			schemaVersion: 2,
+			storageRootDir: options.temporaryDirectory,
 			host: {
 				controllerPort: 18800,
 				projectNamespace: 'mediated-env-live',
@@ -112,8 +108,6 @@ async function createMediatedEnvSystemConfig(options: {
 						imageProfile: 'openclaw',
 						memory: '512M',
 						port: 18791,
-						stateDir,
-						zoneFilesDir,
 					},
 					id: 'shravan',
 					agents: [{ id: 'shravan' }],
@@ -138,6 +132,7 @@ async function createMediatedEnvSystemConfig(options: {
 		},
 		{ systemConfigPath: path.join(options.temporaryDirectory, 'config', 'system.json') },
 	);
+	return { ...systemConfig, cacheDir: options.cacheDir };
 }
 
 async function runToolVmSshCommand(options: {
@@ -217,9 +212,7 @@ describeLiveVmIntegration('live: Tool VM mediated placeholder environment', () =
 		}
 
 		const hostAgentGitDirectoryRoot = path.join(
-			systemConfig.runtimeDir,
-			'zones',
-			zone.id,
+			zone.gateway.zoneRuntimeDir,
 			'gitdirs',
 			'agents',
 			'shravan',

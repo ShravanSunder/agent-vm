@@ -61,13 +61,13 @@ function minimalWorkerConfig(): unknown {
 
 async function writeContainerProjectFixture(rootPath: string): Promise<string> {
 	await writeJson(path.join(rootPath, 'config', 'system.json'), {
+		schemaVersion: 2,
 		host: {
 			controllerPort: 18800,
 			projectNamespace: 'agent-vm',
 			githubToken: { source: 'environment', envVar: 'GITHUB_TOKEN' },
 		},
-		cacheDir: '/var/agent-vm/cache',
-		controllerStateDir: '/var/agent-vm/controller-state',
+		storageRootDir: '/var/agent-vm',
 		imageProfiles: {
 			gateways: {
 				worker: {
@@ -87,7 +87,6 @@ async function writeContainerProjectFixture(rootPath: string): Promise<string> {
 					port: 18791,
 					config: '/etc/agent-vm/gateways/coding-agent/worker.json',
 					imageProfile: 'worker',
-					stateDir: '/var/agent-vm/state',
 				},
 				secrets: {},
 				egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),
@@ -127,13 +126,13 @@ async function writeContainerProjectFixture(rootPath: string): Promise<string> {
 
 async function writeOpenClawProjectFixture(rootPath: string): Promise<string> {
 	await writeJson(path.join(rootPath, 'config', 'system.json'), {
+		schemaVersion: 2,
 		host: {
 			controllerPort: 18800,
 			projectNamespace: 'agent-vm',
 			githubToken: { source: 'environment', envVar: 'GITHUB_TOKEN' },
 		},
-		cacheDir: path.join(rootPath, 'cache'),
-		controllerStateDir: path.join(rootPath, 'controller-state'),
+		storageRootDir: path.join(rootPath, 'storage'),
 		imageProfiles: {
 			gateways: {
 				openclaw: {
@@ -165,8 +164,6 @@ async function writeOpenClawProjectFixture(rootPath: string): Promise<string> {
 					port: 18791,
 					config: './gateways/shravan/openclaw.json',
 					imageProfile: 'openclaw',
-					stateDir: path.join(rootPath, 'state', 'shravan'),
-					zoneFilesDir: path.join(rootPath, 'zone-files', 'shravan'),
 					authProfilesByAgent: {
 						shravan: { source: 'environment', envVar: 'SHRAVAN_AUTH_PROFILES' },
 					},
@@ -550,16 +547,21 @@ async function configureLoadedFixtureAsHermes(
 	if (zone === undefined || zone.gateway.type !== 'openclaw') {
 		throw new Error('Expected OpenClaw fixture zone');
 	}
-	zone.gateway = {
-		config: zone.gateway.config,
-		cpus: zone.gateway.cpus,
-		imageProfile: 'hermes',
-		memory: zone.gateway.memory,
-		port: zone.gateway.port,
-		profilesByAgent: { shravan: 'researcher' },
-		stateDir: zone.gateway.stateDir,
-		type: 'hermes',
-		zoneFilesDir: zone.gateway.zoneFilesDir,
+	const zoneIndex = systemConfig.zones.indexOf(zone);
+	systemConfig.zones[zoneIndex] = {
+		...zone,
+		gateway: {
+			config: zone.gateway.config,
+			cpus: zone.gateway.cpus,
+			imageProfile: 'hermes',
+			memory: zone.gateway.memory,
+			port: zone.gateway.port,
+			profilesByAgent: { shravan: 'researcher' },
+			stateDir: zone.gateway.stateDir,
+			type: 'hermes',
+			zoneFilesDir: zone.gateway.zoneFilesDir,
+			zoneRuntimeDir: zone.gateway.zoneRuntimeDir,
+		},
 	};
 	await writeFile(
 		zone.gateway.config,
@@ -1433,8 +1435,9 @@ describe('runConfigValidation', () => {
 	it('leaves runtime container paths unchanged inside /etc/agent-vm', () => {
 		const systemConfig = createLoadedSystemConfig(
 			{
+				schemaVersion: 2,
 				host: { controllerPort: 18800, projectNamespace: 'agent-vm' },
-				controllerStateDir: '/var/agent-vm/controller-state',
+				storageRootDir: '/var/agent-vm',
 				imageProfiles: {
 					gateways: {
 						worker: {
@@ -1453,7 +1456,6 @@ describe('runConfigValidation', () => {
 							port: 18791,
 							config: '/etc/agent-vm/gateways/coding-agent/worker.json',
 							imageProfile: 'worker',
-							stateDir: '/var/agent-vm/state',
 						},
 						secrets: {},
 						egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),
@@ -1498,10 +1500,20 @@ describe('runConfigValidation', () => {
 		);
 		try {
 			const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
-			const gatewayStateDirectoryPath = path.join(temporaryDirectoryPath, 'state', 'shravan');
-			const controllerStateAliasPath = path.join(temporaryDirectoryPath, 'controller-state');
-			await mkdir(gatewayStateDirectoryPath, { recursive: true });
-			await symlink(gatewayStateDirectoryPath, controllerStateAliasPath);
+			const gatewayStateDirectoryPath = path.join(
+				temporaryDirectoryPath,
+				'storage',
+				'shravan',
+				'state',
+			);
+			const controllerStateDirectoryPath = path.join(
+				temporaryDirectoryPath,
+				'storage',
+				'controller-state',
+			);
+			await mkdir(controllerStateDirectoryPath, { recursive: true });
+			await mkdir(path.dirname(gatewayStateDirectoryPath), { recursive: true });
+			await symlink(controllerStateDirectoryPath, gatewayStateDirectoryPath);
 
 			// Act / Assert
 			await expect(loadSystemConfig(systemConfigPath)).rejects.toThrow(
@@ -1643,7 +1655,7 @@ describe('runConfigValidation', () => {
 		await rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});
 
-	it('reports runtimeDir overlap with non-runtime storage paths', async () => {
+	it('reports controllerRuntimeDir overlap with non-runtime storage paths', async () => {
 		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
 		const systemConfigPath = await writeContainerProjectFixture(temporaryDirectoryPath);
 		const systemConfig = await loadSystemConfig(systemConfigPath);
@@ -1652,7 +1664,7 @@ describe('runConfigValidation', () => {
 			systemConfig: {
 				...systemConfig,
 				cacheDir: path.join(temporaryDirectoryPath, 'cache'),
-				runtimeDir: path.join(temporaryDirectoryPath, 'cache', 'runtime'),
+				controllerRuntimeDir: path.join(temporaryDirectoryPath, 'cache', 'runtime'),
 			},
 		});
 
@@ -1661,7 +1673,7 @@ describe('runConfigValidation', () => {
 			result.checks.find((check) => check.name === 'runtime-path-isolation-cacheDir'),
 		).toMatchObject({
 			ok: false,
-			hint: 'runtimeDir must not overlap cacheDir',
+			hint: 'controllerRuntimeDir must not overlap cacheDir',
 		});
 
 		await rm(temporaryDirectoryPath, { force: true, recursive: true });

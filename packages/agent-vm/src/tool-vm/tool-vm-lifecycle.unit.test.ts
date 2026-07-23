@@ -219,14 +219,10 @@ async function createTemporaryDirectory(): Promise<string> {
 async function createToolVmSystemConfig(): Promise<LoadedSystemConfig> {
 	const temporaryDirectory = await createTemporaryDirectory();
 	const systemConfigPath = path.join(temporaryDirectory, 'config', 'system.json');
-	const stateDir = path.join(temporaryDirectory, 'state', 'shravan');
-	const zoneFilesDir = path.join(temporaryDirectory, 'zone-files', 'shravan');
 
 	return createLoadedSystemConfig(
 		{
-			cacheDir: path.join(temporaryDirectory, 'cache'),
-			controllerStateDir: path.join(temporaryDirectory, 'controller-state'),
-			runtimeDir: path.join(temporaryDirectory, 'runtime'),
+			storageRootDir: path.join(temporaryDirectory, 'storage'),
 			host: {
 				controllerPort: 18800,
 				projectNamespace: 'claw-tests-a1b2c3d4',
@@ -280,8 +276,6 @@ async function createToolVmSystemConfig(): Promise<LoadedSystemConfig> {
 						memory: '2G',
 						config: './config/shravan/openclaw.json',
 						port: 18791,
-						stateDir,
-						zoneFilesDir,
 					},
 					id: 'shravan',
 					secrets: {
@@ -322,16 +316,21 @@ function configureToolVmFixtureAsHermes(systemConfig: LoadedSystemConfig): void 
 	if (zone === undefined || zone.gateway.type !== 'openclaw') {
 		throw new Error('Expected shravan OpenClaw fixture zone');
 	}
-	zone.gateway = {
-		config: './config/shravan/hermes.yaml',
-		cpus: zone.gateway.cpus,
-		imageProfile: 'hermes',
-		memory: zone.gateway.memory,
-		port: zone.gateway.port,
-		profilesByAgent: { sun: 'researcher' },
-		stateDir: zone.gateway.stateDir,
-		type: 'hermes',
-		zoneFilesDir: zone.gateway.zoneFilesDir,
+	const zoneIndex = systemConfig.zones.indexOf(zone);
+	systemConfig.zones[zoneIndex] = {
+		...zone,
+		gateway: {
+			config: './config/shravan/hermes.yaml',
+			cpus: zone.gateway.cpus,
+			imageProfile: 'hermes',
+			memory: zone.gateway.memory,
+			port: zone.gateway.port,
+			profilesByAgent: { sun: 'researcher' },
+			stateDir: zone.gateway.stateDir,
+			type: 'hermes',
+			zoneFilesDir: zone.gateway.zoneFilesDir,
+			zoneRuntimeDir: zone.gateway.zoneRuntimeDir,
+		},
 	};
 }
 
@@ -340,10 +339,14 @@ async function createAgentGitDirectoryRoot(options: {
 	readonly systemConfig: LoadedSystemConfig;
 	readonly zoneId: string;
 }): Promise<string> {
+	const zone = options.systemConfig.zones.find(
+		(candidateZone) => candidateZone.id === options.zoneId,
+	);
+	if (zone === undefined) {
+		throw new Error(`Unknown test zone '${options.zoneId}'.`);
+	}
 	const hostGitDirectoryRoot = path.join(
-		options.systemConfig.runtimeDir,
-		'zones',
-		options.zoneId,
+		zone.gateway.zoneRuntimeDir,
 		'gitdirs',
 		'agents',
 		options.agentId,

@@ -555,9 +555,7 @@ export async function createStockGatewayRuntimeSandboxVmHarness(): Promise<Stock
 	const runtimeComposition = createManagedVmRuntimeComposition();
 	const udsRuntimeRoot = await mkdtemp('/tmp/agent-vm-sandbox-uds-');
 	const sharedHostGitDirectoryRoot = path.join(
-		project.systemConfig.runtimeDir,
-		'zones',
-		systemZone.id,
+		systemZone.gateway.zoneRuntimeDir,
 		'gitdirs',
 		'agents',
 		'gateway-agent',

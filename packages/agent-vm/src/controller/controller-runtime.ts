@@ -417,7 +417,7 @@ function resolveWorkspaceGitRemoteOperationConfig(options: {
 			zoneFilesDir: zone.gateway.zoneFilesDir,
 		}).hostWorkspaceRoot,
 		remoteUrl: configuredAgent.workspaceGit.remote.repoUrl,
-		runtimeDir: options.systemConfig.runtimeDir,
+		zoneRuntimeDir: zone.gateway.zoneRuntimeDir,
 		zoneId: options.zoneId,
 	};
 }
@@ -581,7 +581,7 @@ async function startControllerRuntimeWithOwnershipLock(
 					controllerPid: process.pid,
 					controllerPort: options.systemConfig.host.controllerPort,
 					event,
-					runtimeDir: options.systemConfig.runtimeDir,
+					controllerRuntimeDir: options.systemConfig.controllerRuntimeDir,
 				});
 			},
 		},
@@ -638,7 +638,7 @@ async function startControllerRuntimeWithOwnershipLock(
 								kind: 'remote',
 								remoteUrl: configuredAgent.workspaceGit.remote.repoUrl,
 							},
-				runtimeDir: options.systemConfig.runtimeDir,
+				zoneRuntimeDir: zone.gateway.zoneRuntimeDir,
 				zoneId: leaseOptions.zoneId,
 			});
 		},
@@ -1386,7 +1386,7 @@ export async function startControllerRuntime(
 ): Promise<ControllerRuntime> {
 	const controllerOwnershipLock = await (
 		dependencies.acquireControllerOwnershipLock ?? acquireControllerOwnershipLockDefault
-	)({ runtimeDirectory: options.systemConfig.runtimeDir });
+	)({ runtimeDirectory: options.systemConfig.controllerRuntimeDir });
 	const controllerStateRoot = createControllerStateRoot({
 		controllerStateDirectoryPath: options.systemConfig.controllerStateDir,
 	});

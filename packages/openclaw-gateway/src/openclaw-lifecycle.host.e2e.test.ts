@@ -531,7 +531,7 @@ describe('openclawLifecycle', () => {
 				gatewayCacheDir: '/host/cache/gateways/shravan',
 				projectNamespace: 'claw-tests-a1b2c3d4',
 				resolvedSecrets,
-				runtimeDir: '/host/runtime',
+				zoneRuntimeDir: '/host/runtime',
 				tcpPool: {
 					basePort: 19000,
 					size: 3,
@@ -582,7 +582,7 @@ describe('openclawLifecycle', () => {
 					gatewayCacheDir: '/host/cache/gateways/shravan',
 					projectNamespace: 'claw-tests-a1b2c3d4',
 					resolvedSecrets,
-					runtimeDir: '/host/runtime',
+					zoneRuntimeDir: '/host/runtime',
 					tcpPool: {
 						basePort: 19000,
 						size: 3,
@@ -622,7 +622,7 @@ describe('openclawLifecycle', () => {
 						...resolvedSecrets,
 						OPENCLAW_DIAGNOSTICS: '*',
 					},
-					runtimeDir: '/host/runtime',
+					zoneRuntimeDir: '/host/runtime',
 					tcpPool: {
 						basePort: 19000,
 						size: 3,
@@ -646,7 +646,7 @@ describe('openclawLifecycle', () => {
 				gatewayCacheDir: '/host/cache/gateways/shravan',
 				projectNamespace: 'claw-tests-a1b2c3d4',
 				resolvedSecrets,
-				runtimeDir: '/host/runtime',
+				zoneRuntimeDir: '/host/runtime',
 				tcpPool: {
 					basePort: 19000,
 					size: 3,
@@ -704,7 +704,7 @@ describe('openclawLifecycle', () => {
 				gatewayCacheDir: '/host/cache/gateways/shravan',
 				projectNamespace: 'claw-tests-a1b2c3d4',
 				resolvedSecrets,
-				runtimeDir: '/host/runtime',
+				zoneRuntimeDir: '/host/runtime',
 				tcpPool: {
 					basePort: 19000,
 					size: 3,
@@ -747,7 +747,7 @@ describe('openclawLifecycle', () => {
 				gatewayCacheDir: '/host/cache/gateways/shravan',
 				projectNamespace: 'claw-tests-a1b2c3d4',
 				resolvedSecrets,
-				runtimeDir: '/host/runtime',
+				zoneRuntimeDir: '/host/runtime',
 				tcpPool: {
 					basePort: 19000,
 					size: 3,
@@ -776,7 +776,7 @@ describe('openclawLifecycle', () => {
 					gatewayCacheDir: '/host/cache/gateways/shravan',
 					projectNamespace: 'claw-tests-a1b2c3d4',
 					resolvedSecrets,
-					runtimeDir: '/host/runtime',
+					zoneRuntimeDir: '/host/runtime',
 					tcpPool: {
 						basePort: 19000,
 						size: 3,
@@ -807,7 +807,7 @@ describe('openclawLifecycle', () => {
 				gatewayCacheDir: '/host/cache/gateways/shravan',
 				projectNamespace: 'claw-tests-a1b2c3d4',
 				resolvedSecrets,
-				runtimeDir: '/host/runtime',
+				zoneRuntimeDir: '/host/runtime',
 				tcpPool: {
 					basePort: 19000,
 					size: 2,
@@ -836,7 +836,7 @@ describe('openclawLifecycle', () => {
 				gatewayCacheDir: '/host/cache/gateways/shravan',
 				projectNamespace: 'claw-tests-a1b2c3d4',
 				resolvedSecrets,
-				runtimeDir: '/host/runtime',
+				zoneRuntimeDir: '/host/runtime',
 				tcpPool: {
 					basePort: 19000,
 					size: 2,
@@ -878,7 +878,7 @@ describe('openclawLifecycle', () => {
 			});
 			expect(vmRequirements.mounts['/agent-vm/logs']).toEqual({
 				access: 'read-write',
-				hostPath: '/host/runtime/zones/shravan/logs',
+				hostPath: '/host/runtime/logs',
 				kind: 'host-directory',
 			});
 			expect(vmRequirements.mounts['/zone']).toEqual({
@@ -938,7 +938,7 @@ describe('openclawLifecycle', () => {
 				gatewayCacheDir: path.join(temporaryDirectory, 'gateway-cache'),
 				projectNamespace: 'claw-tests-a1b2c3d4',
 				resolvedSecrets,
-				runtimeDir: path.join(temporaryDirectory, 'runtime'),
+				zoneRuntimeDir: path.join(temporaryDirectory, 'runtime'),
 				tcpPool: { basePort: 19_000, size: 2 },
 				zone,
 			});
@@ -958,7 +958,7 @@ describe('openclawLifecycle', () => {
 			expect(vmRequirements.mounts).toEqual({
 				'/agent-vm/logs': {
 					access: 'read-write',
-					hostPath: path.join(temporaryDirectory, 'runtime', 'zones', 'shravan', 'logs'),
+					hostPath: path.join(temporaryDirectory, 'runtime', 'logs'),
 					kind: 'host-directory',
 				},
 				'/home/openclaw/.openclaw/cache': {
@@ -989,7 +989,7 @@ describe('openclawLifecycle', () => {
 				gatewayCacheDir: '/host/cache/gateways/shravan',
 				projectNamespace: 'claw-tests-a1b2c3d4',
 				resolvedSecrets,
-				runtimeDir: '/host/runtime',
+				zoneRuntimeDir: '/host/runtime',
 				tcpPool: {
 					basePort: 19000,
 					size: 2,
@@ -1016,7 +1016,7 @@ describe('openclawLifecycle', () => {
 				gatewayCacheDir: '/host/cache/gateways/shravan',
 				projectNamespace: 'claw-tests-a1b2c3d4',
 				resolvedSecrets,
-				runtimeDir: '/host/runtime',
+				zoneRuntimeDir: '/host/runtime',
 				tcpPool: {
 					basePort: 19000,
 					size: 2,
@@ -1056,7 +1056,7 @@ describe('openclawLifecycle', () => {
 				gatewayCacheDir: '/host/cache/gateways/shravan',
 				projectNamespace: 'claw-tests-a1b2c3d4',
 				resolvedSecrets,
-				runtimeDir: '/host/runtime',
+				zoneRuntimeDir: '/host/runtime',
 				tcpPool: {
 					basePort: 19000,
 					size: 2,
@@ -1075,7 +1075,7 @@ describe('openclawLifecycle', () => {
 				gatewayCacheDir: '/host/cache/gateways/shravan',
 				projectNamespace: 'claw-tests-a1b2c3d4',
 				resolvedSecrets,
-				runtimeDir: '/host/runtime',
+				zoneRuntimeDir: '/host/runtime',
 				tcpPool: {
 					basePort: 19000,
 					size: 2,
@@ -1094,7 +1094,7 @@ describe('openclawLifecycle', () => {
 				gatewayCacheDir: '/host/cache/gateways/shravan',
 				projectNamespace: 'claw-tests-a1b2c3d4',
 				resolvedSecrets,
-				runtimeDir: '/host/runtime',
+				zoneRuntimeDir: '/host/runtime',
 				tcpPool: {
 					basePort: 19000,
 					size: 2,
@@ -1120,7 +1120,7 @@ describe('openclawLifecycle', () => {
 				gatewayCacheDir: '/host/cache/gateways/shravan',
 				projectNamespace: 'claw-tests-a1b2c3d4',
 				resolvedSecrets,
-				runtimeDir: '/host/runtime',
+				zoneRuntimeDir: '/host/runtime',
 				tcpPool: {
 					basePort: 19000,
 					size: 2,
@@ -1162,7 +1162,7 @@ describe('openclawLifecycle', () => {
 					...resolvedSecrets,
 					NODE_OPTIONS: '--inspect=0.0.0.0:9229',
 				},
-				runtimeDir: '/host/runtime',
+				zoneRuntimeDir: '/host/runtime',
 				tcpPool: {
 					basePort: 19000,
 					size: 2,

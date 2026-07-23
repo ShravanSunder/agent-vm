@@ -46,11 +46,9 @@ function createSystemConfig(
 		readonly providers: Record<string, { readonly profileIds: string[] }>;
 	},
 ): LoadedSystemConfig {
-	return createLoadedSystemConfig(
+	const systemConfig = createLoadedSystemConfig(
 		{
-			cacheDir: './cache',
-			controllerStateDir: '/controller-state-test',
-			runtimeDir: './runtime',
+			storageRootDir: './storage',
 			host: {
 				controllerPort: 18800,
 				projectNamespace: 'agent-vm-test',
@@ -96,8 +94,6 @@ function createSystemConfig(
 						memory: '2G',
 						config: openClawConfigPath,
 						port: 18791,
-						stateDir,
-						zoneFilesDir: './zone-files/shravan',
 						authProfilesByAgent,
 						...(authLogin === undefined ? {} : { authLogin }),
 					},
@@ -124,6 +120,14 @@ function createSystemConfig(
 		},
 		{ systemConfigPath: path.join(path.dirname(openClawConfigPath), 'system.json') },
 	);
+	const zone = systemConfig.zones[0];
+	if (zone === undefined || zone.gateway.type !== 'openclaw') {
+		throw new Error('Expected OpenClaw fixture zone.');
+	}
+	return {
+		...systemConfig,
+		zones: [{ ...zone, gateway: { ...zone.gateway, stateDir } }],
+	};
 }
 
 describe('buildOpenClawDeploymentDoctorChecks', () => {

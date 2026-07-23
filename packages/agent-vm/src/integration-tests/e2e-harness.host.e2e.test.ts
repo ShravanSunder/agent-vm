@@ -249,7 +249,7 @@ describe('scaffoldGatewayE2eProject', () => {
 		temporaryRoots.push(openClawProject.tempRoot, workerProject.tempRoot);
 
 		for (const project of [openClawProject, workerProject]) {
-			expect(path.resolve(project.systemConfig.runtimeDir)).toContain(
+			expect(path.resolve(project.systemConfig.storageRootDir)).toContain(
 				path.resolve(project.tempRoot),
 			);
 			for (const zone of project.systemConfig.zones) {
@@ -1116,8 +1116,8 @@ describe('prepareGatewayE2eProjectImages', () => {
 		process.env.AGENT_VM_E2E_CACHE_DIR = smokeCacheRoot;
 		const buildConfigs: LoadedSystemConfig[] = [];
 		try {
-			firstProject.systemConfig.cacheDir = path.join(smokeCacheRoot, 'worker');
-			secondProject.systemConfig.cacheDir = path.join(smokeCacheRoot, 'worker');
+			Object.assign(firstProject.systemConfig, { cacheDir: path.join(smokeCacheRoot, 'worker') });
+			Object.assign(secondProject.systemConfig, { cacheDir: path.join(smokeCacheRoot, 'worker') });
 			await Promise.all(
 				[firstProject, secondProject].map(async (project) => {
 					const gatewayProfile = project.systemConfig.imageProfiles.gateways.worker;
@@ -1228,7 +1228,7 @@ describe('prepareGatewayE2eProjectImages', () => {
 		});
 		temporaryRoots.push(workerProject.tempRoot, openClawProject.tempRoot);
 		for (const project of [workerProject, openClawProject]) {
-			project.systemConfig.cacheDir = smokeCacheRoot;
+			Object.assign(project.systemConfig, { cacheDir: smokeCacheRoot });
 			project.systemConfig.imageProfiles.toolVms = {};
 		}
 		const workerProfile = workerProject.systemConfig.imageProfiles.gateways.worker;
@@ -1311,8 +1311,8 @@ describe('prepareGatewayE2eProjectImages', () => {
 			zoneId: 'worker-e2e',
 		});
 		temporaryRoots.push(firstProject.tempRoot, secondProject.tempRoot);
-		firstProject.systemConfig.cacheDir = path.join(smokeCacheRoot, 'worker');
-		secondProject.systemConfig.cacheDir = path.join(smokeCacheRoot, 'worker');
+		Object.assign(firstProject.systemConfig, { cacheDir: path.join(smokeCacheRoot, 'worker') });
+		Object.assign(secondProject.systemConfig, { cacheDir: path.join(smokeCacheRoot, 'worker') });
 		for (const project of [firstProject, secondProject]) {
 			const gatewayProfile = project.systemConfig.imageProfiles.gateways.worker;
 			if (gatewayProfile === undefined) {
@@ -1490,6 +1490,7 @@ function createManagedGatewayStartResultStub(
 function createMinimalOpenClawSystemConfig(projectRoot = '/tmp'): LoadedSystemConfig {
 	return {
 		cacheDir: path.join(projectRoot, 'cache'),
+		controllerRuntimeDir: path.join(projectRoot, 'controller-runtime'),
 		controllerStateDir: path.join(projectRoot, 'controller-state'),
 		host: {
 			controllerPort: 18800,
@@ -1513,8 +1514,8 @@ function createMinimalOpenClawSystemConfig(projectRoot = '/tmp'): LoadedSystemCo
 				},
 			},
 		},
-		runtimeDir: path.join(projectRoot, 'runtime'),
-		schemaVersion: 1,
+		schemaVersion: 2,
+		storageRootDir: projectRoot,
 		systemConfigPath: path.join(projectRoot, 'config', 'system.json'),
 		tcpPool: { basePort: 19000, size: 4 },
 		toolVmProfiles: {
@@ -1542,8 +1543,9 @@ function createMinimalOpenClawSystemConfig(projectRoot = '/tmp'): LoadedSystemCo
 					imageProfile: 'openclaw',
 					memory: '1G',
 					port: 18789,
-					stateDir: path.join(projectRoot, 'state'),
-					zoneFilesDir: path.join(projectRoot, 'zone-files'),
+					stateDir: path.join(projectRoot, 'smoke', 'state'),
+					zoneFilesDir: path.join(projectRoot, 'smoke', 'zone-files'),
+					zoneRuntimeDir: path.join(projectRoot, 'smoke', 'runtime'),
 				},
 				id: 'smoke',
 				secrets: {

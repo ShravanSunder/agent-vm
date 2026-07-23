@@ -288,7 +288,7 @@ export interface BuildGatewayVmRequirementsOptions {
 	readonly gatewayCacheDir: string;
 	readonly projectNamespace: string;
 	readonly resolvedSecrets: Record<string, string>;
-	readonly runtimeDir: string;
+	readonly zoneRuntimeDir: string;
 	readonly tcpPool: {
 		readonly basePort: number;
 		readonly size: number;

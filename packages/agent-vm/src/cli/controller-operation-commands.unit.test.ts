@@ -32,9 +32,7 @@ function createWorkerSystemConfig(
 ): LoadedSystemConfig {
 	return createLoadedSystemConfig(
 		{
-			cacheDir: './cache',
-			controllerStateDir: '/controller-state-test',
-			runtimeDir: './runtime',
+			storageRootDir: './storage',
 			host: {
 				controllerPort: 18800,
 				projectNamespace: 'agent-vm-test',
@@ -86,7 +84,6 @@ function createWorkerSystemConfig(
 						memory: '2G',
 						config: workerConfigPath,
 						port: 18791,
-						stateDir: './state/worker',
 					},
 					id: 'worker',
 					secrets: {},
@@ -104,9 +101,7 @@ function createOpenClawSystemConfig(
 ): LoadedSystemConfig {
 	return createLoadedSystemConfig(
 		{
-			cacheDir: './cache',
-			controllerStateDir: '/controller-state-test',
-			runtimeDir: './runtime',
+			storageRootDir: './storage',
 			host: {
 				controllerPort: 18800,
 				projectNamespace: 'agent-vm-test',
@@ -162,8 +157,6 @@ function createOpenClawSystemConfig(
 							'openclaw.json',
 						),
 						port: 18791,
-						stateDir: './state/shravan',
-						zoneFilesDir: './zone-files/shravan',
 					},
 					id: 'shravan',
 					agents: [{ id: 'sun' }],
@@ -247,9 +240,7 @@ function createManagedBaseOpenClawSystemConfig(
 ): LoadedSystemConfig {
 	return createLoadedSystemConfig(
 		{
-			cacheDir: './cache',
-			controllerStateDir: '/controller-state-test',
-			runtimeDir: './runtime',
+			storageRootDir: './storage',
 			host: {
 				controllerPort: 18800,
 				projectNamespace: 'agent-vm-test',
@@ -322,8 +313,6 @@ function createManagedBaseOpenClawSystemConfig(
 							'openclaw.json',
 						),
 						port: 18791,
-						stateDir: './state/shravan',
-						zoneFilesDir: './zone-files/shravan',
 					},
 					id: 'shravan',
 					agents: [{ id: 'sun' }],

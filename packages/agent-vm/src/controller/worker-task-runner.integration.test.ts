@@ -207,10 +207,11 @@ vi.mock('execa', () => ({
 }));
 
 const systemConfig = {
-	schemaVersion: 1,
+	schemaVersion: 2,
+	storageRootDir: '/tmp',
 	cacheDir: '/tmp/cache',
-	controllerStateDir: '/controller-state-test',
-	runtimeDir: '/tmp/runtime',
+	controllerStateDir: '/tmp/controller-state',
+	controllerRuntimeDir: '/tmp/controller-runtime',
 	systemConfigPath: '/tmp/config/system.json',
 	host: {
 		controllerPort: 18800,
@@ -239,7 +240,8 @@ const systemConfig = {
 				cpus: 2,
 				port: 18791,
 				config: '',
-				stateDir: '',
+				stateDir: '/tmp/shravan/state',
+				zoneRuntimeDir: '/tmp/shravan/runtime',
 				repoPushPolicies: [],
 			},
 			secrets: {
@@ -413,9 +415,10 @@ describe('worker-task-runner', () => {
 			throw new Error('Expected zone config.');
 		}
 		zone.gateway.config = path.join(tempDir, 'gateway-config.json');
-		zone.gateway.stateDir = path.join(tempDir, 'state');
+		zone.gateway.stateDir = path.join(tempDir, zone.id, 'state');
+		zone.gateway.zoneRuntimeDir = path.join(tempDir, zone.id, 'runtime');
 		systemConfig.controllerStateDir = path.join(tempDir, 'controller-state');
-		systemConfig.runtimeDir = path.join(tempDir, 'runtime');
+		systemConfig.controllerRuntimeDir = path.join(tempDir, 'controller-runtime');
 		await fs.writeFile(zone.gateway.config, JSON.stringify(buildWorkerConfigInput()));
 
 		globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
@@ -2000,12 +2003,11 @@ describe('worker-task-runner', () => {
 			zoneId: 'shravan',
 		});
 
-		const taskRuntimeRoot = path.join(
-			systemConfig.runtimeDir,
-			'worker-tasks',
-			'shravan',
-			result.taskId,
-		);
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected zone config.');
+		}
+		const taskRuntimeRoot = path.join(zone.gateway.zoneRuntimeDir, 'worker-tasks', result.taskId);
 		await expect(fs.stat(taskRuntimeRoot)).rejects.toMatchObject({ code: 'ENOENT' });
 	});
 
@@ -2045,12 +2047,11 @@ describe('worker-task-runner', () => {
 			}),
 		});
 
-		const taskRuntimeRoot = path.join(
-			systemConfig.runtimeDir,
-			'worker-tasks',
-			'shravan',
-			result.taskId,
-		);
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected zone config.');
+		}
+		const taskRuntimeRoot = path.join(zone.gateway.zoneRuntimeDir, 'worker-tasks', result.taskId);
 		await expect(fs.stat(taskRuntimeRoot)).rejects.toThrow();
 	});
 
@@ -2365,12 +2366,11 @@ describe('worker-task-runner', () => {
 			zoneId: 'shravan',
 		});
 
-		const taskRuntimeRoot = path.join(
-			systemConfig.runtimeDir,
-			'worker-tasks',
-			'shravan',
-			result.taskId,
-		);
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected zone config.');
+		}
+		const taskRuntimeRoot = path.join(zone.gateway.zoneRuntimeDir, 'worker-tasks', result.taskId);
 		await expect(fs.stat(taskRuntimeRoot)).rejects.toMatchObject({ code: 'ENOENT' });
 	});
 
@@ -2504,9 +2504,8 @@ describe('worker-task-runner', () => {
 		}
 		const taskRoot = path.join(zone.gateway.stateDir, 'tasks', 'task-cleanup-failures');
 		const taskRuntimeRoot = path.join(
-			systemConfig.runtimeDir,
+			zone.gateway.zoneRuntimeDir,
 			'worker-tasks',
-			zone.id,
 			'task-cleanup-failures',
 		);
 		await fs.mkdir(path.join(taskRuntimeRoot, 'work'), { recursive: true });
@@ -2517,7 +2516,7 @@ describe('worker-task-runner', () => {
 			if (normalizedTarget.endsWith('/agent-vm/resources')) {
 				throw new Error('resource removal failed');
 			}
-			if (normalizedTarget.endsWith('/runtime/worker-tasks/shravan/task-cleanup-failures')) {
+			if (normalizedTarget.endsWith('/shravan/runtime/worker-tasks/task-cleanup-failures')) {
 				throw new Error('runtime removal failed');
 			}
 		});
@@ -2531,7 +2530,7 @@ describe('worker-task-runner', () => {
 		let thrownError: unknown;
 		try {
 			await postStopGateway('task-cleanup-failures', zone, [startedProvider], {
-				runtimeDir: systemConfig.runtimeDir,
+				zoneRuntimeDir: zone.gateway.zoneRuntimeDir,
 			});
 		} catch (error) {
 			thrownError = error;
@@ -2633,9 +2632,8 @@ describe('worker-task-runner', () => {
 
 		const taskRoot = path.join(zone.gateway.stateDir, 'tasks', 'task-keep-state');
 		const taskRuntimeRoot = path.join(
-			systemConfig.runtimeDir,
+			zone.gateway.zoneRuntimeDir,
 			'worker-tasks',
-			zone.id,
 			'task-keep-state',
 		);
 		await fs.mkdir(path.join(taskRuntimeRoot, 'work'), { recursive: true });
@@ -2655,7 +2653,7 @@ describe('worker-task-runner', () => {
 			repoId: 'repo-a',
 		};
 		await postStopGateway('task-keep-state', zone, [startedProvider], {
-			runtimeDir: systemConfig.runtimeDir,
+			zoneRuntimeDir: zone.gateway.zoneRuntimeDir,
 		});
 
 		expect(stopRepoResourceProvidersMock).toHaveBeenCalledWith([startedProvider]);

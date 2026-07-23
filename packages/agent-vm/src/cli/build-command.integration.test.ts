@@ -12,7 +12,11 @@ import {
 } from '../build/gondolin-image-builder.js';
 import { managedVmImageAssetFileNames as buildImageAssetFileNames } from '../build/gondolin-managed-vm-build-tooling.js';
 import type { ManagedImageRelease } from '../build/managed-image-dockerfile.js';
-import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
+import {
+	createLoadedSystemConfig,
+	type LoadedSystemConfig,
+	type SystemConfigInput,
+} from '../config/system-config.js';
 import {
 	createControllerStateRoot,
 	resolveControllerGatewayStateRoot,
@@ -78,11 +82,11 @@ function createSharedToolVmSystemConfig(options: {
 	readonly cacheDirectory: string;
 	readonly toolProfileNames: readonly string[];
 }): LoadedSystemConfig {
-	const { systemConfigPath: _systemConfigPath, ...baseConfig } = createTestSystemConfig();
+	const baseConfig = createTestSystemConfigInput();
 	return createLoadedSystemConfig(
 		{
 			...baseConfig,
-			cacheDir: options.cacheDirectory,
+			storageRootDir: path.dirname(options.cacheDirectory),
 			imageProfiles: {
 				gateways: {
 					openclaw: {
@@ -157,74 +161,73 @@ function createTestManagedImageRelease(): ManagedImageRelease {
 	};
 }
 
-function createTestSystemConfig(): LoadedSystemConfig {
-	return createLoadedSystemConfig(
-		{
-			cacheDir: '/cache',
-			controllerStateDir: '/controller-state-test',
-			runtimeDir: '/runtime',
-			host: {
-				controllerPort: 18800,
-				projectNamespace: 'claw-tests-a1b2c3d4',
-				secretsProvider: { type: '1password', tokenSource: { type: 'env' } },
-			},
-			imageProfiles: {
-				gateways: {
-					openclaw: {
-						type: 'openclaw',
-						buildConfig: '/project/vm-images/gateways/openclaw/build-config.json',
-						dockerfile: '/project/vm-images/gateways/openclaw/Dockerfile',
-					},
-				},
-				toolVms: {
-					default: {
-						type: 'toolVm',
-						buildConfig: '/project/vm-images/tool-vms/default/build-config.json',
-					},
-				},
-			},
-			zones: [
-				{
-					egressHosts: ['example.com'].map((host) => ({ host, audience: 'gateway' as const })),
-					gateway: {
-						type: 'openclaw',
-						controlAuth: {
-							mode: 'token',
-							secret: 'OPENCLAW_GATEWAY_TOKEN',
-						},
-						imageProfile: 'openclaw',
-						cpus: 2,
-						memory: '2G',
-						config: './config/test/openclaw.json',
-						port: 18791,
-						stateDir: '/state/test',
-						zoneFilesDir: '/zone-files/test',
-					},
-					id: 'test-zone',
-					agents: [{ id: 'main' }],
-					secrets: {
-						OPENCLAW_GATEWAY_TOKEN: {
-							source: 'environment',
-							envVar: 'OPENCLAW_GATEWAY_TOKEN',
-							injection: 'env',
-							audience: 'gateway',
-						},
-					},
-					defaultToolVmProfile: 'standard',
-					agentToolVmProfiles: {},
-				},
-			],
-			toolVmProfiles: {
-				standard: {
-					cpus: 1,
-					imageProfile: 'default',
-					memory: '1G',
-				},
-			},
-			tcpPool: { basePort: 19000, size: 5 },
+function createTestSystemConfigInput(): SystemConfigInput {
+	return {
+		storageRootDir: '/',
+		host: {
+			controllerPort: 18800,
+			projectNamespace: 'claw-tests-a1b2c3d4',
+			secretsProvider: { type: '1password', tokenSource: { type: 'env' } },
 		},
-		{ systemConfigPath: '/project/config/system.json' },
-	);
+		imageProfiles: {
+			gateways: {
+				openclaw: {
+					type: 'openclaw',
+					buildConfig: '/project/vm-images/gateways/openclaw/build-config.json',
+					dockerfile: '/project/vm-images/gateways/openclaw/Dockerfile',
+				},
+			},
+			toolVms: {
+				default: {
+					type: 'toolVm',
+					buildConfig: '/project/vm-images/tool-vms/default/build-config.json',
+				},
+			},
+		},
+		zones: [
+			{
+				egressHosts: ['example.com'].map((host) => ({ host, audience: 'gateway' as const })),
+				gateway: {
+					type: 'openclaw',
+					controlAuth: {
+						mode: 'token',
+						secret: 'OPENCLAW_GATEWAY_TOKEN',
+					},
+					imageProfile: 'openclaw',
+					cpus: 2,
+					memory: '2G',
+					config: './config/test/openclaw.json',
+					port: 18791,
+				},
+				id: 'test-zone',
+				agents: [{ id: 'main' }],
+				secrets: {
+					OPENCLAW_GATEWAY_TOKEN: {
+						source: 'environment',
+						envVar: 'OPENCLAW_GATEWAY_TOKEN',
+						injection: 'env',
+						audience: 'gateway',
+					},
+				},
+				defaultToolVmProfile: 'standard',
+				agentToolVmProfiles: {},
+			},
+		],
+		toolVmProfiles: {
+			standard: {
+				cpus: 1,
+				imageProfile: 'default',
+				memory: '1G',
+			},
+		},
+		tcpPool: { basePort: 19000, size: 5 },
+	};
+}
+
+function createTestSystemConfig(): LoadedSystemConfig {
+	return createLoadedSystemConfig(createTestSystemConfigInput(), {
+		systemConfigPath: '/project/config/system.json',
+	});
 }
 
 function createObservabilitySystemConfig(
@@ -234,7 +237,7 @@ function createObservabilitySystemConfig(
 		readonly zoneEnabled?: boolean;
 	} = {},
 ): LoadedSystemConfig {
-	const { systemConfigPath: _systemConfigPath, ...baseConfig } = createTestSystemConfig();
+	const baseConfig = createTestSystemConfigInput();
 	const stackMode = options.stackMode ?? 'managed';
 	const zoneEnabled = options.zoneEnabled ?? false;
 	const hostObservability =
@@ -484,7 +487,7 @@ describe('runBuildCommand', () => {
 			findPrunableImageDirectories: async () => [],
 		};
 
-		const { systemConfigPath: _systemConfigPath, ...baseConfig } = createTestSystemConfig();
+		const baseConfig = createTestSystemConfigInput();
 		await runBuildCommand(
 			{
 				systemConfig: createLoadedSystemConfig(
@@ -1380,11 +1383,11 @@ describe('runBuildCommand', () => {
 			}),
 			'utf8',
 		);
-		const { systemConfigPath: _systemConfigPath, ...baseConfig } = createTestSystemConfig();
+		const baseConfig = createTestSystemConfigInput();
 		const systemConfig = createLoadedSystemConfig(
 			{
 				...baseConfig,
-				cacheDir: cacheDirectory,
+				storageRootDir: path.dirname(cacheDirectory),
 				imageProfiles: {
 					gateways: {
 						openclaw: { type: 'openclaw', buildConfig: buildConfigPath },
@@ -1394,7 +1397,7 @@ describe('runBuildCommand', () => {
 					},
 				},
 			},
-			{ systemConfigPath: path.join(temporaryDirectory, 'system.json') },
+			{ systemConfigPath: path.join(temporaryDirectory, 'config', 'system.json') },
 		);
 		const observedFingerprints: string[] = [];
 
@@ -1529,12 +1532,12 @@ describe('runBuildCommand', () => {
 			}),
 			'utf8',
 		);
-		const { systemConfigPath: _systemConfigPath, ...baseConfig } = createTestSystemConfig();
+		const baseConfig = createTestSystemConfigInput();
 		const toolProfileNames = ['default', 'shravan', 'alevtina', 'sun'] as const;
 		const systemConfig = createLoadedSystemConfig(
 			{
 				...baseConfig,
-				cacheDir: cacheDirectory,
+				storageRootDir: path.dirname(cacheDirectory),
 				imageProfiles: {
 					gateways: {
 						openclaw: {
@@ -2014,11 +2017,11 @@ describe('runBuildCommand', () => {
 			}),
 			'utf8',
 		);
-		const { systemConfigPath: _systemConfigPath, ...baseConfig } = createTestSystemConfig();
+		const baseConfig = createTestSystemConfigInput();
 		const systemConfig = createLoadedSystemConfig(
 			{
 				...baseConfig,
-				cacheDir: cacheDirectory,
+				storageRootDir: path.dirname(cacheDirectory),
 				imageProfiles: {
 					gateways: {
 						openclaw: {
@@ -2089,11 +2092,11 @@ describe('runBuildCommand', () => {
 			'utf8',
 		);
 		fs.writeFileSync(dockerfilePath, 'FROM scratch\n');
-		const { systemConfigPath: _systemConfigPath, ...baseConfig } = createTestSystemConfig();
+		const baseConfig = createTestSystemConfigInput();
 		const systemConfig = createLoadedSystemConfig(
 			{
 				...baseConfig,
-				cacheDir: cacheDirectory,
+				storageRootDir: path.dirname(cacheDirectory),
 				imageProfiles: {
 					gateways: {
 						openclaw: {
@@ -2182,11 +2185,11 @@ describe('runBuildCommand', () => {
 		fs.writeFileSync(gatewayDockerfilePath, 'FROM scratch\n', 'utf8');
 		fs.writeFileSync(toolVmDockerfilePath, 'FROM scratch\n', 'utf8');
 
-		const { systemConfigPath: _systemConfigPath, ...baseConfig } = createTestSystemConfig();
+		const baseConfig = createTestSystemConfigInput();
 		const systemConfig = createLoadedSystemConfig(
 			{
 				...baseConfig,
-				cacheDir: path.join(temporaryDirectory, 'cache'),
+				storageRootDir: temporaryDirectory,
 				imageProfiles: {
 					gateways: {
 						openclaw: {
@@ -2254,11 +2257,11 @@ describe('runBuildCommand', () => {
 		fs.writeFileSync(gatewayDockerfilePath, 'FROM scratch\n', 'utf8');
 		fs.writeFileSync(toolVmDockerfilePath, 'FROM scratch\n', 'utf8');
 
-		const { systemConfigPath: _systemConfigPath, ...baseConfig } = createTestSystemConfig();
+		const baseConfig = createTestSystemConfigInput();
 		const systemConfig = createLoadedSystemConfig(
 			{
 				...baseConfig,
-				cacheDir: path.join(temporaryDirectory, 'cache'),
+				storageRootDir: temporaryDirectory,
 				imageProfiles: {
 					gateways: {
 						default: {
@@ -2843,39 +2846,36 @@ describe('runBuildCommand', () => {
 		if (!baseZone) {
 			throw new Error('Expected a test zone.');
 		}
-		const { systemConfigPath, ...baseSystemConfig } = systemConfig;
-		const workerSystemConfig = createLoadedSystemConfig(
-			{
-				...baseSystemConfig,
-				controllerStateDir: controllerStateDirectory,
-				imageProfiles: {
-					...systemConfig.imageProfiles,
-					gateways: {
-						worker: {
-							buildConfig: '/project/vm-images/gateways/worker/build-config.json',
-							type: 'worker',
-						},
+		const workerSystemConfig = {
+			...systemConfig,
+			controllerStateDir: controllerStateDirectory,
+			imageProfiles: {
+				...systemConfig.imageProfiles,
+				gateways: {
+					worker: {
+						buildConfig: '/project/vm-images/gateways/worker/build-config.json',
+						type: 'worker',
 					},
 				},
-				zones: [
-					{
-						egressHosts: baseZone.egressHosts,
-						gateway: {
-							config: '/project/config/test/worker.json',
-							cpus: 2,
-							imageProfile: 'worker',
-							memory: '2G',
-							port: 18791,
-							stateDir: path.join(temporaryDirectory, 'worker-state'),
-							type: 'worker',
-						},
-						id: baseZone.id,
-						secrets: {},
-					},
-				],
 			},
-			{ systemConfigPath },
-		);
+			zones: [
+				{
+					egressHosts: baseZone.egressHosts,
+					gateway: {
+						config: '/project/config/test/worker.json',
+						cpus: 2,
+						imageProfile: 'worker',
+						memory: '2G',
+						port: 18791,
+						stateDir: path.join(temporaryDirectory, 'worker-state'),
+						type: 'worker',
+						zoneRuntimeDir: path.join(temporaryDirectory, 'worker-runtime'),
+					},
+					id: baseZone.id,
+					secrets: {},
+				},
+			],
+		} satisfies LoadedSystemConfig;
 
 		await runBuildCommand(
 			{ systemConfig: workerSystemConfig },

@@ -36,9 +36,10 @@ const testOpenClawZone = {
 		imageProfile: 'openclaw',
 		memory: '2G',
 		port: 18_791,
-		stateDir: '/state/zone-test',
+		stateDir: '/storage/zone-test/state',
 		type: 'openclaw',
-		zoneFilesDir: '/zone-files/zone-test',
+		zoneFilesDir: '/storage/zone-test/zone-files',
+		zoneRuntimeDir: '/storage/zone-test/runtime',
 	},
 	id: 'zone-test',
 	secrets: {

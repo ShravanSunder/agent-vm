@@ -680,11 +680,9 @@ directory.
 ```
   system.json
   |-- host              Controller port, project namespace, secrets provider, GitHub token
-  |-- cacheDir          Rebuildable cache directory; not included in zone backups
-  |-- runtimeDir        Active worker runtime dir; not included in zone backups
-  |-- zones[].gateway.zoneFilesDir
-  |                      OpenClaw zone files; RealFS at /zone and included in backups
-  |                      Tool VM leases may select concrete child paths under /zone
+  |-- storageRootDir    Sole authored standard operational storage root
+  |                      Derives global cache/controller paths and each zone's
+  |                      state, zone-files, and runtime leaves
   |-- images            Build config paths for gateway and tool VM images
   |-- zones[]           Zone definitions: gateway type, resources, secrets, audience-scoped egress hosts
   |-- toolVmProfiles    Named Tool VM profiles (memory, cpus, image profile)
@@ -692,7 +690,7 @@ directory.
   |-- leaseIdleTtl      Optional lease idle TTL policy
 ```
 
-Each zone declares its `gateway.type` (`openclaw` or `worker`), resource
+Each zone declares its `gateway.type` (`openclaw`, `hermes`, or `worker`), resource
 limits, secret references, and audience-scoped outbound `egressHosts`.
 Gateway VMs receive `gateway | both` egress hosts and secrets; OpenClaw Tool
 VMs receive only `tool-vm | both` mediated secrets and egress hosts. OpenClaw

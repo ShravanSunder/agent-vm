@@ -23,7 +23,6 @@ function createSystemConfig(
 						imageProfile: 'worker',
 						memory: '4G',
 						port: 18891,
-						stateDir: '/state/beta',
 						type: 'worker' as const,
 					},
 					id: 'beta',
@@ -44,9 +43,7 @@ function createSystemConfig(
 						imageProfile: 'openclaw',
 						memory: '4G',
 						port: 18891,
-						stateDir: '/state/beta',
 						type: 'openclaw' as const,
-						zoneFilesDir: '/zone-files/beta',
 					},
 					id: 'beta',
 					secrets: {
@@ -60,9 +57,8 @@ function createSystemConfig(
 				};
 	return createLoadedSystemConfig(
 		{
-			schemaVersion: 1,
-			cacheDir: '/cache',
-			controllerStateDir: '/controller-state-test',
+			schemaVersion: 2,
+			storageRootDir: '/storage',
 			host: {
 				controllerPort: options.controllerPort ?? 18900,
 				projectNamespace: 'shravan-claw-beta-25319b68',
@@ -88,7 +84,6 @@ function createSystemConfig(
 					},
 				},
 			},
-			runtimeDir: '/runtime',
 			toolVmProfiles: {
 				default: {
 					cpus: 1,
@@ -284,7 +279,7 @@ describe('runControllerOfflineCleanup', () => {
 			results: [
 				{
 					ownershipDisposition: 'complete',
-					stateDir: '/state/beta',
+					stateDir: '/storage/beta/state',
 					zoneId: 'beta',
 				},
 			],
@@ -325,7 +320,7 @@ describe('runControllerOfflineCleanup', () => {
 			results: [
 				{
 					ownershipDisposition: 'complete',
-					stateDir: '/state/beta',
+					stateDir: '/storage/beta/state',
 					zoneId: 'beta',
 				},
 			],
@@ -333,7 +328,7 @@ describe('runControllerOfflineCleanup', () => {
 		expect(assertControllerUnavailableForOfflineCleanup).not.toHaveBeenCalled();
 		expect(cleanupRecordedVmTree).toHaveBeenCalledOnce();
 		expect(acquireControllerOwnershipLock).toHaveBeenCalledWith({
-			runtimeDirectory: '/runtime',
+			runtimeDirectory: '/storage/controller-runtime',
 		});
 		expect(operationOrder).toEqual(['acquire-lock', 'cleanup-records', 'release-lock']);
 	});
@@ -371,7 +366,7 @@ describe('runControllerOfflineCleanup', () => {
 			results: [
 				{
 					ownershipDisposition: 'complete',
-					stateDir: '/state/beta',
+					stateDir: '/storage/beta/state',
 					zoneId: 'beta',
 				},
 			],
@@ -379,7 +374,7 @@ describe('runControllerOfflineCleanup', () => {
 
 		expect(cleanupRecordedVmTree).toHaveBeenCalledOnce();
 		expect(cleanupRecordedVmTree).toHaveBeenCalledWith({
-			controllerStateRoot: { directoryPath: '/controller-state-test' },
+			controllerStateRoot: { directoryPath: '/storage/controller-state' },
 			systemConfig,
 			zoneId: 'beta',
 		});
@@ -424,7 +419,7 @@ describe('runControllerOfflineCleanup', () => {
 			results: [
 				{
 					ownershipDisposition: 'complete',
-					stateDir: '/state/beta',
+					stateDir: '/storage/beta/state',
 					zoneId: 'beta',
 				},
 			],
@@ -432,7 +427,7 @@ describe('runControllerOfflineCleanup', () => {
 
 		expect(operationOrder).toEqual(['scan-legacy-evidence', 'cleanup-tools', 'cleanup-gateway']);
 		expect(scanGatewayStateAuthorityEvidence).toHaveBeenCalledWith({
-			gatewayStateDirectoryPath: '/state/beta',
+			gatewayStateDirectoryPath: '/storage/beta/state',
 		});
 		expect(cleanupRecordedToolVmRuntimes).toHaveBeenCalledWith(
 			{
@@ -441,7 +436,7 @@ describe('runControllerOfflineCleanup', () => {
 				mode: 'offline-cleanup',
 				projectNamespace: systemConfig.host.projectNamespace,
 				recordsTarget: {
-					directoryPath: '/controller-state-test/zones/beta/tool-leases',
+					directoryPath: '/storage/controller-state/zones/beta/tool-leases',
 					kind: 'controller-tool-lease-records',
 					zoneId: 'beta',
 				},
@@ -457,7 +452,7 @@ describe('runControllerOfflineCleanup', () => {
 				mode: 'offline-cleanup',
 				projectNamespace: systemConfig.host.projectNamespace,
 				runtimeRecordTarget: {
-					filePath: '/controller-state-test/zones/beta/gateway-runtime.json',
+					filePath: '/storage/controller-state/zones/beta/gateway-runtime.json',
 					kind: 'controller-managed-gateway-runtime-record',
 					zoneId: 'beta',
 				},
@@ -503,21 +498,21 @@ describe('runControllerOfflineCleanup', () => {
 			results: [
 				{
 					ownershipDisposition: 'complete',
-					stateDir: '/state/beta',
+					stateDir: '/storage/beta/state',
 					zoneId: 'beta',
 				},
 			],
 		});
 
 		expect(scanGatewayStateAuthorityEvidence).toHaveBeenCalledWith({
-			gatewayStateDirectoryPath: '/state/beta',
+			gatewayStateDirectoryPath: '/storage/beta/state',
 		});
 		expect(cleanupRecordedWorkerRuntimes).toHaveBeenCalledWith(
 			{
 				expectedConfigPath: systemConfig.systemConfigPath,
 				expectedControllerPort: systemConfig.host.controllerPort,
 				gatewayStateRoot: {
-					directoryPath: '/controller-state-test/zones/beta',
+					directoryPath: '/storage/controller-state/zones/beta',
 					zoneId: 'beta',
 				},
 				mode: 'offline-cleanup',
@@ -566,7 +561,7 @@ describe('runControllerOfflineCleanup', () => {
 		);
 
 		expect(scanGatewayStateAuthorityEvidence).toHaveBeenCalledWith({
-			gatewayStateDirectoryPath: '/state/beta',
+			gatewayStateDirectoryPath: '/storage/beta/state',
 		});
 		expect(cleanupRecordedToolVmRuntimes).not.toHaveBeenCalled();
 		expect(cleanupRecordedGatewayRuntime).not.toHaveBeenCalled();

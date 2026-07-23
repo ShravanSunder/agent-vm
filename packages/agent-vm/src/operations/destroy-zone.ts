@@ -48,11 +48,7 @@ export async function runControllerDestroy(
 
 	if (options.purge) {
 		await fs.rm(zone.gateway.stateDir, { force: true, recursive: true });
-		await fs.rm(path.join(options.systemConfig.runtimeDir, 'worker-tasks', zone.id), {
-			force: true,
-			recursive: true,
-		});
-		await fs.rm(path.join(options.systemConfig.runtimeDir, 'zones', zone.id), {
+		await fs.rm(zone.gateway.zoneRuntimeDir, {
 			force: true,
 			recursive: true,
 		});

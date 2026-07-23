@@ -35,18 +35,20 @@ afterEach(async () => {
 async function createSystemConfigFixture(
 	leaseIdleTtl?: LoadedSystemConfig['leaseIdleTtl'],
 ): Promise<LoadedSystemConfig> {
-	const stateDir = path.join(testRoot, 'state', 'zone-a');
-	const zoneFilesDir = path.join(testRoot, 'zone-files', 'zone-a');
-	await mkdir(path.join(testRoot, 'runtime', 'zones', 'zone-a', 'gitdirs', 'agents', 'main'), {
+	const stateDir = path.join(testRoot, 'zone-a', 'state');
+	const zoneFilesDir = path.join(testRoot, 'zone-a', 'zone-files');
+	const zoneRuntimeDir = path.join(testRoot, 'zone-a', 'runtime');
+	await mkdir(path.join(zoneRuntimeDir, 'gitdirs', 'agents', 'main'), {
 		recursive: true,
 	});
 	await mkdir(path.join(zoneFilesDir, 'agents', 'main'), { recursive: true });
 	return {
-		schemaVersion: 1,
+		schemaVersion: 2,
+		storageRootDir: testRoot,
 		cacheDir: path.join(testRoot, 'cache'),
 		controllerStateDir: path.join(testRoot, 'controller-state'),
+		controllerRuntimeDir: path.join(testRoot, 'controller-runtime'),
 		...(leaseIdleTtl === undefined ? {} : { leaseIdleTtl }),
-		runtimeDir: path.join(testRoot, 'runtime'),
 		systemConfigPath: path.join(testRoot, 'config', 'system.json'),
 		host: {
 			controllerPort: 18_800,
@@ -121,6 +123,7 @@ async function createSystemConfigFixture(
 					stateDir,
 					type: 'openclaw',
 					zoneFilesDir,
+					zoneRuntimeDir,
 				},
 				id: 'zone-a',
 				secrets: {
@@ -142,19 +145,23 @@ function configureFixtureAsHermes(systemConfig: LoadedSystemConfig): void {
 		throw new Error('Expected managed framework fixture zone');
 	}
 	const gateway = zone.gateway;
-	zone.gateway = {
-		config: gateway.config,
-		cpus: gateway.cpus,
-		imageProfile: 'hermes',
-		memory: gateway.memory,
-		port: gateway.port,
-		profilesByAgent: { main: 'researcher' },
-		stateDir: gateway.stateDir,
-		type: 'hermes',
-		zoneFilesDir:
-			gateway.type === 'worker'
-				? path.join(testRoot, 'zone-files', 'zone-a')
-				: gateway.zoneFilesDir,
+	systemConfig.zones[0] = {
+		...zone,
+		gateway: {
+			config: gateway.config,
+			cpus: gateway.cpus,
+			imageProfile: 'hermes',
+			memory: gateway.memory,
+			port: gateway.port,
+			profilesByAgent: { main: 'researcher' },
+			stateDir: gateway.stateDir,
+			type: 'hermes',
+			zoneFilesDir:
+				gateway.type === 'worker'
+					? path.join(testRoot, 'zone-a', 'zone-files')
+					: gateway.zoneFilesDir,
+			zoneRuntimeDir: gateway.zoneRuntimeDir,
+		},
 	};
 }
 
@@ -204,7 +211,7 @@ function leaseResolutionInput(options?: {
 describe('createManagedFrameworkToolVmLeaseCreateOptionsResolver', () => {
 	it('does not resolve or return a Git root when workspaceGit is absent', async () => {
 		const systemConfig = await createSystemConfigFixture();
-		await rm(path.join(testRoot, 'runtime', 'zones', 'zone-a', 'gitdirs'), {
+		await rm(path.join(testRoot, 'zone-a', 'runtime', 'gitdirs'), {
 			force: true,
 			recursive: true,
 		});
@@ -216,7 +223,7 @@ describe('createManagedFrameworkToolVmLeaseCreateOptionsResolver', () => {
 
 		expect(options).not.toHaveProperty('hostGitDirectoryRoot');
 		await expect(
-			realpath(path.join(testRoot, 'runtime', 'zones', 'zone-a', 'gitdirs')),
+			realpath(path.join(testRoot, 'zone-a', 'runtime', 'gitdirs')),
 		).rejects.toMatchObject({ code: 'ENOENT' });
 	});
 
@@ -251,10 +258,10 @@ describe('createManagedFrameworkToolVmLeaseCreateOptionsResolver', () => {
 		if (zone === undefined) {
 			throw new Error('Expected OpenClaw fixture zone');
 		}
-		await mkdir(path.join(testRoot, 'zone-files', 'zone-a', 'agents', 'second'), {
+		await mkdir(path.join(testRoot, 'zone-a', 'zone-files', 'agents', 'second'), {
 			recursive: true,
 		});
-		await mkdir(path.join(testRoot, 'runtime', 'zones', 'zone-a', 'gitdirs', 'agents', 'second'), {
+		await mkdir(path.join(testRoot, 'zone-a', 'runtime', 'gitdirs', 'agents', 'second'), {
 			recursive: true,
 		});
 		zone.agents = [{ id: 'main' }, { id: 'second', workspaceGit: { mode: 'local' } }];
@@ -283,7 +290,7 @@ describe('createManagedFrameworkToolVmLeaseCreateOptionsResolver', () => {
 		});
 		expect(options.guestWorkdir).toBe('/work');
 		await expect(
-			realpath(path.join(testRoot, 'runtime', 'zones', 'zone-a', 'gitdirs', 'agents', 'second')),
+			realpath(path.join(testRoot, 'zone-a', 'runtime', 'gitdirs', 'agents', 'second')),
 		).resolves.toBe(options.hostGitDirectoryRoot);
 		expect(options).not.toHaveProperty('zoneGitMount');
 		expect(options).not.toHaveProperty('gatewaySelfRoot');
@@ -294,7 +301,7 @@ describe('createManagedFrameworkToolVmLeaseCreateOptionsResolver', () => {
 			purpose: 'tool_vm_lease',
 		});
 		await expect(
-			realpath(path.join(testRoot, 'zone-files', 'zone-a', 'agents', 'second')),
+			realpath(path.join(testRoot, 'zone-a', 'zone-files', 'agents', 'second')),
 		).resolves.toBe(options.hostWorkspaceRoot);
 	});
 
@@ -339,10 +346,10 @@ describe('createManagedFrameworkToolVmLeaseCreateOptionsResolver', () => {
 			zoneId: 'zone-a',
 		});
 		await expect(
-			realpath(path.join(testRoot, 'zone-files', 'zone-a', 'agents', 'main')),
+			realpath(path.join(testRoot, 'zone-a', 'zone-files', 'agents', 'main')),
 		).resolves.toBe(options.hostWorkspaceRoot);
 		await expect(
-			realpath(path.join(testRoot, 'runtime', 'zones', 'zone-a', 'gitdirs', 'agents', 'main')),
+			realpath(path.join(testRoot, 'zone-a', 'runtime', 'gitdirs', 'agents', 'main')),
 		).resolves.toBe(options.hostGitDirectoryRoot);
 	});
 
@@ -352,10 +359,10 @@ describe('createManagedFrameworkToolVmLeaseCreateOptionsResolver', () => {
 		if (zone === undefined) {
 			throw new Error('Expected OpenClaw fixture zone');
 		}
-		await mkdir(path.join(testRoot, 'zone-files', 'zone-a', 'agents', 'second'), {
+		await mkdir(path.join(testRoot, 'zone-a', 'zone-files', 'agents', 'second'), {
 			recursive: true,
 		});
-		await mkdir(path.join(testRoot, 'runtime', 'zones', 'zone-a', 'gitdirs', 'agents', 'second'), {
+		await mkdir(path.join(testRoot, 'zone-a', 'runtime', 'gitdirs', 'agents', 'second'), {
 			recursive: true,
 		});
 		zone.agents = [{ id: 'main' }, { id: 'second' }];
@@ -374,7 +381,7 @@ describe('createManagedFrameworkToolVmLeaseCreateOptionsResolver', () => {
 		);
 
 		await expect(
-			realpath(path.join(testRoot, 'zone-files', 'zone-a', 'agents', 'second')),
+			realpath(path.join(testRoot, 'zone-a', 'zone-files', 'agents', 'second')),
 		).resolves.toBe(options.hostWorkspaceRoot);
 		expect(options.hostWorkspaceRoot).not.toContain('caller-selected');
 	});
@@ -438,14 +445,18 @@ describe('createManagedFrameworkToolVmLeaseCreateOptionsResolver', () => {
 		if (zone === undefined) {
 			throw new Error('Expected managed framework fixture zone');
 		}
-		zone.gateway = {
-			config: './config/worker.json',
-			cpus: 2,
-			imageProfile: 'worker',
-			memory: '2G',
-			port: 18_792,
-			stateDir: path.join(testRoot, 'state', 'zone-a'),
-			type: 'worker',
+		systemConfig.zones[0] = {
+			...zone,
+			gateway: {
+				config: './config/worker.json',
+				cpus: 2,
+				imageProfile: 'worker',
+				memory: '2G',
+				port: 18_792,
+				stateDir: path.join(testRoot, 'zone-a', 'state'),
+				type: 'worker',
+				zoneRuntimeDir: path.join(testRoot, 'zone-a', 'runtime'),
+			},
 		};
 		const resolveLeaseCreateOptions = createManagedFrameworkToolVmLeaseCreateOptionsResolver({
 			systemConfig,

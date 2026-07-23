@@ -46,7 +46,7 @@ describe('createZoneBackupManager', () => {
 			stateDir,
 			zoneFilesDir,
 			backupDir,
-			runtimeDir,
+			zoneRuntimeDir: runtimeDir,
 		});
 
 		expect(result.zoneId).toBe('shravan');
@@ -72,7 +72,7 @@ describe('createZoneBackupManager', () => {
 				stateDir,
 				zoneFilesDir,
 				backupDir,
-				runtimeDir: path.join(stateDir, 'worker-tasks'),
+				zoneRuntimeDir: path.join(stateDir, 'worker-tasks'),
 			}),
 		).rejects.toThrow(/runtimeDir.*stateDir/u);
 		await expect(
@@ -82,7 +82,7 @@ describe('createZoneBackupManager', () => {
 				stateDir,
 				zoneFilesDir,
 				backupDir,
-				runtimeDir: path.join(zoneFilesDir, 'runtime'),
+				zoneRuntimeDir: path.join(zoneFilesDir, 'runtime'),
 			}),
 		).rejects.toThrow(/runtimeDir.*zoneFilesDir/u);
 		await expect(
@@ -92,7 +92,7 @@ describe('createZoneBackupManager', () => {
 				stateDir: path.join(tmpDir, 'runtime', 'state'),
 				zoneFilesDir,
 				backupDir,
-				runtimeDir: path.join(tmpDir, 'runtime'),
+				zoneRuntimeDir: path.join(tmpDir, 'runtime'),
 			}),
 		).rejects.toThrow(/runtimeDir.*stateDir/u);
 		await expect(
@@ -102,7 +102,7 @@ describe('createZoneBackupManager', () => {
 				stateDir,
 				zoneFilesDir: path.join(tmpDir, 'runtime', 'zone-files'),
 				backupDir,
-				runtimeDir: path.join(tmpDir, 'runtime'),
+				zoneRuntimeDir: path.join(tmpDir, 'runtime'),
 			}),
 		).rejects.toThrow(/runtimeDir.*zoneFilesDir/u);
 	});
@@ -125,7 +125,7 @@ describe('createZoneBackupManager', () => {
 				zoneFilesDir,
 				backupDir,
 				cacheDir,
-				runtimeDir: path.join(cacheDir, 'worker-tasks'),
+				zoneRuntimeDir: path.join(cacheDir, 'worker-tasks'),
 			}),
 		).rejects.toThrow(/runtimeDir.*cacheDir/u);
 		await expect(
@@ -135,7 +135,7 @@ describe('createZoneBackupManager', () => {
 				zoneFilesDir,
 				backupDir,
 				cacheDir: path.join(tmpDir, 'runtime', 'cache'),
-				runtimeDir: path.join(tmpDir, 'runtime'),
+				zoneRuntimeDir: path.join(tmpDir, 'runtime'),
 			}),
 		).rejects.toThrow(/runtimeDir.*cacheDir/u);
 	});
@@ -160,7 +160,7 @@ describe('createZoneBackupManager', () => {
 			stateDir,
 			zoneFilesDir,
 			backupDir,
-			runtimeDir,
+			zoneRuntimeDir: runtimeDir,
 		});
 
 		// Clear dirs to simulate a fresh machine
@@ -204,7 +204,7 @@ describe('createZoneBackupManager', () => {
 			stateDir: sourceStateDir,
 			zoneFilesDir: sourceZoneFilesDir,
 			backupDir,
-			runtimeDir,
+			zoneRuntimeDir: runtimeDir,
 		});
 
 		// Restore to completely different parents
@@ -295,7 +295,7 @@ describe('createZoneBackupManager', () => {
 			stateDir,
 			zoneFilesDir,
 			backupDir,
-			runtimeDir,
+			zoneRuntimeDir: runtimeDir,
 		});
 
 		// Clear and restore

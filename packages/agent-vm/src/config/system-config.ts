@@ -19,6 +19,7 @@ import { resolveConfigPath } from './path-resolver.js';
 import { zoneResourcesPolicySchema } from './resource-contracts/index.js';
 
 const gatewayTypeValues = ['openclaw', 'hermes', 'worker'] as const;
+const reservedZoneIds = new Set(['cache', 'controller-state', 'controller-runtime']);
 export const agentIdSchema = z
 	.string()
 	.min(1)
@@ -34,7 +35,8 @@ export const zoneIdSchema = z
 	.regex(
 		/^[a-z0-9][a-z0-9._-]*$/u,
 		'zone id must start with a lowercase letter or number and contain only lowercase letters, numbers, dots, underscores, or hyphens',
-	);
+	)
+	.refine((zoneId) => !reservedZoneIds.has(zoneId), 'zone id is reserved for global storage');
 
 function escapeRegExpLiteral(value: string): string {
 	return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
@@ -392,7 +394,6 @@ const zoneGatewayBaseSchema = z.object({
 		.strict()
 		.optional(),
 	config: z.string().min(1),
-	stateDir: z.string().min(1),
 	runtimeRootfsSize: z.string().min(1).optional(),
 	backupDir: z.string().min(1).optional(),
 	backupIdentity: hostSecretReferenceSchema.optional(),
@@ -403,7 +404,6 @@ const openClawZoneGatewaySchema = zoneGatewayBaseSchema
 	.extend({
 		type: z.literal('openclaw'),
 		controlAuth: openClawGatewayControlAuthSchema,
-		zoneFilesDir: z.string().min(1),
 		authProfilesRef: authProfilesSecretSchema.optional(),
 		authProfilesByAgent: z.record(agentIdSchema, authProfilesSecretSchema).optional(),
 		authLogin: openClawAuthLoginSchema.optional(),
@@ -457,7 +457,6 @@ const hermesProfilesByAgentSchema = z
 const hermesZoneGatewaySchema = zoneGatewayBaseSchema
 	.extend({
 		type: z.literal('hermes'),
-		zoneFilesDir: z.string().min(1),
 		profilesByAgent: hermesProfilesByAgentSchema,
 	})
 	.strict();
@@ -886,7 +885,7 @@ const zoneObservabilitySchema = z.discriminatedUnion('enabled', [
 const systemConfigSchema = z
 	.object({
 		$schema: z.string().min(1).optional(),
-		schemaVersion: z.literal(1).default(1),
+		schemaVersion: z.literal(2).default(2),
 		host: z.object({
 			controllerPort: z.number().int().positive(),
 			projectNamespace: z
@@ -907,9 +906,7 @@ const systemConfigSchema = z
 			observability: hostObservabilitySchema.optional(),
 		}),
 		controller: controllerConfigSchema.default({ health: defaultControllerHealthConfig }),
-		cacheDir: z.string().min(1).default('./cache'),
-		controllerStateDir: z.string().min(1),
-		runtimeDir: z.string().min(1).default('./runtime'),
+		storageRootDir: z.string().min(1).default('~/.agent-vm'),
 		imageProfiles: imageProfilesSchema,
 		zones: z
 			.array(
@@ -1449,12 +1446,36 @@ type ManagedHostObservabilityConfig = Extract<
 	{ readonly enabled: true; readonly stack: { readonly mode: 'managed' } }
 >;
 
-export type SystemConfig = Omit<ParsedSystemConfig, 'controller'> & {
+type ParsedSystemZone = ParsedSystemConfig['zones'][number];
+type ParsedZoneGateway = ParsedSystemZone['gateway'];
+type ResolvedZoneGateway = ParsedZoneGateway extends infer TGateway
+	? TGateway extends { readonly type: 'openclaw' | 'hermes' }
+		? TGateway & {
+				readonly stateDir: string;
+				readonly zoneFilesDir: string;
+				readonly zoneRuntimeDir: string;
+			}
+		: TGateway extends { readonly type: 'worker' }
+			? TGateway & {
+					readonly stateDir: string;
+					readonly zoneRuntimeDir: string;
+				}
+			: never
+	: never;
+type ResolvedSystemZone = Omit<ParsedSystemZone, 'gateway'> & {
+	readonly gateway: ResolvedZoneGateway;
+};
+
+export type SystemConfig = Omit<ParsedSystemConfig, 'controller' | 'zones'> & {
+	readonly cacheDir: string;
 	readonly controller?: ParsedSystemConfig['controller'];
+	readonly controllerRuntimeDir: string;
+	readonly controllerStateDir: string;
+	readonly zones: ResolvedSystemZone[];
 };
 export type SystemConfigInput = z.input<typeof systemConfigSchema>;
 
-export const systemConfigSchemaId = 'agent-vm:system:1';
+export const systemConfigSchemaId = 'agent-vm:system:2';
 
 export function createSystemConfigSchemaArtifact(): Record<string, unknown> {
 	return {
@@ -1501,7 +1522,7 @@ interface ControllerStateProtectedPath {
 
 type ControllerStateProtectedPathConfig = Pick<
 	SystemConfig,
-	'cacheDir' | 'host' | 'runtimeDir' | 'zones'
+	'cacheDir' | 'controllerRuntimeDir' | 'host' | 'zones'
 >;
 
 function collectControllerStateProtectedPaths(
@@ -1512,7 +1533,7 @@ function collectControllerStateProtectedPaths(
 		{ label: 'system config file', path: systemConfigPath },
 		{ label: 'system config parent directory', path: path.dirname(systemConfigPath) },
 		{ label: 'cacheDir', path: config.cacheDir },
-		{ label: 'runtimeDir', path: config.runtimeDir },
+		{ label: 'controllerRuntimeDir', path: config.controllerRuntimeDir },
 	];
 	const observability = config.host.observability;
 	if (isManagedHostObservabilityConfig(observability)) {
@@ -1550,16 +1571,13 @@ function assertControllerStatePathIsolation(options: {
 	}
 }
 
-function assertResolvedRuntimePathIsolation(
-	config: z.infer<typeof systemConfigSchema>,
-	systemConfigPath: string,
-): void {
+function assertResolvedRuntimePathIsolation(config: SystemConfig, systemConfigPath: string): void {
 	assertControllerStatePathIsolation({
 		controllerStateDir: config.controllerStateDir,
 		protectedPaths: collectControllerStateProtectedPaths(config, systemConfigPath),
 	});
-	if (pathsOverlap(config.runtimeDir, config.cacheDir)) {
-		throw new Error('runtimeDir must not overlap cacheDir.');
+	if (pathsOverlap(config.controllerRuntimeDir, config.cacheDir)) {
+		throw new Error('controllerRuntimeDir must not overlap cacheDir.');
 	}
 	const observability = config.host.observability;
 	if (isManagedHostObservabilityConfig(observability)) {
@@ -1567,13 +1585,13 @@ function assertResolvedRuntimePathIsolation(
 		if (pathsOverlap(dataDir, config.cacheDir)) {
 			throw new Error('observability dataDir must not overlap cacheDir.');
 		}
-		if (pathsOverlap(dataDir, config.runtimeDir)) {
-			throw new Error('observability dataDir must not overlap runtimeDir.');
+		if (pathsOverlap(dataDir, config.controllerRuntimeDir)) {
+			throw new Error('observability dataDir must not overlap controllerRuntimeDir.');
 		}
 	}
 	for (const zone of config.zones) {
-		if (pathsOverlap(config.runtimeDir, zone.gateway.stateDir)) {
-			throw new Error(`runtimeDir must not overlap stateDir for zone '${zone.id}'.`);
+		if (pathsOverlap(config.controllerRuntimeDir, zone.gateway.stateDir)) {
+			throw new Error(`controllerRuntimeDir must not overlap stateDir for zone '${zone.id}'.`);
 		}
 		if (pathsOverlap(config.cacheDir, zone.gateway.stateDir)) {
 			throw new Error(`cacheDir must not overlap stateDir for zone '${zone.id}'.`);
@@ -1586,9 +1604,9 @@ function assertResolvedRuntimePathIsolation(
 		}
 		if (
 			zone.gateway.type !== 'worker' &&
-			pathsOverlap(config.runtimeDir, zone.gateway.zoneFilesDir)
+			pathsOverlap(config.controllerRuntimeDir, zone.gateway.zoneFilesDir)
 		) {
-			throw new Error(`runtimeDir must not overlap zoneFilesDir for zone '${zone.id}'.`);
+			throw new Error(`controllerRuntimeDir must not overlap zoneFilesDir for zone '${zone.id}'.`);
 		}
 		if (
 			zone.gateway.type !== 'worker' &&
@@ -1617,14 +1635,60 @@ function assertResolvedRuntimePathIsolation(
 	}
 }
 
+function deriveResolvedStorage(
+	config: ParsedSystemConfig | SystemConfig,
+	storageRootDir: string = config.storageRootDir,
+): SystemConfig {
+	const zones: ResolvedSystemZone[] = config.zones.map((zone): ResolvedSystemZone => {
+		const zoneRootDir = path.join(storageRootDir, zone.id);
+		const stateDir = path.join(zoneRootDir, 'state');
+		const zoneRuntimeDir = path.join(zoneRootDir, 'runtime');
+		switch (zone.gateway.type) {
+			case 'openclaw':
+			case 'hermes':
+				return {
+					...zone,
+					gateway: {
+						...zone.gateway,
+						stateDir,
+						zoneFilesDir: path.join(zoneRootDir, 'zone-files'),
+						zoneRuntimeDir,
+					},
+				};
+			case 'worker':
+				return {
+					...zone,
+					gateway: {
+						...zone.gateway,
+						stateDir,
+						zoneRuntimeDir,
+					},
+				};
+			default: {
+				const exhaustiveGateway: never = zone.gateway;
+				throw new Error(`Unhandled gateway type: ${String(exhaustiveGateway)}`);
+			}
+		}
+	});
+	return {
+		...config,
+		storageRootDir,
+		cacheDir: path.join(storageRootDir, 'cache'),
+		controllerStateDir: path.join(storageRootDir, 'controller-state'),
+		controllerRuntimeDir: path.join(storageRootDir, 'controller-runtime'),
+		zones,
+	};
+}
+
 export function createLoadedSystemConfig(
 	config: SystemConfigInput,
 	options: { readonly systemConfigPath: string },
 ): LoadedSystemConfig {
 	const parsedConfig = systemConfigSchema.parse(config);
-	assertResolvedRuntimePathIsolation(parsedConfig, options.systemConfigPath);
+	const resolvedConfig = deriveResolvedStorage(parsedConfig);
+	assertResolvedRuntimePathIsolation(resolvedConfig, options.systemConfigPath);
 	return {
-		...parsedConfig,
+		...resolvedConfig,
 		systemConfigPath: options.systemConfigPath,
 	};
 }
@@ -1646,23 +1710,18 @@ function resolveRelativePaths(
 				return {
 					...gateway,
 					config: resolvePath(gateway.config),
-					stateDir: resolvePath(gateway.stateDir),
 					...(gateway.backupDir ? { backupDir: resolvePath(gateway.backupDir) } : {}),
-					zoneFilesDir: resolvePath(gateway.zoneFilesDir),
 				};
 			case 'hermes':
 				return {
 					...gateway,
 					config: resolvePath(gateway.config),
-					stateDir: resolvePath(gateway.stateDir),
 					...(gateway.backupDir ? { backupDir: resolvePath(gateway.backupDir) } : {}),
-					zoneFilesDir: resolvePath(gateway.zoneFilesDir),
 				};
 			case 'worker':
 				return {
 					...gateway,
 					config: resolvePath(gateway.config),
-					stateDir: resolvePath(gateway.stateDir),
 					...(gateway.backupDir ? { backupDir: resolvePath(gateway.backupDir) } : {}),
 				};
 			default: {
@@ -1683,9 +1742,7 @@ function resolveRelativePaths(
 					},
 				}
 			: config.host,
-		cacheDir: resolvePath(config.cacheDir),
-		controllerStateDir: resolvePath(config.controllerStateDir),
-		runtimeDir: resolvePath(config.runtimeDir),
+		storageRootDir: resolvePath(config.storageRootDir),
 		imageProfiles: {
 			gateways: Object.fromEntries(
 				Object.entries(config.imageProfiles.gateways).map(([profileId, profile]) => [
@@ -1796,20 +1853,24 @@ async function resolveCanonicalPathIdentity(inputPath: string): Promise<string> 
 	});
 }
 
-async function canonicalizeControllerStatePath(
+async function canonicalizeStorageRootPath(
 	config: LoadedSystemConfig,
 ): Promise<LoadedSystemConfig> {
-	const controllerStateDir = await resolveCanonicalPathIdentity(config.controllerStateDir);
+	const storageRootDir = await resolveCanonicalPathIdentity(config.storageRootDir);
+	const resolvedConfig = deriveResolvedStorage(config, storageRootDir);
 	const protectedPaths = await Promise.all(
-		collectControllerStateProtectedPaths(config, config.systemConfigPath).map(
+		collectControllerStateProtectedPaths(resolvedConfig, config.systemConfigPath).map(
 			async (protectedPath): Promise<ControllerStateProtectedPath> => ({
 				label: protectedPath.label,
 				path: await resolveCanonicalPathIdentity(protectedPath.path),
 			}),
 		),
 	);
-	assertControllerStatePathIsolation({ controllerStateDir, protectedPaths });
-	return { ...config, controllerStateDir };
+	assertControllerStatePathIsolation({
+		controllerStateDir: resolvedConfig.controllerStateDir,
+		protectedPaths,
+	});
+	return { ...resolvedConfig, systemConfigPath: config.systemConfigPath };
 }
 
 async function resolveExistingSystemConfigPath(configPath: string): Promise<string> {
@@ -1836,5 +1897,5 @@ export async function loadSystemConfig(configPath: string): Promise<LoadedSystem
 	const loadedConfig = createLoadedSystemConfig(resolveRelativePaths(config, configDir), {
 		systemConfigPath: absoluteConfigPath,
 	});
-	return await canonicalizeControllerStatePath(loadedConfig);
+	return await canonicalizeStorageRootPath(loadedConfig);
 }

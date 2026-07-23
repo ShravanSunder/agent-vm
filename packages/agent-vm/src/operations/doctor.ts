@@ -202,29 +202,29 @@ export function buildRuntimePathIsolationChecks(
 	systemConfig: SystemConfig,
 ): readonly DoctorCheck[] {
 	const failedChecks: DoctorCheck[] = [];
-	if (pathsOverlap(systemConfig.runtimeDir, systemConfig.cacheDir)) {
+	if (pathsOverlap(systemConfig.controllerRuntimeDir, systemConfig.cacheDir)) {
 		failedChecks.push({
 			name: 'runtime-path-isolation-cacheDir',
 			ok: false,
-			hint: 'runtimeDir must not overlap cacheDir',
+			hint: 'controllerRuntimeDir must not overlap cacheDir',
 		});
 	}
 	for (const zone of systemConfig.zones) {
-		if (pathsOverlap(systemConfig.runtimeDir, zone.gateway.stateDir)) {
+		if (pathsOverlap(systemConfig.controllerRuntimeDir, zone.gateway.stateDir)) {
 			failedChecks.push({
 				name: `runtime-path-isolation-stateDir-${zone.id}`,
 				ok: false,
-				hint: `runtimeDir must not overlap stateDir for zone '${zone.id}'`,
+				hint: `controllerRuntimeDir must not overlap stateDir for zone '${zone.id}'`,
 			});
 		}
 		if (
 			zone.gateway.type === 'openclaw' &&
-			pathsOverlap(systemConfig.runtimeDir, zone.gateway.zoneFilesDir)
+			pathsOverlap(systemConfig.controllerRuntimeDir, zone.gateway.zoneFilesDir)
 		) {
 			failedChecks.push({
 				name: `runtime-path-isolation-zoneFilesDir-${zone.id}`,
 				ok: false,
-				hint: `runtimeDir must not overlap zoneFilesDir for zone '${zone.id}'`,
+				hint: `controllerRuntimeDir must not overlap zoneFilesDir for zone '${zone.id}'`,
 			});
 		}
 	}
@@ -234,7 +234,7 @@ export function buildRuntimePathIsolationChecks(
 				{
 					name: 'runtime-path-isolation',
 					ok: true,
-					hint: systemConfig.runtimeDir,
+					hint: systemConfig.controllerRuntimeDir,
 				},
 			];
 }
@@ -244,7 +244,7 @@ export function buildRuntimePathIsolationCheck(systemConfig: SystemConfig): Doct
 		buildRuntimePathIsolationChecks(systemConfig)[0] ?? {
 			name: 'runtime-path-isolation',
 			ok: true,
-			hint: systemConfig.runtimeDir,
+			hint: systemConfig.controllerRuntimeDir,
 		}
 	);
 }
@@ -332,7 +332,7 @@ function buildWorkerWorkRootfsChecks(
 				gatewayCacheDir: systemConfig.cacheDir,
 				projectNamespace: systemConfig.host.projectNamespace,
 				resolvedSecrets: {},
-				runtimeDir: systemConfig.runtimeDir,
+				zoneRuntimeDir: zone.gateway.zoneRuntimeDir,
 				tcpPool: systemConfig.tcpPool,
 				zone: gatewayZone,
 			});

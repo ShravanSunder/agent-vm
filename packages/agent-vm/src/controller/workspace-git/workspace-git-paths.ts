@@ -11,7 +11,7 @@ export interface WorkspaceGitPaths {
 
 export function resolveWorkspaceGitPaths(options: {
 	readonly agentId: string;
-	readonly runtimeDir: string;
+	readonly zoneRuntimeDir: string;
 	readonly zoneId: string;
 }): WorkspaceGitPaths {
 	const hostGitDirectoryRoot = resolveManagedAgentGitDirectoryRoot(options);

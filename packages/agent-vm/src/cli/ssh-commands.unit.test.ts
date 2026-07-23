@@ -6,10 +6,11 @@ import { defaultCliDependencies } from './agent-vm-cli-support.js';
 import { runSshCommand } from './ssh-commands.js';
 
 const systemConfig = {
-	schemaVersion: 1,
+	schemaVersion: 2,
+	storageRootDir: './storage',
 	cacheDir: './cache',
 	controllerStateDir: '/controller-state-test',
-	runtimeDir: './runtime',
+	controllerRuntimeDir: './controller-runtime',
 	host: {
 		controllerPort: 18800,
 		projectNamespace: 'claw-tests-a1b2c3d4',
@@ -57,6 +58,7 @@ const systemConfig = {
 				port: 18791,
 				stateDir: './state/shravan',
 				zoneFilesDir: './zone-files/shravan',
+				zoneRuntimeDir: './runtime/shravan',
 			},
 			id: 'shravan',
 			secrets: {

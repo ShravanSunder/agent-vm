@@ -478,10 +478,11 @@ function isPathInsideDirectory(candidatePath: string, directoryPath: string): bo
 }
 
 const systemConfig = {
-	schemaVersion: 1,
+	schemaVersion: 2,
+	storageRootDir: controllerRuntimeTestRoot,
 	cacheDir: path.join(controllerRuntimeTestRoot, 'cache'),
 	controllerStateDir: path.join(controllerRuntimeTestRoot, 'controller-state'),
-	runtimeDir: path.join(controllerRuntimeTestRoot, 'runtime'),
+	controllerRuntimeDir: path.join(controllerRuntimeTestRoot, 'controller-runtime'),
 	systemConfigPath: path.join(controllerRuntimeTestRoot, 'config', 'system.json'),
 	host: {
 		controllerPort: 18_800,
@@ -535,6 +536,7 @@ const systemConfig = {
 				config: path.join(controllerRuntimeTestRoot, 'config', 'shravan', 'openclaw.json'),
 				stateDir: path.join(controllerRuntimeTestRoot, 'state', 'shravan'),
 				zoneFilesDir: path.join(controllerRuntimeTestRoot, 'zone-files', 'shravan'),
+				zoneRuntimeDir: path.join(controllerRuntimeTestRoot, 'shravan', 'runtime'),
 			},
 			secrets: {
 				OPENCLAW_GATEWAY_TOKEN: {
@@ -693,7 +695,7 @@ describe('controller runtime test fixture paths', () => {
 		const repositoryRoot = process.cwd();
 		const generatedPaths = [
 			systemConfig.cacheDir,
-			systemConfig.runtimeDir,
+			systemConfig.controllerRuntimeDir,
 			...systemConfig.zones.flatMap((zone) => [
 				zone.gateway.stateDir,
 				...(zone.gateway.type === 'openclaw' ? [zone.gateway.zoneFilesDir] : []),
@@ -1222,10 +1224,10 @@ describe('startControllerRuntime', () => {
 		const absoluteLeaseRoot = await mkdtemp(
 			path.join(tmpdir(), 'agent-vm-controller-runtime-test-'),
 		);
-		await mkdir(path.join(absoluteLeaseRoot, 'zone-files', zone.id, 'agents', 'main', 'self'), {
+		await mkdir(path.join(absoluteLeaseRoot, zone.id, 'zone-files', 'agents', 'main', 'self'), {
 			recursive: true,
 		});
-		await mkdir(path.join(absoluteLeaseRoot, 'zone-files', zone.id, 'agents', 'main', 'work'), {
+		await mkdir(path.join(absoluteLeaseRoot, zone.id, 'zone-files', 'agents', 'main', 'work'), {
 			recursive: true,
 		});
 		const absoluteLeaseZone = {
@@ -1233,8 +1235,9 @@ describe('startControllerRuntime', () => {
 			agents: [{ id: 'main', workspaceGit: { mode: 'local' } }],
 			gateway: {
 				...zone.gateway,
-				stateDir: path.join(absoluteLeaseRoot, 'state', zone.id),
-				zoneFilesDir: path.join(absoluteLeaseRoot, 'zone-files', zone.id),
+				stateDir: path.join(absoluteLeaseRoot, zone.id, 'state'),
+				zoneFilesDir: path.join(absoluteLeaseRoot, zone.id, 'zone-files'),
+				zoneRuntimeDir: path.join(absoluteLeaseRoot, zone.id, 'runtime'),
 			},
 		} satisfies LoadedSystemConfig['zones'][number];
 		const absoluteLeaseSystemConfig = {
@@ -1244,17 +1247,9 @@ describe('startControllerRuntime', () => {
 				...systemConfig.zones.filter((candidateZone) => candidateZone.id !== zone.id),
 			],
 		} satisfies LoadedSystemConfig;
-		await mkdir(
-			path.join(
-				absoluteLeaseSystemConfig.runtimeDir,
-				'zones',
-				zone.id,
-				'gitdirs',
-				'agents',
-				'main',
-			),
-			{ recursive: true },
-		);
+		await mkdir(path.join(absoluteLeaseZone.gateway.zoneRuntimeDir, 'gitdirs', 'agents', 'main'), {
+			recursive: true,
+		});
 		const closeGatewayVm = vi.fn(async () => {});
 		let capturedHealthEventStore: HealthEventStore | undefined;
 		let capturedOpenClawRuntimeStatusStore: OpenClawRuntimeStatusStore | undefined;
@@ -1343,9 +1338,7 @@ describe('startControllerRuntime', () => {
 			) => ({
 				branch: 'agent/workspace',
 				hostGitDirectory: path.join(
-					absoluteLeaseSystemConfig.runtimeDir,
-					'zones',
-					options.zoneId,
+					absoluteLeaseZone.gateway.zoneRuntimeDir,
 					'gitdirs',
 					'agents',
 					options.agentId,
@@ -1445,7 +1438,7 @@ describe('startControllerRuntime', () => {
 		);
 		expect(configureManagedVmHostNetworkDefaults).toHaveBeenCalledOnce();
 		expect(acquireControllerOwnershipLock).toHaveBeenCalledWith({
-			runtimeDirectory: absoluteLeaseSystemConfig.runtimeDir,
+			runtimeDirectory: absoluteLeaseSystemConfig.controllerRuntimeDir,
 		});
 		expect(startupEvents.indexOf('ownership-lock-acquired')).toBeLessThan(
 			startupEvents.indexOf('secrets'),
@@ -1568,7 +1561,7 @@ describe('startControllerRuntime', () => {
 				path.join(absoluteLeaseZone.gateway.zoneFilesDir, 'agents', 'main'),
 			),
 			policy: { kind: 'local' },
-			runtimeDir: absoluteLeaseSystemConfig.runtimeDir,
+			zoneRuntimeDir: absoluteLeaseZone.gateway.zoneRuntimeDir,
 			zoneId: 'shravan',
 		});
 		const refreshedControllerLeaseCallerContext = {
@@ -2498,16 +2491,20 @@ describe('startControllerRuntime', () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
 		process.env.OPENCLAW_GATEWAY_TOKEN = 'gateway-token';
 		const tempRoot = await mkdtemp(path.join(tmpdir(), 'agent-vm-controller-health-'));
-		const runtimeDir = path.join(tempRoot, 'runtime');
+		const controllerRuntimeDir = path.join(tempRoot, 'controller-runtime');
 		const runtimeSystemConfig = {
 			...systemConfig,
-			runtimeDir,
+			storageRootDir: tempRoot,
+			cacheDir: path.join(tempRoot, 'cache'),
+			controllerStateDir: path.join(tempRoot, 'controller-state'),
+			controllerRuntimeDir,
 			zones: systemConfig.zones.map((zone) => ({
 				...zone,
 				gateway: {
 					...zone.gateway,
-					stateDir: path.join(tempRoot, 'state', zone.id),
-					zoneFilesDir: path.join(tempRoot, 'zone-files', zone.id),
+					stateDir: path.join(tempRoot, zone.id, 'state'),
+					zoneFilesDir: path.join(tempRoot, zone.id, 'zone-files'),
+					zoneRuntimeDir: path.join(tempRoot, zone.id, 'runtime'),
 				},
 			})),
 		} satisfies LoadedSystemConfig;
@@ -2624,7 +2621,7 @@ describe('startControllerRuntime', () => {
 			} satisfies AgentVmHealthEvent);
 			await vi.waitFor(async () => {
 				const logText = await readFile(
-					path.join(runtimeDir, 'controller-health', 'events.jsonl'),
+					path.join(controllerRuntimeDir, 'controller-health', 'events.jsonl'),
 					'utf8',
 				);
 				expect(logText).toContain('"eventKind":"gateway-control-session"');

@@ -47,7 +47,7 @@ describe('workerLifecycle', () => {
 			gatewayCacheDir: '/host/cache/gateways/shravan',
 			projectNamespace: 'claw-tests-a1b2c3d4',
 			resolvedSecrets: { OPENAI_API_KEY: 'openai-token' },
-			runtimeDir: '/host/runtime',
+			zoneRuntimeDir: '/host/runtime',
 			tcpPool: {
 				basePort: 19000,
 				size: 5,
@@ -96,7 +96,7 @@ describe('workerLifecycle', () => {
 			gatewayCacheDir: '/host/cache/gateways/shravan',
 			projectNamespace: 'claw-tests-a1b2c3d4',
 			resolvedSecrets: { OPENAI_API_KEY: 'openai-token' },
-			runtimeDir: '/host/runtime',
+			zoneRuntimeDir: '/host/runtime',
 			tcpPool: {
 				basePort: 19000,
 				size: 5,
@@ -115,7 +115,7 @@ describe('workerLifecycle', () => {
 			gatewayCacheDir: '/host/cache/gateways/shravan',
 			projectNamespace: 'claw-tests-a1b2c3d4',
 			resolvedSecrets: { OPENAI_API_KEY: 'openai-token' },
-			runtimeDir: '/host/runtime',
+			zoneRuntimeDir: '/host/runtime',
 			tcpPool: {
 				basePort: 19000,
 				size: 5,
@@ -142,7 +142,7 @@ describe('workerLifecycle', () => {
 			gatewayCacheDir: '/host/cache/gateways/shravan',
 			projectNamespace: 'claw-tests-a1b2c3d4',
 			resolvedSecrets: { OPENAI_API_KEY: 'openai-token' },
-			runtimeDir: '/host/runtime',
+			zoneRuntimeDir: '/host/runtime',
 			tcpPool: {
 				basePort: 19000,
 				size: 5,
@@ -189,7 +189,7 @@ describe('workerLifecycle', () => {
 				GITHUB_TOKEN: 'github-token',
 				LINEAR_API_KEY: 'linear-token',
 			},
-			runtimeDir: '/host/runtime',
+			zoneRuntimeDir: '/host/runtime',
 			tcpPool: {
 				basePort: 19000,
 				size: 5,
@@ -237,7 +237,7 @@ describe('workerLifecycle', () => {
 				OPENAI_API_KEY: 'openai-token',
 				NODE_OPTIONS: '--inspect=0.0.0.0:9229',
 			},
-			runtimeDir: '/host/runtime',
+			zoneRuntimeDir: '/host/runtime',
 			tcpPool: {
 				basePort: 19000,
 				size: 5,

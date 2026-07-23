@@ -103,16 +103,16 @@ function createFixtureGatewayDestroyer(options: {
 
 function createSystemConfig(
 	controllerPort: number,
-	stateDirectory: string,
-	zoneFilesDirectory: string,
+	storageRootDir: string,
 	openClawConfigPath: string,
 ): LoadedSystemConfig {
 	return {
-		schemaVersion: 1,
-		cacheDir: path.join(path.dirname(stateDirectory), 'cache'),
-		controllerStateDir: path.join(path.dirname(stateDirectory), 'controller-state'),
-		runtimeDir: path.join(path.dirname(stateDirectory), 'runtime'),
-		systemConfigPath: path.join(path.dirname(stateDirectory), 'config', 'system.json'),
+		schemaVersion: 2,
+		storageRootDir,
+		cacheDir: path.join(storageRootDir, 'cache'),
+		controllerRuntimeDir: path.join(storageRootDir, 'controller-runtime'),
+		controllerStateDir: path.join(storageRootDir, 'controller-state'),
+		systemConfigPath: path.join(storageRootDir, 'config', 'system.json'),
 		host: {
 			controllerPort,
 			projectNamespace: 'claw-tests-a1b2c3d4',
@@ -154,8 +154,9 @@ function createSystemConfig(
 					cpus: 2,
 					port: controllerPort + 100,
 					config: openClawConfigPath,
-					stateDir: stateDirectory,
-					zoneFilesDir: zoneFilesDirectory,
+					stateDir: path.join(storageRootDir, 'shravan', 'state'),
+					zoneFilesDir: path.join(storageRootDir, 'shravan', 'zone-files'),
+					zoneRuntimeDir: path.join(storageRootDir, 'shravan', 'runtime'),
 				},
 				secrets: {
 					OPENCLAW_GATEWAY_TOKEN: {
@@ -355,8 +356,8 @@ describe('live integration: controller restart persistence', () => {
 		const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'controller-restart-live-'));
 		createdDirectories.push(tempDirectory);
 
-		const stateDirectory = path.join(tempDirectory, 'state');
-		const zoneFilesDirectory = path.join(tempDirectory, 'zone-files');
+		const stateDirectory = path.join(tempDirectory, 'shravan', 'state');
+		const zoneFilesDirectory = path.join(tempDirectory, 'shravan', 'zone-files');
 		const zoneLeaseDirectory = path.join(zoneFilesDirectory, 'restart-work');
 		const openClawConfigPath = path.join(tempDirectory, 'openclaw.json');
 		fs.mkdirSync(stateDirectory, { recursive: true });
@@ -381,12 +382,7 @@ describe('live integration: controller restart persistence', () => {
 		);
 
 		const controllerPort = 18841;
-		const systemConfig = createSystemConfig(
-			controllerPort,
-			stateDirectory,
-			zoneFilesDirectory,
-			openClawConfigPath,
-		);
+		const systemConfig = createSystemConfig(controllerPort, tempDirectory, openClawConfigPath);
 		const zone = systemConfig.zones[0];
 		if (!zone) {
 			throw new Error('Expected restart test zone.');

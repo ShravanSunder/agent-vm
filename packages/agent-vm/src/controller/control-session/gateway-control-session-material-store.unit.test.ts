@@ -41,12 +41,12 @@ describe('gateway control session material store', () => {
 
 		await writeGatewayControlSessionMaterial(runtimeDirectory, material);
 
-		const materialPath = resolveGatewayControlSessionMaterialPath(runtimeDirectory, 'shravan');
+		const materialPath = resolveGatewayControlSessionMaterialPath(runtimeDirectory);
 		const storedMaterialText = await readFile(materialPath, 'utf8');
 		expect(storedMaterialText).toContain('BEGIN PRIVATE KEY');
 		expect((await stat(materialPath)).mode & 0o777).toBe(0o600);
 
-		const restoredMaterial = await loadGatewayControlSessionMaterial(runtimeDirectory, 'shravan');
+		const restoredMaterial = await loadGatewayControlSessionMaterial(runtimeDirectory);
 		expect(restoredMaterial).not.toBeNull();
 		if (restoredMaterial === null) {
 			throw new Error('Expected restored gateway control session material.');
@@ -69,8 +69,6 @@ describe('gateway control session material store', () => {
 	it('returns null when no host runtime material exists for the zone', async () => {
 		const runtimeDirectory = await createRuntimeDirectory();
 
-		await expect(
-			loadGatewayControlSessionMaterial(runtimeDirectory, 'shravan'),
-		).resolves.toBeNull();
+		await expect(loadGatewayControlSessionMaterial(runtimeDirectory)).resolves.toBeNull();
 	});
 });

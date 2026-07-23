@@ -12,10 +12,11 @@ import type { PreparedWorkerTask } from '../worker-task-runner.js';
 import { createWorkerZoneRuntime as createWorkerZoneRuntimeImpl } from './worker-zone-runtime.js';
 
 const systemConfig = {
-	schemaVersion: 1,
+	schemaVersion: 2,
+	storageRootDir: './storage',
 	cacheDir: './cache',
 	controllerStateDir: '/controller-state-test',
-	runtimeDir: './runtime',
+	controllerRuntimeDir: './runtime',
 	host: {
 		controllerPort: 18800,
 		projectNamespace: 'worker-runtime-test',
@@ -37,6 +38,7 @@ const systemConfig = {
 				port: 18793,
 				config: './worker/worker.json',
 				stateDir: './state/worker',
+				zoneRuntimeDir: './runtime/worker-zone',
 			},
 			secrets: {},
 			egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),

@@ -929,9 +929,8 @@ async function createSystemConfig(): Promise<LoadedSystemConfig> {
 	await writeMinimalMcpPortalConfigs(toolPortalConfigDir);
 	return createLoadedSystemConfig(
 		{
-			cacheDir: path.join(workingDirectoryPath, 'cache'),
-			controllerStateDir: path.join(workingDirectoryPath, 'controller-state'),
-			runtimeDir: path.join(workingDirectoryPath, 'runtime'),
+			schemaVersion: 2,
+			storageRootDir: workingDirectoryPath,
 			host: {
 				controllerPort: 18800,
 				projectNamespace: 'claw-tests-a1b2c3d4',
@@ -986,8 +985,6 @@ async function createSystemConfig(): Promise<LoadedSystemConfig> {
 						config: gatewayConfigPath,
 						rawEnvSecrets: ['DISCORD_BOT_TOKEN'],
 						runtimeRootfsSize: '12G',
-						stateDir: path.join(workingDirectoryPath, 'state', 'shravan'),
-						zoneFilesDir: path.join(workingDirectoryPath, 'zone-files', 'shravan'),
 					},
 					toolPortal: createGatewayZoneToolPortalConfig(toolPortalConfigDir),
 					secrets: {
@@ -1092,6 +1089,7 @@ async function createHermesSystemConfig(): Promise<LoadedSystemConfig> {
 					stateDir: openClawZone.gateway.stateDir,
 					type: 'hermes',
 					zoneFilesDir: openClawZone.gateway.zoneFilesDir,
+					zoneRuntimeDir: openClawZone.gateway.zoneRuntimeDir,
 				},
 				secrets: {
 					API_SERVER_KEY: {
@@ -1136,8 +1134,39 @@ function createObservabilitySystemConfig(
 		readonly zoneEnabled?: boolean;
 	} = {},
 ): LoadedSystemConfig {
-	const { systemConfigPath, ...baseConfig } = systemConfig;
+	const {
+		cacheDir: _cacheDir,
+		controllerRuntimeDir: _controllerRuntimeDir,
+		controllerStateDir: _controllerStateDir,
+		systemConfigPath,
+		...baseConfig
+	} = systemConfig;
 	const zoneEnabled = options.zoneEnabled ?? false;
+	const authoredZones = baseConfig.zones.map((zone) => {
+		const { gateway, ...authoredZone } = zone;
+		const observability = zoneEnabled
+			? {
+					observability: {
+						enabled: true as const,
+						services: {
+							framework: { traces: true, metrics: true, logs: true },
+							toolPortal: { traces: true, metrics: true, logs: true },
+						},
+					},
+				}
+			: {};
+		if (gateway.type === 'worker') {
+			const { stateDir: _stateDir, zoneRuntimeDir: _zoneRuntimeDir, ...authoredGateway } = gateway;
+			return { ...authoredZone, ...observability, gateway: authoredGateway };
+		}
+		const {
+			stateDir: _stateDir,
+			zoneFilesDir: _zoneFilesDir,
+			zoneRuntimeDir: _zoneRuntimeDir,
+			...authoredGateway
+		} = gateway;
+		return { ...authoredZone, ...observability, gateway: authoredGateway };
+	});
 	return createLoadedSystemConfig(
 		{
 			...baseConfig,
@@ -1162,20 +1191,7 @@ function createObservabilitySystemConfig(
 					},
 				},
 			},
-			zones: baseConfig.zones.map((zone) => ({
-				...zone,
-				...(zoneEnabled
-					? {
-							observability: {
-								enabled: true,
-								services: {
-									framework: { traces: true, metrics: true, logs: true },
-									toolPortal: { traces: true, metrics: true, logs: true },
-								},
-							},
-						}
-					: {}),
-			})),
+			zones: authoredZones,
 		},
 		{ systemConfigPath },
 	);
@@ -1471,7 +1487,11 @@ describe('startGatewayZone', () => {
 			},
 		);
 
-		const logDirectoryPath = path.join(systemConfig.runtimeDir, 'zones', 'shravan', 'logs');
+		const zone = systemConfig.zones[0];
+		if (zone === undefined) {
+			throw new Error('Expected configured test zone.');
+		}
+		const logDirectoryPath = path.join(zone.gateway.zoneRuntimeDir, 'logs');
 		expect((await stat(logDirectoryPath)).mode & 0o777).toBe(0o700);
 		expect(buildImage).toHaveBeenCalled();
 		expect(ownership.createVmOwnership.mock.invocationCallOrder[0] ?? 0).toBeLessThan(
@@ -1525,7 +1545,7 @@ describe('startGatewayZone', () => {
 				mounts: expect.objectContaining({
 					'/agent-vm/logs': {
 						access: 'read-write',
-						hostPath: path.join(systemConfig.runtimeDir, 'zones', 'shravan', 'logs'),
+						hostPath: path.join(zone.gateway.zoneRuntimeDir, 'logs'),
 						kind: 'host-directory',
 					},
 					'/home/openclaw/.openclaw/cache': {
@@ -3310,9 +3330,9 @@ describe('startGatewayZone', () => {
 		expect(managedAgentWorkspaceStats.every((workspaceStats) => workspaceStats.isDirectory())).toBe(
 			true,
 		);
-		await expect(
-			stat(path.join(systemConfig.runtimeDir, 'zones', zone.id, 'gitdirs')),
-		).rejects.toMatchObject({ code: 'ENOENT' });
+		await expect(stat(path.join(zone.gateway.zoneRuntimeDir, 'gitdirs'))).rejects.toMatchObject({
+			code: 'ENOENT',
+		});
 		expect(await readFile(stateSentinelPath, 'utf8')).toBe('state-preserved\n');
 		expect(await readFile(controllerStateSentinelPath, 'utf8')).toBe(
 			'controller-state-preserved\n',
@@ -6345,7 +6365,7 @@ describe('startGatewayZone', () => {
 		).rejects.toMatchObject({ code: 'ENOENT' });
 
 		const controllerOnlyMaterialText = await readFile(
-			resolveGatewayControlSessionMaterialPath(systemConfigWithToolPortal.runtimeDir, 'shravan'),
+			resolveGatewayControlSessionMaterialPath(zone.gateway.zoneRuntimeDir),
 			'utf8',
 		);
 		const controllerOnlyMaterial = requireObjectProperty(
@@ -6674,17 +6694,13 @@ describe('startGatewayZone', () => {
 		expect(workspaceRootStats.every((rootStats) => rootStats.isDirectory())).toBe(true);
 		expect(
 			(
-				await stat(
-					path.join(systemConfig.runtimeDir, 'zones', zone.id, 'gitdirs', 'agents', 'main'),
-				)
+				await stat(path.join(zone.gateway.zoneRuntimeDir, 'gitdirs', 'agents', 'main'))
 			).isDirectory(),
 		).toBe(true);
 		await expect(
-			stat(path.join(systemConfig.runtimeDir, 'zones', zone.id, 'gitdirs', 'agents', 'second')),
+			stat(path.join(zone.gateway.zoneRuntimeDir, 'gitdirs', 'agents', 'second')),
 		).rejects.toMatchObject({ code: 'ENOENT' });
-		expect(
-			(await stat(path.join(systemConfig.runtimeDir, 'zones', zone.id, 'logs'))).isDirectory(),
-		).toBe(true);
+		expect((await stat(path.join(zone.gateway.zoneRuntimeDir, 'logs'))).isDirectory()).toBe(true);
 		const execCallCountBeforeDestroy = exec.mock.calls.length;
 		await managedResult.destroyGateway();
 		expect(exec).toHaveBeenCalledTimes(execCallCountBeforeDestroy);

@@ -13,14 +13,14 @@ export async function createEncryptedBackup(options: {
 	readonly backupDir: string;
 	readonly cacheDir: string;
 	readonly encryption: BackupEncryption;
-	readonly runtimeDir: string;
+	readonly zoneRuntimeDir: string;
 	readonly stateDir: string;
 	readonly zoneFilesDir?: string;
 	readonly zoneId: string;
 }): Promise<BackupResult> {
 	assertRuntimeDirOutsideBackupInputs({
 		cacheDir: options.cacheDir,
-		runtimeDir: options.runtimeDir,
+		zoneRuntimeDir: options.zoneRuntimeDir,
 		stateDir: options.stateDir,
 		...(options.zoneFilesDir !== undefined ? { zoneFilesDir: options.zoneFilesDir } : {}),
 	});
@@ -130,26 +130,26 @@ function assertNoPathOverlap(options: {
 
 function assertRuntimeDirOutsideBackupInputs(options: {
 	readonly cacheDir: string;
-	readonly runtimeDir: string;
+	readonly zoneRuntimeDir: string;
 	readonly stateDir: string;
 	readonly zoneFilesDir?: string;
 }): void {
 	assertNoPathOverlap({
-		firstLabel: 'runtimeDir',
-		firstPath: options.runtimeDir,
+		firstLabel: 'zoneRuntimeDir',
+		firstPath: options.zoneRuntimeDir,
 		secondLabel: 'stateDir',
 		secondPath: options.stateDir,
 	});
 	assertNoPathOverlap({
-		firstLabel: 'runtimeDir',
-		firstPath: options.runtimeDir,
+		firstLabel: 'zoneRuntimeDir',
+		firstPath: options.zoneRuntimeDir,
 		secondLabel: 'cacheDir',
 		secondPath: options.cacheDir,
 	});
 	if (options.zoneFilesDir !== undefined) {
 		assertNoPathOverlap({
-			firstLabel: 'runtimeDir',
-			firstPath: options.runtimeDir,
+			firstLabel: 'zoneRuntimeDir',
+			firstPath: options.zoneRuntimeDir,
 			secondLabel: 'zoneFilesDir',
 			secondPath: options.zoneFilesDir,
 		});

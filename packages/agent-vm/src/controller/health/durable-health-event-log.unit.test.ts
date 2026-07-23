@@ -26,7 +26,7 @@ describe('durable health event log', () => {
 			controllerPid: 46_529,
 			controllerPort: 18_800,
 			event,
-			runtimeDir,
+			controllerRuntimeDir: runtimeDir,
 		});
 
 		const logText = await readFile(
@@ -57,7 +57,7 @@ describe('durable health event log', () => {
 			controllerPort: 18_800,
 			event: gatewayRecoveryEvent({ errorCode: 'secret-resolution-failed', result: 'failed' }),
 			operationId: 'op-refresh',
-			runtimeDir,
+			controllerRuntimeDir: runtimeDir,
 		});
 		await appendDurableHealthEvent({
 			controllerPid: 46_529,
@@ -68,10 +68,10 @@ describe('durable health event log', () => {
 				result: 'failed',
 			}),
 			operationId: 'op-recovery',
-			runtimeDir,
+			controllerRuntimeDir: runtimeDir,
 		});
 
-		const records = await readDurableHealthEvents({ runtimeDir });
+		const records = await readDurableHealthEvents({ controllerRuntimeDir: runtimeDir });
 
 		expect(records.map((record) => record.operationId)).toEqual(['op-refresh', 'op-recovery']);
 		expect(records.at(-1)).toMatchObject({
@@ -88,10 +88,10 @@ describe('durable health event log', () => {
 			controllerPid: 46_529,
 			controllerPort: 18_800,
 			event,
-			runtimeDir,
+			controllerRuntimeDir: runtimeDir,
 		});
 
-		const [record] = await readDurableHealthEvents({ runtimeDir });
+		const [record] = await readDurableHealthEvents({ controllerRuntimeDir: runtimeDir });
 
 		expect(record).toMatchObject({
 			body: { operationId: 'op-from-event' },
@@ -102,7 +102,9 @@ describe('durable health event log', () => {
 	it('returns an empty list when the durable health log has not been created yet', async () => {
 		const runtimeDir = await createTemporaryDirectory();
 
-		await expect(readDurableHealthEvents({ runtimeDir })).resolves.toEqual([]);
+		await expect(readDurableHealthEvents({ controllerRuntimeDir: runtimeDir })).resolves.toEqual(
+			[],
+		);
 	});
 });
 

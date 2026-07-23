@@ -136,7 +136,11 @@ export function createObservabilityRuntimeConfig(
 
 	const baseConfig = {
 		enabled: true,
-		runtimeDir: path.join(config.runtimeDir, 'observability', config.host.projectNamespace),
+		runtimeDir: path.join(
+			config.controllerRuntimeDir,
+			'observability',
+			config.host.projectNamespace,
+		),
 		bindAddress: hostObservability.bindAddress,
 		ports: hostObservability.ports,
 		prepareOnBuild: hostObservability.prepareOnBuild,

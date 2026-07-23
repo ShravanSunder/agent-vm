@@ -22,10 +22,11 @@ import { parseAgentIds } from './commands/init-definition.js';
 
 function createCliBuildSystemConfig(): LoadedSystemConfig {
 	return {
-		schemaVersion: 1,
+		schemaVersion: 2,
+		storageRootDir: './storage',
 		cacheDir: './cache',
 		controllerStateDir: '/controller-state-test',
-		runtimeDir: './runtime',
+		controllerRuntimeDir: './controller-runtime',
 		systemConfigPath: './config/system.json',
 		host: {
 			controllerPort: 18800,
@@ -82,6 +83,7 @@ function createCliBuildSystemConfig(): LoadedSystemConfig {
 					config: './config/shravan/openclaw.json',
 					port: 18791,
 					stateDir: './state/shravan',
+					zoneRuntimeDir: './runtime/shravan',
 					zoneFilesDir: './zone-files/shravan',
 					authLogin: {
 						defaultAgent: 'main',
@@ -144,6 +146,7 @@ function createCliBuildWorkerSystemConfig(): LoadedSystemConfig {
 					config: './config/shravan/worker.json',
 					port: 18791,
 					stateDir: './state/shravan',
+					zoneRuntimeDir: './runtime/shravan',
 				},
 			},
 		],
@@ -170,6 +173,7 @@ function createCliBuildHermesSystemConfig(): LoadedSystemConfig {
 					port: 18791,
 					stateDir: './state/shravan',
 					zoneFilesDir: './zone-files/shravan',
+					zoneRuntimeDir: './runtime/shravan',
 					profilesByAgent: { shravan: 'main' },
 				},
 			},
@@ -1042,7 +1046,7 @@ describe('runAgentVmCli', () => {
 				skipObservability: false,
 				systemConfig: expect.objectContaining({
 					cacheDir: './cache',
-					runtimeDir: './runtime',
+					controllerRuntimeDir: './controller-runtime',
 					systemConfigPath: './config/system.json',
 					imageProfiles: expect.objectContaining({
 						gateways: expect.objectContaining({
@@ -1186,7 +1190,7 @@ describe('runAgentVmCli', () => {
 				subcommand: 'clean',
 				systemConfig: expect.objectContaining({
 					cacheDir: './cache',
-					runtimeDir: './runtime',
+					controllerRuntimeDir: './controller-runtime',
 					systemConfigPath: './config/system.json',
 				}),
 			},
@@ -1215,7 +1219,7 @@ describe('runAgentVmCli', () => {
 				subcommand: 'list',
 				systemConfig: expect.objectContaining({
 					cacheDir: './cache',
-					runtimeDir: './runtime',
+					controllerRuntimeDir: './controller-runtime',
 					systemConfigPath: './config/system.json',
 				}),
 			},
@@ -1893,10 +1897,11 @@ describe('runAgentVmCli', () => {
 				probeOnePasswordServiceAccountHeadlessAuth: async () => ({ hint: 'ok', ok: true }),
 				resolveServiceAccountToken: async () => 'mock-token',
 				loadSystemConfig: async () => ({
-					schemaVersion: 1,
+					schemaVersion: 2,
+					storageRootDir: './storage',
 					cacheDir: './cache',
 					controllerStateDir: '/controller-state-test',
-					runtimeDir: './runtime',
+					controllerRuntimeDir: './controller-runtime',
 					systemConfigPath,
 					host: {
 						controllerPort: 18800,
@@ -2009,10 +2014,11 @@ describe('runAgentVmCli', () => {
 				probeOnePasswordServiceAccountHeadlessAuth: async () => ({ hint: 'ok', ok: true }),
 				resolveServiceAccountToken: async () => 'mock-token',
 				loadSystemConfig: async () => ({
-					schemaVersion: 1,
+					schemaVersion: 2,
+					storageRootDir: './storage',
 					cacheDir: './cache',
 					controllerStateDir: '/controller-state-test',
-					runtimeDir: './runtime',
+					controllerRuntimeDir: './controller-runtime',
 					systemConfigPath: './config/system.json',
 					host: {
 						controllerPort: 18800,
@@ -2133,10 +2139,11 @@ describe('runAgentVmCli', () => {
 				probeOnePasswordServiceAccountHeadlessAuth: async () => ({ hint: 'ok', ok: true }),
 				resolveServiceAccountToken: async () => 'mock-token',
 				loadSystemConfig: async () => ({
-					schemaVersion: 1,
+					schemaVersion: 2,
+					storageRootDir: './storage',
 					cacheDir: './cache',
 					controllerStateDir: '/controller-state-test',
-					runtimeDir: './runtime',
+					controllerRuntimeDir: './controller-runtime',
 					systemConfigPath: './config/system.json',
 					host: {
 						controllerPort: 18800,
@@ -2194,6 +2201,7 @@ describe('runAgentVmCli', () => {
 								port: 18791,
 								stateDir: './state/shravan',
 								zoneFilesDir: './zone-files/shravan',
+								zoneRuntimeDir: './runtime/shravan',
 							},
 							id: 'shravan',
 							secrets: {
@@ -2462,10 +2470,11 @@ describe('runAgentVmCli', () => {
 			probeOnePasswordServiceAccountHeadlessAuth: async () => ({ hint: 'ok', ok: true }),
 			resolveServiceAccountToken: async () => 'mock-token',
 			loadSystemConfig: async (): Promise<LoadedSystemConfig> => ({
-				schemaVersion: 1,
+				schemaVersion: 2,
+				storageRootDir: './storage',
 				cacheDir: './cache',
 				controllerStateDir: '/controller-state-test',
-				runtimeDir: './runtime',
+				controllerRuntimeDir: './controller-runtime',
 				systemConfigPath: './config/system.json',
 				host: {
 					controllerPort: 18800,
@@ -2523,6 +2532,7 @@ describe('runAgentVmCli', () => {
 							port: 18791,
 							stateDir: './state/shravan',
 							zoneFilesDir: './zone-files/shravan',
+							zoneRuntimeDir: './runtime/shravan',
 						},
 						id: 'shravan',
 						secrets: {
@@ -3177,10 +3187,11 @@ describe('runAgentVmCli', () => {
 					listBackups,
 				}),
 				loadSystemConfig: async () => ({
-					schemaVersion: 1,
+					schemaVersion: 2,
+					storageRootDir: './storage',
 					cacheDir: './cache',
 					controllerStateDir: '/controller-state-test',
-					runtimeDir: './runtime',
+					controllerRuntimeDir: './controller-runtime',
 					systemConfigPath: './config/system.json',
 					host: {
 						controllerPort: 18800,
@@ -3225,6 +3236,7 @@ describe('runAgentVmCli', () => {
 								port: 18791,
 								stateDir: './state/shravan',
 								zoneFilesDir: './zone-files/shravan',
+								zoneRuntimeDir: './runtime/shravan',
 							},
 							id: 'shravan',
 							secrets: {
@@ -3347,10 +3359,11 @@ describe('runAgentVmCli', () => {
 					listBackups: () => [],
 				}),
 				loadSystemConfig: async () => ({
-					schemaVersion: 1,
+					schemaVersion: 2,
+					storageRootDir: './storage',
 					cacheDir: './cache',
 					controllerStateDir: '/controller-state-test',
-					runtimeDir: './runtime',
+					controllerRuntimeDir: './controller-runtime',
 					systemConfigPath: './config/system.json',
 					host: {
 						controllerPort: 18800,
@@ -3395,6 +3408,7 @@ describe('runAgentVmCli', () => {
 								port: 18791,
 								stateDir: './state/shravan',
 								zoneFilesDir: './zone-files/shravan',
+								zoneRuntimeDir: './runtime/shravan',
 								backupIdentity: {
 									source: '1password',
 									ref: 'op://test-vault/backup-identity/password',

@@ -11,7 +11,7 @@ polling, and teardown. For the in-VM task loop itself, see
 
 ```text
 POST /zones/:zoneId/worker-tasks
-  -> create host gitdirs under runtimeDir
+  -> create host gitdirs under zoneRuntimeDir
   -> export repo metadata for .agent-vm config/resources
   -> merge zone config + repo-local overrides
   -> resolve resources
@@ -31,7 +31,7 @@ they are unsafe mutations unless a future idempotency contract proves otherwise.
 Worker repo files are hot execution data. They live on the VM rootfs/COW under
 `/work/repos/<repoId>` so edits, package installs, builds, and tests avoid the
 Gondolin RealFS path. Git metadata lives under
-`<runtimeDir>/worker-tasks/<zone>/<task>/gitdirs/<repoId>.git`, mounted into the
+`<zoneRuntimeDir>/worker-tasks/<taskId>/gitdirs/<repoId>.git`, mounted into the
 VM at `/gitdirs/<repoId>.git`; controller push/fetch operations use that host
 gitdir directly and disable hooks.
 

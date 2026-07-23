@@ -123,14 +123,10 @@ function createFixtureGatewayDestroyer(options: {
 	};
 }
 
-function createTestSystemConfig(options: {
-	readonly rootDirectory: string;
-	readonly stateDirectory: string;
-}): LoadedSystemConfig {
+function createTestSystemConfig(options: { readonly rootDirectory: string }): LoadedSystemConfig {
 	return createLoadedSystemConfig(
 		{
-			cacheDir: path.join(options.rootDirectory, 'cache'),
-			controllerStateDir: path.join(options.rootDirectory, 'controller-state'),
+			storageRootDir: options.rootDirectory,
 			host: {
 				controllerPort: 18_841,
 				projectNamespace: 'ownership-restart-e2e',
@@ -151,8 +147,7 @@ function createTestSystemConfig(options: {
 					},
 				},
 			},
-			runtimeDir: path.join(options.rootDirectory, 'runtime'),
-			schemaVersion: 1,
+			schemaVersion: 2,
 			tcpPool: { basePort: 29_000, size: 8 },
 			toolVmProfiles: {
 				default: { cpus: 1, imageProfile: 'default', memory: '512M' },
@@ -173,9 +168,7 @@ function createTestSystemConfig(options: {
 						imageProfile: 'openclaw',
 						memory: '512M',
 						port: 28_891,
-						stateDir: options.stateDirectory,
 						type: 'openclaw',
-						zoneFilesDir: path.join(options.rootDirectory, 'zone-files'),
 					},
 					id: zoneId,
 					secrets: {
@@ -202,8 +195,8 @@ function createTestSystemConfig(options: {
 
 async function createTestDeployment(): Promise<TestDeployment> {
 	const rootDirectory = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-own-'));
-	const stateDirectory = path.join(rootDirectory, 'state');
-	const systemConfig = createTestSystemConfig({ rootDirectory, stateDirectory });
+	const stateDirectory = path.join(rootDirectory, zoneId, 'state');
+	const systemConfig = createTestSystemConfig({ rootDirectory });
 	return {
 		controllerRecordTargets: resolveControllerGatewayRecordTargets({
 			gatewayStateRoot: resolveControllerGatewayStateRoot({

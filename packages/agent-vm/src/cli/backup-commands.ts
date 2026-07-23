@@ -83,7 +83,7 @@ export async function runBackupCommand(options: RunBackupCommandOptions): Promis
 			await backupManager.createBackup({
 				backupDir,
 				cacheDir: options.systemConfig.cacheDir,
-				runtimeDir: options.systemConfig.runtimeDir,
+				zoneRuntimeDir: zone.gateway.zoneRuntimeDir,
 				stateDir: zone.gateway.stateDir,
 				...(zone.gateway.type !== 'worker' ? { zoneFilesDir: zone.gateway.zoneFilesDir } : {}),
 				zoneId,

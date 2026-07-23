@@ -42,7 +42,7 @@ repair/download caches                  rebuildable
 OpenClaw zone files                     long-lived household
                                        user/agent files
 
-/agent-vm/logs                          RealFS runtimeDir      no
+/agent-vm/logs                          RealFS zoneRuntimeDir  no
 gateway-boot-latest.log,                zone-lifetime, wiped by
 openclaw-YYYY-MM-DD.log                 destroy-zone --purge
 
@@ -97,7 +97,7 @@ metadata, agents.md                     metadata
 source edits, node_modules,             hot task repo files
 builds, tests, package installs
 
-/gitdirs/<repoId>.git                   RealFS runtimeDir      explicit
+/gitdirs/<repoId>.git                   RealFS zoneRuntimeDir  explicit
 Git objects, refs, index                recovery/export only
 
 /work/tmp                               rootfs/COW             no
@@ -137,13 +137,13 @@ backed up.
 
 The backup command also copies managed OpenClaw and Hermes `zoneFilesDir` roots. Worker gitdirs must
 not be placed there either unless backup gains a worker-specific exclusion
-policy. For the target design, gitdirs live in `runtimeDir`, a non-backup task
-runtime root, and are deleted during task teardown.
+policy. Gitdirs live in `zoneRuntimeDir`, a non-backup task runtime root, and
+are deleted during task teardown.
 
 ## Target Worker Layout
 
 ```text
-stateDir/
+<storageRootDir>/<zoneId>/state/
   tasks/<taskId>/
     state/
       effective-worker.json
@@ -153,8 +153,8 @@ stateDir/
       runtime-instructions.md
       resources/
 
-runtimeDir/
-  worker-tasks/<zoneId>/<taskId>/
+<storageRootDir>/<zoneId>/runtime/
+  worker-tasks/<taskId>/
     gitdirs/<repoId>.git
     recovery/
 

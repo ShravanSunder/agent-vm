@@ -99,10 +99,10 @@ async function waitForHealthEvent(options: {
 	readonly controllerUrl: string;
 	readonly describeEvent: string;
 	readonly matches: (event: AgentVmHealthEvent) => boolean;
-	readonly runtimeDir: string;
+	readonly controllerRuntimeDir: string;
 	readonly timeoutMs: number;
 }): Promise<AgentVmHealthEvent> {
-	const eventLogPath = controllerHealthEventLogPath(options.runtimeDir);
+	const eventLogPath = controllerHealthEventLogPath(options.controllerRuntimeDir);
 	await fs.mkdir(path.dirname(eventLogPath), { recursive: true });
 	await fs.appendFile(eventLogPath, '', 'utf8');
 	const watcher = watch(eventLogPath, { persistent: false });
@@ -110,7 +110,11 @@ async function waitForHealthEvent(options: {
 	try {
 		while (true) {
 			const nextLogChange = watcher.next();
-			const event = (await readDurableHealthEvents({ runtimeDir: options.runtimeDir }))
+			const event = (
+				await readDurableHealthEvents({
+					controllerRuntimeDir: options.controllerRuntimeDir,
+				})
+			)
 				.map((record) => record.body)
 				.find(options.matches);
 			if (event !== undefined) {
@@ -154,7 +158,7 @@ async function waitForHealthEvent(options: {
 
 async function waitForGatewayServiceFailureCount(options: {
 	readonly expectedCount: number;
-	readonly runtimeDir: string;
+	readonly controllerRuntimeDir: string;
 	readonly timeoutMs: number;
 }): Promise<readonly Extract<AgentVmHealthEvent, { readonly kind: 'gateway-service-health' }>[]> {
 	const deadlineMs = Date.now() + options.timeoutMs;
@@ -163,7 +167,11 @@ async function waitForGatewayServiceFailureCount(options: {
 		{ readonly kind: 'gateway-service-health' }
 	>[] = [];
 	while (Date.now() < deadlineMs) {
-		failures = (await readDurableHealthEvents({ runtimeDir: options.runtimeDir }))
+		failures = (
+			await readDurableHealthEvents({
+				controllerRuntimeDir: options.controllerRuntimeDir,
+			})
+		)
 			.map((record) => record.body)
 			.filter(
 				(
@@ -338,7 +346,7 @@ describeOpenClawControlLinkSmoke('smoke: OpenClaw agent-vm controller control se
 			controllerUrl: harness.controllerUrl,
 			describeEvent: 'gateway-service-health ok',
 			matches: (event) => event.kind === 'gateway-service-health' && event.result === 'ok',
-			runtimeDir: harness.systemConfig.runtimeDir,
+			controllerRuntimeDir: harness.systemConfig.controllerRuntimeDir,
 			timeoutMs: 60_000,
 		});
 		expect(gatewayServiceEvent).toMatchObject({ kind: 'gateway-service-health', result: 'ok' });
@@ -347,7 +355,7 @@ describeOpenClawControlLinkSmoke('smoke: OpenClaw agent-vm controller control se
 			controllerUrl: harness.controllerUrl,
 			describeEvent: 'gateway-control-session ok',
 			matches: (event) => event.kind === 'gateway-control-session' && event.result === 'ok',
-			runtimeDir: harness.systemConfig.runtimeDir,
+			controllerRuntimeDir: harness.systemConfig.controllerRuntimeDir,
 			timeoutMs: 60_000,
 		});
 		expect(gatewayControlSessionEvent).toMatchObject({
@@ -386,7 +394,7 @@ describeOpenClawControlLinkSmoke('smoke: OpenClaw agent-vm controller control se
 				event.kind === 'gateway-recovery' &&
 				event.result === 'ok' &&
 				event.oldVmId === initialGatewayVmId,
-			runtimeDir: harness.systemConfig.runtimeDir,
+			controllerRuntimeDir: harness.systemConfig.controllerRuntimeDir,
 			timeoutMs: 300_000,
 		});
 		const successor = await waitForSuccessorGatewayStart({
@@ -450,7 +458,7 @@ describeOpenClawControlLinkSmoke('smoke: OpenClaw agent-vm controller control se
 		systemConfig = {
 			...systemConfig,
 			controllerStateDir: path.join(project.tempRoot, 'controller-state-service-recovery'),
-			runtimeDir: path.join(project.tempRoot, 'runtime-service-recovery'),
+			controllerRuntimeDir: path.join(project.tempRoot, 'controller-runtime-service-recovery'),
 		};
 		harness = await startControlLinkHarness();
 		const predecessor = gatewayStarts.at(-1);
@@ -461,7 +469,7 @@ describeOpenClawControlLinkSmoke('smoke: OpenClaw agent-vm controller control se
 			controllerUrl: harness.controllerUrl,
 			describeEvent: 'gateway-service-health readiness before framework hang',
 			matches: (event) => event.kind === 'gateway-service-health' && event.result === 'ok',
-			runtimeDir: harness.systemConfig.runtimeDir,
+			controllerRuntimeDir: harness.systemConfig.controllerRuntimeDir,
 			timeoutMs: 60_000,
 		});
 		const initialGatewayVmId = predecessor.vmId;
@@ -499,12 +507,12 @@ printf '%s %s\\n' "$process_id" "$observed_start_identity"
 		}
 		const serviceFailures = await waitForGatewayServiceFailureCount({
 			expectedCount: smokeGatewayServiceAutoRestart.consecutiveFailureThreshold,
-			runtimeDir: harness.systemConfig.runtimeDir,
+			controllerRuntimeDir: harness.systemConfig.controllerRuntimeDir,
 			timeoutMs: 60_000,
 		});
 		const healthEvents = (
 			await readDurableHealthEvents({
-				runtimeDir: harness.systemConfig.runtimeDir,
+				controllerRuntimeDir: harness.systemConfig.controllerRuntimeDir,
 			})
 		).map((record) => record.body);
 		expect(
@@ -539,7 +547,7 @@ printf '%s %s\\n' "$process_id" "$observed_start_identity"
 				event.kind === 'gateway-service-health' &&
 				event.result === 'ok' &&
 				event.observedAtMs > lastFailure.observedAtMs,
-			runtimeDir: harness.systemConfig.runtimeDir,
+			controllerRuntimeDir: harness.systemConfig.controllerRuntimeDir,
 			timeoutMs: 60_000,
 		});
 		expect(gatewayStarts).toHaveLength(1);

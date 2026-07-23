@@ -54,11 +54,10 @@ interface ValidApprovalApproverInput {
 }
 
 interface ValidSystemConfigInput {
+	schemaVersion: 2;
 	host: Record<string, unknown>;
 	controller?: unknown;
-	cacheDir: string;
-	controllerStateDir: string;
-	runtimeDir: string;
+	storageRootDir: string;
 	imageProfiles: Record<string, unknown>;
 	zones: [ValidSystemConfigZoneInput, ...ValidSystemConfigZoneInput[]];
 	toolVmProfiles?: Record<string, unknown>;
@@ -76,14 +75,12 @@ function configureFirstZoneAsWorker(config: ValidSystemConfigInput): ValidSystem
 		cpus: 2,
 		port: 18791,
 		config: './shravan/worker.json',
-		stateDir: '../state/shravan',
 	};
 	delete zone.agents;
 	delete zone.defaultToolVmProfile;
 	delete zone.agentToolVmProfiles;
 	delete zone.runtimeAuthHints;
 	delete zone.toolPortal;
-	zone.egressHosts = [];
 	zone.secrets = {};
 	return zone;
 }
@@ -98,13 +95,12 @@ afterEach(async () => {
 
 function createValidSystemConfigInput(): ValidSystemConfigInput {
 	return {
+		schemaVersion: 2,
 		host: {
 			controllerPort: 18800,
 			projectNamespace: 'claw-tests-a1b2c3d4',
 		},
-		cacheDir: '../cache',
-		controllerStateDir: '../controller-state',
-		runtimeDir: '../runtime',
+		storageRootDir: '../storage',
 		imageProfiles: {
 			gateways: {
 				hermes: {
@@ -141,8 +137,6 @@ function createValidSystemConfigInput(): ValidSystemConfigInput {
 					cpus: 2,
 					port: 18791,
 					config: './shravan/openclaw.json',
-					stateDir: '../state/shravan',
-					zoneFilesDir: '../zone-files/shravan',
 				},
 				secrets: {
 					OPENCLAW_GATEWAY_TOKEN: {
@@ -181,8 +175,6 @@ function configureFirstZoneAsHermes(config: ValidSystemConfigInput): ValidSystem
 		cpus: 2,
 		port: 8642,
 		config: './hermes/config.yaml',
-		stateDir: '../state/hermes',
-		zoneFilesDir: '../zone-files/hermes',
 		profilesByAgent: { shravan: 'researcher' },
 	};
 	zone.secrets = {};
@@ -286,16 +278,48 @@ function readJsonSchemaStringEnum(schema: Record<string, unknown>): readonly str
 }
 
 describe('loadSystemConfig', () => {
-	test('rejects a system config without controllerStateDir', async () => {
+	test('derives global and per-zone storage paths from the schema-v2 storage root', async () => {
 		// Arrange
-		const { controllerStateDir: _controllerStateDir, ...input } = createValidSystemConfigInput();
+		const config = createValidSystemConfigInput();
 		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-config-missing-controller-state-',
+			'agent-vm-system-config-root-derived-',
+			config,
+		);
+		const canonicalConfigDirectory = await realpath(path.dirname(configPath));
+		const expectedStorageRoot = path.resolve(canonicalConfigDirectory, '../storage');
+
+		// Act
+		const loadedConfig = await loadSystemConfig(configPath);
+
+		// Assert
+		expect(loadedConfig.storageRootDir).toBe(expectedStorageRoot);
+		expect(loadedConfig.cacheDir).toBe(path.join(expectedStorageRoot, 'cache'));
+		expect(loadedConfig.controllerStateDir).toBe(
+			path.join(expectedStorageRoot, 'controller-state'),
+		);
+		expect(loadedConfig.controllerRuntimeDir).toBe(
+			path.join(expectedStorageRoot, 'controller-runtime'),
+		);
+		expect(loadedConfig.zones[0]?.gateway).toMatchObject({
+			stateDir: path.join(expectedStorageRoot, 'shravan', 'state'),
+			zoneFilesDir: path.join(expectedStorageRoot, 'shravan', 'zone-files'),
+			zoneRuntimeDir: path.join(expectedStorageRoot, 'shravan', 'runtime'),
+		});
+	});
+
+	test('defaults storageRootDir to the current user Agent VM root', async () => {
+		// Arrange
+		const { storageRootDir: _storageRootDir, ...input } = createValidSystemConfigInput();
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-config-default-storage-root-',
 			input,
 		);
 
-		// Act / Assert
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/controllerStateDir/u);
+		// Act
+		const loadedConfig = await loadSystemConfig(configPath);
+
+		// Assert
+		expect(loadedConfig.storageRootDir).toBe(path.join(os.homedir(), '.agent-vm'));
 	});
 
 	test('loads system.jsonc with comments and trailing commas', async () => {
@@ -308,11 +332,10 @@ describe('loadSystemConfig', () => {
 			configPath,
 			[
 				'{',
+				'  "schemaVersion": 2,',
 				'  // Controller host settings',
 				`  "host": ${JSON.stringify(config.host)},`,
-				'  "cacheDir": "../cache",',
-				'  "controllerStateDir": "../controller-state",',
-				'  "runtimeDir": "../runtime",',
+				'  "storageRootDir": "../storage",',
 				`  "imageProfiles": ${JSON.stringify(config.imageProfiles)},`,
 				`  "zones": ${JSON.stringify(config.zones)},`,
 				`  "toolVmProfiles": ${JSON.stringify(config.toolVmProfiles)},`,
@@ -1116,12 +1139,14 @@ describe('loadSystemConfig', () => {
 	test('loads a valid plan-1 controller config', async () => {
 		const workingDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-system-config-'));
 		createdDirectories.push(workingDirectoryPath);
+		const canonicalWorkingDirectoryPath = await realpath(workingDirectoryPath);
 		const configPath = path.join(workingDirectoryPath, 'config', 'system.json');
 		await mkdir(path.dirname(configPath), { recursive: true });
 
 		await writeFile(
 			configPath,
 			JSON.stringify({
+				schemaVersion: 2,
 				host: {
 					controllerPort: 18800,
 					projectNamespace: 'claw-tests-a1b2c3d4',
@@ -1134,8 +1159,7 @@ describe('loadSystemConfig', () => {
 						tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
 					},
 				},
-				cacheDir: '../cache',
-				controllerStateDir: '../controller-state',
+				storageRootDir: '../storage',
 				imageProfiles: {
 					gateways: {
 						openclaw: {
@@ -1167,7 +1191,6 @@ describe('loadSystemConfig', () => {
 							cpus: 2,
 							port: 18791,
 							config: './shravan/openclaw.json',
-							stateDir: '../state/shravan',
 						},
 						secrets: {
 							ANTHROPIC_API_KEY: {
@@ -1209,7 +1232,7 @@ describe('loadSystemConfig', () => {
 				},
 				projectNamespace: 'claw-tests-a1b2c3d4',
 			},
-			cacheDir: path.join(workingDirectoryPath, 'cache'),
+			cacheDir: path.join(canonicalWorkingDirectoryPath, 'storage', 'cache'),
 			imageProfiles: {
 				gateways: {
 					openclaw: {
@@ -1253,24 +1276,31 @@ describe('loadSystemConfig', () => {
 		});
 	});
 
-	test('adds only the runtime system config path', async () => {
+	test('adds only resolved storage paths and the runtime system config path', async () => {
 		const configPath = await writeSystemConfigForTest(
 			'agent-vm-system-config-cache-id-',
 			createValidSystemConfigInput(),
 		);
 
 		const config = await loadSystemConfig(configPath);
+		const canonicalConfigDirectory = await realpath(path.dirname(configPath));
+		const expectedStorageRoot = path.resolve(canonicalConfigDirectory, '../storage');
 
 		expect(config.systemConfigPath).toBe(configPath);
-		expect(config.runtimeDir).toBe(path.join(path.dirname(configPath), '..', 'runtime'));
+		expect(config.storageRootDir).toBe(expectedStorageRoot);
+		expect(config.controllerRuntimeDir).toBe(path.join(expectedStorageRoot, 'controller-runtime'));
 	});
 
-	test('resolves controllerStateDir relative to the system config file', async () => {
+	test('resolves an absolute storageRootDir without rebasing it to the system config', async () => {
 		// Arrange
 		const input = createValidSystemConfigInput();
-		input.controllerStateDir = '../controller-state';
+		const absoluteStorageRoot = path.join(
+			await realpath(os.tmpdir()),
+			'agent-vm-absolute-storage-root',
+		);
+		input.storageRootDir = absoluteStorageRoot;
 		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-config-controller-state-relative-',
+			'agent-vm-system-config-storage-root-absolute-',
 			input,
 		);
 
@@ -1278,36 +1308,36 @@ describe('loadSystemConfig', () => {
 		const config = await loadSystemConfig(configPath);
 
 		// Assert
-		expect(config.controllerStateDir).toBe(
-			path.join(await realpath(path.join(path.dirname(configPath), '..')), 'controller-state'),
-		);
+		expect(config.storageRootDir).toBe(absoluteStorageRoot);
+		expect(config.controllerStateDir).toBe(path.join(absoluteStorageRoot, 'controller-state'));
 	});
 
-	test('expands ~/ paths to the current user home directory', async () => {
+	test('expands a ~/ storageRootDir and derives the complete tree', async () => {
 		const input = createValidSystemConfigInput();
-		input.cacheDir = '~/.agent-vm/cache';
-		input.runtimeDir = '~/.agent-vm/runtime';
+		input.storageRootDir = '~/.agent-vm/custom';
 		const firstZone = input.zones[0];
 		firstZone.gateway = {
 			...firstZone.gateway,
-			stateDir: '~/.agent-vm/state/shravan',
-			zoneFilesDir: '~/.agent-vm/zone-files/shravan',
 			backupDir: '~/.agent-vm-backups/shravan',
 		};
 		const configPath = await writeSystemConfigForTest('agent-vm-system-config-tilde-', input);
 
 		const config = await loadSystemConfig(configPath);
 
-		expect(config.cacheDir).toBe(path.join(os.homedir(), '.agent-vm', 'cache'));
-		expect(config.runtimeDir).toBe(path.join(os.homedir(), '.agent-vm', 'runtime'));
-		expect(config.zones[0]?.gateway.stateDir).toBe(
-			path.join(os.homedir(), '.agent-vm', 'state', 'shravan'),
-		);
+		const expectedRoot = path.join(os.homedir(), '.agent-vm', 'custom');
+		expect(config.storageRootDir).toBe(expectedRoot);
+		expect(config.cacheDir).toBe(path.join(expectedRoot, 'cache'));
+		expect(config.controllerStateDir).toBe(path.join(expectedRoot, 'controller-state'));
+		expect(config.controllerRuntimeDir).toBe(path.join(expectedRoot, 'controller-runtime'));
+		expect(config.zones[0]?.gateway.stateDir).toBe(path.join(expectedRoot, 'shravan', 'state'));
 		if (config.zones[0]?.gateway.type !== 'openclaw') {
 			throw new Error('Expected fixture zone to be OpenClaw.');
 		}
 		expect(config.zones[0].gateway.zoneFilesDir).toBe(
-			path.join(os.homedir(), '.agent-vm', 'zone-files', 'shravan'),
+			path.join(expectedRoot, 'shravan', 'zone-files'),
+		);
+		expect(config.zones[0].gateway.zoneRuntimeDir).toBe(
+			path.join(expectedRoot, 'shravan', 'runtime'),
 		);
 		expect(config.zones[0]?.gateway.backupDir).toBe(
 			path.join(os.homedir(), '.agent-vm-backups', 'shravan'),
@@ -1329,13 +1359,34 @@ describe('loadSystemConfig', () => {
 				cpus: 2,
 				port: 18791,
 				config: './shravan/worker.json',
-				stateDir: '../state/shravan',
 				zoneFilesDir: '../zone-files/shravan',
 			},
 		};
 		const configPath = await writeSystemConfigForTest('agent-vm-system-worker-zone-files-', input);
 
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/zoneFilesDir/u);
+	});
+
+	test('derives Worker state and runtime without a zone-files directory', async () => {
+		// Arrange
+		const input = createValidSystemConfigInput();
+		configureFirstZoneAsWorker(input);
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-worker-derived-storage-',
+			input,
+		);
+		const canonicalConfigDirectory = await realpath(path.dirname(configPath));
+		const expectedStorageRoot = path.resolve(canonicalConfigDirectory, '../storage');
+
+		// Act
+		const config = await loadSystemConfig(configPath);
+
+		// Assert
+		expect(config.zones[0]?.gateway).toMatchObject({
+			stateDir: path.join(expectedStorageRoot, 'shravan', 'state'),
+			zoneRuntimeDir: path.join(expectedStorageRoot, 'shravan', 'runtime'),
+		});
+		expect(config.zones[0]?.gateway).not.toHaveProperty('zoneFilesDir');
 	});
 
 	test('rejects retired OpenClaw gateway zoneGit authority', () => {
@@ -1579,7 +1630,6 @@ describe('loadSystemConfig', () => {
 				cpus: 2,
 				port: 18791,
 				config: './shravan/worker.json',
-				stateDir: '../state/shravan',
 				zoneGit: {
 					remote: {
 						repoUrl: 'ShravanSunder/sunfam-zone-files',
@@ -1618,7 +1668,6 @@ describe('loadSystemConfig', () => {
 				cpus: 2,
 				port: 18791,
 				config: './shravan/openclaw.json',
-				stateDir: '../state/shravan',
 				workspaceDir: '../workspaces/shravan',
 			},
 		};
@@ -1731,6 +1780,7 @@ describe('loadSystemConfig', () => {
 		await writeFile(
 			configPath,
 			JSON.stringify({
+				schemaVersion: 2,
 				host: {
 					controllerPort: 18800,
 					projectNamespace: 'claw-tests-a1b2c3d4',
@@ -1739,8 +1789,7 @@ describe('loadSystemConfig', () => {
 						tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
 					},
 				},
-				cacheDir: '../cache',
-				controllerStateDir: '../controller-state',
+				storageRootDir: '../storage',
 				imageProfiles: {
 					gateways: {
 						openclaw: {
@@ -1792,6 +1841,7 @@ describe('loadSystemConfig', () => {
 		await writeFile(
 			configPath,
 			JSON.stringify({
+				schemaVersion: 2,
 				host: {
 					controllerPort: 18800,
 					projectNamespace: 'claw-tests-a1b2c3d4',
@@ -1800,8 +1850,7 @@ describe('loadSystemConfig', () => {
 						tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
 					},
 				},
-				cacheDir: '../cache',
-				controllerStateDir: '../controller-state',
+				storageRootDir: '../storage',
 				imageProfiles: {
 					gateways: {
 						openclaw: {
@@ -1834,8 +1883,6 @@ describe('loadSystemConfig', () => {
 							cpus: 2,
 							port: 18791,
 							config: './shravan/openclaw.json',
-							stateDir: '../state/shravan',
-							zoneFilesDir: '../zone-files/shravan',
 						},
 						secrets: {
 							DISCORD_BOT_TOKEN: {
@@ -1877,6 +1924,7 @@ describe('loadSystemConfig', () => {
 		await writeFile(
 			configPath,
 			JSON.stringify({
+				schemaVersion: 2,
 				host: {
 					controllerPort: 18800,
 					projectNamespace: 'bad:namespace',
@@ -1885,8 +1933,7 @@ describe('loadSystemConfig', () => {
 						tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
 					},
 				},
-				cacheDir: '../cache',
-				controllerStateDir: '../controller-state',
+				storageRootDir: '../storage',
 				imageProfiles: {
 					gateways: {
 						openclaw: {
@@ -1919,8 +1966,6 @@ describe('loadSystemConfig', () => {
 							cpus: 2,
 							port: 18791,
 							config: './shravan/openclaw.json',
-							stateDir: '../state/shravan',
-							zoneFilesDir: '../zone-files/shravan',
 						},
 						secrets: {
 							OPENCLAW_GATEWAY_TOKEN: {
@@ -2896,6 +2941,7 @@ describe('loadSystemConfig', () => {
 		await writeFile(
 			configPath,
 			JSON.stringify({
+				schemaVersion: 2,
 				host: {
 					controllerPort: 18800,
 					projectNamespace: 'claw-tests-a1b2c3d4',
@@ -2904,8 +2950,7 @@ describe('loadSystemConfig', () => {
 						tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
 					},
 				},
-				cacheDir: '../cache',
-				controllerStateDir: '../controller-state',
+				storageRootDir: '../storage',
 				imageProfiles: {
 					gateways: {
 						openclaw: {
@@ -2938,8 +2983,6 @@ describe('loadSystemConfig', () => {
 							cpus: 2,
 							port: 18791,
 							config: './shravan/openclaw.json',
-							stateDir: '../state/shravan',
-							zoneFilesDir: '../zone-files/shravan',
 						},
 						secrets: {
 							OPENCLAW_GATEWAY_TOKEN: {
@@ -3352,7 +3395,6 @@ describe('loadSystemConfig', () => {
 					cpus: 2,
 					port: 18791,
 					config: './worker-zone/worker.json',
-					stateDir: '../state/worker-zone',
 				},
 				secrets: {},
 				runtimeAuthHints: [],
@@ -3449,8 +3491,6 @@ describe('loadSystemConfig', () => {
 					cpus: 2,
 					port: 18791,
 					config: './shravan/openclaw.json',
-					stateDir: '../state/shravan',
-					zoneFilesDir: '../zone-files/shravan',
 				},
 				secrets: {
 					OPENCLAW_GATEWAY_TOKEN: {
@@ -3485,7 +3525,6 @@ describe('loadSystemConfig', () => {
 					cpus: 2,
 					port: 18791,
 					config: './shravan/worker.json',
-					stateDir: '../state/shravan',
 				},
 				secrets: {},
 				runtimeAuthHints: [],
@@ -3560,63 +3599,57 @@ describe('loadSystemConfig', () => {
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/Too small|Invalid key/u);
 	});
 
-	test('rejects runtimeDir overlap with cacheDir after resolving paths', async () => {
-		const config = createValidSystemConfigInput();
-		config.cacheDir = '../cache';
-		config.runtimeDir = '../cache/runtime';
-		const configPath = await writeSystemConfigForTest('agent-vm-system-overlap-cache-', config);
+	test.each(['cacheDir', 'controllerStateDir', 'runtimeDir'])(
+		'rejects removed authored global storage field %s',
+		async (removedField) => {
+			// Arrange
+			const config = createValidSystemConfigInput();
+			config[removedField] = `../legacy-${removedField}`;
+			const configPath = await writeSystemConfigForTest(
+				'agent-vm-system-removed-global-storage-field-',
+				config,
+			);
 
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(
-			/runtimeDir must not overlap cacheDir/u,
-		);
-	});
+			// Act / Assert
+			await expect(loadSystemConfig(configPath)).rejects.toThrow(new RegExp(removedField, 'u'));
+		},
+	);
 
-	test('rejects runtimeDir overlap with zone stateDir after resolving paths', async () => {
-		const config = createValidSystemConfigInput();
-		config.runtimeDir = '../state/shravan/runtime';
-		const configPath = await writeSystemConfigForTest('agent-vm-system-overlap-state-', config);
+	test.each(['stateDir', 'zoneFilesDir'])(
+		'rejects removed authored gateway storage field %s',
+		async (removedField) => {
+			// Arrange
+			const config = createValidSystemConfigInput();
+			config.zones[0].gateway[removedField] = `../legacy-${removedField}`;
+			const configPath = await writeSystemConfigForTest(
+				'agent-vm-system-removed-gateway-storage-field-',
+				config,
+			);
 
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(
-			/runtimeDir must not overlap stateDir/u,
-		);
-	});
+			// Act / Assert
+			await expect(loadSystemConfig(configPath)).rejects.toThrow(new RegExp(removedField, 'u'));
+		},
+	);
 
-	test('rejects runtimeDir overlap with OpenClaw zoneFilesDir after resolving paths', async () => {
-		const config = createValidSystemConfigInput();
-		config.runtimeDir = '../zone-files/shravan/runtime';
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-overlap-zone-files-',
-			config,
-		);
+	test.each(['cache', 'controller-state', 'controller-runtime'])(
+		'rejects reserved global storage zone id %s',
+		async (reservedZoneId) => {
+			// Arrange
+			const config = createValidSystemConfigInput();
+			config.zones[0].id = reservedZoneId;
+			const configPath = await writeSystemConfigForTest(
+				'agent-vm-system-reserved-storage-zone-id-',
+				config,
+			);
 
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(
-			/runtimeDir must not overlap zoneFilesDir/u,
-		);
-	});
-
-	test('rejects cacheDir overlap with zone stateDir after resolving paths', async () => {
-		const config = createValidSystemConfigInput();
-		config.cacheDir = '../state/shravan/cache';
-		const configPath = await writeSystemConfigForTest('agent-vm-system-cache-state-', config);
-
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(
-			/cacheDir must not overlap stateDir/u,
-		);
-	});
-
-	test('rejects cacheDir overlap with managed zoneFilesDir after resolving paths', async () => {
-		const config = createValidSystemConfigInput();
-		config.cacheDir = '../zone-files/shravan/cache';
-		const configPath = await writeSystemConfigForTest('agent-vm-system-cache-zone-files-', config);
-
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(
-			/cacheDir must not overlap zoneFilesDir/u,
-		);
-	});
+			// Act / Assert
+			await expect(loadSystemConfig(configPath)).rejects.toThrow(/reserved for global storage/u);
+		},
+	);
 
 	test('rejects an explicit backupDir nested under stateDir', async () => {
 		const config = createValidSystemConfigInput();
-		config.zones[0].gateway.backupDir = '../state/shravan/explicit-backups';
+		config.zones[0].gateway.backupDir = '../storage/shravan/state/explicit-backups';
 		const configPath = await writeSystemConfigForTest(
 			'agent-vm-system-explicit-backup-state-',
 			config,
@@ -3629,7 +3662,7 @@ describe('loadSystemConfig', () => {
 
 	test('rejects an explicit backupDir that contains managed zoneFilesDir', async () => {
 		const config = createValidSystemConfigInput();
-		config.zones[0].gateway.backupDir = '../zone-files';
+		config.zones[0].gateway.backupDir = '../storage/shravan/zone-files/explicit-backups';
 		const configPath = await writeSystemConfigForTest(
 			'agent-vm-system-explicit-backup-zone-files-',
 			config,
@@ -3653,222 +3686,21 @@ describe('loadSystemConfig', () => {
 		expect(loadedConfig.zones[0]?.gateway.backupDir).toBeUndefined();
 	});
 
-	const controllerStateProtectedPathCases = [
-		{
-			label: 'the system config file',
-			kind: 'file',
-			configure: (
-				_config: ValidSystemConfigInput,
-				_protectedPath: string,
-				systemConfigPath: string,
-			): string => systemConfigPath,
-		},
-		{
-			label: 'the system config parent directory',
-			kind: 'directory',
-			configure: (
-				_config: ValidSystemConfigInput,
-				_protectedPath: string,
-				systemConfigPath: string,
-			): string => path.dirname(systemConfigPath),
-		},
-		{
-			label: 'cacheDir',
-			kind: 'directory',
-			configure: (config: ValidSystemConfigInput, protectedPath: string): string => {
-				config.cacheDir = protectedPath;
-				return protectedPath;
-			},
-		},
-		{
-			label: 'runtimeDir',
-			kind: 'directory',
-			configure: (config: ValidSystemConfigInput, protectedPath: string): string => {
-				config.runtimeDir = protectedPath;
-				return protectedPath;
-			},
-		},
-		{
-			label: 'zone stateDir',
-			kind: 'directory',
-			configure: (config: ValidSystemConfigInput, protectedPath: string): string => {
-				config.zones[0].gateway.stateDir = protectedPath;
-				return protectedPath;
-			},
-		},
-		{
-			label: 'zoneFilesDir',
-			kind: 'directory',
-			configure: (config: ValidSystemConfigInput, protectedPath: string): string => {
-				config.zones[0].gateway.zoneFilesDir = protectedPath;
-				return protectedPath;
-			},
-		},
-		{
-			label: 'backup output',
-			kind: 'directory',
-			configure: (config: ValidSystemConfigInput, protectedPath: string): string => {
-				config.zones[0].gateway.backupDir = protectedPath;
-				return protectedPath;
-			},
-		},
-		{
-			label: 'managed observability dataDir',
-			kind: 'directory',
-			configure: (config: ValidSystemConfigInput, protectedPath: string): string => {
-				config.host.observability = {
-					enabled: true,
-					dataDir: protectedPath,
-					retention: {
-						metrics: { period: '30d' },
-						logs: { period: '14d' },
-						traces: { period: '7d' },
-					},
-				};
-				return protectedPath;
-			},
-		},
-		{
-			label: 'the mounted gateway config directory',
-			kind: 'directory',
-			configure: (config: ValidSystemConfigInput, protectedPath: string): string => {
-				config.zones[0].gateway.config = path.join(protectedPath, 'openclaw.json');
-				return protectedPath;
-			},
-		},
-	] as const;
-
-	for (const relationship of ['direct', 'descendant', 'ancestor'] as const) {
-		test.each(controllerStateProtectedPathCases)(
-			`rejects a ${relationship} controllerStateDir overlap with $label`,
-			async ({ configure, label }) => {
-				// Arrange
-				const testRoot = await mkdtemp(
-					path.join(os.tmpdir(), `agent-vm-controller-state-${relationship}-`),
-				);
-				createdDirectories.push(testRoot);
-				const configPath = path.join(testRoot, 'authored-config', 'system.json');
-				const protectedPath = configure(
-					createValidSystemConfigInput(),
-					path.join(testRoot, 'protected', label.replaceAll(' ', '-'), 'target'),
-					configPath,
-				);
-				const config = createValidSystemConfigInput();
-				configure(config, protectedPath, configPath);
-				config.controllerStateDir =
-					relationship === 'direct'
-						? protectedPath
-						: relationship === 'descendant'
-							? path.join(protectedPath, 'controller-state')
-							: path.dirname(protectedPath);
-				await mkdir(path.dirname(configPath), { recursive: true });
-				await writeFile(configPath, JSON.stringify(config), 'utf8');
-
-				// Act / Assert
-				await expect(loadSystemConfig(configPath)).rejects.toThrow(/controllerStateDir/u);
-			},
-		);
-	}
-
-	test.each(controllerStateProtectedPathCases)(
-		'rejects a controllerStateDir symlink alias with $label',
-		async ({ configure, kind, label }) => {
-			// Arrange
-			const testRoot = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-controller-state-alias-'));
-			createdDirectories.push(testRoot);
-			const configPath = path.join(testRoot, 'authored-config', 'system.json');
-			const config = createValidSystemConfigInput();
-			const protectedPath = configure(
-				config,
-				path.join(testRoot, 'protected', label.replaceAll(' ', '-'), 'target'),
-				configPath,
-			);
-			const controllerStateAlias = path.join(testRoot, 'controller-state-alias');
-			config.controllerStateDir = controllerStateAlias;
-			await mkdir(path.dirname(configPath), { recursive: true });
-			if (kind === 'directory') {
-				await mkdir(protectedPath, { recursive: true });
-			}
-			await writeFile(configPath, JSON.stringify(config), 'utf8');
-			await symlink(protectedPath, controllerStateAlias);
-
-			// Act / Assert
-			await expect(loadSystemConfig(configPath)).rejects.toThrow(/controllerStateDir/u);
-		},
-	);
-
-	const controllerStateConfigurableDirectoryCases = controllerStateProtectedPathCases.filter(
-		({ label }) =>
-			label !== 'the system config file' && label !== 'the system config parent directory',
-	);
-
-	test.each(controllerStateConfigurableDirectoryCases)(
-		'rejects a $label symlink alias to controllerStateDir',
-		async ({ configure, label }) => {
-			// Arrange
-			const testRoot = await mkdtemp(
-				path.join(os.tmpdir(), 'agent-vm-protected-path-controller-state-alias-'),
-			);
-			createdDirectories.push(testRoot);
-			const configPath = path.join(testRoot, 'authored-config', 'system.json');
-			const controllerStateDirectory = path.join(testRoot, 'controller-state');
-			const protectedPathAlias = path.join(
-				testRoot,
-				'protected-aliases',
-				label.replaceAll(' ', '-'),
-			);
-			const config = createValidSystemConfigInput();
-			config.controllerStateDir = controllerStateDirectory;
-			configure(config, protectedPathAlias, configPath);
-			await mkdir(path.dirname(configPath), { recursive: true });
-			await mkdir(controllerStateDirectory, { recursive: true });
-			await mkdir(path.dirname(protectedPathAlias), { recursive: true });
-			await symlink(controllerStateDirectory, protectedPathAlias);
-			await writeFile(configPath, JSON.stringify(config), 'utf8');
-
-			// Act / Assert
-			await expect(loadSystemConfig(configPath)).rejects.toThrow(/controllerStateDir/u);
-		},
-	);
-
-	test('fails closed when controllerStateDir traverses a broken symlink', async () => {
+	test('fails closed when storageRootDir traverses a broken symlink', async () => {
 		// Arrange
-		const testRoot = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-controller-state-broken-'));
+		const testRoot = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-storage-root-broken-'));
 		createdDirectories.push(testRoot);
 		const config = createValidSystemConfigInput();
-		const brokenLinkPath = path.join(testRoot, 'broken-controller-root');
-		config.controllerStateDir = path.join(brokenLinkPath, 'controller-state');
+		const brokenLinkPath = path.join(testRoot, 'broken-storage-root');
+		config.storageRootDir = path.join(brokenLinkPath, 'deployment');
 		await symlink(path.join(testRoot, 'missing-target'), brokenLinkPath);
 		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-config-broken-controller-state-',
+			'agent-vm-system-config-broken-storage-root-',
 			config,
 		);
 
 		// Act / Assert
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/broken symlink/u);
-	});
-
-	test('preserves the resolved stateDir spelling while comparing canonical identities', async () => {
-		// Arrange
-		const testRoot = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-controller-state-spelling-'));
-		createdDirectories.push(testRoot);
-		const realStateDirectory = path.join(testRoot, 'real-state');
-		const linkedStateDirectory = path.join(testRoot, 'linked-state');
-		await mkdir(realStateDirectory, { recursive: true });
-		await symlink(realStateDirectory, linkedStateDirectory);
-		const config = createValidSystemConfigInput();
-		config.controllerStateDir = path.join(testRoot, 'controller-state');
-		config.zones[0].gateway.stateDir = linkedStateDirectory;
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-config-state-spelling-',
-			config,
-		);
-
-		// Act
-		const loadedConfig = await loadSystemConfig(configPath);
-
-		// Assert
-		expect(loadedConfig.zones[0]?.gateway.stateDir).toBe(linkedStateDirectory);
 	});
 
 	test('parses host observability defaults without zone opt-in', async () => {
@@ -4116,10 +3948,13 @@ describe('loadSystemConfig', () => {
 
 	test('emits author-facing JSON Schema for managed and external observability variants', () => {
 		const artifact = createSystemConfigSchemaArtifact();
-		expect(artifact.required).toContain('controllerStateDir');
-		expect(artifact.properties).toMatchObject({
-			controllerStateDir: { minLength: 1, type: 'string' },
+		const artifactProperties = requireRecordProperty(artifact, 'properties');
+		expect(artifactProperties).toMatchObject({
+			storageRootDir: { default: '~/.agent-vm', minLength: 1, type: 'string' },
 		});
+		expect(artifactProperties).not.toHaveProperty('cacheDir');
+		expect(artifactProperties).not.toHaveProperty('controllerStateDir');
+		expect(artifactProperties).not.toHaveProperty('runtimeDir');
 		const hostSchema = isRecord(artifact.properties) ? artifact.properties.host : undefined;
 		if (!isRecord(hostSchema) || !isRecord(hostSchema.properties)) {
 			throw new Error('Expected host schema properties.');
@@ -4170,7 +4005,6 @@ describe('loadSystemConfig', () => {
 			required: ['mode', 'scrubbing'],
 		});
 
-		const artifactProperties = requireRecordProperty(artifact, 'properties');
 		const zonesSchema = requireRecordProperty(artifactProperties, 'zones');
 		const zoneItemsSchema = requireRecordProperty(zonesSchema, 'items');
 		const zoneProperties = requireRecordProperty(zoneItemsSchema, 'properties');
@@ -4553,12 +4387,16 @@ describe('loadSystemConfig', () => {
 	);
 
 	test.each([
-		['cacheDir', '../cache/observability', /dataDir must not overlap cacheDir/u],
-		['runtimeDir', '../runtime/observability', /dataDir must not overlap runtimeDir/u],
-		['stateDir', '../state/shravan/observability', /dataDir must not overlap stateDir/u],
+		['cacheDir', '../storage/cache/observability', /dataDir must not overlap cacheDir/u],
+		[
+			'controllerRuntimeDir',
+			'../storage/controller-runtime/observability',
+			/dataDir must not overlap controllerRuntimeDir/u,
+		],
+		['stateDir', '../storage/shravan/state/observability', /dataDir must not overlap stateDir/u],
 		[
 			'zoneFilesDir',
-			'../zone-files/shravan/observability',
+			'../storage/shravan/zone-files/observability',
 			/dataDir must not overlap zoneFilesDir/u,
 		],
 	])(

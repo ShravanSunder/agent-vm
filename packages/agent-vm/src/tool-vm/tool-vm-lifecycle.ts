@@ -148,7 +148,7 @@ function createManagedAgentGitReadOnlySshEgress(options: {
 async function validateControllerDerivedAgentGitDirectoryRoot(options: {
 	readonly agentId: string;
 	readonly hostGitDirectoryRoot: string;
-	readonly runtimeDir: string;
+	readonly zoneRuntimeDir: string;
 	readonly zoneId: string;
 }): Promise<string> {
 	const [hostGitDirectoryRoot, expectedGitDirectoryRoot] = await Promise.all([
@@ -156,8 +156,7 @@ async function validateControllerDerivedAgentGitDirectoryRoot(options: {
 		realpath(
 			resolveManagedAgentGitDirectoryRoot({
 				agentId: options.agentId,
-				runtimeDir: options.runtimeDir,
-				zoneId: options.zoneId,
+				zoneRuntimeDir: options.zoneRuntimeDir,
 			}),
 		),
 	]);
@@ -365,7 +364,7 @@ export async function createUnstartedToolVm(
 		return await validateControllerDerivedAgentGitDirectoryRoot({
 			agentId: options.agentId,
 			hostGitDirectoryRoot: configuredGitDirectoryRoot,
-			runtimeDir: options.systemConfig.runtimeDir,
+			zoneRuntimeDir: zone.gateway.zoneRuntimeDir,
 			zoneId: options.zoneId,
 		});
 	};

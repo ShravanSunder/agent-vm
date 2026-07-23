@@ -1,7 +1,7 @@
 import { chmod, lstat, mkdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
 
-import { agentIdSchema, zoneIdSchema } from '../config/system-config.js';
+import { agentIdSchema } from '../config/system-config.js';
 
 export interface ManagedAgentWorkspacePaths {
 	readonly agentId: string;
@@ -11,42 +11,32 @@ export interface ManagedAgentWorkspacePaths {
 
 export function resolveManagedAgentGitDirectoryRoot(options: {
 	readonly agentId: string;
-	readonly runtimeDir: string;
-	readonly zoneId: string;
+	readonly zoneRuntimeDir: string;
 }): string {
-	if (!path.isAbsolute(options.runtimeDir)) {
-		throw new Error('Managed agent Git directory runtimeDir must be absolute.');
+	if (!path.isAbsolute(options.zoneRuntimeDir)) {
+		throw new Error('Managed agent Git directory zoneRuntimeDir must be absolute.');
 	}
 	const agentId = agentIdSchema.parse(options.agentId);
-	const zoneId = zoneIdSchema.parse(options.zoneId);
-	return path.join(options.runtimeDir, 'zones', zoneId, 'gitdirs', 'agents', agentId);
+	return path.join(options.zoneRuntimeDir, 'gitdirs', 'agents', agentId);
 }
 
 export async function materializeManagedAgentGitDirectoryRoot(options: {
 	readonly agentId: string;
-	readonly runtimeDir: string;
-	readonly zoneId: string;
+	readonly zoneRuntimeDir: string;
 }): Promise<string> {
 	const hostGitDirectoryRoot = resolveManagedAgentGitDirectoryRoot(options);
-	const zonesRuntimeRoot = path.join(options.runtimeDir, 'zones');
-	const zoneRuntimeRoot = path.join(options.runtimeDir, 'zones', options.zoneId);
-	const gitDirectoriesRoot = path.join(zoneRuntimeRoot, 'gitdirs');
+	const gitDirectoriesRoot = path.join(options.zoneRuntimeDir, 'gitdirs');
 	const agentGitDirectoriesRoot = path.join(gitDirectoriesRoot, 'agents');
-	for (const existingRuntimePath of [options.runtimeDir, zonesRuntimeRoot, zoneRuntimeRoot]) {
-		// oxlint-disable-next-line no-await-in-loop -- runtime ancestors are validated in parent-to-child order without mutating permissions.
-		await assertExistingRealDirectory(existingRuntimePath);
-	}
+	await assertExistingRealDirectory(options.zoneRuntimeDir);
 	for (const directoryPath of [gitDirectoriesRoot, agentGitDirectoriesRoot, hostGitDirectoryRoot]) {
 		// oxlint-disable-next-line no-await-in-loop -- each real directory is admitted in parent-to-child order.
 		await ensureRealDirectory(directoryPath);
 	}
 
-	const canonicalRuntimeDir = await realpath(options.runtimeDir);
+	const canonicalZoneRuntimeDir = await realpath(options.zoneRuntimeDir);
 	const canonicalGitDirectoryRoot = await realpath(hostGitDirectoryRoot);
 	const expectedCanonicalGitDirectoryRoot = path.join(
-		canonicalRuntimeDir,
-		'zones',
-		zoneIdSchema.parse(options.zoneId),
+		canonicalZoneRuntimeDir,
 		'gitdirs',
 		'agents',
 		agentIdSchema.parse(options.agentId),

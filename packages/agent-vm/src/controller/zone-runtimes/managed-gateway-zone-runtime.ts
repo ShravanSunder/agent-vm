@@ -509,8 +509,7 @@ export function createManagedGatewayZoneRuntime(
 			}
 			await appendGatewayLifecycleOperationRecordDefault({
 				record: operationRecord,
-				runtimeDir: options.systemConfig.runtimeDir,
-				zoneId: options.zone.id,
+				zoneRuntimeDir: options.zone.gateway.zoneRuntimeDir,
 			});
 		} catch (error) {
 			writeManagedGatewayZoneRuntimeLog(

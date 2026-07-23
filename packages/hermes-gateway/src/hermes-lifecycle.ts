@@ -177,7 +177,7 @@ export const hermesLifecycle = {
 		gatewayCacheDir,
 		projectNamespace,
 		resolvedSecrets,
-		runtimeDir,
+		zoneRuntimeDir,
 		tcpPool,
 		zone,
 	}: BuildGatewayVmRequirementsOptions): GatewayVmRequirements {
@@ -202,7 +202,7 @@ export const hermesLifecycle = {
 			mounts: {
 				[agentVmLogsDirVmPath]: {
 					access: 'read-write',
-					hostPath: path.join(runtimeDir, 'zones', zone.id, 'logs'),
+					hostPath: path.join(zoneRuntimeDir, 'logs'),
 					kind: 'host-directory',
 				},
 				[hermesCacheDirVmPath]: {

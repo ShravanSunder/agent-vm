@@ -72,8 +72,8 @@ function createSystemConfig(
 	zoneDefinitions: readonly ApprovalZoneDefinition[],
 ): LoadedSystemConfig {
 	const config = {
-		cacheDir: path.join(TEST_ROOT, 'cache'),
-		controllerStateDir: path.join(TEST_ROOT, 'controller-state'),
+		schemaVersion: 2,
+		storageRootDir: TEST_ROOT,
 		host: {
 			controllerPort: 18_800,
 			projectNamespace: 'approval-authentication-test',
@@ -91,7 +91,6 @@ function createSystemConfig(
 			},
 			toolVms: {},
 		},
-		runtimeDir: path.join(TEST_ROOT, 'runtime'),
 		tcpPool: { basePort: 19_000, size: 10 },
 		toolVmProfiles: {},
 		zones: zoneDefinitions.map((definition, zoneIndex) => ({
@@ -109,7 +108,6 @@ function createSystemConfig(
 				imageProfile: 'worker',
 				memory: '1G',
 				port: 20_000 + zoneIndex,
-				stateDir: path.join(TEST_ROOT, 'state', definition.zoneId),
 				type: 'worker',
 			},
 			id: definition.zoneId,

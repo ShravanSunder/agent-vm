@@ -24,7 +24,7 @@ describe('managed agent root storage', () => {
 
 	async function createStorageRoots(): Promise<{
 		readonly controllerStateDir: string;
-		readonly runtimeDir: string;
+		readonly zoneRuntimeDir: string;
 		readonly stateDir: string;
 		readonly temporaryRoot: string;
 		readonly zoneFilesDir: string;
@@ -33,7 +33,7 @@ describe('managed agent root storage', () => {
 		temporaryRoots.push(temporaryRoot);
 		return {
 			controllerStateDir: path.join(temporaryRoot, 'controller-state'),
-			runtimeDir: path.join(temporaryRoot, 'runtime'),
+			zoneRuntimeDir: path.join(temporaryRoot, 'runtime'),
 			stateDir: path.join(temporaryRoot, 'state'),
 			temporaryRoot,
 			zoneFilesDir: path.join(temporaryRoot, 'zone-files'),
@@ -42,52 +42,48 @@ describe('managed agent root storage', () => {
 
 	it('materializes one controller-derived writable Git directory root per zone agent', async () => {
 		const roots = await createStorageRoots();
-		await mkdir(path.join(roots.runtimeDir, 'zones', 'zone-a'), { recursive: true });
-		await chmod(roots.runtimeDir, 0o755);
-		const runtimeModeBeforeMaterialization = (await lstat(roots.runtimeDir)).mode & 0o777;
+		await mkdir(roots.zoneRuntimeDir, { recursive: true });
+		await chmod(roots.zoneRuntimeDir, 0o755);
+		const runtimeModeBeforeMaterialization = (await lstat(roots.zoneRuntimeDir)).mode & 0o777;
 
 		const hostGitDirectoryRoot = await materializeManagedAgentGitDirectoryRoot({
 			agentId: 'alpha',
-			runtimeDir: roots.runtimeDir,
-			zoneId: 'zone-a',
+			zoneRuntimeDir: roots.zoneRuntimeDir,
 		});
 
 		expect(hostGitDirectoryRoot).toBe(
-			await realpath(path.join(roots.runtimeDir, 'zones', 'zone-a', 'gitdirs', 'agents', 'alpha')),
+			await realpath(path.join(roots.zoneRuntimeDir, 'gitdirs', 'agents', 'alpha')),
 		);
 		expect((await lstat(hostGitDirectoryRoot)).mode & 0o777).toBe(0o700);
-		expect((await lstat(roots.runtimeDir)).mode & 0o777).toBe(runtimeModeBeforeMaterialization);
+		expect((await lstat(roots.zoneRuntimeDir)).mode & 0o777).toBe(runtimeModeBeforeMaterialization);
 		expect(
 			resolveManagedAgentGitDirectoryRoot({
 				agentId: 'alpha',
-				runtimeDir: roots.runtimeDir,
-				zoneId: 'zone-a',
+				zoneRuntimeDir: roots.zoneRuntimeDir,
 			}),
-		).toBe(path.join(roots.runtimeDir, 'zones', 'zone-a', 'gitdirs', 'agents', 'alpha'));
+		).toBe(path.join(roots.zoneRuntimeDir, 'gitdirs', 'agents', 'alpha'));
 	});
 
 	it('materializes concurrent agent Git roots through shared zone ancestors', async () => {
 		const roots = await createStorageRoots();
-		await mkdir(path.join(roots.runtimeDir, 'zones', 'zone-a'), { recursive: true });
+		await mkdir(roots.zoneRuntimeDir, { recursive: true });
 
 		const [alphaGitDirectoryRoot, betaGitDirectoryRoot] = await Promise.all([
 			materializeManagedAgentGitDirectoryRoot({
 				agentId: 'alpha',
-				runtimeDir: roots.runtimeDir,
-				zoneId: 'zone-a',
+				zoneRuntimeDir: roots.zoneRuntimeDir,
 			}),
 			materializeManagedAgentGitDirectoryRoot({
 				agentId: 'beta',
-				runtimeDir: roots.runtimeDir,
-				zoneId: 'zone-a',
+				zoneRuntimeDir: roots.zoneRuntimeDir,
 			}),
 		]);
 
 		expect(alphaGitDirectoryRoot).toBe(
-			await realpath(path.join(roots.runtimeDir, 'zones', 'zone-a', 'gitdirs', 'agents', 'alpha')),
+			await realpath(path.join(roots.zoneRuntimeDir, 'gitdirs', 'agents', 'alpha')),
 		);
 		expect(betaGitDirectoryRoot).toBe(
-			await realpath(path.join(roots.runtimeDir, 'zones', 'zone-a', 'gitdirs', 'agents', 'beta')),
+			await realpath(path.join(roots.zoneRuntimeDir, 'gitdirs', 'agents', 'beta')),
 		);
 	});
 

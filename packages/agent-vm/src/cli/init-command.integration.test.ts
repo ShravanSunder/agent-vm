@@ -71,9 +71,8 @@ const noGeneratedAgeIdentityDependencies = {
 
 const scaffoldedSystemConfigSchema = z.object({
 	$schema: z.string().min(1),
-	schemaVersion: z.literal(1),
-	cacheDir: z.string().min(1),
-	controllerStateDir: z.string().min(1),
+	schemaVersion: z.literal(2),
+	storageRootDir: z.string().min(1),
 	host: z.object({
 		projectNamespace: z.string().min(1),
 	}),
@@ -88,15 +87,14 @@ const scaffoldedSystemConfigSchema = z.object({
 });
 
 /**
- * Narrower schema for tests that assert runtime path fields written into
- * the scaffolded `system.json` (cacheDir + runtimeDir + per-zone stateDir,
- * OpenClaw zoneFilesDir, optional backupDir). Validates instead of
+ * Narrower schema for tests that assert storage paths written into
+ * the scaffolded `system.json` (storageRootDir + optional backupDir).
+ * Validates instead of
  * `as`-casting `JSON.parse` output.
  */
 const scaffoldedRuntimePathsSchema = z.object({
-	cacheDir: z.string().min(1),
-	controllerStateDir: z.string().min(1),
-	runtimeDir: z.string().min(1),
+	schemaVersion: z.literal(2),
+	storageRootDir: z.string().min(1),
 	zones: z.tuple([
 		z.object({
 			gateway: z.union([
@@ -106,13 +104,10 @@ const scaffoldedRuntimePathsSchema = z.object({
 						mode: z.literal('token'),
 						secret: z.string().min(1),
 					}),
-					stateDir: z.string().min(1),
-					zoneFilesDir: z.string().min(1),
 					backupDir: z.string().min(1).optional(),
 				}),
 				z.object({
 					type: z.literal('worker'),
-					stateDir: z.string().min(1),
 					backupDir: z.string().min(1).optional(),
 				}),
 			]),
@@ -302,9 +297,8 @@ describe('scaffoldAgentVmProject', () => {
 		expect(result.created).toContain('config/schemas/mcp.schema.json');
 		expect(result.created).toContain('config/schemas/mcp-portal.schema.json');
 		expect(config.$schema).toBe('./schemas/system.schema.json');
-		expect(config.schemaVersion).toBe(1);
-		expect(config.cacheDir).toBe('../cache');
-		expect(config.controllerStateDir).toBe('../controller-state');
+		expect(config.schemaVersion).toBe(2);
+		expect(config.storageRootDir).toBe('../.agent-vm');
 		expect(config.host.projectNamespace).toMatch(/^agent-vm-init-test-/u);
 		expect(config.zones[0]?.id).toBe('test-zone');
 		expect(config.zones[0]?.gateway.type).toBe('openclaw');
@@ -312,10 +306,9 @@ describe('scaffoldAgentVmProject', () => {
 		await expect(
 			readGeneratedJsonc(path.join(targetDir, 'config', 'schemas', 'system.schema.json')),
 		).resolves.toMatchObject({
-			$id: 'agent-vm:system:1',
-			required: expect.arrayContaining(['controllerStateDir']),
+			$id: 'agent-vm:system:2',
 			properties: {
-				controllerStateDir: { minLength: 1, type: 'string' },
+				storageRootDir: { minLength: 1, type: 'string' },
 			},
 		});
 		await expect(
@@ -548,7 +541,7 @@ describe('scaffoldAgentVmProject', () => {
 		);
 		expect(
 			await fs.readFile(path.join(targetDir, 'docs', 'manual', 'layout.md'), 'utf8'),
-		).toContain('runtimeDir/zones/<zoneId>/gitdirs/agents/<agentId>/workspace.git');
+		).toContain('zoneRuntimeDir/gitdirs/agents/<agentId>/workspace.git');
 		const perAgentManual = await fs.readFile(
 			path.join(targetDir, 'docs', 'manual', 'per-agent-setup.md'),
 			'utf8',
@@ -703,11 +696,12 @@ describe('scaffoldAgentVmProject', () => {
 		);
 
 		expect(await pathExists(path.join(targetDir, 'config', 'gateways', 'my-zone'))).toBe(true);
-		expect(await pathExists(path.join(targetDir, 'cache'))).toBe(true);
-		expect(await pathExists(path.join(targetDir, 'controller-state'))).toBe(true);
-		expect(await pathExists(path.join(targetDir, 'runtime'))).toBe(true);
-		expect(await pathExists(path.join(targetDir, 'state', 'my-zone'))).toBe(true);
-		expect(await pathExists(path.join(targetDir, 'zone-files', 'my-zone'))).toBe(true);
+		expect(await pathExists(path.join(targetDir, '.agent-vm', 'cache'))).toBe(true);
+		expect(await pathExists(path.join(targetDir, '.agent-vm', 'controller-state'))).toBe(true);
+		expect(await pathExists(path.join(targetDir, '.agent-vm', 'controller-runtime'))).toBe(true);
+		expect(await pathExists(path.join(targetDir, '.agent-vm', 'my-zone', 'state'))).toBe(true);
+		expect(await pathExists(path.join(targetDir, '.agent-vm', 'my-zone', 'runtime'))).toBe(true);
+		expect(await pathExists(path.join(targetDir, '.agent-vm', 'my-zone', 'zone-files'))).toBe(true);
 		expect(await pathExists(path.join(targetDir, 'backups', 'my-zone'))).toBe(true);
 		expect(await pathExists(path.join(targetDir, 'workspaces', 'tools'))).toBe(false);
 	});
@@ -758,40 +752,37 @@ describe('scaffoldAgentVmProject', () => {
 			await readGeneratedSystemConfig(targetDir),
 		);
 		const loadedSystemConfig = await loadSystemConfig(systemConfigPath);
+		const canonicalFakeHomeDir = await fs.realpath(fakeHomeDir);
 
-		expect(systemConfig.cacheDir).toBe(path.join(fakeHomeDir, '.agent-vm', 'cache'));
-		expect(systemConfig.controllerStateDir).toBe(
-			path.join(fakeHomeDir, '.agent-vm', 'controller-state'),
-		);
-		expect(systemConfig.runtimeDir).toBe(path.join(fakeHomeDir, '.agent-vm', 'runtime'));
-		expect(systemConfig.zones[0].gateway.stateDir).toBe(
-			path.join(fakeHomeDir, '.agent-vm', 'state', 'shravan'),
-		);
+		expect(systemConfig.storageRootDir).toBe(path.join(fakeHomeDir, '.agent-vm'));
 		if (systemConfig.zones[0].gateway.type !== 'openclaw') {
 			throw new Error('Expected OpenClaw scaffold to write an OpenClaw gateway.');
 		}
-		expect(systemConfig.zones[0].gateway.zoneFilesDir).toBe(
-			path.join(fakeHomeDir, '.agent-vm', 'zone-files', 'shravan'),
-		);
 		expect(systemConfig.zones[0].gateway.backupDir).toBe(
 			path.join(fakeHomeDir, '.agent-vm-backups', 'shravan'),
 		);
-		expect(loadedSystemConfig.cacheDir).toBe(systemConfig.cacheDir);
+		expect(loadedSystemConfig.storageRootDir).toBe(path.join(canonicalFakeHomeDir, '.agent-vm'));
+		expect(loadedSystemConfig.cacheDir).toBe(path.join(canonicalFakeHomeDir, '.agent-vm', 'cache'));
 		expect(loadedSystemConfig.controllerStateDir).toBe(
-			await fs.realpath(systemConfig.controllerStateDir),
+			path.join(canonicalFakeHomeDir, '.agent-vm', 'controller-state'),
 		);
-		expect(loadedSystemConfig.runtimeDir).toBe(systemConfig.runtimeDir);
+		expect(loadedSystemConfig.controllerRuntimeDir).toBe(
+			path.join(canonicalFakeHomeDir, '.agent-vm', 'controller-runtime'),
+		);
 		expect(loadedSystemConfig.zones[0]?.gateway.stateDir).toBe(
-			systemConfig.zones[0].gateway.stateDir,
+			path.join(canonicalFakeHomeDir, '.agent-vm', 'shravan', 'state'),
 		);
 		if (loadedSystemConfig.zones[0]?.gateway.type !== 'openclaw') {
 			throw new Error('Expected loaded scaffold to be an OpenClaw gateway.');
 		}
 		expect(loadedSystemConfig.zones[0].gateway.zoneFilesDir).toBe(
-			systemConfig.zones[0].gateway.zoneFilesDir,
+			path.join(canonicalFakeHomeDir, '.agent-vm', 'shravan', 'zone-files'),
+		);
+		expect(loadedSystemConfig.zones[0].gateway.zoneRuntimeDir).toBe(
+			path.join(canonicalFakeHomeDir, '.agent-vm', 'shravan', 'runtime'),
 		);
 		expect(loadedSystemConfig.zones[0]?.gateway.backupDir).toBe(
-			systemConfig.zones[0].gateway.backupDir,
+			path.join(fakeHomeDir, '.agent-vm-backups', 'shravan'),
 		);
 	});
 
@@ -824,9 +815,10 @@ describe('scaffoldAgentVmProject', () => {
 		// user-dir profile SHOULD create the dirs it advertises in system.json
 		expect(await pathExists(path.join(fakeHomeDir, '.agent-vm', 'cache'))).toBe(true);
 		expect(await pathExists(path.join(fakeHomeDir, '.agent-vm', 'controller-state'))).toBe(true);
-		expect(await pathExists(path.join(fakeHomeDir, '.agent-vm', 'runtime'))).toBe(true);
-		expect(await pathExists(path.join(fakeHomeDir, '.agent-vm', 'state', 'shravan'))).toBe(true);
-		expect(await pathExists(path.join(fakeHomeDir, '.agent-vm', 'zone-files', 'shravan'))).toBe(
+		expect(await pathExists(path.join(fakeHomeDir, '.agent-vm', 'controller-runtime'))).toBe(true);
+		expect(await pathExists(path.join(fakeHomeDir, '.agent-vm', 'shravan', 'state'))).toBe(true);
+		expect(await pathExists(path.join(fakeHomeDir, '.agent-vm', 'shravan', 'runtime'))).toBe(true);
+		expect(await pathExists(path.join(fakeHomeDir, '.agent-vm', 'shravan', 'zone-files'))).toBe(
 			true,
 		);
 		expect(await pathExists(path.join(fakeHomeDir, '.agent-vm-backups', 'shravan'))).toBe(true);
@@ -835,7 +827,7 @@ describe('scaffoldAgentVmProject', () => {
 		);
 	});
 
-	it('writes backupDir for local profile alongside ../state and ../runtime', async () => {
+	it('writes backupDir for local profile alongside the storage root', async () => {
 		const targetDir = await createTestDirectory();
 
 		await scaffoldAgentVmProject(
@@ -854,8 +846,7 @@ describe('scaffoldAgentVmProject', () => {
 			await readGeneratedSystemConfig(targetDir),
 		);
 
-		expect(systemConfig.runtimeDir).toBe('../runtime');
-		expect(systemConfig.zones[0].gateway.stateDir).toBe('../state/my-zone');
+		expect(systemConfig.storageRootDir).toBe('../.agent-vm');
 		expect(systemConfig.zones[0].gateway.backupDir).toBe('../backups/my-zone');
 	});
 
@@ -1862,10 +1853,9 @@ describe('scaffoldAgentVmProject', () => {
 		const systemConfig = await readGeneratedSystemConfig(targetDir);
 		const podWorkerSystemConfig = z
 			.object({
+				schemaVersion: z.literal(2),
 				host: z.object({ projectNamespace: z.string().min(1) }),
-				cacheDir: z.string().min(1),
-				controllerStateDir: z.string().min(1),
-				runtimeDir: z.string().min(1),
+				storageRootDir: z.string().min(1),
 				imageProfiles: z.object({
 					gateways: z.object({
 						worker: z.object({
@@ -1883,7 +1873,7 @@ describe('scaffoldAgentVmProject', () => {
 					z.object({
 						gateway: z.object({
 							config: z.string().min(1),
-							stateDir: z.string().min(1),
+							backupDir: z.string().min(1),
 						}),
 					}),
 				]),
@@ -1892,9 +1882,7 @@ describe('scaffoldAgentVmProject', () => {
 			.parse(systemConfig);
 
 		expect(podWorkerSystemConfig.host.projectNamespace).toBe('agent-vm');
-		expect(podWorkerSystemConfig.cacheDir).toBe('/var/agent-vm/cache');
-		expect(podWorkerSystemConfig.controllerStateDir).toBe('/var/agent-vm/controller-state');
-		expect(podWorkerSystemConfig.runtimeDir).toBe('/var/agent-vm/runtime');
+		expect(podWorkerSystemConfig.storageRootDir).toBe('/var/agent-vm');
 		expect(podWorkerSystemConfig.imageProfiles.gateways.worker.buildConfig).toBe(
 			'/etc/agent-vm/vm-images/gateways/worker/build-config.jsonc',
 		);
@@ -1907,7 +1895,7 @@ describe('scaffoldAgentVmProject', () => {
 		expect(podWorkerSystemConfig.zones[0].gateway.config).toBe(
 			'/etc/agent-vm/gateways/coding-agent/worker.jsonc',
 		);
-		expect(podWorkerSystemConfig.zones[0].gateway.stateDir).toBe('/var/agent-vm/state');
+		expect(podWorkerSystemConfig.zones[0].gateway.backupDir).toBe('/var/agent-vm/backups');
 		expect(podWorkerSystemConfig.zones[0].gateway).not.toHaveProperty('zoneFilesDir');
 		expect(podWorkerSystemConfig.toolVmProfiles).toEqual({});
 

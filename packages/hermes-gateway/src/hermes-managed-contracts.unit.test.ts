@@ -159,7 +159,7 @@ plugins:
 			gatewayCacheDir: '/deployment/cache/hermes',
 			projectNamespace: 'deployment-a',
 			resolvedSecrets: { API_SERVER_KEY: 'test-only-key' },
-			runtimeDir: '/deployment/runtime',
+			zoneRuntimeDir: '/deployment/runtime',
 			tcpPool: { basePort: 22_000, size: 2 },
 			zone: createHermesZone(createHermesAdapterMaterial()),
 		});
@@ -171,7 +171,7 @@ plugins:
 		expect(requirements.mounts).toEqual({
 			'/agent-vm/logs': {
 				access: 'read-write',
-				hostPath: '/deployment/runtime/zones/hermes-zone/logs',
+				hostPath: '/deployment/runtime/logs',
 				kind: 'host-directory',
 			},
 			'/home/hermes/.cache': {

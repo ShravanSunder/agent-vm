@@ -18,13 +18,15 @@ describe('validateControllerSelectedToolVmDirectory', () => {
 	let temporaryDirectory: string;
 	let zone: ZoneConfig;
 	let zoneFilesDirectory: string;
+	let zoneRuntimeDirectory: string;
 
 	beforeAll(async () => {
 		temporaryDirectory = await mkdtemp(
 			path.join(tmpdir(), 'agent-vm-controller-selected-tool-directory-'),
 		);
-		zoneFilesDirectory = path.join(temporaryDirectory, 'zone-files');
-		stateDirectory = path.join(temporaryDirectory, 'state');
+		zoneFilesDirectory = path.join(temporaryDirectory, 'test-zone', 'zone-files');
+		stateDirectory = path.join(temporaryDirectory, 'test-zone', 'state');
+		zoneRuntimeDirectory = path.join(temporaryDirectory, 'test-zone', 'runtime');
 		agentWorkspaceDirectory = path.join(zoneFilesDirectory, 'agents', 'main');
 		await mkdir(agentWorkspaceDirectory, { recursive: true });
 		await mkdir(stateDirectory, { recursive: true });
@@ -45,6 +47,7 @@ describe('validateControllerSelectedToolVmDirectory', () => {
 				stateDir: stateDirectory,
 				type: 'openclaw',
 				zoneFilesDir: zoneFilesDirectory,
+				zoneRuntimeDir: zoneRuntimeDirectory,
 			},
 			id: 'test-zone',
 			secrets: {
@@ -96,6 +99,7 @@ describe('validateControllerSelectedToolVmDirectory', () => {
 				stateDir: stateDirectory,
 				type: 'hermes' as const,
 				zoneFilesDir: zoneFilesDirectory,
+				zoneRuntimeDir: zoneRuntimeDirectory,
 			},
 		} satisfies ZoneConfig;
 
@@ -194,6 +198,7 @@ describe('validateControllerSelectedToolVmDirectory', () => {
 						port: 18_792,
 						stateDir: stateDirectory,
 						type: 'worker',
+						zoneRuntimeDir: zoneRuntimeDirectory,
 					},
 				},
 			}),

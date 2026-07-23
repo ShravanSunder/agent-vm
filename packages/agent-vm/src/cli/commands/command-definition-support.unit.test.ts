@@ -46,10 +46,11 @@ describe('requireZone', () => {
 		expect(() =>
 			requireZone(
 				{
+					storageRootDir: './storage',
 					cacheDir: './cache',
 					controllerStateDir: '/controller-state-test',
-					runtimeDir: './runtime',
-					schemaVersion: 1,
+					controllerRuntimeDir: './controller-runtime',
+					schemaVersion: 2,
 					host: {
 						controllerPort: 18800,
 						projectNamespace: 'claw-tests-a1b2c3d4',
@@ -100,6 +101,7 @@ describe('requireZone', () => {
 								port: 18791,
 								stateDir: './state/shravan',
 								zoneFilesDir: './zone-files/shravan',
+								zoneRuntimeDir: './runtime/shravan',
 							},
 							id: 'shravan',
 							secrets: {

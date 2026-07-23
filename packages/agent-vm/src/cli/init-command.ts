@@ -91,14 +91,10 @@ export interface PromptAndStoreTokenDependencies {
 export type ScaffoldPathMode = 'local' | 'pod' | 'user-dir';
 
 interface ScaffoldPathProfile {
-	readonly cacheDir: string;
-	readonly controllerStateDir: string;
-	readonly runtimeDir: string;
+	readonly storageRootDir: string;
 	readonly createLocalRuntimeDirectories: boolean;
 	readonly gatewayConfig: (zoneId: string, gatewayType: GatewayType) => string;
 	readonly gatewayConfigDir: (zoneId: string) => string;
-	readonly gatewayStateDir: (zoneId: string) => string;
-	readonly gatewayZoneFilesDir: (zoneId: string) => string;
 	readonly gatewayBackupDir: (zoneId: string) => string;
 	readonly gatewayBuildConfig: (gatewayType: GatewayType) => string;
 	readonly gatewayOverlay: (gatewayType: GatewayType) => string;
@@ -190,15 +186,11 @@ function resolveGatewayConfigFileName(gatewayType: GatewayType): 'worker.jsonc' 
 }
 
 const localPathProfile: ScaffoldPathProfile = {
-	cacheDir: '../cache',
-	controllerStateDir: '../controller-state',
-	runtimeDir: '../runtime',
+	storageRootDir: '../.agent-vm',
 	createLocalRuntimeDirectories: true,
 	gatewayConfig: (zoneId, gatewayType) =>
 		`./gateways/${zoneId}/${resolveGatewayConfigFileName(gatewayType)}`,
 	gatewayConfigDir: (zoneId) => `./gateways/${zoneId}`,
-	gatewayStateDir: (zoneId) => `../state/${zoneId}`,
-	gatewayZoneFilesDir: (zoneId) => `../zone-files/${zoneId}`,
 	gatewayBackupDir: (zoneId) => `../backups/${zoneId}`,
 	gatewayBuildConfig: (gatewayType) => `../vm-images/gateways/${gatewayType}/build-config.jsonc`,
 	gatewayOverlay: (gatewayType) => `../vm-images/gateways/${gatewayType}/overlay.jsonc`,
@@ -207,15 +199,11 @@ const localPathProfile: ScaffoldPathProfile = {
 };
 
 const podPathProfile: ScaffoldPathProfile = {
-	cacheDir: '/var/agent-vm/cache',
-	controllerStateDir: '/var/agent-vm/controller-state',
-	runtimeDir: '/var/agent-vm/runtime',
+	storageRootDir: '/var/agent-vm',
 	createLocalRuntimeDirectories: false,
 	gatewayConfig: (zoneId, gatewayType) =>
 		`/etc/agent-vm/gateways/${zoneId}/${resolveGatewayConfigFileName(gatewayType)}`,
 	gatewayConfigDir: (zoneId) => `/etc/agent-vm/gateways/${zoneId}`,
-	gatewayStateDir: () => '/var/agent-vm/state',
-	gatewayZoneFilesDir: () => '/var/agent-vm/zone-files',
 	gatewayBackupDir: () => '/var/agent-vm/backups',
 	gatewayBuildConfig: (gatewayType) =>
 		`/etc/agent-vm/vm-images/gateways/${gatewayType}/build-config.jsonc`,
@@ -231,15 +219,11 @@ const podPathProfile: ScaffoldPathProfile = {
  * config, image recipes) stay in-repo.
  */
 const userDirPathProfile: ScaffoldPathProfile = {
-	cacheDir: '~/.agent-vm/cache',
-	controllerStateDir: '~/.agent-vm/controller-state',
-	runtimeDir: '~/.agent-vm/runtime',
+	storageRootDir: '~/.agent-vm',
 	createLocalRuntimeDirectories: true,
 	gatewayConfig: (zoneId, gatewayType) =>
 		`./gateways/${zoneId}/${resolveGatewayConfigFileName(gatewayType)}`,
 	gatewayConfigDir: (zoneId) => `./gateways/${zoneId}`,
-	gatewayStateDir: (zoneId) => `~/.agent-vm/state/${zoneId}`,
-	gatewayZoneFilesDir: (zoneId) => `~/.agent-vm/zone-files/${zoneId}`,
 	gatewayBackupDir: (zoneId) => `~/.agent-vm-backups/${zoneId}`,
 	gatewayBuildConfig: (gatewayType) => `../vm-images/gateways/${gatewayType}/build-config.jsonc`,
 	gatewayOverlay: (gatewayType) => `../vm-images/gateways/${gatewayType}/overlay.jsonc`,
@@ -279,17 +263,7 @@ function resolveConfigWritablePathProfile(
 ): ScaffoldPathProfile {
 	return {
 		...pathProfile,
-		cacheDir: resolveHomeRelativeScaffoldPath(pathProfile.cacheDir, configDir, homeDir),
-		controllerStateDir: resolveHomeRelativeScaffoldPath(
-			pathProfile.controllerStateDir,
-			configDir,
-			homeDir,
-		),
-		runtimeDir: resolveHomeRelativeScaffoldPath(pathProfile.runtimeDir, configDir, homeDir),
-		gatewayStateDir: (zoneId) =>
-			resolveHomeRelativeScaffoldPath(pathProfile.gatewayStateDir(zoneId), configDir, homeDir),
-		gatewayZoneFilesDir: (zoneId) =>
-			resolveHomeRelativeScaffoldPath(pathProfile.gatewayZoneFilesDir(zoneId), configDir, homeDir),
+		storageRootDir: resolveHomeRelativeScaffoldPath(pathProfile.storageRootDir, configDir, homeDir),
 		gatewayBackupDir: (zoneId) =>
 			resolveHomeRelativeScaffoldPath(pathProfile.gatewayBackupDir(zoneId), configDir, homeDir),
 		toolVmOverlay: resolveHomeRelativeScaffoldPath(pathProfile.toolVmOverlay, configDir, homeDir),
@@ -374,7 +348,7 @@ const defaultSystemConfig = (
 	agentIds?: readonly string[],
 ): object => ({
 	$schema: './schemas/system.schema.json',
-	schemaVersion: 1,
+	schemaVersion: 2,
 	host: {
 		controllerPort: 18800,
 		projectNamespace,
@@ -392,9 +366,7 @@ const defaultSystemConfig = (
 				}
 			: {}),
 	},
-	cacheDir: pathProfile.cacheDir,
-	controllerStateDir: pathProfile.controllerStateDir,
-	runtimeDir: pathProfile.runtimeDir,
+	storageRootDir: pathProfile.storageRootDir,
 	imageProfiles: {
 		gateways: {
 			[gatewayType]: {
@@ -421,7 +393,6 @@ const defaultSystemConfig = (
 				config: pathProfile.gatewayConfig(zoneId, gatewayType),
 				imageProfile: gatewayType,
 				runtimeRootfsSize: gatewayType === 'openclaw' ? '12G' : '8G',
-				stateDir: pathProfile.gatewayStateDir(zoneId),
 				ssh: { secretEnv: 'explicit' },
 				...(gatewayType === 'openclaw'
 					? {
@@ -429,7 +400,6 @@ const defaultSystemConfig = (
 								mode: 'token',
 								secret: 'OPENCLAW_GATEWAY_TOKEN',
 							},
-							zoneFilesDir: pathProfile.gatewayZoneFilesDir(zoneId),
 							authProfilesByAgent: {},
 						}
 					: {}),
@@ -1336,14 +1306,17 @@ async function scaffoldAgentVmProjectInternal(
 	}
 
 	if (pathProfile.createLocalRuntimeDirectories) {
+		const storageRootDir = resolveConfigPath(pathProfile.storageRootDir, configDir, homeDir);
+		const zoneRootDir = path.join(storageRootDir, options.zoneId);
 		const directoriesToCreate = [
-			pathProfile.cacheDir,
-			pathProfile.controllerStateDir,
-			pathProfile.runtimeDir,
-			pathProfile.gatewayStateDir(options.zoneId),
-			...(gatewayType === 'openclaw' ? [pathProfile.gatewayZoneFilesDir(options.zoneId)] : []),
-			pathProfile.gatewayBackupDir(options.zoneId),
-		].map((profilePath) => resolveConfigPath(profilePath, configDir, homeDir));
+			path.join(storageRootDir, 'cache'),
+			path.join(storageRootDir, 'controller-state'),
+			path.join(storageRootDir, 'controller-runtime'),
+			path.join(zoneRootDir, 'state'),
+			path.join(zoneRootDir, 'runtime'),
+			...(gatewayType === 'openclaw' ? [path.join(zoneRootDir, 'zone-files')] : []),
+			resolveConfigPath(pathProfile.gatewayBackupDir(options.zoneId), configDir, homeDir),
+		];
 		await Promise.all(
 			directoriesToCreate.map((directoryPath) => mkdir(directoryPath, { recursive: true })),
 		);

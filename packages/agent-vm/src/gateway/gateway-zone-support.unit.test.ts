@@ -24,6 +24,7 @@ function createGatewayZone(ingress?: GatewayZone['gateway']['ingress']): Gateway
 			...(ingress === undefined ? {} : { ingress }),
 			stateDir: './state/shravan',
 			zoneFilesDir: './zone-files/shravan',
+			zoneRuntimeDir: './shravan/runtime',
 		},
 		secrets: {},
 		egressHosts: [],
@@ -83,6 +84,7 @@ describe('mapSystemGatewayZoneToLifecycleZone', () => {
 				config: './gateways/hermes/config.yaml',
 				stateDir: './state/hermes',
 				zoneFilesDir: './zone-files/hermes',
+				zoneRuntimeDir: './hermes/runtime',
 				profilesByAgent: {
 					researcher: 'research-profile',
 					reviewer: 'review-profile',
@@ -232,6 +234,7 @@ describe('mapSystemGatewayZoneToLifecycleZone', () => {
 					config: './gateways/hermes/config.yaml',
 					stateDir: './state/hermes',
 					zoneFilesDir: './zone-files/hermes',
+					zoneRuntimeDir: './hermes/runtime',
 					profilesByAgent: { researcher: 'research-profile' },
 				},
 				observability: {

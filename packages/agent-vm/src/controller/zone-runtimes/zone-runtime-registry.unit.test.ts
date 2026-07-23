@@ -46,10 +46,11 @@ const zoneRuntimeRegistryTestRoot = path.join(
 );
 
 const systemConfig = {
-	schemaVersion: 1,
+	schemaVersion: 2,
+	storageRootDir: zoneRuntimeRegistryTestRoot,
 	cacheDir: path.join(zoneRuntimeRegistryTestRoot, 'cache'),
 	controllerStateDir: path.join(zoneRuntimeRegistryTestRoot, 'controller-state'),
-	runtimeDir: path.join(zoneRuntimeRegistryTestRoot, 'runtime'),
+	controllerRuntimeDir: path.join(zoneRuntimeRegistryTestRoot, 'controller-runtime'),
 	host: {
 		controllerPort: 18800,
 		projectNamespace: 'multi-zone-test',
@@ -79,6 +80,7 @@ const systemConfig = {
 				config: './shravan/openclaw.json',
 				stateDir: path.join(zoneRuntimeRegistryTestRoot, 'state', 'shravan'),
 				zoneFilesDir: path.join(zoneRuntimeRegistryTestRoot, 'zone-files', 'shravan'),
+				zoneRuntimeDir: path.join(zoneRuntimeRegistryTestRoot, 'shravan', 'runtime'),
 			},
 			secrets: {
 				OPENCLAW_GATEWAY_TOKEN: {
@@ -107,6 +109,7 @@ const systemConfig = {
 				config: './alevtina/openclaw.json',
 				stateDir: path.join(zoneRuntimeRegistryTestRoot, 'state', 'alevtina'),
 				zoneFilesDir: path.join(zoneRuntimeRegistryTestRoot, 'zone-files', 'alevtina'),
+				zoneRuntimeDir: path.join(zoneRuntimeRegistryTestRoot, 'alevtina', 'runtime'),
 			},
 			secrets: {
 				OPENCLAW_GATEWAY_TOKEN: {
@@ -130,6 +133,7 @@ const systemConfig = {
 				port: 18793,
 				config: './worker/worker.json',
 				stateDir: path.join(zoneRuntimeRegistryTestRoot, 'state', 'worker'),
+				zoneRuntimeDir: path.join(zoneRuntimeRegistryTestRoot, 'worker-zone', 'runtime'),
 			},
 			secrets: {},
 			egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),
@@ -501,6 +505,7 @@ function getHermesZone(): GatewayZone & {
 			stateDir: path.join(zoneRuntimeRegistryTestRoot, 'state', 'hermes-zone'),
 			type: 'hermes',
 			zoneFilesDir: path.join(zoneRuntimeRegistryTestRoot, 'zone-files', 'hermes-zone'),
+			zoneRuntimeDir: path.join(zoneRuntimeRegistryTestRoot, 'hermes-zone', 'runtime'),
 		},
 		id: 'hermes-zone',
 		secrets: {},
@@ -511,9 +516,10 @@ describe('zone runtime registry test fixture paths', () => {
 	it('keeps generated runtime and state paths outside the repository checkout', () => {
 		const generatedPaths = [
 			systemConfig.cacheDir,
-			systemConfig.runtimeDir,
+			systemConfig.controllerRuntimeDir,
 			...systemConfig.zones.flatMap((zone) => [
 				zone.gateway.stateDir,
+				zone.gateway.zoneRuntimeDir,
 				...(zone.gateway.type === 'openclaw' ? [zone.gateway.zoneFilesDir] : []),
 			]),
 		];
@@ -1500,8 +1506,7 @@ describe('createWorkerZoneRuntime', () => {
 		const originalFetch = globalThis.fetch;
 		try {
 			const stateDir = path.join(tempDirectory, 'state', 'worker-zone');
-			const runtimeDir = path.join(tempDirectory, 'runtime');
-			const workerRuntimeDir = path.join(runtimeDir, 'worker-tasks', 'worker-zone');
+			const workerRuntimeDir = path.join(tempDirectory, 'worker-zone-runtime');
 			await mkdir(stateDir, { recursive: true });
 			await mkdir(workerRuntimeDir, { recursive: true });
 			await writeFile(path.join(stateDir, 'state.txt'), 'state', 'utf8');
@@ -1511,6 +1516,7 @@ describe('createWorkerZoneRuntime', () => {
 				gateway: {
 					...getWorkerZone().gateway,
 					stateDir,
+					zoneRuntimeDir: workerRuntimeDir,
 				},
 			};
 			const clear = vi.fn();
@@ -1542,7 +1548,6 @@ describe('createWorkerZoneRuntime', () => {
 				secretResolver: createResolvingSecretResolver(),
 				systemConfig: {
 					...loadedSystemConfig,
-					runtimeDir,
 					zones: [purgeWorkerZone],
 				},
 				zone: purgeWorkerZone,

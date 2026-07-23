@@ -5,6 +5,7 @@ import { createObservabilityRuntimeConfig } from './observability-config.js';
 
 function createConfig(): SystemConfigInput {
 	return {
+		schemaVersion: 2,
 		host: {
 			controllerPort: 18800,
 			projectNamespace: 'observability-test',
@@ -24,9 +25,7 @@ function createConfig(): SystemConfigInput {
 				},
 			},
 		},
-		cacheDir: '/tmp/agent-vm-cache',
-		controllerStateDir: '/controller-state-test',
-		runtimeDir: '/tmp/agent-vm-runtime',
+		storageRootDir: '/var/agent-vm-observability-storage',
 		imageProfiles: {
 			gateways: {
 				hermes: {
@@ -64,8 +63,6 @@ function createConfig(): SystemConfigInput {
 					cpus: 2,
 					port: 18791,
 					config: '/tmp/openclaw.json',
-					stateDir: '/tmp/state/sunfam',
-					zoneFilesDir: '/tmp/zone-files/sunfam',
 				},
 				observability: {
 					enabled: true,
@@ -174,8 +171,6 @@ describe('createObservabilityRuntimeConfig', () => {
 			cpus: 2,
 			port: 8642,
 			config: '/tmp/hermes/config.yaml',
-			stateDir: '/tmp/state/hermes',
-			zoneFilesDir: '/tmp/zone-files/hermes',
 			profilesByAgent: { main: 'main-profile' },
 		};
 		const loadedConfig = createLoadedSystemConfig(configInput, {
@@ -215,7 +210,8 @@ describe('createObservabilityRuntimeConfig', () => {
 			enabled: true,
 			stackMode: 'managed',
 			projectName: 'agent-vm-observability-observability-test',
-			runtimeDir: '/tmp/agent-vm-runtime/observability/observability-test',
+			runtimeDir:
+				'/var/agent-vm-observability-storage/controller-runtime/observability/observability-test',
 			dataDir: '/tmp/agent-vm-observability',
 			bindAddress: '127.0.0.1',
 			ports: {
@@ -258,7 +254,8 @@ describe('createObservabilityRuntimeConfig', () => {
 		expect(runtimeConfig).toEqual({
 			enabled: true,
 			stackMode: 'external',
-			runtimeDir: '/tmp/agent-vm-runtime/observability/observability-test',
+			runtimeDir:
+				'/var/agent-vm-observability-storage/controller-runtime/observability/observability-test',
 			bindAddress: '127.0.0.1',
 			ports: {
 				collectorGrpc: 4317,

@@ -8,7 +8,7 @@ export interface AppendDurableHealthEventOptions {
 	readonly controllerPort: number;
 	readonly event: AgentVmHealthEvent;
 	readonly operationId?: string | undefined;
-	readonly runtimeDir: string;
+	readonly controllerRuntimeDir: string;
 }
 
 export interface DurableHealthEventRecord {
@@ -22,17 +22,17 @@ export interface DurableHealthEventRecord {
 }
 
 export interface ReadDurableHealthEventsOptions {
-	readonly runtimeDir: string;
+	readonly controllerRuntimeDir: string;
 }
 
-export function controllerHealthEventLogPath(runtimeDir: string): string {
-	return path.join(runtimeDir, 'controller-health', 'events.jsonl');
+export function controllerHealthEventLogPath(controllerRuntimeDir: string): string {
+	return path.join(controllerRuntimeDir, 'controller-health', 'events.jsonl');
 }
 
 export async function appendDurableHealthEvent(
 	options: AppendDurableHealthEventOptions,
 ): Promise<void> {
-	const logPath = controllerHealthEventLogPath(options.runtimeDir);
+	const logPath = controllerHealthEventLogPath(options.controllerRuntimeDir);
 	await mkdir(path.dirname(logPath), { recursive: true });
 	const operationId = options.operationId ?? operationIdForHealthEvent(options.event);
 	const record: DurableHealthEventRecord = {
@@ -50,7 +50,7 @@ export async function appendDurableHealthEvent(
 export async function readDurableHealthEvents(
 	options: ReadDurableHealthEventsOptions,
 ): Promise<readonly DurableHealthEventRecord[]> {
-	const logPath = controllerHealthEventLogPath(options.runtimeDir);
+	const logPath = controllerHealthEventLogPath(options.controllerRuntimeDir);
 	let logText: string;
 	try {
 		logText = await readFile(logPath, 'utf8');

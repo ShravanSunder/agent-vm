@@ -83,7 +83,7 @@ describe('live integration: API client → controller over real HTTP', () => {
 		activeGatewayPort = gatewayPort;
 
 		// --- Real controller diagnostic HTTP route ---
-		const hostGitDirectoryRoot = '/home/openclaw/runtime/zones/shravan/gitdirs/agents/main';
+		const hostGitDirectoryRoot = '/home/openclaw/shravan/runtime/gitdirs/agents/main';
 		const lease = {
 			agentId: 'main',
 			createdAt: Date.now(),

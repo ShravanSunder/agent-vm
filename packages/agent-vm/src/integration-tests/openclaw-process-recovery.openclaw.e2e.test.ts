@@ -152,7 +152,7 @@ async function readHealthSnapshot(controllerUrl: string): Promise<ZoneHealthSnap
 async function waitForGatewayReplacementEvent(options: {
 	readonly controllerUrl: string;
 	readonly oldVmId: string;
-	readonly runtimeDir: string;
+	readonly controllerRuntimeDir: string;
 	readonly timeoutMs: number;
 }): Promise<
 	Extract<AgentVmHealthEvent, { readonly kind: 'gateway-recovery'; readonly result: 'ok' }>
@@ -167,14 +167,18 @@ async function waitForGatewayReplacementEvent(options: {
 		event.result === 'ok' &&
 		event.action === 'gateway-vm-restart' &&
 		event.oldVmId === options.oldVmId;
-	const eventLogPath = controllerHealthEventLogPath(options.runtimeDir);
+	const eventLogPath = controllerHealthEventLogPath(options.controllerRuntimeDir);
 	await fs.mkdir(path.dirname(eventLogPath), { recursive: true });
 	await fs.appendFile(eventLogPath, '', 'utf8');
 	const watcher = watch(eventLogPath, { persistent: false });
 	const deadlineMs = Date.now() + options.timeoutMs;
 	try {
 		while (true) {
-			const event = (await readDurableHealthEvents({ runtimeDir: options.runtimeDir }))
+			const event = (
+				await readDurableHealthEvents({
+					controllerRuntimeDir: options.controllerRuntimeDir,
+				})
+			)
 				.map((record) => record.body)
 				.find(matches);
 			if (event !== undefined) return event;
@@ -527,7 +531,7 @@ describeOpenClawProcessRecoveryE2e(
 			const recoveryEvent = await waitForGatewayReplacementEvent({
 				controllerUrl: activeHarness.controllerUrl,
 				oldVmId: predecessor.vm.id,
-				runtimeDir: activeHarness.systemConfig.runtimeDir,
+				controllerRuntimeDir: activeHarness.systemConfig.controllerRuntimeDir,
 				timeoutMs: 300_000,
 			});
 			const successor = gatewayStarts.find((start) => start.vm.id === recoveryEvent.newVmId);

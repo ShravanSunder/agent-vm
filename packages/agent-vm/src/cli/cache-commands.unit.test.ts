@@ -6,9 +6,7 @@ import { runCacheCommand, type CacheCommandDependencies } from './cache-commands
 function createCacheCommandSystemConfig(): LoadedSystemConfig {
 	return createLoadedSystemConfig(
 		{
-			cacheDir: '/cache',
-			controllerStateDir: '/controller-state-test',
-			runtimeDir: '/runtime',
+			storageRootDir: '/storage',
 			host: {
 				controllerPort: 18800,
 				projectNamespace: 'claw-tests-a1b2c3d4',
@@ -59,8 +57,6 @@ function createCacheCommandSystemConfig(): LoadedSystemConfig {
 						memory: '2G',
 						config: './config/shravan/openclaw.json',
 						port: 18791,
-						stateDir: './state/shravan',
-						zoneFilesDir: './zone-files/shravan',
 					},
 					id: 'shravan',
 					agents: [{ id: 'main' }],

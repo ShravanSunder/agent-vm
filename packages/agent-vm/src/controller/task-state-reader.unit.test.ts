@@ -20,10 +20,11 @@ afterEach(async () => {
 
 function makeSystemConfig(): SystemConfig {
 	return {
-		schemaVersion: 1,
+		schemaVersion: 2,
+		storageRootDir: '/tmp/storage-root',
 		cacheDir: '/tmp/cache',
 		controllerStateDir: '/controller-state-test',
-		runtimeDir: '/tmp/runtime',
+		controllerRuntimeDir: '/tmp/controller-runtime',
 		host: {
 			controllerPort: 18800,
 			projectNamespace: 'claw-tests-a1b2c3d4',
@@ -47,6 +48,7 @@ function makeSystemConfig(): SystemConfig {
 					port: 18791,
 					config: '/tmp/gateway-config.json',
 					stateDir,
+					zoneRuntimeDir: path.join(path.dirname(stateDir), 'runtime'),
 				},
 				secrets: {},
 				egressHosts: ['github.com'].map((host) => ({ host, audience: 'gateway' as const })),

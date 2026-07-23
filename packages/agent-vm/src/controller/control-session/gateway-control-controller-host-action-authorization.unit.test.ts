@@ -139,8 +139,10 @@ async function createSystemConfigFixture(
 ): Promise<LoadedSystemConfig> {
 	const configDir = options.configDir ?? (await writeToolPortalAuthoredConfig());
 	return {
+		storageRootDir: testRoot,
 		cacheDir: path.join(testRoot, 'cache'),
 		controllerStateDir: path.join(testRoot, 'controller-state'),
+		controllerRuntimeDir: path.join(testRoot, 'controller-runtime'),
 		controller: {
 			health: {
 				controlSessionDeathGraceMs: 600_000,
@@ -183,8 +185,7 @@ async function createSystemConfigFixture(
 				},
 			},
 		},
-		runtimeDir: path.join(testRoot, 'runtime'),
-		schemaVersion: 1,
+		schemaVersion: 2,
 		systemConfigPath: path.join(testRoot, 'config', 'system.jsonc'),
 		tcpPool: { basePort: 19_000, size: 5 },
 		toolVmProfiles: {},
@@ -218,9 +219,10 @@ async function createSystemConfigFixture(
 					imageProfile: 'openclaw',
 					memory: '2G',
 					port: 18_791,
-					stateDir: path.join(testRoot, 'state', 'zone-a'),
+					stateDir: path.join(testRoot, 'zone-a', 'state'),
 					type: 'openclaw',
-					zoneFilesDir: path.join(testRoot, 'zone-files', 'zone-a'),
+					zoneFilesDir: path.join(testRoot, 'zone-a', 'zone-files'),
+					zoneRuntimeDir: path.join(testRoot, 'zone-a', 'runtime'),
 				},
 				id: 'zone-a',
 				secrets: {
@@ -251,16 +253,20 @@ function configureFixtureAsHermes(systemConfig: LoadedSystemConfig): void {
 	if (zone === undefined || zone.gateway.type !== 'openclaw') {
 		throw new Error('Expected OpenClaw fixture zone');
 	}
-	zone.gateway = {
-		config: path.join(testRoot, 'config', 'zone-a', 'hermes.yaml'),
-		cpus: zone.gateway.cpus,
-		imageProfile: 'hermes',
-		memory: zone.gateway.memory,
-		port: zone.gateway.port,
-		profilesByAgent: { main: 'researcher' },
-		stateDir: zone.gateway.stateDir,
-		type: 'hermes',
-		zoneFilesDir: zone.gateway.zoneFilesDir,
+	systemConfig.zones[0] = {
+		...zone,
+		gateway: {
+			config: path.join(testRoot, 'config', 'zone-a', 'hermes.yaml'),
+			cpus: zone.gateway.cpus,
+			imageProfile: 'hermes',
+			memory: zone.gateway.memory,
+			port: zone.gateway.port,
+			profilesByAgent: { main: 'researcher' },
+			stateDir: zone.gateway.stateDir,
+			type: 'hermes',
+			zoneFilesDir: zone.gateway.zoneFilesDir,
+			zoneRuntimeDir: zone.gateway.zoneRuntimeDir,
+		},
 	};
 }
 
@@ -456,14 +462,18 @@ describe('authorizeGatewayControlControllerHostAction', () => {
 		if (zone === undefined) {
 			throw new Error('Expected managed framework fixture zone');
 		}
-		zone.gateway = {
-			config: path.join(testRoot, 'config', 'zone-a', 'worker.json'),
-			cpus: 2,
-			imageProfile: 'worker',
-			memory: '2G',
-			port: 18_792,
-			stateDir: path.join(testRoot, 'state', 'zone-a'),
-			type: 'worker',
+		systemConfig.zones[0] = {
+			...zone,
+			gateway: {
+				config: path.join(testRoot, 'config', 'zone-a', 'worker.json'),
+				cpus: 2,
+				imageProfile: 'worker',
+				memory: '2G',
+				port: 18_792,
+				stateDir: path.join(testRoot, 'zone-a', 'state'),
+				type: 'worker',
+				zoneRuntimeDir: path.join(testRoot, 'zone-a', 'runtime'),
+			},
 		};
 
 		await expect(

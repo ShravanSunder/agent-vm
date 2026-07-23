@@ -16,7 +16,7 @@ Deep dive into the controller runtime: startup lifecycle, HTTP API surface, leas
   startControllerRuntime(options, dependencies)
     |
     |-- 1. Acquire the deployment ownership lock
-    |      Holds runtimeDir/vm-ownership/controller-ownership.lock
+    |      Holds controllerRuntimeDir/vm-ownership/controller-ownership.lock
     |      for the controller's complete lifetime
     |
     |-- 2. Resolve secrets
@@ -154,7 +154,7 @@ context.
 
 Health snapshots and the bounded event history are in-memory controller state
 for fast live reads. Accepted health and recovery events are also appended to
-`<runtimeDir>/controller-health/events.jsonl` as diagnostic evidence. That
+`<controllerRuntimeDir>/controller-health/events.jsonl` as diagnostic evidence. That
 durable JSONL log is not backup state and is not authority for ownership,
 destruction, adoption, or slot reuse. The controller owns lifecycle decisions;
 schema-v2 runtime records plus revalidated process and endpoint identity are
@@ -280,7 +280,7 @@ not by VM-facing public HTTP lease routes.
     |      or defaultToolVmProfile
     |-- 3. Derive and realpath controller-owned capabilities:
     |      workspace  = <zoneFilesDir>/agents/<agentId>
-    |      Git root  = <runtimeDir>/zones/<zoneId>/gitdirs/agents/<agentId>
+    |      Git root  = <zoneRuntimeDir>/gitdirs/agents/<agentId>
     |-- 4. Set the Tool VM default cwd to rootfs/COW /work
     |-- 5. Validate the optional requested idle TTL hint
     |
@@ -435,7 +435,7 @@ Worker-mode zones do not start a gateway at boot. Instead, each task gets an eph
     |   1. Generate taskId (crypto.randomUUID)
     |   2. Create task state and non-backup task runtime roots
     |   3. Copy local worker tarball if AGENT_VM_WORKER_TARBALL_PATH set
-    |   4. Create RealFS gitdirs under runtimeDir in parallel
+    |   4. Create RealFS gitdirs under zoneRuntimeDir in parallel
     |      - Derive repo IDs from repo URLs, deduplicate
     |   5. Read .agent-vm/config.jsonc or .agent-vm/config.json from primary repo
     |   6. Deep-merge zone gateway config + project config

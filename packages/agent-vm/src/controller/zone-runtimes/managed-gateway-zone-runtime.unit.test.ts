@@ -121,10 +121,11 @@ const testManagedGatewayBootContract = createManagedGatewayBootContract({
 });
 
 const systemConfig = {
-	schemaVersion: 1,
+	schemaVersion: 2,
+	storageRootDir: managedGatewayZoneRuntimeTestRoot,
 	cacheDir: path.join(managedGatewayZoneRuntimeTestRoot, 'cache'),
 	controllerStateDir: path.join(managedGatewayZoneRuntimeTestRoot, 'controller-state'),
-	runtimeDir: path.join(managedGatewayZoneRuntimeTestRoot, 'runtime'),
+	controllerRuntimeDir: path.join(managedGatewayZoneRuntimeTestRoot, 'controller-runtime'),
 	host: {
 		controllerPort: 18800,
 		projectNamespace: 'gateway-runtime-tests',
@@ -153,6 +154,7 @@ const systemConfig = {
 				config: './shravan/openclaw.json',
 				stateDir: path.join(managedGatewayZoneRuntimeTestRoot, 'state', 'shravan'),
 				zoneFilesDir: path.join(managedGatewayZoneRuntimeTestRoot, 'zone-files', 'shravan'),
+				zoneRuntimeDir: path.join(managedGatewayZoneRuntimeTestRoot, 'shravan', 'runtime'),
 			},
 			secrets: {
 				OPENCLAW_GATEWAY_TOKEN: {
@@ -449,6 +451,7 @@ function getHermesZone(): GatewayZone & {
 			stateDir: openClawZone.gateway.stateDir,
 			type: 'hermes',
 			zoneFilesDir: openClawZone.gateway.zoneFilesDir,
+			zoneRuntimeDir: openClawZone.gateway.zoneRuntimeDir,
 		},
 		id: 'hermes-zone',
 		secrets: {},
@@ -592,7 +595,7 @@ describe('Managed Gateway zone runtime test fixture paths', () => {
 	it('keeps generated lifecycle records outside the repository checkout', () => {
 		const generatedPaths = [
 			systemConfig.cacheDir,
-			systemConfig.runtimeDir,
+			systemConfig.controllerRuntimeDir,
 			getOpenClawZone().gateway.stateDir,
 			getOpenClawZone().gateway.zoneFilesDir,
 		];

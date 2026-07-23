@@ -1538,7 +1538,7 @@ async function startGatewayZoneImplementation(
 				stateDir: zone.gateway.stateDir,
 				zoneFilesDir: zone.gateway.zoneFilesDir,
 			});
-			await fs.mkdir(path.join(options.systemConfig.runtimeDir, 'zones', zone.id), {
+			await fs.mkdir(zone.gateway.zoneRuntimeDir, {
 				mode: 0o700,
 				recursive: true,
 			});
@@ -1548,8 +1548,7 @@ async function startGatewayZoneImplementation(
 					.map(async (agent): Promise<void> => {
 						await materializeManagedAgentGitDirectoryRoot({
 							agentId: agent.id,
-							runtimeDir: options.systemConfig.runtimeDir,
-							zoneId: zone.id,
+							zoneRuntimeDir: zone.gateway.zoneRuntimeDir,
 						});
 					}),
 			);
@@ -1558,7 +1557,7 @@ async function startGatewayZoneImplementation(
 	const gatewayCacheDir = path.join(options.systemConfig.cacheDir, 'gateways', zone.id);
 	await fs.mkdir(gatewayCacheDir, { recursive: true });
 	if (isManagedGatewayZone(zone)) {
-		const logDir = path.join(options.systemConfig.runtimeDir, 'zones', zone.id, 'logs');
+		const logDir = path.join(zone.gateway.zoneRuntimeDir, 'logs');
 		await fs.mkdir(logDir, { recursive: true, mode: 0o700 });
 		await fs.chmod(logDir, 0o700);
 	}
@@ -1567,7 +1566,7 @@ async function startGatewayZoneImplementation(
 		gatewayCacheDir,
 		projectNamespace: options.systemConfig.host.projectNamespace,
 		resolvedSecrets,
-		runtimeDir: options.systemConfig.runtimeDir,
+		zoneRuntimeDir: zone.gateway.zoneRuntimeDir,
 		tcpPool: options.systemConfig.tcpPool,
 		zone: lifecycleZone,
 	});
@@ -1966,12 +1965,7 @@ async function startGatewayZoneImplementation(
 		throw new Error(`Managed Gateway zone '${zone.id}' lost validated startup prerequisites.`);
 	}
 	const bootInputReservation = await reserveManagedGatewayBootInputDirectory({
-		parentDirectory: path.join(
-			options.systemConfig.runtimeDir,
-			'zones',
-			zone.id,
-			'managed-gateway-boot-inputs',
-		),
+		parentDirectory: path.join(zone.gateway.zoneRuntimeDir, 'managed-gateway-boot-inputs'),
 	});
 	let ownedBootInputDirectory:
 		| ReturnType<ManagedVmOwnedDirectoryCapability['openHostDirectory']>
@@ -2152,8 +2146,7 @@ async function startGatewayZoneImplementation(
 				stage: 'runtime-record-deletion',
 			},
 			{
-				cleanup: async () =>
-					await deleteGatewayControlSessionMaterial(options.systemConfig.runtimeDir, zone.id),
+				cleanup: async () => await deleteGatewayControlSessionMaterial(zone.gateway.zoneRuntimeDir),
 				stage: 'control-session-material-deletion',
 			},
 			{
@@ -2719,7 +2712,7 @@ async function startGatewayZoneImplementation(
 			);
 		}
 		await (dependencies.writeGatewayControlSessionMaterial ?? writeGatewayControlSessionMaterial)(
-			options.systemConfig.runtimeDir,
+			zone.gateway.zoneRuntimeDir,
 			managedControlSessionMaterial,
 		);
 		const startupRuntimeRecord = await buildManagedGatewayRuntimeRecord({

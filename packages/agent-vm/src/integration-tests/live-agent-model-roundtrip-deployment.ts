@@ -28,7 +28,9 @@ export function createLiveRoundtripDeploymentConfig(
 	return {
 		...options.systemConfig,
 		cacheDir: resolveLiveRoundtripCacheDir(),
-		runtimeDir: path.join(options.deploymentRoot, 'runtime'),
+		controllerRuntimeDir: path.join(options.deploymentRoot, 'controller-runtime'),
+		controllerStateDir: path.join(options.deploymentRoot, 'controller-state'),
+		storageRootDir: options.deploymentRoot,
 		systemConfigPath: path.join(options.deploymentRoot, 'config', 'system.json'),
 		host: {
 			...options.systemConfig.host,
@@ -39,7 +41,9 @@ export function createLiveRoundtripDeploymentConfig(
 			size: 1,
 		},
 		zones: options.systemConfig.zones.map((configuredZone) => {
-			const gatewayStateDir = path.join(options.deploymentRoot, 'state', configuredZone.id);
+			const zoneRootDir = path.join(options.deploymentRoot, configuredZone.id);
+			const gatewayStateDir = path.join(zoneRootDir, 'state');
+			const zoneRuntimeDir = path.join(zoneRootDir, 'runtime');
 			if (configuredZone.gateway.type === 'openclaw') {
 				return {
 					...configuredZone,
@@ -47,7 +51,8 @@ export function createLiveRoundtripDeploymentConfig(
 						...configuredZone.gateway,
 						port: options.gatewayPort,
 						stateDir: gatewayStateDir,
-						zoneFilesDir: path.join(options.deploymentRoot, 'zone-files', configuredZone.id),
+						zoneFilesDir: path.join(zoneRootDir, 'zone-files'),
+						zoneRuntimeDir,
 					},
 				};
 			}
@@ -57,6 +62,7 @@ export function createLiveRoundtripDeploymentConfig(
 					...configuredZone.gateway,
 					port: options.gatewayPort,
 					stateDir: gatewayStateDir,
+					zoneRuntimeDir,
 				},
 			};
 		}),

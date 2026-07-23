@@ -20,10 +20,11 @@ const controllerRuntimeOperationsTestRoot = path.join(
 );
 
 const systemConfig = {
-	schemaVersion: 1,
+	schemaVersion: 2,
+	storageRootDir: controllerRuntimeOperationsTestRoot,
 	cacheDir: path.join(controllerRuntimeOperationsTestRoot, 'cache'),
 	controllerStateDir: path.join(controllerRuntimeOperationsTestRoot, 'controller-state'),
-	runtimeDir: path.join(controllerRuntimeOperationsTestRoot, 'runtime'),
+	controllerRuntimeDir: path.join(controllerRuntimeOperationsTestRoot, 'controller-runtime'),
 	host: {
 		controllerPort: 18800,
 		projectNamespace: 'claw-tests-a1b2c3d4',
@@ -59,9 +60,10 @@ const systemConfig = {
 				cpus: 2,
 				port: 18791,
 				config: './config/shravan/openclaw.json',
-				stateDir: path.join(controllerRuntimeOperationsTestRoot, 'state', 'shravan'),
+				stateDir: path.join(controllerRuntimeOperationsTestRoot, 'shravan', 'state'),
 				ssh: { secretEnv: 'explicit' },
-				zoneFilesDir: path.join(controllerRuntimeOperationsTestRoot, 'zone-files', 'shravan'),
+				zoneFilesDir: path.join(controllerRuntimeOperationsTestRoot, 'shravan', 'zone-files'),
+				zoneRuntimeDir: path.join(controllerRuntimeOperationsTestRoot, 'shravan', 'runtime'),
 			},
 			secrets: {
 				OPENCLAW_GATEWAY_TOKEN: {
@@ -89,9 +91,10 @@ const systemConfig = {
 				cpus: 2,
 				port: 18792,
 				config: './config/alevtina/openclaw.json',
-				stateDir: path.join(controllerRuntimeOperationsTestRoot, 'state', 'alevtina'),
+				stateDir: path.join(controllerRuntimeOperationsTestRoot, 'alevtina', 'state'),
 				ssh: { secretEnv: 'explicit' },
-				zoneFilesDir: path.join(controllerRuntimeOperationsTestRoot, 'zone-files', 'alevtina'),
+				zoneFilesDir: path.join(controllerRuntimeOperationsTestRoot, 'alevtina', 'zone-files'),
+				zoneRuntimeDir: path.join(controllerRuntimeOperationsTestRoot, 'alevtina', 'runtime'),
 			},
 			secrets: {
 				OPENCLAW_GATEWAY_TOKEN: {
@@ -161,9 +164,10 @@ function createHermesSystemConfig(): SystemConfig {
 					port: 18_793,
 					profilesByAgent: { main: 'main' },
 					ssh: { secretEnv: 'explicit' },
-					stateDir: path.join(controllerRuntimeOperationsTestRoot, 'state', 'hermes-zone'),
+					stateDir: path.join(controllerRuntimeOperationsTestRoot, 'hermes-zone', 'state'),
 					type: 'hermes',
-					zoneFilesDir: path.join(controllerRuntimeOperationsTestRoot, 'zone-files', 'hermes-zone'),
+					zoneFilesDir: path.join(controllerRuntimeOperationsTestRoot, 'hermes-zone', 'zone-files'),
+					zoneRuntimeDir: path.join(controllerRuntimeOperationsTestRoot, 'hermes-zone', 'runtime'),
 				},
 				id: 'hermes-zone',
 				secrets: {},
@@ -176,7 +180,7 @@ describe('controller runtime operations test fixture paths', () => {
 	it('keeps generated runtime and state paths outside the repository checkout', () => {
 		const generatedPaths = [
 			systemConfig.cacheDir,
-			systemConfig.runtimeDir,
+			systemConfig.controllerRuntimeDir,
 			...systemConfig.zones.flatMap((zone) => [
 				zone.gateway.stateDir,
 				...(zone.gateway.type === 'openclaw' ? [zone.gateway.zoneFilesDir] : []),

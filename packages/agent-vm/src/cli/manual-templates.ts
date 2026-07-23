@@ -89,15 +89,17 @@ config/gateways/<zone>/openclaw.json is OpenClaw-owned gateway config.
 config/gateways/<zone>/worker.jsonc is Agent Worker gateway config when the zone type is worker.
 vm-images/ contains deployment-owned Gondolin build-config.jsonc files and small managed image overlays.
 agent-vm owns the gateway/tool base image recipes and pins the managed GHCR base layer version.
-stateDir stores durable gateway state.
-zoneFilesDir stores durable shared zone files and per-agent workspaces for managed Gateway zones. Each configured agent owns zoneFilesDir/agents/<agentId>.
+storageRootDir is the sole authored standard operational storage root. Schema version 2 derives cacheDir, controllerStateDir, controllerRuntimeDir, and each zone's stateDir, optional zoneFilesDir, and zoneRuntimeDir from it.
+stateDir is <storageRootDir>/<zoneId>/state and stores durable gateway state.
+zoneFilesDir stores durable shared zone files and per-agent workspaces for managed Gateway zones. It is derived at <storageRootDir>/<zoneId>/zone-files. Each configured agent owns zoneFilesDir/agents/<agentId>. Worker zones have no active zoneFilesDir.
 gateway.backupIdentity selects the host-resolved Age identity required by backup create and restore. Backup list does not resolve it, and there is no implicit identity fallback.
-cacheDir stores rebuildable artifacts.
-controllerStateDir is required, stores host-controller-only durable authority, and has no default.
+cacheDir is <storageRootDir>/cache and stores rebuildable artifacts.
+controllerStateDir is required as a derived controller capability at <storageRootDir>/controller-state and stores host-controller-only durable authority.
 controllerStateDir is never mounted into a Gateway or Tool VM and must remain disjoint from config, cache, runtime, Gateway state, backup, observability, and mount-source paths.
 All controller records live below the one host-controller-owned root at controllerStateDir/zones/<zoneId>: approvals/, gateway-runtime.json, tool-leases/<recordId>.json, and worker-tasks/<taskId>/gateway-runtime.json.
-runtimeDir stores controller runtime artifacts that are not backup state, including OpenClaw gateway logs under runtimeDir/zones/<zone>/logs.
-When zones[].agents[].workspaceGit is enabled, its isolated Git database lives at runtimeDir/zones/<zoneId>/gitdirs/agents/<agentId>/workspace.git while the durable workspace remains under zoneFilesDir/agents/<agentId>.
+controllerRuntimeDir is <storageRootDir>/controller-runtime and stores the controller ownership lock, health evidence, and generated observability files.
+zoneRuntimeDir is <storageRootDir>/<zoneId>/runtime and stores zone logs, workspace Git databases, Worker task runtime, and control-session material outside normal backup.
+When zones[].agents[].workspaceGit is enabled, its isolated Git database lives at zoneRuntimeDir/gitdirs/agents/<agentId>/workspace.git while the durable workspace remains under zoneFilesDir/agents/<agentId>.
 
 Author JSONC for human-owned agent-vm config. Runtime files such as /state/effective-worker.json, task event JSONL, runtime records, and API bodies stay strict JSON.
 OpenClaw gateway VMs mount zoneFilesDir at /zone.
@@ -207,7 +209,7 @@ Health model:
 - tool-vm-ssh means command, file-bridge, finalize, or probe SSH operations on the gateway-to-Tool-VM path.
 - tool-vm-ssh lifecycle events distinguish Tool Portal service observations from controller_final decisions. A controller_final stale_to_reacquired event proves the controller accepted one replacement transition for the old lease and records old/replacement lease correlation using redacted public ids.
 
-Health snapshots and bounded event history are in-memory controller state for live diagnosis. Accepted health and recovery events are also appended to <runtimeDir>/controller-health/events.jsonl as diagnostic evidence; that log and exported telemetry are not lifecycle authority. The controller owns lifecycle decisions; schema-v2 runtime records plus revalidated process and endpoint identity are durable crash-cleanup evidence.
+Health snapshots and bounded event history are in-memory controller state for live diagnosis. Accepted health and recovery events are also appended to <controllerRuntimeDir>/controller-health/events.jsonl as diagnostic evidence; that log and exported telemetry are not lifecycle authority. The controller owns lifecycle decisions; schema-v2 runtime records plus revalidated process and endpoint identity are durable crash-cleanup evidence.
 
 By default, controller.health.gatewayServiceAutoRestart observes gateway-service and gateway-control-session degradation. The managed Tool Portal and selected framework processes are VM-boot siblings; neither supervises or restarts the other. Unrecoverable sibling or control-session failure retires the Gateway epoch and uses whole-Gateway VM recovery. The same recovery path can cold-start a failed or stopped Gateway when current ownership checks prove it is safe. Gateway recovery has a 61 minute cooldown per zone and a 10 minute restart deadline. Gateway replacement releases active Tool VM leases for that zone first, so in-flight tool work is interrupted instead of keeping stale SSH state alive. After 3 consecutive failed automatic Gateway recoveries, the controller records gateway-recovery-suspended and pauses further auto-recovery for that zone until the 24 hour reset window expires.
 
@@ -249,13 +251,13 @@ Multi-zone controller work makes one controller process manage multiple typed zo
 				`
 Host observability is deployment-configured. Enable host.observability in ${options.systemConfigPath}. Per-zone observability supports managed OpenClaw and Hermes gateways through Gondolin HTTP mediation. Each enabled zone configures separate framework and common Tool Portal signal policies under zones[].observability.services. The old collector route depended on raw Gondolin tcpHosts and must not be restored.
 
-Use host.observability.stack.mode=managed when this deployment should own the local Victoria + OpenTelemetry Collector stack. In managed mode, host.observability.stack.scrubbing.responsibility defaults to agent-vm-managed-collector. Agent-vm build prepares the host stack when host.observability.prepareOnBuild is true and at least one selected managed OpenClaw or Hermes zone has zones[].observability enabled. The build step renders docker-compose.observability.yml and otel-collector-config.yaml under runtimeDir/observability/<projectNamespace>, creates durable Victoria data directories under host.observability.dataDir, then runs docker compose up -d. Generated Compose services use restart: unless-stopped so Docker can restore them after daemon or host recovery. Use agent-vm build --no-observability to skip the host stack for one build run.
+Use host.observability.stack.mode=managed when this deployment should own the local Victoria + OpenTelemetry Collector stack. In managed mode, host.observability.stack.scrubbing.responsibility defaults to agent-vm-managed-collector. Agent-vm build prepares the host stack when host.observability.prepareOnBuild is true and at least one selected managed OpenClaw or Hermes zone has zones[].observability enabled. The build step renders docker-compose.observability.yml and otel-collector-config.yaml under controllerRuntimeDir/observability/<projectNamespace>, creates durable Victoria data directories under host.observability.dataDir, then runs docker compose up -d. Generated Compose services use restart: unless-stopped so Docker can restore them after daemon or host recovery. Use agent-vm build --no-observability to skip the host stack for one build run.
 
 Use host.observability.stack.mode=external when a shared collector is already managed outside this deployment. External mode never renders or starts Docker Compose and does not require host.observability.dataDir or retention. Set host.observability.stack.scrubbing.responsibility=external-collector to make the external collector sanitization responsibility explicit, and keep that collector available on the configured loopback collector ports.
 
 Controller startup does not start Docker Compose. With controllerStartPolicy=degraded, the controller binds and starts while it checks host observability readiness in the background. Managed mode checks the OpenTelemetry collector plus Victoria metrics, logs, and traces endpoints. External mode checks only the configured OpenTelemetry collector health endpoint. With controllerStartPolicy=require-ready, startup waits only for the configured total bounded readiness budget and fails if the configured collector or already-prepared managed stack is unavailable. With controllerStartPolicy=off, startup does not check host observability.
 
-For managed mode, use a durable host.observability.dataDir outside cacheDir, runtimeDir, stateDir, and zoneFilesDir. Victoria data is intentionally not stored in rebuildable cache or disposable runtime folders. Retention is configured separately for metrics, logs, and traces with period plus optional disk bounds.
+For managed mode, keep durable host.observability.dataDir outside storageRootDir. Victoria data is intentionally independent from rebuildable cache and disposable controller or zone runtime folders. Retention is configured separately for metrics, logs, and traces with period plus optional disk bounds.
 
 Published ports bind to loopback only. Do not publish collector or Victoria ports on broad host interfaces unless a separate, authenticated access layer owns that exposure.
 
@@ -461,10 +463,10 @@ Managed Tool VMs do not currently expose a generic /agent-vm path. Worker task V
 /state is controller/gateway plumbing, not the primary place for agent docs.
 worker repo edits live under /work/repos inside Worker gateway task VMs.
 Worker gateway task VMs use /work/tmp for temporary files and /work/cache for disposable package-manager cache.
-OpenClaw gateway VMs use /work/tmp and /work/cache for disposable runtime work; persistent zone files live at /zone and are backed by gateway.zoneFilesDir.
+OpenClaw gateway VMs use /work/tmp and /work/cache for disposable runtime work; persistent zone files live at /zone and are backed by the derived zoneFilesDir.
 
 OpenClaw SDK compatibility note: OpenClaw may call the agent's Gateway path workspaceDir. In managed mode it must identify the configured agent workspace under /zone/agents/<agentId>. The plugin validates that native origin, translates it immediately to stable agent identity, and never sends the Gateway path or a host path as Tool VM storage authority.
-Controller startup acquires <runtimeDir>/vm-ownership/controller-ownership.lock before secret resolution or VM reconciliation and holds it until shutdown completes. A second controller or offline cleanup process cannot enter destructive reconciliation while that lock is held.
+Controller startup acquires <controllerRuntimeDir>/vm-ownership/controller-ownership.lock before secret resolution or VM reconciliation and holds it until shutdown completes. A second controller or offline cleanup process cannot enter destructive reconciliation while that lock is held.
 The lock is mutual exclusion, not destruction evidence. The controller persists schema-v2 Tool records at controllerStateDir/zones/<zoneId>/tool-leases/<recordId>.json and the Gateway record at controllerStateDir/zones/<zoneId>/gateway-runtime.json. They bind the deployment and Gateway parent to exact VM id, pid, and process-start identity cleanup evidence. Controller restart adopts no VM: it destroys verified Tool runners before their Gateway, then starts a fresh tree. Unknown or mismatched identity preserves the record and refuses replacement or Tool slot reuse. HTTP health and telemetry remain diagnostic only.
 
 Per-agent workspace Git:
@@ -473,7 +475,7 @@ Per-agent workspace Git:
 - mode=remote creates the same isolated database and exposes the controller-owned workspace_git_push Tool Portal action for that agent.
 - Tool VM Git SSH remains read-only: fetch is allowed and direct push is denied.
 - The controller uses host-only HTTPS credentials, expected-head/CAS checks, and rejects a push to the configured default branch.
-- Backups include durable workspace files and exclude runtimeDir Git metadata.
+- Backups include durable workspace files and exclude zoneRuntimeDir Git metadata.
 `,
 			),
 		},

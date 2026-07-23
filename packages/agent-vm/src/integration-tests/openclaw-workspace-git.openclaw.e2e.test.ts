@@ -367,7 +367,7 @@ describeOpenClawWorkspaceGitSmoke('smoke: OpenClaw workspace Git through Tool Po
 		const committedHead = await resolveWorkspaceGitBranchObjectId({
 			agentId,
 			branch: workspaceGitBranch,
-			runtimeDir: project.systemConfig.runtimeDir,
+			zoneRuntimeDir: project.zone.gateway.zoneRuntimeDir,
 			zoneId: project.zone.id,
 		});
 		if (committedHead === null) {

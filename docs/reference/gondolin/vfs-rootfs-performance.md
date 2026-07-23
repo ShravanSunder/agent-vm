@@ -196,7 +196,7 @@ the default `/tmp` tmpfs, but that is usually a heavier solution than setting
   Backup: no
 
 /zone
-  Backing: RealFS zoneFilesDir config field for
+  Backing: RealFS derived zoneFilesDir for
            long-lived OpenClaw household files
   Backup: yes
 
@@ -205,7 +205,7 @@ the default `/tmp` tmpfs, but that is usually a heavier solution than setting
   Purpose: hot source edits, node_modules, builds, tests
 
 /gitdirs/<repo>.git
-  Backing: RealFS runtimeDir outside normal zone backup
+  Backing: RealFS zoneRuntimeDir outside normal zone backup
   Purpose: host-visible Git objects, refs, and index; explicit recovery/export
            only
   Backup: no normal backup

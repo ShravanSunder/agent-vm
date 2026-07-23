@@ -536,14 +536,14 @@ export interface WorkerTaskResult {
 export async function preStartGateway(
 	taskInput: WorkerTaskInput,
 	zoneConfig: GatewayZone,
-	options: { readonly githubToken?: string; readonly runtimeDir?: string } = {},
+	options: { readonly githubToken?: string; readonly zoneRuntimeDir?: string } = {},
 ): Promise<PreStartResult> {
 	const parsedTaskInput = workerTaskControllerRequestSchema.parse(taskInput);
 	const taskId = crypto.randomUUID();
 	const taskRoot = path.join(zoneConfig.gateway.stateDir, 'tasks', taskId);
-	const runtimeDir =
-		options.runtimeDir ?? path.join(path.dirname(zoneConfig.gateway.stateDir), 'runtime');
-	const taskRuntimeRoot = path.join(runtimeDir, 'worker-tasks', zoneConfig.id, taskId);
+	const zoneRuntimeDir =
+		options.zoneRuntimeDir ?? path.join(path.dirname(zoneConfig.gateway.stateDir), 'runtime');
+	const taskRuntimeRoot = path.join(zoneRuntimeDir, 'worker-tasks', taskId);
 	const workDir = path.join(taskRuntimeRoot, 'work');
 	const stateDir = path.join(taskRoot, 'state');
 	const agentVmDir = path.join(taskRoot, 'agent-vm');
@@ -835,12 +835,12 @@ export async function postStopGateway(
 	taskId: string,
 	zoneConfig: GatewayZone,
 	startedProviders: readonly StartedRepoResourceProvider[] = [],
-	options: { readonly runtimeDir?: string } = {},
+	options: { readonly zoneRuntimeDir?: string } = {},
 ): Promise<void> {
 	const taskRoot = path.join(zoneConfig.gateway.stateDir, 'tasks', taskId);
-	const runtimeDir =
-		options.runtimeDir ?? path.join(path.dirname(zoneConfig.gateway.stateDir), 'runtime');
-	const taskRuntimeRoot = path.join(runtimeDir, 'worker-tasks', zoneConfig.id, taskId);
+	const zoneRuntimeDir =
+		options.zoneRuntimeDir ?? path.join(path.dirname(zoneConfig.gateway.stateDir), 'runtime');
+	const taskRuntimeRoot = path.join(zoneRuntimeDir, 'worker-tasks', taskId);
 	const resourcesDir = path.join(taskRoot, 'agent-vm', 'resources');
 	let cleanupError: Error | null = null;
 	let runtimeRemovalError: Error | null = null;
@@ -1026,7 +1026,7 @@ export async function prepareWorkerTask(
 	}
 
 	const preStartOptions = {
-		runtimeDir: options.systemConfig.runtimeDir,
+		zoneRuntimeDir: zone.gateway.zoneRuntimeDir,
 		...(options.githubToken ? { githubToken: options.githubToken } : {}),
 	};
 	const preStartResult = await preStartGateway(options.input, zone, preStartOptions);
@@ -1371,7 +1371,7 @@ export async function executeWorkerTask(
 				prepared.zone,
 				prepared.preStartResult.startedResourceProviders,
 				{
-					runtimeDir: options.systemConfig.runtimeDir,
+					zoneRuntimeDir: prepared.zone.gateway.zoneRuntimeDir,
 				},
 			);
 		} catch (error) {

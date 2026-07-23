@@ -320,10 +320,11 @@ describe('worker-task-runner integration', () => {
 	});
 
 	const systemConfig = {
-		schemaVersion: 1,
-		cacheDir: '/tmp/cache',
-		controllerStateDir: '/controller-state-test',
-		runtimeDir: '/tmp/runtime',
+		schemaVersion: 2,
+		storageRootDir: '/tmp/agent-vm-worker-storage',
+		cacheDir: '/tmp/agent-vm-worker-storage/cache',
+		controllerRuntimeDir: '/tmp/agent-vm-worker-storage/controller-runtime',
+		controllerStateDir: '/tmp/agent-vm-worker-storage/controller-state',
 		systemConfigPath: '/tmp/config/system.json',
 		host: {
 			controllerPort: 18800,
@@ -352,7 +353,8 @@ describe('worker-task-runner integration', () => {
 					cpus: 2,
 					port: 18791,
 					config: '',
-					stateDir: '',
+					stateDir: '/tmp/agent-vm-worker-storage/shravan/state',
+					zoneRuntimeDir: '/tmp/agent-vm-worker-storage/shravan/runtime',
 				},
 				secrets: {
 					OPENCLAW_GATEWAY_TOKEN: {
@@ -379,9 +381,16 @@ describe('worker-task-runner integration', () => {
 			throw new Error('Expected zone config.');
 		}
 		zone.gateway.config = path.join(tempDir, 'gateway-config.json');
-		zone.gateway.stateDir = path.join(tempDir, 'state');
-		systemConfig.controllerStateDir = path.join(tempDir, 'controller-state');
-		systemConfig.runtimeDir = path.join(tempDir, 'runtime');
+		Object.assign(systemConfig, {
+			cacheDir: path.join(tempDir, 'cache'),
+			controllerRuntimeDir: path.join(tempDir, 'controller-runtime'),
+			controllerStateDir: path.join(tempDir, 'controller-state'),
+			storageRootDir: tempDir,
+		});
+		Object.assign(zone.gateway, {
+			stateDir: path.join(tempDir, 'shravan', 'state'),
+			zoneRuntimeDir: path.join(tempDir, 'shravan', 'runtime'),
+		});
 		await fs.writeFile(zone.gateway.config, JSON.stringify(buildWorkerConfigInput()));
 
 		const { executeWorkerTask, prepareWorkerTask } =
@@ -439,7 +448,7 @@ describe('worker-task-runner integration', () => {
 		await expect(fs.stat(result.taskRoot)).resolves.toBeDefined();
 		await expect(fs.stat(path.join(result.taskRoot, 'state'))).resolves.toBeDefined();
 		await expect(
-			fs.stat(path.join(systemConfig.runtimeDir, 'worker-tasks', 'shravan', result.taskId)),
+			fs.stat(path.join(zone.gateway.zoneRuntimeDir, 'worker-tasks', result.taskId)),
 		).rejects.toThrow();
 	});
 });

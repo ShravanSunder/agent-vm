@@ -67,7 +67,7 @@ export interface WorkspaceGitRemoteOperationConfig {
 	readonly githubToken?: string;
 	readonly hostWorkspaceDirectory: string;
 	readonly remoteUrl: string;
-	readonly runtimeDir: string;
+	readonly zoneRuntimeDir: string;
 	readonly zoneId: string;
 }
 
@@ -282,18 +282,17 @@ export async function materializeWorkspaceGitRepository(options: {
 	readonly agentId: string;
 	readonly hostWorkspaceDirectory: string;
 	readonly policy: WorkspaceGitInitializationPolicy;
-	readonly runtimeDir: string;
+	readonly zoneRuntimeDir: string;
 	readonly zoneId: string;
 }): Promise<MaterializedWorkspaceGitRepository> {
 	await assertRealDirectory(options.hostWorkspaceDirectory);
 	await materializeManagedAgentGitDirectoryRoot({
 		agentId: options.agentId,
-		runtimeDir: options.runtimeDir,
-		zoneId: options.zoneId,
+		zoneRuntimeDir: options.zoneRuntimeDir,
 	});
 	const workspaceGitPaths = resolveWorkspaceGitPaths({
 		agentId: options.agentId,
-		runtimeDir: options.runtimeDir,
+		zoneRuntimeDir: options.zoneRuntimeDir,
 		zoneId: options.zoneId,
 	});
 	await mkdir(workspaceGitPaths.hostGitDirectoryRoot, { mode: 0o700, recursive: true });
@@ -419,12 +418,12 @@ async function readWorkspaceGitBranchObjectIdFromDirectory(options: {
 export async function resolveWorkspaceGitBranchObjectId(options: {
 	readonly agentId: string;
 	readonly branch: string;
-	readonly runtimeDir: string;
+	readonly zoneRuntimeDir: string;
 	readonly zoneId: string;
 }): Promise<string | null> {
 	const workspaceGitPaths = resolveWorkspaceGitPaths({
 		agentId: options.agentId,
-		runtimeDir: options.runtimeDir,
+		zoneRuntimeDir: options.zoneRuntimeDir,
 		zoneId: options.zoneId,
 	});
 	return await readWorkspaceGitBranchObjectIdFromDirectory({
@@ -586,7 +585,7 @@ async function executeWorkspaceGitPush(
 	const localHead = await resolveWorkspaceGitBranchObjectId({
 		agentId: options.agentId,
 		branch,
-		runtimeDir: options.runtimeDir,
+		zoneRuntimeDir: options.zoneRuntimeDir,
 		zoneId: options.zoneId,
 	});
 	if (localHead === null) {
@@ -601,7 +600,7 @@ async function executeWorkspaceGitPush(
 	const referenceName = `refs/heads/${branch}`;
 	const workspaceGitPaths = resolveWorkspaceGitPaths({
 		agentId: options.agentId,
-		runtimeDir: options.runtimeDir,
+		zoneRuntimeDir: options.zoneRuntimeDir,
 		zoneId: options.zoneId,
 	});
 	return await withSanitizedGitRepositoryView(

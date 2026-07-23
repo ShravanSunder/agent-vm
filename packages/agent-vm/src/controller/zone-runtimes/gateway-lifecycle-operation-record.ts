@@ -56,8 +56,7 @@ export interface GatewayLifecycleOperationRecord {
 }
 
 export interface GatewayLifecycleOperationLogLocator {
-	readonly runtimeDir: string;
-	readonly zoneId: string;
+	readonly zoneRuntimeDir: string;
 }
 
 export interface AppendGatewayLifecycleOperationRecordOptions extends GatewayLifecycleOperationLogLocator {
@@ -67,13 +66,7 @@ export interface AppendGatewayLifecycleOperationRecordOptions extends GatewayLif
 export function resolveGatewayLifecycleOperationLogPath(
 	options: GatewayLifecycleOperationLogLocator,
 ): string {
-	return path.join(
-		options.runtimeDir,
-		'zones',
-		options.zoneId,
-		'gateway-lifecycle',
-		'events.jsonl',
-	);
+	return path.join(options.zoneRuntimeDir, 'gateway-lifecycle', 'events.jsonl');
 }
 
 export async function appendGatewayLifecycleOperationRecord(

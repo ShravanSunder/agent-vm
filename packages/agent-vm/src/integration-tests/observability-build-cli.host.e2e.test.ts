@@ -161,10 +161,7 @@ async function createSmokeDeployment(
 	const configDirectory = path.join(temporaryDirectory, 'config');
 	const vmImagesDirectory = path.join(temporaryDirectory, 'vm-images');
 	const cacheDir = path.join(temporaryDirectory, 'cache');
-	const controllerStateDir = path.join(temporaryDirectory, 'controller-state');
-	const runtimeDir = path.join(temporaryDirectory, 'runtime');
-	const stateDir = path.join(temporaryDirectory, 'state', 'sunfam');
-	const zoneFilesDir = path.join(temporaryDirectory, 'zone-files', 'sunfam');
+	const runtimeDir = path.join(temporaryDirectory, 'controller-runtime');
 	const dataDir = path.join(temporaryDirectory, 'observability-data');
 	const gatewayConfigPath = path.join(configDirectory, 'gateways', 'sunfam', 'openclaw.json');
 	const gatewayBuildConfigPath = path.join(
@@ -200,10 +197,8 @@ async function createSmokeDeployment(
 	await writeJson(gatewayBuildConfigPath, buildConfig);
 	await writeJson(toolBuildConfigPath, buildConfig);
 	await writeJson(configPath, {
-		schemaVersion: 1,
-		cacheDir,
-		controllerStateDir,
-		runtimeDir,
+		schemaVersion: 2,
+		storageRootDir: temporaryDirectory,
 		host: {
 			controllerPort: 18_800,
 			projectNamespace: 'observability-cli-smoke',
@@ -265,8 +260,6 @@ async function createSmokeDeployment(
 					cpus: 1,
 					port: 18_791,
 					config: gatewayConfigPath,
-					stateDir,
-					zoneFilesDir,
 					controlAuth: {
 						mode: 'token',
 						secret: 'OPENCLAW_GATEWAY_TOKEN',

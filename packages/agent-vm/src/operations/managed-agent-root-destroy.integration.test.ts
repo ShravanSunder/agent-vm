@@ -25,6 +25,7 @@ describe('managed agent root destruction boundary', () => {
 		const controllerStateDir = path.join(temporaryRoot, 'controller-state');
 		const stateDir = path.join(temporaryRoot, 'state');
 		const zoneFilesDir = path.join(temporaryRoot, 'zone-files');
+		const zoneRuntimeDir = path.join(temporaryRoot, 'runtime');
 		await Promise.all([mkdir(controllerStateDir), mkdir(stateDir)]);
 		const [agentRoots] = await materializeManagedAgentRootStorage({
 			agentIds: ['alpha'],
@@ -37,10 +38,11 @@ describe('managed agent root destruction boundary', () => {
 		}
 		await writeFile(path.join(controllerStateDir, 'controller-record.json'), '{}\n');
 		const systemConfig = {
-			schemaVersion: 1,
+			schemaVersion: 2,
+			storageRootDir: temporaryRoot,
 			cacheDir: path.join(temporaryRoot, 'cache'),
 			controllerStateDir,
-			runtimeDir: path.join(temporaryRoot, 'runtime'),
+			controllerRuntimeDir: path.join(temporaryRoot, 'controller-runtime'),
 			host: { controllerPort: 18800, projectNamespace: 'managed-agent-destroy' },
 			imageProfiles: {
 				gateways: {
@@ -74,6 +76,7 @@ describe('managed agent root destruction boundary', () => {
 						stateDir,
 						type: 'openclaw',
 						zoneFilesDir,
+						zoneRuntimeDir,
 					},
 					id: 'zone-a',
 					secrets: {},

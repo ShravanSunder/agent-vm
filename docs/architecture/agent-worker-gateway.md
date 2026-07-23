@@ -79,7 +79,7 @@ The sandbox is a **Gondolin virtual machine** — a lightweight VM that boots in
   |    state/       <-- config file + event logs (read/write)          |
   |    agent-vm/    <-- generated runtime docs/resources               |
   |                                                                    |
-  |  runtimeDir/worker-tasks/<zone>/<taskId>/                          |
+  |  zoneRuntimeDir/worker-tasks/<taskId>/                             |
   |    gitdirs/     <-- Git objects/refs/index, not normal backup      |
   |                                                                    |
   |  These two folders are the ONLY connection between host and VM.    |
@@ -138,11 +138,11 @@ When someone submits a task, the controller runs through 5 stages:
   |  Create fresh directories:               |
   |    stateDir/tasks/<taskId>/state/        |
   |    stateDir/tasks/<taskId>/agent-vm/     |
-  |    runtimeDir/.../gitdirs/               |
+  |    zoneRuntimeDir/gitdirs/               |
   |                                          |
   |  Prepare Git metadata:                   |
   |    git clone --bare --branch main <url>  |
-  |      runtimeDir/.../gitdirs/<repo>.git   |
+  |      zoneRuntimeDir/gitdirs/<repo>.git   |
   |    extract .agent-vm/ metadata only      |
   |                                          |
   |  Build configuration:                    |
@@ -682,7 +682,7 @@ Here's a concrete trace of a successful task from start to finish:
   CONTROLLER                                    WORKER (inside VM)
   ----------                                    ------------------
 
-  create gitdir -> runtimeDir/.../gitdirs/repo.git
+  create gitdir -> zoneRuntimeDir/worker-tasks/<taskId>/gitdirs/repo.git
   Write config  -> stateDir/tasks/<taskId>/state/
   Boot Gondolin VM (rootfs /work/repos + /gitdirs + /state)
   POST /tasks { "Add pagination" }

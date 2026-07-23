@@ -458,7 +458,7 @@ describe('manual templates', () => {
 			'worker-tasks/<taskId>/gateway-runtime.json',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
-			'acquires <runtimeDir>/vm-ownership/controller-ownership.lock before secret resolution',
+			'acquires <controllerRuntimeDir>/vm-ownership/controller-ownership.lock before secret resolution',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
 			'controllerStateDir/zones/<zoneId>/tool-leases/<recordId>.json',
@@ -529,7 +529,7 @@ describe('manual templates', () => {
 		expect(operationsManual).toContain('unhealthy-recoverable');
 		expect(operationsManual).toContain('unhealthy-unrecoverable');
 		expect(operationsManual).toContain('secret-resolution-failed is a recovery blocker');
-		expect(operationsManual).toContain('<runtimeDir>/controller-health/events.jsonl');
+		expect(operationsManual).toContain('<controllerRuntimeDir>/controller-health/events.jsonl');
 		expect(operationsManual).toContain(
 			'schema-v2 runtime records plus revalidated process and endpoint identity',
 		);

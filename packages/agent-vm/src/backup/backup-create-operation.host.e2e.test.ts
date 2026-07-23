@@ -43,8 +43,6 @@ describe('createEncryptedBackup', () => {
 		const secondAgentWorkspaceDir = path.join(zoneFilesDir, 'agents', 'bob');
 		const runtimeWorkspaceGitDir = path.join(
 			runtimeDir,
-			'zones',
-			'sunfam',
 			'gitdirs',
 			'agents',
 			'alice',
@@ -94,7 +92,7 @@ describe('createEncryptedBackup', () => {
 					await copyFile(inputPath, outputPath);
 				},
 			},
-			runtimeDir,
+			zoneRuntimeDir: runtimeDir,
 			stateDir,
 			zoneFilesDir,
 			zoneId: 'sunfam',
@@ -171,15 +169,7 @@ describe('createEncryptedBackup', () => {
 		const betaProfileDir = path.join(stateDir, 'profiles', 'beta');
 		const clawfestWorkspaceDir = path.join(zoneFilesDir, 'agents', 'clawfest');
 		const betaWorkspaceDir = path.join(zoneFilesDir, 'agents', 'beta');
-		const runtimeGitDir = path.join(
-			runtimeDir,
-			'zones',
-			'hermes-beta',
-			'gitdirs',
-			'agents',
-			'clawfest',
-			'workspace.git',
-		);
+		const runtimeGitDir = path.join(runtimeDir, 'gitdirs', 'agents', 'clawfest', 'workspace.git');
 		await Promise.all(
 			[
 				backupDir,
@@ -219,7 +209,7 @@ describe('createEncryptedBackup', () => {
 					await copyFile(inputPath, outputPath);
 				},
 			},
-			runtimeDir,
+			zoneRuntimeDir: runtimeDir,
 			stateDir,
 			zoneFilesDir,
 			zoneId: 'hermes-beta',

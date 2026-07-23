@@ -1,6 +1,6 @@
 # system.jsonc
 
-`system.jsonc` is the controller's top-level human-authored config file.
+`system.jsonc` is the controller's top-level human-authored schema-version-2 config file.
 Relative paths are resolved relative to the directory containing the system
 config. `system.json` is still accepted for existing deployments, but new
 scaffolds generate `system.jsonc`.
@@ -39,11 +39,7 @@ controller
 	    staleAfterMs
 	    eventHistoryLimit
 
-cacheDir
-
-controllerStateDir
-
-runtimeDir
+storageRootDir
 
 imageProfiles
   gateways
@@ -177,7 +173,7 @@ Example:
 | `stack.scrubbing.responsibility` | `agent-vm-managed-collector` for managed; required `external-collector` for external | Declares which collector owns defense-in-depth sensitive-field dropping. Source code must still avoid emitting secrets in the first place. |
 | `runner` | `docker-compose` | Managed-stack host runner used by `agent-vm build` to start the stack. Managed only. |
 | `mode` | `collector` | OpenTelemetry Collector receives OTLP and exports to Victoria. |
-| `dataDir` | required for `managed` | Durable host directory for Victoria data. Must not overlap cacheDir, runtimeDir, stateDir, or zoneFilesDir. Omit for `external`. |
+| `dataDir` | required for `managed` | Independent durable host directory for Victoria data. Must not overlap `storageRootDir` or its derived cache, controller, or zone leaves. Omit for `external`. |
 | `projectName` | `agent-vm-observability-<projectNamespace>` | Managed-stack Docker Compose project name. Must use lowercase letters, numbers, hyphens, and underscores, and start with a letter or number. Managed only. |
 | `bindAddress` | `127.0.0.1` | Host bind address for collector and Victoria ports. Only loopback addresses are accepted. |
 | `prepareOnBuild` | `true` | Lets `agent-vm build` render artifacts and run Docker Compose for `managed` when an opted-in zone is selected. `external` reports that the stack is externally managed. |
@@ -222,8 +218,8 @@ Compose or create Victoria storage directories for external stacks.
 For `managed`, `agent-vm build` writes:
 
 ```text
-<runtimeDir>/observability/<projectNamespace>/docker-compose.observability.yml
-<runtimeDir>/observability/<projectNamespace>/otel-collector-config.yaml
+<controllerRuntimeDir>/observability/<projectNamespace>/docker-compose.observability.yml
+<controllerRuntimeDir>/observability/<projectNamespace>/otel-collector-config.yaml
 <host.observability.dataDir>/metrics
 <host.observability.dataDir>/logs
 <host.observability.dataDir>/traces
@@ -265,7 +261,7 @@ the defaults.
 
 The health snapshot and bounded event history are in-memory controller state
 for live HTTP reads. The controller also appends accepted health and recovery
-events to `<runtimeDir>/controller-health/events.jsonl` as diagnostic evidence.
+events to `<controllerRuntimeDir>/controller-health/events.jsonl` as diagnostic evidence.
 That JSONL log is not authority for ownership or recovery decisions; the
 runtime record and current process/port checks remain the authority.
 
@@ -317,7 +313,40 @@ Example:
 }
 ```
 
-## cacheDir
+## storageRootDir
+
+`storageRootDir` is the sole authored standard operational storage path. It
+supports the existing absolute, config-relative, and home-relative syntax and
+defaults to `~/.agent-vm`. Schema version 2 rejects authored `cacheDir`,
+`controllerStateDir`, `runtimeDir`, `zones[].gateway.stateDir`, and
+`zones[].gateway.zoneFilesDir` fields.
+
+The controller derives this exact tree:
+
+```text
+<storageRootDir>/
+├── cache/                              cacheDir
+├── controller-state/                   controllerStateDir
+│   └── zones/<zoneId>/
+├── controller-runtime/                 controllerRuntimeDir
+│   ├── vm-ownership/
+│   ├── controller-health/
+│   └── observability/<projectNamespace>/
+└── <zoneId>/
+    ├── state/                          stateDir
+    ├── zone-files/                     zoneFilesDir for OpenClaw and Hermes
+    └── runtime/                        zoneRuntimeDir
+        ├── logs/
+        ├── gitdirs/agents/<agentId>/
+        ├── worker-tasks/<taskId>/
+        └── control-sessions/
+```
+
+`cache`, `controller-state`, and `controller-runtime` are reserved and invalid
+as zone IDs. Independent controller deployments on one host must select
+different storage roots.
+
+## Derived cacheDir
 
 `cacheDir` stores rebuildable artifacts. It is intentionally outside encrypted
 zone backups. Current uses include Gondolin image outputs and per-zone gateway
@@ -328,7 +357,6 @@ rebuildable dependency trees under `stateDir` just to make them survive gateway
 VM reboot; mount a cache path or bake stable dependency trees into the image
 instead.
 
-`cacheDir` may be local disk or network-backed storage in larger deployments.
 Do not put active worker gitdirs here; unpushed commits are not rebuildable
 cache.
 
@@ -352,53 +380,48 @@ profile build also writes a profile-local prepared-image record under
 `cacheDir`; gateway and Tool VM startup may use that record when the matching
 assets still exist.
 
-## controllerStateDir
+## Derived controllerStateDir
 
-`controllerStateDir` is a required top-level path with no default. Relative
-values resolve against the directory containing `system.jsonc`. The controller
-canonicalizes it before use and rejects direct, ancestor, descendant, or
-symlink-alias overlap with the authored system config and its parent,
-`cacheDir`, `runtimeDir`, every zone `stateDir`, every `zoneFilesDir`, backup
-output, managed observability storage, and every Gateway or Tool VM mount
-source.
+`controllerStateDir` is `<storageRootDir>/controller-state`. The controller
+canonicalizes the storage root before use and preserves existing path-isolation
+and mount-source checks.
 
 This directory is host-controller-only durable authority. It and all of its
 descendants must never enter immutable boot inputs, environment, telemetry, or
-any Gateway or Tool VM mount. Existing Gateway-visible `stateDir` paths and
-relative layouts remain unchanged.
+any Gateway or Tool VM mount.
 
-## runtimeDir
+## Derived controllerRuntimeDir and zoneRuntimeDir
 
-`runtimeDir` stores active, non-backup runtime artifacts that are not durable
-zone state and not repairable cache. It should prefer local disk because these
-paths can be hot during task execution.
+`controllerRuntimeDir` is `<storageRootDir>/controller-runtime` and stores the
+controller ownership lock, health evidence, and generated observability files.
+`zoneRuntimeDir` is `<storageRootDir>/<zoneId>/runtime` and stores active
+non-backup runtime artifacts owned by one zone.
 
 Current uses include OpenClaw gateway logs and worker Git metadata:
 
 ```text
-<runtimeDir>/zones/<zoneId>/logs/
-<runtimeDir>/worker-tasks/<zoneId>/<taskId>/gitdirs/<repoId>.git
+<zoneRuntimeDir>/logs/
+<zoneRuntimeDir>/gitdirs/agents/<agentId>/workspace.git
+<zoneRuntimeDir>/worker-tasks/<taskId>/gitdirs/<repoId>.git
 ```
 
-Normal `backup create` does not copy `runtimeDir`, and validation fails when
-`runtimeDir` overlaps `cacheDir`, any zone `stateDir`, or any OpenClaw
-`zoneFilesDir`. Worker runtime artifacts are task-lifetime data: the agent must
+Normal `backup create` copies neither runtime root. Worker runtime artifacts are
+task-lifetime data: the agent must
 commit and call `git-push` before task teardown if work must survive. OpenClaw
 gateway logs are runtime evidence for post-mortems and performance debugging;
 they persist across gateway VM restarts but are intentionally excluded from
 normal zone backups.
 
-## zoneFilesDir
+## Derived zoneFilesDir
 
-`zoneFilesDir` is the long-lived managed Gateway shared-files and per-agent
-workspace directory. OpenClaw RealFS-mounts the complete directory at `/zone`;
-for both OpenClaw and Hermes, the controller selects each agent workspace from
-`zoneFilesDir/agents/<agentId>` for its Tool VM. The complete directory is
-included in both OpenClaw and Hermes zone backups.
+`zoneFilesDir` is the derived `<storageRootDir>/<zoneId>/zone-files` managed
+Gateway shared-files and per-agent workspace directory. OpenClaw RealFS-mounts
+the complete directory at `/zone`; for both OpenClaw and Hermes, the controller
+selects each agent workspace from `zoneFilesDir/agents/<agentId>` for its Tool
+VM. The complete directory is included in both OpenClaw and Hermes zone backups.
 
 Worker gateways do not use `zoneFilesDir`. Their repo files live in VM-local
-`/work/repos/<repoId>`, and their Git metadata lives under system-level
-`runtimeDir`.
+`/work/repos/<repoId>`, and their Git metadata lives under `zoneRuntimeDir`.
 
 Do not call this `workspaceDir`. Worker execution files live under VM-local
 `/work/repos/<repoId>` and are not backed by this host path. For managed agents,
@@ -891,7 +914,6 @@ Each zone selects one gateway image profile and one gateway behavior config:
     "port": 18791,
     "config": "./gateways/coding-agent/worker.jsonc",
     "imageProfile": "worker",
-    "stateDir": "../state/coding-agent",
     "repoPushPolicies": [
       {
         "repoUrl": "https://github.com/example/example-repo.git",
@@ -942,9 +964,9 @@ Worker zones do not declare Tool VM profile fields. OpenClaw zones must declare
 empty. This makes the Tool VM image policy visible in generated configs instead
 of hiding it behind defaults.
 
-Managed OpenClaw and Hermes zones add `zoneFilesDir` because they own durable
-per-agent workspaces. OpenClaw also mounts the zone root at `/zone`; Hermes does
-not expose a broad zone root to its Gateway:
+Managed OpenClaw and Hermes zones receive a derived `zoneFilesDir` because they
+own durable per-agent workspaces. OpenClaw also mounts that path at `/zone`;
+Hermes does not expose a broad zone root to its Gateway:
 
 ```json
 {
@@ -957,8 +979,6 @@ not expose a broad zone root to its Gateway:
     "config": "./gateways/shravan/openclaw.json",
     "imageProfile": "openclaw",
     "runtimeRootfsSize": "12G",
-    "stateDir": "../state/shravan",
-    "zoneFilesDir": "../zone-files/shravan",
     "backupDir": "../backups/shravan",
     "backupIdentity": {
       "source": "environment",
@@ -1146,7 +1166,7 @@ The important path model is:
 
 ```text
 OpenClaw gateway durable zone files:
-  guest /zone  ->  host gateway.zoneFilesDir
+  guest /zone  ->  host derived zoneFilesDir
 
 Tool VM selected work mount:
   guest /workspace -> filtered host zoneFilesDir/agents/<agentId>

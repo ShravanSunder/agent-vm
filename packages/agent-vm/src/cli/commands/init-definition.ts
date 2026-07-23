@@ -58,8 +58,7 @@ const initPresets = {
 } as const satisfies Record<InitPresetName, InitPresetDefaults>;
 
 const initPresetDescription =
-	'macos-local: user-dir paths (cacheDir ~/.agent-vm/cache, runtimeDir ~/.agent-vm/runtime, ' +
-	'stateDir ~/.agent-vm/state/<zone>, zoneFilesDir ~/.agent-vm/zone-files/<zone>, ' +
+	'macos-local: user-dir paths (storageRootDir ~/.agent-vm with derived global and zone paths, ' +
 	'backupDir ~/.agent-vm-backups/<zone>), aarch64, 1password, .env.local; ' +
 	'container-x86: container runtime paths (/var/agent-vm), x86_64, environment secrets; ' +
 	'container-arm64: container runtime paths (/var/agent-vm), aarch64, environment secrets';

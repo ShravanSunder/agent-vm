@@ -24,7 +24,7 @@ export interface ZoneBackupManager {
 		readonly zoneId: string;
 		readonly cacheDir: string;
 		readonly stateDir: string;
-		readonly runtimeDir: string;
+		readonly zoneRuntimeDir: string;
 		readonly zoneFilesDir?: string;
 		readonly backupDir: string;
 	}): Promise<BackupResult>;
@@ -54,7 +54,7 @@ export function createZoneBackupManager(encryption: BackupEncryption): ZoneBacku
 				encryption,
 				backupDir: options.backupDir,
 				cacheDir: options.cacheDir,
-				runtimeDir: options.runtimeDir,
+				zoneRuntimeDir: options.zoneRuntimeDir,
 				stateDir: options.stateDir,
 				...(options.zoneFilesDir !== undefined ? { zoneFilesDir: options.zoneFilesDir } : {}),
 				zoneId: options.zoneId,

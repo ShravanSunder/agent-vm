@@ -159,10 +159,11 @@ import path and is not included in encrypted zone backups. Durable OpenClaw
 state and auth profiles remain under `stateDir`.
 
 The OpenClaw VM path `/zone` is long-lived zone files, not worker-style hot
-execution storage. This storage is RealFS-mounted and backed up. The host-side
-config field is `zoneFilesDir`; each configured agent owns a durable child at
-`zoneFilesDir/agents/<agentId>`. OpenClaw's native `workspaceDir` is identity
-evidence at the plugin boundary, not a controller mount-path input.
+execution storage. This storage is RealFS-mounted and backed up. The controller
+derives `zoneFilesDir` as `<storageRootDir>/<zoneId>/zone-files`; each configured
+agent owns a durable child at `zoneFilesDir/agents/<agentId>`. OpenClaw's native
+`workspaceDir` is identity evidence at the plugin boundary, not a controller
+mount-path input.
 
 ---
 
@@ -426,9 +427,9 @@ OpenClaw SDK `workspaceDir` authenticates the configured agent only; it is
 translated at the plugin boundary and never becomes host-path authority.
 
 The controller remains the storage authority. It derives the selected
-`zoneFilesDir/agents/<agentId>` source and optional runtime Git database from
-trusted configuration, constructs the filtered provider, and boots the Tool VM
-without accepting a caller-supplied host or Gateway mount path.
+`zoneFilesDir/agents/<agentId>` source and optional `zoneRuntimeDir` Git database
+from trusted configuration, constructs the filtered provider, and boots the Tool
+VM without accepting a caller-supplied host or Gateway mount path.
 
 OpenClaw SDK compatibility note: OpenClaw currently names the selected sandbox
 path `workspaceDir`. The agent-vm plugin validates it as native identity

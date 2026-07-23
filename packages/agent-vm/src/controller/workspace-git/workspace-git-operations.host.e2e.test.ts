@@ -20,7 +20,7 @@ interface RemoteWorkspaceFixture {
 	readonly hostWorkspaceDirectory: string;
 	readonly materialized: MaterializedWorkspaceGitRepository;
 	readonly remoteGitDirectory: string;
-	readonly runtimeDir: string;
+	readonly zoneRuntimeDir: string;
 }
 
 async function createRemoteWorkspaceFixture(options: {
@@ -33,7 +33,7 @@ async function createRemoteWorkspaceFixture(options: {
 		mkdir(hostWorkspaceDirectory, { recursive: true }),
 		execa('/usr/bin/git', ['init', '--bare', remoteGitDirectory]),
 	]);
-	const runtimeDir = path.join(options.testRoot, 'runtime');
+	const zoneRuntimeDir = path.join(options.testRoot, 'runtime');
 	const materialized = await materializeWorkspaceGitRepository({
 		agentId: 'alice',
 		hostWorkspaceDirectory,
@@ -42,7 +42,7 @@ async function createRemoteWorkspaceFixture(options: {
 			kind: 'remote',
 			remoteUrl: remoteGitDirectory,
 		},
-		runtimeDir,
+		zoneRuntimeDir,
 		zoneId: 'gateway',
 	});
 	return {
@@ -50,7 +50,7 @@ async function createRemoteWorkspaceFixture(options: {
 		hostWorkspaceDirectory,
 		materialized,
 		remoteGitDirectory,
-		runtimeDir,
+		zoneRuntimeDir,
 	};
 }
 
@@ -133,7 +133,7 @@ async function pushFixtureHead(
 			expectedHead,
 			hostWorkspaceDirectory: fixture.hostWorkspaceDirectory,
 			remoteUrl: fixture.remoteGitDirectory,
-			runtimeDir: fixture.runtimeDir,
+			zoneRuntimeDir: fixture.zoneRuntimeDir,
 			zoneId: 'gateway',
 		},
 		beforePushCompareAndSwap === undefined ? {} : { beforePushCompareAndSwap },
@@ -242,7 +242,7 @@ describe('workspace Git repository materialization', () => {
 					agentId: 'alice',
 					hostWorkspaceDirectory,
 					policy: { kind: 'local' },
-					runtimeDir: path.join(testRoot, 'runtime'),
+					zoneRuntimeDir: path.join(testRoot, 'runtime'),
 					zoneId: 'gateway',
 				});
 			} finally {
@@ -277,7 +277,7 @@ describe('workspace Git repository materialization', () => {
 				kind: 'remote',
 				remoteUrl: 'https://github.com/example/alice-workspace.git',
 			},
-			runtimeDir: path.join(testRoot, 'runtime'),
+			zoneRuntimeDir: path.join(testRoot, 'runtime'),
 			zoneId: 'gateway',
 		});
 
@@ -305,7 +305,7 @@ describe('workspace Git repository materialization', () => {
 				kind: 'remote',
 				remoteUrl: 'https://github.com/example/alice-workspace.git',
 			},
-			runtimeDir: path.join(testRoot, 'runtime'),
+			zoneRuntimeDir: path.join(testRoot, 'runtime'),
 			zoneId: 'gateway',
 		});
 
@@ -355,7 +355,7 @@ describe('workspace Git repository materialization', () => {
 				kind: 'remote',
 				remoteUrl: 'https://github.com/example/alice-workspace.git',
 			},
-			runtimeDir: path.join(testRoot, 'runtime'),
+			zoneRuntimeDir: path.join(testRoot, 'runtime'),
 			zoneId: 'gateway',
 		});
 
@@ -411,7 +411,7 @@ describe('workspace Git repository materialization', () => {
 				kind: 'remote',
 				remoteUrl: 'https://github.com/example/alice-workspace.git',
 			},
-			runtimeDir: path.join(testRoot, 'runtime'),
+			zoneRuntimeDir: path.join(testRoot, 'runtime'),
 			zoneId: 'gateway',
 		});
 
@@ -461,7 +461,7 @@ describe('workspace Git repository materialization', () => {
 				kind: 'remote',
 				remoteUrl: 'https://github.com/example/alice-workspace.git',
 			},
-			runtimeDir: path.join(testRoot, 'runtime'),
+			zoneRuntimeDir: path.join(testRoot, 'runtime'),
 			zoneId: 'gateway',
 		});
 
@@ -492,7 +492,7 @@ describe('workspace Git repository materialization', () => {
 				kind: 'remote',
 				remoteUrl: remoteGitDirectory,
 			},
-			runtimeDir: path.join(testRoot, 'runtime'),
+			zoneRuntimeDir: path.join(testRoot, 'runtime'),
 			zoneId: 'gateway',
 		});
 		await writeFile(path.join(hostWorkspaceDirectory, 'MEMORY.md'), 'durable memory\n', 'utf8');
@@ -526,7 +526,7 @@ describe('workspace Git repository materialization', () => {
 			expectedHead: localHead,
 			hostWorkspaceDirectory,
 			remoteUrl: remoteGitDirectory,
-			runtimeDir: path.join(testRoot, 'runtime'),
+			zoneRuntimeDir: path.join(testRoot, 'runtime'),
 			zoneId: 'gateway',
 		});
 
@@ -581,7 +581,7 @@ describe('workspace Git repository materialization', () => {
 			resolveWorkspaceGitBranchObjectId({
 				agentId: 'alice',
 				branch: fixture.branch,
-				runtimeDir: fixture.runtimeDir,
+				zoneRuntimeDir: fixture.zoneRuntimeDir,
 				zoneId: 'gateway',
 			}),
 		).resolves.toBe(localHead);
@@ -626,7 +626,7 @@ describe('workspace Git repository materialization', () => {
 			resolveWorkspaceGitBranchObjectId({
 				agentId: 'alice',
 				branch: fixture.branch,
-				runtimeDir: fixture.runtimeDir,
+				zoneRuntimeDir: fixture.zoneRuntimeDir,
 				zoneId: 'gateway',
 			}),
 		).rejects.toThrow(/loose object id.*exact lowercase/u);
@@ -649,7 +649,7 @@ describe('workspace Git repository materialization', () => {
 			expectedHead: localHead,
 			hostWorkspaceDirectory: fixture.hostWorkspaceDirectory,
 			remoteUrl: unreachableRemote,
-			runtimeDir: fixture.runtimeDir,
+			zoneRuntimeDir: fixture.zoneRuntimeDir,
 			zoneId: 'gateway',
 		} as const;
 
@@ -701,7 +701,7 @@ describe('workspace Git repository materialization', () => {
 			resolveWorkspaceGitBranchObjectId({
 				agentId: 'alice',
 				branch: fixture.branch,
-				runtimeDir: fixture.runtimeDir,
+				zoneRuntimeDir: fixture.zoneRuntimeDir,
 				zoneId: 'gateway',
 			}),
 		).resolves.toBe(localHead);
@@ -789,7 +789,7 @@ describe('workspace Git repository materialization', () => {
 					expectedHead: localHead,
 					hostWorkspaceDirectory: fixture.hostWorkspaceDirectory,
 					remoteUrl: fixture.remoteGitDirectory,
-					runtimeDir: fixture.runtimeDir,
+					zoneRuntimeDir: fixture.zoneRuntimeDir,
 					zoneId: 'gateway',
 				},
 				{

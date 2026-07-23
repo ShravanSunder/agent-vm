@@ -175,7 +175,7 @@ export async function runControllerOfflineCleanup(
 
 	const controllerOwnershipLock = await (
 		dependencies.acquireControllerOwnershipLock ?? acquireControllerOwnershipLockDefault
-	)({ runtimeDirectory: options.systemConfig.runtimeDir });
+	)({ runtimeDirectory: options.systemConfig.controllerRuntimeDir });
 	const controllerStateRoot = createControllerStateRoot({
 		controllerStateDirectoryPath: options.systemConfig.controllerStateDir,
 	});

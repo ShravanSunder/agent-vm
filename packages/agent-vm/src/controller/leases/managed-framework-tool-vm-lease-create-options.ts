@@ -96,8 +96,7 @@ export function createManagedFrameworkToolVmLeaseCreateOptionsResolver(
 				: realpath(
 						resolveManagedAgentGitDirectoryRoot({
 							agentId: authorityContext.agentId,
-							runtimeDir: options.systemConfig.runtimeDir,
-							zoneId: authorityContext.zoneId,
+							zoneRuntimeDir: zone.gateway.zoneRuntimeDir,
 						}),
 					),
 			realpath(rootPaths.hostWorkspaceRoot),

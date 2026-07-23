@@ -1845,10 +1845,13 @@ export async function scaffoldOpenClawE2eProject(options: {
 		zoneId: options.zoneId,
 		...(options.agents ? { agents: options.agents } : {}),
 	});
-	const systemConfig = await loadSystemConfig(path.join(tempRoot, 'config', 'system.json'));
+	const loadedSystemConfig = await loadSystemConfig(path.join(tempRoot, 'config', 'system.json'));
+	const systemConfig: LoadedSystemConfig = {
+		...loadedSystemConfig,
+		cacheDir: path.join(resolveE2eCacheRoot(), 'openclaw'),
+	};
 	systemConfig.host.controllerPort = controllerPort;
 	systemConfig.host.projectNamespace = 'claw-tests-workspace-git';
-	systemConfig.cacheDir = path.join(resolveE2eCacheRoot(), 'openclaw');
 	const zone = getOpenClawE2eZone(systemConfig);
 	zone.gateway.port = gatewayPort;
 	return {
@@ -1910,10 +1913,13 @@ export async function scaffoldWorkerE2eProject(options: {
 		targetDir: tempRoot,
 		zoneId: options.zoneId,
 	});
-	const systemConfig = await loadSystemConfig(path.join(tempRoot, 'config', 'system.json'));
+	const loadedSystemConfig = await loadSystemConfig(path.join(tempRoot, 'config', 'system.json'));
+	const systemConfig: LoadedSystemConfig = {
+		...loadedSystemConfig,
+		cacheDir: path.join(resolveE2eCacheRoot(), 'worker'),
+	};
 	systemConfig.host.controllerPort = controllerPort;
 	systemConfig.host.projectNamespace = 'claw-tests-worker';
-	systemConfig.cacheDir = path.join(resolveE2eCacheRoot(), 'worker');
 	systemConfig.host.secretsProvider = {
 		type: '1password',
 		tokenSource: { type: 'env', envVar: 'AGENT_VM_TEST_OPENAI_API_KEY' },

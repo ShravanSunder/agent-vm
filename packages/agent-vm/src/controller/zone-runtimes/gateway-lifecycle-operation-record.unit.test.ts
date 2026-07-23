@@ -24,17 +24,13 @@ describe('gateway lifecycle operation records', () => {
 
 		await appendGatewayLifecycleOperationRecord({
 			record,
-			runtimeDir: tempDir.path,
-			zoneId: 'sunfam',
+			zoneRuntimeDir: tempDir.path,
 		});
 
 		const logPath = resolveGatewayLifecycleOperationLogPath({
-			runtimeDir: tempDir.path,
-			zoneId: 'sunfam',
+			zoneRuntimeDir: tempDir.path,
 		});
-		expect(logPath).toBe(
-			path.join(tempDir.path, 'zones', 'sunfam', 'gateway-lifecycle', 'events.jsonl'),
-		);
+		expect(logPath).toBe(path.join(tempDir.path, 'gateway-lifecycle', 'events.jsonl'));
 		expect(await readFile(logPath, 'utf8')).toBe(`${JSON.stringify(record)}\n`);
 	});
 
@@ -57,20 +53,18 @@ describe('gateway lifecycle operation records', () => {
 
 		await appendGatewayLifecycleOperationRecord({
 			record: firstRecord,
-			runtimeDir: tempDir.path,
-			zoneId: 'sunfam',
+			zoneRuntimeDir: tempDir.path,
 		});
 		await appendGatewayLifecycleOperationRecord({
 			record: secondRecord,
-			runtimeDir: tempDir.path,
-			zoneId: 'sunfam',
+			zoneRuntimeDir: tempDir.path,
 		});
 
 		await expect(
-			readGatewayLifecycleOperationRecords({ runtimeDir: tempDir.path, zoneId: 'sunfam' }),
+			readGatewayLifecycleOperationRecords({ zoneRuntimeDir: tempDir.path }),
 		).resolves.toEqual([firstRecord, secondRecord]);
 		await expect(
-			readLatestGatewayLifecycleOperationRecord({ runtimeDir: tempDir.path, zoneId: 'sunfam' }),
+			readLatestGatewayLifecycleOperationRecord({ zoneRuntimeDir: tempDir.path }),
 		).resolves.toEqual(secondRecord);
 	});
 
@@ -88,14 +82,12 @@ describe('gateway lifecycle operation records', () => {
 
 			await appendGatewayLifecycleOperationRecord({
 				record,
-				runtimeDir: tempDir.path,
-				zoneId: 'sunfam',
+				zoneRuntimeDir: tempDir.path,
 			});
 
 			await expect(
 				readLatestGatewayLifecycleOperationRecord({
-					runtimeDir: tempDir.path,
-					zoneId: 'sunfam',
+					zoneRuntimeDir: tempDir.path,
 				}),
 			).resolves.toEqual(record);
 		},
@@ -110,19 +102,17 @@ describe('gateway lifecycle operation records', () => {
 			observedAtMs: 100,
 		});
 		const logPath = resolveGatewayLifecycleOperationLogPath({
-			runtimeDir: tempDir.path,
-			zoneId: 'sunfam',
+			zoneRuntimeDir: tempDir.path,
 		});
 
 		await appendGatewayLifecycleOperationRecord({
 			record: validRecord,
-			runtimeDir: tempDir.path,
-			zoneId: 'sunfam',
+			zoneRuntimeDir: tempDir.path,
 		});
 		await writeFile(logPath, `${JSON.stringify(validRecord)}\n{"kind":`, 'utf8');
 
 		await expect(
-			readLatestGatewayLifecycleOperationRecord({ runtimeDir: tempDir.path, zoneId: 'sunfam' }),
+			readLatestGatewayLifecycleOperationRecord({ zoneRuntimeDir: tempDir.path }),
 		).resolves.toEqual(validRecord);
 	});
 
@@ -135,19 +125,17 @@ describe('gateway lifecycle operation records', () => {
 			observedAtMs: 200,
 		});
 		const logPath = resolveGatewayLifecycleOperationLogPath({
-			runtimeDir: tempDir.path,
-			zoneId: 'sunfam',
+			zoneRuntimeDir: tempDir.path,
 		});
 
 		await appendGatewayLifecycleOperationRecord({
 			record: validRecord,
-			runtimeDir: tempDir.path,
-			zoneId: 'sunfam',
+			zoneRuntimeDir: tempDir.path,
 		});
 		await writeFile(logPath, `{"kind":\n${JSON.stringify(validRecord)}\n`, 'utf8');
 
 		await expect(
-			readGatewayLifecycleOperationRecords({ runtimeDir: tempDir.path, zoneId: 'sunfam' }),
+			readGatewayLifecycleOperationRecords({ zoneRuntimeDir: tempDir.path }),
 		).rejects.toThrow('Corrupt gateway lifecycle operation record at line 1');
 	});
 });

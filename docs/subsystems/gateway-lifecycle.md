@@ -201,7 +201,7 @@ mounts:
   /home/openclaw/.openclaw/config    -> configDirectory  (realfs)
   /home/openclaw/.openclaw/cache     -> gatewayCacheDir  (realfs)
   /home/openclaw/.openclaw/state     -> stateDir         (realfs)
-  /agent-vm/logs                     -> runtimeDir/zones/<zone>/logs (realfs)
+  /agent-vm/logs                     -> zoneRuntimeDir/logs (realfs)
   /zone           -> zoneFilesDir (realfs)
 
 tcpHosts:
@@ -279,7 +279,7 @@ environment:
 
 mounts:
   /state                -> task stateDir       (realfs)
-  /gitdirs              -> runtimeDir task root (realfs)
+  /gitdirs              -> zoneRuntimeDir task root (realfs)
 
 rootfs/COW paths:
   /work/repos            -> repo files, package installs, builds, tests

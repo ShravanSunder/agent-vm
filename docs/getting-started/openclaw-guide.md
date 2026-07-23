@@ -23,6 +23,8 @@ For the full OpenClaw architecture, see [architecture/openclaw-gateway.md](../ar
 
 ```json
 {
+	"schemaVersion": 2,
+	"storageRootDir": "../.agent-vm",
   "zones": [{
     "id": "my-openclaw",
     "gateway": {
@@ -32,8 +34,6 @@ For the full OpenClaw architecture, see [architecture/openclaw-gateway.md](../ar
       "port": 18791,
       "config": "./my-openclaw/openclaw.json",
       "imageProfile": "openclaw",
-      "stateDir": "../state/my-openclaw",
-      "zoneFilesDir": "../zone-files/my-openclaw",
       "controlAuth": {
         "mode": "token",
         "secret": "OPENCLAW_GATEWAY_TOKEN"
@@ -326,7 +326,7 @@ Opens an SSH session into the gateway VM for debugging.
 
 Use controller logs for both the gateway boot log and the OpenClaw runtime log
 tail. The gateway VM writes these logs under `/agent-vm/logs`, backed by
-`<runtimeDir>/zones/<zone>/logs` on the host, so they survive gateway restarts
+`<storageRootDir>/<zoneId>/runtime/logs` on the host, so they survive gateway restarts
 without entering normal zone backups:
 
 ```bash
