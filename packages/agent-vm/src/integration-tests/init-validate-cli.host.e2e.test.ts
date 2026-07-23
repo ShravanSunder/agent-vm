@@ -25,7 +25,7 @@ afterEach(async () => {
 });
 
 describe('smoke: generated agent-vm config validation', () => {
-	it('initializes and validates a config with host-only controller state', async () => {
+	it('initializes and validates a config with root-derived controller storage', async () => {
 		// Arrange
 		const targetDirectory = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-init-validate-cli-'));
 		createdDirectories.push(targetDirectory);
@@ -59,7 +59,7 @@ describe('smoke: generated agent-vm config validation', () => {
 		);
 
 		// Assert
-		expect(generatedConfigText).toContain('"controllerStateDir": "../controller-state"');
+		expect(generatedConfigText).toContain('"storageRootDir": "../.agent-vm"');
 		expect(validationResult.exitCode).toBe(0);
 	});
 });

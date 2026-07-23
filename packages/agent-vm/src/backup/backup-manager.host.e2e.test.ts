@@ -54,7 +54,7 @@ describe('createZoneBackupManager', () => {
 		expect(fs.existsSync(result.backupPath)).toBe(true);
 	});
 
-	it('rejects backups when runtimeDir overlaps backup-copied paths', async () => {
+	it('rejects backups when zoneRuntimeDir overlaps backup-copied paths', async () => {
 		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'backup-runtime-overlap-'));
 		const stateDir = path.join(tmpDir, 'state');
 		const zoneFilesDir = path.join(tmpDir, 'zone-files');
@@ -74,7 +74,7 @@ describe('createZoneBackupManager', () => {
 				backupDir,
 				zoneRuntimeDir: path.join(stateDir, 'worker-tasks'),
 			}),
-		).rejects.toThrow(/runtimeDir.*stateDir/u);
+		).rejects.toThrow(/zoneRuntimeDir.*stateDir/u);
 		await expect(
 			manager.createBackup({
 				zoneId: 'shravan',
@@ -84,7 +84,7 @@ describe('createZoneBackupManager', () => {
 				backupDir,
 				zoneRuntimeDir: path.join(zoneFilesDir, 'runtime'),
 			}),
-		).rejects.toThrow(/runtimeDir.*zoneFilesDir/u);
+		).rejects.toThrow(/zoneRuntimeDir.*zoneFilesDir/u);
 		await expect(
 			manager.createBackup({
 				zoneId: 'shravan',
@@ -94,7 +94,7 @@ describe('createZoneBackupManager', () => {
 				backupDir,
 				zoneRuntimeDir: path.join(tmpDir, 'runtime'),
 			}),
-		).rejects.toThrow(/runtimeDir.*stateDir/u);
+		).rejects.toThrow(/zoneRuntimeDir.*stateDir/u);
 		await expect(
 			manager.createBackup({
 				zoneId: 'shravan',
@@ -104,10 +104,10 @@ describe('createZoneBackupManager', () => {
 				backupDir,
 				zoneRuntimeDir: path.join(tmpDir, 'runtime'),
 			}),
-		).rejects.toThrow(/runtimeDir.*zoneFilesDir/u);
+		).rejects.toThrow(/zoneRuntimeDir.*zoneFilesDir/u);
 	});
 
-	it('rejects backups when runtimeDir overlaps cacheDir', async () => {
+	it('rejects backups when zoneRuntimeDir overlaps cacheDir', async () => {
 		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'backup-runtime-cache-overlap-'));
 		const stateDir = path.join(tmpDir, 'state');
 		const zoneFilesDir = path.join(tmpDir, 'zone-files');
@@ -127,7 +127,7 @@ describe('createZoneBackupManager', () => {
 				cacheDir,
 				zoneRuntimeDir: path.join(cacheDir, 'worker-tasks'),
 			}),
-		).rejects.toThrow(/runtimeDir.*cacheDir/u);
+		).rejects.toThrow(/zoneRuntimeDir.*cacheDir/u);
 		await expect(
 			manager.createBackup({
 				zoneId: 'shravan',
@@ -137,7 +137,7 @@ describe('createZoneBackupManager', () => {
 				cacheDir: path.join(tmpDir, 'runtime', 'cache'),
 				zoneRuntimeDir: path.join(tmpDir, 'runtime'),
 			}),
-		).rejects.toThrow(/runtimeDir.*cacheDir/u);
+		).rejects.toThrow(/zoneRuntimeDir.*cacheDir/u);
 	});
 
 	it('restores a backup to state and zone-files dirs', async () => {
