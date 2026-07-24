@@ -119,6 +119,30 @@ function buildHermesFrameworkEnvironment(
 			'Managed Hermes requires API_SERVER_KEY so its readiness/API listener cannot start unauthenticated.',
 		);
 	}
+	const observabilityEnvironment =
+		zone.observability === undefined
+			? {}
+			: {
+					OTEL_BLRP_MAX_EXPORT_BATCH_SIZE: String(
+						zone.observability.framework.admissionLimits.maxExportBatchRecords,
+					),
+					OTEL_BLRP_MAX_QUEUE_SIZE: String(
+						zone.observability.framework.admissionLimits.maxQueuedRecordsPerSignal,
+					),
+					OTEL_BLRP_SCHEDULE_DELAY: String(zone.observability.framework.flushIntervalMs),
+					OTEL_BSP_MAX_EXPORT_BATCH_SIZE: String(
+						zone.observability.framework.admissionLimits.maxExportBatchRecords,
+					),
+					OTEL_BSP_MAX_QUEUE_SIZE: String(
+						zone.observability.framework.admissionLimits.maxQueuedRecordsPerSignal,
+					),
+					OTEL_BSP_SCHEDULE_DELAY: String(zone.observability.framework.flushIntervalMs),
+					OTEL_EXPORTER_OTLP_ENDPOINT: `http://${zone.observability.collector.host}:${String(zone.observability.collector.httpPort)}`,
+					OTEL_METRIC_EXPORT_INTERVAL: String(zone.observability.framework.flushIntervalMs),
+					OTEL_SERVICE_NAME: zone.observability.framework.serviceName,
+					OTEL_TRACES_SAMPLER: 'parentbased_traceidratio',
+					OTEL_TRACES_SAMPLER_ARG: String(zone.observability.framework.sampleRate),
+				};
 	for (const protectedEnvironmentName of [
 		'AGENT_VM_HERMES_MANAGED_CONFIG_PATH',
 		'API_SERVER_ENABLED',
@@ -136,6 +160,7 @@ function buildHermesFrameworkEnvironment(
 	}
 	return Object.freeze({
 		...environmentSecrets,
+		...observabilityEnvironment,
 		AGENT_VM_HERMES_MANAGED_CONFIG_PATH: managedFrameworkConfigurationInputPath,
 		API_SERVER_ENABLED: 'true',
 		API_SERVER_HOST: '0.0.0.0',

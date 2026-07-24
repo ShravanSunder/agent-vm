@@ -4,7 +4,14 @@ version = "0.0.121"
 description = "Partial managed Hermes profile adapter for agent-vm."
 requires-python = ">=3.13,<3.14"
 license = "MIT"
-dependencies = ["agent-vm-agent-portal-sdk==0.0.121", "hermes-agent==0.18.2", "pydantic>=2.12.0,<3"]
+dependencies = [
+	"agent-vm-agent-portal-sdk==0.0.121",
+	"hermes-agent==0.18.2",
+	"opentelemetry-api==1.44.0",
+	"opentelemetry-exporter-otlp-proto-http==1.44.0",
+	"opentelemetry-sdk==1.44.0",
+	"pydantic>=2.12.0,<3",
+]
 
 [project.scripts]
 agent-vm-hermes-gateway = "agent_vm_hermes_adapter.managed_gateway_bootstrap:main"

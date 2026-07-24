@@ -136,6 +136,39 @@ plugins:
 		const material = createHermesAdapterMaterial();
 		const zone = {
 			...createHermesZone(material),
+			observability: {
+				collector: {
+					host: 'otel-collector.observability.vm.host',
+					grpcPort: 4317,
+					httpPort: 4318,
+					targetGrpcPort: 4317,
+					targetHost: '127.0.0.1',
+					targetHttpPort: 4318,
+				},
+				framework: {
+					admissionLimits: {
+						maxExportBatchRecords: 16,
+						maxQueuedRecordsPerSignal: 32,
+						maxRecordBytes: 1024,
+					},
+					flushIntervalMs: 1000,
+					sampleRate: 1,
+					serviceName: 'agent-vm-hermes',
+					sourcePolicy: { admitBaggage: false, captureContent: false },
+				},
+				mode: 'collector' as const,
+				toolPortal: {
+					admissionLimits: {
+						maxExportBatchRecords: 16,
+						maxQueuedRecordsPerSignal: 32,
+						maxRecordBytes: 1024,
+					},
+					flushIntervalMs: 1000,
+					sampleRate: 1,
+					serviceName: 'agent-vm-tool-portal',
+					sourcePolicy: { admitBaggage: false, captureContent: false },
+				},
+			},
 			runtimeEnvironment: {
 				OTEL_RESOURCE_ATTRIBUTES:
 					'dev.repo.hash=0123456789abcdef,dev.worktree.hash=fedcba9876543210',
@@ -168,7 +201,18 @@ plugins:
 			GATEWAY_MULTIPLEX_PROFILES: 'true',
 			HERMES_MANAGED_DIR: '/run/agent-vm/managed-gateway',
 			HERMES_HOME: '/home/hermes/.hermes',
+			OTEL_BLRP_MAX_EXPORT_BATCH_SIZE: '16',
+			OTEL_BLRP_MAX_QUEUE_SIZE: '32',
+			OTEL_BLRP_SCHEDULE_DELAY: '1000',
+			OTEL_BSP_MAX_EXPORT_BATCH_SIZE: '16',
+			OTEL_BSP_MAX_QUEUE_SIZE: '32',
+			OTEL_BSP_SCHEDULE_DELAY: '1000',
+			OTEL_EXPORTER_OTLP_ENDPOINT: 'http://otel-collector.observability.vm.host:4318',
+			OTEL_METRIC_EXPORT_INTERVAL: '1000',
 			OTEL_RESOURCE_ATTRIBUTES: 'dev.repo.hash=0123456789abcdef,dev.worktree.hash=fedcba9876543210',
+			OTEL_SERVICE_NAME: 'agent-vm-hermes',
+			OTEL_TRACES_SAMPLER: 'parentbased_traceidratio',
+			OTEL_TRACES_SAMPLER_ARG: '1',
 		});
 		expect(readFileMock).toHaveBeenCalledWith('/deployment/config/hermes.yaml', 'utf8');
 	});

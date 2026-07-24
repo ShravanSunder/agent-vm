@@ -117,8 +117,14 @@ def managed_plugin_configuration() -> Mapping[str, object]:
 class FakeGatewayRuntimeClient:
     last_instance: t.ClassVar["FakeGatewayRuntimeClient | None"] = None
 
-    def __init__(self, *, attachment: object | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        attachment: object | None = None,
+        trace_context_provider: Callable[[], Mapping[str, object] | None] | None = None,
+    ) -> None:
         self.attachment = attachment
+        self.trace_context_provider = trace_context_provider
         self.connect_calls = 0
         self.disconnect_calls = 0
         self.__class__.last_instance = self
@@ -128,6 +134,18 @@ class FakeGatewayRuntimeClient:
 
     async def disconnect(self) -> None:
         self.disconnect_calls += 1
+
+
+class FakeHermesToolPortalTelemetry:
+    def __init__(self) -> None:
+        self.shutdown_calls = 0
+        self.trace_context_provider: Callable[[], Mapping[str, object] | None] = self._provide
+
+    def _provide(self) -> Mapping[str, object] | None:
+        return None
+
+    def shutdown(self) -> None:
+        self.shutdown_calls += 1
 
 
 class FakeTerminalToolModule:
@@ -974,6 +992,7 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
     def test_connects_installs_hooks_before_stock_gateway_and_restores_on_exit(self) -> None:
         terminal_tool_module = FakeTerminalToolModule()
         plugin_context = FakeHermesPluginContext()
+        telemetry = FakeHermesToolPortalTelemetry()
         original_resolver = terminal_tool_module._resolve_container_task_id
         original_factory = terminal_tool_module._create_environment
         original_process_instance_methods = {
@@ -1026,10 +1045,17 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
                 protected_hermes_home,
                 profile_names=profile_names,
             )
-            with patch.object(
-                managed_gateway_bootstrap,
-                "GatewayRuntimeClient",
-                FakeGatewayRuntimeClient,
+            with (
+                patch.object(
+                    managed_gateway_bootstrap,
+                    "GatewayRuntimeClient",
+                    FakeGatewayRuntimeClient,
+                ),
+                patch.object(
+                    managed_gateway_bootstrap,
+                    "create_hermes_tool_portal_telemetry_from_environment",
+                    return_value=telemetry,
+                ),
             ):
                 managed_gateway_bootstrap.run_managed_hermes_gateway(
                     configuration_path=configuration_path,
@@ -1066,12 +1092,15 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
         if client is None:
             self.fail("managed bootstrap did not retain the test client receipt")
         self.assertEqual(client.disconnect_calls, 1)
+        self.assertIs(client.trace_context_provider, telemetry.trace_context_provider)
+        self.assertEqual(telemetry.shutdown_calls, 1)
         with self.assertRaisesRegex(RuntimeError, "requires bootstrap runtime configuration"):
             register_managed_tool_portal_plugin(FakeHermesPluginContext())
 
     def test_clears_plugin_runtime_when_stock_gateway_fails(self) -> None:
         terminal_tool_module = FakeTerminalToolModule()
         plugin_context = FakeHermesPluginContext()
+        telemetry = FakeHermesToolPortalTelemetry()
 
         def failing_stock_gateway_runner() -> None:
             register_managed_tool_portal_plugin(plugin_context)
@@ -1088,6 +1117,11 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
                     managed_gateway_bootstrap,
                     "GatewayRuntimeClient",
                     FakeGatewayRuntimeClient,
+                ),
+                patch.object(
+                    managed_gateway_bootstrap,
+                    "create_hermes_tool_portal_telemetry_from_environment",
+                    return_value=telemetry,
                 ),
                 self.assertRaisesRegex(RuntimeError, "stock Hermes Gateway failed"),
             ):
@@ -1109,6 +1143,8 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
         if client is None:
             self.fail("managed bootstrap did not retain the failed test client receipt")
         self.assertEqual(client.disconnect_calls, 1)
+        self.assertIs(client.trace_context_provider, telemetry.trace_context_provider)
+        self.assertEqual(telemetry.shutdown_calls, 1)
 
     def test_rejects_drifted_profile_cohort_before_managed_or_stock_runtime_use(self) -> None:
         def missing_protected_hermes_home(protected_hermes_home: Path) -> None:

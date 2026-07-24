@@ -3,6 +3,7 @@ import json
 import typing as t
 import unittest
 from collections.abc import Callable, Mapping
+from contextlib import contextmanager
 from types import MappingProxyType
 from unittest.mock import patch
 
@@ -10,6 +11,8 @@ from agent_vm_agent_portal_sdk.contracts import get_portable_contract_json_schem
 from agent_vm_agent_portal_sdk.gateway_runtime_client import GatewayRuntimeClient
 from hermes_cli.plugins import PluginContext, PluginManager, PluginManifest
 from hermes_cli.tools_config import _get_platform_tools
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
 from pydantic import BaseModel
 from tools.registry import registry as hermes_tool_registry
 
@@ -22,10 +25,13 @@ from agent_vm_hermes_adapter.managed_profile_adapter import (
 from agent_vm_hermes_adapter.managed_tool_portal_capability_tools import (
     MANAGED_TOOL_PORTAL_PLUGIN_NAME,
     MANAGED_TOOL_PORTAL_TOOL_NAMES,
+    _invoke,
+    _ManagedToolPortalPluginRuntime,
     clear_managed_tool_portal_plugin_configuration,
     configure_managed_tool_portal_plugin,
     register,
 )
+from agent_vm_hermes_adapter.managed_tool_portal_observability import HermesToolPortalTelemetry
 
 PROJECTION_COHORT_DIGEST = (
     "projection-cohort:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -155,6 +161,81 @@ class FakeHermesPluginContext:
         self.hooks[hook_name] = callback
 
 
+class FakeToolOperationTelemetry:
+    def __init__(self) -> None:
+        self.active_operations: list[str] = []
+        self.post_tool_call_records: list[tuple[object, object, object]] = []
+
+    @contextmanager
+    def observe_tool_operation(self, tool_name: str) -> t.Iterator[None]:
+        self.active_operations.append(tool_name)
+        yield
+
+    def observe_post_tool_call(
+        self,
+        *,
+        duration_milliseconds: object,
+        status: object,
+        tool_name: object,
+    ) -> None:
+        self.post_tool_call_records.append((duration_milliseconds, status, tool_name))
+
+    def trace_context_provider(self) -> Mapping[str, object] | None:
+        return None
+
+    def shutdown(self) -> None:
+        return None
+
+
+class ThreadBoundaryToolOperationTelemetry(FakeToolOperationTelemetry):
+    def __init__(self) -> None:
+        super().__init__()
+        self._tracer = TracerProvider().get_tracer("test-hermes-tool-portal")
+
+    @contextmanager
+    @t.override
+    def observe_tool_operation(self, tool_name: str) -> t.Iterator[None]:
+        self.active_operations.append(tool_name)
+        with self._tracer.start_as_current_span("test.hermes.tool_portal"):
+            yield
+
+    @t.override
+    def trace_context_provider(self) -> Mapping[str, object] | None:
+        span_context = trace.get_current_span().get_span_context()
+        if not span_context.is_valid:
+            return None
+        return {
+            "traceparent": (
+                f"00-{span_context.trace_id:032x}-{span_context.span_id:016x}"
+                f"-{int(span_context.trace_flags):02x}"
+            )
+        }
+
+
+class RecordingGatewayRuntimeTransport:
+    def __init__(self) -> None:
+        self.request_parameters: Mapping[str, object] | None = None
+
+    async def connect(self, socket_path: str) -> None:
+        del socket_path
+
+    async def handshake(self, attachment: Mapping[str, object]) -> Mapping[str, object]:
+        del attachment
+        return {"kind": "accepted"}
+
+    async def request(
+        self,
+        method: str,
+        params: Mapping[str, object],
+    ) -> Mapping[str, object]:
+        del method
+        self.request_parameters = dict(params)
+        return {}
+
+    async def disconnect(self) -> None:
+        return None
+
+
 def build_adapter() -> tuple[HermesManagedAdapter, FakeGatewayRuntimeClient]:
     client = FakeGatewayRuntimeClient()
     adapter = HermesManagedAdapter(
@@ -177,10 +258,12 @@ def build_adapter() -> tuple[HermesManagedAdapter, FakeGatewayRuntimeClient]:
 def configure_plugin_for_profile(
     adapter: HermesManagedAdapter,
     current_projection: list[CanonicalManagedAgentProjection],
+    telemetry: HermesToolPortalTelemetry | None = None,
 ) -> None:
     configure_managed_tool_portal_plugin(
         adapter=adapter,
         current_projection=lambda: current_projection[0],
+        telemetry=FakeToolOperationTelemetry() if telemetry is None else telemetry,
     )
 
 
@@ -260,6 +343,119 @@ class ManagedToolPortalCapabilityToolsTests(unittest.TestCase):
         finally:
             adapter.close(disconnect_gateway_runtime=False)
 
+    def test_registers_post_tool_call_observer_for_bounded_telemetry(self) -> None:
+        adapter, _client = build_adapter()
+        projection = adapter.projection_for_profile("researcher")
+        context = FakeHermesPluginContext()
+        configure_plugin_for_profile(adapter, [projection])
+
+        try:
+            register(context)
+        finally:
+            adapter.close(disconnect_gateway_runtime=False)
+
+        self.assertIn("post_tool_call", context.hooks)
+
+    def test_observes_managed_tool_portal_handler_without_request_content(self) -> None:
+        adapter, _client = build_adapter()
+        projection = adapter.projection_for_profile("researcher")
+        context = FakeHermesPluginContext()
+        telemetry = FakeToolOperationTelemetry()
+        configure_managed_tool_portal_plugin(
+            adapter=adapter,
+            current_projection=lambda: projection,
+            telemetry=telemetry,
+        )
+
+        try:
+            register(context)
+            context.handlers["tool_portal_list"]({"secret": "must-not-leave-handler"})
+        finally:
+            adapter.close(disconnect_gateway_runtime=False)
+
+        self.assertEqual(telemetry.active_operations, ["tool_portal_list"])
+
+    def test_post_tool_call_discards_content_bearing_hook_fields(self) -> None:
+        adapter, _client = build_adapter()
+        projection = adapter.projection_for_profile("researcher")
+        context = FakeHermesPluginContext()
+        telemetry = FakeToolOperationTelemetry()
+        configure_managed_tool_portal_plugin(
+            adapter=adapter,
+            current_projection=lambda: projection,
+            telemetry=telemetry,
+        )
+
+        try:
+            register(context)
+            context.hooks["post_tool_call"](
+                args={"credential": "must-not-export"},
+                duration_ms=41,
+                error_message="must-not-export",
+                result="must-not-export",
+                session_id="must-not-export",
+                status="ok",
+                task_id="must-not-export",
+                tool_call_id="must-not-export",
+                tool_name="tool_portal_list",
+            )
+        finally:
+            adapter.close(disconnect_gateway_runtime=False)
+
+        self.assertEqual(telemetry.post_tool_call_records, [(41, "ok", "tool_portal_list")])
+
+    def test_handler_span_reaches_gateway_runtime_transport_across_client_loop_thread(self) -> None:
+        telemetry = ThreadBoundaryToolOperationTelemetry()
+        transport = RecordingGatewayRuntimeTransport()
+        client = GatewayRuntimeClient(
+            attachment={
+                "attachmentGeneration": 1,
+                "clientKind": "hermes-managed-plugin",
+                "configuredAgentIds": ["researcher", "reviewer"],
+                "frameworkEpoch": "framework-epoch",
+                "gatewayEpoch": "gateway-epoch",
+                "protocolVersion": 1,
+                "projectionCohortDigest": PROJECTION_COHORT_DIGEST,
+                "runtimeEpoch": "runtime-epoch",
+                "schemaVersion": 1,
+            },
+            trace_context_provider=telemetry.trace_context_provider,
+            transport=transport,
+        )
+        adapter = HermesManagedAdapter(
+            config=HermesManagedAdapterConfig(
+                profiles=(
+                    build_projection(agent_id="researcher"),
+                    build_projection(agent_id="reviewer"),
+                ),
+                projection_cohort_digest=PROJECTION_COHORT_DIGEST,
+                protected_hermes_home="/home/hermes/.hermes",
+            ),
+            gateway_runtime_client=client,
+        )
+        projection = adapter.projection_for_profile("researcher")
+        runtime = _ManagedToolPortalPluginRuntime(
+            adapter=adapter,
+            current_projection=lambda: projection,
+            telemetry=telemetry,
+        )
+        adapter.connect_gateway_runtime()
+
+        try:
+            with self.assertRaises(Exception):
+                _invoke(runtime, "tool_portal_list", {"requests": [{"id": "request-1"}]})
+        finally:
+            adapter.close()
+
+        self.assertIsNotNone(transport.request_parameters)
+        request_parameters = t.cast("Mapping[str, object]", transport.request_parameters)
+        trace_context = request_parameters["traceContext"]
+        self.assertIsInstance(trace_context, dict)
+        self.assertRegex(
+            t.cast("dict[str, str]", trace_context)["traceparent"],
+            r"^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$",
+        )
+
     def test_plugin_context_tracking_makes_toolset_visible_to_platform_resolution(self) -> None:
         adapter, _client = build_adapter()
         projection = adapter.projection_for_profile("researcher")
@@ -331,6 +527,7 @@ class ManagedToolPortalCapabilityToolsTests(unittest.TestCase):
         configure_managed_tool_portal_plugin(
             adapter=adapter,
             current_projection=reject_unadmitted_profile,
+            telemetry=FakeToolOperationTelemetry(),
         )
         register(context)
         try:
@@ -355,6 +552,7 @@ class ManagedToolPortalCapabilityToolsTests(unittest.TestCase):
         configure_managed_tool_portal_plugin(
             adapter=adapter,
             current_projection=resolve_projection,
+            telemetry=FakeToolOperationTelemetry(),
         )
         register(context)
         try:

@@ -36,6 +36,9 @@ from .managed_tool_portal_capability_tools import (
     clear_managed_tool_portal_plugin_configuration,
     configure_managed_tool_portal_plugin,
 )
+from .managed_tool_portal_observability import (
+    create_hermes_tool_portal_telemetry_from_environment,
+)
 
 DEFAULT_MANAGED_FRAMEWORK_CONFIGURATION_PATH = Path(
     "/run/agent-vm/managed-gateway/framework-service.json"
@@ -577,7 +580,11 @@ def _run_managed_hermes_gateway_runtime(
             material.discord_bot_token_environment_variables_by_profile
         ),
     )
-    gateway_runtime_client = GatewayRuntimeClient(attachment=material.attachment)
+    telemetry = create_hermes_tool_portal_telemetry_from_environment()
+    gateway_runtime_client = GatewayRuntimeClient(
+        attachment=material.attachment,
+        trace_context_provider=telemetry.trace_context_provider,
+    )
     adapter = HermesManagedAdapter(
         config=adapter_config,
         gateway_runtime_client=gateway_runtime_client,
@@ -601,6 +608,7 @@ def _run_managed_hermes_gateway_runtime(
         configure_managed_tool_portal_plugin(
             adapter=adapter,
             current_projection=hooks._current_projection,
+            telemetry=telemetry,
         )
         hooks.install()
         try:
@@ -619,7 +627,10 @@ def _run_managed_hermes_gateway_runtime(
                 try:
                     hooks.close()
                 finally:
-                    adapter.close()
+                    try:
+                        adapter.close()
+                    finally:
+                        telemetry.shutdown()
 
 
 def run_managed_hermes_gateway(

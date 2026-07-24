@@ -18,6 +18,7 @@ from .managed_profile_adapter import (
     _projection_profile_name,
     build_managed_trusted_context,
 )
+from .managed_tool_portal_observability import HermesToolPortalTelemetry
 
 MANAGED_TOOL_PORTAL_PLUGIN_NAME = "agent-vm-tool-portal"
 MANAGED_TOOL_PORTAL_TOOL_NAMES = (
@@ -64,6 +65,7 @@ class HermesGatewayMessageEvent(t.Protocol):
 class _ManagedToolPortalPluginRuntime(t.NamedTuple):
     adapter: HermesManagedAdapter
     current_projection: Callable[[], CanonicalManagedAgentProjection]
+    telemetry: HermesToolPortalTelemetry
 
 
 _CONFIGURATION_LOCK = threading.Lock()
@@ -74,6 +76,7 @@ def configure_managed_tool_portal_plugin(
     *,
     adapter: HermesManagedAdapter,
     current_projection: Callable[[], CanonicalManagedAgentProjection],
+    telemetry: HermesToolPortalTelemetry,
 ) -> None:
     """Bind the installed plugin to the bootstrap-owned managed runtime."""
     global _configured_runtime
@@ -83,6 +86,7 @@ def configure_managed_tool_portal_plugin(
         _configured_runtime = _ManagedToolPortalPluginRuntime(
             adapter=adapter,
             current_projection=current_projection,
+            telemetry=telemetry,
         )
 
 
@@ -137,19 +141,35 @@ def _invoke(
     tool_name: str,
     request: Mapping[str, object],
 ) -> str:
-    projection = runtime.current_projection()
-    profile_name = _projection_profile_name(projection)
-    client = runtime.adapter.gateway_runtime_client_for_profile(profile_name)
-    trusted_context = build_managed_trusted_context(projection)
-    if tool_name == "tool_portal_list":
-        operation = client.portal.list(request, trusted_context=trusted_context)
-    elif tool_name == "tool_portal_search":
-        operation = client.portal.search(request, trusted_context=trusted_context)
-    elif tool_name == "tool_portal_describe":
-        operation = client.portal.describe(request, trusted_context=trusted_context)
-    else:
-        operation = client.portal.call(request, trusted_context=trusted_context)
-    return _result_json(runtime.adapter.run_gateway_runtime_coroutine(operation))
+    with runtime.telemetry.observe_tool_operation(tool_name):
+        projection = runtime.current_projection()
+        profile_name = _projection_profile_name(projection)
+        client = runtime.adapter.gateway_runtime_client_for_profile(profile_name)
+        trusted_context = build_managed_trusted_context(projection)
+        if tool_name == "tool_portal_list":
+            operation = client.portal.list(request, trusted_context=trusted_context)
+        elif tool_name == "tool_portal_search":
+            operation = client.portal.search(request, trusted_context=trusted_context)
+        elif tool_name == "tool_portal_describe":
+            operation = client.portal.describe(request, trusted_context=trusted_context)
+        else:
+            operation = client.portal.call(request, trusted_context=trusted_context)
+        return _result_json(runtime.adapter.run_gateway_runtime_coroutine(operation))
+
+
+def _observe_post_tool_call(
+    runtime: _ManagedToolPortalPluginRuntime,
+    *,
+    duration_ms: object,
+    status: object,
+    tool_name: object,
+    **_discarded_hook_fields: object,
+) -> None:
+    runtime.telemetry.observe_post_tool_call(
+        duration_milliseconds=duration_ms,
+        status=status,
+        tool_name=tool_name,
+    )
 
 
 def _admit_managed_gateway_event(
@@ -174,6 +194,10 @@ def register(context: HermesPluginContext) -> None:
     context.register_hook(
         "pre_gateway_dispatch",
         lambda **kwargs: _admit_managed_gateway_event(runtime, **kwargs),
+    )
+    context.register_hook(
+        "post_tool_call",
+        lambda **kwargs: _observe_post_tool_call(runtime, **kwargs),
     )
     for tool_name in MANAGED_TOOL_PORTAL_TOOL_NAMES:
         context.register_tool(
