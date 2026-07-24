@@ -3140,6 +3140,34 @@ describe('loadSystemConfig', () => {
 		}
 	});
 
+	test('rejects Hermes Discord token mappings that reuse one secret', () => {
+		const config = createValidSystemConfigInput();
+		const zone = configureFirstZoneAsHermes(config);
+		zone.agents = [{ id: 'research-agent' }, { id: 'review-agent' }];
+		zone.gateway.profilesByAgent = {
+			'research-agent': 'researcher',
+			'review-agent': 'reviewer',
+		};
+		Object.assign(zone.gateway, {
+			discordBotTokenSecretsByAgent: {
+				'research-agent': 'DISCORD_BOT_TOKEN_SHARED',
+				'review-agent': 'DISCORD_BOT_TOKEN_SHARED',
+			},
+		});
+		zone.secrets = {
+			DISCORD_BOT_TOKEN_SHARED: {
+				source: 'environment',
+				envVar: 'DISCORD_BOT_TOKEN_SHARED',
+				injection: 'env',
+				audience: 'gateway',
+			},
+		};
+
+		expect(() => parseSystemConfigInputForTest(config)).toThrow(
+			/discordBotTokenSecretsByAgent must assign one distinct secret per agent/u,
+		);
+	});
+
 	test('rejects unmapped raw Hermes application secrets', () => {
 		const config = createValidSystemConfigInput();
 		const zone = configureFirstZoneAsHermes(config);
