@@ -26,7 +26,7 @@ const hermesGatewayGuestPort = 8642;
 const managedFrameworkConfigurationInputPath =
 	'/run/agent-vm/managed-gateway/framework-service.json';
 const managedFrameworkEnvironmentInputPath =
-	'/run/agent-vm/managed-gateway/framework.environment.sh';
+	'/run/agent-vm/managed-gateway-environment/framework.environment.sh';
 const managedHermesConfigurationDirectoryPath = '/run/agent-vm/managed-gateway';
 const protectedHermesHomeVmPath = '/home/hermes/.hermes';
 const hermesCacheDirVmPath = '/home/hermes/.cache';
@@ -34,20 +34,22 @@ const agentVmLogsDirVmPath = '/agent-vm/logs';
 const hermesGatewayGuestPath = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 
 type UnknownRecord = Readonly<Record<string, unknown>>;
+type HermesGatewayConfig = Extract<GatewayZoneConfig['gateway'], { readonly type: 'hermes' }>;
 
 function isObjectRecord(value: unknown): value is UnknownRecord {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function assertHermesGatewayZone(zone: GatewayZoneConfig): void {
-	const gatewayType: string = zone.gateway.type;
-	if (gatewayType !== 'hermes') {
-		throw new Error(`Hermes lifecycle cannot build gateway type '${gatewayType}'.`);
+function requireHermesGatewayConfig(zone: GatewayZoneConfig): HermesGatewayConfig {
+	const gateway = zone.gateway;
+	if (gateway.type !== 'hermes') {
+		throw new Error(`Hermes lifecycle cannot build gateway type '${gateway.type}'.`);
 	}
+	return gateway;
 }
 
 function requireHermesAdapterMaterial(zone: GatewayZoneConfig): UnknownRecord {
-	assertHermesGatewayZone(zone);
+	const gateway = requireHermesGatewayConfig(zone);
 	const gondolinConfig = zone.runtimePluginConfigs?.gondolin;
 	if (!isObjectRecord(gondolinConfig)) {
 		throw new Error('Managed Hermes requires the controller-authored Gondolin runtime config.');
@@ -65,7 +67,27 @@ function requireHermesAdapterMaterial(zone: GatewayZoneConfig): UnknownRecord {
 	if (!isObjectRecord(toolPortalMaterial.agentProjections)) {
 		throw new Error('Managed Hermes requires exact controller-authored agent projections.');
 	}
-	return toolPortalMaterial;
+	const discordBotTokenSecretsByAgent = gateway.discordBotTokenSecretsByAgent;
+	if (discordBotTokenSecretsByAgent === undefined) {
+		return toolPortalMaterial;
+	}
+	const discordBotTokenEnvironmentVariablesByProfile = Object.fromEntries(
+		Object.entries(discordBotTokenSecretsByAgent).map(([agentId, secretName]) => {
+			const profileName = gateway.profilesByAgent[agentId];
+			if (profileName === undefined) {
+				throw new Error(
+					`Managed Hermes Discord token mapping references agent '${agentId}' without a profile.`,
+				);
+			}
+			return [profileName, secretName];
+		}),
+	);
+	return Object.freeze({
+		...toolPortalMaterial,
+		discordBotTokenEnvironmentVariablesByProfile: Object.freeze(
+			discordBotTokenEnvironmentVariablesByProfile,
+		),
+	});
 }
 
 function buildGatewayTcpHosts(tcpPool: {
@@ -134,7 +156,7 @@ function buildHermesFrameworkEnvironment(
 export function buildHermesFrameworkServiceBootMetadata(
 	zone: GatewayZoneConfig,
 ): ManagedHermesServiceBootMetadata {
-	assertHermesGatewayZone(zone);
+	requireHermesGatewayConfig(zone);
 	return Object.freeze({
 		bootEntry: 'hermes-gateway',
 		configurationInputPath: managedFrameworkConfigurationInputPath,
@@ -181,7 +203,7 @@ export const hermesLifecycle = {
 		tcpPool,
 		zone,
 	}: BuildGatewayVmRequirementsOptions): GatewayVmRequirements {
-		assertHermesGatewayZone(zone);
+		const gateway = requireHermesGatewayConfig(zone);
 		const { mediatedSecrets } = mergeRuntimeGatewaySecrets(
 			splitResolvedGatewaySecrets(zone, resolvedSecrets),
 			{
@@ -190,6 +212,17 @@ export const hermesLifecycle = {
 				runtimeMediatedSecrets: zone.runtimeMediatedSecrets,
 			},
 		);
+		const discordBotTokenProfileNames = Object.keys(
+			gateway.discordBotTokenSecretsByAgent ?? {},
+		).map((agentId) => {
+			const profileName = gateway.profilesByAgent[agentId];
+			if (profileName === undefined) {
+				throw new Error(
+					`Managed Hermes Discord token mapping references agent '${agentId}' without a profile.`,
+				);
+			}
+			return profileName;
+		});
 		return {
 			allowedHosts: gatewayVmAllowedHosts(zone.egressHosts),
 			environment: {
@@ -211,9 +244,16 @@ export const hermesLifecycle = {
 					kind: 'host-directory',
 				},
 				[protectedHermesHomeVmPath]: {
-					access: 'read-write',
 					hostPath: zone.gateway.stateDir,
-					kind: 'host-directory',
+					...(discordBotTokenProfileNames.length === 0
+						? { access: 'read-write' as const, kind: 'host-directory' as const }
+						: {
+								deny: [],
+								kind: 'shadow' as const,
+								temporaryFilesystems: discordBotTokenProfileNames
+									.toSorted()
+									.map((profileName) => `/profiles/${profileName}/.env`),
+							}),
 				},
 			},
 			rootfsMode: 'cow',

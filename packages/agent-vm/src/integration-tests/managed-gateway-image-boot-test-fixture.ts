@@ -1,10 +1,9 @@
 import { generateKeyPairSync } from 'node:crypto';
-import { chmod, mkdir, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { managedToolPortalConfigSchema, mcpConfigSchema } from '@agent-vm/config-contracts';
 import { deriveGatewayRuntimePortalSemanticSnapshot } from '@agent-vm/gateway-control-contracts';
-import type { ManagedVm } from '@agent-vm/managed-vm';
+import type { ManagedVm, ManagedVmFinalizableMemoryFile } from '@agent-vm/managed-vm';
 
 import { readPreparedManagedVmImage } from '../build/prepared-gondolin-image-cache.js';
 import { createManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
@@ -16,7 +15,7 @@ import {
 } from './e2e-harness.js';
 
 export const managedGatewayBootInputGuestRoot = '/run/agent-vm/managed-gateway';
-export const managedGatewayBootInputStagingGuestRoot = '/run/agent-vm/managed-gateway-inputs';
+export const managedGatewayBootEnvironmentGuestRoot = '/run/agent-vm/managed-gateway-environment';
 export const managedGatewayBootSecretCanary = 'managed-gateway-image-boot-secret-canary';
 
 export type ManagedGatewayBootInputFileName = 'framework-service.json' | 'tool-portal-service.json';
@@ -31,6 +30,11 @@ export interface ManagedGatewayImageBootFixture {
 	readonly preparedImage: PreparedManagedGatewayImage;
 	readonly project: OpenClawE2eProject;
 	readonly vm: ManagedVm;
+}
+
+interface ManagedGatewayImageBootInputInventories {
+	readonly environmentFiles: readonly ManagedVmFinalizableMemoryFile[];
+	readonly structuredInputFiles: readonly ManagedVmFinalizableMemoryFile[];
 }
 
 function serviceConfig(verifierPublicKeyPem: string, identitySuffix?: string): object {
@@ -121,17 +125,22 @@ function openClawConfig(): object {
 	};
 }
 
-async function writeProtectedBootInputs(props: {
-	readonly hostDirectory: string;
+function createMemoryFile(relativePath: string, contents: string): ManagedVmFinalizableMemoryFile {
+	return {
+		contents: new TextEncoder().encode(contents),
+		mode: 0o600,
+		relativePath,
+	};
+}
+
+function buildProtectedBootInputs(props: {
 	readonly identitySuffix?: string;
 	readonly omittedInputFileName?: ManagedGatewayBootInputFileName;
-}): Promise<void> {
-	await mkdir(props.hostDirectory, { mode: 0o700, recursive: true });
-	await chmod(props.hostDirectory, 0o700);
+}): ManagedGatewayImageBootInputInventories {
 	const { publicKey } = generateKeyPairSync('ed25519');
 	const verifierPublicKeyPem = publicKey.export({ format: 'pem', type: 'spki' }).toString();
-	const inputFiles = new Map<string, string>([
-		[
+	const environmentFiles = [
+		createMemoryFile(
 			'framework.environment.sh',
 			[
 				'export HOME=/home/openclaw',
@@ -142,35 +151,36 @@ async function writeProtectedBootInputs(props: {
 				'export PATH=/pnpm:/usr/local/bin:/usr/bin:/bin',
 				'',
 			].join('\n'),
-		],
+		),
+		createMemoryFile(
+			'tool-portal.environment.sh',
+			'export HOME=/home/openclaw\nexport PATH=/pnpm:/usr/local/bin:/usr/bin:/bin\n',
+		),
+	];
+	const structuredInputContents = new Map<
+		ManagedGatewayBootInputFileName | 'mcp.config.json',
+		string
+	>([
 		['mcp.config.json', `${JSON.stringify({ providers: {}, schemaVersion: 1 })}\n`],
 		['framework-service.json', `${JSON.stringify(openClawConfig())}\n`],
 		[
 			'tool-portal-service.json',
 			`${JSON.stringify(serviceConfig(verifierPublicKeyPem, props.identitySuffix))}\n`,
 		],
-		[
-			'tool-portal.environment.sh',
-			'export HOME=/home/openclaw\nexport PATH=/pnpm:/usr/local/bin:/usr/bin:/bin\n',
-		],
 	]);
 	if (props.omittedInputFileName !== undefined) {
-		inputFiles.delete(props.omittedInputFileName);
+		structuredInputContents.delete(props.omittedInputFileName);
 	}
-	await Promise.all(
-		[...inputFiles].map(async ([fileName, contents]) => {
-			const filePath = path.join(props.hostDirectory, fileName);
-			await writeFile(filePath, contents, { mode: 0o600 });
-			await chmod(filePath, 0o600);
-			const fileStatus = await stat(filePath);
-			if (!fileStatus.isFile() || (fileStatus.mode & 0o777) !== 0o600) {
-				throw new Error(`Managed Gateway boot input '${fileName}' is not a mode-0600 file.`);
-			}
-		}),
-	);
+	return {
+		environmentFiles,
+		structuredInputFiles: [...structuredInputContents].map(([fileName, contents]) =>
+			createMemoryFile(fileName, contents),
+		),
+	};
 }
 
 export async function createManagedGatewayImageBootFixture(props: {
+	readonly environmentMountAccess?: 'read-only' | 'read-write';
 	readonly identitySuffix?: string;
 	readonly omittedInputFileName?: ManagedGatewayBootInputFileName;
 	readonly sessionLabel: string;
@@ -204,9 +214,7 @@ export async function createManagedGatewayImageBootFixture(props: {
 				'OpenClaw managed image preparation did not publish a prepared-image receipt.',
 			);
 		}
-		const bootInputHostDirectory = path.join(project.tempRoot, 'managed-gateway-boot-inputs');
-		await writeProtectedBootInputs({
-			hostDirectory: bootInputHostDirectory,
+		const bootInputs = buildProtectedBootInputs({
 			...(props.identitySuffix === undefined ? {} : { identitySuffix: props.identitySuffix }),
 			...(props.omittedInputFileName === undefined
 				? {}
@@ -218,10 +226,13 @@ export async function createManagedGatewayImageBootFixture(props: {
 			imageReference: preparedImage.imagePath,
 			mediatedSecrets: [],
 			mounts: {
-				[managedGatewayBootInputStagingGuestRoot]: {
+				[managedGatewayBootEnvironmentGuestRoot]: {
+					access: props.environmentMountAccess ?? 'read-write',
+					kind: 'finalizable-memory',
+				},
+				[managedGatewayBootInputGuestRoot]: {
 					access: 'read-only',
-					hostPath: bootInputHostDirectory,
-					kind: 'host-directory',
+					kind: 'finalizable-memory',
 				},
 			},
 			resources: {
@@ -234,6 +245,17 @@ export async function createManagedGatewayImageBootFixture(props: {
 				: { runtimeRootfsSize: project.zone.gateway.runtimeRootfsSize }),
 			sessionLabel: props.sessionLabel,
 			tcpHosts: [],
+		});
+		if (vm.finalizeMemoryMount === undefined) {
+			throw new Error(`Managed Gateway fixture VM '${vm.id}' lacks finalizable memory mounts.`);
+		}
+		await vm.finalizeMemoryMount({
+			files: bootInputs.environmentFiles,
+			guestPath: managedGatewayBootEnvironmentGuestRoot,
+		});
+		await vm.finalizeMemoryMount({
+			files: bootInputs.structuredInputFiles,
+			guestPath: managedGatewayBootInputGuestRoot,
 		});
 		return {
 			close: async (): Promise<void> => {
@@ -252,6 +274,7 @@ export async function createManagedGatewayImageBootFixture(props: {
 }
 
 export async function startManagedGatewayImageBootFixture(props: {
+	readonly environmentMountAccess?: 'read-only' | 'read-write';
 	readonly identitySuffix?: string;
 	readonly omittedInputFileName?: ManagedGatewayBootInputFileName;
 	readonly sessionLabel: string;

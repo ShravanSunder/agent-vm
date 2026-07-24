@@ -9,6 +9,7 @@ import {
 	type HttpHooks,
 	type VMOptions,
 	type VmFs as GondolinVmFs,
+	type VirtualFileHandle,
 	type VirtualProvider,
 } from '@earendil-works/gondolin';
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
@@ -29,6 +30,43 @@ import {
 
 function createTestProvider(): VirtualProvider {
 	return new MemoryProvider();
+}
+
+function setNonRootOwnership<TStats extends { gid: number; uid: number }>(stats: TStats): TStats {
+	stats.gid = 4567;
+	stats.uid = 1234;
+	return stats;
+}
+
+function createNonRootMemoryProvider(): VirtualProvider {
+	const provider: VirtualProvider = new MemoryProvider();
+	const originalOpen = provider.open.bind(provider);
+	const originalOpenSync = provider.openSync.bind(provider);
+	const originalStat = provider.stat.bind(provider);
+	const originalStatSync = provider.statSync.bind(provider);
+	const originalLstat = provider.lstat.bind(provider);
+	const originalLstatSync = provider.lstatSync.bind(provider);
+	const wrapHandle = (handle: VirtualFileHandle): VirtualFileHandle => {
+		const originalHandleStat = handle.stat.bind(handle);
+		const originalHandleStatSync = handle.statSync.bind(handle);
+		handle.stat = async (options?: object) =>
+			setNonRootOwnership(await originalHandleStat(options));
+		handle.statSync = (options?: object) => setNonRootOwnership(originalHandleStatSync(options));
+		return handle;
+	};
+	provider.open = async (entryPath, flags, mode) =>
+		wrapHandle(await originalOpen(entryPath, flags, mode));
+	provider.openSync = (entryPath, flags, mode) =>
+		wrapHandle(originalOpenSync(entryPath, flags, mode));
+	provider.stat = async (entryPath, options) =>
+		setNonRootOwnership(await originalStat(entryPath, options));
+	provider.statSync = (entryPath, options) =>
+		setNonRootOwnership(originalStatSync(entryPath, options));
+	provider.lstat = async (entryPath, options) =>
+		setNonRootOwnership(await originalLstat(entryPath, options));
+	provider.lstatSync = (entryPath, options) =>
+		setNonRootOwnership(originalLstatSync(entryPath, options));
+	return provider;
 }
 
 /* oxlint-disable typescript-eslint/no-unsafe-type-assertion, unicorn/no-thenable -- This
@@ -92,6 +130,7 @@ const TEST_SSH_SERVER_HOST_KEY = {
 function createFakeVmInstance(
 	options: {
 		readonly hostPid?: number | null;
+		readonly start?: ManagedVmInstance['start'];
 	} = {},
 ): TestManagedVmInstance {
 	const exec = vi.fn((command: string | string[]) =>
@@ -123,7 +162,7 @@ function createFakeVmInstance(
 		})),
 		getHostPid: vi.fn(() => options.hostPid ?? null),
 		setIngressRoutes: vi.fn(),
-		start: vi.fn(async () => {}),
+		start: options.start ?? vi.fn(async () => {}),
 		close: vi.fn(async () => {}),
 	};
 }
@@ -132,6 +171,7 @@ function createBaseDependencies(options?: {
 	readonly configureHostNetworkDefaults?: () => ReturnType<typeof configureHostNetworkDefaults>;
 	readonly createVm?: (vmOptions: VMOptions) => Promise<ManagedVmInstance>;
 	readonly closePinnedRealFsRoot?: (root: PinnedRealFsRoot) => void;
+	readonly createMemoryProvider?: () => VirtualProvider;
 	readonly createPinnedRealFsProvider?: (root: PinnedRealFsRoot) => VirtualProvider;
 	readonly createReadonlyProvider?: (provider: VirtualProvider) => VirtualProvider;
 	readonly createRealFsProvider?: (hostPath: string) => VirtualProvider;
@@ -150,7 +190,7 @@ function createBaseDependencies(options?: {
 			httpHooks: {} satisfies HttpHooks,
 		})),
 		closePinnedRealFsRoot: vi.fn(options?.closePinnedRealFsRoot ?? (() => {})),
-		createMemoryProvider: vi.fn(() => createTestProvider()),
+		createMemoryProvider: vi.fn(options?.createMemoryProvider ?? (() => createTestProvider())),
 		createPinnedRealFsProvider: vi.fn(
 			options?.createPinnedRealFsProvider ?? (() => createTestProvider()),
 		),
@@ -173,6 +213,252 @@ function createPinnedRoot(fd: number): PinnedRealFsRoot {
 }
 
 describe('createManagedVm', () => {
+	it('finalizes writable and guest-read-only memory mounts before start', async () => {
+		const rawProviders: VirtualProvider[] = [];
+		let capturedVmOptions: VMOptions | undefined;
+		const nativeVmStart = vi.fn(async () => {});
+		const nativeVm = createFakeVmInstance({ hostPid: 4321, start: nativeVmStart });
+		const dependencies = createBaseDependencies({
+			createMemoryProvider: () => {
+				const provider = createNonRootMemoryProvider();
+				rawProviders.push(provider);
+				return provider;
+			},
+			createReadonlyProvider: createHardenedReadonlyProvider,
+			createVm: async (vmOptions) => {
+				capturedVmOptions = vmOptions;
+				return nativeVm;
+			},
+		});
+		const managedVm = await createManagedVm(
+			{
+				allowedHosts: [],
+				cpus: 1,
+				imagePath: '/images/test',
+				memory: '1G',
+				rootfsMode: 'memory',
+				secrets: {},
+				vfsMounts: {
+					'/run/environment': {
+						access: 'read-write',
+						kind: 'finalizable-memory',
+					},
+					'/run/structured': {
+						access: 'read-only',
+						kind: 'finalizable-memory',
+					},
+				},
+			},
+			dependencies,
+		);
+
+		const environmentContents = Uint8Array.from([1, 2, 3]);
+		await managedVm.finalizeMemoryMount({
+			files: [
+				{
+					contents: environmentContents,
+					mode: 0o700,
+					relativePath: 'nested/environment.sh',
+				},
+			],
+			guestPath: '/run/environment',
+		});
+		environmentContents[0] = 9;
+		await managedVm.finalizeMemoryMount({
+			files: [
+				{
+					contents: Uint8Array.from([4, 5, 6]),
+					mode: 0o600,
+					relativePath: 'service.json',
+				},
+			],
+			guestPath: '/run/structured',
+		});
+		await managedVm.start();
+
+		expect(rawProviders).toHaveLength(2);
+		await expect(rawProviders[0]?.readFile?.('/nested/environment.sh')).resolves.toEqual(
+			Buffer.from([1, 2, 3]),
+		);
+		await expect(rawProviders[1]?.readFile?.('/service.json')).resolves.toEqual(
+			Buffer.from([4, 5, 6]),
+		);
+		const guestMounts = capturedVmOptions?.vfs?.mounts;
+		const guestEnvironmentProvider = guestMounts?.['/run/environment'];
+		const guestStructuredProvider = guestMounts?.['/run/structured'];
+		if (!guestEnvironmentProvider || !guestStructuredProvider) {
+			throw new Error('Expected both finalizable memory providers in Gondolin VM options.');
+		}
+		expect(guestEnvironmentProvider).not.toBe(rawProviders[0]);
+		expect(guestMounts?.['/run/structured']).not.toBe(rawProviders[1]);
+		const environmentPathStats = await guestEnvironmentProvider.stat('/nested/environment.sh');
+		const environmentLinkStats = await guestEnvironmentProvider.lstat('/nested/environment.sh');
+		const structuredPathStats = guestStructuredProvider.statSync('/service.json');
+		const structuredHandle = await guestStructuredProvider.open('/service.json', 'r');
+		const structuredHandleStats = await structuredHandle.stat();
+		const environmentHandle = guestEnvironmentProvider.openSync('/nested/environment.sh', 'r');
+		const environmentHandleStats = environmentHandle.statSync();
+		expect(environmentPathStats).toMatchObject({ gid: 0, uid: 0 });
+		expect(environmentLinkStats).toMatchObject({ gid: 0, uid: 0 });
+		expect(structuredPathStats).toMatchObject({ gid: 0, mode: expect.any(Number), uid: 0 });
+		expect(structuredHandleStats).toMatchObject({ gid: 0, size: 3, uid: 0 });
+		expect(environmentHandleStats).toMatchObject({ gid: 0, size: 3, uid: 0 });
+		await structuredHandle.close();
+		environmentHandle.closeSync();
+		await expect(guestEnvironmentProvider.unlink('/nested/environment.sh')).resolves.toBe(
+			undefined,
+		);
+		await expect(guestStructuredProvider.unlink('/service.json')).rejects.toMatchObject({
+			code: 'EROFS',
+		});
+		expect(nativeVmStart).toHaveBeenCalledOnce();
+	});
+
+	it('poisons the VM when finalization fails and rejects duplicate or late finalization', async () => {
+		const failingProvider = new MemoryProvider();
+		failingProvider.writeFile = vi.fn(async () => {
+			throw new Error('injected memory write failure');
+		});
+		const nativeVmStart = vi.fn(async () => {});
+		const nativeVm = createFakeVmInstance({ hostPid: 4321, start: nativeVmStart });
+		const managedVm = await createManagedVm(
+			{
+				allowedHosts: [],
+				cpus: 1,
+				imagePath: '/images/test',
+				memory: '1G',
+				rootfsMode: 'memory',
+				secrets: {},
+				vfsMounts: {
+					'/run/inputs': {
+						access: 'read-only',
+						kind: 'finalizable-memory',
+					},
+				},
+			},
+			createBaseDependencies({
+				createMemoryProvider: () => failingProvider,
+				createVm: async () => nativeVm,
+			}),
+		);
+
+		await expect(
+			managedVm.finalizeMemoryMount({
+				files: [
+					{
+						contents: Uint8Array.from([1]),
+						mode: 0o600,
+						relativePath: 'service.json',
+					},
+				],
+				guestPath: '/run/inputs',
+			}),
+		).rejects.toThrow('injected memory write failure');
+		await expect(managedVm.start()).rejects.toThrow('poisoned');
+		await expect(
+			managedVm.finalizeMemoryMount({
+				files: [],
+				guestPath: '/run/inputs',
+			}),
+		).rejects.toThrow('poisoned');
+		expect(nativeVmStart).not.toHaveBeenCalled();
+
+		const successfulVm = await createManagedVm(
+			{
+				allowedHosts: [],
+				cpus: 1,
+				imagePath: '/images/test',
+				memory: '1G',
+				rootfsMode: 'memory',
+				secrets: {},
+				vfsMounts: {
+					'/run/inputs': {
+						access: 'read-only',
+						kind: 'finalizable-memory',
+					},
+				},
+			},
+			createBaseDependencies({
+				createMemoryProvider: () => new MemoryProvider(),
+				createVm: async () => createFakeVmInstance({ hostPid: 4322 }),
+			}),
+		);
+		await successfulVm.finalizeMemoryMount({ files: [], guestPath: '/run/inputs' });
+		await expect(
+			successfulVm.finalizeMemoryMount({ files: [], guestPath: '/run/inputs' }),
+		).rejects.toThrow('exactly once');
+		await expect(successfulVm.start()).rejects.toThrow('poisoned');
+
+		const incompleteVmNativeStart = vi.fn(async () => {});
+		const incompleteVmNative = createFakeVmInstance({
+			hostPid: 4323,
+			start: incompleteVmNativeStart,
+		});
+		const incompleteVm = await createManagedVm(
+			{
+				allowedHosts: [],
+				cpus: 1,
+				imagePath: '/images/test',
+				memory: '1G',
+				rootfsMode: 'memory',
+				secrets: {},
+				vfsMounts: {
+					'/run/inputs': {
+						access: 'read-only',
+						kind: 'finalizable-memory',
+					},
+				},
+			},
+			createBaseDependencies({
+				createMemoryProvider: () => new MemoryProvider(),
+				createVm: async () => incompleteVmNative,
+			}),
+		);
+		await expect(incompleteVm.start()).rejects.toThrow('must be finalized before start');
+		await expect(
+			incompleteVm.finalizeMemoryMount({ files: [], guestPath: '/run/inputs' }),
+		).rejects.toThrow('poisoned');
+		expect(incompleteVmNativeStart).not.toHaveBeenCalled();
+	});
+
+	it('closes pinned roots when finalizable memory provider construction fails', async () => {
+		const pinnedRoot = createPinnedRoot(91);
+		const closePinnedRealFsRoot = vi.fn();
+		const createVm = vi.fn(async () => createFakeVmInstance());
+
+		await expect(
+			createManagedVm(
+				{
+					allowedHosts: [],
+					cpus: 1,
+					imagePath: '/images/test',
+					memory: '1G',
+					rootfsMode: 'memory',
+					secrets: {},
+					vfsMounts: {
+						'/state': {
+							kind: 'realfs',
+							pinnedHostRoot: pinnedRoot,
+						},
+						'/run/inputs': {
+							access: 'read-only',
+							kind: 'finalizable-memory',
+						},
+					},
+				},
+				createBaseDependencies({
+					closePinnedRealFsRoot,
+					createMemoryProvider: () => {
+						throw new Error('injected provider construction failure');
+					},
+					createVm,
+				}),
+			),
+		).rejects.toThrow('injected provider construction failure');
+		expect(closePinnedRealFsRoot).toHaveBeenCalledWith(pinnedRoot);
+		expect(createVm).not.toHaveBeenCalled();
+	});
+
 	it('requires a structured ssh-ed25519 server host key in ManagedVm SSH access', () => {
 		expectTypeOf<SshAccess>().toHaveProperty('serverHostKey').toEqualTypeOf<{
 			readonly algorithm: 'ssh-ed25519';

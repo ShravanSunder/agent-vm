@@ -108,6 +108,51 @@ function hermesRootConfigurationPath(zone: GatewayZoneConfig): string {
 	return path.join(zone.gateway.stateDir, hermesRootConfigurationFileName);
 }
 
+function requireHermesDiscordTokenProfileNames(zone: GatewayZoneConfig): readonly string[] {
+	if (zone.gateway.type !== 'hermes') {
+		throw new Error('Managed Hermes Discord token files require a Hermes gateway zone.');
+	}
+	const gateway = zone.gateway;
+	const discordBotTokenSecretsByAgent = gateway.discordBotTokenSecretsByAgent;
+	if (discordBotTokenSecretsByAgent === undefined) {
+		return [];
+	}
+	return Object.keys(discordBotTokenSecretsByAgent)
+		.map((agentId) => {
+			const profileName = gateway.profilesByAgent[agentId];
+			if (profileName === undefined) {
+				throw new Error(
+					`Managed Hermes Discord token mapping references agent '${agentId}' without a profile.`,
+				);
+			}
+			return profileName;
+		})
+		.toSorted();
+}
+
+async function validateHermesDurableSecretFilesAbsent(zone: GatewayZoneConfig): Promise<void> {
+	if ((await readPathStatus(path.join(zone.gateway.stateDir, '.env'))) !== undefined) {
+		throw new Error('Managed Hermes durable root .env must be absent.');
+	}
+	const durableProfileEnvironmentFiles = await Promise.all(
+		requireHermesDiscordTokenProfileNames(zone).map(async (profileName) => ({
+			exists:
+				(await readPathStatus(
+					path.join(hermesProfilesDirectoryPath(zone), profileName, '.env'),
+				)) !== undefined,
+			profileName,
+		})),
+	);
+	const existingDurableProfileEnvironmentFile = durableProfileEnvironmentFiles.find(
+		(candidate) => candidate.exists,
+	);
+	if (existingDurableProfileEnvironmentFile !== undefined) {
+		throw new Error(
+			`Managed Hermes durable profile '${existingDurableProfileEnvironmentFile.profileName}' .env must be absent.`,
+		);
+	}
+}
+
 async function validateHermesRootConfigurationFile(options: {
 	readonly allowMissing: boolean;
 	readonly configurationFilePath: string;
@@ -215,6 +260,7 @@ export async function preflightHermesProfileDirectories(
 	_secretResolver: GatewayHostStateSecretResolver,
 ): Promise<void> {
 	const expectedProfileNames = requireHermesProfileNames(zone);
+	await validateHermesDurableSecretFilesAbsent(zone);
 	await validateHermesRootConfigurationFile({
 		allowMissing: true,
 		configurationFilePath: hermesRootConfigurationPath(zone),
@@ -232,6 +278,7 @@ export async function prepareHermesProfileDirectories(
 ): Promise<void> {
 	const expectedProfileNames = requireHermesProfileNames(zone);
 	const profilesDirectoryPath = hermesProfilesDirectoryPath(zone);
+	await validateHermesDurableSecretFilesAbsent(zone);
 	await validateHermesRootConfigurationFile({
 		allowMissing: true,
 		configurationFilePath: hermesRootConfigurationPath(zone),

@@ -1,6 +1,11 @@
+import type { Stats } from 'node:fs';
 import net from 'node:net';
 
-import type { ManagedVmFilteredWorkspacePolicy } from '@agent-vm/managed-vm';
+import {
+	validateManagedVmFinalizeMemoryMountRequest,
+	type ManagedVmFilteredWorkspacePolicy,
+	type ManagedVmFinalizeMemoryMountRequest,
+} from '@agent-vm/managed-vm';
 import {
 	MemoryProvider,
 	ReadonlyProvider,
@@ -64,6 +69,76 @@ export type ManagedSshEgressOptions = SshOptions;
 export type IngressRoute = GondolinIngressRoute;
 
 type VirtualProviderMethod = (...methodArguments: readonly unknown[]) => unknown;
+
+function createGuestRootOwnedStats(stats: Stats): Stats {
+	return new Proxy(stats, {
+		get(target: Stats, property: string | symbol, receiver: unknown): unknown {
+			if (property === 'gid' || property === 'uid') {
+				return 0;
+			}
+			return Reflect.get(target, property, receiver);
+		},
+	});
+}
+
+function createGuestRootOwnedFileHandle(handle: VirtualFileHandle): VirtualFileHandle {
+	return new Proxy(handle, {
+		get(target: VirtualFileHandle, property: string | symbol, receiver: unknown): unknown {
+			const value = Reflect.get(target, property, receiver) as unknown;
+			if (property === 'stat') {
+				return async (options?: object): Promise<Stats> =>
+					createGuestRootOwnedStats(await target.stat(options));
+			}
+			if (property === 'statSync') {
+				return (options?: object): Stats => createGuestRootOwnedStats(target.statSync(options));
+			}
+			return typeof value === 'function'
+				? (...methodArguments: readonly unknown[]): unknown =>
+						Reflect.apply(value as VirtualProviderMethod, target, methodArguments)
+				: value;
+		},
+	});
+}
+
+function createGuestRootOwnedProvider(provider: VirtualProvider): VirtualProvider {
+	return new Proxy(provider, {
+		get(target: VirtualProvider, property: string | symbol, receiver: unknown): unknown {
+			const value = Reflect.get(target, property, receiver) as unknown;
+			if (property === 'open') {
+				return async (
+					entryPath: string,
+					flags: string,
+					mode?: number,
+				): Promise<VirtualFileHandle> =>
+					createGuestRootOwnedFileHandle(await target.open(entryPath, flags, mode));
+			}
+			if (property === 'openSync') {
+				return (entryPath: string, flags: string, mode?: number): VirtualFileHandle =>
+					createGuestRootOwnedFileHandle(target.openSync(entryPath, flags, mode));
+			}
+			if (property === 'stat') {
+				return async (entryPath: string, options?: object): Promise<Stats> =>
+					createGuestRootOwnedStats(await target.stat(entryPath, options));
+			}
+			if (property === 'statSync') {
+				return (entryPath: string, options?: object): Stats =>
+					createGuestRootOwnedStats(target.statSync(entryPath, options));
+			}
+			if (property === 'lstat') {
+				return async (entryPath: string, options?: object): Promise<Stats> =>
+					createGuestRootOwnedStats(await target.lstat(entryPath, options));
+			}
+			if (property === 'lstatSync') {
+				return (entryPath: string, options?: object): Stats =>
+					createGuestRootOwnedStats(target.lstatSync(entryPath, options));
+			}
+			return typeof value === 'function'
+				? (...methodArguments: readonly unknown[]): unknown =>
+						Reflect.apply(value as VirtualProviderMethod, target, methodArguments)
+				: value;
+		},
+	});
+}
 
 function createReadonlyMutationError(
 	syscall: string,
@@ -336,6 +411,10 @@ type RealFsVfsMountSpec = {
 export type VfsMountSpec =
 	| RealFsVfsMountSpec
 	| {
+			readonly access: 'read-only' | 'read-write';
+			readonly kind: 'finalizable-memory';
+	  }
+	| {
 			readonly kind: 'filtered-workspace';
 			readonly pinnedHostRoot: PinnedRealFsRoot;
 			readonly policy: ManagedVmFilteredWorkspacePolicy;
@@ -374,6 +453,7 @@ export interface ManagedVm {
 	exec(command: ManagedExecInput, options?: ManagedExecOptions): ManagedExecProcess;
 	enableSsh(options?: EnableSshOptions): Promise<SshAccess>;
 	enableIngress(options?: EnableIngressOptions): Promise<IngressAccess>;
+	finalizeMemoryMount(request: ManagedVmFinalizeMemoryMountRequest): Promise<void>;
 	getHostPid(): number | null;
 	getVmInstance(): ManagedVmInstance;
 	setIngressRoutes(routes: readonly IngressRoute[]): void;
@@ -462,6 +542,8 @@ function createProviderFromSpec(
 	dependencies: ManagedVmDependencies,
 ): VirtualProvider {
 	switch (mountSpec.kind) {
+		case 'finalizable-memory':
+			throw new Error('Finalizable memory mounts require retained provider construction.');
 		case 'memory':
 			return dependencies.createMemoryProvider();
 		case 'realfs': {
@@ -514,17 +596,38 @@ function createProviderFromSpec(
 	}
 }
 
+interface FinalizableMemoryMount {
+	readonly provider: VirtualProvider;
+	state: 'failed' | 'finalized' | 'finalizing' | 'pending';
+}
+
+interface CreatedVfsMounts {
+	readonly finalizableMemoryMounts: Map<string, FinalizableMemoryMount>;
+	readonly mounts: Record<string, VirtualProvider>;
+}
+
 function createVfsMounts(
 	vfsMounts: Record<string, VfsMountSpec>,
 	dependencies: ManagedVmDependencies,
-): Record<string, VirtualProvider> {
+): CreatedVfsMounts {
 	const mountMap: Record<string, VirtualProvider> = {};
+	const finalizableMemoryMounts = new Map<string, FinalizableMemoryMount>();
 
 	for (const [guestPath, mountSpec] of Object.entries(vfsMounts)) {
+		if (mountSpec.kind === 'finalizable-memory') {
+			const provider = dependencies.createMemoryProvider();
+			finalizableMemoryMounts.set(guestPath, { provider, state: 'pending' });
+			const guestProvider = createGuestRootOwnedProvider(provider);
+			mountMap[guestPath] =
+				mountSpec.access === 'read-only'
+					? dependencies.createReadonlyProvider(guestProvider)
+					: guestProvider;
+			continue;
+		}
 		mountMap[guestPath] = createProviderFromSpec(mountSpec, dependencies);
 	}
 
-	return mountMap;
+	return { finalizableMemoryMounts, mounts: mountMap };
 }
 
 function collectPinnedRealFsRoots(
@@ -816,8 +919,10 @@ export async function createManagedVm(
 	);
 	const isIpAllowed = createInternalTcpHostPolicy(internalTcpHostRules);
 	const pinnedRealFsRoots = collectPinnedRealFsRoots(options.vfsMounts);
+	let createdVfsMounts: CreatedVfsMounts;
 	let vmInstance: ManagedVmInstance;
 	try {
+		createdVfsMounts = createVfsMounts(options.vfsMounts, dependencies);
 		const hookBundle = dependencies.createHttpHooks({
 			allowedHosts: options.allowedHosts,
 			...(allowedInternalHosts.length > 0 ? { allowedInternalHosts } : {}),
@@ -842,7 +947,7 @@ export async function createManagedVm(
 			httpHooks: hookBundle.httpHooks,
 			vfs: {
 				fuseMount: '/data',
-				mounts: createVfsMounts(options.vfsMounts, dependencies),
+				mounts: createdVfsMounts.mounts,
 			},
 			...(hasTcpHosts || hasSshEgress
 				? {
@@ -868,6 +973,11 @@ export async function createManagedVm(
 		throw error;
 	}
 
+	let finalizationPoison: unknown;
+	let lifecycleState: 'closed' | 'created' | 'started' = 'created';
+	const poisonFinalization = (error: unknown): void => {
+		finalizationPoison ??= error;
+	};
 	return {
 		fs: vmInstance.fs,
 		id: vmInstance.id,
@@ -896,6 +1006,50 @@ export async function createManagedVm(
 		async enableIngress(ingressOptions?: EnableIngressOptions): Promise<IngressAccess> {
 			return await vmInstance.enableIngress(resolveManagedVmIngressOptions(ingressOptions));
 		},
+		async finalizeMemoryMount(request: ManagedVmFinalizeMemoryMountRequest): Promise<void> {
+			if (lifecycleState === 'closed') {
+				throw new Error('Managed Gondolin VM memory mounts cannot be finalized after close.');
+			}
+			if (lifecycleState === 'started') {
+				throw new Error('Managed Gondolin VM memory mounts cannot be finalized after start.');
+			}
+			if (finalizationPoison !== undefined) {
+				throw new Error('Managed Gondolin VM memory mount finalization is poisoned.', {
+					cause: finalizationPoison,
+				});
+			}
+			let validatedRequest: ManagedVmFinalizeMemoryMountRequest;
+			try {
+				validatedRequest = validateManagedVmFinalizeMemoryMountRequest(request);
+				const mount = createdVfsMounts.finalizableMemoryMounts.get(validatedRequest.guestPath);
+				if (mount === undefined) {
+					throw new Error(
+						`Managed Gondolin VM has no declared finalizable memory mount at '${validatedRequest.guestPath}'.`,
+					);
+				}
+				if (mount.state !== 'pending') {
+					throw new Error(
+						`Managed Gondolin VM memory mount '${validatedRequest.guestPath}' must be finalized exactly once.`,
+					);
+				}
+				mount.state = 'finalizing';
+				if (mount.provider.writeFile === undefined) {
+					throw new Error('Gondolin memory provider does not support file writes.');
+				}
+				for (const file of validatedRequest.files) {
+					// oxlint-disable-next-line no-await-in-loop -- one-shot inventory publication is intentionally ordered.
+					await mount.provider.writeFile(`/${file.relativePath}`, Buffer.from(file.contents), {
+						mode: file.mode,
+					});
+				}
+				mount.state = 'finalized';
+			} catch (error) {
+				const mount = createdVfsMounts.finalizableMemoryMounts.get(request.guestPath);
+				if (mount !== undefined) mount.state = 'failed';
+				poisonFinalization(error);
+				throw error;
+			}
+		},
 		getHostPid(): number | null {
 			return vmInstance.getHostPid?.() ?? null;
 		},
@@ -906,7 +1060,26 @@ export async function createManagedVm(
 			vmInstance.setIngressRoutes(routes);
 		},
 		async start(): Promise<void> {
+			if (finalizationPoison !== undefined) {
+				throw new Error(
+					'Managed Gondolin VM cannot start after memory finalization was poisoned.',
+					{
+						cause: finalizationPoison,
+					},
+				);
+			}
+			const incompleteMount = [...createdVfsMounts.finalizableMemoryMounts].find(
+				([, mount]) => mount.state !== 'finalized',
+			);
+			if (incompleteMount !== undefined) {
+				const error = new Error(
+					`Managed Gondolin VM memory mount '${incompleteMount[0]}' must be finalized before start.`,
+				);
+				poisonFinalization(error);
+				throw error;
+			}
 			await vmInstance.start();
+			lifecycleState = 'started';
 		},
 		async close(): Promise<void> {
 			const closeErrors: unknown[] = [];
@@ -915,6 +1088,8 @@ export async function createManagedVm(
 			} catch (error) {
 				closeErrors.push(error);
 			}
+			lifecycleState = 'closed';
+			createdVfsMounts.finalizableMemoryMounts.clear();
 			try {
 				closePinnedRealFsRoots(pinnedRealFsRoots, dependencies);
 			} catch (error) {

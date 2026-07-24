@@ -3041,6 +3041,26 @@ describe('loadSystemConfig', () => {
 			'research-agent': 'researcher',
 			'review-agent': 'code-reviewer',
 		};
+		Object.assign(zone.gateway, {
+			discordBotTokenSecretsByAgent: {
+				'research-agent': 'DISCORD_BOT_TOKEN_RESEARCH',
+				'review-agent': 'DISCORD_BOT_TOKEN_REVIEW',
+			},
+		});
+		zone.secrets = {
+			DISCORD_BOT_TOKEN_RESEARCH: {
+				source: 'environment',
+				envVar: 'DISCORD_BOT_TOKEN_RESEARCH',
+				injection: 'env',
+				audience: 'gateway',
+			},
+			DISCORD_BOT_TOKEN_REVIEW: {
+				source: 'environment',
+				envVar: 'DISCORD_BOT_TOKEN_REVIEW',
+				injection: 'env',
+				audience: 'gateway',
+			},
+		};
 		zone.defaultToolVmProfile = 'standard';
 		zone.agentToolVmProfiles = { 'review-agent': 'standard' };
 		zone.toolPortal = createValidZoneToolPortalConfigInput();
@@ -3055,6 +3075,10 @@ describe('loadSystemConfig', () => {
 			],
 			gateway: {
 				type: 'hermes',
+				discordBotTokenSecretsByAgent: {
+					'research-agent': 'DISCORD_BOT_TOKEN_RESEARCH',
+					'review-agent': 'DISCORD_BOT_TOKEN_REVIEW',
+				},
 				profilesByAgent: {
 					'research-agent': 'researcher',
 					'review-agent': 'code-reviewer',
@@ -3063,6 +3087,74 @@ describe('loadSystemConfig', () => {
 			defaultToolVmProfile: 'standard',
 			agentToolVmProfiles: { 'review-agent': 'standard' },
 		});
+	});
+
+	test('rejects incomplete or unsafe Hermes Discord token mappings', () => {
+		const invalidCases = [
+			{
+				mapping: {},
+				secrets: {},
+			},
+			{
+				mapping: { shravan: 'DISCORD_TOKEN', extra: 'DISCORD_TOKEN_EXTRA' },
+				secrets: {
+					DISCORD_TOKEN: {
+						source: 'environment',
+						envVar: 'DISCORD_TOKEN',
+						injection: 'env',
+						audience: 'gateway',
+					},
+					DISCORD_TOKEN_EXTRA: {
+						source: 'environment',
+						envVar: 'DISCORD_TOKEN_EXTRA',
+						injection: 'env',
+						audience: 'gateway',
+					},
+				},
+			},
+			{
+				mapping: { shravan: 'DISCORD_TOKEN' },
+				secrets: {
+					DISCORD_TOKEN: {
+						source: 'environment',
+						envVar: 'DISCORD_TOKEN',
+						injection: 'http-mediation',
+						audience: 'gateway',
+						hosts: ['discord.com'],
+					},
+				},
+			},
+		] as const;
+
+		for (const invalidCase of invalidCases) {
+			const config = createValidSystemConfigInput();
+			const zone = configureFirstZoneAsHermes(config);
+			Object.assign(zone.gateway, {
+				discordBotTokenSecretsByAgent: invalidCase.mapping,
+			});
+			zone.secrets = invalidCase.secrets;
+
+			expect(() => parseSystemConfigInputForTest(config)).toThrow(
+				/discordBotTokenSecretsByAgent|Discord bot token/u,
+			);
+		}
+	});
+
+	test('rejects unmapped raw Hermes application secrets', () => {
+		const config = createValidSystemConfigInput();
+		const zone = configureFirstZoneAsHermes(config);
+		zone.secrets = {
+			UNMAPPED_APPLICATION_TOKEN: {
+				source: 'environment',
+				envVar: 'UNMAPPED_APPLICATION_TOKEN',
+				injection: 'env',
+				audience: 'gateway',
+			},
+		};
+
+		expect(() => parseSystemConfigInputForTest(config)).toThrow(
+			/env secret 'UNMAPPED_APPLICATION_TOKEN'.*http-mediation/u,
+		);
 	});
 
 	test('requires an explicit nonempty Hermes profile assignment for every configured agent', () => {

@@ -17,6 +17,7 @@ import {
 import { waitForProtocolRetryInterval } from './e2e-protocol-wait.js';
 import { shouldRunLiveVmE2e } from './live-vm-e2e-gates.js';
 import {
+	managedGatewayBootEnvironmentGuestRoot,
 	managedGatewayBootInputGuestRoot,
 	managedGatewayBootSecretCanary,
 	startManagedGatewayImageBootFixture,
@@ -526,6 +527,42 @@ async function waitForStableManagedGatewayPartialStart(
 	);
 }
 
+async function waitForStableManagedGatewayNoSiblingStart(
+	vm: ManagedVm,
+): Promise<ManagedGatewayBootObservation> {
+	const startedAtMs = performance.now();
+	let stableObservationCount = 0;
+	let lastObservation: ManagedGatewayBootObservation | undefined;
+	while (performance.now() - startedAtMs <= processObservationTimeoutMs) {
+		// oxlint-disable-next-line no-await-in-loop -- the observer must sample sequential guest /proc state.
+		lastObservation = await observeManagedGatewayBoot(vm);
+		// oxlint-disable-next-line no-await-in-loop -- non-empty service logs are the bounded unlink-failure event.
+		const unlinkFailureEvidence = await vm.exec([
+			'/bin/sh',
+			'-c',
+			'test -s /var/log/agent-vm/tool-portal-service.log && test -s /var/log/agent-vm/openclaw-service.log',
+		]);
+		if (
+			unlinkFailureEvidence.ok &&
+			matchingRoleProcesses(lastObservation, 'tool-portal').length === 0 &&
+			matchingRoleProcesses(lastObservation, 'openclaw').length === 0 &&
+			residentBootLaunchers(lastObservation).length === 0
+		) {
+			stableObservationCount += 1;
+			if (stableObservationCount >= stableSiblingTerminationObservationCount) {
+				return lastObservation;
+			}
+		} else {
+			stableObservationCount = 0;
+		}
+		// oxlint-disable-next-line no-await-in-loop -- /proc exposes no managed sibling-start completion event.
+		await waitForProtocolRetryInterval(processObservationRetryIntervalMs);
+	}
+	throw new Error(
+		`Managed Gateway siblings did not remain absent after failed boot: ${JSON.stringify(lastObservation)}.`,
+	);
+}
+
 function residentBootLaunchers(
 	observation: ManagedGatewayBootObservation,
 ): readonly GuestProcessObservation[] {
@@ -599,9 +636,12 @@ describeLiveVmIntegration('Managed Gateway image-owned sibling boot', () => {
 			expect(initScript).toContain('/usr/local/bin/agent-vm-gateway-runtime');
 			expect(initScript).toContain('/usr/local/bin/openclaw gateway --port 18789');
 			expect(initScript).toContain(
-				'managed_gateway_input_staging_root=/run/agent-vm/managed-gateway-inputs',
+				'managed_gateway_environment_input_root=/run/agent-vm/managed-gateway-environment',
 			);
-			expect(initScript).toContain('managed_gateway_input_root=/run/agent-vm/managed-gateway');
+			expect(initScript).toContain(
+				'managed_gateway_structured_input_root=/run/agent-vm/managed-gateway',
+			);
+			expect(initScript).not.toContain('managed-gateway-inputs');
 			expect(initScript).toContain('tool-portal.environment.sh');
 			expect(initScript).toContain('framework.environment.sh');
 			expect(initScript.includes(managedGatewayBootSecretCanary)).toBe(false);
@@ -648,6 +688,22 @@ describeLiveVmIntegration('Managed Gateway image-owned sibling boot', () => {
 					attachment: { status: 'awaiting-attachment' },
 					publication: { status: 'published' },
 				},
+			});
+			const bootInputMountObservation = await fixture.vm.exec([
+				'/bin/sh',
+				'-c',
+				[
+					`test ! -e ${managedGatewayBootEnvironmentGuestRoot}/tool-portal.environment.sh`,
+					`test ! -e ${managedGatewayBootEnvironmentGuestRoot}/framework.environment.sh`,
+					`test -f ${managedGatewayBootInputGuestRoot}/tool-portal-service.json`,
+					`test -f ${managedGatewayBootInputGuestRoot}/framework-service.json`,
+					`test ! -e /run/agent-vm/gateway-runtime/tool-portal-service.json`,
+					`test ! -e /run/agent-vm/gateway-runtime/framework-service.json`,
+				].join(' && '),
+			]);
+			expect(bootInputMountObservation).toMatchObject({
+				exitCode: 0,
+				ok: true,
 			});
 
 			const authShellResult = await fixture.vm.exec([
@@ -712,6 +768,23 @@ describeLiveVmIntegration('Managed Gateway image-owned sibling boot', () => {
 					serviceId: 'tool-portal-image-owned',
 				},
 			});
+			expect(observation.fatalEvidence).toBeNull();
+		} finally {
+			await fixture.close();
+		}
+	}, 900_000);
+
+	it('starts neither sibling when environment-script unlink is denied', async () => {
+		const fixture = await startManagedGatewayImageBootFixture({
+			environmentMountAccess: 'read-only',
+			sessionLabel: 'managed-gateway-image-owned-environment-unlink-denied',
+		});
+		try {
+			const observation = await waitForStableManagedGatewayNoSiblingStart(fixture.vm);
+			expect(matchingRoleProcesses(observation, 'tool-portal')).toEqual([]);
+			expect(matchingRoleProcesses(observation, 'openclaw')).toEqual([]);
+			expect(residentBootLaunchers(observation)).toEqual([]);
+			expect(observation.readinessEvidence).toBeNull();
 			expect(observation.fatalEvidence).toBeNull();
 		} finally {
 			await fixture.close();

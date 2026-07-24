@@ -21,8 +21,12 @@ function createHermesZone(toolPortalMaterial: unknown): GatewayZoneConfig {
 		gateway: {
 			config: '/deployment/config/hermes.yaml',
 			cpus: 2,
+			discordBotTokenSecretsByAgent: {
+				researcher: 'DISCORD_BOT_TOKEN_RESEARCHER',
+			},
 			memory: '4G',
 			port: 8642,
+			profilesByAgent: { researcher: 'researcher' },
 			runtimeRootfsSize: '16G',
 			ssh: { secretEnv: 'never' },
 			stateDir: '/deployment/state/hermes',
@@ -35,6 +39,12 @@ function createHermesZone(toolPortalMaterial: unknown): GatewayZoneConfig {
 			API_SERVER_KEY: {
 				audience: 'gateway',
 				envVar: 'HERMES_API_SERVER_KEY',
+				injection: 'env',
+				source: 'environment',
+			},
+			DISCORD_BOT_TOKEN_RESEARCHER: {
+				audience: 'gateway',
+				envVar: 'DISCORD_BOT_TOKEN_RESEARCHER',
 				injection: 'env',
 				source: 'environment',
 			},
@@ -99,6 +109,7 @@ plugins:
 
 		expect(metadata).toMatchObject({
 			bootEntry: 'hermes-gateway',
+			environmentInputPath: '/run/agent-vm/managed-gateway-environment/framework.environment.sh',
 			framework: 'hermes',
 			role: 'framework-service',
 		});
@@ -132,11 +143,19 @@ plugins:
 		} satisfies GatewayZoneConfig;
 
 		const bootInputs = await hermesLifecycle.buildFrameworkServiceBootInputs({
-			resolvedSecrets: { API_SERVER_KEY: 'test-only-key' },
+			resolvedSecrets: {
+				API_SERVER_KEY: 'test-only-key',
+				DISCORD_BOT_TOKEN_RESEARCHER: 'discord-test-only-key',
+			},
 			zone,
 		});
 
-		expect(bootInputs.configuration).toBe(material);
+		expect(bootInputs.configuration).toEqual({
+			...material,
+			discordBotTokenEnvironmentVariablesByProfile: {
+				researcher: 'DISCORD_BOT_TOKEN_RESEARCHER',
+			},
+		});
 		expect(bootInputs).toMatchObject({
 			kind: 'hermes-managed-scope',
 			managedConfigurationSource: expect.stringContaining('agent-vm-tool-portal'),
@@ -145,6 +164,7 @@ plugins:
 			AGENT_VM_HERMES_MANAGED_CONFIG_PATH: '/run/agent-vm/managed-gateway/framework-service.json',
 			API_SERVER_ENABLED: 'true',
 			API_SERVER_KEY: 'test-only-key',
+			DISCORD_BOT_TOKEN_RESEARCHER: 'discord-test-only-key',
 			GATEWAY_MULTIPLEX_PROFILES: 'true',
 			HERMES_MANAGED_DIR: '/run/agent-vm/managed-gateway',
 			HERMES_HOME: '/home/hermes/.hermes',
@@ -153,12 +173,15 @@ plugins:
 		expect(readFileMock).toHaveBeenCalledWith('/deployment/config/hermes.yaml', 'utf8');
 	});
 
-	it('mounts durable state directly at HERMES_HOME', () => {
+	it('mounts durable state with exact memory-only profile token files', () => {
 		const requirements = hermesLifecycle.buildVmRequirements({
 			controllerPort: 7777,
 			gatewayCacheDir: '/deployment/cache/hermes',
 			projectNamespace: 'deployment-a',
-			resolvedSecrets: { API_SERVER_KEY: 'test-only-key' },
+			resolvedSecrets: {
+				API_SERVER_KEY: 'test-only-key',
+				DISCORD_BOT_TOKEN_RESEARCHER: 'discord-test-only-key',
+			},
 			zoneRuntimeDir: '/deployment/runtime',
 			tcpPool: { basePort: 22_000, size: 2 },
 			zone: createHermesZone(createHermesAdapterMaterial()),
@@ -180,9 +203,10 @@ plugins:
 				kind: 'host-directory',
 			},
 			'/home/hermes/.hermes': {
-				access: 'read-write',
+				deny: [],
 				hostPath: '/deployment/state/hermes',
-				kind: 'host-directory',
+				kind: 'shadow',
+				temporaryFilesystems: ['/profiles/researcher/.env'],
 			},
 		});
 		expect(requirements.mounts).not.toHaveProperty('/workspace');

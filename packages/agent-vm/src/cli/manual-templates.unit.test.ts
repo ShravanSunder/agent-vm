@@ -106,6 +106,15 @@ describe('manual templates', () => {
 			'DISCORD_BOT_TOKEN',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).toContain(
+			'gateway.discordBotTokenSecretsByAgent',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).toContain(
+			'exact memory-backed profiles/<profile>/.env files',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).toContain(
+			'secrets.preserve_existing',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).toContain(
 			'cdn.discordapp.com',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).toContain(

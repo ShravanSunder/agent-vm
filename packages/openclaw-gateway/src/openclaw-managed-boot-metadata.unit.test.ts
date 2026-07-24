@@ -81,7 +81,7 @@ describe('OpenClaw managed boot metadata', () => {
 		expect(metadata).toEqual({
 			bootEntry: 'openclaw-gateway',
 			configurationInputPath: '/run/agent-vm/managed-gateway/framework-service.json',
-			environmentInputPath: '/run/agent-vm/managed-gateway/framework.environment.sh',
+			environmentInputPath: '/run/agent-vm/managed-gateway-environment/framework.environment.sh',
 			framework: 'openclaw',
 			ingress: { guestPort: 18789, kind: 'framework-http' },
 			logIdentity: {

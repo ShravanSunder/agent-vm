@@ -31,26 +31,38 @@ describe('managed Gateway rootfs init projection', () => {
 			expect(script).not.toMatch(/\b(wait|restart|supervis|childRecipe|services\[)\b/iu);
 			expect(script).not.toContain('ManagedVm.exec');
 			expect(script).toContain(
-				'managed_gateway_input_staging_root=/run/agent-vm/managed-gateway-inputs',
+				'managed_gateway_environment_input_root=/run/agent-vm/managed-gateway-environment',
 			);
-			expect(script).toContain('managed_gateway_input_root=/run/agent-vm/managed-gateway');
+			expect(script).toContain(
+				'managed_gateway_structured_input_root=/run/agent-vm/managed-gateway',
+			);
 			expect(script).not.toMatch(/--reuid|--regid|--init-groups/u);
 			expect(script.match(/exec \/bin\/sh -c 'set -a;/gu)).toHaveLength(2);
 			expect(script).not.toContain('exec su ');
 			expect(script).toContain(
-				'for managed_gateway_input_name in tool-portal.environment.sh tool-portal-service.json mcp.config.json',
+				'. /run/agent-vm/managed-gateway-environment/tool-portal.environment.sh || exit 78',
 			);
 			expect(script).toContain(
-				frameworkBootEntry === 'hermes-framework-service'
-					? 'for managed_gateway_input_name in framework.environment.sh framework-service.json config.yaml'
-					: 'for managed_gateway_input_name in framework.environment.sh framework-service.json',
+				'rm -- /run/agent-vm/managed-gateway-environment/tool-portal.environment.sh || exit 78',
+			);
+			expect(script).toContain(
+				'. /run/agent-vm/managed-gateway-environment/framework.environment.sh || exit 78',
+			);
+			expect(script).toContain(
+				'rm -- /run/agent-vm/managed-gateway-environment/framework.environment.sh || exit 78',
 			);
 			if (frameworkBootEntry === 'openclaw-framework-service') {
 				expect(script).not.toContain('framework-service.json config.yaml');
 			}
-			expect(script).toContain('-m 0700 "$managed_gateway_input_root"');
 			expect(script).toContain('install -d -m 0700 /run/agent-vm/gateway-runtime');
-			expect(script).toContain('-m 0600 "$managed_gateway_input_staging_root/');
+			expect(script).not.toMatch(/\b(cp|install)\b[^\n]*managed-gateway/gu);
+			expect(script).not.toContain('managed_gateway_input_staging_root');
+			expect(script.indexOf('. /run/agent-vm/managed-gateway-environment/')).toBeLessThan(
+				script.indexOf('rm -- /run/agent-vm/managed-gateway-environment/'),
+			);
+			expect(script.indexOf('rm -- /run/agent-vm/managed-gateway-environment/')).toBeLessThan(
+				script.indexOf('exec /usr/local/bin/agent-vm-gateway-runtime'),
+			);
 		},
 	);
 

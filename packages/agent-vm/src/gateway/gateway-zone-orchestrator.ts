@@ -123,11 +123,7 @@ import {
 	createManagedGatewayBootContract,
 	managedGatewayBootInputPaths,
 } from './managed-gateway-boot-contract.js';
-import {
-	finalizeManagedGatewayBootInputs,
-	releaseManagedGatewayBootInputDirectory,
-	reserveManagedGatewayBootInputDirectory,
-} from './managed-gateway-boot-input-materializer.js';
+import { serializeManagedGatewayBootInputs } from './managed-gateway-boot-input-materializer.js';
 import {
 	buildManagedGatewayExpectedAdmissionCohort,
 	buildManagedGatewayFrameworkAdapterMaterial,
@@ -1610,11 +1606,6 @@ async function startGatewayZoneImplementation(
 				`Managed Gateway zone '${zone.id}' requires controller-issued control session material.`,
 			);
 		}
-		if (dependencies.managedVmOwnedDirectories === undefined) {
-			throw new Error(
-				`Managed Gateway zone '${zone.id}' requires the managed VM owned-directory capability.`,
-			);
-		}
 		if (dependencies.gatewayRuntimeArtifactLimits === undefined) {
 			throw new Error(
 				`Managed Gateway zone '${zone.id}' requires explicit Gateway Runtime artifact limits.`,
@@ -1953,68 +1944,28 @@ async function startGatewayZoneImplementation(
 
 	const managedPortalMaterialization = toolPortalMaterialization;
 	const managedControlSessionMaterial = controlSessionMaterial;
-	const managedVmOwnedDirectories = dependencies.managedVmOwnedDirectories;
 	const gatewayRuntimeArtifactLimits = dependencies.gatewayRuntimeArtifactLimits;
 	if (
 		managedPortalMaterialization.kind !== 'configured' ||
 		managedPortalMaterialization.mode !== 'runtime' ||
 		managedControlSessionMaterial === undefined ||
-		managedVmOwnedDirectories === undefined ||
 		gatewayRuntimeArtifactLimits === undefined
 	) {
 		throw new Error(`Managed Gateway zone '${zone.id}' lost validated startup prerequisites.`);
 	}
-	const bootInputReservation = await reserveManagedGatewayBootInputDirectory({
-		parentDirectory: path.join(zone.gateway.zoneRuntimeDir, 'managed-gateway-boot-inputs'),
-	});
-	let ownedBootInputDirectory:
-		| ReturnType<ManagedVmOwnedDirectoryCapability['openHostDirectory']>
-		| undefined;
-	const cleanupManagedBootInputs = async (): Promise<void> => {
-		const cleanupErrors: unknown[] = [];
-		try {
-			if (ownedBootInputDirectory?.state === 'acquired') {
-				ownedBootInputDirectory.close();
-			}
-		} catch (error: unknown) {
-			cleanupErrors.push(error);
-		}
-		try {
-			await releaseManagedGatewayBootInputDirectory(bootInputReservation);
-		} catch (error: unknown) {
-			cleanupErrors.push(error);
-		}
-		if (cleanupErrors.length > 1) {
-			throw new AggregateError(cleanupErrors, 'Managed Gateway boot input cleanup failed.');
-		}
-		if (cleanupErrors.length === 1) throw cleanupErrors[0];
-	};
-	try {
-		ownedBootInputDirectory = managedVmOwnedDirectories.openHostDirectory(
-			bootInputReservation.directoryPath,
-		);
-	} catch (error: unknown) {
-		try {
-			await vmOwnership.abandonUnattachedGatewaySeedAfter(cleanupManagedBootInputs);
-		} catch (cleanupError: unknown) {
-			throw createAggregateErrorWithCause({
-				cause: cleanupError,
-				errors: [error, cleanupError],
-				message: `Managed Gateway boot input acquisition failed for zone '${zone.id}' and cleanup did not complete.`,
-			});
-		}
-		throw error;
-	}
 	const exactManagedVm = await createManagedVmForMounts(
 		{
 			...vfsMounts,
-			[managedGatewayBootInputPaths.stagingRoot]: {
+			[managedGatewayBootInputPaths.environmentRoot]: {
+				access: 'read-write',
+				kind: 'finalizable-memory',
+			},
+			[managedGatewayBootInputPaths.structuredRoot]: {
 				access: 'read-only',
-				directory: ownedBootInputDirectory,
-				kind: 'owned-host-directory',
+				kind: 'finalizable-memory',
 			},
 		},
-		cleanupManagedBootInputs,
+		async () => {},
 	);
 	let gatewayIdentity: ReturnType<typeof vmOwnership.attachGatewayVm>;
 	try {
@@ -2032,11 +1983,6 @@ async function startGatewayZoneImplementation(
 						);
 					}
 					await exactManagedVm.close();
-				} catch (cleanupError: unknown) {
-					cleanupErrors.push(cleanupError);
-				}
-				try {
-					await cleanupManagedBootInputs();
 				} catch (cleanupError: unknown) {
 					cleanupErrors.push(cleanupError);
 				}
@@ -2149,10 +2095,6 @@ async function startGatewayZoneImplementation(
 				cleanup: async () => await deleteGatewayControlSessionMaterial(zone.gateway.zoneRuntimeDir),
 				stage: 'control-session-material-deletion',
 			},
-			{
-				cleanup: cleanupManagedBootInputs,
-				stage: 'managed-boot-input-release',
-			},
 		],
 		withdrawAdmission: [
 			{ cleanup: disposeControlSession, stage: 'control-session-disposal' },
@@ -2235,7 +2177,7 @@ async function startGatewayZoneImplementation(
 			observability: lifecycleZone.observability,
 			portalAdmission: managedPortalMaterialization.portalAdmission,
 		});
-		await finalizeManagedGatewayBootInputs({
+		const bootInputInventories = serializeManagedGatewayBootInputs({
 			cohort: expectedCohort,
 			frameworkConfig: frameworkServiceInputs.configuration,
 			frameworkEnvironment: {
@@ -2249,9 +2191,21 @@ async function startGatewayZoneImplementation(
 					}
 				: { frameworkInputKind: frameworkServiceInputs.kind }),
 			mcpConfig: managedPortalMaterialization.mcpConfig,
-			reservation: bootInputReservation,
 			toolPortalEnvironment,
 			toolPortalServiceConfig,
+		});
+		if (exactManagedVm.finalizeMemoryMount === undefined) {
+			throw new Error(
+				`Managed Gateway VM '${exactManagedVm.id}' does not support finalizable memory mounts.`,
+			);
+		}
+		await exactManagedVm.finalizeMemoryMount({
+			files: bootInputInventories.environmentFiles,
+			guestPath: managedGatewayBootInputPaths.environmentRoot,
+		});
+		await exactManagedVm.finalizeMemoryMount({
+			files: bootInputInventories.structuredInputFiles,
+			guestPath: managedGatewayBootInputPaths.structuredRoot,
 		});
 
 		const candidate: GatewayAtomicAdmissionCandidate = {

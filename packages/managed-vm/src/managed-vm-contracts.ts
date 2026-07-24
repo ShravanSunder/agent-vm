@@ -173,6 +173,10 @@ export type ManagedVmMount =
 			readonly kind: 'owned-filtered-workspace';
 			readonly policy: ManagedVmFilteredWorkspacePolicy;
 	  }
+	| {
+			readonly access: 'read-only' | 'read-write';
+			readonly kind: 'finalizable-memory';
+	  }
 	| { readonly kind: 'memory' }
 	| {
 			readonly deny: readonly string[];
@@ -227,12 +231,109 @@ export interface ManagedVmCreateRequest {
 	readonly tcpHosts: readonly ManagedVmTcpHostMapping[];
 }
 
+export interface ManagedVmFinalizableMemoryFile {
+	readonly contents: Uint8Array;
+	readonly mode: number;
+	readonly relativePath: string;
+}
+
+export interface ManagedVmFinalizeMemoryMountRequest {
+	readonly files: readonly ManagedVmFinalizableMemoryFile[];
+	readonly guestPath: string;
+}
+
+export interface ManagedVmFinalizableMemoryMountCapability {
+	finalizeMemoryMount(request: ManagedVmFinalizeMemoryMountRequest): Promise<void>;
+}
+
+function isCanonicalRelativeMemoryFilePath(relativePath: string): boolean {
+	if (
+		relativePath.length === 0 ||
+		relativePath.startsWith('/') ||
+		relativePath.endsWith('/') ||
+		relativePath.includes('\\') ||
+		relativePath.includes('\0')
+	) {
+		return false;
+	}
+	const segments = relativePath.split('/');
+	return segments.every((segment) => segment.length > 0 && segment !== '.' && segment !== '..');
+}
+
+function isCanonicalAbsoluteGuestPath(guestPath: string): boolean {
+	if (
+		!guestPath.startsWith('/') ||
+		guestPath.length === 1 ||
+		guestPath.endsWith('/') ||
+		guestPath.includes('\\') ||
+		guestPath.includes('\0')
+	) {
+		return false;
+	}
+	return guestPath
+		.slice(1)
+		.split('/')
+		.every((segment) => segment.length > 0 && segment !== '.' && segment !== '..');
+}
+
+export function validateManagedVmFinalizeMemoryMountRequest(
+	request: ManagedVmFinalizeMemoryMountRequest,
+): ManagedVmFinalizeMemoryMountRequest {
+	if (!isCanonicalAbsoluteGuestPath(request.guestPath)) {
+		throw new Error(
+			'Managed VM finalizable memory mount guest path must be absolute and canonical.',
+		);
+	}
+	const copiedFiles = request.files.map((file) => {
+		if (!isCanonicalRelativeMemoryFilePath(file.relativePath)) {
+			throw new Error(
+				`Managed VM finalizable memory file path must be one canonical relative path: ${file.relativePath}`,
+			);
+		}
+		if (!Number.isSafeInteger(file.mode) || file.mode < 0 || file.mode > 0o777) {
+			throw new Error(
+				`Managed VM finalizable memory file '${file.relativePath}' must use a permission mode between 0000 and 0777.`,
+			);
+		}
+		if (!(file.contents instanceof Uint8Array)) {
+			throw new Error(
+				`Managed VM finalizable memory file '${file.relativePath}' contents must be a Uint8Array.`,
+			);
+		}
+		return {
+			contents: new Uint8Array(file.contents),
+			mode: file.mode,
+			relativePath: file.relativePath,
+		} satisfies ManagedVmFinalizableMemoryFile;
+	});
+	const sortedPaths = copiedFiles.map((file) => file.relativePath).toSorted();
+	for (let index = 0; index < sortedPaths.length; index += 1) {
+		const currentPath = sortedPaths[index];
+		const nextPath = sortedPaths[index + 1];
+		if (currentPath === nextPath) {
+			throw new Error(
+				`Managed VM finalizable memory inventory contains duplicate relative path: ${currentPath}`,
+			);
+		}
+		if (currentPath !== undefined && nextPath?.startsWith(`${currentPath}/`)) {
+			throw new Error(
+				`Managed VM finalizable memory inventory contains a file-directory collision: ${currentPath}`,
+			);
+		}
+	}
+	return {
+		files: copiedFiles,
+		guestPath: request.guestPath,
+	};
+}
+
 export interface ManagedVm {
 	close(): Promise<void>;
 	configureIngressRoutes(routes: readonly ManagedVmIngressRoute[]): void;
 	enableIngress(options?: ManagedVmIngressOptions): Promise<ManagedVmAccessHandle>;
 	enableSsh(options?: ManagedVmEnableSshOptions): Promise<ManagedVmSshAccess>;
 	exec(command: ManagedVmExecCommand, options?: ManagedVmExecOptions): ManagedVmExecProcess;
+	readonly finalizeMemoryMount?: ManagedVmFinalizableMemoryMountCapability['finalizeMemoryMount'];
 	/** Null before start succeeds or after the owned host process exits. */
 	getHostProcessId(): number | null;
 	readonly id: string;

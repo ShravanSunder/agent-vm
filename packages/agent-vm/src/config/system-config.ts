@@ -465,6 +465,7 @@ const hermesProfilesByAgentSchema = z
 const hermesZoneGatewaySchema = zoneGatewayBaseSchema
 	.extend({
 		type: z.literal('hermes'),
+		discordBotTokenSecretsByAgent: z.record(agentIdSchema, secretNameSchema).optional(),
 		profilesByAgent: hermesProfilesByAgentSchema,
 	})
 	.strict();
@@ -1350,6 +1351,64 @@ const systemConfigSchema = z
 							code: z.ZodIssueCode.custom,
 							message: `Hermes zone '${zone.id}' profilesByAgent references undeclared agent '${agentId}'.`,
 							path: ['zones', zoneIndex, 'gateway', 'profilesByAgent', agentId],
+						});
+					}
+				}
+				const discordBotTokenSecretsByAgent = zone.gateway.discordBotTokenSecretsByAgent;
+				const mappedSecretNames = Object.values(discordBotTokenSecretsByAgent ?? {});
+				if (discordBotTokenSecretsByAgent !== undefined) {
+					const mappedAgentIds = new Set(Object.keys(discordBotTokenSecretsByAgent));
+					for (const agentId of configuredProfileAgentIds) {
+						if (!mappedAgentIds.has(agentId)) {
+							context.addIssue({
+								code: z.ZodIssueCode.custom,
+								message: `Hermes zone '${zone.id}' discordBotTokenSecretsByAgent is missing configured agent '${agentId}'.`,
+								path: ['zones', zoneIndex, 'gateway', 'discordBotTokenSecretsByAgent'],
+							});
+						}
+					}
+					for (const agentId of mappedAgentIds) {
+						if (!configuredProfileAgentIds.has(agentId)) {
+							context.addIssue({
+								code: z.ZodIssueCode.custom,
+								message: `Hermes zone '${zone.id}' discordBotTokenSecretsByAgent references undeclared agent '${agentId}'.`,
+								path: ['zones', zoneIndex, 'gateway', 'discordBotTokenSecretsByAgent', agentId],
+							});
+						}
+					}
+					if (new Set(mappedSecretNames).size !== mappedSecretNames.length) {
+						context.addIssue({
+							code: z.ZodIssueCode.custom,
+							message: `Hermes zone '${zone.id}' discordBotTokenSecretsByAgent must assign one distinct secret per agent.`,
+							path: ['zones', zoneIndex, 'gateway', 'discordBotTokenSecretsByAgent'],
+						});
+					}
+					for (const [agentId, secretName] of Object.entries(discordBotTokenSecretsByAgent)) {
+						const secret = zone.secrets[secretName];
+						if (secret === undefined) {
+							context.addIssue({
+								code: z.ZodIssueCode.custom,
+								message: `Hermes zone '${zone.id}' Discord bot token mapping for agent '${agentId}' references unknown secret '${secretName}'.`,
+								path: ['zones', zoneIndex, 'secrets', secretName],
+							});
+							continue;
+						}
+						if (secret.injection !== 'env' || secret.audience !== 'gateway') {
+							context.addIssue({
+								code: z.ZodIssueCode.custom,
+								message: `Hermes zone '${zone.id}' Discord bot token secret '${secretName}' must use injection 'env' and audience 'gateway'.`,
+								path: ['zones', zoneIndex, 'secrets', secretName],
+							});
+						}
+					}
+				}
+				const allowedRawSecretNames = new Set(['API_SERVER_KEY', ...mappedSecretNames]);
+				for (const [secretName, secret] of Object.entries(zone.secrets)) {
+					if (secret.injection === 'env' && !allowedRawSecretNames.has(secretName)) {
+						context.addIssue({
+							code: z.ZodIssueCode.custom,
+							message: `Hermes zone '${zone.id}' env secret '${secretName}' must be API_SERVER_KEY, mapped by discordBotTokenSecretsByAgent, or use injection 'http-mediation'.`,
+							path: ['zones', zoneIndex, 'secrets', secretName],
 						});
 					}
 				}

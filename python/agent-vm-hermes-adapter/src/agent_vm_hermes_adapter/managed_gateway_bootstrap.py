@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import re
 import stat
 import threading
 import types
@@ -45,6 +46,7 @@ _MANAGED_HERMES_HOME_ENVIRONMENT_NAME = "HERMES_HOME"
 _MANAGED_TOOL_PORTAL_PLUGIN_NAME = "agent-vm-tool-portal"
 _MANAGED_CACHE_KEY_PREFIX = "agent-vm-hermes:"
 _MANAGED_TOOL_VM_CWD = "/work"
+_ENVIRONMENT_NAME_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _MANAGED_UPSTREAM_ROUTING_ENVIRONMENT: Mapping[str, str] = {
     "TERMINAL_ENV": "ssh",
     "TERMINAL_SSH_HOST": "managed-tool-vm.invalid",
@@ -126,6 +128,7 @@ class _StockHermesTerminalToolAdapter:
 class _ManagedAdapterMaterial(t.NamedTuple):
     attachment: Mapping[str, object]
     agent_projections: Mapping[str, object]
+    discord_bot_token_environment_variables_by_profile: Mapping[str, str]
 
 
 class _ManagedEnvironmentCacheEntry(t.NamedTuple):
@@ -150,8 +153,15 @@ def _require_string(value: object, label: str) -> str:
 def load_managed_adapter_material(configuration_path: Path) -> _ManagedAdapterMaterial:
     raw_configuration = json.loads(configuration_path.read_text(encoding="utf-8"))
     configuration = _require_mapping(raw_configuration, "managed Hermes adapter material")
-    if set(configuration) != {"agentProjections", "attachment"}:
-        message = "managed Hermes adapter material requires exactly attachment and agentProjections"
+    required_fields = {"agentProjections", "attachment"}
+    optional_fields = {"discordBotTokenEnvironmentVariablesByProfile"}
+    if not required_fields.issubset(configuration) or not set(configuration).issubset(
+        required_fields | optional_fields
+    ):
+        message = (
+            "managed Hermes adapter material requires attachment and agentProjections "
+            "with only the optional Discord profile environment mapping"
+        )
         raise ValueError(message)
     attachment = _require_mapping(configuration["attachment"], "attachment")
     if attachment.get("clientKind") != "hermes-managed-plugin":
@@ -175,10 +185,90 @@ def load_managed_adapter_material(configuration_path: Path) -> _ManagedAdapterMa
     ):
         message = "managed Hermes attachment and projection agent cohorts must match exactly"
         raise ValueError(message)
+    discord_environment_mapping_field = "discordBotTokenEnvironmentVariablesByProfile"
+    if discord_environment_mapping_field not in configuration:
+        discord_environment_mapping: Mapping[str, str] = types.MappingProxyType({})
+    else:
+        raw_discord_environment_mapping = _require_mapping(
+            configuration[discord_environment_mapping_field],
+            discord_environment_mapping_field,
+        )
+        expected_profile_names = {
+            _projection_profile_name(
+                _require_mapping(projection, f"agentProjections[{agent_id!r}]")
+            )
+            for agent_id, projection in agent_projections.items()
+        }
+        if set(raw_discord_environment_mapping) != expected_profile_names:
+            message = (
+                "managed Hermes Discord environment mapping and profile cohorts must match exactly"
+            )
+            raise ValueError(message)
+        normalized_discord_environment_mapping: dict[str, str] = {}
+        for profile_name, environment_name_value in raw_discord_environment_mapping.items():
+            environment_name = _require_string(
+                environment_name_value,
+                f"Discord token environment name for profile {profile_name!r}",
+            )
+            if _ENVIRONMENT_NAME_PATTERN.fullmatch(environment_name) is None:
+                message = (
+                    f"Discord token environment name for profile {profile_name!r} "
+                    "must be a safe environment variable name"
+                )
+                raise ValueError(message)
+            normalized_discord_environment_mapping[profile_name] = environment_name
+        if len(set(normalized_discord_environment_mapping.values())) != len(
+            normalized_discord_environment_mapping
+        ):
+            message = "managed Hermes Discord environment names must be distinct"
+            raise ValueError(message)
+        discord_environment_mapping = types.MappingProxyType(normalized_discord_environment_mapping)
     return _ManagedAdapterMaterial(
         attachment=dict(attachment),
         agent_projections=types.MappingProxyType(dict(agent_projections)),
+        discord_bot_token_environment_variables_by_profile=discord_environment_mapping,
     )
+
+
+def _materialize_discord_profile_environment_files(
+    *,
+    protected_hermes_home: Path,
+    environment_variables_by_profile: Mapping[str, str],
+) -> None:
+    token_values_by_profile: dict[str, str] = {}
+    try:
+        for profile_name, environment_name in environment_variables_by_profile.items():
+            token_value = os.environ.get(environment_name)
+            if not token_value:
+                message = (
+                    f"Discord token environment variable for profile {profile_name!r} "
+                    "must contain a value"
+                )
+                raise ValueError(message)
+            if any(character in token_value for character in ("\0", "\r", "\n")):
+                message = (
+                    f"Discord token environment variable for profile {profile_name!r} "
+                    "contains unsafe line content"
+                )
+                raise ValueError(message)
+            token_values_by_profile[profile_name] = token_value
+    finally:
+        for environment_name in environment_variables_by_profile.values():
+            _ = os.environ.pop(environment_name, None)
+
+    for profile_name, token_value in token_values_by_profile.items():
+        environment_path = protected_hermes_home / "profiles" / profile_name / ".env"
+        file_descriptor = os.open(
+            environment_path,
+            os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW | os.O_CLOEXEC,
+            0o600,
+        )
+        try:
+            os.fchmod(file_descriptor, 0o600)
+            with os.fdopen(file_descriptor, "wb", closefd=False) as environment_file:
+                environment_file.write(f"DISCORD_BOT_TOKEN={token_value}".encode())
+        finally:
+            os.close(file_descriptor)
 
 
 def _validate_managed_profile_cohort(
@@ -243,6 +333,25 @@ def _validate_managed_plugin_policy(configuration: Mapping[str, object]) -> None
     if _MANAGED_TOOL_PORTAL_PLUGIN_NAME in disabled_value:
         message = (
             f"managed Hermes plugins.disabled must not include {_MANAGED_TOOL_PORTAL_PLUGIN_NAME!r}"
+        )
+        raise HermesProfileAdmissionError(message)
+
+
+def _validate_discord_profile_secret_policy(
+    *,
+    configuration: Mapping[str, object],
+    environment_variables_by_profile: Mapping[str, str],
+) -> None:
+    if not environment_variables_by_profile:
+        return
+    secrets_value = configuration.get("secrets")
+    preserve_existing = (
+        secrets_value.get("preserve_existing") if isinstance(secrets_value, Mapping) else None
+    )
+    if not isinstance(preserve_existing, list) or "DISCORD_BOT_TOKEN" not in preserve_existing:
+        message = (
+            "managed Hermes secrets.preserve_existing must include "
+            "'DISCORD_BOT_TOKEN' for mapped Discord profiles"
         )
         raise HermesProfileAdmissionError(message)
 
@@ -441,7 +550,14 @@ def _run_managed_hermes_gateway_runtime(
     terminal_tool_module: _HermesTerminalToolModule | None = None,
 ) -> None:
     material = load_managed_adapter_material(configuration_path)
-    _validate_managed_plugin_policy(managed_configuration_loader())
+    managed_configuration = managed_configuration_loader()
+    _validate_managed_plugin_policy(managed_configuration)
+    _validate_discord_profile_secret_policy(
+        configuration=managed_configuration,
+        environment_variables_by_profile=(
+            material.discord_bot_token_environment_variables_by_profile
+        ),
+    )
     projection_cohort_digest = _require_string(
         material.attachment.get("projectionCohortDigest"),
         "attachment.projectionCohortDigest",
@@ -454,6 +570,12 @@ def _run_managed_hermes_gateway_runtime(
     _validate_managed_profile_cohort(
         protected_hermes_home=protected_hermes_home,
         agent_projections=adapter_config.profiles,
+    )
+    _materialize_discord_profile_environment_files(
+        protected_hermes_home=protected_hermes_home,
+        environment_variables_by_profile=(
+            material.discord_bot_token_environment_variables_by_profile
+        ),
     )
     gateway_runtime_client = GatewayRuntimeClient(attachment=material.attachment)
     adapter = HermesManagedAdapter(

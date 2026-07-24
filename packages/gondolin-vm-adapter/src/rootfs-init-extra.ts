@@ -48,8 +48,8 @@ export interface ResolvedRootfsInitExtra {
 	};
 }
 
-const managedGatewayInputStagingRoot = '/run/agent-vm/managed-gateway-inputs';
-const managedGatewayInputRoot = '/run/agent-vm/managed-gateway';
+const managedGatewayEnvironmentInputRoot = '/run/agent-vm/managed-gateway-environment';
+const managedGatewayStructuredInputRoot = '/run/agent-vm/managed-gateway';
 const managedGatewayRuntimeRoot = '/run/agent-vm/gateway-runtime';
 const managedGatewayLogRoot = '/var/log/agent-vm';
 
@@ -79,29 +79,28 @@ export function renderManagedGatewayRootfsInitScript(
 	const selectedFrameworkLogPath = `${managedGatewayLogRoot}/${frameworkLogFileName(projection.frameworkBootEntry)}`;
 	const frameworkBootInputFileNames =
 		projection.frameworkBootEntry === 'hermes-framework-service'
-			? 'framework.environment.sh framework-service.json config.yaml'
-			: 'framework.environment.sh framework-service.json';
+			? 'framework-service.json config.yaml'
+			: 'framework-service.json';
 	return `# Fixed managed Gateway sibling boot entries.
-managed_gateway_input_staging_root=${managedGatewayInputStagingRoot}
-managed_gateway_input_root=${managedGatewayInputRoot}
+managed_gateway_environment_input_root=${managedGatewayEnvironmentInputRoot}
+managed_gateway_structured_input_root=${managedGatewayStructuredInputRoot}
 mkdir -p ${managedGatewayLogRoot}
-install -d -m 0700 "$managed_gateway_input_root"
 install -d -m 0700 ${managedGatewayRuntimeRoot}
 install -m 0600 /dev/null ${managedGatewayLogRoot}/tool-portal-service.log
 install -m 0600 /dev/null ${selectedFrameworkLogPath}
 (
-  for managed_gateway_input_name in tool-portal.environment.sh tool-portal-service.json mcp.config.json; do
-    if [ ! -f "$managed_gateway_input_staging_root/$managed_gateway_input_name" ]; then exit 78; fi
-    install -m 0600 "$managed_gateway_input_staging_root/$managed_gateway_input_name" "$managed_gateway_input_root/$managed_gateway_input_name" || exit 78
+  if [ ! -f "$managed_gateway_environment_input_root/tool-portal.environment.sh" ]; then exit 78; fi
+  for managed_gateway_input_name in tool-portal-service.json mcp.config.json; do
+    if [ ! -f "$managed_gateway_structured_input_root/$managed_gateway_input_name" ]; then exit 78; fi
   done
-  exec /bin/sh -c 'set -a; . ${managedGatewayInputRoot}/tool-portal.environment.sh; set +a; exec /usr/local/bin/agent-vm-gateway-runtime --config ${managedGatewayInputRoot}/tool-portal-service.json'
+  exec /bin/sh -c 'set -a; . ${managedGatewayEnvironmentInputRoot}/tool-portal.environment.sh || exit 78; set +a; rm -- ${managedGatewayEnvironmentInputRoot}/tool-portal.environment.sh || exit 78; exec /usr/local/bin/agent-vm-gateway-runtime --config ${managedGatewayStructuredInputRoot}/tool-portal-service.json'
 ) >> ${managedGatewayLogRoot}/tool-portal-service.log 2>&1 &
 (
+  if [ ! -f "$managed_gateway_environment_input_root/framework.environment.sh" ]; then exit 78; fi
   for managed_gateway_input_name in ${frameworkBootInputFileNames}; do
-    if [ ! -f "$managed_gateway_input_staging_root/$managed_gateway_input_name" ]; then exit 78; fi
-    install -m 0600 "$managed_gateway_input_staging_root/$managed_gateway_input_name" "$managed_gateway_input_root/$managed_gateway_input_name" || exit 78
+    if [ ! -f "$managed_gateway_structured_input_root/$managed_gateway_input_name" ]; then exit 78; fi
   done
-  exec /bin/sh -c 'set -a; . ${managedGatewayInputRoot}/framework.environment.sh; set +a; exec ${selectedFrameworkBootCommand}'
+  exec /bin/sh -c 'set -a; . ${managedGatewayEnvironmentInputRoot}/framework.environment.sh || exit 78; set +a; rm -- ${managedGatewayEnvironmentInputRoot}/framework.environment.sh || exit 78; exec ${selectedFrameworkBootCommand}'
 ) >> ${selectedFrameworkLogPath} 2>&1 &
 `;
 }

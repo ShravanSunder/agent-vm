@@ -103,6 +103,7 @@ interface LifecycleNativeVm {
 	readonly enableIngress: ReturnType<typeof vi.fn>;
 	readonly enableSsh: ReturnType<typeof vi.fn>;
 	readonly exec: ReturnType<typeof vi.fn>;
+	readonly finalizeMemoryMount: ReturnType<typeof vi.fn>;
 	readonly getHostPid: ReturnType<typeof vi.fn>;
 	readonly id: string;
 	readonly setIngressRoutes: ReturnType<typeof vi.fn>;
@@ -115,6 +116,7 @@ function createLifecycleNativeVm(start: () => Promise<void>): LifecycleNativeVm 
 		enableIngress: vi.fn(),
 		enableSsh: vi.fn(),
 		exec: vi.fn(() => createFakeNativeExecProcess()),
+		finalizeMemoryMount: vi.fn(async () => {}),
 		getHostPid: vi.fn(() => 4321),
 		id: 'lifecycle-vm',
 		setIngressRoutes: vi.fn(),
@@ -251,6 +253,67 @@ describe('createGondolinManagedVmProvider', () => {
 				},
 			}),
 		);
+	});
+
+	it('translates finalizable memory mounts and forwards complete inventories', async () => {
+		const nativeVm = createLifecycleNativeVm(async () => {});
+		createNativeManagedVmMock.mockResolvedValue(nativeVm);
+		const provider = createGondolinManagedVmProvider();
+		const vm = await provider.factory.createManagedVm({
+			...createBasicManagedVmRequest(),
+			mounts: {
+				'/run/environment': {
+					access: 'read-write',
+					kind: 'finalizable-memory',
+				},
+				'/run/structured': {
+					access: 'read-only',
+					kind: 'finalizable-memory',
+				},
+			},
+		});
+		const callerContents = Uint8Array.from([1, 2, 3]);
+		if (!('finalizeMemoryMount' in vm) || typeof vm.finalizeMemoryMount !== 'function') {
+			throw new Error('Expected finalizable memory mount capability');
+		}
+
+		await vm.finalizeMemoryMount({
+			files: [
+				{
+					contents: callerContents,
+					mode: 0o600,
+					relativePath: 'service.json',
+				},
+			],
+			guestPath: '/run/structured',
+		});
+
+		expect(createNativeManagedVmMock).toHaveBeenCalledWith(
+			expect.objectContaining({
+				vfsMounts: {
+					'/run/environment': {
+						access: 'read-write',
+						kind: 'finalizable-memory',
+					},
+					'/run/structured': {
+						access: 'read-only',
+						kind: 'finalizable-memory',
+					},
+				},
+			}),
+		);
+		expect(nativeVm.finalizeMemoryMount).toHaveBeenCalledWith({
+			files: [
+				{
+					contents: Uint8Array.from([1, 2, 3]),
+					mode: 0o600,
+					relativePath: 'service.json',
+				},
+			],
+			guestPath: '/run/structured',
+		});
+
+		expect(nativeVm.finalizeMemoryMount).toHaveBeenCalledOnce();
 	});
 
 	it('translates neutral pipe and discard output modes to stock Gondolin exec options', async () => {

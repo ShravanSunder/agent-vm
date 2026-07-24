@@ -78,6 +78,7 @@ function assertCreateRequestSupported(request: ManagedVmCreateRequest): void {
 		if (
 			![
 				'host-directory',
+				'finalizable-memory',
 				'owned-host-directory',
 				'owned-filtered-workspace',
 				'memory',
@@ -263,6 +264,12 @@ async function translateMounts(
 	try {
 		for (const [guestPath, mount] of Object.entries(mounts)) {
 			switch (mount.kind) {
+				case 'finalizable-memory':
+					translatedMounts[guestPath] = {
+						access: mount.access,
+						kind: 'finalizable-memory',
+					};
+					break;
 				case 'host-directory':
 					translatedMounts[guestPath] = {
 						hostPath: mount.hostPath,
@@ -412,6 +419,9 @@ function wrapManagedVm(
 				serverHostKey: access.serverHostKey,
 				user: access.user,
 			};
+		},
+		async finalizeMemoryMount(request): Promise<void> {
+			await nativeVm.finalizeMemoryMount(request);
 		},
 		exec(command: ManagedVmExecCommand, options?: ManagedVmExecOptions): ManagedVmExecProcess {
 			const normalizedCommand = typeof command === 'string' ? command : [...command];

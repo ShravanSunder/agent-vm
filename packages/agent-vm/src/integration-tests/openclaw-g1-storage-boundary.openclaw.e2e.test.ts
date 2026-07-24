@@ -101,6 +101,7 @@ function hostSourcePathFromMount(mount: ManagedVmMount): string | undefined {
 		case 'owned-host-directory':
 		case 'owned-filtered-workspace':
 			return mount.directory.identity.canonicalPath;
+		case 'finalizable-memory':
 		case 'memory':
 			return undefined;
 	}

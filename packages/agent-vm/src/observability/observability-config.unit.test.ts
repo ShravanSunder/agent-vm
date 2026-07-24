@@ -173,6 +173,7 @@ describe('createObservabilityRuntimeConfig', () => {
 			config: '/tmp/hermes/config.yaml',
 			profilesByAgent: { main: 'main-profile' },
 		};
+		delete firstZone.secrets.OPENCLAW_GATEWAY_TOKEN;
 		const loadedConfig = createLoadedSystemConfig(configInput, {
 			systemConfigPath: '/tmp/config/system.json',
 		});

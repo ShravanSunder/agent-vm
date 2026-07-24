@@ -10,7 +10,7 @@ import {
 const openClawFrameworkService = {
 	bootEntry: 'openclaw-gateway',
 	configurationInputPath: '/run/agent-vm/managed-gateway/framework-service.json',
-	environmentInputPath: '/run/agent-vm/managed-gateway/framework.environment.sh',
+	environmentInputPath: '/run/agent-vm/managed-gateway-environment/framework.environment.sh',
 	framework: 'openclaw',
 	ingress: { guestPort: 18789, kind: 'framework-http' },
 	logIdentity: {
@@ -30,7 +30,7 @@ describe('managed Gateway boot composition', () => {
 		expect(contract.toolPortalService).toMatchObject({
 			bootEntry: 'agent-vm-gateway-runtime',
 			configurationInputPath: '/run/agent-vm/managed-gateway/tool-portal-service.json',
-			environmentInputPath: '/run/agent-vm/managed-gateway/tool-portal.environment.sh',
+			environmentInputPath: '/run/agent-vm/managed-gateway-environment/tool-portal.environment.sh',
 			role: 'tool-portal-service',
 		});
 		expect(contract.frameworkService).toEqual(openClawFrameworkService);
@@ -38,10 +38,10 @@ describe('managed Gateway boot composition', () => {
 		expect(Object.isFrozen(contract.toolPortalService)).toBe(true);
 	});
 
-	it('separates the controller-mounted staging root from service-owned runtime inputs', () => {
+	it('separates writable environment staging from read-only structured inputs', () => {
 		expect(managedGatewayBootInputPaths).toEqual({
-			runtimeRoot: '/run/agent-vm/managed-gateway',
-			stagingRoot: '/run/agent-vm/managed-gateway-inputs',
+			environmentRoot: '/run/agent-vm/managed-gateway-environment',
+			structuredRoot: '/run/agent-vm/managed-gateway',
 		});
 		expect(Object.isFrozen(managedGatewayBootInputPaths)).toBe(true);
 	});

@@ -1,0 +1,585 @@
+import { createHash } from 'node:crypto';
+import { access, lstat, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+
+import type { ManagedVmCreateRequest } from '@agent-vm/managed-vm';
+import { afterAll, describe, expect, it } from 'vitest';
+
+import type { GatewayZoneVmOperations } from '../gateway/gateway-zone-support.js';
+import {
+	canRunManagedVmE2e,
+	currentE2eArchitecture,
+	prepareGatewayE2eProjectImages,
+	removeE2eTempRoot,
+	startE2eControllerRuntime,
+	startE2eGatewayZone,
+	type E2eHarnessRuntime,
+} from './e2e-harness.js';
+import {
+	scaffoldHermesE2eProject,
+	useLocalHermesGatewayImagePackages,
+	type HermesE2eProject,
+} from './hermes-e2e-harness.js';
+
+const architecture = currentE2eArchitecture();
+const runHermesDiscordProfileSecretsE2e =
+	process.env.AGENT_VM_HERMES_E2E === '1' && (await canRunManagedVmE2e({ architecture }));
+const describeHermesDiscordProfileSecretsE2e = runHermesDiscordProfileSecretsE2e
+	? describe
+	: describe.skip;
+
+const agentIds = ['clawfest', 'beta'] as const;
+const discordSecretEnvironmentNames = {
+	beta: 'DISCORD_BOT_TOKEN_BETA',
+	clawfest: 'DISCORD_BOT_TOKEN_CLAWFEST',
+} as const;
+const mediatedSecretEnvironmentName = 'HERMES_E2E_MEDIATED_SECRET';
+const mediatedHost = 'hermes-profile-secrets.vm.host';
+const durableSiblingFileName = 'durable-profile-state.txt';
+
+type AgentId = (typeof agentIds)[number];
+
+interface GenerationCanaries {
+	readonly discordByAgent: Readonly<Record<AgentId, string>>;
+	readonly mediated: string;
+}
+
+interface GatewayStartObservation {
+	readonly request: ManagedVmCreateRequest;
+	readonly vm: GatewayZoneVmOperations;
+}
+
+interface GuestProfileFileObservation {
+	readonly digest: string;
+	readonly mode: string;
+	readonly profileName: AgentId;
+	readonly regularFile: boolean;
+}
+
+interface GuestEnvironmentObservation {
+	readonly environmentScriptsRemain: boolean;
+	readonly toolPortalContainsRawValue: boolean;
+	readonly toolPortalContainsSourceName: boolean;
+	readonly vmWideContainsRawValue: boolean;
+	readonly vmWideContainsSourceName: boolean;
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function sha256(value: string): string {
+	return createHash('sha256').update(value).digest('hex');
+}
+
+function createGenerationCanaries(generation: 'first' | 'second'): GenerationCanaries {
+	return {
+		discordByAgent: {
+			beta: `non-secret-beta-${generation}-generation-canary`,
+			clawfest: `non-secret-clawfest-${generation}-generation-canary`,
+		},
+		mediated: `non-secret-mediated-${generation}-generation-canary`,
+	};
+}
+
+async function configureHermesProfileSecrets(project: HermesE2eProject): Promise<void> {
+	Object.assign(project.zone.gateway, {
+		discordBotTokenSecretsByAgent: discordSecretEnvironmentNames,
+	});
+	for (const agentId of agentIds) {
+		const secretEnvironmentName = discordSecretEnvironmentNames[agentId];
+		project.zone.secrets[secretEnvironmentName] = {
+			audience: 'gateway',
+			envVar: secretEnvironmentName,
+			injection: 'env',
+			source: 'environment',
+		};
+	}
+	project.zone.secrets[mediatedSecretEnvironmentName] = {
+		audience: 'gateway',
+		envVar: mediatedSecretEnvironmentName,
+		hosts: [mediatedHost],
+		injection: 'http-mediation',
+		source: 'environment',
+	};
+	project.zone.egressHosts = [
+		...(project.zone.egressHosts ?? []),
+		{ audience: 'gateway', host: mediatedHost },
+	];
+	const existingConfiguration = await readFile(project.zone.gateway.config, 'utf8');
+	await writeFile(
+		project.zone.gateway.config,
+		`${existingConfiguration.trimEnd()}\nsecrets:\n  preserve_existing:\n    - DISCORD_BOT_TOKEN\n`,
+		'utf8',
+	);
+}
+
+function generationSecretInputs(generationCanaries: GenerationCanaries): Record<string, string> {
+	return {
+		[discordSecretEnvironmentNames.beta]: generationCanaries.discordByAgent.beta,
+		[discordSecretEnvironmentNames.clawfest]: generationCanaries.discordByAgent.clawfest,
+		[mediatedSecretEnvironmentName]: generationCanaries.mediated,
+		GITHUB_TOKEN: 'unused-hermes-profile-secrets-e2e-token',
+	};
+}
+
+function requireProfileFileObservations(output: string): readonly GuestProfileFileObservation[] {
+	const parsed: unknown = JSON.parse(output);
+	if (
+		!Array.isArray(parsed) ||
+		parsed.some(
+			(observation) =>
+				!isObjectRecord(observation) ||
+				typeof observation.digest !== 'string' ||
+				typeof observation.mode !== 'string' ||
+				typeof observation.profileName !== 'string' ||
+				typeof observation.regularFile !== 'boolean',
+		)
+	) {
+		throw new Error('Hermes guest profile-file observation had an invalid safe result shape.');
+	}
+	return parsed.map((observation) => ({
+		digest: String(observation.digest),
+		mode: String(observation.mode),
+		profileName: observation.profileName as AgentId,
+		regularFile: Boolean(observation.regularFile),
+	}));
+}
+
+async function inspectGuestProfileFiles(
+	vm: GatewayZoneVmOperations,
+): Promise<readonly GuestProfileFileObservation[]> {
+	const result = await vm.exec(`
+python3 - <<'PY'
+import hashlib
+import json
+import os
+import stat
+
+observations = []
+for profile_name in ("clawfest", "beta"):
+    file_path = f"/home/hermes/.hermes/profiles/{profile_name}/.env"
+    file_stat = os.lstat(file_path)
+    with open(file_path, "rb") as profile_file:
+        digest = hashlib.sha256(profile_file.read()).hexdigest()
+    observations.append({
+        "digest": digest,
+        "mode": format(stat.S_IMODE(file_stat.st_mode), "03o"),
+        "profileName": profile_name,
+        "regularFile": stat.S_ISREG(file_stat.st_mode) and not stat.S_ISLNK(file_stat.st_mode),
+    })
+print(json.dumps(observations, sort_keys=True))
+PY
+`);
+	if (!result.ok) {
+		throw new Error(
+			`Hermes guest profile-file inspection failed: exit=${String(result.exitCode)} stderr=${result.stderr}`,
+		);
+	}
+	return requireProfileFileObservations(result.stdout);
+}
+
+function requireEnvironmentObservation(output: string): GuestEnvironmentObservation {
+	const parsed: unknown = JSON.parse(output);
+	if (
+		!isObjectRecord(parsed) ||
+		typeof parsed.environmentScriptsRemain !== 'boolean' ||
+		typeof parsed.toolPortalContainsRawValue !== 'boolean' ||
+		typeof parsed.toolPortalContainsSourceName !== 'boolean' ||
+		typeof parsed.vmWideContainsRawValue !== 'boolean' ||
+		typeof parsed.vmWideContainsSourceName !== 'boolean'
+	) {
+		throw new Error('Hermes guest environment observation had an invalid safe result shape.');
+	}
+	return {
+		environmentScriptsRemain: parsed.environmentScriptsRemain,
+		toolPortalContainsRawValue: parsed.toolPortalContainsRawValue,
+		toolPortalContainsSourceName: parsed.toolPortalContainsSourceName,
+		vmWideContainsRawValue: parsed.vmWideContainsRawValue,
+		vmWideContainsSourceName: parsed.vmWideContainsSourceName,
+	};
+}
+
+async function inspectGuestEnvironments(options: {
+	readonly canaries: GenerationCanaries;
+	readonly vm: GatewayZoneVmOperations;
+}): Promise<GuestEnvironmentObservation> {
+	const rawValueDigests = Object.values(options.canaries.discordByAgent).map(sha256);
+	const result = await options.vm.exec(['python3', '-', ...rawValueDigests], {
+		stdin: `
+import hashlib
+import json
+import os
+import sys
+
+raw_value_digests = set(sys.argv[1:])
+source_names = {
+    b"DISCORD_BOT_TOKEN_CLAWFEST",
+    b"DISCORD_BOT_TOKEN_BETA",
+}
+
+def inspect_environment(process_id):
+    try:
+        entries = [
+            entry
+            for entry in open(f"/proc/{process_id}/environ", "rb").read().split(b"\\0")
+            if entry
+        ]
+    except (FileNotFoundError, PermissionError):
+        return {"containsRawValue": False, "containsSourceName": False}
+    names = {entry.partition(b"=")[0] for entry in entries}
+    values = [entry.partition(b"=")[2] for entry in entries]
+    return {
+        "containsRawValue": any(
+            hashlib.sha256(value).hexdigest() in raw_value_digests
+            for value in values
+        ),
+        "containsSourceName": bool(names & source_names),
+    }
+
+tool_portal_process_ids = []
+for process_id in os.listdir("/proc"):
+    if not process_id.isdigit():
+        continue
+    try:
+        command_line = open(f"/proc/{process_id}/cmdline", "rb").read()
+    except (FileNotFoundError, PermissionError):
+        continue
+    if b"agent-vm-gateway-runtime" in command_line:
+        tool_portal_process_ids.append(process_id)
+if len(tool_portal_process_ids) != 1:
+    raise RuntimeError(
+        f"expected one Tool Portal process, observed {len(tool_portal_process_ids)}"
+    )
+
+vm_wide = inspect_environment("1")
+tool_portal = inspect_environment(tool_portal_process_ids[0])
+print(json.dumps({
+    "environmentScriptsRemain": any(
+        os.path.exists(path)
+        for path in (
+            "/run/agent-vm/managed-gateway-environment/framework.environment.sh",
+            "/run/agent-vm/managed-gateway-environment/tool-portal.environment.sh",
+        )
+    ),
+    "toolPortalContainsRawValue": tool_portal["containsRawValue"],
+    "toolPortalContainsSourceName": tool_portal["containsSourceName"],
+    "vmWideContainsRawValue": vm_wide["containsRawValue"],
+    "vmWideContainsSourceName": vm_wide["containsSourceName"],
+}, sort_keys=True))
+`,
+	});
+	if (!result.ok) {
+		throw new Error(
+			`Hermes guest environment inspection failed: exit=${String(result.exitCode)} stderr=${result.stderr}`,
+		);
+	}
+	return requireEnvironmentObservation(result.stdout);
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+	return await access(filePath)
+		.then(() => true)
+		.catch((error: unknown): false => {
+			if (isObjectRecord(error) && error.code === 'ENOENT') return false;
+			throw error;
+		});
+}
+
+async function collectCanaryLeakPaths(
+	rootPaths: readonly string[],
+	canaries: readonly string[],
+): Promise<readonly string[]> {
+	const canaryBuffers = canaries.map((canary) => Buffer.from(canary));
+	const leakedPaths: string[] = [];
+	const visit = async (candidatePath: string): Promise<void> => {
+		const candidateStat = await lstat(candidatePath).catch((error: unknown) => {
+			if (isObjectRecord(error) && error.code === 'ENOENT') return undefined;
+			throw error;
+		});
+		if (candidateStat === undefined || candidateStat.isSymbolicLink()) return;
+		if (candidateStat.isDirectory()) {
+			const childNames = await readdir(candidatePath);
+			for (const childName of childNames) {
+				// oxlint-disable-next-line eslint/no-await-in-loop -- deterministic bounded durable-tree inspection
+				await visit(path.join(candidatePath, childName));
+			}
+			return;
+		}
+		if (!candidateStat.isFile()) return;
+		const contents = await readFile(candidatePath);
+		if (canaryBuffers.some((canary) => contents.includes(canary))) {
+			leakedPaths.push(candidatePath);
+		}
+	};
+	for (const rootPath of rootPaths) {
+		// oxlint-disable-next-line eslint/no-await-in-loop -- deterministic bounded durable-root inspection
+		await visit(rootPath);
+	}
+	return leakedPaths;
+}
+
+async function inspectDurableProfileState(options: {
+	readonly durableSiblingPaths: Readonly<Record<AgentId, string>>;
+	readonly stateDir: string;
+}): Promise<
+	readonly {
+		readonly durableSiblingContent: string;
+		readonly lowerEnvironmentFileExists: boolean;
+		readonly profileName: AgentId;
+	}[]
+> {
+	return await Promise.all(
+		agentIds.map(async (agentId) => ({
+			durableSiblingContent: await readFile(options.durableSiblingPaths[agentId], 'utf8'),
+			lowerEnvironmentFileExists: await pathExists(
+				path.join(options.stateDir, 'profiles', agentId, '.env'),
+			),
+			profileName: agentId,
+		})),
+	);
+}
+
+async function startGeneration(options: {
+	readonly canaries: GenerationCanaries;
+	readonly project: HermesE2eProject;
+}): Promise<{
+	readonly gateway: GatewayStartObservation;
+	readonly harness: E2eHarnessRuntime;
+}> {
+	let managedVmCreateRequest: ManagedVmCreateRequest | undefined;
+	let gatewayVm: GatewayZoneVmOperations | undefined;
+	const harness = await startE2eControllerRuntime({
+		secrets: generationSecretInputs(options.canaries),
+		startGatewayZone: async (startOptions) => {
+			const result = await startE2eGatewayZone(startOptions, {
+				onManagedVmCreateRequest: (request) => {
+					managedVmCreateRequest = request;
+				},
+			});
+			if (result.executionModel !== 'managed-gateway') {
+				throw new Error('Hermes profile-secret E2E requires a managed Gateway boot.');
+			}
+			gatewayVm = result.vm;
+			return result;
+		},
+		startOptions: {
+			systemConfig: options.project.systemConfig,
+			zoneIds: [options.project.zone.id],
+		},
+	});
+	if (managedVmCreateRequest === undefined || gatewayVm === undefined) {
+		await harness.close({ preserveTempRoot: true });
+		throw new Error('Hermes profile-secret E2E did not observe the managed Gateway boot.');
+	}
+	return {
+		gateway: {
+			request: managedVmCreateRequest,
+			vm: gatewayVm,
+		},
+		harness,
+	};
+}
+
+function assertSafeManagedVmRequest(options: {
+	readonly canaries: GenerationCanaries;
+	readonly request: ManagedVmCreateRequest;
+}): void {
+	const rawDiscordValues = Object.values(options.canaries.discordByAgent);
+	expect(Object.keys(options.request.environment)).not.toContain(
+		discordSecretEnvironmentNames.clawfest,
+	);
+	expect(Object.keys(options.request.environment)).not.toContain(
+		discordSecretEnvironmentNames.beta,
+	);
+	expect(
+		Object.values(options.request.environment).some((value) => rawDiscordValues.includes(value)),
+	).toBe(false);
+	expect(Object.keys(options.request.environment)).not.toContain(mediatedSecretEnvironmentName);
+	expect(Object.values(options.request.environment)).not.toContain(options.canaries.mediated);
+	const hermesHomeMount = options.request.mounts['/home/hermes/.hermes'];
+	expect(
+		hermesHomeMount?.kind === 'shadow' ? [...hermesHomeMount.temporaryFilesystems].toSorted() : [],
+	).toEqual(['/profiles/beta/.env', '/profiles/clawfest/.env']);
+	const mediatedDescriptor = options.request.mediatedSecrets.find(
+		(descriptor) => descriptor.environmentVariable === mediatedSecretEnvironmentName,
+	);
+	expect(mediatedDescriptor).toBeDefined();
+	expect(mediatedDescriptor?.allowedHosts).toEqual([mediatedHost]);
+	expect(mediatedDescriptor?.guestPlaceholder).toEqual(expect.any(String));
+	expect(mediatedDescriptor?.guestPlaceholder).not.toBe('');
+	expect(mediatedDescriptor?.guestPlaceholder).not.toBe(options.canaries.mediated);
+	expect(mediatedDescriptor?.value).toBe(options.canaries.mediated);
+}
+
+function assertGuestProfileFiles(
+	observations: readonly GuestProfileFileObservation[],
+	canaries: GenerationCanaries,
+): void {
+	expect(
+		observations.map((observation) => ({
+			digest: observation.digest,
+			mode: observation.mode,
+			profileName: observation.profileName,
+			regularFile: observation.regularFile,
+		})),
+	).toEqual(
+		agentIds.map((agentId) => ({
+			digest: sha256(`DISCORD_BOT_TOKEN=${canaries.discordByAgent[agentId]}`),
+			mode: '600',
+			profileName: agentId,
+			regularFile: true,
+		})),
+	);
+}
+
+describeHermesDiscordProfileSecretsE2e(
+	'e2e: Hermes Discord profile secrets remain memory-only across Gateway boots',
+	() => {
+		let activeHarness: E2eHarnessRuntime | undefined;
+		let project: HermesE2eProject | undefined;
+
+		afterAll(async () => {
+			try {
+				await activeHarness?.close();
+			} finally {
+				if (project) await removeE2eTempRoot(project.tempRoot);
+			}
+		});
+
+		it('rebuilds exact profile files from protected service inputs without durable leakage', async () => {
+			const repoRoot = path.resolve(process.cwd());
+			const firstGeneration = createGenerationCanaries('first');
+			const secondGeneration = createGenerationCanaries('second');
+			project = await scaffoldHermesE2eProject({
+				agents: agentIds,
+				architecture,
+				prefix: 'hermes-managed-base-environment-e2e-',
+				zoneId: 'hermes-discord-profile-secrets-e2e',
+			});
+			await configureHermesProfileSecrets(project);
+			const durableSiblingPaths = Object.fromEntries(
+				agentIds.map((agentId) => [
+					agentId,
+					path.join(
+						project?.zone.gateway.stateDir ?? '',
+						'profiles',
+						agentId,
+						durableSiblingFileName,
+					),
+				]),
+			) as Readonly<Record<AgentId, string>>;
+			await Promise.all(
+				agentIds.map(async (agentId) => {
+					const durableSiblingPath = durableSiblingPaths[agentId];
+					await mkdir(path.dirname(durableSiblingPath), { recursive: true });
+					await writeFile(durableSiblingPath, `durable-${agentId}\n`, 'utf8');
+				}),
+			);
+			await useLocalHermesGatewayImagePackages({
+				architecture,
+				profileName: project.zone.gateway.imageProfile,
+				projectRoot: project.tempRoot,
+				repoRoot,
+				systemConfig: project.systemConfig,
+			});
+			await prepareGatewayE2eProjectImages({ project });
+
+			const firstBoot = await startGeneration({
+				canaries: firstGeneration,
+				project,
+			});
+			activeHarness = firstBoot.harness;
+			assertSafeManagedVmRequest({
+				canaries: firstGeneration,
+				request: firstBoot.gateway.request,
+			});
+			assertGuestProfileFiles(
+				await inspectGuestProfileFiles(firstBoot.gateway.vm),
+				firstGeneration,
+			);
+			expect(
+				await inspectGuestEnvironments({
+					canaries: firstGeneration,
+					vm: firstBoot.gateway.vm,
+				}),
+			).toEqual({
+				environmentScriptsRemain: false,
+				toolPortalContainsRawValue: false,
+				toolPortalContainsSourceName: false,
+				vmWideContainsRawValue: false,
+				vmWideContainsSourceName: false,
+			});
+			expect(
+				await inspectDurableProfileState({
+					durableSiblingPaths,
+					stateDir: project.zone.gateway.stateDir,
+				}),
+			).toEqual(
+				agentIds.map((agentId) => ({
+					durableSiblingContent: `durable-${agentId}\n`,
+					lowerEnvironmentFileExists: false,
+					profileName: agentId,
+				})),
+			);
+
+			await activeHarness.close({ preserveTempRoot: true });
+			activeHarness = undefined;
+			expect(firstBoot.gateway.vm.getHostProcessId()).toBeNull();
+
+			const secondBoot = await startGeneration({
+				canaries: secondGeneration,
+				project,
+			});
+			activeHarness = secondBoot.harness;
+			assertSafeManagedVmRequest({
+				canaries: secondGeneration,
+				request: secondBoot.gateway.request,
+			});
+			assertGuestProfileFiles(
+				await inspectGuestProfileFiles(secondBoot.gateway.vm),
+				secondGeneration,
+			);
+			expect(
+				await inspectGuestEnvironments({
+					canaries: secondGeneration,
+					vm: secondBoot.gateway.vm,
+				}),
+			).toEqual({
+				environmentScriptsRemain: false,
+				toolPortalContainsRawValue: false,
+				toolPortalContainsSourceName: false,
+				vmWideContainsRawValue: false,
+				vmWideContainsSourceName: false,
+			});
+			expect(
+				await inspectDurableProfileState({
+					durableSiblingPaths,
+					stateDir: project.zone.gateway.stateDir,
+				}),
+			).toEqual(
+				agentIds.map((agentId) => ({
+					durableSiblingContent: `durable-${agentId}\n`,
+					lowerEnvironmentFileExists: false,
+					profileName: agentId,
+				})),
+			);
+			expect(
+				await collectCanaryLeakPaths(
+					[
+						project.zone.gateway.stateDir,
+						project.zone.gateway.zoneFilesDir,
+						project.zone.gateway.zoneRuntimeDir,
+						project.systemConfig.controllerStateDir,
+					],
+					[
+						...Object.values(firstGeneration.discordByAgent),
+						firstGeneration.mediated,
+						...Object.values(secondGeneration.discordByAgent),
+						secondGeneration.mediated,
+					],
+				),
+			).toEqual([]);
+		}, 900_000);
+	},
+);

@@ -240,6 +240,7 @@ export interface PrepareGatewayE2eProjectImagesOptions {
 }
 
 export interface StartE2eControllerRuntimeOptions {
+	readonly onControllerManagedVmCreateRequest?: (request: ManagedVmCreateRequest) => void;
 	readonly onLeaseCreateRequest?: ControllerRuntimeDependencies['onLeaseCreateRequest'];
 	readonly secrets: E2eHarnessSecretMap;
 	readonly startGatewayZone?: ControllerRuntimeDependencies['startGatewayZone'];
@@ -2021,8 +2022,18 @@ export async function startE2eControllerRuntime(
 	const secretResolver = createSmokeSecretResolver(options.secrets);
 	const tempRoot = path.dirname(path.dirname(options.startOptions.systemConfig.systemConfigPath));
 	try {
+		const managedVmFactory =
+			options.onControllerManagedVmCreateRequest === undefined
+				? managedVmRuntimeComposition.managedVmFactory
+				: {
+						createManagedVm: async (request: ManagedVmCreateRequest) => {
+							options.onControllerManagedVmCreateRequest?.(request);
+							return await managedVmRuntimeComposition.managedVmFactory.createManagedVm(request);
+						},
+					};
 		const runtime = await startControllerRuntime(options.startOptions, {
 			...managedVmRuntimeComposition,
+			managedVmFactory,
 			createSecretResolver: async (): Promise<SecretResolver> => secretResolver,
 			...(options.onLeaseCreateRequest === undefined
 				? {}

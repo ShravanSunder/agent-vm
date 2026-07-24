@@ -426,7 +426,7 @@ Managed OpenClaw zones may declare multiple trusted agents in zones[].agents. Us
 		{
 			relativePath: 'docs/manual/channels.md',
 			content: generatedPage(
-				'OpenClaw Channels',
+				'Gateway Channels',
 				`
 Discord is configured by the deployment, not by agent-vm defaults.
 
@@ -448,6 +448,13 @@ Discord recipe:
 - Pin @openclaw/discord in vm-images/gateways/openclaw/overlay.jsonc only when the deployment needs to override the managed default version.
 - Do not add runtimeAuthHints to OpenClaw zones; they are worker gateway runtime instructions only.
 - Tool VM secrets must use injection http-mediation and declare agentAccess as "all" or a non-empty list of declared zone agent ids. source environment is allowed only as the controller-side source for mediated Tool VM secrets; never use injection env for Tool VM audience.
+
+Managed Hermes Discord recipe:
+- Map every profilesByAgent agent to one distinct zone secret with gateway.discordBotTokenSecretsByAgent.
+- Each mapped Discord secret must use injection env and audience gateway. Other application and provider credentials remain HTTP-mediated.
+- Include DISCORD_BOT_TOKEN in the managed Hermes secrets.preserve_existing list.
+- Agent VM confines the raw values to the protected Hermes service; the existing adapter writes only the exact memory-backed profiles/<profile>/.env files before stock Hermes starts.
+- Durable root .env and mapped profile .env files are rejected. Remove known legacy files explicitly before starting the zone; do not add migration or copy-back behavior.
 `,
 			),
 		},

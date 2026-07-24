@@ -1167,6 +1167,37 @@ managed workspace Git push path is controller-owned over HTTPS through the
 `workspace_git_push` Tool Portal host action; do not add a workspace Git push
 token to the gateway VM.
 
+For managed Hermes Discord profiles,
+`gateway.discordBotTokenSecretsByAgent` maps each declared agent id to one
+distinct zone secret name:
+
+```jsonc
+{
+  "profilesByAgent": {
+    "clawfest": "clawfest",
+    "beta": "beta"
+  },
+  "discordBotTokenSecretsByAgent": {
+    "clawfest": "DISCORD_BOT_TOKEN_CLAWFEST",
+    "beta": "DISCORD_BOT_TOKEN_BETA"
+  }
+}
+```
+
+The mapping keys must exactly match `profilesByAgent`. Each mapped secret must
+use `injection: "env"` and `audience: "gateway"`; Discord is the raw Gateway
+environment exception because Hermes uses the token for both HTTP and WebSocket
+traffic. Agent VM passes the values only to the protected Hermes service. The
+existing Hermes adapter writes each value as `DISCORD_BOT_TOKEN` in the exact
+memory-backed `profiles/<profile>/.env`, removes the authored source variable,
+and then starts stock Hermes. The managed Hermes configuration must include
+`DISCORD_BOT_TOKEN` in `secrets.preserve_existing` so external secret sources
+cannot replace a profile's assigned token. The rest of `stateDir` remains
+durable RealFS.
+Preflight rejects durable root or mapped profile `.env` files; remove known
+legacy files explicitly before starting the zone. Other application and
+provider credentials remain HTTP-mediated.
+
 `zones[].gateway.runtimeRootfsSize` optionally requests a minimum runtime root
 disk size for the gateway VM, using Gondolin `rootfs.size`. The base image is
 not rebuilt for this value; Gondolin grows the writable root disk and runs

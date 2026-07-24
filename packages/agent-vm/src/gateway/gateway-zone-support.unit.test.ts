@@ -82,6 +82,10 @@ describe('mapSystemGatewayZoneToLifecycleZone', () => {
 				cpus: 2,
 				port: 8642,
 				config: './gateways/hermes/config.yaml',
+				discordBotTokenSecretsByAgent: {
+					researcher: 'DISCORD_BOT_TOKEN_RESEARCHER',
+					reviewer: 'DISCORD_BOT_TOKEN_REVIEWER',
+				},
 				stateDir: './state/hermes',
 				zoneFilesDir: './zone-files/hermes',
 				zoneRuntimeDir: './hermes/runtime',
@@ -98,6 +102,10 @@ describe('mapSystemGatewayZoneToLifecycleZone', () => {
 			cpus: 2,
 			port: 8642,
 			config: './gateways/hermes/config.yaml',
+			discordBotTokenSecretsByAgent: {
+				researcher: 'DISCORD_BOT_TOKEN_RESEARCHER',
+				reviewer: 'DISCORD_BOT_TOKEN_REVIEWER',
+			},
 			stateDir: './state/hermes',
 			ssh: { secretEnv: 'explicit' },
 			zoneFilesDir: './zone-files/hermes',

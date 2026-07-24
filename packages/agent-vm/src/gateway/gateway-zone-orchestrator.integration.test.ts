@@ -29,6 +29,7 @@ import type {
 	ManagedVm,
 	ManagedVmCreateRequest,
 	ManagedVmFactory,
+	ManagedVmFinalizeMemoryMountRequest,
 	ManagedVmImageBuildResult,
 	ManagedVmImageCapability,
 	ManagedVmOwnedDirectoryCapability,
@@ -109,6 +110,7 @@ interface TestGatewayStartHarnessOptions {
 		readonly connectOptions: Parameters<GatewayControlSessionConnector>[0];
 		readonly snapshot: GatewayRuntimeReadinessSnapshot;
 	}) => void;
+	readonly preserveMissingFinalizableMemoryMountCapability?: boolean;
 	readonly runtimeReadinessSemanticRevision?: string;
 }
 
@@ -320,6 +322,10 @@ function withTestVmOwnership(
 
 const testControlConnectionId = '55555555-5555-4555-8555-555555555555';
 const testControlSessionId = '33333333-3333-4333-8333-333333333333';
+const managedGatewayBootInputCaptures = new WeakMap<
+	ManagedVmCreateRequest,
+	Map<string, ManagedVmFinalizeMemoryMountRequest>
+>();
 
 const connectTestGatewayControlSession: GatewayControlSessionConnector = async () => ({
 	close: vi.fn(),
@@ -353,13 +359,17 @@ const connectTestGatewayControlSession: GatewayControlSessionConnector = async (
 });
 
 async function dispatchTestGatewayRuntimeReadiness(options: {
-	readonly bootInputDirectoryPath: string;
 	readonly connectOptions: Parameters<GatewayControlSessionConnector>[0];
+	readonly managedVmCreateRequest: ManagedVmCreateRequest;
 	readonly semanticRevision?: string;
 }): Promise<GatewayRuntimeReadinessSnapshot> {
 	const serviceConfig = GatewayRuntimeServiceConfigSchema.parse(
 		JSON.parse(
-			await readFile(path.join(options.bootInputDirectoryPath, 'tool-portal-service.json'), 'utf8'),
+			requireManagedGatewayBootInputFile(
+				options.managedVmCreateRequest,
+				managedGatewayBootInputPaths.structuredRoot,
+				'tool-portal-service.json',
+			),
 		),
 	);
 	const expectedAttachment = {
@@ -499,7 +509,7 @@ function startGatewayZone(
 	harnessOptions: TestGatewayStartHarnessOptions = {},
 ): Promise<GatewayZoneStartResult> {
 	let createdVmId: string | undefined;
-	let managedGatewayBootInputDirectoryPath: string | undefined;
+	let managedVmCreateRequest: ManagedVmCreateRequest | undefined;
 	let runnerDetached = false;
 	const suppliedManagedVmFactory = dependencies.managedVmFactory;
 	const startOptions = withTestVmOwnership(
@@ -530,11 +540,11 @@ function startGatewayZone(
 			)(connectOptions);
 			if (
 				harnessOptions.dispatchRuntimeReadiness !== false &&
-				managedGatewayBootInputDirectoryPath !== undefined
+				managedVmCreateRequest !== undefined
 			) {
 				const snapshot = await dispatchTestGatewayRuntimeReadiness({
-					bootInputDirectoryPath: managedGatewayBootInputDirectoryPath,
 					connectOptions,
+					managedVmCreateRequest,
 					...(harnessOptions.runtimeReadinessSemanticRevision === undefined
 						? {}
 						: {
@@ -547,11 +557,30 @@ function startGatewayZone(
 		},
 		managedVmFactory: {
 			createManagedVm: async (createOptions: GatewayManagedVmFactoryOptions) => {
-				const bootInputMount = createOptions.mounts[managedGatewayBootInputPaths.stagingRoot];
-				if (bootInputMount?.kind === 'owned-host-directory') {
-					managedGatewayBootInputDirectoryPath = bootInputMount.directory.identity.canonicalPath;
-				}
+				managedVmCreateRequest = createOptions;
+				const capturedFinalizations = new Map<string, ManagedVmFinalizeMemoryMountRequest>();
+				managedGatewayBootInputCaptures.set(createOptions, capturedFinalizations);
 				const managedVm = await suppliedManagedVmFactory.createManagedVm(createOptions);
+				const finalizeMemoryMount = managedVm.finalizeMemoryMount?.bind(managedVm);
+				if (
+					finalizeMemoryMount !== undefined ||
+					harnessOptions.preserveMissingFinalizableMemoryMountCapability !== true
+				) {
+					Object.defineProperty(managedVm, 'finalizeMemoryMount', {
+						configurable: true,
+						value: async (request: ManagedVmFinalizeMemoryMountRequest): Promise<void> => {
+							await finalizeMemoryMount?.(request);
+							capturedFinalizations.set(request.guestPath, {
+								files: request.files.map((file) => ({
+									contents: new Uint8Array(file.contents),
+									mode: file.mode,
+									relativePath: file.relativePath,
+								})),
+								guestPath: request.guestPath,
+							});
+						},
+					});
+				}
 				const getHostProcessId = managedVm.getHostProcessId.bind(managedVm);
 				Object.defineProperty(managedVm, 'getHostProcessId', {
 					configurable: true,
@@ -1078,6 +1107,10 @@ async function createHermesSystemConfig(): Promise<LoadedSystemConfig> {
 				gateway: {
 					config: path.join(configDir, 'hermes.yaml'),
 					cpus: openClawZone.gateway.cpus,
+					discordBotTokenSecretsByAgent: {
+						main: 'DISCORD_BOT_TOKEN_MAIN',
+						second: 'DISCORD_BOT_TOKEN_SECOND',
+					},
 					imageProfile: 'hermes',
 					memory: openClawZone.gateway.memory,
 					port: openClawZone.gateway.port,
@@ -1097,6 +1130,18 @@ async function createHermesSystemConfig(): Promise<LoadedSystemConfig> {
 						injection: 'env',
 						source: 'config',
 						value: 'test-hermes-api-server-key',
+					},
+					DISCORD_BOT_TOKEN_MAIN: {
+						audience: 'gateway',
+						injection: 'env',
+						source: 'config',
+						value: 'test-hermes-main-discord-token',
+					},
+					DISCORD_BOT_TOKEN_SECOND: {
+						audience: 'gateway',
+						injection: 'env',
+						source: 'config',
+						value: 'test-hermes-second-discord-token',
 					},
 				},
 			},
@@ -1227,6 +1272,7 @@ function createHealthyGatewayVmStub(
 	readonly configureIngressRoutes: Mock<ManagedVm['configureIngressRoutes']>;
 	readonly enableIngress: Mock<ManagedVm['enableIngress']>;
 	readonly exec: Mock<ManagedVm['exec']>;
+	readonly finalizeMemoryMount: Mock<NonNullable<ManagedVm['finalizeMemoryMount']>>;
 	readonly managedVm: ManagedVm;
 	readonly start: Mock<ManagedVm['start']>;
 } {
@@ -1234,12 +1280,14 @@ function createHealthyGatewayVmStub(
 	const configureIngressRoutes = vi.fn<ManagedVm['configureIngressRoutes']>();
 	const enableIngress = vi.fn(async () => createTestIngressAccess());
 	const exec = vi.fn(() => createManagedExecProcessStub({ stdout: '200' }));
+	const finalizeMemoryMount = vi.fn<NonNullable<ManagedVm['finalizeMemoryMount']>>(async () => {});
 	const start = vi.fn(async () => {});
 	return {
 		close,
 		configureIngressRoutes,
 		enableIngress,
 		exec,
+		finalizeMemoryMount,
 		managedVm: {
 			id: vmId,
 			start,
@@ -1247,6 +1295,7 @@ function createHealthyGatewayVmStub(
 			enableIngress,
 			enableSsh: vi.fn(async () => createTestSshAccess()),
 			exec,
+			finalizeMemoryMount,
 			getHostProcessId: vi.fn(() => pid),
 			configureIngressRoutes,
 		},
@@ -1254,17 +1303,20 @@ function createHealthyGatewayVmStub(
 	};
 }
 
-function requireManagedGatewayBootInputDirectoryPath(
+function requireManagedGatewayBootInputFile(
 	createRequest: ManagedVmCreateRequest | undefined,
+	guestPath: string,
+	relativePath: string,
 ): string {
 	if (createRequest === undefined) {
 		throw new Error('Expected managed Gateway VM creation request.');
 	}
-	const bootInputMount = createRequest.mounts[managedGatewayBootInputPaths.stagingRoot];
-	if (bootInputMount?.kind !== 'owned-host-directory') {
-		throw new Error('Expected managed Gateway protected boot-input mount.');
+	const finalization = managedGatewayBootInputCaptures.get(createRequest)?.get(guestPath);
+	const file = finalization?.files.find((candidate) => candidate.relativePath === relativePath);
+	if (file === undefined) {
+		throw new Error(`Expected managed Gateway RAM boot input '${guestPath}/${relativePath}'.`);
 	}
-	return bootInputMount.directory.identity.canonicalPath;
+	return new TextDecoder().decode(file.contents);
 }
 
 function createOpenClawSecretResolver(resolvedSecrets: Record<string, string>): SecretResolver {
@@ -1433,6 +1485,9 @@ describe('startGatewayZone', () => {
 				stdout: command.includes('curl -sS -o /dev/null -w "%{http_code}"') ? '200' : '',
 			}),
 		);
+		const finalizeMemoryMountMock = vi.fn<NonNullable<ManagedVm['finalizeMemoryMount']>>(
+			async () => {},
+		);
 		const startMock = vi.fn(async () => {});
 		const configureIngressRoutesMock = vi.fn();
 		const writeGatewayRuntimeRecord = vi.fn<
@@ -1445,6 +1500,7 @@ describe('startGatewayZone', () => {
 			enableIngress: enableIngressMock,
 			enableSsh: enableSshMock,
 			exec: execMock,
+			finalizeMemoryMount: finalizeMemoryMountMock,
 			getHostProcessId: vi.fn(() => 28282),
 			configureIngressRoutes: configureIngressRoutesMock,
 		};
@@ -1499,6 +1555,13 @@ describe('startGatewayZone', () => {
 		);
 		expect(ownership.attachGatewayVm).toHaveBeenCalledWith('vm-123');
 		expect(ownership.attachGatewayVm.mock.invocationCallOrder[0] ?? 0).toBeLessThan(
+			finalizeMemoryMountMock.mock.invocationCallOrder[0] ?? 0,
+		);
+		expect(finalizeMemoryMountMock.mock.calls.map(([request]) => request.guestPath)).toEqual([
+			managedGatewayBootInputPaths.environmentRoot,
+			managedGatewayBootInputPaths.structuredRoot,
+		]);
+		expect(finalizeMemoryMountMock.mock.invocationCallOrder[1] ?? 0).toBeLessThan(
 			startMock.mock.invocationCallOrder[0] ?? 0,
 		);
 		expect(startMock).toHaveBeenCalledOnce();
@@ -1567,16 +1630,18 @@ describe('startGatewayZone', () => {
 		if (createdVmOptions === undefined) {
 			throw new Error('Expected gateway VM creation call');
 		}
-		expect(createdVmOptions.mounts[managedGatewayBootInputPaths.stagingRoot]).toMatchObject({
-			access: 'read-only',
-			kind: 'owned-host-directory',
+		expect(createdVmOptions.mounts[managedGatewayBootInputPaths.environmentRoot]).toEqual({
+			access: 'read-write',
+			kind: 'finalizable-memory',
 		});
-		const protectedFrameworkEnvironment = await readFile(
-			path.join(
-				requireManagedGatewayBootInputDirectoryPath(createdVmOptions),
-				'framework.environment.sh',
-			),
-			'utf8',
+		expect(createdVmOptions.mounts[managedGatewayBootInputPaths.structuredRoot]).toEqual({
+			access: 'read-only',
+			kind: 'finalizable-memory',
+		});
+		const protectedFrameworkEnvironment = requireManagedGatewayBootInputFile(
+			createdVmOptions,
+			managedGatewayBootInputPaths.environmentRoot,
+			'framework.environment.sh',
 		);
 		expect(createdVmOptions.allowedHosts).not.toContain('controller.vm.host');
 		expect(createdVmOptions.environment).not.toHaveProperty('DISCORD_BOT_TOKEN');
@@ -3135,12 +3200,10 @@ describe('startGatewayZone', () => {
 			'openclaw-managed-plugin',
 		);
 		const protectedFrameworkConfig = parseJsonObject(
-			await readFile(
-				path.join(
-					requireManagedGatewayBootInputDirectoryPath(managedVmCreateRequest),
-					'framework-service.json',
-				),
-				'utf8',
+			requireManagedGatewayBootInputFile(
+				managedVmCreateRequest,
+				managedGatewayBootInputPaths.structuredRoot,
+				'framework-service.json',
 			),
 		);
 		const pluginsConfig = requireObjectProperty(protectedFrameworkConfig, 'plugins');
@@ -4127,11 +4190,16 @@ describe('startGatewayZone', () => {
 			throw new Error('Expected the managed VM descriptor to carry a guest placeholder.');
 		}
 		expect(mediatedSecret.guestPlaceholder).toMatch(/^GONDOLIN_SECRET_[0-9a-f]{48}$/u);
-		const bootInputDirectoryPath = requireManagedGatewayBootInputDirectoryPath(vmOptions);
-		const [toolPortalEnvironment, frameworkEnvironment] = await Promise.all([
-			readFile(path.join(bootInputDirectoryPath, 'tool-portal.environment.sh'), 'utf8'),
-			readFile(path.join(bootInputDirectoryPath, 'framework.environment.sh'), 'utf8'),
-		]);
+		const toolPortalEnvironment = requireManagedGatewayBootInputFile(
+			vmOptions,
+			managedGatewayBootInputPaths.environmentRoot,
+			'tool-portal.environment.sh',
+		);
+		const frameworkEnvironment = requireManagedGatewayBootInputFile(
+			vmOptions,
+			managedGatewayBootInputPaths.environmentRoot,
+			'framework.environment.sh',
+		);
 		expect(toolPortalEnvironment).toContain(
 			`export AGENT_VM_MCP_PERPLEXITY_PERPLEXITY_API_KEY='${mediatedSecret.guestPlaceholder}'`,
 		);
@@ -4408,9 +4476,10 @@ describe('startGatewayZone', () => {
 			throw new Error('Expected the framework mediated secret to carry a guest placeholder.');
 		}
 		expect(frameworkMediatedSecret.guestPlaceholder).toMatch(/^GONDOLIN_SECRET_[0-9a-f]{48}$/u);
-		const protectedFrameworkEnvironment = await readFile(
-			path.join(requireManagedGatewayBootInputDirectoryPath(vmOptions), 'framework.environment.sh'),
-			'utf8',
+		const protectedFrameworkEnvironment = requireManagedGatewayBootInputFile(
+			vmOptions,
+			managedGatewayBootInputPaths.environmentRoot,
+			'framework.environment.sh',
 		);
 
 		// Raw framework secrets are scoped to the protected framework process input.
@@ -4940,12 +5009,10 @@ describe('startGatewayZone', () => {
 			},
 		);
 
-		const protectedFrameworkEnvironment = await readFile(
-			path.join(
-				requireManagedGatewayBootInputDirectoryPath(managedVmCreateRequest),
-				'framework.environment.sh',
-			),
-			'utf8',
+		const protectedFrameworkEnvironment = requireManagedGatewayBootInputFile(
+			managedVmCreateRequest,
+			managedGatewayBootInputPaths.environmentRoot,
+			'framework.environment.sh',
 		);
 		expect(protectedFrameworkEnvironment).toContain(
 			"export OPENCLAW_CONFIG_PATH='/run/agent-vm/managed-gateway/framework-service.json'",
@@ -5417,7 +5484,7 @@ describe('startGatewayZone', () => {
 		expect(stockVmClose).toHaveBeenCalledOnce();
 	});
 
-	it('closes the created VM and retires boot inputs when ownership attachment fails', async () => {
+	it('closes the created VM without creating disk staging when ownership attachment fails', async () => {
 		// Arrange
 		const attachmentError = new Error('gateway ownership attachment failed');
 		const vmId = 'vm-attachment-failure';
@@ -5426,12 +5493,9 @@ describe('startGatewayZone', () => {
 			throw attachmentError;
 		});
 		const { close, managedVm, start } = createHealthyGatewayVmStub(vmId, null);
-		let bootInputDirectoryPath: string | undefined;
+		let managedVmCreateRequest: ManagedVmCreateRequest | undefined;
 		const createManagedVm = vi.fn(async (request: ManagedVmCreateRequest): Promise<ManagedVm> => {
-			const bootInputMount = request.mounts[managedGatewayBootInputPaths.stagingRoot];
-			if (bootInputMount?.kind === 'owned-host-directory') {
-				bootInputDirectoryPath = bootInputMount.directory.identity.canonicalPath;
-			}
+			managedVmCreateRequest = request;
 			return managedVm;
 		});
 
@@ -5460,10 +5524,14 @@ describe('startGatewayZone', () => {
 		expect(ownership.destroyLive).not.toHaveBeenCalled();
 		expect(start).not.toHaveBeenCalled();
 		expect(close).toHaveBeenCalledOnce();
-		if (bootInputDirectoryPath === undefined) {
-			throw new Error('Expected the managed Gateway boot-input directory path.');
-		}
-		await expect(stat(bootInputDirectoryPath)).rejects.toMatchObject({ code: 'ENOENT' });
+		expect(managedVmCreateRequest?.mounts[managedGatewayBootInputPaths.environmentRoot]).toEqual({
+			access: 'read-write',
+			kind: 'finalizable-memory',
+		});
+		expect(managedVmCreateRequest?.mounts[managedGatewayBootInputPaths.structuredRoot]).toEqual({
+			access: 'read-only',
+			kind: 'finalizable-memory',
+		});
 	});
 
 	it('refuses raw close when ownership attachment fails after a managed Gateway runner appears', async () => {
@@ -5475,12 +5543,9 @@ describe('startGatewayZone', () => {
 			throw attachmentError;
 		});
 		const { close, managedVm, start } = createHealthyGatewayVmStub(vmId, 28_407);
-		let bootInputDirectoryPath: string | undefined;
+		let managedVmCreateRequest: ManagedVmCreateRequest | undefined;
 		const createManagedVm = vi.fn(async (request: ManagedVmCreateRequest): Promise<ManagedVm> => {
-			const bootInputMount = request.mounts[managedGatewayBootInputPaths.stagingRoot];
-			if (bootInputMount?.kind === 'owned-host-directory') {
-				bootInputDirectoryPath = bootInputMount.directory.identity.canonicalPath;
-			}
+			managedVmCreateRequest = request;
 			return managedVm;
 		});
 
@@ -5518,10 +5583,14 @@ describe('startGatewayZone', () => {
 		expect(ownership.abandonUnattachedGatewaySeedAfter).toHaveBeenCalledOnce();
 		expect(close).not.toHaveBeenCalled();
 		expect(start).not.toHaveBeenCalled();
-		if (bootInputDirectoryPath === undefined) {
-			throw new Error('Expected the managed Gateway boot-input directory path.');
-		}
-		await expect(stat(bootInputDirectoryPath)).rejects.toMatchObject({ code: 'ENOENT' });
+		expect(managedVmCreateRequest?.mounts[managedGatewayBootInputPaths.environmentRoot]).toEqual({
+			access: 'read-write',
+			kind: 'finalizable-memory',
+		});
+		expect(managedVmCreateRequest?.mounts[managedGatewayBootInputPaths.structuredRoot]).toEqual({
+			access: 'read-only',
+			kind: 'finalizable-memory',
+		});
 	});
 
 	it('contains the created managed Gateway VM when protected host-state preparation fails', async () => {
@@ -5568,6 +5637,118 @@ describe('startGatewayZone', () => {
 		expect(prepareHostState).toHaveBeenCalledOnce();
 		expect(createManagedVm).toHaveBeenCalledOnce();
 		expect(ownership.attachGatewayVm).toHaveBeenCalledWith(vmId);
+		expect(ownership.destroyLive).toHaveBeenCalledOnce();
+		expect(start).not.toHaveBeenCalled();
+		expect(close).toHaveBeenCalledOnce();
+	});
+
+	it('contains the unstarted managed Gateway VM when finalizable memory mounts are unsupported', async () => {
+		const vmId = 'vm-finalizable-memory-unsupported';
+		const ownership = createTestVmOwnershipHarness(vmId, createTestGatewayEpochIdentity(vmId));
+		const { close, managedVm, start } = createHealthyGatewayVmStub(vmId, null);
+		const {
+			finalizeMemoryMount: _unsupportedFinalizeMemoryMount,
+			...managedVmWithoutFinalization
+		} = managedVm;
+
+		await expect(
+			startGatewayZone(
+				{
+					createVmOwnership: ownership.createVmOwnership,
+					secretResolver: createOpenClawSecretResolver({
+						DISCORD_BOT_TOKEN: 'discord-token',
+						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
+						PERPLEXITY_API_KEY: 'pplx-key',
+					}),
+					systemConfig: await createSystemConfig(),
+					zoneId: 'shravan',
+				},
+				{
+					createGatewayControlSessionMaterial: createExactTestGatewayControlSessionMaterial,
+					managedVmFactory: {
+						createManagedVm: vi.fn(async () => managedVmWithoutFinalization),
+					},
+					managedVmImages: testManagedVmImages,
+				},
+				'controller-internal',
+				{ preserveMissingFinalizableMemoryMountCapability: true },
+			),
+		).rejects.toThrow('does not support finalizable memory mounts');
+
+		expect(ownership.attachGatewayVm).toHaveBeenCalledWith(vmId);
+		expect(ownership.destroyLive).toHaveBeenCalledOnce();
+		expect(start).not.toHaveBeenCalled();
+		expect(close).toHaveBeenCalledOnce();
+	});
+
+	it('contains the unstarted managed Gateway VM when environment mount finalization fails', async () => {
+		const vmId = 'vm-environment-finalization-failure';
+		const finalizationError = new Error('environment finalization failed');
+		const ownership = createTestVmOwnershipHarness(vmId, createTestGatewayEpochIdentity(vmId));
+		const { close, finalizeMemoryMount, managedVm, start } = createHealthyGatewayVmStub(vmId, null);
+		finalizeMemoryMount.mockRejectedValueOnce(finalizationError);
+
+		await expect(
+			startGatewayZone(
+				{
+					createVmOwnership: ownership.createVmOwnership,
+					secretResolver: createOpenClawSecretResolver({
+						DISCORD_BOT_TOKEN: 'discord-token',
+						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
+						PERPLEXITY_API_KEY: 'pplx-key',
+					}),
+					systemConfig: await createSystemConfig(),
+					zoneId: 'shravan',
+				},
+				{
+					createGatewayControlSessionMaterial: createExactTestGatewayControlSessionMaterial,
+					managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
+					managedVmImages: testManagedVmImages,
+				},
+			),
+		).rejects.toBe(finalizationError);
+
+		expect(finalizeMemoryMount).toHaveBeenCalledOnce();
+		expect(finalizeMemoryMount.mock.calls[0]?.[0].guestPath).toBe(
+			managedGatewayBootInputPaths.environmentRoot,
+		);
+		expect(ownership.destroyLive).toHaveBeenCalledOnce();
+		expect(start).not.toHaveBeenCalled();
+		expect(close).toHaveBeenCalledOnce();
+	});
+
+	it('contains the unstarted managed Gateway VM when structured mount finalization fails', async () => {
+		const vmId = 'vm-structured-finalization-failure';
+		const finalizationError = new Error('structured finalization failed');
+		const ownership = createTestVmOwnershipHarness(vmId, createTestGatewayEpochIdentity(vmId));
+		const { close, finalizeMemoryMount, managedVm, start } = createHealthyGatewayVmStub(vmId, null);
+		finalizeMemoryMount.mockResolvedValueOnce().mockRejectedValueOnce(finalizationError);
+
+		await expect(
+			startGatewayZone(
+				{
+					createVmOwnership: ownership.createVmOwnership,
+					secretResolver: createOpenClawSecretResolver({
+						DISCORD_BOT_TOKEN: 'discord-token',
+						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
+						PERPLEXITY_API_KEY: 'pplx-key',
+					}),
+					systemConfig: await createSystemConfig(),
+					zoneId: 'shravan',
+				},
+				{
+					createGatewayControlSessionMaterial: createExactTestGatewayControlSessionMaterial,
+					managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
+					managedVmImages: testManagedVmImages,
+				},
+			),
+		).rejects.toBe(finalizationError);
+
+		expect(finalizeMemoryMount).toHaveBeenCalledTimes(2);
+		expect(finalizeMemoryMount.mock.calls.map(([request]) => request.guestPath)).toEqual([
+			managedGatewayBootInputPaths.environmentRoot,
+			managedGatewayBootInputPaths.structuredRoot,
+		]);
 		expect(ownership.destroyLive).toHaveBeenCalledOnce();
 		expect(start).not.toHaveBeenCalled();
 		expect(close).toHaveBeenCalledOnce();
@@ -5930,12 +6111,10 @@ describe('startGatewayZone', () => {
 		}
 		const runtimeServiceConfig = GatewayRuntimeServiceConfigSchema.parse(
 			JSON.parse(
-				await readFile(
-					path.join(
-						requireManagedGatewayBootInputDirectoryPath(managedVmCreateRequest),
-						'tool-portal-service.json',
-					),
-					'utf8',
+				requireManagedGatewayBootInputFile(
+					managedVmCreateRequest,
+					managedGatewayBootInputPaths.structuredRoot,
+					'tool-portal-service.json',
 				),
 			),
 		);
@@ -6331,12 +6510,10 @@ describe('startGatewayZone', () => {
 		});
 		const toolPortalServiceConfig = GatewayRuntimeServiceConfigSchema.parse(
 			JSON.parse(
-				await readFile(
-					path.join(
-						requireManagedGatewayBootInputDirectoryPath(managedVmCreateRequest),
-						'tool-portal-service.json',
-					),
-					'utf8',
+				requireManagedGatewayBootInputFile(
+					managedVmCreateRequest,
+					managedGatewayBootInputPaths.structuredRoot,
+					'tool-portal-service.json',
 				),
 			),
 		);
@@ -6623,7 +6800,11 @@ describe('startGatewayZone', () => {
 		// Act
 		const result = await startGatewayZone(
 			{
-				secretResolver: createOpenClawSecretResolver({}),
+				secretResolver: createOpenClawSecretResolver({
+					API_SERVER_KEY: 'test-hermes-api-server-key',
+					DISCORD_BOT_TOKEN_MAIN: 'test-hermes-main-discord-token',
+					DISCORD_BOT_TOKEN_SECOND: 'test-hermes-second-discord-token',
+				}),
 				systemConfig,
 				zoneId: zone.id,
 			},
@@ -6656,10 +6837,12 @@ describe('startGatewayZone', () => {
 			framework: 'hermes',
 			role: 'framework-service',
 		});
-		const bootInputDirectoryPath =
-			requireManagedGatewayBootInputDirectoryPath(managedVmCreateRequest);
 		const frameworkServiceConfig = parseJsonObject(
-			await readFile(path.join(bootInputDirectoryPath, 'framework-service.json'), 'utf8'),
+			requireManagedGatewayBootInputFile(
+				managedVmCreateRequest,
+				managedGatewayBootInputPaths.structuredRoot,
+				'framework-service.json',
+			),
 		);
 		expect(frameworkServiceConfig).toMatchObject({
 			agentProjections: {
@@ -6678,10 +6861,31 @@ describe('startGatewayZone', () => {
 				clientKind: 'hermes-managed-plugin',
 				configuredAgentIds: agentIds,
 			},
+			discordBotTokenEnvironmentVariablesByProfile: {
+				'beta-main': 'DISCORD_BOT_TOKEN_MAIN',
+				'beta-second': 'DISCORD_BOT_TOKEN_SECOND',
+			},
 		});
+		const frameworkEnvironment = requireManagedGatewayBootInputFile(
+			managedVmCreateRequest,
+			managedGatewayBootInputPaths.environmentRoot,
+			'framework.environment.sh',
+		);
+		expect(frameworkEnvironment).toContain(
+			"export DISCORD_BOT_TOKEN_MAIN='test-hermes-main-discord-token'",
+		);
+		expect(frameworkEnvironment).toContain(
+			"export DISCORD_BOT_TOKEN_SECOND='test-hermes-second-discord-token'",
+		);
+		expect(managedVmCreateRequest?.environment).not.toHaveProperty('DISCORD_BOT_TOKEN_MAIN');
+		expect(managedVmCreateRequest?.environment).not.toHaveProperty('DISCORD_BOT_TOKEN_SECOND');
 		const toolPortalServiceConfig = GatewayRuntimeServiceConfigSchema.parse(
 			JSON.parse(
-				await readFile(path.join(bootInputDirectoryPath, 'tool-portal-service.json'), 'utf8'),
+				requireManagedGatewayBootInputFile(
+					managedVmCreateRequest,
+					managedGatewayBootInputPaths.structuredRoot,
+					'tool-portal-service.json',
+				),
 			),
 		);
 		expect(toolPortalServiceConfig.attachment).toMatchObject({

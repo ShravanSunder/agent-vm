@@ -41,7 +41,7 @@ const openClawGatewayGuestPort = 18789;
 const managedFrameworkConfigurationInputPath =
 	'/run/agent-vm/managed-gateway/framework-service.json';
 const managedFrameworkEnvironmentInputPath =
-	'/run/agent-vm/managed-gateway/framework.environment.sh';
+	'/run/agent-vm/managed-gateway-environment/framework.environment.sh';
 const openClawGatewayGuestPath =
 	'/pnpm:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 const diagnosticsOtelPluginId = 'diagnostics-otel';

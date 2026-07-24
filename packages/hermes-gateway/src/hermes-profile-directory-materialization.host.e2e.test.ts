@@ -119,6 +119,39 @@ describe('Hermes profile directory materialization', () => {
 		expect((await stat(rootConfigurationPath)).mode & 0o777).toBe(0o640);
 	});
 
+	it.each([
+		{ relativePath: '.env', expectedMessage: /durable root.*\.env.*must be absent/u },
+		{
+			relativePath: 'profiles/researcher/.env',
+			expectedMessage: /durable profile 'researcher'.*\.env.*must be absent/u,
+		},
+	])(
+		'rejects existing durable Hermes secret file $relativePath without reading or mutating it',
+		async ({ expectedMessage, relativePath }) => {
+			const stateDirectoryPath = await createTemporaryStateDirectory();
+			const durableSecretPath = path.join(stateDirectoryPath, relativePath);
+			await mkdir(path.dirname(durableSecretPath), { mode: 0o700, recursive: true });
+			await writeFile(durableSecretPath, 'do-not-read-or-change', { mode: 0o640 });
+			const zone = createHermesZone({
+				profilesByAgent: { researcher: 'researcher' },
+				stateDirectoryPath,
+			});
+			Object.assign(zone.gateway, {
+				discordBotTokenSecretsByAgent: { researcher: 'DISCORD_BOT_TOKEN_RESEARCHER' },
+			});
+
+			await expect(
+				hermesLifecycle.preflightHostState?.(zone, unusedSecretResolver),
+			).rejects.toThrow(expectedMessage);
+			await expect(hermesLifecycle.prepareHostState?.(zone, unusedSecretResolver)).rejects.toThrow(
+				expectedMessage,
+			);
+
+			expect(await readFile(durableSecretPath, 'utf8')).toBe('do-not-read-or-change');
+			expect((await stat(durableSecretPath)).mode & 0o777).toBe(0o640);
+		},
+	);
+
 	it('rejects a symlinked root config without following or mutating it', async () => {
 		const stateDirectoryPath = await createTemporaryStateDirectory();
 		const externalConfigurationPath = path.join(

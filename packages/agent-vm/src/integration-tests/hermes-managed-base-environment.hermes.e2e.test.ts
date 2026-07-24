@@ -1,10 +1,11 @@
 /* oxlint-disable eslint/no-await-in-loop -- live profile turns are serialized to make isolation evidence deterministic */
-import { createHmac, randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import path from 'node:path';
 
 import type { AgentVmHealthEvent, ZoneHealthSnapshot } from '@agent-vm/gateway-lifecycle';
+import type { ManagedVmCreateRequest } from '@agent-vm/managed-vm';
 import { afterAll, describe, expect, it } from 'vitest';
 
 import {
@@ -49,6 +50,14 @@ const describeHermesManagedEnvironmentE2e = runHermesManagedEnvironmentE2e
 	? describe
 	: describe.skip;
 const agentIds = ['main', 'beta'] as const;
+const discordSecretEnvironmentNames = {
+	beta: 'DISCORD_BOT_TOKEN_BETA_E2E',
+	main: 'DISCORD_BOT_TOKEN_MAIN_E2E',
+} as const;
+const discordSecretCanaries = {
+	beta: 'synthetic-beta-discord-tool-vm-exclusion-canary',
+	main: 'synthetic-main-discord-tool-vm-exclusion-canary',
+} as const;
 const fakeModelContextLength = 65_536;
 const fakeModelHost = 'hermes-model.vm.host';
 const fakeModelName = 'hermes-e2e';
@@ -65,6 +74,11 @@ const requiredStockToolNames = [
 ] as const;
 
 type AgentId = (typeof agentIds)[number];
+
+const toolVmForbiddenEnvironmentDigests = [
+	...Object.values(discordSecretEnvironmentNames),
+	...Object.values(discordSecretCanaries),
+].map((value) => createHash('sha256').update(value).digest('hex'));
 
 interface OpenAiCompatibleToolCall {
 	readonly arguments: Readonly<Record<string, unknown>>;
@@ -177,7 +191,19 @@ function scriptedToolCall(agentId: AgentId, toolMessageCount: number): OpenAiCom
 		case 0:
 			return {
 				arguments: {
-					command: `pwd && printf '%s\\n' 'TERMINAL_${upperAgentId}' > /workspace/${agentId}-terminal.txt`,
+					command: [
+						`python3 - ${toolVmForbiddenEnvironmentDigests.join(' ')} <<'PY'`,
+						'import hashlib',
+						'import os',
+						'import sys',
+						'forbidden = set(sys.argv[1:])',
+						'observed = {hashlib.sha256(value.encode()).hexdigest() for item in os.environ.items() for value in item}',
+						'if observed.intersection(forbidden):',
+						'    raise SystemExit("forbidden Tool VM environment material")',
+						'print("TOOL_VM_DISCORD_ENV_CLEAN")',
+						'PY',
+						`pwd && printf '%s\\n' 'TERMINAL_${upperAgentId}' > /workspace/${agentId}-terminal.txt`,
+					].join('\n'),
 				},
 				name: 'terminal',
 			};
@@ -715,6 +741,7 @@ describeHermesManagedEnvironmentE2e(
 		let project: HermesE2eProject | undefined;
 		const gatewayStarts: ManagedGatewayStartObservation[] = [];
 		const observedLeaseRequests: ObservedControllerLeaseCreateRequest[] = [];
+		const toolVmCreateRequests: ManagedVmCreateRequest[] = [];
 
 		afterAll(async () => {
 			try {
@@ -737,16 +764,28 @@ describeHermesManagedEnvironmentE2e(
 				prefix: 'hermes-managed-base-environment-e2e-',
 				zoneId: 'hermes-managed-environment-e2e',
 			});
+			Object.assign(project.zone.gateway, {
+				discordBotTokenSecretsByAgent: discordSecretEnvironmentNames,
+			});
+			for (const agentId of agentIds) {
+				const secretEnvironmentName = discordSecretEnvironmentNames[agentId];
+				project.zone.secrets[secretEnvironmentName] = {
+					audience: 'gateway',
+					envVar: secretEnvironmentName,
+					injection: 'env',
+					source: 'environment',
+				};
+			}
 			await writeFile(
 				project.zone.gateway.config,
-				renderHermesManagedE2eConfiguration({
+				`${renderHermesManagedE2eConfiguration({
 					contextLength: fakeModelContextLength,
 					fakeModelHost,
 					fakeModelName,
 					webhookPort,
 					webhookRoute,
 					webhookSecret,
-				}),
+				})}secrets:\n  preserve_existing:\n    - DISCORD_BOT_TOKEN\n`,
 				'utf8',
 			);
 			project.zone.egressHosts = [
@@ -762,6 +801,9 @@ describeHermesManagedEnvironmentE2e(
 			});
 			await prepareGatewayE2eProjectImages({ project });
 			harness = await startE2eControllerRuntime({
+				onControllerManagedVmCreateRequest: (request) => {
+					toolVmCreateRequests.push(request);
+				},
 				onLeaseCreateRequest: (request) => {
 					observedLeaseRequests.push({
 						agentId: request.agentId,
@@ -770,6 +812,8 @@ describeHermesManagedEnvironmentE2e(
 					});
 				},
 				secrets: {
+					[discordSecretEnvironmentNames.beta]: discordSecretCanaries.beta,
+					[discordSecretEnvironmentNames.main]: discordSecretCanaries.main,
 					GITHUB_TOKEN: 'unused-hermes-managed-environment-token',
 				},
 				startGatewayZone: async (startOptions) => {
@@ -829,6 +873,7 @@ describeHermesManagedEnvironmentE2e(
 					0, 1, 2, 3, 4, 5, 6,
 				]);
 				expect(profileRequests[1]?.messageSnapshot).toContain('/work');
+				expect(profileRequests[1]?.messageSnapshot).toContain('TOOL_VM_DISCORD_ENV_CLEAN');
 				expect(profileRequests[3]?.messageSnapshot).toContain(`FILE_${upperAgentId}`);
 				expect(profileRequests[4]?.messageSnapshot).toContain(`CODE_${upperAgentId}`);
 				const processResult = profileRequests[6]?.toolMessageContents.join('\n') ?? '';
@@ -838,6 +883,22 @@ describeHermesManagedEnvironmentE2e(
 				expect(processResult).toContain(`BACKGROUND_${upperAgentId}`);
 				const otherAgentId = agentId === 'main' ? 'beta' : 'main';
 				expect(processResult).not.toContain(`BACKGROUND_${otherAgentId.toUpperCase()}`);
+			}
+			expect(toolVmCreateRequests).toHaveLength(agentIds.length);
+			for (const request of toolVmCreateRequests) {
+				expect(request.sessionLabel).toMatch(/:tool:\d+$/u);
+				expect(Object.keys(request.environment)).not.toEqual(
+					expect.arrayContaining(Object.values(discordSecretEnvironmentNames)),
+				);
+				expect(Object.values(request.environment)).not.toEqual(
+					expect.arrayContaining(Object.values(discordSecretCanaries)),
+				);
+				expect(request.mediatedSecrets.map((secret) => secret.environmentVariable)).not.toEqual(
+					expect.arrayContaining(Object.values(discordSecretEnvironmentNames)),
+				);
+				expect(request.mediatedSecrets.map((secret) => secret.value)).not.toEqual(
+					expect.arrayContaining(Object.values(discordSecretCanaries)),
+				);
 			}
 
 			const activeProject = project;

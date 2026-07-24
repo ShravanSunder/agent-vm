@@ -7,8 +7,8 @@ import {
 import type { ManagedGatewayImageBootProjection } from '../build/gondolin-managed-vm-build-tooling.js';
 
 export const managedGatewayBootInputPaths = Object.freeze({
-	runtimeRoot: '/run/agent-vm/managed-gateway',
-	stagingRoot: '/run/agent-vm/managed-gateway-inputs',
+	environmentRoot: '/run/agent-vm/managed-gateway-environment',
+	structuredRoot: '/run/agent-vm/managed-gateway',
 });
 
 export function createManagedGatewayBootContract(
@@ -20,8 +20,8 @@ export function createManagedGatewayBootContract(
 		kind: 'managed-gateway-exact-two-role',
 		toolPortalService: {
 			bootEntry: 'agent-vm-gateway-runtime',
-			configurationInputPath: `${managedGatewayBootInputPaths.runtimeRoot}/tool-portal-service.json`,
-			environmentInputPath: `${managedGatewayBootInputPaths.runtimeRoot}/tool-portal.environment.sh`,
+			configurationInputPath: `${managedGatewayBootInputPaths.structuredRoot}/tool-portal-service.json`,
+			environmentInputPath: `${managedGatewayBootInputPaths.environmentRoot}/tool-portal.environment.sh`,
 			logIdentity: {
 				guestPath: '/var/log/agent-vm/tool-portal-service.log',
 				serviceName: 'agent-vm-tool-portal',
