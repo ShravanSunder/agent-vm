@@ -710,7 +710,7 @@ describeLiveVmIntegration('Managed Gateway image-owned sibling boot', () => {
 				'/bin/sh',
 				'-c',
 				wrapWithOpenClawShellEnvironment(
-					'test "$OPENCLAW_CONFIG_PATH" = "/run/agent-vm/managed-gateway/framework-service.json" && command -v openclaw >/dev/null',
+					'test "$OPENCLAW_CONFIG_PATH" = "/home/openclaw/.openclaw/state/effective-openclaw.json" && command -v openclaw >/dev/null',
 				),
 			]);
 			expect(authShellResult).toMatchObject({

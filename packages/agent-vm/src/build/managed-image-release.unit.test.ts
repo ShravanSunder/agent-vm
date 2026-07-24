@@ -203,6 +203,9 @@ describe('managed image release', () => {
 
 		expect(generatedDockerfile).toContain('install -d -m 0755 /etc/profile.d');
 		expect(generatedDockerfile).toContain(
+			"'export OPENCLAW_CONFIG_PATH=/home/openclaw/.openclaw/state/effective-openclaw.json'",
+		);
+		expect(generatedDockerfile).not.toContain(
 			"'export OPENCLAW_CONFIG_PATH=/run/agent-vm/managed-gateway/framework-service.json'",
 		);
 		expect(generatedDockerfile).toContain(

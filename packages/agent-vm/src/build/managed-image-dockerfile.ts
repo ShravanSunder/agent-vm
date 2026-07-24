@@ -379,7 +379,7 @@ function renderManagedOpenClawAuthShellEnvironmentInstallCommand(): string {
 	const environmentLines = [
 		'export HOME=/home/openclaw',
 		'export OPENCLAW_HOME=/home/openclaw',
-		'export OPENCLAW_CONFIG_PATH=/run/agent-vm/managed-gateway/framework-service.json',
+		'export OPENCLAW_CONFIG_PATH=/home/openclaw/.openclaw/state/effective-openclaw.json',
 		'export OPENCLAW_STATE_DIR=/home/openclaw/.openclaw/state',
 		'export PNPM_HOME=/pnpm',
 		'export PATH=/pnpm:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
