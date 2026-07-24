@@ -64,6 +64,7 @@ type ConfigurationOnlySerializationInput = Extract<
 	SerializeManagedGatewayBootInputsProps,
 	{ readonly frameworkInputKind: 'configuration-only' }
 > & {
+	readonly openClawControlAuthSecretName: string;
 	readonly toolPortalServiceConfig: {
 		readonly controlEndpoint: {
 			readonly listen: {
@@ -83,10 +84,12 @@ function createSerializationInput(
 		cohort: expectedCohort,
 		frameworkConfig: { gateway: { mode: 'local', port: 18_789 } },
 		frameworkEnvironment: {
+			DISCORD_BOT_TOKEN: 'unrelated-framework-secret',
 			OPENCLAW_CONFIG_PATH: '/run/agent-vm/managed-gateway/framework-service.json',
 			OPENCLAW_GATEWAY_TOKEN: secretCanary,
 		},
 		frameworkInputKind: 'configuration-only' as const,
+		openClawControlAuthSecretName: 'OPENCLAW_GATEWAY_TOKEN',
 		mcpConfig: { providers: {}, schemaVersion: 1 },
 		toolPortalEnvironment: {
 			HOME: '/home/openclaw',
@@ -124,7 +127,16 @@ describe('serializeManagedGatewayBootInputs', () => {
 		expect(decodeFiles(inputs.environmentFiles)).toEqual({
 			'framework.environment.sh': {
 				contents:
-					"export OPENCLAW_CONFIG_PATH='/run/agent-vm/managed-gateway/framework-service.json'\nexport OPENCLAW_GATEWAY_TOKEN='not-a-real-secret-canary'\n",
+					"export DISCORD_BOT_TOKEN='unrelated-framework-secret'\nexport OPENCLAW_CONFIG_PATH='/run/agent-vm/managed-gateway/framework-service.json'\nexport OPENCLAW_GATEWAY_TOKEN='not-a-real-secret-canary'\n",
+				mode: 0o600,
+			},
+			'openclaw-all-secrets.environment.sh': {
+				contents:
+					"export DISCORD_BOT_TOKEN='unrelated-framework-secret'\nexport OPENCLAW_CONFIG_PATH='/run/agent-vm/managed-gateway/framework-service.json'\nexport OPENCLAW_GATEWAY_TOKEN='not-a-real-secret-canary'\n",
+				mode: 0o600,
+			},
+			'openclaw-gateway-token.environment.sh': {
+				contents: "export OPENCLAW_GATEWAY_TOKEN='not-a-real-secret-canary'\n",
 				mode: 0o600,
 			},
 			'tool-portal.environment.sh': {
@@ -153,8 +165,9 @@ describe('serializeManagedGatewayBootInputs', () => {
 	});
 
 	it('adds Hermes managed configuration only to structured inputs', () => {
+		const { openClawControlAuthSecretName: _, ...baseInput } = createSerializationInput();
 		const inputs = serializeManagedGatewayBootInputs({
-			...createSerializationInput(),
+			...baseInput,
 			frameworkInputKind: 'hermes-managed-scope',
 			frameworkManagedConfigurationSource: 'model: test\n',
 		});
@@ -164,6 +177,9 @@ describe('serializeManagedGatewayBootInputs', () => {
 			mode: 0o600,
 		});
 		expect(decodeFiles(inputs.environmentFiles)).not.toHaveProperty('config.yaml');
+		expect(decodeFiles(inputs.environmentFiles)).not.toHaveProperty(
+			'openclaw-gateway-token.environment.sh',
+		);
 	});
 
 	it('rejects unsafe environment and noncanonical JSON before returning either inventory', () => {

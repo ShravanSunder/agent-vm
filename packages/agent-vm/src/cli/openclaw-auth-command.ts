@@ -9,7 +9,7 @@ import {
 	resolveControllerBaseUrl,
 } from './agent-vm-cli-support.js';
 import { formatZodError } from './format-zod-error.js';
-import { wrapWithOpenClawShellEnvironment } from './openclaw-shell-prefix.js';
+import { wrapWithOpenClawGatewayTokenShellEnvironment } from './openclaw-shell-prefix.js';
 import { resolveZoneAdminToken, zoneSshAccessResponseSchema } from './ssh-commands.js';
 
 function resolveOpenClawProfileIds(options: {
@@ -146,7 +146,7 @@ export async function runOpenClawAuthCommand(options: {
 	const parsedSshResponse = zoneSshAccessResponseSchema.safeParse(
 		await controllerClient.enableZoneSsh(options.zoneId, {
 			...(adminToken ? { adminToken } : {}),
-			secretEnv: 'default',
+			secretEnv: 'gateway-token',
 		}),
 	);
 	if (!parsedSshResponse.success) {
@@ -160,6 +160,11 @@ export async function runOpenClawAuthCommand(options: {
 	if (!sshResponse.host || !sshResponse.port) {
 		throw new Error(
 			`Cannot auth: controller returned incomplete SSH access for zone '${options.zoneId}'.`,
+		);
+	}
+	if (sshResponse.secretEnvEnabled !== true) {
+		throw new Error(
+			`Controller did not enable the OpenClaw gateway token for auth in zone '${options.zoneId}'.`,
 		);
 	}
 
@@ -198,7 +203,7 @@ export async function runOpenClawAuthCommand(options: {
 			'-p',
 			String(sshResponse.port),
 			`${sshResponse.user ?? 'root'}@${sshResponse.host}`,
-			wrapWithOpenClawShellEnvironment(
+			wrapWithOpenClawGatewayTokenShellEnvironment(
 				options.authConfig.buildLoginCommand(options.provider, {
 					agentId: authAgentId,
 					deviceCode: options.deviceCode === true,
@@ -231,7 +236,7 @@ export async function runOpenClawAuthCommand(options: {
 		'-p',
 		String(sshResponse.port),
 		`${sshResponse.user ?? 'root'}@${sshResponse.host}`,
-		wrapWithOpenClawShellEnvironment(
+		wrapWithOpenClawGatewayTokenShellEnvironment(
 			options.authConfig.buildProfileListCommand(options.provider, { agentId: authAgentId }),
 		),
 	];

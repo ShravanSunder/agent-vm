@@ -153,6 +153,18 @@ function buildProtectedBootInputs(props: {
 			].join('\n'),
 		),
 		createMemoryFile(
+			'openclaw-all-secrets.environment.sh',
+			[
+				'export HOME=/home/openclaw',
+				`export OPENCLAW_GATEWAY_TOKEN=${managedGatewayBootSecretCanary}`,
+				'',
+			].join('\n'),
+		),
+		createMemoryFile(
+			'openclaw-gateway-token.environment.sh',
+			`export OPENCLAW_GATEWAY_TOKEN=${managedGatewayBootSecretCanary}\n`,
+		),
+		createMemoryFile(
 			'tool-portal.environment.sh',
 			'export HOME=/home/openclaw\nexport PATH=/pnpm:/usr/local/bin:/usr/bin:/bin\n',
 		),

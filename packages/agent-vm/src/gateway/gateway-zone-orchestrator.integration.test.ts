@@ -4481,6 +4481,16 @@ describe('startGatewayZone', () => {
 			managedGatewayBootInputPaths.environmentRoot,
 			'framework.environment.sh',
 		);
+		const gatewayTokenEnvironment = requireManagedGatewayBootInputFile(
+			vmOptions,
+			managedGatewayBootInputPaths.environmentRoot,
+			'openclaw-gateway-token.environment.sh',
+		);
+		const allSecretsEnvironment = requireManagedGatewayBootInputFile(
+			vmOptions,
+			managedGatewayBootInputPaths.environmentRoot,
+			'openclaw-all-secrets.environment.sh',
+		);
 
 		// Raw framework secrets are scoped to the protected framework process input.
 		expect(protectedFrameworkEnvironment).toContain("export DISCORD_BOT_TOKEN='discord-token'");
@@ -4490,6 +4500,12 @@ describe('startGatewayZone', () => {
 		expect(protectedFrameworkEnvironment).toContain(
 			`export PERPLEXITY_API_KEY='${frameworkMediatedSecret.guestPlaceholder}'`,
 		);
+		expect(gatewayTokenEnvironment).toBe(
+			"export OPENCLAW_GATEWAY_TOKEN='resolved-gateway-token'\n",
+		);
+		expect(gatewayTokenEnvironment).not.toContain('DISCORD_BOT_TOKEN');
+		expect(gatewayTokenEnvironment).not.toContain('PERPLEXITY_API_KEY');
+		expect(allSecretsEnvironment).toBe(protectedFrameworkEnvironment);
 		expect(vmOptions.environment).not.toHaveProperty('DISCORD_BOT_TOKEN');
 		expect(vmOptions.environment).not.toHaveProperty('OPENCLAW_GATEWAY_TOKEN');
 
@@ -6877,6 +6893,20 @@ describe('startGatewayZone', () => {
 		expect(frameworkEnvironment).toContain(
 			"export DISCORD_BOT_TOKEN_SECOND='test-hermes-second-discord-token'",
 		);
+		expect(() =>
+			requireManagedGatewayBootInputFile(
+				managedVmCreateRequest,
+				managedGatewayBootInputPaths.environmentRoot,
+				'openclaw-gateway-token.environment.sh',
+			),
+		).toThrow();
+		expect(() =>
+			requireManagedGatewayBootInputFile(
+				managedVmCreateRequest,
+				managedGatewayBootInputPaths.environmentRoot,
+				'openclaw-all-secrets.environment.sh',
+			),
+		).toThrow();
 		expect(managedVmCreateRequest?.environment).not.toHaveProperty('DISCORD_BOT_TOKEN_MAIN');
 		expect(managedVmCreateRequest?.environment).not.toHaveProperty('DISCORD_BOT_TOKEN_SECOND');
 		const toolPortalServiceConfig = GatewayRuntimeServiceConfigSchema.parse(

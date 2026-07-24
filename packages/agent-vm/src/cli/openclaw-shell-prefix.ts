@@ -1,6 +1,8 @@
 export const openClawShellEnvFilePath = '/etc/profile.d/openclaw-env.sh';
-export const openClawRuntimeSecretsEnvFilePath = '/run/openclaw/secrets.env';
-export const openClawGatewayTokenEnvFilePath = '/run/openclaw/gateway-token.env';
+export const openClawRuntimeSecretsEnvFilePath =
+	'/run/agent-vm/managed-gateway-environment/openclaw-all-secrets.environment.sh';
+export const openClawGatewayTokenEnvFilePath =
+	'/run/agent-vm/managed-gateway-environment/openclaw-gateway-token.environment.sh';
 
 export function shellQuote(value: string): string {
 	return `'${value.replace(/'/gu, `'\\''`)}'`;
@@ -15,7 +17,7 @@ export function buildOpenClawGatewayTokenShellPrefix(): string {
 }
 
 export function buildOpenClawAllSecretsShellPrefix(): string {
-	return `source ${openClawShellEnvFilePath} && set -a && . ${openClawRuntimeSecretsEnvFilePath} && set +a && `;
+	return `set -a && . ${openClawRuntimeSecretsEnvFilePath} && set +a && source ${openClawShellEnvFilePath} && `;
 }
 
 export function wrapWithOpenClawGatewayTokenShellEnvironment(command: string): string {

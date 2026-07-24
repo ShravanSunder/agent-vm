@@ -1328,6 +1328,7 @@ describe('runAgentVmCli', () => {
 						host: '127.0.0.1',
 						identityFile: '/tmp/test-key',
 						port: 19000,
+						secretEnvEnabled: true,
 						user: 'root',
 					})),
 				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
@@ -1441,6 +1442,7 @@ describe('runAgentVmCli', () => {
 						host: '127.0.0.1',
 						identityFile: '/tmp/test-key',
 						port: 19000,
+						secretEnvEnabled: true,
 						user: 'root',
 					})),
 				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
@@ -1537,6 +1539,7 @@ describe('runAgentVmCli', () => {
 						host: '127.0.0.1',
 						identityFile: '/tmp/test-key',
 						port: 19000,
+						secretEnvEnabled: true,
 						user: 'root',
 					})),
 				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfigWithAgents()),
@@ -1584,6 +1587,7 @@ describe('runAgentVmCli', () => {
 						host: '127.0.0.1',
 						identityFile: '/tmp/test-key',
 						port: 19000,
+						secretEnvEnabled: true,
 						user: 'root',
 					})),
 				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfigWithAgents()),
@@ -2635,7 +2639,11 @@ describe('runAgentVmCli', () => {
 
 		expect(runInteractiveProcess).toHaveBeenCalledWith(
 			'ssh',
-			expect.arrayContaining([expect.stringContaining('/run/openclaw/gateway-token.env')]),
+			expect.arrayContaining([
+				expect.stringContaining(
+					'/run/agent-vm/managed-gateway-environment/openclaw-gateway-token.environment.sh',
+				),
+			]),
 		);
 		const firstSshCall = vi.mocked(runInteractiveProcess).mock.calls[0];
 		if (!firstSshCall) {
@@ -2643,7 +2651,9 @@ describe('runAgentVmCli', () => {
 		}
 		const sshArguments = firstSshCall[1];
 		const remoteCommand = sshArguments.at(-1);
-		expect(remoteCommand).not.toEqual(expect.stringContaining('/run/openclaw/secrets.env'));
+		expect(remoteCommand).not.toEqual(
+			expect.stringContaining('openclaw-all-secrets.environment.sh'),
+		);
 	});
 
 	it('routes controller ssh --all-secrets through the raw gateway secret env file', async () => {
@@ -2678,8 +2688,14 @@ describe('runAgentVmCli', () => {
 		}
 		const sshArguments = firstSshCall[1];
 		const remoteCommand = sshArguments.at(-1);
-		expect(remoteCommand).toEqual(expect.stringContaining('/run/openclaw/secrets.env'));
-		expect(remoteCommand).not.toEqual(expect.stringContaining('/run/openclaw/gateway-token.env'));
+		expect(remoteCommand).toEqual(
+			expect.stringContaining(
+				'/run/agent-vm/managed-gateway-environment/openclaw-all-secrets.environment.sh',
+			),
+		);
+		expect(remoteCommand).not.toEqual(
+			expect.stringContaining('openclaw-gateway-token.environment.sh'),
+		);
 	});
 
 	it('routes auth codex-harness to native per-agent Codex CLI auth', async () => {
@@ -2720,7 +2736,9 @@ describe('runAgentVmCli', () => {
 		expect(remoteCommand).not.toEqual(
 			expect.stringContaining('/run/agent-vm/managed-gateway/framework.environment.sh'),
 		);
-		expect(remoteCommand).not.toEqual(expect.stringContaining('/run/openclaw/secrets.env'));
+		expect(remoteCommand).not.toEqual(
+			expect.stringContaining('openclaw-all-secrets.environment.sh'),
+		);
 		expect(remoteCommand).not.toEqual(expect.stringContaining('/pnpm/global/5'));
 		expect(remoteCommand).toEqual(expect.stringContaining('pnpm root -g'));
 		expect(remoteCommand).toEqual(expect.stringContaining('CODEX_HOME="$codex_home"'));

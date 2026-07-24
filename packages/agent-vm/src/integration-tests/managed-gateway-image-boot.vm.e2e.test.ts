@@ -6,7 +6,10 @@ import type { ManagedVm } from '@agent-vm/managed-vm';
 import { describe, expect, it } from 'vitest';
 
 import { readPreparedManagedVmImage } from '../build/prepared-gondolin-image-cache.js';
-import { wrapWithOpenClawShellEnvironment } from '../cli/openclaw-shell-prefix.js';
+import {
+	wrapWithOpenClawGatewayTokenShellEnvironment,
+	wrapWithOpenClawShellEnvironment,
+} from '../cli/openclaw-shell-prefix.js';
 import { createManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
 import { isProcessAlive } from '../shared/managed-vm-process.js';
 import {
@@ -695,6 +698,8 @@ describeLiveVmIntegration('Managed Gateway image-owned sibling boot', () => {
 				[
 					`test ! -e ${managedGatewayBootEnvironmentGuestRoot}/tool-portal.environment.sh`,
 					`test ! -e ${managedGatewayBootEnvironmentGuestRoot}/framework.environment.sh`,
+					`test -f ${managedGatewayBootEnvironmentGuestRoot}/openclaw-gateway-token.environment.sh`,
+					`test -f ${managedGatewayBootEnvironmentGuestRoot}/openclaw-all-secrets.environment.sh`,
 					`test -f ${managedGatewayBootInputGuestRoot}/tool-portal-service.json`,
 					`test -f ${managedGatewayBootInputGuestRoot}/framework-service.json`,
 					`test ! -e /run/agent-vm/gateway-runtime/tool-portal-service.json`,
@@ -714,6 +719,18 @@ describeLiveVmIntegration('Managed Gateway image-owned sibling boot', () => {
 				),
 			]);
 			expect(authShellResult).toMatchObject({
+				exitCode: 0,
+				ok: true,
+			});
+
+			const tokenAuthShellResult = await fixture.vm.exec([
+				'/bin/sh',
+				'-c',
+				wrapWithOpenClawGatewayTokenShellEnvironment(
+					`test "$OPENCLAW_GATEWAY_TOKEN" = "${managedGatewayBootSecretCanary}" && test "$OPENCLAW_CONFIG_PATH" = "/home/openclaw/.openclaw/state/effective-openclaw.json"`,
+				),
+			]);
+			expect(tokenAuthShellResult).toMatchObject({
 				exitCode: 0,
 				ok: true,
 			});

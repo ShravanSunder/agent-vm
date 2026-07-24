@@ -759,7 +759,7 @@ async function runOpenClawSubagentSpawnProbe(options: {
 	readonly marker: string;
 }): Promise<OpenClawSubagentSpawnProbeResult> {
 	const command = `set -eu
-. /run/agent-vm/managed-gateway/framework.environment.sh
+. /run/agent-vm/managed-gateway-environment/openclaw-all-secrets.environment.sh
 OPENCLAW_PACKAGE_ROOT=""
 for candidate in /pnpm/global/*/node_modules/openclaw /usr/local/lib/node_modules/openclaw; do
 	if [ -d "$candidate/dist" ]; then

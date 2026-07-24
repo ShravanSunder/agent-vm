@@ -2177,6 +2177,23 @@ async function startGatewayZoneImplementation(
 			observability: lifecycleZone.observability,
 			portalAdmission: managedPortalMaterialization.portalAdmission,
 		});
+		const frameworkBootInput = (() => {
+			if (frameworkServiceInputs.kind === 'hermes-managed-scope') {
+				return {
+					frameworkInputKind: frameworkServiceInputs.kind,
+					frameworkManagedConfigurationSource: frameworkServiceInputs.managedConfigurationSource,
+				} as const;
+			}
+			if (lifecycleZone.gateway.type !== 'openclaw') {
+				throw new Error(
+					`Managed Gateway configuration-only framework for zone '${zone.id}' must be OpenClaw.`,
+				);
+			}
+			return {
+				frameworkInputKind: frameworkServiceInputs.kind,
+				openClawControlAuthSecretName: lifecycleZone.gateway.controlAuth.secret,
+			} as const;
+		})();
 		const bootInputInventories = serializeManagedGatewayBootInputs({
 			cohort: expectedCohort,
 			frameworkConfig: frameworkServiceInputs.configuration,
@@ -2184,12 +2201,7 @@ async function startGatewayZoneImplementation(
 				...frameworkServiceInputs.environment,
 				...managedGatewayMediatedSecretBootProjection?.frameworkEnvironment,
 			},
-			...(frameworkServiceInputs.kind === 'hermes-managed-scope'
-				? {
-						frameworkInputKind: frameworkServiceInputs.kind,
-						frameworkManagedConfigurationSource: frameworkServiceInputs.managedConfigurationSource,
-					}
-				: { frameworkInputKind: frameworkServiceInputs.kind }),
+			...frameworkBootInput,
 			mcpConfig: managedPortalMaterialization.mcpConfig,
 			toolPortalEnvironment,
 			toolPortalServiceConfig,

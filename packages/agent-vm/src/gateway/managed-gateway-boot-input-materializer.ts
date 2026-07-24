@@ -27,6 +27,7 @@ interface ManagedGatewayBootInputCommonProps {
 type ManagedGatewayFrameworkBootInputProps =
 	| {
 			readonly frameworkInputKind: 'configuration-only';
+			readonly openClawControlAuthSecretName: string;
 	  }
 	| {
 			readonly frameworkInputKind: 'hermes-managed-scope';
@@ -163,6 +164,19 @@ function serializeEnvironment(
 	return `${lines.join('\n')}\n`;
 }
 
+function requireEnvironmentValue(
+	environment: Readonly<Record<string, string>>,
+	environmentVariableName: string,
+): string {
+	const environmentVariableValue = environment[environmentVariableName];
+	if (environmentVariableValue === undefined) {
+		throw new Error(
+			`Managed Gateway OpenClaw control auth secret '${environmentVariableName}' is absent from the protected framework environment.`,
+		);
+	}
+	return environmentVariableValue;
+}
+
 function createMemoryFile(relativePath: string, contents: string): ManagedVmFinalizableMemoryFile {
 	return {
 		contents: new TextEncoder().encode(contents),
@@ -183,6 +197,26 @@ export function serializeManagedGatewayBootInputs(
 			'framework.environment.sh',
 			serializeEnvironment(props.frameworkEnvironment, 'framework'),
 		),
+		...(props.frameworkInputKind === 'configuration-only'
+			? [
+					createMemoryFile(
+						'openclaw-all-secrets.environment.sh',
+						serializeEnvironment(props.frameworkEnvironment, 'OpenClaw all-secrets'),
+					),
+					createMemoryFile(
+						'openclaw-gateway-token.environment.sh',
+						serializeEnvironment(
+							{
+								[props.openClawControlAuthSecretName]: requireEnvironmentValue(
+									props.frameworkEnvironment,
+									props.openClawControlAuthSecretName,
+								),
+							},
+							'OpenClaw gateway token',
+						),
+					),
+				]
+			: []),
 		createMemoryFile(
 			'tool-portal.environment.sh',
 			serializeEnvironment(props.toolPortalEnvironment, 'Tool Portal'),

@@ -85,6 +85,9 @@ export async function runSshCommand(options: RunSshCommandOptions): Promise<void
 		throw new Error('--print is not supported for controller ssh.');
 	}
 	const zone = requireZone(options.systemConfig, readZoneFlag(restArguments));
+	if (requestAllSecrets && zone.gateway.type !== 'openclaw') {
+		throw new Error('--all-secrets is supported only for OpenClaw zones.');
+	}
 	const adminToken = await resolveZoneAdminToken({
 		dependencies: options.dependencies,
 		systemConfig: options.systemConfig,
@@ -93,7 +96,12 @@ export async function runSshCommand(options: RunSshCommandOptions): Promise<void
 	const parsedSshResponse = zoneSshAccessResponseSchema.safeParse(
 		await controllerClient.enableZoneSsh(zone.id, {
 			...(adminToken ? { adminToken } : {}),
-			secretEnv: requestAllSecrets ? 'all-secrets' : 'gateway-token',
+			secretEnv:
+				zone.gateway.type === 'openclaw'
+					? requestAllSecrets
+						? 'all-secrets'
+						: 'gateway-token'
+					: 'default',
 		}),
 	);
 	if (!parsedSshResponse.success) {
@@ -107,17 +115,18 @@ export async function runSshCommand(options: RunSshCommandOptions): Promise<void
 	if (!sshResponse.host || !sshResponse.port) {
 		throw new Error('Controller returned incomplete SSH access details.');
 	}
-	const secretEnvEnabled = sshResponse.secretEnvEnabled === true;
-	if (!secretEnvEnabled) {
+	if (zone.gateway.type === 'openclaw' && sshResponse.secretEnvEnabled !== true) {
 		throw new Error(
 			'Controller did not enable OPENCLAW_GATEWAY_TOKEN for this SSH session. Check the zone gateway.ssh.secretEnv policy and configured OPENCLAW_GATEWAY_TOKEN secret.',
 		);
 	}
 	const secretEnvRequest: SshSecretEnvRequest = requestAllSecrets ? 'all-secrets' : 'gateway-token';
 	const remoteShellCommand =
-		secretEnvRequest === 'all-secrets'
-			? wrapWithOpenClawAllSecretsShellEnvironment('exec bash -l')
-			: wrapWithOpenClawGatewayTokenShellEnvironment('exec bash -l');
+		zone.gateway.type !== 'openclaw'
+			? "bash -lc 'exec bash -l'"
+			: secretEnvRequest === 'all-secrets'
+				? wrapWithOpenClawAllSecretsShellEnvironment('exec bash -l')
+				: wrapWithOpenClawGatewayTokenShellEnvironment('exec bash -l');
 
 	const sshArguments = [
 		'-t',
