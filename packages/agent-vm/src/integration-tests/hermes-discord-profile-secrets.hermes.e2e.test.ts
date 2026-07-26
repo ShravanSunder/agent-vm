@@ -33,8 +33,11 @@ const discordSecretEnvironmentNames = {
 	beta: 'DISCORD_BOT_TOKEN_BETA',
 	clawfest: 'DISCORD_BOT_TOKEN_CLAWFEST',
 } as const;
-const mediatedSecretEnvironmentName = 'HERMES_E2E_MEDIATED_SECRET';
-const mediatedSecretProfileTargetName = 'PROVIDER_API_KEY';
+const mediatedSecretEnvironmentNames = {
+	beta: 'HERMES_E2E_MEDIATED_SECRET_BETA',
+	clawfest: 'HERMES_E2E_MEDIATED_SECRET_CLAWFEST',
+} as const;
+const mediatedSecretProfileTargetName = 'OPENROUTER_API_KEY';
 const mediatedHost = 'hermes-profile-secrets.vm.host';
 const durableSiblingFileName = 'durable-profile-state.txt';
 
@@ -42,7 +45,7 @@ type AgentId = (typeof agentIds)[number];
 
 interface GenerationCanaries {
 	readonly discordByAgent: Readonly<Record<AgentId, string>>;
-	readonly mediated: string;
+	readonly mediatedByAgent: Readonly<Record<AgentId, string>>;
 }
 
 interface GatewayStartObservation {
@@ -60,6 +63,7 @@ interface GuestProfileFileObservation {
 
 interface GuestEnvironmentObservation {
 	readonly environmentScriptsRemain: boolean;
+	readonly toolPortalContainsMediatedPlaceholder: boolean;
 	readonly toolPortalContainsRawValue: boolean;
 	readonly toolPortalContainsSourceName: boolean;
 	readonly vmWideContainsRawValue: boolean;
@@ -80,7 +84,10 @@ function createGenerationCanaries(generation: 'first' | 'second'): GenerationCan
 			beta: `non-secret-beta-${generation}-generation-canary`,
 			clawfest: `non-secret-clawfest-${generation}-generation-canary`,
 		},
-		mediated: `non-secret-mediated-${generation}-generation-canary`,
+		mediatedByAgent: {
+			beta: `non-secret-mediated-beta-${generation}-generation-canary`,
+			clawfest: `non-secret-mediated-clawfest-${generation}-generation-canary`,
+		},
 	};
 }
 
@@ -91,7 +98,7 @@ async function configureHermesProfileSecrets(project: HermesE2eProject): Promise
 				agentId,
 				{
 					DISCORD_BOT_TOKEN: discordSecretEnvironmentNames[agentId],
-					[mediatedSecretProfileTargetName]: mediatedSecretEnvironmentName,
+					[mediatedSecretProfileTargetName]: mediatedSecretEnvironmentNames[agentId],
 				},
 			]),
 		),
@@ -105,13 +112,16 @@ async function configureHermesProfileSecrets(project: HermesE2eProject): Promise
 			source: 'environment',
 		};
 	}
-	project.zone.secrets[mediatedSecretEnvironmentName] = {
-		audience: 'gateway',
-		envVar: mediatedSecretEnvironmentName,
-		hosts: [mediatedHost],
-		injection: 'http-mediation',
-		source: 'environment',
-	};
+	for (const agentId of agentIds) {
+		const secretEnvironmentName = mediatedSecretEnvironmentNames[agentId];
+		project.zone.secrets[secretEnvironmentName] = {
+			audience: 'gateway',
+			envVar: secretEnvironmentName,
+			hosts: [mediatedHost],
+			injection: 'http-mediation',
+			source: 'environment',
+		};
+	}
 	project.zone.egressHosts = [
 		...(project.zone.egressHosts ?? []),
 		{ audience: 'gateway', host: mediatedHost },
@@ -122,7 +132,8 @@ function generationSecretInputs(generationCanaries: GenerationCanaries): Record<
 	return {
 		[discordSecretEnvironmentNames.beta]: generationCanaries.discordByAgent.beta,
 		[discordSecretEnvironmentNames.clawfest]: generationCanaries.discordByAgent.clawfest,
-		[mediatedSecretEnvironmentName]: generationCanaries.mediated,
+		[mediatedSecretEnvironmentNames.beta]: generationCanaries.mediatedByAgent.beta,
+		[mediatedSecretEnvironmentNames.clawfest]: generationCanaries.mediatedByAgent.clawfest,
 		GITHUB_TOKEN: 'unused-hermes-profile-secrets-e2e-token',
 	};
 }
@@ -181,7 +192,7 @@ for profile_name in ("clawfest", "beta"):
         "mode": format(stat.S_IMODE(file_stat.st_mode), "03o"),
         "profileName": profile_name,
         "providerValueDigest": hashlib.sha256(
-            entries["PROVIDER_API_KEY"].encode()
+            entries["OPENROUTER_API_KEY"].encode()
         ).hexdigest(),
         "regularFile": stat.S_ISREG(file_stat.st_mode) and not stat.S_ISLNK(file_stat.st_mode),
     })
@@ -201,6 +212,7 @@ function requireEnvironmentObservation(output: string): GuestEnvironmentObservat
 	if (
 		!isObjectRecord(parsed) ||
 		typeof parsed.environmentScriptsRemain !== 'boolean' ||
+		typeof parsed.toolPortalContainsMediatedPlaceholder !== 'boolean' ||
 		typeof parsed.toolPortalContainsRawValue !== 'boolean' ||
 		typeof parsed.toolPortalContainsSourceName !== 'boolean' ||
 		typeof parsed.vmWideContainsRawValue !== 'boolean' ||
@@ -210,6 +222,7 @@ function requireEnvironmentObservation(output: string): GuestEnvironmentObservat
 	}
 	return {
 		environmentScriptsRemain: parsed.environmentScriptsRemain,
+		toolPortalContainsMediatedPlaceholder: parsed.toolPortalContainsMediatedPlaceholder,
 		toolPortalContainsRawValue: parsed.toolPortalContainsRawValue,
 		toolPortalContainsSourceName: parsed.toolPortalContainsSourceName,
 		vmWideContainsRawValue: parsed.vmWideContainsRawValue,
@@ -219,20 +232,45 @@ function requireEnvironmentObservation(output: string): GuestEnvironmentObservat
 
 async function inspectGuestEnvironments(options: {
 	readonly canaries: GenerationCanaries;
+	readonly mediatedGuestPlaceholdersByAgent: Readonly<Record<AgentId, string>>;
 	readonly vm: GatewayZoneVmOperations;
 }): Promise<GuestEnvironmentObservation> {
-	const rawValueDigests = Object.values(options.canaries.discordByAgent).map(sha256);
-	const result = await options.vm.exec(['python3', '-', ...rawValueDigests], {
-		stdin: `
+	const rawValueDigests = [
+		...Object.values(options.canaries.discordByAgent),
+		...Object.values(options.canaries.mediatedByAgent),
+	].map(sha256);
+	const mediatedGuestPlaceholderDigests = Object.values(
+		options.mediatedGuestPlaceholdersByAgent,
+	).map(sha256);
+	const result = await options.vm.exec(
+		[
+			'python3',
+			'-',
+			...rawValueDigests.map((digest) => `--raw-value-digest=${digest}`),
+			...mediatedGuestPlaceholderDigests.map((digest) => `--mediated-placeholder-digest=${digest}`),
+		],
+		{
+			stdin: `
 import hashlib
 import json
 import os
 import sys
 
-raw_value_digests = set(sys.argv[1:])
+raw_value_digests = {
+    argument.removeprefix("--raw-value-digest=")
+    for argument in sys.argv[1:]
+    if argument.startswith("--raw-value-digest=")
+}
+mediated_placeholder_digests = {
+    argument.removeprefix("--mediated-placeholder-digest=")
+    for argument in sys.argv[1:]
+    if argument.startswith("--mediated-placeholder-digest=")
+}
 source_names = {
     b"DISCORD_BOT_TOKEN_CLAWFEST",
     b"DISCORD_BOT_TOKEN_BETA",
+    b"HERMES_E2E_MEDIATED_SECRET_CLAWFEST",
+    b"HERMES_E2E_MEDIATED_SECRET_BETA",
 }
 
 def inspect_environment(process_id):
@@ -247,6 +285,10 @@ def inspect_environment(process_id):
     names = {entry.partition(b"=")[0] for entry in entries}
     values = [entry.partition(b"=")[2] for entry in entries]
     return {
+        "containsMediatedPlaceholder": any(
+            hashlib.sha256(value).hexdigest() in mediated_placeholder_digests
+            for value in values
+        ),
         "containsRawValue": any(
             hashlib.sha256(value).hexdigest() in raw_value_digests
             for value in values
@@ -279,13 +321,15 @@ print(json.dumps({
             "/run/agent-vm/managed-gateway-environment/tool-portal.environment.sh",
         )
     ),
+    "toolPortalContainsMediatedPlaceholder": tool_portal["containsMediatedPlaceholder"],
     "toolPortalContainsRawValue": tool_portal["containsRawValue"],
     "toolPortalContainsSourceName": tool_portal["containsSourceName"],
     "vmWideContainsRawValue": vm_wide["containsRawValue"],
     "vmWideContainsSourceName": vm_wide["containsSourceName"],
 }, sort_keys=True))
 `,
-	});
+		},
+	);
 	if (!result.ok) {
 		throw new Error(
 			`Hermes guest environment inspection failed: exit=${String(result.exitCode)} stderr=${result.stderr}`,
@@ -403,6 +447,7 @@ function assertSafeManagedVmRequest(options: {
 	readonly request: ManagedVmCreateRequest;
 }): void {
 	const rawDiscordValues = Object.values(options.canaries.discordByAgent);
+	const rawMediatedValues = Object.values(options.canaries.mediatedByAgent);
 	expect(Object.keys(options.request.environment)).not.toContain(
 		discordSecretEnvironmentNames.clawfest,
 	);
@@ -412,40 +457,62 @@ function assertSafeManagedVmRequest(options: {
 	expect(
 		Object.values(options.request.environment).some((value) => rawDiscordValues.includes(value)),
 	).toBe(false);
-	expect(Object.keys(options.request.environment)).not.toContain(mediatedSecretEnvironmentName);
-	expect(Object.values(options.request.environment)).not.toContain(options.canaries.mediated);
+	for (const mediatedSecretEnvironmentName of Object.values(mediatedSecretEnvironmentNames)) {
+		expect(Object.keys(options.request.environment)).not.toContain(mediatedSecretEnvironmentName);
+	}
+	expect(
+		Object.values(options.request.environment).some((value) => rawMediatedValues.includes(value)),
+	).toBe(false);
 	const hermesHomeMount = options.request.mounts['/home/hermes/.hermes'];
 	expect(
 		hermesHomeMount?.kind === 'shadow' ? [...hermesHomeMount.temporaryFilesystems].toSorted() : [],
 	).toEqual(['/profiles/beta/.env', '/profiles/clawfest/.env']);
-	const mediatedDescriptor = options.request.mediatedSecrets.find(
-		(descriptor) => descriptor.environmentVariable === mediatedSecretEnvironmentName,
-	);
-	expect(mediatedDescriptor).toBeDefined();
-	expect(mediatedDescriptor?.allowedHosts).toEqual([mediatedHost]);
-	expect(mediatedDescriptor?.guestPlaceholder).toEqual(expect.any(String));
-	expect(mediatedDescriptor?.guestPlaceholder).not.toBe('');
-	expect(mediatedDescriptor?.guestPlaceholder).not.toBe(options.canaries.mediated);
-	expect(mediatedDescriptor?.value).toBe(options.canaries.mediated);
+	const mediatedGuestPlaceholders = agentIds.map((agentId) => {
+		const mediatedDescriptor = options.request.mediatedSecrets.find(
+			(descriptor) => descriptor.environmentVariable === mediatedSecretEnvironmentNames[agentId],
+		);
+		expect(mediatedDescriptor).toBeDefined();
+		expect(mediatedDescriptor?.allowedHosts).toEqual([mediatedHost]);
+		expect(mediatedDescriptor?.guestPlaceholder).toEqual(expect.any(String));
+		expect(mediatedDescriptor?.guestPlaceholder).not.toBe('');
+		expect(mediatedDescriptor?.guestPlaceholder).not.toBe(
+			options.canaries.mediatedByAgent[agentId],
+		);
+		expect(mediatedDescriptor?.value).toBe(options.canaries.mediatedByAgent[agentId]);
+		return mediatedDescriptor?.guestPlaceholder;
+	});
+	expect(new Set(mediatedGuestPlaceholders).size).toBe(agentIds.length);
 }
 
-function requireMediatedGuestPlaceholder(request: ManagedVmCreateRequest): string {
+function requireMediatedGuestPlaceholder(
+	request: ManagedVmCreateRequest,
+	agentId: AgentId,
+): string {
 	const descriptor = request.mediatedSecrets.find(
-		(candidate) => candidate.environmentVariable === mediatedSecretEnvironmentName,
+		(candidate) => candidate.environmentVariable === mediatedSecretEnvironmentNames[agentId],
 	);
 	if (descriptor === undefined) {
-		throw new Error('Hermes profile-secret E2E omitted its mediated provider projection.');
+		throw new Error(`Hermes profile-secret E2E omitted the ${agentId} mediated projection.`);
 	}
 	if (typeof descriptor.guestPlaceholder !== 'string' || descriptor.guestPlaceholder.length === 0) {
-		throw new Error('Hermes profile-secret E2E omitted its mediated provider placeholder.');
+		throw new Error(`Hermes profile-secret E2E omitted the ${agentId} mediated placeholder.`);
 	}
 	return descriptor.guestPlaceholder;
+}
+
+function requireMediatedGuestPlaceholdersByAgent(
+	request: ManagedVmCreateRequest,
+): Readonly<Record<AgentId, string>> {
+	return {
+		beta: requireMediatedGuestPlaceholder(request, 'beta'),
+		clawfest: requireMediatedGuestPlaceholder(request, 'clawfest'),
+	};
 }
 
 function assertGuestProfileFiles(
 	observations: readonly GuestProfileFileObservation[],
 	canaries: GenerationCanaries,
-	mediatedGuestPlaceholder: string,
+	mediatedGuestPlaceholdersByAgent: Readonly<Record<AgentId, string>>,
 ): void {
 	expect(
 		observations.map((observation) => ({
@@ -460,12 +527,18 @@ function assertGuestProfileFiles(
 			discordValueDigest: sha256(canaries.discordByAgent[agentId]),
 			mode: '600',
 			profileName: agentId,
-			providerValueDigest: sha256(mediatedGuestPlaceholder),
+			providerValueDigest: sha256(mediatedGuestPlaceholdersByAgent[agentId]),
 			regularFile: true,
 		})),
 	);
+	expect(new Set(observations.map((observation) => observation.providerValueDigest)).size).toBe(
+		agentIds.length,
+	);
 	expect(observations.map((observation) => observation.providerValueDigest)).not.toContain(
-		sha256(canaries.mediated),
+		sha256(canaries.mediatedByAgent.beta),
+	);
+	expect(observations.map((observation) => observation.providerValueDigest)).not.toContain(
+		sha256(canaries.mediatedByAgent.clawfest),
 	);
 }
 
@@ -530,18 +603,23 @@ describeHermesDiscordProfileSecretsE2e(
 				canaries: firstGeneration,
 				request: firstBoot.gateway.request,
 			});
+			const firstBootMediatedGuestPlaceholders = requireMediatedGuestPlaceholdersByAgent(
+				firstBoot.gateway.request,
+			);
 			assertGuestProfileFiles(
 				await inspectGuestProfileFiles(firstBoot.gateway.vm),
 				firstGeneration,
-				requireMediatedGuestPlaceholder(firstBoot.gateway.request),
+				firstBootMediatedGuestPlaceholders,
 			);
 			expect(
 				await inspectGuestEnvironments({
 					canaries: firstGeneration,
+					mediatedGuestPlaceholdersByAgent: firstBootMediatedGuestPlaceholders,
 					vm: firstBoot.gateway.vm,
 				}),
 			).toEqual({
 				environmentScriptsRemain: false,
+				toolPortalContainsMediatedPlaceholder: false,
 				toolPortalContainsRawValue: false,
 				toolPortalContainsSourceName: false,
 				vmWideContainsRawValue: false,
@@ -573,18 +651,28 @@ describeHermesDiscordProfileSecretsE2e(
 				canaries: secondGeneration,
 				request: secondBoot.gateway.request,
 			});
+			const secondBootMediatedGuestPlaceholders = requireMediatedGuestPlaceholdersByAgent(
+				secondBoot.gateway.request,
+			);
 			assertGuestProfileFiles(
 				await inspectGuestProfileFiles(secondBoot.gateway.vm),
 				secondGeneration,
-				requireMediatedGuestPlaceholder(secondBoot.gateway.request),
+				secondBootMediatedGuestPlaceholders,
 			);
+			for (const agentId of agentIds) {
+				expect(secondBootMediatedGuestPlaceholders[agentId]).not.toBe(
+					firstBootMediatedGuestPlaceholders[agentId],
+				);
+			}
 			expect(
 				await inspectGuestEnvironments({
 					canaries: secondGeneration,
+					mediatedGuestPlaceholdersByAgent: secondBootMediatedGuestPlaceholders,
 					vm: secondBoot.gateway.vm,
 				}),
 			).toEqual({
 				environmentScriptsRemain: false,
+				toolPortalContainsMediatedPlaceholder: false,
 				toolPortalContainsRawValue: false,
 				toolPortalContainsSourceName: false,
 				vmWideContainsRawValue: false,
@@ -612,9 +700,9 @@ describeHermesDiscordProfileSecretsE2e(
 					],
 					[
 						...Object.values(firstGeneration.discordByAgent),
-						firstGeneration.mediated,
+						...Object.values(firstGeneration.mediatedByAgent),
 						...Object.values(secondGeneration.discordByAgent),
-						secondGeneration.mediated,
+						...Object.values(secondGeneration.mediatedByAgent),
 					],
 				),
 			).toEqual([]);

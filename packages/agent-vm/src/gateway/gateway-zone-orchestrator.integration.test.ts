@@ -67,6 +67,7 @@ import {
 	TEST_SSH_SERVER_HOST_KEY,
 	createManagedExecProcessStub,
 } from '../testing/managed-vm-test-helpers.js';
+import { selectToolVmMediatedSecretNamesForAgent } from '../tool-vm/tool-vm-secret-selection.js';
 import { loadGatewayLifecycle } from './gateway-lifecycle-loader.js';
 import {
 	preflightGatewayZoneStart,
@@ -6948,6 +6949,143 @@ describe('startGatewayZone', () => {
 		const execCallCountBeforeDestroy = exec.mock.calls.length;
 		await managedResult.destroyGateway();
 		expect(exec).toHaveBeenCalledTimes(execCallCountBeforeDestroy);
+	});
+
+	it('keeps Hermes profile projection and Tool VM agent access selectors isolated', async () => {
+		const sourceName = 'PROFILE_A_PROVIDER_KEY';
+		const sourceRef = 'op://agent-vm/hermes-profile-a-provider/credential';
+		const systemConfig = await createHermesSystemConfig();
+		const zone = systemConfig.zones[0];
+		if (zone === undefined || zone.gateway.type !== 'hermes') {
+			throw new Error('Expected Hermes gateway test zone.');
+		}
+		zone.gateway.profileSecretProjectionsByAgent.main = {
+			...zone.gateway.profileSecretProjectionsByAgent.main,
+			OPENROUTER_API_KEY: sourceName,
+		};
+		zone.secrets[sourceName] = {
+			agentAccess: ['second'],
+			audience: 'both',
+			hosts: ['openrouter.ai'],
+			injection: 'http-mediation',
+			ref: sourceRef,
+			source: '1password',
+		};
+		zone.egressHosts = [...zone.egressHosts, { audience: 'both', host: 'openrouter.ai' }];
+		let managedVmCreateRequest: ManagedVmCreateRequest | undefined;
+		const { managedVm } = createHealthyGatewayVmStub('vm-hermes-selector-isolation', 28_403);
+
+		const result = await startGatewayZone(
+			{
+				secretResolver: createOpenClawSecretResolver({
+					[sourceRef]: 'test-profile-a-provider-key',
+				}),
+				systemConfig,
+				zoneId: zone.id,
+			},
+			{
+				managedVmFactory: {
+					createManagedVm: vi.fn(async (createRequest) => {
+						managedVmCreateRequest = createRequest;
+						return managedVm;
+					}),
+				},
+				managedVmImages: testManagedVmImages,
+			},
+		);
+
+		expect(selectToolVmMediatedSecretNamesForAgent({ agentId: 'main', zone }).has(sourceName)).toBe(
+			false,
+		);
+		expect(
+			selectToolVmMediatedSecretNamesForAgent({ agentId: 'second', zone }).has(sourceName),
+		).toBe(true);
+		const frameworkServiceConfig = parseJsonObject(
+			requireManagedGatewayBootInputFile(
+				managedVmCreateRequest,
+				managedGatewayBootInputPaths.structuredRoot,
+				'framework-service.json',
+			),
+		);
+		const profileSources = frameworkServiceConfig.profileEnvironmentSourceNamesByProfile as Record<
+			string,
+			Record<string, string>
+		>;
+		expect(profileSources['beta-main']).toMatchObject({ OPENROUTER_API_KEY: sourceName });
+		expect(profileSources['beta-second']).not.toHaveProperty('OPENROUTER_API_KEY');
+		const projectedDescriptor = managedVmCreateRequest?.mediatedSecrets.find(
+			(secret) => secret.environmentVariable === sourceName,
+		);
+		expect(projectedDescriptor?.guestPlaceholder).toMatch(/^GONDOLIN_SECRET_[0-9a-f]{48}$/u);
+		const toolPortalEnvironment = requireManagedGatewayBootInputFile(
+			managedVmCreateRequest,
+			managedGatewayBootInputPaths.environmentRoot,
+			'tool-portal.environment.sh',
+		);
+		expect(toolPortalEnvironment).not.toContain(sourceName);
+		expect(toolPortalEnvironment).not.toContain('OPENROUTER_API_KEY');
+		await requireManagedGatewayResult(result).destroyGateway();
+	});
+
+	it('rejects a projected mediated source colliding with constructed Hermes OTel environment', async () => {
+		const collisionSourceName = 'OTEL_SERVICE_NAME';
+		const collisionSourceRef = 'op://agent-vm/hermes-otel-collision/credential';
+		const hermesSystemConfig = await createHermesSystemConfig();
+		const observabilitySystemConfig = createObservabilitySystemConfig(await createSystemConfig(), {
+			controllerStartPolicy: 'off',
+			zoneEnabled: true,
+		});
+		const zone = hermesSystemConfig.zones[0];
+		const observabilityZone = observabilitySystemConfig.zones[0];
+		if (
+			zone === undefined ||
+			zone.gateway.type !== 'hermes' ||
+			observabilityZone?.observability === undefined
+		) {
+			throw new Error('Expected Hermes and observability gateway test zones.');
+		}
+		zone.observability = observabilityZone.observability;
+		zone.gateway.profileSecretProjectionsByAgent.main = {
+			...zone.gateway.profileSecretProjectionsByAgent.main,
+			OPENROUTER_API_KEY: collisionSourceName,
+		};
+		zone.secrets[collisionSourceName] = {
+			audience: 'gateway',
+			hosts: ['openrouter.ai'],
+			injection: 'http-mediation',
+			ref: collisionSourceRef,
+			source: '1password',
+		};
+		zone.egressHosts = [...zone.egressHosts, { audience: 'gateway', host: 'openrouter.ai' }];
+		const systemConfig = {
+			...observabilitySystemConfig,
+			imageProfiles: hermesSystemConfig.imageProfiles,
+			zones: [zone],
+		};
+		const { finalizeMemoryMount, managedVm, start } = createHealthyGatewayVmStub(
+			'vm-hermes-otel-collision',
+			28_404,
+		);
+
+		await expect(
+			startGatewayZone(
+				{
+					secretResolver: createOpenClawSecretResolver({
+						[collisionSourceRef]: 'test-hermes-otel-collision-key',
+					}),
+					systemConfig,
+					zoneId: zone.id,
+				},
+				{
+					managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
+					managedVmImages: testManagedVmImages,
+				},
+			),
+		).rejects.toThrow(
+			"Managed Gateway framework mediated source 'OTEL_SERVICE_NAME' collides with the constructed framework environment.",
+		);
+		expect(finalizeMemoryMount).not.toHaveBeenCalled();
+		expect(start).not.toHaveBeenCalled();
 	});
 
 	it('exposes managed OpenClaw as an image-owned cohort without controller process authority', async () => {
