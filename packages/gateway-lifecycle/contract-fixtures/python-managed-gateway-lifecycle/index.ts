@@ -31,7 +31,6 @@ export const pythonManagedGatewayLifecycleFixture = {
 			configuration: { gateway: { port: 18789 } },
 			environment: { HOME: '/home/hermes' },
 			kind: 'hermes-managed-scope',
-			managedConfigurationSource: 'plugins:\n  enabled: [agent-vm-tool-portal]\n  disabled: []\n',
 		});
 	},
 	buildFrameworkServiceBootMetadata(_zone: GatewayZoneConfig): ManagedHermesServiceBootMetadata {

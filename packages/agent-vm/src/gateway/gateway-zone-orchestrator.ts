@@ -2181,7 +2181,6 @@ async function startGatewayZoneImplementation(
 			if (frameworkServiceInputs.kind === 'hermes-managed-scope') {
 				return {
 					frameworkInputKind: frameworkServiceInputs.kind,
-					frameworkManagedConfigurationSource: frameworkServiceInputs.managedConfigurationSource,
 				} as const;
 			}
 			if (lifecycleZone.gateway.type !== 'openclaw') {

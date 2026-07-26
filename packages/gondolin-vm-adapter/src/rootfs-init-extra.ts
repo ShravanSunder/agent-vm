@@ -77,10 +77,7 @@ export function renderManagedGatewayRootfsInitScript(
 ): string {
 	const selectedFrameworkBootCommand = frameworkBootCommand(projection.frameworkBootEntry);
 	const selectedFrameworkLogPath = `${managedGatewayLogRoot}/${frameworkLogFileName(projection.frameworkBootEntry)}`;
-	const frameworkBootInputFileNames =
-		projection.frameworkBootEntry === 'hermes-framework-service'
-			? 'framework-service.json config.yaml'
-			: 'framework-service.json';
+	const frameworkBootInputFileNames = 'framework-service.json';
 	return `# Fixed managed Gateway sibling boot entries.
 managed_gateway_environment_input_root=${managedGatewayEnvironmentInputRoot}
 managed_gateway_structured_input_root=${managedGatewayStructuredInputRoot}

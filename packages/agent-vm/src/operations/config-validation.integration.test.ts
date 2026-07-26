@@ -547,11 +547,17 @@ async function configureLoadedFixtureAsHermes(
 	if (zone === undefined || zone.gateway.type !== 'openclaw') {
 		throw new Error('Expected OpenClaw fixture zone');
 	}
+	const hermesConfigurationDirectoryPath = path.join(
+		path.dirname(zone.gateway.config),
+		'hermes-managed',
+	);
+	const hermesConfigurationPath = path.join(hermesConfigurationDirectoryPath, 'config.yaml');
+	await mkdir(hermesConfigurationDirectoryPath, { recursive: true });
 	const zoneIndex = systemConfig.zones.indexOf(zone);
 	systemConfig.zones[zoneIndex] = {
 		...zone,
 		gateway: {
-			config: zone.gateway.config,
+			config: hermesConfigurationPath,
 			cpus: zone.gateway.cpus,
 			imageProfile: 'hermes',
 			memory: zone.gateway.memory,
@@ -564,7 +570,7 @@ async function configureLoadedFixtureAsHermes(
 		},
 	};
 	await writeFile(
-		zone.gateway.config,
+		hermesConfigurationPath,
 		'plugins:\n  enabled: [agent-vm-tool-portal]\n  disabled: []\n',
 		'utf8',
 	);
@@ -703,6 +709,53 @@ describe('runConfigValidation', () => {
 			name: 'hermes-config-shravan',
 			ok: false,
 		});
+	});
+
+	it.each([
+		['an unexpected sibling', 'unexpected.txt'],
+		['a managed .env sibling', '.env'],
+	])('rejects Hermes managed configuration directory with %s', async (_caseName, siblingName) => {
+		const systemConfig = await createOpenClawSystemConfigWithManagedToolPortal();
+		await configureLoadedFixtureAsHermes(systemConfig);
+		const zone = systemConfig.zones[0];
+		if (zone === undefined || zone.gateway.type !== 'hermes') {
+			throw new Error('Expected Hermes fixture zone');
+		}
+		await writeFile(
+			path.join(path.dirname(zone.gateway.config), siblingName),
+			'opaque-marker',
+			'utf8',
+		);
+
+		const result = await runConfigValidation({
+			runCommand: successfulOpenClawValidationCommand,
+			systemConfig,
+		});
+		const hermesConfigCheck = result.checks.find((check) => check.name === 'hermes-config-shravan');
+
+		expect(hermesConfigCheck).toMatchObject({ ok: false });
+		expect(hermesConfigCheck?.hint).toContain('must contain only config.yaml');
+		expect(hermesConfigCheck?.hint).not.toContain('opaque-marker');
+	});
+
+	it('reports an unreadable Hermes managed configuration without exposing the configured path', async () => {
+		const systemConfig = await createOpenClawSystemConfigWithManagedToolPortal();
+		await configureLoadedFixtureAsHermes(systemConfig);
+		const zone = systemConfig.zones[0];
+		if (zone === undefined || zone.gateway.type !== 'hermes') {
+			throw new Error('Expected Hermes fixture zone');
+		}
+		await rm(zone.gateway.config);
+
+		const result = await runConfigValidation({
+			runCommand: successfulOpenClawValidationCommand,
+			systemConfig,
+		});
+		const hermesConfigCheck = result.checks.find((check) => check.name === 'hermes-config-shravan');
+
+		expect(hermesConfigCheck).toMatchObject({ ok: false });
+		expect(hermesConfigCheck?.hint).toContain('path is unreadable');
+		expect(hermesConfigCheck?.hint).not.toContain(zone.gateway.config);
 	});
 
 	it('does not expose malformed Hermes config contents in validation output', async () => {

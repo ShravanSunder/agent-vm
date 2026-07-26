@@ -347,7 +347,6 @@ interface ManagedFrameworkServiceConfigurationOnlyBootInputs extends ManagedFram
 
 interface ManagedHermesFrameworkServiceBootInputs extends ManagedFrameworkServiceBootInputsBase {
 	readonly kind: 'hermes-managed-scope';
-	readonly managedConfigurationSource: string;
 }
 
 export type ManagedFrameworkServiceBootInputs =

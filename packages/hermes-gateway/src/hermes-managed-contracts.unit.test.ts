@@ -1,5 +1,5 @@
 import type { GatewayZoneConfig } from '@agent-vm/gateway-lifecycle';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import {
 	buildHermesFrameworkServiceBootMetadata,
@@ -7,13 +7,6 @@ import {
 	HERMES_AGENT_DISTRIBUTION,
 	renderHermesManagedImageRecipe,
 } from './index.js';
-
-const readFileMock = vi.hoisted(() => vi.fn());
-
-vi.mock('node:fs/promises', async (importOriginal) => ({
-	...(await importOriginal<typeof import('node:fs/promises')>()),
-	readFile: readFileMock,
-}));
 
 function createHermesZone(toolPortalMaterial: unknown): GatewayZoneConfig {
 	return {
@@ -78,15 +71,6 @@ function createHermesAdapterMaterial(): Readonly<Record<string, unknown>> {
 }
 
 describe('managed Hermes package contracts', () => {
-	beforeEach(() => {
-		readFileMock.mockReset();
-		readFileMock.mockResolvedValue(`
-plugins:
-  enabled: [agent-vm-tool-portal]
-  disabled: []
-`);
-	});
-
 	it('wires host-authoritative profile preflight and preparation hooks', () => {
 		expect(hermesLifecycle.preflightHostState).toBeTypeOf('function');
 		expect(hermesLifecycle.prepareHostState).toBeTypeOf('function');
@@ -197,15 +181,14 @@ plugins:
 		});
 		expect(bootInputs).toMatchObject({
 			kind: 'hermes-managed-scope',
-			managedConfigurationSource: expect.stringContaining('agent-vm-tool-portal'),
 		});
+		expect(bootInputs).not.toHaveProperty('managedConfigurationSource');
 		expect(bootInputs.environment).toMatchObject({
 			AGENT_VM_HERMES_MANAGED_CONFIG_PATH: '/run/agent-vm/managed-gateway/framework-service.json',
 			API_SERVER_ENABLED: 'true',
 			API_SERVER_KEY: 'test-only-key',
 			DISCORD_BOT_TOKEN_RESEARCHER: 'discord-test-only-key',
 			GATEWAY_MULTIPLEX_PROFILES: 'true',
-			HERMES_MANAGED_DIR: '/run/agent-vm/managed-gateway',
 			HERMES_HOME: '/home/hermes/.hermes',
 			OTEL_BLRP_MAX_EXPORT_BATCH_SIZE: '64',
 			OTEL_BLRP_MAX_QUEUE_SIZE: '256',
@@ -220,10 +203,16 @@ plugins:
 			OTEL_TRACES_SAMPLER: 'parentbased_traceidratio',
 			OTEL_TRACES_SAMPLER_ARG: '1',
 		});
-		expect(readFileMock).toHaveBeenCalledWith('/deployment/config/hermes.yaml', 'utf8');
+		expect(bootInputs.environment).not.toHaveProperty('HERMES_MANAGED');
+		expect(bootInputs.environment).not.toHaveProperty('HERMES_MANAGED_DIR');
 	});
 
 	it('mounts durable state with exact memory-only profile token files', () => {
+		const baseZone = createHermesZone(createHermesAdapterMaterial());
+		const {
+			discordBotTokenSecretsByAgent: _legacyDiscordProjection,
+			...gatewayWithoutLegacyDiscordProjection
+		} = baseZone.gateway as Extract<GatewayZoneConfig['gateway'], { readonly type: 'hermes' }>;
 		const requirements = hermesLifecycle.buildVmRequirements({
 			controllerPort: 7777,
 			gatewayCacheDir: '/deployment/cache/hermes',
@@ -234,7 +223,16 @@ plugins:
 			},
 			zoneRuntimeDir: '/deployment/runtime',
 			tcpPool: { basePort: 22_000, size: 2 },
-			zone: createHermesZone(createHermesAdapterMaterial()),
+			zone: {
+				...baseZone,
+				gateway: {
+					...gatewayWithoutLegacyDiscordProjection,
+					profilesByAgent: {
+						beta: 'beta',
+						researcher: 'researcher',
+					},
+				},
+			},
 		});
 
 		expect(requirements.environment).not.toHaveProperty('API_SERVER_KEY');
@@ -242,6 +240,11 @@ plugins:
 			HERMES_HOME: '/home/hermes/.hermes',
 		});
 		expect(requirements.mounts).toEqual({
+			'/etc/hermes': {
+				access: 'read-only',
+				hostPath: '/deployment/config',
+				kind: 'host-directory',
+			},
 			'/agent-vm/logs': {
 				access: 'read-write',
 				hostPath: '/deployment/runtime/logs',
@@ -256,7 +259,7 @@ plugins:
 				deny: [],
 				hostPath: '/deployment/state/hermes',
 				kind: 'shadow',
-				temporaryFilesystems: ['/profiles/researcher/.env'],
+				temporaryFilesystems: ['/profiles/beta/.env', '/profiles/researcher/.env'],
 			},
 		});
 		expect(requirements.mounts).not.toHaveProperty('/workspace');
@@ -264,6 +267,21 @@ plugins:
 			'tool-0.vm.host:22': '127.0.0.1:22000',
 			'tool-1.vm.host:22': '127.0.0.1:22001',
 		});
+	});
+
+	it('protects generated multiplex and removed managed-directory environment names', async () => {
+		for (const environmentName of ['GATEWAY_MULTIPLEX_PROFILES', 'HERMES_MANAGED_DIR'] as const) {
+			const zone = {
+				...createHermesZone(createHermesAdapterMaterial()),
+				runtimeEnvironment: { [environmentName]: 'deployment-authored-override' },
+			} satisfies GatewayZoneConfig;
+			await expect(
+				hermesLifecycle.buildFrameworkServiceBootInputs({
+					resolvedSecrets: { API_SERVER_KEY: 'test-only-key' },
+					zone,
+				}),
+			).rejects.toThrow(`cannot override '${environmentName}'`);
+		}
 	});
 
 	it('rejects missing, malformed, and wrong-framework immutable input', async () => {

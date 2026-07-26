@@ -36,7 +36,14 @@ async function createTemporaryStateDirectory(): Promise<string> {
 	);
 	createdTemporaryDirectories.push(temporaryDirectoryPath);
 	const stateDirectoryPath = path.join(temporaryDirectoryPath, 'state');
+	const managedConfigurationDirectoryPath = path.join(temporaryDirectoryPath, 'hermes-managed');
 	await mkdir(stateDirectoryPath, { mode: 0o755 });
+	await mkdir(managedConfigurationDirectoryPath, { mode: 0o755 });
+	await writeFile(
+		path.join(managedConfigurationDirectoryPath, 'config.yaml'),
+		'plugins:\n  enabled: [agent-vm-tool-portal]\n  disabled: []\n',
+		'utf8',
+	);
 	return stateDirectoryPath;
 }
 
@@ -53,7 +60,7 @@ function createHermesZone(options: {
 		agents: (options.agents ?? Object.keys(profilesByAgent)).map((agentId) => ({ id: agentId })),
 		egressHosts: [],
 		gateway: {
-			config: '/deployment/config/hermes.yaml',
+			config: path.join(path.dirname(options.stateDirectoryPath), 'hermes-managed', 'config.yaml'),
 			cpus: 2,
 			memory: '4G',
 			port: 8642,
@@ -99,6 +106,11 @@ describe('Hermes profile directory materialization', () => {
 		expect(await readdir(profilesDirectoryPath)).toEqual(['researcher', 'writer']);
 		expect(await readFile(rootConfigurationPath, 'utf8')).toBe('{}\n');
 		expect((await stat(rootConfigurationPath)).mode & 0o777).toBe(0o600);
+		for (const profileName of ['researcher', 'writer']) {
+			const profileConfigurationPath = path.join(profilesDirectoryPath, profileName, 'config.yaml');
+			expect(await readFile(profileConfigurationPath, 'utf8')).toBe('{}\n');
+			expect((await stat(profileConfigurationPath)).mode & 0o777).toBe(0o600);
+		}
 		expect((await stat(profilesDirectoryPath)).mode & 0o777).toBe(0o700);
 		expect((await stat(path.join(profilesDirectoryPath, 'researcher'))).mode & 0o777).toBe(0o700);
 		expect((await stat(path.join(profilesDirectoryPath, 'writer'))).mode & 0o777).toBe(0o700);
@@ -117,6 +129,27 @@ describe('Hermes profile directory materialization', () => {
 
 		expect(await readFile(rootConfigurationPath, 'utf8')).toBe('existing: configuration\n');
 		expect((await stat(rootConfigurationPath)).mode & 0o777).toBe(0o640);
+	});
+
+	it('preserves an existing admitted named config without changing its bytes or mode', async () => {
+		const stateDirectoryPath = await createTemporaryStateDirectory();
+		const profileConfigurationPath = path.join(
+			stateDirectoryPath,
+			'profiles',
+			'researcher',
+			'config.yaml',
+		);
+		await mkdir(path.dirname(profileConfigurationPath), { mode: 0o700, recursive: true });
+		await writeFile(profileConfigurationPath, 'profile_setting: preserved\n', { mode: 0o640 });
+		const zone = createHermesZone({
+			profilesByAgent: { researcher: 'researcher' },
+			stateDirectoryPath,
+		});
+
+		await hermesLifecycle.prepareHostState?.(zone, unusedSecretResolver);
+
+		expect(await readFile(profileConfigurationPath, 'utf8')).toBe('profile_setting: preserved\n');
+		expect((await stat(profileConfigurationPath)).mode & 0o777).toBe(0o640);
 	});
 
 	it.each([
@@ -152,6 +185,59 @@ describe('Hermes profile directory materialization', () => {
 		},
 	);
 
+	it.each([
+		['an unsafe sibling', 'unexpected.txt', 'opaque-marker', /must contain only config\.yaml/u],
+		[
+			'a forbidden common credential',
+			'config.yaml',
+			'plugins:\n  enabled: [agent-vm-tool-portal]\n  disabled: []\napi_key: opaque-marker\n',
+			/credential field 'api_key'/u,
+		],
+	] as const)(
+		'rejects common configuration with %s through lifecycle preflight without exposing its value',
+		async (_caseName, fileName, fileContents, expectedMessage) => {
+			const stateDirectoryPath = await createTemporaryStateDirectory();
+			const commonConfigurationDirectoryPath = path.join(
+				path.dirname(stateDirectoryPath),
+				'hermes-managed',
+			);
+			await writeFile(path.join(commonConfigurationDirectoryPath, fileName), fileContents, 'utf8');
+			const zone = createHermesZone({ stateDirectoryPath });
+
+			let thrownError: unknown;
+			try {
+				await hermesLifecycle.preflightHostState?.(zone, unusedSecretResolver);
+			} catch (error: unknown) {
+				thrownError = error;
+			}
+
+			expect(thrownError).toBeInstanceOf(Error);
+			expect((thrownError as Error).message).toMatch(expectedMessage);
+			expect((thrownError as Error).message).not.toContain('opaque-marker');
+		},
+	);
+
+	it.each([
+		'.op.env',
+		'gateway.json',
+		'cache/op_cache.json',
+		'cache/bws_cache.json',
+		'cache/bws_cache.enc.json',
+	] as const)('rejects durable root artifact %s without deleting it', async (artifactPath) => {
+		const stateDirectoryPath = await createTemporaryStateDirectory();
+		const durableArtifactPath = path.join(stateDirectoryPath, artifactPath);
+		await mkdir(path.dirname(durableArtifactPath), { mode: 0o700, recursive: true });
+		await writeFile(durableArtifactPath, 'preserve-me', { mode: 0o640 });
+		const zone = createHermesZone({ stateDirectoryPath });
+
+		await expect(hermesLifecycle.preflightHostState?.(zone, unusedSecretResolver)).rejects.toThrow(
+			`artifact '${artifactPath}' must be absent`,
+		);
+
+		expect(await readFile(durableArtifactPath, 'utf8')).toBe('preserve-me');
+		expect((await stat(durableArtifactPath)).mode & 0o777).toBe(0o640);
+	});
+
 	it('rejects a symlinked root config without following or mutating it', async () => {
 		const stateDirectoryPath = await createTemporaryStateDirectory();
 		const externalConfigurationPath = path.join(
@@ -167,6 +253,34 @@ describe('Hermes profile directory materialization', () => {
 		);
 		await expect(hermesLifecycle.prepareHostState?.(zone, unusedSecretResolver)).rejects.toThrow(
 			/root config.*symbolic link/u,
+		);
+
+		expect(await readFile(externalConfigurationPath, 'utf8')).toBe('outside: preserved\n');
+		expect((await stat(externalConfigurationPath)).mode & 0o777).toBe(0o640);
+	});
+
+	it('rejects a symlinked named config without following or mutating it', async () => {
+		const stateDirectoryPath = await createTemporaryStateDirectory();
+		const externalConfigurationPath = path.join(
+			path.dirname(stateDirectoryPath),
+			'external-profile-config.yaml',
+		);
+		const profileConfigurationPath = path.join(
+			stateDirectoryPath,
+			'profiles',
+			'researcher',
+			'config.yaml',
+		);
+		await writeFile(externalConfigurationPath, 'outside: preserved\n', { mode: 0o640 });
+		await mkdir(path.dirname(profileConfigurationPath), { mode: 0o700, recursive: true });
+		await symlink(externalConfigurationPath, profileConfigurationPath);
+		const zone = createHermesZone({
+			profilesByAgent: { researcher: 'researcher' },
+			stateDirectoryPath,
+		});
+
+		await expect(hermesLifecycle.preflightHostState?.(zone, unusedSecretResolver)).rejects.toThrow(
+			/regular file/u,
 		);
 
 		expect(await readFile(externalConfigurationPath, 'utf8')).toBe('outside: preserved\n');
@@ -266,6 +380,29 @@ describe('Hermes profile directory materialization', () => {
 			expect((await stat(path.join(profilesDirectoryPath, 'researcher'))).mode & 0o777).toBe(0o750);
 		},
 	);
+
+	it('rejects an admitted named-home secret cache without deleting it', async () => {
+		const stateDirectoryPath = await createTemporaryStateDirectory();
+		const durableArtifactPath = path.join(
+			stateDirectoryPath,
+			'profiles',
+			'researcher',
+			'cache',
+			'op_cache.json',
+		);
+		await mkdir(path.dirname(durableArtifactPath), { mode: 0o700, recursive: true });
+		await writeFile(durableArtifactPath, 'preserve-me', { mode: 0o640 });
+		const zone = createHermesZone({
+			profilesByAgent: { researcher: 'researcher' },
+			stateDirectoryPath,
+		});
+
+		await expect(hermesLifecycle.preflightHostState?.(zone, unusedSecretResolver)).rejects.toThrow(
+			/artifact 'cache\/op_cache\.json' must be absent/u,
+		);
+
+		expect(await readFile(durableArtifactPath, 'utf8')).toBe('preserve-me');
+	});
 
 	it('rejects a file at an expected profile path without overwriting it', async () => {
 		const stateDirectoryPath = await createTemporaryStateDirectory();

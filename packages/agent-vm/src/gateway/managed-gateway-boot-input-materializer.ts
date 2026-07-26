@@ -31,7 +31,6 @@ type ManagedGatewayFrameworkBootInputProps =
 	  }
 	| {
 			readonly frameworkInputKind: 'hermes-managed-scope';
-			readonly frameworkManagedConfigurationSource: string;
 	  };
 
 export type SerializeManagedGatewayBootInputsProps = ManagedGatewayBootInputCommonProps &
@@ -232,9 +231,6 @@ export function serializeManagedGatewayBootInputs(
 			'tool-portal-service.json',
 			serializeCanonicalJson(props.toolPortalServiceConfig, 'toolPortalServiceConfig'),
 		),
-		...(props.frameworkInputKind === 'hermes-managed-scope'
-			? [createMemoryFile('config.yaml', props.frameworkManagedConfigurationSource)]
-			: []),
 	];
 	return { environmentFiles, structuredInputFiles };
 }

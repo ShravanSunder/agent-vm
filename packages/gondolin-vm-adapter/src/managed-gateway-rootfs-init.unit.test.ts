@@ -51,9 +51,7 @@ describe('managed Gateway rootfs init projection', () => {
 			expect(script).toContain(
 				'rm -- /run/agent-vm/managed-gateway-environment/framework.environment.sh || exit 78',
 			);
-			if (frameworkBootEntry === 'openclaw-framework-service') {
-				expect(script).not.toContain('framework-service.json config.yaml');
-			}
+			expect(script).not.toContain('framework-service.json config.yaml');
 			expect(script).toContain('install -d -m 0700 /run/agent-vm/gateway-runtime');
 			expect(script).not.toMatch(/\b(cp|install)\b[^\n]*managed-gateway/gu);
 			expect(script).not.toContain('managed_gateway_input_staging_root');

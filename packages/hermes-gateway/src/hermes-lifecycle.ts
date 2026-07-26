@@ -16,7 +16,6 @@ import {
 	splitResolvedGatewaySecrets,
 } from '@agent-vm/gateway-lifecycle';
 
-import { loadHermesManagedConfiguration } from './hermes-managed-configuration.js';
 import {
 	preflightHermesProfileDirectories,
 	prepareHermesProfileDirectories,
@@ -27,7 +26,6 @@ const managedFrameworkConfigurationInputPath =
 	'/run/agent-vm/managed-gateway/framework-service.json';
 const managedFrameworkEnvironmentInputPath =
 	'/run/agent-vm/managed-gateway-environment/framework.environment.sh';
-const managedHermesConfigurationDirectoryPath = '/run/agent-vm/managed-gateway';
 const protectedHermesHomeVmPath = '/home/hermes/.hermes';
 const hermesCacheDirVmPath = '/home/hermes/.cache';
 const agentVmLogsDirVmPath = '/agent-vm/logs';
@@ -166,7 +164,6 @@ function buildHermesFrameworkEnvironment(
 		API_SERVER_HOST: '0.0.0.0',
 		API_SERVER_PORT: String(hermesGatewayGuestPort),
 		GATEWAY_MULTIPLEX_PROFILES: 'true',
-		HERMES_MANAGED_DIR: managedHermesConfigurationDirectoryPath,
 		HERMES_HOME: protectedHermesHomeVmPath,
 		HOME: '/home/hermes',
 		NODE_EXTRA_CA_CERTS: '/run/gondolin/ca-certificates.crt',
@@ -205,12 +202,10 @@ export async function buildHermesFrameworkServiceBootInputs(
 	options: BuildManagedFrameworkServiceBootInputsOptions,
 ): Promise<ManagedFrameworkServiceBootInputs> {
 	const configuration = requireHermesAdapterMaterial(options.zone);
-	const managedConfiguration = await loadHermesManagedConfiguration(options.zone.gateway.config);
 	return Object.freeze({
 		configuration,
 		environment: buildHermesFrameworkEnvironment(options.zone, options.resolvedSecrets),
 		kind: 'hermes-managed-scope',
-		managedConfigurationSource: managedConfiguration.source,
 	});
 }
 
@@ -237,17 +232,7 @@ export const hermesLifecycle = {
 				runtimeMediatedSecrets: zone.runtimeMediatedSecrets,
 			},
 		);
-		const discordBotTokenProfileNames = Object.keys(
-			gateway.discordBotTokenSecretsByAgent ?? {},
-		).map((agentId) => {
-			const profileName = gateway.profilesByAgent[agentId];
-			if (profileName === undefined) {
-				throw new Error(
-					`Managed Hermes Discord token mapping references agent '${agentId}' without a profile.`,
-				);
-			}
-			return profileName;
-		});
+		const profileEnvironmentShadowNames = Object.values(gateway.profilesByAgent).toSorted();
 		return {
 			allowedHosts: gatewayVmAllowedHosts(zone.egressHosts),
 			environment: {
@@ -258,6 +243,11 @@ export const hermesLifecycle = {
 			},
 			mediatedSecrets,
 			mounts: {
+				'/etc/hermes': {
+					access: 'read-only',
+					hostPath: path.dirname(gateway.config),
+					kind: 'host-directory',
+				},
 				[agentVmLogsDirVmPath]: {
 					access: 'read-write',
 					hostPath: path.join(zoneRuntimeDir, 'logs'),
@@ -270,15 +260,11 @@ export const hermesLifecycle = {
 				},
 				[protectedHermesHomeVmPath]: {
 					hostPath: zone.gateway.stateDir,
-					...(discordBotTokenProfileNames.length === 0
-						? { access: 'read-write' as const, kind: 'host-directory' as const }
-						: {
-								deny: [],
-								kind: 'shadow' as const,
-								temporaryFilesystems: discordBotTokenProfileNames
-									.toSorted()
-									.map((profileName) => `/profiles/${profileName}/.env`),
-							}),
+					deny: [],
+					kind: 'shadow',
+					temporaryFilesystems: profileEnvironmentShadowNames.map(
+						(profileName) => `/profiles/${profileName}/.env`,
+					),
 				},
 			},
 			rootfsMode: 'cow',

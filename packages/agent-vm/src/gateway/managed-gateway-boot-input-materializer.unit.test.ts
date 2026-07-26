@@ -164,18 +164,14 @@ describe('serializeManagedGatewayBootInputs', () => {
 		expect(inputs).not.toHaveProperty('receiptId');
 	});
 
-	it('adds Hermes managed configuration only to structured inputs', () => {
+	it('keeps Hermes managed scope out of structured configuration inputs', () => {
 		const { openClawControlAuthSecretName: _, ...baseInput } = createSerializationInput();
 		const inputs = serializeManagedGatewayBootInputs({
 			...baseInput,
 			frameworkInputKind: 'hermes-managed-scope',
-			frameworkManagedConfigurationSource: 'model: test\n',
 		});
 
-		expect(decodeFiles(inputs.structuredInputFiles)['config.yaml']).toEqual({
-			contents: 'model: test\n',
-			mode: 0o600,
-		});
+		expect(decodeFiles(inputs.structuredInputFiles)).not.toHaveProperty('config.yaml');
 		expect(decodeFiles(inputs.environmentFiles)).not.toHaveProperty('config.yaml');
 		expect(decodeFiles(inputs.environmentFiles)).not.toHaveProperty(
 			'openclaw-gateway-token.environment.sh',
