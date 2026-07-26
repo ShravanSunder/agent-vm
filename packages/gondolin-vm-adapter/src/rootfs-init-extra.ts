@@ -78,6 +78,8 @@ export function renderManagedGatewayRootfsInitScript(
 	const selectedFrameworkBootCommand = frameworkBootCommand(projection.frameworkBootEntry);
 	const selectedFrameworkLogPath = `${managedGatewayLogRoot}/${frameworkLogFileName(projection.frameworkBootEntry)}`;
 	const frameworkBootInputFileNames = 'framework-service.json';
+	const serviceEnvironmentIsolationPrefix =
+		projection.frameworkBootEntry === 'hermes-framework-service' ? '/usr/bin/env -i ' : '';
 	return `# Fixed managed Gateway sibling boot entries.
 managed_gateway_environment_input_root=${managedGatewayEnvironmentInputRoot}
 managed_gateway_structured_input_root=${managedGatewayStructuredInputRoot}
@@ -90,14 +92,14 @@ install -m 0600 /dev/null ${selectedFrameworkLogPath}
   for managed_gateway_input_name in tool-portal-service.json mcp.config.json; do
     if [ ! -f "$managed_gateway_structured_input_root/$managed_gateway_input_name" ]; then exit 78; fi
   done
-  exec /usr/bin/env -i /bin/sh -c 'set -a; . ${managedGatewayEnvironmentInputRoot}/tool-portal.environment.sh || exit 78; set +a; rm -- ${managedGatewayEnvironmentInputRoot}/tool-portal.environment.sh || exit 78; exec /usr/local/bin/agent-vm-gateway-runtime --config ${managedGatewayStructuredInputRoot}/tool-portal-service.json'
+  exec ${serviceEnvironmentIsolationPrefix}/bin/sh -c 'set -a; . ${managedGatewayEnvironmentInputRoot}/tool-portal.environment.sh || exit 78; set +a; rm -- ${managedGatewayEnvironmentInputRoot}/tool-portal.environment.sh || exit 78; exec /usr/local/bin/agent-vm-gateway-runtime --config ${managedGatewayStructuredInputRoot}/tool-portal-service.json'
 ) >> ${managedGatewayLogRoot}/tool-portal-service.log 2>&1 &
 (
   if [ ! -f "$managed_gateway_environment_input_root/framework.environment.sh" ]; then exit 78; fi
   for managed_gateway_input_name in ${frameworkBootInputFileNames}; do
     if [ ! -f "$managed_gateway_structured_input_root/$managed_gateway_input_name" ]; then exit 78; fi
   done
-  exec /usr/bin/env -i /bin/sh -c 'set -a; . ${managedGatewayEnvironmentInputRoot}/framework.environment.sh || exit 78; set +a; rm -- ${managedGatewayEnvironmentInputRoot}/framework.environment.sh || exit 78; exec ${selectedFrameworkBootCommand}'
+  exec ${serviceEnvironmentIsolationPrefix}/bin/sh -c 'set -a; . ${managedGatewayEnvironmentInputRoot}/framework.environment.sh || exit 78; set +a; rm -- ${managedGatewayEnvironmentInputRoot}/framework.environment.sh || exit 78; exec ${selectedFrameworkBootCommand}'
 ) >> ${selectedFrameworkLogPath} 2>&1 &
 `;
 }

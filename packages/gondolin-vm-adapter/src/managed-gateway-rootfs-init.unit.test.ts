@@ -37,10 +37,6 @@ describe('managed Gateway rootfs init projection', () => {
 				'managed_gateway_structured_input_root=/run/agent-vm/managed-gateway',
 			);
 			expect(script).not.toMatch(/--reuid|--regid|--init-groups/u);
-			expect([...script.matchAll(/exec \/usr\/bin\/env -i \/bin\/sh -c 'set -a;/gu)]).toHaveLength(
-				2,
-			);
-			expect(script).not.toContain('exec /bin/sh -c');
 			expect(script).not.toContain('exec su ');
 			expect(script).toContain(
 				'. /run/agent-vm/managed-gateway-environment/tool-portal.environment.sh || exit 78',
@@ -66,6 +62,36 @@ describe('managed Gateway rootfs init projection', () => {
 			);
 		},
 	);
+
+	it('isolates both Hermes sibling service environments from Gateway VM bootstrap values', () => {
+		// Arrange
+		const bootProjection = {
+			frameworkBootEntry: 'hermes-framework-service',
+			kind: 'managed-gateway-exact-two-role',
+		} as const;
+
+		// Act
+		const script = renderManagedGatewayRootfsInitScript(bootProjection);
+
+		// Assert
+		expect([...script.matchAll(/exec \/usr\/bin\/env -i \/bin\/sh -c 'set -a;/gu)]).toHaveLength(2);
+		expect(script).not.toContain('exec /bin/sh -c');
+	});
+
+	it('preserves the existing OpenClaw sibling service bootstrap environments', () => {
+		// Arrange
+		const bootProjection = {
+			frameworkBootEntry: 'openclaw-framework-service',
+			kind: 'managed-gateway-exact-two-role',
+		} as const;
+
+		// Act
+		const script = renderManagedGatewayRootfsInitScript(bootProjection);
+
+		// Assert
+		expect(script.match(/exec \/bin\/sh -c 'set -a;/gu)).toHaveLength(2);
+		expect(script).not.toContain('exec /usr/bin/env -i');
+	});
 
 	it('fingerprints the exact managed pair and rejects deployment-authored init authority', async () => {
 		// Arrange
