@@ -43,6 +43,8 @@ const reservedHermesProfileProjectionSourceNames: ReadonlySet<string> = new Set(
 	'HOME',
 	'NODE_EXTRA_CA_CERTS',
 	'PATH',
+	'REQUESTS_CA_BUNDLE',
+	'SSL_CERT_FILE',
 	'TEMP',
 	'TMP',
 	'TMPDIR',
@@ -82,7 +84,10 @@ const hermesProfileGlobalEnvironmentPrefixes = [
 
 export function isReservedHermesProfileProjectionSourceName(sourceName: string): boolean {
 	return (
-		reservedHermesProfileProjectionSourceNames.has(sourceName) || sourceName.startsWith('OTEL_')
+		reservedHermesProfileProjectionSourceNames.has(sourceName) ||
+		sourceName.startsWith('LD_') ||
+		sourceName.startsWith('OTEL_') ||
+		sourceName.startsWith('PYTHON')
 	);
 }
 
@@ -225,6 +230,8 @@ function buildHermesFrameworkEnvironment(
 		HOME: '/home/hermes',
 		NODE_EXTRA_CA_CERTS: '/run/gondolin/ca-certificates.crt',
 		PATH: hermesGatewayGuestPath,
+		REQUESTS_CA_BUNDLE: '/run/gondolin/ca-certificates.crt',
+		SSL_CERT_FILE: '/run/gondolin/ca-certificates.crt',
 		TEMP: '/work/tmp',
 		TMP: '/work/tmp',
 		TMPDIR: '/work/tmp',

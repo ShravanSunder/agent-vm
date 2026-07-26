@@ -105,8 +105,14 @@ describe('managed Hermes package contracts', () => {
 			'GATEWAY_MULTIPLEX_PROFILES',
 			'HERMES_HOME',
 			'HOME',
+			'LD_AUDIT',
+			'LD_PRELOAD',
 			'OTEL_SERVICE_NAME',
 			'PATH',
+			'PYTHONIOENCODING',
+			'PYTHONWARNINGS',
+			'REQUESTS_CA_BUNDLE',
+			'SSL_CERT_FILE',
 			'TMPDIR',
 		] as const) {
 			expect(isReservedHermesProfileProjectionSourceName(sourceName)).toBe(true);
@@ -116,7 +122,13 @@ describe('managed Hermes package contracts', () => {
 			'HERMES_HOME',
 			'HERMES_KANBAN_DB',
 			'HERMES_TELEGRAM_BATCH_DELAY',
+			'LD_AUDIT',
+			'LD_PRELOAD',
 			'PATH',
+			'PYTHONIOENCODING',
+			'PYTHONWARNINGS',
+			'REQUESTS_CA_BUNDLE',
+			'SSL_CERT_FILE',
 			'TERMINAL_BACKEND',
 		] as const) {
 			expect(isReservedHermesProfileProjectionTargetName(targetName)).toBe(true);
@@ -245,6 +257,8 @@ describe('managed Hermes package contracts', () => {
 			OTEL_SERVICE_NAME: 'agent-vm-hermes',
 			OTEL_TRACES_SAMPLER: 'parentbased_traceidratio',
 			OTEL_TRACES_SAMPLER_ARG: '1',
+			REQUESTS_CA_BUNDLE: '/run/gondolin/ca-certificates.crt',
+			SSL_CERT_FILE: '/run/gondolin/ca-certificates.crt',
 		});
 		expect(bootInputs.environment).not.toHaveProperty('HERMES_MANAGED');
 		expect(bootInputs.environment).not.toHaveProperty('HERMES_MANAGED_DIR');

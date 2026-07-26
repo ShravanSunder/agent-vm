@@ -3280,6 +3280,49 @@ describe('loadSystemConfig', () => {
 				},
 			},
 			{
+				sourceName: 'PYTHONWARNINGS',
+				targetName: 'DISCORD_BOT_TOKEN',
+				secret: {
+					source: 'environment',
+					envVar: 'PYTHONWARNINGS',
+					injection: 'env',
+					audience: 'gateway',
+				},
+			},
+			{
+				sourceName: 'LD_PRELOAD',
+				targetName: 'OPENROUTER_API_KEY',
+				secret: {
+					source: 'environment',
+					envVar: 'LD_PRELOAD',
+					injection: 'http-mediation',
+					audience: 'gateway',
+					hosts: ['openrouter.ai'],
+				},
+			},
+			{
+				sourceName: 'PROFILE_PROVIDER_SOURCE_A',
+				targetName: 'PYTHONIOENCODING',
+				secret: {
+					source: 'environment',
+					envVar: 'PROFILE_PROVIDER_SOURCE_A',
+					injection: 'http-mediation',
+					audience: 'gateway',
+					hosts: ['openrouter.ai'],
+				},
+			},
+			{
+				sourceName: 'PROFILE_PROVIDER_SOURCE_B',
+				targetName: 'LD_AUDIT',
+				secret: {
+					source: 'environment',
+					envVar: 'PROFILE_PROVIDER_SOURCE_B',
+					injection: 'http-mediation',
+					audience: 'gateway',
+					hosts: ['openrouter.ai'],
+				},
+			},
+			{
 				sourceName: 'RAW_PROVIDER',
 				targetName: 'OPENROUTER_API_KEY',
 				secret: {
@@ -3306,6 +3349,10 @@ describe('loadSystemConfig', () => {
 		for (const invalidCase of invalidCases) {
 			const config = createValidSystemConfigInput();
 			const zone = configureFirstZoneAsHermes(config);
+			zone.egressHosts = [
+				...(zone.egressHosts ?? []),
+				{ host: 'openrouter.ai', audience: 'gateway' },
+			];
 			zone.gateway.profileSecretProjectionsByAgent = {
 				shravan: {
 					DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_SHRAVAN',
