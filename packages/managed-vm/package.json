@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/managed-vm",
-	"version": "0.0.122",
+	"version": "0.0.123",
 	"description": "Backend-neutral managed VM contracts and ownership semantics for agent-vm.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {

@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/gateway-runtime",
-	"version": "0.0.122",
+	"version": "0.0.123",
 	"description": "Gateway-local Tool Portal service, private UDS, and managed runtime backends.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {
