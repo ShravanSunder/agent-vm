@@ -344,11 +344,7 @@ export function mapSystemGatewayZoneToLifecycleZone(
 					return {
 						...baseGateway,
 						type: 'hermes',
-						...(zone.gateway.discordBotTokenSecretsByAgent
-							? {
-									discordBotTokenSecretsByAgent: zone.gateway.discordBotTokenSecretsByAgent,
-								}
-							: {}),
+						profileSecretProjectionsByAgent: zone.gateway.profileSecretProjectionsByAgent,
 						profilesByAgent: zone.gateway.profilesByAgent,
 						zoneFilesDir: zone.gateway.zoneFilesDir,
 					};

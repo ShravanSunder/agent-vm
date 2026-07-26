@@ -30,6 +30,69 @@ const protectedHermesHomeVmPath = '/home/hermes/.hermes';
 const hermesCacheDirVmPath = '/home/hermes/.cache';
 const agentVmLogsDirVmPath = '/agent-vm/logs';
 const hermesGatewayGuestPath = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
+const reservedHermesProfileProjectionSourceNames: ReadonlySet<string> = new Set([
+	'AGENT_VM_HERMES_MANAGED_CONFIG_PATH',
+	'API_SERVER_ENABLED',
+	'API_SERVER_HOST',
+	'API_SERVER_KEY',
+	'API_SERVER_PORT',
+	'GATEWAY_MULTIPLEX_PROFILES',
+	'HERMES_HOME',
+	'HERMES_MANAGED',
+	'HERMES_MANAGED_DIR',
+	'HOME',
+	'NODE_EXTRA_CA_CERTS',
+	'PATH',
+	'TEMP',
+	'TMP',
+	'TMPDIR',
+	'UV_CACHE_DIR',
+]);
+const hermesProfileGlobalEnvironmentNames: ReadonlySet<string> = new Set([
+	'HERMES_HOME',
+	'HERMES_PROFILE',
+	'HERMES_GATEWAY_LOCK_DIR',
+	'HERMES_MAX_ITERATIONS',
+	'HERMES_MAX_TOKENS',
+	'HERMES_API_TIMEOUT',
+	'HERMES_REDACT_SECRETS',
+	'HERMES_NOUS_TIMEOUT_SECONDS',
+	'_HERMES_GATEWAY',
+	'PATH',
+	'HOME',
+	'USER',
+	'LANG',
+	'LC_ALL',
+	'TZ',
+	'PWD',
+	'SHELL',
+	'TMPDIR',
+	'VIRTUAL_ENV',
+	'PYTHONPATH',
+	'SSL_CERT_FILE',
+	'HERMES_KANBAN_DB',
+	'HERMES_KANBAN_WORKSPACES_ROOT',
+	'HERMES_KANBAN_BOARD',
+]);
+const hermesProfileGlobalEnvironmentPrefixes = [
+	'HERMES_KANBAN_',
+	'HERMES_TELEGRAM_',
+	'TERMINAL_',
+] as const;
+
+export function isReservedHermesProfileProjectionSourceName(sourceName: string): boolean {
+	return (
+		reservedHermesProfileProjectionSourceNames.has(sourceName) || sourceName.startsWith('OTEL_')
+	);
+}
+
+export function isReservedHermesProfileProjectionTargetName(targetName: string): boolean {
+	return (
+		isReservedHermesProfileProjectionSourceName(targetName) ||
+		hermesProfileGlobalEnvironmentNames.has(targetName) ||
+		hermesProfileGlobalEnvironmentPrefixes.some((prefix) => targetName.startsWith(prefix))
+	);
+}
 
 type UnknownRecord = Readonly<Record<string, unknown>>;
 type HermesGatewayConfig = Extract<GatewayZoneConfig['gateway'], { readonly type: 'hermes' }>;
@@ -65,26 +128,20 @@ function requireHermesAdapterMaterial(zone: GatewayZoneConfig): UnknownRecord {
 	if (!isObjectRecord(toolPortalMaterial.agentProjections)) {
 		throw new Error('Managed Hermes requires exact controller-authored agent projections.');
 	}
-	const discordBotTokenSecretsByAgent = gateway.discordBotTokenSecretsByAgent;
-	if (discordBotTokenSecretsByAgent === undefined) {
-		return toolPortalMaterial;
-	}
-	const discordBotTokenEnvironmentVariablesByProfile = Object.fromEntries(
-		Object.entries(discordBotTokenSecretsByAgent).map(([agentId, secretName]) => {
+	const profileEnvironmentSourceNamesByProfile = Object.fromEntries(
+		Object.entries(gateway.profileSecretProjectionsByAgent).map(([agentId, projections]) => {
 			const profileName = gateway.profilesByAgent[agentId];
 			if (profileName === undefined) {
 				throw new Error(
-					`Managed Hermes Discord token mapping references agent '${agentId}' without a profile.`,
+					`Managed Hermes profile secret projection references agent '${agentId}' without a profile.`,
 				);
 			}
-			return [profileName, secretName];
+			return [profileName, Object.freeze({ ...projections })];
 		}),
 	);
 	return Object.freeze({
 		...toolPortalMaterial,
-		discordBotTokenEnvironmentVariablesByProfile: Object.freeze(
-			discordBotTokenEnvironmentVariablesByProfile,
-		),
+		profileEnvironmentSourceNamesByProfile: Object.freeze(profileEnvironmentSourceNamesByProfile),
 	});
 }
 

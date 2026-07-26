@@ -502,6 +502,9 @@ function getHermesZone(): GatewayZone & {
 			memory: '2G',
 			port: 18_793,
 			profilesByAgent: { main: 'main' },
+			profileSecretProjectionsByAgent: {
+				main: { DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN' },
+			},
 			stateDir: path.join(zoneRuntimeRegistryTestRoot, 'state', 'hermes-zone'),
 			type: 'hermes',
 			zoneFilesDir: path.join(zoneRuntimeRegistryTestRoot, 'zone-files', 'hermes-zone'),

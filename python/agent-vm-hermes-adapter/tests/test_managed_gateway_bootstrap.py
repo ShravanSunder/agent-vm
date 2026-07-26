@@ -11,6 +11,7 @@ from unittest.mock import ANY, Mock, call, patch
 
 import hermes_constants
 from agent_vm_agent_portal_sdk.gateway_runtime_client import GatewayRuntimeClient
+from gateway import run as hermes_gateway_run
 from tools import file_tools as hermes_file_tools
 from tools.environments import local as local_environment_module
 from tools.environments import ssh as ssh_environment_module
@@ -66,7 +67,7 @@ def build_material(
     *,
     client_kind: str = "hermes-managed-plugin",
     profile_names: tuple[str, str] = ("researcher", "reviewer"),
-    discord_bot_token_environment_variables_by_profile: Mapping[str, object] | None = None,
+    profile_environment_source_names_by_profile: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     researcher_profile_name, reviewer_profile_name = profile_names
     material: dict[str, object] = {
@@ -82,10 +83,14 @@ def build_material(
         },
         "attachment": build_attachment(client_kind=client_kind),
     }
-    if discord_bot_token_environment_variables_by_profile is not None:
-        material["discordBotTokenEnvironmentVariablesByProfile"] = dict(
-            discord_bot_token_environment_variables_by_profile
-        )
+    material["profileEnvironmentSourceNamesByProfile"] = (
+        {
+            researcher_profile_name: {"DISCORD_BOT_TOKEN": "SOURCE_RESEARCHER"},
+            reviewer_profile_name: {"DISCORD_BOT_TOKEN": "SOURCE_REVIEWER"},
+        }
+        if profile_environment_source_names_by_profile is None
+        else dict(profile_environment_source_names_by_profile)
+    )
     return material
 
 
@@ -109,8 +114,7 @@ def managed_plugin_configuration() -> Mapping[str, object]:
         "plugins": {
             "enabled": ["agent-vm-tool-portal"],
             "disabled": [],
-        },
-        "secrets": {"preserve_existing": ["DISCORD_BOT_TOKEN"]},
+        }
     }
 
 
@@ -311,35 +315,55 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
                     with self.assertRaises((TypeError, ValueError)):
                         load_managed_adapter_material(configuration_path)
 
-    def test_loads_only_a_closed_safe_discord_profile_environment_mapping(self) -> None:
+    def test_loads_only_complete_safe_profile_environment_source_maps(self) -> None:
         valid_mapping = {
-            "researcher": "DISCORD_BOT_TOKEN_RESEARCHER",
-            "reviewer": "DISCORD_BOT_TOKEN_REVIEWER",
+            "researcher": {
+                "DISCORD_BOT_TOKEN": "DISCORD_BOT_TOKEN_RESEARCHER",
+                "OPENROUTER_API_KEY": "OPENROUTER_API_KEY_RESEARCHER",
+            },
+            "reviewer": {
+                "DISCORD_BOT_TOKEN": "DISCORD_BOT_TOKEN_REVIEWER",
+                "OPENROUTER_API_KEY": "OPENROUTER_API_KEY_REVIEWER",
+            },
         }
         invalid_mappings: tuple[tuple[str, Mapping[str, object]], ...] = (
             (
                 "missing profile",
-                {"researcher": "DISCORD_BOT_TOKEN_RESEARCHER"},
+                {"researcher": valid_mapping["researcher"]},
             ),
             (
                 "unexpected profile",
                 {
                     **valid_mapping,
-                    "intruder": "DISCORD_BOT_TOKEN_INTRUDER",
+                    "intruder": {"DISCORD_BOT_TOKEN": "DISCORD_BOT_TOKEN_INTRUDER"},
                 },
             ),
             (
-                "unsafe environment name",
+                "empty target map",
                 {
                     **valid_mapping,
-                    "reviewer": "DISCORD-BOT-TOKEN-REVIEWER",
+                    "reviewer": {},
                 },
             ),
             (
-                "duplicate environment name",
+                "unsafe target name",
                 {
-                    "researcher": "DISCORD_BOT_TOKEN_SHARED",
-                    "reviewer": "DISCORD_BOT_TOKEN_SHARED",
+                    **valid_mapping,
+                    "reviewer": {"DISCORD-BOT-TOKEN": "DISCORD_BOT_TOKEN_REVIEWER"},
+                },
+            ),
+            (
+                "global target name",
+                {
+                    **valid_mapping,
+                    "reviewer": {"HERMES_HOME": "DISCORD_BOT_TOKEN_REVIEWER"},
+                },
+            ),
+            (
+                "unsafe source name",
+                {
+                    **valid_mapping,
+                    "reviewer": {"DISCORD_BOT_TOKEN": "DISCORD-BOT-TOKEN-REVIEWER"},
                 },
             ),
         )
@@ -347,7 +371,7 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
             configuration_path = Path(temporary_directory) / "framework-service.json"
             configuration_path.write_text(
                 json.dumps(
-                    build_material(discord_bot_token_environment_variables_by_profile=valid_mapping)
+                    build_material(profile_environment_source_names_by_profile=valid_mapping)
                 ),
                 encoding="utf-8",
             )
@@ -355,7 +379,12 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
             loaded = load_managed_adapter_material(configuration_path)
 
             self.assertEqual(
-                dict(loaded.discord_bot_token_environment_variables_by_profile),
+                {
+                    profile_name: dict(target_sources)
+                    for profile_name, target_sources in (
+                        loaded.profile_environment_source_names_by_profile.items()
+                    )
+                },
                 valid_mapping,
             )
             for case_name, invalid_mapping in invalid_mappings:
@@ -363,7 +392,7 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
                     configuration_path.write_text(
                         json.dumps(
                             build_material(
-                                discord_bot_token_environment_variables_by_profile=invalid_mapping
+                                profile_environment_source_names_by_profile=invalid_mapping
                             )
                         ),
                         encoding="utf-8",
@@ -371,14 +400,22 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
                     with self.assertRaises((TypeError, ValueError)):
                         load_managed_adapter_material(configuration_path)
 
-    def test_materializes_discord_profile_tokens_before_stock_gateway(self) -> None:
+    def test_materializes_complete_sorted_profile_maps_before_stock_gateway(self) -> None:
         environment_mapping = {
-            "research-profile": "DISCORD_BOT_TOKEN_RESEARCHER",
-            "review-profile": "DISCORD_BOT_TOKEN_REVIEWER",
+            "research-profile": {
+                "ZEBRA_KEY": "SOURCE_RESEARCHER_ZEBRA",
+                "DISCORD_BOT_TOKEN": "SOURCE_RESEARCHER_DISCORD",
+            },
+            "review-profile": {
+                "ZEBRA_KEY": "SOURCE_REVIEWER_ZEBRA",
+                "DISCORD_BOT_TOKEN": "SOURCE_REVIEWER_DISCORD",
+            },
         }
         token_values = {
-            "DISCORD_BOT_TOKEN_RESEARCHER": "test-token-researcher",
-            "DISCORD_BOT_TOKEN_REVIEWER": "test-token-reviewer",
+            "SOURCE_RESEARCHER_ZEBRA": "test-researcher-zebra",
+            "SOURCE_RESEARCHER_DISCORD": "test-researcher-discord",
+            "SOURCE_REVIEWER_ZEBRA": "test-reviewer-zebra",
+            "SOURCE_REVIEWER_DISCORD": "test-reviewer-discord",
         }
 
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -390,7 +427,7 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
                 json.dumps(
                     build_material(
                         profile_names=profile_names,
-                        discord_bot_token_environment_variables_by_profile=environment_mapping,
+                        profile_environment_source_names_by_profile=environment_mapping,
                     )
                 ),
                 encoding="utf-8",
@@ -401,14 +438,19 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
             )
 
             def stock_gateway_runner() -> None:
-                for profile_name, environment_name in environment_mapping.items():
+                for profile_name, target_sources in environment_mapping.items():
                     token_path = protected_hermes_home / "profiles" / profile_name / ".env"
+                    expected_content = "".join(
+                        f"{target_name}={token_values[target_sources[target_name]]}\n"
+                        for target_name in sorted(target_sources)
+                    )
                     self.assertEqual(
                         token_path.read_text(encoding="utf-8"),
-                        f"DISCORD_BOT_TOKEN={token_values[environment_name]}",
+                        expected_content,
                     )
                     self.assertEqual(stat.S_IMODE(token_path.stat().st_mode), 0o600)
-                    self.assertNotIn(environment_name, os.environ)
+                    for source_name in target_sources.values():
+                        self.assertNotIn(source_name, os.environ)
                     self.assertEqual(
                         {path.name for path in token_path.parent.iterdir()},
                         {".env", "existing-content.txt"},
@@ -430,14 +472,14 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
                     terminal_tool_module=FakeTerminalToolModule(),
                 )
 
-    def test_rejects_discord_profile_tokens_without_preserve_existing_policy(self) -> None:
+    def test_removes_created_profile_shadows_when_later_write_and_unlink_fail(self) -> None:
         environment_mapping = {
-            "researcher": "DISCORD_BOT_TOKEN_RESEARCHER",
-            "reviewer": "DISCORD_BOT_TOKEN_REVIEWER",
+            "researcher": {"DISCORD_BOT_TOKEN": "SOURCE_RESEARCHER"},
+            "reviewer": {"DISCORD_BOT_TOKEN": "SOURCE_REVIEWER"},
         }
         token_values = {
-            "DISCORD_BOT_TOKEN_RESEARCHER": "test-token-researcher",
-            "DISCORD_BOT_TOKEN_REVIEWER": "test-token-reviewer",
+            "SOURCE_RESEARCHER": "opaque-token-researcher",
+            "SOURCE_REVIEWER": "opaque-token-reviewer",
         }
 
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -446,71 +488,186 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
             protected_hermes_home = temporary_root / "protected-hermes-home"
             configuration_path.write_text(
                 json.dumps(
-                    build_material(
-                        discord_bot_token_environment_variables_by_profile=environment_mapping
-                    )
+                    build_material(profile_environment_source_names_by_profile=environment_mapping)
                 ),
                 encoding="utf-8",
             )
             materialize_profile_cohort(protected_hermes_home)
             stock_gateway_runner = Mock()
+            original_fchmod = managed_gateway_bootstrap.os.fchmod
+            original_unlink = Path.unlink
+            chmod_calls = 0
 
+            def fail_second_shadow_chmod(file_descriptor: int, mode: int) -> None:
+                nonlocal chmod_calls
+                chmod_calls += 1
+                if chmod_calls == 2:
+                    raise OSError("forced second profile shadow write failure")
+                original_fchmod(file_descriptor, mode)
+
+            def fail_researcher_unlink(path: Path, missing_ok: bool = False) -> None:
+                if path.name == ".env" and path.parent.name == "researcher":
+                    raise OSError("forced first shadow unlink failure")
+                original_unlink(path, missing_ok=missing_ok)
+
+            isolated_environment = dict(token_values)
             with (
-                patch.dict(os.environ, token_values, clear=False),
+                patch.object(managed_gateway_bootstrap.os, "environ", isolated_environment),
                 patch.object(
-                    managed_gateway_bootstrap,
-                    "GatewayRuntimeClient",
-                    FakeGatewayRuntimeClient,
+                    managed_gateway_bootstrap.os,
+                    "fchmod",
+                    side_effect=fail_second_shadow_chmod,
                 ),
-                self.assertRaisesRegex(
-                    managed_gateway_bootstrap.HermesProfileAdmissionError,
-                    "preserve_existing",
-                ),
+                patch.object(Path, "unlink", new=fail_researcher_unlink),
+                self.assertRaisesRegex(RuntimeError, "could not remove every failed"),
             ):
                 managed_gateway_bootstrap.run_managed_hermes_gateway(
                     configuration_path=configuration_path,
-                    managed_configuration_loader=lambda: {
-                        "plugins": {
-                            "enabled": ["agent-vm-tool-portal"],
-                            "disabled": [],
-                        }
-                    },
+                    managed_configuration_loader=managed_plugin_configuration,
                     protected_hermes_home=protected_hermes_home,
                     stock_gateway_runner=stock_gateway_runner,
                     terminal_tool_module=FakeTerminalToolModule(),
                 )
 
+            for target_sources in environment_mapping.values():
+                for source_name in target_sources.values():
+                    self.assertNotIn(source_name, isolated_environment)
+            self.assertTrue((protected_hermes_home / "profiles" / "researcher" / ".env").exists())
+            self.assertFalse((protected_hermes_home / "profiles" / "reviewer" / ".env").exists())
+            self.assertFalse((protected_hermes_home / ".env").exists())
             stock_gateway_runner.assert_not_called()
 
-    def test_rejects_missing_or_unsafe_discord_tokens_before_stock_gateway(self) -> None:
+    def test_managed_policy_bindings_overlay_fallbacks_and_restore_stock_targets(self) -> None:
+        class FakeGatewayRunner:
+            @staticmethod
+            def _load_provider_routing() -> dict[str, object]:
+                return {"unexpected": True}
+
+        fallback_inputs: list[dict[str, object]] = []
+
+        def get_fallback_chain(configuration: dict[str, object]) -> list[object]:
+            fallback_inputs.append(configuration)
+            return [configuration]
+
+        def load_gateway_config() -> dict[str, object]:
+            return {"provider_routing": {"order": ["provider-b"]}}
+
+        fake_gateway_run = SimpleNamespace(
+            GatewayRunner=FakeGatewayRunner,
+            _load_gateway_config=load_gateway_config,
+            get_fallback_chain=get_fallback_chain,
+        )
+        bindings = managed_gateway_bootstrap._HermesManagedPolicyReadBindings(
+            gateway_run_module=fake_gateway_run,
+        )
+        original_fallback = fake_gateway_run.get_fallback_chain
+        original_routing_descriptor = FakeGatewayRunner.__dict__["_load_provider_routing"]
+
+        with patch.object(
+            managed_gateway_bootstrap.hermes_managed_scope,
+            "apply_managed_overlay",
+            side_effect=lambda configuration: {**configuration, "managed": True},
+        ):
+            bindings.install()
+            self.assertEqual(
+                fake_gateway_run.get_fallback_chain({"fallback": "local"}),
+                [{"fallback": "local", "managed": True}],
+            )
+            self.assertIsInstance(
+                FakeGatewayRunner.__dict__["_load_provider_routing"], staticmethod
+            )
+            self.assertEqual(FakeGatewayRunner._load_provider_routing(), {"order": ["provider-b"]})
+            self.assertEqual(
+                FakeGatewayRunner()._load_provider_routing(),
+                {"order": ["provider-b"]},
+            )
+            bindings.close()
+
+        self.assertEqual(fallback_inputs, [{"fallback": "local", "managed": True}])
+        self.assertIs(fake_gateway_run.get_fallback_chain, original_fallback)
+        self.assertIs(
+            FakeGatewayRunner.__dict__["_load_provider_routing"],
+            original_routing_descriptor,
+        )
+
+    def test_managed_policy_bindings_restore_fallback_after_partial_install_failure(self) -> None:
+        class RefusingGatewayRunnerMeta(type):
+            fail_provider_routing_install = True
+
+            @t.override
+            def __setattr__(cls, name: str, value: object) -> None:
+                if name == "_load_provider_routing" and cls.fail_provider_routing_install:
+                    raise RuntimeError("forced provider routing install failure")
+                super().__setattr__(name, value)
+
+        class RefusingGatewayRunner(metaclass=RefusingGatewayRunnerMeta):
+            @staticmethod
+            def _load_provider_routing() -> dict[str, object]:
+                return {}
+
+        def get_fallback_chain(configuration: dict[str, object]) -> list[object]:
+            return [configuration]
+
+        def load_gateway_config() -> dict[str, object]:
+            return {}
+
+        fake_gateway_run = SimpleNamespace(
+            GatewayRunner=RefusingGatewayRunner,
+            _load_gateway_config=load_gateway_config,
+            get_fallback_chain=get_fallback_chain,
+        )
+        bindings = managed_gateway_bootstrap._HermesManagedPolicyReadBindings(
+            gateway_run_module=fake_gateway_run,
+        )
+        original_fallback = fake_gateway_run.get_fallback_chain
+        original_routing_descriptor = RefusingGatewayRunner.__dict__["_load_provider_routing"]
+
+        with self.assertRaisesRegex(RuntimeError, "forced provider routing install failure"):
+            bindings.install()
+
+        self.assertIs(fake_gateway_run.get_fallback_chain, original_fallback)
+        self.assertIs(
+            RefusingGatewayRunner.__dict__["_load_provider_routing"],
+            original_routing_descriptor,
+        )
+
+    def test_managed_policy_bindings_reject_drifted_stock_targets(self) -> None:
+        bindings = managed_gateway_bootstrap._HermesManagedPolicyReadBindings(
+            gateway_run_module=hermes_gateway_run,
+        )
+        with patch.object(hermes_gateway_run, "get_fallback_chain", lambda _: []):
+            with self.assertRaisesRegex(RuntimeError, "changed"):
+                bindings.install()
+
+    def test_rejects_missing_or_unsafe_profile_values_before_stock_gateway(self) -> None:
         environment_mapping = {
-            "researcher": "DISCORD_BOT_TOKEN_RESEARCHER",
-            "reviewer": "DISCORD_BOT_TOKEN_REVIEWER",
+            "researcher": {"DISCORD_BOT_TOKEN": "SOURCE_RESEARCHER"},
+            "reviewer": {"DISCORD_BOT_TOKEN": "SOURCE_REVIEWER"},
         }
         invalid_token_environments: tuple[tuple[str, Mapping[str, str]], ...] = (
             (
                 "missing value",
-                {"DISCORD_BOT_TOKEN_RESEARCHER": "test-token-researcher"},
+                {"SOURCE_RESEARCHER": "test-token-researcher"},
             ),
             (
                 "NUL",
                 {
-                    "DISCORD_BOT_TOKEN_RESEARCHER": "test-token-researcher",
-                    "DISCORD_BOT_TOKEN_REVIEWER": "test-token\0reviewer",
+                    "SOURCE_RESEARCHER": "test-token-researcher",
+                    "SOURCE_REVIEWER": "test-token\0reviewer",
                 },
             ),
             (
                 "carriage return",
                 {
-                    "DISCORD_BOT_TOKEN_RESEARCHER": "test-token-researcher",
-                    "DISCORD_BOT_TOKEN_REVIEWER": "test-token\rreviewer",
+                    "SOURCE_RESEARCHER": "test-token-researcher",
+                    "SOURCE_REVIEWER": "test-token\rreviewer",
                 },
             ),
             (
                 "line feed",
                 {
-                    "DISCORD_BOT_TOKEN_RESEARCHER": "test-token-researcher",
-                    "DISCORD_BOT_TOKEN_REVIEWER": "test-token\nreviewer",
+                    "SOURCE_RESEARCHER": "test-token-researcher",
+                    "SOURCE_REVIEWER": "test-token\nreviewer",
                 },
             ),
         )
@@ -523,7 +680,7 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
                 configuration_path.write_text(
                     json.dumps(
                         build_material(
-                            discord_bot_token_environment_variables_by_profile=environment_mapping
+                            profile_environment_source_names_by_profile=environment_mapping
                         )
                     ),
                     encoding="utf-8",
@@ -538,7 +695,7 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
                         "environ",
                         isolated_environment,
                     ),
-                    self.assertRaises((TypeError, ValueError)),
+                    self.assertRaises((TypeError, ValueError)) as raised,
                 ):
                     managed_gateway_bootstrap.run_managed_hermes_gateway(
                         configuration_path=configuration_path,
@@ -548,9 +705,13 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
                         terminal_tool_module=FakeTerminalToolModule(),
                     )
 
+                error_text = str(raised.exception)
+                for source_value in invalid_environment.values():
+                    self.assertNotIn(source_value, error_text)
                 stock_gateway_runner.assert_not_called()
-                for environment_name in environment_mapping.values():
-                    self.assertNotIn(environment_name, isolated_environment)
+                for target_sources in environment_mapping.values():
+                    for source_name in target_sources.values():
+                        self.assertNotIn(source_name, isolated_environment)
                 for profile_name in environment_mapping:
                     self.assertFalse(
                         (protected_hermes_home / "profiles" / profile_name / ".env").exists()
@@ -558,12 +719,12 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
 
     def test_refuses_to_follow_a_profile_environment_symlink(self) -> None:
         environment_mapping = {
-            "researcher": "DISCORD_BOT_TOKEN_RESEARCHER",
-            "reviewer": "DISCORD_BOT_TOKEN_REVIEWER",
+            "researcher": {"DISCORD_BOT_TOKEN": "SOURCE_RESEARCHER"},
+            "reviewer": {"DISCORD_BOT_TOKEN": "SOURCE_REVIEWER"},
         }
         token_values = {
-            "DISCORD_BOT_TOKEN_RESEARCHER": "test-token-researcher",
-            "DISCORD_BOT_TOKEN_REVIEWER": "test-token-reviewer",
+            "SOURCE_RESEARCHER": "test-token-researcher",
+            "SOURCE_REVIEWER": "test-token-reviewer",
         }
 
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -572,9 +733,7 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
             protected_hermes_home = temporary_root / "protected-hermes-home"
             configuration_path.write_text(
                 json.dumps(
-                    build_material(
-                        discord_bot_token_environment_variables_by_profile=environment_mapping
-                    )
+                    build_material(profile_environment_source_names_by_profile=environment_mapping)
                 ),
                 encoding="utf-8",
             )
@@ -597,8 +756,9 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
                 )
 
             self.assertEqual(symlink_target.read_text(encoding="utf-8"), "sentinel")
-            for environment_name in environment_mapping.values():
-                self.assertNotIn(environment_name, os.environ)
+            for target_sources in environment_mapping.values():
+                for source_name in target_sources.values():
+                    self.assertNotIn(source_name, os.environ)
             stock_gateway_runner.assert_not_called()
 
     def test_installs_profile_aware_cache_keys_before_environment_use(self) -> None:
@@ -1056,6 +1216,11 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
                     "create_hermes_tool_portal_telemetry_from_environment",
                     return_value=telemetry,
                 ),
+                patch.dict(
+                    os.environ,
+                    {"SOURCE_RESEARCHER": "test-researcher", "SOURCE_REVIEWER": "test-reviewer"},
+                    clear=False,
+                ),
             ):
                 managed_gateway_bootstrap.run_managed_hermes_gateway(
                     configuration_path=configuration_path,
@@ -1101,6 +1266,10 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
         terminal_tool_module = FakeTerminalToolModule()
         plugin_context = FakeHermesPluginContext()
         telemetry = FakeHermesToolPortalTelemetry()
+        original_fallback_chain = hermes_gateway_run.get_fallback_chain
+        original_provider_routing_descriptor = hermes_gateway_run.GatewayRunner.__dict__[
+            "_load_provider_routing"
+        ]
 
         def failing_stock_gateway_runner() -> None:
             register_managed_tool_portal_plugin(plugin_context)
@@ -1122,6 +1291,11 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
                     managed_gateway_bootstrap,
                     "create_hermes_tool_portal_telemetry_from_environment",
                     return_value=telemetry,
+                ),
+                patch.dict(
+                    os.environ,
+                    {"SOURCE_RESEARCHER": "test-researcher", "SOURCE_REVIEWER": "test-reviewer"},
+                    clear=False,
                 ),
                 self.assertRaisesRegex(RuntimeError, "stock Hermes Gateway failed"),
             ):
@@ -1145,6 +1319,11 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
         self.assertEqual(client.disconnect_calls, 1)
         self.assertIs(client.trace_context_provider, telemetry.trace_context_provider)
         self.assertEqual(telemetry.shutdown_calls, 1)
+        self.assertIs(hermes_gateway_run.get_fallback_chain, original_fallback_chain)
+        self.assertIs(
+            hermes_gateway_run.GatewayRunner.__dict__["_load_provider_routing"],
+            original_provider_routing_descriptor,
+        )
 
     def test_rejects_drifted_profile_cohort_before_managed_or_stock_runtime_use(self) -> None:
         def missing_protected_hermes_home(protected_hermes_home: Path) -> None:

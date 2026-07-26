@@ -93,6 +93,9 @@ const hermesSystemConfig = {
 				type: 'hermes',
 				imageProfile: 'hermes',
 				profilesByAgent: { beta: 'beta' },
+				profileSecretProjectionsByAgent: {
+					beta: { DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN' },
+				},
 				cpus: 2,
 				memory: '2G',
 				config: './config/hermes/hermes.yaml',

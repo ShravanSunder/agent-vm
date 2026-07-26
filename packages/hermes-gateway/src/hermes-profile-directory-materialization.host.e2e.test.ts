@@ -65,6 +65,12 @@ function createHermesZone(options: {
 			memory: '4G',
 			port: 8642,
 			profilesByAgent,
+			profileSecretProjectionsByAgent: Object.fromEntries(
+				Object.keys(profilesByAgent).map((agentId) => [
+					agentId,
+					{ DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN' },
+				]),
+			),
 			ssh: { secretEnv: 'never' },
 			stateDir: options.stateDirectoryPath,
 			type: 'hermes',
@@ -170,7 +176,11 @@ describe('Hermes profile directory materialization', () => {
 				stateDirectoryPath,
 			});
 			Object.assign(zone.gateway, {
-				discordBotTokenSecretsByAgent: { researcher: 'DISCORD_BOT_TOKEN_RESEARCHER' },
+				profileSecretProjectionsByAgent: {
+					researcher: {
+						DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_RESEARCHER',
+					},
+				},
 			});
 
 			await expect(

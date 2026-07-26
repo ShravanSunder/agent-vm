@@ -5,6 +5,8 @@ import {
 	buildHermesFrameworkServiceBootMetadata,
 	hermesLifecycle,
 	HERMES_AGENT_DISTRIBUTION,
+	isReservedHermesProfileProjectionSourceName,
+	isReservedHermesProfileProjectionTargetName,
 	renderHermesManagedImageRecipe,
 } from './index.js';
 
@@ -14,8 +16,11 @@ function createHermesZone(toolPortalMaterial: unknown): GatewayZoneConfig {
 		gateway: {
 			config: '/deployment/config/hermes.yaml',
 			cpus: 2,
-			discordBotTokenSecretsByAgent: {
-				researcher: 'DISCORD_BOT_TOKEN_RESEARCHER',
+			profileSecretProjectionsByAgent: {
+				researcher: {
+					DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_RESEARCHER',
+					OPENROUTER_API_KEY: 'OPENROUTER_API_KEY_RESEARCHER',
+				},
 			},
 			memory: '4G',
 			port: 8642,
@@ -39,6 +44,13 @@ function createHermesZone(toolPortalMaterial: unknown): GatewayZoneConfig {
 				audience: 'gateway',
 				envVar: 'DISCORD_BOT_TOKEN_RESEARCHER',
 				injection: 'env',
+				source: 'environment',
+			},
+			OPENROUTER_API_KEY_RESEARCHER: {
+				audience: 'gateway',
+				envVar: 'OPENROUTER_API_KEY_RESEARCHER',
+				hosts: ['openrouter.ai'],
+				injection: 'http-mediation',
 				source: 'environment',
 			},
 		},
@@ -84,6 +96,33 @@ describe('managed Hermes package contracts', () => {
 			sourceRepository: 'https://github.com/NousResearch/hermes-agent.git',
 			sourceRevision: '9de9c25f620ff7f1ce0fd5457d596052d5159596',
 		});
+	});
+
+	it('owns fixed profile projection source and target name defenses', () => {
+		for (const sourceName of [
+			'AGENT_VM_HERMES_MANAGED_CONFIG_PATH',
+			'API_SERVER_KEY',
+			'GATEWAY_MULTIPLEX_PROFILES',
+			'HERMES_HOME',
+			'HOME',
+			'OTEL_SERVICE_NAME',
+			'PATH',
+			'TMPDIR',
+		] as const) {
+			expect(isReservedHermesProfileProjectionSourceName(sourceName)).toBe(true);
+		}
+		for (const targetName of [
+			'API_SERVER_KEY',
+			'HERMES_HOME',
+			'HERMES_KANBAN_DB',
+			'HERMES_TELEGRAM_BATCH_DELAY',
+			'PATH',
+			'TERMINAL_BACKEND',
+		] as const) {
+			expect(isReservedHermesProfileProjectionTargetName(targetName)).toBe(true);
+		}
+		expect(isReservedHermesProfileProjectionSourceName('OPENROUTER_API_KEY_SOURCE')).toBe(false);
+		expect(isReservedHermesProfileProjectionTargetName('OPENROUTER_API_KEY')).toBe(false);
 	});
 
 	it('builds closed Hermes boot metadata without executable or supervisor authority', () => {
@@ -169,14 +208,18 @@ describe('managed Hermes package contracts', () => {
 			resolvedSecrets: {
 				API_SERVER_KEY: 'test-only-key',
 				DISCORD_BOT_TOKEN_RESEARCHER: 'discord-test-only-key',
+				OPENROUTER_API_KEY_RESEARCHER: 'provider-test-only-key',
 			},
 			zone,
 		});
 
 		expect(bootInputs.configuration).toEqual({
 			...material,
-			discordBotTokenEnvironmentVariablesByProfile: {
-				researcher: 'DISCORD_BOT_TOKEN_RESEARCHER',
+			profileEnvironmentSourceNamesByProfile: {
+				researcher: {
+					DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_RESEARCHER',
+					OPENROUTER_API_KEY: 'OPENROUTER_API_KEY_RESEARCHER',
+				},
 			},
 		});
 		expect(bootInputs).toMatchObject({
@@ -209,10 +252,10 @@ describe('managed Hermes package contracts', () => {
 
 	it('mounts durable state with exact memory-only profile token files', () => {
 		const baseZone = createHermesZone(createHermesAdapterMaterial());
-		const {
-			discordBotTokenSecretsByAgent: _legacyDiscordProjection,
-			...gatewayWithoutLegacyDiscordProjection
-		} = baseZone.gateway as Extract<GatewayZoneConfig['gateway'], { readonly type: 'hermes' }>;
+		const baseHermesGateway = baseZone.gateway as Extract<
+			GatewayZoneConfig['gateway'],
+			{ readonly type: 'hermes' }
+		>;
 		const requirements = hermesLifecycle.buildVmRequirements({
 			controllerPort: 7777,
 			gatewayCacheDir: '/deployment/cache/hermes',
@@ -226,10 +269,19 @@ describe('managed Hermes package contracts', () => {
 			zone: {
 				...baseZone,
 				gateway: {
-					...gatewayWithoutLegacyDiscordProjection,
+					...baseHermesGateway,
 					profilesByAgent: {
 						beta: 'beta',
 						researcher: 'researcher',
+					},
+					profileSecretProjectionsByAgent: {
+						beta: {
+							DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_BETA',
+						},
+						researcher: {
+							DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_RESEARCHER',
+							OPENROUTER_API_KEY: 'OPENROUTER_API_KEY_RESEARCHER',
+						},
 					},
 				},
 			},

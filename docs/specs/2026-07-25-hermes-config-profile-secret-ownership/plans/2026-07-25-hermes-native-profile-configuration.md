@@ -401,9 +401,9 @@ Behavior:
 - prove exact RAM shadows and supported stop/update/start marker A-to-B
   behavior;
 - rewrite the two existing Hermes E2E files to prove generic target maps,
-  distinct sources under the same target, profile-attributed mediation,
-  root-without-Discord, one Tool-VM capability per profile, denial without Tool
-  VM dispatch, fallback activation, and epoch/placeholder change;
+  distinct sources under the same target, producer-to-consumer interoperability,
+  exact RAM custody, root-without-Discord, native RealFS state, and
+  epoch/placeholder change;
 - update canonical configuration documentation, generated manual templates,
   and manual-template tests;
 - run a built-CLI `agent-vm manual update` smoke against an OS-temp deployment.
@@ -431,6 +431,9 @@ Proof:
 
 Root API turns, loader inspection, or file presence do not substitute for
 named-profile provider turns. Those require real beta Discord identities.
+Credentialed beta therefore owns profile-attributed mediation, one Tool-VM
+capability per profile, denial without Tool VM dispatch, and fallback
+activation.
 
 ## Requirements / Proof Matrix
 

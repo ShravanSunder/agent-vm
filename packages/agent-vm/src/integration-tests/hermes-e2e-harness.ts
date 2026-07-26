@@ -35,12 +35,10 @@ export interface HermesE2eProject {
 }
 
 export interface RenderHermesManagedE2eConfigurationOptions {
+	readonly acceptanceMarker?: string;
 	readonly contextLength: number;
 	readonly fakeModelHost: string;
 	readonly fakeModelName: string;
-	readonly webhookPort: number;
-	readonly webhookRoute: string;
-	readonly webhookSecret: string;
 }
 
 const hermesGatewayLocalPackageNames = [
@@ -54,6 +52,8 @@ const hermesGatewayLocalPackageNames = [
 	'tool-portal',
 	'gateway-runtime',
 ] as const;
+
+export const hermesE2eApiServerKey = 'hermes-e2e-api-server-key';
 
 function getHermesE2eZone(systemConfig: LoadedSystemConfig): HermesE2eProject['zone'] {
 	const zone = systemConfig.zones[0];
@@ -93,6 +93,9 @@ export function renderHermesManagedE2eConfiguration(
 		'  enabled:',
 		'    - agent-vm-tool-portal',
 		'  disabled: []',
+		...(options.acceptanceMarker === undefined
+			? []
+			: [`agent_vm_acceptance_marker: ${options.acceptanceMarker}`]),
 		'model:',
 		`  default: ${options.fakeModelName}`,
 		'  provider: custom:hermes-e2e',
@@ -100,34 +103,21 @@ export function renderHermesManagedE2eConfiguration(
 		'custom_providers:',
 		'  - name: hermes-e2e',
 		`    base_url: http://${options.fakeModelHost}/v1`,
-		'    api_key: hermes-e2e-test-key',
 		'    api_mode: chat_completions',
 		`    model: ${options.fakeModelName}`,
 		'    models:',
 		`      ${options.fakeModelName}:`,
 		`        context_length: ${String(options.contextLength)}`,
+		'fallback_providers:',
+		'  - provider: custom:hermes-e2e',
+		`    model: ${options.fakeModelName}`,
+		'provider_routing:',
+		'  order:',
+		'    - hermes-e2e',
 		'approvals:',
 		"  mode: 'off'",
 		'code_execution:',
 		'  mode: project',
-		'platform_toolsets:',
-		'  webhook:',
-		'    - terminal',
-		'    - file',
-		'    - code_execution',
-		'gateway:',
-		'  multiplex_profiles: true',
-		'platforms:',
-		'  webhook:',
-		'    enabled: true',
-		'    extra:',
-		'      host: 127.0.0.1',
-		`      port: ${String(options.webhookPort)}`,
-		'      routes:',
-		`        ${options.webhookRoute}:`,
-		`          secret: ${options.webhookSecret}`,
-		"          prompt: 'PROFILE={profile}'",
-		'          deliver: log',
 		'',
 	].join('\n');
 }
@@ -273,7 +263,8 @@ export async function scaffoldHermesE2eProject(options: {
 		throw new Error('Hermes E2E scaffold requires the internal OpenClaw base fixture.');
 	}
 	const configDirectory = path.dirname(openClawZone.gateway.config);
-	const hermesConfigurationPath = path.join(configDirectory, 'hermes.yaml');
+	const hermesManagedConfigurationDirectory = path.join(configDirectory, 'hermes-managed');
+	const hermesConfigurationPath = path.join(hermesManagedConfigurationDirectory, 'config.yaml');
 	const hermesImageDirectory = path.join(
 		openClawProject.tempRoot,
 		'vm-images',
@@ -281,13 +272,14 @@ export async function scaffoldHermesE2eProject(options: {
 		'hermes',
 	);
 	await Promise.all([
+		fs.mkdir(hermesManagedConfigurationDirectory, { recursive: true }),
 		fs.mkdir(hermesImageDirectory, { recursive: true }),
-		fs.writeFile(
-			hermesConfigurationPath,
-			'plugins:\n  enabled:\n    - agent-vm-tool-portal\n  disabled: []\n',
-			'utf8',
-		),
 	]);
+	await fs.writeFile(
+		hermesConfigurationPath,
+		'plugins:\n  enabled:\n    - agent-vm-tool-portal\n  disabled: []\n',
+		'utf8',
+	);
 	openClawProject.systemConfig.imageProfiles.gateways = {
 		hermes: {
 			buildConfig: path.join(hermesImageDirectory, 'build-config.jsonc'),
@@ -306,6 +298,12 @@ export async function scaffoldHermesE2eProject(options: {
 			cpus: openClawZone.gateway.cpus,
 			imageProfile: 'hermes',
 			memory: openClawZone.gateway.memory,
+			profileSecretProjectionsByAgent: Object.fromEntries(
+				options.agents.map((agentId) => [
+					agentId,
+					{ DISCORD_BOT_TOKEN: `DISCORD_BOT_TOKEN_${agentId.toUpperCase()}` },
+				]),
+			),
 			port: openClawZone.gateway.port,
 			profilesByAgent: Object.fromEntries(options.agents.map((agentId) => [agentId, agentId])),
 			runtimeRootfsSize: openClawZone.gateway.runtimeRootfsSize,
@@ -319,7 +317,7 @@ export async function scaffoldHermesE2eProject(options: {
 				audience: 'gateway',
 				injection: 'env',
 				source: 'config',
-				value: 'hermes-e2e-api-server-key',
+				value: hermesE2eApiServerKey,
 			},
 		},
 	};

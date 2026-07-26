@@ -176,8 +176,20 @@ function configureFirstZoneAsHermes(config: ValidSystemConfigInput): ValidSystem
 		port: 8642,
 		config: './hermes/config.yaml',
 		profilesByAgent: { shravan: 'researcher' },
+		profileSecretProjectionsByAgent: {
+			shravan: {
+				DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_SHRAVAN',
+			},
+		},
 	};
-	zone.secrets = {};
+	zone.secrets = {
+		DISCORD_BOT_TOKEN_SHRAVAN: {
+			source: 'environment',
+			envVar: 'DISCORD_BOT_TOKEN_SHRAVAN',
+			injection: 'env',
+			audience: 'gateway',
+		},
+	};
 	zone.egressHosts = [{ host: 'api.openai.com', audience: 'gateway' }];
 	return zone;
 }
@@ -2209,7 +2221,10 @@ describe('loadSystemConfig', () => {
 	test('rejects websocket upgrade hosts missing from egress hosts', () => {
 		const config = createValidSystemConfigInput();
 		const zone = config.zones[0];
-		zone.egressHosts = [{ host: 'api.github.com', audience: 'gateway' }];
+		zone.egressHosts = [
+			{ host: 'api.github.com', audience: 'gateway' },
+			{ host: 'openrouter.ai', audience: 'gateway' },
+		];
 		zone.websocketUpgrades = [
 			{
 				audience: 'gateway',
@@ -2619,7 +2634,10 @@ describe('loadSystemConfig', () => {
 	test('rejects agentAccess on gateway-only mediated secrets', () => {
 		const config = createValidSystemConfigInput();
 		const zone = config.zones[0];
-		zone.egressHosts = [{ host: 'api.github.com', audience: 'gateway' }];
+		zone.egressHosts = [
+			{ host: 'api.github.com', audience: 'gateway' },
+			{ host: 'openrouter.ai', audience: 'gateway' },
+		];
 		zone.secrets.GITHUB_TOKEN = {
 			source: 'environment',
 			envVar: 'GITHUB_TOKEN',
@@ -2675,7 +2693,10 @@ describe('loadSystemConfig', () => {
 		const config = createValidSystemConfigInput();
 		const zone = config.zones[0];
 		zone.agents = [{ id: 'shravan' }];
-		zone.egressHosts = [{ host: 'api.github.com', audience: 'gateway' }];
+		zone.egressHosts = [
+			{ host: 'api.github.com', audience: 'gateway' },
+			{ host: 'openrouter.ai', audience: 'gateway' },
+		];
 		zone.secrets.GITHUB_TOKEN = {
 			source: 'environment',
 			envVar: 'GITHUB_TOKEN',
@@ -3042,9 +3063,15 @@ describe('loadSystemConfig', () => {
 			'review-agent': 'code-reviewer',
 		};
 		Object.assign(zone.gateway, {
-			discordBotTokenSecretsByAgent: {
-				'research-agent': 'DISCORD_BOT_TOKEN_RESEARCH',
-				'review-agent': 'DISCORD_BOT_TOKEN_REVIEW',
+			profileSecretProjectionsByAgent: {
+				'research-agent': {
+					DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_RESEARCH',
+					OPENROUTER_API_KEY: 'OPENROUTER_API_KEY_SHARED',
+				},
+				'review-agent': {
+					DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_REVIEW',
+					OPENROUTER_API_KEY: 'OPENROUTER_API_KEY_SHARED',
+				},
 			},
 		});
 		zone.secrets = {
@@ -3060,11 +3087,21 @@ describe('loadSystemConfig', () => {
 				injection: 'env',
 				audience: 'gateway',
 			},
+			OPENROUTER_API_KEY_SHARED: {
+				source: 'environment',
+				envVar: 'OPENROUTER_API_KEY_SHARED',
+				injection: 'http-mediation',
+				audience: 'gateway',
+				hosts: ['openrouter.ai'],
+			},
 		};
 		zone.defaultToolVmProfile = 'standard';
 		zone.agentToolVmProfiles = { 'review-agent': 'standard' };
 		zone.toolPortal = createValidZoneToolPortalConfigInput();
-		zone.egressHosts = [{ host: 'api.github.com', audience: 'gateway' }];
+		zone.egressHosts = [
+			{ host: 'api.github.com', audience: 'gateway' },
+			{ host: 'openrouter.ai', audience: 'gateway' },
+		];
 
 		const parsed = parseSystemConfigInputForTest(config);
 
@@ -3075,9 +3112,15 @@ describe('loadSystemConfig', () => {
 			],
 			gateway: {
 				type: 'hermes',
-				discordBotTokenSecretsByAgent: {
-					'research-agent': 'DISCORD_BOT_TOKEN_RESEARCH',
-					'review-agent': 'DISCORD_BOT_TOKEN_REVIEW',
+				profileSecretProjectionsByAgent: {
+					'research-agent': {
+						DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_RESEARCH',
+						OPENROUTER_API_KEY: 'OPENROUTER_API_KEY_SHARED',
+					},
+					'review-agent': {
+						DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_REVIEW',
+						OPENROUTER_API_KEY: 'OPENROUTER_API_KEY_SHARED',
+					},
 				},
 				profilesByAgent: {
 					'research-agent': 'researcher',
@@ -3089,14 +3132,24 @@ describe('loadSystemConfig', () => {
 		});
 	});
 
-	test('rejects incomplete or unsafe Hermes Discord token mappings', () => {
+	test('rejects incomplete or unsafe Hermes profile secret projections', () => {
 		const invalidCases = [
 			{
 				mapping: {},
-				secrets: {},
+				secrets: {
+					DISCORD_BOT_TOKEN_SHRAVAN: {
+						source: 'environment',
+						envVar: 'DISCORD_BOT_TOKEN_SHRAVAN',
+						injection: 'env',
+						audience: 'gateway',
+					},
+				},
 			},
 			{
-				mapping: { shravan: 'DISCORD_TOKEN', extra: 'DISCORD_TOKEN_EXTRA' },
+				mapping: {
+					shravan: { DISCORD_BOT_TOKEN: 'DISCORD_TOKEN' },
+					extra: { DISCORD_BOT_TOKEN: 'DISCORD_TOKEN_EXTRA' },
+				},
 				secrets: {
 					DISCORD_TOKEN: {
 						source: 'environment',
@@ -3113,7 +3166,7 @@ describe('loadSystemConfig', () => {
 				},
 			},
 			{
-				mapping: { shravan: 'DISCORD_TOKEN' },
+				mapping: { shravan: { DISCORD_BOT_TOKEN: 'DISCORD_TOKEN' } },
 				secrets: {
 					DISCORD_TOKEN: {
 						source: 'environment',
@@ -3130,12 +3183,12 @@ describe('loadSystemConfig', () => {
 			const config = createValidSystemConfigInput();
 			const zone = configureFirstZoneAsHermes(config);
 			Object.assign(zone.gateway, {
-				discordBotTokenSecretsByAgent: invalidCase.mapping,
+				profileSecretProjectionsByAgent: invalidCase.mapping,
 			});
 			zone.secrets = invalidCase.secrets;
 
 			expect(() => parseSystemConfigInputForTest(config)).toThrow(
-				/discordBotTokenSecretsByAgent|Discord bot token/u,
+				/profileSecretProjectionsByAgent|Discord bot token/u,
 			);
 		}
 	});
@@ -3149,9 +3202,9 @@ describe('loadSystemConfig', () => {
 			'review-agent': 'reviewer',
 		};
 		Object.assign(zone.gateway, {
-			discordBotTokenSecretsByAgent: {
-				'research-agent': 'DISCORD_BOT_TOKEN_SHARED',
-				'review-agent': 'DISCORD_BOT_TOKEN_SHARED',
+			profileSecretProjectionsByAgent: {
+				'research-agent': { DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_SHARED' },
+				'review-agent': { DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_SHARED' },
 			},
 		});
 		zone.secrets = {
@@ -3164,11 +3217,11 @@ describe('loadSystemConfig', () => {
 		};
 
 		expect(() => parseSystemConfigInputForTest(config)).toThrow(
-			/discordBotTokenSecretsByAgent must assign one distinct secret per agent/u,
+			/DISCORD_BOT_TOKEN.*distinct source/u,
 		);
 	});
 
-	test('rejects unmapped raw Hermes application secrets', () => {
+	test('rejects non-Discord raw Hermes application secrets', () => {
 		const config = createValidSystemConfigInput();
 		const zone = configureFirstZoneAsHermes(config);
 		zone.secrets = {
@@ -3181,8 +3234,90 @@ describe('loadSystemConfig', () => {
 		};
 
 		expect(() => parseSystemConfigInputForTest(config)).toThrow(
-			/env secret 'UNMAPPED_APPLICATION_TOKEN'.*http-mediation/u,
+			/env secret 'UNMAPPED_APPLICATION_TOKEN'.*DISCORD_BOT_TOKEN/u,
 		);
+	});
+
+	test('requires every authored Gateway-reaching mediated source to be assigned', () => {
+		const config = createValidSystemConfigInput();
+		const zone = configureFirstZoneAsHermes(config);
+		zone.secrets.UNASSIGNED_PROVIDER_KEY = {
+			source: 'environment',
+			envVar: 'UNASSIGNED_PROVIDER_KEY',
+			injection: 'http-mediation',
+			audience: 'both',
+			hosts: ['provider.example'],
+			agentAccess: ['shravan'],
+		};
+
+		expect(() => parseSystemConfigInputForTest(config)).toThrow(
+			/UNASSIGNED_PROVIDER_KEY.*assigned to at least one Hermes profile/u,
+		);
+	});
+
+	test('rejects config, reserved, raw non-Discord, and Tool-VM-only projection sources', () => {
+		const invalidCases = [
+			{
+				sourceName: 'CONFIG_PROVIDER',
+				targetName: 'OPENROUTER_API_KEY',
+				secret: {
+					source: 'config',
+					value: 'not-admitted',
+					injection: 'http-mediation',
+					audience: 'gateway',
+					hosts: ['openrouter.ai'],
+				},
+			},
+			{
+				sourceName: 'API_SERVER_KEY',
+				targetName: 'OPENROUTER_API_KEY',
+				secret: {
+					source: 'environment',
+					envVar: 'API_SERVER_KEY',
+					injection: 'http-mediation',
+					audience: 'gateway',
+					hosts: ['openrouter.ai'],
+				},
+			},
+			{
+				sourceName: 'RAW_PROVIDER',
+				targetName: 'OPENROUTER_API_KEY',
+				secret: {
+					source: 'environment',
+					envVar: 'RAW_PROVIDER',
+					injection: 'env',
+					audience: 'gateway',
+				},
+			},
+			{
+				sourceName: 'TOOL_VM_PROVIDER',
+				targetName: 'OPENROUTER_API_KEY',
+				secret: {
+					source: 'environment',
+					envVar: 'TOOL_VM_PROVIDER',
+					injection: 'http-mediation',
+					audience: 'tool-vm',
+					hosts: ['openrouter.ai'],
+					agentAccess: ['shravan'],
+				},
+			},
+		] as const;
+
+		for (const invalidCase of invalidCases) {
+			const config = createValidSystemConfigInput();
+			const zone = configureFirstZoneAsHermes(config);
+			zone.gateway.profileSecretProjectionsByAgent = {
+				shravan: {
+					DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_SHRAVAN',
+					[invalidCase.targetName]: invalidCase.sourceName,
+				},
+			};
+			zone.secrets[invalidCase.sourceName] = invalidCase.secret;
+
+			expect(() => parseSystemConfigInputForTest(config)).toThrow(
+				/config|reserved|http-mediation|Gateway-reaching|API_SERVER_KEY/u,
+			);
+		}
 	});
 
 	test('requires an explicit nonempty Hermes profile assignment for every configured agent', () => {

@@ -163,6 +163,9 @@ function createHermesSystemConfig(): SystemConfig {
 					memory: '2G',
 					port: 18_793,
 					profilesByAgent: { main: 'main' },
+					profileSecretProjectionsByAgent: {
+						main: { DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN' },
+					},
 					ssh: { secretEnv: 'explicit' },
 					stateDir: path.join(controllerRuntimeOperationsTestRoot, 'hermes-zone', 'state'),
 					type: 'hermes',

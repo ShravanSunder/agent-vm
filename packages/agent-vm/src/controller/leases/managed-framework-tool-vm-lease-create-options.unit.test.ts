@@ -154,6 +154,9 @@ function configureFixtureAsHermes(systemConfig: LoadedSystemConfig): void {
 			memory: gateway.memory,
 			port: gateway.port,
 			profilesByAgent: { main: 'researcher' },
+			profileSecretProjectionsByAgent: {
+				main: { DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN' },
+			},
 			stateDir: gateway.stateDir,
 			type: 'hermes',
 			zoneFilesDir:

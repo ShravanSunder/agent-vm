@@ -96,6 +96,9 @@ describe('validateControllerSelectedToolVmDirectory', () => {
 				memory: '2G',
 				port: 18_793,
 				profilesByAgent: { main: 'researcher' },
+				profileSecretProjectionsByAgent: {
+					main: { DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN' },
+				},
 				stateDir: stateDirectory,
 				type: 'hermes' as const,
 				zoneFilesDir: zoneFilesDirectory,

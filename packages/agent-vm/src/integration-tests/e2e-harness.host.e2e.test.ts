@@ -347,26 +347,23 @@ describe('scaffoldGatewayE2eProject', () => {
 		).resolves.toContain('agent_vm_hermes_adapter');
 	});
 
-	it('enables the stock Hermes webhook toolsets exercised by the managed environment E2E', () => {
+	it('renders safe shared Hermes policy for the managed environment E2E', () => {
 		const configuration = renderHermesManagedE2eConfiguration({
 			contextLength: 65_536,
 			fakeModelHost: 'model.vm.host',
 			fakeModelName: 'hermes-e2e',
-			webhookPort: 8644,
-			webhookRoute: 'managed-environment-e2e',
-			webhookSecret: 'test-secret',
 		});
 
-		expect(configuration).toContain(
-			[
-				'platform_toolsets:',
-				'  webhook:',
-				'    - terminal',
-				'    - file',
-				'    - code_execution',
-			].join('\n'),
-		);
+		expect(configuration).toContain('    - agent-vm-tool-portal');
 		expect(configuration).toContain('  context_length: 65536');
+		expect(configuration).toContain(
+			'fallback_providers:\n  - provider: custom:hermes-e2e\n    model: hermes-e2e',
+		);
+		expect(configuration).toContain('provider_routing:\n  order:\n    - hermes-e2e');
+		expect(configuration).not.toContain('api_key:');
+		expect(configuration).not.toContain('webhook');
+		expect(configuration).not.toContain('multiplex_profiles');
+		expect(configuration).not.toContain('preserve_existing');
 	});
 });
 

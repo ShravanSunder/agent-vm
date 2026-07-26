@@ -2193,12 +2193,21 @@ async function startGatewayZoneImplementation(
 				openClawControlAuthSecretName: lifecycleZone.gateway.controlAuth.secret,
 			} as const;
 		})();
+		const frameworkMediatedEnvironment =
+			managedGatewayMediatedSecretBootProjection?.frameworkEnvironment ?? {};
+		for (const environmentName of Object.keys(frameworkMediatedEnvironment)) {
+			if (Object.hasOwn(frameworkServiceInputs.environment, environmentName)) {
+				throw new Error(
+					`Managed Gateway framework mediated source '${environmentName}' collides with the constructed framework environment.`,
+				);
+			}
+		}
 		const bootInputInventories = serializeManagedGatewayBootInputs({
 			cohort: expectedCohort,
 			frameworkConfig: frameworkServiceInputs.configuration,
 			frameworkEnvironment: {
 				...frameworkServiceInputs.environment,
-				...managedGatewayMediatedSecretBootProjection?.frameworkEnvironment,
+				...frameworkMediatedEnvironment,
 			},
 			...frameworkBootInput,
 			mcpConfig: managedPortalMaterialization.mcpConfig,

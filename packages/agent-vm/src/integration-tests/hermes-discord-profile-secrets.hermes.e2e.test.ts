@@ -34,6 +34,7 @@ const discordSecretEnvironmentNames = {
 	clawfest: 'DISCORD_BOT_TOKEN_CLAWFEST',
 } as const;
 const mediatedSecretEnvironmentName = 'HERMES_E2E_MEDIATED_SECRET';
+const mediatedSecretProfileTargetName = 'PROVIDER_API_KEY';
 const mediatedHost = 'hermes-profile-secrets.vm.host';
 const durableSiblingFileName = 'durable-profile-state.txt';
 
@@ -50,9 +51,10 @@ interface GatewayStartObservation {
 }
 
 interface GuestProfileFileObservation {
-	readonly digest: string;
+	readonly discordValueDigest: string;
 	readonly mode: string;
 	readonly profileName: AgentId;
+	readonly providerValueDigest: string;
 	readonly regularFile: boolean;
 }
 
@@ -84,7 +86,15 @@ function createGenerationCanaries(generation: 'first' | 'second'): GenerationCan
 
 async function configureHermesProfileSecrets(project: HermesE2eProject): Promise<void> {
 	Object.assign(project.zone.gateway, {
-		discordBotTokenSecretsByAgent: discordSecretEnvironmentNames,
+		profileSecretProjectionsByAgent: Object.fromEntries(
+			agentIds.map((agentId) => [
+				agentId,
+				{
+					DISCORD_BOT_TOKEN: discordSecretEnvironmentNames[agentId],
+					[mediatedSecretProfileTargetName]: mediatedSecretEnvironmentName,
+				},
+			]),
+		),
 	});
 	for (const agentId of agentIds) {
 		const secretEnvironmentName = discordSecretEnvironmentNames[agentId];
@@ -106,12 +116,6 @@ async function configureHermesProfileSecrets(project: HermesE2eProject): Promise
 		...(project.zone.egressHosts ?? []),
 		{ audience: 'gateway', host: mediatedHost },
 	];
-	const existingConfiguration = await readFile(project.zone.gateway.config, 'utf8');
-	await writeFile(
-		project.zone.gateway.config,
-		`${existingConfiguration.trimEnd()}\nsecrets:\n  preserve_existing:\n    - DISCORD_BOT_TOKEN\n`,
-		'utf8',
-	);
 }
 
 function generationSecretInputs(generationCanaries: GenerationCanaries): Record<string, string> {
@@ -130,18 +134,20 @@ function requireProfileFileObservations(output: string): readonly GuestProfileFi
 		parsed.some(
 			(observation) =>
 				!isObjectRecord(observation) ||
-				typeof observation.digest !== 'string' ||
+				typeof observation.discordValueDigest !== 'string' ||
 				typeof observation.mode !== 'string' ||
 				typeof observation.profileName !== 'string' ||
+				typeof observation.providerValueDigest !== 'string' ||
 				typeof observation.regularFile !== 'boolean',
 		)
 	) {
 		throw new Error('Hermes guest profile-file observation had an invalid safe result shape.');
 	}
 	return parsed.map((observation) => ({
-		digest: String(observation.digest),
+		discordValueDigest: String(observation.discordValueDigest),
 		mode: String(observation.mode),
 		profileName: observation.profileName as AgentId,
+		providerValueDigest: String(observation.providerValueDigest),
 		regularFile: Boolean(observation.regularFile),
 	}));
 }
@@ -160,12 +166,23 @@ observations = []
 for profile_name in ("clawfest", "beta"):
     file_path = f"/home/hermes/.hermes/profiles/{profile_name}/.env"
     file_stat = os.lstat(file_path)
-    with open(file_path, "rb") as profile_file:
-        digest = hashlib.sha256(profile_file.read()).hexdigest()
+    entries = {
+        key: value
+        for key, value in (
+            line.rstrip("\\n").split("=", 1)
+            for line in open(file_path, encoding="utf-8")
+            if "=" in line
+        )
+    }
     observations.append({
-        "digest": digest,
+        "discordValueDigest": hashlib.sha256(
+            entries["DISCORD_BOT_TOKEN"].encode()
+        ).hexdigest(),
         "mode": format(stat.S_IMODE(file_stat.st_mode), "03o"),
         "profileName": profile_name,
+        "providerValueDigest": hashlib.sha256(
+            entries["PROVIDER_API_KEY"].encode()
+        ).hexdigest(),
         "regularFile": stat.S_ISREG(file_stat.st_mode) and not stat.S_ISLNK(file_stat.st_mode),
     })
 print(json.dumps(observations, sort_keys=True))
@@ -412,24 +429,43 @@ function assertSafeManagedVmRequest(options: {
 	expect(mediatedDescriptor?.value).toBe(options.canaries.mediated);
 }
 
+function requireMediatedGuestPlaceholder(request: ManagedVmCreateRequest): string {
+	const descriptor = request.mediatedSecrets.find(
+		(candidate) => candidate.environmentVariable === mediatedSecretEnvironmentName,
+	);
+	if (descriptor === undefined) {
+		throw new Error('Hermes profile-secret E2E omitted its mediated provider projection.');
+	}
+	if (typeof descriptor.guestPlaceholder !== 'string' || descriptor.guestPlaceholder.length === 0) {
+		throw new Error('Hermes profile-secret E2E omitted its mediated provider placeholder.');
+	}
+	return descriptor.guestPlaceholder;
+}
+
 function assertGuestProfileFiles(
 	observations: readonly GuestProfileFileObservation[],
 	canaries: GenerationCanaries,
+	mediatedGuestPlaceholder: string,
 ): void {
 	expect(
 		observations.map((observation) => ({
-			digest: observation.digest,
+			discordValueDigest: observation.discordValueDigest,
 			mode: observation.mode,
 			profileName: observation.profileName,
+			providerValueDigest: observation.providerValueDigest,
 			regularFile: observation.regularFile,
 		})),
 	).toEqual(
 		agentIds.map((agentId) => ({
-			digest: sha256(`DISCORD_BOT_TOKEN=${canaries.discordByAgent[agentId]}`),
+			discordValueDigest: sha256(canaries.discordByAgent[agentId]),
 			mode: '600',
 			profileName: agentId,
+			providerValueDigest: sha256(mediatedGuestPlaceholder),
 			regularFile: true,
 		})),
+	);
+	expect(observations.map((observation) => observation.providerValueDigest)).not.toContain(
+		sha256(canaries.mediated),
 	);
 }
 
@@ -497,6 +533,7 @@ describeHermesDiscordProfileSecretsE2e(
 			assertGuestProfileFiles(
 				await inspectGuestProfileFiles(firstBoot.gateway.vm),
 				firstGeneration,
+				requireMediatedGuestPlaceholder(firstBoot.gateway.request),
 			);
 			expect(
 				await inspectGuestEnvironments({
@@ -539,6 +576,7 @@ describeHermesDiscordProfileSecretsE2e(
 			assertGuestProfileFiles(
 				await inspectGuestProfileFiles(secondBoot.gateway.vm),
 				secondGeneration,
+				requireMediatedGuestPlaceholder(secondBoot.gateway.request),
 			);
 			expect(
 				await inspectGuestEnvironments({

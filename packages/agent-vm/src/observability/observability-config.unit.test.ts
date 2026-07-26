@@ -172,8 +172,17 @@ describe('createObservabilityRuntimeConfig', () => {
 			port: 8642,
 			config: '/tmp/hermes/config.yaml',
 			profilesByAgent: { main: 'main-profile' },
+			profileSecretProjectionsByAgent: {
+				main: { DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN' },
+			},
 		};
 		delete firstZone.secrets.OPENCLAW_GATEWAY_TOKEN;
+		firstZone.secrets.DISCORD_BOT_TOKEN = {
+			source: 'environment',
+			envVar: 'DISCORD_BOT_TOKEN',
+			injection: 'env',
+			audience: 'gateway',
+		};
 		const loadedConfig = createLoadedSystemConfig(configInput, {
 			systemConfigPath: '/tmp/config/system.json',
 		});

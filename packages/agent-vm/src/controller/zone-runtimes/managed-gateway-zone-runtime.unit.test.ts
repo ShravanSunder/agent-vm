@@ -448,6 +448,9 @@ function getHermesZone(): GatewayZone & {
 			memory: openClawZone.gateway.memory,
 			port: openClawZone.gateway.port,
 			profilesByAgent: { main: 'main' },
+			profileSecretProjectionsByAgent: {
+				main: { DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN' },
+			},
 			stateDir: openClawZone.gateway.stateDir,
 			type: 'hermes',
 			zoneFilesDir: openClawZone.gateway.zoneFilesDir,

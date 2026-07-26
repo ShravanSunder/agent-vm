@@ -82,9 +82,14 @@ describe('mapSystemGatewayZoneToLifecycleZone', () => {
 				cpus: 2,
 				port: 8642,
 				config: './gateways/hermes/config.yaml',
-				discordBotTokenSecretsByAgent: {
-					researcher: 'DISCORD_BOT_TOKEN_RESEARCHER',
-					reviewer: 'DISCORD_BOT_TOKEN_REVIEWER',
+				profileSecretProjectionsByAgent: {
+					researcher: {
+						DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_RESEARCHER',
+						OPENROUTER_API_KEY: 'OPENROUTER_API_KEY_RESEARCHER',
+					},
+					reviewer: {
+						DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_REVIEWER',
+					},
 				},
 				stateDir: './state/hermes',
 				zoneFilesDir: './zone-files/hermes',
@@ -102,9 +107,14 @@ describe('mapSystemGatewayZoneToLifecycleZone', () => {
 			cpus: 2,
 			port: 8642,
 			config: './gateways/hermes/config.yaml',
-			discordBotTokenSecretsByAgent: {
-				researcher: 'DISCORD_BOT_TOKEN_RESEARCHER',
-				reviewer: 'DISCORD_BOT_TOKEN_REVIEWER',
+			profileSecretProjectionsByAgent: {
+				researcher: {
+					DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_RESEARCHER',
+					OPENROUTER_API_KEY: 'OPENROUTER_API_KEY_RESEARCHER',
+				},
+				reviewer: {
+					DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_REVIEWER',
+				},
 			},
 			stateDir: './state/hermes',
 			ssh: { secretEnv: 'explicit' },
@@ -244,6 +254,9 @@ describe('mapSystemGatewayZoneToLifecycleZone', () => {
 					zoneFilesDir: './zone-files/hermes',
 					zoneRuntimeDir: './hermes/runtime',
 					profilesByAgent: { researcher: 'research-profile' },
+					profileSecretProjectionsByAgent: {
+						researcher: { DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN' },
+					},
 				},
 				observability: {
 					enabled: true,

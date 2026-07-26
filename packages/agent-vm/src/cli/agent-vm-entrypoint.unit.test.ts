@@ -175,6 +175,9 @@ function createCliBuildHermesSystemConfig(): LoadedSystemConfig {
 					zoneFilesDir: './zone-files/shravan',
 					zoneRuntimeDir: './runtime/shravan',
 					profilesByAgent: { shravan: 'main' },
+					profileSecretProjectionsByAgent: {
+						shravan: { DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN' },
+					},
 				},
 			},
 		],

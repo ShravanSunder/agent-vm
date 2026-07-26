@@ -124,7 +124,9 @@ interface OpenClawGatewayZoneGatewayConfig extends GatewayZoneBaseGatewayConfig 
 interface HermesGatewayZoneGatewayConfig extends GatewayZoneBaseGatewayConfig {
 	readonly type: 'hermes';
 	readonly zoneFilesDir: string;
-	readonly discordBotTokenSecretsByAgent?: Readonly<Record<string, string>>;
+	readonly profileSecretProjectionsByAgent: Readonly<
+		Record<string, Readonly<Record<string, string>>>
+	>;
 	readonly profilesByAgent: Readonly<Record<string, string>>;
 }
 

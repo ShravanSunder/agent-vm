@@ -130,6 +130,9 @@ describe('runControllerDestroy', () => {
 						memory: zone.gateway.memory,
 						port: zone.gateway.port,
 						profilesByAgent: { shravan: 'researcher' },
+						profileSecretProjectionsByAgent: {
+							shravan: { DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN' },
+						},
 						stateDir: zone.gateway.stateDir,
 						type: 'hermes' as const,
 						zoneFilesDir,

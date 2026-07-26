@@ -1,6 +1,8 @@
 """Fixed managed boot entry for stock Hermes Gateway 0.18.2."""
 
+import copy
 import hashlib
+import inspect
 import json
 import os
 import re
@@ -12,7 +14,9 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 
 import hermes_constants
+from agent import secret_scope as hermes_secret_scope
 from agent_vm_agent_portal_sdk.gateway_runtime_client import GatewayRuntimeClient
+from gateway import run as hermes_gateway_run
 from hermes_cli import gateway as hermes_gateway
 from hermes_cli import managed_scope as hermes_managed_scope
 from tools import file_tools as hermes_file_tools
@@ -131,7 +135,7 @@ class _StockHermesTerminalToolAdapter:
 class _ManagedAdapterMaterial(t.NamedTuple):
     attachment: Mapping[str, object]
     agent_projections: Mapping[str, object]
-    discord_bot_token_environment_variables_by_profile: Mapping[str, str]
+    profile_environment_source_names_by_profile: Mapping[str, Mapping[str, str]]
 
 
 class _ManagedEnvironmentCacheEntry(t.NamedTuple):
@@ -156,15 +160,13 @@ def _require_string(value: object, label: str) -> str:
 def load_managed_adapter_material(configuration_path: Path) -> _ManagedAdapterMaterial:
     raw_configuration = json.loads(configuration_path.read_text(encoding="utf-8"))
     configuration = _require_mapping(raw_configuration, "managed Hermes adapter material")
-    required_fields = {"agentProjections", "attachment"}
-    optional_fields = {"discordBotTokenEnvironmentVariablesByProfile"}
-    if not required_fields.issubset(configuration) or not set(configuration).issubset(
-        required_fields | optional_fields
-    ):
-        message = (
-            "managed Hermes adapter material requires attachment and agentProjections "
-            "with only the optional Discord profile environment mapping"
-        )
+    required_fields = {
+        "agentProjections",
+        "attachment",
+        "profileEnvironmentSourceNamesByProfile",
+    }
+    if set(configuration) != required_fields:
+        message = "managed Hermes adapter material has an unexpected field set"
         raise ValueError(message)
     attachment = _require_mapping(configuration["attachment"], "attachment")
     if attachment.get("clientKind") != "hermes-managed-plugin":
@@ -188,90 +190,125 @@ def load_managed_adapter_material(configuration_path: Path) -> _ManagedAdapterMa
     ):
         message = "managed Hermes attachment and projection agent cohorts must match exactly"
         raise ValueError(message)
-    discord_environment_mapping_field = "discordBotTokenEnvironmentVariablesByProfile"
-    if discord_environment_mapping_field not in configuration:
-        discord_environment_mapping: Mapping[str, str] = types.MappingProxyType({})
-    else:
-        raw_discord_environment_mapping = _require_mapping(
-            configuration[discord_environment_mapping_field],
-            discord_environment_mapping_field,
+    profile_environment_mapping_field = "profileEnvironmentSourceNamesByProfile"
+    raw_profile_environment_mapping = _require_mapping(
+        configuration[profile_environment_mapping_field],
+        profile_environment_mapping_field,
+    )
+    expected_profile_names = {
+        _projection_profile_name(_require_mapping(projection, f"agentProjections[{agent_id!r}]"))
+        for agent_id, projection in agent_projections.items()
+    }
+    if set(raw_profile_environment_mapping) != expected_profile_names:
+        message = (
+            "managed Hermes profile environment mapping and profile cohorts must match exactly"
         )
-        expected_profile_names = {
-            _projection_profile_name(
-                _require_mapping(projection, f"agentProjections[{agent_id!r}]")
-            )
-            for agent_id, projection in agent_projections.items()
-        }
-        if set(raw_discord_environment_mapping) != expected_profile_names:
-            message = (
-                "managed Hermes Discord environment mapping and profile cohorts must match exactly"
-            )
+        raise ValueError(message)
+    normalized_profile_environment_mapping: dict[str, Mapping[str, str]] = {}
+    for profile_name, target_sources_value in raw_profile_environment_mapping.items():
+        target_sources = _require_mapping(
+            target_sources_value,
+            f"profile environment mapping for profile {profile_name!r}",
+        )
+        if not target_sources:
+            message = f"profile environment mapping for profile {profile_name!r} must not be empty"
             raise ValueError(message)
-        normalized_discord_environment_mapping: dict[str, str] = {}
-        for profile_name, environment_name_value in raw_discord_environment_mapping.items():
-            environment_name = _require_string(
-                environment_name_value,
-                f"Discord token environment name for profile {profile_name!r}",
+        normalized_target_sources: dict[str, str] = {}
+        for target_name_value, source_name_value in target_sources.items():
+            target_name = _require_string(
+                target_name_value,
+                f"profile target environment name for profile {profile_name!r}",
             )
-            if _ENVIRONMENT_NAME_PATTERN.fullmatch(environment_name) is None:
-                message = (
-                    f"Discord token environment name for profile {profile_name!r} "
-                    "must be a safe environment variable name"
-                )
+            source_name = _require_string(
+                source_name_value,
+                f"profile source environment name for profile {profile_name!r}",
+            )
+            if _ENVIRONMENT_NAME_PATTERN.fullmatch(target_name) is None:
+                message = f"profile target environment name for profile {profile_name!r} is unsafe"
                 raise ValueError(message)
-            normalized_discord_environment_mapping[profile_name] = environment_name
-        if len(set(normalized_discord_environment_mapping.values())) != len(
-            normalized_discord_environment_mapping
-        ):
-            message = "managed Hermes Discord environment names must be distinct"
-            raise ValueError(message)
-        discord_environment_mapping = types.MappingProxyType(normalized_discord_environment_mapping)
+            if hermes_secret_scope._is_global_env(target_name):
+                message = f"profile target environment name for profile {profile_name!r} is global"
+                raise ValueError(message)
+            if _ENVIRONMENT_NAME_PATTERN.fullmatch(source_name) is None:
+                message = f"profile source environment name for profile {profile_name!r} is unsafe"
+                raise ValueError(message)
+            normalized_target_sources[target_name] = source_name
+        normalized_profile_environment_mapping[profile_name] = types.MappingProxyType(
+            normalized_target_sources
+        )
     return _ManagedAdapterMaterial(
         attachment=dict(attachment),
         agent_projections=types.MappingProxyType(dict(agent_projections)),
-        discord_bot_token_environment_variables_by_profile=discord_environment_mapping,
+        profile_environment_source_names_by_profile=types.MappingProxyType(
+            normalized_profile_environment_mapping
+        ),
     )
 
 
-def _materialize_discord_profile_environment_files(
+def _materialize_profile_environment_files(
     *,
     protected_hermes_home: Path,
-    environment_variables_by_profile: Mapping[str, str],
+    environment_source_names_by_profile: Mapping[str, Mapping[str, str]],
 ) -> None:
-    token_values_by_profile: dict[str, str] = {}
+    values_by_profile: dict[str, dict[str, str]] = {}
+    source_names = {
+        source_name
+        for target_sources in environment_source_names_by_profile.values()
+        for source_name in target_sources.values()
+    }
     try:
-        for profile_name, environment_name in environment_variables_by_profile.items():
-            token_value = os.environ.get(environment_name)
-            if not token_value:
-                message = (
-                    f"Discord token environment variable for profile {profile_name!r} "
-                    "must contain a value"
-                )
-                raise ValueError(message)
-            if any(character in token_value for character in ("\0", "\r", "\n")):
-                message = (
-                    f"Discord token environment variable for profile {profile_name!r} "
-                    "contains unsafe line content"
-                )
-                raise ValueError(message)
-            token_values_by_profile[profile_name] = token_value
+        for profile_name, target_sources in environment_source_names_by_profile.items():
+            target_values: dict[str, str] = {}
+            for target_name, source_name in target_sources.items():
+                source_value = os.environ.get(source_name)
+                if not source_value:
+                    message = (
+                        f"profile source environment for {profile_name!r} must contain a value"
+                    )
+                    raise ValueError(message)
+                if any(character in source_value for character in ("\0", "\r", "\n")):
+                    message = (
+                        f"profile source environment for {profile_name!r} contains unsafe content"
+                    )
+                    raise ValueError(message)
+                target_values[target_name] = source_value
+            values_by_profile[profile_name] = target_values
     finally:
-        for environment_name in environment_variables_by_profile.values():
-            _ = os.environ.pop(environment_name, None)
+        for source_name in source_names:
+            _ = os.environ.pop(source_name, None)
 
-    for profile_name, token_value in token_values_by_profile.items():
-        environment_path = protected_hermes_home / "profiles" / profile_name / ".env"
-        file_descriptor = os.open(
-            environment_path,
-            os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW | os.O_CLOEXEC,
-            0o600,
-        )
-        try:
-            os.fchmod(file_descriptor, 0o600)
-            with os.fdopen(file_descriptor, "wb", closefd=False) as environment_file:
-                environment_file.write(f"DISCORD_BOT_TOKEN={token_value}".encode())
-        finally:
-            os.close(file_descriptor)
+    created_environment_paths: list[Path] = []
+    try:
+        for profile_name, target_values in values_by_profile.items():
+            environment_path = protected_hermes_home / "profiles" / profile_name / ".env"
+            file_descriptor = os.open(
+                environment_path,
+                os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW | os.O_CLOEXEC,
+                0o600,
+            )
+            created_environment_paths.append(environment_path)
+            try:
+                os.fchmod(file_descriptor, 0o600)
+                with os.fdopen(file_descriptor, "wb", closefd=False) as environment_file:
+                    for target_name in sorted(target_values):
+                        environment_file.write(
+                            f"{target_name}={target_values[target_name]}\n".encode()
+                        )
+            finally:
+                os.close(file_descriptor)
+    except BaseException as materialization_error:
+        cleanup_errors: list[BaseException] = []
+        for environment_path in reversed(created_environment_paths):
+            try:
+                environment_path.unlink()
+            except FileNotFoundError:
+                pass
+            except BaseException as cleanup_error:
+                cleanup_errors.append(cleanup_error)
+        if cleanup_errors:
+            message = "Managed Hermes could not remove every failed profile environment shadow"
+            raise RuntimeError(message) from cleanup_errors[0]
+        raise materialization_error
 
 
 def _validate_managed_profile_cohort(
@@ -340,23 +377,150 @@ def _validate_managed_plugin_policy(configuration: Mapping[str, object]) -> None
         raise HermesProfileAdmissionError(message)
 
 
-def _validate_discord_profile_secret_policy(
-    *,
-    configuration: Mapping[str, object],
-    environment_variables_by_profile: Mapping[str, str],
-) -> None:
-    if not environment_variables_by_profile:
-        return
-    secrets_value = configuration.get("secrets")
-    preserve_existing = (
-        secrets_value.get("preserve_existing") if isinstance(secrets_value, Mapping) else None
-    )
-    if not isinstance(preserve_existing, list) or "DISCORD_BOT_TOKEN" not in preserve_existing:
-        message = (
-            "managed Hermes secrets.preserve_existing must include "
-            "'DISCORD_BOT_TOKEN' for mapped Discord profiles"
+class _HermesManagedPolicyReadBindings:
+    """Temporarily directs pinned raw readers through Hermes managed config."""
+
+    _original_provider_routing_descriptor: object
+    _provider_routing_wrapper: object | None
+
+    def __init__(self, *, gateway_run_module: object = hermes_gateway_run) -> None:
+        self._gateway_run_module = gateway_run_module
+        self._gateway_runner = self._require_gateway_runner()
+        self._original_get_fallback_chain = self._require_callable("get_fallback_chain")
+        self._original_load_gateway_config = self._require_callable("_load_gateway_config")
+        original_provider_routing_descriptor = inspect.getattr_static(
+            self._gateway_runner,
+            "_load_provider_routing",
+            None,
         )
-        raise HermesProfileAdmissionError(message)
+        if not isinstance(original_provider_routing_descriptor, staticmethod):
+            message = (
+                "Pinned Hermes GatewayRunner._load_provider_routing target is absent, changed, "
+                "or not a static method"
+            )
+            raise RuntimeError(message)
+        original_provider_routing = original_provider_routing_descriptor.__func__
+        if not callable(original_provider_routing):
+            message = "Pinned Hermes GatewayRunner._load_provider_routing target is not callable"
+            raise RuntimeError(message)
+        self._original_provider_routing_descriptor = original_provider_routing_descriptor
+        self._original_provider_routing: Callable[[], object] = original_provider_routing
+        self._fallback_wrapper: Callable[[object], object] | None = None
+        self._provider_routing_wrapper = None
+
+    def _require_gateway_runner(self) -> type[object]:
+        gateway_runner = getattr(self._gateway_run_module, "GatewayRunner", None)
+        if not isinstance(gateway_runner, type):
+            message = "Pinned Hermes GatewayRunner target is absent or changed"
+            raise RuntimeError(message)
+        return gateway_runner
+
+    def _require_callable(self, name: str) -> Callable[..., object]:
+        target = getattr(self._gateway_run_module, name, None)
+        if not callable(target):
+            message = f"Pinned Hermes {name} target is absent or not callable"
+            raise RuntimeError(message)
+        return target
+
+    def install(self) -> None:
+        if self._fallback_wrapper is not None or self._provider_routing_wrapper is not None:
+            message = "Hermes managed policy bindings are already installed"
+            raise RuntimeError(message)
+        if (
+            getattr(self._gateway_run_module, "get_fallback_chain", None)
+            is not self._original_get_fallback_chain
+        ):
+            message = (
+                "Pinned Hermes get_fallback_chain target changed before managed binding install"
+            )
+            raise RuntimeError(message)
+        if (
+            getattr(self._gateway_run_module, "_load_gateway_config", None)
+            is not self._original_load_gateway_config
+        ):
+            message = (
+                "Pinned Hermes _load_gateway_config target changed before managed binding install"
+            )
+            raise RuntimeError(message)
+        if (
+            inspect.getattr_static(self._gateway_runner, "_load_provider_routing", None)
+            is not self._original_provider_routing_descriptor
+        ):
+            message = (
+                "Pinned Hermes GatewayRunner._load_provider_routing target changed "
+                "before managed binding install"
+            )
+            raise RuntimeError(message)
+
+        def get_managed_fallback_chain(raw_configuration: object) -> object:
+            if not isinstance(raw_configuration, dict):
+                message = "Pinned Hermes fallback configuration must be a dictionary"
+                raise TypeError(message)
+            managed_configuration = hermes_managed_scope.apply_managed_overlay(
+                copy.deepcopy(raw_configuration)
+            )
+            return self._original_get_fallback_chain(managed_configuration)
+
+        def load_managed_provider_routing() -> object:
+            effective_configuration = self._original_load_gateway_config()
+            if not isinstance(effective_configuration, Mapping):
+                message = "Pinned Hermes effective gateway configuration must be a mapping"
+                raise TypeError(message)
+            provider_routing = effective_configuration.get("provider_routing", {})
+            if not isinstance(provider_routing, Mapping):
+                message = "Pinned Hermes provider_routing must be a mapping"
+                raise TypeError(message)
+            return dict(provider_routing)
+
+        self._fallback_wrapper = get_managed_fallback_chain
+        try:
+            setattr(self._gateway_run_module, "get_fallback_chain", self._fallback_wrapper)
+            provider_routing_descriptor = staticmethod(load_managed_provider_routing)
+            setattr(
+                self._gateway_runner,
+                "_load_provider_routing",
+                provider_routing_descriptor,
+            )
+            self._provider_routing_wrapper = provider_routing_descriptor
+            installed_provider_routing_descriptor = inspect.getattr_static(
+                self._gateway_runner,
+                "_load_provider_routing",
+            )
+            if not isinstance(installed_provider_routing_descriptor, staticmethod):
+                message = (
+                    "Pinned Hermes provider routing binding did not install as a static method"
+                )
+                raise RuntimeError(message)
+        except BaseException:
+            self.close()
+            raise
+
+    def close(self) -> None:
+        restoration_errors: list[BaseException] = []
+        if self._provider_routing_wrapper is not None:
+            try:
+                setattr(
+                    self._gateway_runner,
+                    "_load_provider_routing",
+                    self._original_provider_routing_descriptor,
+                )
+            except BaseException as error:
+                restoration_errors.append(error)
+            finally:
+                self._provider_routing_wrapper = None
+        if self._fallback_wrapper is not None:
+            try:
+                setattr(
+                    self._gateway_run_module,
+                    "get_fallback_chain",
+                    self._original_get_fallback_chain,
+                )
+            except BaseException as error:
+                restoration_errors.append(error)
+            finally:
+                self._fallback_wrapper = None
+        if restoration_errors:
+            raise restoration_errors[0]
 
 
 class HermesManagedEnvironmentHooks:
@@ -555,12 +719,6 @@ def _run_managed_hermes_gateway_runtime(
     material = load_managed_adapter_material(configuration_path)
     managed_configuration = managed_configuration_loader()
     _validate_managed_plugin_policy(managed_configuration)
-    _validate_discord_profile_secret_policy(
-        configuration=managed_configuration,
-        environment_variables_by_profile=(
-            material.discord_bot_token_environment_variables_by_profile
-        ),
-    )
     projection_cohort_digest = _require_string(
         material.attachment.get("projectionCohortDigest"),
         "attachment.projectionCohortDigest",
@@ -574,11 +732,9 @@ def _run_managed_hermes_gateway_runtime(
         protected_hermes_home=protected_hermes_home,
         agent_projections=adapter_config.profiles,
     )
-    _materialize_discord_profile_environment_files(
+    _materialize_profile_environment_files(
         protected_hermes_home=protected_hermes_home,
-        environment_variables_by_profile=(
-            material.discord_bot_token_environment_variables_by_profile
-        ),
+        environment_source_names_by_profile=(material.profile_environment_source_names_by_profile),
     )
     telemetry = create_hermes_tool_portal_telemetry_from_environment()
     gateway_runtime_client = GatewayRuntimeClient(
@@ -603,6 +759,7 @@ def _run_managed_hermes_gateway_runtime(
         current_projection=hooks._current_projection,
         process_registry=hermes_process_registry,
     )
+    managed_policy_bindings = _HermesManagedPolicyReadBindings()
     adapter.connect_gateway_runtime()
     try:
         configure_managed_tool_portal_plugin(
@@ -616,21 +773,25 @@ def _run_managed_hermes_gateway_runtime(
         except BaseException:
             hooks.close()
             raise
+        managed_policy_bindings.install()
         (hermes_gateway.run_gateway if stock_gateway_runner is None else stock_gateway_runner)()
     finally:
         try:
             clear_managed_tool_portal_plugin_configuration()
         finally:
             try:
-                process_hooks.close()
+                managed_policy_bindings.close()
             finally:
                 try:
-                    hooks.close()
+                    process_hooks.close()
                 finally:
                     try:
-                        adapter.close()
+                        hooks.close()
                     finally:
-                        telemetry.shutdown()
+                        try:
+                            adapter.close()
+                        finally:
+                            telemetry.shutdown()
 
 
 def run_managed_hermes_gateway(

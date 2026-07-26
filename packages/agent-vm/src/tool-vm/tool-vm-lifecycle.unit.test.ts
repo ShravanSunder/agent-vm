@@ -326,6 +326,9 @@ function configureToolVmFixtureAsHermes(systemConfig: LoadedSystemConfig): void 
 			memory: zone.gateway.memory,
 			port: zone.gateway.port,
 			profilesByAgent: { sun: 'researcher' },
+			profileSecretProjectionsByAgent: {
+				sun: { DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN' },
+			},
 			stateDir: zone.gateway.stateDir,
 			type: 'hermes',
 			zoneFilesDir: zone.gateway.zoneFilesDir,

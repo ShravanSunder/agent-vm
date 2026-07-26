@@ -1068,6 +1068,8 @@ async function createHermesSystemConfig(): Promise<LoadedSystemConfig> {
 		throw new Error('Expected the base OpenClaw test zone.');
 	}
 	const configDir = path.dirname(openClawZone.gateway.config);
+	const hermesManagedConfigDir = path.join(configDir, 'hermes-managed');
+	await mkdir(hermesManagedConfigDir, { recursive: true });
 	await Promise.all([
 		writeFile(
 			path.join(configDir, 'tool-portal.config.jsonc'),
@@ -1083,7 +1085,7 @@ async function createHermesSystemConfig(): Promise<LoadedSystemConfig> {
 			'utf8',
 		),
 		writeFile(
-			path.join(configDir, 'hermes.yaml'),
+			path.join(hermesManagedConfigDir, 'config.yaml'),
 			'plugins:\n  enabled:\n    - agent-vm-tool-portal\n  disabled: []\n',
 			'utf8',
 		),
@@ -1105,11 +1107,15 @@ async function createHermesSystemConfig(): Promise<LoadedSystemConfig> {
 				...openClawZone,
 				agents: [{ id: 'main' }, { id: 'second' }],
 				gateway: {
-					config: path.join(configDir, 'hermes.yaml'),
+					config: path.join(hermesManagedConfigDir, 'config.yaml'),
 					cpus: openClawZone.gateway.cpus,
-					discordBotTokenSecretsByAgent: {
-						main: 'DISCORD_BOT_TOKEN_MAIN',
-						second: 'DISCORD_BOT_TOKEN_SECOND',
+					profileSecretProjectionsByAgent: {
+						main: {
+							DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_MAIN',
+						},
+						second: {
+							DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_SECOND',
+						},
 					},
 					imageProfile: 'hermes',
 					memory: openClawZone.gateway.memory,
@@ -6877,9 +6883,13 @@ describe('startGatewayZone', () => {
 				clientKind: 'hermes-managed-plugin',
 				configuredAgentIds: agentIds,
 			},
-			discordBotTokenEnvironmentVariablesByProfile: {
-				'beta-main': 'DISCORD_BOT_TOKEN_MAIN',
-				'beta-second': 'DISCORD_BOT_TOKEN_SECOND',
+			profileEnvironmentSourceNamesByProfile: {
+				'beta-main': {
+					DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_MAIN',
+				},
+				'beta-second': {
+					DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_SECOND',
+				},
 			},
 		});
 		const frameworkEnvironment = requireManagedGatewayBootInputFile(

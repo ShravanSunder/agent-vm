@@ -4,6 +4,8 @@ export {
 	buildHermesFrameworkServiceBootInputs,
 	buildHermesFrameworkServiceBootMetadata,
 	hermesLifecycle,
+	isReservedHermesProfileProjectionSourceName,
+	isReservedHermesProfileProjectionTargetName,
 } from './hermes-lifecycle.js';
 export {
 	loadHermesManagedConfiguration,

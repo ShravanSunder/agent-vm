@@ -449,12 +449,13 @@ Discord recipe:
 - Do not add runtimeAuthHints to OpenClaw zones; they are worker gateway runtime instructions only.
 - Tool VM secrets must use injection http-mediation and declare agentAccess as "all" or a non-empty list of declared zone agent ids. source environment is allowed only as the controller-side source for mediated Tool VM secrets; never use injection env for Tool VM audience.
 
-Managed Hermes Discord recipe:
-- Map every profilesByAgent agent to one distinct zone secret with gateway.discordBotTokenSecretsByAgent.
-- Each mapped Discord secret must use injection env and audience gateway. Other application and provider credentials remain HTTP-mediated.
-- Include DISCORD_BOT_TOKEN in the managed Hermes secrets.preserve_existing list.
-- Agent VM confines the raw values to the protected Hermes service; the existing adapter writes only the exact memory-backed profiles/<profile>/.env files before stock Hermes starts.
-- Durable root .env and mapped profile .env files are rejected. Remove known legacy files explicitly before starting the zone; do not add migration or copy-back behavior.
+Managed Hermes profile secrets:
+- Give every declared agent matching entries in gateway.profilesByAgent and gateway.profileSecretProjectionsByAgent.
+- Map the DISCORD_BOT_TOKEN target to one distinct injection env, audience gateway zone secret per agent.
+- Map other profile credential targets to Gateway-reaching http-mediation sources; Hermes receives only their opaque placeholders.
+- Agent VM writes complete target maps only to the exact memory-backed profiles/<profile>/.env files before stock Hermes starts.
+- Keep common non-secret policy in the dedicated gateway.config config.yaml directory mounted read-only at /etc/hermes/config.yaml. HERMES_MANAGED_DIR remains unset; root/default and named profile homes remain direct stateDir RealFS.
+- Durable root/profile .env and secret-bearing native Hermes config are rejected. Remove known legacy files explicitly; do not add migration or copy-back behavior.
 `,
 			),
 		},
