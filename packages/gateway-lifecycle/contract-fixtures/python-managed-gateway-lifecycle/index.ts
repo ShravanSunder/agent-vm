@@ -24,6 +24,13 @@ function buildPythonManagedVmRequirements(): GatewayVmRequirements {
 
 export const pythonManagedGatewayLifecycleFixture = {
 	executionModel: 'managed-gateway',
+	interactiveSsh: {
+		buildSession: () => ({
+			remoteShellCommand: "bash -lc 'exec bash -l'",
+			requireSecretEnvironmentEnabled: false,
+			secretEnvironment: 'default',
+		}),
+	},
 	buildFrameworkServiceBootInputs(
 		_options: BuildManagedFrameworkServiceBootInputsOptions,
 	): Promise<ManagedFrameworkServiceBootInputs> {
