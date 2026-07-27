@@ -66,6 +66,15 @@ def _binary_chunk(content: bytes) -> dict[str, object]:
     }
 
 
+def _write_all_to_file_descriptor(write_fd: int, content: bytes) -> None:
+    remaining_content = memoryview(content)
+    while remaining_content:
+        written_bytes = os.write(write_fd, remaining_content)
+        if written_bytes <= 0:
+            raise OSError("Hermes output pipe write made no progress")
+        remaining_content = remaining_content[written_bytes:]
+
+
 def _content_digest(content: bytes) -> str:
     return f"sha256:{hashlib.sha256(content).hexdigest()}"
 
@@ -175,8 +184,8 @@ class HermesGatewayRuntimeEnvironment(BaseEnvironment):
         self._trusted_context = build_managed_trusted_context(projection, session_id=task_id)
         self._cleanup_lock = threading.Lock()
         self._closed = False
-        self._environment_handle = self._open_environment()
         super().__init__(cwd=cwd or _DEFAULT_TOOL_VM_CWD, timeout=timeout)
+        self._environment_handle = self._open_environment()
         self.init_session()
 
     @property
@@ -230,7 +239,8 @@ class HermesGatewayRuntimeEnvironment(BaseEnvironment):
             self.gateway_runtime_client.sandbox.environment.status(
                 {"environment": dict(self._environment_handle)},
                 trusted_context=self._trusted_context,
-            )
+            ),
+            timeout=self.timeout,
         )
         status_kind = _require_string(
             _model_mapping(result).get("kind"),
@@ -379,7 +389,8 @@ class HermesGatewayRuntimeEnvironment(BaseEnvironment):
             self.gateway_runtime_client.sandbox.environment.open(
                 {},
                 trusted_context=self._trusted_context,
-            )
+            ),
+            timeout=self.timeout,
         )
         return _require_mapping(_model_mapping(result).get("environment"), "environment handle")
 
@@ -406,7 +417,11 @@ class HermesGatewayRuntimeEnvironment(BaseEnvironment):
             )
             if content:
                 try:
-                    os.write(write_fd, content)
+                    await asyncio.to_thread(
+                        _write_all_to_file_descriptor,
+                        write_fd,
+                        content,
+                    )
                 except OSError:
                     return
             if result_mapping.get("eof") is True:

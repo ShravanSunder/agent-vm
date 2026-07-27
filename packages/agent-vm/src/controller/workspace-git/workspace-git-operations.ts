@@ -95,32 +95,38 @@ interface WorkspaceGitPushDependencies {
 	}) => Promise<void>;
 }
 
-interface WorkspaceGitPushNotDispatchedErrorOptions {
+interface WorkspaceGitPushRejectedErrorOptions {
 	readonly cause?: unknown;
 	readonly errorClass: string;
 	readonly message: string;
 	readonly safeMessage: string;
 }
 
-export class WorkspaceGitPushNotDispatchedError extends Error {
+export class WorkspaceGitPushRejectedError extends Error {
 	public readonly errorClass: string;
 	public readonly safeMessage: string;
 
-	public constructor(options: WorkspaceGitPushNotDispatchedErrorOptions) {
+	public constructor(options: WorkspaceGitPushRejectedErrorOptions) {
 		super(options.message, { cause: options.cause });
-		this.name = 'WorkspaceGitPushNotDispatchedError';
+		this.name = 'WorkspaceGitPushRejectedError';
 		this.errorClass = options.errorClass;
 		this.safeMessage = options.safeMessage;
 	}
 }
 
-export class WorkspaceGitConflictError extends WorkspaceGitPushNotDispatchedError {
+export class WorkspaceGitPushNotDispatchedError extends WorkspaceGitPushRejectedError {
+	public constructor(options: WorkspaceGitPushRejectedErrorOptions) {
+		super(options);
+		this.name = 'WorkspaceGitPushNotDispatchedError';
+	}
+}
+
+export class WorkspaceGitConflictError extends WorkspaceGitPushRejectedError {
 	public constructor(message: string) {
 		super({
 			errorClass: 'workspace_git_conflict',
 			message,
-			safeMessage:
-				'Workspace Git push was rejected before dispatch because repository state changed.',
+			safeMessage: 'Workspace Git push was rejected because repository state changed.',
 		});
 		this.name = 'WorkspaceGitConflictError';
 	}
@@ -539,6 +545,20 @@ function parseRemoteHead(output: string, referenceName: string): string | null {
 	);
 }
 
+function isWorkspaceGitStaleLeaseRejection(options: {
+	readonly localHead: string;
+	readonly referenceName: string;
+	readonly result: WorkspaceGitCommandResult;
+}): boolean {
+	if (options.result.exitCode === 0) {
+		return false;
+	}
+	const expectedPorcelainStatus = `!\t${options.localHead}:${options.referenceName}\t[rejected] (stale info)`;
+	return options.result.stdout
+		.split('\n')
+		.some((line) => line.trimEnd() === expectedPorcelainStatus);
+}
+
 function parseCommitSummaries(output: string): readonly WorkspaceGitCommitSummary[] {
 	if (output.trim().length === 0) {
 		return [];
@@ -685,9 +705,10 @@ async function executeWorkspaceGitPush(
 			);
 			await dependencies.beforePushCompareAndSwap?.({ branch, localHead, remoteHead });
 			markPushMayHaveStarted();
-			await runSanitizedWorkspaceGitStdout({
+			const pushResult = await runSanitizedWorkspaceGitCommand({
 				argumentsList: [
 					'push',
+					'--porcelain',
 					`--force-with-lease=${referenceName}:${remoteHead ?? ''}`,
 					remote.url,
 					`${localHead}:${referenceName}`,
@@ -696,6 +717,22 @@ async function executeWorkspaceGitPush(
 				protocol: remote.protocol,
 				view,
 			});
+			if (pushResult.exitCode !== 0) {
+				if (
+					isWorkspaceGitStaleLeaseRejection({
+						localHead,
+						referenceName,
+						result: pushResult,
+					})
+				) {
+					throw new WorkspaceGitConflictError(
+						`Workspace Git remote branch '${branch}' changed before the compare-and-swap push.`,
+					);
+				}
+				throw new Error(
+					`Workspace Git command failed: ${pushResult.stdout}\n${pushResult.stderr}`.trim(),
+				);
+			}
 			const verifiedRemoteHead = parseRemoteHead(
 				await runSanitizedWorkspaceGitStdout({
 					argumentsList: ['ls-remote', remote.url, referenceName],
@@ -728,7 +765,7 @@ export async function pushWorkspaceGit(
 			pushMayHaveStarted = true;
 		});
 	} catch (error) {
-		if (pushMayHaveStarted || error instanceof WorkspaceGitPushNotDispatchedError) {
+		if (pushMayHaveStarted || error instanceof WorkspaceGitPushRejectedError) {
 			throw error;
 		}
 		throw new WorkspaceGitPushNotDispatchedError({

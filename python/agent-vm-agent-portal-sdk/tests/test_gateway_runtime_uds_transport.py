@@ -8,6 +8,7 @@ from tempfile import TemporaryDirectory
 import pytest
 from agent_vm_agent_portal_sdk.gateway_runtime_client import GatewayRuntimeClient
 from agent_vm_agent_portal_sdk.gateway_runtime_uds_transport import (
+    GatewayRuntimeUdsRemoteError,
     GatewayRuntimeUdsTransport,
     GatewayRuntimeUdsTransportError,
 )
@@ -385,6 +386,72 @@ async def _exercise_cancelled_request_discard_drain(
             _ = await asyncio.gather(*tuple(server_tasks), return_exceptions=True)
 
 
+async def _exercise_remote_error_without_poisoning_connection(
+    socket_path: str,
+) -> tuple[GatewayRuntimeUdsRemoteError, Mapping[str, object]]:
+    server_tasks: set[asyncio.Task[None]] = set()
+
+    async def handle_client(
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ) -> None:
+        try:
+            first_request = await _read_test_frame(reader)
+            writer.write(
+                _encode_test_frame(
+                    {
+                        "error": {
+                            "code": -32603,
+                            "data": {"code": "dispatch-failed"},
+                            "message": "Gateway runtime method dispatch failed.",
+                        },
+                        "id": first_request[2].get("id"),
+                        "jsonrpc": "2.0",
+                    },
+                ),
+            )
+            await writer.drain()
+            second_request = await _read_test_frame(reader)
+            writer.write(
+                _encode_test_frame(
+                    {
+                        "id": second_request[2].get("id"),
+                        "jsonrpc": "2.0",
+                        "result": {"kind": "second-request-succeeded"},
+                    },
+                ),
+            )
+            await writer.drain()
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+    def accept_client(
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ) -> None:
+        server_task = asyncio.create_task(handle_client(reader, writer))
+        server_tasks.add(server_task)
+
+    server = await asyncio.start_unix_server(accept_client, path=socket_path)
+    transport = GatewayRuntimeUdsTransport()
+    try:
+        await transport.connect(socket_path)
+        with pytest.raises(GatewayRuntimeUdsRemoteError) as captured_error:
+            _ = await transport.request("portal.search", {"requestId": "request-failed"})
+        second_result = await transport.request(
+            "portal.search",
+            {"requestId": "request-after-error"},
+        )
+        return captured_error.value, second_result
+    finally:
+        await transport.disconnect()
+        server.close()
+        await server.wait_closed()
+        if server_tasks:
+            _ = await asyncio.gather(*tuple(server_tasks), return_exceptions=True)
+
+
 def test_gateway_runtime_uds_transport_exchanges_content_length_frames_over_real_unix_socket() -> None:
     # Arrange
     expected_request: JsonObject = {
@@ -481,6 +548,23 @@ def test_gateway_runtime_uds_transport_discards_cancelled_response_without_poiso
         "method": "portal.call",
         "params": {"requestId": "request-after-cancel"},
     }
+    assert second_result == {"kind": "second-request-succeeded"}
+
+
+def test_gateway_runtime_uds_transport_preserves_remote_error_without_poisoning_connection() -> None:
+    # Arrange
+    with TemporaryDirectory(prefix="agent-vm-uds-remote-error-", dir="/tmp") as socket_directory:
+        socket_path = Path(socket_directory) / "gateway-runtime.sock"
+
+        # Act
+        remote_error, second_result = asyncio.run(
+            _exercise_remote_error_without_poisoning_connection(str(socket_path)),
+        )
+
+    # Assert
+    assert remote_error.code == "dispatch-failed"
+    assert remote_error.json_rpc_code == "-32603"
+    assert remote_error.data == {"code": "dispatch-failed"}
     assert second_result == {"kind": "second-request-succeeded"}
 
 

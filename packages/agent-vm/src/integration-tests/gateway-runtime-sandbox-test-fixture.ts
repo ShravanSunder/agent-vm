@@ -11,26 +11,24 @@ import type {
 	GatewayRuntimeTrustedInvocationContext,
 } from '@agent-vm/gateway-control-contracts';
 import {
+	DEFAULT_GATEWAY_RUNTIME_SANDBOX_TRAVERSAL_LIMITS,
+	createGatewayRuntimeSandboxBinding,
+	createGatewayRuntimeSandboxOperationAuthority,
+	createGatewayRuntimeSandboxPathContract,
+	createGatewayRuntimeSandboxProcessRegistry,
+	type GatewayRuntimeSandboxOperationAuthority,
+	type GatewayRuntimeSandboxOperationContext,
+	type GatewayRuntimeSandboxProcessRegistry,
+} from '@agent-vm/gateway-runtime';
+import {
 	createManagedToolPortalCapabilityCore,
 	type ToolPortalApprovalPort,
 	type ToolPortalBackendPort,
 } from '@agent-vm/tool-portal';
 
-import { createGatewayRuntimeSandboxBinding } from '../../../gateway-runtime/src/sandbox/sandbox-binding-authority.js';
-import {
-	createGatewayRuntimeSandboxOperationAuthority,
-	type GatewayRuntimeSandboxOperationAuthority,
-	type GatewayRuntimeSandboxOperationContext,
-} from '../../../gateway-runtime/src/sandbox/sandbox-operation-authority.js';
-import {
-	DEFAULT_GATEWAY_RUNTIME_SANDBOX_TRAVERSAL_LIMITS,
-	createGatewayRuntimeSandboxPathContract,
-} from '../../../gateway-runtime/src/sandbox/sandbox-path-contract.js';
-import {
-	createGatewayRuntimeSandboxProcessRegistry,
-	type GatewayRuntimeSandboxProcessRegistry,
-} from '../../../gateway-runtime/src/sandbox/sandbox-process-registry.js';
-import type { StrictToolVmSshProcessRuntime } from '../../../gateway-runtime/src/sandbox/strict-tool-vm-ssh-process-runtime.js';
+type StrictToolVmSshProcessRuntime = Parameters<
+	typeof createGatewayRuntimeSandboxProcessRegistry
+>[0]['processRuntime'];
 
 type SandboxCapability = 'exec' | 'process_logs' | 'read_file';
 

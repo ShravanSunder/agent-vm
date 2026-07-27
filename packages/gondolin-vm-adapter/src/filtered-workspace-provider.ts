@@ -427,6 +427,20 @@ function createWorkspaceHardlinkProvider(
 				if (!writable(destinationPath)) {
 					return failProviderOperation(property, destinationPath, 'EROFS');
 				}
+				if (property === 'link') {
+					if (!provider.realpath) {
+						return failProviderOperation(property, sourcePath, 'ENOENT');
+					}
+					return provider
+						.realpath(sourcePath)
+						.then(() =>
+							Reflect.apply(underlyingLinkMethod as ProviderMethod, baseProvider, methodArguments),
+						);
+				}
+				if (!provider.realpathSync) {
+					return failProviderOperation(property, sourcePath, 'ENOENT');
+				}
+				provider.realpathSync(sourcePath);
 				return Reflect.apply(underlyingLinkMethod as ProviderMethod, baseProvider, methodArguments);
 			};
 		},

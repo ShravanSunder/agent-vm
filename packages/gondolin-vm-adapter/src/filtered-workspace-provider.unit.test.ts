@@ -247,6 +247,60 @@ describe('filtered workspace Gondolin provider', () => {
 		}
 	});
 
+	it.each([{ method: 'link' as const }, { method: 'linkSync' as const }])(
+		'denies $method when a writable source symlink resolves to filtered workspace content',
+		async (testCase) => {
+			const source = createWorkspaceSource();
+			if (!source.symlinkSync) {
+				throw new Error('MemoryProvider must support symlinks for this hardlink test.');
+			}
+			source.symlinkSync('/notes/private.txt', '/notes/hidden-alias.txt');
+			source.symlinkSync('/reviewed/skill/SKILL.md', '/notes/readonly-alias.md');
+			const provider = createFilteredWorkspaceProvider({
+				baseProvider: source,
+				dependencies: createDependencies(),
+				policy: {
+					hiddenPaths: ['notes/private.txt'],
+					readonlyInputs: [
+						{
+							destinationRelativePath: 'skills/managed',
+							sourceRelativePath: 'reviewed/skill',
+						},
+					],
+					temporaryPaths: [],
+					visibility: {
+						kind: 'positive-paths',
+						visiblePaths: ['notes', 'skills/managed'],
+						writablePaths: ['notes'],
+					},
+				},
+			});
+			const deniedHardlinks = [
+				['/notes/hidden-alias.txt', '/notes/hidden-hardlink.txt'],
+				['/notes/readonly-alias.md', '/notes/readonly-hardlink.md'],
+			] as const;
+
+			if (testCase.method === 'link') {
+				await Promise.all(
+					deniedHardlinks.map(async ([sourcePath, destinationPath]) =>
+						expect(provider.link?.(sourcePath, destinationPath)).rejects.toMatchObject({
+							errno: ERRNO.ENOENT,
+						}),
+					),
+				);
+			} else {
+				for (const [sourcePath, destinationPath] of deniedHardlinks) {
+					expect(() => provider.linkSync?.(sourcePath, destinationPath)).toThrow(
+						expect.objectContaining({ errno: ERRNO.ENOENT }),
+					);
+				}
+			}
+
+			expect(await source.readFile?.('/notes/private.txt', 'utf8')).toBe('hidden');
+			expect(await source.readFile?.('/reviewed/skill/SKILL.md', 'utf8')).toBe('reviewed skill');
+		},
+	);
+
 	it('copies readonly input files to writable destinations without mutating the source', async () => {
 		const source = createWorkspaceSource();
 		const provider = createFilteredWorkspaceProvider({

@@ -1,3 +1,6 @@
+import asyncio
+import concurrent.futures
+import threading
 import unittest
 
 from agent_vm_agent_portal_sdk.gateway_runtime_client import GatewayRuntimeClient
@@ -7,6 +10,7 @@ from agent_vm_hermes_adapter import (
     HermesManagedAdapterConfig,
     HermesProfileAdmissionError,
 )
+from agent_vm_hermes_adapter.managed_gateway_runtime_client_loop import GatewayRuntimeClientLoop
 
 PROJECTION_COHORT_DIGEST = (
     "projection-cohort:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -180,6 +184,36 @@ class HermesManagedAdapterTests(unittest.TestCase):
                 projection_cohort_digest=PROJECTION_COHORT_DIGEST,
                 protected_hermes_home="/",
             )
+
+
+class GatewayRuntimeClientLoopTests(unittest.TestCase):
+    def test_run_cancels_submitted_coroutine_after_synchronous_timeout(self) -> None:
+        # Arrange
+        client_loop = GatewayRuntimeClientLoop(build_unconnected_gateway_runtime_client())
+        cancellation_observed = threading.Event()
+
+        async def wait_until_cancelled() -> None:
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancellation_observed.set()
+
+        async def unrelated_operation() -> str:
+            return "shared-loop-responsive"
+
+        try:
+            # Act
+            with self.assertRaises(concurrent.futures.TimeoutError):
+                client_loop.run(wait_until_cancelled(), timeout=0.01)
+
+            # Assert
+            self.assertTrue(cancellation_observed.wait(timeout=1))
+            self.assertEqual(
+                client_loop.run(unrelated_operation(), timeout=1),
+                "shared-loop-responsive",
+            )
+        finally:
+            client_loop.close(disconnect=False)
 
 
 if __name__ == "__main__":

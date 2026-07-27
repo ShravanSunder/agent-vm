@@ -5,6 +5,7 @@ import {
 } from '@agent-vm/gateway-control-contracts';
 import { describe, expect, it, vi } from 'vitest';
 
+import { createGatewayRuntimeSandboxOperationAuthority } from '../sandbox/sandbox-operation-authority.js';
 import type {
 	StrictToolVmSshAccess,
 	StrictToolVmSshClient,
@@ -84,7 +85,12 @@ function createStrictSshClientFixture(
 	connectImplementation: () => Promise<void> = async () => undefined,
 ): StrictSshClientFixture {
 	const transportFailureObservers = new Set<(failure: StrictToolVmSshTransportFailure) => void>();
-	const close = vi.fn();
+	const close = vi.fn((options?: { readonly notifyTransportFailure?: true }): void => {
+		if (options?.notifyTransportFailure !== true) return;
+		for (const observer of transportFailureObservers) {
+			observer({ kind: 'transport-close' });
+		}
+	});
 	const connect = vi.fn(connectImplementation);
 	const client = {
 		close,
@@ -341,6 +347,51 @@ describe('Gateway control published binding runtime', () => {
 		expect(client.close).not.toHaveBeenCalled();
 	});
 
+	it('fences old operation authority before ending its transport during binding replacement', async () => {
+		// Arrange
+		const originalClient = createStrictSshClientFixture();
+		const replacementClient = createStrictSshClientFixture();
+		const fixture = createRuntimeFixture([originalClient, replacementClient]);
+		const originalPublication = currentPublication();
+		await fixture.runtime.applyPublication(originalPublication);
+		const operationContext = {
+			activeUseId: '55555555-5555-4555-8555-555555555555',
+			environmentGeneration: 'environment-a-1',
+			gatewayEpoch: acceptedSession.gatewayEpoch,
+			leafGeneration: originalPublication.binding.leafGeneration,
+			leaseId: originalPublication.binding.leaseId,
+			sshBindingId: originalPublication.binding.sshBindingId,
+			stablePrincipal: originalPublication.binding.stablePrincipal,
+		};
+		const operationAuthority = createGatewayRuntimeSandboxOperationAuthority(operationContext);
+		originalClient.client.observeTransportFailure(() => {
+			operationAuthority.beginReplacement({ replacementLeafGeneration: 'leaf-a-2' });
+		});
+		const authorityAtTransportEnd: string[] = [];
+		originalClient.close.mockImplementation(
+			(options?: { readonly notifyTransportFailure?: true }): void => {
+				if (options?.notifyTransportFailure === true) {
+					originalClient.emitTransportFailure({ kind: 'transport-close' });
+				}
+				authorityAtTransportEnd.push(operationAuthority.authorize(operationContext).kind);
+			},
+		);
+
+		// Act
+		await fixture.runtime.applyPublication(
+			currentPublication({
+				leafGeneration: 'leaf-a-2',
+				leaseId: 'lease-a-2',
+				observedAtMs: 200,
+				sshBindingId: 'ssh-a-2',
+			}),
+		);
+
+		// Assert
+		expect(authorityAtTransportEnd).toEqual(['stale-operation-authority']);
+		expect(originalClient.close).toHaveBeenCalledWith({ notifyTransportFailure: true });
+	});
+
 	it('retires old-session slots and accepts a publication from the replacement session', async () => {
 		// Arrange
 		const originalClient = createStrictSshClientFixture();
@@ -437,6 +488,7 @@ describe('Gateway control published binding runtime', () => {
 			state: { kind: 'retired', reason: 'replaced' },
 		});
 		expect(client.close).toHaveBeenCalledOnce();
+		expect(client.close).toHaveBeenCalledWith({ notifyTransportFailure: true });
 		expect(
 			fixture.runtime.lookupReadyConnection({ trustedContext: trustedContextA }),
 		).toMatchObject({
@@ -519,6 +571,7 @@ describe('Gateway control published binding runtime', () => {
 		// Assert
 		expect(clientA.close).toHaveBeenCalledOnce();
 		expect(clientB.close).toHaveBeenCalledOnce();
+		expect(clientB.close.mock.calls).toEqual([[]]);
 		expect(clientA.getObserverCount()).toBe(0);
 		expect(clientB.getObserverCount()).toBe(0);
 		expect(fixture.runtime.readState({ trustedContext: trustedContextA })).toMatchObject({

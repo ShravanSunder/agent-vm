@@ -47,7 +47,12 @@ class GatewayRuntimeClientLoop:
         *,
         timeout: float | None = None,
     ) -> TResult:
-        return self.submit(coroutine).result(timeout=timeout)
+        submitted_future = self.submit(coroutine)
+        try:
+            return submitted_future.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            _ = submitted_future.cancel()
+            raise
 
     def connect(self) -> None:
         self.run(self._client.connect())

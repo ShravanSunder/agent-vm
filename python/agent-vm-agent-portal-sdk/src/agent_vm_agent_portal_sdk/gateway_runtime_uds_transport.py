@@ -17,6 +17,22 @@ class GatewayRuntimeUdsTransportError(Exception):
         self.code = code
 
 
+class GatewayRuntimeUdsRemoteError(GatewayRuntimeUdsTransportError):
+    """A complete JSON-RPC error response received over a healthy transport."""
+
+    def __init__(
+        self,
+        json_rpc_code: str,
+        message: str,
+        *,
+        data: Mapping[str, object] | None = None,
+    ) -> None:
+        self.data = dict(data) if data is not None else None
+        data_code = self.data.get("code") if self.data is not None else None
+        super().__init__(data_code if isinstance(data_code, str) else json_rpc_code, message)
+        self.json_rpc_code = json_rpc_code
+
+
 def _raise_transport_error(
     code: str,
     message: str,
@@ -223,10 +239,16 @@ class GatewayRuntimeUdsTransport:
                 if isinstance(error_object, dict):
                     error_mapping = t.cast("dict[object, object]", error_object)
                     error_code = error_mapping.get("code")
+                    error_data = error_mapping.get("data")
                     error_message = error_mapping.get("message")
-                    _raise_transport_error(
+                    raise GatewayRuntimeUdsRemoteError(
                         str(error_code),
                         error_message if isinstance(error_message, str) else "Gateway runtime request failed.",
+                        data=(
+                            t.cast("Mapping[str, object]", error_data)
+                            if isinstance(error_data, dict) and all(isinstance(key, str) for key in error_data)
+                            else None
+                        ),
                     )
                 _raise_transport_error(
                     "invalid-remote-error",

@@ -749,7 +749,7 @@ describe('workspace Git repository materialization', () => {
 						observedRemoteHead,
 					}),
 			),
-		).rejects.toThrow();
+		).rejects.toThrow(WorkspaceGitConflictError);
 
 		await expect(readBareRemoteHead(fixture)).resolves.toBe(racedRemoteHead);
 		await expect(snapshotAgentWritableGitSource(fixture)).resolves.toEqual(sourceBeforePush);
@@ -807,7 +807,7 @@ describe('workspace Git repository materialization', () => {
 					},
 				},
 			),
-		).rejects.toThrow();
+		).rejects.toThrow(WorkspaceGitConflictError);
 
 		await expect(readBareRemoteHead(fixture)).resolves.toBe(competingRemoteHead);
 		await expect(snapshotAgentWritableGitSource(fixture)).resolves.toEqual(sourceBeforePush);

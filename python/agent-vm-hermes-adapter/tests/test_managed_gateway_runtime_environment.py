@@ -1,9 +1,13 @@
 import asyncio
+import base64
+import concurrent.futures
 import io
+import os
 import threading
 import typing as t
 import unittest
 from collections.abc import Awaitable, Mapping
+from unittest.mock import patch
 
 from agent_vm_agent_portal_sdk.gateway_runtime_client import GatewayRuntimeClient
 from pydantic import BaseModel, ConfigDict
@@ -407,6 +411,164 @@ class HermesGatewayRuntimeEnvironmentTests(unittest.TestCase):
         self.assertEqual(operation_events, ["write", "close", "wait"])
         environment.cleanup()
 
+    def test_full_output_pipe_does_not_block_shared_gateway_runtime_loop(self) -> None:
+        # Arrange
+        environment = self.factory.create(
+            profile_name="researcher",
+            task_id="session-researcher",
+            cwd="/work",
+            timeout=60,
+        )
+        stream_read_started = threading.Event()
+
+        async def read_output(
+            request: Mapping[str, object],
+            *,
+            trusted_context: Mapping[str, object],
+        ) -> PortableResult:
+            del trusted_context
+            stream_read_started.set()
+            return PortableResult.model_validate(
+                {
+                    "chunk": {
+                        "byteLength": 13,
+                        "contentBase64": base64.b64encode(b"blocked-write").decode("ascii"),
+                        "encoding": "base64",
+                    },
+                    "eof": True,
+                    "kind": "read",
+                    "sequence": 0,
+                    "stream": request["stream"],
+                }
+            )
+
+        self.client.sandbox.stream.set_override("read", read_output)
+        stdout_read_fd, stdout_write_fd = os.pipe()
+        original_os_write = os.write
+        os.set_blocking(stdout_write_fd, False)
+        try:
+            while True:
+                try:
+                    _ = original_os_write(stdout_write_fd, b"x" * 4_096)
+                except BlockingIOError:
+                    break
+        finally:
+            os.set_blocking(stdout_write_fd, True)
+
+        pipe_write_started = threading.Event()
+
+        def observe_pipe_write(
+            write_fd: int,
+            content: bytes | bytearray | memoryview,
+        ) -> int:
+            if write_fd == stdout_write_fd:
+                pipe_write_started.set()
+            return original_os_write(write_fd, content)
+
+        stream_handle = {
+            "channel": "stdout",
+            "handleId": "stdout-1",
+            "kind": "stream",
+            "owningGeneration": "tool-vm-generation-7",
+        }
+        stream_read_future = None
+        try:
+            with patch(
+                "agent_vm_hermes_adapter.managed_gateway_runtime_environment.os.write",
+                side_effect=observe_pipe_write,
+            ):
+                stream_read_future = self.adapter.submit_gateway_runtime_coroutine(
+                    environment._read_stream(stream_handle, stdout_write_fd)
+                )
+                self.assertTrue(stream_read_started.wait(timeout=1))
+                self.assertTrue(pipe_write_started.wait(timeout=1))
+
+                async def unrelated_profile_operation() -> str:
+                    return "shared-loop-responsive"
+
+                # Act
+                unrelated_result = self.adapter.run_gateway_runtime_coroutine(
+                    unrelated_profile_operation(),
+                    timeout=0.1,
+                )
+
+                # Assert
+                self.assertEqual(unrelated_result, "shared-loop-responsive")
+        finally:
+            os.close(stdout_read_fd)
+            if stream_read_future is not None:
+                self.assertIsNone(stream_read_future.result(timeout=2))
+            try:
+                os.close(stdout_write_fd)
+            except OSError:
+                pass
+            environment.cleanup()
+
+    def test_partial_pipe_writes_deliver_the_entire_stream_chunk(self) -> None:
+        # Arrange
+        environment = self.factory.create(
+            profile_name="researcher",
+            task_id="session-researcher",
+            cwd="/work",
+            timeout=60,
+        )
+        expected_content = b"partial-write"
+
+        async def read_output(
+            request: Mapping[str, object],
+            *,
+            trusted_context: Mapping[str, object],
+        ) -> PortableResult:
+            del trusted_context
+            return PortableResult.model_validate(
+                {
+                    "chunk": {
+                        "byteLength": len(expected_content),
+                        "contentBase64": base64.b64encode(expected_content).decode("ascii"),
+                        "encoding": "base64",
+                    },
+                    "eof": True,
+                    "kind": "read",
+                    "sequence": 0,
+                    "stream": request["stream"],
+                }
+            )
+
+        self.client.sandbox.stream.set_override("read", read_output)
+        written_segments: list[bytes] = []
+
+        def write_partial_content(
+            write_fd: int,
+            content: bytes | bytearray | memoryview,
+        ) -> int:
+            del write_fd
+            written_segment = bytes(content[:3])
+            written_segments.append(written_segment)
+            return len(written_segment)
+
+        stream_handle = {
+            "channel": "stdout",
+            "handleId": "stdout-1",
+            "kind": "stream",
+            "owningGeneration": "tool-vm-generation-7",
+        }
+        try:
+            with patch(
+                "agent_vm_hermes_adapter.managed_gateway_runtime_environment.os.write",
+                side_effect=write_partial_content,
+            ):
+                # Act
+                stream_read_future = self.adapter.submit_gateway_runtime_coroutine(
+                    environment._read_stream(stream_handle, 73)
+                )
+                self.assertIsNone(stream_read_future.result(timeout=2))
+
+            # Assert
+            self.assertEqual(b"".join(written_segments), expected_content)
+            self.assertGreater(len(written_segments), 1)
+        finally:
+            environment.cleanup()
+
     def test_replaced_environment_retires_locally_without_remote_close(self) -> None:
         environment = self.factory.create(
             profile_name="researcher",
@@ -445,6 +607,107 @@ class HermesGatewayRuntimeEnvironmentTests(unittest.TestCase):
             operation_name for operation_name, _, _ in self.client.sandbox.environment.calls
         ]
         self.assertEqual(environment_operation_names, ["open", "status", "status"])
+
+    def test_environment_open_uses_existing_environment_timeout(self) -> None:
+        # Arrange
+        open_started = threading.Event()
+        creation_finished = threading.Event()
+        creation_errors: list[BaseException] = []
+
+        async def blocked_open(
+            request: Mapping[str, object],
+            *,
+            trusted_context: Mapping[str, object],
+        ) -> PortableResult:
+            del request, trusted_context
+            open_started.set()
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+
+        self.client.sandbox.environment.set_override("open", blocked_open)
+
+        def create_environment() -> None:
+            try:
+                _ = self.factory.create(
+                    profile_name="researcher",
+                    task_id="session-researcher",
+                    cwd="/work",
+                    timeout=1,
+                )
+            except BaseException as error:
+                creation_errors.append(error)
+            finally:
+                creation_finished.set()
+
+        creation_thread = threading.Thread(target=create_environment)
+        creation_thread.start()
+        try:
+            self.assertTrue(open_started.wait(timeout=1))
+
+            # Act
+            self.assertTrue(creation_finished.wait(timeout=2))
+
+            # Assert
+            creation_thread.join(timeout=1)
+            self.assertFalse(creation_thread.is_alive())
+            self.assertEqual(len(creation_errors), 1)
+            self.assertIsInstance(creation_errors[0], concurrent.futures.TimeoutError)
+        finally:
+            if creation_thread.is_alive():
+                self.adapter.close()
+                creation_thread.join(timeout=2)
+
+    def test_environment_status_uses_existing_environment_timeout(self) -> None:
+        # Arrange
+        environment = self.factory.create(
+            profile_name="researcher",
+            task_id="session-researcher",
+            cwd="/work",
+            timeout=1,
+        )
+        status_started = threading.Event()
+        status_finished = threading.Event()
+        status_errors: list[BaseException] = []
+
+        async def blocked_status(
+            request: Mapping[str, object],
+            *,
+            trusted_context: Mapping[str, object],
+        ) -> PortableResult:
+            del request, trusted_context
+            status_started.set()
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+
+        self.client.sandbox.environment.set_override("status", blocked_status)
+
+        def resolve_environment_status() -> None:
+            try:
+                _ = environment.resolve_status_kind()
+            except BaseException as error:
+                status_errors.append(error)
+            finally:
+                status_finished.set()
+
+        status_thread = threading.Thread(target=resolve_environment_status)
+        status_thread.start()
+        try:
+            self.assertTrue(status_started.wait(timeout=1))
+
+            # Act
+            self.assertTrue(status_finished.wait(timeout=2))
+
+            # Assert
+            status_thread.join(timeout=1)
+            self.assertFalse(status_thread.is_alive())
+            self.assertEqual(len(status_errors), 1)
+            self.assertIsInstance(status_errors[0], concurrent.futures.TimeoutError)
+        finally:
+            if status_thread.is_alive():
+                self.adapter.close()
+                status_thread.join(timeout=2)
+            else:
+                environment.cleanup()
 
     def test_ambiguous_outcome_is_never_synthesized_as_success(self) -> None:
         environment = self.factory.create(

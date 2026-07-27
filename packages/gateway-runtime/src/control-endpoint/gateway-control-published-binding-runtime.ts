@@ -179,13 +179,20 @@ function generationsMatch(
 	);
 }
 
-function closeSlot(slot: PublishedBindingConnectionSlot): void {
+function closeSlot(
+	slot: PublishedBindingConnectionSlot,
+	options: { readonly notifyTransportFailure: boolean } = { notifyTransportFailure: false },
+): void {
 	if (slot.closed) return;
 	slot.closed = true;
 	slot.transportFailureSubscription?.unsubscribe();
 	slot.transportFailureSubscription = undefined;
 	try {
-		slot.client.close();
+		if (options.notifyTransportFailure) {
+			slot.client.close({ notifyTransportFailure: true });
+		} else {
+			slot.client.close();
+		}
 	} catch {}
 }
 
@@ -207,7 +214,9 @@ export function createGatewayControlPublishedBindingRuntime(
 	let nextSlotVersion = 1;
 
 	function retireAllSlotsForSessionChange(): void {
-		for (const slot of slotsByStablePrincipal.values()) closeSlot(slot);
+		for (const slot of slotsByStablePrincipal.values()) {
+			closeSlot(slot, { notifyTransportFailure: true });
+		}
 		slotsByStablePrincipal.clear();
 	}
 
@@ -240,7 +249,7 @@ export function createGatewayControlPublishedBindingRuntime(
 				) {
 					return ignoredResult('duplicate_publication', generation.stablePrincipal);
 				}
-				closeSlot(existingSlot);
+				closeSlot(existingSlot, { notifyTransportFailure: true });
 			}
 			if (
 				!generationsMatch(existingSlot.generation, generation) &&
@@ -248,7 +257,9 @@ export function createGatewayControlPublishedBindingRuntime(
 			) {
 				return ignoredResult('stale_publication', generation.stablePrincipal);
 			}
-			if (!existingSlot.closed) closeSlot(existingSlot);
+			if (!existingSlot.closed) {
+				closeSlot(existingSlot, { notifyTransportFailure: true });
+			}
 		}
 
 		const client = props.createStrictSshClient({
@@ -341,7 +352,7 @@ export function createGatewayControlPublishedBindingRuntime(
 		if (publication.observedAtMs < existingSlot.publicationObservedAtMs) {
 			return ignoredResult('stale_publication', generation.stablePrincipal);
 		}
-		closeSlot(existingSlot);
+		closeSlot(existingSlot, { notifyTransportFailure: true });
 		existingSlot.state = {
 			generation,
 			kind: 'retired',

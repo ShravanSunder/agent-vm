@@ -12,6 +12,7 @@ import {
 	preflightGatewayZoneStart as preflightGatewayZoneStartDefault,
 	startGatewayZoneForController,
 } from '../gateway/gateway-zone-orchestrator.js';
+import type { GatewayControlSessionAttachmentGap } from '../gateway/gateway-zone-support.js';
 import { resolveManagedAgentRootPaths } from '../gateway/managed-agent-root-storage.js';
 import { controllerFixedGatewayRuntimeArtifactLimits } from '../gateway/managed-gateway-runtime-input-builders.js';
 import { resolveControllerTelemetryIdentity as resolveControllerTelemetryIdentityDefault } from '../observability/controller-telemetry-identity.js';
@@ -895,6 +896,14 @@ async function startControllerRuntimeWithOwnershipLock(
 								...(startOptions?.onControlSessionHeartbeat
 									? { onControlSessionHeartbeat: startOptions.onControlSessionHeartbeat }
 									: {}),
+								onControlSessionAttachmentGap: (transition: GatewayControlSessionAttachmentGap) => {
+									leaseManager.markControlSessionDisconnected({
+										gateway: transition.gateway,
+										observedAtMs: transition.observedAtMs,
+										processEpoch: transition.processEpoch,
+										sessionAttachmentGeneration: transition.attachmentGeneration,
+									});
+								},
 								...(startOptions?.onGatewayRuntimeAttachmentLost
 									? {
 											onGatewayRuntimeAttachmentLost: startOptions.onGatewayRuntimeAttachmentLost,

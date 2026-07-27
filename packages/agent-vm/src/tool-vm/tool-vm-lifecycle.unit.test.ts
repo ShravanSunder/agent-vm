@@ -664,7 +664,11 @@ describe('createToolVm', () => {
 							hiddenPaths: [],
 							readonlyInputs: [],
 							temporaryPaths: [],
-							visibility: { kind: 'whole-root-writable' },
+							visibility: {
+								kind: 'positive-paths',
+								visiblePaths: [''],
+								writablePaths: [''],
+							},
 						},
 					},
 				}),
@@ -761,7 +765,11 @@ describe('createToolVm', () => {
 							},
 						],
 						temporaryPaths: [],
-						visibility: { kind: 'whole-root-writable' },
+						visibility: {
+							kind: 'positive-paths',
+							visiblePaths: [''],
+							writablePaths: [''],
+						},
 					},
 				}),
 			);

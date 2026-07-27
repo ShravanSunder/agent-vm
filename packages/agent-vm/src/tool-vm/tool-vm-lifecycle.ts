@@ -103,7 +103,11 @@ function managedAgentWorkspacePolicy(
 	const selectedAgentSourceRootPolicy = {
 		...readOnlyGitPointer,
 		temporaryPaths: [],
-		visibility: { kind: 'whole-root-writable' },
+		visibility: {
+			kind: 'positive-paths',
+			visiblePaths: [''],
+			writablePaths: [''],
+		},
 	} satisfies ManagedVmFilteredWorkspacePolicy;
 	switch (zone.gateway.type) {
 		case 'openclaw':

@@ -45,7 +45,7 @@ import {
 import type { ControllerApprovalArmDispatchResult } from '../approval/controller-approval-ledger.js';
 import type { OpenClawRuntimeStatusReport } from '../openclaw-runtime-status.js';
 import type { GatewayEpochIdentity } from '../vm-ownership/vm-ownership-contracts.js';
-import { WorkspaceGitPushNotDispatchedError } from '../workspace-git/workspace-git-operations.js';
+import { WorkspaceGitPushRejectedError } from '../workspace-git/workspace-git-operations.js';
 import type { ControlSessionDomainHandler } from './control-session-dispatcher.js';
 import type { GatewayControlBindingPublicationCoordinator } from './gateway-control-binding-publication.js';
 import type {
@@ -957,7 +957,7 @@ async function executeToolPortalControllerHostAction(options: {
 	} catch (error) {
 		if (
 			options.payload.actionId === 'workspace_git_push' &&
-			error instanceof WorkspaceGitPushNotDispatchedError
+			error instanceof WorkspaceGitPushRejectedError
 		) {
 			return commandResultPayload({
 				error: {

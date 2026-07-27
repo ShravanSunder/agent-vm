@@ -562,6 +562,28 @@ describe('strict Tool VM SSH client', () => {
 		expect(closedFailures).toEqual([]);
 	});
 
+	it('publishes invalidation before ending a replaced transport', async () => {
+		// Arrange
+		const fixture = createStrictSshFixture();
+		await connectFixture(fixture);
+		const observedOrder: string[] = [];
+		fixture.client.observeTransportFailure((failure) => {
+			observedOrder.push(failure.kind);
+		});
+		const endTransport = vi.spyOn(fixture.sshTransport, 'end').mockImplementationOnce(() => {
+			observedOrder.push('transport-ended');
+			return fixture.sshTransport;
+		});
+
+		// Act
+		fixture.client.close({ notifyTransportFailure: true });
+		await Promise.resolve();
+
+		// Assert
+		expect(observedOrder).toEqual(['transport-close', 'transport-ended']);
+		expect(endTransport).toHaveBeenCalledOnce();
+	});
+
 	it('executes argv under a normalized /work cwd and returns bounded stdout/stderr bytes', async () => {
 		// Arrange
 		const fixture = createStrictSshFixture();
@@ -592,6 +614,25 @@ describe('strict Tool VM SSH client', () => {
 			stderr: Buffer.from('stderr'),
 			stdout: Buffer.from('stdout'),
 		});
+	});
+
+	it('rejects a signal-only command exit without returning a null exit code', async () => {
+		// Arrange
+		const fixture = createStrictSshFixture();
+		fixture.sshTransport.onExec = (_command, callback) => {
+			callback(undefined, fixture.sshTransport.channel as unknown as ClientChannel);
+			queueMicrotask(() => {
+				fixture.sshTransport.channel.emit('exit', null, 'SIGKILL', false, '');
+				fixture.sshTransport.channel.emit('close');
+			});
+		};
+		await connectFixture(fixture);
+
+		// Act
+		const execution = fixture.client.execute({ argv: ['/usr/bin/sleep', '30'], cwd: '' });
+
+		// Assert
+		await expect(execution).rejects.toThrow(/without an exit result/i);
 	});
 
 	it.each([
@@ -1112,6 +1153,30 @@ describe('strict Tool VM SSH client', () => {
 		expect(terminalEvents).toEqual([{ exitCode: 17, kind: 'exited' }]);
 	});
 
+	it('reports a signal-only process exit as ambiguous instead of a numeric exit', async () => {
+		// Arrange
+		const fixture = createStrictSshFixture();
+		const terminalEvents: StrictToolVmSshProcessTerminalEvent[] = [];
+		fixture.sshTransport.onExec = (_command, callback) => {
+			callback(undefined, fixture.sshTransport.channel as unknown as ClientChannel);
+		};
+		await connectFixture(fixture);
+		await fixture.client.openProcessChannel({
+			argv: ['/usr/bin/sleep', '30'],
+			cwd: '',
+			onStderr: () => undefined,
+			onStdout: () => undefined,
+			onTerminal: (event) => terminalEvents.push(event),
+		});
+
+		// Act
+		fixture.sshTransport.channel.emit('exit', null, 'SIGKILL', false, '');
+		fixture.sshTransport.channel.emit('close');
+
+		// Assert
+		expect(terminalEvents).toEqual([{ kind: 'ambiguous' }]);
+	});
+
 	it('rejects a backpressured process write when the channel becomes terminal before drain', async () => {
 		// Arrange
 		const fixture = createStrictSshFixture();
@@ -1290,18 +1355,20 @@ describe('strict Tool VM SSH client', () => {
 		await connectFixture(fixture);
 
 		// Act
-		const results = await Promise.allSettled(
-			Array.from(
-				{ length: 12 },
-				async (_value, index) =>
-					await fixture.client.guestStat({ path: `/workspace/file-${index}.txt` }),
-			),
+		const operations = Array.from(
+			{ length: 12 },
+			async (_value, index) =>
+				await fixture.client.guestStat({ path: `/workspace/file-${index}.txt` }),
 		);
+		const queuedDeadlineCount = fixture.deadlineScheduler.pendingDeadlineDelays.length;
+		const results = await Promise.allSettled(operations);
 
 		// Assert
+		expect(queuedDeadlineCount).toBe(0);
 		expect(results.every((result) => result.status === 'fulfilled')).toBe(true);
 		expect(maximumActiveSftpChannelCount).toBe(1);
 		expect(activeSftpChannelCount).toBe(0);
+		expect(sshTransport.destroyCallCount).toBe(0);
 	});
 
 	it('closes an SFTP session that arrives after its operation deadline without dispatching work', async () => {

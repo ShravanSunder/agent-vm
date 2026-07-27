@@ -110,7 +110,7 @@ export interface StrictToolVmSshProcessChannelClient {
 }
 
 export interface StrictToolVmSshClient {
-	readonly close: () => void;
+	readonly close: (options?: { readonly notifyTransportFailure: true }) => void;
 	readonly connect: () => Promise<void>;
 	readonly execute: (request: {
 		readonly argv: readonly string[];
@@ -545,7 +545,7 @@ export function createStrictToolVmSshClient(
 		}
 		return await new Promise((resolve, reject) => {
 			let channel: ClientChannel | undefined;
-			let exitCode: number | undefined;
+			let exitCode: number | null | undefined;
 			let settled = false;
 			let stderrBytes = 0;
 			let stdoutBytes = 0;
@@ -609,12 +609,12 @@ export function createStrictToolVmSshClient(
 				openedChannel.once('error', (): void => {
 					finishRejected(new Error('Strict SSH command channel failed.'), true);
 				});
-				openedChannel.once('exit', (code: number): void => {
+				openedChannel.once('exit', (code: number | null): void => {
 					exitCode = code;
 				});
 				openedChannel.once('close', (): void => {
 					if (settled) return;
-					if (exitCode === undefined) {
+					if (typeof exitCode !== 'number') {
 						finishRejected(new Error('Strict SSH command closed without an exit result.'), false);
 						return;
 					}
@@ -712,7 +712,7 @@ export function createStrictToolVmSshClient(
 				request.signal?.removeEventListener('abort', onAbort);
 
 				let cancellationRequested = false;
-				let exitCode: number | undefined;
+				let exitCode: number | null | undefined;
 				let inputEnded = false;
 				let stderrBytes = 0;
 				let stdoutBytes = 0;
@@ -748,7 +748,7 @@ export function createStrictToolVmSshClient(
 				};
 				const onTransportError = (): void => {
 					observeTerminal(
-						exitCode === undefined ? { kind: 'ambiguous' } : { exitCode, kind: 'exited' },
+						typeof exitCode === 'number' ? { exitCode, kind: 'exited' } : { kind: 'ambiguous' },
 					);
 					closeChannelOnce();
 				};
@@ -792,16 +792,16 @@ export function createStrictToolVmSshClient(
 				});
 				openedChannel.once('error', (): void => {
 					observeTerminal(
-						exitCode === undefined ? { kind: 'ambiguous' } : { exitCode, kind: 'exited' },
+						typeof exitCode === 'number' ? { exitCode, kind: 'exited' } : { kind: 'ambiguous' },
 					);
 					closeChannelOnce();
 				});
-				openedChannel.once('exit', (code: number): void => {
+				openedChannel.once('exit', (code: number | null): void => {
 					exitCode = code;
 				});
 				openedChannel.once('close', (): void => {
 					observeTerminal(
-						exitCode === undefined ? { kind: 'ambiguous' } : { exitCode, kind: 'exited' },
+						typeof exitCode === 'number' ? { exitCode, kind: 'exited' } : { kind: 'ambiguous' },
 					);
 				});
 				processChannelTransportFailureObservers.add(onTransportError);
@@ -947,20 +947,21 @@ export function createStrictToolVmSshClient(
 		const nextAdmission = createSftpOperationAdmissionGate();
 		sftpOperationAdmission = nextAdmission.promise;
 		return await new Promise<TValue>((resolve, reject) => {
+			let deadline: DeadlineHandle | undefined;
 			let settled = false;
-			const deadline = beginDeadline({
-				delayMilliseconds: options.deadlineMilliseconds.operation,
-				onExpire: (): void => {
-					if (settled) return;
-					settled = true;
-					client.destroy();
-					reject(new Error('Strict SSH SFTP operation deadline expired.'));
-				},
-				runtime: options.runtime,
-			});
 			void (async (): Promise<TValue> => {
 				await precedingAdmission;
 				if (settled) throw new Error('Strict SSH SFTP operation deadline expired.');
+				deadline = beginDeadline({
+					delayMilliseconds: options.deadlineMilliseconds.operation,
+					onExpire: (): void => {
+						if (settled) return;
+						settled = true;
+						client.destroy();
+						reject(new Error('Strict SSH SFTP operation deadline expired.'));
+					},
+					runtime: options.runtime,
+				});
 				const sftp = await getSftp();
 				const channelClose = observeSftpChannelClose(sftp);
 				if (settled) {
@@ -978,13 +979,13 @@ export function createStrictToolVmSshClient(
 					(value): void => {
 						if (settled) return;
 						settled = true;
-						deadline.cancel();
+						deadline?.cancel();
 						resolve(value);
 					},
 					(error: unknown): void => {
 						if (settled) return;
 						settled = true;
-						deadline.cancel();
+						deadline?.cancel();
 						reject(
 							error instanceof Error && error.message.startsWith('Strict SSH')
 								? error
@@ -1044,7 +1045,10 @@ export function createStrictToolVmSshClient(
 	};
 
 	return {
-		close: (): void => {
+		close: (closeOptions): void => {
+			if (closeOptions?.notifyTransportFailure === true) {
+				publishConnectedTransportFailure({ kind: 'transport-close' });
+			}
 			closeRequested = true;
 			connected = false;
 			transport?.end();

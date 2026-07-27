@@ -1410,6 +1410,7 @@ describe('startControllerRuntime', () => {
 					registerSession: expect.any(Function),
 					submit: expect.any(Function),
 				}),
+				onControlSessionAttachmentGap: expect.any(Function),
 				zoneId: 'shravan',
 			}),
 			expect.objectContaining({

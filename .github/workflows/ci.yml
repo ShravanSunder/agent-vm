@@ -120,6 +120,21 @@ jobs:
       - name: Portal package export audit
         run: pnpm test:portal-exports
 
+      - name: Generated portal contract freshness
+        run: pnpm exec tsx scripts/generate-portal-contracts.ts --check-clean
+
+      - name: Python tests
+        run: uv run pytest python
+
+      - name: Python format check
+        run: pnpm python:fmt:check
+
+      - name: Python lint
+        run: pnpm python:lint
+
+      - name: Python typecheck
+        run: pnpm python:typecheck
+
       - name: Lint
         run: pnpm lint
 

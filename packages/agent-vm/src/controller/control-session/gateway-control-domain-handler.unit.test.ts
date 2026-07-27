@@ -1824,8 +1824,7 @@ describe('gateway control domain handler', () => {
 				error: {
 					errorClass: 'workspace_git_conflict',
 					retryable: false,
-					safeMessage:
-						'Workspace Git push was rejected before dispatch because repository state changed.',
+					safeMessage: 'Workspace Git push was rejected because repository state changed.',
 				},
 				responseToMessageId: semanticEnvelope.messageId,
 				result: 'rejected',

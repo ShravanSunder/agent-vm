@@ -461,6 +461,18 @@ PORTABLE_CONTRACT_ADAPTERS: t.Mapping[str, TypeAdapter[object]] = {
 }
 
 
+def get_portable_contract_json_schema(schema_id: str) -> dict[str, object]:
+    """Return an owned copy of one generated portable contract JSON schema."""
+    manifest_schemas = _require_mapping(_GENERATED_PORTABLE_SCHEMA_MANIFEST.get("schemas"))
+    definition_value = manifest_schemas.get(schema_id)
+    if definition_value is None:
+        unknown_schema_message = f"Unknown portable contract schema {schema_id!r}."
+        raise KeyError(unknown_schema_message)
+    definition = _require_mapping(definition_value)
+    json_schema = _require_mapping(definition.get("jsonSchema"))
+    return copy.deepcopy(json_schema)
+
+
 def encode_canonical_json(value: object) -> str:
     """Encode one normalized portable value with stable UTF-8 JSON semantics."""
     return json.dumps(
