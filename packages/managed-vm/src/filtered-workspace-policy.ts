@@ -5,9 +5,18 @@ import type {
 	ManagedVmFilteredWorkspaceReadonlyInput,
 } from './managed-vm-contracts.js';
 
-function assertNormalizedRelativePath(relativePath: string, fieldName: string): void {
+function assertNormalizedRelativePath(
+	relativePath: string,
+	fieldName: string,
+	allowWorkspaceRoot = false,
+): void {
+	if (relativePath.length === 0) {
+		if (allowWorkspaceRoot) {
+			return;
+		}
+		throw new Error(`${fieldName} must be a normalized workspace-relative path: ${relativePath}`);
+	}
 	if (
-		relativePath.length === 0 ||
 		relativePath.includes('\0') ||
 		relativePath.includes('\\') ||
 		relativePath.endsWith('/') ||
@@ -20,16 +29,24 @@ function assertNormalizedRelativePath(relativePath: string, fieldName: string): 
 }
 
 function isEqualOrDescendant(candidatePath: string, ancestorPath: string): boolean {
-	return candidatePath === ancestorPath || candidatePath.startsWith(`${ancestorPath}/`);
+	return (
+		ancestorPath.length === 0 ||
+		candidatePath === ancestorPath ||
+		candidatePath.startsWith(`${ancestorPath}/`)
+	);
 }
 
 function pathsOverlap(firstPath: string, secondPath: string): boolean {
 	return isEqualOrDescendant(firstPath, secondPath) || isEqualOrDescendant(secondPath, firstPath);
 }
 
-function validatePathSet(paths: readonly string[], label: string): void {
+function validatePathSet(
+	paths: readonly string[],
+	label: string,
+	allowWorkspaceRoot = false,
+): void {
 	for (const relativePath of paths) {
-		assertNormalizedRelativePath(relativePath, label);
+		assertNormalizedRelativePath(relativePath, label, allowWorkspaceRoot);
 	}
 	const seenPaths = new Set<string>();
 	for (const relativePath of paths) {
@@ -142,8 +159,8 @@ export function validateManagedVmFilteredWorkspacePolicy(
 	validateReadonlyInputs(policy.readonlyInputs);
 
 	if (policy.visibility.kind === 'positive-paths') {
-		validatePathSet(policy.visibility.visiblePaths, 'visible path');
-		validatePathSet(policy.visibility.writablePaths, 'writable path');
+		validatePathSet(policy.visibility.visiblePaths, 'visible path', true);
+		validatePathSet(policy.visibility.writablePaths, 'writable path', true);
 		if (policy.visibility.visiblePaths.length === 0) {
 			throw new Error('A positive filtered workspace policy must admit at least one visible path.');
 		}

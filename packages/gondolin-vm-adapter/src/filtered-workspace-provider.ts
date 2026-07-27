@@ -40,7 +40,11 @@ function toRelativeProviderPath(providerPath: string): string {
 }
 
 function isEqualOrDescendant(candidatePath: string, ancestorPath: string): boolean {
-	return candidatePath === ancestorPath || candidatePath.startsWith(`${ancestorPath}/`);
+	return (
+		ancestorPath.length === 0 ||
+		candidatePath === ancestorPath ||
+		candidatePath.startsWith(`${ancestorPath}/`)
+	);
 }
 
 function pathsOverlap(firstPath: string, secondPath: string): boolean {

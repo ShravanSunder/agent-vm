@@ -140,7 +140,9 @@ export type ManagedVmFilteredWorkspaceVisibility =
 	| { readonly kind: 'whole-root-writable' }
 	| {
 			readonly kind: 'positive-paths';
+			/** Normalized workspace-relative paths; an empty path selects the owned workspace root. */
 			readonly visiblePaths: readonly string[];
+			/** Normalized workspace-relative paths; an empty path selects the owned workspace root. */
 			readonly writablePaths: readonly string[];
 	  };
 

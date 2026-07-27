@@ -64,6 +64,41 @@ describe('managed filtered workspace policy', () => {
 		);
 	});
 
+	it('accepts the selected workspace root in positive visibility and writability sets', () => {
+		const rootSelectedPolicy = createPositivePolicy({
+			visibility: {
+				kind: 'positive-paths',
+				visiblePaths: [''],
+				writablePaths: [''],
+			},
+		});
+
+		expect(validateManagedVmFilteredWorkspacePolicy(rootSelectedPolicy)).toEqual(
+			rootSelectedPolicy,
+		);
+	});
+
+	it('rejects the workspace root outside positive visibility and writability sets', () => {
+		expect(() =>
+			validateManagedVmFilteredWorkspacePolicy(createPositivePolicy({ hiddenPaths: [''] })),
+		).toThrow(/normalized workspace-relative path/u);
+		expect(() =>
+			validateManagedVmFilteredWorkspacePolicy(createPositivePolicy({ temporaryPaths: [''] })),
+		).toThrow(/normalized workspace-relative path/u);
+		expect(() =>
+			validateManagedVmFilteredWorkspacePolicy(
+				createPositivePolicy({
+					readonlyInputs: [
+						{
+							destinationRelativePath: '',
+							sourceRelativePath: 'reviewed/skill',
+						},
+					],
+				}),
+			),
+		).toThrow(/normalized workspace-relative path/u);
+	});
+
 	it.each([
 		'/absolute',
 		'../escape',

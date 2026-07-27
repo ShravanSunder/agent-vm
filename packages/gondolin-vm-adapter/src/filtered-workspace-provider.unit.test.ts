@@ -50,6 +50,41 @@ function createDependencies(): FilteredWorkspaceProviderDependencies {
 }
 
 describe('filtered workspace Gondolin provider', () => {
+	it('projects the selected workspace root without enumerating authored child paths', async () => {
+		const source = createWorkspaceSource();
+		writeProviderFile(source, '/.git', 'gitdir: /gitdirs/workspace.git\n');
+		const provider = createFilteredWorkspaceProvider({
+			baseProvider: source,
+			dependencies: createDependencies(),
+			policy: {
+				hiddenPaths: [],
+				readonlyInputs: [
+					{
+						destinationRelativePath: '.git',
+						sourceRelativePath: '.git',
+					},
+				],
+				temporaryPaths: [],
+				visibility: {
+					kind: 'positive-paths',
+					visiblePaths: [''],
+					writablePaths: [''],
+				},
+			},
+		});
+
+		expect((await provider.readdir('/')).map(String).toSorted()).toEqual(
+			['.git', 'node_modules', 'notes', 'private', 'reviewed', 'reviewed-note.txt'].toSorted(),
+		);
+		expect(await provider.readFile?.('/notes/visible.txt', 'utf8')).toBe('visible');
+		await provider.writeFile?.('/notes/from-tool-vm.txt', 'created');
+		expect(await source.readFile?.('/notes/from-tool-vm.txt', 'utf8')).toBe('created');
+		expect(await provider.readFile?.('/.git', 'utf8')).toBe('gitdir: /gitdirs/workspace.git\n');
+		await expect(provider.writeFile?.('/.git', 'replace')).rejects.toMatchObject({
+			code: 'EROFS',
+		});
+	});
+
 	it('confines nested readonly inputs to their selected source subtree', async () => {
 		const source = createWorkspaceSource();
 		writeProviderFile(source, '/outside.txt', 'outside file');
