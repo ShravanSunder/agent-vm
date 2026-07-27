@@ -59,12 +59,12 @@ function validatePathSet(
 	}
 	for (let pathIndex = 0; pathIndex < paths.length; pathIndex += 1) {
 		const firstPath = paths[pathIndex];
-		if (!firstPath) {
+		if (firstPath === undefined) {
 			continue;
 		}
 		for (let comparedIndex = pathIndex + 1; comparedIndex < paths.length; comparedIndex += 1) {
 			const secondPath = paths[comparedIndex];
-			if (secondPath && pathsOverlap(firstPath, secondPath)) {
+			if (secondPath !== undefined && pathsOverlap(firstPath, secondPath)) {
 				throw new Error(
 					`Managed filtered workspace policy has overlapping ${label}s: ${firstPath} and ${secondPath}`,
 				);

@@ -129,6 +129,28 @@ describe('managed filtered workspace policy', () => {
 		expect(() =>
 			validateManagedVmFilteredWorkspacePolicy(
 				createPositivePolicy({
+					visibility: {
+						kind: 'positive-paths',
+						visiblePaths: ['', 'notes'],
+						writablePaths: ['notes'],
+					},
+				}),
+			),
+		).toThrow(/overlapping visible paths/u);
+		expect(() =>
+			validateManagedVmFilteredWorkspacePolicy(
+				createPositivePolicy({
+					visibility: {
+						kind: 'positive-paths',
+						visiblePaths: [''],
+						writablePaths: ['', 'notes'],
+					},
+				}),
+			),
+		).toThrow(/overlapping writable paths/u);
+		expect(() =>
+			validateManagedVmFilteredWorkspacePolicy(
+				createPositivePolicy({
 					readonlyInputs: [
 						{ destinationRelativePath: 'managed', sourceRelativePath: 'reviewed/one' },
 						{
