@@ -26,6 +26,9 @@ jobs:
       - name: Install Python 3.13
         run: uv python install 3.13
 
+      - name: Install Python workspace
+        run: uv sync --all-packages --frozen
+
       - run: pnpm install --frozen-lockfile
 
       - name: Cache apt packages
