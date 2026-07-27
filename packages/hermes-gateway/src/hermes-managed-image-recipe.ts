@@ -230,9 +230,20 @@ function renderHermesManagedImagePublicRegistryInstallLines(
 	];
 }
 
+function renderHermesTuiInstallCommand(): string {
+	return [
+		`RUN hermes_tui_dist="$(/opt/agent-vm/hermes-venv/bin/python -c 'from pathlib import Path; import hermes_cli; print(Path(hermes_cli.__file__).resolve().parent / "tui_dist")')" && \\`,
+		'    test -f "$hermes_tui_dist/entry.js" && \\',
+		'    install -d -m 0755 /opt/agent-vm/hermes-tui && \\',
+		'    ln -sfn "$hermes_tui_dist" /opt/agent-vm/hermes-tui/dist && \\',
+		'    test -f /opt/agent-vm/hermes-tui/dist/entry.js',
+	].join('\n');
+}
+
 function renderHermesShellEnvironmentInstallCommand(): string {
 	const environmentLines = [
 		'export HERMES_HOME=/home/hermes/.hermes',
+		'export HERMES_TUI_DIR=/opt/agent-vm/hermes-tui',
 		'export HOME=/home/hermes',
 		'export PATH=/opt/agent-vm/hermes-venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
 		'export TMPDIR=/work/tmp',
@@ -301,6 +312,8 @@ function renderHermesManagedImageDockerfile(
 		'    (ln -sfn /proc/self/fd /dev/fd 2>/dev/null || true)',
 		'',
 		...artifactInstallLines,
+		'',
+		renderHermesTuiInstallCommand(),
 		'',
 		renderHermesShellEnvironmentInstallCommand(),
 		'',

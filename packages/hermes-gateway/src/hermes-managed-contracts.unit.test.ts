@@ -459,6 +459,13 @@ describe('managed Hermes package contracts', () => {
 		expect(recipe.dockerfile).toContain('/usr/local/bin/agent-vm-hermes-gateway');
 		expect(recipe.dockerfile).toContain('/etc/profile.d/hermes-env.sh');
 		expect(recipe.dockerfile).toContain(
+			'hermes_tui_dist="$(/opt/agent-vm/hermes-venv/bin/python -c',
+		);
+		expect(recipe.dockerfile).toContain('test -f "$hermes_tui_dist/entry.js"');
+		expect(recipe.dockerfile).toContain('ln -sfn "$hermes_tui_dist" /opt/agent-vm/hermes-tui/dist');
+		expect(recipe.dockerfile).toContain('test -f /opt/agent-vm/hermes-tui/dist/entry.js');
+		expect(recipe.dockerfile).toContain('export HERMES_TUI_DIR=/opt/agent-vm/hermes-tui');
+		expect(recipe.dockerfile).toContain(
 			'export PATH=/opt/agent-vm/hermes-venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
 		);
 		expect(recipe.dockerfile).toContain('export SSL_CERT_FILE=/run/gondolin/ca-certificates.crt');
@@ -507,6 +514,13 @@ describe('managed Hermes package contracts', () => {
 		);
 		expect(recipe.dockerfile).toContain('/usr/local/bin/agent-vm-gateway-runtime');
 		expect(recipe.dockerfile).toContain('/usr/local/bin/agent-vm-hermes-gateway');
+		expect(recipe.dockerfile).toContain(
+			'hermes_tui_dist="$(/opt/agent-vm/hermes-venv/bin/python -c',
+		);
+		expect(recipe.dockerfile).toContain('test -f "$hermes_tui_dist/entry.js"');
+		expect(recipe.dockerfile).toContain('ln -sfn "$hermes_tui_dist" /opt/agent-vm/hermes-tui/dist');
+		expect(recipe.dockerfile).toContain('test -f /opt/agent-vm/hermes-tui/dist/entry.js');
+		expect(recipe.dockerfile).toContain('export HERMES_TUI_DIR=/opt/agent-vm/hermes-tui');
 		expect(recipe.dockerfile).toContain(
 			'metadata.version("agent-vm-agent-portal-sdk") == "0.0.116"',
 		);

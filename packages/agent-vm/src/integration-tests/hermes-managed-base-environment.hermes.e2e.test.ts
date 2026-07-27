@@ -79,6 +79,8 @@ async function expectHermesInteractiveShellEnvironment(
 		wrapWithHermesShellEnvironment(
 			[
 				'test "$HERMES_HOME" = "/home/hermes/.hermes"',
+				'test "$HERMES_TUI_DIR" = "/opt/agent-vm/hermes-tui"',
+				'test -f "$HERMES_TUI_DIR/dist/entry.js"',
 				'test "$SSL_CERT_FILE" = "/run/gondolin/ca-certificates.crt"',
 				'test "$REQUESTS_CA_BUNDLE" = "/run/gondolin/ca-certificates.crt"',
 				'command -v hermes >/dev/null',
