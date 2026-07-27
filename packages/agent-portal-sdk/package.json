@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/agent-portal-sdk",
-	"version": "0.0.124",
+	"version": "0.0.125",
 	"description": "Portal-neutral Zod contracts and helpers for agent-facing capability surfaces.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {
