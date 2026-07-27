@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { wrapWithHermesShellEnvironment } from '@agent-vm/hermes-gateway';
 import type { ManagedVmCreateRequest } from '@agent-vm/managed-vm';
 import { afterAll, describe, expect, it } from 'vitest';
 
@@ -67,6 +68,27 @@ interface ManagedHermesEpoch {
 	readonly harness: E2eHarnessRuntime;
 	readonly start: ManagedGatewayStartObservation;
 	readonly toolVmCreateRequests: readonly ManagedVmCreateRequest[];
+}
+
+async function expectHermesInteractiveShellEnvironment(
+	vm: Pick<GatewayZoneVmOperations, 'exec'>,
+): Promise<void> {
+	const shellEnvironmentResult = await vm.exec([
+		'/bin/sh',
+		'-c',
+		wrapWithHermesShellEnvironment(
+			[
+				'test "$HERMES_HOME" = "/home/hermes/.hermes"',
+				'test "$SSL_CERT_FILE" = "/run/gondolin/ca-certificates.crt"',
+				'test "$REQUESTS_CA_BUNDLE" = "/run/gondolin/ca-certificates.crt"',
+				'command -v hermes >/dev/null',
+			].join(' && '),
+		),
+	]);
+	expect(shellEnvironmentResult).toMatchObject({
+		exitCode: 0,
+		ok: true,
+	});
 }
 
 function sha256(value: string): string {
@@ -493,6 +515,7 @@ describeHermesManagedEnvironmentE2e(
 				gatewayPort: project.gatewayPort,
 				vm: firstEpoch.start.vm,
 			});
+			await expectHermesInteractiveShellEnvironment(firstEpoch.start.vm);
 			await inspectLiveHermesEpoch({
 				acceptanceMarker: commonAcceptanceMarkers.first,
 				start: firstEpoch.start,

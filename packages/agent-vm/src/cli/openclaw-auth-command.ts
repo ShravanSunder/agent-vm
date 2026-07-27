@@ -1,4 +1,5 @@
 import type { GatewayAuthConfig } from '@agent-vm/gateway-lifecycle';
+import { wrapWithOpenClawGatewayTokenShellEnvironment } from '@agent-vm/openclaw-gateway';
 import { execa } from 'execa';
 
 import { agentIdSchema, type SystemConfig } from '../config/system-config.js';
@@ -9,7 +10,6 @@ import {
 	resolveControllerBaseUrl,
 } from './agent-vm-cli-support.js';
 import { formatZodError } from './format-zod-error.js';
-import { wrapWithOpenClawGatewayTokenShellEnvironment } from './openclaw-shell-prefix.js';
 import { resolveZoneAdminToken, zoneSshAccessResponseSchema } from './ssh-commands.js';
 
 function resolveOpenClawProfileIds(options: {

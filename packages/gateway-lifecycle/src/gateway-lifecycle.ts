@@ -44,6 +44,18 @@ export interface GatewayAuthConfig {
 	) => string;
 }
 
+export interface GatewayInteractiveSshSession {
+	readonly remoteShellCommand: string;
+	readonly requireSecretEnvironmentEnabled: boolean;
+	readonly secretEnvironment: 'default' | 'gateway-token' | 'all-secrets';
+}
+
+export interface GatewayInteractiveSshConfig {
+	readonly buildSession: (options: {
+		readonly requestAllSecrets: boolean;
+	}) => GatewayInteractiveSshSession;
+}
+
 interface GatewayAuthProfilesRef {
 	readonly source: '1password' | 'config' | 'environment';
 }
@@ -357,6 +369,9 @@ export type ManagedFrameworkServiceBootInputs =
 
 export interface ManagedGatewayLifecycle extends GatewayLifecycleBase {
 	readonly executionModel: 'managed-gateway';
+
+	/** Build the framework-owned interactive SSH session contract. */
+	readonly interactiveSsh: GatewayInteractiveSshConfig;
 
 	/** Build the selected framework half of the exact managed boot contract. */
 	buildFrameworkServiceBootMetadata(zone: GatewayZoneConfig): ManagedFrameworkServiceBootMetadata;

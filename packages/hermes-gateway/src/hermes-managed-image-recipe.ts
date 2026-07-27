@@ -1,4 +1,5 @@
 import { HERMES_AGENT_DISTRIBUTION } from './hermes-distribution.js';
+import { managedHermesShellEnvironmentPath } from './hermes-shell-environment.js';
 
 const HERMES_GATEWAY_BASE_IMAGE = 'node:24-slim';
 const HERMES_GATEWAY_UV_IMAGE = 'ghcr.io/astral-sh/uv:0.11.31';
@@ -229,6 +230,35 @@ function renderHermesManagedImagePublicRegistryInstallLines(
 	];
 }
 
+function renderHermesShellEnvironmentInstallCommand(): string {
+	const environmentLines = [
+		'export HERMES_HOME=/home/hermes/.hermes',
+		'export HOME=/home/hermes',
+		'export PATH=/opt/agent-vm/hermes-venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+		'export TMPDIR=/work/tmp',
+		'export TMP=/work/tmp',
+		'export TEMP=/work/tmp',
+		'export UV_CACHE_DIR=/work/cache/uv',
+		'export NODE_EXTRA_CA_CERTS=/run/gondolin/ca-certificates.crt',
+		'export REQUESTS_CA_BUNDLE=/run/gondolin/ca-certificates.crt',
+		'export SSL_CERT_FILE=/run/gondolin/ca-certificates.crt',
+	] as const;
+
+	return [
+		'RUN install -d -m 0755 /etc/profile.d && \\',
+		"    printf '%s\\n' \\",
+		...environmentLines.map(
+			(environmentLine, index) =>
+				`      '${environmentLine}'${
+					index === environmentLines.length - 1
+						? ` > ${managedHermesShellEnvironmentPath} && \\`
+						: ' \\'
+				}`,
+		),
+		`    chmod 0644 ${managedHermesShellEnvironmentPath}`,
+	].join('\n');
+}
+
 function renderHermesManagedImageDockerfile(
 	artifactContext: HermesManagedImageArtifactContext,
 ): string {
@@ -271,6 +301,8 @@ function renderHermesManagedImageDockerfile(
 		'    (ln -sfn /proc/self/fd /dev/fd 2>/dev/null || true)',
 		'',
 		...artifactInstallLines,
+		'',
+		renderHermesShellEnvironmentInstallCommand(),
 		'',
 	].join('\n');
 }

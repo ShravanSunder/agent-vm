@@ -20,6 +20,7 @@ import {
 	preflightHermesProfileDirectories,
 	prepareHermesProfileDirectories,
 } from './hermes-profile-directory-materialization.js';
+import { wrapWithHermesShellEnvironment } from './hermes-shell-environment.js';
 
 const hermesGatewayGuestPort = 8642;
 const managedFrameworkConfigurationInputPath =
@@ -50,6 +51,7 @@ const reservedHermesProfileProjectionSourceNames: ReadonlySet<string> = new Set(
 	'TMPDIR',
 	'UV_CACHE_DIR',
 ]);
+
 const hermesProfileGlobalEnvironmentNames: ReadonlySet<string> = new Set([
 	'HERMES_HOME',
 	'HERMES_PROFILE',
@@ -275,6 +277,18 @@ export async function buildHermesFrameworkServiceBootInputs(
 
 export const hermesLifecycle = {
 	executionModel: 'managed-gateway',
+	interactiveSsh: {
+		buildSession: ({ requestAllSecrets }: { readonly requestAllSecrets: boolean }) => {
+			if (requestAllSecrets) {
+				throw new Error('--all-secrets is supported only for OpenClaw zones.');
+			}
+			return {
+				remoteShellCommand: wrapWithHermesShellEnvironment('exec bash -l'),
+				requireSecretEnvironmentEnabled: false,
+				secretEnvironment: 'default',
+			};
+		},
+	},
 	buildFrameworkServiceBootInputs: buildHermesFrameworkServiceBootInputs,
 	buildFrameworkServiceBootMetadata: buildHermesFrameworkServiceBootMetadata,
 	preflightHostState: preflightHermesProfileDirectories,

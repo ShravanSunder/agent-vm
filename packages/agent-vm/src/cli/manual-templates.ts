@@ -391,6 +391,7 @@ For Tool VM-reaching mediated secrets, agentAccess is required and the zone must
 
 Zones scaffold controller SSH adminAccess as mode: "none" because secret-backed admin SSH requires an operator-created secret. To protect controller-mediated SSH, create the secret first, then change zones[].adminAccess to mode: "secret" with a real secret reference.
 Use agent-vm controller ssh --zone <zoneId> for a gateway admin shell. OpenClaw admin commands source the token named by gateway.controlAuth.secret.
+Hermes admin shells load HERMES_HOME, the Hermes CLI path, and Gondolin CA bundle variables without loading raw framework secrets. Run native commands such as hermes auth add <provider> inside that shell.
 Use agent-vm controller ssh --zone <zoneId> --all-secrets only when the shell must inspect or debug every raw gateway environment secret.
 Controller SSH opens an interactive shell only. Do not use it as a one-shot command runner, and do not try to print raw SSH commands from the CLI.
 Use agent-vm auth 1password <op-ref-or-url> --config ${options.systemConfigPath} to read a 1Password service-account token with op read and store it in the configured macOS Keychain service/account. Omit the ref/url only when pasting the token interactively.

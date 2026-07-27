@@ -3,13 +3,13 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { ManagedVm } from '@agent-vm/managed-vm';
-import { describe, expect, it } from 'vitest';
-
-import { readPreparedManagedVmImage } from '../build/prepared-gondolin-image-cache.js';
 import {
 	wrapWithOpenClawGatewayTokenShellEnvironment,
 	wrapWithOpenClawShellEnvironment,
-} from '../cli/openclaw-shell-prefix.js';
+} from '@agent-vm/openclaw-gateway';
+import { describe, expect, it } from 'vitest';
+
+import { readPreparedManagedVmImage } from '../build/prepared-gondolin-image-cache.js';
 import { createManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
 import { isProcessAlive } from '../shared/managed-vm-process.js';
 import {

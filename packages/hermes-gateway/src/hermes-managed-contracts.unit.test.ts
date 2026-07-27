@@ -88,6 +88,17 @@ describe('managed Hermes package contracts', () => {
 		expect(hermesLifecycle.prepareHostState).toBeTypeOf('function');
 	});
 
+	it('owns its framework-ready interactive SSH session contract', () => {
+		expect(hermesLifecycle.interactiveSsh.buildSession({ requestAllSecrets: false })).toEqual({
+			remoteShellCommand: "bash -lc 'source /etc/profile.d/hermes-env.sh && exec bash -l'",
+			requireSecretEnvironmentEnabled: false,
+			secretEnvironment: 'default',
+		});
+		expect(() => hermesLifecycle.interactiveSsh.buildSession({ requestAllSecrets: true })).toThrow(
+			'--all-secrets is supported only for OpenClaw zones.',
+		);
+	});
+
 	it('pins the researched Hermes Python distribution and source revision', () => {
 		expect(HERMES_AGENT_DISTRIBUTION).toEqual({
 			distributionName: 'hermes-agent',
@@ -446,6 +457,14 @@ describe('managed Hermes package contracts', () => {
 		expect(recipe.dockerfile).toContain("'hermes-agent[messaging]==0.18.2'");
 		expect(recipe.dockerfile).toContain('pnpm install --prod --ignore-scripts');
 		expect(recipe.dockerfile).toContain('/usr/local/bin/agent-vm-hermes-gateway');
+		expect(recipe.dockerfile).toContain('/etc/profile.d/hermes-env.sh');
+		expect(recipe.dockerfile).toContain(
+			'export PATH=/opt/agent-vm/hermes-venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+		);
+		expect(recipe.dockerfile).toContain('export SSL_CERT_FILE=/run/gondolin/ca-certificates.crt');
+		expect(recipe.dockerfile).toContain(
+			'export REQUESTS_CA_BUNDLE=/run/gondolin/ca-certificates.crt',
+		);
 		expect(recipe.dockerfile).toContain(
 			'gateway_runtime_bin="/opt/agent-vm/local-packages/node_modules/@agent-vm/gateway-runtime/dist/bin/gateway-runtime.js"',
 		);

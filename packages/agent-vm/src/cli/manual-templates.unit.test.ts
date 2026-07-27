@@ -222,6 +222,12 @@ describe('manual templates', () => {
 			'agent-vm controller ssh --zone <zoneId>',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
+			'Hermes admin shells load HERMES_HOME, the Hermes CLI path, and Gondolin CA bundle variables',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
+			'hermes auth add <provider>',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
 			'--all-secrets',
 		);
 		expect(

@@ -110,6 +110,27 @@ const hermesSystemConfig = {
 	],
 } satisfies SystemConfig;
 
+const workerSystemConfig = {
+	...systemConfig,
+	zones: [
+		{
+			...baseZone,
+			gateway: {
+				type: 'worker',
+				imageProfile: 'worker',
+				cpus: 2,
+				memory: '2G',
+				config: './config/worker/worker.json',
+				port: 18793,
+				stateDir: './state/worker',
+				zoneRuntimeDir: './runtime/worker',
+			},
+			id: 'worker-zone',
+			secrets: {},
+		},
+	],
+} satisfies SystemConfig;
+
 const systemConfigWithAdminAccess = {
 	...systemConfig,
 	zones: [
@@ -378,7 +399,7 @@ describe('runSshCommand', () => {
 		expect(shellCommand).not.toContain('resolved-admin-token');
 	});
 
-	it('opens a plain Hermes login shell without OpenClaw secret setup', async () => {
+	it('opens a Hermes-ready login shell without OpenClaw secret setup', async () => {
 		const enableZoneSsh = vi.fn(async () => ({
 			host: '127.0.0.1',
 			identityFile: '/tmp/hermes-key',
@@ -403,9 +424,10 @@ describe('runSshCommand', () => {
 
 		expect(enableZoneSsh).toHaveBeenCalledWith('hermes-zone', { secretEnv: 'default' });
 		const remoteCommand = vi.mocked(runInteractiveProcess).mock.calls[0]?.[1].at(-1);
-		expect(remoteCommand).toBe("bash -lc 'exec bash -l'");
+		expect(remoteCommand).toEqual(expect.stringContaining('source /etc/profile.d/hermes-env.sh'));
 		expect(remoteCommand).not.toEqual(expect.stringContaining('openclaw'));
 		expect(remoteCommand).not.toEqual(expect.stringContaining('OPENCLAW_GATEWAY_TOKEN'));
+		expect(remoteCommand).not.toEqual(expect.stringContaining('framework.environment.sh'));
 	});
 
 	it('rejects all-secrets SSH for Hermes before enabling SSH', async () => {
@@ -427,6 +449,34 @@ describe('runSshCommand', () => {
 			}),
 		).rejects.toThrow('--all-secrets is supported only for OpenClaw zones');
 		expect(enableZoneSsh).not.toHaveBeenCalled();
+	});
+
+	it('rejects controller SSH for Worker before contacting the controller', async () => {
+		const enableZoneSsh = vi.fn(async () => ({
+			host: '127.0.0.1',
+			port: 2224,
+			user: 'root',
+		}));
+		const runInteractiveProcess = vi.fn(
+			async (_command: string, _arguments: readonly string[]): Promise<void> => {},
+		);
+
+		await expect(
+			runSshCommand({
+				dependencies: {
+					...defaultCliDependencies,
+					createControllerClient: () => createControllerClientStub(enableZoneSsh),
+					runInteractiveProcess,
+				},
+				io: { stderr: { write: () => true }, stdout: { write: () => true } },
+				restArguments: ['--zone', 'worker-zone'],
+				systemConfig: workerSystemConfig,
+			}),
+		).rejects.toThrow(
+			"controller ssh is not implemented for gateway type 'worker'; use the Worker task APIs.",
+		);
+		expect(enableZoneSsh).not.toHaveBeenCalled();
+		expect(runInteractiveProcess).not.toHaveBeenCalled();
 	});
 
 	it('throws when the controller returns incomplete ssh data without a printable command', async () => {

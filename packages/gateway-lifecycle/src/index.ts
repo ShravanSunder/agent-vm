@@ -90,6 +90,8 @@ export type {
 	DirectProcessGatewayLifecycle,
 	GatewayAuthConfig,
 	GatewayIngressConfig,
+	GatewayInteractiveSshConfig,
+	GatewayInteractiveSshSession,
 	GatewayLifecycle,
 	GatewayLifecycleBase,
 	GatewaySecretConfig,

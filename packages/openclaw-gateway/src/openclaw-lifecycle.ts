@@ -28,6 +28,11 @@ import {
 	type SecretResolver,
 } from '@agent-vm/secret-management';
 
+import {
+	shellQuote,
+	wrapWithOpenClawAllSecretsShellEnvironment,
+	wrapWithOpenClawGatewayTokenShellEnvironment,
+} from './openclaw-shell-environment.js';
 import { writeFileAtomically } from './write-file-atomically.js';
 
 const effectiveOpenClawConfigFileName = 'effective-openclaw.json';
@@ -291,10 +296,6 @@ async function assertEffectiveConfigPathWritable(
 	} finally {
 		await rm(preflightPath, { force: true });
 	}
-}
-
-function shellQuote(value: string): string {
-	return `'${value.replace(/'/gu, `'\\''`)}'`;
 }
 
 function assertAllowedOpenClawEnvironmentSecrets(
@@ -1289,6 +1290,15 @@ export async function buildOpenClawFrameworkServiceBootInputs(
 
 export const openclawLifecycle = {
 	executionModel: 'managed-gateway',
+	interactiveSsh: {
+		buildSession: ({ requestAllSecrets }: { readonly requestAllSecrets: boolean }) => ({
+			remoteShellCommand: requestAllSecrets
+				? wrapWithOpenClawAllSecretsShellEnvironment('exec bash -l')
+				: wrapWithOpenClawGatewayTokenShellEnvironment('exec bash -l'),
+			requireSecretEnvironmentEnabled: true,
+			secretEnvironment: requestAllSecrets ? 'all-secrets' : 'gateway-token',
+		}),
+	},
 	authConfig: {
 		listProvidersCommand: 'openclaw models auth list --format plain 2>/dev/null || echo ""',
 		buildLoginCommand: (

@@ -14,6 +14,10 @@ export {
 } from './hermes-managed-configuration.js';
 export type { HermesManagedConfiguration } from './hermes-managed-configuration.js';
 export { renderHermesManagedImageRecipe } from './hermes-managed-image-recipe.js';
+export {
+	managedHermesShellEnvironmentPath,
+	wrapWithHermesShellEnvironment,
+} from './hermes-shell-environment.js';
 export type {
 	HermesManagedImageArtifactContext,
 	HermesManagedImageBuildConfig,

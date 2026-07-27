@@ -326,6 +326,21 @@ function createObservabilityConfig(): NonNullable<GatewayZoneConfig['observabili
 }
 
 describe('openclawLifecycle', () => {
+	it('owns its token-backed interactive SSH session contract', () => {
+		expect(openclawLifecycle.interactiveSsh.buildSession({ requestAllSecrets: false })).toEqual({
+			remoteShellCommand:
+				"bash -lc 'source /etc/profile.d/openclaw-env.sh && set -a && . /run/agent-vm/managed-gateway-environment/openclaw-gateway-token.environment.sh && set +a && exec bash -l'",
+			requireSecretEnvironmentEnabled: true,
+			secretEnvironment: 'gateway-token',
+		});
+		expect(openclawLifecycle.interactiveSsh.buildSession({ requestAllSecrets: true })).toEqual({
+			remoteShellCommand:
+				"bash -lc 'set -a && . /run/agent-vm/managed-gateway-environment/openclaw-all-secrets.environment.sh && set +a && source /etc/profile.d/openclaw-env.sh && exec bash -l'",
+			requireSecretEnvironmentEnabled: true,
+			secretEnvironment: 'all-secrets',
+		});
+	});
+
 	describe('authConfig', () => {
 		it('provides a list-providers command', () => {
 			expect(openclawLifecycle.authConfig).toBeDefined();

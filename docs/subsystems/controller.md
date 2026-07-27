@@ -124,7 +124,7 @@ Registered conditionally -- only when `operations` or `workerTaskRunner` is prov
 | `POST` | `/zones/:zoneId/credentials/refresh` | Re-resolve secrets, restart gateway | OpenClaw |
 | `POST` | `/zones/:zoneId/destroy` | Stop gateway, release zone leases, purge state | OpenClaw |
 | `POST` | `/zones/:zoneId/upgrade` | Rebuild image and restart gateway | OpenClaw |
-| `POST` | `/zones/:zoneId/enable-ssh` | Enable SSH into gateway VM | OpenClaw |
+| `POST` | `/zones/:zoneId/enable-ssh` | Enable SSH into gateway VM | Managed gateways |
 | `POST` | `/zones/:zoneId/execute-command` | Run a shell command inside gateway VM; requires zone admin token when adminAccess is configured | OpenClaw |
 | `POST` | `/zones/:zoneId/worker-tasks` | Submit a worker task (`requestTaskId`, prompt, repos, context) | Worker |
 | `GET` | `/zones/:zoneId/tasks/:taskId` | Read worker task state snapshot | Worker |
@@ -138,6 +138,12 @@ It must reject `-- <remote command>` and `--print` so the CLI does not become an
 unreviewed remote-command runner. Command execution inside a gateway VM is a
 separate `/zones/:zoneId/execute-command` controller operation and is protected
 by zone admin authorization when `adminAccess` is configured.
+
+The interactive shell is framework-ready for managed Gateway zones. OpenClaw
+loads its writable framework paths and explicitly authorized SSH secret
+environment. Hermes loads only non-secret framework paths and the Gondolin CA
+bundle variables needed by Python and Node CLI operations such as
+`hermes auth add`; it does not load the one-time framework service environment.
 
 ---
 
