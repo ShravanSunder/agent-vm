@@ -651,8 +651,8 @@ describe('startE2eControllerRuntime', () => {
 		expect(dockerfile).toContain('file:/tmp/agent-vm-config-contracts-0.0.0-smoke.tgz');
 		expect(dockerfile).toContain('@agent-vm/mcp-portal');
 		expect(dockerfile).toContain('WORKDIR /opt/openclaw-runtime-packages');
-		expect(dockerfile).toContain('"openclaw": "2026.6.8"');
-		expect(dockerfile).toContain('"@openclaw/codex": "2026.6.8"');
+		expect(dockerfile).toContain('"openclaw": "2026.7.1-2"');
+		expect(dockerfile).toContain("openclaw plugins install 'npm:@openclaw/codex' --pin");
 		expect(dockerfile).toContain('RUN pnpm install --prod --ignore-scripts');
 		expect(dockerfile).toContain('"@openai/codex@');
 		expect(dockerfile).not.toContain('RUN pnpm add -g "openclaw@');
@@ -784,8 +784,8 @@ describe('startE2eControllerRuntime', () => {
 			'COPY agent-vm-tool-portal-0.0.0-smoke.tgz /tmp/agent-vm-tool-portal-0.0.0-smoke.tgz',
 		);
 		expect(dockerfile).toContain('WORKDIR /opt/openclaw-runtime-packages');
-		expect(dockerfile).toContain('"openclaw": "2026.6.8"');
-		expect(dockerfile).toContain('"@openclaw/codex": "2026.6.8"');
+		expect(dockerfile).toContain('"openclaw": "2026.7.1-2"');
+		expect(dockerfile).toContain("openclaw plugins install 'npm:@openclaw/codex' --pin");
 		expect(dockerfile).toContain('RUN pnpm install --prod --ignore-scripts');
 		expect(dockerfile).toContain('"@openai/codex@');
 		expect(dockerfile).not.toContain('RUN pnpm add -g "openclaw@');
