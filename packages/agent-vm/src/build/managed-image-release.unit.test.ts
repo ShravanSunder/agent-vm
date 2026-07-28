@@ -425,6 +425,9 @@ describe('managed image release', () => {
 			'ln -sfn /opt/openclaw-runtime-packages/node_modules/openclaw "$global_package_root/openclaw"',
 		);
 		expect(generatedDockerfile).toContain(
+			'ln -sfn /opt/openclaw-runtime-packages/node_modules/openclaw/openclaw.mjs /pnpm/openclaw',
+		);
+		expect(generatedDockerfile).toContain(
 			'ln -sfn "$plugin_package_root" "$global_package_root/@openclaw/discord"',
 		);
 		expect(generatedDockerfile).toContain(

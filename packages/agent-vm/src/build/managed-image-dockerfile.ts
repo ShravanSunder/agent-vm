@@ -361,7 +361,9 @@ function renderOpenClawPackageInstallLines(
 		[
 			'RUN global_package_root="$(pnpm root -g)" && \\',
 			'    mkdir -p "$global_package_root" && \\',
-			`    ${renderOpenClawPackageSymlinkCommand(corePackage.name)}`,
+			`    ${renderOpenClawPackageSymlinkCommand(corePackage.name)} && \\`,
+			'    chmod 755 /opt/openclaw-runtime-packages/node_modules/openclaw/openclaw.mjs && \\',
+			'    ln -sfn /opt/openclaw-runtime-packages/node_modules/openclaw/openclaw.mjs /pnpm/openclaw',
 		].join('\n'),
 	];
 	if (pluginPackages.length === 0) {
