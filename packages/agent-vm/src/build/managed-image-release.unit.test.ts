@@ -13,6 +13,7 @@ import {
 
 const managedOpenClawVersion = '2026.7.1-2';
 const managedOpenClawCodexVersion = '2026.7.1-1';
+const managedOpenClawDiagnosticsOtelVersion = '2026.7.1';
 const managedOpenClawDiscordVersion = '2026.7.1';
 const managedOpenAiCodexCliVersion = '0.139.0';
 const managedDockerfileForbiddenSecretPattern =
@@ -46,6 +47,7 @@ function createTestManagedImageRelease(): ManagedImageRelease {
 					openclaw: [
 						`openclaw@${managedOpenClawVersion}`,
 						`@openclaw/codex@${managedOpenClawCodexVersion}`,
+						`@openclaw/diagnostics-otel@${managedOpenClawDiagnosticsOtelVersion}`,
 						`@openclaw/discord@${managedOpenClawDiscordVersion}`,
 					],
 					pnpm: { undici: '8.5.0' },
@@ -86,6 +88,7 @@ describe('managed image release', () => {
 				openclaw: [
 					`openclaw@${managedOpenClawVersion}`,
 					`@openclaw/codex@${managedOpenClawCodexVersion}`,
+					`@openclaw/diagnostics-otel@${managedOpenClawDiagnosticsOtelVersion}`,
 					`@openclaw/discord@${managedOpenClawDiscordVersion}`,
 				],
 				pnpm: { undici: '8.5.0' },
@@ -358,6 +361,12 @@ describe('managed image release', () => {
 					version: '2026.7.1-1',
 				},
 				{
+					name: '@openclaw/diagnostics-otel',
+					spec: '@openclaw/diagnostics-otel@2026.7.1',
+					source: 'managed-images.json/packageOverrides.openclaw',
+					version: '2026.7.1',
+				},
+				{
 					name: '@openclaw/discord',
 					spec: '@openclaw/discord@2026.5.7',
 					source: 'overlay.jsonc/packageOverrides.openclaw',
@@ -368,6 +377,11 @@ describe('managed image release', () => {
 				{
 					message:
 						'OpenClaw package versions differ: openclaw uses 2026.5.7, but @openclaw/codex uses 2026.7.1-1.',
+					type: 'openclaw-package-version-mismatch',
+				},
+				{
+					message:
+						'OpenClaw package versions differ: openclaw uses 2026.5.7, but @openclaw/diagnostics-otel uses 2026.7.1.',
 					type: 'openclaw-package-version-mismatch',
 				},
 			],
@@ -1212,6 +1226,11 @@ describe('managed image release', () => {
 				type: 'openclaw-package-version-mismatch',
 				message:
 					'OpenClaw package versions differ: openclaw uses 2026.5.7, but @openclaw/codex uses 2026.7.1-1.',
+			},
+			{
+				type: 'openclaw-package-version-mismatch',
+				message:
+					'OpenClaw package versions differ: openclaw uses 2026.5.7, but @openclaw/diagnostics-otel uses 2026.7.1.',
 			},
 			{
 				type: 'openclaw-package-version-mismatch',
