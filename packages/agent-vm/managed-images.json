@@ -2,17 +2,11 @@
 	"schemaVersion": 1,
 	"baseImages": {
 		"openclaw-gateway": {
+			"openclawPackageVersion": "2026.7.1-2",
+			"openclawPluginList": ["@openclaw/codex", "@openclaw/discord", "@openclaw/diagnostics-otel"],
 			"packageOverrides": {
-				"openclaw": [
-					"openclaw@2026.7.1-2",
-					"@openclaw/codex@2026.7.1-1",
-					"@openclaw/diagnostics-otel@2026.7.1",
-					"@openclaw/discord@2026.7.1"
-				],
-				"npm": ["@openai/codex@0.139.0"],
-				"pnpm": {
-					"undici": "8.5.0"
-				}
+				"openclaw": ["@openclaw/discord@2026.7.1"],
+				"npm": ["@openai/codex@0.139.0"]
 			},
 			"repository": "ghcr.io/shravansunder/agent-vm-managed-openclaw-gateway-base",
 			"tag": "2026.05.27.1"

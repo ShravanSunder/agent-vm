@@ -131,9 +131,11 @@ function createTestManagedImageRelease(): ManagedImageRelease {
 	return {
 		baseImages: {
 			'openclaw-gateway': {
+				openclawPackageVersion: '2026.6.8',
+				openclawPluginList: ['@openclaw/codex', '@openclaw/discord', '@openclaw/diagnostics-otel'],
 				packageOverrides: {
 					npm: ['@openai/codex@0.139.0'],
-					openclaw: ['openclaw@2026.6.8', '@openclaw/codex@2026.6.8'],
+					openclaw: ['@openclaw/discord@2026.6.8'],
 					pnpm: { undici: '8.5.0' },
 				},
 				repository: 'ghcr.io/shravansunder/agent-vm-managed-openclaw-gateway-base',
@@ -634,7 +636,9 @@ describe('runBuildCommand', () => {
 			'RUN apt-get update && apt-get install -y --no-install-recommends "ca-certificates"',
 		);
 		expect(generatedDockerfile).toContain('WORKDIR /opt/openclaw-runtime-packages');
-		expect(generatedDockerfile).toContain('"@openclaw/discord": "2026.5.7"');
+		expect(generatedDockerfile).toContain(
+			"openclaw plugins install 'npm:@openclaw/discord@2026.5.7' --pin",
+		);
 		expect(generatedDockerfile).toContain('"openclaw": "2026.6.8"');
 		expect(generatedDockerfile).toContain('"undici": "8.5.0"');
 		expect(generatedDockerfile).toContain('RUN pnpm install --prod --ignore-scripts');
@@ -728,7 +732,9 @@ describe('runBuildCommand', () => {
 		expect(outputLines[0]).toContain(
 			'overrides undici@8.5.0[managed-images.json/packageOverrides.pnpm]',
 		);
-		expect(outputLines[0]).toContain('discord@2026.6.8[managed-default]');
+		expect(outputLines[0]).toContain(
+			'discord@2026.6.8[managed-images.json/packageOverrides.openclaw]',
+		);
 		expect(outputLines[0]).toContain(
 			'npm @openai/codex@0.139.0[managed-images.json/packageOverrides.npm]',
 		);
@@ -748,7 +754,7 @@ describe('runBuildCommand', () => {
 				schemaVersion: 1,
 				extraAptPackages: [],
 				packageOverrides: {
-					openclaw: ['openclaw@2026.5.7', '@openclaw/discord@2026.5.2'],
+					openclaw: ['@openclaw/discord@2026.5.2'],
 				},
 				runAfterBase: [],
 			}),
@@ -810,7 +816,7 @@ describe('runBuildCommand', () => {
 
 		expect(outputLines).toHaveLength(1);
 		expect(outputLines[0]).not.toContain('\n');
-		expect(outputLines[0]).toContain('warnings 2');
+		expect(outputLines[0]).toContain('warnings 1');
 		expect(outputLines[0]).toContain('discord@2026.5.2[overlay.jsonc/packageOverrides.openclaw]');
 		expect(outputLines[0]).not.toContain('OpenClaw package versions differ');
 	});
@@ -884,16 +890,18 @@ describe('runBuildCommand', () => {
 		const generatedDockerfile = fs.readFileSync(dockerBuilds[0]?.dockerfilePath ?? '', 'utf8');
 		expect(generatedDockerfile).toContain('WORKDIR /opt/openclaw-runtime-packages');
 		expect(generatedDockerfile).toContain('"openclaw": "2026.6.8"');
-		expect(generatedDockerfile).toContain('"@openclaw/codex": "2026.6.8"');
-		expect(generatedDockerfile).toContain('"@openclaw/discord": "2026.6.8"');
+		expect(generatedDockerfile).toContain("openclaw plugins install 'npm:@openclaw/codex' --pin");
+		expect(generatedDockerfile).toContain(
+			"openclaw plugins install 'npm:@openclaw/discord@2026.6.8' --pin",
+		);
 		expect(generatedDockerfile).toContain('"undici": "8.5.0"');
 		expect(generatedDockerfile).toContain('RUN pnpm install --prod --ignore-scripts');
 		expect(generatedDockerfile).toContain(
-			'ln -sfn /opt/openclaw-runtime-packages/node_modules/@openclaw/discord "$global_package_root/@openclaw/discord"',
+			'ln -sfn "$plugin_package_root" "$global_package_root/@openclaw/discord"',
 		);
 	});
 
-	it('does not add diagnostics OTEL OpenClaw package without accepted zone telemetry', async () => {
+	it('installs listed diagnostics OTEL OpenClaw package without accepted zone telemetry', async () => {
 		const temporaryDirectory = createTemporaryDirectory();
 		const gatewayConfigDirectory = path.join(temporaryDirectory, 'config', 'gateways', 'sunfam');
 		fs.mkdirSync(gatewayConfigDirectory, { recursive: true });
@@ -963,12 +971,14 @@ describe('runBuildCommand', () => {
 		const generatedDockerfile = fs.readFileSync(dockerBuilds[0]?.dockerfilePath ?? '', 'utf8');
 		expect(generatedDockerfile).toContain('WORKDIR /opt/openclaw-runtime-packages');
 		expect(generatedDockerfile).toContain('"openclaw": "2026.6.8"');
-		expect(generatedDockerfile).toContain('"@openclaw/codex": "2026.6.8"');
-		expect(generatedDockerfile).not.toContain('"@openclaw/diagnostics-otel": "2026.6.8"');
+		expect(generatedDockerfile).toContain("openclaw plugins install 'npm:@openclaw/codex' --pin");
+		expect(generatedDockerfile).toContain(
+			"openclaw plugins install 'npm:@openclaw/diagnostics-otel' --pin",
+		);
 		expect(generatedDockerfile).toContain('"undici": "8.5.0"');
 		expect(generatedDockerfile).toContain('RUN pnpm install --prod --ignore-scripts');
-		expect(generatedDockerfile).not.toContain(
-			'ln -sfn /opt/openclaw-runtime-packages/node_modules/@openclaw/diagnostics-otel "$global_package_root/@openclaw/diagnostics-otel"',
+		expect(generatedDockerfile).toContain(
+			'ln -sfn "$plugin_package_root" "$global_package_root/@openclaw/diagnostics-otel"',
 		);
 		expect(generatedDockerfile).not.toContain('openclaw-diagnostics-otel.tgz');
 		expect(generatedDockerfile).not.toContain(
@@ -1044,13 +1054,15 @@ describe('runBuildCommand', () => {
 		);
 
 		const generatedDockerfile = fs.readFileSync(dockerBuilds[0]?.dockerfilePath ?? '', 'utf8');
-		expect(generatedDockerfile).toContain('"@openclaw/diagnostics-otel": "2026.6.8"');
 		expect(generatedDockerfile).toContain(
-			'ln -sfn /opt/openclaw-runtime-packages/node_modules/@openclaw/diagnostics-otel "$global_package_root/@openclaw/diagnostics-otel"',
+			"openclaw plugins install 'npm:@openclaw/diagnostics-otel' --pin",
+		);
+		expect(generatedDockerfile).toContain(
+			'ln -sfn "$plugin_package_root" "$global_package_root/@openclaw/diagnostics-otel"',
 		);
 	});
 
-	it('does not add disabled OpenClaw channel packages', async () => {
+	it('installs listed OpenClaw channel packages when a channel is disabled', async () => {
 		const temporaryDirectory = createTemporaryDirectory();
 		const gatewayConfigDirectory = path.join(temporaryDirectory, 'config', 'gateways', 'sunfam');
 		fs.mkdirSync(gatewayConfigDirectory, { recursive: true });
@@ -1119,10 +1131,12 @@ describe('runBuildCommand', () => {
 		const generatedDockerfile = fs.readFileSync(dockerBuilds[0]?.dockerfilePath ?? '', 'utf8');
 		expect(generatedDockerfile).toContain('WORKDIR /opt/openclaw-runtime-packages');
 		expect(generatedDockerfile).toContain('"openclaw": "2026.6.8"');
-		expect(generatedDockerfile).toContain('"@openclaw/codex": "2026.6.8"');
+		expect(generatedDockerfile).toContain("openclaw plugins install 'npm:@openclaw/codex' --pin");
 		expect(generatedDockerfile).toContain('"undici": "8.5.0"');
 		expect(generatedDockerfile).toContain('RUN pnpm install --prod --ignore-scripts');
-		expect(generatedDockerfile).not.toContain('@openclaw/discord');
+		expect(generatedDockerfile).toContain(
+			"openclaw plugins install 'npm:@openclaw/discord@2026.6.8' --pin",
+		);
 	});
 
 	it('finds the scaffold root by walking up to config/system.json instead of assuming dockerfile depth', async () => {
