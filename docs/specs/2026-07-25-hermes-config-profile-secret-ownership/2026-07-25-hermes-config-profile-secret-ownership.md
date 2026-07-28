@@ -11,7 +11,7 @@ secret projection, Discord secret custody, and focused proof expectations
 ## Product Intent
 
 One managed Hermes Gateway VM serves the configured `clawfest` and `beta`
-identities through stock Hermes 0.18.2, one existing Agent VM Hermes adapter,
+identities through stock Hermes 0.19.0, one existing Agent VM Hermes adapter,
 and one common Tool Portal service.
 
 Operators author one common non-secret Hermes configuration. Stock Hermes reads
@@ -126,7 +126,7 @@ contract:
   structured RAM input;
 - the use of `/run/agent-vm/managed-gateway` as `HERMES_MANAGED_DIR`; and
 - the `secrets.preserve_existing` authoring and adapter-validation requirement,
-  which does not exist in pinned Hermes 0.18.2.
+  which does not exist in pinned Hermes 0.19.0.
 
 It preserves that specification's Discord custody, finalizable-memory
 bootstrap, exact RAM `.env` shadows, source-environment removal, direct
@@ -143,8 +143,9 @@ mount behavior is used.
 
 ## Exact Upstream Constraints
 
-The managed Hermes image pins `hermes-agent[messaging]==0.18.2`, corresponding
-to upstream tag `v2026.7.7.2`.
+The managed Hermes image pins `hermes-agent[messaging]==0.19.0`, corresponding
+to upstream tag `v2026.7.20` and release commit
+`3ef6bbd201263d354fd83ec55b3c306ded2eb72a`.
 
 That release establishes:
 
@@ -169,12 +170,21 @@ That release establishes:
 8. Most gateway configuration consumers use the native managed overlay, but
    three pinned `gateway.run` readers bypass it: fallback credential resolution,
    fallback model-chain loading, and provider-routing loading.
-9. `secrets.preserve_existing` is not implemented in Hermes 0.18.2.
+9. `GatewayRunner.__init__()` calls `load_gateway_config_for_runner()`. With
+   multiplexing enabled, pinned Hermes reloads stock `load_gateway_config()`
+   inside the root/default `_profile_runtime_scope`. Root/default intentionally
+   has no `.env`, so that scoped reload cannot see the process-only
+   `API_SERVER_KEY` required by its API/health listener.
+10. `secrets.preserve_existing` is not implemented in Hermes 0.19.0.
 
 Agent VM must preserve these constraints rather than emulate Hermes config or
 launch another framework process. The existing adapter may correct only the
-three pinned managed-policy read gaps through the upstream managed-overlay
-helper and stock parsers.
+three pinned managed-policy direct-read gaps through the upstream
+managed-overlay helper and stock parsers, plus replace
+`load_gateway_config_for_runner` with one unscoped call to stock
+`load_gateway_config()` for root/default process startup. That bounded reload
+correction preserves stock managed-overlay parsing, root/default primary
+ownership, and named-profile runtime `SecretScope`s.
 
 ## Authored Configuration Contract
 
@@ -443,7 +453,7 @@ Agent VM lifecycle                    Agent VM controller
 existing Agent VM Hermes adapter
   owns:
     pre-start named-profile admission
-    pinned Hermes 0.18.2 managed-policy read-gap correction
+    pinned Hermes 0.19.0 three-read-gap and root-readiness reload correction
     exact assigned profile RAM .env materialization
     source environment cleanup
   does not own:
@@ -452,7 +462,7 @@ existing Agent VM Hermes adapter
     provider raw values, or durable state
                           |
                           v
-stock Hermes 0.18.2
+stock Hermes 0.19.0
   owns:
     managed-config precedence
     native root/profile config parsing
@@ -540,7 +550,7 @@ placeholders participate in profile `.env` lookup.
 
 ## Hermes Configuration Admission
 
-Before Gateway startup, Agent VM applies one Hermes-0.18.2-pinned admission
+Before Gateway startup, Agent VM applies one Hermes-0.19.0-pinned admission
 contract to the deployment-authored common `config.yaml` and the root/default
 and admitted named native-home `config.yaml` files:
 
@@ -577,9 +587,9 @@ sanitizes, migrates, or deletes configuration or state. If this inventory
 cannot enforce the boundary without expanding into upstream configuration
 semantics, implementation must stop and reconverge.
 
-## Pinned Hermes 0.18.2 Read-Gap Correction
+## Pinned Hermes 0.19.0 Read-Gap And Root-Readiness Correction
 
-The existing Agent VM Hermes adapter installs two temporary, fail-closed
+The existing Agent VM Hermes adapter installs three temporary, fail-closed
 bindings around stock `run_gateway()`:
 
 1. The module-global `gateway.run.get_fallback_chain` binding applies upstream
@@ -589,12 +599,21 @@ bindings around stock `run_gateway()`:
 2. `GatewayRunner._load_provider_routing` reads through the pinned stock
    `gateway.run._load_gateway_config()` raw-effective-config helper and returns
    only its `provider_routing` mapping.
+3. The module-global `gateway.run.load_gateway_config_for_runner` binding
+   delegates once to pinned stock `gateway.config.load_gateway_config()`. This
+   avoids only the root/default multiplex reload inside
+   `_profile_runtime_scope`, so process-only `API_SERVER_KEY` remains visible
+   while the same stock loader still applies managed configuration.
+   Named-profile runtime scopes and profile `SecretScope` resolution are
+   unchanged.
 
-The adapter restores both original bindings on every normal close or failure
-path. Startup fails closed when the pinned targets are absent, changed, or not
-callable. The correction does not implement merge semantics, copy config, add
-an authority, or change upstream Hermes; it directs the three known bypasses
-through upstream's native managed overlay.
+The adapter restores all three original bindings on every normal close or
+failure path. Startup fails closed when the pinned targets are absent, changed,
+or not callable. The correction does not implement merge semantics, copy
+config, add an authority, persist a secret, or change upstream Hermes; it
+directs the three known raw-config bypasses through upstream's native managed
+overlay and corrects only the root/default runner-config reload required for
+process-owned API/health readiness.
 
 ## Secret Custody Contract
 
@@ -736,12 +755,16 @@ legacy `gateway.json` is forbidden in every admitted home.
 R6. Root/default alone owns the process-level Agent VM API/health listener and
 starts no Discord adapter. Named profiles start no port-binding platform, and
 neither common nor durable profile-authored config contains a port-binding
-platform, including webhook.
+platform, including webhook. The pinned bootstrap binding performs
+root/default's initial stock gateway-config load outside a profile
+`SecretScope` so the process-only `API_SERVER_KEY` remains visible; it does not
+alter named-profile `SecretScope`s or listener policy.
 
 R7. Common model and fallback policy is effective for every configured profile
 through stock Hermes managed-config precedence. The existing adapter corrects
-only the three pinned Hermes 0.18.2 fallback/provider-routing read gaps and
-restores its bindings on every exit path.
+only the three pinned Hermes 0.19.0 fallback/provider-routing read gaps plus the
+single root/default `load_gateway_config_for_runner` readiness seam and
+restores all three bindings on every exit path.
 
 R8. Provider and application credentials remain HTTP-mediated and never enter
 Hermes config, process environment, state, or profile files as raw values. Each
@@ -837,12 +860,15 @@ Planning must operationalize only the proof needed for these requirements:
   every created shadow after partial failure, and does not start stock Hermes
   after any failed projection;
 - pinned adapter proof demonstrates the two fallback readers and provider
-  routing consume the upstream managed overlay, original bindings are restored
-  after success and failure, and changed/absent pinned targets fail closed;
-- exact Hermes 0.18.2 loading proves root/default and both named profiles see
+  routing consume the upstream managed overlay; the root-runner binding
+  delegates exactly once to stock `load_gateway_config()`, preserves
+  process-only `API_SERVER_KEY` without a root `.env`, and leaves named-profile
+  `SecretScope`s unchanged; all three original bindings are restored after
+  success and failure, and changed/absent pinned targets fail closed;
+- exact Hermes 0.19.0 loading proves root/default and both named profiles see
   the common model, fallback, provider-routing, and plugin policy while
-  retaining distinct non-secret local leaves and only root/default owns
-  API/health;
+  retaining distinct non-secret local leaves; root/default alone loads the
+  process-owned API key and owns API/health;
 - one live Hermes acceptance proves both Discord profiles connect with their
   assigned identities, root/default has no Discord connection, each profile
   initiates a uniquely marked provider-authenticated turn through its real
@@ -1016,8 +1042,9 @@ Stop before implementation expands the design if:
   host-directory mount without exposing files beyond the dedicated config
   directory;
 - common fallback loading still bypasses the exact managed config after the
-  two bounded fallback bindings, or provider routing still bypasses the stock
-  managed loader after its bounded correction;
+  two bounded fallback readers, provider routing still bypasses the stock
+  managed loader after its bounded correction, or root/default API readiness
+  requires broader behavior than the bounded runner-config reload correction;
 - durable-config admission requires a generic Hermes parser, value scanner,
   sanitizer, or reproduction of upstream configuration semantics;
 - root/default attempts to start Discord without a token, or a named secondary
@@ -1054,15 +1081,18 @@ Local source:
 Exact upstream release:
 
 - `NousResearch/hermes-agent`
-- tag `v2026.7.7.2`
-- commit `9de9c25f620ff7f1ce0fd5457d596052d5159596`
-- package version `0.18.2`
+- tag `v2026.7.20`
+- commit `3ef6bbd201263d354fd83ec55b3c306ded2eb72a`
+- package version `0.19.0`
 - decisive files: `hermes_cli/managed_scope.py`,
   `hermes_cli/profiles.py`, `hermes_constants.py`, `gateway/config.py`,
   `gateway/run.py`, `agent/secret_scope.py`, and
   `hermes_cli/fallback_config.py`;
-- pinned direct-read seams: `gateway/config.py:994-1005`,
-  `gateway/run.py:1949-1954`, and `gateway/run.py:4961-4984`.
+- pinned seams: `gateway.config.load_gateway_config`, the API-server
+  environment bridge, `gateway.run.load_gateway_config_for_runner`,
+  `gateway.run._load_gateway_config`, `GatewayRunner._load_provider_routing`,
+  `_load_fallback_model`, `_refresh_fallback_model`, and
+  `agent.secret_scope._profile_runtime_scope`/`get_secret`.
 
 ## Open Decisions
 
