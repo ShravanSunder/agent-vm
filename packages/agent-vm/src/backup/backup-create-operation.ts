@@ -4,10 +4,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
-import {
-	getZoneGitStatus,
-	type ZoneGitReadConfig,
-} from '../controller/zone-git/zone-git-operations.js';
 import { buildBackupPaths } from './backup-archive-layout.js';
 import type { BackupEncryption, BackupResult } from './backup-manager.js';
 
@@ -17,21 +13,17 @@ export async function createEncryptedBackup(options: {
 	readonly backupDir: string;
 	readonly cacheDir: string;
 	readonly encryption: BackupEncryption;
-	readonly runtimeDir: string;
+	readonly zoneRuntimeDir: string;
 	readonly stateDir: string;
 	readonly zoneFilesDir?: string;
-	readonly zoneGit?: ZoneGitReadConfig;
 	readonly zoneId: string;
 }): Promise<BackupResult> {
 	assertRuntimeDirOutsideBackupInputs({
 		cacheDir: options.cacheDir,
-		runtimeDir: options.runtimeDir,
+		zoneRuntimeDir: options.zoneRuntimeDir,
 		stateDir: options.stateDir,
 		...(options.zoneFilesDir !== undefined ? { zoneFilesDir: options.zoneFilesDir } : {}),
 	});
-	if (options.zoneGit) {
-		await assertZoneGitReadyForBackup(options.zoneGit);
-	}
 	const timestamp = new Date().toISOString().replace(/[:.]/gu, '-');
 	const backupPaths = buildBackupPaths({
 		backupDir: options.backupDir,
@@ -43,7 +35,12 @@ export async function createEncryptedBackup(options: {
 
 	const stagingDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'backup-stage-'));
 	try {
-		await execFileAsync('cp', ['-a', options.stateDir, path.join(stagingDirectory, 'state')]);
+		const stagedStateDirectory = path.join(stagingDirectory, 'state');
+		await copyStateDirectoryExcludingNestedBackupDirectory({
+			backupDir: options.backupDir,
+			stagedStateDirectory,
+			stateDir: options.stateDir,
+		});
 		if (options.zoneFilesDir !== undefined) {
 			await execFileAsync('cp', [
 				'-a',
@@ -80,32 +77,34 @@ export async function createEncryptedBackup(options: {
 	};
 }
 
-async function assertZoneGitReadyForBackup(zoneGit: ZoneGitReadConfig): Promise<void> {
-	const status = await getZoneGitStatus(zoneGit);
-	const violations: string[] = [];
-	if (!status.initialized) {
-		violations.push(
-			`zone Git is configured but not initialized. Run agent-vm zone-git init --zone ${zoneGit.zoneId} before backup.`,
-		);
+async function copyStateDirectoryExcludingNestedBackupDirectory(options: {
+	readonly backupDir: string;
+	readonly stagedStateDirectory: string;
+	readonly stateDir: string;
+}): Promise<void> {
+	const nestedBackupRelativePath = path.relative(
+		path.resolve(options.stateDir),
+		path.resolve(options.backupDir),
+	);
+	const nestedBackupDirectory =
+		nestedBackupRelativePath !== '' &&
+		nestedBackupRelativePath !== '..' &&
+		!nestedBackupRelativePath.startsWith(`..${path.sep}`) &&
+		!path.isAbsolute(nestedBackupRelativePath)
+			? path.resolve(options.backupDir)
+			: undefined;
+	if (nestedBackupDirectory === undefined) {
+		await execFileAsync('cp', ['-a', options.stateDir, options.stagedStateDirectory]);
+		return;
 	}
-	if (status.dirty) {
-		violations.push(
-			'uncommitted zone Git changes are present. Run git status, git add, and git commit before backup.',
-		);
-	}
-	if (status.aheadOfRemote > 0) {
-		violations.push(
-			`${String(status.aheadOfRemote)} unpushed zone Git commit(s) are present. Run agent-vm zone-git push --zone ${zoneGit.zoneId} before backup.`,
-		);
-	}
-	if (violations.length > 0) {
-		throw new Error(
-			[
-				`Zone '${zoneGit.zoneId}' is not ready for backup:`,
-				...violations.map((item) => `- ${item}`),
-			].join('\n'),
-		);
-	}
+	await fs.cp(options.stateDir, options.stagedStateDirectory, {
+		dereference: false,
+		filter: (sourcePath): boolean =>
+			nestedBackupDirectory === undefined || path.resolve(sourcePath) !== nestedBackupDirectory,
+		preserveTimestamps: true,
+		recursive: true,
+		verbatimSymlinks: true,
+	});
 }
 
 function isSameOrDescendantPath(childPath: string, parentPath: string): boolean {
@@ -131,26 +130,26 @@ function assertNoPathOverlap(options: {
 
 function assertRuntimeDirOutsideBackupInputs(options: {
 	readonly cacheDir: string;
-	readonly runtimeDir: string;
+	readonly zoneRuntimeDir: string;
 	readonly stateDir: string;
 	readonly zoneFilesDir?: string;
 }): void {
 	assertNoPathOverlap({
-		firstLabel: 'runtimeDir',
-		firstPath: options.runtimeDir,
+		firstLabel: 'zoneRuntimeDir',
+		firstPath: options.zoneRuntimeDir,
 		secondLabel: 'stateDir',
 		secondPath: options.stateDir,
 	});
 	assertNoPathOverlap({
-		firstLabel: 'runtimeDir',
-		firstPath: options.runtimeDir,
+		firstLabel: 'zoneRuntimeDir',
+		firstPath: options.zoneRuntimeDir,
 		secondLabel: 'cacheDir',
 		secondPath: options.cacheDir,
 	});
 	if (options.zoneFilesDir !== undefined) {
 		assertNoPathOverlap({
-			firstLabel: 'runtimeDir',
-			firstPath: options.runtimeDir,
+			firstLabel: 'zoneRuntimeDir',
+			firstPath: options.zoneRuntimeDir,
 			secondLabel: 'zoneFilesDir',
 			secondPath: options.zoneFilesDir,
 		});

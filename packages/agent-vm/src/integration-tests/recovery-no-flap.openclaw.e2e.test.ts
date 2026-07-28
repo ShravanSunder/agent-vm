@@ -1,51 +1,49 @@
 /* oxlint-disable eslint/no-await-in-loop -- serialized faults and stability observations are intentional */
 import { randomUUID } from 'node:crypto';
-import fs from 'node:fs/promises';
+import fs, { watch } from 'node:fs/promises';
 import path from 'node:path';
 
+import type { AgentVmHealthEvent, ZoneHealthSnapshot } from '@agent-vm/gateway-lifecycle';
 import {
-	CONTROL_PROTOCOL_VERSION,
-	ControlEnvelopeSchema,
-	type ControlEnvelope,
-} from '@agent-vm/control-protocol-contracts';
-import type { GatewayControlLeaseSnapshot } from '@agent-vm/gateway-control-contracts';
-import {
-	GatewayControlRpcCommandResultMessageSchema,
-	gatewayControlDeliveryPolicyByOperation,
-} from '@agent-vm/gateway-control-contracts';
-import type { ManagedVm } from '@agent-vm/managed-vm';
-import {
-	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV,
-	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_IDENTITIES_ENV,
-	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV,
-	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH,
-	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_SIGNATURE_HEADER,
-	testExports as toolVmWriteReadE2eToolTestExports,
+	AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_ENV,
+	AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_IDENTITIES_ENV,
+	AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_KEY_ENV,
+	AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_PATH,
+	AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_SIGNATURE_HEADER,
+	gatewayRuntimeSandboxWriteReadE2eTestExports,
 } from '@agent-vm/openclaw-agent-vm-plugin';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import type { GatewayControlLeaseRpcOperations } from '../controller/control-session/index.js';
+import {
+	createControllerStateRoot,
+	resolveControllerGatewayStateRoot,
+} from '../controller/durable-state/controller-state-paths.js';
+import {
+	resolveControllerGatewayRecordTargets,
+	type ControllerGatewayRecordTargets,
+} from '../controller/durable-state/controller-state-record-paths.js';
+import {
+	controllerHealthEventLogPath,
+	readDurableHealthEvents,
+} from '../controller/health/durable-health-event-log.js';
 import {
 	loadAllToolVmRuntimeRecords,
 	type ToolVmRuntimeRecord,
 } from '../controller/leases/tool-vm-runtime-record.js';
-import { createOpenClawProcessReliabilityFaultHandler } from '../controller/reliability/testing/openclaw-process-reliability-fault-handler.js';
 import {
-	createOpenClawProcessReliabilityFaultTargetRegistry,
-	type OpenClawProcessReliabilityFaultTargetRegistry,
-	type OpenClawProcessReliabilityFaultTargetSnapshot,
-} from '../controller/reliability/testing/openclaw-process-reliability-fault-target-registry.js';
-import type { ReliabilityFaultApplyRequest } from '../controller/reliability/testing/reliability-test-fault-contracts.js';
+	readManagedGatewaySiblingProcessIdentity,
+	terminateManagedGatewaySibling,
+} from '../controller/reliability/testing/gateway-reliability-fault-adapter.js';
 import {
-	OPENCLAW_PROCESS_RECOVERY_ATTEMPT_WINDOW_MS,
-	OPENCLAW_PROCESS_RECOVERY_COOLDOWN_MS,
-	OPENCLAW_PROCESS_RECOVERY_MAX_ATTEMPTS,
-	OPENCLAW_PROCESS_RECOVERY_STABILITY_HEARTBEATS,
-	OPENCLAW_PROCESS_RECOVERY_STABILITY_MS,
-	OPENCLAW_PROCESS_RECOVERY_STABILITY_OBSERVATIONS,
-	OPENCLAW_PROCESS_RECOVERY_SUCCESS_HISTORY_MS,
-	OPENCLAW_PROCESS_RECOVERY_SUCCESS_LIMIT,
-} from '../controller/zone-runtimes/openclaw-process-recovery.js';
+	gatewayIdentitiesEqual,
+	type GatewayEpochIdentity,
+} from '../controller/vm-ownership/vm-ownership-contracts.js';
+import type { GatewayExpectedAdmissionCohort } from '../gateway/gateway-aggregate-admission-state.js';
+import {
+	loadManagedGatewayRuntimeRecord,
+	type ManagedGatewayRuntimeRecord,
+} from '../gateway/gateway-runtime-record.js';
+import type { GatewayZoneVmOperations } from '../gateway/gateway-zone-support.js';
 import {
 	expectedControlLeaseReliabilityEvidenceWriteKind,
 	hashControlLeaseReliabilityArtifact,
@@ -66,6 +64,10 @@ import {
 import { waitForProtocolRetryInterval, withProtocolDeadline } from './e2e-protocol-wait.js';
 
 const architecture = currentE2eArchitecture();
+type GatewayVmObservationOperations = Pick<
+	GatewayZoneVmOperations,
+	'enableSsh' | 'exec' | 'getHostProcessId' | 'id'
+>;
 const canRunRecoveryNoFlapE2e =
 	process.env.AGENT_VM_OPENCLAW_E2E === '1' && (await canRunManagedVmE2e({ architecture }));
 const describeRecoveryNoFlapE2e = canRunRecoveryNoFlapE2e ? describe : describe.skip;
@@ -85,74 +87,131 @@ const betaIdentity = {
 	sessionKey: 'agent:beta:tool-vm-write-read:recovery-no-flap-beta',
 } as const;
 const configuredProbeIdentities = [mainIdentity, betaIdentity] as const;
+const recoveryGatewayServiceAutoRestart = {
+	channelProviderHealth: {
+		consecutiveFailureThreshold: 3,
+		enabled: true,
+		restartGatewayOnRecoverable: true,
+		restartGatewayOnUnrecoverable: false,
+		transitioningTimeoutMs: 120_000,
+	},
+	cooldownMs: 1,
+	consecutiveFailureThreshold: 1,
+	enabled: true,
+	failedRecoveryResetMs: 24 * 60 * 60 * 1_000,
+	maxConsecutiveFailedRecoveries: 3,
+	restartTimeoutMs: 120_000,
+} as const;
 
 interface ToolVmWriteReadResult {
 	readonly agentId: 'beta' | 'main';
 	readonly marker: string;
 	readonly readBack: string;
-	readonly runtimeId: string;
 }
 
-interface ObservedRecoveryIdentity {
-	readonly processEpoch: string;
-	readonly processId: number;
-	readonly processStartTimeTicks: string;
-	readonly sessionAttachmentGeneration: number;
-	readonly sessionId: string;
+interface ManagedGatewayStartObservation {
+	readonly expectedCohort: GatewayExpectedAdmissionCohort;
+	readonly qemuPid: number;
+	readonly vm: GatewayVmObservationOperations;
 }
+
+interface AdmittedGatewayObservation {
+	readonly gatewayStart: ManagedGatewayStartObservation;
+	readonly runtimeIds: Readonly<Record<'beta' | 'main', string>>;
+	readonly runtimeRecord: ManagedGatewayRuntimeRecord;
+}
+
+class E2eTimeoutError extends Error {}
 
 function isObjectRecord(value: unknown): value is Readonly<Record<string, unknown>> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function isPrivateLeaseSnapshot(value: unknown): value is GatewayControlLeaseSnapshot & {
-	readonly ssh: {
-		readonly host: string;
-		readonly identityPem: string;
-		readonly knownHostsLine: string;
-		readonly port: number;
-		readonly user: string;
-	};
-} {
-	return (
-		isObjectRecord(value) &&
-		typeof value.leaseId === 'string' &&
-		isObjectRecord(value.ssh) &&
-		typeof value.ssh.host === 'string' &&
-		typeof value.ssh.identityPem === 'string' &&
-		typeof value.ssh.knownHostsLine === 'string' &&
-		typeof value.ssh.port === 'number' &&
-		typeof value.ssh.user === 'string'
-	);
+function latestEvents(snapshot: ZoneHealthSnapshot): readonly AgentVmHealthEvent[] {
+	return 'latestEvents' in snapshot ? snapshot.latestEvents : [];
 }
 
-function capturePrivateLeaseSnapshots(
-	operations: GatewayControlLeaseRpcOperations,
-	snapshots: Map<string, GatewayControlLeaseSnapshot>,
-): GatewayControlLeaseRpcOperations {
-	const capture = (result: unknown): void => {
-		if (isPrivateLeaseSnapshot(result)) {
-			snapshots.set(result.leaseId, result);
+function withTimeout<TValue>(
+	promise: Promise<TValue>,
+	timeoutMs: number,
+	message: string,
+): Promise<TValue> {
+	let timeout: ReturnType<typeof setTimeout> | undefined;
+	const timeoutPromise = new Promise<never>((_resolve, reject) => {
+		timeout = setTimeout(() => reject(new E2eTimeoutError(message)), timeoutMs);
+	});
+	return Promise.race([promise, timeoutPromise]).finally(() => {
+		if (timeout !== undefined) clearTimeout(timeout);
+	});
+}
+
+async function readHealthSnapshot(controllerUrl: string): Promise<ZoneHealthSnapshot> {
+	const response = await fetch(
+		`${controllerUrl}/zones/${encodeURIComponent(zoneId)}/health-snapshot`,
+	);
+	if (!response.ok) {
+		throw new Error(`Health snapshot returned HTTP ${String(response.status)}.`);
+	}
+	return (await response.json()) as ZoneHealthSnapshot;
+}
+
+async function waitForGatewayReplacementEvent(options: {
+	readonly controllerUrl: string;
+	readonly oldVmId: string;
+	readonly controllerRuntimeDir: string;
+	readonly timeoutMs: number;
+}): Promise<
+	Extract<AgentVmHealthEvent, { readonly kind: 'gateway-recovery'; readonly result: 'ok' }>
+> {
+	const matches = (
+		event: AgentVmHealthEvent,
+	): event is Extract<
+		AgentVmHealthEvent,
+		{ readonly kind: 'gateway-recovery'; readonly result: 'ok' }
+	> =>
+		event.kind === 'gateway-recovery' &&
+		event.result === 'ok' &&
+		event.action === 'gateway-vm-restart' &&
+		event.oldVmId === options.oldVmId;
+	const eventLogPath = controllerHealthEventLogPath(options.controllerRuntimeDir);
+	await fs.mkdir(path.dirname(eventLogPath), { recursive: true });
+	await fs.appendFile(eventLogPath, '', 'utf8');
+	const watcher = watch(eventLogPath, { persistent: false });
+	const deadlineMs = Date.now() + options.timeoutMs;
+	try {
+		while (true) {
+			const event = (
+				await readDurableHealthEvents({
+					controllerRuntimeDir: options.controllerRuntimeDir,
+				})
+			)
+				.map((record) => record.body)
+				.find(matches);
+			if (event !== undefined) return event;
+			const remainingTimeoutMs = deadlineMs - Date.now();
+			if (remainingTimeoutMs <= 0) break;
+			try {
+				const nextResult = await withTimeout(
+					watcher.next(),
+					remainingTimeoutMs,
+					`Timed out waiting for Gateway replacement of '${options.oldVmId}'.`,
+				);
+				if (nextResult.done === true) break;
+			} catch (error) {
+				if (error instanceof E2eTimeoutError) break;
+				throw error;
+			}
 		}
-	};
-	return {
-		getLease: async (request, options) => {
-			const result = await operations.getLease(request, options);
-			capture(result);
-			return result;
-		},
-		prepareSemanticMutation: async (options) => {
-			const prepared = await operations.prepareSemanticMutation(options);
-			return {
-				...prepared,
-				execute: async (proof) => {
-					const result = await prepared.execute(proof);
-					capture(result);
-					return result;
-				},
-			};
-		},
-	};
+	} finally {
+		await watcher.return?.();
+	}
+	const lastSnapshot = await readHealthSnapshot(options.controllerUrl).catch(() => undefined);
+	const snapshotEvent =
+		lastSnapshot === undefined ? undefined : latestEvents(lastSnapshot).find(matches);
+	if (snapshotEvent !== undefined) return snapshotEvent;
+	throw new Error(
+		`Timed out waiting for Gateway replacement of '${options.oldVmId}'; last snapshot: ${JSON.stringify(lastSnapshot)}`,
+	);
 }
 
 function parseWriteReadResult(value: unknown): ToolVmWriteReadResult {
@@ -163,8 +222,7 @@ function parseWriteReadResult(value: unknown): ToolVmWriteReadResult {
 	if (
 		(details.agentId !== 'main' && details.agentId !== 'beta') ||
 		typeof details.marker !== 'string' ||
-		typeof details.readBack !== 'string' ||
-		typeof details.runtimeId !== 'string'
+		typeof details.readBack !== 'string'
 	) {
 		throw new Error(`Tool VM probe details were malformed: ${JSON.stringify(details)}`);
 	}
@@ -172,8 +230,39 @@ function parseWriteReadResult(value: unknown): ToolVmWriteReadResult {
 		agentId: details.agentId,
 		marker: details.marker,
 		readBack: details.readBack,
-		runtimeId: details.runtimeId,
 	};
+}
+
+async function loadConfiguredToolVmRuntimeRecords(options: {
+	readonly expectedGateway: GatewayEpochIdentity;
+	readonly recordTargets: ControllerGatewayRecordTargets;
+}): Promise<Readonly<Record<'beta' | 'main', ToolVmRuntimeRecord>>> {
+	const results = await loadAllToolVmRuntimeRecords(options.recordTargets.toolLeaseRecords);
+	const parseError = results.find((result) => result.kind === 'parse-error');
+	if (parseError !== undefined) {
+		throw new Error(`Tool VM runtime record failed to parse: ${parseError.path}`);
+	}
+	const records = results
+		.filter((result) => result.kind === 'loaded')
+		.map((result) => result.record)
+		.filter(
+			(record) =>
+				record.zoneId === zoneId &&
+				configuredProbeIdentities.some((identity) => identity.agentId === record.agentId) &&
+				gatewayIdentitiesEqual(record.gateway, options.expectedGateway),
+		);
+	if (records.length !== configuredProbeIdentities.length) {
+		throw new Error(
+			`Expected ${String(configuredProbeIdentities.length)} Tool VM runtime records for Gateway '${options.expectedGateway.gatewayVmId}', found ${String(records.length)}.`,
+		);
+	}
+	const recordsByAgentId = Object.fromEntries(
+		records.map((record) => [record.agentId, record]),
+	) as Partial<Record<'beta' | 'main', ToolVmRuntimeRecord>>;
+	if (recordsByAgentId.main === undefined || recordsByAgentId.beta === undefined) {
+		throw new Error('Expected one Tool VM runtime record per configured agent.');
+	}
+	return { beta: recordsByAgentId.beta, main: recordsByAgentId.main };
 }
 
 async function callWriteReadProbe(options: {
@@ -187,24 +276,21 @@ async function callWriteReadProbe(options: {
 	}
 	const bodyText = JSON.stringify({
 		agentId: options.identity.agentId,
-		filePath: `.agent-vm/recovery-no-flap-${randomUUID()}.txt`,
+		filePath: `agent-vm-e2e-recovery-no-flap-${randomUUID()}.txt`,
 		marker: options.marker,
-		scenario: 'write-read',
+		action: 'write-read',
 		sessionKey: options.identity.sessionKey,
 	});
 	const response = await withProtocolDeadline(
 		fetch(
-			`http://${ingress.host}:${String(ingress.port)}${AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH}`,
+			`http://${ingress.host}:${String(ingress.port)}${AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_PATH}`,
 			{
 				body: bodyText,
 				headers: {
 					authorization: `Bearer ${gatewayToken}`,
 					'content-type': 'application/json',
-					[AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_SIGNATURE_HEADER]:
-						toolVmWriteReadE2eToolTestExports.signToolVmWriteReadE2eRouteBody(
-							bodyText,
-							probeSigningKey,
-						),
+					[AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_SIGNATURE_HEADER]:
+						gatewayRuntimeSandboxWriteReadE2eTestExports.signBody(bodyText, probeSigningKey),
 				},
 				method: 'POST',
 			},
@@ -219,217 +305,73 @@ async function callWriteReadProbe(options: {
 	return parseWriteReadResult(responseBody);
 }
 
-async function readCurrentRecords(
-	stateDirectory: string,
-): Promise<Map<string, ToolVmRuntimeRecord>> {
-	const results = await loadAllToolVmRuntimeRecords(stateDirectory);
-	const parseError = results.find((result) => result.kind === 'parse-error');
-	if (parseError !== undefined) {
-		throw new Error(`Tool VM runtime record failed to parse: ${parseError.path}`);
-	}
-	return new Map(
-		results
-			.filter((result) => result.kind === 'loaded')
-			.map((result) => [result.record.leaseId, result.record] as const),
-	);
-}
-
-async function readOpenClawProcessIdentity(gatewayVm: ManagedVm): Promise<{
-	readonly processId: number;
-	readonly startTimeTicks: string;
-}> {
-	const result = await gatewayVm.exec(`
-set -eu
-port_hex="$(printf '%04X' 18789)"
-socket_inode="$(awk -v port=":$port_hex" '$2 ~ port && $4 == "0A" { print $10; exit }' /proc/net/tcp /proc/net/tcp6 2>/dev/null || true)"
-gateway_pid=""
-if [ -n "$socket_inode" ]; then
-  for fd in /proc/[0-9]*/fd/*; do
-    target="$(readlink "$fd" 2>/dev/null || true)"
-    if [ "$target" = "socket:[$socket_inode]" ]; then
-      gateway_pid="$(echo "$fd" | cut -d / -f 3)"
-      break
-    fi
-  done
-fi
-test -n "$gateway_pid"
-start_time_ticks="$(awk '{ print $22 }' "/proc/$gateway_pid/stat")"
-printf '%s %s\\n' "$gateway_pid" "$start_time_ticks"
-`);
-	if (result.exitCode !== 0) {
-		throw new Error(`OpenClaw process identity read failed: ${result.stderr}`);
-	}
-	const [processIdText, startTimeTicks] = result.stdout.trim().split(/\s+/u);
-	const processId = Number(processIdText);
-	if (!Number.isSafeInteger(processId) || processId <= 0 || startTimeTicks === undefined) {
-		throw new Error(`OpenClaw process identity output was invalid: ${result.stdout}`);
-	}
-	return { processId, startTimeTicks };
-}
-
-async function runStrictSshCommand(options: {
-	readonly command: string;
-	readonly gatewayVm: ManagedVm;
-	readonly snapshot: GatewayControlLeaseSnapshot & {
-		readonly ssh: {
-			readonly host: string;
-			readonly identityPem: string;
-			readonly knownHostsLine: string;
-			readonly port: number;
-			readonly user: string;
-		};
-	};
-}): Promise<Awaited<ReturnType<ManagedVm['exec']>>> {
-	const identityBase64 = Buffer.from(options.snapshot.ssh.identityPem).toString('base64');
-	const knownHostsBase64 = Buffer.from(`${options.snapshot.ssh.knownHostsLine.trim()}\n`).toString(
-		'base64',
-	);
-	const commandBase64 = Buffer.from(options.command).toString('base64');
-	return await options.gatewayVm.exec(`set -eu
-scratch_dir=/tmp/recovery-no-flap-ssh-${randomUUID()}
-mkdir -p "$scratch_dir"
-printf %s ${identityBase64} | base64 -d > "$scratch_dir/identity"
-printf %s ${knownHostsBase64} | base64 -d > "$scratch_dir/known_hosts"
-chmod 600 "$scratch_dir/identity" "$scratch_dir/known_hosts"
-remote_command="$(printf %s ${commandBase64} | base64 -d)"
-ssh -4 -p ${String(options.snapshot.ssh.port)} -i "$scratch_dir/identity" \\
-  -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$scratch_dir/known_hosts" \\
-  -o UpdateHostKeys=no -o BatchMode=yes -o ConnectTimeout=10 \\
-  ${options.snapshot.ssh.user}@${options.snapshot.ssh.host} "$remote_command"
-result=$?
-rm -f "$scratch_dir/identity" "$scratch_dir/known_hosts"
-rmdir "$scratch_dir"
-exit "$result"`);
-}
-
-function currentAcceptedSessionIdentity(
-	controlSession: NonNullable<Awaited<ReturnType<typeof startGatewayZone>>['controlSession']>,
-): { readonly attachmentGeneration: number; readonly sessionId: string } {
-	const diagnostics = controlSession.getDiagnostics();
-	const attachmentGeneration = diagnostics.attachmentGeneration;
-	const sessionId = diagnostics.lastHelloResponse?.sessionId;
-	if (
-		attachmentGeneration === undefined ||
-		sessionId === undefined ||
-		diagnostics.lastHelloResponse?.outcome !== 'accepted' ||
-		!diagnostics.connected ||
-		!diagnostics.ready
-	) {
-		throw new Error(`Expected accepted control session: ${JSON.stringify(diagnostics)}`);
-	}
-	return { attachmentGeneration, sessionId };
-}
-
-async function waitForSuccessor(options: {
-	readonly gatewayVm: ManagedVm;
-	readonly previousProcessEpoch: string;
-	readonly previousSessionId: string;
-	readonly registry: OpenClawProcessReliabilityFaultTargetRegistry;
-}): Promise<{
-	readonly identity: ObservedRecoveryIdentity;
-	readonly target: OpenClawProcessReliabilityFaultTargetSnapshot;
-}> {
-	const deadlineMs = Date.now() + 120_000;
-	while (Date.now() < deadlineMs) {
-		const target = options.registry.getCurrent();
-		const diagnostics = target?.controlSession?.getDiagnostics();
-		const attachmentGeneration = diagnostics?.attachmentGeneration;
-		const sessionId = diagnostics?.lastHelloResponse?.sessionId;
-		if (
-			target !== undefined &&
-			target.processEpoch !== options.previousProcessEpoch &&
-			attachmentGeneration !== undefined &&
-			sessionId !== undefined &&
-			sessionId !== options.previousSessionId &&
-			diagnostics?.lastHelloResponse?.outcome === 'accepted' &&
-			diagnostics.connected &&
-			diagnostics.ready
-		) {
-			const process = await readOpenClawProcessIdentity(options.gatewayVm);
-			return {
-				identity: {
-					processEpoch: target.processEpoch,
-					processId: process.processId,
-					processStartTimeTicks: process.startTimeTicks,
-					sessionAttachmentGeneration: attachmentGeneration,
-					sessionId,
-				},
-				target,
-			};
-		}
-		await waitForProtocolRetryInterval(500);
-	}
-	throw new Error('Timed out waiting for a distinct accepted OpenClaw process/session successor.');
-}
-
-function createTerminationRequest(
-	target: OpenClawProcessReliabilityFaultTargetSnapshot,
-	recoveryIndex: number,
-): ReliabilityFaultApplyRequest {
-	const issuedAtMs = Date.now();
-	return {
-		action: 'terminate-owned-gateway-service',
-		actionId: randomUUID(),
-		authorityId: randomUUID(),
-		expiresAtMs: issuedAtMs + 30_000,
-		fences: {
-			controller: target.controllerGeneration,
-			controlSession: { generation: 0, id: 'neutral-control-session' },
-			gateway: target.gatewayGeneration,
-			leaseLeaf: { generation: 0, id: 'neutral-lease-leaf' },
-			openClawProcess: target.openClawProcessGeneration,
-		},
-		issuedAtMs,
-		nonce: randomUUID().replaceAll('-', ''),
-		runId: `recovery-no-flap-e2e-${String(recoveryIndex)}`,
-		schemaVersion: 1,
-		target: target.target,
-	};
-}
-
-async function sendControlPing(options: {
-	readonly sequence: number;
-	readonly target: OpenClawProcessReliabilityFaultTargetSnapshot;
-}): Promise<void> {
-	const controlSession = options.target.controlSession;
-	if (controlSession === undefined) {
-		throw new Error('Expected Gateway control session identity for stability ping.');
-	}
-	const diagnostics = controlSession.getDiagnostics();
-	const hello = diagnostics.lastHelloResponse;
-	if (hello === undefined || hello.outcome !== 'accepted') {
-		throw new Error(
-			`Expected accepted control session before ping: ${JSON.stringify(diagnostics)}`,
-		);
-	}
-	const envelope: ControlEnvelope = ControlEnvelopeSchema.parse({
-		bootId: options.target.processEpoch,
-		connectionId: hello.connectionId,
-		controllerEpoch: hello.controllerEpoch,
-		createdAtMs: Date.now(),
-		deliveryPolicy: gatewayControlDeliveryPolicyByOperation.control_ping,
-		domain: 'gateway_control',
-		kind: 'command',
-		messageId: randomUUID(),
-		operation: 'control_ping',
-		peerId: `gateway-${options.target.gateway.zoneId}`,
-		protocolVersion: CONTROL_PROTOCOL_VERSION,
-		sequence: options.sequence,
-		sessionId: hello.sessionId,
-		zoneId: options.target.gateway.zoneId,
+async function killFrameworkSibling(start: ManagedGatewayStartObservation): Promise<void> {
+	const frameworkPort = start.expectedCohort.ingressIntent.frameworkRootRoute.guestPort;
+	const identity = await readManagedGatewaySiblingProcessIdentity({
+		gatewayVm: start.vm,
+		guestPort: frameworkPort,
+		role: 'framework',
 	});
-	const result = GatewayControlRpcCommandResultMessageSchema.parse(
-		await controlSession.emitApplicationMessage(
-			envelope,
-			{ kind: 'command', operation: 'control_ping' },
-			{ kind: 'command', operation: 'control_ping', payload: {} },
+	await terminateManagedGatewaySibling({ gatewayVm: start.vm, identity, role: 'framework' });
+}
+
+function expectFreshManagedGatewayCohort(options: {
+	readonly predecessor: ManagedGatewayStartObservation;
+	readonly successor: ManagedGatewayStartObservation;
+}): void {
+	expect(options.successor.vm.id).not.toBe(options.predecessor.vm.id);
+	expect(options.successor.expectedCohort.fence.gatewayEpoch).not.toBe(
+		options.predecessor.expectedCohort.fence.gatewayEpoch,
+	);
+	expect(options.successor.expectedCohort.frameworkIdentity.frameworkEpoch).not.toBe(
+		options.predecessor.expectedCohort.frameworkIdentity.frameworkEpoch,
+	);
+	expect(options.successor.expectedCohort.toolPortalIdentity.processEpoch).not.toBe(
+		options.predecessor.expectedCohort.toolPortalIdentity.processEpoch,
+	);
+	expect(options.successor.expectedCohort.toolPortalIdentity.runtimeEpoch).not.toBe(
+		options.predecessor.expectedCohort.toolPortalIdentity.runtimeEpoch,
+	);
+}
+
+async function observeAggregateAdmission(options: {
+	readonly gatewayStart: ManagedGatewayStartObservation;
+	readonly harness: E2eHarnessRuntime;
+	readonly markerPrefix: string;
+	readonly recordTargets: ControllerGatewayRecordTargets;
+}): Promise<AdmittedGatewayObservation> {
+	const runtimeRecord = await loadManagedGatewayRuntimeRecord(
+		options.recordTargets.managedGatewayRuntimeRecord,
+	);
+	if (runtimeRecord === null) {
+		throw new Error('Managed Gateway aggregate admission omitted its runtime record.');
+	}
+	expect(runtimeRecord.vmId).toBe(options.gatewayStart.vm.id);
+	expect(runtimeRecord.expectedCohort).toEqual(options.gatewayStart.expectedCohort);
+	expect(options.gatewayStart.expectedCohort.fence.vmId).toBe(options.gatewayStart.vm.id);
+	const probes = await Promise.all(
+		configuredProbeIdentities.map(
+			async (identity) =>
+				await callWriteReadProbe({
+					harness: options.harness,
+					identity,
+					marker: `${options.markerPrefix}_${identity.agentId}_${randomUUID()}`,
+				}),
 		),
 	);
-	expect(result).toMatchObject({
-		kind: 'command_result',
-		operation: 'control_ping',
-		payload: { responseToMessageId: envelope.messageId, result: 'ok' },
+	for (const probe of probes) expect(probe.readBack).toBe(probe.marker);
+	const toolVmRecords = await loadConfiguredToolVmRuntimeRecords({
+		expectedGateway: runtimeRecord.gateway,
+		recordTargets: options.recordTargets,
 	});
+	const runtimeIds = Object.fromEntries(
+		Object.values(toolVmRecords).map((record) => [record.agentId, record.leaseId]),
+	) as Readonly<Record<'beta' | 'main', string>>;
+	expect(new Set(Object.values(runtimeIds)).size).toBe(configuredProbeIdentities.length);
+	for (const record of Object.values(toolVmRecords)) {
+		expect(record.gateway.gatewayVmId).toBe(options.gatewayStart.vm.id);
+	}
+	return { gatewayStart: options.gatewayStart, runtimeIds, runtimeRecord };
 }
 
 async function readPackageIdentity(): Promise<{
@@ -453,13 +395,10 @@ async function readPackageIdentity(): Promise<{
 	};
 }
 
-describeRecoveryNoFlapE2e('e2e: repeated process recovery followed by no-flap window', () => {
-	let gatewayStart: Awaited<ReturnType<typeof startGatewayZone>> | undefined;
+describeRecoveryNoFlapE2e('e2e: repeated whole-Gateway recovery followed by no-flap window', () => {
 	let harness: E2eHarnessRuntime | undefined;
 	let project: OpenClawE2eProject | undefined;
-	let registry: OpenClawProcessReliabilityFaultTargetRegistry | undefined;
-	const leaseSnapshots = new Map<string, GatewayControlLeaseSnapshot>();
-	const publishedTargets: OpenClawProcessReliabilityFaultTargetSnapshot[] = [];
+	const gatewayStarts: ManagedGatewayStartObservation[] = [];
 
 	beforeAll(async () => {
 		const repoRoot = path.resolve(process.cwd());
@@ -475,9 +414,9 @@ describeRecoveryNoFlapE2e('e2e: repeated process recovery followed by no-flap wi
 		}
 		const openClawGateway = systemZone.gateway;
 		for (const envName of [
-			AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV,
-			AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV,
-			AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_IDENTITIES_ENV,
+			AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_ENV,
+			AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_KEY_ENV,
+			AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_IDENTITIES_ENV,
 		]) {
 			systemZone.secrets[envName] = {
 				audience: 'gateway',
@@ -488,9 +427,9 @@ describeRecoveryNoFlapE2e('e2e: repeated process recovery followed by no-flap wi
 		}
 		openClawGateway.rawEnvSecrets = [
 			...(openClawGateway.rawEnvSecrets ?? []),
-			AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV,
-			AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV,
-			AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_IDENTITIES_ENV,
+			AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_ENV,
+			AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_KEY_ENV,
+			AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_IDENTITIES_ENV,
 		];
 		await Promise.all(
 			configuredProbeIdentities.map(async ({ agentId }) => {
@@ -507,49 +446,41 @@ describeRecoveryNoFlapE2e('e2e: repeated process recovery followed by no-flap wi
 			systemConfig: project.systemConfig,
 		});
 		await prepareGatewayE2eProjectImages({ project });
-		harness = await startE2eControllerRuntime({
-			createOpenClawProcessReliabilityFaultTargetRegistry: (options) => {
-				const delegate = createOpenClawProcessReliabilityFaultTargetRegistry(options);
-				const instrumented = {
-					getCurrent: (target) => delegate.getCurrent(target),
-					isCurrent: (snapshot) => delegate.isCurrent(snapshot),
-					publish: (publication) => {
-						const snapshot = delegate.publish(publication);
-						publishedTargets.push(snapshot);
-						return snapshot;
-					},
-					revoke: (revocation) => delegate.revoke(revocation),
-				} satisfies OpenClawProcessReliabilityFaultTargetRegistry;
-				registry = instrumented;
-				return instrumented;
+		const systemConfig = {
+			...project.systemConfig,
+			controller: {
+				health: {
+					...project.systemConfig.controller?.health,
+					controlSessionDeathGraceMs: 30_000,
+					enabled: true,
+					eventHistoryLimit: 400,
+					gatewayServiceAutoRestart: recoveryGatewayServiceAutoRestart,
+					gatewayServiceIntervalMs: 500,
+					staleAfterMs: 10_000,
+				},
 			},
+		};
+		harness = await startE2eControllerRuntime({
 			secrets: {
-				[AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV]: '1',
-				[AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_IDENTITIES_ENV]:
+				[AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_ENV]: '1',
+				[AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_IDENTITIES_ENV]:
 					JSON.stringify(configuredProbeIdentities),
-				[AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV]: probeSigningKey,
+				[AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_KEY_ENV]: probeSigningKey,
 				GITHUB_TOKEN: 'unused-recovery-no-flap-token',
 				OPENCLAW_GATEWAY_TOKEN: gatewayToken,
 				PERPLEXITY_API_KEY: 'unused-recovery-no-flap-token',
 			},
 			startGatewayZone: async (startOptions) => {
-				if (startOptions.gatewayControlLeaseRpc === undefined) {
-					throw new Error('Expected Gateway control lease RPC operations.');
+				const result = await startGatewayZone(startOptions);
+				if (result.executionModel !== 'managed-gateway') {
+					throw new Error('Recovery no-flap proof requires managed Gateway image boot.');
 				}
-				const result = await startGatewayZone({
-					...startOptions,
-					gatewayControlLeaseRpc: capturePrivateLeaseSnapshots(
-						startOptions.gatewayControlLeaseRpc,
-						leaseSnapshots,
-					),
-				});
-				result.vm.configureIngressRoutes([
-					{ port: result.processSpec.guestListenPort, prefix: '/', stripPrefix: true },
-				]);
-				gatewayStart = result;
+				const qemuPid = result.vm.getHostProcessId();
+				if (qemuPid === null) throw new Error('Managed Gateway start omitted its QEMU pid.');
+				gatewayStarts.push({ expectedCohort: result.expectedCohort, qemuPid, vm: result.vm });
 				return result;
 			},
-			startOptions: { systemConfig: project.systemConfig, zoneIds: [zoneId] },
+			startOptions: { systemConfig, zoneIds: [zoneId] },
 		});
 	}, 900_000);
 
@@ -563,211 +494,161 @@ describeRecoveryNoFlapE2e('e2e: repeated process recovery followed by no-flap wi
 		}
 	});
 
-	it('recovers exactly three times and remains stable without Gateway or Tool churn', async () => {
-		if (gatewayStart === undefined || harness === undefined || registry === undefined) {
-			throw new Error('Expected recovery no-flap Gateway, control session, and registry.');
+	it('replaces three failed cohorts and then keeps the admitted successor stable', async () => {
+		if (harness === undefined || project === undefined) {
+			throw new Error('Expected recovery no-flap harness.');
 		}
-		const activeGatewayStart = gatewayStart;
 		const activeHarness = harness;
-		const activeRegistry = registry;
-		const activeZone = activeHarness.systemConfig.zones[0];
-		if (activeZone === undefined) {
-			throw new Error('Expected recovery no-flap zone configuration.');
+		const systemZone = project.systemConfig.zones[0];
+		const initialStart = gatewayStarts[0];
+		if (
+			systemZone === undefined ||
+			systemZone.gateway.type !== 'openclaw' ||
+			initialStart === undefined
+		) {
+			throw new Error('Expected initial managed OpenClaw Gateway.');
 		}
+		const controllerRecordTargets = resolveControllerGatewayRecordTargets({
+			gatewayStateRoot: resolveControllerGatewayStateRoot({
+				controllerStateRoot: createControllerStateRoot({
+					controllerStateDirectoryPath: activeHarness.systemConfig.controllerStateDir,
+				}),
+				zoneId,
+			}),
+		});
+		const admittedGateways: AdmittedGatewayObservation[] = [
+			await observeAggregateAdmission({
+				gatewayStart: initialStart,
+				harness: activeHarness,
+				markerPrefix: 'INITIAL',
+				recordTargets: controllerRecordTargets,
+			}),
+		];
+		const recoveryEvents: Extract<
+			AgentVmHealthEvent,
+			{ readonly kind: 'gateway-recovery'; readonly result: 'ok' }
+		>[] = [];
 
-		const initialProbes = await Promise.all(
-			configuredProbeIdentities.map(
-				async (identity) =>
-					await callWriteReadProbe({
+		for (let recoveryIndex = 1; recoveryIndex <= requiredRecoveryCount; recoveryIndex += 1) {
+			const predecessor = admittedGateways.at(-1);
+			if (predecessor === undefined)
+				throw new Error('Previous admitted Gateway became unavailable.');
+			await killFrameworkSibling(predecessor.gatewayStart);
+			const recoveryEvent = await waitForGatewayReplacementEvent({
+				controllerUrl: activeHarness.controllerUrl,
+				oldVmId: predecessor.gatewayStart.vm.id,
+				controllerRuntimeDir: activeHarness.systemConfig.controllerRuntimeDir,
+				timeoutMs: 300_000,
+			});
+			recoveryEvents.push(recoveryEvent);
+			const successorStart = gatewayStarts.find((start) => start.vm.id === recoveryEvent.newVmId);
+			if (successorStart === undefined) {
+				throw new Error(`Gateway replacement '${recoveryEvent.newVmId}' was not observed.`);
+			}
+			expectFreshManagedGatewayCohort({
+				predecessor: predecessor.gatewayStart,
+				successor: successorStart,
+			});
+			expect(recoveryEvent).toMatchObject({
+				action: 'gateway-vm-restart',
+				oldVmId: predecessor.gatewayStart.vm.id,
+				result: 'ok',
+				zoneId,
+			});
+			expect(['gateway-control-session-unhealthy', 'gateway-service-unhealthy']).toContain(
+				recoveryEvent.reason,
+			);
+			const successor = await observeAggregateAdmission({
+				gatewayStart: successorStart,
+				harness: activeHarness,
+				markerPrefix: `RECOVERY_${String(recoveryIndex)}`,
+				recordTargets: controllerRecordTargets,
+			});
+			const predecessorRuntimeIds = new Set(Object.values(predecessor.runtimeIds));
+			for (const runtimeId of Object.values(successor.runtimeIds)) {
+				expect(predecessorRuntimeIds.has(runtimeId)).toBe(false);
+			}
+			admittedGateways.push(successor);
+			if (recoveryIndex < requiredRecoveryCount) {
+				const stabilizationStartedAtMs = Date.now();
+				const stabilizationGatewayStartCount = gatewayStarts.length;
+				let stabilizationObservationCount = 0;
+				while (
+					Date.now() - stabilizationStartedAtMs <
+					recoveryGatewayServiceAutoRestart.restartTimeoutMs + stabilityProbeIntervalMs
+				) {
+					const identity =
+						configuredProbeIdentities[
+							stabilizationObservationCount % configuredProbeIdentities.length
+						];
+					if (identity === undefined) {
+						throw new Error('Recovery stabilization identity selection failed.');
+					}
+					const stabilizationProbe = await callWriteReadProbe({
 						harness: activeHarness,
 						identity,
-						marker: `INITIAL_${identity.agentId}_${randomUUID()}`,
-					}),
-			),
-		);
-		const runtimeIds = Object.fromEntries(
-			initialProbes.map((result) => [result.agentId, result.runtimeId]),
-		) as Record<'beta' | 'main', string>;
-		const initialRecords = await readCurrentRecords(activeZone.gateway.stateDir);
-		const ownedInitialRecords = new Map(
-			Object.values(runtimeIds).map(
-				(runtimeId) => [runtimeId, initialRecords.get(runtimeId)] as const,
-			),
-		);
-		if (Array.from(ownedInitialRecords.values()).some((record) => record === undefined)) {
-			throw new Error('Expected both exact initial Tool VM runtime records.');
-		}
-		const gatewayVmId = activeGatewayStart.vm.id;
-		const canaryPaths = new Map<string, string>();
-		const initialSshSnapshots = new Map<string, NonNullable<GatewayControlLeaseSnapshot['ssh']>>();
-		for (const identity of configuredProbeIdentities) {
-			const runtimeId = runtimeIds[identity.agentId];
-			const snapshot = leaseSnapshots.get(runtimeId);
-			if (!isPrivateLeaseSnapshot(snapshot)) {
-				throw new Error(`Expected private SSH snapshot for ${identity.agentId}.`);
-			}
-			const canaryPath = `.agent-vm/no-flap-${identity.agentId}-${randomUUID()}.txt`;
-			const canaryMarker = `CANARY_${identity.agentId}_${randomUUID()}`;
-			canaryPaths.set(identity.agentId, `${canaryPath}\0${canaryMarker}`);
-			initialSshSnapshots.set(identity.agentId, snapshot.ssh);
-			const write = await runStrictSshCommand({
-				command: `mkdir -p .agent-vm && printf %s ${canaryMarker} > ${canaryPath}`,
-				gatewayVm: activeGatewayStart.vm,
-				snapshot,
-			});
-			expect(write).toMatchObject({ exitCode: 0 });
-		}
-
-		const initialTarget = activeRegistry.getCurrent();
-		if (initialTarget === undefined) {
-			throw new Error('Expected exact initial OpenClaw process fault target.');
-		}
-		if (initialTarget.controlSession === undefined) {
-			throw new Error('Expected initial exact process target to expose its control session.');
-		}
-		const initialSession = currentAcceptedSessionIdentity(initialTarget.controlSession);
-		const initialProcess = await readOpenClawProcessIdentity(activeGatewayStart.vm);
-		const observedRecoveries: ObservedRecoveryIdentity[] = [
-			{
-				processEpoch: initialTarget.processEpoch,
-				processId: initialProcess.processId,
-				processStartTimeTicks: initialProcess.startTimeTicks,
-				sessionAttachmentGeneration: initialSession.attachmentGeneration,
-				sessionId: initialSession.sessionId,
-			},
-		];
-		const handler = createOpenClawProcessReliabilityFaultHandler({
-			createReceiptId: randomUUID,
-			nowMs: Date.now,
-			registry: activeRegistry,
-		});
-		let currentTarget = initialTarget;
-		for (let recoveryIndex = 1; recoveryIndex <= requiredRecoveryCount; recoveryIndex += 1) {
-			const previousIdentity = observedRecoveries.at(-1);
-			if (previousIdentity === undefined) {
-				throw new Error('Previous recovery identity became unavailable.');
-			}
-			const receipt = await handler(createTerminationRequest(currentTarget, recoveryIndex));
-			expect(receipt).toMatchObject({ state: 'applied', target: currentTarget.target });
-			const successor = await waitForSuccessor({
-				gatewayVm: activeGatewayStart.vm,
-				previousProcessEpoch: previousIdentity.processEpoch,
-				previousSessionId: previousIdentity.sessionId,
-				registry: activeRegistry,
-			});
-			currentTarget = successor.target;
-			observedRecoveries.push(successor.identity);
-			expect(activeGatewayStart.vm.id).toBe(gatewayVmId);
-			const probes = await Promise.all(
-				configuredProbeIdentities.map(
-					async (identity) =>
-						await callWriteReadProbe({
-							harness: activeHarness,
-							identity,
-							marker: `RECOVERY_${String(recoveryIndex)}_${identity.agentId}_${randomUUID()}`,
-						}),
-				),
-			);
-			for (const probe of probes) {
-				expect(probe.runtimeId).toBe(runtimeIds[probe.agentId]);
-				expect(probe.readBack).toBe(probe.marker);
-			}
-			const currentRecords = await readCurrentRecords(activeZone.gateway.stateDir);
-			for (const runtimeId of Object.values(runtimeIds)) {
-				expect(currentRecords.get(runtimeId)).toEqual(ownedInitialRecords.get(runtimeId));
-			}
-			for (const identity of configuredProbeIdentities) {
-				const runtimeId = runtimeIds[identity.agentId];
-				const snapshot = leaseSnapshots.get(runtimeId);
-				const canary = canaryPaths.get(identity.agentId)?.split('\0');
-				if (
-					!isPrivateLeaseSnapshot(snapshot) ||
-					canary?.[0] === undefined ||
-					canary[1] === undefined
-				) {
-					throw new Error(`Expected stable SSH canary for ${identity.agentId}.`);
+						marker: `STABILIZING_${String(recoveryIndex)}_${String(stabilizationObservationCount)}_${identity.agentId}_${randomUUID()}`,
+					});
+					expect(stabilizationProbe.readBack).toBe(stabilizationProbe.marker);
+					const stabilizationRecords = await loadConfiguredToolVmRuntimeRecords({
+						expectedGateway: successor.runtimeRecord.gateway,
+						recordTargets: controllerRecordTargets,
+					});
+					expect(stabilizationRecords[identity.agentId].leaseId).toBe(
+						successor.runtimeIds[identity.agentId],
+					);
+					expect(gatewayStarts).toHaveLength(stabilizationGatewayStartCount);
+					stabilizationObservationCount += 1;
+					await waitForProtocolRetryInterval(stabilityProbeIntervalMs);
 				}
-				expect(snapshot.ssh).toEqual(initialSshSnapshots.get(identity.agentId));
-				const read = await runStrictSshCommand({
-					command: `cat ${canary[0]}`,
-					gatewayVm: activeGatewayStart.vm,
-					snapshot,
-				});
-				expect(read).toMatchObject({ exitCode: 0 });
-				expect(read.stdout.trim()).toBe(canary[1]);
+				expect(stabilizationObservationCount).toBeGreaterThanOrEqual(2);
 			}
 		}
 
-		expect(new Set(observedRecoveries.map((identity) => identity.processEpoch)).size).toBe(
+		expect(admittedGateways).toHaveLength(requiredRecoveryCount + 1);
+		expect(new Set(admittedGateways.map((gateway) => gateway.gatewayStart.vm.id)).size).toBe(
 			requiredRecoveryCount + 1,
 		);
-		expect(new Set(observedRecoveries.map((identity) => identity.sessionId)).size).toBe(
-			requiredRecoveryCount + 1,
-		);
+		expect(
+			new Set(
+				admittedGateways.map((gateway) => gateway.gatewayStart.expectedCohort.fence.gatewayEpoch),
+			).size,
+		).toBe(requiredRecoveryCount + 1);
+
+		const stableGateway = admittedGateways.at(-1);
+		if (stableGateway === undefined) throw new Error('Final admitted Gateway became unavailable.');
 		const quietWindowStartedAtMs = Date.now();
-		const quietWindowTarget = activeRegistry.getCurrent();
-		const quietWindowPublicationCount = publishedTargets.length;
+		const quietWindowGatewayStartCount = gatewayStarts.length;
 		let stabilityObservationCount = 0;
 		while (Date.now() - quietWindowStartedAtMs < stabilityWindowMs) {
 			const identity =
 				configuredProbeIdentities[stabilityObservationCount % configuredProbeIdentities.length];
-			if (identity === undefined) {
-				throw new Error('Stability probe identity selection failed.');
-			}
-			await sendControlPing({
-				sequence: stabilityObservationCount + 1,
-				target: currentTarget,
-			});
+			if (identity === undefined) throw new Error('Stability probe identity selection failed.');
 			const probe = await callWriteReadProbe({
 				harness: activeHarness,
 				identity,
 				marker: `QUIET_${String(stabilityObservationCount)}_${identity.agentId}_${randomUUID()}`,
 			});
-			expect(probe.runtimeId).toBe(runtimeIds[identity.agentId]);
-			const quietRecords = await readCurrentRecords(activeZone.gateway.stateDir);
-			for (const runtimeId of Object.values(runtimeIds)) {
-				expect(quietRecords.get(runtimeId)).toEqual(ownedInitialRecords.get(runtimeId));
-			}
-			const quietSnapshot = leaseSnapshots.get(runtimeIds[identity.agentId]);
-			const quietCanary = canaryPaths.get(identity.agentId)?.split('\0');
-			if (
-				!isPrivateLeaseSnapshot(quietSnapshot) ||
-				quietCanary?.[0] === undefined ||
-				quietCanary[1] === undefined
-			) {
-				throw new Error(`Expected quiet-window SSH canary for ${identity.agentId}.`);
-			}
-			expect(quietSnapshot.ssh).toEqual(initialSshSnapshots.get(identity.agentId));
-			const quietCanaryRead = await runStrictSshCommand({
-				command: `cat ${quietCanary[0]}`,
-				gatewayVm: activeGatewayStart.vm,
-				snapshot: quietSnapshot,
+			expect(probe.readBack).toBe(probe.marker);
+			const quietWindowRecords = await loadConfiguredToolVmRuntimeRecords({
+				expectedGateway: stableGateway.runtimeRecord.gateway,
+				recordTargets: controllerRecordTargets,
 			});
-			expect(quietCanaryRead).toMatchObject({ exitCode: 0 });
-			expect(quietCanaryRead.stdout.trim()).toBe(quietCanary[1]);
-			expect(activeRegistry.getCurrent()).toBe(quietWindowTarget);
-			expect(publishedTargets).toHaveLength(quietWindowPublicationCount);
-			expect(activeGatewayStart.vm.id).toBe(gatewayVmId);
+			expect(quietWindowRecords[identity.agentId].leaseId).toBe(
+				stableGateway.runtimeIds[identity.agentId],
+			);
+			expect(gatewayStarts).toHaveLength(quietWindowGatewayStartCount);
 			stabilityObservationCount += 1;
 			await waitForProtocolRetryInterval(stabilityProbeIntervalMs);
 		}
 		const quietWindowEndedAtMs = Date.now();
 		expect(quietWindowEndedAtMs - quietWindowStartedAtMs).toBeGreaterThanOrEqual(stabilityWindowMs);
 		expect(stabilityObservationCount).toBeGreaterThanOrEqual(2);
-		expect(publishedTargets).toHaveLength(requiredRecoveryCount + 1);
+		expect(gatewayStarts).toHaveLength(requiredRecoveryCount + 1);
 
 		const budgetsArtifact = JSON.stringify({
-			observedRecoveryCount: requiredRecoveryCount,
-			policy: {
-				attemptWindowMs: OPENCLAW_PROCESS_RECOVERY_ATTEMPT_WINDOW_MS,
-				cooldownMs: OPENCLAW_PROCESS_RECOVERY_COOLDOWN_MS,
-				maxAttempts: OPENCLAW_PROCESS_RECOVERY_MAX_ATTEMPTS,
-				stabilityHeartbeats: OPENCLAW_PROCESS_RECOVERY_STABILITY_HEARTBEATS,
-				stabilityMs: OPENCLAW_PROCESS_RECOVERY_STABILITY_MS,
-				stabilityObservations: OPENCLAW_PROCESS_RECOVERY_STABILITY_OBSERVATIONS,
-				successHistoryMs: OPENCLAW_PROCESS_RECOVERY_SUCCESS_HISTORY_MS,
-				successLimit: OPENCLAW_PROCESS_RECOVERY_SUCCESS_LIMIT,
-			},
+			observedRecoveryCount: recoveryEvents.length,
+			policy: recoveryGatewayServiceAutoRestart,
 			quietWindow: {
 				endedAtMs: quietWindowEndedAtMs,
 				observationCount: stabilityObservationCount,
@@ -777,9 +658,12 @@ describeRecoveryNoFlapE2e('e2e: repeated process recovery followed by no-flap wi
 			},
 		});
 		const identityArtifact = JSON.stringify({
-			gatewayVmId,
-			processes: observedRecoveries,
-			toolRecords: Object.fromEntries(ownedInitialRecords),
+			cohorts: admittedGateways.map((gateway) => ({
+				expectedCohort: gateway.gatewayStart.expectedCohort,
+				runtimeIds: gateway.runtimeIds,
+				vmId: gateway.gatewayStart.vm.id,
+			})),
+			recoveryEvents,
 		});
 		const runScopedQueryMarker = `quiet-${hashControlLeaseReliabilityArtifact(
 			process.env.AGENT_VM_RELIABILITY_RUN_ID ?? 'local',
@@ -789,61 +673,47 @@ describeRecoveryNoFlapE2e('e2e: repeated process recovery followed by no-flap wi
 			payload: {
 				artifacts: [
 					{
-						operationId: 'recovery-no-flap-budgets',
+						operationId: 'whole-gateway-recovery-no-flap-budgets',
 						sha256: hashControlLeaseReliabilityArtifact(budgetsArtifact),
 					},
 					{
-						operationId: 'recovery-no-flap-identities',
+						operationId: 'whole-gateway-recovery-no-flap-identities',
 						sha256: hashControlLeaseReliabilityArtifact(identityArtifact),
 					},
 				],
-				generationIdentities: publishedTargets.map((target) => ({
-					generation: target.openClawProcessGeneration.generation,
-					targetId: target.openClawProcessGeneration.id,
-					targetKind: 'openclaw-process',
+				generationIdentities: admittedGateways.map((gateway, generationIndex) => ({
+					generation: generationIndex + 1,
+					targetId: gateway.gatewayStart.expectedCohort.fence.gatewayEpoch,
+					targetKind: 'gateway-cohort',
 				})),
 				packageIdentities: [await readPackageIdentity()],
-				processIdentities: [
-					...observedRecoveries.map((identity) => ({
-						bootId: identity.processEpoch,
-						kind: 'openclaw-process' as const,
-						processId: identity.processId,
-						startIdentity: `proc-start-${identity.processStartTimeTicks}`,
-					})),
-					...Array.from(ownedInitialRecords.values()).flatMap((record) =>
-						record === undefined
-							? []
-							: [
-									{
-										bootId: record.gateway.gatewayEpochId,
-										kind: 'tool-vm-process' as const,
-										processId: record.qemuPid,
-										startIdentity: hashControlLeaseReliabilityArtifact(
-											`${record.processIdentity.command}\n${record.processIdentity.lstart}`,
-										),
-									},
-								],
-					),
-				],
+				processIdentities: admittedGateways.map((gateway) => ({
+					bootId: `gateway-${gateway.gatewayStart.vm.id}`,
+					kind: 'gateway-qemu',
+					processId: gateway.gatewayStart.qemuPid,
+					startIdentity: `process-${hashControlLeaseReliabilityArtifact(
+						gateway.runtimeRecord.processIdentity.lstart,
+					).slice(0, 32)}`,
+				})),
 				queryIdentities: [
 					{
 						marker: runScopedQueryMarker,
-						source: 'recovery-no-flap-stability-window',
+						source: 'whole-gateway-recovery-no-flap-stability-window',
 						windowEndMs: quietWindowEndedAtMs,
 						windowStartMs: quietWindowStartedAtMs,
 					},
 				],
 				runtimeIdentities: [
-					{
-						generation: initialTarget.gatewayGeneration.generation,
-						id: gatewayVmId,
+					...admittedGateways.map((gateway, generationIndex) => ({
+						generation: generationIndex + 1,
+						id: gateway.gatewayStart.vm.id,
 						kind: 'gateway-vm',
-					},
-					...Array.from(ownedInitialRecords.values()).flatMap((record) =>
-						record === undefined
-							? []
-							: [{ generation: 0, id: record.vmId, kind: 'tool-vm' as const }],
-					),
+					})),
+					...Object.values(stableGateway.runtimeIds).map((runtimeId) => ({
+						generation: requiredRecoveryCount + 1,
+						id: runtimeId,
+						kind: 'tool-vm-lease',
+					})),
 				],
 			},
 		});

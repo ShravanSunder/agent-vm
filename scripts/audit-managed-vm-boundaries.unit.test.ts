@@ -269,4 +269,40 @@ describe('auditManagedVmBoundaries', () => {
 			]),
 		);
 	});
+
+	it('rejects managed Gateway identity projection across contracts, adapters, tests, and images', () => {
+		const findings = auditManagedVmBoundaries([
+			...validSources,
+			{
+				content:
+					"export type ManagedVmGuestOwnership = { readonly kind: 'projected-guest-identity' };",
+				filePath: 'packages/managed-vm/src/managed-vm-contracts.ts',
+			},
+			{
+				content: "const request = { guestOwnership: { kind: 'preserve-host-identity' } };",
+				filePath: 'packages/agent-vm/src/controller/worker-task-runner.integration.test.ts',
+			},
+			{
+				content: 'function frameworkServiceUser() {}\nsetpriv --reuid=root',
+				filePath: 'packages/gondolin-vm-adapter/src/rootfs-init-extra.ts',
+			},
+			{
+				content:
+					'groupadd --gid 1001 openclaw\nuseradd --uid 1001 --gid 1001 openclaw\nchown -R openclaw:openclaw /home/openclaw',
+				filePath: 'docker/base-images/openclaw-gateway/Dockerfile',
+			},
+		]);
+
+		expect(findings.map((finding) => finding.reason)).toEqual(
+			expect.arrayContaining([
+				'ManagedVmGuestOwnership declaration is forbidden',
+				'guestOwnership mount policy is forbidden',
+				'managed framework service-user selection is forbidden',
+				'managed Gateway setpriv identity transition is forbidden',
+				'managed OpenClaw service-account creation is forbidden',
+				'managed OpenClaw service-account ownership is forbidden',
+				'projected guest identity variant is forbidden',
+			]),
+		);
+	});
 });

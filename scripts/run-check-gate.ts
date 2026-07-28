@@ -10,6 +10,7 @@ export type CheckGateCommandId =
 	| 'managed-vm-contracts'
 	| 'package-versions'
 	| 'portal-architecture'
+	| 'portal-contracts'
 	| 'portal-exports'
 	| 'zod-version'
 	| 'test-taxonomy'
@@ -109,13 +110,19 @@ export function createCheckGatePlan(): readonly CheckGatePhase[] {
 					label: 'portal package export audit',
 				},
 				{
+					args: ['exec', 'tsx', 'scripts/generate-portal-contracts.ts', '--check-clean'],
+					command: 'pnpm',
+					id: 'portal-contracts',
+					label: 'generated portal contract freshness',
+				},
+				{
 					args: ['run', 'test:managed-vm-boundaries'],
 					command: 'pnpm',
 					id: 'managed-vm-boundaries',
 					label: 'managed VM package boundary audit',
 				},
 				{
-					args: ['run', 'test:managed-vm-contracts'],
+					args: ['exec', 'tsx', 'scripts/verify-managed-vm-contracts.ts', '--skip-workspace-build'],
 					command: 'pnpm',
 					id: 'managed-vm-contracts',
 					label: 'managed VM contract and declaration verifier',

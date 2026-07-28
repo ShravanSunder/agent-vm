@@ -11,6 +11,7 @@ const allowedTestSuffixes = [
 	'.host.e2e.test.ts',
 	'.vm.e2e.test.ts',
 	'.openclaw.e2e.test.ts',
+	'.hermes.e2e.test.ts',
 	'.worker.e2e.test.ts',
 	'.secrets.e2e.test.ts',
 	'.llm.e2e.test.ts',
@@ -130,6 +131,9 @@ export function resolveTestFileProjectNames(filePath: string): readonly string[]
 		}
 		if (filePath.endsWith('.openclaw.e2e.test.ts')) {
 			projectNames.push('e2e-openclaw');
+		}
+		if (filePath.endsWith('.hermes.e2e.test.ts')) {
+			projectNames.push('e2e-hermes');
 		}
 		if (filePath.endsWith('.worker.e2e.test.ts')) {
 			projectNames.push('e2e-worker');
@@ -283,7 +287,7 @@ async function collectViolations(): Promise<readonly string[]> {
 			const violations: string[] = [];
 			if (!hasAllowedTestSuffix(filePath)) {
 				violations.push(
-					`${filePath}: test files must use .unit.test.ts, .integration.test.ts, .host.e2e.test.ts, .vm.e2e.test.ts, .openclaw.e2e.test.ts, .worker.e2e.test.ts, .secrets.e2e.test.ts, or .llm.e2e.test.ts`,
+					`${filePath}: test files must use .unit.test.ts, .integration.test.ts, .host.e2e.test.ts, .vm.e2e.test.ts, .openclaw.e2e.test.ts, .hermes.e2e.test.ts, .worker.e2e.test.ts, .secrets.e2e.test.ts, or .llm.e2e.test.ts`,
 				);
 				return violations;
 			}

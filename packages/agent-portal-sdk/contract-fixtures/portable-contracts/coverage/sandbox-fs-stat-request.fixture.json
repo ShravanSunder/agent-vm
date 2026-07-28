@@ -1,0 +1,29 @@
+{
+	"caseId": "coverage-sandbox-fs-stat-request",
+	"schemaId": "sandbox.fs.stat.request",
+	"tags": [
+		"accepted",
+		"coverage"
+	],
+	"input": {
+		"environment": {
+			"handleId": "environment-a",
+			"kind": "environment",
+			"owningGeneration": "generation-a"
+		},
+		"path": "file.txt"
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"environment": {
+				"handleId": "environment-a",
+				"kind": "environment",
+				"owningGeneration": "generation-a"
+			},
+			"path": "file.txt"
+		},
+		"canonicalJson": "{\"environment\":{\"handleId\":\"environment-a\",\"kind\":\"environment\",\"owningGeneration\":\"generation-a\"},\"path\":\"file.txt\"}",
+		"refinementIdentities": []
+	}
+}

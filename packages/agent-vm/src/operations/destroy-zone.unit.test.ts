@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { access, mkdir, mkdtemp } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -16,13 +17,147 @@ afterEach(() => {
 	}
 });
 
+function createDestroySystemConfig(tempDirectory: string, stateDir: string): SystemConfig {
+	return {
+		schemaVersion: 2,
+		storageRootDir: tempDirectory,
+		cacheDir: path.join(tempDirectory, 'cache'),
+		controllerStateDir: path.join(tempDirectory, 'controller-state'),
+		controllerRuntimeDir: path.join(tempDirectory, 'controller-runtime'),
+		host: {
+			controllerPort: 18800,
+			projectNamespace: 'claw-tests-a1b2c3d4',
+			secretsProvider: {
+				type: '1password',
+				tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
+			},
+		},
+		imageProfiles: {
+			gateways: {
+				openclaw: {
+					type: 'openclaw',
+					buildConfig: './vm-images/gateways/openclaw/build-config.json',
+				},
+			},
+			toolVms: {
+				default: {
+					type: 'toolVm',
+					buildConfig: './vm-images/tool-vms/default/build-config.json',
+				},
+			},
+		},
+		zones: [
+			{
+				id: 'shravan',
+				gateway: {
+					type: 'openclaw',
+					controlAuth: { mode: 'token', secret: 'OPENCLAW_GATEWAY_TOKEN' },
+					imageProfile: 'openclaw',
+					memory: '2G',
+					cpus: 2,
+					port: 18791,
+					config: './config/shravan/openclaw.json',
+					stateDir,
+					zoneFilesDir: path.join(tempDirectory, 'zone-files', 'shravan'),
+					zoneRuntimeDir: path.join(tempDirectory, 'runtime'),
+				},
+				secrets: {
+					OPENCLAW_GATEWAY_TOKEN: {
+						source: 'environment',
+						envVar: 'OPENCLAW_GATEWAY_TOKEN',
+						injection: 'env',
+						audience: 'gateway',
+					},
+				},
+				egressHosts: [],
+				defaultToolVmProfile: 'standard',
+				agentToolVmProfiles: {},
+			},
+		],
+		toolVmProfiles: {
+			standard: { memory: '1G', cpus: 1, imageProfile: 'default' },
+		},
+		tcpPool: { basePort: 19000, size: 5 },
+	};
+}
+
 describe('runControllerDestroy', () => {
+	it('rejects legacy controller evidence before stop, lease release, or purge', async () => {
+		const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-vm-destroy-legacy-'));
+		createdDirectories.push(tempDirectory);
+		const stateDir = path.join(tempDirectory, 'state', 'shravan');
+		fs.mkdirSync(stateDir, { recursive: true });
+		const legacyRecordPath = path.join(stateDir, 'gateway-runtime.json');
+		fs.writeFileSync(legacyRecordPath, '{}\n');
+		const stopGatewayZone = vi.fn(async () => {});
+		const releaseZoneLeases = vi.fn(async () => {});
+		const systemConfig = createDestroySystemConfig(tempDirectory, stateDir);
+
+		await expect(
+			runControllerDestroy(
+				{ purge: true, systemConfig, zoneId: 'shravan' },
+				{ releaseZoneLeases, stopGatewayZone },
+			),
+		).rejects.toThrow(
+			`Legacy controller record evidence exists under Gateway state for zone 'shravan': gateway-runtime:file:${legacyRecordPath}`,
+		);
+		expect(stopGatewayZone).not.toHaveBeenCalled();
+		expect(releaseZoneLeases).not.toHaveBeenCalled();
+		expect(fs.existsSync(stateDir)).toBe(true);
+	});
+
+	it('purges Hermes zone files through the same managed framework authority', async () => {
+		const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-destroy-hermes-'));
+		createdDirectories.push(tempDirectory);
+		const stateDir = path.join(tempDirectory, 'state', 'shravan');
+		const zoneFilesDir = path.join(tempDirectory, 'zone-files', 'shravan');
+		await mkdir(stateDir, { recursive: true });
+		await mkdir(zoneFilesDir, { recursive: true });
+		const baseSystemConfig = createDestroySystemConfig(tempDirectory, stateDir);
+		const zone = baseSystemConfig.zones[0];
+		if (zone === undefined || zone.gateway.type !== 'openclaw') {
+			throw new Error('Expected OpenClaw fixture zone');
+		}
+		const systemConfig = {
+			...baseSystemConfig,
+			zones: [
+				{
+					...zone,
+					gateway: {
+						config: './config/shravan/hermes.yaml',
+						cpus: zone.gateway.cpus,
+						imageProfile: 'hermes',
+						memory: zone.gateway.memory,
+						port: zone.gateway.port,
+						profilesByAgent: { shravan: 'researcher' },
+						profileSecretProjectionsByAgent: {
+							shravan: { DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN' },
+						},
+						stateDir: zone.gateway.stateDir,
+						type: 'hermes' as const,
+						zoneFilesDir,
+						zoneRuntimeDir: zone.gateway.zoneRuntimeDir,
+					},
+				},
+			],
+		} satisfies SystemConfig;
+
+		await runControllerDestroy(
+			{ purge: true, systemConfig, zoneId: 'shravan' },
+			{
+				releaseZoneLeases: async () => {},
+				stopGatewayZone: async () => {},
+			},
+		);
+
+		await expect(access(zoneFilesDir)).rejects.toMatchObject({ code: 'ENOENT' });
+	});
 	it('releases zone leases and optionally purges persisted state', async () => {
 		const rmSyncSpy = vi.spyOn(fs, 'rmSync');
 		const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-vm-destroy-'));
 		createdDirectories.push(tempDirectory);
-		const runtimeDir = path.join(tempDirectory, 'runtime');
-		const runtimeLogsDir = path.join(runtimeDir, 'zones', 'shravan', 'logs');
+		const zoneRuntimeDir = path.join(tempDirectory, 'runtime');
+		const runtimeLogsDir = path.join(zoneRuntimeDir, 'logs');
 		const stateDir = path.join(tempDirectory, 'state', 'shravan');
 		const zoneFilesDir = path.join(tempDirectory, 'zone-files', 'shravan');
 		fs.mkdirSync(runtimeLogsDir, { recursive: true });
@@ -31,9 +166,11 @@ describe('runControllerDestroy', () => {
 		fs.mkdirSync(zoneFilesDir, { recursive: true });
 
 		const systemConfig = {
-			schemaVersion: 1,
+			schemaVersion: 2,
+			storageRootDir: tempDirectory,
 			cacheDir: './cache',
-			runtimeDir,
+			controllerStateDir: path.join(tempDirectory, 'controller-state'),
+			controllerRuntimeDir: path.join(tempDirectory, 'controller-runtime'),
 			host: {
 				controllerPort: 18800,
 				projectNamespace: 'claw-tests-a1b2c3d4',
@@ -76,6 +213,7 @@ describe('runControllerDestroy', () => {
 						config: './config/shravan/openclaw.json',
 						stateDir,
 						zoneFilesDir,
+						zoneRuntimeDir,
 					},
 					secrets: {
 						OPENCLAW_GATEWAY_TOKEN: {
@@ -139,16 +277,18 @@ describe('runControllerDestroy', () => {
 	it('purges worker runtime artifacts for the zone', async () => {
 		const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-vm-destroy-worker-'));
 		createdDirectories.push(tempDirectory);
-		const runtimeDir = path.join(tempDirectory, 'runtime');
-		const workerRuntimeDir = path.join(runtimeDir, 'worker-tasks', 'shravan');
+		const zoneRuntimeDir = path.join(tempDirectory, 'runtime');
+		const workerRuntimeDir = path.join(zoneRuntimeDir, 'worker-tasks');
 		const stateDir = path.join(tempDirectory, 'state', 'shravan');
 		fs.mkdirSync(path.join(workerRuntimeDir, 'task-1', 'gitdirs'), { recursive: true });
 		fs.mkdirSync(stateDir, { recursive: true });
 
 		const systemConfig = {
-			schemaVersion: 1,
+			schemaVersion: 2,
+			storageRootDir: tempDirectory,
 			cacheDir: './cache',
-			runtimeDir,
+			controllerStateDir: path.join(tempDirectory, 'controller-state'),
+			controllerRuntimeDir: path.join(tempDirectory, 'controller-runtime'),
 			host: {
 				controllerPort: 18800,
 				projectNamespace: 'claw-tests-a1b2c3d4',
@@ -177,6 +317,7 @@ describe('runControllerDestroy', () => {
 						port: 18791,
 						config: './config/shravan/worker.json',
 						stateDir,
+						zoneRuntimeDir,
 					},
 					secrets: {},
 					egressHosts: ['github.com'].map((host) => ({ host, audience: 'gateway' as const })),

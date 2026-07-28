@@ -1,5 +1,12 @@
 # Backup Pipeline Hardening
 
+> **Partially superseded:** Preserve the plaintext-temporary-file hardening as
+> historical substrate only. The accepted contract in
+> `docs/specs/2026-07-20-tool-portal-pr-wrapup/2026-07-20-tool-portal-pr-wrapup.md`
+> keeps the implicit `<stateDir>/backups` default through nested exclusion and
+> keeps restore as a simple additive copy. Its staged-swap restore, live-zone
+> guard, runtime coordination, and default-directory redesign are not current work.
+
 Planned at: 4f419b0
 Repo: /Users/shravansunder/Documents/dev/project-dev/agent-vm.improve-v1
 Status: proposed

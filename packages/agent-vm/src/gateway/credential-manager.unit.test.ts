@@ -9,9 +9,11 @@ import type { SystemConfig } from '../config/system-config.js';
 import { resolveZoneSecrets } from './credential-manager.js';
 
 const systemConfig = {
-	schemaVersion: 1,
+	schemaVersion: 2,
+	storageRootDir: './storage',
 	cacheDir: './cache',
-	runtimeDir: './runtime',
+	controllerStateDir: '/controller-state-test',
+	controllerRuntimeDir: './runtime',
 	host: {
 		controllerPort: 18800,
 		projectNamespace: 'claw-tests-a1b2c3d4',
@@ -54,6 +56,7 @@ const systemConfig = {
 				config: './config/shravan/openclaw.json',
 				stateDir: './state/shravan',
 				zoneFilesDir: './zone-files/shravan',
+				zoneRuntimeDir: './runtime/shravan',
 			},
 			secrets: {
 				ANTHROPIC_API_KEY: {

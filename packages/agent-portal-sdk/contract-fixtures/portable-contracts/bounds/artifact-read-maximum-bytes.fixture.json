@@ -1,0 +1,29 @@
+{
+	"caseId": "artifact-read-maximum-bytes",
+	"schemaId": "portal.artifact.read-request",
+	"tags": ["accepted", "boundary", "byte-bound", "default"],
+	"input": {
+		"maxBytes": 16777216,
+		"reference": {
+			"byteLength": 16777216,
+			"expiresAt": "2030-01-01T00:00:00.000Z",
+			"fingerprint": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+			"id": "artifact-maximum"
+		}
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"maxBytes": 16777216,
+			"offsetBytes": 0,
+			"reference": {
+				"byteLength": 16777216,
+				"expiresAt": "2030-01-01T00:00:00.000Z",
+				"fingerprint": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+				"id": "artifact-maximum"
+			}
+		},
+		"canonicalJson": "{\"maxBytes\":16777216,\"offsetBytes\":0,\"reference\":{\"byteLength\":16777216,\"expiresAt\":\"2030-01-01T00:00:00.000Z\",\"fingerprint\":\"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"id\":\"artifact-maximum\"}}",
+		"refinementIdentities": []
+	}
+}

@@ -11,6 +11,15 @@ import { runControllerOperationCommand } from './controller-operation-commands.j
 const originalPath = process.env.PATH;
 const ansiEscapeSequencePattern = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g');
 
+function createControllerOperationToolPortalConfig(
+	configDir: string,
+): NonNullable<LoadedSystemConfig['zones'][number]['toolPortal']> {
+	return {
+		configDir,
+		surfaceEligibilityByProfile: { default: {} },
+	};
+}
+
 afterEach(() => {
 	process.env.PATH = originalPath;
 	delete process.env.OP_SERVICE_ACCOUNT_TOKEN;
@@ -23,8 +32,7 @@ function createWorkerSystemConfig(
 ): LoadedSystemConfig {
 	return createLoadedSystemConfig(
 		{
-			cacheDir: './cache',
-			runtimeDir: './runtime',
+			storageRootDir: './storage',
 			host: {
 				controllerPort: 18800,
 				projectNamespace: 'agent-vm-test',
@@ -76,7 +84,6 @@ function createWorkerSystemConfig(
 						memory: '2G',
 						config: workerConfigPath,
 						port: 18791,
-						stateDir: './state/worker',
 					},
 					id: 'worker',
 					secrets: {},
@@ -90,12 +97,11 @@ function createWorkerSystemConfig(
 function createOpenClawSystemConfig(
 	toolVmBuildConfigPath: string,
 	systemConfigPath: string,
-	options: { readonly includeMcpPortal?: boolean } = {},
+	options: { readonly includeToolPortal?: boolean } = {},
 ): LoadedSystemConfig {
 	return createLoadedSystemConfig(
 		{
-			cacheDir: './cache',
-			runtimeDir: './runtime',
+			storageRootDir: './storage',
 			host: {
 				controllerPort: 18800,
 				projectNamespace: 'agent-vm-test',
@@ -151,16 +157,14 @@ function createOpenClawSystemConfig(
 							'openclaw.json',
 						),
 						port: 18791,
-						stateDir: './state/shravan',
-						zoneFilesDir: './zone-files/shravan',
 					},
 					id: 'shravan',
 					agents: [{ id: 'sun' }],
-					...(options.includeMcpPortal === true
+					...(options.includeToolPortal === true
 						? {
-								toolPortal: {
-									configDir: path.join(path.dirname(systemConfigPath), 'gateways', 'shravan'),
-								},
+								toolPortal: createControllerOperationToolPortalConfig(
+									path.join(path.dirname(systemConfigPath), 'gateways', 'shravan'),
+								),
 							}
 						: {}),
 					secrets: {
@@ -232,12 +236,11 @@ function createManagedBaseOpenClawSystemConfig(
 	gatewayBuildConfigPath: string,
 	toolVmBuildConfigPath: string,
 	systemConfigPath: string,
-	options: { readonly includeMcpPortal?: boolean } = {},
+	options: { readonly includeToolPortal?: boolean } = {},
 ): LoadedSystemConfig {
 	return createLoadedSystemConfig(
 		{
-			cacheDir: './cache',
-			runtimeDir: './runtime',
+			storageRootDir: './storage',
 			host: {
 				controllerPort: 18800,
 				projectNamespace: 'agent-vm-test',
@@ -310,16 +313,14 @@ function createManagedBaseOpenClawSystemConfig(
 							'openclaw.json',
 						),
 						port: 18791,
-						stateDir: './state/shravan',
-						zoneFilesDir: './zone-files/shravan',
 					},
 					id: 'shravan',
 					agents: [{ id: 'sun' }],
-					...(options.includeMcpPortal === true
+					...(options.includeToolPortal === true
 						? {
-								toolPortal: {
-									configDir: path.join(path.dirname(systemConfigPath), 'gateways', 'shravan'),
-								},
+								toolPortal: createControllerOperationToolPortalConfig(
+									path.join(path.dirname(systemConfigPath), 'gateways', 'shravan'),
+								),
 							}
 						: {}),
 					secrets: {
@@ -339,7 +340,7 @@ function createManagedBaseOpenClawSystemConfig(
 	);
 }
 
-async function writeNativeMcpPortalConfigFiles(configDirectoryPath: string): Promise<void> {
+async function writeManagedToolPortalConfigFiles(configDirectoryPath: string): Promise<void> {
 	const portalConfigDirectoryPath = path.join(configDirectoryPath, 'gateways', 'shravan');
 	await fs.mkdir(portalConfigDirectoryPath, { recursive: true });
 	await fs.writeFile(
@@ -348,9 +349,10 @@ async function writeNativeMcpPortalConfigFiles(configDirectoryPath: string): Pro
 		'utf8',
 	);
 	await fs.writeFile(
-		path.join(portalConfigDirectoryPath, 'mcp-portal.config.jsonc'),
+		path.join(portalConfigDirectoryPath, 'tool-portal.config.jsonc'),
 		JSON.stringify({
 			agents: { sun: { profile: 'default' } },
+			mode: 'managed',
 			profiles: { default: { namespaces: {} } },
 			schemaVersion: 1,
 		}),
@@ -756,7 +758,7 @@ describe('runControllerOperationCommand', () => {
 						{ name: 'host-runtime-dir', ok: true },
 						{ name: 'gateway-image-profile-worker-dockerfile', ok: true },
 						{ name: 'tool-vm-image-profile-default-dockerfile', ok: true },
-						{ name: 'zone-git-shravan', ok: true },
+						{ name: 'controller-cache-writable', ok: true },
 						{ name: 'zone-runtime-shravan', ok: true },
 						{ name: 'zone-secrets-shravan', ok: true },
 						{ name: 'worker-config-path-worker', ok: true },
@@ -1230,7 +1232,7 @@ describe('runControllerOperationCommand', () => {
 		}
 	});
 
-	it('continues 1Password doctor checks when zone Git GitHub token resolution fails', async () => {
+	it('does not resolve or report retired whole-zone Git authority during doctor', async () => {
 		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-doctor-'));
 		const systemConfigPath = path.join(temporaryDirectoryPath, 'config', 'system.json');
 		const toolVmBuildConfigPath = path.join(
@@ -1245,19 +1247,6 @@ describe('runControllerOperationCommand', () => {
 		try {
 			const outputs: string[] = [];
 			const systemConfig = createOpenClawSystemConfig(toolVmBuildConfigPath, systemConfigPath);
-			const zone = systemConfig.zones[0];
-			if (!zone || zone.gateway.type !== 'openclaw') {
-				throw new Error('Expected OpenClaw test system config to include an OpenClaw zone.');
-			}
-			zone.gateway.zoneGit = {
-				remote: {
-					branch: 'main',
-					defaultBranch: 'trunk',
-					protectedBranches: ['trunk'],
-					protectedBranchPatterns: ['release/*'],
-					repoUrl: 'ShravanSunder/sunfam-zone-files',
-				},
-			};
 			const onePasswordSystemConfig = {
 				...systemConfig,
 				host: {
@@ -1273,20 +1262,19 @@ describe('runControllerOperationCommand', () => {
 				},
 			} satisfies LoadedSystemConfig;
 			await writeImageBuildConfigsForDoctor(onePasswordSystemConfig);
+			const createSecretResolver = vi.fn(async () => ({
+				resolve: async (): Promise<string> => {
+					throw new Error('Retired whole-zone Git authority must not be resolved by doctor.');
+				},
+				resolveAll: async (): Promise<Record<string, string>> => ({}),
+			}));
 
 			await runControllerOperationCommand({
 				...fastDoctorEnvironmentOptions(['op']),
 				dependencies: {
 					...defaultCliDependencies,
 					createControllerClient: createControllerClientStub,
-					createSecretResolver: async () => ({
-						resolve: async (): Promise<string> => {
-							throw new Error(
-								'GitHub token failed through OP_SERVICE_ACCOUNT_TOKEN=SUPER-SECRET-TOKEN Bearer github-token-value ref=op://agent-vm/github-token/credential',
-							);
-						},
-						resolveAll: async () => ({}),
-					}),
+					createSecretResolver,
 					probeOnePasswordServiceAccountHeadlessAuth: async () => ({
 						hint: 'headless probe ok for SUPER-SECRET-TOKEN',
 						ok: true,
@@ -1313,28 +1301,20 @@ describe('runControllerOperationCommand', () => {
 			const renderedOutput = outputs.join('');
 			expect(renderedOutput).not.toContain('SUPER-SECRET-TOKEN');
 			expect(renderedOutput).not.toContain('op://');
-			expect(renderedOutput).not.toContain('github-token-value');
+			expect(createSecretResolver).not.toHaveBeenCalled();
 			const result = JSON.parse(renderedOutput) as {
 				readonly checks: readonly {
 					readonly hint?: string;
 					readonly name: string;
 					readonly ok: boolean;
 				}[];
-				readonly ok: boolean;
 			};
-			expect(result.ok).toBe(false);
 			expect(result.checks.find((check) => check.name === '1password-op-cli-headless')).toEqual({
 				name: '1password-op-cli-headless',
 				ok: true,
 				hint: 'headless probe ok for <redacted>',
 			});
-			expect(result.checks.find((check) => check.name === 'zone-git-github-token-shravan')).toEqual(
-				{
-					name: 'zone-git-github-token-shravan',
-					ok: false,
-					hint: 'Configured host.githubToken could not be resolved: GitHub token failed through OP_SERVICE_ACCOUNT_TOKEN=<redacted> Bearer <redacted> ref=<1password-ref>',
-				},
-			);
+			expect(result.checks.some((check) => check.name.startsWith('zone-git-'))).toBe(false);
 		} finally {
 			await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
 		}
@@ -1354,7 +1334,7 @@ describe('runControllerOperationCommand', () => {
 		await fs.mkdir(binDirectoryPath, { recursive: true });
 		await fs.mkdir(path.dirname(openClawConfigPath), { recursive: true });
 		await fs.writeFile(openClawConfigPath, JSON.stringify(createHealthyOpenClawConfig()), 'utf8');
-		await writeNativeMcpPortalConfigFiles(configDirectoryPath);
+		await writeManagedToolPortalConfigFiles(configDirectoryPath);
 		await fs.writeFile(
 			path.join(binDirectoryPath, 'openclaw'),
 			`#!/bin/sh
@@ -1368,7 +1348,7 @@ printf '{"ok":true}\\n'
 		const systemConfig = createOpenClawSystemConfig(
 			path.join(temporaryDirectoryPath, 'vm-images', 'tool-vms', 'default', 'build-config.json'),
 			path.join(configDirectoryPath, 'system.json'),
-			{ includeMcpPortal: true },
+			{ includeToolPortal: true },
 		);
 		await writeImageBuildConfigsForDoctor(systemConfig);
 
@@ -1655,7 +1635,7 @@ printf '{"ok":true}\\n'
 		await fs.mkdir(path.dirname(toolVmBuildConfigPath), { recursive: true });
 		await fs.mkdir(path.dirname(openClawConfigPath), { recursive: true });
 		await fs.writeFile(openClawConfigPath, JSON.stringify(createHealthyOpenClawConfig()), 'utf8');
-		await writeNativeMcpPortalConfigFiles(path.dirname(systemConfigPath));
+		await writeManagedToolPortalConfigFiles(path.dirname(systemConfigPath));
 		await fs.writeFile(
 			gatewayBuildConfigPath,
 			JSON.stringify({ oci: { image: 'agent-vm-openclaw:latest', pullPolicy: 'never' } }),
@@ -1700,7 +1680,7 @@ printf '{"ok":true}\\n'
 				gatewayBuildConfigPath,
 				toolVmBuildConfigPath,
 				systemConfigPath,
-				{ includeMcpPortal: true },
+				{ includeToolPortal: true },
 			),
 		});
 

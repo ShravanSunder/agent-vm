@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import {
 	PortalCallRequestSchema,
 	type PortalCallResult,
@@ -20,10 +22,13 @@ import {
 import {
 	type FormattedSecretValue,
 	loadMcpConfig,
+	mcpConfigSchema,
+	type McpConfig,
 	type ToolPortalMcpProjection,
 	ToolPortalMcpProjectionSchema,
 	type ToolPortalToolSelector,
 } from '@agent-vm/config-contracts';
+import { z } from 'zod';
 
 import {
 	createPortalCore,
@@ -34,12 +39,15 @@ import type {
 	PortalBatchDiagnostic,
 	PortalBatchResult,
 	PortalCore,
+	PortalCoreEvent,
 	PortalCoreResult,
 	PortalCoreToolName,
 	PortalToolResult,
 } from '../core/index.js';
+import type { PortalAgentScopeSource } from '../portal-access-policy.js';
 
 export interface McpProviderCapabilityBackendCallOptions {
+	readonly operationIdsByCallId?: Readonly<Record<string, string>>;
 	readonly signal?: AbortSignal;
 }
 
@@ -64,7 +72,13 @@ export interface McpProviderCapabilityBackend {
 
 export interface CreateMcpProviderCapabilityBackendProps {
 	readonly core: PortalCore;
+	readonly portalAgentScopeSource?: PortalAgentScopeSource;
 	readonly projection: ToolPortalMcpProjection;
+	readonly sessionKey?: string;
+}
+
+export interface McpProviderBackendSessionOptions {
+	readonly portalAgentScopeSource?: PortalAgentScopeSource;
 	readonly sessionKey?: string;
 }
 
@@ -72,7 +86,7 @@ export interface ManagedMcpProviderBackendFactory {
 	readonly close: () => Promise<void>;
 	readonly createBackend: (
 		projection: ToolPortalMcpProjection,
-		options?: { readonly sessionKey?: string },
+		options?: McpProviderBackendSessionOptions,
 	) => McpProviderCapabilityBackend;
 	readonly retireSession: (sessionKey: string) => Promise<void>;
 }
@@ -82,14 +96,75 @@ export interface CreateManagedMcpProviderBackendFactoryProps {
 	readonly resolveSecret: (secret: FormattedSecretValue) => Promise<string>;
 }
 
+export interface CreateManagedMcpProviderBackendFactoryFromConfigProps {
+	readonly mcpConfig: McpConfig;
+	readonly resolveSecret: (secret: FormattedSecretValue) => Promise<string>;
+}
+
+interface TrackedMcpProviderAgentScope {
+	readonly agentId: string;
+	readonly portalAgentScopeSource: PortalAgentScopeSource;
+}
+
 type PreflightCallDecision =
 	| { readonly kind: 'allow' }
 	| { readonly code: 'approval_required' | 'capability_denied'; readonly kind: 'error' };
 
+const operationIdSchema = z.string().uuid();
+
+function operationIdsForCalls(props: {
+	readonly calls: readonly { readonly id: string }[];
+	readonly suppliedOperationIdsByCallId: Readonly<Record<string, string>> | undefined;
+}): ReadonlyMap<string, string> {
+	if (props.suppliedOperationIdsByCallId === undefined) {
+		return new Map(props.calls.map((call) => [call.id, randomUUID()]));
+	}
+	const suppliedEntries = Object.entries(props.suppliedOperationIdsByCallId);
+	const suppliedOperationIds = new Map(suppliedEntries);
+	if (
+		suppliedEntries.length !== props.calls.length ||
+		props.calls.some((call) => !suppliedOperationIds.has(call.id))
+	) {
+		throw new Error('MCP provider operation identity map must match request call ids exactly.');
+	}
+	return new Map(
+		props.calls.map((call) => {
+			const operationId = suppliedOperationIds.get(call.id);
+			const parsedOperationId = operationIdSchema.safeParse(operationId);
+			if (!parsedOperationId.success) {
+				throw new Error('MCP provider operation identity map must contain UUID values.');
+			}
+			return [call.id, parsedOperationId.data];
+		}),
+	);
+}
+
+interface NormalizedScalarPortalItem {
+	readonly error?: PortalError;
+	readonly id: string;
+	readonly status: 'error' | 'ok';
+	readonly value?: JsonValue;
+}
+
+interface NormalizedScalarPortalResult {
+	readonly diagnostics?: readonly SafeDiagnostic[];
+	readonly items: readonly NormalizedScalarPortalItem[];
+	readonly ok: boolean;
+}
+
 export async function createManagedMcpProviderBackendFactory(
 	props: CreateManagedMcpProviderBackendFactoryProps,
 ): Promise<ManagedMcpProviderBackendFactory> {
-	const mcpConfig = await loadMcpConfig(props.mcpConfigPath);
+	return await createManagedMcpProviderBackendFactoryFromConfig({
+		mcpConfig: await loadMcpConfig(props.mcpConfigPath),
+		resolveSecret: props.resolveSecret,
+	});
+}
+
+export async function createManagedMcpProviderBackendFactoryFromConfig(
+	props: CreateManagedMcpProviderBackendFactoryFromConfigProps,
+): Promise<ManagedMcpProviderBackendFactory> {
+	const mcpConfig = mcpConfigSchema.parse(props.mcpConfig);
 	const upstreamServers = await resolveUpstreamServers({
 		config: mcpConfig,
 		resolveSecret: props.resolveSecret,
@@ -115,18 +190,25 @@ export async function createManagedMcpProviderBackendFactory(
 		},
 		upstreamNamespaces: upstreamServers.map((server) => server.namespace),
 	});
-	const agentIdsBySessionKey = new Map<string, Set<string>>();
+	const agentScopesBySessionKey = new Map<string, Map<string, TrackedMcpProviderAgentScope>>();
 	return {
 		close: async () => await core.close(),
 		createBackend: (projection, backendOptions = {}): McpProviderCapabilityBackend => {
 			const parsedProjection = ToolPortalMcpProjectionSchema.parse(projection);
+			const portalAgentScopeSource = backendOptions.portalAgentScopeSource ?? 'openclaw-trusted';
 			if (backendOptions.sessionKey !== undefined) {
-				const agentIds = agentIdsBySessionKey.get(backendOptions.sessionKey) ?? new Set<string>();
-				agentIds.add(parsedProjection.agentId);
-				agentIdsBySessionKey.set(backendOptions.sessionKey, agentIds);
+				const agentScopes =
+					agentScopesBySessionKey.get(backendOptions.sessionKey) ??
+					new Map<string, TrackedMcpProviderAgentScope>();
+				agentScopes.set(`${portalAgentScopeSource}\0${parsedProjection.agentId}`, {
+					agentId: parsedProjection.agentId,
+					portalAgentScopeSource,
+				});
+				agentScopesBySessionKey.set(backendOptions.sessionKey, agentScopes);
 			}
 			return createMcpProviderCapabilityBackend({
 				core,
+				portalAgentScopeSource,
 				projection: parsedProjection,
 				...(backendOptions.sessionKey === undefined
 					? {}
@@ -134,19 +216,19 @@ export async function createManagedMcpProviderBackendFactory(
 			});
 		},
 		retireSession: async (sessionKey) => {
-			const agentIds = agentIdsBySessionKey.get(sessionKey);
-			if (agentIds === undefined) {
+			const agentScopes = agentScopesBySessionKey.get(sessionKey);
+			if (agentScopes === undefined) {
 				return;
 			}
-			agentIdsBySessionKey.delete(sessionKey);
+			agentScopesBySessionKey.delete(sessionKey);
 			await Promise.all(
-				[...agentIds].map(async (agentId) => {
+				[...agentScopes.values()].map(async ({ agentId, portalAgentScopeSource }) => {
 					await core.invalidateSession(
 						core.createAgentScope({
 							agentId,
 							agentScopeId: `mcp-provider:${agentId}`,
 							sessionKey,
-							source: 'openclaw-trusted',
+							source: portalAgentScopeSource,
 						}),
 					);
 				}),
@@ -163,12 +245,17 @@ export function createMcpProviderCapabilityBackend(
 		agentId: projection.agentId,
 		agentScopeId: `mcp-provider:${projection.agentId}`,
 		...(props.sessionKey === undefined ? {} : { sessionKey: props.sessionKey }),
-		source: 'openclaw-trusted',
+		source: props.portalAgentScopeSource ?? 'openclaw-trusted',
 	});
+	const owningGeneration = props.sessionKey ?? `mcp-provider:${projection.agentId}`;
 
 	return {
 		async call(request, options): Promise<PortalCallResult> {
 			const parsedRequest = PortalCallRequestSchema.parse(request);
+			const operationIdsByCallId = operationIdsForCalls({
+				calls: parsedRequest.calls,
+				suppliedOperationIdsByCallId: options?.operationIdsByCallId,
+			});
 			const preflightItems = new Map<string, PortalCallResult['items'][number]>();
 			const executableCalls: (typeof parsedRequest.calls)[number][] = [];
 			for (const callRequest of parsedRequest.calls) {
@@ -187,6 +274,9 @@ export function createMcpProviderCapabilityBackend(
 						id: callRequest.id,
 						namespace: callRequest.namespace,
 						name: callRequest.name,
+						operationId: operationIdsByCallId.get(callRequest.id) ?? randomUUID(),
+						owningGeneration,
+						disposition: 'not-dispatched',
 					}),
 				);
 			}
@@ -194,7 +284,7 @@ export function createMcpProviderCapabilityBackend(
 			const coreItems = new Map<string, PortalCallResult['items'][number]>();
 			const diagnostics: SafeDiagnostic[] = [];
 			if (executableCalls.length > 0) {
-				const coreResult = await callCore({
+				const callEvidence = await callCoreWithDispatchEvidence({
 					core: props.core,
 					input: {
 						calls: executableCalls.map((callRequest) => ({
@@ -208,11 +298,17 @@ export function createMcpProviderCapabilityBackend(
 					scope,
 					toolName: 'mcp_portal_call',
 				});
-				const normalizedCoreResult = normalizeCoreItemResult(coreResult, projection);
+				const normalizedCoreResult = normalizeCoreItemResult({
+					coreResult: callEvidence.coreResult,
+					dispatchedRequestIds: callEvidence.dispatchedRequestIds,
+					operationIdsByCallId,
+					owningGeneration,
+					projection,
+				});
 				for (const item of normalizedCoreResult.items) {
 					coreItems.set(item.id, item);
 				}
-				diagnostics.push(...safeDiagnosticsFromCoreResult(coreResult, projection));
+				diagnostics.push(...safeDiagnosticsFromCoreResult(callEvidence.coreResult, projection));
 			}
 
 			return PortalCallResultSchema.parse({
@@ -226,6 +322,9 @@ export function createMcpProviderCapabilityBackend(
 							id: callRequest.id,
 							namespace: callRequest.namespace,
 							name: callRequest.name,
+							operationId: operationIdsByCallId.get(callRequest.id) ?? randomUUID(),
+							owningGeneration,
+							disposition: 'ambiguous',
 						}),
 				),
 				ok: parsedRequest.calls.every((callRequest) => {
@@ -339,6 +438,35 @@ async function callCore(props: {
 	);
 }
 
+async function callCoreWithDispatchEvidence(props: {
+	readonly core: PortalCore;
+	readonly input: unknown;
+	readonly scope: Parameters<PortalCore['callStream']>[0]['scope'];
+	readonly signal?: AbortSignal;
+	readonly toolName: PortalCoreToolName;
+}): Promise<{
+	readonly coreResult: PortalCoreResult;
+	readonly dispatchedRequestIds: ReadonlySet<string>;
+}> {
+	const dispatchedRequestIds = new Set<string>();
+	const sourceEvents = props.core.callStream({
+		input: props.input,
+		...(props.signal !== undefined ? { signal: props.signal } : {}),
+		scope: props.scope,
+		toolName: props.toolName,
+	});
+	const observedEvents = async function* (): AsyncIterable<PortalCoreEvent> {
+		for await (const event of sourceEvents) {
+			if (event.kind === 'item_started') {
+				dispatchedRequestIds.add(event.requestId);
+			}
+			yield event;
+		}
+	};
+	const coreResult = await props.core.collectPortalCoreResult(observedEvents());
+	return { coreResult, dispatchedRequestIds };
+}
+
 async function callCoreWhenNeeded(props: {
 	readonly core: PortalCore;
 	readonly input: { readonly requests: readonly unknown[] };
@@ -371,10 +499,10 @@ function projectNamespaceFilteredRequests<
 	readonly projection: ToolPortalMcpProjection;
 	readonly requests: readonly TRequest[];
 }): {
-	readonly preflightItems: Map<string, PortalCallResult['items'][number]>;
+	readonly preflightItems: Map<string, NormalizedScalarPortalItem>;
 	readonly projectedRequests: readonly TRequest[];
 } {
-	const preflightItems = new Map<string, PortalCallResult['items'][number]>();
+	const preflightItems = new Map<string, NormalizedScalarPortalItem>();
 	const projectedRequests: TRequest[] = [];
 	for (const request of props.requests) {
 		const namespaces = projectedNamespaces(props.projection, request.namespaces);
@@ -458,71 +586,96 @@ function publicToolRecordFromMcpToolRecord(tool: McpToolRecord): Readonly<Record
 function normalizeScalarBatchResult(
 	coreResult: PortalCoreResult | null,
 	projection: ToolPortalMcpProjection,
-): PortalCallResult {
+): NormalizedScalarPortalResult {
 	if (coreResult === null) {
-		return PortalCallResultSchema.parse({ items: [], ok: true });
+		return { items: [], ok: true };
 	}
 	const batchResult = portalBatchResultFromStructuredContent(coreResult.structuredContent);
 	const items = Object.entries(batchResult.results).map(([id, itemResult]) =>
 		normalizePortalToolResultItem(id, itemResult, projection),
 	);
-	return PortalCallResultSchema.parse({
+	return {
 		diagnostics: safeDiagnosticsFromCoreResult(coreResult, projection),
 		items,
 		ok: batchResult.ok && items.every((item) => item.status === 'ok'),
-	});
+	};
 }
 
-function normalizeCoreItemResult(
-	coreResult: PortalCoreResult,
-	projection: ToolPortalMcpProjection,
-): PortalCallResult {
+function normalizeCoreItemResult(props: {
+	readonly coreResult: PortalCoreResult;
+	readonly dispatchedRequestIds: ReadonlySet<string>;
+	readonly operationIdsByCallId: ReadonlyMap<string, string>;
+	readonly owningGeneration: string;
+	readonly projection: ToolPortalMcpProjection;
+}): PortalCallResult {
 	return PortalCallResultSchema.parse({
-		items: coreResult.items.map((item) => {
+		items: props.coreResult.items.map((item) => {
+			const operationId = props.operationIdsByCallId.get(item.requestId) ?? randomUUID();
 			if (item.status === 'success') {
 				return {
 					id: item.requestId,
+					operationId,
+					outcome: {
+						certainty: 'proven',
+						completion: 'succeeded',
+						kind: 'completed',
+						retryClass: 'forbidden',
+					},
+					owningGeneration: props.owningGeneration,
 					status: 'ok',
 					value: isRecord(item.structuredContent)
-						? filterProjectedCapabilityValues(item.structuredContent, projection)
+						? filterProjectedCapabilityValues(item.structuredContent, props.projection)
 						: jsonValueFromUnknown(item.structuredContent ?? item.content),
 				};
 			}
 			return {
 				error: portalErrorFromUnknown(item.error),
 				id: item.requestId,
+				operationId,
+				outcome: props.dispatchedRequestIds.has(item.requestId)
+					? {
+							certainty: 'side-effects-and-termination-unknown',
+							kind: 'ambiguous',
+							retryClass: 'forbidden',
+						}
+					: {
+							certainty: 'proven',
+							kind: 'not-dispatched',
+							retryClass: 'safe-before-dispatch',
+						},
+				owningGeneration: props.owningGeneration,
 				status: 'error',
 			};
 		}),
-		ok: coreResult.items.every((item) => item.status === 'success'),
+		ok: props.coreResult.items.every((item) => item.status === 'success'),
 	});
 }
 
 function mergeScalarBatchResult(props: {
 	readonly coreResult: PortalCoreResult | null;
-	readonly preflightItems: Map<string, PortalCallResult['items'][number]>;
+	readonly preflightItems: Map<string, NormalizedScalarPortalItem>;
 	readonly projection: ToolPortalMcpProjection;
 	readonly requestIds: readonly string[];
-}): PortalCallResult {
+}): NormalizedScalarPortalResult {
 	const normalizedCoreResult = normalizeScalarBatchResult(props.coreResult, props.projection);
 	const coreItems = new Map(normalizedCoreResult.items.map((item) => [item.id, item]));
 	const items = props.requestIds
 		.map((requestId) => props.preflightItems.get(requestId) ?? coreItems.get(requestId))
-		.filter((item): item is PortalCallResult['items'][number] => item !== undefined);
-	return PortalCallResultSchema.parse({
+		.filter((item): item is NormalizedScalarPortalItem => item !== undefined);
+	return {
 		...(normalizedCoreResult.diagnostics !== undefined
 			? { diagnostics: normalizedCoreResult.diagnostics }
 			: {}),
 		items,
 		ok: items.every((item) => item.status === 'ok'),
-	});
+	};
 }
 
 function normalizePortalToolResultItem(
 	id: string,
 	result: PortalToolResult,
 	projection: ToolPortalMcpProjection,
-): PortalCallResult['items'][number] {
+): NormalizedScalarPortalItem {
 	if (!result.ok) {
 		return {
 			error: portalErrorFromUnknown(result.error),
@@ -609,9 +762,12 @@ function filterProjectedCapabilityValues(
 
 function errorItem(props: {
 	readonly code: 'approval_required' | 'capability_denied' | 'execution_failed';
+	readonly disposition: 'ambiguous' | 'not-dispatched';
 	readonly id: string;
 	readonly name: string;
 	readonly namespace: string;
+	readonly operationId: string;
+	readonly owningGeneration: string;
 }): PortalCallResult['items'][number] {
 	return {
 		error: {
@@ -625,6 +781,20 @@ function errorItem(props: {
 			safeDiagnostic: safeDiagnosticForCode(props.code),
 		},
 		id: props.id,
+		operationId: props.operationId,
+		outcome:
+			props.disposition === 'not-dispatched'
+				? {
+						certainty: 'proven',
+						kind: 'not-dispatched',
+						retryClass: 'safe-before-dispatch',
+					}
+				: {
+						certainty: 'side-effects-and-termination-unknown',
+						kind: 'ambiguous',
+						retryClass: 'forbidden',
+					},
+		owningGeneration: props.owningGeneration,
 		status: 'error',
 	};
 }

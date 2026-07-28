@@ -46,6 +46,14 @@ describe('shared agent portal harness', () => {
 			items: [
 				{
 					id: 'call-github',
+					operationId: 'fake-operation:call-github',
+					outcome: {
+						certainty: 'proven',
+						completion: 'succeeded',
+						kind: 'completed',
+						retryClass: 'forbidden',
+					},
+					owningGeneration: 'fake-mcp-provider-generation',
 					status: 'ok',
 					value: { number: 42, title: 'Harness proof' },
 				},

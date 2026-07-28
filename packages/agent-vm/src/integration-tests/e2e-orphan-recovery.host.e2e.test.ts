@@ -5,13 +5,48 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { createManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
+import {
+	createControllerStateRoot,
+	resolveControllerGatewayStateRoot,
+} from '../controller/durable-state/controller-state-paths.js';
+import {
+	resolveControllerGatewayRecordTargets,
+	type ControllerGatewayRecordTargets,
+	type ControllerManagedGatewayRuntimeRecordTarget,
+} from '../controller/durable-state/controller-state-record-paths.js';
+import type { GatewayEpochIdentity } from '../controller/vm-ownership/vm-ownership-contracts.js';
 import { cleanupRecordedGatewayRuntime } from '../gateway/gateway-recovery.js';
 import {
-	loadGatewayRuntimeRecord,
-	writeGatewayRuntimeRecord,
+	loadManagedGatewayRuntimeRecord,
+	type ManagedGatewayRuntimeRecord,
+	writeManagedGatewayRuntimeRecord,
 } from '../gateway/gateway-runtime-record.js';
+import { createManagedGatewayBootContract } from '../gateway/managed-gateway-boot-contract.js';
 
 const createdDirectories: string[] = [];
+const zoneId = 'shravan';
+const managedVmRuntimeComposition = createManagedVmRuntimeComposition();
+
+const testManagedGatewayBootContract = createManagedGatewayBootContract({
+	bootEntry: 'openclaw-gateway',
+	configurationInputPath: '/run/agent-vm/managed-gateway/framework-service.json',
+	environmentInputPath: '/run/agent-vm/managed-gateway/framework.environment.sh',
+	framework: 'openclaw',
+	ingress: { guestPort: 18_789, kind: 'framework-http' },
+	logIdentity: {
+		guestPath: '/var/log/agent-vm/openclaw-service.log',
+		serviceName: 'agent-vm-openclaw-test',
+	},
+	readiness: { guestPort: 18_789, kind: 'framework-http', path: '/readyz' },
+	role: 'framework-service',
+});
+
+const testManagedGatewayImage = {
+	built: false,
+	fingerprint: 'orphan-recovery-test-image',
+	imageReference: 'openclaw-gateway:test',
+};
 
 afterEach(() => {
 	for (const directoryPath of createdDirectories.splice(0)) {
@@ -19,10 +54,20 @@ afterEach(() => {
 	}
 });
 
-function createStateDirectory(): string {
+function createControllerStateDirectory(): string {
 	const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-vm-orphan-recovery-'));
 	createdDirectories.push(temporaryDirectory);
 	return temporaryDirectory;
+}
+
+function createFixtureControllerRecordTargets(): ControllerGatewayRecordTargets {
+	const controllerStateDirectoryPath = createControllerStateDirectory();
+	return resolveControllerGatewayRecordTargets({
+		gatewayStateRoot: resolveControllerGatewayStateRoot({
+			controllerStateRoot: createControllerStateRoot({ controllerStateDirectoryPath }),
+			zoneId,
+		}),
+	});
 }
 
 async function findUnusedTcpPort(): Promise<number> {
@@ -49,33 +94,109 @@ async function findUnusedTcpPort(): Promise<number> {
 	return address.port;
 }
 
+function createManagedGatewayExpectedCohort(
+	gatewayIdentity: GatewayEpochIdentity,
+): ManagedGatewayRuntimeRecord['expectedCohort'] {
+	const identitySuffix = `${gatewayIdentity.zoneId}:${gatewayIdentity.generationId}`;
+	const frameworkEpoch = `openclaw-framework:${gatewayIdentity.bootId}`;
+	const processEpoch = `tool-portal-process:${gatewayIdentity.bootId}`;
+	const runtimeEpoch = `tool-portal-runtime:${gatewayIdentity.generationId}`;
+	return {
+		controlIdentity: {
+			controllerEpoch: gatewayIdentity.controllerEpoch,
+			generationId: gatewayIdentity.generationId,
+			peerId: `tool-portal-control:${gatewayIdentity.zoneId}`,
+			processEpoch,
+		},
+		fence: {
+			controllerEpoch: gatewayIdentity.controllerEpoch,
+			gatewayEpoch: gatewayIdentity.generationId,
+			vmId: gatewayIdentity.gatewayVmId,
+			zoneId: gatewayIdentity.zoneId,
+		},
+		frameworkIdentity: {
+			attachmentGeneration: 1,
+			clientKind: 'openclaw-managed-plugin',
+			configuredAgentIds: ['shravan'],
+			frameworkEpoch,
+			frameworkKind: 'openclaw',
+			projectionCohortDigest:
+				'projection-cohort:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+		},
+		ingressIntent: {
+			controlRoute: {
+				audience: 'gateway-control',
+				guestPort: 18_790,
+				kind: 'tool-portal-control',
+				prefix: '/__agent-vm',
+				stripPrefix: false,
+			},
+			frameworkRootRoute: {
+				guestPort: 18_789,
+				kind: 'framework-root',
+				prefix: '/',
+				stripPrefix: true,
+			},
+		},
+		providerRevision: `provider:${identitySuffix}`,
+		requiredBackendRevision: `required-backends:${identitySuffix}`,
+		semanticRevision: `semantic:${identitySuffix}`,
+		toolPortalIdentity: {
+			processEpoch,
+			role: 'tool-portal',
+			runtimeEpoch,
+			serviceId: `tool-portal-service:${identitySuffix}`,
+		},
+		udsIdentity: {
+			frameworkEpoch,
+			gatewayEpoch: gatewayIdentity.generationId,
+			runtimeEpoch,
+			socketPath: '/run/agent-vm/gateway-runtime/managed-plugin.sock',
+		},
+	};
+}
+
 function createRuntimeRecord(props: {
 	readonly ingressPort: number;
 	readonly qemuPid: number;
-	readonly stateDirectory: string;
+	readonly runtimeRecordTarget: ControllerManagedGatewayRuntimeRecordTarget;
 }): Promise<void> {
-	return writeGatewayRuntimeRecord(props.stateDirectory, {
+	const gatewayIdentity = {
+		bootId: 'boot-a',
+		controllerEpoch: 'controller-epoch-a',
+		gatewayEpochId: 'gateway-epoch-a',
+		gatewayVmId: `vm-${props.qemuPid}`,
+		generationId: 'generation-a',
+		zoneId: 'shravan',
+	} satisfies GatewayEpochIdentity;
+	const expectedCohort = createManagedGatewayExpectedCohort(gatewayIdentity);
+	const processIdentity = {
+		command: 'qemu-system-aarch64 -m 4G',
+		lstart: 'Fri May 22 10:00:00 2026',
+	};
+	return writeManagedGatewayRuntimeRecord(props.runtimeRecordTarget, {
+		appliedIngressRoutes: [
+			{ ...expectedCohort.ingressIntent.controlRoute, guestPort: 18_790 },
+			expectedCohort.ingressIntent.frameworkRootRoute,
+		],
+		bootContract: testManagedGatewayBootContract,
 		configPath: '/deployments/claw/config/system.jsonc',
 		controllerPort: 18800,
 		createdAt: '2026-04-13T12:34:56.000Z',
-		gateway: {
-			bootId: 'boot-a',
-			controllerEpoch: 'controller-epoch-a',
-			gatewayEpochId: 'gateway-epoch-a',
-			gatewayVmId: `vm-${props.qemuPid}`,
-			generationId: 'generation-a',
-			zoneId: 'shravan',
-		},
-		gatewayType: 'openclaw',
-		guestListenPort: 18789,
+		expectedCohort,
+		gateway: gatewayIdentity,
+		image: testManagedGatewayImage,
 		ingressPort: props.ingressPort,
-		processIdentity: {
-			command: 'qemu-system-aarch64 -m 4G',
-			lstart: 'Fri May 22 10:00:00 2026',
+		processIdentity,
+		processTarget: {
+			hostPid: props.qemuPid,
+			processIdentity,
+			vmId: gatewayIdentity.gatewayVmId,
 		},
 		projectNamespace: 'claw-tests-a1b2c3d4',
 		qemuPid: props.qemuPid,
-		schemaVersion: 2,
+		runtimeKind: 'managed-gateway',
+		schemaVersion: 4,
 		sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
 		vmId: `vm-${props.qemuPid}`,
 		zoneId: 'shravan',
@@ -103,57 +224,87 @@ function findDefinitelyDeadPid(): number {
 
 describe('integration: orphan recovery', () => {
 	it('removes a stale runtime record when the recorded pid is already dead', async () => {
-		const stateDirectory = createStateDirectory();
+		const controllerRecordTargets = createFixtureControllerRecordTargets();
 		const deadPid = findDefinitelyDeadPid();
 		const ingressPort = await findUnusedTcpPort();
-		await createRuntimeRecord({ ingressPort, qemuPid: deadPid, stateDirectory });
+		await createRuntimeRecord({
+			ingressPort,
+			qemuPid: deadPid,
+			runtimeRecordTarget: controllerRecordTargets.managedGatewayRuntimeRecord,
+		});
 
 		await expect(
-			cleanupRecordedGatewayRuntime({
-				expectedConfigPath: '/deployments/claw/config/system.jsonc',
-				expectedControllerPort: 18800,
-				projectNamespace: 'claw-tests-a1b2c3d4',
-				stateDir: stateDirectory,
-				zoneId: 'shravan',
-			}),
+			cleanupRecordedGatewayRuntime(
+				{
+					expectedConfigPath: '/deployments/claw/config/system.jsonc',
+					expectedControllerPort: 18800,
+					projectNamespace: 'claw-tests-a1b2c3d4',
+					runtimeRecordTarget: controllerRecordTargets.managedGatewayRuntimeRecord,
+					zoneId,
+				},
+				{
+					exactProcessTermination: managedVmRuntimeComposition.managedVmExactProcessTermination,
+				},
+			),
 		).resolves.toEqual({
 			cleanedUp: true,
 			killedPid: null,
 		});
 
-		await expect(loadGatewayRuntimeRecord(stateDirectory)).resolves.toBeNull();
-		expect(fs.existsSync(path.join(stateDirectory, 'gateway-runtime.json'))).toBe(false);
+		await expect(
+			loadManagedGatewayRuntimeRecord(controllerRecordTargets.managedGatewayRuntimeRecord),
+		).resolves.toBeNull();
+		expect(fs.existsSync(controllerRecordTargets.managedGatewayRuntimeRecord.filePath)).toBe(false);
 	});
 
-	it('preserves a runtime record when the gateway port is free but the recorded pid is live and unrelated', async () => {
-		const stateDirectory = createStateDirectory();
+	it('removes a stale record without signaling when the recorded pid was reused by an unrelated process', async () => {
+		const controllerRecordTargets = createFixtureControllerRecordTargets();
 		const ingressPort = await findUnusedTcpPort();
-		await createRuntimeRecord({ ingressPort, qemuPid: 1, stateDirectory });
+		await createRuntimeRecord({
+			ingressPort,
+			qemuPid: 1,
+			runtimeRecordTarget: controllerRecordTargets.managedGatewayRuntimeRecord,
+		});
 
 		await expect(
-			cleanupRecordedGatewayRuntime({
-				expectedConfigPath: '/deployments/claw/config/system.jsonc',
-				expectedControllerPort: 18800,
-				projectNamespace: 'claw-tests-a1b2c3d4',
-				stateDir: stateDirectory,
-				zoneId: 'shravan',
-			}),
-		).rejects.toThrow(/process identity changed/u);
+			cleanupRecordedGatewayRuntime(
+				{
+					expectedConfigPath: '/deployments/claw/config/system.jsonc',
+					expectedControllerPort: 18800,
+					projectNamespace: 'claw-tests-a1b2c3d4',
+					runtimeRecordTarget: controllerRecordTargets.managedGatewayRuntimeRecord,
+					zoneId,
+				},
+				{
+					exactProcessTermination: managedVmRuntimeComposition.managedVmExactProcessTermination,
+				},
+			),
+		).resolves.toEqual({
+			cleanedUp: true,
+			killedPid: null,
+		});
 
-		await expect(loadGatewayRuntimeRecord(stateDirectory)).resolves.not.toBeNull();
+		await expect(
+			loadManagedGatewayRuntimeRecord(controllerRecordTargets.managedGatewayRuntimeRecord),
+		).resolves.toBeNull();
 	});
 
 	it('is a no-op when no runtime record exists', async () => {
-		const stateDirectory = createStateDirectory();
+		const controllerRecordTargets = createFixtureControllerRecordTargets();
 
 		await expect(
-			cleanupRecordedGatewayRuntime({
-				expectedConfigPath: '/deployments/claw/config/system.jsonc',
-				expectedControllerPort: 18800,
-				projectNamespace: 'claw-tests-a1b2c3d4',
-				stateDir: stateDirectory,
-				zoneId: 'shravan',
-			}),
+			cleanupRecordedGatewayRuntime(
+				{
+					expectedConfigPath: '/deployments/claw/config/system.jsonc',
+					expectedControllerPort: 18800,
+					projectNamespace: 'claw-tests-a1b2c3d4',
+					runtimeRecordTarget: controllerRecordTargets.managedGatewayRuntimeRecord,
+					zoneId,
+				},
+				{
+					exactProcessTermination: managedVmRuntimeComposition.managedVmExactProcessTermination,
+				},
+			),
 		).resolves.toEqual({
 			cleanedUp: false,
 			killedPid: null,
@@ -161,19 +312,24 @@ describe('integration: orphan recovery', () => {
 	});
 
 	it('throws and preserves malformed runtime records during offline cleanup', async () => {
-		const stateDirectory = createStateDirectory();
-		const runtimeRecordPath = path.join(stateDirectory, 'gateway-runtime.json');
-		fs.mkdirSync(stateDirectory, { recursive: true });
+		const controllerRecordTargets = createFixtureControllerRecordTargets();
+		const runtimeRecordPath = controllerRecordTargets.managedGatewayRuntimeRecord.filePath;
+		fs.mkdirSync(path.dirname(runtimeRecordPath), { recursive: true });
 		fs.writeFileSync(runtimeRecordPath, '{"createdAt":', 'utf8');
 
 		await expect(
-			cleanupRecordedGatewayRuntime({
-				expectedConfigPath: '/deployments/claw/config/system.jsonc',
-				expectedControllerPort: 18800,
-				projectNamespace: 'claw-tests-a1b2c3d4',
-				stateDir: stateDirectory,
-				zoneId: 'shravan',
-			}),
+			cleanupRecordedGatewayRuntime(
+				{
+					expectedConfigPath: '/deployments/claw/config/system.jsonc',
+					expectedControllerPort: 18800,
+					projectNamespace: 'claw-tests-a1b2c3d4',
+					runtimeRecordTarget: controllerRecordTargets.managedGatewayRuntimeRecord,
+					zoneId,
+				},
+				{
+					exactProcessTermination: managedVmRuntimeComposition.managedVmExactProcessTermination,
+				},
+			),
 		).rejects.toThrow(/Malformed gateway runtime record/u);
 
 		expect(fs.existsSync(runtimeRecordPath)).toBe(true);

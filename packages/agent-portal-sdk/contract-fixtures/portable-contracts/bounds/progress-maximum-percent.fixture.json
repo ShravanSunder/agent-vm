@@ -1,0 +1,22 @@
+{
+	"caseId": "progress-maximum-percent",
+	"schemaId": "portal.progress.event",
+	"tags": ["accepted", "boundary", "numeric"],
+	"input": {
+		"id": "progress-maximum",
+		"kind": "progress",
+		"message": "Complete",
+		"percent": 100
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"id": "progress-maximum",
+			"kind": "progress",
+			"message": "Complete",
+			"percent": 100
+		},
+		"canonicalJson": "{\"id\":\"progress-maximum\",\"kind\":\"progress\",\"message\":\"Complete\",\"percent\":100}",
+		"refinementIdentities": ["portal.request-id.not-reserved"]
+	}
+}

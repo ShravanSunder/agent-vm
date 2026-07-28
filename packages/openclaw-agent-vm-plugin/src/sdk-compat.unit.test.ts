@@ -12,16 +12,7 @@
 import { describe, expect, it } from 'vitest';
 
 // These are the function names our type guard checks for
-const REQUIRED_SDK_EXPORTS = [
-	'buildExecRemoteCommand',
-	'buildRemoteCommand',
-	'buildSshSandboxArgv',
-	'createRemoteShellSandboxFsBridge',
-	'createSshSandboxSessionFromSettings',
-	'runSshSandboxCommand',
-	'sanitizeEnvVars',
-	'registerSandboxBackend',
-] as const;
+const REQUIRED_SDK_EXPORTS = ['registerSandboxBackend'] as const;
 
 describe('SDK compatibility contract', () => {
 	it('documents the required OpenClaw SDK exports that our type guard validates', () => {
@@ -33,18 +24,9 @@ describe('SDK compatibility contract', () => {
 		// 1. Boot a gateway VM with the new OpenClaw version
 		// 2. Run the SDK validation script (see sdk-validate.mjs below)
 		// 3. If it passes, our plugin is compatible
-		// 4. If it fails, update the type guard + SshHelpers interface
+		// 4. If it fails, update the narrow SDK type guard
 
-		expect(REQUIRED_SDK_EXPORTS).toEqual([
-			'buildExecRemoteCommand',
-			'buildRemoteCommand',
-			'buildSshSandboxArgv',
-			'createRemoteShellSandboxFsBridge',
-			'createSshSandboxSessionFromSettings',
-			'runSshSandboxCommand',
-			'sanitizeEnvVars',
-			'registerSandboxBackend',
-		]);
+		expect(REQUIRED_SDK_EXPORTS).toEqual(['registerSandboxBackend']);
 	});
 });
 

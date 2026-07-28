@@ -1,0 +1,37 @@
+[project]
+name = "agent-vm-hermes-adapter"
+version = "0.0.126"
+description = "Partial managed Hermes profile adapter for agent-vm."
+requires-python = ">=3.13,<3.14"
+license = "MIT"
+dependencies = [
+	"agent-vm-agent-portal-sdk==0.0.126",
+	"hermes-agent==0.19.0",
+	"opentelemetry-api==1.44.0",
+	"opentelemetry-exporter-otlp-proto-http==1.44.0",
+	"opentelemetry-sdk==1.44.0",
+	"pydantic>=2.12.0,<3",
+]
+
+[project.scripts]
+agent-vm-hermes-gateway = "agent_vm_hermes_adapter.managed_gateway_bootstrap:main"
+
+[project.entry-points."hermes_agent.plugins"]
+agent-vm-tool-portal = "agent_vm_hermes_adapter.managed_tool_portal_capability_tools"
+
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.sdist]
+include = ["src/agent_vm_hermes_adapter"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agent_vm_hermes_adapter"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]

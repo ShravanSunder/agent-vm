@@ -16,9 +16,11 @@ function createSystemConfig(
 	},
 ): SystemConfig {
 	return {
-		schemaVersion: 1,
+		schemaVersion: 2,
+		storageRootDir: './storage',
 		cacheDir: './cache',
-		runtimeDir: './runtime',
+		controllerStateDir: '/controller-state-test',
+		controllerRuntimeDir: './controller-runtime',
 		host: {
 			controllerPort: 18800,
 			projectNamespace: 'claw-tests-a1b2c3d4',

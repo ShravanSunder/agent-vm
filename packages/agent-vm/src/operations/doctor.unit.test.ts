@@ -1,21 +1,95 @@
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ManagedImageRelease } from '../build/managed-image-dockerfile.js';
-import { createLoadedSystemConfig, type SystemConfig } from '../config/system-config.js';
 import {
+	createLoadedSystemConfig,
+	type SystemConfig,
+	type SystemConfigInput,
+} from '../config/system-config.js';
+import {
+	collectManagedAgentRootStorageChecks,
 	collectManagedImagePackageOverrideDoctorChecks,
 	collectVmHostSystemDoctorCheck,
 	runControllerDoctor,
 } from './doctor.js';
 
+describe('collectManagedAgentRootStorageChecks', () => {
+	const temporaryRoots: string[] = [];
+
+	afterEach(async () => {
+		await Promise.all(
+			temporaryRoots.splice(0).map(async (temporaryRoot) => {
+				await rm(temporaryRoot, { force: true, recursive: true });
+			}),
+		);
+	});
+
+	it('accepts both absent roots before controller materialization', async () => {
+		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'doctor-agent-roots-'));
+		temporaryRoots.push(temporaryDirectoryPath);
+		const firstZone = systemConfig.zones[0];
+		if (firstZone === undefined || firstZone.gateway.type !== 'openclaw') {
+			throw new Error('Test fixture must include an OpenClaw zone.');
+		}
+
+		const checks = await collectManagedAgentRootStorageChecks({
+			...systemConfig,
+			zones: [
+				{
+					...firstZone,
+					gateway: {
+						...firstZone.gateway,
+						zoneFilesDir: path.join(temporaryDirectoryPath, 'zone-files'),
+					},
+				},
+			],
+		});
+
+		expect(checks).toEqual([
+			expect.objectContaining({ hint: 'pending controller materialization', ok: true }),
+		]);
+	});
+
+	it('rejects an unsafe managed agent workspace root', async () => {
+		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'doctor-agent-roots-'));
+		temporaryRoots.push(temporaryDirectoryPath);
+		const zoneFilesDir = path.join(temporaryDirectoryPath, 'zone-files');
+		const firstZone = systemConfig.zones[0];
+		if (firstZone === undefined || firstZone.gateway.type !== 'openclaw') {
+			throw new Error('Test fixture must include an OpenClaw zone.');
+		}
+		await mkdir(path.join(zoneFilesDir, 'agents'), { recursive: true });
+		await writeFile(path.join(zoneFilesDir, 'agents', 'shravan'), 'not a directory');
+
+		const checks = await collectManagedAgentRootStorageChecks({
+			...systemConfig,
+			zones: [
+				{
+					...firstZone,
+					gateway: { ...firstZone.gateway, zoneFilesDir },
+				},
+			],
+		});
+
+		expect(checks).toEqual([
+			expect.objectContaining({
+				hint: expect.stringContaining('workspace=unsafe'),
+				ok: false,
+			}),
+		]);
+	});
+});
+
 const systemConfig = {
-	schemaVersion: 1,
+	schemaVersion: 2,
+	storageRootDir: './storage',
 	cacheDir: './cache',
-	runtimeDir: './runtime',
+	controllerStateDir: '/controller-state-test',
+	controllerRuntimeDir: './runtime',
 	host: {
 		controllerPort: 18800,
 		projectNamespace: 'claw-tests-a1b2c3d4',
@@ -62,6 +136,7 @@ const systemConfig = {
 				config: './config/shravan/openclaw.json',
 				stateDir: './state/shravan',
 				zoneFilesDir: './zone-files/shravan',
+				zoneRuntimeDir: './runtime/shravan',
 				authProfilesByAgent: {
 					shravan: { source: 'environment', envVar: 'SHRAVAN_AUTH_PROFILES' },
 				},
@@ -77,15 +152,6 @@ const systemConfig = {
 			egressHosts: ['api.anthropic.com'].map((host) => ({ host, audience: 'gateway' as const })),
 			defaultToolVmProfile: 'standard',
 			agentToolVmProfiles: {},
-			agentSandboxSeeds: {
-				shravan: [
-					{
-						source: { source: 'environment', envVar: 'SHRAVAN_GCLOUD_CONFIG' },
-						target: '.config/gcloud/configurations/config_default',
-						mode: 0o600,
-					},
-				],
-			},
 		},
 	],
 	toolVmProfiles: {
@@ -150,10 +216,43 @@ function createManagedImageReleaseFixture(): ManagedImageRelease {
 
 interface RuntimePathOverlapCase {
 	readonly cacheDir?: string;
+	readonly controllerRuntimeDir?: string;
 	readonly expectedHint: string;
-	readonly runtimeDir?: string;
 	readonly stateDir?: string;
 	readonly zoneFilesDir?: string;
+}
+
+function createSystemConfigInputFromResolvedFixture(config: SystemConfig): SystemConfigInput {
+	const {
+		cacheDir: _cacheDir,
+		controllerRuntimeDir: _controllerRuntimeDir,
+		controllerStateDir: _controllerStateDir,
+		zones,
+		...configInput
+	} = config;
+	return {
+		...configInput,
+		zones: zones.map((zone) => ({
+			...zone,
+			gateway: stripResolvedGatewayStorage(zone.gateway),
+		})),
+	};
+}
+
+function stripResolvedGatewayStorage(
+	gateway: SystemConfig['zones'][number]['gateway'],
+): SystemConfigInput['zones'][number]['gateway'] {
+	if (gateway.type === 'worker') {
+		const { stateDir: _stateDir, zoneRuntimeDir: _zoneRuntimeDir, ...gatewayInput } = gateway;
+		return gatewayInput;
+	}
+	const {
+		stateDir: _stateDir,
+		zoneFilesDir: _zoneFilesDir,
+		zoneRuntimeDir: _zoneRuntimeDir,
+		...gatewayInput
+	} = gateway;
+	return gatewayInput;
 }
 
 function createWorkerOnlySystemConfig(): SystemConfig {
@@ -176,6 +275,7 @@ function createWorkerOnlySystemConfig(): SystemConfig {
 					port: 18791,
 					config: './config/worker/worker.json',
 					stateDir: './state/worker',
+					zoneRuntimeDir: './runtime/worker',
 				},
 				secrets: {},
 				egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),
@@ -252,8 +352,93 @@ function createManagedObservabilitySystemConfig(): SystemConfig {
 }
 
 describe('runControllerDoctor', () => {
-	it('reports all checks passing when environment is complete', () => {
-		const result = runControllerDoctor({
+	it('reports deterministic failed legacy-controller-record checks for every affected zone', async () => {
+		const firstZone = systemConfig.zones[0];
+		if (!firstZone || firstZone.gateway.type !== 'openclaw') {
+			throw new Error('Expected an OpenClaw test zone.');
+		}
+		const secondStateDirectory = '/state/sun';
+		const firstStateDirectory = path.resolve(firstZone.gateway.stateDir);
+		const scanGatewayStateAuthorityEvidence = vi.fn(
+			async ({ gatewayStateDirectoryPath }: { readonly gatewayStateDirectoryPath: string }) =>
+				gatewayStateDirectoryPath === firstStateDirectory
+					? [
+							{
+								absolutePath: `${gatewayStateDirectoryPath}/tool-leases`,
+								family: 'tool-leases' as const,
+								kind: 'directory' as const,
+							},
+						]
+					: [
+							{
+								absolutePath: `${gatewayStateDirectoryPath}/gateway-runtime.json`,
+								family: 'gateway-runtime' as const,
+								kind: 'symbolic-link' as const,
+							},
+						],
+		);
+		const result = await runControllerDoctor({
+			availableBinaries: allBinaries,
+			diskFreeBytes: 50 * 1024 * 1024 * 1024,
+			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
+			occupiedPorts: new Set<number>(),
+			nodeVersion: 'v25.9.0',
+			scanGatewayStateAuthorityEvidence,
+			totalMemoryBytes: 16 * 1024 * 1024 * 1024,
+			systemConfig: {
+				...systemConfig,
+				zones: [
+					firstZone,
+					{
+						...firstZone,
+						gateway: {
+							...firstZone.gateway,
+							port: firstZone.gateway.port + 1,
+							stateDir: secondStateDirectory,
+							zoneFilesDir: '/zone-files/sun',
+						},
+						id: 'sun',
+					},
+				],
+			},
+		});
+
+		expect(scanGatewayStateAuthorityEvidence).toHaveBeenCalledTimes(2);
+		expect(result.ok).toBe(false);
+		expect(result.checks).toEqual(
+			expect.arrayContaining([
+				{
+					name: 'legacy-controller-record-evidence-shravan-0',
+					ok: false,
+					hint: `family=tool-leases kind=directory path=${firstStateDirectory}/tool-leases; move controller-owned records to controllerStateDir and remove legacy Gateway-state evidence`,
+				},
+				{
+					name: 'legacy-controller-record-evidence-sun-0',
+					ok: false,
+					hint: `family=gateway-runtime kind=symbolic-link path=${secondStateDirectory}/gateway-runtime.json; move controller-owned records to controllerStateDir and remove legacy Gateway-state evidence`,
+				},
+			]),
+		);
+	});
+
+	it('reports one green legacy-controller-record check when every zone is clean', async () => {
+		const result = await runControllerDoctor({
+			availableBinaries: allBinaries,
+			diskFreeBytes: 50 * 1024 * 1024 * 1024,
+			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
+			nodeVersion: 'v25.9.0',
+			scanGatewayStateAuthorityEvidence: async () => [],
+			systemConfig,
+		});
+
+		expect(result.checks).toContainEqual({
+			name: 'legacy-controller-record-evidence',
+			ok: true,
+			hint: 'No legacy controller records exist under Gateway state directories.',
+		});
+	});
+	it('reports all checks passing when environment is complete', async () => {
+		const result = await runControllerDoctor({
 			availableBinaries: allBinaries,
 			diskFreeBytes: 50 * 1024 * 1024 * 1024,
 			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
@@ -289,12 +474,6 @@ describe('runControllerDoctor', () => {
 			ok: true,
 			hint: 'configured',
 		});
-		expect(
-			result.checks.find((check) => check.name === 'zone-agent-sandbox-seed-shravan-shravan-0'),
-		).toMatchObject({
-			ok: true,
-			hint: '.config/gcloud/configurations/config_default',
-		});
 		expect(result.checks.find((check) => check.name === 'age')).toBeUndefined();
 		expect(result.checks.find((check) => check.name === '1password-cli')).toBeUndefined();
 		expect(result.checks.find((check) => check.name === 'observability-enabled')).toMatchObject({
@@ -304,7 +483,7 @@ describe('runControllerDoctor', () => {
 		expect(result.checks.find((check) => check.name === 'docker-cli')).toBeUndefined();
 	});
 
-	it('reports Tool VM mediated secret agent access', () => {
+	it('reports Tool VM mediated secret agent access', async () => {
 		const baseConfig = createExternalObservabilitySystemConfig();
 		const baseZone = baseConfig.zones[0];
 		if (!baseZone) {
@@ -345,7 +524,7 @@ describe('runControllerDoctor', () => {
 			],
 		} satisfies SystemConfig;
 
-		const result = runControllerDoctor({
+		const result = await runControllerDoctor({
 			availableBinaries: allBinaries,
 			diskFreeBytes: 50 * 1024 * 1024 * 1024,
 			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
@@ -369,8 +548,8 @@ describe('runControllerDoctor', () => {
 		});
 	});
 
-	it('recommends managed observability when host observability is omitted', () => {
-		const result = runControllerDoctor({
+	it('recommends managed observability when host observability is omitted', async () => {
+		const result = await runControllerDoctor({
 			availableBinaries: allBinaries,
 			diskFreeBytes: 50 * 1024 * 1024 * 1024,
 			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
@@ -392,8 +571,8 @@ describe('runControllerDoctor', () => {
 		);
 	});
 
-	it('requires Docker only for managed observability stacks', () => {
-		const missingDockerResult = runControllerDoctor({
+	it('requires Docker only for managed observability stacks', async () => {
+		const missingDockerResult = await runControllerDoctor({
 			availableBinaries: allBinaries,
 			diskFreeBytes: 50 * 1024 * 1024 * 1024,
 			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
@@ -404,7 +583,7 @@ describe('runControllerDoctor', () => {
 			zigVersion: '0.15.2',
 			systemConfig: createManagedObservabilitySystemConfig(),
 		});
-		const readyDockerResult = runControllerDoctor({
+		const readyDockerResult = await runControllerDoctor({
 			availableBinaries: new Set([...allBinaries, 'docker']),
 			diskFreeBytes: 50 * 1024 * 1024 * 1024,
 			dockerDaemonReady: true,
@@ -427,7 +606,7 @@ describe('runControllerDoctor', () => {
 		});
 	});
 
-	it('checks Docker CLI and daemon when Docker-backed images are configured', () => {
+	it('checks Docker CLI and daemon when Docker-backed images are configured', async () => {
 		const dockerBackedConfig = {
 			...systemConfig,
 			imageProfiles: {
@@ -442,7 +621,7 @@ describe('runControllerDoctor', () => {
 			},
 		} satisfies SystemConfig;
 
-		const missingDockerResult = runControllerDoctor({
+		const missingDockerResult = await runControllerDoctor({
 			availableBinaries: allBinaries,
 			diskFreeBytes: 50 * 1024 * 1024 * 1024,
 			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
@@ -453,7 +632,7 @@ describe('runControllerDoctor', () => {
 			zigVersion: '0.15.2',
 			systemConfig: dockerBackedConfig,
 		});
-		const readyDockerResult = runControllerDoctor({
+		const readyDockerResult = await runControllerDoctor({
 			availableBinaries: new Set([...allBinaries, 'docker']),
 			diskFreeBytes: 50 * 1024 * 1024 * 1024,
 			dockerDaemonReady: true,
@@ -486,7 +665,7 @@ describe('runControllerDoctor', () => {
 		});
 	});
 
-	it('checks Docker CLI and daemon when managed base images are configured', () => {
+	it('checks Docker CLI and daemon when managed base images are configured', async () => {
 		const managedBaseConfig = {
 			...systemConfig,
 			imageProfiles: {
@@ -504,7 +683,7 @@ describe('runControllerDoctor', () => {
 			},
 		} satisfies SystemConfig;
 
-		const result = runControllerDoctor({
+		const result = await runControllerDoctor({
 			availableBinaries: allBinaries,
 			diskFreeBytes: 50 * 1024 * 1024 * 1024,
 			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
@@ -637,7 +816,7 @@ describe('runControllerDoctor', () => {
 		expect(checks[0]?.hint).toContain('move openClawPackageOverrides to packageOverrides.openclaw');
 	});
 
-	it('flags legacy Dockerfile image profiles for migration', () => {
+	it('flags legacy Dockerfile image profiles for migration', async () => {
 		const dockerBackedConfig = {
 			...systemConfig,
 			imageProfiles: {
@@ -652,7 +831,7 @@ describe('runControllerDoctor', () => {
 			},
 		} satisfies SystemConfig;
 
-		const result = runControllerDoctor({
+		const result = await runControllerDoctor({
 			availableBinaries: new Set([...allBinaries, 'docker']),
 			diskFreeBytes: 50 * 1024 * 1024 * 1024,
 			dockerDaemonReady: true,
@@ -676,8 +855,8 @@ describe('runControllerDoctor', () => {
 		});
 	});
 
-	it('flags missing or too-old Zig versions', () => {
-		const missingResult = runControllerDoctor({
+	it('flags missing or too-old Zig versions', async () => {
+		const missingResult = await runControllerDoctor({
 			availableBinaries: allBinaries,
 			diskFreeBytes: 50 * 1024 * 1024 * 1024,
 			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
@@ -687,7 +866,7 @@ describe('runControllerDoctor', () => {
 			totalMemoryBytes: 16 * 1024 * 1024 * 1024,
 			systemConfig,
 		});
-		const outdatedResult = runControllerDoctor({
+		const outdatedResult = await runControllerDoctor({
 			availableBinaries: allBinaries,
 			diskFreeBytes: 50 * 1024 * 1024 * 1024,
 			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
@@ -712,8 +891,8 @@ describe('runControllerDoctor', () => {
 		});
 	});
 
-	it('does not require optional 1Password CLI or age binaries for env-backed configs', () => {
-		const result = runControllerDoctor({
+	it('does not require optional 1Password CLI or age binaries for env-backed configs', async () => {
+		const result = await runControllerDoctor({
 			availableBinaries: allBinaries,
 			diskFreeBytes: 50 * 1024 * 1024 * 1024,
 			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
@@ -728,8 +907,8 @@ describe('runControllerDoctor', () => {
 		expect(result.checks.find((check) => check.name === '1password-cli')).toBeUndefined();
 	});
 
-	it('flags missing qemu with an install hint', () => {
-		const result = runControllerDoctor({
+	it('flags missing qemu with an install hint', async () => {
+		const result = await runControllerDoctor({
 			availableBinaries: new Set<string>(),
 			diskFreeBytes: 50 * 1024 * 1024 * 1024,
 			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
@@ -745,8 +924,8 @@ describe('runControllerDoctor', () => {
 		expect(qemuCheck?.hint).toBe('Install QEMU (for example: brew install qemu).');
 	});
 
-	it('flags missing OpenClaw CLI for OpenClaw gateway configs', () => {
-		const result = runControllerDoctor({
+	it('flags missing OpenClaw CLI for OpenClaw gateway configs', async () => {
+		const result = await runControllerDoctor({
 			availableBinaries: new Set([...allBinaries].filter((binary) => binary !== 'openclaw')),
 			diskFreeBytes: 50 * 1024 * 1024 * 1024,
 			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
@@ -759,12 +938,12 @@ describe('runControllerDoctor', () => {
 		expect(result.ok).toBe(false);
 		expect(result.checks.find((check) => check.name === 'openclaw-cli')).toMatchObject({
 			ok: false,
-			hint: 'Install OpenClaw in this catalog for local schema validation: pnpm add -D openclaw@2026.6.8.',
+			hint: 'Install OpenClaw in this catalog for local schema validation: pnpm add -D openclaw@2026.7.1-2.',
 		});
 	});
 
-	it('flags occupied ports and insufficient resources', () => {
-		const result = runControllerDoctor({
+	it('flags occupied ports and insufficient resources', async () => {
+		const result = await runControllerDoctor({
 			availableBinaries: allBinaries,
 			diskFreeBytes: 1,
 			env: {},
@@ -781,31 +960,31 @@ describe('runControllerDoctor', () => {
 		expect(result.checks.find((check) => check.name === 'disk-space')?.ok).toBe(false);
 	});
 
-	it('flags runtimeDir overlap with cache, state, and zone files paths', () => {
+	it('flags controllerRuntimeDir overlap with cache, state, and zone files paths', async () => {
 		const overlappingConfigs = [
 			{
-				runtimeDir: './cache/runtime',
-				expectedHint: 'runtimeDir must not overlap cacheDir',
+				controllerRuntimeDir: './cache/runtime',
+				expectedHint: 'controllerRuntimeDir must not overlap cacheDir',
 			},
 			{
 				cacheDir: './runtime/cache',
-				expectedHint: 'runtimeDir must not overlap cacheDir',
+				expectedHint: 'controllerRuntimeDir must not overlap cacheDir',
 			},
 			{
-				runtimeDir: './state/shravan/runtime',
-				expectedHint: "runtimeDir must not overlap stateDir for zone 'shravan'",
+				controllerRuntimeDir: './state/shravan/runtime',
+				expectedHint: "controllerRuntimeDir must not overlap stateDir for zone 'shravan'",
 			},
 			{
 				stateDir: './runtime/state/shravan',
-				expectedHint: "runtimeDir must not overlap stateDir for zone 'shravan'",
+				expectedHint: "controllerRuntimeDir must not overlap stateDir for zone 'shravan'",
 			},
 			{
-				runtimeDir: './zone-files/shravan/runtime',
-				expectedHint: "runtimeDir must not overlap zoneFilesDir for zone 'shravan'",
+				controllerRuntimeDir: './zone-files/shravan/runtime',
+				expectedHint: "controllerRuntimeDir must not overlap zoneFilesDir for zone 'shravan'",
 			},
 			{
 				zoneFilesDir: './runtime/zone-files/shravan',
-				expectedHint: "runtimeDir must not overlap zoneFilesDir for zone 'shravan'",
+				expectedHint: "controllerRuntimeDir must not overlap zoneFilesDir for zone 'shravan'",
 			},
 		] satisfies readonly RuntimePathOverlapCase[];
 
@@ -814,7 +993,8 @@ describe('runControllerDoctor', () => {
 			if (firstZone === undefined || firstZone.gateway.type !== 'openclaw') {
 				throw new Error('Test fixture must include an OpenClaw zone.');
 			}
-			const result = runControllerDoctor({
+			// oxlint-disable-next-line no-await-in-loop -- each table case is asserted independently in declaration order.
+			const result = await runControllerDoctor({
 				availableBinaries: allBinaries,
 				diskFreeBytes: 50 * 1024 * 1024 * 1024,
 				env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
@@ -824,7 +1004,8 @@ describe('runControllerDoctor', () => {
 				systemConfig: {
 					...systemConfig,
 					cacheDir: overlappingConfig.cacheDir ?? systemConfig.cacheDir,
-					runtimeDir: overlappingConfig.runtimeDir ?? systemConfig.runtimeDir,
+					controllerRuntimeDir:
+						overlappingConfig.controllerRuntimeDir ?? systemConfig.controllerRuntimeDir,
 					zones: [
 						{
 							...firstZone,
@@ -848,12 +1029,12 @@ describe('runControllerDoctor', () => {
 		}
 	});
 
-	it('reports every runtimeDir overlap in one doctor run', () => {
+	it('reports every controllerRuntimeDir overlap in one doctor run', async () => {
 		const firstZone = systemConfig.zones[0];
 		if (firstZone === undefined || firstZone.gateway.type !== 'openclaw') {
 			throw new Error('Test fixture must include an OpenClaw zone.');
 		}
-		const result = runControllerDoctor({
+		const result = await runControllerDoctor({
 			availableBinaries: allBinaries,
 			diskFreeBytes: 50 * 1024 * 1024 * 1024,
 			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
@@ -863,7 +1044,7 @@ describe('runControllerDoctor', () => {
 			systemConfig: {
 				...systemConfig,
 				cacheDir: './runtime/cache',
-				runtimeDir: './runtime',
+				controllerRuntimeDir: './runtime',
 				zones: [
 					{
 						...firstZone,
@@ -886,8 +1067,8 @@ describe('runControllerDoctor', () => {
 		);
 	});
 
-	it('flags worker /work VFS mounts as a performance risk', () => {
-		const result = runControllerDoctor({
+	it('flags worker /work VFS mounts as a performance risk', async () => {
+		const result = await runControllerDoctor({
 			availableBinaries: allBinaries,
 			diskFreeBytes: 50 * 1024 * 1024 * 1024,
 			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
@@ -925,7 +1106,9 @@ describe('collectVmHostSystemDoctorCheck', () => {
 		await mkdir(vmHostSystemPath, { recursive: true });
 
 		const check = await collectVmHostSystemDoctorCheck(
-			createLoadedSystemConfig(systemConfig, { systemConfigPath: configPath }),
+			createLoadedSystemConfig(createSystemConfigInputFromResolvedFixture(systemConfig), {
+				systemConfigPath: configPath,
+			}),
 		);
 
 		expect(check).toMatchObject({
@@ -948,7 +1131,9 @@ describe('collectVmHostSystemDoctorCheck', () => {
 		);
 
 		const check = await collectVmHostSystemDoctorCheck(
-			createLoadedSystemConfig(systemConfig, { systemConfigPath: configPath }),
+			createLoadedSystemConfig(createSystemConfigInputFromResolvedFixture(systemConfig), {
+				systemConfigPath: configPath,
+			}),
 		);
 
 		expect(check).toMatchObject({
@@ -960,7 +1145,7 @@ describe('collectVmHostSystemDoctorCheck', () => {
 
 	it('checks runtime host files inside /etc/agent-vm container configs', async () => {
 		const check = await collectVmHostSystemDoctorCheck({
-			...createLoadedSystemConfig(systemConfig, {
+			...createLoadedSystemConfig(createSystemConfigInputFromResolvedFixture(systemConfig), {
 				systemConfigPath: '/etc/agent-vm/system.json',
 			}),
 		});
@@ -995,7 +1180,9 @@ describe('collectVmHostSystemDoctorCheck', () => {
 		} satisfies SystemConfig;
 
 		const check = await collectVmHostSystemDoctorCheck(
-			createLoadedSystemConfig(containerSystemConfig, { systemConfigPath: configPath }),
+			createLoadedSystemConfig(createSystemConfigInputFromResolvedFixture(containerSystemConfig), {
+				systemConfigPath: configPath,
+			}),
 		);
 
 		expect(check).toMatchObject({
@@ -1012,7 +1199,9 @@ describe('collectVmHostSystemDoctorCheck', () => {
 
 		await expect(
 			collectVmHostSystemDoctorCheck(
-				createLoadedSystemConfig(systemConfig, { systemConfigPath: configPath }),
+				createLoadedSystemConfig(createSystemConfigInputFromResolvedFixture(systemConfig), {
+					systemConfigPath: configPath,
+				}),
 			),
 		).resolves.toBeNull();
 	});

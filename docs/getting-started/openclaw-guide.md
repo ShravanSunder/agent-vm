@@ -23,6 +23,12 @@ For the full OpenClaw architecture, see [architecture/openclaw-gateway.md](../ar
 
 ```json
 {
+	"schemaVersion": 2,
+	"storageRootDir": "../.agent-vm/my-openclaw",
+	"host": {
+		"controllerPort": 18900,
+		"projectNamespace": "my-openclaw"
+	},
   "zones": [{
     "id": "my-openclaw",
     "gateway": {
@@ -32,8 +38,6 @@ For the full OpenClaw architecture, see [architecture/openclaw-gateway.md](../ar
       "port": 18791,
       "config": "./my-openclaw/openclaw.json",
       "imageProfile": "openclaw",
-      "stateDir": "../state/my-openclaw",
-      "zoneFilesDir": "../zone-files/my-openclaw",
       "controlAuth": {
         "mode": "token",
         "secret": "OPENCLAW_GATEWAY_TOKEN"
@@ -99,7 +103,7 @@ versions in `package.json` and runtime image additions in the overlay.
 For host-side validation, install the same OpenClaw version in the catalog:
 
 ```bash
-pnpm add -D openclaw@2026.6.8
+pnpm add -D openclaw@2026.7.1-2
 ```
 
 `agent-vm doctor` and `agent-vm validate` use the catalog's `openclaw`
@@ -187,7 +191,7 @@ over the private control session exposed through Gondolin ingress:
        | receives SSH lease capability only
        v
   Tool VM (Zone 3 — untrusted)
-       | /workspace mounted, no raw secrets, scoped mediated placeholders only
+       | filtered /workspace, rootfs/COW /work, no raw secrets
        | SSH access via tool-{slot}.vm.host:22
 ```
 
@@ -196,11 +200,10 @@ profile from the zone's `agentToolVmProfiles` map, falling back to
 `defaultToolVmProfile`. Idle leases are reaped by `leaseIdleTtl`, with a 100
 minute default when no policy is configured.
 
-The lease `workMountDir` is a gateway VM path, not a host path. It must name a
-concrete child path under `/zone` or
-`/home/openclaw/.openclaw/state/sandboxes`; the controller rejects those roots
-themselves as too broad. The controller resolves the selected path to the host
-directory that backs the Tool VM's `/workspace` mount.
+The plugin authenticates OpenClaw's native agent/workspace context, then the
+controller selects that configured agent's filtered durable `/workspace`,
+optional `/gitdirs/workspace.git`, and rootfs/COW `/work`. The lease request
+does not carry a host or Gateway mount path.
 
 For internals, see [architecture/openclaw-gateway.md](../architecture/openclaw-gateway.md#tool-vm-leases).
 
@@ -327,7 +330,7 @@ Opens an SSH session into the gateway VM for debugging.
 
 Use controller logs for both the gateway boot log and the OpenClaw runtime log
 tail. The gateway VM writes these logs under `/agent-vm/logs`, backed by
-`<runtimeDir>/zones/<zone>/logs` on the host, so they survive gateway restarts
+`<storageRootDir>/<zoneId>/runtime/logs` on the host, so they survive gateway restarts
 without entering normal zone backups:
 
 ```bash

@@ -230,13 +230,14 @@ describe('Tool VM lease authority runtime projections', () => {
 		]);
 	});
 
-	it('makes a destroying lease unavailable before mechanical destruction settles', async () => {
+	it('makes an access-fenced lease unavailable while retained cleanup remains unsettled', async () => {
 		// Arrange
 		const runtime = createToolVmLeaseAuthorityRuntime<TestLease>();
 		const authority = createAuthority();
 		const lease = createLease();
-		const destroyCompletion = createDeferred<void>();
-		const destroy = vi.fn(() => destroyCompletion.promise);
+		const cleanupCompletion = createDeferred<void>();
+		const cleanup = vi.fn(() => cleanupCompletion.promise);
+		const fenceAccess = vi.fn(async () => {});
 		runtime.registerGateway(GATEWAY_ONE);
 		runtime.beginProvisioning({
 			authority,
@@ -253,13 +254,16 @@ describe('Tool VM lease authority runtime projections', () => {
 		// Act
 		const destruction = runtime.destroyExact({
 			authority,
-			destroy,
+			cleanup,
 			destroyedAtMs: 300,
+			fenceAccess,
 			reason: 'lease-release',
 		});
+		await destruction.accessFenced;
 
 		// Assert
-		expect(destroy).toHaveBeenCalledOnce();
+		expect(fenceAccess).toHaveBeenCalledOnce();
+		expect(cleanup).toHaveBeenCalledOnce();
 		expect(runtime.getLease(lease.id)).toBeUndefined();
 		expect(
 			runtime.findCurrentLeaseByPrincipal({
@@ -267,11 +271,11 @@ describe('Tool VM lease authority runtime projections', () => {
 				principal: PRINCIPAL_MAIN,
 			}),
 		).toBeUndefined();
-		expect(runtime.leafSnapshotForLease(lease.id)).toMatchObject({ kind: 'destroying' });
+		expect(runtime.leafSnapshotForLease(lease.id)).toMatchObject({ kind: 'retiring' });
 
 		// Act
-		destroyCompletion.resolve();
-		await destruction;
+		cleanupCompletion.resolve();
+		await destruction.completion;
 
 		// Assert
 		expect(runtime.authorityForLease(lease.id)).toBeUndefined();

@@ -41,7 +41,7 @@ function createChildCompletion(): ChildCompletion {
 
 interface MutableToolVmMembership {
 	readonly agentId: string;
-	readonly completion: ChildCompletion;
+	completion: ChildCompletion;
 	readonly leafId: string;
 	state: ToolVmMembershipState;
 	toolVmId?: string;
@@ -67,6 +67,7 @@ export interface ToolVmMembershipHandle {
 	attachToolVm(toolVmId: string): void;
 	beginDestroying(): void;
 	commitCurrent(): void;
+	recordAccessFenced(): void;
 	recordDestroyed(): void;
 	recordUnavailable(): void;
 	snapshot(): ToolVmMembershipSnapshot;
@@ -87,6 +88,7 @@ export interface GatewayOwnershipCoordinator {
 		readonly generationId: string;
 		readonly zoneId: string;
 	}): GatewayEpochSeedHandle;
+	abandonUnattachedGatewaySeed(expectedSeed: GatewayEpochSeed): void;
 	admitProvisionalToolVm(options: {
 		readonly agentId: string;
 		readonly expectedGateway: GatewayEpochIdentity;
@@ -128,6 +130,27 @@ function gatewaySnapshot(gateway: MutableGatewayMembership): GatewayMembershipSn
 		seed: structuredClone(gateway.seed),
 		state: gateway.state,
 	};
+}
+
+function clearCurrentLeafMapping(
+	gateway: MutableGatewayMembership,
+	child: MutableToolVmMembership,
+): void {
+	if (gateway.leafIdByAgentId.get(child.agentId) === child.leafId) {
+		gateway.leafIdByAgentId.delete(child.agentId);
+	}
+}
+
+function blockingSameAgentPredecessor(
+	gateway: MutableGatewayMembership,
+	child: MutableToolVmMembership,
+): MutableToolVmMembership | undefined {
+	return [...gateway.childrenByLeafId.values()].find(
+		(candidate) =>
+			candidate !== child &&
+			candidate.agentId === child.agentId &&
+			(candidate.state === 'destroying' || candidate.state === 'owner-unsafe'),
+	);
 }
 
 export function createGatewayOwnershipCoordinator(
@@ -185,6 +208,17 @@ export function createGatewayOwnershipCoordinator(
 	};
 
 	return {
+		abandonUnattachedGatewaySeed(expectedSeed): void {
+			const gateway = requireGatewayForSeed(expectedSeed);
+			if (gateway.identity !== undefined) {
+				throw new GatewayOwnershipCoordinatorError('gateway-already-attached');
+			}
+			if (gateway.state !== 'seeded') {
+				throw new GatewayOwnershipCoordinatorError('gateway-not-current');
+			}
+			gateway.state = 'retired';
+		},
+
 		beginGatewayEpoch(beginOptions): GatewayEpochSeedHandle {
 			const existingGateway = currentGatewayByZone.get(beginOptions.zoneId);
 			if (existingGateway !== undefined && existingGateway.state !== 'retired') {
@@ -239,6 +273,13 @@ export function createGatewayOwnershipCoordinator(
 			if (gateway.leafIdByAgentId.has(agent.agentId)) {
 				throw new GatewayOwnershipCoordinatorError('agent-already-admitted');
 			}
+			if (
+				[...gateway.childrenByLeafId.values()].some(
+					(child) => child.agentId === agent.agentId && child.state === 'owner-unsafe',
+				)
+			) {
+				throw new GatewayOwnershipCoordinatorError('owner-unsafe');
+			}
 			if (gateway.childrenByLeafId.has(leafId)) {
 				throw new GatewayOwnershipCoordinatorError('leaf-already-admitted');
 			}
@@ -272,10 +313,17 @@ export function createGatewayOwnershipCoordinator(
 				},
 				beginDestroying(): void {
 					const currentChild = requireCurrentChild();
-					if (currentChild.state === 'destroyed' || currentChild.state === 'owner-unsafe') {
+					if (currentChild.state === 'retiring') {
+						return;
+					}
+					if (currentChild.state === 'destroyed') {
 						throw new GatewayOwnershipCoordinatorError('child-not-current');
 					}
+					if (currentChild.state === 'owner-unsafe') {
+						currentChild.completion = createChildCompletion();
+					}
 					currentChild.state = 'destroying';
+					clearCurrentLeafMapping(gateway, currentChild);
 				},
 				commitCurrent(): void {
 					const currentGateway = requireOperationalGateway(admitOptions.expectedGateway);
@@ -289,15 +337,33 @@ export function createGatewayOwnershipCoordinator(
 					if (currentChild.state !== 'provisional') {
 						throw new GatewayOwnershipCoordinatorError('child-not-current');
 					}
+					const blockingPredecessor = blockingSameAgentPredecessor(currentGateway, currentChild);
+					if (blockingPredecessor?.state === 'owner-unsafe') {
+						throw new GatewayOwnershipCoordinatorError('owner-unsafe');
+					}
+					if (blockingPredecessor !== undefined) {
+						throw new GatewayOwnershipCoordinatorError('agent-already-admitted');
+					}
 					currentChild.state = 'current';
 				},
-				recordDestroyed(): void {
+				recordAccessFenced(): void {
 					const currentChild = requireCurrentChild();
+					if (currentChild.state === 'retiring') {
+						return;
+					}
 					if (currentChild.state !== 'destroying') {
 						throw new GatewayOwnershipCoordinatorError('child-not-current');
 					}
+					currentChild.state = 'retiring';
+					clearCurrentLeafMapping(gateway, currentChild);
+				},
+				recordDestroyed(): void {
+					const currentChild = requireCurrentChild();
+					if (currentChild.state !== 'destroying' && currentChild.state !== 'retiring') {
+						throw new GatewayOwnershipCoordinatorError('child-not-current');
+					}
 					currentChild.state = 'destroyed';
-					gateway.leafIdByAgentId.delete(currentChild.agentId);
+					clearCurrentLeafMapping(gateway, currentChild);
 					currentChild.completion.resolve(true);
 				},
 				recordUnavailable(): void {
@@ -305,8 +371,10 @@ export function createGatewayOwnershipCoordinator(
 					if (currentChild.state === 'destroyed') {
 						throw new GatewayOwnershipCoordinatorError('child-not-current');
 					}
+					if (currentChild.state === 'retiring') {
+						return;
+					}
 					currentChild.state = 'owner-unsafe';
-					gateway.state = 'owner-unsafe';
 					currentChild.completion.resolve(false);
 				},
 				snapshot(): ToolVmMembershipSnapshot {

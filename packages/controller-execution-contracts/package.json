@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/controller-execution-contracts",
-	"version": "0.0.114",
+	"version": "0.0.126",
 	"description": "Zod contracts for controller-owned portal execution boundaries.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {
@@ -27,6 +27,10 @@
 		"./controller-dispatch-boundary": {
 			"types": "./dist/controller-dispatch-boundary/index.d.ts",
 			"import": "./dist/controller-dispatch-boundary/index.js"
+		},
+		"./controller-execution-data-boundary": {
+			"types": "./dist/controller-execution-data-boundary/index.d.ts",
+			"import": "./dist/controller-execution-data-boundary/index.js"
 		},
 		"./controller-host-action-boundary": {
 			"types": "./dist/controller-host-action-boundary/index.d.ts",

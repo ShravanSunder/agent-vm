@@ -66,7 +66,7 @@ describe('isGatewayImageCached', () => {
 
 		const systemConfig = createLoadedSystemConfig(
 			{
-				cacheDir,
+				storageRootDir: temporaryDirectoryPath,
 				host: {
 					controllerPort: 18800,
 					projectNamespace: 'cache-test',
@@ -106,7 +106,6 @@ describe('isGatewayImageCached', () => {
 							config: '/tmp/gateway.json',
 							memory: '2G',
 							port: 18791,
-							stateDir: '/tmp/state',
 						},
 						id: 'coding-agent',
 						secrets: {},

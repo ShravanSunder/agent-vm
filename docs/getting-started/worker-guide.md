@@ -36,6 +36,12 @@ In your `system.jsonc`, add a zone with `gateway.type: "worker"`:
 
 ```json
 {
+	"schemaVersion": 2,
+	"storageRootDir": "~/.agent-vm/coding-agent",
+	"host": {
+		"controllerPort": 18900,
+		"projectNamespace": "coding-agent"
+	},
   "zones": [{
     "id": "dev-worker",
     "gateway": {
@@ -43,8 +49,7 @@ In your `system.jsonc`, add a zone with `gateway.type: "worker"`:
       "memory": "2G",
       "cpus": 2,
       "port": 18791,
-      "config": "./dev-worker/worker.jsonc",
-      "stateDir": "../state/dev-worker"
+      "config": "./dev-worker/worker.jsonc"
     },
     "secrets": { ... },
     "egressHosts": [

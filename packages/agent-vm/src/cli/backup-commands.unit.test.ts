@@ -1,5 +1,4 @@
-import type { SecretRef } from '@agent-vm/secret-management';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
 import { defaultCliDependencies } from './agent-vm-cli-support.js';
@@ -8,8 +7,7 @@ import { runBackupCommand } from './backup-commands.js';
 function createBackupSystemConfig(): LoadedSystemConfig {
 	return createLoadedSystemConfig(
 		{
-			cacheDir: './cache',
-			runtimeDir: './runtime',
+			storageRootDir: './storage',
 			host: {
 				controllerPort: 18800,
 				projectNamespace: 'claw-tests-a1b2c3d4',
@@ -64,8 +62,6 @@ function createBackupSystemConfig(): LoadedSystemConfig {
 						memory: '2G',
 						config: './config/shravan/openclaw.json',
 						port: 18791,
-						stateDir: './state/shravan',
-						zoneFilesDir: './zone-files/shravan',
 					},
 					id: 'shravan',
 					agents: [{ id: 'main' }],
@@ -85,6 +81,27 @@ function createBackupSystemConfig(): LoadedSystemConfig {
 		{ systemConfigPath: './config/system.json' },
 	);
 }
+
+type BackupIdentityReference = NonNullable<
+	LoadedSystemConfig['zones'][number]['gateway']['backupIdentity']
+>;
+
+function withBackupIdentity(
+	systemConfig: LoadedSystemConfig,
+	backupIdentity: BackupIdentityReference,
+): LoadedSystemConfig {
+	return {
+		...systemConfig,
+		zones: systemConfig.zones.map((zone) => ({
+			...zone,
+			gateway: { ...zone.gateway, backupIdentity },
+		})),
+	};
+}
+
+afterEach(() => {
+	vi.unstubAllEnvs();
+});
 
 describe('runBackupCommand', () => {
 	it('lists backups without resolving secrets', async () => {
@@ -155,26 +172,30 @@ describe('runBackupCommand', () => {
 		});
 
 		expect(listBackups).toHaveBeenCalledWith({
-			backupDir: './state/shravan/backups',
+			backupDir: 'storage/shravan/state/backups',
 			zoneId: 'shravan',
 		});
 		expect(outputs.join('')).toContain('shravan__2026-04-11.tar.age');
 	});
 
-	it('creates a backup with the per-zone 1Password key ref', async () => {
+	it('creates a backup with the configured environment identity', async () => {
 		const createBackup = vi.fn(async () => ({
 			backupPath: './state/shravan/backups/shravan__2026-04-11.tar.age',
 			timestamp: '2026-04-11',
 			zoneId: 'shravan',
 		}));
-		const systemConfig = createBackupSystemConfig();
-
+		const systemConfig = withBackupIdentity(createBackupSystemConfig(), {
+			source: 'environment',
+			envVar: 'AGENT_VM_TEST_BACKUP_IDENTITY',
+		});
+		let identityPromise: Promise<string> | undefined;
+		vi.stubEnv('AGENT_VM_TEST_BACKUP_IDENTITY', 'test-environment-backup-identity');
 		await runBackupCommand({
 			dependencies: {
 				...defaultCliDependencies,
 				buildControllerStatus: () => ({ controllerPort: 18800, toolVmProfiles: [], zones: [] }),
 				createAgeBackupEncryption: (dependencies) => {
-					void dependencies.resolveIdentity();
+					identityPromise = dependencies.resolveIdentity();
 					return { decrypt: async () => {}, encrypt: async () => {} };
 				},
 				createControllerClient: () => ({
@@ -203,13 +224,7 @@ describe('runBackupCommand', () => {
 					upgradeZone: async () => ({}),
 				}),
 				createSecretResolver: async () => ({
-					resolve: async (secretRef: SecretRef) => {
-						if (secretRef.source === 'config') {
-							throw new Error('Unexpected config secret.');
-						}
-						expect(secretRef.ref).toBe('op://agent-vm/shravan-gateway-backup/password');
-						return 'backup-key';
-					},
+					resolve: async () => 'unused-1password-secret',
 					resolveAll: async () => ({}),
 				}),
 				createZoneBackupManager: () => ({
@@ -229,13 +244,14 @@ describe('runBackupCommand', () => {
 			systemConfig,
 		});
 
+		await expect(identityPromise).resolves.toBe('test-environment-backup-identity');
 		expect(createBackup).toHaveBeenCalledWith({
-			backupDir: './state/shravan/backups',
-			cacheDir: './cache',
-			runtimeDir: './runtime',
-			stateDir: './state/shravan',
-			zoneFilesDir: './zone-files/shravan',
+			backupDir: 'storage/shravan/state/backups',
+			cacheDir: 'storage/cache',
+			stateDir: 'storage/shravan/state',
+			zoneFilesDir: 'storage/shravan/zone-files',
 			zoneId: 'shravan',
+			zoneRuntimeDir: 'storage/shravan/runtime',
 		});
 	});
 
@@ -296,20 +312,52 @@ describe('runBackupCommand', () => {
 		).rejects.toThrow('Usage: agent-vm backup restore <path> [--zone <id>]');
 	});
 
-	it('restores a backup into the target zone files and state directories', async () => {
+	it.each(['create', 'restore'] as const)(
+		'requires gateway.backupIdentity for backup %s',
+		async (backupSubcommand) => {
+			const systemConfig = createBackupSystemConfig();
+			const restArguments =
+				backupSubcommand === 'restore'
+					? ['restore', '/tmp/backup.tar.age', '--zone', 'shravan']
+					: ['create', '--zone', 'shravan'];
+
+			await expect(
+				runBackupCommand({
+					dependencies: defaultCliDependencies,
+					io: {
+						stderr: { write: () => true },
+						stdout: { write: () => true },
+					},
+					restArguments,
+					systemConfig,
+				}),
+			).rejects.toThrow(
+				`Zone 'shravan' must configure gateway.backupIdentity for backup ${backupSubcommand}.`,
+			);
+		},
+	);
+
+	it('restores a backup with the configured inline identity', async () => {
 		const restoreBackup = vi.fn(async () => ({
 			stateDir: './state/shravan',
 			zoneFilesDir: './zone-files/shravan',
 			zoneId: 'shravan',
 		}));
-		const systemConfig = createBackupSystemConfig();
+		const systemConfig = withBackupIdentity(createBackupSystemConfig(), {
+			source: 'config',
+			value: 'test-inline-backup-identity',
+		});
 		const outputs: string[] = [];
+		let identityPromise: Promise<string> | undefined;
 
 		await runBackupCommand({
 			dependencies: {
 				...defaultCliDependencies,
 				buildControllerStatus: () => ({ controllerPort: 18800, toolVmProfiles: [], zones: [] }),
-				createAgeBackupEncryption: () => ({ decrypt: async () => {}, encrypt: async () => {} }),
+				createAgeBackupEncryption: (dependencies) => {
+					identityPromise = dependencies.resolveIdentity();
+					return { decrypt: async () => {}, encrypt: async () => {} };
+				},
 				createControllerClient: () => ({
 					destroyZone: async () => ({}),
 					enableZoneSsh: async () => ({}),
@@ -336,7 +384,7 @@ describe('runBackupCommand', () => {
 					upgradeZone: async () => ({}),
 				}),
 				createSecretResolver: async () => ({
-					resolve: async () => '',
+					resolve: async () => 'unused-1password-secret',
 					resolveAll: async () => ({}),
 				}),
 				createZoneBackupManager: () => ({
@@ -361,10 +409,11 @@ describe('runBackupCommand', () => {
 			systemConfig,
 		});
 
+		await expect(identityPromise).resolves.toBe('test-inline-backup-identity');
 		expect(restoreBackup).toHaveBeenCalledWith({
 			backupPath: '/tmp/backup.tar.age',
-			stateDir: './state/shravan',
-			zoneFilesDir: './zone-files/shravan',
+			stateDir: 'storage/shravan/state',
+			zoneFilesDir: 'storage/shravan/zone-files',
 		});
 		expect(outputs.join('')).toContain('"zoneId": "shravan"');
 	});

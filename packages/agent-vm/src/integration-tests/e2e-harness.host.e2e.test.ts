@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import type { ManagedVm } from '@agent-vm/managed-vm';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { computeFingerprintFromConfigPath } from '../build/gondolin-image-builder.js';
 import { managedVmImageAssetFileNames } from '../build/gondolin-managed-vm-build-tooling.js';
@@ -12,9 +12,13 @@ import {
 	writePreparedManagedVmImage,
 } from '../build/prepared-gondolin-image-cache.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
-import { createOpenClawProcessReliabilityFaultTargetRegistry } from '../controller/reliability/testing/openclaw-process-reliability-fault-target-registry.js';
 import type { GatewayVmLifecycleAuthority } from '../controller/vm-ownership/gateway-vm-lifecycle-authority.js';
-import type { StartGatewayZoneOptions } from '../gateway/gateway-zone-support.js';
+import type {
+	GatewayZoneDestroyResult,
+	ManagedGatewayZoneStartResult,
+	StartGatewayZoneOptions,
+} from '../gateway/gateway-zone-support.js';
+import { createManagedGatewayBootContract } from '../gateway/managed-gateway-boot-contract.js';
 import {
 	TEST_SSH_SERVER_HOST_KEY,
 	createManagedExecProcessStub,
@@ -39,9 +43,80 @@ import {
 	useLocalOpenClawPluginGatewayImage,
 	useLocalToolVmMcpPortalPackage,
 } from './e2e-harness.js';
+import {
+	renderHermesManagedE2eConfiguration,
+	scaffoldHermesE2eProject,
+	useLocalHermesGatewayImagePackages,
+} from './hermes-e2e-harness.js';
 
 const temporaryRoots: string[] = [];
 const normalizedDockerContextTimestampMs = Date.UTC(2000, 0, 1, 0, 0, 0, 0);
+const testManagedGatewayBootContract = createManagedGatewayBootContract({
+	bootEntry: 'openclaw-gateway',
+	configurationInputPath: '/run/agent-vm/managed-gateway/framework-service.json',
+	environmentInputPath: '/run/agent-vm/managed-gateway/framework.environment.sh',
+	framework: 'openclaw',
+	ingress: { guestPort: 18_789, kind: 'framework-http' },
+	logIdentity: {
+		guestPath: '/var/log/agent-vm/openclaw-service.log',
+		serviceName: 'agent-vm-openclaw-test',
+	},
+	readiness: { guestPort: 18_789, kind: 'framework-http', path: '/readyz' },
+	role: 'framework-service',
+});
+const testManagedGatewayExpectedCohort = {
+	controlIdentity: {
+		controllerEpoch: 'controller-epoch-smoke',
+		generationId: 'gateway-generation-smoke',
+		peerId: 'tool-portal-control:smoke',
+		processEpoch: 'tool-portal-process-smoke',
+	},
+	fence: {
+		controllerEpoch: 'controller-epoch-smoke',
+		gatewayEpoch: 'gateway-generation-smoke',
+		vmId: 'vm-smoke-test',
+		zoneId: 'smoke',
+	},
+	frameworkIdentity: {
+		attachmentGeneration: 1,
+		clientKind: 'openclaw-managed-plugin',
+		configuredAgentIds: ['smoke'],
+		frameworkEpoch: 'openclaw-framework-smoke',
+		frameworkKind: 'openclaw',
+		projectionCohortDigest:
+			'projection-cohort:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+	},
+	ingressIntent: {
+		controlRoute: {
+			audience: 'gateway-control',
+			guestPort: 18_790,
+			kind: 'tool-portal-control',
+			prefix: '/__agent-vm',
+			stripPrefix: false,
+		},
+		frameworkRootRoute: {
+			guestPort: 18_789,
+			kind: 'framework-root',
+			prefix: '/',
+			stripPrefix: false,
+		},
+	},
+	providerRevision: 'provider-revision-smoke',
+	requiredBackendRevision: 'required-backends-smoke',
+	semanticRevision: 'semantic-revision-smoke',
+	toolPortalIdentity: {
+		processEpoch: 'tool-portal-process-smoke',
+		role: 'tool-portal',
+		runtimeEpoch: 'tool-portal-runtime-smoke',
+		serviceId: 'tool-portal-service-smoke',
+	},
+	udsIdentity: {
+		frameworkEpoch: 'openclaw-framework-smoke',
+		gatewayEpoch: 'gateway-generation-smoke',
+		runtimeEpoch: 'tool-portal-runtime-smoke',
+		socketPath: '/run/agent-vm/gateway-runtime/managed-plugin.sock',
+	},
+} satisfies ManagedGatewayZoneStartResult['expectedCohort'];
 
 async function createTemporaryRoot(prefix: string): Promise<string> {
 	const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -174,7 +249,7 @@ describe('scaffoldGatewayE2eProject', () => {
 		temporaryRoots.push(openClawProject.tempRoot, workerProject.tempRoot);
 
 		for (const project of [openClawProject, workerProject]) {
-			expect(path.resolve(project.systemConfig.runtimeDir)).toContain(
+			expect(path.resolve(project.systemConfig.storageRootDir)).toContain(
 				path.resolve(project.tempRoot),
 			);
 			for (const zone of project.systemConfig.zones) {
@@ -231,6 +306,65 @@ describe('scaffoldGatewayE2eProject', () => {
 		expect(project.zone.gateway.type).toBe('openclaw');
 		expect(project.systemConfig.zones[0]?.agents).toEqual([{ id: 'smoke-agent' }]);
 	});
+
+	it('materializes the local Hermes image overlay into a newly scaffolded Docker context', async () => {
+		const project = await scaffoldHermesE2eProject({
+			agents: ['main', 'beta'],
+			architecture: 'aarch64',
+			prefix: 'hermes-managed-base-environment-e2e-',
+			zoneId: 'hermes-smoke',
+		});
+		temporaryRoots.push(project.tempRoot);
+		expect(Object.keys(project.systemConfig.imageProfiles.gateways)).toEqual(['hermes']);
+		const gatewayProfile = project.systemConfig.imageProfiles.gateways.hermes;
+		if (gatewayProfile === undefined) {
+			throw new Error('Expected the Hermes E2E image profile.');
+		}
+		const localArtifactDirectory = path.join(
+			path.dirname(gatewayProfile.buildConfig),
+			'local-agent-vm',
+		);
+		await expect(fs.access(localArtifactDirectory)).rejects.toThrow();
+
+		await useLocalHermesGatewayImagePackages({
+			architecture: 'aarch64',
+			profileName: project.zone.gateway.imageProfile,
+			projectRoot: project.tempRoot,
+			repoRoot: process.cwd(),
+			systemConfig: project.systemConfig,
+		});
+
+		const localArtifactFileNames = await fs.readdir(localArtifactDirectory);
+		expect(localArtifactFileNames).toContain('package.json');
+		expect(localArtifactFileNames.some((fileName) => fileName.endsWith('.tgz'))).toBe(true);
+		expect(
+			localArtifactFileNames.some(
+				(fileName) => fileName.startsWith('agent_vm_hermes_adapter-') && fileName.endsWith('.whl'),
+			),
+		).toBe(true);
+		await expect(
+			fs.readFile(path.join(path.dirname(gatewayProfile.buildConfig), 'Dockerfile'), 'utf8'),
+		).resolves.toContain('agent_vm_hermes_adapter');
+	});
+
+	it('renders safe shared Hermes policy for the managed environment E2E', () => {
+		const configuration = renderHermesManagedE2eConfiguration({
+			contextLength: 65_536,
+			fakeModelHost: 'model.vm.host',
+			fakeModelName: 'hermes-e2e',
+		});
+
+		expect(configuration).toContain('    - agent-vm-tool-portal');
+		expect(configuration).toContain('  context_length: 65536');
+		expect(configuration).toContain(
+			'fallback_providers:\n  - provider: custom:hermes-e2e\n    model: hermes-e2e',
+		);
+		expect(configuration).toContain('provider_routing:\n  order:\n    - hermes-e2e');
+		expect(configuration).not.toContain('api_key:');
+		expect(configuration).not.toContain('webhook');
+		expect(configuration).not.toContain('multiplex_profiles');
+		expect(configuration).not.toContain('preserve_existing');
+	});
 });
 
 describe('resolveLocalPackagePackArgs', () => {
@@ -245,71 +379,6 @@ describe('resolveLocalPackagePackArgs', () => {
 });
 
 describe('startE2eControllerRuntime', () => {
-	it('forwards only the exact optional OpenClaw reliability target registry factory', async () => {
-		const { startE2eControllerRuntime } = await import('./e2e-harness.js');
-		const systemConfig = createMinimalOpenClawSystemConfig();
-		const zone = systemConfig.zones[0];
-		if (!zone) {
-			throw new Error('Expected smoke system config to contain a zone.');
-		}
-		const gatewayIdentity = {
-			bootId: 'gateway-boot-smoke',
-			controllerEpoch: 'controller-epoch-smoke',
-			gatewayEpochId: 'gateway-epoch-smoke',
-			gatewayVmId: 'vm-smoke-test',
-			generationId: 'gateway-generation-smoke',
-			zoneId: zone.id,
-		};
-		const createReliabilityTargetRegistry = vi.fn(
-			createOpenClawProcessReliabilityFaultTargetRegistry,
-		);
-		const harness = await startE2eControllerRuntime({
-			createOpenClawProcessReliabilityFaultTargetRegistry: createReliabilityTargetRegistry,
-			secrets: {
-				AGENT_VM_TEST_OPENAI_API_KEY: 'test-service-account-token',
-				OPENCLAW_GATEWAY_TOKEN: 'test-gateway-token',
-			},
-			startGatewayZone: async (options) => {
-				options.onOpenClawProcessReliabilityFaultTarget?.({
-					gateway: gatewayIdentity,
-					processEpoch: 'process-epoch-smoke',
-					reliabilityFaultActuator: {
-						terminateOwnedProcess: vi.fn(async () => {
-							throw new Error('harness forwarding test must not actuate a fault');
-						}),
-					},
-				});
-				return {
-					image: { built: false, fingerprint: 'test', imageReference: '/tmp/image' },
-					ingress: { host: '127.0.0.1', port: 18789 },
-					processEpoch: 'process-epoch-smoke',
-					processSpec: {
-						bootstrapCommand: '',
-						guestListenPort: 18789,
-						healthCheck: { type: 'http', port: 18789, path: '/readyz' },
-						logPath: '/tmp/gateway.log',
-						startCommand: '',
-					},
-					terminateVm: async () => {},
-					vm: createManagedVmStub(),
-					vmOwnership: {
-						...createExactVmOwnershipStub('vm-smoke-test'),
-						gatewayIdentity,
-					},
-					zone,
-				};
-			},
-			startHttpServer: async () => ({ close: async () => undefined }),
-			startOptions: { systemConfig, zoneIds: [zone.id] },
-		});
-
-		try {
-			expect(createReliabilityTargetRegistry).toHaveBeenCalledOnce();
-		} finally {
-			await harness.close();
-		}
-	});
-
 	it('preserves smoke Docker images by default so one suite can reuse the built cache', () => {
 		expect(shouldCleanupE2eDockerImages({ env: {} })).toBe(false);
 		expect(
@@ -344,21 +413,7 @@ describe('startE2eControllerRuntime', () => {
 			},
 			startGatewayZone: async (options) => {
 				capturedGatewayStarts.push(options);
-				return {
-					image: { built: false, fingerprint: 'test', imageReference: '/tmp/image' },
-					ingress: { host: '127.0.0.1', port: 18789 },
-					processSpec: {
-						bootstrapCommand: '',
-						guestListenPort: 18789,
-						healthCheck: { type: 'http', port: 18789, path: '/readyz' },
-						logPath: '/tmp/gateway.log',
-						startCommand: '',
-					},
-					terminateVm: async () => {},
-					vm: createManagedVmStub(),
-					vmOwnership: createExactVmOwnershipStub('vm-smoke-test'),
-					zone,
-				};
+				return createManagedGatewayStartResultStub(zone);
 			},
 			startHttpServer: async () => ({
 				close: async () => undefined,
@@ -372,8 +427,8 @@ describe('startE2eControllerRuntime', () => {
 			},
 			vfsMountsOverride: {
 				'/work/repo': {
-					hostPath: process.cwd(),
 					access: 'read-only',
+					hostPath: process.cwd(),
 					kind: 'host-directory',
 				},
 			},
@@ -385,8 +440,8 @@ describe('startE2eControllerRuntime', () => {
 			});
 			expect(capturedGatewayStarts[0]?.vfsMountsOverride).toEqual({
 				'/work/repo': {
-					hostPath: process.cwd(),
 					access: 'read-only',
+					hostPath: process.cwd(),
 					kind: 'host-directory',
 				},
 			});
@@ -409,21 +464,7 @@ describe('startE2eControllerRuntime', () => {
 				AGENT_VM_TEST_OPENAI_API_KEY: 'test-service-account-token',
 				OPENCLAW_GATEWAY_TOKEN: 'test-gateway-token',
 			},
-			startGatewayZone: async () => ({
-				image: { built: false, fingerprint: 'test', imageReference: '/tmp/image' },
-				ingress: { host: '127.0.0.1', port: 18789 },
-				processSpec: {
-					bootstrapCommand: '',
-					guestListenPort: 18789,
-					healthCheck: { type: 'http', port: 18789, path: '/readyz' },
-					logPath: '/tmp/gateway.log',
-					startCommand: '',
-				},
-				terminateVm: async () => {},
-				vm: createManagedVmStub(),
-				vmOwnership: createExactVmOwnershipStub('vm-smoke-test'),
-				zone,
-			}),
+			startGatewayZone: async () => createManagedGatewayStartResultStub(zone),
 			startHttpServer: async () => ({
 				close: async () => undefined,
 			}),
@@ -452,21 +493,7 @@ describe('startE2eControllerRuntime', () => {
 				AGENT_VM_TEST_OPENAI_API_KEY: 'test-service-account-token',
 				OPENCLAW_GATEWAY_TOKEN: 'test-gateway-token',
 			},
-			startGatewayZone: async () => ({
-				image: { built: false, fingerprint: 'test', imageReference: '/tmp/image' },
-				ingress: { host: '127.0.0.1', port: 18789 },
-				processSpec: {
-					bootstrapCommand: '',
-					guestListenPort: 18789,
-					healthCheck: { type: 'http', port: 18789, path: '/readyz' },
-					logPath: '/tmp/gateway.log',
-					startCommand: '',
-				},
-				terminateVm: async () => {},
-				vm: createManagedVmStub(),
-				vmOwnership: createExactVmOwnershipStub('vm-smoke-test'),
-				zone,
-			}),
+			startGatewayZone: async () => createManagedGatewayStartResultStub(zone),
 			startHttpServer: async () => ({
 				close: async () => undefined,
 			}),
@@ -554,6 +581,7 @@ describe('startE2eControllerRuntime', () => {
 		await createFakeSecretsPackage(repoRoot);
 		await createFakeGondolinVmAdapterPackage(repoRoot);
 		await createFakeGatewayLifecyclePackage(repoRoot);
+		await createFakeGatewayRuntimePackage(repoRoot);
 		await createFakeManagedVmPackage(repoRoot);
 		await createFakeControlProtocolContractsPackage(repoRoot);
 		await createFakeControllerExecutionContractsPackage(repoRoot);
@@ -593,6 +621,9 @@ describe('startE2eControllerRuntime', () => {
 			'COPY agent-vm-gateway-lifecycle-0.0.0-smoke.tgz /tmp/agent-vm-gateway-lifecycle-0.0.0-smoke.tgz',
 		);
 		expect(dockerfile).toContain(
+			'COPY agent-vm-gateway-runtime-0.0.0-smoke.tgz /tmp/agent-vm-gateway-runtime-0.0.0-smoke.tgz',
+		);
+		expect(dockerfile).toContain(
 			'COPY agent-vm-managed-vm-0.0.0-smoke.tgz /tmp/agent-vm-managed-vm-0.0.0-smoke.tgz',
 		);
 		expect(dockerfile).toContain(
@@ -620,8 +651,8 @@ describe('startE2eControllerRuntime', () => {
 		expect(dockerfile).toContain('file:/tmp/agent-vm-config-contracts-0.0.0-smoke.tgz');
 		expect(dockerfile).toContain('@agent-vm/mcp-portal');
 		expect(dockerfile).toContain('WORKDIR /opt/openclaw-runtime-packages');
-		expect(dockerfile).toContain('"openclaw": "2026.6.8"');
-		expect(dockerfile).toContain('"@openclaw/codex": "2026.6.8"');
+		expect(dockerfile).toContain('"openclaw": "2026.7.1-2"');
+		expect(dockerfile).toContain("openclaw plugins install 'npm:@openclaw/codex' --pin");
 		expect(dockerfile).toContain('RUN pnpm install --prod --ignore-scripts');
 		expect(dockerfile).toContain('"@openai/codex@');
 		expect(dockerfile).not.toContain('RUN pnpm add -g "openclaw@');
@@ -704,6 +735,7 @@ describe('startE2eControllerRuntime', () => {
 		await createFakeSecretsPackage(repoRoot);
 		await createFakeGondolinVmAdapterPackage(repoRoot);
 		await createFakeGatewayLifecyclePackage(repoRoot);
+		await createFakeGatewayRuntimePackage(repoRoot);
 		await createFakeManagedVmPackage(repoRoot);
 		await createFakeControlProtocolContractsPackage(repoRoot);
 		await createFakeControllerExecutionContractsPackage(repoRoot);
@@ -737,6 +769,9 @@ describe('startE2eControllerRuntime', () => {
 			'COPY agent-vm-gateway-lifecycle-0.0.0-smoke.tgz /tmp/agent-vm-gateway-lifecycle-0.0.0-smoke.tgz',
 		);
 		expect(dockerfile).toContain(
+			'COPY agent-vm-gateway-runtime-0.0.0-smoke.tgz /tmp/agent-vm-gateway-runtime-0.0.0-smoke.tgz',
+		);
+		expect(dockerfile).toContain(
 			'COPY agent-vm-openclaw-agent-vm-plugin-0.0.0-smoke.tgz /tmp/agent-vm-openclaw-agent-vm-plugin-0.0.0-smoke.tgz',
 		);
 		expect(dockerfile).toContain(
@@ -749,8 +784,8 @@ describe('startE2eControllerRuntime', () => {
 			'COPY agent-vm-tool-portal-0.0.0-smoke.tgz /tmp/agent-vm-tool-portal-0.0.0-smoke.tgz',
 		);
 		expect(dockerfile).toContain('WORKDIR /opt/openclaw-runtime-packages');
-		expect(dockerfile).toContain('"openclaw": "2026.6.8"');
-		expect(dockerfile).toContain('"@openclaw/codex": "2026.6.8"');
+		expect(dockerfile).toContain('"openclaw": "2026.7.1-2"');
+		expect(dockerfile).toContain("openclaw plugins install 'npm:@openclaw/codex' --pin");
 		expect(dockerfile).toContain('RUN pnpm install --prod --ignore-scripts');
 		expect(dockerfile).toContain('"@openai/codex@');
 		expect(dockerfile).not.toContain('RUN pnpm add -g "openclaw@');
@@ -782,6 +817,7 @@ describe('startE2eControllerRuntime', () => {
 		await createFakeSecretsPackage(repoRoot);
 		await createFakeGondolinVmAdapterPackage(repoRoot);
 		await createFakeGatewayLifecyclePackage(repoRoot);
+		await createFakeGatewayRuntimePackage(repoRoot);
 		await createFakeManagedVmPackage(repoRoot);
 		await createFakeControlProtocolContractsPackage(repoRoot);
 		await createFakeControllerExecutionContractsPackage(repoRoot);
@@ -1077,8 +1113,8 @@ describe('prepareGatewayE2eProjectImages', () => {
 		process.env.AGENT_VM_E2E_CACHE_DIR = smokeCacheRoot;
 		const buildConfigs: LoadedSystemConfig[] = [];
 		try {
-			firstProject.systemConfig.cacheDir = path.join(smokeCacheRoot, 'worker');
-			secondProject.systemConfig.cacheDir = path.join(smokeCacheRoot, 'worker');
+			Object.assign(firstProject.systemConfig, { cacheDir: path.join(smokeCacheRoot, 'worker') });
+			Object.assign(secondProject.systemConfig, { cacheDir: path.join(smokeCacheRoot, 'worker') });
 			await Promise.all(
 				[firstProject, secondProject].map(async (project) => {
 					const gatewayProfile = project.systemConfig.imageProfiles.gateways.worker;
@@ -1154,6 +1190,110 @@ describe('prepareGatewayE2eProjectImages', () => {
 		);
 	});
 
+	it('does not reuse a prepared Worker image when the expected managed Gateway boot projection changes', async () => {
+		const temporaryRoot = await createTemporaryRoot('agent-vm-e2e-harness-');
+		const smokeCacheRoot = path.join(temporaryRoot, 'shared-smoke-cache');
+		const sharedBuildConfigPath = path.join(temporaryRoot, 'shared-build-config.jsonc');
+		const sharedDockerContextDirectory = path.join(temporaryRoot, 'shared-docker-context');
+		const sharedDockerfilePath = path.join(sharedDockerContextDirectory, 'Dockerfile');
+		await fs.mkdir(sharedDockerContextDirectory, { recursive: true });
+		await fs.writeFile(
+			sharedBuildConfigPath,
+			`${JSON.stringify({
+				alpine: {
+					kernelImage: 'vmlinuz-virt',
+					kernelPackage: 'linux-virt',
+					rootfsPackages: [],
+					version: '3.23.0',
+				},
+				arch: 'aarch64',
+				distro: 'alpine',
+				rootfs: { label: 'gondolin-root', sizeMb: 2_048 },
+			})}\n`,
+			'utf8',
+		);
+		await fs.writeFile(sharedDockerfilePath, 'FROM scratch\n', 'utf8');
+		const workerProject = await scaffoldWorkerE2eProject({
+			architecture: 'aarch64',
+			prefix: 'worker-loop-e2e-',
+			zoneId: 'worker-e2e',
+		});
+		const openClawProject = await scaffoldOpenClawE2eProject({
+			architecture: 'aarch64',
+			prefix: 'openclaw-control-link-e2e-',
+			zoneId: 'openclaw-e2e',
+		});
+		temporaryRoots.push(workerProject.tempRoot, openClawProject.tempRoot);
+		for (const project of [workerProject, openClawProject]) {
+			Object.assign(project.systemConfig, { cacheDir: smokeCacheRoot });
+			project.systemConfig.imageProfiles.toolVms = {};
+		}
+		const workerProfile = workerProject.systemConfig.imageProfiles.gateways.worker;
+		const openClawProfile = openClawProject.systemConfig.imageProfiles.gateways.openclaw;
+		const workerZone = workerProject.systemConfig.zones[0];
+		const openClawZone = openClawProject.systemConfig.zones[0];
+		if (
+			workerProfile === undefined ||
+			openClawProfile === undefined ||
+			workerZone === undefined ||
+			openClawZone === undefined
+		) {
+			throw new Error('Expected Worker and OpenClaw e2e fixtures.');
+		}
+		workerProfile.buildConfig = sharedBuildConfigPath;
+		workerProfile.dockerfile = sharedDockerfilePath;
+		delete workerProfile.source;
+		openClawProfile.buildConfig = sharedBuildConfigPath;
+		openClawProfile.dockerfile = sharedDockerfilePath;
+		delete openClawProfile.source;
+		workerProject.systemConfig.imageProfiles.gateways = { shared: workerProfile };
+		openClawProject.systemConfig.imageProfiles.gateways = { shared: openClawProfile };
+		workerZone.gateway.imageProfile = 'shared';
+		openClawZone.gateway.imageProfile = 'shared';
+		const builtGatewayTypes: string[] = [];
+		const runBuild = async ({
+			systemConfig,
+		}: {
+			readonly systemConfig: LoadedSystemConfig;
+		}): Promise<void> => {
+			const profile = systemConfig.imageProfiles.gateways.shared;
+			if (profile === undefined) throw new Error('Expected shared gateway profile.');
+			builtGatewayTypes.push(profile.type);
+			const managedGatewayBoot =
+				profile.type === 'openclaw'
+					? {
+							frameworkBootEntry: 'openclaw-framework-service' as const,
+							kind: 'managed-gateway-exact-two-role' as const,
+						}
+					: undefined;
+			const fingerprint = await computeFingerprintFromConfigPath(
+				profile.buildConfig,
+				managedGatewayBoot === undefined ? {} : { managedGatewayBoot },
+			);
+			const cacheDir = path.join(systemConfig.cacheDir, 'gateway-images', 'shared');
+			const imagePath = path.join(cacheDir, fingerprint);
+			await fs.mkdir(imagePath, { recursive: true });
+			await Promise.all(
+				managedVmImageAssetFileNames.map(
+					async (fileName) =>
+						await fs.writeFile(path.join(imagePath, fileName), `${fileName}\n`, 'utf8'),
+				),
+			);
+			await writePreparedManagedVmImage({
+				buildConfigPath: profile.buildConfig,
+				cacheDir,
+				fingerprint,
+				imagePath,
+				...(managedGatewayBoot === undefined ? {} : { managedGatewayBoot }),
+			});
+		};
+
+		await prepareGatewayE2eProjectImages({ project: workerProject, runBuild });
+		await prepareGatewayE2eProjectImages({ project: openClawProject, runBuild });
+
+		expect(builtGatewayTypes).toEqual(['worker', 'openclaw']);
+	});
+
 	it('does not materialize managed-source profiles from the e2e manifest', async () => {
 		const temporaryRoot = await createTemporaryRoot('agent-vm-e2e-harness-');
 		const smokeCacheRoot = path.join(temporaryRoot, 'shared-smoke-cache');
@@ -1168,8 +1308,8 @@ describe('prepareGatewayE2eProjectImages', () => {
 			zoneId: 'worker-e2e',
 		});
 		temporaryRoots.push(firstProject.tempRoot, secondProject.tempRoot);
-		firstProject.systemConfig.cacheDir = path.join(smokeCacheRoot, 'worker');
-		secondProject.systemConfig.cacheDir = path.join(smokeCacheRoot, 'worker');
+		Object.assign(firstProject.systemConfig, { cacheDir: path.join(smokeCacheRoot, 'worker') });
+		Object.assign(secondProject.systemConfig, { cacheDir: path.join(smokeCacheRoot, 'worker') });
 		for (const project of [firstProject, secondProject]) {
 			const gatewayProfile = project.systemConfig.imageProfiles.gateways.worker;
 			if (gatewayProfile === undefined) {
@@ -1305,6 +1445,9 @@ function createExactVmOwnershipStub(vmId: string): GatewayVmLifecycleAuthority {
 	};
 	const gatewayIdentity = { ...gatewaySeed, gatewayVmId: vmId };
 	return {
+		abandonUnattachedGatewaySeedAfter: async (cleanupOwnedResources) => {
+			await cleanupOwnedResources();
+		},
 		attachGatewayVm: () => gatewayIdentity,
 		containPendingCreate: async () => {},
 		destroyLive: async (destroyVm) => await destroyVm(),
@@ -1313,9 +1456,39 @@ function createExactVmOwnershipStub(vmId: string): GatewayVmLifecycleAuthority {
 	};
 }
 
+function createManagedGatewayStartResultStub(
+	zone: ManagedGatewayZoneStartResult['zone'],
+): ManagedGatewayZoneStartResult {
+	const vm = createManagedVmStub();
+	const vmOwnership = createExactVmOwnershipStub(vm.id);
+	const gatewayIdentity = vmOwnership.gatewayIdentity;
+	if (gatewayIdentity === undefined) {
+		throw new Error('Expected the smoke Gateway ownership fixture to be attached.');
+	}
+	let destroyGatewayInFlight: Promise<GatewayZoneDestroyResult> | undefined;
+	return {
+		bootContract: testManagedGatewayBootContract,
+		destroyGateway: () => {
+			destroyGatewayInFlight ??= vmOwnership
+				.destroyLive(async () => await vm.close())
+				.then(() => ({ kind: 'destroyed-clean' }) satisfies GatewayZoneDestroyResult);
+			return destroyGatewayInFlight;
+		},
+		executionModel: 'managed-gateway',
+		expectedCohort: testManagedGatewayExpectedCohort,
+		gatewayIdentity,
+		image: { built: false, fingerprint: 'test', imageReference: '/tmp/image' },
+		ingress: { host: '127.0.0.1', port: 18789 },
+		vm,
+		zone,
+	};
+}
+
 function createMinimalOpenClawSystemConfig(projectRoot = '/tmp'): LoadedSystemConfig {
 	return {
 		cacheDir: path.join(projectRoot, 'cache'),
+		controllerRuntimeDir: path.join(projectRoot, 'controller-runtime'),
+		controllerStateDir: path.join(projectRoot, 'controller-state'),
 		host: {
 			controllerPort: 18800,
 			projectNamespace: 'smoke-tests',
@@ -1338,8 +1511,8 @@ function createMinimalOpenClawSystemConfig(projectRoot = '/tmp'): LoadedSystemCo
 				},
 			},
 		},
-		runtimeDir: path.join(projectRoot, 'runtime'),
-		schemaVersion: 1,
+		schemaVersion: 2,
+		storageRootDir: projectRoot,
 		systemConfigPath: path.join(projectRoot, 'config', 'system.json'),
 		tcpPool: { basePort: 19000, size: 4 },
 		toolVmProfiles: {
@@ -1351,7 +1524,6 @@ function createMinimalOpenClawSystemConfig(projectRoot = '/tmp'): LoadedSystemCo
 		},
 		zones: [
 			{
-				agentSandboxSeeds: {},
 				agentToolVmProfiles: {},
 				agents: [{ id: 'smoke' }],
 				defaultToolVmProfile: 'standard',
@@ -1368,8 +1540,9 @@ function createMinimalOpenClawSystemConfig(projectRoot = '/tmp'): LoadedSystemCo
 					imageProfile: 'openclaw',
 					memory: '1G',
 					port: 18789,
-					stateDir: path.join(projectRoot, 'state'),
-					zoneFilesDir: path.join(projectRoot, 'zone-files'),
+					stateDir: path.join(projectRoot, 'smoke', 'state'),
+					zoneFilesDir: path.join(projectRoot, 'smoke', 'zone-files'),
+					zoneRuntimeDir: path.join(projectRoot, 'smoke', 'runtime'),
 				},
 				id: 'smoke',
 				secrets: {
@@ -1563,6 +1736,10 @@ async function createFakeGatewayLifecyclePackage(repoRoot: string): Promise<void
 
 async function createFakeManagedVmPackage(repoRoot: string): Promise<void> {
 	await createFakeSimplePackage(repoRoot, 'managed-vm');
+}
+
+async function createFakeGatewayRuntimePackage(repoRoot: string): Promise<void> {
+	await createFakeSimplePackage(repoRoot, 'gateway-runtime');
 }
 
 async function createFakeControlProtocolContractsPackage(repoRoot: string): Promise<void> {

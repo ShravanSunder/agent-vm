@@ -3,22 +3,34 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import type { ManagedVm } from '@agent-vm/managed-vm';
 import {
-	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV,
-	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_IDENTITIES_ENV,
-	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV,
-	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH,
-	AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_SIGNATURE_HEADER,
-	testExports as toolVmWriteReadE2eToolTestExports,
+	AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_ENV,
+	AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_IDENTITIES_ENV,
+	AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_KEY_ENV,
+	AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_PATH,
+	AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_SIGNATURE_HEADER,
+	gatewayRuntimeSandboxWriteReadE2eTestExports,
 } from '@agent-vm/openclaw-agent-vm-plugin';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import {
+	createControllerStateRoot,
+	resolveControllerGatewayStateRoot,
+} from '../controller/durable-state/controller-state-paths.js';
+import {
+	resolveControllerGatewayRecordTargets,
+	type ControllerToolLeaseRecordsTarget,
+} from '../controller/durable-state/controller-state-record-paths.js';
+import {
 	loadAllToolVmRuntimeRecords,
 	type ToolVmRuntimeRecord,
 } from '../controller/leases/tool-vm-runtime-record.js';
-import { loadGatewayRuntimeRecord } from '../gateway/gateway-runtime-record.js';
+import {
+	gatewayIdentitiesEqual,
+	type GatewayEpochIdentity,
+} from '../controller/vm-ownership/vm-ownership-contracts.js';
+import { loadManagedGatewayRuntimeRecord } from '../gateway/gateway-runtime-record.js';
+import type { GatewayZoneVmOperations } from '../gateway/gateway-zone-support.js';
 import {
 	expectedControlLeaseReliabilityEvidenceWriteKind,
 	hashControlLeaseReliabilityArtifact,
@@ -63,14 +75,12 @@ interface ToolVmWriteReadResult {
 	readonly agentId: string;
 	readonly marker: string;
 	readonly readBack: string;
-	readonly runtimeId: string;
-	readonly sessionKey: string;
 	readonly status: 'ok';
 }
 
 interface GatewayStartObservation {
 	readonly qemuPid: number;
-	readonly vm: ManagedVm;
+	readonly vm: GatewayZoneVmOperations;
 	readonly vmId: string;
 }
 
@@ -87,9 +97,7 @@ function parseToolVmWriteReadResult(value: unknown): ToolVmWriteReadResult {
 		details.status !== 'ok' ||
 		typeof details.agentId !== 'string' ||
 		typeof details.marker !== 'string' ||
-		typeof details.readBack !== 'string' ||
-		typeof details.runtimeId !== 'string' ||
-		typeof details.sessionKey !== 'string'
+		typeof details.readBack !== 'string'
 	) {
 		throw new Error('Tool VM write/read probe returned malformed details.');
 	}
@@ -97,8 +105,6 @@ function parseToolVmWriteReadResult(value: unknown): ToolVmWriteReadResult {
 		agentId: details.agentId,
 		marker: details.marker,
 		readBack: details.readBack,
-		runtimeId: details.runtimeId,
-		sessionKey: details.sessionKey,
 		status: details.status,
 	};
 }
@@ -114,24 +120,21 @@ async function callSignedWriteReadProbe(options: {
 	}
 	const bodyText = JSON.stringify({
 		agentId: options.identity.agentId,
-		filePath: `.agent-vm/gateway-subtree-${options.identity.agentId}-${randomUUID()}.txt`,
+		filePath: `agent-vm-e2e-gateway-subtree-${options.identity.agentId}-${randomUUID()}.txt`,
 		marker: options.marker,
-		scenario: 'write-read',
+		action: 'write-read',
 		sessionKey: options.identity.sessionKey,
 	});
 	const response = await withProtocolDeadline(
 		fetch(
-			`http://${ingress.host}:${String(ingress.port)}${AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_PATH}`,
+			`http://${ingress.host}:${String(ingress.port)}${AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_PATH}`,
 			{
 				body: bodyText,
 				headers: {
 					authorization: `Bearer ${gatewayToken}`,
 					'content-type': 'application/json',
-					[AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_SIGNATURE_HEADER]:
-						toolVmWriteReadE2eToolTestExports.signToolVmWriteReadE2eRouteBody(
-							bodyText,
-							probeSigningKey,
-						),
+					[AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_SIGNATURE_HEADER]:
+						gatewayRuntimeSandboxWriteReadE2eTestExports.signBody(bodyText, probeSigningKey),
 				},
 				method: 'POST',
 			},
@@ -149,10 +152,11 @@ async function callSignedWriteReadProbe(options: {
 }
 
 async function readExactToolVmRuntimeRecords(
-	stateDirectory: string,
-	leaseIds: ReadonlySet<string>,
+	recordsTarget: ControllerToolLeaseRecordsTarget,
+	expectedGateway: GatewayEpochIdentity,
+	agentIds: readonly string[],
 ): Promise<ReadonlyMap<string, ToolVmRuntimeRecord>> {
-	const results = await loadAllToolVmRuntimeRecords(stateDirectory);
+	const results = await loadAllToolVmRuntimeRecords(recordsTarget);
 	const parseError = results.find((result) => result.kind === 'parse-error');
 	if (parseError !== undefined) {
 		throw new Error(`Tool VM runtime record failed to parse: ${parseError.path}`);
@@ -160,13 +164,22 @@ async function readExactToolVmRuntimeRecords(
 	const records = results
 		.filter((result) => result.kind === 'loaded')
 		.map((result) => result.record)
-		.filter((record) => leaseIds.has(record.leaseId));
-	if (records.length !== leaseIds.size) {
+		.filter(
+			(record) =>
+				record.zoneId === zoneId &&
+				agentIds.includes(record.agentId) &&
+				gatewayIdentitiesEqual(record.gateway, expectedGateway),
+		);
+	if (records.length !== agentIds.length) {
 		throw new Error(
-			`Expected ${String(leaseIds.size)} exact Tool VM runtime records, found ${String(records.length)}.`,
+			`Expected ${String(agentIds.length)} exact Tool VM runtime records for Gateway '${expectedGateway.gatewayVmId}', found ${String(records.length)}.`,
 		);
 	}
-	return new Map(records.map((record) => [record.leaseId, record] as const));
+	const recordsByAgentId = new Map(records.map((record) => [record.agentId, record] as const));
+	if (recordsByAgentId.size !== agentIds.length) {
+		throw new Error(`Expected one Tool VM runtime record per configured agent.`);
+	}
+	return recordsByAgentId;
 }
 
 function isProcessAbsent(processId: number): boolean {
@@ -214,7 +227,7 @@ describeGatewaySubtreeReplacementE2e('e2e: Gateway subtree replacement', () => {
 	let harness: E2eHarnessRuntime | undefined;
 	let project: OpenClawE2eProject | undefined;
 	const gatewayStarts: GatewayStartObservation[] = [];
-	const oldGatewayClosed = createDeferredPromise();
+	const oldGatewayDestroyed = createDeferredPromise();
 	const allowSuccessorStart = createDeferredPromise();
 	let oldToolRecords: ReadonlyMap<string, ToolVmRuntimeRecord> | undefined;
 	let replacementOrderingArtifact: string | undefined;
@@ -231,11 +244,19 @@ describeGatewaySubtreeReplacementE2e('e2e: Gateway subtree replacement', () => {
 		if (systemZone === undefined || systemZone.gateway.type !== 'openclaw') {
 			throw new Error('Expected Gateway replacement E2E project to contain an OpenClaw zone.');
 		}
+		const controllerRecordTargets = resolveControllerGatewayRecordTargets({
+			gatewayStateRoot: resolveControllerGatewayStateRoot({
+				controllerStateRoot: createControllerStateRoot({
+					controllerStateDirectoryPath: project.systemConfig.controllerStateDir,
+				}),
+				zoneId,
+			}),
+		});
 		const openClawGateway = systemZone.gateway;
 		for (const envName of [
-			AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV,
-			AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV,
-			AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_IDENTITIES_ENV,
+			AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_ENV,
+			AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_KEY_ENV,
+			AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_IDENTITIES_ENV,
 		]) {
 			systemZone.secrets[envName] = {
 				audience: 'gateway',
@@ -246,9 +267,9 @@ describeGatewaySubtreeReplacementE2e('e2e: Gateway subtree replacement', () => {
 		}
 		openClawGateway.rawEnvSecrets = [
 			...(openClawGateway.rawEnvSecrets ?? []),
-			AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV,
-			AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV,
-			AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_IDENTITIES_ENV,
+			AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_ENV,
+			AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_KEY_ENV,
+			AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_IDENTITIES_ENV,
 		];
 		await Promise.all(
 			configuredProbeIdentities.map(async ({ agentId }) => {
@@ -267,10 +288,10 @@ describeGatewaySubtreeReplacementE2e('e2e: Gateway subtree replacement', () => {
 		await prepareGatewayE2eProjectImages({ project });
 		harness = await startE2eControllerRuntime({
 			secrets: {
-				[AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_ENV]: '1',
-				[AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_IDENTITIES_ENV]:
+				[AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_ENV]: '1',
+				[AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_IDENTITIES_ENV]:
 					JSON.stringify(configuredProbeIdentities),
-				[AGENT_VM_E2E_TOOL_VM_WRITE_READ_PROBE_KEY_ENV]: probeSigningKey,
+				[AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_KEY_ENV]: probeSigningKey,
 				GITHUB_TOKEN: 'unused-gateway-subtree-token',
 				OPENCLAW_GATEWAY_TOKEN: gatewayToken,
 				PERPLEXITY_API_KEY: 'unused-gateway-subtree-token',
@@ -281,13 +302,17 @@ describeGatewaySubtreeReplacementE2e('e2e: Gateway subtree replacement', () => {
 					if (exactOldToolRecords === undefined) {
 						throw new Error('Successor start began before old Tool identities were captured.');
 					}
-					const remainingRecords = await loadAllToolVmRuntimeRecords(systemZone.gateway.stateDir);
+					const remainingRecords = await loadAllToolVmRuntimeRecords(
+						controllerRecordTargets.toolLeaseRecords,
+					);
 					if (remainingRecords.length !== 0) {
 						throw new Error(
 							'Successor Gateway start began while old Tool runtime records remained.',
 						);
 					}
-					const oldGatewayRecord = await loadGatewayRuntimeRecord(systemZone.gateway.stateDir);
+					const oldGatewayRecord = await loadManagedGatewayRuntimeRecord(
+						controllerRecordTargets.managedGatewayRuntimeRecord,
+					);
 					if (oldGatewayRecord !== null) {
 						throw new Error('Successor Gateway start began while the old Gateway record remained.');
 					}
@@ -318,16 +343,21 @@ describeGatewaySubtreeReplacementE2e('e2e: Gateway subtree replacement', () => {
 				if (qemuPid === null) {
 					throw new Error('Started Gateway omitted its host QEMU pid.');
 				}
+				if (result.executionModel !== 'managed-gateway') {
+					throw new Error('OpenClaw Gateway unexpectedly used the direct-process execution model.');
+				}
 				gatewayStarts.push({ qemuPid, vm: result.vm, vmId: result.vm.id });
-				result.vm.configureIngressRoutes([
-					{ port: result.processSpec.guestListenPort, prefix: '/', stripPrefix: true },
-				]);
 				if (gatewayStarts.length === 1) {
-					const stockClose = result.vm.close.bind(result.vm);
-					result.vm.close = async (): Promise<void> => {
-						await stockClose();
-						oldGatewayClosed.resolve();
-						await allowSuccessorStart.promise;
+					const destroyGateway = (): ReturnType<typeof result.destroyGateway> =>
+						result.destroyGateway();
+					return {
+						...result,
+						destroyGateway: async () => {
+							const destroyResult = await destroyGateway();
+							oldGatewayDestroyed.resolve();
+							await allowSuccessorStart.promise;
+							return destroyResult;
+						},
 					};
 				}
 				return result;
@@ -357,11 +387,21 @@ describeGatewaySubtreeReplacementE2e('e2e: Gateway subtree replacement', () => {
 		if (activeZone === undefined || activeZone.gateway.type !== 'openclaw') {
 			throw new Error('Expected active OpenClaw zone.');
 		}
+		const controllerRecordTargets = resolveControllerGatewayRecordTargets({
+			gatewayStateRoot: resolveControllerGatewayStateRoot({
+				controllerStateRoot: createControllerStateRoot({
+					controllerStateDirectoryPath: activeProject.systemConfig.controllerStateDir,
+				}),
+				zoneId,
+			}),
+		});
 		const g1 = gatewayStarts[0];
 		if (g1 === undefined) {
 			throw new Error('Expected initial Gateway start.');
 		}
-		const g1RuntimeRecord = await loadGatewayRuntimeRecord(activeZone.gateway.stateDir);
+		const g1RuntimeRecord = await loadManagedGatewayRuntimeRecord(
+			controllerRecordTargets.managedGatewayRuntimeRecord,
+		);
 		if (g1RuntimeRecord === null || g1RuntimeRecord.vmId !== g1.vmId) {
 			throw new Error('Expected exact initial Gateway runtime record.');
 		}
@@ -375,9 +415,13 @@ describeGatewaySubtreeReplacementE2e('e2e: Gateway subtree replacement', () => {
 					}),
 			),
 		);
-		const oldLeaseIds = new Set(initialResults.map((result) => result.runtimeId));
+		oldToolRecords = await readExactToolVmRuntimeRecords(
+			controllerRecordTargets.toolLeaseRecords,
+			g1RuntimeRecord.gateway,
+			configuredProbeIdentities.map((identity) => identity.agentId),
+		);
+		const oldLeaseIds = new Set([...oldToolRecords.values()].map((record) => record.leaseId));
 		expect(oldLeaseIds.size).toBe(2);
-		oldToolRecords = await readExactToolVmRuntimeRecords(activeZone.gateway.stateDir, oldLeaseIds);
 		for (const result of initialResults) {
 			expect(result.readBack).toBe(result.marker);
 		}
@@ -386,7 +430,11 @@ describeGatewaySubtreeReplacementE2e('e2e: Gateway subtree replacement', () => {
 			`${activeHarness.controllerUrl}/zones/${encodeURIComponent(zoneId)}/credentials/refresh`,
 			{ method: 'POST' },
 		);
-		await withProtocolDeadline(oldGatewayClosed.promise, 'old Gateway stock close', 180_000);
+		await withProtocolDeadline(
+			oldGatewayDestroyed.promise,
+			'old Gateway typed destruction',
+			180_000,
+		);
 
 		const fencedAdmission = await callSignedWriteReadProbe({
 			harness: activeHarness,
@@ -415,9 +463,14 @@ describeGatewaySubtreeReplacementE2e('e2e: Gateway subtree replacement', () => {
 		}
 		expect(g2.vmId).not.toBe(g1.vmId);
 		expect(isProcessAbsent(g1.qemuPid)).toBe(true);
-		const g2RuntimeRecord = await loadGatewayRuntimeRecord(activeZone.gateway.stateDir);
+		const g2RuntimeRecord = await loadManagedGatewayRuntimeRecord(
+			controllerRecordTargets.managedGatewayRuntimeRecord,
+		);
+		if (g2RuntimeRecord === null) {
+			throw new Error('Expected exact successor Gateway runtime record.');
+		}
 		expect(g2RuntimeRecord).toMatchObject({ vmId: g2.vmId, zoneId });
-		expect(g2RuntimeRecord?.gateway.gatewayVmId).toBe(g2.vmId);
+		expect(g2RuntimeRecord.gateway.gatewayVmId).toBe(g2.vmId);
 
 		const freshResults = await Promise.all(
 			configuredProbeIdentities.map(
@@ -431,14 +484,14 @@ describeGatewaySubtreeReplacementE2e('e2e: Gateway subtree replacement', () => {
 		);
 		for (const result of freshResults) {
 			expect(result.readBack).toBe(result.marker);
-			expect(oldLeaseIds.has(result.runtimeId)).toBe(false);
 		}
-		const freshLeaseIds = new Set(freshResults.map((result) => result.runtimeId));
-		expect(freshLeaseIds.size).toBe(2);
 		const freshRecords = await readExactToolVmRuntimeRecords(
-			activeZone.gateway.stateDir,
-			freshLeaseIds,
+			controllerRecordTargets.toolLeaseRecords,
+			g2RuntimeRecord.gateway,
+			configuredProbeIdentities.map((identity) => identity.agentId),
 		);
+		const freshLeaseIds = new Set([...freshRecords.values()].map((record) => record.leaseId));
+		expect(freshLeaseIds.size).toBe(2);
 		for (const record of freshRecords.values()) {
 			expect(record.gateway.gatewayVmId).toBe(g2.vmId);
 			expect([...oldLeaseIds]).not.toContain(record.leaseId);
@@ -482,16 +535,16 @@ describeGatewaySubtreeReplacementE2e('e2e: Gateway subtree replacement', () => {
 						kind: 'gateway-qemu',
 						processId: g2.qemuPid,
 						startIdentity: `process-${hashControlLeaseReliabilityArtifact(
-							g2RuntimeRecord?.processIdentity.lstart ?? 'unknown',
+							g2RuntimeRecord.processIdentity.lstart,
 						).slice(0, 32)}`,
 					},
 				],
 				runtimeIdentities: [
 					{ generation: 1, id: g1.vmId, kind: 'gateway-vm' },
 					{ generation: 2, id: g2.vmId, kind: 'gateway-vm' },
-					...freshResults.map((result) => ({
+					...[...freshRecords.values()].map((record) => ({
 						generation: 2,
-						id: result.runtimeId,
+						id: record.leaseId,
 						kind: 'tool-vm-lease' as const,
 					})),
 				],

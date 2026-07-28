@@ -6,470 +6,205 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import type { SystemConfig } from '../../config/system-config.js';
 import {
-	resolveLeaseWorkMountDir,
-	type LeaseWorkMountValidationError,
-	type LeaseWorkMountValidationErrorKind,
-	validateResolvedToolWorkMountDir,
+	type ControllerSelectedToolVmDirectoryValidationError,
+	validateControllerSelectedToolVmDirectory,
 } from './lease-work-mount-paths.js';
 
 type ZoneConfig = SystemConfig['zones'][number];
 
-describe('resolveLeaseWorkMountDir', () => {
-	let tempDir: string;
-	let runtimeDir: string;
-	let zoneFilesDir: string;
-	let stateDir: string;
+describe('validateControllerSelectedToolVmDirectory', () => {
+	let agentWorkspaceDirectory: string;
+	let stateDirectory: string;
+	let temporaryDirectory: string;
 	let zone: ZoneConfig;
+	let zoneFilesDirectory: string;
+	let zoneRuntimeDirectory: string;
 
 	beforeAll(async () => {
-		tempDir = await mkdtemp(path.join(tmpdir(), 'agent-vm-lease-work-mount-'));
-		runtimeDir = path.join(tempDir, 'runtime');
-		zoneFilesDir = path.join(tempDir, 'zone-files', 'shravan');
-		stateDir = path.join(tempDir, 'state', 'shravan');
-		await mkdir(path.join(zoneFilesDir, 'project'), { recursive: true });
-		await mkdir(path.join(zoneFilesDir, 'agents', 'beta', 'project'), { recursive: true });
-		await mkdir(path.join(zoneFilesDir, 'agents', 'main'), { recursive: true });
-		await mkdir(path.join(stateDir, 'sandboxes', 'beta', 'work'), { recursive: true });
-		await mkdir(path.join(stateDir, 'sandboxes', 'main', 'work'), { recursive: true });
-		await mkdir(path.join(stateDir, 'workspace-beta'), { recursive: true });
+		temporaryDirectory = await mkdtemp(
+			path.join(tmpdir(), 'agent-vm-controller-selected-tool-directory-'),
+		);
+		zoneFilesDirectory = path.join(temporaryDirectory, 'test-zone', 'zone-files');
+		stateDirectory = path.join(temporaryDirectory, 'test-zone', 'state');
+		zoneRuntimeDirectory = path.join(temporaryDirectory, 'test-zone', 'runtime');
+		agentWorkspaceDirectory = path.join(zoneFilesDirectory, 'agents', 'main');
+		await mkdir(agentWorkspaceDirectory, { recursive: true });
+		await mkdir(stateDirectory, { recursive: true });
 		zone = {
-			egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),
+			agentToolVmProfiles: {},
+			defaultToolVmProfile: 'standard',
+			egressHosts: [],
 			gateway: {
-				type: 'openclaw',
+				config: path.join(temporaryDirectory, 'openclaw.json'),
 				controlAuth: {
 					mode: 'token',
 					secret: 'OPENCLAW_GATEWAY_TOKEN',
 				},
-				imageProfile: 'openclaw',
 				cpus: 2,
+				imageProfile: 'openclaw',
 				memory: '2G',
-				config: path.join(tempDir, 'openclaw.json'),
-				port: 18791,
-				stateDir,
-				zoneFilesDir,
+				port: 18_791,
+				stateDir: stateDirectory,
+				type: 'openclaw',
+				zoneFilesDir: zoneFilesDirectory,
+				zoneRuntimeDir: zoneRuntimeDirectory,
 			},
-			id: 'shravan',
+			id: 'test-zone',
 			secrets: {
 				OPENCLAW_GATEWAY_TOKEN: {
-					source: 'environment',
+					audience: 'gateway',
 					envVar: 'OPENCLAW_GATEWAY_TOKEN',
 					injection: 'env',
-					audience: 'gateway',
+					source: 'environment',
 				},
 			},
-			defaultToolVmProfile: 'standard',
-			agentToolVmProfiles: {},
 		};
 	});
 
 	afterAll(async () => {
-		await rm(tempDir, { recursive: true, force: true });
+		await rm(temporaryDirectory, { force: true, recursive: true });
 	});
 
-	it('maps OpenClaw gateway sandbox paths to host stateDir sandboxes', async () => {
+	it('accepts the exact controller-selected managed agent workspace', async () => {
 		await expect(
-			resolveLeaseWorkMountDir({
-				agentId: 'beta',
-				runtimeDir,
-				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/beta/work',
-				zone,
-			}),
-		).resolves.toEqual({
-			guestWorkdir: '/workspace',
-			hostWorkMountDir: await realpath(path.join(stateDir, 'sandboxes', 'beta', 'work')),
-		});
-	});
-
-	it('rejects OpenClaw gateway sandbox paths for a different agent', async () => {
-		await expect(
-			resolveLeaseWorkMountDir({
-				agentId: 'beta',
-				runtimeDir,
-				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
-				zone,
-			}),
-		).rejects.toMatchObject({
-			kind: 'work-mount-purpose-not-allowed',
-		} satisfies Partial<LeaseWorkMountValidationError>);
-	});
-
-	it('rejects ambiguous OpenClaw gateway sandbox paths without an agent segment', async () => {
-		await mkdir(path.join(stateDir, 'sandboxes', 'work'), { recursive: true });
-
-		await expect(
-			resolveLeaseWorkMountDir({
-				agentId: 'beta',
-				runtimeDir,
-				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/work',
-				zone,
-			}),
-		).rejects.toMatchObject({
-			kind: 'work-mount-purpose-not-allowed',
-		});
-	});
-
-	it('maps OpenClaw state fallback workspace paths to host stateDir workspace children', async () => {
-		await expect(
-			resolveLeaseWorkMountDir({
-				agentId: 'beta',
-				runtimeDir,
-				workMountDir: '/home/openclaw/.openclaw/state/workspace-beta',
-				zone,
-			}),
-		).resolves.toEqual({
-			guestWorkdir: '/workspace',
-			hostWorkMountDir: await realpath(path.join(stateDir, 'workspace-beta')),
-		});
-	});
-
-	it('rejects unrelated OpenClaw state paths as lease work mounts', async () => {
-		await mkdir(path.join(stateDir, 'credentials'), { recursive: true });
-
-		await expect(
-			resolveLeaseWorkMountDir({
-				agentId: 'beta',
-				runtimeDir,
-				workMountDir: '/home/openclaw/.openclaw/state/credentials',
-				zone,
-			}),
-		).rejects.toMatchObject({
-			kind: 'work-mount-purpose-not-allowed',
-		} satisfies Partial<LeaseWorkMountValidationError>);
-	});
-
-	it('rejects OpenClaw default workspace fallback paths because they are not gateway lease backed', async () => {
-		await expect(
-			resolveLeaseWorkMountDir({
+			validateControllerSelectedToolVmDirectory({
 				agentId: 'main',
-				runtimeDir,
-				workMountDir: '/home/openclaw/.openclaw/workspace',
+				hostDirectory: agentWorkspaceDirectory,
+				kind: 'managed-agent-workspace',
 				zone,
 			}),
-		).rejects.toMatchObject({
-			kind: 'work-mount-unknown-runtime-path',
-		} satisfies Partial<LeaseWorkMountValidationError>);
+		).resolves.toBe(await realpath(agentWorkspaceDirectory));
 	});
 
-	it('rejects exact OpenClaw gateway work mount roots', async () => {
+	it('accepts the exact controller-selected zone files directory', async () => {
 		await expect(
-			resolveLeaseWorkMountDir({
-				agentId: 'beta',
-				runtimeDir,
-				workMountDir: '/home/openclaw/.openclaw/state/sandboxes',
+			validateControllerSelectedToolVmDirectory({
+				hostDirectory: zoneFilesDirectory,
+				kind: 'zone-files',
 				zone,
 			}),
-		).rejects.toThrow(/must name a child path under/u);
-		await expect(
-			resolveLeaseWorkMountDir({
-				agentId: 'beta',
-				runtimeDir,
-				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/',
-				zone,
-			}),
-		).rejects.toThrow(/must name a child path under/u);
-		await expect(
-			resolveLeaseWorkMountDir({
-				agentId: 'beta',
-				runtimeDir,
-				workMountDir: '/zone',
-				zone,
-			}),
-		).rejects.toThrow(/must name a child path under/u);
-		await expect(
-			resolveLeaseWorkMountDir({
-				agentId: 'beta',
-				runtimeDir,
-				workMountDir: '/zone/',
-				zone,
-			}),
-		).rejects.toThrow(/must name a child path under/u);
+		).resolves.toBe(await realpath(zoneFilesDirectory));
 	});
 
-	it('maps OpenClaw gateway agent-owned /zone paths to host zoneFilesDir', async () => {
-		await expect(
-			resolveLeaseWorkMountDir({
-				agentId: 'beta',
-				runtimeDir,
-				workMountDir: '/zone/agents/beta/project',
-				zone,
-			}),
-		).resolves.toEqual({
-			guestWorkdir: '/workspace',
-			hostWorkMountDir: await realpath(path.join(zoneFilesDir, 'agents', 'beta', 'project')),
-		});
-	});
-
-	it('rejects OpenClaw gateway /zone agent paths for a different agent', async () => {
-		await expect(
-			resolveLeaseWorkMountDir({
-				agentId: 'beta',
-				runtimeDir,
-				workMountDir: '/zone/agents/main',
-				zone,
-			}),
-		).rejects.toMatchObject({
-			kind: 'work-mount-purpose-not-allowed',
-		} satisfies Partial<LeaseWorkMountValidationError>);
-	});
-
-	it('rejects /zone agent symlinks that resolve into another agent workspace', async () => {
-		const linkPath = path.join(zoneFilesDir, 'agents', 'beta', 'main-link');
-		await symlink(path.join(zoneFilesDir, 'agents', 'main'), linkPath);
-
-		await expect(
-			resolveLeaseWorkMountDir({
-				agentId: 'beta',
-				runtimeDir,
-				workMountDir: '/zone/agents/beta/main-link',
-				zone,
-			}),
-		).rejects.toMatchObject({
-			kind: 'work-mount-purpose-not-allowed',
-		} satisfies Partial<LeaseWorkMountValidationError>);
-	});
-
-	it('rejects symlinked /zone agent roots that resolve into another agent workspace', async () => {
-		await mkdir(path.join(zoneFilesDir, 'agents', 'main', 'project'), { recursive: true });
-		const linkPath = path.join(zoneFilesDir, 'agents', 'link-agent');
-		await symlink(path.join(zoneFilesDir, 'agents', 'main'), linkPath);
-
-		await expect(
-			resolveLeaseWorkMountDir({
-				agentId: 'link-agent',
-				runtimeDir,
-				workMountDir: '/zone/agents/link-agent/project',
-				zone,
-			}),
-		).rejects.toMatchObject({
-			kind: 'work-mount-purpose-not-allowed',
-		} satisfies Partial<LeaseWorkMountValidationError>);
-	});
-
-	it('rejects symlinked sandbox roots that resolve into another agent workspace', async () => {
-		const linkPath = path.join(stateDir, 'sandboxes', 'link-agent');
-		await symlink(path.join(stateDir, 'sandboxes', 'main'), linkPath);
-
-		await expect(
-			resolveLeaseWorkMountDir({
-				agentId: 'link-agent',
-				runtimeDir,
-				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/link-agent/work',
-				zone,
-			}),
-		).rejects.toMatchObject({
-			kind: 'work-mount-purpose-not-allowed',
-		} satisfies Partial<LeaseWorkMountValidationError>);
-	});
-
-	it('rejects symlinked state workspace roots that resolve into another agent workspace', async () => {
-		await mkdir(path.join(stateDir, 'workspace-beta'), { recursive: true });
-		const linkPath = path.join(stateDir, 'workspace-link-agent');
-		await symlink(path.join(stateDir, 'workspace-beta'), linkPath);
-
-		await expect(
-			resolveLeaseWorkMountDir({
-				agentId: 'link-agent',
-				runtimeDir,
-				workMountDir: '/home/openclaw/.openclaw/state/workspace-link-agent',
-				zone,
-			}),
-		).rejects.toThrow(/not a symlink or non-directory root/u);
-	});
-
-	it('returns zone Git mount metadata for configured OpenClaw /zone leases', async () => {
-		if (zone.gateway.type !== 'openclaw') {
-			throw new Error('test fixture must use an OpenClaw gateway');
-		}
-		const zoneWithZoneGit = {
+	it('uses the same controller-selected workspace authority for Hermes', async () => {
+		const hermesZone = {
 			...zone,
 			gateway: {
-				...zone.gateway,
-				zoneGit: {
-					remote: {
-						repoUrl: 'https://github.com/shravansunder/sunfam-zone-files.git',
-						branch: 'agent/zone-files',
-						defaultBranch: 'main',
-						protectedBranches: ['main'],
-						protectedBranchPatterns: ['release/*'],
-					},
+				config: path.join(temporaryDirectory, 'hermes.yaml'),
+				cpus: 2,
+				imageProfile: 'hermes',
+				memory: '2G',
+				port: 18_793,
+				profilesByAgent: { main: 'researcher' },
+				profileSecretProjectionsByAgent: {
+					main: { DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN' },
 				},
+				stateDir: stateDirectory,
+				type: 'hermes' as const,
+				zoneFilesDir: zoneFilesDirectory,
+				zoneRuntimeDir: zoneRuntimeDirectory,
 			},
 		} satisfies ZoneConfig;
 
 		await expect(
-			resolveLeaseWorkMountDir({
-				agentId: 'beta',
-				runtimeDir,
-				workMountDir: '/zone/agents/beta/project',
-				zone: zoneWithZoneGit,
+			validateControllerSelectedToolVmDirectory({
+				agentId: 'main',
+				hostDirectory: agentWorkspaceDirectory,
+				kind: 'managed-agent-workspace',
+				zone: hermesZone,
 			}),
-		).resolves.toEqual({
-			guestWorkdir: '/zone/agents/beta/project',
-			hostWorkMountDir: await realpath(path.join(zoneFilesDir, 'agents', 'beta', 'project')),
-			zoneGitMount: {
-				hostZoneFilesDir: zoneFilesDir,
-				hostZoneGitRoot: path.join(runtimeDir, 'zones', 'shravan', 'zone-git'),
-			},
-		});
-	});
-
-	it('rejects traversal before path translation', async () => {
+		).resolves.toBe(await realpath(agentWorkspaceDirectory));
 		await expect(
-			resolveLeaseWorkMountDir({
-				agentId: 'beta',
-				runtimeDir,
-				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/../../../etc',
-				zone,
+			validateControllerSelectedToolVmDirectory({
+				hostDirectory: zoneFilesDirectory,
+				kind: 'zone-files',
+				zone: hermesZone,
 			}),
-		).rejects.toThrow(/must not contain '\.\.' path segments/u);
-		await expect(
-			resolveLeaseWorkMountDir({
-				agentId: 'beta',
-				runtimeDir,
-				workMountDir: '/zone/../../../etc',
-				zone,
-			}),
-		).rejects.toThrow(/must not contain '\.\.' path segments/u);
-	});
-
-	it('rejects symlinks that resolve outside allowed roots', async () => {
-		const sensitiveDir = path.join(tempDir, 'sensitive');
-		const linkPath = path.join(stateDir, 'sandboxes', 'beta', 'ssh-link');
-		await mkdir(sensitiveDir, { recursive: true });
-		await symlink(sensitiveDir, linkPath);
-
-		await expect(
-			resolveLeaseWorkMountDir({
-				agentId: 'beta',
-				runtimeDir,
-				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/beta/ssh-link',
-				zone,
-			}),
-		).rejects.toThrow(/outside allowed OpenClaw tool work mount roots/u);
-	});
-
-	it('rejects host paths even when they are inside allowed roots', async () => {
-		const hostWorkMountDir = path.join(zoneFilesDir, 'project');
-
-		await expect(
-			resolveLeaseWorkMountDir({
-				agentId: 'beta',
-				runtimeDir,
-				workMountDir: hostWorkMountDir,
-				zone,
-			}),
-		).rejects.toMatchObject({
-			kind: 'work-mount-unknown-runtime-path',
-		} satisfies Partial<LeaseWorkMountValidationError>);
+		).resolves.toBe(await realpath(zoneFilesDirectory));
 	});
 
 	it.each([
-		{ kind: 'work-mount-unknown-runtime-path', workMountDir: '/workspace' },
-		{ kind: 'work-mount-unknown-runtime-path', workMountDir: '/workspace/app' },
-		{ kind: 'work-mount-unknown-runtime-path', workMountDir: '/work' },
-		{ kind: 'work-mount-unknown-runtime-path', workMountDir: '/work/tmp' },
-	] satisfies readonly {
-		readonly kind: LeaseWorkMountValidationErrorKind;
-		readonly workMountDir: string;
-	}[])(
-		'rejects Tool VM guest path %s as controller lease workMountDir',
-		async ({ kind, workMountDir }) => {
-			await expect(
-				resolveLeaseWorkMountDir({
-					agentId: 'beta',
-					runtimeDir,
-					workMountDir,
-					zone,
-				}),
-			).rejects.toMatchObject({
-				kind,
-			} satisfies Partial<LeaseWorkMountValidationError>);
-		},
-	);
-
-	it('allows direct lifecycle validation of resolved host work mount paths', async () => {
-		const hostWorkMountDir = path.join(zoneFilesDir, 'project');
+		['another agent', 'other-agent'],
+		['an agent workspace child', 'workspace-child'],
+		['gateway state', 'gateway-state'],
+	] as const)('rejects %s as managed agent workspace authority', async (_label, candidateKind) => {
+		const hostDirectory =
+			candidateKind === 'other-agent'
+				? path.join(zoneFilesDirectory, 'agents', 'other')
+				: candidateKind === 'workspace-child'
+					? path.join(agentWorkspaceDirectory, 'project')
+					: stateDirectory;
+		await mkdir(hostDirectory, { recursive: true });
 
 		await expect(
-			validateResolvedToolWorkMountDir({
-				hostWorkMountDir,
-				zone,
-			}),
-		).resolves.toBe(await realpath(hostWorkMountDir));
-	});
-
-	it('rejects cache runtime and unrelated host paths', async () => {
-		const unrelatedPath = path.join(tempDir, 'cache', 'project');
-		await mkdir(unrelatedPath, { recursive: true });
-
-		await expect(
-			validateResolvedToolWorkMountDir({
-				hostWorkMountDir: unrelatedPath,
-				zone,
-			}),
-		).rejects.toThrow(/outside allowed OpenClaw tool work mount roots/u);
-	});
-
-	it('rejects non-absolute work mount paths', async () => {
-		await expect(
-			resolveLeaseWorkMountDir({
-				agentId: 'beta',
-				runtimeDir,
-				workMountDir: 'relative/work',
-				zone,
-			}),
-		).rejects.toThrow(/Lease workMountDir 'relative\/work' must be absolute/u);
-		await expect(
-			resolveLeaseWorkMountDir({
-				agentId: 'beta',
-				runtimeDir,
-				workMountDir: 'relative/work',
+			validateControllerSelectedToolVmDirectory({
+				agentId: 'main',
+				hostDirectory,
+				kind: 'managed-agent-workspace',
 				zone,
 			}),
 		).rejects.toMatchObject({
-			kind: 'work-mount-not-absolute',
-		} satisfies Partial<LeaseWorkMountValidationError>);
+			kind: 'not-controller-selected',
+		} satisfies Partial<ControllerSelectedToolVmDirectoryValidationError>);
 	});
 
-	it('rejects non-OpenClaw zones', async () => {
+	it('rejects a symlink at the selected workspace leaf', async () => {
+		const realDirectory = path.join(temporaryDirectory, 'symlink-target');
+		const linkedWorkspace = path.join(zoneFilesDirectory, 'agents', 'linked');
+		await mkdir(realDirectory);
+		await symlink(realDirectory, linkedWorkspace);
+
 		await expect(
-			resolveLeaseWorkMountDir({
-				agentId: 'beta',
-				runtimeDir,
-				workMountDir: '/zone/project',
+			validateControllerSelectedToolVmDirectory({
+				agentId: 'linked',
+				hostDirectory: linkedWorkspace,
+				kind: 'managed-agent-workspace',
+				zone,
+			}),
+		).rejects.toMatchObject({
+			kind: 'not-real-directory',
+		} satisfies Partial<ControllerSelectedToolVmDirectoryValidationError>);
+	});
+
+	it('rejects relative and parent-traversal paths before filesystem access', async () => {
+		await expect(
+			validateControllerSelectedToolVmDirectory({
+				agentId: 'main',
+				hostDirectory: 'agents/main',
+				kind: 'managed-agent-workspace',
+				zone,
+			}),
+		).rejects.toMatchObject({ kind: 'not-absolute' });
+		await expect(
+			validateControllerSelectedToolVmDirectory({
+				agentId: 'main',
+				hostDirectory: `${zoneFilesDirectory}/agents/../agents/main`,
+				kind: 'managed-agent-workspace',
+				zone,
+			}),
+		).rejects.toMatchObject({ kind: 'parent-traversal' });
+	});
+
+	it('rejects gateway types without managed Tool VM directory semantics', async () => {
+		await expect(
+			validateControllerSelectedToolVmDirectory({
+				agentId: 'main',
+				hostDirectory: agentWorkspaceDirectory,
+				kind: 'managed-agent-workspace',
 				zone: {
 					...zone,
 					gateway: {
-						type: 'worker',
-						imageProfile: 'worker',
+						config: path.join(temporaryDirectory, 'worker.json'),
 						cpus: 2,
+						imageProfile: 'worker',
 						memory: '2G',
-						config: path.join(tempDir, 'worker.json'),
-						port: 18791,
-						stateDir,
+						port: 18_792,
+						stateDir: stateDirectory,
+						type: 'worker',
+						zoneRuntimeDir: zoneRuntimeDirectory,
 					},
 				},
 			}),
-		).rejects.toThrow(/does not support OpenClaw tool VM leases/u);
-	});
-
-	it('rejects when no allowed work mount roots exist', async () => {
-		const missingRootZone = {
-			...zone,
-			gateway: {
-				...zone.gateway,
-				stateDir: path.join(tempDir, 'missing-state'),
-				zoneFilesDir: path.join(tempDir, 'missing-zone-files'),
-			},
-		};
-
-		await expect(
-			resolveLeaseWorkMountDir({
-				agentId: 'beta',
-				runtimeDir,
-				workMountDir: '/zone/agents/beta/project',
-				zone: missingRootZone,
-			}),
-		).rejects.toThrow(/failed directory realpath check/u);
+		).rejects.toMatchObject({ kind: 'unsupported-gateway' });
 	});
 });

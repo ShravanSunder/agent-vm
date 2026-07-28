@@ -1,5 +1,5 @@
-export const TOOL_VM_WORKSPACE_GUEST_ROOT = '/workspace';
-export const TOOL_VM_SCRATCH_GUEST_ROOT = '/work';
+export const TOOL_VM_WORK_GUEST_ROOT = '/work';
+export const TOOL_VM_SCRATCH_GUEST_ROOT = '/scratch';
 export const OPENCLAW_STATE_VM_ROOT = '/home/openclaw/.openclaw/state';
 export const OPENCLAW_STATE_SANDBOXES_VM_ROOT = `${OPENCLAW_STATE_VM_ROOT}/sandboxes`;
 
@@ -263,7 +263,7 @@ export function translateRuntimePath(input: TranslateRuntimePathInput): Translat
 			purpose: input.purpose,
 		});
 	}
-	// Reject traversal before normalization so /workspace/../secret cannot
+	// Reject traversal before normalization so /work/../secret cannot
 	// collapse into a seemingly valid path under a trusted root.
 	if (pathContainsParentTraversal(input.inputPath)) {
 		return errorResult({

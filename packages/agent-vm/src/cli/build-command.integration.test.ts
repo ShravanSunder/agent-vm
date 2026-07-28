@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import fsPromises from 'node:fs/promises';
+import fsPromises, { mkdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { Writable } from 'node:stream';
@@ -12,8 +12,21 @@ import {
 } from '../build/gondolin-image-builder.js';
 import { managedVmImageAssetFileNames as buildImageAssetFileNames } from '../build/gondolin-managed-vm-build-tooling.js';
 import type { ManagedImageRelease } from '../build/managed-image-dockerfile.js';
-import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
 import {
+	createLoadedSystemConfig,
+	type LoadedSystemConfig,
+	type SystemConfigInput,
+} from '../config/system-config.js';
+import {
+	createControllerStateRoot,
+	resolveControllerGatewayStateRoot,
+} from '../controller/durable-state/controller-state-paths.js';
+import {
+	resolveControllerGatewayRecordTargets,
+	resolveControllerWorkerTaskRuntimeRecordTarget,
+} from '../controller/durable-state/controller-state-record-paths.js';
+import {
+	managedGatewayBootProjectionForGatewayType,
 	runBuildCommand as runBuildCommandDefault,
 	type BuildCommandDependencies,
 } from './build-command.js';
@@ -69,11 +82,11 @@ function createSharedToolVmSystemConfig(options: {
 	readonly cacheDirectory: string;
 	readonly toolProfileNames: readonly string[];
 }): LoadedSystemConfig {
-	const { systemConfigPath: _systemConfigPath, ...baseConfig } = createTestSystemConfig();
+	const baseConfig = createTestSystemConfigInput();
 	return createLoadedSystemConfig(
 		{
 			...baseConfig,
-			cacheDir: options.cacheDirectory,
+			storageRootDir: path.dirname(options.cacheDirectory),
 			imageProfiles: {
 				gateways: {
 					openclaw: {
@@ -118,9 +131,11 @@ function createTestManagedImageRelease(): ManagedImageRelease {
 	return {
 		baseImages: {
 			'openclaw-gateway': {
+				openclawPackageVersion: '2026.6.8',
+				openclawPluginList: ['@openclaw/codex', '@openclaw/discord', '@openclaw/diagnostics-otel'],
 				packageOverrides: {
 					npm: ['@openai/codex@0.139.0'],
-					openclaw: ['openclaw@2026.6.8', '@openclaw/codex@2026.6.8'],
+					openclaw: ['@openclaw/discord@2026.6.8'],
 					pnpm: { undici: '8.5.0' },
 				},
 				repository: 'ghcr.io/shravansunder/agent-vm-managed-openclaw-gateway-base',
@@ -148,73 +163,73 @@ function createTestManagedImageRelease(): ManagedImageRelease {
 	};
 }
 
-function createTestSystemConfig(): LoadedSystemConfig {
-	return createLoadedSystemConfig(
-		{
-			cacheDir: '/cache',
-			runtimeDir: '/runtime',
-			host: {
-				controllerPort: 18800,
-				projectNamespace: 'claw-tests-a1b2c3d4',
-				secretsProvider: { type: '1password', tokenSource: { type: 'env' } },
-			},
-			imageProfiles: {
-				gateways: {
-					openclaw: {
-						type: 'openclaw',
-						buildConfig: '/project/vm-images/gateways/openclaw/build-config.json',
-						dockerfile: '/project/vm-images/gateways/openclaw/Dockerfile',
-					},
-				},
-				toolVms: {
-					default: {
-						type: 'toolVm',
-						buildConfig: '/project/vm-images/tool-vms/default/build-config.json',
-					},
-				},
-			},
-			zones: [
-				{
-					egressHosts: ['example.com'].map((host) => ({ host, audience: 'gateway' as const })),
-					gateway: {
-						type: 'openclaw',
-						controlAuth: {
-							mode: 'token',
-							secret: 'OPENCLAW_GATEWAY_TOKEN',
-						},
-						imageProfile: 'openclaw',
-						cpus: 2,
-						memory: '2G',
-						config: './config/test/openclaw.json',
-						port: 18791,
-						stateDir: '/state/test',
-						zoneFilesDir: '/zone-files/test',
-					},
-					id: 'test-zone',
-					agents: [{ id: 'main' }],
-					secrets: {
-						OPENCLAW_GATEWAY_TOKEN: {
-							source: 'environment',
-							envVar: 'OPENCLAW_GATEWAY_TOKEN',
-							injection: 'env',
-							audience: 'gateway',
-						},
-					},
-					defaultToolVmProfile: 'standard',
-					agentToolVmProfiles: {},
-				},
-			],
-			toolVmProfiles: {
-				standard: {
-					cpus: 1,
-					imageProfile: 'default',
-					memory: '1G',
-				},
-			},
-			tcpPool: { basePort: 19000, size: 5 },
+function createTestSystemConfigInput(): SystemConfigInput {
+	return {
+		storageRootDir: '/',
+		host: {
+			controllerPort: 18800,
+			projectNamespace: 'claw-tests-a1b2c3d4',
+			secretsProvider: { type: '1password', tokenSource: { type: 'env' } },
 		},
-		{ systemConfigPath: '/project/config/system.json' },
-	);
+		imageProfiles: {
+			gateways: {
+				openclaw: {
+					type: 'openclaw',
+					buildConfig: '/project/vm-images/gateways/openclaw/build-config.json',
+					dockerfile: '/project/vm-images/gateways/openclaw/Dockerfile',
+				},
+			},
+			toolVms: {
+				default: {
+					type: 'toolVm',
+					buildConfig: '/project/vm-images/tool-vms/default/build-config.json',
+				},
+			},
+		},
+		zones: [
+			{
+				egressHosts: ['example.com'].map((host) => ({ host, audience: 'gateway' as const })),
+				gateway: {
+					type: 'openclaw',
+					controlAuth: {
+						mode: 'token',
+						secret: 'OPENCLAW_GATEWAY_TOKEN',
+					},
+					imageProfile: 'openclaw',
+					cpus: 2,
+					memory: '2G',
+					config: './config/test/openclaw.json',
+					port: 18791,
+				},
+				id: 'test-zone',
+				agents: [{ id: 'main' }],
+				secrets: {
+					OPENCLAW_GATEWAY_TOKEN: {
+						source: 'environment',
+						envVar: 'OPENCLAW_GATEWAY_TOKEN',
+						injection: 'env',
+						audience: 'gateway',
+					},
+				},
+				defaultToolVmProfile: 'standard',
+				agentToolVmProfiles: {},
+			},
+		],
+		toolVmProfiles: {
+			standard: {
+				cpus: 1,
+				imageProfile: 'default',
+				memory: '1G',
+			},
+		},
+		tcpPool: { basePort: 19000, size: 5 },
+	};
+}
+
+function createTestSystemConfig(): LoadedSystemConfig {
+	return createLoadedSystemConfig(createTestSystemConfigInput(), {
+		systemConfigPath: '/project/config/system.json',
+	});
 }
 
 function createObservabilitySystemConfig(
@@ -224,7 +239,7 @@ function createObservabilitySystemConfig(
 		readonly zoneEnabled?: boolean;
 	} = {},
 ): LoadedSystemConfig {
-	const { systemConfigPath: _systemConfigPath, ...baseConfig } = createTestSystemConfig();
+	const baseConfig = createTestSystemConfigInput();
 	const stackMode = options.stackMode ?? 'managed';
 	const zoneEnabled = options.zoneEnabled ?? false;
 	const hostObservability =
@@ -271,11 +286,9 @@ function createObservabilitySystemConfig(
 					? {
 							observability: {
 								enabled: true,
-								openclaw: {
-									serviceName: `agent-vm-openclaw-${zone.id}`,
-									traces: true,
-									metrics: true,
-									logs: true,
+								services: {
+									framework: { traces: true, metrics: true, logs: true },
+									toolPortal: { traces: true, metrics: true, logs: true },
 								},
 							},
 						}
@@ -323,6 +336,18 @@ async function runBuildCommand(
 }
 
 describe('runBuildCommand', () => {
+	it('selects the fixed sibling boot entry only for managed framework gateways', () => {
+		expect(managedGatewayBootProjectionForGatewayType('openclaw')).toEqual({
+			frameworkBootEntry: 'openclaw-framework-service',
+			kind: 'managed-gateway-exact-two-role',
+		});
+		expect(managedGatewayBootProjectionForGatewayType('hermes')).toEqual({
+			frameworkBootEntry: 'hermes-framework-service',
+			kind: 'managed-gateway-exact-two-role',
+		});
+		expect(managedGatewayBootProjectionForGatewayType('worker')).toBeUndefined();
+	});
+
 	it('builds Docker image when dockerfile is configured', async () => {
 		const dockerBuilds: { dockerfilePath: string; imageTag: string }[] = [];
 		const pluginSyncs: string[] = [];
@@ -464,7 +489,7 @@ describe('runBuildCommand', () => {
 			findPrunableImageDirectories: async () => [],
 		};
 
-		const { systemConfigPath: _systemConfigPath, ...baseConfig } = createTestSystemConfig();
+		const baseConfig = createTestSystemConfigInput();
 		await runBuildCommand(
 			{
 				systemConfig: createLoadedSystemConfig(
@@ -537,7 +562,7 @@ describe('runBuildCommand', () => {
 		const gatewayConfigPath = path.join(gatewayConfigDirectory, 'openclaw.json');
 		fs.writeFileSync(gatewayConfigPath, JSON.stringify({ channels: {} }), 'utf8');
 		const buildConfigPath = path.join(temporaryDirectory, 'build-config.json');
-		fs.writeFileSync(
+		await writeFile(
 			buildConfigPath,
 			JSON.stringify({ oci: { image: 'agent-vm-gateway:managed' } }),
 			'utf8',
@@ -611,7 +636,9 @@ describe('runBuildCommand', () => {
 			'RUN apt-get update && apt-get install -y --no-install-recommends "ca-certificates"',
 		);
 		expect(generatedDockerfile).toContain('WORKDIR /opt/openclaw-runtime-packages');
-		expect(generatedDockerfile).toContain('"@openclaw/discord": "2026.5.7"');
+		expect(generatedDockerfile).toContain(
+			"openclaw plugins install 'npm:@openclaw/discord@2026.5.7' --pin",
+		);
 		expect(generatedDockerfile).toContain('"openclaw": "2026.6.8"');
 		expect(generatedDockerfile).toContain('"undici": "8.5.0"');
 		expect(generatedDockerfile).toContain('RUN pnpm install --prod --ignore-scripts');
@@ -705,7 +732,9 @@ describe('runBuildCommand', () => {
 		expect(outputLines[0]).toContain(
 			'overrides undici@8.5.0[managed-images.json/packageOverrides.pnpm]',
 		);
-		expect(outputLines[0]).toContain('discord@2026.6.8[managed-default]');
+		expect(outputLines[0]).toContain(
+			'discord@2026.6.8[managed-images.json/packageOverrides.openclaw]',
+		);
 		expect(outputLines[0]).toContain(
 			'npm @openai/codex@0.139.0[managed-images.json/packageOverrides.npm]',
 		);
@@ -725,7 +754,7 @@ describe('runBuildCommand', () => {
 				schemaVersion: 1,
 				extraAptPackages: [],
 				packageOverrides: {
-					openclaw: ['openclaw@2026.5.7', '@openclaw/discord@2026.5.2'],
+					openclaw: ['@openclaw/discord@2026.5.2'],
 				},
 				runAfterBase: [],
 			}),
@@ -787,7 +816,7 @@ describe('runBuildCommand', () => {
 
 		expect(outputLines).toHaveLength(1);
 		expect(outputLines[0]).not.toContain('\n');
-		expect(outputLines[0]).toContain('warnings 2');
+		expect(outputLines[0]).toContain('warnings 1');
 		expect(outputLines[0]).toContain('discord@2026.5.2[overlay.jsonc/packageOverrides.openclaw]');
 		expect(outputLines[0]).not.toContain('OpenClaw package versions differ');
 	});
@@ -861,16 +890,18 @@ describe('runBuildCommand', () => {
 		const generatedDockerfile = fs.readFileSync(dockerBuilds[0]?.dockerfilePath ?? '', 'utf8');
 		expect(generatedDockerfile).toContain('WORKDIR /opt/openclaw-runtime-packages');
 		expect(generatedDockerfile).toContain('"openclaw": "2026.6.8"');
-		expect(generatedDockerfile).toContain('"@openclaw/codex": "2026.6.8"');
-		expect(generatedDockerfile).toContain('"@openclaw/discord": "2026.6.8"');
+		expect(generatedDockerfile).toContain("openclaw plugins install 'npm:@openclaw/codex' --pin");
+		expect(generatedDockerfile).toContain(
+			"openclaw plugins install 'npm:@openclaw/discord@2026.6.8' --pin",
+		);
 		expect(generatedDockerfile).toContain('"undici": "8.5.0"');
 		expect(generatedDockerfile).toContain('RUN pnpm install --prod --ignore-scripts');
 		expect(generatedDockerfile).toContain(
-			'ln -sfn /opt/openclaw-runtime-packages/node_modules/@openclaw/discord "$global_package_root/@openclaw/discord"',
+			'ln -sfn "$plugin_package_root" "$global_package_root/@openclaw/discord"',
 		);
 	});
 
-	it('does not add diagnostics OTEL OpenClaw package without accepted zone telemetry', async () => {
+	it('installs listed diagnostics OTEL OpenClaw package without accepted zone telemetry', async () => {
 		const temporaryDirectory = createTemporaryDirectory();
 		const gatewayConfigDirectory = path.join(temporaryDirectory, 'config', 'gateways', 'sunfam');
 		fs.mkdirSync(gatewayConfigDirectory, { recursive: true });
@@ -940,12 +971,14 @@ describe('runBuildCommand', () => {
 		const generatedDockerfile = fs.readFileSync(dockerBuilds[0]?.dockerfilePath ?? '', 'utf8');
 		expect(generatedDockerfile).toContain('WORKDIR /opt/openclaw-runtime-packages');
 		expect(generatedDockerfile).toContain('"openclaw": "2026.6.8"');
-		expect(generatedDockerfile).toContain('"@openclaw/codex": "2026.6.8"');
-		expect(generatedDockerfile).not.toContain('"@openclaw/diagnostics-otel": "2026.6.8"');
+		expect(generatedDockerfile).toContain("openclaw plugins install 'npm:@openclaw/codex' --pin");
+		expect(generatedDockerfile).toContain(
+			"openclaw plugins install 'npm:@openclaw/diagnostics-otel' --pin",
+		);
 		expect(generatedDockerfile).toContain('"undici": "8.5.0"');
 		expect(generatedDockerfile).toContain('RUN pnpm install --prod --ignore-scripts');
-		expect(generatedDockerfile).not.toContain(
-			'ln -sfn /opt/openclaw-runtime-packages/node_modules/@openclaw/diagnostics-otel "$global_package_root/@openclaw/diagnostics-otel"',
+		expect(generatedDockerfile).toContain(
+			'ln -sfn "$plugin_package_root" "$global_package_root/@openclaw/diagnostics-otel"',
 		);
 		expect(generatedDockerfile).not.toContain('openclaw-diagnostics-otel.tgz');
 		expect(generatedDockerfile).not.toContain(
@@ -1021,13 +1054,15 @@ describe('runBuildCommand', () => {
 		);
 
 		const generatedDockerfile = fs.readFileSync(dockerBuilds[0]?.dockerfilePath ?? '', 'utf8');
-		expect(generatedDockerfile).toContain('"@openclaw/diagnostics-otel": "2026.6.8"');
 		expect(generatedDockerfile).toContain(
-			'ln -sfn /opt/openclaw-runtime-packages/node_modules/@openclaw/diagnostics-otel "$global_package_root/@openclaw/diagnostics-otel"',
+			"openclaw plugins install 'npm:@openclaw/diagnostics-otel' --pin",
+		);
+		expect(generatedDockerfile).toContain(
+			'ln -sfn "$plugin_package_root" "$global_package_root/@openclaw/diagnostics-otel"',
 		);
 	});
 
-	it('does not add disabled OpenClaw channel packages', async () => {
+	it('installs listed OpenClaw channel packages when a channel is disabled', async () => {
 		const temporaryDirectory = createTemporaryDirectory();
 		const gatewayConfigDirectory = path.join(temporaryDirectory, 'config', 'gateways', 'sunfam');
 		fs.mkdirSync(gatewayConfigDirectory, { recursive: true });
@@ -1096,10 +1131,12 @@ describe('runBuildCommand', () => {
 		const generatedDockerfile = fs.readFileSync(dockerBuilds[0]?.dockerfilePath ?? '', 'utf8');
 		expect(generatedDockerfile).toContain('WORKDIR /opt/openclaw-runtime-packages');
 		expect(generatedDockerfile).toContain('"openclaw": "2026.6.8"');
-		expect(generatedDockerfile).toContain('"@openclaw/codex": "2026.6.8"');
+		expect(generatedDockerfile).toContain("openclaw plugins install 'npm:@openclaw/codex' --pin");
 		expect(generatedDockerfile).toContain('"undici": "8.5.0"');
 		expect(generatedDockerfile).toContain('RUN pnpm install --prod --ignore-scripts');
-		expect(generatedDockerfile).not.toContain('@openclaw/discord');
+		expect(generatedDockerfile).toContain(
+			"openclaw plugins install 'npm:@openclaw/discord@2026.6.8' --pin",
+		);
 	});
 
 	it('finds the scaffold root by walking up to config/system.json instead of assuming dockerfile depth', async () => {
@@ -1260,11 +1297,15 @@ describe('runBuildCommand', () => {
 	});
 
 	it('uses Docker rootfs identity as fingerprint input for Docker-backed targets', async () => {
-		const fingerprintInputs: unknown[] = [];
+		const fingerprintInputs: {
+			fingerprintInput: unknown;
+			managedGatewayBoot: unknown;
+		}[] = [];
 		const gondolinBuilds: {
 			cacheDir: string;
 			fingerprintInput: unknown;
 			fullReset: boolean | undefined;
+			managedGatewayBoot: unknown;
 		}[] = [];
 		const dockerRootfsIdentity = {
 			architecture: 'arm64',
@@ -1281,6 +1322,7 @@ describe('runBuildCommand', () => {
 						cacheDir: options.cacheDir,
 						fingerprintInput: options.fingerprintInput,
 						fullReset: options.fullReset,
+						managedGatewayBoot: options.managedGatewayBoot,
 					});
 					return {
 						built: true,
@@ -1291,7 +1333,10 @@ describe('runBuildCommand', () => {
 					};
 				},
 				computeManagedVmFingerprint: async (options) => {
-					fingerprintInputs.push(options.fingerprintInput);
+					fingerprintInputs.push({
+						fingerprintInput: options.fingerprintInput,
+						managedGatewayBoot: options.managedGatewayBoot,
+					});
 					return options.fingerprintInput === undefined
 						? 'tool-fingerprint'
 						: 'gateway-rootfs-fingerprint';
@@ -1305,10 +1350,16 @@ describe('runBuildCommand', () => {
 
 		expect(fingerprintInputs).toEqual([
 			{
-				dockerRootfsIdentity,
-				schemaVersion: 1,
+				fingerprintInput: {
+					dockerRootfsIdentity,
+					schemaVersion: 1,
+				},
+				managedGatewayBoot: {
+					frameworkBootEntry: 'openclaw-framework-service',
+					kind: 'managed-gateway-exact-two-role',
+				},
 			},
-			undefined,
+			{ fingerprintInput: undefined, managedGatewayBoot: undefined },
 		]);
 		expect(gondolinBuilds).toEqual([
 			{
@@ -1318,13 +1369,88 @@ describe('runBuildCommand', () => {
 					schemaVersion: 1,
 				},
 				fullReset: undefined,
+				managedGatewayBoot: {
+					frameworkBootEntry: 'openclaw-framework-service',
+					kind: 'managed-gateway-exact-two-role',
+				},
 			},
 			{
 				cacheDir: '/cache/tool-vm-images/default',
 				fingerprintInput: undefined,
 				fullReset: undefined,
+				managedGatewayBoot: undefined,
 			},
 		]);
+	});
+
+	it('keeps managed Gateway precomputed and actual image fingerprints aligned', async () => {
+		// Arrange
+		const temporaryDirectory = createTemporaryDirectory();
+		const buildConfigPath = path.join(temporaryDirectory, 'build-config.json');
+		const cacheDirectory = path.join(temporaryDirectory, 'cache');
+		fs.writeFileSync(
+			buildConfigPath,
+			JSON.stringify({
+				arch: 'aarch64',
+				distro: 'alpine',
+				rootfs: { label: 'shared-root' },
+			}),
+			'utf8',
+		);
+		const baseConfig = createTestSystemConfigInput();
+		const systemConfig = createLoadedSystemConfig(
+			{
+				...baseConfig,
+				storageRootDir: path.dirname(cacheDirectory),
+				imageProfiles: {
+					gateways: {
+						openclaw: { type: 'openclaw', buildConfig: buildConfigPath },
+					},
+					toolVms: {
+						default: { type: 'toolVm', buildConfig: buildConfigPath },
+					},
+				},
+			},
+			{ systemConfigPath: path.join(temporaryDirectory, 'config', 'system.json') },
+		);
+		const observedFingerprints: string[] = [];
+
+		// Act
+		await runBuildCommandDefault(
+			{ systemConfig },
+			{
+				buildManagedVmImage: async (options) => {
+					const fingerprint = await computeFingerprintFromConfigPath(
+						options.buildConfigPath,
+						options.managedGatewayBoot === undefined
+							? {}
+							: { managedGatewayBoot: options.managedGatewayBoot },
+					);
+					const imagePath = path.join(options.cacheDir, fingerprint);
+					await mkdir(imagePath, { recursive: true });
+					await Promise.all(
+						buildImageAssetFileNames.map(
+							async (fileName) =>
+								await writeFile(
+									path.join(imagePath, fileName),
+									`managed-boot-fingerprint:${fileName}\n`,
+									'utf8',
+								),
+						),
+					);
+					observedFingerprints.push(fingerprint);
+					return { built: true, fingerprint, imagePath };
+				},
+				findPrunableImageDirectories: async () => [],
+				resolveRequiredZigVersion: async () => '0.15.2',
+				resolveZigVersion: async () => '0.15.2',
+				runTask: async (_title, fn) => await fn(),
+			},
+		);
+
+		// Assert
+		expect(observedFingerprints).toHaveLength(2);
+		expect(new Set(observedFingerprints).size).toBe(2);
 	});
 
 	it('reuses the same shared Gondolin cache directories across multiple zones', async () => {
@@ -1420,12 +1546,12 @@ describe('runBuildCommand', () => {
 			}),
 			'utf8',
 		);
-		const { systemConfigPath: _systemConfigPath, ...baseConfig } = createTestSystemConfig();
+		const baseConfig = createTestSystemConfigInput();
 		const toolProfileNames = ['default', 'shravan', 'alevtina', 'sun'] as const;
 		const systemConfig = createLoadedSystemConfig(
 			{
 				...baseConfig,
-				cacheDir: cacheDirectory,
+				storageRootDir: path.dirname(cacheDirectory),
 				imageProfiles: {
 					gateways: {
 						openclaw: {
@@ -1905,11 +2031,11 @@ describe('runBuildCommand', () => {
 			}),
 			'utf8',
 		);
-		const { systemConfigPath: _systemConfigPath, ...baseConfig } = createTestSystemConfig();
+		const baseConfig = createTestSystemConfigInput();
 		const systemConfig = createLoadedSystemConfig(
 			{
 				...baseConfig,
-				cacheDir: cacheDirectory,
+				storageRootDir: path.dirname(cacheDirectory),
 				imageProfiles: {
 					gateways: {
 						openclaw: {
@@ -1980,11 +2106,11 @@ describe('runBuildCommand', () => {
 			'utf8',
 		);
 		fs.writeFileSync(dockerfilePath, 'FROM scratch\n');
-		const { systemConfigPath: _systemConfigPath, ...baseConfig } = createTestSystemConfig();
+		const baseConfig = createTestSystemConfigInput();
 		const systemConfig = createLoadedSystemConfig(
 			{
 				...baseConfig,
-				cacheDir: cacheDirectory,
+				storageRootDir: path.dirname(cacheDirectory),
 				imageProfiles: {
 					gateways: {
 						openclaw: {
@@ -2073,11 +2199,11 @@ describe('runBuildCommand', () => {
 		fs.writeFileSync(gatewayDockerfilePath, 'FROM scratch\n', 'utf8');
 		fs.writeFileSync(toolVmDockerfilePath, 'FROM scratch\n', 'utf8');
 
-		const { systemConfigPath: _systemConfigPath, ...baseConfig } = createTestSystemConfig();
+		const baseConfig = createTestSystemConfigInput();
 		const systemConfig = createLoadedSystemConfig(
 			{
 				...baseConfig,
-				cacheDir: path.join(temporaryDirectory, 'cache'),
+				storageRootDir: temporaryDirectory,
 				imageProfiles: {
 					gateways: {
 						openclaw: {
@@ -2145,11 +2271,11 @@ describe('runBuildCommand', () => {
 		fs.writeFileSync(gatewayDockerfilePath, 'FROM scratch\n', 'utf8');
 		fs.writeFileSync(toolVmDockerfilePath, 'FROM scratch\n', 'utf8');
 
-		const { systemConfigPath: _systemConfigPath, ...baseConfig } = createTestSystemConfig();
+		const baseConfig = createTestSystemConfigInput();
 		const systemConfig = createLoadedSystemConfig(
 			{
 				...baseConfig,
-				cacheDir: path.join(temporaryDirectory, 'cache'),
+				storageRootDir: temporaryDirectory,
 				imageProfiles: {
 					gateways: {
 						default: {
@@ -2315,6 +2441,10 @@ describe('runBuildCommand', () => {
 		vi.useFakeTimers();
 		const taskStatuses: (string | undefined)[] = [];
 		let finishGondolinBuild: (() => void) | undefined;
+		let signalGondolinBuildStarted: (() => void) | undefined;
+		const gondolinBuildStarted = new Promise<void>((resolve) => {
+			signalGondolinBuildStarted = resolve;
+		});
 
 		const buildPromise = runBuildCommand(
 			{
@@ -2334,6 +2464,7 @@ describe('runBuildCommand', () => {
 			},
 			{
 				buildManagedVmImage: async () => {
+					signalGondolinBuildStarted?.();
 					await new Promise<void>((resolve) => {
 						finishGondolinBuild = resolve;
 					});
@@ -2358,6 +2489,7 @@ describe('runBuildCommand', () => {
 			},
 		);
 
+		await gondolinBuildStarted;
 		await vi.advanceTimersByTimeAsync(16_000);
 		finishGondolinBuild?.();
 		await buildPromise;
@@ -2637,11 +2769,20 @@ describe('runBuildCommand', () => {
 		expect(statusMessages).toContain('image cache auto-prune failed');
 	});
 
-	it('skips auto-prune when a gateway runtime record exists', async () => {
+	it('skips auto-prune when a current managed Gateway runtime record exists', async () => {
 		const temporaryDirectory = createTemporaryDirectory();
-		const stateDirectory = path.join(temporaryDirectory, 'state', 'test');
-		fs.mkdirSync(stateDirectory, { recursive: true });
-		fs.writeFileSync(path.join(stateDirectory, 'gateway-runtime.json'), '{}\n', 'utf8');
+		const controllerStateDirectory = path.join(temporaryDirectory, 'controller-state');
+		const gatewayStateRoot = resolveControllerGatewayStateRoot({
+			controllerStateRoot: createControllerStateRoot({
+				controllerStateDirectoryPath: controllerStateDirectory,
+			}),
+			zoneId: 'test-zone',
+		});
+		const runtimeRecordTarget = resolveControllerGatewayRecordTargets({
+			gatewayStateRoot,
+		}).managedGatewayRuntimeRecord;
+		fs.mkdirSync(path.dirname(runtimeRecordTarget.filePath), { recursive: true });
+		fs.writeFileSync(runtimeRecordTarget.filePath, '{}\n', 'utf8');
 		const deleteStaleImageDirectories = vi.fn(async () => {});
 		const findPrunableImageDirectories = vi.fn(async () => []);
 		const outputMessages: string[] = [];
@@ -2656,15 +2797,7 @@ describe('runBuildCommand', () => {
 			{
 				systemConfig: {
 					...systemConfig,
-					zones: [
-						{
-							...baseZone,
-							gateway: {
-								...baseZone.gateway,
-								stateDir: stateDirectory,
-							},
-						},
-					],
+					controllerStateDir: controllerStateDirectory,
 				},
 			},
 			{
@@ -2702,6 +2835,134 @@ describe('runBuildCommand', () => {
 			'Image cache auto-prune skipped because gateway runtime records exist for zone(s): test-zone. Stop the controller before pruning old image generations.',
 		);
 		expect(statusMessages).toContain('image cache auto-prune skipped');
+	});
+
+	it('skips auto-prune when a current Worker runtime record collection is non-empty', async () => {
+		const temporaryDirectory = createTemporaryDirectory();
+		const controllerStateDirectory = path.join(temporaryDirectory, 'controller-state');
+		const gatewayStateRoot = resolveControllerGatewayStateRoot({
+			controllerStateRoot: createControllerStateRoot({
+				controllerStateDirectoryPath: controllerStateDirectory,
+			}),
+			zoneId: 'test-zone',
+		});
+		const workerRecordTarget = resolveControllerWorkerTaskRuntimeRecordTarget({
+			gatewayStateRoot,
+			taskId: 'task-1',
+		});
+		fs.mkdirSync(path.dirname(workerRecordTarget.filePath), { recursive: true });
+		fs.writeFileSync(workerRecordTarget.filePath, '{}\n', 'utf8');
+		const deleteStaleImageDirectories = vi.fn(async () => {});
+		const findPrunableImageDirectories = vi.fn(async () => []);
+		const outputMessages: string[] = [];
+		const systemConfig = createTestSystemConfig();
+		const baseZone = systemConfig.zones[0];
+		if (!baseZone) {
+			throw new Error('Expected a test zone.');
+		}
+		const workerSystemConfig = {
+			...systemConfig,
+			controllerStateDir: controllerStateDirectory,
+			imageProfiles: {
+				...systemConfig.imageProfiles,
+				gateways: {
+					worker: {
+						buildConfig: '/project/vm-images/gateways/worker/build-config.json',
+						type: 'worker',
+					},
+				},
+			},
+			zones: [
+				{
+					egressHosts: baseZone.egressHosts,
+					gateway: {
+						config: '/project/config/test/worker.json',
+						cpus: 2,
+						imageProfile: 'worker',
+						memory: '2G',
+						port: 18791,
+						stateDir: path.join(temporaryDirectory, 'worker-state'),
+						type: 'worker',
+						zoneRuntimeDir: path.join(temporaryDirectory, 'worker-runtime'),
+					},
+					id: baseZone.id,
+					secrets: {},
+				},
+			],
+		} satisfies LoadedSystemConfig;
+
+		await runBuildCommand(
+			{ systemConfig: workerSystemConfig },
+			{
+				buildManagedVmImage: async (options) => ({
+					built: false,
+					fingerprint: 'current-worker',
+					imagePath: path.join(options.cacheDir, 'current'),
+				}),
+				deleteStaleImageDirectories,
+				findPrunableImageDirectories,
+				runTask: async (_title, fn) => {
+					await fn({
+						interactive: true,
+						setOutput: (output) => {
+							outputMessages.push(typeof output === 'string' ? output : output.message);
+						},
+						setStatus: () => {},
+					});
+				},
+				syncBundledOpenClawPlugin: noOpPluginSync,
+			},
+		);
+
+		expect(findPrunableImageDirectories).not.toHaveBeenCalled();
+		expect(deleteStaleImageDirectories).not.toHaveBeenCalled();
+		expect(outputMessages).toContain(
+			'Image cache auto-prune skipped because gateway runtime records exist for zone(s): test-zone. Stop the controller before pruning old image generations.',
+		);
+	});
+
+	it('rejects legacy controller record evidence before any build mutation', async () => {
+		const temporaryDirectory = createTemporaryDirectory();
+		const stateDirectory = path.join(temporaryDirectory, 'state', 'test');
+		fs.mkdirSync(stateDirectory, { recursive: true });
+		fs.writeFileSync(path.join(stateDirectory, 'gateway-runtime.json'), '{}\n', 'utf8');
+		const buildDockerImage = vi.fn(async () => {});
+		const buildManagedVmImageForLegacyRejection = vi.fn(async () => ({
+			built: false,
+			fingerprint: 'unreachable',
+			imagePath: path.join(temporaryDirectory, 'unreachable'),
+		}));
+		const systemConfig = createTestSystemConfig();
+		const baseZone = systemConfig.zones[0];
+		if (!baseZone || baseZone.gateway.type !== 'openclaw') {
+			throw new Error('Expected an OpenClaw test zone.');
+		}
+
+		await expect(
+			runBuildCommand(
+				{
+					systemConfig: {
+						...systemConfig,
+						zones: [
+							{
+								...baseZone,
+								gateway: { ...baseZone.gateway, stateDir: stateDirectory },
+							},
+						],
+					},
+				},
+				{
+					buildDockerImage,
+					buildManagedVmImage: buildManagedVmImageForLegacyRejection,
+					computeManagedVmFingerprint: async () => 'unreachable-fingerprint',
+					syncBundledOpenClawPlugin: noOpPluginSync,
+				},
+			),
+		).rejects.toThrow(
+			`Legacy controller record evidence exists under Gateway state for zone 'test-zone': gateway-runtime:file:${path.join(stateDirectory, 'gateway-runtime.json')}`,
+		);
+		expect(buildDockerImage).not.toHaveBeenCalled();
+		expect(buildManagedVmImageForLegacyRejection).not.toHaveBeenCalled();
 	});
 
 	it('warns without failing when post-build auto-prune discovery fails', async () => {

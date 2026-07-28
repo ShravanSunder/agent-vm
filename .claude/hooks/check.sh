@@ -62,7 +62,7 @@ case "$file_path" in
   ;;
 esac
 
-# Python: Ruff + BasedPyright
+# Python: Ruff + ty
 case "$file_path" in
   *.py)
     if command -v uv >/dev/null 2>&1; then
@@ -70,8 +70,8 @@ case "$file_path" in
         err "Hint: Ruff found issues in $file_path"
         has_errors=1
       fi
-      if ! uv run basedpyright "$file_path" 2>&1; then
-        err "Hint: BasedPyright type checking failed for $file_path"
+      if ! uv run ty check "$file_path" 2>&1; then
+        err "Hint: ty type checking failed for $file_path"
         has_errors=1
       fi
     fi

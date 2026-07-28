@@ -1,0 +1,19 @@
+{
+	"caseId": "invalid-error-result-with-value",
+	"schemaId": "portal.call.item-result",
+	"tags": ["rejected", "result-discriminant", "unknown-field"],
+	"input": {
+		"error": {
+			"code": "execution_failed",
+			"message": "An error result cannot contain a value."
+		},
+		"id": "call-1",
+		"status": "error",
+		"value": {}
+	},
+	"expectation": {
+		"kind": "rejected",
+		"errorCodes": ["portal.result.status-shape"],
+		"refinementIdentities": ["portal.request-id.not-reserved"]
+	}
+}

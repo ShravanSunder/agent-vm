@@ -6,6 +6,7 @@ import type {
 	GatewayControlLeaseUseEndPayload,
 	GatewayControlLeaseUseHeartbeatPayload,
 	GatewayControlLeaseUseStartPayload,
+	GatewayControlToolVmBindingAccessGrant,
 } from '@agent-vm/gateway-control-contracts';
 import {
 	GatewayControlLeaseCreateIntentPayloadSchema,
@@ -14,6 +15,8 @@ import {
 	GatewayControlLeaseUseEndPayloadSchema,
 	GatewayControlLeaseUseHeartbeatPayloadSchema,
 	GatewayControlLeaseUseStartPayloadSchema,
+	GatewayControlPrivateLeaseSnapshotSchema,
+	GatewayControlToolVmBindingAccessGrantSchema,
 } from '@agent-vm/gateway-control-contracts';
 import {
 	normalizeToolVmActiveUseCorrelation,
@@ -24,14 +27,21 @@ import {
 	type ControllerLeaseManager,
 	readIdentityPemFromFile,
 } from '../http/controller-http-route-support.js';
-import { resolveToolVmLeaseCompatibility } from '../leases/lease-manager.js';
+import { resolveToolVmLeaseCompatibility, type LeaseManager } from '../leases/lease-manager.js';
+import type { ToolVmLeaseRetirementEvent } from '../leases/lease-manager.js';
 import type { ObservedControllerLeaseCreateRequest } from '../leases/observed-lease-create-request.js';
+import type {
+	AuthorizedToolVmLeafBinding,
+	StableToolVmLeasePrincipal,
+} from '../leases/tool-vm-lease-authority-contracts.js';
+import { stableToolVmLeasePrincipalsEqual } from '../leases/tool-vm-lease-authority-state-helpers.js';
 import type { ToolVmLeaseCompatibility } from '../leases/tool-vm-lease-authority-state.js';
 import { buildToolVmKnownHostsLine } from '../leases/tool-vm-ssh-server-identity.js';
 import {
 	gatewayIdentitiesEqual,
 	type GatewayEpochIdentity,
 } from '../vm-ownership/vm-ownership-contracts.js';
+import type { GatewayControlToolVmBindingCreator } from './gateway-control-binding-publication.js';
 import type { GatewayControlTrustedCallerContext } from './gateway-control-caller-context.js';
 import type {
 	GatewayControlLeaseRpcOperations,
@@ -44,8 +54,18 @@ import type {
 import type { GatewaySemanticExecutionProof } from './gateway-semantic-result-ledger.js';
 
 type LeaseCreateOptions = Parameters<ControllerLeaseManager['createLease']>[0];
+type GatewayControlLease = NonNullable<ReturnType<ControllerLeaseManager['peekLease']>>['lease'];
 type GatewayControlLeaseManager = ControllerLeaseManager &
-	Required<Pick<ControllerLeaseManager, 'getLeaseAuthority'>>;
+	Required<
+		Pick<
+			LeaseManager,
+			| 'getCurrentNonterminalUses'
+			| 'getCurrentLeaseBinding'
+			| 'getLeaseAuthority'
+			| 'reacquireLease'
+			| 'subscribeLeaseRetirement'
+		>
+	>;
 type GatewayControlLeaseCreatePayload = GatewayControlLeaseCreateIntentPayload;
 type ToolVmSshHealthEvent = Extract<AgentVmHealthEvent, { readonly kind: 'tool-vm-ssh' }>;
 
@@ -68,8 +88,13 @@ export interface GatewayControlLeaseRpcControllerOptions {
 		readonly callerContext: GatewayControlTrustedCallerContext;
 		readonly gateway: GatewayEpochIdentity;
 		readonly payload: GatewayControlLeaseCreatePayload;
-	}) => Promise<LeaseCreateOptions>;
-	readonly seedLeaseWorkspace?: (leaseCreateOptions: LeaseCreateOptions) => Promise<void>;
+	}) => Promise<Omit<LeaseCreateOptions, 'principal'>>;
+}
+
+export interface GatewayControlBindingPublicationSource extends GatewayControlToolVmBindingCreator {
+	readonly subscribeBindingRetirement: (
+		listener: (event: ToolVmLeaseRetirementEvent) => void,
+	) => () => void;
 }
 
 function leaseCreatePayloadFromReacquirePayload(
@@ -88,6 +113,12 @@ function leaseRpcRejection(
 		leaseRejectionReason,
 		result: 'rejected',
 	};
+}
+
+function leasePrincipalFromCallerContext(
+	callerContext: GatewayControlTrustedCallerContext,
+): StableToolVmLeasePrincipal {
+	return callerContext.principal;
 }
 
 function safeErrorName(error: unknown): string {
@@ -135,8 +166,8 @@ function isReacquireCompatibilityCurrent(optionsToCompare: {
 			optionsToCompare.currentCompatibility.profileId &&
 		optionsToCompare.authorityCompatibility.purpose ===
 			optionsToCompare.currentCompatibility.purpose &&
-		optionsToCompare.authorityCompatibility.workMountDir ===
-			optionsToCompare.currentCompatibility.workMountDir
+		optionsToCompare.authorityCompatibility.profileAssignmentRevision ===
+			optionsToCompare.currentCompatibility.profileAssignmentRevision
 	);
 }
 
@@ -222,9 +253,39 @@ function callerContextStateForLeaseRejection(
 	return exhaustiveReason;
 }
 
+function assertCurrentBindingMatchesLiveLease(options: {
+	readonly currentBinding: AuthorizedToolVmLeafBinding;
+	readonly lease: GatewayControlLease;
+}): void {
+	const expectedSshUser = options.lease.sshAccess.user ?? 'root';
+	const expectedServerIdentity = JSON.stringify(
+		Reflect.get(options.lease.sshAccess, 'serverHostKey'),
+	);
+	if (
+		options.currentBinding.leaseId !== options.lease.id ||
+		options.currentBinding.runtimeBinding.runtimeRecordId !== options.lease.runtimeRecordId ||
+		options.currentBinding.runtimeBinding.tcpSlot !== options.lease.tcpSlot ||
+		options.currentBinding.runtimeBinding.vmId !== options.lease.vm.id ||
+		options.currentBinding.sshBinding.host !== options.lease.sshAccess.host ||
+		options.currentBinding.sshBinding.identityFile !== options.lease.sshAccess.identityFile ||
+		options.currentBinding.sshBinding.port !== options.lease.sshAccess.port ||
+		options.currentBinding.sshBinding.serverIdentity !== expectedServerIdentity ||
+		options.currentBinding.sshBinding.user !== expectedSshUser
+	) {
+		throw new Error(
+			`Lease '${options.lease.id}' current authority binding does not match its live runtime.`,
+		);
+	}
+}
+
 function serializeGatewayControlLeaseSnapshot(options: {
+	readonly currentBinding?: AuthorizedToolVmLeafBinding | undefined;
 	readonly includeSsh: 'private' | 'public' | false;
-	readonly lease: NonNullable<ReturnType<ControllerLeaseManager['peekLease']>>['lease'];
+	readonly lease: GatewayControlLease;
+	readonly readCurrentBinding?:
+		| ((leaseId: string) => AuthorizedToolVmLeafBinding | undefined)
+		| undefined;
+	readonly readCurrentNonterminalUses?: LeaseManager['getCurrentNonterminalUses'] | undefined;
 	readonly state?: GatewayControlLeaseSnapshot['state'];
 	readonly readIdentityPem: (identityFilePath: string) => Promise<string>;
 }): Promise<GatewayControlLeaseSnapshot> {
@@ -233,14 +294,33 @@ function serializeGatewayControlLeaseSnapshot(options: {
 			agentId: options.lease.agentId,
 			idleTtlMs: options.lease.effectiveIdleTtlMs,
 			leaseId: options.lease.id,
-			state: options.state ?? 'idle',
 			tcpSlot: options.lease.tcpSlot,
 			transport: 'ssh-sandbox' as const,
 			workdir: options.lease.guestWorkdir,
 			zoneId: options.lease.zoneId,
-		} satisfies Omit<GatewayControlLeaseSnapshot, 'ssh'>;
+		} satisfies Omit<GatewayControlLeaseSnapshot, 'activeUseId' | 'expiresAtMs' | 'ssh' | 'state'>;
+		const readStateFields = (): Pick<
+			GatewayControlLeaseSnapshot,
+			'activeUseId' | 'expiresAtMs' | 'state'
+		> => {
+			if (options.state !== undefined) {
+				return { state: options.state };
+			}
+			const currentUses = options.readCurrentNonterminalUses?.(options.lease.id) ?? [];
+			const currentUse = currentUses[0];
+			if (currentUse === undefined) {
+				return { state: 'idle' };
+			}
+			return currentUses.length === 1
+				? {
+						activeUseId: currentUse.useId,
+						expiresAtMs: currentUse.expiresAtMs,
+						state: 'active',
+					}
+				: { state: 'active' };
+		};
 		if (options.includeSsh === false) {
-			return baseSnapshot;
+			return { ...baseSnapshot, ...readStateFields() };
 		}
 		const publicSshAccess = {
 			host: `tool-${options.lease.tcpSlot}.vm.host`,
@@ -250,35 +330,118 @@ function serializeGatewayControlLeaseSnapshot(options: {
 		if (options.includeSsh === 'public') {
 			return {
 				...baseSnapshot,
+				...readStateFields(),
 				ssh: publicSshAccess,
 			};
+		}
+		const currentBinding = options.currentBinding;
+		if (currentBinding === undefined) {
+			throw new Error(`Lease '${options.lease.id}' does not have a current authority binding.`);
 		}
 		if (!options.lease.sshAccess.identityFile) {
 			throw new Error(`Lease '${options.lease.id}' does not have an SSH identity file.`);
 		}
+		assertCurrentBindingMatchesLiveLease({ currentBinding, lease: options.lease });
 		const identityPem = await options.readIdentityPem(options.lease.sshAccess.identityFile);
 		if (identityPem.trim().length === 0) {
 			throw new Error(`Lease '${options.lease.id}' SSH identity file is empty.`);
 		}
+		const revalidatedBinding = options.readCurrentBinding?.(options.lease.id);
+		if (
+			revalidatedBinding === undefined ||
+			revalidatedBinding.leafGeneration !== currentBinding.leafGeneration ||
+			revalidatedBinding.sshBinding.bindingId !== currentBinding.sshBinding.bindingId
+		) {
+			throw new Error(
+				`Lease '${options.lease.id}' current authority binding changed during private serialization.`,
+			);
+		}
+		assertCurrentBindingMatchesLiveLease({
+			currentBinding: revalidatedBinding,
+			lease: options.lease,
+		});
 		const knownHostsLine = buildToolVmKnownHostsLine({
 			leaseId: options.lease.id,
 			serverHostKey: Reflect.get(options.lease.sshAccess, 'serverHostKey'),
 			tcpSlot: options.lease.tcpSlot,
 		});
-		return {
+		return GatewayControlPrivateLeaseSnapshotSchema.parse({
 			...baseSnapshot,
+			...readStateFields(),
+			leafGeneration: currentBinding.leafGeneration,
 			ssh: {
 				...publicSshAccess,
 				identityPem,
 				knownHostsLine,
 			},
-		};
+			sshBindingId: currentBinding.sshBinding.bindingId,
+		});
 	})();
+}
+
+async function serializeGatewayControlToolVmBindingAccessGrant(options: {
+	readonly currentBinding: AuthorizedToolVmLeafBinding | undefined;
+	readonly lease: GatewayControlLease;
+	readonly profileAssignmentRevision: string;
+	readonly readCurrentBinding: (leaseId: string) => AuthorizedToolVmLeafBinding | undefined;
+	readonly readIdentityPem: (identityFilePath: string) => Promise<string>;
+	readonly stablePrincipal: string;
+}): Promise<GatewayControlToolVmBindingAccessGrant> {
+	const currentBinding = options.currentBinding;
+	if (currentBinding === undefined) {
+		throw new Error(`Lease '${options.lease.id}' does not have a current authority binding.`);
+	}
+	if (!options.lease.sshAccess.identityFile) {
+		throw new Error(`Lease '${options.lease.id}' does not have an SSH identity file.`);
+	}
+	assertCurrentBindingMatchesLiveLease({ currentBinding, lease: options.lease });
+	const identityPem = await options.readIdentityPem(options.lease.sshAccess.identityFile);
+	if (identityPem.trim().length === 0) {
+		throw new Error(`Lease '${options.lease.id}' SSH identity file is empty.`);
+	}
+	const revalidatedBinding = options.readCurrentBinding(options.lease.id);
+	if (
+		revalidatedBinding === undefined ||
+		revalidatedBinding.leafGeneration !== currentBinding.leafGeneration ||
+		revalidatedBinding.sshBinding.bindingId !== currentBinding.sshBinding.bindingId
+	) {
+		throw new Error(
+			`Lease '${options.lease.id}' current authority binding changed during private serialization.`,
+		);
+	}
+	assertCurrentBindingMatchesLiveLease({
+		currentBinding: revalidatedBinding,
+		lease: options.lease,
+	});
+	return GatewayControlToolVmBindingAccessGrantSchema.parse({
+		agentId: options.lease.agentId,
+		idleTtlMs: options.lease.effectiveIdleTtlMs,
+		leafGeneration: revalidatedBinding.leafGeneration,
+		leaseId: options.lease.id,
+		profileAssignmentRevision: options.profileAssignmentRevision,
+		ssh: {
+			host: `tool-${options.lease.tcpSlot}.vm.host`,
+			identityPem,
+			knownHostsLine: buildToolVmKnownHostsLine({
+				leaseId: options.lease.id,
+				serverHostKey: Reflect.get(options.lease.sshAccess, 'serverHostKey'),
+				tcpSlot: options.lease.tcpSlot,
+			}),
+			port: 22,
+			user: options.lease.sshAccess.user ?? 'root',
+		},
+		sshBindingId: revalidatedBinding.sshBinding.bindingId,
+		stablePrincipal: options.stablePrincipal,
+		tcpSlot: options.lease.tcpSlot,
+		transport: 'ssh-sandbox',
+		workdir: options.lease.guestWorkdir,
+		zoneId: options.lease.zoneId,
+	});
 }
 
 export function createGatewayControlLeaseRpcOperations(
 	options: GatewayControlLeaseRpcControllerOptions,
-): GatewayControlLeaseRpcOperations {
+): GatewayControlLeaseRpcOperations & GatewayControlBindingPublicationSource {
 	const now = options.now ?? (() => Date.now());
 	const readIdentityPem = options.readIdentityPem ?? readIdentityPemFromFile;
 
@@ -293,8 +456,10 @@ export function createGatewayControlLeaseRpcOperations(
 		}
 		if (
 			!gatewayIdentitiesEqual(authority.authority.gateway, payload.gateway) ||
-			authority.authority.principal.agentId !== payload.callerContext.agentId ||
-			authority.authority.principal.zoneId !== payload.callerContext.zoneId
+			!stableToolVmLeasePrincipalsEqual(
+				authority.authority.principal,
+				leasePrincipalFromCallerContext(payload.callerContext),
+			)
 		) {
 			return {
 				rejection: leaseRpcRejection('ownership_denied'),
@@ -302,6 +467,20 @@ export function createGatewayControlLeaseRpcOperations(
 			};
 		}
 		return { authority, status: 'accepted' };
+	}
+
+	function recordLeaseCreateRequest(
+		callerContext: GatewayControlTrustedCallerContext,
+		leaseCreateOptions: Pick<LeaseCreateOptions, 'effectiveIdleTtlMs' | 'profileId' | 'zoneId'>,
+	): void {
+		options.onLeaseCreateRequest?.({
+			agentId: callerContext.agentId,
+			...(leaseCreateOptions.effectiveIdleTtlMs === undefined
+				? {}
+				: { idleTtlMs: leaseCreateOptions.effectiveIdleTtlMs }),
+			profileId: leaseCreateOptions.profileId,
+			zoneId: leaseCreateOptions.zoneId,
+		});
 	}
 
 	const mutationOperations = {
@@ -312,26 +491,17 @@ export function createGatewayControlLeaseRpcOperations(
 			readonly callerContext: GatewayControlTrustedCallerContext;
 			readonly leaseCreateOptions: LeaseCreateOptions;
 		}) => {
-			let stage = 'seed_lease_workspace';
+			let stage = 'lease_manager_create_lease';
 			try {
-				await options.seedLeaseWorkspace?.(leaseCreateOptions);
-				options.onLeaseCreateRequest?.({
-					agentId: callerContext.agentId,
-					agentWorkspaceDir: callerContext.agentWorkspaceDir,
-					...(leaseCreateOptions.effectiveIdleTtlMs === undefined
-						? {}
-						: { idleTtlMs: leaseCreateOptions.effectiveIdleTtlMs }),
-					profileId: leaseCreateOptions.profileId,
-					sessionKeyDigest: callerContext.sessionKeyDigest,
-					workMountDir: callerContext.workMountDir,
-					zoneId: leaseCreateOptions.zoneId,
-				});
-				stage = 'lease_manager_create_lease';
+				recordLeaseCreateRequest(callerContext, leaseCreateOptions);
 				const lease = await options.leaseManager.createLease(leaseCreateOptions);
 				stage = 'serialize_lease_snapshot';
 				return await serializeGatewayControlLeaseSnapshot({
+					currentBinding: options.leaseManager.getCurrentLeaseBinding(lease.id),
 					includeSsh: 'private',
 					lease,
+					readCurrentBinding: options.leaseManager.getCurrentLeaseBinding,
+					readCurrentNonterminalUses: options.leaseManager.getCurrentNonterminalUses,
 					readIdentityPem,
 				});
 			} catch (error) {
@@ -344,7 +514,6 @@ export function createGatewayControlLeaseRpcOperations(
 					observedAtMs: Math.max(1, now()),
 					operation: 'lease-create',
 					result: 'failed',
-					sessionKeyDigest: callerContext.sessionKeyDigest,
 					statusCode: 500,
 					zoneId: callerContext.zoneId,
 				});
@@ -373,7 +542,7 @@ export function createGatewayControlLeaseRpcOperations(
 			const result = options.leaseManager.endActiveUse?.(leaseId, useId, {
 				authority: {
 					gateway,
-					principal: { agentId: callerContext.agentId, zoneId: callerContext.zoneId },
+					principal: leasePrincipalFromCallerContext(callerContext),
 				},
 				outcome: payload.reason === 'completed' ? 'completed' : 'failed',
 				processEpoch,
@@ -406,8 +575,13 @@ export function createGatewayControlLeaseRpcOperations(
 				return undefined;
 			}
 			return await serializeGatewayControlLeaseSnapshot({
+				...(includeSsh === 'private'
+					? { currentBinding: options.leaseManager.getCurrentLeaseBinding(leaseId) }
+					: {}),
 				includeSsh,
 				lease: leaseSnapshot.lease,
+				readCurrentBinding: options.leaseManager.getCurrentLeaseBinding,
+				readCurrentNonterminalUses: options.leaseManager.getCurrentNonterminalUses,
 				readIdentityPem,
 			});
 		}) satisfies GatewayControlLeaseRpcOperations['getLease'],
@@ -463,17 +637,10 @@ export function createGatewayControlLeaseRpcOperations(
 				});
 				return leaseRpcRejection('ownership_denied');
 			}
-			await options.seedLeaseWorkspace?.(leaseCreateOptions);
-			if (options.leaseManager.peekLease(payload.oldLeaseId) !== undefined) {
-				try {
-					await options.leaseManager.releaseLease(payload.oldLeaseId, { force: true });
-				} catch (error) {
-					if (options.leaseManager.peekLease(payload.oldLeaseId) !== undefined) {
-						throw error;
-					}
-				}
-			}
-			const replacementLease = await options.leaseManager.createLease(leaseCreateOptions);
+			const replacementLease = await options.leaseManager.reacquireLease(
+				payload.oldLeaseId,
+				leaseCreateOptions,
+			);
 			if (replacementLease.id === payload.oldLeaseId) {
 				emitReacquireLifecycleEvent({
 					callerContext,
@@ -488,8 +655,11 @@ export function createGatewayControlLeaseRpcOperations(
 				return leaseRpcRejection('lease_reacquire_required');
 			}
 			const replacementSnapshot = await serializeGatewayControlLeaseSnapshot({
+				currentBinding: options.leaseManager.getCurrentLeaseBinding(replacementLease.id),
 				includeSsh: 'private',
 				lease: replacementLease,
+				readCurrentBinding: options.leaseManager.getCurrentLeaseBinding,
+				readCurrentNonterminalUses: options.leaseManager.getCurrentNonterminalUses,
 				readIdentityPem,
 			});
 			emitReacquireLifecycleEvent({
@@ -526,7 +696,7 @@ export function createGatewayControlLeaseRpcOperations(
 			const heartbeat = options.leaseManager.heartbeatActiveUse?.(leaseId, useId, {
 				authority: {
 					gateway,
-					principal: { agentId: callerContext.agentId, zoneId: callerContext.zoneId },
+					principal: leasePrincipalFromCallerContext(callerContext),
 				},
 				processEpoch,
 				sessionAttachmentGeneration: attachmentGeneration,
@@ -593,8 +763,11 @@ export function createGatewayControlLeaseRpcOperations(
 				return undefined;
 			}
 			return await serializeGatewayControlLeaseSnapshot({
+				currentBinding: options.leaseManager.getCurrentLeaseBinding(leaseId),
 				includeSsh: 'private',
 				lease: renewal.lease,
+				readCurrentBinding: options.leaseManager.getCurrentLeaseBinding,
+				readCurrentNonterminalUses: options.leaseManager.getCurrentNonterminalUses,
 				readIdentityPem,
 			});
 		},
@@ -621,7 +794,7 @@ export function createGatewayControlLeaseRpcOperations(
 			const activeUse = options.leaseManager.startActiveUse?.(leaseId, {
 				authority: {
 					gateway,
-					principal: { agentId: callerContext.agentId, zoneId: callerContext.zoneId },
+					principal: leasePrincipalFromCallerContext(callerContext),
 				},
 				...(correlation === undefined
 					? {}
@@ -666,11 +839,15 @@ export function createGatewayControlLeaseRpcOperations(
 		});
 		if (optionsToPrepare.operation === 'lease_create') {
 			const payload = GatewayControlLeaseCreateIntentPayloadSchema.parse(optionsToPrepare.payload);
-			const leaseOptions = await options.resolveLeaseCreateOptions({
+			const resolvedLeaseOptions = await options.resolveLeaseCreateOptions({
 				callerContext: optionsToPrepare.callerContext,
 				gateway: optionsToPrepare.gateway,
 				payload,
 			});
+			const leaseOptions = {
+				...resolvedLeaseOptions,
+				principal: leasePrincipalFromCallerContext(optionsToPrepare.callerContext),
+			} satisfies LeaseCreateOptions;
 			const compatibility = resolveToolVmLeaseCompatibility(leaseOptions);
 			return {
 				execute: async () =>
@@ -715,7 +892,7 @@ export function createGatewayControlLeaseRpcOperations(
 					optionsToPrepare.payload,
 				);
 				const { decision, profile } = parseLeaseAuthorityProfile(payload.oldLeaseId);
-				const leaseCreateOptions =
+				const resolvedLeaseCreateOptions =
 					decision.status === 'accepted'
 						? await options.resolveLeaseCreateOptions({
 								callerContext: optionsToPrepare.callerContext,
@@ -723,6 +900,13 @@ export function createGatewayControlLeaseRpcOperations(
 								payload: leaseCreatePayloadFromReacquirePayload(payload),
 							})
 						: undefined;
+				const leaseCreateOptions =
+					resolvedLeaseCreateOptions === undefined
+						? undefined
+						: ({
+								...resolvedLeaseCreateOptions,
+								principal: leasePrincipalFromCallerContext(optionsToPrepare.callerContext),
+							} satisfies LeaseCreateOptions);
 				const semanticProfile =
 					leaseCreateOptions === undefined
 						? profile
@@ -802,7 +986,29 @@ export function createGatewayControlLeaseRpcOperations(
 	}
 
 	return {
+		createBinding: async ({ callerContext, gateway, payload }) => {
+			const resolvedLeaseOptions = await options.resolveLeaseCreateOptions({
+				callerContext,
+				gateway,
+				payload,
+			});
+			recordLeaseCreateRequest(callerContext, resolvedLeaseOptions);
+			const lease = await options.leaseManager.createLease({
+				...resolvedLeaseOptions,
+				principal: leasePrincipalFromCallerContext(callerContext),
+			});
+			return await serializeGatewayControlToolVmBindingAccessGrant({
+				currentBinding: options.leaseManager.getCurrentLeaseBinding(lease.id),
+				lease,
+				profileAssignmentRevision: callerContext.principal.profileAssignmentRevision,
+				readCurrentBinding: options.leaseManager.getCurrentLeaseBinding,
+				readIdentityPem,
+				stablePrincipal: callerContext.stablePrincipal,
+			});
+		},
 		getLease: mutationOperations.getLease,
 		prepareSemanticMutation,
+		subscribeBindingRetirement: (listener) =>
+			options.leaseManager.subscribeLeaseRetirement(listener),
 	};
 }

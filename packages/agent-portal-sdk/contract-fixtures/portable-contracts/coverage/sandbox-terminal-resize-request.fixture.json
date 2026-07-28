@@ -1,0 +1,35 @@
+{
+	"caseId": "coverage-sandbox-terminal-resize-request",
+	"schemaId": "sandbox.terminal.resize.request",
+	"tags": [
+		"accepted",
+		"coverage"
+	],
+	"input": {
+		"size": {
+			"columns": 80,
+			"rows": 24
+		},
+		"terminal": {
+			"handleId": "terminal-a",
+			"kind": "terminal",
+			"owningGeneration": "generation-a"
+		}
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"size": {
+				"columns": 80,
+				"rows": 24
+			},
+			"terminal": {
+				"handleId": "terminal-a",
+				"kind": "terminal",
+				"owningGeneration": "generation-a"
+			}
+		},
+		"canonicalJson": "{\"size\":{\"columns\":80,\"rows\":24},\"terminal\":{\"handleId\":\"terminal-a\",\"kind\":\"terminal\",\"owningGeneration\":\"generation-a\"}}",
+		"refinementIdentities": []
+	}
+}

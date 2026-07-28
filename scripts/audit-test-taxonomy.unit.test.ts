@@ -19,6 +19,7 @@ describe('hasAllowedTestSuffix', () => {
 		expect(hasAllowedTestSuffix('packages/example/example.host.e2e.test.ts')).toBe(true);
 		expect(hasAllowedTestSuffix('packages/example/example.vm.e2e.test.ts')).toBe(true);
 		expect(hasAllowedTestSuffix('packages/example/example.openclaw.e2e.test.ts')).toBe(true);
+		expect(hasAllowedTestSuffix('packages/example/example.hermes.e2e.test.ts')).toBe(true);
 		expect(hasAllowedTestSuffix('packages/example/example.worker.e2e.test.ts')).toBe(true);
 		expect(hasAllowedTestSuffix('packages/example/example.secrets.e2e.test.ts')).toBe(true);
 		expect(hasAllowedTestSuffix('packages/example/example.llm.e2e.test.ts')).toBe(true);
@@ -213,6 +214,7 @@ describe('isE2eTest', () => {
 		expect(isE2eTest('packages/example/example.host.e2e.test.ts')).toBe(true);
 		expect(isE2eTest('packages/example/example.vm.e2e.test.ts')).toBe(true);
 		expect(isE2eTest('packages/example/example.openclaw.e2e.test.ts')).toBe(true);
+		expect(isE2eTest('packages/example/example.hermes.e2e.test.ts')).toBe(true);
 		expect(isE2eTest('packages/example/example.integration.test.ts')).toBe(false);
 	});
 });
@@ -232,6 +234,9 @@ describe('resolveTestFileProjectNames', () => {
 		]);
 		expect(resolveTestFileProjectNames('packages/example/example.openclaw.e2e.test.ts')).toEqual([
 			'e2e-openclaw',
+		]);
+		expect(resolveTestFileProjectNames('packages/example/example.hermes.e2e.test.ts')).toEqual([
+			'e2e-hermes',
 		]);
 		expect(resolveTestFileProjectNames('packages/example/example.worker.e2e.test.ts')).toEqual([
 			'e2e-worker',

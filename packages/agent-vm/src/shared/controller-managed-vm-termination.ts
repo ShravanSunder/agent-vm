@@ -1,8 +1,6 @@
-import {
-	terminateRecordedManagedVmHostProcess,
-	type ManagedVmKillDependencies,
-	type ProcessIdentity,
-} from './managed-vm-process.js';
+import type { ManagedVmExactProcessTerminationCapability } from '@agent-vm/managed-vm';
+
+import type { ProcessIdentity } from './managed-vm-process.js';
 
 const defaultRunnerDetachAttempts = 20;
 const runnerDetachPollIntervalMs = 25;
@@ -54,26 +52,31 @@ export function containsManagedVmTerminationUnprovenError(error: unknown): boole
 
 interface TerminateRecordedManagedVmProcessOptions {
 	readonly contextLabel?: string;
-	readonly dependencies: ManagedVmKillDependencies;
+	readonly exactProcessTermination: ManagedVmExactProcessTerminationCapability;
 	readonly target: ManagedVmProcessTarget;
 }
 
 export async function terminateRecordedManagedVmProcess(
 	options: TerminateRecordedManagedVmProcessOptions,
 ): Promise<ManagedVmTerminationOutcome> {
-	const terminatedPid = await terminateRecordedManagedVmHostProcess({
-		contextLabel: options.contextLabel ?? `managed VM '${options.target.vmId}'`,
-		dependencies: options.dependencies,
-		pid: options.target.hostPid,
-		recordedIdentity: options.target.processIdentity,
+	const contextLabel = options.contextLabel ?? `managed VM '${options.target.vmId}'`;
+	const outcome = await options.exactProcessTermination.terminateRecordedHostProcess({
+		contextLabel,
+		identity: {
+			command: options.target.processIdentity.command,
+			hostProcessId: options.target.hostPid,
+			processStartIdentity: options.target.processIdentity.lstart,
+			vmId: options.target.vmId,
+		},
 	});
-	return terminatedPid === null
+	return outcome.kind === 'already-absent'
 		? { kind: 'already-absent', pid: options.target.hostPid }
-		: { kind: 'terminated', pid: terminatedPid };
+		: { kind: 'terminated', pid: outcome.hostProcessId };
 }
 
 interface TerminateLiveManagedVmOptions extends TerminateRecordedManagedVmProcessOptions {
 	readonly runnerDetachAttempts?: number;
+	readonly sleep: (delayMs: number) => Promise<void>;
 	readonly vm: LiveManagedVmTerminationHandle;
 }
 
@@ -97,7 +100,7 @@ function assertLiveVmMatchesTarget(options: {
 
 async function waitForGondolinRunnerDetach(options: {
 	readonly attempts: number;
-	readonly dependencies: ManagedVmKillDependencies;
+	readonly sleep: (delayMs: number) => Promise<void>;
 	readonly target: ManagedVmProcessTarget;
 	readonly vm: LiveManagedVmTerminationHandle;
 }): Promise<void> {
@@ -112,7 +115,7 @@ async function waitForGondolinRunnerDetach(options: {
 			);
 		}
 		// oxlint-disable-next-line no-await-in-loop -- bounded runner-detach polling is sequential
-		await options.dependencies.sleep(runnerDetachPollIntervalMs);
+		await options.sleep(runnerDetachPollIntervalMs);
 	}
 	throw new Error(
 		`Gondolin still reports runner pid ${String(options.target.hostPid)} for VM '${options.target.vmId}' after controller-owned process termination; refusing stock close to protect sibling VMs.`,
@@ -128,7 +131,7 @@ export async function terminateLiveManagedVm(
 		if (initialHostPid !== null) {
 			await waitForGondolinRunnerDetach({
 				attempts: options.runnerDetachAttempts ?? defaultRunnerDetachAttempts,
-				dependencies: options.dependencies,
+				sleep: options.sleep,
 				target: options.target,
 				vm: options.vm,
 			});

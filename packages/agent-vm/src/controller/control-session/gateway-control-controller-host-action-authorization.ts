@@ -8,14 +8,13 @@ import type { GatewayControlToolPortalControllerHostActionPayload } from '@agent
 
 import type { SystemConfig } from '../../config/system-config.js';
 import { loadMcpPortalEffectiveToolPortalConfigSnapshot } from '../../gateway/mcp-portal-effective-config.js';
-import { isOpenClawZoneGitConfigured } from '../zone-git/zone-git-paths.js';
 import type {
 	GatewayControlAcceptedSessionRef,
 	GatewayControlTrustedCallerContext,
 } from './gateway-control-caller-context.js';
 
 const controllerHostActionNamespace = 'controller_host_action';
-const zoneGitPushToolName = 'zone_git_push';
+const workspaceGitPushToolName = 'workspace_git_push';
 const controllerHostProbeToolName = 'controller_host_probe';
 const controllerHostProbeEnvGate = 'AGENT_VM_E2E_CONTROLLER_HOST_PROBE';
 
@@ -56,8 +55,8 @@ function rejectAuthorization(
 
 function isSupportedControllerHostActionName(
 	value: string | undefined,
-): value is typeof zoneGitPushToolName | typeof controllerHostProbeToolName {
-	return value === zoneGitPushToolName || value === controllerHostProbeToolName;
+): value is typeof workspaceGitPushToolName | typeof controllerHostProbeToolName {
+	return value === workspaceGitPushToolName || value === controllerHostProbeToolName;
 }
 
 export async function authorizeGatewayControlControllerHostAction(
@@ -78,7 +77,7 @@ export async function authorizeGatewayControlControllerHostAction(
 	const zone = request.systemConfig.zones.find(
 		(configuredZone) => configuredZone.id === request.session.zoneId,
 	);
-	if (zone === undefined || zone.gateway.type !== 'openclaw') {
+	if (zone === undefined || zone.gateway.type === 'worker') {
 		return rejectAuthorization(
 			'controller_host_action_zone_unsupported',
 			'controller host action zone is not supported',
@@ -90,11 +89,16 @@ export async function authorizeGatewayControlControllerHostAction(
 			'controller host action is not configured for this zone',
 		);
 	}
-	if (request.payload.actionId === zoneGitPushToolName && !isOpenClawZoneGitConfigured(zone)) {
-		return rejectAuthorization(
-			'controller_host_action_not_configured',
-			'controller host action is not configured for this zone',
+	if (request.payload.actionId === workspaceGitPushToolName) {
+		const configuredAgent = zone.agents?.find(
+			(agent) => agent.id === request.callerContext.agentId,
 		);
+		if (configuredAgent?.workspaceGit?.mode !== 'remote') {
+			return rejectAuthorization(
+				'controller_host_action_not_configured',
+				'controller host action is not configured for this agent',
+			);
+		}
 	}
 	if (
 		request.payload.actionId === controllerHostProbeToolName &&
@@ -104,6 +108,9 @@ export async function authorizeGatewayControlControllerHostAction(
 			'controller_host_action_not_configured',
 			'controller host probe is not enabled',
 		);
+	}
+	if (request.payload.approvalReservation !== undefined) {
+		return { authorized: true };
 	}
 
 	let effectiveConfig: Awaited<ReturnType<typeof loadMcpPortalEffectiveToolPortalConfigSnapshot>>;

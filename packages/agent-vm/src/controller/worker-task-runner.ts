@@ -14,6 +14,7 @@ import {
 	type WorkerConfigDraft,
 } from '@agent-vm/agent-vm-worker';
 import type {
+	ManagedVmExactProcessTerminationCapability,
 	ManagedVmFactory,
 	ManagedVmImageCapability,
 	ManagedVmMount,
@@ -32,12 +33,15 @@ import {
 	type WorkerTaskControllerRequestInput,
 } from '../config/resource-contracts/index.js';
 import type { LoadedSystemConfig, SystemConfig } from '../config/system-config.js';
-import {
-	deleteGatewayRuntimeRecord,
-	loadGatewayRuntimeRecord,
-} from '../gateway/gateway-runtime-record.js';
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
-import type { GatewayZone } from '../gateway/gateway-zone-support.js';
+import type {
+	DirectProcessGatewayZoneStartResult,
+	GatewayZone,
+} from '../gateway/gateway-zone-support.js';
+import {
+	assertWorkerRuntimeRecordMatchesLiveGateway,
+	loadWorkerRuntimeRecord,
+} from '../gateway/worker-runtime-record.js';
 import { loadRepoResourceDescriptionContract } from '../resources/repo-resource-contract-loader.js';
 import {
 	startRepoResourceProviders,
@@ -47,7 +51,7 @@ import {
 } from '../resources/repo-resource-provider-runner.js';
 import { compileResourceOverlay } from '../resources/resource-compiler.js';
 import { resolveTaskResources } from '../resources/resource-resolver.js';
-import type { ManagedVmKillDependencies } from '../shared/managed-vm-process.js';
+import type { ProcessIdentity } from '../shared/managed-vm-process.js';
 import type { ActiveWorkerTask } from './active-task-registry.js';
 import { createHostGitDir, createVmWorkPath } from './active-task-registry.js';
 import {
@@ -65,6 +69,7 @@ import {
 	type ControlSessionClient,
 	type WorkerControlRpcOperations,
 } from './control-session/index.js';
+import type { ControllerWorkerTaskRuntimeRecordTarget } from './durable-state/controller-state-record-paths.js';
 import { buildGithubAuthConfigArgs, scrubGithubTokenFromOutput } from './git-auth-support.js';
 import {
 	buildResolvedRuntimeResources,
@@ -94,6 +99,9 @@ function createStandaloneWorkerVmLifecycleAuthority(options: {
 		zoneId: options.zoneId,
 	} satisfies GatewayEpochSeed;
 	let gatewayIdentity: GatewayEpochIdentity | undefined;
+	let seedAbandonmentInFlight: Promise<void> | undefined;
+	let seedAbandonmentRequested = false;
+	let seedAbandoned = false;
 	let destroyed = false;
 
 	return {
@@ -101,7 +109,35 @@ function createStandaloneWorkerVmLifecycleAuthority(options: {
 		get gatewayIdentity(): GatewayEpochIdentity | undefined {
 			return gatewayIdentity === undefined ? undefined : structuredClone(gatewayIdentity);
 		},
+		abandonUnattachedGatewaySeedAfter(cleanupOwnedResources): Promise<void> {
+			if (gatewayIdentity !== undefined) {
+				return Promise.reject(
+					new Error(`Worker task '${options.taskId}' VM lifecycle is already attached.`),
+				);
+			}
+			if (seedAbandoned) {
+				return Promise.resolve();
+			}
+			if (seedAbandonmentInFlight !== undefined) {
+				return seedAbandonmentInFlight;
+			}
+			seedAbandonmentRequested = true;
+			const abandonmentAttempt = (async (): Promise<void> => {
+				await cleanupOwnedResources();
+				seedAbandoned = true;
+			})();
+			const trackedAbandonment = abandonmentAttempt.finally(() => {
+				if (seedAbandonmentInFlight === trackedAbandonment) {
+					seedAbandonmentInFlight = undefined;
+				}
+			});
+			seedAbandonmentInFlight = trackedAbandonment;
+			return trackedAbandonment;
+		},
 		attachGatewayVm(gatewayVmId): GatewayEpochIdentity {
+			if (seedAbandonmentRequested) {
+				throw new Error(`Worker task '${options.taskId}' VM lifecycle has begun seed abandonment.`);
+			}
 			if (gatewayIdentity !== undefined) {
 				throw new Error(`Worker task '${options.taskId}' VM lifecycle is already attached.`);
 			}
@@ -500,14 +536,14 @@ export interface WorkerTaskResult {
 export async function preStartGateway(
 	taskInput: WorkerTaskInput,
 	zoneConfig: GatewayZone,
-	options: { readonly githubToken?: string; readonly runtimeDir?: string } = {},
+	options: { readonly githubToken?: string; readonly zoneRuntimeDir?: string } = {},
 ): Promise<PreStartResult> {
 	const parsedTaskInput = workerTaskControllerRequestSchema.parse(taskInput);
 	const taskId = crypto.randomUUID();
 	const taskRoot = path.join(zoneConfig.gateway.stateDir, 'tasks', taskId);
-	const runtimeDir =
-		options.runtimeDir ?? path.join(path.dirname(zoneConfig.gateway.stateDir), 'runtime');
-	const taskRuntimeRoot = path.join(runtimeDir, 'worker-tasks', zoneConfig.id, taskId);
+	const zoneRuntimeDir =
+		options.zoneRuntimeDir ?? path.join(path.dirname(zoneConfig.gateway.stateDir), 'runtime');
+	const taskRuntimeRoot = path.join(zoneRuntimeDir, 'worker-tasks', taskId);
 	const workDir = path.join(taskRuntimeRoot, 'work');
 	const stateDir = path.join(taskRoot, 'state');
 	const agentVmDir = path.join(taskRoot, 'agent-vm');
@@ -799,12 +835,12 @@ export async function postStopGateway(
 	taskId: string,
 	zoneConfig: GatewayZone,
 	startedProviders: readonly StartedRepoResourceProvider[] = [],
-	options: { readonly runtimeDir?: string } = {},
+	options: { readonly zoneRuntimeDir?: string } = {},
 ): Promise<void> {
 	const taskRoot = path.join(zoneConfig.gateway.stateDir, 'tasks', taskId);
-	const runtimeDir =
-		options.runtimeDir ?? path.join(path.dirname(zoneConfig.gateway.stateDir), 'runtime');
-	const taskRuntimeRoot = path.join(runtimeDir, 'worker-tasks', zoneConfig.id, taskId);
+	const zoneRuntimeDir =
+		options.zoneRuntimeDir ?? path.join(path.dirname(zoneConfig.gateway.stateDir), 'runtime');
+	const taskRuntimeRoot = path.join(zoneRuntimeDir, 'worker-tasks', taskId);
 	const resourcesDir = path.join(taskRoot, 'agent-vm', 'resources');
 	let cleanupError: Error | null = null;
 	let runtimeRemovalError: Error | null = null;
@@ -916,12 +952,15 @@ export interface ExecuteWorkerTaskOptions {
 		readonly operations: WorkerControlRpcOperations;
 	};
 	readonly connectWorkerControlSession?: typeof connectWorkerControlSessionDefault;
-	readonly managedVmKillDependencies?: ManagedVmKillDependencies;
+	readonly managedVmExactProcessTermination: ManagedVmExactProcessTerminationCapability;
+	readonly managedVmTerminationSleep?: (delayMs: number) => Promise<void>;
 	readonly managedVmFactory: ManagedVmFactory;
 	readonly managedVmImages: ManagedVmImageCapability;
+	readonly readProcessIdentity?: (pid: number) => Promise<ProcessIdentity | null>;
 	readonly pollClock?: WorkerTaskPollClock;
 	readonly pollIntervalMs?: number;
 	readonly timeoutMs?: number;
+	readonly workerRuntimeRecordTarget: ControllerWorkerTaskRuntimeRecordTarget;
 	readonly onWorkerTaskIngress?: (
 		zoneId: string,
 		taskId: string,
@@ -987,7 +1026,7 @@ export async function prepareWorkerTask(
 	}
 
 	const preStartOptions = {
-		runtimeDir: options.systemConfig.runtimeDir,
+		zoneRuntimeDir: zone.gateway.zoneRuntimeDir,
 		...(options.githubToken ? { githubToken: options.githubToken } : {}),
 	};
 	const preStartResult = await preStartGateway(options.input, zone, preStartOptions);
@@ -1062,7 +1101,7 @@ export async function executeWorkerTask(
 	prepared: PreparedWorkerTask,
 	options: ExecuteWorkerTaskOptions,
 ): Promise<WorkerTaskResult> {
-	let gateway: Awaited<ReturnType<typeof startGatewayZone>> | undefined;
+	let gateway: DirectProcessGatewayZoneStartResult | undefined;
 	let controlSession: ControlSessionClient | undefined;
 	let workerControlDeathGraceState: ControlSessionDeathGraceState = { kind: 'connected' };
 	let result: WorkerTaskResult | undefined;
@@ -1075,9 +1114,17 @@ export async function executeWorkerTask(
 					taskId: prepared.taskId,
 					zoneId: prepared.zoneId,
 				});
+	if (
+		options.workerRuntimeRecordTarget.zoneId !== prepared.zoneId ||
+		options.workerRuntimeRecordTarget.taskId !== prepared.taskId
+	) {
+		throw new Error(
+			`Worker runtime record target '${options.workerRuntimeRecordTarget.zoneId}/${options.workerRuntimeRecordTarget.taskId}' does not match prepared task '${prepared.zoneId}/${prepared.taskId}'.`,
+		);
+	}
 
 	try {
-		gateway = await startGatewayZone(
+		const startedGateway = await startGatewayZone(
 			{
 				createVmOwnership: async (ownershipOptions): Promise<GatewayVmLifecycleAuthority> => {
 					if (ownershipOptions.kind !== 'standalone') {
@@ -1102,17 +1149,25 @@ export async function executeWorkerTask(
 				systemConfig: options.systemConfig,
 				tcpHostsOverride: prepared.preStartResult.tcpHosts,
 				vfsMountsOverride: prepared.preStartResult.vfsMounts,
+				runtimeRecordTarget: options.workerRuntimeRecordTarget,
 				zoneId: prepared.zoneId,
 				zoneOverride: prepared.taskZoneConfig,
 			},
 			{
 				managedVmFactory: options.managedVmFactory,
+				managedVmExactProcessTermination: options.managedVmExactProcessTermination,
 				managedVmImages: options.managedVmImages,
-				...(options.managedVmKillDependencies === undefined
+				...(options.managedVmTerminationSleep === undefined
 					? {}
-					: { managedVmKillDependencies: options.managedVmKillDependencies }),
+					: { managedVmTerminationSleep: options.managedVmTerminationSleep }),
 			},
 		);
+		if (startedGateway.executionModel !== 'direct-process') {
+			throw new Error(
+				`Worker task '${prepared.taskId}' requires the direct-process Gateway lifecycle.`,
+			);
+		}
+		gateway = startedGateway;
 		await options.onWorkerTaskIngress?.(prepared.zoneId, prepared.taskId, gateway.ingress);
 
 		const baseUrl = `http://${gateway.ingress.host}:${gateway.ingress.port}`;
@@ -1249,30 +1304,65 @@ export async function executeWorkerTask(
 	} catch (error) {
 		cleanupErrors.push(toError(error));
 	}
-	try {
-		if (gateway) {
-			try {
-				const runtimeRecord = await loadGatewayRuntimeRecord(
-					prepared.taskZoneConfig.gateway.stateDir,
+	if (gateway) {
+		try {
+			const persistedRuntimeRecord = await loadWorkerRuntimeRecord(
+				options.workerRuntimeRecordTarget,
+			);
+			const runtimeRecord = persistedRuntimeRecord;
+			if (runtimeRecord === null && gateway.vm.getHostProcessId() !== null) {
+				throw new Error(
+					`Worker VM '${gateway.vm.id}' has a live runner but no runtime record; refusing unverified cleanup.`,
 				);
-				if (runtimeRecord === null && gateway.vm.getHostProcessId() !== null) {
-					throw new Error(
-						`Worker VM '${gateway.vm.id}' has a live runner but no runtime record; refusing unverified cleanup.`,
-					);
-				}
-				await gateway.vmOwnership.destroyLive(gateway.terminateVm);
-				if (runtimeRecord !== null) {
-					await deleteGatewayRuntimeRecord(prepared.taskZoneConfig.gateway.stateDir);
-				}
-				vmDestructionComplete = true;
-			} catch (error) {
-				throw new Error(`Worker VM '${gateway.vm.id}' cleanup did not prove exact destruction`, {
-					cause: error,
+			}
+			if (runtimeRecord !== null) {
+				await assertWorkerRuntimeRecordMatchesLiveGateway({
+					expectedProcessTarget: gateway.processTarget,
+					gatewayIdentity: gateway.gatewayIdentity,
+					managedVm: gateway.vm,
+					...(options.readProcessIdentity === undefined
+						? {}
+						: { readProcessIdentity: options.readProcessIdentity }),
+					record: runtimeRecord,
 				});
 			}
+			const destructionResult = await gateway.destroyGateway();
+			vmDestructionComplete = true;
+			if (destructionResult.kind === 'destroyed-cleanup-incomplete') {
+				const [firstCleanupFailure, ...remainingCleanupFailures] =
+					destructionResult.cleanupFailures;
+				const firstCleanupStageError = new Error(
+					`Worker VM '${gateway.vm.id}' exact destruction completed but gateway cleanup stage '${firstCleanupFailure.stage}' did not complete.`,
+					{ cause: firstCleanupFailure.error },
+				);
+				if (remainingCleanupFailures.length === 0) {
+					cleanupErrors.push(firstCleanupStageError);
+				} else {
+					const cleanupStageErrors = [
+						firstCleanupStageError,
+						...remainingCleanupFailures.map(
+							(cleanupFailure) =>
+								new Error(
+									`Worker VM '${gateway.vm.id}' exact destruction completed but gateway cleanup stage '${cleanupFailure.stage}' did not complete.`,
+									{ cause: cleanupFailure.error },
+								),
+						),
+					];
+					const cleanupAggregate = new AggregateError(
+						cleanupStageErrors,
+						`Worker VM '${gateway.vm.id}' exact destruction completed with incomplete gateway cleanup.`,
+					);
+					cleanupAggregate.cause = firstCleanupStageError;
+					cleanupErrors.push(cleanupAggregate);
+				}
+			}
+		} catch (error) {
+			cleanupErrors.push(
+				new Error(`Worker VM '${gateway.vm.id}' cleanup did not prove exact destruction`, {
+					cause: error,
+				}),
+			);
 		}
-	} catch (error) {
-		cleanupErrors.push(toError(error));
 	}
 	if (vmDestructionComplete) {
 		try {
@@ -1281,7 +1371,7 @@ export async function executeWorkerTask(
 				prepared.zone,
 				prepared.preStartResult.startedResourceProviders,
 				{
-					runtimeDir: options.systemConfig.runtimeDir,
+					zoneRuntimeDir: prepared.zone.gateway.zoneRuntimeDir,
 				},
 			);
 		} catch (error) {

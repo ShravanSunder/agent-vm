@@ -1,0 +1,26 @@
+{
+	"caseId": "missing-operation-identity-outcome",
+	"schemaId": "portal.call.item-result",
+	"tags": ["missing-identity", "missing-outcome", "outcome", "rejected"],
+	"input": {
+		"artifacts": [
+			{
+				"byteLength": 7,
+				"expiresAt": "2026-07-13T20:00:00.000Z",
+				"fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				"id": "artifact-1",
+				"mediaType": "text/plain"
+			}
+		],
+		"id": "call-1",
+		"status": "ok",
+		"value": {
+			"issue": 123
+		}
+	},
+	"expectation": {
+		"kind": "rejected",
+		"errorCodes": ["portal.result.outcome-algebra"],
+		"refinementIdentities": ["portal.request-id.not-reserved", "portal.result.outcome-algebra"]
+	}
+}

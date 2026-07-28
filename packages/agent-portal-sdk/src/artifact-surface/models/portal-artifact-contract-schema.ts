@@ -15,12 +15,13 @@ export type PortalArtifactRecord = z.infer<typeof PortalArtifactRecordSchema>;
 
 export const PortalArtifactReadRequestSchema = z
 	.object({
-		artifactId: z.string().min(1),
 		maxBytes: z
 			.number()
 			.int()
 			.positive()
 			.max(16 * 1024 * 1024),
+		offsetBytes: z.number().int().nonnegative().default(0),
+		reference: ArtifactReferenceSchema,
 	})
 	.strict();
 
@@ -30,6 +31,7 @@ export const PortalArtifactReadResultSchema = z
 	.object({
 		contentBase64: z.string(),
 		mediaType: z.string().optional(),
+		offsetBytes: z.number().int().nonnegative(),
 		reference: ArtifactReferenceSchema,
 		truncated: z.boolean().default(false),
 	})

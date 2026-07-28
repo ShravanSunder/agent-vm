@@ -1,0 +1,31 @@
+{
+	"caseId": "coverage-sandbox-exec-start-result",
+	"schemaId": "sandbox.exec.start.result",
+	"tags": [
+		"accepted",
+		"coverage"
+	],
+	"input": {
+		"kind": "started",
+		"mode": "direct",
+		"operation": {
+			"operationId": "operation-a",
+			"owningGeneration": "generation-a"
+		},
+		"streams": []
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"kind": "started",
+			"mode": "direct",
+			"operation": {
+				"operationId": "operation-a",
+				"owningGeneration": "generation-a"
+			},
+			"streams": []
+		},
+		"canonicalJson": "{\"kind\":\"started\",\"mode\":\"direct\",\"operation\":{\"operationId\":\"operation-a\",\"owningGeneration\":\"generation-a\"},\"streams\":[]}",
+		"refinementIdentities": []
+	}
+}

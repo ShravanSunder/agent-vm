@@ -96,9 +96,11 @@ const runLiveModelRoundtrip = shouldRunLiveModelRoundtripE2e({
 const describeLiveModelRoundtrip = runLiveModelRoundtrip ? describe : describe.skip;
 
 const liveRoundtripFixtureSystemConfig = {
-	schemaVersion: 1,
-	cacheDir: './cache',
-	runtimeDir: './runtime',
+	schemaVersion: 2,
+	storageRootDir: '/storage-root-test',
+	cacheDir: '/storage-root-test/cache',
+	controllerStateDir: '/storage-root-test/controller-state',
+	controllerRuntimeDir: '/storage-root-test/controller-runtime',
 	systemConfigPath: './config/system.json',
 	host: {
 		controllerPort: 18_800,
@@ -136,8 +138,9 @@ const liveRoundtripFixtureSystemConfig = {
 				imageProfile: 'openclaw',
 				memory: '2G',
 				port: 18_791,
-				stateDir: './state/shravan',
-				zoneFilesDir: './zone-files/shravan',
+				stateDir: '/storage-root-test/shravan/state',
+				zoneFilesDir: '/storage-root-test/shravan/zone-files',
+				zoneRuntimeDir: '/storage-root-test/shravan/runtime',
 			},
 			secrets: {},
 			egressHosts: [],
@@ -234,7 +237,7 @@ describe('live integration: agent model roundtrip deployment config', () => {
 
 			expect(liveConfig.cacheDir).toBe(resolveLiveRoundtripCacheDir());
 			expect(path.resolve(liveConfig.cacheDir)).not.toContain(path.resolve(deploymentRoot));
-			expect(path.resolve(liveConfig.runtimeDir)).toContain(path.resolve(deploymentRoot));
+			expect(path.resolve(liveConfig.controllerRuntimeDir)).toContain(path.resolve(deploymentRoot));
 			for (const zone of liveConfig.zones) {
 				expect(path.resolve(zone.gateway.stateDir)).toContain(path.resolve(deploymentRoot));
 				if (zone.gateway.type === 'openclaw') {

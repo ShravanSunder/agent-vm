@@ -95,7 +95,7 @@ fast formatting and linting.
 - Unit tests: `pnpm test:unit`.
 - Integration tests: `pnpm test:integration`.
   Unit and integration Vitest projects use the `threads` pool for fast local and
-  CI feedback. Do not move live VM, OpenClaw, Worker, 1Password, LLM, or host
+  CI feedback. Do not move live VM, OpenClaw, Hermes, Worker, 1Password, LLM, or host
   e2e lanes onto that pool without proving teardown and process isolation still
   hold.
 - E2E inventory: `pnpm test:e2e:inventory`.
@@ -110,13 +110,14 @@ fast formatting and linting.
   - VM/Gondolin: `mise exec -- pnpm test:e2e:vm`.
   - VM/Gondolin HTTP mediation: `mise exec -- pnpm test:e2e:vm-mediation`.
   - OpenClaw gateway: `mise exec -- pnpm test:e2e:openclaw`.
+  - Hermes gateway: `mise exec -- pnpm test:e2e:hermes`.
   - Worker gateway/runtime: `mise exec -- pnpm test:e2e:worker`.
   - 1Password test account: `pnpm test:e2e:secrets`.
   - LLM/model roundtrip: `pnpm test:e2e:llm`.
   Proof lanes run through `scripts/run-vitest-evidence-project.ts` and must
   fail on zero tests, skipped tests, or todo tests. Only `test:e2e:inventory`
   may skip.
-- E2E VM/OpenClaw/Worker lanes require Docker, QEMU, and the pinned Zig from
+- E2E VM/OpenClaw/Hermes/Worker lanes require Docker, QEMU, and the pinned Zig from
   `mise.toml`. Use `mise exec --` for those lanes. The e2e harness uses a
   shared rebuildable image/local-package cache by default and honors
   `AGENT_VM_E2E_CACHE_DIR` when you want to pin that cache location.
@@ -141,6 +142,7 @@ The suffix is the contract. Do not use plain `*.test.ts` for new tests.
 - Host e2e tests must use `*.host.e2e.test.ts`.
 - VM e2e tests must use `*.vm.e2e.test.ts`.
 - OpenClaw e2e tests must use `*.openclaw.e2e.test.ts`.
+- Hermes e2e tests must use `*.hermes.e2e.test.ts`.
 - Worker e2e tests must use `*.worker.e2e.test.ts`.
 - 1Password e2e tests must use `*.secrets.e2e.test.ts`.
 - LLM-gated e2e tests must use `*.llm.e2e.test.ts`.
@@ -284,15 +286,26 @@ safe.
 
 ## MCP Portal Fast Loop
 
-For MCP Portal work, keep the provider layer and agent policy layer separate.
-`mcp.config.jsonc` owns upstream MCP providers, transports, egress, and secrets.
-`mcp-portal.config.jsonc` owns agent profile assignments and portal policy. A
-profile is a complete policy: there is no profile inheritance and no merge with
-a default profile.
+Keep managed Tool Portal config separate from standalone MCP Portal config.
+Both modes use `mcp.config.jsonc` for upstream MCP providers, transports,
+egress, and secrets.
 
-Use targeted tests first:
+- Managed Gateway mode authors `tool-portal.config.jsonc` for agent profile
+  assignments and complete cross-backend capability policies. Every capability
+  declares `backend.kind`; managed config uses `capabilities`, not standalone
+  MCP Portal `namespaces`.
+- Standalone/external MCP Portal mode authors `mcp-portal.config.jsonc` for MCP
+  namespace policy, bearer credentials, HMAC approval tokens, `externalAuth`,
+  and `mcpProxy`. Managed Gateway mode never loads that file as policy authority.
 
-- Config shape: `pnpm vitest run packages/config-contracts/src/mcp-portal-config.unit.test.ts`.
+In both policy files, a profile is complete: there is no profile inheritance or
+merge with a default profile.
+
+Use targeted config tests first:
+
+- Shared MCP provider config: `pnpm vitest run packages/config-contracts/src/mcp-config.unit.test.ts`.
+- Managed Tool Portal config: `pnpm vitest run packages/config-contracts/src/tool-portal-config.unit.test.ts`.
+- Standalone MCP Portal config: `pnpm vitest run packages/config-contracts/src/mcp-portal-config.unit.test.ts`.
 - Portal tool result shapes: `pnpm vitest run packages/mcp-portal/src/core/portal-tools.unit.test.ts`.
 - Live validation behavior: `pnpm vitest run packages/agent-vm/src/operations/config-validation.integration.test.ts`.
 
@@ -301,6 +314,14 @@ validation after provider/profile edits:
 
 - `pnpm validate`
 - `pnpm exec agent-vm validate --config config/system.jsonc --mcp-live`
+
+Managed live validation follows only Tool Portal capabilities whose
+`backend.kind` is `mcp_provider`; it does not validate controller-host-action or
+Tool VM runner capabilities as MCP namespaces.
+
+If any managed `calls.requiresApproval` selector effectively admits a tool, the
+zone must declare `approvalAccess`. Static validation and gateway preflight fail
+closed when it is absent; there is no approval-access default.
 
 For tight beta iteration before publishing, pack local tarballs from this repo
 and install them into the deployment with `pnpm add --force` or the deployment's

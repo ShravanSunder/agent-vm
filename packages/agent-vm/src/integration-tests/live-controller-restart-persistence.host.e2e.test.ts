@@ -12,29 +12,107 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import { startControllerRuntime } from '../controller/controller-runtime.js';
+import {
+	createControllerStateRoot,
+	resolveControllerGatewayStateRoot,
+} from '../controller/durable-state/controller-state-paths.js';
+import type { ControllerManagedGatewayRuntimeRecordTarget } from '../controller/durable-state/controller-state-record-paths.js';
+import { resolveControllerGatewayRecordTargets } from '../controller/durable-state/controller-state-record-paths.js';
 import { startControllerHttpServer } from '../controller/http/controller-http-server.js';
 import type { GatewayVmLifecycleAuthority } from '../controller/vm-ownership/gateway-vm-lifecycle-authority.js';
+import type { GatewayEpochIdentity } from '../controller/vm-ownership/vm-ownership-contracts.js';
 import {
-	deleteGatewayRuntimeRecord,
-	loadGatewayRuntimeRecord,
-	writeGatewayRuntimeRecord,
+	deleteManagedGatewayRuntimeRecord,
+	loadManagedGatewayRuntimeRecord,
+	type ManagedGatewayRuntimeRecord,
+	writeManagedGatewayRuntimeRecord,
 } from '../gateway/gateway-runtime-record.js';
+import type {
+	GatewayZoneDestroyResult,
+	ManagedGatewayZoneStartResult,
+} from '../gateway/gateway-zone-support.js';
+import { createManagedGatewayBootContract } from '../gateway/managed-gateway-boot-contract.js';
 import {
 	TEST_SSH_SERVER_HOST_KEY,
 	createManagedExecProcessStub,
 } from '../testing/managed-vm-test-helpers.js';
 
+const testManagedGatewayBootContract = createManagedGatewayBootContract({
+	bootEntry: 'openclaw-gateway',
+	configurationInputPath: '/run/agent-vm/managed-gateway/framework-service.json',
+	environmentInputPath: '/run/agent-vm/managed-gateway/framework.environment.sh',
+	framework: 'openclaw',
+	ingress: { guestPort: 18_789, kind: 'framework-http' },
+	logIdentity: {
+		guestPath: '/var/log/agent-vm/openclaw-service.log',
+		serviceName: 'agent-vm-openclaw-test',
+	},
+	readiness: { guestPort: 18_789, kind: 'framework-http', path: '/readyz' },
+	role: 'framework-service',
+});
+
+const testManagedGatewayImage = {
+	built: true,
+	fingerprint: 'gateway-image',
+	imageReference: '/tmp/gateway-image',
+};
+
+function createFixtureGatewayDestroyer(options: {
+	readonly destroyGatewayVm: () => Promise<void>;
+	readonly runtimeRecordTarget: ControllerManagedGatewayRuntimeRecordTarget;
+	readonly vmOwnership: GatewayVmLifecycleAuthority;
+}): () => Promise<GatewayZoneDestroyResult> {
+	let exactDestruction: Promise<void> | undefined;
+	let exactDestructionComplete = false;
+	let runtimeRecordDeleted = false;
+	let destroyAttemptInFlight: Promise<GatewayZoneDestroyResult> | undefined;
+
+	return (): Promise<GatewayZoneDestroyResult> => {
+		if (destroyAttemptInFlight !== undefined) {
+			return destroyAttemptInFlight;
+		}
+		const attempt = (async (): Promise<GatewayZoneDestroyResult> => {
+			if (!exactDestructionComplete) {
+				exactDestruction ??= options.vmOwnership.destroyLive(options.destroyGatewayVm);
+				await exactDestruction;
+				exactDestructionComplete = true;
+			}
+			if (runtimeRecordDeleted) {
+				return { kind: 'destroyed-clean' };
+			}
+			try {
+				await deleteManagedGatewayRuntimeRecord(options.runtimeRecordTarget);
+				runtimeRecordDeleted = true;
+				return { kind: 'destroyed-clean' };
+			} catch (error) {
+				return {
+					cleanupFailures: [{ error, stage: 'runtime-record-deletion' }],
+					kind: 'destroyed-cleanup-incomplete',
+				};
+			}
+		})();
+		const trackedAttempt = attempt.finally(() => {
+			if (destroyAttemptInFlight === trackedAttempt) {
+				destroyAttemptInFlight = undefined;
+			}
+		});
+		destroyAttemptInFlight = trackedAttempt;
+		return trackedAttempt;
+	};
+}
+
 function createSystemConfig(
 	controllerPort: number,
-	stateDirectory: string,
-	zoneFilesDirectory: string,
+	storageRootDir: string,
 	openClawConfigPath: string,
 ): LoadedSystemConfig {
 	return {
-		schemaVersion: 1,
-		cacheDir: path.join(path.dirname(stateDirectory), 'cache'),
-		runtimeDir: path.join(path.dirname(stateDirectory), 'runtime'),
-		systemConfigPath: path.join(path.dirname(stateDirectory), 'config', 'system.json'),
+		schemaVersion: 2,
+		storageRootDir,
+		cacheDir: path.join(storageRootDir, 'cache'),
+		controllerRuntimeDir: path.join(storageRootDir, 'controller-runtime'),
+		controllerStateDir: path.join(storageRootDir, 'controller-state'),
+		systemConfigPath: path.join(storageRootDir, 'config', 'system.json'),
 		host: {
 			controllerPort,
 			projectNamespace: 'claw-tests-a1b2c3d4',
@@ -63,6 +141,7 @@ function createSystemConfig(
 		},
 		zones: [
 			{
+				agents: [{ id: 'shravan' }],
 				id: 'shravan',
 				gateway: {
 					type: 'openclaw',
@@ -75,8 +154,9 @@ function createSystemConfig(
 					cpus: 2,
 					port: controllerPort + 100,
 					config: openClawConfigPath,
-					stateDir: stateDirectory,
-					zoneFilesDir: zoneFilesDirectory,
+					stateDir: path.join(storageRootDir, 'shravan', 'state'),
+					zoneFilesDir: path.join(storageRootDir, 'shravan', 'zone-files'),
+					zoneRuntimeDir: path.join(storageRootDir, 'shravan', 'runtime'),
 				},
 				secrets: {
 					OPENCLAW_GATEWAY_TOKEN: {
@@ -106,6 +186,69 @@ function createSystemConfig(
 }
 
 async function startManagedVmStub(): Promise<void> {}
+
+function createManagedGatewayExpectedCohort(options: {
+	readonly configuredAgentIds: readonly string[];
+	readonly gatewayIdentity: GatewayEpochIdentity;
+}): ManagedGatewayRuntimeRecord['expectedCohort'] {
+	const identitySuffix = `${options.gatewayIdentity.zoneId}:${options.gatewayIdentity.generationId}`;
+	const frameworkEpoch = `openclaw-framework:${options.gatewayIdentity.bootId}`;
+	const processEpoch = `tool-portal-process:${options.gatewayIdentity.bootId}`;
+	const runtimeEpoch = `tool-portal-runtime:${options.gatewayIdentity.generationId}`;
+	return {
+		controlIdentity: {
+			controllerEpoch: options.gatewayIdentity.controllerEpoch,
+			generationId: options.gatewayIdentity.generationId,
+			peerId: `tool-portal-control:${options.gatewayIdentity.zoneId}`,
+			processEpoch,
+		},
+		fence: {
+			controllerEpoch: options.gatewayIdentity.controllerEpoch,
+			gatewayEpoch: options.gatewayIdentity.generationId,
+			vmId: options.gatewayIdentity.gatewayVmId,
+			zoneId: options.gatewayIdentity.zoneId,
+		},
+		frameworkIdentity: {
+			attachmentGeneration: 1,
+			clientKind: 'openclaw-managed-plugin',
+			configuredAgentIds: options.configuredAgentIds,
+			frameworkEpoch,
+			frameworkKind: 'openclaw',
+			projectionCohortDigest:
+				'projection-cohort:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+		},
+		ingressIntent: {
+			controlRoute: {
+				audience: 'gateway-control',
+				guestPort: 18_790,
+				kind: 'tool-portal-control',
+				prefix: '/__agent-vm',
+				stripPrefix: false,
+			},
+			frameworkRootRoute: {
+				guestPort: 18_789,
+				kind: 'framework-root',
+				prefix: '/',
+				stripPrefix: true,
+			},
+		},
+		providerRevision: `provider:${identitySuffix}`,
+		requiredBackendRevision: `required-backends:${identitySuffix}`,
+		semanticRevision: `semantic:${identitySuffix}`,
+		toolPortalIdentity: {
+			processEpoch,
+			role: 'tool-portal',
+			runtimeEpoch,
+			serviceId: `tool-portal-service:${identitySuffix}`,
+		},
+		udsIdentity: {
+			frameworkEpoch,
+			gatewayEpoch: options.gatewayIdentity.generationId,
+			runtimeEpoch,
+			socketPath: '/run/agent-vm/gateway-runtime/managed-plugin.sock',
+		},
+	};
+}
 
 async function enableIngressStub(): Promise<{
 	close(): Promise<void>;
@@ -213,8 +356,8 @@ describe('live integration: controller restart persistence', () => {
 		const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'controller-restart-live-'));
 		createdDirectories.push(tempDirectory);
 
-		const stateDirectory = path.join(tempDirectory, 'state');
-		const zoneFilesDirectory = path.join(tempDirectory, 'zone-files');
+		const stateDirectory = path.join(tempDirectory, 'shravan', 'state');
+		const zoneFilesDirectory = path.join(tempDirectory, 'shravan', 'zone-files');
 		const zoneLeaseDirectory = path.join(zoneFilesDirectory, 'restart-work');
 		const openClawConfigPath = path.join(tempDirectory, 'openclaw.json');
 		fs.mkdirSync(stateDirectory, { recursive: true });
@@ -230,7 +373,7 @@ describe('live integration: controller restart persistence', () => {
 							scope: 'agent',
 							workspaceAccess: 'rw',
 						},
-						workspace: '/zone/agents/default',
+						workspace: '/zone/agents/default/self',
 					},
 					list: [],
 				},
@@ -239,16 +382,19 @@ describe('live integration: controller restart persistence', () => {
 		);
 
 		const controllerPort = 18841;
-		const systemConfig = createSystemConfig(
-			controllerPort,
-			stateDirectory,
-			zoneFilesDirectory,
-			openClawConfigPath,
-		);
+		const systemConfig = createSystemConfig(controllerPort, tempDirectory, openClawConfigPath);
 		const zone = systemConfig.zones[0];
 		if (!zone) {
 			throw new Error('Expected restart test zone.');
 		}
+		const controllerRecordTargets = resolveControllerGatewayRecordTargets({
+			gatewayStateRoot: resolveControllerGatewayStateRoot({
+				controllerStateRoot: createControllerStateRoot({
+					controllerStateDirectoryPath: systemConfig.controllerStateDir,
+				}),
+				zoneId: zone.id,
+			}),
+		});
 
 		let currentServerClosed: Promise<void> | undefined;
 		let gatewayStartOrdinal = 0;
@@ -272,6 +418,12 @@ describe('live integration: controller restart persistence', () => {
 							throw new Error('Restart persistence test injects its gateway and Tool VM doubles.');
 						},
 					} satisfies ManagedVmFactory,
+					managedVmExactProcessTermination: {
+						terminateRecordedHostProcess: async (request) => ({
+							hostProcessId: request.identity.hostProcessId,
+							kind: 'terminated',
+						}),
+					},
 					managedVmImages: {
 						prepareImage: async () => ({
 							built: false,
@@ -340,51 +492,66 @@ describe('live integration: controller restart persistence', () => {
 						if (gatewayIdentity === undefined) {
 							throw new Error('Expected attached Gateway identity before runtime publication.');
 						}
-						await writeGatewayRuntimeRecord(stateDirectory, {
-							configPath: systemConfig.systemConfigPath,
-							controllerPort: systemConfig.host.controllerPort,
-							createdAt: new Date().toISOString(),
-							gateway: gatewayIdentity,
-							gatewayType: 'openclaw',
-							guestListenPort: 18_789,
-							ingressPort: 18_791,
-							processIdentity: {
-								command: 'qemu-system-aarch64 -m 1G',
-								lstart: 'Fri May 22 10:00:00 2026',
-							},
-							projectNamespace: systemConfig.host.projectNamespace,
-							qemuPid: gatewayVm.getHostProcessId() ?? 28_000,
-							schemaVersion: 2,
-							sessionLabel: `${systemConfig.host.projectNamespace}:${zone.id}:gateway`,
-							vmId: gatewayVm.id,
-							zoneId: zone.id,
+						const expectedCohort = createManagedGatewayExpectedCohort({
+							configuredAgentIds: ['shravan'],
+							gatewayIdentity,
 						});
+						const qemuPid = gatewayVm.getHostProcessId() ?? 28_000;
+						const processIdentity = {
+							command: 'qemu-system-aarch64 -m 1G',
+							lstart: 'Fri May 22 10:00:00 2026',
+						};
+						await writeManagedGatewayRuntimeRecord(
+							controllerRecordTargets.managedGatewayRuntimeRecord,
+							{
+								appliedIngressRoutes: [
+									{ ...expectedCohort.ingressIntent.controlRoute, guestPort: 18_790 },
+									expectedCohort.ingressIntent.frameworkRootRoute,
+								],
+								bootContract: testManagedGatewayBootContract,
+								configPath: systemConfig.systemConfigPath,
+								controllerPort: systemConfig.host.controllerPort,
+								createdAt: new Date().toISOString(),
+								expectedCohort,
+								gateway: gatewayIdentity,
+								image: testManagedGatewayImage,
+								ingressPort: 18_791,
+								processIdentity,
+								processTarget: {
+									hostPid: qemuPid,
+									processIdentity,
+									vmId: gatewayVm.id,
+								},
+								projectNamespace: systemConfig.host.projectNamespace,
+								qemuPid,
+								runtimeKind: 'managed-gateway',
+								schemaVersion: 4,
+								sessionLabel: `${systemConfig.host.projectNamespace}:${zone.id}:gateway`,
+								vmId: gatewayVm.id,
+								zoneId: zone.id,
+							},
+						);
 						gatewayVmIds.push(gatewayVm.id);
 						return {
-							image: {
-								built: true,
-								fingerprint: 'gateway-image',
-								imageReference: '/tmp/gateway-image',
-							},
+							bootContract: testManagedGatewayBootContract,
+							destroyGateway: createFixtureGatewayDestroyer({
+								destroyGatewayVm: async () => {
+									await gatewayVm.close();
+								},
+								runtimeRecordTarget: controllerRecordTargets.managedGatewayRuntimeRecord,
+								vmOwnership,
+							}),
+							executionModel: 'managed-gateway',
+							expectedCohort,
+							gatewayIdentity,
+							image: testManagedGatewayImage,
 							ingress: {
 								host: '127.0.0.1',
 								port: 18791,
 							},
-							processSpec: {
-								bootstrapCommand: 'bootstrap-openclaw',
-								guestListenPort: 18789,
-								healthCheck: { type: 'http', port: 18789, path: '/' } as const,
-								logPath: '/agent-vm/logs/gateway-boot-latest.log',
-								startCommand: 'start-openclaw',
-							},
-							terminateVm: async () => {
-								await gatewayVm.close();
-								await deleteGatewayRuntimeRecord(stateDirectory);
-							},
 							vm: gatewayVm,
-							vmOwnership,
 							zone,
-						};
+						} satisfies ManagedGatewayZoneStartResult;
 					}),
 				},
 			);
@@ -404,8 +571,11 @@ describe('live integration: controller restart persistence', () => {
 			stderr: '',
 			stdout: '',
 		});
-		await expect(loadGatewayRuntimeRecord(stateDirectory)).resolves.toMatchObject({
-			schemaVersion: 2,
+		await expect(
+			loadManagedGatewayRuntimeRecord(controllerRecordTargets.managedGatewayRuntimeRecord),
+		).resolves.toMatchObject({
+			runtimeKind: 'managed-gateway',
+			schemaVersion: 4,
 			vmId: gatewayVmIds[0],
 		});
 
@@ -420,13 +590,18 @@ describe('live integration: controller restart persistence', () => {
 		await currentServerClosed;
 		await runtime.close();
 		await expect(fetch(`http://127.0.0.1:${String(controllerPort)}/health`)).rejects.toThrow();
-		await expect(loadGatewayRuntimeRecord(stateDirectory)).resolves.toBeNull();
+		await expect(
+			loadManagedGatewayRuntimeRecord(controllerRecordTargets.managedGatewayRuntimeRecord),
+		).resolves.toBeNull();
 
 		const restartedRuntime = await startRuntime();
 		expect(gatewayVmIds).toHaveLength(2);
 		expect(gatewayVmIds[1]).not.toBe(gatewayVmIds[0]);
-		await expect(loadGatewayRuntimeRecord(stateDirectory)).resolves.toMatchObject({
-			schemaVersion: 2,
+		await expect(
+			loadManagedGatewayRuntimeRecord(controllerRecordTargets.managedGatewayRuntimeRecord),
+		).resolves.toMatchObject({
+			runtimeKind: 'managed-gateway',
+			schemaVersion: 4,
 			vmId: gatewayVmIds[1],
 		});
 
@@ -482,6 +657,8 @@ describe('live integration: controller restart persistence', () => {
 		expect(createLeaseResponse.status).toBe(404);
 
 		await restartedRuntime.close();
-		await expect(loadGatewayRuntimeRecord(stateDirectory)).resolves.toBeNull();
+		await expect(
+			loadManagedGatewayRuntimeRecord(controllerRecordTargets.managedGatewayRuntimeRecord),
+		).resolves.toBeNull();
 	});
 });

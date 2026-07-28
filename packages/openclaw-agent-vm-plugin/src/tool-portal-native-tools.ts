@@ -1,19 +1,24 @@
-import { createPortalCallSurfaceJsonSchemas } from '@agent-vm/agent-portal-sdk';
 import {
-	createManagedToolPortalInProcessRuntime,
-	type ToolPortalInProcessEntryPoint,
-} from '@agent-vm/tool-portal';
-
-import {
-	cacheKeyForGatewayControlCallerContext,
-	type GatewayControlCallerContextCacheScope,
-	type GatewayControlCallerContextStore,
-} from './gateway-control-service/gateway-control-caller-context-store.js';
-import { createGatewayControlControllerHostActionBackend } from './gateway-control-service/gateway-control-controller-host-action-backend.js';
+	type PortalCallRequest,
+	type PortalCallResult,
+	PortalCallRequestSchema,
+	type PortalDescribeRequest,
+	type PortalDescribeResult,
+	PortalDescribeRequestSchema,
+	type PortalListRequest,
+	type PortalListResult,
+	PortalListRequestSchema,
+	type PortalSearchRequest,
+	type PortalSearchResult,
+	PortalSearchRequestSchema,
+	createPortalCallSurfaceJsonSchemas,
+} from '@agent-vm/agent-portal-sdk';
+import type { ManagedAgentProjection } from '@agent-vm/agent-portal-sdk/contracts';
 import type {
-	GatewayControlIdentity,
-	GatewayControlService,
-} from './gateway-control-service/gateway-control-service.js';
+	GatewayRuntimeClientTrustedInvocationContext,
+	GatewayRuntimePortalRequestOptions,
+} from '@agent-vm/agent-portal-sdk/gateway-runtime-client';
+
 import type {
 	OpenClawPluginToolContext,
 	OpenClawToolRegistration,
@@ -29,20 +34,36 @@ export const TOOL_PORTAL_NATIVE_TOOL_NAMES = [
 
 type ToolPortalNativeToolName = (typeof TOOL_PORTAL_NATIVE_TOOL_NAMES)[number];
 
+export interface OpenClawToolPortalClient {
+	readonly portal: {
+		readonly call: (
+			request: PortalCallRequest,
+			options: GatewayRuntimePortalRequestOptions,
+		) => Promise<PortalCallResult>;
+		readonly describe: (
+			request: PortalDescribeRequest,
+			options: GatewayRuntimePortalRequestOptions,
+		) => Promise<PortalDescribeResult>;
+		readonly list: (
+			request: PortalListRequest,
+			options: GatewayRuntimePortalRequestOptions,
+		) => Promise<PortalListResult>;
+		readonly search: (
+			request: PortalSearchRequest,
+			options: GatewayRuntimePortalRequestOptions,
+		) => Promise<PortalSearchResult>;
+	};
+}
+
 interface ToolPortalNativeToolRuntime {
-	readonly getEntryPoint: (
-		context: OpenClawPluginToolContext,
-	) => Promise<ToolPortalInProcessEntryPoint>;
+	readonly agentProjections: Readonly<Record<string, ManagedAgentProjection>>;
+	readonly clientProvider: () => OpenClawToolPortalClient | undefined;
 }
 
 export interface RegisterToolPortalNativeToolsProps {
+	readonly agentProjections: Readonly<Record<string, ManagedAgentProjection>>;
 	readonly api: OpenClawToolRegistrationApi;
-	readonly configDir: string;
-	readonly gatewayControl?: {
-		readonly callerContextStore: GatewayControlCallerContextStore;
-		readonly identity: GatewayControlIdentity;
-		readonly service: GatewayControlService;
-	};
+	readonly clientProvider: () => OpenClawToolPortalClient | undefined;
 	readonly logger?: {
 		readonly warn?: (message: string) => void;
 	};
@@ -55,86 +76,60 @@ function requireContextString(value: string | undefined, fieldName: string): str
 	return value;
 }
 
-function callerContextScopeForOpenClawContext(options: {
+function optionalContextString(value: string | undefined, fieldName: string): string | undefined {
+	return value === undefined ? undefined : requireContextString(value, fieldName);
+}
+
+function trustedInvocationContext(options: {
 	readonly context: OpenClawPluginToolContext;
-	readonly zoneId: string;
-}): GatewayControlCallerContextCacheScope {
+	readonly runtime: ToolPortalNativeToolRuntime;
+	readonly toolCallId: string;
+}): GatewayRuntimeClientTrustedInvocationContext {
 	const agentId = requireContextString(options.context.agentId, 'agentId');
-	const workspaceDir = requireContextString(
-		options.context.workspaceDir ?? options.context.agentDir,
-		'workspaceDir',
+	const projection = options.runtime.agentProjections[agentId];
+	if (projection === undefined) {
+		throw new Error(`tool-portal: OpenClaw agentId '${agentId}' is not configured.`);
+	}
+	if (
+		projection.agentId !== agentId ||
+		projection.frameworkIdentity.kind !== 'openclaw' ||
+		projection.frameworkIdentity.agentId !== agentId
+	) {
+		throw new Error(
+			`tool-portal: OpenClaw projection identity does not match authenticated agentId '${agentId}'.`,
+		);
+	}
+	const authenticatedSubjectId = optionalContextString(
+		options.context.requesterSenderId,
+		'requesterSenderId',
 	);
+	const sessionId = optionalContextString(options.context.sessionId, 'sessionId');
+	const sessionKey = optionalContextString(options.context.sessionKey, 'sessionKey');
+	const toolCallId = requireContextString(options.toolCallId, 'toolCallId');
 	return {
-		agentId,
-		agentWorkspaceDir: options.context.agentDir ?? workspaceDir,
-		purpose: 'tool_portal_controller_host_action',
-		sessionKey: requireContextString(options.context.sessionKey, 'sessionKey'),
-		workMountDir: workspaceDir,
-		zoneId: options.zoneId,
-	};
-}
-
-function createToolPortalNativeToolRuntime(props: {
-	readonly configDir: string;
-	readonly gatewayControl?: RegisterToolPortalNativeToolsProps['gatewayControl'];
-}): ToolPortalNativeToolRuntime {
-	const gatewayControl = props.gatewayControl;
-	const callerContextScopeByEntryPointCacheKey = new Map<
-		string,
-		GatewayControlCallerContextCacheScope
-	>();
-	const managedRuntime = createManagedToolPortalInProcessRuntime({
-		configDir: props.configDir,
-		...(gatewayControl === undefined
-			? {}
-			: {
-					createControllerHostActionBackend: (projection, context) => {
-						const callerContextScope = callerContextScopeByEntryPointCacheKey.get(
-							context.entryPointCacheKey,
-						);
-						if (callerContextScope === undefined) {
-							throw new Error(
-								'tool-portal: controller host action backend is missing caller context scope.',
-							);
-						}
-						return createGatewayControlControllerHostActionBackend({
-							callerContextStore: gatewayControl.callerContextStore,
-							callerContextScope,
-							controlService: gatewayControl.service,
-							identity: gatewayControl.identity,
-							projection,
-						});
-					},
-				}),
-	});
-
-	return {
-		getEntryPoint: async (context) => {
-			if (context.agentId === undefined || context.agentId.length === 0) {
-				throw new Error('tool-portal: OpenClaw did not provide a trusted agentId.');
-			}
-			if (gatewayControl !== undefined) {
-				const callerContextScope = callerContextScopeForOpenClawContext({
-					context,
-					zoneId: gatewayControl.identity.zoneId,
-				});
-				const entryPointCacheKey = cacheKeyForGatewayControlCallerContext(callerContextScope);
-				callerContextScopeByEntryPointCacheKey.set(entryPointCacheKey, callerContextScope);
-				try {
-					return await managedRuntime.getEntryPoint(context.agentId, { entryPointCacheKey });
-				} finally {
-					callerContextScopeByEntryPointCacheKey.delete(entryPointCacheKey);
-				}
-			}
-			return await managedRuntime.getEntryPoint(context.agentId);
+		correlation: {
+			...(sessionId === undefined ? {} : { sessionId }),
+			...(sessionKey === undefined ? {} : { sessionKey }),
+			toolCallId,
 		},
+		principal: {
+			agentId,
+			frameworkIdentity: projection.frameworkIdentity,
+			profileAssignmentRevision: projection.profileAssignmentRevision,
+			toolPortalProfileId: projection.toolPortalProfileId,
+		},
+		...(authenticatedSubjectId === undefined ? {} : { requester: { authenticatedSubjectId } }),
 	};
 }
 
-function toolPortalOperationOptions(signal: AbortSignal | undefined): {
-	readonly signal?: AbortSignal;
-} {
-	return signal === undefined ? {} : { signal };
+function toolPortalOperationOptions(options: {
+	readonly signal: AbortSignal | undefined;
+	readonly trustedContext: GatewayRuntimeClientTrustedInvocationContext;
+}): GatewayRuntimePortalRequestOptions {
+	return {
+		...(options.signal === undefined ? {} : { signal: options.signal }),
+		trustedContext: options.trustedContext,
+	};
 }
 
 function createOpenClawToolResult(result: unknown): {
@@ -155,19 +150,35 @@ function createToolPortalNativeTool(props: {
 }): OpenClawToolRegistration {
 	return {
 		description: descriptionForToolPortalTool(props.name),
-		execute: async (_toolCallId, params, signal) => {
-			const entryPoint = await props.runtime.getEntryPoint(props.context);
-			const options = toolPortalOperationOptions(signal);
+		execute: async (toolCallId, params, signal) => {
+			const trustedContext = trustedInvocationContext({
+				context: props.context,
+				runtime: props.runtime,
+				toolCallId,
+			});
+			const client = props.runtime.clientProvider();
+			if (client === undefined) {
+				throw new Error('tool-portal: Gateway runtime client is unavailable during discovery.');
+			}
+			const options = toolPortalOperationOptions({ signal, trustedContext });
 			if (props.name === 'tool_portal_list') {
-				return createOpenClawToolResult(await entryPoint.list(params, options));
+				return createOpenClawToolResult(
+					await client.portal.list(PortalListRequestSchema.parse(params), options),
+				);
 			}
 			if (props.name === 'tool_portal_search') {
-				return createOpenClawToolResult(await entryPoint.search(params, options));
+				return createOpenClawToolResult(
+					await client.portal.search(PortalSearchRequestSchema.parse(params), options),
+				);
 			}
 			if (props.name === 'tool_portal_describe') {
-				return createOpenClawToolResult(await entryPoint.describe(params, options));
+				return createOpenClawToolResult(
+					await client.portal.describe(PortalDescribeRequestSchema.parse(params), options),
+				);
 			}
-			return createOpenClawToolResult(await entryPoint.call(params, options));
+			return createOpenClawToolResult(
+				await client.portal.call(PortalCallRequestSchema.parse(params), options),
+			);
 		},
 		label: props.name,
 		name: props.name,
@@ -196,9 +207,19 @@ export function registerToolPortalNativeTools(props: RegisterToolPortalNativeToo
 		);
 		return;
 	}
-	const runtime = createToolPortalNativeToolRuntime({
-		configDir: props.configDir,
-		...(props.gatewayControl === undefined ? {} : { gatewayControl: props.gatewayControl }),
+	const runtime: ToolPortalNativeToolRuntime = Object.freeze({
+		agentProjections: Object.freeze(
+			Object.fromEntries(
+				Object.entries(props.agentProjections).map(([agentId, projection]) => [
+					agentId,
+					Object.freeze({
+						...projection,
+						frameworkIdentity: Object.freeze({ ...projection.frameworkIdentity }),
+					}),
+				]),
+			),
+		),
+		clientProvider: props.clientProvider,
 	});
 	const schemas = createPortalCallSurfaceJsonSchemas();
 	const schemasByName: Record<ToolPortalNativeToolName, Record<string, unknown>> = {

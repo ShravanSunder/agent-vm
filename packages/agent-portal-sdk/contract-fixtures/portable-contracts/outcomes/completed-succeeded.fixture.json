@@ -1,0 +1,40 @@
+{
+	"caseId": "completed-succeeded",
+	"schemaId": "portal.call.item-result",
+	"tags": ["accepted", "outcome", "result-discriminant"],
+	"input": {
+		"id": "call-1",
+		"operationId": "operation-1",
+		"owningGeneration": "tool-vm-generation-1",
+		"outcome": {
+			"certainty": "proven",
+			"completion": "succeeded",
+			"kind": "completed",
+			"retryClass": "forbidden"
+		},
+		"status": "ok",
+		"value": {
+			"issue": 123
+		}
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"id": "call-1",
+			"operationId": "operation-1",
+			"outcome": {
+				"certainty": "proven",
+				"completion": "succeeded",
+				"kind": "completed",
+				"retryClass": "forbidden"
+			},
+			"owningGeneration": "tool-vm-generation-1",
+			"status": "ok",
+			"value": {
+				"issue": 123
+			}
+		},
+		"canonicalJson": "{\"id\":\"call-1\",\"operationId\":\"operation-1\",\"outcome\":{\"certainty\":\"proven\",\"completion\":\"succeeded\",\"kind\":\"completed\",\"retryClass\":\"forbidden\"},\"owningGeneration\":\"tool-vm-generation-1\",\"status\":\"ok\",\"value\":{\"issue\":123}}",
+		"refinementIdentities": ["portal.request-id.not-reserved", "portal.result.outcome-algebra"]
+	}
+}

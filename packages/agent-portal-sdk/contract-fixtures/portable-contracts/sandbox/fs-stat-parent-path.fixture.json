@@ -1,0 +1,26 @@
+{
+	"caseId": "sandbox-fs-stat-parent-path",
+	"schemaId": "sandbox.fs.stat.request",
+	"tags": ["accepted", "path"],
+	"input": {
+		"environment": {
+			"handleId": "environment-a",
+			"kind": "environment",
+			"owningGeneration": "generation-a"
+		},
+		"path": "../workspace/memory/notes.md"
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"environment": {
+				"handleId": "environment-a",
+				"kind": "environment",
+				"owningGeneration": "generation-a"
+			},
+			"path": "../workspace/memory/notes.md"
+		},
+		"canonicalJson": "{\"environment\":{\"handleId\":\"environment-a\",\"kind\":\"environment\",\"owningGeneration\":\"generation-a\"},\"path\":\"../workspace/memory/notes.md\"}",
+		"refinementIdentities": []
+	}
+}

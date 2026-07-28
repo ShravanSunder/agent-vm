@@ -7,6 +7,7 @@ import {
 import {
 	buildGatewayControlCallerContextAgentAuthorityPayload,
 	buildGatewayControlCallerContextProofPayload,
+	type GatewayControlCallerContextProofPayloadInput,
 	type GatewayControlCallerContextRegisterPayload,
 	type GatewayControlRpcMessage,
 	type GatewayControlRpcOperation,
@@ -24,6 +25,7 @@ import {
 	TEST_SSH_SERVER_HOST_KEY,
 	createManagedExecProcessStub,
 } from '../../testing/managed-vm-test-helpers.js';
+import type { ControllerToolLeaseRecordsTarget } from '../durable-state/controller-state-record-paths.js';
 import { createLeaseManager } from '../leases/lease-manager.js';
 import { createTcpPool } from '../leases/tcp-pool.js';
 import type {
@@ -49,6 +51,8 @@ const acceptedSession = {
 	zoneId: 'zone-a',
 };
 
+const testHostGitDirectoryRoot = '/host/runtime/zones/zone-a/gitdirs/agents/main';
+
 const TEST_GATEWAY_EPOCH = {
 	bootId: acceptedSession.bootId,
 	controllerEpoch: acceptedSession.controllerEpoch,
@@ -65,6 +69,7 @@ function refuseUnexpectedGatewayOwnershipOperation(): never {
 function createOwnershipCoordinatorStub(): GatewayOwnershipCoordinator {
 	return {
 		beginGatewayEpoch: () => refuseUnexpectedGatewayOwnershipOperation(),
+		abandonUnattachedGatewaySeed: () => refuseUnexpectedGatewayOwnershipOperation(),
 		admitProvisionalToolVm: (options) => {
 			if (!gatewayIdentitiesEqual(TEST_GATEWAY_EPOCH, options.expectedGateway)) {
 				throw new Error('Tool VM admission refused a stale Gateway VM epoch.');
@@ -82,6 +87,9 @@ function createOwnershipCoordinatorStub(): GatewayOwnershipCoordinator {
 				},
 				commitCurrent(): void {
 					state = 'current';
+				},
+				recordAccessFenced(): void {
+					state = 'retiring';
 				},
 				recordDestroyed(): void {
 					state = 'destroyed';
@@ -109,21 +117,24 @@ const callerContextProofKey = 'test-caller-context-proof-key-with-enough-length'
 const agentAuthorityKeys: Readonly<Record<string, string>> = {
 	main: 'test-main-agent-authority-key-with-enough-length',
 };
+const invocationPrincipal = {
+	agentId: 'main',
+	frameworkIdentity: { agentId: 'main', kind: 'openclaw' },
+	profileAssignmentRevision: 'assignment-main',
+	toolPortalProfileId: 'standard',
+} as const;
 
 function signCallerContextEvidence(
-	evidence: Omit<
-		GatewayControlCallerContextRegisterPayload['adapterEvidence'],
-		'agentAuthority' | 'proof'
-	>,
+	evidence: GatewayControlCallerContextProofPayloadInput,
 ): GatewayControlCallerContextRegisterPayload['adapterEvidence'] {
 	return {
 		...evidence,
 		agentAuthority: {
 			algorithm: 'hmac-sha256',
-			digest: createHmac('sha256', agentAuthorityKeys[evidence.agentId] ?? 'missing')
+			digest: createHmac('sha256', agentAuthorityKeys[evidence.principal.agentId] ?? 'missing')
 				.update(buildGatewayControlCallerContextAgentAuthorityPayload(evidence), 'utf8')
 				.digest('base64url'),
-			keyId: evidence.agentId,
+			keyId: evidence.principal.agentId,
 		},
 		proof: {
 			algorithm: 'hmac-sha256',
@@ -136,13 +147,12 @@ function signCallerContextEvidence(
 
 const callerContextRegisterPayload = {
 	adapterEvidence: signCallerContextEvidence({
-		agentId: 'main',
-		agentWorkspaceDir: '/home/openclaw/workspace',
-		sessionKey: 'agent:main:test-session',
-		workMountDir: '/host/sandbox-work',
+		principal: invocationPrincipal,
 		zoneId: acceptedSession.zoneId,
 	}),
 } satisfies GatewayControlCallerContextRegisterPayload;
+
+const validateCallerContextRegistration = (): void => {};
 
 function createEnvelope(operation: GatewayControlRpcOperation, sequence: number): ControlEnvelope {
 	return {
@@ -208,6 +218,13 @@ function createTestLeaseManager(): ReturnType<typeof createLeaseManager> {
 	let leaseIdIndex = 0;
 	return createLeaseManager({
 		controllerPort: 18800,
+		managedVmExactProcessTermination: {
+			terminateRecordedHostProcess: async ({ identity }) => ({
+				hostProcessId: identity.hostProcessId,
+				kind: 'already-absent',
+			}),
+		},
+		managedVmTerminationSleep: async () => {},
 		createLeaseId: () => {
 			const leaseId = leaseIds[leaseIdIndex];
 			if (leaseId === undefined) {
@@ -218,13 +235,6 @@ function createTestLeaseManager(): ReturnType<typeof createLeaseManager> {
 		},
 		createManagedVm: createManagedVmStub(),
 		deleteToolVmRuntimeRecord: vi.fn(async () => {}),
-		managedVmKillDependencies: {
-			isProcessAlive: () => false,
-			killProcess: vi.fn(),
-			readProcessCommand: async () => null,
-			readProcessIdentity: async () => null,
-			sleep: async () => {},
-		},
 		now: () => 1_000,
 		ownershipCoordinator: createOwnershipCoordinatorStub(),
 		projectNamespace: 'gateway-control-lifecycle-events-integration-tests',
@@ -233,9 +243,14 @@ function createTestLeaseManager(): ReturnType<typeof createLeaseManager> {
 			lstart: 'Fri May 22 10:00:00 2026',
 		}),
 		readTcpListenPortOwner: async () => null,
-		stateDirFor: (zoneId) => `/tmp/gateway-control-lifecycle-events-integration-tests/${zoneId}`,
 		systemConfigPath: '/etc/agent-vm/system.json',
 		tcpPool: createTcpPool({ basePort: 19000, size: 2 }),
+		toolLeaseRecordsTargetFor: (zoneId) =>
+			({
+				directoryPath: `/tmp/gateway-control-lifecycle-events-integration-tests/${zoneId}/tool-leases`,
+				kind: 'controller-tool-lease-records',
+				zoneId,
+			}) satisfies ControllerToolLeaseRecordsTarget,
 		toolVmUsePolicy: {
 			endedUseTombstoneTtlMs: 10_000,
 			heartbeatAfterMs: 1_000,
@@ -272,6 +287,7 @@ describe('gateway control lifecycle event integration', () => {
 		const callerContexts = createGatewayControlCallerContextRegistry({
 			agentAuthorityKeys,
 			callerContextProofKey,
+			validateRegistration: validateCallerContextRegistration,
 			createCallerContextId: () => {
 				const callerContextId = callerContextIds[callerContextIdIndex];
 				if (callerContextId === undefined) {
@@ -290,11 +306,10 @@ describe('gateway control lifecycle event integration', () => {
 			},
 			resolveLeaseCreateOptions: async ({ callerContext, gateway }) => ({
 				agentId: callerContext.agentId,
-				agentWorkspaceDir: callerContext.agentWorkspaceDir,
 				expectedGateway: gateway,
-				gatewayWorkMountDir: callerContext.workMountDir,
-				guestWorkdir: '/workspace',
-				hostWorkMountDir: '/host/validated-work',
+				guestWorkdir: '/work',
+				hostGitDirectoryRoot: testHostGitDirectoryRoot,
+				hostWorkspaceRoot: '/host/validated-work',
 				profile: {
 					cpus: 2,
 					imageProfile: 'tool-default',

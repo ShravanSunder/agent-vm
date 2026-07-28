@@ -99,6 +99,14 @@ describe('MCP provider capability backend integration', () => {
 			items: [
 				{
 					id: 'read-thing',
+					operationId: expect.stringMatching(/\S+/u),
+					outcome: {
+						certainty: 'proven',
+						completion: 'succeeded',
+						kind: 'completed',
+						retryClass: 'forbidden',
+					},
+					owningGeneration: 'mcp-provider:agent-a',
 					status: 'ok',
 					value: {
 						namespace: fakeUpstreamNamespace,
@@ -109,11 +117,18 @@ describe('MCP provider capability backend integration', () => {
 			],
 			ok: true,
 		});
-		expect(writeResult).toMatchObject({
+		expect(PortalCallResultSchema.parse(writeResult)).toMatchObject({
 			items: [
 				{
 					error: { code: 'approval_required' },
 					id: 'write-thing',
+					operationId: expect.stringMatching(/\S+/u),
+					outcome: {
+						certainty: 'proven',
+						kind: 'not-dispatched',
+						retryClass: 'safe-before-dispatch',
+					},
+					owningGeneration: 'mcp-provider:agent-a',
 					status: 'error',
 				},
 			],

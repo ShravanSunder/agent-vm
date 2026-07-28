@@ -1,4 +1,5 @@
 import {
+	deriveGatewayControlStablePrincipal,
 	GatewayControlLeaseCreateIntentPayloadSchema,
 	GatewayControlLeaseIdPayloadSchema,
 	GatewayControlLeaseReacquireIntentPayloadSchema,
@@ -15,6 +16,7 @@ import {
 	TEST_SSH_SERVER_HOST_KEY,
 	createManagedExecProcessStub,
 } from '../../testing/managed-vm-test-helpers.js';
+import type { ControllerToolLeaseRecordsTarget } from '../durable-state/controller-state-record-paths.js';
 import { createLeaseManager } from '../leases/lease-manager.js';
 import { createTcpPool } from '../leases/tcp-pool.js';
 import type {
@@ -39,19 +41,28 @@ import {
 	type GatewaySemanticExecutionProof,
 } from './gateway-semantic-result-ledger.js';
 
+const callerPrincipal = {
+	agentId: 'main',
+	frameworkIdentity: { agentId: 'main', kind: 'openclaw' },
+	profileAssignmentRevision: 'assignment-main',
+	toolPortalProfileId: 'standard',
+} as const;
+const optionalToolCorrelationSessionKeyDigest = '0123456789abcdef0123456789abcdef';
+const testHostGitDirectoryRoot = '/host/runtime/zones/zone-a/gitdirs/agents/main';
+
 const callerContext = {
 	agentId: 'main',
-	agentWorkspaceDir: '/home/openclaw/workspace',
 	bootId: 'gateway-boot-a',
 	callerContextId: '44444444-4444-4444-8444-444444444444',
 	connectionId: '11111111-1111-4111-8111-111111111111',
 	controllerEpoch: 'epoch-a',
 	peerId: 'gateway-zone-a',
+	principal: callerPrincipal,
 	purpose: 'tool_vm_lease',
 	sessionId: '33333333-3333-4333-8333-333333333333',
-	sessionKeyDigest: '0123456789abcdef0123456789abcdef',
-	stablePrincipal: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-	workMountDir: '/host/sandbox-work',
+	stablePrincipal: deriveGatewayControlStablePrincipal({
+		principal: callerPrincipal,
+	}),
 	zoneId: 'zone-a',
 } satisfies GatewayControlTrustedCallerContext;
 
@@ -59,8 +70,18 @@ const otherCallerContext = {
 	...callerContext,
 	agentId: 'other',
 	callerContextId: '55555555-5555-4555-8555-555555555555',
-	sessionKeyDigest: 'fedcba9876543210fedcba9876543210',
-	stablePrincipal: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+	principal: {
+		...callerPrincipal,
+		agentId: 'other',
+		frameworkIdentity: { agentId: 'other', kind: 'openclaw' },
+	},
+	stablePrincipal: deriveGatewayControlStablePrincipal({
+		principal: {
+			...callerPrincipal,
+			agentId: 'other',
+			frameworkIdentity: { agentId: 'other', kind: 'openclaw' },
+		},
+	}),
 } satisfies GatewayControlTrustedCallerContext;
 
 const refreshedCallerContext = {
@@ -80,8 +101,7 @@ const sameAgentDifferentSessionCallerContext = {
 	callerContextId: '99999999-9999-4999-8999-999999999999',
 	connectionId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
 	sessionId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-	sessionKeyDigest: '11111111111111112222222222222222',
-	stablePrincipal: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+	stablePrincipal: callerContext.stablePrincipal,
 } satisfies GatewayControlTrustedCallerContext;
 
 const callerContextPayload = {
@@ -112,6 +132,25 @@ const TEST_PROCESS_EPOCH = 'gateway-control-lease-rpc-process-epoch';
 const TEST_ATTACHMENT_GENERATION = 1;
 const TEST_OPERATION_PAYLOAD_DIGEST =
 	'0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+function createDeferredValue<TValue>(): {
+	readonly promise: Promise<TValue>;
+	resolve(value: TValue): void;
+} {
+	let resolveDeferredValue: ((value: TValue) => void) | undefined;
+	const promise = new Promise<TValue>((resolve) => {
+		resolveDeferredValue = resolve;
+	});
+	return {
+		promise,
+		resolve(value: TValue): void {
+			if (resolveDeferredValue === undefined) {
+				throw new Error('deferred value resolver was not initialized');
+			}
+			resolveDeferredValue(value);
+		},
+	};
+}
 
 type ExpectedLeaseRpcSurface = 'getLease' | 'prepareSemanticMutation';
 
@@ -233,6 +272,7 @@ function createOwnershipCoordinatorStub(
 ): GatewayOwnershipCoordinator {
 	return {
 		beginGatewayEpoch: () => refuseUnexpectedGatewayOwnershipOperation(),
+		abandonUnattachedGatewaySeed: () => refuseUnexpectedGatewayOwnershipOperation(),
 		admitProvisionalToolVm: vi.fn(
 			(
 				options: Parameters<GatewayOwnershipCoordinator['admitProvisionalToolVm']>[0],
@@ -254,6 +294,9 @@ function createOwnershipCoordinatorStub(
 					},
 					commitCurrent(): void {
 						state = 'current';
+					},
+					recordAccessFenced(): void {
+						state = 'retiring';
 					},
 					recordDestroyed(): void {
 						state = 'destroyed';
@@ -297,17 +340,21 @@ function withCallerContextPayload<TPayload>(
 function createManagedVmStub(
 	options: {
 		readonly closeError?: Error;
-		readonly closeErrors?: readonly (Error | null)[];
 		readonly isLive?: () => boolean;
 		readonly omitServerHostKey?: boolean;
 		readonly serverHostKeyOverride?: unknown;
+		readonly sshCloseError?: Error;
 	} = {},
 ): Parameters<typeof createLeaseManager>[0]['createManagedVm'] {
 	return vi.fn(async () => {
-		let closeAttemptIndex = 0;
+		let closePromise: Promise<void> | undefined;
 		let hostPidReadCount = 0;
 		const sshAccess = {
-			close: vi.fn(async () => {}),
+			close: vi.fn(async () => {
+				if (options.sshCloseError !== undefined) {
+					throw options.sshCloseError;
+				}
+			}),
 			command: 'ssh sandbox@127.0.0.1',
 			host: '127.0.0.1',
 			identityFile: '/tmp/tool-vm-key',
@@ -321,15 +368,10 @@ function createManagedVmStub(
 			Reflect.set(sshAccess, 'serverHostKey', options.serverHostKeyOverride);
 		}
 		const vm = {
-			close: vi.fn(async () => {
-				if (options.closeError !== undefined) {
-					throw options.closeError;
-				}
-				const configuredError = options.closeErrors?.[closeAttemptIndex];
-				closeAttemptIndex += 1;
-				if (configuredError !== undefined && configuredError !== null) {
-					throw configuredError;
-				}
+			close: vi.fn((): Promise<void> => {
+				closePromise ??=
+					options.closeError === undefined ? Promise.resolve() : Promise.reject(options.closeError);
+				return closePromise;
 			}),
 			enableIngress: vi.fn(async () => ({
 				close: vi.fn(async () => {}),
@@ -357,7 +399,6 @@ function createManagedVmStub(
 function createTestLeaseManager(
 	options: {
 		readonly closeError?: Error;
-		readonly closeErrors?: readonly (Error | null)[];
 		readonly createManagedVm?: Parameters<typeof createLeaseManager>[0]['createManagedVm'];
 		readonly isLive?: () => boolean;
 		readonly leaseIds?: readonly string[];
@@ -371,6 +412,13 @@ function createTestLeaseManager(
 	let leaseIdIndex = 0;
 	return createLeaseManager({
 		controllerPort: 18800,
+		managedVmExactProcessTermination: {
+			terminateRecordedHostProcess: async ({ identity }) => ({
+				hostProcessId: identity.hostProcessId,
+				kind: 'already-absent',
+			}),
+		},
+		managedVmTerminationSleep: async () => {},
 		createLeaseId: () => {
 			const leaseId = options.leaseIds?.[leaseIdIndex] ?? 'lease-main';
 			leaseIdIndex += 1;
@@ -380,7 +428,6 @@ function createTestLeaseManager(
 			options.createManagedVm ??
 			createManagedVmStub({
 				...(options.closeError === undefined ? {} : { closeError: options.closeError }),
-				...(options.closeErrors === undefined ? {} : { closeErrors: options.closeErrors }),
 				...(options.isLive === undefined ? {} : { isLive: options.isLive }),
 				...(options.omitServerHostKey === undefined
 					? {}
@@ -390,13 +437,6 @@ function createTestLeaseManager(
 					: { serverHostKeyOverride: options.serverHostKeyOverride }),
 			}),
 		deleteToolVmRuntimeRecord: vi.fn(async () => {}),
-		managedVmKillDependencies: {
-			isProcessAlive: () => false,
-			killProcess: vi.fn(),
-			readProcessCommand: async () => null,
-			readProcessIdentity: async () => null,
-			sleep: async () => {},
-		},
 		now: options.now ?? (() => 1_000),
 		readTcpListenPortOwner: async () => null,
 		ownershipCoordinator: options.ownershipCoordinator ?? createOwnershipCoordinatorStub(),
@@ -405,9 +445,14 @@ function createTestLeaseManager(
 			command: 'qemu-system-x86_64 -m 1G',
 			lstart: 'Fri May 22 10:00:00 2026',
 		}),
-		stateDirFor: (zoneId) => `/tmp/gateway-control-lease-rpc-tests/${zoneId}`,
 		systemConfigPath: '/etc/agent-vm/system.json',
 		tcpPool: options.tcpPool ?? createTcpPool({ basePort: 19000, size: 2 }),
+		toolLeaseRecordsTargetFor: (zoneId) =>
+			({
+				directoryPath: `/tmp/gateway-control-lease-rpc-tests/${zoneId}/tool-leases`,
+				kind: 'controller-tool-lease-records',
+				zoneId,
+			}) satisfies ControllerToolLeaseRecordsTarget,
 		toolVmUsePolicy: {
 			endedUseTombstoneTtlMs: 10_000,
 			heartbeatAfterMs: 1_000,
@@ -418,7 +463,7 @@ function createTestLeaseManager(
 }
 
 describe('createGatewayControlLeaseRpcOperations', () => {
-	it('exposes only the hard-cut read and semantic-mutation surface', () => {
+	it('keeps binding creation narrow beside the hard-cut lease RPC surface', () => {
 		const leaseRpc = createGatewayControlLeaseRpcOperations({
 			leaseManager: createTestLeaseManager(),
 			resolveLeaseCreateOptions: async () => {
@@ -430,18 +475,74 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			true,
 			true,
 		]);
-		expect(Object.keys(leaseRpc).toSorted()).toEqual(['getLease', 'prepareSemanticMutation']);
+		expect(Object.keys(leaseRpc).toSorted()).toEqual([
+			'createBinding',
+			'getLease',
+			'prepareSemanticMutation',
+			'subscribeBindingRetirement',
+		]);
+	});
+
+	it('creates an active-use-free Tool VM binding grant through controller-owned options', async () => {
+		const leaseManager = createTestLeaseManager();
+		const observedLeaseCreateRequests: unknown[] = [];
+		const leaseRpc = createGatewayControlLeaseRpcOperations({
+			leaseManager,
+			onLeaseCreateRequest: (request) => {
+				observedLeaseCreateRequests.push(request);
+			},
+			readIdentityPem: async () => 'identity-pem',
+			resolveLeaseCreateOptions: async () => ({
+				agentId: callerContext.agentId,
+				effectiveIdleTtlMs: 60_000,
+				expectedGateway: TEST_GATEWAY_EPOCH,
+				guestWorkdir: '/work',
+				hostGitDirectoryRoot: testHostGitDirectoryRoot,
+				hostWorkspaceRoot: '/host/validated-work',
+				profile: {
+					cpus: 2,
+					imageProfile: 'tool-default',
+					memory: '2G',
+				},
+				profileId: 'standard',
+				zoneId: callerContext.zoneId,
+			}),
+		});
+
+		const grant = await leaseRpc.createBinding({
+			callerContext,
+			gateway: TEST_GATEWAY_EPOCH,
+			payload: callerContextPayload,
+		});
+
+		expect(grant).toMatchObject({
+			agentId: callerContext.agentId,
+			leaseId: 'lease-main',
+			profileAssignmentRevision: callerContext.principal.profileAssignmentRevision,
+			stablePrincipal: callerContext.stablePrincipal,
+			zoneId: callerContext.zoneId,
+		});
+		expect(grant).not.toHaveProperty('activeUseId');
+		expect(grant).not.toHaveProperty('state');
+		expect(leaseManager.getCurrentNonterminalUses(grant.leaseId)).toEqual([]);
+		expect(observedLeaseCreateRequests).toEqual([
+			{
+				agentId: callerContext.agentId,
+				idleTtlMs: 60_000,
+				profileId: 'standard',
+				zoneId: callerContext.zoneId,
+			},
+		]);
 	});
 
 	it('creates and serializes leases through controller-owned create options', async () => {
 		const resolveLeaseCreateOptions = vi.fn(async () => ({
 			agentId: callerContext.agentId,
-			agentWorkspaceDir: callerContext.agentWorkspaceDir,
 			effectiveIdleTtlMs: 60_000,
 			expectedGateway: TEST_GATEWAY_EPOCH,
-			guestWorkdir: '/workspace',
-			gatewayWorkMountDir: callerContext.workMountDir,
-			hostWorkMountDir: '/host/validated-work',
+			guestWorkdir: '/work',
+			hostGitDirectoryRoot: testHostGitDirectoryRoot,
+			hostWorkspaceRoot: '/host/validated-work',
 			profile: {
 				cpus: 2,
 				imageProfile: 'tool-default',
@@ -451,8 +552,9 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			zoneId: callerContext.zoneId,
 		}));
 		const observedLeaseCreateRequests: unknown[] = [];
+		const leaseManager = createTestLeaseManager();
 		const leaseRpc = createGatewayControlLeaseRpcOperations({
-			leaseManager: createTestLeaseManager(),
+			leaseManager,
 			onLeaseCreateRequest: (request) => {
 				observedLeaseCreateRequests.push(request);
 			},
@@ -468,6 +570,8 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				},
 			},
 		});
+		const currentBinding = leaseManager.getCurrentLeaseBinding(lease.leaseId);
+		expect(currentBinding).toBeDefined();
 		const peeked = await leaseRpc.getLease(
 			withCallerContextPayload({ ...callerContextPayload, leaseId: lease.leaseId }),
 			{ includeSsh: 'public' },
@@ -498,17 +602,15 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		expect(observedLeaseCreateRequests).toEqual([
 			{
 				agentId: 'main',
-				agentWorkspaceDir: '/home/openclaw/workspace',
 				idleTtlMs: 60_000,
 				profileId: 'standard',
-				sessionKeyDigest: '0123456789abcdef0123456789abcdef',
-				workMountDir: '/host/sandbox-work',
 				zoneId: 'zone-a',
 			},
 		]);
 		expect(lease).toEqual({
 			agentId: 'main',
 			idleTtlMs: 60_000,
+			leafGeneration: currentBinding?.leafGeneration,
 			leaseId: 'lease-main',
 			ssh: {
 				host: 'tool-0.vm.host',
@@ -517,10 +619,11 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				port: 22,
 				user: 'sandbox',
 			},
+			sshBindingId: currentBinding?.sshBinding.bindingId,
 			state: 'idle',
 			tcpSlot: 0,
 			transport: 'ssh-sandbox',
-			workdir: '/workspace',
+			workdir: '/work',
 			zoneId: 'zone-a',
 		});
 		expect(peeked).toEqual({
@@ -535,7 +638,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			state: 'idle',
 			tcpSlot: 0,
 			transport: 'ssh-sandbox',
-			workdir: '/workspace',
+			workdir: '/work',
 			zoneId: 'zone-a',
 		});
 		expect(renewed).toEqual(lease);
@@ -546,24 +649,166 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			state: 'released',
 			tcpSlot: 0,
 			transport: 'ssh-sandbox',
-			workdir: '/workspace',
+			workdir: '/work',
 			zoneId: 'zone-a',
 		});
+		expect(peeked).not.toHaveProperty('leafGeneration');
+		expect(peeked).not.toHaveProperty('sshBindingId');
+		expect(released).not.toHaveProperty('leafGeneration');
+		expect(released).not.toHaveProperty('sshBindingId');
 	});
 
-	it('defers sandbox seeding until the first admitted semantic execute and never repeats it on replay', async () => {
+	it('refuses private serialization when no current lease binding exists', async () => {
 		// Arrange
-		const seedSandboxWorkspace = vi.fn(async (): Promise<void> => {});
+		const leaseManager = createTestLeaseManager();
+		const leaseRpc = createGatewayControlLeaseRpcOperations({
+			leaseManager,
+			readIdentityPem: async () => 'identity-pem',
+			resolveLeaseCreateOptions: async ({ callerContext: currentCallerContext, gateway }) => ({
+				agentId: currentCallerContext.agentId,
+				expectedGateway: gateway,
+				guestWorkdir: '/work',
+				hostGitDirectoryRoot: testHostGitDirectoryRoot,
+				hostWorkspaceRoot: '/host/validated-work',
+				profile: {
+					cpus: 2,
+					imageProfile: 'tool-default',
+					memory: '2G',
+				},
+				profileId: 'standard',
+				zoneId: currentCallerContext.zoneId,
+			}),
+		});
+		const lease = await executeLeaseSemanticMutation(leaseRpc, 'lease_create', {
+			callerContext,
+			payload: callerContextPayload,
+		});
+		vi.spyOn(leaseManager, 'getCurrentLeaseBinding').mockReturnValue(undefined);
+
+		// Act
+		const privateLeaseRead = leaseRpc.getLease(
+			withCallerContextPayload({ ...callerContextPayload, leaseId: lease.leaseId }),
+			{ includeSsh: 'private' },
+		);
+
+		// Assert
+		await expect(privateLeaseRead).rejects.toThrow(
+			`Lease '${lease.leaseId}' does not have a current authority binding.`,
+		);
+	});
+
+	it('refuses private serialization when the current binding does not match the live lease', async () => {
+		// Arrange
+		const leaseManager = createTestLeaseManager();
+		const leaseRpc = createGatewayControlLeaseRpcOperations({
+			leaseManager,
+			readIdentityPem: async () => 'identity-pem',
+			resolveLeaseCreateOptions: async ({ callerContext: currentCallerContext, gateway }) => ({
+				agentId: currentCallerContext.agentId,
+				expectedGateway: gateway,
+				guestWorkdir: '/work',
+				hostGitDirectoryRoot: testHostGitDirectoryRoot,
+				hostWorkspaceRoot: '/host/validated-work',
+				profile: {
+					cpus: 2,
+					imageProfile: 'tool-default',
+					memory: '2G',
+				},
+				profileId: 'standard',
+				zoneId: currentCallerContext.zoneId,
+			}),
+		});
+		const lease = await executeLeaseSemanticMutation(leaseRpc, 'lease_create', {
+			callerContext,
+			payload: callerContextPayload,
+		});
+		const currentBinding = leaseManager.getCurrentLeaseBinding(lease.leaseId);
+		if (currentBinding === undefined) {
+			throw new Error('test lease did not create a current binding');
+		}
+		vi.spyOn(leaseManager, 'getCurrentLeaseBinding').mockReturnValue({
+			...currentBinding,
+			runtimeBinding: {
+				...currentBinding.runtimeBinding,
+				vmId: 'stale-tool-vm',
+			},
+		});
+
+		// Act
+		const privateLeaseRead = leaseRpc.getLease(
+			withCallerContextPayload({ ...callerContextPayload, leaseId: lease.leaseId }),
+			{ includeSsh: 'private' },
+		);
+
+		// Assert
+		await expect(privateLeaseRead).rejects.toThrow(
+			`Lease '${lease.leaseId}' current authority binding does not match its live runtime.`,
+		);
+	});
+
+	it('revalidates current authority after the asynchronous private identity read', async () => {
+		// Arrange
+		const leaseManager = createTestLeaseManager();
+		const identityReadStarted = createDeferredValue<void>();
+		const heldIdentityRead = createDeferredValue<string>();
+		let holdIdentityRead = false;
+		const leaseRpc = createGatewayControlLeaseRpcOperations({
+			leaseManager,
+			readIdentityPem: async () => {
+				if (!holdIdentityRead) {
+					return 'identity-pem';
+				}
+				identityReadStarted.resolve();
+				return await heldIdentityRead.promise;
+			},
+			resolveLeaseCreateOptions: async ({ callerContext: currentCallerContext, gateway }) => ({
+				agentId: currentCallerContext.agentId,
+				expectedGateway: gateway,
+				guestWorkdir: '/work',
+				hostGitDirectoryRoot: testHostGitDirectoryRoot,
+				hostWorkspaceRoot: '/host/validated-work',
+				profile: {
+					cpus: 2,
+					imageProfile: 'tool-default',
+					memory: '2G',
+				},
+				profileId: 'standard',
+				zoneId: currentCallerContext.zoneId,
+			}),
+		});
+		const lease = await executeLeaseSemanticMutation(leaseRpc, 'lease_create', {
+			callerContext,
+			payload: callerContextPayload,
+		});
+		holdIdentityRead = true;
+		const currentBinding = vi.spyOn(leaseManager, 'getCurrentLeaseBinding');
+
+		// Act
+		const privateLeaseRead = leaseRpc.getLease(
+			withCallerContextPayload({ ...callerContextPayload, leaseId: lease.leaseId }),
+			{ includeSsh: 'private' },
+		);
+		await identityReadStarted.promise;
+		currentBinding.mockReturnValue(undefined);
+		heldIdentityRead.resolve('identity-pem');
+
+		// Assert
+		await expect(privateLeaseRead).rejects.toThrow(
+			`Lease '${lease.leaseId}' current authority binding changed during private serialization.`,
+		);
+	});
+
+	it('defers lease creation until the first admitted semantic execute and never repeats it on replay', async () => {
+		// Arrange
 		const leaseManager = createTestLeaseManager();
 		const createLease = vi.spyOn(leaseManager, 'createLease');
 		const resolveLeaseCreateOptions = vi.fn(async () => ({
 			agentId: callerContext.agentId,
-			agentWorkspaceDir: callerContext.agentWorkspaceDir,
 			effectiveIdleTtlMs: 60_000,
 			expectedGateway: TEST_GATEWAY_EPOCH,
-			gatewayWorkMountDir: callerContext.workMountDir,
-			guestWorkdir: '/workspace',
-			hostWorkMountDir: '/host/validated-work',
+			guestWorkdir: '/work',
+			hostGitDirectoryRoot: testHostGitDirectoryRoot,
+			hostWorkspaceRoot: '/host/validated-work',
 			profile: {
 				cpus: 2,
 				imageProfile: 'tool-default',
@@ -576,7 +821,6 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			leaseManager,
 			readIdentityPem: async () => 'identity-pem',
 			resolveLeaseCreateOptions,
-			seedLeaseWorkspace: seedSandboxWorkspace,
 		});
 		const preparation = {
 			attachmentGeneration: TEST_ATTACHMENT_GENERATION,
@@ -590,7 +834,6 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		// Act
 		const firstPreparedMutation = await leaseRpc.prepareSemanticMutation(preparation);
 		const replayPreparedMutation = await leaseRpc.prepareSemanticMutation(preparation);
-		expect.soft(seedSandboxWorkspace).not.toHaveBeenCalled();
 		expect.soft(createLease).not.toHaveBeenCalled();
 		const identity = {
 			commandId: 'semantic-seed-command',
@@ -619,39 +862,35 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		// Assert
 		expect(firstResult).toMatchObject({ kind: 'completed' });
 		expect(replayResult).toEqual(firstResult);
-		expect(seedSandboxWorkspace).toHaveBeenCalledOnce();
 		expect(createLease).toHaveBeenCalledOnce();
 	});
 
-	it('seeds once before semantic reacquire release and replacement creation without replaying effects', async () => {
+	it('delegates one atomic semantic reacquire without RPC-owned workspace mutation', async () => {
 		// Arrange
 		const effectOrder: string[] = [];
-		const seedSandboxWorkspace = vi.fn(async (): Promise<void> => {
-			effectOrder.push('seed');
-		});
 		const leaseManager = createTestLeaseManager({ leaseIds: ['lease-old', 'lease-new'] });
 		const originalCreateLease = leaseManager.createLease.bind(leaseManager);
-		const originalReleaseLease = leaseManager.releaseLease.bind(leaseManager);
+		const originalReacquireLease = leaseManager.reacquireLease.bind(leaseManager);
 		const createLease = vi
 			.spyOn(leaseManager, 'createLease')
 			.mockImplementation(async (options) => {
 				effectOrder.push('create');
 				return await originalCreateLease(options);
 			});
-		const releaseLease = vi
-			.spyOn(leaseManager, 'releaseLease')
-			.mockImplementation(async (leaseId, options) => {
-				effectOrder.push('release');
-				return await originalReleaseLease(leaseId, options);
+		const reacquireLease = vi
+			.spyOn(leaseManager, 'reacquireLease')
+			.mockImplementation(async (oldLeaseId, options) => {
+				effectOrder.push('reacquire');
+				return await originalReacquireLease(oldLeaseId, options);
 			});
+		const releaseLease = vi.spyOn(leaseManager, 'releaseLease');
 		const resolveLeaseCreateOptions = vi.fn(async () => ({
 			agentId: callerContext.agentId,
-			agentWorkspaceDir: callerContext.agentWorkspaceDir,
 			effectiveIdleTtlMs: 60_000,
 			expectedGateway: TEST_GATEWAY_EPOCH,
-			gatewayWorkMountDir: callerContext.workMountDir,
-			guestWorkdir: '/workspace',
-			hostWorkMountDir: '/host/validated-work',
+			guestWorkdir: '/work',
+			hostGitDirectoryRoot: testHostGitDirectoryRoot,
+			hostWorkspaceRoot: '/host/validated-work',
 			profile: {
 				cpus: 2,
 				imageProfile: 'tool-default',
@@ -664,15 +903,14 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			leaseManager,
 			readIdentityPem: async () => 'identity-pem',
 			resolveLeaseCreateOptions,
-			seedLeaseWorkspace: seedSandboxWorkspace,
 		});
 		const oldLease = await executeLeaseSemanticMutation(leaseRpc, 'lease_create', {
 			callerContext,
 			payload: callerContextPayload,
 		});
 		effectOrder.splice(0);
-		seedSandboxWorkspace.mockClear();
 		createLease.mockClear();
+		reacquireLease.mockClear();
 		releaseLease.mockClear();
 		const reacquirePayload = {
 			callerContext: {
@@ -698,7 +936,6 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		const firstPreparedMutation = await leaseRpc.prepareSemanticMutation(preparation);
 		const replayPreparedMutation = await leaseRpc.prepareSemanticMutation(preparation);
 		expect.soft(effectOrder).toEqual([]);
-		expect.soft(seedSandboxWorkspace).not.toHaveBeenCalled();
 		expect.soft(releaseLease).not.toHaveBeenCalled();
 		expect.soft(createLease).not.toHaveBeenCalled();
 		const identity = {
@@ -728,11 +965,11 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		// Assert
 		expect(firstResult).toMatchObject({ kind: 'completed' });
 		expect(replayResult).toEqual(firstResult);
-		expect(effectOrder).toEqual(['seed', 'release', 'create']);
-		expect(seedSandboxWorkspace).toHaveBeenCalledOnce();
-		expect(releaseLease).toHaveBeenCalledOnce();
-		expect(releaseLease).toHaveBeenCalledWith(oldLease.leaseId, { force: true });
-		expect(createLease).toHaveBeenCalledOnce();
+		expect(effectOrder).toEqual(['reacquire']);
+		expect(reacquireLease).toHaveBeenCalledOnce();
+		expect(reacquireLease).toHaveBeenCalledWith(oldLease.leaseId, expect.any(Object));
+		expect(releaseLease).not.toHaveBeenCalled();
+		expect(createLease).not.toHaveBeenCalled();
 	});
 
 	it.each([
@@ -754,11 +991,10 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				readIdentityPem: async () => 'identity-pem',
 				resolveLeaseCreateOptions: async () => ({
 					agentId: callerContext.agentId,
-					agentWorkspaceDir: callerContext.agentWorkspaceDir,
 					expectedGateway: TEST_GATEWAY_EPOCH,
-					guestWorkdir: '/workspace',
-					gatewayWorkMountDir: callerContext.workMountDir,
-					hostWorkMountDir: '/host/validated-work',
+					guestWorkdir: '/work',
+					hostGitDirectoryRoot: testHostGitDirectoryRoot,
+					hostWorkspaceRoot: '/host/validated-work',
 					profile: {
 						cpus: 2,
 						imageProfile: 'tool-default',
@@ -794,11 +1030,10 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			readIdentityPem: async () => 'identity-pem',
 			resolveLeaseCreateOptions: async () => ({
 				agentId: callerContext.agentId,
-				agentWorkspaceDir: callerContext.agentWorkspaceDir,
 				expectedGateway: staleGateway,
-				guestWorkdir: '/workspace',
-				gatewayWorkMountDir: callerContext.workMountDir,
-				hostWorkMountDir: '/host/validated-work',
+				guestWorkdir: '/work',
+				hostGitDirectoryRoot: testHostGitDirectoryRoot,
+				hostWorkspaceRoot: '/host/validated-work',
 				profile: {
 					cpus: 2,
 					imageProfile: 'tool-default',
@@ -832,11 +1067,10 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		const recordedHealthEvents: AgentVmHealthEvent[] = [];
 		const resolveLeaseCreateOptions = vi.fn(async () => ({
 			agentId: callerContext.agentId,
-			agentWorkspaceDir: callerContext.agentWorkspaceDir,
 			expectedGateway: TEST_GATEWAY_EPOCH,
-			guestWorkdir: '/workspace',
-			gatewayWorkMountDir: callerContext.workMountDir,
-			hostWorkMountDir: '/host/validated-work',
+			guestWorkdir: '/work',
+			hostGitDirectoryRoot: testHostGitDirectoryRoot,
+			hostWorkspaceRoot: '/host/validated-work',
 			profile: {
 				cpus: 2,
 				imageProfile: 'tool-default',
@@ -871,7 +1105,6 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				observedAtMs: 1_000,
 				operation: 'lease-create',
 				result: 'failed',
-				sessionKeyDigest: callerContext.sessionKeyDigest,
 				statusCode: 500,
 				zoneId: callerContext.zoneId,
 			},
@@ -886,11 +1119,10 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			readIdentityPem: async () => 'identity-pem',
 			resolveLeaseCreateOptions: async () => ({
 				agentId: callerContext.agentId,
-				agentWorkspaceDir: callerContext.agentWorkspaceDir,
 				expectedGateway: TEST_GATEWAY_EPOCH,
-				guestWorkdir: '/workspace',
-				gatewayWorkMountDir: callerContext.workMountDir,
-				hostWorkMountDir: '/host/validated-work',
+				guestWorkdir: '/work',
+				hostGitDirectoryRoot: testHostGitDirectoryRoot,
+				hostWorkspaceRoot: '/host/validated-work',
 				profile: {
 					cpus: 2,
 					imageProfile: 'tool-default',
@@ -916,7 +1148,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				...callerContextPayload,
 				correlation: {
 					runId: 'run-a',
-					sessionKeyDigest: callerContext.sessionKeyDigest,
+					sessionKeyDigest: optionalToolCorrelationSessionKeyDigest,
 					toolCallId: 'tool-call-a',
 					traceId: 'fedcba9876543210fedcba9876543210',
 				},
@@ -972,11 +1204,10 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			readIdentityPem: async () => 'identity-pem',
 			resolveLeaseCreateOptions: async () => ({
 				agentId: callerContext.agentId,
-				agentWorkspaceDir: callerContext.agentWorkspaceDir,
 				expectedGateway: TEST_GATEWAY_EPOCH,
-				guestWorkdir: '/workspace',
-				gatewayWorkMountDir: callerContext.workMountDir,
-				hostWorkMountDir: '/host/validated-work',
+				guestWorkdir: '/work',
+				hostGitDirectoryRoot: testHostGitDirectoryRoot,
+				hostWorkspaceRoot: '/host/validated-work',
 				profile: {
 					cpus: 2,
 					imageProfile: 'tool-default',
@@ -1031,17 +1262,80 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		});
 	});
 
+	it.each([
+		{
+			changedPrincipal: { toolPortalProfileId: 'privileged' },
+			field: 'toolPortalProfileId',
+		},
+		{
+			changedPrincipal: { profileAssignmentRevision: 'assignment-main-next' },
+			field: 'profileAssignmentRevision',
+		},
+		{
+			changedPrincipal: {
+				frameworkIdentity: { kind: 'hermes' as const, profileName: 'main' },
+			},
+			field: 'frameworkIdentity',
+		},
+	])('rejects lease reads when the trusted $field changes', async ({ changedPrincipal }) => {
+		const leaseRpc = createGatewayControlLeaseRpcOperations({
+			leaseManager: createTestLeaseManager(),
+			readIdentityPem: async () => 'identity-pem',
+			resolveLeaseCreateOptions: async () => ({
+				agentId: callerContext.agentId,
+				expectedGateway: TEST_GATEWAY_EPOCH,
+				guestWorkdir: '/work',
+				hostGitDirectoryRoot: testHostGitDirectoryRoot,
+				hostWorkspaceRoot: '/host/validated-work',
+				profile: { cpus: 2, imageProfile: 'tool-default', memory: '2G' },
+				profileId: 'standard',
+				zoneId: callerContext.zoneId,
+			}),
+		});
+		const lease = await executeLeaseSemanticMutation(leaseRpc, 'lease_create', {
+			callerContext,
+			payload: callerContextPayload,
+		});
+		const changedTrustedPrincipal = {
+			...callerContext.principal,
+			...changedPrincipal,
+		};
+		const changedCallerContext = {
+			...callerContext,
+			callerContextId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+			principal: changedTrustedPrincipal,
+			stablePrincipal: deriveGatewayControlStablePrincipal({
+				principal: changedTrustedPrincipal,
+			}),
+		} satisfies GatewayControlTrustedCallerContext;
+
+		await expect(
+			leaseRpc.getLease(
+				withCallerContextPayload(
+					{
+						callerContext: { callerContextId: changedCallerContext.callerContextId },
+						leaseId: lease.leaseId,
+					},
+					changedCallerContext,
+				),
+				{ includeSsh: 'private' },
+			),
+		).resolves.toEqual({
+			leaseRejectionReason: 'ownership_denied',
+			result: 'rejected',
+		});
+	});
+
 	it('keeps leases reachable after reconnect refreshes the caller context id', async () => {
 		const leaseRpc = createGatewayControlLeaseRpcOperations({
 			leaseManager: createTestLeaseManager(),
 			readIdentityPem: async () => 'identity-pem',
 			resolveLeaseCreateOptions: async () => ({
 				agentId: callerContext.agentId,
-				agentWorkspaceDir: callerContext.agentWorkspaceDir,
 				expectedGateway: TEST_GATEWAY_EPOCH,
-				guestWorkdir: '/workspace',
-				gatewayWorkMountDir: callerContext.workMountDir,
-				hostWorkMountDir: '/host/validated-work',
+				guestWorkdir: '/work',
+				hostGitDirectoryRoot: testHostGitDirectoryRoot,
+				hostWorkspaceRoot: '/host/validated-work',
 				profile: {
 					cpus: 2,
 					imageProfile: 'tool-default',
@@ -1109,17 +1403,122 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		);
 	});
 
+	it('returns the existing active use to a refreshed caller context after private revalidation', async () => {
+		// Arrange
+		let nowMs = 1_000;
+		let identityReadCount = 0;
+		const useId = '01890f00-0000-7000-8000-000000000000';
+		const leaseManager = createTestLeaseManager({ now: () => nowMs });
+		const leaseRpc = createGatewayControlLeaseRpcOperations({
+			leaseManager,
+			readIdentityPem: async () => {
+				identityReadCount += 1;
+				if (identityReadCount === 2) {
+					nowMs = 2_000;
+					leaseManager.heartbeatActiveUse('lease-main', useId, {
+						authority: {
+							gateway: TEST_GATEWAY_EPOCH,
+							principal: callerPrincipal,
+						},
+						processEpoch: TEST_PROCESS_EPOCH,
+						sessionAttachmentGeneration: TEST_ATTACHMENT_GENERATION,
+					});
+				}
+				return 'identity-pem';
+			},
+			resolveLeaseCreateOptions: async ({ callerContext: currentCallerContext }) => ({
+				agentId: currentCallerContext.agentId,
+				expectedGateway: TEST_GATEWAY_EPOCH,
+				guestWorkdir: '/work',
+				hostGitDirectoryRoot: testHostGitDirectoryRoot,
+				hostWorkspaceRoot: '/host/validated-work',
+				profile: {
+					cpus: 2,
+					imageProfile: 'tool-default',
+					memory: '2G',
+				},
+				profileId: 'standard',
+				zoneId: currentCallerContext.zoneId,
+			}),
+		});
+		const firstLease = await executeLeaseSemanticMutation(leaseRpc, 'lease_create', {
+			callerContext,
+			payload: callerContextPayload,
+		});
+		await executeLeaseSemanticMutation(
+			leaseRpc,
+			'lease_use_start',
+			withCallerContextPayload({
+				...callerContextPayload,
+				leaseId: firstLease.leaseId,
+				useId,
+			}),
+		);
+
+		// Act
+		const refreshedLease = await executeLeaseSemanticMutation(leaseRpc, 'lease_create', {
+			callerContext: refreshedCallerContextIdOnly,
+			payload: {
+				callerContext: { callerContextId: refreshedCallerContext.callerContextId },
+			},
+		});
+
+		// Assert
+		expect(refreshedLease).toEqual(
+			expect.objectContaining({
+				activeUseId: useId,
+				expiresAtMs: 6_000,
+				leaseId: firstLease.leaseId,
+				state: 'active',
+			}),
+		);
+		expect(identityReadCount).toBe(2);
+	});
+
+	it('fails private serialization closed when the current-use projection fails', async () => {
+		// Arrange
+		const leaseManager = createTestLeaseManager();
+		vi.spyOn(leaseManager, 'getCurrentNonterminalUses').mockImplementation(() => {
+			throw new Error('current-use projection failed');
+		});
+		const leaseRpc = createGatewayControlLeaseRpcOperations({
+			leaseManager,
+			readIdentityPem: async () => 'identity-pem',
+			resolveLeaseCreateOptions: async () => ({
+				agentId: callerContext.agentId,
+				expectedGateway: TEST_GATEWAY_EPOCH,
+				guestWorkdir: '/work',
+				hostGitDirectoryRoot: testHostGitDirectoryRoot,
+				hostWorkspaceRoot: '/host/validated-work',
+				profile: {
+					cpus: 2,
+					imageProfile: 'tool-default',
+					memory: '2G',
+				},
+				profileId: 'standard',
+				zoneId: callerContext.zoneId,
+			}),
+		});
+
+		// Act / Assert
+		await expect(
+			executeLeaseSemanticMutation(leaseRpc, 'lease_create', {
+				callerContext,
+				payload: callerContextPayload,
+			}),
+		).rejects.toThrow('current-use projection failed');
+	});
+
 	it('rejects current lease work when the same-gateway fence changes after caller-context resolution', async () => {
 		const leaseRpc = createGatewayControlLeaseRpcOperations({
 			leaseManager: createTestLeaseManager(),
 			readIdentityPem: async () => 'identity-pem',
 			resolveLeaseCreateOptions: async () => ({
 				agentId: callerContext.agentId,
-				agentWorkspaceDir: callerContext.agentWorkspaceDir,
 				expectedGateway: TEST_GATEWAY_EPOCH,
-				guestWorkdir: '/workspace',
-				gatewayWorkMountDir: callerContext.workMountDir,
-				hostWorkMountDir: '/host/validated-work',
+				guestWorkdir: '/work',
+				hostGitDirectoryRoot: testHostGitDirectoryRoot,
+				hostWorkspaceRoot: '/host/validated-work',
 				profile: {
 					cpus: 2,
 					imageProfile: 'tool-default',
@@ -1207,11 +1606,10 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				},
 				resolveLeaseCreateOptions: async () => ({
 					agentId: callerContext.agentId,
-					agentWorkspaceDir: callerContext.agentWorkspaceDir,
 					expectedGateway: TEST_GATEWAY_EPOCH,
-					guestWorkdir: '/workspace',
-					gatewayWorkMountDir: callerContext.workMountDir,
-					hostWorkMountDir: '/host/validated-work',
+					guestWorkdir: '/work',
+					hostGitDirectoryRoot: testHostGitDirectoryRoot,
+					hostWorkspaceRoot: '/host/validated-work',
 					profile: {
 						cpus: 2,
 						imageProfile: 'tool-default',
@@ -1240,10 +1638,13 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 					},
 				},
 			});
+			const replacementBinding = leaseManager.getCurrentLeaseBinding('lease-new');
 
 			expect(replacementLease).toEqual(
 				expect.objectContaining({
+					leafGeneration: replacementBinding?.leafGeneration,
 					leaseId: 'lease-new',
+					sshBindingId: replacementBinding?.sshBinding.bindingId,
 					state: 'idle',
 				}),
 			);
@@ -1266,11 +1667,10 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		let profileId = 'standard';
 		const resolveLeaseCreateOptions = vi.fn(async () => ({
 			agentId: callerContext.agentId,
-			agentWorkspaceDir: callerContext.agentWorkspaceDir,
 			expectedGateway: TEST_GATEWAY_EPOCH,
-			guestWorkdir: '/workspace',
-			gatewayWorkMountDir: callerContext.workMountDir,
-			hostWorkMountDir: '/host/validated-work',
+			guestWorkdir: '/work',
+			hostGitDirectoryRoot: testHostGitDirectoryRoot,
+			hostWorkspaceRoot: '/host/validated-work',
 			profile: {
 				cpus: 2,
 				imageProfile: 'tool-default',
@@ -1314,16 +1714,75 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		expect(leaseManager.peekLease('lease-new')).toBeUndefined();
 	});
 
+	it('rejects reacquire when recorded profile assignment revision is stale', async () => {
+		const leaseManager = createTestLeaseManager({ leaseIds: ['lease-old', 'lease-new'] });
+		const leaseRpc = createGatewayControlLeaseRpcOperations({
+			leaseManager,
+			readIdentityPem: async () => 'identity-pem',
+			resolveLeaseCreateOptions: async ({ callerContext: context }) => ({
+				agentId: context.agentId,
+				expectedGateway: TEST_GATEWAY_EPOCH,
+				guestWorkdir: '/work',
+				hostGitDirectoryRoot: testHostGitDirectoryRoot,
+				hostWorkspaceRoot: '/host/validated-work',
+				profile: {
+					cpus: 2,
+					imageProfile: 'tool-default',
+					memory: '2G',
+				},
+				profileId: 'standard',
+				zoneId: context.zoneId,
+			}),
+		});
+		const oldLease = await executeLeaseSemanticMutation(leaseRpc, 'lease_create', {
+			callerContext,
+			payload: callerContextPayload,
+		});
+		const readLeaseAuthority = leaseManager.getLeaseAuthority.bind(leaseManager);
+		vi.spyOn(leaseManager, 'getLeaseAuthority').mockImplementation((leaseId) => {
+			const leaseAuthority = readLeaseAuthority(leaseId);
+			return leaseAuthority === undefined
+				? undefined
+				: {
+						...leaseAuthority,
+						compatibility: {
+							...leaseAuthority.compatibility,
+							profileAssignmentRevision: 'stale-assignment-revision',
+						},
+					};
+		});
+
+		await expect(
+			executeLeaseSemanticMutation(leaseRpc, 'lease_reacquire', {
+				callerContext: refreshedCallerContextIdOnly,
+				payload: {
+					callerContext: {
+						callerContextId: refreshedCallerContext.callerContextId,
+					},
+					oldLeaseId: oldLease.leaseId,
+					staleEvidence: {
+						kind: 'lease-manager',
+						observedAtMs: 1_100,
+						reason: 'released',
+					},
+				},
+			}),
+		).resolves.toEqual({
+			leaseRejectionReason: 'ownership_denied',
+			result: 'rejected',
+		});
+		expect(leaseManager.peekLease('lease-new')).toBeUndefined();
+	});
+
 	it('revalidates current compatibility before returning a recorded replacement lease', async () => {
 		const leaseManager = createTestLeaseManager({ leaseIds: ['lease-old', 'lease-new'] });
-		let hostWorkMountDir = '/host/validated-work';
+		let hostWorkspaceRoot = '/host/validated-work';
 		const resolveLeaseCreateOptions = vi.fn(async () => ({
 			agentId: callerContext.agentId,
-			agentWorkspaceDir: callerContext.agentWorkspaceDir,
 			expectedGateway: TEST_GATEWAY_EPOCH,
-			guestWorkdir: '/workspace',
-			gatewayWorkMountDir: callerContext.workMountDir,
-			hostWorkMountDir,
+			guestWorkdir: '/work',
+			hostGitDirectoryRoot: testHostGitDirectoryRoot,
+			hostWorkspaceRoot,
 			profile: {
 				cpus: 2,
 				imageProfile: 'tool-default',
@@ -1358,7 +1817,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			}),
 		).resolves.toEqual(expect.objectContaining({ leaseId: 'lease-new' }));
 
-		hostWorkMountDir = '/host/other-work';
+		hostWorkspaceRoot = '/host/other-work';
 
 		await expect(
 			executeLeaseSemanticMutation(leaseRpc, 'lease_reacquire', {
@@ -1386,11 +1845,10 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		const leaseManager = createTestLeaseManager({ leaseIds: ['lease-old', 'lease-new'] });
 		const resolveLeaseCreateOptions = vi.fn(async ({ callerContext: context }) => ({
 			agentId: context.agentId,
-			agentWorkspaceDir: context.agentWorkspaceDir,
 			expectedGateway: TEST_GATEWAY_EPOCH,
-			guestWorkdir: '/workspace',
-			gatewayWorkMountDir: context.workMountDir,
-			hostWorkMountDir: '/host/validated-work',
+			guestWorkdir: '/work',
+			hostGitDirectoryRoot: testHostGitDirectoryRoot,
+			hostWorkspaceRoot: '/host/validated-work',
 			profile: {
 				cpus: 2,
 				imageProfile: 'tool-default',
@@ -1435,11 +1893,10 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		const recordedHealthEvents: AgentVmHealthEvent[] = [];
 		const resolveLeaseCreateOptions = vi.fn(async ({ callerContext: context }) => ({
 			agentId: context.agentId,
-			agentWorkspaceDir: context.agentWorkspaceDir,
 			expectedGateway: TEST_GATEWAY_EPOCH,
-			guestWorkdir: '/workspace',
-			gatewayWorkMountDir: callerContext.workMountDir,
-			hostWorkMountDir: '/host/validated-work',
+			guestWorkdir: '/work',
+			hostGitDirectoryRoot: testHostGitDirectoryRoot,
+			hostWorkspaceRoot: '/host/validated-work',
 			profile: {
 				cpus: 2,
 				imageProfile: 'tool-default',
@@ -1501,11 +1958,10 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		const leaseManager = createTestLeaseManager({ leaseIds: ['lease-old', 'lease-new'] });
 		const resolveLeaseCreateOptions = vi.fn(async ({ callerContext: context }) => ({
 			agentId: context.agentId,
-			agentWorkspaceDir: context.agentWorkspaceDir,
 			expectedGateway: TEST_GATEWAY_EPOCH,
-			guestWorkdir: '/workspace',
-			gatewayWorkMountDir: callerContext.workMountDir,
-			hostWorkMountDir: '/host/validated-work',
+			guestWorkdir: '/work',
+			hostGitDirectoryRoot: testHostGitDirectoryRoot,
+			hostWorkspaceRoot: '/host/validated-work',
 			profile: {
 				cpus: 2,
 				imageProfile: 'tool-default',
@@ -1553,11 +2009,10 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		const leaseManager = createTestLeaseManager({ leaseIds: ['lease-old', 'lease-new'] });
 		const resolveLeaseCreateOptions = vi.fn(async ({ callerContext: context }) => ({
 			agentId: context.agentId,
-			agentWorkspaceDir: context.agentWorkspaceDir,
 			expectedGateway: TEST_GATEWAY_EPOCH,
-			guestWorkdir: '/workspace',
-			gatewayWorkMountDir: context.workMountDir,
-			hostWorkMountDir: '/host/validated-work',
+			guestWorkdir: '/work',
+			hostGitDirectoryRoot: testHostGitDirectoryRoot,
+			hostWorkspaceRoot: '/host/validated-work',
 			profile: {
 				cpus: 2,
 				imageProfile: 'tool-default',
@@ -1623,43 +2078,17 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		});
 	});
 
-	it('serializes the replacement created during reacquire resolution', async () => {
-		const baseLeaseManager = createTestLeaseManager({ leaseIds: ['lease-old', 'lease-race'] });
-		let injectedSameAgentCreate = false;
-		const leaseRpcRef: {
-			current?: ReturnType<typeof createGatewayControlLeaseRpcOperations>;
-		} = {};
-		const leaseManager = {
-			...baseLeaseManager,
-			releaseLease: async (
-				leaseId: string,
-				options?: Parameters<typeof baseLeaseManager.releaseLease>[1],
-			): Promise<void> => {
-				await baseLeaseManager.releaseLease(leaseId, options);
-				if (!injectedSameAgentCreate && leaseId === 'lease-old') {
-					injectedSameAgentCreate = true;
-					const currentLeaseRpc = leaseRpcRef.current;
-					if (currentLeaseRpc === undefined) {
-						throw new Error('test lease RPC was not initialized');
-					}
-					await executeLeaseSemanticMutation(currentLeaseRpc, 'lease_create', {
-						callerContext: sameAgentDifferentSessionCallerContext,
-						payload: {
-							callerContext: {
-								callerContextId: sameAgentDifferentSessionCallerContext.callerContextId,
-							},
-						},
-					});
-				}
-			},
-		};
+	it('delegates reacquire atomically and serializes its replacement', async () => {
+		const leaseManager = createTestLeaseManager({ leaseIds: ['lease-old', 'lease-race'] });
+		const createLease = vi.spyOn(leaseManager, 'createLease');
+		const reacquireLease = vi.spyOn(leaseManager, 'reacquireLease');
+		const releaseLease = vi.spyOn(leaseManager, 'releaseLease');
 		const resolveLeaseCreateOptions = vi.fn(async ({ callerContext: context }) => ({
 			agentId: context.agentId,
-			agentWorkspaceDir: context.agentWorkspaceDir,
 			expectedGateway: TEST_GATEWAY_EPOCH,
-			guestWorkdir: '/workspace',
-			gatewayWorkMountDir: context.workMountDir,
-			hostWorkMountDir: '/host/validated-work',
+			guestWorkdir: '/work',
+			hostGitDirectoryRoot: testHostGitDirectoryRoot,
+			hostWorkspaceRoot: '/host/validated-work',
 			profile: {
 				cpus: 2,
 				imageProfile: 'tool-default',
@@ -1673,12 +2102,32 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			readIdentityPem: async () => 'identity-pem',
 			resolveLeaseCreateOptions,
 		});
-		leaseRpcRef.current = leaseRpc;
 		const oldLease = await executeLeaseSemanticMutation(leaseRpc, 'lease_create', {
 			callerContext,
 			payload: callerContextPayload,
 		});
+		createLease.mockClear();
 
+		const replacement = await executeLeaseSemanticMutation(leaseRpc, 'lease_reacquire', {
+			callerContext: refreshedCallerContextIdOnly,
+			payload: {
+				callerContext: {
+					callerContextId: refreshedCallerContext.callerContextId,
+				},
+				oldLeaseId: oldLease.leaseId,
+				staleEvidence: {
+					kind: 'tool-vm-ssh',
+					observedAtMs: 1_100,
+					operation: 'command',
+				},
+			},
+		});
+
+		expect(replacement).toEqual(expect.objectContaining({ leaseId: 'lease-race' }));
+		expect(reacquireLease).toHaveBeenCalledOnce();
+		expect(reacquireLease).toHaveBeenCalledWith('lease-old', expect.any(Object));
+		expect(releaseLease).not.toHaveBeenCalled();
+		expect(createLease).not.toHaveBeenCalled();
 		await expect(
 			executeLeaseSemanticMutation(leaseRpc, 'lease_reacquire', {
 				callerContext: refreshedCallerContextIdOnly,
@@ -1694,22 +2143,25 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 					},
 				},
 			}),
-		).resolves.toEqual(expect.objectContaining({ leaseId: 'lease-race' }));
-		expect(injectedSameAgentCreate).toBe(true);
+		).resolves.toEqual({
+			leaseRejectionReason: 'lease_authority_absent',
+			result: 'rejected',
+		});
 	});
 
-	it('blocks reacquire when force release cannot prove old lease destruction', async () => {
+	it('admits a successor after ManagedVm close while predecessor SSH cleanup remains failed', async () => {
 		const leaseManager = createTestLeaseManager({
-			closeError: new Error('close failed after logical retirement'),
+			createManagedVm: createManagedVmStub({
+				sshCloseError: new Error('SSH cleanup failed after close'),
+			}),
 			leaseIds: ['lease-old', 'lease-new'],
 		});
 		const resolveLeaseCreateOptions = vi.fn(async ({ callerContext: context }) => ({
 			agentId: context.agentId,
-			agentWorkspaceDir: context.agentWorkspaceDir,
 			expectedGateway: TEST_GATEWAY_EPOCH,
-			guestWorkdir: '/workspace',
-			gatewayWorkMountDir: context.workMountDir,
-			hostWorkMountDir: '/host/validated-work',
+			guestWorkdir: '/work',
+			hostGitDirectoryRoot: testHostGitDirectoryRoot,
+			hostWorkspaceRoot: '/host/validated-work',
 			profile: {
 				cpus: 2,
 				imageProfile: 'tool-default',
@@ -1728,6 +2180,27 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			payload: callerContextPayload,
 		});
 
+		const replacement = await executeLeaseSemanticMutation(leaseRpc, 'lease_reacquire', {
+			callerContext: refreshedCallerContextIdOnly,
+			payload: {
+				callerContext: {
+					callerContextId: refreshedCallerContext.callerContextId,
+				},
+				oldLeaseId: oldLease.leaseId,
+				staleEvidence: {
+					kind: 'tool-vm-ssh',
+					observedAtMs: 1_100,
+					operation: 'command',
+				},
+			},
+		});
+
+		expect(replacement).toEqual(expect.objectContaining({ leaseId: 'lease-new' }));
+		expect(leaseManager.peekLease('lease-old')?.lease.id).toBe('lease-old');
+		expect(leaseManager.getLeaseAuthority('lease-old')).toBeUndefined();
+		expect(leaseManager.getCurrentLeaseBinding('lease-old')).toBeUndefined();
+		expect(leaseManager.getLeaseAuthority('lease-new')).toBeDefined();
+		expect(leaseManager.getCurrentLeaseBinding('lease-new')).toBeDefined();
 		await expect(
 			executeLeaseSemanticMutation(leaseRpc, 'lease_reacquire', {
 				callerContext: refreshedCallerContextIdOnly,
@@ -1743,15 +2216,17 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 					},
 				},
 			}),
-		).rejects.toThrow('close failed after logical retirement');
-		expect(leaseManager.peekLease('lease-old')?.lease.id).toBe('lease-old');
-		expect(leaseManager.peekLease('lease-new')).toBeUndefined();
+		).resolves.toEqual({
+			leaseRejectionReason: 'lease_authority_absent',
+			result: 'rejected',
+		});
 	});
 
-	it('keeps releasing authority fenced until exact retry permits one successor', async () => {
-		const tcpPool = createTcpPool({ basePort: 19000, size: 1 });
+	it('keeps post-fence cleanup-debt predecessor private while successor remains current', async () => {
+		const closeError = new Error('containment close failed');
+		const tcpPool = createTcpPool({ basePort: 19000, size: 2 });
 		const leaseManager = createTestLeaseManager({
-			closeErrors: [new Error('incomplete exact destruction'), null],
+			closeError,
 			leaseIds: ['lease-old', 'lease-new', 'lease-unexpected'],
 			tcpPool,
 		});
@@ -1762,11 +2237,10 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			readIdentityPem: async () => 'identity-pem',
 			resolveLeaseCreateOptions: async ({ callerContext: context }) => ({
 				agentId: context.agentId,
-				agentWorkspaceDir: context.agentWorkspaceDir,
 				expectedGateway: TEST_GATEWAY_EPOCH,
-				guestWorkdir: '/workspace',
-				gatewayWorkMountDir: context.workMountDir,
-				hostWorkMountDir: '/host/validated-work',
+				guestWorkdir: '/work',
+				hostGitDirectoryRoot: testHostGitDirectoryRoot,
+				hostWorkspaceRoot: '/host/validated-work',
 				profile: {
 					cpus: 2,
 					imageProfile: 'tool-default',
@@ -1787,11 +2261,11 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 
 		await expect(
 			executeLeaseSemanticMutation(leaseRpc, 'lease_release', oldLeasePayload),
-		).rejects.toThrow(/incomplete/u);
+		).rejects.toThrow(closeError);
 
 		await expect(
 			executeLeaseSemanticMutation(leaseRpc, 'lease_renew', oldLeasePayload),
-		).rejects.toThrow(/releasing/u);
+		).resolves.toBeUndefined();
 		await expect(
 			executeLeaseSemanticMutation(
 				leaseRpc,
@@ -1802,8 +2276,10 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 					useId: '01890f00-0000-7000-8000-000000000001',
 				}),
 			),
-		).rejects.toThrow(/not available for new active work/u);
+		).resolves.toBeUndefined();
 		expect(leaseManager.peekLease(oldLease.leaseId)?.lease.id).toBe(oldLease.leaseId);
+		expect(leaseManager.getLeaseAuthority(oldLease.leaseId)).toBeUndefined();
+		expect(leaseManager.getCurrentLeaseBinding(oldLease.leaseId)).toBeUndefined();
 		expect(retirementEvents).toEqual([]);
 		expect(tcpPool.isQuarantined(0)).toBe(true);
 
@@ -1821,28 +2297,52 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				},
 			},
 		};
-		const replacementLease = await executeLeaseSemanticMutation(
+		const fencedReacquire = await executeLeaseSemanticMutation(
 			leaseRpc,
 			'lease_reacquire',
 			reacquireRequest,
 		);
+		const successorLease = await executeLeaseSemanticMutation(leaseRpc, 'lease_create', {
+			callerContext: refreshedCallerContext,
+			payload: {
+				callerContext: {
+					callerContextId: refreshedCallerContext.callerContextId,
+				},
+			},
+		});
+		const repeatedCreate = await executeLeaseSemanticMutation(leaseRpc, 'lease_create', {
+			callerContext: refreshedCallerContext,
+			payload: {
+				callerContext: {
+					callerContextId: refreshedCallerContext.callerContextId,
+				},
+			},
+		});
 		const repeatedReacquire = await executeLeaseSemanticMutation(
 			leaseRpc,
 			'lease_reacquire',
 			reacquireRequest,
 		);
 
-		expect(replacementLease).toMatchObject({ leaseId: 'lease-new', tcpSlot: 0 });
+		expect(fencedReacquire).toEqual({
+			leaseRejectionReason: 'lease_authority_absent',
+			result: 'rejected',
+		});
+		expect(successorLease).toEqual(expect.objectContaining({ leaseId: 'lease-new' }));
+		expect(repeatedCreate).toEqual(expect.objectContaining({ leaseId: 'lease-new' }));
 		expect(repeatedReacquire).toEqual({
 			leaseRejectionReason: 'lease_authority_absent',
 			result: 'rejected',
 		});
-		expect(leaseManager.peekLease(oldLease.leaseId)).toBeUndefined();
+		expect(leaseManager.peekLease(oldLease.leaseId)).toBeDefined();
+		expect(leaseManager.getLeaseAuthority(oldLease.leaseId)).toBeUndefined();
+		expect(leaseManager.getCurrentLeaseBinding(oldLease.leaseId)).toBeUndefined();
 		expect(leaseManager.listLeases().map((lease) => lease.id)).toEqual(['lease-new']);
-		expect(retirementEvents).toEqual([
-			expect.objectContaining({ leaseId: oldLease.leaseId, reason: 'released' }),
-		]);
-		expect(tcpPool.isQuarantined(0)).toBe(false);
+		expect(leaseManager.getLeaseAuthority('lease-new')).toBeDefined();
+		expect(leaseManager.getCurrentLeaseBinding('lease-new')).toBeDefined();
+		expect(retirementEvents).toEqual([]);
+		expect(tcpPool.isQuarantined(0)).toBe(true);
+		expect(tcpPool.isQuarantined(1)).toBe(false);
 	});
 
 	it('reacquires from current controller compatibility without runtime-status authority', async () => {
@@ -1855,11 +2355,10 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			observedResolvedGateways.push(structuredClone(gateway));
 			return {
 				agentId: context.agentId,
-				agentWorkspaceDir: context.agentWorkspaceDir,
 				expectedGateway: TEST_GATEWAY_EPOCH,
-				guestWorkdir: '/workspace',
-				gatewayWorkMountDir: context.workMountDir,
-				hostWorkMountDir: '/host/validated-work',
+				guestWorkdir: '/work',
+				hostGitDirectoryRoot: testHostGitDirectoryRoot,
+				hostWorkspaceRoot: '/host/validated-work',
 				profile: {
 					cpus: 2,
 					imageProfile: 'tool-default',
@@ -1954,11 +2453,10 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			readIdentityPem: async () => 'identity-pem',
 			resolveLeaseCreateOptions: async () => ({
 				agentId: callerContext.agentId,
-				agentWorkspaceDir: callerContext.agentWorkspaceDir,
 				expectedGateway: TEST_GATEWAY_EPOCH,
-				guestWorkdir: '/workspace',
-				gatewayWorkMountDir: callerContext.workMountDir,
-				hostWorkMountDir: '/host/validated-work',
+				guestWorkdir: '/work',
+				hostGitDirectoryRoot: testHostGitDirectoryRoot,
+				hostWorkspaceRoot: '/host/validated-work',
 				profile: {
 					cpus: 2,
 					imageProfile: 'tool-default',
@@ -2016,11 +2514,10 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			},
 			resolveLeaseCreateOptions: async () => ({
 				agentId: callerContext.agentId,
-				agentWorkspaceDir: callerContext.agentWorkspaceDir,
 				expectedGateway: TEST_GATEWAY_EPOCH,
-				guestWorkdir: '/workspace',
-				gatewayWorkMountDir: callerContext.workMountDir,
-				hostWorkMountDir: '/host/validated-work',
+				guestWorkdir: '/work',
+				hostGitDirectoryRoot: testHostGitDirectoryRoot,
+				hostWorkspaceRoot: '/host/validated-work',
 				profile: {
 					cpus: 2,
 					imageProfile: 'tool-default',
@@ -2060,11 +2557,10 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			readIdentityPem: async () => 'identity-pem',
 			resolveLeaseCreateOptions: async () => ({
 				agentId: callerContext.agentId,
-				agentWorkspaceDir: callerContext.agentWorkspaceDir,
 				expectedGateway: TEST_GATEWAY_EPOCH,
-				guestWorkdir: '/workspace',
-				gatewayWorkMountDir: callerContext.workMountDir,
-				hostWorkMountDir: '/host/validated-work',
+				guestWorkdir: '/work',
+				hostGitDirectoryRoot: testHostGitDirectoryRoot,
+				hostWorkspaceRoot: '/host/validated-work',
 				profile: {
 					cpus: 2,
 					imageProfile: 'tool-default',
@@ -2103,11 +2599,10 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			readIdentityPem: async () => 'identity-pem',
 			resolveLeaseCreateOptions: async () => ({
 				agentId: callerContext.agentId,
-				agentWorkspaceDir: callerContext.agentWorkspaceDir,
 				expectedGateway: TEST_GATEWAY_EPOCH,
-				guestWorkdir: '/workspace',
-				gatewayWorkMountDir: callerContext.workMountDir,
-				hostWorkMountDir: '/host/validated-work',
+				guestWorkdir: '/work',
+				hostGitDirectoryRoot: testHostGitDirectoryRoot,
+				hostWorkspaceRoot: '/host/validated-work',
 				profile: {
 					cpus: 2,
 					imageProfile: 'tool-default',

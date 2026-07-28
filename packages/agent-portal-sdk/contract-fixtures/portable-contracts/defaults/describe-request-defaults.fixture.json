@@ -1,0 +1,44 @@
+{
+	"caseId": "describe-request-defaults",
+	"schemaId": "portal.describe.request",
+	"tags": ["accepted", "default", "request"],
+	"input": {
+		"requests": [
+			{
+				"id": "describe-1",
+				"tools": [
+					{
+						"name": "get_issue",
+						"namespace": "github"
+					}
+				]
+			}
+		]
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"requests": [
+				{
+					"id": "describe-1",
+					"includeJsonSchema": true,
+					"includeRelated": true,
+					"includeTypescriptHelper": false,
+					"includeZod": false,
+					"tools": [
+						{
+							"name": "get_issue",
+							"namespace": "github"
+						}
+					]
+				}
+			]
+		},
+		"canonicalJson": "{\"requests\":[{\"id\":\"describe-1\",\"includeJsonSchema\":true,\"includeRelated\":true,\"includeTypescriptHelper\":false,\"includeZod\":false,\"tools\":[{\"name\":\"get_issue\",\"namespace\":\"github\"}]}]}",
+		"refinementIdentities": [
+			"portal.batch.unique-item-ids",
+			"portal.describe.default-includes",
+			"portal.request-id.not-reserved"
+		]
+	}
+}

@@ -1,16 +1,28 @@
 import type {
 	GatewayIngressConfig,
+	ManagedGatewayBootContract,
 	GatewayProcessSpec,
 	GatewayZoneConfig,
 	GatewayZoneObservabilityConfig,
 } from '@agent-vm/gateway-lifecycle';
+import {
+	createGatewayTelemetryProducerSafetyContract,
+	gatewayFrameworkTelemetryServiceNames,
+	gatewayToolPortalTelemetryServiceName,
+} from '@agent-vm/gateway-lifecycle';
 import type {
 	ManagedVm,
 	ManagedVmCreateRequest,
+	ManagedVmEnableSshOptions,
+	ManagedVmExecCommand,
+	ManagedVmExecOptions,
+	ManagedVmExecProcess,
 	ManagedVmImageBuildResult,
+	ManagedVmSshAccess,
 } from '@agent-vm/managed-vm';
 
 import type { LoadedSystemConfig, SystemConfig } from '../config/system-config.js';
+import type { ControllerApprovalLedger } from '../controller/approval/controller-approval-ledger.js';
 import type {
 	ControlSessionDispatcher,
 	ControlSessionFenceRegistry,
@@ -18,23 +30,20 @@ import type {
 	GatewayControlControllerHostActionOperations,
 	GatewayControlAttemptOutcome,
 	GatewayControlAttachmentGapTransition,
+	GatewayControlBindingPublicationSource,
 	GatewayControlLeaseRpcOperations,
 	GatewayControlProcessAdmissionCoordinator,
 	GatewayControlReconnectExhaustedTransition,
 	GatewayDisposableControlSessionClient,
 	GatewayControlSessionMaterial,
 } from '../controller/control-session/index.js';
-import type { GatewayVmRecoverySourceKey } from '../controller/health/gateway-vm-recovery-policy.js';
 import type { HealthEventStore } from '../controller/health/health-event-store.js';
 import type { OpenClawRuntimeStatusStore } from '../controller/openclaw-runtime-status.js';
-import type { OpenClawProcessSupervisor } from '../controller/process-supervisor/openclaw-process-supervisor.js';
 import type { GatewayVmLifecycleAuthority } from '../controller/vm-ownership/gateway-vm-lifecycle-authority.js';
 import type { GatewayEpochIdentity } from '../controller/vm-ownership/vm-ownership-contracts.js';
+import type { ManagedVmProcessTarget } from '../shared/controller-managed-vm-termination.js';
 import type { RunTaskFn } from '../shared/run-task.js';
-import type {
-	OpenClawGatewayProcessEpochOwner,
-	OpenClawProcessEpochLossBarrier,
-} from './openclaw-gateway-process-epoch-owner.js';
+import type { GatewayExpectedAdmissionCohort } from './gateway-aggregate-admission-state.js';
 
 export type GatewayZone = SystemConfig['zones'][number];
 
@@ -56,17 +65,18 @@ export interface GatewayControlSessionHeartbeat {
 	readonly processEpoch: string;
 }
 
+export interface GatewayRuntimeAttachmentLost {
+	readonly connectionId: string;
+	readonly gateway: GatewayEpochIdentity;
+	readonly observationSequence: number;
+}
+
 export type GatewayControlSessionAttemptOutcome = GatewayControlAttemptOutcome & {
 	readonly gateway: GatewayEpochIdentity;
 	readonly processEpoch: string;
 };
 
 export interface StartGatewayZoneOptions {
-	readonly beginProcessEpochLoss?: (loss: {
-		readonly ambiguousAtMs: number;
-		readonly gateway: GatewayEpochIdentity;
-		readonly processEpoch: string;
-	}) => OpenClawProcessEpochLossBarrier;
 	readonly controlSession?: {
 		readonly controllerEpoch: string;
 	};
@@ -81,6 +91,8 @@ export interface StartGatewayZoneOptions {
 	}) => Promise<GatewayVmLifecycleAuthority>;
 	readonly environmentOverride?: Record<string, string>;
 	readonly gatewayControlControllerHostActions?: GatewayControlControllerHostActionOperations;
+	readonly gatewayControlApprovalLedger?: ControllerApprovalLedger;
+	readonly gatewayControlBindingPublicationSource?: GatewayControlBindingPublicationSource;
 	readonly gatewayControlLeaseRpc?: GatewayControlLeaseRpcOperations;
 	readonly gatewayControlProcessAdmissionCoordinator?: GatewayControlProcessAdmissionCoordinator;
 	readonly gitReadAllowlistRepos?: readonly string[];
@@ -94,9 +106,13 @@ export interface StartGatewayZoneOptions {
 	readonly onControlSessionReconnectExhausted?: (
 		transition: GatewayControlSessionReconnectExhausted,
 	) => void;
+	readonly onGatewayRuntimeAttachmentLost?: (transition: GatewayRuntimeAttachmentLost) => void;
 	readonly prebuiltImage?: ManagedVmImageBuildResult | undefined;
 	readonly runTask?: RunTaskFn;
 	readonly runtimeEnvironment?: Readonly<Record<string, string>>;
+	readonly runtimeRecordTarget:
+		| import('../controller/durable-state/controller-state-record-paths.js').ControllerManagedGatewayRuntimeRecordTarget
+		| import('../controller/durable-state/controller-state-record-paths.js').ControllerWorkerTaskRuntimeRecordTarget;
 	readonly runtimePluginConfigs?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
 	readonly secretResolver: import('@agent-vm/secret-management').SecretResolver;
 	readonly systemConfig: LoadedSystemConfig;
@@ -107,25 +123,81 @@ export interface StartGatewayZoneOptions {
 	readonly zoneOverride?: GatewayZone;
 }
 
-export type GatewayZonePreflightOptions = Omit<StartGatewayZoneOptions, 'createVmOwnership'>;
+export type GatewayZonePreflightOptions = Omit<
+	StartGatewayZoneOptions,
+	'createVmOwnership' | 'runtimeRecordTarget'
+>;
 
-export interface GatewayZoneStartResult {
-	readonly controlSession?: GatewayDisposableControlSessionClient | undefined;
-	readonly controlSessionRecoverySourceKey?: GatewayVmRecoverySourceKey | undefined;
+export type GatewayZoneCleanupFailureStage =
+	| 'control-session-disposal'
+	| 'control-session-material-deletion'
+	| 'ingress-withdrawal'
+	| 'managed-boot-input-release'
+	| 'runtime-record-deletion';
+
+export interface GatewayZoneCleanupFailure {
+	readonly error: unknown;
+	readonly stage: GatewayZoneCleanupFailureStage;
+}
+
+export type GatewayZoneDestroyResult =
+	| { readonly kind: 'destroyed-clean' }
+	| {
+			readonly cleanupFailures: readonly [
+				GatewayZoneCleanupFailure,
+				...GatewayZoneCleanupFailure[],
+			];
+			readonly kind: 'destroyed-cleanup-incomplete';
+	  };
+
+export interface GatewayZoneVmOperations extends Pick<
+	ManagedVm,
+	'enableSsh' | 'exec' | 'getHostProcessId' | 'id'
+> {}
+
+export function createGatewayZoneVmOperations(managedVm: ManagedVm): GatewayZoneVmOperations {
+	return {
+		enableSsh(options?: ManagedVmEnableSshOptions): Promise<ManagedVmSshAccess> {
+			return managedVm.enableSsh(options);
+		},
+		exec(command: ManagedVmExecCommand, options?: ManagedVmExecOptions): ManagedVmExecProcess {
+			return managedVm.exec(command, options);
+		},
+		getHostProcessId(): number | null {
+			return managedVm.getHostProcessId();
+		},
+		id: managedVm.id,
+	};
+}
+
+interface GatewayZoneStartResultBase {
+	destroyGateway(): Promise<GatewayZoneDestroyResult>;
+	readonly gatewayIdentity: GatewayEpochIdentity;
 	readonly image: ManagedVmImageBuildResult;
 	readonly ingress: {
 		readonly host: string;
 		readonly port: number;
 	};
-	readonly openClawProcessSupervisor?: OpenClawProcessSupervisor | undefined;
-	readonly openClawProcessEpochOwner?: OpenClawGatewayProcessEpochOwner | undefined;
-	readonly processEpoch?: string | undefined;
-	readonly processSpec: GatewayProcessSpec;
-	readonly terminateVm: () => Promise<void>;
-	readonly vm: ManagedVm;
-	readonly vmOwnership: GatewayVmLifecycleAuthority;
+	readonly vm: GatewayZoneVmOperations;
 	readonly zone: GatewayZone;
 }
+
+export interface ManagedGatewayZoneStartResult extends GatewayZoneStartResultBase {
+	readonly bootContract: ManagedGatewayBootContract;
+	readonly controlSession?: GatewayDisposableControlSessionClient | undefined;
+	readonly executionModel: 'managed-gateway';
+	readonly expectedCohort: GatewayExpectedAdmissionCohort;
+}
+
+export interface DirectProcessGatewayZoneStartResult extends GatewayZoneStartResultBase {
+	readonly executionModel: 'direct-process';
+	readonly processSpec: GatewayProcessSpec;
+	readonly processTarget: ManagedVmProcessTarget;
+}
+
+export type GatewayZoneStartResult =
+	| DirectProcessGatewayZoneStartResult
+	| ManagedGatewayZoneStartResult;
 
 export type GatewayControlSessionMaterialFactory = (options: {
 	readonly controllerEpoch: string;
@@ -142,6 +214,7 @@ export type GatewayControlSessionConnector = (options: {
 	readonly material: GatewayControlSessionMaterial;
 	readonly onAttemptOutcome?: ConnectGatewayControlSessionOptions['onAttemptOutcome'];
 	readonly onAttachmentGap?: (transition: GatewayControlAttachmentGapTransition) => void;
+	readonly onHelloResponse?: ConnectGatewayControlSessionOptions['onHelloResponse'];
 	readonly onReconnectExhausted?: (transition: GatewayControlReconnectExhaustedTransition) => void;
 	readonly processAdmissionCoordinator?: GatewayControlProcessAdmissionCoordinator;
 	readonly recordHealthEvent?: ConnectGatewayControlSessionOptions['recordHealthEvent'];
@@ -194,7 +267,10 @@ function mapSystemZoneObservabilityToLifecycleObservability(
 		return undefined;
 	}
 
-	const { openclaw } = zone.observability;
+	const frameworkServiceName =
+		zone.gateway.type === 'openclaw'
+			? gatewayFrameworkTelemetryServiceNames.openclaw
+			: gatewayFrameworkTelemetryServiceNames.hermes;
 	return {
 		mode: 'collector',
 		collector: {
@@ -205,14 +281,18 @@ function mapSystemZoneObservabilityToLifecycleObservability(
 			targetGrpcPort: hostObservability.ports.collectorGrpc,
 			targetHttpPort: hostObservability.ports.collectorHttp,
 		},
-		openclaw: {
-			serviceName: openclaw.serviceName,
-			traces: openclaw.traces,
-			metrics: openclaw.metrics,
-			logs: openclaw.logs,
-			sampleRate: openclaw.sampleRate,
-			flushIntervalMs: openclaw.flushIntervalMs,
-			diagnosticsFlags: openclaw.diagnosticsFlags,
+		framework: {
+			...zone.observability.services.framework,
+			...createGatewayTelemetryProducerSafetyContract(),
+			serviceName: frameworkServiceName,
+		},
+		...(zone.observability.openclaw === undefined
+			? {}
+			: { openclaw: { diagnosticsFlags: zone.observability.openclaw.diagnosticsFlags } }),
+		toolPortal: {
+			...zone.observability.services.toolPortal,
+			...createGatewayTelemetryProducerSafetyContract(),
+			serviceName: gatewayToolPortalTelemetryServiceName,
 		},
 	};
 }
@@ -239,31 +319,46 @@ export function mapSystemGatewayZoneToLifecycleZone(
 			: {}),
 		ssh: zone.gateway.ssh ?? { secretEnv: 'explicit' },
 		stateDir: zone.gateway.stateDir,
-		...(zone.gateway.authProfilesRef ? { authProfilesRef: zone.gateway.authProfilesRef } : {}),
 	};
 
 	return {
 		id: zone.id,
 		...(zone.agents === undefined ? {} : { agents: zone.agents }),
-		...(zone.gateway.type === 'openclaw' && zone.gateway.zoneGit !== undefined
-			? { gitReadAllowlistRepos: [zone.gateway.zoneGit.remote.repoUrl] }
-			: {}),
-		gateway:
-			zone.gateway.type === 'openclaw'
-				? {
+		gateway: (() => {
+			switch (zone.gateway.type) {
+				case 'openclaw':
+					return {
 						...baseGateway,
 						type: 'openclaw',
 						controlAuth: zone.gateway.controlAuth,
 						zoneFilesDir: zone.gateway.zoneFilesDir,
+						...(zone.gateway.authProfilesRef
+							? { authProfilesRef: zone.gateway.authProfilesRef }
+							: {}),
 						...(zone.gateway.authProfilesByAgent
 							? { authProfilesByAgent: zone.gateway.authProfilesByAgent }
 							: {}),
 						...(zone.gateway.rawEnvSecrets ? { rawEnvSecrets: zone.gateway.rawEnvSecrets } : {}),
-					}
-				: {
+					};
+				case 'hermes':
+					return {
+						...baseGateway,
+						type: 'hermes',
+						profileSecretProjectionsByAgent: zone.gateway.profileSecretProjectionsByAgent,
+						profilesByAgent: zone.gateway.profilesByAgent,
+						zoneFilesDir: zone.gateway.zoneFilesDir,
+					};
+				case 'worker':
+					return {
 						...baseGateway,
 						type: 'worker',
-					},
+					};
+				default: {
+					const exhaustiveGateway: never = zone.gateway;
+					throw new Error(`Unhandled gateway type: ${String(exhaustiveGateway)}`);
+				}
+			}
+		})(),
 		secrets: zone.secrets,
 		egressHosts: zone.egressHosts,
 		...(zone.defaultToolVmProfile ? { defaultToolVmProfile: zone.defaultToolVmProfile } : {}),

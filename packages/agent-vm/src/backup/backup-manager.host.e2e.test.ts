@@ -46,7 +46,7 @@ describe('createZoneBackupManager', () => {
 			stateDir,
 			zoneFilesDir,
 			backupDir,
-			runtimeDir,
+			zoneRuntimeDir: runtimeDir,
 		});
 
 		expect(result.zoneId).toBe('shravan');
@@ -54,7 +54,7 @@ describe('createZoneBackupManager', () => {
 		expect(fs.existsSync(result.backupPath)).toBe(true);
 	});
 
-	it('rejects backups when runtimeDir overlaps backup-copied paths', async () => {
+	it('rejects backups when zoneRuntimeDir overlaps backup-copied paths', async () => {
 		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'backup-runtime-overlap-'));
 		const stateDir = path.join(tmpDir, 'state');
 		const zoneFilesDir = path.join(tmpDir, 'zone-files');
@@ -72,9 +72,9 @@ describe('createZoneBackupManager', () => {
 				stateDir,
 				zoneFilesDir,
 				backupDir,
-				runtimeDir: path.join(stateDir, 'worker-tasks'),
+				zoneRuntimeDir: path.join(stateDir, 'worker-tasks'),
 			}),
-		).rejects.toThrow(/runtimeDir.*stateDir/u);
+		).rejects.toThrow(/zoneRuntimeDir.*stateDir/u);
 		await expect(
 			manager.createBackup({
 				zoneId: 'shravan',
@@ -82,9 +82,9 @@ describe('createZoneBackupManager', () => {
 				stateDir,
 				zoneFilesDir,
 				backupDir,
-				runtimeDir: path.join(zoneFilesDir, 'runtime'),
+				zoneRuntimeDir: path.join(zoneFilesDir, 'runtime'),
 			}),
-		).rejects.toThrow(/runtimeDir.*zoneFilesDir/u);
+		).rejects.toThrow(/zoneRuntimeDir.*zoneFilesDir/u);
 		await expect(
 			manager.createBackup({
 				zoneId: 'shravan',
@@ -92,9 +92,9 @@ describe('createZoneBackupManager', () => {
 				stateDir: path.join(tmpDir, 'runtime', 'state'),
 				zoneFilesDir,
 				backupDir,
-				runtimeDir: path.join(tmpDir, 'runtime'),
+				zoneRuntimeDir: path.join(tmpDir, 'runtime'),
 			}),
-		).rejects.toThrow(/runtimeDir.*stateDir/u);
+		).rejects.toThrow(/zoneRuntimeDir.*stateDir/u);
 		await expect(
 			manager.createBackup({
 				zoneId: 'shravan',
@@ -102,12 +102,12 @@ describe('createZoneBackupManager', () => {
 				stateDir,
 				zoneFilesDir: path.join(tmpDir, 'runtime', 'zone-files'),
 				backupDir,
-				runtimeDir: path.join(tmpDir, 'runtime'),
+				zoneRuntimeDir: path.join(tmpDir, 'runtime'),
 			}),
-		).rejects.toThrow(/runtimeDir.*zoneFilesDir/u);
+		).rejects.toThrow(/zoneRuntimeDir.*zoneFilesDir/u);
 	});
 
-	it('rejects backups when runtimeDir overlaps cacheDir', async () => {
+	it('rejects backups when zoneRuntimeDir overlaps cacheDir', async () => {
 		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'backup-runtime-cache-overlap-'));
 		const stateDir = path.join(tmpDir, 'state');
 		const zoneFilesDir = path.join(tmpDir, 'zone-files');
@@ -125,9 +125,9 @@ describe('createZoneBackupManager', () => {
 				zoneFilesDir,
 				backupDir,
 				cacheDir,
-				runtimeDir: path.join(cacheDir, 'worker-tasks'),
+				zoneRuntimeDir: path.join(cacheDir, 'worker-tasks'),
 			}),
-		).rejects.toThrow(/runtimeDir.*cacheDir/u);
+		).rejects.toThrow(/zoneRuntimeDir.*cacheDir/u);
 		await expect(
 			manager.createBackup({
 				zoneId: 'shravan',
@@ -135,9 +135,9 @@ describe('createZoneBackupManager', () => {
 				zoneFilesDir,
 				backupDir,
 				cacheDir: path.join(tmpDir, 'runtime', 'cache'),
-				runtimeDir: path.join(tmpDir, 'runtime'),
+				zoneRuntimeDir: path.join(tmpDir, 'runtime'),
 			}),
-		).rejects.toThrow(/runtimeDir.*cacheDir/u);
+		).rejects.toThrow(/zoneRuntimeDir.*cacheDir/u);
 	});
 
 	it('restores a backup to state and zone-files dirs', async () => {
@@ -160,7 +160,7 @@ describe('createZoneBackupManager', () => {
 			stateDir,
 			zoneFilesDir,
 			backupDir,
-			runtimeDir,
+			zoneRuntimeDir: runtimeDir,
 		});
 
 		// Clear dirs to simulate a fresh machine
@@ -204,7 +204,7 @@ describe('createZoneBackupManager', () => {
 			stateDir: sourceStateDir,
 			zoneFilesDir: sourceZoneFilesDir,
 			backupDir,
-			runtimeDir,
+			zoneRuntimeDir: runtimeDir,
 		});
 
 		// Restore to completely different parents
@@ -295,7 +295,7 @@ describe('createZoneBackupManager', () => {
 			stateDir,
 			zoneFilesDir,
 			backupDir,
-			runtimeDir,
+			zoneRuntimeDir: runtimeDir,
 		});
 
 		// Clear and restore

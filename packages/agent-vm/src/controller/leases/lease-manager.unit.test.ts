@@ -2,13 +2,18 @@ import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import type { ManagedVm, ManagedVmSshAccess } from '@agent-vm/managed-vm';
+import type {
+	ManagedVm,
+	ManagedVmExactProcessTerminationCapability,
+	ManagedVmSshAccess,
+} from '@agent-vm/managed-vm';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
 	TEST_SSH_SERVER_HOST_KEY,
 	createManagedExecProcessStub,
 } from '../../testing/managed-vm-test-helpers.js';
+import type { ControllerToolLeaseRecordsTarget } from '../durable-state/controller-state-record-paths.js';
 import {
 	createGatewayOwnershipCoordinator,
 	type GatewayOwnershipCoordinator,
@@ -25,6 +30,7 @@ import {
 	type ToolVmProvisioningHandle,
 } from './lease-manager.js';
 import { createTcpPool, type TcpPool } from './tcp-pool.js';
+import type { StableToolVmLeasePrincipal } from './tool-vm-lease-authority-contracts.js';
 import { deleteToolVmRuntimeRecord, writeToolVmRuntimeRecord } from './tool-vm-runtime-record.js';
 
 const TEST_GATEWAY_EPOCH = {
@@ -51,6 +57,7 @@ interface LeaseManagerHarness {
 	>;
 	readonly events: string[];
 	readonly leaseManager: ReturnType<typeof createLeaseManager>;
+	readonly managedVmExactProcessTermination: ManagedVmExactProcessTerminationCapability;
 	readonly runtimes: Map<number, FakeVmRuntime>;
 	readonly tcpPool: TcpPool;
 	setNow(nowMs: number): void;
@@ -79,6 +86,7 @@ function createManagedVmStub(options: {
 	readonly serverHostKey?: ManagedVmSshAccess['serverHostKey'];
 	readonly sshFailure?: Error;
 }): ManagedVm {
+	let closePromise: Promise<void> | undefined;
 	const sshAccess = {
 		async close(): Promise<void> {
 			options.events.push(`ssh-close:${options.id}`);
@@ -92,9 +100,12 @@ function createManagedVmStub(options: {
 		user: 'sandbox',
 	} satisfies ManagedVmSshAccess;
 	return {
-		async close(): Promise<void> {
-			options.events.push(`vm-close:${options.id}`);
-			options.runtime.alive = false;
+		close(): Promise<void> {
+			if (closePromise === undefined) {
+				options.events.push(`vm-close:${options.id}`);
+				closePromise = Promise.resolve();
+			}
+			return closePromise;
 		},
 		async enableIngress() {
 			return { close: async () => {}, host: '127.0.0.1', port: 18_791 };
@@ -134,10 +145,13 @@ function createHarness(
 		readonly deleteRuntimeRecord?: NonNullable<
 			Parameters<typeof createLeaseManager>[0]['deleteToolVmRuntimeRecord']
 		>;
-		readonly killProcess?: (pid: number, signal: NodeJS.Signals) => void;
+		readonly managedVmExactProcessTermination?: ManagedVmExactProcessTerminationCapability;
 		readonly now?: number;
-		readonly stateDirFor?: (zoneId: string) => string;
+		readonly prepareLeasePersistentState?: NonNullable<
+			Parameters<typeof createLeaseManager>[0]['prepareLeasePersistentState']
+		>;
 		readonly tcpPool?: TcpPool;
+		readonly toolLeaseRecordsTargetFor?: (zoneId: string) => ControllerToolLeaseRecordsTarget;
 		readonly toolVmUsePolicy?: {
 			readonly endedUseTombstoneTtlMs: number;
 			readonly heartbeatAfterMs: number;
@@ -202,6 +216,23 @@ function createHarness(
 			: await options.createManagedVm({ events, id, pid, runtime });
 	});
 	const tcpPool = options.tcpPool ?? createTcpPool({ basePort: 19_000, size: 4 });
+	const defaultProcessIdentity = {
+		command: 'qemu-system-aarch64 agent-vm',
+		lstart: 'Fri May 22 10:00:00 2026',
+	};
+	const managedVmExactProcessTermination =
+		options.managedVmExactProcessTermination ??
+		({
+			terminateRecordedHostProcess: async ({ identity }) => {
+				const runtime = runtimes.get(identity.hostProcessId);
+				if (runtime?.alive !== true) {
+					return { hostProcessId: identity.hostProcessId, kind: 'already-absent' };
+				}
+				events.push(`process-SIGTERM:${String(identity.hostProcessId)}`);
+				runtime.alive = false;
+				return { hostProcessId: identity.hostProcessId, kind: 'terminated' };
+			},
+		} satisfies ManagedVmExactProcessTerminationCapability);
 	const leaseManager = createLeaseManager({
 		controllerPort: 18_800,
 		createLeafGeneration: (() => {
@@ -222,40 +253,31 @@ function createHarness(
 			(async (_stateDirectory, recordId): Promise<void> => {
 				events.push(`record-delete:${recordId}`);
 			}),
-		managedVmKillDependencies: {
-			isProcessAlive: (pid) => runtimes.get(pid)?.alive === true,
-			killProcess:
-				options.killProcess ??
-				((pid, signal): void => {
-					events.push(`process-${signal}:${String(pid)}`);
-					const runtime = runtimes.get(pid);
-					if (runtime !== undefined) {
-						runtime.alive = false;
-					}
-				}),
-			readProcessCommand: async () => 'qemu-system-aarch64 agent-vm',
-			readProcessIdentity: async () => ({
-				command: 'qemu-system-aarch64 agent-vm',
-				lstart: 'Fri May 22 10:00:00 2026',
-			}),
-			sleep: async () => {},
-		},
 		now: () => nowMs,
+		managedVmExactProcessTermination,
+		managedVmTerminationSleep: async () => {},
 		ownershipCoordinator: coordinator,
+		...(options.prepareLeasePersistentState === undefined
+			? {}
+			: { prepareLeasePersistentState: options.prepareLeasePersistentState }),
 		projectNamespace: 'lease-manager-tests',
-		readProcessIdentity: async () => ({
-			command: 'qemu-system-aarch64 agent-vm',
-			lstart: 'Fri May 22 10:00:00 2026',
-		}),
+		readProcessIdentity: async () => defaultProcessIdentity,
 		readTcpListenPortOwner: async (port) => {
 			const runtime = [...runtimes.values()].find(
 				(candidateRuntime) => candidateRuntime.sshOpen && candidateRuntime.sshPort === port,
 			);
 			return runtime === undefined ? null : { command: 'node', pid: process.pid };
 		},
-		stateDirFor: options.stateDirFor ?? ((zoneId) => `/tmp/lease-manager-tests/${zoneId}`),
 		systemConfigPath: '/etc/agent-vm/system.json',
 		tcpPool,
+		toolLeaseRecordsTargetFor:
+			options.toolLeaseRecordsTargetFor ??
+			((zoneId) =>
+				({
+					directoryPath: `/tmp/lease-manager-tests/${zoneId}/tool-leases`,
+					kind: 'controller-tool-lease-records',
+					zoneId,
+				}) satisfies ControllerToolLeaseRecordsTarget),
 		...(options.toolVmUsePolicy === undefined ? {} : { toolVmUsePolicy: options.toolVmUsePolicy }),
 		writeToolVmRuntimeRecord:
 			options.writeRuntimeRecord ??
@@ -269,6 +291,7 @@ function createHarness(
 		createManagedVm,
 		events,
 		leaseManager,
+		managedVmExactProcessTermination,
 		runtimes,
 		setNow(nextNowMs): void {
 			nowMs = nextNowMs;
@@ -277,16 +300,25 @@ function createHarness(
 	};
 }
 
+function leasePrincipal(agentId: string): StableToolVmLeasePrincipal {
+	return {
+		agentId,
+		frameworkIdentity: { agentId, kind: 'openclaw' },
+		profileAssignmentRevision: `assignment-${agentId}`,
+		toolPortalProfileId: 'standard',
+	};
+}
+
 function createLeaseOptions(agentId = 'beta'): ToolVmLeaseCreateOptions {
 	return {
 		agentId,
-		agentWorkspaceDir: `/host/agents/${agentId}`,
 		expectedGateway: TEST_GATEWAY_EPOCH,
-		gatewayWorkMountDir: `/gateway/${agentId}/work`,
 		guestWorkdir: '/work',
-		hostWorkMountDir: `/host/work/${agentId}`,
+		hostGitDirectoryRoot: `/host/runtime/zones/${TEST_GATEWAY_EPOCH.zoneId}/gitdirs/agents/${agentId}`,
+		hostWorkspaceRoot: `/host/workspace/${agentId}`,
 		profile: { cpus: 1, imageProfile: 'default', memory: '1G' },
 		profileId: 'standard',
+		principal: leasePrincipal(agentId),
 		zoneId: TEST_GATEWAY_EPOCH.zoneId,
 	};
 }
@@ -297,7 +329,7 @@ function activeUseContext(agentId: string): ToolVmLeaseActiveUseExecutionProof &
 	return {
 		authority: {
 			gateway: TEST_GATEWAY_EPOCH,
-			principal: { agentId, zoneId: TEST_GATEWAY_EPOCH.zoneId },
+			principal: leasePrincipal(agentId),
 		},
 		operationPayloadDigest: 'payload-digest',
 		processEpoch: 'process-epoch-1',
@@ -382,7 +414,6 @@ describe('createLeaseManager stock Gondolin lifecycle', () => {
 		expect(harness.events).toEqual(
 			expect.arrayContaining([
 				'membership-destroying:beta',
-				'process-SIGTERM:12001',
 				'vm-close:tool-vm-1',
 				'record-delete:00000000-0000-4000-8000-000000000001',
 				'membership-destroyed:beta',
@@ -411,7 +442,6 @@ describe('createLeaseManager stock Gondolin lifecycle', () => {
 			expect.arrayContaining([
 				'membership-destroying:beta',
 				'ssh-close:tool-vm-1',
-				'process-SIGTERM:12001',
 				'membership-destroyed:beta',
 			]),
 		);
@@ -441,14 +471,13 @@ describe('createLeaseManager stock Gondolin lifecycle', () => {
 			expect.arrayContaining([
 				'vm-start-rejected:tool-vm-1',
 				'record-write:00000000-0000-4000-8000-000000000001',
-				'process-SIGTERM:12001',
 				'record-delete:00000000-0000-4000-8000-000000000001',
 			]),
 		);
 		expect(harness.tcpPool.allocate()).toBe(0);
 	});
 
-	it('releases SSH, exact recorded process, runtime record, membership, then the TCP slot', async () => {
+	it('closes the VM and SSH, deletes the runtime record and membership, then releases the TCP slot', async () => {
 		const harness = createHarness();
 		const lease = await harness.leaseManager.createLease(createLeaseOptions());
 		harness.events.length = 0;
@@ -457,9 +486,9 @@ describe('createLeaseManager stock Gondolin lifecycle', () => {
 
 		expect(harness.events).toEqual([
 			'membership-destroying:beta',
-			'ssh-close:tool-vm-1',
 			'process-SIGTERM:12001',
 			'vm-close:tool-vm-1',
+			'ssh-close:tool-vm-1',
 			'record-delete:00000000-0000-4000-8000-000000000001',
 			'membership-destroyed:beta',
 		]);
@@ -467,23 +496,317 @@ describe('createLeaseManager stock Gondolin lifecycle', () => {
 		expect(harness.tcpPool.allocate()).toBe(0);
 	});
 
-	it('preserves the runtime record, quarantines the slot, and marks ownership unsafe on kill failure', async () => {
+	it('preserves cleanup debt without restoring predecessor authority after close failure', async () => {
 		const deleteRuntimeRecord = vi.fn(async () => {});
 		const harness = createHarness({
+			createManagedVm: async ({ events, id, pid, runtime }) => ({
+				...createManagedVmStub({ events, id, pid, runtime }),
+				close: () => Promise.reject(new Error('close failed')),
+			}),
 			deleteRuntimeRecord,
-			killProcess: () => {
-				throw new Error('signal refused');
-			},
 			tcpPool: createTcpPool({ basePort: 19_000, size: 1 }),
 		});
 		const lease = await harness.leaseManager.createLease(createLeaseOptions());
 
-		await expect(harness.leaseManager.releaseLease(lease.id)).rejects.toThrow('signal refused');
+		await expect(harness.leaseManager.releaseLease(lease.id)).rejects.toThrow('close failed');
 
 		expect(deleteRuntimeRecord).not.toHaveBeenCalled();
 		expect(harness.tcpPool.isQuarantined(lease.tcpSlot)).toBe(true);
-		expect(harness.coordinator.snapshotGateway(TEST_GATEWAY_EPOCH).state).toBe('owner-unsafe');
+		expect(harness.coordinator.snapshotGateway(TEST_GATEWAY_EPOCH)).toMatchObject({
+			children: [expect.objectContaining({ state: 'retiring' })],
+			state: 'admitting',
+		});
 		expect(harness.leaseManager.peekLease(lease.id)).toBeDefined();
+	});
+
+	it('admits a successor after the exact fence despite predecessor close cleanup debt', async () => {
+		const harness = createHarness({
+			createManagedVm: async ({ events, id, pid, runtime }) => ({
+				...createManagedVmStub({ events, id, pid, runtime }),
+				close: () => Promise.reject(new Error('containment unavailable')),
+			}),
+		});
+		const firstLease = await harness.leaseManager.createLease(createLeaseOptions());
+
+		await expect(harness.leaseManager.releaseLease(firstLease.id)).rejects.toThrow(
+			'containment unavailable',
+		);
+		expect(harness.leaseManager.getCurrentLeaseBinding(firstLease.id)).toBeUndefined();
+		expect(harness.leaseManager.getLeaseAuthority(firstLease.id)).toBeUndefined();
+
+		const successor = await harness.leaseManager.createLease(createLeaseOptions());
+		expect(successor.id).not.toBe(firstLease.id);
+		expect(harness.createManagedVm).toHaveBeenCalledTimes(2);
+		expect(harness.leaseManager.peekLease(firstLease.id)).toBeDefined();
+		expect(harness.leaseManager.getCurrentLeaseBinding(successor.id)).toBeDefined();
+	});
+
+	it('closes VM resources after exact fencing when the adapter retains an absent runner pid', async () => {
+		// Arrange
+		let closeRequested = false;
+		const close = vi.fn(async (): Promise<void> => {
+			closeRequested = true;
+		});
+		const harness = createHarness({
+			createManagedVm: async ({ events, id, pid, runtime }) => {
+				const vm = createManagedVmStub({ events, id, pid, runtime });
+				return {
+					...vm,
+					close,
+					getHostProcessId: (): number | null => (closeRequested ? null : pid),
+				};
+			},
+			managedVmExactProcessTermination: {
+				terminateRecordedHostProcess: async ({ identity }) => ({
+					hostProcessId: identity.hostProcessId,
+					kind: 'already-absent',
+				}),
+			},
+		});
+		const lease = await harness.leaseManager.createLease(createLeaseOptions());
+
+		// Act
+		await harness.leaseManager.releaseLease(lease.id);
+
+		// Assert
+		expect(close).toHaveBeenCalledOnce();
+		expect(harness.leaseManager.peekLease(lease.id)).toBeUndefined();
+		expect(harness.tcpPool.isQuarantined(lease.tcpSlot)).toBe(false);
+	});
+
+	it('boots a successor while exact predecessor retirement is still in progress', async () => {
+		// Arrange
+		const releaseTerminationWait = Promise.withResolvers<void>();
+		const rolloverOrder: string[] = [];
+		let predecessorExactIdentityPresent = true;
+		let predecessorRuntime: FakeVmRuntime | undefined;
+		const harness = createHarness({
+			createManagedVm: async ({ events, id, pid, runtime }) => {
+				rolloverOrder.push(`construct:${id}`);
+				if (id === 'tool-vm-1') {
+					predecessorRuntime = runtime;
+				}
+				const vm = createManagedVmStub({ events, id, pid, runtime });
+				return {
+					...vm,
+					async enableSsh(enableOptions): Promise<ManagedVmSshAccess> {
+						rolloverOrder.push(`ssh-enable:${id}`);
+						return await vm.enableSsh(enableOptions);
+					},
+				};
+			},
+			managedVmExactProcessTermination: {
+				terminateRecordedHostProcess: async ({ identity }) => {
+					rolloverOrder.push(`SIGTERM:${String(identity.hostProcessId)}`);
+					await releaseTerminationWait.promise;
+					return {
+						hostProcessId: identity.hostProcessId,
+						kind: predecessorExactIdentityPresent ? 'terminated' : 'already-absent',
+					};
+				},
+			},
+			prepareLeasePersistentState: async (): Promise<void> => {
+				rolloverOrder.push('prepare-persistent');
+			},
+		});
+		const predecessor = await harness.leaseManager.createLease(createLeaseOptions());
+		rolloverOrder.length = 0;
+
+		// Act
+		const reacquire = harness.leaseManager.reacquireLease(predecessor.id, createLeaseOptions());
+		await vi.waitFor(() => {
+			expect(rolloverOrder).toContain('construct:tool-vm-2');
+			expect(rolloverOrder).toContain('SIGTERM:12001');
+		});
+
+		// Assert
+		expect(harness.createManagedVm).toHaveBeenCalledTimes(2);
+		expect(rolloverOrder).toHaveLength(2);
+		expect(harness.events).not.toContain('process-SIGKILL:12001');
+		expect(harness.events).not.toContain('ssh-enable:tool-vm-2');
+		expect(rolloverOrder).not.toContain('prepare-persistent');
+		expect(harness.events.filter((event) => event === 'membership-current:beta')).toHaveLength(1);
+		expect(harness.leaseManager.getCurrentLeaseBinding(predecessor.id)).toBeUndefined();
+
+		// Act
+		predecessorExactIdentityPresent = false;
+		if (predecessorRuntime !== undefined) {
+			predecessorRuntime.alive = false;
+		}
+		releaseTerminationWait.resolve();
+		const successor = await reacquire;
+
+		// Assert
+		expect(successor.id).not.toBe(predecessor.id);
+		expect(successor.tcpSlot).not.toBe(predecessor.tcpSlot);
+		expect(harness.events).toContain('ssh-enable:tool-vm-2');
+		expect(rolloverOrder.indexOf('prepare-persistent')).toBeGreaterThan(
+			rolloverOrder.indexOf('SIGTERM:12001'),
+		);
+		expect(rolloverOrder.indexOf('prepare-persistent')).toBeLessThan(
+			rolloverOrder.indexOf('ssh-enable:tool-vm-2'),
+		);
+		expect(harness.events.filter((event) => event === 'membership-current:beta')).toHaveLength(2);
+		expect(harness.leaseManager.getLeaseAuthority(predecessor.id)).toBeUndefined();
+		expect(harness.leaseManager.getCurrentLeaseBinding(predecessor.id)).toBeUndefined();
+		expect(harness.leaseManager.getLeaseAuthority(successor.id)).toBeDefined();
+		expect(harness.leaseManager.getCurrentLeaseBinding(successor.id)).toBeDefined();
+	});
+
+	it('keeps a successor current when predecessor close cleanup fails after exact fencing', async () => {
+		const harness = createHarness({
+			createManagedVm: async ({ events, id, pid, runtime }) => {
+				const vm = createManagedVmStub({ events, id, pid, runtime });
+				if (id !== 'tool-vm-1') {
+					return vm;
+				}
+				const closeFailure = Promise.reject(new Error('predecessor cleanup failed'));
+				void closeFailure.catch(() => {});
+				return { ...vm, close: () => closeFailure };
+			},
+		});
+		const predecessor = await harness.leaseManager.createLease(createLeaseOptions());
+
+		const successor = await harness.leaseManager.reacquireLease(
+			predecessor.id,
+			createLeaseOptions(),
+		);
+
+		expect(harness.leaseManager.peekLease(predecessor.id)).toBeDefined();
+		expect(harness.leaseManager.getLeaseAuthority(predecessor.id)).toBeUndefined();
+		expect(harness.createManagedVm).toHaveBeenCalledTimes(2);
+		expect(harness.leaseManager.getCurrentLeaseBinding(successor.id)).toBeDefined();
+		expect(harness.events).not.toContain('process-SIGKILL:12001');
+		expect(harness.coordinator.snapshotGateway(TEST_GATEWAY_EPOCH)).toMatchObject({
+			children: expect.arrayContaining([
+				expect.objectContaining({ state: 'retiring', toolVmId: predecessor.vm.id }),
+				expect.objectContaining({ state: 'current', toolVmId: successor.vm.id }),
+			]),
+		});
+		expect(harness.coordinator.snapshotGateway(TEST_GATEWAY_EPOCH).state).toBe('admitting');
+	});
+
+	it('closes the fenced predecessor when its adapter pid clears during ManagedVm.close', async () => {
+		// Arrange
+		let predecessorCloseRequested = false;
+		const predecessorClose = vi.fn(async (): Promise<void> => {
+			predecessorCloseRequested = true;
+		});
+		const harness = createHarness({
+			createManagedVm: async ({ events, id, pid, runtime }) => {
+				const vm = createManagedVmStub({ events, id, pid, runtime });
+				if (id !== 'tool-vm-1') {
+					return vm;
+				}
+				return {
+					...vm,
+					close: predecessorClose,
+					getHostProcessId: () => (predecessorCloseRequested ? null : pid),
+				};
+			},
+		});
+		const predecessor = await harness.leaseManager.createLease(createLeaseOptions());
+
+		// Act
+		const successor = await harness.leaseManager.reacquireLease(
+			predecessor.id,
+			createLeaseOptions(),
+		);
+
+		// Assert
+		expect(predecessorClose).toHaveBeenCalledOnce();
+		expect(harness.tcpPool.isQuarantined(predecessor.tcpSlot)).toBe(false);
+		expect(harness.leaseManager.peekLease(predecessor.id)).toBeUndefined();
+		expect(harness.leaseManager.getCurrentLeaseBinding(successor.id)).toBeDefined();
+		expect(harness.coordinator.snapshotGateway(TEST_GATEWAY_EPOCH)).toMatchObject({
+			children: expect.arrayContaining([
+				expect.objectContaining({ state: 'destroyed', toolVmId: predecessor.vm.id }),
+				expect.objectContaining({ state: 'current', toolVmId: successor.vm.id }),
+			]),
+		});
+	});
+
+	it('admits a successor after dead-leaf fencing while predecessor cleanup continues', async () => {
+		// Arrange
+		const predecessorCleanup = Promise.withResolvers<void>();
+		const predecessorCloseStarted = Promise.withResolvers<void>();
+		const harness = createHarness({
+			createManagedVm: async ({ events, id, pid, runtime }) => {
+				const vm = createManagedVmStub({ events, id, pid, runtime });
+				if (id !== 'tool-vm-1') {
+					return vm;
+				}
+				return {
+					...vm,
+					close: async (): Promise<void> => {
+						predecessorCloseStarted.resolve();
+						await predecessorCleanup.promise;
+					},
+					exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 1 })),
+				};
+			},
+		});
+		const predecessor = await harness.leaseManager.createLease(createLeaseOptions());
+
+		// Act
+		const reaping = harness.leaseManager.reapDeadIdleLeases();
+		await predecessorCloseStarted.promise;
+		const successorCreation = harness.leaseManager.createLease(createLeaseOptions());
+		await vi.waitFor(() => expect(harness.createManagedVm).toHaveBeenCalledTimes(2));
+
+		// Assert
+		expect(harness.leaseManager.getCurrentLeaseBinding(predecessor.id)).toBeUndefined();
+		const successor = await successorCreation;
+		expect(harness.leaseManager.getCurrentLeaseBinding(successor.id)).toBeDefined();
+		expect(harness.leaseManager.peekLease(predecessor.id)).toBeDefined();
+
+		// Cleanup and final assertion
+		predecessorCleanup.resolve();
+		await reaping;
+		await vi.waitFor(() => expect(harness.leaseManager.peekLease(predecessor.id)).toBeUndefined());
+	});
+
+	it('drains current and retiring generations before retiring the Gateway', async () => {
+		const firstSshCleanup = Promise.withResolvers<void>();
+		let constructionCount = 0;
+		const harness = createHarness({
+			createManagedVm: async ({ events, id, pid, runtime }) => {
+				constructionCount += 1;
+				const vm = createManagedVmStub({ events, id, pid, runtime });
+				if (constructionCount !== 1) {
+					return vm;
+				}
+				return {
+					...vm,
+					async enableSsh(enableOptions): Promise<ManagedVmSshAccess> {
+						const access = await vm.enableSsh(enableOptions);
+						return {
+							...access,
+							async close(): Promise<void> {
+								await firstSshCleanup.promise;
+								await access.close();
+							},
+						};
+					},
+				};
+			},
+		});
+		const predecessor = await harness.leaseManager.createLease(createLeaseOptions());
+		const successor = await harness.leaseManager.reacquireLease(
+			predecessor.id,
+			createLeaseOptions(),
+		);
+		expect(harness.leaseManager.peekLease(predecessor.id)).toBeDefined();
+		expect(harness.leaseManager.getLeaseAuthority(successor.id)).toBeDefined();
+
+		const gatewayDestruction = harness.leaseManager.destroyGatewayOwnedLeases(TEST_GATEWAY_EPOCH);
+		firstSshCleanup.resolve();
+		await gatewayDestruction;
+
+		expect(harness.leaseManager.peekLease(predecessor.id)).toBeUndefined();
+		expect(harness.leaseManager.peekLease(successor.id)).toBeUndefined();
+		expect(harness.leaseManager.listLeases()).toEqual([]);
+		expect(harness.events.filter((event) => event === 'membership-destroyed:beta')).toHaveLength(2);
 	});
 
 	it('refuses slot release when the stock SSH listener remains bound after termination', async () => {
@@ -510,7 +833,7 @@ describe('createLeaseManager stock Gondolin lifecycle', () => {
 
 		expect(deleteRuntimeRecord).not.toHaveBeenCalled();
 		expect(harness.tcpPool.isQuarantined(lease.tcpSlot)).toBe(true);
-		expect(harness.coordinator.snapshotGateway(TEST_GATEWAY_EPOCH).state).toBe('owner-unsafe');
+		expect(harness.coordinator.snapshotGateway(TEST_GATEWAY_EPOCH).state).toBe('admitting');
 	});
 
 	it('reuses a live same-agent lease without constructing another VM', async () => {
@@ -598,7 +921,10 @@ describe('createLeaseManager stock Gondolin lifecycle', () => {
 		await harness.leaseManager.createLease(request);
 
 		await expect(
-			harness.leaseManager.createLease({ ...request, hostWorkMountDir: '/host/work/changed' }),
+			harness.leaseManager.createLease({
+				...request,
+				hostWorkspaceRoot: '/host/workspace/changed',
+			}),
 		).rejects.toBeInstanceOf(AgentLeaseCompatibilityConflictError);
 		await expect(
 			harness.leaseManager.createLease({ ...request, profileId: 'larger' }),
@@ -674,11 +1000,7 @@ describe('createLeaseManager stock Gondolin lifecycle', () => {
 		);
 
 		expect(harness.events).toEqual(
-			expect.arrayContaining([
-				'membership-destroying:beta',
-				'process-SIGTERM:12001',
-				'membership-destroyed:beta',
-			]),
+			expect.arrayContaining(['membership-destroying:beta', 'membership-destroyed:beta']),
 		);
 		expect(harness.tcpPool.allocate()).toBe(0);
 	});
@@ -736,6 +1058,34 @@ describe('createLeaseManager stock Gondolin lifecycle', () => {
 		).toThrow(/ended|terminal/iu);
 	});
 
+	it('accepts only exact same-leaf semantic retries for an existing active-use id', async () => {
+		// Arrange
+		const harness = createHarness();
+		const lease = await harness.leaseManager.createLease(createLeaseOptions());
+		const useId = '01890f00-0000-7000-8000-000000000000';
+		const initialRequest = {
+			...activeUseContext(lease.agentId),
+			useId,
+		};
+		const initialResponse = harness.leaseManager.startActiveUse(lease.id, initialRequest);
+		harness.setNow(2_000);
+
+		// Act / Assert
+		expect(harness.leaseManager.startActiveUse(lease.id, initialRequest)).toEqual(initialResponse);
+		for (const changedRequest of [
+			{ ...initialRequest, processEpoch: 'process-epoch-2' },
+			{ ...initialRequest, semanticOperationId: 'semantic-operation-2' },
+			{ ...initialRequest, operationPayloadDigest: 'payload-digest-2' },
+		]) {
+			expect(() => harness.leaseManager.startActiveUse(lease.id, changedRequest)).toThrow(
+				/changed process or semantic meaning/iu,
+			);
+		}
+		expect(harness.leaseManager.getActiveUses(lease.id)).toEqual([
+			expect.objectContaining({ useId }),
+		]);
+	});
+
 	it('moves disconnected active work into an observation gap and resumes on a newer attachment', async () => {
 		const harness = createHarness();
 		const lease = await harness.leaseManager.createLease(createLeaseOptions());
@@ -759,6 +1109,102 @@ describe('createLeaseManager stock Gondolin lifecycle', () => {
 			sessionAttachmentGeneration: 2,
 		});
 		expect(harness.leaseManager.getActiveUseCount(lease.id)).toBe(1);
+	});
+
+	it('projects the one running use with its heartbeat expiry', async () => {
+		// Arrange
+		const harness = createHarness({
+			toolVmUsePolicy: {
+				endedUseTombstoneTtlMs: 10_000,
+				heartbeatAfterMs: 1_000,
+				heartbeatStaleMs: 4_000,
+			},
+		});
+		const lease = await harness.leaseManager.createLease(createLeaseOptions());
+		const useId = '01890f00-0000-7000-8000-000000000000';
+		harness.leaseManager.startActiveUse(lease.id, {
+			...activeUseContext(lease.agentId),
+			useId,
+		});
+
+		// Act / Assert
+		expect(harness.leaseManager.getCurrentNonterminalUses(lease.id)).toEqual([
+			{
+				expiresAtMs: 5_000,
+				useId,
+			},
+		]);
+	});
+
+	it('projects an observation gap until its exact resume deadline', async () => {
+		// Arrange
+		const harness = createHarness({
+			toolVmUsePolicy: {
+				endedUseTombstoneTtlMs: 10_000,
+				heartbeatAfterMs: 1_000,
+				heartbeatStaleMs: 4_000,
+			},
+		});
+		const lease = await harness.leaseManager.createLease(createLeaseOptions());
+		const useId = '01890f00-0000-7000-8000-000000000000';
+		harness.leaseManager.startActiveUse(lease.id, {
+			...activeUseContext(lease.agentId),
+			useId,
+		});
+		harness.leaseManager.markControlSessionDisconnected({
+			gateway: TEST_GATEWAY_EPOCH,
+			observedAtMs: 1_100,
+			processEpoch: 'process-epoch-1',
+			sessionAttachmentGeneration: 1,
+		});
+
+		// Act / Assert
+		expect(harness.leaseManager.getCurrentNonterminalUses(lease.id)).toEqual([
+			{
+				expiresAtMs: 5_100,
+				useId,
+			},
+		]);
+	});
+
+	it('excludes terminal and ambiguous retained uses from the current-use projection', async () => {
+		// Arrange
+		const terminalHarness = createHarness();
+		const terminalLease = await terminalHarness.leaseManager.createLease(createLeaseOptions());
+		const terminalUseId = '01890f00-0000-7000-8000-000000000000';
+		terminalHarness.leaseManager.startActiveUse(terminalLease.id, {
+			...activeUseContext(terminalLease.agentId),
+			useId: terminalUseId,
+		});
+		terminalHarness.leaseManager.endActiveUse(terminalLease.id, terminalUseId, {
+			...activeUseContext(terminalLease.agentId),
+			outcome: 'completed',
+		});
+		const ambiguousHarness = createHarness({
+			toolVmUsePolicy: {
+				endedUseTombstoneTtlMs: 10_000,
+				heartbeatAfterMs: 1_000,
+				heartbeatStaleMs: 4_000,
+			},
+		});
+		const ambiguousLease = await ambiguousHarness.leaseManager.createLease(createLeaseOptions());
+		const ambiguousUseId = '01890f00-0000-7000-8000-000000000001';
+		ambiguousHarness.leaseManager.startActiveUse(ambiguousLease.id, {
+			...activeUseContext(ambiguousLease.agentId),
+			useId: ambiguousUseId,
+		});
+		ambiguousHarness.leaseManager.markControlSessionDisconnected({
+			gateway: TEST_GATEWAY_EPOCH,
+			observedAtMs: 1_100,
+			processEpoch: 'process-epoch-1',
+			sessionAttachmentGeneration: 1,
+		});
+		ambiguousHarness.setNow(5_100);
+		ambiguousHarness.leaseManager.reapExpiredActiveUses();
+
+		// Act / Assert
+		expect(terminalHarness.leaseManager.getCurrentNonterminalUses(terminalLease.id)).toEqual([]);
+		expect(ambiguousHarness.leaseManager.getCurrentNonterminalUses(ambiguousLease.id)).toEqual([]);
 	});
 
 	it('returns an empty process-loss barrier for a fresh Gateway epoch with no leases', async () => {
@@ -849,7 +1295,7 @@ describe('createLeaseManager stock Gondolin lifecycle', () => {
 				...createLeaseOptions(),
 				expectedGateway: successorGateway,
 			}),
-		).rejects.toThrow(/different Gateway VM epoch/iu);
+		).rejects.toThrow(/gateway-identity-mismatch/iu);
 	});
 
 	it('keeps an actively heartbeating lease alive past its idle TTL', async () => {
@@ -1082,12 +1528,62 @@ describe('createLeaseManager stock Gondolin lifecycle', () => {
 		expect(harness.leaseManager.listLeases()).toHaveLength(2);
 	});
 
+	it('rolls over distinct profile assignments for the same agent and Gateway', async () => {
+		const harness = createHarness();
+		const standardProfileRequest = createLeaseOptions('same-agent');
+		const privilegedProfileRequest = {
+			...standardProfileRequest,
+			principal: {
+				...standardProfileRequest.principal,
+				profileAssignmentRevision: 'assignment-same-agent-privileged',
+				toolPortalProfileId: 'privileged',
+			},
+		} satisfies ToolVmLeaseCreateOptions;
+
+		const standardLease = await harness.leaseManager.createLease(standardProfileRequest);
+		const privilegedLease = await harness.leaseManager.createLease(privilegedProfileRequest);
+
+		expect(standardLease.id).not.toBe(privilegedLease.id);
+		expect(harness.leaseManager.listLeases()).toEqual([
+			expect.objectContaining({ id: privilegedLease.id }),
+		]);
+		expect(harness.leaseManager.getLeaseAuthority(standardLease.id)).toBeUndefined();
+		expect(harness.leaseManager.getLeaseAuthority(privilegedLease.id)).toMatchObject({
+			authority: { principal: { toolPortalProfileId: 'privileged' } },
+		});
+	});
+
+	it('rejects persistent-root rebinds that are not accompanied by a new assignment revision', async () => {
+		const harness = createHarness();
+		const currentRequest = createLeaseOptions('same-agent');
+		await harness.leaseManager.createLease(currentRequest);
+
+		await expect(
+			harness.leaseManager.createLease({
+				...currentRequest,
+				hostWorkspaceRoot: '/host/workspace/same-agent-other',
+			}),
+		).rejects.toMatchObject({
+			mismatchedFields: ['hostWorkspaceRoot'],
+		});
+		await expect(
+			harness.leaseManager.createLease({
+				...currentRequest,
+				hostGitDirectoryRoot: '/host/runtime/zones/shravan/gitdirs/agents/same-agent-other',
+			}),
+		).rejects.toMatchObject({
+			mismatchedFields: ['hostGitDirectoryRoot'],
+		});
+		expect(harness.createManagedVm).toHaveBeenCalledOnce();
+	});
+
 	it('aggregates exact-Gateway child failures while completing unaffected siblings', async () => {
 		const harness = createHarness({
-			killProcess: (pid) => {
-				if (pid === 12_001) throw new Error('alpha termination failed');
-				const runtime = harness.runtimes.get(pid);
-				if (runtime !== undefined) runtime.alive = false;
+			createManagedVm: async ({ events, id, pid, runtime }) => {
+				const vm = createManagedVmStub({ events, id, pid, runtime });
+				return id === 'tool-vm-1'
+					? { ...vm, close: () => Promise.reject(new Error('alpha close failed')) }
+					: vm;
 			},
 		});
 		const alpha = await harness.leaseManager.createLease(createLeaseOptions('alpha'));
@@ -1172,7 +1668,7 @@ describe('createLeaseManager stock Gondolin lifecycle', () => {
 
 		await Promise.all([renewal, reaping]);
 
-		expect(harness.events.filter((event) => event === 'process-SIGTERM:12001')).toHaveLength(1);
+		expect(harness.events.filter((event) => event === 'vm-close:tool-vm-1')).toHaveLength(1);
 		expect(harness.leaseManager.peekLease(lease.id)).toBeUndefined();
 	});
 });
@@ -1198,19 +1694,8 @@ describe('createLeaseManager runtime record integration', () => {
 			createLeaseId: () => 'lease-disk',
 			createManagedVm: harness.createManagedVm,
 			createRuntimeRecordId: () => '00000000-0000-4000-8000-000000000099',
-			managedVmKillDependencies: {
-				isProcessAlive: (pid) => harness.runtimes.get(pid)?.alive === true,
-				killProcess: (pid) => {
-					const runtime = harness.runtimes.get(pid);
-					if (runtime !== undefined) runtime.alive = false;
-				},
-				readProcessCommand: async () => 'qemu-system-aarch64 agent-vm',
-				readProcessIdentity: async () => ({
-					command: 'qemu-system-aarch64 agent-vm',
-					lstart: 'Fri May 22 10:00:00 2026',
-				}),
-				sleep: async () => {},
-			},
+			managedVmExactProcessTermination: harness.managedVmExactProcessTermination,
+			managedVmTerminationSleep: async () => {},
 			now: () => 1_000,
 			ownershipCoordinator: harness.coordinator,
 			projectNamespace: 'lease-manager-tests',
@@ -1219,9 +1704,14 @@ describe('createLeaseManager runtime record integration', () => {
 				lstart: 'Fri May 22 10:00:00 2026',
 			}),
 			readTcpListenPortOwner: async () => null,
-			stateDirFor: () => stateDirectory,
 			systemConfigPath: '/etc/agent-vm/system.json',
 			tcpPool: createTcpPool({ basePort: 19_000, size: 1 }),
+			toolLeaseRecordsTargetFor: (zoneId) =>
+				({
+					directoryPath: path.join(stateDirectory, 'tool-leases'),
+					kind: 'controller-tool-lease-records',
+					zoneId,
+				}) satisfies ControllerToolLeaseRecordsTarget,
 		});
 
 		const lease = await manager.createLease(createLeaseOptions());
@@ -1233,24 +1723,28 @@ describe('createLeaseManager runtime record integration', () => {
 		expect(await readdir(recordDirectory)).toEqual([]);
 	});
 
-	it('preserves the schema-v2 runtime record on exact termination failure', async () => {
+	it('preserves the schema-v2 runtime record on ManagedVm close failure', async () => {
 		const stateDirectory = await mkdtemp(path.join(os.tmpdir(), 'lease-manager-runtime-failure-'));
 		temporaryDirectories.push(stateDirectory);
 		const harness = createHarness({
+			createManagedVm: async ({ events, id, pid, runtime }) => ({
+				...createManagedVmStub({ events, id, pid, runtime }),
+				close: () => Promise.reject(new Error('close denied')),
+			}),
 			deleteRuntimeRecord: deleteToolVmRuntimeRecord,
-			killProcess: () => {
-				throw new Error('termination denied');
-			},
-			stateDirFor: () => stateDirectory,
 			tcpPool: createTcpPool({ basePort: 19_000, size: 1 }),
+			toolLeaseRecordsTargetFor: (zoneId) =>
+				({
+					directoryPath: path.join(stateDirectory, 'tool-leases'),
+					kind: 'controller-tool-lease-records',
+					zoneId,
+				}) satisfies ControllerToolLeaseRecordsTarget,
 			writeRuntimeRecord: writeToolVmRuntimeRecord,
 		});
 		const lease = await harness.leaseManager.createLease(createLeaseOptions());
 		const recordDirectory = path.join(stateDirectory, 'tool-leases');
 
-		await expect(harness.leaseManager.releaseLease(lease.id)).rejects.toThrow(
-			/termination denied/iu,
-		);
+		await expect(harness.leaseManager.releaseLease(lease.id)).rejects.toThrow(/close denied/iu);
 
 		expect(await readdir(recordDirectory)).toEqual(['00000000-0000-4000-8000-000000000001.json']);
 		expect(harness.tcpPool.isQuarantined(lease.tcpSlot)).toBe(true);

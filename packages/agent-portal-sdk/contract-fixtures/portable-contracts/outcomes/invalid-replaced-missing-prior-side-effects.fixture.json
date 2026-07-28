@@ -1,0 +1,25 @@
+{
+	"caseId": "invalid-replaced-missing-prior-side-effects",
+	"schemaId": "portal.call.item-result",
+	"tags": ["illegal-combination", "rejected", "replacement"],
+	"input": {
+		"error": {
+			"code": "execution_failed",
+			"message": "The owning generation was replaced."
+		},
+		"id": "call-1",
+		"operationId": "operation-1",
+		"owningGeneration": "tool-vm-generation-1",
+		"outcome": {
+			"certainty": "proven-terminated",
+			"kind": "replaced-proven",
+			"retryClass": "manual-only"
+		},
+		"status": "error"
+	},
+	"expectation": {
+		"kind": "rejected",
+		"errorCodes": ["portal.result.outcome-algebra"],
+		"refinementIdentities": ["portal.request-id.not-reserved", "portal.result.outcome-algebra"]
+	}
+}

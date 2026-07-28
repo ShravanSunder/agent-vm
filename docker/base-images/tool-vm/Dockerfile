@@ -1,6 +1,6 @@
 FROM node:24-slim
 
-COPY --from=ghcr.io/astral-sh/uv:0.11.16 /uv /uvx /usr/local/bin/
+COPY --from=ghcr.io/astral-sh/uv:0.11.31 /uv /uvx /usr/local/bin/
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -50,7 +50,7 @@ RUN \
     rm -rf /root/.cache/uv && \
     ln -sf /usr/bin/fdfind /usr/local/bin/fd && \
     ln -sfn /proc/self/fd /dev/fd && \
-    mkdir -p /work /run/sshd /var/log && \
+    mkdir -p /work /scratch /run/sshd /var/log && \
     touch /var/log/lastlog /var/log/faillog
 
 WORKDIR /work

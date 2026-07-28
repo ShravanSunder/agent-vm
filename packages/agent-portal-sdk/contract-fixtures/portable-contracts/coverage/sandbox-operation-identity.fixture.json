@@ -1,0 +1,21 @@
+{
+	"caseId": "coverage-sandbox-operation-identity",
+	"schemaId": "sandbox.operation.identity",
+	"tags": [
+		"accepted",
+		"coverage"
+	],
+	"input": {
+		"operationId": "operation-a",
+		"owningGeneration": "generation-a"
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"operationId": "operation-a",
+			"owningGeneration": "generation-a"
+		},
+		"canonicalJson": "{\"operationId\":\"operation-a\",\"owningGeneration\":\"generation-a\"}",
+		"refinementIdentities": []
+	}
+}

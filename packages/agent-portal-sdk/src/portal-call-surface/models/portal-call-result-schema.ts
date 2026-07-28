@@ -8,6 +8,7 @@ import {
 } from '../../capability-description-surface/models/capability-descriptor-schema.js';
 import { JsonValueSchema } from '../../contract-primitives/models/json-value-schema.js';
 import { ItemIdSchema } from '../../contract-primitives/models/request-id-schema.js';
+import { withPortableSuperRefinement } from '../../portable-contracts/portable-refinement-authoring.js';
 import { SafeDiagnosticSchema } from '../../portal-event-surface/models/safe-diagnostic-schema.js';
 import { PortalErrorSchema } from './portal-error-schema.js';
 
@@ -42,19 +43,125 @@ function createPortalItemResultSchema<TValueSchema extends z.ZodType>(valueSchem
 	]);
 }
 
+const CompletedSucceededOutcomeSchema = z
+	.object({
+		certainty: z.literal('proven'),
+		completion: z.literal('succeeded'),
+		kind: z.literal('completed'),
+		retryClass: z.literal('forbidden'),
+	})
+	.strict();
+
+const CompletedFailedOutcomeSchema = z
+	.object({
+		certainty: z.literal('proven'),
+		completion: z.literal('failed'),
+		kind: z.literal('completed'),
+		retryClass: z.enum(['forbidden', 'policy-gated']),
+	})
+	.strict();
+
+const NotDispatchedOutcomeSchema = z
+	.object({
+		certainty: z.literal('proven'),
+		kind: z.literal('not-dispatched'),
+		retryClass: z.literal('safe-before-dispatch'),
+	})
+	.strict();
+
+const ProvenTerminatedOutcomeSchema = z.union([
+	z
+		.object({
+			certainty: z.literal('proven-terminated'),
+			kind: z.literal('cancelled-proven'),
+			retryClass: z.literal('manual-only'),
+		})
+		.strict(),
+	z
+		.object({
+			certainty: z.literal('proven-terminated'),
+			kind: z.literal('timed-out-proven'),
+			retryClass: z.literal('manual-only'),
+		})
+		.strict(),
+	z
+		.object({
+			certainty: z.literal('proven-terminated'),
+			kind: z.literal('replaced-proven'),
+			priorSideEffects: z.literal('possible'),
+			retryClass: z.literal('manual-only'),
+		})
+		.strict(),
+]);
+
+const AmbiguousOutcomeSchema = z
+	.object({
+		certainty: z.literal('side-effects-and-termination-unknown'),
+		kind: z.literal('ambiguous'),
+		retryClass: z.literal('forbidden'),
+	})
+	.strict();
+
+const TerminalErrorOutcomeSchema = z.union([
+	NotDispatchedOutcomeSchema,
+	CompletedFailedOutcomeSchema,
+	ProvenTerminatedOutcomeSchema,
+	AmbiguousOutcomeSchema,
+]);
+
+export const PortalApprovalChallengeSchema = z
+	.object({
+		challengeId: z.string().uuid(),
+		expiresAt: z.string().datetime(),
+	})
+	.strict();
+
+export const PortalApprovalRequiredCallItemResultSchema = z
+	.object({
+		approvalChallenge: PortalApprovalChallengeSchema,
+		error: PortalErrorSchema.extend({ code: z.literal('approval_required') }).strict(),
+		id: ItemIdSchema,
+		operationId: z.string().min(1),
+		outcome: NotDispatchedOutcomeSchema,
+		owningGeneration: z.string().min(1),
+		status: z.literal('approval_required'),
+	})
+	.strict();
+
+export const PortalCallItemResultSchema = z.discriminatedUnion('status', [
+	z
+		.object({
+			artifacts: z.array(ArtifactReferenceSchema).optional(),
+			diagnostics: z.array(SafeDiagnosticSchema).optional(),
+			id: ItemIdSchema,
+			operationId: z.string().min(1),
+			outcome: CompletedSucceededOutcomeSchema,
+			owningGeneration: z.string().min(1),
+			status: z.literal('ok'),
+			truncation: TruncationMetadataSchema.optional(),
+			value: JsonValueSchema,
+		})
+		.strict(),
+	z
+		.object({
+			diagnostics: z.array(SafeDiagnosticSchema).optional(),
+			error: PortalErrorSchema,
+			id: ItemIdSchema,
+			operationId: z.string().min(1),
+			outcome: TerminalErrorOutcomeSchema,
+			owningGeneration: z.string().min(1),
+			status: z.literal('error'),
+		})
+		.strict(),
+	PortalApprovalRequiredCallItemResultSchema,
+]);
+
 // oxlint-disable-next-line explicit-function-return-type -- Preserve the exact Zod object inference derived from the item schema.
 function createPortalResultSchema<TItemSchema extends z.ZodType<{ readonly status: string }>>(
 	itemSchema: TItemSchema,
 ) {
-	return z
-		.object({
-			auditCorrelationId: z.string().min(1).optional(),
-			diagnostics: z.array(SafeDiagnosticSchema).optional(),
-			items: z.array(itemSchema),
-			ok: z.boolean(),
-		})
-		.strict()
-		.superRefine((result, context) => {
+	return withPortableSuperRefinement({
+		refinement: (result, context) => {
 			const allItemsSucceeded = result.items.every((item) => item.status === 'ok');
 			if (result.ok !== allItemsSucceeded) {
 				context.addIssue({
@@ -63,10 +170,18 @@ function createPortalResultSchema<TItemSchema extends z.ZodType<{ readonly statu
 					path: ['ok'],
 				});
 			}
-		});
+		},
+		refinementIdentity: 'portal.result.aggregate-status',
+		schema: z
+			.object({
+				auditCorrelationId: z.string().min(1).optional(),
+				diagnostics: z.array(SafeDiagnosticSchema).optional(),
+				items: z.array(itemSchema),
+				ok: z.boolean(),
+			})
+			.strict(),
+	});
 }
-
-export const PortalCallItemResultSchema = createPortalItemResultSchema(JsonValueSchema);
 
 export const PortalListItemValueSchema = z
 	.object({

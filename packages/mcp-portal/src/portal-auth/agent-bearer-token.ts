@@ -6,7 +6,15 @@ export interface DeriveAgentBearerTokenProps {
 	readonly masterKey: Buffer;
 }
 
+export interface DeriveAudienceScopedAgentBearerTokenProps extends DeriveAgentBearerTokenProps {
+	readonly audience: string;
+}
+
 export interface VerifyAgentBearerAuthorizationProps extends DeriveAgentBearerTokenProps {
+	readonly authorizationHeader: string | undefined;
+}
+
+export interface VerifyAudienceScopedAgentBearerAuthorizationProps extends DeriveAudienceScopedAgentBearerTokenProps {
 	readonly authorizationHeader: string | undefined;
 }
 
@@ -14,7 +22,7 @@ export type VerifyAgentBearerAuthorizationResult =
 	| { readonly ok: true }
 	| { readonly ok: false; readonly reason: 'malformed' | 'missing' | 'signature-mismatch' };
 
-const bearerPurposePrefix = 'mcp-proxy:agent:';
+export const mcpPortalAgentBearerAudience = 'mcp-proxy:agent';
 const minimumMasterKeyBytes = 32;
 const base64UrlPattern = /^[A-Za-z0-9_-]+$/u;
 
@@ -36,8 +44,18 @@ export function decodePortalMasterKey(encodedMasterKey: string): Buffer {
 }
 
 export function deriveAgentBearerToken(props: DeriveAgentBearerTokenProps): string {
+	return deriveAudienceScopedAgentBearerToken({
+		...props,
+		audience: mcpPortalAgentBearerAudience,
+	});
+}
+
+export function deriveAudienceScopedAgentBearerToken(
+	props: DeriveAudienceScopedAgentBearerTokenProps,
+): string {
+	assertCredentialAudience(props.audience);
 	return createHmac('sha256', props.masterKey)
-		.update(`${bearerPurposePrefix}${props.agentId}:v${String(props.credentialVersion)}`)
+		.update(`${props.audience}:${props.agentId}:v${String(props.credentialVersion)}`)
 		.digest('base64url');
 }
 
@@ -59,8 +77,18 @@ function mismatchedTokenWithExpectedLength(expectedToken: string): string {
 export function verifyAgentBearerAuthorization(
 	props: VerifyAgentBearerAuthorizationProps,
 ): VerifyAgentBearerAuthorizationResult {
-	const expectedToken = deriveAgentBearerToken({
+	return verifyAudienceScopedAgentBearerAuthorization({
+		...props,
+		audience: mcpPortalAgentBearerAudience,
+	});
+}
+
+export function verifyAudienceScopedAgentBearerAuthorization(
+	props: VerifyAudienceScopedAgentBearerAuthorizationProps,
+): VerifyAgentBearerAuthorizationResult {
+	const expectedToken = deriveAudienceScopedAgentBearerToken({
 		agentId: props.agentId,
+		audience: props.audience,
 		credentialVersion: props.credentialVersion,
 		masterKey: props.masterKey,
 	});
@@ -80,4 +108,10 @@ export function verifyAgentBearerAuthorization(
 		return { ok: false, reason: 'signature-mismatch' };
 	}
 	return { ok: true };
+}
+
+function assertCredentialAudience(audience: string): void {
+	if (audience.length === 0 || audience !== audience.trim() || audience.includes('\0')) {
+		throw new Error('Portal credential audience must be a non-empty canonical string.');
+	}
 }

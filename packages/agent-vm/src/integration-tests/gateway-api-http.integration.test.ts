@@ -1,3 +1,4 @@
+import { TOOL_VM_WORK_GUEST_ROOT } from '@agent-vm/gateway-lifecycle';
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 /**
@@ -16,7 +17,6 @@ import { afterAll, describe, expect, it, vi } from 'vitest';
 
 import { createControllerApp } from '../controller/http/controller-http-routes.js';
 import type { Lease } from '../controller/leases/lease-manager.js';
-import { OPENCLAW_TOOL_VM_WORKSPACE_MOUNT } from '../controller/leases/lease-work-mount-paths.js';
 import { createGatewayApiClient } from '../gateway-api-client/gateway-api-client.js';
 import {
 	TEST_SSH_SERVER_HOST_KEY,
@@ -83,16 +83,18 @@ describe('live integration: API client → controller over real HTTP', () => {
 		activeGatewayPort = gatewayPort;
 
 		// --- Real controller diagnostic HTTP route ---
-		const lease: Lease = {
+		const hostGitDirectoryRoot = '/home/openclaw/shravan/runtime/gitdirs/agents/main';
+		const lease = {
 			agentId: 'main',
-			agentWorkspaceDir: '/home/openclaw/work',
 			createdAt: Date.now(),
 			effectiveIdleTtlMs: 30 * 60 * 1000,
+			guestWorkdir: TOOL_VM_WORK_GUEST_ROOT,
+			hostGitDirectoryRoot,
+			hostWorkspaceRoot: '/home/openclaw/zone-files/agents/main',
 			id: 'smoke-lease-001',
 			lastUsedAt: Date.now(),
 			profileId: 'standard',
 			runtimeRecordId: 'smoke-lease-001',
-			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			sshAccess: {
 				close: async () => {},
 				host: '127.0.0.1',
@@ -124,9 +126,9 @@ describe('live integration: API client → controller over real HTTP', () => {
 				getHostProcessId: () => null,
 				start: async () => {},
 			},
-			hostWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/agent/work',
+			profileAssignmentRevision: 'profile-assignment:main:1',
 			zoneId: 'shravan',
-		};
+		} satisfies Lease;
 		const controllerApp = createControllerApp({
 			readIdentityPem: async () => 'pem-smoke',
 			toolVmProfiles: {
@@ -147,10 +149,6 @@ describe('live integration: API client → controller over real HTTP', () => {
 				listLeases: vi.fn(() => [lease]),
 				releaseLease: vi.fn(async () => {}),
 			},
-			resolveLeaseWorkMountDir: async ({ workMountDir }) => ({
-				guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
-				hostWorkMountDir: workMountDir,
-			}),
 		});
 		controllerServer = serve({ fetch: controllerApp.fetch, hostname: '127.0.0.1', port: 0 });
 		await waitForServerListening(controllerServer);

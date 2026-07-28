@@ -12,7 +12,7 @@ import {
 } from './controller-runtime-operations.js';
 import type { ControllerZoneAdminAuthError } from './zone-runtimes/zone-runtime-errors.js';
 import { ControllerZoneNotFoundError } from './zone-runtimes/zone-runtime-errors.js';
-import type { OpenClawZoneRuntime } from './zone-runtimes/zone-runtime-types.js';
+import type { ManagedGatewayZoneRuntime } from './zone-runtimes/zone-runtime-types.js';
 
 const controllerRuntimeOperationsTestRoot = path.join(
 	tmpdir(),
@@ -20,9 +20,11 @@ const controllerRuntimeOperationsTestRoot = path.join(
 );
 
 const systemConfig = {
-	schemaVersion: 1,
+	schemaVersion: 2,
+	storageRootDir: controllerRuntimeOperationsTestRoot,
 	cacheDir: path.join(controllerRuntimeOperationsTestRoot, 'cache'),
-	runtimeDir: path.join(controllerRuntimeOperationsTestRoot, 'runtime'),
+	controllerStateDir: path.join(controllerRuntimeOperationsTestRoot, 'controller-state'),
+	controllerRuntimeDir: path.join(controllerRuntimeOperationsTestRoot, 'controller-runtime'),
 	host: {
 		controllerPort: 18800,
 		projectNamespace: 'claw-tests-a1b2c3d4',
@@ -58,9 +60,10 @@ const systemConfig = {
 				cpus: 2,
 				port: 18791,
 				config: './config/shravan/openclaw.json',
-				stateDir: path.join(controllerRuntimeOperationsTestRoot, 'state', 'shravan'),
+				stateDir: path.join(controllerRuntimeOperationsTestRoot, 'shravan', 'state'),
 				ssh: { secretEnv: 'explicit' },
-				zoneFilesDir: path.join(controllerRuntimeOperationsTestRoot, 'zone-files', 'shravan'),
+				zoneFilesDir: path.join(controllerRuntimeOperationsTestRoot, 'shravan', 'zone-files'),
+				zoneRuntimeDir: path.join(controllerRuntimeOperationsTestRoot, 'shravan', 'runtime'),
 			},
 			secrets: {
 				OPENCLAW_GATEWAY_TOKEN: {
@@ -88,9 +91,10 @@ const systemConfig = {
 				cpus: 2,
 				port: 18792,
 				config: './config/alevtina/openclaw.json',
-				stateDir: path.join(controllerRuntimeOperationsTestRoot, 'state', 'alevtina'),
+				stateDir: path.join(controllerRuntimeOperationsTestRoot, 'alevtina', 'state'),
 				ssh: { secretEnv: 'explicit' },
-				zoneFilesDir: path.join(controllerRuntimeOperationsTestRoot, 'zone-files', 'alevtina'),
+				zoneFilesDir: path.join(controllerRuntimeOperationsTestRoot, 'alevtina', 'zone-files'),
+				zoneRuntimeDir: path.join(controllerRuntimeOperationsTestRoot, 'alevtina', 'runtime'),
 			},
 			secrets: {
 				OPENCLAW_GATEWAY_TOKEN: {
@@ -127,16 +131,59 @@ function isPathInsideDirectory(candidatePath: string, directoryPath: string): bo
 	return relativePath === '' || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath));
 }
 
-const baseZone = systemConfig.zones[0];
-if (!baseZone) {
-	throw new Error('Expected test system config to include a zone.');
+function requireBaseZone(): (typeof systemConfig.zones)[number] {
+	const zone = systemConfig.zones[0];
+	if (!zone) {
+		throw new Error('Expected test system config to include a zone.');
+	}
+	return zone;
+}
+
+const baseZone = requireBaseZone();
+
+function createHermesSystemConfig(): SystemConfig {
+	return {
+		...systemConfig,
+		imageProfiles: {
+			...systemConfig.imageProfiles,
+			gateways: {
+				...systemConfig.imageProfiles.gateways,
+				hermes: { type: 'hermes', buildConfig: './vm-images/gateways/hermes/build-config.json' },
+			},
+		},
+		zones: [
+			{
+				...baseZone,
+				agents: [{ id: 'main' }],
+				egressHosts: baseZone.egressHosts,
+				gateway: {
+					config: './config/hermes/config.yaml',
+					cpus: 2,
+					imageProfile: 'hermes',
+					memory: '2G',
+					port: 18_793,
+					profilesByAgent: { main: 'main' },
+					profileSecretProjectionsByAgent: {
+						main: { DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN' },
+					},
+					ssh: { secretEnv: 'explicit' },
+					stateDir: path.join(controllerRuntimeOperationsTestRoot, 'hermes-zone', 'state'),
+					type: 'hermes',
+					zoneFilesDir: path.join(controllerRuntimeOperationsTestRoot, 'hermes-zone', 'zone-files'),
+					zoneRuntimeDir: path.join(controllerRuntimeOperationsTestRoot, 'hermes-zone', 'runtime'),
+				},
+				id: 'hermes-zone',
+				secrets: {},
+			},
+		],
+	};
 }
 
 describe('controller runtime operations test fixture paths', () => {
 	it('keeps generated runtime and state paths outside the repository checkout', () => {
 		const generatedPaths = [
 			systemConfig.cacheDir,
-			systemConfig.runtimeDir,
+			systemConfig.controllerRuntimeDir,
 			...systemConfig.zones.flatMap((zone) => [
 				zone.gateway.stateDir,
 				...(zone.gateway.type === 'openclaw' ? [zone.gateway.zoneFilesDir] : []),
@@ -181,7 +228,7 @@ describe('createControllerRuntimeOperations', () => {
 			refreshCredentials: vi.fn(async () => ({ ok: true as const, zoneId: 'shravan' })),
 			upgrade: vi.fn(async () => ({ ok: true as const, zoneId: 'shravan' })),
 		} satisfies Pick<
-			OpenClawZoneRuntime,
+			ManagedGatewayZoneRuntime,
 			| 'destroy'
 			| 'enableSsh'
 			| 'exec'
@@ -223,7 +270,7 @@ describe('createControllerRuntimeOperations', () => {
 			refreshCredentials: vi.fn(async () => ({ ok: true as const, zoneId: 'alevtina' })),
 			upgrade: vi.fn(async () => ({ ok: true as const, zoneId: 'alevtina' })),
 		} satisfies Pick<
-			OpenClawZoneRuntime,
+			ManagedGatewayZoneRuntime,
 			| 'destroy'
 			| 'enableSsh'
 			| 'exec'
@@ -237,7 +284,8 @@ describe('createControllerRuntimeOperations', () => {
 			destroyZoneRuntime: async (zoneId, purged) =>
 				await (zoneId === 'shravan' ? shravanRuntime : alevtinaRuntime).destroy(purged),
 			getActiveLeases: () => [],
-			getOpenClawRuntime: (zoneId) => (zoneId === 'shravan' ? shravanRuntime : alevtinaRuntime),
+			getManagedGatewayRuntime: (zoneId) =>
+				zoneId === 'shravan' ? shravanRuntime : alevtinaRuntime,
 			getRuntimeStatusByZone: () => ({
 				alevtina: { lifecycleState: 'running' },
 				shravan: { lifecycleState: 'running' },
@@ -280,6 +328,74 @@ describe('createControllerRuntimeOperations', () => {
 		expect(alevtinaRuntime.destroy).toHaveBeenCalledWith(true);
 	});
 
+	it('dispatches Hermes admin shell operations through the managed Gateway runtime', async () => {
+		const hermesSystemConfig = createHermesSystemConfig();
+		const hermesRuntime = {
+			destroy: vi.fn(async (purged: boolean) => ({
+				ok: true as const,
+				purged,
+				zoneId: 'hermes-zone',
+			})),
+			enableSsh: vi.fn(async () => ({
+				close: async () => {},
+				command: 'ssh hermes-zone',
+				host: '127.0.0.1',
+				identityFile: '/tmp/hermes-zone-identity',
+				port: 22,
+				serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+				user: 'root',
+			})),
+			exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: 'hermes-zone' })),
+			getHealth: vi.fn(async () => ({
+				ok: true,
+				observation: 'http 200',
+				zoneId: 'hermes-zone',
+			})),
+			getLogs: vi.fn(async () => ({ output: 'hermes logs', zoneId: 'hermes-zone' })),
+			getServiceHealth: vi.fn(async () => ({
+				ok: true,
+				observation: 'http 200',
+				zoneId: 'hermes-zone',
+			})),
+			refreshCredentials: vi.fn(async () => ({ ok: true as const, zoneId: 'hermes-zone' })),
+			upgrade: vi.fn(async () => ({ ok: true as const, zoneId: 'hermes-zone' })),
+		} satisfies Pick<
+			ManagedGatewayZoneRuntime,
+			| 'destroy'
+			| 'enableSsh'
+			| 'exec'
+			| 'getHealth'
+			| 'getLogs'
+			| 'getServiceHealth'
+			| 'refreshCredentials'
+			| 'upgrade'
+		>;
+		const operations = createControllerRuntimeOperations({
+			destroyZoneRuntime: async (_zoneId, purged) => await hermesRuntime.destroy(purged),
+			getActiveLeases: () => [],
+			getManagedGatewayRuntime: () => hermesRuntime,
+			getRuntimeStatusByZone: () => ({
+				'hermes-zone': { lifecycleState: 'running' },
+			}),
+			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			systemConfig: hermesSystemConfig,
+		});
+
+		await expect(operations.execInZone('hermes-zone', 'pwd', {})).resolves.toEqual({
+			exitCode: 0,
+			stderr: '',
+			stdout: 'hermes-zone',
+		});
+		await expect(
+			operations.enableSshForZone('hermes-zone', { secretEnv: 'default' }),
+		).resolves.toMatchObject({
+			command: 'ssh hermes-zone',
+		});
+
+		expect(hermesRuntime.exec).toHaveBeenCalledWith('pwd');
+		expect(hermesRuntime.enableSsh).toHaveBeenCalledOnce();
+	});
+
 	it('throws the typed not-found error for unknown zone status', async () => {
 		const runtime = {
 			destroy: vi.fn(async (purged: boolean) => ({ ok: true as const, purged, zoneId: 'shravan' })),
@@ -303,7 +419,7 @@ describe('createControllerRuntimeOperations', () => {
 			refreshCredentials: vi.fn(async () => ({ ok: true as const, zoneId: 'shravan' })),
 			upgrade: vi.fn(async () => ({ ok: true as const, zoneId: 'shravan' })),
 		} satisfies Pick<
-			OpenClawZoneRuntime,
+			ManagedGatewayZoneRuntime,
 			| 'destroy'
 			| 'enableSsh'
 			| 'exec'
@@ -316,7 +432,7 @@ describe('createControllerRuntimeOperations', () => {
 		const operations = createControllerRuntimeOperations({
 			destroyZoneRuntime: async (_zoneId, purged) => await runtime.destroy(purged),
 			getActiveLeases: () => [],
-			getOpenClawRuntime: () => runtime,
+			getManagedGatewayRuntime: () => runtime,
 			getRuntimeStatusByZone: () => ({}),
 			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
 			systemConfig,
@@ -351,7 +467,7 @@ describe('createControllerRuntimeOperations', () => {
 			refreshCredentials: vi.fn(async () => ({ ok: true as const, zoneId: 'shravan' })),
 			upgrade: vi.fn(async () => ({ ok: true as const, zoneId: 'shravan' })),
 		} satisfies Pick<
-			OpenClawZoneRuntime,
+			ManagedGatewayZoneRuntime,
 			| 'destroy'
 			| 'enableSsh'
 			| 'exec'
@@ -365,7 +481,7 @@ describe('createControllerRuntimeOperations', () => {
 		const operations = createControllerRuntimeOperations({
 			destroyZoneRuntime: async (_zoneId, purged) => await runtime.destroy(purged),
 			getActiveLeases: () => [],
-			getOpenClawRuntime: () => runtime,
+			getManagedGatewayRuntime: () => runtime,
 			getRuntimeStatusByZone: () => ({}),
 			secretResolver: {
 				resolve: resolveSecret,
@@ -440,7 +556,7 @@ describe('createControllerRuntimeOperations', () => {
 			refreshCredentials: vi.fn(async () => ({ ok: true as const, zoneId: 'shravan' })),
 			upgrade: vi.fn(async () => ({ ok: true as const, zoneId: 'shravan' })),
 		} satisfies Pick<
-			OpenClawZoneRuntime,
+			ManagedGatewayZoneRuntime,
 			| 'destroy'
 			| 'enableSsh'
 			| 'exec'
@@ -453,7 +569,7 @@ describe('createControllerRuntimeOperations', () => {
 		const operations = createControllerRuntimeOperations({
 			destroyZoneRuntime: async (_zoneId, purged) => await runtime.destroy(purged),
 			getActiveLeases: () => [],
-			getOpenClawRuntime: () => runtime,
+			getManagedGatewayRuntime: () => runtime,
 			getRuntimeStatusByZone: () => ({}),
 			secretResolver: {
 				resolve: async () => 'expected-admin-token',

@@ -36,6 +36,21 @@ loadDotEnvLocal();
 export default defineConfig({
 	resolve: {
 		alias: {
+			'@agent-vm/agent-portal-sdk/contracts': repoPath(
+				'packages/agent-portal-sdk/src/contracts/index.ts',
+			),
+			'@agent-vm/agent-portal-sdk/gateway-runtime-client': repoPath(
+				'packages/agent-portal-sdk/src/gateway-runtime-client/index.ts',
+			),
+			'@agent-vm/agent-portal-sdk/gateway-runtime-local-exec': repoPath(
+				'packages/agent-portal-sdk/src/gateway-runtime-local-exec/index.ts',
+			),
+			'@agent-vm/agent-portal-sdk/tool-portal-mcp-client/node-transport': repoPath(
+				'packages/agent-portal-sdk/src/tool-portal-mcp-client/node-tool-portal-mcp-transport.ts',
+			),
+			'@agent-vm/agent-portal-sdk/tool-portal-mcp-client': repoPath(
+				'packages/agent-portal-sdk/src/tool-portal-mcp-client/index.ts',
+			),
 			'@agent-vm/agent-portal-sdk': repoPath('packages/agent-portal-sdk/src/index.ts'),
 			'@agent-vm/agent-portal-sdk/adapter-boundary': repoPath(
 				'packages/agent-portal-sdk/src/adapter-boundary/index.ts',
@@ -66,6 +81,9 @@ export default defineConfig({
 			'@agent-vm/controller-execution-contracts/controller-dispatch-boundary': repoPath(
 				'packages/controller-execution-contracts/src/controller-dispatch-boundary/index.ts',
 			),
+			'@agent-vm/controller-execution-contracts/controller-execution-data-boundary': repoPath(
+				'packages/controller-execution-contracts/src/controller-execution-data-boundary/index.ts',
+			),
 			'@agent-vm/controller-execution-contracts/controller-host-action-boundary': repoPath(
 				'packages/controller-execution-contracts/src/controller-host-action-boundary/index.ts',
 			),
@@ -84,6 +102,14 @@ export default defineConfig({
 				'packages/gateway-control-contracts/src/index.ts',
 			),
 			'@agent-vm/gateway-lifecycle': repoPath('packages/gateway-lifecycle/src/index.ts'),
+			'@agent-vm/gateway-runtime/flow-control': repoPath(
+				'packages/gateway-runtime/src/uds/gateway-runtime-flow-control.ts',
+			),
+			'@agent-vm/gateway-runtime/protocol': repoPath(
+				'packages/gateway-runtime/src/uds/gateway-runtime-protocol.ts',
+			),
+			'@agent-vm/gateway-runtime': repoPath('packages/gateway-runtime/src/index.ts'),
+			'@agent-vm/hermes-gateway': repoPath('packages/hermes-gateway/src/index.ts'),
 			'@agent-vm/managed-vm': repoPath('packages/managed-vm/src/index.ts'),
 			'@agent-vm/openclaw-agent-vm-plugin': repoPath(
 				'packages/openclaw-agent-vm-plugin/src/index.ts',
@@ -117,9 +143,6 @@ export default defineConfig({
 			),
 			'@agent-vm/worker-gateway': repoPath('packages/worker-gateway/src/index.ts'),
 			'@agent-vm/tool-portal': repoPath('packages/tool-portal/src/index.ts'),
-			'@agent-vm/tool-portal/in-process-entrypoint': repoPath(
-				'packages/tool-portal/src/in-process-entrypoint/index.ts',
-			),
 			'@agent-vm/tool-portal/testing': repoPath('packages/tool-portal/src/testing/index.ts'),
 		},
 	},
@@ -236,6 +259,16 @@ export default defineConfig({
 				test: {
 					name: 'e2e-openclaw',
 					include: ['packages/**/*.openclaw.e2e.test.ts'],
+					testTimeout: 900_000,
+					hookTimeout: 300_000,
+					maxWorkers: 1,
+				},
+			},
+			{
+				extends: true,
+				test: {
+					name: 'e2e-hermes',
+					include: ['packages/**/*.hermes.e2e.test.ts'],
 					testTimeout: 900_000,
 					hookTimeout: 300_000,
 					maxWorkers: 1,

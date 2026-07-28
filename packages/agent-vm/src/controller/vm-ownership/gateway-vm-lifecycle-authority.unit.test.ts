@@ -59,6 +59,131 @@ function admitCurrentToolVm(options: {
 }
 
 describe('Gateway VM lifecycle authority', () => {
+	it('retires an unattached seed only after its owned resources close successfully', async () => {
+		const coordinator = createCoordinator();
+		const cleanupCompletion = createDeferredPromise<void>();
+		const cleanup = vi.fn(async () => await cleanupCompletion.promise);
+		const authority = createGatewayVmLifecycleAuthority({
+			bootId: 'boot-1',
+			destroyGatewayOwnedLeases: async () => {},
+			generationId: 'generation-1',
+			ownershipCoordinator: coordinator,
+			zoneId: 'openclaw',
+		});
+
+		const abandonment = authority.abandonUnattachedGatewaySeedAfter(cleanup);
+		expect(cleanup).toHaveBeenCalledOnce();
+		expect(() =>
+			coordinator.beginGatewayEpoch({
+				bootId: 'boot-2',
+				generationId: 'generation-2',
+				zoneId: 'openclaw',
+			}),
+		).toThrowError(
+			expect.objectContaining<Partial<GatewayOwnershipCoordinatorError>>({
+				code: 'gateway-already-current',
+			}),
+		);
+
+		cleanupCompletion.resolve();
+		await abandonment;
+
+		expect(
+			coordinator.beginGatewayEpoch({
+				bootId: 'boot-2',
+				generationId: 'generation-2',
+				zoneId: 'openclaw',
+			}).seed,
+		).toMatchObject({ bootId: 'boot-2', generationId: 'generation-2' });
+	});
+
+	it('retains failed unattached cleanup authority and permits a cleanup-only retry', async () => {
+		const coordinator = createCoordinator();
+		const firstCleanup = vi.fn(async () => {
+			throw new Error('owned boot inputs remain open');
+		});
+		const authority = createGatewayVmLifecycleAuthority({
+			bootId: 'boot-1',
+			destroyGatewayOwnedLeases: async () => {},
+			generationId: 'generation-1',
+			ownershipCoordinator: coordinator,
+			zoneId: 'openclaw',
+		});
+
+		await expect(authority.abandonUnattachedGatewaySeedAfter(firstCleanup)).rejects.toThrow(
+			'owned boot inputs remain open',
+		);
+		expect(() =>
+			coordinator.beginGatewayEpoch({
+				bootId: 'boot-2',
+				generationId: 'generation-2',
+				zoneId: 'openclaw',
+			}),
+		).toThrowError(
+			expect.objectContaining<Partial<GatewayOwnershipCoordinatorError>>({
+				code: 'gateway-already-current',
+			}),
+		);
+		expect(() => authority.attachGatewayVm('gateway-vm-after-partial-cleanup')).toThrow(
+			"Gateway VM lifecycle for zone 'openclaw' has begun seed abandonment.",
+		);
+
+		const successfulCleanup = vi.fn(async () => {});
+		await authority.abandonUnattachedGatewaySeedAfter(successfulCleanup);
+
+		expect(firstCleanup).toHaveBeenCalledOnce();
+		expect(successfulCleanup).toHaveBeenCalledOnce();
+		expect(
+			coordinator.beginGatewayEpoch({
+				bootId: 'boot-2',
+				generationId: 'generation-2',
+				zoneId: 'openclaw',
+			}).seed,
+		).toMatchObject({ bootId: 'boot-2' });
+	});
+
+	it('coalesces concurrent seed abandonment and never repeats successful cleanup', async () => {
+		const coordinator = createCoordinator();
+		const cleanupCompletion = createDeferredPromise<void>();
+		const cleanup = vi.fn(async () => await cleanupCompletion.promise);
+		const authority = createGatewayVmLifecycleAuthority({
+			bootId: 'boot-1',
+			destroyGatewayOwnedLeases: async () => {},
+			generationId: 'generation-1',
+			ownershipCoordinator: coordinator,
+			zoneId: 'openclaw',
+		});
+
+		const firstAbandonment = authority.abandonUnattachedGatewaySeedAfter(cleanup);
+		const concurrentAbandonment = authority.abandonUnattachedGatewaySeedAfter(cleanup);
+		expect(concurrentAbandonment).toBe(firstAbandonment);
+		expect(cleanup).toHaveBeenCalledOnce();
+
+		cleanupCompletion.resolve();
+		await Promise.all([firstAbandonment, concurrentAbandonment]);
+		await authority.abandonUnattachedGatewaySeedAfter(cleanup);
+
+		expect(cleanup).toHaveBeenCalledOnce();
+	});
+
+	it('does not run unattached cleanup after a Gateway VM identity is attached', async () => {
+		const coordinator = createCoordinator();
+		const cleanup = vi.fn(async () => {});
+		const authority = createGatewayVmLifecycleAuthority({
+			bootId: 'boot-1',
+			destroyGatewayOwnedLeases: async () => {},
+			generationId: 'generation-1',
+			ownershipCoordinator: coordinator,
+			zoneId: 'openclaw',
+		});
+		authority.attachGatewayVm('gateway-vm-1');
+
+		await expect(authority.abandonUnattachedGatewaySeedAfter(cleanup)).rejects.toThrow(
+			"Gateway VM lifecycle for zone 'openclaw' is already attached.",
+		);
+		expect(cleanup).not.toHaveBeenCalled();
+	});
+
 	it('allocates a Gateway seed before construction and attaches the stock VM identity once', () => {
 		const coordinator = createCoordinator();
 		const authority = createGatewayVmLifecycleAuthority({

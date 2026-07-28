@@ -1,5 +1,6 @@
 import {
 	type AuthorizedToolVmLeafBinding,
+	type AmbiguousToolVmActiveUse,
 	type TerminalToolVmActiveUseTombstone,
 	type ToolVmActiveUse,
 	type ToolVmLeafAuthorityReference,
@@ -40,6 +41,70 @@ const defaultRetentionPolicy = {
 	terminalUseTombstoneTtlMs: DEFAULT_TOOL_VM_TERMINAL_USE_TOMBSTONE_TTL_MS,
 } satisfies ToolVmLeaseAuthorityRetentionPolicy;
 
+function leafRolloverAmbiguity(
+	activeUse: ToolVmActiveUse,
+	ambiguousAtMs: number,
+): AmbiguousToolVmActiveUse | ToolVmActiveUse {
+	if (activeUse.kind !== 'running' && activeUse.kind !== 'observation-gap') {
+		return activeUse;
+	}
+	return {
+		ambiguousAtMs,
+		...(activeUse.correlation === undefined ? {} : { correlation: activeUse.correlation }),
+		kind: 'ambiguous',
+		...(activeUse.latestOperationReport === undefined
+			? {}
+			: { latestOperationReport: activeUse.latestOperationReport }),
+		...(activeUse.latestReport === undefined ? {} : { latestReport: activeUse.latestReport }),
+		operationPayloadDigest: activeUse.operationPayloadDigest,
+		processEpoch: activeUse.processEpoch,
+		reason: 'leaf-rollover',
+		semanticOperationId: activeUse.semanticOperationId,
+		startedAtMs: activeUse.startedAtMs,
+		useId: activeUse.useId,
+	};
+}
+
+function oldestTerminalUseTombstoneKey(
+	tombstones: ReadonlyMap<string, TerminalToolVmActiveUseTombstone>,
+): string | undefined {
+	let oldestEntry: readonly [string, TerminalToolVmActiveUseTombstone] | undefined;
+	for (const entry of tombstones.entries()) {
+		if (
+			oldestEntry === undefined ||
+			entry[1].endedAtMs < oldestEntry[1].endedAtMs ||
+			(entry[1].endedAtMs === oldestEntry[1].endedAtMs && entry[0] < oldestEntry[0])
+		) {
+			oldestEntry = entry;
+		}
+	}
+	return oldestEntry?.[0];
+}
+
+function retainRolloverAmbiguityWithoutBlockingDestruction(options: {
+	readonly key: string;
+	readonly nowMs: number;
+	readonly retentionPolicy: ToolVmLeaseAuthorityRetentionPolicy;
+	readonly tombstone: TerminalToolVmActiveUseTombstone;
+	readonly tombstones: Map<string, TerminalToolVmActiveUseTombstone>;
+}): void {
+	for (const [key, tombstone] of options.tombstones.entries()) {
+		if (tombstone.expiresAtMs <= options.nowMs) {
+			options.tombstones.delete(key);
+		}
+	}
+	if (
+		!options.tombstones.has(options.key) &&
+		options.tombstones.size >= options.retentionPolicy.maxTerminalUseTombstones
+	) {
+		const oldestKey = oldestTerminalUseTombstoneKey(options.tombstones);
+		if (oldestKey !== undefined) {
+			options.tombstones.delete(oldestKey);
+		}
+	}
+	options.tombstones.set(options.key, options.tombstone);
+}
+
 export function createEmptyToolVmLeaseAuthorityState(
 	options: {
 		readonly retentionPolicy?: Partial<ToolVmLeaseAuthorityRetentionPolicy>;
@@ -51,9 +116,12 @@ export function createEmptyToolVmLeaseAuthorityState(
 	};
 	validateRetentionPolicy(retentionPolicy);
 	return {
+		accessFencingLeavesByGeneration: new Map(),
+		currentPrincipalKeyByAgentId: new Map(),
 		leavesByPrincipal: new Map(),
 		parent: { kind: 'unregistered' },
 		retentionPolicy,
+		retiringLeavesByGeneration: new Map(),
 		terminalUseTombstones: new Map(),
 		tombstonesByGeneration: new Map(),
 	};
@@ -129,7 +197,11 @@ export function reduceToolVmLeaseAuthorityState(
 					'Gateway parent must be sealed before retirement.',
 				);
 			}
-			if (state.leavesByPrincipal.size > 0) {
+			if (
+				state.leavesByPrincipal.size > 0 ||
+				state.accessFencingLeavesByGeneration.size > 0 ||
+				state.retiringLeavesByGeneration.size > 0
+			) {
 				return transitionError(
 					'parent-has-live-leaves',
 					'Gateway parent cannot retire while a live leaf disposition remains.',
@@ -148,21 +220,16 @@ export function reduceToolVmLeaseAuthorityState(
 					'Lease identity and policy expiry must be controller-owned bounded values.',
 				);
 			}
-			if (command.authority.principal.zoneId !== command.authority.gateway.zoneId) {
-				return transitionError(
-					'principal-mismatch',
-					'Stable principal zone does not match its Gateway parent.',
-				);
-			}
-			const principalKey = stablePrincipalKey(command.authority.principal);
-			if (state.leavesByPrincipal.has(principalKey)) {
+			if (state.currentPrincipalKeyByAgentId.has(command.authority.principal.agentId)) {
 				return transitionError(
 					'leaf-already-exists',
-					'Stable principal already has a provisional or live leaf.',
+					'Gateway agent already has a provisional or current-admission leaf.',
 				);
 			}
 			if (
 				state.tombstonesByGeneration.has(command.authority.leafGeneration) ||
+				state.accessFencingLeavesByGeneration.has(command.authority.leafGeneration) ||
+				state.retiringLeavesByGeneration.has(command.authority.leafGeneration) ||
 				[...state.leavesByPrincipal.values()].some(
 					(leaf) => leaf.leafGeneration === command.authority.leafGeneration,
 				)
@@ -192,6 +259,17 @@ export function reduceToolVmLeaseAuthorityState(
 				return transitionError(
 					'leaf-not-provisioning',
 					`Leaf is '${leaf.kind}' and cannot accept a create result.`,
+				);
+			}
+			if (
+				[...state.accessFencingLeavesByGeneration.values()].some(
+					(predecessorLeaf) =>
+						predecessorLeaf.principal.agentId === command.authority.principal.agentId,
+				)
+			) {
+				return transitionError(
+					'predecessor-access-not-fenced',
+					'Provisioning leaf cannot become current before predecessor access is fenced.',
 				);
 			}
 			return replaceLeaf(state, {
@@ -300,13 +378,43 @@ export function reduceToolVmLeaseAuthorityState(
 					'Terminal active-use identity was retried with changed semantic meaning.',
 				);
 			}
+			const retiringRolloverUses = [...state.retiringLeavesByGeneration.values()]
+				.filter(
+					(retiringLeaf) => retiringLeaf.principal.agentId === command.authority.principal.agentId,
+				)
+				.map((retiringLeaf) => retiringLeaf.activeUses.get(command.use.useId))
+				.filter(
+					(activeUse): activeUse is AmbiguousToolVmActiveUse =>
+						activeUse?.kind === 'ambiguous' && activeUse.reason === 'leaf-rollover',
+				);
+			if (retiringRolloverUses.length > 0) {
+				const allRetainedEvidenceMatches = retiringRolloverUses.every(
+					(activeUse) =>
+						activeUse.semanticOperationId === command.use.semanticOperationId &&
+						activeUse.operationPayloadDigest === command.use.operationPayloadDigest &&
+						activeUse.processEpoch === command.use.processEpoch,
+				);
+				if (allRetainedEvidenceMatches) {
+					return transitionError(
+						'active-use-not-resumable',
+						'Active use became ambiguous during predecessor rollover and cannot be resumed.',
+					);
+				}
+				return transitionError(
+					'active-use-semantic-collision',
+					'Retiring predecessor active-use identity was retried with changed semantic meaning.',
+				);
+			}
 			const existingUse = leaf.activeUses.get(command.use.useId);
 			if (existingUse !== undefined) {
 				const sameSemanticIdentity =
 					existingUse.processEpoch === command.use.processEpoch &&
 					existingUse.semanticOperationId === command.use.semanticOperationId &&
 					existingUse.operationPayloadDigest === command.use.operationPayloadDigest;
-				if (existingUse.kind === 'running' && sameSemanticIdentity) {
+				const sameAttachmentGeneration =
+					(existingUse.kind === 'running' || existingUse.kind === 'observation-gap') &&
+					existingUse.sessionAttachmentGeneration === command.use.sessionAttachmentGeneration;
+				if (existingUse.kind === 'running' && sameSemanticIdentity && sameAttachmentGeneration) {
 					return state;
 				}
 				if (!sameSemanticIdentity) {
@@ -315,9 +423,24 @@ export function reduceToolVmLeaseAuthorityState(
 						'Active-use identity was retried with changed process or semantic meaning.',
 					);
 				}
+				if (!sameAttachmentGeneration) {
+					return transitionError(
+						'active-use-conflict',
+						'Active-use identity was retried from another attachment generation.',
+					);
+				}
 			}
-			if (nonTerminalActiveUseExists(leaf.activeUses)) {
-				return transitionError('active-use-conflict', 'Leaf already has non-terminal remote work.');
+			const conflictingUseExists = [...leaf.activeUses.values()].some(
+				(activeUse) =>
+					activeUse.kind !== 'running' ||
+					activeUse.processEpoch !== command.use.processEpoch ||
+					activeUse.sessionAttachmentGeneration !== command.use.sessionAttachmentGeneration,
+			);
+			if (conflictingUseExists) {
+				return transitionError(
+					'active-use-conflict',
+					'Leaf has non-terminal work from another process or attachment generation.',
+				);
 			}
 			const activeUses = new Map(leaf.activeUses);
 			activeUses.set(command.use.useId, { ...command.use, kind: 'running' });
@@ -521,6 +644,7 @@ export function reduceToolVmLeaseAuthorityState(
 				principal: leaf.principal,
 				processEpoch: activeUse.processEpoch,
 				semanticOperationId: activeUse.semanticOperationId,
+				startedAtMs: activeUse.startedAtMs,
 				useId: activeUse.useId,
 			} satisfies TerminalToolVmActiveUseTombstone;
 			terminalUseTombstones.set(tombstoneKey, terminalTombstone);
@@ -624,8 +748,14 @@ export function reduceToolVmLeaseAuthorityState(
 					'Owner-unsafe leaf requires an explicit exact retry path.',
 				);
 			}
+			const activeUses = new Map(
+				[...leaf.activeUses.entries()].map(([useId, activeUse]) => [
+					useId,
+					leafRolloverAmbiguity(activeUse, command.ambiguousAtMs),
+				]),
+			);
 			return replaceLeaf(state, {
-				activeUses: leaf.activeUses,
+				activeUses,
 				compatibility: leaf.compatibility,
 				destructionReason: command.reason,
 				kind: 'destroying',
@@ -637,9 +767,56 @@ export function reduceToolVmLeaseAuthorityState(
 				...('sshBinding' in leaf ? { sshBinding: leaf.sshBinding } : {}),
 			});
 		}
+		case 'access-fenced': {
+			requireExactParent(state, command.authority.gateway);
+			const leaf = requireLiveLeaf(state, command.authority);
+			if (leaf.kind === 'retiring') {
+				return state;
+			}
+			if (leaf.kind !== 'destroying') {
+				return transitionError(
+					'leaf-not-destroying',
+					`Leaf is '${leaf.kind}' and has no positive access fence.`,
+				);
+			}
+			const principalKey = stablePrincipalKey(leaf.principal);
+			const leavesByPrincipal = new Map(state.leavesByPrincipal);
+			const removesCurrentLeaf =
+				leavesByPrincipal.get(principalKey)?.leafGeneration === leaf.leafGeneration;
+			if (removesCurrentLeaf) {
+				leavesByPrincipal.delete(principalKey);
+			}
+			const currentPrincipalKeyByAgentId = new Map(state.currentPrincipalKeyByAgentId);
+			if (
+				removesCurrentLeaf &&
+				currentPrincipalKeyByAgentId.get(leaf.principal.agentId) === principalKey
+			) {
+				currentPrincipalKeyByAgentId.delete(leaf.principal.agentId);
+			}
+			const retiringLeavesByGeneration = new Map(state.retiringLeavesByGeneration);
+			retiringLeavesByGeneration.set(leaf.leafGeneration, {
+				...leaf,
+				kind: 'retiring',
+			});
+			const accessFencingLeavesByGeneration = new Map(state.accessFencingLeavesByGeneration);
+			accessFencingLeavesByGeneration.delete(leaf.leafGeneration);
+			return {
+				...state,
+				accessFencingLeavesByGeneration,
+				currentPrincipalKeyByAgentId,
+				leavesByPrincipal,
+				retiringLeavesByGeneration,
+			};
+		}
 		case 'destruction-incomplete': {
 			requireExactParent(state, command.authority.gateway);
 			const leaf = requireLiveLeaf(state, command.authority);
+			if (leaf.kind === 'retiring') {
+				return replaceLeaf(state, {
+					...leaf,
+					cleanupIncompleteReason: command.reason,
+				});
+			}
 			if (leaf.kind !== 'destroying') {
 				return transitionError('leaf-not-destroying', `Leaf is '${leaf.kind}', not destroying.`);
 			}
@@ -678,7 +855,7 @@ export function reduceToolVmLeaseAuthorityState(
 		case 'destruction-completed': {
 			requireExactParent(state, command.authority.gateway);
 			const leaf = requireLiveLeaf(state, command.authority);
-			if (leaf.kind !== 'destroying') {
+			if (leaf.kind !== 'destroying' && leaf.kind !== 'retiring') {
 				return transitionError('leaf-not-destroying', `Leaf is '${leaf.kind}', not destroying.`);
 			}
 			if (
@@ -700,8 +877,58 @@ export function reduceToolVmLeaseAuthorityState(
 					'Leaf tombstone capacity is exhausted; prune expired entries first.',
 				);
 			}
+			const principalKey = stablePrincipalKey(leaf.principal);
 			const leavesByPrincipal = new Map(state.leavesByPrincipal);
-			leavesByPrincipal.delete(stablePrincipalKey(leaf.principal));
+			const removesCurrentLeaf =
+				leavesByPrincipal.get(principalKey)?.leafGeneration === leaf.leafGeneration;
+			if (removesCurrentLeaf) {
+				leavesByPrincipal.delete(principalKey);
+			}
+			const currentPrincipalKeyByAgentId = new Map(state.currentPrincipalKeyByAgentId);
+			if (
+				removesCurrentLeaf &&
+				currentPrincipalKeyByAgentId.get(leaf.principal.agentId) === principalKey
+			) {
+				currentPrincipalKeyByAgentId.delete(leaf.principal.agentId);
+			}
+			const retiringLeavesByGeneration = new Map(state.retiringLeavesByGeneration);
+			retiringLeavesByGeneration.delete(leaf.leafGeneration);
+			const accessFencingLeavesByGeneration = new Map(state.accessFencingLeavesByGeneration);
+			accessFencingLeavesByGeneration.delete(leaf.leafGeneration);
+			const terminalUseTombstones = new Map(state.terminalUseTombstones);
+			for (const activeUse of leaf.activeUses.values()) {
+				if (activeUse.kind !== 'ambiguous' || activeUse.reason !== 'leaf-rollover') {
+					continue;
+				}
+				const tombstone = {
+					ambiguousAtMs: activeUse.ambiguousAtMs,
+					ambiguityReason: activeUse.reason,
+					...(activeUse.correlation === undefined ? {} : { correlation: activeUse.correlation }),
+					endedAtMs: command.destroyedAtMs,
+					expiresAtMs: command.destroyedAtMs + state.retentionPolicy.terminalUseTombstoneTtlMs,
+					gateway: structuredClone(command.authority.gateway),
+					leafGeneration: leaf.leafGeneration,
+					...(activeUse.latestOperationReport === undefined
+						? {}
+						: { latestOperationReport: activeUse.latestOperationReport }),
+					...(activeUse.latestReport === undefined ? {} : { latestReport: activeUse.latestReport }),
+					operationPayloadDigest: activeUse.operationPayloadDigest,
+					outcome: 'ambiguous-rollover',
+					principal: leaf.principal,
+					processEpoch: activeUse.processEpoch,
+					semanticOperationId: activeUse.semanticOperationId,
+					startedAtMs: activeUse.startedAtMs,
+					useId: activeUse.useId,
+				} satisfies TerminalToolVmActiveUseTombstone;
+				const tombstoneKey = terminalUseTombstoneKey(command.authority, activeUse.useId);
+				retainRolloverAmbiguityWithoutBlockingDestruction({
+					key: tombstoneKey,
+					nowMs: command.destroyedAtMs,
+					retentionPolicy: state.retentionPolicy,
+					tombstone,
+					tombstones: terminalUseTombstones,
+				});
+			}
 			const tombstonesByGeneration = new Map(state.tombstonesByGeneration);
 			tombstonesByGeneration.set(leaf.leafGeneration, {
 				destroyedAtMs: command.destroyedAtMs,
@@ -715,7 +942,15 @@ export function reduceToolVmLeaseAuthorityState(
 				...(leaf.sshBinding === undefined ? {} : { sshBindingId: leaf.sshBinding.bindingId }),
 				...(leaf.runtimeBinding === undefined ? {} : { vmId: leaf.runtimeBinding.vmId }),
 			});
-			return { ...state, leavesByPrincipal, tombstonesByGeneration };
+			return {
+				...state,
+				accessFencingLeavesByGeneration,
+				currentPrincipalKeyByAgentId,
+				leavesByPrincipal,
+				retiringLeavesByGeneration,
+				terminalUseTombstones,
+				tombstonesByGeneration,
+			};
 		}
 		case 'prune-tombstones': {
 			const tombstonesByGeneration = new Map(

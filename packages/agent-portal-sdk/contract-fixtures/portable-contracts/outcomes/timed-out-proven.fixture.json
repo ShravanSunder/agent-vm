@@ -1,0 +1,40 @@
+{
+	"caseId": "timed-out-proven",
+	"schemaId": "portal.call.item-result",
+	"tags": ["accepted", "outcome", "timeout"],
+	"input": {
+		"error": {
+			"code": "timeout",
+			"message": "Execution timed out and termination was proven."
+		},
+		"id": "call-1",
+		"operationId": "operation-1",
+		"owningGeneration": "tool-vm-generation-1",
+		"outcome": {
+			"certainty": "proven-terminated",
+			"kind": "timed-out-proven",
+			"retryClass": "manual-only"
+		},
+		"status": "error"
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"error": {
+				"code": "timeout",
+				"message": "Execution timed out and termination was proven."
+			},
+			"id": "call-1",
+			"operationId": "operation-1",
+			"outcome": {
+				"certainty": "proven-terminated",
+				"kind": "timed-out-proven",
+				"retryClass": "manual-only"
+			},
+			"owningGeneration": "tool-vm-generation-1",
+			"status": "error"
+		},
+		"canonicalJson": "{\"error\":{\"code\":\"timeout\",\"message\":\"Execution timed out and termination was proven.\"},\"id\":\"call-1\",\"operationId\":\"operation-1\",\"outcome\":{\"certainty\":\"proven-terminated\",\"kind\":\"timed-out-proven\",\"retryClass\":\"manual-only\"},\"owningGeneration\":\"tool-vm-generation-1\",\"status\":\"error\"}",
+		"refinementIdentities": ["portal.request-id.not-reserved", "portal.result.outcome-algebra"]
+	}
+}

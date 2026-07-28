@@ -1,0 +1,33 @@
+{
+	"caseId": "coverage-sandbox-fs-rename-request",
+	"schemaId": "sandbox.fs.rename.request",
+	"tags": [
+		"accepted",
+		"coverage"
+	],
+	"input": {
+		"destinationPath": "dst.txt",
+		"environment": {
+			"handleId": "environment-a",
+			"kind": "environment",
+			"owningGeneration": "generation-a"
+		},
+		"replace": false,
+		"sourcePath": "src.txt"
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"destinationPath": "dst.txt",
+			"environment": {
+				"handleId": "environment-a",
+				"kind": "environment",
+				"owningGeneration": "generation-a"
+			},
+			"replace": false,
+			"sourcePath": "src.txt"
+		},
+		"canonicalJson": "{\"destinationPath\":\"dst.txt\",\"environment\":{\"handleId\":\"environment-a\",\"kind\":\"environment\",\"owningGeneration\":\"generation-a\"},\"replace\":false,\"sourcePath\":\"src.txt\"}",
+		"refinementIdentities": []
+	}
+}

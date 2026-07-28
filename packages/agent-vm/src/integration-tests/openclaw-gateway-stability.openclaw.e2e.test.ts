@@ -175,24 +175,15 @@ async function waitForInitialReadiness(controllerUrl: string): Promise<void> {
 
 async function readPostReadinessHealthEvents(options: {
 	readonly readyAtMs: number;
-	readonly runtimeDir: string;
+	readonly controllerRuntimeDir: string;
 }): Promise<readonly AgentVmHealthEvent[]> {
-	return (await readDurableHealthEvents({ runtimeDir: options.runtimeDir }))
+	return (await readDurableHealthEvents({ controllerRuntimeDir: options.controllerRuntimeDir }))
 		.map((record) => record.body)
 		.filter((event) => event.observedAtMs > options.readyAtMs);
 }
 
-async function readGatewayBootLog(options: {
-	readonly runtimeDir: string;
-	readonly zoneId: string;
-}): Promise<string> {
-	const bootLogPath = path.join(
-		options.runtimeDir,
-		'zones',
-		options.zoneId,
-		'logs',
-		'gateway-boot-latest.log',
-	);
+async function readGatewayBootLog(options: { readonly zoneRuntimeDir: string }): Promise<string> {
+	const bootLogPath = path.join(options.zoneRuntimeDir, 'logs', 'gateway-boot-latest.log');
 	return await fs.readFile(bootLogPath, 'utf8').catch((error: unknown) => {
 		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') {
 			return '';
@@ -277,14 +268,10 @@ describeOpenClawStability('e2e: OpenClaw managed gateway stability', () => {
 			},
 			startGatewayZone: async (startGatewayOptions) => {
 				const result = await startGatewayZone(startGatewayOptions);
+				if (result.executionModel !== 'managed-gateway') {
+					throw new Error('OpenClaw stability proof requires managed Gateway image boot.');
+				}
 				gatewayVmIds.push(result.vm.id);
-				result.vm.configureIngressRoutes([
-					{
-						port: result.processSpec.guestListenPort,
-						prefix: '/',
-						stripPrefix: true,
-					},
-				]);
 				return result;
 			},
 			startOptions: {
@@ -307,6 +294,10 @@ describeOpenClawStability('e2e: OpenClaw managed gateway stability', () => {
 	it('keeps controller health, zone health, service health, and health snapshots stable', async () => {
 		if (harness === undefined || project === undefined || systemConfig === undefined) {
 			throw new Error('Expected OpenClaw stability harness to be initialized.');
+		}
+		const systemZone = systemConfig.zones[0];
+		if (systemZone === undefined) {
+			throw new Error('Expected OpenClaw stability zone.');
 		}
 		const durationMs = positiveIntegerFromEnv(
 			'AGENT_VM_OPENCLAW_STABILITY_DURATION_MS',
@@ -338,11 +329,10 @@ describeOpenClawStability('e2e: OpenClaw managed gateway stability', () => {
 			});
 			const postReadinessEvents = await readPostReadinessHealthEvents({
 				readyAtMs,
-				runtimeDir: harness.systemConfig.runtimeDir,
+				controllerRuntimeDir: harness.systemConfig.controllerRuntimeDir,
 			});
 			const bootLog = await readGatewayBootLog({
-				runtimeDir: harness.systemConfig.runtimeDir,
-				zoneId,
+				zoneRuntimeDir: systemZone.gateway.zoneRuntimeDir,
 			});
 			assertNoPostReadinessInstability({
 				events: postReadinessEvents,
@@ -359,11 +349,10 @@ describeOpenClawStability('e2e: OpenClaw managed gateway stability', () => {
 		}
 		const finalEvents = await readPostReadinessHealthEvents({
 			readyAtMs,
-			runtimeDir: harness.systemConfig.runtimeDir,
+			controllerRuntimeDir: harness.systemConfig.controllerRuntimeDir,
 		});
 		const finalBootLog = await readGatewayBootLog({
-			runtimeDir: harness.systemConfig.runtimeDir,
-			zoneId,
+			zoneRuntimeDir: systemZone.gateway.zoneRuntimeDir,
 		});
 		const finalScan = assertNoPostReadinessInstability({
 			events: finalEvents,

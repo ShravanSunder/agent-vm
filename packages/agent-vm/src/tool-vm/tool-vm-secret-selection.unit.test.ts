@@ -61,6 +61,7 @@ function createZoneWithSecrets(secrets: Record<string, ZoneSecretConfig>): ZoneC
 			config: './config/sunfam/openclaw.json',
 			stateDir: './state/sunfam',
 			zoneFilesDir: './zone-files/sunfam',
+			zoneRuntimeDir: './runtime/sunfam',
 		},
 		secrets,
 		egressHosts: [],

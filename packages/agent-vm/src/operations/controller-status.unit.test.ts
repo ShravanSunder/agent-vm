@@ -8,9 +8,11 @@ import {
 } from './controller-status.js';
 
 const systemConfig = {
-	schemaVersion: 1,
+	schemaVersion: 2,
+	storageRootDir: './storage',
 	cacheDir: './cache',
-	runtimeDir: './runtime',
+	controllerStateDir: '/controller-state-test',
+	controllerRuntimeDir: './controller-runtime',
 	host: {
 		controllerPort: 18800,
 		projectNamespace: 'claw-tests-a1b2c3d4',
@@ -53,6 +55,7 @@ const systemConfig = {
 				config: './config/shravan/openclaw.json',
 				stateDir: './state/shravan',
 				zoneFilesDir: './zone-files/shravan',
+				zoneRuntimeDir: './runtime/shravan',
 			},
 			secrets: {
 				OPENCLAW_GATEWAY_TOKEN: {
@@ -81,6 +84,7 @@ const systemConfig = {
 				config: './config/alevtina/openclaw.json',
 				stateDir: './state/alevtina',
 				zoneFilesDir: './zone-files/alevtina',
+				zoneRuntimeDir: './runtime/alevtina',
 			},
 			secrets: {
 				OPENCLAW_GATEWAY_TOKEN: {
@@ -104,6 +108,7 @@ const systemConfig = {
 				port: 18793,
 				config: './config/worker/worker.json',
 				stateDir: './state/worker',
+				zoneRuntimeDir: './runtime/worker',
 			},
 			secrets: {},
 			egressHosts: ['api.anthropic.com'].map((host) => ({ host, audience: 'gateway' as const })),

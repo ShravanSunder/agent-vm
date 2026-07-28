@@ -38,6 +38,12 @@ const LEGACY_CURRENT_LEASE_REGISTRY_FACTORY = 'createToolVmCurrentLeaseRegistry'
 const CONTROLLER_MANAGED_TERMINATION_FILE_PATH =
 	'packages/agent-vm/src/shared/controller-managed-vm-termination.ts';
 const TOOL_VM_LIFECYCLE_FILE_PATH = 'packages/agent-vm/src/tool-vm/tool-vm-lifecycle.ts';
+const MANAGED_AGENT_TOOL_VM_MOUNTS_FILE_PATH =
+	'packages/agent-vm/src/tool-vm/managed-agent-tool-vm-mounts.ts';
+const UNSTARTED_VM_CONSTRUCTION_FUNCTION_BY_PATH = new Map([
+	[TOOL_VM_LIFECYCLE_FILE_PATH, 'createUnstartedToolVm'],
+	[MANAGED_AGENT_TOOL_VM_MOUNTS_FILE_PATH, 'createManagedVmWithFilteredAgentWorkspace'],
+]);
 const DELETED_VM_LIFECYCLE_MODULES = new Set([
 	'exact-vm-lifecycle.js',
 	'vm-creation-ownership.js',
@@ -75,6 +81,7 @@ const KNOWN_MANAGED_VM_CLOSE_RECEIVERS = new Set([
 	'currentLease.vm',
 	'gateway.vm',
 	'lease.vm',
+	'exactManagedVm',
 	'managedVm',
 	'options.vm',
 	'pendingCleanup.vm',
@@ -407,9 +414,10 @@ function isInsideUnstartedVmConstructionCleanup(
 	closeCall: ts.CallExpression,
 	normalizedPath: string,
 ): boolean {
+	const expectedFunctionName = UNSTARTED_VM_CONSTRUCTION_FUNCTION_BY_PATH.get(normalizedPath);
 	return (
-		normalizedPath === TOOL_VM_LIFECYCLE_FILE_PATH &&
-		containingFunctionDeclaration(closeCall)?.name?.text === 'createUnstartedToolVm'
+		expectedFunctionName !== undefined &&
+		containingFunctionDeclaration(closeCall)?.name?.text === expectedFunctionName
 	);
 }
 
@@ -556,6 +564,78 @@ function hasLexicalRunnerAbsenceProof(
 	return false;
 }
 
+function postCloseHostPidCaptureIdentifier(options: {
+	readonly receiver: string;
+	readonly sourceFile: ts.SourceFile;
+	readonly statement: ts.VariableStatement;
+}): string | undefined {
+	if (options.statement.declarationList.declarations.length !== 1) {
+		return undefined;
+	}
+	const [declaration] = options.statement.declarationList.declarations;
+	if (
+		declaration === undefined ||
+		!ts.isIdentifier(declaration.name) ||
+		declaration.initializer === undefined ||
+		hostPidReceiverFromCall(declaration.initializer, options.sourceFile) !== options.receiver
+	) {
+		return undefined;
+	}
+	return declaration.name.text;
+}
+
+function hasLeaseManagerPostCloseRunnerAbsenceProof(
+	closeCall: ts.CallExpression,
+	receiver: string,
+	sourceFile: ts.SourceFile,
+	normalizedPath: string,
+): boolean {
+	if (normalizedPath !== LEASE_MANAGER_FILE_PATH) {
+		return false;
+	}
+	let containingFunction: ts.Node | undefined = closeCall.parent;
+	while (containingFunction !== undefined && !ts.isFunctionDeclaration(containingFunction)) {
+		containingFunction = containingFunction.parent;
+	}
+	if (
+		containingFunction === undefined ||
+		!ts.isFunctionDeclaration(containingFunction) ||
+		containingFunction.name?.text !== 'completeToolVmResourceCleanup'
+	) {
+		return false;
+	}
+	const directStatement = directStatementInBlock(closeCall);
+	if (directStatement === undefined) {
+		return false;
+	}
+	const closeIndex = directStatement.block.statements.indexOf(directStatement.statement);
+	const postClosePidCapture = directStatement.block.statements[closeIndex + 1];
+	const postCloseAssertion = directStatement.block.statements[closeIndex + 2];
+	if (
+		postClosePidCapture === undefined ||
+		!ts.isVariableStatement(postClosePidCapture) ||
+		postCloseAssertion === undefined ||
+		!ts.isIfStatement(postCloseAssertion) ||
+		!branchAlwaysThrows(postCloseAssertion.thenStatement)
+	) {
+		return false;
+	}
+	const postClosePidIdentifier = postCloseHostPidCaptureIdentifier({
+		receiver,
+		sourceFile,
+		statement: postClosePidCapture,
+	});
+	return (
+		postClosePidIdentifier !== undefined &&
+		ts.isBinaryExpression(postCloseAssertion.expression) &&
+		postCloseAssertion.expression.operatorToken.kind ===
+			ts.SyntaxKind.ExclamationEqualsEqualsToken &&
+		ts.isIdentifier(postCloseAssertion.expression.left) &&
+		postCloseAssertion.expression.left.text === postClosePidIdentifier &&
+		postCloseAssertion.expression.right.kind === ts.SyntaxKind.NullKeyword
+	);
+}
+
 function managedVmCloseReceiver(
 	callExpression: ts.CallExpression,
 	sourceFile: ts.SourceFile,
@@ -569,6 +649,20 @@ function managedVmCloseReceiver(
 	}
 	const receiver = callExpression.expression.expression.getText(sourceFile).replaceAll(/\s+/gu, '');
 	return KNOWN_MANAGED_VM_CLOSE_RECEIVERS.has(receiver) ? receiver : undefined;
+}
+
+function isInsideLeaseManagerAccessFence(node: ts.Node, normalizedPath: string): boolean {
+	if (normalizedPath !== LEASE_MANAGER_FILE_PATH) {
+		return false;
+	}
+	let ancestor: ts.Node | undefined = node.parent;
+	while (ancestor !== undefined) {
+		if (ts.isFunctionDeclaration(ancestor) && ancestor.name?.text === 'fenceToolVmAccess') {
+			return true;
+		}
+		ancestor = ancestor.parent;
+	}
+	return false;
 }
 
 function auditSource(
@@ -623,9 +717,11 @@ function auditSource(
 			const receiver = managedVmCloseReceiver(node, sourceFile);
 			if (
 				receiver !== undefined &&
+				!isInsideLeaseManagerAccessFence(node, normalizedPath) &&
 				!isInsideControllerManagedTerminationPrimitive(node, normalizedPath) &&
 				!isProjectedIntoControllerManagedTermination(node) &&
 				!isInsideUnstartedVmConstructionCleanup(node, normalizedPath) &&
+				!hasLeaseManagerPostCloseRunnerAbsenceProof(node, receiver, sourceFile, normalizedPath) &&
 				!hasLexicalRunnerAbsenceProof(node, receiver, sourceFile)
 			) {
 				insertFinding(

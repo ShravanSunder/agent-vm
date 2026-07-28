@@ -1,10 +1,14 @@
 import { redactOnePasswordReferences } from '@agent-vm/secret-management';
 
 import type { ControllerRuntimeReadiness } from '../http/controller-http-route-support.js';
+import type { GatewayEpochIdentity } from '../vm-ownership/vm-ownership-contracts.js';
 import type { GatewayZoneLifecycleState } from '../zone-runtimes/gateway-zone-state-machine.js';
-import { isOpenClawZoneRestartTimeoutError } from '../zone-runtimes/openclaw-zone-runtime.js';
+import { isManagedGatewayZoneRestartTimeoutError } from '../zone-runtimes/managed-gateway-zone-runtime.js';
 import { ControllerZoneRuntimeStartError } from '../zone-runtimes/zone-runtime-errors.js';
-import type { OpenClawZoneRestartResult } from '../zone-runtimes/zone-runtime-types.js';
+import type {
+	ManagedGatewayZoneRestartResult,
+	ManagedGatewayZoneRuntime,
+} from '../zone-runtimes/zone-runtime-types.js';
 import { classifyGatewayRecoveryAction } from './gateway-recovery-actions.js';
 import type {
 	GatewayVmRecoveryRequest,
@@ -22,24 +26,25 @@ export interface CreateGatewayVmRecoveryRunnerOptions {
 	readonly writeLog: (message: string) => void;
 }
 
-function gatewayRecoverySourceKeysEqual(
-	left: GatewayVmRecoverySourceKey,
-	right: GatewayVmRecoverySourceKey,
+function gatewayRecoverySourceMatchesManagedVm(
+	sourceKey: GatewayVmRecoverySourceKey,
+	managedVmIdentity: GatewayEpochIdentity,
 ): boolean {
 	return (
-		left.bootId === right.bootId &&
-		left.domain === right.domain &&
-		left.gatewayVmId === right.gatewayVmId &&
-		left.generationId === right.generationId &&
-		left.zoneId === right.zoneId
+		sourceKey.domain === 'gateway_control' &&
+		sourceKey.bootId === managedVmIdentity.bootId &&
+		sourceKey.gatewayVmId === managedVmIdentity.gatewayVmId &&
+		sourceKey.generationId === managedVmIdentity.generationId &&
+		sourceKey.zoneId === managedVmIdentity.zoneId
 	);
 }
 
 export interface RecoverableGatewayRuntime {
+	readonly gatewayType: ManagedGatewayZoneRuntime['gatewayType'];
 	readonly coldStart: (options: {
 		readonly operationTrigger: 'auto-recovery';
 		readonly timeoutMs: number;
-	}) => Promise<OpenClawZoneRestartResult>;
+	}) => Promise<ManagedGatewayZoneRestartResult>;
 	readonly getLifecycleState: () => GatewayZoneLifecycleState;
 	readonly getSnapshot: () => {
 		readonly bootedAt?: string | undefined;
@@ -57,7 +62,7 @@ export interface RecoverableGatewayRuntime {
 	readonly restart: (options: {
 		readonly operationTrigger: 'auto-recovery';
 		readonly timeoutMs: number;
-	}) => Promise<OpenClawZoneRestartResult>;
+	}) => Promise<ManagedGatewayZoneRestartResult>;
 }
 
 function formatUnknownError(error: unknown): string {
@@ -106,7 +111,7 @@ export function classifyGatewayRecoveryRestartError(error: unknown): string {
 	) {
 		return error.gatewayLifecycleErrorCode;
 	}
-	if (isOpenClawZoneRestartTimeoutError(error)) {
+	if (isManagedGatewayZoneRestartTimeoutError(error)) {
 		return 'recovery-timeout';
 	}
 	const code = getUnknownErrorCode(error);
@@ -197,7 +202,7 @@ export function createGatewayVmRecoveryRunner(
 			runtime = options.getRecoverableGatewayRuntime(request.zoneId);
 		} catch (error) {
 			options.writeLog(
-				`Gateway VM recovery failed to find OpenClaw runtime for zone '${request.zoneId}': ${formatRecoveryLogError(error)}`,
+				`Gateway VM recovery failed to find managed Gateway runtime for zone '${request.zoneId}': ${formatRecoveryLogError(error)}`,
 			);
 			return {
 				action: 'observe-only',
@@ -210,12 +215,13 @@ export function createGatewayVmRecoveryRunner(
 		const oldSnapshot = runtime.getSnapshot();
 		const lifecycleState = runtime.getLifecycleState();
 		if (lifecycleState.kind === 'running' || lifecycleState.kind === 'running-degraded') {
-			const currentSourceKey = lifecycleState.gateway.controlSessionRecoverySourceKey;
 			if (
 				request.sourceKey === undefined ||
 				request.sourceKey.zoneId !== request.zoneId ||
-				currentSourceKey === undefined ||
-				!gatewayRecoverySourceKeysEqual(currentSourceKey, request.sourceKey)
+				!gatewayRecoverySourceMatchesManagedVm(
+					request.sourceKey,
+					lifecycleState.gateway.gatewayIdentity,
+				)
 			) {
 				return {
 					action: 'observe-only',
@@ -273,7 +279,7 @@ export function createGatewayVmRecoveryRunner(
 			options.writeLog(
 				`Auto cold-starting gateway VM for zone '${request.zoneId}' after ${request.consecutiveFailures} consecutive ${request.reason} observations.`,
 			);
-			let coldStartResult: OpenClawZoneRestartResult;
+			let coldStartResult: ManagedGatewayZoneRestartResult;
 			try {
 				coldStartResult = await runWithDeadline(
 					runtime.coldStart({
@@ -328,7 +334,7 @@ export function createGatewayVmRecoveryRunner(
 			`Auto-restarting gateway VM for zone '${request.zoneId}' after ${request.consecutiveFailures} consecutive ${request.reason} observations.`,
 		);
 
-		let restartResult: OpenClawZoneRestartResult;
+		let restartResult: ManagedGatewayZoneRestartResult;
 		try {
 			restartResult = await runWithDeadline(
 				runtime.restart({

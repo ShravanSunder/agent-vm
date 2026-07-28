@@ -15,6 +15,7 @@ import {
 	CapabilityDescriptorSchema,
 	PortalAdapterEnvelopeSchema,
 	PortalArtifactReadRequestSchema,
+	PortalArtifactReadResultSchema,
 	PortalDiagnosticEventSchema,
 	TrustedAgentScopeSchema,
 } from '../index.js';
@@ -175,6 +176,13 @@ describe('portal call surface contracts', () => {
 						},
 					},
 					id: 'call-1',
+					operationId: 'operation-1',
+					outcome: {
+						certainty: 'proven',
+						kind: 'not-dispatched',
+						retryClass: 'safe-before-dispatch',
+					},
+					owningGeneration: 'gateway-generation-1',
 					status: 'error',
 				},
 			],
@@ -341,20 +349,36 @@ describe('portal call surface contracts', () => {
 		).toMatchObject({ status: 'approved' });
 		expect(
 			ApprovalRequiredResultSchema.parse({
+				approvalChallenge: {
+					challengeId: '9f9f3b26-f20d-4c63-a1fe-809c2ca1b85f',
+					expiresAt: '2026-06-20T20:00:00.000Z',
+				},
 				error: {
 					code: 'approval_required',
 					message: 'Ask operator to approve github.create_issue.',
 				},
 				id: 'call-1',
-				status: 'error',
+				operationId: 'operation-1',
+				outcome: {
+					certainty: 'proven',
+					kind: 'not-dispatched',
+					retryClass: 'safe-before-dispatch',
+				},
+				owningGeneration: 'gateway-generation-1',
+				status: 'approval_required',
 			}),
-		).toMatchObject({ status: 'error' });
+		).toMatchObject({ status: 'approval_required' });
 		expect(
 			PortalArtifactReadRequestSchema.parse({
-				artifactId: 'artifact-1',
 				maxBytes: 1024,
+				reference: {
+					byteLength: 4096,
+					expiresAt: '2026-07-13T20:00:00.000Z',
+					fingerprint: `sha256:${'a'.repeat(64)}`,
+					id: 'artifact-1',
+				},
 			}),
-		).toMatchObject({ artifactId: 'artifact-1' });
+		).toMatchObject({ offsetBytes: 0, reference: { id: 'artifact-1' } });
 		expect(
 			PortalDiagnosticEventSchema.parse({
 				diagnostic: {
@@ -379,5 +403,44 @@ describe('portal call surface contracts', () => {
 		expect(schemas.describe).toEqual(z.toJSONSchema(PortalDescribeRequestSchema, { io: 'input' }));
 		expect(schemas.list).toEqual(z.toJSONSchema(PortalListRequestSchema, { io: 'input' }));
 		expect(schemas.search).toEqual(z.toJSONSchema(PortalSearchRequestSchema, { io: 'input' }));
+	});
+
+	it('carries an explicit bounded artifact byte range through request and result contracts', () => {
+		// Arrange
+		const reference = {
+			byteLength: 2053,
+			expiresAt: '2026-07-13T20:00:00.000Z',
+			fingerprint: `sha256:${'b'.repeat(64)}`,
+			id: 'artifact-1',
+		};
+		const readRequest = {
+			maxBytes: 1024,
+			offsetBytes: 2048,
+			reference,
+		};
+		const readResult = {
+			contentBase64: 'Ynl0ZXM=',
+			offsetBytes: 2048,
+			reference,
+			truncated: false,
+		};
+
+		// Act
+		const parsedRequest = PortalArtifactReadRequestSchema.parse(readRequest);
+		const parsedResult = PortalArtifactReadResultSchema.parse(readResult);
+
+		// Assert
+		expect(parsedRequest).toEqual(readRequest);
+		expect(parsedResult).toEqual(readResult);
+		expect(
+			PortalArtifactReadRequestSchema.safeParse({ ...readRequest, offsetBytes: -1 }).success,
+		).toBe(false);
+		expect(
+			PortalArtifactReadRequestSchema.safeParse({
+				artifactId: reference.id,
+				maxBytes: 1024,
+				offsetBytes: 0,
+			}).success,
+		).toBe(false);
 	});
 });

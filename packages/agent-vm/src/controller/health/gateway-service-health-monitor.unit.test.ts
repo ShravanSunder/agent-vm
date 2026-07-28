@@ -52,6 +52,70 @@ const s6bRecoveryOptions = {
 } as const;
 
 describe('createGatewayServiceHealthMonitor', () => {
+	it('recovers once from terminal attachment loss without requiring a failed service probe', async () => {
+		// Arrange
+		const healthEventStore = new HealthEventStore({
+			eventHistoryLimit: 20,
+			staleAfterMs: 30_000,
+		});
+		healthEventStore.record({
+			domain: 'gateway_control',
+			elapsedMs: 1,
+			kind: 'gateway-control-session',
+			observedAtMs: 10_000,
+			operation: 'control-session-heartbeat',
+			peerId: 'gateway-sunfam',
+			result: 'ok',
+			zoneId: 'sunfam',
+		});
+		const recoverGatewayVm = vi.fn(async () => ({
+			elapsedMs: 1,
+			leaseReleaseFailureCount: 0,
+			newBootedAt: '2026-07-20T20:01:00.000Z',
+			newHostPid: 2222,
+			newVmId: 'gateway-vm-b',
+			oldBootedAt: '2026-07-20T20:00:00.000Z',
+			oldHostPid: 1111,
+			oldVmId: 'gateway-vm-a',
+			result: 'ok' as const,
+		}));
+		const monitor = createGatewayServiceHealthMonitor({
+			gatewayServiceAutoRestart,
+			healthEventStore,
+			intervalMs: 10_000,
+			now: () => 10_000,
+			probeZoneHealth: vi.fn(async () => ({
+				ok: true,
+				path: '/health',
+				port: 18_789,
+				statusCode: 200,
+				zoneId: 'sunfam',
+			})),
+			recoverGatewayVm,
+			staleAfterMs: 30_000,
+			zoneIds: ['sunfam'],
+		});
+
+		// Act
+		await monitor.recoverFromTerminalAttachmentLoss({
+			sourceKey: gatewayRecoverySourceKey,
+			zoneId: 'sunfam',
+		});
+		await monitor.recoverFromTerminalAttachmentLoss({
+			sourceKey: gatewayRecoverySourceKey,
+			zoneId: 'sunfam',
+		});
+
+		// Assert
+		expect(recoverGatewayVm).toHaveBeenCalledOnce();
+		expect(recoverGatewayVm).toHaveBeenCalledWith({
+			consecutiveFailures: gatewayServiceAutoRestart.consecutiveFailureThreshold,
+			reason: 'gateway-service-unhealthy',
+			sourceKey: gatewayRecoverySourceKey,
+			zoneId: 'sunfam',
+		});
+	});
+
 	it('records ok and failed gateway service probes', async () => {
 		const healthEventStore = new HealthEventStore({
 			eventHistoryLimit: 20,
@@ -446,7 +510,7 @@ describe('createGatewayServiceHealthMonitor', () => {
 				kind: 'controller-request',
 				maxAttempts: 1,
 				observedAtMs: nowMs,
-				operation: 'zone-git-push',
+				operation: 'workspace-git-push',
 				result: 'failed',
 				zoneId: 'sunfam',
 			});

@@ -6,6 +6,7 @@ describe('gateway-lifecycle compile contracts', () => {
 	it('accepts a language-neutral Python guest lifecycle and rejects forbidden imports', () => {
 		const verification = verifyGatewayLifecycleContracts();
 
+		expect(verification.managedPositiveDiagnostics).toEqual([]);
 		expect(verification.positiveDiagnostics).toEqual([]);
 		expect(verification.positiveFixtureUsesForbiddenGatewaySpecificSurface).toBe(false);
 		expect(verification.negativeFixtures).toEqual([

@@ -42,6 +42,13 @@ const forbiddenPublicDeclarationTokens = [
 	'nativeOptions',
 	'backendData',
 ] as const;
+const forbiddenIdentityDeclarationTokens = [
+	'ManagedVmGuestOwnership',
+	'ProjectedGuestIdentity',
+	'createGuestIdentityProjectedProvider',
+	'guestOwnership',
+	'projected-guest-identity',
+] as const;
 
 const repositoryRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const fixtureRoot = path.join(repositoryRoot, 'scripts/fixtures/managed-vm-contracts');
@@ -107,16 +114,24 @@ export function auditManagedVmPublicDeclarations(
 ): readonly ManagedVmPublicDeclarationFinding[] {
 	const findings: ManagedVmPublicDeclarationFinding[] = [];
 	for (const source of sources) {
-		if (source.packageName === concreteAdapterPackageName) {
-			continue;
-		}
-		for (const forbiddenToken of forbiddenPublicDeclarationTokens) {
+		for (const forbiddenToken of forbiddenIdentityDeclarationTokens) {
 			if (source.content.includes(forbiddenToken)) {
 				findings.push({
 					filePath: source.filePath.replaceAll('\\', '/'),
 					forbiddenToken,
 					packageName: source.packageName,
 				});
+			}
+		}
+		if (source.packageName !== concreteAdapterPackageName) {
+			for (const forbiddenToken of forbiddenPublicDeclarationTokens) {
+				if (source.content.includes(forbiddenToken)) {
+					findings.push({
+						filePath: source.filePath.replaceAll('\\', '/'),
+						forbiddenToken,
+						packageName: source.packageName,
+					});
+				}
 			}
 		}
 	}
@@ -238,8 +253,14 @@ export function verifyManagedVmContracts(): ManagedVmContractVerification {
 	};
 }
 
+export function shouldRebuildManagedVmContractWorkspace(arguments_: readonly string[]): boolean {
+	return !arguments_.includes('--skip-workspace-build');
+}
+
 async function runManagedVmContractVerifier(): Promise<void> {
-	await rebuildWorkspace(repositoryRoot);
+	if (shouldRebuildManagedVmContractWorkspace(process.argv.slice(2))) {
+		await rebuildWorkspace(repositoryRoot);
+	}
 	const verification = verifyManagedVmContracts();
 	const declarationFindings = auditManagedVmPublicDeclarations(
 		await readManagedVmPublicDeclarations(repositoryRoot),

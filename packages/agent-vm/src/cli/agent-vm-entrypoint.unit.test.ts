@@ -22,9 +22,11 @@ import { parseAgentIds } from './commands/init-definition.js';
 
 function createCliBuildSystemConfig(): LoadedSystemConfig {
 	return {
-		schemaVersion: 1,
+		schemaVersion: 2,
+		storageRootDir: './storage',
 		cacheDir: './cache',
-		runtimeDir: './runtime',
+		controllerStateDir: '/controller-state-test',
+		controllerRuntimeDir: './controller-runtime',
 		systemConfigPath: './config/system.json',
 		host: {
 			controllerPort: 18800,
@@ -81,6 +83,7 @@ function createCliBuildSystemConfig(): LoadedSystemConfig {
 					config: './config/shravan/openclaw.json',
 					port: 18791,
 					stateDir: './state/shravan',
+					zoneRuntimeDir: './runtime/shravan',
 					zoneFilesDir: './zone-files/shravan',
 					authLogin: {
 						defaultAgent: 'main',
@@ -143,6 +146,38 @@ function createCliBuildWorkerSystemConfig(): LoadedSystemConfig {
 					config: './config/shravan/worker.json',
 					port: 18791,
 					stateDir: './state/shravan',
+					zoneRuntimeDir: './runtime/shravan',
+				},
+			},
+		],
+	};
+}
+
+function createCliBuildHermesSystemConfig(): LoadedSystemConfig {
+	const systemConfig = createCliBuildSystemConfig();
+	const zone = systemConfig.zones[0];
+	if (!zone) {
+		throw new Error('Expected CLI test config to include a zone.');
+	}
+	return {
+		...systemConfig,
+		zones: [
+			{
+				...zone,
+				gateway: {
+					type: 'hermes',
+					imageProfile: 'hermes',
+					cpus: 2,
+					memory: '2G',
+					config: './config/shravan/hermes.yaml',
+					port: 18791,
+					stateDir: './state/shravan',
+					zoneFilesDir: './zone-files/shravan',
+					zoneRuntimeDir: './runtime/shravan',
+					profilesByAgent: { shravan: 'main' },
+					profileSecretProjectionsByAgent: {
+						shravan: { DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN' },
+					},
 				},
 			},
 		],
@@ -1014,7 +1049,7 @@ describe('runAgentVmCli', () => {
 				skipObservability: false,
 				systemConfig: expect.objectContaining({
 					cacheDir: './cache',
-					runtimeDir: './runtime',
+					controllerRuntimeDir: './controller-runtime',
 					systemConfigPath: './config/system.json',
 					imageProfiles: expect.objectContaining({
 						gateways: expect.objectContaining({
@@ -1158,7 +1193,7 @@ describe('runAgentVmCli', () => {
 				subcommand: 'clean',
 				systemConfig: expect.objectContaining({
 					cacheDir: './cache',
-					runtimeDir: './runtime',
+					controllerRuntimeDir: './controller-runtime',
 					systemConfigPath: './config/system.json',
 				}),
 			},
@@ -1187,7 +1222,7 @@ describe('runAgentVmCli', () => {
 				subcommand: 'list',
 				systemConfig: expect.objectContaining({
 					cacheDir: './cache',
-					runtimeDir: './runtime',
+					controllerRuntimeDir: './controller-runtime',
 					systemConfigPath: './config/system.json',
 				}),
 			},
@@ -1296,6 +1331,7 @@ describe('runAgentVmCli', () => {
 						host: '127.0.0.1',
 						identityFile: '/tmp/test-key',
 						port: 19000,
+						secretEnvEnabled: true,
 						user: 'root',
 					})),
 				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
@@ -1409,6 +1445,7 @@ describe('runAgentVmCli', () => {
 						host: '127.0.0.1',
 						identityFile: '/tmp/test-key',
 						port: 19000,
+						secretEnvEnabled: true,
 						user: 'root',
 					})),
 				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
@@ -1505,6 +1542,7 @@ describe('runAgentVmCli', () => {
 						host: '127.0.0.1',
 						identityFile: '/tmp/test-key',
 						port: 19000,
+						secretEnvEnabled: true,
 						user: 'root',
 					})),
 				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfigWithAgents()),
@@ -1552,6 +1590,7 @@ describe('runAgentVmCli', () => {
 						host: '127.0.0.1',
 						identityFile: '/tmp/test-key',
 						port: 19000,
+						secretEnvEnabled: true,
 						user: 'root',
 					})),
 				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfigWithAgents()),
@@ -1596,6 +1635,35 @@ describe('runAgentVmCli', () => {
 		).rejects.toThrow(/--zone is required/u);
 	});
 
+	it.each([
+		{ gatewayType: 'hermes', loadSystemConfig: createCliBuildHermesSystemConfig },
+		{ gatewayType: 'worker', loadSystemConfig: createCliBuildWorkerSystemConfig },
+	] as const)(
+		'rejects OpenClaw auth login for $gatewayType zones before opening SSH',
+		async ({ loadSystemConfig }) => {
+			const runInteractiveProcess: NonNullable<CliDependencies['runInteractiveProcess']> = vi.fn(
+				async (_command: string, _arguments_: readonly string[]): Promise<void> => {},
+			);
+
+			await expect(
+				runAgentVmCli(
+					['auth', 'openclaw', 'login', 'openai', '--zone', 'shravan'],
+					{
+						stderr: { write: () => true },
+						stdout: { write: () => true },
+					},
+					{
+						...defaultCliDependencies,
+						loadSystemConfig: vi.fn(async () => loadSystemConfig()),
+						runInteractiveProcess,
+					},
+				),
+			).rejects.toThrow("Zone 'shravan' does not support OpenClaw auth login.");
+
+			expect(runInteractiveProcess).not.toHaveBeenCalled();
+		},
+	);
+
 	it('prints top-level help instead of throwing on --help', async () => {
 		const stdoutChunks: string[] = [];
 
@@ -1630,6 +1698,19 @@ describe('runAgentVmCli', () => {
 				defaultCliDependencies,
 			),
 		).rejects.toThrow(/openclaw|worker/u);
+	});
+
+	it('rejects Hermes init until a Hermes scaffold contract exists', async () => {
+		await expect(
+			runAgentVmCli(
+				['init', 'test-zone', '--type', 'hermes', '--secrets', '1password'],
+				{
+					stderr: { write: () => true },
+					stdout: { write: () => true },
+				},
+				defaultCliDependencies,
+			),
+		).rejects.toThrow("Expected 'openclaw' or 'worker', got 'hermes'");
 	});
 
 	it('prints controller help instead of throwing on controller --help', async () => {
@@ -1823,9 +1904,11 @@ describe('runAgentVmCli', () => {
 				probeOnePasswordServiceAccountHeadlessAuth: async () => ({ hint: 'ok', ok: true }),
 				resolveServiceAccountToken: async () => 'mock-token',
 				loadSystemConfig: async () => ({
-					schemaVersion: 1,
+					schemaVersion: 2,
+					storageRootDir: './storage',
 					cacheDir: './cache',
-					runtimeDir: './runtime',
+					controllerStateDir: '/controller-state-test',
+					controllerRuntimeDir: './controller-runtime',
 					systemConfigPath,
 					host: {
 						controllerPort: 18800,
@@ -1870,6 +1953,7 @@ describe('runAgentVmCli', () => {
 					checks: [],
 					ok: true,
 				}),
+				runControllerOfflineCleanup: defaultCliDependencies.runControllerOfflineCleanup,
 				startControllerRuntime: vi.fn(async () => createStartedControllerRuntime()),
 				startGatewayZone: vi.fn(async () => undefined as never),
 			},
@@ -1937,9 +2021,11 @@ describe('runAgentVmCli', () => {
 				probeOnePasswordServiceAccountHeadlessAuth: async () => ({ hint: 'ok', ok: true }),
 				resolveServiceAccountToken: async () => 'mock-token',
 				loadSystemConfig: async () => ({
-					schemaVersion: 1,
+					schemaVersion: 2,
+					storageRootDir: './storage',
 					cacheDir: './cache',
-					runtimeDir: './runtime',
+					controllerStateDir: '/controller-state-test',
+					controllerRuntimeDir: './controller-runtime',
 					systemConfigPath: './config/system.json',
 					host: {
 						controllerPort: 18800,
@@ -1984,6 +2070,7 @@ describe('runAgentVmCli', () => {
 					checks: [],
 					ok: true,
 				}),
+				runControllerOfflineCleanup: defaultCliDependencies.runControllerOfflineCleanup,
 				startControllerRuntime: vi.fn(async () => createStartedControllerRuntime()),
 				startGatewayZone: vi.fn(async () => undefined as never),
 			},
@@ -2059,9 +2146,11 @@ describe('runAgentVmCli', () => {
 				probeOnePasswordServiceAccountHeadlessAuth: async () => ({ hint: 'ok', ok: true }),
 				resolveServiceAccountToken: async () => 'mock-token',
 				loadSystemConfig: async () => ({
-					schemaVersion: 1,
+					schemaVersion: 2,
+					storageRootDir: './storage',
 					cacheDir: './cache',
-					runtimeDir: './runtime',
+					controllerStateDir: '/controller-state-test',
+					controllerRuntimeDir: './controller-runtime',
 					systemConfigPath: './config/system.json',
 					host: {
 						controllerPort: 18800,
@@ -2119,6 +2208,7 @@ describe('runAgentVmCli', () => {
 								port: 18791,
 								stateDir: './state/shravan',
 								zoneFilesDir: './zone-files/shravan',
+								zoneRuntimeDir: './runtime/shravan',
 							},
 							id: 'shravan',
 							secrets: {
@@ -2138,6 +2228,7 @@ describe('runAgentVmCli', () => {
 					checks: [],
 					ok: true,
 				}),
+				runControllerOfflineCleanup: defaultCliDependencies.runControllerOfflineCleanup,
 				startControllerRuntime,
 				startGatewayZone: vi.fn(async () => undefined as never),
 			},
@@ -2145,7 +2236,7 @@ describe('runAgentVmCli', () => {
 
 		expect(startControllerRuntime).toHaveBeenCalledWith(
 			expect.objectContaining({
-				zoneId: 'shravan',
+				zoneIds: ['shravan'],
 			}),
 			{
 				runTask: expect.any(Function),
@@ -2303,7 +2394,7 @@ describe('runAgentVmCli', () => {
 
 		expect(startControllerRuntime).toHaveBeenCalledWith(
 			expect.objectContaining({
-				zoneId: 'alevtina',
+				zoneIds: ['alevtina'],
 			}),
 			{
 				runTask: expect.any(Function),
@@ -2386,9 +2477,11 @@ describe('runAgentVmCli', () => {
 			probeOnePasswordServiceAccountHeadlessAuth: async () => ({ hint: 'ok', ok: true }),
 			resolveServiceAccountToken: async () => 'mock-token',
 			loadSystemConfig: async (): Promise<LoadedSystemConfig> => ({
-				schemaVersion: 1,
+				schemaVersion: 2,
+				storageRootDir: './storage',
 				cacheDir: './cache',
-				runtimeDir: './runtime',
+				controllerStateDir: '/controller-state-test',
+				controllerRuntimeDir: './controller-runtime',
 				systemConfigPath: './config/system.json',
 				host: {
 					controllerPort: 18800,
@@ -2446,6 +2539,7 @@ describe('runAgentVmCli', () => {
 							port: 18791,
 							stateDir: './state/shravan',
 							zoneFilesDir: './zone-files/shravan',
+							zoneRuntimeDir: './runtime/shravan',
 						},
 						id: 'shravan',
 						secrets: {
@@ -2465,6 +2559,7 @@ describe('runAgentVmCli', () => {
 				checks: [],
 				ok: true,
 			}),
+			runControllerOfflineCleanup: defaultCliDependencies.runControllerOfflineCleanup,
 			startControllerRuntime: vi.fn(async () => createStartedControllerRuntime()),
 			startGatewayZone: vi.fn(async () => undefined as never),
 		};
@@ -2547,7 +2642,11 @@ describe('runAgentVmCli', () => {
 
 		expect(runInteractiveProcess).toHaveBeenCalledWith(
 			'ssh',
-			expect.arrayContaining([expect.stringContaining('/run/openclaw/gateway-token.env')]),
+			expect.arrayContaining([
+				expect.stringContaining(
+					'/run/agent-vm/managed-gateway-environment/openclaw-gateway-token.environment.sh',
+				),
+			]),
 		);
 		const firstSshCall = vi.mocked(runInteractiveProcess).mock.calls[0];
 		if (!firstSshCall) {
@@ -2555,7 +2654,9 @@ describe('runAgentVmCli', () => {
 		}
 		const sshArguments = firstSshCall[1];
 		const remoteCommand = sshArguments.at(-1);
-		expect(remoteCommand).not.toEqual(expect.stringContaining('/run/openclaw/secrets.env'));
+		expect(remoteCommand).not.toEqual(
+			expect.stringContaining('openclaw-all-secrets.environment.sh'),
+		);
 	});
 
 	it('routes controller ssh --all-secrets through the raw gateway secret env file', async () => {
@@ -2590,8 +2691,14 @@ describe('runAgentVmCli', () => {
 		}
 		const sshArguments = firstSshCall[1];
 		const remoteCommand = sshArguments.at(-1);
-		expect(remoteCommand).toEqual(expect.stringContaining('/run/openclaw/secrets.env'));
-		expect(remoteCommand).not.toEqual(expect.stringContaining('/run/openclaw/gateway-token.env'));
+		expect(remoteCommand).toEqual(
+			expect.stringContaining(
+				'/run/agent-vm/managed-gateway-environment/openclaw-all-secrets.environment.sh',
+			),
+		);
+		expect(remoteCommand).not.toEqual(
+			expect.stringContaining('openclaw-gateway-token.environment.sh'),
+		);
 	});
 
 	it('routes auth codex-harness to native per-agent Codex CLI auth', async () => {
@@ -2629,7 +2736,12 @@ describe('runAgentVmCli', () => {
 		const remoteCommand = sshArguments?.at(-1);
 		expect(remoteCommand).toEqual(expect.stringContaining('shravan'));
 		expect(remoteCommand).toEqual(expect.stringContaining('source /etc/profile.d/openclaw-env.sh'));
-		expect(remoteCommand).not.toEqual(expect.stringContaining('/run/openclaw/secrets.env'));
+		expect(remoteCommand).not.toEqual(
+			expect.stringContaining('/run/agent-vm/managed-gateway/framework.environment.sh'),
+		);
+		expect(remoteCommand).not.toEqual(
+			expect.stringContaining('openclaw-all-secrets.environment.sh'),
+		);
 		expect(remoteCommand).not.toEqual(expect.stringContaining('/pnpm/global/5'));
 		expect(remoteCommand).toEqual(expect.stringContaining('pnpm root -g'));
 		expect(remoteCommand).toEqual(expect.stringContaining('CODEX_HOME="$codex_home"'));
@@ -3099,9 +3211,11 @@ describe('runAgentVmCli', () => {
 					listBackups,
 				}),
 				loadSystemConfig: async () => ({
-					schemaVersion: 1,
+					schemaVersion: 2,
+					storageRootDir: './storage',
 					cacheDir: './cache',
-					runtimeDir: './runtime',
+					controllerStateDir: '/controller-state-test',
+					controllerRuntimeDir: './controller-runtime',
 					systemConfigPath: './config/system.json',
 					host: {
 						controllerPort: 18800,
@@ -3146,6 +3260,7 @@ describe('runAgentVmCli', () => {
 								port: 18791,
 								stateDir: './state/shravan',
 								zoneFilesDir: './zone-files/shravan',
+								zoneRuntimeDir: './runtime/shravan',
 							},
 							id: 'shravan',
 							secrets: {
@@ -3162,6 +3277,7 @@ describe('runAgentVmCli', () => {
 					],
 				}),
 				runControllerDoctor: () => ({ checks: [], ok: true }),
+				runControllerOfflineCleanup: defaultCliDependencies.runControllerOfflineCleanup,
 				startControllerRuntime: vi.fn(async () => createStartedControllerRuntime({ vmId: 'vm-1' })),
 				resolveManagedVmMinimumZigVersion: async () => '0.15.2',
 				probeOnePasswordServiceAccountHeadlessAuth: async () => ({ hint: 'ok', ok: true }),
@@ -3256,7 +3372,7 @@ describe('runAgentVmCli', () => {
 						if (ref.source === 'config') {
 							throw new Error('Unexpected config secret.');
 						}
-						expect(ref.ref).toBe('op://agent-vm/shravan-gateway-backup/password');
+						expect(ref.ref).toBe('op://test-vault/backup-identity/password');
 						return 'resolved-passphrase';
 					},
 					resolveAll: async () => ({}),
@@ -3267,9 +3383,11 @@ describe('runAgentVmCli', () => {
 					listBackups: () => [],
 				}),
 				loadSystemConfig: async () => ({
-					schemaVersion: 1,
+					schemaVersion: 2,
+					storageRootDir: './storage',
 					cacheDir: './cache',
-					runtimeDir: './runtime',
+					controllerStateDir: '/controller-state-test',
+					controllerRuntimeDir: './controller-runtime',
 					systemConfigPath: './config/system.json',
 					host: {
 						controllerPort: 18800,
@@ -3314,6 +3432,11 @@ describe('runAgentVmCli', () => {
 								port: 18791,
 								stateDir: './state/shravan',
 								zoneFilesDir: './zone-files/shravan',
+								zoneRuntimeDir: './runtime/shravan',
+								backupIdentity: {
+									source: '1password',
+									ref: 'op://test-vault/backup-identity/password',
+								},
 							},
 							id: 'shravan',
 							secrets: {
@@ -3330,6 +3453,7 @@ describe('runAgentVmCli', () => {
 					],
 				}),
 				runControllerDoctor: () => ({ checks: [], ok: true }),
+				runControllerOfflineCleanup: defaultCliDependencies.runControllerOfflineCleanup,
 				startControllerRuntime: vi.fn(async () => createStartedControllerRuntime({ vmId: 'vm-1' })),
 				resolveManagedVmMinimumZigVersion: async () => '0.15.2',
 				probeOnePasswordServiceAccountHeadlessAuth: async () => ({ hint: 'ok', ok: true }),

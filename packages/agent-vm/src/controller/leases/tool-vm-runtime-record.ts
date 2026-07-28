@@ -7,6 +7,7 @@ import { ZodError, z } from 'zod';
 
 import { readProcessIdentity as defaultReadProcessIdentity } from '../../shared/managed-vm-process.js';
 import { writeFileAtomically } from '../../shared/write-file-atomically.js';
+import type { ControllerToolLeaseRecordsTarget } from '../durable-state/controller-state-record-paths.js';
 import {
 	gatewayEpochIdentitySchema,
 	type GatewayEpochIdentity,
@@ -58,23 +59,42 @@ export type ToolVmRuntimeRecordLoadResult =
 			readonly path: string;
 	  };
 
-const toolLeasesDirectoryName = 'tool-leases';
+const toolVmRuntimeRecordIdSchema = z.uuid();
 
-function resolveToolLeasesDirectory(stateDirectory: string): string {
-	return path.join(stateDirectory, toolLeasesDirectoryName);
+function toolVmRuntimeRecordSchemaForTarget(
+	recordsTarget: ControllerToolLeaseRecordsTarget,
+): z.ZodType<ToolVmRuntimeRecord> {
+	return toolVmRuntimeRecordSchema.superRefine((record, context) => {
+		if (record.zoneId !== recordsTarget.zoneId) {
+			context.addIssue({
+				code: 'custom',
+				message: `Tool VM runtime record zone '${record.zoneId}' does not match target zone '${recordsTarget.zoneId}'.`,
+				path: ['zoneId'],
+			});
+		}
+	});
 }
 
-function resolveToolVmRuntimeRecordPath(stateDirectory: string, recordId: string): string {
-	return path.join(resolveToolLeasesDirectory(stateDirectory), `${recordId}.json`);
+function resolveToolVmRuntimeRecordPath(
+	recordsTarget: ControllerToolLeaseRecordsTarget,
+	recordId: string,
+): string {
+	return path.join(
+		recordsTarget.directoryPath,
+		`${toolVmRuntimeRecordIdSchema.parse(recordId)}.json`,
+	);
 }
 
 export function toolVmRuntimeRecordFilename(record: ToolVmRuntimeRecord): string {
 	return `${record.recordId}.json`;
 }
 
-function parseToolVmRuntimeRecord(rawRuntimeRecord: string): ToolVmRuntimeRecord {
+function parseToolVmRuntimeRecord(
+	rawRuntimeRecord: string,
+	recordsTarget: ControllerToolLeaseRecordsTarget,
+): ToolVmRuntimeRecord {
 	const parsedRuntimeRecord = JSON.parse(rawRuntimeRecord) as unknown;
-	return toolVmRuntimeRecordSchema.parse(parsedRuntimeRecord);
+	return toolVmRuntimeRecordSchemaForTarget(recordsTarget).parse(parsedRuntimeRecord);
 }
 
 function runtimeRecordParseError(error: SyntaxError | ZodError): Error {
@@ -82,10 +102,10 @@ function runtimeRecordParseError(error: SyntaxError | ZodError): Error {
 }
 
 export async function loadToolVmRuntimeRecord(
-	stateDirectory: string,
+	recordsTarget: ControllerToolLeaseRecordsTarget,
 	recordId: string,
 ): Promise<ToolVmRuntimeRecord | null> {
-	const runtimeRecordPath = resolveToolVmRuntimeRecordPath(stateDirectory, recordId);
+	const runtimeRecordPath = resolveToolVmRuntimeRecordPath(recordsTarget, recordId);
 	let rawRuntimeRecord: string;
 	try {
 		rawRuntimeRecord = await fs.readFile(runtimeRecordPath, 'utf8');
@@ -95,17 +115,18 @@ export async function loadToolVmRuntimeRecord(
 		}
 		throw error;
 	}
-	return parseToolVmRuntimeRecord(rawRuntimeRecord);
+	return parseToolVmRuntimeRecord(rawRuntimeRecord, recordsTarget);
 }
 
 async function loadToolVmRuntimeRecordResult(
 	runtimeRecordPath: string,
+	recordsTarget: ControllerToolLeaseRecordsTarget,
 ): Promise<ToolVmRuntimeRecordLoadResult> {
 	try {
 		return {
 			kind: 'loaded',
 			path: runtimeRecordPath,
-			record: parseToolVmRuntimeRecord(await fs.readFile(runtimeRecordPath, 'utf8')),
+			record: parseToolVmRuntimeRecord(await fs.readFile(runtimeRecordPath, 'utf8'), recordsTarget),
 		};
 	} catch (error) {
 		if (!(error instanceof SyntaxError) && !(error instanceof ZodError)) {
@@ -120,9 +141,9 @@ async function loadToolVmRuntimeRecordResult(
 }
 
 export async function loadAllToolVmRuntimeRecords(
-	stateDirectory: string,
+	recordsTarget: ControllerToolLeaseRecordsTarget,
 ): Promise<ToolVmRuntimeRecordLoadResult[]> {
-	const leasesDirectory = resolveToolLeasesDirectory(stateDirectory);
+	const leasesDirectory = recordsTarget.directoryPath;
 	let entries: string[];
 	try {
 		entries = await fs.readdir(leasesDirectory);
@@ -139,7 +160,7 @@ export async function loadAllToolVmRuntimeRecords(
 		}
 		const runtimeRecordPath = path.join(leasesDirectory, entry);
 		// oxlint-disable-next-line no-await-in-loop -- per-entry parse errors need their own path.
-		results.push(await loadToolVmRuntimeRecordResult(runtimeRecordPath));
+		results.push(await loadToolVmRuntimeRecordResult(runtimeRecordPath, recordsTarget));
 	}
 	results.sort((left, right) => {
 		const leftCreatedAt = left.kind === 'loaded' ? left.record.createdAt : '';
@@ -150,22 +171,22 @@ export async function loadAllToolVmRuntimeRecords(
 }
 
 export async function writeToolVmRuntimeRecord(
-	stateDirectory: string,
+	recordsTarget: ControllerToolLeaseRecordsTarget,
 	record: ToolVmRuntimeRecord,
 ): Promise<void> {
-	const parsedRecord = toolVmRuntimeRecordSchema.parse(record);
-	const runtimeRecordPath = resolveToolVmRuntimeRecordPath(stateDirectory, parsedRecord.recordId);
-	await fs.mkdir(resolveToolLeasesDirectory(stateDirectory), { recursive: true, mode: 0o700 });
+	const parsedRecord = toolVmRuntimeRecordSchemaForTarget(recordsTarget).parse(record);
+	const runtimeRecordPath = resolveToolVmRuntimeRecordPath(recordsTarget, parsedRecord.recordId);
+	await fs.mkdir(recordsTarget.directoryPath, { recursive: true, mode: 0o700 });
 	await writeFileAtomically(runtimeRecordPath, `${JSON.stringify(parsedRecord, null, 2)}\n`, {
 		mode: 0o600,
 	});
 }
 
 export async function deleteToolVmRuntimeRecord(
-	stateDirectory: string,
+	recordsTarget: ControllerToolLeaseRecordsTarget,
 	recordId: string,
 ): Promise<void> {
-	await fs.rm(resolveToolVmRuntimeRecordPath(stateDirectory, recordId), { force: true });
+	await fs.rm(resolveToolVmRuntimeRecordPath(recordsTarget, recordId), { force: true });
 }
 
 function resolveManagedVmQemuPid(managedVm: ManagedVm): number {

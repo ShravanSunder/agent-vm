@@ -19,14 +19,16 @@ import {
 } from './package-overrides.js';
 
 const managedOpenClawAgentVmPluginPackageName = '@agent-vm/openclaw-agent-vm-plugin';
+const managedGatewayRuntimePackageName = '@agent-vm/gateway-runtime';
 const managedMcpPortalPackageName = '@agent-vm/mcp-portal';
 const managedOpenAiCodexCliPackageName = '@openai/codex';
-const managedCoreOpenClawPackageNames = ['openclaw', '@openclaw/codex'] as const;
 const managedOpenClawPackageNames = new Set([
 	managedOpenClawAgentVmPluginPackageName,
+	managedGatewayRuntimePackageName,
 	managedMcpPortalPackageName,
 ]);
 const managedOpenClawAgentVmPluginExtensionPath = '/home/openclaw/.openclaw/extensions/gondolin';
+const managedOpenClawAuthShellEnvironmentPath = '/etc/profile.d/openclaw-env.sh';
 const managedPnpmHomePath = '/pnpm';
 const managedPnpmGlobalDirectory = '/pnpm/global';
 const requiredManagedRuntimeDependencyPatchesByOpenClawVersion = new Map<
@@ -111,6 +113,7 @@ export interface ManagedDockerfilePlan {
 	readonly openClawAgentVmPluginPackage?: ManagedDockerfilePackagePlanEntry;
 	readonly mcpPortalPackage?: ManagedDockerfilePackagePlanEntry;
 	readonly directNpmPackages: readonly ManagedDockerfilePackagePlanEntry[];
+	readonly gatewayRuntimePackage?: ManagedDockerfilePackagePlanEntry;
 	readonly openClawDependencyOverrides: readonly ManagedDockerfileDependencyOverridePlanEntry[];
 	readonly openClawPackages: readonly ManagedDockerfilePackagePlanEntry[];
 	readonly warnings: readonly ManagedDockerfilePlanWarning[];
@@ -122,6 +125,8 @@ export interface GenerateManagedDockerfileResult {
 }
 
 export interface ManagedBaseImageReference {
+	readonly openclawPackageVersion?: string;
+	readonly openclawPluginList?: readonly string[];
 	readonly packageOverrides: PackageOverrides;
 	readonly repository: string;
 	readonly tag: string;
@@ -156,12 +161,19 @@ const managedBaseImageReferenceSchema = z
 	})
 	.strict();
 
+const managedOpenClawBaseImageReferenceSchema = managedBaseImageReferenceSchema
+	.extend({
+		openclawPackageVersion: z.string().min(1),
+		openclawPluginList: z.array(z.string().min(1)),
+	})
+	.strict();
+
 const managedImageReleaseSchema = z
 	.object({
 		schemaVersion: z.literal(1),
 		baseImages: z
 			.object({
-				'openclaw-gateway': managedBaseImageReferenceSchema,
+				'openclaw-gateway': managedOpenClawBaseImageReferenceSchema,
 				'tool-vm': managedBaseImageReferenceSchema,
 				'worker-gateway': managedBaseImageReferenceSchema,
 			})
@@ -320,43 +332,68 @@ function renderOpenClawPackageInstallLines(
 	openClawPackages: readonly ManagedDockerfilePackagePlanEntry[],
 	pnpmOverrides: readonly ResolvedPackageOverrideVersion[],
 ): readonly string[] {
-	if (openClawPackages.length === 0) {
-		return [];
-	}
-	if (pnpmOverrides.length === 0) {
-		return ['RUN pnpm add -g --ignore-scripts ' + shellJoin(openClawPackages.map((entry) => entry.spec))];
+	const corePackage = openClawPackages.find((packageEntry) => packageEntry.name === 'openclaw');
+	if (!corePackage?.version) {
+		throw new Error('OpenClaw image plans require an exact openclawPackageVersion.');
 	}
 	const pnpmOverrideMap = Object.fromEntries(
 		pnpmOverrides.map((overrideEntry) => [overrideEntry.name, overrideEntry.version]),
 	);
 	const packageJson = {
 		private: true,
-		dependencies: openClawPackageDependencyMap(openClawPackages, pnpmOverrides),
+		dependencies: openClawPackageDependencyMap([corePackage], pnpmOverrides),
 		pnpm: {
 			overrides: pnpmOverrideMap,
 		},
 	};
-	return [
+	const pluginPackages = openClawPackages.filter((packageEntry) => packageEntry.name !== 'openclaw');
+	const imagePluginStateDirectory = '/opt/agent-vm/openclaw-plugins';
+	const lines = [
 		'WORKDIR /opt/openclaw-runtime-packages',
 		`RUN printf '%s\\n' ${formatJsonObjectForDockerfile(packageJson)} > package.json`,
 		'RUN pnpm install --prod --ignore-scripts',
 		...pnpmOverrides.map((overrideEntry) =>
 			renderBundledDependencyRelinkCommand({
-				openClawPackages,
+				openClawPackages: [corePackage],
 				overridePackageName: overrideEntry.name,
 			}),
 		),
 		[
 			'RUN global_package_root="$(pnpm root -g)" && \\',
 			'    mkdir -p "$global_package_root" && \\',
-			...openClawPackages.map(
-				(packageEntry, index) =>
-					`    ${renderOpenClawPackageSymlinkCommand(packageEntry.name)}${
-						index === openClawPackages.length - 1 ? '' : ' && \\'
-					}`,
-			),
+			`    ${renderOpenClawPackageSymlinkCommand(corePackage.name)} && \\`,
+			'    chmod 755 /opt/openclaw-runtime-packages/node_modules/openclaw/openclaw.mjs && \\',
+			'    ln -sfn /opt/openclaw-runtime-packages/node_modules/openclaw/openclaw.mjs /pnpm/openclaw',
 		].join('\n'),
 	];
+	if (pluginPackages.length === 0) {
+		return lines;
+	}
+	lines.push(
+		[
+			`RUN install -d -m 0755 ${imagePluginStateDirectory} && \\`,
+			"    printf '%s\\n' \\",
+			"      '{' \\",
+			"      '  \"gateway\": { \"mode\": \"local\", \"auth\": { \"mode\": \"token\" } }' \\",
+			`      '}' > ${imagePluginStateDirectory}/openclaw.json && \\`,
+			`    chmod 0600 ${imagePluginStateDirectory}/openclaw.json`,
+		].join('\n'),
+	);
+	for (const pluginPackage of pluginPackages) {
+		const packageParentPath = pluginPackage.name.split('/').slice(0, -1).join('/');
+		lines.push(
+			`RUN OPENCLAW_STATE_DIR=${imagePluginStateDirectory} OPENCLAW_CONFIG_PATH=${imagePluginStateDirectory}/openclaw.json openclaw plugins install ${shellSingleQuote(`npm:${pluginPackage.spec}`)} --pin`,
+			[
+				'RUN global_package_root="$(pnpm root -g)" && \\',
+				`    plugin_package_json="$(find ${imagePluginStateDirectory}/npm/projects -path '*/node_modules/${pluginPackage.name}/package.json' -type f -print -quit)" && \\`,
+				'    test -n "$plugin_package_json" && \\',
+				'    plugin_package_root="$(dirname "$plugin_package_json")" && \\',
+				`    mkdir -p "$global_package_root/${packageParentPath}" && \\`,
+				`    ln -sfn "$plugin_package_root" "$global_package_root/${pluginPackage.name}"`,
+			].join('\n'),
+		);
+	}
+	return lines;
 }
 
 function renderGitHubCliStableAptInstallCommand(): string {
@@ -371,11 +408,42 @@ function renderGitHubCliStableAptInstallCommand(): string {
 	].join('\n');
 }
 
+function renderManagedOpenClawAuthShellEnvironmentInstallCommand(): string {
+	const environmentLines = [
+		'export HOME=/home/openclaw',
+		'export OPENCLAW_HOME=/home/openclaw',
+		'export OPENCLAW_CONFIG_PATH=/home/openclaw/.openclaw/state/effective-openclaw.json',
+		'export OPENCLAW_STATE_DIR=/home/openclaw/.openclaw/state',
+		'export PNPM_HOME=/pnpm',
+		'export PATH=/pnpm:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+		'export TMPDIR=/work/tmp',
+		'export TMP=/work/tmp',
+		'export TEMP=/work/tmp',
+		'export npm_config_cache=/work/cache/npm',
+		'export pnpm_config_store_dir=/work/cache/pnpm/store',
+		'export PIP_CACHE_DIR=/work/cache/pip',
+		'export UV_CACHE_DIR=/work/cache/uv',
+		'export NODE_EXTRA_CA_CERTS=/run/gondolin/ca-certificates.crt',
+	];
+	return [
+		'RUN install -d -m 0755 /etc/profile.d && \\',
+		"    printf '%s\\n' \\",
+		...environmentLines.map(
+			(environmentLine, index) =>
+				`      ${shellSingleQuote(environmentLine)}${
+					index === environmentLines.length - 1 ? ` > ${managedOpenClawAuthShellEnvironmentPath} && \\` : ' \\'
+				}`,
+		),
+		`    chmod 0644 ${managedOpenClawAuthShellEnvironmentPath}`,
+	].join('\n');
+}
+
 function renderManagedDockerfile(props: {
 	readonly base: ManagedImageBase;
 	readonly baseImage: ManagedBaseImageReference;
 	readonly overlay: ManagedImageOverlay;
 	readonly directNpmPackages: readonly ManagedDockerfilePackagePlanEntry[];
+	readonly gatewayRuntimePackageSpec?: string;
 	readonly mcpPortalPackageSpec?: string;
 	readonly openClawAgentVmPackageInstallMode?: 'managed-packages' | 'local-overlay' | undefined;
 	readonly openClawAgentVmPluginPackageSpec?: string;
@@ -397,6 +465,7 @@ function renderManagedDockerfile(props: {
 		);
 	}
 	if (props.base === 'tool-vm') {
+		lines.push('RUN rm -rf /scratch && install -d -m 0755 /work /workspace');
 		lines.push(renderGitHubCliStableAptInstallCommand());
 	}
 	if (
@@ -465,13 +534,20 @@ function renderManagedDockerfile(props: {
 		let managedFinalStagePackageSpecs: readonly string[];
 		if (openClawAgentVmPackageInstallMode === 'managed-packages') {
 			const openClawAgentVmPluginPackageSpec = props.openClawAgentVmPluginPackageSpec;
+			const gatewayRuntimePackageSpec = props.gatewayRuntimePackageSpec;
 			if (!openClawAgentVmPluginPackageSpec) {
 				throw new Error(
 					'OpenClaw gateway managed Dockerfiles require the managed OpenClaw plugin package spec.',
 				);
 			}
+			if (!gatewayRuntimePackageSpec) {
+				throw new Error(
+					'OpenClaw gateway managed Dockerfiles require the Gateway runtime package spec.',
+				);
+			}
 			managedFinalStagePackageSpecs = [
 				openClawAgentVmPluginPackageSpec,
+				gatewayRuntimePackageSpec,
 			];
 		} else {
 			managedFinalStagePackageSpecs = [];
@@ -486,6 +562,7 @@ function renderManagedDockerfile(props: {
 					shellJoin(props.directNpmPackages.map((packageEntry) => packageEntry.spec)),
 			);
 		}
+		lines.push(renderManagedOpenClawAuthShellEnvironmentInstallCommand());
 		lines.push('WORKDIR /');
 	}
 	for (const copy of props.overlay.copy) {
@@ -499,7 +576,15 @@ function renderManagedDockerfile(props: {
 			[
 				'RUN package_root="$(pnpm root -g)" && \\',
 				'    openclaw_package_root="$package_root/openclaw" && \\',
+				...(props.gatewayRuntimePackageSpec
+					? [
+							'    gateway_runtime_bin="$package_root/@agent-vm/gateway-runtime/dist/bin/gateway-runtime.js" && \\',
+							'    test -f "$gateway_runtime_bin" && chmod 755 "$gateway_runtime_bin" && \\',
+							'    ln -sfn "$gateway_runtime_bin" /usr/local/bin/agent-vm-gateway-runtime && \\',
+						]
+					: []),
 				'    mkdir -p /home/openclaw/.openclaw/extensions && \\',
+				'    ln -sfn "$openclaw_package_root/dist/plugin-sdk/diagnostic-runtime.js" /opt/openclaw-sdk/diagnostic-runtime.js && \\',
 				'    ln -sfn "$openclaw_package_root/dist/plugin-sdk/sandbox.js" /opt/openclaw-sdk/sandbox.js && \\',
 				'    ln -sfn "$openclaw_package_root/openclaw.mjs" /pnpm/openclaw && \\',
 				'    chmod 755 "$openclaw_package_root/openclaw.mjs" && \\',
@@ -517,6 +602,8 @@ function renderManagedDockerfile(props: {
 
 function resolveOpenClawPackagePlanEntries(props: {
 	readonly effectivePackageOverrides: EffectivePackageOverrides;
+	readonly openclawPackageVersion: string;
+	readonly openclawPluginList: readonly string[];
 	readonly requiredOpenClawPackageNames: readonly string[];
 }): readonly ManagedDockerfilePackagePlanEntry[] {
 	const entriesByName = new Map<string, ManagedDockerfilePackagePlanEntry>();
@@ -524,6 +611,16 @@ function resolveOpenClawPackagePlanEntries(props: {
 		if (managedOpenClawPackageNames.has(packageOverride.name)) {
 			throw new Error(
 				`packageOverrides.openclaw cannot override managed package ${packageOverride.name}. Update the agent-vm release instead.`,
+			);
+		}
+		if (packageOverride.name === 'openclaw') {
+			throw new Error(
+				'packageOverrides.openclaw cannot override the OpenClaw core package. Update openclawPackageVersion instead.',
+			);
+		}
+		if (!props.openclawPluginList.includes(packageOverride.name)) {
+			throw new Error(
+				`packageOverrides.openclaw cannot override unlisted OpenClaw plugin ${packageOverride.name}. Add it to openclawPluginList first.`,
 			);
 		}
 		entriesByName.set(packageOverride.name, {
@@ -534,29 +631,39 @@ function resolveOpenClawPackagePlanEntries(props: {
 		});
 	}
 
-	const effectiveOpenClawPackage = entriesByName.get('openclaw');
-	if (!effectiveOpenClawPackage?.version) {
-		throw new Error('OpenClaw gateway packageOverrides.openclaw must include openclaw@<version>.');
+	for (const requiredPackageName of props.requiredOpenClawPackageNames) {
+		if (!props.openclawPluginList.includes(requiredPackageName)) {
+			throw new Error(
+				`OpenClaw configuration requires plugin ${requiredPackageName}, but it is missing from openclawPluginList.`,
+			);
+		}
 	}
-	for (const packageName of props.requiredOpenClawPackageNames) {
+	for (const packageName of props.openclawPluginList) {
 		if (entriesByName.has(packageName)) {
 			continue;
 		}
 		entriesByName.set(packageName, {
 			name: packageName,
-			source: effectiveOpenClawPackage.source.startsWith('overlay.jsonc/')
-				? effectiveOpenClawPackage.source
-				: 'managed-default',
-			spec: packageSpec(packageName, effectiveOpenClawPackage.version),
-			version: effectiveOpenClawPackage.version,
+			source: 'managed-default',
+			spec: packageName,
 		});
 	}
 
-	return [...entriesByName.values()];
-}
-
-function mergeRequiredOpenClawPackageNames(packageNames: readonly string[]): readonly string[] {
-	return [...new Set([...managedCoreOpenClawPackageNames, ...packageNames])];
+	return [
+		{
+			name: 'openclaw',
+			source: 'managed-images.json',
+			spec: packageSpec('openclaw', props.openclawPackageVersion),
+			version: props.openclawPackageVersion,
+		},
+		...props.openclawPluginList.map((packageName) => {
+			const packageEntry = entriesByName.get(packageName);
+			if (!packageEntry) {
+				throw new Error(`OpenClaw plugin ${packageName} did not resolve to an install plan entry.`);
+			}
+			return packageEntry;
+		}),
+	];
 }
 
 function collectOpenClawPackagePlanWarnings(
@@ -633,9 +740,13 @@ export async function generateManagedDockerfile(
 		options.base === 'openclaw-gateway'
 			? resolveOpenClawPackagePlanEntries({
 					effectivePackageOverrides,
-					requiredOpenClawPackageNames: mergeRequiredOpenClawPackageNames(
-						options.requiredOpenClawPackageNames ?? [],
-					),
+					openclawPackageVersion:
+						baseImage.openclawPackageVersion ??
+						(() => {
+							throw new Error('Managed OpenClaw image is missing openclawPackageVersion.');
+						})(),
+					openclawPluginList: baseImage.openclawPluginList ?? [],
+					requiredOpenClawPackageNames: options.requiredOpenClawPackageNames ?? [],
 				})
 			: [];
 	const effectivePnpmOverrides = filterPnpmOverridesForPackages(
@@ -652,6 +763,10 @@ export async function generateManagedDockerfile(
 	const openClawAgentVmPluginPackageSpec =
 		options.base === 'openclaw-gateway' && openClawAgentVmPackageInstallMode === 'managed-packages'
 			? await resolveManagedOpenClawAgentVmPluginPackageSpec()
+			: undefined;
+	const gatewayRuntimePackageSpec =
+		options.base === 'openclaw-gateway' && openClawAgentVmPackageInstallMode === 'managed-packages'
+			? await resolveManagedPackageSpec(managedGatewayRuntimePackageName)
 			: undefined;
 	const mcpPortalPackageSpec =
 		options.base === 'tool-vm' && !usesLocalAgentVmPackageOverlay
@@ -698,6 +813,7 @@ export async function generateManagedDockerfile(
 			base: options.base,
 			baseImage,
 			directNpmPackages,
+			...(gatewayRuntimePackageSpec === undefined ? {} : { gatewayRuntimePackageSpec }),
 			...(mcpPortalPackageSpec === undefined ? {} : { mcpPortalPackageSpec }),
 			overlay,
 			openClawAgentVmPackageInstallMode,
@@ -732,6 +848,15 @@ export async function generateManagedDockerfile(
 						},
 					}),
 			...(mcpPortalPackagePlan === undefined ? {} : { mcpPortalPackage: mcpPortalPackagePlan }),
+			...(gatewayRuntimePackageSpec === undefined
+				? {}
+				: {
+						gatewayRuntimePackage: {
+							name: managedGatewayRuntimePackageName,
+							source: 'installed-package',
+							spec: gatewayRuntimePackageSpec,
+						},
+					}),
 			directNpmPackages,
 			openClawDependencyOverrides,
 			openClawPackages,

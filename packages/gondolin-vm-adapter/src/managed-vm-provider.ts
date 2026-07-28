@@ -4,6 +4,7 @@ import path from 'node:path';
 import {
 	createOwnedHostDirectoryController,
 	assertPositiveHostProcessId,
+	validateManagedVmFilteredWorkspacePolicy,
 	type ManagedVm,
 	type ManagedVmAccessHandle,
 	type ManagedVmCreateRequest,
@@ -12,6 +13,7 @@ import {
 	type ManagedVmExecOutputChunk,
 	type ManagedVmExecProcess,
 	type ManagedVmExecResult,
+	type ManagedVmExecStreamMode,
 	type ManagedVmIngressOptions,
 	type ManagedVmIngressRoute,
 	type ManagedVmProvider,
@@ -23,6 +25,7 @@ import { validateBuildConfig } from '@earendil-works/gondolin';
 import { parse, printParseErrorCode, type ParseError } from 'jsonc-parser';
 
 import { buildImage } from './build-pipeline.js';
+import { createGondolinExactProcessTerminationCapability } from './exact-recorded-process-termination.js';
 import {
 	resolveGondolinMinimumZigVersion,
 	resolveGondolinPackageSpec,
@@ -72,7 +75,16 @@ function assertCreateRequestSupported(request: ManagedVmCreateRequest): void {
 		if (!guestPath.startsWith('/')) {
 			throw new Error(`Managed VM mount path must be absolute: ${guestPath}`);
 		}
-		if (!['host-directory', 'owned-host-directory', 'memory', 'shadow'].includes(mount.kind)) {
+		if (
+			![
+				'host-directory',
+				'finalizable-memory',
+				'owned-host-directory',
+				'owned-filtered-workspace',
+				'memory',
+				'shadow',
+			].includes(mount.kind)
+		) {
 			throw new Error(`Unsupported managed VM mount kind: ${formatUnknownValue(mount.kind)}`);
 		}
 	}
@@ -141,11 +153,47 @@ function translateExecStdin(
 	})();
 }
 
+const MANAGED_VM_EXEC_OUTPUT_WINDOW_MIN_BYTES = 4 * 1024;
+const MANAGED_VM_EXEC_OUTPUT_WINDOW_MAX_BYTES = 16 * 1024 * 1024;
+
+function translateExecStreamMode(mode: ManagedVmExecStreamMode): 'ignore' | 'pipe' {
+	if (typeof mode !== 'object' || mode === null || !('kind' in mode)) {
+		throw new Error('Unsupported managed VM exec output mode.');
+	}
+	if (mode.kind === 'pipe') {
+		return 'pipe';
+	}
+	if (mode.kind === 'discard') {
+		return 'ignore';
+	}
+	throw new Error('Unsupported managed VM exec output mode.');
+}
+
+function translateExecStreamingOptions(
+	output: NonNullable<ManagedVmExecOptions['output']>,
+): Pick<NativeManagedExecOptions, 'stderr' | 'stdout' | 'windowBytes'> {
+	if (
+		!Number.isInteger(output.windowBytes) ||
+		output.windowBytes < MANAGED_VM_EXEC_OUTPUT_WINDOW_MIN_BYTES ||
+		output.windowBytes > MANAGED_VM_EXEC_OUTPUT_WINDOW_MAX_BYTES
+	) {
+		throw new Error(
+			`Managed VM exec output window must be an integer between ${String(MANAGED_VM_EXEC_OUTPUT_WINDOW_MIN_BYTES)} and ${String(MANAGED_VM_EXEC_OUTPUT_WINDOW_MAX_BYTES)} bytes.`,
+		);
+	}
+	return {
+		stderr: translateExecStreamMode(output.stderr),
+		stdout: translateExecStreamMode(output.stdout),
+		windowBytes: output.windowBytes,
+	};
+}
+
 function translateExecOptions(options: ManagedVmExecOptions): NativeManagedExecOptions {
 	return {
 		...(options.argv ? { argv: [...options.argv] } : {}),
 		...(options.cwd ? { cwd: options.cwd } : {}),
 		...(options.env ? { env: translateExecEnvironment(options.env) } : {}),
+		...(options.output === undefined ? {} : translateExecStreamingOptions(options.output)),
 		...(options.pty === undefined ? {} : { pty: options.pty }),
 		...(options.signal ? { signal: options.signal } : {}),
 		...(options.stdin === undefined ? {} : { stdin: translateExecStdin(options.stdin) }),
@@ -177,15 +225,51 @@ function wrapExecProcess(nativeProcess: ReturnType<NativeManagedVm['exec']>): Ma
 	}) satisfies ManagedVmExecProcess;
 }
 
-function translateMounts(
+async function assertReadonlyInputSourcesStayWithinOwnedRoot(
+	pinnedRoot: PinnedRealFsRoot,
+	policy: ReturnType<typeof validateManagedVmFilteredWorkspacePolicy>,
+): Promise<void> {
+	const canonicalRootPrefix = pinnedRoot.realPath.endsWith(path.sep)
+		? pinnedRoot.realPath
+		: `${pinnedRoot.realPath}${path.sep}`;
+	await Promise.all(
+		policy.readonlyInputs.map(async (readonlyInput) => {
+			const sourcePath = path.join(
+				pinnedRoot.realPath,
+				...readonlyInput.sourceRelativePath.split('/'),
+			);
+			const canonicalSourcePath = await fs.realpath(sourcePath);
+			if (
+				canonicalSourcePath !== pinnedRoot.realPath &&
+				!canonicalSourcePath.startsWith(canonicalRootPrefix)
+			) {
+				throw new Error(
+					`Managed filtered workspace read-only source crosses the owned root boundary: ${readonlyInput.sourceRelativePath}`,
+				);
+			}
+		}),
+	);
+}
+
+async function translateMounts(
 	mounts: ManagedVmCreateRequest['mounts'],
 	ownedDirectoryRoots: OwnedDirectoryProvenance,
-): TranslatedMounts {
+): Promise<TranslatedMounts> {
 	const translatedMounts: Record<string, VfsMountSpec> = {};
 	const transfers: OwnedHostDirectoryTransfer[] = [];
+	const sourceValidations: {
+		readonly pinnedRoot: PinnedRealFsRoot;
+		readonly policy: ReturnType<typeof validateManagedVmFilteredWorkspacePolicy>;
+	}[] = [];
 	try {
 		for (const [guestPath, mount] of Object.entries(mounts)) {
 			switch (mount.kind) {
+				case 'finalizable-memory':
+					translatedMounts[guestPath] = {
+						access: mount.access,
+						kind: 'finalizable-memory',
+					};
+					break;
 				case 'host-directory':
 					translatedMounts[guestPath] = {
 						hostPath: mount.hostPath,
@@ -206,6 +290,23 @@ function translateMounts(
 					};
 					break;
 				}
+				case 'owned-filtered-workspace': {
+					const pinnedRoot = ownedDirectoryRoots.get(mount.directory);
+					if (!pinnedRoot) {
+						throw new Error('Owned host directory was not acquired by this Gondolin provider.');
+					}
+					assertPinnedRealFsRoot(pinnedRoot);
+					transfers.push(mount.directory.consume());
+					ownedDirectoryRoots.delete(mount.directory);
+					const policy = validateManagedVmFilteredWorkspacePolicy(mount.policy);
+					sourceValidations.push({ pinnedRoot, policy });
+					translatedMounts[guestPath] = {
+						kind: 'filtered-workspace',
+						pinnedHostRoot: pinnedRoot,
+						policy,
+					};
+					break;
+				}
 				case 'memory':
 					translatedMounts[guestPath] = { kind: 'memory' };
 					break;
@@ -221,6 +322,11 @@ function translateMounts(
 					break;
 			}
 		}
+		await Promise.all(
+			sourceValidations.map(({ pinnedRoot, policy }) =>
+				assertReadonlyInputSourcesStayWithinOwnedRoot(pinnedRoot, policy),
+			),
+		);
 	} catch (error) {
 		const closeErrors = closeOwnedDirectoryTransfers(transfers);
 		if (closeErrors.length > 0) {
@@ -314,6 +420,9 @@ function wrapManagedVm(
 				user: access.user,
 			};
 		},
+		async finalizeMemoryMount(request): Promise<void> {
+			await nativeVm.finalizeMemoryMount(request);
+		},
 		exec(command: ManagedVmExecCommand, options?: ManagedVmExecOptions): ManagedVmExecProcess {
 			const normalizedCommand = typeof command === 'string' ? command : [...command];
 			const nativeProcess = nativeVm.exec(
@@ -405,19 +514,26 @@ export function createGondolinManagedVmProvider(): ManagedVmProvider {
 				return diagnostics;
 			},
 		},
+		exactProcessTermination: createGondolinExactProcessTerminationCapability(),
 		factory: {
 			async createManagedVm(request: ManagedVmCreateRequest): Promise<ManagedVm> {
 				assertCreateRequestSupported(request);
 				const secrets = Object.fromEntries(
 					request.mediatedSecrets.map((secret) => [
 						secret.environmentVariable,
-						{ hosts: [...secret.allowedHosts], value: secret.value },
+						{
+							hosts: [...secret.allowedHosts],
+							...(secret.guestPlaceholder === undefined
+								? {}
+								: { placeholder: secret.guestPlaceholder }),
+							value: secret.value,
+						},
 					]),
 				);
 				const tcpHosts = Object.fromEntries(
 					request.tcpHosts.map((mapping) => [mapping.guestHost, mapping.target]),
 				);
-				const translatedMounts = translateMounts(request.mounts, ownedDirectoryRoots);
+				const translatedMounts = await translateMounts(request.mounts, ownedDirectoryRoots);
 				let nativeVm: NativeManagedVm;
 				try {
 					nativeVm = await createNativeManagedVm({

@@ -74,6 +74,12 @@ export function classifyGatewayControlAdmission(
 			return { reason: 'direction_violation', status: 'fence' };
 		}
 		switch (message.operation) {
+			case 'gateway_runtime_readiness':
+				return {
+					coalesceKey: 'gateway-runtime-readiness',
+					messageClass: 'liveness',
+					status: 'classified',
+				};
 			case 'runtime_status':
 				return {
 					coalesceKey: `runtime-status:${message.payload.statusKind}`,
@@ -97,6 +103,19 @@ export function classifyGatewayControlAdmission(
 	}
 	if (options.direction === 'controller_to_gateway') {
 		switch (message.operation) {
+			case 'tool_vm_binding_publish': {
+				if (message.kind !== 'command') {
+					return { reason: 'direction_violation', status: 'fence' };
+				}
+				const stablePrincipal = message.payload.binding.stablePrincipal;
+				return {
+					authoritySchedulingKey: stablePrincipal,
+					coalesceKey: `tool-vm-binding:${stablePrincipal}`,
+					messageClass: 'authority',
+					stablePrincipal,
+					status: 'classified',
+				};
+			}
 			case 'operation_cancel':
 				return options.controllerSafetyOperation === true &&
 					message.payload.initiatedBy === 'controller'
@@ -117,6 +136,9 @@ export function classifyGatewayControlAdmission(
 			case 'lease_use_heartbeat':
 			case 'lease_use_end':
 			case 'tool_portal_controller_host_action':
+			case 'tool_portal_admission_reserve':
+			case 'tool_portal_dispatch_arm':
+			case 'tool_vm_binding_request':
 				return { reason: 'direction_violation', status: 'fence' };
 		}
 	}
@@ -145,6 +167,8 @@ export function classifyGatewayControlAdmission(
 				: { reason: 'direction_violation', status: 'fence' };
 		case 'recovery_command':
 			return { reason: 'direction_violation', status: 'fence' };
+		case 'tool_vm_binding_publish':
+			return { reason: 'direction_violation', status: 'fence' };
 		case 'lease_create':
 		case 'lease_get':
 		case 'lease_peek':
@@ -153,6 +177,9 @@ export function classifyGatewayControlAdmission(
 		case 'lease_use_start':
 		case 'lease_use_end':
 		case 'tool_portal_controller_host_action':
+		case 'tool_portal_admission_reserve':
+		case 'tool_portal_dispatch_arm':
+		case 'tool_vm_binding_request':
 			return authorityClassification(options.stablePrincipal);
 	}
 	return { reason: 'direction_violation', status: 'fence' };

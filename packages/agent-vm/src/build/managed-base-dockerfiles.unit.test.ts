@@ -37,7 +37,7 @@ describe('managed base Dockerfiles', () => {
 		expect(dockerfile).toContain('npm install -g pnpm@10.33.0');
 		expect(dockerfile).toContain('pnpm --version');
 		expect(dockerfile).toContain('ENV PATH=${PNPM_HOME}:${PATH}');
-		expect(dockerfile).toContain('COPY --from=ghcr.io/astral-sh/uv:0.11.16 /uv /uvx /usr/local/bin/');
+		expect(dockerfile).toContain('COPY --from=ghcr.io/astral-sh/uv:0.11.31 /uv /uvx /usr/local/bin/');
 		expect(dockerfile).toContain('uv python install 3.13 --install-dir /opt/python');
 		expect(dockerfile).toContain('ln -sfn "$python_bindir/python3" /usr/local/bin/python3');
 		expect(dockerfile).not.toContain('python3 \\');
@@ -63,11 +63,12 @@ describe('managed base Dockerfiles', () => {
 
 		expect(dockerfile).toContain('npm install -g pnpm@10.33.0');
 		expect(dockerfile).toContain('pnpm --version');
-		expect(dockerfile).toContain('COPY --from=ghcr.io/astral-sh/uv:0.11.16 /uv /uvx /usr/local/bin/');
+		expect(dockerfile).toContain('COPY --from=ghcr.io/astral-sh/uv:0.11.31 /uv /uvx /usr/local/bin/');
 		expect(dockerfile).toContain('uv python install 3.13 --install-dir /opt/python');
 		expect(dockerfile).toContain('ripgrep \\');
 		expect(dockerfile).toContain('fd-find \\');
 		expect(dockerfile).toContain('micro \\');
+		expect(dockerfile).toContain('mkdir -p /work /scratch /run/sshd /var/log');
 		expect(dockerfile).not.toContain('python3 \\');
 		expect(dockerfile).not.toContain('nano \\');
 		expect(dockerfile).not.toContain('vim-tiny');

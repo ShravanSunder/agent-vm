@@ -1,18 +1,17 @@
 import { buildToolSessionLabel } from '@agent-vm/gateway-lifecycle';
+import type { ManagedVmExactProcessTerminationCapability } from '@agent-vm/managed-vm';
 
+import { terminateRecordedManagedVmProcess } from '../../shared/controller-managed-vm-termination.js';
 import {
-	isProcessAlive,
-	terminateRecordedManagedVmHostProcess,
-	killProcess,
 	readProcessCommand,
 	readProcessIdentity,
-	sleep,
 	verifyRecordedManagedVmHostProcess,
 } from '../../shared/managed-vm-process.js';
 import {
 	readTcpListenPortOwner as defaultReadTcpListenPortOwner,
 	type PortOwner,
 } from '../../shared/port-owner.js';
+import type { ControllerToolLeaseRecordsTarget } from '../durable-state/controller-state-record-paths.js';
 import type { ToolVmRuntimeRecord } from './tool-vm-runtime-record.js';
 import {
 	deleteToolVmRuntimeRecord,
@@ -34,20 +33,20 @@ function validateToolVmRecordCleanupScope(options: {
 	readonly expectedControllerPort: number;
 	readonly projectNamespace: string;
 	readonly runtimeRecord: ToolVmRuntimeRecord;
-	readonly stateDir: string;
+	readonly recordsDirectoryPath: string;
 	readonly zoneId: string;
 }): string | null {
 	if (options.runtimeRecord.configPath !== options.expectedConfigPath) {
-		return `Tool VM runtime record for lease '${options.runtimeRecord.leaseId}' at '${options.stateDir}' belongs to configPath '${options.runtimeRecord.configPath}', not '${options.expectedConfigPath}'. Refusing scoped cleanup.`;
+		return `Tool VM runtime record for lease '${options.runtimeRecord.leaseId}' at '${options.recordsDirectoryPath}' belongs to configPath '${options.runtimeRecord.configPath}', not '${options.expectedConfigPath}'. Refusing scoped cleanup.`;
 	}
 	if (options.runtimeRecord.controllerPort !== options.expectedControllerPort) {
-		return `Tool VM runtime record for lease '${options.runtimeRecord.leaseId}' at '${options.stateDir}' belongs to controllerPort '${options.runtimeRecord.controllerPort}', not '${options.expectedControllerPort}'. Refusing scoped cleanup.`;
+		return `Tool VM runtime record for lease '${options.runtimeRecord.leaseId}' at '${options.recordsDirectoryPath}' belongs to controllerPort '${options.runtimeRecord.controllerPort}', not '${options.expectedControllerPort}'. Refusing scoped cleanup.`;
 	}
 	if (options.runtimeRecord.projectNamespace !== options.projectNamespace) {
-		return `Tool VM runtime record for lease '${options.runtimeRecord.leaseId}' at '${options.stateDir}' belongs to projectNamespace '${options.runtimeRecord.projectNamespace}', not '${options.projectNamespace}'. Refusing scoped cleanup.`;
+		return `Tool VM runtime record for lease '${options.runtimeRecord.leaseId}' at '${options.recordsDirectoryPath}' belongs to projectNamespace '${options.runtimeRecord.projectNamespace}', not '${options.projectNamespace}'. Refusing scoped cleanup.`;
 	}
 	if (options.runtimeRecord.zoneId !== options.zoneId) {
-		return `Tool VM runtime record for lease '${options.runtimeRecord.leaseId}' at '${options.stateDir}' belongs to zone '${options.runtimeRecord.zoneId}', not requested zone '${options.zoneId}'. Refusing scoped cleanup.`;
+		return `Tool VM runtime record for lease '${options.runtimeRecord.leaseId}' at '${options.recordsDirectoryPath}' belongs to zone '${options.runtimeRecord.zoneId}', not requested zone '${options.zoneId}'. Refusing scoped cleanup.`;
 	}
 	const expectedSessionLabel = buildToolSessionLabel(
 		options.projectNamespace,
@@ -55,26 +54,25 @@ function validateToolVmRecordCleanupScope(options: {
 		options.runtimeRecord.tcpSlot,
 	);
 	if (options.runtimeRecord.sessionLabel !== expectedSessionLabel) {
-		return `Tool VM runtime record for lease '${options.runtimeRecord.leaseId}' at '${options.stateDir}' session label '${options.runtimeRecord.sessionLabel}' does not match expected '${expectedSessionLabel}'. Refusing scoped cleanup.`;
+		return `Tool VM runtime record for lease '${options.runtimeRecord.leaseId}' at '${options.recordsDirectoryPath}' session label '${options.runtimeRecord.sessionLabel}' does not match expected '${expectedSessionLabel}'. Refusing scoped cleanup.`;
 	}
 	return null;
 }
 
 async function terminateRecordedToolVmProcess(
 	runtimeRecord: ToolVmRuntimeRecord,
-	dependencies: Required<
-		Pick<
-			ToolVmRecoveryDependencies,
-			'isProcessAlive' | 'killProcess' | 'readProcessCommand' | 'readProcessIdentity' | 'sleep'
-		>
-	>,
+	dependencies: Required<Pick<ToolVmRecoveryDependencies, 'exactProcessTermination'>>,
 ): Promise<number | null> {
-	return await terminateRecordedManagedVmHostProcess({
+	const outcome = await terminateRecordedManagedVmProcess({
 		contextLabel: `Tool VM runtime record for lease '${runtimeRecord.leaseId}' (zone '${runtimeRecord.zoneId}', slot ${runtimeRecord.tcpSlot})`,
-		dependencies,
-		pid: runtimeRecord.qemuPid,
-		recordedIdentity: runtimeRecord.processIdentity,
+		exactProcessTermination: dependencies.exactProcessTermination,
+		target: {
+			hostPid: runtimeRecord.qemuPid,
+			processIdentity: runtimeRecord.processIdentity,
+			vmId: runtimeRecord.vmId,
+		},
 	});
+	return outcome.kind === 'already-absent' ? null : outcome.pid;
 }
 
 type ToolVmPortOwnershipProof =
@@ -121,15 +119,13 @@ async function verifyToolVmPortOwnership(options: {
 
 export interface ToolVmRecoveryDependencies {
 	readonly deleteToolVmRuntimeRecord?: typeof deleteToolVmRuntimeRecord;
-	readonly isProcessAlive?: (pid: number) => boolean;
-	readonly killProcess?: (pid: number, signal: NodeJS.Signals) => void;
+	readonly exactProcessTermination: ManagedVmExactProcessTerminationCapability;
 	readonly loadAllToolVmRuntimeRecords?: typeof loadAllToolVmRuntimeRecords;
 	readonly log?: (message: string) => void;
 	readonly portForSlot?: (slot: number) => number;
 	readonly readProcessCommand?: (pid: number) => Promise<string | null>;
 	readonly readProcessIdentity?: typeof readProcessIdentity;
 	readonly readTcpListenPortOwner?: (port: number) => Promise<PortOwner | null>;
-	readonly sleep?: (delayMs: number) => Promise<void>;
 }
 
 export interface ToolVmCleanupResult {
@@ -145,16 +141,15 @@ export async function cleanupRecordedToolVmRuntimes(
 		readonly expectedControllerPort: number;
 		readonly mode?: 'in-process-recovery' | 'offline-cleanup';
 		readonly projectNamespace: string;
-		readonly stateDir: string;
+		readonly recordsTarget: ControllerToolLeaseRecordsTarget;
 		readonly tcpBasePort?: number;
-		readonly zoneId: string;
 	},
-	dependencies: ToolVmRecoveryDependencies = {},
+	dependencies: ToolVmRecoveryDependencies,
 ): Promise<ToolVmCleanupResult> {
 	const log = dependencies.log ?? writeRecoveryLog;
 	const runtimeRecordResults = await (
 		dependencies.loadAllToolVmRuntimeRecords ?? loadAllToolVmRuntimeRecords
-	)(options.stateDir);
+	)(options.recordsTarget);
 	if (runtimeRecordResults.length === 0) {
 		return { cleanedCount: 0, killedPids: [], quarantinedCount: 0, warnings: [] };
 	}
@@ -162,12 +157,9 @@ export async function cleanupRecordedToolVmRuntimes(
 	const killedPids: number[] = [];
 	const warnings: string[] = [];
 	let cleanedCount = 0;
-	const killDependencies = {
-		isProcessAlive: dependencies.isProcessAlive ?? isProcessAlive,
-		killProcess: dependencies.killProcess ?? killProcess,
+	const processObservationDependencies = {
 		readProcessCommand: dependencies.readProcessCommand ?? readProcessCommand,
 		readProcessIdentity: dependencies.readProcessIdentity ?? readProcessIdentity,
-		sleep: dependencies.sleep ?? sleep,
 	};
 	const deleteRecord = dependencies.deleteToolVmRuntimeRecord ?? deleteToolVmRuntimeRecord;
 	const portForSlot =
@@ -196,9 +188,9 @@ export async function cleanupRecordedToolVmRuntimes(
 			expectedConfigPath: options.expectedConfigPath,
 			expectedControllerPort: options.expectedControllerPort,
 			projectNamespace: options.projectNamespace,
+			recordsDirectoryPath: options.recordsTarget.directoryPath,
 			runtimeRecord,
-			stateDir: options.stateDir,
-			zoneId: options.zoneId,
+			zoneId: options.recordsTarget.zoneId,
 		});
 		if (scopeMismatch !== null) {
 			if (options.mode !== 'in-process-recovery') {
@@ -253,8 +245,8 @@ export async function cleanupRecordedToolVmRuntimes(
 				contextLabel: `Tool VM runtime record for lease '${runtimeRecord.leaseId}' (zone '${runtimeRecord.zoneId}', slot ${runtimeRecord.tcpSlot})`,
 				currentSignalLabel: 'SIGTERM',
 				pid: runtimeRecord.qemuPid,
-				readProcessCommand: killDependencies.readProcessCommand,
-				readProcessIdentity: killDependencies.readProcessIdentity,
+				readProcessCommand: processObservationDependencies.readProcessCommand,
+				readProcessIdentity: processObservationDependencies.readProcessIdentity,
 				recordedIdentity: runtimeRecord.processIdentity,
 			});
 		}),
@@ -262,11 +254,13 @@ export async function cleanupRecordedToolVmRuntimes(
 
 	const cleanupOutcomes = await Promise.all(
 		cleanupReadyRuntimeRecords.map(async ({ runtimeRecord }) => {
-			const killedPid = await terminateRecordedToolVmProcess(runtimeRecord, killDependencies);
+			const killedPid = await terminateRecordedToolVmProcess(runtimeRecord, {
+				exactProcessTermination: dependencies.exactProcessTermination,
+			});
 			try {
-				await deleteRecord(options.stateDir, runtimeRecord.recordId);
+				await deleteRecord(options.recordsTarget, runtimeRecord.recordId);
 			} catch (error) {
-				const warning = `Failed to remove stale tool VM runtime record for lease '${runtimeRecord.leaseId}' at '${options.stateDir}': ${error instanceof Error ? error.message : JSON.stringify(error)}`;
+				const warning = `Failed to remove stale tool VM runtime record for lease '${runtimeRecord.leaseId}' at '${options.recordsTarget.directoryPath}': ${error instanceof Error ? error.message : JSON.stringify(error)}`;
 				log(warning);
 				return {
 					cleanedCount: 0,

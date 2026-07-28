@@ -31,6 +31,49 @@ const ROOT_METADATA_PATHS = [
 	'tsconfig.json',
 ] as const;
 
+const REJECTED_MANAGED_GATEWAY_IDENTITY_PATTERNS = [
+	{
+		pattern: /\b(?:export\s+)?type\s+ManagedVmGuestOwnership\b/gu,
+		reason: 'ManagedVmGuestOwnership declaration is forbidden',
+	},
+	{
+		pattern: /\bguestOwnership\s*:/gu,
+		reason: 'guestOwnership mount policy is forbidden',
+	},
+	{
+		pattern: /\bkind\s*:\s*['"]projected-guest-identity['"]/gu,
+		reason: 'projected guest identity variant is forbidden',
+	},
+	{
+		pattern: /\bcreateGuestIdentityProjectedProvider\b/gu,
+		reason: 'projected guest identity provider is forbidden',
+	},
+	{
+		pattern: /\bframeworkServiceUser\b/gu,
+		reason: 'managed framework service-user selection is forbidden',
+	},
+	{
+		pattern: /\bmanaged_gateway_service_user\b/gu,
+		reason: 'managed Gateway service-user transition state is forbidden',
+	},
+	{
+		pattern: /\bsetpriv\s+--reuid\b/gu,
+		reason: 'managed Gateway setpriv identity transition is forbidden',
+	},
+	{
+		pattern: /\bopenClawServiceGuestOwnership\b/gu,
+		reason: 'managed OpenClaw projected ownership constant is forbidden',
+	},
+] as const;
+
+const MANAGED_GATEWAY_IDENTITY_SOURCE_PREFIXES = [
+	'packages/agent-vm/src/',
+	'packages/gondolin-vm-adapter/src/',
+	'packages/managed-vm/src/',
+	'packages/openclaw-gateway/src/',
+	'packages/worker-gateway/src/',
+] as const;
+
 type JsonObject = Readonly<Record<string, unknown>>;
 
 function normalizeFilePath(filePath: string): string {
@@ -227,6 +270,78 @@ function insertFinding(
 	}
 }
 
+function sourceLineNumberAtIndex(content: string, index: number): number {
+	return content.slice(0, index).split('\n').length;
+}
+
+function auditRejectedManagedGatewayIdentity(
+	source: ManagedVmBoundaryAuditSource,
+	findings: ManagedVmBoundaryAuditFinding[],
+): void {
+	const isManagedGatewayIdentitySource = MANAGED_GATEWAY_IDENTITY_SOURCE_PREFIXES.some((prefix) =>
+		source.filePath.startsWith(prefix),
+	);
+	if (isManagedGatewayIdentitySource) {
+		for (const residuePattern of REJECTED_MANAGED_GATEWAY_IDENTITY_PATTERNS) {
+			for (const match of source.content.matchAll(residuePattern.pattern)) {
+				insertFinding(
+					findings,
+					source,
+					residuePattern.reason,
+					sourceLineNumberAtIndex(source.content, match.index),
+				);
+			}
+		}
+	}
+
+	if (source.filePath === 'docker/base-images/openclaw-gateway/Dockerfile') {
+		for (const [pattern, reason] of [
+			[
+				/\b(?:groupadd|useradd)\b[^\n]*\bopenclaw\b/gu,
+				'managed OpenClaw service-account creation is forbidden',
+			],
+			[
+				/\bchown\b[^\n]*\bopenclaw(?::openclaw)?\b/gu,
+				'managed OpenClaw service-account ownership is forbidden',
+			],
+		] as const) {
+			for (const match of source.content.matchAll(pattern)) {
+				insertFinding(
+					findings,
+					source,
+					reason,
+					sourceLineNumberAtIndex(source.content, match.index),
+				);
+			}
+		}
+	}
+
+	if (
+		source.filePath ===
+			'packages/agent-vm/src/integration-tests/gateway-runtime-vm-boundary.vm.e2e.test.ts' ||
+		source.filePath ===
+			'packages/agent-vm/src/integration-tests/gateway-runtime-uds-pressure.vm.e2e.test.ts'
+	) {
+		for (const [pattern, reason] of [
+			[/assert\.notEqual\(processUserId,\s*0/gu, 'managed Gateway VM proof requires root UID'],
+			[/processUserId\)\.toBeGreaterThan\(0\)/gu, 'managed Gateway VM assertion requires root UID'],
+			[
+				/\[['"]su['"],\s*['"]openclaw['"]/gu,
+				'managed Gateway VM proof must not launch through an OpenClaw service account',
+			],
+		] as const) {
+			for (const match of source.content.matchAll(pattern)) {
+				insertFinding(
+					findings,
+					source,
+					reason,
+					sourceLineNumberAtIndex(source.content, match.index),
+				);
+			}
+		}
+	}
+}
+
 function auditManifest(
 	source: ManagedVmBoundaryAuditSource,
 	findings: ManagedVmBoundaryAuditFinding[],
@@ -325,7 +440,13 @@ function auditGondolinProvenance(
 	if (!source.content.includes(GONDOLIN_SDK_PACKAGE) && !source.filePath.includes('gondolin')) {
 		return;
 	}
-	if (/patchedDependencies|\boverrides\b|@patch:|patch_hash/iu.test(source.content)) {
+	const isDependencyMetadata =
+		source.filePath.endsWith('/package.json') ||
+		ROOT_METADATA_PATHS.some((metadataPath) => metadataPath === source.filePath);
+	if (
+		isDependencyMetadata &&
+		/patchedDependencies|\boverrides\b|@patch:|patch_hash/iu.test(source.content)
+	) {
 		insertFinding(findings, source, 'Gondolin SDK patch or override configuration is forbidden');
 	}
 	const parsed = parseJsonObject(source.content);
@@ -371,6 +492,7 @@ export function auditManagedVmBoundaries(
 	for (const source of normalizedSources) {
 		auditManifest(source, findings);
 		auditGondolinProvenance(source, findings);
+		auditRejectedManagedGatewayIdentity(source, findings);
 		const activeSurface =
 			isProductionTypeScriptFile(source.filePath) ||
 			source.filePath.endsWith('/package.json') ||
@@ -443,6 +565,9 @@ async function listFilesRecursively(directoryPath: string): Promise<readonly str
 			entries.map(async (entry): Promise<readonly string[]> => {
 				const entryPath = path.join(directoryPath, entry.name);
 				if (entry.isDirectory()) {
+					if (entry.name === 'dist' || entry.name === 'node_modules') {
+						return [];
+					}
 					return await listFilesRecursively(entryPath);
 				}
 				return entry.isFile() ? [entryPath] : [];
@@ -460,6 +585,7 @@ export async function readManagedVmBoundaryAuditSources(
 		return (
 			relativePath.endsWith('/package.json') ||
 			/(?:^|\/)tsconfig[^/]*[.]jsonc?$/u.test(relativePath) ||
+			/\.(?:cts|mts|ts|tsx)$/u.test(relativePath) ||
 			isProductionTypeScriptFile(relativePath)
 		);
 	});
@@ -473,10 +599,22 @@ export async function readManagedVmBoundaryAuditSources(
 			}
 		}),
 	);
+	const managedOpenClawDockerfilePath = path.join(
+		repositoryRoot,
+		'docker/base-images/openclaw-gateway/Dockerfile',
+	);
+	let managedOpenClawDockerfile: string | undefined;
+	try {
+		await readFile(managedOpenClawDockerfilePath, 'utf8');
+		managedOpenClawDockerfile = managedOpenClawDockerfilePath;
+	} catch {
+		managedOpenClawDockerfile = undefined;
+	}
 	return await Promise.all(
 		[
 			...selectedPackageFiles,
 			...rootFiles.filter((value): value is string => value !== undefined),
+			...(managedOpenClawDockerfile === undefined ? [] : [managedOpenClawDockerfile]),
 		].map(
 			async (absoluteFilePath): Promise<ManagedVmBoundaryAuditSource> => ({
 				content: await readFile(absoluteFilePath, 'utf8'),

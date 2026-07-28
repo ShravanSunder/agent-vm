@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { GatewayEpochIdentity } from '../vm-ownership/vm-ownership-contracts.js';
+import { stablePrincipalKey } from './tool-vm-lease-authority-state-helpers.js';
 import {
 	authorizeCurrentToolVmLeafBinding,
 	createEmptyToolVmLeaseAuthorityState,
@@ -24,19 +25,23 @@ const GATEWAY_ONE = {
 
 const PRINCIPAL_MAIN = {
 	agentId: 'main',
-	zoneId: 'shravan',
+	frameworkIdentity: { agentId: 'main', kind: 'openclaw' },
+	profileAssignmentRevision: 'assignment-main',
+	toolPortalProfileId: 'standard',
 } satisfies StableToolVmLeasePrincipal;
 
 const PRINCIPAL_SIBLING = {
+	...PRINCIPAL_MAIN,
 	agentId: 'sibling',
-	zoneId: 'shravan',
+	frameworkIdentity: { agentId: 'sibling', kind: 'openclaw' },
+	profileAssignmentRevision: 'assignment-sibling',
 } satisfies StableToolVmLeasePrincipal;
 
 const COMPATIBILITY = {
 	policyFingerprint: 'policy-a',
 	profileId: 'standard',
+	profileAssignmentRevision: 'assignment-main',
 	purpose: 'coding',
-	workMountDir: '/home/openclaw/work',
 } satisfies ToolVmLeaseCompatibility;
 
 function authorityReference(
@@ -183,7 +188,7 @@ describe('Tool VM lease authority reliability boundaries', () => {
 			sessionAttachmentGeneration: 7,
 			useId: 'use-1',
 		});
-		expect(heartbeating.leavesByPrincipal.get('shravan\0main')).toMatchObject({
+		expect(heartbeating.leavesByPrincipal.get(stablePrincipalKey(PRINCIPAL_MAIN))).toMatchObject({
 			activeUses: new Map([
 				[
 					'use-1',
@@ -205,7 +210,7 @@ describe('Tool VM lease authority reliability boundaries', () => {
 				processEpoch: 'process-1',
 				sessionAttachmentGeneration: 7,
 				useId: 'use-1',
-			}).leavesByPrincipal.get('shravan\0main'),
+			}).leavesByPrincipal.get(stablePrincipalKey(PRINCIPAL_MAIN)),
 		).toMatchObject({
 			activeUses: new Map([['use-1', expect.objectContaining({ lastHeartbeatAtMs: 110 })]]),
 		});
@@ -309,7 +314,7 @@ describe('Tool VM lease authority reliability boundaries', () => {
 			processEpoch: 'process-1',
 			sessionAttachmentGeneration: 7,
 		});
-		expect(disconnected.leavesByPrincipal.get('shravan\0main')).toMatchObject({
+		expect(disconnected.leavesByPrincipal.get(stablePrincipalKey(PRINCIPAL_MAIN))).toMatchObject({
 			activeUses: new Map([['use-1', expect.objectContaining({ resumeDeadlineMs: 120 })]]),
 		});
 
@@ -323,7 +328,7 @@ describe('Tool VM lease authority reliability boundaries', () => {
 					processEpoch: 'process-1',
 					sessionAttachmentGeneration: 8,
 					useId: 'use-1',
-				}).leavesByPrincipal.get('shravan\0main'),
+				}).leavesByPrincipal.get(stablePrincipalKey(PRINCIPAL_MAIN)),
 			).toMatchObject({
 				activeUses: new Map([['use-1', expect.objectContaining({ kind: 'running' })]]),
 			});
@@ -453,13 +458,14 @@ describe('Tool VM lease authority reliability boundaries', () => {
 				authority: siblingAuthority,
 				kind: 'start-active-use',
 				use,
-			}).leavesByPrincipal.get('shravan\0sibling'),
+			}).leavesByPrincipal.get(stablePrincipalKey(PRINCIPAL_SIBLING)),
 		).toMatchObject({ activeUses: new Map([['use-1', expect.any(Object)]]) });
 	});
 
 	it('refuses a destroyed VM identity that conflicts with the committed runtime binding', () => {
 		const authority = authorityReference();
 		const destroying = reduceToolVmLeaseAuthorityState(createCurrentLeaf(), {
+			ambiguousAtMs: 200,
 			authority,
 			kind: 'begin-destruction',
 			reason: 'test',
@@ -475,7 +481,7 @@ describe('Tool VM lease authority reliability boundaries', () => {
 				}),
 			'lease-identity-mismatch',
 		);
-		expect(destroying.leavesByPrincipal.get('shravan\0main')).toMatchObject({
+		expect(destroying.accessFencingLeavesByGeneration.get(authority.leafGeneration)).toMatchObject({
 			kind: 'destroying',
 			runtimeBinding: { vmId: 'tool-vm-leaf-generation-1' },
 		});
@@ -550,6 +556,7 @@ describe('Tool VM lease authority reliability boundaries', () => {
 		expect(endedSecond.terminalUseTombstones.size).toBe(1);
 
 		const destroyingFirst = reduceToolVmLeaseAuthorityState(endedSecond, {
+			ambiguousAtMs: 115,
 			authority,
 			kind: 'begin-destruction',
 			reason: 'replace-first',
@@ -566,6 +573,7 @@ describe('Tool VM lease authority reliability boundaries', () => {
 			{ leafGeneration: 'leaf-generation-2' },
 		);
 		const destroyingReplacement = reduceToolVmLeaseAuthorityState(replacement, {
+			ambiguousAtMs: 121,
 			authority: replacementAuthority,
 			kind: 'begin-destruction',
 			reason: 'replace-second',
@@ -602,6 +610,7 @@ describe('Tool VM lease authority reliability boundaries', () => {
 		const oldAuthority = authorityReference();
 		const current = createCurrentLeaf();
 		const destroying = reduceToolVmLeaseAuthorityState(current, {
+			ambiguousAtMs: 200,
 			authority: oldAuthority,
 			kind: 'begin-destruction',
 			reason: 'persistent-ssh-failure',
@@ -611,12 +620,23 @@ describe('Tool VM lease authority reliability boundaries', () => {
 			kind: 'destruction-incomplete',
 			reason: 'runner-still-live',
 		});
+		const replacementAuthority = authorityReference({ leafGeneration: 'leaf-generation-2' });
+		const replacementProvisioning = beginProvisioning(ownerUnsafe, {
+			leafGeneration: replacementAuthority.leafGeneration,
+		});
 		expectTransitionError(
-			() => beginProvisioning(ownerUnsafe, { leafGeneration: 'leaf-generation-2' }),
+			() => beginProvisioning(replacementProvisioning, { leafGeneration: 'leaf-generation-3' }),
 			'leaf-already-exists',
 		);
+		expectTransitionError(
+			() =>
+				commitCurrent(replacementProvisioning, {
+					leafGeneration: replacementAuthority.leafGeneration,
+				}),
+			'predecessor-access-not-fenced',
+		);
 
-		const retryingDestruction = reduceToolVmLeaseAuthorityState(ownerUnsafe, {
+		const retryingDestruction = reduceToolVmLeaseAuthorityState(replacementProvisioning, {
 			authority: oldAuthority,
 			kind: 'retry-destruction',
 			reason: 'retry-exact-destruction',
@@ -627,7 +647,10 @@ describe('Tool VM lease authority reliability boundaries', () => {
 			kind: 'destruction-completed',
 			reason: 'persistent-ssh-failure',
 		});
-		expect(destroyed.leavesByPrincipal.has('shravan\0main')).toBe(false);
+		expect(destroyed.leavesByPrincipal.get(stablePrincipalKey(PRINCIPAL_MAIN))).toMatchObject({
+			kind: 'provisioning',
+			leafGeneration: replacementAuthority.leafGeneration,
+		});
 		expect(destroyed.tombstonesByGeneration.get('leaf-generation-1')).toMatchObject({
 			kind: 'destroyed',
 			leaseId: 'lease-leaf-generation-1',
@@ -644,12 +667,8 @@ describe('Tool VM lease authority reliability boundaries', () => {
 			'leaf-destroyed',
 		);
 
-		const replacementAuthority = authorityReference({ leafGeneration: 'leaf-generation-2' });
-		const replacementProvisioning = beginProvisioning(destroyed, {
-			leafGeneration: replacementAuthority.leafGeneration,
-		});
-		expectTransitionError(() => commitCurrent(replacementProvisioning), 'leaf-destroyed');
-		const replacementCurrent = commitCurrent(replacementProvisioning, {
+		expectTransitionError(() => commitCurrent(destroyed), 'leaf-destroyed');
+		const replacementCurrent = commitCurrent(destroyed, {
 			leafGeneration: replacementAuthority.leafGeneration,
 		});
 		expect(

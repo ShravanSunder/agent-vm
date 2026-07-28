@@ -1,0 +1,33 @@
+{
+	"caseId": "coverage-sandbox-fs-list-request",
+	"schemaId": "sandbox.fs.list.request",
+	"tags": [
+		"accepted",
+		"coverage"
+	],
+	"input": {
+		"environment": {
+			"handleId": "environment-a",
+			"kind": "environment",
+			"owningGeneration": "generation-a"
+		},
+		"maxDepth": 1,
+		"maxEntries": 10,
+		"path": "src"
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"environment": {
+				"handleId": "environment-a",
+				"kind": "environment",
+				"owningGeneration": "generation-a"
+			},
+			"maxDepth": 1,
+			"maxEntries": 10,
+			"path": "src"
+		},
+		"canonicalJson": "{\"environment\":{\"handleId\":\"environment-a\",\"kind\":\"environment\",\"owningGeneration\":\"generation-a\"},\"maxDepth\":1,\"maxEntries\":10,\"path\":\"src\"}",
+		"refinementIdentities": []
+	}
+}

@@ -1,5 +1,6 @@
 import type {
 	ManagedVm,
+	ManagedVmExactProcessTerminationCapability,
 	ManagedVmFactory,
 	ManagedVmImageCapability,
 	ManagedVmOwnedDirectoryCapability,
@@ -7,7 +8,6 @@ import type {
 import type { SecretResolver } from '@agent-vm/secret-management';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
-import type { deleteGatewayRuntimeRecord } from '../gateway/gateway-runtime-record.js';
 import type {
 	preflightGatewayZoneStart,
 	startGatewayZoneForController,
@@ -24,12 +24,11 @@ import type { createControllerService } from './http/controller-http-routes.js';
 import type { ToolVmProfile } from './leases/lease-manager.js';
 import type { ToolVmProvisioningHandle } from './leases/lease-manager.js';
 import type { ObservedControllerLeaseCreateRequest } from './leases/observed-lease-create-request.js';
-import type { createOpenClawProcessReliabilityFaultTargetRegistry } from './reliability/testing/openclaw-process-reliability-fault-target-registry.js';
 import type { acquireControllerOwnershipLock } from './vm-ownership/controller-ownership-lock.js';
 import type { createGatewayOwnershipCoordinator } from './vm-ownership/gateway-ownership-coordinator.js';
 import type { executeWorkerTask, prepareWorkerTask } from './worker-task-runner.js';
-import type { ZoneGitOperationLocks } from './zone-git/zone-git-operation-locks.js';
-import type { ZoneGitToolVmMount } from './zone-git/zone-git-paths.js';
+import type { WorkspaceGitOperationLocks } from './workspace-git/workspace-git-operation-locks.js';
+import type { materializeWorkspaceGitRepository } from './workspace-git/workspace-git-operations.js';
 
 export interface ControllerRuntime {
 	readonly controllerPort: number;
@@ -53,30 +52,28 @@ export interface ControllerRuntimeDependencies {
 	readonly checkObservabilityStackReadiness?: typeof checkObservabilityStackReadiness;
 	readonly configureManagedVmHostNetworkDefaults: ConfigureManagedVmHostNetworkDefaults;
 	readonly managedVmFactory: ManagedVmFactory;
+	readonly managedVmExactProcessTermination: ManagedVmExactProcessTerminationCapability;
 	readonly managedVmImages: ManagedVmImageCapability;
 	readonly managedVmOwnedDirectories: ManagedVmOwnedDirectoryCapability;
+	readonly materializeWorkspaceGitRepository?: typeof materializeWorkspaceGitRepository;
 	readonly controllerEpoch?: string;
 	readonly acquireControllerOwnershipLock?: typeof acquireControllerOwnershipLock;
 	readonly resolveControllerTelemetryIdentity?: typeof resolveControllerTelemetryIdentity;
 	readonly resolveControllerTelemetryServiceVersion?: () => Promise<string>;
 	readonly startControllerTelemetry?: typeof startControllerTelemetry;
 	readonly createGatewayOwnershipCoordinator?: typeof createGatewayOwnershipCoordinator;
-	readonly createOpenClawProcessReliabilityFaultTargetRegistry?:
-		| typeof createOpenClawProcessReliabilityFaultTargetRegistry
-		| undefined;
 	readonly createManagedToolVm?: (options: {
 		readonly agentId: string;
+		readonly hostGitDirectoryRoot?: string | undefined;
+		readonly hostWorkspaceRoot: string;
 		readonly profile: ToolVmProfile;
 		readonly tcpSlot: number;
-		readonly hostWorkMountDir: string;
-		readonly zoneGitMount?: ZoneGitToolVmMount;
 		readonly zoneId: string;
 		readonly secretResolver: SecretResolver;
 	}) => Promise<ManagedVm | ToolVmProvisioningHandle>;
 	readonly createSecretResolver?: (options: {
 		readonly serviceAccountToken: string;
 	}) => Promise<SecretResolver>;
-	readonly deleteGatewayRuntimeRecord?: typeof deleteGatewayRuntimeRecord;
 	readonly now?: () => number;
 	readonly onLeaseCreateRequest?: (request: ObservedControllerLeaseCreateRequest) => void;
 	// Injected by tests so the lease manager doesn't shell out to `ps` against
@@ -111,7 +108,7 @@ export interface ControllerRuntimeDependencies {
 	}) => Promise<{
 		close(): Promise<void>;
 	}>;
-	readonly zoneGitOperationLocks?: ZoneGitOperationLocks;
+	readonly workspaceGitOperationLocks?: WorkspaceGitOperationLocks;
 }
 
 export interface StartControllerRuntimeOptions {

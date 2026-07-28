@@ -1,0 +1,37 @@
+{
+	"caseId": "coverage-sandbox-process-logs-request",
+	"schemaId": "sandbox.process.logs.request",
+	"tags": [
+		"accepted",
+		"coverage"
+	],
+	"input": {
+		"channels": [
+			"stdout"
+		],
+		"maxBytes": 1,
+		"process": {
+			"handleId": "process-a",
+			"kind": "process",
+			"owningGeneration": "generation-a"
+		}
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"channels": [
+				"stdout"
+			],
+			"maxBytes": 1,
+			"process": {
+				"handleId": "process-a",
+				"kind": "process",
+				"owningGeneration": "generation-a"
+			}
+		},
+		"canonicalJson": "{\"channels\":[\"stdout\"],\"maxBytes\":1,\"process\":{\"handleId\":\"process-a\",\"kind\":\"process\",\"owningGeneration\":\"generation-a\"}}",
+		"refinementIdentities": [
+			"sandbox.binary-chunk.byte-length"
+		]
+	}
+}

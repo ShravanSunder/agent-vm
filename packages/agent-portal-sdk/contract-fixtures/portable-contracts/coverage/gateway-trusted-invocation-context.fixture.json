@@ -1,0 +1,53 @@
+{
+	"caseId": "coverage-gateway-trusted-invocation-context",
+	"schemaId": "gateway.trusted-invocation-context",
+	"tags": [
+		"accepted",
+		"coverage"
+	],
+	"input": {
+		"correlation": {
+			"runId": "run-a",
+			"sessionId": "session-a",
+			"sessionKey": "session-key-a",
+			"toolCallId": "tool-call-a"
+		},
+		"principal": {
+			"agentId": "agent-a",
+			"frameworkIdentity": {
+				"kind": "hermes",
+				"profileName": "profile-a"
+			},
+			"profileAssignmentRevision": "profiles-1",
+			"toolPortalProfileId": "profile-a"
+		},
+		"requester": {
+			"authenticatedSubjectId": "subject-a"
+		}
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"correlation": {
+				"runId": "run-a",
+				"sessionId": "session-a",
+				"sessionKey": "session-key-a",
+				"toolCallId": "tool-call-a"
+			},
+			"principal": {
+				"agentId": "agent-a",
+				"frameworkIdentity": {
+					"kind": "hermes",
+					"profileName": "profile-a"
+				},
+				"profileAssignmentRevision": "profiles-1",
+				"toolPortalProfileId": "profile-a"
+			},
+			"requester": {
+				"authenticatedSubjectId": "subject-a"
+			}
+		},
+		"canonicalJson": "{\"correlation\":{\"runId\":\"run-a\",\"sessionId\":\"session-a\",\"sessionKey\":\"session-key-a\",\"toolCallId\":\"tool-call-a\"},\"principal\":{\"agentId\":\"agent-a\",\"frameworkIdentity\":{\"kind\":\"hermes\",\"profileName\":\"profile-a\"},\"profileAssignmentRevision\":\"profiles-1\",\"toolPortalProfileId\":\"profile-a\"},\"requester\":{\"authenticatedSubjectId\":\"subject-a\"}}",
+		"refinementIdentities": []
+	}
+}

@@ -1,28 +1,50 @@
 import { Buffer } from 'node:buffer';
-import fs from 'node:fs/promises';
+import fs, { stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
 import { CONTROL_SESSION_TIMING_MS } from '@agent-vm/control-protocol-contracts';
-import type { ManagedVm, ManagedVmFactory, ManagedVmImageCapability } from '@agent-vm/managed-vm';
+import type {
+	ManagedVm,
+	ManagedVmExactProcessTerminationCapability,
+	ManagedVmFactory,
+	ManagedVmImageCapability,
+} from '@agent-vm/managed-vm';
 import type { Mock } from 'vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
-import { writeGatewayRuntimeRecord } from '../gateway/gateway-runtime-record.js';
-import type { StartGatewayZoneOptions } from '../gateway/gateway-zone-support.js';
+import type {
+	DirectProcessGatewayZoneStartResult,
+	GatewayZoneDestroyResult,
+	StartGatewayZoneOptions,
+} from '../gateway/gateway-zone-support.js';
+import {
+	buildWorkerRuntimeRecord,
+	loadWorkerRuntimeRecord,
+	loadWorkerRuntimeRecordResult,
+	writeWorkerRuntimeRecord,
+} from '../gateway/worker-runtime-record.js';
 import { terminateLiveManagedVm } from '../shared/controller-managed-vm-termination.js';
-import type { ManagedVmKillDependencies } from '../shared/managed-vm-process.js';
 import {
 	TEST_SSH_SERVER_HOST_KEY,
 	createManagedExecProcessStub,
 } from '../testing/managed-vm-test-helpers.js';
 import type { ControlSessionClient, WorkerControlRpcOperations } from './control-session/index.js';
+import {
+	createControllerStateRoot,
+	resolveControllerGatewayStateRoot,
+} from './durable-state/controller-state-paths.js';
+import {
+	resolveControllerWorkerTaskRuntimeRecordTarget,
+	type ControllerWorkerTaskRuntimeRecordTarget,
+} from './durable-state/controller-state-record-paths.js';
 import type { WorkerTaskInput } from './worker-task-runner.js';
 import type { WorkerTaskPollClock } from './worker-task-runner.js';
 
-const startGatewayZoneMock = vi.fn();
+const startGatewayZoneMock =
+	vi.fn<typeof import('../gateway/gateway-zone-orchestrator.js').startGatewayZone>();
 const stopRepoResourceProvidersMock =
 	vi.fn<typeof import('../resources/repo-resource-provider-runner.js').stopRepoResourceProviders>();
 const startRepoResourceProvidersMock = vi.fn<
@@ -62,6 +84,10 @@ const closedTaskStateSchema = z.object({
 
 const workerControllerEpoch = 'worker-controller-epoch-test';
 const workerVmId = 'worker-vm-1';
+const workerProcessIdentity = {
+	command: 'qemu-system-aarch64 -name worker-vm-1',
+	lstart: 'Sat Jul 11 17:00:00 2026',
+} as const;
 const managedVmFactoryStub: ManagedVmFactory = {
 	createManagedVm: async () => {
 		throw new Error('The gateway-zone mock owns VM creation in this test.');
@@ -72,6 +98,46 @@ const managedVmImagesStub: ManagedVmImageCapability = {
 		throw new Error('The gateway-zone mock owns image preparation in this test.');
 	},
 };
+
+function resolveWorkerRuntimeRecordTarget(options: {
+	readonly systemConfig: LoadedSystemConfig;
+	readonly taskId: string;
+	readonly zoneId: string;
+}): ControllerWorkerTaskRuntimeRecordTarget {
+	const controllerStateRoot = createControllerStateRoot({
+		controllerStateDirectoryPath: options.systemConfig.controllerStateDir,
+	});
+	const gatewayStateRoot = resolveControllerGatewayStateRoot({
+		controllerStateRoot,
+		zoneId: options.zoneId,
+	});
+	return resolveControllerWorkerTaskRuntimeRecordTarget({
+		gatewayStateRoot,
+		taskId: options.taskId,
+	});
+}
+
+async function publishMockOrchestratorWorkerRuntimeRecord(options: {
+	readonly result: DirectProcessGatewayZoneStartResult;
+	readonly startOptions: StartGatewayZoneOptions;
+}): Promise<void> {
+	if (options.startOptions.runtimeRecordTarget.kind !== 'controller-worker-task-runtime-record') {
+		throw new Error('Worker test orchestration requires a Worker runtime record target.');
+	}
+	const runtimeRecord = await buildWorkerRuntimeRecord({
+		controllerPort: options.startOptions.systemConfig.host.controllerPort,
+		gatewayIdentity: options.result.gatewayIdentity,
+		ingressPort: options.result.ingress.port,
+		managedVm: options.result.vm,
+		processSpec: options.result.processSpec,
+		projectNamespace: options.startOptions.systemConfig.host.projectNamespace,
+		readProcessIdentity: async () => options.result.processTarget.processIdentity,
+		systemConfigPath: options.startOptions.systemConfig.systemConfigPath,
+		taskId: options.startOptions.runtimeRecordTarget.taskId,
+		zoneId: options.startOptions.runtimeRecordTarget.zoneId,
+	});
+	await writeWorkerRuntimeRecord(options.startOptions.runtimeRecordTarget, runtimeRecord);
+}
 
 function buildWorkerConfigInput(): Record<string, unknown> {
 	return {
@@ -141,9 +207,11 @@ vi.mock('execa', () => ({
 }));
 
 const systemConfig = {
-	schemaVersion: 1,
+	schemaVersion: 2,
+	storageRootDir: '/tmp',
 	cacheDir: '/tmp/cache',
-	runtimeDir: '/tmp/runtime',
+	controllerStateDir: '/tmp/controller-state',
+	controllerRuntimeDir: '/tmp/controller-runtime',
 	systemConfigPath: '/tmp/config/system.json',
 	host: {
 		controllerPort: 18800,
@@ -172,7 +240,8 @@ const systemConfig = {
 				cpus: 2,
 				port: 18791,
 				config: '',
-				stateDir: '',
+				stateDir: '/tmp/shravan/state',
+				zoneRuntimeDir: '/tmp/shravan/runtime',
 				repoPushPolicies: [],
 			},
 			secrets: {
@@ -197,10 +266,16 @@ const systemConfig = {
 
 async function executePreparedWorkerTaskForTest(options: {
 	readonly input: WorkerTaskInput;
-	readonly managedVmKillDependencies?: ManagedVmKillDependencies;
+	readonly managedVmExactProcessTermination?: ManagedVmExactProcessTerminationCapability;
 	readonly onTaskFinished?: (zoneId: string, taskId: string) => Promise<void>;
+	readonly onWorkerTaskIngress?: (
+		zoneId: string,
+		taskId: string,
+		workerIngress: { readonly host: string; readonly port: number },
+	) => Promise<void>;
 	readonly pollClock?: WorkerTaskPollClock;
 	readonly pollIntervalMs?: number;
+	readonly readProcessIdentity?: (pid: number) => Promise<typeof workerProcessIdentity | null>;
 	readonly secretResolver: { resolve: () => Promise<string>; resolveAll: () => Promise<{}> };
 	readonly systemConfig: LoadedSystemConfig;
 	readonly zoneId: string;
@@ -218,18 +293,40 @@ async function executePreparedWorkerTaskForTest(options: {
 	});
 	return await executeWorkerTask(prepared, {
 		...(options.onTaskFinished ? { onTaskFinished: options.onTaskFinished } : {}),
+		...(options.onWorkerTaskIngress ? { onWorkerTaskIngress: options.onWorkerTaskIngress } : {}),
 		controllerEpoch: workerControllerEpoch,
 		managedVmFactory: managedVmFactoryStub,
 		managedVmImages: managedVmImagesStub,
-		...(options.managedVmKillDependencies === undefined
-			? {}
-			: { managedVmKillDependencies: options.managedVmKillDependencies }),
+		managedVmExactProcessTermination:
+			options.managedVmExactProcessTermination ?? createManagedVmExactProcessTerminationStub(),
+		managedVmTerminationSleep: async () => {},
+		readProcessIdentity: options.readProcessIdentity ?? createWorkerProcessIdentityReaderStub(),
 		secretResolver: options.secretResolver,
 		systemConfig: options.systemConfig,
+		workerRuntimeRecordTarget: resolveWorkerRuntimeRecordTarget({
+			systemConfig: options.systemConfig,
+			taskId: prepared.taskId,
+			zoneId: prepared.zoneId,
+		}),
 		pollClock: options.pollClock ?? createInstantPollClock(),
 		pollIntervalMs: options.pollIntervalMs ?? 1,
 		...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
 	});
+}
+
+function createManagedVmExactProcessTerminationStub(): ManagedVmExactProcessTerminationCapability {
+	return {
+		terminateRecordedHostProcess: async ({ identity }) => ({
+			hostProcessId: identity.hostProcessId,
+			kind: 'terminated',
+		}),
+	};
+}
+
+function createWorkerProcessIdentityReaderStub(): (
+	pid: number,
+) => Promise<typeof workerProcessIdentity | null> {
+	return async (pid: number) => (pid === 48_282 ? workerProcessIdentity : null);
 }
 
 function createInstantPollClock(): WorkerTaskPollClock {
@@ -309,6 +406,7 @@ describe('worker-task-runner', () => {
 	let managedVm: ManagedVm;
 	let managedVmCloseMock: Mock<() => Promise<void>>;
 	let managedVmStartMock: Mock<() => Promise<void>>;
+	let gatewayDestroyMock: Mock<() => Promise<GatewayZoneDestroyResult>>;
 
 	beforeEach(async () => {
 		tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'worker-runner-'));
@@ -317,8 +415,10 @@ describe('worker-task-runner', () => {
 			throw new Error('Expected zone config.');
 		}
 		zone.gateway.config = path.join(tempDir, 'gateway-config.json');
-		zone.gateway.stateDir = path.join(tempDir, 'state');
-		systemConfig.runtimeDir = path.join(tempDir, 'runtime');
+		zone.gateway.stateDir = path.join(tempDir, zone.id, 'state');
+		zone.gateway.zoneRuntimeDir = path.join(tempDir, zone.id, 'runtime');
+		systemConfig.controllerStateDir = path.join(tempDir, 'controller-state');
+		systemConfig.controllerRuntimeDir = path.join(tempDir, 'controller-runtime');
 		await fs.writeFile(zone.gateway.config, JSON.stringify(buildWorkerConfigInput()));
 
 		globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
@@ -342,6 +442,10 @@ describe('worker-task-runner', () => {
 
 		managedVmCloseMock = vi.fn(async () => {});
 		managedVmStartMock = vi.fn(async () => {});
+		gatewayDestroyMock = vi.fn(async () => {
+			await managedVm.close();
+			return { kind: 'destroyed-clean' };
+		});
 		managedVm = {
 			id: workerVmId,
 			close: async () => await managedVmCloseMock(),
@@ -361,7 +465,7 @@ describe('worker-task-runner', () => {
 			})),
 			exec: vi.fn(() => createManagedExecProcessStub()),
 			configureIngressRoutes: vi.fn(),
-			getHostProcessId: () => null,
+			getHostProcessId: () => 48_282,
 			start: async () => await managedVmStartMock(),
 		};
 
@@ -371,10 +475,13 @@ describe('worker-task-runner', () => {
 				sessionLabel: 'worker-task-session',
 				zoneId: zone.id,
 			});
-			vmOwnership.attachGatewayVm(managedVm.id);
+			const gatewayIdentity = vmOwnership.attachGatewayVm(managedVm.id);
 			await managedVm.start();
-			return {
-				image: { built: true, fingerprint: 'gateway', imagePath: '/tmp/gateway.img' },
+			const result = {
+				destroyGateway: gatewayDestroyMock,
+				executionModel: 'direct-process' as const,
+				gatewayIdentity,
+				image: { built: true, fingerprint: 'gateway', imageReference: '/tmp/gateway.img' },
 				ingress: { host: '127.0.0.1', port: 18791 },
 				processSpec: {
 					bootstrapCommand: 'true',
@@ -384,11 +491,16 @@ describe('worker-task-runner', () => {
 					guestListenPort: 18789,
 					logPath: '/tmp/worker.log',
 				},
-				terminateVm: async () => await managedVm.close(),
+				processTarget: {
+					hostPid: 48_282,
+					processIdentity: workerProcessIdentity,
+					vmId: managedVm.id,
+				},
 				vm: managedVm,
-				vmOwnership,
 				zone,
-			};
+			} satisfies DirectProcessGatewayZoneStartResult;
+			await publishMockOrchestratorWorkerRuntimeRecord({ result, startOptions });
+			return result;
 		});
 		execaMock.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
 	});
@@ -451,6 +563,7 @@ describe('worker-task-runner', () => {
 			expect.any(Object),
 		);
 		expect(managedVmStartMock).toHaveBeenCalledOnce();
+		expect(gatewayDestroyMock).toHaveBeenCalledOnce();
 		expect(managedVmCloseMock).toHaveBeenCalledOnce();
 	});
 
@@ -467,9 +580,7 @@ describe('worker-task-runner', () => {
 			systemConfig,
 			zoneId: 'shravan',
 		});
-		const startOptions = startGatewayZoneMock.mock.calls[0]?.[0] as
-			| StartGatewayZoneOptions
-			| undefined;
+		const startOptions = startGatewayZoneMock.mock.calls[0]?.[0];
 		if (startOptions === undefined) {
 			throw new Error('Worker task did not invoke gateway startup.');
 		}
@@ -493,16 +604,52 @@ describe('worker-task-runner', () => {
 		});
 	});
 
+	it('retires an unattached standalone Worker seed only after cleanup succeeds', async () => {
+		// Arrange
+		await executePreparedWorkerTaskForTest({
+			input: {
+				requestTaskId: 'request-task-standalone-seed-abandonment',
+				prompt: 'verify standalone seed abandonment',
+				repos: [],
+				context: {},
+			},
+			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			systemConfig,
+			zoneId: 'shravan',
+		});
+		const startOptions = startGatewayZoneMock.mock.calls[0]?.[0];
+		if (startOptions === undefined) {
+			throw new Error('Worker task did not invoke gateway startup.');
+		}
+		const vmOwnership = await startOptions.createVmOwnership({
+			kind: 'standalone',
+			sessionLabel: 'worker-standalone-seed-abandonment',
+			zoneId: 'shravan',
+		});
+		const cleanupOwnedResources = vi
+			.fn<() => Promise<void>>()
+			.mockRejectedValueOnce(new Error('worker boot cleanup failed'))
+			.mockResolvedValueOnce();
+
+		// Act / Assert
+		await expect(
+			vmOwnership.abandonUnattachedGatewaySeedAfter(cleanupOwnedResources),
+		).rejects.toThrow('worker boot cleanup failed');
+		expect(() => vmOwnership.attachGatewayVm('worker-vm-after-failed-abandonment')).toThrow(
+			/begun seed abandonment/u,
+		);
+		await vmOwnership.abandonUnattachedGatewaySeedAfter(cleanupOwnedResources);
+		await vmOwnership.abandonUnattachedGatewaySeedAfter(cleanupOwnedResources);
+		expect(cleanupOwnedResources).toHaveBeenCalledTimes(2);
+	});
+
 	it('terminates the exact recorded Worker VM runner before stock close', async () => {
 		const zone = systemConfig.zones[0];
 		if (!zone) {
 			throw new Error('Expected zone config.');
 		}
-		const processIdentity = {
-			command: 'qemu-system-aarch64 -name worker-vm-1',
-			lstart: 'Sat Jul 11 17:00:00 2026',
-		};
 		const orderedEvents: string[] = [];
+		let observedRuntimeRecord: Awaited<ReturnType<typeof loadWorkerRuntimeRecord>> = null;
 		let runnerAttached = true;
 		managedVm = {
 			...managedVm,
@@ -511,16 +658,29 @@ describe('worker-task-runner', () => {
 		managedVmCloseMock.mockImplementation(async () => {
 			orderedEvents.push('stock-close');
 		});
-		const managedVmKillDependencies = {
-			isProcessAlive: () => runnerAttached,
-			killProcess: (pid: number, signal: NodeJS.Signals) => {
-				orderedEvents.push(`${signal}:${String(pid)}`);
+		const managedVmExactProcessTermination = {
+			terminateRecordedHostProcess: async ({ identity }) => {
+				if (!runnerAttached) {
+					return { hostProcessId: identity.hostProcessId, kind: 'already-absent' };
+				}
+				orderedEvents.push(`SIGTERM:${String(identity.hostProcessId)}`);
 				runnerAttached = false;
+				return { hostProcessId: identity.hostProcessId, kind: 'terminated' };
 			},
-			readProcessCommand: async () => processIdentity.command,
-			readProcessIdentity: async () => processIdentity,
-			sleep: async () => {},
-		} satisfies ManagedVmKillDependencies;
+		} satisfies ManagedVmExactProcessTerminationCapability;
+		const exactWorkerDestroyMock = vi.fn(async (): Promise<GatewayZoneDestroyResult> => {
+			await terminateLiveManagedVm({
+				exactProcessTermination: managedVmExactProcessTermination,
+				sleep: async () => {},
+				target: {
+					hostPid: 48_282,
+					processIdentity: workerProcessIdentity,
+					vmId: managedVm.id,
+				},
+				vm: managedVm,
+			});
+			return { kind: 'destroyed-clean' };
+		});
 		startGatewayZoneMock.mockImplementationOnce(async (startOptions: StartGatewayZoneOptions) => {
 			const vmOwnership = await startOptions.createVmOwnership({
 				kind: 'standalone',
@@ -533,24 +693,11 @@ describe('worker-task-runner', () => {
 			if (workerStateDirectory === undefined) {
 				throw new Error('Worker task startup did not provide its state directory.');
 			}
-			await writeGatewayRuntimeRecord(workerStateDirectory, {
-				configPath: systemConfig.systemConfigPath,
-				controllerPort: systemConfig.host.controllerPort,
-				createdAt: '2026-07-11T17:00:00.000Z',
-				gateway: gatewayIdentity,
-				gatewayType: 'worker',
-				guestListenPort: 18_789,
-				ingressPort: 18_791,
-				processIdentity,
-				projectNamespace: systemConfig.host.projectNamespace,
-				qemuPid: 48_282,
-				schemaVersion: 2,
-				sessionLabel: `${systemConfig.host.projectNamespace}:${zone.id}:gateway`,
-				vmId: managedVm.id,
-				zoneId: zone.id,
-			});
-			return {
-				image: { built: true, fingerprint: 'gateway', imagePath: '/tmp/gateway.img' },
+			const result = {
+				destroyGateway: exactWorkerDestroyMock,
+				executionModel: 'direct-process' as const,
+				gatewayIdentity,
+				image: { built: true, fingerprint: 'gateway', imageReference: '/tmp/gateway.img' },
 				ingress: { host: '127.0.0.1', port: 18_791 },
 				processSpec: {
 					bootstrapCommand: 'true',
@@ -559,21 +706,16 @@ describe('worker-task-runner', () => {
 					guestListenPort: 18_789,
 					logPath: '/tmp/worker.log',
 				},
-				terminateVm: async () => {
-					await terminateLiveManagedVm({
-						dependencies: managedVmKillDependencies,
-						target: {
-							hostPid: 48_282,
-							processIdentity,
-							vmId: managedVm.id,
-						},
-						vm: managedVm,
-					});
+				processTarget: {
+					hostPid: 48_282,
+					processIdentity: workerProcessIdentity,
+					vmId: managedVm.id,
 				},
 				vm: managedVm,
-				vmOwnership,
 				zone,
-			};
+			} satisfies DirectProcessGatewayZoneStartResult;
+			await publishMockOrchestratorWorkerRuntimeRecord({ result, startOptions });
+			return result;
 		});
 		await executePreparedWorkerTaskForTest({
 			input: {
@@ -582,13 +724,114 @@ describe('worker-task-runner', () => {
 				repos: [],
 				context: {},
 			},
-			managedVmKillDependencies,
+			managedVmExactProcessTermination,
+			onWorkerTaskIngress: async (_zoneId, taskId) => {
+				const workerRuntimeRecordTarget = resolveWorkerRuntimeRecordTarget({
+					systemConfig,
+					taskId,
+					zoneId: zone.id,
+				});
+				observedRuntimeRecord = await loadWorkerRuntimeRecord(workerRuntimeRecordTarget);
+				expect((await stat(workerRuntimeRecordTarget.filePath)).mode & 0o777).toBe(0o600);
+			},
 			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
 			systemConfig,
 			zoneId: zone.id,
 		});
 
+		expect(observedRuntimeRecord).toMatchObject({
+			gateway: expect.objectContaining({ gatewayVmId: managedVm.id }),
+			guestListenPort: 18_789,
+			processIdentity: workerProcessIdentity,
+			qemuPid: 48_282,
+			runtimeKind: 'worker-direct-process',
+			schemaVersion: 3,
+			vmId: managedVm.id,
+		});
 		expect(orderedEvents).toEqual(['SIGTERM:48282', 'stock-close']);
+		expect(exactWorkerDestroyMock).toHaveBeenCalledOnce();
+	});
+
+	it('refuses Worker termination when durable runtime evidence names another VM', async () => {
+		// Arrange
+		let mismatchedRecordPath: string | undefined;
+
+		// Act
+		const execution = executePreparedWorkerTaskForTest({
+			input: {
+				requestTaskId: 'request-task-mismatched-worker-record',
+				prompt: 'refuse ambiguous Worker cleanup',
+				repos: [],
+				context: {},
+			},
+			onWorkerTaskIngress: async (_zoneId, taskId) => {
+				const zone = systemConfig.zones[0];
+				if (zone === undefined) {
+					throw new Error('Expected Worker zone config.');
+				}
+				const workerRuntimeRecordTarget = resolveWorkerRuntimeRecordTarget({
+					systemConfig,
+					taskId,
+					zoneId: zone.id,
+				});
+				const runtimeRecord = await loadWorkerRuntimeRecord(workerRuntimeRecordTarget);
+				if (runtimeRecord === null) {
+					throw new Error('Production Worker startup did not persist its runtime record.');
+				}
+				const staleVmId = 'stale-worker-vm';
+				await writeWorkerRuntimeRecord(workerRuntimeRecordTarget, {
+					...runtimeRecord,
+					gateway: { ...runtimeRecord.gateway, gatewayVmId: staleVmId },
+					vmId: staleVmId,
+				});
+				mismatchedRecordPath = workerRuntimeRecordTarget.filePath;
+			},
+			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			systemConfig,
+			zoneId: 'shravan',
+		});
+
+		// Assert
+		await expect(execution).rejects.toMatchObject({
+			cause: expect.objectContaining({
+				message: expect.stringMatching(/does not match the live Worker Gateway/u),
+			}),
+			message: expect.stringMatching(/cleanup did not prove exact destruction/u),
+		});
+		expect(managedVmCloseMock).not.toHaveBeenCalled();
+		expect(gatewayDestroyMock).not.toHaveBeenCalled();
+		if (mismatchedRecordPath === undefined) {
+			throw new Error('Expected mismatched Worker runtime record path.');
+		}
+		await expect(fs.stat(mismatchedRecordPath)).resolves.toBeDefined();
+	});
+
+	it('rejects the removed generic v2 runtime record as Worker ownership evidence', async () => {
+		// Arrange
+		const workerRuntimeRecordTarget = resolveWorkerRuntimeRecordTarget({
+			systemConfig,
+			taskId: 'legacy-worker-task',
+			zoneId: 'shravan',
+		});
+		await fs.mkdir(path.dirname(workerRuntimeRecordTarget.filePath), { recursive: true });
+		await fs.writeFile(
+			workerRuntimeRecordTarget.filePath,
+			JSON.stringify({
+				configPath: systemConfig.systemConfigPath,
+				controllerPort: systemConfig.host.controllerPort,
+				createdAt: '2026-07-11T17:00:00.000Z',
+				gatewayType: 'worker',
+				guestListenPort: 18_789,
+				schemaVersion: 2,
+			}),
+			{ encoding: 'utf8', mode: 0o600 },
+		);
+
+		// Act
+		const loadResult = await loadWorkerRuntimeRecordResult(workerRuntimeRecordTarget);
+
+		// Assert
+		expect(loadResult).toMatchObject({ kind: 'parse-error' });
 	});
 
 	it('writes effective worker config into per-task state during pre-start', async () => {
@@ -691,7 +934,10 @@ describe('worker-task-runner', () => {
 		await expect(fs.readFile(path.join(result.workDir, 'AGENTS.md'), 'utf8')).rejects.toThrow();
 		await expect(fs.readlink(path.join(result.workDir, 'CLAUDE.md'))).rejects.toThrow();
 		expect(result.vfsMounts['/agent-vm']).toEqual(
-			expect.objectContaining({ access: 'read-only', kind: 'host-directory' }),
+			expect.objectContaining({
+				access: 'read-only',
+				kind: 'host-directory',
+			}),
 		);
 		expect(result.vfsMounts['/work/repos']).toBeUndefined();
 		expect(result.vfsMounts['/gitdirs']).toEqual(
@@ -1757,12 +2003,11 @@ describe('worker-task-runner', () => {
 			zoneId: 'shravan',
 		});
 
-		const taskRuntimeRoot = path.join(
-			systemConfig.runtimeDir,
-			'worker-tasks',
-			'shravan',
-			result.taskId,
-		);
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected zone config.');
+		}
+		const taskRuntimeRoot = path.join(zone.gateway.zoneRuntimeDir, 'worker-tasks', result.taskId);
 		await expect(fs.stat(taskRuntimeRoot)).rejects.toMatchObject({ code: 'ENOENT' });
 	});
 
@@ -1789,18 +2034,24 @@ describe('worker-task-runner', () => {
 
 		const result = await executeWorkerTask(prepared, {
 			controllerEpoch: workerControllerEpoch,
+			managedVmExactProcessTermination: createManagedVmExactProcessTerminationStub(),
 			managedVmFactory: managedVmFactoryStub,
 			managedVmImages: managedVmImagesStub,
+			readProcessIdentity: createWorkerProcessIdentityReaderStub(),
 			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
 			systemConfig,
+			workerRuntimeRecordTarget: resolveWorkerRuntimeRecordTarget({
+				systemConfig,
+				taskId: prepared.taskId,
+				zoneId: prepared.zoneId,
+			}),
 		});
 
-		const taskRuntimeRoot = path.join(
-			systemConfig.runtimeDir,
-			'worker-tasks',
-			'shravan',
-			result.taskId,
-		);
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected zone config.');
+		}
+		const taskRuntimeRoot = path.join(zone.gateway.zoneRuntimeDir, 'worker-tasks', result.taskId);
 		await expect(fs.stat(taskRuntimeRoot)).rejects.toThrow();
 	});
 
@@ -1916,12 +2167,19 @@ describe('worker-task-runner', () => {
 				controllerEpoch: 'worker-epoch-a',
 				operations: createWorkerControlOperationsStub(),
 			},
+			managedVmExactProcessTermination: createManagedVmExactProcessTerminationStub(),
 			managedVmFactory: managedVmFactoryStub,
 			managedVmImages: managedVmImagesStub,
 			pollClock: createInstantPollClock(),
 			pollIntervalMs: 1,
+			readProcessIdentity: createWorkerProcessIdentityReaderStub(),
 			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
 			systemConfig,
+			workerRuntimeRecordTarget: resolveWorkerRuntimeRecordTarget({
+				systemConfig,
+				taskId: prepared.taskId,
+				zoneId: prepared.zoneId,
+			}),
 		});
 
 		expect(connectWorkerControlSession).toHaveBeenCalledOnce();
@@ -1971,13 +2229,20 @@ describe('worker-task-runner', () => {
 					controllerEpoch: 'worker-epoch-a',
 					operations: createWorkerControlOperationsStub(),
 				},
+				managedVmExactProcessTermination: createManagedVmExactProcessTerminationStub(),
 				managedVmFactory: managedVmFactoryStub,
 				managedVmImages: managedVmImagesStub,
 				pollClock: createInstantPollClock(),
 				pollIntervalMs: CONTROL_SESSION_TIMING_MS.controlSessionDeathGrace,
+				readProcessIdentity: createWorkerProcessIdentityReaderStub(),
 				secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
 				systemConfig,
 				timeoutMs: CONTROL_SESSION_TIMING_MS.controlSessionDeathGrace * 2,
+				workerRuntimeRecordTarget: resolveWorkerRuntimeRecordTarget({
+					systemConfig,
+					taskId: prepared.taskId,
+					zoneId: prepared.zoneId,
+				}),
 			}),
 		).rejects.toThrow(/exceeded death grace/u);
 		expect(connectWorkerControlSession).toHaveBeenCalledOnce();
@@ -2027,13 +2292,20 @@ describe('worker-task-runner', () => {
 					controllerEpoch: 'worker-epoch-a',
 					operations: createWorkerControlOperationsStub(),
 				},
+				managedVmExactProcessTermination: createManagedVmExactProcessTerminationStub(),
 				managedVmFactory: managedVmFactoryStub,
 				managedVmImages: managedVmImagesStub,
 				pollClock: createInstantPollClock(),
 				pollIntervalMs: CONTROL_SESSION_TIMING_MS.controlSessionDeathGrace,
+				readProcessIdentity: createWorkerProcessIdentityReaderStub(),
 				secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
 				systemConfig,
 				timeoutMs: CONTROL_SESSION_TIMING_MS.controlSessionDeathGrace * 2,
+				workerRuntimeRecordTarget: resolveWorkerRuntimeRecordTarget({
+					systemConfig,
+					taskId: prepared.taskId,
+					zoneId: prepared.zoneId,
+				}),
 			}),
 		).rejects.toThrow(/exceeded death grace/u);
 		expect(connectWorkerControlSession).toHaveBeenCalledOnce();
@@ -2094,13 +2366,55 @@ describe('worker-task-runner', () => {
 			zoneId: 'shravan',
 		});
 
-		const taskRuntimeRoot = path.join(
-			systemConfig.runtimeDir,
-			'worker-tasks',
-			'shravan',
-			result.taskId,
-		);
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected zone config.');
+		}
+		const taskRuntimeRoot = path.join(zone.gateway.zoneRuntimeDir, 'worker-tasks', result.taskId);
 		await expect(fs.stat(taskRuntimeRoot)).rejects.toMatchObject({ code: 'ENOENT' });
+	});
+
+	it('continues task cleanup after exact Worker destruction reports ancillary cleanup debt', async () => {
+		// Arrange
+		const onTaskFinished = vi.fn(async () => {});
+		gatewayDestroyMock.mockImplementationOnce(async () => {
+			await managedVm.close();
+			return {
+				kind: 'destroyed-cleanup-incomplete',
+				cleanupFailures: [
+					{
+						error: new Error('runtime record delete failed'),
+						stage: 'runtime-record-deletion',
+					},
+				],
+			};
+		});
+
+		// Act
+		const execution = executePreparedWorkerTaskForTest({
+			input: {
+				requestTaskId: 'request-task-worker-cleanup-debt',
+				prompt: 'classify worker cleanup debt',
+				repos: [],
+				context: {},
+			},
+			onTaskFinished,
+			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			systemConfig,
+			zoneId: 'shravan',
+		});
+
+		// Assert
+		await expect(execution).rejects.toMatchObject({
+			cause: expect.objectContaining({ message: 'runtime record delete failed' }),
+			message: expect.stringMatching(
+				/exact destruction completed but gateway cleanup stage 'runtime-record-deletion'/u,
+			),
+		});
+		expect(gatewayDestroyMock).toHaveBeenCalledOnce();
+		expect(managedVmCloseMock).toHaveBeenCalledOnce();
+		expect(stopRepoResourceProvidersMock).toHaveBeenCalledOnce();
+		expect(onTaskFinished).toHaveBeenCalledOnce();
 	});
 
 	it('preserves task resources when primary failure is followed by unproven VM destruction', async () => {
@@ -2153,6 +2467,7 @@ describe('worker-task-runner', () => {
 			}),
 		]);
 		expect(managedVmCloseMock).toHaveBeenCalled();
+		expect(gatewayDestroyMock).toHaveBeenCalledOnce();
 		expect(stopRepoResourceProvidersMock).not.toHaveBeenCalled();
 	});
 
@@ -2176,6 +2491,7 @@ describe('worker-task-runner', () => {
 		).rejects.toThrow(/did not prove exact destruction/u);
 
 		expect(managedVmCloseMock).toHaveBeenCalledOnce();
+		expect(gatewayDestroyMock).toHaveBeenCalledOnce();
 		expect(onTaskFinished).not.toHaveBeenCalled();
 		expect(stopRepoResourceProvidersMock).not.toHaveBeenCalled();
 	});
@@ -2188,9 +2504,8 @@ describe('worker-task-runner', () => {
 		}
 		const taskRoot = path.join(zone.gateway.stateDir, 'tasks', 'task-cleanup-failures');
 		const taskRuntimeRoot = path.join(
-			systemConfig.runtimeDir,
+			zone.gateway.zoneRuntimeDir,
 			'worker-tasks',
-			zone.id,
 			'task-cleanup-failures',
 		);
 		await fs.mkdir(path.join(taskRuntimeRoot, 'work'), { recursive: true });
@@ -2201,7 +2516,7 @@ describe('worker-task-runner', () => {
 			if (normalizedTarget.endsWith('/agent-vm/resources')) {
 				throw new Error('resource removal failed');
 			}
-			if (normalizedTarget.endsWith('/runtime/worker-tasks/shravan/task-cleanup-failures')) {
+			if (normalizedTarget.endsWith('/shravan/runtime/worker-tasks/task-cleanup-failures')) {
 				throw new Error('runtime removal failed');
 			}
 		});
@@ -2215,7 +2530,7 @@ describe('worker-task-runner', () => {
 		let thrownError: unknown;
 		try {
 			await postStopGateway('task-cleanup-failures', zone, [startedProvider], {
-				runtimeDir: systemConfig.runtimeDir,
+				zoneRuntimeDir: zone.gateway.zoneRuntimeDir,
 			});
 		} catch (error) {
 			thrownError = error;
@@ -2317,9 +2632,8 @@ describe('worker-task-runner', () => {
 
 		const taskRoot = path.join(zone.gateway.stateDir, 'tasks', 'task-keep-state');
 		const taskRuntimeRoot = path.join(
-			systemConfig.runtimeDir,
+			zone.gateway.zoneRuntimeDir,
 			'worker-tasks',
-			zone.id,
 			'task-keep-state',
 		);
 		await fs.mkdir(path.join(taskRuntimeRoot, 'work'), { recursive: true });
@@ -2339,7 +2653,7 @@ describe('worker-task-runner', () => {
 			repoId: 'repo-a',
 		};
 		await postStopGateway('task-keep-state', zone, [startedProvider], {
-			runtimeDir: systemConfig.runtimeDir,
+			zoneRuntimeDir: zone.gateway.zoneRuntimeDir,
 		});
 
 		expect(stopRepoResourceProvidersMock).toHaveBeenCalledWith([startedProvider]);

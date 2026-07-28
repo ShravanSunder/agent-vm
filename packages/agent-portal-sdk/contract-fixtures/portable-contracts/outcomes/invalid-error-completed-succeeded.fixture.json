@@ -1,0 +1,26 @@
+{
+	"caseId": "invalid-error-completed-succeeded",
+	"schemaId": "portal.call.item-result",
+	"tags": ["illegal-combination", "outcome", "rejected"],
+	"input": {
+		"error": {
+			"code": "execution_failed",
+			"message": "An error cannot carry a succeeded outcome."
+		},
+		"id": "call-1",
+		"operationId": "operation-1",
+		"owningGeneration": "runner-generation-1",
+		"outcome": {
+			"certainty": "proven",
+			"completion": "succeeded",
+			"kind": "completed",
+			"retryClass": "forbidden"
+		},
+		"status": "error"
+	},
+	"expectation": {
+		"kind": "rejected",
+		"errorCodes": ["portal.result.outcome-algebra"],
+		"refinementIdentities": ["portal.request-id.not-reserved", "portal.result.outcome-algebra"]
+	}
+}

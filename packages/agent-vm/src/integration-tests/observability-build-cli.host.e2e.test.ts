@@ -7,7 +7,10 @@ import { execa } from 'execa';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { computeFingerprintFromConfigPath } from '../build/gondolin-image-builder.js';
-import { managedVmImageAssetFileNames } from '../build/gondolin-managed-vm-build-tooling.js';
+import {
+	managedVmImageAssetFileNames,
+	type ManagedGatewayImageBootProjection,
+} from '../build/gondolin-managed-vm-build-tooling.js';
 
 const repoRoot = process.cwd();
 const agentVmCliPath = path.join(
@@ -106,8 +109,14 @@ async function writeJson(filePath: string, value: unknown): Promise<void> {
 async function seedBuiltImageCache(options: {
 	readonly buildConfigPath: string;
 	readonly cacheDirectory: string;
+	readonly managedGatewayBoot?: ManagedGatewayImageBootProjection;
 }): Promise<void> {
-	const fingerprint = await computeFingerprintFromConfigPath(options.buildConfigPath);
+	const fingerprint = await computeFingerprintFromConfigPath(
+		options.buildConfigPath,
+		options.managedGatewayBoot === undefined
+			? {}
+			: { managedGatewayBoot: options.managedGatewayBoot },
+	);
 	const imageDirectory = path.join(options.cacheDirectory, fingerprint);
 	await fs.mkdir(imageDirectory, { recursive: true });
 	await Promise.all(
@@ -152,9 +161,7 @@ async function createSmokeDeployment(
 	const configDirectory = path.join(temporaryDirectory, 'config');
 	const vmImagesDirectory = path.join(temporaryDirectory, 'vm-images');
 	const cacheDir = path.join(temporaryDirectory, 'cache');
-	const runtimeDir = path.join(temporaryDirectory, 'runtime');
-	const stateDir = path.join(temporaryDirectory, 'state', 'sunfam');
-	const zoneFilesDir = path.join(temporaryDirectory, 'zone-files', 'sunfam');
+	const runtimeDir = path.join(temporaryDirectory, 'controller-runtime');
 	const dataDir = path.join(temporaryDirectory, 'observability-data');
 	const gatewayConfigPath = path.join(configDirectory, 'gateways', 'sunfam', 'openclaw.json');
 	const gatewayBuildConfigPath = path.join(
@@ -190,9 +197,8 @@ async function createSmokeDeployment(
 	await writeJson(gatewayBuildConfigPath, buildConfig);
 	await writeJson(toolBuildConfigPath, buildConfig);
 	await writeJson(configPath, {
-		schemaVersion: 1,
-		cacheDir,
-		runtimeDir,
+		schemaVersion: 2,
+		storageRootDir: temporaryDirectory,
 		host: {
 			controllerPort: 18_800,
 			projectNamespace: 'observability-cli-smoke',
@@ -254,8 +260,6 @@ async function createSmokeDeployment(
 					cpus: 1,
 					port: 18_791,
 					config: gatewayConfigPath,
-					stateDir,
-					zoneFilesDir,
 					controlAuth: {
 						mode: 'token',
 						secret: 'OPENCLAW_GATEWAY_TOKEN',
@@ -276,12 +280,10 @@ async function createSmokeDeployment(
 					? {
 							observability: {
 								enabled: true,
-								openclaw: {
-									serviceName: 'agent-vm-openclaw-sunfam',
-									traces: true,
-									metrics: true,
-									logs: true,
-									diagnosticsFlags: ['gateway.lifecycle'],
+								openclaw: { diagnosticsFlags: ['gateway.lifecycle'] },
+								services: {
+									framework: { traces: true, metrics: true, logs: true },
+									toolPortal: { traces: true, metrics: true, logs: true },
 								},
 							},
 						}
@@ -301,6 +303,10 @@ async function createSmokeDeployment(
 		seedBuiltImageCache({
 			buildConfigPath: gatewayBuildConfigPath,
 			cacheDirectory: path.join(cacheDir, 'gateway-images', 'openclaw'),
+			managedGatewayBoot: {
+				frameworkBootEntry: 'openclaw-framework-service',
+				kind: 'managed-gateway-exact-two-role',
+			},
 		}),
 		seedBuiltImageCache({
 			buildConfigPath: toolBuildConfigPath,

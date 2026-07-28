@@ -1,0 +1,24 @@
+{
+	"caseId": "nested-key-order-and-negative-zero",
+	"schemaId": "portal.json-value",
+	"tags": ["accepted", "canonical-json", "numeric"],
+	"input": {
+		"z": {
+			"second": 2,
+			"first": 1
+		},
+		"a": -0.0
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"a": 0,
+			"z": {
+				"first": 1,
+				"second": 2
+			}
+		},
+		"canonicalJson": "{\"a\":0,\"z\":{\"first\":1,\"second\":2}}",
+		"refinementIdentities": ["portal.json.canonical"]
+	}
+}

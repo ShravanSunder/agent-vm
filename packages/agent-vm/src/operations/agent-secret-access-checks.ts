@@ -30,11 +30,11 @@ function getAgentAccess(secret: ZoneSecretConfig): AgentAccessConfig | undefined
 	return 'agentAccess' in secret ? secret.agentAccess : undefined;
 }
 
-export function buildOpenClawAgentSecretAccessChecks(
+export function buildManagedAgentSecretAccessChecks(
 	systemConfig: Pick<SystemConfig, 'zones'>,
 ): readonly AgentSecretAccessCheck[] {
 	return systemConfig.zones.flatMap((zone) => {
-		if (zone.gateway.type !== 'openclaw') {
+		if (zone.gateway.type === 'worker') {
 			return [];
 		}
 		return Object.entries(zone.secrets).flatMap(([secretName, secret]) => {

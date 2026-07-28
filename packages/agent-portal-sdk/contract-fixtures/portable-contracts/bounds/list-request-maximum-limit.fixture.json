@@ -1,0 +1,30 @@
+{
+	"caseId": "list-request-maximum-limit",
+	"schemaId": "portal.list.request",
+	"tags": ["accepted", "boundary", "numeric"],
+	"input": {
+		"requests": [
+			{
+				"id": "list-maximum",
+				"limit": 100
+			}
+		]
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"requests": [
+				{
+					"id": "list-maximum",
+					"limit": 100
+				}
+			]
+		},
+		"canonicalJson": "{\"requests\":[{\"id\":\"list-maximum\",\"limit\":100}]}",
+		"refinementIdentities": [
+			"portal.batch.unique-item-ids",
+			"portal.list.default-limit",
+			"portal.request-id.not-reserved"
+		]
+	}
+}

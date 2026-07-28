@@ -1,102 +1,126 @@
 import {
-	GATEWAY_CONTROL_CALLER_CONTEXT_AGENT_AUTHORITY_KEYS_ENV,
-	GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV,
-} from '@agent-vm/gateway-lifecycle';
+	GatewayRuntimeClient,
+	type GatewayRuntimeClientOptions,
+	type GatewayRuntimeTraceContext,
+} from '@agent-vm/agent-portal-sdk/gateway-runtime-client';
 
 import {
 	type AgentVmPluginConfigInput,
 	type AgentVmPluginConfigJsonObject,
 	resolveAgentVmPluginConfig,
 } from './agent-vm-plugin-config.js';
-import { createGatewayControlCallerContextStore } from './gateway-control-service/gateway-control-caller-context-store.js';
-import { createGatewayControlEventPublisher } from './gateway-control-service/gateway-control-event-publisher.js';
-import { createGatewayControlLeaseClient } from './gateway-control-service/gateway-control-lease-client.js';
 import {
-	ensureGatewayControlSessionHeartbeat,
-	getOrCreateGatewayControlServiceRuntime,
-} from './gateway-control-service/gateway-control-service-runtime.js';
+	createOpenClawGatewayRuntimeSandboxRegistration,
+	type OpenClawGatewayRuntimeSandboxClient,
+	type OpenClawGatewayRuntimeSandboxRegistration,
+} from './gateway-runtime-sandbox-backend.js';
 import {
-	GATEWAY_CONTROL_READY_PATH,
-	GATEWAY_CONTROL_SOCKET_PATH,
-	type GatewayControlIdentity,
-	type GatewayControlService,
-} from './gateway-control-service/gateway-control-service.js';
+	getOpenClawGatewayRuntimeClient,
+	publishOpenClawGatewayRuntimeClient,
+} from './openclaw-gateway-runtime-client-binding.js';
 import {
-	OPENCLAW_SSH_SESSION_SCRATCH_ROOT,
-	createBackendDeps,
-} from './openclaw-backend-dependencies.js';
-import { buildOpenClawRuntimeStatusReport } from './openclaw-runtime-status.js';
-import {
-	assertSdkShape,
-	type OpenClawHttpRouteRegistrationApi,
-	type OpenClawToolRegistrationApi,
-	type SshHelpers,
-	type SshSandboxSession,
+	createOpenClawGatewayRuntimeTraceContextBridge,
+	type OpenClawDiagnosticRuntimeLoader,
+} from './openclaw-gateway-runtime-trace-context.js';
+import type {
+	OpenClawHttpRouteRegistrationApi,
+	OpenClawSandboxBackendRegistrationApi,
+	OpenClawPluginServiceRegistrationApi,
+	OpenClawToolRegistrationApi,
 } from './openclaw-sandbox-sdk-contract.js';
+import { assertSdkShape } from './openclaw-sandbox-sdk-contract.js';
 import {
-	createAgentVmSandboxBackendFactory,
-	createAgentVmSandboxBackendManager,
-} from './sandbox-backend-factory.js';
-import { registerToolPortalNativeTools } from './tool-portal-native-tools.js';
-import { registerToolVmWriteReadE2eRoute } from './tool-vm-write-read-e2e-tool.js';
+	type OpenClawToolPortalClient,
+	registerToolPortalNativeTools,
+} from './tool-portal-native-tools.js';
 
-const gatewayControlLeaseClientEndpoint = 'gateway-control://control-session';
+type OpenClawGatewayRuntimeClient = Pick<GatewayRuntimeClient, 'connect' | 'disconnect'> &
+	OpenClawToolPortalClient;
+
+interface AgentVmPluginRegistrationApi {
+	readonly config?: AgentVmPluginConfigJsonObject;
+	readonly pluginConfig: AgentVmPluginConfigInput;
+	readonly registerHttpRoute?: OpenClawHttpRouteRegistrationApi['registerHttpRoute'];
+	readonly registerService?: OpenClawPluginServiceRegistrationApi['registerService'];
+	readonly registerTool?: OpenClawToolRegistrationApi['registerTool'];
+	readonly registrationMode: string;
+	readonly runtime?: {
+		readonly config?: {
+			readonly current?: () => AgentVmPluginConfigJsonObject;
+		};
+	};
+}
 
 interface RegisterAgentVmPluginOptions {
-	readonly enableToolVmWriteReadE2eRoute?: boolean | undefined;
+	readonly createSandboxRegistration?: (options: {
+		readonly agentProjections: NonNullable<
+			ReturnType<typeof resolveAgentVmPluginConfig>['toolPortal']
+		>['agentProjections'];
+		readonly client: OpenClawGatewayRuntimeClient;
+		readonly traceContextProvider: () => GatewayRuntimeTraceContext | undefined;
+	}) => OpenClawGatewayRuntimeSandboxRegistration;
+	readonly createGatewayRuntimeClient?: (
+		options: GatewayRuntimeClientOptions,
+	) => OpenClawGatewayRuntimeClient;
+	readonly onGatewayRuntimeClientCreated?: (options: {
+		readonly agentProjections: NonNullable<
+			ReturnType<typeof resolveAgentVmPluginConfig>['toolPortal']
+		>['agentProjections'];
+		readonly api: OpenClawHttpRouteRegistrationApi;
+		readonly client: OpenClawGatewayRuntimeClient;
+	}) => void;
+	readonly loadOpenClawSandboxSdk?: () => Promise<OpenClawSandboxBackendRegistrationApi>;
+	readonly loadOpenClawDiagnosticRuntime?: OpenClawDiagnosticRuntimeLoader;
 }
 
-function resolveGatewayControlCallerContextProofKey(): string {
-	const proofKey = process.env[GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV];
-	if (proofKey === undefined || proofKey.length === 0) {
-		throw new Error(
-			`Gondolin full registration requires ${GATEWAY_CONTROL_CALLER_CONTEXT_PROOF_KEY_ENV}.`,
-		);
-	}
-	return proofKey;
+function createOpenClawGatewayRuntimeClient(
+	options: GatewayRuntimeClientOptions,
+): OpenClawGatewayRuntimeClient {
+	return new GatewayRuntimeClient(options);
 }
 
-function isStringRecord(value: unknown): value is Readonly<Record<string, string>> {
-	if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-		return false;
+function isUnknownRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function assertGatewayRuntimeSandboxClient(
+	client: OpenClawGatewayRuntimeClient,
+): asserts client is OpenClawGatewayRuntimeClient & OpenClawGatewayRuntimeSandboxClient {
+	const unknownClient: unknown = client;
+	if (!isUnknownRecord(unknownClient) || !isUnknownRecord(unknownClient.sandbox)) {
+		throw new Error('GatewayRuntimeClient is missing the managed Sandbox API.');
 	}
-	for (const entryValue of Object.values(value)) {
-		if (typeof entryValue !== 'string' || entryValue.length === 0) {
-			return false;
+	for (const operationGroup of ['environment', 'execution', 'filesystem', 'stream'] as const) {
+		if (!isUnknownRecord(unknownClient.sandbox[operationGroup])) {
+			throw new Error(`GatewayRuntimeClient is missing Sandbox ${operationGroup} operations.`);
 		}
 	}
-	return true;
 }
 
-function resolveGatewayControlCallerContextAgentAuthorityKeys(): Readonly<Record<string, string>> {
-	const rawKeys = process.env[GATEWAY_CONTROL_CALLER_CONTEXT_AGENT_AUTHORITY_KEYS_ENV];
-	if (rawKeys === undefined || rawKeys.length === 0) {
-		throw new Error(
-			`Gondolin full registration requires ${GATEWAY_CONTROL_CALLER_CONTEXT_AGENT_AUTHORITY_KEYS_ENV}.`,
-		);
-	}
-	const parsedKeys = JSON.parse(rawKeys) as unknown;
-	if (!isStringRecord(parsedKeys)) {
-		throw new Error(
-			`Gondolin full registration requires ${GATEWAY_CONTROL_CALLER_CONTEXT_AGENT_AUTHORITY_KEYS_ENV} to be a JSON object of agent keys.`,
-		);
-	}
-	return parsedKeys;
+function createDefaultSandboxRegistration(options: {
+	readonly agentProjections: NonNullable<
+		ReturnType<typeof resolveAgentVmPluginConfig>['toolPortal']
+	>['agentProjections'];
+	readonly client: OpenClawGatewayRuntimeClient;
+	readonly traceContextProvider: () => GatewayRuntimeTraceContext | undefined;
+}): OpenClawGatewayRuntimeSandboxRegistration {
+	assertGatewayRuntimeSandboxClient(options.client);
+	return createOpenClawGatewayRuntimeSandboxRegistration({
+		agentProjections: options.agentProjections,
+		client: options.client,
+		traceContextProvider: options.traceContextProvider,
+	});
+}
+
+async function loadOpenClawSandboxSdk(): Promise<OpenClawSandboxBackendRegistrationApi> {
+	const sdkPath = '/opt/openclaw-sdk/sandbox.js';
+	const sdkModule: unknown = await import(sdkPath);
+	assertSdkShape(sdkModule);
+	return sdkModule;
 }
 
 export function registerAgentVmPlugin(
-	api: {
-		readonly config?: AgentVmPluginConfigJsonObject;
-		readonly pluginConfig: AgentVmPluginConfigInput;
-		readonly registerHttpRoute?: OpenClawHttpRouteRegistrationApi['registerHttpRoute'];
-		readonly registerTool?: OpenClawToolRegistrationApi['registerTool'];
-		readonly registrationMode: string;
-		readonly runtime?: {
-			readonly config?: {
-				readonly current?: () => AgentVmPluginConfigJsonObject;
-			};
-		};
-	},
+	api: AgentVmPluginRegistrationApi,
 	options: RegisterAgentVmPluginOptions = {},
 ): void {
 	const registerTool = api.registerTool;
@@ -106,183 +130,122 @@ export function registerAgentVmPlugin(
 		}
 		return;
 	}
+
 	const pluginConfig = resolveAgentVmPluginConfig(api.pluginConfig);
-	if (pluginConfig.toolPortal !== undefined && api.registrationMode !== 'full') {
-		registerToolPortalNativeTools({
-			api: { registerTool },
-			configDir: pluginConfig.toolPortal.configDir,
-			logger: {
-				warn: (message) => process.stderr.write(`${message}\n`),
-			},
-		});
-	}
+	const toolPortalConfig = pluginConfig.toolPortal;
 	if (api.registrationMode !== 'full') {
+		if (toolPortalConfig !== undefined) {
+			registerToolPortalNativeTools({
+				agentProjections: toolPortalConfig.agentProjections,
+				api: { registerTool },
+				clientProvider: getOpenClawGatewayRuntimeClient,
+				logger: {
+					warn: (message) => process.stderr.write(`${message}\n`),
+				},
+			});
+		}
 		return;
 	}
-	if (pluginConfig.controlSession === undefined) {
-		throw new Error('Gondolin full registration requires controlSession.');
-	}
-	const callerContextProofKey = resolveGatewayControlCallerContextProofKey();
-	const callerContextAgentAuthorityKeys = resolveGatewayControlCallerContextAgentAuthorityKeys();
-	const registerHttpRoute = api.registerHttpRoute;
-	if (typeof registerHttpRoute !== 'function') {
-		throw new Error('Gondolin control-session registration requires OpenClaw registerHttpRoute.');
-	}
-	const gatewayControlIdentity: GatewayControlIdentity = {
-		bootId: pluginConfig.controlSession.bootId,
-		callerContextAgentAuthorityKeys,
-		callerContextProofKey,
-		controllerEpoch: pluginConfig.controlSession.controllerEpoch,
-		generationId: pluginConfig.controlSession.generationId,
-		peerId: pluginConfig.controlSession.peerId,
-		processEpoch: pluginConfig.controlSession.processEpoch,
-		zoneId: pluginConfig.zoneId,
-	};
-	const gatewayControlRuntime = getOrCreateGatewayControlServiceRuntime({
-		identity: gatewayControlIdentity,
-		verifierPublicKeyPem: pluginConfig.controlSession.verifierPublicKeyPem,
-	});
-	const gatewayControlService: GatewayControlService = gatewayControlRuntime.service;
-	const gatewayControlCallerContextStore = createGatewayControlCallerContextStore();
-	if (pluginConfig.toolPortal !== undefined) {
-		registerToolPortalNativeTools({
-			api: { registerTool },
-			configDir: pluginConfig.toolPortal.configDir,
-			gatewayControl: {
-				callerContextStore: gatewayControlCallerContextStore,
-				identity: gatewayControlIdentity,
-				service: gatewayControlService,
-			},
-			logger: {
-				warn: (message) => process.stderr.write(`${message}\n`),
-			},
-		});
-	}
-	const gatewayControlEventPublisher = createGatewayControlEventPublisher({
-		controlService: gatewayControlService,
-		identity: gatewayControlIdentity,
-	});
-	ensureGatewayControlSessionHeartbeat({
-		identity: gatewayControlIdentity,
-		publisher: gatewayControlEventPublisher,
-		runtime: gatewayControlRuntime,
-		writeLog: (message) => process.stderr.write(`${message}\n`),
-	});
-	registerHttpRoute({
-		auth: 'plugin',
-		handler: gatewayControlService.handleReadyRequest,
-		match: 'exact',
-		path: GATEWAY_CONTROL_READY_PATH,
-	});
-	registerHttpRoute({
-		auth: 'plugin',
-		handler: (_req, res) => {
-			res.statusCode = 404;
-			res.setHeader('cache-control', 'no-store');
-			res.setHeader('content-type', 'text/plain; charset=utf-8');
-			res.end('upgrade required\n');
-			return true;
-		},
-		handleUpgrade: gatewayControlService.handleUpgrade,
-		match: 'exact',
-		path: GATEWAY_CONTROL_SOCKET_PATH,
-	});
-	const buildRuntimeStatus = ():
-		| ReturnType<typeof buildOpenClawRuntimeStatusReport>
-		| undefined => {
-		const runtimeConfig = api.runtime?.config?.current?.() ?? api.config;
-		return runtimeConfig
-			? buildOpenClawRuntimeStatusReport({
-					config: runtimeConfig,
-					zoneId: pluginConfig.zoneId,
-				})
-			: undefined;
-	};
-	const publishRuntimeStatus = async (
-		report: ReturnType<typeof buildOpenClawRuntimeStatusReport>,
-	): Promise<void> => {
-		await gatewayControlEventPublisher.publishOpenClawRuntimeStatus(report);
-	};
 
-	const sdkPath = '/opt/openclaw-sdk/sandbox.js';
-	const agentVmSandboxBackendFactoryPromise = import(sdkPath).then(
-		(sdkRaw: Record<string, unknown>) => {
-			assertSdkShape(sdkRaw);
+	if (toolPortalConfig === undefined) {
+		throw new Error('Gondolin full registration requires toolPortal.');
+	}
+	const registerService = api.registerService;
+	if (typeof registerService !== 'function') {
+		throw new Error('Gondolin Tool Portal registration requires OpenClaw registerService.');
+	}
 
-			const sshHelpers: SshHelpers = {
-				buildExecRemoteCommand: sdkRaw.buildExecRemoteCommand,
-				buildRemoteCommand: sdkRaw.buildRemoteCommand,
-				buildSshSandboxArgv: sdkRaw.buildSshSandboxArgv,
-				createRemoteShellSandboxFsBridge: sdkRaw.createRemoteShellSandboxFsBridge,
-				createSshSandboxSessionFromSettings: sdkRaw.createSshSandboxSessionFromSettings,
-				...(typeof sdkRaw.disposeSshSandboxSession === 'function'
-					? {
-							disposeSshSandboxSession: sdkRaw.disposeSshSandboxSession as (
-								session: SshSandboxSession,
-							) => Promise<void>,
-						}
-					: {}),
-				runSshSandboxCommand: sdkRaw.runSshSandboxCommand,
-				sanitizeEnvVars: sdkRaw.sanitizeEnvVars,
-			};
-
-			const backendDependencies = createBackendDeps(sshHelpers);
-			const gatewayControlLeaseClient = createGatewayControlLeaseClient({
-				callerContextStore: gatewayControlCallerContextStore,
-				controlService: gatewayControlService,
-				identity: gatewayControlIdentity,
-			});
-			const backendDependenciesWithLeaseClient = {
-				...backendDependencies,
-				createLeaseClient: () => gatewayControlLeaseClient,
-				publishHealthEvent: gatewayControlEventPublisher.publishHealthEvent,
-				publishOpenClawRuntimeStatus: publishRuntimeStatus,
-			};
-			const agentVmSandboxBackendFactory = createAgentVmSandboxBackendFactory(
-				{
-					...pluginConfig,
-					controllerUrl: gatewayControlLeaseClientEndpoint,
-					openClawRuntimeConfigProvider: () => api.runtime?.config?.current?.() ?? api.config,
-					openClawRuntimeStatusProvider: buildRuntimeStatus,
-				},
-				backendDependenciesWithLeaseClient,
-			);
-			sdkRaw.registerSandboxBackend('gondolin', {
-				factory: agentVmSandboxBackendFactory,
-				manager: createAgentVmSandboxBackendManager(
-					{
-						controllerUrl: gatewayControlLeaseClientEndpoint,
-						zoneId: pluginConfig.zoneId,
-					},
-					backendDependenciesWithLeaseClient,
-				),
-			});
-			return agentVmSandboxBackendFactory;
-		},
+	const createGatewayRuntimeClient =
+		options.createGatewayRuntimeClient ?? createOpenClawGatewayRuntimeClient;
+	const traceContextBridge = createOpenClawGatewayRuntimeTraceContextBridge(
+		options.loadOpenClawDiagnosticRuntime === undefined
+			? {}
+			: { loadDiagnosticRuntime: options.loadOpenClawDiagnosticRuntime },
 	);
-	agentVmSandboxBackendFactoryPromise.catch((error: unknown) => {
-		const message = error instanceof Error ? error.message : JSON.stringify(error);
-		process.stderr.write(`[gondolin] failed to load OpenClaw SDK: ${message}\n`);
+	const gatewayRuntimeClient = createGatewayRuntimeClient({
+		attachment: toolPortalConfig.attachment,
+		traceContextProvider: traceContextBridge.provide,
 	});
-	if (options.enableToolVmWriteReadE2eRoute === true) {
-		registerToolVmWriteReadE2eRoute({
-			api: { registerHttpRoute },
-			factoryProvider: async () => await agentVmSandboxBackendFactoryPromise,
-		});
-	}
+	const createSandboxRegistration =
+		options.createSandboxRegistration ?? createDefaultSandboxRegistration;
+	let sandboxRegistration: OpenClawGatewayRuntimeSandboxRegistration | undefined;
+	let restoreSandboxBackend: (() => void) | undefined;
+	let releaseGatewayRuntimeClient: (() => void) | undefined;
+	const unregisterSandboxBackend = (): void => {
+		try {
+			restoreSandboxBackend?.();
+		} finally {
+			restoreSandboxBackend = undefined;
+		}
+	};
+	registerToolPortalNativeTools({
+		agentProjections: toolPortalConfig.agentProjections,
+		api: { registerTool },
+		clientProvider: getOpenClawGatewayRuntimeClient,
+		logger: {
+			warn: (message) => process.stderr.write(`${message}\n`),
+		},
+	});
+	options.onGatewayRuntimeClientCreated?.({
+		agentProjections: toolPortalConfig.agentProjections,
+		api: api.registerHttpRoute === undefined ? {} : { registerHttpRoute: api.registerHttpRoute },
+		client: gatewayRuntimeClient,
+	});
+	registerService({
+		id: 'agent-vm-gateway-runtime-client',
+		start: async () => {
+			try {
+				await traceContextBridge.load();
+				await gatewayRuntimeClient.connect();
+				sandboxRegistration = createSandboxRegistration({
+					agentProjections: toolPortalConfig.agentProjections,
+					client: gatewayRuntimeClient,
+					traceContextProvider: traceContextBridge.provide,
+				});
+				const sandboxSdk = await (options.loadOpenClawSandboxSdk ?? loadOpenClawSandboxSdk)();
+				restoreSandboxBackend = sandboxSdk.registerSandboxBackend('gondolin', {
+					factory: sandboxRegistration.factory,
+					resolveWorkdir: sandboxRegistration.resolveWorkdir,
+				});
+				releaseGatewayRuntimeClient?.();
+				releaseGatewayRuntimeClient = publishOpenClawGatewayRuntimeClient(gatewayRuntimeClient);
+			} catch (error: unknown) {
+				releaseGatewayRuntimeClient?.();
+				releaseGatewayRuntimeClient = undefined;
+				try {
+					unregisterSandboxBackend();
+				} catch {
+					// Preserve the startup failure while still closing reservations and the client.
+				}
+				await sandboxRegistration?.close().catch(() => undefined);
+				await gatewayRuntimeClient.disconnect().catch(() => undefined);
+				throw error;
+			}
+		},
+		stop: async () => {
+			releaseGatewayRuntimeClient?.();
+			releaseGatewayRuntimeClient = undefined;
+			try {
+				unregisterSandboxBackend();
+			} finally {
+				try {
+					await sandboxRegistration?.close();
+				} finally {
+					await gatewayRuntimeClient.disconnect();
+				}
+			}
+		},
+	});
 }
 
 const plugin = {
 	id: 'gondolin',
 	name: 'Gondolin VM Sandbox',
-	description: 'Sandbox backend powered by Gondolin micro-VMs.',
+	description: 'Thin OpenClaw adapter for the agent-vm Gateway Runtime service.',
 
 	register(api: Parameters<typeof registerAgentVmPlugin>[0]): void {
-		registerAgentVmPlugin(api, { enableToolVmWriteReadE2eRoute: true });
+		registerAgentVmPlugin(api);
 	},
 };
 
 export default plugin;
-
-export { OPENCLAW_SSH_SESSION_SCRATCH_ROOT, createBackendDeps };
-export type { SshHelpers };

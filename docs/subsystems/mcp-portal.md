@@ -16,23 +16,28 @@ register the native `mcp_portal_*` model tool names.
 
 ## Model
 
-Each Tool Portal call gets a runtime scope. For managed OpenClaw, the plugin
-resolves the agent from OpenClaw's trusted `ctx.agentId` and the loaded portal
-configuration; the model never sends `agentId` as a portal tool argument. The
-agent scope owns:
+Managed Gateway mode has one service-wide Tool Portal service, one MCP provider
+runtime, and one configured `managedMcp.guestPort` for all agents in the zone.
+It does not create one MCP backend instance or listener per agent. Each call
+carries trusted invocation context supplied by the framework adapter; the model
+never sends `agentId` as a portal tool argument. Tool Portal verifies the
+trusted agent assignment and profile revision, then selects that profile's
+capability policy for the call. The invocation scope contains:
 
-- the OpenClaw-provided agent identity
-- the allowed namespace/tool policy
-- upstream MCP clients
-- the catalog snapshot
-- the scoped search index
+- the trusted agent and session identity
+- the selected complete profile
+- the allowed capability/tool policy for the active surface
+- the catalog and search view filtered for that invocation
 
 The agent never passes upstream auth headers, env, or upstream server config
 through portal tool inputs.
 
-The OpenClaw plugin injects prompt context through OpenClaw hooks and gates
-portal calls before native tool execution. OpenClaw's hook-approved params are
-the in-process approval boundary for managed native tools.
+Managed `calls.requiresApproval` is authorized by the controller approval
+authority. Tool Portal reserves the exact call intent and dispatches only under
+the resulting controller reservation or grant; standalone MCP Portal HMAC
+tokens are not authority for managed calls. If any managed approval selector
+effectively admits a tool, the zone must declare `approvalAccess`; static
+validation and gateway preflight fail closed instead of supplying a default.
 
 ## MCP Portal And Tool Portal Modes
 
@@ -41,11 +46,14 @@ agent/profile.
 
 - Standalone MCP Portal mode exposes `mcp_portal_list`,
   `mcp_portal_search`, `mcp_portal_describe`, and `mcp_portal_call`.
-  `mcp-portal.config.jsonc` owns the visible MCP namespace/tool policy.
+  `mcp.config.jsonc` owns providers and `mcp-portal.config.jsonc` owns the
+  visible MCP namespace/tool policy plus standalone bearer/HMAC settings.
 - Tool Portal mode exposes portal-neutral list/search/describe/call adapters.
-  `tool-portal.config.jsonc` owns the cross-backend policy. MCP-backed
-  capabilities are projected into an effective MCP projection and executed by
-  MCP Portal's MCP provider backend.
+  Managed Gateway authors `mcp.config.jsonc` plus `tool-portal.config.jsonc`.
+  The latter owns complete profiles, `capabilities`, explicit `backend.kind`
+  bindings, and call/tool selectors. MCP-backed capabilities are projected into
+  an internal MCP compatibility view and executed by MCP Portal's MCP provider
+  backend.
 
 MCP Portal still owns upstream MCP provider sessions, upstream MCP transport
 handling, provider secret resolution, upstream MCP JSON Schema validation, and
@@ -53,10 +61,10 @@ MCP-specific redaction. Tool Portal owns whether a capability is model-visible,
 the cross-backend approval decision, the catalog-static backend binding, and
 the portal-neutral result contract.
 
-The first Tool Portal slice currently ships package contracts and in-process
-composition helpers. Its config schema and JSON Schema artifact are available
-from `@agent-vm/config-contracts`, but `tool-portal.config.jsonc` is not yet a
-live deployment-loaded `agent-vm validate` surface.
+Managed `agent-vm validate` loads `tool-portal.config.jsonc` directly. A
+generated `mcp-portal.config.<generation>.jsonc` may still exist in the managed
+cache as a transitional compatibility projection, but managed deployments do
+not author or load `mcp-portal.config.jsonc` as policy authority.
 
 ## Standalone MCP Portal Agent-Facing Tools
 
@@ -86,17 +94,18 @@ reject the whole portal request. `diagnostics` carries batch-level partial
 discovery state, such as an upstream namespace that failed while healthy
 namespaces remained available.
 
-## Catalog And Search Isolation
+## Standalone MCP Portal Catalog And Search Isolation
 
 Denied tools never enter an agent's catalog or search index. The portal builds
 the scoped catalog after resolving the server-side agent policy, then builds
 the search index from that scoped catalog. It does not build one global index
 and post-filter results.
 
-Each profile is a complete portal policy. Profiles do not inherit from or merge
-with other profiles; `agents.<agentId>.profile` selects exactly one profile.
-Namespace exposure is fail closed. Empty `profiles.<name>.namespaces` exposes no
-upstream namespaces. Each namespace colocates its policy:
+In standalone `mcp-portal.config.jsonc`, each profile is a complete portal
+policy. Profiles do not inherit from or merge with other profiles;
+`agents.<agentId>.profile` selects exactly one profile. Namespace exposure is
+fail closed. Empty `profiles.<name>.namespaces` exposes no upstream namespaces.
+Each namespace colocates its policy:
 `tools.allow`, `tools.deny`, `calls.withoutApproval`, and
 `calls.requiresApproval`. `tools.allow` is `*` for every discovered tool or an
 explicit list of visible tool names; `tools.deny` removes names from that
@@ -126,9 +135,11 @@ They do not receive upstream MCP credentials.
 
 Authored deployment config is JSONC. `system.jsonc` points at
 `config/schemas/system.schema.json`; gateway MCP config files point at
-`../../schemas/mcp.schema.json` and `../../schemas/mcp-portal.schema.json`.
-Those schema files are emitted by `agent-vm init` and kept in sync from Zod
-schemas for editor tooling. Runtime compatibility checks use `schemaVersion`.
+`../../schemas/mcp.schema.json` plus either
+`../../schemas/tool-portal.schema.json` for managed Gateway policy or
+`../../schemas/mcp-portal.schema.json` for standalone MCP Portal policy. Those
+schema files are emitted by `agent-vm init` and kept in sync from Zod schemas
+for editor tooling. Runtime compatibility checks use `schemaVersion`.
 
 ## Auth, Approval, And Redaction
 
@@ -197,15 +208,15 @@ with HTTP mediation, such as protocols that place credentials in request bodies,
 opaque WebSocket payloads, or other bytes Gondolin cannot inspect. Raw env
 provider secrets must be named intentionally in `zones[].gateway.rawEnvSecrets`.
 
-Managed OpenClaw gateway mode does not start a portal HTTP server, does not open
-guest port `18790`, and does not require `MCP_PORTAL_SERVER_SECRET`. The
-OpenClaw plugin registers Tool Portal tools; MCP Portal is used as the
-MCP-provider backend inside that portal stack. `agent-vm` materializes effective
-MCP Portal config before gateway boot and injects only the runtime environment
-needed by configured upstream providers. Generated provider-secret environment
-names are provider-scoped, such as `AGENT_VM_MCP_LINEAR_AUTHORIZATION`, so two
-upstream providers can use the same authored header or env key without
-colliding.
+Managed Gateway mode does not start the standalone MCP Portal server and does
+not require `MCP_PORTAL_SERVER_SECRET`. The managed Tool Portal service instead
+uses `zones[].toolPortal.managedMcp.guestPort` when its bounded MCP surface is
+attached. MCP Portal remains the shared MCP-provider backend inside that one
+service. `agent-vm` materializes effective provider and Tool Portal config before
+gateway boot and injects only the runtime environment needed by configured
+upstream providers. Generated provider-secret environment names are
+provider-scoped, such as `AGENT_VM_MCP_LINEAR_AUTHORIZATION`, so two upstream
+providers can use the same authored header or env key without colliding.
 
 External `/mcp-proxy` mode is different: `mcp-portal mcp-proxy serve` runs on the
 operator host, resolves its configured auth secrets at process startup, and
@@ -231,10 +242,10 @@ not a blanket ban that would break loopback sidecars.
 
 Annotation trust is per upstream namespace. Untrusted upstream annotations do
 not bypass approval. V1 does not accept model-visible approval tokens,
-`commitToken`, or draft/commit fields. In managed OpenClaw mode, the
-`before_tool_call` hook is the approval boundary: OpenClaw delivers the
-post-approval params to the native tool, and the native tool executes exactly
-those params through `/core`.
+`commitToken`, or draft/commit fields. In managed mode, the controller approval
+authority binds the trusted principal, exact call, arguments, backend kind, and
+active semantic revisions before dispatch. Managed Tool Portal does not accept
+standalone `portalApprovalToken` or HMAC material as authority.
 
 ### Item-Level Approval In Batches
 
@@ -247,11 +258,11 @@ When a batch mixes approval-free calls with approval-required calls:
 - the whole outer `mcp_portal_call` is not converted into one approval prompt
 
 Agents should retry only the approval-required calls in a separate
-`mcp_portal_call` batch. In standalone MCP Portal native-tool mode, a
-homogeneous approval-required batch triggers the plugin approval prompt. After
-the operator approves it, the plugin injects a short-lived server-only
-`portalApprovalToken`, and MCP Portal core verifies the token before executing
-the gated calls.
+`mcp_portal_call` batch. This behavior belongs to standalone MCP Portal
+native-tool mode. In that mode, a homogeneous approval-required batch triggers
+the plugin approval prompt. After the operator approves it, the plugin injects a
+short-lived server-only `portalApprovalToken`, and MCP Portal core verifies the
+token before executing the gated calls.
 
 The token is bound to the approved agent id, exact namespace/tool names, and
 argument hashes. It is short-lived and single-use in standalone MCP Portal
@@ -290,20 +301,22 @@ mode and standalone direct MCP proxy mode:
 
 Managed Tool Portal tools return this value in `details`. Direct MCP proxy
 tools return the same value as JSON text content. Use
-`agent-vm validate --mcp-live` after changing providers, secrets, or profile
-tool names.
+`agent-vm validate --mcp-live` after changing managed providers, secrets, or
+profile tool names. Managed live validation follows only capabilities whose
+`backend.kind` is `mcp_provider`; other backend kinds are not interpreted as MCP
+provider namespaces.
 
 Intent verification is future work. A future draft-confirm-commit flow should
 remain server-side and must not turn model-visible fields into proof of
 approval.
 
-## Deferred Tool Portal Surfaces
+## Backend Availability Boundary
 
-The current Tool Portal slice does not expose shell CLIs, a Tool Portal MCP
-proxy, an HTTP API, an OpenClaw Tool Portal adapter, generic Tool VM runner
-execution, controller host-action execution, or broad VM artifact publication.
-CLI allowance schemas and validators are contract-only: they parse and validate
-argv-shaped intent but do not execute subprocesses or mount credentials.
+`tool-portal.config.jsonc` requires an explicit backend kind for every managed
+capability. Schema acceptance is not runtime availability proof. MCP-provider
+composition and controller approval authority are covered here; later Tool VM
+runner and other backend/process cutovers require their own implementation and
+proof before deployment docs may treat them as available.
 
 ## Local E2E Verification
 

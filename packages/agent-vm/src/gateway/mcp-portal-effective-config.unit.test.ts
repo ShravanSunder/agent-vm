@@ -3,9 +3,9 @@ import path from 'node:path';
 
 import {
 	mcpConfigSchema,
-	mcpPortalConfigSchema,
+	toolPortalConfigSchema,
 	type McpConfig,
-	type McpPortalConfig,
+	type ToolPortalConfig,
 } from '@agent-vm/config-contracts';
 import type { SecretResolver } from '@agent-vm/secret-management';
 import type { SecretRef } from '@agent-vm/secret-management';
@@ -19,13 +19,15 @@ import {
 
 type TestSecretResolver = SecretResolver & { readonly resolveAllMock: ReturnType<typeof vi.fn> };
 
-function createDefaultPortalConfigInput(): unknown {
+function createDefaultToolPortalConfigInput(): unknown {
 	return {
 		agents: { shravan: { profile: 'default' } },
+		mode: 'managed',
 		profiles: {
 			default: {
 				namespaces: {
 					deepwiki: {
+						backend: { kind: 'mcp_provider' },
 						calls: {
 							requiresApproval: { allow: [] },
 							withoutApproval: { allow: '*' },
@@ -43,28 +45,33 @@ function parseMcpConfigForTest(config: unknown): McpConfig {
 	return mcpConfigSchema.parse(config);
 }
 
-function parsePortalConfigForTest(config: unknown): McpPortalConfig {
-	return mcpPortalConfigSchema.parse(config);
+function parseToolPortalConfigForTest(config: unknown): ToolPortalConfig {
+	return toolPortalConfigSchema.parse(config);
 }
 
 function createPlanPropsForTest(props: {
+	readonly approvalAccessConfigured?: boolean;
 	readonly allowedRawEnvSecretNames?: readonly string[];
 	readonly declaredAgentIds?: readonly string[];
-	readonly includeZoneGitControllerHostAction?: boolean;
 	readonly mcpConfig: unknown;
-	readonly portalConfig?: unknown;
 	readonly secretResolver?: SecretResolver;
+	readonly toolPortalConfig?: unknown;
+	readonly workspaceGitPushAgentEligibility?: {
+		readonly eligibleAgentIds: readonly string[];
+	};
 	readonly zoneId?: string;
 }): McpPortalEffectiveConfigFromConfigProps {
 	return {
+		approvalAccessConfigured: props.approvalAccessConfigured ?? false,
 		effectiveHostConfigDir: path.join(tmpdir(), 'agent-vm-tool-portal-effective-test'),
-		effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/tool-portal-effective',
-		...(props.includeZoneGitControllerHostAction === undefined
+		...(props.workspaceGitPushAgentEligibility === undefined
 			? {}
-			: { includeZoneGitControllerHostAction: props.includeZoneGitControllerHostAction }),
+			: { workspaceGitPushAgentEligibility: props.workspaceGitPushAgentEligibility }),
 		mcpConfig: parseMcpConfigForTest(props.mcpConfig),
-		portalConfig: parsePortalConfigForTest(props.portalConfig ?? createDefaultPortalConfigInput()),
 		secretResolver: props.secretResolver ?? createSecretResolver({}),
+		toolPortalConfig: parseToolPortalConfigForTest(
+			props.toolPortalConfig ?? createDefaultToolPortalConfigInput(),
+		),
 		zoneId: props.zoneId ?? 'shravan',
 		...(props.allowedRawEnvSecretNames === undefined
 			? {}
@@ -140,11 +147,12 @@ describe('MCP Portal effective config materialization', () => {
 				createPlanPropsForTest({
 					declaredAgentIds: ['main'],
 					mcpConfig,
-					portalConfig: {
+					toolPortalConfig: {
 						agents: {
 							main: { profile: 'default' },
 							ghost: { profile: 'default' },
 						},
+						mode: 'managed',
 						profiles: {
 							default: { namespaces: {} },
 						},
@@ -153,7 +161,7 @@ describe('MCP Portal effective config materialization', () => {
 					zoneId: 'zone-a',
 				}),
 			),
-		).rejects.toThrow(/mcp-portal\.config\.jsonc declares undeclared agent "ghost"/u);
+		).rejects.toThrow(/tool-portal\.config\.jsonc declares undeclared agent "ghost"/u);
 	});
 
 	it('rejects managed Tool Portal config missing declared zone agents during materialization', async () => {
@@ -164,10 +172,11 @@ describe('MCP Portal effective config materialization', () => {
 				createPlanPropsForTest({
 					declaredAgentIds: ['main', 'second'],
 					mcpConfig,
-					portalConfig: {
+					toolPortalConfig: {
 						agents: {
 							main: { profile: 'default' },
 						},
+						mode: 'managed',
 						profiles: {
 							default: { namespaces: {} },
 						},
@@ -176,7 +185,7 @@ describe('MCP Portal effective config materialization', () => {
 					zoneId: 'zone-a',
 				}),
 			),
-		).rejects.toThrow(/declared agent "second" is missing from mcp-portal\.config\.jsonc agents/u);
+		).rejects.toThrow(/declared agent "second" is missing from tool-portal\.config\.jsonc agents/u);
 	});
 
 	it('materializes matching same-zone multi-agent Tool Portal bindings', async () => {
@@ -184,11 +193,12 @@ describe('MCP Portal effective config materialization', () => {
 			createPlanPropsForTest({
 				declaredAgentIds: ['main', 'second'],
 				mcpConfig: { providers: {}, schemaVersion: 1 },
-				portalConfig: {
+				toolPortalConfig: {
 					agents: {
 						main: { profile: 'default' },
 						second: { profile: 'readonly' },
 					},
+					mode: 'managed',
 					profiles: {
 						default: { namespaces: {} },
 						readonly: { namespaces: {} },
@@ -203,6 +213,50 @@ describe('MCP Portal effective config materialization', () => {
 			main: { credentialVersion: 1, profile: 'default' },
 			second: { credentialVersion: 1, profile: 'readonly' },
 		});
+	});
+
+	it('rejects approval-required managed calls when protected approval access is absent', async () => {
+		// Arrange
+		const props = createPlanPropsForTest({
+			approvalAccessConfigured: false,
+			mcpConfig: {
+				providers: {
+					deepwiki: {
+						kind: 'mcp',
+						namespace: 'deepwiki',
+						transport: { kind: 'streamable-http', url: 'https://mcp.deepwiki.com/mcp' },
+					},
+				},
+				schemaVersion: 1,
+			},
+			toolPortalConfig: {
+				agents: { shravan: { profile: 'default' } },
+				mode: 'managed',
+				profiles: {
+					default: {
+						namespaces: {
+							deepwiki: {
+								backend: { kind: 'mcp_provider' },
+								calls: {
+									requiresApproval: { allow: ['ask_question'] },
+									withoutApproval: { allow: [] },
+								},
+								tools: { allow: ['ask_question'] },
+							},
+						},
+					},
+				},
+				schemaVersion: 1,
+			},
+		});
+
+		// Act
+		const planPromise = planMcpPortalEffectiveConfigFromConfig(props);
+
+		// Assert
+		await expect(planPromise).rejects.toThrow(
+			/managed calls requiring approval require zones\[\]\.approvalAccess/u,
+		);
 	});
 
 	it('does not report loopback HTTP provider URLs as external gateway egress', async () => {
@@ -403,68 +457,51 @@ describe('MCP Portal effective config materialization', () => {
 		});
 	});
 
-	it('strips external proxy auth from managed effective portal config', async () => {
-		const portalConfig = {
-			agents: {
-				shravan: {
-					hmacKey: {
-						ref: 'op://agent-vm/shravan-mcp-portal-approval/credential',
-						source: '1password',
-					},
-					profile: 'default',
-				},
-			},
-			externalAuth: {
-				masterKey: {
-					ref: 'op://agent-vm/sunfam-mcp-portal-external-auth/credential',
-					source: '1password',
-				},
-			},
-			mcpProxy: {
-				auth: { headerName: 'authorization' },
-				server: { host: '127.0.0.1', port: 18791 },
-			},
+	it('derives the internal MCP projection from strict managed Tool Portal policy', async () => {
+		const toolPortalConfig = {
+			agents: { shravan: { profile: 'default' } },
+			mode: 'managed',
 			profiles: { default: { namespaces: {} } },
 			schemaVersion: 1,
 		};
 		const plan = await planMcpPortalEffectiveConfigFromConfig(
 			createPlanPropsForTest({
 				mcpConfig: { providers: {}, schemaVersion: 1 },
-				portalConfig,
+				toolPortalConfig,
 			}),
 		);
 		const effectivePortalConfig = plan.effectivePortalConfig;
 
-		expect(JSON.stringify(effectivePortalConfig)).not.toContain('source');
-		expect(JSON.stringify(effectivePortalConfig)).not.toContain('op://');
 		expect(effectivePortalConfig.agents).toEqual({
 			shravan: { credentialVersion: 1, profile: 'default' },
 		});
 		expect(effectivePortalConfig.externalAuth).toBeUndefined();
 		expect(effectivePortalConfig.mcpProxy).toBeUndefined();
+		expect(plan.effectiveToolPortalConfig).toEqual(parseToolPortalConfigForTest(toolPortalConfig));
 	});
 
-	it('maps explicit reviewed controller host action capabilities only for the authored profile', async () => {
+	it('preserves explicit reviewed controller host action namespaces for the authored profile', async () => {
 		const plan = await planMcpPortalEffectiveConfigFromConfig(
 			createPlanPropsForTest({
-				includeZoneGitControllerHostAction: true,
 				mcpConfig: { providers: {}, schemaVersion: 1 },
-				portalConfig: {
+				toolPortalConfig: {
 					agents: {
 						readonly: { profile: 'readonly' },
 						shravan: { profile: 'default' },
 					},
+					mode: 'managed',
 					profiles: {
 						default: {
 							namespaces: {
 								controller_host_action: {
+									backend: { kind: 'controller_host_action' },
 									calls: {
 										requiresApproval: { allow: [] },
 										withoutApproval: {
-											allow: ['zone_git_push', 'controller_host_probe'],
+											allow: ['workspace_git_push', 'controller_host_probe'],
 										},
 									},
-									tools: { allow: ['zone_git_push', 'controller_host_probe'] },
+									tools: { allow: ['workspace_git_push', 'controller_host_probe'] },
 								},
 							},
 						},
@@ -472,35 +509,37 @@ describe('MCP Portal effective config materialization', () => {
 					},
 					schemaVersion: 1,
 				},
+				workspaceGitPushAgentEligibility: { eligibleAgentIds: ['shravan'] },
 			}),
 		);
 
 		expect(
-			plan.effectiveToolPortalConfig.profiles.default?.capabilities.controller_host_action,
+			plan.effectiveToolPortalConfig.profiles.default?.namespaces.controller_host_action,
 		).toEqual({
 			backend: { kind: 'controller_host_action' },
 			calls: {
 				requiresApproval: { allow: [], deny: [] },
-				withoutApproval: { allow: ['zone_git_push', 'controller_host_probe'], deny: [] },
+				withoutApproval: { allow: ['workspace_git_push', 'controller_host_probe'], deny: [] },
 			},
-			tools: { allow: ['zone_git_push', 'controller_host_probe'], deny: [] },
+			tools: { allow: ['workspace_git_push', 'controller_host_probe'], deny: [] },
 		});
 		expect(
-			plan.effectiveToolPortalConfig.profiles.readonly?.capabilities.controller_host_action,
+			plan.effectiveToolPortalConfig.profiles.readonly?.namespaces.controller_host_action,
 		).toBeUndefined();
 	});
 
-	it('maps controller host probe without requiring zone Git materialization', async () => {
+	it('preserves controller host probe without requiring remote workspace Git', async () => {
 		const plan = await planMcpPortalEffectiveConfigFromConfig(
 			createPlanPropsForTest({
-				includeZoneGitControllerHostAction: false,
 				mcpConfig: { providers: {}, schemaVersion: 1 },
-				portalConfig: {
+				toolPortalConfig: {
 					agents: { shravan: { profile: 'default' } },
+					mode: 'managed',
 					profiles: {
 						default: {
 							namespaces: {
 								controller_host_action: {
+									backend: { kind: 'controller_host_action' },
 									calls: {
 										requiresApproval: { allow: [] },
 										withoutApproval: { allow: ['controller_host_probe'] },
@@ -516,7 +555,7 @@ describe('MCP Portal effective config materialization', () => {
 		);
 
 		expect(
-			plan.effectiveToolPortalConfig.profiles.default?.capabilities.controller_host_action,
+			plan.effectiveToolPortalConfig.profiles.default?.namespaces.controller_host_action,
 		).toEqual({
 			backend: { kind: 'controller_host_action' },
 			calls: {
@@ -527,106 +566,160 @@ describe('MCP Portal effective config materialization', () => {
 		});
 	});
 
-	it('rejects zone git controller host action materialization when zone Git is disabled', async () => {
+	it('rejects workspace Git push materialization for an ineligible agent', async () => {
 		await expect(
 			planMcpPortalEffectiveConfigFromConfig(
 				createPlanPropsForTest({
-					includeZoneGitControllerHostAction: false,
 					mcpConfig: { providers: {}, schemaVersion: 1 },
-					portalConfig: {
+					toolPortalConfig: {
 						agents: { shravan: { profile: 'default' } },
+						mode: 'managed',
 						profiles: {
 							default: {
 								namespaces: {
 									controller_host_action: {
+										backend: { kind: 'controller_host_action' },
 										calls: {
 											requiresApproval: { allow: [] },
-											withoutApproval: { allow: ['zone_git_push'] },
+											withoutApproval: { allow: ['workspace_git_push'] },
 										},
-										tools: { allow: ['zone_git_push'] },
+										tools: { allow: ['workspace_git_push'] },
 									},
 								},
 							},
 						},
 						schemaVersion: 1,
 					},
-				}),
-			),
-		).rejects.toThrow(/zone_git_push while zoneGit is disabled/u);
-	});
-
-	it('rejects managed OpenClaw MCP capabilities that require approval', async () => {
-		const mcpConfig = { providers: {}, schemaVersion: 1 };
-
-		await expect(
-			planMcpPortalEffectiveConfigFromConfig(
-				createPlanPropsForTest({
-					mcpConfig,
-					portalConfig: {
-						agents: { shravan: { profile: 'default' } },
-						profiles: {
-							default: {
-								namespaces: {
-									deepwiki: {
-										calls: {
-											requiresApproval: { allow: ['ask_question'] },
-											withoutApproval: { allow: [] },
-										},
-										tools: { allow: '*' },
-									},
-								},
-							},
-						},
-						schemaVersion: 1,
-					},
+					workspaceGitPushAgentEligibility: { eligibleAgentIds: [] },
 				}),
 			),
 		).rejects.toThrow(
-			/managed OpenClaw Tool Portal profile "default" namespace "deepwiki" does not support calls\.requiresApproval/u,
+			/managed agent "shravan" assigned profile "default" cannot allow workspace_git_push/u,
 		);
 	});
 
-	it('rejects managed OpenClaw MCP capabilities that require approval for every tool', async () => {
-		const mcpConfig = { providers: {}, schemaVersion: 1 };
-
+	it('rejects a shared workspace Git push profile when any assigned agent is ineligible', async () => {
 		await expect(
 			planMcpPortalEffectiveConfigFromConfig(
 				createPlanPropsForTest({
-					mcpConfig,
-					portalConfig: {
-						agents: { shravan: { profile: 'default' } },
+					declaredAgentIds: ['remote-agent', 'local-agent'],
+					mcpConfig: { providers: {}, schemaVersion: 1 },
+					toolPortalConfig: {
+						agents: {
+							'local-agent': { profile: 'shared' },
+							'remote-agent': { profile: 'shared' },
+						},
+						mode: 'managed',
 						profiles: {
-							default: {
+							shared: {
 								namespaces: {
-									deepwiki: {
+									controller_host_action: {
+										backend: { kind: 'controller_host_action' },
 										calls: {
-											requiresApproval: { allow: '*' },
-											withoutApproval: { allow: [] },
+											requiresApproval: { allow: [] },
+											withoutApproval: { allow: ['workspace_git_push'] },
 										},
-										tools: { allow: '*' },
+										tools: { allow: ['workspace_git_push'] },
 									},
 								},
 							},
 						},
 						schemaVersion: 1,
 					},
+					workspaceGitPushAgentEligibility: { eligibleAgentIds: ['remote-agent'] },
 				}),
 			),
-		).rejects.toThrow(/Move callable tools to calls\.withoutApproval/u);
+		).rejects.toThrow(
+			/managed agent "local-agent" assigned profile "shared" cannot allow workspace_git_push/u,
+		);
 	});
 
-	it('rejects broad authored controller host action policy for zone Git host actions', async () => {
+	it('preserves managed MCP namespaces that require approval', async () => {
+		const mcpConfig = { providers: {}, schemaVersion: 1 };
+
+		const plan = await planMcpPortalEffectiveConfigFromConfig(
+			createPlanPropsForTest({
+				approvalAccessConfigured: true,
+				mcpConfig,
+				toolPortalConfig: {
+					agents: { shravan: { profile: 'default' } },
+					mode: 'managed',
+					profiles: {
+						default: {
+							namespaces: {
+								deepwiki: {
+									backend: { kind: 'mcp_provider' },
+									calls: {
+										requiresApproval: { allow: ['ask_question'] },
+										withoutApproval: { allow: [] },
+									},
+									tools: { allow: '*' },
+								},
+							},
+						},
+					},
+					schemaVersion: 1,
+				},
+			}),
+		);
+
+		expect(plan.effectiveToolPortalConfig.profiles.default?.namespaces.deepwiki).toEqual({
+			backend: { kind: 'mcp_provider' },
+			calls: {
+				requiresApproval: { allow: ['ask_question'], deny: [] },
+				withoutApproval: { allow: [], deny: [] },
+			},
+			tools: { allow: '*', deny: [] },
+		});
+	});
+
+	it('preserves managed MCP namespaces that require approval for every tool', async () => {
+		const mcpConfig = { providers: {}, schemaVersion: 1 };
+
+		const plan = await planMcpPortalEffectiveConfigFromConfig(
+			createPlanPropsForTest({
+				approvalAccessConfigured: true,
+				mcpConfig,
+				toolPortalConfig: {
+					agents: { shravan: { profile: 'default' } },
+					mode: 'managed',
+					profiles: {
+						default: {
+							namespaces: {
+								deepwiki: {
+									backend: { kind: 'mcp_provider' },
+									calls: {
+										requiresApproval: { allow: '*' },
+										withoutApproval: { allow: [] },
+									},
+									tools: { allow: '*' },
+								},
+							},
+						},
+					},
+					schemaVersion: 1,
+				},
+			}),
+		);
+
+		expect(
+			plan.effectiveToolPortalConfig.profiles.default?.namespaces.deepwiki?.calls.requiresApproval,
+		).toEqual({ allow: '*', deny: [] });
+	});
+
+	it('rejects broad authored controller host action policy for workspace Git host actions', async () => {
 		await expect(
 			planMcpPortalEffectiveConfigFromConfig(
 				createPlanPropsForTest({
-					includeZoneGitControllerHostAction: true,
 					mcpConfig: { providers: {}, schemaVersion: 1 },
-					portalConfig: {
+					toolPortalConfig: {
 						agents: { shravan: { profile: 'default' } },
+						mode: 'managed',
 						profiles: {
 							default: {
 								namespaces: {
 									controller_host_action: {
+										backend: { kind: 'controller_host_action' },
 										calls: {
 											requiresApproval: { allow: [] },
 											withoutApproval: { allow: '*' },
@@ -638,41 +731,40 @@ describe('MCP Portal effective config materialization', () => {
 						},
 						schemaVersion: 1,
 					},
+					workspaceGitPushAgentEligibility: { eligibleAgentIds: ['shravan'] },
 				}),
 			),
-		).rejects.toThrow(
-			/controller_host_action tools must explicitly allow reviewed controller host actions/u,
-		);
+		).rejects.toThrow(/namespace "controller_host_action" tools must explicitly allow/u);
 	});
 
 	it('rejects unknown controller host action tools for managed OpenClaw', async () => {
 		await expect(
 			planMcpPortalEffectiveConfigFromConfig(
 				createPlanPropsForTest({
-					includeZoneGitControllerHostAction: true,
 					mcpConfig: { providers: {}, schemaVersion: 1 },
-					portalConfig: {
+					toolPortalConfig: {
 						agents: { shravan: { profile: 'default' } },
+						mode: 'managed',
 						profiles: {
 							default: {
 								namespaces: {
 									controller_host_action: {
+										backend: { kind: 'controller_host_action' },
 										calls: {
 											requiresApproval: { allow: [] },
-											withoutApproval: { allow: ['zone_git_push', 'host_shell_exec'] },
+											withoutApproval: { allow: ['workspace_git_push', 'host_shell_exec'] },
 										},
-										tools: { allow: ['zone_git_push', 'host_shell_exec'] },
+										tools: { allow: ['workspace_git_push', 'host_shell_exec'] },
 									},
 								},
 							},
 						},
 						schemaVersion: 1,
 					},
+					workspaceGitPushAgentEligibility: { eligibleAgentIds: ['shravan'] },
 				}),
 			),
-		).rejects.toThrow(
-			/controller_host_action supports only reviewed controller host actions in this cutover/u,
-		);
+		).rejects.toThrow(/namespace "controller_host_action" supports only reviewed/u);
 	});
 
 	it('resolves 1Password provider secrets once and writes environment-only effective configs', async () => {
@@ -726,9 +818,7 @@ describe('MCP Portal effective config materialization', () => {
 			},
 		});
 		expect(result.runtimeEnvironment).toEqual({});
-		expect(result.pluginConfig).toEqual({
-			configDir: '/home/openclaw/.openclaw/cache/tool-portal-effective',
-		});
+		expect(result).not.toHaveProperty('pluginConfig');
 	});
 
 	it('generates provider-scoped secret env names to avoid cross-provider collisions', async () => {

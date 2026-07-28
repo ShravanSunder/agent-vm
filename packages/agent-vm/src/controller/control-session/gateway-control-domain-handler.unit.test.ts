@@ -7,9 +7,11 @@ import {
 import {
 	buildGatewayControlCallerContextAgentAuthorityPayload,
 	buildGatewayControlCallerContextProofPayload,
+	deriveGatewayControlStablePrincipal,
 	type GatewayControlCallerContextRegisterPayload,
 	type GatewayControlLeaseSnapshot,
 	type GatewayControlLeaseUseSnapshot,
+	type GatewayRuntimeReadinessSnapshot,
 	GatewayControlRpcMessageSchema,
 	gatewayControlDeliveryPolicyByOperation,
 } from '@agent-vm/gateway-control-contracts';
@@ -18,14 +20,12 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { TEST_SSH_SERVER_HOST_KEY } from '../../testing/managed-vm-test-helpers.js';
 import type { OpenClawRuntimeStatusReport } from '../openclaw-runtime-status.js';
+import { WorkspaceGitConflictError } from '../workspace-git/workspace-git-operations.js';
 import {
 	createControlSessionDispatcher,
 	type ControlSessionDispatcher,
 } from './control-session-dispatcher.js';
-import {
-	createGatewayControlCallerContextRegistry,
-	deriveGatewayControlStablePrincipal,
-} from './gateway-control-caller-context.js';
+import { createGatewayControlCallerContextRegistry } from './gateway-control-caller-context.js';
 import {
 	createGatewayControlDomainHandler,
 	type GatewayControlControllerHostActionOperations,
@@ -53,9 +53,14 @@ const gateway = {
 	generationId: 'gateway-generation-a',
 	zoneId: acceptedSession.zoneId,
 };
-const stablePrincipal = deriveGatewayControlStablePrincipal({
+const invocationPrincipal = {
 	agentId: 'main',
-	zoneId: gateway.zoneId,
+	frameworkIdentity: { agentId: 'main', kind: 'openclaw' },
+	profileAssignmentRevision: 'assignment-main',
+	toolPortalProfileId: 'standard',
+} as const;
+const stablePrincipal = deriveGatewayControlStablePrincipal({
+	principal: invocationPrincipal,
 });
 
 const callerContextProofKey = 'test-caller-context-proof-key-with-enough-length';
@@ -73,10 +78,10 @@ function signCallerContextEvidence(
 		...evidence,
 		agentAuthority: {
 			algorithm: 'hmac-sha256',
-			digest: createHmac('sha256', agentAuthorityKeys[evidence.agentId] ?? 'missing')
+			digest: createHmac('sha256', agentAuthorityKeys[evidence.principal.agentId] ?? 'missing')
 				.update(buildGatewayControlCallerContextAgentAuthorityPayload(evidence), 'utf8')
 				.digest('base64url'),
-			keyId: evidence.agentId,
+			keyId: evidence.principal.agentId,
 		},
 		proof: {
 			algorithm: 'hmac-sha256',
@@ -108,10 +113,7 @@ const callerContextRegisterEnvelope = {
 
 const callerContextRegisterPayload = {
 	adapterEvidence: signCallerContextEvidence({
-		agentId: 'main',
-		agentWorkspaceDir: '/home/openclaw/workspace',
-		sessionKey: 'agent:main:test-session',
-		workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
+		principal: invocationPrincipal,
 		zoneId: 'zone-a',
 	}),
 } satisfies GatewayControlCallerContextRegisterPayload;
@@ -125,6 +127,7 @@ const callerContextRegisterMessage = GatewayControlRpcMessageSchema.parse({
 const leaseSnapshot = {
 	agentId: 'main',
 	idleTtlMs: 120_000,
+	leafGeneration: 'leaf-generation-main',
 	leaseId: 'lease-main',
 	ssh: {
 		host: 'tool-7.vm.host',
@@ -134,9 +137,10 @@ const leaseSnapshot = {
 		user: 'root',
 	},
 	state: 'idle',
+	sshBindingId: 'ssh-binding-main',
 	tcpSlot: 7,
 	transport: 'ssh-sandbox',
-	workdir: '/workspace',
+	workdir: '/work',
 	zoneId: acceptedSession.zoneId,
 } satisfies GatewayControlLeaseSnapshot;
 
@@ -147,6 +151,22 @@ const activeLeaseUseSnapshot = {
 	state: 'active',
 	useId: '01890f00-0000-4000-8000-000000000000',
 } satisfies GatewayControlLeaseUseSnapshot;
+
+const publicLeaseSnapshot = {
+	agentId: leaseSnapshot.agentId,
+	idleTtlMs: leaseSnapshot.idleTtlMs,
+	leaseId: leaseSnapshot.leaseId,
+	ssh: {
+		host: leaseSnapshot.ssh.host,
+		port: leaseSnapshot.ssh.port,
+		user: leaseSnapshot.ssh.user,
+	},
+	state: leaseSnapshot.state,
+	tcpSlot: leaseSnapshot.tcpSlot,
+	transport: leaseSnapshot.transport,
+	workdir: leaseSnapshot.workdir,
+	zoneId: leaseSnapshot.zoneId,
+} satisfies GatewayControlLeaseSnapshot;
 
 const releasedLeaseSnapshot = {
 	agentId: leaseSnapshot.agentId,
@@ -227,7 +247,9 @@ function createLeaseRpcStub(
 	const executors = {
 		createLease: vi.fn(async () => leaseSnapshot),
 		endLeaseUse: vi.fn(async () => endedLeaseUseSnapshot),
-		getLease: vi.fn(async () => leaseSnapshot),
+		getLease: vi.fn(async (_request, readOptions) =>
+			readOptions.includeSsh === 'private' ? leaseSnapshot : publicLeaseSnapshot,
+		),
 		heartbeatLeaseUse: vi.fn(async () => activeLeaseUseSnapshot),
 		reacquireLease: vi.fn(async () => leaseSnapshot),
 		releaseLease: vi.fn(async () => releasedLeaseSnapshot),
@@ -336,12 +358,12 @@ function createTestGatewayControlDomainHandler(
 }
 
 function createAuthorizedControllerHostActions(
-	pushZoneGit: GatewayControlControllerHostActionOperations['pushZoneGit'],
+	pushWorkspaceGit: GatewayControlControllerHostActionOperations['pushWorkspaceGit'],
 	overrides: Partial<GatewayControlControllerHostActionOperations> = {},
 ): GatewayControlControllerHostActionOperations {
 	return {
 		authorizeControllerHostAction: vi.fn(async () => ({ authorized: true }) as const),
-		pushZoneGit,
+		pushWorkspaceGit,
 		runControllerHostProbe: vi.fn(async () => ({
 			entryNames: ['agent-vm-host-probe.txt'],
 			probeKind: 'controller_cache_dir_listing' as const,
@@ -359,11 +381,8 @@ function createRegisteredCallerContexts(
 	callerContexts.register({
 		payload: {
 			adapterEvidence: signCallerContextEvidence({
-				agentId: callerContextRegisterPayload.adapterEvidence.agentId,
-				agentWorkspaceDir: callerContextRegisterPayload.adapterEvidence.agentWorkspaceDir,
+				principal: callerContextRegisterPayload.adapterEvidence.principal,
 				...(options.purpose === undefined ? {} : { purpose: options.purpose }),
-				sessionKey: callerContextRegisterPayload.adapterEvidence.sessionKey,
-				workMountDir: callerContextRegisterPayload.adapterEvidence.workMountDir,
 				zoneId: callerContextRegisterPayload.adapterEvidence.zoneId,
 			}),
 		},
@@ -381,6 +400,7 @@ function createCallerContexts(
 	return createGatewayControlCallerContextRegistry({
 		agentAuthorityKeys,
 		callerContextProofKey,
+		validateRegistration: () => {},
 		...options,
 	});
 }
@@ -410,8 +430,7 @@ describe('gateway control domain handler', () => {
 			payload: {
 				callerContext: {
 					admissionPrincipal: deriveGatewayControlStablePrincipal({
-						agentId: 'main',
-						zoneId: 'zone-a',
+						principal: invocationPrincipal,
 					}),
 					callerContextId: '44444444-4444-4444-8444-444444444444',
 				},
@@ -420,6 +439,111 @@ describe('gateway control domain handler', () => {
 			},
 		});
 		expect(JSON.stringify(response)).not.toContain('agent:main:test-session');
+	});
+
+	it('routes authenticated Tool VM binding demand through exact session authority', async () => {
+		const callerContexts = createCallerContexts({
+			createCallerContextId: () => '44444444-4444-4444-8444-444444444444',
+		});
+		const requestBinding = vi.fn(async () => ({
+			agentId: invocationPrincipal.agentId,
+			stablePrincipal,
+			status: 'publication_pending' as const,
+		}));
+		const dispatcher = createGatewayControlTestDispatcher();
+		dispatcher.register(
+			'gateway_control',
+			createTestGatewayControlDomainHandler({
+				bindingPublication: {
+					requestBinding,
+					retireBinding: vi.fn(async () => {}),
+				},
+				callerContexts,
+				session: acceptedSession,
+			}),
+		);
+		await dispatcher.dispatch({
+			envelope: callerContextRegisterEnvelope,
+			payload: callerContextRegisterMessage,
+		});
+
+		const response = await dispatcher.dispatch({
+			envelope: createEnvelope('tool_vm_binding_request'),
+			payload: {
+				kind: 'command',
+				operation: 'tool_vm_binding_request',
+				payload: callerContextPayload,
+			},
+		});
+
+		expect(requestBinding).toHaveBeenCalledWith({
+			authority: {
+				attachmentGeneration: 1,
+				connectionId: acceptedSession.connectionId,
+				controllerEpoch: acceptedSession.controllerEpoch,
+				gatewayEpoch: gateway.generationId,
+				processEpoch: acceptedSession.bootId,
+				sessionId: acceptedSession.sessionId,
+				zoneId: acceptedSession.zoneId,
+			},
+			callerContext: expect.objectContaining({
+				agentId: invocationPrincipal.agentId,
+				stablePrincipal,
+			}),
+			gateway,
+			payload: callerContextPayload,
+		});
+		expect(response).toEqual({
+			kind: 'command_result',
+			operation: 'tool_vm_binding_request',
+			payload: {
+				bindingRequest: {
+					agentId: invocationPrincipal.agentId,
+					stablePrincipal,
+					status: 'publication_pending',
+				},
+				responseToMessageId: '66666666-6666-4666-8666-666666666666',
+				result: 'ok',
+			},
+		});
+	});
+
+	it('rejects unregistered Tool VM binding demand before controller creation', async () => {
+		const requestBinding = vi.fn(async () => ({
+			agentId: invocationPrincipal.agentId,
+			stablePrincipal,
+			status: 'publication_pending' as const,
+		}));
+		const dispatcher = createGatewayControlTestDispatcher();
+		dispatcher.register(
+			'gateway_control',
+			createTestGatewayControlDomainHandler({
+				bindingPublication: {
+					requestBinding,
+					retireBinding: vi.fn(async () => {}),
+				},
+				callerContexts: createCallerContexts(),
+				session: acceptedSession,
+			}),
+		);
+
+		const response = await dispatcher.dispatch({
+			envelope: createEnvelope('tool_vm_binding_request'),
+			payload: {
+				kind: 'command',
+				operation: 'tool_vm_binding_request',
+				payload: callerContextPayload,
+			},
+		});
+
+		expect(requestBinding).not.toHaveBeenCalled();
+		expect(response).toMatchObject({
+			operation: 'tool_vm_binding_request',
+			payload: {
+				error: { errorClass: 'caller_context_absent', retryable: false },
+				result: 'rejected',
+			},
+		});
 	});
 
 	it('creates a lease only through a registered callerContextId', async () => {
@@ -1271,12 +1395,153 @@ describe('gateway control domain handler', () => {
 		});
 	});
 
-	it('routes tool_portal_controller_host_action through the narrow zone git push handler', async () => {
-		const pushZoneGit = vi.fn(async () => ({
+	it('records schema-validated Gateway runtime readiness from the accepted control session', async () => {
+		const readiness = GatewayControlRpcMessageSchema.parse({
+			kind: 'event',
+			operation: 'gateway_runtime_readiness',
+			payload: {
+				controlEndpoint: {
+					identity: {
+						bootId: 'boot-1',
+						controllerEpoch: acceptedSession.controllerEpoch,
+						generationId: gateway.generationId,
+						peerId: acceptedSession.peerId,
+						processEpoch: 'process-epoch-1',
+						zoneId: acceptedSession.zoneId,
+					},
+					listener: {
+						host: '127.0.0.1',
+						port: 18_790,
+						readyPath: '/__agent-vm/ready',
+						socketPath: '/__agent-vm/gateway-control',
+					},
+				},
+				kind: 'tool-portal-role-readiness',
+				providerRevision: 'provider-1',
+				requiredBackends: {
+					readyBackendKinds: ['mcp_provider'],
+					revision: 'bindings-1',
+					status: 'ready',
+				},
+				semanticRevision: 'semantic-1',
+				serviceIdentity: {
+					processEpoch: 'process-epoch-1',
+					role: 'tool-portal',
+					serviceId: 'tool-portal-zone-a',
+				},
+				snapshotVersion: 1,
+				uds: {
+					attachment: {
+						expected: {
+							attachmentGeneration: 1,
+							clientKind: 'openclaw-managed-plugin',
+							configuredAgentIds: ['main'],
+							frameworkEpoch: 'framework-epoch-1',
+							gatewayEpoch: 'gateway-epoch-1',
+							protocolVersion: 1,
+							projectionCohortDigest:
+								'projection-cohort:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+							runtimeEpoch: 'runtime-epoch-1',
+							schemaVersion: 1,
+						},
+						observationSequence: 0,
+						snapshotVersion: 1,
+						status: 'awaiting-attachment',
+					},
+					publication: {
+						identity: 'managed-plugin-private-uds',
+						protocolVersion: 1,
+						schemaVersion: 1,
+						socketPath: '/run/agent-vm/gateway-runtime/managed-plugin.sock',
+						status: 'published',
+					},
+				},
+			},
+		}).payload;
+		const recordGatewayRuntimeReadiness =
+			vi.fn<(snapshot: GatewayRuntimeReadinessSnapshot) => void>();
+		const dispatcher = createControlSessionDispatcher({
+			sessionFence: {
+				...acceptedSession,
+				domain: 'gateway_control',
+			},
+		});
+		dispatcher.register(
+			'gateway_control',
+			createTestGatewayControlDomainHandler({
+				callerContexts: createCallerContexts(),
+				recordGatewayRuntimeReadiness,
+				session: acceptedSession,
+			}),
+		);
+
+		const response = await dispatcher.dispatch({
+			envelope: createEnvelope('gateway_runtime_readiness', {
+				deliveryPolicy: 'latest_wins',
+				kind: 'event',
+			}),
+			payload: {
+				kind: 'event',
+				operation: 'gateway_runtime_readiness',
+				payload: readiness,
+			},
+		});
+
+		expect(response).toBeUndefined();
+		expect(recordGatewayRuntimeReadiness).toHaveBeenCalledOnce();
+		expect(recordGatewayRuntimeReadiness).toHaveBeenCalledWith(readiness);
+		await expect(
+			dispatcher.dispatch({
+				envelope: createEnvelope('gateway_runtime_readiness', {
+					connectionId: '99999999-9999-4999-8999-999999999999',
+					deliveryPolicy: 'latest_wins',
+					kind: 'event',
+				}),
+				payload: {
+					kind: 'event',
+					operation: 'gateway_runtime_readiness',
+					payload: readiness,
+				},
+			}),
+		).rejects.toThrow('control session envelope connectionId mismatch');
+		expect(recordGatewayRuntimeReadiness).toHaveBeenCalledOnce();
+
+		const dispatcherWithoutRecorder = createControlSessionDispatcher({
+			sessionFence: {
+				...acceptedSession,
+				domain: 'gateway_control',
+			},
+		});
+		dispatcherWithoutRecorder.register(
+			'gateway_control',
+			createTestGatewayControlDomainHandler({
+				callerContexts: createCallerContexts(),
+				session: acceptedSession,
+			}),
+		);
+		await expect(
+			dispatcherWithoutRecorder.dispatch({
+				envelope: createEnvelope('gateway_runtime_readiness', {
+					deliveryPolicy: 'latest_wins',
+					kind: 'event',
+				}),
+				payload: {
+					kind: 'event',
+					operation: 'gateway_runtime_readiness',
+					payload: readiness,
+				},
+			}),
+		).resolves.toBeUndefined();
+	});
+
+	it('routes tool_portal_controller_host_action through the narrow workspace Git push handler', async () => {
+		const pushWorkspaceGit = vi.fn(async () => ({
 			branch: 'main',
-			localHead: 'abc123',
-			pushedCommits: [{ sha: 'abc123', subject: 'docs: update memory' }],
-			remoteHead: 'abc123',
+			localHead: '0123456789abcdef0123456789abcdef01234567',
+			pushedCommits: [
+				{ sha: '0123456789abcdef0123456789abcdef01234567', subject: 'docs: update memory' },
+			],
+			remoteHead: '0123456789abcdef0123456789abcdef01234567',
 		}));
 		const callerContexts = createRegisteredCallerContexts({
 			purpose: 'tool_portal_controller_host_action',
@@ -1286,7 +1551,7 @@ describe('gateway control domain handler', () => {
 			'gateway_control',
 			createTestGatewayControlDomainHandler({
 				callerContexts,
-				controllerHostActions: createAuthorizedControllerHostActions(pushZoneGit),
+				controllerHostActions: createAuthorizedControllerHostActions(pushWorkspaceGit),
 				session: acceptedSession,
 			}),
 		);
@@ -1299,34 +1564,34 @@ describe('gateway control domain handler', () => {
 				kind: 'command',
 				operation: 'tool_portal_controller_host_action',
 				payload: {
-					actionId: 'zone_git_push',
+					actionId: 'workspace_git_push',
 					...callerContextPayload,
 					correlation: {
 						capability: {
-							name: 'zone_git_push',
+							name: 'workspace_git_push',
 							namespace: 'controller_host_action',
 						},
 					},
-					expectedHead: 'abc123',
+					expectedHead: '0123456789abcdef0123456789abcdef01234567',
 				},
 			},
 		});
 
-		expect(pushZoneGit).toHaveBeenCalledWith({
+		expect(pushWorkspaceGit).toHaveBeenCalledWith({
 			callerContext: expect.objectContaining({
 				agentId: 'main',
 				callerContextId: '44444444-4444-4444-8444-444444444444',
 			}),
 			payload: {
-				actionId: 'zone_git_push',
+				actionId: 'workspace_git_push',
 				...callerContextPayload,
 				correlation: {
 					capability: {
-						name: 'zone_git_push',
+						name: 'workspace_git_push',
 						namespace: 'controller_host_action',
 					},
 				},
-				expectedHead: 'abc123',
+				expectedHead: '0123456789abcdef0123456789abcdef01234567',
 			},
 			session: acceptedSession,
 		});
@@ -1335,12 +1600,14 @@ describe('gateway control domain handler', () => {
 			operation: 'tool_portal_controller_host_action',
 			payload: {
 				controllerHostAction: {
-					actionId: 'zone_git_push',
+					actionId: 'workspace_git_push',
 					result: {
 						branch: 'main',
-						localHead: 'abc123',
-						pushedCommits: [{ sha: 'abc123', subject: 'docs: update memory' }],
-						remoteHead: 'abc123',
+						localHead: '0123456789abcdef0123456789abcdef01234567',
+						pushedCommits: [
+							{ sha: '0123456789abcdef0123456789abcdef01234567', subject: 'docs: update memory' },
+						],
+						remoteHead: '0123456789abcdef0123456789abcdef01234567',
 					},
 				},
 				responseToMessageId: '66666666-6666-4666-8666-666666666666',
@@ -1350,12 +1617,14 @@ describe('gateway control domain handler', () => {
 		expect(callerContexts.resolve('44444444-4444-4444-8444-444444444444')).toBeUndefined();
 	});
 
-	it('refuses changed zone_git_push meaning for the same semantic identity without a second push', async () => {
-		const pushZoneGit = vi.fn(async () => ({
+	it('refuses changed workspace_git_push meaning for the same semantic identity without a second push', async () => {
+		const pushWorkspaceGit = vi.fn(async () => ({
 			branch: 'main',
-			localHead: 'abc123',
-			pushedCommits: [{ sha: 'abc123', subject: 'docs: update memory' }],
-			remoteHead: 'abc123',
+			localHead: '0123456789abcdef0123456789abcdef01234567',
+			pushedCommits: [
+				{ sha: '0123456789abcdef0123456789abcdef01234567', subject: 'docs: update memory' },
+			],
+			remoteHead: '0123456789abcdef0123456789abcdef01234567',
 		}));
 		const callerContexts = createRegisteredCallerContexts({
 			purpose: 'tool_portal_controller_host_action',
@@ -1365,13 +1634,13 @@ describe('gateway control domain handler', () => {
 			'gateway_control',
 			createTestGatewayControlDomainHandler({
 				callerContexts,
-				controllerHostActions: createAuthorizedControllerHostActions(pushZoneGit),
+				controllerHostActions: createAuthorizedControllerHostActions(pushWorkspaceGit),
 				session: acceptedSession,
 			}),
 		);
 		const semanticEnvelope = createEnvelope('tool_portal_controller_host_action', {
 			commandId: '77777777-7777-4777-8777-777777777777',
-			idempotencyKey: 'zone-git-push-semantic-identity',
+			idempotencyKey: 'workspace-git-push-semantic-identity',
 		});
 
 		await dispatcher.dispatch({
@@ -1380,15 +1649,15 @@ describe('gateway control domain handler', () => {
 				kind: 'command',
 				operation: 'tool_portal_controller_host_action',
 				payload: {
-					actionId: 'zone_git_push',
+					actionId: 'workspace_git_push',
 					...callerContextPayload,
 					correlation: {
 						capability: {
-							name: 'zone_git_push',
+							name: 'workspace_git_push',
 							namespace: 'controller_host_action',
 						},
 					},
-					expectedHead: 'abc123',
+					expectedHead: '0123456789abcdef0123456789abcdef01234567',
 				},
 			},
 		});
@@ -1403,15 +1672,15 @@ describe('gateway control domain handler', () => {
 				kind: 'command',
 				operation: 'tool_portal_controller_host_action',
 				payload: {
-					actionId: 'zone_git_push',
+					actionId: 'workspace_git_push',
 					...callerContextPayload,
 					correlation: {
 						capability: {
-							name: 'zone_git_push',
+							name: 'workspace_git_push',
 							namespace: 'controller_host_action',
 						},
 					},
-					expectedHead: 'def456',
+					expectedHead: 'fedcba9876543210fedcba9876543210fedcba98',
 				},
 			},
 		});
@@ -1424,12 +1693,12 @@ describe('gateway control domain handler', () => {
 				result: 'failed',
 			},
 		});
-		expect(pushZoneGit).toHaveBeenCalledOnce();
+		expect(pushWorkspaceGit).toHaveBeenCalledOnce();
 	});
 
-	it('fences a lost zone_git_push result as unknown without replaying its side effect', async () => {
+	it('fences a lost workspace_git_push result as unknown without replaying its side effect', async () => {
 		let remotePushCount = 0;
-		const pushZoneGit = vi.fn(async () => {
+		const pushWorkspaceGit = vi.fn(async () => {
 			remotePushCount += 1;
 			throw new Error('simulated result loss after remote push');
 		});
@@ -1441,27 +1710,27 @@ describe('gateway control domain handler', () => {
 			'gateway_control',
 			createTestGatewayControlDomainHandler({
 				callerContexts,
-				controllerHostActions: createAuthorizedControllerHostActions(pushZoneGit),
+				controllerHostActions: createAuthorizedControllerHostActions(pushWorkspaceGit),
 				session: acceptedSession,
 			}),
 		);
 		const semanticEnvelope = createEnvelope('tool_portal_controller_host_action', {
 			commandId: '99999999-9999-4999-8999-999999999999',
-			idempotencyKey: 'zone-git-push-result-loss',
+			idempotencyKey: 'workspace-git-push-result-loss',
 		});
 		const message = {
 			kind: 'command' as const,
 			operation: 'tool_portal_controller_host_action' as const,
 			payload: {
-				actionId: 'zone_git_push' as const,
+				actionId: 'workspace_git_push' as const,
 				...callerContextPayload,
 				correlation: {
 					capability: {
-						name: 'zone_git_push',
+						name: 'workspace_git_push',
 						namespace: 'controller_host_action',
 					},
 				},
-				expectedHead: 'abc123',
+				expectedHead: '0123456789abcdef0123456789abcdef01234567',
 			},
 		};
 
@@ -1496,15 +1765,88 @@ describe('gateway control domain handler', () => {
 			},
 		});
 		expect(remotePushCount).toBe(1);
-		expect(pushZoneGit).toHaveBeenCalledOnce();
+		expect(pushWorkspaceGit).toHaveBeenCalledOnce();
+	});
+
+	it('returns a proven pre-dispatch workspace_git_push conflict without replaying it', async () => {
+		const pushWorkspaceGit = vi.fn(async () => {
+			throw new WorkspaceGitConflictError('Workspace Git local head does not match expectedHead.');
+		});
+		const callerContexts = createRegisteredCallerContexts({
+			purpose: 'tool_portal_controller_host_action',
+		});
+		const dispatcher = createGatewayControlTestDispatcher();
+		dispatcher.register(
+			'gateway_control',
+			createTestGatewayControlDomainHandler({
+				callerContexts,
+				controllerHostActions: createAuthorizedControllerHostActions(pushWorkspaceGit),
+				session: acceptedSession,
+			}),
+		);
+		const semanticEnvelope = createEnvelope('tool_portal_controller_host_action', {
+			commandId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+			idempotencyKey: 'workspace-git-push-pre-dispatch-conflict',
+		});
+		const message = {
+			kind: 'command' as const,
+			operation: 'tool_portal_controller_host_action' as const,
+			payload: {
+				actionId: 'workspace_git_push' as const,
+				...callerContextPayload,
+				correlation: {
+					capability: {
+						name: 'workspace_git_push',
+						namespace: 'controller_host_action',
+					},
+				},
+				expectedHead: '0123456789abcdef0123456789abcdef01234567',
+			},
+		};
+
+		const firstResponse = await dispatcher.dispatch({
+			envelope: semanticEnvelope,
+			payload: message,
+		});
+		const retryMessageId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+		const retryResponse = await dispatcher.dispatch({
+			envelope: {
+				...semanticEnvelope,
+				messageId: retryMessageId,
+				sequence: semanticEnvelope.sequence + 1,
+			},
+			payload: message,
+		});
+
+		expect(firstResponse).toMatchObject({
+			operation: 'tool_portal_controller_host_action',
+			payload: {
+				error: {
+					errorClass: 'workspace_git_conflict',
+					retryable: false,
+					safeMessage: 'Workspace Git push was rejected because repository state changed.',
+				},
+				responseToMessageId: semanticEnvelope.messageId,
+				result: 'rejected',
+			},
+		});
+		expect(retryResponse).toMatchObject({
+			operation: 'tool_portal_controller_host_action',
+			payload: {
+				error: { errorClass: 'workspace_git_conflict' },
+				responseToMessageId: retryMessageId,
+				result: 'rejected',
+			},
+		});
+		expect(pushWorkspaceGit).toHaveBeenCalledOnce();
 	});
 
 	it('routes controller_host_probe through the fixed host probe handler without a shell command', async () => {
-		const pushZoneGit = vi.fn(async () => ({
+		const pushWorkspaceGit = vi.fn(async () => ({
 			branch: 'main',
-			localHead: 'abc123',
+			localHead: '0123456789abcdef0123456789abcdef01234567',
 			pushedCommits: [],
-			remoteHead: 'abc123',
+			remoteHead: '0123456789abcdef0123456789abcdef01234567',
 		}));
 		const runControllerHostProbe = vi.fn(async () => ({
 			entryNames: ['agent-vm-host-probe.txt'],
@@ -1518,7 +1860,7 @@ describe('gateway control domain handler', () => {
 			'gateway_control',
 			createTestGatewayControlDomainHandler({
 				callerContexts,
-				controllerHostActions: createAuthorizedControllerHostActions(pushZoneGit, {
+				controllerHostActions: createAuthorizedControllerHostActions(pushWorkspaceGit, {
 					runControllerHostProbe,
 				}),
 				session: acceptedSession,
@@ -1545,7 +1887,7 @@ describe('gateway control domain handler', () => {
 			},
 		});
 
-		expect(pushZoneGit).not.toHaveBeenCalled();
+		expect(pushWorkspaceGit).not.toHaveBeenCalled();
 		expect(runControllerHostProbe).toHaveBeenCalledWith({
 			callerContext: expect.objectContaining({
 				agentId: 'main',
@@ -1582,18 +1924,18 @@ describe('gateway control domain handler', () => {
 	});
 
 	it('rejects tool_portal_controller_host_action when callerContextId was registered for a lease', async () => {
-		const pushZoneGit = vi.fn(async () => ({
+		const pushWorkspaceGit = vi.fn(async () => ({
 			branch: 'main',
-			localHead: 'abc123',
+			localHead: '0123456789abcdef0123456789abcdef01234567',
 			pushedCommits: [],
-			remoteHead: 'abc123',
+			remoteHead: '0123456789abcdef0123456789abcdef01234567',
 		}));
 		const dispatcher = createGatewayControlTestDispatcher();
 		dispatcher.register(
 			'gateway_control',
 			createTestGatewayControlDomainHandler({
 				callerContexts: createRegisteredCallerContexts({ purpose: 'tool_vm_lease' }),
-				controllerHostActions: createAuthorizedControllerHostActions(pushZoneGit),
+				controllerHostActions: createAuthorizedControllerHostActions(pushWorkspaceGit),
 				session: acceptedSession,
 			}),
 		);
@@ -1606,20 +1948,20 @@ describe('gateway control domain handler', () => {
 				kind: 'command',
 				operation: 'tool_portal_controller_host_action',
 				payload: {
-					actionId: 'zone_git_push',
+					actionId: 'workspace_git_push',
 					...callerContextPayload,
 					correlation: {
 						capability: {
-							name: 'zone_git_push',
+							name: 'workspace_git_push',
 							namespace: 'controller_host_action',
 						},
 					},
-					expectedHead: 'abc123',
+					expectedHead: '0123456789abcdef0123456789abcdef01234567',
 				},
 			},
 		});
 
-		expect(pushZoneGit).not.toHaveBeenCalled();
+		expect(pushWorkspaceGit).not.toHaveBeenCalled();
 		expect(response).toEqual({
 			kind: 'command_result',
 			operation: 'tool_portal_controller_host_action',
@@ -1653,15 +1995,15 @@ describe('gateway control domain handler', () => {
 				kind: 'command',
 				operation: 'tool_portal_controller_host_action',
 				payload: {
-					actionId: 'zone_git_push',
+					actionId: 'workspace_git_push',
 					...callerContextPayload,
 					correlation: {
 						capability: {
-							name: 'zone_git_push',
+							name: 'workspace_git_push',
 							namespace: 'controller_host_action',
 						},
 					},
-					expectedHead: 'abc123',
+					expectedHead: '0123456789abcdef0123456789abcdef01234567',
 				},
 			},
 		});
@@ -1682,18 +2024,18 @@ describe('gateway control domain handler', () => {
 	});
 
 	it('rejects tool_portal_controller_host_action when callerContextId is not registered', async () => {
-		const pushZoneGit = vi.fn(async () => ({
+		const pushWorkspaceGit = vi.fn(async () => ({
 			branch: 'main',
-			localHead: 'abc123',
+			localHead: '0123456789abcdef0123456789abcdef01234567',
 			pushedCommits: [],
-			remoteHead: 'abc123',
+			remoteHead: '0123456789abcdef0123456789abcdef01234567',
 		}));
 		const dispatcher = createGatewayControlTestDispatcher();
 		dispatcher.register(
 			'gateway_control',
 			createTestGatewayControlDomainHandler({
 				callerContexts: createCallerContexts(),
-				controllerHostActions: createAuthorizedControllerHostActions(pushZoneGit),
+				controllerHostActions: createAuthorizedControllerHostActions(pushWorkspaceGit),
 				session: acceptedSession,
 			}),
 		);
@@ -1706,20 +2048,20 @@ describe('gateway control domain handler', () => {
 				kind: 'command',
 				operation: 'tool_portal_controller_host_action',
 				payload: {
-					actionId: 'zone_git_push',
+					actionId: 'workspace_git_push',
 					...callerContextPayload,
 					correlation: {
 						capability: {
-							name: 'zone_git_push',
+							name: 'workspace_git_push',
 							namespace: 'controller_host_action',
 						},
 					},
-					expectedHead: 'abc123',
+					expectedHead: '0123456789abcdef0123456789abcdef01234567',
 				},
 			},
 		});
 
-		expect(pushZoneGit).not.toHaveBeenCalled();
+		expect(pushWorkspaceGit).not.toHaveBeenCalled();
 		expect(response).toEqual({
 			kind: 'command_result',
 			operation: 'tool_portal_controller_host_action',
@@ -1736,11 +2078,11 @@ describe('gateway control domain handler', () => {
 	});
 
 	it('rejects tool_portal_controller_host_action before push when authorization denies it', async () => {
-		const pushZoneGit = vi.fn(async () => ({
+		const pushWorkspaceGit = vi.fn(async () => ({
 			branch: 'main',
-			localHead: 'abc123',
+			localHead: '0123456789abcdef0123456789abcdef01234567',
 			pushedCommits: [],
-			remoteHead: 'abc123',
+			remoteHead: '0123456789abcdef0123456789abcdef01234567',
 		}));
 		const authorizeControllerHostAction = vi.fn(
 			async () =>
@@ -1760,7 +2102,7 @@ describe('gateway control domain handler', () => {
 				callerContexts,
 				controllerHostActions: {
 					authorizeControllerHostAction,
-					pushZoneGit,
+					pushWorkspaceGit,
 					runControllerHostProbe: vi.fn(async () => ({
 						entryNames: ['agent-vm-host-probe.txt'],
 						probeKind: 'controller_cache_dir_listing' as const,
@@ -1778,15 +2120,15 @@ describe('gateway control domain handler', () => {
 				kind: 'command',
 				operation: 'tool_portal_controller_host_action',
 				payload: {
-					actionId: 'zone_git_push',
+					actionId: 'workspace_git_push',
 					...callerContextPayload,
 					correlation: {
 						capability: {
-							name: 'zone_git_push',
+							name: 'workspace_git_push',
 							namespace: 'controller_host_action',
 						},
 					},
-					expectedHead: 'abc123',
+					expectedHead: '0123456789abcdef0123456789abcdef01234567',
 				},
 			},
 		});
@@ -1797,19 +2139,19 @@ describe('gateway control domain handler', () => {
 				callerContextId: '44444444-4444-4444-8444-444444444444',
 			}),
 			payload: {
-				actionId: 'zone_git_push',
+				actionId: 'workspace_git_push',
 				...callerContextPayload,
 				correlation: {
 					capability: {
-						name: 'zone_git_push',
+						name: 'workspace_git_push',
 						namespace: 'controller_host_action',
 					},
 				},
-				expectedHead: 'abc123',
+				expectedHead: '0123456789abcdef0123456789abcdef01234567',
 			},
 			session: acceptedSession,
 		});
-		expect(pushZoneGit).not.toHaveBeenCalled();
+		expect(pushWorkspaceGit).not.toHaveBeenCalled();
 		expect(response).toEqual({
 			kind: 'command_result',
 			operation: 'tool_portal_controller_host_action',

@@ -11,7 +11,8 @@ import {
 	resolveManagedOpenClawAgentVmPluginPackageSpec,
 } from './managed-image-dockerfile.js';
 
-const managedOpenClawVersion = '2026.6.8';
+const managedOpenClawVersion = '2026.7.1-2';
+const managedOpenClawDiscordVersion = '2026.7.1';
 const managedOpenAiCodexCliVersion = '0.139.0';
 const managedDockerfileForbiddenSecretPattern =
 	/TOKEN|Authorization|\.npmrc|\.netrc|_authToken|Bearer/u;
@@ -39,12 +40,15 @@ function createTestManagedImageRelease(): ManagedImageRelease {
 	return {
 		baseImages: {
 			'openclaw-gateway': {
+				openclawPackageVersion: managedOpenClawVersion,
+				openclawPluginList: [
+					'@openclaw/codex',
+					'@openclaw/discord',
+					'@openclaw/diagnostics-otel',
+				],
 				packageOverrides: {
 					npm: [`@openai/codex@${managedOpenAiCodexCliVersion}`],
-					openclaw: [
-						`openclaw@${managedOpenClawVersion}`,
-						`@openclaw/codex@${managedOpenClawVersion}`,
-					],
+					openclaw: [`@openclaw/discord@${managedOpenClawDiscordVersion}`],
 					pnpm: { undici: '8.5.0' },
 				},
 				repository: 'ghcr.io/shravansunder/agent-vm-managed-openclaw-gateway-base',
@@ -77,14 +81,17 @@ describe('managed image release', () => {
 		const release = await resolveManagedImageRelease();
 
 		expect(release.baseImages['openclaw-gateway']).toMatchObject({
+			openclawPackageVersion: managedOpenClawVersion,
+			openclawPluginList: [
+				'@openclaw/codex',
+				'@openclaw/discord',
+				'@openclaw/diagnostics-otel',
+			],
 			repository: 'ghcr.io/shravansunder/agent-vm-managed-openclaw-gateway-base',
 			packageOverrides: {
 				npm: [`@openai/codex@${managedOpenAiCodexCliVersion}`],
-				openclaw: [
-					`openclaw@${managedOpenClawVersion}`,
-					`@openclaw/codex@${managedOpenClawVersion}`,
-				],
-				pnpm: { undici: '8.5.0' },
+				openclaw: [`@openclaw/discord@${managedOpenClawDiscordVersion}`],
+				pnpm: {},
 			},
 			tag: '2026.05.27.1',
 		});
@@ -107,11 +114,7 @@ describe('managed image release', () => {
 
 	it('keeps repo-local OpenClaw validation examples aligned with the managed release', async () => {
 		const release = await resolveManagedImageRelease();
-		const openClawPackageSpec = release.baseImages['openclaw-gateway'].packageOverrides.openclaw.find(
-			(packageSpecValue) => packageSpecValue.startsWith('openclaw@'),
-		);
-		expect(openClawPackageSpec).toBe(`openclaw@${managedOpenClawVersion}`);
-		const expectedOpenClawPackageSpec = openClawPackageSpec ?? '';
+		const expectedOpenClawPackageSpec = `openclaw@${release.baseImages['openclaw-gateway'].openclawPackageVersion}`;
 		const gettingStartedGuide = await fs.readFile(
 			new URL('../../../../docs/getting-started/openclaw-guide.md', import.meta.url),
 			'utf8',
@@ -156,6 +159,66 @@ describe('managed image release', () => {
 		);
 	});
 
+	it('installs the common Gateway runtime executable beside the OpenClaw plugin', async () => {
+		// Arrange
+		const temporaryDirectory = await fs.mkdtemp(
+			path.join(os.tmpdir(), 'agent-vm-managed-gateway-runtime-'),
+		);
+
+		// Act
+		const result = await generateManagedDockerfile({
+			base: 'openclaw-gateway',
+			imageTargetFamily: 'gateway',
+			imageTargetName: 'openclaw',
+			managedImageRelease: createTestManagedImageRelease(),
+			outputDirectory: path.join(temporaryDirectory, 'generated'),
+			requiredOpenClawPackageNames: [],
+		});
+		const generatedDockerfile = await fs.readFile(result.dockerfilePath, 'utf8');
+
+		// Assert
+		expect(generatedDockerfile).toMatch(
+			/RUN pnpm add -g "@agent-vm\/openclaw-agent-vm-plugin@[^"]+" "@agent-vm\/gateway-runtime@[^"]+"/u,
+		);
+		expect(result.plan.gatewayRuntimePackage).toMatchObject({
+			name: '@agent-vm/gateway-runtime',
+			source: 'installed-package',
+		});
+		expect(generatedDockerfile).toContain(
+			'ln -sfn "$gateway_runtime_bin" /usr/local/bin/agent-vm-gateway-runtime',
+		);
+	});
+
+	it('creates the non-secret OpenClaw auth shell environment in the managed image', async () => {
+		const temporaryDirectory = await fs.mkdtemp(
+			path.join(os.tmpdir(), 'agent-vm-managed-openclaw-auth-shell-'),
+		);
+
+		const result = await generateManagedDockerfile({
+			base: 'openclaw-gateway',
+			imageTargetFamily: 'gateway',
+			imageTargetName: 'openclaw',
+			managedImageRelease: createTestManagedImageRelease(),
+			outputDirectory: path.join(temporaryDirectory, 'generated'),
+			requiredOpenClawPackageNames: [],
+		});
+		const generatedDockerfile = await fs.readFile(result.dockerfilePath, 'utf8');
+
+		expect(generatedDockerfile).toContain('install -d -m 0755 /etc/profile.d');
+		expect(generatedDockerfile).toContain(
+			"'export OPENCLAW_CONFIG_PATH=/home/openclaw/.openclaw/state/effective-openclaw.json'",
+		);
+		expect(generatedDockerfile).not.toContain(
+			"'export OPENCLAW_CONFIG_PATH=/run/agent-vm/managed-gateway/framework-service.json'",
+		);
+		expect(generatedDockerfile).toContain(
+			"'export OPENCLAW_STATE_DIR=/home/openclaw/.openclaw/state'",
+		);
+		expect(generatedDockerfile).toContain('> /etc/profile.d/openclaw-env.sh');
+		expect(generatedDockerfile).toContain('chmod 0644 /etc/profile.d/openclaw-env.sh');
+		expectManagedDockerfileToAvoidSecretMaterial(generatedDockerfile);
+	});
+
 	it('keeps uv in the OpenClaw gateway base instead of generated Dockerfiles', async () => {
 		const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-managed-uv-'));
 		const outputDirectory = path.join(temporaryDirectory, 'generated');
@@ -171,7 +234,7 @@ describe('managed image release', () => {
 
 		const generatedDockerfile = await fs.readFile(result.dockerfilePath, 'utf8');
 		expect(generatedDockerfile).not.toContain(
-			'COPY --from=ghcr.io/astral-sh/uv:0.11.16 /uv /uvx /usr/local/bin/',
+			'COPY --from=ghcr.io/astral-sh/uv:0.11.31 /uv /uvx /usr/local/bin/',
 		);
 		expect(generatedDockerfile).not.toContain('RUN uv --version && uvx --version');
 	});
@@ -224,7 +287,6 @@ describe('managed image release', () => {
 				'  "extraAptPackages": [],',
 				'  "packageOverrides": {',
 				'    "openclaw": [',
-				'      "openclaw@2026.5.7",',
 				'      "@openclaw/discord@2026.5.7"',
 				'    ]',
 				'  },',
@@ -253,12 +315,21 @@ describe('managed image release', () => {
 		expect(generatedDockerfile).toContain('RUN pnpm add -g "@agent-vm/openclaw-agent-vm-plugin@');
 		expect(generatedDockerfile).not.toContain('@agent-vm/openclaw-mcp-portal-plugin');
 		expect(generatedDockerfile).not.toContain('@agent-vm/mcp-portal');
-		expect(generatedDockerfile).toContain('"openclaw": "2026.5.7"');
-		expect(generatedDockerfile).toContain('"@openclaw/codex": "2026.6.8"');
-		expect(generatedDockerfile).toContain('"@openclaw/discord": "2026.5.7"');
+		expect(generatedDockerfile).toContain('"openclaw": "2026.7.1-2"');
+		expect(generatedDockerfile).toContain(
+			"openclaw plugins install 'npm:@openclaw/codex' --pin",
+		);
+		expect(generatedDockerfile).toContain(
+			"openclaw plugins install 'npm:@openclaw/discord@2026.5.7' --pin",
+		);
 		expect(generatedDockerfile).toContain(`"@openai/codex@${managedOpenAiCodexCliVersion}"`);
 		expect(generatedDockerfile).toContain('openclaw doctor --fix --non-interactive');
-		expect(generatedDockerfile).toContain('/opt/openclaw-sdk/sandbox.js');
+		expect(generatedDockerfile).toContain(
+			'ln -sfn "$openclaw_package_root/dist/plugin-sdk/sandbox.js" /opt/openclaw-sdk/sandbox.js',
+		);
+		expect(generatedDockerfile).toContain(
+			'ln -sfn "$openclaw_package_root/dist/plugin-sdk/diagnostic-runtime.js" /opt/openclaw-sdk/diagnostic-runtime.js',
+		);
 		expect(generatedDockerfile).toContain('package_root="$(pnpm root -g)"');
 		expect(generatedDockerfile).toContain(
 			'ln -sfn "$package_root/@agent-vm/openclaw-agent-vm-plugin/dist" /home/openclaw/.openclaw/extensions/gondolin',
@@ -278,15 +349,14 @@ describe('managed image release', () => {
 			openClawPackages: [
 				{
 					name: 'openclaw',
-					spec: 'openclaw@2026.5.7',
-					source: 'overlay.jsonc/packageOverrides.openclaw',
-					version: '2026.5.7',
+					spec: 'openclaw@2026.7.1-2',
+					source: 'managed-images.json',
+					version: '2026.7.1-2',
 				},
 				{
 					name: '@openclaw/codex',
-					spec: '@openclaw/codex@2026.6.8',
-					source: 'managed-images.json/packageOverrides.openclaw',
-					version: '2026.6.8',
+					spec: '@openclaw/codex',
+					source: 'managed-default',
 				},
 				{
 					name: '@openclaw/discord',
@@ -294,11 +364,16 @@ describe('managed image release', () => {
 					source: 'overlay.jsonc/packageOverrides.openclaw',
 					version: '2026.5.7',
 				},
+				{
+					name: '@openclaw/diagnostics-otel',
+					spec: '@openclaw/diagnostics-otel',
+					source: 'managed-default',
+				},
 			],
 			warnings: [
 				{
 					message:
-						'OpenClaw package versions differ: openclaw uses 2026.5.7, but @openclaw/codex uses 2026.6.8.',
+						'OpenClaw package versions differ: openclaw uses 2026.7.1-2, but @openclaw/discord uses 2026.5.7.',
 					type: 'openclaw-package-version-mismatch',
 				},
 			],
@@ -322,12 +397,16 @@ describe('managed image release', () => {
 
 		const generatedDockerfile = await fs.readFile(result.dockerfilePath, 'utf8');
 		expect(generatedDockerfile).not.toContain(
-			'RUN pnpm add -g "openclaw@2026.6.8" "@openclaw/discord@2026.6.8" "@openclaw/codex@2026.6.8"',
+			'RUN pnpm add -g "openclaw@2026.7.1-2" "@openclaw/discord@2026.7.1" "@openclaw/codex@2026.7.1-1"',
 		);
 		expect(generatedDockerfile).toContain('WORKDIR /opt/openclaw-runtime-packages');
-		expect(generatedDockerfile).toContain('"openclaw": "2026.6.8"');
-		expect(generatedDockerfile).toContain('"@openclaw/discord": "2026.6.8"');
-		expect(generatedDockerfile).toContain('"@openclaw/codex": "2026.6.8"');
+		expect(generatedDockerfile).toContain('"openclaw": "2026.7.1-2"');
+		expect(generatedDockerfile).toContain(
+			"openclaw plugins install 'npm:@openclaw/discord@2026.7.1' --pin",
+		);
+		expect(generatedDockerfile).toContain(
+			"openclaw plugins install 'npm:@openclaw/codex' --pin",
+		);
 		expect(generatedDockerfile).toContain('"pnpm": {');
 		expect(generatedDockerfile).toContain('"overrides": {');
 		expect(generatedDockerfile).toContain('"undici": "8.5.0"');
@@ -346,7 +425,10 @@ describe('managed image release', () => {
 			'ln -sfn /opt/openclaw-runtime-packages/node_modules/openclaw "$global_package_root/openclaw"',
 		);
 		expect(generatedDockerfile).toContain(
-			'ln -sfn /opt/openclaw-runtime-packages/node_modules/@openclaw/discord "$global_package_root/@openclaw/discord"',
+			'ln -sfn /opt/openclaw-runtime-packages/node_modules/openclaw/openclaw.mjs /pnpm/openclaw',
+		);
+		expect(generatedDockerfile).toContain(
+			'ln -sfn "$plugin_package_root" "$global_package_root/@openclaw/discord"',
 		);
 		expect(generatedDockerfile).toContain(
 			'ln -sfn "$openclaw_package_root/openclaw.mjs" /pnpm/openclaw',
@@ -467,7 +549,9 @@ describe('managed image release', () => {
 		});
 
 		const generatedDockerfile = await fs.readFile(result.dockerfilePath, 'utf8');
-		expect(generatedDockerfile).toContain('"@openclaw/discord": "2026.6.8"');
+		expect(generatedDockerfile).toContain(
+			"openclaw plugins install 'npm:@openclaw/discord@2026.6.8' --pin",
+		);
 		expect(generatedDockerfile).toContain('"undici": "8.6.0"');
 		expect(generatedDockerfile).toContain('RUN pnpm add -g --ignore-scripts "@openai/codex@0.139.1"');
 		expect(result.plan.directNpmPackages).toContainEqual({
@@ -672,9 +756,9 @@ describe('managed image release', () => {
 				...createTestManagedImageRelease().baseImages,
 				'openclaw-gateway': {
 					...createTestManagedImageRelease().baseImages['openclaw-gateway'],
+					openclawPackageVersion: '2026.6.8',
 					packageOverrides: {
 						...createTestManagedImageRelease().baseImages['openclaw-gateway'].packageOverrides,
-						openclaw: ['openclaw@2026.6.8', '@openclaw/codex@2026.6.8'],
 						pnpm: { undici: '8.3.0' },
 					},
 				},
@@ -706,6 +790,7 @@ describe('managed image release', () => {
 					...createTestManagedImageRelease().baseImages,
 					'openclaw-gateway': {
 						...createTestManagedImageRelease().baseImages['openclaw-gateway'],
+						openclawPackageVersion: '2026.6.8',
 						packageOverrides: {
 							...createTestManagedImageRelease().baseImages['openclaw-gateway'].packageOverrides,
 							pnpm: { undici: undiciVersion },
@@ -738,6 +823,7 @@ describe('managed image release', () => {
 				...createTestManagedImageRelease().baseImages,
 				'openclaw-gateway': {
 					...createTestManagedImageRelease().baseImages['openclaw-gateway'],
+					openclawPackageVersion: '2026.6.8',
 					packageOverrides: {
 						...createTestManagedImageRelease().baseImages['openclaw-gateway'].packageOverrides,
 						pnpm: {},
@@ -975,6 +1061,9 @@ describe('managed image release', () => {
 		});
 
 		const generatedDockerfile = await fs.readFile(result.dockerfilePath, 'utf8');
+		expect(generatedDockerfile).toContain(
+			'RUN rm -rf /scratch && install -d -m 0755 /work /workspace',
+		);
 		expectToolVmDockerfileToInstallGitHubCliFromStableApt(generatedDockerfile);
 		expect(generatedDockerfile).toContain('ENV PNPM_HOME=/pnpm');
 		expect(generatedDockerfile).toContain('ENV PATH=${PNPM_HOME}:${PATH}');
@@ -1112,7 +1201,6 @@ describe('managed image release', () => {
 					'  "extraAptPackages": [],',
 					'  "packageOverrides": {',
 					'    "openclaw": [',
-					'      "openclaw@2026.5.7",',
 					'      "@openclaw/discord@2026.5.2"',
 					'    ]',
 					'  },',
@@ -1137,12 +1225,7 @@ describe('managed image release', () => {
 			{
 				type: 'openclaw-package-version-mismatch',
 				message:
-					'OpenClaw package versions differ: openclaw uses 2026.5.7, but @openclaw/codex uses 2026.6.8.',
-			},
-			{
-				type: 'openclaw-package-version-mismatch',
-				message:
-					'OpenClaw package versions differ: openclaw uses 2026.5.7, but @openclaw/discord uses 2026.5.2.',
+					'OpenClaw package versions differ: openclaw uses 2026.7.1-2, but @openclaw/discord uses 2026.5.2.',
 			},
 		]);
 	});

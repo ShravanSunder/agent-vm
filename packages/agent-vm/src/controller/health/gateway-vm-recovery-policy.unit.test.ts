@@ -69,6 +69,62 @@ function primeControlSessionRecoveryDue(
 }
 
 describe('createGatewayVmRecoveryTracker', () => {
+	it('requests immediate whole-Gateway recovery for terminal attachment loss', () => {
+		// Arrange
+		const tracker = createGatewayVmRecoveryTracker({ policy });
+
+		// Act
+		const decision = tracker.requestTerminalGatewayRecovery({
+			observedAtMs: 10_000,
+			result: 'failed',
+			sourceKey: gatewayRecoverySourceKey,
+			zoneId: gatewayRecoverySourceKey.zoneId,
+		});
+
+		// Assert
+		expect(decision).toEqual({
+			consecutiveFailures: policy.consecutiveFailureThreshold,
+			kind: 'restart',
+			reason: 'gateway-service-unhealthy',
+			zoneId: gatewayRecoverySourceKey.zoneId,
+		});
+	});
+
+	it('retains policy fences for terminal attachment-loss recovery requests', () => {
+		// Arrange
+		const disabledTracker = createGatewayVmRecoveryTracker({
+			policy: { ...policy, enabled: false },
+		});
+		const activeTracker = createGatewayVmRecoveryTracker({ policy });
+		activeTracker.markRecoveryStarted({ observedAtMs: 10_000, zoneId: 'sunfam' });
+
+		// Act
+		const disabledDecision = disabledTracker.requestTerminalGatewayRecovery({
+			observedAtMs: 10_000,
+			result: 'failed',
+			sourceKey: gatewayRecoverySourceKey,
+			zoneId: 'sunfam',
+		});
+		const inFlightDecision = activeTracker.requestTerminalGatewayRecovery({
+			observedAtMs: 10_001,
+			result: 'failed',
+			sourceKey: gatewayRecoverySourceKey,
+			zoneId: 'sunfam',
+		});
+		activeTracker.markRecoveryFinished({ observedAtMs: 20_000, result: 'ok', zoneId: 'sunfam' });
+		const stabilizingDecision = activeTracker.requestTerminalGatewayRecovery({
+			observedAtMs: 20_001,
+			result: 'failed',
+			sourceKey: replacementGatewayRecoverySourceKey,
+			zoneId: 'sunfam',
+		});
+
+		// Assert
+		expect(disabledDecision).toMatchObject({ kind: 'none', reason: 'disabled' });
+		expect(inFlightDecision).toMatchObject({ kind: 'none', reason: 'in-flight' });
+		expect(stabilizingDecision).toMatchObject({ kind: 'none', reason: 'stabilizing' });
+	});
+
 	it('requires control-session death-grace evidence before gateway-service failures can restart', () => {
 		const tracker = createGatewayVmRecoveryTracker({ policy });
 

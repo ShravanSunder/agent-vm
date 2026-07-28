@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { withPortableSuperRefinement } from '../../portable-contracts/portable-refinement-authoring.js';
+
 export type JsonPrimitive = boolean | null | number | string;
 export type JsonArray = JsonValue[];
 export type JsonObject = { [key: string]: JsonValue };
@@ -21,8 +23,15 @@ export const JsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
 	]),
 );
 
-export const JsonObjectSchema: z.ZodType<JsonObject> = z
-	.record(z.string().min(1).max(JsonObjectKeyMaxLength), JsonValueSchema)
-	.refine((value) => Object.keys(value).length <= JsonObjectMaxEntries, {
-		message: 'JSON object exceeds the maximum number of entries.',
-	});
+export const JsonObjectSchema: z.ZodType<JsonObject> = withPortableSuperRefinement({
+	refinement: (value, context) => {
+		if (Object.keys(value).length > JsonObjectMaxEntries) {
+			context.addIssue({
+				code: 'custom',
+				message: 'JSON object exceeds the maximum number of entries.',
+			});
+		}
+	},
+	refinementIdentity: 'portal.json.max-object-entries',
+	schema: z.record(z.string().min(1).max(JsonObjectKeyMaxLength), JsonValueSchema),
+});

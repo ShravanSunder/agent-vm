@@ -29,9 +29,11 @@ const authConfig: GatewayAuthConfig = {
 };
 
 const systemConfig = {
-	schemaVersion: 1,
+	schemaVersion: 2,
+	storageRootDir: './storage',
 	cacheDir: './cache',
-	runtimeDir: './runtime',
+	controllerStateDir: '/controller-state-test',
+	controllerRuntimeDir: './controller-runtime',
 	host: { controllerPort: 18800, projectNamespace: 'claw-tests-a1b2c3d4' },
 	imageProfiles: {
 		gateways: {
@@ -60,6 +62,7 @@ const systemConfig = {
 				port: 18791,
 				stateDir: './state/shravan',
 				zoneFilesDir: './zone-files/shravan',
+				zoneRuntimeDir: './runtime/shravan',
 			},
 			id: 'shravan',
 			secrets: {
@@ -109,6 +112,7 @@ describe('runOpenClawAuthCommand', () => {
 						enableZoneSsh: async () => ({
 							host: '127.0.0.1',
 							port: 2222,
+							secretEnvEnabled: true,
 							user: 'root',
 						}),
 					}),
@@ -187,6 +191,7 @@ describe('runOpenClawAuthCommand', () => {
 						enableZoneSsh: async () => ({
 							host: '127.0.0.1',
 							port: 2222,
+							secretEnvEnabled: true,
 							user: 'root',
 						}),
 					}),
@@ -350,6 +355,7 @@ describe('runOpenClawAuthCommand', () => {
 						enableZoneSsh: async () => ({
 							host: '127.0.0.1',
 							port: 2222,
+							secretEnvEnabled: true,
 							user: 'root',
 						}),
 					}),
@@ -391,12 +397,15 @@ describe('runOpenClawAuthCommand', () => {
 	});
 
 	it('runs interactive SSH with the login command when provider is given', async () => {
-		const runInteractiveProcess = vi.fn(async () => {});
+		const runInteractiveProcess = vi.fn(
+			async (_command: string, _arguments: readonly string[]): Promise<void> => {},
+		);
 		const runCommand = createSuccessfulProfileListCommand();
 		const enableZoneSsh = vi.fn(async () => ({
 			host: '127.0.0.1',
 			identityFile: '/tmp/key',
 			port: 2222,
+			secretEnvEnabled: true,
 			user: 'root',
 		}));
 
@@ -420,14 +429,26 @@ describe('runOpenClawAuthCommand', () => {
 			zoneId: 'shravan',
 		});
 
-		expect(enableZoneSsh).toHaveBeenCalledWith('shravan', { secretEnv: 'default' });
+		expect(enableZoneSsh).toHaveBeenCalledWith('shravan', { secretEnv: 'gateway-token' });
 		expect(runInteractiveProcess).toHaveBeenCalledWith(
 			'ssh',
 			expect.arrayContaining([
 				'-t',
 				'root@127.0.0.1',
-				expect.stringContaining('source /etc/profile.d/openclaw-env.sh'),
+				expect.stringContaining(
+					'/run/agent-vm/managed-gateway-environment/openclaw-gateway-token.environment.sh',
+				),
 			]),
+		);
+		const remoteCommand = vi.mocked(runInteractiveProcess).mock.calls[0]?.[1].at(-1);
+		expect(remoteCommand).not.toEqual(
+			expect.stringContaining('openclaw-all-secrets.environment.sh'),
+		);
+		const verificationRemoteCommand = vi.mocked(runCommand).mock.calls[0]?.[1].at(-1);
+		expect(verificationRemoteCommand).toEqual(
+			expect.stringContaining(
+				'/run/agent-vm/managed-gateway-environment/openclaw-gateway-token.environment.sh',
+			),
 		);
 	});
 
@@ -435,6 +456,7 @@ describe('runOpenClawAuthCommand', () => {
 		const enableZoneSsh = vi.fn(async () => ({
 			host: '127.0.0.1',
 			port: 2222,
+			secretEnvEnabled: true,
 			user: 'root',
 		}));
 		const createSecretResolver = vi.fn(async () => ({
@@ -489,7 +511,7 @@ describe('runOpenClawAuthCommand', () => {
 
 		expect(enableZoneSsh).toHaveBeenCalledWith('shravan', {
 			adminToken: 'resolved-admin-token',
-			secretEnv: 'default',
+			secretEnv: 'gateway-token',
 		});
 		expect(runInteractiveProcess).toHaveBeenCalledWith('ssh', expect.any(Array));
 	});
@@ -508,6 +530,7 @@ describe('runOpenClawAuthCommand', () => {
 						enableZoneSsh: async () => ({
 							host: '127.0.0.1',
 							port: 2222,
+							secretEnvEnabled: true,
 							user: 'root',
 						}),
 					}),
@@ -541,6 +564,7 @@ describe('runOpenClawAuthCommand', () => {
 		const enableZoneSsh = vi.fn(async () => ({
 			host: '127.0.0.1',
 			port: 2222,
+			secretEnvEnabled: true,
 			user: 'root',
 		}));
 
@@ -565,5 +589,37 @@ describe('runOpenClawAuthCommand', () => {
 				zoneId: 'shravan',
 			}),
 		).rejects.toThrow("Auth failed for codex in zone 'shravan' agent 'main': connect ECONNREFUSED");
+	});
+
+	it('fails closed when the controller does not expose the OpenClaw gateway token', async () => {
+		const runInteractiveProcess = vi.fn(async () => {});
+
+		await expect(
+			runOpenClawAuthCommand({
+				authConfig,
+				dependencies: {
+					...defaultCliDependencies,
+					createControllerClient: vi.fn(() =>
+						createControllerClientStub({
+							enableZoneSsh: async () => ({
+								host: '127.0.0.1',
+								port: 2222,
+								secretEnvEnabled: false,
+								user: 'root',
+							}),
+						}),
+					),
+					runCommand: createSuccessfulProfileListCommand(),
+					runInteractiveProcess,
+				},
+				io: { stdout: { write: vi.fn(() => true) }, stderr: { write: vi.fn(() => true) } },
+				agentId: 'main',
+				profileIds: ['openai-codex:test@example.com'],
+				provider: 'codex',
+				systemConfig,
+				zoneId: 'shravan',
+			}),
+		).rejects.toThrow('did not enable the OpenClaw gateway token');
+		expect(runInteractiveProcess).not.toHaveBeenCalled();
 	});
 });

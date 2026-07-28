@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/gateway-control-contracts",
-	"version": "0.0.114",
+	"version": "0.0.126",
 	"description": "Gateway control domain contracts for agent-vm Socket.IO sessions.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {
@@ -36,6 +36,8 @@
 		"test:unit": "vitest run --root ../../ --config vitest.config.ts --project unit packages/gateway-control-contracts/src"
 	},
 	"dependencies": {
+		"@agent-vm/agent-portal-sdk": "workspace:*",
+		"@agent-vm/config-contracts": "workspace:*",
 		"@agent-vm/control-protocol-contracts": "workspace:*",
 		"zod": "^4.4.3"
 	},

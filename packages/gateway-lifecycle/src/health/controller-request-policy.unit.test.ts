@@ -67,6 +67,7 @@ describe('controller request policies', () => {
 	it('keeps external controller routes out of the in-VM policy table', () => {
 		expect(externalControllerRoutes).toContain('GET /controller-status');
 		expect(externalControllerRoutes).toContain('POST /zones/:zoneId/worker-tasks');
+		expect(externalControllerRoutes).not.toContain('GET /zones/:zoneId/zone-git/status');
 		expect(controllerRequestPolicies).not.toHaveProperty('worker-task-create');
 		expect(controllerRequestPolicies).not.toHaveProperty('worker-task-close');
 	});
@@ -83,7 +84,7 @@ describe('controller request policies', () => {
 			maxAttempts: 1,
 			retryEnabled: false,
 		});
-		expect(controllerRequestPolicies['zone-git-push']).toMatchObject({
+		expect(controllerRequestPolicies['workspace-git-push']).toMatchObject({
 			idempotency: 'unsafe-mutation',
 			maxAttempts: 1,
 			retryEnabled: false,

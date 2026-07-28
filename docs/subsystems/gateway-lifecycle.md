@@ -201,7 +201,7 @@ mounts:
   /home/openclaw/.openclaw/config    -> configDirectory  (realfs)
   /home/openclaw/.openclaw/cache     -> gatewayCacheDir  (realfs)
   /home/openclaw/.openclaw/state     -> stateDir         (realfs)
-  /agent-vm/logs                     -> runtimeDir/zones/<zone>/logs (realfs)
+  /agent-vm/logs                     -> zoneRuntimeDir/logs (realfs)
   /zone           -> zoneFilesDir (realfs)
 
 tcpHosts:
@@ -219,8 +219,8 @@ OpenClaw raw env secrets are intentionally narrow. The configured
 `gateway.controlAuth.secret` is allowed by default; additional gateway env
 secrets must be listed in `gateway.rawEnvSecrets`. Provider API tokens should
 use Gondolin `http-mediation` unless the integration cannot be mediated at the
-HTTP boundary. Generated runtime env secrets, such as zone-git capability env
-vars, must also be listed when enabled.
+HTTP boundary. Controller-owned workspace Git credentials never enter the
+Gateway VM environment.
 
 Bundled OpenClaw plugin runtime dependencies are staged under
 `OPENCLAW_PLUGIN_STAGE_DIR`. Target state is image/rootfs-local staging at
@@ -228,19 +228,22 @@ Bundled OpenClaw plugin runtime dependencies are staged under
 this under `OPENCLAW_STATE_DIR`: staged plugin `node_modules` trees are
 rebuildable and must not be included in encrypted zone backups.
 
-### buildProcessSpec
+### Managed framework service
 
-- **bootstrap**: creates `/work/tmp` and `/work/cache/*`, writes
-  `/etc/profile.d/openclaw-env.sh` with non-secret environment exports, writes
-  runtime-only secret env files under `/run/openclaw`, including
-  `/run/openclaw/secrets.env` for the gateway daemon and token-only
-  `/run/openclaw/gateway-token.env` for controller SSH admin shells.
-- **start**: sources `/run/openclaw/secrets.env`, then runs
-  `cd /home/openclaw && nohup openclaw gateway --port 18789`
-- **healthCheck**: HTTP on port 18789, path `/readyz` for explicit readiness probes
-- **serviceHealthCheck**: HTTP on port 18789, path `/health` for startup and controller liveness monitoring
-- **guestListenPort**: 18789
-- **logPath**: `/agent-vm/logs/gateway-boot-latest.log`
+- **environment input**:
+  `/run/agent-vm/managed-gateway/framework.environment.sh`
+- **configuration input**:
+  `/run/agent-vm/managed-gateway/framework-service.json`
+- **start**: the image-owned managed Gateway launcher sources the framework
+  environment input and runs `openclaw gateway --port 18789`
+- **readiness**: HTTP on port 18789, path `/readyz`
+- **service health**: HTTP on port 18789, path `/health`
+- **log path**: `/var/log/agent-vm/openclaw-service.log`
+
+The generated managed OpenClaw image provides
+`/etc/profile.d/openclaw-env.sh` with only the non-secret structural
+environment needed by controller-initiated OpenClaw auth commands. Framework
+secrets remain confined to the protected managed framework environment input.
 
 ### authConfig
 
@@ -279,7 +282,7 @@ environment:
 
 mounts:
   /state                -> task stateDir       (realfs)
-  /gitdirs              -> runtimeDir task root (realfs)
+  /gitdirs              -> zoneRuntimeDir task root (realfs)
 
 rootfs/COW paths:
   /work/repos            -> repo files, package installs, builds, tests

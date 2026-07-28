@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
-import { cp, mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises';
+import { access, cp, mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
@@ -8,6 +8,10 @@ import {
 	emptyPackageOverrides,
 	packageOverridesSchema,
 } from '../packages/agent-vm/src/build/package-overrides.ts';
+import {
+	renderHermesManagedImageRecipe,
+	type HermesManagedImageBuildTarget,
+} from '../packages/hermes-gateway/src/index.ts';
 import { stripJsonComments } from './jsonc-comments.ts';
 
 const execFileAsync = promisify(execFile);
@@ -21,7 +25,9 @@ export const AGENT_VM_PACKAGE_NAMES = [
 	'@agent-vm/controller-execution-contracts',
 	'@agent-vm/gateway-control-contracts',
 	'@agent-vm/gateway-lifecycle',
+	'@agent-vm/gateway-runtime',
 	'@agent-vm/gondolin-vm-adapter',
+	'@agent-vm/hermes-gateway',
 	'@agent-vm/managed-vm',
 	'@agent-vm/mcp-portal',
 	'@agent-vm/openclaw-agent-vm-plugin',
@@ -41,6 +47,7 @@ export const OPENCLAW_GATEWAY_TARBALL_PACKAGE_NAMES = [
 	'@agent-vm/secret-management',
 	'@agent-vm/gondolin-vm-adapter',
 	'@agent-vm/gateway-lifecycle',
+	'@agent-vm/gateway-runtime',
 	'@agent-vm/managed-vm',
 	'@agent-vm/mcp-portal',
 	'@agent-vm/tool-portal',
@@ -54,6 +61,18 @@ export const TOOL_VM_TARBALL_PACKAGE_NAMES = [
 	'@agent-vm/mcp-portal',
 ] as const;
 
+export const HERMES_GATEWAY_TARBALL_PACKAGE_NAMES = [
+	'@agent-vm/agent-portal-sdk',
+	'@agent-vm/config-contracts',
+	'@agent-vm/control-protocol-contracts',
+	'@agent-vm/controller-execution-contracts',
+	'@agent-vm/gateway-control-contracts',
+	'@agent-vm/secret-management',
+	'@agent-vm/mcp-portal',
+	'@agent-vm/tool-portal',
+	'@agent-vm/gateway-runtime',
+] as const;
+
 type AgentVmPackageName = (typeof AGENT_VM_PACKAGE_NAMES)[number];
 
 interface BetaTarballPackageEntry {
@@ -65,6 +84,7 @@ interface BetaTarballPackageEntry {
 
 export interface BetaTarballSyncPlan {
 	readonly gatewayPackages: readonly BetaTarballPackageEntry[];
+	readonly hermesGatewayPackages: readonly BetaTarballPackageEntry[];
 	readonly hostPackageSpecifier: string;
 	readonly packages: readonly BetaTarballPackageEntry[];
 	readonly tarballDirectoryReference: string;
@@ -127,9 +147,23 @@ interface ResolvePnpmPackArgsOptions {
 
 interface RefreshBetaDeploymentTarballArtifactsOptions {
 	readonly deploymentDirectory: string;
+	readonly hermesImage?: HermesBetaImageArtifacts | undefined;
 	readonly managedOpenClawGatewayPackageOverrides: PackageOverrides;
 	readonly plan: BetaTarballSyncPlan;
 	readonly tarballDirectory: string;
+}
+
+export interface HermesBetaPythonWheelArtifact {
+	readonly fileName: string;
+	readonly sourcePath: string;
+}
+
+export interface HermesBetaImageArtifacts {
+	readonly buildTarget: HermesManagedImageBuildTarget;
+	readonly pythonWheels: {
+		readonly agentPortalSdk: HermesBetaPythonWheelArtifact;
+		readonly hermesAdapter: HermesBetaPythonWheelArtifact;
+	};
 }
 
 interface RunCommandOptions {
@@ -194,6 +228,13 @@ export function createBetaTarballSyncPlan(
 		}
 		return packageEntry;
 	});
+	const hermesGatewayPackages = HERMES_GATEWAY_TARBALL_PACKAGE_NAMES.map((packageName) => {
+		const packageEntry = packageEntryByName.get(packageName);
+		if (!packageEntry) {
+			throw new Error(`Internal error: ${packageName} is missing from package plan.`);
+		}
+		return packageEntry;
+	});
 	const toolVmPackages = TOOL_VM_TARBALL_PACKAGE_NAMES.map((packageName) => {
 		const packageEntry = packageEntryByName.get(packageName);
 		if (!packageEntry) {
@@ -209,6 +250,7 @@ export function createBetaTarballSyncPlan(
 	}
 	return {
 		gatewayPackages,
+		hermesGatewayPackages,
 		hostPackageSpecifier: hostPackageEntry.specifier,
 		packages,
 		tarballDirectoryReference: options.tarballDirectoryReference,
@@ -289,6 +331,35 @@ function renderLocalPackageManifest(packageEntries: readonly BetaTarballPackageE
 			type: 'module',
 			dependencies,
 			pnpm: { overrides: dependencies },
+		},
+		null,
+		'\t',
+	)}\n`;
+}
+
+function renderHermesLocalPackageManifest(
+	packageEntries: readonly BetaTarballPackageEntry[],
+): string {
+	const packageEntryByName = new Map(
+		packageEntries.map((packageEntry) => [packageEntry.name, packageEntry]),
+	);
+	const gatewayRuntimePackage = packageEntryByName.get('@agent-vm/gateway-runtime');
+	if (gatewayRuntimePackage === undefined) {
+		throw new Error('Hermes image package plan must include @agent-vm/gateway-runtime.');
+	}
+	const localPackageSpecifiers = Object.fromEntries(
+		packageEntries.map((packageEntry) => [
+			packageEntry.name,
+			`file:./${packageEntry.overlayFileName}`,
+		]),
+	);
+	return `${JSON.stringify(
+		{
+			type: 'module',
+			dependencies: {
+				'@agent-vm/gateway-runtime': localPackageSpecifiers['@agent-vm/gateway-runtime'],
+			},
+			pnpm: { overrides: localPackageSpecifiers },
 		},
 		null,
 		'\t',
@@ -461,6 +532,7 @@ export function renderOpenClawGatewayOverlay(
 		),
 		...renderLocalPackageInstallStartCommands(options.plan.gatewayPackages),
 		'package_root="$(pnpm root -g)" && mkdir -p "$package_root/@agent-vm" && ln -sfn /opt/agent-vm/local-packages/node_modules/@agent-vm/openclaw-agent-vm-plugin "$package_root/@agent-vm/openclaw-agent-vm-plugin" && ln -sfn /opt/agent-vm/local-packages/node_modules/@agent-vm/mcp-portal "$package_root/@agent-vm/mcp-portal"',
+		'test -f /opt/agent-vm/local-packages/node_modules/@agent-vm/gateway-runtime/dist/bin/gateway-runtime.js && chmod 755 /opt/agent-vm/local-packages/node_modules/@agent-vm/gateway-runtime/dist/bin/gateway-runtime.js && ln -sfn /opt/agent-vm/local-packages/node_modules/@agent-vm/gateway-runtime/dist/bin/gateway-runtime.js /usr/local/bin/agent-vm-gateway-runtime',
 		renderLocalPackageCleanupCommand(options.plan.gatewayPackages),
 	];
 	return {
@@ -601,6 +673,83 @@ async function readManagedOpenClawGatewayPackageOverrides(
 	return parsedPackageOverrides.data;
 }
 
+async function readHermesBetaImageBuildTarget(
+	deploymentDirectory: string,
+): Promise<HermesManagedImageBuildTarget | undefined> {
+	const buildConfigPath = path.join(
+		deploymentDirectory,
+		'vm-images',
+		'gateways',
+		'hermes',
+		'build-config.jsonc',
+	);
+	let buildConfig: JsonRecord;
+	try {
+		buildConfig = await readJsonFile(buildConfigPath);
+	} catch (error) {
+		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') {
+			return undefined;
+		}
+		throw error;
+	}
+	const architecture = buildConfig.arch;
+	const oci = buildConfig.oci;
+	const rootfs = buildConfig.rootfs;
+	if (
+		(architecture !== 'aarch64' && architecture !== 'x86_64') ||
+		!isJsonRecord(oci) ||
+		typeof oci.image !== 'string' ||
+		oci.image.trim().length === 0 ||
+		!isJsonRecord(rootfs) ||
+		typeof rootfs.sizeMb !== 'number' ||
+		!Number.isSafeInteger(rootfs.sizeMb) ||
+		rootfs.sizeMb <= 0
+	) {
+		throw new Error(
+			`${buildConfigPath} must declare arch, oci.image, and a positive integer rootfs.sizeMb for Hermes image synchronization.`,
+		);
+	}
+	return {
+		architecture,
+		kind: 'gondolin-custom-dockerfile',
+		ociImage: oci.image,
+		rootfsSizeMb: rootfs.sizeMb,
+	};
+}
+
+async function resolveHermesBetaImageArtifacts(options: {
+	readonly buildTarget: HermesManagedImageBuildTarget;
+	readonly repositoryDirectory: string;
+	readonly version: string;
+}): Promise<HermesBetaImageArtifacts> {
+	const agentPortalSdkFileName = `agent_vm_agent_portal_sdk-${options.version}-py3-none-any.whl`;
+	const hermesAdapterFileName = `agent_vm_hermes_adapter-${options.version}-py3-none-any.whl`;
+	const agentPortalSdkSourcePath = path.join(
+		options.repositoryDirectory,
+		'dist',
+		agentPortalSdkFileName,
+	);
+	const hermesAdapterSourcePath = path.join(
+		options.repositoryDirectory,
+		'dist',
+		hermesAdapterFileName,
+	);
+	await Promise.all([access(agentPortalSdkSourcePath), access(hermesAdapterSourcePath)]);
+	return {
+		buildTarget: options.buildTarget,
+		pythonWheels: {
+			agentPortalSdk: {
+				fileName: agentPortalSdkFileName,
+				sourcePath: agentPortalSdkSourcePath,
+			},
+			hermesAdapter: {
+				fileName: hermesAdapterFileName,
+				sourcePath: hermesAdapterSourcePath,
+			},
+		},
+	};
+}
+
 async function runCommand(
 	command: string,
 	args: readonly string[],
@@ -694,6 +843,99 @@ async function pruneStaleLocalOverlayFiles(options: {
 	);
 }
 
+function isHermesLocalArtifactFileName(
+	fileName: string,
+	packageEntries: readonly BetaTarballPackageEntry[],
+): boolean {
+	const isKnownPackageTarball = packageEntries.some((packageEntry) => {
+		const packageFileNamePrefix = `${packageEntry.name.replace('@agent-vm/', 'agent-vm-')}-`;
+		return fileName.startsWith(packageFileNamePrefix) && fileName.endsWith('.tgz');
+	});
+	return (
+		isKnownPackageTarball ||
+		(fileName.startsWith('agent_vm_agent_portal_sdk-') && fileName.endsWith('.whl')) ||
+		(fileName.startsWith('agent_vm_hermes_adapter-') && fileName.endsWith('.whl'))
+	);
+}
+
+async function materializeHermesBetaImageArtifacts(options: {
+	readonly deploymentDirectory: string;
+	readonly hermesImage: HermesBetaImageArtifacts;
+	readonly packageEntries: readonly BetaTarballPackageEntry[];
+	readonly tarballDirectory: string;
+}): Promise<void> {
+	const hermesImageDirectory = path.join(
+		options.deploymentDirectory,
+		'vm-images',
+		'gateways',
+		'hermes',
+	);
+	const localArtifactDirectory = path.join(hermesImageDirectory, 'local-agent-vm');
+	await mkdir(localArtifactDirectory, { recursive: true });
+
+	const currentArtifactFileNames = new Set([
+		'package.json',
+		...options.packageEntries.map((packageEntry) => packageEntry.overlayFileName),
+		options.hermesImage.pythonWheels.agentPortalSdk.fileName,
+		options.hermesImage.pythonWheels.hermesAdapter.fileName,
+	]);
+	const existingArtifactEntries = await readdir(localArtifactDirectory, { withFileTypes: true });
+	await Promise.all(
+		existingArtifactEntries
+			.filter(
+				(directoryEntry) =>
+					directoryEntry.isFile() &&
+					isHermesLocalArtifactFileName(directoryEntry.name, options.packageEntries) &&
+					!currentArtifactFileNames.has(directoryEntry.name),
+			)
+			.map((directoryEntry) => unlink(path.join(localArtifactDirectory, directoryEntry.name))),
+	);
+
+	await Promise.all([
+		...options.packageEntries.map((packageEntry) =>
+			cp(
+				path.join(options.tarballDirectory, packageEntry.fileName),
+				path.join(localArtifactDirectory, packageEntry.overlayFileName),
+			),
+		),
+		cp(
+			options.hermesImage.pythonWheels.agentPortalSdk.sourcePath,
+			path.join(localArtifactDirectory, options.hermesImage.pythonWheels.agentPortalSdk.fileName),
+		),
+		cp(
+			options.hermesImage.pythonWheels.hermesAdapter.sourcePath,
+			path.join(localArtifactDirectory, options.hermesImage.pythonWheels.hermesAdapter.fileName),
+		),
+	]);
+	await writeFile(
+		path.join(localArtifactDirectory, 'package.json'),
+		renderHermesLocalPackageManifest(options.packageEntries),
+	);
+
+	const recipe = renderHermesManagedImageRecipe({
+		artifactContext: {
+			kind: 'local-artifact-context',
+			gatewayRuntime: {
+				executablePath:
+					'/opt/agent-vm/local-packages/node_modules/@agent-vm/gateway-runtime/dist/bin/gateway-runtime.js',
+				packageArchiveFiles: options.packageEntries.map(
+					(packageEntry) => `local-agent-vm/${packageEntry.overlayFileName}`,
+				),
+				packageManifestFile: 'local-agent-vm/package.json',
+			},
+			pythonWheels: {
+				agentPortalSdk: `local-agent-vm/${options.hermesImage.pythonWheels.agentPortalSdk.fileName}`,
+				hermesAdapter: `local-agent-vm/${options.hermesImage.pythonWheels.hermesAdapter.fileName}`,
+			},
+		},
+		buildTarget: options.hermesImage.buildTarget,
+	});
+	await Promise.all([
+		writeFile(path.join(hermesImageDirectory, 'Dockerfile'), recipe.dockerfile),
+		writeJsonFile(path.join(hermesImageDirectory, 'build-config.jsonc'), recipe.buildConfig),
+	]);
+}
+
 export async function refreshBetaDeploymentTarballArtifacts(
 	options: RefreshBetaDeploymentTarballArtifactsOptions,
 ): Promise<void> {
@@ -761,11 +1003,20 @@ export async function refreshBetaDeploymentTarballArtifacts(
 			plan: options.plan,
 		}),
 	);
+	if (options.hermesImage !== undefined) {
+		await materializeHermesBetaImageArtifacts({
+			deploymentDirectory: options.deploymentDirectory,
+			hermesImage: options.hermesImage,
+			packageEntries: options.plan.hermesGatewayPackages,
+			tarballDirectory: options.tarballDirectory,
+		});
+	}
 }
 
 async function syncBetaTarballs(options: SyncBetaTarballsOptions): Promise<void> {
 	const hash = options.hash ?? (await getGitShortHash(options.repositoryDirectory));
 	const version = await readWorkspacePackageVersion(options.repositoryDirectory);
+	const hermesImageBuildTarget = await readHermesBetaImageBuildTarget(options.deploymentDirectory);
 	const managedOpenClawGatewayPackageOverrides = await readManagedOpenClawGatewayPackageOverrides(
 		options.repositoryDirectory,
 	);
@@ -775,6 +1026,9 @@ async function syncBetaTarballs(options: SyncBetaTarballsOptions): Promise<void>
 
 	if (!options.skipBuild) {
 		await runCommand('pnpm', ['build'], { cwd: options.repositoryDirectory });
+		if (hermesImageBuildTarget !== undefined) {
+			await runCommand('pnpm', ['python:build'], { cwd: options.repositoryDirectory });
+		}
 	}
 	await mkdir(tarballDirectory, { recursive: true });
 	for (const packageEntry of plan.packages) {
@@ -784,9 +1038,18 @@ async function syncBetaTarballs(options: SyncBetaTarballsOptions): Promise<void>
 			tarballDirectory,
 		});
 	}
+	const hermesImage =
+		hermesImageBuildTarget === undefined
+			? undefined
+			: await resolveHermesBetaImageArtifacts({
+					buildTarget: hermesImageBuildTarget,
+					repositoryDirectory: options.repositoryDirectory,
+					version,
+				});
 
 	await refreshBetaDeploymentTarballArtifacts({
 		deploymentDirectory: options.deploymentDirectory,
+		...(hermesImage === undefined ? {} : { hermesImage }),
 		managedOpenClawGatewayPackageOverrides,
 		plan,
 		tarballDirectory,

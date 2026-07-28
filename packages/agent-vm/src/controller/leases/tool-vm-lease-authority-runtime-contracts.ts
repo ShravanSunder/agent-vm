@@ -27,15 +27,22 @@ export type ToolVmExactDestructionAdmissionPolicy =
 
 export interface ToolVmExactDestructionOptions {
 	readonly authority: ToolVmLeafAuthorityReference;
-	readonly destroy: () => Promise<void>;
+	readonly cleanup: () => Promise<void>;
 	readonly destroyedAtMs: number;
+	readonly fenceAccess: () => Promise<void>;
 	readonly reason: string;
+}
+
+export interface ToolVmExactDestructionProgress<TLease extends ToolVmRuntimeLeaseIdentity> {
+	readonly accessFenced: Promise<void>;
+	readonly completion: Promise<ToolVmLeaseRuntimeResource<TLease>>;
 }
 
 export type ToolVmExactDestructionAdmission<TLease extends ToolVmRuntimeLeaseIdentity> =
 	| { readonly kind: 'blocked-active-use' }
 	| { readonly kind: 'skip-recently-used' }
 	| {
+			readonly accessFenced: Promise<void>;
 			readonly completion: Promise<ToolVmLeaseRuntimeResource<TLease>>;
 			readonly kind: 'started';
 	  };
@@ -74,9 +81,14 @@ export interface ToolVmLeaseAuthorityRuntime<
 		command: RuntimeForwardedAuthorityCommand,
 	): ToolVmLeaseLeafState | undefined;
 	authorityForLease(leaseId: string): ToolVmLeafAuthorityReference | undefined;
-	authorityForPrincipal(
-		principal: StableToolVmLeasePrincipal,
-	): ToolVmLeafAuthorityReference | undefined;
+	authorityForCurrentAgent(options: {
+		readonly agentId: string;
+		readonly gateway: GatewayEpochIdentity;
+	}): ToolVmLeafAuthorityReference | undefined;
+	authorityForPrincipal(options: {
+		readonly gateway: GatewayEpochIdentity;
+		readonly principal: StableToolVmLeasePrincipal;
+	}): ToolVmLeafAuthorityReference | undefined;
 	cleanupContextForAuthority(authority: ToolVmLeafAuthorityReference): TCleanupContext | undefined;
 	cleanupContextForLease(leaseId: string): TCleanupContext | undefined;
 	beginProvisioning(options: {
@@ -91,7 +103,7 @@ export interface ToolVmLeaseAuthorityRuntime<
 		readonly runtimeBinding: ToolVmRuntimeBinding;
 		readonly sshBinding: ToolVmSshBinding;
 	}): Promise<void>;
-	destroyExact(options: ToolVmExactDestructionOptions): Promise<ToolVmLeaseRuntimeResource<TLease>>;
+	destroyExact(options: ToolVmExactDestructionOptions): ToolVmExactDestructionProgress<TLease>;
 	findCurrentLeaseByPrincipal(options: {
 		readonly gateway: GatewayEpochIdentity;
 		readonly principal: StableToolVmLeasePrincipal;

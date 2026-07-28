@@ -1,0 +1,24 @@
+{
+	"caseId": "artifact-reference-valid",
+	"schemaId": "portal.artifact.reference",
+	"tags": ["accepted", "artifact", "boundary"],
+	"input": {
+		"byteLength": 4096,
+		"expiresAt": "2030-01-01T00:00:00.000Z",
+		"fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"id": "artifact-1",
+		"mediaType": "application/json"
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"byteLength": 4096,
+			"expiresAt": "2030-01-01T00:00:00.000Z",
+			"fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"id": "artifact-1",
+			"mediaType": "application/json"
+		},
+		"canonicalJson": "{\"byteLength\":4096,\"expiresAt\":\"2030-01-01T00:00:00.000Z\",\"fingerprint\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"id\":\"artifact-1\",\"mediaType\":\"application/json\"}",
+		"refinementIdentities": []
+	}
+}

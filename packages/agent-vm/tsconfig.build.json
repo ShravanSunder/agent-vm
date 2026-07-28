@@ -20,5 +20,10 @@
 			"@agent-vm/worker-gateway": ["../worker-gateway/dist/index.d.ts"]
 		}
 	},
-	"exclude": ["src/**/*.test.ts", "src/testing/**"]
+	"exclude": [
+		"src/**/*.test.ts",
+		"src/testing/**",
+		"src/integration-tests/gateway-runtime-sandbox-test-fixture.ts",
+		"src/integration-tests/gateway-runtime-sandbox-vm-test-fixture.ts"
+	]
 }

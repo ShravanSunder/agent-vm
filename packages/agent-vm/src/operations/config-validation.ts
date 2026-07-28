@@ -2,18 +2,18 @@ import { access } from 'node:fs/promises';
 import path from 'node:path';
 
 import { loadWorkerConfigDraft } from '@agent-vm/agent-vm-worker';
-import {
-	loadMcpConfig,
-	loadMcpPortalConfig,
-	resolveMcpPortalProfile,
-} from '@agent-vm/config-contracts';
+import { loadMcpConfig, loadToolPortalConfig } from '@agent-vm/config-contracts';
+import { loadHermesManagedConfiguration } from '@agent-vm/hermes-gateway';
 import type { SecretResolver } from '@agent-vm/secret-management';
 import { execa } from 'execa';
 
 import { validateManagedImageOverlay } from '../build/managed-image-dockerfile.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
-import { planMcpPortalEffectiveConfig } from '../gateway/mcp-portal-effective-config.js';
-import { buildOpenClawAgentSecretAccessChecks } from './agent-secret-access-checks.js';
+import {
+	managedToolPortalRequiresApprovalAccess,
+	planMcpPortalEffectiveConfig,
+} from '../gateway/mcp-portal-effective-config.js';
+import { buildManagedAgentSecretAccessChecks } from './agent-secret-access-checks.js';
 import {
 	type ConfigValidationCheck,
 	type ConfigValidationCommandOptions,
@@ -253,6 +253,27 @@ async function collectGatewayConfigCheck(
 	return await collectReadableFileCheck(`gateway-config-${zone.id}`, gatewayConfigPath);
 }
 
+async function collectHermesConfigCheck(
+	systemConfig: LoadedSystemConfig,
+	zone: LoadedSystemConfig['zones'][number],
+): Promise<ConfigValidationCheck> {
+	const gatewayConfigPath = resolveProjectCheckoutPath(systemConfig, zone.gateway.config);
+	try {
+		await loadHermesManagedConfiguration(gatewayConfigPath);
+		return {
+			hint: gatewayConfigPath,
+			name: `hermes-config-${zone.id}`,
+			ok: true,
+		};
+	} catch (error: unknown) {
+		return {
+			hint: getErrorMessage(error),
+			name: `hermes-config-${zone.id}`,
+			ok: false,
+		};
+	}
+}
+
 async function collectOpenClawConfigCheck(
 	systemConfig: LoadedSystemConfig,
 	zone: LoadedSystemConfig['zones'][number],
@@ -279,7 +300,7 @@ async function collectOpenClawConfigCheck(
 	} catch (error) {
 		const installHint =
 			getErrorCode(error) === 'ENOENT'
-				? 'OpenClaw CLI not found. Install OpenClaw in this catalog for local schema validation: pnpm add -D openclaw@2026.6.8.'
+				? 'OpenClaw CLI not found. Install OpenClaw in this catalog for local schema validation: pnpm add -D openclaw@2026.7.1-2.'
 				: getErrorMessage(error);
 		return {
 			name: `openclaw-config-${zone.id}`,
@@ -381,7 +402,7 @@ function buildZoneToolVmProfileChecks(
 	systemConfig: LoadedSystemConfig,
 ): readonly ConfigValidationCheck[] {
 	return systemConfig.zones.flatMap((zone) => {
-		if (zone.gateway.type !== 'openclaw') {
+		if (zone.gateway.type === 'worker') {
 			return [];
 		}
 		const agentToolVmProfileChecks = Object.entries(zone.agentToolVmProfiles ?? {}).map(
@@ -424,31 +445,20 @@ function buildOpenClawAgentSetupChecks(
 					hint: 'configured',
 				}) satisfies ConfigValidationCheck,
 		);
-		const sandboxSeedChecks = Object.entries(zone.agentSandboxSeeds ?? {}).flatMap(
-			([agentId, seeds]) =>
-				seeds.map(
-					(seed, seedIndex) =>
-						({
-							name: `zone-agent-sandbox-seed-${zone.id}-${agentId}-${String(seedIndex)}`,
-							ok: true,
-							hint: seed.target,
-						}) satisfies ConfigValidationCheck,
-				),
-		);
-		return [...authProfileChecks, ...sandboxSeedChecks];
+		return authProfileChecks;
 	});
 }
 
-async function collectMcpPortalConfigChecks(
+async function collectToolPortalConfigChecks(
 	systemConfig: LoadedSystemConfig,
 	zone: LoadedSystemConfig['zones'][number],
 ): Promise<readonly ConfigValidationCheck[]> {
-	if (zone.gateway.type !== 'openclaw' || zone.toolPortal === undefined) {
+	if (zone.gateway.type === 'worker' || zone.toolPortal === undefined) {
 		return [];
 	}
 	const configDir = resolveProjectCheckoutPath(systemConfig, zone.toolPortal.configDir);
 	const mcpConfigPath = path.join(configDir, 'mcp.config.jsonc');
-	const mcpPortalConfigPath = path.join(configDir, 'mcp-portal.config.jsonc');
+	const toolPortalConfigPath = path.join(configDir, 'tool-portal.config.jsonc');
 	const checks: ConfigValidationCheck[] = [];
 	try {
 		await loadMcpConfig(mcpConfigPath);
@@ -462,49 +472,57 @@ async function collectMcpPortalConfigChecks(
 	}
 
 	try {
-		const portalConfig = await loadMcpPortalConfig(mcpPortalConfigPath);
-		checks.push({ name: `mcp-portal-config-${zone.id}`, ok: true, hint: mcpPortalConfigPath });
+		const toolPortalConfig = await loadToolPortalConfig(toolPortalConfigPath);
+		checks.push({ name: `tool-portal-config-${zone.id}`, ok: true, hint: toolPortalConfigPath });
+		const requiresApprovalAccess = managedToolPortalRequiresApprovalAccess(toolPortalConfig);
+		const approvalAccessConfigured = zone.approvalAccess !== undefined;
+		checks.push(
+			requiresApprovalAccess && !approvalAccessConfigured
+				? {
+						hint: `Managed Tool Portal calls requiring approval for zone '${zone.id}' require zones[].approvalAccess with at least one authenticated approver.`,
+						name: `tool-portal-approval-access-${zone.id}`,
+						ok: false,
+					}
+				: {
+						hint: requiresApprovalAccess
+							? 'Protected approval access is configured.'
+							: 'No managed approval-required calls are configured.',
+						name: `tool-portal-approval-access-${zone.id}`,
+						ok: true,
+					},
+		);
 		const declaredAgentIds = new Set((zone.agents ?? []).map((agent) => agent.id));
 		for (const agent of zone.agents ?? []) {
-			const portalAgent = portalConfig.agents[agent.id];
+			const portalAgent = toolPortalConfig.agents[agent.id];
 			if (portalAgent === undefined) {
 				checks.push({
-					name: `mcp-portal-agent-${zone.id}-${agent.id}`,
+					name: `tool-portal-agent-${zone.id}-${agent.id}`,
 					ok: false,
-					hint: `Agent '${agent.id}' is missing from mcp-portal.config.jsonc agents.`,
+					hint: `Agent '${agent.id}' is missing from tool-portal.config.jsonc agents.`,
 				});
 				continue;
 			}
-			try {
-				resolveMcpPortalProfile(portalConfig, portalAgent.profile);
-				checks.push({
-					name: `mcp-portal-profile-${zone.id}-${agent.id}`,
-					ok: true,
-					hint: portalAgent.profile,
-				});
-			} catch {
-				checks.push({
-					name: `mcp-portal-profile-${zone.id}-${agent.id}`,
-					ok: false,
-					hint: `Agent '${agent.id}' references unknown MCP Portal profile '${portalAgent.profile}'.`,
-				});
-			}
+			checks.push({
+				name: `tool-portal-profile-${zone.id}-${agent.id}`,
+				ok: true,
+				hint: portalAgent.profile,
+			});
 		}
-		for (const agentId of Object.keys(portalConfig.agents)) {
+		for (const agentId of Object.keys(toolPortalConfig.agents)) {
 			if (declaredAgentIds.has(agentId)) {
 				continue;
 			}
 			checks.push({
-				name: `mcp-portal-agent-declared-${zone.id}-${agentId}`,
+				name: `tool-portal-agent-declared-${zone.id}-${agentId}`,
 				ok: false,
-				hint: `mcp-portal.config.jsonc declares agent '${agentId}' that is not in zones[].agents.`,
+				hint: `tool-portal.config.jsonc declares agent '${agentId}' that is not in zones[].agents.`,
 			});
 		}
 	} catch (error) {
 		checks.push({
-			name: `mcp-portal-config-${zone.id}`,
+			name: `tool-portal-config-${zone.id}`,
 			ok: false,
-			hint: `Missing or invalid ${mcpPortalConfigPath}: ${getErrorMessage(error)}`,
+			hint: `Missing or invalid ${toolPortalConfigPath}: ${getErrorMessage(error)}`,
 		});
 	}
 	try {
@@ -513,14 +531,17 @@ async function collectMcpPortalConfigChecks(
 				? ['OPENCLAW_GATEWAY_TOKEN', ...(zone.gateway.rawEnvSecrets ?? [])]
 				: [];
 		await planMcpPortalEffectiveConfig({
+			approvalAccessConfigured: zone.approvalAccess !== undefined,
 			authoredConfigDir: configDir,
 			effectiveHostConfigDir: path.join(systemConfig.cacheDir, zone.id, 'tool-portal-effective'),
-			effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/tool-portal-effective',
 			allowedRawEnvSecretNames,
 			declaredAgentIds: (zone.agents ?? []).map((agent) => agent.id),
-			includeZoneGitControllerHostAction:
-				zone.gateway.type === 'openclaw' && zone.gateway.zoneGit !== undefined,
 			secretResolver: validationOnlySecretResolver,
+			workspaceGitPushAgentEligibility: {
+				eligibleAgentIds: (zone.agents ?? [])
+					.filter((agent) => agent.workspaceGit?.mode === 'remote')
+					.map((agent) => agent.id),
+			},
 			zoneId: zone.id,
 		});
 		checks.push({
@@ -532,7 +553,7 @@ async function collectMcpPortalConfigChecks(
 		checks.push({
 			name: `tool-portal-effective-config-${zone.id}`,
 			ok: false,
-			hint: `Invalid MCP Portal materialization config in ${configDir}: ${getErrorMessage(error)}`,
+			hint: `Invalid managed Tool Portal materialization config in ${configDir}: ${getErrorMessage(error)}`,
 		});
 	}
 	return checks;
@@ -544,16 +565,21 @@ export async function runConfigValidation(
 	const systemConfig = options.systemConfig;
 	const runCommand = options.runCommand ?? runCommandDefault;
 	const zoneConfigChecks = await Promise.all(
-		systemConfig.zones.map(async (zone) =>
-			zone.gateway.type === 'worker'
-				? await collectWorkerConfigCheck(systemConfig, zone)
-				: await collectGatewayConfigCheck(systemConfig, zone),
-		),
+		systemConfig.zones.map(async (zone) => {
+			switch (zone.gateway.type) {
+				case 'hermes':
+					return await collectHermesConfigCheck(systemConfig, zone);
+				case 'openclaw':
+					return await collectGatewayConfigCheck(systemConfig, zone);
+				case 'worker':
+					return await collectWorkerConfigCheck(systemConfig, zone);
+			}
+		}),
 	);
 	const toolPortalConfigChecks = (
 		await Promise.all(
 			systemConfig.zones.map(
-				async (zone) => await collectMcpPortalConfigChecks(systemConfig, zone),
+				async (zone) => await collectToolPortalConfigChecks(systemConfig, zone),
 			),
 		)
 	).flat();
@@ -583,7 +609,7 @@ export async function runConfigValidation(
 		),
 		...buildZoneToolVmProfileChecks(systemConfig),
 		...buildOpenClawAgentSetupChecks(systemConfig),
-		...buildOpenClawAgentSecretAccessChecks(systemConfig),
+		...buildManagedAgentSecretAccessChecks(systemConfig),
 		...(vmHostSystemCheck ? [vmHostSystemCheck] : []),
 		...zoneConfigChecks,
 		...toolPortalConfigChecks,

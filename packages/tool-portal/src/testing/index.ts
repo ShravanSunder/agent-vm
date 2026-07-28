@@ -31,9 +31,10 @@ export function createToolPortalConfigFixture(
 				profile: profileId,
 			},
 		},
+		mode: 'managed',
 		profiles: {
 			[profileId]: {
-				capabilities: {
+				namespaces: {
 					[namespace]: {
 						backend: { kind: 'mcp_provider' },
 						calls: {

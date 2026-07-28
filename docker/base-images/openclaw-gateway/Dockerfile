@@ -1,6 +1,6 @@
 FROM node:24-slim
 
-COPY --from=ghcr.io/astral-sh/uv:0.11.16 /uv /uvx /usr/local/bin/
+COPY --from=ghcr.io/astral-sh/uv:0.11.31 /uv /uvx /usr/local/bin/
 
 # Runtime auth must flow through controller HTTP mediation. Keep token env
 # names, registry auth files, and build args out of this image so a future
@@ -34,9 +34,6 @@ RUN apt-get update && \
     uvx --version && \
     rm -rf /root/.cache/uv && \
     mkdir -p /opt/openclaw-sdk && \
-    useradd -m -s /bin/bash openclaw && \
     mkdir -p /home/openclaw/.openclaw/extensions /pnpm/global/5/node_modules/@openclaw /zone /run/sshd /root /work/tmp /work/cache /var/log && \
     touch /var/log/lastlog /var/log/faillog && \
-    chown -R openclaw:openclaw /home/openclaw /work && \
-    chown -R root:root /home/openclaw/.openclaw/extensions && \
     (ln -sfn /proc/self/fd /dev/fd 2>/dev/null || true)

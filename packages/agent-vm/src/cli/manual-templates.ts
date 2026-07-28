@@ -35,10 +35,10 @@ Use docs/manual/tool-vm-leases.md before changing agent-vm Tool VM lease identit
 Use docs/manual/gateway-ingress.md before changing gateway ports, OpenClaw Control UI access, SSE/streaming behavior, WebSocket access, or serving additional webservers from inside a VM.
 Use docs/manual/operations.md before debugging agent-vm controller health, gateway service health, lease-heartbeat, lease-renew, Tool VM SSH, or Gondolin tcpHosts timeouts.
 Use docs/manual/observability.md before changing host observability, Victoria storage, OpenTelemetry collector ports, OpenClaw diagnostics flags, or logging behavior.
-Use docs/manual/mcp-portal.md before changing MCP providers, MCP Portal profiles, MCP package pins, or live MCP validation.
+Use docs/manual/mcp-portal.md before changing MCP providers, managed Tool Portal profiles, standalone MCP Portal profiles, MCP package pins, or live MCP validation.
 Use docs/manual/tool-access.md before answering whether a tool binary, auth profile, or tool VM image should be agent-specific.
 Use docs/manual/channels.md before helping a human configure Discord, Slack, Telegram, or another OpenClaw channel.
-Use docs/manual/runtime-paths.md before answering where files appear inside VMs or how workMountDir backs the Tool VM lease workdir.
+Use docs/manual/runtime-paths.md before answering where files appear inside VMs or how managed Tool VMs separate durable /workspace, disposable /work, and optional /gitdirs.
 Use docs/manual/per-agent-setup.md before changing multi-agent layouts, OpenClaw scope=agent configuration, or per-agent tool/auth isolation.
 
 Do not assume Discord is enabled by the framework. Channels and channel secrets are deployment-owned.
@@ -66,10 +66,10 @@ Read in this order:
 5. gateway-ingress.md explains host-facing gateway ports, OpenClaw web serving, SSE, WebSockets, and the boundary between single-route OpenClaw ingress and additional guest webservers.
 6. openclaw-defaults.md explains agent-vm-owned OpenClaw defaults and doctor checks.
 7. observability.md explains managed or external host observability setup, build-time Docker Compose startup for managed stacks, controller startup behavior, and telemetry safety rules.
-8. mcp-portal.md explains progressive MCP discovery and gateway-owned MCP auth.
+8. mcp-portal.md explains managed Tool Portal policy, standalone MCP Portal policy, progressive MCP discovery, and gateway-owned MCP auth.
 9. tool-access.md explains binary, auth, OpenClaw tool, and zone/image isolation.
 10. channels.md explains how deployments add Discord or other channels.
-11. runtime-paths.md explains /workspace, /work, and other in-VM paths.
+11. runtime-paths.md explains /workspace, /work, optional /gitdirs, and other in-VM paths.
 12. per-agent-setup.md explains multi-agent layout and tool access choices.
 13. migration-discord.md explains how existing Discord deployments keep working.
 14. secrets.md explains runtime auth and HTTP mediation.
@@ -89,16 +89,22 @@ config/gateways/<zone>/openclaw.json is OpenClaw-owned gateway config.
 config/gateways/<zone>/worker.jsonc is Agent Worker gateway config when the zone type is worker.
 vm-images/ contains deployment-owned Gondolin build-config.jsonc files and small managed image overlays.
 agent-vm owns the gateway/tool base image recipes and pins the managed GHCR base layer version.
-stateDir stores durable gateway state.
-zoneFilesDir stores durable user/household files for OpenClaw zones.
-cacheDir stores rebuildable artifacts.
-runtimeDir stores controller runtime artifacts that are not backup state, including OpenClaw gateway logs under runtimeDir/zones/<zone>/logs.
-When OpenClaw zoneGit is enabled, runtimeDir stores Git metadata at runtimeDir/zones/<zoneId>/zone-git/zone-files.git while zoneFilesDir remains the worktree.
+storageRootDir is the required, final deployment storage root. Generated local, user-dir, and pod scaffolds scope it by host.projectNamespace. The controller loads that full path and derives cacheDir, controllerStateDir, controllerRuntimeDir, and each zone's stateDir, optional zoneFilesDir, and zoneRuntimeDir without appending the namespace again.
+stateDir is <storageRootDir>/<zoneId>/state and stores durable gateway state.
+zoneFilesDir stores durable shared zone files and per-agent workspaces for managed Gateway zones. It is derived at <storageRootDir>/<zoneId>/zone-files. Each configured agent owns zoneFilesDir/agents/<agentId>. Worker zones have no active zoneFilesDir.
+gateway.backupIdentity selects the host-resolved Age identity required by backup create and restore. Backup list does not resolve it, and there is no implicit identity fallback.
+cacheDir is <storageRootDir>/cache and stores rebuildable artifacts.
+controllerStateDir is required as a derived controller capability at <storageRootDir>/controller-state and stores host-controller-only durable authority.
+controllerStateDir is never mounted into a Gateway or Tool VM and must remain disjoint from config, cache, runtime, Gateway state, backup, observability, and mount-source paths.
+All controller records live below the one host-controller-owned root at controllerStateDir/zones/<zoneId>: approvals/, gateway-runtime.json, tool-leases/<recordId>.json, and worker-tasks/<taskId>/gateway-runtime.json.
+controllerRuntimeDir is <storageRootDir>/controller-runtime and stores the controller ownership lock, health evidence, and generated observability files.
+zoneRuntimeDir is <storageRootDir>/<zoneId>/runtime and stores zone logs, workspace Git databases, Worker task runtime, and control-session material outside normal backup.
+When zones[].agents[].workspaceGit is enabled, its isolated Git database lives at zoneRuntimeDir/gitdirs/agents/<agentId>/workspace.git while the durable workspace remains under zoneFilesDir/agents/<agentId>.
 
 Author JSONC for human-owned agent-vm config. Runtime files such as /state/effective-worker.json, task event JSONL, runtime records, and API bodies stay strict JSON.
 OpenClaw gateway VMs mount zoneFilesDir at /zone.
-OpenClaw Tool VMs mount the validated lease work mount at /workspace; /work remains Tool VM rootfs/COW scratch.
-OpenClaw Tool VMs with zoneGit mount zoneFilesDir at /zone and runtimeDir/zones/<zoneId>/zone-git at /agent-vm/zone-git.
+Managed OpenClaw Tool VMs expose only the selected agent's filtered durable workspace at /workspace. They do not mount the whole /zone tree.
+Managed Tool VMs use rootfs/COW /work for disposable execution and optionally expose only the selected workspace Git database at /gitdirs/workspace.git. No generic /agent-vm surface is mounted unless a future contract names its exact generated inventory and owner.
 Worker task VMs keep repo files on rootfs/COW at /work/repos.
 OpenClaw gateway VMs use /work/tmp and /work/cache for disposable runtime work.
 `,
@@ -139,24 +145,24 @@ agent-vm build prints the resolved base image, generated Dockerfile path, OpenCl
 			content: generatedPage(
 				'Tool VM Lease Identity And Reuse',
 				`
-Managed OpenClaw Tool VMs are agent-keyed: one compatible Tool VM per zone and OpenClaw agent id.
-The OpenClaw plugin derives agentId from the OpenClaw session key and sends only private control-session caller evidence to the controller. OpenClaw scope keys are plugin-boundary metadata only: they are discarded before controller-owned lease resolution and do not choose, identify, renew, list, log, or store Tool VM leases.
-The controller validates the requested gateway work path, resolves it to a host work mount, and returns the Tool VM guest workdir. The lease identity remains zoneId + agentId, not a path string.
+Managed OpenClaw and Hermes Tool VMs are agent-keyed: one compatible Tool VM per zone and Agent VM agent id.
+The framework integration authenticates the native OpenClaw agent or Hermes profile, selects its controller-authored projection, and sends typed requests to the common Tool Portal service over the private UDS. Framework scope/session metadata does not choose, identify, renew, list, log, or store Tool VM leases.
+The controller resolves the stable agent identity to controller-owned workspace, optional workspace Git, and Tool VM profile capabilities. Caller-supplied Gateway or host paths do not select storage. The lease identity remains zoneId + agentId, not a path string.
 TCP slots are capacity; they are not identity.
-Cached Tool VM handles use private gateway_control_rpc lease_renew for idle lease reuse, and active shell/file operations use private gateway_control_rpc lease_use_heartbeat records so long commands are not reaped mid-run.
+The common Tool Portal service owns current-epoch agent bindings, per-agent strict SSH connections, Sandbox operations, and active-use tracking. It renews reusable bindings and heartbeats active shell/file/process operations over its private controller relationship so long commands are not reaped mid-run.
 Health snapshots include lease-renew and lease-heartbeat observations. Both keep lease state alive when successful, but they prove different things: lease-renew proves an idle cached lease can be reused, while lease-heartbeat proves an active operation still has a live private control-session path.
 
-If a cached handle observes stale Tool VM SSH evidence, it must retire the old binding before the next operation. The plugin asks the controller for a replacement with private gateway_control_rpc lease_reacquire. The controller re-checks old-lease authority, current caller context, session fence, workspace, work mount, profile, and agent ownership before it returns new SSH material.
-The old lease id is correlation only, not authority. No later shell, file, exec, heartbeat, or finalize work may use the old lease id or old SSH identity after stale evidence. If the controller denies reacquire, the handle is terminal for new work.
+If the Tool Portal service observes stale Tool VM SSH evidence, it retires the old binding before the next operation and asks the controller for current replacement access. The controller re-checks old-binding authority, current caller context, session fence, workspace, profile, and agent ownership before publishing new service-private SSH material.
+The old lease id is correlation only, not authority. No later shell, file, exec, heartbeat, or finalize work may use the old lease id or old SSH identity after stale evidence. Framework integrations never receive lease ids or SSH material.
 
 Example:
 - shravan agent uses agentId=shravan.
 - alevtina agent uses agentId=alevtina.
-- Each agent gets its own compatible Tool VM lease mounted at /workspace in its Tool VM.
-- Managed OpenClaw supports multiple declared agents in the same zone when their per-agent config is explicit and consistent.
+- Each agent gets its own compatible Tool VM lease with its filtered durable workspace at /workspace and disposable rootfs/COW work at /work.
+- Managed OpenClaw and Hermes support multiple declared agents in the same zone when their per-agent config is explicit and consistent.
 - defaultToolVmProfile is the fallback Tool VM image; agentToolVmProfiles can select a different image per declared agent.
 - Use separate zones when gateway lifecycle or channel isolation matters more than sharing a gateway VM.
-- Configure gateway.authProfilesByAgent and agentSandboxSeeds for per-agent auth/profile files.
+- Configure gateway.authProfilesByAgent only when agents intentionally need separate prebuilt OpenClaw auth profiles. Agent-authored durable files live in that agent's zoneFilesDir/agents/<agentId> workspace.
 - Use separate zones when gateway lifecycle isolation or shared-zone cost is worse than another gateway VM.
 `,
 			),
@@ -176,7 +182,7 @@ agent-vm controller cleanup --config ${options.systemConfigPath} --zone ${option
 
 Offline cleanup first acquires the same deployment-wide ownership lock held by a running controller, then refuses to run while the configured controller health endpoint is reachable. --force skips only that advisory health probe; it never bypasses the ownership lock or exact-evidence checks.
 
-The ownership lock provides mutual exclusion; it is not destruction evidence. Cleanup validates schema-v2 records under the selected zone stateDir: Tool records at <stateDir>/tool-leases/<recordId>.json first, then <stateDir>/gateway-runtime.json. Records bind canonical config path, controller port, project namespace, zone, full Gateway parent identity, VM id, pid, and process command/start identity as applicable. The controller revalidates the live process and endpoint, never adopts an old VM, and deletes a record only after exact process and endpoint absence is proven.
+The ownership lock provides mutual exclusion; it is not destruction evidence. Cleanup validates schema-v2 records under controllerStateDir/zones/<zoneId>: Tool records at controllerStateDir/zones/<zoneId>/tool-leases/<recordId>.json first, then controllerStateDir/zones/<zoneId>/gateway-runtime.json. Records bind canonical config path, controller port, project namespace, zone, full Gateway parent identity, VM id, pid, and process command/start identity as applicable. The controller revalidates the live process and endpoint, never adopts an old VM, and deletes a record only after exact process and endpoint absence is proven.
 
 Old, malformed, mismatched, occupied-endpoint, or otherwise unproven records fail closed and remain for diagnosis. Unknown identity preserves the evidence and prevents Gateway replacement or Tool TCP-slot reuse. Gateway subtree cleanup runs at most four child destroys concurrently, and the whole subtree has a 300 second deadline. An incomplete disposition leaves the old Gateway owner-unsafe and refuses a replacement until cleanup is proven complete.
 
@@ -196,16 +202,16 @@ Health model:
 - gateway-service-health means the agent-vm controller can probe gateway service liveness through the gateway VM runtime. For OpenClaw, periodic monitoring and explicit service-health use /health; explicit zone health probes /readyz.
 - gateway-control-session means the agent-vm controller owns a private Socket.IO control session into the gateway VM through Gondolin ingress.
 - agent-channel-provider-health means the gateway/plugin reports whether an agent channel provider can communicate. The controller reads only generic health values such as healthy, transitioning, unhealthy-recoverable, and unhealthy-unrecoverable.
-- gateway-recovery means the controller attempted an automatic Gateway VM restart or cold start after same-Gateway process recovery was exhausted or Gateway service/lifecycle evidence required outward escalation.
+- gateway-recovery means the controller attempted an automatic whole-Gateway VM restart or cold start after Gateway service, control-session, or sibling-lifecycle evidence required replacement.
 - gateway-recovery-suspended means repeated automatic restarts failed and the controller paused further auto-recovery for that zone until the reset window expires.
 - lease-heartbeat means an active Tool VM operation can refresh its active use.
 - lease-renew means an idle cached Tool VM lease can be reused.
 - tool-vm-ssh means command, file-bridge, finalize, or probe SSH operations on the gateway-to-Tool-VM path.
-- tool-vm-ssh lifecycle events distinguish plugin observations from controller_final decisions. A controller_final stale_to_reacquired event proves the controller accepted one replacement transition for the old lease and records old/replacement lease correlation using redacted public ids.
+- tool-vm-ssh lifecycle events distinguish Tool Portal service observations from controller_final decisions. A controller_final stale_to_reacquired event proves the controller accepted one replacement transition for the old lease and records old/replacement lease correlation using redacted public ids.
 
-Health snapshots and bounded event history are in-memory controller state for live diagnosis. Accepted health and recovery events are also appended to <runtimeDir>/controller-health/events.jsonl as diagnostic evidence; that log and exported telemetry are not lifecycle authority. The controller owns lifecycle decisions; schema-v2 runtime records plus revalidated process and endpoint identity are durable crash-cleanup evidence.
+Health snapshots and bounded event history are in-memory controller state for live diagnosis. Accepted health and recovery events are also appended to <controllerRuntimeDir>/controller-health/events.jsonl as diagnostic evidence; that log and exported telemetry are not lifecycle authority. The controller owns lifecycle decisions; schema-v2 runtime records plus revalidated process and endpoint identity are durable crash-cleanup evidence.
 
-By default, controller.health.gatewayServiceAutoRestart observes gateway-service and gateway-control-session degradation. A stale or dead control session while Gateway service still answers first requests bounded same-Gateway OpenClaw process recovery; this preserves the Gateway VM and healthy Tool VMs. Gateway VM restart is the outward escalation after same-Gateway process recovery is exhausted or Gateway service/lifecycle evidence requires replacement. The same Gateway recovery path can cold-start a failed or stopped gateway when current ownership checks prove it is safe. Gateway recovery has a 61 minute cooldown per zone and a 10 minute restart deadline. Gateway replacement releases active Tool VM leases for that zone first, so in-flight tool work is interrupted instead of keeping stale SSH state alive. After 3 consecutive failed automatic Gateway recoveries, the controller records gateway-recovery-suspended and pauses further auto-recovery for that zone until the 24 hour reset window expires.
+By default, controller.health.gatewayServiceAutoRestart observes gateway-service and gateway-control-session degradation. The managed Tool Portal and selected framework processes are VM-boot siblings; neither supervises or restarts the other. Unrecoverable sibling or control-session failure retires the Gateway epoch and uses whole-Gateway VM recovery. The same recovery path can cold-start a failed or stopped Gateway when current ownership checks prove it is safe. Gateway recovery has a 61 minute cooldown per zone and a 10 minute restart deadline. Gateway replacement releases active Tool VM leases for that zone first, so in-flight tool work is interrupted instead of keeping stale SSH state alive. After 3 consecutive failed automatic Gateway recoveries, the controller records gateway-recovery-suspended and pauses further auto-recovery for that zone until the 24 hour reset window expires.
 
 Channel-provider failures are diagnostic input only through the generic contract by default. A channel provider marked unhealthy-recoverable degrades readiness/status but does not restart the gateway unless controller health policy explicitly enables restartGatewayOnRecoverable. A channel provider marked unhealthy-unrecoverable is surfaced for operator diagnosis and does not restart the gateway by default. Provider-specific details stay in the event payload; the controller must not branch on Discord, Slack, or other platform-specific names.
 
@@ -226,14 +232,15 @@ Health timeouts are operation-specific. Short health probes should fail quickly;
 				`
 Agent-vm provides VM lifecycle, storage mounts, TCP/HTTP mediation, image build, and tool VM leases.
 OpenClaw owns plugin lifecycle, agents.list, channels, and gateway behavior.
-The controller is the control plane: it issues leases and tracks active uses. Command stdout, stderr, and file bridge traffic stay on the gateway-to-Tool-VM SSH data path.
+Managed Gateway boot starts one common Tool Portal service process beside OpenClaw. The thin OpenClaw plugin authenticates the native agent and sends Tool Portal Capability API and SSH Sandbox API requests through one GatewayRuntimeClient over the private UDS.
+The controller remains durable lease authority. ToolPortalService owns current-epoch bindings, per-agent strict SSH connections, active uses, and Sandbox operations. OpenClaw receives API results, not lease ids or SSH material. Command stdout, stderr, and file traffic flow through the private UDS and the service-owned gateway-to-Tool-VM SSH data path.
 OpenClaw application heartbeat turns are not infrastructure health checks. Use agent-vm health snapshots to distinguish gateway-service health, gateway-to-controller control session, lease-heartbeat, lease-renew, and Tool VM SSH health.
 Channel-provider details stay inside OpenClaw/plugin payloads. The controller branches only on generic channel-provider health: healthy, transitioning, unhealthy-recoverable, and unhealthy-unrecoverable. Recoverable channel-provider failures degrade readiness/status by default; gateway VM restart is opt-in through controller health policy.
 
 The default scaffold enables Gondolin and memory-core support. It does not enable Discord.
 OpenClaw-owned openclaw.json stays strict JSON unless OpenClaw itself supports comments or agent-vm renders a strict effective config first.
 
-Multi-zone controller work makes one controller process manage multiple typed zones. Use defaultToolVmProfile, agentToolVmProfiles, gateway.authProfilesByAgent, agentSandboxSeeds, leaseIdleTtl, and tcpPool from the current system config reference for exact field names.
+Multi-zone controller work makes one controller process manage multiple typed zones. Use defaultToolVmProfile, agentToolVmProfiles, gateway.authProfilesByAgent, zones[].agents[].workspaceGit, leaseIdleTtl, and tcpPool from the current system config reference for exact field names.
 `,
 			),
 		},
@@ -242,19 +249,21 @@ Multi-zone controller work makes one controller process manage multiple typed zo
 			content: generatedPage(
 				'Host Observability',
 				`
-Host observability is deployment-configured. Enable host.observability in ${options.systemConfigPath}. Per-zone OpenClaw observability stays available during the Socket.IO control-plane hard cutover through Gondolin HTTP mediation. The old collector route depended on raw Gondolin tcpHosts and must not be restored.
+Host observability is deployment-configured. Enable host.observability in ${options.systemConfigPath}. Per-zone observability supports managed OpenClaw and Hermes gateways through Gondolin HTTP mediation. Each enabled zone configures separate framework and common Tool Portal signal policies under zones[].observability.services. The old collector route depended on raw Gondolin tcpHosts and must not be restored.
 
-Use host.observability.stack.mode=managed when this deployment should own the local Victoria + OpenTelemetry Collector stack. In managed mode, host.observability.stack.scrubbing.responsibility defaults to agent-vm-managed-collector. Agent-vm build prepares the host stack when host.observability.prepareOnBuild is true and at least one selected managed OpenClaw zone has zones[].observability enabled. The build step renders docker-compose.observability.yml and otel-collector-config.yaml under runtimeDir/observability/<projectNamespace>, creates durable Victoria data directories under host.observability.dataDir, then runs docker compose up -d. Generated Compose services use restart: unless-stopped so Docker can restore them after daemon or host recovery. Use agent-vm build --no-observability to skip the host stack for one build run.
+Use host.observability.stack.mode=managed when this deployment should own the local Victoria + OpenTelemetry Collector stack. In managed mode, host.observability.stack.scrubbing.responsibility defaults to agent-vm-managed-collector. Agent-vm build prepares the host stack when host.observability.prepareOnBuild is true and at least one selected managed OpenClaw or Hermes zone has zones[].observability enabled. The build step renders docker-compose.observability.yml and otel-collector-config.yaml under controllerRuntimeDir/observability/<projectNamespace>, creates durable Victoria data directories under host.observability.dataDir, then runs docker compose up -d. Generated Compose services use restart: unless-stopped so Docker can restore them after daemon or host recovery. Use agent-vm build --no-observability to skip the host stack for one build run.
 
 Use host.observability.stack.mode=external when a shared collector is already managed outside this deployment. External mode never renders or starts Docker Compose and does not require host.observability.dataDir or retention. Set host.observability.stack.scrubbing.responsibility=external-collector to make the external collector sanitization responsibility explicit, and keep that collector available on the configured loopback collector ports.
 
 Controller startup does not start Docker Compose. With controllerStartPolicy=degraded, the controller binds and starts while it checks host observability readiness in the background. Managed mode checks the OpenTelemetry collector plus Victoria metrics, logs, and traces endpoints. External mode checks only the configured OpenTelemetry collector health endpoint. With controllerStartPolicy=require-ready, startup waits only for the configured total bounded readiness budget and fails if the configured collector or already-prepared managed stack is unavailable. With controllerStartPolicy=off, startup does not check host observability.
 
-For managed mode, use a durable host.observability.dataDir outside cacheDir, runtimeDir, stateDir, and zoneFilesDir. Victoria data is intentionally not stored in rebuildable cache or disposable runtime folders. Retention is configured separately for metrics, logs, and traces with period plus optional disk bounds.
+For managed mode, keep durable host.observability.dataDir outside storageRootDir. Victoria data is intentionally independent from rebuildable cache and disposable controller or zone runtime folders. Retention is configured separately for metrics, logs, and traces with period plus optional disk bounds.
 
 Published ports bind to loopback only. Do not publish collector or Victoria ports on broad host interfaces unless a separate, authenticated access layer owns that exposure.
 
-Enable zones[].observability only for managed OpenClaw zones that should export diagnostics to the host collector. The gateway sends OTLP HTTP/protobuf to a synthetic collector host that agent-vm rewrites to the configured loopback collector. Tool VM SSH is the only managed gateway raw TCP exception.
+Enable zones[].observability only for managed OpenClaw or Hermes zones that should export framework and Tool Portal diagnostics to the host collector. Worker zones reject it. The gateway sends OTLP to a synthetic collector host that agent-vm rewrites to the configured loopback collector. Tool VM SSH is the only managed gateway raw TCP exception.
+
+Service identities are fixed: agent-vm-openclaw, agent-vm-hermes, and agent-vm-tool-portal. Do not author serviceName. Each producer suppresses content and baggage and uses its own fixed bounded lossy queue; collector scrubbing remains defense in depth. Only OpenClaw zones may use the optional zones[].observability.openclaw.diagnosticsFlags extension.
 
 Do not inject OPENCLAW_DIAGNOSTICS through rawEnvSecrets to recreate the old collector route. Authored OpenClaw logging.redactSensitive must stay enabled.
 
@@ -297,7 +306,7 @@ Agent-vm scaffolds OpenClaw defaults that make the deployment usable without han
 	agents.defaults.model.primary is openai/gpt-5.5.
 	agents.defaults.models["openai/gpt-5.5"].agentRuntime.id is pi so GPT-5.5 runs through the PI harness.
 	session.dmScope is per-channel-peer so Discord DMs from different people do not share one agent session.
-		approvals.plugin.enabled is true with approvals.plugin.mode=session for OpenClaw-owned plugin approval prompts. Managed Tool Portal capabilities under calls.requiresApproval are rejected in this cutover; use calls.withoutApproval for callable managed OpenClaw capabilities until an approval bridge exists. Exec approval forwarding remains deployment-owned.
+		approvals.plugin.enabled is true with approvals.plugin.mode=session for OpenClaw-owned plugin approval prompts. Managed Tool Portal calls.requiresApproval uses the controller-owned approval surface and requires zone approvalAccess when any tool is effectively admitted; calls.withoutApproval remains the direct-call policy. Exec approval forwarding remains deployment-owned.
 		tools.web.fetch.ssrfPolicy trusts fake-IP ranges for web_fetch. For gateway/tool TCP mappings, agent-vm's Gondolin adapter uses RFC2544 synthetic IPv4 plus ::ffff:198.18.0.1 as the synthetic AAAA answer so OpenClaw SSRF checks can validate all DNS answers without a broad hostname bypass.
 		tools.sandbox.tools.alsoAllow includes web_search, web_fetch, message, and group:plugins so sandboxed sessions can see web tools once a provider is configured, can explicitly send channel replies when OpenClaw uses message_tool_only group reply delivery, and can see optional plugin-owned tools such as tool_portal_*.
 	plugins.load.paths includes /home/openclaw/.openclaw/extensions for agent-vm-managed extensions and the package manager's global root for managed OpenClaw packages.
@@ -305,10 +314,10 @@ Agent-vm scaffolds OpenClaw defaults that make the deployment usable without han
 	gateway.auth.mode is token for agent-vm-managed gateways.
 	logging.file is rendered in the effective OpenClaw config as /agent-vm/logs/openclaw-YYYY-MM-DD.log unless the deployment explicitly sets its own logging.file.
 
-		Managed OpenClaw gateway images install @agent-vm/openclaw-agent-vm-plugin and register it as the gondolin extension. The gondolin extension registers Tool Portal native tools and calls Tool Portal with MCP providers as an internal backend when configured.
+		Managed OpenClaw gateway images install @agent-vm/openclaw-agent-vm-plugin and register it as the gondolin extension. The gondolin extension is a thin client: it registers Tool Portal native tools and forwards Capability API and SSH Sandbox API requests to the common Tool Portal service over the private UDS.
 		Managed OpenClaw gateway images install external channel packages required by config. For example, channels.discord.enabled asks for @openclaw/discord. The managed release supplies the default version unless vm-images/gateways/openclaw/overlay.jsonc pins that package in packageOverrides.openclaw. Transitive workarounds use packageOverrides.pnpm, and the rebuilt image must be inspected before calling that workaround active.
 
-	Use agent-vm init --openclaw-agents sun,shravan to scaffold declared same-zone managed OpenClaw agents with /zone/agents/<id> workspaces. Keep OpenClaw agents.list, zones[].agents, and Tool Portal/MCP Portal bindings aligned before validation. For OpenClaw provider auth, gateway.authLogin.defaultAgent may own the shared profile store; use gateway.authProfilesByAgent only when agents intentionally need separate prebuilt auth profile files.
+	Use agent-vm init --openclaw-agents sun,shravan to scaffold declared same-zone managed OpenClaw agents with /zone/agents/<id> workspaces. Keep OpenClaw agents.list, zones[].agents, Tool Portal agent assignments, and the MCP provider catalog aligned before validation. For OpenClaw provider auth, gateway.authLogin.defaultAgent may own the shared profile store; use gateway.authProfilesByAgent only when agents intentionally need separate prebuilt auth profile files.
 
 	Run agent-vm validate after editing OpenClaw config or system config. Validate owns static schema and policy shape, including removed fields and WebSocket upgrade policy. Run agent-vm doctor after rebuilding or starting the deployment to check runtime host readiness, plugin paths, memory slots, workspace access, sandbox plugin tools, and configured auth profile material.
 	`,
@@ -319,9 +328,11 @@ Agent-vm scaffolds OpenClaw defaults that make the deployment usable without han
 			content: generatedPage(
 				'MCP Portal',
 				`
-MCP Portal is a scoped backend facade over deployment-owned upstream MCP servers. Managed OpenClaw exposes Tool Portal native tools in the gateway VM; external MCP clients may still use mcp-portal mcp-proxy serve.
+Managed Gateway Tool Portal, standalone Tool Portal, and standalone MCP Portal are separate operating surfaces. Managed OpenClaw exposes Tool Portal native tools in the Gateway VM. External consumers may use explicitly configured standalone Tool Portal entrypoints or the separate mcp-portal mcp-proxy serve command.
 
-Tool Portal is the model-visible cross-backend contract layer for managed OpenClaw. It composes MCP providers, controller host actions, and future backend kinds behind one capability vocabulary. MCP Portal remains the MCP-provider backend and standalone proxy surface, not the managed OpenClaw plugin identity.
+Managed Gateway boot starts one common Tool Portal service process beside the selected OpenClaw or Hermes framework process. Each thin framework integration authenticates its native agent/profile and uses one GatewayRuntimeClient over the private UDS. ToolPortalService owns policy, controller bindings, per-agent strict SSH, active uses, and Sandbox operations; the integrations never receive lease ids or SSH material.
+
+Tool Portal is the model-visible cross-backend contract layer for managed OpenClaw and Hermes. It composes MCP providers, controller host actions, and Tool VM runners behind one capability vocabulary. Its managed config pair is mcp.config.jsonc plus tool-portal.config.jsonc. Standalone Tool Portal uses tool-portal.config.jsonc with mode standalone and explicitly configured HTTP/MCP/stdio entrypoints. Standalone MCP Portal is a separate product that loads mcp.config.jsonc plus mcp-portal.config.jsonc. Managed Gateway does not load mcp-portal.config.jsonc or use standalone bearer/HMAC policy as managed authority, and it exposes no Tool Portal HTTP/MCP/stdio listener or public ingress.
 
 		Agents should use progressive disclosure:
 		1. tool_portal_list with requests[] for allowed capabilities and compact summaries.
@@ -329,9 +340,13 @@ Tool Portal is the model-visible cross-backend contract layer for managed OpenCl
 		3. tool_portal_describe with requests[] for full JSON Schema and optional TypeScript/Zod helpers.
 		4. tool_portal_call with calls[] to call authorized capabilities by namespace + name after seeing the schema.
 
+	The Capability API above is distinct from the managed-only SSH Sandbox API. Capability calls select namespace + name and apply catalog, call, approval, and backend policy. OpenClaw SandboxBackend and Hermes BaseEnvironment use GatewayRuntimeClient.sandbox for direct authenticated environment, shell, filesystem, process, stream, and terminal operations. Both paths may use the same current agent binding and service-owned SSH connection only after their distinct admission.
+
 	All portal responses are { ok, items, diagnostics? }. Each item has id and status. Successful items use { status: "ok", value }; failed items use { status: "error", error }.
 
-		Each agent receives a named MCP profile in mcp-portal.config.jsonc. mcp.config.jsonc owns the upstream MCP providers; mcp-portal.config.jsonc owns agent profile assignments and MCP namespace policies. Agent-vm projects those MCP policies into a generated Tool Portal effective config for managed OpenClaw. Each profile is a complete policy; profiles do not inherit from or merge with other profiles. Namespace exposure defaults to deny-all unless config enables namespaces. Each namespace uses selector policies: tools.allow / tools.deny for visibility, calls.withoutApproval for direct managed OpenClaw calls, and calls.requiresApproval for standalone MCP Portal approval policy. Managed OpenClaw rejects calls.requiresApproval during effective config materialization in this cutover. Denied tools do not enter the agent's catalog or search index.
+		For Managed Gateway, mcp.config.jsonc owns upstream MCP providers and tool-portal.config.jsonc owns agent assignments plus complete profiles. Profiles do not inherit from or merge with other profiles. Each profile declares namespaces, and every namespace must select an explicit backend.kind: mcp_provider, controller_host_action, or tool_vm_runner. Each namespace carries tools.allow / tools.deny visibility selectors plus calls.withoutApproval and calls.requiresApproval call selectors. Namespaces absent from the profile are denied. The controller approval surface handles managed calls.requiresApproval; calls.withoutApproval permits direct managed calls. Any managed namespace that effectively admits a tool through calls.requiresApproval requires zone approvalAccess. Static validation and Gateway preflight fail closed when approvalAccess is absent; agent-vm does not infer a default. Denied tools do not enter the agent's catalog or search index.
+
+		For standalone or external MCP Portal, mcp.config.jsonc owns upstream MCP providers and mcp-portal.config.jsonc owns agent assignments, complete MCP profiles, call policy, and optional external proxy authentication. Bearer credentials, HMAC approval tokens, credentialVersion, and externalAuth belong only to this standalone surface.
 
 	Authored config is JSONC. $schema points at local config/schemas/*.schema.json files generated by agent-vm init. schemaVersion is the runtime compatibility gate.
 
@@ -341,9 +356,9 @@ Tool Portal is the model-visible cross-backend contract layer for managed OpenCl
 
 	Store MCP provider secrets as raw values. Omit \`format\` when the upstream expects the raw value. Use \`format: { "kind": "bearer" }\` when an upstream expects Bearer presentation, or \`format: { "kind": "prefix", "prefix": "Token" }\` for provider-specific schemes. Prefix presentation inserts exactly one ASCII space between the prefix and the raw secret or mediated placeholder, and the prefix itself must not contain whitespace.
 
-		Run agent-vm validate --mcp-live after editing MCP providers or MCP Portal profiles. Static validate checks schema and Tool Portal materialization. Live validate starts referenced MCP providers/namespaces, runs tools/list, and reports namespace, transport, phase, and hints for failures. Providers that are configured but not referenced by an active MCP Portal profile are outside that validation run.
+		Run agent-vm validate --mcp-live after editing managed MCP providers or Tool Portal profiles. Static validate checks the managed mcp.config.jsonc and tool-portal.config.jsonc schema and materialization. Live validate follows only active Tool Portal namespaces whose backend.kind is mcp_provider, starts their referenced MCP providers, runs tools/list, and reports provider namespace, transport, phase, and hints for failures. Providers configured in mcp.config.jsonc but not referenced by an active mcp_provider namespace are outside that validation run.
 
-	Read-only/destructive annotations are trusted only for configured namespaces. Managed OpenClaw capabilities must be explicitly allowed through calls.withoutApproval in this cutover; calls.requiresApproval is rejected until a Tool Portal approval bridge exists.
+	Read-only/destructive annotations are trusted only for configured MCP-provider namespaces. Managed namespaces must be explicitly selected through calls.withoutApproval or calls.requiresApproval.
 	Channel-native approval settings, such as Discord approver user IDs, remain deployment-owned.
 
 	MCP provider URLs must use http or https. Loopback and private-network upstream URLs are allowed because authored config is trusted deployment config and sidecar/local MCP providers are a supported shape. Do not import untrusted MCP provider config directly; if config trust changes, add an explicit per-provider network allowlist before accepting private-network targets.
@@ -376,6 +391,7 @@ For Tool VM-reaching mediated secrets, agentAccess is required and the zone must
 
 Zones scaffold controller SSH adminAccess as mode: "none" because secret-backed admin SSH requires an operator-created secret. To protect controller-mediated SSH, create the secret first, then change zones[].adminAccess to mode: "secret" with a real secret reference.
 Use agent-vm controller ssh --zone <zoneId> for a gateway admin shell. OpenClaw admin commands source the token named by gateway.controlAuth.secret.
+Hermes admin shells load HERMES_HOME, the Hermes CLI path, and Gondolin CA bundle variables without loading raw framework secrets. Run native commands such as hermes auth add <provider> inside that shell.
 Use agent-vm controller ssh --zone <zoneId> --all-secrets only when the shell must inspect or debug every raw gateway environment secret.
 Controller SSH opens an interactive shell only. Do not use it as a one-shot command runner, and do not try to print raw SSH commands from the CLI.
 Use agent-vm auth 1password <op-ref-or-url> --config ${options.systemConfigPath} to read a 1Password service-account token with op read and store it in the configured macOS Keychain service/account. Omit the ref/url only when pasting the token interactively.
@@ -411,7 +427,7 @@ Managed OpenClaw zones may declare multiple trusted agents in zones[].agents. Us
 		{
 			relativePath: 'docs/manual/channels.md',
 			content: generatedPage(
-				'OpenClaw Channels',
+				'Gateway Channels',
 				`
 Discord is configured by the deployment, not by agent-vm defaults.
 
@@ -433,6 +449,14 @@ Discord recipe:
 - Pin @openclaw/discord in vm-images/gateways/openclaw/overlay.jsonc only when the deployment needs to override the managed default version.
 - Do not add runtimeAuthHints to OpenClaw zones; they are worker gateway runtime instructions only.
 - Tool VM secrets must use injection http-mediation and declare agentAccess as "all" or a non-empty list of declared zone agent ids. source environment is allowed only as the controller-side source for mediated Tool VM secrets; never use injection env for Tool VM audience.
+
+Managed Hermes profile secrets:
+- Give every declared agent matching entries in gateway.profilesByAgent and gateway.profileSecretProjectionsByAgent.
+- Map the DISCORD_BOT_TOKEN target to one distinct injection env, audience gateway zone secret per agent.
+- Map other profile credential targets to Gateway-reaching http-mediation sources; Hermes receives only their opaque placeholders.
+- Agent VM writes complete target maps only to the exact memory-backed profiles/<profile>/.env files before stock Hermes starts.
+- Keep common non-secret policy in the dedicated gateway.config config.yaml directory mounted read-only at /etc/hermes/config.yaml. HERMES_MANAGED_DIR remains unset; root/default and named profile homes remain direct stateDir RealFS.
+- Durable root/profile .env and secret-bearing native Hermes config are rejected. Remove known legacy files explicitly; do not add migration or copy-back behavior.
 `,
 			),
 		},
@@ -441,32 +465,26 @@ Discord recipe:
 			content: generatedPage(
 				'Runtime Paths',
 				`
-OpenClaw Tool VMs run commands in the lease workdir returned by the controller. For normal OpenClaw sandbox leases that workdir is /workspace.
-/workspace is the Tool VM guest RealFS mount. It is backed by the validated workMountDir selected by OpenClaw and resolved by the controller to hostWorkMountDir.
-/work is Tool VM-local rootfs/COW scratch and is deleted with the Tool VM.
-/agent-vm contains generated agent-vm runtime instructions.
+Managed OpenClaw Tool VMs run commands in rootfs/COW /work by default. /work is disposable execution space and is deleted with the Tool VM.
+/workspace is the current agent's filtered durable RealFS workspace selected by the controller from stable agent identity. It is the only durable agent workspace exposed to that Tool VM.
+/gitdirs/workspace.git is present only when the current agent enables zones[].agents[].workspaceGit. No parent Git directory or sibling agent Git database is exposed.
+Managed Tool VMs do not currently expose a generic /agent-vm path. Worker task VMs retain their separately owned generated /agent-vm inputs.
 /state is controller/gateway plumbing, not the primary place for agent docs.
 worker repo edits live under /work/repos inside Worker gateway task VMs.
 Worker gateway task VMs use /work/tmp for temporary files and /work/cache for disposable package-manager cache.
-OpenClaw gateway VMs use /work/tmp and /work/cache for disposable runtime work; persistent zone files live at /zone and are backed by gateway.zoneFilesDir.
+OpenClaw gateway VMs use /work/tmp and /work/cache for disposable runtime work; persistent zone files live at /zone and are backed by the derived zoneFilesDir.
 
-The OpenClaw plugin may accept Tool VM guest cwd intent such as \`/workspace\`, \`/workspace/<child>\`, \`/work\`, or \`/work/<child>\`. The plugin translates that intent before it enters the controller-owned lease flow.
-The controller-owned lease flow is stricter: it accepts only controller-supported OpenClaw gateway paths such as \`/zone/<child>\` or \`/home/openclaw/.openclaw/state/sandboxes/<child>\`. Direct Tool VM guest paths such as \`/workspace\` and \`/work\` are rejected at the controller boundary.
+OpenClaw SDK compatibility note: OpenClaw may call the agent's Gateway path workspaceDir. In managed mode it must identify the configured agent workspace under /zone/agents/<agentId>. The plugin validates that native origin, translates it immediately to stable agent identity, and never sends the Gateway path or a host path as Tool VM storage authority.
+Controller startup acquires <controllerRuntimeDir>/vm-ownership/controller-ownership.lock before secret resolution or VM reconciliation and holds it until shutdown completes. A second controller or offline cleanup process cannot enter destructive reconciliation while that lock is held.
+The lock is mutual exclusion, not destruction evidence. The controller persists schema-v2 Tool records at controllerStateDir/zones/<zoneId>/tool-leases/<recordId>.json and the Gateway record at controllerStateDir/zones/<zoneId>/gateway-runtime.json. They bind the deployment and Gateway parent to exact VM id, pid, and process-start identity cleanup evidence. Controller restart adopts no VM: it destroys verified Tool runners before their Gateway, then starts a fresh tree. Unknown or mismatched identity preserves the record and refuses replacement or Tool slot reuse. HTTP health and telemetry remain diagnostic only.
 
-workMountDir is a gateway VM path under /zone or /home/openclaw/.openclaw/state/sandboxes. The roots themselves are validation boundaries; leases must choose concrete child paths.
-hostWorkMountDir is the host realpath after controller validation.
-OpenClaw SDK compatibility note: OpenClaw may call the selected sandbox path workspaceDir. The agent-vm plugin translates that external SDK name to controller workMountDir.
-Controller startup acquires <runtimeDir>/vm-ownership/controller-ownership.lock before secret resolution or VM reconciliation and holds it until shutdown completes. A second controller or offline cleanup process cannot enter destructive reconciliation while that lock is held.
-The lock is mutual exclusion, not destruction evidence. The controller persists schema-v2 Tool records at <stateDir>/tool-leases/<recordId>.json and the Gateway record at <stateDir>/gateway-runtime.json. They bind the deployment and Gateway parent to exact VM id, pid, and process-start identity cleanup evidence. Controller restart adopts no VM: it destroys verified Tool runners before their Gateway, then starts a fresh tree. Unknown or mismatched identity preserves the record and refuses replacement or Tool slot reuse. HTTP health and telemetry remain diagnostic only.
-
-When gateway.zoneGit is configured:
-- Host zone files stay in gateway.zoneFilesDir.
-- Host Git metadata lives in runtimeDir/zones/<zoneId>/zone-git/zone-files.git.
-- Gateway VM zone files stay mounted at /zone.
-- Tool VMs mount /zone and /agent-vm/zone-git instead of /workspace.
-- Tool VM workdir is the requested /zone child path, such as /zone/agents/shravan.
-- Backups include current zone files and exclude runtimeDir Git metadata.
-- Backups require a clean and pushed zone Git repo.
+Per-agent workspace Git:
+- Configure workspaceGit on the owning zones[].agents[] entry; absence disables Git.
+- mode=local creates an isolated workspace Git database without a push capability.
+- mode=remote creates the same isolated database and exposes the controller-owned workspace_git_push Tool Portal action for that agent.
+- Tool VM Git SSH remains read-only: fetch is allowed and direct push is denied.
+- The controller uses host-only HTTPS credentials, expected-head/CAS checks, and rejects a push to the configured default branch.
+- Backups include durable workspace files and exclude zoneRuntimeDir Git metadata.
 `,
 			),
 		},
@@ -477,7 +495,7 @@ When gateway.zoneGit is configured:
 				`
 Managed OpenClaw gateway zones may declare multiple trusted agents. Use scope=agent so OpenClaw resolves each agent to its stable work mount; agent-vm still keys Tool VM lease identity by zone and agent id.
 
-Per-agent auth isolation works by using agent-vm auth codex-harness for native Codex CLI auth, gateway.authProfilesByAgent for intentionally separate prebuilt OpenClaw auth profiles, and first-boot files through agentSandboxSeeds. Seeds target paths relative to the agent sandbox backing directory exposed at /workspace in Tool VMs and do not overwrite existing files.
+Per-agent auth isolation works by using agent-vm auth codex-harness for native Codex CLI auth and gateway.authProfilesByAgent for intentionally separate prebuilt OpenClaw auth profiles. Agent-authored durable files belong under zoneFilesDir/agents/<agentId> and appear through the selected filtered /workspace projection; framework-private auth state remains in the Gateway and is not projected into Tool VMs.
 Shared OpenClaw provider auth works through gateway.authLogin. agent-vm auth openclaw login <provider> --all-configured-profiles logs in each configured gateway.authLogin.providers.<provider>.profileIds entry for gateway.authLogin.defaultAgent and verifies those profile IDs afterward. Use --dry-run before a refresh when you want to inspect the target agent and profile list.
 Native Codex-runtime agents use codex-harness --all-agents to run one device-auth session per agent listed in the zone's system config. Use --agent <agentId> for a one-off login outside that configured list.
 
@@ -485,11 +503,11 @@ OpenClaw tool allowlists are a policy layer. They do not remove binaries from th
 
 Binary-level isolation requires different Tool VM images. Use agentToolVmProfiles for per-agent image differences inside one managed OpenClaw zone when gateway lifecycle can be shared. Use separate zones when the gateway VM, channel, secret, or zone-files boundary must also be separate.
 
-Git workflow with gateway.zoneGit:
-- Agents may inspect, stage, and commit workspace changes with git status, git add, and git commit.
-- Do not run raw git push. Tool VMs do not have GitHub credentials.
-- After committing, ask Tool Portal for the controller-owned zone Git push capability.
-- If the controller reports divergence or rejection, stop and report the exact message.
+Git workflow with zones[].agents[].workspaceGit:
+- Agents may inspect, switch branches, merge, stage, and commit their own /workspace changes with normal Git commands.
+- Do not run raw git push. Tool VM Git SSH is read-only and Tool VMs do not receive GitHub credentials.
+- Remote mode exposes the controller-owned workspace_git_push Tool Portal action for the configured branch; local mode and absent workspaceGit expose no push action.
+- The controller rejects the configured default branch. If it reports divergence, expected-head mismatch, or another rejection, stop and report the exact message.
 `,
 			),
 		},

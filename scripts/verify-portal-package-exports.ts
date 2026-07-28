@@ -1,8 +1,10 @@
 /// <reference types="node" />
 
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+
+import ts from 'typescript';
 
 const requiredPortalPackageExports = [
 	'@agent-vm/agent-portal-sdk',
@@ -10,9 +12,14 @@ const requiredPortalPackageExports = [
 	'@agent-vm/agent-portal-sdk/approval-surface',
 	'@agent-vm/agent-portal-sdk/artifact-surface',
 	'@agent-vm/agent-portal-sdk/capability-description-surface',
+	'@agent-vm/agent-portal-sdk/contracts',
+	'@agent-vm/agent-portal-sdk/gateway-runtime-client',
 	'@agent-vm/agent-portal-sdk/portal-call-surface',
 	'@agent-vm/agent-portal-sdk/portal-event-surface',
+	'@agent-vm/agent-portal-sdk/portable-contracts',
 	'@agent-vm/agent-portal-sdk/testing',
+	'@agent-vm/agent-portal-sdk/tool-portal-mcp-client',
+	'@agent-vm/agent-portal-sdk/tool-portal-mcp-client/node-transport',
 	'@agent-vm/controller-execution-contracts',
 	'@agent-vm/controller-execution-contracts/controller-dispatch-boundary',
 	'@agent-vm/controller-execution-contracts/controller-host-action-boundary',
@@ -20,6 +27,7 @@ const requiredPortalPackageExports = [
 	'@agent-vm/controller-execution-contracts/testing',
 	'@agent-vm/control-protocol-contracts',
 	'@agent-vm/gateway-control-contracts',
+	'@agent-vm/gateway-runtime',
 	'@agent-vm/mcp-portal',
 	'@agent-vm/mcp-portal/cli',
 	'@agent-vm/mcp-portal/core',
@@ -31,7 +39,7 @@ const requiredPortalPackageExports = [
 	'@agent-vm/mcp-portal/portal-auth/hmac-token',
 	'@agent-vm/mcp-portal/testing/fake-upstream-mcp-server',
 	'@agent-vm/tool-portal',
-	'@agent-vm/tool-portal/in-process-entrypoint',
+	'@agent-vm/tool-portal/standalone-entrypoint',
 	'@agent-vm/tool-portal/testing',
 	'@agent-vm/worker-control-contracts',
 ] as const;
@@ -80,6 +88,22 @@ const requiredPortalNamedExports = {
 		'ToolSchemaHintSchema',
 		'ToolSchemaSummarySchema',
 	],
+	'@agent-vm/agent-portal-sdk/contracts': [
+		'GatewayRuntimeFrameworkIdentitySchema',
+		'GatewayRuntimeProjectionCohortDigestSchema',
+		'GatewayRuntimeTrustedInvocationPrincipalSchema',
+		'ManagedAgentProjectionSchema',
+	],
+	'@agent-vm/agent-portal-sdk/gateway-runtime-client': [
+		'GatewayRuntimeClient',
+		'GatewayRuntimeFrameDecoder',
+		'GatewayRuntimeProtocolError',
+		'GatewayRuntimeSocketReadFlow',
+		'createGatewayRuntimeChunkSenderState',
+		'createNodeGatewayRuntimeTransportFactory',
+		'encodeGatewayRuntimeFrame',
+		'reduceGatewayRuntimeChunkSenderState',
+	],
 	'@agent-vm/agent-portal-sdk/portal-call-surface': [
 		'PortalCallRequestSchema',
 		'PortalCallResultSchema',
@@ -100,9 +124,20 @@ const requiredPortalNamedExports = {
 		'PortalProgressEventSchema',
 		'SafeDiagnosticSchema',
 	],
+	'@agent-vm/agent-portal-sdk/portable-contracts': [
+		'PORTABLE_CONTRACT_ADAPTERS',
+		'PORTABLE_REFINEMENT_DESCRIPTORS',
+		'PORTABLE_REFINEMENT_IDENTITIES',
+		'assertPortableContractSchemaIsExportable',
+		'encodeCanonicalJson',
+	],
 	'@agent-vm/agent-portal-sdk/testing': [
 		'createPortalCallRequestFixture',
 		'createPortalCallResultFixture',
+	],
+	'@agent-vm/agent-portal-sdk/tool-portal-mcp-client': ['ToolPortalMcpClient'],
+	'@agent-vm/agent-portal-sdk/tool-portal-mcp-client/node-transport': [
+		'createNodeToolPortalMcpTransport',
 	],
 	'@agent-vm/controller-execution-contracts': [
 		'ArtifactPolicySchema',
@@ -147,6 +182,8 @@ const requiredPortalNamedExports = {
 		'GatewayControlRpcCommandResultMessageSchema',
 		'GatewayControlRpcMessageSchema',
 		'GatewayControlToolPortalControllerHostActionPayloadSchema',
+		'GatewayRuntimePortalSemanticSnapshotSchema',
+		'GatewayRuntimeTrustedInvocationContextSchema',
 		'buildGatewayControlJsonSchemas',
 		'createGatewayControlAdmissionScheduler',
 		'createGatewayControlAdmissionExecutor',
@@ -154,6 +191,10 @@ const requiredPortalNamedExports = {
 		'gatewayControlCommandExecutionTimeoutMsByOperation',
 		'gatewayControlDeliveryPolicyByKind',
 		'gatewayControlDeliveryPolicyByOperation',
+	],
+	'@agent-vm/gateway-runtime': [
+		'GATEWAY_RUNTIME_AUTHENTICATED_PRIVATE_UDS_OPERATION_GROUPS',
+		'createGatewayRuntimeToolPortalComposition',
 	],
 	'@agent-vm/mcp-portal': ['UpstreamMcpError', 'createUpstreamMcpClientRuntime'],
 	'@agent-vm/mcp-portal/cli': ['buildProfilePolicyMaps', 'parsePortalServerCliArgs'],
@@ -190,8 +231,7 @@ const requiredPortalNamedExports = {
 		'createFakeUpstreamTools',
 		'startFakeUpstreamMcpServer',
 	],
-	'@agent-vm/tool-portal': ['createManagedToolPortalInProcessRuntime'],
-	'@agent-vm/tool-portal/in-process-entrypoint': ['createManagedToolPortalInProcessRuntime'],
+	'@agent-vm/tool-portal': ['createToolPortalMcpProviderBackendPort', 'createToolPortalService'],
 	'@agent-vm/tool-portal/testing': ['createCliAllowanceFixture', 'createToolPortalConfigFixture'],
 	'@agent-vm/worker-control-contracts': [
 		'WorkerControlDomainSchema',
@@ -210,13 +250,18 @@ const requiredPortalNamedExportSpecifiers = [
 	'@agent-vm/agent-portal-sdk/approval-surface',
 	'@agent-vm/agent-portal-sdk/artifact-surface',
 	'@agent-vm/agent-portal-sdk/capability-description-surface',
+	'@agent-vm/agent-portal-sdk/gateway-runtime-client',
 	'@agent-vm/agent-portal-sdk/portal-call-surface',
 	'@agent-vm/agent-portal-sdk/portal-event-surface',
+	'@agent-vm/agent-portal-sdk/portable-contracts',
 	'@agent-vm/agent-portal-sdk/testing',
+	'@agent-vm/agent-portal-sdk/tool-portal-mcp-client',
+	'@agent-vm/agent-portal-sdk/tool-portal-mcp-client/node-transport',
 	'@agent-vm/controller-execution-contracts',
 	'@agent-vm/controller-execution-contracts/testing',
 	'@agent-vm/control-protocol-contracts',
 	'@agent-vm/gateway-control-contracts',
+	'@agent-vm/gateway-runtime',
 	'@agent-vm/mcp-portal',
 	'@agent-vm/mcp-portal/cli',
 	'@agent-vm/mcp-portal/core',
@@ -228,7 +273,6 @@ const requiredPortalNamedExportSpecifiers = [
 	'@agent-vm/mcp-portal/portal-auth/hmac-token',
 	'@agent-vm/mcp-portal/testing/fake-upstream-mcp-server',
 	'@agent-vm/tool-portal',
-	'@agent-vm/tool-portal/in-process-entrypoint',
 	'@agent-vm/tool-portal/testing',
 	'@agent-vm/worker-control-contracts',
 ] as const satisfies readonly (keyof typeof requiredPortalNamedExports)[];
@@ -250,6 +294,23 @@ const deferredPortalPackageExports = [
 	'@agent-vm/tool-portal/http-api',
 	'@agent-vm/tool-portal/mcp-proxy',
 ] as const;
+
+const forbiddenPortalPackageExports = [
+	'@agent-vm/gateway-runtime/flow-control',
+	'@agent-vm/gateway-runtime/protocol',
+	'@agent-vm/tool-portal/in-process-entrypoint',
+] as const;
+
+const forbiddenPortalNamedExports = {
+	'@agent-vm/tool-portal': [
+		'createManagedToolPortalInProcessRuntime',
+		'createToolPortalInProcessEntryPoint',
+	],
+} as const;
+
+const forbiddenPortalNamedExportSpecifiers = [
+	'@agent-vm/tool-portal',
+] as const satisfies readonly (keyof typeof forbiddenPortalNamedExports)[];
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -287,6 +348,13 @@ function exportImportPathFromValue(value: unknown): string | undefined {
 	return undefined;
 }
 
+function exportTypesPathFromValue(value: unknown): string | undefined {
+	if (isRecord(value) && typeof value.types === 'string') {
+		return value.types;
+	}
+	return undefined;
+}
+
 async function loadPackageJson(packageName: string): Promise<Readonly<Record<string, unknown>>> {
 	const packageJsonPath = path.join(repositoryRoot, 'packages', packageName, 'package.json');
 	const parsedPackageJson: unknown = JSON.parse(await readFile(packageJsonPath, 'utf8'));
@@ -296,7 +364,10 @@ async function loadPackageJson(packageName: string): Promise<Readonly<Record<str
 	return parsedPackageJson;
 }
 
-async function requiredPackageExportUrlForSpecifier(specifier: string): Promise<string> {
+async function requiredPackageExportTargetsForSpecifier(specifier: string): Promise<{
+	readonly importUrl: string;
+	readonly typesPath: string;
+}> {
 	const { packageName, subpath } = packageNameAndSubpathForSpecifier(specifier);
 	const packageJson = await loadPackageJson(packageName);
 	if (!isRecord(packageJson.exports)) {
@@ -316,19 +387,96 @@ async function requiredPackageExportUrlForSpecifier(specifier: string): Promise<
 			`Portal export ${specifier} import target ${importPath} is not a built dist JavaScript export`,
 		);
 	}
-	return pathToFileURL(path.resolve(repositoryRoot, 'packages', packageName, importPath)).href;
+	const typesPath = exportTypesPathFromValue(exportValue);
+	if (typesPath === undefined) {
+		throw new Error(`Portal export ${specifier} has no types target in package exports`);
+	}
+	if (!typesPath.startsWith('./dist/') || !typesPath.endsWith('.d.ts')) {
+		throw new Error(
+			`Portal export ${specifier} types target ${typesPath} is not a built dist declaration export`,
+		);
+	}
+	const packageRootPath = path.resolve(repositoryRoot, 'packages', packageName);
+	const resolvedTypesPath = path.resolve(packageRootPath, typesPath);
+	const relativeTypesPath = path.relative(packageRootPath, resolvedTypesPath);
+	if (relativeTypesPath.startsWith('..') || path.isAbsolute(relativeTypesPath)) {
+		throw new Error(`Portal export ${specifier} types target escapes its package root`);
+	}
+	const typesFileStats = await stat(resolvedTypesPath);
+	if (!typesFileStats.isFile()) {
+		throw new Error(`Portal export ${specifier} types target is not a regular file: ${typesPath}`);
+	}
+	return {
+		importUrl: pathToFileURL(path.resolve(packageRootPath, importPath)).href,
+		typesPath,
+	};
 }
 
 async function importRequiredPackageExport(
 	specifier: string,
 ): Promise<Readonly<Record<string, unknown>>> {
 	const moduleExports: unknown = await import(
-		await requiredPackageExportUrlForSpecifier(specifier)
+		(await requiredPackageExportTargetsForSpecifier(specifier)).importUrl
 	);
 	if (!isRecord(moduleExports)) {
 		throw new Error(`Portal export ${specifier} did not load a module namespace object`);
 	}
 	return moduleExports;
+}
+
+async function assertAgentPortalSdkRootTypesMatchPackageTypes(): Promise<void> {
+	const packageJson = await loadPackageJson('agent-portal-sdk');
+	if (!isRecord(packageJson.exports)) {
+		throw new Error('Agent Portal SDK package has no exports map');
+	}
+	const rootTypesPath = exportTypesPathFromValue(packageJson.exports['.']);
+	if (rootTypesPath === undefined || packageJson.types !== rootTypesPath) {
+		throw new Error(
+			'Agent Portal SDK package types field must match the root package export types target',
+		);
+	}
+}
+
+function assertBuiltDeclarationConsumerCompiles(): void {
+	const configPath = path.join(
+		repositoryRoot,
+		'packages',
+		'agent-portal-sdk',
+		'type-tests',
+		'built-declaration-consumer',
+		'tsconfig.json',
+	);
+	const configFile = ts.readConfigFile(configPath, (filePath) => ts.sys.readFile(filePath));
+	const diagnostics: ts.Diagnostic[] = [];
+	if (configFile.error !== undefined) {
+		diagnostics.push(configFile.error);
+	} else {
+		const parsedConfig = ts.parseJsonConfigFileContent(
+			configFile.config,
+			ts.sys,
+			path.dirname(configPath),
+			undefined,
+			configPath,
+		);
+		diagnostics.push(...parsedConfig.errors);
+		if (parsedConfig.errors.length === 0) {
+			const program = ts.createProgram(parsedConfig.fileNames, parsedConfig.options);
+			diagnostics.push(...ts.getPreEmitDiagnostics(program));
+		}
+	}
+	if (diagnostics.length === 0) {
+		return;
+	}
+	throw new Error(
+		`Built Agent Portal SDK declaration consumer failed to compile:\n${ts.formatDiagnostics(
+			diagnostics,
+			{
+				getCanonicalFileName: (fileName) => fileName,
+				getCurrentDirectory: () => repositoryRoot,
+				getNewLine: () => '\n',
+			},
+		)}`,
+	);
 }
 
 async function assertRequiredExportResolves(specifier: string): Promise<void> {
@@ -348,6 +496,21 @@ async function assertRequiredNamedExportsResolve(
 		);
 	}
 	return requiredPortalNamedExports[specifier].length;
+}
+
+async function assertForbiddenNamedExportsAreAbsent(
+	specifier: keyof typeof forbiddenPortalNamedExports,
+): Promise<number> {
+	const moduleExports = await importRequiredPackageExport(specifier);
+	const presentNames = forbiddenPortalNamedExports[specifier].filter((exportName) =>
+		Object.hasOwn(moduleExports, exportName),
+	);
+	if (presentNames.length > 0) {
+		throw new Error(
+			`Portal export ${specifier} retains forbidden named exports: ${presentNames.join(', ')}`,
+		);
+	}
+	return forbiddenPortalNamedExports[specifier].length;
 }
 
 async function assertRequiredExportSmokeCallsPass(
@@ -400,6 +563,15 @@ async function main(): Promise<void> {
 		(totalCount, exportCount) => totalCount + exportCount,
 		0,
 	);
+	const forbiddenNamedExportCounts = await Promise.all(
+		forbiddenPortalNamedExportSpecifiers.map((specifier) =>
+			assertForbiddenNamedExportsAreAbsent(specifier),
+		),
+	);
+	const forbiddenNamedExportCount = forbiddenNamedExportCounts.reduce(
+		(totalCount, exportCount) => totalCount + exportCount,
+		0,
+	);
 	const smokeCallCounts = await Promise.all(
 		requiredPortalExportSmokeSpecifiers.map((specifier) =>
 			assertRequiredExportSmokeCallsPass(specifier),
@@ -412,8 +584,13 @@ async function main(): Promise<void> {
 	await Promise.all(
 		deferredPortalPackageExports.map((specifier) => assertDeferredExportIsAbsent(specifier)),
 	);
+	await Promise.all(
+		forbiddenPortalPackageExports.map((specifier) => assertDeferredExportIsAbsent(specifier)),
+	);
+	await assertAgentPortalSdkRootTypesMatchPackageTypes();
+	assertBuiltDeclarationConsumerCompiles();
 	process.stdout.write(
-		`portal package exports: ${String(requiredPortalPackageExports.length)} required imports resolved, ${String(namedExportCount)} named exports present, ${String(smokeCallCount)} smoke calls passed, ${String(deferredPortalPackageExports.length)} deferred imports absent\n`,
+		`portal package exports: ${String(requiredPortalPackageExports.length)} required imports and declaration targets resolved, ${String(namedExportCount)} named exports present, ${String(forbiddenNamedExportCount)} forbidden named exports absent, ${String(smokeCallCount)} smoke calls passed, built declaration consumer compiled, ${String(deferredPortalPackageExports.length)} deferred imports absent, ${String(forbiddenPortalPackageExports.length)} forbidden compatibility imports absent\n`,
 	);
 }
 

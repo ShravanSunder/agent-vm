@@ -491,13 +491,12 @@ OpenClaw Gateway runs a long-lived gateway VM that hosts an interactive chat age
 
 The gateway VM boots at controller startup and stays running. Tool VMs are
 created on demand via the private gateway control session -- each gets a TCP
-slot, SSH access, and a lease-owned `/workspace` mount for non-zone-git RealFS
-work. The lease `workMountDir` is a gateway path under a concrete child of
-`/zone` or `/home/openclaw/.openclaw/state/sandboxes`; the controller resolves
-it to the host directory backing the Tool VM lease workdir. `/work` stays
-VM-local rootfs/COW scratch. Auth profiles and the effective OpenClaw config are
-written to the host-side state directory before the VM boots via
-`prepareHostState()`. The gateway reaches tool VMs via synthetic DNS
+slot, SSH access, a filtered durable `/workspace`, rootfs/COW `/work`, an
+optional selected `/gitdirs/workspace.git`, and reviewed read-only `/agent-vm`
+inputs. Stable agent identity and trusted controller configuration select those
+capabilities; lease callers do not provide host mount paths. Auth profiles and
+the effective OpenClaw config are written to the host-side state directory
+before the VM boots via `prepareHostState()`. The gateway reaches tool VMs via synthetic DNS
 (`tool-{n}.vm.host:22`). Gateway/controller control traffic uses Socket.IO over
 Gondolin's HTTP upgrade bridge.
 
@@ -681,11 +680,9 @@ directory.
 ```
   system.json
   |-- host              Controller port, project namespace, secrets provider, GitHub token
-  |-- cacheDir          Rebuildable cache directory; not included in zone backups
-  |-- runtimeDir        Active worker runtime dir; not included in zone backups
-  |-- zones[].gateway.zoneFilesDir
-  |                      OpenClaw zone files; RealFS at /zone and included in backups
-  |                      Tool VM leases may select concrete child paths under /zone
+  |-- storageRootDir    Sole authored standard operational storage root
+  |                      Derives global cache/controller paths and each zone's
+  |                      state, zone-files, and runtime leaves
   |-- images            Build config paths for gateway and tool VM images
   |-- zones[]           Zone definitions: gateway type, resources, secrets, audience-scoped egress hosts
   |-- toolVmProfiles    Named Tool VM profiles (memory, cpus, image profile)
@@ -693,7 +690,7 @@ directory.
   |-- leaseIdleTtl      Optional lease idle TTL policy
 ```
 
-Each zone declares its `gateway.type` (`openclaw` or `worker`), resource
+Each zone declares its `gateway.type` (`openclaw`, `hermes`, or `worker`), resource
 limits, secret references, and audience-scoped outbound `egressHosts`.
 Gateway VMs receive `gateway | both` egress hosts and secrets; OpenClaw Tool
 VMs receive only `tool-vm | both` mediated secrets and egress hosts. OpenClaw
@@ -742,8 +739,8 @@ The system operates across three trust boundaries:
   |  |  |  ZONE 3: TOOL VM  (untrusted)                            |  |  |
   |  |  |                                                           |  |  |
   |  |  |  Ephemeral, per-lease. Runs LLM-generated code.           |  |  |
-  |  |  |  Has: /workspace mount (realfs), /work scratch, no net     |  |  |
-  |  |  |  Can: read/write /workspace, run arbitrary commands        |  |  |
+  |  |  |  Has: filtered /workspace, rootfs /work, no net            |  |  |
+  |  |  |  Can: edit its workspace, use /work, run commands          |  |  |
   |  |  |  Cannot: reach the internet, access secrets, persist      |  |  |
   |  |  +----------------------------------------------------------+  |  |
   |  +---------------------------------------------------------------+  |

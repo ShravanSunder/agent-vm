@@ -2,6 +2,7 @@ import { execa } from 'execa';
 import { z } from 'zod';
 
 import type { SystemConfig } from '../config/system-config.js';
+import { loadGatewayLifecycle } from '../gateway/gateway-lifecycle-loader.js';
 import {
 	type CliDependencies,
 	type CliIo,
@@ -11,10 +12,6 @@ import {
 	resolveControllerBaseUrl,
 } from './agent-vm-cli-support.js';
 import { formatZodError } from './format-zod-error.js';
-import {
-	wrapWithOpenClawAllSecretsShellEnvironment,
-	wrapWithOpenClawGatewayTokenShellEnvironment,
-} from './openclaw-shell-prefix.js';
 
 interface RunSshCommandOptions {
 	readonly dependencies: CliDependencies;
@@ -35,8 +32,6 @@ export const zoneSshAccessResponseSchema = z
 	.passthrough();
 
 export type ZoneSshAccessResponse = z.infer<typeof zoneSshAccessResponseSchema>;
-
-type SshSecretEnvRequest = 'gateway-token' | 'all-secrets';
 
 export async function resolveZoneAdminToken(options: {
 	readonly dependencies: Pick<
@@ -85,6 +80,13 @@ export async function runSshCommand(options: RunSshCommandOptions): Promise<void
 		throw new Error('--print is not supported for controller ssh.');
 	}
 	const zone = requireZone(options.systemConfig, readZoneFlag(restArguments));
+	const lifecycle = loadGatewayLifecycle(zone.gateway.type);
+	if (lifecycle.executionModel !== 'managed-gateway') {
+		throw new Error(
+			`controller ssh is not implemented for gateway type '${zone.gateway.type}'; use the Worker task APIs.`,
+		);
+	}
+	const interactiveSshSession = lifecycle.interactiveSsh.buildSession({ requestAllSecrets });
 	const adminToken = await resolveZoneAdminToken({
 		dependencies: options.dependencies,
 		systemConfig: options.systemConfig,
@@ -93,7 +95,7 @@ export async function runSshCommand(options: RunSshCommandOptions): Promise<void
 	const parsedSshResponse = zoneSshAccessResponseSchema.safeParse(
 		await controllerClient.enableZoneSsh(zone.id, {
 			...(adminToken ? { adminToken } : {}),
-			secretEnv: requestAllSecrets ? 'all-secrets' : 'gateway-token',
+			secretEnv: interactiveSshSession.secretEnvironment,
 		}),
 	);
 	if (!parsedSshResponse.success) {
@@ -107,17 +109,14 @@ export async function runSshCommand(options: RunSshCommandOptions): Promise<void
 	if (!sshResponse.host || !sshResponse.port) {
 		throw new Error('Controller returned incomplete SSH access details.');
 	}
-	const secretEnvEnabled = sshResponse.secretEnvEnabled === true;
-	if (!secretEnvEnabled) {
+	if (
+		interactiveSshSession.requireSecretEnvironmentEnabled &&
+		sshResponse.secretEnvEnabled !== true
+	) {
 		throw new Error(
 			'Controller did not enable OPENCLAW_GATEWAY_TOKEN for this SSH session. Check the zone gateway.ssh.secretEnv policy and configured OPENCLAW_GATEWAY_TOKEN secret.',
 		);
 	}
-	const secretEnvRequest: SshSecretEnvRequest = requestAllSecrets ? 'all-secrets' : 'gateway-token';
-	const remoteShellCommand =
-		secretEnvRequest === 'all-secrets'
-			? wrapWithOpenClawAllSecretsShellEnvironment('exec bash -l')
-			: wrapWithOpenClawGatewayTokenShellEnvironment('exec bash -l');
 
 	const sshArguments = [
 		'-t',
@@ -129,7 +128,7 @@ export async function runSshCommand(options: RunSshCommandOptions): Promise<void
 		'-p',
 		String(sshResponse.port),
 		`${sshResponse.user ?? 'root'}@${sshResponse.host}`,
-		remoteShellCommand,
+		interactiveSshSession.remoteShellCommand,
 	];
 	const runInteractiveProcess =
 		options.dependencies.runInteractiveProcess ??

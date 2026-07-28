@@ -1,0 +1,11 @@
+{
+	"caseId": "sandbox-operation-unsafe-integer",
+	"schemaId": "sandbox.operation.identity",
+	"tags": ["numeric", "rejected", "safe-integer"],
+	"input": { "operationId": "operation-a", "owningGeneration": 9007199254740992 },
+	"expectation": {
+		"kind": "rejected",
+		"errorCodes": ["portable.number.unsafe-integer"],
+		"refinementIdentities": ["portal.number.safe-integer"]
+	}
+}

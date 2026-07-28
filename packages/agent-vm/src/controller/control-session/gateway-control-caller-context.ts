@@ -1,14 +1,12 @@
-import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 
 import {
 	buildGatewayControlCallerContextAgentAuthorityPayload,
 	buildGatewayControlCallerContextProofPayload,
+	deriveGatewayControlStablePrincipal,
 	type GatewayControlCallerContextRegisterPayloadSchema,
+	type GatewayRuntimeTrustedInvocationPrincipal,
 } from '@agent-vm/gateway-control-contracts';
-import {
-	isOpenClawAgentSessionKey,
-	resolveOpenClawAgentIdFromSessionKey,
-} from '@agent-vm/openclaw-agent-vm-plugin';
 import type { z } from 'zod/v4';
 
 export type GatewayControlCallerContextRegisterPayload = z.infer<
@@ -29,17 +27,15 @@ export interface GatewayControlCallerContextSessionRef extends GatewayControlAcc
 
 export interface GatewayControlTrustedCallerContext {
 	readonly agentId: string;
-	readonly agentWorkspaceDir: string;
 	readonly bootId: string;
 	readonly callerContextId: string;
 	readonly connectionId: string;
 	readonly controllerEpoch: string;
 	readonly peerId: string;
+	readonly principal: GatewayRuntimeTrustedInvocationPrincipal;
 	readonly purpose: GatewayControlCallerContextPurpose;
 	readonly sessionId: string;
-	readonly sessionKeyDigest: string;
 	readonly stablePrincipal: string;
-	readonly workMountDir: string;
 	readonly zoneId: string;
 }
 
@@ -87,23 +83,6 @@ export interface GatewayControlCallerContextRegistry {
 export const DEFAULT_GATEWAY_CONTROL_CALLER_CONTEXT_LIMIT = 256;
 export const DEFAULT_GATEWAY_CONTROL_CALLER_CONTEXT_TTL_MS = 10 * 60 * 1_000;
 
-export function deriveGatewayControlStablePrincipal(options: {
-	readonly agentId: string;
-	readonly zoneId: string;
-}): string {
-	return createHash('sha256')
-		.update('agent-vm-gateway-stable-principal-v1', 'utf8')
-		.update('\0')
-		.update(options.zoneId, 'utf8')
-		.update('\0')
-		.update(options.agentId, 'utf8')
-		.digest('hex');
-}
-
-export function digestGatewayControlSessionKey(sessionKey: string): string {
-	return createHash('sha256').update(sessionKey, 'utf8').digest('hex');
-}
-
 function assertGatewayControlCallerContextEvidence(
 	evidence: GatewayControlCallerContextRegisterPayload['adapterEvidence'],
 	keys: {
@@ -111,21 +90,11 @@ function assertGatewayControlCallerContextEvidence(
 		readonly callerContextProofKey: string;
 	},
 ): void {
-	if (!isOpenClawAgentSessionKey(evidence.sessionKey)) {
-		throw new Error('gateway caller context sessionKey is not agent-shaped');
-	}
-	const sessionAgentId = resolveOpenClawAgentIdFromSessionKey(evidence.sessionKey);
-	if (sessionAgentId !== evidence.agentId) {
-		throw new Error('gateway caller context agentId does not match sessionKey agent');
-	}
 	const expectedDigest = createHmac('sha256', keys.callerContextProofKey)
 		.update(
 			buildGatewayControlCallerContextProofPayload({
-				agentId: evidence.agentId,
-				agentWorkspaceDir: evidence.agentWorkspaceDir,
+				principal: evidence.principal,
 				purpose: evidence.purpose,
-				sessionKey: evidence.sessionKey,
-				workMountDir: evidence.workMountDir,
 				zoneId: evidence.zoneId,
 			}),
 			'utf8',
@@ -139,7 +108,7 @@ function assertGatewayControlCallerContextEvidence(
 	) {
 		throw new Error('gateway caller context proof digest is invalid');
 	}
-	const agentAuthorityKey = keys.agentAuthorityKeys[evidence.agentId];
+	const agentAuthorityKey = keys.agentAuthorityKeys[evidence.principal.agentId];
 	if (agentAuthorityKey === undefined) {
 		throw new Error('gateway caller context agent authority key is missing');
 	}
@@ -149,11 +118,8 @@ function assertGatewayControlCallerContextEvidence(
 	const expectedAgentAuthorityDigest = createHmac('sha256', agentAuthorityKey)
 		.update(
 			buildGatewayControlCallerContextAgentAuthorityPayload({
-				agentId: evidence.agentId,
-				agentWorkspaceDir: evidence.agentWorkspaceDir,
+				principal: evidence.principal,
 				purpose: evidence.purpose,
-				sessionKey: evidence.sessionKey,
-				workMountDir: evidence.workMountDir,
 				zoneId: evidence.zoneId,
 			}),
 			'utf8',
@@ -162,7 +128,7 @@ function assertGatewayControlCallerContextEvidence(
 	const expectedAgentAuthorityDigestBytes = Buffer.from(expectedAgentAuthorityDigest, 'utf8');
 	const observedAgentAuthorityDigestBytes = Buffer.from(evidence.agentAuthority.digest, 'utf8');
 	if (
-		evidence.agentAuthority.keyId !== evidence.agentId ||
+		evidence.agentAuthority.keyId !== evidence.principal.agentId ||
 		observedAgentAuthorityDigestBytes.length !== expectedAgentAuthorityDigestBytes.length ||
 		!timingSafeEqual(observedAgentAuthorityDigestBytes, expectedAgentAuthorityDigestBytes)
 	) {
@@ -171,10 +137,10 @@ function assertGatewayControlCallerContextEvidence(
 }
 
 function buildCallerContextCacheKey(options: {
-	readonly evidence: GatewayControlCallerContextRegisterPayload['adapterEvidence'];
+	readonly registration: GatewayControlValidatedCallerRegistration;
 	readonly session: GatewayControlCallerContextSessionRef;
 }): string {
-	const purpose = options.evidence.purpose ?? 'tool_vm_lease';
+	const registration = options.registration;
 	return [
 		options.session.zoneId,
 		options.session.peerId,
@@ -182,11 +148,8 @@ function buildCallerContextCacheKey(options: {
 		options.session.bootId,
 		options.session.sessionId,
 		options.session.connectionId,
-		purpose,
-		options.evidence.agentId,
-		options.evidence.agentWorkspaceDir,
-		options.evidence.workMountDir,
-		digestGatewayControlSessionKey(options.evidence.sessionKey),
+		registration.purpose,
+		deriveGatewayControlStablePrincipal({ principal: registration.principal }),
 	].join('\u0000');
 }
 
@@ -211,6 +174,7 @@ export function createGatewayControlCallerContextRegistry(options: {
 	readonly maxContexts?: number;
 	readonly now?: () => number;
 	readonly ttlMs?: number;
+	readonly validateRegistration?: (payload: GatewayControlCallerContextRegisterPayload) => void;
 }): GatewayControlCallerContextRegistry {
 	const agentAuthorityKeys = options.agentAuthorityKeys;
 	const callerContextProofKey = options.callerContextProofKey;
@@ -257,10 +221,7 @@ export function createGatewayControlCallerContextRegistry(options: {
 			context.sessionId,
 			context.connectionId,
 			context.purpose,
-			context.agentId,
-			context.agentWorkspaceDir,
-			context.workMountDir,
-			context.sessionKeyDigest,
+			deriveGatewayControlStablePrincipal({ principal: context.principal }),
 		].join('\u0000');
 		contextIdByCacheKey.delete(cacheKey);
 	}
@@ -300,21 +261,22 @@ export function createGatewayControlCallerContextRegistry(options: {
 			agentAuthorityKeys,
 			callerContextProofKey,
 		});
+		if (options.validateRegistration === undefined) {
+			throw new Error('gateway caller context principal validator is not configured');
+		}
+		options.validateRegistration(validationOptions.payload);
 		return {
-			agentId: evidence.agentId,
-			agentWorkspaceDir: evidence.agentWorkspaceDir,
+			agentId: evidence.principal.agentId,
 			bootId: validationOptions.session.bootId,
 			connectionId: validationOptions.session.connectionId,
 			controllerEpoch: validationOptions.session.controllerEpoch,
 			peerId: validationOptions.session.peerId,
+			principal: evidence.principal,
 			purpose: evidence.purpose ?? 'tool_vm_lease',
 			sessionId: validationOptions.session.sessionId,
-			sessionKeyDigest: digestGatewayControlSessionKey(evidence.sessionKey),
 			stablePrincipal: deriveGatewayControlStablePrincipal({
-				agentId: evidence.agentId,
-				zoneId: validationOptions.session.zoneId,
+				principal: evidence.principal,
 			}),
-			workMountDir: evidence.workMountDir,
 			zoneId: validationOptions.session.zoneId,
 		};
 	}
@@ -323,10 +285,9 @@ export function createGatewayControlCallerContextRegistry(options: {
 		register: ({ payload, session }) => {
 			const nowMs = now();
 			pruneExpiredContexts(nowMs);
-			const evidence = payload.adapterEvidence;
 			const validatedRegistration = validateRegistrationForSession({ payload, session });
 			removeSupersededSessionContexts(session);
-			const cacheKey = buildCallerContextCacheKey({ evidence, session });
+			const cacheKey = buildCallerContextCacheKey({ registration: validatedRegistration, session });
 			const existingContextId = contextIdByCacheKey.get(cacheKey);
 			if (existingContextId !== undefined) {
 				const existingContext = contextById.get(existingContextId);

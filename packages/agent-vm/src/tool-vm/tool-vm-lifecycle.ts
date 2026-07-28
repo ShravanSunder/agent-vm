@@ -6,46 +6,41 @@ import {
 	createWebSocketUpgradeRequestGuard,
 	egressHostsForAudience,
 	FORCE_IPV4_EGRESS_NODE_OPTIONS,
+	normalizeGitReposForSshReadAllowlist,
 	splitResolvedSecretsByInjection,
 } from '@agent-vm/gateway-lifecycle';
 import {
 	type ManagedVm,
+	type ManagedVmExactProcessTerminationCapability,
 	type ManagedVmFactory,
+	type ManagedVmFilteredWorkspacePolicy,
+	type ManagedVmGitReadOnlySshEgress,
 	type ManagedVmImageCapability,
-	type ManagedVmMount,
 	type ManagedVmOwnedDirectoryCapability,
-	type OwnedHostDirectory,
 } from '@agent-vm/managed-vm';
 import type { SecretResolver } from '@agent-vm/secret-management';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import type { ToolVmProfile } from '../controller/leases/lease-manager.js';
-import {
-	OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
-	validateResolvedToolWorkMountDir as validateResolvedToolWorkMountDirDefault,
-} from '../controller/leases/lease-work-mount-paths.js';
-import {
-	OPENCLAW_ZONE_FILES_GUEST_ROOT,
-	OPENCLAW_ZONE_GIT_GUEST_ROOT,
-	resolveZoneGitPaths,
-	type ZoneGitToolVmMount,
-} from '../controller/zone-git/zone-git-paths.js';
+import { validateControllerSelectedToolVmDirectory as validateControllerSelectedToolVmDirectoryDefault } from '../controller/leases/lease-work-mount-paths.js';
 import { resolveZoneSecrets } from '../gateway/credential-manager.js';
+import { resolveManagedAgentGitDirectoryRoot } from '../gateway/managed-agent-root-storage.js';
 import { terminateLiveManagedVm } from '../shared/controller-managed-vm-termination.js';
-import {
-	isProcessAlive,
-	killProcess,
-	readProcessCommand,
-	readProcessIdentity,
-	sleep,
-	type ManagedVmKillDependencies,
-	type ProcessIdentity,
-} from '../shared/managed-vm-process.js';
+import { readProcessIdentity, sleep, type ProcessIdentity } from '../shared/managed-vm-process.js';
+import { createManagedVmWithFilteredAgentWorkspace } from './managed-agent-tool-vm-mounts.js';
 import { selectToolVmMediatedSecretNamesForAgent } from './tool-vm-secret-selection.js';
 
 const TOOL_VM_MEDIATED_ENV_PROFILE_PATH = '/etc/profile.d/agent-vm-mediated-env.sh';
 const TOOL_VM_MEDIATED_ENVIRONMENT_PATH = '/etc/environment';
 const TOOL_VM_MEDIATED_SSHD_CONFIG_PATH = '/etc/ssh/sshd_config';
+const TOOL_VM_GIT_SAFE_DIRECTORY_ARGV = [
+	'git',
+	'config',
+	'--system',
+	'--replace-all',
+	'safe.directory',
+	'/workspace',
+] as const;
 const TOOL_VM_SSH_HOST_KEY_RESET_COMMAND = 'rm -f /etc/ssh/ssh_host_*';
 const reservedToolVmMediatedSecretNames = new Set([
 	'BASH_ENV',
@@ -59,11 +54,19 @@ const reservedToolVmMediatedSecretNames = new Set([
 const shellEnvironmentNamePattern = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 
 export interface ToolVmLifecycleDependencies {
+	readonly managedAgentRootMountDependencies?: Parameters<
+		typeof createManagedVmWithFilteredAgentWorkspace
+	>[1];
 	readonly managedVmFactory: ManagedVmFactory;
 	readonly managedVmImages: ManagedVmImageCapability;
 	readonly managedVmOwnedDirectories: ManagedVmOwnedDirectoryCapability;
-	readonly managedVmKillDependencies?: ManagedVmKillDependencies;
-	readonly validateResolvedToolWorkMountDir?: typeof validateResolvedToolWorkMountDirDefault;
+	readonly validateControllerSelectedToolVmDirectory?: typeof validateControllerSelectedToolVmDirectoryDefault;
+}
+
+export interface StartedToolVmLifecycleDependencies extends ToolVmLifecycleDependencies {
+	readonly managedVmExactProcessTermination: ManagedVmExactProcessTerminationCapability;
+	readonly managedVmTerminationSleep?: (delayMs: number) => Promise<void>;
+	readonly readProcessIdentity?: typeof readProcessIdentity;
 }
 
 export interface UnstartedToolVmProvisioning {
@@ -71,15 +74,102 @@ export interface UnstartedToolVmProvisioning {
 	prepareStartedVm(): Promise<void>;
 }
 
-async function configureZoneGitToolVm(toolVm: ManagedVm): Promise<void> {
-	const result = await toolVm.exec(
-		`git config --global --add safe.directory ${OPENCLAW_ZONE_FILES_GUEST_ROOT}`,
-	);
-	if (result.exitCode !== 0) {
+export interface ToolVmRootBinding {
+	readonly hostGitDirectoryRoot?: string | undefined;
+	readonly hostWorkspaceRoot: string;
+	readonly kind: 'managed-agent-workspace';
+}
+
+function managedAgentWorkspacePolicy(
+	agentId: string,
+	zone: LoadedSystemConfig['zones'][number],
+): ManagedVmFilteredWorkspacePolicy {
+	const configuredAgent = zone.agents?.find((agent) => agent.id === agentId);
+	if (configuredAgent === undefined) {
+		throw new Error(`Zone '${zone.id}' does not declare managed agent '${agentId}'.`);
+	}
+	const readOnlyGitPointer =
+		configuredAgent.workspaceGit === undefined
+			? { hiddenPaths: [], readonlyInputs: [] }
+			: {
+					hiddenPaths: [],
+					readonlyInputs: [
+						{
+							destinationRelativePath: '.git',
+							sourceRelativePath: '.git',
+						},
+					],
+				};
+	const selectedAgentSourceRootPolicy = {
+		...readOnlyGitPointer,
+		temporaryPaths: [],
+		visibility: {
+			kind: 'positive-paths',
+			visiblePaths: [''],
+			writablePaths: [''],
+		},
+	} satisfies ManagedVmFilteredWorkspacePolicy;
+	switch (zone.gateway.type) {
+		case 'openclaw':
+		case 'hermes':
+			return selectedAgentSourceRootPolicy;
+		case 'worker':
+			throw new Error(
+				`Gateway type '${zone.gateway.type}' does not yet define a managed agent workspace policy.`,
+			);
+	}
+}
+
+function createManagedAgentGitReadOnlySshEgress(options: {
+	readonly agentId: string;
+	readonly zone: LoadedSystemConfig['zones'][number];
+}): ManagedVmGitReadOnlySshEgress | undefined {
+	const configuredAgent = options.zone.agents?.find((agent) => agent.id === options.agentId);
+	if (configuredAgent?.workspaceGit?.mode !== 'remote') {
+		return undefined;
+	}
+	const agentSocket = process.env.SSH_AUTH_SOCK;
+	if (agentSocket === undefined || agentSocket.length === 0) {
+		return undefined;
+	}
+	const normalizedAllowlist = normalizeGitReposForSshReadAllowlist([
+		configuredAgent.workspaceGit.remote.repoUrl,
+	]);
+	if (
+		normalizedAllowlist.allowedHosts.length === 0 ||
+		normalizedAllowlist.allowedRepos.length === 0
+	) {
+		return undefined;
+	}
+	return {
+		agentSocket,
+		allowedHosts: normalizedAllowlist.allowedHosts,
+		allowedRepositories: normalizedAllowlist.allowedRepos,
+		kind: 'git-read-only',
+	};
+}
+
+async function validateControllerDerivedAgentGitDirectoryRoot(options: {
+	readonly agentId: string;
+	readonly hostGitDirectoryRoot: string;
+	readonly zoneRuntimeDir: string;
+	readonly zoneId: string;
+}): Promise<string> {
+	const [hostGitDirectoryRoot, expectedGitDirectoryRoot] = await Promise.all([
+		realpath(options.hostGitDirectoryRoot),
+		realpath(
+			resolveManagedAgentGitDirectoryRoot({
+				agentId: options.agentId,
+				zoneRuntimeDir: options.zoneRuntimeDir,
+			}),
+		),
+	]);
+	if (hostGitDirectoryRoot !== expectedGitDirectoryRoot) {
 		throw new Error(
-			`Failed to configure Tool VM Git safe.directory for ${OPENCLAW_ZONE_FILES_GUEST_ROOT}: ${result.stderr || result.stdout}`,
+			`Managed agent Git directory root '${hostGitDirectoryRoot}' does not match controller-derived path '${expectedGitDirectoryRoot}'.`,
 		);
 	}
+	return hostGitDirectoryRoot;
 }
 
 async function resetInheritedToolVmSshHostIdentity(toolVm: ManagedVm): Promise<void> {
@@ -87,6 +177,15 @@ async function resetInheritedToolVmSshHostIdentity(toolVm: ManagedVm): Promise<v
 	if (result.exitCode !== 0) {
 		throw new Error(
 			`Failed to remove inherited Tool VM SSH host identity: ${result.stderr || result.stdout}`,
+		);
+	}
+}
+
+async function configureToolVmGitSafeDirectory(toolVm: ManagedVm): Promise<void> {
+	const result = await toolVm.exec(TOOL_VM_GIT_SAFE_DIRECTORY_ARGV);
+	if (result.exitCode !== 0) {
+		throw new Error(
+			`Failed to configure the Tool VM Git safe directory: ${result.stderr || result.stdout}`,
 		);
 	}
 }
@@ -232,15 +331,15 @@ export async function createUnstartedToolVm(
 		readonly profile: ToolVmProfile;
 		readonly systemConfig: LoadedSystemConfig;
 		readonly tcpSlot: number;
-		readonly hostWorkMountDir: string;
-		readonly zoneGitMount?: ZoneGitToolVmMount;
+		readonly rootBinding: ToolVmRootBinding;
 		readonly zoneId: string;
 		readonly secretResolver: SecretResolver;
 	},
 	dependencies: ToolVmLifecycleDependencies,
 ): Promise<UnstartedToolVmProvisioning> {
-	const validateResolvedToolWorkMountDir =
-		dependencies.validateResolvedToolWorkMountDir ?? validateResolvedToolWorkMountDirDefault;
+	const validateControllerSelectedToolVmDirectory =
+		dependencies.validateControllerSelectedToolVmDirectory ??
+		validateControllerSelectedToolVmDirectoryDefault;
 	const zone = options.systemConfig.zones.find(
 		(configuredZone) => configuredZone.id === options.zoneId,
 	);
@@ -252,10 +351,36 @@ export async function createUnstartedToolVm(
 		throw new Error(`Tool VM image profile '${options.profile.imageProfile}' is not configured.`);
 	}
 	// Fail bad lease paths before doing any expensive image work.
-	await validateResolvedToolWorkMountDir({
-		hostWorkMountDir: options.hostWorkMountDir,
-		zone,
-	});
+	const configuredAgent = zone.agents?.find((agent) => agent.id === options.agentId);
+	if (configuredAgent === undefined) {
+		throw new Error(`Zone '${zone.id}' does not declare managed agent '${options.agentId}'.`);
+	}
+	const configuredGitDirectoryRoot = options.rootBinding.hostGitDirectoryRoot;
+	const validateConfiguredGitDirectoryRoot = async (): Promise<string | undefined> => {
+		if (configuredAgent.workspaceGit === undefined) {
+			return undefined;
+		}
+		if (configuredGitDirectoryRoot === undefined) {
+			throw new Error(
+				`Managed agent '${options.agentId}' requires a controller-selected Git directory root.`,
+			);
+		}
+		return await validateControllerDerivedAgentGitDirectoryRoot({
+			agentId: options.agentId,
+			hostGitDirectoryRoot: configuredGitDirectoryRoot,
+			zoneRuntimeDir: zone.gateway.zoneRuntimeDir,
+			zoneId: options.zoneId,
+		});
+	};
+	await Promise.all([
+		validateControllerSelectedToolVmDirectory({
+			agentId: options.agentId,
+			hostDirectory: options.rootBinding.hostWorkspaceRoot,
+			kind: 'managed-agent-workspace',
+			zone,
+		}),
+		validateConfiguredGitDirectoryRoot(),
+	]);
 	const toolVmSecretNames = selectToolVmMediatedSecretNamesForAgent({
 		agentId: options.agentId,
 		zone,
@@ -281,84 +406,26 @@ export async function createUnstartedToolVm(
 		cacheDirectory: toolImageCacheDir,
 		recipePath: toolImageProfile.buildConfig,
 	});
+	const sshEgress = createManagedAgentGitReadOnlySshEgress({
+		agentId: options.agentId,
+		zone,
+	});
 
 	// Internal createToolVm callers bypass the /lease route; validate and acquire
 	// host-directory authority immediately before handing it to the provider.
-	const hostWorkMountDirectory = await validateResolvedToolWorkMountDir({
-		hostWorkMountDir: options.hostWorkMountDir,
-		zone,
-	});
-	const ownedDirectories: OwnedHostDirectory[] = [];
-	const openOwnedDirectory = (hostPath: string): OwnedHostDirectory => {
-		const ownedDirectory = dependencies.managedVmOwnedDirectories.openHostDirectory(hostPath);
-		if (
-			ownedDirectory.identity.canonicalPath !== hostPath ||
-			!Number.isSafeInteger(ownedDirectory.identity.device) ||
-			ownedDirectory.identity.device < 0 ||
-			!Number.isSafeInteger(ownedDirectory.identity.inode) ||
-			ownedDirectory.identity.inode <= 0
-		) {
-			ownedDirectory.close();
-			throw new Error(
-				`Managed VM provider returned an invalid owned-directory identity for '${hostPath}'.`,
-			);
-		}
-		ownedDirectories.push(ownedDirectory);
-		return ownedDirectory;
+	const hostGitDirectoryRoot = await validateConfiguredGitDirectoryRoot();
+	const managedAgentWorkspaceRoot = {
+		...(hostGitDirectoryRoot === undefined ? {} : { hostGitDirectoryRoot }),
+		hostWorkspaceRoot: await validateControllerSelectedToolVmDirectory({
+			agentId: options.agentId,
+			hostDirectory: options.rootBinding.hostWorkspaceRoot,
+			kind: 'managed-agent-workspace',
+			zone,
+		}),
 	};
 	let toolVm: ManagedVm | undefined;
 	try {
-		let mounts: Readonly<Record<string, ManagedVmMount>>;
-		if (options.zoneGitMount) {
-			const hostZoneFilesDirectory = await validateResolvedToolWorkMountDir({
-				hostWorkMountDir: options.zoneGitMount.hostZoneFilesDir,
-				zone,
-			});
-			const hostZoneGitRoot = await realpath(options.zoneGitMount.hostZoneGitRoot);
-			const expectedZoneGitRoot = await realpath(
-				resolveZoneGitPaths({
-					runtimeDir: options.systemConfig.runtimeDir,
-					zoneId: options.zoneId,
-				}).hostZoneGitRoot,
-			);
-			if (hostZoneGitRoot !== expectedZoneGitRoot) {
-				throw new Error(
-					`Zone Git root '${hostZoneGitRoot}' does not match expected runtime path '${expectedZoneGitRoot}' for zone '${options.zoneId}'.`,
-				);
-			}
-			const ownedZoneFilesDirectory = openOwnedDirectory(hostZoneFilesDirectory);
-			const ownedZoneGitDirectory = openOwnedDirectory(hostZoneGitRoot);
-			await validateResolvedToolWorkMountDir({
-				hostWorkMountDir: ownedZoneFilesDirectory.identity.canonicalPath,
-				zone,
-			});
-			mounts = {
-				[OPENCLAW_ZONE_GIT_GUEST_ROOT]: {
-					access: 'read-write',
-					directory: ownedZoneGitDirectory,
-					kind: 'owned-host-directory',
-				},
-				[OPENCLAW_ZONE_FILES_GUEST_ROOT]: {
-					access: 'read-write',
-					directory: ownedZoneFilesDirectory,
-					kind: 'owned-host-directory',
-				},
-			};
-		} else {
-			const ownedWorkMountDirectory = openOwnedDirectory(hostWorkMountDirectory);
-			await validateResolvedToolWorkMountDir({
-				hostWorkMountDir: ownedWorkMountDirectory.identity.canonicalPath,
-				zone,
-			});
-			mounts = {
-				[OPENCLAW_TOOL_VM_WORKSPACE_MOUNT]: {
-					access: 'read-write',
-					directory: ownedWorkMountDirectory,
-					kind: 'owned-host-directory',
-				},
-			};
-		}
-		toolVm = await dependencies.managedVmFactory.createManagedVm({
+		const managedVmRequest = {
 			allowedHosts: egressHostsForAudience(zone.egressHosts, 'tool-vm'),
 			environment: {
 				NODE_OPTIONS: FORCE_IPV4_EGRESS_NODE_OPTIONS,
@@ -375,9 +442,8 @@ export async function createUnstartedToolVm(
 					runtimeAudience: 'tool-vm',
 				}),
 			},
-			mounts,
 			resources: { cpuCount: options.profile.cpus, memory: options.profile.memory },
-			rootfsMode: 'cow',
+			rootfsMode: 'cow' as const,
 			...(options.profile.runtimeRootfsSize
 				? { runtimeRootfsSize: options.profile.runtimeRootfsSize }
 				: {}),
@@ -386,17 +452,29 @@ export async function createUnstartedToolVm(
 				options.zoneId,
 				options.tcpSlot,
 			),
+			...(sshEgress === undefined ? {} : { sshEgress }),
 			tcpHosts: [],
-		});
+		};
+		toolVm = await createManagedVmWithFilteredAgentWorkspace(
+			{
+				factory: dependencies.managedVmFactory,
+				...(managedAgentWorkspaceRoot.hostGitDirectoryRoot === undefined
+					? {}
+					: { hostGitDirectoryRoot: managedAgentWorkspaceRoot.hostGitDirectoryRoot }),
+				hostWorkspaceRoot: managedAgentWorkspaceRoot.hostWorkspaceRoot,
+				ownedDirectories: dependencies.managedVmOwnedDirectories,
+				request: managedVmRequest,
+				workspacePolicy: managedAgentWorkspacePolicy(options.agentId, zone),
+			},
+			dependencies.managedAgentRootMountDependencies,
+		);
 		const createdToolVm = toolVm;
 		return {
 			async prepareStartedVm(): Promise<void> {
 				assertToolVmMediatedSecretNames(mediatedSecrets);
 				await resetInheritedToolVmSshHostIdentity(createdToolVm);
+				await configureToolVmGitSafeDirectory(createdToolVm);
 				await writeToolVmMediatedEnvBootstrap(createdToolVm, mediatedSecrets);
-				if (options.zoneGitMount) {
-					await configureZoneGitToolVm(createdToolVm);
-				}
 			},
 			vm: createdToolVm,
 		};
@@ -407,16 +485,6 @@ export async function createUnstartedToolVm(
 				await toolVm.close();
 			} catch (caughtCloseError) {
 				cleanupErrors.push(caughtCloseError);
-			}
-		}
-		for (const ownedDirectory of ownedDirectories) {
-			if (ownedDirectory.state !== 'acquired') {
-				continue;
-			}
-			try {
-				ownedDirectory.close();
-			} catch (ownedDirectoryCloseError) {
-				cleanupErrors.push(ownedDirectoryCloseError);
 			}
 		}
 		if (cleanupErrors.length > 0) {
@@ -433,7 +501,7 @@ export async function createUnstartedToolVm(
 
 export async function createToolVm(
 	options: Parameters<typeof createUnstartedToolVm>[0],
-	dependencies: ToolVmLifecycleDependencies,
+	dependencies: StartedToolVmLifecycleDependencies,
 ): Promise<ManagedVm> {
 	const provisioning = await createUnstartedToolVm(options, dependencies);
 	const { vm } = provisioning;
@@ -450,9 +518,9 @@ export async function createToolVm(
 		if (hostPid === null || !Number.isSafeInteger(hostPid) || hostPid <= 0) {
 			throw new Error(`Tool VM '${vm.id}' did not expose a positive host process id after start.`);
 		}
-		const identityReader =
-			dependencies.managedVmKillDependencies?.readProcessIdentity ?? readProcessIdentity;
-		const processIdentity = await identityReader(hostPid);
+		const processIdentity = await (dependencies.readProcessIdentity ?? readProcessIdentity)(
+			hostPid,
+		);
 		if (processIdentity === null) {
 			throw new Error(
 				`Tool VM '${vm.id}' pid ${String(hostPid)} disappeared before process identity capture.`,
@@ -475,13 +543,8 @@ export async function createToolVm(
 			} else {
 				await terminateLiveManagedVm({
 					contextLabel: `Tool VM '${vm.id}' creation rollback`,
-					dependencies: dependencies.managedVmKillDependencies ?? {
-						isProcessAlive,
-						killProcess,
-						readProcessCommand,
-						readProcessIdentity,
-						sleep,
-					},
+					exactProcessTermination: dependencies.managedVmExactProcessTermination,
+					sleep: dependencies.managedVmTerminationSleep ?? sleep,
 					target: processTarget,
 					vm: {
 						close: async () => await vm.close(),

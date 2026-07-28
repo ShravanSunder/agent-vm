@@ -1,0 +1,23 @@
+{
+	"caseId": "coverage-sandbox-fs-mkdir-result",
+	"schemaId": "sandbox.fs.mkdir.result",
+	"tags": [
+		"accepted",
+		"coverage"
+	],
+	"input": {
+		"created": true,
+		"kind": "directory-ready",
+		"path": "tmp"
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"created": true,
+			"kind": "directory-ready",
+			"path": "tmp"
+		},
+		"canonicalJson": "{\"created\":true,\"kind\":\"directory-ready\",\"path\":\"tmp\"}",
+		"refinementIdentities": []
+	}
+}

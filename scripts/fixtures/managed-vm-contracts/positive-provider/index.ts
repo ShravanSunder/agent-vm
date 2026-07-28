@@ -2,6 +2,7 @@ import type {
 	ManagedVm,
 	ManagedVmCreateRequest,
 	ManagedVmExecProcess,
+	ManagedVmExactProcessTerminationRequest,
 	ManagedVmAccessHandle,
 	ManagedVmMediatedSecretDescriptor,
 	ManagedVmRequestMediation,
@@ -64,6 +65,12 @@ class FakeManagedVm implements ManagedVm {
 const fakeProvider = {
 	diagnostics: {
 		checkCompatibility: async () => [],
+	},
+	exactProcessTermination: {
+		terminateRecordedHostProcess: async (request: ManagedVmExactProcessTerminationRequest) => ({
+			hostProcessId: request.identity.hostProcessId,
+			kind: 'already-absent',
+		}),
 	},
 	factory: {
 		createManagedVm: async (_request: ManagedVmCreateRequest): Promise<ManagedVm> =>

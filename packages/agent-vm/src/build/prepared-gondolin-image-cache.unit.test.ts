@@ -83,6 +83,55 @@ describe('prepared Gondolin image cache', () => {
 		await expect(readPreparedManagedVmImage({ buildConfigPath, cacheDir })).resolves.toBeUndefined();
 	});
 
+	it('preserves the exact managed Gateway boot projection in the prepared receipt', async () => {
+		// Arrange
+		const cacheDir = await createTemporaryDirectory();
+		const buildConfigPath = path.join(cacheDir, '..', 'build-config.jsonc');
+		const imagePath = path.join(cacheDir, 'managed-gateway-fingerprint');
+		const managedGatewayBoot = {
+			frameworkBootEntry: 'openclaw-framework-service',
+			kind: 'managed-gateway-exact-two-role',
+		} as const;
+		await writeFakeImageAssets(imagePath);
+
+		// Act
+		await writePreparedManagedVmImage({
+			buildConfigPath,
+			cacheDir,
+			fingerprint: 'managed-gateway-fingerprint',
+			imagePath,
+			managedGatewayBoot,
+		});
+
+		// Assert
+		await expect(readPreparedManagedVmImage({ buildConfigPath, cacheDir })).resolves.toMatchObject(
+			{
+				managedGatewayBoot,
+			},
+		);
+	});
+
+	it('invalidates legacy prepared-image receipts that predate the managed boot contract', async () => {
+		// Arrange
+		const cacheDir = await createTemporaryDirectory();
+		const buildConfigPath = path.join(cacheDir, '..', 'build-config.jsonc');
+		const imagePath = path.join(cacheDir, 'legacy-fingerprint');
+		await writeFakeImageAssets(imagePath);
+		await fs.writeFile(
+			path.join(cacheDir, 'prepared-image.json'),
+			`${JSON.stringify({
+				buildConfigPath: path.resolve(buildConfigPath),
+				fingerprint: 'legacy-fingerprint',
+				imagePath: path.resolve(imagePath),
+				schemaVersion: 1,
+			})}\n`,
+			'utf8',
+		);
+
+		// Act and assert
+		await expect(readPreparedManagedVmImage({ buildConfigPath, cacheDir })).resolves.toBeUndefined();
+	});
+
 	it('ignores a corrupted prepared image record', async () => {
 		const cacheDir = await createTemporaryDirectory();
 		const buildConfigPath = path.join(cacheDir, '..', 'build-config.jsonc');

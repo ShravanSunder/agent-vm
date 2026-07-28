@@ -13,164 +13,127 @@ For the concrete OpenClaw and Worker gateway path matrix, see
 
 ## Config-Level Path Map
 
-These fields live at different config levels and have different lifecycle
-semantics. Keeping those boundaries explicit prevents `runtimeDir`,
-`zoneFilesDir`, and `cacheDir` from drifting into each other's jobs.
+`storageRootDir` is the sole authored standard operational storage path. The
+generated root is scoped by the deployment's `projectNamespace` for local,
+user-dir, and pod scaffolds. The controller loads that final root and derives
+the remaining paths from it and validated zone IDs; it does not append the
+namespace again.
 
 ```text
-field             scope                 durable?          backup?   contains
-──────────────    ──────────────────    ──────────────    ───────   ─────────────────────────────
+path                  scope                 durable?          backup?   contains
+──────────────────    ──────────────────    ──────────────    ───────   ─────────────────────────────
 
-cacheDir          system                yes               no        rebuildable image/plugin/tool
-                                                                       cache
+cacheDir              global derived        yes               no        rebuildable image/plugin/tool
+                                                                           cache
 
-runtimeDir        system                mixed: worker     no        active worker artifacts,
-                                        per-task                       zone runtime logs,
-                                        ephemeral;                     gitdirs, repo metadata,
-                                        OpenClaw zone-                 recovery exports
-                                        persistent (see
-                                        below)
+controllerRuntimeDir  global derived        runtime-scoped    no        controller lock, health evidence,
+                                                                           observability runtime config
 
-stateDir          per-zone              yes               yes       identity, auth profiles,
-                                                                       effective config,
-                                                                       runtime records
+zoneRuntimeDir        per-zone derived      runtime-scoped    no        worker artifacts, zone logs,
+                                                                           per-agent gitdirs, control material
 
-zoneFilesDir      OpenClaw per-zone     yes               yes       long-lived user/agent files
-                                                                       mounted at
-                                                                       /zone
+stateDir              per-zone derived      yes               yes       gateway identity, auth profiles,
+                                                                           effective config, sandboxes
 
-backupDir         per-zone output       artifact          no        encrypted backup archives
+controllerStateDir    global derived        yes               no        host-only controller approval,
+                                                                           lifecycle, and cleanup authority
+
+zoneFilesDir          managed Gateway       yes               yes       long-lived shared/agent files;
+                      per-zone                                         OpenClaw mounts /zone
+
+backupDir             per-zone output       artifact          no        encrypted backup archives
 ```
 
-Worker zones do not have `zoneFilesDir` in the target schema. Worker repo files
-live inside the VM under `/work/repos/<repoId>`, while worker gitdirs live under
-`runtimeDir`.
+Worker zones do not have an active `zoneFilesDir`. Worker repo files live inside
+the VM under `/work/repos/<repoId>`, while worker gitdirs live under the zone's
+derived `zoneRuntimeDir`.
 
-### runtimeDir is two lifecycles, not one
-
-`runtimeDir`'s "task-lifetime" durability covers only the worker subtree.
-The OpenClaw zone subtree has different lifecycle rules.
+### Controller runtime and zone runtime are distinct
 
 ```text
 subtree                                             lifecycle              wiped by
 ─────────────────────────────────────────           ─────────────────      ────────────────────────
-runtimeDir/worker-tasks/<zone>/<task>/              per-task               postStopGateway runs
+zoneRuntimeDir/worker-tasks/<task>/                 per-task               postStopGateway runs
   work/, gitdirs/, repo-metadata/                                          fs.rm(taskRuntimeRoot)
                                                                            on every task end
 
-runtimeDir/zones/<zone>/logs/                       per-zone               destroy-zone --purge
+zoneRuntimeDir/logs/                                per-zone               destroy-zone --purge
                                                                            (orchestrator creates,
                                                                            openclaw appends across
                                                                            every gateway restart)
 
-runtimeDir/zones/<zone>/zone-git/                   per-zone, preserved    NOT wiped by
-                                                    by destroy-zone's       destroy-zone --purge
-                                                    selective deletion      (see two reasons
-                                                    (see note below)        below)
-
-runtimeDir/vm-ownership/controller-ownership.lock   controller lifetime    released by the
+controllerRuntimeDir/vm-ownership/                  controller lifetime    released by the
+  controller-ownership.lock
                                                                            controller or offline
                                                                            cleanup process
 
-stateDir/gateway-runtime.json                        Gateway lifetime        exact Gateway cleanup
-                                                    schema v2 evidence      after child cleanup
+controllerStateDir/zones/<zone>/                     Gateway lifetime        exact Gateway cleanup
+  gateway-runtime.json                               schema v2 evidence      after child cleanup
 
-stateDir/tool-leases/<recordId>.json                 Tool VM lifetime        exact Tool cleanup
-                                                    schema v2 evidence      before parent cleanup
+controllerStateDir/zones/<zone>/                     Tool VM lifetime        exact Tool cleanup
+  tool-leases/<recordId>.json                        schema v2 evidence      before parent cleanup
 ```
 
 The controller holds `controller-ownership.lock` for its complete process
 lifetime. Offline cleanup acquires the same lock before probing controller
 health or reading destructive evidence. The lock provides deployment-wide
 mutual exclusion; it is not destruction evidence. The controller is the sole
-lifecycle authority. Schema-v2 runtime records under the selected zone's
-`stateDir` are its durable exact-cleanup evidence after a crash: they bind the
-canonical deployment and zone to the recorded VM id, host pid, process-start
-identity, and Gateway parent identity. Cleanup revalidates that evidence
-against the current config and live process/endpoint state before signaling.
-HTTP health and telemetry remain diagnostic inputs and cannot authorize VM
-adoption, destruction, or TCP-slot reuse.
-
-Note that `zone-git/` is preserved **implicitly**, not by explicit policy.
-`destroy-zone --purge` enumerates specific subtrees to delete (`worker-tasks/`,
-`zones/<zone>/logs/`, and `zoneFilesDir`). It does NOT use a broad
-`fs.rm(runtimeDir/zones/<zone>/)` that would also remove `zone-git/`. Any
-future change to `destroy-zone.ts` that broadens the rm scope must
-explicitly exclude `zone-git/` — the two reasons below are why.
-
-1. **Data loss prevention.** `zone-git/zone-files.git` is the authoritative
-   git store for committed work in this zone. Backups capture
-   `zoneFilesDir` (the worktree) but not the git history under
-   `runtimeDir/zones/<zone>/zone-git/`. Any commits that have not been
-   pushed to a remote live only in `zone-git/`; wiping it loses that
-   history irrecoverably.
-2. **Pointer integrity.** `zoneFilesDir/.git` is a `gitdir:` pointer file
-   (not a directory) referencing `/agent-vm/zone-git/zone-files.git`
-   inside the gateway VM, which is realfs-mounted to
-   `runtimeDir/zones/<zone>/zone-git/zone-files.git`. Backed-up
-   `zoneFilesDir` carries this pointer with it; wiping the target leaves
-   any future restore with a dangling `.git` reference.
+lifecycle authority. Schema-v2 runtime records under
+`controllerStateDir/zones/<zone>/` are its durable exact-cleanup evidence
+after a crash: they bind the canonical deployment and zone to the recorded VM
+id, host pid, process-start identity, and Gateway parent identity. The one
+system-level `controllerStateDir` is host-controller-only and is never mounted
+into a Gateway or Tool VM. Cleanup revalidates its evidence against the current
+config and live process/endpoint state before signaling. HTTP health and
+telemetry remain diagnostic inputs and cannot authorize VM adoption,
+destruction, or TCP-slot reuse.
 
 ## Lease Path Vocabulary
 
-Tool VM lease paths cross three naming layers: OpenClaw SDK input, gateway VM
-paths, and controller-trusted host paths. Keep these names distinct.
-
-Runtime path translation is implemented as a shared pure translator in
-`@agent-vm/gateway-lifecycle`. The shared code owns path mechanics: absolute
-path normalization, parent-traversal rejection, longest-root matching, relative
-path calculation, guest-to-host and host-to-guest mapping, storage backing
-classification, and structured retry guidance.
-
-Runtime packages inject their own mapping facts. The OpenClaw plugin injects
-the Tool VM mapping where `/workspace` is the RealFS workspace mount and
-`/work` is Tool VM rootfs/COW scratch. The controller injects the OpenClaw
-gateway lease mapping where `/zone` maps to `zoneFilesDir` and
-`/home/openclaw/.openclaw/state/sandboxes` maps to `stateDir/sandboxes`.
+Managed Tool VM storage is selected from stable controller-owned agent identity,
+not a caller-supplied host or Gateway path. Keep Gateway framework paths,
+controller-selected host capabilities, and Tool VM guest paths distinct.
 
 ```text
 name / path                         layer / location                  storage / backing
 ────────────────────────────────    ───────────────────────────────   ─────────────────────────────
 
-zoneFilesDir                        system.json host config            durable RealFS, backed up
-                                    OpenClaw zones only                mounted in gateway at /zone
+zoneFilesDir                        controller-derived host path       durable RealFS, backed up
+                                    OpenClaw and Hermes zones          OpenClaw gateway mounts /zone;
+                                                                       Tool VMs receive one agent child
 
 /zone                               OpenClaw gateway VM                RealFS -> zoneFilesDir
-                                    durable zone files                 shared, backed up
+	                                durable zone files                 shared, backed up
 
-workMountDir                        gateway_control_rpc lease_create   gateway VM path, untrusted input
-                                    chosen by OpenClaw/plugin          must be child of /zone or sandboxes
+zoneFilesDir/agents/<agentId>       controller-selected host source    one durable agent workspace
+	                                stable agent identity              projected, never caller authority
 
-/home/openclaw/.openclaw/state/
-sandboxes/<child>                   OpenClaw gateway VM                RealFS -> stateDir/sandboxes/<child>
-                                    agent sandbox namespace            durable state, backed up
+workspaceDir                        OpenClaw SDK boundary only          Gateway path used to authenticate
+	                                plugin input                       the configured agent identity
 
-hostWorkMountDir                    controller internal                trusted resolved host path
-                                    after validation/realpath          passed to lease manager / RealFS
+/workspace                          managed Tool VM guest path         filtered RealFS projection of
+	                                durable agent-owned files          zoneFilesDir/agents/<agentId>
 
-	/workspace                          Tool VM guest path                 RealFS -> hostWorkMountDir
-	                                    lease-local execution dir          survives if backing host dir does
+zoneRuntimeDir/
+gitdirs/agents/<agentId>            controller-selected host root      optional workspace.git only
+	                                per-agent Git namespace            never normal backup payload
 
-	effectiveGuestCwd                   plugin/controller response         Tool VM guest cwd for commands
-	                                    derived from runtime translation    may be /workspace, /workspace/sub, or /work
+/gitdirs                            managed Tool VM guest path         selected agent Git databases only
 
-	/work                               Tool VM guest path                 rootfs/COW
-	                                    disposable scratch                 deleted with the Tool VM
+/work                               managed Tool VM guest path         rootfs/COW; repos, builds, caches,
+	                                default execution cwd              packages, and temporary work
 
-agentWorkspaceDir                   OpenClaw/tool process cwd concept  guest-side agent working dir
-                                    controller lease field             not a host storage root
-
-workspaceDir                        OpenClaw SDK boundary only          external SDK name
-                                    plugin input                       translated immediately to workMountDir
+effectiveGuestCwd                   plugin/controller response         Tool VM guest cwd for commands;
+	                                controller-selected                normally /work or a child
 
 /work/repos/<repoId>                Worker VM guest path               rootfs/COW
                                     worker task repo files             disposable after worker VM closes
 
-/gitdirs/<repoId>.git               Worker VM / host runtime           RealFS runtimeDir
+/gitdirs/<repoId>.git               Worker VM / host runtime           RealFS zoneRuntimeDir
                                     git metadata                       not normal zone backup
 
 /agent-vm/logs                      OpenClaw gateway VM                RealFS ->
-                                                                       runtimeDir/zones/<zone>/logs
+                                                                       zoneRuntimeDir/logs
                                     gateway/runtime logs               not normal zone backup
 
 /cache                              OpenClaw gateway VM                RealFS -> cacheDir
@@ -196,26 +159,35 @@ rootfs / image
   Backup: no; rebuilt from image recipes
   Rule: hot runtime dependencies and package trees needed during normal boot
 
-durable state
-  Owner: controller runtime
-  Host: <stateDir>
+Gateway durable state
+  Owner: gateway runtime
+  Host: <storageRootDir>/<zoneId>/state (`stateDir`)
   VM: /home/openclaw/.openclaw/state or /state
   Backup: yes
-  Rule: difficult or annoying to recreate; identity, auth profiles, runtime records
+  Rule: preserve existing Gateway-visible identity, auth, effective config,
+        sandbox, and framework state paths exactly
 
-  Note: `gateway-runtime.json` is the schema-v2 Gateway cleanup record under
-  `stateDir`. It is not part of `runtimeDir`; the shared word "runtime" does
-  not imply the same lifecycle. It records canonical config path, controller
-  port, project namespace, zone, full Gateway epoch identity, VM id, host pid,
-  process command/start identity, session label, and the ingress port once
-  available.
+controller durable authority
+  Owner: host controller
+  Host: <storageRootDir>/controller-state/zones/<zone>/
+  VM: never mounted into a Gateway or Tool VM
+  Backup: excluded from normal zone backup
+  Rule: one system/controller-owned root for approval, lifecycle, and cleanup
+        records; it must remain disjoint from every VM mount source
 
-  Note: `tool-leases/<recordId>.json` is the schema-v2 cleanup record for an
-  OpenClaw Tool VM. `recordId` is a controller-generated UUID. The record keeps
-  canonical config path, controller port, project namespace, zone, full parent
-  Gateway identity, `agentId`, `leaseId`, `vmId`, `qemuPid`, process
-  command/start identity, TCP slot, and session label. It never persists
-  OpenClaw scope keys.
+  The per-zone root contains:
+  - `approvals/` for controller-owned approval records;
+  - `gateway-runtime.json` for the managed Gateway cleanup record;
+  - `tool-leases/<recordId>.json` for Tool VM cleanup records; and
+  - `worker-tasks/<taskId>/gateway-runtime.json` for Worker task cleanup
+    records.
+
+  The managed Gateway record captures canonical config path, controller port,
+  project namespace, zone, full Gateway epoch identity, VM id, host pid,
+  process command/start identity, session label, and ingress port when
+  available. Each Tool record additionally binds its controller-generated
+  record id, `agentId`, `leaseId`, parent Gateway identity, TCP slot, and exact
+  managed VM process evidence. It never persists framework scope keys.
 
   Controller restart adopts no VM. Startup and scoped offline cleanup process
   all Tool VM records for a zone before its Gateway record, prove the recorded
@@ -257,23 +229,31 @@ durable state
 
 rebuildable cache
   Owner: controller/runtime tooling
-  Host: <cacheDir>
+  Host: <storageRootDir>/cache (`cacheDir`)
   VM: gateway-specific cache mounts
   Backup: no
   Rule: can be deleted and repaired; may persist across reboot for speed
 
-runtime artifacts
-  Owner: controller runtime
-  Host: <runtimeDir>
-  VM: /gitdirs for worker task git metadata, future runtime-only mounts
+controller runtime artifacts
+	Owner: controller deployment runtime
+	Host: <storageRootDir>/controller-runtime (`controllerRuntimeDir`)
+	VM: never mounted as a broad root
+  Backup: no
+  Rule: controller lock, health evidence, and generated observability files
+
+zone runtime artifacts
+	Owner: runtime subsystems acting for one zone
+	Host: <storageRootDir>/<zoneId>/runtime (`zoneRuntimeDir`)
+	VM: optional /gitdirs/workspace.git for a managed agent; /gitdirs for
+	    Worker task Git metadata
   Backup: no normal zone backup; explicit recovery/export only
   Rule: active task runtime state that is not rebuildable cache and not
-        durable state; local disk preferred because cacheDir may be networked
+        durable state
 
 zone files
-  Owner: long-lived gateway/user workflow
-  Host: <zoneFilesDir>
-  VM: /zone
+	Owner: long-lived gateway/user workflow
+	Host: <storageRootDir>/<zoneId>/zone-files (`zoneFilesDir`)
+	VM: /zone in the OpenClaw Gateway; selected agent content at /workspace in Tool VMs
   Backup: yes for OpenClaw-style long-lived zone backups
   Rule: RealFS-mounted durable household/user files, not hot package-manager work
 
@@ -292,9 +272,10 @@ worker repo files
   Rule: rootfs/COW repo files for source edits, package installs, builds, tests
 
 gitdir
-  Owner: controller + worker runtime
-  Host: <runtimeDir>/worker-tasks/<zone>/<task>/gitdirs/<repo>.git
-  VM: /gitdirs/<repo>.git
+  Owner: controller + selected agent or worker runtime
+  Host: <zoneRuntimeDir>/gitdirs/agents/<agentId>/workspace.git or
+        <zoneRuntimeDir>/worker-tasks/<task>/gitdirs/<repo>.git
+  VM: optional managed-agent /gitdirs/workspace.git or Worker /gitdirs/<repo>.git
   Backup: explicit recovery/export only, not normal zone backup
   Rule: host-visible Git objects/refs/index used with VM-local repo files;
         never place under stateDir or normal backup-copied zone files
@@ -315,16 +296,22 @@ catalog repo
   vm-images/gateways/openclaw/overlay.jsonc
 
 host stateDir
-  ~/.agent-vm/state/<zone>/
+  ~/.agent-vm/<projectNamespace>/<zone>/state/
     effective-openclaw.json
     agents/main/agent/auth-profiles.json
     agents/<agentId>/agent/auth-profiles.json
     sandboxes/<agentId>/work/
-    gateway-runtime.json
-    tool-leases/<recordId>.json
+
+host controllerStateDir
+	~/.agent-vm/<projectNamespace>/controller-state/
+	  zones/<zone>/
+      approvals/
+      gateway-runtime.json
+      tool-leases/<recordId>.json
+      worker-tasks/<taskId>/gateway-runtime.json
 
 host cacheDir
-  ~/.agent-vm/cache/
+  ~/.agent-vm/<projectNamespace>/cache/
     gateway-images/<imageProfile>/
       prepared-image.json
     tool-vm-images/<imageProfile>/
@@ -332,15 +319,22 @@ host cacheDir
     gateways/<zone>/
       plugin-runtime-deps/
 
-host runtimeDir
-  ~/.agent-vm/runtime/
-    zones/<zone>/
-      logs/
-    worker-tasks/<zone>/<task>/
+host controllerRuntimeDir
+  ~/.agent-vm/<projectNamespace>/controller-runtime/
+    vm-ownership/
+    controller-health/
+    observability/<projectNamespace>/
+
+host zoneRuntimeDir
+  ~/.agent-vm/<projectNamespace>/<zone>/runtime/
+    logs/
+    gitdirs/agents/<agentId>/
+      workspace.git
+    worker-tasks/<task>/
       gitdirs/<repo>.git
 
 host zoneFilesDir
-  ~/.agent-vm/zone-files/<zone>/
+  ~/.agent-vm/<projectNamespace>/<zone>/zone-files/
     agents/default/
 
 host backupDir
@@ -356,25 +350,23 @@ trees through a Gondolin VFS mount.
 download cache. It must not be the primary runtime import path for stable
 bundled plugin dependencies, and it must not be moved into `stateDir`.
 
-`stateDir` is for effective config, auth profiles, and durable runtime metadata.
+`stateDir` is for effective config, auth profiles, sandboxes, and other durable
+Gateway-visible state. Controller lifecycle and approval authority belongs only
+under `controllerStateDir/zones/<zone>/`.
 Putting dependency trees in state makes encrypted backups large, slow, and hard
 to reason about.
 
 Gateway logs are runtime evidence, not backup state and not rebuildable cache.
-OpenClaw gateway logs belong under `runtimeDir/zones/<zone>/logs` and are
+OpenClaw gateway logs belong under `zoneRuntimeDir/logs` and are
 mounted into the gateway VM at `/agent-vm/logs`.
 
-OpenClaw agent sandbox work directories live under `stateDir` and can be mounted
-into Tool VMs as `/workspace`. Per-agent sandbox seeds are written only into
-these sandbox-backed workspace directories, and only when the target file does
-not already exist. Shared `/zone` work mounts are not seeded this way.
-
-Tool VM lease requests name `workMountDir` as a gateway path under a concrete
-child of `/zone` or `/home/openclaw/.openclaw/state/sandboxes`; the roots
-themselves are validation boundaries and rejected as mount targets. The
-controller resolves that gateway path to a trusted host `hostWorkMountDir`. For
-non-zone-git leases the Tool VM sees the resolved directory at `/workspace`;
-`/work` remains VM-local rootfs/COW scratch.
+Every configured long-lived agent has one canonical durable workspace at
+`zoneFilesDir/agents/<agentId>`. The Gateway framework may see that directory at
+its native path, but the controller independently projects only the selected
+agent workspace into a managed Tool VM at `/workspace`. `/work` remains
+rootfs/COW and `/gitdirs` exposes only the optional selected agent workspace Git
+database. Remote workspace push is controller-owned over HTTPS through
+`workspace_git_push`; Tool VM Git SSH remains read-only.
 
 ## Worker Repo Files And Git
 
@@ -435,28 +427,11 @@ For the full rootfs/VFS knob matrix, reproducible benchmark command, and
 environment-portable interpretation guide, see
 [Gondolin VFS And Rootfs Performance](../reference/gondolin/vfs-rootfs-performance.md).
 
-## Backup Contract
-
-OpenClaw zone backups archive:
-
-```text
-state/
-zone files/     # config field: gateway.zoneFilesDir
-manifest.json
-```
-
-Worker zone backups archive `stateDir` only. Worker zones do not have
-`zoneFilesDir` in the target schema.
-
-Zone backups do not archive `cacheDir` or `runtimeDir`. If a cache is missing
-after restore, doctor/repair flows should rebuild it rather than restoring stale
-dependency trees from encrypted backup. Worker runtime state is deleted at task
-teardown in v1, so recovery must happen before teardown through committed work
-and controller-side `git-push`, not through normal zone backup.
-
 ## Design Rule
 
-If data is required for correctness and cannot be recreated from config,
-secrets, or upstream packages, it belongs in state. If it only avoids slow
-repair or rebuild work, it belongs in cache. If it is a stable hot dependency
-tree required during every boot, it belongs in the image/rootfs.
+If Gateway-visible data is required for framework correctness and cannot be
+recreated from config, secrets, or upstream packages, it belongs in
+`stateDir`. Host-only approval, lifecycle, and cleanup authority belongs in
+`controllerStateDir`. If data only avoids slow repair or rebuild work, it
+belongs in cache. If it is a stable hot dependency tree required during every
+boot, it belongs in the image/rootfs.

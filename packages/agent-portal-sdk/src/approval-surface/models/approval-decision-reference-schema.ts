@@ -1,7 +1,10 @@
 import { z } from 'zod';
 
 import { ItemIdSchema } from '../../contract-primitives/models/request-id-schema.js';
-import { PortalErrorSchema } from '../../portal-call-surface/models/portal-error-schema.js';
+import {
+	PortalApprovalChallengeSchema,
+	PortalApprovalRequiredCallItemResultSchema,
+} from '../../portal-call-surface/models/portal-call-result-schema.js';
 
 export const ApprovalDecisionReferenceSchema = z
 	.object({
@@ -14,14 +17,9 @@ export const ApprovalDecisionReferenceSchema = z
 
 export type ApprovalDecisionReference = z.infer<typeof ApprovalDecisionReferenceSchema>;
 
-export const ApprovalRequiredResultSchema = z
-	.object({
-		error: PortalErrorSchema.extend({
-			code: z.literal('approval_required'),
-		}),
-		id: ItemIdSchema,
-		status: z.literal('error'),
-	})
-	.strict();
+export const ApprovalRequiredResultSchema = PortalApprovalRequiredCallItemResultSchema;
+
+export const ApprovalChallengeReferenceSchema = PortalApprovalChallengeSchema;
 
 export type ApprovalRequiredResult = z.infer<typeof ApprovalRequiredResultSchema>;
+export type ApprovalChallengeReference = z.infer<typeof ApprovalChallengeReferenceSchema>;

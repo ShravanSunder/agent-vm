@@ -8,16 +8,11 @@ import {
 	terminateLiveManagedVm,
 	type ManagedVmProcessTarget,
 } from '../shared/controller-managed-vm-termination.js';
-import {
-	isProcessAlive,
-	killProcess,
-	readProcessCommand,
-	readProcessIdentity,
-	sleep,
-} from '../shared/managed-vm-process.js';
+import { readProcessIdentity, sleep } from '../shared/managed-vm-process.js';
 import { shouldRunLiveVmE2e } from './live-vm-e2e-gates.js';
 
-const managedVmFactory = createGondolinManagedVmProvider().factory;
+const managedVmProvider = createGondolinManagedVmProvider();
+const managedVmFactory = managedVmProvider.factory;
 
 const TEST_SECRET_VALUE = 'agent-vm-http-mediation-test-secret';
 const mediationHost = 'mediation-test.vm.host';
@@ -86,7 +81,8 @@ async function terminateVmRuntime(
 	if (runtime === null) return;
 	await terminateLiveManagedVm({
 		contextLabel: 'HTTP mediation VM cleanup',
-		dependencies: { isProcessAlive, killProcess, readProcessCommand, readProcessIdentity, sleep },
+		exactProcessTermination: managedVmProvider.exactProcessTermination,
+		sleep,
 		target: runtime.target,
 		vm: runtime.managedVm,
 	});

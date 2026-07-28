@@ -1,0 +1,35 @@
+{
+	"caseId": "coverage-sandbox-fs-read-request",
+	"schemaId": "sandbox.fs.read.request",
+	"tags": [
+		"accepted",
+		"coverage"
+	],
+	"input": {
+		"environment": {
+			"handleId": "environment-a",
+			"kind": "environment",
+			"owningGeneration": "generation-a"
+		},
+		"maxBytes": 1,
+		"offsetBytes": 0,
+		"path": "file.txt"
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"environment": {
+				"handleId": "environment-a",
+				"kind": "environment",
+				"owningGeneration": "generation-a"
+			},
+			"maxBytes": 1,
+			"offsetBytes": 0,
+			"path": "file.txt"
+		},
+		"canonicalJson": "{\"environment\":{\"handleId\":\"environment-a\",\"kind\":\"environment\",\"owningGeneration\":\"generation-a\"},\"maxBytes\":1,\"offsetBytes\":0,\"path\":\"file.txt\"}",
+		"refinementIdentities": [
+			"sandbox.binary-chunk.byte-length"
+		]
+	}
+}

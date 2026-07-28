@@ -14,19 +14,14 @@ import type { ManagedVm, ManagedVmSshAccess } from '@agent-vm/managed-vm';
  */
 import { afterAll, describe, expect, it } from 'vitest';
 
-const managedVmFactory = createGondolinManagedVmProvider().factory;
+const managedVmProvider = createGondolinManagedVmProvider();
+const managedVmFactory = managedVmProvider.factory;
 
 import {
 	terminateLiveManagedVm,
 	type ManagedVmProcessTarget,
 } from '../shared/controller-managed-vm-termination.js';
-import {
-	isProcessAlive,
-	killProcess,
-	readProcessCommand,
-	readProcessIdentity,
-	sleep,
-} from '../shared/managed-vm-process.js';
+import { readProcessIdentity, sleep } from '../shared/managed-vm-process.js';
 import { waitForProtocolRetryInterval } from './e2e-protocol-wait.js';
 import { shouldRunLiveVmE2e } from './live-vm-e2e-gates.js';
 
@@ -57,7 +52,8 @@ async function terminateStartedVm(options: {
 	await options.sshAccess?.close();
 	await terminateLiveManagedVm({
 		contextLabel: options.context,
-		dependencies: { isProcessAlive, killProcess, readProcessCommand, readProcessIdentity, sleep },
+		exactProcessTermination: managedVmProvider.exactProcessTermination,
+		sleep,
 		target: options.processTarget,
 		vm: options.vm,
 	});

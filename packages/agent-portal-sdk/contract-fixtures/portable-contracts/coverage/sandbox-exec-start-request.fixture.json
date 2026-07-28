@@ -1,0 +1,51 @@
+{
+	"caseId": "coverage-sandbox-exec-start-request",
+	"schemaId": "sandbox.exec.start.request",
+	"tags": [
+		"accepted",
+		"coverage"
+	],
+	"input": {
+		"command": "printf '%s\\n' \"$GREETING\" && pwd",
+		"cwd": "/workspace",
+		"environment": {
+			"handleId": "environment-a",
+			"kind": "environment",
+			"owningGeneration": "generation-a"
+		},
+		"environmentVariables": [
+			{
+				"name": "GREETING",
+				"value": "hello world"
+			}
+		],
+		"mode": {
+			"kind": "direct"
+		},
+		"timeoutMs": 1000
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"command": "printf '%s\\n' \"$GREETING\" && pwd",
+			"cwd": "/workspace",
+			"environment": {
+				"handleId": "environment-a",
+				"kind": "environment",
+				"owningGeneration": "generation-a"
+			},
+			"environmentVariables": [
+				{
+					"name": "GREETING",
+					"value": "hello world"
+				}
+			],
+			"mode": {
+				"kind": "direct"
+			},
+			"timeoutMs": 1000
+		},
+		"canonicalJson": "{\"command\":\"printf '%s\\\\n' \\\"$GREETING\\\" && pwd\",\"cwd\":\"/workspace\",\"environment\":{\"handleId\":\"environment-a\",\"kind\":\"environment\",\"owningGeneration\":\"generation-a\"},\"environmentVariables\":[{\"name\":\"GREETING\",\"value\":\"hello world\"}],\"mode\":{\"kind\":\"direct\"},\"timeoutMs\":1000}",
+		"refinementIdentities": ["sandbox.environment-variable.unique-names"]
+	}
+}

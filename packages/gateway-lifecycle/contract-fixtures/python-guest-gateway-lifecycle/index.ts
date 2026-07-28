@@ -1,5 +1,5 @@
 import type {
-	GatewayLifecycle,
+	DirectProcessGatewayLifecycle,
 	GatewayProcessSpec,
 	GatewayVmRequirements,
 	GatewayZoneConfig,
@@ -32,10 +32,11 @@ function buildPythonGuestProcessSpec(): GatewayProcessSpec {
 }
 
 export const pythonGuestGatewayLifecycleFixture = {
+	executionModel: 'direct-process',
 	buildProcessSpec(_zone: GatewayZoneConfig): GatewayProcessSpec {
 		return buildPythonGuestProcessSpec();
 	},
 	buildVmRequirements(): GatewayVmRequirements {
 		return buildPythonGuestVmRequirements();
 	},
-} satisfies GatewayLifecycle;
+} satisfies DirectProcessGatewayLifecycle;

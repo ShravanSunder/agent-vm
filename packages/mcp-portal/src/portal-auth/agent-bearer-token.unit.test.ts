@@ -2,12 +2,61 @@ import { describe, expect, it } from 'vitest';
 
 import {
 	decodePortalMasterKey,
+	deriveAudienceScopedAgentBearerToken,
 	deriveAgentBearerToken,
 	formatMasterKeyFingerprint,
+	verifyAudienceScopedAgentBearerAuthorization,
 	verifyAgentBearerAuthorization,
 } from './agent-bearer-token.js';
 
 describe('agent bearer token helpers', () => {
+	it('cryptographically separates product audiences', () => {
+		const masterKey = Buffer.from('master-key');
+		const mcpPortalBearer = deriveAudienceScopedAgentBearerToken({
+			agentId: 'shravan',
+			audience: 'mcp-portal:agent',
+			credentialVersion: 1,
+			masterKey,
+		});
+		const toolPortalBearer = deriveAudienceScopedAgentBearerToken({
+			agentId: 'shravan',
+			audience: 'tool-portal:agent',
+			credentialVersion: 1,
+			masterKey,
+		});
+
+		expect(mcpPortalBearer).not.toBe(toolPortalBearer);
+		expect(
+			verifyAudienceScopedAgentBearerAuthorization({
+				agentId: 'shravan',
+				audience: 'tool-portal:agent',
+				authorizationHeader: `Bearer ${mcpPortalBearer}`,
+				credentialVersion: 1,
+				masterKey,
+			}),
+		).toEqual({ ok: false, reason: 'signature-mismatch' });
+		expect(
+			verifyAudienceScopedAgentBearerAuthorization({
+				agentId: 'shravan',
+				audience: 'tool-portal:agent',
+				authorizationHeader: `Bearer ${toolPortalBearer}`,
+				credentialVersion: 1,
+				masterKey,
+			}),
+		).toEqual({ ok: true });
+	});
+
+	it('rejects an empty audience instead of falling back', () => {
+		expect(() =>
+			deriveAudienceScopedAgentBearerToken({
+				agentId: 'shravan',
+				audience: '',
+				credentialVersion: 1,
+				masterKey: Buffer.from('master-key'),
+			}),
+		).toThrow(/audience/u);
+	});
+
 	it('derives deterministic audience-scoped bearers per agent', () => {
 		const masterKey = Buffer.from('master-key');
 

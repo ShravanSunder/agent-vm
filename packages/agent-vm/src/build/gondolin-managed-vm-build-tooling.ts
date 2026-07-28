@@ -6,12 +6,18 @@ import {
 	resolveGondolinPackageSpec as resolvePackageSpec,
 } from '@agent-vm/gondolin-vm-adapter';
 
+export interface ManagedGatewayImageBootProjection {
+	readonly frameworkBootEntry: 'hermes-framework-service' | 'openclaw-framework-service';
+	readonly kind: 'managed-gateway-exact-two-role';
+}
+
 export interface ManagedVmBackendImageBuildOptions {
 	readonly buildConfig: unknown;
 	readonly cacheDir: string;
 	readonly configDir?: string;
 	readonly fullReset?: boolean;
 	readonly fingerprintInput?: unknown;
+	readonly managedGatewayBoot?: ManagedGatewayImageBootProjection;
 	readonly output?: { write(chunk: string | Uint8Array): boolean };
 }
 
@@ -31,6 +37,7 @@ export interface ManagedVmBackendImageBuildTooling {
 		readonly configDir?: string;
 		readonly fingerprintInput?: unknown;
 		readonly gondolinVersion?: string;
+		readonly managedGatewayBoot?: ManagedGatewayImageBootProjection;
 	}): Promise<string>;
 }
 

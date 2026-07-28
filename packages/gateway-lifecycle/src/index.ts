@@ -4,6 +4,13 @@ export {
 	gatewayTypeValues,
 } from './gateway-runtime-contract.js';
 export {
+	createGatewayTelemetryProducerSafetyContract,
+	gatewayFrameworkTelemetryServiceNames,
+	gatewayTelemetryAdmissionLimits,
+	gatewayTelemetrySourcePolicy,
+	gatewayToolPortalTelemetryServiceName,
+} from './gateway-lifecycle.js';
+export {
 	controllerVmHost,
 	egressHostsForAudience,
 	gatewayVmAllowedHosts,
@@ -79,19 +86,46 @@ export type {
 } from './health/controller-request-policy.js';
 export type {
 	BuildGatewayVmRequirementsOptions,
+	BuildManagedFrameworkServiceBootInputsOptions,
+	DirectProcessGatewayLifecycle,
 	GatewayAuthConfig,
 	GatewayIngressConfig,
+	GatewayInteractiveSshConfig,
+	GatewayInteractiveSshSession,
 	GatewayLifecycle,
+	GatewayLifecycleBase,
 	GatewaySecretConfig,
 	GatewayZoneAgentConfig,
 	GatewayZoneConfig,
 	GatewayZoneMcpPortalConfig,
 	GatewayZoneObservabilityConfig,
+	GatewayFrameworkTelemetryProducerConfig,
+	GatewayTelemetryAdmissionLimits,
+	GatewayTelemetryProducerSafetyContract,
+	GatewayTelemetrySignalPolicy,
+	GatewayTelemetrySourcePolicy,
+	GatewayToolPortalTelemetryProducerConfig,
 	EnvInjectedGatewaySecretConfig,
 	HttpMediatedGatewaySecretConfig,
+	ManagedFrameworkServiceBootInputs,
+	ManagedGatewayLifecycle,
 } from './gateway-lifecycle.js';
 export type { GatewayHealthCheck, GatewayProcessSpec } from './gateway-process-spec.js';
 export type { GatewayVmRequirements } from './gateway-vm-spec.js';
+export { parseManagedGatewayBootContract } from './managed-gateway-boot-contract.js';
+export type {
+	ManagedFrameworkBootEntry,
+	ManagedFrameworkIngressMetadata,
+	ManagedFrameworkKind,
+	ManagedFrameworkReadinessMetadata,
+	ManagedFrameworkServiceBootMetadata,
+	ManagedGatewayBootContract,
+	ManagedGatewayLogIdentity,
+	ManagedHermesServiceBootMetadata,
+	ManagedOpenClawServiceBootMetadata,
+	ManagedToolPortalReadinessMetadata,
+	ManagedToolPortalServiceBootMetadata,
+} from './managed-gateway-boot-contract.js';
 export {
 	mergeRuntimeGatewaySecrets,
 	splitResolvedGatewaySecrets,
@@ -107,11 +141,11 @@ export {
 	OPENCLAW_STATE_SANDBOXES_VM_ROOT,
 	OPENCLAW_STATE_VM_ROOT,
 	TOOL_VM_SCRATCH_GUEST_ROOT,
-	TOOL_VM_WORKSPACE_GUEST_ROOT,
 	translateRuntimePath,
 } from './runtime-paths/runtime-path-mapping.js';
 export { createToolVmLeaseId, isToolVmLeaseId, parseToolVmLeaseId } from './tool-vm-lease-id.js';
 export {
+	TOOL_VM_WORK_GUEST_ROOT,
 	defaultToolVmLeaseAuthorityTombstoneTtlMs,
 	isToolVmLeasePeek,
 	isToolVmSshLease,

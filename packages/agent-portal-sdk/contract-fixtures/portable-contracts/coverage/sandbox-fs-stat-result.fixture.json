@@ -1,0 +1,21 @@
+{
+	"caseId": "coverage-sandbox-fs-stat-result",
+	"schemaId": "sandbox.fs.stat.result",
+	"tags": [
+		"accepted",
+		"coverage"
+	],
+	"input": {
+		"kind": "not-found",
+		"path": "missing.txt"
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"kind": "not-found",
+			"path": "missing.txt"
+		},
+		"canonicalJson": "{\"kind\":\"not-found\",\"path\":\"missing.txt\"}",
+		"refinementIdentities": []
+	}
+}

@@ -100,8 +100,13 @@ export function createPathsSubcommands(io: CliIo, dependencies: CliDependencies)
 						const entries = [
 							buildResolvedPathEntry(`zone[${zone.id}].stateDir`, zone.gateway.stateDir, sizes),
 							buildResolvedPathEntry(`zone[${zone.id}].backupDir`, backupDir, sizes),
+							buildResolvedPathEntry(
+								`zone[${zone.id}].zoneRuntimeDir`,
+								zone.gateway.zoneRuntimeDir,
+								sizes,
+							),
 						];
-						if (zone.gateway.type !== 'openclaw') {
+						if (zone.gateway.type === 'worker') {
 							return entries;
 						}
 						return [
@@ -114,8 +119,14 @@ export function createPathsSubcommands(io: CliIo, dependencies: CliDependencies)
 						];
 					});
 					const entries: ResolvedPathEntry[] = await Promise.all([
+						buildResolvedPathEntry('storageRootDir', systemConfig.storageRootDir, sizes),
 						buildResolvedPathEntry('cacheDir', systemConfig.cacheDir, sizes),
-						buildResolvedPathEntry('runtimeDir', systemConfig.runtimeDir, sizes),
+						buildResolvedPathEntry('controllerStateDir', systemConfig.controllerStateDir, sizes),
+						buildResolvedPathEntry(
+							'controllerRuntimeDir',
+							systemConfig.controllerRuntimeDir,
+							sizes,
+						),
 						...zoneEntryPromises,
 					]);
 

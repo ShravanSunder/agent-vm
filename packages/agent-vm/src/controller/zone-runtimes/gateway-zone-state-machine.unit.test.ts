@@ -1,9 +1,10 @@
 import { gatewayRecoveryHealthReasons } from '@agent-vm/gateway-lifecycle';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
+import type { GatewayExpectedAdmissionCohort } from '../../gateway/gateway-aggregate-admission-state.js';
 import type { GatewayOwnershipEvidence } from '../../gateway/gateway-ownership-evidence.js';
+import { createManagedGatewayBootContract } from '../../gateway/managed-gateway-boot-contract.js';
 import type { ControllerZoneLifecycleState } from '../../operations/controller-status.js';
-import type { GatewayVmLifecycleAuthority } from '../vm-ownership/gateway-vm-lifecycle-authority.js';
 import {
 	classifyGatewayStartError,
 	deriveGatewayDiagnosisSnapshot,
@@ -14,6 +15,47 @@ import {
 	type GatewayZoneLifecycleState,
 } from './gateway-zone-state-machine.js';
 import type { GatewayZoneRuntimeHandle } from './zone-runtime-types.js';
+
+const testManagedGatewayBootContract = createManagedGatewayBootContract({
+	bootEntry: 'openclaw-gateway',
+	configurationInputPath: '/run/agent-vm/managed-gateway/framework-service.json',
+	environmentInputPath: '/run/agent-vm/managed-gateway/framework.environment.sh',
+	framework: 'openclaw',
+	ingress: { guestPort: 18_789, kind: 'framework-http' },
+	logIdentity: {
+		guestPath: '/var/log/agent-vm/openclaw-service.log',
+		serviceName: 'agent-vm-openclaw-test',
+	},
+	readiness: { guestPort: 18_789, kind: 'framework-http', path: '/readyz' },
+	role: 'framework-service',
+});
+
+const testOpenClawZone = {
+	agentToolVmProfiles: {},
+	defaultToolVmProfile: 'standard',
+	egressHosts: [],
+	gateway: {
+		config: '/config/openclaw.json',
+		controlAuth: { mode: 'token', secret: 'OPENCLAW_GATEWAY_TOKEN' },
+		cpus: 2,
+		imageProfile: 'openclaw',
+		memory: '2G',
+		port: 18_791,
+		stateDir: '/state/zone-test',
+		type: 'openclaw',
+		zoneFilesDir: '/zone-files/zone-test',
+		zoneRuntimeDir: '/runtime/zone-test',
+	},
+	id: 'zone-test',
+	secrets: {
+		OPENCLAW_GATEWAY_TOKEN: {
+			audience: 'gateway',
+			envVar: 'OPENCLAW_GATEWAY_TOKEN',
+			injection: 'env',
+			source: 'environment',
+		},
+	},
+} satisfies GatewayZoneRuntimeHandle['zone'];
 
 describe('projectGatewayZoneLifecycleStateForStatus', () => {
 	it('keeps the public controller status projection backward-compatible', () => {
@@ -217,17 +259,18 @@ describe('GatewayRecoveryErrorCode', () => {
 
 function createGatewayRuntimeHandle(): GatewayZoneRuntimeHandle {
 	return {
-		ingress: { host: '127.0.0.1', port: 18791 },
-		processSpec: {
-			bootstrapCommand: 'bootstrap',
-			guestListenPort: 8080,
-			healthCheck: { path: '/readyz', port: 8080, type: 'http' },
-			logPath: '/logs/gateway.log',
-			startCommand: 'start',
+		bootContract: testManagedGatewayBootContract,
+		executionModel: 'managed-gateway',
+		expectedCohort: createExpectedAdmissionCohort(),
+		destroyGateway: async () => ({ kind: 'destroyed-clean' }),
+		gatewayIdentity: createGatewayIdentity('gateway-vm-1'),
+		image: {
+			built: false,
+			fingerprint: 'gateway-image-fingerprint',
+			imageReference: '/images/openclaw-gateway',
 		},
-		terminateVm: async () => {},
+		ingress: { host: '127.0.0.1', port: 18791 },
 		vm: {
-			close: async () => {},
 			enableSsh: (): never => {
 				throw new Error('not used');
 			},
@@ -237,25 +280,74 @@ function createGatewayRuntimeHandle(): GatewayZoneRuntimeHandle {
 			getHostProcessId: (): number => 42,
 			id: 'gateway-vm-1',
 		},
-		vmOwnership: createGatewayVmOwnershipStub('gateway-vm-1'),
+		zone: testOpenClawZone,
 	};
 }
 
-function createGatewayVmOwnershipStub(vmId: string): GatewayVmLifecycleAuthority {
-	const gatewaySeed = {
+function createExpectedAdmissionCohort(): GatewayExpectedAdmissionCohort {
+	return {
+		controlIdentity: {
+			controllerEpoch: 'controller-test',
+			generationId: 'generation-test',
+			peerId: 'tool-portal-control',
+			processEpoch: 'tool-portal-process-test',
+		},
+		fence: {
+			controllerEpoch: 'controller-test',
+			gatewayEpoch: 'gateway-epoch-test',
+			vmId: 'gateway-vm-1',
+			zoneId: 'zone-test',
+		},
+		frameworkIdentity: {
+			attachmentGeneration: 1,
+			clientKind: 'openclaw-managed-plugin',
+			configuredAgentIds: ['main'],
+			frameworkEpoch: 'framework-epoch-test',
+			frameworkKind: 'openclaw',
+			projectionCohortDigest:
+				'projection-cohort:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+		},
+		ingressIntent: {
+			controlRoute: {
+				audience: 'gateway-control',
+				guestPort: 18_790,
+				kind: 'tool-portal-control',
+				prefix: '/_agent-vm/control',
+				stripPrefix: true,
+			},
+			frameworkRootRoute: {
+				guestPort: 18_789,
+				kind: 'framework-root',
+				prefix: '/',
+				stripPrefix: true,
+			},
+		},
+		providerRevision: 'provider-revision-test',
+		requiredBackendRevision: 'required-backend-revision-test',
+		semanticRevision: 'semantic-revision-test',
+		toolPortalIdentity: {
+			processEpoch: 'tool-portal-process-test',
+			role: 'tool-portal',
+			runtimeEpoch: 'runtime-epoch-test',
+			serviceId: 'tool-portal-service-test',
+		},
+		udsIdentity: {
+			frameworkEpoch: 'framework-epoch-test',
+			gatewayEpoch: 'gateway-epoch-test',
+			runtimeEpoch: 'runtime-epoch-test',
+			socketPath: '/run/agent-vm/gateway-runtime/managed-plugin.sock',
+		},
+	};
+}
+
+function createGatewayIdentity(vmId: string): GatewayZoneRuntimeHandle['gatewayIdentity'] {
+	return {
 		bootId: 'boot-test',
 		controllerEpoch: 'controller-test',
 		gatewayEpochId: 'gateway-epoch-test',
+		gatewayVmId: vmId,
 		generationId: 'generation-test',
 		zoneId: 'zone-test',
-	};
-	const gatewayIdentity = { ...gatewaySeed, gatewayVmId: vmId };
-	return {
-		gatewayIdentity,
-		gatewaySeed,
-		attachGatewayVm: () => gatewayIdentity,
-		containPendingCreate: async () => {},
-		destroyLive: async (destroyVm) => await destroyVm(),
 	};
 }
 

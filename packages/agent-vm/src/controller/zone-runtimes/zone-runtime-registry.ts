@@ -11,7 +11,7 @@ import {
 import type {
 	ControllerZoneRuntime,
 	ControllerZoneRuntimeSnapshot,
-	OpenClawZoneRuntime,
+	ManagedGatewayZoneRuntime,
 	WorkerZoneRuntime,
 } from './zone-runtime-types.js';
 
@@ -25,7 +25,7 @@ export interface ZoneRuntimeRegistry {
 		readonly purged: boolean;
 		readonly zoneId: string;
 	}>;
-	getOpenClawRuntime(zoneId: string): OpenClawZoneRuntime;
+	getManagedGatewayRuntime(zoneId: string): ManagedGatewayZoneRuntime;
 	getDiagnosisByZone(): Readonly<Record<string, GatewayDiagnosisSnapshot>>;
 	getSnapshotByZone(): Readonly<Record<string, ControllerZoneRuntimeSnapshot>>;
 	getWorkerRuntime(zoneId: string): WorkerZoneRuntime;
@@ -78,12 +78,12 @@ export function createZoneRuntimeRegistry(options: {
 		async destroyZone(zoneId, purge) {
 			return await getRuntime(zoneId).destroy(purge);
 		},
-		getOpenClawRuntime(zoneId) {
+		getManagedGatewayRuntime(zoneId) {
 			const runtime = getRuntime(zoneId);
-			if (runtime.gatewayType !== 'openclaw') {
+			if (runtime.gatewayType === 'worker') {
 				throw new ControllerZoneOperationUnsupportedError(
 					zoneId,
-					'OpenClaw operations',
+					'managed Gateway operations',
 					runtime.gatewayType,
 				);
 			}
@@ -108,7 +108,8 @@ export function createZoneRuntimeRegistry(options: {
 			const runtimeDiagnoses = Object.fromEntries(
 				[...runtimesByZoneId.entries()]
 					.filter(
-						(entry): entry is [string, OpenClawZoneRuntime] => entry[1].gatewayType === 'openclaw',
+						(entry): entry is [string, ManagedGatewayZoneRuntime] =>
+							entry[1].gatewayType !== 'worker',
 					)
 					.map(([zoneId, runtime]) => [zoneId, runtime.getDiagnosis()]),
 			);
@@ -150,7 +151,9 @@ export function createZoneRuntimeRegistry(options: {
 		async startSelectedZones() {
 			await Promise.all(
 				[...runtimesByZoneId.values()]
-					.filter((runtime): runtime is OpenClawZoneRuntime => runtime.gatewayType === 'openclaw')
+					.filter(
+						(runtime): runtime is ManagedGatewayZoneRuntime => runtime.gatewayType !== 'worker',
+					)
 					.map(async (runtime) => {
 						try {
 							await runtime.start();

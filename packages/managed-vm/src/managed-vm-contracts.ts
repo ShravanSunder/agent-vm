@@ -1,10 +1,23 @@
 /** A command executed in the guest. */
 export type ManagedVmExecCommand = string | readonly string[];
 
+export type ManagedVmExecStreamMode = { readonly kind: 'discard' } | { readonly kind: 'pipe' };
+
+/**
+ * Explicit bounded streaming policy. Omitting this group preserves the
+ * backend's buffered execution behavior for existing non-streaming callers.
+ */
+export interface ManagedVmExecStreamingOptions {
+	readonly stderr: ManagedVmExecStreamMode;
+	readonly stdout: ManagedVmExecStreamMode;
+	readonly windowBytes: number;
+}
+
 export interface ManagedVmExecOptions {
 	readonly argv?: readonly string[];
 	readonly cwd?: string;
 	readonly env?: readonly string[] | Readonly<Record<string, string>>;
+	readonly output?: ManagedVmExecStreamingOptions;
 	readonly pty?: boolean;
 	readonly signal?: AbortSignal;
 	readonly stdin?: string | Uint8Array | AsyncIterable<Uint8Array>;
@@ -123,6 +136,29 @@ export interface OwnedHostDirectoryTransfer {
 	readonly state: 'adapter-owned' | 'closed';
 }
 
+export type ManagedVmFilteredWorkspaceVisibility =
+	| { readonly kind: 'whole-root-writable' }
+	| {
+			readonly kind: 'positive-paths';
+			/** Normalized workspace-relative paths; an empty path selects the owned workspace root. */
+			readonly visiblePaths: readonly string[];
+			/** Normalized workspace-relative paths; an empty path selects the owned workspace root. */
+			readonly writablePaths: readonly string[];
+	  };
+
+export interface ManagedVmFilteredWorkspaceReadonlyInput {
+	readonly destinationRelativePath: string;
+	readonly sourceRelativePath: string;
+}
+
+/** Controller-authored policy over one owned canonical workspace root. */
+export interface ManagedVmFilteredWorkspacePolicy {
+	readonly hiddenPaths: readonly string[];
+	readonly readonlyInputs: readonly ManagedVmFilteredWorkspaceReadonlyInput[];
+	readonly temporaryPaths: readonly string[];
+	readonly visibility: ManagedVmFilteredWorkspaceVisibility;
+}
+
 export type ManagedVmMount =
 	| {
 			readonly access: 'read-only' | 'read-write';
@@ -133,6 +169,15 @@ export type ManagedVmMount =
 			readonly access: 'read-only' | 'read-write';
 			readonly directory: OwnedHostDirectory;
 			readonly kind: 'owned-host-directory';
+	  }
+	| {
+			readonly directory: OwnedHostDirectory;
+			readonly kind: 'owned-filtered-workspace';
+			readonly policy: ManagedVmFilteredWorkspacePolicy;
+	  }
+	| {
+			readonly access: 'read-only' | 'read-write';
+			readonly kind: 'finalizable-memory';
 	  }
 	| { readonly kind: 'memory' }
 	| {
@@ -145,6 +190,8 @@ export type ManagedVmMount =
 export interface ManagedVmMediatedSecretDescriptor {
 	readonly allowedHosts: readonly string[];
 	readonly environmentVariable: string;
+	/** Opaque, non-secret token used to represent the mediated value inside the guest. */
+	readonly guestPlaceholder?: string;
 	/**
 	 * Resolved only at the trusted host/provider boundary. The provider must use
 	 * this value solely for outbound HTTP mediation and must never inject the raw
@@ -186,12 +233,109 @@ export interface ManagedVmCreateRequest {
 	readonly tcpHosts: readonly ManagedVmTcpHostMapping[];
 }
 
+export interface ManagedVmFinalizableMemoryFile {
+	readonly contents: Uint8Array;
+	readonly mode: number;
+	readonly relativePath: string;
+}
+
+export interface ManagedVmFinalizeMemoryMountRequest {
+	readonly files: readonly ManagedVmFinalizableMemoryFile[];
+	readonly guestPath: string;
+}
+
+export interface ManagedVmFinalizableMemoryMountCapability {
+	finalizeMemoryMount(request: ManagedVmFinalizeMemoryMountRequest): Promise<void>;
+}
+
+function isCanonicalRelativeMemoryFilePath(relativePath: string): boolean {
+	if (
+		relativePath.length === 0 ||
+		relativePath.startsWith('/') ||
+		relativePath.endsWith('/') ||
+		relativePath.includes('\\') ||
+		relativePath.includes('\0')
+	) {
+		return false;
+	}
+	const segments = relativePath.split('/');
+	return segments.every((segment) => segment.length > 0 && segment !== '.' && segment !== '..');
+}
+
+function isCanonicalAbsoluteGuestPath(guestPath: string): boolean {
+	if (
+		!guestPath.startsWith('/') ||
+		guestPath.length === 1 ||
+		guestPath.endsWith('/') ||
+		guestPath.includes('\\') ||
+		guestPath.includes('\0')
+	) {
+		return false;
+	}
+	return guestPath
+		.slice(1)
+		.split('/')
+		.every((segment) => segment.length > 0 && segment !== '.' && segment !== '..');
+}
+
+export function validateManagedVmFinalizeMemoryMountRequest(
+	request: ManagedVmFinalizeMemoryMountRequest,
+): ManagedVmFinalizeMemoryMountRequest {
+	if (!isCanonicalAbsoluteGuestPath(request.guestPath)) {
+		throw new Error(
+			'Managed VM finalizable memory mount guest path must be absolute and canonical.',
+		);
+	}
+	const copiedFiles = request.files.map((file) => {
+		if (!isCanonicalRelativeMemoryFilePath(file.relativePath)) {
+			throw new Error(
+				`Managed VM finalizable memory file path must be one canonical relative path: ${file.relativePath}`,
+			);
+		}
+		if (!Number.isSafeInteger(file.mode) || file.mode < 0 || file.mode > 0o777) {
+			throw new Error(
+				`Managed VM finalizable memory file '${file.relativePath}' must use a permission mode between 0000 and 0777.`,
+			);
+		}
+		if (!(file.contents instanceof Uint8Array)) {
+			throw new Error(
+				`Managed VM finalizable memory file '${file.relativePath}' contents must be a Uint8Array.`,
+			);
+		}
+		return {
+			contents: new Uint8Array(file.contents),
+			mode: file.mode,
+			relativePath: file.relativePath,
+		} satisfies ManagedVmFinalizableMemoryFile;
+	});
+	const sortedPaths = copiedFiles.map((file) => file.relativePath).toSorted();
+	for (let index = 0; index < sortedPaths.length; index += 1) {
+		const currentPath = sortedPaths[index];
+		const nextPath = sortedPaths[index + 1];
+		if (currentPath === nextPath) {
+			throw new Error(
+				`Managed VM finalizable memory inventory contains duplicate relative path: ${currentPath}`,
+			);
+		}
+		if (currentPath !== undefined && nextPath?.startsWith(`${currentPath}/`)) {
+			throw new Error(
+				`Managed VM finalizable memory inventory contains a file-directory collision: ${currentPath}`,
+			);
+		}
+	}
+	return {
+		files: copiedFiles,
+		guestPath: request.guestPath,
+	};
+}
+
 export interface ManagedVm {
 	close(): Promise<void>;
 	configureIngressRoutes(routes: readonly ManagedVmIngressRoute[]): void;
 	enableIngress(options?: ManagedVmIngressOptions): Promise<ManagedVmAccessHandle>;
 	enableSsh(options?: ManagedVmEnableSshOptions): Promise<ManagedVmSshAccess>;
 	exec(command: ManagedVmExecCommand, options?: ManagedVmExecOptions): ManagedVmExecProcess;
+	readonly finalizeMemoryMount?: ManagedVmFinalizableMemoryMountCapability['finalizeMemoryMount'];
 	/** Null before start succeeds or after the owned host process exits. */
 	getHostProcessId(): number | null;
 	readonly id: string;
@@ -200,10 +344,25 @@ export interface ManagedVm {
 
 /** Durable controller identity captured before authority admission. */
 export interface ManagedVmHostProcessIdentity {
-	readonly command: readonly string[];
+	readonly command: string;
 	readonly hostProcessId: number;
 	readonly processStartIdentity: string;
 	readonly vmId: string;
+}
+
+export interface ManagedVmExactProcessTerminationRequest {
+	readonly contextLabel: string;
+	readonly identity: ManagedVmHostProcessIdentity;
+}
+
+export type ManagedVmExactProcessTerminationOutcome =
+	| { readonly hostProcessId: number; readonly kind: 'already-absent' }
+	| { readonly hostProcessId: number; readonly kind: 'terminated' };
+
+export interface ManagedVmExactProcessTerminationCapability {
+	terminateRecordedHostProcess(
+		request: ManagedVmExactProcessTerminationRequest,
+	): Promise<ManagedVmExactProcessTerminationOutcome>;
 }
 
 export interface ManagedVmFactory {
@@ -243,6 +402,7 @@ export interface ManagedVmOwnedDirectoryCapability {
 /** Aggregate available only at application composition boundaries. */
 export interface ManagedVmProvider {
 	readonly diagnostics: ManagedVmDiagnosticsCapability;
+	readonly exactProcessTermination: ManagedVmExactProcessTerminationCapability;
 	readonly factory: ManagedVmFactory;
 	readonly images: ManagedVmImageCapability;
 	readonly ownedDirectories: ManagedVmOwnedDirectoryCapability;

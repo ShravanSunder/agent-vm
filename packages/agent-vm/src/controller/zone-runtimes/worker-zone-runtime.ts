@@ -1,11 +1,16 @@
 import { appendEvent, type TaskEvent } from '@agent-vm/agent-vm-worker';
-import type { ManagedVmFactory, ManagedVmImageCapability } from '@agent-vm/managed-vm';
+import type {
+	ManagedVmExactProcessTerminationCapability,
+	ManagedVmFactory,
+	ManagedVmImageCapability,
+} from '@agent-vm/managed-vm';
 import type { SecretResolver } from '@agent-vm/secret-management';
 
 import type { LoadedSystemConfig } from '../../config/system-config.js';
 import { runControllerDestroy as runControllerDestroyDefault } from '../../operations/destroy-zone.js';
 import { containsManagedVmTerminationUnprovenError } from '../../shared/controller-managed-vm-termination.js';
 import type { ActiveTaskRegistry, ActiveWorkerTask } from '../active-task-registry.js';
+import type { ControllerWorkerTaskRuntimeRecordTarget } from '../durable-state/controller-state-record-paths.js';
 import { pullDefaultForTask, type PullDefaultRequest } from '../git-pull-default-operations.js';
 import {
 	pushBranchesForTask,
@@ -69,12 +74,16 @@ export interface CreateWorkerZoneRuntimeOptions {
 	) => void | Promise<void>;
 	readonly onWorkerTaskPrepared?: (task: ActiveWorkerTask) => void | Promise<void>;
 	readonly managedVmFactory: ManagedVmFactory;
+	readonly managedVmExactProcessTermination: ManagedVmExactProcessTerminationCapability;
 	readonly managedVmImages: ManagedVmImageCapability;
 	readonly prepareWorkerTask?: typeof prepareWorkerTaskDefault;
 	readonly requestHeartbeatRegistry: Pick<RequestHeartbeatRegistry, 'acquire' | 'release'>;
 	readonly runControllerDestroy?: typeof runControllerDestroyDefault;
 	readonly secretResolver: SecretResolver;
 	readonly systemConfig: LoadedSystemConfig;
+	readonly workerRuntimeRecordTargetFor: (
+		taskId: string,
+	) => ControllerWorkerTaskRuntimeRecordTarget;
 	readonly zone: WorkerZoneConfig;
 }
 
@@ -291,7 +300,9 @@ export function createWorkerZoneRuntime(
 					secretResolver: options.secretResolver,
 					systemConfig: options.systemConfig,
 					managedVmFactory: options.managedVmFactory,
+					managedVmExactProcessTermination: options.managedVmExactProcessTermination,
 					managedVmImages: options.managedVmImages,
+					workerRuntimeRecordTarget: options.workerRuntimeRecordTargetFor(prepared.taskId),
 				});
 			} catch (error) {
 				if (

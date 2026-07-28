@@ -36,9 +36,15 @@ export interface GatewayServiceHealthProbeResult {
 }
 
 export interface GatewayServiceHealthMonitor {
+	recoverFromTerminalAttachmentLoss(request: TerminalAttachmentLossRecoveryRequest): Promise<void>;
 	start(): void;
 	stop(): Promise<void>;
 	tick(): Promise<void>;
+}
+
+export interface TerminalAttachmentLossRecoveryRequest {
+	readonly sourceKey: GatewayVmRecoverySourceKey;
+	readonly zoneId: string;
 }
 
 export interface GatewayVmRecoveryRequest {
@@ -230,6 +236,7 @@ export function createGatewayServiceHealthMonitor(
 	const recoveryTracker = createGatewayVmRecoveryTracker({ policy: recoveryPolicy });
 	let timer: NodeJS.Timeout | undefined;
 	let runningTick: Promise<void> | undefined;
+	const runningTerminalAttachmentRecoveryByZoneId = new Map<string, Promise<void>>();
 	const recoveredChannelProviderEventKeys = new Set<string>();
 	const controlSessionRecoveryRetryAtMsByEventKey = new Map<string, number>();
 	const controlSessionDeathGraceByZoneId = new Map<string, ControlSessionDeathGraceState>();
@@ -574,6 +581,67 @@ export function createGatewayServiceHealthMonitor(
 		options.healthEventStore.record(event);
 	};
 
+	const executeGatewayRecoveryDecision = async (props: {
+		readonly decision: GatewayVmRecoveryDecision;
+		readonly observedAtMs: number;
+		readonly recoveryBudgetClass: GatewayVmRecoveryBudgetClass;
+		readonly sourceKey?: GatewayVmRecoverySourceKey | undefined;
+		readonly suspensionReason: GatewayVmRecoveryReason;
+	}): Promise<void> => {
+		if (props.decision.kind === 'suspended') {
+			if (!props.decision.outwardEscalationRequired) {
+				return;
+			}
+			recordGatewayRecoverySuspendedEvent({
+				consecutiveFailedRecoveries: props.decision.consecutiveFailedRecoveries,
+				consecutiveFailures: props.decision.consecutiveFailures,
+				observedAtMs: props.observedAtMs,
+				reason: props.suspensionReason,
+				action: 'operator-required',
+				zoneId: props.decision.zoneId,
+			});
+			return;
+		}
+		if (props.decision.kind !== 'restart') {
+			return;
+		}
+		if (stopped) {
+			writeGatewayServiceHealthMonitorLog(
+				`recovery requested for zone '${props.decision.zoneId}' but monitor is stopped`,
+			);
+			return;
+		}
+
+		recoveryTracker.markRecoveryStarted({
+			observedAtMs: props.observedAtMs,
+			recoveryBudgetClass: props.recoveryBudgetClass,
+			zoneId: props.decision.zoneId,
+		});
+		const recoveryResult = await runRecovery(
+			{
+				consecutiveFailures: props.decision.consecutiveFailures,
+				reason: props.decision.reason,
+				...(props.sourceKey === undefined ? {} : { sourceKey: props.sourceKey }),
+				zoneId: props.decision.zoneId,
+			},
+			recoveryActionForBudgetClass(props.recoveryBudgetClass),
+		);
+		const observedAtMs = options.now();
+		recoveryTracker.markRecoveryFinished({
+			observedAtMs,
+			recoveryBudgetClass: props.recoveryBudgetClass,
+			result: budgetResultForRecoveryResult(recoveryResult),
+			zoneId: props.decision.zoneId,
+		});
+		recordGatewayRecoveryEvent({
+			consecutiveFailures: props.decision.consecutiveFailures,
+			observedAtMs,
+			reason: props.decision.reason,
+			result: recoveryResult,
+			zoneId: props.decision.zoneId,
+		});
+	};
+
 	const maybeRecoverGatewayVm = async (props: {
 		readonly observedAtMs: number;
 		readonly reason: GatewayVmRecoveryReason;
@@ -674,60 +742,15 @@ export function createGatewayServiceHealthMonitor(
 						zoneId: props.zoneId,
 					});
 
-		if (decision.kind === 'suspended') {
-			if (!decision.outwardEscalationRequired) {
-				return;
-			}
-			recordGatewayRecoverySuspendedEvent({
-				consecutiveFailedRecoveries: decision.consecutiveFailedRecoveries,
-				consecutiveFailures: decision.consecutiveFailures,
-				observedAtMs: props.observedAtMs,
-				reason:
-					controlSessionDecision?.kind === 'suspended'
-						? 'gateway-control-session-unhealthy'
-						: props.reason,
-				action: 'operator-required',
-				zoneId: decision.zoneId,
-			});
-			return;
-		}
-		if (decision.kind !== 'restart') {
-			return;
-		}
-		if (stopped) {
-			writeGatewayServiceHealthMonitorLog(
-				`recovery requested for zone '${decision.zoneId}' but monitor is stopped`,
-			);
-			return;
-		}
-
-		recoveryTracker.markRecoveryStarted({
+		await executeGatewayRecoveryDecision({
+			decision,
 			observedAtMs: props.observedAtMs,
 			recoveryBudgetClass,
-			zoneId: decision.zoneId,
-		});
-		const recoveryResult = await runRecovery(
-			{
-				consecutiveFailures: decision.consecutiveFailures,
-				reason: decision.reason,
-				...(sourceKey === undefined ? {} : { sourceKey }),
-				zoneId: decision.zoneId,
-			},
-			recoveryActionForBudgetClass(recoveryBudgetClass),
-		);
-		const observedAtMs = options.now();
-		recoveryTracker.markRecoveryFinished({
-			observedAtMs,
-			recoveryBudgetClass,
-			result: budgetResultForRecoveryResult(recoveryResult),
-			zoneId: decision.zoneId,
-		});
-		recordGatewayRecoveryEvent({
-			consecutiveFailures: decision.consecutiveFailures,
-			observedAtMs,
-			reason: decision.reason,
-			result: recoveryResult,
-			zoneId: decision.zoneId,
+			...(sourceKey === undefined ? {} : { sourceKey }),
+			suspensionReason:
+				controlSessionDecision?.kind === 'suspended'
+					? 'gateway-control-session-unhealthy'
+					: props.reason,
 		});
 	};
 
@@ -909,6 +932,40 @@ export function createGatewayServiceHealthMonitor(
 	};
 
 	return {
+		recoverFromTerminalAttachmentLoss: async (request): Promise<void> => {
+			const existingRecovery = runningTerminalAttachmentRecoveryByZoneId.get(request.zoneId);
+			if (existingRecovery !== undefined) {
+				return await existingRecovery;
+			}
+			const recovery = (async (): Promise<void> => {
+				const observedAtMs = options.now();
+				const recoveryBudgetClass = classifyRecoveryBudgetClass({
+					consecutiveFailures: recoveryPolicy.consecutiveFailureThreshold,
+					reason: 'gateway-service-unhealthy',
+					zoneId: request.zoneId,
+				});
+				const decision = recoveryTracker.requestTerminalGatewayRecovery({
+					observedAtMs,
+					recoveryBudgetClass,
+					result: 'failed',
+					sourceKey: request.sourceKey,
+					zoneId: request.zoneId,
+				});
+				await executeGatewayRecoveryDecision({
+					decision,
+					observedAtMs,
+					recoveryBudgetClass,
+					sourceKey: request.sourceKey,
+					suspensionReason: 'gateway-service-unhealthy',
+				});
+			})().finally(() => {
+				if (runningTerminalAttachmentRecoveryByZoneId.get(request.zoneId) === recovery) {
+					runningTerminalAttachmentRecoveryByZoneId.delete(request.zoneId);
+				}
+			});
+			runningTerminalAttachmentRecoveryByZoneId.set(request.zoneId, recovery);
+			return await recovery;
+		},
 		start: () => {
 			if (timer) {
 				return;
@@ -933,6 +990,9 @@ export function createGatewayServiceHealthMonitor(
 			}
 			if (runningTick) {
 				await runningTick;
+			}
+			if (runningTerminalAttachmentRecoveryByZoneId.size > 0) {
+				await Promise.all(runningTerminalAttachmentRecoveryByZoneId.values());
 			}
 		},
 		tick,

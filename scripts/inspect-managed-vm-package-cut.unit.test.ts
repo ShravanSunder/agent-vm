@@ -23,6 +23,7 @@ const requiredPackageNames = [
 	'@agent-vm/managed-vm',
 	'@agent-vm/gateway-lifecycle',
 	'@agent-vm/gondolin-vm-adapter',
+	'@agent-vm/hermes-gateway',
 	'@agent-vm/openclaw-gateway',
 	'@agent-vm/worker-gateway',
 	'@agent-vm/openclaw-agent-vm-plugin',
@@ -51,6 +52,9 @@ function completeWorkspace(): readonly WorkspacePackage[] {
 		workspacePackage('@agent-vm/managed-vm'),
 		workspacePackage('@agent-vm/gateway-lifecycle', { '@agent-vm/managed-vm': 'workspace:*' }),
 		workspacePackage('@agent-vm/gondolin-vm-adapter', { '@agent-vm/managed-vm': 'workspace:*' }),
+		workspacePackage('@agent-vm/hermes-gateway', {
+			'@agent-vm/gateway-lifecycle': 'workspace:*',
+		}),
 		workspacePackage('@agent-vm/openclaw-gateway', {
 			'@agent-vm/gateway-lifecycle': 'workspace:*',
 		}),
@@ -62,6 +66,7 @@ function completeWorkspace(): readonly WorkspacePackage[] {
 		}),
 		workspacePackage('@agent-vm/agent-vm', {
 			'@agent-vm/gondolin-vm-adapter': 'workspace:*',
+			'@agent-vm/hermes-gateway': 'workspace:*',
 			'@agent-vm/openclaw-agent-vm-plugin': 'workspace:*',
 			'@agent-vm/openclaw-gateway': 'workspace:*',
 			'@agent-vm/worker-gateway': 'workspace:*',

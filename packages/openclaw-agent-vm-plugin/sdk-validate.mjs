@@ -10,15 +10,7 @@
  */
 const SDK_PATH = '/opt/openclaw-sdk/sandbox.js';
 
-const REQUIRED_EXPORTS = [
-	'buildExecRemoteCommand',
-	'buildRemoteCommand',
-	'buildSshSandboxArgv',
-	'createSshSandboxSessionFromSettings',
-	'runSshSandboxCommand',
-	'sanitizeEnvVars',
-	'registerSandboxBackend',
-];
+const REQUIRED_EXPORTS = ['registerSandboxBackend'];
 
 try {
 	const sdk = await import(SDK_PATH);
@@ -26,7 +18,7 @@ try {
 
 	if (missing.length > 0) {
 		process.stderr.write(`SDK MISMATCH - missing exports: ${missing.join(', ')}\n`);
-		process.stderr.write('Update assertSdkShape() and SshHelpers interface in plugin.ts\n');
+		process.stderr.write('Update the pinned OpenClaw sandbox registration contract.\n');
 		process.exit(1);
 	}
 

@@ -1,4 +1,7 @@
+import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer, type Server as HttpServer } from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
 
 import {
 	CONTROL_QUEUE_LIMITS,
@@ -7,19 +10,22 @@ import {
 	type ControlEnvelope,
 } from '@agent-vm/control-protocol-contracts';
 import {
+	GATEWAY_RUNTIME_APPROVAL_AUDIENCE,
 	GatewayControlRpcMessageSchema,
+	GatewayControlRpcCommandResultMessageSchema,
+	deriveGatewayControlStablePrincipal,
 	gatewayControlDeliveryPolicyByKind,
 	gatewayControlDeliveryPolicyByOperation,
 	type GatewayControlHello,
 	type GatewayControlRpcMessage,
+	type GatewayRuntimeApprovalChallengeIntent,
 } from '@agent-vm/gateway-control-contracts';
 import type { AgentVmHealthEvent } from '@agent-vm/gateway-lifecycle';
 import {
 	GATEWAY_CONTROL_READY_PATH,
 	GATEWAY_CONTROL_SOCKET_PATH,
 	createGatewayControlService,
-	createGatewayControlEventPublisher,
-} from '@agent-vm/openclaw-agent-vm-plugin';
+} from '@agent-vm/gateway-runtime';
 import type { WorkerControlHello as ControlHello } from '@agent-vm/worker-control-contracts';
 import { Server as SocketIoServer, type Socket as SocketIoServerSocket } from 'socket.io';
 import { io as createSocketIoClient } from 'socket.io-client';
@@ -29,6 +35,8 @@ import {
 	waitForProtocolRetryInterval,
 	withProtocolDeadline,
 } from '../../integration-tests/e2e-protocol-wait.js';
+import { createControllerApprovalLedger } from '../approval/controller-approval-ledger.js';
+import type { ControllerApprovalRecordsTarget } from '../durable-state/controller-state-record-paths.js';
 import {
 	CONTROL_SESSION_EVENT_NAMES,
 	type ControlSessionClient,
@@ -42,7 +50,10 @@ import {
 	type ControlSessionDispatcher,
 } from './control-session-dispatcher.js';
 import { createGatewayControlCallerContextRegistry } from './gateway-control-caller-context.js';
-import { createGatewayControlDomainHandler } from './gateway-control-domain-handler.js';
+import {
+	createGatewayControlDomainHandler,
+	resolveGatewayControlInboundStablePrincipal,
+} from './gateway-control-domain-handler.js';
 import { createGatewayControlProcessAdmissionCoordinator } from './gateway-control-process-admission-coordinator.js';
 import {
 	buildGatewayControlEndpoint,
@@ -207,7 +218,16 @@ function buildLeaseCreateOkCommandResultMessage(
 			lease: {
 				agentId: 'agent-a',
 				idleTtlMs: 120_000,
+				leafGeneration: 'leaf-generation-a',
 				leaseId: 'lease-a',
+				ssh: {
+					host: 'tool-0.vm.host',
+					identityPem: 'pem',
+					knownHostsLine: 'tool-0.vm.host ssh-ed25519 AAAA',
+					port: 22,
+					user: 'sandbox',
+				},
+				sshBindingId: 'ssh-binding-a',
 				state: 'idle',
 				tcpSlot: 0,
 				transport: 'ssh-sandbox',
@@ -329,8 +349,6 @@ describe('control session client', () => {
 		const gatewayControlService = createGatewayControlService({
 			identity: {
 				bootId: material.bootId,
-				callerContextAgentAuthorityKeys: material.agentAuthorityKeys,
-				callerContextProofKey: material.callerContextProofKey,
 				controllerEpoch: material.controllerEpoch,
 				generationId: material.generationId,
 				peerId: material.peerId,
@@ -441,6 +459,442 @@ describe('control session client', () => {
 		}
 	});
 
+	it('publishes an authority-fenced Tool VM binding from controller to Gateway', async () => {
+		const material = createGatewayControlSessionMaterial({
+			controllerEpoch: 'epoch-binding-publication',
+			zoneId: 'zone-binding-publication',
+		});
+		const observedMessages: GatewayControlRpcMessage[] = [];
+		const bindingObserved = deferredProtocolWork();
+		const gatewayControlService = createGatewayControlService({
+			applicationMessageHandler: {
+				handle: async ({ envelope, payload }) => {
+					const message = GatewayControlRpcMessageSchema.parse(payload);
+					observedMessages.push(message);
+					bindingObserved.resolve();
+					return GatewayControlRpcCommandResultMessageSchema.parse({
+						kind: 'command_result',
+						operation: 'tool_vm_binding_publish',
+						payload: {
+							responseToMessageId: envelope.messageId,
+							result: 'ok',
+						},
+					});
+				},
+				messageIdentity: ({ payload }) => {
+					const message = GatewayControlRpcMessageSchema.parse(payload);
+					return {
+						kind: message.kind,
+						...(message.operation === undefined ? {} : { operation: message.operation }),
+					};
+				},
+			},
+			identity: {
+				bootId: material.bootId,
+				controllerEpoch: material.controllerEpoch,
+				generationId: material.generationId,
+				peerId: material.peerId,
+				processEpoch: material.processEpoch,
+				zoneId: material.zoneId,
+			},
+			verifierPublicKeyPem: material.verifierPublicKeyPem,
+		});
+		const httpServer = createServer((request, response) => {
+			if (new URL(request.url ?? '/', 'http://127.0.0.1').pathname === GATEWAY_CONTROL_READY_PATH) {
+				gatewayControlService.handleReadyRequest(request, response);
+				return;
+			}
+			response.statusCode = 404;
+			response.end('not found\n');
+		});
+		httpServer.on('upgrade', (request, socket, head) => {
+			if (
+				new URL(request.url ?? '/', 'http://127.0.0.1').pathname === GATEWAY_CONTROL_SOCKET_PATH
+			) {
+				gatewayControlService.handleUpgrade(request, socket, head);
+				return;
+			}
+			socket.destroy();
+		});
+		const port = await listen(httpServer);
+		const client = await connectGatewayControlSession({
+			endpoint: buildGatewayControlEndpoint({ host: '127.0.0.1', port }),
+			material,
+		});
+
+		try {
+			const diagnostics = client.getDiagnostics();
+			const acceptedSession = diagnostics.lastHelloResponse;
+			if (
+				diagnostics.attachmentGeneration === undefined ||
+				acceptedSession?.outcome !== 'accepted'
+			) {
+				throw new Error('Expected an accepted Gateway control attachment.');
+			}
+			const stablePrincipal = 'a'.repeat(64);
+			const message = GatewayControlRpcMessageSchema.parse({
+				kind: 'command',
+				operation: 'tool_vm_binding_publish',
+				payload: {
+					authority: {
+						attachmentGeneration: diagnostics.attachmentGeneration,
+						connectionId: acceptedSession.connectionId,
+						controllerEpoch: material.controllerEpoch,
+						gatewayEpoch: `gateway-epoch:${material.generationId}`,
+						processEpoch: material.processEpoch,
+						sessionId: acceptedSession.sessionId,
+						zoneId: material.zoneId,
+					},
+					binding: {
+						agentId: 'agent-a',
+						idleTtlMs: 60_000,
+						leafGeneration: 'leaf-a',
+						leaseId: 'lease-a',
+						profileAssignmentRevision: 'assignment-a',
+						ssh: {
+							host: 'tool-0.vm.host',
+							identityPem: 'private-key',
+							knownHostsLine: 'tool-0.vm.host ssh-ed25519 AAAA',
+							port: 22,
+							user: 'root',
+						},
+						sshBindingId: 'ssh-a',
+						stablePrincipal,
+						tcpSlot: 0,
+						transport: 'ssh-sandbox',
+						workdir: '/work',
+						zoneId: material.zoneId,
+					},
+					kind: 'current',
+					observedAtMs: 1_000,
+				},
+			});
+			const envelope = {
+				bootId: material.processEpoch,
+				commandId: '44444444-4444-4444-8444-444444444444',
+				connectionId: acceptedSession.connectionId,
+				controllerEpoch: material.controllerEpoch,
+				createdAtMs: 1_000,
+				deliveryPolicy: gatewayControlDeliveryPolicyByOperation.tool_vm_binding_publish,
+				domain: 'gateway_control',
+				idempotencyKey: 'binding-publication-a',
+				kind: 'command',
+				messageId: '55555555-5555-4555-8555-555555555555',
+				operation: 'tool_vm_binding_publish',
+				peerId: material.peerId,
+				protocolVersion: CONTROL_PROTOCOL_VERSION,
+				sequence: 1,
+				sessionId: acceptedSession.sessionId,
+				zoneId: material.zoneId,
+			} satisfies ControlEnvelope;
+
+			await expect(
+				client.emitApplicationMessage(
+					envelope,
+					{ kind: 'command', operation: 'tool_vm_binding_publish' },
+					message,
+				),
+			).resolves.toMatchObject({
+				kind: 'command_result',
+				operation: 'tool_vm_binding_publish',
+				payload: { result: 'ok' },
+			});
+			await withProtocolDeadline(bindingObserved.promise, 'controller binding publication');
+			expect(observedMessages).toEqual([message]);
+		} finally {
+			client.close();
+			await gatewayControlService.close();
+			await closeHttpServer(httpServer);
+		}
+	});
+
+	it('carries approval reservation, arm, and replay rejection across the gateway control wire', async () => {
+		// Arrange
+		const approvalNowMs = Date.parse('2026-07-13T12:00:00.000Z');
+		const material = createGatewayControlSessionMaterial({
+			controllerEpoch: 'controller-epoch-approval-wire',
+			zoneId: 'zone-approval-wire',
+		});
+		const gatewayEpochId = `gateway-epoch:${material.generationId}`;
+		const approvalAuthorityContext = {
+			controllerEpoch: material.controllerEpoch,
+			frameworkEpoch: material.processEpoch,
+			gatewayEpoch: gatewayEpochId,
+			runtimeEpoch: material.generationId,
+			zoneId: material.zoneId,
+		} as const;
+		const approvalIntent = {
+			backendKind: 'mcp_provider',
+			call: {
+				arguments: { issueTitle: 'Require operator approval over the control wire' },
+				id: 'github.create_issue',
+				name: 'create_issue',
+				namespace: 'github',
+			},
+			operationId: '11111111-1111-4111-8111-111111111111',
+			semanticRevisions: {
+				activeRevision: 'active-approval-wire',
+				bindingRevision: 'binding-approval-wire',
+				catalogRevision: 'catalog-approval-wire',
+				profilePolicyRevision: 'profile-policy-approval-wire',
+				providerRevision: 'provider-approval-wire',
+				schemaRevision: 'schema-approval-wire',
+			},
+			surfaceClass: 'mcp',
+			trustedContext: {
+				correlation: {
+					runId: 'run-approval-wire',
+					sessionId: 'session-approval-wire',
+					toolCallId: 'tool-call-approval-wire',
+				},
+				principal: {
+					agentId: 'agent-approval-wire',
+					frameworkIdentity: { agentId: 'agent-approval-wire', kind: 'openclaw' },
+					profileAssignmentRevision: 'profile-assignment-approval-wire',
+					toolPortalProfileId: 'profile-approval-wire',
+				},
+				requester: { authenticatedSubjectId: 'subject-approval-wire' },
+			},
+		} satisfies GatewayRuntimeApprovalChallengeIntent;
+		const approvalAdmissionPrincipal = deriveGatewayControlStablePrincipal({
+			principal: approvalIntent.trustedContext.principal,
+		});
+		const temporaryDirectoryPath = await mkdtemp(
+			path.join(os.tmpdir(), 'agent-vm-approval-control-wire-'),
+		);
+		const recordsTarget = {
+			directoryPath: path.join(temporaryDirectoryPath, 'approval-records'),
+			kind: 'controller-approval-records',
+			zoneId: material.zoneId,
+		} satisfies ControllerApprovalRecordsTarget;
+		const approvalLedger = createControllerApprovalLedger({
+			challengeTtlMs: 300_000,
+			currentControllerEpoch: material.controllerEpoch,
+			now: () => approvalNowMs,
+			recordsTarget,
+		});
+		const callerContexts = createGatewayControlCallerContextRegistry({
+			agentAuthorityKeys: material.agentAuthorityKeys,
+			callerContextProofKey: material.callerContextProofKey,
+		});
+		const gatewayControlService = createGatewayControlService({
+			identity: {
+				bootId: material.bootId,
+				controllerEpoch: material.controllerEpoch,
+				generationId: material.generationId,
+				peerId: material.peerId,
+				processEpoch: material.processEpoch,
+				zoneId: material.zoneId,
+			},
+			verifierPublicKeyPem: material.verifierPublicKeyPem,
+		});
+		const httpServer = createServer((request, response) => {
+			const url = new URL(request.url ?? '/', 'http://127.0.0.1');
+			if (url.pathname === GATEWAY_CONTROL_READY_PATH) {
+				gatewayControlService.handleReadyRequest(request, response);
+				return;
+			}
+			response.statusCode = 404;
+			response.end('not found\n');
+		});
+		httpServer.on('upgrade', (request, socket, head) => {
+			const url = new URL(request.url ?? '/', 'http://127.0.0.1');
+			if (url.pathname === GATEWAY_CONTROL_SOCKET_PATH) {
+				gatewayControlService.handleUpgrade(request, socket, head);
+				return;
+			}
+			socket.write('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n');
+			socket.destroy();
+		});
+		const sessionFenceRegistry = createControlSessionFenceRegistry();
+		const dispatcher = createControlSessionDispatcher({ sessionFenceRegistry });
+		dispatcher.register(
+			'gateway_control',
+			createGatewayControlDomainHandler({
+				approvalLedger,
+				callerContexts,
+				gateway: {
+					bootId: material.bootId,
+					controllerEpoch: material.controllerEpoch,
+					gatewayEpochId,
+					gatewayVmId: 'gateway-vm-approval-wire',
+					generationId: material.generationId,
+					zoneId: material.zoneId,
+				},
+				session: {
+					bootId: material.processEpoch,
+					controllerEpoch: material.controllerEpoch,
+					peerId: material.peerId,
+					zoneId: material.zoneId,
+				},
+			}),
+		);
+		const port = await listen(httpServer);
+		let client: Awaited<ReturnType<typeof connectGatewayControlSession>> | undefined;
+
+		try {
+			client = await connectGatewayControlSession({
+				dispatcher,
+				endpoint: buildGatewayControlEndpoint({ host: '127.0.0.1', port }),
+				material,
+				resolveInboundStablePrincipal: ({ envelope, message }) =>
+					resolveGatewayControlInboundStablePrincipal({
+						callerContexts,
+						envelope,
+						message,
+					}),
+				sessionFenceRegistry,
+			});
+			type ApprovalCommand = Extract<
+				GatewayControlRpcMessage,
+				{
+					readonly kind: 'command';
+					readonly operation: 'tool_portal_admission_reserve' | 'tool_portal_dispatch_arm';
+				}
+			>;
+			const emitApprovalCommand = async (options: {
+				readonly message: ApprovalCommand;
+				readonly messageId: string;
+			}): Promise<Extract<GatewayControlRpcMessage, { readonly kind: 'command_result' }>> =>
+				GatewayControlRpcCommandResultMessageSchema.parse(
+					await withProtocolDeadline(
+						gatewayControlService.emitApplicationMessage(
+							{
+								buildEnvelope: ({ acceptedSession, sequence }) => ({
+									bootId: acceptedSession.bootId,
+									connectionId: acceptedSession.connectionId,
+									controllerEpoch: acceptedSession.controllerEpoch,
+									createdAtMs: approvalNowMs,
+									deliveryPolicy:
+										gatewayControlDeliveryPolicyByOperation[options.message.operation],
+									domain: 'gateway_control',
+									expiresAtMs: approvalNowMs + 60_000,
+									kind: 'command',
+									messageId: options.messageId,
+									operation: options.message.operation,
+									peerId: acceptedSession.peerId,
+									protocolVersion: CONTROL_PROTOCOL_VERSION,
+									sequence,
+									sessionId: acceptedSession.sessionId,
+									zoneId: acceptedSession.zoneId,
+								}),
+								domainMessage: {
+									kind: 'command',
+									operation: options.message.operation,
+								},
+								payload: options.message,
+							},
+							{
+								admissionPrincipal: approvalAdmissionPrincipal,
+								commandResultTimeoutMs: 2_000,
+							},
+						),
+						`approval control command ${options.message.operation}`,
+					),
+				);
+			const reserveMessage = {
+				kind: 'command',
+				operation: 'tool_portal_admission_reserve',
+				payload: { intent: approvalIntent },
+			} satisfies ApprovalCommand;
+
+			// Act
+			const pendingResponse = await emitApprovalCommand({
+				message: reserveMessage,
+				messageId: '22222222-2222-4222-8222-222222222222',
+			});
+			if (pendingResponse.operation !== 'tool_portal_admission_reserve') {
+				throw new Error('Expected an approval admission response over gateway control.');
+			}
+			const pendingAdmission = pendingResponse.payload.approvalAdmission;
+			if (pendingAdmission?.kind !== 'approval-required') {
+				throw new Error(
+					`Expected a pending approval challenge over gateway control, received ${JSON.stringify(pendingResponse)}.`,
+				);
+			}
+			const decision = await approvalLedger.decide({
+				approvalId: pendingAdmission.challenge.approvalId,
+				authorityContext: approvalAuthorityContext,
+				decision: 'approve',
+				operator: {
+					approverId: 'operator-approval-wire',
+					audience: GATEWAY_RUNTIME_APPROVAL_AUDIENCE,
+					credentialId: 'credential-approval-wire',
+					provenance: 'approval-access',
+				},
+			});
+			const reservationResponse = await emitApprovalCommand({
+				message: reserveMessage,
+				messageId: '33333333-3333-4333-8333-333333333333',
+			});
+			if (reservationResponse.operation !== 'tool_portal_admission_reserve') {
+				throw new Error('Expected an approval reservation response over gateway control.');
+			}
+			const reservationAdmission = reservationResponse.payload.approvalAdmission;
+			if (
+				reservationAdmission?.kind !== 'dispatch-reserved' ||
+				reservationAdmission.reservation.backendKind === 'controller_host_action'
+			) {
+				throw new Error('Expected an approved dispatch reservation over gateway control.');
+			}
+			const armMessage = {
+				kind: 'command',
+				operation: 'tool_portal_dispatch_arm',
+				payload: { reservation: reservationAdmission.reservation },
+			} satisfies ApprovalCommand;
+			const armResponse = await emitApprovalCommand({
+				message: armMessage,
+				messageId: '44444444-4444-4444-8444-444444444444',
+			});
+			const replayResponse = await emitApprovalCommand({
+				message: armMessage,
+				messageId: '55555555-5555-4555-8555-555555555555',
+			});
+
+			// Assert
+			expect(decision).toMatchObject({ decision: 'approve', kind: 'recorded' });
+			expect(reservationAdmission.reservation).toMatchObject({
+				authorityContext: approvalAuthorityContext,
+				operationId: approvalIntent.operationId,
+				stablePrincipal: approvalAdmissionPrincipal,
+			});
+			expect(armResponse).toMatchObject({
+				kind: 'command_result',
+				operation: 'tool_portal_dispatch_arm',
+				payload: {
+					approvalDispatch: {
+						grant: {
+							authorityContext: approvalAuthorityContext,
+							operationId: approvalIntent.operationId,
+							stablePrincipal: approvalAdmissionPrincipal,
+						},
+						kind: 'dispatch-armed',
+					},
+					responseToMessageId: '44444444-4444-4444-8444-444444444444',
+					result: 'ok',
+				},
+			});
+			expect(replayResponse).toMatchObject({
+				kind: 'command_result',
+				operation: 'tool_portal_dispatch_arm',
+				payload: {
+					approvalDispatch: {
+						kind: 'ambiguous',
+						operationId: approvalIntent.operationId,
+						reason: 'dispatch-armed',
+					},
+					responseToMessageId: '55555555-5555-4555-8555-555555555555',
+					result: 'ok',
+				},
+			});
+		} finally {
+			client?.close();
+			await gatewayControlService.close();
+			await closeHttpServer(httpServer);
+			await rm(temporaryDirectoryPath, { force: true, recursive: true });
+		}
+	});
+
 	it('dispatches heartbeat frames from the production gateway control publisher', async () => {
 		const material = createGatewayControlSessionMaterial({
 			controllerEpoch: 'epoch-publisher-heartbeat',
@@ -449,8 +903,6 @@ describe('control session client', () => {
 		const gatewayControlService = createGatewayControlService({
 			identity: {
 				bootId: material.bootId,
-				callerContextAgentAuthorityKeys: material.agentAuthorityKeys,
-				callerContextProofKey: material.callerContextProofKey,
 				controllerEpoch: material.controllerEpoch,
 				generationId: material.generationId,
 				peerId: material.peerId,
@@ -515,25 +967,27 @@ describe('control session client', () => {
 		});
 
 		try {
-			const publisher = createGatewayControlEventPublisher({
-				controlService: gatewayControlService,
-				createId: () => 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-				identity: {
-					bootId: material.bootId,
-					callerContextAgentAuthorityKeys: material.agentAuthorityKeys,
-					callerContextProofKey: material.callerContextProofKey,
+			await gatewayControlService.emitApplicationMessage({
+				buildEnvelope: ({ acceptedSession, sequence }) => ({
+					bootId: acceptedSession.bootId,
+					connectionId: acceptedSession.connectionId,
 					controllerEpoch: material.controllerEpoch,
-					generationId: material.generationId,
+					createdAtMs: 10_000,
+					deliveryPolicy: gatewayControlDeliveryPolicyByKind.heartbeat,
+					domain: 'gateway_control',
+					kind: 'heartbeat',
+					messageId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
 					peerId: material.peerId,
-					processEpoch: material.processEpoch,
+					protocolVersion: CONTROL_PROTOCOL_VERSION,
+					sequence,
+					sessionId: acceptedSession.sessionId,
 					zoneId: material.zoneId,
-				},
-				now: () => 10_000,
-			});
-
-			await publisher.publishControlSessionHeartbeat({
-				elapsedMs: 4,
-				observedAtMs: 9_996,
+				}),
+				domainMessage: { kind: 'heartbeat' },
+				payload: GatewayControlRpcMessageSchema.parse({
+					kind: 'heartbeat',
+					payload: { elapsedMs: 4, observedAtMs: 9_996 },
+				}),
 			});
 
 			expect(recordedHealthEvents).toEqual([
@@ -622,8 +1076,6 @@ describe('control session client', () => {
 			},
 			identity: {
 				bootId: materialA.bootId,
-				callerContextAgentAuthorityKeys: materialA.agentAuthorityKeys,
-				callerContextProofKey: materialA.callerContextProofKey,
 				controllerEpoch: materialA.controllerEpoch,
 				generationId: materialA.generationId,
 				peerId: materialA.peerId,
@@ -650,8 +1102,6 @@ describe('control session client', () => {
 			},
 			identity: {
 				bootId: materialB.bootId,
-				callerContextAgentAuthorityKeys: materialB.agentAuthorityKeys,
-				callerContextProofKey: materialB.callerContextProofKey,
 				controllerEpoch: materialB.controllerEpoch,
 				generationId: materialB.generationId,
 				peerId: materialB.peerId,
@@ -1678,8 +2128,6 @@ describe('control session client', () => {
 		const service = createGatewayControlService({
 			identity: {
 				bootId: material.bootId,
-				callerContextAgentAuthorityKeys: material.agentAuthorityKeys,
-				callerContextProofKey: material.callerContextProofKey,
 				controllerEpoch: material.controllerEpoch,
 				generationId: material.generationId,
 				peerId: material.peerId,
@@ -1786,7 +2234,6 @@ describe('control session client', () => {
 				correlation: {
 					traceId: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 				},
-				gatewayWorkspaceDir: '/workspace/from-gateway',
 			},
 		});
 		let emitPeerMessage:
@@ -1910,7 +2357,6 @@ describe('control session client', () => {
 				callerContext: {
 					callerContextId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
 				},
-				gatewayWorkspaceDir: '/workspace/from-gateway',
 			},
 		});
 		let releaseFirstDispatch: (() => void) | undefined;
@@ -2073,7 +2519,6 @@ describe('control session client', () => {
 				callerContext: {
 					callerContextId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
 				},
-				gatewayWorkspaceDir: '/workspace/from-gateway',
 			},
 		});
 		let emitPeerMessage:
@@ -2158,7 +2603,6 @@ describe('control session client', () => {
 				callerContext: {
 					callerContextId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
 				},
-				gatewayWorkspaceDir: '/workspace/from-gateway',
 			},
 		});
 		let emitPeerMessage:
@@ -2295,7 +2739,6 @@ describe('control session client', () => {
 				callerContext: {
 					callerContextId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
 				},
-				gatewayWorkspaceDir: '/workspace/from-gateway',
 			},
 		});
 		let emitPeerMessage:
@@ -2375,8 +2818,6 @@ describe('control session client', () => {
 			createGatewayControlService({
 				identity: {
 					bootId: material.bootId,
-					callerContextAgentAuthorityKeys: material.agentAuthorityKeys,
-					callerContextProofKey: material.callerContextProofKey,
 					controllerEpoch: material.controllerEpoch,
 					generationId: material.generationId,
 					peerId: material.peerId,

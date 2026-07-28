@@ -1,0 +1,17 @@
+{
+	"caseId": "artifact-reference-path-rejected",
+	"schemaId": "portal.artifact.reference",
+	"tags": ["artifact", "rejected", "unknown-field"],
+	"input": {
+		"byteLength": 4096,
+		"expiresAt": "2030-01-01T00:00:00.000Z",
+		"fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"id": "artifact-1",
+		"path": "/run/agent-vm/gateway-runtime/artifacts/epoch/artifact-1"
+	},
+	"expectation": {
+		"kind": "rejected",
+		"errorCodes": ["portable.object.unknown-field"],
+		"refinementIdentities": []
+	}
+}

@@ -7,7 +7,6 @@ export * from './operations/destroy-zone.js';
 export * from './operations/doctor.js';
 export {
 	preflightGatewayZoneStart,
-	resolveOpenClawProcessSupervisorStateMount,
 	startGatewayZone,
 	validateGatewayControlCallerContextRegistration,
 } from './gateway/gateway-zone-orchestrator.js';

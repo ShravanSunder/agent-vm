@@ -5,7 +5,6 @@ import { command, flag, subcommands } from 'cmd-ts';
 
 import { readPreparedManagedVmImage } from '../../build/prepared-gondolin-image-cache.js';
 import type { LoadedSystemConfig } from '../../config/system-config.js';
-import { runControllerOfflineCleanup } from '../../operations/controller-offline-cleanup.js';
 import { type CliDependencies, type CliIo, requireZone } from '../agent-vm-cli-support.js';
 import { runControllerOperationCommand } from '../controller-operation-commands.js';
 import { createRunTask } from '../run-task.js';
@@ -123,7 +122,7 @@ export function createControllerSubcommands(io: CliIo, dependencies: CliDependen
 					const runtime = await dependencies.startControllerRuntime(
 						{
 							systemConfig,
-							zoneId: selectedZone.id,
+							zoneIds: [selectedZone.id],
 						},
 						{ runTask },
 					);
@@ -162,9 +161,7 @@ export function createControllerSubcommands(io: CliIo, dependencies: CliDependen
 				handler: async ({ config, force, zone }) => {
 					const systemConfig = await loadSystemConfigFromOption(config, dependencies);
 					const selectedZone = requireZone(systemConfig, zone);
-					const result = await (
-						dependencies.runControllerOfflineCleanup ?? runControllerOfflineCleanup
-					)({
+					const result = await dependencies.runControllerOfflineCleanup({
 						force,
 						systemConfig,
 						zoneId: selectedZone.id,

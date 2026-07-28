@@ -7,12 +7,14 @@ import path from 'node:path';
 import { setTimeout as waitForRetryInterval } from 'node:timers/promises';
 import { promisify } from 'node:util';
 
+import type { ManagedVmCreateRequest } from '@agent-vm/managed-vm';
 import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 
 import { computeFingerprintFromConfigPath } from '../build/gondolin-image-builder.js';
 import {
 	hasManagedVmImageAssets,
 	resolveManagedVmMinimumZigVersion,
+	type ManagedGatewayImageBootProjection,
 } from '../build/gondolin-managed-vm-build-tooling.js';
 import {
 	generateManagedDockerfile,
@@ -40,19 +42,39 @@ import {
 	startGatewayZoneForController as startGatewayZoneForControllerDefault,
 } from '../gateway/gateway-zone-orchestrator.js';
 import type { StartGatewayZoneOptions } from '../gateway/gateway-zone-support.js';
+import { controllerFixedGatewayRuntimeArtifactLimits } from '../gateway/managed-gateway-runtime-input-builders.js';
 
 const managedVmRuntimeComposition = createManagedVmRuntimeComposition();
 
 export async function startE2eGatewayZone(
 	options: StartGatewayZoneOptions,
+	testHooks: {
+		readonly onManagedVmCreateRequest?: (request: ManagedVmCreateRequest) => void;
+	} = {},
 ): Promise<Awaited<ReturnType<typeof startGatewayZoneDefault>>> {
-	return await startGatewayZoneDefault(options, managedVmRuntimeComposition);
+	const managedVmFactory =
+		testHooks.onManagedVmCreateRequest === undefined
+			? managedVmRuntimeComposition.managedVmFactory
+			: {
+					createManagedVm: async (request: ManagedVmCreateRequest) => {
+						testHooks.onManagedVmCreateRequest?.(request);
+						return await managedVmRuntimeComposition.managedVmFactory.createManagedVm(request);
+					},
+				};
+	return await startGatewayZoneDefault(options, {
+		...managedVmRuntimeComposition,
+		gatewayRuntimeArtifactLimits: controllerFixedGatewayRuntimeArtifactLimits,
+		managedVmFactory,
+	});
 }
 
 export async function startE2eGatewayZoneForController(
 	options: Parameters<typeof startGatewayZoneForControllerDefault>[0],
 ): Promise<Awaited<ReturnType<typeof startGatewayZoneForControllerDefault>>> {
-	return await startGatewayZoneForControllerDefault(options, managedVmRuntimeComposition);
+	return await startGatewayZoneForControllerDefault(options, {
+		...managedVmRuntimeComposition,
+		gatewayRuntimeArtifactLimits: controllerFixedGatewayRuntimeArtifactLimits,
+	});
 }
 
 interface OpenClawE2eZone extends Omit<LoadedSystemConfig['zones'][number], 'gateway'> {
@@ -74,7 +96,7 @@ interface LocalNpmPackageTarball {
 	readonly packageName: string;
 }
 
-interface LocalDockerPackageTarball {
+export interface LocalDockerPackageTarball {
 	readonly archiveName: string;
 	readonly packageName: string;
 	readonly sourcePath: string;
@@ -97,6 +119,7 @@ interface E2eImageTarget {
 	readonly dockerfile?: string;
 	readonly e2eManifestEligible: boolean;
 	readonly family: 'gateway' | 'toolVm';
+	readonly managedGatewayBoot?: ManagedGatewayImageBootProjection;
 	readonly name: string;
 	readonly recipeFingerprint: string;
 	readonly source?: unknown;
@@ -109,19 +132,20 @@ interface E2ePreparedImageManifestEntry {
 	readonly fingerprint: string;
 	readonly fingerprintInput?: unknown;
 	readonly imagePath: string;
+	readonly managedGatewayBoot?: ManagedGatewayImageBootProjection;
 	readonly name: string;
 	readonly recipeFingerprint: string;
 }
 
 interface E2ePreparedImageManifest {
 	readonly entries: readonly E2ePreparedImageManifestEntry[];
-	readonly schemaVersion: 1;
+	readonly schemaVersion: 2;
 }
 
 const defaultOpenClawMcpPortalExtensionsPath = '/home/openclaw/.openclaw/extensions/mcp-portal';
 const dockerContextLocalPackageTimestamp = new Date('2000-01-01T00:00:00.000Z');
 const e2ePreparedImageManifestFileName = 'prepared-e2e-images.json';
-const e2ePreparedImageManifestSchemaVersion = 1;
+const e2ePreparedImageManifestSchemaVersion = 2;
 const execFileAsync = promisify(execFile);
 const openClawMcpPortalPluginName = 'mcp-portal';
 const e2eTempRootPrefixes = [
@@ -132,11 +156,12 @@ const e2eTempRootPrefixes = [
 	'openclaw-mcp-portal-e2e-',
 	'openclaw-process-recovery-e2e-',
 	'openclaw-subagent-lease-e2e-',
-	'openclaw-zone-git-e2e-',
+	'openclaw-workspace-git-e2e-',
+	'hermes-managed-base-environment-e2e-',
 	'worker-loop-e2e-',
 ] as const;
 
-function resolveE2eCacheRoot(): string {
+export function resolveE2eCacheRoot(): string {
 	const configuredCacheRoot = process.env.AGENT_VM_E2E_CACHE_DIR;
 	if (configuredCacheRoot !== undefined && configuredCacheRoot.length > 0) {
 		return path.resolve(configuredCacheRoot);
@@ -189,6 +214,11 @@ export type GatewayE2eKind = 'openclaw' | 'worker';
 
 export type GatewayE2eProject = OpenClawE2eProject | WorkerE2eProject;
 
+export interface GatewayE2eImageProject {
+	readonly systemConfig: LoadedSystemConfig;
+	readonly tempRoot: string;
+}
+
 export interface ScaffoldGatewayE2eProjectOptions {
 	readonly agents?: readonly string[];
 	readonly architecture: ImageArchitecture;
@@ -205,12 +235,12 @@ export interface ManagedVmE2ePrerequisiteOptions {
 }
 
 export interface PrepareGatewayE2eProjectImagesOptions {
-	readonly project: GatewayE2eProject;
+	readonly project: GatewayE2eImageProject;
 	readonly runBuild?: typeof runBuildCommand;
 }
 
 export interface StartE2eControllerRuntimeOptions {
-	readonly createOpenClawProcessReliabilityFaultTargetRegistry?: ControllerRuntimeDependencies['createOpenClawProcessReliabilityFaultTargetRegistry'];
+	readonly onControllerManagedVmCreateRequest?: (request: ManagedVmCreateRequest) => void;
 	readonly onLeaseCreateRequest?: ControllerRuntimeDependencies['onLeaseCreateRequest'];
 	readonly secrets: E2eHarnessSecretMap;
 	readonly startGatewayZone?: ControllerRuntimeDependencies['startGatewayZone'];
@@ -448,6 +478,7 @@ async function normalizeE2eImageSourceForFingerprint(source: unknown): Promise<u
 async function computeE2eImageRecipeFingerprint(options: {
 	readonly buildConfigPath: string;
 	readonly dockerfile?: string;
+	readonly managedGatewayBoot?: ManagedGatewayImageBootProjection;
 	readonly source?: unknown;
 }): Promise<string> {
 	const hasher = crypto.createHash('sha256');
@@ -458,14 +489,44 @@ async function computeE2eImageRecipeFingerprint(options: {
 				options.dockerfile === undefined
 					? undefined
 					: await computeDockerContextFingerprint(options.dockerfile),
+			effectiveBuildFingerprint: await computeFingerprintFromConfigPath(
+				options.buildConfigPath,
+				options.managedGatewayBoot === undefined
+					? {}
+					: { managedGatewayBoot: options.managedGatewayBoot },
+			),
+			managedGatewayBoot: options.managedGatewayBoot,
 			source: await normalizeE2eImageSourceForFingerprint(options.source),
 		}),
 	);
 	return hasher.digest('hex');
 }
 
+function managedGatewayBootProjectionForE2eTarget(
+	family: E2eImageTarget['family'],
+	profile:
+		| LoadedSystemConfig['imageProfiles']['gateways'][string]
+		| LoadedSystemConfig['imageProfiles']['toolVms'][string],
+): ManagedGatewayImageBootProjection | undefined {
+	if (family !== 'gateway' || (profile.type !== 'openclaw' && profile.type !== 'hermes')) {
+		return undefined;
+	}
+	return {
+		frameworkBootEntry:
+			profile.type === 'hermes' ? 'hermes-framework-service' : 'openclaw-framework-service',
+		kind: 'managed-gateway-exact-two-role',
+	};
+}
+
+function managedGatewayBootProjectionsEqual(
+	left: ManagedGatewayImageBootProjection | undefined,
+	right: ManagedGatewayImageBootProjection | undefined,
+): boolean {
+	return left?.kind === right?.kind && left?.frameworkBootEntry === right?.frameworkBootEntry;
+}
+
 async function collectE2eImageTargets(
-	project: GatewayE2eProject,
+	project: GatewayE2eImageProject,
 ): Promise<readonly E2eImageTarget[]> {
 	const createImageTarget = async (
 		family: 'gateway' | 'toolVm',
@@ -474,6 +535,7 @@ async function collectE2eImageTargets(
 			| LoadedSystemConfig['imageProfiles']['gateways'][string]
 			| LoadedSystemConfig['imageProfiles']['toolVms'][string],
 	): Promise<E2eImageTarget> => {
+		const managedGatewayBoot = managedGatewayBootProjectionForE2eTarget(family, profile);
 		const target: E2eImageTarget = {
 			buildConfigPath: profile.buildConfig,
 			cacheDirectory: path.join(
@@ -483,10 +545,12 @@ async function collectE2eImageTargets(
 			),
 			e2eManifestEligible: profile.source === undefined,
 			family,
+			...(managedGatewayBoot === undefined ? {} : { managedGatewayBoot }),
 			name: profileName,
 			recipeFingerprint: await computeE2eImageRecipeFingerprint({
 				buildConfigPath: profile.buildConfig,
 				...(profile.dockerfile === undefined ? {} : { dockerfile: profile.dockerfile }),
+				...(managedGatewayBoot === undefined ? {} : { managedGatewayBoot }),
 				...(profile.source === undefined ? {} : { source: profile.source }),
 			}),
 		};
@@ -526,6 +590,14 @@ function parseE2ePreparedImageManifest(value: unknown): E2ePreparedImageManifest
 		if (!isObjectRecord(entry)) {
 			return false;
 		}
+		const managedGatewayBoot = entry.managedGatewayBoot;
+		const hasValidManagedGatewayBoot =
+			managedGatewayBoot === undefined ||
+			(isObjectRecord(managedGatewayBoot) &&
+				managedGatewayBoot.kind === 'managed-gateway-exact-two-role' &&
+				(managedGatewayBoot.frameworkBootEntry === 'openclaw-framework-service' ||
+					managedGatewayBoot.frameworkBootEntry === 'hermes-framework-service') &&
+				Object.keys(managedGatewayBoot).length === 2);
 		return (
 			(entry.family === 'gateway' || entry.family === 'toolVm') &&
 			typeof entry.name === 'string' &&
@@ -533,7 +605,8 @@ function parseE2ePreparedImageManifest(value: unknown): E2ePreparedImageManifest
 			typeof entry.buildConfigPath === 'string' &&
 			typeof entry.cacheDirectory === 'string' &&
 			typeof entry.fingerprint === 'string' &&
-			typeof entry.imagePath === 'string'
+			typeof entry.imagePath === 'string' &&
+			hasValidManagedGatewayBoot
 		);
 	});
 	return { entries, schemaVersion: e2ePreparedImageManifestSchemaVersion };
@@ -577,7 +650,7 @@ function e2eManifestEntryKey(entry: E2ePreparedImageManifestEntry): string {
 }
 
 async function materializePreparedE2eImagesFromManifest(
-	project: GatewayE2eProject,
+	project: GatewayE2eImageProject,
 	targets: readonly E2eImageTarget[],
 ): Promise<boolean> {
 	if (targets.some((target) => !target.e2eManifestEligible)) {
@@ -590,7 +663,11 @@ async function materializePreparedE2eImagesFromManifest(
 	const targetReadiness = await Promise.all(
 		targets.map(async (target) => {
 			const entry = entriesByKey.get(e2eImageTargetKey(target));
-			return entry !== undefined && (await hasManagedVmImageAssets(entry.imagePath));
+			return (
+				entry !== undefined &&
+				managedGatewayBootProjectionsEqual(entry.managedGatewayBoot, target.managedGatewayBoot) &&
+				(await hasManagedVmImageAssets(entry.imagePath))
+			);
 		}),
 	);
 	if (targetReadiness.some((isReady) => !isReady)) {
@@ -612,6 +689,9 @@ async function materializePreparedE2eImagesFromManifest(
 					? {}
 					: { fingerprintInput: entry.fingerprintInput }),
 				imagePath: entry.imagePath,
+				...(entry.managedGatewayBoot === undefined
+					? {}
+					: { managedGatewayBoot: entry.managedGatewayBoot }),
 			});
 		}),
 	);
@@ -619,7 +699,7 @@ async function materializePreparedE2eImagesFromManifest(
 }
 
 async function recordPreparedE2eImages(
-	project: GatewayE2eProject,
+	project: GatewayE2eImageProject,
 	targets: readonly E2eImageTarget[],
 ): Promise<void> {
 	const manifest = await readE2ePreparedImageManifest(project.systemConfig.cacheDir);
@@ -643,6 +723,16 @@ async function recordPreparedE2eImages(
 			continue;
 		}
 		const { preparedImage, target } = item;
+		if (
+			!managedGatewayBootProjectionsEqual(
+				preparedImage.managedGatewayBoot,
+				target.managedGatewayBoot,
+			)
+		) {
+			throw new Error(
+				`Prepared e2e image boot projection does not match ${target.family}/${target.name}.`,
+			);
+		}
 		entriesByKey.set(e2eImageTargetKey(target), {
 			buildConfigPath: path.resolve(target.buildConfigPath),
 			cacheDirectory: path.resolve(target.cacheDirectory),
@@ -652,6 +742,9 @@ async function recordPreparedE2eImages(
 				? {}
 				: { fingerprintInput: preparedImage.fingerprintInput }),
 			imagePath: preparedImage.imagePath,
+			...(preparedImage.managedGatewayBoot === undefined
+				? {}
+				: { managedGatewayBoot: preparedImage.managedGatewayBoot }),
 			name: target.name,
 			recipeFingerprint: target.recipeFingerprint,
 		});
@@ -1000,7 +1093,7 @@ export async function removeE2eLocalPackageTarballs(
 	);
 }
 
-async function copyLocalPackageTarballsToDockerContext(options: {
+export async function copyLocalPackageTarballsToDockerContext(options: {
 	readonly dockerContextDirectory: string;
 	readonly tarballs: readonly LocalDockerPackageTarball[];
 }): Promise<void> {
@@ -1021,7 +1114,7 @@ function shellSingleQuote(value: string): string {
 	return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
-function createLocalDockerPackageTarball(props: {
+export function createLocalDockerPackageTarball(props: {
 	readonly packageName: string;
 	readonly sourcePath: string;
 }): LocalDockerPackageTarball {
@@ -1032,7 +1125,7 @@ function createLocalDockerPackageTarball(props: {
 	};
 }
 
-async function packLocalAgentVmPackageTarball(options: {
+export async function packLocalAgentVmPackageTarball(options: {
 	readonly packageName: string;
 	readonly repoRoot: string;
 }): Promise<string> {
@@ -1042,7 +1135,7 @@ async function packLocalAgentVmPackageTarball(options: {
 	});
 }
 
-function localDockerPackageDependencyName(tarball: LocalDockerPackageTarball): string {
+export function localDockerPackageDependencyName(tarball: LocalDockerPackageTarball): string {
 	return `@agent-vm/${tarball.packageName}`;
 }
 
@@ -1066,6 +1159,43 @@ function renderLocalDockerPackageManifest(tarballs: readonly LocalDockerPackageT
 	)}\n`;
 }
 
+export async function buildLocalPythonWheel(options: {
+	readonly distributionFilePrefix: string;
+	readonly outputDirectory: string;
+	readonly packageDirectory: string;
+	readonly repoRoot: string;
+}): Promise<string> {
+	await execFileAsync(
+		'uv',
+		['build', '--wheel', '--out-dir', options.outputDirectory, options.packageDirectory],
+		{ cwd: options.repoRoot, maxBuffer: 20 * 1024 * 1024 },
+	);
+	const matchingWheelFileNames = (await fs.readdir(options.outputDirectory)).filter(
+		(fileName) => fileName.startsWith(options.distributionFilePrefix) && fileName.endsWith('.whl'),
+	);
+	if (matchingWheelFileNames.length !== 1) {
+		throw new Error(
+			`Expected one ${options.distributionFilePrefix} wheel, found ${String(matchingWheelFileNames.length)}.`,
+		);
+	}
+	const matchingWheelFileName = matchingWheelFileNames[0];
+	if (matchingWheelFileName === undefined) {
+		throw new Error(`Expected one ${options.distributionFilePrefix} wheel.`);
+	}
+	return path.join(options.outputDirectory, matchingWheelFileName);
+}
+
+export function requireLocalPackageTarballPath(
+	packedTarballs: readonly { readonly packageName: string; readonly sourcePath: string }[],
+	packageName: string,
+): string {
+	const packedTarball = packedTarballs.find((entry) => entry.packageName === packageName);
+	if (packedTarball === undefined) {
+		throw new Error(`Required local package tarball '${packageName}' was not packed.`);
+	}
+	return packedTarball.sourcePath;
+}
+
 function renderLocalDockerPackageInstallLines(
 	tarballs: readonly LocalDockerPackageTarball[],
 ): readonly string[] {
@@ -1083,7 +1213,7 @@ function renderLocalDockerPackageInstallLines(
 	];
 }
 
-async function useLocalToolVmMcpPortalPackageTarballs(options: {
+export async function useLocalToolVmMcpPortalPackageTarballs(options: {
 	readonly localAgentPortalSdkTarballPath: string;
 	readonly localConfigContractsTarballPath: string;
 	readonly localMcpPortalTarballPath: string;
@@ -1352,6 +1482,10 @@ export async function useLocalOpenClawGatewayImagePackages(options: {
 		packageName: 'gateway-lifecycle',
 		repoRoot: options.repoRoot,
 	});
+	const localGatewayRuntimeTarballPath = await packLocalAgentVmPackageTarball({
+		packageName: 'gateway-runtime',
+		repoRoot: options.repoRoot,
+	});
 	const localManagedVmTarballPath = await packLocalAgentVmPackageTarball({
 		packageName: 'managed-vm',
 		repoRoot: options.repoRoot,
@@ -1401,6 +1535,10 @@ export async function useLocalOpenClawGatewayImagePackages(options: {
 			createLocalDockerPackageTarball({
 				packageName: 'gateway-lifecycle',
 				sourcePath: localGatewayLifecycleTarballPath,
+			}),
+			createLocalDockerPackageTarball({
+				packageName: 'gateway-runtime',
+				sourcePath: localGatewayRuntimeTarballPath,
 			}),
 			createLocalDockerPackageTarball({
 				packageName: 'managed-vm',
@@ -1461,6 +1599,9 @@ export async function useLocalOpenClawGatewayImagePackages(options: {
 				...renderLocalDockerPackageInstallLines(localPackageTarballs),
 				'RUN package_root="/opt/agent-vm/local-packages/node_modules" && \\',
 				'    global_package_root="$(pnpm root -g)" && \\',
+				'    gateway_runtime_bin="$package_root/@agent-vm/gateway-runtime/dist/bin/gateway-runtime.js" && \\',
+				'    test -f "$gateway_runtime_bin" && chmod 755 "$gateway_runtime_bin" && \\',
+				'    ln -sfn "$gateway_runtime_bin" /usr/local/bin/agent-vm-gateway-runtime && \\',
 				'    mkdir -p "$global_package_root" /home/openclaw/.openclaw/extensions && \\',
 				'    ln -sfn "$package_root/@agent-vm" "$global_package_root/@agent-vm" && \\',
 				'    ln -sfn "$package_root/@agent-vm/openclaw-agent-vm-plugin/dist" /home/openclaw/.openclaw/extensions/gondolin',
@@ -1488,6 +1629,7 @@ export async function useLocalOpenClawGatewayImagePackages(options: {
 			localSecretManagementTarballPath,
 			localGondolinVmAdapterTarballPath,
 			localGatewayLifecycleTarballPath,
+			localGatewayRuntimeTarballPath,
 			localManagedVmTarballPath,
 			localControlProtocolContractsTarballPath,
 			localControllerExecutionContractsTarballPath,
@@ -1534,6 +1676,10 @@ export async function useLocalOpenClawPluginGatewayImage(options: {
 	});
 	const localGatewayLifecycleTarballPath = await packLocalAgentVmPackageTarball({
 		packageName: 'gateway-lifecycle',
+		repoRoot: options.repoRoot,
+	});
+	const localGatewayRuntimeTarballPath = await packLocalAgentVmPackageTarball({
+		packageName: 'gateway-runtime',
 		repoRoot: options.repoRoot,
 	});
 	const localManagedVmTarballPath = await packLocalAgentVmPackageTarball({
@@ -1587,6 +1733,10 @@ export async function useLocalOpenClawPluginGatewayImage(options: {
 				sourcePath: localGatewayLifecycleTarballPath,
 			}),
 			createLocalDockerPackageTarball({
+				packageName: 'gateway-runtime',
+				sourcePath: localGatewayRuntimeTarballPath,
+			}),
+			createLocalDockerPackageTarball({
 				packageName: 'managed-vm',
 				sourcePath: localManagedVmTarballPath,
 			}),
@@ -1637,6 +1787,9 @@ export async function useLocalOpenClawPluginGatewayImage(options: {
 				...renderLocalDockerPackageInstallLines(localPackageTarballs),
 				'RUN package_root="/opt/agent-vm/local-packages/node_modules" && \\',
 				'    global_package_root="$(pnpm root -g)" && \\',
+				'    gateway_runtime_bin="$package_root/@agent-vm/gateway-runtime/dist/bin/gateway-runtime.js" && \\',
+				'    test -f "$gateway_runtime_bin" && chmod 755 "$gateway_runtime_bin" && \\',
+				'    ln -sfn "$gateway_runtime_bin" /usr/local/bin/agent-vm-gateway-runtime && \\',
 				'    mkdir -p "$global_package_root" /home/openclaw/.openclaw/extensions && \\',
 				'    ln -sfn "$package_root/@agent-vm" "$global_package_root/@agent-vm" && \\',
 				'    ln -sfn "$package_root/@agent-vm/openclaw-agent-vm-plugin/dist" /home/openclaw/.openclaw/extensions/gondolin',
@@ -1664,6 +1817,7 @@ export async function useLocalOpenClawPluginGatewayImage(options: {
 			localSecretManagementTarballPath,
 			localGondolinVmAdapterTarballPath,
 			localGatewayLifecycleTarballPath,
+			localGatewayRuntimeTarballPath,
 			localManagedVmTarballPath,
 			localControlProtocolContractsTarballPath,
 			localControllerExecutionContractsTarballPath,
@@ -1692,10 +1846,13 @@ export async function scaffoldOpenClawE2eProject(options: {
 		zoneId: options.zoneId,
 		...(options.agents ? { agents: options.agents } : {}),
 	});
-	const systemConfig = await loadSystemConfig(path.join(tempRoot, 'config', 'system.json'));
+	const loadedSystemConfig = await loadSystemConfig(path.join(tempRoot, 'config', 'system.json'));
+	const systemConfig: LoadedSystemConfig = {
+		...loadedSystemConfig,
+		cacheDir: path.join(resolveE2eCacheRoot(), 'openclaw'),
+	};
 	systemConfig.host.controllerPort = controllerPort;
-	systemConfig.host.projectNamespace = 'claw-tests-zone-git';
-	systemConfig.cacheDir = path.join(resolveE2eCacheRoot(), 'openclaw');
+	systemConfig.host.projectNamespace = 'claw-tests-workspace-git';
 	const zone = getOpenClawE2eZone(systemConfig);
 	zone.gateway.port = gatewayPort;
 	return {
@@ -1757,10 +1914,13 @@ export async function scaffoldWorkerE2eProject(options: {
 		targetDir: tempRoot,
 		zoneId: options.zoneId,
 	});
-	const systemConfig = await loadSystemConfig(path.join(tempRoot, 'config', 'system.json'));
+	const loadedSystemConfig = await loadSystemConfig(path.join(tempRoot, 'config', 'system.json'));
+	const systemConfig: LoadedSystemConfig = {
+		...loadedSystemConfig,
+		cacheDir: path.join(resolveE2eCacheRoot(), 'worker'),
+	};
 	systemConfig.host.controllerPort = controllerPort;
 	systemConfig.host.projectNamespace = 'claw-tests-worker';
-	systemConfig.cacheDir = path.join(resolveE2eCacheRoot(), 'worker');
 	systemConfig.host.secretsProvider = {
 		type: '1password',
 		tokenSource: { type: 'env', envVar: 'AGENT_VM_TEST_OPENAI_API_KEY' },
@@ -1798,7 +1958,6 @@ export async function writeOpenClawMcpPortalE2eConfigs(options: {
 	readonly agentId: string;
 	readonly configDir: string;
 	readonly namespace: string;
-	readonly portalAccessHeaderName: string;
 	readonly upstreamUrl: string;
 }): Promise<void> {
 	await fs.writeFile(
@@ -1825,17 +1984,19 @@ export async function writeOpenClawMcpPortalE2eConfigs(options: {
 		'utf8',
 	);
 	await fs.writeFile(
-		path.join(options.configDir, 'mcp-portal.config.jsonc'),
+		path.join(options.configDir, 'tool-portal.config.jsonc'),
 		`${JSON.stringify(
 			{
-				$schema: '../../schemas/mcp-portal.schema.json',
+				$schema: '../../schemas/tool-portal.schema.json',
 				agents: {
 					[options.agentId]: { profile: 'smoke' },
 				},
+				mode: 'managed',
 				profiles: {
 					smoke: {
 						namespaces: {
 							[options.namespace]: {
+								backend: { kind: 'mcp_provider' },
 								calls: {
 									requiresApproval: { allow: [] },
 									withoutApproval: { allow: ['read_thing'] },
@@ -1843,7 +2004,6 @@ export async function writeOpenClawMcpPortalE2eConfigs(options: {
 								tools: { allow: ['read_thing', 'write_thing'] },
 							},
 						},
-						promptContext: { enabled: true, maxNamespaces: 12 },
 					},
 				},
 				schemaVersion: 1,
@@ -1862,14 +2022,18 @@ export async function startE2eControllerRuntime(
 	const secretResolver = createSmokeSecretResolver(options.secrets);
 	const tempRoot = path.dirname(path.dirname(options.startOptions.systemConfig.systemConfigPath));
 	try {
+		const managedVmFactory =
+			options.onControllerManagedVmCreateRequest === undefined
+				? managedVmRuntimeComposition.managedVmFactory
+				: {
+						createManagedVm: async (request: ManagedVmCreateRequest) => {
+							options.onControllerManagedVmCreateRequest?.(request);
+							return await managedVmRuntimeComposition.managedVmFactory.createManagedVm(request);
+						},
+					};
 		const runtime = await startControllerRuntime(options.startOptions, {
 			...managedVmRuntimeComposition,
-			...(options.createOpenClawProcessReliabilityFaultTargetRegistry === undefined
-				? {}
-				: {
-						createOpenClawProcessReliabilityFaultTargetRegistry:
-							options.createOpenClawProcessReliabilityFaultTargetRegistry,
-					}),
+			managedVmFactory,
 			createSecretResolver: async (): Promise<SecretResolver> => secretResolver,
 			...(options.onLeaseCreateRequest === undefined
 				? {}

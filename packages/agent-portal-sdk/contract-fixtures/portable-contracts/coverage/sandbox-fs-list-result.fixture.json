@@ -1,0 +1,21 @@
+{
+	"caseId": "coverage-sandbox-fs-list-result",
+	"schemaId": "sandbox.fs.list.result",
+	"tags": [
+		"accepted",
+		"coverage"
+	],
+	"input": {
+		"entries": [],
+		"kind": "listed"
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"entries": [],
+			"kind": "listed"
+		},
+		"canonicalJson": "{\"entries\":[],\"kind\":\"listed\"}",
+		"refinementIdentities": []
+	}
+}

@@ -1,0 +1,37 @@
+{
+	"caseId": "coverage-sandbox-stream-write-result",
+	"schemaId": "sandbox.stream.write.result",
+	"tags": [
+		"accepted",
+		"coverage"
+	],
+	"input": {
+		"bytesWritten": 0,
+		"kind": "written",
+		"sequence": 0,
+		"stream": {
+			"channel": "stdin",
+			"handleId": "stream-input",
+			"kind": "stream",
+			"owningGeneration": "generation-a"
+		}
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"bytesWritten": 0,
+			"kind": "written",
+			"sequence": 0,
+			"stream": {
+				"channel": "stdin",
+				"handleId": "stream-input",
+				"kind": "stream",
+				"owningGeneration": "generation-a"
+			}
+		},
+		"canonicalJson": "{\"bytesWritten\":0,\"kind\":\"written\",\"sequence\":0,\"stream\":{\"channel\":\"stdin\",\"handleId\":\"stream-input\",\"kind\":\"stream\",\"owningGeneration\":\"generation-a\"}}",
+		"refinementIdentities": [
+			"sandbox.binary-chunk.byte-length"
+		]
+	}
+}

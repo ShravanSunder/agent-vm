@@ -42,17 +42,9 @@ repair/download caches                  rebuildable
 OpenClaw zone files                     long-lived household
                                        user/agent files
 
-/agent-vm/logs                          RealFS runtimeDir      no
+/agent-vm/logs                          RealFS zoneRuntimeDir  no
 gateway-boot-latest.log,                zone-lifetime, wiped by
 openclaw-YYYY-MM-DD.log                 destroy-zone --purge
-
-/agent-vm/zone-git                      RealFS runtimeDir      no, but PRESERVED
-zone-files.git (when zoneGit            authoritative store for
-configured)                             committed-but-unpushed
-                                       zone work; referenced by
-                                       backed-up zoneFilesDir/.git
-                                       pointer. See storage-model
-                                       "runtimeDir is two lifecycles".
 
 /work/tmp                               rootfs/COW             no
 large temp, TMPDIR target               disposable disk
@@ -63,11 +55,11 @@ runtime package cache                   disposable or repairable
 /tmp, /run, /var/log                    guest tmpfs            no
 sockets, pid files, tiny scratch        memory-pressure only
 
-gateway-runtime.json                    stateDir               yes
-host runtime record                     durable enough
+gateway-runtime.json                    controllerStateDir     no
+host runtime record                     controller-only
 
-tool-leases/<recordId>.json             stateDir               yes
-Tool VM recovery record                 durable enough
+tool-leases/<recordId>.json             controllerStateDir     no
+Tool VM recovery record                 controller-only
 recordId UUID; keeps agentId,
 leaseId, vmId, qemuPid; never
 stores OpenClaw scope keys
@@ -105,7 +97,7 @@ metadata, agents.md                     metadata
 source edits, node_modules,             hot task repo files
 builds, tests, package installs
 
-/gitdirs/<repoId>.git                   RealFS runtimeDir      explicit
+/gitdirs/<repoId>.git                   RealFS zoneRuntimeDir  explicit
 Git objects, refs, index                recovery/export only
 
 /work/tmp                               rootfs/COW             no
@@ -143,15 +135,15 @@ The backup command currently copies `stateDir` wholesale. Anything under worker
 `stateDir` silently becomes encrypted backup payload when a worker zone is
 backed up.
 
-The backup command also copies the OpenClaw `zoneFilesDir`. Worker gitdirs must
+The backup command also copies managed OpenClaw and Hermes `zoneFilesDir` roots. Worker gitdirs must
 not be placed there either unless backup gains a worker-specific exclusion
-policy. For the target design, gitdirs live in `runtimeDir`, a non-backup task
-runtime root, and are deleted during task teardown.
+policy. Gitdirs live in `zoneRuntimeDir`, a non-backup task runtime root, and
+are deleted during task teardown.
 
 ## Target Worker Layout
 
 ```text
-stateDir/
+<storageRootDir>/<zoneId>/state/
   tasks/<taskId>/
     state/
       effective-worker.json
@@ -161,8 +153,8 @@ stateDir/
       runtime-instructions.md
       resources/
 
-runtimeDir/
-  worker-tasks/<zoneId>/<taskId>/
+<storageRootDir>/<zoneId>/runtime/
+  worker-tasks/<taskId>/
     gitdirs/<repoId>.git
     recovery/
 
@@ -221,15 +213,11 @@ added.
 
 ## Tool VM
 
-Tool VMs are lease-local execution sandboxes. Non-zone-git Tool VMs see the
-mounted RealFS working directory at `/workspace`; `/work` remains rootfs/COW
-scratch inside the Tool VM. The lease request supplies `workMountDir` as an
-OpenClaw gateway child path under `/zone` or
-`/home/openclaw/.openclaw/state/sandboxes`; those roots are allowed-root
-boundaries, not valid mount targets. The controller validates and translates
-that value to a host `hostWorkMountDir` before creating the RealFS mount.
-agent-vm closes the tool VM on lease release, but it does not clean the
-supplied work mount directory.
+Tool VMs are lease-local execution sandboxes. The controller selects one stable
+agent identity and grants only that agent's filtered durable workspace and
+optional workspace Git database. Callers never supply a host mount path.
+`/work` is fast rootfs/COW execution space and is discarded when the Tool VM
+closes or is replaced.
 
 For the canonical name/location/storage vocabulary, see
 [Lease Path Vocabulary](storage-model.md#lease-path-vocabulary).
@@ -238,15 +226,18 @@ For the canonical name/location/storage vocabulary, see
 path or data                           backing                backup
 ──────────────────────────────         ─────────────────      ─────────
 
-/workspace                             RealFS hostWorkMountDir varies
-OpenClaw-selected tool work mount      owned by lease caller
+/workspace                             filtered RealFS         yes
+selected durable agent workspace      zoneFilesDir child
 
-/work                                  rootfs/COW             no
-Tool VM scratch                        deleted with Tool VM
+/work                                  rootfs/COW              no
+repos, builds, packages, temp work     deleted with Tool VM
+
+/gitdirs/workspace.git                 selected RealFS         no
+optional workspace Git database       controller runtime
+
+/agent-vm                              reviewed read-only      generated
+runtime instructions and metadata     narrow inputs only
 
 /tmp, /run, /var/log                   guest tmpfs            no
 tiny scratch only                      memory-pressure
-
-/state or /agent-vm                    RealFS only if needed  varies
-controller lease metadata              narrow control files
 ```

@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/agent-portal-sdk",
-	"version": "0.0.114",
+	"version": "0.0.126",
 	"description": "Portal-neutral Zod contracts and helpers for agent-facing capability surfaces.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {
@@ -13,8 +13,13 @@
 		"url": "git+https://github.com/ShravanSunder/agent-vm.git",
 		"directory": "packages/agent-portal-sdk"
 	},
+	"bin": {
+		"tool-portal": "dist/cli/tool-portal.js"
+	},
 	"files": [
-		"dist"
+		"contract-fixtures",
+		"dist",
+		"portable-contract-schema-manifest.json"
 	],
 	"type": "module",
 	"main": "./dist/index.js",
@@ -40,6 +45,18 @@
 			"types": "./dist/capability-description-surface/index.d.ts",
 			"import": "./dist/capability-description-surface/index.js"
 		},
+		"./contracts": {
+			"types": "./dist/contracts/index.d.ts",
+			"import": "./dist/contracts/index.js"
+		},
+		"./gateway-runtime-client": {
+			"types": "./dist/gateway-runtime-client/index.d.ts",
+			"import": "./dist/gateway-runtime-client/index.js"
+		},
+		"./gateway-runtime-local-exec": {
+			"types": "./dist/gateway-runtime-local-exec/index.d.ts",
+			"import": "./dist/gateway-runtime-local-exec/index.js"
+		},
 		"./portal-call-surface": {
 			"types": "./dist/portal-call-surface/index.d.ts",
 			"import": "./dist/portal-call-surface/index.js"
@@ -48,9 +65,21 @@
 			"types": "./dist/portal-event-surface/index.d.ts",
 			"import": "./dist/portal-event-surface/index.js"
 		},
+		"./portable-contracts": {
+			"types": "./dist/portable-contracts/index.d.ts",
+			"import": "./dist/portable-contracts/index.js"
+		},
 		"./testing": {
 			"types": "./dist/testing/index.d.ts",
 			"import": "./dist/testing/index.js"
+		},
+		"./tool-portal-mcp-client": {
+			"types": "./dist/tool-portal-mcp-client/index.d.ts",
+			"import": "./dist/tool-portal-mcp-client/index.js"
+		},
+		"./tool-portal-mcp-client/node-transport": {
+			"types": "./dist/tool-portal-mcp-client/node-tool-portal-mcp-transport.d.ts",
+			"import": "./dist/tool-portal-mcp-client/node-tool-portal-mcp-transport.js"
 		}
 	},
 	"publishConfig": {
@@ -64,6 +93,7 @@
 		"test:unit": "vitest run --root ../../ --config vitest.config.ts --project unit packages/agent-portal-sdk/src"
 	},
 	"dependencies": {
+		"@modelcontextprotocol/sdk": "^1.29.0",
 		"zod": "^4.4.3"
 	},
 	"devDependencies": {

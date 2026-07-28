@@ -1,0 +1,21 @@
+{
+	"caseId": "call-request-unknown-field",
+	"schemaId": "portal.call.request",
+	"tags": ["rejected", "request", "unknown-field"],
+	"input": {
+		"calls": [
+			{
+				"arguments": {},
+				"backendKind": "controller_rpc",
+				"id": "call-1",
+				"name": "get_issue",
+				"namespace": "github"
+			}
+		]
+	},
+	"expectation": {
+		"kind": "rejected",
+		"errorCodes": ["portable.object.unknown-field"],
+		"refinementIdentities": ["portal.batch.unique-item-ids", "portal.request-id.not-reserved"]
+	}
+}

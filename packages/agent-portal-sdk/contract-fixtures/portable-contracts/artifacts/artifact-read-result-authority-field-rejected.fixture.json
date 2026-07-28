@@ -1,0 +1,21 @@
+{
+	"caseId": "artifact-read-result-authority-field-rejected",
+	"schemaId": "portal.artifact.read-result",
+	"tags": ["artifact", "rejected", "unknown-field"],
+	"input": {
+		"contentBase64": "eyJvayI6dHJ1ZX0=",
+		"leaseId": "lease-secret",
+		"offsetBytes": 0,
+		"reference": {
+			"byteLength": 11,
+			"expiresAt": "2030-01-01T00:00:00.000Z",
+			"fingerprint": "sha256:4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+			"id": "artifact-1"
+		}
+	},
+	"expectation": {
+		"kind": "rejected",
+		"errorCodes": ["portable.object.unknown-field"],
+		"refinementIdentities": ["portal.artifact-read.default-truncated"]
+	}
+}

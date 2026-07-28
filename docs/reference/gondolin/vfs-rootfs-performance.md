@@ -49,9 +49,9 @@ guest tmpfs
   Bad for: large package trees or unbounded build artifacts
 ```
 
-Writing to `/scratch/big.bin` or `/work/tmp/big.bin` is different from writing
-to `/tmp/big.bin`. If `/scratch` and `/work` are not VFS mounts and not tmpfs
-mounts, they live on the rootfs. With `rootfs.mode = "cow"`, that means the
+Writing to `/work/big.bin` is different from writing to `/tmp/big.bin`. If
+`/work` is not a VFS mount and not tmpfs, it lives on the rootfs. With
+`rootfs.mode = "cow"`, that means the
 write lands in the disposable qcow2 overlay rather than consuming guest tmpfs
 memory.
 
@@ -196,7 +196,7 @@ the default `/tmp` tmpfs, but that is usually a heavier solution than setting
   Backup: no
 
 /zone
-  Backing: RealFS zoneFilesDir config field for
+  Backing: RealFS derived zoneFilesDir for
            long-lived OpenClaw household files
   Backup: yes
 
@@ -205,23 +205,22 @@ the default `/tmp` tmpfs, but that is usually a heavier solution than setting
   Purpose: hot source edits, node_modules, builds, tests
 
 /gitdirs/<repo>.git
-  Backing: RealFS runtimeDir outside normal zone backup
+  Backing: RealFS zoneRuntimeDir outside normal zone backup
   Purpose: host-visible Git objects, refs, and index; explicit recovery/export
            only
   Backup: no normal backup
 
-/work or /scratch
-  Backing: rootfs/COW unless explicitly mounted
-  Purpose: large temporary disk-backed files
-
 OpenClaw Tool VM /workspace
-  Backing: RealFS hostWorkMountDir resolved from lease workMountDir
-  Purpose: lease-selected execution directory; workMountDir must be a concrete
-           child path under /zone or /home/openclaw/.openclaw/state/sandboxes
+  Backing: filtered RealFS selected from zoneFilesDir/agents/<agentId>
+  Purpose: durable agent-owned files
 
 OpenClaw Tool VM /work
   Backing: rootfs/COW
-  Purpose: disposable scratch; not the lease RealFS mount
+  Purpose: disposable repos, builds, packages, and hot execution data
+
+OpenClaw Tool VM /gitdirs/workspace.git
+  Backing: optional selected RealFS runtime Git database
+  Purpose: Git metadata for the durable agent workspace
 
 /tmp
   Backing: guest tmpfs unless overridden

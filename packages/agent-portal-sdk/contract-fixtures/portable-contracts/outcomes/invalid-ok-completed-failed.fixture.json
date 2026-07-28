@@ -1,0 +1,23 @@
+{
+	"caseId": "invalid-ok-completed-failed",
+	"schemaId": "portal.call.item-result",
+	"tags": ["illegal-combination", "outcome", "rejected"],
+	"input": {
+		"id": "call-1",
+		"operationId": "operation-1",
+		"owningGeneration": "runner-generation-1",
+		"outcome": {
+			"certainty": "proven",
+			"completion": "failed",
+			"kind": "completed",
+			"retryClass": "forbidden"
+		},
+		"status": "ok",
+		"value": {}
+	},
+	"expectation": {
+		"kind": "rejected",
+		"errorCodes": ["portal.result.outcome-algebra"],
+		"refinementIdentities": ["portal.request-id.not-reserved", "portal.result.outcome-algebra"]
+	}
+}

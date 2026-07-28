@@ -7,16 +7,13 @@ import {
 import {
 	buildGatewayControlCallerContextAgentAuthorityPayload,
 	buildGatewayControlCallerContextProofPayload,
+	deriveGatewayControlStablePrincipal,
 	type GatewayControlCallerContextRegisterPayload,
 	GatewayControlRpcMessageSchema,
 } from '@agent-vm/gateway-control-contracts';
 import { describe, expect, it } from 'vitest';
 
-import {
-	createGatewayControlCallerContextRegistry,
-	deriveGatewayControlStablePrincipal,
-	digestGatewayControlSessionKey,
-} from './gateway-control-caller-context.js';
+import { createGatewayControlCallerContextRegistry } from './gateway-control-caller-context.js';
 import { resolveGatewayControlInboundStablePrincipal } from './gateway-control-domain-handler.js';
 
 const acceptedSession = {
@@ -32,6 +29,12 @@ const callerContextProofKey = 'test-caller-context-proof-key-with-enough-length'
 const agentAuthorityKeys: Readonly<Record<string, string>> = {
 	main: 'test-main-agent-authority-key-with-enough-length',
 };
+const invocationPrincipal = {
+	agentId: 'main',
+	frameworkIdentity: { agentId: 'main', kind: 'openclaw' },
+	profileAssignmentRevision: 'assignment-a',
+	toolPortalProfileId: 'engineering',
+} as const;
 
 function signRegisterPayload(
 	payload: Omit<
@@ -44,10 +47,10 @@ function signRegisterPayload(
 			...payload,
 			agentAuthority: {
 				algorithm: 'hmac-sha256',
-				digest: createHmac('sha256', agentAuthorityKeys[payload.agentId] ?? 'missing')
+				digest: createHmac('sha256', agentAuthorityKeys[payload.principal.agentId] ?? 'missing')
 					.update(buildGatewayControlCallerContextAgentAuthorityPayload(payload), 'utf8')
 					.digest('base64url'),
-				keyId: payload.agentId,
+				keyId: payload.principal.agentId,
 			},
 			proof: {
 				algorithm: 'hmac-sha256',
@@ -65,16 +68,61 @@ function createRegisterPayload(
 	> = {},
 ): GatewayControlCallerContextRegisterPayload {
 	return signRegisterPayload({
-		agentId: 'main',
-		agentWorkspaceDir: '/home/openclaw/workspace',
-		sessionKey: 'agent:main:test-session',
-		workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
+		principal: invocationPrincipal,
 		zoneId: 'zone-a',
 		...overrides,
 	});
 }
 
 const registerPayload = createRegisterPayload();
+
+const approvalIntent = {
+	backendKind: 'mcp_provider',
+	call: {
+		arguments: { issueTitle: 'Require operator approval' },
+		id: 'github.create_issue',
+		name: 'create_issue',
+		namespace: 'github',
+	},
+	operationId: '11111111-1111-4111-8111-111111111111',
+	semanticRevisions: {
+		activeRevision: 'active-1',
+		bindingRevision: 'binding-1',
+		catalogRevision: 'catalog-1',
+		profilePolicyRevision: 'policy-1',
+		providerRevision: 'provider-1',
+		schemaRevision: 'schema-1',
+	},
+	surfaceClass: 'mcp',
+	trustedContext: {
+		correlation: {
+			runId: 'run-main',
+			sessionId: 'session-main',
+			toolCallId: 'tool-call-main',
+		},
+		principal: invocationPrincipal,
+		requester: { authenticatedSubjectId: 'subject-main' },
+	},
+} as const;
+
+const controllerIssuedReservation = {
+	approvalId: '22222222-2222-4222-8222-222222222222',
+	authorityContext: {
+		controllerEpoch: acceptedSession.controllerEpoch,
+		frameworkEpoch: acceptedSession.bootId,
+		gatewayEpoch: 'gateway-epoch-a',
+		runtimeEpoch: 'runtime-epoch-a',
+		zoneId: acceptedSession.zoneId,
+	},
+	backendKind: 'mcp_provider',
+	expiresAt: '2026-07-13T16:05:00.000Z',
+	fingerprint: `sha256:${'a'.repeat(64)}`,
+	operationId: approvalIntent.operationId,
+	reservationId: '33333333-3333-4333-8333-333333333333',
+	stablePrincipal: deriveGatewayControlStablePrincipal({
+		principal: approvalIntent.trustedContext.principal,
+	}),
+} as const;
 
 function createInboundEnvelope(operation: string, sequence: number): ControlEnvelope {
 	return {
@@ -103,11 +151,13 @@ function createRegistry(
 		readonly maxContexts?: number;
 		readonly now?: () => number;
 		readonly ttlMs?: number;
+		readonly validateRegistration?: () => void;
 	} = {},
 ): ReturnType<typeof createGatewayControlCallerContextRegistry> {
 	return createGatewayControlCallerContextRegistry({
 		agentAuthorityKeys,
 		callerContextProofKey,
+		validateRegistration: () => {},
 		...options,
 	});
 }
@@ -128,10 +178,26 @@ describe('gateway control caller context registry', () => {
 				message,
 			}),
 		).toEqual({
-			stablePrincipal: deriveGatewayControlStablePrincipal({ agentId: 'main', zoneId: 'zone-a' }),
+			stablePrincipal: deriveGatewayControlStablePrincipal({
+				principal: invocationPrincipal,
+			}),
 			status: 'accepted',
 		});
 		expect(callerContexts.resolve('unregistered')).toBeUndefined();
+	});
+
+	it('fails closed when trusted principal validation is not configured', () => {
+		const callerContexts = createGatewayControlCallerContextRegistry({
+			agentAuthorityKeys,
+			callerContextProofKey,
+		});
+
+		expect(() =>
+			callerContexts.validateRegistrationForSession({
+				payload: registerPayload,
+				session: acceptedSession,
+			}),
+		).toThrow(/principal validator is not configured/u);
 	});
 
 	it('represents principal-free control commands with an explicit not-required state', () => {
@@ -149,6 +215,64 @@ describe('gateway control caller context registry', () => {
 				message,
 			}),
 		).toEqual({ status: 'not_required' });
+	});
+
+	it('derives reserve admission from the trusted intent principal', () => {
+		// Arrange
+		const callerContexts = createRegistry();
+		const message = GatewayControlRpcMessageSchema.parse({
+			kind: 'command',
+			operation: 'tool_portal_admission_reserve',
+			payload: { intent: approvalIntent },
+		});
+
+		// Act
+		const resolution = resolveGatewayControlInboundStablePrincipal({
+			callerContexts,
+			envelope: createInboundEnvelope('tool_portal_admission_reserve', 2),
+			message,
+		});
+
+		// Assert
+		expect(resolution).toEqual({
+			stablePrincipal: deriveGatewayControlStablePrincipal({
+				principal: approvalIntent.trustedContext.principal,
+			}),
+			status: 'accepted',
+		});
+	});
+
+	it('uses the controller-issued reservation principal for arm and rejects public authority injection', () => {
+		// Arrange
+		const callerContexts = createRegistry();
+		const message = GatewayControlRpcMessageSchema.parse({
+			kind: 'command',
+			operation: 'tool_portal_dispatch_arm',
+			payload: { reservation: controllerIssuedReservation },
+		});
+		const publicAuthorityInjection = 'f'.repeat(64);
+
+		// Act
+		const resolution = resolveGatewayControlInboundStablePrincipal({
+			callerContexts,
+			envelope: createInboundEnvelope('tool_portal_dispatch_arm', 3),
+			message,
+		});
+		const injectedMessage = GatewayControlRpcMessageSchema.safeParse({
+			kind: 'command',
+			operation: 'tool_portal_dispatch_arm',
+			payload: {
+				admissionPrincipal: publicAuthorityInjection,
+				reservation: controllerIssuedReservation,
+			},
+		});
+
+		// Assert
+		expect(injectedMessage.success).toBe(false);
+		expect(resolution).toEqual({
+			stablePrincipal: controllerIssuedReservation.stablePrincipal,
+			status: 'accepted',
+		});
 	});
 
 	it('resolves a registered callerContextId to the same principal and grants none to invalid material', () => {
@@ -213,19 +337,94 @@ describe('gateway control caller context registry', () => {
 		).toThrow(/proof digest is invalid/u);
 	});
 
-	it('derives a stable principal from controller-validated zone and agent identity', () => {
-		const principal = deriveGatewayControlStablePrincipal({ agentId: 'main', zoneId: 'zone-a' });
+	it('derives stable authority from every principal field independently of optional correlation', () => {
+		const stablePrincipal = deriveGatewayControlStablePrincipal({
+			principal: invocationPrincipal,
+		});
 
-		expect(principal).toMatch(/^[a-f0-9]{64}$/u);
-		expect(deriveGatewayControlStablePrincipal({ agentId: 'main', zoneId: 'zone-a' })).toBe(
-			principal,
-		);
-		expect(deriveGatewayControlStablePrincipal({ agentId: 'other', zoneId: 'zone-a' })).not.toBe(
-			principal,
-		);
-		expect(deriveGatewayControlStablePrincipal({ agentId: 'main', zoneId: 'zone-b' })).not.toBe(
-			principal,
-		);
+		expect(stablePrincipal).toMatch(/^[a-f0-9]{64}$/u);
+		for (const changedPrincipal of [
+			{ ...invocationPrincipal, agentId: 'other' },
+			{ ...invocationPrincipal, toolPortalProfileId: 'operations' },
+			{ ...invocationPrincipal, profileAssignmentRevision: 'assignment-b' },
+			{
+				...invocationPrincipal,
+				frameworkIdentity: { kind: 'hermes' as const, profileName: 'main' },
+			},
+		]) {
+			expect(deriveGatewayControlStablePrincipal({ principal: changedPrincipal })).not.toBe(
+				stablePrincipal,
+			);
+		}
+		const registry = createRegistry();
+		const withoutCorrelation = registry.validateRegistrationForSession({
+			payload: registerPayload,
+			session: acceptedSession,
+		});
+		const withCorrelation = registry.validateRegistrationForSession({
+			payload: {
+				...registerPayload,
+				correlation: {
+					sessionKeyDigest: 'a'.repeat(64),
+					toolCallId: 'tool-call-other',
+				},
+			},
+			session: acceptedSession,
+		});
+
+		expect(withoutCorrelation.stablePrincipal).toBe(stablePrincipal);
+		expect(withCorrelation.stablePrincipal).toBe(stablePrincipal);
+		expect(withCorrelation.principal).toEqual(withoutCorrelation.principal);
+	});
+
+	it('binds every stable principal field into both caller-context HMAC payloads', () => {
+		const {
+			agentAuthority: _agentAuthority,
+			proof: _proof,
+			...baselineEvidence
+		} = registerPayload.adapterEvidence;
+		const baselineProofPayload = buildGatewayControlCallerContextProofPayload(baselineEvidence);
+		const baselineAgentAuthorityPayload =
+			buildGatewayControlCallerContextAgentAuthorityPayload(baselineEvidence);
+
+		for (const changedPrincipal of [
+			{ ...invocationPrincipal, agentId: 'other' },
+			{ ...invocationPrincipal, toolPortalProfileId: 'operations' },
+			{ ...invocationPrincipal, profileAssignmentRevision: 'assignment-b' },
+			{
+				...invocationPrincipal,
+				frameworkIdentity: { kind: 'hermes' as const, profileName: 'main' },
+			},
+		]) {
+			const changedEvidence = { ...baselineEvidence, principal: changedPrincipal };
+
+			expect(buildGatewayControlCallerContextProofPayload(changedEvidence)).not.toBe(
+				baselineProofPayload,
+			);
+			expect(buildGatewayControlCallerContextAgentAuthorityPayload(changedEvidence)).not.toBe(
+				baselineAgentAuthorityPayload,
+			);
+		}
+	});
+
+	it('does not dedupe distinct stable principals in the same accepted session', () => {
+		let nextContextId = 0;
+		const registry = createRegistry({
+			createCallerContextId: () => {
+				nextContextId += 1;
+				return `44444444-4444-4444-8444-${String(nextContextId).padStart(12, '0')}`;
+			},
+		});
+		const firstContext = registry.register({ payload: registerPayload, session: acceptedSession });
+		const secondContext = registry.register({
+			payload: createRegisterPayload({
+				principal: { ...invocationPrincipal, toolPortalProfileId: 'operations' },
+			}),
+			session: acceptedSession,
+		});
+
+		expect(secondContext.callerContextId).not.toBe(firstContext.callerContextId);
+		expect(secondContext.stablePrincipal).not.toBe(firstContext.stablePrincipal);
 	});
 
 	it('validates normalized trusted caller claims without allocating or registering a context', () => {
@@ -245,22 +444,18 @@ describe('gateway control caller context registry', () => {
 
 		expect(validation).toEqual({
 			agentId: 'main',
-			agentWorkspaceDir: '/home/openclaw/workspace',
 			bootId: 'boot-a',
 			connectionId: 'connection-a',
 			controllerEpoch: 'epoch-a',
 			peerId: 'gateway-zone-a',
+			principal: invocationPrincipal,
 			purpose: 'tool_vm_lease',
 			sessionId: 'session-a',
-			sessionKeyDigest: digestGatewayControlSessionKey('agent:main:test-session'),
 			stablePrincipal: deriveGatewayControlStablePrincipal({
-				agentId: 'main',
-				zoneId: 'zone-a',
+				principal: invocationPrincipal,
 			}),
-			workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
 			zoneId: 'zone-a',
 		});
-		expect(JSON.stringify(validation)).not.toContain('agent:main:test-session');
 		expect(createdCallerContextCount).toBe(0);
 		expect(registry.resolve(callerContextId)).toBeUndefined();
 	});
@@ -275,9 +470,7 @@ describe('gateway control caller context registry', () => {
 			},
 			maxContexts: 1,
 		});
-		const signedPayload = createRegisterPayload({
-			sessionKey: 'agent:main:original-session',
-		});
+		const signedPayload = createRegisterPayload();
 		const wrongAgentAuthorityPayload = {
 			adapterEvidence: {
 				...registerPayload.adapterEvidence,
@@ -287,7 +480,10 @@ describe('gateway control caller context registry', () => {
 						.update(
 							buildGatewayControlCallerContextAgentAuthorityPayload({
 								...registerPayload.adapterEvidence,
-								agentId: 'other-agent',
+								principal: {
+									...registerPayload.adapterEvidence.principal,
+									agentId: 'other-agent',
+								},
 							}),
 							'utf8',
 						)
@@ -308,7 +504,10 @@ describe('gateway control caller context registry', () => {
 				payload: {
 					adapterEvidence: {
 						...signedPayload.adapterEvidence,
-						sessionKey: 'agent:main:forged-session',
+						principal: {
+							...signedPayload.adapterEvidence.principal,
+							toolPortalProfileId: 'forged-profile',
+						},
 					},
 				},
 				session: acceptedSession,
@@ -414,7 +613,7 @@ describe('gateway control caller context registry', () => {
 		});
 	});
 
-	it('issues an opaque context id and stores only a sessionKey digest', () => {
+	it('issues an opaque context id and stores the complete stable principal', () => {
 		const registry = createRegistry({
 			createCallerContextId: () => '44444444-4444-4444-8444-444444444444',
 		});
@@ -426,23 +625,19 @@ describe('gateway control caller context registry', () => {
 
 		expect(context).toEqual({
 			agentId: 'main',
-			agentWorkspaceDir: '/home/openclaw/workspace',
 			bootId: 'boot-a',
 			callerContextId: '44444444-4444-4444-8444-444444444444',
 			connectionId: 'connection-a',
 			controllerEpoch: 'epoch-a',
 			peerId: 'gateway-zone-a',
+			principal: invocationPrincipal,
 			purpose: 'tool_vm_lease',
 			sessionId: 'session-a',
-			sessionKeyDigest: digestGatewayControlSessionKey('agent:main:test-session'),
 			stablePrincipal: deriveGatewayControlStablePrincipal({
-				agentId: 'main',
-				zoneId: 'zone-a',
+				principal: invocationPrincipal,
 			}),
-			workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
 			zoneId: 'zone-a',
 		});
-		expect(JSON.stringify(context)).not.toContain('agent:main:test-session');
 		expect(registry.resolve(context.callerContextId)).toEqual(context);
 	});
 
@@ -596,9 +791,9 @@ describe('gateway control caller context registry', () => {
 		registry.release(firstContext.callerContextId);
 
 		const secondContext = registry.register({
-			payload: {
-				...createRegisterPayload({ sessionKey: 'agent:main:second-session' }),
-			},
+			payload: createRegisterPayload({
+				principal: { ...invocationPrincipal, toolPortalProfileId: 'operations' },
+			}),
 			session: acceptedSession,
 		});
 
@@ -636,7 +831,9 @@ describe('gateway control caller context registry', () => {
 
 		expect(() =>
 			registry.register({
-				payload: createRegisterPayload({ sessionKey: 'agent:main:second-session' }),
+				payload: createRegisterPayload({
+					principal: { ...invocationPrincipal, toolPortalProfileId: 'operations' },
+				}),
 				session: acceptedSession,
 			}),
 		).toThrow(/caller context registry limit exceeded/u);
@@ -653,50 +850,19 @@ describe('gateway control caller context registry', () => {
 		).toThrow(/zoneId mismatch/u);
 	});
 
-	it('rejects registration evidence with a malformed session key', () => {
+	it('rejects HMAC-signed evidence when a principal field is changed after signing', () => {
 		const registry = createRegistry();
-
-		expect(() =>
-			registry.register({
-				payload: {
-					adapterEvidence: {
-						...registerPayload.adapterEvidence,
-						sessionKey: 'not-agent-shaped',
-					},
-				},
-				session: acceptedSession,
-			}),
-		).toThrow(/sessionKey is not agent-shaped/u);
-	});
-
-	it('rejects registration evidence when agentId does not match the session key', () => {
-		const registry = createRegistry();
-
-		expect(() =>
-			registry.register({
-				payload: {
-					adapterEvidence: {
-						...registerPayload.adapterEvidence,
-						agentId: 'other-agent',
-					},
-				},
-				session: acceptedSession,
-			}),
-		).toThrow(/agentId does not match sessionKey agent/u);
-	});
-
-	it('rejects HMAC-signed evidence when the session key suffix is changed after signing', () => {
-		const registry = createRegistry();
-		const signedPayload = createRegisterPayload({
-			sessionKey: 'agent:main:original-session',
-		});
+		const signedPayload = createRegisterPayload();
 
 		expect(() =>
 			registry.register({
 				payload: {
 					adapterEvidence: {
 						...signedPayload.adapterEvidence,
-						sessionKey: 'agent:main:forged-session',
+						principal: {
+							...signedPayload.adapterEvidence.principal,
+							toolPortalProfileId: 'profile-forged',
+						},
 					},
 				},
 				session: acceptedSession,
@@ -733,7 +899,10 @@ describe('gateway control caller context registry', () => {
 								.update(
 									buildGatewayControlCallerContextAgentAuthorityPayload({
 										...registerPayload.adapterEvidence,
-										agentId: 'other-agent',
+										principal: {
+											...registerPayload.adapterEvidence.principal,
+											agentId: 'other-agent',
+										},
 									}),
 									'utf8',
 								)

@@ -6,9 +6,11 @@ import { defaultCliDependencies } from './agent-vm-cli-support.js';
 import { runSshCommand } from './ssh-commands.js';
 
 const systemConfig = {
-	schemaVersion: 1,
+	schemaVersion: 2,
+	storageRootDir: './storage',
 	cacheDir: './cache',
-	runtimeDir: './runtime',
+	controllerStateDir: '/controller-state-test',
+	controllerRuntimeDir: './controller-runtime',
 	host: {
 		controllerPort: 18800,
 		projectNamespace: 'claw-tests-a1b2c3d4',
@@ -19,6 +21,10 @@ const systemConfig = {
 	},
 	imageProfiles: {
 		gateways: {
+			hermes: {
+				type: 'hermes',
+				buildConfig: './vm-images/gateways/hermes/build-config.json',
+			},
 			openclaw: {
 				type: 'openclaw',
 				buildConfig: './vm-images/gateways/openclaw/build-config.json',
@@ -56,6 +62,7 @@ const systemConfig = {
 				port: 18791,
 				stateDir: './state/shravan',
 				zoneFilesDir: './zone-files/shravan',
+				zoneRuntimeDir: './runtime/shravan',
 			},
 			id: 'shravan',
 			secrets: {
@@ -76,6 +83,53 @@ const baseZone = systemConfig.zones[0];
 if (!baseZone) {
 	throw new Error('Expected test system config to include a zone.');
 }
+
+const hermesSystemConfig = {
+	...systemConfig,
+	zones: [
+		{
+			...baseZone,
+			gateway: {
+				type: 'hermes',
+				imageProfile: 'hermes',
+				profilesByAgent: { beta: 'beta' },
+				profileSecretProjectionsByAgent: {
+					beta: { DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN' },
+				},
+				cpus: 2,
+				memory: '2G',
+				config: './config/hermes/hermes.yaml',
+				port: 18792,
+				stateDir: './state/hermes',
+				zoneFilesDir: './zone-files/hermes',
+				zoneRuntimeDir: './runtime/hermes',
+			},
+			id: 'hermes-zone',
+			secrets: {},
+		},
+	],
+} satisfies SystemConfig;
+
+const workerSystemConfig = {
+	...systemConfig,
+	zones: [
+		{
+			...baseZone,
+			gateway: {
+				type: 'worker',
+				imageProfile: 'worker',
+				cpus: 2,
+				memory: '2G',
+				config: './config/worker/worker.json',
+				port: 18793,
+				stateDir: './state/worker',
+				zoneRuntimeDir: './runtime/worker',
+			},
+			id: 'worker-zone',
+			secrets: {},
+		},
+	],
+} satisfies SystemConfig;
 
 const systemConfigWithAdminAccess = {
 	...systemConfig,
@@ -148,11 +202,15 @@ describe('runSshCommand', () => {
 			'-p',
 			'2222',
 			'root@127.0.0.1',
-			expect.stringContaining('/run/openclaw/gateway-token.env'),
+			expect.stringContaining(
+				'/run/agent-vm/managed-gateway-environment/openclaw-gateway-token.environment.sh',
+			),
 		]);
 		const sshArguments = vi.mocked(runInteractiveProcess).mock.calls[0]?.[1];
 		const shellCommand = sshArguments?.at(-1);
-		expect(shellCommand).not.toEqual(expect.stringContaining('/run/openclaw/secrets.env'));
+		expect(shellCommand).not.toEqual(
+			expect.stringContaining('openclaw-all-secrets.environment.sh'),
+		);
 	});
 
 	it('spawns an all-secrets interactive ssh session when explicitly requested', async () => {
@@ -186,8 +244,20 @@ describe('runSshCommand', () => {
 		});
 		const sshArguments = vi.mocked(runInteractiveProcess).mock.calls[0]?.[1];
 		const shellCommand = sshArguments?.at(-1);
-		expect(shellCommand).toEqual(expect.stringContaining('/run/openclaw/secrets.env'));
-		expect(shellCommand).not.toEqual(expect.stringContaining('/run/openclaw/gateway-token.env'));
+		expect(shellCommand).toEqual(
+			expect.stringContaining(
+				'/run/agent-vm/managed-gateway-environment/openclaw-all-secrets.environment.sh',
+			),
+		);
+		expect(shellCommand).not.toEqual(
+			expect.stringContaining('openclaw-gateway-token.environment.sh'),
+		);
+		if (typeof shellCommand !== 'string') {
+			throw new Error('Expected OpenClaw all-secrets shell command.');
+		}
+		expect(shellCommand.indexOf('openclaw-all-secrets.environment.sh')).toBeLessThan(
+			shellCommand.indexOf('/etc/profile.d/openclaw-env.sh'),
+		);
 	});
 
 	it('fails closed when the controller cannot enable the ssh gateway token', async () => {
@@ -322,9 +392,91 @@ describe('runSshCommand', () => {
 		if (typeof shellCommand !== 'string') {
 			throw new Error('Expected SSH shell command to be present.');
 		}
-		expect(shellCommand).toContain('/run/openclaw/gateway-token.env');
-		expect(shellCommand).not.toContain('/run/openclaw/secrets.env');
+		expect(shellCommand).toContain(
+			'/run/agent-vm/managed-gateway-environment/openclaw-gateway-token.environment.sh',
+		);
+		expect(shellCommand).not.toContain('openclaw-all-secrets.environment.sh');
 		expect(shellCommand).not.toContain('resolved-admin-token');
+	});
+
+	it('opens a Hermes-ready login shell without OpenClaw secret setup', async () => {
+		const enableZoneSsh = vi.fn(async () => ({
+			host: '127.0.0.1',
+			identityFile: '/tmp/hermes-key',
+			port: 2223,
+			secretEnvEnabled: false,
+			user: 'root',
+		}));
+		const runInteractiveProcess = vi.fn(
+			async (_command: string, _arguments: readonly string[]): Promise<void> => {},
+		);
+
+		await runSshCommand({
+			dependencies: {
+				...defaultCliDependencies,
+				createControllerClient: () => createControllerClientStub(enableZoneSsh),
+				runInteractiveProcess,
+			},
+			io: { stderr: { write: () => true }, stdout: { write: () => true } },
+			restArguments: ['--zone', 'hermes-zone'],
+			systemConfig: hermesSystemConfig,
+		});
+
+		expect(enableZoneSsh).toHaveBeenCalledWith('hermes-zone', { secretEnv: 'default' });
+		const remoteCommand = vi.mocked(runInteractiveProcess).mock.calls[0]?.[1].at(-1);
+		expect(remoteCommand).toEqual(expect.stringContaining('source /etc/profile.d/hermes-env.sh'));
+		expect(remoteCommand).not.toEqual(expect.stringContaining('openclaw'));
+		expect(remoteCommand).not.toEqual(expect.stringContaining('OPENCLAW_GATEWAY_TOKEN'));
+		expect(remoteCommand).not.toEqual(expect.stringContaining('framework.environment.sh'));
+	});
+
+	it('rejects all-secrets SSH for Hermes before enabling SSH', async () => {
+		const enableZoneSsh = vi.fn(async () => ({
+			host: '127.0.0.1',
+			port: 2223,
+			user: 'root',
+		}));
+
+		await expect(
+			runSshCommand({
+				dependencies: {
+					...defaultCliDependencies,
+					createControllerClient: () => createControllerClientStub(enableZoneSsh),
+				},
+				io: { stderr: { write: () => true }, stdout: { write: () => true } },
+				restArguments: ['--zone', 'hermes-zone', '--all-secrets'],
+				systemConfig: hermesSystemConfig,
+			}),
+		).rejects.toThrow('--all-secrets is supported only for OpenClaw zones');
+		expect(enableZoneSsh).not.toHaveBeenCalled();
+	});
+
+	it('rejects controller SSH for Worker before contacting the controller', async () => {
+		const enableZoneSsh = vi.fn(async () => ({
+			host: '127.0.0.1',
+			port: 2224,
+			user: 'root',
+		}));
+		const runInteractiveProcess = vi.fn(
+			async (_command: string, _arguments: readonly string[]): Promise<void> => {},
+		);
+
+		await expect(
+			runSshCommand({
+				dependencies: {
+					...defaultCliDependencies,
+					createControllerClient: () => createControllerClientStub(enableZoneSsh),
+					runInteractiveProcess,
+				},
+				io: { stderr: { write: () => true }, stdout: { write: () => true } },
+				restArguments: ['--zone', 'worker-zone'],
+				systemConfig: workerSystemConfig,
+			}),
+		).rejects.toThrow(
+			"controller ssh is not implemented for gateway type 'worker'; use the Worker task APIs.",
+		);
+		expect(enableZoneSsh).not.toHaveBeenCalled();
+		expect(runInteractiveProcess).not.toHaveBeenCalled();
 	});
 
 	it('throws when the controller returns incomplete ssh data without a printable command', async () => {

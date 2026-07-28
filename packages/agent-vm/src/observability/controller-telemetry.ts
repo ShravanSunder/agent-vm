@@ -106,6 +106,7 @@ export interface ControllerTelemetryDiagnostics {
 }
 
 export const defaultControllerTelemetryDriverOperationTimeoutMs = 2_000;
+export const OTEL_RESOURCE_ATTRIBUTES_ENVIRONMENT_VARIABLE = 'OTEL_RESOURCE_ATTRIBUTES' as const;
 
 export interface StartControllerTelemetryOptions {
 	readonly createDriver?:
@@ -319,16 +320,48 @@ export function createControllerTelemetryResourceAttributes(options: {
 }): TelemetryAttributes {
 	return {
 		'dev.branch.name': options.identity.branchName,
-		'dev.release.channel':
-			options.identity.releaseChannel ??
-			inferReleaseChannel(options.projectNamespace, options.stackMode),
-		'dev.repo.hash': stableTelemetryHash(options.identity.repositoryIdentity),
-		'dev.runtime.flavor':
-			options.identity.runtimeFlavor ?? inferRuntimeFlavor(options.projectNamespace),
-		'dev.worktree.hash': stableTelemetryHash(options.identity.worktreeIdentity),
+		...createSharedDevelopmentTelemetryResourceAttributes(options),
 		'service.name': 'agent-vm-controller',
 		'service.version': options.identity.serviceVersion,
 	};
+}
+
+export function createGatewayTelemetryResourceAttributesEnvironmentValue(options: {
+	readonly identity: ControllerTelemetryIdentity;
+	readonly projectNamespace: string;
+	readonly stackMode: EnabledObservabilityRuntimeConfig['stackMode'];
+}): string {
+	return Object.entries(createSharedDevelopmentTelemetryResourceAttributes(options))
+		.toSorted(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
+		.map(
+			([attributeName, attributeValue]) =>
+				`${encodeURIComponent(attributeName)}=${encodeURIComponent(String(attributeValue))}`,
+		)
+		.join(',');
+}
+
+function createSharedDevelopmentTelemetryResourceAttributes(options: {
+	readonly identity: ControllerTelemetryIdentity;
+	readonly projectNamespace: string;
+	readonly stackMode: EnabledObservabilityRuntimeConfig['stackMode'];
+}): TelemetryAttributes {
+	return {
+		'dev.release.channel': normalizeTelemetryCategory(
+			options.identity.releaseChannel,
+			inferReleaseChannel(options.projectNamespace, options.stackMode),
+		),
+		'dev.repo.hash': stableTelemetryHash(options.identity.repositoryIdentity),
+		'dev.runtime.flavor': normalizeTelemetryCategory(
+			options.identity.runtimeFlavor,
+			inferRuntimeFlavor(options.projectNamespace),
+		),
+		'dev.worktree.hash': stableTelemetryHash(options.identity.worktreeIdentity),
+	};
+}
+
+function normalizeTelemetryCategory(value: string | undefined, fallback: string): string {
+	const candidate = value ?? fallback;
+	return /^[a-z0-9][a-z0-9._-]{0,63}$/u.test(candidate) ? candidate : fallback;
 }
 
 function formatCollectorHttpEndpoint(config: EnabledObservabilityRuntimeConfig): string {

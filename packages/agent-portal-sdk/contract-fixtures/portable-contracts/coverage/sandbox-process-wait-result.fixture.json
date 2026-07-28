@@ -1,0 +1,37 @@
+{
+	"caseId": "coverage-sandbox-process-wait-result",
+	"schemaId": "sandbox.process.wait.result",
+	"tags": [
+		"accepted",
+		"coverage"
+	],
+	"input": {
+		"kind": "running",
+		"operation": {
+			"operationId": "operation-a",
+			"owningGeneration": "generation-a"
+		},
+		"process": {
+			"handleId": "process-a",
+			"kind": "process",
+			"owningGeneration": "generation-a"
+		}
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"kind": "running",
+			"operation": {
+				"operationId": "operation-a",
+				"owningGeneration": "generation-a"
+			},
+			"process": {
+				"handleId": "process-a",
+				"kind": "process",
+				"owningGeneration": "generation-a"
+			}
+		},
+		"canonicalJson": "{\"kind\":\"running\",\"operation\":{\"operationId\":\"operation-a\",\"owningGeneration\":\"generation-a\"},\"process\":{\"handleId\":\"process-a\",\"kind\":\"process\",\"owningGeneration\":\"generation-a\"}}",
+		"refinementIdentities": []
+	}
+}

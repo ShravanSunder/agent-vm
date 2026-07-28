@@ -1,0 +1,20 @@
+{
+	"caseId": "gateway-managed-agent-projection-old-authority-rejected",
+	"schemaId": "gateway.managed-agent-projection",
+	"tags": ["managed-agent-projection", "old-authority", "rejected"],
+	"input": {
+		"agentId": "agent-a",
+		"frameworkIdentity": {
+			"agentId": "agent-a",
+			"kind": "openclaw"
+		},
+		"profileAssignmentRevision": "profile-assignment-a",
+		"profileId": "retired-profile-selector",
+		"toolPortalProfileId": "engineering"
+	},
+	"expectation": {
+		"kind": "rejected",
+		"errorCodes": ["portable.object.unknown-field"],
+		"refinementIdentities": []
+	}
+}

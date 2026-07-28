@@ -1,0 +1,135 @@
+# Exclude a variety of commonly ignored directories.
+exclude = [
+	".bzr",
+	".direnv",
+	".eggs",
+	".git",
+	".git-rewrite",
+	".hg",
+	".ipynb_checkpoints",
+	".mypy_cache",
+	".nox",
+	".pants.d",
+	".pyenv",
+	".pytest_cache",
+	".pytype",
+	".ruff_cache",
+	".svn",
+	".tox",
+	".venv",
+	".vscode",
+	"__pypackages__",
+	"_build",
+	"buck-out",
+	"build",
+	"dist",
+	"node_modules",
+	"site-packages",
+	"venv",
+	".ts",
+	".tsx",
+	".venv",
+]
+
+extend-include = ["*.ipynb"]
+
+line-length = 160
+indent-width = 4
+target-version = "py313"
+
+[lint]
+select = ['ALL']
+extend-select = ['ICN', 'TID', 'ASYNC', 'FAST', 'ANN', "A", "B", "C", "F"]
+ignore = [
+	"BLE001",
+
+	"D100",
+	"D101",
+	"D102",
+	"D103",
+	"D104",
+	"D105",
+	"D106",
+	"D107",
+	"D205",
+	"D400",
+	"D401",
+	"D402",
+	"D404",
+	"D414",
+	"D415",
+	"D417",
+	"D418",
+	"D419",
+
+	"E501",
+	"EM101",
+
+	"FBT001",
+
+	"G004",
+
+	"INP001",
+
+	"PLC0415",
+	"PERF401",
+	"PERF402",
+
+	"RUF001",
+
+	"TC002",
+	"TRY003",
+	"TC006",
+	"TRY300",
+	"TRY301",
+
+
+	"SIM108",
+	"S311",
+	"S608",
+
+	"UP006",
+
+
+	"W293",
+	"W291",
+	"TC001",
+
+	"C901",
+	"CPY001",
+	"PLR0915",
+
+]
+
+fixable = ["ALL"]
+
+[lint.per-file-ignores]
+
+
+"**/*_test.py" = ["T201", "S101", "PLR2004", "SLF001", "ARG001"]
+"**/tests/**/*.py" = ["T201", "S101", "PLR2004", "SLF001", "ARG001"]
+"**/conftest.py" = ["T201", "S101", "PLR2004", "SLF001", "ARG001"]
+
+
+[format]
+quote-style = "double"
+
+[lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Security"]
+
+
+[lint.flake8-import-conventions.aliases]
+numpy = "np"
+scipy = "sp"
+pyarrow = "pa"
+typing = "t"
+sqlalchemy = "sa"
+
+[lint.flake8-import-conventions]
+# Declare the banned `from` imports.
+banned-from = ["typing"]
+
+[lint.flake8-tidy-imports]
+# Ban certain modules from being imported at module level, instead requiring
+# that they're imported lazily (e.g., within a function definition).
+banned-module-level-imports = ["torch", "tensorflow"]

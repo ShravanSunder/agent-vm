@@ -8,6 +8,7 @@ import { validateBuildConfig } from '@earendil-works/gondolin';
 import {
 	prepareBuildConfigWithAgentVmRootfsInitExtra,
 	resolveRootfsInitExtra,
+	type GondolinManagedGatewayBootProjection,
 } from './rootfs-init-extra.js';
 
 export type { BuildConfig } from '@earendil-works/gondolin';
@@ -20,6 +21,7 @@ export interface BuildImageOptions {
 	readonly configDir?: string;
 	readonly fullReset?: boolean;
 	readonly fingerprintInput?: unknown;
+	readonly managedGatewayBoot?: GondolinManagedGatewayBootProjection;
 	readonly output?: BuildOutput;
 }
 
@@ -39,6 +41,7 @@ export interface GondolinImageBuildToolingOptions {
 	readonly configDir?: string;
 	readonly fullReset?: boolean;
 	readonly fingerprintInput?: unknown;
+	readonly managedGatewayBoot?: GondolinManagedGatewayBootProjection;
 	readonly output?: BuildOutput;
 }
 
@@ -47,6 +50,7 @@ export interface GondolinImageFingerprintOptions {
 	readonly configDir?: string;
 	readonly fingerprintInput?: unknown;
 	readonly gondolinVersion?: string;
+	readonly managedGatewayBoot?: GondolinManagedGatewayBootProjection;
 }
 
 export interface GondolinImageBuildTooling {
@@ -239,6 +243,7 @@ export async function computeEffectiveBuildFingerprint(options: {
 	readonly configDir?: string;
 	readonly fingerprintInput?: unknown;
 	readonly gondolinVersion?: string;
+	readonly managedGatewayBoot?: GondolinManagedGatewayBootProjection;
 }): Promise<{
 	readonly fingerprint: string;
 	readonly rootfsInitExtraContent: string;
@@ -246,6 +251,9 @@ export async function computeEffectiveBuildFingerprint(options: {
 	const resolvedRootfsInitExtra = await resolveRootfsInitExtra({
 		buildConfig: options.buildConfig,
 		...(options.configDir ? { configDir: options.configDir } : {}),
+		...(options.managedGatewayBoot === undefined
+			? {}
+			: { managedGatewayBoot: options.managedGatewayBoot }),
 	});
 	const fingerprint = computeBuildFingerprint(options.buildConfig, options.gondolinVersion, {
 		agentVmRootfsInitExtra: resolvedRootfsInitExtra.fingerprintInput,
@@ -270,6 +278,9 @@ export async function buildImage(
 		...(options.fingerprintInput === undefined
 			? {}
 			: { fingerprintInput: options.fingerprintInput }),
+		...(options.managedGatewayBoot === undefined
+			? {}
+			: { managedGatewayBoot: options.managedGatewayBoot }),
 		...(dependencies.gondolinVersion ? { gondolinVersion: dependencies.gondolinVersion } : {}),
 	});
 	const fingerprint = effectiveBuildFingerprint.fingerprint;

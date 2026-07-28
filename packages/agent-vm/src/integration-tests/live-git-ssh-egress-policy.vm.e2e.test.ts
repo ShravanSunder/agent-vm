@@ -13,13 +13,7 @@ import {
 	terminateLiveManagedVm,
 	type ManagedVmProcessTarget,
 } from '../shared/controller-managed-vm-termination.js';
-import {
-	isProcessAlive,
-	killProcess,
-	readProcessCommand,
-	readProcessIdentity,
-	sleep,
-} from '../shared/managed-vm-process.js';
+import { readProcessIdentity, sleep } from '../shared/managed-vm-process.js';
 import { shouldRunLiveVmE2e } from './live-vm-e2e-gates.js';
 
 const describeLiveVmIntegration = shouldRunLiveVmE2e() ? describe : describe.skip;
@@ -27,7 +21,8 @@ const describeLiveVmIntegration = shouldRunLiveVmE2e() ? describe : describe.ski
 const upstreamGitHost = '127.0.0.1.sslip.io';
 const allowedRepository = 'agent-vm/read-only-fixture.git';
 const crossVmSshFixturePort = 19100;
-const managedVmFactory = createGondolinManagedVmProvider().factory;
+const managedVmProvider = createGondolinManagedVmProvider();
+const managedVmFactory = managedVmProvider.factory;
 const execFileAsync = promisify(execFile);
 
 function createLiveVmRequest(
@@ -67,7 +62,8 @@ async function terminateVmRuntime(
 	if (runtime === null) return;
 	await terminateLiveManagedVm({
 		contextLabel: context,
-		dependencies: { isProcessAlive, killProcess, readProcessCommand, readProcessIdentity, sleep },
+		exactProcessTermination: managedVmProvider.exactProcessTermination,
+		sleep,
 		target: runtime.target,
 		vm: runtime.managedVm,
 	});

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
 	ControllerDispatchIntentSchema,
+	ControllerExecutionResultSchema,
 	ControllerHostActionRequestSchema,
 	ManagedVmArtifactReadRequestSchema,
 	ManagedVmExecRequestSchema,
@@ -19,7 +20,124 @@ const validDispatchIntent = {
 	trustedScope: validTrustedScope,
 };
 
+const validExecutionBinding = {
+	fingerprint: `sha256:${'a'.repeat(64)}`,
+	operationId: 'operation-a',
+};
+
 describe('controller execution contracts', () => {
+	it.each([
+		{
+			binding: validExecutionBinding,
+			certainty: 'proven',
+			completion: 'succeeded',
+			diagnostics: [],
+			kind: 'completed',
+			retryClass: 'forbidden',
+			value: { packageName: '@agent-vm/agent-vm' },
+		},
+		{
+			binding: validExecutionBinding,
+			certainty: 'proven',
+			diagnostics: [],
+			error: { code: 'capability_denied', message: 'Controller policy denied dispatch.' },
+			kind: 'not-dispatched',
+			reason: 'denied',
+			retryClass: 'safe-before-dispatch',
+		},
+		{
+			binding: validExecutionBinding,
+			certainty: 'side-effects-and-termination-unknown',
+			diagnostics: [],
+			error: { code: 'execution_failed', message: 'Dispatch state is unknown.' },
+			kind: 'ambiguous',
+			reason: 'dispatch-state-unknown',
+			retryClass: 'forbidden',
+		},
+	] as const)('accepts the canonical $kind controller execution result', (result) => {
+		expect(ControllerExecutionResultSchema.parse(result)).toEqual(result);
+	});
+
+	it('allows a strict proven not-dispatched result before trusted identity is available', () => {
+		const result = {
+			certainty: 'proven',
+			diagnostics: [],
+			error: { code: 'validation_failed', message: 'The public request is invalid.' },
+			kind: 'not-dispatched',
+			reason: 'public-authority-or-policy-override',
+			retryClass: 'safe-before-dispatch',
+		} as const;
+
+		expect(ControllerExecutionResultSchema.parse(result)).toEqual(result);
+	});
+
+	it.each([
+		[
+			'legacy ok result',
+			{ auditCorrelationId: 'audit-a', diagnostics: [], status: 'ok', value: {} },
+		],
+		[
+			'legacy error result',
+			{
+				diagnostics: [],
+				error: { code: 'execution_failed', message: 'failed' },
+				status: 'error',
+			},
+		],
+		[
+			'completed result carrying an error',
+			{
+				binding: validExecutionBinding,
+				certainty: 'proven',
+				completion: 'succeeded',
+				diagnostics: [],
+				error: { code: 'execution_failed', message: 'impossible' },
+				kind: 'completed',
+				retryClass: 'forbidden',
+				value: {},
+			},
+		],
+		[
+			'not-dispatched result carrying a value',
+			{
+				binding: validExecutionBinding,
+				certainty: 'proven',
+				diagnostics: [],
+				error: { code: 'capability_denied', message: 'denied' },
+				kind: 'not-dispatched',
+				reason: 'denied',
+				retryClass: 'safe-before-dispatch',
+				value: {},
+			},
+		],
+		[
+			'ambiguous result claiming safe replay',
+			{
+				binding: validExecutionBinding,
+				certainty: 'side-effects-and-termination-unknown',
+				diagnostics: [],
+				error: { code: 'execution_failed', message: 'unknown' },
+				kind: 'ambiguous',
+				reason: 'dispatch-state-unknown',
+				retryClass: 'safe-before-dispatch',
+			},
+		],
+		[
+			'partially bound dispatch identity',
+			{
+				binding: { operationId: 'operation-a' },
+				certainty: 'proven',
+				diagnostics: [],
+				error: { code: 'capability_denied', message: 'denied' },
+				kind: 'not-dispatched',
+				reason: 'denied',
+				retryClass: 'safe-before-dispatch',
+			},
+		],
+	] as const)('rejects invalid cross-variant data for %s', (_name, result) => {
+		expect(ControllerExecutionResultSchema.safeParse(result).success).toBe(false);
+	});
+
 	it('rejects adapter-supplied execution authority in dispatch intent', () => {
 		for (const forbiddenField of [
 			'executablePath',

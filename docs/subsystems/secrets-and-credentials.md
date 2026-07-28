@@ -247,8 +247,8 @@ OpenClaw's env SecretRef shape instead of storing the plaintext token in
 `<stateDir>/effective-openclaw.json`. Other raw environment secrets must be
 named explicitly in `gateway.rawEnvSecrets`; provider API tokens should use
 `http-mediation` unless the integration cannot be mediated at the HTTP boundary.
-Generated runtime env secrets, such as zone-git capability env vars, must also
-be listed when enabled.
+Controller-owned workspace Git credentials never enter the Gateway VM
+environment.
 
 MCP Portal upstream credentials stay in the gateway VM portal process. The
 portal exposes schema, summaries, helper source, and validated call results to

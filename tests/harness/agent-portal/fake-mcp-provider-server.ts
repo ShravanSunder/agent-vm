@@ -156,11 +156,26 @@ function createCallResult(
 					},
 				},
 				id: callRequest.id,
+				operationId: `fake-operation:${callRequest.id}`,
+				outcome: {
+					certainty: 'proven',
+					kind: 'not-dispatched',
+					retryClass: 'safe-before-dispatch',
+				},
+				owningGeneration: 'fake-mcp-provider-generation',
 				status: 'error',
 			};
 		}
 		return {
 			id: callRequest.id,
+			operationId: `fake-operation:${callRequest.id}`,
+			outcome: {
+				certainty: 'proven',
+				completion: 'succeeded',
+				kind: 'completed',
+				retryClass: 'forbidden',
+			},
+			owningGeneration: 'fake-mcp-provider-generation',
 			status: 'ok',
 			value: capability.value,
 		};

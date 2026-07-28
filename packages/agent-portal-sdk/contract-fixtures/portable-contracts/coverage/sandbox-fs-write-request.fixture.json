@@ -1,0 +1,43 @@
+{
+	"caseId": "coverage-sandbox-fs-write-request",
+	"schemaId": "sandbox.fs.write.request",
+	"tags": [
+		"accepted",
+		"coverage"
+	],
+	"input": {
+		"atomic": true,
+		"content": {
+			"byteLength": 0,
+			"contentBase64": "",
+			"encoding": "base64"
+		},
+		"environment": {
+			"handleId": "environment-a",
+			"kind": "environment",
+			"owningGeneration": "generation-a"
+		},
+		"path": "file.txt"
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"atomic": true,
+			"content": {
+				"byteLength": 0,
+				"contentBase64": "",
+				"encoding": "base64"
+			},
+			"environment": {
+				"handleId": "environment-a",
+				"kind": "environment",
+				"owningGeneration": "generation-a"
+			},
+			"path": "file.txt"
+		},
+		"canonicalJson": "{\"atomic\":true,\"content\":{\"byteLength\":0,\"contentBase64\":\"\",\"encoding\":\"base64\"},\"environment\":{\"handleId\":\"environment-a\",\"kind\":\"environment\",\"owningGeneration\":\"generation-a\"},\"path\":\"file.txt\"}",
+		"refinementIdentities": [
+			"sandbox.binary-chunk.byte-length"
+		]
+	}
+}

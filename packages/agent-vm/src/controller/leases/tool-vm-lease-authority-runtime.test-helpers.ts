@@ -39,19 +39,23 @@ export const GATEWAY_TWO = {
 
 export const PRINCIPAL_MAIN = {
 	agentId: 'main',
-	zoneId: GATEWAY_ONE.zoneId,
+	frameworkIdentity: { agentId: 'main', kind: 'openclaw' },
+	profileAssignmentRevision: 'assignment-main',
+	toolPortalProfileId: 'standard',
 } satisfies StableToolVmLeasePrincipal;
 
 export const PRINCIPAL_SIBLING = {
+	...PRINCIPAL_MAIN,
 	agentId: 'sibling',
-	zoneId: GATEWAY_ONE.zoneId,
+	frameworkIdentity: { agentId: 'sibling', kind: 'openclaw' },
+	profileAssignmentRevision: 'assignment-sibling',
 } satisfies StableToolVmLeasePrincipal;
 
 export const COMPATIBILITY = {
 	policyFingerprint: 'policy-a',
 	profileId: 'standard',
+	profileAssignmentRevision: 'assignment-main',
 	purpose: 'coding',
-	workMountDir: '/home/openclaw/work',
 } satisfies ToolVmLeaseCompatibility;
 
 export const RUNTIME_BINDING = {
@@ -93,7 +97,7 @@ export function createLease(overrides: Partial<TestLease> = {}): TestLease {
 		lastUsedAt: 1_000,
 		label: 'primary lease',
 		vm: { id: RUNTIME_BINDING.vmId },
-		zoneId: PRINCIPAL_MAIN.zoneId,
+		zoneId: GATEWAY_ONE.zoneId,
 		...overrides,
 	};
 }

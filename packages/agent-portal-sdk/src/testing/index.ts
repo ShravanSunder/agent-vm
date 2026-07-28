@@ -44,6 +44,14 @@ export function createPortalCallResultFixture(
 		items: [
 			{
 				id: props.id ?? 'call-1',
+				operationId: 'operation-1',
+				outcome: {
+					certainty: 'proven',
+					completion: 'succeeded',
+					kind: 'completed',
+					retryClass: 'forbidden',
+				},
+				owningGeneration: 'tool-vm-generation-1',
 				status: 'ok',
 				value: props.value ?? {},
 			},

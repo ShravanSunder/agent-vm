@@ -1,0 +1,35 @@
+{
+	"caseId": "call-result-aggregate-status-invalid",
+	"schemaId": "portal.call.result",
+	"tags": ["aggregate-status", "illegal-combination", "rejected"],
+	"input": {
+		"items": [
+			{
+				"error": {
+					"code": "execution_failed",
+					"message": "Execution failed safely."
+				},
+				"id": "call-1",
+				"operationId": "operation-1",
+				"outcome": {
+					"certainty": "proven",
+					"completion": "failed",
+					"kind": "completed",
+					"retryClass": "policy-gated"
+				},
+				"owningGeneration": "runner-generation-1",
+				"status": "error"
+			}
+		],
+		"ok": true
+	},
+	"expectation": {
+		"kind": "rejected",
+		"errorCodes": ["portal.result.aggregate-status"],
+		"refinementIdentities": [
+			"portal.request-id.not-reserved",
+			"portal.result.aggregate-status",
+			"portal.result.outcome-algebra"
+		]
+	}
+}

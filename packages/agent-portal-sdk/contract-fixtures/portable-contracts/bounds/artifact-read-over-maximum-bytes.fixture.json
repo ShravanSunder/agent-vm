@@ -1,0 +1,19 @@
+{
+	"caseId": "artifact-read-over-maximum-bytes",
+	"schemaId": "portal.artifact.read-request",
+	"tags": ["boundary", "byte-bound", "rejected"],
+	"input": {
+		"maxBytes": 16777217,
+		"reference": {
+			"byteLength": 16777217,
+			"expiresAt": "2030-01-01T00:00:00.000Z",
+			"fingerprint": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+			"id": "artifact-over-maximum"
+		}
+	},
+	"expectation": {
+		"kind": "rejected",
+		"errorCodes": ["portable.number.above-maximum"],
+		"refinementIdentities": []
+	}
+}

@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { isToolVmLeasePeek, isToolVmSshLease } from './tool-vm-lease.js';
-
-const OPENCLAW_TOOL_VM_WORKSPACE_MOUNT = '/workspace';
+import { TOOL_VM_WORK_GUEST_ROOT, isToolVmLeasePeek, isToolVmSshLease } from './tool-vm-lease.js';
 
 describe('Tool VM SSH lease types', () => {
 	it('accepts an SSH lease capability and does not model filesystem methods', () => {
@@ -19,7 +17,7 @@ describe('Tool VM SSH lease types', () => {
 			},
 			tcpSlot: 0,
 			transport: 'ssh-sandbox',
-			workdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
+			workdir: TOOL_VM_WORK_GUEST_ROOT,
 		};
 
 		expect(isToolVmSshLease(lease)).toBe(true);
@@ -41,7 +39,7 @@ describe('Tool VM SSH lease types', () => {
 				},
 				tcpSlot: 0,
 				transport: 'ssh-sandbox',
-				workdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
+				workdir: TOOL_VM_WORK_GUEST_ROOT,
 			}),
 		).toBe(false);
 	});
@@ -62,7 +60,7 @@ describe('Tool VM SSH lease types', () => {
 				},
 				tcpSlot: 0,
 				transport: 'ssh-sandbox',
-				workdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
+				workdir: TOOL_VM_WORK_GUEST_ROOT,
 			}),
 		).toBe(false);
 	});
@@ -82,7 +80,7 @@ describe('Tool VM SSH lease types', () => {
 				},
 				tcpSlot: 0,
 				transport: 'ssh-sandbox',
-				workdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
+				workdir: TOOL_VM_WORK_GUEST_ROOT,
 			}),
 		).toBe(false);
 	});
@@ -103,7 +101,7 @@ describe('Tool VM SSH lease types', () => {
 				},
 				tcpSlot: 0,
 				transport: 'ssh-sandbox',
-				workdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
+				workdir: TOOL_VM_WORK_GUEST_ROOT,
 				zoneId: 'default',
 			}),
 		).toBe(true);
@@ -125,7 +123,7 @@ describe('Tool VM SSH lease types', () => {
 				},
 				tcpSlot: 0,
 				transport: 'ssh-sandbox',
-				workdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
+				workdir: TOOL_VM_WORK_GUEST_ROOT,
 				zoneId: 'default',
 			}),
 		).toBe(false);

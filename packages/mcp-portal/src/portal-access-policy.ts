@@ -13,7 +13,11 @@ export type PortalAgentIdentity = {
 	readonly [portalAgentIdentityBrand]: true;
 };
 
-export type PortalAgentScopeSource = 'cli-operator' | 'mcp-proxy-bearer' | 'openclaw-trusted';
+export type PortalAgentScopeSource =
+	| 'cli-operator'
+	| 'mcp-proxy-bearer'
+	| 'openclaw-trusted'
+	| 'tool-portal-service';
 
 export interface PortalToolSelector {
 	readonly namespace: string;

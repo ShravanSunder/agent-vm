@@ -1,3 +1,4 @@
+import type { GatewayRuntimeTrustedInvocationPrincipal } from '@agent-vm/gateway-control-contracts';
 import type {
 	ToolVmActiveUseCorrelation,
 	ToolVmActiveUseOperationReport,
@@ -5,16 +6,13 @@ import type {
 
 import type { GatewayEpochIdentity } from '../vm-ownership/vm-ownership-contracts.js';
 
-export interface StableToolVmLeasePrincipal {
-	readonly agentId: string;
-	readonly zoneId: string;
-}
+export type StableToolVmLeasePrincipal = GatewayRuntimeTrustedInvocationPrincipal;
 
 export interface ToolVmLeaseCompatibility {
 	readonly policyFingerprint: string;
 	readonly profileId: string;
 	readonly purpose: string;
-	readonly workMountDir: string;
+	readonly profileAssignmentRevision: string;
 }
 
 export interface ToolVmLeafAuthorityReference {
@@ -74,7 +72,7 @@ export interface ObservationGapToolVmActiveUse extends ToolVmActiveUseIdentity {
 export interface AmbiguousToolVmActiveUse extends ToolVmActiveUseIdentity {
 	readonly ambiguousAtMs: number;
 	readonly kind: 'ambiguous';
-	readonly reason: 'observation-gap-expired' | 'process-epoch-lost';
+	readonly reason: 'leaf-rollover' | 'observation-gap-expired' | 'process-epoch-lost';
 }
 
 export interface TerminalToolVmActiveUse extends ToolVmActiveUseIdentity {
@@ -133,6 +131,14 @@ export interface DestroyingToolVmLeaseLeaf extends ToolVmLeaseLeafBase {
 	readonly sshBinding?: ToolVmSshBinding;
 }
 
+export interface RetiringToolVmLeaseLeaf extends ToolVmLeaseLeafBase {
+	readonly cleanupIncompleteReason?: string;
+	readonly destructionReason: string;
+	readonly kind: 'retiring';
+	readonly runtimeBinding?: ToolVmRuntimeBinding;
+	readonly sshBinding?: ToolVmSshBinding;
+}
+
 export interface OwnerUnsafeToolVmLeaseLeaf extends ToolVmLeaseLeafBase {
 	readonly kind: 'owner-unsafe';
 	readonly ownerUnsafeReason: string;
@@ -146,7 +152,10 @@ export type ToolVmLeaseLeafState =
 	| SuspectToolVmLeaseLeaf
 	| QuarantinedToolVmLeaseLeaf
 	| DestroyingToolVmLeaseLeaf
+	| RetiringToolVmLeaseLeaf
 	| OwnerUnsafeToolVmLeaseLeaf;
+
+export type AccessFencingToolVmLeaseLeaf = DestroyingToolVmLeaseLeaf | OwnerUnsafeToolVmLeaseLeaf;
 
 export interface DestroyedToolVmLeaseLeafTombstone {
 	readonly destroyedAtMs: number;
@@ -161,7 +170,7 @@ export interface DestroyedToolVmLeaseLeafTombstone {
 	readonly vmId?: string;
 }
 
-export interface TerminalToolVmActiveUseTombstone {
+interface ToolVmActiveUseTombstoneEvidence {
 	readonly correlation?: ToolVmActiveUseCorrelation;
 	readonly endedAtMs: number;
 	readonly expiresAtMs: number;
@@ -170,12 +179,22 @@ export interface TerminalToolVmActiveUseTombstone {
 	readonly latestReport?: ToolVmActiveUseLatestReport;
 	readonly latestOperationReport?: ToolVmActiveUseOperationReport;
 	readonly operationPayloadDigest: string;
-	readonly outcome: TerminalToolVmActiveUse['outcome'];
 	readonly principal: StableToolVmLeasePrincipal;
 	readonly processEpoch: string;
 	readonly semanticOperationId: string;
+	readonly startedAtMs: number;
 	readonly useId: string;
 }
+
+export type TerminalToolVmActiveUseTombstone = ToolVmActiveUseTombstoneEvidence &
+	(
+		| { readonly outcome: TerminalToolVmActiveUse['outcome'] }
+		| {
+				readonly ambiguousAtMs: number;
+				readonly ambiguityReason: 'leaf-rollover';
+				readonly outcome: 'ambiguous-rollover';
+		  }
+	);
 
 export interface ToolVmLeaseAuthorityRetentionPolicy {
 	readonly leafTombstoneTtlMs: number;
@@ -192,8 +211,11 @@ export type ToolVmLeaseParentState =
 	| { readonly gateway: GatewayEpochIdentity; readonly kind: 'retired' };
 
 export interface ToolVmLeaseAuthorityState {
+	readonly accessFencingLeavesByGeneration: ReadonlyMap<string, AccessFencingToolVmLeaseLeaf>;
+	readonly currentPrincipalKeyByAgentId: ReadonlyMap<string, string>;
 	readonly leavesByPrincipal: ReadonlyMap<string, ToolVmLeaseLeafState>;
 	readonly parent: ToolVmLeaseParentState;
+	readonly retiringLeavesByGeneration: ReadonlyMap<string, RetiringToolVmLeaseLeaf>;
 	readonly retentionPolicy: ToolVmLeaseAuthorityRetentionPolicy;
 	readonly terminalUseTombstones: ReadonlyMap<string, TerminalToolVmActiveUseTombstone>;
 	readonly tombstonesByGeneration: ReadonlyMap<string, DestroyedToolVmLeaseLeafTombstone>;
@@ -226,6 +248,7 @@ export type ToolVmLeaseAuthorityTransitionErrorCode =
 	| 'parent-not-admitting'
 	| 'parent-not-sealed'
 	| 'parent-unregistered'
+	| 'predecessor-access-not-fenced'
 	| 'principal-mismatch'
 	| 'process-epoch-mismatch'
 	| 'observation-gap-expired'
@@ -346,9 +369,14 @@ export type ToolVmLeaseAuthorityCommand =
 			readonly processEpoch: string;
 	  }
 	| {
+			readonly ambiguousAtMs: number;
 			readonly authority: ToolVmLeafAuthorityReference;
 			readonly kind: 'begin-destruction';
 			readonly reason: string;
+	  }
+	| {
+			readonly authority: ToolVmLeafAuthorityReference;
+			readonly kind: 'access-fenced';
 	  }
 	| {
 			readonly authority: ToolVmLeafAuthorityReference;

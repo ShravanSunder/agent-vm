@@ -30,6 +30,13 @@ afterEach(() => {
 });
 
 describe('workerLifecycle', () => {
+	it('retains the direct process lifecycle', () => {
+		expect(workerLifecycle.executionModel).toBe('direct-process');
+		expect(workerLifecycle).toEqual(
+			expect.objectContaining({ buildProcessSpec: expect.any(Function) }),
+		);
+	});
+
 	it('does not support interactive auth', () => {
 		expect(workerLifecycle.authConfig).toBeUndefined();
 	});
@@ -40,7 +47,7 @@ describe('workerLifecycle', () => {
 			gatewayCacheDir: '/host/cache/gateways/shravan',
 			projectNamespace: 'claw-tests-a1b2c3d4',
 			resolvedSecrets: { OPENAI_API_KEY: 'openai-token' },
-			runtimeDir: '/host/runtime',
+			zoneRuntimeDir: '/host/runtime',
 			tcpPool: {
 				basePort: 19000,
 				size: 5,
@@ -49,8 +56,8 @@ describe('workerLifecycle', () => {
 		});
 
 		expect(vmRequirements.mounts['/state']).toEqual({
-			hostPath: '/host/state/shravan',
 			access: 'read-write',
+			hostPath: '/host/state/shravan',
 			kind: 'host-directory',
 		});
 		expect(vmRequirements.mounts['/work']).toBeUndefined();
@@ -89,7 +96,7 @@ describe('workerLifecycle', () => {
 			gatewayCacheDir: '/host/cache/gateways/shravan',
 			projectNamespace: 'claw-tests-a1b2c3d4',
 			resolvedSecrets: { OPENAI_API_KEY: 'openai-token' },
-			runtimeDir: '/host/runtime',
+			zoneRuntimeDir: '/host/runtime',
 			tcpPool: {
 				basePort: 19000,
 				size: 5,
@@ -108,7 +115,7 @@ describe('workerLifecycle', () => {
 			gatewayCacheDir: '/host/cache/gateways/shravan',
 			projectNamespace: 'claw-tests-a1b2c3d4',
 			resolvedSecrets: { OPENAI_API_KEY: 'openai-token' },
-			runtimeDir: '/host/runtime',
+			zoneRuntimeDir: '/host/runtime',
 			tcpPool: {
 				basePort: 19000,
 				size: 5,
@@ -135,7 +142,7 @@ describe('workerLifecycle', () => {
 			gatewayCacheDir: '/host/cache/gateways/shravan',
 			projectNamespace: 'claw-tests-a1b2c3d4',
 			resolvedSecrets: { OPENAI_API_KEY: 'openai-token' },
-			runtimeDir: '/host/runtime',
+			zoneRuntimeDir: '/host/runtime',
 			tcpPool: {
 				basePort: 19000,
 				size: 5,
@@ -182,7 +189,7 @@ describe('workerLifecycle', () => {
 				GITHUB_TOKEN: 'github-token',
 				LINEAR_API_KEY: 'linear-token',
 			},
-			runtimeDir: '/host/runtime',
+			zoneRuntimeDir: '/host/runtime',
 			tcpPool: {
 				basePort: 19000,
 				size: 5,
@@ -230,7 +237,7 @@ describe('workerLifecycle', () => {
 				OPENAI_API_KEY: 'openai-token',
 				NODE_OPTIONS: '--inspect=0.0.0.0:9229',
 			},
-			runtimeDir: '/host/runtime',
+			zoneRuntimeDir: '/host/runtime',
 			tcpPool: {
 				basePort: 19000,
 				size: 5,
@@ -253,7 +260,7 @@ describe('workerLifecycle', () => {
 		expect(processSpec.bootstrapCommand).not.toContain(' npm install');
 		expect(processSpec.bootstrapCommand).toContain('PNPM_HOME=/pnpm');
 		expect(processSpec.bootstrapCommand).toContain('PATH=/pnpm:$PATH');
-		expect(processSpec.bootstrapCommand).toContain('mkdir -p /work/repos /work/tmp');
+		expect(processSpec.bootstrapCommand).toContain('mkdir -p /workspace /work/repos /work/tmp');
 		expect(processSpec.bootstrapCommand).toContain('/work/cache/pnpm/store');
 		expect(processSpec.bootstrapCommand).toContain('/state/agent-vm-worker-packages/package.json');
 		expect(processSpec.bootstrapCommand).toContain('/state/agent-vm-worker-packages/node_modules');
@@ -270,6 +277,11 @@ describe('workerLifecycle', () => {
 		expect(processSpec.startCommand).toContain('cd /work');
 		expect(processSpec.startCommand).toContain('serve --port 18789');
 		expect(processSpec.healthCheck).toEqual({ type: 'http', port: 18789, path: '/health' });
+		expect(processSpec.serviceHealthCheck).toEqual({
+			type: 'http',
+			port: 18789,
+			path: '/health',
+		});
 		expect(processSpec.guestListenPort).toBe(18789);
 		expect(processSpec.logPath).toBe('/tmp/agent-vm-worker.log');
 	});

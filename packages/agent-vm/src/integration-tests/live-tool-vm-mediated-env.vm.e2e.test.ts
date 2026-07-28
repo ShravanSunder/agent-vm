@@ -1,6 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
-import os from 'node:os';
+import { mkdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
@@ -8,30 +7,23 @@ import type { ManagedVm } from '@agent-vm/managed-vm';
 import { createStaticSecretResolver } from '@agent-vm/secret-management';
 import { afterAll, describe, expect, it } from 'vitest';
 
+import { runBuildCommand } from '../cli/build-command.js';
 import { createManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
 import {
 	terminateLiveManagedVm,
 	type ManagedVmProcessTarget,
 } from '../shared/controller-managed-vm-termination.js';
-import {
-	isProcessAlive,
-	killProcess,
-	readProcessCommand,
-	readProcessIdentity,
-	sleep,
-} from '../shared/managed-vm-process.js';
+import { readProcessIdentity, sleep } from '../shared/managed-vm-process.js';
 import { createToolVm } from '../tool-vm/tool-vm-lifecycle.js';
+import { prepareGatewayE2eProjectImages, scaffoldOpenClawE2eProject } from './e2e-harness.js';
 import { shouldRunLiveVmE2e } from './live-vm-e2e-gates.js';
 
 const execFileAsync = promisify(execFile);
 const describeLiveVmIntegration = shouldRunLiveVmE2e() ? describe : describe.skip;
+const managedVmRuntimeComposition = createManagedVmRuntimeComposition();
 
 const rawGithubToken = 'real-github-token-for-mediated-env-live-test';
-
-async function createTemporaryDirectory(): Promise<string> {
-	return await mkdtemp(path.join(os.tmpdir(), 'agent-vm-live-mediated-env-'));
-}
 
 async function captureStartedVmProcess(managedVm: ManagedVm): Promise<ManagedVmProcessTarget> {
 	const hostPid = managedVm.getHostProcessId();
@@ -51,21 +43,22 @@ async function terminateVmRuntime(
 ): Promise<void> {
 	await terminateLiveManagedVm({
 		contextLabel: 'Tool VM mediated environment cleanup',
-		dependencies: { isProcessAlive, killProcess, readProcessCommand, readProcessIdentity, sleep },
+		exactProcessTermination: managedVmRuntimeComposition.managedVmExactProcessTermination,
+		sleep,
 		target,
 		vm: managedVm,
 	});
 }
 
-async function createMediatedEnvSystemConfig(
-	temporaryDirectory: string,
-): Promise<LoadedSystemConfig> {
-	const zoneFilesDir = path.join(temporaryDirectory, 'zone-files', 'shravan');
-	const stateDir = path.join(temporaryDirectory, 'state', 'shravan');
-
-	return createLoadedSystemConfig(
+async function createMediatedEnvSystemConfig(options: {
+	readonly cacheDir: string;
+	readonly temporaryDirectory: string;
+	readonly toolVmBuildConfigPath: string;
+}): Promise<LoadedSystemConfig> {
+	const systemConfig = createLoadedSystemConfig(
 		{
-			cacheDir: path.join(temporaryDirectory, 'cache'),
+			schemaVersion: 2,
+			storageRootDir: options.temporaryDirectory,
 			host: {
 				controllerPort: 18800,
 				projectNamespace: 'mediated-env-live',
@@ -84,7 +77,7 @@ async function createMediatedEnvSystemConfig(
 				toolVms: {
 					default: {
 						type: 'toolVm',
-						buildConfig: '/test-fixtures/tool-vm-build-config.jsonc',
+						buildConfig: options.toolVmBuildConfigPath,
 					},
 				},
 			},
@@ -115,8 +108,6 @@ async function createMediatedEnvSystemConfig(
 						imageProfile: 'openclaw',
 						memory: '512M',
 						port: 18791,
-						stateDir,
-						zoneFilesDir,
 					},
 					id: 'shravan',
 					agents: [{ id: 'shravan' }],
@@ -139,8 +130,9 @@ async function createMediatedEnvSystemConfig(
 				},
 			],
 		},
-		{ systemConfigPath: path.join(temporaryDirectory, 'config', 'system.json') },
+		{ systemConfigPath: path.join(options.temporaryDirectory, 'config', 'system.json') },
 	);
+	return { ...systemConfig, cacheDir: options.cacheDir };
 }
 
 async function runToolVmSshCommand(options: {
@@ -179,8 +171,37 @@ describeLiveVmIntegration('live: Tool VM mediated placeholder environment', () =
 	});
 
 	it('makes scoped http-mediated placeholders visible only to the allowed Tool VM agent', async () => {
-		temporaryDirectory = await createTemporaryDirectory();
-		const systemConfig = await createMediatedEnvSystemConfig(temporaryDirectory);
+		const project = await scaffoldOpenClawE2eProject({
+			agents: ['shravan'],
+			architecture: process.arch === 'arm64' ? 'aarch64' : 'x86_64',
+			prefix: 'agent-vm-live-mediated-env-',
+			zoneId: 'shravan',
+		});
+		temporaryDirectory = project.tempRoot;
+		await prepareGatewayE2eProjectImages({
+			project,
+			runBuild: async ({ systemConfig: preparedSystemConfig }) => {
+				await runBuildCommand({
+					skipObservability: true,
+					systemConfig: {
+						...preparedSystemConfig,
+						imageProfiles: {
+							...preparedSystemConfig.imageProfiles,
+							gateways: {},
+						},
+					},
+				});
+			},
+		});
+		const preparedToolVmImageProfile = project.systemConfig.imageProfiles.toolVms.default;
+		if (preparedToolVmImageProfile === undefined) {
+			throw new Error('Expected the E2E project to configure a default Tool VM image.');
+		}
+		const systemConfig = await createMediatedEnvSystemConfig({
+			cacheDir: project.systemConfig.cacheDir,
+			temporaryDirectory,
+			toolVmBuildConfigPath: preparedToolVmImageProfile.buildConfig,
+		});
 		const zone = systemConfig.zones[0];
 		if (zone?.gateway.type !== 'openclaw') {
 			throw new Error('Expected OpenClaw test zone.');
@@ -190,30 +211,34 @@ describeLiveVmIntegration('live: Tool VM mediated placeholder environment', () =
 			throw new Error('Expected standard Tool VM profile.');
 		}
 
-		const hostWorkMountDir = path.join(zone.gateway.zoneFilesDir, 'agents', 'shravan');
-		await mkdir(hostWorkMountDir, { recursive: true });
-		const runtimeComposition = createManagedVmRuntimeComposition();
+		const hostAgentGitDirectoryRoot = path.join(
+			zone.gateway.zoneRuntimeDir,
+			'gitdirs',
+			'agents',
+			'shravan',
+		);
+		const hostAgentRoot = path.join(zone.gateway.zoneFilesDir, 'agents', 'shravan');
+		await Promise.all([
+			mkdir(hostAgentGitDirectoryRoot, { recursive: true }),
+			mkdir(hostAgentRoot, { recursive: true }),
+		]);
+		const runtimeComposition = managedVmRuntimeComposition;
 		const toolVm = await createToolVm(
 			{
 				agentId: 'shravan',
 				cacheDir: systemConfig.cacheDir,
-				hostWorkMountDir,
 				profile,
+				rootBinding: {
+					hostGitDirectoryRoot: hostAgentGitDirectoryRoot,
+					hostWorkspaceRoot: hostAgentRoot,
+					kind: 'managed-agent-workspace',
+				},
 				secretResolver: createStaticSecretResolver({}),
 				systemConfig,
 				tcpSlot: 0,
 				zoneId: 'shravan',
 			},
-			{
-				...runtimeComposition,
-				managedVmImages: {
-					prepareImage: async () => ({
-						built: false,
-						fingerprint: 'live-mediated-env-fixture',
-						imageReference: 'alpine-base:latest',
-					}),
-				},
-			},
+			runtimeComposition,
 		);
 		const terminationTarget = await captureStartedVmProcess(toolVm);
 		let sshAccess: Awaited<ReturnType<ManagedVm['enableSsh']>> | undefined;

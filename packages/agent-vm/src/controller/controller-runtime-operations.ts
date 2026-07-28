@@ -17,7 +17,7 @@ import {
 	ControllerZoneAdminAuthError,
 	ControllerZoneNotFoundError,
 } from './zone-runtimes/zone-runtime-errors.js';
-import type { OpenClawZoneRuntime } from './zone-runtimes/zone-runtime-types.js';
+import type { ManagedGatewayZoneRuntime } from './zone-runtimes/zone-runtime-types.js';
 
 interface ControllerRuntimeOperations {
 	readonly destroyZone: (targetZoneId: string, purge: boolean) => Promise<unknown>;
@@ -65,10 +65,10 @@ interface ControllerRuntimeOperations {
 
 export function createControllerRuntimeOperations(options: {
 	readonly getActiveLeases: () => readonly { readonly zoneId: string }[];
-	readonly getOpenClawRuntime: (
+	readonly getManagedGatewayRuntime: (
 		zoneId: string,
 	) => Pick<
-		OpenClawZoneRuntime,
+		ManagedGatewayZoneRuntime,
 		| 'destroy'
 		| 'enableSsh'
 		| 'exec'
@@ -122,7 +122,7 @@ export function createControllerRuntimeOperations(options: {
 				secretResolver: options.secretResolver,
 				zone,
 			});
-			const sshAccess = await options.getOpenClawRuntime(targetZoneId).enableSsh();
+			const sshAccess = await options.getManagedGatewayRuntime(targetZoneId).enableSsh();
 			return {
 				...sshAccess,
 				secretEnvEnabled: shouldEnableSshSecretEnv({
@@ -138,7 +138,7 @@ export function createControllerRuntimeOperations(options: {
 				secretResolver: options.secretResolver,
 				zone,
 			});
-			return await options.getOpenClawRuntime(targetZoneId).exec(command);
+			return await options.getManagedGatewayRuntime(targetZoneId).exec(command);
 		},
 		getStatus: async () =>
 			buildControllerStatus(
@@ -147,17 +147,19 @@ export function createControllerRuntimeOperations(options: {
 				options.getObservabilityStatus?.(),
 			),
 		getZoneHealth: async (targetZoneId) =>
-			await options.getOpenClawRuntime(targetZoneId).getHealth(),
+			await options.getManagedGatewayRuntime(targetZoneId).getHealth(),
 		getZoneServiceHealth: async (targetZoneId) =>
-			await options.getOpenClawRuntime(targetZoneId).getServiceHealth(),
-		getZoneLogs: async (targetZoneId) => await options.getOpenClawRuntime(targetZoneId).getLogs(),
+			await options.getManagedGatewayRuntime(targetZoneId).getServiceHealth(),
+		getZoneLogs: async (targetZoneId) =>
+			await options.getManagedGatewayRuntime(targetZoneId).getLogs(),
 		getZoneStatus: async (targetZoneId) => {
 			findZone(targetZoneId);
 			return buildControllerZoneStatus(options.systemConfig, targetZoneId, buildRuntimeStatus());
 		},
 		refreshZoneCredentials: async (targetZoneId) =>
-			await options.getOpenClawRuntime(targetZoneId).refreshCredentials(),
-		upgradeZone: async (targetZoneId) => await options.getOpenClawRuntime(targetZoneId).upgrade(),
+			await options.getManagedGatewayRuntime(targetZoneId).refreshCredentials(),
+		upgradeZone: async (targetZoneId) =>
+			await options.getManagedGatewayRuntime(targetZoneId).upgrade(),
 	};
 }
 

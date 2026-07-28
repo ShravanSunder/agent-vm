@@ -4,6 +4,7 @@ import {
 } from '../vm-ownership/vm-ownership-contracts.js';
 import {
 	type ToolVmExactDestructionOptions,
+	type ToolVmExactDestructionProgress,
 	type ToolVmLeaseAuthorityRuntime,
 	type ToolVmLeaseRuntimeResource,
 	type ToolVmRuntimeLeaseIdentity,
@@ -30,6 +31,7 @@ export {
 	type ToolVmExactDestructionAdmission,
 	type ToolVmExactDestructionAdmissionPolicy,
 	type ToolVmExactDestructionOptions,
+	type ToolVmExactDestructionProgress,
 	type ToolVmLeaseAuthorityRuntime,
 	type ToolVmLeaseRuntimeResource,
 	type ToolVmRuntimeLeaseIdentity,
@@ -41,7 +43,7 @@ interface MutableToolVmLeaseRuntimeResource<
 	commitDisposition: 'complete' | 'not-started';
 	commitIdentity?: string;
 	commitLease?: TLease;
-	destructionInFlight?: Promise<ToolVmLeaseRuntimeResource<TLease>>;
+	destructionInFlight?: ToolVmExactDestructionProgress<TLease>;
 	lease?: TLease;
 }
 
@@ -115,7 +117,10 @@ export function createToolVmLeaseAuthorityRuntime<
 		resource: MutableToolVmLeaseRuntimeResource<TLease>,
 	): TLease | undefined {
 		const state = requireAuthorityState(resource.authority.gateway);
-		const leaf = state.leavesByPrincipal.get(stablePrincipalKey(resource.authority.principal));
+		const principalKey = state.currentPrincipalKeyByAgentId.get(
+			resource.authority.principal.agentId,
+		);
+		const leaf = principalKey === undefined ? undefined : state.leavesByPrincipal.get(principalKey);
 		return leaf?.kind === 'current' && leaf.leafGeneration === resource.authority.leafGeneration
 			? resource.lease
 			: undefined;
@@ -169,7 +174,7 @@ export function createToolVmLeaseAuthorityRuntime<
 	): void {
 		const state = requireAuthorityState(authority.gateway);
 		const leaf = requireLiveLeaf(state, authority);
-		if (leaf.kind !== 'destroying') {
+		if (leaf.kind !== 'destroying' && leaf.kind !== 'retiring') {
 			return;
 		}
 		replaceAuthorityState(
@@ -184,32 +189,56 @@ export function createToolVmLeaseAuthorityRuntime<
 
 	function startExactDestruction(
 		destroyOptions: ToolVmExactDestructionOptions,
-	): Promise<ToolVmLeaseRuntimeResource<TLease>> {
+	): ToolVmExactDestructionProgress<TLease> {
 		const resource = requireResource(destroyOptions.authority);
 		if (resource.destructionInFlight !== undefined) {
 			return resource.destructionInFlight;
 		}
 		const currentState = requireAuthorityState(destroyOptions.authority.gateway);
 		const currentLeaf = requireLiveLeaf(currentState, destroyOptions.authority);
-		const destructionState = reduceToolVmLeaseAuthorityState(
-			currentState,
-			currentLeaf.kind === 'owner-unsafe'
-				? {
-						authority: destroyOptions.authority,
-						kind: 'retry-destruction',
-						reason: destroyOptions.reason,
-					}
-				: {
-						authority: destroyOptions.authority,
-						kind: 'begin-destruction',
-						reason: destroyOptions.reason,
-					},
-		);
+		const destructionState =
+			currentLeaf.kind === 'retiring'
+				? currentState
+				: reduceToolVmLeaseAuthorityState(
+						currentState,
+						currentLeaf.kind === 'owner-unsafe'
+							? {
+									authority: destroyOptions.authority,
+									kind: 'retry-destruction',
+									reason: destroyOptions.reason,
+								}
+							: {
+									ambiguousAtMs: destroyOptions.destroyedAtMs,
+									authority: destroyOptions.authority,
+									kind: 'begin-destruction',
+									reason: destroyOptions.reason,
+								},
+					);
 		reserveDestructionTombstone(currentState, destroyOptions.authority);
 		replaceAuthorityState(destroyOptions.authority.gateway, destructionState);
-		const destruction = (async (): Promise<ToolVmLeaseRuntimeResource<TLease>> => {
+		let resolveAccessFenced: (() => void) | undefined;
+		let rejectAccessFenced: ((error: unknown) => void) | undefined;
+		let accessFenceSettled = false;
+		const accessFenced = new Promise<void>((resolve, reject) => {
+			resolveAccessFenced = resolve;
+			rejectAccessFenced = reject;
+		});
+		void accessFenced.catch(() => {});
+		const completion = (async (): Promise<ToolVmLeaseRuntimeResource<TLease>> => {
 			try {
-				await destroyOptions.destroy();
+				if (currentLeaf.kind !== 'retiring') {
+					await destroyOptions.fenceAccess();
+					replaceAuthorityState(
+						destroyOptions.authority.gateway,
+						reduceToolVmLeaseAuthorityState(
+							requireAuthorityState(destroyOptions.authority.gateway),
+							{ authority: destroyOptions.authority, kind: 'access-fenced' },
+						),
+					);
+				}
+				accessFenceSettled = true;
+				resolveAccessFenced?.();
+				await destroyOptions.cleanup();
 				const completedState = reduceToolVmLeaseAuthorityState(
 					requireAuthorityState(destroyOptions.authority.gateway),
 					{
@@ -228,11 +257,16 @@ export function createToolVmLeaseAuthorityRuntime<
 				return resource;
 			} catch (error) {
 				recordDestructionIncomplete(destroyOptions.authority, 'controller-destruction-failed');
+				if (!accessFenceSettled) {
+					accessFenceSettled = true;
+					rejectAccessFenced?.(error);
+				}
 				throw error;
 			}
 		})();
-		resource.destructionInFlight = destruction;
-		void destruction.then(
+		const progress = { accessFenced, completion } satisfies ToolVmExactDestructionProgress<TLease>;
+		resource.destructionInFlight = progress;
+		void completion.then(
 			() => {
 				delete resource.destructionInFlight;
 			},
@@ -240,7 +274,7 @@ export function createToolVmLeaseAuthorityRuntime<
 				delete resource.destructionInFlight;
 			},
 		);
-		return destruction;
+		return progress;
 	}
 
 	return {
@@ -256,7 +290,7 @@ export function createToolVmLeaseAuthorityRuntime<
 		admitExactDestruction(admissionOptions) {
 			const resource = requireResource(admissionOptions.authority);
 			if (resource.destructionInFlight !== undefined) {
-				return { completion: resource.destructionInFlight, kind: 'started' };
+				return { ...resource.destructionInFlight, kind: 'started' };
 			}
 			if (admissionOptions.policy.kind === 'require-no-active-use') {
 				const leaf = leafSnapshotForResource(resource);
@@ -271,7 +305,7 @@ export function createToolVmLeaseAuthorityRuntime<
 					return { kind: 'skip-recently-used' };
 				}
 			}
-			return { completion: startExactDestruction(admissionOptions), kind: 'started' };
+			return { ...startExactDestruction(admissionOptions), kind: 'started' };
 		},
 		applyAuthorityCommand(command): ToolVmLeaseLeafState | undefined {
 			if (command.kind === 'prune-tombstones') {
@@ -280,6 +314,8 @@ export function createToolVmLeaseAuthorityRuntime<
 					const canEvictRetiredState =
 						prunedState.parent.kind === 'retired' &&
 						prunedState.leavesByPrincipal.size === 0 &&
+						prunedState.accessFencingLeavesByGeneration.size === 0 &&
+						prunedState.retiringLeavesByGeneration.size === 0 &&
 						prunedState.terminalUseTombstones.size === 0 &&
 						prunedState.tombstonesByGeneration.size === 0 &&
 						leaseIdsForGateway(prunedState.parent.gateway).length === 0 &&
@@ -306,16 +342,38 @@ export function createToolVmLeaseAuthorityRuntime<
 			const resource = resourceForLeaseId(leaseId);
 			return resource === undefined ? undefined : structuredClone(resource.authority);
 		},
-		authorityForPrincipal(principal): ToolVmLeafAuthorityReference | undefined {
-			const principalKey = stablePrincipalKey(principal);
-			const resource = [...resourcesByAuthority.values()].find(
-				(candidateResource) =>
-					stablePrincipalKey(candidateResource.authority.principal) === principalKey,
-			);
-			if (resource !== undefined) {
-				return structuredClone(resource.authority);
+		authorityForCurrentAgent(optionsForAgent): ToolVmLeafAuthorityReference | undefined {
+			const state = authorityStatesByGateway.get(gatewayAuthorityKey(optionsForAgent.gateway));
+			const principalKey = state?.currentPrincipalKeyByAgentId.get(optionsForAgent.agentId);
+			const leaf =
+				principalKey === undefined ? undefined : state?.leavesByPrincipal.get(principalKey);
+			return leaf?.kind !== 'current'
+				? undefined
+				: {
+						gateway: structuredClone(optionsForAgent.gateway),
+						leaseId: leaf.leaseId,
+						leafGeneration: leaf.leafGeneration,
+						principal: structuredClone(leaf.principal),
+					};
+		},
+		authorityForPrincipal(optionsForPrincipal): ToolVmLeafAuthorityReference | undefined {
+			const principalKey = stablePrincipalKey(optionsForPrincipal.principal);
+			const state = authorityStatesByGateway.get(gatewayAuthorityKey(optionsForPrincipal.gateway));
+			if (
+				state?.currentPrincipalKeyByAgentId.get(optionsForPrincipal.principal.agentId) !==
+				principalKey
+			) {
+				return undefined;
 			}
-			return undefined;
+			const leaf = state.leavesByPrincipal.get(principalKey);
+			return leaf?.kind !== 'current'
+				? undefined
+				: {
+						gateway: structuredClone(optionsForPrincipal.gateway),
+						leaseId: leaf.leaseId,
+						leafGeneration: leaf.leafGeneration,
+						principal: structuredClone(leaf.principal),
+					};
 		},
 		cleanupContextForAuthority(authority): TCleanupContext | undefined {
 			return cleanupContextsByAuthority.get(authorityResourceKey(authority));
@@ -394,7 +452,7 @@ export function createToolVmLeaseAuthorityRuntime<
 			replaceAuthorityState(commitOptions.authority.gateway, state);
 			resource.commitDisposition = 'complete';
 		},
-		destroyExact(destroyOptions): Promise<ToolVmLeaseRuntimeResource<TLease>> {
+		destroyExact(destroyOptions): ToolVmExactDestructionProgress<TLease> {
 			return startExactDestruction(destroyOptions);
 		},
 		findCurrentLeaseByPrincipal(findOptions): TLease | undefined {
@@ -402,7 +460,11 @@ export function createToolVmLeaseAuthorityRuntime<
 			if (state === undefined) {
 				return undefined;
 			}
-			const leaf = state.leavesByPrincipal.get(stablePrincipalKey(findOptions.principal));
+			const principalKey = stablePrincipalKey(findOptions.principal);
+			if (state.currentPrincipalKeyByAgentId.get(findOptions.principal.agentId) !== principalKey) {
+				return undefined;
+			}
+			const leaf = state.leavesByPrincipal.get(principalKey);
 			if (leaf?.kind !== 'current') {
 				return undefined;
 			}

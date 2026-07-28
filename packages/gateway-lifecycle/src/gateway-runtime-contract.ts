@@ -1,4 +1,4 @@
-export const gatewayTypeValues = ['openclaw', 'worker'] as const;
+export const gatewayTypeValues = ['openclaw', 'hermes', 'worker'] as const;
 
 export type GatewayType = (typeof gatewayTypeValues)[number];
 
