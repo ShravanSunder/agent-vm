@@ -53,6 +53,7 @@ _MANAGED_HERMES_HOME_ENVIRONMENT_NAME = "HERMES_HOME"
 _MANAGED_TOOL_PORTAL_PLUGIN_NAME = "agent-vm-tool-portal"
 _MANAGED_CACHE_KEY_PREFIX = "agent-vm-hermes:"
 _MANAGED_TOOL_VM_CWD = "/work"
+_STOCK_HERMES_RESERVED_DEFAULT_PROFILE_NAME = "default"
 _ENVIRONMENT_NAME_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _MANAGED_UPSTREAM_ROUTING_ENVIRONMENT: Mapping[str, str] = {
     "TERMINAL_ENV": "ssh",
@@ -335,7 +336,11 @@ def _validate_managed_profile_cohort(
 
     with os.scandir(profiles_root) as profiles_directory:
         profile_entries = tuple(profiles_directory)
-    actual_profile_names = {entry.name for entry in profile_entries}
+    actual_profile_names = {
+        entry.name
+        for entry in profile_entries
+        if entry.name != _STOCK_HERMES_RESERVED_DEFAULT_PROFILE_NAME
+    }
     if actual_profile_names != expected_profile_names:
         missing_profile_names = sorted(expected_profile_names - actual_profile_names)
         unexpected_profile_names = sorted(actual_profile_names - expected_profile_names)
@@ -387,6 +392,10 @@ class _HermesManagedPolicyReadBindings:
         self._gateway_run_module = gateway_run_module
         self._gateway_runner = self._require_gateway_runner()
         self._original_get_fallback_chain = self._require_callable("get_fallback_chain")
+        self._original_load_gateway_config_for_runner = self._require_callable(
+            "load_gateway_config_for_runner"
+        )
+        self._stock_load_gateway_config = self._require_callable("load_gateway_config")
         self._original_load_gateway_config = self._require_callable("_load_gateway_config")
         original_provider_routing_descriptor = inspect.getattr_static(
             self._gateway_runner,
@@ -406,6 +415,7 @@ class _HermesManagedPolicyReadBindings:
         self._original_provider_routing_descriptor = original_provider_routing_descriptor
         self._original_provider_routing: Callable[[], object] = original_provider_routing
         self._fallback_wrapper: Callable[[object], object] | None = None
+        self._gateway_config_for_runner_wrapper: Callable[[], object] | None = None
         self._provider_routing_wrapper = None
 
     def _require_gateway_runner(self) -> type[object]:
@@ -423,7 +433,11 @@ class _HermesManagedPolicyReadBindings:
         return target
 
     def install(self) -> None:
-        if self._fallback_wrapper is not None or self._provider_routing_wrapper is not None:
+        if (
+            self._fallback_wrapper is not None
+            or self._gateway_config_for_runner_wrapper is not None
+            or self._provider_routing_wrapper is not None
+        ):
             message = "Hermes managed policy bindings are already installed"
             raise RuntimeError(message)
         if (
@@ -440,6 +454,15 @@ class _HermesManagedPolicyReadBindings:
         ):
             message = (
                 "Pinned Hermes _load_gateway_config target changed before managed binding install"
+            )
+            raise RuntimeError(message)
+        if (
+            getattr(self._gateway_run_module, "load_gateway_config_for_runner", None)
+            is not self._original_load_gateway_config_for_runner
+        ):
+            message = (
+                "Pinned Hermes load_gateway_config_for_runner target changed "
+                "before managed binding install"
             )
             raise RuntimeError(message)
         if (
@@ -472,9 +495,18 @@ class _HermesManagedPolicyReadBindings:
                 raise TypeError(message)
             return dict(provider_routing)
 
+        def load_managed_gateway_config_for_runner() -> object:
+            return self._stock_load_gateway_config()
+
         self._fallback_wrapper = get_managed_fallback_chain
+        self._gateway_config_for_runner_wrapper = load_managed_gateway_config_for_runner
         try:
             setattr(self._gateway_run_module, "get_fallback_chain", self._fallback_wrapper)
+            setattr(
+                self._gateway_run_module,
+                "load_gateway_config_for_runner",
+                self._gateway_config_for_runner_wrapper,
+            )
             provider_routing_descriptor = staticmethod(load_managed_provider_routing)
             setattr(
                 self._gateway_runner,
@@ -519,6 +551,17 @@ class _HermesManagedPolicyReadBindings:
                 restoration_errors.append(error)
             finally:
                 self._fallback_wrapper = None
+        if self._gateway_config_for_runner_wrapper is not None:
+            try:
+                setattr(
+                    self._gateway_run_module,
+                    "load_gateway_config_for_runner",
+                    self._original_load_gateway_config_for_runner,
+                )
+            except BaseException as error:
+                restoration_errors.append(error)
+            finally:
+                self._gateway_config_for_runner_wrapper = None
         if restoration_errors:
             raise restoration_errors[0]
 

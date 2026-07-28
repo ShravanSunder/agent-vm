@@ -552,15 +552,21 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
         def load_gateway_config() -> dict[str, object]:
             return {"provider_routing": {"order": ["provider-b"]}}
 
+        def load_gateway_config_for_runner() -> dict[str, object]:
+            return {"unexpected": True}
+
         fake_gateway_run = SimpleNamespace(
             GatewayRunner=FakeGatewayRunner,
             _load_gateway_config=load_gateway_config,
             get_fallback_chain=get_fallback_chain,
+            load_gateway_config=load_gateway_config,
+            load_gateway_config_for_runner=load_gateway_config_for_runner,
         )
         bindings = managed_gateway_bootstrap._HermesManagedPolicyReadBindings(
             gateway_run_module=fake_gateway_run,
         )
         original_fallback = fake_gateway_run.get_fallback_chain
+        original_gateway_config_for_runner = fake_gateway_run.load_gateway_config_for_runner
         original_routing_descriptor = FakeGatewayRunner.__dict__["_load_provider_routing"]
 
         with patch.object(
@@ -581,10 +587,18 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
                 FakeGatewayRunner()._load_provider_routing(),
                 {"order": ["provider-b"]},
             )
+            self.assertEqual(
+                fake_gateway_run.load_gateway_config_for_runner(),
+                {"provider_routing": {"order": ["provider-b"]}},
+            )
             bindings.close()
 
         self.assertEqual(fallback_inputs, [{"fallback": "local", "managed": True}])
         self.assertIs(fake_gateway_run.get_fallback_chain, original_fallback)
+        self.assertIs(
+            fake_gateway_run.load_gateway_config_for_runner,
+            original_gateway_config_for_runner,
+        )
         self.assertIs(
             FakeGatewayRunner.__dict__["_load_provider_routing"],
             original_routing_descriptor,
@@ -615,6 +629,8 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
             GatewayRunner=RefusingGatewayRunner,
             _load_gateway_config=load_gateway_config,
             get_fallback_chain=get_fallback_chain,
+            load_gateway_config=load_gateway_config,
+            load_gateway_config_for_runner=load_gateway_config,
         )
         bindings = managed_gateway_bootstrap._HermesManagedPolicyReadBindings(
             gateway_run_module=fake_gateway_run,
@@ -1353,10 +1369,6 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
             materialize_profile_cohort(protected_hermes_home)
             (protected_hermes_home / "profiles/intruder").mkdir()
 
-        def default_profile(protected_hermes_home: Path) -> None:
-            materialize_profile_cohort(protected_hermes_home)
-            (protected_hermes_home / "profiles/default").mkdir()
-
         def named_profile_file(protected_hermes_home: Path) -> None:
             (protected_hermes_home / "profiles/researcher").mkdir(parents=True)
             (protected_hermes_home / "profiles/reviewer").write_text(
@@ -1390,7 +1402,6 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
             ("missing profiles root", missing_profiles_root),
             ("missing expected profile", missing_expected_profile),
             ("extra profile", extra_profile),
-            ("default profile", default_profile),
             ("named profile file", named_profile_file),
             ("named profile symlink", named_profile_symlink),
             ("profiles root symlink", profiles_root_symlink),
@@ -1433,6 +1444,20 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
                     sentinel_path.read_text(encoding="utf-8"),
                     "must remain untouched",
                 )
+
+    def test_accepts_stock_hermes_reserved_default_profile_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            protected_hermes_home = Path(directory) / "protected-hermes-home"
+            materialize_profile_cohort(protected_hermes_home)
+            (protected_hermes_home / "profiles/default/pairing").mkdir(parents=True)
+
+            managed_gateway_bootstrap._validate_managed_profile_cohort(
+                protected_hermes_home=protected_hermes_home,
+                agent_projections=(
+                    build_projection(agent_id="researcher", profile_name="researcher"),
+                    build_projection(agent_id="reviewer", profile_name="reviewer"),
+                ),
+            )
 
     def test_rejects_missing_or_conflicting_managed_plugin_policy_before_runtime_use(self) -> None:
         invalid_plugin_policies: tuple[tuple[str, Mapping[str, object]], ...] = (

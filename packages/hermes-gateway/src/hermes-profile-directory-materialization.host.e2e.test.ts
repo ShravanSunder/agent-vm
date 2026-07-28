@@ -359,7 +359,7 @@ describe('Hermes profile directory materialization', () => {
 		expect((await stat(path.join(profilesDirectoryPath, 'writer'))).mode & 0o777).toBe(0o700);
 	});
 
-	it.each(['stale', 'default', 'Invalid!'])(
+	it.each(['stale', 'Invalid!'])(
 		'rejects unexpected existing profile directory %s without deleting or mutating contents',
 		async (unexpectedProfileName) => {
 			const stateDirectoryPath = await createTemporaryStateDirectory();
@@ -390,6 +390,22 @@ describe('Hermes profile directory materialization', () => {
 			expect((await stat(path.join(profilesDirectoryPath, 'researcher'))).mode & 0o777).toBe(0o750);
 		},
 	);
+
+	it('preserves the stock Hermes reserved default profile directory', async () => {
+		const stateDirectoryPath = await createTemporaryStateDirectory();
+		const profilesDirectoryPath = path.join(stateDirectoryPath, 'profiles');
+		const defaultPairingDirectoryPath = path.join(profilesDirectoryPath, 'default', 'pairing');
+		await mkdir(defaultPairingDirectoryPath, { mode: 0o700, recursive: true });
+		const zone = createHermesZone({
+			profilesByAgent: { researcher: 'researcher' },
+			stateDirectoryPath,
+		});
+
+		await hermesLifecycle.prepareHostState?.(zone, unusedSecretResolver);
+
+		expect((await stat(defaultPairingDirectoryPath)).isDirectory()).toBe(true);
+		expect(await readdir(profilesDirectoryPath)).toEqual(['default', 'researcher']);
+	});
 
 	it('rejects an admitted named-home secret cache without deleting it', async () => {
 		const stateDirectoryPath = await createTemporaryStateDirectory();

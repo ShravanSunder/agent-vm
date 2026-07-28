@@ -10,6 +10,7 @@ import {
 
 const hermesProfileNamePattern = /^[a-z0-9][a-z0-9_-]{0,63}$/u;
 const hermesProfilesDirectoryName = 'profiles';
+const stockHermesReservedDefaultProfileName = 'default';
 const hermesRootConfigurationFileName = 'config.yaml';
 type FileSystemEntryStatus = Awaited<ReturnType<typeof lstat>>;
 type GatewayHostStateSecretResolver = Parameters<
@@ -218,12 +219,15 @@ async function validateHermesProfileDirectoryTopology(options: {
 		);
 	}
 
-	const expectedProfileNameSet = new Set(options.expectedProfileNames);
+	const allowedProfileNameSet = new Set([
+		...options.expectedProfileNames,
+		stockHermesReservedDefaultProfileName,
+	]);
 	const profileEntries = (
 		await readdir(options.profilesDirectoryPath, { withFileTypes: true })
 	).toSorted((leftEntry, rightEntry) => leftEntry.name.localeCompare(rightEntry.name));
 	for (const profileEntry of profileEntries) {
-		if (!expectedProfileNameSet.has(profileEntry.name)) {
+		if (!allowedProfileNameSet.has(profileEntry.name)) {
 			throw new Error(
 				`Managed Hermes profiles root contains unexpected profile entry '${profileEntry.name}'.`,
 			);
