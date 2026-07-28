@@ -103,6 +103,13 @@ export function createGatewayControlBindingPublicationCoordinator(
 	const now = options.now ?? Date.now;
 	const inFlightByPrincipal = new Map<string, InFlightBindingPublication>();
 	const currentBindingByPrincipal = new Map<string, GatewayControlToolVmBindingIdentity>();
+	let lastPublicationObservedAtMs = 0;
+
+	const nextPublicationObservedAtMs = (): number => {
+		const observedAtMs = Math.max(1, now(), lastPublicationObservedAtMs + 1);
+		lastPublicationObservedAtMs = observedAtMs;
+		return observedAtMs;
+	};
 
 	const assertCurrentAuthority = (
 		authority: GatewayControlToolVmBindingPublicationAuthority,
@@ -127,7 +134,7 @@ export function createGatewayControlBindingPublicationCoordinator(
 				authority: request.authority,
 				binding: request.binding,
 				kind: 'retired',
-				observedAtMs: Math.max(1, now()),
+				observedAtMs: nextPublicationObservedAtMs(),
 				reason: request.reason,
 			}),
 		);
@@ -179,7 +186,7 @@ export function createGatewayControlBindingPublicationCoordinator(
 						authority: request.authority,
 						binding,
 						kind: 'current',
-						observedAtMs: Math.max(1, now()),
+						observedAtMs: nextPublicationObservedAtMs(),
 					}),
 				);
 				assertCurrentAuthority(request.authority);

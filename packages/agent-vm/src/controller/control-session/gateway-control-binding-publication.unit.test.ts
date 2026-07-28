@@ -249,6 +249,9 @@ describe('Gateway control binding publication coordinator', () => {
 			'retired',
 			'current',
 		]);
+		expect(publications.map((publication) => publication.observedAtMs)).toEqual([
+			1_000, 1_001, 1_002,
+		]);
 		await coordinator.retireBinding({
 			authority,
 			leaseId: 'lease-a',
