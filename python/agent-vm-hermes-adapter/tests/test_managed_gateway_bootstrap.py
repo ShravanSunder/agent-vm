@@ -1004,7 +1004,7 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
             patch.dict(stock_terminal_tool._last_activity, {}, clear=True),
             patch.dict(stock_terminal_tool._creation_locks, {}, clear=True),
             patch.dict(hermes_file_tools._file_ops_cache, {}, clear=True),
-            patch.dict(hermes_file_tools._last_known_cwd, {}, clear=True),
+            patch.dict(stock_terminal_tool._session_cwd, {}, clear=True),
             patch.object(stock_terminal_tool, "_start_cleanup_thread", return_value=None),
             patch.object(
                 managed_gateway_bootstrap.hermes_constants,

@@ -11,7 +11,9 @@ import {
 	resolveManagedOpenClawAgentVmPluginPackageSpec,
 } from './managed-image-dockerfile.js';
 
-const managedOpenClawVersion = '2026.6.8';
+const managedOpenClawVersion = '2026.7.1-2';
+const managedOpenClawCodexVersion = '2026.7.1-1';
+const managedOpenClawDiscordVersion = '2026.7.1';
 const managedOpenAiCodexCliVersion = '0.139.0';
 const managedDockerfileForbiddenSecretPattern =
 	/TOKEN|Authorization|\.npmrc|\.netrc|_authToken|Bearer/u;
@@ -43,7 +45,8 @@ function createTestManagedImageRelease(): ManagedImageRelease {
 					npm: [`@openai/codex@${managedOpenAiCodexCliVersion}`],
 					openclaw: [
 						`openclaw@${managedOpenClawVersion}`,
-						`@openclaw/codex@${managedOpenClawVersion}`,
+						`@openclaw/codex@${managedOpenClawCodexVersion}`,
+						`@openclaw/discord@${managedOpenClawDiscordVersion}`,
 					],
 					pnpm: { undici: '8.5.0' },
 				},
@@ -82,7 +85,8 @@ describe('managed image release', () => {
 				npm: [`@openai/codex@${managedOpenAiCodexCliVersion}`],
 				openclaw: [
 					`openclaw@${managedOpenClawVersion}`,
-					`@openclaw/codex@${managedOpenClawVersion}`,
+					`@openclaw/codex@${managedOpenClawCodexVersion}`,
+					`@openclaw/discord@${managedOpenClawDiscordVersion}`,
 				],
 				pnpm: { undici: '8.5.0' },
 			},
@@ -314,7 +318,7 @@ describe('managed image release', () => {
 		expect(generatedDockerfile).not.toContain('@agent-vm/openclaw-mcp-portal-plugin');
 		expect(generatedDockerfile).not.toContain('@agent-vm/mcp-portal');
 		expect(generatedDockerfile).toContain('"openclaw": "2026.5.7"');
-		expect(generatedDockerfile).toContain('"@openclaw/codex": "2026.6.8"');
+		expect(generatedDockerfile).toContain('"@openclaw/codex": "2026.7.1-1"');
 		expect(generatedDockerfile).toContain('"@openclaw/discord": "2026.5.7"');
 		expect(generatedDockerfile).toContain(`"@openai/codex@${managedOpenAiCodexCliVersion}"`);
 		expect(generatedDockerfile).toContain('openclaw doctor --fix --non-interactive');
@@ -349,9 +353,9 @@ describe('managed image release', () => {
 				},
 				{
 					name: '@openclaw/codex',
-					spec: '@openclaw/codex@2026.6.8',
+					spec: '@openclaw/codex@2026.7.1-1',
 					source: 'managed-images.json/packageOverrides.openclaw',
-					version: '2026.6.8',
+					version: '2026.7.1-1',
 				},
 				{
 					name: '@openclaw/discord',
@@ -363,7 +367,7 @@ describe('managed image release', () => {
 			warnings: [
 				{
 					message:
-						'OpenClaw package versions differ: openclaw uses 2026.5.7, but @openclaw/codex uses 2026.6.8.',
+						'OpenClaw package versions differ: openclaw uses 2026.5.7, but @openclaw/codex uses 2026.7.1-1.',
 					type: 'openclaw-package-version-mismatch',
 				},
 			],
@@ -387,12 +391,12 @@ describe('managed image release', () => {
 
 		const generatedDockerfile = await fs.readFile(result.dockerfilePath, 'utf8');
 		expect(generatedDockerfile).not.toContain(
-			'RUN pnpm add -g "openclaw@2026.6.8" "@openclaw/discord@2026.6.8" "@openclaw/codex@2026.6.8"',
+			'RUN pnpm add -g "openclaw@2026.7.1-2" "@openclaw/discord@2026.7.1" "@openclaw/codex@2026.7.1-1"',
 		);
 		expect(generatedDockerfile).toContain('WORKDIR /opt/openclaw-runtime-packages');
-		expect(generatedDockerfile).toContain('"openclaw": "2026.6.8"');
-		expect(generatedDockerfile).toContain('"@openclaw/discord": "2026.6.8"');
-		expect(generatedDockerfile).toContain('"@openclaw/codex": "2026.6.8"');
+		expect(generatedDockerfile).toContain('"openclaw": "2026.7.1-2"');
+		expect(generatedDockerfile).toContain('"@openclaw/discord": "2026.7.1"');
+		expect(generatedDockerfile).toContain('"@openclaw/codex": "2026.7.1-1"');
 		expect(generatedDockerfile).toContain('"pnpm": {');
 		expect(generatedDockerfile).toContain('"overrides": {');
 		expect(generatedDockerfile).toContain('"undici": "8.5.0"');
@@ -773,6 +777,7 @@ describe('managed image release', () => {
 						...createTestManagedImageRelease().baseImages['openclaw-gateway'],
 						packageOverrides: {
 							...createTestManagedImageRelease().baseImages['openclaw-gateway'].packageOverrides,
+							openclaw: ['openclaw@2026.6.8', '@openclaw/codex@2026.6.8'],
 							pnpm: { undici: undiciVersion },
 						},
 					},
@@ -805,6 +810,7 @@ describe('managed image release', () => {
 					...createTestManagedImageRelease().baseImages['openclaw-gateway'],
 					packageOverrides: {
 						...createTestManagedImageRelease().baseImages['openclaw-gateway'].packageOverrides,
+						openclaw: ['openclaw@2026.6.8', '@openclaw/codex@2026.6.8'],
 						pnpm: {},
 					},
 				},
@@ -1205,7 +1211,7 @@ describe('managed image release', () => {
 			{
 				type: 'openclaw-package-version-mismatch',
 				message:
-					'OpenClaw package versions differ: openclaw uses 2026.5.7, but @openclaw/codex uses 2026.6.8.',
+					'OpenClaw package versions differ: openclaw uses 2026.5.7, but @openclaw/codex uses 2026.7.1-1.',
 			},
 			{
 				type: 'openclaw-package-version-mismatch',

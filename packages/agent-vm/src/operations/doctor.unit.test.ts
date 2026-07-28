@@ -938,7 +938,7 @@ describe('runControllerDoctor', () => {
 		expect(result.ok).toBe(false);
 		expect(result.checks.find((check) => check.name === 'openclaw-cli')).toMatchObject({
 			ok: false,
-			hint: 'Install OpenClaw in this catalog for local schema validation: pnpm add -D openclaw@2026.6.8.',
+			hint: 'Install OpenClaw in this catalog for local schema validation: pnpm add -D openclaw@2026.7.1-2.',
 		});
 	});
 

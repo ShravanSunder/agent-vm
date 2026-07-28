@@ -102,10 +102,10 @@ describe('managed Hermes package contracts', () => {
 	it('pins the researched Hermes Python distribution and source revision', () => {
 		expect(HERMES_AGENT_DISTRIBUTION).toEqual({
 			distributionName: 'hermes-agent',
-			projectVersion: '0.18.2',
+			projectVersion: '0.19.0',
 			pythonRequirement: '>=3.11,<3.14',
 			sourceRepository: 'https://github.com/NousResearch/hermes-agent.git',
-			sourceRevision: '9de9c25f620ff7f1ce0fd5457d596052d5159596',
+			sourceRevision: '3ef6bbd201263d354fd83ec55b3c306ded2eb72a',
 		});
 	});
 
@@ -408,7 +408,7 @@ describe('managed Hermes package contracts', () => {
 		});
 
 		expect(recipe.kind).toBe('hermes-managed-image-recipe');
-		expect(recipe.installSpecifier).toBe('hermes-agent[messaging]==0.18.2');
+		expect(recipe.installSpecifier).toBe('hermes-agent[messaging]==0.19.0');
 		expect(recipe.frameworkBootEntry).toBe('hermes-gateway');
 		expect(recipe.buildNetworkAccess).toEqual({
 			aptPackages: 'public-debian-repositories',
@@ -454,7 +454,7 @@ describe('managed Hermes package contracts', () => {
 		expect(recipe.dockerfile).toContain(
 			'COPY local-agent-vm/agent-vm-gateway-runtime-0.0.116.tgz /opt/agent-vm/local-packages/agent-vm-gateway-runtime-0.0.116.tgz',
 		);
-		expect(recipe.dockerfile).toContain("'hermes-agent[messaging]==0.18.2'");
+		expect(recipe.dockerfile).toContain("'hermes-agent[messaging]==0.19.0'");
 		expect(recipe.dockerfile).toContain('pnpm install --prod --ignore-scripts');
 		expect(recipe.dockerfile).toContain('/usr/local/bin/agent-vm-hermes-gateway');
 		expect(recipe.dockerfile).toContain('/etc/profile.d/hermes-env.sh');
@@ -507,7 +507,7 @@ describe('managed Hermes package contracts', () => {
 		);
 		expect(recipe.dockerfile).toContain("'agent-vm-agent-portal-sdk==0.0.116'");
 		expect(recipe.dockerfile).toContain("'agent-vm-hermes-adapter==0.0.116'");
-		expect(recipe.dockerfile).toContain("'hermes-agent[messaging]==0.18.2'");
+		expect(recipe.dockerfile).toContain("'hermes-agent[messaging]==0.19.0'");
 		expect(recipe.dockerfile).toContain('--default-index https://pypi.org/simple');
 		expect(recipe.dockerfile).toContain(
 			'gateway_runtime_bin="/opt/agent-vm/registry-packages/node_modules/@agent-vm/gateway-runtime/dist/bin/gateway-runtime.js"',

@@ -40,7 +40,7 @@ class PackageBoundaryTests(unittest.TestCase):
     def test_package_declares_exact_hermes_distribution(self) -> None:
         pyproject = (PACKAGE_ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
-        self.assertIn('"hermes-agent==0.18.2"', pyproject)
+        self.assertIn('"hermes-agent==0.19.0"', pyproject)
         self.assertNotIn("hermes-agent>=", pyproject)
 
 

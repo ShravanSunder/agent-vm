@@ -103,7 +103,7 @@ versions in `package.json` and runtime image additions in the overlay.
 For host-side validation, install the same OpenClaw version in the catalog:
 
 ```bash
-pnpm add -D openclaw@2026.6.8
+pnpm add -D openclaw@2026.7.1-2
 ```
 
 `agent-vm doctor` and `agent-vm validate` use the catalog's `openclaw`

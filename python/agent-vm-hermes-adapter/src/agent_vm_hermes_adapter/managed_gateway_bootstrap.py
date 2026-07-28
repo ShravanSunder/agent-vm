@@ -1,4 +1,4 @@
-"""Fixed managed boot entry for stock Hermes Gateway 0.18.2."""
+"""Fixed managed boot entry for stock Hermes Gateway 0.19.0."""
 
 import copy
 import hashlib

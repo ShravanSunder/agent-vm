@@ -896,7 +896,7 @@ Example non-default OpenClaw runtime package pin:
 	"schemaVersion": 1,
 	"packageOverrides": {
 		"openclaw": [
-			"@openclaw/discord@2026.6.8"
+			"@openclaw/discord@2026.7.1"
 		],
     "pnpm": {
       "undici": "8.5.0"

@@ -300,7 +300,7 @@ async function collectOpenClawConfigCheck(
 	} catch (error) {
 		const installHint =
 			getErrorCode(error) === 'ENOENT'
-				? 'OpenClaw CLI not found. Install OpenClaw in this catalog for local schema validation: pnpm add -D openclaw@2026.6.8.'
+				? 'OpenClaw CLI not found. Install OpenClaw in this catalog for local schema validation: pnpm add -D openclaw@2026.7.1-2.'
 				: getErrorMessage(error);
 		return {
 			name: `openclaw-config-${zone.id}`,

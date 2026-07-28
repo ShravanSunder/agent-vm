@@ -1,9 +1,9 @@
 export interface HermesAgentDistributionPin {
 	readonly distributionName: 'hermes-agent';
-	readonly projectVersion: '0.18.2';
+	readonly projectVersion: '0.19.0';
 	readonly pythonRequirement: '>=3.11,<3.14';
 	readonly sourceRepository: 'https://github.com/NousResearch/hermes-agent.git';
-	readonly sourceRevision: '9de9c25f620ff7f1ce0fd5457d596052d5159596';
+	readonly sourceRevision: '3ef6bbd201263d354fd83ec55b3c306ded2eb72a';
 }
 
 /**
@@ -15,8 +15,8 @@ export interface HermesAgentDistributionPin {
  */
 export const HERMES_AGENT_DISTRIBUTION = Object.freeze({
 	distributionName: 'hermes-agent',
-	projectVersion: '0.18.2',
+	projectVersion: '0.19.0',
 	pythonRequirement: '>=3.11,<3.14',
 	sourceRepository: 'https://github.com/NousResearch/hermes-agent.git',
-	sourceRevision: '9de9c25f620ff7f1ce0fd5457d596052d5159596',
+	sourceRevision: '3ef6bbd201263d354fd83ec55b3c306ded2eb72a',
 } satisfies HermesAgentDistributionPin);

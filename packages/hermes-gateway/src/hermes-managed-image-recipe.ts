@@ -5,7 +5,7 @@ const HERMES_GATEWAY_BASE_IMAGE = 'node:24-slim';
 const HERMES_GATEWAY_UV_IMAGE = 'ghcr.io/astral-sh/uv:0.11.31';
 const HERMES_GATEWAY_PNPM_VERSION = '10.33.0';
 const HERMES_GATEWAY_PYTHON_VERSION = '3.13';
-const HERMES_GATEWAY_INSTALL_SPECIFIER = 'hermes-agent[messaging]==0.18.2';
+const HERMES_GATEWAY_INSTALL_SPECIFIER = 'hermes-agent[messaging]==0.19.0';
 const HERMES_GATEWAY_CONTAINER_IMAGES: readonly ['node:24-slim', 'ghcr.io/astral-sh/uv:0.11.31'] = [
 	HERMES_GATEWAY_BASE_IMAGE,
 	HERMES_GATEWAY_UV_IMAGE,
@@ -83,7 +83,7 @@ export interface HermesManagedImageRecipe {
 	readonly buildNetworkAccess: HermesManagedImageBuildNetworkAccess;
 	readonly dockerfile: string;
 	readonly frameworkBootEntry: 'hermes-gateway';
-	readonly installSpecifier: 'hermes-agent[messaging]==0.18.2';
+	readonly installSpecifier: 'hermes-agent[messaging]==0.19.0';
 	readonly kind: 'hermes-managed-image-recipe';
 	readonly sourceRevision: typeof HERMES_AGENT_DISTRIBUTION.sourceRevision;
 }
