@@ -30,6 +30,7 @@ describe('createVitestEvidenceObservabilityEnvironment', () => {
 		});
 
 		expect(result.env).toEqual({
+			AGENT_VM_E2E_USE_LOCAL_TOOL_VM_PACKAGES: '1',
 			AGENT_VM_OBSERVABILITY_MARKER: 'agent-vm-e2e-openclaw-1234-abcd',
 			AGENT_VM_OBSERVABILITY_QUERY_START: '2026-06-20T13:25:00.000Z',
 			AGENT_VM_OBSERVABILITY_RELEASE_CHANNEL: 'local',
@@ -44,6 +45,16 @@ describe('createVitestEvidenceObservabilityEnvironment', () => {
 			runId: '1234-abcd',
 			stateFilePath: '/repo/tmp/vitest-results/e2e-openclaw-1234-abcd/observability-state.json',
 		});
+	});
+
+	it('does not enable local Tool VM packages for non-live evidence projects', () => {
+		const result = createVitestEvidenceObservabilityEnvironment({
+			projectName: 'e2e-host',
+			runDirectory: '/repo/tmp/vitest-results/e2e-host-1234-abcd',
+			runId: '1234-abcd',
+		});
+
+		expect(result.env).not.toHaveProperty('AGENT_VM_E2E_USE_LOCAL_TOOL_VM_PACKAGES');
 	});
 });
 
