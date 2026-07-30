@@ -142,6 +142,7 @@ class FakeGatewayRuntimeClient:
 
 class FakeHermesToolPortalTelemetry:
     def __init__(self) -> None:
+        self.observer_hooks_enabled = True
         self.max_inflight_observations = 8
         self.shutdown_calls = 0
         self.trace_context_provider: Callable[[], Mapping[str, object] | None] = self._provide

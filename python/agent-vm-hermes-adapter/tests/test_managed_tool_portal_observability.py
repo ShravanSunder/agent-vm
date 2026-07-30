@@ -4,7 +4,7 @@ import typing as t
 import unittest
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 from opentelemetry import trace
 from opentelemetry.sdk._logs import ReadableLogRecord
@@ -16,6 +16,7 @@ from opentelemetry.sdk._logs.export import (
 from opentelemetry.sdk.metrics.export import MetricExporter, MetricExportResult, MetricsData
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter, SpanExportResult
+from opentelemetry.trace import StatusCode
 
 from agent_vm_hermes_adapter.managed_framework_observability import (
     ProviderAttemptCompletedRecord,
@@ -246,8 +247,143 @@ class ManagedToolPortalObservabilityTests(unittest.TestCase):
             tool_name="tool_portal_list",
         )
 
+        self.assertFalse(telemetry.observer_hooks_enabled)
         self.assertIsNone(telemetry.trace_context_provider())
         self.assertIsNone(telemetry.shutdown())
+
+    def test_tool_operation_failure_does_not_record_exception_content(self) -> None:
+        raw_error_canary = "raw-tool-portal-error-canary"
+        span_exporter = _RecordingSpanExporter()
+        with (
+            telemetry_environment(
+                OTEL_BSP_SCHEDULE_DELAY="10",
+                OTEL_TRACES_EXPORTER="otlp",
+            ),
+            patch(
+                "agent_vm_hermes_adapter.managed_tool_portal_observability.OTLPSpanExporter",
+                return_value=span_exporter,
+            ),
+        ):
+            telemetry = create_hermes_tool_portal_telemetry_from_environment()
+
+        with self.assertRaisesRegex(RuntimeError, raw_error_canary):
+            with telemetry.observe_tool_operation("tool_portal_list"):
+                raise RuntimeError(raw_error_canary)
+        telemetry.shutdown()
+
+        operation_span = next(
+            span for span in span_exporter.spans if span.name == "hermes.tool_portal.operation"
+        )
+        self.assertEqual(operation_span.status.status_code, StatusCode.ERROR)
+        self.assertEqual(operation_span.events, ())
+        self.assertNotIn(raw_error_canary, str(operation_span.attributes))
+
+    def test_turn_duration_caps_metric_value_and_span_timing(self) -> None:
+        meter_provider = MagicMock()
+        tracer_provider = MagicMock()
+        turn_span = tracer_provider.get_tracer.return_value.start_span.return_value
+        started_at_epoch_nanoseconds = 1_000_000_000
+        maximum_duration_milliseconds = 86_400_000.0
+        maximum_duration_nanoseconds = int(maximum_duration_milliseconds * 1_000_000)
+        with (
+            telemetry_environment(
+                OTEL_METRICS_EXPORTER="otlp",
+                OTEL_TRACES_EXPORTER="otlp",
+            ),
+            patch(
+                "agent_vm_hermes_adapter.managed_tool_portal_observability.MeterProvider",
+                return_value=meter_provider,
+            ),
+            patch(
+                "agent_vm_hermes_adapter.managed_tool_portal_observability.TracerProvider",
+                return_value=tracer_provider,
+            ),
+            patch("agent_vm_hermes_adapter.managed_tool_portal_observability.OTLPMetricExporter"),
+            patch("agent_vm_hermes_adapter.managed_tool_portal_observability.OTLPSpanExporter"),
+            patch(
+                "agent_vm_hermes_adapter.managed_tool_portal_observability."
+                "PeriodicExportingMetricReader"
+            ),
+            patch("agent_vm_hermes_adapter.managed_tool_portal_observability.BatchSpanProcessor"),
+        ):
+            telemetry = create_hermes_tool_portal_telemetry_from_environment()
+
+        with (
+            patch(
+                "agent_vm_hermes_adapter.managed_tool_portal_observability.time.monotonic_ns",
+                side_effect=[0, maximum_duration_nanoseconds + 1],
+            ),
+            patch(
+                "agent_vm_hermes_adapter.managed_tool_portal_observability.time.time_ns",
+                return_value=started_at_epoch_nanoseconds,
+            ),
+        ):
+            turn_handle = telemetry.start_turn(TurnStartedRecord(platform_class="discord"))
+            if turn_handle is None:
+                self.fail("enabled framework telemetry did not create a turn handle")
+            telemetry.complete_turn(
+                turn_handle,
+                TurnCompletedRecord(result_class=TurnResultClass.SUCCESS),
+            )
+
+        tracer_provider.get_tracer.return_value.start_span.assert_called_once_with(
+            "hermes.turn",
+            context=ANY,
+            attributes=ANY,
+            start_time=started_at_epoch_nanoseconds,
+        )
+        turn_span.end.assert_called_once_with(
+            end_time=started_at_epoch_nanoseconds + maximum_duration_nanoseconds
+        )
+        meter_provider.get_meter.return_value.create_histogram.return_value.record.assert_called_with(
+            maximum_duration_milliseconds,
+            ANY,
+        )
+
+    def test_provider_span_timing_uses_bounded_hook_duration(self) -> None:
+        tracer_provider = MagicMock()
+        provider_span = tracer_provider.get_tracer.return_value.start_span.return_value
+        started_at_epoch_nanoseconds = 1_000_000_000
+        duration_milliseconds = 86_400_000.0
+        duration_nanoseconds = int(duration_milliseconds * 1_000_000)
+        with (
+            telemetry_environment(OTEL_TRACES_EXPORTER="otlp"),
+            patch(
+                "agent_vm_hermes_adapter.managed_tool_portal_observability.TracerProvider",
+                return_value=tracer_provider,
+            ),
+            patch("agent_vm_hermes_adapter.managed_tool_portal_observability.OTLPSpanExporter"),
+            patch("agent_vm_hermes_adapter.managed_tool_portal_observability.BatchSpanProcessor"),
+        ):
+            telemetry = create_hermes_tool_portal_telemetry_from_environment()
+
+        with patch(
+            "agent_vm_hermes_adapter.managed_tool_portal_observability.time.time_ns",
+            return_value=started_at_epoch_nanoseconds,
+        ):
+            provider_handle = telemetry.start_provider_attempt(
+                None,
+                ProviderAttemptStartedRecord(model="test-model", provider="test-provider"),
+            )
+            if provider_handle is None:
+                self.fail("enabled framework telemetry did not create a provider handle")
+            telemetry.complete_provider_attempt(
+                provider_handle,
+                ProviderAttemptCompletedRecord(
+                    duration_milliseconds=duration_milliseconds,
+                    result_class=ProviderAttemptResultClass.SUCCESS,
+                ),
+            )
+
+        tracer_provider.get_tracer.return_value.start_span.assert_called_once_with(
+            "hermes.llm.request",
+            context=ANY,
+            attributes=ANY,
+            start_time=started_at_epoch_nanoseconds,
+        )
+        provider_span.end.assert_called_once_with(
+            end_time=started_at_epoch_nanoseconds + duration_nanoseconds
+        )
 
     def test_signal_selectors_require_exact_explicit_values(self) -> None:
         for environment_name, environment_value in (
@@ -436,6 +572,7 @@ class ManagedToolPortalObservabilityTests(unittest.TestCase):
         )
 
         meter = meter_provider.get_meter.return_value
+        self.assertTrue(telemetry.observer_hooks_enabled)
         meter.create_counter.return_value.add.assert_called_once()
         meter.create_histogram.return_value.record.assert_called_once()
         tracer_provider.get_tracer.assert_called_once()

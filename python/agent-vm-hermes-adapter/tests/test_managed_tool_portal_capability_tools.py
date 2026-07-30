@@ -170,7 +170,8 @@ class FakeHermesPluginContext:
 
 
 class FakeToolOperationTelemetry:
-    def __init__(self) -> None:
+    def __init__(self, *, observer_hooks_enabled: bool = True) -> None:
+        self.observer_hooks_enabled = observer_hooks_enabled
         self.max_inflight_observations = 8
         self.active_operations: list[str] = []
         self.framework_records: list[tuple[str, object, object | None]] = []
@@ -413,6 +414,23 @@ class ManagedToolPortalCapabilityToolsTests(unittest.TestCase):
             },
         )
         self.assertNotIn("pre_tool_call", context.hooks)
+
+    def test_disabled_telemetry_does_not_register_observer_hooks(self) -> None:
+        adapter, _client = build_adapter()
+        projection = adapter.projection_for_profile("researcher")
+        context = FakeHermesPluginContext()
+        configure_managed_tool_portal_plugin(
+            adapter=adapter,
+            current_projection=lambda: projection,
+            telemetry=FakeToolOperationTelemetry(observer_hooks_enabled=False),
+        )
+
+        try:
+            register(context)
+        finally:
+            adapter.close(disconnect_gateway_runtime=False)
+
+        self.assertEqual(set(context.hooks), {"pre_gateway_dispatch"})
 
     def test_framework_hooks_return_none_and_discard_content_canaries(self) -> None:
         adapter, _client = build_adapter()

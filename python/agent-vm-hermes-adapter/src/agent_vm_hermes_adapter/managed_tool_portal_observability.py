@@ -376,17 +376,22 @@ def _provider_metric_attributes(
 class _FrameworkTurnHandle:
     platform_class: str
     span: Span | None
+    started_at_epoch_nanoseconds: int
     started_at_monotonic_nanoseconds: int
 
 
 @dataclass(frozen=True)
 class _FrameworkProviderAttemptHandle:
     span: Span | None
+    started_at_epoch_nanoseconds: int
     started_record: ProviderAttemptStartedRecord
 
 
 class HermesToolPortalTelemetry(t.Protocol):
     max_inflight_observations: int
+
+    @property
+    def observer_hooks_enabled(self) -> bool: ...
 
     @contextlib.contextmanager
     def observe_tool_operation(self, tool_name: str) -> Iterator[None]: ...
@@ -455,6 +460,7 @@ def _duration_milliseconds(value: object) -> float:
 
 
 class _DisabledHermesToolPortalTelemetry:
+    observer_hooks_enabled = False
     max_inflight_observations = 0
 
     @contextlib.contextmanager
@@ -529,6 +535,12 @@ class _OtelHermesToolPortalTelemetry:
             self._initialize_metrics(configuration.endpoint, resource)
         if configuration.traces_enabled:
             self._initialize_traces(configuration.endpoint, resource)
+
+    @property
+    def observer_hooks_enabled(self) -> bool:
+        return (
+            self._logger is not None or self._meter_provider is not None or self._tracer is not None
+        )
 
     def _initialize_logs(self, endpoint: str, resource: Resource) -> None:
         provider: LoggerProvider | None = None
@@ -629,6 +641,8 @@ class _OtelHermesToolPortalTelemetry:
             span_manager = self._tracer.start_as_current_span(
                 "hermes.tool_portal.operation",
                 attributes=attributes,
+                record_exception=False,
+                set_status_on_exception=False,
             )
             span = span_manager.__enter__()
         except Exception:
@@ -776,6 +790,8 @@ class _OtelHermesToolPortalTelemetry:
             _safe_provider_shutdown(provider)
 
     def start_turn(self, record: TurnStartedRecord) -> object | None:
+        started_at_epoch_nanoseconds = time.time_ns()
+        started_at_monotonic_nanoseconds = time.monotonic_ns()
         attributes = {
             "agent_vm.operation.category": "turn",
             "agent_vm.operation.name": "turn",
@@ -784,7 +800,12 @@ class _OtelHermesToolPortalTelemetry:
         }
         maximum_attributes = {**attributes, "agent_vm.result.class": "interrupted"}
         span = (
-            self._start_framework_span("hermes.turn", attributes, None)
+            self._start_framework_span(
+                "hermes.turn",
+                attributes,
+                None,
+                start_time=started_at_epoch_nanoseconds,
+            )
             if self._trace_record_is_admitted("hermes.turn", maximum_attributes)
             else None
         )
@@ -793,7 +814,8 @@ class _OtelHermesToolPortalTelemetry:
         return _FrameworkTurnHandle(
             platform_class=record.platform_class,
             span=span,
-            started_at_monotonic_nanoseconds=time.monotonic_ns(),
+            started_at_epoch_nanoseconds=started_at_epoch_nanoseconds,
+            started_at_monotonic_nanoseconds=started_at_monotonic_nanoseconds,
         )
 
     def complete_turn(self, handle: object, record: TurnCompletedRecord) -> None:
@@ -806,11 +828,14 @@ class _OtelHermesToolPortalTelemetry:
             "agent_vm.result.class": result_class,
             "hermes.platform.class": handle.platform_class,
         }
-        duration_milliseconds = max(
-            0.0,
+        duration_milliseconds = _duration_milliseconds(
             (time.monotonic_ns() - handle.started_at_monotonic_nanoseconds) / 1_000_000,
         )
-        self._finish_framework_span(handle.span, result_class)
+        self._finish_framework_span(
+            handle.span,
+            result_class,
+            end_time=handle.started_at_epoch_nanoseconds + int(duration_milliseconds * 1_000_000),
+        )
         self._emit_framework_log("hermes.turn.completed", attributes)
         self._record_framework_metric("hermes.turns_total", 1, attributes)
         self._record_framework_metric("hermes.turn.duration", duration_milliseconds, attributes)
@@ -820,6 +845,7 @@ class _OtelHermesToolPortalTelemetry:
         parent_handle: object | None,
         record: ProviderAttemptStartedRecord,
     ) -> object | None:
+        started_at_epoch_nanoseconds = time.time_ns()
         attributes = _provider_started_attributes(record)
         maximum_attributes = {
             **attributes,
@@ -836,7 +862,12 @@ class _OtelHermesToolPortalTelemetry:
             parent_handle.span if isinstance(parent_handle, _FrameworkTurnHandle) else None
         )
         span = (
-            self._start_framework_span("hermes.llm.request", attributes, parent_span)
+            self._start_framework_span(
+                "hermes.llm.request",
+                attributes,
+                parent_span,
+                start_time=started_at_epoch_nanoseconds,
+            )
             if self._trace_record_is_admitted(
                 "hermes.llm.request",
                 maximum_attributes,
@@ -847,6 +878,7 @@ class _OtelHermesToolPortalTelemetry:
             return None
         return _FrameworkProviderAttemptHandle(
             span=span,
+            started_at_epoch_nanoseconds=started_at_epoch_nanoseconds,
             started_record=record,
         )
 
@@ -867,13 +899,19 @@ class _OtelHermesToolPortalTelemetry:
             if result_class == "failure"
             else "hermes.llm.request.completed"
         )
-        self._finish_framework_span(handle.span, result_class, attributes)
+        duration_milliseconds = _duration_milliseconds(record.duration_milliseconds)
+        self._finish_framework_span(
+            handle.span,
+            result_class,
+            attributes,
+            end_time=handle.started_at_epoch_nanoseconds + int(duration_milliseconds * 1_000_000),
+        )
         self._emit_framework_log(event_name, attributes)
         metric_attributes = _provider_metric_attributes(attributes)
         self._record_framework_metric("hermes.llm.requests_total", 1, metric_attributes)
         self._record_framework_metric(
             "hermes.llm.request.duration",
-            record.duration_milliseconds,
+            duration_milliseconds,
             metric_attributes,
         )
         if record.usage_input_tokens is not None:

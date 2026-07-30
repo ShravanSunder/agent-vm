@@ -1,0 +1,857 @@
+import { writeFile } from 'node:fs/promises';
+/* oxlint-disable eslint/no-await-in-loop -- the test waits on external protocol state */
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import path from 'node:path';
+
+import type { ManagedVmCreateRequest } from '@agent-vm/managed-vm';
+import { execa } from 'execa';
+import { afterAll, describe, expect, it } from 'vitest';
+
+import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
+import type { GatewayZoneVmOperations } from '../gateway/gateway-zone-support.js';
+import { controllerFixedGatewayRuntimeArtifactLimits } from '../gateway/managed-gateway-runtime-input-builders.js';
+import { createObservabilityRuntimeConfig } from '../observability/observability-config.js';
+import { prepareObservabilityStack } from '../observability/observability-lifecycle.js';
+import {
+	canRunManagedVmE2e,
+	currentE2eArchitecture,
+	findAvailablePort,
+	prepareGatewayE2eProjectImages,
+	removeE2eTempRoot,
+	startE2eControllerRuntime,
+	useLocalToolVmMcpPortalPackage,
+	type E2eHarnessRuntime,
+} from './e2e-harness.js';
+import { waitForProtocolRetryInterval } from './e2e-protocol-wait.js';
+import {
+	hermesE2eApiServerKey,
+	scaffoldHermesE2eProject,
+	useLocalHermesGatewayImagePackages,
+	type HermesE2eProject,
+} from './hermes-e2e-harness.js';
+import {
+	expectProviderTransitionLogs,
+	requireTraceIdForSpan,
+	selectStoredHermesFrameworkLogs,
+	waitForVictoriaMetric,
+	waitForVictoriaText,
+} from './hermes-framework-observability-e2e-support.js';
+
+const architecture = currentE2eArchitecture();
+const runHermesFrameworkObservabilityE2e =
+	process.env.AGENT_VM_HERMES_E2E === '1' && (await canRunManagedVmE2e({ architecture }));
+const describeHermesFrameworkObservabilityE2e = runHermesFrameworkObservabilityE2e
+	? describe
+	: describe.skip;
+
+const primaryModelHost = 'api.openai.com';
+const primaryModelName = 'hermes-framework-otel-primary';
+const fallbackModelHost = 'openrouter.ai';
+const fallbackModelName = 'hermes-framework-otel-fallback';
+const discordSecretEnvironmentName = 'DISCORD_BOT_TOKEN_MAIN_E2E';
+const forbiddenCanaries = [
+	'hermes-framework-otel-prompt-canary',
+	'hermes-framework-otel-response-canary',
+	'hermes-framework-otel-tool-argument-canary',
+	'hermes-framework-otel-command-canary',
+	'hermes-framework-otel-identity-canary',
+	'hermes-framework-otel-unapproved-resource-canary',
+	'hermes-framework-otel-raw-error-canary',
+	'hermes-framework-otel-discord-secret-canary',
+	'hermes-framework-otel-tool-result-canary',
+	'/work/hermes-framework-otel-path-canary',
+	'https://hermes-framework-otel-url-canary.invalid/private',
+] as const;
+
+interface FakeProviderRequestObservation {
+	readonly host: string | undefined;
+}
+
+interface FakeProvider {
+	readonly close: () => Promise<void>;
+	readonly observations: () => readonly FakeProviderRequestObservation[];
+	readonly port: number;
+}
+
+interface CapturedOtlpRequest {
+	readonly body: Buffer;
+	readonly path: string;
+}
+
+function writeJson(response: ServerResponse, statusCode: number, body: object): void {
+	response.writeHead(statusCode, { 'content-type': 'application/json' });
+	response.end(JSON.stringify(body));
+}
+
+function writeServerSentEvents(response: ServerResponse, chunks: readonly object[]): void {
+	response.writeHead(200, {
+		'cache-control': 'no-cache',
+		connection: 'keep-alive',
+		'content-type': 'text/event-stream',
+	});
+	for (const chunk of chunks) {
+		response.write(`data: ${JSON.stringify(chunk)}\n\n`);
+	}
+	response.end('data: [DONE]\n\n');
+}
+
+async function readRequestBody(request: IncomingMessage): Promise<string> {
+	const chunks: Buffer[] = [];
+	for await (const chunk of request) {
+		chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+	}
+	return Buffer.concat(chunks).toString('utf8');
+}
+
+function captureOtlpMediation(options: {
+	readonly capturedRequests: CapturedOtlpRequest[];
+	readonly request: ManagedVmCreateRequest;
+}): ManagedVmCreateRequest {
+	const originalRequestHook = options.request.mediation?.onRequest;
+	if (originalRequestHook === undefined) {
+		throw new Error('Hermes observability E2E expected the production OTLP mediation hook.');
+	}
+	return {
+		...options.request,
+		mediation: {
+			...options.request.mediation,
+			onRequest: async (request: Request): Promise<Request | Response | void> => {
+				const url = new URL(request.url);
+				if (
+					url.hostname === 'otel-collector.observability.vm.host' &&
+					['/v1/logs', '/v1/metrics', '/v1/traces'].includes(url.pathname)
+				) {
+					options.capturedRequests.push({
+						body: Buffer.from(await request.clone().arrayBuffer()),
+						path: url.pathname,
+					});
+				}
+				return await originalRequestHook(request);
+			},
+		},
+	};
+}
+
+async function startFakeProvider(): Promise<FakeProvider> {
+	const observations: FakeProviderRequestObservation[] = [];
+	let fallbackRequestCount = 0;
+	// oxlint-disable-next-line typescript/no-misused-promises -- request body consumption is async
+	const server = createServer(async (request, response) => {
+		const url = new URL(request.url ?? '/', 'http://127.0.0.1');
+		if (request.method !== 'POST' || url.pathname !== '/v1/chat/completions') {
+			writeJson(response, 404, { error: 'unhandled fake provider route' });
+			return;
+		}
+		await readRequestBody(request);
+		observations.push({ host: request.headers.host });
+		if (request.headers.host?.startsWith(primaryModelHost) === true) {
+			writeJson(response, 500, {
+				error: { message: forbiddenCanaries[6], type: 'test_provider_failure' },
+			});
+			return;
+		}
+		fallbackRequestCount += 1;
+		if (fallbackRequestCount <= 2) {
+			const toolCall =
+				fallbackRequestCount === 1
+					? {
+							function: {
+								arguments: JSON.stringify({
+									command: `printf '%s %s %s %s' '${forbiddenCanaries[3]}' '${forbiddenCanaries[8]}' '${forbiddenCanaries[9]}' '${forbiddenCanaries[10]}'`,
+								}),
+								name: 'terminal',
+							},
+							id: 'terminal-call',
+							index: 0,
+							type: 'function',
+						}
+					: {
+							function: {
+								arguments: JSON.stringify({
+									requests: [{ id: forbiddenCanaries[2] }],
+								}),
+								name: 'tool_portal_list',
+							},
+							id: 'tool-portal-call',
+							index: 0,
+							type: 'function',
+						};
+			writeServerSentEvents(response, [
+				{
+					choices: [
+						{
+							delta: {
+								content: null,
+								role: 'assistant',
+								tool_calls: [toolCall],
+							},
+							finish_reason: null,
+							index: 0,
+						},
+					],
+					created: fallbackRequestCount,
+					id: `hermes-framework-otel-tool-response-${String(fallbackRequestCount)}`,
+					model: fallbackModelName,
+					object: 'chat.completion.chunk',
+				},
+				{
+					choices: [{ delta: {}, finish_reason: 'tool_calls', index: 0 }],
+					created: fallbackRequestCount,
+					id: `hermes-framework-otel-tool-response-${String(fallbackRequestCount)}`,
+					model: fallbackModelName,
+					object: 'chat.completion.chunk',
+				},
+				{
+					choices: [],
+					created: fallbackRequestCount,
+					id: `hermes-framework-otel-tool-response-${String(fallbackRequestCount)}`,
+					model: fallbackModelName,
+					object: 'chat.completion.chunk',
+					usage: { completion_tokens: 7, prompt_tokens: 11, total_tokens: 18 },
+				},
+			]);
+			return;
+		}
+		writeServerSentEvents(response, [
+			{
+				choices: [
+					{
+						delta: { content: forbiddenCanaries[1], role: 'assistant' },
+						finish_reason: null,
+						index: 0,
+					},
+				],
+				created: 2,
+				id: 'hermes-framework-otel-second-provider-response',
+				model: fallbackModelName,
+				object: 'chat.completion.chunk',
+			},
+			{
+				choices: [{ delta: {}, finish_reason: 'stop', index: 0 }],
+				created: 2,
+				id: 'hermes-framework-otel-second-provider-response',
+				model: fallbackModelName,
+				object: 'chat.completion.chunk',
+			},
+			{
+				choices: [],
+				created: 2,
+				id: 'hermes-framework-otel-second-provider-response',
+				model: fallbackModelName,
+				object: 'chat.completion.chunk',
+				usage: { completion_tokens: 5, prompt_tokens: 13, total_tokens: 18 },
+			},
+		]);
+	});
+	await new Promise<void>((resolve, reject) => {
+		server.once('error', reject);
+		server.listen(0, '127.0.0.1', () => {
+			server.off('error', reject);
+			resolve();
+		});
+	});
+	const address = server.address();
+	if (address === null || typeof address === 'string') {
+		await new Promise<void>((resolve) => server.close(() => resolve()));
+		throw new Error('Fake Hermes provider did not bind a loopback port.');
+	}
+	return {
+		close: async () =>
+			await new Promise<void>((resolve, reject) =>
+				server.close((error) => (error ? reject(error) : resolve())),
+			),
+		observations: () => observations,
+		port: address.port,
+	};
+}
+
+function renderHermesFrameworkObservabilityConfiguration(providerPort: number): string {
+	return [
+		'plugins:',
+		'  enabled:',
+		'    - agent-vm-tool-portal',
+		'  disabled: []',
+		'model:',
+		`  default: ${primaryModelName}`,
+		'  provider: custom:hermes-framework-otel-primary',
+		'  context_length: 65536',
+		'custom_providers:',
+		'  - name: hermes-framework-otel-primary',
+		`    base_url: http://${primaryModelHost}:${String(providerPort)}/v1`,
+		'    api_mode: chat_completions',
+		`    model: ${primaryModelName}`,
+		'    models:',
+		`      ${primaryModelName}:`,
+		'        context_length: 65536',
+		'  - name: hermes-framework-otel-fallback',
+		`    base_url: http://${fallbackModelHost}:${String(providerPort)}/v1`,
+		'    api_mode: chat_completions',
+		`    model: ${fallbackModelName}`,
+		'    models:',
+		`      ${fallbackModelName}:`,
+		'        context_length: 65536',
+		'fallback_providers:',
+		'  - provider: custom:hermes-framework-otel-fallback',
+		`    model: ${fallbackModelName}`,
+		'provider_routing:',
+		'  order:',
+		'    - hermes-framework-otel-primary',
+		'    - hermes-framework-otel-fallback',
+		'approvals:',
+		"  mode: 'off'",
+		'code_execution:',
+		'  mode: project',
+		'',
+	].join('\n');
+}
+
+async function waitForRootApiHealth(gatewayPort: number): Promise<void> {
+	const deadline = Date.now() + 60_000;
+	while (Date.now() < deadline) {
+		try {
+			const response = await fetch(`http://127.0.0.1:${String(gatewayPort)}/health`, {
+				signal: AbortSignal.timeout(2_000),
+			});
+			if (response.ok) return;
+		} catch {}
+		await waitForProtocolRetryInterval(250);
+	}
+	throw new Error('Timed out waiting for the Hermes root API health endpoint.');
+}
+
+async function stopObservabilityStack(project: HermesE2eProject): Promise<void> {
+	const observability = project.systemConfig.host.observability;
+	if (observability?.enabled !== true || observability.stack.mode !== 'managed') return;
+	const composePath = path.join(
+		project.systemConfig.controllerRuntimeDir,
+		'observability',
+		project.systemConfig.host.projectNamespace,
+		'docker-compose.observability.yml',
+	);
+	await execa(
+		'docker',
+		[
+			'compose',
+			'--project-name',
+			project.systemConfig.host.projectNamespace,
+			'--file',
+			composePath,
+			'down',
+			'--volumes',
+		],
+		{
+			reject: false,
+			timeout: 30_000,
+		},
+	);
+}
+
+async function readObservabilityStackDiagnostics(project: HermesE2eProject): Promise<string> {
+	const composePath = path.join(
+		project.systemConfig.controllerRuntimeDir,
+		'observability',
+		project.systemConfig.host.projectNamespace,
+		'docker-compose.observability.yml',
+	);
+	const result = await execa(
+		'docker',
+		[
+			'compose',
+			'--project-name',
+			project.systemConfig.host.projectNamespace,
+			'--file',
+			composePath,
+			'logs',
+			'--no-color',
+			'--tail',
+			'200',
+			'otel-collector',
+		],
+		{ reject: false, timeout: 30_000 },
+	);
+	return `${result.stdout}\n${result.stderr}`;
+}
+
+async function runSignalNegativeGatewayBoot(options: {
+	readonly disabledPath: '/v1/logs' | '/v1/metrics' | '/v1/traces';
+	readonly disabledSignal: 'logs' | 'metrics' | 'traces';
+}): Promise<void> {
+	const repoRoot = path.resolve(process.cwd());
+	const provider = await startFakeProvider();
+	let harness: E2eHarnessRuntime | undefined;
+	let project: HermesE2eProject | undefined;
+	const capturedRequests: CapturedOtlpRequest[] = [];
+	try {
+		const ports = await Promise.all(
+			Array.from({ length: 6 }, async () => await findAvailablePort()),
+		);
+		if (ports.length !== 6) throw new Error('Expected six observability ports.');
+		const [collectorGrpc, collectorHttp, collectorHealth, metrics, logs, traces] = ports as [
+			number,
+			number,
+			number,
+			number,
+			number,
+			number,
+		];
+		project = await scaffoldHermesE2eProject({
+			agents: ['main'],
+			architecture,
+			prefix: `hermes-framework-otel-${options.disabledSignal}-disabled-e2e-`,
+			zoneId: `hermes-framework-otel-${options.disabledSignal}-disabled-e2e`,
+		});
+		const systemZone = project.systemConfig.zones[0];
+		if (systemZone === undefined || systemZone.gateway.type !== 'hermes') {
+			throw new Error('Expected the Hermes signal-negative E2E zone.');
+		}
+		project.systemConfig.host.observability = {
+			bindAddress: '127.0.0.1',
+			controllerStartPolicy: 'off',
+			enabled: true,
+			mode: 'collector',
+			ports: { collectorGrpc, collectorHealth, collectorHttp, logs, metrics, traces },
+			prepareOnBuild: false,
+			projectName: `hermes-otel-${options.disabledSignal}-disabled-${Date.now().toString(36)}`,
+			runner: 'docker-compose',
+			stack: { mode: 'external', scrubbing: { responsibility: 'external-collector' } },
+			startupCheckTimeoutMs: 30_000,
+			waitOnBuild: false,
+		};
+		systemZone.observability = {
+			enabled: true,
+			services: {
+				framework: {
+					flushIntervalMs: 1_000,
+					logs: options.disabledSignal !== 'logs',
+					metrics: options.disabledSignal !== 'metrics',
+					sampleRate: 1,
+					traces: options.disabledSignal !== 'traces',
+				},
+				toolPortal: {
+					flushIntervalMs: 1_000,
+					logs: false,
+					metrics: false,
+					sampleRate: 1,
+					traces: false,
+				},
+			},
+		};
+		systemZone.secrets[discordSecretEnvironmentName] = {
+			audience: 'gateway',
+			envVar: discordSecretEnvironmentName,
+			injection: 'env',
+			source: 'environment',
+		};
+		systemZone.gateway.profileSecretProjectionsByAgent.main = {
+			DISCORD_BOT_TOKEN: discordSecretEnvironmentName,
+		};
+		systemZone.egressHosts = [
+			...(systemZone.egressHosts ?? []),
+			{ audience: 'gateway', host: primaryModelHost },
+			{ audience: 'gateway', host: fallbackModelHost },
+		];
+		await Promise.all([
+			useLocalToolVmMcpPortalPackage({
+				projectRoot: project.tempRoot,
+				repoRoot,
+				systemConfig: project.systemConfig,
+			}),
+			writeFile(
+				systemZone.gateway.config,
+				renderHermesFrameworkObservabilityConfiguration(provider.port),
+				'utf8',
+			),
+		]);
+		await useLocalHermesGatewayImagePackages({
+			architecture,
+			profileName: project.zone.gateway.imageProfile,
+			projectRoot: project.tempRoot,
+			repoRoot,
+			systemConfig: project.systemConfig,
+		});
+		await prepareGatewayE2eProjectImages({ project });
+		harness = await startE2eControllerRuntime({
+			secrets: {
+				[discordSecretEnvironmentName]: forbiddenCanaries[7],
+				GITHUB_TOKEN: 'unused-hermes-framework-otel-github-token',
+			},
+			startGatewayZone: async (startOptions, dependencies) =>
+				await startGatewayZone(startOptions, {
+					...dependencies,
+					gatewayRuntimeArtifactLimits: controllerFixedGatewayRuntimeArtifactLimits,
+					managedVmFactory: {
+						createManagedVm: async (request) =>
+							await dependencies.managedVmFactory.createManagedVm(
+								captureOtlpMediation({ capturedRequests, request }),
+							),
+					},
+				}),
+			startOptions: { systemConfig: project.systemConfig, zoneIds: [project.zone.id] },
+			tcpHostsOverride: {
+				[`${primaryModelHost}:${String(provider.port)}`]: `127.0.0.1:${String(provider.port)}`,
+				[`${fallbackModelHost}:${String(provider.port)}`]: `127.0.0.1:${String(provider.port)}`,
+			},
+		});
+		await waitForRootApiHealth(project.gatewayPort);
+		const response = await fetch(
+			`http://127.0.0.1:${String(project.gatewayPort)}/p/main/v1/chat/completions`,
+			{
+				body: JSON.stringify({
+					messages: [{ content: forbiddenCanaries[0], role: 'user' }],
+					model: primaryModelName,
+					stream: false,
+				}),
+				headers: {
+					authorization: `Bearer ${hermesE2eApiServerKey}`,
+					'content-type': 'application/json',
+					'x-hermes-session-id': `${options.disabledSignal}-signal-negative-session`,
+				},
+				method: 'POST',
+				signal: AbortSignal.timeout(120_000),
+			},
+		);
+		expect(response.ok).toBe(true);
+		expect(await response.text()).toContain(forbiddenCanaries[1]);
+		await harness.close({ preserveTempRoot: true });
+		harness = undefined;
+		const requestPaths = capturedRequests.map(({ path: otlpPath }) => otlpPath);
+		expect(requestPaths).not.toContain(options.disabledPath);
+		for (const enabledPath of ['/v1/logs', '/v1/metrics', '/v1/traces'] as const) {
+			if (enabledPath === options.disabledPath) continue;
+			expect(
+				requestPaths.filter((requestPath) => requestPath === enabledPath).length,
+			).toBeGreaterThanOrEqual(1);
+		}
+	} finally {
+		await harness?.close({ preserveTempRoot: true });
+		await provider.close();
+		if (project !== undefined) await removeE2eTempRoot(project.tempRoot);
+	}
+}
+
+describeHermesFrameworkObservabilityE2e(
+	'e2e: Hermes framework OTLP through Gondolin mediation',
+	() => {
+		let harness: E2eHarnessRuntime | undefined;
+		let project: HermesE2eProject | undefined;
+		let provider: FakeProvider | undefined;
+		let gatewayVm: Pick<GatewayZoneVmOperations, 'exec'> | undefined;
+		const capturedOtlpRequests: CapturedOtlpRequest[] = [];
+
+		afterAll(async () => {
+			try {
+				await harness?.close({ preserveTempRoot: true });
+			} finally {
+				await Promise.allSettled([
+					provider?.close(),
+					project === undefined ? Promise.resolve() : stopObservabilityStack(project),
+				]);
+				if (project !== undefined) await removeE2eTempRoot(project.tempRoot);
+			}
+		});
+
+		it('exports bounded turn, provider, built-in tool, and Tool Portal telemetry to Victoria', async () => {
+			const repoRoot = path.resolve(process.cwd());
+			provider = await startFakeProvider();
+			const ports = await Promise.all(
+				Array.from({ length: 6 }, async () => await findAvailablePort()),
+			);
+			if (ports.length !== 6) {
+				throw new Error('Expected six observability ports.');
+			}
+			const [collectorGrpc, collectorHttp, collectorHealth, metrics, logs, traces] = ports as [
+				number,
+				number,
+				number,
+				number,
+				number,
+				number,
+			];
+			project = await scaffoldHermesE2eProject({
+				agents: ['main'],
+				architecture,
+				prefix: 'hermes-framework-observability-e2e-',
+				zoneId: 'hermes-framework-observability-e2e',
+			});
+			const systemZone = project.systemConfig.zones[0];
+			if (systemZone === undefined || systemZone.gateway.type !== 'hermes') {
+				throw new Error('Expected the Hermes observability E2E zone.');
+			}
+			const observabilityProjectName = `hermes-otel-${Date.now().toString(36)}`;
+			project.systemConfig.host.projectNamespace = observabilityProjectName;
+			project.systemConfig.host.observability = {
+				bindAddress: '127.0.0.1',
+				controllerStartPolicy: 'require-ready',
+				dataDir: path.join(project.tempRoot, 'victoria-data'),
+				enabled: true,
+				mode: 'collector',
+				ports: { collectorGrpc, collectorHealth, collectorHttp, logs, metrics, traces },
+				prepareOnBuild: true,
+				projectName: observabilityProjectName,
+				retention: {
+					logs: { maxDiskSpaceUsageBytes: '128MiB', period: '1d' },
+					metrics: { minFreeDiskSpaceBytes: '1MiB', period: '1d' },
+					traces: { maxDiskSpaceUsageBytes: '128MiB', period: '1d' },
+				},
+				runner: 'docker-compose',
+				stack: { mode: 'managed', scrubbing: { responsibility: 'agent-vm-managed-collector' } },
+				startupCheckTimeoutMs: 30_000,
+				waitOnBuild: true,
+			};
+			systemZone.observability = {
+				enabled: true,
+				services: {
+					framework: {
+						flushIntervalMs: 1_000,
+						logs: true,
+						metrics: true,
+						sampleRate: 1,
+						traces: true,
+					},
+					toolPortal: {
+						flushIntervalMs: 1_000,
+						logs: true,
+						metrics: true,
+						sampleRate: 1,
+						traces: true,
+					},
+				},
+			};
+			systemZone.secrets[discordSecretEnvironmentName] = {
+				audience: 'gateway',
+				envVar: discordSecretEnvironmentName,
+				injection: 'env',
+				source: 'environment',
+			};
+			systemZone.gateway.profileSecretProjectionsByAgent.main = {
+				DISCORD_BOT_TOKEN: discordSecretEnvironmentName,
+			};
+			systemZone.egressHosts = [
+				...(systemZone.egressHosts ?? []),
+				{ audience: 'gateway', host: primaryModelHost },
+				{ audience: 'gateway', host: fallbackModelHost },
+			];
+			await Promise.all([
+				useLocalToolVmMcpPortalPackage({
+					projectRoot: project.tempRoot,
+					repoRoot,
+					systemConfig: project.systemConfig,
+				}),
+				writeFile(
+					systemZone.gateway.config,
+					renderHermesFrameworkObservabilityConfiguration(provider.port),
+					'utf8',
+				),
+			]);
+			await useLocalHermesGatewayImagePackages({
+				architecture,
+				profileName: project.zone.gateway.imageProfile,
+				projectRoot: project.tempRoot,
+				repoRoot,
+				systemConfig: project.systemConfig,
+			});
+			await prepareGatewayE2eProjectImages({ project });
+			const observabilityRuntimeConfig = createObservabilityRuntimeConfig(project.systemConfig);
+			if (
+				!observabilityRuntimeConfig.enabled ||
+				observabilityRuntimeConfig.stackMode !== 'managed'
+			) {
+				throw new Error('Expected managed observability runtime configuration.');
+			}
+			await prepareObservabilityStack({ config: observabilityRuntimeConfig, wait: true });
+			harness = await startE2eControllerRuntime({
+				secrets: {
+					[discordSecretEnvironmentName]: forbiddenCanaries[7],
+					GITHUB_TOKEN: 'unused-hermes-framework-otel-github-token',
+				},
+				startGatewayZone: async (startOptions, dependencies) => {
+					const controllerResourceAttributes =
+						startOptions.runtimeEnvironment?.OTEL_RESOURCE_ATTRIBUTES;
+					if (controllerResourceAttributes === undefined) {
+						throw new Error(
+							'Hermes observability E2E requires controller-authored resource attributes.',
+						);
+					}
+					const result = await startGatewayZone(
+						{
+							...startOptions,
+							runtimeEnvironment: {
+								...startOptions.runtimeEnvironment,
+								OTEL_RESOURCE_ATTRIBUTES: `${controllerResourceAttributes},unapproved.resource=${forbiddenCanaries[5]}`,
+							},
+						},
+						{
+							...dependencies,
+							gatewayRuntimeArtifactLimits: controllerFixedGatewayRuntimeArtifactLimits,
+							managedVmFactory: {
+								createManagedVm: async (request) =>
+									await dependencies.managedVmFactory.createManagedVm(
+										captureOtlpMediation({ capturedRequests: capturedOtlpRequests, request }),
+									),
+							},
+						},
+					);
+					if (result.executionModel !== 'managed-gateway') {
+						throw new Error('Hermes observability E2E requires a managed Gateway VM.');
+					}
+					gatewayVm = result.vm;
+					return result;
+				},
+				startOptions: { systemConfig: project.systemConfig, zoneIds: [project.zone.id] },
+				tcpHostsOverride: {
+					[`${primaryModelHost}:${String(provider.port)}`]: `127.0.0.1:${String(provider.port)}`,
+					[`${fallbackModelHost}:${String(provider.port)}`]: `127.0.0.1:${String(provider.port)}`,
+				},
+			});
+			await waitForRootApiHealth(project.gatewayPort);
+			const response = await fetch(
+				`http://127.0.0.1:${String(project.gatewayPort)}/p/main/v1/chat/completions`,
+				{
+					body: JSON.stringify({
+						messages: [
+							{ content: `${forbiddenCanaries[0]} ${forbiddenCanaries[4]}`, role: 'user' },
+						],
+						model: primaryModelName,
+						stream: false,
+					}),
+					headers: {
+						authorization: `Bearer ${hermesE2eApiServerKey}`,
+						'content-type': 'application/json',
+						'x-hermes-session-id': forbiddenCanaries[4],
+					},
+					method: 'POST',
+					signal: AbortSignal.timeout(120_000),
+				},
+			);
+			expect(response.ok).toBe(true);
+			const responseBody = await response.text();
+			expect(responseBody).toContain(forbiddenCanaries[1]);
+			const providerObservations = provider.observations();
+			const primaryProviderHost = `${primaryModelHost}:${String(provider.port)}`;
+			const fallbackProviderHost = `${fallbackModelHost}:${String(provider.port)}`;
+			expect(
+				providerObservations.filter(({ host }) => host === primaryProviderHost).length,
+			).toBeGreaterThanOrEqual(1);
+			expect(
+				providerObservations.filter(({ host }) => host === fallbackProviderHost).length,
+			).toBeGreaterThanOrEqual(3);
+			expect(
+				providerObservations.every(
+					({ host }) => host === primaryProviderHost || host === fallbackProviderHost,
+				),
+			).toBe(true);
+			const logsEndpoint = `http://127.0.0.1:${String(logs)}/select/logsql/query`;
+			const tracesEndpoint = `http://127.0.0.1:${String(traces)}/select/logsql/query`;
+			const readTelemetryDiagnostics = async (): Promise<string> => {
+				if (gatewayVm === undefined || project === undefined) {
+					return 'Gateway VM diagnostics unavailable.';
+				}
+				return `${(
+					await gatewayVm.exec(
+						[
+							'for process_environment in /proc/[0-9]*/environ; do',
+							"tr '\\0' '\\n' < \"$process_environment\" 2>/dev/null",
+							"| sed -n '/^OTEL_/s/=.*$/=<set>/p'",
+							'done;',
+							'tail -n 300 /var/log/agent-vm/hermes-service.log 2>&1',
+						].join(' '),
+					)
+				).toString()}\n${await readObservabilityStackDiagnostics(project)}`;
+			};
+			const frameworkLogs = await waitForVictoriaText({
+				diagnostics: readTelemetryDiagnostics,
+				endpoint: logsEndpoint,
+				expected: ['"agent_vm.operation.category":"turn"', '"hermes.tool.category"'],
+				query: '*',
+			});
+			const frameworkTraces = await waitForVictoriaText({
+				endpoint: tracesEndpoint,
+				expected: ['hermes.llm.request', 'hermes.tool.call'],
+				query: '"resource_attr:service.name":"agent-vm-hermes"',
+			});
+			const frameworkToolPortalTraces = await waitForVictoriaText({
+				endpoint: tracesEndpoint,
+				expected: 'hermes.tool_portal.operation',
+				query: '"resource_attr:service.name":"agent-vm-hermes"',
+			});
+			const toolPortalOperationTraceId = requireTraceIdForSpan(
+				frameworkToolPortalTraces,
+				'hermes.tool_portal.operation',
+			);
+			const commonToolPortalTraces = await waitForVictoriaText({
+				endpoint: tracesEndpoint,
+				expected: toolPortalOperationTraceId,
+				query: '"resource_attr:service.name":"agent-vm-tool-portal"',
+			});
+			const frameworkMetrics = await waitForVictoriaMetric(metrics, 'hermes.turns_total');
+			expect(frameworkLogs).toContain('"agent_vm.operation.category":"provider_attempt"');
+			expect(frameworkLogs).toContain('"agent_vm.operation.category":"tool"');
+			expect(frameworkLogs).toContain('"agent_vm.result.class":"success"');
+			expectProviderTransitionLogs({
+				fallbackModelName,
+				logs: frameworkLogs,
+				primaryModelName,
+			});
+			expect(frameworkTraces).toContain('hermes.tool.call');
+			expect(frameworkTraces).toContain('hermes.tool.category');
+			expect(frameworkTraces).toContain(primaryModelName);
+			expect(frameworkTraces).toContain(fallbackModelName);
+			expect(frameworkTraces).toContain('dev.runtime.flavor');
+			expect(frameworkMetrics).toContain('hermes.turns_total');
+			expect(frameworkToolPortalTraces).toContain('hermes.tool_portal.operation');
+			expect(commonToolPortalTraces).toContain(toolPortalOperationTraceId);
+			const storedFrameworkLogs = selectStoredHermesFrameworkLogs(frameworkLogs);
+			for (const expectedOperationCategory of ['turn', 'provider_attempt', 'tool']) {
+				expect(storedFrameworkLogs).toContain(
+					`"agent_vm.operation.category":"${expectedOperationCategory}"`,
+				);
+			}
+			expectProviderTransitionLogs({
+				fallbackModelName,
+				logs: storedFrameworkLogs,
+				primaryModelName,
+			});
+			const capturedFrameworkOtlpRequests = capturedOtlpRequests.filter(({ body }) =>
+				body.includes('agent-vm-hermes'),
+			);
+			expect(capturedFrameworkOtlpRequests.map(({ path: otlpPath }) => otlpPath)).toEqual(
+				expect.arrayContaining(['/v1/logs', '/v1/metrics', '/v1/traces']),
+			);
+			for (const { body } of capturedFrameworkOtlpRequests) {
+				for (const canary of forbiddenCanaries) expect(body.includes(canary)).toBe(false);
+				expect(body.includes('dev.runtime.flavor')).toBe(true);
+			}
+			const contentCanaries = forbiddenCanaries.filter((_, index) => index !== 5);
+			for (const { body } of capturedOtlpRequests) {
+				for (const canary of contentCanaries) expect(body.includes(canary)).toBe(false);
+			}
+			const allStoredFrameworkSignals = [
+				storedFrameworkLogs,
+				frameworkTraces,
+				frameworkToolPortalTraces,
+				frameworkMetrics,
+			];
+			for (const canary of forbiddenCanaries) {
+				for (const storedSignal of allStoredFrameworkSignals) {
+					expect(storedSignal).not.toContain(canary);
+				}
+			}
+			for (const canary of contentCanaries) {
+				expect(frameworkLogs).not.toContain(canary);
+				expect(commonToolPortalTraces).not.toContain(canary);
+			}
+		}, 900_000);
+
+		it.each([
+			['traces', '/v1/traces'],
+			['metrics', '/v1/metrics'],
+			['logs', '/v1/logs'],
+		] as const)(
+			'does not mediate framework %s OTLP exports when that signal is disabled',
+			async (disabledSignal, disabledPath) => {
+				await runSignalNegativeGatewayBoot({ disabledPath, disabledSignal });
+			},
+			900_000,
+		);
+	},
+);

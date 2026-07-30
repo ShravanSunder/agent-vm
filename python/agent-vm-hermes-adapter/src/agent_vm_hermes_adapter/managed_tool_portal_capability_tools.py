@@ -210,19 +210,20 @@ def register(context: HermesPluginContext) -> None:
         "pre_gateway_dispatch",
         lambda **kwargs: _admit_managed_gateway_event(runtime, **kwargs),
     )
-    context.register_hook(
-        "post_tool_call",
-        lambda **kwargs: _observe_post_tool_call(runtime, **kwargs),
-    )
-    for hook_name, callback in (
-        ("pre_llm_call", runtime.framework_observability.on_pre_llm_call),
-        ("post_llm_call", runtime.framework_observability.on_post_llm_call),
-        ("pre_api_request", runtime.framework_observability.on_pre_api_request),
-        ("post_api_request", runtime.framework_observability.on_post_api_request),
-        ("api_request_error", runtime.framework_observability.on_api_request_error),
-        ("on_session_end", runtime.framework_observability.on_session_end),
-    ):
-        context.register_hook(hook_name, callback)
+    if runtime.telemetry.observer_hooks_enabled:
+        context.register_hook(
+            "post_tool_call",
+            lambda **kwargs: _observe_post_tool_call(runtime, **kwargs),
+        )
+        for hook_name, callback in (
+            ("pre_llm_call", runtime.framework_observability.on_pre_llm_call),
+            ("post_llm_call", runtime.framework_observability.on_post_llm_call),
+            ("pre_api_request", runtime.framework_observability.on_pre_api_request),
+            ("post_api_request", runtime.framework_observability.on_post_api_request),
+            ("api_request_error", runtime.framework_observability.on_api_request_error),
+            ("on_session_end", runtime.framework_observability.on_session_end),
+        ):
+            context.register_hook(hook_name, callback)
     for tool_name in MANAGED_TOOL_PORTAL_TOOL_NAMES:
         context.register_tool(
             name=tool_name,
