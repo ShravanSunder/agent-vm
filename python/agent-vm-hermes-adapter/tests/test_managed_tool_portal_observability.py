@@ -8,10 +8,14 @@ from unittest.mock import MagicMock, patch
 
 from opentelemetry import trace
 from opentelemetry.sdk._logs import ReadableLogRecord
-from opentelemetry.sdk._logs.export import LogRecordExporter, LogRecordExportResult
+from opentelemetry.sdk._logs.export import (
+    BatchLogRecordProcessor,
+    LogRecordExporter,
+    LogRecordExportResult,
+)
 from opentelemetry.sdk.metrics.export import MetricExporter, MetricExportResult, MetricsData
-from opentelemetry.sdk.trace import ReadableSpan
-from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
+from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter, SpanExportResult
 
 from agent_vm_hermes_adapter.managed_framework_observability import (
     ProviderAttemptCompletedRecord,
@@ -436,6 +440,99 @@ class ManagedToolPortalObservabilityTests(unittest.TestCase):
         meter.create_histogram.return_value.record.assert_called_once()
         tracer_provider.get_tracer.assert_called_once()
 
+    def test_failed_processor_registration_shuts_down_unowned_workers(self) -> None:
+        baseline_otel_thread_ids = {
+            thread.ident for thread in threading.enumerate() if thread.name.startswith("Otel")
+        }
+        log_exporter = _RecordingLogExporter()
+        log_processors: list[BatchLogRecordProcessor] = []
+
+        def create_log_processor(
+            exporter: LogRecordExporter,
+        ) -> BatchLogRecordProcessor:
+            self.assertIs(exporter, log_exporter)
+            processor = BatchLogRecordProcessor(exporter)
+            log_processors.append(processor)
+            return processor
+
+        log_provider = MagicMock()
+        log_provider.add_log_record_processor.side_effect = RuntimeError(
+            "test-only log processor registration failure"
+        )
+        try:
+            with (
+                telemetry_environment(OTEL_LOGS_EXPORTER="otlp"),
+                patch(
+                    "agent_vm_hermes_adapter.managed_tool_portal_observability.LoggerProvider",
+                    return_value=log_provider,
+                ),
+                patch(
+                    "agent_vm_hermes_adapter.managed_tool_portal_observability."
+                    "BatchLogRecordProcessor",
+                    side_effect=create_log_processor,
+                ),
+                patch(
+                    "agent_vm_hermes_adapter.managed_tool_portal_observability.OTLPLogExporter",
+                    return_value=log_exporter,
+                ),
+            ):
+                telemetry = create_hermes_tool_portal_telemetry_from_environment()
+            telemetry.shutdown()
+            self.assertEqual(
+                {
+                    thread.ident
+                    for thread in threading.enumerate()
+                    if thread.name.startswith("Otel")
+                },
+                baseline_otel_thread_ids,
+            )
+        finally:
+            for processor in log_processors:
+                processor.shutdown()
+
+        span_exporter = _RecordingSpanExporter()
+        span_processors: list[BatchSpanProcessor] = []
+
+        def create_span_processor(exporter: SpanExporter) -> BatchSpanProcessor:
+            self.assertIs(exporter, span_exporter)
+            processor = BatchSpanProcessor(exporter)
+            span_processors.append(processor)
+            return processor
+
+        tracer_provider = MagicMock()
+        tracer_provider.add_span_processor.side_effect = RuntimeError(
+            "test-only span processor registration failure"
+        )
+        try:
+            with (
+                telemetry_environment(OTEL_TRACES_EXPORTER="otlp"),
+                patch(
+                    "agent_vm_hermes_adapter.managed_tool_portal_observability.TracerProvider",
+                    return_value=tracer_provider,
+                ),
+                patch(
+                    "agent_vm_hermes_adapter.managed_tool_portal_observability.BatchSpanProcessor",
+                    side_effect=create_span_processor,
+                ),
+                patch(
+                    "agent_vm_hermes_adapter.managed_tool_portal_observability.OTLPSpanExporter",
+                    return_value=span_exporter,
+                ),
+            ):
+                telemetry = create_hermes_tool_portal_telemetry_from_environment()
+            telemetry.shutdown()
+            self.assertEqual(
+                {
+                    thread.ident
+                    for thread in threading.enumerate()
+                    if thread.name.startswith("Otel")
+                },
+                baseline_otel_thread_ids,
+            )
+        finally:
+            for processor in span_processors:
+                processor.shutdown()
+
     def test_admits_only_closed_controller_resource_attributes(self) -> None:
         resource_environment = (
             "dev.release.channel=beta,"
@@ -798,40 +895,43 @@ class ManagedToolPortalObservabilityTests(unittest.TestCase):
         ):
             telemetry = create_hermes_tool_portal_telemetry_from_environment()
 
+        ambient_provider = TracerProvider()
+        ambient_tracer = ambient_provider.get_tracer("ambient-test")
+        with ambient_tracer.start_as_current_span("unrelated.ambient"):
+            turn_handle = telemetry.start_turn(TurnStartedRecord(platform_class="discord"))
+            provider_handle = telemetry.start_provider_attempt(
+                turn_handle,
+                ProviderAttemptStartedRecord(
+                    model="test-model",
+                    provider="test-provider",
+                ),
+            )
+            if provider_handle is None or turn_handle is None:
+                self.fail("enabled framework telemetry did not create observation handles")
+            telemetry.complete_provider_attempt(
+                provider_handle,
+                ProviderAttemptCompletedRecord(
+                    duration_milliseconds=12,
+                    result_class=ProviderAttemptResultClass.SUCCESS,
+                    usage_input_tokens=3,
+                    usage_output_tokens=5,
+                ),
+            )
+            telemetry.emit_tool_call(
+                turn_handle,
+                ToolCallRecord(
+                    duration_milliseconds=7,
+                    result_class=ToolResultClass.SUCCESS,
+                    tool_category=ToolCategory.HERMES_TOOL,
+                    tool_name="terminal",
+                ),
+            )
+            telemetry.complete_turn(
+                turn_handle,
+                TurnCompletedRecord(result_class=TurnResultClass.SUCCESS),
+            )
         self.assertFalse(trace.get_current_span().get_span_context().is_valid)
-        turn_handle = telemetry.start_turn(TurnStartedRecord(platform_class="discord"))
-        provider_handle = telemetry.start_provider_attempt(
-            turn_handle,
-            ProviderAttemptStartedRecord(
-                model="test-model",
-                provider="test-provider",
-            ),
-        )
-        if provider_handle is None or turn_handle is None:
-            self.fail("enabled framework telemetry did not create observation handles")
-        telemetry.complete_provider_attempt(
-            provider_handle,
-            ProviderAttemptCompletedRecord(
-                duration_milliseconds=12,
-                result_class=ProviderAttemptResultClass.SUCCESS,
-                usage_input_tokens=3,
-                usage_output_tokens=5,
-            ),
-        )
-        telemetry.emit_tool_call(
-            turn_handle,
-            ToolCallRecord(
-                duration_milliseconds=7,
-                result_class=ToolResultClass.SUCCESS,
-                tool_category=ToolCategory.HERMES_TOOL,
-                tool_name="terminal",
-            ),
-        )
-        telemetry.complete_turn(
-            turn_handle,
-            TurnCompletedRecord(result_class=TurnResultClass.SUCCESS),
-        )
-        self.assertFalse(trace.get_current_span().get_span_context().is_valid)
+        ambient_provider.shutdown()
         telemetry.shutdown()
 
         spans_by_name = {span.name: span for span in span_exporter.spans}
@@ -840,6 +940,7 @@ class ManagedToolPortalObservabilityTests(unittest.TestCase):
             {"hermes.llm.request", "hermes.tool.call", "hermes.turn"},
         )
         turn_span_id = spans_by_name["hermes.turn"].context.span_id
+        self.assertIsNone(spans_by_name["hermes.turn"].parent)
         provider_parent = spans_by_name["hermes.llm.request"].parent
         tool_parent = spans_by_name["hermes.tool.call"].parent
         if provider_parent is None or tool_parent is None:

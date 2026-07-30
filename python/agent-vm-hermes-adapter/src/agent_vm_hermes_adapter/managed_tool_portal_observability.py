@@ -14,6 +14,7 @@ from urllib.parse import unquote_to_bytes
 
 from opentelemetry import trace
 from opentelemetry._logs import SeverityNumber
+from opentelemetry.context import Context
 from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
 from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
@@ -531,16 +532,20 @@ class _OtelHermesToolPortalTelemetry:
 
     def _initialize_logs(self, endpoint: str, resource: Resource) -> None:
         provider: LoggerProvider | None = None
+        processor: BatchLogRecordProcessor | None = None
+        processor_registered = False
         try:
             provider = LoggerProvider(resource=resource)
-            provider.add_log_record_processor(
-                BatchLogRecordProcessor(
-                    OTLPLogExporter(endpoint=_signal_endpoint(endpoint, "/v1/logs"))
-                )
+            processor = BatchLogRecordProcessor(
+                OTLPLogExporter(endpoint=_signal_endpoint(endpoint, "/v1/logs"))
             )
+            provider.add_log_record_processor(processor)
+            processor_registered = True
             logger = provider.get_logger(_INSTRUMENTATION_NAME)
         except Exception:
             _safe_provider_shutdown(provider)
+            if not processor_registered:
+                _safe_provider_shutdown(processor)
             _log_signal_initialization_failure("logs")
             return
         self._logger_provider = provider
@@ -589,16 +594,20 @@ class _OtelHermesToolPortalTelemetry:
 
     def _initialize_traces(self, endpoint: str, resource: Resource) -> None:
         provider: TracerProvider | None = None
+        processor: BatchSpanProcessor | None = None
+        processor_registered = False
         try:
             provider = TracerProvider(resource=resource)
-            provider.add_span_processor(
-                BatchSpanProcessor(
-                    OTLPSpanExporter(endpoint=_signal_endpoint(endpoint, "/v1/traces"))
-                )
+            processor = BatchSpanProcessor(
+                OTLPSpanExporter(endpoint=_signal_endpoint(endpoint, "/v1/traces"))
             )
+            provider.add_span_processor(processor)
+            processor_registered = True
             tracer = provider.get_tracer(_INSTRUMENTATION_NAME)
         except Exception:
             _safe_provider_shutdown(provider)
+            if not processor_registered:
+                _safe_provider_shutdown(processor)
             _log_signal_initialization_failure("traces")
             return
         self._tracer_provider = provider
@@ -944,7 +953,9 @@ class _OtelHermesToolPortalTelemetry:
     ) -> Span | None:
         if self._tracer is None:
             return None
-        parent_context = trace.set_span_in_context(parent_span) if parent_span is not None else None
+        parent_context = (
+            trace.set_span_in_context(parent_span) if parent_span is not None else Context()
+        )
         try:
             return self._tracer.start_span(
                 span_name,

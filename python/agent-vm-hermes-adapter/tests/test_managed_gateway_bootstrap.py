@@ -1381,6 +1381,47 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
             original_provider_routing_descriptor,
         )
 
+    def test_shuts_down_telemetry_when_gateway_runtime_connect_fails(self) -> None:
+        telemetry = FakeHermesToolPortalTelemetry()
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            configuration_path = temporary_root / "framework-service.json"
+            protected_hermes_home = temporary_root / "protected-hermes-home"
+            configuration_path.write_text(json.dumps(build_material()), encoding="utf-8")
+            materialize_profile_cohort(protected_hermes_home)
+            with (
+                patch.object(
+                    managed_gateway_bootstrap,
+                    "create_hermes_tool_portal_telemetry_from_environment",
+                    return_value=telemetry,
+                ),
+                patch.object(
+                    HermesManagedAdapter,
+                    "connect_gateway_runtime",
+                    side_effect=RuntimeError("test-only Gateway Runtime connect failure"),
+                ),
+                patch.dict(
+                    os.environ,
+                    {"SOURCE_RESEARCHER": "test-researcher", "SOURCE_REVIEWER": "test-reviewer"},
+                    clear=False,
+                ),
+                self.assertRaisesRegex(
+                    RuntimeError,
+                    "test-only Gateway Runtime connect failure",
+                ),
+            ):
+                managed_gateway_bootstrap.run_managed_hermes_gateway(
+                    configuration_path=configuration_path,
+                    managed_configuration_loader=managed_plugin_configuration,
+                    protected_hermes_home=protected_hermes_home,
+                    stock_gateway_runner=Mock(),
+                    terminal_tool_module=FakeTerminalToolModule(),
+                )
+
+        self.assertEqual(telemetry.shutdown_calls, 1)
+        with self.assertRaisesRegex(RuntimeError, "requires bootstrap runtime configuration"):
+            register_managed_tool_portal_plugin(FakeHermesPluginContext())
+
     def test_rejects_drifted_profile_cohort_before_managed_or_stock_runtime_use(self) -> None:
         def missing_protected_hermes_home(protected_hermes_home: Path) -> None:
             del protected_hermes_home
