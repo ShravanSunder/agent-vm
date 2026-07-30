@@ -1,6 +1,10 @@
 import ast
 import pathlib
+import tomllib
 import unittest
+
+from hermes_cli.middleware import OBSERVER_SCHEMA_VERSION
+from hermes_cli.plugins import VALID_HOOKS
 
 PACKAGE_ROOT = pathlib.Path(__file__).parents[1]
 SOURCE_ROOT = PACKAGE_ROOT / "src" / "agent_vm_hermes_adapter"
@@ -38,10 +42,44 @@ class PackageBoundaryTests(unittest.TestCase):
         self.assertIn("agent_vm_agent_portal_sdk.contracts", imported_modules)
 
     def test_package_declares_exact_hermes_distribution(self) -> None:
-        pyproject = (PACKAGE_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        with (PACKAGE_ROOT / "pyproject.toml").open("rb") as pyproject_file:
+            package_config = tomllib.load(pyproject_file)
 
-        self.assertIn('"hermes-agent==0.19.0"', pyproject)
-        self.assertNotIn("hermes-agent>=", pyproject)
+        self.assertEqual(
+            package_config["project"]["dependencies"],
+            [
+                "agent-vm-agent-portal-sdk==0.0.126",
+                "hermes-agent==0.19.0",
+                "opentelemetry-api==1.44.0",
+                "opentelemetry-exporter-otlp-proto-http==1.44.0",
+                "opentelemetry-sdk==1.44.0",
+                "pydantic>=2.12.0,<3",
+            ],
+        )
+        self.assertEqual(
+            package_config["project"]["entry-points"]["hermes_agent.plugins"],
+            {
+                "agent-vm-tool-portal": (
+                    "agent_vm_hermes_adapter.managed_tool_portal_capability_tools"
+                ),
+            },
+        )
+
+    def test_installed_hermes_supports_adapter_telemetry_hooks(self) -> None:
+        self.assertTrue(
+            {
+                "pre_llm_call",
+                "post_llm_call",
+                "pre_api_request",
+                "post_api_request",
+                "api_request_error",
+                "post_tool_call",
+                "on_session_end",
+            }.issubset(VALID_HOOKS),
+        )
+
+    def test_installed_hermes_uses_the_expected_observer_schema(self) -> None:
+        self.assertEqual(OBSERVER_SCHEMA_VERSION, "hermes.observer.v1")
 
 
 if __name__ == "__main__":

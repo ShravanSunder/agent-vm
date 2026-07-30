@@ -142,6 +142,7 @@ class FakeGatewayRuntimeClient:
 
 class FakeHermesToolPortalTelemetry:
     def __init__(self) -> None:
+        self.max_inflight_observations = 8
         self.shutdown_calls = 0
         self.trace_context_provider: Callable[[], Mapping[str, object] | None] = self._provide
 
@@ -150,6 +151,31 @@ class FakeHermesToolPortalTelemetry:
 
     def shutdown(self) -> None:
         self.shutdown_calls += 1
+
+    def start_turn(self, record: object) -> object:
+        del record
+        return object()
+
+    def complete_turn(self, handle: object, record: object) -> None:
+        del handle, record
+
+    def start_provider_attempt(
+        self,
+        parent_handle: object | None,
+        record: object,
+    ) -> object:
+        del parent_handle, record
+        return object()
+
+    def complete_provider_attempt(self, handle: object, record: object) -> None:
+        del handle, record
+
+    def emit_tool_call(
+        self,
+        parent_handle: object | None,
+        record: object,
+    ) -> None:
+        del parent_handle, record
 
 
 class FakeTerminalToolModule:
@@ -1203,6 +1229,20 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
                 tuple(plugin_context.registered_tool_names),
                 MANAGED_TOOL_PORTAL_TOOL_NAMES,
             )
+            self.assertEqual(
+                set(plugin_context.registered_hook_names),
+                {
+                    "api_request_error",
+                    "on_session_end",
+                    "post_api_request",
+                    "post_llm_call",
+                    "post_tool_call",
+                    "pre_api_request",
+                    "pre_gateway_dispatch",
+                    "pre_llm_call",
+                },
+            )
+            self.assertNotIn("pre_tool_call", plugin_context.registered_hook_names)
             client = FakeGatewayRuntimeClient.last_instance
             if client is None:
                 self.fail("managed bootstrap did not construct a Gateway Runtime client")

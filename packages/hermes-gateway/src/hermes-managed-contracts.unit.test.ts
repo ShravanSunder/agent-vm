@@ -263,16 +263,166 @@ describe('managed Hermes package contracts', () => {
 			OTEL_BSP_MAX_QUEUE_SIZE: '256',
 			OTEL_BSP_SCHEDULE_DELAY: '1000',
 			OTEL_EXPORTER_OTLP_ENDPOINT: 'http://otel-collector.observability.vm.host:4318',
+			OTEL_LOGS_EXPORTER: 'otlp',
 			OTEL_METRIC_EXPORT_INTERVAL: '1000',
+			OTEL_METRICS_EXPORTER: 'otlp',
 			OTEL_RESOURCE_ATTRIBUTES: 'dev.repo.hash=0123456789abcdef,dev.worktree.hash=fedcba9876543210',
 			OTEL_SERVICE_NAME: 'agent-vm-hermes',
+			OTEL_TRACES_EXPORTER: 'otlp',
 			OTEL_TRACES_SAMPLER: 'parentbased_traceidratio',
 			OTEL_TRACES_SAMPLER_ARG: '1',
+			AGENT_VM_HERMES_OTEL_MAX_INFLIGHT_OBSERVATIONS: '256',
+			AGENT_VM_HERMES_OTEL_MAX_RECORD_BYTES: '65536',
 			REQUESTS_CA_BUNDLE: '/run/gondolin/ca-certificates.crt',
 			SSL_CERT_FILE: '/run/gondolin/ca-certificates.crt',
 		});
 		expect(bootInputs.environment).not.toHaveProperty('HERMES_MANAGED');
 		expect(bootInputs.environment).not.toHaveProperty('HERMES_MANAGED_DIR');
+	});
+
+	it('disables each Hermes telemetry signal independently through exact exporter selectors', async () => {
+		const signalCases = [
+			{
+				frameworkSignals: { logs: false, metrics: true, traces: true },
+				selectors: {
+					OTEL_LOGS_EXPORTER: 'none',
+					OTEL_METRICS_EXPORTER: 'otlp',
+					OTEL_TRACES_EXPORTER: 'otlp',
+				},
+			},
+			{
+				frameworkSignals: { logs: true, metrics: false, traces: true },
+				selectors: {
+					OTEL_LOGS_EXPORTER: 'otlp',
+					OTEL_METRICS_EXPORTER: 'none',
+					OTEL_TRACES_EXPORTER: 'otlp',
+				},
+			},
+			{
+				frameworkSignals: { logs: true, metrics: true, traces: false },
+				selectors: {
+					OTEL_LOGS_EXPORTER: 'otlp',
+					OTEL_METRICS_EXPORTER: 'otlp',
+					OTEL_TRACES_EXPORTER: 'none',
+				},
+			},
+		] as const;
+
+		await Promise.all(
+			signalCases.map(async (signalCase) => {
+				const zone = {
+					...createHermesZone(createHermesAdapterMaterial()),
+					observability: {
+						collector: {
+							host: 'otel-collector.observability.vm.host',
+							grpcPort: 4317,
+							httpPort: 4318,
+							targetGrpcPort: 4317,
+							targetHost: '127.0.0.1',
+							targetHttpPort: 4318,
+						},
+						framework: {
+							admissionLimits: {
+								maxExportBatchRecords: 64,
+								maxQueuedRecordsPerSignal: 256,
+								maxRecordBytes: 65_536,
+							},
+							flushIntervalMs: 1000,
+							...signalCase.frameworkSignals,
+							sampleRate: 1,
+							serviceName: 'agent-vm-hermes',
+							sourcePolicy: { admitBaggage: false, captureContent: false },
+						},
+						mode: 'collector' as const,
+						toolPortal: {
+							admissionLimits: {
+								maxExportBatchRecords: 64,
+								maxQueuedRecordsPerSignal: 256,
+								maxRecordBytes: 65_536,
+							},
+							flushIntervalMs: 1000,
+							logs: true,
+							metrics: true,
+							sampleRate: 1,
+							serviceName: 'agent-vm-tool-portal',
+							sourcePolicy: { admitBaggage: false, captureContent: false },
+							traces: true,
+						},
+					},
+				} satisfies GatewayZoneConfig;
+
+				const bootInputs = await hermesLifecycle.buildFrameworkServiceBootInputs({
+					resolvedSecrets: { API_SERVER_KEY: 'test-only-key' },
+					zone,
+				});
+
+				expect(bootInputs.environment).toMatchObject(signalCase.selectors);
+			}),
+		);
+	});
+
+	it('rejects deployment-authored overrides of lifecycle-owned Hermes telemetry settings', async () => {
+		await Promise.all(
+			[
+				'AGENT_VM_HERMES_OTEL_MAX_INFLIGHT_OBSERVATIONS',
+				'AGENT_VM_HERMES_OTEL_MAX_RECORD_BYTES',
+				'OTEL_LOGS_EXPORTER',
+				'OTEL_METRICS_EXPORTER',
+				'OTEL_RESOURCE_ATTRIBUTES',
+				'OTEL_SDK_DISABLED',
+				'OTEL_TRACES_EXPORTER',
+			].map(async (environmentName) => {
+				const baseZone = createHermesZone(createHermesAdapterMaterial());
+				const zone = {
+					...baseZone,
+					secrets: {
+						...baseZone.secrets,
+						[environmentName]: {
+							audience: 'gateway',
+							envVar: environmentName,
+							injection: 'env',
+							source: 'environment',
+						},
+					},
+				} satisfies GatewayZoneConfig;
+
+				await expect(
+					hermesLifecycle.buildFrameworkServiceBootInputs({
+						resolvedSecrets: {
+							API_SERVER_KEY: 'test-only-key',
+							[environmentName]: 'deployment-authored-override',
+						},
+						zone,
+					}),
+				).rejects.toThrow(new RegExp(environmentName, 'u'));
+			}),
+		);
+	});
+
+	it('rejects non-controller runtime overrides of lifecycle-owned Hermes telemetry settings', async () => {
+		await Promise.all(
+			[
+				'AGENT_VM_HERMES_OTEL_MAX_INFLIGHT_OBSERVATIONS',
+				'AGENT_VM_HERMES_OTEL_MAX_RECORD_BYTES',
+				'OTEL_LOGS_EXPORTER',
+				'OTEL_METRICS_EXPORTER',
+				'OTEL_RESOURCE_ATTRIBUTES',
+				'OTEL_SDK_DISABLED',
+				'OTEL_TRACES_EXPORTER',
+			].map(async (environmentName) => {
+				const zone = {
+					...createHermesZone(createHermesAdapterMaterial()),
+					runtimeEnvironment: { [environmentName]: 'deployment-authored-override' },
+				} satisfies GatewayZoneConfig;
+
+				await expect(
+					hermesLifecycle.buildFrameworkServiceBootInputs({
+						resolvedSecrets: { API_SERVER_KEY: 'test-only-key' },
+						zone,
+					}),
+				).rejects.toThrow(new RegExp(environmentName, 'u'));
+			}),
+		);
 	});
 
 	it('mounts durable state with exact memory-only profile token files', () => {

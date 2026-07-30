@@ -10,6 +10,7 @@ from agent_vm_agent_portal_sdk.contracts import (
 )
 from pydantic import BaseModel
 
+from .managed_framework_observability import ManagedFrameworkObservability
 from .managed_profile_adapter import (
     CanonicalManagedAgentProjection,
     HermesManagedAdapter,
@@ -65,6 +66,7 @@ class HermesGatewayMessageEvent(t.Protocol):
 class _ManagedToolPortalPluginRuntime(t.NamedTuple):
     adapter: HermesManagedAdapter
     current_projection: Callable[[], CanonicalManagedAgentProjection]
+    framework_observability: ManagedFrameworkObservability
     telemetry: HermesToolPortalTelemetry
 
 
@@ -86,6 +88,10 @@ def configure_managed_tool_portal_plugin(
         _configured_runtime = _ManagedToolPortalPluginRuntime(
             adapter=adapter,
             current_projection=current_projection,
+            framework_observability=ManagedFrameworkObservability(
+                sink=telemetry,
+                max_inflight_observations=telemetry.max_inflight_observations,
+            ),
             telemetry=telemetry,
         )
 
@@ -94,7 +100,10 @@ def clear_managed_tool_portal_plugin_configuration() -> None:
     """Remove process-local runtime authority after managed Gateway shutdown."""
     global _configured_runtime
     with _CONFIGURATION_LOCK:
+        runtime = _configured_runtime
         _configured_runtime = None
+    if runtime is not None:
+        runtime.framework_observability.shutdown()
 
 
 def _require_configured_runtime() -> _ManagedToolPortalPluginRuntime:
@@ -163,8 +172,14 @@ def _observe_post_tool_call(
     duration_ms: object,
     status: object,
     tool_name: object,
-    **_discarded_hook_fields: object,
+    **hook_fields: object,
 ) -> None:
+    runtime.framework_observability.on_post_tool_call(
+        duration_ms=duration_ms,
+        status=status,
+        tool_name=tool_name,
+        **hook_fields,
+    )
     runtime.telemetry.observe_post_tool_call(
         duration_milliseconds=duration_ms,
         status=status,
@@ -199,6 +214,15 @@ def register(context: HermesPluginContext) -> None:
         "post_tool_call",
         lambda **kwargs: _observe_post_tool_call(runtime, **kwargs),
     )
+    for hook_name, callback in (
+        ("pre_llm_call", runtime.framework_observability.on_pre_llm_call),
+        ("post_llm_call", runtime.framework_observability.on_post_llm_call),
+        ("pre_api_request", runtime.framework_observability.on_pre_api_request),
+        ("post_api_request", runtime.framework_observability.on_post_api_request),
+        ("api_request_error", runtime.framework_observability.on_api_request_error),
+        ("on_session_end", runtime.framework_observability.on_session_end),
+    ):
+        context.register_hook(hook_name, callback)
     for tool_name in MANAGED_TOOL_PORTAL_TOOL_NAMES:
         context.register_tool(
             name=tool_name,
