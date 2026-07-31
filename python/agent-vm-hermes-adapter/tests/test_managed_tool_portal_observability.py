@@ -1078,6 +1078,10 @@ class ManagedToolPortalObservabilityTests(unittest.TestCase):
         )
         turn_span_id = spans_by_name["hermes.turn"].context.span_id
         self.assertIsNone(spans_by_name["hermes.turn"].parent)
+        self.assertEqual(
+            dict(spans_by_name["hermes.turn"].attributes or {})["agent_vm.result.class"],
+            "success",
+        )
         provider_parent = spans_by_name["hermes.llm.request"].parent
         tool_parent = spans_by_name["hermes.tool.call"].parent
         if provider_parent is None or tool_parent is None:

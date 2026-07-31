@@ -263,24 +263,6 @@ class ManagedFrameworkObservability:
                 self._turn_observations[turn_key] = handle
         return None
 
-    def on_post_llm_call(
-        self,
-        *,
-        turn_id: object = None,
-        **_discarded_hook_fields: object,
-    ) -> None:
-        turn_key = _correlation_key(turn_id)
-        if turn_key is None:
-            return None
-        with self._correlation_lock:
-            handle = self._turn_observations.pop(turn_key, None)
-        if handle is not None:
-            self._complete_turn(
-                handle,
-                TurnCompletedRecord(result_class=TurnResultClass.SUCCESS),
-            )
-        return None
-
     def on_pre_api_request(
         self,
         *,

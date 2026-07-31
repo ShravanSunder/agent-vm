@@ -834,6 +834,7 @@ class _OtelHermesToolPortalTelemetry:
         self._finish_framework_span(
             handle.span,
             result_class,
+            attributes,
             end_time=handle.started_at_epoch_nanoseconds + int(duration_milliseconds * 1_000_000),
         )
         self._emit_framework_log("hermes.turn.completed", attributes)

@@ -217,7 +217,6 @@ def register(context: HermesPluginContext) -> None:
         )
         for hook_name, callback in (
             ("pre_llm_call", runtime.framework_observability.on_pre_llm_call),
-            ("post_llm_call", runtime.framework_observability.on_post_llm_call),
             ("pre_api_request", runtime.framework_observability.on_pre_api_request),
             ("post_api_request", runtime.framework_observability.on_post_api_request),
             ("api_request_error", runtime.framework_observability.on_api_request_error),

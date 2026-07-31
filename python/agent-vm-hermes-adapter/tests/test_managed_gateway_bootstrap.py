@@ -1236,7 +1236,6 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
                     "api_request_error",
                     "on_session_end",
                     "post_api_request",
-                    "post_llm_call",
                     "post_tool_call",
                     "pre_api_request",
                     "pre_gateway_dispatch",

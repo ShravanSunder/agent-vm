@@ -95,7 +95,7 @@ def _all_record_values(sink: _RecordingSink) -> list[object]:
 
 @t.final
 class ManagedFrameworkObservabilityTests(unittest.TestCase):
-    def test_all_seven_callbacks_return_none_and_emit_closed_records(self) -> None:
+    def test_all_callbacks_return_none_and_emit_closed_records(self) -> None:
         sink = _RecordingSink()
         mapper = ManagedFrameworkObservability(
             sink=sink,
@@ -143,8 +143,10 @@ class ManagedFrameworkObservabilityTests(unittest.TestCase):
             )
         )
         self.assertIsNone(
-            mapper.on_post_llm_call(
+            mapper.on_session_end(
                 turn_id="turn-1",
+                completed=True,
+                interrupted=False,
                 assistant_response=CONTENT_CANARY,
             )
         )
@@ -355,7 +357,7 @@ class ManagedFrameworkObservabilityTests(unittest.TestCase):
         self.assertEqual(len(sink.turn_starts), 2)
         self.assertEqual(len(sink.provider_starts), 2)
 
-        mapper.on_post_llm_call(turn_id="turn-1")
+        mapper.on_session_end(turn_id="turn-1", completed=True, interrupted=False)
         mapper.on_api_request_error(
             turn_id="turn-2",
             api_request_id="api-2",
@@ -366,7 +368,7 @@ class ManagedFrameworkObservabilityTests(unittest.TestCase):
 
         self.assertEqual(len(sink.turn_starts), 3)
         self.assertEqual(len(sink.provider_starts), 3)
-        mapper.on_post_llm_call(turn_id="turn-2")
+        mapper.on_session_end(turn_id="turn-2", completed=True, interrupted=False)
         self.assertEqual(
             [record.result_class for _, record in sink.turn_completions],
             [TurnResultClass.SUCCESS, TurnResultClass.SUCCESS],
@@ -386,7 +388,7 @@ class ManagedFrameworkObservabilityTests(unittest.TestCase):
             api_request_id="api",
             api_duration=1,
         )
-        mapper.on_post_llm_call(turn_id="missing")
+        mapper.on_session_end(turn_id="missing", completed=True, interrupted=False)
         self.assertEqual(sink.provider_completions, [])
         self.assertEqual(sink.turn_completions, [])
 
@@ -400,8 +402,8 @@ class ManagedFrameworkObservabilityTests(unittest.TestCase):
             api_request_id="api",
             api_duration=1,
         )
-        mapper.on_post_llm_call(turn_id="turn")
-        mapper.on_post_llm_call(turn_id="turn")
+        mapper.on_session_end(turn_id="turn", completed=True, interrupted=False)
+        mapper.on_session_end(turn_id="turn", completed=True, interrupted=False)
         self.assertEqual(len(sink.provider_completions), 1)
         self.assertEqual(len(sink.turn_completions), 1)
 
@@ -433,7 +435,7 @@ class ManagedFrameworkObservabilityTests(unittest.TestCase):
             sink.provider_completions[0][1].result_class,
             ProviderAttemptResultClass.UNKNOWN,
         )
-        mapper.on_post_llm_call(turn_id="turn-b")
+        mapper.on_session_end(turn_id="turn-b", completed=True, interrupted=False)
         mapper.on_post_api_request(
             turn_id="turn-b",
             api_request_id="api-b",
@@ -441,6 +443,30 @@ class ManagedFrameworkObservabilityTests(unittest.TestCase):
         )
         self.assertEqual(len(sink.turn_completions), 2)
         self.assertEqual(len(sink.provider_completions), 2)
+
+    def test_on_session_end_preserves_authoritative_failure_outcome(self) -> None:
+        sink = _RecordingSink()
+        mapper = ManagedFrameworkObservability(
+            sink=sink,
+            max_inflight_observations=2,
+        )
+        mapper.on_pre_llm_call(turn_id="turn", platform="cli")
+
+        mapper.on_session_end(
+            turn_id="turn",
+            completed=False,
+            interrupted=False,
+        )
+
+        self.assertEqual(
+            sink.turn_completions,
+            [
+                (
+                    sink.turn_starts[0][0],
+                    TurnCompletedRecord(result_class=TurnResultClass.FAILURE),
+                )
+            ],
+        )
 
     def test_shutdown_snapshots_then_drains_attempts_and_turns(self) -> None:
         sink = _RecordingSink()
@@ -488,7 +514,7 @@ class ManagedFrameworkObservabilityTests(unittest.TestCase):
                 api_request_id="api-a",
                 api_duration=1,
             )
-            mapper.on_post_llm_call(turn_id="turn-a")
+            mapper.on_session_end(turn_id="turn-a", completed=True, interrupted=False)
 
         worker = threading.Thread(target=first_turn)
         worker.start()

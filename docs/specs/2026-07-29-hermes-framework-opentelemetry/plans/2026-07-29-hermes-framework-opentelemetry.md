@@ -3,8 +3,8 @@
 Date: 2026-07-29
 Source:
 `../2026-07-29-hermes-framework-opentelemetry.md`
-Validated source: 653 lines,
-SHA-256 `4a08d9c755551972983357a1a1697ccf56045ebcd29f8b34f97a760553a76e7f`
+Validated source: 664 lines,
+SHA-256 `5936e64d5f26169734b4619974df6d124b390b4be760b030f767efeb91f4ad0b`
 Validated base: `93ad40964571317bcfb6bba4a5c6c8bbdb4c98b2`
 
 ## Goal
@@ -135,7 +135,7 @@ Requirements: R4–R12, R14.
 
 Red:
 
-- Add mapper tests covering all seven hooks, exact callback `None` returns,
+- Add mapper tests covering all six framework hooks, exact callback `None` returns,
   closed attributes/result classes, numeric/string bounds, failover reason,
   `post_tool_call`-supplied duration, malformed values, content canaries, and
   forbidden arbitrary `str()` conversion.
@@ -145,6 +145,10 @@ Red:
   parent/attribute isolation.
 - Assert registered names belong to `hermes_cli.plugins.VALID_HOOKS` and the
   observer schema remains `hermes.observer.v1`.
+- Execute the installed Hermes `finalize_turn` boundary and require the
+  authoritative `on_session_end` `turn_id`, `completed`, and `interrupted`
+  payload. Keep the exact distribution and lockfile-hash gates so a Hermes
+  update cannot silently bypass compatibility review.
 
 Green:
 

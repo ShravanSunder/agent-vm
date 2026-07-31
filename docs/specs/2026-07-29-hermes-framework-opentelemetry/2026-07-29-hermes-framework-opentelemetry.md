@@ -213,17 +213,18 @@ The plugin registers only the hooks needed for this contract:
 
 ```text
 pre_llm_call       -> open one turn observation
-post_llm_call      -> complete a successful turn observation
 pre_api_request    -> open one provider-attempt observation
 post_api_request   -> complete a successful provider attempt and record usage
 api_request_error  -> complete a failed provider attempt
 post_tool_call     -> emit one observation for each event Hermes supplies
-on_session_end     -> close incomplete observations for the matching turn
+on_session_end     -> complete the matching turn with its authoritative outcome
 ```
 
 The pinned Hermes call sites establish:
 
-- `pre_llm_call` and `post_llm_call` occur once around a completed turn.
+- `pre_llm_call` supplies the stable identifier that opens a turn observation.
+- `on_session_end` supplies the authoritative `completed` and `interrupted`
+  outcome for paths that reach pinned Hermes turn finalization.
 - `pre_api_request`, `post_api_request`, and `api_request_error` occur per
   provider API attempt.
 - `post_tool_call` supplies the authoritative per-tool `duration_ms` and status,
@@ -245,12 +246,17 @@ preflight interruption or rejected because its argument payload is malformed.
 Those non-executions are outside the framework telemetry contract; Agent VM
 does not add a second interception path or upstream hook to synthesize them.
 
-`post_llm_call` is not guaranteed for an interrupted or failed turn.
-Pinned `on_session_end` fires at the end of each `run_conversation` call, not
-only when a long-lived session expires. It closes only observations whose
-`turn_id` matches that hook. A hook without `turn_id` never triggers global or
-session-wide closure. Telemetry shutdown closes any remaining observations
-without inventing a successful result.
+`post_llm_call` is deliberately not registered for telemetry. Pinned Hermes may
+emit it for a response whose later `on_session_end` payload reports
+`completed=false`, so the hook is not an authoritative success signal.
+
+Pinned `on_session_end` fires for paths that reach turn finalization. It closes
+only observations whose `turn_id` matches that hook. A hook without `turn_id`
+never triggers global or session-wide closure. Some pinned Hermes direct-return
+failure paths bypass turn finalization and expose no terminal observer hook.
+Those observations remain bounded and telemetry shutdown closes them as
+`abandoned`; Agent VM does not wrap Hermes, add a timer, infer finality from a
+provider error, or change upstream Hermes to manufacture an outcome.
 
 Every telemetry callback returns `None`. In particular, `pre_llm_call` and
 other behavior-capable Hermes hooks are used in observe-only mode; telemetry
@@ -394,8 +400,9 @@ The runtime may retain only active turn and API-request observation records.
 Each map is capped at the existing
 `maxQueuedRecordsPerSignal` admission limit. When a map is full, the runtime
 drops the new observation; it does not evict another active turn, start a timer,
-or add a second queue. Entries are removed on their matching completion/error
-hook, on the matching turn's `on_session_end`, or at telemetry shutdown.
+or add a second queue. Provider-attempt entries are removed on their matching
+completion/error hook. Turn entries are removed on the matching turn's
+`on_session_end` or at telemetry shutdown.
 
 Duplicate, missing, or out-of-order hooks must not affect Hermes behavior. The
 runtime records a fixed internal telemetry classification when safe and drops
@@ -512,7 +519,10 @@ R3. The existing
 `zones[].observability.services.framework.{traces,metrics,logs}` settings
 independently control Hermes provider/exporter creation and OTLP traffic.
 
-R4. A real Hermes turn emits a bounded turn observation.
+R4. A pinned-Hermes `pre_llm_call` opens a bounded turn observation. A matching
+`on_session_end` completes it with the supplied success, failure, or interruption
+outcome. If pinned Hermes exposes no terminal hook, shutdown completes the
+observation as `abandoned` without inventing an outcome.
 
 R5. Every actual Hermes provider API attempt emits a bounded success or failure
 observation with timing, retry metadata when supplied, and token usage when
@@ -562,8 +572,9 @@ The implementation plan must map every requirement to proof. At minimum:
   comma-separated, unknown, and `OTEL_SDK_DISABLED` rejection; per-signal
   constructor failure; the closed record and resource allowlists;
   `maxRecordBytes`; numeric and string bounds; malformed hook values;
-  success/error/interruption closure; capped correlation state; shutdown; and
-  fail-open behavior.
+  authoritative `on_session_end` success/error/interruption closure; installed
+  Hermes finalizer payload compatibility; missing-terminal shutdown as
+  `abandoned`; capped correlation state; shutdown; and fail-open behavior.
 - Plugin unit proof exercises the exact registered hook set and passes
   secret-bearing canaries through every content-bearing hook field, proving none
   reach the telemetry runtime's emitted records. It also asserts every callback
