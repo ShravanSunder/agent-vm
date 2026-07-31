@@ -50,7 +50,7 @@ class PackageBoundaryTests(unittest.TestCase):
         self.assertEqual(
             package_config["project"]["dependencies"],
             [
-                "agent-vm-agent-portal-sdk==0.0.126",
+                (f"agent-vm-agent-portal-sdk=={package_config['project']['version']}"),
                 "hermes-agent==0.19.0",
                 "opentelemetry-api==1.44.0",
                 "opentelemetry-exporter-otlp-proto-http==1.44.0",
