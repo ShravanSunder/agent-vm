@@ -49,19 +49,23 @@ const primaryModelName = 'hermes-framework-otel-primary';
 const fallbackModelHost = 'openrouter.ai';
 const fallbackModelName = 'hermes-framework-otel-fallback';
 const discordSecretEnvironmentName = 'DISCORD_BOT_TOKEN_MAIN_E2E';
-const forbiddenCanaries = [
-	'hermes-framework-otel-prompt-canary',
-	'hermes-framework-otel-response-canary',
-	'hermes-framework-otel-tool-argument-canary',
-	'hermes-framework-otel-command-canary',
-	'hermes-framework-otel-identity-canary',
-	'hermes-framework-otel-unapproved-resource-canary',
-	'hermes-framework-otel-raw-error-canary',
-	'hermes-framework-otel-discord-secret-canary',
-	'hermes-framework-otel-tool-result-canary',
-	'/work/hermes-framework-otel-path-canary',
-	'https://hermes-framework-otel-url-canary.invalid/private',
-] as const;
+const forbiddenCanariesByField = {
+	command: 'hermes-framework-otel-command-canary',
+	discordSecret: 'hermes-framework-otel-discord-secret-canary',
+	identity: 'hermes-framework-otel-identity-canary',
+	path: '/work/hermes-framework-otel-path-canary',
+	prompt: 'hermes-framework-otel-prompt-canary',
+	rawError: 'hermes-framework-otel-raw-error-canary',
+	response: 'hermes-framework-otel-response-canary',
+	toolArgument: 'hermes-framework-otel-tool-argument-canary',
+	toolResult: 'hermes-framework-otel-tool-result-canary',
+	unapprovedResource: 'hermes-framework-otel-unapproved-resource-canary',
+	url: 'https://hermes-framework-otel-url-canary.invalid/private',
+} as const satisfies Readonly<Record<string, string>>;
+const forbiddenCanaries = Object.values(forbiddenCanariesByField);
+const contentCanaries = forbiddenCanaries.filter(
+	(canary) => canary !== forbiddenCanariesByField.unapprovedResource,
+);
 
 interface FakeProviderRequestObservation {
 	readonly host: string | undefined;
@@ -146,7 +150,10 @@ async function startFakeProvider(): Promise<FakeProvider> {
 		observations.push({ host: request.headers.host });
 		if (request.headers.host?.startsWith(primaryModelHost) === true) {
 			writeJson(response, 500, {
-				error: { message: forbiddenCanaries[6], type: 'test_provider_failure' },
+				error: {
+					message: forbiddenCanariesByField.rawError,
+					type: 'test_provider_failure',
+				},
 			});
 			return;
 		}
@@ -157,7 +164,7 @@ async function startFakeProvider(): Promise<FakeProvider> {
 					? {
 							function: {
 								arguments: JSON.stringify({
-									command: `printf '%s %s %s %s' '${forbiddenCanaries[3]}' '${forbiddenCanaries[8]}' '${forbiddenCanaries[9]}' '${forbiddenCanaries[10]}'`,
+									command: `printf '%s %s %s %s' '${forbiddenCanariesByField.command}' '${forbiddenCanariesByField.toolResult}' '${forbiddenCanariesByField.path}' '${forbiddenCanariesByField.url}'`,
 								}),
 								name: 'terminal',
 							},
@@ -168,7 +175,7 @@ async function startFakeProvider(): Promise<FakeProvider> {
 					: {
 							function: {
 								arguments: JSON.stringify({
-									requests: [{ id: forbiddenCanaries[2] }],
+									requests: [{ id: forbiddenCanariesByField.toolArgument }],
 								}),
 								name: 'tool_portal_list',
 							},
@@ -216,7 +223,7 @@ async function startFakeProvider(): Promise<FakeProvider> {
 			{
 				choices: [
 					{
-						delta: { content: forbiddenCanaries[1], role: 'assistant' },
+						delta: { content: forbiddenCanariesByField.response, role: 'assistant' },
 						finish_reason: null,
 						index: 0,
 					},
@@ -472,7 +479,7 @@ async function runSignalNegativeGatewayBoot(options: {
 		await prepareGatewayE2eProjectImages({ project });
 		harness = await startE2eControllerRuntime({
 			secrets: {
-				[discordSecretEnvironmentName]: forbiddenCanaries[7],
+				[discordSecretEnvironmentName]: forbiddenCanariesByField.discordSecret,
 				GITHUB_TOKEN: 'unused-hermes-framework-otel-github-token',
 			},
 			startGatewayZone: async (startOptions, dependencies) =>
@@ -497,7 +504,7 @@ async function runSignalNegativeGatewayBoot(options: {
 			`http://127.0.0.1:${String(project.gatewayPort)}/p/main/v1/chat/completions`,
 			{
 				body: JSON.stringify({
-					messages: [{ content: forbiddenCanaries[0], role: 'user' }],
+					messages: [{ content: forbiddenCanariesByField.prompt, role: 'user' }],
 					model: primaryModelName,
 					stream: false,
 				}),
@@ -511,7 +518,7 @@ async function runSignalNegativeGatewayBoot(options: {
 			},
 		);
 		expect(response.ok).toBe(true);
-		expect(await response.text()).toContain(forbiddenCanaries[1]);
+		expect(await response.text()).toContain(forbiddenCanariesByField.response);
 		await harness.close({ preserveTempRoot: true });
 		harness = undefined;
 		const requestPaths = capturedRequests.map(({ path: otlpPath }) => otlpPath);
@@ -661,7 +668,7 @@ describeHermesFrameworkObservabilityE2e(
 			await prepareObservabilityStack({ config: observabilityRuntimeConfig, wait: true });
 			harness = await startE2eControllerRuntime({
 				secrets: {
-					[discordSecretEnvironmentName]: forbiddenCanaries[7],
+					[discordSecretEnvironmentName]: forbiddenCanariesByField.discordSecret,
 					GITHUB_TOKEN: 'unused-hermes-framework-otel-github-token',
 				},
 				startGatewayZone: async (startOptions, dependencies) => {
@@ -677,7 +684,7 @@ describeHermesFrameworkObservabilityE2e(
 							...startOptions,
 							runtimeEnvironment: {
 								...startOptions.runtimeEnvironment,
-								OTEL_RESOURCE_ATTRIBUTES: `${controllerResourceAttributes},unapproved.resource=${forbiddenCanaries[5]}`,
+								OTEL_RESOURCE_ATTRIBUTES: `${controllerResourceAttributes},unapproved.resource=${forbiddenCanariesByField.unapprovedResource}`,
 							},
 						},
 						{
@@ -709,7 +716,10 @@ describeHermesFrameworkObservabilityE2e(
 				{
 					body: JSON.stringify({
 						messages: [
-							{ content: `${forbiddenCanaries[0]} ${forbiddenCanaries[4]}`, role: 'user' },
+							{
+								content: `${forbiddenCanariesByField.prompt} ${forbiddenCanariesByField.identity}`,
+								role: 'user',
+							},
 						],
 						model: primaryModelName,
 						stream: false,
@@ -717,7 +727,7 @@ describeHermesFrameworkObservabilityE2e(
 					headers: {
 						authorization: `Bearer ${hermesE2eApiServerKey}`,
 						'content-type': 'application/json',
-						'x-hermes-session-id': forbiddenCanaries[4],
+						'x-hermes-session-id': forbiddenCanariesByField.identity,
 					},
 					method: 'POST',
 					signal: AbortSignal.timeout(120_000),
@@ -725,7 +735,7 @@ describeHermesFrameworkObservabilityE2e(
 			);
 			expect(response.ok).toBe(true);
 			const responseBody = await response.text();
-			expect(responseBody).toContain(forbiddenCanaries[1]);
+			expect(responseBody).toContain(forbiddenCanariesByField.response);
 			const providerObservations = provider.observations();
 			const primaryProviderHost = `${primaryModelHost}:${String(provider.port)}`;
 			const fallbackProviderHost = `${fallbackModelHost}:${String(provider.port)}`;
@@ -821,7 +831,6 @@ describeHermesFrameworkObservabilityE2e(
 				for (const canary of forbiddenCanaries) expect(body.includes(canary)).toBe(false);
 				expect(body.includes('dev.runtime.flavor')).toBe(true);
 			}
-			const contentCanaries = forbiddenCanaries.filter((_, index) => index !== 5);
 			for (const { body } of capturedOtlpRequests) {
 				for (const canary of contentCanaries) expect(body.includes(canary)).toBe(false);
 			}
