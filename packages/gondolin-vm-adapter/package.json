@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/gondolin-vm-adapter",
-	"version": "0.0.126",
+	"version": "0.0.128",
 	"description": "Gondolin implementation of the backend-neutral @agent-vm/managed-vm contracts.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {
