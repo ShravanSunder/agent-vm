@@ -18,7 +18,9 @@ import {
 } from '../build/gondolin-managed-vm-build-tooling.js';
 import {
 	generateManagedDockerfile,
+	loadManagedImageOverlay,
 	resolveManagedImageRelease,
+	type ManagedImageOverlay,
 } from '../build/managed-image-dockerfile.js';
 import {
 	readPreparedManagedVmImage,
@@ -831,6 +833,21 @@ export async function seedGatewayImageCacheIfAvailable(options: {
 export async function prepareGatewayE2eProjectImages(
 	options: PrepareGatewayE2eProjectImagesOptions,
 ): Promise<void> {
+	if (process.env.AGENT_VM_E2E_USE_LOCAL_TOOL_VM_PACKAGES === '1') {
+		const managedToolVmProfileNames = Object.entries(
+			options.project.systemConfig.imageProfiles.toolVms,
+		)
+			.filter(([, profile]) => profile.source !== undefined)
+			.map(([profileName]) => profileName);
+		if (managedToolVmProfileNames.length > 0) {
+			await useLocalToolVmMcpPortalPackage({
+				profileNames: managedToolVmProfileNames,
+				projectRoot: options.project.tempRoot,
+				repoRoot: process.cwd(),
+				systemConfig: options.project.systemConfig,
+			});
+		}
+	}
 	const imageTargets = await collectE2eImageTargets(options.project);
 	if (await materializePreparedE2eImagesFromManifest(options.project, imageTargets)) {
 		return;
@@ -1213,71 +1230,192 @@ function renderLocalDockerPackageInstallLines(
 	];
 }
 
+function renderLocalDockerPackageInstallCommand(
+	tarballs: readonly LocalDockerPackageTarball[],
+): string {
+	const [runLine, ...continuationLines] = renderLocalDockerPackageInstallLines(tarballs);
+	if (runLine === undefined || !runLine.startsWith('RUN ')) {
+		throw new Error(
+			'Expected the local package install renderer to begin with a Dockerfile RUN command.',
+		);
+	}
+	return [runLine.slice('RUN '.length), ...continuationLines].join('\n');
+}
+
+function isLocalToolVmPackageInstallCommand(command: string): boolean {
+	return (
+		command.includes('/opt/agent-vm/local-packages/package.json') &&
+		command.includes('file:/tmp/agent-vm-mcp-portal-')
+	);
+}
+
+function resolveManagedOverlayCopySourcePath(
+	overlayDirectory: string,
+	relativeSourcePath: string,
+): string {
+	if (path.isAbsolute(relativeSourcePath) || relativeSourcePath.split(/[\\/]+/u).includes('..')) {
+		throw new Error(
+			`Managed image overlay copy source '${relativeSourcePath}' must be relative and must not contain parent traversal.`,
+		);
+	}
+	return path.join(overlayDirectory, relativeSourcePath);
+}
+
+async function writeLocalToolVmManagedOverlay(options: {
+	readonly localPackageTarballs: readonly LocalDockerPackageTarball[];
+	readonly originalOverlayPath: string | undefined;
+	readonly overlayDirectory: string;
+}): Promise<string> {
+	const originalOverlay = await loadManagedImageOverlay(options.originalOverlayPath);
+	const originalOverlayDirectory =
+		options.originalOverlayPath === undefined
+			? undefined
+			: path.dirname(options.originalOverlayPath);
+	const generatedCopySourcePaths = new Set(
+		options.localPackageTarballs.map((tarball) => `local-agent-vm/${tarball.archiveName}`),
+	);
+	const preservedCopyEntries = originalOverlay.copy.filter(
+		(copyEntry) => !generatedCopySourcePaths.has(copyEntry.from),
+	);
+	await fs.mkdir(options.overlayDirectory, { recursive: true });
+	await Promise.all(
+		preservedCopyEntries.map(async (copyEntry): Promise<void> => {
+			if (originalOverlayDirectory === undefined) {
+				throw new Error('Managed Tool VM overlay copy entries require an original overlay path.');
+			}
+			const sourcePath = resolveManagedOverlayCopySourcePath(
+				originalOverlayDirectory,
+				copyEntry.from,
+			);
+			const targetPath = resolveManagedOverlayCopySourcePath(
+				options.overlayDirectory,
+				copyEntry.from,
+			);
+			if (path.resolve(sourcePath) === path.resolve(targetPath)) {
+				return;
+			}
+			await fs.mkdir(path.dirname(targetPath), { recursive: true });
+			await fs.copyFile(sourcePath, targetPath);
+		}),
+	);
+	const localPackageDirectory = path.join(options.overlayDirectory, 'local-agent-vm');
+	await fs.mkdir(localPackageDirectory, { recursive: true });
+	await Promise.all(
+		options.localPackageTarballs.map(async (tarball): Promise<void> => {
+			await fs.copyFile(tarball.sourcePath, path.join(localPackageDirectory, tarball.archiveName));
+		}),
+	);
+	const derivedOverlay = {
+		...originalOverlay,
+		copy: [
+			...preservedCopyEntries,
+			...options.localPackageTarballs.map((tarball) => ({
+				from: `local-agent-vm/${tarball.archiveName}`,
+				to: `/tmp/${tarball.archiveName}`,
+			})),
+		],
+		runAfterBase: [
+			...originalOverlay.runAfterBase.filter(
+				(command) => !isLocalToolVmPackageInstallCommand(command),
+			),
+			renderLocalDockerPackageInstallCommand(options.localPackageTarballs),
+		],
+	} satisfies ManagedImageOverlay;
+	const derivedOverlayPath = path.join(options.overlayDirectory, 'overlay.jsonc');
+	await fs.writeFile(derivedOverlayPath, `${JSON.stringify(derivedOverlay, null, '\t')}\n`, 'utf8');
+	return derivedOverlayPath;
+}
+
 export async function useLocalToolVmMcpPortalPackageTarballs(options: {
 	readonly localAgentPortalSdkTarballPath: string;
 	readonly localConfigContractsTarballPath: string;
 	readonly localMcpPortalTarballPath: string;
 	readonly localSecretManagementTarballPath: string;
+	readonly profileNames?: readonly string[] | undefined;
 	readonly projectRoot: string;
 	readonly systemConfig: LoadedSystemConfig;
 }): Promise<void> {
 	const managedImageRelease = await resolveManagedImageRelease();
 	const baseImage = managedImageRelease.baseImages['tool-vm'];
 	const toolVmProfiles = Object.entries(options.systemConfig.imageProfiles.toolVms);
-	await Promise.all(
-		toolVmProfiles.map(async ([profileName, toolVmProfile]): Promise<void> => {
-			const dockerContextDirectory = path.join(
-				options.projectRoot,
-				'vm-images',
-				'tool-vms',
-				`${profileName}-local-mcp-portal`,
-			);
-			const dockerfilePath = path.join(dockerContextDirectory, 'Dockerfile');
-			await fs.rm(dockerContextDirectory, { force: true, recursive: true });
-			await fs.mkdir(dockerContextDirectory, { recursive: true });
-			const localPackageTarballs = [
-				createLocalDockerPackageTarball({
-					packageName: 'agent-portal-sdk',
-					sourcePath: options.localAgentPortalSdkTarballPath,
-				}),
-				createLocalDockerPackageTarball({
-					packageName: 'config-contracts',
-					sourcePath: options.localConfigContractsTarballPath,
-				}),
-				createLocalDockerPackageTarball({
-					packageName: 'secret-management',
-					sourcePath: options.localSecretManagementTarballPath,
-				}),
-				createLocalDockerPackageTarball({
-					packageName: 'mcp-portal',
-					sourcePath: options.localMcpPortalTarballPath,
-				}),
-			] satisfies readonly LocalDockerPackageTarball[];
-			await copyLocalPackageTarballsToDockerContext({
-				dockerContextDirectory,
-				tarballs: localPackageTarballs,
-			});
-			await fs.writeFile(
-				dockerfilePath,
-				[
-					`FROM ${baseImage.repository}:${baseImage.tag}`,
-					'',
-					'# Generated by the OpenClaw smoke harness from the local MCP Portal package.',
-					...localPackageTarballs.map(
-						(tarball) => `COPY ${tarball.archiveName} /tmp/${tarball.archiveName}`,
-					),
-					...renderLocalDockerPackageInstallLines(localPackageTarballs),
-					'',
-				].join('\n'),
-				'utf8',
-			);
-			toolVmProfile.dockerfile = dockerfilePath;
-			delete toolVmProfile.source;
+	const localPackageTarballs = [
+		createLocalDockerPackageTarball({
+			packageName: 'agent-portal-sdk',
+			sourcePath: options.localAgentPortalSdkTarballPath,
 		}),
+		createLocalDockerPackageTarball({
+			packageName: 'config-contracts',
+			sourcePath: options.localConfigContractsTarballPath,
+		}),
+		createLocalDockerPackageTarball({
+			packageName: 'secret-management',
+			sourcePath: options.localSecretManagementTarballPath,
+		}),
+		createLocalDockerPackageTarball({
+			packageName: 'mcp-portal',
+			sourcePath: options.localMcpPortalTarballPath,
+		}),
+	] satisfies readonly LocalDockerPackageTarball[];
+	await Promise.all(
+		toolVmProfiles
+			.filter(
+				([profileName]) =>
+					options.profileNames === undefined || options.profileNames.includes(profileName),
+			)
+			.map(async ([profileName, toolVmProfile]): Promise<void> => {
+				if (toolVmProfile.source !== undefined) {
+					const overlayDirectory = path.join(
+						options.projectRoot,
+						'vm-images',
+						'tool-vms',
+						`${profileName}-local-mcp-portal-overlay`,
+					);
+					const derivedOverlayPath = await writeLocalToolVmManagedOverlay({
+						localPackageTarballs,
+						originalOverlayPath: toolVmProfile.source.overlay,
+						overlayDirectory,
+					});
+					toolVmProfile.source = {
+						...toolVmProfile.source,
+						overlay: derivedOverlayPath,
+					};
+					return;
+				}
+				const dockerContextDirectory = path.join(
+					options.projectRoot,
+					'vm-images',
+					'tool-vms',
+					`${profileName}-local-mcp-portal`,
+				);
+				const dockerfilePath = path.join(dockerContextDirectory, 'Dockerfile');
+				await fs.rm(dockerContextDirectory, { force: true, recursive: true });
+				await fs.mkdir(dockerContextDirectory, { recursive: true });
+				await copyLocalPackageTarballsToDockerContext({
+					dockerContextDirectory,
+					tarballs: localPackageTarballs,
+				});
+				await fs.writeFile(
+					dockerfilePath,
+					[
+						`FROM ${baseImage.repository}:${baseImage.tag}`,
+						'',
+						'# Generated by the OpenClaw smoke harness from the local MCP Portal package.',
+						...localPackageTarballs.map(
+							(tarball) => `COPY ${tarball.archiveName} /tmp/${tarball.archiveName}`,
+						),
+						...renderLocalDockerPackageInstallLines(localPackageTarballs),
+						'',
+					].join('\n'),
+					'utf8',
+				);
+				toolVmProfile.dockerfile = dockerfilePath;
+				delete toolVmProfile.source;
+			}),
 	);
 }
 
 export async function useLocalToolVmMcpPortalPackage(options: {
+	readonly profileNames?: readonly string[] | undefined;
 	readonly projectRoot: string;
 	readonly repoRoot: string;
 	readonly systemConfig: LoadedSystemConfig;
@@ -1304,6 +1442,7 @@ export async function useLocalToolVmMcpPortalPackage(options: {
 			localConfigContractsTarballPath,
 			localMcpPortalTarballPath,
 			localSecretManagementTarballPath,
+			...(options.profileNames === undefined ? {} : { profileNames: options.profileNames }),
 			projectRoot: options.projectRoot,
 			systemConfig: options.systemConfig,
 		});

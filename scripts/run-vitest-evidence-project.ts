@@ -50,6 +50,13 @@ export interface VitestEvidenceSummary {
 }
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const localToolVmPackageEvidenceProjects = new Set([
+	'e2e-hermes',
+	'e2e-openclaw',
+	'e2e-vm',
+	'e2e-vm-mediation',
+	'e2e-worker',
+]);
 
 export function resolveVitestJsonOutputFilePath(
 	rootDirectory: string,
@@ -83,6 +90,9 @@ export function createVitestEvidenceObservabilityEnvironment(options: {
 	} satisfies VitestEvidenceObservabilityState;
 	return {
 		env: {
+			...(localToolVmPackageEvidenceProjects.has(options.projectName)
+				? { AGENT_VM_E2E_USE_LOCAL_TOOL_VM_PACKAGES: '1' }
+				: {}),
 			AGENT_VM_OBSERVABILITY_MARKER: marker,
 			AGENT_VM_OBSERVABILITY_QUERY_START: queryStart,
 			AGENT_VM_OBSERVABILITY_RELEASE_CHANNEL: 'local',

@@ -8,6 +8,12 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { computeFingerprintFromConfigPath } from '../build/gondolin-image-builder.js';
 import { managedVmImageAssetFileNames } from '../build/gondolin-managed-vm-build-tooling.js';
 import {
+	generateManagedDockerfile,
+	loadManagedImageOverlay,
+	resolveManagedImageRelease,
+	type GenerateManagedDockerfileResult,
+} from '../build/managed-image-dockerfile.js';
+import {
 	readPreparedManagedVmImage,
 	writePreparedManagedVmImage,
 } from '../build/prepared-gondolin-image-cache.js';
@@ -1037,6 +1043,224 @@ describe('findReusableGatewayImageDirectory', () => {
 });
 
 describe('prepareGatewayE2eProjectImages', () => {
+	it('preserves managed Tool VM overlays while replacing registry packages with local tarballs', async () => {
+		const previousCacheRoot = process.env.AGENT_VM_E2E_CACHE_DIR;
+		const previousLocalPackageMode = process.env.AGENT_VM_E2E_USE_LOCAL_TOOL_VM_PACKAGES;
+		const temporaryRoot = await createTemporaryRoot('agent-vm-e2e-harness-');
+		process.env.AGENT_VM_E2E_CACHE_DIR = path.join(temporaryRoot, 'shared-e2e-cache');
+		process.env.AGENT_VM_E2E_USE_LOCAL_TOOL_VM_PACKAGES = '1';
+		try {
+			const project = await scaffoldOpenClawE2eProject({
+				architecture: 'aarch64',
+				prefix: 'openclaw-local-tool-vm-packages-',
+				zoneId: 'openclaw-local-tool-vm-packages',
+			});
+			temporaryRoots.push(project.tempRoot);
+			const managedToolVmProfile = project.systemConfig.imageProfiles.toolVms.default;
+			if (managedToolVmProfile === undefined) {
+				throw new Error('Expected the scaffold to define a managed default Tool VM profile.');
+			}
+			if (managedToolVmProfile.source === undefined) {
+				throw new Error('Expected the scaffold Tool VM profile to use a managed source.');
+			}
+			const originalOverlayPath = managedToolVmProfile.source.overlay;
+			if (originalOverlayPath === undefined) {
+				throw new Error('Expected the scaffold Tool VM profile to define a managed overlay.');
+			}
+			const originalOverlayDirectory = path.dirname(originalOverlayPath);
+			const originalOverlayAssetPath = path.join(
+				originalOverlayDirectory,
+				'managed-overlay',
+				'marker.txt',
+			);
+			const prefixedCustomOverlayAssetPath = path.join(
+				originalOverlayDirectory,
+				'local-agent-vm',
+				'agent-vm-custom-runtime.tgz',
+			);
+			await fs.mkdir(path.dirname(originalOverlayAssetPath), { recursive: true });
+			await fs.mkdir(path.dirname(prefixedCustomOverlayAssetPath), { recursive: true });
+			await fs.writeFile(originalOverlayAssetPath, 'managed-overlay-marker\n', 'utf8');
+			await fs.writeFile(prefixedCustomOverlayAssetPath, 'custom-runtime-archive\n', 'utf8');
+			await fs.writeFile(
+				originalOverlayPath,
+				`${JSON.stringify(
+					{
+						schemaVersion: 1,
+						extraAptPackages: ['ripgrep'],
+						packageOverrides: {
+							npm: ['tsx@4.20.3'],
+							openclaw: [],
+							pnpm: {},
+						},
+						copy: [
+							{
+								from: 'managed-overlay/marker.txt',
+								to: '/opt/agent-vm/managed-overlay-marker.txt',
+							},
+							{
+								from: 'local-agent-vm/agent-vm-custom-runtime.tgz',
+								to: '/opt/agent-vm/agent-vm-custom-runtime.tgz',
+							},
+						],
+						runAfterBase: ['test -f /opt/agent-vm/managed-overlay-marker.txt'],
+					},
+					null,
+					'\t',
+				)}\n`,
+				'utf8',
+			);
+			const sourceManagedDockerfilePath = path.join(
+				project.tempRoot,
+				'source-managed-tool-vm.Dockerfile',
+			);
+			await fs.writeFile(sourceManagedDockerfilePath, 'FROM scratch\n', 'utf8');
+			managedToolVmProfile.dockerfile = sourceManagedDockerfilePath;
+			const explicitDockerfilePath = path.join(project.tempRoot, 'explicit-tool-vm.Dockerfile');
+			await fs.writeFile(explicitDockerfilePath, 'FROM scratch\n', 'utf8');
+			project.systemConfig.imageProfiles.toolVms.explicit = {
+				...managedToolVmProfile,
+				dockerfile: explicitDockerfilePath,
+				source: undefined,
+			};
+			const buildConfigs: LoadedSystemConfig[] = [];
+			let generatedManagedDockerfile: GenerateManagedDockerfileResult | undefined;
+
+			await prepareGatewayE2eProjectImages({
+				project,
+				runBuild: async ({ systemConfig }) => {
+					buildConfigs.push(systemConfig);
+					const toolVmProfile = systemConfig.imageProfiles.toolVms.default;
+					if (toolVmProfile?.source === undefined) {
+						throw new Error('Expected the localized Tool VM profile to retain its managed source.');
+					}
+					generatedManagedDockerfile = await generateManagedDockerfile({
+						base: toolVmProfile.source.base,
+						imageTargetFamily: 'toolVm',
+						imageTargetName: 'default',
+						managedImageRelease: await resolveManagedImageRelease(),
+						outputDirectory: path.join(project.tempRoot, 'generated-tool-vm-proof'),
+						...(toolVmProfile.source.overlay === undefined
+							? {}
+							: { overlayPath: toolVmProfile.source.overlay }),
+					});
+				},
+			});
+			await prepareGatewayE2eProjectImages({
+				project,
+				runBuild: async ({ systemConfig }) => {
+					buildConfigs.push(systemConfig);
+					const toolVmProfile = systemConfig.imageProfiles.toolVms.default;
+					if (toolVmProfile?.source === undefined) {
+						throw new Error('Expected repeated localization to retain the managed source.');
+					}
+					generatedManagedDockerfile = await generateManagedDockerfile({
+						base: toolVmProfile.source.base,
+						imageTargetFamily: 'toolVm',
+						imageTargetName: 'default',
+						managedImageRelease: await resolveManagedImageRelease(),
+						outputDirectory: path.join(project.tempRoot, 'generated-tool-vm-proof'),
+						...(toolVmProfile.source.overlay === undefined
+							? {}
+							: { overlayPath: toolVmProfile.source.overlay }),
+					});
+				},
+			});
+
+			const toolVmProfile = project.systemConfig.imageProfiles.toolVms.default;
+			if (toolVmProfile?.source?.overlay === undefined) {
+				throw new Error(
+					'Expected the default Tool VM profile to retain a derived managed overlay.',
+				);
+			}
+			if (generatedManagedDockerfile === undefined) {
+				throw new Error('Expected the build seam to generate the managed Tool VM Dockerfile.');
+			}
+			const derivedOverlay = await loadManagedImageOverlay(toolVmProfile.source.overlay);
+			const dockerfile = await fs.readFile(generatedManagedDockerfile.dockerfilePath, 'utf8');
+			expect(buildConfigs).toEqual([project.systemConfig, project.systemConfig]);
+			expect(toolVmProfile.dockerfile).toBe(sourceManagedDockerfilePath);
+			expect(toolVmProfile.source.overlay).not.toBe(originalOverlayPath);
+			expect(derivedOverlay.extraAptPackages).toEqual(['ripgrep']);
+			expect(derivedOverlay.packageOverrides).toEqual({
+				npm: ['tsx@4.20.3'],
+				openclaw: [],
+				pnpm: {},
+			});
+			expect(derivedOverlay.copy).toContainEqual({
+				from: 'managed-overlay/marker.txt',
+				to: '/opt/agent-vm/managed-overlay-marker.txt',
+			});
+			expect(derivedOverlay.copy).toContainEqual({
+				from: 'local-agent-vm/agent-vm-custom-runtime.tgz',
+				to: '/opt/agent-vm/agent-vm-custom-runtime.tgz',
+			});
+			expect(
+				derivedOverlay.copy.filter((copyEntry) =>
+					/^local-agent-vm\/agent-vm-(?:agent-portal-sdk|config-contracts|secret-management|mcp-portal)-/u.test(
+						copyEntry.from,
+					),
+				),
+			).toHaveLength(4);
+			expect(
+				derivedOverlay.runAfterBase.filter((command) =>
+					command.includes('/opt/agent-vm/local-packages/package.json'),
+				),
+			).toHaveLength(1);
+			expect(derivedOverlay.runAfterBase).toContain(
+				'test -f /opt/agent-vm/managed-overlay-marker.txt',
+			);
+			expect(
+				await fs.readFile(
+					path.join(path.dirname(toolVmProfile.source.overlay), 'managed-overlay', 'marker.txt'),
+					'utf8',
+				),
+			).toBe('managed-overlay-marker\n');
+			expect(
+				await fs.readFile(
+					path.join(
+						path.dirname(toolVmProfile.source.overlay),
+						'local-agent-vm',
+						'agent-vm-custom-runtime.tgz',
+					),
+					'utf8',
+				),
+			).toBe('custom-runtime-archive\n');
+			expect(dockerfile).toContain(
+				'RUN apt-get update && apt-get install -y --no-install-recommends "ripgrep"',
+			);
+			expect(dockerfile).toContain(
+				'COPY overlay/managed-overlay/marker.txt /opt/agent-vm/managed-overlay-marker.txt',
+			);
+			expect(dockerfile).toContain('RUN test -f /opt/agent-vm/managed-overlay-marker.txt');
+			expect(dockerfile).toContain('RUN pnpm add -g --ignore-scripts "tsx@4.20.3"');
+			expect(dockerfile).toMatch(
+				/COPY overlay\/local-agent-vm\/agent-vm-mcp-portal-[^\s]+\.tgz \/tmp\/agent-vm-mcp-portal-[^\s]+\.tgz/u,
+			);
+			expect(dockerfile).toContain('file:/tmp/agent-vm-mcp-portal-');
+			expect(dockerfile).not.toMatch(/pnpm add -g "@agent-vm\/mcp-portal@/u);
+			expect(generatedManagedDockerfile.plan.mcpPortalPackage).toMatchObject({
+				name: '@agent-vm/mcp-portal',
+				source: 'local-overlay',
+			});
+			expect(project.systemConfig.imageProfiles.toolVms.explicit).toMatchObject({
+				dockerfile: explicitDockerfilePath,
+				source: undefined,
+			});
+		} finally {
+			if (previousCacheRoot === undefined) {
+				delete process.env.AGENT_VM_E2E_CACHE_DIR;
+			} else {
+				process.env.AGENT_VM_E2E_CACHE_DIR = previousCacheRoot;
+			}
+			if (previousLocalPackageMode === undefined) {
+				delete process.env.AGENT_VM_E2E_USE_LOCAL_TOOL_VM_PACKAGES;
+			} else {
+				process.env.AGENT_VM_E2E_USE_LOCAL_TOOL_VM_PACKAGES = previousLocalPackageMode;
+			}
+		}
+	});
+
 	it('seeds reusable gateway images before running the build command once for the project', async () => {
 		const previousSmokeCacheRoot = process.env.AGENT_VM_E2E_CACHE_DIR;
 		const temporaryRoot = await createTemporaryRoot('agent-vm-e2e-harness-');
