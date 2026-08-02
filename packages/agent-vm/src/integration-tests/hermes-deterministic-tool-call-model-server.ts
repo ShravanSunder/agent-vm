@@ -122,6 +122,7 @@ echo "$!" >/tmp/agent-vm-hermes-recovery-model.pid
 node --input-type=module <<'NODE'
 import { once } from 'node:events';
 import fs from 'node:fs';
+import { readFile } from 'node:fs/promises';
 
 const readyPath = '/tmp/agent-vm-hermes-recovery-model.ready';
 const logPath = '/tmp/agent-vm-hermes-recovery-model.log';
@@ -131,7 +132,7 @@ if (!fs.existsSync(readyPath)) {
   try {
     while (!fs.existsSync(readyPath)) {
       if (Date.now() >= readinessDeadlineMs) {
-        const startupLog = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8') : '(missing)';
+        const startupLog = await readFile(logPath, 'utf8').catch(() => '(missing)');
         throw new Error('Hermes deterministic model server did not become ready:\\n' + startupLog);
       }
       await once(watcher, 'change', { signal: AbortSignal.timeout(1000) }).catch(() => undefined);

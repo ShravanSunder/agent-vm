@@ -112,6 +112,16 @@ describe('agent-vm health events', () => {
 		expect(
 			isAgentVmHealthEvent({
 				...event,
+				nextRetryAtMs: undefined,
+				outcome: 'accepted',
+				reconnectPhase: 'attempt-failed',
+				terminalReason: 'controller-shutdown',
+				windowState: 'closed',
+			}),
+		).toBe(false);
+		expect(
+			isAgentVmHealthEvent({
+				...event,
 				reconnectPhase: 'attempt-started',
 			}),
 		).toBe(false);

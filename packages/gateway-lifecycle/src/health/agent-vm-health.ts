@@ -683,7 +683,7 @@ function hasValidGatewayControlSessionReconnectEvidence(value: Record<string, un
 	}
 	return value.terminalReason === 'accepted'
 		? isAcceptedPhase && value.outcome === 'accepted'
-		: !isAcceptedPhase;
+		: !isAcceptedPhase && value.outcome !== 'accepted';
 }
 
 export function isAgentVmHealthEvent(value: unknown): value is AgentVmHealthEvent {
