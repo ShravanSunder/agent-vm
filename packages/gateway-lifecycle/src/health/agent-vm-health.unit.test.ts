@@ -57,6 +57,44 @@ describe('agent-vm health events', () => {
 		).toBe(false);
 	});
 
+	it('validates bounded reconnect-window evidence and rejects open-ended or inconsistent fields', () => {
+		const event = {
+			attemptCount: 4,
+			bootId: 'gateway-boot-a',
+			domain: 'gateway_control',
+			elapsedMs: 50,
+			firstObservedAtMs: 1_000,
+			kind: 'gateway-control-session',
+			latestObservedAtMs: 1_050,
+			nextRetryAtMs: 1_100,
+			observedAtMs: 1_050,
+			operation: 'control-session-reconnect',
+			outcome: 'transport-error',
+			peerId: 'gateway-beta',
+			reconnectPhase: 'retry-scheduled',
+			result: 'failed',
+			windowState: 'open',
+			zoneId: 'beta',
+		} satisfies AgentVmHealthEvent;
+
+		expect(isAgentVmHealthEvent(event)).toBe(true);
+		expect(isAgentVmHealthEvent({ ...event, reconnectPhase: 'dialing-forever' })).toBe(false);
+		expect(isAgentVmHealthEvent({ ...event, outcome: 'raw socket exception' })).toBe(false);
+		expect(isAgentVmHealthEvent({ ...event, bootId: undefined })).toBe(false);
+		expect(isAgentVmHealthEvent({ ...event, terminalReason: 'accepted' })).toBe(false);
+		expect(
+			isAgentVmHealthEvent({
+				...event,
+				nextRetryAtMs: undefined,
+				outcome: 'accepted',
+				reconnectPhase: 'accepted',
+				result: 'ok',
+				terminalReason: 'accepted',
+				windowState: 'closed',
+			}),
+		).toBe(true);
+	});
+
 	it('keeps gateway plugin health generic over gateway type', () => {
 		const workerEvent = {
 			gatewayService: 'worker',

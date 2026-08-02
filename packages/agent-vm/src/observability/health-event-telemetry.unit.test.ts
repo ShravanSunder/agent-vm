@@ -101,6 +101,52 @@ describe('mapHealthEventToTelemetry', () => {
 		});
 	});
 
+	it('maps bounded reconnect evidence without raw peer, boot, or session identifiers', () => {
+		const event = {
+			attemptCount: 7,
+			bootId: 'boot-secret-canary',
+			connectionId: 'connection-secret-canary',
+			domain: 'gateway_control',
+			elapsedMs: 125,
+			firstObservedAtMs: 1_781_445_000_000,
+			kind: 'gateway-control-session',
+			latestObservedAtMs: 1_781_445_000_125,
+			nextRetryAtMs: 1_781_445_005_125,
+			observedAtMs: 1_781_445_000_125,
+			operation: 'control-session-reconnect',
+			outcome: 'timeout',
+			peerId: 'peer-secret-canary',
+			reconnectPhase: 'retry-scheduled',
+			result: 'timeout',
+			sessionId: 'session-secret-canary',
+			windowState: 'open',
+			zoneId: 'beta',
+		} satisfies AgentVmHealthEvent;
+
+		const telemetry = mapHealthEventToTelemetry(event);
+		const serialized = JSON.stringify(telemetry);
+
+		expect(telemetry.log.attributes).toMatchObject({
+			'agent_vm.gateway.control.attempt_count': 7,
+			'agent_vm.gateway.control.first_observed_at_ms': 1_781_445_000_000,
+			'agent_vm.gateway.control.latest_observed_at_ms': 1_781_445_000_125,
+			'agent_vm.gateway.control.next_retry_at_ms': 1_781_445_005_125,
+			'agent_vm.gateway.control.outcome': 'timeout',
+			'agent_vm.gateway.control.reconnect_phase': 'retry-scheduled',
+			'agent_vm.gateway.control.window_state': 'open',
+		});
+		expect(telemetry.log.attributes['agent_vm.gateway.control.boot_id_hash']).toMatch(
+			/^[a-f0-9]{16}$/u,
+		);
+		expect(telemetry.log.attributes['agent_vm.gateway.control.peer_id_hash']).toMatch(
+			/^[a-f0-9]{16}$/u,
+		);
+		expect(serialized).not.toContain('boot-secret-canary');
+		expect(serialized).not.toContain('connection-secret-canary');
+		expect(serialized).not.toContain('peer-secret-canary');
+		expect(serialized).not.toContain('session-secret-canary');
+	});
+
 	it('maps health correlation into operator-visible log attributes only', () => {
 		const event = {
 			agentId: 'main',

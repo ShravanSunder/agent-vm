@@ -43,7 +43,10 @@ import {
 	startGatewayZone as startGatewayZoneDefault,
 	startGatewayZoneForController as startGatewayZoneForControllerDefault,
 } from '../gateway/gateway-zone-orchestrator.js';
-import type { StartGatewayZoneOptions } from '../gateway/gateway-zone-support.js';
+import type {
+	GatewayControlSessionConnector,
+	StartGatewayZoneOptions,
+} from '../gateway/gateway-zone-support.js';
 import { controllerFixedGatewayRuntimeArtifactLimits } from '../gateway/managed-gateway-runtime-input-builders.js';
 
 const managedVmRuntimeComposition = createManagedVmRuntimeComposition();
@@ -72,9 +75,15 @@ export async function startE2eGatewayZone(
 
 export async function startE2eGatewayZoneForController(
 	options: Parameters<typeof startGatewayZoneForControllerDefault>[0],
+	testHooks: {
+		readonly connectGatewayControlSession?: GatewayControlSessionConnector;
+	} = {},
 ): Promise<Awaited<ReturnType<typeof startGatewayZoneForControllerDefault>>> {
 	return await startGatewayZoneForControllerDefault(options, {
 		...managedVmRuntimeComposition,
+		...(testHooks.connectGatewayControlSession === undefined
+			? {}
+			: { connectGatewayControlSession: testHooks.connectGatewayControlSession }),
 		gatewayRuntimeArtifactLimits: controllerFixedGatewayRuntimeArtifactLimits,
 	});
 }

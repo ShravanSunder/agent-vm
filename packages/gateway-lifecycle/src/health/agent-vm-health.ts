@@ -175,6 +175,73 @@ export const gatewayControlSessionHealthOperations = [
 export type GatewayControlSessionHealthOperation =
 	(typeof gatewayControlSessionHealthOperations)[number];
 
+export const gatewayControlSessionReconnectPhases = [
+	'attachment-lost',
+	'attempt-started',
+	'attempt-failed',
+	'retry-scheduled',
+	'accepted',
+	'stabilizing',
+	'stable',
+] as const;
+
+export type GatewayControlSessionReconnectPhase =
+	(typeof gatewayControlSessionReconnectPhases)[number];
+
+export const gatewayControlSessionReconnectOutcomes = [
+	'transport-error',
+	'timeout',
+	'accepted',
+	'rejected',
+	'generation-mismatch',
+	'stale-attachment',
+] as const;
+
+export type GatewayControlSessionReconnectOutcome =
+	(typeof gatewayControlSessionReconnectOutcomes)[number];
+
+export const gatewayControlSessionReconnectTerminalReasons = [
+	'accepted',
+	'manager-disposed',
+	'gateway-superseded',
+	'controller-shutdown',
+] as const;
+
+export type GatewayControlSessionReconnectTerminalReason =
+	(typeof gatewayControlSessionReconnectTerminalReasons)[number];
+
+interface GatewayControlSessionReconnectEvidenceBase {
+	readonly attemptCount: number;
+	readonly bootId: string;
+	readonly firstObservedAtMs: number;
+	readonly latestObservedAtMs: number;
+	readonly outcome: GatewayControlSessionReconnectOutcome;
+	readonly reconnectPhase: GatewayControlSessionReconnectPhase;
+}
+
+type GatewayControlSessionReconnectEvidence =
+	| (GatewayControlSessionReconnectEvidenceBase & {
+			readonly nextRetryAtMs?: number | undefined;
+			readonly terminalReason?: undefined;
+			readonly windowState: 'open';
+	  })
+	| (GatewayControlSessionReconnectEvidenceBase & {
+			readonly nextRetryAtMs?: undefined;
+			readonly terminalReason: GatewayControlSessionReconnectTerminalReason;
+			readonly windowState: 'closed';
+	  });
+
+interface GatewayControlSessionReconnectEvidenceAbsent {
+	readonly attemptCount?: undefined;
+	readonly firstObservedAtMs?: undefined;
+	readonly latestObservedAtMs?: undefined;
+	readonly nextRetryAtMs?: undefined;
+	readonly outcome?: undefined;
+	readonly reconnectPhase?: undefined;
+	readonly terminalReason?: undefined;
+	readonly windowState?: undefined;
+}
+
 export type AgentVmHealthEvent =
 	| (AgentVmHealthEventBase & {
 			readonly kind: 'caller-context-rejection';
@@ -200,16 +267,17 @@ export type AgentVmHealthEvent =
 			readonly port: number;
 			readonly statusCode?: number | undefined;
 	  })
-	| (AgentVmHealthEventBase & {
-			readonly bootId?: string | undefined;
-			readonly connectionId?: string | undefined;
-			readonly domain: 'gateway_control';
-			readonly elapsedMs: number;
-			readonly kind: 'gateway-control-session';
-			readonly operation: GatewayControlSessionHealthOperation;
-			readonly peerId: string;
-			readonly sessionId?: string | undefined;
-	  })
+	| (AgentVmHealthEventBase &
+			(GatewayControlSessionReconnectEvidence | GatewayControlSessionReconnectEvidenceAbsent) & {
+				readonly bootId?: string | undefined;
+				readonly connectionId?: string | undefined;
+				readonly domain: 'gateway_control';
+				readonly elapsedMs: number;
+				readonly kind: 'gateway-control-session';
+				readonly operation: GatewayControlSessionHealthOperation;
+				readonly peerId: string;
+				readonly sessionId?: string | undefined;
+			})
 	| (AgentVmHealthEventBase & {
 			readonly attempt: number;
 			readonly elapsedMs: number;
@@ -558,6 +626,58 @@ function hasValidToolVmLeaseLifecycleFields(value: Record<string, unknown>): boo
 	);
 }
 
+const gatewayControlSessionReconnectEvidenceKeys = [
+	'attemptCount',
+	'firstObservedAtMs',
+	'latestObservedAtMs',
+	'nextRetryAtMs',
+	'outcome',
+	'reconnectPhase',
+	'terminalReason',
+	'windowState',
+] as const;
+
+function hasValidGatewayControlSessionReconnectEvidence(value: Record<string, unknown>): boolean {
+	const hasReconnectEvidence = gatewayControlSessionReconnectEvidenceKeys.some(
+		(key) => value[key] !== undefined,
+	);
+	if (!hasReconnectEvidence) {
+		return true;
+	}
+	if (
+		!isNonNegativeInteger(value.attemptCount) ||
+		typeof value.bootId !== 'string' ||
+		value.bootId.length === 0 ||
+		!isNonNegativeInteger(value.firstObservedAtMs) ||
+		!isNonNegativeInteger(value.latestObservedAtMs) ||
+		value.latestObservedAtMs < value.firstObservedAtMs ||
+		!isOneOf(gatewayControlSessionReconnectOutcomes, value.outcome) ||
+		!isOneOf(gatewayControlSessionReconnectPhases, value.reconnectPhase)
+	) {
+		return false;
+	}
+	const isAcceptedPhase = isOneOf(
+		['accepted', 'stabilizing', 'stable'] as const,
+		value.reconnectPhase,
+	);
+	if ((isAcceptedPhase && value.result !== 'ok') || (!isAcceptedPhase && value.result === 'ok')) {
+		return false;
+	}
+	if (value.windowState === 'open') {
+		return (
+			value.terminalReason === undefined &&
+			(value.nextRetryAtMs === undefined ||
+				(isNonNegativeInteger(value.nextRetryAtMs) &&
+					value.nextRetryAtMs >= value.latestObservedAtMs))
+		);
+	}
+	return (
+		value.windowState === 'closed' &&
+		value.nextRetryAtMs === undefined &&
+		isOneOf(gatewayControlSessionReconnectTerminalReasons, value.terminalReason)
+	);
+}
+
 export function isAgentVmHealthEvent(value: unknown): value is AgentVmHealthEvent {
 	if (!isRecord(value) || !hasBaseEventFields(value)) {
 		return false;
@@ -602,6 +722,7 @@ export function isAgentVmHealthEvent(value: unknown): value is AgentVmHealthEven
 				optionalString(value.connectionId) &&
 				value.domain === 'gateway_control' &&
 				isNonNegativeFiniteNumber(value.elapsedMs) &&
+				hasValidGatewayControlSessionReconnectEvidence(value) &&
 				isOneOf(gatewayControlSessionHealthOperations, value.operation) &&
 				typeof value.peerId === 'string' &&
 				value.peerId.length > 0 &&

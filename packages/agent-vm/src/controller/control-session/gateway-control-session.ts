@@ -98,6 +98,7 @@ export interface ConnectGatewayControlSessionOptions {
 	readonly onReconnectExhausted?: GatewayDisposableControlSessionClientOptions['onReconnectExhausted'];
 	readonly processAdmissionCoordinator?: GatewayControlProcessAdmissionCoordinator;
 	readonly recordHealthEvent?: GatewayDisposableControlSessionClientOptions['recordHealthEvent'];
+	readonly recordLiveHealthEvent?: GatewayDisposableControlSessionClientOptions['recordLiveHealthEvent'];
 	readonly resolveInboundStablePrincipal?: GatewayDisposableControlSessionClientOptions['resolveInboundStablePrincipal'];
 	readonly sessionFenceRegistry?: ControlSessionFenceRegistry;
 	readonly signal?: AbortSignal;
@@ -556,6 +557,9 @@ export async function connectGatewayControlSession(
 		...(options.recordHealthEvent === undefined
 			? {}
 			: { recordHealthEvent: options.recordHealthEvent }),
+		...(options.recordLiveHealthEvent === undefined
+			? {}
+			: { recordLiveHealthEvent: options.recordLiveHealthEvent }),
 		...(options.resolveInboundStablePrincipal === undefined
 			? {}
 			: { resolveInboundStablePrincipal: options.resolveInboundStablePrincipal }),

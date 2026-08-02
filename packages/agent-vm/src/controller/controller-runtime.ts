@@ -803,6 +803,11 @@ async function startControllerRuntimeWithOwnershipLock(
 						managedVmExactProcessTermination: dependencies.managedVmExactProcessTermination,
 						managedVmImages: dependencies.managedVmImages,
 						managedVmOwnedDirectories: dependencies.managedVmOwnedDirectories,
+						recordCurrentControlSessionHealthEvent: (event) => healthEventStore.record(event),
+						recordCurrentControlSessionLiveHealthEvent: (event) =>
+							healthEventStore.recordLiveOnly(event),
+						recordNonCurrentControlSessionEvidence: (event) =>
+							healthEventStore.recordEvidenceOnly(event),
 						...(dependencies.isProcessAlive ? { isProcessAlive: dependencies.isProcessAlive } : {}),
 						now,
 						onGatewayRuntimeAttachmentLost: (transition) => {
@@ -895,6 +900,11 @@ async function startControllerRuntimeWithOwnershipLock(
 									: {}),
 								...(startOptions?.onControlSessionHeartbeat
 									? { onControlSessionHeartbeat: startOptions.onControlSessionHeartbeat }
+									: {}),
+								...(startOptions?.onControlSessionHealthEvidence
+									? {
+											onControlSessionHealthEvidence: startOptions.onControlSessionHealthEvidence,
+										}
 									: {}),
 								onControlSessionAttachmentGap: (transition: GatewayControlSessionAttachmentGap) => {
 									leaseManager.markControlSessionDisconnected({
@@ -1312,6 +1322,10 @@ async function startControllerRuntimeWithOwnershipLock(
 					};
 				},
 				recoverGatewayVm,
+				recoverDeadControlSession: ({ sourceKey, zoneId }) => {
+					registry.getManagedGatewayRuntime(zoneId).ensureCurrentControlSessionDialing(sourceKey);
+					return Promise.resolve();
+				},
 				resolveGatewayRecoverySourceKey: ({ zoneId }) => {
 					try {
 						const lifecycleState = registry.getManagedGatewayRuntime(zoneId).getLifecycleState();

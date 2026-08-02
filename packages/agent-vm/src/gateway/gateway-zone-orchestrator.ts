@@ -2519,16 +2519,35 @@ async function startGatewayZoneImplementation(
 								processEpoch: managedControlSessionMaterial.processEpoch,
 							});
 						},
-						...(options.healthEventStore === undefined
+						...(options.healthEventStore === undefined &&
+						options.onControlSessionHealthEvidence === undefined
 							? {}
 							: {
 									recordHealthEvent: (
 										event: Extract<
 											AgentVmHealthEvent,
-											{ readonly kind: 'caller-context-rejection' }
+											{
+												readonly kind: 'caller-context-rejection' | 'gateway-control-session';
+											}
 										>,
 									): void => {
-										options.healthEventStore?.record(event);
+										if (event.kind === 'caller-context-rejection') {
+											options.healthEventStore?.record(event);
+											return;
+										}
+										if (options.onControlSessionHealthEvidence !== undefined) {
+											options.onControlSessionHealthEvidence({
+												event,
+												gateway: gatewayIdentity,
+												recordKind: 'durable-and-live',
+											});
+											return;
+										}
+										if (event.windowState === 'closed' && event.terminalReason !== 'accepted') {
+											options.healthEventStore?.recordEvidenceOnly(event);
+										} else {
+											options.healthEventStore?.record(event);
+										}
 									},
 								}),
 						resolveInboundStablePrincipal: ({ envelope, message }) =>
@@ -2549,6 +2568,17 @@ async function startGatewayZoneImplementation(
 								...transition,
 								gateway: gatewayIdentity,
 							});
+						},
+						recordLiveHealthEvent: (event) => {
+							if (options.onControlSessionHealthEvidence !== undefined) {
+								options.onControlSessionHealthEvidence({
+									event,
+									gateway: gatewayIdentity,
+									recordKind: 'live-only',
+								});
+								return;
+							}
+							options.healthEventStore?.recordLiveOnly(event);
 						},
 						...(options.onControlSessionReconnectExhausted === undefined
 							? {}

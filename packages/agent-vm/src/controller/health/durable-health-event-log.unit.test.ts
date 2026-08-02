@@ -99,6 +99,39 @@ describe('durable health event log', () => {
 		});
 	});
 
+	it('round-trips a closed reconnect outage summary through the durable schema', async () => {
+		const runtimeDir = await createTemporaryDirectory();
+		const event = {
+			attemptCount: 19,
+			bootId: 'gateway-boot-a',
+			domain: 'gateway_control',
+			elapsedMs: 70_000,
+			firstObservedAtMs: 1_780_000_000_000,
+			kind: 'gateway-control-session',
+			latestObservedAtMs: 1_780_000_070_000,
+			observedAtMs: 1_780_000_070_000,
+			operation: 'control-session-reconnect',
+			outcome: 'accepted',
+			peerId: 'gateway-sunfam',
+			reconnectPhase: 'accepted',
+			result: 'ok',
+			terminalReason: 'accepted',
+			windowState: 'closed',
+			zoneId: 'sunfam',
+		} satisfies AgentVmHealthEvent;
+
+		await appendDurableHealthEvent({
+			controllerPid: 46_529,
+			controllerPort: 18_800,
+			event,
+			controllerRuntimeDir: runtimeDir,
+		});
+
+		const [record] = await readDurableHealthEvents({ controllerRuntimeDir: runtimeDir });
+
+		expect(record?.body).toEqual(event);
+	});
+
 	it('returns an empty list when the durable health log has not been created yet', async () => {
 		const runtimeDir = await createTemporaryDirectory();
 

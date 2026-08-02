@@ -180,6 +180,7 @@ function normalizeProofFilePath(filePath: string): string {
 		filePath.length > 1_024 ||
 		filePath.startsWith('/') ||
 		filePath.endsWith('/') ||
+		filePath.includes('/') ||
 		filePath.includes('\0') ||
 		filePath.split('/').some((segment) => segment === '' || segment === '.' || segment === '..') ||
 		!filePath.startsWith(proofFilePathPrefix)
@@ -273,6 +274,31 @@ function parseRouteParams(
 			filePath: normalizeProofFilePath(value.filePath),
 			marker: value.marker,
 			sentinelFilePath: normalizeProofFilePath(value.sentinelFilePath),
+		};
+	}
+	if (value.action === 'read-existing') {
+		if (
+			Object.keys(value).toSorted().join(',') !== 'action,agentId,filePath,marker,sessionKey' ||
+			typeof value.filePath !== 'string' ||
+			typeof value.marker !== 'string' ||
+			value.marker.length === 0
+		) {
+			throw new GatewayRuntimeSandboxE2eRouteError(
+				'gateway-runtime-sandbox-write-read-e2e: read-existing body contains unsupported fields.',
+				400,
+			);
+		}
+		if (Buffer.byteLength(value.marker, 'utf8') > maximumMarkerBytes) {
+			throw new GatewayRuntimeSandboxE2eRouteError(
+				'gateway-runtime-sandbox-write-read-e2e: marker exceeds the byte limit.',
+				413,
+			);
+		}
+		return {
+			action: value.action,
+			...configuredIdentity,
+			filePath: normalizeProofFilePath(value.filePath),
+			marker: value.marker,
 		};
 	}
 	if (

@@ -15,6 +15,7 @@ import type { ActiveTaskRegistry } from '../active-task-registry.js';
 import type { GatewayDisposableControlSessionClient } from '../control-session/index.js';
 import type { PullDefaultRequest, PullDefaultResult } from '../git-pull-default-operations.js';
 import type { PushBranchRequest, PushBranchResult } from '../git-push-operations.js';
+import type { GatewayVmRecoverySourceKey } from '../health/gateway-vm-recovery-policy.js';
 import type { LeaseManager, ToolVmProfile } from '../leases/lease-manager.js';
 import type { RequestHeartbeatRegistry } from '../request-heartbeat-registry.js';
 import type { GatewayEpochIdentity } from '../vm-ownership/vm-ownership-contracts.js';
@@ -87,6 +88,12 @@ export interface ManagedGatewayZoneRuntime extends ControllerZoneRuntimeBase {
 		readonly zoneId: string;
 	}>;
 	getLifecycleState(): GatewayZoneLifecycleState;
+	ensureCurrentControlSessionDialing(
+		sourceKey: GatewayVmRecoverySourceKey,
+	):
+		| ReturnType<GatewayDisposableControlSessionClient['ensureDialing']>
+		| { readonly status: 'control-session-unavailable' }
+		| { readonly status: 'not-current' };
 	getDiagnosis(): GatewayDiagnosisSnapshot;
 	getLogs(): Promise<{ readonly output: string; readonly zoneId: string }>;
 	refreshCredentials(options?: {

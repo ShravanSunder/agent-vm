@@ -103,6 +103,21 @@ export class HealthEventStore {
 	}
 
 	record(event: AgentVmHealthEvent): void {
+		this.#recordLiveState(event);
+		this.#queueDurableWrite(event);
+		this.#queueHealthEventSinks(event);
+	}
+
+	recordLiveOnly(event: AgentVmHealthEvent): void {
+		this.#recordLiveState(event);
+		this.#queueHealthEventSinks(event);
+	}
+
+	recordEvidenceOnly(event: AgentVmHealthEvent): void {
+		this.#queueDurableWrite(event);
+	}
+
+	#recordLiveState(event: AgentVmHealthEvent): void {
 		this.#history.push(event);
 		while (this.#history.length > this.#eventHistoryLimit) {
 			this.#history.shift();
@@ -116,8 +131,6 @@ export class HealthEventStore {
 			}
 			this.#evictOldestLatestBuckets();
 		}
-		this.#queueDurableWrite(event);
-		this.#queueHealthEventSinks(event);
 	}
 
 	#evictOldestLatestBuckets(): void {
@@ -185,9 +198,22 @@ export class HealthEventStore {
 interface PendingEvidenceRecord {
 	readonly byteSize: number;
 	readonly coalescingKey?: string | undefined;
+	readonly coalescingMode?: EvidenceCoalescingMode | undefined;
 	readonly event: AgentVmHealthEvent;
 	readonly notBeforeMs: number;
 }
+
+interface OutstandingEvidenceDelivery {
+	readonly byteSize: number;
+	readonly coalescingKey?: string | undefined;
+	readonly coalescingMode?: EvidenceCoalescingMode | undefined;
+}
+
+type EvidenceCoalescingMode =
+	| 'reconnect-window-close'
+	| 'reconnect-window-opening'
+	| 'reconnect-window-update'
+	| 'routine';
 
 interface BoundedHealthEventEvidenceQueueOptions {
 	readonly deliver: (event: AgentVmHealthEvent) => Promise<void>;
@@ -201,7 +227,7 @@ class BoundedHealthEventEvidenceQueue {
 	readonly #idleWaiters = new Set<() => void>();
 	readonly #livenessWindowStartedAtByBucket = new Map<string, number>();
 	#activeDelivery: Promise<void> | undefined;
-	readonly #outstandingDeliveries = new Map<symbol, number>();
+	readonly #outstandingDeliveries = new Map<symbol, OutstandingEvidenceDelivery>();
 	#coalescedRecords = 0;
 	#drainScheduled = false;
 	#drainTimer: ReturnType<typeof setTimeout> | undefined;
@@ -233,25 +259,35 @@ class BoundedHealthEventEvidenceQueue {
 			return;
 		}
 
-		const coalescingKey = evidenceCoalescingKey(event);
+		const reconnectWindowKey = reconnectEvidenceWindowKey(event);
+		const coalescingMode = reconnectEvidenceCoalescingMode(event);
+		const coalescingKey = reconnectWindowKey ?? evidenceCoalescingKey(event);
 		const livenessWindowStartedAtMs =
-			coalescingKey === undefined
+			coalescingKey === undefined || reconnectWindowKey !== undefined
 				? undefined
 				: this.#livenessWindowStartedAtByBucket.get(coalescingKey);
 		let notBeforeMs =
-			livenessWindowStartedAtMs === undefined
-				? 0
-				: livenessWindowStartedAtMs + this.#limits.livenessAggregationWindowMs;
-		if (coalescingKey !== undefined) {
+			coalescingMode === 'reconnect-window-update'
+				? Number.POSITIVE_INFINITY
+				: livenessWindowStartedAtMs === undefined
+					? 0
+					: livenessWindowStartedAtMs + this.#limits.livenessAggregationWindowMs;
+		if (coalescingKey !== undefined && coalescingMode !== 'reconnect-window-opening') {
 			const existingIndex = this.#pending.findIndex(
-				(pending) => pending.coalescingKey === coalescingKey,
+				(pending) =>
+					pending.coalescingKey === coalescingKey &&
+					(coalescingMode === 'routine'
+						? pending.coalescingMode === 'routine'
+						: pending.coalescingMode === 'reconnect-window-update'),
 			);
 			if (existingIndex >= 0) {
 				const [replaced] = this.#pending.splice(existingIndex, 1);
 				if (replaced !== undefined) {
 					this.#pendingBytes -= replaced.byteSize;
 					this.#coalescedRecords += 1;
-					notBeforeMs = replaced.notBeforeMs;
+					if (coalescingMode !== 'reconnect-window-close') {
+						notBeforeMs = replaced.notBeforeMs;
+					}
 				}
 			}
 		}
@@ -267,15 +303,23 @@ class BoundedHealthEventEvidenceQueue {
 				this.#recordDrop(byteSize);
 				return;
 			}
-			const routineEvidenceIndex = this.#pending.findIndex(
-				(pending) => pending.coalescingKey !== undefined,
+			const coalescibleOrdinaryEvidenceIndex = this.#pending.findIndex(
+				(pending) =>
+					!isReconnectWindowBoundary(pending.coalescingMode) && pending.coalescingKey !== undefined,
+			);
+			const ordinaryEvidenceIndex = this.#pending.findIndex(
+				(pending) => !isReconnectWindowBoundary(pending.coalescingMode),
 			);
 			const evictionIndex =
 				callerContextDiagnosticIndex >= 0
 					? callerContextDiagnosticIndex
-					: routineEvidenceIndex >= 0
-						? routineEvidenceIndex
-						: 0;
+					: coalescibleOrdinaryEvidenceIndex >= 0
+						? coalescibleOrdinaryEvidenceIndex
+						: ordinaryEvidenceIndex;
+			if (evictionIndex < 0) {
+				this.#recordDrop(byteSize);
+				return;
+			}
 			const [evicted] = this.#pending.splice(evictionIndex, 1);
 			if (evicted === undefined) {
 				this.#recordDrop(byteSize);
@@ -285,7 +329,7 @@ class BoundedHealthEventEvidenceQueue {
 			this.#recordDrop(evicted.byteSize);
 		}
 
-		this.#pending.push({ byteSize, coalescingKey, event, notBeforeMs });
+		this.#pending.push({ byteSize, coalescingKey, coalescingMode, event, notBeforeMs });
 		this.#pendingBytes += byteSize;
 		this.#highWaterPendingBytes = Math.max(this.#highWaterPendingBytes, this.#pendingBytes);
 		this.#highWaterPendingRecords = Math.max(this.#highWaterPendingRecords, this.#pending.length);
@@ -339,7 +383,7 @@ class BoundedHealthEventEvidenceQueue {
 			highWaterPendingRecords: this.#highWaterPendingRecords,
 			operationTimeouts: this.#operationTimeouts,
 			outstandingBytes: [...this.#outstandingDeliveries.values()].reduce(
-				(total, byteSize) => total + byteSize,
+				(total, delivery) => total + delivery.byteSize,
 				0,
 			),
 			pendingBytes: this.#pendingBytes,
@@ -385,12 +429,16 @@ class BoundedHealthEventEvidenceQueue {
 			return;
 		}
 		this.#pendingBytes -= next.byteSize;
-		if (next.coalescingKey !== undefined) {
+		if (next.coalescingKey !== undefined && next.coalescingMode === 'routine') {
 			this.#recordLivenessWindowStart(next.coalescingKey);
 		}
 
 		const deliveryIdentity = Symbol('health-event-evidence-delivery');
-		this.#outstandingDeliveries.set(deliveryIdentity, next.byteSize);
+		this.#outstandingDeliveries.set(deliveryIdentity, {
+			byteSize: next.byteSize,
+			coalescingKey: next.coalescingKey,
+			coalescingMode: next.coalescingMode,
+		});
 		let resolveOperationTimeout: (() => void) | undefined;
 		const operationTimeout = setTimeout(() => {
 			resolveOperationTimeout?.();
@@ -430,11 +478,28 @@ class BoundedHealthEventEvidenceQueue {
 
 	#selectNextDeliveryIndex(): number {
 		if (this.#flushRequests > 0) {
-			return this.#pending.length === 0 ? -1 : 0;
+			return this.#pending.findIndex(
+				(record) =>
+					record.coalescingMode !== 'reconnect-window-update' &&
+					!this.#hasOutstandingReconnectWindowDelivery(record),
+			);
 		}
 		const nowMs = Date.now();
 		return this.#pending.findIndex(
-			(record) => record.coalescingKey === undefined || record.notBeforeMs <= nowMs,
+			(record) =>
+				!this.#hasOutstandingReconnectWindowDelivery(record) &&
+				(record.coalescingKey === undefined || record.notBeforeMs <= nowMs),
+		);
+	}
+
+	#hasOutstandingReconnectWindowDelivery(record: PendingEvidenceRecord): boolean {
+		if (record.coalescingKey === undefined || !isReconnectWindowEvidence(record.coalescingMode)) {
+			return false;
+		}
+		return [...this.#outstandingDeliveries.values()].some(
+			(delivery) =>
+				delivery.coalescingKey === record.coalescingKey &&
+				isReconnectWindowEvidence(delivery.coalescingMode),
 		);
 	}
 
@@ -491,6 +556,14 @@ class BoundedHealthEventEvidenceQueue {
 	}
 }
 
+function isReconnectWindowBoundary(mode: EvidenceCoalescingMode | undefined): boolean {
+	return mode === 'reconnect-window-opening' || mode === 'reconnect-window-close';
+}
+
+function isReconnectWindowEvidence(mode: EvidenceCoalescingMode | undefined): boolean {
+	return isReconnectWindowBoundary(mode) || mode === 'reconnect-window-update';
+}
+
 function evidenceCoalescingKey(event: AgentVmHealthEvent): string | undefined {
 	if (event.kind === 'caller-context-rejection') {
 		return healthEventBucketKey(event);
@@ -509,6 +582,27 @@ function evidenceCoalescingKey(event: AgentVmHealthEvent): string | undefined {
 		return undefined;
 	}
 	return healthEventBucketKey(event);
+}
+
+function reconnectEvidenceWindowKey(event: AgentVmHealthEvent): string | undefined {
+	if (event.kind !== 'gateway-control-session' || event.reconnectPhase === undefined) {
+		return undefined;
+	}
+	return `${event.zoneId}:${event.kind}:reconnect:${event.peerId}:${event.bootId}`;
+}
+
+function reconnectEvidenceCoalescingMode(
+	event: AgentVmHealthEvent,
+): EvidenceCoalescingMode | undefined {
+	if (event.kind !== 'gateway-control-session' || event.reconnectPhase === undefined) {
+		return evidenceCoalescingKey(event) === undefined ? undefined : 'routine';
+	}
+	if (event.windowState === 'closed') {
+		return 'reconnect-window-close';
+	}
+	return event.reconnectPhase === 'attachment-lost'
+		? 'reconnect-window-opening'
+		: 'reconnect-window-update';
 }
 
 function resolveEvidenceQueueLimits(

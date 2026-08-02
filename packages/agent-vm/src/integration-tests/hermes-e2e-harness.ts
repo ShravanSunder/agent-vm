@@ -37,6 +37,7 @@ export interface HermesE2eProject {
 export interface RenderHermesManagedE2eConfigurationOptions {
 	readonly acceptanceMarker?: string;
 	readonly contextLength: number;
+	readonly fakeModelBaseUrl?: string;
 	readonly fakeModelHost: string;
 	readonly fakeModelName: string;
 }
@@ -102,7 +103,7 @@ export function renderHermesManagedE2eConfiguration(
 		`  context_length: ${String(options.contextLength)}`,
 		'custom_providers:',
 		'  - name: hermes-e2e',
-		`    base_url: http://${options.fakeModelHost}/v1`,
+		`    base_url: ${options.fakeModelBaseUrl ?? `http://${options.fakeModelHost}/v1`}`,
 		'    api_mode: chat_completions',
 		`    model: ${options.fakeModelName}`,
 		'    models:',
