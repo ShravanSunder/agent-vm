@@ -664,18 +664,26 @@ function hasValidGatewayControlSessionReconnectEvidence(value: Record<string, un
 		return false;
 	}
 	if (value.windowState === 'open') {
-		return (
-			value.terminalReason === undefined &&
-			(value.nextRetryAtMs === undefined ||
-				(isNonNegativeInteger(value.nextRetryAtMs) &&
-					value.nextRetryAtMs >= value.latestObservedAtMs))
-		);
+		if (isAcceptedPhase || value.terminalReason !== undefined) {
+			return false;
+		}
+		if (value.reconnectPhase === 'retry-scheduled') {
+			return (
+				isNonNegativeInteger(value.nextRetryAtMs) && value.nextRetryAtMs >= value.latestObservedAtMs
+			);
+		}
+		return value.nextRetryAtMs === undefined;
 	}
-	return (
-		value.windowState === 'closed' &&
-		value.nextRetryAtMs === undefined &&
-		isOneOf(gatewayControlSessionReconnectTerminalReasons, value.terminalReason)
-	);
+	if (
+		value.windowState !== 'closed' ||
+		value.nextRetryAtMs !== undefined ||
+		!isOneOf(gatewayControlSessionReconnectTerminalReasons, value.terminalReason)
+	) {
+		return false;
+	}
+	return value.terminalReason === 'accepted'
+		? isAcceptedPhase && value.outcome === 'accepted'
+		: !isAcceptedPhase;
 }
 
 export function isAgentVmHealthEvent(value: unknown): value is AgentVmHealthEvent {

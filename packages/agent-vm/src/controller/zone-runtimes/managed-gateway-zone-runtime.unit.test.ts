@@ -967,6 +967,7 @@ describe('createManagedGatewayZoneRuntime host process liveness', () => {
 		const recordCurrent = vi.fn();
 		const recordCurrentLive = vi.fn();
 		const recordNonCurrent = vi.fn();
+		const destroyGateway = vi.fn(async () => ({ kind: 'destroyed-clean' }) as const);
 		let recordEvidence: ((evidence: GatewayControlSessionHealthEvidence) => void) | undefined;
 		const shutdownTerminalEvent = {
 			attemptCount: 1,
@@ -992,6 +993,7 @@ describe('createManagedGatewayZoneRuntime host process liveness', () => {
 				gateway: gatewayIdentity,
 				recordKind: 'durable-and-live',
 			});
+			throw new Error('simulated control-session close failure');
 		});
 		const controlSession = createTestControlSession(
 			() => ({ status: 'accepted-current' }),
@@ -1007,6 +1009,7 @@ describe('createManagedGatewayZoneRuntime host process liveness', () => {
 				recordEvidence = startOptions?.onControlSessionHealthEvidence;
 				return {
 					controlSession,
+					destroyGateway,
 					gatewayIdentity,
 					image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
 					ingress: { host: '127.0.0.1', port: 18791 },
@@ -1047,9 +1050,11 @@ describe('createManagedGatewayZoneRuntime host process liveness', () => {
 		await runtime.shutdown();
 
 		expect(closeForControllerShutdown).toHaveBeenCalledOnce();
+		expect(destroyGateway).toHaveBeenCalledOnce();
 		expect(recordCurrent).toHaveBeenCalledOnce();
 		expect(recordCurrentLive).not.toHaveBeenCalled();
 		expect(recordNonCurrent).toHaveBeenCalledExactlyOnceWith(shutdownTerminalEvent);
+		expect(runtime.getLifecycleState()).toEqual({ kind: 'stopped' });
 	});
 
 	it('normalizes managed VM exec processes into command results', async () => {

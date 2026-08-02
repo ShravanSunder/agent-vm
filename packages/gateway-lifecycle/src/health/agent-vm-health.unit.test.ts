@@ -89,6 +89,39 @@ describe('agent-vm health events', () => {
 				outcome: 'accepted',
 				reconnectPhase: 'accepted',
 				result: 'ok',
+			}),
+		).toBe(false);
+		expect(
+			isAgentVmHealthEvent({
+				...event,
+				nextRetryAtMs: undefined,
+				outcome: 'accepted',
+				reconnectPhase: 'stable',
+				result: 'ok',
+			}),
+		).toBe(false);
+		expect(
+			isAgentVmHealthEvent({
+				...event,
+				nextRetryAtMs: undefined,
+				reconnectPhase: 'attempt-failed',
+				terminalReason: 'accepted',
+				windowState: 'closed',
+			}),
+		).toBe(false);
+		expect(
+			isAgentVmHealthEvent({
+				...event,
+				reconnectPhase: 'attempt-started',
+			}),
+		).toBe(false);
+		expect(
+			isAgentVmHealthEvent({
+				...event,
+				nextRetryAtMs: undefined,
+				outcome: 'accepted',
+				reconnectPhase: 'accepted',
+				result: 'ok',
 				terminalReason: 'accepted',
 				windowState: 'closed',
 			}),

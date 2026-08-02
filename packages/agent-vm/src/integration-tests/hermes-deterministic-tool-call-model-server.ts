@@ -124,11 +124,17 @@ import { once } from 'node:events';
 import fs from 'node:fs';
 
 const readyPath = '/tmp/agent-vm-hermes-recovery-model.ready';
+const logPath = '/tmp/agent-vm-hermes-recovery-model.log';
+const readinessDeadlineMs = Date.now() + 60000;
 if (!fs.existsSync(readyPath)) {
   const watcher = fs.watch('/tmp');
   try {
     while (!fs.existsSync(readyPath)) {
-      await once(watcher, 'change');
+      if (Date.now() >= readinessDeadlineMs) {
+        const startupLog = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8') : '(missing)';
+        throw new Error('Hermes deterministic model server did not become ready:\\n' + startupLog);
+      }
+      await once(watcher, 'change', { signal: AbortSignal.timeout(1000) }).catch(() => undefined);
     }
   } finally {
     watcher.close();

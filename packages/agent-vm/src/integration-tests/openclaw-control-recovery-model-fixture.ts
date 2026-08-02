@@ -472,10 +472,18 @@ MOCK_OPENAI_PORT=${shellSingleQuote(String(options.port))} node --input-type=mod
 import { once } from 'node:events';
 import fs from 'node:fs';
 const readyPath = '/tmp/agent-vm-control-recovery-mock-openai.ready';
+const logPath = '/tmp/agent-vm-control-recovery-mock-openai.log';
+const readinessDeadlineMs = Date.now() + 30000;
 if (!fs.existsSync(readyPath)) {
   const watcher = fs.watch('/tmp');
   try {
-    while (!fs.existsSync(readyPath)) await once(watcher, 'change');
+    while (!fs.existsSync(readyPath)) {
+      if (Date.now() >= readinessDeadlineMs) {
+        const startupLog = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8') : '(missing)';
+        throw new Error('mock OpenAI server did not become ready:\\n' + startupLog);
+      }
+      await once(watcher, 'change', { signal: AbortSignal.timeout(500) }).catch(() => undefined);
+    }
   } finally {
     watcher.close();
   }

@@ -704,7 +704,7 @@ describeControlSessionRecoveryE2e('e2e: disposable control-session recovery', ()
 			identity: mainIdentity,
 			marker: initialMainProbe.marker,
 		});
-		expect(postRecoveryMainResult.readBack).toBe(postRecoveryMainResult.marker);
+		expect(postRecoveryMainResult.readBack).toBe(initialMainProbe.marker);
 		const postRecoveryToolVmRecords = await readExactToolVmRuntimeRecords(
 			controllerRecordTargets.toolLeaseRecords,
 			configuredAgentIds,

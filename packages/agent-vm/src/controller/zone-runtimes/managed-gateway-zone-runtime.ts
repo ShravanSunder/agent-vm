@@ -872,7 +872,13 @@ export function createManagedGatewayZoneRuntime(
 			previousGateway,
 		};
 		if (closeForControllerShutdown) {
-			activeGateway?.controlSession?.closeForControllerShutdown();
+			try {
+				activeGateway?.controlSession?.closeForControllerShutdown();
+			} catch (error) {
+				writeManagedGatewayZoneRuntimeLog(
+					`Failed to close the control session for controller shutdown in zone '${options.zone.id}': ${formatUnknownError(error)}`,
+				);
+			}
 		}
 		try {
 			await recordLifecycleOperation({
