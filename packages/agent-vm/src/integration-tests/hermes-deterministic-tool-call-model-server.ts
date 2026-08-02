@@ -10,7 +10,7 @@ export async function startHermesDeterministicToolCallModelServer(options: {
 set -eu
 cat >/tmp/agent-vm-hermes-recovery-model.mjs <<'NODE'
 import http from 'node:http';
-import fs from 'node:fs';
+import { writeFile } from 'node:fs/promises';
 
 const port = ${String(options.port)};
 const frameworkMarker = ${JSON.stringify(options.frameworkMarker)};
@@ -112,33 +112,36 @@ const server = http.createServer(async (request, response) => {
 });
 
 server.listen(port, '127.0.0.1', () => {
-  fs.writeFileSync(readyPath, 'ready\\n', 'utf8');
-  process.stdout.write('ready\\n');
+  void writeFile(readyPath, 'ready\\n', 'utf8')
+    .then(() => process.stdout.write('ready\\n'))
+    .catch((error) => {
+      console.error(error);
+      process.exitCode = 1;
+      server.close();
+    });
 });
 NODE
 rm -f /tmp/agent-vm-hermes-recovery-model.ready
 node /tmp/agent-vm-hermes-recovery-model.mjs >/tmp/agent-vm-hermes-recovery-model.log 2>&1 &
 echo "$!" >/tmp/agent-vm-hermes-recovery-model.pid
 node --input-type=module <<'NODE'
-import { once } from 'node:events';
-import fs from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { access, readFile, watch } from 'node:fs/promises';
 
 const readyPath = '/tmp/agent-vm-hermes-recovery-model.ready';
 const logPath = '/tmp/agent-vm-hermes-recovery-model.log';
-const readinessDeadlineMs = Date.now() + 60000;
-if (!fs.existsSync(readyPath)) {
-  const watcher = fs.watch('/tmp');
+const readyFileExists = () => access(readyPath).then(() => true, () => false);
+if (!(await readyFileExists())) {
+	const readinessDeadlineSignal = AbortSignal.timeout(60000);
   try {
-    while (!fs.existsSync(readyPath)) {
-      if (Date.now() >= readinessDeadlineMs) {
-        const startupLog = await readFile(logPath, 'utf8').catch(() => '(missing)');
-        throw new Error('Hermes deterministic model server did not become ready:\\n' + startupLog);
-      }
-      await once(watcher, 'change', { signal: AbortSignal.timeout(1000) }).catch(() => undefined);
+    for await (const _event of watch('/tmp', { signal: readinessDeadlineSignal })) {
+      if (await readyFileExists()) break;
     }
-  } finally {
-    watcher.close();
+  } catch (error) {
+    if (!readinessDeadlineSignal.aborted) throw error;
+  }
+  if (!(await readyFileExists())) {
+    const startupLog = await readFile(logPath, 'utf8').catch(() => '(missing)');
+    throw new Error('Hermes deterministic model server did not become ready:\\n' + startupLog);
   }
 }
 NODE

@@ -135,7 +135,7 @@ OPENCLAW_PROOF_EXPECTED_HISTORY_MARKER=${shellSingleQuote(options.expectedHistor
 OPENCLAW_PROOF_MESSAGE=${shellSingleQuote(options.message)} \\
 OPENCLAW_PROOF_REQUIRED_TOOL_OUTPUT_MARKER=${shellSingleQuote(options.requiredToolOutputMarker ?? '')} \\
 node --input-type=module <<'NODE'
-import fs from 'node:fs';
+import { readFile } from 'node:fs/promises';
 const gatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
 if (!gatewayToken) throw new Error('missing OpenClaw Gateway token');
 const expectedHistoryMarker = process.env.OPENCLAW_PROOF_EXPECTED_HISTORY_MARKER;
@@ -221,7 +221,7 @@ socket.addEventListener('message', async (event) => {
         history = await request('chat.history', { limit: 20, maxChars: 20000, sessionKey });
         if (JSON.stringify(history).includes(expectedHistoryMarker)) break;
       }
-	      const requestLog = fs.readFileSync('/tmp/agent-vm-control-recovery-mock-openai-requests.jsonl', 'utf8');
+	      const requestLog = await readFile('/tmp/agent-vm-control-recovery-mock-openai-requests.jsonl', 'utf8');
 	      if (!JSON.stringify(history).includes(expectedHistoryMarker)) {
 	        throw new Error('OpenClaw model marker was absent from production chat history; model request log:\\n' + requestLog);
 	      }
@@ -326,7 +326,7 @@ export async function startOpenClawControlRecoveryModelServer(options: {
 	const result = await options.gatewayVm.exec(`
 set -eu
 cat >/tmp/agent-vm-control-recovery-mock-openai.mjs <<'NODE'
-import fs from 'node:fs';
+import { appendFile, writeFile } from 'node:fs/promises';
 import http from 'node:http';
 
 	const port = Number(process.env.MOCK_OPENAI_PORT);
@@ -425,7 +425,7 @@ const server = http.createServer(async (request, response) => {
 	  const functionCallOutput = Array.isArray(requestBody?.input)
 	    ? requestBody.input.find((item) => item?.type === 'function_call_output')
 	    : undefined;
-	  fs.appendFileSync(requestLog, JSON.stringify({
+	  await appendFile(requestLog, JSON.stringify({
 	    method: request.method,
 	    path: url.pathname,
 	    bodyBytes: body.length,
@@ -462,30 +462,33 @@ const server = http.createServer(async (request, response) => {
   writeJson(response, 404, { error: { message: 'unhandled mock route' } });
 });
 server.listen(port, '127.0.0.1', () => {
-  fs.writeFileSync(readyPath, 'ready\\n', 'utf8');
+  void writeFile(readyPath, 'ready\\n', 'utf8').catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+    server.close();
+  });
 });
 NODE
 rm -f /tmp/agent-vm-control-recovery-mock-openai.ready /tmp/agent-vm-control-recovery-mock-openai-requests.jsonl
 MOCK_OPENAI_PORT=${shellSingleQuote(String(options.port))} node /tmp/agent-vm-control-recovery-mock-openai.mjs >/tmp/agent-vm-control-recovery-mock-openai.log 2>&1 &
 echo "$!" >/tmp/agent-vm-control-recovery-mock-openai.pid
 MOCK_OPENAI_PORT=${shellSingleQuote(String(options.port))} node --input-type=module <<'NODE'
-import { once } from 'node:events';
-import fs from 'node:fs';
+import { access, readFile, watch } from 'node:fs/promises';
 const readyPath = '/tmp/agent-vm-control-recovery-mock-openai.ready';
 const logPath = '/tmp/agent-vm-control-recovery-mock-openai.log';
-const readinessDeadlineMs = Date.now() + 30000;
-if (!fs.existsSync(readyPath)) {
-  const watcher = fs.watch('/tmp');
+const readyFileExists = () => access(readyPath).then(() => true, () => false);
+if (!(await readyFileExists())) {
+  const readinessDeadlineSignal = AbortSignal.timeout(30000);
   try {
-    while (!fs.existsSync(readyPath)) {
-      if (Date.now() >= readinessDeadlineMs) {
-        const startupLog = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8') : '(missing)';
-        throw new Error('mock OpenAI server did not become ready:\\n' + startupLog);
-      }
-      await once(watcher, 'change', { signal: AbortSignal.timeout(500) }).catch(() => undefined);
+    for await (const _event of watch('/tmp', { signal: readinessDeadlineSignal })) {
+      if (await readyFileExists()) break;
     }
-  } finally {
-    watcher.close();
+  } catch (error) {
+    if (!readinessDeadlineSignal.aborted) throw error;
+  }
+  if (!(await readyFileExists())) {
+    const startupLog = await readFile(logPath, 'utf8').catch(() => '(missing)');
+    throw new Error('mock OpenAI server did not become ready:\\n' + startupLog);
   }
 }
 const response = await fetch('http://127.0.0.1:' + process.env.MOCK_OPENAI_PORT + '/health');

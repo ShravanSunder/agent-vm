@@ -1226,10 +1226,10 @@ function renderLocalDockerPackageInstallLines(
 	tarballs: readonly LocalDockerPackageTarball[],
 ): readonly string[] {
 	const manifestWriterScript = [
-		'require("node:fs").writeFileSync(',
+		'require("node:fs/promises").writeFile(',
 		'"/opt/agent-vm/local-packages/package.json",',
 		JSON.stringify(renderLocalDockerPackageManifest(tarballs)),
-		')',
+		').catch((error) => { console.error(error); process.exitCode = 1; })',
 	].join('');
 	return [
 		'RUN mkdir -p /opt/agent-vm/local-packages && \\',
