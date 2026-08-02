@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/gateway-lifecycle",
-	"version": "0.0.129",
+	"version": "0.0.130",
 	"description": "Shared gateway lifecycle contracts, workload intent, and cross-gateway policies.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {

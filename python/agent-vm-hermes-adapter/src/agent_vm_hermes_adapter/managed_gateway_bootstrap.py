@@ -780,31 +780,35 @@ def _run_managed_hermes_gateway_runtime(
         environment_source_names_by_profile=(material.profile_environment_source_names_by_profile),
     )
     telemetry = create_hermes_tool_portal_telemetry_from_environment()
-    gateway_runtime_client = GatewayRuntimeClient(
-        attachment=material.attachment,
-        trace_context_provider=telemetry.trace_context_provider,
-    )
-    adapter = HermesManagedAdapter(
-        config=adapter_config,
-        gateway_runtime_client=gateway_runtime_client,
-    )
-    hooks = HermesManagedEnvironmentHooks(
-        adapter=adapter,
-        attachment=material.attachment,
-        protected_hermes_home=protected_hermes_home,
-        terminal_tool_module=(
-            _StockHermesTerminalToolAdapter()
-            if terminal_tool_module is None
-            else terminal_tool_module
-        ),
-    )
-    process_hooks = HermesManagedProcessHooks(
-        current_projection=hooks._current_projection,
-        process_registry=hermes_process_registry,
-    )
-    managed_policy_bindings = _HermesManagedPolicyReadBindings()
-    adapter.connect_gateway_runtime()
+    adapter: HermesManagedAdapter | None = None
+    hooks: HermesManagedEnvironmentHooks | None = None
+    process_hooks: HermesManagedProcessHooks | None = None
+    managed_policy_bindings: _HermesManagedPolicyReadBindings | None = None
     try:
+        gateway_runtime_client = GatewayRuntimeClient(
+            attachment=material.attachment,
+            trace_context_provider=telemetry.trace_context_provider,
+        )
+        adapter = HermesManagedAdapter(
+            config=adapter_config,
+            gateway_runtime_client=gateway_runtime_client,
+        )
+        hooks = HermesManagedEnvironmentHooks(
+            adapter=adapter,
+            attachment=material.attachment,
+            protected_hermes_home=protected_hermes_home,
+            terminal_tool_module=(
+                _StockHermesTerminalToolAdapter()
+                if terminal_tool_module is None
+                else terminal_tool_module
+            ),
+        )
+        process_hooks = HermesManagedProcessHooks(
+            current_projection=hooks._current_projection,
+            process_registry=hermes_process_registry,
+        )
+        managed_policy_bindings = _HermesManagedPolicyReadBindings()
+        adapter.connect_gateway_runtime()
         configure_managed_tool_portal_plugin(
             adapter=adapter,
             current_projection=hooks._current_projection,
@@ -823,16 +827,20 @@ def _run_managed_hermes_gateway_runtime(
             clear_managed_tool_portal_plugin_configuration()
         finally:
             try:
-                managed_policy_bindings.close()
+                if managed_policy_bindings is not None:
+                    managed_policy_bindings.close()
             finally:
                 try:
-                    process_hooks.close()
+                    if process_hooks is not None:
+                        process_hooks.close()
                 finally:
                     try:
-                        hooks.close()
+                        if hooks is not None:
+                            hooks.close()
                     finally:
                         try:
-                            adapter.close()
+                            if adapter is not None:
+                                adapter.close()
                         finally:
                             telemetry.shutdown()
 

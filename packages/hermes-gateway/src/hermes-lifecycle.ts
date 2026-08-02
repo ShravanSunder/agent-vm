@@ -31,6 +31,7 @@ const protectedHermesHomeVmPath = '/home/hermes/.hermes';
 const hermesCacheDirVmPath = '/home/hermes/.cache';
 const agentVmLogsDirVmPath = '/agent-vm/logs';
 const hermesGatewayGuestPath = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
+const otelResourceAttributesEnvironmentName = 'OTEL_RESOURCE_ATTRIBUTES';
 const reservedHermesProfileProjectionSourceNames: ReadonlySet<string> = new Set([
 	'AGENT_VM_HERMES_MANAGED_CONFIG_PATH',
 	'API_SERVER_ENABLED',
@@ -164,18 +165,50 @@ function buildGatewayTcpHosts(tcpPool: {
 	);
 }
 
+function assertNoHermesObservabilityEnvironmentOverrides(options: {
+	readonly environmentSecrets: Readonly<Record<string, string>>;
+	readonly observabilityEnabled: boolean;
+	readonly runtimeEnvironment: Readonly<Record<string, string>> | undefined;
+}): void {
+	for (const environmentName of Object.keys(options.environmentSecrets)) {
+		if (
+			environmentName.startsWith('AGENT_VM_HERMES_OTEL_') ||
+			environmentName.startsWith('OTEL_')
+		) {
+			throw new Error(
+				`Managed Hermes deployment secrets cannot override observability environment '${environmentName}'.`,
+			);
+		}
+	}
+	for (const environmentName of Object.keys(options.runtimeEnvironment ?? {})) {
+		const isControllerResourceAttributes =
+			options.observabilityEnabled && environmentName === otelResourceAttributesEnvironmentName;
+		if (
+			!isControllerResourceAttributes &&
+			(environmentName.startsWith('AGENT_VM_HERMES_OTEL_') || environmentName.startsWith('OTEL_'))
+		) {
+			throw new Error(
+				`Managed Hermes runtime environment cannot override observability environment '${environmentName}'.`,
+			);
+		}
+	}
+}
+
 function buildHermesFrameworkEnvironment(
 	zone: GatewayZoneConfig,
 	resolvedSecrets: Record<string, string>,
 ): Readonly<Record<string, string>> {
-	const { environmentSecrets } = mergeRuntimeGatewaySecrets(
-		splitResolvedGatewaySecrets(zone, resolvedSecrets),
-		{
-			logPrefix: 'hermes-managed-framework-service-runtime-secrets',
-			runtimeEnvironment: zone.runtimeEnvironment,
-			runtimeMediatedSecrets: zone.runtimeMediatedSecrets,
-		},
-	);
+	const splitSecrets = splitResolvedGatewaySecrets(zone, resolvedSecrets);
+	assertNoHermesObservabilityEnvironmentOverrides({
+		environmentSecrets: splitSecrets.environmentSecrets,
+		observabilityEnabled: zone.observability !== undefined,
+		runtimeEnvironment: zone.runtimeEnvironment,
+	});
+	const { environmentSecrets } = mergeRuntimeGatewaySecrets(splitSecrets, {
+		logPrefix: 'hermes-managed-framework-service-runtime-secrets',
+		runtimeEnvironment: zone.runtimeEnvironment,
+		runtimeMediatedSecrets: zone.runtimeMediatedSecrets,
+	});
 	if (environmentSecrets.API_SERVER_KEY === undefined) {
 		throw new Error(
 			'Managed Hermes requires API_SERVER_KEY so its readiness/API listener cannot start unauthenticated.',
@@ -200,10 +233,19 @@ function buildHermesFrameworkEnvironment(
 					),
 					OTEL_BSP_SCHEDULE_DELAY: String(zone.observability.framework.flushIntervalMs),
 					OTEL_EXPORTER_OTLP_ENDPOINT: `http://${zone.observability.collector.host}:${String(zone.observability.collector.httpPort)}`,
+					OTEL_LOGS_EXPORTER: zone.observability.framework.logs ? 'otlp' : 'none',
 					OTEL_METRIC_EXPORT_INTERVAL: String(zone.observability.framework.flushIntervalMs),
+					OTEL_METRICS_EXPORTER: zone.observability.framework.metrics ? 'otlp' : 'none',
 					OTEL_SERVICE_NAME: zone.observability.framework.serviceName,
+					OTEL_TRACES_EXPORTER: zone.observability.framework.traces ? 'otlp' : 'none',
 					OTEL_TRACES_SAMPLER: 'parentbased_traceidratio',
 					OTEL_TRACES_SAMPLER_ARG: String(zone.observability.framework.sampleRate),
+					AGENT_VM_HERMES_OTEL_MAX_INFLIGHT_OBSERVATIONS: String(
+						zone.observability.framework.admissionLimits.maxQueuedRecordsPerSignal,
+					),
+					AGENT_VM_HERMES_OTEL_MAX_RECORD_BYTES: String(
+						zone.observability.framework.admissionLimits.maxRecordBytes,
+					),
 				};
 	for (const protectedEnvironmentName of [
 		'AGENT_VM_HERMES_MANAGED_CONFIG_PATH',

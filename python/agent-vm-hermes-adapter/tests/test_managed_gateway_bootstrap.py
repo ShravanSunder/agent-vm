@@ -142,6 +142,8 @@ class FakeGatewayRuntimeClient:
 
 class FakeHermesToolPortalTelemetry:
     def __init__(self) -> None:
+        self.observer_hooks_enabled = True
+        self.max_inflight_observations = 8
         self.shutdown_calls = 0
         self.trace_context_provider: Callable[[], Mapping[str, object] | None] = self._provide
 
@@ -150,6 +152,31 @@ class FakeHermesToolPortalTelemetry:
 
     def shutdown(self) -> None:
         self.shutdown_calls += 1
+
+    def start_turn(self, record: object) -> object:
+        del record
+        return object()
+
+    def complete_turn(self, handle: object, record: object) -> None:
+        del handle, record
+
+    def start_provider_attempt(
+        self,
+        parent_handle: object | None,
+        record: object,
+    ) -> object:
+        del parent_handle, record
+        return object()
+
+    def complete_provider_attempt(self, handle: object, record: object) -> None:
+        del handle, record
+
+    def emit_tool_call(
+        self,
+        parent_handle: object | None,
+        record: object,
+    ) -> None:
+        del parent_handle, record
 
 
 class FakeTerminalToolModule:
@@ -1203,6 +1230,19 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
                 tuple(plugin_context.registered_tool_names),
                 MANAGED_TOOL_PORTAL_TOOL_NAMES,
             )
+            self.assertEqual(
+                set(plugin_context.registered_hook_names),
+                {
+                    "api_request_error",
+                    "on_session_end",
+                    "post_api_request",
+                    "post_tool_call",
+                    "pre_api_request",
+                    "pre_gateway_dispatch",
+                    "pre_llm_call",
+                },
+            )
+            self.assertNotIn("pre_tool_call", plugin_context.registered_hook_names)
             client = FakeGatewayRuntimeClient.last_instance
             if client is None:
                 self.fail("managed bootstrap did not construct a Gateway Runtime client")
@@ -1340,6 +1380,47 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
             hermes_gateway_run.GatewayRunner.__dict__["_load_provider_routing"],
             original_provider_routing_descriptor,
         )
+
+    def test_shuts_down_telemetry_when_gateway_runtime_connect_fails(self) -> None:
+        telemetry = FakeHermesToolPortalTelemetry()
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            configuration_path = temporary_root / "framework-service.json"
+            protected_hermes_home = temporary_root / "protected-hermes-home"
+            configuration_path.write_text(json.dumps(build_material()), encoding="utf-8")
+            materialize_profile_cohort(protected_hermes_home)
+            with (
+                patch.object(
+                    managed_gateway_bootstrap,
+                    "create_hermes_tool_portal_telemetry_from_environment",
+                    return_value=telemetry,
+                ),
+                patch.object(
+                    HermesManagedAdapter,
+                    "connect_gateway_runtime",
+                    side_effect=RuntimeError("test-only Gateway Runtime connect failure"),
+                ),
+                patch.dict(
+                    os.environ,
+                    {"SOURCE_RESEARCHER": "test-researcher", "SOURCE_REVIEWER": "test-reviewer"},
+                    clear=False,
+                ),
+                self.assertRaisesRegex(
+                    RuntimeError,
+                    "test-only Gateway Runtime connect failure",
+                ),
+            ):
+                managed_gateway_bootstrap.run_managed_hermes_gateway(
+                    configuration_path=configuration_path,
+                    managed_configuration_loader=managed_plugin_configuration,
+                    protected_hermes_home=protected_hermes_home,
+                    stock_gateway_runner=Mock(),
+                    terminal_tool_module=FakeTerminalToolModule(),
+                )
+
+        self.assertEqual(telemetry.shutdown_calls, 1)
+        with self.assertRaisesRegex(RuntimeError, "requires bootstrap runtime configuration"):
+            register_managed_tool_portal_plugin(FakeHermesPluginContext())
 
     def test_rejects_drifted_profile_cohort_before_managed_or_stock_runtime_use(self) -> None:
         def missing_protected_hermes_home(protected_hermes_home: Path) -> None:

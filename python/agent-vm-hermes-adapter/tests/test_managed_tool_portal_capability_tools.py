@@ -16,6 +16,14 @@ from opentelemetry.sdk.trace import TracerProvider
 from pydantic import BaseModel
 from tools.registry import registry as hermes_tool_registry
 
+from agent_vm_hermes_adapter.managed_framework_observability import (
+    ManagedFrameworkObservability,
+    ProviderAttemptCompletedRecord,
+    ProviderAttemptStartedRecord,
+    ToolCallRecord,
+    TurnCompletedRecord,
+    TurnStartedRecord,
+)
 from agent_vm_hermes_adapter.managed_profile_adapter import (
     CanonicalManagedAgentProjection,
     HermesManagedAdapter,
@@ -162,8 +170,11 @@ class FakeHermesPluginContext:
 
 
 class FakeToolOperationTelemetry:
-    def __init__(self) -> None:
+    def __init__(self, *, observer_hooks_enabled: bool = True) -> None:
+        self.observer_hooks_enabled = observer_hooks_enabled
+        self.max_inflight_observations = 8
         self.active_operations: list[str] = []
+        self.framework_records: list[tuple[str, object, object | None]] = []
         self.post_tool_call_records: list[tuple[object, object, object]] = []
 
     @contextmanager
@@ -185,6 +196,41 @@ class FakeToolOperationTelemetry:
 
     def shutdown(self) -> None:
         return None
+
+    def start_turn(self, record: TurnStartedRecord) -> object:
+        handle = object()
+        self.framework_records.append(("turn.started", record, handle))
+        return handle
+
+    def complete_turn(
+        self,
+        handle: object,
+        record: TurnCompletedRecord,
+    ) -> None:
+        self.framework_records.append(("turn.completed", record, handle))
+
+    def start_provider_attempt(
+        self,
+        parent_handle: object | None,
+        record: ProviderAttemptStartedRecord,
+    ) -> object:
+        handle = object()
+        self.framework_records.append(("provider.started", record, parent_handle))
+        return handle
+
+    def complete_provider_attempt(
+        self,
+        handle: object,
+        record: ProviderAttemptCompletedRecord,
+    ) -> None:
+        self.framework_records.append(("provider.completed", record, handle))
+
+    def emit_tool_call(
+        self,
+        parent_handle: object | None,
+        record: ToolCallRecord,
+    ) -> None:
+        self.framework_records.append(("tool.completed", record, parent_handle))
 
 
 class ThreadBoundaryToolOperationTelemetry(FakeToolOperationTelemetry):
@@ -354,7 +400,100 @@ class ManagedToolPortalCapabilityToolsTests(unittest.TestCase):
         finally:
             adapter.close(disconnect_gateway_runtime=False)
 
-        self.assertIn("post_tool_call", context.hooks)
+        self.assertEqual(
+            set(context.hooks),
+            {
+                "api_request_error",
+                "on_session_end",
+                "post_api_request",
+                "post_tool_call",
+                "pre_api_request",
+                "pre_gateway_dispatch",
+                "pre_llm_call",
+            },
+        )
+        self.assertNotIn("pre_tool_call", context.hooks)
+
+    def test_disabled_telemetry_does_not_register_observer_hooks(self) -> None:
+        adapter, _client = build_adapter()
+        projection = adapter.projection_for_profile("researcher")
+        context = FakeHermesPluginContext()
+        configure_managed_tool_portal_plugin(
+            adapter=adapter,
+            current_projection=lambda: projection,
+            telemetry=FakeToolOperationTelemetry(observer_hooks_enabled=False),
+        )
+
+        try:
+            register(context)
+        finally:
+            adapter.close(disconnect_gateway_runtime=False)
+
+        self.assertEqual(set(context.hooks), {"pre_gateway_dispatch"})
+
+    def test_framework_hooks_return_none_and_discard_content_canaries(self) -> None:
+        adapter, _client = build_adapter()
+        projection = adapter.projection_for_profile("researcher")
+        context = FakeHermesPluginContext()
+        telemetry = FakeToolOperationTelemetry()
+        configure_managed_tool_portal_plugin(
+            adapter=adapter,
+            current_projection=lambda: projection,
+            telemetry=telemetry,
+        )
+        register(context)
+
+        canary = "forbidden-content-canary"
+        try:
+            self.assertIsNone(
+                context.hooks["pre_llm_call"](
+                    turn_id="turn-1",
+                    platform="discord",
+                    user_message=canary,
+                )
+            )
+            self.assertIsNone(
+                context.hooks["pre_api_request"](
+                    turn_id="turn-1",
+                    api_request_id="request-1",
+                    model="model",
+                    provider="provider",
+                    api_mode="chat_completions",
+                    request_messages=canary,
+                )
+            )
+            self.assertIsNone(
+                context.hooks["api_request_error"](
+                    turn_id="turn-1",
+                    api_request_id="request-1",
+                    api_duration=0.25,
+                    reason="unknown",
+                    error=canary,
+                )
+            )
+            self.assertIsNone(
+                context.hooks["post_tool_call"](
+                    turn_id="turn-1",
+                    tool_name="terminal",
+                    duration_ms=12,
+                    status="ok",
+                    args=canary,
+                    result=canary,
+                )
+            )
+            self.assertIsNone(
+                context.hooks["on_session_end"](
+                    turn_id="turn-1",
+                    completed=False,
+                    interrupted=True,
+                    conversation_history=canary,
+                )
+            )
+        finally:
+            adapter.close(disconnect_gateway_runtime=False)
+
+        self.assertNotIn(canary, repr(telemetry.framework_records))
+        self.assertNotIn(canary, repr(telemetry.post_tool_call_records))
 
     def test_observes_managed_tool_portal_handler_without_request_content(self) -> None:
         adapter, _client = build_adapter()
@@ -437,6 +576,10 @@ class ManagedToolPortalCapabilityToolsTests(unittest.TestCase):
         runtime = _ManagedToolPortalPluginRuntime(
             adapter=adapter,
             current_projection=lambda: projection,
+            framework_observability=ManagedFrameworkObservability(
+                sink=telemetry,
+                max_inflight_observations=telemetry.max_inflight_observations,
+            ),
             telemetry=telemetry,
         )
         adapter.connect_gateway_runtime()
