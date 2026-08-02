@@ -29,6 +29,7 @@ import {
 } from '../testing/managed-vm-test-helpers.js';
 import type { GatewayControlTrustedCallerContext } from './control-session/gateway-control-caller-context.js';
 import type { GatewayControlPreparedLeaseSemanticMutation } from './control-session/gateway-control-domain-handler.js';
+import type { GatewayDisposableControlSessionClient } from './control-session/gateway-disposable-control-session-client.js';
 import type { GatewaySemanticExecutionProof } from './control-session/gateway-semantic-result-ledger.js';
 import { createStopControllerOperation } from './controller-runtime-operations.js';
 import type { ControllerRuntimeDependencies } from './controller-runtime-types.js';
@@ -265,6 +266,34 @@ function createManagedOpenClawGatewayResultContract(
 		bootContract: controllerRuntimeTestManagedGatewayBootContract,
 		executionModel: 'managed-gateway',
 		expectedCohort,
+	};
+}
+
+function createGatewayControlSessionStub(
+	ensureDialing: GatewayDisposableControlSessionClient['ensureDialing'],
+): GatewayDisposableControlSessionClient {
+	return {
+		close: () => {},
+		closeForControllerShutdown: () => {},
+		emitApplicationMessage: async () => undefined,
+		ensureDialing,
+		fenceCurrentSession: () => ({ status: 'not-current' }),
+		getDiagnostics: () => ({
+			accepted: true,
+			connected: true,
+			endpointPath: '/control',
+			helloCount: 1,
+			ready: true,
+			reconnectAttempts: 0,
+			reconnectExhausted: false,
+		}),
+		ready: Promise.resolve({
+			attachmentGeneration: 1,
+			connectionId: '11111111-1111-4111-8111-111111111111',
+			controllerEpoch: 'controller-epoch-a',
+			outcome: 'accepted',
+			sessionId: '22222222-2222-4222-8222-222222222222',
+		}),
 	};
 }
 
@@ -2854,6 +2883,7 @@ describe('startControllerRuntime', () => {
 			throw new Error('Expected test zone.');
 		}
 		let nowMs = Date.parse('2026-05-27T13:00:00.000Z');
+		const ensureControlSessionDialing = vi.fn(() => ({ status: 'retry-scheduled' as const }));
 		const closeGatewayVm = vi.fn(async () => {});
 		const healthProbeCommands: string[] = [];
 		const intervalCallbacks: {
@@ -2866,6 +2896,7 @@ describe('startControllerRuntime', () => {
 		const startGatewayZone = vi.fn(async (startOptions) => {
 			capturedHealthEventStore = startOptions.healthEventStore;
 			return {
+				controlSession: createGatewayControlSessionStub(ensureControlSessionDialing),
 				image: {
 					built: true,
 					fingerprint: 'gateway-image',
@@ -2984,6 +3015,14 @@ describe('startControllerRuntime', () => {
 		expect(closeGatewayVm).not.toHaveBeenCalled();
 		expect(healthProbeCommands).toHaveLength(2);
 		expect(healthProbeCommands.every((command) => command.includes('/readyz'))).toBe(true);
+		nowMs += runtimeSystemConfig.controller.health.staleAfterMs + 1;
+		await monitorTick();
+		nowMs += runtimeSystemConfig.controller.health.controlSessionDeathGraceMs + 1;
+		await monitorTick();
+		expect(ensureControlSessionDialing).toHaveBeenCalledOnce();
+		expect(ensureControlSessionDialing).toHaveBeenCalledWith('stale-health');
+		expect(startGatewayZone).toHaveBeenCalledOnce();
+		expect(closeGatewayVm).not.toHaveBeenCalled();
 		const onGatewayRuntimeAttachmentLost =
 			startGatewayZone.mock.calls[0]?.[0].onGatewayRuntimeAttachmentLost;
 		if (onGatewayRuntimeAttachmentLost === undefined) {

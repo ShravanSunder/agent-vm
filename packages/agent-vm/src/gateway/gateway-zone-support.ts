@@ -5,6 +5,7 @@ import type {
 	GatewayZoneConfig,
 	GatewayZoneObservabilityConfig,
 } from '@agent-vm/gateway-lifecycle';
+import type { AgentVmHealthEvent } from '@agent-vm/gateway-lifecycle';
 import {
 	createGatewayTelemetryProducerSafetyContract,
 	gatewayFrameworkTelemetryServiceNames,
@@ -76,6 +77,12 @@ export type GatewayControlSessionAttemptOutcome = GatewayControlAttemptOutcome &
 	readonly processEpoch: string;
 };
 
+export interface GatewayControlSessionHealthEvidence {
+	readonly event: Extract<AgentVmHealthEvent, { readonly kind: 'gateway-control-session' }>;
+	readonly gateway: GatewayEpochIdentity;
+	readonly recordKind: 'durable-and-live' | 'live-only';
+}
+
 export interface StartGatewayZoneOptions {
 	readonly controlSession?: {
 		readonly controllerEpoch: string;
@@ -103,6 +110,7 @@ export interface StartGatewayZoneOptions {
 	readonly onControlSessionAttemptOutcome?: (outcome: GatewayControlSessionAttemptOutcome) => void;
 	readonly onControlSessionAttachmentGap?: (transition: GatewayControlSessionAttachmentGap) => void;
 	readonly onControlSessionHeartbeat?: (transition: GatewayControlSessionHeartbeat) => void;
+	readonly onControlSessionHealthEvidence?: (evidence: GatewayControlSessionHealthEvidence) => void;
 	readonly onControlSessionReconnectExhausted?: (
 		transition: GatewayControlSessionReconnectExhausted,
 	) => void;
@@ -218,6 +226,7 @@ export type GatewayControlSessionConnector = (options: {
 	readonly onReconnectExhausted?: (transition: GatewayControlReconnectExhaustedTransition) => void;
 	readonly processAdmissionCoordinator?: GatewayControlProcessAdmissionCoordinator;
 	readonly recordHealthEvent?: ConnectGatewayControlSessionOptions['recordHealthEvent'];
+	readonly recordLiveHealthEvent?: ConnectGatewayControlSessionOptions['recordLiveHealthEvent'];
 	readonly resolveInboundStablePrincipal?: ConnectGatewayControlSessionOptions['resolveInboundStablePrincipal'];
 	readonly sessionFenceRegistry?: ControlSessionFenceRegistry;
 	readonly signal?: AbortSignal;

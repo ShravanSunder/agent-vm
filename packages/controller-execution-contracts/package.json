@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/controller-execution-contracts",
-	"version": "0.0.128",
+	"version": "0.0.130",
 	"description": "Zod contracts for controller-owned portal execution boundaries.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {

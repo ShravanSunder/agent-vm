@@ -1,3 +1,5 @@
+import { Buffer } from 'node:buffer';
+
 import type { AgentVmHealthEvent } from '@agent-vm/gateway-lifecycle';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -17,6 +19,34 @@ function gatewayControlSessionEvent(
 		zoneId: 'beta',
 		...overrides,
 	} as AgentVmHealthEvent;
+}
+
+type GatewayControlSessionEvent = Extract<
+	AgentVmHealthEvent,
+	{ readonly kind: 'gateway-control-session' }
+>;
+
+function reconnectEvent(
+	overrides: Partial<GatewayControlSessionEvent> = {},
+): GatewayControlSessionEvent {
+	return {
+		attemptCount: 0,
+		bootId: 'gateway-boot-a',
+		domain: 'gateway_control',
+		elapsedMs: 0,
+		firstObservedAtMs: 1_000,
+		kind: 'gateway-control-session',
+		latestObservedAtMs: 1_000,
+		observedAtMs: 1_000,
+		operation: 'control-session-reconnect',
+		outcome: 'stale-attachment',
+		peerId: 'gateway-beta',
+		reconnectPhase: 'attachment-lost',
+		result: 'failed',
+		windowState: 'open',
+		zoneId: 'beta',
+		...overrides,
+	} as GatewayControlSessionEvent;
 }
 
 describe('HealthEventStore', () => {
@@ -527,6 +557,361 @@ describe('HealthEventStore', () => {
 		} finally {
 			vi.useRealTimers();
 		}
+	});
+
+	it('updates live reconnect phase immediately while persisting one opening and one terminal summary', async () => {
+		const append = vi.fn(async (_event: AgentVmHealthEvent) => {});
+		const store = new HealthEventStore({
+			durableEventLog: { append },
+			eventHistoryLimit: 20,
+			staleAfterMs: 30_000,
+		});
+		const opening = reconnectEvent({});
+
+		store.record(opening);
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(append).toHaveBeenCalledWith(opening);
+
+		store.record(
+			reconnectEvent({
+				attemptCount: 1,
+				latestObservedAtMs: 1_100,
+				observedAtMs: 1_100,
+				outcome: 'transport-error',
+				reconnectPhase: 'attempt-failed',
+			}),
+		);
+		store.record(
+			reconnectEvent({
+				attemptCount: 1,
+				latestObservedAtMs: 1_110,
+				nextRetryAtMs: 1_360,
+				observedAtMs: 1_110,
+				outcome: 'transport-error',
+				reconnectPhase: 'retry-scheduled',
+			}),
+		);
+		store.record(
+			reconnectEvent({
+				attemptCount: 2,
+				latestObservedAtMs: 1_360,
+				observedAtMs: 1_360,
+				outcome: 'timeout',
+				reconnectPhase: 'attempt-failed',
+				result: 'timeout',
+			}),
+		);
+
+		expect(store.listLatestEventsForZone('beta')).toEqual([
+			reconnectEvent({
+				attemptCount: 2,
+				latestObservedAtMs: 1_360,
+				observedAtMs: 1_360,
+				outcome: 'timeout',
+				reconnectPhase: 'attempt-failed',
+				result: 'timeout',
+			}),
+		]);
+		expect(append).toHaveBeenCalledTimes(1);
+
+		const closed = reconnectEvent({
+			attemptCount: 2,
+			latestObservedAtMs: 1_500,
+			observedAtMs: 1_500,
+			outcome: 'accepted',
+			reconnectPhase: 'accepted',
+			result: 'ok',
+			terminalReason: 'accepted',
+			windowState: 'closed',
+		});
+		store.record(closed);
+		await store.flushDurableWrites();
+
+		expect(append).toHaveBeenCalledTimes(2);
+		expect(append).toHaveBeenNthCalledWith(2, closed);
+		expect(store.getEvidenceQueueDiagnostics().durableLog.coalescedRecords).toBe(3);
+	});
+
+	it('delivers a reconnect close that replaces a deferred outage update during normal draining', async () => {
+		const append = vi.fn(async (_event: AgentVmHealthEvent) => {});
+		const store = new HealthEventStore({
+			durableEventLog: { append },
+			eventHistoryLimit: 20,
+			staleAfterMs: 30_000,
+		});
+		const opening = reconnectEvent({});
+		const deferredUpdate = reconnectEvent({
+			attemptCount: 1,
+			latestObservedAtMs: 1_100,
+			observedAtMs: 1_100,
+			outcome: 'transport-error',
+			reconnectPhase: 'attempt-failed',
+		});
+		const closed = reconnectEvent({
+			attemptCount: 1,
+			latestObservedAtMs: 1_200,
+			observedAtMs: 1_200,
+			outcome: 'accepted',
+			reconnectPhase: 'accepted',
+			result: 'ok',
+			terminalReason: 'accepted',
+			windowState: 'closed',
+		});
+
+		store.record(opening);
+		store.record(deferredUpdate);
+		store.record(closed);
+		await new Promise<void>((resolve) => setImmediate(resolve));
+
+		expect(append).toHaveBeenCalledTimes(2);
+		expect(append).toHaveBeenNthCalledWith(1, opening);
+		expect(append).toHaveBeenNthCalledWith(2, closed);
+		expect(store.getEvidenceQueueDiagnostics().durableLog).toMatchObject({
+			coalescedRecords: 1,
+			pendingRecords: 0,
+		});
+	});
+
+	it('waits for a timed-out reconnect opening delivery to settle before delivering its close', async () => {
+		vi.useFakeTimers();
+		try {
+			const opening = reconnectEvent({});
+			const closed = reconnectEvent({
+				attemptCount: 1,
+				latestObservedAtMs: 1_200,
+				observedAtMs: 1_200,
+				outcome: 'accepted',
+				reconnectPhase: 'accepted',
+				result: 'ok',
+				terminalReason: 'accepted',
+				windowState: 'closed',
+			});
+			let resolveOpeningDelivery: (() => void) | undefined;
+			const openingDelivery = new Promise<void>((resolve) => {
+				resolveOpeningDelivery = resolve;
+			});
+			const append = vi.fn(async (event: AgentVmHealthEvent) => {
+				if (event === opening) {
+					await openingDelivery;
+				}
+			});
+			const store = new HealthEventStore({
+				durableEventLog: { append },
+				eventHistoryLimit: 20,
+				evidenceQueueLimits: {
+					maxOutstandingOperations: 2,
+					operationTimeoutMs: 20,
+				},
+				staleAfterMs: 30_000,
+			});
+
+			store.record(opening);
+			await Promise.resolve();
+			await Promise.resolve();
+			expect(append).toHaveBeenCalledTimes(1);
+			expect(append).toHaveBeenNthCalledWith(1, opening);
+
+			store.record(
+				reconnectEvent({
+					attemptCount: 1,
+					latestObservedAtMs: 1_100,
+					observedAtMs: 1_100,
+					outcome: 'transport-error',
+					reconnectPhase: 'attempt-failed',
+				}),
+			);
+			store.record(closed);
+			await vi.advanceTimersByTimeAsync(20);
+
+			expect(append).toHaveBeenCalledTimes(1);
+			expect(store.getEvidenceQueueDiagnostics().durableLog).toMatchObject({
+				activeOperations: 1,
+				operationTimeouts: 1,
+				pendingRecords: 1,
+			});
+
+			resolveOpeningDelivery?.();
+			await vi.advanceTimersByTimeAsync(0);
+
+			expect(append).toHaveBeenCalledTimes(2);
+			expect(append).toHaveBeenNthCalledWith(1, opening);
+			expect(append).toHaveBeenNthCalledWith(2, closed);
+			expect(store.getEvidenceQueueDiagnostics().durableLog).toMatchObject({
+				activeOperations: 0,
+				pendingRecords: 0,
+			});
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('retains reconnect opening and close evidence under routine and intermediate capacity pressure', async () => {
+		const opening = reconnectEvent({});
+		const closed = reconnectEvent({
+			attemptCount: 2,
+			latestObservedAtMs: 1_300,
+			observedAtMs: 1_300,
+			outcome: 'accepted',
+			reconnectPhase: 'accepted',
+			result: 'ok',
+			terminalReason: 'accepted',
+			windowState: 'closed',
+		});
+		const pairByteSize =
+			Buffer.byteLength(JSON.stringify(opening), 'utf8') +
+			Buffer.byteLength(JSON.stringify(closed), 'utf8');
+		const append = vi.fn(async (_event: AgentVmHealthEvent) => {});
+		const store = new HealthEventStore({
+			durableEventLog: { append },
+			eventHistoryLimit: 20,
+			evidenceQueueLimits: {
+				maxPendingBytes: pairByteSize,
+				maxPendingRecords: 2,
+			},
+			staleAfterMs: 30_000,
+		});
+
+		store.record(opening);
+		for (let attemptCount = 1; attemptCount <= 2; attemptCount += 1) {
+			store.record(
+				reconnectEvent({
+					attemptCount,
+					latestObservedAtMs: 1_000 + attemptCount,
+					observedAtMs: 1_000 + attemptCount,
+					outcome: 'transport-error',
+					reconnectPhase: 'attempt-failed',
+				}),
+			);
+		}
+		store.record(gatewayControlSessionEvent({ observedAtMs: 1_100 }));
+		store.record(gatewayControlSessionEvent({ observedAtMs: 1_101 }));
+		store.record(closed);
+		await new Promise<void>((resolve) => setImmediate(resolve));
+
+		expect(append).toHaveBeenCalledTimes(2);
+		expect(append).toHaveBeenNthCalledWith(1, opening);
+		expect(append).toHaveBeenNthCalledWith(2, closed);
+		const diagnostics = store.getEvidenceQueueDiagnostics().durableLog;
+		expect(diagnostics).toMatchObject({
+			maxPendingBytes: pairByteSize,
+			maxPendingRecords: 2,
+			pendingBytes: 0,
+			pendingRecords: 0,
+		});
+		expect(diagnostics.droppedRecords).toBeGreaterThan(0);
+	});
+
+	it('does not coalesce reconnect windows from different exact Gateway sources', async () => {
+		const append = vi.fn(async (_event: AgentVmHealthEvent) => {});
+		const store = new HealthEventStore({
+			durableEventLog: { append },
+			eventHistoryLimit: 20,
+			staleAfterMs: 30_000,
+		});
+
+		store.record(reconnectEvent({ bootId: 'gateway-boot-a' }));
+		store.record(
+			reconnectEvent({
+				bootId: 'gateway-boot-b',
+				peerId: 'gateway-beta-successor',
+			}),
+		);
+		await store.flushDurableWrites();
+
+		expect(append).toHaveBeenCalledTimes(2);
+	});
+
+	it('bounds sink flushes when reconnect close evidence is missing or delayed', async () => {
+		vi.useFakeTimers();
+		try {
+			const append = vi.fn(async (_event: AgentVmHealthEvent) => {});
+			const record = vi.fn(async (_event: AgentVmHealthEvent) => {});
+			const store = new HealthEventStore({
+				durableEventLog: { append },
+				eventHistoryLimit: 20,
+				evidenceQueueLimits: {
+					flushTimeoutMs: 20,
+					operationTimeoutMs: 20,
+				},
+				healthEventSinks: [{ record }],
+				staleAfterMs: 30_000,
+			});
+
+			store.record(reconnectEvent({}));
+			await Promise.resolve();
+			await Promise.resolve();
+			expect(append).toHaveBeenCalledTimes(1);
+			expect(record).toHaveBeenCalledTimes(1);
+
+			store.record(
+				reconnectEvent({
+					attemptCount: 1,
+					latestObservedAtMs: 1_100,
+					observedAtMs: 1_100,
+					outcome: 'transport-error',
+					reconnectPhase: 'attempt-failed',
+				}),
+			);
+			let flushesSettled = false;
+			const flushes = Promise.all([store.flushDurableWrites(), store.flushHealthEventSinks()]).then(
+				() => {
+					flushesSettled = true;
+				},
+			);
+
+			await vi.advanceTimersByTimeAsync(19);
+			expect(flushesSettled).toBe(false);
+			await vi.advanceTimersByTimeAsync(1);
+			await flushes;
+
+			expect(flushesSettled).toBe(true);
+			expect(append).toHaveBeenCalledTimes(1);
+			expect(record).toHaveBeenCalledTimes(1);
+			expect(store.getEvidenceQueueDiagnostics()).toMatchObject({
+				durableLog: { flushTimeouts: 1, pendingRecords: 1 },
+				healthEventSinks: { flushTimeouts: 1, pendingRecords: 1 },
+			});
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('persists a stale-source terminal summary without overwriting current live state', async () => {
+		const append = vi.fn(async (_event: AgentVmHealthEvent) => {});
+		const store = new HealthEventStore({
+			durableEventLog: { append },
+			eventHistoryLimit: 20,
+			staleAfterMs: 30_000,
+		});
+		const currentAccepted = reconnectEvent({
+			bootId: 'gateway-boot-current',
+			latestObservedAtMs: 2_000,
+			observedAtMs: 2_000,
+			outcome: 'accepted',
+			peerId: 'gateway-current',
+			reconnectPhase: 'accepted',
+			result: 'ok',
+			terminalReason: 'accepted',
+			windowState: 'closed',
+		});
+		const staleDisposed = reconnectEvent({
+			bootId: 'gateway-boot-stale',
+			latestObservedAtMs: 2_100,
+			observedAtMs: 2_100,
+			peerId: 'gateway-stale',
+			reconnectPhase: 'retry-scheduled',
+			terminalReason: 'gateway-superseded',
+			windowState: 'closed',
+		});
+
+		store.record(currentAccepted);
+		store.recordEvidenceOnly(staleDisposed);
+		await store.flushDurableWrites();
+
+		expect(store.listLatestEventsForZone('beta')).toEqual([currentAccepted]);
+		expect(store.listHistory()).toEqual([currentAccepted]);
+		expect(append).toHaveBeenCalledWith(staleDisposed);
 	});
 
 	it('persists recovery action and failure class through the durable log boundary', async () => {

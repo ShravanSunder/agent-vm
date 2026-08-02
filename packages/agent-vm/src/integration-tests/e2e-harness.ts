@@ -43,7 +43,10 @@ import {
 	startGatewayZone as startGatewayZoneDefault,
 	startGatewayZoneForController as startGatewayZoneForControllerDefault,
 } from '../gateway/gateway-zone-orchestrator.js';
-import type { StartGatewayZoneOptions } from '../gateway/gateway-zone-support.js';
+import type {
+	GatewayControlSessionConnector,
+	StartGatewayZoneOptions,
+} from '../gateway/gateway-zone-support.js';
 import { controllerFixedGatewayRuntimeArtifactLimits } from '../gateway/managed-gateway-runtime-input-builders.js';
 
 const managedVmRuntimeComposition = createManagedVmRuntimeComposition();
@@ -72,9 +75,15 @@ export async function startE2eGatewayZone(
 
 export async function startE2eGatewayZoneForController(
 	options: Parameters<typeof startGatewayZoneForControllerDefault>[0],
+	testHooks: {
+		readonly connectGatewayControlSession?: GatewayControlSessionConnector;
+	} = {},
 ): Promise<Awaited<ReturnType<typeof startGatewayZoneForControllerDefault>>> {
 	return await startGatewayZoneForControllerDefault(options, {
 		...managedVmRuntimeComposition,
+		...(testHooks.connectGatewayControlSession === undefined
+			? {}
+			: { connectGatewayControlSession: testHooks.connectGatewayControlSession }),
 		gatewayRuntimeArtifactLimits: controllerFixedGatewayRuntimeArtifactLimits,
 	});
 }
@@ -1217,10 +1226,10 @@ function renderLocalDockerPackageInstallLines(
 	tarballs: readonly LocalDockerPackageTarball[],
 ): readonly string[] {
 	const manifestWriterScript = [
-		'require("node:fs").writeFileSync(',
+		'require("node:fs/promises").writeFile(',
 		'"/opt/agent-vm/local-packages/package.json",',
 		JSON.stringify(renderLocalDockerPackageManifest(tarballs)),
-		')',
+		').catch((error) => { console.error(error); process.exitCode = 1; })',
 	].join('');
 	return [
 		'RUN mkdir -p /opt/agent-vm/local-packages && \\',

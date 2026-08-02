@@ -7,6 +7,16 @@ import { wrapWithHermesShellEnvironment } from '@agent-vm/hermes-gateway';
 import type { ManagedVmCreateRequest } from '@agent-vm/managed-vm';
 import { afterAll, describe, expect, it } from 'vitest';
 
+import {
+	connectGatewayControlSession,
+	GATEWAY_CONTROL_RECONNECT_DEADLINE_MS,
+	GATEWAY_CONTROL_RECONNECT_MAX_ATTEMPTS,
+	type GatewayDisposableControlSessionClient,
+} from '../controller/control-session/index.js';
+import {
+	startControlTransportReliabilityProxy,
+	type ControlTransportReliabilityProxy,
+} from '../controller/reliability/testing/control-transport-reliability-proxy.js';
 import { readManagedGatewaySiblingProcessIdentity } from '../controller/reliability/testing/gateway-reliability-fault-adapter.js';
 import type { GatewayExpectedAdmissionCohort } from '../gateway/gateway-aggregate-admission-state.js';
 import type { GatewayZoneVmOperations } from '../gateway/gateway-zone-support.js';
@@ -17,13 +27,16 @@ import {
 	removeE2eTempRoot,
 	startE2eControllerRuntime,
 	startE2eGatewayZone,
+	startE2eGatewayZoneForController,
 	type E2eHarnessRuntime,
 } from './e2e-harness.js';
 import { waitForProtocolRetryInterval } from './e2e-protocol-wait.js';
+import { startHermesDeterministicToolCallModelServer } from './hermes-deterministic-tool-call-model-server.js';
 import {
 	renderHermesManagedE2eConfiguration,
 	scaffoldHermesE2eProject,
 	useLocalHermesGatewayImagePackages,
+	hermesE2eApiServerKey,
 	type HermesE2eProject,
 } from './hermes-e2e-harness.js';
 
@@ -56,15 +69,20 @@ const fakeModelHost = 'hermes-model.provider.test';
 const fakeModelName = 'hermes-e2e';
 const providerCredentialCanary = 'synthetic-hermes-provider-credential-canary';
 const providerCredentialEnvironmentName = 'PROVIDER_API_KEY';
+const fakeModelPort = 18_080;
+const frameworkGapMarker = 'HERMES_FRAMEWORK_AVAILABLE_DURING_CONTROL_GAP';
+const toolVmRecoveryMarker = 'HERMES_TOOL_VM_RECOVERY_OK';
 
 interface ManagedGatewayStartObservation {
+	readonly controlSession: GatewayDisposableControlSessionClient;
 	readonly expectedCohort: GatewayExpectedAdmissionCohort;
-	readonly managedVmCreateRequest: ManagedVmCreateRequest;
+	readonly managedVmCreateRequest?: ManagedVmCreateRequest;
 	readonly qemuPid: number;
 	readonly vm: Pick<GatewayZoneVmOperations, 'exec' | 'getHostProcessId' | 'id'>;
 }
 
 interface ManagedHermesEpoch {
+	readonly controlTransportProxy?: ControlTransportReliabilityProxy;
 	readonly harness: E2eHarnessRuntime;
 	readonly start: ManagedGatewayStartObservation;
 	readonly toolVmCreateRequests: readonly ManagedVmCreateRequest[];
@@ -101,9 +119,82 @@ function renderCommonConfiguration(acceptanceMarker: string): string {
 	return renderHermesManagedE2eConfiguration({
 		acceptanceMarker,
 		contextLength: fakeModelContextLength,
+		fakeModelBaseUrl: `http://127.0.0.1:${String(fakeModelPort)}/v1`,
 		fakeModelHost,
 		fakeModelName,
 	});
+}
+
+async function callHermesProfile(options: {
+	readonly gatewayPort: number;
+	readonly prompt: string;
+}): Promise<string> {
+	const response = await fetch(
+		`http://127.0.0.1:${String(options.gatewayPort)}/p/main/v1/chat/completions`,
+		{
+			body: JSON.stringify({
+				messages: [{ content: options.prompt, role: 'user' }],
+				model: fakeModelName,
+				stream: false,
+			}),
+			headers: {
+				authorization: `Bearer ${hermesE2eApiServerKey}`,
+				'content-type': 'application/json',
+			},
+			method: 'POST',
+			signal: AbortSignal.timeout(120_000),
+		},
+	);
+	const responseBody: unknown = await response.json();
+	if (
+		!response.ok ||
+		typeof responseBody !== 'object' ||
+		responseBody === null ||
+		!('choices' in responseBody) ||
+		!Array.isArray(responseBody.choices)
+	) {
+		throw new Error(
+			`Hermes profile request failed with HTTP ${String(response.status)}: ${JSON.stringify(responseBody)}`,
+		);
+	}
+	const firstChoice: unknown = responseBody.choices[0];
+	if (
+		typeof firstChoice !== 'object' ||
+		firstChoice === null ||
+		!('message' in firstChoice) ||
+		typeof firstChoice.message !== 'object' ||
+		firstChoice.message === null ||
+		!('content' in firstChoice.message) ||
+		typeof firstChoice.message.content !== 'string'
+	) {
+		throw new Error(`Hermes profile response was malformed: ${JSON.stringify(responseBody)}`);
+	}
+	return firstChoice.message.content;
+}
+
+async function waitForFreshAcceptedControlSession(options: {
+	readonly controlSession: GatewayDisposableControlSessionClient;
+	readonly minimumAttachmentGeneration: number;
+	readonly previousSessionId: string;
+}): Promise<void> {
+	const deadlineMs = Date.now() + 120_000;
+	while (Date.now() < deadlineMs) {
+		const diagnostics = options.controlSession.getDiagnostics();
+		if (
+			diagnostics.connected &&
+			diagnostics.ready &&
+			diagnostics.attachmentGeneration !== undefined &&
+			diagnostics.attachmentGeneration >= options.minimumAttachmentGeneration &&
+			diagnostics.lastHelloResponse?.outcome === 'accepted' &&
+			diagnostics.lastHelloResponse.sessionId !== options.previousSessionId
+		) {
+			return;
+		}
+		await waitForProtocolRetryInterval(500);
+	}
+	throw new Error(
+		`Timed out waiting for the recovered Hermes control session: ${JSON.stringify(options.controlSession.getDiagnostics())}`,
+	);
 }
 
 async function materializeNativeProfileLeaves(project: HermesE2eProject): Promise<void> {
@@ -184,47 +275,79 @@ function resolvedHermesSecrets(): Readonly<Record<string, string>> {
 }
 
 async function startManagedHermesEpoch(options: {
+	readonly enableControlTransportIsolation?: boolean;
 	readonly project: HermesE2eProject;
 }): Promise<ManagedHermesEpoch> {
+	let controlTransportProxy: ControlTransportReliabilityProxy | undefined;
 	let managedGatewayStart: ManagedGatewayStartObservation | undefined;
 	const toolVmCreateRequests: ManagedVmCreateRequest[] = [];
-	const harness = await startE2eControllerRuntime({
-		onControllerManagedVmCreateRequest: (request) => {
-			toolVmCreateRequests.push(request);
-		},
-		secrets: resolvedHermesSecrets(),
-		startGatewayZone: async (startOptions) => {
-			let managedVmCreateRequest: ManagedVmCreateRequest | undefined;
-			const result = await startE2eGatewayZone(startOptions, {
-				onManagedVmCreateRequest: (request) => {
-					managedVmCreateRequest = request;
-				},
-			});
-			if (result.executionModel !== 'managed-gateway' || managedVmCreateRequest === undefined) {
-				throw new Error('Hermes managed environment E2E requires a managed Gateway image boot.');
-			}
-			const qemuPid = result.vm.getHostProcessId();
-			if (qemuPid === null) {
-				throw new Error('Managed Hermes Gateway start omitted its QEMU pid.');
-			}
-			managedGatewayStart = {
-				expectedCohort: result.expectedCohort,
-				managedVmCreateRequest,
-				qemuPid,
-				vm: result.vm,
-			};
-			return result;
-		},
-		startOptions: {
-			systemConfig: options.project.systemConfig,
-			zoneIds: [options.project.zone.id],
-		},
-	});
+	let harness: Awaited<ReturnType<typeof startE2eControllerRuntime>>;
+	try {
+		harness = await startE2eControllerRuntime({
+			onControllerManagedVmCreateRequest: (request) => {
+				toolVmCreateRequests.push(request);
+			},
+			secrets: resolvedHermesSecrets(),
+			startGatewayZone: async (startOptions) => {
+				let managedVmCreateRequest: ManagedVmCreateRequest | undefined;
+				const result = options.enableControlTransportIsolation
+					? await startE2eGatewayZoneForController(startOptions, {
+							connectGatewayControlSession: async (connectOptions) => {
+								controlTransportProxy = await startControlTransportReliabilityProxy({
+									target: connectOptions.endpoint,
+								});
+								return await connectGatewayControlSession({
+									...connectOptions,
+									endpoint: {
+										...connectOptions.endpoint,
+										...controlTransportProxy.endpoint,
+									},
+								});
+							},
+						})
+					: await startE2eGatewayZone(startOptions, {
+							onManagedVmCreateRequest: (request) => {
+								managedVmCreateRequest = request;
+							},
+						});
+				if (result.executionModel !== 'managed-gateway' || result.controlSession === undefined) {
+					throw new Error('Hermes managed environment E2E requires a managed Gateway image boot.');
+				}
+				if (!options.enableControlTransportIsolation && managedVmCreateRequest === undefined) {
+					throw new Error('Hermes managed environment E2E did not observe its Gateway VM request.');
+				}
+				const qemuPid = result.vm.getHostProcessId();
+				if (qemuPid === null) {
+					throw new Error('Managed Hermes Gateway start omitted its QEMU pid.');
+				}
+				managedGatewayStart = {
+					controlSession: result.controlSession,
+					expectedCohort: result.expectedCohort,
+					...(managedVmCreateRequest === undefined ? {} : { managedVmCreateRequest }),
+					qemuPid,
+					vm: result.vm,
+				};
+				return result;
+			},
+			startOptions: {
+				systemConfig: options.project.systemConfig,
+				zoneIds: [options.project.zone.id],
+			},
+		});
+	} catch (error: unknown) {
+		await controlTransportProxy?.close().catch(() => undefined);
+		throw error;
+	}
 	if (managedGatewayStart === undefined) {
-		await harness.close({ preserveTempRoot: true });
+		try {
+			await harness.close({ preserveTempRoot: true });
+		} finally {
+			await controlTransportProxy?.close();
+		}
 		throw new Error('Hermes managed environment E2E did not observe the managed Gateway start.');
 	}
 	return {
+		...(controlTransportProxy === undefined ? {} : { controlTransportProxy }),
 		harness,
 		start: managedGatewayStart,
 		toolVmCreateRequests,
@@ -236,6 +359,9 @@ function assertManagedGatewayProjection(
 	project: HermesE2eProject,
 ): void {
 	const request = start.managedVmCreateRequest;
+	if (request === undefined) {
+		throw new Error('Managed Hermes Gateway projection assertion requires its VM create request.');
+	}
 	expect(request.environment.HERMES_MANAGED_DIR).toBeUndefined();
 	expect(request.environment.HERMES_MANAGED).toBeUndefined();
 	expect(request.mounts['/etc/hermes']).toMatchObject({
@@ -474,13 +600,18 @@ describeHermesManagedEnvironmentE2e(
 	'e2e: Hermes managed common policy reaches the stock root runtime',
 	() => {
 		let activeHarness: E2eHarnessRuntime | undefined;
+		let activeControlTransportProxy: ControlTransportReliabilityProxy | undefined;
 		let project: HermesE2eProject | undefined;
 
 		afterAll(async () => {
 			try {
 				await activeHarness?.close();
 			} finally {
-				if (project) await removeE2eTempRoot(project.tempRoot);
+				try {
+					await activeControlTransportProxy?.close();
+				} finally {
+					if (project) await removeE2eTempRoot(project.tempRoot);
+				}
 			}
 		});
 
@@ -533,9 +664,15 @@ describeHermesManagedEnvironmentE2e(
 			);
 			expect(await readNativeProfileLeaves(project)).toEqual(expectedNativeLeaves);
 
-			const secondEpoch = await startManagedHermesEpoch({ project });
+			const secondEpoch = await startManagedHermesEpoch({
+				enableControlTransportIsolation: true,
+				project,
+			});
 			activeHarness = secondEpoch.harness;
-			assertManagedGatewayProjection(secondEpoch.start, project);
+			activeControlTransportProxy = secondEpoch.controlTransportProxy;
+			if (activeControlTransportProxy === undefined) {
+				throw new Error('Hermes recovery E2E did not create its control transport proxy.');
+			}
 			expect(secondEpoch.toolVmCreateRequests).toEqual([]);
 			await waitForRootApiHealth({
 				gatewayPort: project.gatewayPort,
@@ -545,6 +682,87 @@ describeHermesManagedEnvironmentE2e(
 				acceptanceMarker: commonAcceptanceMarkers.second,
 				start: secondEpoch.start,
 			});
+			await startHermesDeterministicToolCallModelServer({
+				frameworkMarker: frameworkGapMarker,
+				port: fakeModelPort,
+				toolVmMarker: toolVmRecoveryMarker,
+				vm: secondEpoch.start.vm,
+			});
+
+			const frameworkPort =
+				secondEpoch.start.expectedCohort.ingressIntent.frameworkRootRoute.guestPort;
+			const toolPortalPort = secondEpoch.start.expectedCohort.ingressIntent.controlRoute.guestPort;
+			const frameworkIdentityBefore = await readManagedGatewaySiblingProcessIdentity({
+				gatewayVm: secondEpoch.start.vm,
+				guestPort: frameworkPort,
+				role: 'framework',
+			});
+			const toolPortalIdentityBefore = await readManagedGatewaySiblingProcessIdentity({
+				gatewayVm: secondEpoch.start.vm,
+				guestPort: toolPortalPort,
+				role: 'tool-portal',
+			});
+			const initialControlDiagnostics = secondEpoch.start.controlSession.getDiagnostics();
+			const initialAttachmentGeneration = initialControlDiagnostics.attachmentGeneration;
+			const initialSessionId = initialControlDiagnostics.lastHelloResponse?.sessionId;
+			if (
+				initialAttachmentGeneration === undefined ||
+				initialSessionId === undefined ||
+				initialControlDiagnostics.lastHelloResponse?.outcome !== 'accepted'
+			) {
+				throw new Error(
+					`Expected an accepted Hermes control session before interruption: ${JSON.stringify(initialControlDiagnostics)}`,
+				);
+			}
+
+			const isolation = activeControlTransportProxy.isolate();
+			const postBudgetAttempt = await activeControlTransportProxy.waitForRejectedConnection({
+				minimumObservedAtMs: isolation.startedAtMs + GATEWAY_CONTROL_RECONNECT_DEADLINE_MS + 1,
+				minimumRejectedConnectionCount:
+					isolation.rejectedConnectionCount + GATEWAY_CONTROL_RECONNECT_MAX_ATTEMPTS + 1,
+				timeoutMs: GATEWAY_CONTROL_RECONNECT_DEADLINE_MS * 3,
+			});
+			expect(postBudgetAttempt.observedAtMs - isolation.startedAtMs).toBeGreaterThan(
+				GATEWAY_CONTROL_RECONNECT_DEADLINE_MS,
+			);
+			expect(
+				await callHermesProfile({
+					gatewayPort: project.gatewayPort,
+					prompt: 'NO_TOOL_FRAMEWORK_PROBE',
+				}),
+			).toContain(frameworkGapMarker);
+			expect(secondEpoch.start.controlSession.getDiagnostics()).toMatchObject({
+				connected: false,
+				reconnectExhausted: false,
+			});
+			activeControlTransportProxy.restore();
+			await waitForFreshAcceptedControlSession({
+				controlSession: secondEpoch.start.controlSession,
+				minimumAttachmentGeneration: initialAttachmentGeneration + 1,
+				previousSessionId: initialSessionId,
+			});
+			expect(
+				await callHermesProfile({
+					gatewayPort: project.gatewayPort,
+					prompt: 'RUN_TOOL_VM_RECOVERY_PROBE',
+				}),
+			).toContain(toolVmRecoveryMarker);
+			expect(secondEpoch.toolVmCreateRequests).toHaveLength(1);
+			expect(secondEpoch.start.vm.getHostProcessId()).toBe(secondEpoch.start.qemuPid);
+			expect(
+				await readManagedGatewaySiblingProcessIdentity({
+					gatewayVm: secondEpoch.start.vm,
+					guestPort: frameworkPort,
+					role: 'framework',
+				}),
+			).toEqual(frameworkIdentityBefore);
+			expect(
+				await readManagedGatewaySiblingProcessIdentity({
+					gatewayVm: secondEpoch.start.vm,
+					guestPort: toolPortalPort,
+					role: 'tool-portal',
+				}),
+			).toEqual(toolPortalIdentityBefore);
 			expect(await readNativeProfileLeaves(project)).toEqual(expectedNativeLeaves);
 			expect(secondEpoch.start.vm.id).not.toBe(firstEpoch.start.vm.id);
 			expect(secondEpoch.start.qemuPid).not.toBe(firstEpoch.start.qemuPid);

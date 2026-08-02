@@ -645,6 +645,7 @@ describe('zone runtime contracts', () => {
 				port: 22,
 			}),
 			exec: async () => ({ exitCode: 0, stderr: '', stdout: 'ok' }),
+			ensureCurrentControlSessionDialing: () => ({ status: 'not-current' }),
 			gatewayType: 'openclaw',
 			getDiagnosis: () => ({
 				channelProviderPlane: 'unknown',
@@ -1732,6 +1733,7 @@ function createFakeManagedGatewayRuntime(
 			port: 22,
 		}),
 		exec: async () => ({ exitCode: 0, stderr: '', stdout: zoneId }),
+		ensureCurrentControlSessionDialing: () => ({ status: 'not-current' }),
 		gatewayType,
 		getDiagnosis: () => ({
 			channelProviderPlane: 'unknown',

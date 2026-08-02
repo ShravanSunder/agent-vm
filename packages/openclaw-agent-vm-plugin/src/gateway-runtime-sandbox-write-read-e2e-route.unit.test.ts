@@ -263,6 +263,16 @@ describe('Gateway Runtime direct Sandbox E2E route', () => {
 		expect(clientFixture.environmentOpen).not.toHaveBeenCalled();
 	});
 
+	it('rejects signed nested proof paths before opening a Sandbox environment', async () => {
+		enableRoute();
+		const { clientFixture, route } = registerRoute();
+		const bodyText = createBody({ filePath: 'agent-vm-e2e-parent/proof.txt' });
+		const response = await invokeRoute({ bodyText, route, signature: signBody(bodyText) });
+
+		expect(response.statusCode).toBe(400);
+		expect(clientFixture.environmentOpen).not.toHaveBeenCalled();
+	});
+
 	it('writes and reads through direct Sandbox operations with trusted per-agent context', async () => {
 		enableRoute();
 		const { clientFixture, route } = registerRoute();
@@ -314,6 +324,35 @@ describe('Gateway Runtime direct Sandbox E2E route', () => {
 		expect('portal' in clientFixture.client).toBe(false);
 	});
 
+	it('reads an existing marker through the authenticated Sandbox path without writing', async () => {
+		enableRoute();
+		const { clientFixture, route } = registerRoute();
+		const bodyText = JSON.stringify({
+			action: 'read-existing',
+			...PROBE_IDENTITY,
+			filePath: PROOF_FILE_PATH,
+			marker: MARKER,
+		});
+		const response = await invokeRoute({ bodyText, route, signature: signBody(bodyText) });
+		expect(response).toEqual({
+			body: {
+				details: {
+					agentId: 'main',
+					filePath: PROOF_FILE_PATH,
+					kind: 'read-existing',
+					marker: MARKER,
+					readBack: MARKER,
+					status: 'ok',
+				},
+				ok: true,
+			},
+			statusCode: 200,
+		});
+		expect(clientFixture.filesystemWrite).not.toHaveBeenCalled();
+		expect(clientFixture.filesystemRead).toHaveBeenCalledTimes(1);
+		expect(clientFixture.environmentClose).toHaveBeenCalledTimes(1);
+	});
+
 	it('runs reset through the direct Sandbox execution handle without a capability call', async () => {
 		enableRoute();
 		const { clientFixture, route } = registerRoute();
@@ -347,6 +386,42 @@ describe('Gateway Runtime direct Sandbox E2E route', () => {
 		expect('portal' in clientFixture.client).toBe(false);
 	});
 
+	it('closes the reset environment when execution start rejects', async () => {
+		enableRoute();
+		const fixture = createClient();
+		fixture.executionStart.mockRejectedValueOnce(new Error('start rejected'));
+		const { route } = registerRoute(fixture);
+		const bodyText = JSON.stringify({ action: 'reset-connection', ...PROBE_IDENTITY });
+		const response = await invokeRoute({ bodyText, route, signature: signBody(bodyText) });
+
+		expect(response.statusCode).toBe(503);
+		expect(fixture.executionCancel).not.toHaveBeenCalled();
+		expect(fixture.environmentClose).toHaveBeenCalledOnce();
+	});
+
+	it('cancels an unexpected reset operation mode and closes its environment', async () => {
+		enableRoute();
+		const fixture = createClient();
+		const unexpectedModeResult = {
+			kind: 'started',
+			mode: 'direct',
+			operation,
+			streams: [stdin],
+		} satisfies Awaited<ReturnType<ExecutionStart>>;
+		Reflect.set(unexpectedModeResult, 'mode', 'unexpected');
+		fixture.executionStart.mockResolvedValueOnce(unexpectedModeResult);
+		const { route } = registerRoute(fixture);
+		const bodyText = JSON.stringify({ action: 'reset-connection', ...PROBE_IDENTITY });
+		const response = await invokeRoute({ bodyText, route, signature: signBody(bodyText) });
+
+		expect(response.statusCode).toBe(503);
+		expect(fixture.executionCancel).toHaveBeenCalledWith(
+			{ operation },
+			expect.objectContaining({ trustedContext: expect.any(Object) }),
+		);
+		expect(fixture.environmentClose).toHaveBeenCalledOnce();
+	});
+
 	it('starts active containment through an exact direct operation and cancels that handle on exit', async () => {
 		enableRoute();
 		const { clientFixture, route } = registerRoute();
@@ -378,6 +453,9 @@ describe('Gateway Runtime direct Sandbox E2E route', () => {
 			statusCode: 503,
 		});
 		expect(clientFixture.executionStart.mock.calls[0]?.[0]).toMatchObject({
+			command: expect.stringContaining(
+				`printf '%s\\n' '${MARKER}' >> '/workspace/${SENTINEL_FILE_PATH}'`,
+			),
 			cwd: '/work',
 			environment,
 			mode: { kind: 'direct' },

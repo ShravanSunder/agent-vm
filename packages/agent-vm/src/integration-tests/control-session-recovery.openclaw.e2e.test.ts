@@ -22,7 +22,11 @@ import {
 } from '@agent-vm/openclaw-agent-vm-plugin';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { GATEWAY_CONTROL_RECONNECT_DEADLINE_MS } from '../controller/control-session/gateway-disposable-control-session-client.js';
+import {
+	connectGatewayControlSession,
+	GATEWAY_CONTROL_RECONNECT_DEADLINE_MS,
+	GATEWAY_CONTROL_RECONNECT_MAX_ATTEMPTS,
+} from '../controller/control-session/index.js';
 import {
 	createControllerStateRoot,
 	resolveControllerGatewayStateRoot,
@@ -36,6 +40,10 @@ import {
 	loadAllToolVmRuntimeRecords,
 	type ToolVmRuntimeRecord,
 } from '../controller/leases/tool-vm-runtime-record.js';
+import {
+	startControlTransportReliabilityProxy,
+	type ControlTransportReliabilityProxy,
+} from '../controller/reliability/testing/control-transport-reliability-proxy.js';
 import type { GatewayZoneVmOperations } from '../gateway/gateway-zone-support.js';
 import {
 	expectedControlLeaseReliabilityEvidenceWriteKind,
@@ -55,6 +63,15 @@ import {
 	useLocalOpenClawGatewayImagePackages,
 } from './e2e-harness.js';
 import { waitForProtocolRetryInterval, withProtocolDeadline } from './e2e-protocol-wait.js';
+import {
+	configureOpenClawControlRecoveryModel,
+	openClawControlRecoveryFrameworkResponseMarker,
+	openClawControlRecoverySandboxExecOutputMarker,
+	runOpenClawControlRecoveryAgentRequest,
+	startOpenClawControlRecoveryActiveOperation,
+	startOpenClawControlRecoveryModelServer,
+	waitForOpenClawCommittedSentinelWhileRequestIsActive,
+} from './openclaw-control-recovery-model-fixture.js';
 
 const architecture = currentE2eArchitecture();
 type GatewayVmObservationOperations = Pick<
@@ -77,6 +94,7 @@ const betaIdentity = {
 } as const;
 const configuredProbeIdentities = [mainIdentity, betaIdentity] as const;
 const reliabilityOperationId = 'control-session-recovery';
+const mockOpenAiPort = 38_941;
 
 function resolveFixtureControllerRecordTargets(options: {
 	readonly controllerStateDirectoryPath: string;
@@ -104,6 +122,8 @@ interface OpenClawProcessIdentity {
 
 interface ToolVmWriteReadResult {
 	readonly agentId: string;
+	readonly filePath: string;
+	readonly kind: 'read-existing' | 'write-read';
 	readonly marker: string;
 	readonly readBack: string;
 	readonly status: 'ok';
@@ -141,7 +161,10 @@ function isObjectRecord(value: unknown): value is Readonly<Record<string, unknow
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function parseToolVmWriteReadResult(value: unknown): ToolVmWriteReadResult {
+function parseToolVmWriteReadResult(
+	value: unknown,
+	expectedKind: ToolVmWriteReadResult['kind'],
+): ToolVmWriteReadResult {
 	if (!isObjectRecord(value) || value.ok !== true || !isObjectRecord(value.details)) {
 		throw new Error('Tool VM write/read probe did not return a successful result.');
 	}
@@ -149,6 +172,8 @@ function parseToolVmWriteReadResult(value: unknown): ToolVmWriteReadResult {
 	if (
 		details.status !== 'ok' ||
 		typeof details.agentId !== 'string' ||
+		typeof details.filePath !== 'string' ||
+		details.kind !== expectedKind ||
 		typeof details.marker !== 'string' ||
 		typeof details.readBack !== 'string'
 	) {
@@ -156,6 +181,8 @@ function parseToolVmWriteReadResult(value: unknown): ToolVmWriteReadResult {
 	}
 	return {
 		agentId: details.agentId,
+		filePath: details.filePath,
+		kind: expectedKind,
 		marker: details.marker,
 		readBack: details.readBack,
 		status: details.status,
@@ -222,7 +249,50 @@ async function callSignedWriteReadProbe(options: {
 			`Tool VM write/read probe failed with HTTP ${String(response.status)}: ${JSON.stringify(responseBody)}`,
 		);
 	}
-	return parseToolVmWriteReadResult(responseBody);
+	return parseToolVmWriteReadResult(responseBody, 'write-read');
+}
+
+async function callSignedReadExistingProbe(options: {
+	readonly filePath: string;
+	readonly harness: E2eHarnessRuntime;
+	readonly identity: (typeof configuredProbeIdentities)[number];
+	readonly marker: string;
+}): Promise<ToolVmWriteReadResult> {
+	const ingress = options.harness.runtime.zones[0]?.gateway?.ingress;
+	if (ingress === undefined) {
+		throw new Error('Control-session recovery E2E did not expose Gateway ingress.');
+	}
+	const bodyText = JSON.stringify({
+		action: 'read-existing',
+		agentId: options.identity.agentId,
+		filePath: options.filePath,
+		marker: options.marker,
+		sessionKey: options.identity.sessionKey,
+	});
+	const response = await withProtocolDeadline(
+		fetch(
+			`http://${ingress.host}:${String(ingress.port)}${AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_PATH}`,
+			{
+				body: bodyText,
+				headers: {
+					authorization: `Bearer ${gatewayToken}`,
+					'content-type': 'application/json',
+					[AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_SIGNATURE_HEADER]:
+						gatewayRuntimeSandboxWriteReadE2eTestExports.signBody(bodyText, probeSigningKey),
+				},
+				method: 'POST',
+			},
+		),
+		`Tool VM ${options.identity.agentId} read-existing probe`,
+		30_000,
+	);
+	const responseBody: unknown = await response.json();
+	if (!response.ok) {
+		throw new Error(
+			`Tool VM read-existing probe failed with HTTP ${String(response.status)}: ${JSON.stringify(responseBody)}`,
+		);
+	}
+	return parseToolVmWriteReadResult(responseBody, 'read-existing');
 }
 
 async function readOpenClawGatewayProcessIdentity(
@@ -341,6 +411,7 @@ async function sendControllerOriginatedControlPing(options: {
 }
 
 describeControlSessionRecoveryE2e('e2e: disposable control-session recovery', () => {
+	let controlTransportProxy: ControlTransportReliabilityProxy | undefined;
 	let gatewayStart: ManagedGatewayStartResult | undefined;
 	let harness: E2eHarnessRuntime | undefined;
 	let project: OpenClawE2eProject | undefined;
@@ -358,6 +429,16 @@ describeControlSessionRecoveryE2e('e2e: disposable control-session recovery', ()
 			throw new Error('Expected control-session recovery project to contain an OpenClaw zone.');
 		}
 		const openClawGateway = systemZone.gateway;
+		await configureOpenClawControlRecoveryModel({
+			configPath: openClawGateway.config,
+			mockPort: mockOpenAiPort,
+		});
+		systemZone.secrets.OPENAI_API_KEY = {
+			audience: 'gateway',
+			envVar: 'OPENAI_API_KEY',
+			injection: 'env',
+			source: 'environment',
+		};
 		for (const envName of [
 			AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_ENV,
 			AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_KEY_ENV,
@@ -372,6 +453,7 @@ describeControlSessionRecoveryE2e('e2e: disposable control-session recovery', ()
 		}
 		openClawGateway.rawEnvSecrets = [
 			...(openClawGateway.rawEnvSecrets ?? []),
+			'OPENAI_API_KEY',
 			AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_ENV,
 			AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_KEY_ENV,
 			AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_IDENTITIES_ENV,
@@ -399,10 +481,27 @@ describeControlSessionRecoveryE2e('e2e: disposable control-session recovery', ()
 				[AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_KEY_ENV]: probeSigningKey,
 				GITHUB_TOKEN: 'unused-control-session-recovery-token',
 				OPENCLAW_GATEWAY_TOKEN: gatewayToken,
+				OPENAI_API_KEY: 'unused-control-session-recovery-model-token',
 				PERPLEXITY_API_KEY: 'unused-control-session-recovery-token',
 			},
 			startGatewayZone: async (startOptions) => {
-				const result = await startGatewayZone(startOptions);
+				const result = await startGatewayZone(startOptions, {
+					connectGatewayControlSession: async (connectOptions) => {
+						if (controlTransportProxy !== undefined) {
+							throw new Error('Control-session recovery created more than one control proxy.');
+						}
+						controlTransportProxy = await startControlTransportReliabilityProxy({
+							target: connectOptions.endpoint,
+						});
+						return await connectGatewayControlSession({
+							...connectOptions,
+							endpoint: {
+								...connectOptions.endpoint,
+								...controlTransportProxy.endpoint,
+							},
+						});
+					},
+				});
 				if (result.executionModel !== 'managed-gateway') {
 					throw new Error('Control-session recovery proof requires managed Gateway image boot.');
 				}
@@ -417,14 +516,22 @@ describeControlSessionRecoveryE2e('e2e: disposable control-session recovery', ()
 		try {
 			await harness?.close();
 		} finally {
-			if (project !== undefined && harness === undefined) {
-				await removeE2eTempRoot(project.tempRoot);
+			try {
+				await controlTransportProxy?.close();
+			} finally {
+				if (project !== undefined && harness === undefined) {
+					await removeE2eTempRoot(project.tempRoot);
+				}
 			}
 		}
 	});
 
-	it('fences only S1 and accepts S2 without Gateway, process, or Tool leaf churn', async () => {
-		if (gatewayStart === undefined || harness === undefined) {
+	it('recovers after the former terminal budget without Gateway, framework, or Tool VM churn', async () => {
+		if (
+			gatewayStart === undefined ||
+			harness === undefined ||
+			controlTransportProxy === undefined
+		) {
 			throw new Error('Expected control-session recovery harness to be initialized.');
 		}
 		const activeGatewayStart = gatewayStart;
@@ -434,7 +541,7 @@ describeControlSessionRecoveryE2e('e2e: disposable control-session recovery', ()
 			throw new Error('Expected control-session recovery to expose its managed control session.');
 		}
 		const activeZone = activeHarness.systemConfig.zones[0];
-		if (activeZone === undefined) {
+		if (activeZone === undefined || activeZone.gateway.type !== 'openclaw') {
 			throw new Error('Expected the control-session recovery zone configuration.');
 		}
 		const controllerRecordTargets = resolveFixtureControllerRecordTargets({
@@ -442,7 +549,11 @@ describeControlSessionRecoveryE2e('e2e: disposable control-session recovery', ()
 			zoneId: activeZone.id,
 		});
 		const expectedCohort = structuredClone(activeGatewayStart.expectedCohort);
-		await Promise.all(
+		await startOpenClawControlRecoveryModelServer({
+			gatewayVm: activeGatewayStart.vm,
+			port: mockOpenAiPort,
+		});
+		const initialProbeResults = await Promise.all(
 			configuredProbeIdentities.map(
 				async (identity) =>
 					await callSignedWriteReadProbe({
@@ -480,27 +591,78 @@ describeControlSessionRecoveryE2e('e2e: disposable control-session recovery', ()
 			throw new Error(`Expected accepted S1 before interruption: ${JSON.stringify(s1Diagnostics)}`);
 		}
 
-		const controlFaultStartedAtMs = Date.now();
-		expect(
-			controlSession.fenceCurrentSession({
-				expectedAttachmentGeneration: s1AttachmentGeneration,
-				expectedSessionId: s1SessionId,
-				reason: 'reliability_test_disconnect',
-			}),
-		).toMatchObject({
-			attachmentGeneration: s1AttachmentGeneration,
-			sessionId: s1SessionId,
-			status: 'fenced',
+		const ambiguousOperationMarker = `AMBIGUOUS_${randomUUID()}`;
+		const ambiguousOperationFilePath = `agent-vm-e2e-control-recovery-active-${randomUUID()}.txt`;
+		const ambiguousSentinelFilePath = `agent-vm-e2e-control-recovery-active-${randomUUID()}.committed`;
+		const ambiguousOperationWorkspaceRoot = await fs.realpath(
+			path.join(activeZone.gateway.zoneFilesDir, 'agents', betaIdentity.agentId),
+		);
+		const ambiguousSentinelHostPath = path.join(
+			ambiguousOperationWorkspaceRoot,
+			ambiguousSentinelFilePath,
+		);
+		const activeOperationOutcome = startOpenClawControlRecoveryActiveOperation({
+			agentId: betaIdentity.agentId,
+			filePath: ambiguousOperationFilePath,
+			gatewayToken,
+			harness: activeHarness,
+			marker: ambiguousOperationMarker,
+			probeSigningKey,
+			sentinelFilePath: ambiguousSentinelFilePath,
+			sessionKey: betaIdentity.sessionKey,
 		});
+		await waitForOpenClawCommittedSentinelWhileRequestIsActive({
+			expectedMarker: ambiguousOperationMarker,
+			requestOutcome: activeOperationOutcome,
+			sentinelPath: ambiguousSentinelHostPath,
+		});
+
+		const controlFaultStartedAtMs = Date.now();
+		const isolation = controlTransportProxy.isolate();
+		const interruptedOperationOutcome = await withProtocolDeadline(
+			activeOperationOutcome,
+			'ambiguous Tool VM operation termination after control transport isolation',
+			30_000,
+		);
+		if (
+			interruptedOperationOutcome.kind === 'response' &&
+			interruptedOperationOutcome.status >= 200 &&
+			interruptedOperationOutcome.status < 300
+		) {
+			throw new Error(
+				`Ambiguous Tool VM operation was falsely reported successful: HTTP ${String(interruptedOperationOutcome.status)}.`,
+			);
+		}
+		const postBudgetAttempt = await controlTransportProxy.waitForRejectedConnection({
+			minimumObservedAtMs: isolation.startedAtMs + GATEWAY_CONTROL_RECONNECT_DEADLINE_MS + 1,
+			minimumRejectedConnectionCount:
+				isolation.rejectedConnectionCount + GATEWAY_CONTROL_RECONNECT_MAX_ATTEMPTS + 1,
+			timeoutMs: GATEWAY_CONTROL_RECONNECT_DEADLINE_MS * 3,
+		});
+		expect(postBudgetAttempt.observedAtMs - isolation.startedAtMs).toBeGreaterThan(
+			GATEWAY_CONTROL_RECONNECT_DEADLINE_MS,
+		);
+		expect(
+			postBudgetAttempt.rejectedConnectionCount - isolation.rejectedConnectionCount,
+		).toBeGreaterThan(GATEWAY_CONTROL_RECONNECT_MAX_ATTEMPTS);
+		await runOpenClawControlRecoveryAgentRequest({
+			expectedHistoryMarker: openClawControlRecoveryFrameworkResponseMarker,
+			gatewayVm: activeGatewayStart.vm,
+			message: 'Provide the configured control-recovery response without using tools.',
+		});
+		expect(await readOpenClawGatewayProcessIdentity(activeGatewayStart.vm)).toEqual(
+			processIdentity,
+		);
+		controlTransportProxy.restore();
 		await waitForFreshAcceptedControlSession({
 			controlSession,
 			minimumAttachmentGeneration: s1AttachmentGeneration + 1,
 			minimumHelloCount: s1Diagnostics.helloCount + 1,
 			previousSessionId: s1SessionId,
-			timeoutMs: GATEWAY_CONTROL_RECONNECT_DEADLINE_MS,
+			timeoutMs: 30_000,
 		});
 		const controlRecoveryDurationMs = Date.now() - controlFaultStartedAtMs;
-		expect(controlRecoveryDurationMs).toBeLessThanOrEqual(GATEWAY_CONTROL_RECONNECT_DEADLINE_MS);
+		expect(controlRecoveryDurationMs).toBeGreaterThan(GATEWAY_CONTROL_RECONNECT_DEADLINE_MS);
 
 		const s2Diagnostics = controlSession.getDiagnostics();
 		const s2AttachmentGeneration = s2Diagnostics.attachmentGeneration;
@@ -516,21 +678,33 @@ describeControlSessionRecoveryE2e('e2e: disposable control-session recovery', ()
 		});
 		expect(s2AttachmentGeneration).toBeGreaterThan(s1AttachmentGeneration);
 		expect(s2SessionId).not.toBe(s1SessionId);
+		const ambiguousSentinelLines = (await fs.readFile(ambiguousSentinelHostPath, 'utf8'))
+			.split('\n')
+			.filter((line) => line.length > 0);
+		expect(ambiguousSentinelLines).toEqual([ambiguousOperationMarker]);
 
 		await sendControllerOriginatedControlPing({ gatewayStart: activeGatewayStart, sequence: 1 });
-		const postRecoveryResults = await Promise.all(
-			configuredProbeIdentities.map(
-				async (identity) =>
-					await callSignedWriteReadProbe({
-						harness: activeHarness,
-						identity,
-						marker: `S2_${identity.agentId}_${randomUUID()}`,
-					}),
-			),
+		await runOpenClawControlRecoveryAgentRequest({
+			expectedHistoryMarker: openClawControlRecoveryFrameworkResponseMarker,
+			gatewayVm: activeGatewayStart.vm,
+			message:
+				`Use the exec tool to run a non-mutating command that prints exactly ${openClawControlRecoverySandboxExecOutputMarker}. ` +
+				'After the tool succeeds, provide the configured control-recovery response.',
+			requiredToolOutputMarker: openClawControlRecoverySandboxExecOutputMarker,
+		});
+		const initialMainProbe = initialProbeResults.find(
+			(result) => result.agentId === mainIdentity.agentId,
 		);
-		for (const result of postRecoveryResults) {
-			expect(result.readBack).toBe(result.marker);
+		if (initialMainProbe === undefined) {
+			throw new Error(`Missing initial Tool VM probe for '${mainIdentity.agentId}'.`);
 		}
+		const postRecoveryMainResult = await callSignedReadExistingProbe({
+			filePath: initialMainProbe.filePath,
+			harness: activeHarness,
+			identity: mainIdentity,
+			marker: initialMainProbe.marker,
+		});
+		expect(postRecoveryMainResult.readBack).toBe(initialMainProbe.marker);
 		const postRecoveryToolVmRecords = await readExactToolVmRuntimeRecords(
 			controllerRecordTargets.toolLeaseRecords,
 			configuredAgentIds,

@@ -30,7 +30,12 @@ import {
 	type GatewayControlLeaseRejectionReason,
 	type GatewayControlRpcMessage,
 } from '@agent-vm/gateway-control-contracts';
-import type { AgentVmHealthEvent } from '@agent-vm/gateway-lifecycle';
+import type {
+	AgentVmHealthEvent,
+	GatewayControlSessionReconnectOutcome,
+	GatewayControlSessionReconnectPhase,
+	GatewayControlSessionReconnectTerminalReason,
+} from '@agent-vm/gateway-lifecycle';
 import { io, type Socket } from 'socket.io-client';
 
 import {
@@ -104,7 +109,12 @@ export interface GatewayDisposableControlSessionClientOptions {
 	readonly processAdmissionCoordinator?: GatewayControlProcessAdmissionCoordinator;
 	readonly reconnectJitterRandom?: () => number;
 	readonly recordHealthEvent?: (
-		event: Extract<AgentVmHealthEvent, { readonly kind: 'caller-context-rejection' }>,
+		event:
+			| Extract<AgentVmHealthEvent, { readonly kind: 'caller-context-rejection' }>
+			| Extract<AgentVmHealthEvent, { readonly kind: 'gateway-control-session' }>,
+	) => void;
+	readonly recordLiveHealthEvent?: (
+		event: Extract<AgentVmHealthEvent, { readonly kind: 'gateway-control-session' }>,
 	) => void;
 	readonly scheduleReconnectTimer?: (
 		callback: () => void,
@@ -191,7 +201,31 @@ export interface GatewayControlAttachmentGapTransition {
 	readonly zoneId: string;
 }
 
+function mapHelloOutcomeToReconnectEvidenceOutcome(
+	outcome: GatewayControlHelloResponse['outcome'],
+): GatewayControlSessionReconnectOutcome {
+	switch (outcome) {
+		case 'accepted':
+			return 'accepted';
+		case 'rejected':
+			return 'rejected';
+		case 'generation_mismatch':
+			return 'generation-mismatch';
+		case 'stale_attachment':
+			return 'stale-attachment';
+	}
+}
+
 export interface GatewayDisposableControlSessionClient extends ControlSessionClient<GatewayControlHelloResponse> {
+	closeForControllerShutdown(): void;
+	ensureDialing(
+		reason: string,
+	):
+		| { readonly status: 'accepted-current' }
+		| { readonly status: 'attempt-active' }
+		| { readonly status: 'retry-scheduled' }
+		| { readonly status: 'retry-started' }
+		| { readonly status: 'disposed' };
 	fenceCurrentSession(options: {
 		readonly expectedAttachmentGeneration: number;
 		readonly expectedSessionId: string;
@@ -413,6 +447,11 @@ export function createGatewayDisposableControlSessionClient(
 	let reconnectGapStartedAtMs: number | undefined = now();
 	let reconnectGapReason = 'initial connection';
 	let reconnectExhausted = false;
+	let reconnectEvidenceClosed = false;
+	let reconnectEvidenceAttemptCount = 0;
+	let reconnectEvidenceFirstObservedAtMs: number | undefined;
+	let reconnectEvidenceLatestOutcome: GatewayControlSessionReconnectOutcome | undefined;
+	let reconnectEvidenceLatestPhase: GatewayControlSessionReconnectPhase | undefined;
 	let reconnectTimer: GatewayControlReconnectTimer | undefined;
 	let pendingAttemptStartIdentity:
 		| {
@@ -420,7 +459,6 @@ export function createGatewayDisposableControlSessionClient(
 				readonly reconnectEpisodeGeneration: number;
 		  }
 		| undefined;
-	let stabilizationDeadlineTimer: GatewayControlReconnectTimer | undefined;
 	let stabilizingAttempt: GatewayControlStabilizingAttempt | undefined;
 	let initialHeaders = options.initialExtraHeaders;
 	let resolveReady!: (response: GatewayControlHelloResponse) => void;
@@ -444,6 +482,82 @@ export function createGatewayDisposableControlSessionClient(
 			options.onAttemptOutcome?.(outcome);
 		} catch {
 			// Diagnostics cannot affect control-session ownership or reconnect behavior.
+		}
+	}
+
+	function recordReconnectEvidence(optionsForEvidence: {
+		readonly attempt?: GatewayControlAttempt | undefined;
+		readonly nextRetryAtMs?: number | undefined;
+		readonly outcome?: GatewayControlSessionReconnectOutcome | undefined;
+		readonly phase: GatewayControlSessionReconnectPhase;
+		readonly liveOnly?: boolean | undefined;
+		readonly terminalReason?: GatewayControlSessionReconnectTerminalReason | undefined;
+	}): void {
+		const firstObservedAtMs = reconnectEvidenceFirstObservedAtMs;
+		if (!hasAcceptedSession || firstObservedAtMs === undefined) {
+			return;
+		}
+		const observedAtMs = now();
+		const outcome = optionsForEvidence.outcome ?? reconnectEvidenceLatestOutcome;
+		if (outcome === undefined) {
+			return;
+		}
+		reconnectEvidenceLatestOutcome = outcome;
+		reconnectEvidenceLatestPhase = optionsForEvidence.phase;
+		const terminalReason = optionsForEvidence.terminalReason;
+		const isClosed = terminalReason !== undefined;
+		reconnectEvidenceClosed = isClosed;
+		const eventBase = {
+			attemptCount: reconnectEvidenceAttemptCount,
+			bootId: options.identity.processEpoch,
+			...(optionsForEvidence.attempt?.connectionId === undefined
+				? {}
+				: { connectionId: optionsForEvidence.attempt.connectionId }),
+			domain: 'gateway_control',
+			elapsedMs: observedAtMs - firstObservedAtMs,
+			firstObservedAtMs,
+			kind: 'gateway-control-session',
+			latestObservedAtMs: observedAtMs,
+			observedAtMs,
+			operation: 'control-session-reconnect',
+			outcome,
+			peerId: options.identity.peerId,
+			reconnectPhase: optionsForEvidence.phase,
+			result:
+				optionsForEvidence.phase === 'accepted' ||
+				optionsForEvidence.phase === 'stabilizing' ||
+				optionsForEvidence.phase === 'stable'
+					? ('ok' as const)
+					: outcome === 'timeout'
+						? ('timeout' as const)
+						: ('failed' as const),
+			...(optionsForEvidence.attempt?.sessionId === undefined
+				? {}
+				: { sessionId: optionsForEvidence.attempt.sessionId }),
+			zoneId: options.identity.zoneId,
+		} as const;
+		const event: Extract<AgentVmHealthEvent, { readonly kind: 'gateway-control-session' }> =
+			isClosed
+				? {
+						...eventBase,
+						terminalReason,
+						windowState: 'closed',
+					}
+				: {
+						...eventBase,
+						...(optionsForEvidence.nextRetryAtMs === undefined
+							? {}
+							: { nextRetryAtMs: optionsForEvidence.nextRetryAtMs }),
+						windowState: 'open',
+					};
+		try {
+			if (optionsForEvidence.liveOnly) {
+				options.recordLiveHealthEvent?.(event);
+			} else {
+				options.recordHealthEvent?.(event);
+			}
+		} catch {
+			// Diagnostic evidence cannot affect control-session ownership or reconnect behavior.
 		}
 	}
 
@@ -489,7 +603,7 @@ export function createGatewayDisposableControlSessionClient(
 		| GatewayControlReconnectExhaustedTransition['exhaustionReason']
 		| undefined {
 		const gapStartedAtMs = reconnectGapStartedAtMs;
-		if (closed || gapStartedAtMs === undefined) {
+		if (closed || hasAcceptedSession || gapStartedAtMs === undefined) {
 			return undefined;
 		}
 		if (reconnectAttempts >= GATEWAY_CONTROL_RECONNECT_MAX_ATTEMPTS) {
@@ -504,13 +618,7 @@ export function createGatewayDisposableControlSessionClient(
 		);
 	}
 
-	function cancelStabilizationDeadline(): void {
-		stabilizationDeadlineTimer?.cancel();
-		stabilizationDeadlineTimer = undefined;
-	}
-
 	function resetReconnectRecoveryEpisode(): void {
-		cancelStabilizationDeadline();
 		reconnectEpisodeGeneration += 1;
 		reconnectAttempts = 0;
 		reconnectExhausted = false;
@@ -529,37 +637,35 @@ export function createGatewayDisposableControlSessionClient(
 			stabilization.heartbeatCount >= GATEWAY_CONTROL_RECONNECT_STABILITY_HEARTBEATS &&
 			now() - stabilization.acceptedAtMs >= GATEWAY_CONTROL_RECONNECT_STABILITY_MS
 		) {
+			recordReconnectEvidence({
+				attempt,
+				liveOnly: true,
+				outcome: 'accepted',
+				phase: 'stable',
+				terminalReason: 'accepted',
+			});
 			resetReconnectRecoveryEpisode();
+			reconnectEvidenceClosed = false;
+			reconnectEvidenceAttemptCount = 0;
+			reconnectEvidenceFirstObservedAtMs = undefined;
+			reconnectEvidenceLatestOutcome = undefined;
+			reconnectEvidenceLatestPhase = undefined;
 		}
 	}
 
 	function beginReconnectStabilization(attempt: GatewayControlAttempt): void {
-		cancelStabilizationDeadline();
 		stabilizingAttempt = {
 			acceptedAtMs: now(),
 			attempt,
 			heartbeatCount: 0,
 		};
-		const gapStartedAtMs = reconnectGapStartedAtMs;
-		if (gapStartedAtMs === undefined) {
-			return;
-		}
-		const remainingDeadlineMs = Math.max(
-			0,
-			GATEWAY_CONTROL_RECONNECT_DEADLINE_MS - (now() - gapStartedAtMs),
-		);
-		stabilizationDeadlineTimer = scheduleReconnectTimer(() => {
-			stabilizationDeadlineTimer = undefined;
-			if (
-				currentAttempt === attempt &&
-				attempt.accepted &&
-				stabilizingAttempt?.attempt === attempt &&
-				reconnectGapStartedAtMs !== undefined
-			) {
-				notifyReconnectExhausted('deadline');
-			}
-		}, remainingDeadlineMs);
-		stabilizationDeadlineTimer.unref?.();
+		recordReconnectEvidence({
+			attempt,
+			liveOnly: true,
+			outcome: 'accepted',
+			phase: 'stabilizing',
+			terminalReason: 'accepted',
+		});
 	}
 
 	function notifyReconnectExhausted(
@@ -618,6 +724,10 @@ export function createGatewayDisposableControlSessionClient(
 			void startAttempt();
 		}, delayMs);
 		reconnectTimer.unref?.();
+		recordReconnectEvidence({
+			nextRetryAtMs: now() + delayMs,
+			phase: 'retry-scheduled',
+		});
 	}
 
 	function fenceAttempt(attempt: GatewayControlAttempt, reason: string): void {
@@ -628,7 +738,6 @@ export function createGatewayDisposableControlSessionClient(
 			? attempt.attachmentGeneration
 			: undefined;
 		if (stabilizingAttempt?.attempt === attempt) {
-			cancelStabilizationDeadline();
 			stabilizingAttempt = undefined;
 		}
 		destroyAttempt(attempt, reason);
@@ -648,10 +757,32 @@ export function createGatewayDisposableControlSessionClient(
 				// The observer cannot prevent the control owner from fencing the attachment.
 			}
 		}
+		if (acceptedAttachmentGeneration !== undefined && reconnectEvidenceClosed) {
+			const gapObservedAtMs = now();
+			reconnectEvidenceClosed = false;
+			reconnectEvidenceAttemptCount = 0;
+			reconnectEvidenceFirstObservedAtMs = gapObservedAtMs;
+			reconnectEvidenceLatestOutcome = 'transport-error';
+			recordReconnectEvidence({
+				outcome: 'transport-error',
+				phase: 'attachment-lost',
+			});
+		}
 		if (reconnectGapStartedAtMs === undefined) {
 			reconnectEpisodeGeneration += 1;
-			reconnectGapStartedAtMs = now();
+			const gapObservedAtMs = now();
+			reconnectGapStartedAtMs = gapObservedAtMs;
 			reconnectGapReason = reason;
+			if (acceptedAttachmentGeneration !== undefined) {
+				reconnectEvidenceClosed = false;
+				reconnectEvidenceAttemptCount = 0;
+				reconnectEvidenceFirstObservedAtMs = gapObservedAtMs;
+				reconnectEvidenceLatestOutcome = 'transport-error';
+				recordReconnectEvidence({
+					outcome: 'transport-error',
+					phase: 'attachment-lost',
+				});
+			}
 		}
 		scheduleReconnect();
 	}
@@ -758,6 +889,11 @@ export function createGatewayDisposableControlSessionClient(
 					helloCount += 1;
 					lastHelloResponse = response;
 					if (response.controllerEpoch !== options.identity.controllerEpoch) {
+						recordReconnectEvidence({
+							attempt,
+							outcome: 'generation-mismatch',
+							phase: 'attempt-failed',
+						});
 						fenceAttempt(attempt, 'gateway control hello controller epoch mismatch');
 						return;
 					}
@@ -765,6 +901,14 @@ export function createGatewayDisposableControlSessionClient(
 						response.outcome !== 'accepted' ||
 						response.attachmentGeneration !== attempt.attachmentGeneration
 					) {
+						recordReconnectEvidence({
+							attempt,
+							outcome:
+								response.outcome === 'accepted'
+									? 'generation-mismatch'
+									: mapHelloOutcomeToReconnectEvidenceOutcome(response.outcome),
+							phase: 'attempt-failed',
+						});
 						fenceAttempt(attempt, `gateway control hello rejected: ${response.outcome}`);
 						return;
 					}
@@ -773,6 +917,12 @@ export function createGatewayDisposableControlSessionClient(
 					attempt.connectionId = response.connectionId;
 					attempt.sessionId = response.sessionId;
 					if (hasAcceptedSession && reconnectGapStartedAtMs !== undefined) {
+						recordReconnectEvidence({
+							attempt,
+							outcome: 'accepted',
+							phase: 'accepted',
+							terminalReason: 'accepted',
+						});
 						beginReconnectStabilization(attempt);
 					} else {
 						hasAcceptedSession = true;
@@ -784,6 +934,17 @@ export function createGatewayDisposableControlSessionClient(
 					}
 				})
 				.catch((error: unknown) => {
+					if (currentAttempt !== attempt) {
+						return;
+					}
+					recordReconnectEvidence({
+						attempt,
+						outcome:
+							error instanceof Error && error.message.includes('timed out')
+								? 'timeout'
+								: 'transport-error',
+						phase: 'attempt-failed',
+					});
 					fenceAttempt(
 						attempt,
 						error instanceof Error ? error.message : 'gateway control hello failed',
@@ -794,6 +955,11 @@ export function createGatewayDisposableControlSessionClient(
 			notifyAttemptOutcome({
 				attachmentGeneration: attempt.attachmentGeneration,
 				kind: 'connect_error',
+			});
+			recordReconnectEvidence({
+				attempt,
+				outcome: 'transport-error',
+				phase: 'attempt-failed',
 			});
 			fenceAttempt(attempt, `gateway control connect failed: ${error.message}`);
 		});
@@ -1078,6 +1244,10 @@ export function createGatewayDisposableControlSessionClient(
 		} as const;
 		pendingAttemptStartIdentity = attemptStartIdentity;
 		reconnectAttempts += 1;
+		if (reconnectEvidenceFirstObservedAtMs !== undefined && !reconnectEvidenceClosed) {
+			reconnectEvidenceAttemptCount += 1;
+		}
+		recordReconnectEvidence({ phase: 'attempt-started' });
 		let extraHeaders: Readonly<Record<string, string>>;
 		try {
 			extraHeaders = attemptNumber === 0 ? initialHeaders : await options.refreshExtraHeaders();
@@ -1092,6 +1262,7 @@ export function createGatewayDisposableControlSessionClient(
 			) {
 				return;
 			}
+			recordReconnectEvidence({ outcome: 'transport-error', phase: 'attempt-failed' });
 			scheduleReconnect();
 			return;
 		}
@@ -1130,13 +1301,61 @@ export function createGatewayDisposableControlSessionClient(
 		attempt.socket.connect();
 	}
 
-	function closeClient(reason: string): void {
+	function ensureDialing(
+		reason: string,
+	):
+		| { readonly status: 'accepted-current' }
+		| { readonly status: 'attempt-active' }
+		| { readonly status: 'retry-scheduled' }
+		| { readonly status: 'retry-started' }
+		| { readonly status: 'disposed' } {
+		if (closed) {
+			return { status: 'disposed' };
+		}
+		if (currentAttempt?.accepted === true) {
+			return { status: 'accepted-current' };
+		}
+		if (currentAttempt !== undefined || pendingAttemptStartIdentity !== undefined) {
+			return { status: 'attempt-active' };
+		}
+		if (reconnectTimer !== undefined) {
+			return { status: 'retry-scheduled' };
+		}
+		if (reconnectGapStartedAtMs === undefined) {
+			reconnectEpisodeGeneration += 1;
+			reconnectGapStartedAtMs = now();
+			reconnectGapReason = reason;
+		}
+		scheduleReconnect();
+		return { status: reconnectTimer === undefined ? 'attempt-active' : 'retry-started' };
+	}
+
+	function closeClient(
+		reason: string,
+		terminalReasonOverride?: GatewayControlSessionReconnectTerminalReason,
+	): void {
 		if (closed) {
 			return;
 		}
+		if (
+			reconnectEvidenceFirstObservedAtMs !== undefined &&
+			!reconnectEvidenceClosed &&
+			reconnectEvidenceLatestOutcome !== undefined &&
+			reconnectEvidenceLatestPhase !== undefined
+		) {
+			const terminalReason =
+				terminalReasonOverride ??
+				(reason === 'gateway control process session superseded'
+					? 'gateway-superseded'
+					: 'manager-disposed');
+			recordReconnectEvidence({
+				outcome: reconnectEvidenceLatestOutcome,
+				phase: reconnectEvidenceLatestPhase,
+				terminalReason,
+			});
+		}
 		closed = true;
 		pendingAttemptStartIdentity = undefined;
-		cancelStabilizationDeadline();
 		if (reconnectTimer !== undefined) {
 			reconnectTimer.cancel();
 			reconnectTimer = undefined;
@@ -1186,6 +1405,9 @@ export function createGatewayDisposableControlSessionClient(
 	return {
 		ready,
 		close: () => closeClient('gateway control session closed'),
+		closeForControllerShutdown: () =>
+			closeClient('gateway control session closed for controller shutdown', 'controller-shutdown'),
+		ensureDialing,
 		fenceCurrentSession: (fenceOptions) => {
 			const attempt = currentAttempt;
 			if (

@@ -330,7 +330,9 @@ const managedGatewayBootInputCaptures = new WeakMap<
 
 const connectTestGatewayControlSession: GatewayControlSessionConnector = async () => ({
 	close: vi.fn(),
+	closeForControllerShutdown: vi.fn(),
 	emitApplicationMessage: vi.fn(async () => ({ ok: true })),
+	ensureDialing: vi.fn(() => ({ status: 'accepted-current' as const })),
 	fenceCurrentSession: vi.fn(() => ({ status: 'not-current' as const })),
 	getDiagnostics: vi.fn(() => ({
 		accepted: true,
@@ -5901,7 +5903,9 @@ describe('startGatewayZone', () => {
 				sessionId: '33333333-3333-4333-8333-333333333333',
 			}),
 			close: controlSessionClose,
+			closeForControllerShutdown: vi.fn(),
 			emitApplicationMessage,
+			ensureDialing: vi.fn(() => ({ status: 'accepted-current' as const })),
 			fenceCurrentSession: vi.fn(() => ({ status: 'not-current' as const })),
 			getDiagnostics: vi.fn(() => ({
 				accepted: true,
@@ -6121,6 +6125,7 @@ describe('startGatewayZone', () => {
 			onReconnectExhausted: expect.any(Function),
 			processAdmissionCoordinator: gatewayControlProcessAdmissionCoordinator,
 			recordHealthEvent: expect.any(Function),
+			recordLiveHealthEvent: expect.any(Function),
 			resolveInboundStablePrincipal: expect.any(Function),
 			sessionFenceRegistry: expect.objectContaining({
 				acceptSession: expect.any(Function),
@@ -6170,6 +6175,34 @@ describe('startGatewayZone', () => {
 			result: 'failed',
 			zoneId: 'shravan',
 		});
+		const acceptedReconnectEvent = {
+			attemptCount: 2,
+			bootId: connectedOptions.material.processEpoch,
+			domain: 'gateway_control',
+			elapsedMs: 100,
+			firstObservedAtMs: 2_000,
+			kind: 'gateway-control-session',
+			latestObservedAtMs: 2_100,
+			observedAtMs: 2_100,
+			operation: 'control-session-reconnect',
+			outcome: 'accepted',
+			peerId: connectedOptions.material.peerId,
+			reconnectPhase: 'accepted',
+			result: 'ok',
+			terminalReason: 'accepted',
+			windowState: 'closed',
+			zoneId: connectedOptions.material.zoneId,
+		} as const;
+		connectedOptions.recordHealthEvent?.(acceptedReconnectEvent);
+		connectedOptions.recordLiveHealthEvent?.({
+			...acceptedReconnectEvent,
+			latestObservedAtMs: 2_200,
+			observedAtMs: 2_200,
+			reconnectPhase: 'stable',
+		});
+		expect(healthEventStore.listLatestEventsForZone('shravan')).toContainEqual(
+			expect.objectContaining({ reconnectPhase: 'stable' }),
+		);
 		const gatewayIdentity = result.gatewayIdentity;
 		connectedOptions.onAttachmentGap?.({
 			attachmentGeneration: 7,

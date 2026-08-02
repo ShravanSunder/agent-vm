@@ -59,6 +59,12 @@ export interface GatewayRuntimeSandboxE2eWriteReadParams extends GatewayRuntimeS
 	readonly marker: string;
 }
 
+export interface GatewayRuntimeSandboxE2eReadExistingParams extends GatewayRuntimeSandboxE2eIdentityParams {
+	readonly action: 'read-existing';
+	readonly filePath: string;
+	readonly marker: string;
+}
+
 export interface GatewayRuntimeSandboxE2eActiveOperationParams extends GatewayRuntimeSandboxE2eIdentityParams {
 	readonly action: 'active-operation-containment';
 	readonly filePath: string;
@@ -68,6 +74,7 @@ export interface GatewayRuntimeSandboxE2eActiveOperationParams extends GatewayRu
 
 export type GatewayRuntimeSandboxE2eActuatorParams =
 	| GatewayRuntimeSandboxE2eActiveOperationParams
+	| GatewayRuntimeSandboxE2eReadExistingParams
 	| GatewayRuntimeSandboxE2eResetConnectionParams
 	| GatewayRuntimeSandboxE2eWriteReadParams;
 
@@ -86,7 +93,17 @@ export interface GatewayRuntimeSandboxE2eWriteReadSuccessDetails {
 	readonly status: 'ok';
 }
 
+export interface GatewayRuntimeSandboxE2eReadExistingSuccessDetails {
+	readonly agentId: string;
+	readonly filePath: string;
+	readonly kind: 'read-existing';
+	readonly marker: string;
+	readonly readBack: string;
+	readonly status: 'ok';
+}
+
 export type GatewayRuntimeSandboxE2eActuatorDetails =
+	| GatewayRuntimeSandboxE2eReadExistingSuccessDetails
 	| GatewayRuntimeSandboxE2eResetConnectionObservationDetails
 	| GatewayRuntimeSandboxE2eWriteReadSuccessDetails;
 
@@ -144,7 +161,7 @@ async function performActiveOperation(options: {
 	const command = [
 		'set -eu',
 		`printf '%s\\n' ${shellQuote(options.params.marker)} > ${shellQuote(filePath)}`,
-		`printf '%s\\n' ${shellQuote(options.params.marker)} > ${shellQuote(sentinelFilePath)}`,
+		`printf '%s\\n' ${shellQuote(options.params.marker)} >> ${shellQuote(sentinelFilePath)}`,
 		`sync ${shellQuote(filePath)} ${shellQuote(sentinelFilePath)}`,
 		'while :; do sleep 1; done',
 	].join('\n');
@@ -264,6 +281,63 @@ async function performWriteRead(options: {
 	}
 }
 
+async function performReadExisting(options: {
+	readonly client: GatewayRuntimeSandboxE2eActuatorClient;
+	readonly params: GatewayRuntimeSandboxE2eReadExistingParams;
+	readonly trustedContext: GatewayRuntimeClientTrustedInvocationContext;
+}): Promise<GatewayRuntimeSandboxE2eReadExistingSuccessDetails> {
+	const operationOptions = requestOptions(options.trustedContext);
+	const markerBytes = Buffer.from(options.params.marker, 'utf8');
+	const sandboxPath = `/workspace/${options.params.filePath}`;
+	const opened = await performSandboxProbeStage({
+		code: 'environment-open-failed',
+		operation: async () => await options.client.sandbox.environment.open({}, operationOptions),
+	});
+	try {
+		const read = await performSandboxProbeStage({
+			code: 'filesystem-read-failed',
+			operation: async () =>
+				await options.client.sandbox.filesystem.read(
+					{
+						environment: opened.environment,
+						maxBytes: markerBytes.byteLength,
+						offsetBytes: 0,
+						path: sandboxPath,
+					},
+					operationOptions,
+				),
+		});
+		const readBackBytes = Buffer.from(read.chunk.contentBase64, 'base64');
+		if (
+			read.chunk.encoding !== 'base64' ||
+			read.chunk.byteLength !== readBackBytes.byteLength ||
+			!read.eof ||
+			read.nextOffsetBytes !== markerBytes.byteLength ||
+			read.path !== sandboxPath ||
+			!readBackBytes.equals(markerBytes)
+		) {
+			throw new GatewayRuntimeSandboxE2eActuatorError('filesystem-readback-mismatch');
+		}
+		return {
+			agentId: options.params.agentId,
+			filePath: options.params.filePath,
+			kind: 'read-existing',
+			marker: options.params.marker,
+			readBack: readBackBytes.toString('utf8'),
+			status: 'ok',
+		};
+	} finally {
+		await performSandboxProbeStage({
+			code: 'environment-close-failed',
+			operation: async () =>
+				await options.client.sandbox.environment.close(
+					{ environment: opened.environment },
+					operationOptions,
+				),
+		});
+	}
+}
+
 async function performResetConnection(options: {
 	readonly client: GatewayRuntimeSandboxE2eActuatorClient;
 	readonly params: GatewayRuntimeSandboxE2eResetConnectionParams;
@@ -274,20 +348,23 @@ async function performResetConnection(options: {
 		code: 'environment-open-failed',
 		operation: async () => await options.client.sandbox.environment.open({}, operationOptions),
 	});
-	const started = await options.client.sandbox.execution.start(
-		{
-			command: resetConnectionScript,
-			cwd: '/work',
-			environment: opened.environment,
-			mode: { kind: 'direct' },
-			timeoutMs: maximumOperationMilliseconds,
-		},
-		operationOptions,
-	);
-	if (started.mode !== 'direct') {
-		throw new GatewayRuntimeSandboxE2eActuatorError('reset-execution-mode');
-	}
+	let started:
+		| Awaited<ReturnType<GatewayRuntimeSandboxE2eActuatorClient['sandbox']['execution']['start']>>
+		| undefined;
 	try {
+		started = await options.client.sandbox.execution.start(
+			{
+				command: resetConnectionScript,
+				cwd: '/work',
+				environment: opened.environment,
+				mode: { kind: 'direct' },
+				timeoutMs: maximumOperationMilliseconds,
+			},
+			operationOptions,
+		);
+		if (started.mode !== 'direct') {
+			throw new GatewayRuntimeSandboxE2eActuatorError('reset-execution-mode');
+		}
 		const waitPromise = options.client.sandbox.execution.wait(
 			{ operation: started.operation, timeoutMs: maximumOperationMilliseconds },
 			operationOptions,
@@ -305,9 +382,11 @@ async function performResetConnection(options: {
 		}
 		return { agentId: options.params.agentId, kind: 'reset-connection', status: 'ambiguous' };
 	} catch (error: unknown) {
-		await options.client.sandbox.execution
-			.cancel({ operation: started.operation }, operationOptions)
-			.catch(() => undefined);
+		if (started !== undefined) {
+			await options.client.sandbox.execution
+				.cancel({ operation: started.operation }, operationOptions)
+				.catch(() => undefined);
+		}
 		throw error;
 	} finally {
 		await options.client.sandbox.environment
@@ -324,6 +403,8 @@ export async function actuateGatewayRuntimeSandboxE2eProbe(options: {
 	switch (options.params.action) {
 		case 'active-operation-containment':
 			return await performActiveOperation({ ...options, params: options.params });
+		case 'read-existing':
+			return await performReadExisting({ ...options, params: options.params });
 		case 'reset-connection':
 			return await performResetConnection({ ...options, params: options.params });
 		case 'write-read':

@@ -20,6 +20,7 @@ import type {
 	GatewayZone,
 	GatewayZoneDestroyResult,
 	GatewayZoneVmOperations,
+	GatewayControlSessionHealthEvidence,
 } from '../../gateway/gateway-zone-support.js';
 import { createManagedGatewayBootContract } from '../../gateway/managed-gateway-boot-contract.js';
 import type { GatewayRuntimeArtifactLimits } from '../../gateway/managed-gateway-runtime-input-builders.js';
@@ -27,6 +28,7 @@ import {
 	TEST_SSH_SERVER_HOST_KEY,
 	createManagedExecProcessStub,
 } from '../../testing/managed-vm-test-helpers.js';
+import type { GatewayDisposableControlSessionClient } from '../control-session/gateway-disposable-control-session-client.js';
 import {
 	createControllerStateRoot,
 	resolveControllerGatewayStateRoot,
@@ -324,6 +326,35 @@ function createTestGatewayIdentity(vmId: string): GatewayEpochIdentity {
 	};
 }
 
+function createTestControlSession(
+	ensureDialing: GatewayDisposableControlSessionClient['ensureDialing'],
+	closeForControllerShutdown: GatewayDisposableControlSessionClient['closeForControllerShutdown'] = () => {},
+): GatewayDisposableControlSessionClient {
+	return {
+		close: () => {},
+		closeForControllerShutdown,
+		emitApplicationMessage: async () => undefined,
+		ensureDialing,
+		fenceCurrentSession: () => ({ status: 'not-current' }),
+		getDiagnostics: () => ({
+			accepted: true,
+			connected: true,
+			endpointPath: '/control',
+			helloCount: 1,
+			ready: true,
+			reconnectAttempts: 0,
+			reconnectExhausted: false,
+		}),
+		ready: Promise.resolve({
+			attachmentGeneration: 1,
+			connectionId: '11111111-1111-4111-8111-111111111111',
+			controllerEpoch: 'controller-epoch-1',
+			outcome: 'accepted',
+			sessionId: '22222222-2222-4222-8222-222222222222',
+		}),
+	};
+}
+
 function createManagedGatewayZoneRuntime(
 	options: TestManagedGatewayZoneRuntimeOptions,
 ): ReturnType<typeof createManagedGatewayZoneRuntimeImpl> {
@@ -612,6 +643,420 @@ describe('Managed Gateway zone runtime test fixture paths', () => {
 });
 
 describe('createManagedGatewayZoneRuntime host process liveness', () => {
+	it('routes only the exact current Gateway source to its control-session manager', async () => {
+		const gatewayIdentity = createTestGatewayIdentity('gateway-vm-watchdog');
+		const ensureDialing = vi.fn(() => ({ status: 'retry-scheduled' as const }));
+		const runtime = createManagedGatewayZoneRuntime({
+			isProcessAlive: () => true,
+			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
+			restartGatewayZone: async () => ({
+				controlSession: createTestControlSession(ensureDialing),
+				gatewayIdentity,
+				image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
+				ingress: { host: '127.0.0.1', port: 18791 },
+				vm: {
+					close: vi.fn(async () => undefined),
+					enableIngress: vi.fn(async () => ({
+						close: vi.fn(async () => {}),
+						host: '127.0.0.1',
+						port: 18791,
+					})),
+					enableSsh: vi.fn(async () => ({
+						close: async () => {},
+						host: '127.0.0.1',
+						port: 22,
+						serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+					})),
+					exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
+					getHostProcessId: () => 48_284,
+					id: gatewayIdentity.gatewayVmId,
+					configureIngressRoutes: vi.fn(),
+					start: async () => {},
+				},
+				zone: getOpenClawZone(),
+			}),
+			secretResolver: createResolvingSecretResolver(),
+			systemConfig: loadedSystemConfig,
+			zone: getOpenClawZone(),
+		});
+		await runtime.start();
+		const currentSource = {
+			bootId: gatewayIdentity.bootId,
+			domain: 'gateway_control' as const,
+			gatewayVmId: gatewayIdentity.gatewayVmId,
+			generationId: gatewayIdentity.generationId,
+			zoneId: gatewayIdentity.zoneId,
+		};
+
+		expect(runtime.ensureCurrentControlSessionDialing(currentSource)).toEqual({
+			status: 'retry-scheduled',
+		});
+		expect(
+			runtime.ensureCurrentControlSessionDialing({
+				...currentSource,
+				generationId: 'stale-generation',
+			}),
+		).toEqual({ status: 'not-current' });
+		expect(ensureDialing).toHaveBeenCalledOnce();
+		expect(ensureDialing).toHaveBeenCalledWith('stale-health');
+	});
+
+	it('admits reconnect evidence only from the currently installed exact Gateway source', async () => {
+		const gatewayIdentity = createTestGatewayIdentity('gateway-vm-evidence');
+		const recordCurrent = vi.fn();
+		const recordCurrentLive = vi.fn();
+		const recordNonCurrent = vi.fn();
+		let recordEvidence: ((evidence: GatewayControlSessionHealthEvidence) => void) | undefined;
+		const runtime = createManagedGatewayZoneRuntime({
+			isProcessAlive: () => true,
+			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
+			recordCurrentControlSessionHealthEvent: recordCurrent,
+			recordCurrentControlSessionLiveHealthEvent: recordCurrentLive,
+			recordNonCurrentControlSessionEvidence: recordNonCurrent,
+			restartGatewayZone: async (_zoneId, startOptions) => {
+				recordEvidence = startOptions?.onControlSessionHealthEvidence;
+				return {
+					gatewayIdentity,
+					image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
+					ingress: { host: '127.0.0.1', port: 18791 },
+					vm: {
+						close: vi.fn(async () => undefined),
+						enableIngress: vi.fn(async () => ({
+							close: vi.fn(async () => {}),
+							host: '127.0.0.1',
+							port: 18791,
+						})),
+						enableSsh: vi.fn(async () => ({
+							close: async () => {},
+							host: '127.0.0.1',
+							port: 22,
+							serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+						})),
+						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
+						getHostProcessId: () => 48_284,
+						id: gatewayIdentity.gatewayVmId,
+						configureIngressRoutes: vi.fn(),
+						start: async () => {},
+					},
+					zone: getOpenClawZone(),
+				};
+			},
+			secretResolver: createResolvingSecretResolver(),
+			systemConfig: loadedSystemConfig,
+			zone: getOpenClawZone(),
+		});
+		await runtime.start();
+		if (recordEvidence === undefined) throw new Error('Expected reconnect evidence recorder.');
+		const acceptedEvent = {
+			attemptCount: 1,
+			bootId: 'process-a',
+			domain: 'gateway_control',
+			elapsedMs: 100,
+			firstObservedAtMs: 1_000,
+			kind: 'gateway-control-session',
+			latestObservedAtMs: 1_100,
+			observedAtMs: 1_100,
+			operation: 'control-session-reconnect',
+			outcome: 'accepted',
+			peerId: 'gateway-zone-a',
+			reconnectPhase: 'accepted',
+			result: 'ok',
+			terminalReason: 'accepted',
+			windowState: 'closed',
+			zoneId: gatewayIdentity.zoneId,
+		} as const;
+
+		recordEvidence({
+			event: acceptedEvent,
+			gateway: gatewayIdentity,
+			recordKind: 'durable-and-live',
+		});
+		recordEvidence({
+			event: { ...acceptedEvent, reconnectPhase: 'stable' },
+			gateway: gatewayIdentity,
+			recordKind: 'live-only',
+		});
+		expect(recordCurrent).toHaveBeenCalledOnce();
+		expect(recordCurrentLive).toHaveBeenCalledOnce();
+
+		await runtime.stop();
+		recordEvidence({
+			event: {
+				...acceptedEvent,
+				outcome: 'transport-error',
+				reconnectPhase: 'retry-scheduled',
+				result: 'failed',
+				terminalReason: 'gateway-superseded',
+			},
+			gateway: gatewayIdentity,
+			recordKind: 'durable-and-live',
+		});
+
+		expect(recordCurrent).toHaveBeenCalledOnce();
+		expect(recordCurrentLive).toHaveBeenCalledOnce();
+		expect(recordNonCurrent).toHaveBeenCalledOnce();
+	});
+
+	it('records an accepted reconnect terminal as durable-only when shutdown already made its source non-current', async () => {
+		const gatewayIdentity = createTestGatewayIdentity('gateway-vm-stopping-evidence');
+		const closeDeferred = createDeferredPromise<void>();
+		const recordCurrent = vi.fn();
+		const recordCurrentLive = vi.fn();
+		const recordNonCurrent = vi.fn();
+		let recordEvidence: ((evidence: GatewayControlSessionHealthEvidence) => void) | undefined;
+		const runtime = createManagedGatewayZoneRuntime({
+			isProcessAlive: () => true,
+			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
+			recordCurrentControlSessionHealthEvent: recordCurrent,
+			recordCurrentControlSessionLiveHealthEvent: recordCurrentLive,
+			recordNonCurrentControlSessionEvidence: recordNonCurrent,
+			restartGatewayZone: async (_zoneId, startOptions) => {
+				recordEvidence = startOptions?.onControlSessionHealthEvidence;
+				return {
+					destroyGateway: async () => {
+						await closeDeferred.promise;
+						return { kind: 'destroyed-clean' } as const;
+					},
+					gatewayIdentity,
+					image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
+					ingress: { host: '127.0.0.1', port: 18791 },
+					vm: {
+						enableIngress: vi.fn(async () => ({
+							close: vi.fn(async () => {}),
+							host: '127.0.0.1',
+							port: 18791,
+						})),
+						enableSsh: vi.fn(async () => ({
+							close: async () => {},
+							host: '127.0.0.1',
+							port: 22,
+							serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+						})),
+						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
+						getHostProcessId: () => 48_284,
+						id: gatewayIdentity.gatewayVmId,
+						configureIngressRoutes: vi.fn(),
+						start: async () => {},
+					},
+					zone: getOpenClawZone(),
+				};
+			},
+			secretResolver: createResolvingSecretResolver(),
+			systemConfig: loadedSystemConfig,
+			zone: getOpenClawZone(),
+		});
+		await runtime.start();
+		if (recordEvidence === undefined) throw new Error('Expected reconnect evidence recorder.');
+		const acceptedTerminal = {
+			attemptCount: 1,
+			bootId: 'process-a',
+			domain: 'gateway_control',
+			elapsedMs: 100,
+			firstObservedAtMs: 1_000,
+			kind: 'gateway-control-session',
+			latestObservedAtMs: 1_100,
+			observedAtMs: 1_100,
+			operation: 'control-session-reconnect',
+			outcome: 'accepted',
+			peerId: 'gateway-zone-a',
+			reconnectPhase: 'accepted',
+			result: 'ok',
+			terminalReason: 'accepted',
+			windowState: 'closed',
+			zoneId: gatewayIdentity.zoneId,
+		} as const;
+
+		const stopPromise = runtime.stop();
+		await drainMicrotasks(1);
+		expect(runtime.getLifecycleState().kind).toBe('stopping');
+		recordEvidence({
+			event: acceptedTerminal,
+			gateway: gatewayIdentity,
+			recordKind: 'durable-and-live',
+		});
+
+		expect(recordCurrent).not.toHaveBeenCalled();
+		expect(recordCurrentLive).not.toHaveBeenCalled();
+		expect(recordNonCurrent).toHaveBeenCalledExactlyOnceWith(acceptedTerminal);
+		closeDeferred.resolve();
+		await stopPromise;
+	});
+
+	it('routes a synchronously superseded manager terminal event to durable-only evidence', async () => {
+		const gatewayIdentity = createTestGatewayIdentity('gateway-vm-synchronous-supersession');
+		const recordCurrent = vi.fn();
+		const recordCurrentLive = vi.fn();
+		const recordNonCurrent = vi.fn();
+		let recordEvidence: ((evidence: GatewayControlSessionHealthEvidence) => void) | undefined;
+		const supersededTerminalEvent = {
+			attemptCount: 3,
+			bootId: 'process-a',
+			domain: 'gateway_control',
+			elapsedMs: 500,
+			firstObservedAtMs: 1_000,
+			kind: 'gateway-control-session',
+			latestObservedAtMs: 1_500,
+			observedAtMs: 1_500,
+			operation: 'control-session-reconnect',
+			outcome: 'transport-error',
+			peerId: 'gateway-zone-a',
+			reconnectPhase: 'retry-scheduled',
+			result: 'failed',
+			terminalReason: 'gateway-superseded',
+			windowState: 'closed',
+			zoneId: gatewayIdentity.zoneId,
+		} as const;
+		const closeSupersededManager = vi.fn(() => {
+			recordEvidence?.({
+				event: supersededTerminalEvent,
+				gateway: gatewayIdentity,
+				recordKind: 'durable-and-live',
+			});
+		});
+		const runtime = createManagedGatewayZoneRuntime({
+			isProcessAlive: () => true,
+			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
+			recordCurrentControlSessionHealthEvent: recordCurrent,
+			recordCurrentControlSessionLiveHealthEvent: recordCurrentLive,
+			recordNonCurrentControlSessionEvidence: recordNonCurrent,
+			restartGatewayZone: async (_zoneId, startOptions) => {
+				recordEvidence = startOptions?.onControlSessionHealthEvidence;
+				return {
+					gatewayIdentity,
+					image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
+					ingress: { host: '127.0.0.1', port: 18791 },
+					vm: {
+						close: vi.fn(async () => undefined),
+						enableIngress: vi.fn(async () => ({
+							close: vi.fn(async () => {}),
+							host: '127.0.0.1',
+							port: 18791,
+						})),
+						enableSsh: vi.fn(async () => ({
+							close: async () => {},
+							host: '127.0.0.1',
+							port: 22,
+							serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+						})),
+						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
+						getHostProcessId: () => 48_284,
+						id: gatewayIdentity.gatewayVmId,
+						configureIngressRoutes: vi.fn(),
+						start: async () => {},
+					},
+					zone: getOpenClawZone(),
+				};
+			},
+			secretResolver: createResolvingSecretResolver(),
+			systemConfig: loadedSystemConfig,
+			zone: getOpenClawZone(),
+		});
+		await runtime.start();
+		if (recordEvidence === undefined) throw new Error('Expected reconnect evidence recorder.');
+
+		closeSupersededManager();
+
+		expect(closeSupersededManager).toHaveBeenCalledOnce();
+		expect(recordCurrent).not.toHaveBeenCalled();
+		expect(recordCurrentLive).not.toHaveBeenCalled();
+		expect(recordNonCurrent).toHaveBeenCalledExactlyOnceWith(supersededTerminalEvent);
+	});
+
+	it('closes an active reconnect outage as durable-only evidence during orderly controller shutdown', async () => {
+		const gatewayIdentity = createTestGatewayIdentity('gateway-vm-controller-shutdown');
+		const recordCurrent = vi.fn();
+		const recordCurrentLive = vi.fn();
+		const recordNonCurrent = vi.fn();
+		const destroyGateway = vi.fn(async () => ({ kind: 'destroyed-clean' }) as const);
+		let recordEvidence: ((evidence: GatewayControlSessionHealthEvidence) => void) | undefined;
+		const shutdownTerminalEvent = {
+			attemptCount: 1,
+			bootId: 'process-a',
+			domain: 'gateway_control',
+			elapsedMs: 100,
+			firstObservedAtMs: 1_000,
+			kind: 'gateway-control-session',
+			latestObservedAtMs: 1_100,
+			observedAtMs: 1_100,
+			operation: 'control-session-reconnect',
+			outcome: 'transport-error',
+			peerId: 'gateway-zone-a',
+			reconnectPhase: 'retry-scheduled',
+			result: 'failed',
+			terminalReason: 'controller-shutdown',
+			windowState: 'closed',
+			zoneId: gatewayIdentity.zoneId,
+		} as const;
+		const closeForControllerShutdown = vi.fn(() => {
+			recordEvidence?.({
+				event: shutdownTerminalEvent,
+				gateway: gatewayIdentity,
+				recordKind: 'durable-and-live',
+			});
+			throw new Error('simulated control-session close failure');
+		});
+		const controlSession = createTestControlSession(
+			() => ({ status: 'accepted-current' }),
+			closeForControllerShutdown,
+		);
+		const runtime = createManagedGatewayZoneRuntime({
+			isProcessAlive: () => true,
+			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
+			recordCurrentControlSessionHealthEvent: recordCurrent,
+			recordCurrentControlSessionLiveHealthEvent: recordCurrentLive,
+			recordNonCurrentControlSessionEvidence: recordNonCurrent,
+			restartGatewayZone: async (_zoneId, startOptions) => {
+				recordEvidence = startOptions?.onControlSessionHealthEvidence;
+				return {
+					controlSession,
+					destroyGateway,
+					gatewayIdentity,
+					image: { built: false, fingerprint: 'fingerprint', imageReference: '/tmp/image' },
+					ingress: { host: '127.0.0.1', port: 18791 },
+					vm: {
+						close: vi.fn(async () => undefined),
+						enableIngress: vi.fn(async () => ({
+							close: vi.fn(async () => {}),
+							host: '127.0.0.1',
+							port: 18791,
+						})),
+						enableSsh: vi.fn(async () => ({
+							close: async () => {},
+							host: '127.0.0.1',
+							port: 22,
+							serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+						})),
+						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
+						getHostProcessId: () => 48_284,
+						id: gatewayIdentity.gatewayVmId,
+						configureIngressRoutes: vi.fn(),
+						start: async () => {},
+					},
+					zone: getOpenClawZone(),
+				};
+			},
+			secretResolver: createResolvingSecretResolver(),
+			systemConfig: loadedSystemConfig,
+			zone: getOpenClawZone(),
+		});
+		await runtime.start();
+		if (recordEvidence === undefined) throw new Error('Expected reconnect evidence recorder.');
+
+		recordEvidence({
+			event: { ...shutdownTerminalEvent, terminalReason: undefined, windowState: 'open' },
+			gateway: gatewayIdentity,
+			recordKind: 'durable-and-live',
+		});
+		await runtime.shutdown();
+
+		expect(closeForControllerShutdown).toHaveBeenCalledOnce();
+		expect(destroyGateway).toHaveBeenCalledOnce();
+		expect(recordCurrent).toHaveBeenCalledOnce();
+		expect(recordCurrentLive).not.toHaveBeenCalled();
+		expect(recordNonCurrent).toHaveBeenCalledExactlyOnceWith(shutdownTerminalEvent);
+		expect(runtime.getLifecycleState()).toEqual({ kind: 'stopped' });
+	});
+
 	it('normalizes managed VM exec processes into command results', async () => {
 		const gatewayExec = vi.fn((_command: string) =>
 			createManagedExecProcessStub({

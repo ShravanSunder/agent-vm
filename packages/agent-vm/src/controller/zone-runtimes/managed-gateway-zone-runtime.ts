@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import type { GatewayHealthCheck } from '@agent-vm/gateway-lifecycle';
+import type { AgentVmHealthEvent, GatewayHealthCheck } from '@agent-vm/gateway-lifecycle';
 import type {
 	ManagedVmExactProcessTerminationCapability,
 	ManagedVmFactory,
@@ -20,6 +20,7 @@ import {
 import type {
 	GatewayControlSessionAttemptOutcome,
 	GatewayControlSessionHeartbeat,
+	GatewayControlSessionHealthEvidence,
 	GatewayControlSessionReconnectExhausted,
 	GatewayRuntimeAttachmentLost,
 	GatewayZoneDestroyResult,
@@ -35,6 +36,7 @@ import { runControllerUpgrade as runControllerUpgradeDefault } from '../../opera
 import { runControllerLogs as runControllerLogsDefault } from '../../operations/zone-logs.js';
 import { isProcessAlive as defaultIsProcessAlive } from '../../shared/managed-vm-process.js';
 import type { ControllerManagedGatewayRuntimeRecordTarget } from '../durable-state/controller-state-record-paths.js';
+import { gatewayIdentitiesEqual } from '../vm-ownership/vm-ownership-contracts.js';
 import {
 	appendGatewayLifecycleOperationRecord as appendGatewayLifecycleOperationRecordDefault,
 	type GatewayLifecycleGatewayIdentity,
@@ -86,6 +88,15 @@ export interface CreateManagedGatewayZoneRuntimeOptions {
 	readonly onGatewayRuntimeAttachmentLost?: (transition: GatewayRuntimeAttachmentLost) => void;
 	readonly runtimeRecordTarget: ControllerManagedGatewayRuntimeRecordTarget;
 	readonly preflightGatewayZoneStart?: typeof preflightGatewayZoneStartDefault;
+	readonly recordCurrentControlSessionHealthEvent?: (
+		event: Extract<AgentVmHealthEvent, { readonly kind: 'gateway-control-session' }>,
+	) => void;
+	readonly recordCurrentControlSessionLiveHealthEvent?: (
+		event: Extract<AgentVmHealthEvent, { readonly kind: 'gateway-control-session' }>,
+	) => void;
+	readonly recordNonCurrentControlSessionEvidence?: (
+		event: Extract<AgentVmHealthEvent, { readonly kind: 'gateway-control-session' }>,
+	) => void;
 	readonly restartGatewayZone?: (
 		zoneId: string,
 		options?: GatewayZoneStartOptions,
@@ -105,6 +116,7 @@ interface GatewayZoneStartOptions {
 	readonly onControlSessionAttemptOutcome?: (outcome: GatewayControlSessionAttemptOutcome) => void;
 	readonly onPendingVmCreation?: (containment: PendingGatewayVmCreationContainment) => void;
 	readonly onControlSessionHeartbeat?: (transition: GatewayControlSessionHeartbeat) => void;
+	readonly onControlSessionHealthEvidence?: (evidence: GatewayControlSessionHealthEvidence) => void;
 	readonly onControlSessionReconnectExhausted?: (
 		transition: GatewayControlSessionReconnectExhausted,
 	) => void;
@@ -344,6 +356,30 @@ export function createManagedGatewayZoneRuntime(
 	let lifecycleOperation: Promise<void> = Promise.resolve();
 	let lifecycleGeneration = 0;
 	let staleGatewayPendingClose: GatewayZoneRuntimeHandle | undefined;
+	const recordControlSessionHealthEvidence = (
+		evidence: GatewayControlSessionHealthEvidence,
+	): void => {
+		if (evidence.event.windowState === 'closed' && evidence.event.terminalReason !== 'accepted') {
+			options.recordNonCurrentControlSessionEvidence?.(evidence.event);
+			return;
+		}
+		const currentGateway = gateway;
+		const sourceIsCurrent =
+			currentGateway !== undefined &&
+			(lifecycleState.kind === 'running' || lifecycleState.kind === 'running-degraded') &&
+			gatewayIdentitiesEqual(currentGateway.gatewayIdentity, evidence.gateway);
+		if (sourceIsCurrent) {
+			if (evidence.recordKind === 'live-only') {
+				options.recordCurrentControlSessionLiveHealthEvent?.(evidence.event);
+			} else {
+				options.recordCurrentControlSessionHealthEvent?.(evidence.event);
+			}
+			return;
+		}
+		if (evidence.event.windowState === 'closed') {
+			options.recordNonCurrentControlSessionEvidence?.(evidence.event);
+		}
+	};
 
 	const startGateway = async (
 		startOptions: GatewayZoneStartOptions = {},
@@ -351,6 +387,7 @@ export function createManagedGatewayZoneRuntime(
 		if (options.restartGatewayZone) {
 			return await options.restartGatewayZone(options.zone.id, {
 				...startOptions,
+				onControlSessionHealthEvidence: recordControlSessionHealthEvidence,
 				...(options.onGatewayRuntimeAttachmentLost === undefined
 					? {}
 					: { onGatewayRuntimeAttachmentLost: options.onGatewayRuntimeAttachmentLost }),
@@ -375,6 +412,7 @@ export function createManagedGatewayZoneRuntime(
 					...(startOptions.onControlSessionHeartbeat
 						? { onControlSessionHeartbeat: startOptions.onControlSessionHeartbeat }
 						: {}),
+					onControlSessionHealthEvidence: recordControlSessionHealthEvidence,
 					...(options.onGatewayRuntimeAttachmentLost === undefined
 						? {}
 						: { onGatewayRuntimeAttachmentLost: options.onGatewayRuntimeAttachmentLost }),
@@ -818,6 +856,7 @@ export function createManagedGatewayZoneRuntime(
 	const stopNow = async (
 		next: 'stopped' | 'starting' = 'stopped',
 		operationContext?: GatewayLifecycleOperationContext,
+		closeForControllerShutdown = false,
 	): Promise<void> => {
 		const activeGateway = gateway;
 		if (activeGateway === undefined && isOwnerUnsafeLifecycleState(getLifecycleState())) {
@@ -832,6 +871,15 @@ export function createManagedGatewayZoneRuntime(
 			operationId,
 			previousGateway,
 		};
+		if (closeForControllerShutdown) {
+			try {
+				activeGateway?.controlSession?.closeForControllerShutdown();
+			} catch (error) {
+				writeManagedGatewayZoneRuntimeLog(
+					`Failed to close the control session for controller shutdown in zone '${options.zone.id}': ${formatUnknownError(error)}`,
+				);
+			}
+		}
 		try {
 			await recordLifecycleOperation({
 				kind: 'stop-requested',
@@ -1105,6 +1153,10 @@ export function createManagedGatewayZoneRuntime(
 		await runLifecycleOperation(async () => await stopNow());
 	};
 
+	const shutdown = async (): Promise<void> => {
+		await runLifecycleOperation(async () => await stopNow('stopped', undefined, true));
+	};
+
 	const start = async (): Promise<void> =>
 		await runLifecycleOperation(async () => {
 			assertGatewaySuccessorCreationAllowed();
@@ -1348,6 +1400,27 @@ export function createManagedGatewayZoneRuntime(
 				},
 			),
 		enableSsh: async () => await requireGateway().vm.enableSsh(),
+		ensureCurrentControlSessionDialing: (sourceKey) => {
+			const currentState = getLifecycleState();
+			if (currentState.kind !== 'running' && currentState.kind !== 'running-degraded') {
+				return { status: 'not-current' };
+			}
+			const identity = currentState.gateway.gatewayIdentity;
+			if (
+				sourceKey.domain !== 'gateway_control' ||
+				sourceKey.zoneId !== identity.zoneId ||
+				sourceKey.gatewayVmId !== identity.gatewayVmId ||
+				sourceKey.bootId !== identity.bootId ||
+				sourceKey.generationId !== identity.generationId
+			) {
+				return { status: 'not-current' };
+			}
+			return (
+				currentState.gateway.controlSession?.ensureDialing('stale-health') ?? {
+					status: 'control-session-unavailable',
+				}
+			);
+		},
 		exec: async (command) => await executeGatewayCommand(requireGateway(), command),
 		gatewayType: options.zone.gateway.type,
 		getHealth: async () => {
@@ -1518,7 +1591,7 @@ export function createManagedGatewayZoneRuntime(
 				);
 			})(),
 		restart,
-		shutdown: stop,
+		shutdown,
 		start,
 		stop,
 		upgrade: async () =>

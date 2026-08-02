@@ -125,6 +125,22 @@ function addKindSpecificAttributes(
 			return;
 		case 'gateway-control-session':
 			attributes['agent_vm.gateway.operation'] = event.operation;
+			if (event.reconnectPhase !== undefined) {
+				attributes['agent_vm.gateway.control.attempt_count'] = event.attemptCount;
+				attributes['agent_vm.gateway.control.boot_id_hash'] = stableTelemetryHash(event.bootId);
+				attributes['agent_vm.gateway.control.first_observed_at_ms'] = event.firstObservedAtMs;
+				attributes['agent_vm.gateway.control.latest_observed_at_ms'] = event.latestObservedAtMs;
+				attributes['agent_vm.gateway.control.outcome'] = event.outcome;
+				attributes['agent_vm.gateway.control.peer_id_hash'] = stableTelemetryHash(event.peerId);
+				attributes['agent_vm.gateway.control.reconnect_phase'] = event.reconnectPhase;
+				attributes['agent_vm.gateway.control.window_state'] = event.windowState;
+				if (event.nextRetryAtMs !== undefined) {
+					attributes['agent_vm.gateway.control.next_retry_at_ms'] = event.nextRetryAtMs;
+				}
+				if (event.terminalReason !== undefined) {
+					attributes['agent_vm.gateway.control.terminal_reason'] = event.terminalReason;
+				}
+			}
 			return;
 		case 'gateway-plugin-health':
 			attributes['agent_vm.gateway.service'] = event.gatewayService;
