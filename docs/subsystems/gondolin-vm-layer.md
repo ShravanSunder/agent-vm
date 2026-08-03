@@ -314,12 +314,15 @@ VM images are built from a `BuildConfig` (loaded from JSON) through Gondolin's `
 `computeBuildFingerprint()` uses stable JSON serialization (sorted keys, no undefined values) to ensure the same config and fingerprint input always produce the same fingerprint regardless of property order. Docker-backed profiles pass the inspected Docker rootfs layer identity as fingerprint input, so unchanged Docker outputs can reuse Gondolin assets and changed Docker layers naturally produce a new generation.
 
 `buildGatewayImage()` in `gateway-image-builder.ts` delegates through the
-injected neutral `ManagedVmImageCapability`. The composition projection first
-checks the profile-local prepared-image record written by `agent-vm build`; if
-the build config, fingerprint input, fingerprint, and asset files still match,
-startup reuses that image reference without invoking Gondolin. Otherwise the
-selected capability loads and builds the image through backend tooling. Tool VM
-startup uses the same prepared-image record contract.
+injected neutral `ManagedVmImageCapability`. Before controller startup admits
+the selected Gateway image, the CLI recomputes its expected fingerprint from
+the prepared record's Docker rootfs identity and managed boot projection under
+the currently installed runtime version tag. A mismatch fails closed and tells
+the operator to run `agent-vm build`; startup never performs Docker or Gondolin
+build work. After that preflight, the composition projection reuses the
+profile-local image reference when its prepared record and assets remain valid.
+Tool VM startup uses the same prepared-image record contract; the required
+deployment build prepares all configured Gateway and Tool VM profiles together.
 
 `agent-vm build` dedupes repeated resolved build config path + effective
 fingerprint pairs across configured image profiles in the same invocation. The

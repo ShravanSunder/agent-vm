@@ -202,6 +202,9 @@ describe('manual templates', () => {
 		)?.content;
 		expect(imageVersioningManual).toContain('There is one owner for each version decision');
 		expect(imageVersioningManual).toContain('package.json owns which installed @agent-vm/*');
+		expect(imageVersioningManual).toContain(
+			'controller start refuses a stale prepared Gateway image',
+		);
 		expect(imageVersioningManual).toContain('managed-images.json');
 		expect(imageVersioningManual).toContain('packageOverrides');
 		expect(imageVersioningManual).toContain('packageOverrides.pnpm');

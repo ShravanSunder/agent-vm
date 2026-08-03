@@ -3,6 +3,8 @@ import path from 'node:path';
 
 import { command, flag, subcommands } from 'cmd-ts';
 
+import { computeFingerprintFromConfigPath } from '../../build/gondolin-image-builder.js';
+import type { ManagedGatewayImageBootProjection } from '../../build/gondolin-managed-vm-build-tooling.js';
 import { readPreparedManagedVmImage } from '../../build/prepared-gondolin-image-cache.js';
 import type { LoadedSystemConfig } from '../../config/system-config.js';
 import { type CliDependencies, type CliIo, requireZone } from '../agent-vm-cli-support.js';
@@ -66,6 +68,13 @@ function createControllerOperationSubcommand(
 export async function isGatewayImageCached(
 	systemConfig: LoadedSystemConfig,
 	zoneId: string,
+	dependencies: {
+		readonly computeManagedVmFingerprint?: (options: {
+			readonly buildConfigPath: string;
+			readonly fingerprintInput?: unknown;
+			readonly managedGatewayBoot?: ManagedGatewayImageBootProjection;
+		}) => Promise<string>;
+	} = {},
 ): Promise<boolean> {
 	const zone = requireZone(systemConfig, zoneId);
 	const gatewayImageProfile = systemConfig.imageProfiles.gateways[zone.gateway.imageProfile];
@@ -81,7 +90,30 @@ export async function isGatewayImageCached(
 		buildConfigPath: gatewayImageProfile.buildConfig,
 		cacheDir: gatewayProfileCacheDirectory,
 	});
-	return preparedGatewayImage !== undefined;
+	if (preparedGatewayImage === undefined) {
+		return false;
+	}
+	const expectedFingerprint = await (
+		dependencies.computeManagedVmFingerprint ??
+		(async (options): Promise<string> =>
+			await computeFingerprintFromConfigPath(options.buildConfigPath, {
+				...(options.fingerprintInput === undefined
+					? {}
+					: { fingerprintInput: options.fingerprintInput }),
+				...(options.managedGatewayBoot === undefined
+					? {}
+					: { managedGatewayBoot: options.managedGatewayBoot }),
+			}))
+	)({
+		buildConfigPath: gatewayImageProfile.buildConfig,
+		...(preparedGatewayImage.fingerprintInput === undefined
+			? {}
+			: { fingerprintInput: preparedGatewayImage.fingerprintInput }),
+		...(preparedGatewayImage.managedGatewayBoot === undefined
+			? {}
+			: { managedGatewayBoot: preparedGatewayImage.managedGatewayBoot }),
+	});
+	return preparedGatewayImage.fingerprint === expectedFingerprint;
 }
 
 async function requireGatewayImageCache(
