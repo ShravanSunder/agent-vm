@@ -149,6 +149,7 @@ function createHarness(
 		>;
 		readonly managedVmExactProcessTermination?: ManagedVmExactProcessTerminationCapability;
 		readonly now?: number;
+		readonly onMembershipDestroyed?: () => void;
 		readonly prepareLeasePersistentState?: NonNullable<
 			Parameters<typeof createLeaseManager>[0]['prepareLeasePersistentState']
 		>;
@@ -191,6 +192,7 @@ function createHarness(
 				recordDestroyed(): void {
 					events.push(`membership-destroyed:${admissionOptions.agentId}`);
 					membership.recordDestroyed();
+					options.onMembershipDestroyed?.();
 				},
 				recordUnavailable(): void {
 					events.push(`membership-unavailable:${admissionOptions.agentId}`);
@@ -528,10 +530,12 @@ describe('createLeaseManager stock Gondolin lifecycle', () => {
 			},
 		});
 		harness.leaseManager.subscribeLeaseRetirement(async (event) => {
+			harness.events.push('retirement-notification-started');
 			retirementEvents.push(event);
 			await retirementAcknowledgement.promise;
 		});
 		const lease = await harness.leaseManager.createLease(createLeaseOptions());
+		harness.events.length = 0;
 
 		// Act
 		const release = harness.leaseManager.releaseLease(lease.id);
@@ -547,6 +551,10 @@ describe('createLeaseManager stock Gondolin lifecycle', () => {
 			},
 		]);
 		expect(retirementEvents).toEqual([{ leaseId: lease.id, reason: 'released' }]);
+		expect(harness.events.indexOf('membership-destroying:beta')).toBeGreaterThanOrEqual(0);
+		expect(harness.events.indexOf('retirement-notification-started')).toBeGreaterThan(
+			harness.events.indexOf('membership-destroying:beta'),
+		);
 		expect(harness.createManagedVm).toHaveBeenCalledOnce();
 
 		// Cleanup
@@ -1437,6 +1445,7 @@ describe('createLeaseManager stock Gondolin lifecycle', () => {
 		// Arrange
 		const retainedCleanup = Promise.withResolvers<void>();
 		const retainedCleanupStarted = Promise.withResolvers<void>();
+		const membershipDestroyed = Promise.withResolvers<void>();
 		const retirementAcknowledgement = Promise.withResolvers<void>();
 		const retirementEvents: ToolVmLeaseRetirementEvent[] = [];
 		const harness = createHarness({
@@ -1452,6 +1461,7 @@ describe('createLeaseManager stock Gondolin lifecycle', () => {
 					},
 				};
 			},
+			onMembershipDestroyed: () => membershipDestroyed.resolve(),
 		});
 		harness.leaseManager.subscribeLeaseRetirement(async (event) => {
 			retirementEvents.push(event);
@@ -1472,7 +1482,6 @@ describe('createLeaseManager stock Gondolin lifecycle', () => {
 		);
 		await retainedCleanupStarted.promise;
 		const replacement = harness.leaseManager.createLease(createLeaseOptions());
-		await vi.waitFor(() => expect(harness.createManagedVm).toHaveBeenCalledTimes(2));
 		const second = await replacement;
 
 		// Assert
@@ -1484,7 +1493,8 @@ describe('createLeaseManager stock Gondolin lifecycle', () => {
 
 		// Cleanup and final assertion
 		retainedCleanup.resolve();
-		await vi.waitFor(() => expect(harness.events).toContain('membership-destroyed:beta'));
+		await membershipDestroyed.promise;
+		expect(harness.events).toContain('membership-destroyed:beta');
 		expect(releaseSettled).toBe(false);
 		retirementAcknowledgement.resolve();
 		await release;

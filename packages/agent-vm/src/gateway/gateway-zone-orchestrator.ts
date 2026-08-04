@@ -2483,7 +2483,7 @@ async function startGatewayZoneImplementation(
 						});
 					} catch (error) {
 						options.writeLog?.(
-							`Gateway Tool VM binding retirement publication failed for zone '${zone.id}': ${error instanceof Error ? error.message : 'unknown error'}.`,
+							`Gateway Tool VM binding retirement publication failed for lease '${event.leaseId}' (reason '${event.reason}') in zone '${zone.id}': ${error instanceof Error ? error.message : 'unknown error'}.`,
 						);
 						throw error;
 					}
