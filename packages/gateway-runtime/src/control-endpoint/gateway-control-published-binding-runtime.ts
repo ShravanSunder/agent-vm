@@ -111,9 +111,14 @@ export interface CreateGatewayControlPublishedBindingRuntimeProps {
 	readonly now?: () => number;
 }
 
+export interface GatewayControlPublishedBindingApplicationContext {
+	readonly expiresAtMs: number;
+}
+
 export interface GatewayControlPublishedBindingRuntime {
 	readonly applyPublication: (
 		publication: GatewayControlToolVmBindingPublication,
+		context: GatewayControlPublishedBindingApplicationContext,
 	) => Promise<GatewayControlPublishedBindingApplyResult>;
 	readonly close: () => Promise<void>;
 	readonly lookupReadyConnection: (request: {
@@ -238,6 +243,7 @@ export function createGatewayControlPublishedBindingRuntime(
 
 	async function applyCurrent(
 		publication: Extract<GatewayControlToolVmBindingPublication, { kind: 'current' }>,
+		context: GatewayControlPublishedBindingApplicationContext,
 	): Promise<GatewayControlPublishedBindingApplyResult> {
 		const generation = generationFromIdentity(publication.binding);
 		const existingSlot = slotsByStablePrincipal.get(generation.stablePrincipal);
@@ -322,6 +328,13 @@ export function createGatewayControlPublishedBindingRuntime(
 			return { kind: 'applied', state: slot.state };
 		}
 
+		if (context.expiresAtMs <= now()) {
+			if (slotsByStablePrincipal.get(generation.stablePrincipal) === slot) {
+				slotsByStablePrincipal.delete(generation.stablePrincipal);
+			}
+			closeSlot(slot);
+			return ignoredResult('stale_publication', generation.stablePrincipal);
+		}
 		if (closed || slot.closed || slotsByStablePrincipal.get(generation.stablePrincipal) !== slot) {
 			closeSlot(slot);
 			return ignoredResult(
@@ -365,9 +378,13 @@ export function createGatewayControlPublishedBindingRuntime(
 
 	async function applyPublication(
 		publication: GatewayControlToolVmBindingPublication,
+		context: GatewayControlPublishedBindingApplicationContext = {
+			expiresAtMs: Number.MAX_SAFE_INTEGER,
+		},
 	): Promise<GatewayControlPublishedBindingApplyResult> {
 		const stablePrincipal = publication.binding.stablePrincipal;
 		if (closed) return ignoredResult('runtime_closed', stablePrincipal);
+		if (context.expiresAtMs <= now()) return ignoredResult('stale_publication', stablePrincipal);
 		const acceptedSession = props.controlService.getCurrentAcceptedSession();
 		if (
 			acceptedSession === undefined ||
@@ -377,7 +394,7 @@ export function createGatewayControlPublishedBindingRuntime(
 			return ignoredResult('binding_authority_mismatch', stablePrincipal);
 		}
 		return publication.kind === 'current'
-			? await applyCurrent(publication)
+			? await applyCurrent(publication, context)
 			: applyRetired(publication);
 	}
 

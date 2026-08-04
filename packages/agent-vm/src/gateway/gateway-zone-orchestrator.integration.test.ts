@@ -6276,6 +6276,7 @@ describe('startGatewayZone', () => {
 		const createEnvelope = (input: {
 			readonly commandId: string;
 			readonly deliveryPolicy: 'critical_idempotent' | 'single_use_critical';
+			readonly expiresAtMs?: number;
 			readonly idempotencyKey: string;
 			readonly messageId: string;
 			readonly operation:
@@ -6292,7 +6293,7 @@ describe('startGatewayZone', () => {
 			createdAtMs: semanticCommandCreatedAtMs,
 			deliveryPolicy: input.deliveryPolicy,
 			domain: 'gateway_control',
-			expiresAtMs: semanticCommandCreatedAtMs + 60_000,
+			expiresAtMs: input.expiresAtMs ?? semanticCommandCreatedAtMs + 60_000,
 			idempotencyKey: input.idempotencyKey,
 			kind: 'command',
 			messageId: input.messageId,
@@ -6377,12 +6378,14 @@ describe('startGatewayZone', () => {
 			},
 			processEpoch: connectedOptions.material.processEpoch,
 		});
+		const bindingRequestExpiresAtMs = semanticCommandCreatedAtMs + 5_000;
 		const bindingRequestResult = GatewayControlRpcCommandResultMessageSchema.parse(
 			await connectedDispatcher.dispatch({
 				attachmentGeneration: 1,
 				envelope: createEnvelope({
 					commandId: '12121212-1212-4212-8212-121212121212',
 					deliveryPolicy: 'critical_idempotent',
+					expiresAtMs: bindingRequestExpiresAtMs,
 					idempotencyKey: 'tool-vm-binding-request',
 					messageId: '13131313-1313-4313-8313-131313131313',
 					operation: 'tool_vm_binding_request',
@@ -6404,6 +6407,7 @@ describe('startGatewayZone', () => {
 		expect(emitApplicationMessage).toHaveBeenCalledWith(
 			expect.objectContaining({
 				bootId: connectedOptions.material.processEpoch,
+				expiresAtMs: bindingRequestExpiresAtMs,
 				operation: 'tool_vm_binding_publish',
 			}),
 			{ kind: 'command', operation: 'tool_vm_binding_publish' },

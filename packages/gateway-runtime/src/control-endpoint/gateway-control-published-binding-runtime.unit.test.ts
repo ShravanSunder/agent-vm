@@ -232,7 +232,10 @@ interface RuntimeFixture {
 	setSession(session: GatewayControlAcceptedSession | undefined): void;
 }
 
-function createRuntimeFixture(clientFixtures: readonly StrictSshClientFixture[]): RuntimeFixture {
+function createRuntimeFixture(
+	clientFixtures: readonly StrictSshClientFixture[],
+	options: { readonly now?: () => number } = {},
+): RuntimeFixture {
 	const createInputs: StrictToolVmSshAccess[] = [];
 	const sessionObservers = new Set<(session: GatewayControlAcceptedSession | undefined) => void>();
 	let clientIndex = 0;
@@ -251,7 +254,7 @@ function createRuntimeFixture(clientFixtures: readonly StrictSshClientFixture[])
 			if (fixture === undefined) throw new Error('Unexpected strict SSH client creation.');
 			return fixture.client;
 		},
-		now: () => 500,
+		now: options.now ?? (() => 500),
 	});
 	return {
 		clients: clientFixtures,
@@ -264,6 +267,14 @@ function createRuntimeFixture(clientFixtures: readonly StrictSshClientFixture[])
 	};
 }
 
+function applyPublication(
+	runtime: ReturnType<typeof createGatewayControlPublishedBindingRuntime>,
+	publication: GatewayControlToolVmBindingPublication,
+	context: { readonly expiresAtMs: number } = { expiresAtMs: Number.MAX_SAFE_INTEGER },
+): ReturnType<ReturnType<typeof createGatewayControlPublishedBindingRuntime>['applyPublication']> {
+	return runtime.applyPublication(publication, context);
+}
+
 describe('Gateway control published binding runtime', () => {
 	it('proactively connects a current publication without starting active use', async () => {
 		// Arrange
@@ -272,7 +283,7 @@ describe('Gateway control published binding runtime', () => {
 		const publication = currentPublication();
 
 		// Act
-		const result = await fixture.runtime.applyPublication(publication);
+		const result = await applyPublication(fixture.runtime, publication);
 
 		// Assert
 		expect(result).toMatchObject({ kind: 'applied', state: { kind: 'ready' } });
@@ -295,8 +306,9 @@ describe('Gateway control published binding runtime', () => {
 
 		// Act
 		await Promise.all([
-			fixture.runtime.applyPublication(currentPublication()),
-			fixture.runtime.applyPublication(
+			applyPublication(fixture.runtime, currentPublication()),
+			applyPublication(
+				fixture.runtime,
 				currentPublication({
 					leafGeneration: 'leaf-b-1',
 					leaseId: 'lease-b-1',
@@ -320,7 +332,7 @@ describe('Gateway control published binding runtime', () => {
 		const client = createStrictSshClientFixture();
 		const fixture = createRuntimeFixture([client]);
 		const current = currentPublication({ observedAtMs: 200 });
-		await fixture.runtime.applyPublication(current);
+		await applyPublication(fixture.runtime, current);
 		const wrongSession = {
 			...currentPublication({ leafGeneration: 'leaf-a-2', observedAtMs: 300 }),
 			authority: publicationAuthority(acceptedSession, {
@@ -334,8 +346,8 @@ describe('Gateway control published binding runtime', () => {
 		});
 
 		// Act
-		const wrongSessionResult = await fixture.runtime.applyPublication(wrongSession);
-		const staleResult = await fixture.runtime.applyPublication(stale);
+		const wrongSessionResult = await applyPublication(fixture.runtime, wrongSession);
+		const staleResult = await applyPublication(fixture.runtime, stale);
 
 		// Assert
 		expect(wrongSessionResult).toMatchObject({
@@ -353,7 +365,7 @@ describe('Gateway control published binding runtime', () => {
 		const replacementClient = createStrictSshClientFixture();
 		const fixture = createRuntimeFixture([originalClient, replacementClient]);
 		const originalPublication = currentPublication();
-		await fixture.runtime.applyPublication(originalPublication);
+		await applyPublication(fixture.runtime, originalPublication);
 		const operationContext = {
 			activeUseId: '55555555-5555-4555-8555-555555555555',
 			environmentGeneration: 'environment-a-1',
@@ -378,7 +390,8 @@ describe('Gateway control published binding runtime', () => {
 		);
 
 		// Act
-		await fixture.runtime.applyPublication(
+		await applyPublication(
+			fixture.runtime,
 			currentPublication({
 				leafGeneration: 'leaf-a-2',
 				leaseId: 'lease-a-2',
@@ -397,11 +410,12 @@ describe('Gateway control published binding runtime', () => {
 		const originalClient = createStrictSshClientFixture();
 		const replacementClient = createStrictSshClientFixture();
 		const fixture = createRuntimeFixture([originalClient, replacementClient]);
-		await fixture.runtime.applyPublication(currentPublication({ observedAtMs: 500 }));
+		await applyPublication(fixture.runtime, currentPublication({ observedAtMs: 500 }));
 
 		// Act
 		fixture.setSession(replacementSession);
-		const result = await fixture.runtime.applyPublication(
+		const result = await applyPublication(
+			fixture.runtime,
 			currentPublication({
 				leafGeneration: 'leaf-a-2',
 				leaseId: 'lease-a-2',
@@ -424,10 +438,10 @@ describe('Gateway control published binding runtime', () => {
 		const client = createStrictSshClientFixture();
 		const fixture = createRuntimeFixture([client]);
 		const publication = currentPublication();
-		await fixture.runtime.applyPublication(publication);
+		await applyPublication(fixture.runtime, publication);
 
 		// Act
-		const result = await fixture.runtime.applyPublication({ ...publication, observedAtMs: 101 });
+		const result = await applyPublication(fixture.runtime, { ...publication, observedAtMs: 101 });
 
 		// Assert
 		expect(result).toMatchObject({ kind: 'ignored', reason: 'duplicate_publication' });
@@ -448,11 +462,11 @@ describe('Gateway control published binding runtime', () => {
 			observedAtMs: 200,
 			sshBindingId: 'ssh-a-2',
 		});
-		const predecessorResultPromise = fixture.runtime.applyPublication(predecessorPublication);
+		const predecessorResultPromise = applyPublication(fixture.runtime, predecessorPublication);
 		await vi.waitFor(() => expect(predecessor.connect).toHaveBeenCalledOnce());
 
 		// Act
-		const successorResult = await fixture.runtime.applyPublication(successorPublication);
+		const successorResult = await applyPublication(fixture.runtime, successorPublication);
 		predecessorConnect.resolve(undefined);
 		const predecessorResult = await predecessorResultPromise;
 
@@ -470,7 +484,7 @@ describe('Gateway control published binding runtime', () => {
 		const client = createStrictSshClientFixture();
 		const fixture = createRuntimeFixture([client]);
 		const current = currentPublication();
-		await fixture.runtime.applyPublication(current);
+		await applyPublication(fixture.runtime, current);
 		const routingKindsObservedDuringClose: string[] = [];
 		client.close.mockImplementation(() => {
 			const lookup = fixture.runtime.lookupReadyConnection({ trustedContext: trustedContextA });
@@ -480,11 +494,12 @@ describe('Gateway control published binding runtime', () => {
 		});
 
 		// Act
-		const mismatchedResult = await fixture.runtime.applyPublication(
+		const mismatchedResult = await applyPublication(
+			fixture.runtime,
 			retiredPublication(current, { leaseId: 'lease-predecessor' }),
 		);
-		const exactResult = await fixture.runtime.applyPublication(retiredPublication(current));
-		const duplicateResult = await fixture.runtime.applyPublication(retiredPublication(current));
+		const exactResult = await applyPublication(fixture.runtime, retiredPublication(current));
+		const duplicateResult = await applyPublication(fixture.runtime, retiredPublication(current));
 
 		// Assert
 		expect(mismatchedResult).toMatchObject({
@@ -516,11 +531,11 @@ describe('Gateway control published binding runtime', () => {
 		const client = createStrictSshClientFixture(() => pendingConnect.promise);
 		const fixture = createRuntimeFixture([client]);
 		const current = currentPublication();
-		const currentResultPromise = fixture.runtime.applyPublication(current);
+		const currentResultPromise = applyPublication(fixture.runtime, current);
 		await vi.waitFor(() => expect(client.connect).toHaveBeenCalledOnce());
 
 		// Act
-		const retirementResult = await fixture.runtime.applyPublication(retiredPublication(current));
+		const retirementResult = await applyPublication(fixture.runtime, retiredPublication(current));
 		pendingConnect.resolve(undefined);
 		const lateCurrentResult = await currentResultPromise;
 
@@ -539,6 +554,37 @@ describe('Gateway control published binding runtime', () => {
 		});
 	});
 
+	it('does not make a binding ready after its publication command expires', async () => {
+		// Arrange
+		let nowMs = 100;
+		const pendingConnect = deferred<void>();
+		const client = createStrictSshClientFixture(() => pendingConnect.promise);
+		const fixture = createRuntimeFixture([client], { now: () => nowMs });
+		const current = currentPublication();
+		const routingKindsObservedDuringClose: string[] = [];
+		client.close.mockImplementation(() => {
+			const lookup = fixture.runtime.lookupReadyConnection({ trustedContext: trustedContextA });
+			routingKindsObservedDuringClose.push(
+				lookup.kind === 'ready' ? lookup.kind : `${lookup.kind}:${lookup.state.kind}`,
+			);
+		});
+		const currentResultPromise = applyPublication(fixture.runtime, current, { expiresAtMs: 110 });
+		await vi.waitFor(() => expect(client.connect).toHaveBeenCalledOnce());
+
+		// Act
+		nowMs = 110;
+		pendingConnect.resolve(undefined);
+		const lateCurrentResult = await currentResultPromise;
+
+		// Assert
+		expect(lateCurrentResult).toMatchObject({ kind: 'ignored', reason: 'stale_publication' });
+		expect(client.close).toHaveBeenCalledOnce();
+		expect(routingKindsObservedDuringClose).toEqual(['unavailable:unbound']);
+		expect(
+			fixture.runtime.lookupReadyConnection({ trustedContext: trustedContextA }),
+		).toMatchObject({ kind: 'unavailable', state: { kind: 'unbound' } });
+	});
+
 	it('moves a failed proactive connection to degraded without exposing it', async () => {
 		// Arrange
 		const client = createStrictSshClientFixture(async () => {
@@ -547,7 +593,7 @@ describe('Gateway control published binding runtime', () => {
 		const fixture = createRuntimeFixture([client]);
 
 		// Act
-		const result = await fixture.runtime.applyPublication(currentPublication());
+		const result = await applyPublication(fixture.runtime, currentPublication());
 
 		// Assert
 		expect(result).toMatchObject({
@@ -572,10 +618,10 @@ describe('Gateway control published binding runtime', () => {
 		const replacementClient = createStrictSshClientFixture();
 		const fixture = createRuntimeFixture([failedClient, replacementClient]);
 		const publication = currentPublication({ observedAtMs: 100 });
-		await fixture.runtime.applyPublication(publication);
+		await applyPublication(fixture.runtime, publication);
 
 		// Act
-		const result = await fixture.runtime.applyPublication({
+		const result = await applyPublication(fixture.runtime, {
 			...publication,
 			observedAtMs: 101,
 		});
@@ -593,8 +639,9 @@ describe('Gateway control published binding runtime', () => {
 		const clientA = createStrictSshClientFixture();
 		const clientB = createStrictSshClientFixture();
 		const fixture = createRuntimeFixture([clientA, clientB]);
-		await fixture.runtime.applyPublication(currentPublication());
-		await fixture.runtime.applyPublication(
+		await applyPublication(fixture.runtime, currentPublication());
+		await applyPublication(
+			fixture.runtime,
 			currentPublication({
 				leafGeneration: 'leaf-b-1',
 				leaseId: 'lease-b-1',
@@ -606,7 +653,8 @@ describe('Gateway control published binding runtime', () => {
 		// Act
 		clientA.emitTransportFailure({ kind: 'transport-close' });
 		await fixture.runtime.close();
-		const closedResult = await fixture.runtime.applyPublication(
+		const closedResult = await applyPublication(
+			fixture.runtime,
 			currentPublication({ leafGeneration: 'leaf-a-2', observedAtMs: 200 }),
 		);
 

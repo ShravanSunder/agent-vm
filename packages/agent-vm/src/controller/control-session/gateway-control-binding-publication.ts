@@ -26,7 +26,10 @@ export interface GatewayControlToolVmBindingCreator {
 export interface GatewayControlBindingPublicationCoordinatorOptions {
 	readonly createBinding: GatewayControlToolVmBindingCreator['createBinding'];
 	readonly now?: () => number;
-	readonly publish: (publication: GatewayControlToolVmBindingPublication) => Promise<void>;
+	readonly publish: (
+		publication: GatewayControlToolVmBindingPublication,
+		options?: { readonly sourceCommandExpiresAtMs: number },
+	) => Promise<void>;
 	readonly readCurrentAuthority: () => GatewayControlToolVmBindingPublicationAuthority | undefined;
 }
 
@@ -217,8 +220,9 @@ export function createGatewayControlBindingPublicationCoordinator(
 						kind: 'current',
 						observedAtMs: nextPublicationObservedAtMs(),
 					}),
+					{ sourceCommandExpiresAtMs: request.expiresAtMs },
 				);
-				assertCurrentAuthority(request.authority);
+				assertCurrentCommand(request);
 				currentBindingByPrincipal.set(principalKey, currentIdentity);
 				return {
 					agentId: binding.agentId,

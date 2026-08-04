@@ -36,7 +36,13 @@ export function createGatewayControlBindingPublicationHandler(
 			if (message.kind !== 'command' || message.operation !== 'tool_vm_binding_publish') {
 				return await defaultHandler.handle(context);
 			}
-			const result = await props.applyPublication(message.payload);
+			const expiresAtMs = context.envelope.expiresAtMs;
+			if (expiresAtMs === undefined) {
+				throw new Error('Tool VM binding publication command is missing its expiry.');
+			}
+			const result = await props.applyPublication(message.payload, {
+				expiresAtMs,
+			});
 			if (result.kind === 'applied' || ignoredPublicationIsIdempotent(result)) {
 				return GatewayControlRpcCommandResultMessageSchema.parse({
 					kind: 'command_result',

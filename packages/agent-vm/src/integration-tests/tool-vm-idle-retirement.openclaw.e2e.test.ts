@@ -5,14 +5,6 @@ import path from 'node:path';
 
 import type { ToolPortalConfig } from '@agent-vm/config-contracts';
 import type { GatewayControlLeaseSnapshot } from '@agent-vm/gateway-control-contracts';
-import {
-	AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_ENV,
-	AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_IDENTITIES_ENV,
-	AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_KEY_ENV,
-	AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_PATH,
-	AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_SIGNATURE_HEADER,
-	gatewayRuntimeSandboxWriteReadE2eTestExports,
-} from '@agent-vm/openclaw-agent-vm-plugin';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import type { GatewayControlBindingPublicationSource } from '../controller/control-session/index.js';
@@ -28,6 +20,7 @@ import {
 	loadAllToolVmRuntimeRecords,
 	type ToolVmRuntimeRecord,
 } from '../controller/leases/tool-vm-runtime-record.js';
+import { createGatewayApiClient } from '../gateway-api-client/gateway-api-client.js';
 import type { GatewayZoneVmOperations } from '../gateway/gateway-zone-support.js';
 import { isProcessAlive } from '../shared/managed-vm-process.js';
 import { hashControlLeaseReliabilityArtifact } from './control-lease-reliability-evidence.js';
@@ -51,9 +44,14 @@ const runIdleRetirementE2e =
 const describeIdleRetirementE2e = runIdleRetirementE2e ? describe : describe.skip;
 const zoneId = 'tool-vm-idle-retirement';
 const gatewayToken = 'tool-vm-idle-retirement-gateway-token';
-const probeSigningKey = 'tool-vm-idle-retirement-write-read-proof-key';
 const sandboxToolPortalProfileId = 'idle-retirement-sandbox';
 const idleTtlMs = 5_000;
+const portalToolNames = [
+	'tool_portal_list',
+	'tool_portal_search',
+	'tool_portal_describe',
+	'tool_portal_call',
+] as const;
 const probeIdentity = {
 	agentId: 'main',
 	sessionKey: 'agent:main:tool-vm-write-read:idle-retirement-main',
@@ -71,10 +69,11 @@ interface OpenClawProcessIdentity {
 
 interface ToolVmWriteReadResult {
 	readonly agentId: string;
+	readonly byteLength: number;
 	readonly filePath: string;
 	readonly kind: 'write-read';
 	readonly marker: string;
-	readonly readBack: string;
+	readonly readArtifactCount: number;
 	readonly status: 'ok';
 }
 
@@ -134,6 +133,50 @@ function isObjectRecord(value: unknown): value is Readonly<Record<string, unknow
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+async function allowPortalNativeToolsInOpenClawConfig(configPath: string): Promise<void> {
+	const parsed: unknown = JSON.parse(await fs.readFile(configPath, 'utf8'));
+	if (!isObjectRecord(parsed)) {
+		throw new Error('Expected OpenClaw idle-retirement config to be a JSON object.');
+	}
+	const tools = isObjectRecord(parsed.tools) ? parsed.tools : {};
+	const existingAllow = Array.isArray(tools.allow)
+		? tools.allow.filter((tool): tool is string => typeof tool === 'string')
+		: [];
+	const updatedConfig = {
+		...parsed,
+		tools: {
+			...tools,
+			allow: [...new Set([...existingAllow, ...portalToolNames])],
+		},
+	};
+	await fs.writeFile(configPath, `${JSON.stringify(updatedConfig, null, '\t')}\n`, 'utf8');
+}
+
+function parseNativePortalToolResult(value: unknown): unknown {
+	if (!isObjectRecord(value) || value.ok !== true || !isObjectRecord(value.result)) {
+		throw new Error(`Expected successful OpenClaw /tools/invoke result: ${JSON.stringify(value)}`);
+	}
+	const details = value.result.details;
+	if (details !== undefined) return details;
+	if (typeof value.result.content === 'string') {
+		return JSON.parse(value.result.content) as unknown;
+	}
+	throw new Error(
+		`Expected OpenClaw tool result details or JSON content: ${JSON.stringify(value)}`,
+	);
+}
+
+function expectSingleItemStatusOk(result: unknown): Readonly<Record<string, unknown>> {
+	if (!isObjectRecord(result) || !Array.isArray(result.items) || result.items.length !== 1) {
+		throw new Error(`Expected Portal result with exactly one item: ${JSON.stringify(result)}`);
+	}
+	const item: unknown = result.items[0];
+	if (!isObjectRecord(item) || item.status !== 'ok') {
+		throw new Error(`Expected Portal item status ok: ${JSON.stringify(item)}`);
+	}
+	return item;
+}
+
 function isPrivateLeaseSnapshot(value: unknown): value is PrivateLeaseSnapshot {
 	return (
 		isObjectRecord(value) &&
@@ -187,66 +230,77 @@ async function callWriteReadProbe(options: {
 		throw new Error('Idle-retirement E2E did not expose Gateway ingress.');
 	}
 	const marker = `${options.phase.toUpperCase()}_${randomUUID()}`;
-	const bodyText = JSON.stringify({
-		action: 'write-read',
-		agentId: probeIdentity.agentId,
-		filePath: `agent-vm-e2e-idle-retirement-${options.phase}-${randomUUID()}.txt`,
-		marker,
-		sessionKey: probeIdentity.sessionKey,
+	const filePath = `agent-vm-e2e-idle-retirement-${options.phase}-${randomUUID()}.txt`;
+	const gatewayClient = createGatewayApiClient({
+		gatewayUrl: `http://${ingress.host}:${String(ingress.port)}`,
+		token: gatewayToken,
 	});
-	const details = await withProtocolDeadline(
-		(async (): Promise<Readonly<Record<string, unknown>>> => {
-			while (true) {
-				const response = await fetch(
-					`http://${ingress.host}:${String(ingress.port)}${AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_PATH}`,
-					{
-						body: bodyText,
-						headers: {
-							authorization: `Bearer ${gatewayToken}`,
-							'content-type': 'application/json',
-							[AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_SIGNATURE_HEADER]:
-								gatewayRuntimeSandboxWriteReadE2eTestExports.signBody(bodyText, probeSigningKey),
+	const writeResult = parseNativePortalToolResult(
+		await withProtocolDeadline(
+			gatewayClient.invokeTool({
+				agentId: probeIdentity.agentId,
+				sessionKey: probeIdentity.sessionKey,
+				args: {
+					calls: [
+						{
+							arguments: { content: marker, path: filePath },
+							id: `${options.phase}-write`,
+							name: 'write_file',
+							namespace: 'sandbox',
 						},
-						method: 'POST',
-					},
-				);
-				const responseBody: unknown = await response.json();
-				if (response.status === 503) {
-					await waitForProtocolRetryInterval(250);
-					continue;
-				}
-				if (
-					!response.ok ||
-					!isObjectRecord(responseBody) ||
-					!isObjectRecord(responseBody.details)
-				) {
-					throw new Error(
-						`Tool VM ${options.phase} probe failed with HTTP ${String(response.status)}.`,
-					);
-				}
-				return responseBody.details;
-			}
-		})(),
-		`Tool VM ${options.phase} write/read readiness and operation`,
-		120_000,
+					],
+				},
+				tool: 'tool_portal_call',
+			}),
+			`Tool VM ${options.phase} Tool Portal write operation`,
+			120_000,
+		),
 	);
-	if (
-		details.status !== 'ok' ||
-		details.kind !== 'write-read' ||
-		typeof details.agentId !== 'string' ||
-		typeof details.filePath !== 'string' ||
-		typeof details.marker !== 'string' ||
-		typeof details.readBack !== 'string'
-	) {
-		throw new Error(`Tool VM ${options.phase} probe returned malformed details.`);
-	}
+	const writeItem = expectSingleItemStatusOk(writeResult);
+	expect(writeItem).toMatchObject({
+		id: `${options.phase}-write`,
+		value: {
+			byteLength: Buffer.byteLength(marker),
+			kind: 'written',
+			path: filePath,
+		},
+	});
+	const readResult = parseNativePortalToolResult(
+		await withProtocolDeadline(
+			gatewayClient.invokeTool({
+				agentId: probeIdentity.agentId,
+				sessionKey: probeIdentity.sessionKey,
+				args: {
+					calls: [
+						{
+							arguments: { path: filePath },
+							id: `${options.phase}-read`,
+							name: 'read_file',
+							namespace: 'sandbox',
+						},
+					],
+				},
+				tool: 'tool_portal_call',
+			}),
+			`Tool VM ${options.phase} Tool Portal read operation`,
+			120_000,
+		),
+	);
+	const readItem = expectSingleItemStatusOk(readResult);
+	const readArtifacts = Array.isArray(readItem.artifacts) ? readItem.artifacts : [];
+	expect(readItem).toMatchObject({
+		id: `${options.phase}-read`,
+		value: { byteLength: Buffer.byteLength(marker), kind: 'file' },
+	});
+	expect(readArtifacts).toHaveLength(1);
 	return {
-		agentId: details.agentId,
-		filePath: details.filePath,
-		kind: details.kind,
-		marker: details.marker,
-		readBack: details.readBack,
-		status: details.status,
+		agentId: probeIdentity.agentId,
+		byteLength: Buffer.byteLength(marker),
+		filePath,
+		kind: 'write-read',
+		marker,
+		readArtifactCount: readArtifacts.length,
+		status: 'ok',
 	};
 }
 
@@ -410,29 +464,11 @@ describeIdleRetirementE2e('e2e: OpenClaw Tool VM idle retirement', () => {
 			`${JSON.stringify(sandboxToolPortalConfig, null, '\t')}\n`,
 			'utf8',
 		);
-		for (const envName of [
-			AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_ENV,
-			AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_IDENTITIES_ENV,
-			AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_KEY_ENV,
-		]) {
-			systemZone.secrets[envName] = {
-				audience: 'gateway',
-				envVar: envName,
-				injection: 'env',
-				source: 'environment',
-			};
-		}
-		openClawGateway.rawEnvSecrets = [
-			...(openClawGateway.rawEnvSecrets ?? []),
-			AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_ENV,
-			AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_IDENTITIES_ENV,
-			AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_KEY_ENV,
-		];
+		await allowPortalNativeToolsInOpenClawConfig(openClawGateway.config);
 		await fs.mkdir(path.join(openClawGateway.zoneFilesDir, 'agents', probeIdentity.agentId), {
 			recursive: true,
 		});
 		await useLocalOpenClawGatewayImagePackages({
-			enableToolVmWriteReadE2eRoute: true,
 			profileName: openClawGateway.imageProfile,
 			projectRoot: project.tempRoot,
 			repoRoot,
@@ -441,11 +477,6 @@ describeIdleRetirementE2e('e2e: OpenClaw Tool VM idle retirement', () => {
 		await prepareGatewayE2eProjectImages({ project });
 		harness = await startE2eControllerRuntime({
 			secrets: {
-				[AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_ENV]: '1',
-				[AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_IDENTITIES_ENV]: JSON.stringify([
-					probeIdentity,
-				]),
-				[AGENT_VM_E2E_GATEWAY_RUNTIME_SANDBOX_PROBE_KEY_ENV]: probeSigningKey,
 				GITHUB_TOKEN: 'unused-tool-vm-idle-retirement-token',
 				OPENCLAW_GATEWAY_TOKEN: gatewayToken,
 				PERPLEXITY_API_KEY: 'unused-tool-vm-idle-retirement-token',
@@ -503,7 +534,8 @@ describeIdleRetirementE2e('e2e: OpenClaw Tool VM idle retirement', () => {
 			harness: activeHarness,
 			phase: 'before-retirement',
 		});
-		expect(initialOperation.readBack).toBe(initialOperation.marker);
+		expect(initialOperation.byteLength).toBe(Buffer.byteLength(initialOperation.marker));
+		expect(initialOperation.readArtifactCount).toBe(1);
 		const initialRecords = [...(await readCurrentRecords(recordsTarget)).values()].filter(
 			(record) => record.agentId === probeIdentity.agentId,
 		);
@@ -536,7 +568,8 @@ describeIdleRetirementE2e('e2e: OpenClaw Tool VM idle retirement', () => {
 			harness: activeHarness,
 			phase: 'successor',
 		});
-		expect(successorOperation.readBack).toBe(successorOperation.marker);
+		expect(successorOperation.byteLength).toBe(Buffer.byteLength(successorOperation.marker));
+		expect(successorOperation.readArtifactCount).toBe(1);
 		expect(successorOperation.filePath).not.toBe(initialOperation.filePath);
 		const successorRecord = await waitForSuccessorRecord({
 			predecessorLeaseId: predecessorRecord.leaseId,

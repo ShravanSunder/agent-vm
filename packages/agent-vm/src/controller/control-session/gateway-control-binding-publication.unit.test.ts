@@ -115,7 +115,9 @@ describe('Gateway control binding publication coordinator', () => {
 
 		expect(first).toEqual(second);
 		expect(createBinding).toHaveBeenCalledOnce();
-		expect(publish).toHaveBeenCalledOnce();
+		expect(publish).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ kind: 'current' }), {
+			sourceCommandExpiresAtMs: bindingCommandExpiresAtMs,
+		});
 		expect(publications[0]).not.toHaveProperty('binding.activeUseId');
 	});
 
@@ -165,6 +167,41 @@ describe('Gateway control binding publication coordinator', () => {
 		).rejects.toThrow(/authority is stale/iu);
 		expect(createBinding).toHaveBeenCalledOnce();
 		expect(publish).not.toHaveBeenCalled();
+	});
+
+	it('does not track a current publication that completes after command expiry', async () => {
+		// Arrange
+		let nowMs = 10;
+		const publicationApplied = deferred<void>();
+		const publish = vi.fn(async () => await publicationApplied.promise);
+		const coordinator = createGatewayControlBindingPublicationCoordinator({
+			createBinding: async () => binding(),
+			now: () => nowMs,
+			publish,
+			readCurrentAuthority: () => authority,
+		});
+		const request = coordinator.requestBinding({
+			authority,
+			callerContext,
+			expiresAtMs: 20,
+			gateway,
+			payload: { callerContext: { callerContextId: callerContext.callerContextId } },
+		});
+		await vi.waitFor(() => expect(publish).toHaveBeenCalledOnce());
+
+		// Act
+		nowMs = 20;
+		publicationApplied.resolve(undefined);
+
+		// Assert
+		await expect(request).rejects.toThrow(/command expired/iu);
+		await expect(
+			coordinator.retireBinding({
+				authority,
+				leaseId: binding().leaseId,
+				reason: 'released',
+			}),
+		).resolves.toBe('not-tracked-on-current-connection');
 	});
 
 	it('retains a late eligible binding unbound and republishes it under fresh authority', async () => {
