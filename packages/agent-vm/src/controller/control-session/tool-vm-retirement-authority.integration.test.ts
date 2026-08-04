@@ -144,7 +144,12 @@ describe('Tool VM retirement authority causal integration', () => {
 			const laterAcquisition = laterResult;
 			expect(laterAcquisition.operationContext.leaseId).toBe('lease-causal-4');
 			expect(fixture.gatewayService.getCurrentAcceptedSession()).toBe(acceptedSession);
-			expect(fixture.evidence.map((entry) => entry.event)).toContain('rejected-use-observed');
+			expect(fixture.evidence.filter((entry) => entry.event === 'rejected-use-observed')).toEqual([
+				expect.objectContaining({
+					leafGeneration: 'leaf-causal-3',
+					leaseId: 'lease-causal-3',
+				}),
+			]);
 			assertPartialOrder(fixture.evidence, [
 				'rejected-use-observed',
 				'rejected-use-recovery-binding-published',
