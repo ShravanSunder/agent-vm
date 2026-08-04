@@ -205,6 +205,7 @@ export interface CausalFixture {
 	armPredecessorExactAbsenceBarrier(): void;
 	close(): Promise<void>;
 	emitCurrentBindingTransportFailure(): void;
+	rejectNextReadyUseWithStaleGatewayBinding(): void;
 	recordWaitingCallCompleted(acquisition: GatewayControlOperationActiveUseAcquisition): void;
 }
 
@@ -318,8 +319,8 @@ export async function createCausalFixture(options: {
 	const predecessorExactAbsenceMayFinish = deferred();
 	const stalePublicationRejected = deferred();
 	const successorProvisionalBootObserved = deferred();
-	const leaseIds = ['lease-causal-1', 'lease-causal-2', 'lease-causal-3'];
-	const leafGenerations = ['leaf-causal-1', 'leaf-causal-2', 'leaf-causal-3'];
+	const leaseIds = ['lease-causal-1', 'lease-causal-2', 'lease-causal-3', 'lease-causal-4'];
+	const leafGenerations = ['leaf-causal-1', 'leaf-causal-2', 'leaf-causal-3', 'leaf-causal-4'];
 	let leaseIdIndex = 0;
 	let leafGenerationIndex = 0;
 	let vmIndex = 0;
@@ -580,6 +581,14 @@ export async function createCausalFixture(options: {
 					publication.binding.leafGeneration,
 					publication.authority.attachmentGeneration,
 				);
+				if (publication.binding.leaseId === 'lease-causal-4') {
+					record(
+						'rejected-use-recovery-binding-published',
+						publication.binding.leaseId,
+						publication.binding.leafGeneration,
+						publication.authority.attachmentGeneration,
+					);
+				}
 				if (publication.binding.leaseId === (leaseIds[1] ?? '')) {
 					record(
 						'successor-fresh-binding-published',
@@ -748,8 +757,16 @@ export async function createCausalFixture(options: {
 			}
 		},
 	} satisfies GatewayRuntimeControlCommandClient;
+	let rejectNextReadyUseWithStaleGatewayBinding = false;
 	const observingCommandClient = {
 		sendCommand: async (request) => {
+			if (
+				rejectNextReadyUseWithStaleGatewayBinding &&
+				request.message.operation === 'lease_use_start'
+			) {
+				rejectNextReadyUseWithStaleGatewayBinding = false;
+				await leaseManager.releaseLease(request.message.payload.leaseId);
+			}
 			const response = await timeoutObservingCommandClient.sendCommand(request);
 			if (
 				request.message.operation === 'lease_reacquire' &&
@@ -796,6 +813,19 @@ export async function createCausalFixture(options: {
 					'successor-use-succeeded',
 					response.response.payload.leaseUse.leaseId,
 					leafGenerations[leaseIds.indexOf(response.response.payload.leaseUse.leaseId)] ?? '',
+					response.acceptedSession.attachmentGeneration,
+				);
+			}
+			if (
+				request.message.operation === 'lease_use_start' &&
+				response.response.operation === 'lease_use_start' &&
+				response.response.payload.result === 'ok' &&
+				response.response.payload.leaseUse.leaseId === 'lease-causal-4'
+			) {
+				record(
+					'rejected-use-recovery-succeeded',
+					response.response.payload.leaseUse.leaseId,
+					'leaf-causal-4',
 					response.acceptedSession.attachmentGeneration,
 				);
 			}
@@ -848,6 +878,10 @@ export async function createCausalFixture(options: {
 		predecessorDestructionObserved: predecessorDestructionObserved.promise,
 		predecessorExactAbsenceMayFinish,
 		publishedBindingRuntime,
+		rejectNextReadyUseWithStaleGatewayBinding: () => {
+			unsubscribeBindingRetirements();
+			rejectNextReadyUseWithStaleGatewayBinding = true;
+		},
 		recordWaitingCallCompleted: (acquisition) => {
 			record(
 				'waiting-call-completed',

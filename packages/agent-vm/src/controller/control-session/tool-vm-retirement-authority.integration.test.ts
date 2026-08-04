@@ -132,12 +132,24 @@ describe('Tool VM retirement authority causal integration', () => {
 			);
 			expect(recoveredAcquisition.operationContext.leaseId).toBe('lease-causal-3');
 			await recoveredAcquisition.endActiveUse('completed');
-			const laterAcquisition = requireBound(
-				await fixture.activeUseRuntime.acquisitionPort.acquire({ trustedContext }),
-			);
-			expect(laterAcquisition.operationContext.leaseId).toBe('lease-causal-3');
+			fixture.rejectNextReadyUseWithStaleGatewayBinding();
+			const laterResult = await fixture.activeUseRuntime.acquisitionPort.acquire({
+				trustedContext,
+			});
+			if (laterResult.kind !== 'bound') {
+				throw new Error(
+					`Rejected-use recovery failed: result=${JSON.stringify(laterResult)} evidence=${JSON.stringify(fixture.evidence)}`,
+				);
+			}
+			const laterAcquisition = laterResult;
+			expect(laterAcquisition.operationContext.leaseId).toBe('lease-causal-4');
 			expect(fixture.gatewayService.getCurrentAcceptedSession()).toBe(acceptedSession);
-			expect(fixture.evidence.map((entry) => entry.event)).not.toContain('rejected-use-observed');
+			expect(fixture.evidence.map((entry) => entry.event)).toContain('rejected-use-observed');
+			assertPartialOrder(fixture.evidence, [
+				'rejected-use-observed',
+				'rejected-use-recovery-binding-published',
+				'rejected-use-recovery-succeeded',
+			]);
 			expect(fixture.evidence.map((entry) => entry.event)).not.toContain(
 				'control-connection-rotated',
 			);
