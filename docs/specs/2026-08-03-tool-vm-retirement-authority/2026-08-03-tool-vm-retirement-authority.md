@@ -1,13 +1,15 @@
 # Tool VM Retirement Authority Specification
 
 Date: 2026-08-03
-Scope: managed OpenClaw and Hermes Tool VM retirement, replacement, and binding recovery
+Scope: shared managed Tool VM retirement, replacement, and binding recovery used by OpenClaw and Hermes
 
 Governing requirements: [Tool VM Retirement Authority Requirements](./2026-08-03-tool-vm-retirement-authority-requirements.md)
 
 ## The user problem
 
-An otherwise healthy managed OpenClaw or Hermes Gateway can permanently lose Tool VM-backed file and shell tools when a Tool VM crosses idle expiry at the same time as a new tool call. The first call waits for three minutes and fails; later calls fail almost immediately. Restarting the Gateway repairs too much and hides a leaf lifecycle defect.
+An otherwise healthy managed Gateway can permanently lose Tool VM-backed file and shell tools when an idle-eligible Tool VM crosses retirement at the same time as a new tool call. The production incident occurred through OpenClaw: the first call waited for three minutes and failed, and later calls failed almost immediately. Restarting the Gateway repairs too much and hides a leaf lifecycle defect.
+
+Hermes consumes the same Gateway Runtime and Controller retirement path, but its current adapter caches one environment and keeps active use open across successful terminal operations. That lease is intentionally not idle-eligible until environment cleanup. The shared fix must remain compatible with Hermes without changing that framework lifecycle.
 
 The user needs the intermediate period to behave as a bounded transition: the old Tool VM becomes unavailable, one replacement becomes ready if work is waiting, and the waiting work continues. The transition must not leave a live but unreachable Tool VM or poison all later binding requests.
 
@@ -36,7 +38,7 @@ The missing retained inner production logs mean source attribution is not yet fi
 
 ## Required outcomes
 
-1. Idle retirement cannot permanently disable Tool VM-backed work.
+1. An actual idle retirement cannot permanently disable Tool VM-backed work, and active framework environments are not retired as idle.
 2. The Controller fences and destroys one predecessor before admitting one routable successor.
 3. The Gateway removes the retiring binding from local routing and closes its SSH client when it receives the exact retirement request.
 4. Same-agent calls arriving during the transition wait within their existing caller deadline and share one result.
@@ -111,11 +113,13 @@ The shared managed Gateway Runtime and Controller path MUST own Tool VM retireme
 
 The `openclaw-managed-plugin` and `hermes-managed-plugin` MUST remain framework attachment and tool-call adapters. They MUST NOT implement separate lease state, VM destruction, retirement retry policy, or replacement coordination.
 
-### R11 — Real behavior is proven across idle expiry
+### R11 — Real behavior is proven at each framework's applicable lifecycle boundary
 
-The final proof MUST run once through a real controller, real OpenClaw Gateway VM and plugin, real Tool Portal path, real Tool VM, and real Gateway-to-Tool-VM SSH connection, and once through the equivalent real Hermes Gateway VM and plugin path. Each proof MUST demonstrate a successful Tool VM operation before idle expiry and another successful operation after retirement/replacement, with no skipped tests.
+The final proof MUST run once through a real controller, real OpenClaw Gateway VM and plugin, real Tool Portal path, real Tool VM, and real Gateway-to-Tool-VM SSH connection. That proof MUST demonstrate a successful Tool VM operation before idle expiry and another successful operation after retirement and replacement.
 
-The live proof MUST establish that the same Gateway remains running. Inventory-only, fake-VM, or schema tests do not satisfy this requirement.
+The final proof MUST also run through the equivalent real Hermes Gateway VM and plugin path. Because Hermes keeps its cached environment active across successful terminal operations, this proof MUST demonstrate that a real Tool VM operation succeeds through the shared runtime after control-connection recovery while the Gateway and framework remain running. It MUST NOT force environment cleanup or add adapter-specific retirement behavior merely to manufacture idle eligibility.
+
+Both live proofs MUST establish that the same Gateway remains running and MUST have no skipped tests. Inventory-only, fake-VM, or schema tests do not satisfy this requirement.
 
 ## Observable transition
 
@@ -155,7 +159,7 @@ sequenceDiagram
 
 | ID | Obligation | Required evidence |
 | --- | --- | --- |
-| V1 | U1, R1: idle expiry becomes a recoverable transition | Deterministic lease/retirement test plus live before/after-idle proof. |
+| V1 | U1, R1: idle expiry becomes a recoverable transition without retiring active framework environments | Deterministic lease/retirement and active-use tests plus live OpenClaw before/after-idle proof. |
 | V2 | U2, R2, R4: Controller fence and exact absence gate successor | Unit state-transition tests and integration process-absence barrier. |
 | V3 | U3, R3: Gateway unroutes before SSH close acknowledgement | Gateway binding-runtime unit test with ordered callbacks. |
 | V4 | U4, R5: same-agent calls coalesce; unrelated agents do not block | Deterministic concurrency integration test. |
@@ -165,7 +169,7 @@ sequenceDiagram
 | V8 | U6, R9: complete interleaving is inspectable | Ordered redacted event log asserted by partial-order constraints, not sleeps. |
 | V9 | U6, R9: source explanation reproduces the production shape | One composed red-path/green-path integration simulation including blocked retirement, response-timeout rotation in the red path, command-expiry containment in the green path, retained late authority, fresh publication, `lease_reacquire`, and next-call recovery. |
 | V10 | U1, U5, R10: both framework plugins remain consumers of shared lifecycle | Composition and boundary tests proving no framework-specific retirement owner. |
-| V11 | U1, U6, R11: real product paths recover after idle | No-skip OpenClaw and Hermes E2E proofs through their real plugins, shared Gateway Runtime, QEMU Tool VM, and SSH. |
+| V11 | U1, U6, R11: real product paths exercise the shared runtime at their applicable lifecycle boundary | No-skip OpenClaw before/after-idle E2E plus no-skip Hermes control-recovery Tool VM E2E through their real plugins, shared Gateway Runtime, QEMU Tool VM, and SSH. |
 
 ## Requirement coverage
 
@@ -175,7 +179,7 @@ U2 -> P2 ambiguous destruction/successor authority -> R2,R4,R6 -> V2,V5
 U3 -> P3 Gateway-held SSH blocks cleanup -> R3,R4 -> V3,V2
 U4 -> P4 calls observe intermediate state -> R5,R8 -> V4,V7
 U5 -> P5 leaf fault expands into broad or framework-specific recovery machinery -> R7,R8,R10 -> V6,V7,V10
-U6 -> P6 incident attribution lacks inner logs -> R9,R11 -> V8,V9,V11
+U6 -> P6 incident attribution lacks inner logs and adapter proof must match real lifecycle -> R9,R11 -> V8,V9,V11
 ```
 
 ## Non-goals

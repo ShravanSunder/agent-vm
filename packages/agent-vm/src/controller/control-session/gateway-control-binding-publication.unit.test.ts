@@ -10,6 +10,7 @@ import { createGatewayControlBindingPublicationCoordinator } from './gateway-con
 import type { GatewayControlTrustedCallerContext } from './gateway-control-caller-context.js';
 
 const stablePrincipal = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const bindingCommandExpiresAtMs = 9_000_000_000_000_000;
 const authority: GatewayControlToolVmBindingPublicationAuthority = {
 	attachmentGeneration: 3,
 	connectionId: '11111111-1111-4111-8111-111111111111',
@@ -102,6 +103,7 @@ describe('Gateway control binding publication coordinator', () => {
 		const request = {
 			authority,
 			callerContext,
+			expiresAtMs: bindingCommandExpiresAtMs,
 			gateway,
 			payload: { callerContext: { callerContextId: callerContext.callerContextId } },
 		} as const;
@@ -130,6 +132,7 @@ describe('Gateway control binding publication coordinator', () => {
 			coordinator.requestBinding({
 				authority,
 				callerContext,
+				expiresAtMs: bindingCommandExpiresAtMs,
 				gateway,
 				payload: { callerContext: { callerContextId: callerContext.callerContextId } },
 			}),
@@ -155,12 +158,77 @@ describe('Gateway control binding publication coordinator', () => {
 			coordinator.requestBinding({
 				authority,
 				callerContext,
+				expiresAtMs: bindingCommandExpiresAtMs,
 				gateway,
 				payload: { callerContext: { callerContextId: callerContext.callerContextId } },
 			}),
 		).rejects.toThrow(/authority is stale/iu);
 		expect(createBinding).toHaveBeenCalledOnce();
 		expect(publish).not.toHaveBeenCalled();
+	});
+
+	it('retains a late eligible binding unbound and republishes it under fresh authority', async () => {
+		// Arrange
+		let currentAuthority = authority;
+		let nowMs = 10;
+		const lateBinding = deferred<GatewayControlToolVmBindingAccessGrant>();
+		const eligibleBinding = binding();
+		const createBinding = vi
+			.fn<() => Promise<GatewayControlToolVmBindingAccessGrant>>()
+			.mockImplementationOnce(async () => await lateBinding.promise)
+			.mockImplementationOnce(async () => eligibleBinding);
+		const publications: GatewayControlToolVmBindingPublication[] = [];
+		const coordinator = createGatewayControlBindingPublicationCoordinator({
+			createBinding,
+			now: () => nowMs,
+			publish: async (publication) => {
+				publications.push(publication);
+			},
+			readCurrentAuthority: () => currentAuthority,
+		});
+		const firstRequest = coordinator.requestBinding({
+			authority,
+			callerContext,
+			expiresAtMs: 20,
+			gateway,
+			payload: { callerContext: { callerContextId: callerContext.callerContextId } },
+		});
+		await vi.waitFor(() => expect(createBinding).toHaveBeenCalledOnce());
+
+		// Act
+		nowMs = 20;
+		lateBinding.resolve(eligibleBinding);
+		await expect(firstRequest).rejects.toThrow(/command expired/iu);
+		const successorAuthority: GatewayControlToolVmBindingPublicationAuthority = {
+			...authority,
+			attachmentGeneration: authority.attachmentGeneration + 1,
+			connectionId: '55555555-5555-4555-8555-555555555555',
+			sessionId: '66666666-6666-4666-8666-666666666666',
+		};
+		currentAuthority = successorAuthority;
+		nowMs = 21;
+		const freshResult = await coordinator.requestBinding({
+			authority: successorAuthority,
+			callerContext: {
+				...callerContext,
+				connectionId: successorAuthority.connectionId,
+				sessionId: successorAuthority.sessionId,
+			},
+			expiresAtMs: 30,
+			gateway,
+			payload: { callerContext: { callerContextId: callerContext.callerContextId } },
+		});
+
+		// Assert
+		expect(freshResult).toMatchObject({ status: 'publication_pending' });
+		expect(createBinding).toHaveBeenCalledTimes(2);
+		expect(publications).toEqual([
+			expect.objectContaining({
+				authority: successorAuthority,
+				binding: expect.objectContaining({ leaseId: eligibleBinding.leaseId }),
+				kind: 'current',
+			}),
+		]);
 	});
 
 	it('does not coalesce demand across attachment authority generations', async () => {
@@ -179,6 +247,7 @@ describe('Gateway control binding publication coordinator', () => {
 		const firstRequest = coordinator.requestBinding({
 			authority,
 			callerContext,
+			expiresAtMs: bindingCommandExpiresAtMs,
 			gateway,
 			payload: { callerContext: { callerContextId: callerContext.callerContextId } },
 		});
@@ -188,6 +257,7 @@ describe('Gateway control binding publication coordinator', () => {
 		const successorResult = await coordinator.requestBinding({
 			authority: successorAuthority,
 			callerContext,
+			expiresAtMs: bindingCommandExpiresAtMs,
 			gateway,
 			payload: { callerContext: { callerContextId: callerContext.callerContextId } },
 		});
@@ -215,6 +285,7 @@ describe('Gateway control binding publication coordinator', () => {
 			coordinator.requestBinding({
 				authority,
 				callerContext,
+				expiresAtMs: bindingCommandExpiresAtMs,
 				gateway,
 				payload: { callerContext: { callerContextId: callerContext.callerContextId } },
 			}),
@@ -237,6 +308,7 @@ describe('Gateway control binding publication coordinator', () => {
 		const request = {
 			authority,
 			callerContext,
+			expiresAtMs: bindingCommandExpiresAtMs,
 			gateway,
 			payload: { callerContext: { callerContextId: callerContext.callerContextId } },
 		} as const;
@@ -288,6 +360,7 @@ describe('Gateway control binding publication coordinator', () => {
 		const request = {
 			authority,
 			callerContext,
+			expiresAtMs: bindingCommandExpiresAtMs,
 			gateway,
 			payload: { callerContext: { callerContextId: callerContext.callerContextId } },
 		} as const;
@@ -314,5 +387,74 @@ describe('Gateway control binding publication coordinator', () => {
 			kind: 'retired',
 			reason: 'released',
 		});
+	});
+
+	it('scopes tracked retirement to the exact current publication authority', async () => {
+		// Arrange
+		let currentAuthority = authority;
+		let nextBinding = binding();
+		const publications: GatewayControlToolVmBindingPublication[] = [];
+		const coordinator = createGatewayControlBindingPublicationCoordinator({
+			createBinding: async () => nextBinding,
+			now: () => 1_000,
+			publish: async (publication) => {
+				publications.push(publication);
+			},
+			readCurrentAuthority: () => currentAuthority,
+		});
+		await coordinator.requestBinding({
+			authority,
+			callerContext,
+			expiresAtMs: bindingCommandExpiresAtMs,
+			gateway,
+			payload: { callerContext: { callerContextId: callerContext.callerContextId } },
+		});
+		const successorAuthority: GatewayControlToolVmBindingPublicationAuthority = {
+			...authority,
+			attachmentGeneration: authority.attachmentGeneration + 1,
+			connectionId: '55555555-5555-4555-8555-555555555555',
+			sessionId: '66666666-6666-4666-8666-666666666666',
+		};
+		const successorCallerContext: GatewayControlTrustedCallerContext = {
+			...callerContext,
+			connectionId: successorAuthority.connectionId,
+			sessionId: successorAuthority.sessionId,
+		};
+		currentAuthority = successorAuthority;
+
+		// Act
+		const staleRetirementResult = await coordinator.retireBinding({
+			authority: successorAuthority,
+			leaseId: nextBinding.leaseId,
+			reason: 'released',
+		});
+		nextBinding = binding('lease-b');
+		await coordinator.requestBinding({
+			authority: successorAuthority,
+			callerContext: successorCallerContext,
+			expiresAtMs: bindingCommandExpiresAtMs,
+			gateway,
+			payload: { callerContext: { callerContextId: successorCallerContext.callerContextId } },
+		});
+		const currentRetirementResult = await coordinator.retireBinding({
+			authority: successorAuthority,
+			leaseId: nextBinding.leaseId,
+			reason: 'released',
+		});
+
+		// Assert
+		expect(staleRetirementResult).toBe('not-tracked-on-current-connection');
+		expect(currentRetirementResult).toBe('publication-applied');
+		expect(
+			publications.map((publication) => ({
+				authority: publication.authority,
+				kind: publication.kind,
+				leaseId: publication.binding.leaseId,
+			})),
+		).toEqual([
+			{ authority, kind: 'current', leaseId: 'lease-a' },
+			{ authority: successorAuthority, kind: 'current', leaseId: 'lease-b' },
+			{ authority: successorAuthority, kind: 'retired', leaseId: 'lease-b' },
+		]);
 	});
 });

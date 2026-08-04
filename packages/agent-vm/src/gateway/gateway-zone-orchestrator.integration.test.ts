@@ -5877,6 +5877,7 @@ describe('startGatewayZone', () => {
 		const loggedMessages: string[] = [];
 		const controlSessionClose = vi.fn();
 		const retirementPublicationObserved = Promise.withResolvers<void>();
+		const retirementPublicationAcknowledgement = Promise.withResolvers<void>();
 		const emitApplicationMessage = vi.fn(
 			async (envelope: ControlEnvelope, _identity: unknown, payload: unknown) => {
 				const message = GatewayControlRpcMessageSchema.parse(payload);
@@ -5886,6 +5887,7 @@ describe('startGatewayZone', () => {
 					message.payload.kind === 'retired'
 				) {
 					retirementPublicationObserved.resolve();
+					await retirementPublicationAcknowledgement.promise;
 				}
 				return GatewayControlRpcCommandResultMessageSchema.parse({
 					kind: 'command_result',
@@ -6618,8 +6620,15 @@ describe('startGatewayZone', () => {
 		if (bindingRetirementListener === undefined) {
 			throw new Error('Expected the Gateway binding retirement subscription.');
 		}
-		bindingRetirementListener({ leaseId: 'lease-main', reason: 'dead' });
+		let retirementListenerSettled = false;
+		const retirementListenerPromise = Promise.resolve(
+			bindingRetirementListener({ leaseId: 'lease-main', reason: 'dead' }),
+		).then(() => {
+			retirementListenerSettled = true;
+		});
 		await retirementPublicationObserved.promise;
+		await Promise.resolve();
+		expect(retirementListenerSettled).toBe(false);
 		expect(emitApplicationMessage).toHaveBeenLastCalledWith(
 			expect.objectContaining({ operation: 'tool_vm_binding_publish' }),
 			{ kind: 'command', operation: 'tool_vm_binding_publish' },
@@ -6632,6 +6641,9 @@ describe('startGatewayZone', () => {
 			}),
 			expect.any(Object),
 		);
+		retirementPublicationAcknowledgement.resolve();
+		await retirementListenerPromise;
+		expect(retirementListenerSettled).toBe(true);
 		await result.destroyGateway();
 		expect(unsubscribeBindingRetirement).toHaveBeenCalledOnce();
 	});

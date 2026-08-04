@@ -43,6 +43,7 @@ The Gateway path and exact termination path are siblings after the Controller fe
 | A binding request has a 180-second result timeout, and timeout closes the control connection. | `packages/gateway-control-contracts/src/index.ts:1273`; `packages/gateway-runtime/src/control-endpoint/gateway-control-application-message-runtime.ts:175-187` |
 | Backend-neutral exact recorded-process termination already exists and fails closed when absence is unproven. | `packages/agent-vm/src/shared/controller-managed-vm-termination.ts`; `packages/managed-vm/src/managed-vm-process-termination.unit.test.ts` |
 | OpenClaw and Hermes receive distinct managed plugin identities but the same Gateway Runtime service and Tool Portal admission material. | `packages/agent-vm/src/gateway/managed-gateway-runtime-input-builders.ts:64-79,137-207`; `packages/hermes-gateway/src/hermes-lifecycle.ts:120-153` |
+| Hermes caches one active environment across successful terminal operations. Environment cleanup sends `sandbox.environment.close`; until then the shared Gateway Runtime continues the active-use heartbeat, and the Controller idle reaper excludes that lease. | `python/agent-vm-hermes-adapter/src/agent_vm_hermes_adapter/managed_gateway_bootstrap.py:629-665`; `python/agent-vm-hermes-adapter/src/agent_vm_hermes_adapter/managed_gateway_runtime_environment.py:503-523,601-612`; `packages/gateway-runtime/src/control-endpoint/gateway-control-operation-active-use-runtime.ts:431-493`; `packages/agent-vm/src/controller/leases/idle-reaper.ts:17-24` |
 
 Installed Gondolin 0.12.0 waits for `forwardServer.close()` without actively destroying accepted SSH-forward sockets. The Gateway's persistent strict SSH client can therefore keep `ManagedVm.close()` pending until that client disconnects. This vendor behavior is a trigger, but the circular ownership ordering is ours to repair.
 
@@ -281,7 +282,8 @@ The current `releaseLease` path holds the per-agent operation lock through `reti
 | No demand follows idle expiry | L1 is destroyed and no successor is provisioned. | Reaper-only integration path. |
 | L1 absence cannot be proven | L1 remains fenced, cleanup evidence retained, TCP resources quarantined, and L2 is not routable. | Exact termination failure fixture. |
 | Gateway dies during the transition | Existing Gateway lifecycle owns reboot/replacement; this transaction remains fenced and does not create a second lifecycle owner. | Existing lifecycle boundary assertion; no new restart call. |
-| One framework adapter invokes the shared Tool VM runner | The same binding/lease transaction runs; no adapter-specific retirement branch exists. | Parameterized composition coverage plus one E2E per adapter. |
+| OpenClaw invokes the shared runner after an environment has released active use | The idle-eligible lease follows the shared retirement transaction and on-demand replacement; no adapter-specific retirement branch exists. | Parameterized composition coverage plus real OpenClaw before/after-idle E2E. |
+| Hermes invokes the shared runner while its cached environment remains active | The same binding/lease code serves the operation, active-use heartbeat keeps the lease non-idle, and no adapter-specific retirement branch exists. | Active-use/idle-reaper tests plus the existing real Hermes control-recovery Tool VM E2E. |
 
 ## Deterministic production simulation
 
@@ -357,10 +359,10 @@ The design preserves the existing provisional startup overlap. Correctness pays 
 | Unit | Logical fence ordering; idle/release lock release at exact absence; exact retired/mismatch behavior; connection-scoped index and pending-request reset; binding-request and `lease_reacquire` command-expiry publication guards; eligible late-lease retention; no SSH enablement/commit/publication before absence | Pure state, injected clock, controllable promises, fake exact-process capability |
 | Integration | Full event-log simulation; delayed/unavailable acknowledgement; held SSH close; red-path connection rotation; green-path command-expiry containment; late lease reselection; `lease_reacquire`; rejected-use recovery; concurrent same/different principals; no-demand; absence-unproven | Real lease manager, publication coordinator, Gateway binding runtime, active-use runtime, and authority checks; VM/SSH edges controllable |
 | OpenClaw E2E | One real tool call succeeds, lease idle-expires, old binding/VM retires, next real tool call succeeds on a successor while the same Gateway stays live | Real controller, QEMU Gateway, OpenClaw plugin, shared Gateway Runtime, Tool Portal, Tool VM, and SSH; no skips |
-| Hermes E2E | Equivalent before/after-idle Tool VM behavior through the Hermes framework adapter while the same Hermes Gateway stays live | Real controller, QEMU Gateway, Hermes plugin, shared Gateway Runtime, Tool Portal, Tool VM, and SSH; no skips |
+| Hermes E2E | A real Tool VM operation succeeds through the shared runtime after control-connection recovery while the same Hermes Gateway and framework stay live; the proof does not force-close the cached active environment to manufacture idle eligibility | Real controller, QEMU Gateway, Hermes plugin, shared Gateway Runtime, Tool Portal, Tool VM, and SSH; no skips |
 | Quality | Repository taxonomy, lint, typecheck, format, and full scoped gate remain green | Current monorepo toolchain |
 
-The live proof may use a test-configured short idle TTL. It must wait on lease and protocol events, not sleep between probes. It must report the old/new lease identities, exact predecessor absence, same Gateway identity, and successful command result without printing secrets.
+The OpenClaw idle-retirement proof may use a test-configured short idle TTL. It must wait on lease and protocol events, not sleep between probes. It must report the old/new lease identities, exact predecessor absence, same Gateway identity, and successful command result without printing secrets. The Hermes control-recovery proof follows its row above and does not require predecessor/successor identities while its cached environment remains active.
 
 ## Requirement realization
 
@@ -371,7 +373,7 @@ The live proof may use a test-configured short idle TTL. It must wait on lease a
 | U3 | Awaitable exact binding retirement; Gateway unroute before SSH close acknowledgement | V3 |
 | U4 | Existing per-agent lock and Gateway principal coalescing; ready only after SSH connect | V4 |
 | U5 | Existing owners and capabilities; framework plugins remain adapters; no new lifecycle, persistence, or public protocol | V6, V7, V10 |
-| U6 | Composed red/green integration event log plus real OpenClaw and Hermes idle-expiry E2E proofs | V8, V9, V11 |
+| U6 | Composed red/green integration event log, real OpenClaw idle-expiry E2E, and real Hermes shared-runtime control-recovery E2E | V8, V9, V11 |
 
 ## Boundary check 2
 
@@ -384,7 +386,7 @@ The design remains inside boundary check 1:
 - Exact process termination is reused rather than exposing Gondolin handles or depending on stock `ManagedVm.close()` for fencing.
 - Control reconnect preserves a current lease when valid and does not itself create a replacement.
 - Provisional successor boot overlap remains; predecessor absence still gates SSH enablement, commit, publication, routing, and use.
-- OpenClaw and Hermes share the same Controller/Gateway Runtime correction; their plugins gain no lifecycle state or recovery policy.
+- OpenClaw and Hermes share the same Controller/Gateway Runtime correction; their plugins gain no lifecycle state or recovery policy. Proof follows each adapter's real lifecycle: OpenClaw reaches idle retirement, while Hermes retains active use until cached-environment cleanup.
 - The deterministic event log is test evidence, not authority or a new production control plane.
 
 The remaining implementation choice is local placement of the narrow collaboration so package dependency direction stays unchanged. Planning may map it to current composition seams; it may not invent a new owner or broaden the contract.

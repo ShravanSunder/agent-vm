@@ -465,18 +465,26 @@ describe('Gateway control published binding runtime', () => {
 		).toMatchObject({ connection: successor.client, generation: { leaseId: 'lease-a-2' } });
 	});
 
-	it('retires only the exact current binding identity', async () => {
+	it('makes exact retirement unavailable before synchronous close and preserves the identity matrix', async () => {
 		// Arrange
 		const client = createStrictSshClientFixture();
 		const fixture = createRuntimeFixture([client]);
 		const current = currentPublication();
 		await fixture.runtime.applyPublication(current);
+		const routingKindsObservedDuringClose: string[] = [];
+		client.close.mockImplementation(() => {
+			const lookup = fixture.runtime.lookupReadyConnection({ trustedContext: trustedContextA });
+			routingKindsObservedDuringClose.push(
+				lookup.kind === 'ready' ? lookup.kind : `${lookup.kind}:${lookup.state.kind}`,
+			);
+		});
 
 		// Act
 		const mismatchedResult = await fixture.runtime.applyPublication(
 			retiredPublication(current, { leaseId: 'lease-predecessor' }),
 		);
 		const exactResult = await fixture.runtime.applyPublication(retiredPublication(current));
+		const duplicateResult = await fixture.runtime.applyPublication(retiredPublication(current));
 
 		// Assert
 		expect(mismatchedResult).toMatchObject({
@@ -487,6 +495,11 @@ describe('Gateway control published binding runtime', () => {
 			kind: 'applied',
 			state: { kind: 'retired', reason: 'replaced' },
 		});
+		expect(duplicateResult).toMatchObject({
+			kind: 'applied',
+			state: { kind: 'retired', reason: 'replaced' },
+		});
+		expect(routingKindsObservedDuringClose).toEqual(['unavailable:retired']);
 		expect(client.close).toHaveBeenCalledOnce();
 		expect(client.close).toHaveBeenCalledWith({ notifyTransportFailure: true });
 		expect(
@@ -494,6 +507,35 @@ describe('Gateway control published binding runtime', () => {
 		).toMatchObject({
 			kind: 'unavailable',
 			state: { kind: 'retired' },
+		});
+	});
+
+	it('prevents delayed connect completion from restoring an exactly retired slot', async () => {
+		// Arrange
+		const pendingConnect = deferred<void>();
+		const client = createStrictSshClientFixture(() => pendingConnect.promise);
+		const fixture = createRuntimeFixture([client]);
+		const current = currentPublication();
+		const currentResultPromise = fixture.runtime.applyPublication(current);
+		await vi.waitFor(() => expect(client.connect).toHaveBeenCalledOnce());
+
+		// Act
+		const retirementResult = await fixture.runtime.applyPublication(retiredPublication(current));
+		pendingConnect.resolve(undefined);
+		const lateCurrentResult = await currentResultPromise;
+
+		// Assert
+		expect(retirementResult).toMatchObject({
+			kind: 'applied',
+			state: { kind: 'retired', reason: 'replaced' },
+		});
+		expect(lateCurrentResult).toMatchObject({ kind: 'ignored', reason: 'stale_publication' });
+		expect(client.close).toHaveBeenCalledOnce();
+		expect(
+			fixture.runtime.lookupReadyConnection({ trustedContext: trustedContextA }),
+		).toMatchObject({
+			kind: 'unavailable',
+			state: { kind: 'retired', reason: 'replaced' },
 		});
 	});
 

@@ -9,10 +9,10 @@ Planning base: `354885d7e718cf46e1d1602c9e4380ff3a78222f`
 
 This plan implements the reviewed requirements, specification, and program design without changing their authority model:
 
-- [Requirements](../2026-08-03-tool-vm-retirement-authority-requirements.md), SHA-256 `d16b2b7529b4e972e4c36032c1db95dcf17f64640d3cd380572b7bca03017354`.
-- [Specification](../2026-08-03-tool-vm-retirement-authority.md), SHA-256 `914d3b73c0762ca3e0d96dcfa9792cf463a361684ad754dd2066b340d7ce7f49`.
-- [Program design](../2026-08-03-tool-vm-retirement-authority-program-design.md), SHA-256 `ea59d3d6cd5d1907617ff46c395e89ee07763f88caf5bbb35708c63a0868016c`.
-- Pair review: Claude Fable v4 plus proof correction verification v6, both ready; Sol advisor found no blocker or important issue on the exact hashes above.
+- [Requirements](../2026-08-03-tool-vm-retirement-authority-requirements.md), SHA-256 `6a25f9473d4d767f9b1a1e1c2a4d3464991120e4af1a57b0debe6e40f6939204`.
+- [Specification](../2026-08-03-tool-vm-retirement-authority.md), SHA-256 `87e1f462709ed3a9f1fcdb727f16860a2db0c665babb432a7e6aacd08bd368f1`.
+- [Program design](../2026-08-03-tool-vm-retirement-authority-program-design.md), SHA-256 `659531ae8c8b049d453a33806bb2a3be66362ae5c7798f7219a9f475c439c858`.
+- Pair review: fresh Sol mode-complete review found one proof-scope ambiguity, which was corrected and freshly verified by a separate focused proof reviewer. Claude Fable returned no receipt after two bounded attempts and is not counted as coverage.
 
 Target classification: `general-domain`, `current-pair-ready`.
 
@@ -49,7 +49,7 @@ Gateway acknowledgement and retained cleanup are observed independently. Neither
 | M4 | An eligible late lease remains current, unbound, and republishable. | S3, S4 | Publication/RPC unit tests and composed integration. | Parent-run tests. | Exact lease/generation retained across authority rotation; no compensation destruction. | Required. |
 | M5 | Provisional boot overlap remains, without early SSH, commit, publication, routing, or use. | S2, S4 | Lease-manager unit tests plus integration barriers. | Parent-run tests. | Ordered controllable barriers around exact absence. | Required. |
 | M6 | `lease_reacquire` and ready-binding -> rejected-use -> one-shot recovery remain correct. | S3, S4 | Active-use, RPC, deadline, and composed integration tests. | Parent-run tests. | Current source entrypoints and result kinds. | Required. |
-| M7 | OpenClaw and Hermes share the fix without plugin lifecycle ownership. | S5 | Shared composition integration plus separate no-skip real framework E2Es. | Parent-run no-skip evidence lanes and runtime identity evidence. | Clean exact commit; real QEMU/plugin/Tool Portal/Tool VM/SSH path; unchanged Gateway identity. | Required. |
+| M7 | OpenClaw and Hermes share the fix without plugin lifecycle ownership. | S5 | Shared composition and active-use/idle-reaper coverage, no-skip real OpenClaw before/after-idle E2E, and the existing no-skip real Hermes control-recovery Tool VM E2E. | Parent-run unit/integration and no-skip evidence lanes with runtime identity evidence. | Clean exact commit; real QEMU/plugin/Tool Portal/Tool VM/SSH path; unchanged Gateway identity; no forced Hermes idle eligibility. | Required. |
 | M8 | Repository and PR are ready. | S6 | Unit, integration, host E2E, inventory, live E2E, `pnpm check`, implementation review, CI and PR state. | Parent-run commands, review receipts, GitHub state. | PR head equals the exact tested and reviewed clean commit. | N/A after slice red/green. |
 
 ## Vertical slices
@@ -170,21 +170,20 @@ The green path uses the production ordering—command expiry earlier than the lo
 
 Checkpoint: the composed integration test fails for the production reason at the unmodified base, then passes after S1-S3. Harness-scripted timeout/rotation events do not satisfy this slice.
 
-### S5 — Shared ownership and real OpenClaw/Hermes proof
+### S5 — Shared ownership and framework-appropriate OpenClaw/Hermes proof
 
 Source: U1, U5, U6; R10, R11; V10, V11; M7.
 
-1. Extend shared-runtime composition coverage only if needed to prove both plugins remain adapters.
-2. Add separate files rather than expanding the near-limit existing E2Es:
-   - `packages/agent-vm/src/integration-tests/tool-vm-idle-retirement.openclaw.e2e.test.ts`
-   - `packages/agent-vm/src/integration-tests/tool-vm-idle-retirement.hermes.e2e.test.ts`
-3. Each no-skip proof performs a real Tool VM operation before a short configured idle TTL, waits on lease/process/protocol evidence, proves exact predecessor absence, then performs a real operation after on-demand replacement.
-4. Capture old/new lease, leaf, process, and strict SSH identity; prove the Gateway VM and framework process identity remain unchanged. Identity evidence records only public fingerprints or hashes.
-5. Ephemeral private SSH material must be removed with `trap`/`finally` cleanup even when an intentional negative SSH canary fails. Each proof asserts the scratch key file is absent afterward. Do not copy the existing negative-canary helper's fall-through cleanup unchanged.
+1. Extend shared-runtime composition coverage only if needed to prove both plugins remain adapters. The focused lower proof set is `managed-gateway-runtime-input-builders.unit.test.ts`, `gateway-control-operation-active-use-runtime.unit.test.ts`, and `idle-reaper.integration.test.ts`.
+2. Add the focused OpenClaw proof at `packages/agent-vm/src/integration-tests/tool-vm-idle-retirement.openclaw.e2e.test.ts`. It performs a real Tool VM operation before a short configured idle TTL, waits on lease/process/protocol evidence, proves exact predecessor absence, then performs a real operation after on-demand replacement.
+3. Reuse `packages/agent-vm/src/integration-tests/hermes-managed-base-environment.hermes.e2e.test.ts` for the real Hermes boundary. Its filtered no-skip proof recovers the accepted control connection, performs a real Tool VM operation through the Hermes plugin and shared Gateway Runtime, and proves the Gateway, Hermes framework, and Tool Portal processes remain unchanged. Do not force environment cleanup or idle expiry; the cached environment's active-use exclusion is covered by the lower proof seams.
+4. The OpenClaw proof captures old/new lease, leaf, process, and strict SSH identity while proving the Gateway VM and framework process identity remain unchanged. Identity evidence records only public fingerprints or hashes.
+5. Ephemeral private SSH material in the OpenClaw proof must be removed with `trap`/`finally` cleanup even when an intentional negative SSH canary fails. Assert the scratch key file is absent afterward. Do not copy the existing negative-canary helper's fall-through cleanup unchanged.
+6. Delete the superseded experimental `packages/agent-vm/src/integration-tests/tool-vm-idle-retirement.hermes.e2e.test.ts` draft. Assert that path is absent before filtered, complete-Hermes, default-E2E, and clean-HEAD proof so Vitest discovery cannot execute the impossible idle journey from an untracked file.
 
-Checkpoint: each filtered evidence-project command runs a nonzero test count with zero skipped/todo tests.
+Checkpoint: both framework-appropriate filtered evidence-project commands run a nonzero test count with zero skipped/todo tests.
 
-Manual proof then uses the existing beta deployment workflow, not a new probe framework: sync the exact local tarballs with `pnpm dev:sync-tarballs -- --deployment ../shravan-claw-beta`, rebuild and start the beta deployment with its normal commands, perform one real file/shell operation, retire that exact Tool VM lease through the existing protected Controller operation, and perform another real operation while observing a new Tool VM identity and unchanged Gateway identity. Record the commands and observations without secrets. If the beta deployment cannot be safely exercised, manual proof remains open; do not replace it with another automated test or claim completion.
+Manual proof then uses the existing beta deployment workflow, not a new probe framework: sync the exact local tarballs with `pnpm dev:sync-tarballs -- --deployment ../shravan-claw-beta`; temporarily set a bounded short beta `leaseIdleTtl`; rebuild and start the beta deployment with its normal commands; perform one real file/shell operation; observe idle retirement through existing lease/process evidence; and perform another real operation while observing a new Tool VM identity and unchanged Gateway identity. Restore the beta configuration and prove no committed deployment drift. Record commands and observations without secrets. If the beta deployment cannot be safely exercised, manual proof remains open; do not replace it with another automated test or claim completion.
 
 ### S6 — Regression, review, and PR readiness
 
@@ -192,11 +191,11 @@ Source: M8 and repository proof rules.
 
 After S1-S5 are green:
 
-1. Run focused unit and integration files.
+1. Assert the superseded Hermes idle-retirement draft is absent, then run focused unit and integration files, including the three lower M7 proof files named in S5.
 2. Run `pnpm test:unit`, `pnpm test:integration`, `pnpm test:e2e:host`, and `pnpm test:e2e:inventory`; label inventory as discovery only.
-3. Run filtered no-skip OpenClaw and Hermes evidence projects, then the complete framework lanes and default `mise exec -- pnpm test:e2e`.
+3. Run the filtered no-skip OpenClaw idle-retirement and Hermes control-recovery evidence projects, then the complete framework lanes and default `mise exec -- pnpm test:e2e`.
 4. Run `pnpm check`.
-5. Commit only the scoped, proven files, then unconditionally rerun both filtered no-skip OpenClaw and Hermes proofs on that clean exact HEAD and record the HEAD plus clean-tree state.
+5. Commit only the scoped, proven files, then unconditionally rerun both framework-appropriate filtered no-skip proofs on that clean exact HEAD and record the HEAD plus clean-tree state.
 6. Run `implementation-review-swarm`, resolve source-valid findings, and rerun affected gates. Any review-driven source change requires both filtered live proofs to rerun on the new clean commit.
 7. Push and create/update the PR. Use blocking GitHub watches at 120-second intervals, verify checks, comments, unresolved threads, mergeability, and exact PR head equality with the tested/reviewed commit. Do not merge.
 
@@ -246,7 +245,7 @@ pnpm test:integration
 pnpm test:e2e:host
 pnpm test:e2e:inventory
 AGENT_VM_OPENCLAW_E2E=1 mise exec -- pnpm tsx scripts/run-vitest-evidence-project.ts e2e-openclaw packages/agent-vm/src/integration-tests/tool-vm-idle-retirement.openclaw.e2e.test.ts
-AGENT_VM_HERMES_E2E=1 mise exec -- pnpm tsx scripts/run-vitest-evidence-project.ts e2e-hermes packages/agent-vm/src/integration-tests/tool-vm-idle-retirement.hermes.e2e.test.ts
+AGENT_VM_HERMES_E2E=1 mise exec -- pnpm tsx scripts/run-vitest-evidence-project.ts e2e-hermes packages/agent-vm/src/integration-tests/hermes-managed-base-environment.hermes.e2e.test.ts
 mise exec -- pnpm test:e2e:openclaw
 mise exec -- pnpm test:e2e:hermes
 mise exec -- pnpm test:e2e

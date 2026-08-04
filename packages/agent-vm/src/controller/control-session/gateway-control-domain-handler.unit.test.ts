@@ -354,7 +354,7 @@ function createGatewayControlTestDispatcher(): ControlSessionDispatcher {
 function createTestGatewayControlDomainHandler(
 	options: Omit<GatewayControlDomainHandlerOptions, 'gateway'>,
 ): ReturnType<typeof createGatewayControlDomainHandler> {
-	return createGatewayControlDomainHandler({ gateway, ...options });
+	return createGatewayControlDomainHandler({ gateway, now: () => 1, ...options });
 }
 
 function createAuthorizedControllerHostActions(
@@ -456,7 +456,7 @@ describe('gateway control domain handler', () => {
 			createTestGatewayControlDomainHandler({
 				bindingPublication: {
 					requestBinding,
-					retireBinding: vi.fn(async () => {}),
+					retireBinding: vi.fn(async () => 'publication-applied' as const),
 				},
 				callerContexts,
 				session: acceptedSession,
@@ -490,6 +490,7 @@ describe('gateway control domain handler', () => {
 				agentId: invocationPrincipal.agentId,
 				stablePrincipal,
 			}),
+			expiresAtMs: 60_000,
 			gateway,
 			payload: callerContextPayload,
 		});
@@ -508,6 +509,78 @@ describe('gateway control domain handler', () => {
 		});
 	});
 
+	it('returns Tool VM binding demand at command expiry while late work continues', async () => {
+		// Arrange
+		vi.useFakeTimers();
+		vi.setSystemTime(1);
+		try {
+			const callerContexts = createCallerContexts({
+				createCallerContextId: () => '44444444-4444-4444-8444-444444444444',
+			});
+			const lateBinding = Promise.withResolvers<{
+				readonly agentId: string;
+				readonly stablePrincipal: string;
+				readonly status: 'publication_pending';
+			}>();
+			const requestBinding = vi.fn(async () => await lateBinding.promise);
+			const dispatcher = createGatewayControlTestDispatcher();
+			dispatcher.register(
+				'gateway_control',
+				createTestGatewayControlDomainHandler({
+					bindingPublication: {
+						requestBinding,
+						retireBinding: vi.fn(async () => 'publication-applied' as const),
+					},
+					callerContexts,
+					session: acceptedSession,
+				}),
+			);
+			await dispatcher.dispatch({
+				envelope: callerContextRegisterEnvelope,
+				payload: callerContextRegisterMessage,
+			});
+			let responseSettled = false;
+			const responsePromise = dispatcher
+				.dispatch({
+					envelope: createEnvelope('tool_vm_binding_request', { expiresAtMs: 100 }),
+					payload: {
+						kind: 'command',
+						operation: 'tool_vm_binding_request',
+						payload: callerContextPayload,
+					},
+				})
+				.then((response) => {
+					responseSettled = true;
+					return response;
+				});
+			await vi.advanceTimersByTimeAsync(0);
+			expect(requestBinding).toHaveBeenCalledOnce();
+
+			// Act
+			await vi.advanceTimersByTimeAsync(99);
+			const responseSettledAtCommandExpiry = responseSettled;
+			lateBinding.resolve({
+				agentId: invocationPrincipal.agentId,
+				stablePrincipal,
+				status: 'publication_pending',
+			});
+			const response = await responsePromise;
+
+			// Assert
+			expect(responseSettledAtCommandExpiry).toBe(true);
+			expect(requestBinding).toHaveBeenCalledWith(expect.objectContaining({ expiresAtMs: 100 }));
+			expect(response).toMatchObject({
+				operation: 'tool_vm_binding_request',
+				payload: {
+					error: { errorClass: 'tool_vm_binding_request_expired', retryable: true },
+					result: 'timeout',
+				},
+			});
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it('rejects unregistered Tool VM binding demand before controller creation', async () => {
 		const requestBinding = vi.fn(async () => ({
 			agentId: invocationPrincipal.agentId,
@@ -520,7 +593,7 @@ describe('gateway control domain handler', () => {
 			createTestGatewayControlDomainHandler({
 				bindingPublication: {
 					requestBinding,
-					retireBinding: vi.fn(async () => {}),
+					retireBinding: vi.fn(async () => 'publication-applied' as const),
 				},
 				callerContexts: createCallerContexts(),
 				session: acceptedSession,
@@ -864,6 +937,69 @@ describe('gateway control domain handler', () => {
 				result: 'ok',
 			},
 		});
+	});
+
+	it('returns lease reacquire as unknown side effect at command expiry without cancelling it', async () => {
+		// Arrange
+		vi.useFakeTimers();
+		vi.setSystemTime(1);
+		try {
+			const lateReacquire = Promise.withResolvers<GatewayControlLeaseSnapshot>();
+			const reacquireLease = vi.fn(async () => await lateReacquire.promise);
+			const leaseRpc = createLeaseRpcStub({ reacquireLease });
+			const dispatcher = createGatewayControlTestDispatcher();
+			dispatcher.register(
+				'gateway_control',
+				createTestGatewayControlDomainHandler({
+					callerContexts: createRegisteredCallerContexts(),
+					leaseRpc,
+					session: acceptedSession,
+				}),
+			);
+			let responseSettled = false;
+			const responsePromise = dispatcher
+				.dispatch({
+					envelope: createEnvelope('lease_reacquire', { expiresAtMs: 100 }),
+					payload: {
+						kind: 'command',
+						operation: 'lease_reacquire',
+						payload: {
+							...callerContextPayload,
+							oldLeaseId: 'lease-main',
+							staleEvidence: {
+								errorCode: 'ssh-command-failed',
+								kind: 'tool-vm-ssh',
+								observedAtMs: 1,
+								operation: 'file-bridge',
+							},
+						},
+					},
+				})
+				.then((response) => {
+					responseSettled = true;
+					return response;
+				});
+			await vi.advanceTimersByTimeAsync(0);
+			expect(reacquireLease).toHaveBeenCalledOnce();
+
+			// Act
+			await vi.advanceTimersByTimeAsync(99);
+			const responseSettledAtCommandExpiry = responseSettled;
+			lateReacquire.resolve(leaseSnapshot);
+			const response = await responsePromise;
+
+			// Assert
+			expect(responseSettledAtCommandExpiry).toBe(true);
+			expect(response).toMatchObject({
+				operation: 'lease_reacquire',
+				payload: {
+					error: { errorClass: 'gateway_semantic_unknown_side_effect' },
+					result: 'failed',
+				},
+			});
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it.each([

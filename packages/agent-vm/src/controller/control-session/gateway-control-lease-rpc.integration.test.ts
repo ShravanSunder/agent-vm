@@ -334,6 +334,7 @@ function createIntegrationDispatcherForSession(options: {
 			callerContexts: options.callerContexts,
 			gateway: TEST_GATEWAY_EPOCH,
 			leaseRpc: options.leaseRpc,
+			now: () => 1_000,
 			session: options.session,
 		}),
 	);
@@ -516,6 +517,7 @@ describe('gateway control lease RPC integration', () => {
 				callerContexts,
 				gateway: TEST_GATEWAY_EPOCH,
 				leaseRpc,
+				now: () => 1_000,
 				session: acceptedSession,
 			}),
 		);
@@ -677,6 +679,7 @@ describe('gateway control lease RPC integration', () => {
 				callerContexts,
 				gateway: TEST_GATEWAY_EPOCH,
 				leaseRpc,
+				now: () => 1_000,
 				session: acceptedSession,
 			}),
 		);
@@ -700,6 +703,7 @@ describe('gateway control lease RPC integration', () => {
 				callerContexts,
 				gateway: replacementGateway,
 				leaseRpc,
+				now: () => 1_000,
 				session: replacementSession,
 			}),
 		);

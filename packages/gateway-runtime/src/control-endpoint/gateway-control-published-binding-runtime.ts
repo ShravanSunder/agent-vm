@@ -322,7 +322,7 @@ export function createGatewayControlPublishedBindingRuntime(
 			return { kind: 'applied', state: slot.state };
 		}
 
-		if (closed || slotsByStablePrincipal.get(generation.stablePrincipal) !== slot) {
+		if (closed || slot.closed || slotsByStablePrincipal.get(generation.stablePrincipal) !== slot) {
 			closeSlot(slot);
 			return ignoredResult(
 				closed ? 'runtime_closed' : 'stale_publication',
@@ -352,7 +352,6 @@ export function createGatewayControlPublishedBindingRuntime(
 		if (publication.observedAtMs < existingSlot.publicationObservedAtMs) {
 			return ignoredResult('stale_publication', generation.stablePrincipal);
 		}
-		closeSlot(existingSlot, { notifyTransportFailure: true });
 		existingSlot.state = {
 			generation,
 			kind: 'retired',
@@ -360,6 +359,7 @@ export function createGatewayControlPublishedBindingRuntime(
 			reason: publication.reason,
 			retiredAtMs: now(),
 		};
+		closeSlot(existingSlot, { notifyTransportFailure: true });
 		return { kind: 'applied', state: existingSlot.state };
 	}
 

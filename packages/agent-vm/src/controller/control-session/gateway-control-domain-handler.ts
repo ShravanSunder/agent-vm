@@ -194,10 +194,36 @@ export interface GatewayControlDomainHandlerOptions {
 	readonly controllerHostActions?: GatewayControlControllerHostActionOperations;
 	readonly gateway: GatewayEpochIdentity;
 	readonly leaseRpc?: GatewayControlLeaseRpcOperations;
+	readonly now?: () => number;
 	readonly recordGatewayRuntimeReadiness?: (snapshot: GatewayRuntimeReadinessSnapshot) => void;
 	readonly recordHealthEvent?: (event: AgentVmHealthEvent) => void;
 	readonly recordRuntimeStatus?: (report: OpenClawRuntimeStatusReport) => void;
 	readonly session: GatewayControlAcceptedSessionRef;
+}
+
+type CommandDeadlineResult<TResult> =
+	| { readonly kind: 'completed'; readonly value: TResult }
+	| { readonly kind: 'expired' };
+
+async function settleCommandWorkAtExpiry<TResult>(options: {
+	readonly expiresAtMs: number;
+	readonly now: () => number;
+	readonly work: Promise<TResult>;
+}): Promise<CommandDeadlineResult<TResult>> {
+	const remainingMilliseconds = options.expiresAtMs - options.now();
+	if (remainingMilliseconds <= 0) return { kind: 'expired' };
+	let expiryTimer: ReturnType<typeof setTimeout> | undefined;
+	const expiry = new Promise<{ readonly kind: 'expired' }>((resolve) => {
+		expiryTimer = setTimeout(() => resolve({ kind: 'expired' }), remainingMilliseconds);
+	});
+	try {
+		return await Promise.race([
+			options.work.then((value) => ({ kind: 'completed', value }) as const),
+			expiry,
+		]);
+	} finally {
+		if (expiryTimer !== undefined) clearTimeout(expiryTimer);
+	}
 }
 
 export interface GatewayControlApprovalLedgerOperations {
@@ -1207,6 +1233,7 @@ function parseLeaseSemanticMutationResult(
 export function createGatewayControlDomainHandler(
 	options: GatewayControlDomainHandlerOptions,
 ): ControlSessionDomainHandler {
+	const now = options.now ?? Date.now;
 	return {
 		assertEnvelopeDeliveryPolicy: assertGatewayControlEnvelopeDeliveryPolicy,
 		policyByKind: gatewayControlDeliveryPolicyByKind,
@@ -1397,7 +1424,20 @@ export function createGatewayControlDomainHandler(
 				options.leaseRpc,
 			).prepareSemanticMutation(preparationOptions);
 			return {
-				execute: preparedMutation.execute,
+				execute:
+					message.operation === 'lease_reacquire'
+						? async (proof) => {
+								const result = await settleCommandWorkAtExpiry({
+									expiresAtMs: validUntilMs,
+									now,
+									work: preparedMutation.execute(proof),
+								});
+								if (result.kind === 'expired') {
+									throw new Error('Gateway lease reacquire command expired.');
+								}
+								return result.value;
+							}
+						: preparedMutation.execute,
 				identity: {
 					commandId,
 					gateway: options.gateway,
@@ -1493,18 +1533,41 @@ export function createGatewayControlDomainHandler(
 							}),
 						});
 					}
-					const bindingRequest = await assertBindingPublicationConfigured(
-						options.bindingPublication,
-					).requestBinding({
-						authority: bindingPublicationAuthorityFromEnvelope({
-							attachmentGeneration,
-							envelope,
+					const expiresAtMs = requireSemanticEnvelopeField(envelope.expiresAtMs, 'expiresAtMs');
+					if (typeof expiresAtMs !== 'number') {
+						throw new Error('Gateway Tool VM binding command expiry is invalid.');
+					}
+					const bindingRequestResult = await settleCommandWorkAtExpiry({
+						expiresAtMs,
+						now,
+						work: assertBindingPublicationConfigured(options.bindingPublication).requestBinding({
+							authority: bindingPublicationAuthorityFromEnvelope({
+								attachmentGeneration,
+								envelope,
+								gateway: options.gateway,
+							}),
+							callerContext: callerContextResolution.callerContext,
+							expiresAtMs,
 							gateway: options.gateway,
+							payload: message.payload,
 						}),
-						callerContext: callerContextResolution.callerContext,
-						gateway: options.gateway,
-						payload: message.payload,
 					});
+					if (bindingRequestResult.kind === 'expired') {
+						return GatewayControlRpcCommandResultMessageSchema.parse({
+							kind: 'command_result',
+							operation: 'tool_vm_binding_request',
+							payload: commandResultPayload({
+								error: {
+									errorClass: 'tool_vm_binding_request_expired',
+									retryable: true,
+									safeMessage: 'Tool VM binding request exceeded its command deadline.',
+								},
+								responseToMessageId: envelope.messageId,
+								result: 'timeout',
+							}),
+						});
+					}
+					const bindingRequest = bindingRequestResult.value;
 					return GatewayControlRpcCommandResultMessageSchema.parse({
 						kind: 'command_result',
 						operation: 'tool_vm_binding_request',

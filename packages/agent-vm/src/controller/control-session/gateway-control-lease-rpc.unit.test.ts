@@ -2231,7 +2231,9 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			tcpPool,
 		});
 		const retirementEvents: unknown[] = [];
-		leaseManager.subscribeLeaseRetirement((event) => retirementEvents.push(event));
+		leaseManager.subscribeLeaseRetirement(async (event) => {
+			retirementEvents.push(event);
+		});
 		const leaseRpc = createGatewayControlLeaseRpcOperations({
 			leaseManager,
 			readIdentityPem: async () => 'identity-pem',
@@ -2280,7 +2282,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		expect(leaseManager.peekLease(oldLease.leaseId)?.lease.id).toBe(oldLease.leaseId);
 		expect(leaseManager.getLeaseAuthority(oldLease.leaseId)).toBeUndefined();
 		expect(leaseManager.getCurrentLeaseBinding(oldLease.leaseId)).toBeUndefined();
-		expect(retirementEvents).toEqual([]);
+		expect(retirementEvents).toEqual([{ leaseId: oldLease.leaseId, reason: 'released' }]);
 		expect(tcpPool.isQuarantined(0)).toBe(true);
 
 		const reacquireRequest = {
@@ -2340,7 +2342,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		expect(leaseManager.listLeases().map((lease) => lease.id)).toEqual(['lease-new']);
 		expect(leaseManager.getLeaseAuthority('lease-new')).toBeDefined();
 		expect(leaseManager.getCurrentLeaseBinding('lease-new')).toBeDefined();
-		expect(retirementEvents).toEqual([]);
+		expect(retirementEvents).toEqual([{ leaseId: oldLease.leaseId, reason: 'released' }]);
 		expect(tcpPool.isQuarantined(0)).toBe(true);
 		expect(tcpPool.isQuarantined(1)).toBe(false);
 	});

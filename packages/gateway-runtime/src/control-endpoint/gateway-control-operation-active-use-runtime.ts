@@ -226,7 +226,13 @@ export function createGatewayControlOperationActiveUseRuntime(
 	);
 	const now = props.now ?? Date.now;
 	const operationGroups = new Set<OperationGroupState>();
-	const pendingBindingRequestsByPrincipal = new Map<GatewayStablePrincipalDigest, Promise<void>>();
+	const pendingBindingRequestsByPrincipal = new Map<
+		GatewayStablePrincipalDigest,
+		{
+			readonly acceptedSession: GatewayControlAcceptedSession;
+			readonly promise: Promise<void>;
+		}
+	>();
 	let closed = false;
 	let retirementPromise: Promise<void> | undefined;
 
@@ -257,11 +263,13 @@ export function createGatewayControlOperationActiveUseRuntime(
 		stablePrincipal: GatewayStablePrincipalDigest,
 		initialState: GatewayControlPublishedBindingState,
 	): Promise<void> {
+		const acceptedSession = props.controlService.getCurrentAcceptedSession();
+		if (closed || acceptedSession === undefined) return;
 		const existingRequest = pendingBindingRequestsByPrincipal.get(stablePrincipal);
-		if (existingRequest !== undefined) return await existingRequest;
+		if (existingRequest?.acceptedSession === acceptedSession) {
+			return await existingRequest.promise;
+		}
 		const requestPromise = (async (): Promise<void> => {
-			const acceptedSession = props.controlService.getCurrentAcceptedSession();
-			if (closed || acceptedSession === undefined) return;
 			const callerContext = await props.callerContextRegistrationClient.register({
 				purpose: 'tool_vm_lease',
 				trustedContext,
@@ -331,11 +339,14 @@ export function createGatewayControlOperationActiveUseRuntime(
 				throw new Error('Controller returned a mismatched Tool VM binding request result.');
 			}
 		})();
-		pendingBindingRequestsByPrincipal.set(stablePrincipal, requestPromise);
+		pendingBindingRequestsByPrincipal.set(stablePrincipal, {
+			acceptedSession,
+			promise: requestPromise,
+		});
 		try {
 			await requestPromise;
 		} finally {
-			if (pendingBindingRequestsByPrincipal.get(stablePrincipal) === requestPromise) {
+			if (pendingBindingRequestsByPrincipal.get(stablePrincipal)?.promise === requestPromise) {
 				pendingBindingRequestsByPrincipal.delete(stablePrincipal);
 			}
 		}

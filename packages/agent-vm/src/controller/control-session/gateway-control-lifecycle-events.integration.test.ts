@@ -331,6 +331,7 @@ describe('gateway control lifecycle event integration', () => {
 				callerContexts,
 				gateway: TEST_GATEWAY_EPOCH,
 				leaseRpc,
+				now: () => 1_000,
 				recordHealthEvent: (event: AgentVmHealthEvent) => {
 					recordedHealthEvents.push(event);
 				},
