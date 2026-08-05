@@ -451,8 +451,12 @@ describe('Gateway control published binding runtime', () => {
 
 	it('prevents a delayed predecessor connection from overwriting its successor', async () => {
 		// Arrange
+		const predecessorConnectStarted = deferred<void>();
 		const predecessorConnect = deferred<void>();
-		const predecessor = createStrictSshClientFixture(() => predecessorConnect.promise);
+		const predecessor = createStrictSshClientFixture(async () => {
+			predecessorConnectStarted.resolve(undefined);
+			await predecessorConnect.promise;
+		});
 		const successor = createStrictSshClientFixture();
 		const fixture = createRuntimeFixture([predecessor, successor]);
 		const predecessorPublication = currentPublication({ observedAtMs: 100 });
@@ -463,7 +467,7 @@ describe('Gateway control published binding runtime', () => {
 			sshBindingId: 'ssh-a-2',
 		});
 		const predecessorResultPromise = applyPublication(fixture.runtime, predecessorPublication);
-		await vi.waitFor(() => expect(predecessor.connect).toHaveBeenCalledOnce());
+		await predecessorConnectStarted.promise;
 
 		// Act
 		const successorResult = await applyPublication(fixture.runtime, successorPublication);
@@ -527,12 +531,16 @@ describe('Gateway control published binding runtime', () => {
 
 	it('prevents delayed connect completion from restoring an exactly retired slot', async () => {
 		// Arrange
+		const connectStarted = deferred<void>();
 		const pendingConnect = deferred<void>();
-		const client = createStrictSshClientFixture(() => pendingConnect.promise);
+		const client = createStrictSshClientFixture(async () => {
+			connectStarted.resolve(undefined);
+			await pendingConnect.promise;
+		});
 		const fixture = createRuntimeFixture([client]);
 		const current = currentPublication();
 		const currentResultPromise = applyPublication(fixture.runtime, current);
-		await vi.waitFor(() => expect(client.connect).toHaveBeenCalledOnce());
+		await connectStarted.promise;
 
 		// Act
 		const retirementResult = await applyPublication(fixture.runtime, retiredPublication(current));
@@ -554,11 +562,93 @@ describe('Gateway control published binding runtime', () => {
 		});
 	});
 
+	it('preserves exact retirement when delayed connect completion crosses command expiry', async () => {
+		// Arrange
+		let nowMs = 100;
+		const connectStarted = deferred<void>();
+		const pendingConnect = deferred<void>();
+		const client = createStrictSshClientFixture(async () => {
+			connectStarted.resolve(undefined);
+			await pendingConnect.promise;
+		});
+		const fixture = createRuntimeFixture([client], { now: () => nowMs });
+		const current = currentPublication();
+		const currentResultPromise = applyPublication(fixture.runtime, current, { expiresAtMs: 110 });
+		await connectStarted.promise;
+
+		// Act
+		const retirementResult = await applyPublication(fixture.runtime, retiredPublication(current));
+		nowMs = 110;
+		pendingConnect.resolve(undefined);
+		const lateCurrentResult = await currentResultPromise;
+		const duplicateRetirementResult = await applyPublication(
+			fixture.runtime,
+			retiredPublication(current),
+		);
+
+		// Assert
+		expect(retirementResult).toMatchObject({
+			kind: 'applied',
+			state: { kind: 'retired', reason: 'replaced' },
+		});
+		expect(lateCurrentResult).toMatchObject({ kind: 'ignored', reason: 'stale_publication' });
+		expect(duplicateRetirementResult).toMatchObject({
+			kind: 'applied',
+			state: { kind: 'retired', reason: 'replaced' },
+		});
+		expect(client.close).toHaveBeenCalledOnce();
+		expect(
+			fixture.runtime.lookupReadyConnection({ trustedContext: trustedContextA }),
+		).toMatchObject({
+			kind: 'unavailable',
+			state: { kind: 'retired', reason: 'replaced' },
+		});
+	});
+
+	it('preserves exact retirement when closing a pending connection rejects it', async () => {
+		// Arrange
+		const connectStarted = deferred<void>();
+		const pendingConnect = deferred<void>();
+		const client = createStrictSshClientFixture(async () => {
+			connectStarted.resolve(undefined);
+			await pendingConnect.promise;
+		});
+		const fixture = createRuntimeFixture([client]);
+		const current = currentPublication();
+		client.close.mockImplementation(() => {
+			pendingConnect.reject(new Error('connection closed during retirement'));
+		});
+		const currentResultPromise = applyPublication(fixture.runtime, current);
+		await connectStarted.promise;
+
+		// Act
+		const retirementResult = await applyPublication(fixture.runtime, retiredPublication(current));
+		const lateCurrentResult = await currentResultPromise;
+
+		// Assert
+		expect(retirementResult).toMatchObject({
+			kind: 'applied',
+			state: { kind: 'retired', reason: 'replaced' },
+		});
+		expect(lateCurrentResult).toMatchObject({ kind: 'ignored', reason: 'stale_publication' });
+		expect(client.close).toHaveBeenCalledOnce();
+		expect(
+			fixture.runtime.lookupReadyConnection({ trustedContext: trustedContextA }),
+		).toMatchObject({
+			kind: 'unavailable',
+			state: { kind: 'retired', reason: 'replaced' },
+		});
+	});
+
 	it('does not make a binding ready after its publication command expires', async () => {
 		// Arrange
 		let nowMs = 100;
+		const connectStarted = deferred<void>();
 		const pendingConnect = deferred<void>();
-		const client = createStrictSshClientFixture(() => pendingConnect.promise);
+		const client = createStrictSshClientFixture(async () => {
+			connectStarted.resolve(undefined);
+			await pendingConnect.promise;
+		});
 		const fixture = createRuntimeFixture([client], { now: () => nowMs });
 		const current = currentPublication();
 		const routingKindsObservedDuringClose: string[] = [];
@@ -569,7 +659,7 @@ describe('Gateway control published binding runtime', () => {
 			);
 		});
 		const currentResultPromise = applyPublication(fixture.runtime, current, { expiresAtMs: 110 });
-		await vi.waitFor(() => expect(client.connect).toHaveBeenCalledOnce());
+		await connectStarted.promise;
 
 		// Act
 		nowMs = 110;

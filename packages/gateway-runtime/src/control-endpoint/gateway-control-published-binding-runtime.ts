@@ -313,34 +313,41 @@ export function createGatewayControlPublishedBindingRuntime(
 		try {
 			await client.connect();
 		} catch {
-			if (!closed && slotsByStablePrincipal.get(generation.stablePrincipal) === slot) {
-				slot.transportFailureSubscription?.unsubscribe();
-				slot.transportFailureSubscription = undefined;
-				slot.state = {
-					degradedAtMs: now(),
-					generation,
-					kind: 'degraded',
-					publicationObservedAtMs: publication.observedAtMs,
-					reason: 'connection_failed',
-				};
+			if (
+				closed ||
+				slot.closed ||
+				slotsByStablePrincipal.get(generation.stablePrincipal) !== slot
+			) {
 				closeSlot(slot);
+				return ignoredResult(
+					closed ? 'runtime_closed' : 'stale_publication',
+					generation.stablePrincipal,
+				);
 			}
+			slot.transportFailureSubscription?.unsubscribe();
+			slot.transportFailureSubscription = undefined;
+			slot.state = {
+				degradedAtMs: now(),
+				generation,
+				kind: 'degraded',
+				publicationObservedAtMs: publication.observedAtMs,
+				reason: 'connection_failed',
+			};
+			closeSlot(slot);
 			return { kind: 'applied', state: slot.state };
 		}
 
-		if (context.expiresAtMs <= now()) {
-			if (slotsByStablePrincipal.get(generation.stablePrincipal) === slot) {
-				slotsByStablePrincipal.delete(generation.stablePrincipal);
-			}
-			closeSlot(slot);
-			return ignoredResult('stale_publication', generation.stablePrincipal);
-		}
 		if (closed || slot.closed || slotsByStablePrincipal.get(generation.stablePrincipal) !== slot) {
 			closeSlot(slot);
 			return ignoredResult(
 				closed ? 'runtime_closed' : 'stale_publication',
 				generation.stablePrincipal,
 			);
+		}
+		if (context.expiresAtMs <= now()) {
+			slotsByStablePrincipal.delete(generation.stablePrincipal);
+			closeSlot(slot);
+			return ignoredResult('stale_publication', generation.stablePrincipal);
 		}
 		slot.state = {
 			connectedAtMs: now(),
@@ -378,9 +385,7 @@ export function createGatewayControlPublishedBindingRuntime(
 
 	async function applyPublication(
 		publication: GatewayControlToolVmBindingPublication,
-		context: GatewayControlPublishedBindingApplicationContext = {
-			expiresAtMs: Number.MAX_SAFE_INTEGER,
-		},
+		context: GatewayControlPublishedBindingApplicationContext,
 	): Promise<GatewayControlPublishedBindingApplyResult> {
 		const stablePrincipal = publication.binding.stablePrincipal;
 		if (closed) return ignoredResult('runtime_closed', stablePrincipal);

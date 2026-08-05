@@ -110,7 +110,7 @@ export function createGatewayControlBindingPublicationCoordinator(
 ): GatewayControlBindingPublicationCoordinator {
 	const now = options.now ?? Date.now;
 	const inFlightByPrincipal = new Map<string, InFlightBindingPublication>();
-	const currentBindingByPrincipal = new Map<string, GatewayControlToolVmBindingIdentity>();
+	const trackedBindingByPrincipal = new Map<string, GatewayControlToolVmBindingIdentity>();
 	let trackedPublicationAuthority: GatewayControlToolVmBindingPublicationAuthority | undefined;
 	let lastPublicationObservedAtMs = 0;
 
@@ -146,8 +146,20 @@ export function createGatewayControlBindingPublicationCoordinator(
 		authority: GatewayControlToolVmBindingPublicationAuthority,
 	): void => {
 		if (authoritiesEqual(trackedPublicationAuthority, authority)) return;
-		currentBindingByPrincipal.clear();
+		trackedBindingByPrincipal.clear();
 		trackedPublicationAuthority = authority;
+	};
+
+	const deleteTrackedBindingIfExact = (
+		principalKey: string,
+		binding: GatewayControlToolVmBindingIdentity,
+		authority: GatewayControlToolVmBindingPublicationAuthority,
+	): void => {
+		if (!authoritiesEqual(trackedPublicationAuthority, authority)) return;
+		const trackedBinding = trackedBindingByPrincipal.get(principalKey);
+		if (trackedBinding !== undefined && bindingsHaveSameIdentity(trackedBinding, binding)) {
+			trackedBindingByPrincipal.delete(principalKey);
+		}
 	};
 
 	const publishRetirement = async (request: {
@@ -199,7 +211,7 @@ export function createGatewayControlBindingPublicationCoordinator(
 					throw new Error('Controller-created Tool VM binding does not match its requested agent.');
 				}
 				const currentIdentity = bindingIdentity(binding);
-				const previous = currentBindingByPrincipal.get(principalKey);
+				const previous = trackedBindingByPrincipal.get(principalKey);
 				if (
 					previous !== undefined &&
 					(previous.leaseId !== binding.leaseId ||
@@ -213,17 +225,23 @@ export function createGatewayControlBindingPublicationCoordinator(
 					});
 					assertCurrentCommand(request);
 				}
-				await options.publish(
-					GatewayControlToolVmBindingPublicationSchema.parse({
-						authority: request.authority,
-						binding,
-						kind: 'current',
-						observedAtMs: nextPublicationObservedAtMs(),
-					}),
-					{ sourceCommandExpiresAtMs: request.expiresAtMs },
-				);
+				const currentPublication = GatewayControlToolVmBindingPublicationSchema.parse({
+					authority: request.authority,
+					binding,
+					kind: 'current',
+					observedAtMs: nextPublicationObservedAtMs(),
+				});
+				trackedBindingByPrincipal.set(principalKey, currentIdentity);
+				try {
+					await options.publish(currentPublication, {
+						sourceCommandExpiresAtMs: request.expiresAtMs,
+					});
+					assertCurrentAuthority(request.authority);
+				} catch (error) {
+					deleteTrackedBindingIfExact(principalKey, currentIdentity, request.authority);
+					throw error;
+				}
 				assertCurrentCommand(request);
-				currentBindingByPrincipal.set(principalKey, currentIdentity);
 				return {
 					agentId: binding.agentId,
 					stablePrincipal: binding.stablePrincipal,
@@ -245,19 +263,13 @@ export function createGatewayControlBindingPublicationCoordinator(
 		retireBinding: async (request) => {
 			assertCurrentAuthority(request.authority);
 			synchronizeTrackedPublicationAuthority(request.authority);
-			const currentEntry = [...currentBindingByPrincipal.entries()].find(
+			const currentEntry = [...trackedBindingByPrincipal.entries()].find(
 				([, binding]) => binding.leaseId === request.leaseId,
 			);
 			if (currentEntry === undefined) return 'not-tracked-on-current-connection';
 			const [principalKey, current] = currentEntry;
 			await publishRetirement({ ...request, binding: current });
-			const currentAfterPublication = currentBindingByPrincipal.get(principalKey);
-			if (
-				currentAfterPublication !== undefined &&
-				bindingsHaveSameIdentity(currentAfterPublication, current)
-			) {
-				currentBindingByPrincipal.delete(principalKey);
-			}
+			deleteTrackedBindingIfExact(principalKey, current, request.authority);
 			return 'publication-applied';
 		},
 	};

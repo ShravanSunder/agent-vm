@@ -613,12 +613,15 @@ describe('Gateway control operation active-use runtime', () => {
 
 	it('does not reuse a pending binding request across accepted control sessions', async () => {
 		// Arrange
+		const firstRegistrationStarted = deferred<void>();
 		const firstRegistration = deferred<GatewayControlRegisteredCallerContext>();
 		const secondRegistration = deferred<GatewayControlRegisteredCallerContext>();
 		let registrationIndex = 0;
 		const fixture = createRuntimeFixture({
 			callerRegistration: async () => {
-				const registration = registrationIndex++ === 0 ? firstRegistration : secondRegistration;
+				const isFirstRegistration = registrationIndex++ === 0;
+				if (isFirstRegistration) firstRegistrationStarted.resolve(undefined);
+				const registration = isFirstRegistration ? firstRegistration : secondRegistration;
 				return await registration.promise;
 			},
 			ready: false,
@@ -631,7 +634,7 @@ describe('Gateway control operation active-use runtime', () => {
 
 		// Act
 		const first = fixture.runtime.acquisitionPort.acquire({ trustedContext: trustedContextA });
-		await vi.waitFor(() => expect(fixture.callerRegister).toHaveBeenCalledOnce());
+		await firstRegistrationStarted.promise;
 		fixture.control.setSession(sessionB);
 		const second = fixture.runtime.acquisitionPort.acquire({ trustedContext: trustedContextA });
 		firstRegistration.resolve(registeredContext);
