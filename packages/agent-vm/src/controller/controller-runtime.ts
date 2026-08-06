@@ -799,6 +799,9 @@ async function startControllerRuntimeWithOwnershipLock(
 				? createManagedGatewayZoneRuntime({
 						createFreshSecretResolver,
 						createVmOwnership: createManagedGatewayVmOwnership,
+						...(options.prebuiltGatewayImages?.[zone.id] === undefined
+							? {}
+							: { initialPrebuiltImage: options.prebuiltGatewayImages[zone.id] }),
 						managedVmFactory: dependencies.managedVmFactory,
 						managedVmExactProcessTermination: dependencies.managedVmExactProcessTermination,
 						managedVmImages: dependencies.managedVmImages,

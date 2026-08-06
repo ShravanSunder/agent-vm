@@ -2,6 +2,7 @@ import type {
 	ManagedVm,
 	ManagedVmExactProcessTerminationCapability,
 	ManagedVmFactory,
+	ManagedVmImageBuildResult,
 	ManagedVmImageCapability,
 	ManagedVmOwnedDirectoryCapability,
 } from '@agent-vm/managed-vm';
@@ -112,6 +113,7 @@ export interface ControllerRuntimeDependencies {
 }
 
 export interface StartControllerRuntimeOptions {
+	readonly prebuiltGatewayImages?: Readonly<Record<string, ManagedVmImageBuildResult>>;
 	readonly systemConfig: LoadedSystemConfig;
 	readonly startupFailures?: readonly {
 		readonly lastError: string;

@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { computeFingerprintFromConfigPath } from '../../build/gondolin-image-builder.js';
 import { managedVmImageAssetFileNames } from '../../build/gondolin-managed-vm-build-tooling.js';
 import type { ManagedGatewayImageBootProjection } from '../../build/gondolin-managed-vm-build-tooling.js';
 import { writePreparedManagedVmImage } from '../../build/prepared-gondolin-image-cache.js';
@@ -46,6 +47,7 @@ async function createGatewayImageCacheFixture(
 				}
 			: { type: 'worker' as const };
 	const temporaryDirectoryPath = await createTemporaryDirectory();
+	const gatewayConfigDirectory = await createTemporaryDirectory();
 	const systemConfigPath = path.join(temporaryDirectoryPath, 'config', 'system.json');
 	const buildConfigPath = path.join(temporaryDirectoryPath, 'build-config.json');
 	const gatewayImageConfiguration = {
@@ -119,7 +121,7 @@ async function createGatewayImageCacheFixture(
 						...gatewayConfiguration,
 						imageProfile: 'worker',
 						cpus: 2,
-						config: '/tmp/gateway.json',
+						config: path.join(gatewayConfigDirectory, 'gateway.json'),
 						memory: '2G',
 						port: 18791,
 					},
@@ -208,5 +210,44 @@ describe('isGatewayImageCached', () => {
 				},
 			}),
 		).resolves.toBe(false);
+	});
+
+	it('rejects a stale boot projection through the default fingerprint computation', async () => {
+		const systemConfig = await createGatewayImageCacheFixture('placeholder-fingerprint', {
+			gatewayType: 'openclaw',
+		});
+		const buildConfigPath = systemConfig.imageProfiles.gateways.worker?.buildConfig;
+		if (buildConfigPath === undefined) {
+			throw new Error('Expected gateway build config path.');
+		}
+		const cacheDir = path.join(systemConfig.cacheDir, 'gateway-images', 'worker');
+		const fingerprintInput = {
+			dockerRootfsIdentity: {
+				architecture: 'arm64',
+				layers: ['sha256:rootfs-layer'],
+				os: 'linux',
+			},
+			schemaVersion: 1,
+		};
+		const staleManagedGatewayBoot: ManagedGatewayImageBootProjection = {
+			frameworkBootEntry: 'hermes-framework-service',
+			kind: 'managed-gateway-exact-two-role',
+		};
+		const staleFingerprint = await computeFingerprintFromConfigPath(buildConfigPath, {
+			fingerprintInput,
+			managedGatewayBoot: staleManagedGatewayBoot,
+		});
+		const imagePath = path.join(cacheDir, staleFingerprint);
+		await writeFakeImageAssets(imagePath);
+		await writePreparedManagedVmImage({
+			buildConfigPath,
+			cacheDir,
+			fingerprint: staleFingerprint,
+			fingerprintInput,
+			imagePath,
+			managedGatewayBoot: staleManagedGatewayBoot,
+		});
+
+		await expect(isGatewayImageCached(systemConfig, 'coding-agent')).resolves.toBe(false);
 	});
 });

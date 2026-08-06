@@ -643,6 +643,55 @@ describe('Managed Gateway zone runtime test fixture paths', () => {
 });
 
 describe('createManagedGatewayZoneRuntime host process liveness', () => {
+	it('forwards the initial prebuilt image without rereading the cache', async () => {
+		const gatewayIdentity = createTestGatewayIdentity('gateway-vm-prebuilt');
+		const prebuiltImage = {
+			built: false,
+			fingerprint: 'validated-fingerprint',
+			imageReference: '/tmp/validated-image',
+		};
+		const observedPrebuiltImages: Array<typeof prebuiltImage | undefined> = [];
+		const runtime = createManagedGatewayZoneRuntime({
+			initialPrebuiltImage: prebuiltImage,
+			now: () => Date.parse('2026-06-07T14:00:00.000Z'),
+			restartGatewayZone: async (_zoneId, startOptions) => {
+				observedPrebuiltImages.push(startOptions?.prebuiltImage);
+				return {
+					gatewayIdentity,
+					image: prebuiltImage,
+					ingress: { host: '127.0.0.1', port: 18_791 },
+					vm: {
+						close: vi.fn(async () => undefined),
+						enableIngress: vi.fn(async () => ({
+							close: vi.fn(async () => {}),
+							host: '127.0.0.1',
+							port: 18_791,
+						})),
+						enableSsh: vi.fn(async () => ({
+							close: async () => {},
+							host: '127.0.0.1',
+							port: 22,
+							serverHostKey: TEST_SSH_SERVER_HOST_KEY,
+						})),
+						exec: vi.fn(() => createManagedExecProcessStub({ stdout: 'ok' })),
+						getHostProcessId: () => 48_284,
+						id: gatewayIdentity.gatewayVmId,
+						configureIngressRoutes: vi.fn(),
+						start: async () => {},
+					},
+					zone: getOpenClawZone(),
+				};
+			},
+			secretResolver: createResolvingSecretResolver(),
+			systemConfig: loadedSystemConfig,
+			zone: getOpenClawZone(),
+		});
+
+		await runtime.start();
+
+		expect(observedPrebuiltImages).toEqual([prebuiltImage]);
+	});
+
 	it('routes only the exact current Gateway source to its control-session manager', async () => {
 		const gatewayIdentity = createTestGatewayIdentity('gateway-vm-watchdog');
 		const ensureDialing = vi.fn(() => ({ status: 'retry-scheduled' as const }));
