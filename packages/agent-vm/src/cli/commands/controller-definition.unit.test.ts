@@ -30,14 +30,28 @@ async function writeFakeImageAssets(imagePath: string): Promise<void> {
 async function createGatewayImageCacheFixture(
 	fingerprint: string,
 	options: {
-		readonly gatewayType?: 'hermes' | 'openclaw' | 'worker';
+		readonly gatewayType?: 'openclaw' | 'worker';
 		readonly preparedManagedGatewayBoot?: ManagedGatewayImageBootProjection;
 	} = {},
 ): Promise<LoadedSystemConfig> {
 	const gatewayType = options.gatewayType ?? 'worker';
+	const gatewayConfiguration =
+		gatewayType === 'openclaw'
+			? {
+					type: 'openclaw' as const,
+					controlAuth: {
+						mode: 'token' as const,
+						secret: 'OPENCLAW_GATEWAY_TOKEN',
+					},
+				}
+			: { type: 'worker' as const };
 	const temporaryDirectoryPath = await createTemporaryDirectory();
 	const systemConfigPath = path.join(temporaryDirectoryPath, 'config', 'system.json');
 	const buildConfigPath = path.join(temporaryDirectoryPath, 'build-config.json');
+	const gatewayImageConfiguration = {
+		type: gatewayType,
+		buildConfig: buildConfigPath,
+	};
 	const cacheDir = path.join(temporaryDirectoryPath, 'cache');
 	const gatewayProfileCacheDirectory = path.join(cacheDir, 'gateway-images', 'worker');
 	const imagePath = path.join(gatewayProfileCacheDirectory, fingerprint);
@@ -75,10 +89,7 @@ async function createGatewayImageCacheFixture(
 			},
 			imageProfiles: {
 				gateways: {
-					worker: {
-						type: gatewayType,
-						buildConfig: buildConfigPath,
-					},
+					worker: gatewayImageConfiguration,
 				},
 				toolVms: {
 					default: {
@@ -105,15 +116,7 @@ async function createGatewayImageCacheFixture(
 						audience: 'gateway' as const,
 					})),
 					gateway: {
-						type: gatewayType,
-						...(gatewayType === 'openclaw'
-							? {
-									controlAuth: {
-										mode: 'token' as const,
-										secret: 'OPENCLAW_GATEWAY_TOKEN',
-									},
-								}
-							: {}),
+						...gatewayConfiguration,
 						imageProfile: 'worker',
 						cpus: 2,
 						config: '/tmp/gateway.json',
