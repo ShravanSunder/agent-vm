@@ -1,11 +1,15 @@
 // oxlint-disable typescript-eslint/explicit-function-return-type
 import path from 'node:path';
 
+import type { ManagedVmImageBuildResult } from '@agent-vm/managed-vm';
 import { command, flag, subcommands } from 'cmd-ts';
 
+import { computeFingerprintFromConfigPath } from '../../build/gondolin-image-builder.js';
+import type { ManagedGatewayImageBootProjection } from '../../build/gondolin-managed-vm-build-tooling.js';
 import { readPreparedManagedVmImage } from '../../build/prepared-gondolin-image-cache.js';
 import type { LoadedSystemConfig } from '../../config/system-config.js';
 import { type CliDependencies, type CliIo, requireZone } from '../agent-vm-cli-support.js';
+import { managedGatewayBootProjectionForGatewayType } from '../build-command.js';
 import { runControllerOperationCommand } from '../controller-operation-commands.js';
 import { createRunTask } from '../run-task.js';
 import { runSshCommand } from '../ssh-commands.js';
@@ -16,6 +20,40 @@ import {
 	createZoneOption,
 	loadSystemConfigFromOption,
 } from './command-definition-support.js';
+
+interface ComputeManagedVmFingerprintOptions {
+	readonly buildConfigPath: string;
+	readonly fingerprintInput?: unknown;
+	readonly managedGatewayBoot?: ManagedGatewayImageBootProjection;
+}
+
+interface IsGatewayImageCachedDependencies {
+	readonly computeManagedVmFingerprint?: (
+		options: ComputeManagedVmFingerprintOptions,
+	) => Promise<string>;
+}
+
+async function resolveExpectedGatewayFingerprint(
+	dependencies: IsGatewayImageCachedDependencies,
+	options: ComputeManagedVmFingerprintOptions,
+): Promise<string | undefined> {
+	try {
+		const computeManagedVmFingerprint =
+			dependencies.computeManagedVmFingerprint ??
+			(async (fingerprintOptions: ComputeManagedVmFingerprintOptions): Promise<string> =>
+				await computeFingerprintFromConfigPath(fingerprintOptions.buildConfigPath, {
+					...(fingerprintOptions.fingerprintInput === undefined
+						? {}
+						: { fingerprintInput: fingerprintOptions.fingerprintInput }),
+					...(fingerprintOptions.managedGatewayBoot === undefined
+						? {}
+						: { managedGatewayBoot: fingerprintOptions.managedGatewayBoot }),
+				}));
+		return await computeManagedVmFingerprint(options);
+	} catch {
+		return undefined;
+	}
+}
 
 function createControllerOperationSubcommand(
 	io: CliIo,
@@ -63,10 +101,11 @@ function createControllerOperationSubcommand(
 	});
 }
 
-export async function isGatewayImageCached(
+async function resolveCachedGatewayImage(
 	systemConfig: LoadedSystemConfig,
 	zoneId: string,
-): Promise<boolean> {
+	dependencies: IsGatewayImageCachedDependencies = {},
+): Promise<ManagedVmImageBuildResult | undefined> {
 	const zone = requireZone(systemConfig, zoneId);
 	const gatewayImageProfile = systemConfig.imageProfiles.gateways[zone.gateway.imageProfile];
 	if (!gatewayImageProfile) {
@@ -81,19 +120,52 @@ export async function isGatewayImageCached(
 		buildConfigPath: gatewayImageProfile.buildConfig,
 		cacheDir: gatewayProfileCacheDirectory,
 	});
-	return preparedGatewayImage !== undefined;
+	if (preparedGatewayImage === undefined) {
+		return undefined;
+	}
+	const managedGatewayBoot = managedGatewayBootProjectionForGatewayType(zone.gateway.type);
+	const expectedFingerprint = await resolveExpectedGatewayFingerprint(dependencies, {
+		buildConfigPath: gatewayImageProfile.buildConfig,
+		...(preparedGatewayImage.fingerprintInput === undefined
+			? {}
+			: { fingerprintInput: preparedGatewayImage.fingerprintInput }),
+		...(managedGatewayBoot === undefined ? {} : { managedGatewayBoot }),
+	});
+	if (expectedFingerprint === undefined) {
+		return undefined;
+	}
+	if (preparedGatewayImage.fingerprint !== expectedFingerprint) {
+		return undefined;
+	}
+	return {
+		built: preparedGatewayImage.built,
+		fingerprint: preparedGatewayImage.fingerprint,
+		imageReference: preparedGatewayImage.imagePath,
+	};
+}
+
+export async function isGatewayImageCached(
+	systemConfig: LoadedSystemConfig,
+	zoneId: string,
+	dependencies: IsGatewayImageCachedDependencies = {},
+): Promise<boolean> {
+	return (await resolveCachedGatewayImage(systemConfig, zoneId, dependencies)) !== undefined;
 }
 
 async function requireGatewayImageCache(
 	systemConfig: LoadedSystemConfig,
 	zoneId: string,
 	dependencies: Pick<CliDependencies, 'isGatewayImageCached'>,
-): Promise<void> {
-	const cacheIsWarm =
-		(await dependencies.isGatewayImageCached?.(systemConfig, zoneId)) ??
-		(await isGatewayImageCached(systemConfig, zoneId));
-	if (cacheIsWarm) {
-		return;
+): Promise<ManagedVmImageBuildResult | undefined> {
+	if (dependencies.isGatewayImageCached !== undefined) {
+		if (await dependencies.isGatewayImageCached(systemConfig, zoneId)) {
+			return undefined;
+		}
+	} else {
+		const preparedImage = await resolveCachedGatewayImage(systemConfig, zoneId);
+		if (preparedImage !== undefined) {
+			return preparedImage;
+		}
 	}
 
 	throw new Error(
@@ -117,10 +189,19 @@ export function createControllerSubcommands(io: CliIo, dependencies: CliDependen
 					const systemConfig = await loadSystemConfigFromOption(config, dependencies);
 					const selectedZone = requireZone(systemConfig, zone);
 
-					await requireGatewayImageCache(systemConfig, selectedZone.id, dependencies);
+					const prebuiltImage = await requireGatewayImageCache(
+						systemConfig,
+						selectedZone.id,
+						dependencies,
+					);
 					const runTask = await createRunTask(io);
 					const runtime = await dependencies.startControllerRuntime(
 						{
+							...(prebuiltImage === undefined
+								? {}
+								: {
+										prebuiltGatewayImages: { [selectedZone.id]: prebuiltImage },
+									}),
 							systemConfig,
 							zoneIds: [selectedZone.id],
 						},

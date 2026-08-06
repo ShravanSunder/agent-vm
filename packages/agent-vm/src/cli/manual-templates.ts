@@ -119,6 +119,8 @@ There is one owner for each version decision.
 
 package.json owns which installed @agent-vm/* package version this deployment uses. Upgrade agent-vm by changing package.json and the lockfile, then run agent-vm manual update and agent-vm build from that installed package.
 
+controller start refuses a stale prepared Gateway image when its fingerprint does not match the currently installed agent-vm runtime and build inputs. Startup does not rebuild images automatically; run agent-vm build from the installed package, then retry controller start.
+
 The installed @agent-vm/agent-vm package owns managed-images.json. That manifest selects the managed GHCR base image tags and managed OpenClaw default version tested with that package. Deployment repos should not copy or edit managed-images.json.
 
 vm-images/.../overlay.jsonc owns deployment image additions. Use extraAptPackages for apt packages, copy for deployment files, runAfterBase for post-base commands, and packageOverrides only for deliberate image-local package pins such as a temporary @openclaw/discord rollback or an explicit undici floor. Do not restate the managed default package set in deployment overlays.

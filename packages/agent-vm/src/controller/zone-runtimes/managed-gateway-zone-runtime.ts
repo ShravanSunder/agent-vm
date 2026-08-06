@@ -85,6 +85,7 @@ export interface CreateManagedGatewayZoneRuntimeOptions {
 	readonly managedVmImages?: ManagedVmImageCapability | undefined;
 	readonly managedVmOwnedDirectories?: ManagedVmOwnedDirectoryCapability | undefined;
 	readonly now: () => number;
+	readonly initialPrebuiltImage?: ManagedVmImageBuildResult | undefined;
 	readonly onGatewayRuntimeAttachmentLost?: (transition: GatewayRuntimeAttachmentLost) => void;
 	readonly runtimeRecordTarget: ControllerManagedGatewayRuntimeRecordTarget;
 	readonly preflightGatewayZoneStart?: typeof preflightGatewayZoneStartDefault;
@@ -1162,7 +1163,9 @@ export function createManagedGatewayZoneRuntime(
 			assertGatewaySuccessorCreationAllowed();
 			return await startNow(
 				undefined,
-				{},
+				options.initialPrebuiltImage === undefined
+					? {}
+					: { prebuiltImage: options.initialPrebuiltImage },
 				{
 					operationId: createOperationId('start'),
 					operationTrigger: 'controller-start',

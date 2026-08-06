@@ -4,9 +4,11 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { computeFingerprintFromConfigPath } from '../../build/gondolin-image-builder.js';
 import { managedVmImageAssetFileNames } from '../../build/gondolin-managed-vm-build-tooling.js';
+import type { ManagedGatewayImageBootProjection } from '../../build/gondolin-managed-vm-build-tooling.js';
 import { writePreparedManagedVmImage } from '../../build/prepared-gondolin-image-cache.js';
-import { createLoadedSystemConfig } from '../../config/system-config.js';
+import { createLoadedSystemConfig, type LoadedSystemConfig } from '../../config/system-config.js';
 import { isGatewayImageCached } from './controller-definition.js';
 
 const temporaryDirectories: string[] = [];
@@ -26,6 +28,125 @@ async function writeFakeImageAssets(imagePath: string): Promise<void> {
 	);
 }
 
+async function createGatewayImageCacheFixture(
+	fingerprint: string,
+	options: {
+		readonly gatewayType?: 'openclaw' | 'worker';
+		readonly preparedManagedGatewayBoot?: ManagedGatewayImageBootProjection;
+	} = {},
+): Promise<LoadedSystemConfig> {
+	const gatewayType = options.gatewayType ?? 'worker';
+	const gatewayConfiguration =
+		gatewayType === 'openclaw'
+			? {
+					type: 'openclaw' as const,
+					controlAuth: {
+						mode: 'token' as const,
+						secret: 'OPENCLAW_GATEWAY_TOKEN',
+					},
+				}
+			: { type: 'worker' as const };
+	const temporaryDirectoryPath = await createTemporaryDirectory();
+	const gatewayConfigDirectory = await createTemporaryDirectory();
+	const systemConfigPath = path.join(temporaryDirectoryPath, 'config', 'system.json');
+	const buildConfigPath = path.join(temporaryDirectoryPath, 'build-config.json');
+	const gatewayImageConfiguration = {
+		type: gatewayType,
+		buildConfig: buildConfigPath,
+	};
+	const cacheDir = path.join(temporaryDirectoryPath, 'cache');
+	const gatewayProfileCacheDirectory = path.join(cacheDir, 'gateway-images', 'worker');
+	const imagePath = path.join(gatewayProfileCacheDirectory, fingerprint);
+	await fs.mkdir(path.dirname(systemConfigPath), { recursive: true });
+	await fs.writeFile(
+		buildConfigPath,
+		JSON.stringify({ arch: 'aarch64', distro: 'alpine' }),
+		'utf8',
+	);
+	await writeFakeImageAssets(imagePath);
+	await writePreparedManagedVmImage({
+		buildConfigPath,
+		cacheDir: gatewayProfileCacheDirectory,
+		fingerprint,
+		fingerprintInput: {
+			dockerRootfsIdentity: {
+				architecture: 'arm64',
+				layers: ['sha256:rootfs-layer'],
+				os: 'linux',
+			},
+			schemaVersion: 1,
+		},
+		imagePath,
+		...(options.preparedManagedGatewayBoot === undefined
+			? {}
+			: { managedGatewayBoot: options.preparedManagedGatewayBoot }),
+	});
+
+	return createLoadedSystemConfig(
+		{
+			storageRootDir: temporaryDirectoryPath,
+			host: {
+				controllerPort: 18800,
+				projectNamespace: 'cache-test',
+			},
+			imageProfiles: {
+				gateways: {
+					worker: gatewayImageConfiguration,
+				},
+				toolVms: {
+					default: {
+						type: 'toolVm',
+						buildConfig: '/unused/tool-build-config.json',
+					},
+				},
+			},
+			tcpPool: {
+				basePort: 19000,
+				size: 5,
+			},
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					imageProfile: 'default',
+					memory: '1G',
+				},
+			},
+			zones: [
+				{
+					egressHosts: ['api.openai.com'].map((host) => ({
+						host,
+						audience: 'gateway' as const,
+					})),
+					gateway: {
+						...gatewayConfiguration,
+						imageProfile: 'worker',
+						cpus: 2,
+						config: path.join(gatewayConfigDirectory, 'gateway.json'),
+						memory: '2G',
+						port: 18791,
+					},
+					id: 'coding-agent',
+					secrets:
+						gatewayType === 'openclaw'
+							? {
+									OPENCLAW_GATEWAY_TOKEN: {
+										audience: 'gateway' as const,
+										envVar: 'OPENCLAW_GATEWAY_TOKEN',
+										injection: 'env' as const,
+										source: 'environment' as const,
+									},
+								}
+							: {},
+					defaultToolVmProfile: gatewayType === 'openclaw' ? 'standard' : undefined,
+					agentToolVmProfiles: gatewayType === 'openclaw' ? {} : undefined,
+					agents: gatewayType === 'openclaw' ? [{ id: 'coding-agent' }] : undefined,
+				},
+			],
+		},
+		{ systemConfigPath },
+	);
+}
+
 afterEach(async () => {
 	await Promise.all(
 		temporaryDirectories
@@ -36,85 +157,97 @@ afterEach(async () => {
 
 describe('isGatewayImageCached', () => {
 	it('accepts the build-prepared gateway image cache record', async () => {
-		const temporaryDirectoryPath = await createTemporaryDirectory();
-		const systemConfigPath = path.join(temporaryDirectoryPath, 'config', 'system.json');
-		const buildConfigPath = path.join(temporaryDirectoryPath, 'build-config.json');
-		const cacheDir = path.join(temporaryDirectoryPath, 'cache');
-		const gatewayProfileCacheDirectory = path.join(cacheDir, 'gateway-images', 'worker');
-		const imagePath = path.join(gatewayProfileCacheDirectory, 'docker-backed-fingerprint');
-		await fs.mkdir(path.dirname(systemConfigPath), { recursive: true });
-		await fs.writeFile(
-			buildConfigPath,
-			JSON.stringify({ arch: 'aarch64', distro: 'alpine' }),
-			'utf8',
-		);
+		const systemConfig = await createGatewayImageCacheFixture('docker-backed-fingerprint');
+
+		await expect(
+			isGatewayImageCached(systemConfig, 'coding-agent', {
+				computeManagedVmFingerprint: async () => 'docker-backed-fingerprint',
+			}),
+		).resolves.toBe(true);
+	});
+
+	it('rejects a prepared gateway image from a different runtime fingerprint', async () => {
+		const systemConfig = await createGatewayImageCacheFixture('previous-runtime-fingerprint');
+
+		await expect(
+			isGatewayImageCached(systemConfig, 'coding-agent', {
+				computeManagedVmFingerprint: async () => 'current-runtime-fingerprint',
+			}),
+		).resolves.toBe(false);
+	});
+
+	it('derives the managed Gateway boot projection from the current gateway type', async () => {
+		const systemConfig = await createGatewayImageCacheFixture('current-fingerprint', {
+			gatewayType: 'openclaw',
+			preparedManagedGatewayBoot: {
+				frameworkBootEntry: 'hermes-framework-service',
+				kind: 'managed-gateway-exact-two-role',
+			},
+		});
+		let observedManagedGatewayBoot: ManagedGatewayImageBootProjection | undefined;
+
+		await expect(
+			isGatewayImageCached(systemConfig, 'coding-agent', {
+				computeManagedVmFingerprint: async (options) => {
+					observedManagedGatewayBoot = options.managedGatewayBoot;
+					return 'current-fingerprint';
+				},
+			}),
+		).resolves.toBe(true);
+		expect(observedManagedGatewayBoot).toEqual({
+			frameworkBootEntry: 'openclaw-framework-service',
+			kind: 'managed-gateway-exact-two-role',
+		});
+	});
+
+	it('treats fingerprint computation failures as a cache miss', async () => {
+		const systemConfig = await createGatewayImageCacheFixture('current-fingerprint');
+
+		await expect(
+			isGatewayImageCached(systemConfig, 'coding-agent', {
+				computeManagedVmFingerprint: async () => {
+					throw new Error('build config unavailable');
+				},
+			}),
+		).resolves.toBe(false);
+	});
+
+	it('rejects a stale boot projection through the default fingerprint computation', async () => {
+		const systemConfig = await createGatewayImageCacheFixture('placeholder-fingerprint', {
+			gatewayType: 'openclaw',
+		});
+		const buildConfigPath = systemConfig.imageProfiles.gateways.worker?.buildConfig;
+		if (buildConfigPath === undefined) {
+			throw new Error('Expected gateway build config path.');
+		}
+		const cacheDir = path.join(systemConfig.cacheDir, 'gateway-images', 'worker');
+		const fingerprintInput = {
+			dockerRootfsIdentity: {
+				architecture: 'arm64',
+				layers: ['sha256:rootfs-layer'],
+				os: 'linux',
+			},
+			schemaVersion: 1,
+		};
+		const staleManagedGatewayBoot: ManagedGatewayImageBootProjection = {
+			frameworkBootEntry: 'hermes-framework-service',
+			kind: 'managed-gateway-exact-two-role',
+		};
+		const staleFingerprint = await computeFingerprintFromConfigPath(buildConfigPath, {
+			fingerprintInput,
+			managedGatewayBoot: staleManagedGatewayBoot,
+		});
+		const imagePath = path.join(cacheDir, staleFingerprint);
 		await writeFakeImageAssets(imagePath);
 		await writePreparedManagedVmImage({
 			buildConfigPath,
-			cacheDir: gatewayProfileCacheDirectory,
-			fingerprint: 'docker-backed-fingerprint',
-			fingerprintInput: {
-				dockerRootfsIdentity: {
-					architecture: 'arm64',
-					layers: ['sha256:rootfs-layer'],
-					os: 'linux',
-				},
-				schemaVersion: 1,
-			},
+			cacheDir,
+			fingerprint: staleFingerprint,
+			fingerprintInput,
 			imagePath,
+			managedGatewayBoot: staleManagedGatewayBoot,
 		});
 
-		const systemConfig = createLoadedSystemConfig(
-			{
-				storageRootDir: temporaryDirectoryPath,
-				host: {
-					controllerPort: 18800,
-					projectNamespace: 'cache-test',
-				},
-				imageProfiles: {
-					gateways: {
-						worker: {
-							type: 'worker',
-							buildConfig: buildConfigPath,
-						},
-					},
-					toolVms: {
-						default: {
-							type: 'toolVm',
-							buildConfig: '/unused/tool-build-config.json',
-						},
-					},
-				},
-				tcpPool: {
-					basePort: 19000,
-					size: 5,
-				},
-				toolVmProfiles: {
-					standard: {
-						cpus: 1,
-						imageProfile: 'default',
-						memory: '1G',
-					},
-				},
-				zones: [
-					{
-						egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),
-						gateway: {
-							type: 'worker',
-							imageProfile: 'worker',
-							cpus: 2,
-							config: '/tmp/gateway.json',
-							memory: '2G',
-							port: 18791,
-						},
-						id: 'coding-agent',
-						secrets: {},
-					},
-				],
-			},
-			{ systemConfigPath },
-		);
-
-		await expect(isGatewayImageCached(systemConfig, 'coding-agent')).resolves.toBe(true);
+		await expect(isGatewayImageCached(systemConfig, 'coding-agent')).resolves.toBe(false);
 	});
 });
