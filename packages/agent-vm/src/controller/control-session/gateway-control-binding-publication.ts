@@ -26,14 +26,22 @@ export interface GatewayControlToolVmBindingCreator {
 export interface GatewayControlBindingPublicationCoordinatorOptions {
 	readonly createBinding: GatewayControlToolVmBindingCreator['createBinding'];
 	readonly now?: () => number;
-	readonly publish: (publication: GatewayControlToolVmBindingPublication) => Promise<void>;
+	readonly publish: (
+		publication: GatewayControlToolVmBindingPublication,
+		options?: { readonly sourceCommandExpiresAtMs: number },
+	) => Promise<void>;
 	readonly readCurrentAuthority: () => GatewayControlToolVmBindingPublicationAuthority | undefined;
 }
+
+export type GatewayControlBindingRetirementPublicationResult =
+	| 'not-tracked-on-current-connection'
+	| 'publication-applied';
 
 export interface GatewayControlBindingPublicationCoordinator {
 	readonly requestBinding: (request: {
 		readonly authority: GatewayControlToolVmBindingPublicationAuthority;
 		readonly callerContext: GatewayControlTrustedCallerContext;
+		readonly expiresAtMs: number;
 		readonly gateway: GatewayEpochIdentity;
 		readonly payload: GatewayControlToolVmBindingRequestPayload;
 	}) => Promise<GatewayControlToolVmBindingRequestResult>;
@@ -44,7 +52,7 @@ export interface GatewayControlBindingPublicationCoordinator {
 			GatewayControlToolVmBindingPublication,
 			{ readonly kind: 'retired' }
 		>['reason'];
-	}) => Promise<void>;
+	}) => Promise<GatewayControlBindingRetirementPublicationResult>;
 }
 
 interface InFlightBindingPublication {
@@ -102,7 +110,8 @@ export function createGatewayControlBindingPublicationCoordinator(
 ): GatewayControlBindingPublicationCoordinator {
 	const now = options.now ?? Date.now;
 	const inFlightByPrincipal = new Map<string, InFlightBindingPublication>();
-	const currentBindingByPrincipal = new Map<string, GatewayControlToolVmBindingIdentity>();
+	const trackedBindingByPrincipal = new Map<string, GatewayControlToolVmBindingIdentity>();
+	let trackedPublicationAuthority: GatewayControlToolVmBindingPublicationAuthority | undefined;
 	let lastPublicationObservedAtMs = 0;
 
 	const nextPublicationObservedAtMs = (): number => {
@@ -117,6 +126,39 @@ export function createGatewayControlBindingPublicationCoordinator(
 		GatewayControlToolVmBindingPublicationAuthoritySchema.parse(authority);
 		if (!authoritiesEqual(options.readCurrentAuthority(), authority)) {
 			throw new Error('Gateway Tool VM binding publication authority is stale.');
+		}
+	};
+
+	const assertCurrentCommand = (request: {
+		readonly authority: GatewayControlToolVmBindingPublicationAuthority;
+		readonly expiresAtMs: number;
+	}): void => {
+		if (!Number.isSafeInteger(request.expiresAtMs) || request.expiresAtMs <= 0) {
+			throw new TypeError('Gateway Tool VM binding command expiry must be a positive integer.');
+		}
+		if (request.expiresAtMs <= now()) {
+			throw new Error('Gateway Tool VM binding command expired.');
+		}
+		assertCurrentAuthority(request.authority);
+	};
+
+	const synchronizeTrackedPublicationAuthority = (
+		authority: GatewayControlToolVmBindingPublicationAuthority,
+	): void => {
+		if (authoritiesEqual(trackedPublicationAuthority, authority)) return;
+		trackedBindingByPrincipal.clear();
+		trackedPublicationAuthority = authority;
+	};
+
+	const deleteTrackedBindingIfExact = (
+		principalKey: string,
+		binding: GatewayControlToolVmBindingIdentity,
+		authority: GatewayControlToolVmBindingPublicationAuthority,
+	): void => {
+		if (!authoritiesEqual(trackedPublicationAuthority, authority)) return;
+		const trackedBinding = trackedBindingByPrincipal.get(principalKey);
+		if (trackedBinding !== undefined && bindingsHaveSameIdentity(trackedBinding, binding)) {
+			trackedBindingByPrincipal.delete(principalKey);
 		}
 	};
 
@@ -143,7 +185,8 @@ export function createGatewayControlBindingPublicationCoordinator(
 
 	return {
 		requestBinding: async (request) => {
-			assertCurrentAuthority(request.authority);
+			assertCurrentCommand(request);
+			synchronizeTrackedPublicationAuthority(request.authority);
 			const principalKey = request.callerContext.stablePrincipal;
 			const existing = inFlightByPrincipal.get(principalKey);
 			if (existing !== undefined && authoritiesEqual(existing.authority, request.authority)) {
@@ -157,7 +200,7 @@ export function createGatewayControlBindingPublicationCoordinator(
 						payload: request.payload,
 					}),
 				);
-				assertCurrentAuthority(request.authority);
+				assertCurrentCommand(request);
 				if (
 					binding.agentId !== request.callerContext.agentId ||
 					binding.profileAssignmentRevision !==
@@ -168,7 +211,7 @@ export function createGatewayControlBindingPublicationCoordinator(
 					throw new Error('Controller-created Tool VM binding does not match its requested agent.');
 				}
 				const currentIdentity = bindingIdentity(binding);
-				const previous = currentBindingByPrincipal.get(principalKey);
+				const previous = trackedBindingByPrincipal.get(principalKey);
 				if (
 					previous !== undefined &&
 					(previous.leaseId !== binding.leaseId ||
@@ -180,17 +223,25 @@ export function createGatewayControlBindingPublicationCoordinator(
 						binding: previous,
 						reason: 'replaced',
 					});
+					assertCurrentCommand(request);
 				}
-				await options.publish(
-					GatewayControlToolVmBindingPublicationSchema.parse({
-						authority: request.authority,
-						binding,
-						kind: 'current',
-						observedAtMs: nextPublicationObservedAtMs(),
-					}),
-				);
-				assertCurrentAuthority(request.authority);
-				currentBindingByPrincipal.set(principalKey, currentIdentity);
+				const currentPublication = GatewayControlToolVmBindingPublicationSchema.parse({
+					authority: request.authority,
+					binding,
+					kind: 'current',
+					observedAtMs: nextPublicationObservedAtMs(),
+				});
+				trackedBindingByPrincipal.set(principalKey, currentIdentity);
+				try {
+					await options.publish(currentPublication, {
+						sourceCommandExpiresAtMs: request.expiresAtMs,
+					});
+					assertCurrentAuthority(request.authority);
+				} catch (error) {
+					deleteTrackedBindingIfExact(principalKey, currentIdentity, request.authority);
+					throw error;
+				}
+				assertCurrentCommand(request);
 				return {
 					agentId: binding.agentId,
 					stablePrincipal: binding.stablePrincipal,
@@ -210,19 +261,16 @@ export function createGatewayControlBindingPublicationCoordinator(
 			}
 		},
 		retireBinding: async (request) => {
-			const currentEntry = [...currentBindingByPrincipal.entries()].find(
+			assertCurrentAuthority(request.authority);
+			synchronizeTrackedPublicationAuthority(request.authority);
+			const currentEntry = [...trackedBindingByPrincipal.entries()].find(
 				([, binding]) => binding.leaseId === request.leaseId,
 			);
-			if (currentEntry === undefined) return;
+			if (currentEntry === undefined) return 'not-tracked-on-current-connection';
 			const [principalKey, current] = currentEntry;
 			await publishRetirement({ ...request, binding: current });
-			const currentAfterPublication = currentBindingByPrincipal.get(principalKey);
-			if (
-				currentAfterPublication !== undefined &&
-				bindingsHaveSameIdentity(currentAfterPublication, current)
-			) {
-				currentBindingByPrincipal.delete(principalKey);
-			}
+			deleteTrackedBindingIfExact(principalKey, current, request.authority);
+			return 'publication-applied';
 		},
 	};
 }

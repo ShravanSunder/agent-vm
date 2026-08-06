@@ -91,7 +91,9 @@ describe('Gateway control binding publication handler', () => {
 		);
 
 		// Assert
-		expect(applyPublication).toHaveBeenCalledExactlyOnceWith(publication);
+		expect(applyPublication).toHaveBeenCalledExactlyOnceWith(publication, {
+			expiresAtMs: 10_100,
+		});
 		expect(result).toMatchObject({
 			operation: 'tool_vm_binding_publish',
 			payload: { result: 'ok' },

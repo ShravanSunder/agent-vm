@@ -158,6 +158,10 @@ export interface ToolVmLeaseRetirementProgress {
 	readonly completion: Promise<void>;
 }
 
+interface ObservedToolVmLeaseRetirementProgress extends ToolVmLeaseRetirementProgress {
+	readonly retirementAcknowledgement: Promise<void>;
+}
+
 export interface ToolVmProcessEpochLossBarrier {
 	readonly affectedLeaseIds: readonly string[];
 	destroyAffectedLeases(): Promise<void>;
@@ -246,7 +250,9 @@ export interface LeaseManager {
 		request: StartToolVmActiveUseRequest &
 			ToolVmLeaseActiveUseExecutionProof & { readonly authority: ToolVmLeaseRequestAuthority },
 	): StartToolVmActiveUseResponse | undefined;
-	subscribeLeaseRetirement(listener: (event: ToolVmLeaseRetirementEvent) => void): () => void;
+	subscribeLeaseRetirement(
+		listener: (event: ToolVmLeaseRetirementEvent) => Promise<void>,
+	): () => void;
 }
 
 export class AgentLeaseCompatibilityConflictError extends Error {
@@ -513,7 +519,7 @@ export function createLeaseManager(options: {
 	readonly toolVmUsePolicy?: ToolVmUsePolicy;
 	readonly writeToolVmRuntimeRecord?: typeof writeToolVmRuntimeRecord;
 }): LeaseManager {
-	const leaseRetirementListeners = new Set<(event: ToolVmLeaseRetirementEvent) => void>();
+	const leaseRetirementListeners = new Set<(event: ToolVmLeaseRetirementEvent) => Promise<void>>();
 	const agentLeaseOperationLock = createAgentLeaseOperationLock();
 	const toolVmUsePolicy = options.toolVmUsePolicy ?? defaultToolVmUsePolicy;
 	assertValidToolVmUsePolicy(toolVmUsePolicy);
@@ -527,7 +533,7 @@ export function createLeaseManager(options: {
 	const lostProcessEpochsByGateway = new Map<string, Set<string>>();
 	const retirementProgressByCompletion = new WeakMap<
 		Promise<unknown>,
-		ToolVmLeaseRetirementProgress
+		ObservedToolVmLeaseRetirementProgress
 	>();
 
 	function markProcessEpochLost(gateway: GatewayEpochIdentity, processEpoch: string): void {
@@ -595,10 +601,8 @@ export function createLeaseManager(options: {
 		return authorityRuntime.activeUseCount(leaseId);
 	}
 
-	function notifyLeaseRetired(event: ToolVmLeaseRetirementEvent): void {
-		for (const listener of leaseRetirementListeners) {
-			listener(event);
-		}
+	async function notifyLeaseRetired(event: ToolVmLeaseRetirementEvent): Promise<void> {
+		await Promise.all([...leaseRetirementListeners].map(async (listener) => await listener(event)));
 	}
 
 	function isLeaseExpired(lease: Lease): boolean {
@@ -671,12 +675,19 @@ export function createLeaseManager(options: {
 		};
 		readonly notifyRetirement?: ToolVmLeaseRetirementReason;
 		readonly retiredLeaseId: string;
-	}): ToolVmLeaseRetirementProgress {
+	}): ObservedToolVmLeaseRetirementProgress {
 		const { cleanupContext, destruction } = optionsToObserve;
 		const existingProgress = retirementProgressByCompletion.get(destruction.completion);
 		if (existingProgress !== undefined) {
 			return existingProgress;
 		}
+		const retirementAcknowledgement =
+			optionsToObserve.notifyRetirement === undefined
+				? Promise.resolve()
+				: notifyLeaseRetired({
+						leaseId: optionsToObserve.retiredLeaseId,
+						reason: optionsToObserve.notifyRetirement,
+					});
 		const accessFenced = destruction.accessFenced.catch((error: unknown) => {
 			const membershipState = cleanupContext.membership?.snapshot().state;
 			if (
@@ -693,12 +704,6 @@ export function createLeaseManager(options: {
 		const completion = destruction.completion.then(
 			() => {
 				releaseTcpSlotAfterCompleteDestruction(cleanupContext.tcpSlot);
-				if (optionsToObserve.notifyRetirement !== undefined) {
-					notifyLeaseRetired({
-						leaseId: optionsToObserve.retiredLeaseId,
-						reason: optionsToObserve.notifyRetirement,
-					});
-				}
 			},
 			(error: unknown) => {
 				const membershipState = cleanupContext.membership?.snapshot().state;
@@ -716,7 +721,12 @@ export function createLeaseManager(options: {
 		);
 		void accessFenced.catch(() => {});
 		void completion.catch(() => {});
-		const progress = { accessFenced, completion } satisfies ToolVmLeaseRetirementProgress;
+		void retirementAcknowledgement.catch(() => {});
+		const progress = {
+			accessFenced,
+			completion,
+			retirementAcknowledgement,
+		} satisfies ObservedToolVmLeaseRetirementProgress;
 		retirementProgressByCompletion.set(destruction.completion, progress);
 		return progress;
 	}
@@ -726,7 +736,7 @@ export function createLeaseManager(options: {
 		readonly cleanupContext: ToolVmLeaseCleanupContext;
 		readonly notifyRetirement?: ToolVmLeaseRetirementReason;
 		readonly reason: string;
-	}): ToolVmLeaseRetirementProgress {
+	}): ObservedToolVmLeaseRetirementProgress {
 		const destruction = authorityRuntime.destroyExact({
 			authority: optionsToDestroy.authority,
 			cleanup: async () => await completeToolVmResourceCleanup(optionsToDestroy.cleanupContext),
@@ -811,7 +821,7 @@ export function createLeaseManager(options: {
 	async function evictLease(
 		lease: Lease,
 		reason: ToolVmLeaseRetirementReason,
-	): Promise<ToolVmLeaseRetirementProgress | undefined> {
+	): Promise<ObservedToolVmLeaseRetirementProgress | undefined> {
 		const authority = authorityRuntime.authorityForLease(lease.id);
 		if (authority === undefined) {
 			return undefined;
@@ -1663,7 +1673,7 @@ export function createLeaseManager(options: {
 			if (retainedAuthority === undefined) {
 				return;
 			}
-			await agentLeaseOperationLock.runExclusive(
+			const retirement = await agentLeaseOperationLock.runExclusive(
 				agentLeaseOperationIdentity({
 					agentId: retainedAuthority.principal.agentId,
 					gateway: retainedAuthority.gateway,
@@ -1671,11 +1681,11 @@ export function createLeaseManager(options: {
 				async () => {
 					const currentLease = authorityRuntime.getRetainedLease(leaseId);
 					if (!currentLease) {
-						return;
+						return undefined;
 					}
 					const authority = authorityRuntime.authorityForLease(leaseId);
 					if (authority === undefined) {
-						return;
+						return undefined;
 					}
 					const cleanupContext = authorityRuntime.cleanupContextForAuthority(authority);
 					if (cleanupContext === undefined) {
@@ -1704,29 +1714,40 @@ export function createLeaseManager(options: {
 						reason: 'released',
 					});
 					if (admission.kind === 'skip-recently-used') {
-						return;
+						return undefined;
 					}
 					if (admission.kind === 'blocked-active-use') {
 						throw new LeaseActiveUseConflictError(
 							`Tool VM lease '${leaseId}' is still in active use.`,
 						);
 					}
-					const retirement = observeToolVmCleanupContextRetirement({
+					const admittedRetirement = observeToolVmCleanupContextRetirement({
 						cleanupContext,
 						destruction: admission,
 						notifyRetirement: 'released',
 						retiredLeaseId: currentLease.id,
 					});
 					try {
-						await retirement.completion;
+						await admittedRetirement.accessFenced;
 					} catch (error) {
 						writeLeaseManagerWarning(
 							`failed to close released lease '${currentLease.id}' in zone '${currentLease.zoneId}': ${formatLeaseManagerError(error)}. Quarantining tcp slot ${currentLease.tcpSlot} and preserving runtime record for exact retry.`,
 						);
 						throw error;
 					}
+					return admittedRetirement;
 				},
 			);
+			if (retirement === undefined) return;
+			try {
+				await retirement.completion;
+			} catch (error) {
+				writeLeaseManagerWarning(
+					`failed to close released lease '${lease.id}' in zone '${lease.zoneId}': ${formatLeaseManagerError(error)}. Quarantining tcp slot ${lease.tcpSlot} and preserving runtime record for exact retry.`,
+				);
+				throw error;
+			}
+			await retirement.retirementAcknowledgement;
 		},
 		startActiveUse(leaseId, request): StartToolVmActiveUseResponse | undefined {
 			const lease = authorityRuntime.getLease(leaseId);

@@ -5,6 +5,7 @@ import path from 'node:path';
 import type {
 	ManagedVm,
 	ManagedVmExactProcessTerminationCapability,
+	ManagedVmHostProcessIdentity,
 	ManagedVmSshAccess,
 } from '@agent-vm/managed-vm';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -27,6 +28,7 @@ import {
 	type ToolVmLeaseCreateOptions,
 	type ToolVmLeaseActiveUseExecutionProof,
 	type ToolVmLeaseRequestAuthority,
+	type ToolVmLeaseRetirementEvent,
 	type ToolVmProvisioningHandle,
 } from './lease-manager.js';
 import { createTcpPool, type TcpPool } from './tcp-pool.js';
@@ -147,6 +149,7 @@ function createHarness(
 		>;
 		readonly managedVmExactProcessTermination?: ManagedVmExactProcessTerminationCapability;
 		readonly now?: number;
+		readonly onMembershipDestroyed?: () => void;
 		readonly prepareLeasePersistentState?: NonNullable<
 			Parameters<typeof createLeaseManager>[0]['prepareLeasePersistentState']
 		>;
@@ -189,6 +192,7 @@ function createHarness(
 				recordDestroyed(): void {
 					events.push(`membership-destroyed:${admissionOptions.agentId}`);
 					membership.recordDestroyed();
+					options.onMembershipDestroyed?.();
 				},
 				recordUnavailable(): void {
 					events.push(`membership-unavailable:${admissionOptions.agentId}`);
@@ -496,6 +500,93 @@ describe('createLeaseManager stock Gondolin lifecycle', () => {
 		expect(harness.tcpPool.allocate()).toBe(0);
 	});
 
+	it('starts async retirement acknowledgement after logical fencing without delaying exact termination', async () => {
+		// Arrange
+		const retainedCleanup = Promise.withResolvers<void>();
+		const retainedCleanupStarted = Promise.withResolvers<void>();
+		const retirementAcknowledgement = Promise.withResolvers<void>();
+		const exactProcessIdentities: ManagedVmHostProcessIdentity[] = [];
+		const retirementEvents: ToolVmLeaseRetirementEvent[] = [];
+		let predecessorRuntime: FakeVmRuntime | undefined;
+		const harness = createHarness({
+			createManagedVm: async ({ events, id, pid, runtime }) => {
+				predecessorRuntime = runtime;
+				const vm = createManagedVmStub({ events, id, pid, runtime });
+				return {
+					...vm,
+					async close(): Promise<void> {
+						retainedCleanupStarted.resolve();
+						await retainedCleanup.promise;
+						await vm.close();
+					},
+				};
+			},
+			managedVmExactProcessTermination: {
+				terminateRecordedHostProcess: async ({ identity }) => {
+					exactProcessIdentities.push(identity);
+					if (predecessorRuntime !== undefined) predecessorRuntime.alive = false;
+					return { hostProcessId: identity.hostProcessId, kind: 'terminated' };
+				},
+			},
+		});
+		harness.leaseManager.subscribeLeaseRetirement(async (event) => {
+			harness.events.push('retirement-notification-started');
+			retirementEvents.push(event);
+			await retirementAcknowledgement.promise;
+		});
+		const lease = await harness.leaseManager.createLease(createLeaseOptions());
+		harness.events.length = 0;
+
+		// Act
+		const release = harness.leaseManager.releaseLease(lease.id);
+		await retainedCleanupStarted.promise;
+
+		// Assert
+		expect(exactProcessIdentities).toEqual([
+			{
+				command: 'qemu-system-aarch64 agent-vm',
+				hostProcessId: 12_001,
+				processStartIdentity: 'Fri May 22 10:00:00 2026',
+				vmId: 'tool-vm-1',
+			},
+		]);
+		expect(retirementEvents).toEqual([{ leaseId: lease.id, reason: 'released' }]);
+		expect(harness.events.indexOf('membership-destroying:beta')).toBeGreaterThanOrEqual(0);
+		expect(harness.events.indexOf('retirement-notification-started')).toBeGreaterThan(
+			harness.events.indexOf('membership-destroying:beta'),
+		);
+		expect(harness.createManagedVm).toHaveBeenCalledOnce();
+
+		// Cleanup
+		retainedCleanup.resolve();
+		retirementAcknowledgement.resolve();
+		await release;
+	});
+
+	it('propagates an async retirement acknowledgement failure after retained cleanup', async () => {
+		// Arrange
+		const acknowledgementFailure = new Error('retirement acknowledgement failed');
+		const retirementAcknowledgement = Promise.withResolvers<void>();
+		void retirementAcknowledgement.promise.catch(() => {});
+		const retirementAcknowledgementStarted = Promise.withResolvers<void>();
+		const harness = createHarness();
+		harness.leaseManager.subscribeLeaseRetirement(() => {
+			retirementAcknowledgementStarted.resolve();
+			return retirementAcknowledgement.promise;
+		});
+		const lease = await harness.leaseManager.createLease(createLeaseOptions());
+
+		// Act
+		const release = harness.leaseManager.releaseLease(lease.id);
+		await retirementAcknowledgementStarted.promise;
+		retirementAcknowledgement.reject(acknowledgementFailure);
+
+		// Assert
+		await expect(release).rejects.toBe(acknowledgementFailure);
+		expect(harness.leaseManager.peekLease(lease.id)).toBeUndefined();
+		expect(harness.tcpPool.allocate()).toBe(0);
+	});
+
 	it('preserves cleanup debt without restoring predecessor authority after close failure', async () => {
 		const deleteRuntimeRecord = vi.fn(async () => {});
 		const harness = createHarness({
@@ -574,7 +665,7 @@ describe('createLeaseManager stock Gondolin lifecycle', () => {
 		expect(harness.tcpPool.isQuarantined(lease.tcpSlot)).toBe(false);
 	});
 
-	it('boots a successor while exact predecessor retirement is still in progress', async () => {
+	it('boots a provisional successor but blocks its admission while predecessor absence is unproven', async () => {
 		// Arrange
 		const releaseTerminationWait = Promise.withResolvers<void>();
 		const rolloverOrder: string[] = [];
@@ -1350,40 +1441,64 @@ describe('createLeaseManager stock Gondolin lifecycle', () => {
 		expect(harness.events).not.toContain('ssh-close:tool-vm-1');
 	});
 
-	it('serializes release with same-agent replacement creation', async () => {
-		let releaseSshClose: (() => void) | undefined;
-		const sshCloseGate = new Promise<void>((resolve) => {
-			releaseSshClose = resolve;
-		});
+	it('releases the same-agent lock after exact absence while cleanup and acknowledgement remain held', async () => {
+		// Arrange
+		const retainedCleanup = Promise.withResolvers<void>();
+		const retainedCleanupStarted = Promise.withResolvers<void>();
+		const membershipDestroyed = Promise.withResolvers<void>();
+		const retirementAcknowledgement = Promise.withResolvers<void>();
+		const retirementEvents: ToolVmLeaseRetirementEvent[] = [];
 		const harness = createHarness({
 			createManagedVm: async ({ events, id, pid, runtime }) => {
 				const vm = createManagedVmStub({ events, id, pid, runtime });
+				if (id !== 'tool-vm-1') return vm;
 				return {
 					...vm,
-					async enableSsh(enableOptions): Promise<ManagedVmSshAccess> {
-						const access = await vm.enableSsh(enableOptions);
-						return {
-							...access,
-							async close(): Promise<void> {
-								await sshCloseGate;
-								await access.close();
-							},
-						};
+					async close(): Promise<void> {
+						retainedCleanupStarted.resolve();
+						await retainedCleanup.promise;
+						await vm.close();
 					},
 				};
 			},
+			onMembershipDestroyed: () => membershipDestroyed.resolve(),
+		});
+		harness.leaseManager.subscribeLeaseRetirement(async (event) => {
+			retirementEvents.push(event);
+			await retirementAcknowledgement.promise;
 		});
 		const first = await harness.leaseManager.createLease(createLeaseOptions());
-		const release = harness.leaseManager.releaseLease(first.id);
-		const replacement = harness.leaseManager.createLease(createLeaseOptions());
-		await Promise.resolve();
-		expect(harness.createManagedVm).toHaveBeenCalledOnce();
-		releaseSshClose?.();
-		await release;
+		let releaseSettled = false;
 
+		// Act
+		const release = harness.leaseManager.releaseLease(first.id);
+		void release.then(
+			() => {
+				releaseSettled = true;
+			},
+			() => {
+				releaseSettled = true;
+			},
+		);
+		await retainedCleanupStarted.promise;
+		const replacement = harness.leaseManager.createLease(createLeaseOptions());
 		const second = await replacement;
+
+		// Assert
 		expect(second.id).not.toBe(first.id);
 		expect(harness.createManagedVm).toHaveBeenCalledTimes(2);
+		expect(retirementEvents).toEqual([{ leaseId: first.id, reason: 'released' }]);
+		expect(releaseSettled).toBe(false);
+		expect(harness.leaseManager.getCurrentLeaseBinding(second.id)).toBeDefined();
+
+		// Cleanup and final assertion
+		retainedCleanup.resolve();
+		await membershipDestroyed.promise;
+		expect(harness.events).toContain('membership-destroyed:beta');
+		expect(releaseSettled).toBe(false);
+		retirementAcknowledgement.resolve();
+		await release;
+		expect(releaseSettled).toBe(true);
 	});
 
 	it('rejects new active work after release fencing begins', async () => {

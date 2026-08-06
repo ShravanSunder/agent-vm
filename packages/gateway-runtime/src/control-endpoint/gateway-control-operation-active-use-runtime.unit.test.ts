@@ -611,6 +611,46 @@ describe('Gateway control operation active-use runtime', () => {
 		expect(fixture.command.requests).toHaveLength(1);
 	});
 
+	it('does not reuse a pending binding request across accepted control sessions', async () => {
+		// Arrange
+		const firstRegistrationStarted = deferred<void>();
+		const firstRegistration = deferred<GatewayControlRegisteredCallerContext>();
+		const secondRegistration = deferred<GatewayControlRegisteredCallerContext>();
+		let registrationIndex = 0;
+		const fixture = createRuntimeFixture({
+			callerRegistration: async () => {
+				const isFirstRegistration = registrationIndex++ === 0;
+				if (isFirstRegistration) firstRegistrationStarted.resolve(undefined);
+				const registration = isFirstRegistration ? firstRegistration : secondRegistration;
+				return await registration.promise;
+			},
+			ready: false,
+			responseSession: sessionB,
+		});
+		const registeredContext: GatewayControlRegisteredCallerContext = {
+			admissionPrincipal: stablePrincipalA,
+			callerContextId: '55555555-5555-4555-8555-555555555555',
+		};
+
+		// Act
+		const first = fixture.runtime.acquisitionPort.acquire({ trustedContext: trustedContextA });
+		await firstRegistrationStarted.promise;
+		fixture.control.setSession(sessionB);
+		const second = fixture.runtime.acquisitionPort.acquire({ trustedContext: trustedContextA });
+		firstRegistration.resolve(registeredContext);
+		secondRegistration.resolve(registeredContext);
+		const results = await Promise.all([first, second]);
+
+		// Assert
+		expect(results).toEqual([
+			expect.objectContaining({ kind: 'not-bound' }),
+			expect.objectContaining({ kind: 'not-bound' }),
+		]);
+		expect(fixture.callerRegister).toHaveBeenCalledTimes(2);
+		expect(fixture.command.requests).toHaveLength(1);
+		expect(fixture.command.requests[0]?.message.operation).toBe('tool_vm_binding_request');
+	});
+
 	it('ends active use while preserving terminal registry and operation authority', async () => {
 		// Arrange
 		const fixture = createRuntimeFixture();

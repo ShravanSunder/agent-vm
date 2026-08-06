@@ -93,7 +93,7 @@ export interface GatewayControlLeaseRpcControllerOptions {
 
 export interface GatewayControlBindingPublicationSource extends GatewayControlToolVmBindingCreator {
 	readonly subscribeBindingRetirement: (
-		listener: (event: ToolVmLeaseRetirementEvent) => void,
+		listener: (event: ToolVmLeaseRetirementEvent) => Promise<void>,
 	) => () => void;
 }
 

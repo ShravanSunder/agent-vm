@@ -2341,7 +2341,10 @@ async function startGatewayZoneImplementation(
 				? undefined
 				: createGatewayControlBindingPublicationCoordinator({
 						createBinding: options.gatewayControlBindingPublicationSource.createBinding,
-						publish: async (publication: GatewayControlToolVmBindingPublication) => {
+						publish: async (
+							publication: GatewayControlToolVmBindingPublication,
+							publicationOptions?: { readonly sourceCommandExpiresAtMs: number },
+						) => {
 							const controlSession = activeControlSession;
 							if (controlSession === undefined) {
 								throw new Error('Gateway control binding publication has no active session.');
@@ -2362,9 +2365,11 @@ async function startGatewayZoneImplementation(
 										createdAtMs: publication.observedAtMs,
 										deliveryPolicy: gatewayControlDeliveryPolicyByOperation.tool_vm_binding_publish,
 										domain: 'gateway_control',
-										expiresAtMs:
+										expiresAtMs: Math.min(
+											publicationOptions?.sourceCommandExpiresAtMs ?? Number.MAX_SAFE_INTEGER,
 											publication.observedAtMs +
-											gatewayControlCommandExecutionTimeoutMsByOperation.tool_vm_binding_publish,
+												gatewayControlCommandExecutionTimeoutMsByOperation.tool_vm_binding_publish,
+										),
 										idempotencyKey: [
 											'tool-vm-binding-publication',
 											publication.kind,
@@ -2467,16 +2472,21 @@ async function startGatewayZoneImplementation(
 			options.gatewayControlBindingPublicationSource !== undefined
 		) {
 			unsubscribeBindingRetirements =
-				options.gatewayControlBindingPublicationSource.subscribeBindingRetirement((event) => {
+				options.gatewayControlBindingPublicationSource.subscribeBindingRetirement(async (event) => {
 					const authority = currentBindingPublicationAuthority;
 					if (authority === undefined) return;
-					void bindingPublication
-						.retireBinding({ authority, leaseId: event.leaseId, reason: event.reason })
-						.catch((error: unknown) => {
-							options.writeLog?.(
-								`Gateway Tool VM binding retirement publication failed for zone '${zone.id}': ${error instanceof Error ? error.message : 'unknown error'}.`,
-							);
+					try {
+						await bindingPublication.retireBinding({
+							authority,
+							leaseId: event.leaseId,
+							reason: event.reason,
 						});
+					} catch (error) {
+						options.writeLog?.(
+							`Gateway Tool VM binding retirement publication failed for lease '${event.leaseId}' (reason '${event.reason}') in zone '${zone.id}': ${error instanceof Error ? error.message : 'unknown error'}.`,
+						);
+						throw error;
+					}
 				});
 		}
 		try {

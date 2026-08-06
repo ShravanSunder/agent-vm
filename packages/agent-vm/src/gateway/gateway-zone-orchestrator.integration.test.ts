@@ -5877,6 +5877,7 @@ describe('startGatewayZone', () => {
 		const loggedMessages: string[] = [];
 		const controlSessionClose = vi.fn();
 		const retirementPublicationObserved = Promise.withResolvers<void>();
+		const retirementPublicationAcknowledgement = Promise.withResolvers<void>();
 		const emitApplicationMessage = vi.fn(
 			async (envelope: ControlEnvelope, _identity: unknown, payload: unknown) => {
 				const message = GatewayControlRpcMessageSchema.parse(payload);
@@ -5886,6 +5887,7 @@ describe('startGatewayZone', () => {
 					message.payload.kind === 'retired'
 				) {
 					retirementPublicationObserved.resolve();
+					await retirementPublicationAcknowledgement.promise;
 				}
 				return GatewayControlRpcCommandResultMessageSchema.parse({
 					kind: 'command_result',
@@ -6274,6 +6276,7 @@ describe('startGatewayZone', () => {
 		const createEnvelope = (input: {
 			readonly commandId: string;
 			readonly deliveryPolicy: 'critical_idempotent' | 'single_use_critical';
+			readonly expiresAtMs?: number;
 			readonly idempotencyKey: string;
 			readonly messageId: string;
 			readonly operation:
@@ -6290,7 +6293,7 @@ describe('startGatewayZone', () => {
 			createdAtMs: semanticCommandCreatedAtMs,
 			deliveryPolicy: input.deliveryPolicy,
 			domain: 'gateway_control',
-			expiresAtMs: semanticCommandCreatedAtMs + 60_000,
+			expiresAtMs: input.expiresAtMs ?? semanticCommandCreatedAtMs + 60_000,
 			idempotencyKey: input.idempotencyKey,
 			kind: 'command',
 			messageId: input.messageId,
@@ -6375,12 +6378,14 @@ describe('startGatewayZone', () => {
 			},
 			processEpoch: connectedOptions.material.processEpoch,
 		});
+		const bindingRequestExpiresAtMs = semanticCommandCreatedAtMs + 5_000;
 		const bindingRequestResult = GatewayControlRpcCommandResultMessageSchema.parse(
 			await connectedDispatcher.dispatch({
 				attachmentGeneration: 1,
 				envelope: createEnvelope({
 					commandId: '12121212-1212-4212-8212-121212121212',
 					deliveryPolicy: 'critical_idempotent',
+					expiresAtMs: bindingRequestExpiresAtMs,
 					idempotencyKey: 'tool-vm-binding-request',
 					messageId: '13131313-1313-4313-8313-131313131313',
 					operation: 'tool_vm_binding_request',
@@ -6402,6 +6407,7 @@ describe('startGatewayZone', () => {
 		expect(emitApplicationMessage).toHaveBeenCalledWith(
 			expect.objectContaining({
 				bootId: connectedOptions.material.processEpoch,
+				expiresAtMs: bindingRequestExpiresAtMs,
 				operation: 'tool_vm_binding_publish',
 			}),
 			{ kind: 'command', operation: 'tool_vm_binding_publish' },
@@ -6618,8 +6624,15 @@ describe('startGatewayZone', () => {
 		if (bindingRetirementListener === undefined) {
 			throw new Error('Expected the Gateway binding retirement subscription.');
 		}
-		bindingRetirementListener({ leaseId: 'lease-main', reason: 'dead' });
+		let retirementListenerSettled = false;
+		const retirementListenerPromise = Promise.resolve(
+			bindingRetirementListener({ leaseId: 'lease-main', reason: 'dead' }),
+		).then(() => {
+			retirementListenerSettled = true;
+		});
 		await retirementPublicationObserved.promise;
+		await Promise.resolve();
+		expect(retirementListenerSettled).toBe(false);
 		expect(emitApplicationMessage).toHaveBeenLastCalledWith(
 			expect.objectContaining({ operation: 'tool_vm_binding_publish' }),
 			{ kind: 'command', operation: 'tool_vm_binding_publish' },
@@ -6632,6 +6645,9 @@ describe('startGatewayZone', () => {
 			}),
 			expect.any(Object),
 		);
+		retirementPublicationAcknowledgement.resolve();
+		await retirementListenerPromise;
+		expect(retirementListenerSettled).toBe(true);
 		await result.destroyGateway();
 		expect(unsubscribeBindingRetirement).toHaveBeenCalledOnce();
 	});
