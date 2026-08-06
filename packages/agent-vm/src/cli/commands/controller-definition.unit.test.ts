@@ -5,6 +5,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { managedVmImageAssetFileNames } from '../../build/gondolin-managed-vm-build-tooling.js';
+import type { ManagedGatewayImageBootProjection } from '../../build/gondolin-managed-vm-build-tooling.js';
 import { writePreparedManagedVmImage } from '../../build/prepared-gondolin-image-cache.js';
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../../config/system-config.js';
 import { isGatewayImageCached } from './controller-definition.js';
@@ -26,7 +27,14 @@ async function writeFakeImageAssets(imagePath: string): Promise<void> {
 	);
 }
 
-async function createGatewayImageCacheFixture(fingerprint: string): Promise<LoadedSystemConfig> {
+async function createGatewayImageCacheFixture(
+	fingerprint: string,
+	options: {
+		readonly gatewayType?: 'hermes' | 'openclaw' | 'worker';
+		readonly preparedManagedGatewayBoot?: ManagedGatewayImageBootProjection;
+	} = {},
+): Promise<LoadedSystemConfig> {
+	const gatewayType = options.gatewayType ?? 'worker';
 	const temporaryDirectoryPath = await createTemporaryDirectory();
 	const systemConfigPath = path.join(temporaryDirectoryPath, 'config', 'system.json');
 	const buildConfigPath = path.join(temporaryDirectoryPath, 'build-config.json');
@@ -53,6 +61,9 @@ async function createGatewayImageCacheFixture(fingerprint: string): Promise<Load
 			schemaVersion: 1,
 		},
 		imagePath,
+		...(options.preparedManagedGatewayBoot === undefined
+			? {}
+			: { managedGatewayBoot: options.preparedManagedGatewayBoot }),
 	});
 
 	return createLoadedSystemConfig(
@@ -65,7 +76,7 @@ async function createGatewayImageCacheFixture(fingerprint: string): Promise<Load
 			imageProfiles: {
 				gateways: {
 					worker: {
-						type: 'worker',
+						type: gatewayType,
 						buildConfig: buildConfigPath,
 					},
 				},
@@ -94,7 +105,15 @@ async function createGatewayImageCacheFixture(fingerprint: string): Promise<Load
 						audience: 'gateway' as const,
 					})),
 					gateway: {
-						type: 'worker',
+						type: gatewayType,
+						...(gatewayType === 'openclaw'
+							? {
+									controlAuth: {
+										mode: 'token' as const,
+										secret: 'OPENCLAW_GATEWAY_TOKEN',
+									},
+								}
+							: {}),
 						imageProfile: 'worker',
 						cpus: 2,
 						config: '/tmp/gateway.json',
@@ -102,7 +121,20 @@ async function createGatewayImageCacheFixture(fingerprint: string): Promise<Load
 						port: 18791,
 					},
 					id: 'coding-agent',
-					secrets: {},
+					secrets:
+						gatewayType === 'openclaw'
+							? {
+									OPENCLAW_GATEWAY_TOKEN: {
+										audience: 'gateway' as const,
+										envVar: 'OPENCLAW_GATEWAY_TOKEN',
+										injection: 'env' as const,
+										source: 'environment' as const,
+									},
+								}
+							: {},
+					defaultToolVmProfile: gatewayType === 'openclaw' ? 'standard' : undefined,
+					agentToolVmProfiles: gatewayType === 'openclaw' ? {} : undefined,
+					agents: gatewayType === 'openclaw' ? [{ id: 'coding-agent' }] : undefined,
 				},
 			],
 		},
@@ -135,6 +167,42 @@ describe('isGatewayImageCached', () => {
 		await expect(
 			isGatewayImageCached(systemConfig, 'coding-agent', {
 				computeManagedVmFingerprint: async () => 'current-runtime-fingerprint',
+			}),
+		).resolves.toBe(false);
+	});
+
+	it('derives the managed Gateway boot projection from the current gateway type', async () => {
+		const systemConfig = await createGatewayImageCacheFixture('current-fingerprint', {
+			gatewayType: 'openclaw',
+			preparedManagedGatewayBoot: {
+				frameworkBootEntry: 'hermes-framework-service',
+				kind: 'managed-gateway-exact-two-role',
+			},
+		});
+		let observedManagedGatewayBoot: ManagedGatewayImageBootProjection | undefined;
+
+		await expect(
+			isGatewayImageCached(systemConfig, 'coding-agent', {
+				computeManagedVmFingerprint: async (options) => {
+					observedManagedGatewayBoot = options.managedGatewayBoot;
+					return 'current-fingerprint';
+				},
+			}),
+		).resolves.toBe(true);
+		expect(observedManagedGatewayBoot).toEqual({
+			frameworkBootEntry: 'openclaw-framework-service',
+			kind: 'managed-gateway-exact-two-role',
+		});
+	});
+
+	it('treats fingerprint computation failures as a cache miss', async () => {
+		const systemConfig = await createGatewayImageCacheFixture('current-fingerprint');
+
+		await expect(
+			isGatewayImageCached(systemConfig, 'coding-agent', {
+				computeManagedVmFingerprint: async () => {
+					throw new Error('build config unavailable');
+				},
 			}),
 		).resolves.toBe(false);
 	});

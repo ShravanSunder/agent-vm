@@ -8,6 +8,7 @@ import type { ManagedGatewayImageBootProjection } from '../../build/gondolin-man
 import { readPreparedManagedVmImage } from '../../build/prepared-gondolin-image-cache.js';
 import type { LoadedSystemConfig } from '../../config/system-config.js';
 import { type CliDependencies, type CliIo, requireZone } from '../agent-vm-cli-support.js';
+import { managedGatewayBootProjectionForGatewayType } from '../build-command.js';
 import { runControllerOperationCommand } from '../controller-operation-commands.js';
 import { createRunTask } from '../run-task.js';
 import { runSshCommand } from '../ssh-commands.js';
@@ -18,6 +19,40 @@ import {
 	createZoneOption,
 	loadSystemConfigFromOption,
 } from './command-definition-support.js';
+
+interface ComputeManagedVmFingerprintOptions {
+	readonly buildConfigPath: string;
+	readonly fingerprintInput?: unknown;
+	readonly managedGatewayBoot?: ManagedGatewayImageBootProjection;
+}
+
+interface IsGatewayImageCachedDependencies {
+	readonly computeManagedVmFingerprint?: (
+		options: ComputeManagedVmFingerprintOptions,
+	) => Promise<string>;
+}
+
+async function resolveExpectedGatewayFingerprint(
+	dependencies: IsGatewayImageCachedDependencies,
+	options: ComputeManagedVmFingerprintOptions,
+): Promise<string | undefined> {
+	try {
+		const computeManagedVmFingerprint =
+			dependencies.computeManagedVmFingerprint ??
+			(async (fingerprintOptions: ComputeManagedVmFingerprintOptions): Promise<string> =>
+				await computeFingerprintFromConfigPath(fingerprintOptions.buildConfigPath, {
+					...(fingerprintOptions.fingerprintInput === undefined
+						? {}
+						: { fingerprintInput: fingerprintOptions.fingerprintInput }),
+					...(fingerprintOptions.managedGatewayBoot === undefined
+						? {}
+						: { managedGatewayBoot: fingerprintOptions.managedGatewayBoot }),
+				}));
+		return await computeManagedVmFingerprint(options);
+	} catch {
+		return undefined;
+	}
+}
 
 function createControllerOperationSubcommand(
 	io: CliIo,
@@ -68,13 +103,7 @@ function createControllerOperationSubcommand(
 export async function isGatewayImageCached(
 	systemConfig: LoadedSystemConfig,
 	zoneId: string,
-	dependencies: {
-		readonly computeManagedVmFingerprint?: (options: {
-			readonly buildConfigPath: string;
-			readonly fingerprintInput?: unknown;
-			readonly managedGatewayBoot?: ManagedGatewayImageBootProjection;
-		}) => Promise<string>;
-	} = {},
+	dependencies: IsGatewayImageCachedDependencies = {},
 ): Promise<boolean> {
 	const zone = requireZone(systemConfig, zoneId);
 	const gatewayImageProfile = systemConfig.imageProfiles.gateways[zone.gateway.imageProfile];
@@ -93,26 +122,17 @@ export async function isGatewayImageCached(
 	if (preparedGatewayImage === undefined) {
 		return false;
 	}
-	const expectedFingerprint = await (
-		dependencies.computeManagedVmFingerprint ??
-		(async (options): Promise<string> =>
-			await computeFingerprintFromConfigPath(options.buildConfigPath, {
-				...(options.fingerprintInput === undefined
-					? {}
-					: { fingerprintInput: options.fingerprintInput }),
-				...(options.managedGatewayBoot === undefined
-					? {}
-					: { managedGatewayBoot: options.managedGatewayBoot }),
-			}))
-	)({
+	const managedGatewayBoot = managedGatewayBootProjectionForGatewayType(zone.gateway.type);
+	const expectedFingerprint = await resolveExpectedGatewayFingerprint(dependencies, {
 		buildConfigPath: gatewayImageProfile.buildConfig,
 		...(preparedGatewayImage.fingerprintInput === undefined
 			? {}
 			: { fingerprintInput: preparedGatewayImage.fingerprintInput }),
-		...(preparedGatewayImage.managedGatewayBoot === undefined
-			? {}
-			: { managedGatewayBoot: preparedGatewayImage.managedGatewayBoot }),
+		...(managedGatewayBoot === undefined ? {} : { managedGatewayBoot }),
 	});
+	if (expectedFingerprint === undefined) {
+		return false;
+	}
 	return preparedGatewayImage.fingerprint === expectedFingerprint;
 }
 
