@@ -714,6 +714,9 @@ describe('managed Hermes package contracts', () => {
 		expect(recipe.dockerfile).toContain("'agent-vm-hermes-adapter==0.0.116'");
 		expect(recipe.dockerfile).not.toContain('hermes-agent[messaging]');
 		expect(recipe.dockerfile).toContain('--default-index https://pypi.org/simple');
+		expect(recipe.dockerfile).toContain('--exclude-newer-package agent-vm-agent-portal-sdk=false');
+		expect(recipe.dockerfile).toContain('--exclude-newer-package agent-vm-hermes-adapter=false');
+		expect(recipe.dockerfile).not.toContain('--no-config');
 		expect(recipe.dockerfile).toContain(
 			'gateway_runtime_bin="/opt/agent-vm/registry-packages/node_modules/@agent-vm/gateway-runtime/dist/bin/gateway-runtime.js"',
 		);

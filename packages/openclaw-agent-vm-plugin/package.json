@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/openclaw-agent-vm-plugin",
-	"version": "0.0.133",
+	"version": "0.0.134",
 	"description": "OpenClaw sandbox-backend plugin that delegates execution to an agent-vm managed VM.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {

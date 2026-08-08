@@ -209,6 +209,8 @@ function renderHermesManagedImagePublicRegistryInstallLines(
 		'    command -v agent-vm-gateway-runtime',
 		'',
 		'RUN uv pip install --python /opt/hermes/.venv/bin/python \\',
+		'      --exclude-newer-package agent-vm-agent-portal-sdk=false \\',
+		'      --exclude-newer-package agent-vm-hermes-adapter=false \\',
 		'      --default-index https://pypi.org/simple \\',
 		`      'agent-vm-agent-portal-sdk==${agentVmVersion}' \\`,
 		`      'agent-vm-hermes-adapter==${agentVmVersion}' && \\`,
