@@ -62,14 +62,19 @@ cleanup() {
 trap cleanup EXIT
 
 echo "[publish] resolving release credentials before long-running preflight"
-NPM_TOKEN="$(op read "$OP_REF")"
+NPM_TOKEN="${AGENT_VM_NPM_TOKEN-}"
+if [[ -z "$NPM_TOKEN" ]]; then
+	NPM_TOKEN="$(op read "$OP_REF")"
+fi
 if [[ -z "$NPM_TOKEN" ]]; then
 	echo "[publish] error: 1Password returned an empty npm token" >&2
 	exit 1
 fi
-PYPI_TOKEN=""
+PYPI_TOKEN="${AGENT_VM_PYPI_TOKEN-}"
 if [[ "$DRY_RUN" == "false" ]]; then
-	PYPI_TOKEN="$(op read "$PYPI_OP_REF")"
+	if [[ -z "$PYPI_TOKEN" ]]; then
+		PYPI_TOKEN="$(op read "$PYPI_OP_REF")"
+	fi
 	if [[ -z "$PYPI_TOKEN" ]]; then
 		echo "[publish] error: 1Password returned an empty PyPI token" >&2
 		exit 1

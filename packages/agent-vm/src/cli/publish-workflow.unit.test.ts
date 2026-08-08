@@ -186,6 +186,8 @@ describe('publish workflow', () => {
 		expect(publishScript.indexOf('PYPI_TOKEN="$(op read "$PYPI_OP_REF")"')).toBeLessThan(
 			publishScript.indexOf('pnpm build'),
 		);
+		expect(publishScript).toContain('NPM_TOKEN="${AGENT_VM_NPM_TOKEN-}"');
+		expect(publishScript).toContain('PYPI_TOKEN="${AGENT_VM_PYPI_TOKEN-}"');
 	});
 
 	it('publishes Python packages from isolated explicit artifacts with optional 1Password auth', async () => {
