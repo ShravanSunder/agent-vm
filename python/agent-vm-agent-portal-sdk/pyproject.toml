@@ -1,6 +1,6 @@
 [project]
 name = "agent-vm-agent-portal-sdk"
-version = "0.0.131"
+version = "0.0.133"
 description = "Portable Python contracts and clients for the agent-vm Tool Portal."
 requires-python = ">=3.13"
 authors = [{ name = "Shravan Sunder", email = "ShravanSunder@users.noreply.github.com" }]

@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/worker-control-contracts",
-	"version": "0.0.131",
+	"version": "0.0.133",
 	"description": "Worker control domain contracts for agent-vm Socket.IO sessions.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {
