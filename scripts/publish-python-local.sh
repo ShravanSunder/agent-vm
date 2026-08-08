@@ -77,16 +77,18 @@ if [[ "$DRY_RUN" == "true" ]]; then
 	exit 0
 fi
 
-if [[ -z "${AGENT_VM_PYPI_TOKEN_OP_REF-}" ]]; then
-	echo "[python-publish] error: AGENT_VM_PYPI_TOKEN_OP_REF is required" >&2
-	exit 1
+PYPI_TOKEN="${AGENT_VM_PYPI_TOKEN-}"
+if [[ -z "$PYPI_TOKEN" ]]; then
+	if [[ -z "${AGENT_VM_PYPI_TOKEN_OP_REF-}" ]]; then
+		echo "[python-publish] error: a resolved PyPI token or 1Password reference is required" >&2
+		exit 1
+	fi
+	if ! command -v op >/dev/null 2>&1; then
+		echo "[python-publish] error: 1Password CLI (op) not on PATH" >&2
+		exit 1
+	fi
+	PYPI_TOKEN="$(op read "$AGENT_VM_PYPI_TOKEN_OP_REF")"
 fi
-if ! command -v op >/dev/null 2>&1; then
-	echo "[python-publish] error: 1Password CLI (op) not on PATH" >&2
-	exit 1
-fi
-
-PYPI_TOKEN="$(op read "$AGENT_VM_PYPI_TOKEN_OP_REF")"
 if [[ -z "$PYPI_TOKEN" ]]; then
 	echo "[python-publish] error: 1Password returned an empty PyPI token" >&2
 	exit 1

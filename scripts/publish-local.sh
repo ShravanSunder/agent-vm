@@ -53,6 +53,36 @@ for required_command in curl jq uv; do
 	fi
 done
 
+WORKDIR="$(mktemp -d)"
+chmod 700 "$WORKDIR"
+cleanup() {
+	unset NPM_TOKEN PYPI_TOKEN
+	rm -rf "$WORKDIR"
+}
+trap cleanup EXIT
+
+echo "[publish] resolving release credentials before long-running preflight"
+NPM_TOKEN="$(op read "$OP_REF")"
+if [[ -z "$NPM_TOKEN" ]]; then
+	echo "[publish] error: 1Password returned an empty npm token" >&2
+	exit 1
+fi
+PYPI_TOKEN=""
+if [[ "$DRY_RUN" == "false" ]]; then
+	PYPI_TOKEN="$(op read "$PYPI_OP_REF")"
+	if [[ -z "$PYPI_TOKEN" ]]; then
+		echo "[publish] error: 1Password returned an empty PyPI token" >&2
+		exit 1
+	fi
+fi
+
+cat > "$WORKDIR/.npmrc" <<EOF
+//registry.npmjs.org/:_authToken=$NPM_TOKEN
+registry=https://registry.npmjs.org/
+EOF
+unset NPM_TOKEN
+export NPM_CONFIG_USERCONFIG="$WORKDIR/.npmrc"
+
 verify_managed_base_images_exist() {
 	if ! command -v docker >/dev/null 2>&1; then
 		echo "[publish] error: Docker CLI not on PATH; cannot verify managed GHCR base images" >&2
@@ -143,23 +173,6 @@ verify_managed_base_images_exist
 echo "[publish] building workspace once"
 pnpm build
 
-WORKDIR="$(mktemp -d)"
-trap 'rm -rf "$WORKDIR"' EXIT
-
-NPM_TOKEN="$(op read "$OP_REF")"
-if [[ -z "$NPM_TOKEN" ]]; then
-	echo "[publish] error: empty token from $OP_REF" >&2
-	exit 1
-fi
-
-cat > "$WORKDIR/.npmrc" <<EOF
-//registry.npmjs.org/:_authToken=$NPM_TOKEN
-registry=https://registry.npmjs.org/
-EOF
-unset NPM_TOKEN
-
-export NPM_CONFIG_USERCONFIG="$WORKDIR/.npmrc"
-
 echo "[publish] verifying npm auth"
 npm whoami
 
@@ -175,7 +188,8 @@ if [[ "$DRY_RUN" == "true" ]]; then
 fi
 
 echo "[publish] publishing Python artifacts"
-AGENT_VM_PYPI_TOKEN_OP_REF="$PYPI_OP_REF" scripts/publish-python-local.sh
+AGENT_VM_PYPI_TOKEN="$PYPI_TOKEN" scripts/publish-python-local.sh
+unset PYPI_TOKEN
 
 echo "[publish] publishing npm artifacts"
 pnpm -r publish --access=public --no-git-checks --config.ignore-scripts=true

@@ -180,6 +180,12 @@ describe('publish workflow', () => {
 		expect(publishScript.indexOf('--config.ignore-scripts=true')).toBeGreaterThan(
 			publishScript.indexOf('pnpm -r publish'),
 		);
+		expect(publishScript.indexOf('NPM_TOKEN="$(op read "$OP_REF")"')).toBeLessThan(
+			publishScript.indexOf('pnpm build'),
+		);
+		expect(publishScript.indexOf('PYPI_TOKEN="$(op read "$PYPI_OP_REF")"')).toBeLessThan(
+			publishScript.indexOf('pnpm build'),
+		);
 	});
 
 	it('publishes Python packages from isolated explicit artifacts with optional 1Password auth', async () => {
@@ -195,6 +201,7 @@ describe('publish workflow', () => {
 			'bash scripts/publish-python-local.sh',
 		);
 		expect(publishScript).toContain('AGENT_VM_PYPI_TOKEN_OP_REF');
+		expect(publishScript).toContain('AGENT_VM_PYPI_TOKEN');
 		expect(publishScript).not.toMatch(/AGENT_VM_PYPI_TOKEN_OP_REF:-/u);
 		expect(publishScript).toContain('PYTHON_DIST_DIR="$(mktemp -d)"');
 		expect(publishScript).toContain('--out-dir "$PYTHON_DIST_DIR"');
@@ -227,7 +234,7 @@ describe('publish workflow', () => {
 		);
 		expect(publishScript).toContain('scripts/publish-python-local.sh --dry-run');
 		expect(publishScript).toContain(
-			'AGENT_VM_PYPI_TOKEN_OP_REF="$PYPI_OP_REF" scripts/publish-python-local.sh',
+			'AGENT_VM_PYPI_TOKEN="$PYPI_TOKEN" scripts/publish-python-local.sh',
 		);
 		expect(publishScript).toContain('verify_published_release');
 		expect(publishScript).toContain('npm view "$package_name@$release_version" version');
