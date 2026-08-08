@@ -16,6 +16,9 @@ import {
 	type E2eHarnessRuntime,
 } from './e2e-harness.js';
 import {
+	buildHermesE2eProfileApiServerKeySecrets,
+	hermesE2eProfileApiServerKey,
+	hermesE2eProfileApiServerKeyEnvironmentName,
 	scaffoldHermesE2eProject,
 	useLocalHermesGatewayImagePackages,
 	type HermesE2eProject,
@@ -54,6 +57,7 @@ interface GatewayStartObservation {
 }
 
 interface GuestProfileFileObservation {
+	readonly apiServerKeyValueDigest: string;
 	readonly discordValueDigest: string;
 	readonly mode: string;
 	readonly profileName: AgentId;
@@ -97,6 +101,7 @@ async function configureHermesProfileSecrets(project: HermesE2eProject): Promise
 			agentIds.map((agentId) => [
 				agentId,
 				{
+					API_SERVER_KEY: hermesE2eProfileApiServerKeyEnvironmentName(agentId),
 					DISCORD_BOT_TOKEN: discordSecretEnvironmentNames[agentId],
 					[mediatedSecretProfileTargetName]: mediatedSecretEnvironmentNames[agentId],
 				},
@@ -130,6 +135,7 @@ async function configureHermesProfileSecrets(project: HermesE2eProject): Promise
 
 function generationSecretInputs(generationCanaries: GenerationCanaries): Record<string, string> {
 	return {
+		...buildHermesE2eProfileApiServerKeySecrets(agentIds),
 		[discordSecretEnvironmentNames.beta]: generationCanaries.discordByAgent.beta,
 		[discordSecretEnvironmentNames.clawfest]: generationCanaries.discordByAgent.clawfest,
 		[mediatedSecretEnvironmentNames.beta]: generationCanaries.mediatedByAgent.beta,
@@ -145,6 +151,7 @@ function requireProfileFileObservations(output: string): readonly GuestProfileFi
 		parsed.some(
 			(observation) =>
 				!isObjectRecord(observation) ||
+				typeof observation.apiServerKeyValueDigest !== 'string' ||
 				typeof observation.discordValueDigest !== 'string' ||
 				typeof observation.mode !== 'string' ||
 				typeof observation.profileName !== 'string' ||
@@ -155,6 +162,7 @@ function requireProfileFileObservations(output: string): readonly GuestProfileFi
 		throw new Error('Hermes guest profile-file observation had an invalid safe result shape.');
 	}
 	return parsed.map((observation) => ({
+		apiServerKeyValueDigest: String(observation.apiServerKeyValueDigest),
 		discordValueDigest: String(observation.discordValueDigest),
 		mode: String(observation.mode),
 		profileName: observation.profileName as AgentId,
@@ -186,6 +194,9 @@ for profile_name in ("clawfest", "beta"):
         )
     }
     observations.append({
+        "apiServerKeyValueDigest": hashlib.sha256(
+            entries["API_SERVER_KEY"].encode()
+        ).hexdigest(),
         "discordValueDigest": hashlib.sha256(
             entries["DISCORD_BOT_TOKEN"].encode()
         ).hexdigest(),
@@ -236,6 +247,7 @@ async function inspectGuestEnvironments(options: {
 	readonly vm: GatewayZoneVmOperations;
 }): Promise<GuestEnvironmentObservation> {
 	const rawValueDigests = [
+		...agentIds.map((agentId) => hermesE2eProfileApiServerKey(agentId)),
 		...Object.values(options.canaries.discordByAgent),
 		...Object.values(options.canaries.mediatedByAgent),
 	].map(sha256);
@@ -267,6 +279,8 @@ mediated_placeholder_digests = {
     if argument.startswith("--mediated-placeholder-digest=")
 }
 source_names = {
+    b"API_SERVER_KEY_CLAWFEST_E2E",
+    b"API_SERVER_KEY_BETA_E2E",
     b"DISCORD_BOT_TOKEN_CLAWFEST",
     b"DISCORD_BOT_TOKEN_BETA",
     b"HERMES_E2E_MEDIATED_SECRET_CLAWFEST",
@@ -516,6 +530,7 @@ function assertGuestProfileFiles(
 ): void {
 	expect(
 		observations.map((observation) => ({
+			apiServerKeyValueDigest: observation.apiServerKeyValueDigest,
 			discordValueDigest: observation.discordValueDigest,
 			mode: observation.mode,
 			profileName: observation.profileName,
@@ -524,12 +539,16 @@ function assertGuestProfileFiles(
 		})),
 	).toEqual(
 		agentIds.map((agentId) => ({
+			apiServerKeyValueDigest: sha256(hermesE2eProfileApiServerKey(agentId)),
 			discordValueDigest: sha256(canaries.discordByAgent[agentId]),
 			mode: '600',
 			profileName: agentId,
 			providerValueDigest: sha256(mediatedGuestPlaceholdersByAgent[agentId]),
 			regularFile: true,
 		})),
+	);
+	expect(new Set(observations.map((observation) => observation.apiServerKeyValueDigest)).size).toBe(
+		agentIds.length,
 	);
 	expect(new Set(observations.map((observation) => observation.providerValueDigest)).size).toBe(
 		agentIds.length,

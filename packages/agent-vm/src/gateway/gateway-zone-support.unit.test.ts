@@ -84,10 +84,12 @@ describe('mapSystemGatewayZoneToLifecycleZone', () => {
 				config: './gateways/hermes/config.yaml',
 				profileSecretProjectionsByAgent: {
 					researcher: {
+						API_SERVER_KEY: 'API_SERVER_KEY_RESEARCHER',
 						DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_RESEARCHER',
 						OPENROUTER_API_KEY: 'OPENROUTER_API_KEY_RESEARCHER',
 					},
 					reviewer: {
+						API_SERVER_KEY: 'API_SERVER_KEY_REVIEWER',
 						DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_REVIEWER',
 					},
 				},
@@ -97,6 +99,21 @@ describe('mapSystemGatewayZoneToLifecycleZone', () => {
 				profilesByAgent: {
 					researcher: 'research-profile',
 					reviewer: 'review-profile',
+				},
+			},
+			secrets: {
+				...createGatewayZone().secrets,
+				API_SERVER_KEY_RESEARCHER: {
+					audience: 'gateway',
+					envVar: 'API_SERVER_KEY_RESEARCHER',
+					injection: 'env',
+					source: 'environment',
+				},
+				API_SERVER_KEY_REVIEWER: {
+					audience: 'gateway',
+					envVar: 'API_SERVER_KEY_REVIEWER',
+					injection: 'env',
+					source: 'environment',
 				},
 			},
 		} satisfies GatewayZone);
@@ -109,10 +126,12 @@ describe('mapSystemGatewayZoneToLifecycleZone', () => {
 			config: './gateways/hermes/config.yaml',
 			profileSecretProjectionsByAgent: {
 				researcher: {
+					API_SERVER_KEY: 'API_SERVER_KEY_RESEARCHER',
 					DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_RESEARCHER',
 					OPENROUTER_API_KEY: 'OPENROUTER_API_KEY_RESEARCHER',
 				},
 				reviewer: {
+					API_SERVER_KEY: 'API_SERVER_KEY_REVIEWER',
 					DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_REVIEWER',
 				},
 			},
@@ -255,7 +274,19 @@ describe('mapSystemGatewayZoneToLifecycleZone', () => {
 					zoneRuntimeDir: './hermes/runtime',
 					profilesByAgent: { researcher: 'research-profile' },
 					profileSecretProjectionsByAgent: {
-						researcher: { DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN' },
+						researcher: {
+							API_SERVER_KEY: 'API_SERVER_KEY_RESEARCHER',
+							DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN',
+						},
+					},
+				},
+				secrets: {
+					...zone.secrets,
+					API_SERVER_KEY_RESEARCHER: {
+						audience: 'gateway',
+						envVar: 'API_SERVER_KEY_RESEARCHER',
+						injection: 'env',
+						source: 'environment',
 					},
 				},
 				observability: {

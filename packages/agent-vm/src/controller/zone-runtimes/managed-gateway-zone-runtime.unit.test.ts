@@ -480,7 +480,10 @@ function getHermesZone(): GatewayZone & {
 			port: openClawZone.gateway.port,
 			profilesByAgent: { main: 'main' },
 			profileSecretProjectionsByAgent: {
-				main: { DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN' },
+				main: {
+					API_SERVER_KEY: 'API_SERVER_KEY_MAIN',
+					DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN',
+				},
 			},
 			stateDir: openClawZone.gateway.stateDir,
 			type: 'hermes',
@@ -488,7 +491,14 @@ function getHermesZone(): GatewayZone & {
 			zoneRuntimeDir: openClawZone.gateway.zoneRuntimeDir,
 		},
 		id: 'hermes-zone',
-		secrets: {},
+		secrets: {
+			API_SERVER_KEY_MAIN: {
+				audience: 'gateway',
+				envVar: 'API_SERVER_KEY_MAIN',
+				injection: 'env',
+				source: 'environment',
+			},
+		},
 	};
 }
 

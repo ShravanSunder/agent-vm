@@ -33,10 +33,13 @@ import {
 import { waitForProtocolRetryInterval } from './e2e-protocol-wait.js';
 import { startHermesDeterministicToolCallModelServer } from './hermes-deterministic-tool-call-model-server.js';
 import {
+	buildHermesE2eProfileApiServerKeySecrets,
+	hermesE2eProfileApiServerKey,
+	hermesE2eProfileApiServerKeyEnvironmentName,
+	hermesE2eRootApiServerKey,
 	renderHermesManagedE2eConfiguration,
 	scaffoldHermesE2eProject,
 	useLocalHermesGatewayImagePackages,
-	hermesE2eApiServerKey,
 	type HermesE2eProject,
 } from './hermes-e2e-harness.js';
 
@@ -97,7 +100,7 @@ async function expectHermesInteractiveShellEnvironment(
 		wrapWithHermesShellEnvironment(
 			[
 				'test "$HERMES_HOME" = "/home/hermes/.hermes"',
-				'test "$HERMES_TUI_DIR" = "/opt/agent-vm/hermes-tui"',
+				'test "$HERMES_TUI_DIR" = "/opt/hermes/ui-tui"',
 				'test -f "$HERMES_TUI_DIR/dist/entry.js"',
 				'test "$SSL_CERT_FILE" = "/run/gondolin/ca-certificates.crt"',
 				'test "$REQUESTS_CA_BUNDLE" = "/run/gondolin/ca-certificates.crt"',
@@ -125,12 +128,20 @@ function renderCommonConfiguration(acceptanceMarker: string): string {
 	});
 }
 
-async function callHermesProfile(options: {
+interface HermesChatCompletionResponse {
+	readonly body: unknown;
+	readonly status: number;
+}
+
+async function requestHermesChatCompletion(options: {
+	readonly apiServerKey: string;
 	readonly gatewayPort: number;
+	readonly profileName?: (typeof agentIds)[number];
 	readonly prompt: string;
-}): Promise<string> {
+}): Promise<HermesChatCompletionResponse> {
+	const routePrefix = options.profileName === undefined ? '' : `/p/${options.profileName}`;
 	const response = await fetch(
-		`http://127.0.0.1:${String(options.gatewayPort)}/p/main/v1/chat/completions`,
+		`http://127.0.0.1:${String(options.gatewayPort)}${routePrefix}/v1/chat/completions`,
 		{
 			body: JSON.stringify({
 				messages: [{ content: options.prompt, role: 'user' }],
@@ -138,16 +149,27 @@ async function callHermesProfile(options: {
 				stream: false,
 			}),
 			headers: {
-				authorization: `Bearer ${hermesE2eApiServerKey}`,
+				authorization: `Bearer ${options.apiServerKey}`,
 				'content-type': 'application/json',
 			},
 			method: 'POST',
 			signal: AbortSignal.timeout(120_000),
 		},
 	);
-	const responseBody: unknown = await response.json();
+	return { body: (await response.json()) as unknown, status: response.status };
+}
+
+async function callHermesProfile(options: {
+	readonly apiServerKey: string;
+	readonly gatewayPort: number;
+	readonly profileName?: (typeof agentIds)[number];
+	readonly prompt: string;
+}): Promise<string> {
+	const response = await requestHermesChatCompletion(options);
+	const responseBody = response.body;
 	if (
-		!response.ok ||
+		response.status < 200 ||
+		response.status >= 300 ||
 		typeof responseBody !== 'object' ||
 		responseBody === null ||
 		!('choices' in responseBody) ||
@@ -170,6 +192,82 @@ async function callHermesProfile(options: {
 		throw new Error(`Hermes profile response was malformed: ${JSON.stringify(responseBody)}`);
 	}
 	return firstChoice.message.content;
+}
+
+async function expectHermesApiKeyRejected(options: {
+	readonly apiServerKey: string;
+	readonly gatewayPort: number;
+	readonly profileName?: (typeof agentIds)[number];
+}): Promise<void> {
+	const response = await requestHermesChatCompletion({
+		...options,
+		prompt: 'NO_TOOL_FRAMEWORK_PROBE',
+	});
+	expect(response).toMatchObject({
+		body: {
+			error: {
+				code: 'gateway_auth_failed',
+				message: 'Invalid gateway API key (API_SERVER_KEY)',
+			},
+		},
+		status: 401,
+	});
+}
+
+async function expectHermesApiKeyIsolation(gatewayPort: number): Promise<void> {
+	expect(
+		await callHermesProfile({
+			apiServerKey: hermesE2eProfileApiServerKey('main'),
+			gatewayPort,
+			profileName: 'main',
+			prompt: 'NO_TOOL_FRAMEWORK_PROBE',
+		}),
+	).toContain(frameworkGapMarker);
+	await expectHermesApiKeyRejected({
+		apiServerKey: hermesE2eProfileApiServerKey('beta'),
+		gatewayPort,
+		profileName: 'main',
+	});
+	await expectHermesApiKeyRejected({
+		apiServerKey: hermesE2eRootApiServerKey,
+		gatewayPort,
+		profileName: 'main',
+	});
+
+	expect(
+		await callHermesProfile({
+			apiServerKey: hermesE2eProfileApiServerKey('beta'),
+			gatewayPort,
+			profileName: 'beta',
+			prompt: 'NO_TOOL_FRAMEWORK_PROBE',
+		}),
+	).toContain(frameworkGapMarker);
+	await expectHermesApiKeyRejected({
+		apiServerKey: hermesE2eProfileApiServerKey('main'),
+		gatewayPort,
+		profileName: 'beta',
+	});
+	await expectHermesApiKeyRejected({
+		apiServerKey: hermesE2eRootApiServerKey,
+		gatewayPort,
+		profileName: 'beta',
+	});
+
+	expect(
+		await callHermesProfile({
+			apiServerKey: hermesE2eRootApiServerKey,
+			gatewayPort,
+			prompt: 'NO_TOOL_FRAMEWORK_PROBE',
+		}),
+	).toContain(frameworkGapMarker);
+	await expectHermesApiKeyRejected({
+		apiServerKey: hermesE2eProfileApiServerKey('main'),
+		gatewayPort,
+	});
+	await expectHermesApiKeyRejected({
+		apiServerKey: hermesE2eProfileApiServerKey('beta'),
+		gatewayPort,
+	});
 }
 
 async function waitForFreshAcceptedControlSession(options: {
@@ -206,9 +304,12 @@ async function materializeNativeProfileLeaves(project: HermesE2eProject): Promis
 	await Promise.all(
 		Object.entries(nativeConfigurationPaths).map(async ([profileName, configurationPath]) => {
 			await mkdir(path.dirname(configurationPath), { recursive: true });
+			const profileMarker = nativeProfileMarkers[profileName as keyof typeof nativeProfileMarkers];
 			await writeFile(
 				configurationPath,
-				`agent_vm_profile_marker: ${nativeProfileMarkers[profileName as keyof typeof nativeProfileMarkers]}\n`,
+				profileName === 'root'
+					? `agent_vm_profile_marker: ${profileMarker}\n`
+					: `agent_vm_profile_marker: ${profileMarker}\nplatforms:\n  api_server:\n    enabled: false\n`,
 				'utf8',
 			);
 		}),
@@ -237,6 +338,7 @@ function configureHermesSecrets(project: HermesE2eProject): void {
 			agentIds.map((agentId) => [
 				agentId,
 				{
+					API_SERVER_KEY: hermesE2eProfileApiServerKeyEnvironmentName(agentId),
 					DISCORD_BOT_TOKEN: discordSecretEnvironmentNames[agentId],
 					[providerCredentialEnvironmentName]: providerCredentialEnvironmentName,
 				},
@@ -267,6 +369,7 @@ function configureHermesSecrets(project: HermesE2eProject): void {
 
 function resolvedHermesSecrets(): Readonly<Record<string, string>> {
 	return {
+		...buildHermesE2eProfileApiServerKeySecrets(agentIds),
 		[discordSecretEnvironmentNames.beta]: discordSecretCanaries.beta,
 		[discordSecretEnvironmentNames.main]: discordSecretCanaries.main,
 		[providerCredentialEnvironmentName]: providerCredentialCanary,
@@ -429,7 +532,7 @@ async function inspectLiveHermesEpoch(options: {
 	]);
 	const result = await options.start.vm.exec(
 		[
-			'/opt/agent-vm/hermes-venv/bin/python',
+			'/opt/hermes/.venv/bin/python',
 			'-',
 			String(frameworkIdentity.processId),
 			String(toolPortalIdentity.processId),
@@ -471,6 +574,13 @@ def process_environment(process_id):
         },
     }
 
+def process_identity(process_id):
+    process_stat = Path(f"/proc/{process_id}").stat()
+    return {
+        "gid": process_stat.st_gid,
+        "uid": process_stat.st_uid,
+    }
+
 def matching_process_count(command_marker):
     count = 0
     for process_path in Path("/proc").iterdir():
@@ -498,6 +608,14 @@ try:
         configuration = load_config()
         model = configuration.get("model", {})
         plugins = configuration.get("plugins", {})
+        state_write_probe = Path(profile_home) / ".agent-vm-e2e-write-probe"
+        try:
+            state_write_probe.write_text("write probe", encoding="utf-8")
+        except OSError:
+            state_writable = False
+        else:
+            state_write_probe.unlink(missing_ok=True)
+            state_writable = True
         profile_snapshots[profile_name] = {
             "acceptanceMarker": configuration.get("agent_vm_acceptance_marker"),
             "fallbackProviders": gateway_run.get_fallback_chain(configuration),
@@ -507,6 +625,7 @@ try:
             "pluginDisabled": plugins.get("disabled"),
             "pluginEnabled": plugins.get("enabled"),
             "providerRouting": gateway_run.GatewayRunner._load_provider_routing(),
+            "stateWritable": state_writable,
         }
 finally:
     bindings.close()
@@ -537,10 +656,22 @@ print(json.dumps({
     "frameworkMultiplexEnabled": (
         framework_environment["values"].get("GATEWAY_MULTIPLEX_PROFILES") == b"true"
     ),
+    "frameworkProcessIdentity": process_identity(framework_process_id),
     "frameworkRootApiEnabled": (
         framework_environment["values"].get("API_SERVER_ENABLED") == b"true"
     ),
+    "frameworkRootGatewayAllowed": (
+        framework_environment["values"].get("HERMES_ALLOW_ROOT_GATEWAY") == b"1"
+    ),
     "hermesProcessCount": matching_process_count(b"agent-vm-hermes-gateway"),
+    "hermesDockerBootstrapProcessCount": sum(
+        matching_process_count(command_marker)
+        for command_marker in (
+            b"entrypoint-dispatch.sh",
+            b"stage2-hook.sh",
+            b"s6-setuidgid",
+        )
+    ),
     "managedConfigurationDirectory": str(managed_scope.get_managed_dir()),
     "managedConfigurationReadOnly": managed_configuration_read_only,
     "profileSnapshots": profile_snapshots,
@@ -548,7 +679,11 @@ print(json.dumps({
     "toolPortalContainsRawProviderCredential": (
         provider_digest in tool_portal_environment["valueDigests"]
     ),
+    "toolPortalEnvironmentHasRootGatewayAllowance": (
+        "HERMES_ALLOW_ROOT_GATEWAY" in tool_portal_environment["names"]
+    ),
     "toolPortalProcessCount": matching_process_count(b"agent-vm-gateway-runtime"),
+    "toolPortalProcessIdentity": process_identity(tool_portal_process_id),
 }, sort_keys=True))
 `,
 		},
@@ -565,7 +700,10 @@ print(json.dumps({
 		frameworkEnvironmentHasManagedDir: false,
 		frameworkEnvironmentHasManagedLock: false,
 		frameworkMultiplexEnabled: true,
+		frameworkProcessIdentity: { gid: 0, uid: 0 },
 		frameworkRootApiEnabled: true,
+		frameworkRootGatewayAllowed: true,
+		hermesDockerBootstrapProcessCount: 0,
 		hermesProcessCount: 1,
 		managedConfigurationDirectory: '/etc/hermes',
 		managedConfigurationReadOnly: true,
@@ -586,12 +724,15 @@ print(json.dumps({
 					pluginDisabled: [],
 					pluginEnabled: ['agent-vm-tool-portal'],
 					providerRouting: { order: ['hermes-e2e'] },
+					stateWritable: true,
 				},
 			]),
 		),
 		rootEnvironmentFileExists: false,
 		toolPortalContainsRawProviderCredential: false,
+		toolPortalEnvironmentHasRootGatewayAllowance: false,
 		toolPortalProcessCount: 1,
+		toolPortalProcessIdentity: { gid: 0, uid: 0 },
 	});
 	return observation;
 }
@@ -688,6 +829,7 @@ describeHermesManagedEnvironmentE2e(
 				toolVmMarker: toolVmRecoveryMarker,
 				vm: secondEpoch.start.vm,
 			});
+			await expectHermesApiKeyIsolation(project.gatewayPort);
 
 			const frameworkPort =
 				secondEpoch.start.expectedCohort.ingressIntent.frameworkRootRoute.guestPort;
@@ -727,7 +869,9 @@ describeHermesManagedEnvironmentE2e(
 			);
 			expect(
 				await callHermesProfile({
+					apiServerKey: hermesE2eProfileApiServerKey('main'),
 					gatewayPort: project.gatewayPort,
+					profileName: 'main',
 					prompt: 'NO_TOOL_FRAMEWORK_PROBE',
 				}),
 			).toContain(frameworkGapMarker);
@@ -743,7 +887,9 @@ describeHermesManagedEnvironmentE2e(
 			});
 			expect(
 				await callHermesProfile({
+					apiServerKey: hermesE2eProfileApiServerKey('main'),
 					gatewayPort: project.gatewayPort,
+					profileName: 'main',
 					prompt: 'RUN_TOOL_VM_RECOVERY_PROBE',
 				}),
 			).toContain(toolVmRecoveryMarker);

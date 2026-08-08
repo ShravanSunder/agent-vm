@@ -454,11 +454,17 @@ Discord recipe:
 
 Managed Hermes profile secrets:
 - Give every declared agent matching entries in gateway.profilesByAgent and gateway.profileSecretProjectionsByAgent.
+- Map the API_SERVER_KEY target to one distinct injection env, audience gateway zone secret per agent. The separate root source named API_SERVER_KEY remains reserved and cannot be reused by a named profile.
 - Map the DISCORD_BOT_TOKEN target to one distinct injection env, audience gateway zone secret per agent.
+- Use each profile's own API key for /p/<profile>/... requests. Unprefixed root routes continue to use the root listener key.
+- The only additional profile environment targets allowed for Hermes are DISCORD_ALLOW_BOTS and DISCORD_BOTS_REQUIRE_INLINE_MENTION; each source must use injection env and audience gateway.
+- DISCORD_ALLOW_BOTS accepts none (safe default), mentions (only explicitly mentioned bot messages), or all. DISCORD_BOTS_REQUIRE_INLINE_MENTION=true adds a literal inline @mention gate for bot-authored messages.
 - Map other profile credential targets to Gateway-reaching http-mediation sources; Hermes receives only their opaque placeholders.
 - Agent VM writes complete target maps only to the exact memory-backed profiles/<profile>/.env files before stock Hermes starts.
 - Keep common non-secret policy in the dedicated gateway.config config.yaml directory mounted read-only at /etc/hermes/config.yaml. HERMES_MANAGED_DIR remains unset; root/default and named profile homes remain direct stateDir RealFS.
+- New named profiles receive native config.yaml with platforms.api_server.enabled: false because the default profile owns Hermes's single HTTP listener; the shared listener still authenticates /p/<profile>/ with that profile's API_SERVER_KEY. Existing named profile configs must contain the same explicit disable or Agent VM rejects them before boot instead of rewriting authored bytes.
 - Durable root/profile .env and secret-bearing native Hermes config are rejected. Remove known legacy files explicitly; do not add migration or copy-back behavior.
+- Do not configure Hermes profiles to reply to one another in a shared Discord channel. Upstream warns that reply pings can satisfy mention gates and create acknowledgement/feedback loops; any beta probe is bounded validation only, not a supported topology.
 `,
 			),
 		},

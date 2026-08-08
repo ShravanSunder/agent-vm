@@ -131,12 +131,24 @@ describe('runControllerDestroy', () => {
 						port: zone.gateway.port,
 						profilesByAgent: { shravan: 'researcher' },
 						profileSecretProjectionsByAgent: {
-							shravan: { DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN' },
+							shravan: {
+								API_SERVER_KEY: 'API_SERVER_KEY_SHRAVAN',
+								DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN',
+							},
 						},
 						stateDir: zone.gateway.stateDir,
 						type: 'hermes' as const,
 						zoneFilesDir,
 						zoneRuntimeDir: zone.gateway.zoneRuntimeDir,
+					},
+					secrets: {
+						...zone.secrets,
+						API_SERVER_KEY_SHRAVAN: {
+							audience: 'gateway',
+							envVar: 'API_SERVER_KEY_SHRAVAN',
+							injection: 'env',
+							source: 'environment',
+						},
 					},
 				},
 			],

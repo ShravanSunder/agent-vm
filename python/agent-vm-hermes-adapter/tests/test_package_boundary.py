@@ -43,7 +43,7 @@ class PackageBoundaryTests(unittest.TestCase):
         )
         self.assertIn("agent_vm_agent_portal_sdk.contracts", imported_modules)
 
-    def test_package_declares_exact_hermes_distribution(self) -> None:
+    def test_package_leaves_hermes_distribution_ownership_to_the_runtime_image(self) -> None:
         with (PACKAGE_ROOT / "pyproject.toml").open("rb") as pyproject_file:
             package_config = tomllib.load(pyproject_file)
 
@@ -51,12 +51,17 @@ class PackageBoundaryTests(unittest.TestCase):
             package_config["project"]["dependencies"],
             [
                 (f"agent-vm-agent-portal-sdk=={package_config['project']['version']}"),
-                "hermes-agent==0.19.0",
                 "opentelemetry-api==1.44.0",
                 "opentelemetry-exporter-otlp-proto-http==1.44.0",
                 "opentelemetry-sdk==1.44.0",
                 "pydantic>=2.12.0,<3",
             ],
+        )
+        self.assertFalse(
+            any(
+                dependency.startswith("hermes-agent")
+                for dependency in package_config["project"]["dependencies"]
+            )
         )
         self.assertEqual(
             package_config["project"]["entry-points"]["hermes_agent.plugins"],
@@ -134,7 +139,9 @@ class PackageBoundaryTests(unittest.TestCase):
                     "task_id": "task",
                     "turn_id": "turn",
                     "completed": False,
+                    "failed": False,
                     "interrupted": False,
+                    "turn_exit_reason": "max_iterations_reached",
                     "model": "model",
                     "platform": "discord",
                 }

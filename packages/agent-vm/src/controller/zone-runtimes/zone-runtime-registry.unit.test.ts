@@ -503,7 +503,10 @@ function getHermesZone(): GatewayZone & {
 			port: 18_793,
 			profilesByAgent: { main: 'main' },
 			profileSecretProjectionsByAgent: {
-				main: { DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN' },
+				main: {
+					API_SERVER_KEY: 'API_SERVER_KEY_MAIN',
+					DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN',
+				},
 			},
 			stateDir: path.join(zoneRuntimeRegistryTestRoot, 'state', 'hermes-zone'),
 			type: 'hermes',
@@ -511,7 +514,14 @@ function getHermesZone(): GatewayZone & {
 			zoneRuntimeDir: path.join(zoneRuntimeRegistryTestRoot, 'hermes-zone', 'runtime'),
 		},
 		id: 'hermes-zone',
-		secrets: {},
+		secrets: {
+			API_SERVER_KEY_MAIN: {
+				audience: 'gateway',
+				envVar: 'API_SERVER_KEY_MAIN',
+				injection: 'env',
+				source: 'environment',
+			},
+		},
 	};
 }
 
