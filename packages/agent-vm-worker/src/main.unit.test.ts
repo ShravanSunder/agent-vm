@@ -69,6 +69,10 @@ describe('agent-vm-worker cli', () => {
 			command: 'health',
 			options: { port: 19_123 },
 		});
+		expect(parseWorkerCommand(['health', '--port', '0'])).toEqual({
+			command: 'health',
+			options: { port: 0 },
+		});
 	});
 
 	it('resolves serve config fallback and state-directory truthiness without normalization', () => {
@@ -123,9 +127,9 @@ describe('agent-vm-worker cli', () => {
 
 	it('rejects invalid worker ports during parsing', () => {
 		for (const argv of [
-			['health', '--port', '0'],
+			['health', '--port', '-1'],
 			['health', '--port', '65536'],
-			['health', '--port', 'not-a-port'],
+			['health', '--port', '1.5'],
 		] as const) {
 			const result = runOptiqueCliParser({
 				argv,

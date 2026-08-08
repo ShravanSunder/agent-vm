@@ -111,7 +111,7 @@ export function runOptiqueCliParser<TParser extends Parser>(
 	}
 }
 
-const workerPortSchema = z.coerce.number().int().min(1).max(65_535);
+const workerPortSchema = z.coerce.number().int().min(0).max(65_535);
 const workerPathSchema = z.string();
 
 export function createWorkerPortValueParser(): ValueParser<'sync', number> {
