@@ -1,7 +1,16 @@
-// oxlint-disable typescript-eslint/explicit-function-return-type
-import { command, flag, oneOf, option, optional, positional, string, type Type } from 'cmd-ts';
+import { object } from '@optique/core/constructs';
+import { map, optional } from '@optique/core/modifiers';
+import type { Parser } from '@optique/core/parser';
+import { argument, command, option } from '@optique/core/primitives';
+import { zod } from '@optique/zod';
+import { z } from 'zod';
 
-import { agentIdSchema, loadSystemConfig } from '../../config/system-config.js';
+import {
+	agentIdSchema,
+	loadSystemConfig,
+	projectNamespaceSchema,
+	zoneIdSchema,
+} from '../../config/system-config.js';
 import type { CliDependencies, CliIo } from '../agent-vm-cli-support.js';
 import {
 	imageArchitectureSchema,
@@ -10,11 +19,12 @@ import {
 	scaffoldAgentVmProject,
 	secretsProviderSchema,
 	type HostSystemType,
+	type GatewayType,
 	type ImageArchitecture,
 	type ScaffoldPathMode,
 	type SecretsProvider,
 } from '../init-command.js';
-import { parseGatewayType } from './command-definition-support.js';
+import { cliDescription, createPresenceFlag } from './command-definition-support.js';
 
 export interface InitPresetDefaults {
 	readonly architecture: ImageArchitecture;
@@ -31,7 +41,6 @@ const scaffoldPathModes = [
 ] as const satisfies readonly ScaffoldPathMode[];
 const initPresetNames = ['macos-local', 'container-x86', 'container-arm64'] as const;
 type InitPresetName = (typeof initPresetNames)[number];
-const initPresetNameSet = new Set<string>(initPresetNames);
 
 const initPresets = {
 	'macos-local': {
@@ -63,20 +72,36 @@ const initPresetDescription =
 	'container-x86: container runtime paths (/var/agent-vm/<projectNamespace>), x86_64, environment secrets; ' +
 	'container-arm64: container runtime paths (/var/agent-vm/<projectNamespace>), aarch64, environment secrets';
 
-const presetType: Type<string, InitPresetDefaults> = {
-	displayName: 'preset-name',
-	description: initPresetDescription,
-	async from(value) {
-		if (!isInitPresetName(value)) {
-			throw new Error(`Unknown preset '${value}'. Available: ${initPresetNames.join(', ')}.`);
+const initPresetSchema = z.enum(initPresetNames).transform((value) => initPresets[value]);
+const gatewayTypeSchema = z.enum(['openclaw', 'worker']);
+const scaffoldPathModeSchema = z.enum(scaffoldPathModes);
+const openClawAgentsSchema = z
+	.string()
+	.transform((value) =>
+		value
+			.split(',')
+			.map((agentId) => agentId.trim())
+			.filter((agentId) => agentId.length > 0),
+	)
+	.superRefine((agentIds, context) => {
+		if (agentIds.length === 0) {
+			context.addIssue({
+				code: 'custom',
+				message: '--openclaw-agents must include at least one non-empty agent id.',
+			});
+			return;
 		}
-		return initPresets[value];
-	},
-};
-
-function isInitPresetName(value: string): value is InitPresetName {
-	return initPresetNameSet.has(value);
-}
+		for (const agentId of agentIds) {
+			const parsedAgentId = agentIdSchema.safeParse(agentId);
+			if (!parsedAgentId.success) {
+				context.addIssue({
+					code: 'custom',
+					message: `Invalid --openclaw-agents value '${agentId}': ${parsedAgentId.error.issues[0]?.message ?? 'invalid agent id'}`,
+				});
+			}
+		}
+	})
+	.transform((agentIds) => Array.from(new Set(agentIds)));
 
 function resolveSecretsProvider(
 	secrets: SecretsProvider | undefined,
@@ -151,130 +176,193 @@ async function resolveOnePasswordPromptOptions(options: {
 }
 
 export function parseAgentIds(agentIds: string): readonly string[] {
-	const parsedAgentIds = agentIds
-		.split(',')
-		.map((agentId) => agentId.trim())
-		.filter((agentId) => agentId.length > 0);
-	if (parsedAgentIds.length === 0) {
-		throw new Error('--openclaw-agents must include at least one non-empty agent id.');
+	const parsedAgentIds = openClawAgentsSchema.safeParse(agentIds);
+	if (!parsedAgentIds.success) {
+		throw new Error(parsedAgentIds.error.issues[0]?.message ?? 'Invalid --openclaw-agents value.');
 	}
-	for (const agentId of parsedAgentIds) {
-		const parsedAgentId = agentIdSchema.safeParse(agentId);
-		if (!parsedAgentId.success) {
-			throw new Error(
-				`Invalid --openclaw-agents value '${agentId}': ${parsedAgentId.error.issues[0]?.message ?? 'invalid agent id'}`,
-			);
-		}
-	}
-	return Array.from(new Set(parsedAgentIds));
+	return parsedAgentIds.data;
 }
 
-export function createInitCommand(io: CliIo, dependencies: CliDependencies) {
-	return command({
-		name: 'init',
-		description: 'Scaffold a new agent-vm project',
-		args: {
-			zoneId: positional({
-				displayName: 'zone-id',
-				type: optional(string),
-				description: 'Zone identifier (default: "default")',
+export interface InitCommandOptions {
+	readonly zoneId: string | undefined;
+	readonly type: GatewayType;
+	readonly preset: InitPresetDefaults | undefined;
+	readonly secrets: SecretsProvider | undefined;
+	readonly arch: ImageArchitecture | undefined;
+	readonly paths: ScaffoldPathMode | undefined;
+	readonly namespace: string | undefined;
+	readonly overwrite: boolean;
+	readonly agents: readonly string[] | undefined;
+	readonly onePasswordKeychainAccountName: string | undefined;
+}
+
+export interface InitCommand {
+	readonly command: 'init';
+	readonly options: InitCommandOptions;
+}
+
+export function createInitCommand(): Parser<'sync', InitCommand> {
+	return command(
+		'init',
+		map(
+			object({
+				zoneId: optional(
+					argument(zod(zoneIdSchema, { metavar: 'ZONE_ID', placeholder: 'default' }), {
+						description: cliDescription('Zone identifier (default: "default")'),
+					}),
+				),
+				type: option(
+					'--type',
+					zod<GatewayType>(gatewayTypeSchema, {
+						metavar: 'TYPE',
+						placeholder: 'openclaw',
+						errors: {
+							zodError: (_error, input) =>
+								cliDescription(
+									`Gateway type is required. Expected 'openclaw' or 'worker', got '${input}'.`,
+								),
+						},
+					}),
+					{ description: cliDescription('Gateway type: openclaw or worker') },
+				),
+				preset: optional(
+					option(
+						'--preset',
+						zod<InitPresetDefaults>(initPresetSchema, {
+							metavar: 'PRESET',
+							placeholder: initPresets['macos-local'],
+						}),
+						{ description: cliDescription(`Preset group. ${initPresetDescription}`) },
+					),
+				),
+				secrets: optional(
+					option(
+						'--secrets',
+						zod<SecretsProvider>(secretsProviderSchema, {
+							metavar: 'PROVIDER',
+							placeholder: 'environment',
+						}),
+						{
+							description: cliDescription(
+								'Secrets provider: 1password (local dev) or environment (CI, container, shell)',
+							),
+						},
+					),
+				),
+				arch: optional(
+					option(
+						'--arch',
+						zod<ImageArchitecture>(imageArchitectureSchema, {
+							metavar: 'ARCH',
+							placeholder: 'aarch64',
+						}),
+						{ description: cliDescription('VM image architecture: aarch64 or x86_64') },
+					),
+				),
+				paths: optional(
+					option(
+						'--paths',
+						zod<ScaffoldPathMode>(scaffoldPathModeSchema, {
+							metavar: 'PATHS',
+							placeholder: 'local',
+						}),
+						{
+							description: cliDescription(
+								'Path profile to scaffold: local (sibling-of-config), pod (/var/agent-vm/<projectNamespace>), or user-dir (~/.agent-vm/<projectNamespace>). Every profile scopes storageRootDir by projectNamespace. Defaults from preset.',
+							),
+						},
+					),
+				),
+				namespace: optional(
+					option(
+						'--namespace',
+						zod(projectNamespaceSchema, { metavar: 'NAMESPACE', placeholder: 'project' }),
+						{
+							description: cliDescription(
+								'Project namespace override (default: deterministic namespace from target path)',
+							),
+						},
+					),
+				),
+				overwrite: createPresenceFlag(
+					'--overwrite',
+					'Overwrite existing scaffolded files (default: skip existing files)',
+				),
+				agents: optional(
+					option(
+						'--openclaw-agents',
+						zod(openClawAgentsSchema, { metavar: 'AGENTS', placeholder: ['main'] }),
+						{
+							description: cliDescription(
+								'Single OpenClaw agent id to scaffold during the Socket.IO control-plane hard cutover.',
+							),
+						},
+					),
+				),
+				onePasswordKeychainAccountName: optional(
+					option(
+						'--onepassword-keychain-account-name',
+						zod(z.string(), { metavar: 'ACCOUNT', placeholder: 'account' }),
+						{
+							description: cliDescription(
+								'Keychain account suffix for the 1Password service account token, stored as 1p-service-account--<name>.',
+							),
+						},
+					),
+				),
 			}),
-			type: option({
-				type: string,
-				long: 'type',
-				description: 'Gateway type: openclaw or worker',
-			}),
-			preset: option({
-				type: optional(presetType),
-				long: 'preset',
-				description: `Preset group. ${initPresetDescription}`,
-			}),
-			secrets: option({
-				type: optional(oneOf(secretsProviderSchema.options)),
-				long: 'secrets',
-				description:
-					'Secrets provider: 1password (local dev) or environment (CI, container, shell)',
-			}),
-			arch: option({
-				type: optional(oneOf(imageArchitectureSchema.options)),
-				long: 'arch',
-				description: 'VM image architecture: aarch64 or x86_64',
-			}),
-			paths: option({
-				type: optional(oneOf(scaffoldPathModes)),
-				long: 'paths',
-				description:
-					'Path profile to scaffold: local (sibling-of-config), pod (/var/agent-vm/<projectNamespace>), ' +
-					'or user-dir (~/.agent-vm/<projectNamespace>). Every profile scopes storageRootDir by projectNamespace. Defaults from preset.',
-			}),
-			namespace: option({
-				type: optional(string),
-				long: 'namespace',
-				description:
-					'Project namespace override (default: deterministic namespace from target path)',
-			}),
-			overwrite: flag({
-				long: 'overwrite',
-				description: 'Overwrite existing scaffolded files (default: skip existing files)',
-			}),
-			agents: option({
-				type: optional(string),
-				long: 'openclaw-agents',
-				description:
-					'Single OpenClaw agent id to scaffold during the Socket.IO control-plane hard cutover.',
-			}),
-			onePasswordKeychainAccountName: option({
-				type: optional(string),
-				long: 'onepassword-keychain-account-name',
-				description:
-					'Keychain account suffix for the 1Password service account token, stored as 1p-service-account--<name>.',
-			}),
-		},
-		handler: async ({
-			agents,
-			arch,
-			namespace,
-			onePasswordKeychainAccountName,
-			overwrite,
-			paths,
-			preset,
-			secrets,
-			type,
-			zoneId,
-		}) => {
-			const gatewayType = parseGatewayType(type);
-			const presetDefaults = preset;
-			const secretsProvider = resolveSecretsProvider(secrets, presetDefaults);
-			const architecture = resolveArchitecture(arch, presetDefaults);
-			const pathMode = resolvePathMode(paths, presetDefaults);
-			const hostSystemType = resolveHostSystemType(pathMode, presetDefaults);
-			const targetDir = dependencies.getCurrentWorkingDirectory?.() ?? process.cwd();
-			const result = await (dependencies.scaffoldAgentVmProject ?? scaffoldAgentVmProject)({
-				...(agents === undefined ? {} : { agents: parseAgentIds(agents) }),
-				architecture,
-				gatewayType,
-				hostSystemType,
-				...(onePasswordKeychainAccountName === undefined ? {} : { onePasswordKeychainAccountName }),
-				overwrite,
-				paths: pathMode,
-				...(namespace === undefined ? {} : { projectNamespace: namespace }),
-				secretsProvider,
-				targetDir,
-				writeLocalEnvironmentFile: presetDefaults?.writeLocalEnvironmentFile ?? false,
-				zoneId: zoneId ?? 'default',
-			});
-			const keychainStored =
-				secretsProvider === '1password'
-					? await (
-							dependencies.promptAndStoreServiceAccountToken ?? promptAndStoreServiceAccountToken
-						)(
-							await resolveOnePasswordPromptOptions({
-								accountName: onePasswordKeychainAccountName,
-								targetDir,
-							}),
-						)
-					: false;
-			io.stdout.write(`${JSON.stringify({ ...result, keychainStored }, null, 2)}\n`);
-		},
+			(options) => ({ command: 'init' as const, options }),
+		),
+		{ description: cliDescription('Scaffold a new agent-vm project') },
+	);
+}
+
+export async function runInitCommand(
+	io: CliIo,
+	dependencies: CliDependencies,
+	options: InitCommandOptions,
+): Promise<void> {
+	const {
+		agents,
+		arch,
+		namespace,
+		onePasswordKeychainAccountName,
+		overwrite,
+		paths,
+		preset,
+		secrets,
+		type,
+		zoneId,
+	} = options;
+	const gatewayType = type;
+	const presetDefaults = preset;
+	const secretsProvider = resolveSecretsProvider(secrets, presetDefaults);
+	const architecture = resolveArchitecture(arch, presetDefaults);
+	const pathMode = resolvePathMode(paths, presetDefaults);
+	const hostSystemType = resolveHostSystemType(pathMode, presetDefaults);
+	const targetDir = dependencies.getCurrentWorkingDirectory?.() ?? process.cwd();
+	const result = await (dependencies.scaffoldAgentVmProject ?? scaffoldAgentVmProject)({
+		...(agents === undefined ? {} : { agents }),
+		architecture,
+		gatewayType,
+		hostSystemType,
+		...(onePasswordKeychainAccountName === undefined ? {} : { onePasswordKeychainAccountName }),
+		overwrite,
+		paths: pathMode,
+		...(namespace === undefined ? {} : { projectNamespace: namespace }),
+		secretsProvider,
+		targetDir,
+		writeLocalEnvironmentFile: presetDefaults?.writeLocalEnvironmentFile ?? false,
+		zoneId: zoneId ?? 'default',
 	});
+	const keychainStored =
+		secretsProvider === '1password'
+			? await (dependencies.promptAndStoreServiceAccountToken ?? promptAndStoreServiceAccountToken)(
+					await resolveOnePasswordPromptOptions({
+						accountName: onePasswordKeychainAccountName,
+						targetDir,
+					}),
+				)
+			: false;
+	io.stdout.write(`${JSON.stringify({ ...result, keychainStored }, null, 2)}\n`);
 }
