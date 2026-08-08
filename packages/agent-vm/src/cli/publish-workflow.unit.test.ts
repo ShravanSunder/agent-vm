@@ -216,6 +216,32 @@ describe('publish workflow', () => {
 		expect(publishScript).not.toContain('.pypirc');
 	});
 
+	it('publishes npm and Python packages through one verified release entrypoint', async () => {
+		const publishScript = await fs.readFile(
+			path.join(process.cwd(), 'scripts', 'publish-local.sh'),
+			'utf8',
+		);
+
+		expect(publishScript).toContain(
+			'PYPI_OP_REF="${AGENT_VM_PYPI_TOKEN_OP_REF:-op://Dev/PyPI/api-token}"',
+		);
+		expect(publishScript).toContain('scripts/publish-python-local.sh --dry-run');
+		expect(publishScript).toContain(
+			'AGENT_VM_PYPI_TOKEN_OP_REF="$PYPI_OP_REF" scripts/publish-python-local.sh',
+		);
+		expect(publishScript).toContain('verify_published_release');
+		expect(publishScript).toContain('npm view "$package_name@$release_version" version');
+		expect(publishScript).toContain(
+			'https://pypi.org/pypi/${python_package}/${release_version}/json',
+		);
+		expect(publishScript.indexOf('scripts/publish-python-local.sh')).toBeLessThan(
+			publishScript.indexOf('pnpm -r publish'),
+		);
+		expect(publishScript.indexOf('pnpm -r publish')).toBeLessThan(
+			publishScript.lastIndexOf('verify_published_release'),
+		);
+	});
+
 	it('keeps npm and Python release versions synchronized', async () => {
 		const versionGuard = await fs.readFile(
 			path.join(process.cwd(), 'scripts', 'check-package-version-sync.sh'),
