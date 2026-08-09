@@ -106,6 +106,7 @@ interface WorkerE2eZone extends Omit<LoadedSystemConfig['zones'][number], 'gatew
 interface LocalNpmPackageTarball {
 	readonly packageDirectory: string;
 	readonly packageName: string;
+	readonly repoRoot: string;
 }
 
 export interface LocalDockerPackageTarball {
@@ -1070,18 +1071,55 @@ function cacheSafeLocalPackageName(packageName: string): string {
 }
 
 async function computeLocalPackagePackFingerprint(
+	repoRoot: string,
 	packageDirectory: string,
 	packPlan: LocalPackagePackPlan,
 ): Promise<string> {
 	const hash = crypto.createHash('sha256');
 	hash.update(`${packPlan.name}\0${packPlan.version}\0${packPlan.filename}\0`);
+	const stableBuildInputPaths = [
+		'.node-version',
+		'.npmrc',
+		'.pnpmfile.cjs',
+		'mise.toml',
+		'package.json',
+		'pnpm-lock.yaml',
+		'pnpm-workspace.yaml',
+		'tsconfig.base.json',
+		'tsconfig.json',
+	] as const;
+	for (const relativePath of stableBuildInputPaths) {
+		const filePath = path.join(repoRoot, relativePath);
+		// oxlint-disable-next-line no-await-in-loop -- ordered optional-input probing keeps cache keys deterministic
+		if (!(await pathExists(filePath))) {
+			continue;
+		}
+		hash.update(`build:${relativePath}\0`);
+		// oxlint-disable-next-line no-await-in-loop -- ordered hashing keeps cache keys deterministic
+		hash.update(await fs.readFile(filePath));
+		hash.update('\0');
+	}
+	const packageSourceFiles = (await listDirectoryFiles(packageDirectory)).filter((filePath) => {
+		const relativePath = path.relative(packageDirectory, filePath).split(path.sep).join('/');
+		return !relativePath.startsWith('dist/') && !relativePath.startsWith('node_modules/');
+	});
+	for (const filePath of packageSourceFiles) {
+		const relativePath = path.relative(packageDirectory, filePath).split(path.sep).join('/');
+		hash.update(`source:${relativePath}\0`);
+		// oxlint-disable-next-line no-await-in-loop -- ordered hashing keeps cache keys deterministic
+		hash.update(await fs.readFile(filePath));
+		hash.update('\0');
+	}
 	for (const file of packPlan.files.toSorted((left, right) =>
 		left.path.localeCompare(right.path),
 	)) {
+		hash.update(`package:${file.path}\0`);
+		if (file.path.startsWith('dist/')) {
+			continue;
+		}
 		const filePath = path.join(packageDirectory, file.path);
 		// oxlint-disable-next-line no-await-in-loop -- ordered hashing keeps cache keys deterministic
 		const fileContents = await fs.readFile(filePath);
-		hash.update(`${file.path}\0`);
 		hash.update(fileContents);
 		hash.update('\0');
 	}
@@ -1200,6 +1238,7 @@ async function packLocalPackageTarball(props: LocalNpmPackageTarball): Promise<s
 	await assertLocalPackageFilesExist(props);
 	const packPlan = resolveLocalPackagePackPlan(props.packageDirectory, props.packageName);
 	const packFingerprint = await computeLocalPackagePackFingerprint(
+		props.repoRoot,
 		props.packageDirectory,
 		packPlan,
 	);
@@ -1318,6 +1357,7 @@ export async function packLocalAgentVmPackageTarball(options: {
 	return await packLocalPackageTarball({
 		packageDirectory: path.join(options.repoRoot, 'packages', options.packageName),
 		packageName: options.packageName,
+		repoRoot: options.repoRoot,
 	});
 }
 
@@ -2176,6 +2216,7 @@ export async function prepareLocalWorkerPackageForGatewayImage(repoRoot: string)
 	return await packLocalPackageTarball({
 		packageDirectory: path.join(repoRoot, 'packages', 'agent-vm-worker'),
 		packageName: 'agent-vm-worker',
+		repoRoot,
 	});
 }
 

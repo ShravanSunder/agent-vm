@@ -389,6 +389,73 @@ describe('resolveLocalPackagePackArgs', () => {
 			'--config.ignore-scripts=true',
 		]);
 	});
+
+	it('reuses a producer tarball when generated dist bytes differ between jobs', async () => {
+		const previousCacheRoot = process.env.AGENT_VM_E2E_CACHE_DIR;
+		const temporaryRoot = await createTemporaryRoot('agent-vm-e2e-package-cache-');
+		const repoRoot = path.join(temporaryRoot, 'repo');
+		const packageDirectory = path.join(repoRoot, 'packages', 'fake-package');
+		const generatedFilePath = path.join(packageDirectory, 'dist', 'index.js');
+		const sourceFilePath = path.join(packageDirectory, 'src', 'index.ts');
+		const extraGeneratedFilePath = path.join(packageDirectory, 'dist', 'extra.js');
+		const rootBuildInputPath = path.join(repoRoot, 'tsconfig.base.json');
+		await fs.mkdir(path.dirname(generatedFilePath), { recursive: true });
+		await fs.mkdir(path.dirname(sourceFilePath), { recursive: true });
+		await fs.writeFile(
+			path.join(packageDirectory, 'package.json'),
+			JSON.stringify({ name: 'fake-package', version: '1.0.0', files: ['dist', 'src'] }),
+		);
+		await fs.writeFile(sourceFilePath, 'export const value = 1;\n');
+		await fs.writeFile(generatedFilePath, 'export const value = 1;\n');
+		await fs.writeFile(path.join(repoRoot, 'package.json'), '{}\n');
+		await fs.writeFile(path.join(repoRoot, 'pnpm-lock.yaml'), 'lockfileVersion: 9.0\n');
+		await fs.writeFile(path.join(repoRoot, 'pnpm-workspace.yaml'), 'packages:\n  - packages/*\n');
+		await fs.writeFile(path.join(repoRoot, '.node-version'), '24\n');
+		await fs.writeFile(rootBuildInputPath, '{}\n');
+		await fs.writeFile(path.join(repoRoot, 'tsconfig.json'), '{}\n');
+		process.env.AGENT_VM_E2E_CACHE_DIR = path.join(temporaryRoot, 'cache');
+		try {
+			const firstTarballPath = await packLocalAgentVmPackageTarball({
+				packageName: 'fake-package',
+				repoRoot,
+			});
+			const firstTarball = await fs.readFile(firstTarballPath);
+			await fs.appendFile(generatedFilePath, '\n// independent build output variation\n', 'utf8');
+			const secondTarballPath = await packLocalAgentVmPackageTarball({
+				packageName: 'fake-package',
+				repoRoot,
+			});
+			expect(secondTarballPath).toBe(firstTarballPath);
+			expect(await fs.readFile(secondTarballPath)).toEqual(firstTarball);
+
+			await fs.appendFile(sourceFilePath, 'export const changed = true;\n', 'utf8');
+			const sourceChangedTarballPath = await packLocalAgentVmPackageTarball({
+				packageName: 'fake-package',
+				repoRoot,
+			});
+			expect(sourceChangedTarballPath).not.toBe(firstTarballPath);
+
+			await fs.writeFile(extraGeneratedFilePath, 'export const extra = true;\n');
+			const layoutChangedTarballPath = await packLocalAgentVmPackageTarball({
+				packageName: 'fake-package',
+				repoRoot,
+			});
+			expect(layoutChangedTarballPath).not.toBe(sourceChangedTarballPath);
+
+			await fs.appendFile(rootBuildInputPath, '{"compilerOptions":{}}\n', 'utf8');
+			const buildInputChangedTarballPath = await packLocalAgentVmPackageTarball({
+				packageName: 'fake-package',
+				repoRoot,
+			});
+			expect(buildInputChangedTarballPath).not.toBe(layoutChangedTarballPath);
+		} finally {
+			if (previousCacheRoot === undefined) {
+				delete process.env.AGENT_VM_E2E_CACHE_DIR;
+			} else {
+				process.env.AGENT_VM_E2E_CACHE_DIR = previousCacheRoot;
+			}
+		}
+	});
 });
 
 describe('startE2eControllerRuntime', () => {
