@@ -98,8 +98,12 @@ describe('CI workflow topology', () => {
 			parallelPreparationStart,
 		);
 		expect(parallelPreparationStart).toBeGreaterThanOrEqual(0);
+		expect(cacheHitBarrierPosition).toBeGreaterThan(parallelPreparationStart);
 		expect(workerRestorePosition).toBeGreaterThan(parallelPreparationStart);
-		expect(workspaceSetupPosition).toBeGreaterThan(workerRestorePosition);
+		expect(workerRestorePosition).toBeLessThan(cacheHitBarrierPosition);
+		expect(workspaceSetupPosition).toBeGreaterThan(parallelPreparationStart);
+		expect(workspaceSetupPosition).toBeLessThan(cacheHitBarrierPosition);
+		expect(cacheHitBarrierPosition).toBeGreaterThan(workerRestorePosition);
 		expect(cacheHitBarrierPosition).toBeGreaterThan(workspaceSetupPosition);
 	});
 
