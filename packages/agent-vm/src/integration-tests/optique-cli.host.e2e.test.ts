@@ -37,6 +37,18 @@ const packedPackageDefinitions = [
 		name: '@agent-vm/agent-vm-worker',
 		directoryPath: path.join(repoRoot, 'packages', 'agent-vm-worker'),
 	},
+	{
+		name: '@agent-vm/agent-portal-sdk',
+		directoryPath: path.join(repoRoot, 'packages', 'agent-portal-sdk'),
+	},
+	{
+		name: '@agent-vm/mcp-portal',
+		directoryPath: path.join(repoRoot, 'packages', 'mcp-portal'),
+	},
+	{
+		name: '@agent-vm/gateway-runtime',
+		directoryPath: path.join(repoRoot, 'packages', 'gateway-runtime'),
+	},
 ] as const;
 
 interface CliInvocationResult {
@@ -206,7 +218,7 @@ describe('built Optique CLI binaries', () => {
 		}
 	});
 
-	it('proves packed runtime dependencies for both shipped CLI packages', async () => {
+	it('proves packed runtime dependencies for every shipped CLI package', async () => {
 		// Act
 		const packedManifests = await Promise.all(
 			packedPackageDefinitions.map(async (packageDefinition) => ({
