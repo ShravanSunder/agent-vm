@@ -188,14 +188,37 @@ jobs:
             command: pnpm run test:e2e:vm -- --shard=4/4
           - lane: e2e-vm-managed-gateway-core
             managed-gateway-test-group: core
+            require-prepared-image-cache: '1'
             command: >-
               pnpm run test:e2e:vm-managed-gateway
           - lane: e2e-vm-managed-gateway-inputs
-            managed-gateway-test-group: inputs
+            managed-gateway-test-group: input-missing-tool-portal
+            require-prepared-image-cache: '1'
             command: >-
               pnpm run test:e2e:vm-managed-gateway
-          - lane: e2e-vm-managed-gateway-termination
-            managed-gateway-test-group: termination
+          - lane: e2e-vm-managed-gateway-inputs-framework
+            managed-gateway-test-group: input-missing-framework
+            require-prepared-image-cache: '1'
+            command: >-
+              pnpm run test:e2e:vm-managed-gateway
+          - lane: e2e-vm-managed-gateway-inputs-read-only
+            managed-gateway-test-group: input-read-only-environment
+            require-prepared-image-cache: '1'
+            command: >-
+              pnpm run test:e2e:vm-managed-gateway
+          - lane: e2e-vm-managed-gateway-termination-tool-portal
+            managed-gateway-test-group: termination-tool-portal
+            require-prepared-image-cache: '1'
+            command: >-
+              pnpm run test:e2e:vm-managed-gateway
+          - lane: e2e-vm-managed-gateway-termination-openclaw
+            managed-gateway-test-group: termination-openclaw
+            require-prepared-image-cache: '1'
+            command: >-
+              pnpm run test:e2e:vm-managed-gateway
+          - lane: e2e-vm-managed-gateway-worker
+            managed-gateway-test-group: worker-stock
+            require-prepared-image-cache: '1'
             command: >-
               pnpm run test:e2e:vm-managed-gateway
     steps:
@@ -239,6 +262,7 @@ jobs:
       - name: Run E2E lane
         env:
           AGENT_VM_E2E_CACHE_DIR: /tmp/agent-vm-e2e-cache
+          AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE: ${{ matrix.require-prepared-image-cache || '0' }}
           AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1'
           AGENT_VM_MANAGED_GATEWAY_TEST_GROUP: ${{ matrix.managed-gateway-test-group || 'none' }}
         run: ${{ matrix.command }}

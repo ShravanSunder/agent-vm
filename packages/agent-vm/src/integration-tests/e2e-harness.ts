@@ -246,6 +246,7 @@ export interface ManagedVmE2ePrerequisiteOptions {
 }
 
 export interface PrepareGatewayE2eProjectImagesOptions {
+	readonly imageFamilies?: readonly E2eImageTarget['family'][];
 	readonly project: GatewayE2eImageProject;
 	readonly runBuild?: typeof runBuildCommand;
 }
@@ -538,7 +539,9 @@ function managedGatewayBootProjectionsEqual(
 
 async function collectE2eImageTargets(
 	project: GatewayE2eImageProject,
+	imageFamilies: readonly E2eImageTarget['family'][] = ['gateway', 'toolVm'],
 ): Promise<readonly E2eImageTarget[]> {
+	const selectedFamilies = new Set(imageFamilies);
 	const createImageTarget = async (
 		family: 'gateway' | 'toolVm',
 		profileName: string,
@@ -554,7 +557,9 @@ async function collectE2eImageTargets(
 				family === 'gateway' ? 'gateway-images' : 'tool-vm-images',
 				profileName,
 			),
-			e2eManifestEligible: profile.source === undefined,
+			e2eManifestEligible:
+				profile.source === undefined ||
+				(family === 'gateway' && selectedFamilies.size === 1 && selectedFamilies.has('gateway')),
 			family,
 			...(managedGatewayBoot === undefined ? {} : { managedGatewayBoot }),
 			name: profileName,
@@ -573,16 +578,21 @@ async function collectE2eImageTargets(
 		}
 		return target;
 	};
-	const gatewayTargets = await Promise.all(
-		Object.entries(project.systemConfig.imageProfiles.gateways).map(
-			async ([profileName, profile]) => await createImageTarget('gateway', profileName, profile),
-		),
-	);
-	const toolVmTargets = await Promise.all(
-		Object.entries(project.systemConfig.imageProfiles.toolVms).map(
-			async ([profileName, profile]) => await createImageTarget('toolVm', profileName, profile),
-		),
-	);
+	const gatewayTargets = selectedFamilies.has('gateway')
+		? await Promise.all(
+				Object.entries(project.systemConfig.imageProfiles.gateways).map(
+					async ([profileName, profile]) =>
+						await createImageTarget('gateway', profileName, profile),
+				),
+			)
+		: [];
+	const toolVmTargets = selectedFamilies.has('toolVm')
+		? await Promise.all(
+				Object.entries(project.systemConfig.imageProfiles.toolVms).map(
+					async ([profileName, profile]) => await createImageTarget('toolVm', profileName, profile),
+				),
+			)
+		: [];
 	return [...gatewayTargets, ...toolVmTargets];
 }
 
@@ -856,7 +866,11 @@ export async function seedGatewayImageCacheIfAvailable(options: {
 export async function prepareGatewayE2eProjectImages(
 	options: PrepareGatewayE2eProjectImagesOptions,
 ): Promise<void> {
-	if (process.env.AGENT_VM_E2E_USE_LOCAL_TOOL_VM_PACKAGES === '1') {
+	const imageFamilies = options.imageFamilies ?? ['gateway', 'toolVm'];
+	if (
+		imageFamilies.includes('toolVm') &&
+		process.env.AGENT_VM_E2E_USE_LOCAL_TOOL_VM_PACKAGES === '1'
+	) {
 		const managedToolVmProfileNames = Object.entries(
 			options.project.systemConfig.imageProfiles.toolVms,
 		)
@@ -871,9 +885,28 @@ export async function prepareGatewayE2eProjectImages(
 			});
 		}
 	}
-	const imageTargets = await collectE2eImageTargets(options.project);
+	const imageTargets = await collectE2eImageTargets(options.project, imageFamilies);
+	if (imageTargets.length === 0) {
+		if (process.env.AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE === '1') {
+			throw new Error('strict prepared e2e image cache required; no selected image targets.');
+		}
+		return;
+	}
 	if (await materializePreparedE2eImagesFromManifest(options.project, imageTargets)) {
 		return;
+	}
+	if (process.env.AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE === '1') {
+		const targetSummary = imageTargets
+			.map(
+				(target) =>
+					`${target.family}/${target.name}#${target.recipeFingerprint}${
+						target.e2eManifestEligible ? '' : ' (not manifest-eligible)'
+					}`,
+			)
+			.join(', ');
+		throw new Error(
+			`strict prepared e2e image cache required; unable to materialize ${targetSummary || 'no selected image targets'}.`,
+		);
 	}
 	await Promise.all(
 		Object.entries(options.project.systemConfig.imageProfiles.gateways).map(

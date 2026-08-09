@@ -34,11 +34,32 @@ describe('CI workflow topology', () => {
 			'pnpm run test:e2e:vm-managed-gateway',
 			'pnpm run test:e2e:vm-mediation',
 			'managed-gateway-test-group: core',
-			'managed-gateway-test-group: inputs',
-			'managed-gateway-test-group: termination',
+			'managed-gateway-test-group: input-missing-tool-portal',
+			'managed-gateway-test-group: input-missing-framework',
+			'managed-gateway-test-group: input-read-only-environment',
+			'managed-gateway-test-group: termination-tool-portal',
+			'managed-gateway-test-group: termination-openclaw',
+			'managed-gateway-test-group: worker-stock',
+			"require-prepared-image-cache: '1'",
 			"AGENT_VM_MANAGED_GATEWAY_TEST_GROUP: ${{ matrix.managed-gateway-test-group || 'none' }}",
+			"AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE: ${{ matrix.require-prepared-image-cache || '0' }}",
 		]) {
 			expect(workflow).toContain(command);
+		}
+		for (const managedGatewayGroup of [
+			'core',
+			'input-missing-tool-portal',
+			'input-missing-framework',
+			'input-read-only-environment',
+			'termination-tool-portal',
+			'termination-openclaw',
+			'worker-stock',
+		]) {
+			expect(workflow).toMatch(
+				new RegExp(
+					`managed-gateway-test-group: ${managedGatewayGroup}\\n\\s+require-prepared-image-cache: '1'`,
+				),
+			);
 		}
 		expect(workflow).not.toContain(
 			'--exclude packages/agent-vm/src/integration-tests/managed-gateway-image-boot.vm.e2e.test.ts',

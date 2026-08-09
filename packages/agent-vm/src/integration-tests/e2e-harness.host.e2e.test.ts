@@ -1427,6 +1427,154 @@ describe('prepareGatewayE2eProjectImages', () => {
 		);
 	});
 
+	it('fails before image build when strict prepared-image reuse is required but absent', async () => {
+		const previousSmokeCacheRoot = process.env.AGENT_VM_E2E_CACHE_DIR;
+		const previousRequirePreparedImageCache = process.env.AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE;
+		const temporaryRoot = await createTemporaryRoot('agent-vm-e2e-harness-');
+		const smokeCacheRoot = path.join(temporaryRoot, 'shared-smoke-cache');
+		const project = await scaffoldWorkerE2eProject({
+			architecture: 'aarch64',
+			prefix: 'worker-loop-e2e-',
+			zoneId: 'worker-e2e',
+		});
+		temporaryRoots.push(project.tempRoot);
+		const gatewayProfile = project.systemConfig.imageProfiles.gateways.worker;
+		if (gatewayProfile === undefined) {
+			throw new Error('Expected Worker gateway image profile.');
+		}
+		const dockerfilePath = path.join(project.tempRoot, 'gateway.Dockerfile');
+		await fs.writeFile(dockerfilePath, 'FROM scratch\n', 'utf8');
+		gatewayProfile.dockerfile = dockerfilePath;
+		delete gatewayProfile.source;
+		process.env.AGENT_VM_E2E_CACHE_DIR = smokeCacheRoot;
+		process.env.AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE = '1';
+		let buildInvoked = false;
+		try {
+			await expect(
+				prepareGatewayE2eProjectImages({
+					imageFamilies: ['gateway'],
+					project,
+					runBuild: async () => {
+						buildInvoked = true;
+					},
+				}),
+			).rejects.toThrow(/strict prepared e2e image cache required/u);
+			await expect(
+				prepareGatewayE2eProjectImages({
+					imageFamilies: [],
+					project,
+					runBuild: async () => {
+						buildInvoked = true;
+					},
+				}),
+			).rejects.toThrow(/strict prepared e2e image cache required/u);
+		} finally {
+			if (previousSmokeCacheRoot === undefined) {
+				delete process.env.AGENT_VM_E2E_CACHE_DIR;
+			} else {
+				process.env.AGENT_VM_E2E_CACHE_DIR = previousSmokeCacheRoot;
+			}
+			if (previousRequirePreparedImageCache === undefined) {
+				delete process.env.AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE;
+			} else {
+				process.env.AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE = previousRequirePreparedImageCache;
+			}
+		}
+		expect(buildInvoked).toBe(false);
+	});
+
+	it('reuses a gateway-only manifest for equivalent managed-source Worker images', async () => {
+		const previousSmokeCacheRoot = process.env.AGENT_VM_E2E_CACHE_DIR;
+		const previousRequirePreparedImageCache = process.env.AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE;
+		const temporaryRoot = await createTemporaryRoot('agent-vm-e2e-harness-');
+		const smokeCacheRoot = path.join(temporaryRoot, 'shared-smoke-cache');
+		const firstProject = await scaffoldWorkerE2eProject({
+			architecture: 'aarch64',
+			prefix: 'worker-loop-e2e-',
+			zoneId: 'worker-e2e',
+		});
+		const secondProject = await scaffoldWorkerE2eProject({
+			architecture: 'aarch64',
+			prefix: 'worker-loop-e2e-',
+			zoneId: 'worker-e2e',
+		});
+		temporaryRoots.push(firstProject.tempRoot, secondProject.tempRoot);
+		for (const project of [firstProject, secondProject]) {
+			Object.assign(project.systemConfig, { cacheDir: path.join(smokeCacheRoot, 'worker') });
+			const gatewayProfile = project.systemConfig.imageProfiles.gateways.worker;
+			if (gatewayProfile === undefined) {
+				throw new Error('Expected worker gateway image profile.');
+			}
+			gatewayProfile.source = { base: 'worker-gateway', kind: 'managedBase' };
+		}
+		process.env.AGENT_VM_E2E_CACHE_DIR = smokeCacheRoot;
+		const buildConfigs: LoadedSystemConfig[] = [];
+		try {
+			await prepareGatewayE2eProjectImages({
+				imageFamilies: ['gateway'],
+				project: firstProject,
+				runBuild: async ({ systemConfig }) => {
+					buildConfigs.push(systemConfig);
+					const gatewayProfile = systemConfig.imageProfiles.gateways.worker;
+					if (gatewayProfile === undefined) {
+						throw new Error('Expected worker gateway image profile.');
+					}
+					const fingerprint = await computeFingerprintFromConfigPath(gatewayProfile.buildConfig);
+					const cacheDir = path.join(systemConfig.cacheDir, 'gateway-images', 'worker');
+					const imagePath = path.join(cacheDir, fingerprint);
+					await fs.mkdir(imagePath, { recursive: true });
+					await Promise.all(
+						managedVmImageAssetFileNames.map(
+							async (fileName) =>
+								await fs.writeFile(
+									path.join(imagePath, fileName),
+									fileName + String.fromCharCode(10),
+									'utf8',
+								),
+						),
+					);
+					await writePreparedManagedVmImage({
+						buildConfigPath: gatewayProfile.buildConfig,
+						cacheDir,
+						fingerprint,
+						imagePath,
+					});
+				},
+			});
+			process.env.AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE = '1';
+			await prepareGatewayE2eProjectImages({
+				imageFamilies: ['gateway'],
+				project: secondProject,
+				runBuild: async ({ systemConfig }) => {
+					buildConfigs.push(systemConfig);
+				},
+			});
+		} finally {
+			if (previousSmokeCacheRoot === undefined) {
+				delete process.env.AGENT_VM_E2E_CACHE_DIR;
+			} else {
+				process.env.AGENT_VM_E2E_CACHE_DIR = previousSmokeCacheRoot;
+			}
+			if (previousRequirePreparedImageCache === undefined) {
+				delete process.env.AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE;
+			} else {
+				process.env.AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE = previousRequirePreparedImageCache;
+			}
+		}
+
+		expect(buildConfigs).toEqual([firstProject.systemConfig]);
+		const secondGatewayProfile = secondProject.systemConfig.imageProfiles.gateways.worker;
+		if (secondGatewayProfile === undefined) {
+			throw new Error('Expected worker gateway image profile.');
+		}
+		await expect(
+			readPreparedManagedVmImage({
+				buildConfigPath: secondGatewayProfile.buildConfig,
+				cacheDir: path.join(secondProject.systemConfig.cacheDir, 'gateway-images', 'worker'),
+			}),
+		).resolves.toMatchObject({ built: false });
+	});
+
 	it('does not reuse a prepared Worker image when the expected managed Gateway boot projection changes', async () => {
 		const temporaryRoot = await createTemporaryRoot('agent-vm-e2e-harness-');
 		const smokeCacheRoot = path.join(temporaryRoot, 'shared-smoke-cache');
