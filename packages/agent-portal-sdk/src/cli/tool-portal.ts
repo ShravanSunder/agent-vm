@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import { readFile } from 'node:fs/promises';
-import path from 'node:path';
 
 import { z } from 'zod';
 
@@ -25,10 +24,12 @@ import {
 	type ToolPortalMcpTransport,
 } from '../tool-portal-mcp-client/index.js';
 import { createNodeToolPortalMcpTransport } from '../tool-portal-mcp-client/node-tool-portal-mcp-transport.js';
+import {
+	runToolPortalCliParser,
+	type ToolPortalCliArguments,
+	type ToolPortalCliOperation,
+} from './tool-portal-cli-parser.js';
 
-const OperationSchema = z.enum(['artifact-read', 'call', 'describe', 'list', 'search']);
-const TransportKindSchema = z.enum(['http', 'scoped-stdio']);
-const EnvironmentVariableNameSchema = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/u);
 const canonicalResultGraceAfterInterruptMilliseconds = 250;
 const ScopedStdioConfigSchema = z
 	.object({
@@ -38,7 +39,6 @@ const ScopedStdioConfigSchema = z
 	})
 	.strict();
 
-type ToolPortalCliOperation = z.infer<typeof OperationSchema>;
 type ToolPortalCliInvocationResult =
 	| { readonly kind: 'artifact-read'; readonly result: PortalArtifactReadResult }
 	| {
@@ -50,115 +50,9 @@ type ToolPortalCliInvocationResult =
 				| PortalSearchResult;
 	  };
 
-interface ToolPortalCliArguments {
-	readonly approvalTokenEnvironmentName?: string;
-	readonly authorizationEnvironmentName?: string;
-	readonly endpoint?: string;
-	readonly inputJson: string;
-	readonly operation: ToolPortalCliOperation;
-	readonly scopedStdioConfigPath?: string;
-	readonly transportKind: z.infer<typeof TransportKindSchema>;
-}
-
 interface ToolPortalCliTransportResult {
 	readonly authorization: string | undefined;
 	readonly transport: ToolPortalMcpTransport;
-}
-
-function parseNamedOptions(argv: readonly string[]): ReadonlyMap<string, string> {
-	const namedOptions = new Map<string, string>();
-	for (let index = 1; index < argv.length; index += 2) {
-		const name = argv[index];
-		const value = argv[index + 1];
-		if (name === undefined || value === undefined || !name.startsWith('--')) {
-			throw new Error('Every Tool Portal CLI option requires one explicit value.');
-		}
-		if (namedOptions.has(name)) {
-			throw new Error(`Duplicate Tool Portal CLI option: ${name}.`);
-		}
-		namedOptions.set(name, value);
-	}
-	return namedOptions;
-}
-
-function requireNamedOption(namedOptions: ReadonlyMap<string, string>, name: string): string {
-	const value = namedOptions.get(name);
-	if (value === undefined || value.length === 0) {
-		throw new Error(`Missing required Tool Portal CLI option: ${name}.`);
-	}
-	return value;
-}
-
-function assertExactOptionNames(
-	namedOptions: ReadonlyMap<string, string>,
-	allowedNames: ReadonlySet<string>,
-): void {
-	for (const name of namedOptions.keys()) {
-		if (!allowedNames.has(name)) {
-			throw new Error(`Unknown Tool Portal CLI option: ${name}.`);
-		}
-	}
-}
-
-function parseCliArguments(argv: readonly string[]): ToolPortalCliArguments {
-	const operation = OperationSchema.parse(argv[0]);
-	const namedOptions = parseNamedOptions(argv);
-	const inputJson = requireNamedOption(namedOptions, '--input-json');
-	const transportKind = TransportKindSchema.parse(requireNamedOption(namedOptions, '--transport'));
-	if (operation !== 'call' && namedOptions.has('--approval-token-env')) {
-		throw new Error('Tool Portal approval tokens are accepted only for the call operation.');
-	}
-
-	if (transportKind === 'http') {
-		assertExactOptionNames(
-			namedOptions,
-			new Set([
-				'--approval-token-env',
-				'--authorization-env',
-				'--endpoint',
-				'--input-json',
-				'--transport',
-			]),
-		);
-		return {
-			...(namedOptions.has('--approval-token-env')
-				? {
-						approvalTokenEnvironmentName: EnvironmentVariableNameSchema.parse(
-							requireNamedOption(namedOptions, '--approval-token-env'),
-						),
-					}
-				: {}),
-			authorizationEnvironmentName: EnvironmentVariableNameSchema.parse(
-				requireNamedOption(namedOptions, '--authorization-env'),
-			),
-			endpoint: requireNamedOption(namedOptions, '--endpoint'),
-			inputJson,
-			operation,
-			transportKind,
-		};
-	}
-
-	assertExactOptionNames(
-		namedOptions,
-		new Set(['--approval-token-env', '--input-json', '--stdio-config', '--transport']),
-	);
-	const scopedStdioConfigPath = requireNamedOption(namedOptions, '--stdio-config');
-	if (!path.isAbsolute(scopedStdioConfigPath)) {
-		throw new Error('Scoped stdio configuration path must be absolute.');
-	}
-	return {
-		...(namedOptions.has('--approval-token-env')
-			? {
-					approvalTokenEnvironmentName: EnvironmentVariableNameSchema.parse(
-						requireNamedOption(namedOptions, '--approval-token-env'),
-					),
-				}
-			: {}),
-		inputJson,
-		operation,
-		scopedStdioConfigPath,
-		transportKind,
-	};
 }
 
 function parseHttpEndpoint(endpoint: string): URL {
@@ -180,30 +74,24 @@ async function createCliTransport(
 	arguments_: ToolPortalCliArguments,
 	environment: NodeJS.ProcessEnv,
 ): Promise<ToolPortalCliTransportResult> {
-	if (arguments_.transportKind === 'http') {
-		const environmentName = arguments_.authorizationEnvironmentName;
+	if (arguments_.transport.kind === 'http') {
+		const environmentName = arguments_.transport.authorizationEnvironmentName;
 		const authorization = environmentName === undefined ? undefined : environment[environmentName];
 		if (authorization === undefined || authorization.length === 0) {
 			throw new Error('The explicit Tool Portal authorization environment variable is unset.');
-		}
-		if (arguments_.endpoint === undefined) {
-			throw new Error('Tool Portal HTTP endpoint is required.');
 		}
 		return {
 			authorization,
 			transport: createNodeToolPortalMcpTransport({
 				authorization,
-				endpoint: parseHttpEndpoint(arguments_.endpoint),
+				endpoint: parseHttpEndpoint(arguments_.transport.endpoint),
 				kind: 'http',
 			}),
 		};
 	}
 
-	if (arguments_.scopedStdioConfigPath === undefined) {
-		throw new Error('Scoped stdio configuration path is required.');
-	}
 	const config = ScopedStdioConfigSchema.parse(
-		JSON.parse(await readFile(arguments_.scopedStdioConfigPath, 'utf8')) as unknown,
+		JSON.parse(await readFile(arguments_.transport.scopedStdioConfigPath, 'utf8')) as unknown,
 	);
 	return {
 		authorization: undefined,
@@ -268,11 +156,15 @@ async function invokePortalOperation(props: {
 				),
 			};
 	}
-	throw new Error(`Unsupported Tool Portal CLI operation: ${String(props.operation)}.`);
+	return assertNever(props.operation);
+}
+
+function assertNever(value: never): never {
+	throw new Error(`Unsupported Tool Portal CLI operation: ${String(value)}.`);
 }
 
 function readApprovalToken(
-	arguments_: ToolPortalCliArguments,
+	arguments_: Extract<ToolPortalCliArguments, { readonly operation: 'call' }>,
 	environment: NodeJS.ProcessEnv,
 ): string | undefined {
 	const environmentName = arguments_.approvalTokenEnvironmentName;
@@ -307,7 +199,13 @@ async function runToolPortalCli(
 	const interrupt = (): void => cancellation.abort(new Error('Tool Portal CLI interrupted.'));
 	process.once('SIGINT', interrupt);
 	try {
-		const cliArguments = parseCliArguments(argv);
+		const parseResult = runToolPortalCliParser(argv, {
+			stderr: process.stderr,
+			stdout: process.stdout,
+		});
+		if (parseResult.kind === 'help') return parseResult.exitCode;
+		if (parseResult.kind === 'parse-error') return parseResult.exitCode;
+		const cliArguments = parseResult.value;
 		const transportResult = await createCliTransport(cliArguments, environment);
 		authorization = transportResult.authorization;
 		client = new ToolPortalMcpClient({ transport: transportResult.transport });

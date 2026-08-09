@@ -24,7 +24,7 @@ Rejected alternatives:
   code but mix pure parsing with effects and make help/error paths harder to
   prove.
 - A shared cross-package CLI framework would add ownership and coupling not
-  required by the two small, independently shipped command roots.
+  required by the independently shipped command roots.
 
 ## Target composition and ownership
 
@@ -46,9 +46,15 @@ agent-vm-worker process entrypoint
       owns: serve/health grammar and Zod value parsers
     dispatches to: worker serve and health operations
       own: server startup and health request effects
+
+tool-portal, mcp-portal, and gateway-runtime entrypoints
+  own: argv, exact stdout/stderr protocol, and final process status
+  call: package-local pure Optique parser and exhaustive dispatcher
+  dispatch to: existing package-owned operations
+    own: portal calls, configuration IO, server startup, and runtime lifecycle
 ```
 
-The two parser roots depend on `@optique/core` constructs/primitives and
+Each parser-owning package depends directly on `@optique/core` constructs/primitives and
 `@optique/zod`. The runner boundary uses `runParser()` from Optique's core
 facade with explicit `onShow` and `onError` callbacks; it does not use
 `@optique/run`'s process-owning `run()`/`runAsync()` path. Operation modules do
@@ -164,11 +170,11 @@ existing startup operation succeeds.
 
 There is one source-tree and package cutover:
 
-1. Both parser trees and runners change together.
+1. Every active parser tree and runner changes together.
 2. All active tests change to assert Optique-owned behavior rather than
    `cmd-ts` wording.
-3. Both package manifests and the lockfile replace `cmd-ts` with the Optique
-   package set.
+3. Every parser-owning package manifest and the lockfile declare the narrow
+   Optique package set they import.
 4. No compatibility phase, feature flag, or dual parser is permitted.
 
 Until all four conditions hold, the branch is not a valid cutover. Rollback is
@@ -178,11 +184,11 @@ the changeset as a whole; there is no runtime state to reconcile.
 
 | Requirement | Structural realization | Observation seam |
 | --- | --- | --- |
-| S1 | Package manifests plus direct Optique imports in both CLI packages | dependency graph and source/static scan |
+| S1 | Package manifests plus direct Optique imports in every active parser-owning package | dependency graph and source/static scan |
 | S2 | Leaf Optique parsers preserve the command grammar; discriminated values preserve typed inputs | parser contract units plus existing operation tests |
 | S3 | Existing or adjacent Zod schemas wrapped only by `@optique/zod` | focused parser validation units |
-| S4 | Pure parser tree followed by one exhaustive async dispatcher per binary | no-effect parse tests and one-dispatch tests |
-| S5 | `runParser()` callback normalization and process-entrypoint-only status mapping | in-process runner tests, automated built-binary host E2E, and a separate outside-suite manual smoke of both binaries |
+| S4 | Pure parser tree followed by one exhaustive async dispatcher per active binary | no-effect parse tests and one-dispatch tests |
+| S5 | `runParser()` callback normalization and process-entrypoint-only status mapping | in-process runner tests, automated built-binary host E2E, and a separate outside-suite manual smoke of every active binary |
 | S6 | Optique confined to CLI definitions/runners; operation dependencies remain unchanged | typecheck, integration/host-E2E suites, package inspection, full quality gate |
 
 Real operation dependencies may be injected/replaced in unit tests. The built

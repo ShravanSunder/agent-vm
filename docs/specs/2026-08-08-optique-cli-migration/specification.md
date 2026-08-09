@@ -4,9 +4,10 @@ Requirements: [requirements.md](requirements.md)
 
 ## Observable change
 
-Today, both shipped CLIs define and run their command trees with `cmd-ts`.
+Today, the controller and worker CLIs use Optique, while Tool Portal, MCP Portal,
+and Gateway Runtime still parse arguments manually or with `node:util.parseArgs`.
 Several CLI values are then validated a second time by hand or through existing
-Zod schemas. After this change, Optique parses both command trees and
+Zod schemas. After this change, Optique parses every active command tree and
 `@optique/zod` validates every value whose accepted domain is described by Zod.
 
 ```text
@@ -14,9 +15,12 @@ operator argv
     |
     +--> agent-vm ---------> existing controller/deployment operations
     |
-    `--> agent-vm-worker --> existing serve/health operations
+    +--> agent-vm-worker --> existing serve/health operations
+    +--> tool-portal -----> existing portal invocation operations
+    +--> mcp-portal ------> existing portal administration/server operations
+    `--> gateway-runtime -> existing managed runtime startup
 
-Both opaque CLI surfaces use Optique + @optique/zod at their input boundary.
+Every active CLI surface uses Optique + @optique/zod at its input boundary.
 ```
 
 ## Normative obligations
@@ -25,9 +29,10 @@ Both opaque CLI surfaces use Optique + @optique/zod at their input boundary.
 
 The workspace MUST use mutually compatible current releases of `@optique/core`,
 `@optique/run`, and `@optique/zod` that support Zod 4 and the required
-`zod(schema, { placeholder })` API. `cmd-ts` MUST be absent from both affected
-package manifests, the lockfile package graph, active TypeScript imports, active
-tests, and current operational documentation describing the CLI implementation.
+`zod(schema, { placeholder })` API. `cmd-ts` MUST be absent from every active
+parser-owning package manifest, the lockfile package graph, active TypeScript
+imports, active tests, and current operational documentation describing the CLI
+implementation.
 
 The permanent cutover checker has exactly two kinds of named exceptions: its
 own checker implementation may contain the forbidden name so it can detect it,
@@ -46,6 +51,11 @@ nested command path, long option, short option, positional argument, default,
 and required-versus-optional rule represented by its current command
 definitions. The `agent-vm-worker` CLI MUST retain the `serve` and `health`
 paths and their current options and defaults.
+
+`tool-portal`, `mcp-portal`, and `agent-vm-gateway-runtime` MUST retain every
+current operation, nested path, option, positional value, transport constraint,
+canonical stdout payload, and process status. Gateway Runtime MUST continue to
+require exactly `--config <absolute-path>`.
 
 For the same valid invocation and injected dependencies, the selected business
 operation MUST receive equivalent typed values and execute once. This includes
@@ -95,7 +105,7 @@ Traces to: U4, U5.
 
 ### S5 — Help, version, diagnostic, and status behavior
 
-For both binaries:
+For every active binary:
 
 - top-level help and leaf/nested-command help MUST describe the reachable
   command path and its options, write to standard output, and complete with
@@ -118,9 +128,12 @@ Traces to: U3, U5.
 
 No runtime API, configuration schema, generated deployment file, controller
 route, worker route, or package export outside the CLI runner/definition surface
-MAY change as part of this migration. Published packages MUST contain the
-Optique runtime dependencies needed by their binaries and MUST contain no
-runtime dependency on `cmd-ts`.
+MAY change as part of this migration. Published packages that own CLI parsers
+MUST contain the narrow Optique runtime dependencies needed by their binaries
+and MUST contain neither a parallel manual parser nor a runtime dependency on
+`cmd-ts`. Packages without a CLI parser MUST NOT gain ceremonial Optique
+dependencies. The deprecated `openclaw-mcp-portal-plugin` is outside this
+obligation.
 
 Traces to: U3, U4.
 
@@ -155,7 +168,7 @@ policy.
 | S2 | Command-contract tests cover every leaf path and compare names, aliases, defaults, optionality, and representative parsed values; existing command behavior tests remain green. |
 | S3 | Unit tests exercise enum, numeric coercion, transformed/reused schemas, invalid inputs, and placeholder-safe parser construction. |
 | S4 | Unit tests prove parsing has no effect and exhaustive dispatch invokes one operation; type checking rejects an unhandled variant. |
-| S5 | Automated built-binary host E2E tests observe stdout, stderr, and exit status for top-level help, nested help, version, valid input, unknown input, missing input, and Zod-invalid input on both binaries where applicable. A separate outside-suite manual smoke invokes both built binaries and records representative argv, stream, status, and one safe effect. |
+| S5 | Automated built-binary host E2E tests observe stdout, stderr, and exit status for top-level help, nested help, version, valid input, unknown input, missing input, and Zod-invalid input on every active binary where applicable. A separate outside-suite manual smoke invokes every active built binary and records representative argv, stream, status, and one safe effect. |
 | S6 | Workspace build, package inspection, targeted unit/integration/host-E2E suites, and the repository quality gate pass without unrelated contract changes. |
 
 Built-binary tests are automated host-E2E evidence; they do not replace the

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace every active `cmd-ts` CLI path with Optique and `@optique/zod` while preserving both shipped binaries' command contracts.
+**Goal:** Make Optique and `@optique/zod` the only parsing foundation for every active repository-owned CLI while preserving each binary's command contract.
 
 **Architecture:** Pure Optique parser trees return discriminated command values. Non-terminating in-process runners use core-facade `runParser()` callbacks, exhaustive async dispatchers invoke operation logic, and process entrypoints alone set final status. Exact-domain Zod schemas own value validation; no `cmd-ts` compatibility or Zod translation shim remains.
 
@@ -18,6 +18,8 @@
 - Parsing is pure; dispatch invokes at most one operation; process entrypoints alone own `process.exitCode`.
 - Do not introduce a compatibility facade, dual parser, async parse validation, new runtime state, or unrelated operation refactors.
 - Use direct `node:fs/promises` imports for new filesystem code and the repository's test suffix taxonomy.
+- Exclude the deprecated `packages/openclaw-mcp-portal-plugin` package.
+- Packages without CLI parsing do not gain ceremonial Optique dependencies.
 
 ---
 
@@ -75,7 +77,26 @@
 - [ ] Convert both leaves to Optique/Zod and separate parser, dispatch, and existing operation effects.
 - [ ] Run worker unit/integration tests and package typecheck; refactor after green.
 
-### Task 4: Prove the hard cutover and built binaries
+### Task 4: Convert the remaining active package-owned CLIs
+
+**Files:**
+- Modify: `packages/agent-portal-sdk/src/cli/tool-portal.ts`
+- Modify: `packages/mcp-portal/src/bin/mcp-portal.ts`
+- Modify: `packages/mcp-portal/src/cli/serve-command.ts`
+- Modify: `packages/gateway-runtime/src/bin/gateway-runtime.ts`
+- Modify: the three owning package manifests
+- Test: focused package-local `*.unit.test.ts` files
+
+**Interfaces:**
+- Produces package-local readonly discriminated command values and exhaustive dispatchers.
+- Preserves canonical stdout and process protocol output byte-for-byte where it is a public contract.
+
+- [ ] In `agent-portal-sdk`, observe failing tests before replacing the Tool Portal custom option map; preserve operations, transports, canonical JSON stdout, and transport-specific constraints.
+- [ ] In `mcp-portal`, observe failing tests before replacing top-level manual parsing and `node:util.parseArgs`; preserve every nested command, credential warning, JSON result, server behavior, and status.
+- [ ] In `gateway-runtime`, observe failing tests before replacing manual `--config` parsing; preserve the exact absolute-path and NUL rejection contract plus readiness/retirement stdout protocol.
+- [ ] Give each parser-owning package only the Optique dependencies it directly imports, then run its complete unit, type, lint, and format gates.
+
+### Task 5: Prove the hard cutover and built binaries
 
 **Files:**
 - Modify: active tests whose names/assertions describe `cmd-ts`
@@ -96,7 +117,7 @@
 
 ## Self-review
 
-Every S1-S6 obligation maps to Tasks 1-4. The plan keeps parser infrastructure,
-the two independently shipped command trees, and black-box/residue proof as
+Every S1-S6 obligation maps to Tasks 1-5. The plan keeps parser infrastructure,
+the independently shipped command trees, and black-box/residue proof as
 separate reviewable units. No task authorizes compatibility shims, command UX
 redesign, runtime changes, or VM/gateway E2E.

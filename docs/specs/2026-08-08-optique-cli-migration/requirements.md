@@ -7,22 +7,26 @@ The repository owner requested a complete replacement of `cmd-ts` with
 repository's existing Zod schemas for command-line value validation. This
 document is the Requirements identity for that request.
 
-The affected developer users and operators invoke the two shipped command-line
-programs:
+The affected developer users, operators, and managed runtimes invoke every
+active repository-owned command-line program:
 
 - `agent-vm`, the controller and deployment-management CLI;
 - `agent-vm-worker`, the in-VM worker process CLI.
+- `tool-portal`, the canonical Tool Portal invocation CLI;
+- `mcp-portal`, the standalone MCP Portal administration and server CLI;
+- `agent-vm-gateway-runtime`, the managed Gateway Runtime process CLI.
 
 The change is limited to CLI definition, parsing, validation, dispatch, help,
-version, error reporting, package dependencies, and proof for those two
-programs. Command business operations, controller behavior, worker HTTP
+version, error reporting, package dependencies, and proof for those active
+programs. The deprecated `openclaw-mcp-portal-plugin` package is excluded.
+Command business operations, controller behavior, worker HTTP
 behavior, deployment formats, and runtime protocols remain outside the change.
 
 ## Authorized needs
 
 ### U1 — One maintained CLI parsing foundation
 
-The two shipped CLIs need one current parsing foundation based on Optique. The
+All active repository-owned CLIs need one current parsing foundation based on Optique. The
 repository must not retain `cmd-ts` as a direct, transitive-by-choice, source,
 test, or documentation dependency for active code.
 
@@ -70,7 +74,7 @@ Priority: required.
 
 ## Desired outcome
 
-Both published CLIs are wholly implemented on Optique and `@optique/zod`, use
+All active published CLIs are wholly implemented on Optique and `@optique/zod`, use
 Zod schemas at CLI value boundaries, preserve the supported operator contract,
 and contain no active or packaged `cmd-ts` residue.
 
@@ -78,12 +82,14 @@ and contain no active or packaged `cmd-ts` residue.
 
 - Redesigning command names, option names, defaults, or business behavior.
 - Introducing async or remote validation during argument parsing.
-- Sharing one parser tree between `agent-vm` and `agent-vm-worker` merely to
+- Sharing one parser tree between independently published packages merely to
   remove textual duplication.
 - Refactoring command operation modules unrelated to separating parsing from
   dispatch.
 - Adding shell completion as a new supported product surface.
 - Preserving undocumented `cmd-ts` formatting quirks.
+- Migrating or otherwise investing in the deprecated
+  `packages/openclaw-mcp-portal-plugin` package.
 
 ## Accepted requirements set
 
