@@ -44,7 +44,10 @@ async function main(): Promise<void> {
 			repoRoot: process.cwd(),
 			systemConfig: openClawPluginProject.systemConfig,
 		});
-		await prepareGatewayE2eProjectImages({ project: openClawPluginProject });
+		await prepareGatewayE2eProjectImages({
+			imageFamilies: ['gateway'],
+			project: openClawPluginProject,
+		});
 		await prepareGatewayE2eProjectImages({ imageFamilies: ['gateway'], project: workerProject });
 		process.stdout.write(`Prepared E2E image cache at ${process.env.AGENT_VM_E2E_CACHE_DIR}\n`);
 	} finally {
