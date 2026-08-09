@@ -1,6 +1,6 @@
 import { chmod, lstat, mkdir, open } from 'node:fs/promises';
 import path from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync } from 'node:sqlite';
 
 export type ControllerOwnershipLockErrorCode =
 	| 'controller-already-active'
@@ -79,6 +79,7 @@ export async function acquireControllerOwnershipLock(options: {
 	const lockPath = await prepareControllerOwnershipLockPath(options.runtimeDirectory);
 	let lockDatabase: DatabaseSync;
 	try {
+		const { DatabaseSync } = await import('node:sqlite');
 		lockDatabase = new DatabaseSync(lockPath);
 	} catch (error) {
 		throw new ControllerOwnershipLockError('ownership-lock-storage-unsafe', { cause: error });

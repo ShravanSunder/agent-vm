@@ -1,5 +1,7 @@
-// oxlint-disable typescript-eslint/explicit-function-return-type
-import { command, flag, subcommands } from 'cmd-ts';
+import { object, or } from '@optique/core/constructs';
+import { map } from '@optique/core/modifiers';
+import type { Parser } from '@optique/core/parser';
+import { command } from '@optique/core/primitives';
 
 import type { CliDependencies, CliIo } from '../agent-vm-cli-support.js';
 import { writeJson } from '../agent-vm-cli-support.js';
@@ -11,13 +13,7 @@ import {
 	validateRepoResources,
 	type ValidateRepoResourcesResult,
 } from '../resources-commands.js';
-
-function createJsonFlag() {
-	return flag({
-		long: 'json',
-		description: 'Print machine-readable JSON output',
-	});
-}
+import { cliDescription, createPresenceFlag } from './command-definition-support.js';
 
 function writePathGroup(io: CliIo, label: string, paths: readonly string[]): void {
 	if (paths.length === 0) {
@@ -51,63 +47,67 @@ function writeValidateSummary(
 	io.stdout.write('Repo resource contract is valid.\n');
 }
 
-export function createResourcesSubcommands(io: CliIo, dependencies: CliDependencies) {
-	return subcommands({
-		name: 'resources',
-		description: 'Scaffold and validate repo resource files',
-		cmds: {
-			init: command({
-				name: 'init',
-				description: 'Scaffold .agent-vm resource files in the current repo',
-				args: {
-					json: createJsonFlag(),
-				},
-				handler: async ({ json }) => {
-					const targetDir = dependencies.getCurrentWorkingDirectory?.() ?? process.cwd();
-					const result = await (dependencies.initRepoResources ?? initRepoResources)({ targetDir });
-					if (json) {
-						writeJson(io, result);
-						return;
-					}
-					writeInitSummary(io, targetDir, result);
-				},
-			}),
-			validate: command({
-				name: 'validate',
-				description: 'Validate .agent-vm resource files in the current repo',
-				args: {
-					json: createJsonFlag(),
-				},
-				handler: async ({ json }) => {
-					const targetDir = dependencies.getCurrentWorkingDirectory?.() ?? process.cwd();
-					const result = await (dependencies.validateRepoResources ?? validateRepoResources)({
-						targetDir,
-					});
-					if (json) {
-						writeJson(io, result);
-						return;
-					}
-					writeValidateSummary(io, targetDir, result);
-				},
-			}),
-			update: command({
-				name: 'update',
-				description: 'Update generated .agent-vm resource support files',
-				args: {
-					json: createJsonFlag(),
-				},
-				handler: async ({ json }) => {
-					const targetDir = dependencies.getCurrentWorkingDirectory?.() ?? process.cwd();
-					const result = await (dependencies.updateRepoResources ?? updateRepoResources)({
-						targetDir,
-					});
-					if (json) {
-						writeJson(io, result);
-						return;
-					}
-					writeUpdateSummary(io, result);
-				},
-			}),
-		},
-	});
+export type ResourcesCommand =
+	| { readonly command: 'resources.init'; readonly options: { readonly json: boolean } }
+	| { readonly command: 'resources.validate'; readonly options: { readonly json: boolean } }
+	| { readonly command: 'resources.update'; readonly options: { readonly json: boolean } };
+
+export function createResourcesSubcommands(): Parser<'sync', ResourcesCommand> {
+	const createResourceCommand = (
+		name: 'init' | 'validate' | 'update',
+		description: string,
+	): Parser<'sync', ResourcesCommand> =>
+		command(
+			name,
+			map(
+				object({
+					json: createPresenceFlag('--json', 'Print machine-readable JSON output'),
+				}),
+				(options) => ({ command: `resources.${name}` as const, options }),
+			),
+			{ description: cliDescription(description) },
+		);
+	return command(
+		'resources',
+		or(
+			createResourceCommand('init', 'Scaffold .agent-vm resource files in the current repo'),
+			createResourceCommand('validate', 'Validate .agent-vm resource files in the current repo'),
+			createResourceCommand('update', 'Update generated .agent-vm resource support files'),
+		),
+		{ description: cliDescription('Scaffold and validate repo resource files') },
+	);
+}
+
+export async function runResourcesCommand(
+	io: CliIo,
+	dependencies: CliDependencies,
+	commandValue: ResourcesCommand,
+): Promise<void> {
+	const targetDir = dependencies.getCurrentWorkingDirectory?.() ?? process.cwd();
+	if (commandValue.command === 'resources.init') {
+		const result = await (dependencies.initRepoResources ?? initRepoResources)({ targetDir });
+		if (commandValue.options.json) {
+			writeJson(io, result);
+			return;
+		}
+		writeInitSummary(io, targetDir, result);
+		return;
+	}
+	if (commandValue.command === 'resources.validate') {
+		const result = await (dependencies.validateRepoResources ?? validateRepoResources)({
+			targetDir,
+		});
+		if (commandValue.options.json) {
+			writeJson(io, result);
+			return;
+		}
+		writeValidateSummary(io, targetDir, result);
+		return;
+	}
+	const result = await (dependencies.updateRepoResources ?? updateRepoResources)({ targetDir });
+	if (commandValue.options.json) {
+		writeJson(io, result);
+		return;
+	}
+	writeUpdateSummary(io, result);
 }

@@ -320,6 +320,34 @@ describe('runAgentVmCli', () => {
 		expect(outputs.join('')).toBe('9.8.7\n');
 	});
 
+	it('rejects invalid parser values before loading dependencies or invoking operations', async () => {
+		const loadSystemConfig = vi.fn(async () => createCliBuildSystemConfig());
+		const scaffoldAgentVmProject = vi.fn(async () => ({
+			created: [],
+			keychainStored: false,
+			skipped: [],
+		}));
+
+		await expect(
+			runAgentVmCli(
+				['config', 'reset-instructions', '--zone', 'cache'],
+				{
+					stderr: { write: () => true },
+					stdout: { write: () => true },
+				},
+				{
+					...defaultCliDependencies,
+					loadSystemConfig,
+					resolveCliVersion: async () => '9.8.7',
+					scaffoldAgentVmProject,
+				},
+			),
+		).rejects.toBeInstanceOf(ReportedCliError);
+
+		expect(loadSystemConfig).not.toHaveBeenCalled();
+		expect(scaffoldAgentVmProject).not.toHaveBeenCalled();
+	});
+
 	it('recognizes symlinked package-manager bin paths as the CLI entrypoint', async () => {
 		const targetDir = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-entrypoint-'));
 		const realEntrypointPath = path.join(targetDir, 'real-entrypoint.js');
@@ -970,7 +998,7 @@ describe('runAgentVmCli', () => {
 				},
 				defaultCliDependencies,
 			),
-		).rejects.toThrow(/Invalid value 'bogus'/u);
+		).rejects.toThrow(/secrets|1password|environment|Invalid option/u);
 	});
 
 	it('rejects init when --arch is missing', async () => {
@@ -3147,7 +3175,7 @@ describe('runAgentVmCli', () => {
 					loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
 				},
 			),
-		).rejects.toThrow('peek');
+		).rejects.toThrow('lease');
 		await expect(
 			runAgentVmCli(
 				['controller', 'lease', 'release', 'lease-123'],
@@ -3161,7 +3189,7 @@ describe('runAgentVmCli', () => {
 					loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
 				},
 			),
-		).rejects.toThrow('release');
+		).rejects.toThrow('lease');
 
 		expect(createControllerClient).not.toHaveBeenCalled();
 	});

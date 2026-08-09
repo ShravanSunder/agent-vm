@@ -53,7 +53,11 @@ describe('smoke: agent-vm resources CLI', () => {
 			timeout: 30_000,
 		});
 
-		expect(result.stdout).toContain('agent-vm <subcommand>');
+		expect(result.exitCode).toBe(0);
+		expect(result.stderr).toBe('');
+		expect(result.stdout).toContain('Usage: agent-vm');
+		expect(result.stdout).toContain('resources');
+		expect(result.stdout).toContain('--help');
 	});
 
 	it('creates, validates, and updates repo resource files without clobbering user-owned files', async () => {

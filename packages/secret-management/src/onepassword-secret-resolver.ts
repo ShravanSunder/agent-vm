@@ -67,7 +67,7 @@ class OpInjectOutputError extends Error {
 function ensureMacOsForKeychain(): void {
 	if (process.platform !== 'darwin') {
 		throw new Error(
-			'Keychain token source is only supported on macOS. Use an env token source on this platform so cmd-ts can surface a clear startup error.',
+			'Keychain token source is only supported on macOS. Use an env token source on this platform so the CLI can surface a clear startup error.',
 		);
 	}
 }
