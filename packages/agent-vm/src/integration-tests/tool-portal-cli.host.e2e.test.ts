@@ -425,6 +425,18 @@ describe('packed Tool Portal CLI', () => {
 		}
 	});
 
+	it('prints top-level help to stdout and exits successfully', async () => {
+		const cliPath = requireCliPath(fixture);
+		const result = await runCli({
+			args: ['--help'],
+			cliPath,
+			env: cliEnvironment(fixture.rootDirectory),
+		});
+
+		expect(result).toMatchObject({ exitCode: 0, stderr: '' });
+		expect(result.stdout).toContain('tool-portal');
+	});
+
 	it.each(operationFixtures)(
 		'maps $operation through explicit authenticated HTTP and emits only canonical JSON',
 		async (operationFixture) => {
