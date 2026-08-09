@@ -60,6 +60,7 @@ describe('CI workflow topology', () => {
 		]);
 
 		for (const cacheInput of [
+			'.github/actions/setup-agent-vm/action.yml',
 			'pnpm-workspace.yaml',
 			'packages/**/src/**',
 			'packages/**/tsconfig*.json',
@@ -75,6 +76,12 @@ describe('CI workflow topology', () => {
 		]) {
 			expect(workflow).toContain(cacheInput);
 		}
+
+		const cacheKeyExpressions = [...workflow.matchAll(/E2E_IMAGE_INPUT_HASH:\s*([^\n]+)/gu)].map(
+			(match) => match[1],
+		);
+		expect(cacheKeyExpressions).toHaveLength(2);
+		expect(cacheKeyExpressions[0]).toBe(cacheKeyExpressions[1]);
 
 		expect(workflow).toContain('permissions:\n  contents: read');
 		expect(workflow).toContain('persist-credentials: false');

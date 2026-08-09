@@ -23,7 +23,6 @@ runs:
         version: '0.11.31'
         enable-cache: true
         cache-dependency-glob: uv.lock
-        cache-python: true
 
     - name: Install Python 3.13
       shell: bash
