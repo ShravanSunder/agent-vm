@@ -77,9 +77,9 @@ export async function acquireControllerOwnershipLock(options: {
 	readonly runtimeDirectory: string;
 }): Promise<ControllerOwnershipLock> {
 	const lockPath = await prepareControllerOwnershipLockPath(options.runtimeDirectory);
-	const { DatabaseSync } = await import('node:sqlite');
 	let lockDatabase: DatabaseSync;
 	try {
+		const { DatabaseSync } = await import('node:sqlite');
 		lockDatabase = new DatabaseSync(lockPath);
 	} catch (error) {
 		throw new ControllerOwnershipLockError('ownership-lock-storage-unsafe', { cause: error });
