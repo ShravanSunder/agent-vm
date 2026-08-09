@@ -1398,7 +1398,13 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
         discover_plugins.assert_called_once_with(force=True)
         self.assertEqual(
             events,
-            ["managed-runtime", "managed-policy", "discover:True", "stock-gateway", "managed-policy-close"],
+            [
+                "managed-runtime",
+                "managed-policy",
+                "discover:True",
+                "stock-gateway",
+                "managed-policy-close",
+            ],
         )
 
     def test_clears_plugin_runtime_when_stock_gateway_fails(self) -> None:
