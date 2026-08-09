@@ -438,6 +438,64 @@ describe('packed Tool Portal CLI', () => {
 		expect(result.stdout).toContain('tool-portal');
 	});
 
+	it('prints leaf list help to stdout and exits successfully', async () => {
+		const cliPath = requireCliPath(fixture);
+		const result = await runCli({
+			args: ['list', '--help'],
+			cliPath,
+			env: cliEnvironment(fixture.rootDirectory),
+		});
+
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toContain('Usage: tool-portal list');
+		expect(result.stderr).toBe('');
+	});
+
+	it('rejects a missing input JSON value before an explicit HTTP invocation', async () => {
+		const cliPath = requireCliPath(fixture);
+		const result = await runCli({
+			args: [
+				'list',
+				'--transport',
+				'http',
+				'--endpoint',
+				'http://127.0.0.1:1/mcp',
+				'--authorization-env',
+				'TOOL_PORTAL_TEST_AUTHORIZATION',
+			],
+			cliPath,
+			env: cliEnvironment(fixture.rootDirectory),
+		});
+
+		expect(result.exitCode).toBe(2);
+		expect(result.stdout).toBe('');
+		expect(result.stderr).toContain('Missing option `--input-json`');
+		expect(result.stderr).not.toMatch(/\n\s+at\s+/u);
+	});
+
+	it('rejects an invalid authorization environment name before any MCP request', async () => {
+		const cliPath = requireCliPath(fixture);
+		const server = await startHttpMcpServer(new Map([['tool_portal_list', successfulListResult]]));
+		try {
+			const result = await runCli({
+				args: explicitHttpArgs({
+					authorizationEnvironmentName: 'not-valid',
+					endpoint: server.endpoint,
+				}),
+				cliPath,
+				env: cliEnvironment(fixture.rootDirectory),
+			});
+
+			expect(result.exitCode).toBe(2);
+			expect(result.stdout).toBe('');
+			expect(result.stderr).toContain('Invalid string');
+			expect(result.stderr).not.toMatch(/\n\s+at\s+/u);
+			expect(server.requests).toEqual([]);
+		} finally {
+			await server.close();
+		}
+	});
+
 	it.each(operationFixtures)(
 		'maps $operation through explicit authenticated HTTP and emits only canonical JSON',
 		async (operationFixture) => {
