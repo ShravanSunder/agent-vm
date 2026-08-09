@@ -62,14 +62,6 @@ describe('mcp-portal Optique parser', () => {
 		});
 	});
 
-	it('preserves the attached short port spelling accepted by the previous parser', () => {
-		expect(parsePortalServerCliArgs(['--config-dir', '/config', '-p123'])).toEqual({
-			agentOverrides: [],
-			configDir: '/config',
-			port: 123,
-		});
-	});
-
 	it('reports help on stdout and malformed Zod values on stderr without terminating the host', () => {
 		const helpOutput = createIo();
 		const helpResult = runMcpPortalCliParser(['mcp-proxy', 'serve', '--help'], helpOutput.io);

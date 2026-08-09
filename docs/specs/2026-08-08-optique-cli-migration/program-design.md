@@ -16,6 +16,11 @@ command values and explicit asynchronous dispatch. This costs an explicit
 dispatcher in each binary, but it makes parsing pure, action ownership visible,
 and in-process testing independent of process termination.
 
+Optique owns tokenization as well as value parsing. No raw-argv preprocessor
+preserves legacy parser-only spellings. Optique-standard equivalent forms may
+therefore become accepted, while command paths, option names, typed values,
+defaults, effects, streams, and statuses remain stable.
+
 Rejected alternatives:
 
 - A local `cmd-ts` compatibility facade would minimize edits but preserve the

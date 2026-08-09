@@ -150,9 +150,6 @@ importers:
       '@optique/core':
         specifier: 1.2.0
         version: 1.2.0
-      '@optique/run':
-        specifier: 1.2.0
-        version: 1.2.0
       '@optique/zod':
         specifier: 1.2.0
         version: 1.2.0(zod@4.4.3)
@@ -212,9 +209,6 @@ importers:
         specifier: ^0.142.5
         version: 0.142.5
       '@optique/core':
-        specifier: 1.2.0
-        version: 1.2.0
-      '@optique/run':
         specifier: 1.2.0
         version: 1.2.0
       '@optique/zod':
@@ -373,6 +367,12 @@ importers:
       '@opentelemetry/sdk-trace-base':
         specifier: 2.8.0
         version: 2.8.0(@opentelemetry/api@1.9.1)
+      '@optique/core':
+        specifier: 1.2.0
+        version: 1.2.0
+      '@optique/zod':
+        specifier: 1.2.0
+        version: 1.2.0(zod@4.4.3)
       engine.io:
         specifier: 6.6.9
         version: 6.6.9
@@ -1148,10 +1148,6 @@ packages:
 
   '@optique/core@1.2.0':
     resolution: {integrity: sha512-h3gHGe8BCo5iVpOt4CcWCmTnPDYdyys0XqOCCc5ZPA2A2S+GmupMkqYNeI57+SildteuGEgBrGP+MlwRlWdzPA==}
-    engines: {bun: '>=1.2.0', deno: '>=2.3.0', node: '>=20.0.0'}
-
-  '@optique/run@1.2.0':
-    resolution: {integrity: sha512-4H+sJbpKlB0DsFYyJmyTj2atDdF+9j14MbH99zPTK7YGQysWQ4Vo8UR1O91+ssIDUnKkMNoss7zMvaMf6A52Jw==}
     engines: {bun: '>=1.2.0', deno: '>=2.3.0', node: '>=20.0.0'}
 
   '@optique/zod@1.2.0':
@@ -3989,10 +3985,6 @@ snapshots:
   '@opentelemetry/semantic-conventions@1.41.1': {}
 
   '@optique/core@1.2.0': {}
-
-  '@optique/run@1.2.0':
-    dependencies:
-      '@optique/core': 1.2.0
 
   '@optique/zod@1.2.0(zod@4.4.3)':
     dependencies:

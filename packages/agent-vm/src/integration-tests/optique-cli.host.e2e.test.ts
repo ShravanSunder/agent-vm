@@ -219,7 +219,6 @@ describe('built Optique CLI binaries', () => {
 			expect(manifest.name).toBe(packageDefinition.name);
 			expect(manifest.dependencies ?? {}).toMatchObject({
 				'@optique/core': '1.2.0',
-				'@optique/run': '1.2.0',
 				'@optique/zod': '1.2.0',
 			});
 			expect(

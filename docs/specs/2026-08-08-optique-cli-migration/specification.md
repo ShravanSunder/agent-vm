@@ -27,8 +27,8 @@ Every active CLI surface uses Optique + @optique/zod at its input boundary.
 
 ### S1 — Complete dependency cutover
 
-The workspace MUST use mutually compatible current releases of `@optique/core`,
-`@optique/run`, and `@optique/zod` that support Zod 4 and the required
+The workspace MUST use mutually compatible current releases of `@optique/core`
+and `@optique/zod` that support Zod 4 and the required
 `zod(schema, { placeholder })` API. `cmd-ts` MUST be absent from every active
 parser-owning package manifest, the lockfile package graph, active TypeScript
 imports, active tests, and current operational documentation describing the CLI
@@ -63,7 +63,9 @@ flags, optional values, enum-like choices, transformed values, numeric values,
 and positional values.
 
 Exact help prose layout, ordering where no semantic order is promised, terminal
-styling, and legacy parser wording are intentionally unspecified.
+styling, legacy parser wording, and legacy parser-specific tokenization quirks
+are intentionally unspecified. Optique's standard grammar is authoritative,
+including equivalent attached long-option values such as `--config=/path`.
 
 Traces to: U3, U4.
 

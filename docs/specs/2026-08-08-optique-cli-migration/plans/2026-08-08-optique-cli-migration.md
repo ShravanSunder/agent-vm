@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - Hard cutover: no active `cmd-ts` manifest, lockfile, source, test-name, or current-doc residue.
-- Use mutually compatible current `@optique/core`, `@optique/run`, and `@optique/zod` releases with Zod 4 support; use `runParser()` for the non-terminating runner.
+- Use mutually compatible current `@optique/core` and `@optique/zod` releases with Zod 4 support; use core-facade `runParser()` for the non-terminating runner and do not declare unused `@optique/run` dependencies.
 - Every Zod-expressible CLI value uses `@optique/zod` with an output-type-safe placeholder.
 - Reuse exact-domain schemas; preserve `init --type` as a CLI-owned `openclaw | worker` subset that rejects `hermes`.
 - Preserve all 34 leaf command paths, option names/aliases, positional arguments, defaults, typed values, effects, output streams, and operation failures.
@@ -20,6 +20,7 @@
 - Use direct `node:fs/promises` imports for new filesystem code and the repository's test suffix taxonomy.
 - Exclude the deprecated `packages/openclaw-mcp-portal-plugin` package.
 - Packages without CLI parsing do not gain ceremonial Optique dependencies.
+- Optique owns tokenization; do not add raw-argv compatibility preprocessors for legacy parser-specific spellings.
 
 ---
 

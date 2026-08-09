@@ -67,7 +67,6 @@
 		"@opentelemetry/sdk-trace-base": "2.8.0",
 		"@opentelemetry/semantic-conventions": "1.41.1",
 		"@optique/core": "1.2.0",
-		"@optique/run": "1.2.0",
 		"@optique/zod": "1.2.0",
 		"ansis": "^4.3.0",
 		"execa": "^9.6.1",

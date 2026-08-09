@@ -49,7 +49,9 @@ operator actions, while malformed invocations must remain failures with useful
 diagnostics.
 
 Exact legacy help layout, punctuation, wrapping, color, and `cmd-ts`-specific
-error wording are not compatibility requirements.
+error wording are not compatibility requirements. Legacy parser-specific token
+forms are also not compatibility requirements; Optique's standard option and
+argument grammar becomes authoritative.
 
 Priority: required.
 

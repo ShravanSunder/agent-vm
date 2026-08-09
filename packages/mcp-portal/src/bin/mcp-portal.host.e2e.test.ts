@@ -26,6 +26,15 @@ const masterKeyText = masterKey.toString('base64url');
 const hmacKey = createHmac('sha256', masterKey)
 	.update(`mcp-portal:approval-agent:${agentId}`)
 	.digest();
+const repositoryRoot = process.cwd();
+const mcpPortalCliPath = join(
+	repositoryRoot,
+	'packages',
+	'mcp-portal',
+	'dist',
+	'bin',
+	'mcp-portal.js',
+);
 
 type StartedUpstreamServer = StartedFakeUpstreamMcpServer;
 
@@ -44,6 +53,14 @@ interface StartedPortalProcess {
 interface PortalClientHandle {
 	readonly client: Client;
 	readonly close: () => Promise<void>;
+}
+
+interface CompletedPortalCliInvocation {
+	readonly argv: readonly string[];
+	readonly exitCode: number | null;
+	readonly signal: NodeJS.Signals | null;
+	readonly stderr: string;
+	readonly stdout: string;
 }
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
@@ -132,6 +149,39 @@ async function waitForPortalExit(
 		timeoutMs,
 		`${describeExit} did not exit within ${String(timeoutMs)}ms.`,
 	);
+}
+
+async function runBuiltPortalCli(argv: readonly string[]): Promise<CompletedPortalCliInvocation> {
+	const child = spawn(process.execPath, [mcpPortalCliPath, ...argv], {
+		cwd: repositoryRoot,
+		stdio: ['ignore', 'pipe', 'pipe'],
+	});
+	const output: ChildOutput = { stderr: '', stdout: '' };
+	child.stdout.setEncoding('utf8');
+	child.stderr.setEncoding('utf8');
+	child.stdout.on('data', (chunk: string) => {
+		output.stdout += chunk;
+	});
+	child.stderr.on('data', (chunk: string) => {
+		output.stderr += chunk;
+	});
+	try {
+		const [exitCode, signal] = await withTimeout(
+			new Promise<[number | null, NodeJS.Signals | null]>((resolve, reject) => {
+				child.once('error', reject);
+				child.once('close', (closedExitCode, closedSignal) => {
+					resolve([closedExitCode, closedSignal]);
+				});
+			}),
+			30_000,
+			`Built MCP Portal CLI did not exit for argv: ${argv.join(' ')}`,
+		);
+		return { argv, exitCode, signal, stderr: output.stderr, stdout: output.stdout };
+	} finally {
+		if (child.exitCode === null) {
+			child.kill('SIGKILL');
+		}
+	}
 }
 
 async function findOpenPort(): Promise<number> {
@@ -338,6 +388,50 @@ function parsePortalJsonResult(value: unknown): unknown {
 	const parsed: unknown = JSON.parse(text);
 	return parsed;
 }
+
+describe('built mcp-portal CLI', () => {
+	it('prints top-level and nested help on stdout with successful status', async () => {
+		await access(mcpPortalCliPath);
+
+		const invocations = await Promise.all([
+			runBuiltPortalCli(['--help']),
+			runBuiltPortalCli(['mcp-proxy', 'serve', '--help']),
+		]);
+
+		expect(invocations[0]).toMatchObject({
+			argv: ['--help'],
+			exitCode: 0,
+			signal: null,
+			stderr: '',
+		});
+		expect(invocations[0]?.stdout).toContain('mcp-portal');
+		expect(invocations[1]).toMatchObject({
+			argv: ['mcp-proxy', 'serve', '--help'],
+			exitCode: 0,
+			signal: null,
+			stderr: '',
+		});
+		expect(invocations[1]?.stdout).toContain('mcp-proxy serve');
+	});
+
+	it('reports malformed invocations on stderr with a failing status and no stdout', async () => {
+		await access(mcpPortalCliPath);
+
+		const invocations = await Promise.all([
+			runBuiltPortalCli(['mcp-proxy', 'serve', '--config-dir', '/config', '--port', 'not-a-port']),
+			runBuiltPortalCli(['validate', 'catalog.json', '--unknown-option']),
+		]);
+
+		for (const invocation of invocations) {
+			expect(invocation.exitCode).not.toBe(0);
+			expect(invocation.signal).toBeNull();
+			expect(invocation.stdout).toBe('');
+			expect(invocation.stderr).toContain('Error:');
+			expect(invocation.stderr.match(/^Error:/gmu)).toHaveLength(1);
+			expect(invocation.stderr).not.toMatch(/TypeError:|ReferenceError:|SyntaxError:|\n\s+at\s/u);
+		}
+	});
+});
 
 describe('portal proxy CLI integration', () => {
 	let configDir: string | null = null;

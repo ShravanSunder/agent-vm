@@ -302,15 +302,6 @@ function createRunOptions(io: McpPortalCliParserIo): RunOptions<never, never> {
 	};
 }
 
-function normalizeAttachedPortOption(argv: readonly string[]): readonly string[] {
-	return argv.flatMap((argumentValue): readonly string[] => {
-		if (argumentValue.startsWith('-p') && argumentValue !== '-p') {
-			return ['-p', argumentValue.slice(2)];
-		}
-		return [argumentValue];
-	});
-}
-
 export function runMcpPortalCliParser(
 	argv: readonly string[],
 	io: McpPortalCliParserIo,
@@ -318,12 +309,7 @@ export function runMcpPortalCliParser(
 	try {
 		return {
 			kind: 'parsed',
-			value: runParser(
-				mcpPortalCliParser,
-				'mcp-portal',
-				normalizeAttachedPortOption(argv),
-				createRunOptions(io),
-			),
+			value: runParser(mcpPortalCliParser, 'mcp-portal', argv, createRunOptions(io)),
 		};
 	} catch (error: unknown) {
 		if (error instanceof McpPortalCliRunnerSignalError) {
@@ -337,7 +323,7 @@ export function parsePortalServerCliArgs(argv: readonly string[]): PortalServerC
 	if (argv.length === 0) {
 		throw new Error('--config-dir <path> is required.');
 	}
-	const result = parseSync(portalServerCliParser, normalizeAttachedPortOption(argv));
+	const result = parseSync(portalServerCliParser, argv);
 	if (!result.success) {
 		throw new Error(formatMessage(result.error));
 	}
