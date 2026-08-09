@@ -74,6 +74,31 @@ describe('CI workflow topology', () => {
 		expect(workflow).toContain('id: e2e-image-cache-key');
 		expect(workflow).toContain('steps.e2e-image-cache-key.outputs.hash');
 		expect(workflow).toContain('lookup-only: true');
+		expect(workflow).toContain(
+			'      - parallel:\n          - name: Restore prepared OpenClaw image cache',
+		);
+		expect(workflow).toContain('          - name: Restore prepared Worker image cache');
+		expect(workflow).toContain('          - name: Set up Agent VM workspace');
+		expect(workflow).not.toContain('\n      - name: Set up Agent VM workspace\n');
+		const parallelPreparationStart = workflow.indexOf(
+			'      - parallel:\n          - name: Restore prepared OpenClaw image cache',
+		);
+		const workerRestorePosition = workflow.indexOf(
+			'          - name: Restore prepared Worker image cache',
+			parallelPreparationStart,
+		);
+		const workspaceSetupPosition = workflow.indexOf(
+			'          - name: Set up Agent VM workspace',
+			parallelPreparationStart,
+		);
+		const cacheHitBarrierPosition = workflow.indexOf(
+			'      - name: Require prepared image caches',
+			parallelPreparationStart,
+		);
+		expect(parallelPreparationStart).toBeGreaterThanOrEqual(0);
+		expect(workerRestorePosition).toBeGreaterThan(parallelPreparationStart);
+		expect(workspaceSetupPosition).toBeGreaterThan(workerRestorePosition);
+		expect(cacheHitBarrierPosition).toBeGreaterThan(workspaceSetupPosition);
 	});
 
 	it('keys prepared images from all package build inputs and prepares both image families', async () => {
