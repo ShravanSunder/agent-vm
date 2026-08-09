@@ -124,6 +124,11 @@ For every active binary:
 The migration MAY adopt Optique's wording, usage layout, suggestions, and color
 behavior. It MUST NOT expose a stack trace for ordinary parse failures.
 
+For the proof obligation above, a boundary invocation exercises an existing
+edge of a CLI value domain, such as an accepted numeric limit or an
+optional-versus-required transition. Boundary coverage does not add a command,
+option, or validation domain.
+
 Traces to: U3, U5.
 
 ### S6 — Public and package compatibility
@@ -170,7 +175,7 @@ policy.
 | S2 | Command-contract tests cover every leaf path and compare names, aliases, defaults, optionality, and representative parsed values; existing command behavior tests remain green. |
 | S3 | Unit tests exercise enum, numeric coercion, transformed/reused schemas, invalid inputs, and placeholder-safe parser construction. |
 | S4 | Unit tests prove parsing has no effect and exhaustive dispatch invokes one operation; type checking rejects an unhandled variant. |
-| S5 | Automated built-binary host E2E tests observe stdout, stderr, and exit status for top-level help, nested help, version, valid input, unknown input, missing input, and Zod-invalid input on every active binary where applicable. A separate outside-suite manual smoke invokes every active built binary and records representative argv, stream, status, and one safe effect. |
+| S5 | Automated built-binary host E2E tests observe stdout, stderr, and exit status for top-level help, nested or leaf help where that path exists, version where that surface exists, representative valid input, existing-domain boundary input, unknown input, missing input, and Zod-invalid input on every active binary. A separate outside-suite manual smoke invokes every active built binary and records representative argv, stream, status, and one safe effect. |
 | S6 | Workspace build, package inspection, targeted unit/integration/host-E2E suites, and the repository quality gate pass without unrelated contract changes. |
 
 Built-binary tests are automated host-E2E evidence; they do not replace the

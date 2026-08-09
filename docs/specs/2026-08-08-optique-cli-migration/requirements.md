@@ -67,10 +67,15 @@ Priority: required.
 
 ### U5 — The shipped binaries are proven, not only type-correct
 
-Maintainers need automated and black-box evidence that both built binaries
-parse representative valid, boundary, invalid, help, and version invocations;
+Maintainers need automated and black-box evidence that every active built
+binary parses representative valid, boundary, invalid, and help invocations,
+plus version invocations where that binary already exposes a version surface;
 dispatch the intended operation once; write diagnostics to the intended stream;
 and return the intended success or failure status.
+
+Boundary evidence means an existing edge of a CLI value domain, such as an
+accepted numeric limit or an optional-versus-required transition; it does not
+authorize a new command, option, or validation domain.
 
 Priority: required.
 
