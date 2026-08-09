@@ -768,16 +768,23 @@ async function recordPreparedE2eImages(
 	});
 }
 
-export async function findReusableGatewayImageDirectory(
-	currentProjectRoot: string,
-	gatewayBuildConfigPath: string,
-	imageProfileName = 'worker',
-): Promise<string | null> {
+export async function findReusableGatewayImageDirectory(options: {
+	readonly currentProjectRoot: string;
+	readonly gatewayBuildConfigPath: string;
+	readonly imageProfileName?: string;
+	readonly managedGatewayBoot?: ManagedGatewayImageBootProjection;
+}): Promise<string | null> {
+	const imageProfileName = options.imageProfileName ?? 'worker';
 	const explicitE2eCacheRoot = process.env.AGENT_VM_E2E_CACHE_DIR;
 	if (!explicitE2eCacheRoot) {
 		return null;
 	}
-	const requiredFingerprint = await computeFingerprintFromConfigPath(gatewayBuildConfigPath);
+	const requiredFingerprint = await computeFingerprintFromConfigPath(
+		options.gatewayBuildConfigPath,
+		options.managedGatewayBoot === undefined
+			? {}
+			: { managedGatewayBoot: options.managedGatewayBoot },
+	);
 	if (!(await pathExists(explicitE2eCacheRoot))) {
 		return null;
 	}
@@ -787,7 +794,7 @@ export async function findReusableGatewayImageDirectory(
 		.map((entry) => path.join(explicitE2eCacheRoot, entry.name));
 
 	for (const e2eRunDirectory of e2eRunDirectories) {
-		if (e2eRunDirectory === currentProjectRoot) {
+		if (e2eRunDirectory === options.currentProjectRoot) {
 			continue;
 		}
 		const candidateImageDirectories = [
@@ -810,19 +817,26 @@ export async function seedGatewayImageCacheIfAvailable(options: {
 	readonly currentProjectRoot: string;
 	readonly gatewayBuildConfigPath: string;
 	readonly imageProfileName?: string;
+	readonly managedGatewayBoot?: ManagedGatewayImageBootProjection;
 }): Promise<void> {
 	const imageProfileName = options.imageProfileName ?? 'worker';
-	const reusableImageDir = await findReusableGatewayImageDirectory(
-		options.currentProjectRoot,
-		options.gatewayBuildConfigPath,
+	const reusableImageDir = await findReusableGatewayImageDirectory({
+		currentProjectRoot: options.currentProjectRoot,
+		gatewayBuildConfigPath: options.gatewayBuildConfigPath,
 		imageProfileName,
-	);
+		...(options.managedGatewayBoot === undefined
+			? {}
+			: { managedGatewayBoot: options.managedGatewayBoot }),
+	});
 	if (!reusableImageDir) {
 		return;
 	}
 
 	const requiredFingerprint = await computeFingerprintFromConfigPath(
 		options.gatewayBuildConfigPath,
+		options.managedGatewayBoot === undefined
+			? {}
+			: { managedGatewayBoot: options.managedGatewayBoot },
 	);
 	const activeImageDir = path.join(
 		options.activeCacheDir,
@@ -864,11 +878,16 @@ export async function prepareGatewayE2eProjectImages(
 	await Promise.all(
 		Object.entries(options.project.systemConfig.imageProfiles.gateways).map(
 			async ([profileName, gatewayProfile]) => {
+				const managedGatewayBoot = managedGatewayBootProjectionForE2eTarget(
+					'gateway',
+					gatewayProfile,
+				);
 				await seedGatewayImageCacheIfAvailable({
 					activeCacheDir: options.project.systemConfig.cacheDir,
 					currentProjectRoot: options.project.tempRoot,
 					gatewayBuildConfigPath: gatewayProfile.buildConfig,
 					imageProfileName: profileName,
+					...(managedGatewayBoot === undefined ? {} : { managedGatewayBoot }),
 				});
 			},
 		),

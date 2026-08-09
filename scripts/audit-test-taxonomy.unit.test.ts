@@ -232,6 +232,11 @@ describe('resolveTestFileProjectNames', () => {
 		expect(resolveTestFileProjectNames('packages/example/example.vm.e2e.test.ts')).toEqual([
 			'e2e-vm',
 		]);
+		expect(
+			resolveTestFileProjectNames(
+				'packages/agent-vm/src/integration-tests/managed-gateway-image-boot.vm.e2e.test.ts',
+			),
+		).toEqual(['e2e-vm-managed-gateway']);
 		expect(resolveTestFileProjectNames('packages/example/example.openclaw.e2e.test.ts')).toEqual([
 			'e2e-openclaw',
 		]);

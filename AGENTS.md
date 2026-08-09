@@ -107,7 +107,8 @@ fast formatting and linting.
   artifacts.
 - Additional E2E proof lanes:
   - Host proofs: `pnpm test:e2e:host`.
-  - VM/Gondolin: `mise exec -- pnpm test:e2e:vm`.
+  - Generic VM/Gondolin: `mise exec -- pnpm test:e2e:vm`.
+  - Managed Gateway VM/Gondolin: `mise exec -- pnpm test:e2e:vm-managed-gateway`.
   - VM/Gondolin HTTP mediation: `mise exec -- pnpm test:e2e:vm-mediation`.
   - OpenClaw gateway: `mise exec -- pnpm test:e2e:openclaw`.
   - Hermes gateway: `mise exec -- pnpm test:e2e:hermes`.

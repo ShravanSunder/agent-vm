@@ -59,17 +59,18 @@ describe('publish workflow', () => {
 	});
 
 	it('caches Gondolin Zig tarballs in CI and publish workflows', async () => {
-		const workflowPaths = [
-			path.join(process.cwd(), '.github', 'workflows', 'ci.yml'),
-			path.join(process.cwd(), '.github', 'workflows', 'publish.yml'),
-		];
-		const workflows = await Promise.all(
-			workflowPaths.map(async (workflowPath: string): Promise<string> => {
-				return fs.readFile(workflowPath, 'utf8');
-			}),
-		);
+		const [ciWorkflow, publishWorkflow, sharedSetupAction] = await Promise.all([
+			fs.readFile(path.join(process.cwd(), '.github', 'workflows', 'ci.yml'), 'utf8'),
+			fs.readFile(path.join(process.cwd(), '.github', 'workflows', 'publish.yml'), 'utf8'),
+			fs.readFile(
+				path.join(process.cwd(), '.github', 'actions', 'setup-agent-vm', 'action.yml'),
+				'utf8',
+			),
+		]);
 
-		for (const workflow of workflows) {
+		expect(ciWorkflow).toContain('./.github/actions/setup-agent-vm');
+
+		for (const workflow of [publishWorkflow, sharedSetupAction]) {
 			expect(workflow).toContain('Resolve Gondolin Zig version');
 			expect(workflow).toContain('Cache Zig tarballs');
 			expect(workflow).toContain('path: .cache/zig');

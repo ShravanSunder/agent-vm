@@ -233,8 +233,21 @@ export default defineConfig({
 					include: ['packages/**/*.vm.e2e.test.ts'],
 					exclude: [
 						'**/node_modules/**',
+						'**/managed-gateway-image-boot.vm.e2e.test.ts',
 						'**/live-gondolin-http-mediation.vm.e2e.test.ts',
 						'**/live-http-mediation.vm.e2e.test.ts',
+					],
+					testTimeout: 900_000,
+					hookTimeout: 300_000,
+					maxWorkers: 1,
+				},
+			},
+			{
+				extends: true,
+				test: {
+					name: 'e2e-vm-managed-gateway',
+					include: [
+						'packages/agent-vm/src/integration-tests/managed-gateway-image-boot.vm.e2e.test.ts',
 					],
 					testTimeout: 900_000,
 					hookTimeout: 300_000,
