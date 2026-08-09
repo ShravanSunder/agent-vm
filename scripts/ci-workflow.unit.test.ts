@@ -27,10 +27,12 @@ describe('CI workflow topology', () => {
 		for (const command of [
 			'pnpm run test:e2e:host-docker',
 			'pnpm run test:e2e:host',
-			'--shard=1/4',
-			'--shard=2/4',
-			'--shard=3/4',
-			'--shard=4/4',
+			'--shard=1/6',
+			'--shard=2/6',
+			'--shard=3/6',
+			'--shard=4/6',
+			'--shard=5/6',
+			'--shard=6/6',
 			'pnpm run test:e2e:vm-managed-gateway',
 			'pnpm run test:e2e:vm-mediation',
 			'managed-gateway-test-group: core',
@@ -74,6 +76,35 @@ describe('CI workflow topology', () => {
 		expect(workflow).toContain('id: e2e-image-cache-key');
 		expect(workflow).toContain('steps.e2e-image-cache-key.outputs.hash');
 		expect(workflow).toContain('lookup-only: true');
+		expect(workflow).toContain(
+			'      - parallel:\n          - name: Restore prepared OpenClaw image cache',
+		);
+		expect(workflow).toContain('          - name: Restore prepared Worker image cache');
+		expect(workflow).toContain('          - name: Set up Agent VM workspace');
+		expect(workflow).not.toContain('\n      - name: Set up Agent VM workspace\n');
+		const parallelPreparationStart = workflow.indexOf(
+			'      - parallel:\n          - name: Restore prepared OpenClaw image cache',
+		);
+		const workerRestorePosition = workflow.indexOf(
+			'          - name: Restore prepared Worker image cache',
+			parallelPreparationStart,
+		);
+		const workspaceSetupPosition = workflow.indexOf(
+			'          - name: Set up Agent VM workspace',
+			parallelPreparationStart,
+		);
+		const cacheHitBarrierPosition = workflow.indexOf(
+			'      - name: Require prepared image caches',
+			parallelPreparationStart,
+		);
+		expect(parallelPreparationStart).toBeGreaterThanOrEqual(0);
+		expect(cacheHitBarrierPosition).toBeGreaterThan(parallelPreparationStart);
+		expect(workerRestorePosition).toBeGreaterThan(parallelPreparationStart);
+		expect(workerRestorePosition).toBeLessThan(cacheHitBarrierPosition);
+		expect(workspaceSetupPosition).toBeGreaterThan(parallelPreparationStart);
+		expect(workspaceSetupPosition).toBeLessThan(cacheHitBarrierPosition);
+		expect(cacheHitBarrierPosition).toBeGreaterThan(workerRestorePosition);
+		expect(cacheHitBarrierPosition).toBeGreaterThan(workspaceSetupPosition);
 	});
 
 	it('keys prepared images from all package build inputs and prepares both image families', async () => {
