@@ -460,20 +460,20 @@ describe('packed Tool Portal CLI', () => {
 		},
 	);
 
-	it('uses exit class 2 for usage, auth, transport, and protocol failures', async () => {
+	it('uses Optique parse status for usage and exit class 2 for application failures', async () => {
 		const cliPath = requireCliPath(fixture);
 		const server = await startHttpMcpServer(new Map([['tool_portal_list', { invalid: true }]]));
 		const missingAuthEnvironment = cliEnvironment(fixture.rootDirectory);
 		delete missingAuthEnvironment['TOOL_PORTAL_TEST_AUTHORIZATION'];
 		const cases = [
-			['usage', [...explicitHttpArgs({ endpoint: server.endpoint }), '--unknown-option']],
-			['auth', explicitHttpArgs({ endpoint: server.endpoint })],
-			['transport', explicitHttpArgs({ endpoint: 'http://127.0.0.1:1/unreachable' })],
-			['protocol', explicitHttpArgs({ endpoint: server.endpoint })],
+			['usage', [...explicitHttpArgs({ endpoint: server.endpoint }), '--unknown-option'], 1],
+			['auth', explicitHttpArgs({ endpoint: server.endpoint }), 2],
+			['transport', explicitHttpArgs({ endpoint: 'http://127.0.0.1:1/unreachable' }), 2],
+			['protocol', explicitHttpArgs({ endpoint: server.endpoint }), 2],
 		] as const;
 
 		await Promise.all(
-			cases.map(async ([failureClass, args]) => {
+			cases.map(async ([failureClass, args, expectedExitCode]) => {
 				const result = await runCli({
 					args,
 					cliPath,
@@ -482,7 +482,7 @@ describe('packed Tool Portal CLI', () => {
 							? missingAuthEnvironment
 							: cliEnvironment(fixture.rootDirectory),
 				});
-				expect(result.exitCode, failureClass).toBe(2);
+				expect(result.exitCode, failureClass).toBe(expectedExitCode);
 				expect(result.stdout, failureClass).toBe('');
 				expect(result.stderr, failureClass).not.toContain(testAuthorization);
 			}),
@@ -566,7 +566,7 @@ describe('packed Tool Portal CLI', () => {
 		await Promise.all(
 			invalidArgv.map(async (args) => {
 				const result = await runCli({ args, cliPath, env: implicitEnvironment });
-				expect(result.exitCode).toBe(2);
+				expect(result.exitCode).toBe(1);
 				expect(result.stdout).toBe('');
 				expect(result.stderr).not.toContain('implicit-token');
 			}),
