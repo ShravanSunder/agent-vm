@@ -36,7 +36,7 @@ async function main(): Promise<void> {
 			zoneId: 'ci-worker-image-cache',
 		});
 		workerTempRoot = workerProject.tempRoot;
-		await prepareGatewayE2eProjectImages({ project: openClawProject });
+		await prepareGatewayE2eProjectImages({ imageFamilies: ['gateway'], project: openClawProject });
 		const pluginProfileName = openClawPluginProject.zone.gateway.imageProfile;
 		await useLocalOpenClawPluginGatewayImage({
 			profileName: pluginProfileName,
