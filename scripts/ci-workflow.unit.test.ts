@@ -110,7 +110,9 @@ describe('CI workflow topology', () => {
 		expect(workflow).toContain('permissions:\n  contents: read');
 		expect(workflow).toContain('persist-credentials: false');
 		expect(preparationScript).toContain('useLocalOpenClawPluginGatewayImage');
-		expect(preparationScript).toContain("imageFamilies: ['gateway'],\n\t\t\tproject: openClawPluginProject");
+		expect(preparationScript).toContain(
+			"imageFamilies: ['gateway'],\n\t\t\tproject: openClawPluginProject",
+		);
 
 		expect(workflow).toContain('Restore prepared OpenClaw image cache');
 		expect(workflow).toContain('Restore prepared Worker image cache');
