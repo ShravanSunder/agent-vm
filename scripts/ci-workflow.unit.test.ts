@@ -115,6 +115,10 @@ describe('CI workflow topology', () => {
 		expect(workflow).toContain('Restore prepared Worker image cache');
 		expect(workflow).toContain('Save prepared OpenClaw image cache');
 		expect(workflow).toContain('Save prepared Worker image cache');
+		expect(workflow).toContain(
+			'/tmp/agent-vm-e2e-cache/openclaw\n            /tmp/agent-vm-e2e-cache/local-package-tarballs',
+		);
+		expect(workflow).not.toContain('agent-vm-e2e-images-v1-openclaw');
 		expect(workflow).not.toContain('restore-keys:');
 		expect(preparationScript).toContain('scaffoldOpenClawE2eProject');
 		expect(preparationScript).toContain('scaffoldWorkerE2eProject');
