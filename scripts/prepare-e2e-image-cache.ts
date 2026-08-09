@@ -27,10 +27,8 @@ async function main(): Promise<void> {
 			zoneId: 'ci-worker-image-cache',
 		});
 		workerTempRoot = workerProject.tempRoot;
-		await Promise.all([
-			prepareGatewayE2eProjectImages({ project: openClawProject }),
-			prepareGatewayE2eProjectImages({ project: workerProject }),
-		]);
+		await prepareGatewayE2eProjectImages({ project: openClawProject });
+		await prepareGatewayE2eProjectImages({ project: workerProject });
 		process.stdout.write(`Prepared E2E image cache at ${process.env.AGENT_VM_E2E_CACHE_DIR}\n`);
 	} finally {
 		await Promise.all([

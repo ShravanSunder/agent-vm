@@ -68,7 +68,6 @@ describe('CI workflow topology', () => {
 		expect(workflow).not.toContain('restore-keys:');
 		expect(preparationScript).toContain('scaffoldOpenClawE2eProject');
 		expect(preparationScript).toContain('scaffoldWorkerE2eProject');
-		expect(preparationScript).toContain('Promise.all');
 		expect(preparationScript).toContain('removeE2eTempRoot');
 	});
 });
