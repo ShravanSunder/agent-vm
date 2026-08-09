@@ -183,13 +183,17 @@ jobs:
       matrix:
         include:
           - lane: e2e-vm-shard-1
-            command: pnpm run test:e2e:vm -- --shard=1/4
+            command: pnpm run test:e2e:vm -- --shard=1/6
           - lane: e2e-vm-shard-2
-            command: pnpm run test:e2e:vm -- --shard=2/4
+            command: pnpm run test:e2e:vm -- --shard=2/6
           - lane: e2e-vm-shard-3
-            command: pnpm run test:e2e:vm -- --shard=3/4
+            command: pnpm run test:e2e:vm -- --shard=3/6
           - lane: e2e-vm-shard-4
-            command: pnpm run test:e2e:vm -- --shard=4/4
+            command: pnpm run test:e2e:vm -- --shard=4/6
+          - lane: e2e-vm-shard-5
+            command: pnpm run test:e2e:vm -- --shard=5/6
+          - lane: e2e-vm-shard-6
+            command: pnpm run test:e2e:vm -- --shard=6/6
           - lane: e2e-vm-managed-gateway-core
             managed-gateway-test-group: core
             require-prepared-image-cache: '1'
