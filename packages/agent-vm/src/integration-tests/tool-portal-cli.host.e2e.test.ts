@@ -498,6 +498,10 @@ describe('packed Tool Portal CLI', () => {
 				expect(result.exitCode, failureClass).toBe(expectedExitCode);
 				expect(result.stdout, failureClass).toBe('');
 				expect(result.stderr, failureClass).not.toContain(testAuthorization);
+				if (failureClass === 'usage') {
+					expect(result.stderr).toContain('Usage: tool-portal');
+					expect(result.stderr).not.toMatch(/\n\s+at\s+/u);
+				}
 			}),
 		);
 		await server.close();
@@ -585,6 +589,8 @@ describe('packed Tool Portal CLI', () => {
 				const result = await runCli({ args, cliPath, env: implicitEnvironment });
 				expect(result.exitCode).toBe(2);
 				expect(result.stdout).toBe('');
+				expect(result.stderr).toContain('Usage: tool-portal');
+				expect(result.stderr).not.toMatch(/\n\s+at\s+/u);
 				expect(result.stderr).not.toContain('implicit-token');
 			}),
 		);
