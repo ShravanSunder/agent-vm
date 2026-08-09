@@ -68,7 +68,10 @@ function createHermesZone(options: {
 			profileSecretProjectionsByAgent: Object.fromEntries(
 				Object.keys(profilesByAgent).map((agentId) => [
 					agentId,
-					{ DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN' },
+					{
+						API_SERVER_KEY: `API_SERVER_KEY_${agentId.toUpperCase()}`,
+						DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN',
+					},
 				]),
 			),
 			ssh: { secretEnv: 'never' },
@@ -77,7 +80,17 @@ function createHermesZone(options: {
 			zoneFilesDir: '/deployment/zone-files/hermes',
 		},
 		id: 'hermes-zone',
-		secrets: {},
+		secrets: Object.fromEntries(
+			Object.keys(profilesByAgent).map((agentId) => [
+				`API_SERVER_KEY_${agentId.toUpperCase()}`,
+				{
+					audience: 'gateway',
+					envVar: `API_SERVER_KEY_${agentId.toUpperCase()}`,
+					injection: 'env',
+					source: 'environment',
+				},
+			]),
+		),
 	};
 }
 
@@ -114,7 +127,9 @@ describe('Hermes profile directory materialization', () => {
 		expect((await stat(rootConfigurationPath)).mode & 0o777).toBe(0o600);
 		for (const profileName of ['researcher', 'writer']) {
 			const profileConfigurationPath = path.join(profilesDirectoryPath, profileName, 'config.yaml');
-			expect(await readFile(profileConfigurationPath, 'utf8')).toBe('{}\n');
+			expect(await readFile(profileConfigurationPath, 'utf8')).toBe(
+				'platforms:\n  api_server:\n    enabled: false\n',
+			);
 			expect((await stat(profileConfigurationPath)).mode & 0o777).toBe(0o600);
 		}
 		expect((await stat(profilesDirectoryPath)).mode & 0o777).toBe(0o700);
@@ -146,13 +161,45 @@ describe('Hermes profile directory materialization', () => {
 			'config.yaml',
 		);
 		await mkdir(path.dirname(profileConfigurationPath), { mode: 0o700, recursive: true });
-		await writeFile(profileConfigurationPath, 'profile_setting: preserved\n', { mode: 0o640 });
+		await writeFile(
+			profileConfigurationPath,
+			'profile_setting: preserved\nplatforms:\n  api_server:\n    enabled: false\n',
+			{ mode: 0o640 },
+		);
 		const zone = createHermesZone({
 			profilesByAgent: { researcher: 'researcher' },
 			stateDirectoryPath,
 		});
 
 		await hermesLifecycle.prepareHostState?.(zone, unusedSecretResolver);
+
+		expect(await readFile(profileConfigurationPath, 'utf8')).toBe(
+			'profile_setting: preserved\nplatforms:\n  api_server:\n    enabled: false\n',
+		);
+		expect((await stat(profileConfigurationPath)).mode & 0o777).toBe(0o640);
+	});
+
+	it('rejects an existing named config without an explicit shared-listener api_server disable', async () => {
+		const stateDirectoryPath = await createTemporaryStateDirectory();
+		const profileConfigurationPath = path.join(
+			stateDirectoryPath,
+			'profiles',
+			'researcher',
+			'config.yaml',
+		);
+		await mkdir(path.dirname(profileConfigurationPath), { mode: 0o700, recursive: true });
+		await writeFile(profileConfigurationPath, 'profile_setting: preserved\n', { mode: 0o640 });
+		const zone = createHermesZone({
+			profilesByAgent: { researcher: 'researcher' },
+			stateDirectoryPath,
+		});
+
+		await expect(hermesLifecycle.preflightHostState?.(zone, unusedSecretResolver)).rejects.toThrow(
+			/explicitly disable platforms\.api_server\.enabled/u,
+		);
+		await expect(hermesLifecycle.prepareHostState?.(zone, unusedSecretResolver)).rejects.toThrow(
+			/explicitly disable platforms\.api_server\.enabled/u,
+		);
 
 		expect(await readFile(profileConfigurationPath, 'utf8')).toBe('profile_setting: preserved\n');
 		expect((await stat(profileConfigurationPath)).mode & 0o777).toBe(0o640);
@@ -178,6 +225,7 @@ describe('Hermes profile directory materialization', () => {
 			Object.assign(zone.gateway, {
 				profileSecretProjectionsByAgent: {
 					researcher: {
+						API_SERVER_KEY: 'API_SERVER_KEY_RESEARCHER',
 						DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_RESEARCHER',
 					},
 				},

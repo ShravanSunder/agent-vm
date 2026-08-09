@@ -109,7 +109,28 @@ describe('manual templates', () => {
 			'gateway.profileSecretProjectionsByAgent',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).toContain(
+			'Map the API_SERVER_KEY target to one distinct injection env, audience gateway zone secret per agent',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).toContain(
+			'separate root source named API_SERVER_KEY remains reserved',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).toContain(
+			"Use each profile's own API key for /p/<profile>/... requests",
+		);
+		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).toContain(
+			'The only additional profile environment targets allowed for Hermes are DISCORD_ALLOW_BOTS and DISCORD_BOTS_REQUIRE_INLINE_MENTION',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).toContain(
+			'DISCORD_ALLOW_BOTS accepts none (safe default), mentions (only explicitly mentioned bot messages), or all',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).toContain(
+			'any beta probe is bounded validation only, not a supported topology',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).toContain(
 			'exact memory-backed profiles/<profile>/.env files',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).toContain(
+			'New named profiles receive native config.yaml with platforms.api_server.enabled: false',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).toContain(
 			'opaque placeholders',

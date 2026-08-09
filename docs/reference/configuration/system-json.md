@@ -1179,11 +1179,17 @@ zone secret source names:
   },
   "profileSecretProjectionsByAgent": {
     "clawfest": {
+      "API_SERVER_KEY": "API_SERVER_KEY_CLAWFEST",
       "DISCORD_BOT_TOKEN": "DISCORD_BOT_TOKEN_CLAWFEST",
+      "DISCORD_ALLOW_BOTS": "DISCORD_ALLOW_BOTS_CLAWFEST",
+      "DISCORD_BOTS_REQUIRE_INLINE_MENTION": "DISCORD_BOTS_REQUIRE_INLINE_MENTION_CLAWFEST",
       "OPENROUTER_API_KEY": "OPENROUTER_API_KEY_CLAWFEST"
     },
     "beta": {
+      "API_SERVER_KEY": "API_SERVER_KEY_BETA",
       "DISCORD_BOT_TOKEN": "DISCORD_BOT_TOKEN_BETA",
+      "DISCORD_ALLOW_BOTS": "DISCORD_ALLOW_BOTS_BETA",
+      "DISCORD_BOTS_REQUIRE_INLINE_MENTION": "DISCORD_BOTS_REQUIRE_INLINE_MENTION_BETA",
       "OPENROUTER_API_KEY": "OPENROUTER_API_KEY_BETA"
     }
   }
@@ -1191,12 +1197,33 @@ zone secret source names:
 ```
 
 The outer mapping keys must exactly match both `zones[].agents` and
-`profilesByAgent`. Every agent declares exactly one `DISCORD_BOT_TOKEN` target
-backed by a distinct `injection: "env"`, `audience: "gateway"` source. Discord
-is the raw Gateway exception because the token is used for both HTTP and
-WebSocket traffic. Other targets use Gateway-reaching `http-mediation` sources,
-so the assigned profile receives only the opaque placeholder and the raw
-provider value remains outside Hermes.
+`profilesByAgent`. Every agent declares exactly one `API_SERVER_KEY` target and
+one `DISCORD_BOT_TOKEN` target. Each target is backed by its own distinct
+`injection: "env"`, `audience: "gateway"` source. The root listener keeps the
+separate reserved source `API_SERVER_KEY`; it cannot be projected into a named
+profile or reused as a profile-key source. Hermes v0.20 authenticates
+`/p/<profile>/...` with the selected profile's key, while unprefixed root routes
+use the root listener key.
+
+Discord remains a raw Gateway exception because the token is used for both HTTP
+and WebSocket traffic. Other profile credential targets use Gateway-reaching
+`http-mediation` sources, so the assigned profile receives only the opaque
+placeholder and the raw provider value remains outside Hermes.
+
+The only additional profile environment targets admitted for Hermes are the
+non-credential Discord controls `DISCORD_ALLOW_BOTS` and
+`DISCORD_BOTS_REQUIRE_INLINE_MENTION`. Each must name a zone secret with
+`injection: "env"` and `audience: "gateway"`; arbitrary profile environment
+targets remain rejected. `DISCORD_ALLOW_BOTS` accepts `none` (the safe default),
+`mentions` (only bot messages that mention the recipient), or `all`.
+`DISCORD_BOTS_REQUIRE_INLINE_MENTION: true` adds a literal inline `@mention`
+requirement for bot-authored messages and does not affect human messages.
+
+These controls do not make Hermes bot-to-bot conversations a supported
+topology. Upstream Hermes warns that Discord reply pings can satisfy another
+bot's mention gate and create an acknowledgement/feedback loop. Keep bot
+admission disabled unless a deliberate, bounded validation probe requires it;
+any beta probe is validation evidence only, not a supported deployment shape.
 
 The adapter writes each complete target map only into the exact memory-backed
 `profiles/<profile>/.env`, removes the transient source variables, and then
@@ -1204,8 +1231,14 @@ starts stock Hermes. Deployment-authored non-secret common policy is the
 read-only `config.yaml` selected by `gateway.config`; root/default and named
 profile homes remain direct durable `stateDir` RealFS. Preflight rejects
 durable root or profile `.env` files and secret-bearing native Hermes
-configuration. Remove known legacy files explicitly before starting the zone;
-do not add migration or copy-back behavior.
+configuration. Agent VM materializes a new named profile's native `config.yaml`
+with `platforms.api_server.enabled: false`: the default profile owns Hermes's
+single HTTP listener while the shared listener still authenticates the named
+profile through its `/p/<profile>/` prefix and profile API key. Existing named
+profile configs must carry the same explicit disable; Agent VM rejects an
+unmarked config before boot rather than silently rewriting authored bytes.
+Remove known legacy files explicitly before starting the zone; do not add
+migration or copy-back behavior.
 
 `zones[].gateway.runtimeRootfsSize` optionally requests a minimum runtime root
 disk size for the gateway VM, using Gondolin `rootfs.size`. The base image is

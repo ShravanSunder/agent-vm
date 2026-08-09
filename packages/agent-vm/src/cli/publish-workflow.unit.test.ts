@@ -180,6 +180,14 @@ describe('publish workflow', () => {
 		expect(publishScript.indexOf('--config.ignore-scripts=true')).toBeGreaterThan(
 			publishScript.indexOf('pnpm -r publish'),
 		);
+		expect(publishScript.indexOf('NPM_TOKEN="$(op read "$OP_REF")"')).toBeLessThan(
+			publishScript.indexOf('pnpm build'),
+		);
+		expect(publishScript.indexOf('PYPI_TOKEN="$(op read "$PYPI_OP_REF")"')).toBeLessThan(
+			publishScript.indexOf('pnpm build'),
+		);
+		expect(publishScript).toContain('NPM_TOKEN="${AGENT_VM_NPM_TOKEN-}"');
+		expect(publishScript).toContain('PYPI_TOKEN="${AGENT_VM_PYPI_TOKEN-}"');
 	});
 
 	it('publishes Python packages from isolated explicit artifacts with optional 1Password auth', async () => {
@@ -195,6 +203,7 @@ describe('publish workflow', () => {
 			'bash scripts/publish-python-local.sh',
 		);
 		expect(publishScript).toContain('AGENT_VM_PYPI_TOKEN_OP_REF');
+		expect(publishScript).toContain('AGENT_VM_PYPI_TOKEN');
 		expect(publishScript).not.toMatch(/AGENT_VM_PYPI_TOKEN_OP_REF:-/u);
 		expect(publishScript).toContain('PYTHON_DIST_DIR="$(mktemp -d)"');
 		expect(publishScript).toContain('--out-dir "$PYTHON_DIST_DIR"');
@@ -214,6 +223,32 @@ describe('publish workflow', () => {
 		expect(publishScript).toContain('export UV_PUBLISH_TOKEN');
 		expect(publishScript).toContain('unset PYPI_TOKEN');
 		expect(publishScript).not.toContain('.pypirc');
+	});
+
+	it('publishes npm and Python packages through one verified release entrypoint', async () => {
+		const publishScript = await fs.readFile(
+			path.join(process.cwd(), 'scripts', 'publish-local.sh'),
+			'utf8',
+		);
+
+		expect(publishScript).toContain(
+			'PYPI_OP_REF="${AGENT_VM_PYPI_TOKEN_OP_REF:-op://Dev/PyPI/api-token}"',
+		);
+		expect(publishScript).toContain('scripts/publish-python-local.sh --dry-run');
+		expect(publishScript).toContain(
+			'AGENT_VM_PYPI_TOKEN="$PYPI_TOKEN" scripts/publish-python-local.sh',
+		);
+		expect(publishScript).toContain('verify_published_release');
+		expect(publishScript).toContain('npm view "$package_name@$release_version" version');
+		expect(publishScript).toContain(
+			'https://pypi.org/pypi/${python_package}/${release_version}/json',
+		);
+		expect(publishScript.indexOf('scripts/publish-python-local.sh')).toBeLessThan(
+			publishScript.indexOf('pnpm -r publish'),
+		);
+		expect(publishScript.indexOf('pnpm -r publish')).toBeLessThan(
+			publishScript.lastIndexOf('verify_published_release'),
+		);
 	});
 
 	it('keeps npm and Python release versions synchronized', async () => {

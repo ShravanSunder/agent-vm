@@ -24,6 +24,7 @@ from agent_vm_hermes_adapter.managed_gateway_bootstrap import (
     load_managed_adapter_material,
 )
 from agent_vm_hermes_adapter.managed_profile_adapter import (
+    CanonicalManagedAgentProjection,
     HermesManagedAdapter,
     HermesManagedAdapterConfig,
 )
@@ -33,6 +34,7 @@ from agent_vm_hermes_adapter.managed_tool_portal_capability_tools import (
 from agent_vm_hermes_adapter.managed_tool_portal_capability_tools import (
     register as register_managed_tool_portal_plugin,
 )
+from agent_vm_hermes_adapter.managed_tool_portal_observability import HermesToolPortalTelemetry
 
 PROJECTION_COHORT_DIGEST = (
     "projection-cohort:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -1317,6 +1319,93 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
         self.assertEqual(telemetry.shutdown_calls, 1)
         with self.assertRaisesRegex(RuntimeError, "requires bootstrap runtime configuration"):
             register_managed_tool_portal_plugin(FakeHermesPluginContext())
+
+    def test_discovers_plugins_after_managed_runtime_configuration(self) -> None:
+        terminal_tool_module = FakeTerminalToolModule()
+        telemetry = FakeHermesToolPortalTelemetry()
+        events: list[str] = []
+        original_configure = managed_gateway_bootstrap.configure_managed_tool_portal_plugin
+
+        class RecordingManagedPolicyBindings:
+            def install(self) -> None:
+                events.append("managed-policy")
+
+            def close(self) -> None:
+                events.append("managed-policy-close")
+
+        def stock_gateway_runner() -> None:
+            events.append("stock-gateway")
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            configuration_path = temporary_root / "framework-service.json"
+            protected_hermes_home = temporary_root / "protected-hermes-home"
+            configuration_path.write_text(json.dumps(build_material()), encoding="utf-8")
+            materialize_profile_cohort(protected_hermes_home)
+
+            def record_configuration(
+                *,
+                adapter: HermesManagedAdapter,
+                current_projection: Callable[[], CanonicalManagedAgentProjection],
+                telemetry: HermesToolPortalTelemetry,
+            ) -> None:
+                events.append("managed-runtime")
+                original_configure(
+                    adapter=adapter,
+                    current_projection=current_projection,
+                    telemetry=telemetry,
+                )
+
+            with (
+                patch.object(
+                    managed_gateway_bootstrap,
+                    "GatewayRuntimeClient",
+                    FakeGatewayRuntimeClient,
+                ),
+                patch.object(
+                    managed_gateway_bootstrap,
+                    "create_hermes_tool_portal_telemetry_from_environment",
+                    return_value=telemetry,
+                ),
+                patch.object(
+                    managed_gateway_bootstrap,
+                    "configure_managed_tool_portal_plugin",
+                    side_effect=record_configuration,
+                ),
+                patch.object(
+                    managed_gateway_bootstrap,
+                    "_HermesManagedPolicyReadBindings",
+                    RecordingManagedPolicyBindings,
+                ),
+                patch(
+                    "hermes_cli.plugins.discover_plugins",
+                    side_effect=lambda **kwargs: events.append(f"discover:{kwargs.get('force')}"),
+                ) as discover_plugins,
+                patch.dict(
+                    os.environ,
+                    {"SOURCE_RESEARCHER": "test-researcher", "SOURCE_REVIEWER": "test-reviewer"},
+                    clear=False,
+                ),
+            ):
+                managed_gateway_bootstrap.run_managed_hermes_gateway(
+                    configuration_path=configuration_path,
+                    managed_configuration_loader=managed_plugin_configuration,
+                    protected_hermes_home=protected_hermes_home,
+                    stock_gateway_runner=stock_gateway_runner,
+                    terminal_tool_module=terminal_tool_module,
+                )
+
+        discover_plugins.assert_called_once_with(force=True)
+        self.assertEqual(
+            events,
+            [
+                "managed-runtime",
+                "managed-policy",
+                "discover:True",
+                "stock-gateway",
+                "managed-policy-close",
+            ],
+        )
 
     def test_clears_plugin_runtime_when_stock_gateway_fails(self) -> None:
         terminal_tool_module = FakeTerminalToolModule()

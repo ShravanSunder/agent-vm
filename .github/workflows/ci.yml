@@ -126,8 +126,11 @@ jobs:
       - name: Generated portal contract freshness
         run: pnpm exec tsx scripts/generate-portal-contracts.ts --check-clean
 
-      - name: Python tests
-        run: uv run pytest python
+      - name: Host Python tests
+        run: pnpm python:test:host
+
+      - name: Hermes adapter tests in pinned runtime
+        run: pnpm python:test:hermes
 
       - name: Python format check
         run: pnpm python:fmt:check
@@ -135,8 +138,11 @@ jobs:
       - name: Python lint
         run: pnpm python:lint
 
-      - name: Python typecheck
-        run: pnpm python:typecheck
+      - name: Host Python typecheck
+        run: pnpm python:typecheck:host
+
+      - name: Hermes adapter typecheck in pinned runtime
+        run: pnpm python:typecheck:hermes
 
       - name: Lint
         run: pnpm lint

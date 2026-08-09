@@ -1114,9 +1114,11 @@ async function createHermesSystemConfig(): Promise<LoadedSystemConfig> {
 					cpus: openClawZone.gateway.cpus,
 					profileSecretProjectionsByAgent: {
 						main: {
+							API_SERVER_KEY: 'API_SERVER_KEY_MAIN',
 							DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_MAIN',
 						},
 						second: {
+							API_SERVER_KEY: 'API_SERVER_KEY_SECOND',
 							DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_SECOND',
 						},
 					},
@@ -1139,6 +1141,18 @@ async function createHermesSystemConfig(): Promise<LoadedSystemConfig> {
 						injection: 'env',
 						source: 'config',
 						value: 'test-hermes-api-server-key',
+					},
+					API_SERVER_KEY_MAIN: {
+						audience: 'gateway',
+						injection: 'env',
+						source: 'config',
+						value: 'test-hermes-main-api-server-key',
+					},
+					API_SERVER_KEY_SECOND: {
+						audience: 'gateway',
+						injection: 'env',
+						source: 'config',
+						value: 'test-hermes-second-api-server-key',
 					},
 					DISCORD_BOT_TOKEN_MAIN: {
 						audience: 'gateway',

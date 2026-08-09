@@ -77,6 +77,24 @@ function isNonEmptyValue(value: unknown): boolean {
 	return true;
 }
 
+function isExplicitlyDisabledPlatformConfiguration(value: unknown): boolean {
+	return isObjectRecord(value) && value.enabled === false;
+}
+
+function hasExplicitlyDisabledApiServer(configuration: Readonly<Record<string, unknown>>): boolean {
+	const gateway = configuration.gateway;
+	const candidates = [
+		configuration,
+		configuration.platforms,
+		isObjectRecord(gateway) ? gateway.platforms : undefined,
+		gateway,
+	];
+	return candidates.some(
+		(candidate) =>
+			isObjectRecord(candidate) && isExplicitlyDisabledPlatformConfiguration(candidate.api_server),
+	);
+}
+
 function requireStringArray(value: unknown, fieldPath: string): readonly string[] {
 	if (!Array.isArray(value) || !value.every((entry) => typeof entry === 'string')) {
 		throw new HermesManagedConfigurationError(
@@ -144,19 +162,30 @@ function rejectDiscordEnablement(configuration: Readonly<Record<string, unknown>
 	}
 }
 
-function rejectPortBindingPlatforms(configuration: Readonly<Record<string, unknown>>): void {
+function rejectPortBindingPlatforms(
+	configuration: Readonly<Record<string, unknown>>,
+	options: { readonly allowDisabledApiServer: boolean },
+): void {
 	const gateway = configuration.gateway;
 	const candidatePlatforms = [
 		configuration,
 		configuration.platforms,
 		isObjectRecord(gateway) ? gateway.platforms : undefined,
+		gateway,
 	];
 	for (const candidate of candidatePlatforms) {
 		if (!isObjectRecord(candidate)) {
 			continue;
 		}
 		for (const platformName of portBindingPlatformNames) {
-			if (Object.hasOwn(candidate, platformName)) {
+			if (
+				Object.hasOwn(candidate, platformName) &&
+				!(
+					options.allowDisabledApiServer &&
+					platformName === 'api_server' &&
+					isExplicitlyDisabledPlatformConfiguration(candidate[platformName])
+				)
+			) {
 				throw new HermesManagedConfigurationError(
 					`Hermes configuration rejects port-binding platform '${platformName}'.`,
 				);
@@ -167,6 +196,7 @@ function rejectPortBindingPlatforms(configuration: Readonly<Record<string, unkno
 
 export function validateHermesConfigurationAdmission(
 	configurationSource: string,
+	options: { readonly allowDisabledApiServer?: boolean } = {},
 ): Readonly<Record<string, unknown>> {
 	const configuration = parseHermesConfigurationDocument(configurationSource);
 	if (Object.hasOwn(configuration, 'secrets')) {
@@ -174,7 +204,9 @@ export function validateHermesConfigurationAdmission(
 	}
 	rejectCredentialFields(configuration);
 	rejectDiscordEnablement(configuration);
-	rejectPortBindingPlatforms(configuration);
+	rejectPortBindingPlatforms(configuration, {
+		allowDisabledApiServer: options.allowDisabledApiServer ?? false,
+	});
 	return configuration;
 }
 
@@ -234,9 +266,10 @@ async function validateManagedConfigurationPath(configurationPath: string): Prom
 	}
 }
 
-export async function validateHermesNativeConfigurationFile(
+async function readAndValidateHermesNativeConfigurationFile(
 	configurationPath: string,
-): Promise<void> {
+	options: { readonly allowDisabledApiServer: boolean },
+): Promise<Readonly<Record<string, unknown>>> {
 	let configurationStatus: Awaited<ReturnType<typeof lstat>>;
 	try {
 		configurationStatus = await lstat(configurationPath);
@@ -253,11 +286,32 @@ export async function validateHermesNativeConfigurationFile(
 		throw new Error('Hermes native configuration is unreadable.');
 	}
 	try {
-		validateHermesConfigurationAdmission(configurationSource);
+		return validateHermesConfigurationAdmission(configurationSource, options);
 	} catch (error: unknown) {
 		const safeDetail =
 			error instanceof HermesManagedConfigurationError ? `: ${error.message}` : '.';
 		throw new Error(`Invalid Hermes native configuration${safeDetail}`);
+	}
+}
+
+export async function validateHermesNativeConfigurationFile(
+	configurationPath: string,
+): Promise<void> {
+	await readAndValidateHermesNativeConfigurationFile(configurationPath, {
+		allowDisabledApiServer: false,
+	});
+}
+
+export async function validateHermesNativeProfileConfigurationFile(
+	configurationPath: string,
+): Promise<void> {
+	const configuration = await readAndValidateHermesNativeConfigurationFile(configurationPath, {
+		allowDisabledApiServer: true,
+	});
+	if (!hasExplicitlyDisabledApiServer(configuration)) {
+		throw new Error(
+			`Managed Hermes named profile config '${configurationPath}' must explicitly disable platforms.api_server.enabled because the default profile owns the shared listener.`,
+		);
 	}
 }
 

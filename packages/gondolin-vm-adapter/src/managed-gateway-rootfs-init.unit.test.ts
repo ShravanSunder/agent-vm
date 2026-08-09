@@ -38,6 +38,7 @@ describe('managed Gateway rootfs init projection', () => {
 			);
 			expect(script).not.toMatch(/--reuid|--regid|--init-groups/u);
 			expect(script).not.toContain('exec su ');
+			expect(script).not.toMatch(/entrypoint-dispatch|s6-setuidgid/u);
 			expect(script).toContain(
 				'. /run/agent-vm/managed-gateway-environment/tool-portal.environment.sh || exit 78',
 			);

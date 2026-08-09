@@ -1,4 +1,4 @@
-"""Fixed managed boot entry for stock Hermes Gateway 0.19.0."""
+"""Fixed managed boot entry for stock Hermes Gateway 0.20.0."""
 
 import copy
 import hashlib
@@ -821,6 +821,13 @@ def _run_managed_hermes_gateway_runtime(
             hooks.close()
             raise
         managed_policy_bindings.install()
+        from hermes_cli.plugins import discover_plugins
+
+        # Hermes v0.20 can discover entry-point plugins while loading gateway
+        # configuration. Refresh only after the managed config bindings are
+        # installed, so plugin enablement is read from the controller-authored
+        # policy instead of the raw profile config.
+        discover_plugins(force=True)
         (hermes_gateway.run_gateway if stock_gateway_runner is None else stock_gateway_runner)()
     finally:
         try:
