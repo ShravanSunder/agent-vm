@@ -105,7 +105,7 @@ jobs:
         id: e2e-image-cache-key
         shell: bash
         env:
-          E2E_IMAGE_INPUT_HASH: ${{ hashFiles('package.json', 'pnpm-workspace.yaml', 'pnpm-lock.yaml', 'uv.lock', '.node-version', '.npmrc', '.pnpmfile.cjs', 'mise.toml', 'tsconfig*.json', '.github/actions/setup-agent-vm/action.yml', 'scripts/prepare-e2e-image-cache.ts', 'packages/**/package.json', 'packages/**/src/**', 'packages/**/tsconfig*.json', 'packages/**/tsdown.config.ts', 'packages/**/README*', 'packages/**/LICENSE*', 'packages/**/LICENCE*', 'packages/**/openclaw.plugin.json', 'packages/**/portable-contract-schema-manifest.json', 'packages/**/contract-fixtures/**', 'packages/**/sdk-validate.mjs', 'packages/agent-vm/managed-images.json', 'python/**', 'vm-images/**') }}
+          E2E_IMAGE_INPUT_HASH: ${{ hashFiles('package.json', 'pnpm-workspace.yaml', 'pnpm-lock.yaml', 'uv.lock', '.node-version', '.npmrc', '.pnpmfile.cjs', 'mise.toml', 'tsconfig*.json', '.github/actions/setup-agent-vm/action.yml', 'scripts/prepare-e2e-image-cache.ts', 'packages/**/package.json', 'packages/**/src/**', 'packages/**/type-tests/**', 'packages/**/tsconfig*.json', 'packages/**/tsdown.config.ts', 'packages/**/README*', 'packages/**/LICENSE*', 'packages/**/LICENCE*', 'packages/**/openclaw.plugin.json', 'packages/**/portable-contract-schema-manifest.json', 'packages/**/contract-fixtures/**', 'packages/**/sdk-validate.mjs', 'packages/agent-vm/managed-images.json', 'python/**', 'vm-images/**') }}
         run: test -n "${E2E_IMAGE_INPUT_HASH}" && echo "hash=${E2E_IMAGE_INPUT_HASH}" >> "${GITHUB_OUTPUT}"
 
       - name: Restore prepared OpenClaw image cache
@@ -234,7 +234,7 @@ jobs:
         id: e2e-image-cache-key
         shell: bash
         env:
-          E2E_IMAGE_INPUT_HASH: ${{ hashFiles('package.json', 'pnpm-workspace.yaml', 'pnpm-lock.yaml', 'uv.lock', '.node-version', '.npmrc', '.pnpmfile.cjs', 'mise.toml', 'tsconfig*.json', '.github/actions/setup-agent-vm/action.yml', 'scripts/prepare-e2e-image-cache.ts', 'packages/**/package.json', 'packages/**/src/**', 'packages/**/tsconfig*.json', 'packages/**/tsdown.config.ts', 'packages/**/README*', 'packages/**/LICENSE*', 'packages/**/LICENCE*', 'packages/**/openclaw.plugin.json', 'packages/**/portable-contract-schema-manifest.json', 'packages/**/contract-fixtures/**', 'packages/**/sdk-validate.mjs', 'packages/agent-vm/managed-images.json', 'python/**', 'vm-images/**') }}
+          E2E_IMAGE_INPUT_HASH: ${{ hashFiles('package.json', 'pnpm-workspace.yaml', 'pnpm-lock.yaml', 'uv.lock', '.node-version', '.npmrc', '.pnpmfile.cjs', 'mise.toml', 'tsconfig*.json', '.github/actions/setup-agent-vm/action.yml', 'scripts/prepare-e2e-image-cache.ts', 'packages/**/package.json', 'packages/**/src/**', 'packages/**/type-tests/**', 'packages/**/tsconfig*.json', 'packages/**/tsdown.config.ts', 'packages/**/README*', 'packages/**/LICENSE*', 'packages/**/LICENCE*', 'packages/**/openclaw.plugin.json', 'packages/**/portable-contract-schema-manifest.json', 'packages/**/contract-fixtures/**', 'packages/**/sdk-validate.mjs', 'packages/agent-vm/managed-images.json', 'python/**', 'vm-images/**') }}
         run: test -n "${E2E_IMAGE_INPUT_HASH}" && echo "hash=${E2E_IMAGE_INPUT_HASH}" >> "${GITHUB_OUTPUT}"
 
       - name: Restore prepared OpenClaw image cache

@@ -90,6 +90,7 @@ describe('CI workflow topology', () => {
 			'.pnpmfile.cjs',
 			'mise.toml',
 			'packages/**/src/**',
+			'packages/**/type-tests/**',
 			'packages/**/tsconfig*.json',
 			'packages/**/tsdown.config.ts',
 			'packages/**/README*',
