@@ -31,16 +31,18 @@ describe('CI workflow topology', () => {
 			'--shard=2/4',
 			'--shard=3/4',
 			'--shard=4/4',
-			'--exclude packages/agent-vm/src/integration-tests/managed-gateway-image-boot.vm.e2e.test.ts',
 			'packages/agent-vm/src/integration-tests/managed-gateway-image-boot.vm.e2e.test.ts',
 			'pnpm run test:e2e:vm-mediation',
 			'managed-gateway-test-group: core',
 			'managed-gateway-test-group: inputs',
 			'managed-gateway-test-group: termination',
-			'AGENT_VM_MANAGED_GATEWAY_TEST_GROUP: ${{ matrix.managed-gateway-test-group }}',
+			"AGENT_VM_MANAGED_GATEWAY_TEST_GROUP: ${{ matrix.managed-gateway-test-group || 'none' }}",
 		]) {
 			expect(workflow).toContain(command);
 		}
+		expect(workflow).not.toContain(
+			'--exclude packages/agent-vm/src/integration-tests/managed-gateway-image-boot.vm.e2e.test.ts',
+		);
 
 		expect(workflow).toContain('needs: e2e-image-cache');
 		expect(workflow).toContain('if: always()');

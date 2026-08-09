@@ -179,13 +179,13 @@ jobs:
       matrix:
         include:
           - lane: e2e-vm-shard-1
-            command: pnpm run test:e2e:vm -- --exclude packages/agent-vm/src/integration-tests/managed-gateway-image-boot.vm.e2e.test.ts --shard=1/4
+            command: pnpm run test:e2e:vm -- --shard=1/4
           - lane: e2e-vm-shard-2
-            command: pnpm run test:e2e:vm -- --exclude packages/agent-vm/src/integration-tests/managed-gateway-image-boot.vm.e2e.test.ts --shard=2/4
+            command: pnpm run test:e2e:vm -- --shard=2/4
           - lane: e2e-vm-shard-3
-            command: pnpm run test:e2e:vm -- --exclude packages/agent-vm/src/integration-tests/managed-gateway-image-boot.vm.e2e.test.ts --shard=3/4
+            command: pnpm run test:e2e:vm -- --shard=3/4
           - lane: e2e-vm-shard-4
-            command: pnpm run test:e2e:vm -- --exclude packages/agent-vm/src/integration-tests/managed-gateway-image-boot.vm.e2e.test.ts --shard=4/4
+            command: pnpm run test:e2e:vm -- --shard=4/4
           - lane: e2e-vm-managed-gateway-core
             managed-gateway-test-group: core
             command: >-
@@ -243,7 +243,7 @@ jobs:
         env:
           AGENT_VM_E2E_CACHE_DIR: /tmp/agent-vm-e2e-cache
           AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1'
-          AGENT_VM_MANAGED_GATEWAY_TEST_GROUP: ${{ matrix.managed-gateway-test-group }}
+          AGENT_VM_MANAGED_GATEWAY_TEST_GROUP: ${{ matrix.managed-gateway-test-group || 'none' }}
         run: ${{ matrix.command }}
 
   e2e-vm-mediation:
