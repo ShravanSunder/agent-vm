@@ -303,67 +303,8 @@ describe('agent-vm-worker cli', () => {
 			}),
 		).rejects.toThrow('Health check failed: Health check failed: 503');
 
-		expect(fetchMock).toHaveBeenCalledWith('http://localhost:19999/health', {
-			signal: expect.any(AbortSignal),
-		});
+		expect(fetchMock).toHaveBeenCalledWith('http://localhost:19999/health');
 		expect(stderrChunks).toHaveLength(0);
-	});
-
-	it('bounds a hanging health request and preserves the abort cause', async () => {
-		vi.useFakeTimers();
-		let requestSignal: AbortSignal | undefined;
-		let abortReason: unknown;
-		let healthError: unknown;
-		let timeoutMsObserved: number | undefined;
-		vi.spyOn(AbortSignal, 'timeout').mockImplementation((timeoutMs: number) => {
-			timeoutMsObserved = timeoutMs;
-			const timeoutController = new AbortController();
-			setTimeout(() => timeoutController.abort(new Error('health request timed out')), timeoutMs);
-			return timeoutController.signal;
-		});
-		const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((_input, init) => {
-			requestSignal = init?.signal ?? undefined;
-			return new Promise<Response>((_resolve, reject) => {
-				if (requestSignal === undefined) return;
-				requestSignal.addEventListener(
-					'abort',
-					() => {
-						abortReason = new Error('health request timed out');
-						reject(abortReason);
-					},
-					{ once: true },
-				);
-			});
-		});
-
-		try {
-			const healthPromise = runAgentVmWorkerCli(['health', '--port', '19999'], {
-				stdout: { write: () => true },
-				stderr: { write: () => true },
-			});
-			healthPromise.catch((error: unknown) => {
-				healthError = error;
-			});
-
-			await vi.advanceTimersByTimeAsync(4_999);
-			expect(requestSignal).toBeInstanceOf(AbortSignal);
-			expect(timeoutMsObserved).toBe(5_000);
-			expect(abortReason).toBeUndefined();
-			expect(healthError).toBeUndefined();
-
-			await vi.advanceTimersByTimeAsync(1);
-			await Promise.resolve();
-			expect(fetchMock).toHaveBeenCalledWith('http://localhost:19999/health', {
-				signal: requestSignal,
-			});
-			expect(abortReason).toBeInstanceOf(Error);
-			expect(healthError).toMatchObject({
-				cause: abortReason,
-				message: expect.stringContaining('Health check failed:'),
-			});
-		} finally {
-			vi.useRealTimers();
-		}
 	});
 
 	it('suppresses duplicate output for reported cli errors', () => {

@@ -13,8 +13,6 @@ import { createCoordinator, type Coordinator } from './coordinator/coordinator.j
 import { createApp } from './server.js';
 import type { HealthCommandOptions, ServeCommandOptions } from './worker-command-parser.js';
 
-const WORKER_HEALTH_REQUEST_TIMEOUT_MS = 5_000;
-
 export interface CliIo {
 	readonly stdout: Pick<NodeJS.WriteStream, 'write'>;
 	readonly stderr: Pick<NodeJS.WriteStream, 'write'>;
@@ -121,9 +119,7 @@ export async function runServeCommand(options: ServeCommandOptions, io: CliIo): 
 
 export async function runHealthCommand(options: HealthCommandOptions, io: CliIo): Promise<void> {
 	try {
-		const response = await fetch(`http://localhost:${options.port}/health`, {
-			signal: AbortSignal.timeout(WORKER_HEALTH_REQUEST_TIMEOUT_MS),
-		});
+		const response = await fetch(`http://localhost:${options.port}/health`);
 		if (!response.ok) {
 			throw new Error(`Health check failed: ${response.status}`);
 		}
