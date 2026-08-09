@@ -86,6 +86,9 @@ describe('CI workflow topology', () => {
 			'.github/actions/setup-agent-vm/action.yml',
 			'pnpm-workspace.yaml',
 			'.node-version',
+			'.npmrc',
+			'.pnpmfile.cjs',
+			'mise.toml',
 			'packages/**/src/**',
 			'packages/**/tsconfig*.json',
 			'packages/**/tsdown.config.ts',
@@ -106,6 +109,11 @@ describe('CI workflow topology', () => {
 		);
 		expect(cacheKeyExpressions).toHaveLength(2);
 		expect(cacheKeyExpressions[0]).toBe(cacheKeyExpressions[1]);
+		expect(
+			workflow.match(
+				/agent-vm-e2e-images-v2-openclaw-\$\{\{ runner\.os \}\}-\$\{\{ steps\.e2e-image-cache-key\.outputs\.hash \}\}/gu,
+			),
+		).toHaveLength(2);
 
 		expect(workflow).toContain('permissions:\n  contents: read');
 		expect(workflow).toContain('persist-credentials: false');
@@ -121,6 +129,11 @@ describe('CI workflow topology', () => {
 		expect(workflow).toContain(
 			'/tmp/agent-vm-e2e-cache/openclaw\n            /tmp/agent-vm-e2e-cache/local-package-tarballs',
 		);
+		expect(
+			workflow.match(
+				/\/tmp\/agent-vm-e2e-cache\/openclaw\n\s+\/tmp\/agent-vm-e2e-cache\/local-package-tarballs/gu,
+			),
+		).toHaveLength(3);
 		expect(workflow).not.toContain('agent-vm-e2e-images-v1-openclaw');
 		expect(workflow).not.toContain('restore-keys:');
 		expect(preparationScript).toContain('scaffoldOpenClawE2eProject');

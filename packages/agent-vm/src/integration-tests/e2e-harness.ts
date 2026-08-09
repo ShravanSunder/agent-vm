@@ -1113,10 +1113,10 @@ async function computeLocalPackagePackFingerprint(
 	for (const file of packPlan.files.toSorted((left, right) =>
 		left.path.localeCompare(right.path),
 	)) {
-		hash.update(`package:${file.path}\0`);
 		if (file.path.startsWith('dist/')) {
 			continue;
 		}
+		hash.update(`package:${file.path}\0`);
 		const filePath = path.join(packageDirectory, file.path);
 		// oxlint-disable-next-line no-await-in-loop -- ordered hashing keeps cache keys deterministic
 		const fileContents = await fs.readFile(filePath);

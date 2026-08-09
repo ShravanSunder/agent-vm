@@ -390,7 +390,7 @@ describe('resolveLocalPackagePackArgs', () => {
 		]);
 	});
 
-	it('reuses a producer tarball when generated dist bytes differ between jobs', async () => {
+	it('reuses a producer tarball when generated dist output differs between jobs', async () => {
 		const previousCacheRoot = process.env.AGENT_VM_E2E_CACHE_DIR;
 		const temporaryRoot = await createTemporaryRoot('agent-vm-e2e-package-cache-');
 		const repoRoot = path.join(temporaryRoot, 'repo');
@@ -428,19 +428,19 @@ describe('resolveLocalPackagePackArgs', () => {
 			expect(secondTarballPath).toBe(firstTarballPath);
 			expect(await fs.readFile(secondTarballPath)).toEqual(firstTarball);
 
+			await fs.writeFile(extraGeneratedFilePath, 'export const extra = true;\n');
+			const layoutChangedTarballPath = await packLocalAgentVmPackageTarball({
+				packageName: 'fake-package',
+				repoRoot,
+			});
+			expect(layoutChangedTarballPath).toBe(firstTarballPath);
+
 			await fs.appendFile(sourceFilePath, 'export const changed = true;\n', 'utf8');
 			const sourceChangedTarballPath = await packLocalAgentVmPackageTarball({
 				packageName: 'fake-package',
 				repoRoot,
 			});
 			expect(sourceChangedTarballPath).not.toBe(firstTarballPath);
-
-			await fs.writeFile(extraGeneratedFilePath, 'export const extra = true;\n');
-			const layoutChangedTarballPath = await packLocalAgentVmPackageTarball({
-				packageName: 'fake-package',
-				repoRoot,
-			});
-			expect(layoutChangedTarballPath).not.toBe(sourceChangedTarballPath);
 
 			await fs.appendFile(rootBuildInputPath, '{"compilerOptions":{}}\n', 'utf8');
 			const buildInputChangedTarballPath = await packLocalAgentVmPackageTarball({
@@ -1418,6 +1418,7 @@ describe('prepareGatewayE2eProjectImages', () => {
 		});
 		temporaryRoots.push(firstProject.tempRoot, secondProject.tempRoot);
 		const previousSmokeCacheRoot = process.env.AGENT_VM_E2E_CACHE_DIR;
+		const previousRequirePreparedImageCache = process.env.AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE;
 		process.env.AGENT_VM_E2E_CACHE_DIR = smokeCacheRoot;
 		const buildConfigs: LoadedSystemConfig[] = [];
 		try {
@@ -1440,6 +1441,7 @@ describe('prepareGatewayE2eProjectImages', () => {
 					delete gatewayProfile.source;
 				}),
 			);
+			delete process.env.AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE;
 			await prepareGatewayE2eProjectImages({
 				project: firstProject,
 				runBuild: async ({ systemConfig }) => {
@@ -1479,6 +1481,11 @@ describe('prepareGatewayE2eProjectImages', () => {
 				delete process.env.AGENT_VM_E2E_CACHE_DIR;
 			} else {
 				process.env.AGENT_VM_E2E_CACHE_DIR = previousSmokeCacheRoot;
+			}
+			if (previousRequirePreparedImageCache === undefined) {
+				delete process.env.AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE;
+			} else {
+				process.env.AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE = previousRequirePreparedImageCache;
 			}
 		}
 
