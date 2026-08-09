@@ -1,6 +1,8 @@
+import { execFile } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 
 import type { ManagedVm } from '@agent-vm/managed-vm';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -36,6 +38,7 @@ import {
 	collectE2eDockerImageTags,
 	disableOpenClawMcpPortalPlugin,
 	findReusableGatewayImageDirectory,
+	packLocalAgentVmPackageTarball,
 	prepareGatewayE2eProjectImages,
 	prepareLocalWorkerPackageForGatewayImage,
 	removeE2eLocalPackageTarballs,
@@ -59,6 +62,7 @@ import {
 } from './hermes-e2e-harness.js';
 
 const temporaryRoots: string[] = [];
+const execFileAsync = promisify(execFile);
 const normalizedDockerContextTimestampMs = Date.UTC(2000, 0, 1, 0, 0, 0, 0);
 const testManagedGatewayBootContract = createManagedGatewayBootContract({
 	bootEntry: 'openclaw-gateway',
@@ -1508,6 +1512,7 @@ describe('prepareGatewayE2eProjectImages', () => {
 			gatewayProfile.source = { base: 'worker-gateway', kind: 'managedBase' };
 		}
 		process.env.AGENT_VM_E2E_CACHE_DIR = smokeCacheRoot;
+		delete process.env.AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE;
 		const buildConfigs: LoadedSystemConfig[] = [];
 		try {
 			await prepareGatewayE2eProjectImages({
@@ -1750,6 +1755,63 @@ describe('prepareGatewayE2eProjectImages', () => {
 });
 
 describe('prepareLocalWorkerPackageForGatewayImage', () => {
+	it('canonicalizes independently generated workspace package archives', async () => {
+		const previousSmokeCacheRoot = process.env.AGENT_VM_E2E_CACHE_DIR;
+		const temporaryRoot = await createTemporaryRoot('agent-vm-package-archive-');
+		const firstCacheRoot = path.join(temporaryRoot, 'first-cache');
+		const secondCacheRoot = path.join(temporaryRoot, 'second-cache');
+		let firstTarballPath = '';
+		let secondTarballPath = '';
+		try {
+			process.env.AGENT_VM_E2E_CACHE_DIR = firstCacheRoot;
+			firstTarballPath = await packLocalAgentVmPackageTarball({
+				packageName: 'gateway-runtime',
+				repoRoot: process.cwd(),
+			});
+			process.env.AGENT_VM_E2E_CACHE_DIR = secondCacheRoot;
+			secondTarballPath = await packLocalAgentVmPackageTarball({
+				packageName: 'gateway-runtime',
+				repoRoot: process.cwd(),
+			});
+		} finally {
+			if (previousSmokeCacheRoot === undefined) {
+				delete process.env.AGENT_VM_E2E_CACHE_DIR;
+			} else {
+				process.env.AGENT_VM_E2E_CACHE_DIR = previousSmokeCacheRoot;
+			}
+		}
+
+		expect(await fs.readFile(firstTarballPath)).toEqual(await fs.readFile(secondTarballPath));
+	});
+
+	it('preserves conditional export ordering while canonicalizing package dependencies', async () => {
+		const previousSmokeCacheRoot = process.env.AGENT_VM_E2E_CACHE_DIR;
+		const temporaryRoot = await createTemporaryRoot('agent-vm-package-exports-');
+		process.env.AGENT_VM_E2E_CACHE_DIR = path.join(temporaryRoot, 'e2e-cache');
+		try {
+			const tarballPath = await packLocalAgentVmPackageTarball({
+				packageName: 'agent-vm',
+				repoRoot: process.cwd(),
+			});
+			const { stdout } = await execFileAsync(
+				'tar',
+				['-xOzf', tarballPath, 'package/package.json'],
+				{ encoding: 'utf8' },
+			);
+			const packedManifest = JSON.parse(stdout) as { readonly exports: unknown };
+			const sourceManifest = JSON.parse(
+				await fs.readFile(path.join(process.cwd(), 'packages', 'agent-vm', 'package.json'), 'utf8'),
+			) as { readonly exports: unknown };
+			expect(JSON.stringify(packedManifest.exports)).toBe(JSON.stringify(sourceManifest.exports));
+		} finally {
+			if (previousSmokeCacheRoot === undefined) {
+				delete process.env.AGENT_VM_E2E_CACHE_DIR;
+			} else {
+				process.env.AGENT_VM_E2E_CACHE_DIR = previousSmokeCacheRoot;
+			}
+		}
+	});
+
 	it('caches the local worker package outside the repo and reuses the generated tarball path', async () => {
 		const previousSmokeCacheRoot = process.env.AGENT_VM_E2E_CACHE_DIR;
 		const temporaryRoot = await createTemporaryRoot('agent-vm-worker-pack-');

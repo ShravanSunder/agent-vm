@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { setTimeout as waitForRetryInterval } from 'node:timers/promises';
 import { promisify } from 'node:util';
+import { gunzipSync, gzipSync } from 'node:zlib';
 
 import type { ManagedVmCreateRequest } from '@agent-vm/managed-vm';
 import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
@@ -1087,6 +1088,112 @@ async function computeLocalPackagePackFingerprint(
 	return hash.digest('hex').slice(0, 24);
 }
 
+const tarBlockSize = 512;
+
+function readTarHeaderField(header: Buffer, offset: number, length: number): string {
+	const field = header.toString('utf8', offset, offset + length);
+	const nulIndex = field.indexOf('\0');
+	return (nulIndex === -1 ? field : field.slice(0, nulIndex)).trim();
+}
+
+function readTarEntrySize(header: Buffer): number {
+	const encodedSize = readTarHeaderField(header, 124, 12);
+	if (encodedSize.length === 0) {
+		return 0;
+	}
+	const size = Number.parseInt(encodedSize, 8);
+	if (!Number.isSafeInteger(size) || size < 0) {
+		throw new Error(`Invalid tar entry size: ${encodedSize}`);
+	}
+	return size;
+}
+
+function rewriteTarEntrySizeAndChecksum(header: Buffer, size: number): void {
+	header.fill(0x20, 124, 136);
+	header.write(`${size.toString(8).padStart(11, '0')}\0`, 124, 'ascii');
+	header.fill(0x20, 148, 156);
+	let checksum = 0;
+	for (const byte of header) {
+		checksum += byte;
+	}
+	header.write(`${checksum.toString(8).padStart(6, '0')}\0 `, 148, 'ascii');
+}
+
+const npmDependencyMapKeys = new Set([
+	'dependencies',
+	'devDependencies',
+	'optionalDependencies',
+	'peerDependencies',
+	'peerDependenciesMeta',
+]);
+
+function canonicalizeNpmManifest(value: unknown): unknown {
+	if (!isJsonRecord(value)) {
+		return value;
+	}
+	return Object.fromEntries(
+		Object.entries(value).map(([key, entry]) => {
+			if (!npmDependencyMapKeys.has(key) || !isJsonRecord(entry)) {
+				return [key, entry];
+			}
+			return [
+				key,
+				Object.fromEntries(
+					Object.entries(entry).toSorted(([left], [right]) => left.localeCompare(right)),
+				),
+			];
+		}),
+	);
+}
+
+async function canonicalizePackedNpmTarball(tarballPath: string): Promise<void> {
+	const compressedArchive = await fs.readFile(tarballPath);
+	const archive = gunzipSync(compressedArchive);
+	const outputChunks: Buffer[] = [];
+	let offset = 0;
+	let manifestFound = false;
+	while (offset + tarBlockSize <= archive.length) {
+		const header = Buffer.from(archive.subarray(offset, offset + tarBlockSize));
+		if (header.every((byte) => byte === 0)) {
+			break;
+		}
+		const entrySize = readTarEntrySize(header);
+		const paddedEntrySize = Math.ceil(entrySize / tarBlockSize) * tarBlockSize;
+		const entryEnd = offset + tarBlockSize + paddedEntrySize;
+		if (entryEnd > archive.length) {
+			throw new Error(`Truncated tar entry in ${tarballPath}`);
+		}
+		const entryName = readTarHeaderField(header, 0, 100);
+		const entryData = archive.subarray(offset + tarBlockSize, offset + tarBlockSize + entrySize);
+		if (entryName === 'package/package.json') {
+			const manifest = JSON.parse(entryData.toString('utf8')) as unknown;
+			const trailingNewline = entryData.toString('utf8').endsWith('\n');
+			const canonicalManifest = Buffer.from(
+				`${JSON.stringify(canonicalizeNpmManifest(manifest), null, 2)}${trailingNewline ? '\n' : ''}`,
+				'utf8',
+			);
+			rewriteTarEntrySizeAndChecksum(header, canonicalManifest.length);
+			outputChunks.push(header, canonicalManifest);
+			const canonicalPadding =
+				canonicalManifest.length % tarBlockSize === 0
+					? 0
+					: tarBlockSize - (canonicalManifest.length % tarBlockSize);
+			if (canonicalPadding > 0) {
+				outputChunks.push(Buffer.alloc(canonicalPadding));
+			}
+			manifestFound = true;
+		} else {
+			outputChunks.push(archive.subarray(offset, entryEnd));
+		}
+		offset = entryEnd;
+	}
+	if (!manifestFound) {
+		throw new Error(`Packed npm tarball is missing package/package.json: ${tarballPath}`);
+	}
+	outputChunks.push(Buffer.alloc(tarBlockSize * 2));
+	await fs.writeFile(tarballPath, gzipSync(Buffer.concat(outputChunks)));
+}
+
 async function packLocalPackageTarball(props: LocalNpmPackageTarball): Promise<string> {
 	const packageJsonPath = path.join(props.packageDirectory, 'package.json');
 	await fs.access(packageJsonPath);
@@ -1119,6 +1226,7 @@ async function packLocalPackageTarball(props: LocalNpmPackageTarball): Promise<s
 		});
 		const packedTarballPath = path.join(packDirectory, packPlan.filename);
 		await fs.access(packedTarballPath);
+		await canonicalizePackedNpmTarball(packedTarballPath);
 		await fs.mkdir(cachedPackageDirectory, { recursive: true });
 		const temporaryCachedTarballPath = path.join(
 			cachedPackageDirectory,
