@@ -142,36 +142,46 @@ type ControllerOperationName =
 
 interface ControllerConfigOptions {
 	readonly config: string;
-	readonly zone?: string | undefined;
-	readonly purge?: boolean | undefined;
 }
 
-type ControllerZoneOptions = ControllerConfigOptions;
+interface ControllerZoneOptions extends ControllerConfigOptions {
+	readonly zone: string | undefined;
+}
+
+interface ControllerDestroyOptions extends ControllerZoneOptions {
+	readonly purge: boolean;
+}
+
+type ControllerOperationOptionsByName = {
+	readonly destroy: ControllerDestroyOptions;
+	readonly health: ControllerZoneOptions;
+	readonly 'health-snapshot': ControllerZoneOptions;
+	readonly logs: ControllerZoneOptions;
+	readonly 'service-health': ControllerZoneOptions;
+	readonly status: ControllerConfigOptions;
+	readonly stop: ControllerConfigOptions;
+	readonly upgrade: ControllerZoneOptions;
+};
+
+type ControllerOperationCommandFor<TName extends ControllerOperationName> = {
+	readonly command: `controller.${TName}`;
+	readonly options: ControllerOperationOptionsByName[TName];
+};
+
+type ControllerOperationCommand = {
+	[TName in ControllerOperationName]: ControllerOperationCommandFor<TName>;
+}[ControllerOperationName];
 
 export type ControllerCommand =
 	| { readonly command: 'controller.start'; readonly options: ControllerZoneOptions }
-	| { readonly command: 'controller.stop'; readonly options: ControllerConfigOptions }
 	| {
 			readonly command: 'controller.cleanup';
 			readonly options: ControllerZoneOptions & { readonly force: boolean };
 	  }
-	| { readonly command: 'controller.status'; readonly options: ControllerConfigOptions }
-	| { readonly command: 'controller.health'; readonly options: ControllerZoneOptions }
-	| {
-			readonly command: 'controller.health-snapshot';
-			readonly options: ControllerZoneOptions;
-	  }
-	| { readonly command: 'controller.service-health'; readonly options: ControllerZoneOptions }
 	| {
 			readonly command: 'controller.ssh';
 			readonly options: ControllerZoneOptions & { readonly allSecrets: boolean };
 	  }
-	| {
-			readonly command: 'controller.destroy';
-			readonly options: ControllerZoneOptions & { readonly purge: boolean };
-	  }
-	| { readonly command: 'controller.upgrade'; readonly options: ControllerZoneOptions }
-	| { readonly command: 'controller.logs'; readonly options: ControllerZoneOptions }
 	| {
 			readonly command: 'controller.credentials.check';
 			readonly options: ControllerZoneOptions;
@@ -179,48 +189,17 @@ export type ControllerCommand =
 	| {
 			readonly command: 'controller.credentials.refresh';
 			readonly options: ControllerZoneOptions;
-	  };
+	  }
+	| ControllerOperationCommand;
 
-type AnyControllerOperationCommand = {
-	readonly command: `controller.${ControllerOperationName}`;
-	readonly options: {
-		readonly config: string;
-		readonly zone?: unknown;
-		readonly purge?: unknown;
-	};
-};
-
-function createControllerOperationParser(
-	name: 'stop' | 'status',
+function createControllerOperationParser<TName extends ControllerOperationName>(
+	name: TName,
 	description: string,
-): Parser<'sync', Extract<ControllerCommand, { readonly command: `controller.${typeof name}` }>>;
-function createControllerOperationParser(
-	name: 'health' | 'health-snapshot' | 'service-health' | 'upgrade' | 'logs',
-	description: string,
-	supportsZone: true,
-): Parser<'sync', Extract<ControllerCommand, { readonly command: `controller.${typeof name}` }>>;
-function createControllerOperationParser(
-	name: 'destroy',
-	description: string,
-	supportsZone: true,
-	supportsPurge: true,
-): Parser<'sync', Extract<ControllerCommand, { readonly command: `controller.${typeof name}` }>>;
-function createControllerOperationParser(
-	name: ControllerOperationName,
-	description: string,
-	supportsZone = false,
-	supportsPurge = false,
-): Parser<'sync', AnyControllerOperationCommand> {
+	optionsParser: Parser<'sync', ControllerOperationOptionsByName[TName]>,
+): Parser<'sync', ControllerOperationCommandFor<TName>> {
 	return command(
 		name,
-		map(
-			object({
-				config: createConfigOption(),
-				...(supportsZone ? { zone: createZoneOption() } : {}),
-				...(supportsPurge ? { purge: createPurgeFlag() } : {}),
-			}),
-			(options) => ({ command: `controller.${name}` as const, options }),
-		),
+		map(optionsParser, (options) => ({ command: `controller.${name}` as const, options })),
 		{ description: cliDescription(description) },
 	);
 }
@@ -293,28 +272,52 @@ export function createControllerSubcommands(): Parser<'sync', ControllerCommand>
 		'controller',
 		or(
 			start,
-			createControllerOperationParser('stop', 'Stop the controller'),
+			createControllerOperationParser(
+				'stop',
+				'Stop the controller',
+				object({ config: createConfigOption() }),
+			),
 			cleanup,
-			createControllerOperationParser('status', 'Show controller status'),
+			createControllerOperationParser(
+				'status',
+				'Show controller status',
+				object({ config: createConfigOption() }),
+			),
 			createControllerOperationParser(
 				'health',
 				'Run the configured live gateway health probe for a zone',
-				true,
+				object({ config: createConfigOption(), zone: createZoneOption() }),
 			),
 			createControllerOperationParser(
 				'health-snapshot',
 				'Show the latest in-memory health snapshot for a zone',
-				true,
+				object({ config: createConfigOption(), zone: createZoneOption() }),
 			),
 			createControllerOperationParser(
 				'service-health',
 				'Run the live gateway service liveness probe for a zone',
-				true,
+				object({ config: createConfigOption(), zone: createZoneOption() }),
 			),
 			ssh,
-			createControllerOperationParser('destroy', 'Destroy a zone runtime', true, true),
-			createControllerOperationParser('upgrade', 'Upgrade a zone runtime', true),
-			createControllerOperationParser('logs', 'Show gateway logs', true),
+			createControllerOperationParser(
+				'destroy',
+				'Destroy a zone runtime',
+				object({
+					config: createConfigOption(),
+					purge: createPurgeFlag(),
+					zone: createZoneOption(),
+				}),
+			),
+			createControllerOperationParser(
+				'upgrade',
+				'Upgrade a zone runtime',
+				object({ config: createConfigOption(), zone: createZoneOption() }),
+			),
+			createControllerOperationParser(
+				'logs',
+				'Show gateway logs',
+				object({ config: createConfigOption(), zone: createZoneOption() }),
+			),
 			credentials,
 		),
 		{ description: cliDescription('Manage the VM controller') },
@@ -406,40 +409,36 @@ export async function runControllerCommand(
 		return;
 	}
 	const systemConfig = await loadSystemConfigFromOption(commandValue.options.config, dependencies);
-	const supportsZone =
-		commandValue.command === 'controller.health' ||
-		commandValue.command === 'controller.health-snapshot' ||
-		commandValue.command === 'controller.service-health' ||
-		commandValue.command === 'controller.destroy' ||
-		commandValue.command === 'controller.upgrade' ||
-		commandValue.command === 'controller.logs';
-	const zoneFlag =
-		supportsZone && 'zone' in commandValue.options && typeof commandValue.options.zone === 'string'
-			? commandValue.options.zone
+	const selectedZone =
+		'zone' in commandValue.options
+			? requireZone(systemConfig, commandValue.options.zone)
 			: undefined;
-	const selectedZone = supportsZone ? requireZone(systemConfig, zoneFlag) : undefined;
-	const operationName: ControllerOperationName =
-		commandValue.command === 'controller.health'
-			? 'health'
-			: commandValue.command === 'controller.health-snapshot'
-				? 'health-snapshot'
-				: commandValue.command === 'controller.service-health'
-					? 'service-health'
-					: commandValue.command === 'controller.destroy'
-						? 'destroy'
-						: commandValue.command === 'controller.upgrade'
-							? 'upgrade'
-							: commandValue.command === 'controller.logs'
-								? 'logs'
-								: commandValue.command === 'controller.stop'
-									? 'stop'
-									: 'status';
+	const operationName: ControllerOperationName = (() => {
+		switch (commandValue.command) {
+			case 'controller.destroy':
+				return 'destroy';
+			case 'controller.health':
+				return 'health';
+			case 'controller.health-snapshot':
+				return 'health-snapshot';
+			case 'controller.logs':
+				return 'logs';
+			case 'controller.service-health':
+				return 'service-health';
+			case 'controller.status':
+				return 'status';
+			case 'controller.stop':
+				return 'stop';
+			case 'controller.upgrade':
+				return 'upgrade';
+			default: {
+				const unreachableCommand: never = commandValue;
+				throw new Error(`Unhandled controller command: ${String(unreachableCommand)}`);
+			}
+		}
+	})();
 	const prefix =
-		commandValue.command === 'controller.destroy' &&
-		'purge' in commandValue.options &&
-		commandValue.options.purge
-			? ['--purge']
-			: [];
+		commandValue.command === 'controller.destroy' && commandValue.options.purge ? ['--purge'] : [];
 	await runControllerOperationCommand({
 		dependencies,
 		io,

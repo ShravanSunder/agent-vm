@@ -1,12 +1,25 @@
 import { describe, expect, it } from 'vitest';
 
-import { createAgentVmParser } from './commands/create-app.js';
+import { createAgentVmParser, type AgentVmCommand } from './commands/create-app.js';
 import { runOptiqueCliParser } from './optique-cli-support.js';
 
 const silentIo = {
 	stderr: { write: (): boolean => true },
 	stdout: { write: (): boolean => true },
 };
+
+function parseAgentVmCommand(argv: readonly string[]): AgentVmCommand {
+	const result = runOptiqueCliParser({
+		argv,
+		io: silentIo,
+		parser: createAgentVmParser(),
+		programName: 'agent-vm',
+	});
+	if (result.kind !== 'parsed') {
+		throw new Error(`Expected parsed command, received ${result.kind}.`);
+	}
+	return result.value;
+}
 
 describe('agent-vm Optique command contract', () => {
 	it('parses every command leaf into a discriminated command value', () => {
@@ -61,6 +74,25 @@ describe('agent-vm Optique command contract', () => {
 			});
 			expect(result).toMatchObject({ kind: 'parsed', value: { command } });
 		}
+	});
+
+	it('preserves exact controller operation option shapes', () => {
+		expect(parseAgentVmCommand(['controller', 'stop'])).toEqual({
+			command: 'controller.stop',
+			options: { config: 'config/system.json' },
+		});
+		expect(parseAgentVmCommand(['controller', 'status'])).toEqual({
+			command: 'controller.status',
+			options: { config: 'config/system.json' },
+		});
+		expect(parseAgentVmCommand(['controller', 'health', '--zone', 'zone'])).toEqual({
+			command: 'controller.health',
+			options: { config: 'config/system.json', zone: 'zone' },
+		});
+		expect(parseAgentVmCommand(['controller', 'destroy', '--zone', 'zone'])).toEqual({
+			command: 'controller.destroy',
+			options: { config: 'config/system.json', purge: false, zone: 'zone' },
+		});
 	});
 
 	it('preserves aliases, defaults, optional values, and Zod-owned domains', () => {
