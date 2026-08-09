@@ -473,6 +473,33 @@ describe('packed Tool Portal CLI', () => {
 		},
 	);
 
+	it('accepts a one-character authorization environment name boundary', async () => {
+		const cliPath = requireCliPath(fixture);
+		const server = await startHttpMcpServer(new Map([['tool_portal_list', successfulListResult]]));
+		try {
+			const result = await runCli({
+				args: explicitHttpArgs({
+					authorizationEnvironmentName: 'A',
+					endpoint: server.endpoint,
+				}),
+				cliPath,
+				env: cliEnvironment(fixture.rootDirectory, { A: testAuthorization }),
+			});
+
+			expect(result.exitCode).toBe(0);
+			expect(result.stderr).toBe('');
+			expect(result.stdout).toBe(`${encodeCanonicalJson(successfulListResult)}\n`);
+			expect(server.requests).toEqual([
+				expect.objectContaining({
+					authorization: `Bearer ${testAuthorization}`,
+					params: expect.objectContaining({ name: 'tool_portal_list' }),
+				}),
+			]);
+		} finally {
+			await server.close();
+		}
+	});
+
 	it('preserves exit class 2 for parse and application failures', async () => {
 		const cliPath = requireCliPath(fixture);
 		const server = await startHttpMcpServer(new Map([['tool_portal_list', { invalid: true }]]));

@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { access, mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
@@ -248,6 +249,30 @@ describe('built Optique CLI binaries', () => {
 		).resolves.toBeUndefined();
 	});
 
+	it('accepts the worker gateway and container-arm64 enum boundaries', async () => {
+		// Arrange
+		await access(agentVmCliPath);
+		const targetDirectory = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-optique-init-'));
+		temporaryDirectories.push(targetDirectory);
+
+		// Act
+		const invocation = await runBuiltCli(
+			agentVmCliPath,
+			['init', 'boundary-zone', '--type', 'worker', '--preset', 'container-arm64'],
+			targetDirectory,
+		);
+		const systemConfig = await readFile(
+			path.join(targetDirectory, 'config', 'system.jsonc'),
+			'utf8',
+		);
+
+		// Assert
+		expect(invocation.exitCode).toBe(0);
+		expect(invocation.stderr).toBe('');
+		expect(systemConfig).toContain('"type": "worker"');
+		expect(systemConfig).toContain('"base": "worker-gateway"');
+	});
+
 	it('proves agent-vm-worker help and leaf help on stdout with success status', async () => {
 		// Arrange
 		await access(agentVmWorkerCliPath);
@@ -302,6 +327,66 @@ describe('built Optique CLI binaries', () => {
 			expect(invocation.stderr.match(/^Error:/gmu)).toHaveLength(1);
 			expect(invocation.stderr).not.toMatch(/TypeError:|ReferenceError:|SyntaxError:|\n\s+at\s/u);
 		}
+	});
+
+	it('accepts port zero as the worker OS-assigned-port boundary', async () => {
+		// Arrange
+		await access(agentVmWorkerCliPath);
+		const stateDirectory = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-worker-optique-state-'));
+		temporaryDirectories.push(stateDirectory);
+		const child = spawn(process.execPath, [agentVmWorkerCliPath, 'serve', '--port', '0'], {
+			cwd: repoRoot,
+			env: { ...process.env, WORK_DIR: stateDirectory },
+			stdio: ['ignore', 'pipe', 'pipe'],
+		});
+		let stdout = '';
+		let stderr = '';
+		child.stdout.setEncoding('utf8');
+		child.stderr.setEncoding('utf8');
+		child.stdout.on('data', (chunk: string) => {
+			stdout += chunk;
+		});
+		child.stderr.on('data', (chunk: string) => {
+			stderr += chunk;
+		});
+
+		// Act
+		await new Promise<void>((resolve, reject) => {
+			const timeoutSignal = AbortSignal.timeout(30_000);
+			const cleanup = (): void => {
+				timeoutSignal.removeEventListener('abort', onTimeout);
+				child.stdout.off('data', onData);
+				child.off('exit', onExit);
+			};
+			const onData = (): void => {
+				if (!/Server listening on http:\/\/localhost:\d+/u.test(stdout)) return;
+				cleanup();
+				resolve();
+			};
+			const onExit = (): void => {
+				cleanup();
+				reject(new Error(`Worker boundary process exited early. stderr=${stderr}`));
+			};
+			const onTimeout = (): void => {
+				cleanup();
+				reject(new Error(`Worker boundary process did not listen. stderr=${stderr}`));
+			};
+			child.stdout.on('data', onData);
+			child.once('exit', onExit);
+			timeoutSignal.addEventListener('abort', onTimeout, { once: true });
+			onData();
+		});
+		child.kill('SIGTERM');
+		const [exitCode, signal] = (await once(child, 'close')) as [
+			number | null,
+			NodeJS.Signals | null,
+		];
+
+		// Assert
+		expect(stdout).toMatch(/Server listening on http:\/\/localhost:\d+/u);
+		expect(stderr).toBe('');
+		expect(exitCode).toBeNull();
+		expect(signal).toBe('SIGTERM');
 	});
 
 	it('performs a safe worker health effect through the built binary', async () => {

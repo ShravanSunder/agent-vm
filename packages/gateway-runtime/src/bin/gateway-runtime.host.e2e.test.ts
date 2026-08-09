@@ -437,6 +437,44 @@ describe('packed Gateway runtime executable', () => {
 		expect(result.stderr).toBe('');
 	});
 
+	it('accepts a minimal absolute config path at the CLI boundary', async () => {
+		if (fixture === undefined) throw new Error('Packed Gateway runtime fixture was not prepared.');
+		// Arrange
+		const boundaryRoot = await mkdtemp(path.join(fixture.root, 'boundary-'));
+		const runtime = await writeProtectedRuntimeConfig(boundaryRoot);
+		const boundaryConfigPath = path.join(runtime.runtimeRoot, 'x');
+		await writeFile(boundaryConfigPath, await readFile(runtime.configPath), { mode: 0o600 });
+		const boundaryProcess = startGatewayRuntimeProcess({
+			binPath: fixture.binPath,
+			configPath: boundaryConfigPath,
+		});
+
+		try {
+			// Act
+			const readiness = await waitForJsonLine({
+				predicate: (value) => value['kind'] === 'tool-portal-role-readiness',
+				process: boundaryProcess,
+			});
+
+			// Assert
+			expect(readiness).toMatchObject({ kind: 'tool-portal-role-readiness' });
+		} finally {
+			if (boundaryProcess.child.exitCode === null) {
+				boundaryProcess.child.kill('SIGTERM');
+				await waitForJsonLine({
+					predicate: (value) => value['kind'] === 'retired',
+					process: boundaryProcess,
+				});
+			}
+			if (boundaryProcess.child.exitCode === null) {
+				await once(boundaryProcess.child, 'exit', {
+					signal: AbortSignal.timeout(PROCESS_WAIT_MILLISECONDS),
+				});
+			}
+			await rm(boundaryRoot, { force: true, recursive: true });
+		}
+	});
+
 	it.each([
 		['missing --config', []],
 		['relative config path', ['--config', 'relative.json']],

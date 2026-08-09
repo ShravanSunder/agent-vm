@@ -415,6 +415,7 @@ describe('built mcp-portal CLI', () => {
 		await access(mcpPortalCliPath);
 
 		const invocations = await Promise.all([
+			runBuiltPortalCli(['validate']),
 			runBuiltPortalCli(['mcp-proxy', 'serve', '--config-dir', '/config', '--port', 'not-a-port']),
 			runBuiltPortalCli(['validate', 'catalog.json', '--unknown-option']),
 		]);
@@ -473,6 +474,54 @@ describe('portal proxy CLI integration', () => {
 			ok: false,
 		});
 	}
+
+	it('accepts port zero as the OS-assigned proxy-port boundary', async () => {
+		if (configDir === null) {
+			throw new Error('Expected portal integration config to be initialized.');
+		}
+		const output: ChildOutput = { stderr: '', stdout: '' };
+		const child = spawn(
+			process.execPath,
+			[mcpPortalCliPath, 'mcp-proxy', 'serve', '--config-dir', configDir, '--port', '0'],
+			{
+				env: {
+					...process.env,
+					MCP_PORTAL_MASTER_KEY: masterKeyText,
+				},
+				stdio: ['ignore', 'pipe', 'pipe'],
+			},
+		);
+		child.stdout.setEncoding('utf8');
+		child.stderr.setEncoding('utf8');
+		child.stdout.on('data', (chunk: string) => {
+			output.stdout += chunk;
+		});
+		child.stderr.on('data', (chunk: string) => {
+			output.stderr += chunk;
+		});
+		const started = { child, output } satisfies StartedPortalProcess;
+
+		try {
+			await waitForOutputCondition({
+				child,
+				describeCondition: 'OS-assigned proxy port readiness',
+				isReady: () => /listening port=\d+/u.test(output.stdout),
+				output,
+				timeoutMs: 30_000,
+			});
+			const portText = output.stdout.match(/listening port=(\d+)/u)?.[1];
+			if (portText === undefined) {
+				throw new Error(`Proxy did not report its assigned port: ${output.stdout}`);
+			}
+			const assignedPort = Number.parseInt(portText, 10);
+			expect(assignedPort).toBeGreaterThan(0);
+			const response = await fetch(`http://127.0.0.1:${String(assignedPort)}/health`);
+			expect(response.status).toBe(200);
+			expect(output.stderr).toBe('');
+		} finally {
+			await stopPortalProcess(started);
+		}
+	});
 
 	it('serves portal tools and proxies approval-gated upstream calls', async () => {
 		if (portalPort === null || upstreamServer === null) {
