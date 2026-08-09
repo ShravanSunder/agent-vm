@@ -273,6 +273,7 @@ function requireCliPath(fixture: PackedCliFixture): string {
 }
 
 function explicitHttpArgs(props: {
+	readonly authorizationEnvironmentName?: string;
 	readonly endpoint: string;
 	readonly operation?: (typeof operationFixtures)[number]['operation'];
 	readonly request?: Readonly<Record<string, unknown>>;
@@ -286,7 +287,7 @@ function explicitHttpArgs(props: {
 		'--endpoint',
 		props.endpoint,
 		'--authorization-env',
-		'TOOL_PORTAL_TEST_AUTHORIZATION',
+		props.authorizationEnvironmentName ?? 'TOOL_PORTAL_TEST_AUTHORIZATION',
 	];
 }
 
@@ -472,13 +473,13 @@ describe('packed Tool Portal CLI', () => {
 		},
 	);
 
-	it('uses Optique parse status for usage and exit class 2 for application failures', async () => {
+	it('preserves exit class 2 for parse and application failures', async () => {
 		const cliPath = requireCliPath(fixture);
 		const server = await startHttpMcpServer(new Map([['tool_portal_list', { invalid: true }]]));
 		const missingAuthEnvironment = cliEnvironment(fixture.rootDirectory);
 		delete missingAuthEnvironment['TOOL_PORTAL_TEST_AUTHORIZATION'];
 		const cases = [
-			['usage', [...explicitHttpArgs({ endpoint: server.endpoint }), '--unknown-option'], 1],
+			['usage', [...explicitHttpArgs({ endpoint: server.endpoint }), '--unknown-option'], 2],
 			['auth', explicitHttpArgs({ endpoint: server.endpoint }), 2],
 			['transport', explicitHttpArgs({ endpoint: 'http://127.0.0.1:1/unreachable' }), 2],
 			['protocol', explicitHttpArgs({ endpoint: server.endpoint }), 2],
@@ -566,6 +567,10 @@ describe('packed Tool Portal CLI', () => {
 		delete implicitEnvironment['TOOL_PORTAL_TEST_AUTHORIZATION'];
 		const invalidArgv = [
 			['list', '--input-json', '{"requests":[{"id":"list-1"}]}', '--transport', 'http'],
+			explicitHttpArgs({
+				authorizationEnvironmentName: 'not-valid',
+				endpoint: 'http://127.0.0.1:1/mcp',
+			}),
 			[
 				...explicitHttpArgs({ endpoint: 'http://127.0.0.1:1/mcp' }),
 				'--authorization',
@@ -578,7 +583,7 @@ describe('packed Tool Portal CLI', () => {
 		await Promise.all(
 			invalidArgv.map(async (args) => {
 				const result = await runCli({ args, cliPath, env: implicitEnvironment });
-				expect(result.exitCode).toBe(1);
+				expect(result.exitCode).toBe(2);
 				expect(result.stdout).toBe('');
 				expect(result.stderr).not.toContain('implicit-token');
 			}),

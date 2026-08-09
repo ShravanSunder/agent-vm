@@ -204,7 +204,7 @@ async function runToolPortalCli(
 			stdout: process.stdout,
 		});
 		if (parseResult.kind === 'help') return parseResult.exitCode;
-		if (parseResult.kind === 'parse-error') return parseResult.exitCode;
+		if (parseResult.kind === 'parse-error') return 2;
 		const cliArguments = parseResult.value;
 		const transportResult = await createCliTransport(cliArguments, environment);
 		authorization = transportResult.authorization;
