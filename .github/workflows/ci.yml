@@ -157,9 +157,13 @@ jobs:
       matrix:
         include:
           - lane: e2e-vm-shard-1
-            command: pnpm run test:e2e:vm -- --shard=1/2
+            command: pnpm run test:e2e:vm -- --shard=1/4
           - lane: e2e-vm-shard-2
-            command: pnpm run test:e2e:vm -- --shard=2/2
+            command: pnpm run test:e2e:vm -- --shard=2/4
+          - lane: e2e-vm-shard-3
+            command: pnpm run test:e2e:vm -- --shard=3/4
+          - lane: e2e-vm-shard-4
+            command: pnpm run test:e2e:vm -- --shard=4/4
     steps:
       - uses: actions/checkout@v4
 

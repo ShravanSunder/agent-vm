@@ -27,8 +27,10 @@ describe('CI workflow topology', () => {
 		for (const command of [
 			'pnpm run test:e2e:host-docker',
 			'pnpm run test:e2e:host',
-			'pnpm run test:e2e:vm -- --shard=1/2',
-			'pnpm run test:e2e:vm -- --shard=2/2',
+			'pnpm run test:e2e:vm -- --shard=1/4',
+			'pnpm run test:e2e:vm -- --shard=2/4',
+			'pnpm run test:e2e:vm -- --shard=3/4',
+			'pnpm run test:e2e:vm -- --shard=4/4',
 			'pnpm run test:e2e:vm-mediation',
 		]) {
 			expect(workflow).toContain(command);
