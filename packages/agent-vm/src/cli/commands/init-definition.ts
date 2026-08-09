@@ -219,7 +219,7 @@ export function createInitCommand(): Parser<'sync', InitCommand> {
 						errors: {
 							zodError: (_error, input) =>
 								cliDescription(
-									`Gateway type is required. Expected 'openclaw' or 'worker', got '${input}'.`,
+									`Invalid gateway type. Expected 'openclaw' or 'worker', got '${input}'.`,
 								),
 						},
 					}),

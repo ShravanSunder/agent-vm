@@ -194,7 +194,7 @@ describe('built Optique CLI binaries', () => {
 			{ argv: ['init', 'demo'], diagnostic: 'Missing option `--type`.' },
 			{
 				argv: ['init', 'demo', '--type', 'hermes'],
-				diagnostic: "Gateway type is required. Expected 'openclaw' or 'worker', got 'hermes'.",
+				diagnostic: "Invalid gateway type. Expected 'openclaw' or 'worker', got 'hermes'.",
 			},
 		];
 

@@ -95,7 +95,7 @@ describe('agent-vm Optique command contract', () => {
 		});
 	});
 
-	it('preserves aliases, defaults, optional values, and Zod-owned domains', () => {
+	it('preserves defaults, optional values, and Zod-owned domains', () => {
 		const result = runOptiqueCliParser({
 			argv: ['init', 'zone', '--type', 'worker', '--secrets', 'environment', '--arch', 'x86_64'],
 			io: silentIo,
