@@ -32,7 +32,14 @@ const processObservationRetryIntervalMs = 100;
 const stableSiblingTerminationObservationCount = 10;
 const toolPortalReadinessPath = '/run/agent-vm/gateway-runtime/tool-portal.readiness.json';
 
-type ManagedGatewayTestGroup = 'core' | 'inputs' | 'termination';
+type ManagedGatewayTestGroup =
+	| 'core'
+	| 'input-missing-tool-portal'
+	| 'input-missing-framework'
+	| 'input-read-only-environment'
+	| 'termination-tool-portal'
+	| 'termination-openclaw'
+	| 'worker-stock';
 
 function selectManagedGatewayTestGroup(
 	value: string | undefined,
@@ -43,7 +50,15 @@ function selectManagedGatewayTestGroup(
 	if (value === 'none') {
 		return 'none';
 	}
-	if (value === 'core' || value === 'inputs' || value === 'termination') {
+	if (
+		value === 'core' ||
+		value === 'input-missing-tool-portal' ||
+		value === 'input-missing-framework' ||
+		value === 'input-read-only-environment' ||
+		value === 'termination-tool-portal' ||
+		value === 'termination-openclaw' ||
+		value === 'worker-stock'
+	) {
 		return value;
 	}
 	throw new Error(`Unsupported AGENT_VM_MANAGED_GATEWAY_TEST_GROUP: ${value}`);
@@ -766,7 +781,7 @@ describeLiveVmIntegration('Managed Gateway image-owned sibling boot', () => {
 		}, 900_000);
 	}
 
-	if (shouldRegisterManagedGatewayTest('inputs')) {
+	if (shouldRegisterManagedGatewayTest('input-missing-tool-portal')) {
 		it('keeps OpenClaw running when the Tool Portal boot input is missing', async () => {
 			const fixture = await startManagedGatewayImageBootFixture({
 				omittedInputFileName: 'tool-portal-service.json',
@@ -790,7 +805,9 @@ describeLiveVmIntegration('Managed Gateway image-owned sibling boot', () => {
 				await fixture.close();
 			}
 		}, 900_000);
+	}
 
+	if (shouldRegisterManagedGatewayTest('input-missing-framework')) {
 		it('keeps Tool Portal ready when the OpenClaw boot input is missing', async () => {
 			const fixture = await startManagedGatewayImageBootFixture({
 				omittedInputFileName: 'framework-service.json',
@@ -821,7 +838,9 @@ describeLiveVmIntegration('Managed Gateway image-owned sibling boot', () => {
 				await fixture.close();
 			}
 		}, 900_000);
+	}
 
+	if (shouldRegisterManagedGatewayTest('input-read-only-environment')) {
 		it('starts neither sibling when environment-script unlink is denied', async () => {
 			const fixture = await startManagedGatewayImageBootFixture({
 				environmentMountAccess: 'read-only',
@@ -840,8 +859,13 @@ describeLiveVmIntegration('Managed Gateway image-owned sibling boot', () => {
 		}, 900_000);
 	}
 
-	if (shouldRegisterManagedGatewayTest('termination')) {
-		it.each(['tool-portal', 'openclaw'] as const)(
+	const selectedTerminationRoles = (['tool-portal', 'openclaw'] as const).filter((role) =>
+		shouldRegisterManagedGatewayTest(
+			role === 'tool-portal' ? 'termination-tool-portal' : 'termination-openclaw',
+		),
+	);
+	if (selectedTerminationRoles.length > 0) {
+		it.each(selectedTerminationRoles)(
 			'terminates the exact %s sibling without restarting it or disturbing its peer',
 			async (terminatedRole) => {
 				const fixture = await startManagedGatewayImageBootFixture({
@@ -881,7 +905,9 @@ describeLiveVmIntegration('Managed Gateway image-owned sibling boot', () => {
 			},
 			900_000,
 		);
+	}
 
+	if (shouldRegisterManagedGatewayTest('worker-stock')) {
 		it('keeps a stock Worker image free of managed Gateway sibling roles', async () => {
 			const project = await scaffoldWorkerE2eProject({
 				architecture: process.arch === 'arm64' ? 'aarch64' : 'x86_64',
@@ -896,7 +922,7 @@ describeLiveVmIntegration('Managed Gateway image-owned sibling boot', () => {
 			let vm: ManagedVm | undefined;
 
 			try {
-				await prepareGatewayE2eProjectImages({ project });
+				await prepareGatewayE2eProjectImages({ imageFamilies: ['gateway'], project });
 				const preparedImage = await readPreparedManagedVmImage({
 					buildConfigPath: workerProfile.buildConfig,
 					cacheDir: path.join(project.systemConfig.cacheDir, 'gateway-images', profileName),

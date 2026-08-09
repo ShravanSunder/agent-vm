@@ -34,11 +34,32 @@ describe('CI workflow topology', () => {
 			'pnpm run test:e2e:vm-managed-gateway',
 			'pnpm run test:e2e:vm-mediation',
 			'managed-gateway-test-group: core',
-			'managed-gateway-test-group: inputs',
-			'managed-gateway-test-group: termination',
+			'managed-gateway-test-group: input-missing-tool-portal',
+			'managed-gateway-test-group: input-missing-framework',
+			'managed-gateway-test-group: input-read-only-environment',
+			'managed-gateway-test-group: termination-tool-portal',
+			'managed-gateway-test-group: termination-openclaw',
+			'managed-gateway-test-group: worker-stock',
+			"require-prepared-image-cache: '1'",
 			"AGENT_VM_MANAGED_GATEWAY_TEST_GROUP: ${{ matrix.managed-gateway-test-group || 'none' }}",
+			"AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE: ${{ matrix.require-prepared-image-cache || '0' }}",
 		]) {
 			expect(workflow).toContain(command);
+		}
+		for (const managedGatewayGroup of [
+			'core',
+			'input-missing-tool-portal',
+			'input-missing-framework',
+			'input-read-only-environment',
+			'termination-tool-portal',
+			'termination-openclaw',
+			'worker-stock',
+		]) {
+			expect(workflow).toMatch(
+				new RegExp(
+					`managed-gateway-test-group: ${managedGatewayGroup}\\n\\s+require-prepared-image-cache: '1'`,
+				),
+			);
 		}
 		expect(workflow).not.toContain(
 			'--exclude packages/agent-vm/src/integration-tests/managed-gateway-image-boot.vm.e2e.test.ts',
@@ -65,7 +86,11 @@ describe('CI workflow topology', () => {
 			'.github/actions/setup-agent-vm/action.yml',
 			'pnpm-workspace.yaml',
 			'.node-version',
+			'.npmrc',
+			'.pnpmfile.cjs',
+			'mise.toml',
 			'packages/**/src/**',
+			'packages/**/type-tests/**',
 			'packages/**/tsconfig*.json',
 			'packages/**/tsdown.config.ts',
 			'packages/**/README*',
@@ -85,15 +110,32 @@ describe('CI workflow topology', () => {
 		);
 		expect(cacheKeyExpressions).toHaveLength(2);
 		expect(cacheKeyExpressions[0]).toBe(cacheKeyExpressions[1]);
+		expect(
+			workflow.match(
+				/agent-vm-e2e-images-v2-openclaw-\$\{\{ runner\.os \}\}-\$\{\{ steps\.e2e-image-cache-key\.outputs\.hash \}\}/gu,
+			),
+		).toHaveLength(2);
 
 		expect(workflow).toContain('permissions:\n  contents: read');
 		expect(workflow).toContain('persist-credentials: false');
 		expect(preparationScript).toContain('useLocalOpenClawPluginGatewayImage');
+		expect(preparationScript).toContain(
+			"imageFamilies: ['gateway'],\n\t\t\tproject: openClawPluginProject",
+		);
 
 		expect(workflow).toContain('Restore prepared OpenClaw image cache');
 		expect(workflow).toContain('Restore prepared Worker image cache');
 		expect(workflow).toContain('Save prepared OpenClaw image cache');
 		expect(workflow).toContain('Save prepared Worker image cache');
+		expect(workflow).toContain(
+			'/tmp/agent-vm-e2e-cache/openclaw\n            /tmp/agent-vm-e2e-cache/local-package-tarballs',
+		);
+		expect(
+			workflow.match(
+				/\/tmp\/agent-vm-e2e-cache\/openclaw\n\s+\/tmp\/agent-vm-e2e-cache\/local-package-tarballs/gu,
+			),
+		).toHaveLength(3);
+		expect(workflow).not.toContain('agent-vm-e2e-images-v1-openclaw');
 		expect(workflow).not.toContain('restore-keys:');
 		expect(preparationScript).toContain('scaffoldOpenClawE2eProject');
 		expect(preparationScript).toContain('scaffoldWorkerE2eProject');
