@@ -10,16 +10,30 @@ async function resolveBundledOpenClawPluginDistDirectory(): Promise<string> {
 	const pluginEntrypointPath = fileURLToPath(
 		import.meta.resolve('@agent-vm/openclaw-agent-vm-plugin'),
 	);
-	const pluginDistDirectory = path.dirname(pluginEntrypointPath);
-	try {
-		await fs.access(path.join(pluginDistDirectory, 'openclaw.plugin.json'));
-	} catch (error) {
-		throw new Error(
-			`Bundled gondolin plugin dist is missing at '${pluginDistDirectory}'. Run \`pnpm build\` before using the OpenClaw gateway scaffold/build path.`,
-			{ cause: error },
-		);
+	const resolvedPluginDirectory = path.dirname(pluginEntrypointPath);
+	const candidateDirectories = [
+		resolvedPluginDirectory,
+		path.resolve(resolvedPluginDirectory, '..', 'dist'),
+	];
+	const accessibleCandidateDirectories = await Promise.all(
+		candidateDirectories.map(async (candidateDirectory) => {
+			try {
+				await fs.access(path.join(candidateDirectory, 'openclaw.plugin.json'));
+				return candidateDirectory;
+			} catch {
+				return undefined;
+			}
+		}),
+	);
+	const resolvedCandidateDirectory = accessibleCandidateDirectories.find(
+		(candidateDirectory): candidateDirectory is string => candidateDirectory !== undefined,
+	);
+	if (resolvedCandidateDirectory !== undefined) {
+		return resolvedCandidateDirectory;
 	}
-	return pluginDistDirectory;
+	throw new Error(
+		`Bundled gondolin plugin dist is missing near '${resolvedPluginDirectory}'. Run \`pnpm build\` before using the OpenClaw gateway scaffold/build path.`,
+	);
 }
 
 export async function syncBundledOpenClawPluginBundle(

@@ -27,11 +27,16 @@ describe('CI workflow topology', () => {
 		for (const command of [
 			'pnpm run test:e2e:host-docker',
 			'pnpm run test:e2e:host',
-			'pnpm run test:e2e:vm -- --shard=1/4',
-			'pnpm run test:e2e:vm -- --shard=2/4',
-			'pnpm run test:e2e:vm -- --shard=3/4',
-			'pnpm run test:e2e:vm -- --shard=4/4',
+			'--shard=1/4',
+			'--shard=2/4',
+			'--shard=3/4',
+			'--shard=4/4',
+			'--exclude packages/agent-vm/src/integration-tests/managed-gateway-image-boot.vm.e2e.test.ts',
+			'packages/agent-vm/src/integration-tests/managed-gateway-image-boot.vm.e2e.test.ts',
 			'pnpm run test:e2e:vm-mediation',
+			"--testNamePattern='boots one Tool Portal root'",
+			"--testNamePattern='(keeps OpenClaw running|keeps Tool Portal ready|starts neither sibling)'",
+			"--testNamePattern='(terminates the exact tool-portal sibling|terminates the exact openclaw sibling|keeps a stock Worker image)'",
 		]) {
 			expect(workflow).toContain(command);
 		}
@@ -42,6 +47,9 @@ describe('CI workflow topology', () => {
 		expect(workflow).toContain('AGENT_VM_E2E_CACHE_DIR: /tmp/agent-vm-e2e-cache');
 		expect(workflow).toContain("AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1'");
 		expect(workflow).toContain('e2e-vm-mediation=${E2E_VM_MEDIATION_RESULT}');
+		expect(workflow).toContain('id: e2e-image-cache-key');
+		expect(workflow).toContain('steps.e2e-image-cache-key.outputs.hash');
+		expect(workflow).toContain('lookup-only: true');
 	});
 
 	it('keys prepared images from all package build inputs and prepares both image families', async () => {
@@ -51,9 +59,13 @@ describe('CI workflow topology', () => {
 		]);
 
 		for (const cacheInput of [
+			'pnpm-workspace.yaml',
 			'packages/**/src/**',
 			'packages/**/tsconfig*.json',
 			'packages/**/tsdown.config.ts',
+			'packages/**/README*',
+			'packages/**/LICENSE*',
+			'packages/**/LICENCE*',
 			'packages/**/openclaw.plugin.json',
 			'packages/**/contract-fixtures/**',
 			'packages/**/sdk-validate.mjs',
@@ -63,6 +75,10 @@ describe('CI workflow topology', () => {
 			expect(workflow).toContain(cacheInput);
 		}
 
+		expect(workflow).toContain('permissions:\n  contents: read');
+		expect(workflow).toContain('persist-credentials: false');
+		expect(preparationScript).toContain('useLocalOpenClawPluginGatewayImage');
+
 		expect(workflow).toContain('Restore prepared OpenClaw image cache');
 		expect(workflow).toContain('Restore prepared Worker image cache');
 		expect(workflow).toContain('Save prepared OpenClaw image cache');
@@ -71,5 +87,6 @@ describe('CI workflow topology', () => {
 		expect(preparationScript).toContain('scaffoldOpenClawE2eProject');
 		expect(preparationScript).toContain('scaffoldWorkerE2eProject');
 		expect(preparationScript).toContain('removeE2eTempRoot');
+		expect(preparationScript).toContain('agent-vm-gateway-e2e-plugin-project-');
 	});
 });

@@ -82,4 +82,20 @@ describe('syncBundledOpenClawPluginBundle', () => {
 			}),
 		).rejects.toThrow('permission denied');
 	});
+
+	it('resolves the built plugin dist when the workspace entrypoint resolves to source', async () => {
+		const targetDirectory = await createTemporaryDirectory('agent-vm-plugin-default-resolver-');
+
+		await syncBundledOpenClawPluginBundle(targetDirectory, 'openclaw');
+
+		expect(
+			await pathExists(
+				path.join(
+					targetDirectory,
+					openClawPluginVendorDirectory('openclaw'),
+					'openclaw.plugin.json',
+				),
+			),
+		).toBe(true);
+	});
 });
