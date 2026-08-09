@@ -12,12 +12,17 @@ const constructedForbiddenCliResiduePattern =
 const activeSourceRoots = [
 	'packages/agent-vm/src',
 	'packages/agent-vm-worker/src',
-	'packages/secret-management/src',
+	'packages/agent-portal-sdk/src',
+	'packages/mcp-portal/src',
+	'packages/gateway-runtime/src',
 ] as const;
 
 const manifestPaths = [
 	'packages/agent-vm/package.json',
 	'packages/agent-vm-worker/package.json',
+	'packages/agent-portal-sdk/package.json',
+	'packages/mcp-portal/package.json',
+	'packages/gateway-runtime/package.json',
 	'pnpm-lock.yaml',
 ] as const;
 
@@ -122,9 +127,15 @@ describe('Optique CLI cutover checker', () => {
 		expect(result.violations).toEqual([]);
 		expect(result.scannedPaths).toContain('packages/agent-vm/package.json');
 		expect(result.scannedPaths).toContain('packages/agent-vm-worker/package.json');
+		expect(result.scannedPaths).toContain('packages/agent-portal-sdk/package.json');
+		expect(result.scannedPaths).toContain('packages/mcp-portal/package.json');
+		expect(result.scannedPaths).toContain('packages/gateway-runtime/package.json');
 		expect(result.scannedPaths).toContain('pnpm-lock.yaml');
 		expect(result.scannedPaths).toContain('packages/agent-vm/src/cli/agent-vm-entrypoint.ts');
 		expect(result.scannedPaths).toContain('packages/agent-vm-worker/src/main.ts');
+		expect(result.scannedPaths).toContain('packages/agent-portal-sdk/src/cli/tool-portal.ts');
+		expect(result.scannedPaths).toContain('packages/mcp-portal/src/bin/mcp-portal.ts');
+		expect(result.scannedPaths).toContain('packages/gateway-runtime/src/bin/gateway-runtime.ts');
 		expect(result.scannedPaths).toContain('docs/README.md');
 		expect(result.scannedPaths).not.toContain(
 			'packages/agent-vm/src/integration-tests/optique-cli-cutover-checker.host.e2e.test.ts',
