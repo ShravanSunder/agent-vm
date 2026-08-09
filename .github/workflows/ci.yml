@@ -64,8 +64,6 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: ./.github/actions/setup-agent-vm
-        with:
-          build: 'false'
 
       - name: Unit tests
         run: pnpm test:unit
