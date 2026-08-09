@@ -53,7 +53,8 @@ shared parser framework or a compatibility facade.
 
 Inspect and, where needed, update the parser-owning manifests and lockfile so
 each active CLI directly declares only the Optique packages it imports and no
-active package retains `cmd-ts`. Keep parser runner support package-local and
+active package retains the removed legacy parser dependency. Keep parser runner
+support package-local and
 non-terminating for in-process callers; process entrypoints alone own the final
 status.
 
@@ -110,9 +111,9 @@ package fixtures and generated artifacts do not overlap.
 
 Run static searches over active manifests, lockfile, source, tests, current
 docs, and packed dependency metadata. Verify that only the named checker and
-the explicitly historical/current migration documents contain `cmd-ts`
-references, and that the deprecated OpenClaw MCP Portal plugin remains outside
-the migration.
+the explicitly historical/current migration documents contain the forbidden
+legacy-parser token, and that the deprecated OpenClaw MCP Portal plugin remains
+outside the migration.
 
 Run the permanent built-binary host-E2E proof across all five binaries. The
 proof must observe argv, stdout, stderr, status, valid behavior, an
