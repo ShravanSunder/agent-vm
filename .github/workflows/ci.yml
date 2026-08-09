@@ -187,20 +187,20 @@ jobs:
           - lane: e2e-vm-shard-4
             command: pnpm run test:e2e:vm -- --exclude packages/agent-vm/src/integration-tests/managed-gateway-image-boot.vm.e2e.test.ts --shard=4/4
           - lane: e2e-vm-managed-gateway-core
+            managed-gateway-test-group: core
             command: >-
               pnpm run test:e2e:vm --
               packages/agent-vm/src/integration-tests/managed-gateway-image-boot.vm.e2e.test.ts
-              --testNamePattern='boots one Tool Portal root'
           - lane: e2e-vm-managed-gateway-inputs
+            managed-gateway-test-group: inputs
             command: >-
               pnpm run test:e2e:vm --
               packages/agent-vm/src/integration-tests/managed-gateway-image-boot.vm.e2e.test.ts
-              --testNamePattern='(keeps OpenClaw running|keeps Tool Portal ready|starts neither sibling)'
           - lane: e2e-vm-managed-gateway-termination
+            managed-gateway-test-group: termination
             command: >-
               pnpm run test:e2e:vm --
               packages/agent-vm/src/integration-tests/managed-gateway-image-boot.vm.e2e.test.ts
-              --testNamePattern='(terminates the exact tool-portal sibling|terminates the exact openclaw sibling|keeps a stock Worker image)'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -243,6 +243,7 @@ jobs:
         env:
           AGENT_VM_E2E_CACHE_DIR: /tmp/agent-vm-e2e-cache
           AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1'
+          AGENT_VM_MANAGED_GATEWAY_TEST_GROUP: ${{ matrix.managed-gateway-test-group }}
         run: ${{ matrix.command }}
 
   e2e-vm-mediation:

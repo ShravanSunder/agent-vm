@@ -1001,7 +1001,13 @@ describe('findReusableGatewayImageDirectory', () => {
 			`${JSON.stringify({ arch: 'x86_64', distro: 'alpine' })}\n`,
 			'utf8',
 		);
-		const fingerprint = await computeFingerprintFromConfigPath(gatewayBuildConfigPath);
+		const managedGatewayBoot = {
+			frameworkBootEntry: 'openclaw-framework-service' as const,
+			kind: 'managed-gateway-exact-two-role' as const,
+		};
+		const fingerprint = await computeFingerprintFromConfigPath(gatewayBuildConfigPath, {
+			managedGatewayBoot,
+		});
 		const reusableImageDirectory = path.join(
 			previousCacheDir,
 			'gateway-images',
@@ -1021,6 +1027,7 @@ describe('findReusableGatewayImageDirectory', () => {
 				currentProjectRoot,
 				gatewayBuildConfigPath,
 				imageProfileName: 'openclaw',
+				managedGatewayBoot,
 			});
 		} finally {
 			if (previousSmokeCacheRoot === undefined) {

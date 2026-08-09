@@ -34,9 +34,10 @@ describe('CI workflow topology', () => {
 			'--exclude packages/agent-vm/src/integration-tests/managed-gateway-image-boot.vm.e2e.test.ts',
 			'packages/agent-vm/src/integration-tests/managed-gateway-image-boot.vm.e2e.test.ts',
 			'pnpm run test:e2e:vm-mediation',
-			"--testNamePattern='boots one Tool Portal root'",
-			"--testNamePattern='(keeps OpenClaw running|keeps Tool Portal ready|starts neither sibling)'",
-			"--testNamePattern='(terminates the exact tool-portal sibling|terminates the exact openclaw sibling|keeps a stock Worker image)'",
+			'managed-gateway-test-group: core',
+			'managed-gateway-test-group: inputs',
+			'managed-gateway-test-group: termination',
+			'AGENT_VM_MANAGED_GATEWAY_TEST_GROUP: ${{ matrix.managed-gateway-test-group }}',
 		]) {
 			expect(workflow).toContain(command);
 		}
