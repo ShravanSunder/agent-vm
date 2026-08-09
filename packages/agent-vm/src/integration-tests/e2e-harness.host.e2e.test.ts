@@ -6,7 +6,10 @@ import type { ManagedVm } from '@agent-vm/managed-vm';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { computeFingerprintFromConfigPath } from '../build/gondolin-image-builder.js';
-import { managedVmImageAssetFileNames } from '../build/gondolin-managed-vm-build-tooling.js';
+import {
+	managedVmImageAssetFileNames,
+	type ManagedGatewayImageBootProjection,
+} from '../build/gondolin-managed-vm-build-tooling.js';
 import {
 	generateManagedDockerfile,
 	loadManagedImageOverlay,
@@ -976,7 +979,10 @@ describe('findReusableGatewayImageDirectory', () => {
 		delete process.env.AGENT_VM_E2E_CACHE_DIR;
 		try {
 			await expect(
-				findReusableGatewayImageDirectory('/tmp/current-smoke', '/tmp/build-config.jsonc'),
+				findReusableGatewayImageDirectory({
+					currentProjectRoot: '/tmp/current-smoke',
+					gatewayBuildConfigPath: '/tmp/build-config.jsonc',
+				}),
 			).resolves.toBeNull();
 		} finally {
 			if (previousSmokeCacheRoot === undefined) {
@@ -1002,9 +1008,9 @@ describe('findReusableGatewayImageDirectory', () => {
 			'utf8',
 		);
 		const managedGatewayBoot = {
-			frameworkBootEntry: 'openclaw-framework-service' as const,
-			kind: 'managed-gateway-exact-two-role' as const,
-		};
+			frameworkBootEntry: 'openclaw-framework-service',
+			kind: 'managed-gateway-exact-two-role',
+		} satisfies ManagedGatewayImageBootProjection;
 		const fingerprint = await computeFingerprintFromConfigPath(gatewayBuildConfigPath, {
 			managedGatewayBoot,
 		});

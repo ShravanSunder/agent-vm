@@ -105,7 +105,7 @@ jobs:
         id: e2e-image-cache-key
         shell: bash
         env:
-          E2E_IMAGE_INPUT_HASH: ${{ hashFiles('package.json', 'pnpm-workspace.yaml', 'pnpm-lock.yaml', 'uv.lock', 'tsconfig*.json', '.github/actions/setup-agent-vm/action.yml', 'scripts/prepare-e2e-image-cache.ts', 'packages/**/package.json', 'packages/**/src/**', 'packages/**/tsconfig*.json', 'packages/**/tsdown.config.ts', 'packages/**/README*', 'packages/**/LICENSE*', 'packages/**/LICENCE*', 'packages/**/openclaw.plugin.json', 'packages/**/portable-contract-schema-manifest.json', 'packages/**/contract-fixtures/**', 'packages/**/sdk-validate.mjs', 'packages/agent-vm/managed-images.json', 'python/**', 'vm-images/**') }}
+          E2E_IMAGE_INPUT_HASH: ${{ hashFiles('package.json', 'pnpm-workspace.yaml', 'pnpm-lock.yaml', 'uv.lock', '.node-version', 'tsconfig*.json', '.github/actions/setup-agent-vm/action.yml', 'scripts/prepare-e2e-image-cache.ts', 'packages/**/package.json', 'packages/**/src/**', 'packages/**/tsconfig*.json', 'packages/**/tsdown.config.ts', 'packages/**/README*', 'packages/**/LICENSE*', 'packages/**/LICENCE*', 'packages/**/openclaw.plugin.json', 'packages/**/portable-contract-schema-manifest.json', 'packages/**/contract-fixtures/**', 'packages/**/sdk-validate.mjs', 'packages/agent-vm/managed-images.json', 'python/**', 'vm-images/**') }}
         run: test -n "${E2E_IMAGE_INPUT_HASH}" && echo "hash=${E2E_IMAGE_INPUT_HASH}" >> "${GITHUB_OUTPUT}"
 
       - name: Restore prepared OpenClaw image cache
@@ -189,18 +189,15 @@ jobs:
           - lane: e2e-vm-managed-gateway-core
             managed-gateway-test-group: core
             command: >-
-              pnpm run test:e2e:vm --
-              packages/agent-vm/src/integration-tests/managed-gateway-image-boot.vm.e2e.test.ts
+              pnpm run test:e2e:vm-managed-gateway
           - lane: e2e-vm-managed-gateway-inputs
             managed-gateway-test-group: inputs
             command: >-
-              pnpm run test:e2e:vm --
-              packages/agent-vm/src/integration-tests/managed-gateway-image-boot.vm.e2e.test.ts
+              pnpm run test:e2e:vm-managed-gateway
           - lane: e2e-vm-managed-gateway-termination
             managed-gateway-test-group: termination
             command: >-
-              pnpm run test:e2e:vm --
-              packages/agent-vm/src/integration-tests/managed-gateway-image-boot.vm.e2e.test.ts
+              pnpm run test:e2e:vm-managed-gateway
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -210,7 +207,7 @@ jobs:
         id: e2e-image-cache-key
         shell: bash
         env:
-          E2E_IMAGE_INPUT_HASH: ${{ hashFiles('package.json', 'pnpm-workspace.yaml', 'pnpm-lock.yaml', 'uv.lock', 'tsconfig*.json', '.github/actions/setup-agent-vm/action.yml', 'scripts/prepare-e2e-image-cache.ts', 'packages/**/package.json', 'packages/**/src/**', 'packages/**/tsconfig*.json', 'packages/**/tsdown.config.ts', 'packages/**/README*', 'packages/**/LICENSE*', 'packages/**/LICENCE*', 'packages/**/openclaw.plugin.json', 'packages/**/portable-contract-schema-manifest.json', 'packages/**/contract-fixtures/**', 'packages/**/sdk-validate.mjs', 'packages/agent-vm/managed-images.json', 'python/**', 'vm-images/**') }}
+          E2E_IMAGE_INPUT_HASH: ${{ hashFiles('package.json', 'pnpm-workspace.yaml', 'pnpm-lock.yaml', 'uv.lock', '.node-version', 'tsconfig*.json', '.github/actions/setup-agent-vm/action.yml', 'scripts/prepare-e2e-image-cache.ts', 'packages/**/package.json', 'packages/**/src/**', 'packages/**/tsconfig*.json', 'packages/**/tsdown.config.ts', 'packages/**/README*', 'packages/**/LICENSE*', 'packages/**/LICENCE*', 'packages/**/openclaw.plugin.json', 'packages/**/portable-contract-schema-manifest.json', 'packages/**/contract-fixtures/**', 'packages/**/sdk-validate.mjs', 'packages/agent-vm/managed-images.json', 'python/**', 'vm-images/**') }}
         run: test -n "${E2E_IMAGE_INPUT_HASH}" && echo "hash=${E2E_IMAGE_INPUT_HASH}" >> "${GITHUB_OUTPUT}"
 
       - name: Restore prepared OpenClaw image cache

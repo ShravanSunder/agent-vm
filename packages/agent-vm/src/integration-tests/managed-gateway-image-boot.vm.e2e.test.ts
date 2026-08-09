@@ -34,14 +34,27 @@ const toolPortalReadinessPath = '/run/agent-vm/gateway-runtime/tool-portal.readi
 
 type ManagedGatewayTestGroup = 'core' | 'inputs' | 'termination';
 
-const selectedManagedGatewayTestGroup = process.env.AGENT_VM_MANAGED_GATEWAY_TEST_GROUP;
+function selectManagedGatewayTestGroup(
+	value: string | undefined,
+): ManagedGatewayTestGroup | 'none' | undefined {
+	if (value === undefined || value.length === 0) {
+		return undefined;
+	}
+	if (value === 'none') {
+		return 'none';
+	}
+	if (value === 'core' || value === 'inputs' || value === 'termination') {
+		return value;
+	}
+	throw new Error(`Unsupported AGENT_VM_MANAGED_GATEWAY_TEST_GROUP: ${value}`);
+}
+
+const selectedManagedGatewayTestGroup = selectManagedGatewayTestGroup(
+	process.env.AGENT_VM_MANAGED_GATEWAY_TEST_GROUP,
+);
 
 function shouldRegisterManagedGatewayTest(group: ManagedGatewayTestGroup): boolean {
-	return (
-		selectedManagedGatewayTestGroup === undefined ||
-		selectedManagedGatewayTestGroup.length === 0 ||
-		selectedManagedGatewayTestGroup === group
-	);
+	return selectedManagedGatewayTestGroup === undefined || selectedManagedGatewayTestGroup === group;
 }
 
 interface GuestProcessObservation {

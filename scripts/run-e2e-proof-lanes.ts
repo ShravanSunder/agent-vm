@@ -3,7 +3,12 @@ import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-export type E2eProofLaneId = 'e2e-host-docker' | 'e2e-host' | 'e2e-vm' | 'e2e-vm-mediation';
+export type E2eProofLaneId =
+	| 'e2e-host-docker'
+	| 'e2e-host'
+	| 'e2e-vm'
+	| 'e2e-vm-managed-gateway'
+	| 'e2e-vm-mediation';
 
 export interface E2eProofLane {
 	readonly args: readonly string[];
@@ -66,6 +71,13 @@ export function createE2eProofLanes(): readonly E2eProofLane[] {
 			env: { AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1' },
 			id: 'e2e-vm',
 			label: 'Gondolin VM e2e',
+		},
+		{
+			args: ['run', 'test:e2e:vm-managed-gateway'],
+			command: 'pnpm',
+			env: { AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1' },
+			id: 'e2e-vm-managed-gateway',
+			label: 'Managed Gateway Gondolin VM e2e',
 		},
 		{
 			args: ['run', 'test:e2e:vm-mediation'],

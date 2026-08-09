@@ -31,7 +31,7 @@ describe('CI workflow topology', () => {
 			'--shard=2/4',
 			'--shard=3/4',
 			'--shard=4/4',
-			'packages/agent-vm/src/integration-tests/managed-gateway-image-boot.vm.e2e.test.ts',
+			'pnpm run test:e2e:vm-managed-gateway',
 			'pnpm run test:e2e:vm-mediation',
 			'managed-gateway-test-group: core',
 			'managed-gateway-test-group: inputs',
@@ -64,6 +64,7 @@ describe('CI workflow topology', () => {
 		for (const cacheInput of [
 			'.github/actions/setup-agent-vm/action.yml',
 			'pnpm-workspace.yaml',
+			'.node-version',
 			'packages/**/src/**',
 			'packages/**/tsconfig*.json',
 			'packages/**/tsdown.config.ts',

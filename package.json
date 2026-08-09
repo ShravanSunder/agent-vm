@@ -44,6 +44,7 @@
 		"test:e2e:host": "tsx scripts/run-vitest-evidence-project.ts e2e-host",
 		"test:e2e:inventory": "vitest run --config vitest.config.ts --project e2e-inventory",
 		"test:e2e:vm": "AGENT_VM_GONDOLIN_E2E=1 tsx scripts/run-vitest-evidence-project.ts e2e-vm",
+		"test:e2e:vm-managed-gateway": "AGENT_VM_GONDOLIN_E2E=1 tsx scripts/run-vitest-evidence-project.ts e2e-vm-managed-gateway",
 		"test:e2e:vm-mediation": "AGENT_VM_GONDOLIN_E2E=1 tsx scripts/run-vitest-evidence-project.ts e2e-vm-mediation",
 		"test:e2e:openclaw": "AGENT_VM_OPENCLAW_E2E=1 tsx scripts/run-vitest-evidence-project.ts e2e-openclaw",
 		"test:e2e:hermes": "AGENT_VM_HERMES_E2E=1 tsx scripts/run-vitest-evidence-project.ts e2e-hermes",
@@ -72,7 +73,7 @@
 		"vitest": "^4.1.5"
 	},
 	"engines": {
-		"node": ">=24.7.0 <25"
+		"node": ">=24"
 	},
 	"packageManager": "pnpm@10.33.0",
 	"pnpm": {
