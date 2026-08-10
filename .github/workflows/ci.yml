@@ -10,88 +10,41 @@ permissions:
   contents: read
 
 jobs:
-  quality:
-    name: Quality checks
+  validation:
+    name: Validation
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
 
-      - uses: ./.github/actions/setup-agent-vm
+      - parallel:
+          - name: Set up Node workspace
+            uses: ./.github/actions/setup-agent-vm
+            with:
+              build: 'false'
 
-      - name: Test taxonomy audit
-        run: pnpm test:taxonomy
+          - name: Set up Python workspace
+            uses: ./.github/actions/setup-python-workspace
 
-      - name: Portal architecture audit
-        run: pnpm test:portal-architecture
+      - name: Quality checks
+        run: pnpm check
 
-      - name: Portal package export audit
-        run: pnpm test:portal-exports
+      - parallel:
+          - name: Unit tests
+            run: pnpm test:unit
 
-      - name: Generated portal contract freshness
-        run: pnpm exec tsx scripts/generate-portal-contracts.ts --check-clean
+          - name: Integration tests
+            run: pnpm test:integration
 
-      - name: Host Python tests
-        run: pnpm python:test:host
+          - name: Host Python tests
+            run: pnpm python:test:host
 
-      - name: Hermes adapter tests in pinned runtime
-        run: pnpm python:test:hermes
+          - name: Hermes adapter tests in pinned runtime
+            run: pnpm python:test:hermes
 
-      - name: Python format check
-        run: pnpm python:fmt:check
-
-      - name: Python lint
-        run: pnpm python:lint
-
-      - name: Host Python typecheck
-        run: pnpm python:typecheck:host
-
-      - name: Hermes adapter typecheck in pinned runtime
-        run: pnpm python:typecheck:hermes
-
-      - name: Lint
-        run: pnpm lint
-
-      - name: Type-aware lint
-        run: pnpm lint:types
-
-      - name: Format check
-        run: pnpm fmt:check
-
-      - name: Typecheck
-        run: pnpm typecheck
-
-  tests:
-    name: Unit and integration tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-
-      - uses: ./.github/actions/setup-agent-vm
-
-      - name: Unit tests
-        run: pnpm test:unit
-
-      - name: Integration tests
-        run: pnpm test:integration
-
-  e2e-inventory:
-    name: E2E inventory
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-
-      - uses: ./.github/actions/setup-agent-vm
-        with:
-          build: 'false'
-
-      - name: E2E inventory
-        run: pnpm test:e2e:inventory
+          - name: E2E inventory
+            run: pnpm test:e2e:inventory
 
   e2e-image-cache:
     name: Prepare E2E image cache
@@ -101,78 +54,85 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Resolve E2E image cache key
-        id: e2e-image-cache-key
-        shell: bash
-        env:
-          E2E_IMAGE_INPUT_HASH: ${{ hashFiles('package.json', 'pnpm-workspace.yaml', 'pnpm-lock.yaml', 'uv.lock', '.node-version', '.npmrc', '.pnpmfile.cjs', 'mise.toml', 'tsconfig*.json', '.github/actions/setup-agent-vm/action.yml', 'scripts/prepare-e2e-image-cache.ts', 'packages/**/package.json', 'packages/**/src/**', 'packages/**/type-tests/**', 'packages/**/tsconfig*.json', 'packages/**/tsdown.config.ts', 'packages/**/README*', 'packages/**/LICENSE*', 'packages/**/LICENCE*', 'packages/**/openclaw.plugin.json', 'packages/**/portable-contract-schema-manifest.json', 'packages/**/contract-fixtures/**', 'packages/**/sdk-validate.mjs', 'packages/agent-vm/managed-images.json', 'python/**', 'vm-images/**') }}
-        run: test -n "${E2E_IMAGE_INPUT_HASH}" && echo "hash=${E2E_IMAGE_INPUT_HASH}" >> "${GITHUB_OUTPUT}"
+      - name: Resolve prepared image cache identity
+        id: image-key
+        uses: ./.github/actions/resolve-e2e-image-cache-key
 
-      - name: Restore prepared OpenClaw image cache
-        id: e2e-openclaw-image-cache-restore
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: |
-            /tmp/agent-vm-e2e-cache/openclaw
-            /tmp/agent-vm-e2e-cache/local-package-tarballs
-          key: agent-vm-e2e-images-v2-openclaw-${{ runner.os }}-${{ steps.e2e-image-cache-key.outputs.hash }}
-          lookup-only: true
+      - parallel:
+          - name: Find prepared OpenClaw image cache
+            id: openclaw-image
+            uses: ./.github/actions/restore-e2e-image-cache
+            with:
+              family: openclaw
+              input-hash: ${{ steps.image-key.outputs.input-hash }}
+              lookup-only: 'true'
 
-      - name: Restore prepared Worker image cache
-        id: e2e-worker-image-cache-restore
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: /tmp/agent-vm-e2e-cache/worker
-          key: agent-vm-e2e-images-v1-worker-${{ runner.os }}-${{ steps.e2e-image-cache-key.outputs.hash }}
-          lookup-only: true
+          - name: Find prepared Worker image cache
+            id: worker-image
+            uses: ./.github/actions/restore-e2e-image-cache
+            with:
+              family: worker
+              input-hash: ${{ steps.image-key.outputs.input-hash }}
+              lookup-only: 'true'
 
-      - uses: ./.github/actions/setup-agent-vm
-        if: steps.e2e-openclaw-image-cache-restore.outputs.cache-hit != 'true' || steps.e2e-worker-image-cache-restore.outputs.cache-hit != 'true'
+      - parallel:
+          - name: Set up Node workspace for image preparation
+            if: steps.openclaw-image.outputs.cache-hit != 'true' || steps.worker-image.outputs.cache-hit != 'true'
+            uses: ./.github/actions/setup-agent-vm
+
+          - name: Set up system packages for image preparation
+            if: steps.openclaw-image.outputs.cache-hit != 'true' || steps.worker-image.outputs.cache-hit != 'true'
+            uses: ./.github/actions/setup-system-packages
 
       - name: Prepare current E2E images
-        if: steps.e2e-openclaw-image-cache-restore.outputs.cache-hit != 'true' || steps.e2e-worker-image-cache-restore.outputs.cache-hit != 'true'
+        if: steps.openclaw-image.outputs.cache-hit != 'true' || steps.worker-image.outputs.cache-hit != 'true'
         env:
           AGENT_VM_E2E_CACHE_DIR: /tmp/agent-vm-e2e-cache
         run: pnpm exec tsx scripts/prepare-e2e-image-cache.ts
 
-      - name: Save prepared OpenClaw image cache
-        if: steps.e2e-openclaw-image-cache-restore.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: |
-            /tmp/agent-vm-e2e-cache/openclaw
-            /tmp/agent-vm-e2e-cache/local-package-tarballs
-          key: ${{ steps.e2e-openclaw-image-cache-restore.outputs.cache-primary-key }}
+      - parallel:
+          - name: Save prepared OpenClaw image cache
+            if: steps.openclaw-image.outputs.cache-hit != 'true'
+            uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+            with:
+              path: |
+                /tmp/agent-vm-e2e-cache/openclaw
+                /tmp/agent-vm-e2e-cache/local-package-tarballs
+              key: ${{ steps.openclaw-image.outputs.primary-key }}
 
-      - name: Save prepared Worker image cache
-        if: steps.e2e-worker-image-cache-restore.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: /tmp/agent-vm-e2e-cache/worker
-          key: ${{ steps.e2e-worker-image-cache-restore.outputs.cache-primary-key }}
+          - name: Save prepared Worker image cache
+            if: steps.worker-image.outputs.cache-hit != 'true'
+            uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+            with:
+              path: /tmp/agent-vm-e2e-cache/worker
+              key: ${{ steps.worker-image.outputs.primary-key }}
 
-  e2e-fast:
+  e2e-host:
     name: E2E (${{ matrix.lane }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - lane: e2e-host-docker
-            command: pnpm run test:e2e:host-docker
-          - lane: e2e-host
-            command: pnpm run test:e2e:host
+        lane:
+          - host-docker
+          - host
+          - vm-mediation
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
 
-      - uses: ./.github/actions/setup-agent-vm
+      - parallel:
+          - name: Set up Node workspace
+            uses: ./.github/actions/setup-agent-vm
+
+          - name: Set up system packages
+            uses: ./.github/actions/setup-system-packages
 
       - name: Run E2E lane
         env:
           AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1'
-        run: ${{ matrix.command }}
+        run: pnpm run test:e2e:${{ matrix.lane }}
 
   e2e-vm:
     name: E2E (${{ matrix.lane }})
@@ -183,148 +143,122 @@ jobs:
       matrix:
         include:
           - lane: e2e-vm-shard-1
-            command: pnpm run test:e2e:vm -- --shard=1/6
+            managed-gateway-test-group: ''
+            shard: 1/6
           - lane: e2e-vm-shard-2
-            command: pnpm run test:e2e:vm -- --shard=2/6
+            managed-gateway-test-group: ''
+            shard: 2/6
           - lane: e2e-vm-shard-3
-            command: pnpm run test:e2e:vm -- --shard=3/6
+            managed-gateway-test-group: ''
+            shard: 3/6
           - lane: e2e-vm-shard-4
-            command: pnpm run test:e2e:vm -- --shard=4/6
+            managed-gateway-test-group: ''
+            shard: 4/6
           - lane: e2e-vm-shard-5
-            command: pnpm run test:e2e:vm -- --shard=5/6
+            managed-gateway-test-group: ''
+            shard: 5/6
           - lane: e2e-vm-shard-6
-            command: pnpm run test:e2e:vm -- --shard=6/6
+            managed-gateway-test-group: ''
+            shard: 6/6
           - lane: e2e-vm-managed-gateway-core
             managed-gateway-test-group: core
-            require-prepared-image-cache: '1'
-            command: >-
-              pnpm run test:e2e:vm-managed-gateway
+            shard: ''
           - lane: e2e-vm-managed-gateway-inputs
             managed-gateway-test-group: input-missing-tool-portal
-            require-prepared-image-cache: '1'
-            command: >-
-              pnpm run test:e2e:vm-managed-gateway
+            shard: ''
           - lane: e2e-vm-managed-gateway-inputs-framework
             managed-gateway-test-group: input-missing-framework
-            require-prepared-image-cache: '1'
-            command: >-
-              pnpm run test:e2e:vm-managed-gateway
+            shard: ''
           - lane: e2e-vm-managed-gateway-inputs-read-only
             managed-gateway-test-group: input-read-only-environment
-            require-prepared-image-cache: '1'
-            command: >-
-              pnpm run test:e2e:vm-managed-gateway
+            shard: ''
           - lane: e2e-vm-managed-gateway-termination-tool-portal
             managed-gateway-test-group: termination-tool-portal
-            require-prepared-image-cache: '1'
-            command: >-
-              pnpm run test:e2e:vm-managed-gateway
+            shard: ''
           - lane: e2e-vm-managed-gateway-termination-openclaw
             managed-gateway-test-group: termination-openclaw
-            require-prepared-image-cache: '1'
-            command: >-
-              pnpm run test:e2e:vm-managed-gateway
+            shard: ''
           - lane: e2e-vm-managed-gateway-worker
             managed-gateway-test-group: worker-stock
-            require-prepared-image-cache: '1'
-            command: >-
-              pnpm run test:e2e:vm-managed-gateway
+            shard: ''
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
 
-      - name: Resolve E2E image cache key
-        id: e2e-image-cache-key
-        shell: bash
-        env:
-          E2E_IMAGE_INPUT_HASH: ${{ hashFiles('package.json', 'pnpm-workspace.yaml', 'pnpm-lock.yaml', 'uv.lock', '.node-version', '.npmrc', '.pnpmfile.cjs', 'mise.toml', 'tsconfig*.json', '.github/actions/setup-agent-vm/action.yml', 'scripts/prepare-e2e-image-cache.ts', 'packages/**/package.json', 'packages/**/src/**', 'packages/**/type-tests/**', 'packages/**/tsconfig*.json', 'packages/**/tsdown.config.ts', 'packages/**/README*', 'packages/**/LICENSE*', 'packages/**/LICENCE*', 'packages/**/openclaw.plugin.json', 'packages/**/portable-contract-schema-manifest.json', 'packages/**/contract-fixtures/**', 'packages/**/sdk-validate.mjs', 'packages/agent-vm/managed-images.json', 'python/**', 'vm-images/**') }}
-        run: test -n "${E2E_IMAGE_INPUT_HASH}" && echo "hash=${E2E_IMAGE_INPUT_HASH}" >> "${GITHUB_OUTPUT}"
+      - name: Resolve prepared image cache identity
+        id: image-key
+        uses: ./.github/actions/resolve-e2e-image-cache-key
 
       - parallel:
           - name: Restore prepared OpenClaw image cache
-            id: e2e-openclaw-image-cache-restore
-            uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+            id: openclaw-image
+            uses: ./.github/actions/restore-e2e-image-cache
             with:
-              path: |
-                /tmp/agent-vm-e2e-cache/openclaw
-                /tmp/agent-vm-e2e-cache/local-package-tarballs
-              key: agent-vm-e2e-images-v2-openclaw-${{ runner.os }}-${{ steps.e2e-image-cache-key.outputs.hash }}
+              family: openclaw
+              input-hash: ${{ steps.image-key.outputs.input-hash }}
 
           - name: Restore prepared Worker image cache
-            id: e2e-worker-image-cache-restore
-            uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+            id: worker-image
+            uses: ./.github/actions/restore-e2e-image-cache
             with:
-              path: /tmp/agent-vm-e2e-cache/worker
-              key: agent-vm-e2e-images-v1-worker-${{ runner.os }}-${{ steps.e2e-image-cache-key.outputs.hash }}
+              family: worker
+              input-hash: ${{ steps.image-key.outputs.input-hash }}
 
           - name: Set up Agent VM workspace
             uses: ./.github/actions/setup-agent-vm
 
+          - name: Set up system packages
+            uses: ./.github/actions/setup-system-packages
+
       - name: Require prepared image caches
         env:
-          OPENCLAW_CACHE_HIT: ${{ steps.e2e-openclaw-image-cache-restore.outputs.cache-hit }}
-          WORKER_CACHE_HIT: ${{ steps.e2e-worker-image-cache-restore.outputs.cache-hit }}
+          OPENCLAW_CACHE_HIT: ${{ steps.openclaw-image.outputs.cache-hit }}
+          WORKER_CACHE_HIT: ${{ steps.worker-image.outputs.cache-hit }}
         run: |
           set -euo pipefail
           test "${OPENCLAW_CACHE_HIT}" = true
           test "${WORKER_CACHE_HIT}" = true
 
-      - name: Run E2E lane
+      - name: Run VM shard
+        if: matrix.shard != ''
         env:
           AGENT_VM_E2E_CACHE_DIR: /tmp/agent-vm-e2e-cache
-          AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE: ${{ matrix.require-prepared-image-cache || '0' }}
           AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1'
-          AGENT_VM_MANAGED_GATEWAY_TEST_GROUP: ${{ matrix.managed-gateway-test-group || 'none' }}
-        run: ${{ matrix.command }}
+        run: pnpm run test:e2e:vm -- --shard=${{ matrix.shard }}
 
-  e2e-vm-mediation:
-    name: E2E (e2e-vm-mediation)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-
-      - uses: ./.github/actions/setup-agent-vm
-
-      - name: Run E2E lane
+      - name: Run managed Gateway group
+        if: matrix.managed-gateway-test-group != ''
         env:
+          AGENT_VM_E2E_CACHE_DIR: /tmp/agent-vm-e2e-cache
+          AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE: '1'
           AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1'
-        run: pnpm run test:e2e:vm-mediation
+          AGENT_VM_MANAGED_GATEWAY_TEST_GROUP: ${{ matrix.managed-gateway-test-group }}
+        run: pnpm run test:e2e:vm-managed-gateway
 
   check:
     name: check
     if: always()
     needs:
-      - quality
-      - tests
-      - e2e-inventory
+      - validation
       - e2e-image-cache
-      - e2e-fast
+      - e2e-host
       - e2e-vm
-      - e2e-vm-mediation
     runs-on: ubuntu-latest
     steps:
       - name: Require every CI lane to pass
         env:
-          QUALITY_RESULT: ${{ needs.quality.result }}
-          TESTS_RESULT: ${{ needs.tests.result }}
-          E2E_INVENTORY_RESULT: ${{ needs.e2e-inventory.result }}
+          VALIDATION_RESULT: ${{ needs.validation.result }}
           E2E_IMAGE_CACHE_RESULT: ${{ needs.e2e-image-cache.result }}
-          E2E_FAST_RESULT: ${{ needs.e2e-fast.result }}
+          E2E_HOST_RESULT: ${{ needs.e2e-host.result }}
           E2E_VM_RESULT: ${{ needs.e2e-vm.result }}
-          E2E_VM_MEDIATION_RESULT: ${{ needs.e2e-vm-mediation.result }}
         run: |
           set -euo pipefail
           results=(
-            "quality=${QUALITY_RESULT}"
-            "tests=${TESTS_RESULT}"
-            "e2e-inventory=${E2E_INVENTORY_RESULT}"
+            "validation=${VALIDATION_RESULT}"
             "e2e-image-cache=${E2E_IMAGE_CACHE_RESULT}"
-            "e2e-fast=${E2E_FAST_RESULT}"
+            "e2e-host=${E2E_HOST_RESULT}"
             "e2e-vm=${E2E_VM_RESULT}"
-            "e2e-vm-mediation=${E2E_VM_MEDIATION_RESULT}"
           )
           printf '%s\n' "${results[@]}"
           for result in "${results[@]}"; do
