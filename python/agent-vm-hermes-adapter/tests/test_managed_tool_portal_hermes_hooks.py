@@ -329,10 +329,14 @@ class ManagedToolPortalHermesHookBoundaryTests(unittest.TestCase):
         runtime = _Runtime(inventory_snapshot=_ready_snapshot())
         barrier = threading.Barrier(8)
         results: list[dict[str, str] | None] = []
+        worker_errors: list[BaseException] = []
 
         def call_once() -> None:
-            barrier.wait()
-            results.append(_call_hook(runtime))
+            try:
+                barrier.wait()
+                results.append(_call_hook(runtime))
+            except BaseException as error:
+                worker_errors.append(error)
 
         threads = [threading.Thread(target=call_once) for _ in range(8)]
         for thread in threads:
@@ -340,6 +344,8 @@ class ManagedToolPortalHermesHookBoundaryTests(unittest.TestCase):
         for thread in threads:
             thread.join()
 
+        self.assertEqual(worker_errors, [])
+        self.assertEqual(len(results), 8)
         self.assertEqual(
             sum(result is not None for result in results),
             1,

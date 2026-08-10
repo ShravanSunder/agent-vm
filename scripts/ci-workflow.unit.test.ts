@@ -72,6 +72,11 @@ describe('CI workflow topology', () => {
 		);
 		expect(workflow).toContain('          - name: Restore prepared Worker image cache');
 		expect(workflow).toContain('          - name: Set up Agent VM workspace');
+		expect(workflow).toContain(
+			'          - name: Set up Python workspace\n' +
+				"            if: matrix.lane == 'host'\n" +
+				'            uses: ./.github/actions/setup-python-workspace',
+		);
 		expect(workflow).not.toContain('\n      - name: Set up Agent VM workspace\n');
 		const parallelPreparationStart = workflow.indexOf(
 			'      - parallel:\n          - name: Restore prepared OpenClaw image cache',

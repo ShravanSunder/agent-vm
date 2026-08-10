@@ -155,11 +155,15 @@ class RedactedInventoryAttemptLogSinkTests(unittest.TestCase):
         ) as logs:
             RedactedInventoryAttemptLogSink().record_inventory_attempt(record)
 
-        self.assertEqual(len(logs.output), 1)
-        self.assertIn("gateway-epoch-1", logs.output[0])
-        self.assertIn("researcher", logs.output[0])
-        self.assertIn("transport", logs.output[0])
-        self.assertNotIn("credential", logs.output[0].lower())
+        self.assertEqual(
+            logs.output,
+            [
+                "WARNING:agent_vm_hermes_adapter.managed_tool_portal."
+                "gateway_runtime_inventory_port:managed Tool Portal inventory attempt failed: "
+                "gateway_epoch=gateway-epoch-1 profile=researcher attempt=2 "
+                "failure=transport disposition=retry"
+            ],
+        )
 
 
 if __name__ == "__main__":

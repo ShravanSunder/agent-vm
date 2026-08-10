@@ -129,6 +129,10 @@ jobs:
           - name: Set up system packages
             uses: ./.github/actions/setup-system-packages
 
+          - name: Set up Python workspace
+            if: matrix.lane == 'host'
+            uses: ./.github/actions/setup-python-workspace
+
       - name: Run E2E lane
         env:
           AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1'
