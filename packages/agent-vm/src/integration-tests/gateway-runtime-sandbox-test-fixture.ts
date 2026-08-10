@@ -133,6 +133,7 @@ const semanticSnapshot = {
 			agentId: 'gateway-agent',
 			frameworkIdentity: { agentId: 'gateway-agent', kind: 'openclaw' },
 			profileAssignmentRevision: 'sandbox-profile-assignment-1',
+			toolPortalNamespaceNames: ['sandbox'],
 			toolPortalProfileId: 'sandbox-user',
 		},
 	},

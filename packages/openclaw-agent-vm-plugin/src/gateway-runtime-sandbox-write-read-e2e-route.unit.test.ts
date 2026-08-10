@@ -21,6 +21,7 @@ const PROJECTION = {
 	agentId: 'main',
 	frameworkIdentity: { agentId: 'main', kind: 'openclaw' },
 	profileAssignmentRevision: 'profile-revision-controller-authored',
+	toolPortalNamespaceNames: [],
 	toolPortalProfileId: 'profile-controller-authored',
 } as const;
 const PROBE_IDENTITY = {
@@ -301,7 +302,12 @@ describe('Gateway Runtime direct Sandbox E2E route', () => {
 		const trustedContext = clientFixture.environmentOpen.mock.calls[0]?.[1]?.trustedContext;
 		expect(trustedContext).toEqual({
 			correlation: { sessionKey: PROBE_IDENTITY.sessionKey },
-			principal: PROJECTION,
+			principal: {
+				agentId: PROJECTION.agentId,
+				frameworkIdentity: PROJECTION.frameworkIdentity,
+				profileAssignmentRevision: PROJECTION.profileAssignmentRevision,
+				toolPortalProfileId: PROJECTION.toolPortalProfileId,
+			},
 		});
 		expect(clientFixture.filesystemWrite.mock.calls[0]?.[0]).toMatchObject({
 			atomic: true,

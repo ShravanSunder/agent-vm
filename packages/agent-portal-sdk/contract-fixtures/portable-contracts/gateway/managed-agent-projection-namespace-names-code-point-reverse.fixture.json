@@ -1,0 +1,26 @@
+{
+	"caseId": "gateway-managed-agent-projection-namespace-names-code-point-reverse",
+	"schemaId": "gateway.managed-agent-projection",
+	"tags": [
+		"code-point-order",
+		"managed-agent-projection",
+		"namespace-names",
+		"rejected",
+		"reverse"
+	],
+	"input": {
+		"agentId": "agent-a",
+		"frameworkIdentity": {
+			"agentId": "agent-a",
+			"kind": "openclaw"
+		},
+		"profileAssignmentRevision": "profile-assignment-a",
+		"toolPortalNamespaceNames": ["\uD800\uDC00", "\uE000"],
+		"toolPortalProfileId": "profile-a"
+	},
+	"expectation": {
+		"kind": "rejected",
+		"errorCodes": ["gateway.managed-agent-projection.namespace-names"],
+		"refinementIdentities": ["gateway.managed-agent-projection.namespace-names"]
+	}
+}

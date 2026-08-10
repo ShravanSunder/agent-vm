@@ -181,7 +181,14 @@ class HermesGatewayRuntimeEnvironment(BaseEnvironment):
         self._adapter = adapter
         self._projection = projection
         self._task_id = task_id
-        self._trusted_context = build_managed_trusted_context(projection, session_id=task_id)
+        self._trusted_context = build_managed_trusted_context(
+            projection,
+            session_id=task_id,
+        ).model_dump(
+            by_alias=True,
+            mode="json",
+            exclude_none=True,
+        )
         self._cleanup_lock = threading.Lock()
         self._closed = False
         super().__init__(cwd=cwd or _DEFAULT_TOOL_VM_CWD, timeout=timeout)
@@ -220,6 +227,10 @@ class HermesGatewayRuntimeEnvironment(BaseEnvironment):
             self._trusted_context = build_managed_trusted_context(
                 self._projection,
                 session_id=cache_identity,
+            ).model_dump(
+                by_alias=True,
+                mode="json",
+                exclude_none=True,
             )
 
     def require_local_process_authority(

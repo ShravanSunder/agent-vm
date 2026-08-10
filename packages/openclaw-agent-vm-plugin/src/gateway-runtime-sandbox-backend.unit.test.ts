@@ -41,12 +41,14 @@ const agentProjections = {
 		agentId: 'agent-a',
 		frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
 		profileAssignmentRevision: 'revision-a',
+		toolPortalNamespaceNames: [],
 		toolPortalProfileId: 'profile-a',
 	},
 	'agent-b': {
 		agentId: 'agent-b',
 		frameworkIdentity: { agentId: 'agent-b', kind: 'openclaw' },
 		profileAssignmentRevision: 'revision-b',
+		toolPortalNamespaceNames: [],
 		toolPortalProfileId: 'profile-b',
 	},
 } as const satisfies Readonly<Record<string, ManagedAgentProjection>>;

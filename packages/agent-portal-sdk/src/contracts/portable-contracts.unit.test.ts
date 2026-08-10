@@ -248,6 +248,7 @@ describe('canonical Agent Portal contracts', () => {
 			agentId: 'agent-a',
 			frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
 			profileAssignmentRevision: 'profile-assignment-a',
+			toolPortalNamespaceNames: ['filesystem', 'github'],
 			toolPortalProfileId: 'profile-a',
 		} as const;
 		const hermesProjection = {
@@ -283,6 +284,45 @@ describe('canonical Agent Portal contracts', () => {
 				}).success,
 			).toBe(false);
 		}
+	});
+
+	it('accepts namespace names beyond the generic opaque identifier bound', () => {
+		// Arrange
+		const longNamespaceName = 'n'.repeat(257);
+		const projection = {
+			agentId: 'agent-a',
+			frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
+			profileAssignmentRevision: 'profile-assignment-a',
+			toolPortalNamespaceNames: [longNamespaceName],
+			toolPortalProfileId: 'profile-a',
+		} as const;
+
+		// Act / Assert
+		expect(ManagedAgentProjectionSchema.safeParse(projection).success).toBe(true);
+	});
+
+	it('orders managed namespace names by Unicode code point', () => {
+		// Arrange
+		const privateUseNamespace = '\uE000';
+		const supplementaryNamespace = '\u{10000}';
+		const projection = {
+			agentId: 'agent-a',
+			frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' as const },
+			profileAssignmentRevision: 'profile-assignment-a',
+			toolPortalNamespaceNames: [privateUseNamespace, supplementaryNamespace],
+			toolPortalProfileId: 'profile-a',
+		};
+
+		// Act
+		const acceptedResult = ManagedAgentProjectionSchema.safeParse(projection);
+		const reverseResult = ManagedAgentProjectionSchema.safeParse({
+			...projection,
+			toolPortalNamespaceNames: [supplementaryNamespace, privateUseNamespace],
+		});
+
+		// Assert
+		expect(acceptedResult.success).toBe(true);
+		expect(reverseResult.success).toBe(false);
 	});
 
 	it('rejects roots and retired authority fields from the stable caller principal', () => {

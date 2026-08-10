@@ -1,10 +1,10 @@
-"""Hermes pip plugin for the managed Tool Portal capability API."""
+"""Typed Hermes boundary for the managed Tool Portal capability API."""
 
 import threading
 import typing as t
-from collections.abc import Callable, Mapping
 
 from agent_vm_agent_portal_sdk.contracts import (
+    PORTABLE_CONTRACT_ADAPTERS,
     encode_canonical_json,
     get_portable_contract_json_schema,
 )
@@ -12,24 +12,35 @@ from pydantic import BaseModel
 
 from .managed_framework_observability import ManagedFrameworkObservability
 from .managed_profile_adapter import (
-    CanonicalManagedAgentProjection,
     HermesManagedAdapter,
-    HermesProfileAdmissionError,
-    HermesSessionSource,
     _projection_profile_name,
     build_managed_trusted_context,
 )
+from .managed_tool_portal.cache import PluginStateCache
+from .managed_tool_portal.hermes_hooks import (
+    HermesPluginContext,
+    ProjectionResolver,
+    register_managed_tool_portal_hooks,
+)
+from .managed_tool_portal.inventory import InventoryCoordinator
+from .managed_tool_portal.models import InjectionCacheKey, InjectionMarker
 from .managed_tool_portal_observability import HermesToolPortalTelemetry
 
 MANAGED_TOOL_PORTAL_PLUGIN_NAME = "agent-vm-tool-portal"
-MANAGED_TOOL_PORTAL_TOOL_NAMES = (
+type ManagedToolName = t.Literal[
+    "tool_portal_list",
+    "tool_portal_search",
+    "tool_portal_describe",
+    "tool_portal_call",
+]
+MANAGED_TOOL_PORTAL_TOOL_NAMES: tuple[ManagedToolName, ...] = (
     "tool_portal_list",
     "tool_portal_search",
     "tool_portal_describe",
     "tool_portal_call",
 )
 _MANAGED_TOOL_PORTAL_TOOLSET = "tool-portal"
-_REQUEST_SCHEMA_ID_BY_TOOL_NAME = {
+_REQUEST_SCHEMA_ID_BY_TOOL_NAME: dict[ManagedToolName, str] = {
     "tool_portal_list": "portal.list.request",
     "tool_portal_search": "portal.search.request",
     "tool_portal_describe": "portal.describe.request",
@@ -37,37 +48,149 @@ _REQUEST_SCHEMA_ID_BY_TOOL_NAME = {
 }
 
 
-class HermesPluginContext(t.Protocol):
-    def register_hook(
+class _ManagedToolPortalPluginRuntime:
+    __slots__ = (
+        "adapter",
+        "current_projection",
+        "framework_observability",
+        "telemetry",
+        "inventory_coordinator",
+        "injection_state_cache",
+        "gateway_epoch",
+    )
+
+    def __init__(
         self,
-        hook_name: str,
-        callback: Callable[..., object],
-    ) -> None: ...
+        *,
+        adapter: HermesManagedAdapter,
+        current_projection: ProjectionResolver,
+        framework_observability: ManagedFrameworkObservability,
+        telemetry: HermesToolPortalTelemetry,
+        inventory_coordinator: InventoryCoordinator,
+        injection_state_cache: PluginStateCache[InjectionCacheKey, InjectionMarker],
+        gateway_epoch: str,
+    ) -> None:
+        self.adapter = adapter
+        self.current_projection = current_projection
+        self.framework_observability = framework_observability
+        self.telemetry = telemetry
+        self.inventory_coordinator = inventory_coordinator
+        self.injection_state_cache = injection_state_cache
+        self.gateway_epoch = gateway_epoch
 
-    def register_tool(
+
+def _safe_model_dump(model: BaseModel) -> dict[str, object]:
+    dumped = model.model_dump(
+        by_alias=True,
+        mode="json",
+        exclude_none=True,
+    )
+    if not isinstance(dumped, dict):
+        raise TypeError("validated model did not produce a JSON object")
+    return dumped
+
+
+def _validate_tool_name(value: str) -> ManagedToolName:
+    if value == "tool_portal_list":
+        return value
+    if value == "tool_portal_search":
+        return value
+    if value == "tool_portal_describe":
+        return value
+    if value == "tool_portal_call":
+        return value
+    raise ValueError(f"unknown managed Tool Portal tool {value!r}")
+
+
+def _validated_tool_request(
+    tool_name: ManagedToolName,
+    raw_request: object,
+) -> dict[str, object]:
+    """Validate Hermes's dynamic tool payload before it reaches Portal code."""
+    adapter = PORTABLE_CONTRACT_ADAPTERS[_REQUEST_SCHEMA_ID_BY_TOOL_NAME[tool_name]]
+    validated = adapter.validate_python(raw_request)
+    if not isinstance(validated, BaseModel):
+        raise TypeError(f"{tool_name} request did not produce a typed model")
+    return _safe_model_dump(validated)
+
+
+def _description_for_tool(tool_name: ManagedToolName) -> str:
+    if tool_name == "tool_portal_list":
+        return "List authorized Tool Portal capabilities and compact tool summaries."
+    if tool_name == "tool_portal_search":
+        return "Search the caller-scoped Tool Portal capability index."
+    if tool_name == "tool_portal_describe":
+        return "Describe exact Tool Portal capability schemas and helper details."
+    return "Validate and call an authorized Tool Portal capability by namespace and name."
+
+
+def _tool_schema(tool_name: ManagedToolName) -> dict[str, object]:
+    return {
+        "name": tool_name,
+        "description": _description_for_tool(tool_name),
+        "parameters": get_portable_contract_json_schema(
+            _REQUEST_SCHEMA_ID_BY_TOOL_NAME[tool_name],
+        ),
+    }
+
+
+def _result_json(result: BaseModel) -> str:
+    return encode_canonical_json(_safe_model_dump(result))
+
+
+def _invoke(
+    runtime: _ManagedToolPortalPluginRuntime,
+    tool_name: ManagedToolName,
+    request: object,
+) -> str:
+    validated_request = _validated_tool_request(tool_name, request)
+    with runtime.telemetry.observe_tool_operation(tool_name):
+        projection = runtime.current_projection()
+        profile_name = _projection_profile_name(projection)
+        client = runtime.adapter.gateway_runtime_client_for_profile(profile_name)
+        trusted_context = _safe_model_dump(build_managed_trusted_context(projection))
+        if tool_name == "tool_portal_list":
+            operation = client.portal.list(
+                validated_request,
+                trusted_context=trusted_context,
+            )
+        elif tool_name == "tool_portal_search":
+            operation = client.portal.search(
+                validated_request,
+                trusted_context=trusted_context,
+            )
+        elif tool_name == "tool_portal_describe":
+            operation = client.portal.describe(
+                validated_request,
+                trusted_context=trusted_context,
+            )
+        else:
+            operation = client.portal.call(
+                validated_request,
+                trusted_context=trusted_context,
+            )
+        return _result_json(runtime.adapter.run_gateway_runtime_coroutine(operation))
+
+
+class _ToolHandler:
+    def __init__(
         self,
-        name: str,
-        toolset: str,
-        schema: dict[str, object],
-        handler: Callable[..., str],
-        check_fn: Callable[..., bool] | None = None,
-        requires_env: list[object] | None = None,
-        is_async: bool = False,
-        description: str = "",
-        emoji: str = "",
-        override: bool = False,
-    ) -> None: ...
+        runtime: _ManagedToolPortalPluginRuntime,
+        tool_name: ManagedToolName,
+    ) -> None:
+        self._runtime = runtime
+        self._tool_name = tool_name
 
-
-class HermesGatewayMessageEvent(t.Protocol):
-    source: HermesSessionSource
-
-
-class _ManagedToolPortalPluginRuntime(t.NamedTuple):
-    adapter: HermesManagedAdapter
-    current_projection: Callable[[], CanonicalManagedAgentProjection]
-    framework_observability: ManagedFrameworkObservability
-    telemetry: HermesToolPortalTelemetry
+    def __call__(
+        self,
+        args: object,
+        *,
+        task_id: object = None,
+        session_id: object = None,
+        user_task: object = None,
+    ) -> str:
+        del task_id, session_id, user_task
+        return _invoke(self._runtime, self._tool_name, args)
 
 
 _CONFIGURATION_LOCK = threading.Lock()
@@ -77,8 +200,11 @@ _configured_runtime: _ManagedToolPortalPluginRuntime | None = None
 def configure_managed_tool_portal_plugin(
     *,
     adapter: HermesManagedAdapter,
-    current_projection: Callable[[], CanonicalManagedAgentProjection],
+    current_projection: ProjectionResolver,
     telemetry: HermesToolPortalTelemetry,
+    inventory_coordinator: InventoryCoordinator,
+    injection_state_cache: PluginStateCache[InjectionCacheKey, InjectionMarker],
+    gateway_epoch: str,
 ) -> None:
     """Bind the installed plugin to the bootstrap-owned managed runtime."""
     global _configured_runtime
@@ -93,6 +219,9 @@ def configure_managed_tool_portal_plugin(
                 max_inflight_observations=telemetry.max_inflight_observations,
             ),
             telemetry=telemetry,
+            inventory_coordinator=inventory_coordinator,
+            injection_state_cache=injection_state_cache,
+            gateway_epoch=gateway_epoch,
         )
 
 
@@ -116,123 +245,18 @@ def _require_configured_runtime() -> _ManagedToolPortalPluginRuntime:
     return runtime
 
 
-def _description_for_tool(tool_name: str) -> str:
-    if tool_name == "tool_portal_list":
-        return "List authorized Tool Portal capabilities and compact tool summaries."
-    if tool_name == "tool_portal_search":
-        return "Search the caller-scoped Tool Portal capability index."
-    if tool_name == "tool_portal_describe":
-        return "Describe exact Tool Portal capability schemas and helper details."
-    return "Validate and call an authorized Tool Portal capability by namespace and name."
-
-
-def _tool_schema(tool_name: str) -> dict[str, object]:
-    request_schema_id = _REQUEST_SCHEMA_ID_BY_TOOL_NAME[tool_name]
-    return {
-        "name": tool_name,
-        "description": _description_for_tool(tool_name),
-        "parameters": get_portable_contract_json_schema(request_schema_id),
-    }
-
-
-def _result_json(result: BaseModel) -> str:
-    return encode_canonical_json(
-        result.model_dump(
-            by_alias=True,
-            mode="json",
-            exclude_none=True,
-        )
-    )
-
-
-def _invoke(
-    runtime: _ManagedToolPortalPluginRuntime,
-    tool_name: str,
-    request: Mapping[str, object],
-) -> str:
-    with runtime.telemetry.observe_tool_operation(tool_name):
-        projection = runtime.current_projection()
-        profile_name = _projection_profile_name(projection)
-        client = runtime.adapter.gateway_runtime_client_for_profile(profile_name)
-        trusted_context = build_managed_trusted_context(projection)
-        if tool_name == "tool_portal_list":
-            operation = client.portal.list(request, trusted_context=trusted_context)
-        elif tool_name == "tool_portal_search":
-            operation = client.portal.search(request, trusted_context=trusted_context)
-        elif tool_name == "tool_portal_describe":
-            operation = client.portal.describe(request, trusted_context=trusted_context)
-        else:
-            operation = client.portal.call(request, trusted_context=trusted_context)
-        return _result_json(runtime.adapter.run_gateway_runtime_coroutine(operation))
-
-
-def _observe_post_tool_call(
-    runtime: _ManagedToolPortalPluginRuntime,
-    *,
-    duration_ms: object,
-    status: object,
-    tool_name: object,
-    **hook_fields: object,
-) -> None:
-    runtime.framework_observability.on_post_tool_call(
-        duration_ms=duration_ms,
-        status=status,
-        tool_name=tool_name,
-        **hook_fields,
-    )
-    runtime.telemetry.observe_post_tool_call(
-        duration_milliseconds=duration_ms,
-        status=status,
-        tool_name=tool_name,
-    )
-
-
-def _admit_managed_gateway_event(
-    runtime: _ManagedToolPortalPluginRuntime,
-    *,
-    event: HermesGatewayMessageEvent,
-    **_kwargs: object,
-) -> dict[str, str]:
-    try:
-        runtime.adapter.admit_session_source(event.source)
-    except HermesProfileAdmissionError:
-        return {
-            "action": "skip",
-            "reason": "managed Hermes profile origin was not admitted",
-        }
-    return {"action": "allow"}
-
-
-def register(context: HermesPluginContext) -> None:
-    """Hermes entry-point hook registering the managed capability toolset."""
+def register(context: object) -> None:
+    """Register the managed tools and typed lifecycle adapters with Hermes."""
+    if not isinstance(context, HermesPluginContext):
+        raise TypeError("Hermes plugin registration requires a compatible PluginContext")
     runtime = _require_configured_runtime()
-    context.register_hook(
-        "pre_gateway_dispatch",
-        lambda **kwargs: _admit_managed_gateway_event(runtime, **kwargs),
-    )
-    if runtime.telemetry.observer_hooks_enabled:
-        context.register_hook(
-            "post_tool_call",
-            lambda **kwargs: _observe_post_tool_call(runtime, **kwargs),
-        )
-        for hook_name, callback in (
-            ("pre_llm_call", runtime.framework_observability.on_pre_llm_call),
-            ("pre_api_request", runtime.framework_observability.on_pre_api_request),
-            ("post_api_request", runtime.framework_observability.on_post_api_request),
-            ("api_request_error", runtime.framework_observability.on_api_request_error),
-            ("on_session_end", runtime.framework_observability.on_session_end),
-        ):
-            context.register_hook(hook_name, callback)
+    register_managed_tool_portal_hooks(context, runtime)
     for tool_name in MANAGED_TOOL_PORTAL_TOOL_NAMES:
         context.register_tool(
             name=tool_name,
             toolset=_MANAGED_TOOL_PORTAL_TOOLSET,
             schema=_tool_schema(tool_name),
-            handler=lambda args, _tool_name=tool_name, **_kwargs: _invoke(
-                runtime,
-                _tool_name,
-                args,
-            ),
+            handler=_ToolHandler(runtime, tool_name),
             description=_description_for_tool(tool_name),
             emoji="🧰",
         )

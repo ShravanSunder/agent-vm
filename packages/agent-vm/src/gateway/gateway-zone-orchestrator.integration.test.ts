@@ -672,6 +672,7 @@ function createTestAgentProjections(
 					agentId,
 					frameworkIdentity: principal.frameworkIdentity,
 					profileAssignmentRevision: principal.profileAssignmentRevision,
+					toolPortalNamespaceNames: [],
 					toolPortalProfileId: principal.toolPortalProfileId,
 				},
 			];
@@ -6705,6 +6706,7 @@ describe('startGatewayZone', () => {
 				agentId: 'second',
 				frameworkIdentity: principal.frameworkIdentity,
 				profileAssignmentRevision: principal.profileAssignmentRevision,
+				toolPortalNamespaceNames: [],
 				toolPortalProfileId: principal.toolPortalProfileId,
 			},
 		};

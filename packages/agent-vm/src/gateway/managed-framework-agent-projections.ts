@@ -1,6 +1,6 @@
 import type { GatewayRuntimeFrameworkIdentity } from '@agent-vm/agent-portal-sdk/contracts';
 import type { ManagedToolPortalConfig } from '@agent-vm/config-contracts';
-import type { ManagedAgentProjectionInput } from '@agent-vm/gateway-control-contracts';
+import type { ManagedFrameworkAgentProjectionInput } from '@agent-vm/gateway-control-contracts';
 
 interface BuildManagedFrameworkAgentProjectionInputsBaseProps {
 	readonly configuredAgents: readonly Readonly<{ readonly id: string }>[];
@@ -87,7 +87,7 @@ function buildManagedFrameworkIdentity(options: {
 
 export function buildManagedFrameworkAgentProjectionInputs(
 	props: BuildManagedFrameworkAgentProjectionInputsProps,
-): readonly ManagedAgentProjectionInput[] {
+): readonly ManagedFrameworkAgentProjectionInput[] {
 	const configuredAgentIds = props.configuredAgents.map((agent) => agent.id);
 	assertExactAgentAssignments({
 		configuredAgentIds,
@@ -102,7 +102,7 @@ export function buildManagedFrameworkAgentProjectionInputs(
 			: undefined;
 
 	return Object.freeze(
-		[...configuredAgentIds].toSorted().map((agentId): ManagedAgentProjectionInput => {
+		[...configuredAgentIds].toSorted().map((agentId): ManagedFrameworkAgentProjectionInput => {
 			const toolPortalAgent = props.toolPortalAgents[agentId];
 			if (toolPortalAgent === undefined) {
 				throw new Error(`Managed framework agent '${agentId}' requires a Tool Portal assignment.`);

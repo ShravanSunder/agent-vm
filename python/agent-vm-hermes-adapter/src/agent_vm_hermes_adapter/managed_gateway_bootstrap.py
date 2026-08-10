@@ -35,6 +35,19 @@ from .managed_profile_adapter import (
     HermesProfileAdmissionError,
     _projection_profile_name,
     _projection_string_field,
+    _validate_canonical_managed_projection,
+)
+from .managed_tool_portal.cache import PluginStateCache
+from .managed_tool_portal.gateway_runtime_inventory_port import (
+    GatewayRuntimeInventoryPort,
+    RedactedInventoryAttemptLogSink,
+)
+from .managed_tool_portal.inventory import InventoryCoordinator
+from .managed_tool_portal.inventory_contracts import InventoryProjection
+from .managed_tool_portal.models import (
+    EvictionReason,
+    InjectionCacheKey,
+    InjectionMarker,
 )
 from .managed_tool_portal_capability_tools import (
     clear_managed_tool_portal_plugin_configuration,
@@ -144,6 +157,36 @@ class _ManagedEnvironmentCacheEntry(t.NamedTuple):
     environment: HermesGatewayRuntimeEnvironment
 
 
+def _build_inventory_projection(
+    *,
+    gateway_epoch: str,
+    projection: CanonicalManagedAgentProjection,
+) -> InventoryProjection:
+    return InventoryProjection(
+        gateway_epoch=gateway_epoch,
+        profile_assignment_revision=projection.profile_assignment_revision,
+        agent_id=projection.agent_id,
+        profile_name=_projection_profile_name(projection),
+        tool_portal_profile_id=projection.tool_portal_profile_id,
+        namespace_names=projection.tool_portal_namespace_names,
+    )
+
+
+async def _start_inventory_populations(
+    *,
+    coordinator: InventoryCoordinator,
+    projections: tuple[InventoryProjection, ...],
+) -> None:
+    """Start every profile population on the adapter-owned event loop."""
+    for projection in projections:
+        _ = coordinator.start_population(projection)
+
+
+async def _close_inventory_coordinator(coordinator: InventoryCoordinator) -> None:
+    """Fence inventory on its owning event loop before loop shutdown drains tasks."""
+    coordinator.close()
+
+
 def _require_mapping(value: object, label: str) -> Mapping[str, object]:
     if not isinstance(value, Mapping):
         message = f"{label} must be an object"
@@ -196,9 +239,12 @@ def load_managed_adapter_material(configuration_path: Path) -> _ManagedAdapterMa
         configuration[profile_environment_mapping_field],
         profile_environment_mapping_field,
     )
-    expected_profile_names = {
-        _projection_profile_name(_require_mapping(projection, f"agentProjections[{agent_id!r}]"))
+    validated_agent_projections = {
+        agent_id: _validate_canonical_managed_projection(projection)
         for agent_id, projection in agent_projections.items()
+    }
+    expected_profile_names = {
+        _projection_profile_name(projection) for projection in validated_agent_projections.values()
     }
     if set(raw_profile_environment_mapping) != expected_profile_names:
         message = (
@@ -762,6 +808,10 @@ def _run_managed_hermes_gateway_runtime(
     material = load_managed_adapter_material(configuration_path)
     managed_configuration = managed_configuration_loader()
     _validate_managed_plugin_policy(managed_configuration)
+    gateway_epoch = _require_string(
+        material.attachment.get("gatewayEpoch"),
+        "attachment.gatewayEpoch",
+    )
     projection_cohort_digest = _require_string(
         material.attachment.get("projectionCohortDigest"),
         "attachment.projectionCohortDigest",
@@ -784,6 +834,8 @@ def _run_managed_hermes_gateway_runtime(
     hooks: HermesManagedEnvironmentHooks | None = None
     process_hooks: HermesManagedProcessHooks | None = None
     managed_policy_bindings: _HermesManagedPolicyReadBindings | None = None
+    inventory_coordinator: InventoryCoordinator | None = None
+    injection_state_cache: PluginStateCache[InjectionCacheKey, InjectionMarker] | None = None
     try:
         gateway_runtime_client = GatewayRuntimeClient(
             attachment=material.attachment,
@@ -809,10 +861,38 @@ def _run_managed_hermes_gateway_runtime(
         )
         managed_policy_bindings = _HermesManagedPolicyReadBindings()
         adapter.connect_gateway_runtime()
+        inventory_projections = tuple(
+            _build_inventory_projection(
+                gateway_epoch=gateway_epoch,
+                projection=projection,
+            )
+            for projection in adapter_config.profiles
+        )
+        inventory_port = GatewayRuntimeInventoryPort(
+            adapter=adapter,
+            gateway_epoch=gateway_epoch,
+        )
+        inventory_coordinator = InventoryCoordinator(
+            gateway=inventory_port,
+            log_sink=RedactedInventoryAttemptLogSink(),
+        )
+        injection_state_cache = PluginStateCache(
+            key_model=InjectionCacheKey,
+            value_model=InjectionMarker,
+        )
         configure_managed_tool_portal_plugin(
             adapter=adapter,
             current_projection=hooks._current_projection,
             telemetry=telemetry,
+            inventory_coordinator=inventory_coordinator,
+            injection_state_cache=injection_state_cache,
+            gateway_epoch=gateway_epoch,
+        )
+        adapter.submit_gateway_runtime_coroutine(
+            _start_inventory_populations(
+                coordinator=inventory_coordinator,
+                projections=inventory_projections,
+            ),
         )
         hooks.install()
         try:
@@ -831,25 +911,34 @@ def _run_managed_hermes_gateway_runtime(
         (hermes_gateway.run_gateway if stock_gateway_runner is None else stock_gateway_runner)()
     finally:
         try:
-            clear_managed_tool_portal_plugin_configuration()
+            if inventory_coordinator is not None and adapter is not None:
+                shutdown_submission = adapter.submit_gateway_runtime_coroutine(
+                    _close_inventory_coordinator(inventory_coordinator),
+                )
+                _ = shutdown_submission.result()
+            if injection_state_cache is not None:
+                injection_state_cache.close(EvictionReason.RUNTIME_SHUTDOWN)
         finally:
             try:
-                if managed_policy_bindings is not None:
-                    managed_policy_bindings.close()
+                clear_managed_tool_portal_plugin_configuration()
             finally:
                 try:
-                    if process_hooks is not None:
-                        process_hooks.close()
+                    if managed_policy_bindings is not None:
+                        managed_policy_bindings.close()
                 finally:
                     try:
-                        if hooks is not None:
-                            hooks.close()
+                        if process_hooks is not None:
+                            process_hooks.close()
                     finally:
                         try:
-                            if adapter is not None:
-                                adapter.close()
+                            if hooks is not None:
+                                hooks.close()
                         finally:
-                            telemetry.shutdown()
+                            try:
+                                if adapter is not None:
+                                    adapter.close()
+                            finally:
+                                telemetry.shutdown()
 
 
 def run_managed_hermes_gateway(

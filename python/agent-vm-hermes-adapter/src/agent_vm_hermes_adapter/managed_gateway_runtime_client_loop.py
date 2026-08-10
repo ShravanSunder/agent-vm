@@ -72,9 +72,9 @@ class GatewayRuntimeClientLoop:
     def close(self, *, disconnect: bool) -> None:
         if self._closed:
             return
+        self.run(self._cancel_pending_tasks())
         if disconnect:
             self.run(self._client.disconnect())
-        self.run(self._cancel_pending_tasks())
         self._closed = True
         self._loop.call_soon_threadsafe(self._loop.stop)
         self._thread.join(timeout=5)
