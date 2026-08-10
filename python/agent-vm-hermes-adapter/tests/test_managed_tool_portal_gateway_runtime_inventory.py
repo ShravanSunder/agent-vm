@@ -7,6 +7,7 @@ from agent_vm_hermes_adapter.managed_tool_portal.gateway_runtime_inventory_port 
 )
 from agent_vm_hermes_adapter.managed_tool_portal.inventory import (
     InventoryAttemptLog,
+    InventoryAuthorityError,
     InventoryFailureClass,
     InventoryListItemRequest,
     InventoryListRequest,
@@ -111,6 +112,32 @@ class GatewayRuntimeInventoryPortTests(unittest.IsolatedAsyncioTestCase):
                 )
             ],
         )
+
+    async def test_rejects_projection_that_does_not_match_admitted_authority(self) -> None:
+        adapter = _FakeAdapter()
+        port = GatewayRuntimeInventoryPort(
+            adapter=adapter,
+            gateway_epoch="gateway-epoch-1",
+        )
+        mismatched_projection = _inventory_projection().model_copy(
+            update={"tool_portal_profile_id": "different-policy"},
+        )
+        request = InventoryListRequest(
+            requestId="inventory-1-0",
+            requests=(InventoryListItemRequest(id="probe-0", namespaces=("filesystem",)),),
+        )
+
+        with self.assertRaisesRegex(
+            InventoryAuthorityError,
+            "inventory projection does not match managed authority",
+        ):
+            await port.list_for_projection(
+                mismatched_projection,
+                request,
+                timeout_seconds=1,
+            )
+
+        self.assertEqual(adapter.client.portal.calls, [])
 
 
 class RedactedInventoryAttemptLogSinkTests(unittest.TestCase):

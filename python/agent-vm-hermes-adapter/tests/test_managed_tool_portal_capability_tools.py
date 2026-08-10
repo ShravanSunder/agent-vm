@@ -773,10 +773,14 @@ class ManagedToolPortalCapabilityToolsTests(unittest.TestCase):
         self.assertNotIn(canary, repr(telemetry.framework_records))
         self.assertNotIn(canary, repr(telemetry.post_tool_call_records))
         turn_parent = next(
-            handle for kind, _record, handle in telemetry.framework_records if kind == "turn.started"
+            handle
+            for kind, _record, handle in telemetry.framework_records
+            if kind == "turn.started"
         )
         tool_parent = next(
-            handle for kind, _record, handle in telemetry.framework_records if kind == "tool.completed"
+            handle
+            for kind, _record, handle in telemetry.framework_records
+            if kind == "tool.completed"
         )
         self.assertIs(tool_parent, turn_parent)
 

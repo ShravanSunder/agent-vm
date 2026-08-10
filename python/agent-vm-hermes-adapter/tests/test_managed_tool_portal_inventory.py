@@ -8,11 +8,14 @@ from pydantic import ValidationError
 from agent_vm_hermes_adapter.managed_tool_portal.cache import (
     CacheSnapshot,
     EvictedState,
+    ExhaustedState,
+    PopulationFailureClass,
     ReadyState,
     UnresolvedState,
 )
 from agent_vm_hermes_adapter.managed_tool_portal.inventory import (
     InventoryAttemptLog,
+    InventoryAuthorityError,
     InventoryCoordinator,
     InventoryFailureClass,
     InventoryListRequest,
@@ -669,6 +672,38 @@ class ManagedToolPortalInventoryTests(unittest.IsolatedAsyncioTestCase):
             ),
         )
         self.assertNotIn("secret", logs.records[0].model_dump_json())
+
+    async def test_invalid_authority_is_terminal_after_one_attempt_without_orientation(
+        self,
+    ) -> None:
+        gateway = ScriptedGateway([InventoryAuthorityError("authority details")])
+        logs = LogSink()
+        coordinator = InventoryCoordinator(gateway=gateway, log_sink=logs)
+        projection = _projection(namespaces=("alpha",))
+
+        task = coordinator.start_population(projection)
+        self.assertIsNotNone(task)
+        await _require_task(task)
+
+        snapshot = coordinator.read_snapshot(projection.cache_key())
+        self.assertIsInstance(snapshot, ExhaustedState)
+        if not isinstance(snapshot, ExhaustedState):
+            self.fail("expected invalid authority to publish an exhausted snapshot")
+        self.assertEqual(snapshot.failure_class, PopulationFailureClass.INVALID_AUTHORITY)
+        self.assertNotIn("orientation", snapshot.model_dump())
+        self.assertEqual(len(gateway.calls), 1)
+        self.assertEqual(
+            logs.records,
+            [
+                InventoryAttemptLog(
+                    gateway_epoch="epoch-a",
+                    profile_name="profile-a",
+                    attempt_number=1,
+                    failure_class=InventoryFailureClass.AUTHORITY,
+                    retry_disposition=InventoryRetryDisposition.TERMINAL,
+                )
+            ],
+        )
 
     async def test_deadline_precedence_prevents_successor_attempt(self) -> None:
         clock = FakeClock()
