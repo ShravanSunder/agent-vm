@@ -11,6 +11,7 @@ import {
 	readTcpListenPortOwner as defaultReadTcpListenPortOwner,
 	type PortOwner,
 } from '../../shared/port-owner.js';
+import { writeControllerDiagnostic } from '../controller-diagnostic-logging.js';
 import type { ControllerToolLeaseRecordsTarget } from '../durable-state/controller-state-record-paths.js';
 import type { ToolVmRuntimeRecord } from './tool-vm-runtime-record.js';
 import {
@@ -19,7 +20,7 @@ import {
 } from './tool-vm-runtime-record.js';
 
 function writeRecoveryLog(message: string): void {
-	process.stderr.write(`[agent-vm] ${message}\n`);
+	writeControllerDiagnostic('lease', message);
 }
 
 // All five fences are required — there is no legacy/fallback path for tool

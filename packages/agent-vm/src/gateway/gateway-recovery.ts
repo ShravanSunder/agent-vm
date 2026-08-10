@@ -1,5 +1,6 @@
 import type { ManagedVmExactProcessTerminationCapability } from '@agent-vm/managed-vm';
 
+import { writeControllerDiagnostic } from '../controller/controller-diagnostic-logging.js';
 import type { ControllerManagedGatewayRuntimeRecordTarget } from '../controller/durable-state/controller-state-record-paths.js';
 import { terminateRecordedManagedVmProcess } from '../shared/controller-managed-vm-termination.js';
 import { isManagedVmProcess } from '../shared/managed-vm-process.js';
@@ -19,7 +20,7 @@ import {
 } from './gateway-runtime-record.js';
 
 function writeRecoveryLog(message: string): void {
-	process.stderr.write(`[agent-vm] ${message}\n`);
+	writeControllerDiagnostic('gateway', message);
 }
 
 function expectedGatewaySessionLabel(projectNamespace: string, zoneId: string): string {

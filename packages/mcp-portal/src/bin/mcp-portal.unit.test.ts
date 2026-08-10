@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 import { createStaticSecretResolver } from '@agent-vm/secret-management';
 import { parseSync } from '@optique/core/parser';
+import { getConfig } from '@logtape/logtape';
 import { describe, expect, it, vi } from 'vitest';
 
 import { mcpPortalRootParser } from '../cli/mcp-portal-cli-parser.js';
@@ -18,11 +19,13 @@ import {
 	startFakeUpstreamMcpServer,
 } from '../testing/fake-upstream-mcp-server.js';
 import {
-	runMcpPortalCommand,
 	waitUntilPortalServerShutdown,
-	type AgentVmMcpPortalRuntimeProps,
 } from './mcp-portal-command-dispatcher.js';
-import { shouldRunMcpPortalEntrypoint } from './mcp-portal.js';
+import {
+	runMcpPortalCommandWithProcessLogging,
+	shouldRunMcpPortalEntrypoint,
+	type AgentVmMcpPortalRuntimeProps,
+} from './mcp-portal.js';
 
 const parserRejected = Symbol('parser-rejected');
 
@@ -32,7 +35,7 @@ async function runMcpPortal(
 ): Promise<number | typeof parserRejected> {
 	const parsed = parseSync(mcpPortalRootParser, args);
 	if (!parsed.success) return parserRejected;
-	return await runMcpPortalCommand(parsed.value, props);
+	return await runMcpPortalCommandWithProcessLogging(parsed.value, props);
 }
 
 class FakeSignalTarget {
@@ -42,12 +45,16 @@ class FakeSignalTarget {
 		this.emitter.off(signal, listener);
 	}
 
-	once(signal: 'SIGINT' | 'SIGTERM', listener: () => void): void {
-		this.emitter.once(signal, listener);
+	on(signal: 'SIGINT' | 'SIGTERM', listener: () => void): void {
+		this.emitter.on(signal, listener);
 	}
 
 	emit(signal: 'SIGINT' | 'SIGTERM'): void {
 		this.emitter.emit(signal);
+	}
+
+	listenerCount(signal: 'SIGINT' | 'SIGTERM'): number {
+		return this.emitter.listenerCount(signal);
 	}
 }
 
@@ -71,6 +78,44 @@ describe('mcp-portal CLI', () => {
 		signalTarget.emit('SIGTERM');
 		await shutdownPromise;
 
+		expect(close).toHaveBeenCalledTimes(1);
+	});
+
+	it('keeps a pending close path installed for a repeated signal', async () => {
+		const signalTarget = new FakeSignalTarget();
+		let resolveClose: (() => void) | undefined;
+		let resolveCompletion: (() => void) | undefined;
+		const closePromise = new Promise<void>((resolve) => {
+			resolveClose = resolve;
+		});
+		const completionPromise = new Promise<void>((resolve) => {
+			resolveCompletion = resolve;
+		});
+		const close = vi.fn(() => closePromise);
+		const shutdownPromise = waitUntilPortalServerShutdown({
+			onShutdownComplete: async () => await completionPromise,
+			server: { close },
+			signalTarget,
+		});
+
+		signalTarget.emit('SIGTERM');
+		await Promise.resolve();
+		expect(close).toHaveBeenCalledTimes(1);
+		expect(signalTarget.listenerCount('SIGTERM')).toBe(1);
+
+		signalTarget.emit('SIGTERM');
+		await Promise.resolve();
+		expect(close).toHaveBeenCalledTimes(1);
+
+		resolveClose?.();
+		await Promise.resolve();
+		expect(signalTarget.listenerCount('SIGTERM')).toBe(1);
+		signalTarget.emit('SIGTERM');
+		expect(close).toHaveBeenCalledTimes(1);
+		resolveCompletion?.();
+		await shutdownPromise;
+		expect(signalTarget.listenerCount('SIGTERM')).toBe(0);
+		signalTarget.emit('SIGTERM');
 		expect(close).toHaveBeenCalledTimes(1);
 	});
 
@@ -220,6 +265,40 @@ describe('mcp-portal CLI', () => {
 			expect(await runMcpPortal(['validate', invalidCatalogPath])).toBe(1);
 		} finally {
 			await rm(workspace, { force: true, recursive: true });
+		}
+	});
+
+	it('does not configure process logging for CLI-only commands', async () => {
+		const workspace = await mkdtemp(join(tmpdir(), 'mcp-portal-'));
+		try {
+			const catalogPath = join(workspace, 'catalog.json');
+			await writeFile(catalogPath, JSON.stringify({ tools: [] }));
+
+			expect(getConfig()).toBeNull();
+			expect(await runMcpPortal(['validate', catalogPath])).toBe(0);
+			expect(getConfig()).toBeNull();
+		} finally {
+			await rm(workspace, { force: true, recursive: true });
+		}
+	});
+
+	it('keeps process logging setup failure bounded at the MCP Portal root', async () => {
+		const stderrChunks: string[] = [];
+		const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+			stderrChunks.push(String(chunk));
+			return true;
+		});
+		try {
+			await expect(
+				runMcpPortal(['mcp-proxy', 'serve', '--config-dir', '/tmp/not-used'], {
+					configureProcessLogging: async () => {
+						throw new Error('connect https://collector.invalid/v1/logs with stack details');
+					},
+				}),
+			).resolves.toBe(1);
+			expect(stderrChunks).toEqual(['mcp-portal: process logging setup failed.\n']);
+		} finally {
+			stderrSpy.mockRestore();
 		}
 	});
 

@@ -1,4 +1,5 @@
 import type { LoadedSystemConfig } from '../../config/system-config.js';
+import { writeControllerDiagnostic } from '../controller-diagnostic-logging.js';
 import {
 	classifyGatewayStartError,
 	deriveGatewayDiagnosisSnapshot,
@@ -54,7 +55,7 @@ export function createZoneRuntimeRegistry(options: {
 	const writeLog =
 		options.writeLog ??
 		((message: string): void => {
-			process.stderr.write(`[zone-runtime-registry] ${message}\n`);
+			writeControllerDiagnostic('gateway', message);
 		});
 
 	for (const zoneId of runtimeZoneIds) {

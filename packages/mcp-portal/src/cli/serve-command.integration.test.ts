@@ -2,11 +2,14 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Writable } from 'node:stream';
 
 import type { SecretResolver } from '@agent-vm/secret-management';
+import { reset } from '@logtape/logtape';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { deriveAgentBearerToken } from '../portal-auth/agent-bearer-token.js';
+import { configureProcessLogging } from './process-logging.js';
 import {
 	applyAgentOverrides,
 	createServeSecretResolver,
@@ -19,9 +22,35 @@ const startedServers: { readonly close: () => Promise<void> }[] = [];
 const externalMasterKey = Buffer.from('0123456789abcdef0123456789abcdef');
 const externalMasterKeyText = externalMasterKey.toString('base64url');
 
+class CaptureWritable extends Writable {
+	readonly chunks: string[] = [];
+	private pendingWrite: (() => void) | undefined;
+
+	constructor() {
+		super({
+			write: (chunk, _encoding, callback) => {
+				this.chunks.push(String(chunk));
+				callback();
+				this.pendingWrite?.();
+				this.pendingWrite = undefined;
+			},
+		});
+	}
+
+	waitForWrite(): Promise<void> {
+		if (this.chunks.length > 0) {
+			return Promise.resolve();
+		}
+		return new Promise((resolve) => {
+			this.pendingWrite = resolve;
+		});
+	}
+}
+
 afterEach(async () => {
 	const serversToClose = startedServers.splice(0);
 	await Promise.all(serversToClose.map((startedServer) => startedServer.close()));
+	await reset();
 });
 
 async function createPortalConfigDir(): Promise<string> {
@@ -204,6 +233,54 @@ describe('startPortalServer', () => {
 		startedServers.push(startedServer);
 
 		expect(startedServer.port).toBe(configuredPort);
+	});
+
+	it('uses the default structured logger and disposes it after server close', async () => {
+		const configDir = await createProxyConfigDir();
+		const stderr = new CaptureWritable();
+		const stdoutChunks: string[] = [];
+		const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+			stdoutChunks.push(String(chunk));
+			return true;
+		});
+		const logging = await configureProcessLogging({ stderr });
+		let startedServer: Awaited<ReturnType<typeof startPortalServer>> | undefined;
+		try {
+			startedServer = await startPortalServer({
+				args: { agentOverrides: [], configDir, port: 0 },
+				env: { MCP_PORTAL_MASTER_KEY: externalMasterKeyText },
+			});
+			await expect(
+				fetch(`http://127.0.0.1:${String(startedServer.port)}/agents/shravan/mcp`),
+			).resolves.toMatchObject({ status: 401 });
+			await stderr.waitForWrite();
+			await new Promise<void>((resolve) => setImmediate(resolve));
+			await startedServer.close();
+			startedServer = undefined;
+			await logging.shutdown();
+
+			const records = stderr.chunks.map(
+				(chunk) =>
+					JSON.parse(chunk) as {
+						readonly logger?: string;
+						readonly properties?: Readonly<Record<string, unknown>>;
+					},
+			);
+			const authRecord = records.find((record) => record.logger === 'agent-vm.mcp-portal.server');
+			expect(authRecord?.properties).toMatchObject({
+				clientAddressClass: 'loopback',
+				decision: 'deny',
+				reason: 'missing',
+			});
+			expect(authRecord?.properties).not.toHaveProperty('clientAddress');
+			expect(stdoutChunks.join('')).toContain('listening port=');
+		} finally {
+			if (startedServer !== undefined) {
+				await startedServer.close();
+			}
+			await logging.shutdown();
+			stdoutSpy.mockRestore();
+		}
 	});
 
 	it('logs post-listen server errors without rejecting the resolved listener', () => {

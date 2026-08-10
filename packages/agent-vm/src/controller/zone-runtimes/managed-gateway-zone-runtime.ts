@@ -35,6 +35,7 @@ import { runControllerDestroy as runControllerDestroyDefault } from '../../opera
 import { runControllerUpgrade as runControllerUpgradeDefault } from '../../operations/upgrade-zone.js';
 import { runControllerLogs as runControllerLogsDefault } from '../../operations/zone-logs.js';
 import { isProcessAlive as defaultIsProcessAlive } from '../../shared/managed-vm-process.js';
+import { writeControllerDiagnostic } from '../controller-diagnostic-logging.js';
 import type { ControllerManagedGatewayRuntimeRecordTarget } from '../durable-state/controller-state-record-paths.js';
 import { gatewayIdentitiesEqual } from '../vm-ownership/vm-ownership-contracts.js';
 import {
@@ -208,7 +209,7 @@ function buildManagedGatewayCombinedLogsCommand(
 }
 
 function writeManagedGatewayZoneRuntimeLog(message: string): void {
-	process.stderr.write(`[managed-gateway-zone-runtime] ${message}\n`);
+	writeControllerDiagnostic('gateway', message);
 }
 
 function unavailableReasonForState(state: GatewayZoneLifecycleState): string | undefined {

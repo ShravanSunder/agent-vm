@@ -1,4 +1,6 @@
-import { writeStderr } from '../shared/stderr.js';
+import { getLogger } from '@logtape/logtape';
+
+import { toSafeWorkerLogProperties } from '../shared/process-logging.js';
 import type { TaskEvent, TaskStatus } from '../state/task-event-types.js';
 import {
 	createInitialState,
@@ -24,6 +26,8 @@ import type {
 } from './coordinator-types.js';
 import { runTask } from './task-runner.js';
 
+const coordinatorLogger = getLogger(['agent-vm', 'worker', 'coordinator']);
+
 export type { Coordinator, CreateTaskInput } from './coordinator-types.js';
 
 async function handleRunTaskEscape(
@@ -35,12 +39,21 @@ async function handleRunTaskEscape(
 	notifyTaskStateChanged: (taskId: string) => void,
 ): Promise<void> {
 	const reason = formatTaskFailureReason(error);
-	writeStderr(`[coordinator] Unhandled runTask error for ${taskId}: ${reason}`);
+	coordinatorLogger.error(
+		'Worker task execution failed unexpectedly.',
+		toSafeWorkerLogProperties({ event: 'task-run-failed', failureClass: 'unhandled', error }),
+	);
 	try {
 		await eventRecorder.recordTaskFailure(taskId, reason);
 	} catch (recordError) {
-		const message = recordError instanceof Error ? recordError.message : String(recordError);
-		writeStderr(`[coordinator] Failed to persist escaped task failure for ${taskId}: ${message}`);
+		coordinatorLogger.error(
+			'Worker task failure could not be persisted.',
+			toSafeWorkerLogProperties({
+				event: 'task-failure-persistence-failed',
+				failureClass: 'persistence-failed',
+				error: recordError,
+			}),
+		);
 		const current = tasks.get(taskId);
 		if (current && !isTerminal(current)) {
 			tasks.set(taskId, { ...current, status: 'failed', updatedAt: new Date().toISOString() });
@@ -95,8 +108,14 @@ export async function createCoordinator(deps: CoordinatorDeps): Promise<Coordina
 				state: activeTaskId === null ? 'idle' : 'running',
 			})
 			.catch((error: unknown) => {
-				const message = error instanceof Error ? error.message : String(error);
-				writeStderr(`[coordinator] Failed to publish Worker capacity snapshot: ${message}`);
+				coordinatorLogger.warn(
+					'Worker capacity snapshot publication failed.',
+					toSafeWorkerLogProperties({
+						event: 'capacity-snapshot-publish-failed',
+						failureClass: 'transport',
+						error,
+					}),
+				);
 			});
 	}
 
@@ -113,8 +132,14 @@ export async function createCoordinator(deps: CoordinatorDeps): Promise<Coordina
 			taskId,
 			taskState.status,
 		).catch((error: unknown) => {
-			const message = error instanceof Error ? error.message : String(error);
-			writeStderr(`[coordinator] Failed to publish Worker runtime event: ${message}`);
+			coordinatorLogger.warn(
+				'Worker runtime event publication failed.',
+				toSafeWorkerLogProperties({
+					event: 'runtime-event-publish-failed',
+					failureClass: 'transport',
+					error,
+				}),
+			);
 		});
 	}
 

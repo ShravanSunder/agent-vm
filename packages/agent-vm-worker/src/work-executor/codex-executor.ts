@@ -2,10 +2,11 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
+import { getLogger } from '@logtape/logtape';
 import { Codex, type Thread, type UserInput } from '@openai/codex-sdk';
 import { execa } from 'execa';
 
-import { writeStderr } from '../shared/stderr.js';
+import { toSafeWorkerLogProperties } from '../shared/process-logging.js';
 import type {
 	ExecutorCapabilities,
 	ExecutorResult,
@@ -13,6 +14,8 @@ import type {
 	WorkExecutor,
 } from './executor-interface.js';
 import { getOrCreateLocalToolMcpServer } from './local-tool-mcp-server.js';
+
+const executorLogger = getLogger(['agent-vm', 'worker', 'executor']);
 
 function extractErrorMessages(error: unknown): readonly string[] {
 	if (!(error instanceof Error)) {
@@ -194,9 +197,13 @@ export function createCodexExecutor(config: CodexExecutorConfig): WorkExecutor {
 						throw error;
 					}
 
-					const message = error instanceof Error ? error.message : String(error);
-					writeStderr(
-						`[codex-executor] Failed to resume thread ${threadId}; rebuilding thread instead: ${message}`,
+					executorLogger.warn(
+						'Worker executor thread resume failed; rebuilding the thread.',
+						toSafeWorkerLogProperties({
+							event: 'executor-thread-resume-failed',
+							failureClass: 'thread-recovery',
+							error,
+						}),
 					);
 					currentThread = null;
 					currentThreadId = null;

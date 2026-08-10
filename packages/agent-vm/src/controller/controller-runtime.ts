@@ -40,6 +40,7 @@ import {
 	createGatewayControlLeaseRpcOperations,
 	createGatewayControlProcessAdmissionCoordinator,
 } from './control-session/index.js';
+import { writeControllerDiagnostic } from './controller-diagnostic-logging.js';
 import {
 	createControllerRuntimeOperations,
 	createStopControllerOperation,
@@ -152,7 +153,7 @@ function resolveToolVmRootBinding(
 }
 
 function writeControllerRuntimeLog(message: string): void {
-	process.stderr.write(`[agent-vm] ${message}\n`);
+	writeControllerDiagnostic('runtime', message);
 }
 
 function formatUnknownError(error: unknown): string {

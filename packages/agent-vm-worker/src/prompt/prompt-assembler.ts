@@ -1,12 +1,16 @@
 import { readFile } from 'node:fs/promises';
 
+import { getLogger } from '@logtape/logtape';
+
+import { toSafeWorkerLogProperties } from '../shared/process-logging.js';
 import type { SkillReference } from '../shared/skill-types.js';
-import { writeStderr } from '../shared/stderr.js';
 import {
 	DEFAULT_BUILTIN_AGENT_INSTRUCTIONS,
 	resolveRoleInstructions,
 	type Role,
 } from './prompt-defaults.js';
+
+const promptLogger = getLogger(['agent-vm', 'worker', 'coordinator']);
 
 export interface BuildRoleSystemPromptProps {
 	readonly role: Role;
@@ -26,13 +30,24 @@ async function resolveSkillContent(skills: readonly SkillReference[]): Promise<s
 			} catch (error) {
 				const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
 				if (code === 'ENOENT') {
-					writeStderr(
-						`[prompt-assembler] Skill not found, skipping: ${skill.name} at ${skill.path}`,
+					promptLogger.warn(
+						'Worker prompt skill was not found; skipping it.',
+						toSafeWorkerLogProperties({
+							event: 'prompt-skill-not-found',
+							failureClass: 'unavailable',
+						}),
 					);
 					return null;
 				}
 				const message = error instanceof Error ? error.message : String(error);
-				writeStderr(`[prompt-assembler] Skill load failed (${skill.name}): ${message}`);
+				promptLogger.error(
+					'Worker prompt skill could not be loaded.',
+					toSafeWorkerLogProperties({
+						event: 'prompt-skill-load-failed',
+						failureClass: 'load-failed',
+						error,
+					}),
+				);
 				throw new Error(`Skill load failed for "${skill.name}" at "${skill.path}": ${message}`, {
 					cause: error,
 				});

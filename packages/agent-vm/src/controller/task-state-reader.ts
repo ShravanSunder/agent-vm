@@ -10,6 +10,7 @@ import {
 } from '@agent-vm/agent-vm-worker';
 
 import type { SystemConfig } from '../config/system-config.js';
+import { writeControllerDiagnostic } from './controller-diagnostic-logging.js';
 
 export interface TaskStateReader {
 	readonly read: (zoneId: string, taskId: string) => Promise<TaskState | null>;
@@ -27,7 +28,7 @@ export interface WriteTaskFailureSentinelOptions {
 }
 
 function writeTaskStateReaderLog(message: string): void {
-	process.stderr.write(`[task-state-reader] ${message}\n`);
+	writeControllerDiagnostic('runtime', message);
 }
 
 function isNodeErrorWithCode(error: unknown, code: string): boolean {

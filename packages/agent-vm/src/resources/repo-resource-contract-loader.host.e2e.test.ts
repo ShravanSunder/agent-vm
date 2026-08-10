@@ -2,7 +2,8 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { describe, expect, it, vi } from 'vitest';
+import { configure, dispose, reset, type LogRecord } from '@logtape/logtape';
+import { describe, expect, it } from 'vitest';
 
 import {
 	finalizeRepoResourceSetupInSubprocess,
@@ -12,7 +13,22 @@ import {
 describe('repo resource contract loader', () => {
 	it('returns null when repo-resources.ts is missing', async () => {
 		const repoDir = await fs.mkdtemp(path.join(os.tmpdir(), 'repo-resource-missing-'));
-		const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+		const capturedRecords: LogRecord[] = [];
+		await configure({
+			loggers: [
+				{
+					category: ['agent-vm', 'controller', 'resource'],
+					lowestLevel: 'trace',
+					sinks: ['capture'],
+				},
+			],
+			reset: true,
+			sinks: {
+				capture: (record): void => {
+					capturedRecords.push(record);
+				},
+			},
+		});
 
 		try {
 			const description = await loadRepoResourceDescriptionContract({
@@ -22,13 +38,16 @@ describe('repo resource contract loader', () => {
 			});
 
 			expect(description).toBeNull();
-			expect(stderrSpy).toHaveBeenCalledWith(
-				expect.stringContaining(
-					'[repo-resource-contract-loader] repo-a: no .agent-vm/repo-resources.ts; skipping repo resource setup.',
-				),
-			);
+			expect(capturedRecords).toHaveLength(1);
+			expect(capturedRecords[0]).toMatchObject({
+				category: ['agent-vm', 'controller', 'resource'],
+				level: 'warning',
+				message: ['Controller diagnostic'],
+				properties: { event: 'diagnostic' },
+			});
 		} finally {
-			stderrSpy.mockRestore();
+			await dispose().catch(() => {});
+			await reset();
 		}
 	});
 

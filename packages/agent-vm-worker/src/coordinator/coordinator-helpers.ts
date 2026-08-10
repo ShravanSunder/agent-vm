@@ -1,11 +1,15 @@
 import { join } from 'node:path';
 
+import { getLogger } from '@logtape/logtape';
+
 import type { WorkerConfig } from '../config/worker-config.js';
-import { writeStderr } from '../shared/stderr.js';
+import { toSafeWorkerLogProperties } from '../shared/process-logging.js';
 import { appendEvent } from '../state/event-log.js';
 import type { TaskConfig, TaskEvent } from '../state/task-event-types.js';
 import { applyEvent, type TaskState } from '../state/task-state.js';
 import type { CreateTaskInput } from './coordinator-types.js';
+
+const coordinatorLogger = getLogger(['agent-vm', 'worker', 'coordinator']);
 
 export function sanitizeErrorMessage(message: string): string {
 	return message
@@ -96,10 +100,21 @@ export function createTaskEventRecorder(
 		try {
 			await emit(taskId, { event: 'task-failed', reason });
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			writeStderr(`[task-event-recorder] Failed to append task-failed for ${taskId}: ${message}`);
-			writeStderr(
-				`[task-event-recorder] Fatal: task-failed could not be persisted for ${taskId}; exiting to avoid state resurrection on restart.`,
+			coordinatorLogger.error(
+				'Worker task failure event could not be persisted.',
+				toSafeWorkerLogProperties({
+					event: 'task-failure-persistence-failed',
+					failureClass: 'persistence-failed',
+					error,
+				}),
+			);
+			coordinatorLogger.error(
+				'Worker task failure persistence is fatal.',
+				toSafeWorkerLogProperties({
+					event: 'task-failure-persistence-fatal',
+					failureClass: 'fatal',
+					error,
+				}),
 			);
 			process.exitCode = 1;
 			setImmediate(() => {

@@ -10,6 +10,7 @@ import {
 	recordControlSessionReconnected,
 	type ControlSessionDeathGraceState,
 } from '../control-session/control-session-death-grace.js';
+import { writeControllerDiagnostic } from '../controller-diagnostic-logging.js';
 import {
 	deriveChannelProviderRecoveryObservation,
 	type AgentChannelProviderHealthEvent,
@@ -158,7 +159,7 @@ export interface CreateGatewayServiceHealthMonitorOptions {
 }
 
 function writeGatewayServiceHealthMonitorLog(message: string): void {
-	process.stderr.write(`[gateway-service-health-monitor] ${message}\n`);
+	writeControllerDiagnostic('gateway', message);
 }
 
 const unknownGatewayServiceHealthTarget = {

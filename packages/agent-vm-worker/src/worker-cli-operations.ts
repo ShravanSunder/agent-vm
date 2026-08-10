@@ -8,9 +8,11 @@ import { attachWorkerControlUpgradeHandler } from './control-session/worker-cont
 import {
 	createWorkerControlService,
 	createWorkerControlServiceOptionsFromEnvironment,
+	type WorkerControlService,
 } from './control-session/worker-control-service.js';
 import { createCoordinator, type Coordinator } from './coordinator/coordinator.js';
 import { createApp } from './server.js';
+import type { ProcessLoggingHandle } from './shared/process-logging.js';
 import type { WorkerCommand } from './worker-cli-parser.js';
 
 type WorkerHealthCommand = Extract<WorkerCommand, { readonly command: 'health' }>;
@@ -43,7 +45,103 @@ export async function runWorkerHealthOperation(
 	}
 }
 
-export async function runWorkerServeLifecycle(command: WorkerServeCommand): Promise<void> {
+type WorkerShutdownSignal = 'SIGINT' | 'SIGTERM';
+
+export interface WorkerSignalTarget {
+	readonly off: (signal: WorkerShutdownSignal, listener: () => void) => void;
+	readonly on: (signal: WorkerShutdownSignal, listener: () => void) => void;
+}
+
+interface WorkerShutdownWaiter {
+	readonly signal: Promise<WorkerShutdownSignal>;
+	readonly cleanup: () => void;
+}
+
+function waitForWorkerShutdownSignal(
+	signalTarget: WorkerSignalTarget = process,
+): WorkerShutdownWaiter {
+	const signals = ['SIGINT', 'SIGTERM'] satisfies readonly WorkerShutdownSignal[];
+	let resolveSignal: ((signal: WorkerShutdownSignal) => void) | undefined;
+	const signal = new Promise<WorkerShutdownSignal>((resolve) => {
+		resolveSignal = resolve;
+	});
+	const listeners = new Map<WorkerShutdownSignal, () => void>();
+	for (const registeredSignal of signals) {
+		const listener = (): void => {
+			resolveSignal?.(registeredSignal);
+		};
+		listeners.set(registeredSignal, listener);
+		signalTarget.on(registeredSignal, listener);
+	}
+	return {
+		signal,
+		cleanup: (): void => {
+			for (const [registeredSignal, listener] of listeners) {
+				signalTarget.off(registeredSignal, listener);
+			}
+			listeners.clear();
+		},
+	};
+}
+
+export interface WorkerServeShutdownLifecycleOptions {
+	readonly server: { readonly close: () => Promise<void> };
+	readonly workerControlService?: Pick<WorkerControlService, 'close'> | undefined;
+	readonly logging?: ProcessLoggingHandle | undefined;
+	readonly signalTarget?: WorkerSignalTarget | undefined;
+}
+
+/**
+ * Wait for retirement, close product resources in order, then dispose logging.
+ * Product shutdown failures remain the primary result; logging is diagnostic.
+ */
+export async function runWorkerServeShutdownLifecycle(
+	options: WorkerServeShutdownLifecycleOptions,
+): Promise<void> {
+	const shutdownWaiter = waitForWorkerShutdownSignal(options.signalTarget);
+	let productCloseFailed = false;
+	let productCloseError: unknown;
+	try {
+		try {
+			await shutdownWaiter.signal;
+			await options.server.close();
+		} catch (error: unknown) {
+			productCloseFailed = true;
+			productCloseError = error;
+		}
+		if (options.workerControlService !== undefined) {
+			try {
+				await options.workerControlService.close();
+			} catch (error: unknown) {
+				if (!productCloseFailed) productCloseError = error;
+				productCloseFailed = true;
+			}
+		}
+
+		try {
+			await options.logging?.shutdown();
+		} catch {
+			// The process root reports logging shutdown failure without replacing the product result.
+		}
+		if (productCloseFailed) throw productCloseError;
+	} finally {
+		shutdownWaiter.cleanup();
+	}
+}
+
+function closeHttpServer(server: HttpServer): Promise<void> {
+	return new Promise((resolve, reject) => {
+		server.close((error?: Error) => {
+			if (error === undefined) resolve();
+			else reject(error);
+		});
+	});
+}
+
+export async function runWorkerServeLifecycle(
+	command: WorkerServeCommand,
+	logging?: ProcessLoggingHandle,
+): Promise<void> {
 	const configPath = command.config ?? process.env.WORKER_CONFIG_PATH ?? undefined;
 	const baseConfig = await loadWorkerConfig(configPath);
 	const config = command.stateDir ? { ...baseConfig, stateDir: command.stateDir } : baseConfig;
@@ -109,5 +207,10 @@ export async function runWorkerServeLifecycle(command: WorkerServeCommand): Prom
 	});
 	if (server instanceof HttpServer) {
 		attachWorkerControlUpgradeHandler({ server, workerControlService });
+		await runWorkerServeShutdownLifecycle({
+			server: { close: () => closeHttpServer(server) },
+			workerControlService,
+			logging,
+		});
 	}
 }

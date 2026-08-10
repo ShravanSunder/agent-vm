@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 
+import { getLogger } from '@logtape/logtape';
 import { execa } from 'execa';
 
 import { resolvePhaseExecutor, type WorkerConfig } from '../config/worker-config.js';
@@ -8,7 +9,7 @@ import { getDiff } from '../git/git-operations.js';
 import { bootstrapRepoWorktrees } from '../git/repo-worktree-bootstrap.js';
 import { runPlanCycle } from '../plan-phase/plan-cycle.js';
 import { buildRoleSystemPrompt } from '../prompt/prompt-assembler.js';
-import { writeStderr } from '../shared/stderr.js';
+import { toSafeWorkerLogProperties } from '../shared/process-logging.js';
 import type { VerificationCommandResult } from '../state/task-event-types.js';
 import type { TaskState } from '../state/task-state.js';
 import { createWorkExecutor } from '../work-executor/executor-factory.js';
@@ -29,6 +30,8 @@ import { runWrapup } from '../wrapup-phase/wrapup-runner.js';
 import type { TaskEventRecorder } from './coordinator-helpers.js';
 import { formatTaskFailureReason } from './coordinator-helpers.js';
 import type { CoordinatorDeps } from './coordinator-types.js';
+
+const coordinatorLogger = getLogger(['agent-vm', 'worker', 'coordinator']);
 
 class TaskClosedError extends Error {
 	constructor(taskId: string) {
@@ -193,7 +196,14 @@ export async function runTask(
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			await eventRecorder.emit(taskId, { event: 'context-gather-failed', reason: message });
-			writeStderr(`[coordinator] Failed to gather repo context for task ${taskId}: ${message}`);
+			coordinatorLogger.warn(
+				'Worker repository context gathering failed.',
+				toSafeWorkerLogProperties({
+					event: 'repository-context-gather-failed',
+					failureClass: 'context-gather-failed',
+					error,
+				}),
+			);
 		}
 
 		await eventRecorder.emit(taskId, { event: 'phase-started', phase: 'plan' });

@@ -23,6 +23,7 @@ import type {
 import { terminateRecordedManagedVmProcess } from '../../shared/controller-managed-vm-termination.js';
 import type { readProcessIdentity } from '../../shared/managed-vm-process.js';
 import { readTcpListenPortOwner } from '../../shared/port-owner.js';
+import { writeControllerDiagnostic } from '../controller-diagnostic-logging.js';
 import type { ControllerToolLeaseRecordsTarget } from '../durable-state/controller-state-record-paths.js';
 import { settleGatewayChildDestructionTasks } from '../vm-ownership/gateway-child-destruction.js';
 import type {
@@ -325,7 +326,7 @@ function formatLeaseManagerError(error: unknown): string {
 }
 
 function writeLeaseManagerWarning(message: string): void {
-	process.stderr.write(`[lease-manager] ${message}\n`);
+	writeControllerDiagnostic('lease', message);
 }
 
 function assertCompatibleAgentLeaseRequest(
