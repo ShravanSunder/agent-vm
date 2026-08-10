@@ -378,13 +378,15 @@ class _PostToolCallHook:
         error_type: object = None,
         error_message: object = None,
         middleware_trace: object = None,
+        telemetry_schema_version: object = None,
     ) -> None:
         del args, result, task_id, session_id, tool_call_id, api_request_id
-        del error_type, error_message, middleware_trace
+        del error_type, error_message, middleware_trace, telemetry_schema_version
         self._runtime.framework_observability.on_post_tool_call(
             duration_ms=duration_ms,
             status=status,
             tool_name=tool_name,
+            turn_id=turn_id,
         )
         self._runtime.telemetry.observe_post_tool_call(
             duration_milliseconds=duration_ms,

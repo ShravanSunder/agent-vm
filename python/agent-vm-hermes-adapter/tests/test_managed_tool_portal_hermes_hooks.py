@@ -293,7 +293,7 @@ class ManagedToolPortalHermesHookBoundaryTests(unittest.TestCase):
             "unresolved",
         )
 
-    def test_session_profile_and_epoch_identities_are_independent(self) -> None:
+    def test_session_profile_and_epoch_identity_dimensions_are_independent(self) -> None:
         shared_cache = PluginStateCache[InjectionCacheKey, InjectionMarker](
             key_model=InjectionCacheKey,
             value_model=InjectionMarker,
@@ -303,9 +303,14 @@ class ManagedToolPortalHermesHookBoundaryTests(unittest.TestCase):
             inventory_snapshot=_ready_snapshot(),
             injection_state_cache=shared_cache,
         )
-        second_runtime = _Runtime(
-            epoch="epoch-b",
+        same_epoch_different_profile_runtime = _Runtime(
+            epoch="epoch-a",
             selected_projection=_projection(agent_id="agent-b"),
+            inventory_snapshot=_ready_snapshot(),
+            injection_state_cache=shared_cache,
+        )
+        same_profile_different_epoch_runtime = _Runtime(
+            epoch="epoch-b",
             inventory_snapshot=_ready_snapshot(),
             injection_state_cache=shared_cache,
         )
@@ -313,7 +318,12 @@ class ManagedToolPortalHermesHookBoundaryTests(unittest.TestCase):
         self.assertIsNotNone(_call_hook(first_runtime, session_id="session-a"))
         self.assertIsNone(_call_hook(first_runtime, session_id="session-a"))
         self.assertIsNotNone(_call_hook(first_runtime, session_id="session-b"))
-        self.assertIsNotNone(_call_hook(second_runtime, session_id="session-a"))
+        self.assertIsNotNone(
+            _call_hook(same_epoch_different_profile_runtime, session_id="session-a")
+        )
+        self.assertIsNotNone(
+            _call_hook(same_profile_different_epoch_runtime, session_id="session-a")
+        )
 
     def test_concurrent_first_turns_return_exactly_one_orientation(self) -> None:
         runtime = _Runtime(inventory_snapshot=_ready_snapshot())

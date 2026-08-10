@@ -756,6 +756,7 @@ class ManagedToolPortalCapabilityToolsTests(unittest.TestCase):
                     status="ok",
                     args=canary,
                     result=canary,
+                    telemetry_schema_version=canary,
                 )
             )
             self.assertIsNone(
@@ -771,6 +772,13 @@ class ManagedToolPortalCapabilityToolsTests(unittest.TestCase):
 
         self.assertNotIn(canary, repr(telemetry.framework_records))
         self.assertNotIn(canary, repr(telemetry.post_tool_call_records))
+        turn_parent = next(
+            handle for kind, _record, handle in telemetry.framework_records if kind == "turn.started"
+        )
+        tool_parent = next(
+            handle for kind, _record, handle in telemetry.framework_records if kind == "tool.completed"
+        )
+        self.assertIs(tool_parent, turn_parent)
 
     def test_observes_managed_tool_portal_handler_without_request_content(self) -> None:
         adapter, _client = build_adapter()
@@ -821,6 +829,7 @@ class ManagedToolPortalCapabilityToolsTests(unittest.TestCase):
                 session_id="must-not-export",
                 status="ok",
                 task_id="must-not-export",
+                telemetry_schema_version="hermes.telemetry.v1",
                 tool_call_id="must-not-export",
                 tool_name="tool_portal_list",
             )

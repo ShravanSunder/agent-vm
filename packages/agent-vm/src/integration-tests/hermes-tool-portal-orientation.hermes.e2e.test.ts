@@ -452,6 +452,10 @@ describeHermesToolPortalOrientationE2e('e2e: Hermes Tool Portal session orientat
 		const finalObservation = provider.observations().at(-1);
 		if (finalObservation === undefined) throw new Error('Expected final provider observation.');
 		expect(requireLatestUserContent(finalObservation)).not.toContain(orientationMarker);
+		const orientationBearingObservations = provider
+			.observations()
+			.filter((observation) => requireLatestUserContent(observation).includes(orientationMarker));
+		expect(orientationBearingObservations).toEqual([orientedObservation]);
 		const expectedSystemContents = systemContents(firstObservation);
 		expect(expectedSystemContents.length).toBeGreaterThan(0);
 		for (const observation of provider.observations()) {
