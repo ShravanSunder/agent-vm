@@ -89,11 +89,16 @@ describe('CI workflow topology', () => {
 			'      - name: Require prepared image caches',
 			parallelPreparationStart,
 		);
+		const vmPreparationBlock = workflow.slice(parallelPreparationStart, cacheHitBarrierPosition);
 		expect(parallelPreparationStart).toBeGreaterThanOrEqual(0);
 		expect(cacheHitBarrierPosition).toBeGreaterThan(parallelPreparationStart);
 		expect(workspaceSetupPosition).toBeGreaterThan(parallelPreparationStart);
 		expect(workspaceSetupPosition).toBeLessThan(cacheHitBarrierPosition);
 		expect(cacheHitBarrierPosition).toBeGreaterThan(workspaceSetupPosition);
+		expect(vmPreparationBlock).toContain(
+			'\n      - name: Set up system packages\n        uses: ./.github/actions/setup-system-packages',
+		);
+		expect(vmPreparationBlock).not.toContain('\n          - name: Set up system packages\n');
 	});
 
 	it('keys prepared images from all package build inputs and prepares both image families', async () => {

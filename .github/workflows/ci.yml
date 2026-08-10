@@ -212,8 +212,8 @@ jobs:
           - name: Set up Agent VM workspace
             uses: ./.github/actions/setup-agent-vm
 
-          - name: Set up system packages
-            uses: ./.github/actions/setup-system-packages
+      - name: Set up system packages
+        uses: ./.github/actions/setup-system-packages
 
       - name: Require prepared image caches
         env:
