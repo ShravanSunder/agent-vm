@@ -1,6 +1,7 @@
 import { type Context, type Hono } from 'hono';
 import type { z } from 'zod';
 
+import { writeControllerDiagnostic } from '../controller-diagnostic-logging.js';
 import { scrubGithubTokenFromOutput } from '../git-auth-support.js';
 import { PullDefaultValidationError } from '../git-pull-default-operations.js';
 import { PushBranchesValidationError } from '../git-push-operations.js';
@@ -93,7 +94,7 @@ async function parseJsonBodyWithSchema<TSchema extends z.ZodType>(
 }
 
 function writeControllerRouteLog(message: string): void {
-	process.stderr.write(`[controller-zone-operation-routes] ${message}\n`);
+	writeControllerDiagnostic('gateway', message);
 }
 
 function errorMessage(error: unknown, fallbackError: string): string {

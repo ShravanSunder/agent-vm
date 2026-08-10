@@ -10,6 +10,7 @@ import type { LoadedSystemConfig } from '../../config/system-config.js';
 import { runControllerDestroy as runControllerDestroyDefault } from '../../operations/destroy-zone.js';
 import { containsManagedVmTerminationUnprovenError } from '../../shared/controller-managed-vm-termination.js';
 import type { ActiveTaskRegistry, ActiveWorkerTask } from '../active-task-registry.js';
+import { writeControllerDiagnostic } from '../controller-diagnostic-logging.js';
 import type { ControllerWorkerTaskRuntimeRecordTarget } from '../durable-state/controller-state-record-paths.js';
 import { pullDefaultForTask, type PullDefaultRequest } from '../git-pull-default-operations.js';
 import {
@@ -95,7 +96,7 @@ async function recordActiveTaskEvent(options: {
 }
 
 function writeWorkerZoneRuntimeLog(message: string): void {
-	process.stderr.write(`[worker-zone-runtime] ${message}\n`);
+	writeControllerDiagnostic('gateway', message);
 }
 
 async function closeActiveWorkerTask(activeTask: ActiveWorkerTask): Promise<void> {

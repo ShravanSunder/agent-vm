@@ -3,6 +3,7 @@ import {
 	type GatewayRuntimeClientOptions,
 	type GatewayRuntimeTraceContext,
 } from '@agent-vm/agent-portal-sdk/gateway-runtime-client';
+import { getLogger } from '@logtape/logtape';
 
 import {
 	type AgentVmPluginConfigInput,
@@ -36,6 +37,8 @@ import {
 
 type OpenClawGatewayRuntimeClient = Pick<GatewayRuntimeClient, 'connect' | 'disconnect'> &
 	OpenClawToolPortalClient;
+
+const openClawPluginLogger = getLogger(['agent-vm', 'openclaw-plugin']);
 
 interface AgentVmPluginRegistrationApi {
 	readonly config?: AgentVmPluginConfigJsonObject;
@@ -140,7 +143,7 @@ export function registerAgentVmPlugin(
 				api: { registerTool },
 				clientProvider: getOpenClawGatewayRuntimeClient,
 				logger: {
-					warn: (message) => process.stderr.write(`${message}\n`),
+					warn: (message) => openClawPluginLogger.warn(message),
 				},
 			});
 		}
@@ -183,7 +186,7 @@ export function registerAgentVmPlugin(
 		api: { registerTool },
 		clientProvider: getOpenClawGatewayRuntimeClient,
 		logger: {
-			warn: (message) => process.stderr.write(`${message}\n`),
+			warn: (message) => openClawPluginLogger.warn(message),
 		},
 	});
 	options.onGatewayRuntimeClientCreated?.({

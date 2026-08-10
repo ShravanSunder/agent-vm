@@ -46,6 +46,8 @@
 		"@agent-vm/worker-control-contracts": "workspace:*",
 		"@hono/node-server": "^2.0.2",
 		"@hono/zod-validator": "^0.8.0",
+		"@logtape/logtape": "2.3.0",
+		"@logtape/otel": "2.3.0",
 		"@modelcontextprotocol/sdk": "^1.29.0",
 		"@openai/codex-sdk": "^0.142.5",
 		"@optique/core": "1.2.0",

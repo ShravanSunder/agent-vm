@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { configure, dispose, reset, type LogRecord, type Sink } from '@logtape/logtape';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -12,6 +13,7 @@ import {
 import e2ePlugin from './openclaw-plugin-registration.e2e.js';
 import defaultPlugin from './openclaw-plugin-registration.js';
 import type { OpenClawHttpRouteRegistration } from './openclaw-sandbox-sdk-contract.js';
+import type { RegisterToolPortalNativeToolsProps } from './tool-portal-native-tools.js';
 
 const TOOL_PORTAL_NATIVE_TOOL_NAMES = [
 	'tool_portal_list',
@@ -71,7 +73,9 @@ function createToolPortalPluginConfig(): {
 	};
 }
 
-afterEach(() => {
+afterEach(async () => {
+	await dispose().catch(() => undefined);
+	await reset();
 	vi.unstubAllEnvs();
 });
 
@@ -164,6 +168,101 @@ describe('createAgentVmPlugin', () => {
 		] as const) {
 			expect(registrationSource).not.toContain(forbiddenAuthorityConstructor);
 		}
+	});
+
+	async function importPluginRegistrationWithWarningProbe(
+		warningMessages: string[],
+	): Promise<typeof import('./openclaw-plugin-registration.js')> {
+		vi.doMock('./tool-portal-native-tools.js', async (importOriginal) => {
+			const actual = await importOriginal<typeof import('./tool-portal-native-tools.js')>();
+			return {
+				...actual,
+				registerToolPortalNativeTools: (props: RegisterToolPortalNativeToolsProps): void => {
+					props.logger?.warn?.(`native-tool-registration-${warningMessages.length + 1}`);
+					warningMessages.push('emitted');
+				},
+			};
+		});
+		return import('./openclaw-plugin-registration.js');
+	}
+
+	function expectCapturedPluginWarning(records: readonly LogRecord[], rawMessage: string): void {
+		expect(records).toContainEqual(
+			expect.objectContaining({
+				category: ['agent-vm', 'openclaw-plugin'],
+				level: 'warning',
+				rawMessage,
+			}),
+		);
+	}
+
+	it('routes the tool-discovery warning adapter through the host-configured logger', async () => {
+		const records: LogRecord[] = [];
+		const sink: Sink = (record): void => {
+			records.push(record);
+		};
+		await configure({
+			loggers: [
+				{
+					category: ['agent-vm', 'openclaw-plugin'],
+					lowestLevel: 'trace',
+					sinks: ['capture'],
+				},
+			],
+			reset: false,
+			sinks: { capture: sink },
+		});
+		const warningMessages: string[] = [];
+		vi.resetModules();
+		const { registerAgentVmPlugin } =
+			await importPluginRegistrationWithWarningProbe(warningMessages);
+
+		registerAgentVmPlugin({
+			pluginConfig: {
+				toolPortal: createToolPortalPluginConfig(),
+				zoneId: 'shravan',
+			},
+			registerTool: vi.fn(),
+			registrationMode: 'tool-discovery',
+		});
+
+		expect(warningMessages).toEqual(['emitted']);
+		expectCapturedPluginWarning(records, 'native-tool-registration-1');
+	});
+
+	it('routes the full-registration warning adapter through the host-configured logger', async () => {
+		const records: LogRecord[] = [];
+		const sink: Sink = (record): void => {
+			records.push(record);
+		};
+		await configure({
+			loggers: [
+				{
+					category: ['agent-vm', 'openclaw-plugin'],
+					lowestLevel: 'trace',
+					sinks: ['capture'],
+				},
+			],
+			reset: false,
+			sinks: { capture: sink },
+		});
+		const warningMessages: string[] = [];
+		vi.resetModules();
+		const { registerAgentVmPlugin } =
+			await importPluginRegistrationWithWarningProbe(warningMessages);
+
+		registerAgentVmPlugin({
+			pluginConfig: {
+				toolPortal: createToolPortalPluginConfig(),
+				zoneId: 'shravan',
+			},
+			registerService: vi.fn(),
+			registerTool: vi.fn(),
+			registrationMode: 'full',
+		});
+
+		expect(warningMessages).toEqual(['emitted']);
+		expectCapturedPluginWarning(records, 'native-tool-registration-1');
 	});
 
 	it('register does not throw when called in non-full mode', () => {

@@ -1,4 +1,5 @@
 import { zValidator } from '@hono/zod-validator';
+import { getLogger } from '@logtape/logtape';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { z } from 'zod';
@@ -7,10 +8,12 @@ import {
 	WORKER_CONTROL_READY_PATH,
 	type WorkerControlService,
 } from './control-session/worker-control-service.js';
+import { toSafeWorkerLogProperties } from './shared/process-logging.js';
 import { repoLocationSchema } from './shared/repo-location.js';
-import { writeStderr } from './shared/stderr.js';
 import { isTerminal } from './state/task-state.js';
 import type { TaskState } from './state/task-state.js';
+
+const serverLogger = getLogger(['agent-vm', 'worker', 'server']);
 
 function validationErrorHook(
 	result: {
@@ -118,8 +121,14 @@ export function createApp(deps: ServerDeps): Hono {
 				const result = await deps.submitTask(context.req.valid('json'));
 				return context.json(result, 201);
 			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
-				writeStderr(`[server] Failed to submit task: ${message}`);
+				serverLogger.error(
+					'Worker task submission failed.',
+					toSafeWorkerLogProperties({
+						event: 'task-submission-failed',
+						failureClass: 'request-failed',
+						error,
+					}),
+				);
 				return context.json({ error: 'task-submission-failed' }, 500);
 			}
 		},
@@ -147,8 +156,14 @@ export function createApp(deps: ServerDeps): Hono {
 			const result = await deps.closeTask(taskId);
 			return context.json(result, 200);
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			writeStderr(`[server] Failed to close task ${taskId}: ${message}`);
+			serverLogger.error(
+				'Worker task close failed.',
+				toSafeWorkerLogProperties({
+					event: 'task-close-failed',
+					failureClass: 'request-failed',
+					error,
+				}),
+			);
 			return context.json({ error: 'task-close-failed' }, 500);
 		}
 	});

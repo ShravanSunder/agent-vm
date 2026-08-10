@@ -1,5 +1,7 @@
 import type { ManagedVm } from '@agent-vm/managed-vm';
 
+import { writeControllerDiagnostic } from '../controller-diagnostic-logging.js';
+
 const toolVmLeaseLivenessTimeoutMs = 5_000;
 
 export async function isToolVmLeaseVmLive(lease: {
@@ -23,8 +25,9 @@ export async function isToolVmLeaseVmLive(lease: {
 		return probeResult !== false && probeResult.exitCode === 0;
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		process.stderr.write(
-			`[lease-manager] liveness check failed for lease '${lease.id}' in zone '${lease.zoneId}': ${message}\n`,
+		writeControllerDiagnostic(
+			'lease',
+			`liveness check failed for lease '${lease.id}' in zone '${lease.zoneId}': ${message}`,
 		);
 		return false;
 	} finally {

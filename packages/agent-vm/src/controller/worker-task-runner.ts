@@ -69,6 +69,7 @@ import {
 	type ControlSessionClient,
 	type WorkerControlRpcOperations,
 } from './control-session/index.js';
+import { writeControllerDiagnostic } from './controller-diagnostic-logging.js';
 import type { ControllerWorkerTaskRuntimeRecordTarget } from './durable-state/controller-state-record-paths.js';
 import { buildGithubAuthConfigArgs, scrubGithubTokenFromOutput } from './git-auth-support.js';
 import {
@@ -188,7 +189,7 @@ function deepMerge(base: unknown, override: unknown): unknown {
 }
 
 function writeStderr(message: string): void {
-	process.stderr.write(`${message}\n`);
+	writeControllerDiagnostic('runtime', message);
 }
 
 function toError(error: unknown): Error {

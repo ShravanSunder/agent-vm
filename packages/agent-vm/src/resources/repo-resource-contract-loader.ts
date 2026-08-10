@@ -12,12 +12,13 @@ import {
 	type ResolvedRepoResourcesDescription,
 	type ResolvedRepoResourcesFinal,
 } from '../config/resource-contracts/index.js';
+import { writeControllerDiagnostic } from '../controller/controller-diagnostic-logging.js';
 
 const REPO_RESOURCES_PATH = path.join('.agent-vm', 'repo-resources.ts');
 const REPO_CONTRACT_TIMEOUT_MS = 30_000;
 
 function writeRepoContractLoaderLog(message: string): void {
-	process.stderr.write(`[repo-resource-contract-loader] ${message}\n`);
+	writeControllerDiagnostic('resource', message);
 }
 
 function getErrorStderr(error: unknown): string | null {

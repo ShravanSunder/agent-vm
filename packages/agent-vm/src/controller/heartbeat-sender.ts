@@ -1,3 +1,5 @@
+import { writeControllerDiagnostic } from './controller-diagnostic-logging.js';
+
 const HEARTBEAT_CADENCE_MS_DEFAULT = 10_000;
 const HEARTBEAT_REQUEST_TIMEOUT_MS = 5_000;
 const HEARTBEAT_FAILURE_REWARN_INTERVAL = 10;
@@ -21,7 +23,7 @@ export interface HeartbeatHandle {
 }
 
 function defaultLogWarning(message: string): void {
-	process.stderr.write(`[heartbeat] ${message}\n`);
+	writeControllerDiagnostic('heartbeat', message);
 }
 
 export function startHeartbeatSender(

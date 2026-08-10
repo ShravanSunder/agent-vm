@@ -1,10 +1,12 @@
 /* oxlint-disable eslint/no-await-in-loop -- git setup commands intentionally run in order */
+import { getLogger } from '@logtape/logtape';
 import { execa } from 'execa';
 
-import { writeStderr } from '../shared/stderr.js';
+import { toSafeWorkerLogProperties } from '../shared/process-logging.js';
 
 const GIT_COMMAND_TIMEOUT_MS = 120_000;
 let loggedHomeFallback = false;
+const gitLogger = getLogger(['agent-vm', 'worker', 'coordinator']);
 
 export interface GitConfigOptions {
 	readonly userEmail: string;
@@ -43,7 +45,13 @@ interface GitResult {
 
 function buildGitEnvironment(): NodeJS.ProcessEnv {
 	if (!process.env.HOME && !loggedHomeFallback) {
-		writeStderr('[git-operations] HOME is unset; using /home/coder for git global config.');
+		gitLogger.warn(
+			'Worker Git HOME fallback is active.',
+			toSafeWorkerLogProperties({
+				event: 'git-home-fallback',
+				failureClass: 'environment-defaulted',
+			}),
+		);
 		loggedHomeFallback = true;
 	}
 	return {

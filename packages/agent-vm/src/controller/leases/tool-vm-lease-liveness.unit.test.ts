@@ -1,4 +1,5 @@
 import type { ManagedVm } from '@agent-vm/managed-vm';
+import { configure, dispose, reset, type LogRecord } from '@logtape/logtape';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createManagedExecProcessStub } from '../../testing/managed-vm-test-helpers.js';
@@ -9,13 +10,33 @@ const TEST_LEASE_IDENTITY = {
 	zoneId: 'shravan',
 } as const;
 
-beforeEach(() => {
+const capturedRecords: LogRecord[] = [];
+
+beforeEach(async () => {
+	capturedRecords.length = 0;
 	vi.useFakeTimers();
+	await configure({
+		loggers: [
+			{
+				category: ['agent-vm', 'controller'],
+				lowestLevel: 'trace',
+				sinks: ['capture'],
+			},
+		],
+		reset: true,
+		sinks: {
+			capture: (record): void => {
+				capturedRecords.push(record);
+			},
+		},
+	});
 });
 
-afterEach(() => {
+afterEach(async () => {
 	vi.restoreAllMocks();
 	vi.useRealTimers();
+	await dispose().catch(() => {});
+	await reset();
 });
 
 describe('isToolVmLeaseVmLive', () => {
@@ -44,23 +65,25 @@ describe('isToolVmLeaseVmLive', () => {
 		expect(exec).toHaveBeenCalledOnce();
 	});
 
-	it('returns false and writes a scoped warning when the VM probe throws', async () => {
+	it('returns false and emits a scoped warning when the VM probe throws', async () => {
 		// Arrange
 		const failure = new Error('QEMU monitor disconnected');
 		const exec = vi.fn<ManagedVm['exec']>(() => {
 			throw failure;
 		});
-		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 
 		// Act
 		const result = await isToolVmLeaseVmLive({ ...TEST_LEASE_IDENTITY, vm: { exec } });
 
 		// Assert
 		expect(result).toBe(false);
-		expect(stderrWrite).toHaveBeenCalledOnce();
-		expect(stderrWrite).toHaveBeenCalledWith(
-			"[lease-manager] liveness check failed for lease 'lease-1' in zone 'shravan': QEMU monitor disconnected\n",
-		);
+		expect(capturedRecords).toHaveLength(1);
+		expect(capturedRecords[0]).toMatchObject({
+			category: ['agent-vm', 'controller', 'lease'],
+			level: 'warning',
+			message: ['Controller diagnostic'],
+			properties: { event: 'failure', failureClass: 'failure' },
+		});
 	});
 
 	it('aborts the VM probe and returns false at exactly five seconds', async () => {

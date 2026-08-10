@@ -35,6 +35,7 @@ import type { PortalToolSelector } from '../portal-access-policy.js';
 import { decodePortalMasterKey } from '../portal-auth/agent-bearer-token.js';
 import { createUpstreamMcpClientRuntime } from '../upstream-mcp-client-runtime.js';
 import { parsePortalServerCliArgs as parsePortalServerCliArgsWithOptique } from './mcp-portal-cli-parser.js';
+import { createPortalServerLogger } from './process-logging.js';
 
 type PortalNodeServer = ReturnType<typeof serve>;
 type PortalServeFunction = typeof serve;
@@ -270,11 +271,7 @@ function createDeferredPort(): DeferredPort {
 }
 
 function defaultPortalServerLogger(): PortalServerLogger {
-	return {
-		log: (event) => {
-			process.stderr.write(`${JSON.stringify(event)}\n`);
-		},
-	};
+	return createPortalServerLogger();
 }
 
 export function handlePortalServerError(props: {

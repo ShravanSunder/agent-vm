@@ -397,8 +397,8 @@ describe('built Optique CLI binaries', () => {
 		// Assert
 		expect(stdout).toMatch(/Server listening on http:\/\/localhost:\d+/u);
 		expect(stderr).toBe('');
-		expect(exitCode).toBeNull();
-		expect(signal).toBe('SIGTERM');
+		expect(exitCode).toBe(0);
+		expect(signal).toBeNull();
 	});
 
 	it('performs a safe worker health effect through the built binary', async () => {

@@ -10,6 +10,13 @@ import { computeFingerprintFromConfigPath } from '../../build/gondolin-image-bui
 import type { ManagedGatewayImageBootProjection } from '../../build/gondolin-managed-vm-build-tooling.js';
 import { readPreparedManagedVmImage } from '../../build/prepared-gondolin-image-cache.js';
 import type { LoadedSystemConfig } from '../../config/system-config.js';
+import type { ControllerRuntime } from '../../controller/controller-runtime-types.js';
+import { createObservabilityRuntimeConfig } from '../../observability/observability-config.js';
+import {
+	configureProcessLogging,
+	type ProcessLoggingHandle,
+	type ProcessLoggingOptions,
+} from '../../observability/process-logging.js';
 import { type CliDependencies, type CliIo, requireZone } from '../agent-vm-cli-support.js';
 import { managedGatewayBootProjectionForGatewayType } from '../build-command.js';
 import { runControllerOperationCommand } from '../controller-operation-commands.js';
@@ -192,6 +199,142 @@ export type ControllerCommand =
 	  }
 	| ControllerOperationCommand;
 
+export interface ControllerStartExecutionOptions {
+	readonly configureProcessLogging?:
+		| ((options: ProcessLoggingOptions) => Promise<ProcessLoggingHandle>)
+		| undefined;
+	readonly processRoot?: boolean;
+	readonly processLoggingStderr?: NodeJS.WritableStream;
+}
+
+export interface ControllerStartLifecycleOptions {
+	readonly createShutdownSignalWaiter?: () => ProcessShutdownSignalWaiter;
+	readonly io: CliIo;
+	readonly logging: ProcessLoggingHandle;
+	readonly runtime: ControllerRuntime;
+	readonly selectedZoneId: string;
+	readonly waitForShutdownSignal?: () => Promise<void>;
+}
+
+export interface ProcessShutdownSignalWaiter {
+	readonly signal: Promise<void>;
+	readonly cleanup: () => void;
+}
+
+function isNodeWritableStream(value: CliIo['stderr']): value is NodeJS.WritableStream {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		'writable' in value &&
+		typeof value.writable === 'boolean' &&
+		'end' in value &&
+		typeof value.end === 'function' &&
+		'on' in value &&
+		typeof value.on === 'function'
+	);
+}
+
+export function resolveControllerProcessLoggingStderr(
+	io: CliIo,
+	executionOptions: ControllerStartExecutionOptions,
+): NodeJS.WritableStream {
+	return (
+		executionOptions.processLoggingStderr ??
+		(isNodeWritableStream(io.stderr) ? io.stderr : process.stderr)
+	);
+}
+
+export function createProcessShutdownSignalWaiter(): ProcessShutdownSignalWaiter {
+	let resolveSignal: (() => void) | undefined;
+	let signaled = false;
+	let cleanedUp = false;
+	const signal = new Promise<void>((resolve) => {
+		resolveSignal = resolve;
+	});
+	const onSignal = (): void => {
+		if (signaled) {
+			return;
+		}
+		signaled = true;
+		resolveSignal?.();
+	};
+	process.on('SIGINT', onSignal);
+	process.on('SIGTERM', onSignal);
+	return {
+		signal,
+		cleanup: (): void => {
+			if (cleanedUp) {
+				return;
+			}
+			cleanedUp = true;
+			process.off('SIGINT', onSignal);
+			process.off('SIGTERM', onSignal);
+		},
+	};
+}
+
+export function waitForProcessShutdownSignal(): Promise<void> {
+	const waiter = createProcessShutdownSignalWaiter();
+	return waiter.signal.finally(waiter.cleanup);
+}
+
+function writeControllerStartReadiness(
+	io: CliIo,
+	runtime: ControllerRuntime,
+	selectedZoneId: string,
+): void {
+	const startedZone = runtime.zones.find((runtimeZone) => runtimeZone.zoneId === selectedZoneId);
+	io.stdout.write(
+		`${JSON.stringify({ controllerPort: runtime.controllerPort, ingress: startedZone?.gateway?.ingress ?? null, vmId: startedZone?.gateway?.vm.id ?? null, zoneId: selectedZoneId }, null, 2)}\n`,
+	);
+}
+
+async function reportSecondaryLoggingShutdownFailure(io: CliIo): Promise<void> {
+	try {
+		io.stderr.write('Controller process logging shutdown failed.\n');
+	} catch {
+		// The product result remains authoritative when stderr itself is unavailable.
+	}
+}
+
+export async function runControllerStartLifecycle(
+	options: ControllerStartLifecycleOptions,
+): Promise<void> {
+	writeControllerStartReadiness(options.io, options.runtime, options.selectedZoneId);
+	const shutdownSignalWaiter =
+		options.waitForShutdownSignal === undefined
+			? (options.createShutdownSignalWaiter ?? createProcessShutdownSignalWaiter)()
+			: {
+					signal: options.waitForShutdownSignal(),
+					cleanup: (): void => undefined,
+				};
+
+	let closePromise: Promise<void> | undefined;
+	const closeRuntime = (): Promise<void> => {
+		closePromise ??= options.runtime.close();
+		return closePromise;
+	};
+	let productCloseError: unknown;
+	try {
+		await shutdownSignalWaiter.signal;
+		try {
+			await closeRuntime();
+		} catch (error) {
+			productCloseError = error;
+		}
+		try {
+			await options.logging.shutdown();
+		} catch {
+			await reportSecondaryLoggingShutdownFailure(options.io);
+		}
+		if (productCloseError !== undefined) {
+			throw productCloseError;
+		}
+	} finally {
+		shutdownSignalWaiter.cleanup();
+	}
+}
+
 function createControllerOperationParser<TName extends ControllerOperationName>(
 	name: TName,
 	description: string,
@@ -328,6 +471,7 @@ export async function runControllerCommand(
 	io: CliIo,
 	dependencies: CliDependencies,
 	commandValue: ControllerCommand,
+	executionOptions: ControllerStartExecutionOptions = {},
 ): Promise<void> {
 	if (commandValue.command === 'controller.start') {
 		const systemConfig = await loadSystemConfigFromOption(
@@ -340,21 +484,63 @@ export async function runControllerCommand(
 			selectedZone.id,
 			dependencies,
 		);
-		const runTask = await createRunTask(io);
-		const runtime = await dependencies.startControllerRuntime(
-			{
-				...(prebuiltImage === undefined
-					? {}
-					: { prebuiltGatewayImages: { [selectedZone.id]: prebuiltImage } }),
-				systemConfig,
-				zoneIds: [selectedZone.id],
-			},
-			{ runTask },
-		);
-		const startedZone = runtime.zones.find((runtimeZone) => runtimeZone.zoneId === selectedZone.id);
-		io.stdout.write(
-			`${JSON.stringify({ controllerPort: runtime.controllerPort, ingress: startedZone?.gateway?.ingress ?? null, vmId: startedZone?.gateway?.vm.id ?? null, zoneId: selectedZone.id }, null, 2)}\n`,
-		);
+		const processLoggingConfig = createObservabilityRuntimeConfig(systemConfig);
+		if (!executionOptions.processRoot) {
+			const runTask = await createRunTask(io);
+			const runtime = await dependencies.startControllerRuntime(
+				{
+					...(prebuiltImage === undefined
+						? {}
+						: { prebuiltGatewayImages: { [selectedZone.id]: prebuiltImage } }),
+					systemConfig,
+					zoneIds: [selectedZone.id],
+				},
+				{ runTask },
+			);
+			writeControllerStartReadiness(io, runtime, selectedZone.id);
+			return;
+		}
+		let logging: ProcessLoggingHandle;
+		try {
+			const configureLogging = executionOptions.configureProcessLogging ?? configureProcessLogging;
+			logging = await configureLogging({
+				observabilityConfig: processLoggingConfig,
+				serviceName: 'agent-vm-controller',
+				stderr: resolveControllerProcessLoggingStderr(io, executionOptions),
+			});
+		} catch {
+			throw new Error('Controller process logging setup failed.');
+		}
+		let runtimeStarted = false;
+		try {
+			const runTask = await createRunTask(io);
+			const runtime = await dependencies.startControllerRuntime(
+				{
+					...(prebuiltImage === undefined
+						? {}
+						: { prebuiltGatewayImages: { [selectedZone.id]: prebuiltImage } }),
+					systemConfig,
+					zoneIds: [selectedZone.id],
+				},
+				{ runTask },
+			);
+			runtimeStarted = true;
+			await runControllerStartLifecycle({
+				io,
+				logging,
+				runtime,
+				selectedZoneId: selectedZone.id,
+			});
+		} catch (error) {
+			if (!runtimeStarted) {
+				try {
+					await logging.shutdown();
+				} catch {
+					await reportSecondaryLoggingShutdownFailure(io);
+				}
+			}
+			throw error;
+		}
 		return;
 	}
 	if (commandValue.command === 'controller.cleanup') {

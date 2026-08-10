@@ -1,8 +1,10 @@
 import fs from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { getLogger } from '@logtape/logtape';
+
+import { toSafeWorkerLogProperties } from '../shared/process-logging.js';
 import type { ReviewResult } from '../shared/review-result.js';
-import { writeStderr } from '../shared/stderr.js';
 import { replayEvents } from './event-log.js';
 import type {
 	PhaseName,
@@ -13,6 +15,8 @@ import type {
 	VerificationCommandResult,
 } from './task-event-types.js';
 import { TERMINAL_STATUSES } from './task-event-types.js';
+
+const stateLogger = getLogger(['agent-vm', 'worker', 'state']);
 
 export interface ControllerGitPushState {
 	readonly repoUrl: string;
@@ -383,7 +387,13 @@ export async function loadTaskStateFromLog(filePath: string): Promise<TaskState 
 
 	const firstEvent = events[0];
 	if (!firstEvent || firstEvent.data.event !== 'task-accepted') {
-		writeStderr(`Skipping ${filePath}: first event is not task-accepted`);
+		stateLogger.warn(
+			'Worker task event log does not start with task acceptance; skipping it.',
+			toSafeWorkerLogProperties({
+				event: 'task-state-first-event-invalid',
+				failureClass: 'invalid-state',
+			}),
+		);
 		return null;
 	}
 

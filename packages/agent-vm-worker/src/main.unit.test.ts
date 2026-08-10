@@ -1,8 +1,10 @@
 import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { Writable } from 'node:stream';
 import { pathToFileURL } from 'node:url';
 
+import { getConfig, reset } from '@logtape/logtape';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -10,6 +12,7 @@ import {
 	isCliEntrypoint,
 	ReportedCliError,
 	runAgentVmWorkerCli,
+	runWorkerProcess,
 	type CliIo,
 	type WorkerCliOperations,
 } from './main.js';
@@ -182,6 +185,85 @@ describe('agent-vm-worker cli', () => {
 			command: 'serve',
 			options: { config: undefined, port: 19_123, stateDir: undefined },
 		});
+	});
+
+	it('configures process logging before dispatching the worker operation', async () => {
+		const stderr = new Writable({ write: (_chunk, _encoding, callback) => callback() });
+		const observedConfiguration: boolean[] = [];
+		const operations: WorkerCliOperations = {
+			runHealth: async (): Promise<void> => undefined,
+			runServe: async (_options, _io, logging): Promise<void> => {
+				observedConfiguration.push(getConfig() !== null);
+				await logging?.shutdown();
+			},
+		};
+
+		try {
+			await runWorkerProcess({ argv: ['serve'], io: { stdout: stderr, stderr }, operations });
+			expect(observedConfiguration).toEqual([true]);
+		} finally {
+			if (getConfig() !== null) await reset();
+		}
+	});
+
+	it('keeps process logging setup failure bounded at the worker root', async () => {
+		const stderrChunks: string[] = [];
+		let startupError: unknown;
+		try {
+			await runWorkerProcess({
+				argv: ['--help'],
+				io: {
+					stderr: new Writable({
+						write: (chunk: Uint8Array, _encoding, callback): void => {
+							stderrChunks.push(Buffer.from(chunk).toString('utf8'));
+							callback();
+						},
+					}),
+					stdout: new Writable({
+						write: (_chunk, _encoding, callback): void => callback(),
+					}),
+				},
+				configureProcessLogging: async () => {
+					throw new Error('connect https://collector.invalid/v1/logs with stack details');
+				},
+			});
+		} catch (error: unknown) {
+			startupError = error;
+		}
+
+		expect(startupError).toBeInstanceOf(Error);
+		expect((startupError as Error).message).toBe('Worker process logging setup failed.');
+		handleCliMainError(startupError, {
+			write: (chunk: string | Uint8Array): boolean => {
+				stderrChunks.push(String(chunk));
+				return true;
+			},
+		});
+		expect(stderrChunks).toEqual(['Worker process logging setup failed.\n']);
+	});
+
+	it('reports secondary logging shutdown failure without changing a successful help result', async () => {
+		const stderrChunks: string[] = [];
+		const stderr = new Writable({
+			write: (chunk: Uint8Array, _encoding, callback): void => {
+				stderrChunks.push(Buffer.from(chunk).toString('utf8'));
+				callback();
+			},
+		});
+		const configureLogging = vi.fn(async () => ({
+			shutdown: async (): Promise<void> => {
+				throw new Error('logging shutdown failed');
+			},
+		}));
+
+		await expect(
+			runWorkerProcess({
+				argv: ['--help'],
+				io: { stdout: stderr, stderr },
+				configureProcessLogging: configureLogging,
+			}),
+		).resolves.toBeUndefined();
+		expect(stderrChunks.join('')).toContain('Worker process logging shutdown failed.\n');
 	});
 
 	it('keeps operation failures as in-process promise failures', async () => {

@@ -1,8 +1,12 @@
 import fs from 'node:fs/promises';
 import { dirname } from 'node:path';
 
-import { writeStderr } from '../shared/stderr.js';
+import { getLogger } from '@logtape/logtape';
+
+import { toSafeWorkerLogProperties } from '../shared/process-logging.js';
 import type { TaskEvent, TimestampedEvent } from './task-event-types.js';
+
+const stateLogger = getLogger(['agent-vm', 'worker', 'state']);
 
 function isTimestampedEvent(value: unknown): value is TimestampedEvent {
 	if (typeof value !== 'object' || value === null) return false;
@@ -58,7 +62,14 @@ export async function replayEvents(filePath: string): Promise<readonly Timestamp
 			events.push(parsedJson);
 		} catch (error) {
 			if (isLastLine) {
-				writeStderr(`Skipping incomplete final line in ${filePath}: ${line.slice(0, 50)}...`);
+				stateLogger.warn(
+					'Worker event log has an incomplete final line; skipping it.',
+					toSafeWorkerLogProperties({
+						event: 'event-log-tail-incomplete',
+						failureClass: 'incomplete',
+						error,
+					}),
+				);
 			} else {
 				throw new Error(
 					`Corrupt event at line ${lineIndex + 1} in ${filePath}: ${error instanceof Error ? error.message : String(error)}`,

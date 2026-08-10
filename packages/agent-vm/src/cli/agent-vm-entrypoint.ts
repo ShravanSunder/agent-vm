@@ -32,7 +32,10 @@ import { runBackupCommandOperation } from './commands/backup-definition.js';
 import { runBuildCommandOperation } from './commands/build-definition.js';
 import { runCacheCommandOperation } from './commands/cache-definition.js';
 import { runConfigCommand } from './commands/config-definition.js';
-import { runControllerCommand } from './commands/controller-definition.js';
+import {
+	runControllerCommand,
+	type ControllerStartExecutionOptions,
+} from './commands/controller-definition.js';
 import { createAgentVmParser, type AgentVmCommand } from './commands/create-app.js';
 import { runDoctorCommand } from './commands/doctor-definition.js';
 import { runInitCommand } from './commands/init-definition.js';
@@ -49,6 +52,7 @@ export async function dispatchAgentVmCommand(
 	commandValue: AgentVmCommand,
 	io: CliIo,
 	dependencies: CliDependencies,
+	executionOptions: ControllerStartExecutionOptions = {},
 ): Promise<void> {
 	switch (commandValue.command) {
 		case 'init':
@@ -107,7 +111,7 @@ export async function dispatchAgentVmCommand(
 		case 'controller.logs':
 		case 'controller.credentials.check':
 		case 'controller.credentials.refresh':
-			await runControllerCommand(io, dependencies, commandValue);
+			await runControllerCommand(io, dependencies, commandValue, executionOptions);
 			return;
 		default: {
 			const unreachableCommand: never = commandValue;
@@ -120,6 +124,7 @@ export async function runAgentVmCli(
 	argv: readonly string[],
 	io: CliIo,
 	dependencies: CliDependencies = defaultCliDependencies,
+	executionOptions: ControllerStartExecutionOptions = {},
 ): Promise<void> {
 	const cliVersion = await (dependencies.resolveCliVersion ?? resolveCliVersion)();
 	const parseErrorChunks: string[] = [];
@@ -144,7 +149,7 @@ export async function runAgentVmCli(
 	if (result.kind === 'parse-error') {
 		throw new ReportedCliError(parseErrorChunks.join('') || 'CLI argument parsing failed.');
 	}
-	await dispatchAgentVmCommand(result.value, io, dependencies);
+	await dispatchAgentVmCommand(result.value, io, dependencies, executionOptions);
 }
 
 export { loadOptionalLocalEnvironmentFile };
@@ -164,10 +169,15 @@ export function handleCliMainError(
 }
 
 async function main(): Promise<void> {
-	await runAgentVmCli(process.argv.slice(2), {
-		stderr: process.stderr,
-		stdout: process.stdout,
-	});
+	await runAgentVmCli(
+		process.argv.slice(2),
+		{
+			stderr: process.stderr,
+			stdout: process.stdout,
+		},
+		defaultCliDependencies,
+		{ processRoot: true },
+	);
 }
 
 export function isCliEntrypoint(importMetaUrl: string, argvEntryPath: string | undefined): boolean {

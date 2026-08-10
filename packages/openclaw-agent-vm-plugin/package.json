@@ -37,6 +37,7 @@
 		"@agent-vm/agent-portal-sdk": "workspace:*",
 		"@agent-vm/config-contracts": "workspace:*",
 		"@agent-vm/gateway-lifecycle": "workspace:*",
+		"@logtape/logtape": "2.3.0",
 		"zod": "^4.4.3"
 	}
 }

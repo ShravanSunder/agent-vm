@@ -1,15 +1,25 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { Writable } from 'node:stream';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { computeFingerprintFromConfigPath } from '../../build/gondolin-image-builder.js';
 import { managedVmImageAssetFileNames } from '../../build/gondolin-managed-vm-build-tooling.js';
 import type { ManagedGatewayImageBootProjection } from '../../build/gondolin-managed-vm-build-tooling.js';
 import { writePreparedManagedVmImage } from '../../build/prepared-gondolin-image-cache.js';
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../../config/system-config.js';
-import { isGatewayImageCached } from './controller-definition.js';
+import type { ControllerRuntime } from '../../controller/controller-runtime-types.js';
+import type { ProcessLoggingHandle } from '../../observability/process-logging.js';
+import { defaultCliDependencies } from '../agent-vm-cli-support.js';
+import {
+	createProcessShutdownSignalWaiter,
+	isGatewayImageCached,
+	resolveControllerProcessLoggingStderr,
+	runControllerCommand,
+	runControllerStartLifecycle,
+} from './controller-definition.js';
 
 const temporaryDirectories: string[] = [];
 
@@ -249,5 +259,205 @@ describe('isGatewayImageCached', () => {
 		});
 
 		await expect(isGatewayImageCached(systemConfig, 'coding-agent')).resolves.toBe(false);
+	});
+});
+
+function createLifecycleRuntime(close: () => Promise<void>): ControllerRuntime {
+	return {
+		close,
+		controllerPort: 18_800,
+		zones: [],
+	};
+}
+
+function createLifecycleLoggingHandle(shutdown: () => Promise<void>): ProcessLoggingHandle {
+	return { shutdown };
+}
+
+describe('runControllerStartLifecycle', () => {
+	it('uses the injected full stderr stream for process-root logging', () => {
+		const injectedStderr = new Writable({
+			write: (_chunk, _encoding, callback) => {
+				callback();
+			},
+		});
+
+		expect(
+			resolveControllerProcessLoggingStderr(
+				{ stderr: injectedStderr, stdout: { write: () => true } },
+				{},
+			),
+		).toBe(injectedStderr);
+	});
+
+	it('prints readiness, closes the product once, then disposes logging once', async () => {
+		const events: string[] = [];
+		const stdoutChunks: string[] = [];
+		const stdout = {
+			write: vi.fn((chunk: string | Uint8Array) => {
+				stdoutChunks.push(String(chunk));
+				return true;
+			}),
+		};
+
+		await runControllerStartLifecycle({
+			io: { stderr: { write: () => true }, stdout },
+			logging: createLifecycleLoggingHandle(async () => {
+				events.push('logging.shutdown');
+			}),
+			runtime: createLifecycleRuntime(async () => {
+				events.push('runtime.close');
+			}),
+			selectedZoneId: 'zone-1',
+			waitForShutdownSignal: async () => {
+				events.push('signal');
+			},
+		});
+
+		expect(events).toEqual(['signal', 'runtime.close', 'logging.shutdown']);
+		expect(stdoutChunks).toHaveLength(1);
+		expect(JSON.parse(stdoutChunks[0] ?? '{}')).toEqual({
+			controllerPort: 18_800,
+			ingress: null,
+			vmId: null,
+			zoneId: 'zone-1',
+		});
+	});
+
+	it('shares the close promise when shutdown is requested more than once', async () => {
+		let resolveClose: (() => void) | undefined;
+		const close = vi.fn(
+			() =>
+				new Promise<void>((resolve) => {
+					resolveClose = resolve;
+				}),
+		);
+		let resolveSignal: (() => void) | undefined;
+		const waitForShutdownSignal = vi.fn(
+			() =>
+				new Promise<void>((resolve) => {
+					resolveSignal = resolve;
+				}),
+		);
+		const lifecycle = runControllerStartLifecycle({
+			io: { stderr: { write: () => true }, stdout: { write: () => true } },
+			logging: createLifecycleLoggingHandle(async () => {}),
+			runtime: createLifecycleRuntime(close),
+			selectedZoneId: 'zone-1',
+			waitForShutdownSignal,
+		});
+
+		resolveSignal?.();
+		await Promise.resolve();
+		resolveClose?.();
+		await lifecycle;
+
+		expect(close).toHaveBeenCalledOnce();
+		expect(waitForShutdownSignal).toHaveBeenCalledOnce();
+	});
+
+	it('keeps a product close error primary when logging disposal also fails', async () => {
+		const productError = new Error('product close failed');
+		const stderrChunks: string[] = [];
+
+		await expect(
+			runControllerStartLifecycle({
+				io: {
+					stderr: {
+						write: (chunk: string | Uint8Array) => {
+							stderrChunks.push(String(chunk));
+							return true;
+						},
+					},
+					stdout: { write: () => true },
+				},
+				logging: createLifecycleLoggingHandle(async () => {
+					throw new Error('logging close failed');
+				}),
+				runtime: createLifecycleRuntime(async () => {
+					throw productError;
+				}),
+				selectedZoneId: 'zone-1',
+				waitForShutdownSignal: async () => {},
+			}),
+		).rejects.toBe(productError);
+
+		expect(stderrChunks).toEqual(['Controller process logging shutdown failed.\n']);
+	});
+
+	it('shares one close path across a second signal while product shutdown is pending', async () => {
+		const initialSigintListenerCount = process.listenerCount('SIGINT');
+		const initialSigtermListenerCount = process.listenerCount('SIGTERM');
+		let resolveClose: (() => void) | undefined;
+		const close = vi.fn(
+			() =>
+				new Promise<void>((resolve) => {
+					resolveClose = resolve;
+				}),
+		);
+		const loggingShutdown = vi.fn(async () => {});
+		const lifecycle = runControllerStartLifecycle({
+			createShutdownSignalWaiter: createProcessShutdownSignalWaiter,
+			io: { stderr: { write: () => true }, stdout: { write: () => true } },
+			logging: createLifecycleLoggingHandle(loggingShutdown),
+			runtime: createLifecycleRuntime(close),
+			selectedZoneId: 'zone-1',
+		});
+
+		process.emit('SIGTERM');
+		await Promise.resolve();
+		process.emit('SIGINT');
+		expect(close).toHaveBeenCalledOnce();
+		expect(loggingShutdown).not.toHaveBeenCalled();
+		expect(process.listenerCount('SIGINT')).toBe(initialSigintListenerCount + 1);
+		expect(process.listenerCount('SIGTERM')).toBe(initialSigtermListenerCount + 1);
+
+		resolveClose?.();
+		await lifecycle;
+
+		expect(loggingShutdown).toHaveBeenCalledOnce();
+		expect(process.listenerCount('SIGINT')).toBe(initialSigintListenerCount);
+		expect(process.listenerCount('SIGTERM')).toBe(initialSigtermListenerCount);
+	});
+});
+
+describe('controller process-root setup', () => {
+	it('reports a bounded startup failure when process logging setup rejects', async () => {
+		const systemConfig = await createGatewayImageCacheFixture('setup-failure-fingerprint');
+		const stderrChunks: string[] = [];
+		const rawSetupError = new Error(
+			'connect https://collector.invalid/v1/logs with Authorization: secret-value',
+		);
+
+		await expect(
+			runControllerCommand(
+				{
+					stderr: {
+						write: (chunk: string | Uint8Array): boolean => {
+							stderrChunks.push(String(chunk));
+							return true;
+						},
+					},
+					stdout: { write: () => true },
+				},
+				{
+					...defaultCliDependencies,
+					isGatewayImageCached: async () => true,
+					loadSystemConfig: async () => systemConfig,
+				},
+				{
+					command: 'controller.start',
+					options: { config: systemConfig.systemConfigPath, zone: 'coding-agent' },
+				},
+				{
+					configureProcessLogging: async () => {
+						throw rawSetupError;
+					},
+					processRoot: true,
+				},
+			),
+		).rejects.toThrow('Controller process logging setup failed.');
+
+		expect(stderrChunks).toEqual([]);
 	});
 });

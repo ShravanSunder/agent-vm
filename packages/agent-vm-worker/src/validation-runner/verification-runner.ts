@@ -2,9 +2,12 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+import { getLogger } from '@logtape/logtape';
 import { execa } from 'execa';
 
-import { writeStderr } from '../shared/stderr.js';
+import { toSafeWorkerLogProperties } from '../shared/process-logging.js';
+
+const executorLogger = getLogger(['agent-vm', 'worker', 'executor']);
 
 export type CommandStatus = 'passed' | 'failed' | 'timeout';
 
@@ -218,8 +221,14 @@ async function writeRawLog(
 		await fs.writeFile(filePath, `${header}${result.rawOutput}\n`, 'utf-8');
 		return filePath;
 	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		writeStderr(`[verification-runner] Failed to write raw log ${filePath}: ${message}`);
+		executorLogger.error(
+			'Worker verification raw log could not be written.',
+			toSafeWorkerLogProperties({
+				event: 'verification-raw-log-write-failed',
+				failureClass: 'persistence-failed',
+				error,
+			}),
+		);
 		return undefined;
 	}
 }

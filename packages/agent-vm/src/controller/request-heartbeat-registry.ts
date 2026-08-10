@@ -1,3 +1,4 @@
+import { writeControllerDiagnostic } from './controller-diagnostic-logging.js';
 import {
 	type HeartbeatHandle,
 	type HeartbeatSenderProps,
@@ -19,7 +20,7 @@ export interface RequestHeartbeatRegistryProps {
 }
 
 function defaultLogWarning(message: string): void {
-	process.stderr.write(`[request-heartbeat-registry] ${message}\n`);
+	writeControllerDiagnostic('heartbeat', message);
 }
 
 export class RequestHeartbeatRegistry {

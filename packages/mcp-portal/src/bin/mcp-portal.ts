@@ -20,6 +20,11 @@ import {
 	type PrintClientConfigCommand,
 } from '../cli/mcp-portal-cli-parser.js';
 import {
+	configureProcessLogging,
+	type ConfigureProcessLoggingProps,
+	type ProcessLoggingHandle,
+} from '../cli/process-logging.js';
+import {
 	buildProfilePolicyMaps,
 	createServeSecretResolver,
 	deriveApprovalHmacKeysFromMasterKey,
@@ -53,6 +58,9 @@ export interface PortalCatalogFile {
 }
 
 export interface AgentVmMcpPortalRuntimeProps {
+	readonly configureProcessLogging?:
+		| ((props: ConfigureProcessLoggingProps) => Promise<ProcessLoggingHandle>)
+		| undefined;
 	readonly env?: Readonly<Record<string, string | undefined>>;
 	readonly secretResolver?: SecretResolver;
 }
@@ -72,7 +80,7 @@ function normalizeCredentialProxyUrl(value: string): string {
 }
 
 type RequiredPortalRuntimeProps = Required<Pick<AgentVmMcpPortalRuntimeProps, 'env'>> &
-	Pick<AgentVmMcpPortalRuntimeProps, 'secretResolver'>;
+	Pick<AgentVmMcpPortalRuntimeProps, 'configureProcessLogging' | 'secretResolver'>;
 
 async function createCliSecretResolver(props: RequiredPortalRuntimeProps): Promise<SecretResolver> {
 	return props.secretResolver ?? (await createServeSecretResolver(props.env));
@@ -209,40 +217,58 @@ function credentialProxyUrlFromConfig(
 type PortalShutdownSignal = 'SIGINT' | 'SIGTERM';
 interface PortalSignalTarget {
 	readonly off: (signal: PortalShutdownSignal, listener: () => void) => void;
-	readonly once: (signal: PortalShutdownSignal, listener: () => void) => void;
+	readonly on: (signal: PortalShutdownSignal, listener: () => void) => void;
 }
 
 export interface RunningPortalServer {
 	readonly close: () => Promise<void>;
 }
 
-function waitForPortalShutdownSignal(
-	signalTarget: PortalSignalTarget = process,
-): Promise<PortalShutdownSignal> {
-	const signals = ['SIGINT', 'SIGTERM'] satisfies readonly PortalShutdownSignal[];
-	return new Promise((resolve) => {
-		const listeners = new Map<PortalShutdownSignal, () => void>();
-		for (const signal of signals) {
-			const listener = (): void => {
-				for (const [registeredSignal, registeredListener] of listeners) {
-					signalTarget.off(registeredSignal, registeredListener);
-				}
-				resolve(signal);
-			};
-			listeners.set(signal, listener);
-			signalTarget.once(signal, listener);
-		}
-	});
-}
-
 export async function waitUntilPortalServerShutdown(props: {
+	readonly onShutdownComplete?: () => Promise<void>;
 	readonly server: RunningPortalServer;
 	readonly signalTarget?: PortalSignalTarget;
 }): Promise<void> {
+	const signalTarget = props.signalTarget ?? process;
+	const signals = ['SIGINT', 'SIGTERM'] satisfies readonly PortalShutdownSignal[];
+	const listeners = new Map<PortalShutdownSignal, () => void>();
+	let closePromise: Promise<void> | undefined;
+	const closeServer = (): Promise<void> => {
+		closePromise ??= Promise.resolve().then(() => props.server.close());
+		return closePromise;
+	};
+	const shutdownPromise = new Promise<void>((resolve, reject) => {
+		for (const signal of signals) {
+			const listener = (): void => {
+				void closeServer().then(resolve, reject);
+			};
+			listeners.set(signal, listener);
+			signalTarget.on(signal, listener);
+		}
+	});
+	let closeFailure: { readonly error: unknown } | undefined;
+	let completionFailure: { readonly error: unknown } | undefined;
 	try {
-		await waitForPortalShutdownSignal(props.signalTarget);
+		try {
+			await shutdownPromise;
+		} catch (error: unknown) {
+			closeFailure = { error };
+		}
+		try {
+			await props.onShutdownComplete?.();
+		} catch (error: unknown) {
+			completionFailure = { error };
+		}
 	} finally {
-		await props.server.close();
+		for (const [signal, listener] of listeners) {
+			signalTarget.off(signal, listener);
+		}
+	}
+	if (closeFailure !== undefined) {
+		throw closeFailure.error;
+	}
+	if (completionFailure !== undefined) {
+		throw completionFailure.error;
 	}
 }
 
@@ -362,22 +388,45 @@ async function dispatchMcpPortalCommand(
 		case 'mcp-proxy.print-client-config':
 			return await printClientConfig(command, runtimeProps);
 		case 'mcp-proxy.serve': {
-			const injectedSecretResolver = runtimeProps.secretResolver;
-			const server = await startPortalServer({
-				args: command.options,
-				env: runtimeProps.env,
-				...(injectedSecretResolver === undefined
-					? {}
-					: {
-							resolveSecret: (secret) =>
-								resolveSecretValue(secret, {
-									env: runtimeProps.env,
-									secretResolver: injectedSecretResolver,
-								}),
-						}),
-			});
-			await waitUntilPortalServerShutdown({ server });
-			return 0;
+			let logging: ProcessLoggingHandle;
+			try {
+				const configureLogging = runtimeProps.configureProcessLogging ?? configureProcessLogging;
+				logging = await configureLogging({ stderr: process.stderr });
+			} catch {
+				throw new Error('mcp-portal: process logging setup failed.');
+			}
+			let loggingShutdownAttempted = false;
+			const shutdownLogging = async (): Promise<void> => {
+				if (loggingShutdownAttempted) {
+					return;
+				}
+				loggingShutdownAttempted = true;
+				try {
+					await logging.shutdown();
+				} catch {
+					process.stderr.write('mcp-portal: logging shutdown failed\n');
+				}
+			};
+			try {
+				const injectedSecretResolver = runtimeProps.secretResolver;
+				const server = await startPortalServer({
+					args: command.options,
+					env: runtimeProps.env,
+					...(injectedSecretResolver === undefined
+						? {}
+						: {
+								resolveSecret: (secret) =>
+									resolveSecretValue(secret, {
+										env: runtimeProps.env,
+										secretResolver: injectedSecretResolver,
+									}),
+							}),
+				});
+				await waitUntilPortalServerShutdown({ onShutdownComplete: shutdownLogging, server });
+				return 0;
+			} finally {
+				await shutdownLogging();
+			}
 		}
 		case 'mcp-proxy.write-credential':
 			return printDisabledCredentialWriter();
@@ -395,6 +444,9 @@ export async function runMcpPortal(
 ): Promise<number> {
 	const runtimeProps = {
 		env: props.env ?? process.env,
+		...(props.configureProcessLogging === undefined
+			? {}
+			: { configureProcessLogging: props.configureProcessLogging }),
 		...(props.secretResolver !== undefined ? { secretResolver: props.secretResolver } : {}),
 	};
 	const parseResult = runMcpPortalCliParser(args, {

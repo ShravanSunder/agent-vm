@@ -56,6 +56,8 @@
 		"@agent-vm/worker-control-contracts": "workspace:*",
 		"@agent-vm/worker-gateway": "workspace:*",
 		"@hono/node-server": "^2.0.2",
+		"@logtape/logtape": "2.3.0",
+		"@logtape/otel": "2.3.0",
 		"@opentelemetry/api": "1.9.1",
 		"@opentelemetry/api-logs": "0.219.0",
 		"@opentelemetry/exporter-logs-otlp-proto": "0.219.0",

@@ -2,6 +2,7 @@ import type { ControllerGitPushPhase, TaskEvent } from '@agent-vm/agent-vm-worke
 import { execa } from 'execa';
 
 import type { ActiveWorkerTask, HostGitDir } from './active-task-registry.js';
+import { writeControllerDiagnostic } from './controller-diagnostic-logging.js';
 import {
 	buildGithubTokenUrl,
 	GitHubRepositoryValidationError,
@@ -64,7 +65,7 @@ class GitPushFailedAfterRetriesError extends Error {
 }
 
 function writePushFlowLog(message: string): void {
-	process.stderr.write(`[git-push-operations] ${message}\n`);
+	writeControllerDiagnostic('git', message);
 }
 
 function buildPushUrl(repoUrl: string, githubToken: string): string {
