@@ -40,6 +40,10 @@ interface OtlpReceiver {
 	readonly requests: Buffer[];
 }
 
+interface StructuredStderrAssertionOptions {
+	readonly allowedPlainLinePattern?: RegExp;
+}
+
 const repositoryRoot = path.resolve(process.cwd());
 const childCompletionMarker = 'structured-logging-host-proof-complete\n';
 
@@ -99,33 +103,45 @@ const emitRecord = () => getLogger(category).warning('Structured logging host pr
 });
 if (${rootKind} === 'agent-vm') {
 \tconst { defaultCliDependencies } = await import(${cliSupportModulePath});
+\tconst originalWrite = process.stdout.write.bind(process.stdout);
+\tlet shutdownScheduled = false;
+\tprocess.stdout.write = ((chunk, ...args) => {
+\t\tconst result = originalWrite(chunk, ...args);
+\t\tif (!shutdownScheduled && String(chunk).includes('"zoneId": "host-proof"')) {
+\t\t\tshutdownScheduled = true;
+\t\t\tvoid (async () => {
+\t\t\t\tconst readiness = JSON.parse(String(chunk));
+\t\t\t\tconst healthResponse = await fetch(
+\t\t\t\t\t'http://127.0.0.1:' + String(readiness.controllerPort) + '/health',
+\t\t\t\t\t{ signal: AbortSignal.timeout(2_000) },
+\t\t\t\t);
+\t\t\t\tif (!healthResponse.ok) {
+\t\t\t\t\tthrow new Error('Controller health probe did not report readiness.');
+\t\t\t\t}
+\t\t\t\temitRecord();
+\t\t\t\tsetImmediate(() => process.kill(process.pid, 'SIGTERM'));
+\t\t\t})().catch((error) => {
+\t\t\t\tprocess.stderr.write(
+\t\t\t\t\t'Controller host-proof listener check failed: ' +
+\t\t\t\t\t(error instanceof Error ? error.message : String(error)) +
+\t\t\t\t\t'\\n',
+\t\t\t\t);
+\t\t\t\tprocess.exitCode = 1;
+\t\t\t\tsetImmediate(() => process.kill(process.pid, 'SIGTERM'));
+\t\t\t});
+\t\t}
+\t\treturn result;
+\t});
 \tawait root.runAgentVmCli(
 \t\t['controller', 'start', '--config', ${systemConfigPath}, '--zone', 'host-proof'],
 \t\t{ stderr: process.stderr, stdout: process.stdout },
 \t\t{
 \t\t\t...defaultCliDependencies,
 \t\t\tisGatewayImageCached: async () => true,
-\t\t\tstartControllerRuntime: async ({ systemConfig, zoneIds }) => {
-\t\t\t\temitRecord();
-\t\t\t\tsetImmediate(() => process.kill(process.pid, 'SIGTERM'));
-\t\t\t\treturn {
-\t\t\t\t\tcontrollerPort: systemConfig.host.controllerPort,
-\t\t\t\t\tzones: [{
-\t\t\t\t\t\tgateway: {
-\t\t\t\t\t\t\tingress: { host: '127.0.0.1', port: 18791 },
-\t\t\t\t\t\t\tvm: { id: 'host-proof-vm' },
-\t\t\t\t\t\t},
-\t\t\t\t\t\tlifecycleState: 'running',
-\t\t\t\t\t\tzoneId: zoneIds[0],
-\t\t\t\t\t}],
-\t\t\t\t\tclose: async () => getLogger(category).warning('Controller runtime closed.', {
-\t\t\t\t\t\tevent: 'controller-runtime-closed',
-\t\t\t\t\t}),
-\t\t\t\t};
-\t\t\t},
 \t\t},
 \t\t{ processLoggingStderr: process.stderr, processRoot: true },
 \t);
+\tprocess.stdout.write = originalWrite;
 \tprocess.stdout.write(${JSON.stringify(childCompletionMarker)});
 } else if (${rootKind} === 'agent-vm-worker') {
 \tconst originalWrite = process.stdout.write.bind(process.stdout);
@@ -242,7 +258,26 @@ async function createOtlpReceiver(): Promise<OtlpReceiver> {
 	};
 }
 
-function assertStructuredStderr(result: ChildResult, expectedLogger: string): void {
+async function allocateTcpPort(): Promise<number> {
+	const server = createServer();
+	server.listen(0, '127.0.0.1');
+	await once(server, 'listening');
+	const address = server.address();
+	if (address === null || typeof address === 'string') {
+		server.close();
+		throw new Error('Structured logging host proof could not allocate a TCP port.');
+	}
+	const closePromise = once(server, 'close');
+	server.close();
+	await closePromise;
+	return address.port;
+}
+
+function assertStructuredStderr(
+	result: ChildResult,
+	expectedLogger: string,
+	options: StructuredStderrAssertionOptions = {},
+): void {
 	expect(result.exitCode, `${expectedLogger} stderr: ${result.stderr}`).toBe(0);
 	expect(result.stdout, `${expectedLogger} stderr: ${result.stderr}`).toContain(
 		childCompletionMarker,
@@ -255,7 +290,17 @@ function assertStructuredStderr(result: ChildResult, expectedLogger: string): vo
 		lines.length,
 		`${expectedLogger} stdout: ${result.stdout} stderr: ${result.stderr}`,
 	).toBeGreaterThanOrEqual(1);
-	const records = lines.map((line) => JSON.parse(line) as Record<string, unknown>);
+	const structuredLines = lines.filter((line) => line.startsWith('{'));
+	const plainLines = lines.filter((line) => !line.startsWith('{'));
+	if (options.allowedPlainLinePattern === undefined) {
+		expect(plainLines).toEqual([]);
+	} else {
+		expect(
+			plainLines.every((line) => options.allowedPlainLinePattern?.test(line)),
+			`${expectedLogger} unexpected plain stderr: ${plainLines.join(' | ')}`,
+		).toBe(true);
+	}
+	const records = structuredLines.map((line) => JSON.parse(line) as Record<string, unknown>);
 	expect(records).toContainEqual(
 		expect.objectContaining({
 			level: 'WARN',
@@ -321,6 +366,7 @@ interface AgentVmProofFixture {
 
 async function createAgentVmProofFixture(collectorHttpPort: number): Promise<AgentVmProofFixture> {
 	const root = await mkdtemp(path.join(tmpdir(), 'agent-vm-logtape-controller-proof-'));
+	const controllerPort = await allocateTcpPort();
 	const configDirectory = path.join(root, 'config');
 	const storageDirectory = path.join(root, 'storage');
 	await Promise.all([mkdir(configDirectory), mkdir(storageDirectory)]);
@@ -329,7 +375,7 @@ async function createAgentVmProofFixture(collectorHttpPort: number): Promise<Age
 		configPath,
 		JSON.stringify({
 			host: {
-				controllerPort: 18_800,
+				controllerPort,
 				observability: {
 					controllerStartPolicy: 'off',
 					enabled: true,
@@ -665,12 +711,23 @@ describe('structured logging process roots', () => {
 						expect(result.stdout).toContain('tool-portal-role-readiness');
 						expect(result.stdout).toContain('"kind":"retired"');
 					} else {
-						assertStructuredStderr(result, child.category.join('.'));
+						assertStructuredStderr(
+							result,
+							child.category.join('.'),
+							child.rootKind === 'agent-vm'
+								? {
+										allowedPlainLinePattern:
+											/^ {0,2}(?:Resolving 1Password secrets|Controller API on :\d+|Starting selected gateway zones)(?:\.\.\.| done)?$/u,
+									}
+								: {},
+						);
 					}
 					if (child.rootKind === 'agent-vm-worker') {
 						expect(result.stdout).toContain('[agent-vm-worker] Server listening on');
 					}
 					if (child.rootKind === 'agent-vm') {
+						expect(result.stdout).toContain('"ingress": null');
+						expect(result.stdout).toContain('"vmId": null');
 						expect(result.stdout).toContain('"zoneId": "host-proof"');
 					}
 				}),

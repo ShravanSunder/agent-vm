@@ -10,6 +10,11 @@ import {
 } from './process-logging.js';
 import type { PortalServerLogEvent } from './serve-command.js';
 
+type PortalApprovalLogEvent = Extract<
+	PortalServerLogEvent,
+	{ readonly event: 'mcp_portal_approval' }
+>;
+
 class CaptureWritable extends Writable {
 	readonly chunks: string[] = [];
 	private pendingWrite: (() => void) | undefined;
@@ -111,9 +116,9 @@ describe('MCP Portal process logging', () => {
 			decision: 'deny',
 			event: 'mcp_portal_approval',
 			level: 'warn',
-			reason: unsafeReason,
+			reason: unsafeReason as PortalApprovalLogEvent['reason'],
 			timeMs: 8,
-		} as unknown as PortalServerLogEvent;
+		} satisfies PortalApprovalLogEvent;
 
 		const record = mapPortalServerLogEvent(event);
 		const reason = record.properties.reason;
@@ -123,6 +128,24 @@ describe('MCP Portal process logging', () => {
 		expect(reason).not.toContain('/');
 		expect(reason).not.toContain('?');
 		expect(reason).not.toContain(unsafeReason);
+	});
+
+	it('does not preserve credentials from a credential-bearing URL-like scope', () => {
+		const credentialBearingScope =
+			'https://scope-user:scope-secret@example.invalid/mcp?token=query-secret';
+		const event = {
+			agentId: credentialBearingScope,
+			decision: 'deny',
+			event: 'mcp_portal_approval',
+			level: 'warn',
+			timeMs: 8,
+		} satisfies PortalServerLogEvent;
+
+		const record = mapPortalServerLogEvent(event);
+
+		expect(record.properties.scope).toBe('unknown');
+		expect(JSON.stringify(record.properties)).not.toContain('scope-secret');
+		expect(JSON.stringify(record.properties)).not.toContain('query-secret');
 	});
 
 	it('routes the default typed logger to bounded JSONL stderr', async () => {
