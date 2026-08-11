@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { managedToolPortalConfigSchema, mcpConfigSchema } from '@agent-vm/config-contracts';
 import { deriveGatewayRuntimePortalSemanticSnapshot } from '@agent-vm/gateway-control-contracts';
@@ -38,6 +39,18 @@ interface OtlpReceiver {
 	readonly close: () => Promise<void>;
 	readonly endpoint: string;
 	readonly requests: Buffer[];
+}
+
+type OtlpAttributeValue =
+	| { readonly kind: 'integer'; readonly value: number }
+	| { readonly kind: 'string'; readonly value: string }
+	| { readonly kind: 'string-array'; readonly value: readonly string[] };
+
+interface OtlpLogRecord {
+	readonly attributes: ReadonlyMap<string, OtlpAttributeValue>;
+	readonly body: string;
+	readonly severityNumber: number;
+	readonly severityText: string;
 }
 
 interface StructuredStderrAssertionOptions {
@@ -189,6 +202,34 @@ if (${rootKind} === 'agent-vm') {
 `;
 }
 
+function createGatewayHostProofPreload(definition: ProductionRootChildDefinition): string {
+	const logtapeModulePath = pathToFileURL(
+		path.join(definition.packageRoot, 'node_modules', '@logtape', 'logtape', 'dist', 'mod.js'),
+	).href;
+	const source = `
+import { getLogger } from ${JSON.stringify(logtapeModulePath)};
+const logger = getLogger(${JSON.stringify(definition.category)});
+const originalWrite = process.stdout.write.bind(process.stdout);
+let stdoutBuffer = '';
+let hostProofEmitted = false;
+process.stdout.write = ((chunk, ...args) => {
+	const result = originalWrite(chunk, ...args);
+	if (!hostProofEmitted) {
+		stdoutBuffer += String(chunk);
+		if (stdoutBuffer.includes('tool-portal-role-readiness')) {
+			hostProofEmitted = true;
+			logger.warning('Structured logging host proof record.', {
+				event: 'host-proof',
+				attempt: 1,
+			});
+		}
+	}
+	return result;
+});
+`;
+	return `data:text/javascript,${encodeURIComponent(source)}`;
+}
+
 async function runProductionRootChild(
 	definition: ProductionRootChildDefinition,
 ): Promise<ChildResult> {
@@ -196,12 +237,21 @@ async function runProductionRootChild(
 		definition.rootKind === 'gateway-runtime'
 			? [definition.rootModulePath, '--config', definition.gatewayConfigPath ?? '']
 			: ['--input-type=module', '--eval', createProductionRootChildCode(definition)];
+	const gatewayHostProofImport =
+		definition.rootKind === 'gateway-runtime'
+			? `--import=${createGatewayHostProofPreload(definition)}`
+			: undefined;
+	const nodeOptions = [process.env.NODE_OPTIONS, gatewayHostProofImport]
+		.filter((value): value is string => value !== undefined && value.length > 0)
+		.join(' ');
 	const child = spawn(process.execPath, childArguments, {
 		cwd: definition.packageRoot,
 		env: {
 			...process.env,
+			...(nodeOptions.length === 0 ? {} : { NODE_OPTIONS: nodeOptions }),
 			OTEL_EXPORTER_OTLP_ENDPOINT: undefined,
 			OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: undefined,
+			OTEL_EXPORTER_OTLP_LOGS_PROTOCOL: 'http/json',
 			...definition.environment,
 		},
 		stdio: ['ignore', 'pipe', 'pipe'],
@@ -329,8 +379,152 @@ function assertGatewayStartupFailure(result: ChildResult): void {
 	);
 }
 
-function otlpRequestContainsCategory(request: Buffer, category: readonly string[]): boolean {
-	return category.every((segment) => request.includes(Buffer.from(segment, 'utf8')));
+function assertGatewayRuntimeSuccess(result: ChildResult): void {
+	expect(result.exitCode, result.stderr).toBe(0);
+	expect(result.stdout).toContain('tool-portal-role-readiness');
+	expect(result.stdout).toContain('"kind":"retired"');
+	const structuredLines = result.stderr
+		.trim()
+		.split('\n')
+		.filter((line) => line.length > 0);
+	expect(structuredLines).toHaveLength(1);
+	expect(JSON.parse(structuredLines[0] ?? '')).toEqual(
+		expect.objectContaining({
+			level: 'WARN',
+			logger: 'agent-vm.gateway-runtime.process',
+			message: 'Structured logging host proof record.',
+			properties: { attempt: 1, event: 'host-proof' },
+		}),
+	);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null;
+}
+
+function readOtlpAttributeValue(value: unknown): OtlpAttributeValue | undefined {
+	if (!isRecord(value)) {
+		return undefined;
+	}
+	if (typeof value.stringValue === 'string') {
+		return { kind: 'string', value: value.stringValue };
+	}
+	const integerValue = value.intValue;
+	if (typeof integerValue === 'number' && Number.isInteger(integerValue)) {
+		return { kind: 'integer', value: integerValue };
+	}
+	if (typeof integerValue === 'string' && integerValue.length > 0) {
+		const parsedInteger = Number(integerValue);
+		if (Number.isInteger(parsedInteger)) {
+			return { kind: 'integer', value: parsedInteger };
+		}
+	}
+	if (!isRecord(value.arrayValue) || !Array.isArray(value.arrayValue.values)) {
+		return undefined;
+	}
+	const stringValues: string[] = [];
+	for (const item of value.arrayValue.values) {
+		if (!isRecord(item) || typeof item.stringValue !== 'string') {
+			return undefined;
+		}
+		stringValues.push(item.stringValue);
+	}
+	return { kind: 'string-array', value: stringValues };
+}
+
+function readOtlpAttributes(value: unknown): ReadonlyMap<string, OtlpAttributeValue> {
+	const attributes = new Map<string, OtlpAttributeValue>();
+	if (!Array.isArray(value)) {
+		return attributes;
+	}
+	for (const item of value) {
+		if (!isRecord(item) || typeof item.key !== 'string') {
+			continue;
+		}
+		const parsedValue = readOtlpAttributeValue(item.value);
+		if (parsedValue !== undefined) {
+			attributes.set(item.key, parsedValue);
+		}
+	}
+	return attributes;
+}
+
+function readOtlpJsonLogRecords(request: Buffer): readonly OtlpLogRecord[] {
+	let payload: unknown;
+	try {
+		payload = JSON.parse(request.toString('utf8')) as unknown;
+	} catch {
+		return [];
+	}
+	if (!isRecord(payload) || !Array.isArray(payload.resourceLogs)) {
+		return [];
+	}
+	const records: OtlpLogRecord[] = [];
+	for (const resourceLog of payload.resourceLogs) {
+		if (!isRecord(resourceLog) || !Array.isArray(resourceLog.scopeLogs)) {
+			continue;
+		}
+		for (const scopeLog of resourceLog.scopeLogs) {
+			if (!isRecord(scopeLog) || !Array.isArray(scopeLog.logRecords)) {
+				continue;
+			}
+			for (const logRecord of scopeLog.logRecords) {
+				if (!isRecord(logRecord) || !isRecord(logRecord.body)) {
+					continue;
+				}
+				const severityNumber = logRecord.severityNumber;
+				const severityText = logRecord.severityText;
+				const body = logRecord.body.stringValue;
+				if (
+					typeof severityNumber !== 'number' ||
+					!Number.isInteger(severityNumber) ||
+					typeof severityText !== 'string' ||
+					typeof body !== 'string'
+				) {
+					continue;
+				}
+				records.push({
+					attributes: readOtlpAttributes(logRecord.attributes),
+					body,
+					severityNumber,
+					severityText,
+				});
+			}
+		}
+	}
+	return records;
+}
+
+function isExpectedOtlpHostProofRecord(
+	record: OtlpLogRecord,
+	category: readonly string[],
+): boolean {
+	const categoryAttribute = record.attributes.get('category');
+	const eventAttribute = record.attributes.get('event');
+	const attemptAttribute = record.attributes.get('attempt');
+	return (
+		record.body === 'Structured logging host proof record.' &&
+		record.severityNumber === 13 &&
+		record.severityText === 'warning' &&
+		record.attributes.size === 3 &&
+		categoryAttribute?.kind === 'string-array' &&
+		categoryAttribute.value.join('.') === category.join('.') &&
+		eventAttribute?.kind === 'string' &&
+		eventAttribute.value === 'host-proof' &&
+		attemptAttribute?.kind === 'integer' &&
+		attemptAttribute.value === 1
+	);
+}
+
+function assertOtlpHostProofRecord(
+	requestWindow: readonly Buffer[],
+	category: readonly string[],
+): void {
+	const records = requestWindow.flatMap((request) => readOtlpJsonLogRecords(request));
+	expect(
+		records.some((record) => isExpectedOtlpHostProofRecord(record, category)),
+		`OTLP request window did not contain the expected ${category.join('.')} record`,
+	).toBe(true);
 }
 
 async function createMcpPortalProofConfigDir(): Promise<string> {
@@ -514,24 +708,22 @@ async function createGatewayRuntimeProofFixture(options: {
 				listen: { host: '127.0.0.1', port: 0 },
 			},
 			mcpConfigPath,
-			observability: options.failStartup
-				? {
-						admissionLimits: {
-							maxExportBatchRecords: 64,
-							maxQueuedRecordsPerSignal: 256,
-							maxRecordBytes: 65_536,
-						},
-						endpoint: new URL(options.collectorEndpoint).origin,
-						flushIntervalMs: 1,
-						kind: 'otlp-http',
-						logs: true,
-						metrics: false,
-						sampleRate: 1,
-						serviceName: 'agent-vm-tool-portal',
-						sourcePolicy: { admitBaggage: false, captureContent: false },
-						traces: false,
-					}
-				: { kind: 'disabled' },
+			observability: {
+				admissionLimits: {
+					maxExportBatchRecords: 64,
+					maxQueuedRecordsPerSignal: 256,
+					maxRecordBytes: 65_536,
+				},
+				endpoint: new URL(options.collectorEndpoint).origin,
+				flushIntervalMs: 1,
+				kind: 'otlp-http',
+				logs: true,
+				metrics: false,
+				sampleRate: 1,
+				serviceName: 'agent-vm-tool-portal',
+				sourcePolicy: { admitBaggage: false, captureContent: false },
+				traces: false,
+			},
 			runtimeRoot,
 			schemaVersion: 1,
 			semanticSnapshot,
@@ -702,36 +894,36 @@ describe('structured logging process roots', () => {
 				},
 			] satisfies readonly ProductionRootChildDefinition[];
 
-			await Promise.all(
-				children.map(async (child): Promise<void> => {
-					const result = await runProductionRootChild(child);
-					if (child.rootKind === 'gateway-runtime') {
-						expect(result.exitCode, result.stderr).toBe(0);
-						expect(result.stderr).toBe('');
-						expect(result.stdout).toContain('tool-portal-role-readiness');
-						expect(result.stdout).toContain('"kind":"retired"');
-					} else {
-						assertStructuredStderr(
-							result,
-							child.category.join('.'),
-							child.rootKind === 'agent-vm'
-								? {
-										allowedPlainLinePattern:
-											/^ {0,2}(?:Resolving 1Password secrets|Controller API on :\d+|Starting selected gateway zones)(?:\.\.\.| done)?$/u,
-									}
-								: {},
-						);
-					}
-					if (child.rootKind === 'agent-vm-worker') {
-						expect(result.stdout).toContain('[agent-vm-worker] Server listening on');
-					}
-					if (child.rootKind === 'agent-vm') {
-						expect(result.stdout).toContain('"ingress": null');
-						expect(result.stdout).toContain('"vmId": null');
-						expect(result.stdout).toContain('"zoneId": "host-proof"');
-					}
-				}),
-			);
+			let requestWindowStart = receiver.requests.length;
+			for (const child of children) {
+				// oxlint-disable-next-line no-await-in-loop -- each child owns the next causal OTLP request window.
+				const result = await runProductionRootChild(child);
+				if (child.rootKind === 'gateway-runtime') {
+					assertGatewayRuntimeSuccess(result);
+				} else {
+					assertStructuredStderr(
+						result,
+						child.category.join('.'),
+						child.rootKind === 'agent-vm'
+							? {
+									allowedPlainLinePattern:
+										/^ {0,2}(?:Resolving 1Password secrets|Controller API on :\d+|Starting selected gateway zones)(?:\.\.\.| done)?$/u,
+								}
+							: {},
+					);
+				}
+				if (child.rootKind === 'agent-vm-worker') {
+					expect(result.stdout).toContain('[agent-vm-worker] Server listening on');
+				}
+				if (child.rootKind === 'agent-vm') {
+					expect(result.stdout).toContain('"ingress": null');
+					expect(result.stdout).toContain('"vmId": null');
+					expect(result.stdout).toContain('"zoneId": "host-proof"');
+				}
+				assertOtlpHostProofRecord(receiver.requests.slice(requestWindowStart), child.category);
+				requestWindowStart = receiver.requests.length;
+			}
+			const failureRequestWindowStart = receiver.requests.length;
 			const gatewayFailureResult = await runProductionRootChild({
 				category: ['agent-vm', 'gateway-runtime', 'process'],
 				configuration: '{}',
@@ -755,12 +947,7 @@ describe('structured logging process roots', () => {
 				),
 			});
 			assertGatewayStartupFailure(gatewayFailureResult);
-			expect(receiver.requests.length).toBeGreaterThanOrEqual(children.length);
-			for (const child of children) {
-				expect(
-					receiver.requests.some((request) => otlpRequestContainsCategory(request, child.category)),
-				).toBe(true);
-			}
+			expect(receiver.requests.length).toBeGreaterThan(failureRequestWindowStart);
 		} finally {
 			await receiver.close();
 			await Promise.all([
