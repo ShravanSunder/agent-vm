@@ -2,6 +2,7 @@
 	"protocolVersion": 1,
 	"refinements": [
 		"gateway.attachment.unique-agent-ids",
+		"gateway.managed-agent-projection.namespace-names",
 		"portal.artifact-read.default-truncated",
 		"portal.batch.unique-item-ids",
 		"portal.describe.default-includes",
@@ -3380,6 +3381,14 @@
 						"minLength": 1,
 						"maxLength": 256
 					},
+					"toolPortalNamespaceNames": {
+						"readOnly": true,
+						"type": "array",
+						"items": {
+							"type": "string",
+							"minLength": 1
+						}
+					},
 					"toolPortalProfileId": {
 						"type": "string",
 						"minLength": 1,
@@ -3390,11 +3399,12 @@
 					"agentId",
 					"frameworkIdentity",
 					"profileAssignmentRevision",
+					"toolPortalNamespaceNames",
 					"toolPortalProfileId"
 				],
 				"additionalProperties": false
 			},
-			"refinementIdentities": []
+			"refinementIdentities": ["gateway.managed-agent-projection.namespace-names"]
 		},
 		"gateway.trusted-invocation-context": {
 			"jsonSchema": {

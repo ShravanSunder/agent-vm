@@ -178,11 +178,18 @@ function configureFirstZoneAsHermes(config: ValidSystemConfigInput): ValidSystem
 		profilesByAgent: { shravan: 'researcher' },
 		profileSecretProjectionsByAgent: {
 			shravan: {
+				API_SERVER_KEY: 'API_SERVER_KEY_SHRAVAN',
 				DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_SHRAVAN',
 			},
 		},
 	};
 	zone.secrets = {
+		API_SERVER_KEY_SHRAVAN: {
+			source: 'environment',
+			envVar: 'API_SERVER_KEY_SHRAVAN',
+			injection: 'env',
+			audience: 'gateway',
+		},
 		DISCORD_BOT_TOKEN_SHRAVAN: {
 			source: 'environment',
 			envVar: 'DISCORD_BOT_TOKEN_SHRAVAN',
@@ -3065,16 +3072,36 @@ describe('loadSystemConfig', () => {
 		Object.assign(zone.gateway, {
 			profileSecretProjectionsByAgent: {
 				'research-agent': {
+					API_SERVER_KEY: 'API_SERVER_KEY_RESEARCH',
 					DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_RESEARCH',
 					OPENROUTER_API_KEY: 'OPENROUTER_API_KEY_SHARED',
 				},
 				'review-agent': {
+					API_SERVER_KEY: 'API_SERVER_KEY_REVIEW',
 					DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_REVIEW',
 					OPENROUTER_API_KEY: 'OPENROUTER_API_KEY_SHARED',
 				},
 			},
 		});
 		zone.secrets = {
+			API_SERVER_KEY: {
+				source: 'environment',
+				envVar: 'API_SERVER_KEY',
+				injection: 'env',
+				audience: 'gateway',
+			},
+			API_SERVER_KEY_RESEARCH: {
+				source: 'environment',
+				envVar: 'API_SERVER_KEY_RESEARCH',
+				injection: 'env',
+				audience: 'gateway',
+			},
+			API_SERVER_KEY_REVIEW: {
+				source: 'environment',
+				envVar: 'API_SERVER_KEY_REVIEW',
+				injection: 'env',
+				audience: 'gateway',
+			},
 			DISCORD_BOT_TOKEN_RESEARCH: {
 				source: 'environment',
 				envVar: 'DISCORD_BOT_TOKEN_RESEARCH',
@@ -3114,10 +3141,12 @@ describe('loadSystemConfig', () => {
 				type: 'hermes',
 				profileSecretProjectionsByAgent: {
 					'research-agent': {
+						API_SERVER_KEY: 'API_SERVER_KEY_RESEARCH',
 						DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_RESEARCH',
 						OPENROUTER_API_KEY: 'OPENROUTER_API_KEY_SHARED',
 					},
 					'review-agent': {
+						API_SERVER_KEY: 'API_SERVER_KEY_REVIEW',
 						DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_REVIEW',
 						OPENROUTER_API_KEY: 'OPENROUTER_API_KEY_SHARED',
 					},
@@ -3130,6 +3159,91 @@ describe('loadSystemConfig', () => {
 			defaultToolVmProfile: 'standard',
 			agentToolVmProfiles: { 'review-agent': 'standard' },
 		});
+	});
+
+	test('allows bounded Discord bot-routing settings in Hermes profile projections', () => {
+		const config = createValidSystemConfigInput();
+		const zone = configureFirstZoneAsHermes(config);
+		const projections = zone.gateway.profileSecretProjectionsByAgent as Record<
+			string,
+			Record<string, string>
+		>;
+		projections.shravan = {
+			...projections.shravan,
+			DISCORD_ALLOW_BOTS: 'DISCORD_ALLOW_BOTS',
+			DISCORD_BOTS_REQUIRE_INLINE_MENTION: 'DISCORD_BOTS_REQUIRE_INLINE_MENTION',
+		};
+		Object.assign(zone.secrets, {
+			DISCORD_ALLOW_BOTS: {
+				source: 'environment',
+				envVar: 'AGENT_VM_HERMES_DISCORD_ALLOW_BOTS',
+				injection: 'env',
+				audience: 'gateway',
+			},
+			DISCORD_BOTS_REQUIRE_INLINE_MENTION: {
+				source: 'environment',
+				envVar: 'AGENT_VM_HERMES_DISCORD_BOTS_REQUIRE_INLINE_MENTION',
+				injection: 'env',
+				audience: 'gateway',
+			},
+		});
+
+		expect(() => parseSystemConfigInputForTest(config)).not.toThrow();
+	});
+
+	test('requires one distinct profile API server key source per Hermes agent', () => {
+		const missingConfig = createValidSystemConfigInput();
+		const missingZone = configureFirstZoneAsHermes(missingConfig);
+		const missingProjections = missingZone.gateway.profileSecretProjectionsByAgent;
+		if (!isRecord(missingProjections) || !isRecord(missingProjections.shravan)) {
+			throw new Error('Expected valid Hermes profile projections.');
+		}
+		delete missingProjections.shravan.API_SERVER_KEY;
+		expect(() => parseSystemConfigInputForTest(missingConfig)).toThrow(
+			/must project exactly one API_SERVER_KEY target/u,
+		);
+
+		const reusedConfig = createValidSystemConfigInput();
+		const reusedZone = configureFirstZoneAsHermes(reusedConfig);
+		reusedZone.agents = [{ id: 'research-agent' }, { id: 'review-agent' }];
+		reusedZone.gateway.profilesByAgent = {
+			'research-agent': 'researcher',
+			'review-agent': 'reviewer',
+		};
+		reusedZone.gateway.profileSecretProjectionsByAgent = {
+			'research-agent': {
+				API_SERVER_KEY: 'API_SERVER_KEY_SHARED',
+				DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_RESEARCH',
+			},
+			'review-agent': {
+				API_SERVER_KEY: 'API_SERVER_KEY_SHARED',
+				DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_REVIEW',
+			},
+		};
+		reusedZone.secrets = {
+			API_SERVER_KEY_SHARED: {
+				source: 'environment',
+				envVar: 'API_SERVER_KEY_SHARED',
+				injection: 'env',
+				audience: 'gateway',
+			},
+			DISCORD_BOT_TOKEN_RESEARCH: {
+				source: 'environment',
+				envVar: 'DISCORD_BOT_TOKEN_RESEARCH',
+				injection: 'env',
+				audience: 'gateway',
+			},
+			DISCORD_BOT_TOKEN_REVIEW: {
+				source: 'environment',
+				envVar: 'DISCORD_BOT_TOKEN_REVIEW',
+				injection: 'env',
+				audience: 'gateway',
+			},
+		};
+
+		expect(() => parseSystemConfigInputForTest(reusedConfig)).toThrow(
+			/API_SERVER_KEY.*distinct source/u,
+		);
 	});
 
 	test('rejects incomplete or unsafe Hermes profile secret projections', () => {
@@ -3147,10 +3261,28 @@ describe('loadSystemConfig', () => {
 			},
 			{
 				mapping: {
-					shravan: { DISCORD_BOT_TOKEN: 'DISCORD_TOKEN' },
-					extra: { DISCORD_BOT_TOKEN: 'DISCORD_TOKEN_EXTRA' },
+					shravan: {
+						API_SERVER_KEY: 'API_SERVER_KEY_SHRAVAN',
+						DISCORD_BOT_TOKEN: 'DISCORD_TOKEN',
+					},
+					extra: {
+						API_SERVER_KEY: 'API_SERVER_KEY_EXTRA',
+						DISCORD_BOT_TOKEN: 'DISCORD_TOKEN_EXTRA',
+					},
 				},
 				secrets: {
+					API_SERVER_KEY_SHRAVAN: {
+						source: 'environment',
+						envVar: 'API_SERVER_KEY_SHRAVAN',
+						injection: 'env',
+						audience: 'gateway',
+					},
+					API_SERVER_KEY_EXTRA: {
+						source: 'environment',
+						envVar: 'API_SERVER_KEY_EXTRA',
+						injection: 'env',
+						audience: 'gateway',
+					},
 					DISCORD_TOKEN: {
 						source: 'environment',
 						envVar: 'DISCORD_TOKEN',
@@ -3166,8 +3298,19 @@ describe('loadSystemConfig', () => {
 				},
 			},
 			{
-				mapping: { shravan: { DISCORD_BOT_TOKEN: 'DISCORD_TOKEN' } },
+				mapping: {
+					shravan: {
+						API_SERVER_KEY: 'API_SERVER_KEY_SHRAVAN',
+						DISCORD_BOT_TOKEN: 'DISCORD_TOKEN',
+					},
+				},
 				secrets: {
+					API_SERVER_KEY_SHRAVAN: {
+						source: 'environment',
+						envVar: 'API_SERVER_KEY_SHRAVAN',
+						injection: 'env',
+						audience: 'gateway',
+					},
 					DISCORD_TOKEN: {
 						source: 'environment',
 						envVar: 'DISCORD_TOKEN',
@@ -3203,11 +3346,29 @@ describe('loadSystemConfig', () => {
 		};
 		Object.assign(zone.gateway, {
 			profileSecretProjectionsByAgent: {
-				'research-agent': { DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_SHARED' },
-				'review-agent': { DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_SHARED' },
+				'research-agent': {
+					API_SERVER_KEY: 'API_SERVER_KEY_RESEARCH',
+					DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_SHARED',
+				},
+				'review-agent': {
+					API_SERVER_KEY: 'API_SERVER_KEY_REVIEW',
+					DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_SHARED',
+				},
 			},
 		});
 		zone.secrets = {
+			API_SERVER_KEY_RESEARCH: {
+				source: 'environment',
+				envVar: 'API_SERVER_KEY_RESEARCH',
+				injection: 'env',
+				audience: 'gateway',
+			},
+			API_SERVER_KEY_REVIEW: {
+				source: 'environment',
+				envVar: 'API_SERVER_KEY_REVIEW',
+				injection: 'env',
+				audience: 'gateway',
+			},
 			DISCORD_BOT_TOKEN_SHARED: {
 				source: 'environment',
 				envVar: 'DISCORD_BOT_TOKEN_SHARED',
@@ -3225,6 +3386,18 @@ describe('loadSystemConfig', () => {
 		const config = createValidSystemConfigInput();
 		const zone = configureFirstZoneAsHermes(config);
 		zone.secrets = {
+			API_SERVER_KEY_SHRAVAN: {
+				source: 'environment',
+				envVar: 'API_SERVER_KEY_SHRAVAN',
+				injection: 'env',
+				audience: 'gateway',
+			},
+			DISCORD_BOT_TOKEN_SHRAVAN: {
+				source: 'environment',
+				envVar: 'DISCORD_BOT_TOKEN_SHRAVAN',
+				injection: 'env',
+				audience: 'gateway',
+			},
 			UNMAPPED_APPLICATION_TOKEN: {
 				source: 'environment',
 				envVar: 'UNMAPPED_APPLICATION_TOKEN',
@@ -3355,6 +3528,7 @@ describe('loadSystemConfig', () => {
 			];
 			zone.gateway.profileSecretProjectionsByAgent = {
 				shravan: {
+					API_SERVER_KEY: 'API_SERVER_KEY_SHRAVAN',
 					DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_SHRAVAN',
 					[invalidCase.targetName]: invalidCase.sourceName,
 				},

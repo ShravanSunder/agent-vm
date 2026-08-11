@@ -1,12 +1,17 @@
+import { execFile } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 
 import type { ManagedVm } from '@agent-vm/managed-vm';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { computeFingerprintFromConfigPath } from '../build/gondolin-image-builder.js';
-import { managedVmImageAssetFileNames } from '../build/gondolin-managed-vm-build-tooling.js';
+import {
+	managedVmImageAssetFileNames,
+	type ManagedGatewayImageBootProjection,
+} from '../build/gondolin-managed-vm-build-tooling.js';
 import {
 	generateManagedDockerfile,
 	loadManagedImageOverlay,
@@ -33,6 +38,7 @@ import {
 	collectE2eDockerImageTags,
 	disableOpenClawMcpPortalPlugin,
 	findReusableGatewayImageDirectory,
+	packLocalAgentVmPackageTarball,
 	prepareGatewayE2eProjectImages,
 	prepareLocalWorkerPackageForGatewayImage,
 	removeE2eLocalPackageTarballs,
@@ -56,6 +62,7 @@ import {
 } from './hermes-e2e-harness.js';
 
 const temporaryRoots: string[] = [];
+const execFileAsync = promisify(execFile);
 const normalizedDockerContextTimestampMs = Date.UTC(2000, 0, 1, 0, 0, 0, 0);
 const testManagedGatewayBootContract = createManagedGatewayBootContract({
 	bootEntry: 'openclaw-gateway',
@@ -381,6 +388,73 @@ describe('resolveLocalPackagePackArgs', () => {
 			'/tmp/agent-vm-pack',
 			'--config.ignore-scripts=true',
 		]);
+	});
+
+	it('reuses a producer tarball when generated dist output differs between jobs', async () => {
+		const previousCacheRoot = process.env.AGENT_VM_E2E_CACHE_DIR;
+		const temporaryRoot = await createTemporaryRoot('agent-vm-e2e-package-cache-');
+		const repoRoot = path.join(temporaryRoot, 'repo');
+		const packageDirectory = path.join(repoRoot, 'packages', 'fake-package');
+		const generatedFilePath = path.join(packageDirectory, 'dist', 'index.js');
+		const sourceFilePath = path.join(packageDirectory, 'src', 'index.ts');
+		const extraGeneratedFilePath = path.join(packageDirectory, 'dist', 'extra.js');
+		const rootBuildInputPath = path.join(repoRoot, 'tsconfig.base.json');
+		await fs.mkdir(path.dirname(generatedFilePath), { recursive: true });
+		await fs.mkdir(path.dirname(sourceFilePath), { recursive: true });
+		await fs.writeFile(
+			path.join(packageDirectory, 'package.json'),
+			JSON.stringify({ name: 'fake-package', version: '1.0.0', files: ['dist', 'src'] }),
+		);
+		await fs.writeFile(sourceFilePath, 'export const value = 1;\n');
+		await fs.writeFile(generatedFilePath, 'export const value = 1;\n');
+		await fs.writeFile(path.join(repoRoot, 'package.json'), '{}\n');
+		await fs.writeFile(path.join(repoRoot, 'pnpm-lock.yaml'), 'lockfileVersion: 9.0\n');
+		await fs.writeFile(path.join(repoRoot, 'pnpm-workspace.yaml'), 'packages:\n  - packages/*\n');
+		await fs.writeFile(path.join(repoRoot, '.node-version'), '24\n');
+		await fs.writeFile(rootBuildInputPath, '{}\n');
+		await fs.writeFile(path.join(repoRoot, 'tsconfig.json'), '{}\n');
+		process.env.AGENT_VM_E2E_CACHE_DIR = path.join(temporaryRoot, 'cache');
+		try {
+			const firstTarballPath = await packLocalAgentVmPackageTarball({
+				packageName: 'fake-package',
+				repoRoot,
+			});
+			const firstTarball = await fs.readFile(firstTarballPath);
+			await fs.appendFile(generatedFilePath, '\n// independent build output variation\n', 'utf8');
+			const secondTarballPath = await packLocalAgentVmPackageTarball({
+				packageName: 'fake-package',
+				repoRoot,
+			});
+			expect(secondTarballPath).toBe(firstTarballPath);
+			expect(await fs.readFile(secondTarballPath)).toEqual(firstTarball);
+
+			await fs.writeFile(extraGeneratedFilePath, 'export const extra = true;\n');
+			const layoutChangedTarballPath = await packLocalAgentVmPackageTarball({
+				packageName: 'fake-package',
+				repoRoot,
+			});
+			expect(layoutChangedTarballPath).toBe(firstTarballPath);
+
+			await fs.appendFile(sourceFilePath, 'export const changed = true;\n', 'utf8');
+			const sourceChangedTarballPath = await packLocalAgentVmPackageTarball({
+				packageName: 'fake-package',
+				repoRoot,
+			});
+			expect(sourceChangedTarballPath).not.toBe(firstTarballPath);
+
+			await fs.appendFile(rootBuildInputPath, '{"compilerOptions":{}}\n', 'utf8');
+			const buildInputChangedTarballPath = await packLocalAgentVmPackageTarball({
+				packageName: 'fake-package',
+				repoRoot,
+			});
+			expect(buildInputChangedTarballPath).not.toBe(layoutChangedTarballPath);
+		} finally {
+			if (previousCacheRoot === undefined) {
+				delete process.env.AGENT_VM_E2E_CACHE_DIR;
+			} else {
+				process.env.AGENT_VM_E2E_CACHE_DIR = previousCacheRoot;
+			}
+		}
 	});
 });
 
@@ -976,7 +1050,10 @@ describe('findReusableGatewayImageDirectory', () => {
 		delete process.env.AGENT_VM_E2E_CACHE_DIR;
 		try {
 			await expect(
-				findReusableGatewayImageDirectory('/tmp/current-smoke', '/tmp/build-config.jsonc'),
+				findReusableGatewayImageDirectory({
+					currentProjectRoot: '/tmp/current-smoke',
+					gatewayBuildConfigPath: '/tmp/build-config.jsonc',
+				}),
 			).resolves.toBeNull();
 		} finally {
 			if (previousSmokeCacheRoot === undefined) {
@@ -1001,7 +1078,13 @@ describe('findReusableGatewayImageDirectory', () => {
 			`${JSON.stringify({ arch: 'x86_64', distro: 'alpine' })}\n`,
 			'utf8',
 		);
-		const fingerprint = await computeFingerprintFromConfigPath(gatewayBuildConfigPath);
+		const managedGatewayBoot = {
+			frameworkBootEntry: 'openclaw-framework-service',
+			kind: 'managed-gateway-exact-two-role',
+		} satisfies ManagedGatewayImageBootProjection;
+		const fingerprint = await computeFingerprintFromConfigPath(gatewayBuildConfigPath, {
+			managedGatewayBoot,
+		});
 		const reusableImageDirectory = path.join(
 			previousCacheDir,
 			'gateway-images',
@@ -1021,6 +1104,7 @@ describe('findReusableGatewayImageDirectory', () => {
 				currentProjectRoot,
 				gatewayBuildConfigPath,
 				imageProfileName: 'openclaw',
+				managedGatewayBoot,
 			});
 		} finally {
 			if (previousSmokeCacheRoot === undefined) {
@@ -1334,6 +1418,7 @@ describe('prepareGatewayE2eProjectImages', () => {
 		});
 		temporaryRoots.push(firstProject.tempRoot, secondProject.tempRoot);
 		const previousSmokeCacheRoot = process.env.AGENT_VM_E2E_CACHE_DIR;
+		const previousRequirePreparedImageCache = process.env.AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE;
 		process.env.AGENT_VM_E2E_CACHE_DIR = smokeCacheRoot;
 		const buildConfigs: LoadedSystemConfig[] = [];
 		try {
@@ -1356,6 +1441,7 @@ describe('prepareGatewayE2eProjectImages', () => {
 					delete gatewayProfile.source;
 				}),
 			);
+			delete process.env.AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE;
 			await prepareGatewayE2eProjectImages({
 				project: firstProject,
 				runBuild: async ({ systemConfig }) => {
@@ -1396,6 +1482,11 @@ describe('prepareGatewayE2eProjectImages', () => {
 			} else {
 				process.env.AGENT_VM_E2E_CACHE_DIR = previousSmokeCacheRoot;
 			}
+			if (previousRequirePreparedImageCache === undefined) {
+				delete process.env.AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE;
+			} else {
+				process.env.AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE = previousRequirePreparedImageCache;
+			}
 		}
 
 		const secondGatewayProfile = secondProject.systemConfig.imageProfiles.gateways.worker;
@@ -1412,6 +1503,155 @@ describe('prepareGatewayE2eProjectImages', () => {
 		expect(secondPreparedImage?.fingerprint).toBe(
 			await computeFingerprintFromConfigPath(secondGatewayProfile.buildConfig),
 		);
+	});
+
+	it('fails before image build when strict prepared-image reuse is required but absent', async () => {
+		const previousSmokeCacheRoot = process.env.AGENT_VM_E2E_CACHE_DIR;
+		const previousRequirePreparedImageCache = process.env.AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE;
+		const temporaryRoot = await createTemporaryRoot('agent-vm-e2e-harness-');
+		const smokeCacheRoot = path.join(temporaryRoot, 'shared-smoke-cache');
+		const project = await scaffoldWorkerE2eProject({
+			architecture: 'aarch64',
+			prefix: 'worker-loop-e2e-',
+			zoneId: 'worker-e2e',
+		});
+		temporaryRoots.push(project.tempRoot);
+		const gatewayProfile = project.systemConfig.imageProfiles.gateways.worker;
+		if (gatewayProfile === undefined) {
+			throw new Error('Expected Worker gateway image profile.');
+		}
+		const dockerfilePath = path.join(project.tempRoot, 'gateway.Dockerfile');
+		await fs.writeFile(dockerfilePath, 'FROM scratch\n', 'utf8');
+		gatewayProfile.dockerfile = dockerfilePath;
+		delete gatewayProfile.source;
+		process.env.AGENT_VM_E2E_CACHE_DIR = smokeCacheRoot;
+		process.env.AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE = '1';
+		let buildInvoked = false;
+		try {
+			await expect(
+				prepareGatewayE2eProjectImages({
+					imageFamilies: ['gateway'],
+					project,
+					runBuild: async () => {
+						buildInvoked = true;
+					},
+				}),
+			).rejects.toThrow(/strict prepared e2e image cache required/u);
+			await expect(
+				prepareGatewayE2eProjectImages({
+					imageFamilies: [],
+					project,
+					runBuild: async () => {
+						buildInvoked = true;
+					},
+				}),
+			).rejects.toThrow(/strict prepared e2e image cache required/u);
+		} finally {
+			if (previousSmokeCacheRoot === undefined) {
+				delete process.env.AGENT_VM_E2E_CACHE_DIR;
+			} else {
+				process.env.AGENT_VM_E2E_CACHE_DIR = previousSmokeCacheRoot;
+			}
+			if (previousRequirePreparedImageCache === undefined) {
+				delete process.env.AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE;
+			} else {
+				process.env.AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE = previousRequirePreparedImageCache;
+			}
+		}
+		expect(buildInvoked).toBe(false);
+	});
+
+	it('reuses a gateway-only manifest for equivalent managed-source Worker images', async () => {
+		const previousSmokeCacheRoot = process.env.AGENT_VM_E2E_CACHE_DIR;
+		const previousRequirePreparedImageCache = process.env.AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE;
+		const temporaryRoot = await createTemporaryRoot('agent-vm-e2e-harness-');
+		const smokeCacheRoot = path.join(temporaryRoot, 'shared-smoke-cache');
+		const firstProject = await scaffoldWorkerE2eProject({
+			architecture: 'aarch64',
+			prefix: 'worker-loop-e2e-',
+			zoneId: 'worker-e2e',
+		});
+		const secondProject = await scaffoldWorkerE2eProject({
+			architecture: 'aarch64',
+			prefix: 'worker-loop-e2e-',
+			zoneId: 'worker-e2e',
+		});
+		temporaryRoots.push(firstProject.tempRoot, secondProject.tempRoot);
+		for (const project of [firstProject, secondProject]) {
+			Object.assign(project.systemConfig, { cacheDir: path.join(smokeCacheRoot, 'worker') });
+			const gatewayProfile = project.systemConfig.imageProfiles.gateways.worker;
+			if (gatewayProfile === undefined) {
+				throw new Error('Expected worker gateway image profile.');
+			}
+			gatewayProfile.source = { base: 'worker-gateway', kind: 'managedBase' };
+		}
+		process.env.AGENT_VM_E2E_CACHE_DIR = smokeCacheRoot;
+		delete process.env.AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE;
+		const buildConfigs: LoadedSystemConfig[] = [];
+		try {
+			await prepareGatewayE2eProjectImages({
+				imageFamilies: ['gateway'],
+				project: firstProject,
+				runBuild: async ({ systemConfig }) => {
+					buildConfigs.push(systemConfig);
+					const gatewayProfile = systemConfig.imageProfiles.gateways.worker;
+					if (gatewayProfile === undefined) {
+						throw new Error('Expected worker gateway image profile.');
+					}
+					const fingerprint = await computeFingerprintFromConfigPath(gatewayProfile.buildConfig);
+					const cacheDir = path.join(systemConfig.cacheDir, 'gateway-images', 'worker');
+					const imagePath = path.join(cacheDir, fingerprint);
+					await fs.mkdir(imagePath, { recursive: true });
+					await Promise.all(
+						managedVmImageAssetFileNames.map(
+							async (fileName) =>
+								await fs.writeFile(
+									path.join(imagePath, fileName),
+									fileName + String.fromCharCode(10),
+									'utf8',
+								),
+						),
+					);
+					await writePreparedManagedVmImage({
+						buildConfigPath: gatewayProfile.buildConfig,
+						cacheDir,
+						fingerprint,
+						imagePath,
+					});
+				},
+			});
+			process.env.AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE = '1';
+			await prepareGatewayE2eProjectImages({
+				imageFamilies: ['gateway'],
+				project: secondProject,
+				runBuild: async ({ systemConfig }) => {
+					buildConfigs.push(systemConfig);
+				},
+			});
+		} finally {
+			if (previousSmokeCacheRoot === undefined) {
+				delete process.env.AGENT_VM_E2E_CACHE_DIR;
+			} else {
+				process.env.AGENT_VM_E2E_CACHE_DIR = previousSmokeCacheRoot;
+			}
+			if (previousRequirePreparedImageCache === undefined) {
+				delete process.env.AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE;
+			} else {
+				process.env.AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE = previousRequirePreparedImageCache;
+			}
+		}
+
+		expect(buildConfigs).toEqual([firstProject.systemConfig]);
+		const secondGatewayProfile = secondProject.systemConfig.imageProfiles.gateways.worker;
+		if (secondGatewayProfile === undefined) {
+			throw new Error('Expected worker gateway image profile.');
+		}
+		await expect(
+			readPreparedManagedVmImage({
+				buildConfigPath: secondGatewayProfile.buildConfig,
+				cacheDir: path.join(secondProject.systemConfig.cacheDir, 'gateway-images', 'worker'),
+			}),
+		).resolves.toMatchObject({ built: false });
 	});
 
 	it('does not reuse a prepared Worker image when the expected managed Gateway boot projection changes', async () => {
@@ -1589,6 +1829,63 @@ describe('prepareGatewayE2eProjectImages', () => {
 });
 
 describe('prepareLocalWorkerPackageForGatewayImage', () => {
+	it('canonicalizes independently generated workspace package archives', async () => {
+		const previousSmokeCacheRoot = process.env.AGENT_VM_E2E_CACHE_DIR;
+		const temporaryRoot = await createTemporaryRoot('agent-vm-package-archive-');
+		const firstCacheRoot = path.join(temporaryRoot, 'first-cache');
+		const secondCacheRoot = path.join(temporaryRoot, 'second-cache');
+		let firstTarballPath = '';
+		let secondTarballPath = '';
+		try {
+			process.env.AGENT_VM_E2E_CACHE_DIR = firstCacheRoot;
+			firstTarballPath = await packLocalAgentVmPackageTarball({
+				packageName: 'gateway-runtime',
+				repoRoot: process.cwd(),
+			});
+			process.env.AGENT_VM_E2E_CACHE_DIR = secondCacheRoot;
+			secondTarballPath = await packLocalAgentVmPackageTarball({
+				packageName: 'gateway-runtime',
+				repoRoot: process.cwd(),
+			});
+		} finally {
+			if (previousSmokeCacheRoot === undefined) {
+				delete process.env.AGENT_VM_E2E_CACHE_DIR;
+			} else {
+				process.env.AGENT_VM_E2E_CACHE_DIR = previousSmokeCacheRoot;
+			}
+		}
+
+		expect(await fs.readFile(firstTarballPath)).toEqual(await fs.readFile(secondTarballPath));
+	});
+
+	it('preserves conditional export ordering while canonicalizing package dependencies', async () => {
+		const previousSmokeCacheRoot = process.env.AGENT_VM_E2E_CACHE_DIR;
+		const temporaryRoot = await createTemporaryRoot('agent-vm-package-exports-');
+		process.env.AGENT_VM_E2E_CACHE_DIR = path.join(temporaryRoot, 'e2e-cache');
+		try {
+			const tarballPath = await packLocalAgentVmPackageTarball({
+				packageName: 'agent-vm',
+				repoRoot: process.cwd(),
+			});
+			const { stdout } = await execFileAsync(
+				'tar',
+				['-xOzf', tarballPath, 'package/package.json'],
+				{ encoding: 'utf8' },
+			);
+			const packedManifest = JSON.parse(stdout) as { readonly exports: unknown };
+			const sourceManifest = JSON.parse(
+				await fs.readFile(path.join(process.cwd(), 'packages', 'agent-vm', 'package.json'), 'utf8'),
+			) as { readonly exports: unknown };
+			expect(JSON.stringify(packedManifest.exports)).toBe(JSON.stringify(sourceManifest.exports));
+		} finally {
+			if (previousSmokeCacheRoot === undefined) {
+				delete process.env.AGENT_VM_E2E_CACHE_DIR;
+			} else {
+				process.env.AGENT_VM_E2E_CACHE_DIR = previousSmokeCacheRoot;
+			}
+		}
+	});
+
 	it('caches the local worker package outside the repo and reuses the generated tarball path', async () => {
 		const previousSmokeCacheRoot = process.env.AGENT_VM_E2E_CACHE_DIR;
 		const temporaryRoot = await createTemporaryRoot('agent-vm-worker-pack-');

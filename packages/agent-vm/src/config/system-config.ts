@@ -425,6 +425,15 @@ const openClawZoneGatewaySchema = zoneGatewayBaseSchema
 
 const hermesProfileNamePattern = /^[a-z0-9][a-z0-9_-]{0,63}$/u;
 
+// These are non-credential Discord controls that Hermes reads from the active
+// profile environment while authorizing inbound bot messages. Keep this
+// allowlist explicit: arbitrary profile environment injection would turn the
+// projection map into an unbounded process-environment escape hatch.
+const hermesProfileEnvironmentInjectionTargetNames = new Set([
+	'DISCORD_ALLOW_BOTS',
+	'DISCORD_BOTS_REQUIRE_INLINE_MENTION',
+]);
+
 function normalizeHermesProfileName(profileName: string): string {
 	return profileName.trim().toLowerCase();
 }
@@ -1381,9 +1390,21 @@ const systemConfigSchema = z
 						});
 					}
 				}
+				const apiServerKeySourceNames: string[] = [];
 				const discordSourceNames: string[] = [];
+				const profileEnvironmentInjectionSourceNames: string[] = [];
 				const assignedSourceNames = new Set<string>();
 				for (const [agentId, projections] of Object.entries(projectionsByAgent)) {
+					const apiServerKeySourceName = projections.API_SERVER_KEY;
+					if (apiServerKeySourceName === undefined) {
+						context.addIssue({
+							code: z.ZodIssueCode.custom,
+							message: `Hermes zone '${zone.id}' agent '${agentId}' must project exactly one API_SERVER_KEY target.`,
+							path: ['zones', zoneIndex, 'gateway', 'profileSecretProjectionsByAgent', agentId],
+						});
+					} else {
+						apiServerKeySourceNames.push(apiServerKeySourceName);
+					}
 					const discordSourceName = projections.DISCORD_BOT_TOKEN;
 					if (discordSourceName === undefined) {
 						context.addIssue({
@@ -1434,11 +1455,20 @@ const systemConfigSchema = z
 								path: projectionPath,
 							});
 						}
-						if (targetName === 'DISCORD_BOT_TOKEN') {
+						if (targetName === 'API_SERVER_KEY' || targetName === 'DISCORD_BOT_TOKEN') {
 							if (secret.injection !== 'env' || secret.audience !== 'gateway') {
 								context.addIssue({
 									code: z.ZodIssueCode.custom,
-									message: `Hermes zone '${zone.id}' Discord bot token source '${sourceName}' must use injection 'env' and audience 'gateway'.`,
+									message: `Hermes zone '${zone.id}' profile target '${targetName}' source '${sourceName}' must use injection 'env' and audience 'gateway'.`,
+									path: projectionPath,
+								});
+							}
+						} else if (hermesProfileEnvironmentInjectionTargetNames.has(targetName)) {
+							profileEnvironmentInjectionSourceNames.push(sourceName);
+							if (secret.injection !== 'env' || secret.audience !== 'gateway') {
+								context.addIssue({
+									code: z.ZodIssueCode.custom,
+									message: `Hermes zone '${zone.id}' profile target '${targetName}' source '${sourceName}' must use env injection and gateway audience.`,
 									path: projectionPath,
 								});
 							}
@@ -1453,6 +1483,13 @@ const systemConfigSchema = z
 							});
 						}
 					}
+				}
+				if (new Set(apiServerKeySourceNames).size !== apiServerKeySourceNames.length) {
+					context.addIssue({
+						code: z.ZodIssueCode.custom,
+						message: `Hermes zone '${zone.id}' API_SERVER_KEY projections must assign one distinct source per agent.`,
+						path: ['zones', zoneIndex, 'gateway', 'profileSecretProjectionsByAgent'],
+					});
 				}
 				if (new Set(discordSourceNames).size !== discordSourceNames.length) {
 					context.addIssue({
@@ -1474,12 +1511,17 @@ const systemConfigSchema = z
 						});
 					}
 				}
-				const allowedRawSecretNames = new Set(['API_SERVER_KEY', ...discordSourceNames]);
+				const allowedRawSecretNames = new Set([
+					'API_SERVER_KEY',
+					...apiServerKeySourceNames,
+					...discordSourceNames,
+					...profileEnvironmentInjectionSourceNames,
+				]);
 				for (const [secretName, secret] of Object.entries(zone.secrets)) {
 					if (secret.injection === 'env' && !allowedRawSecretNames.has(secretName)) {
 						context.addIssue({
 							code: z.ZodIssueCode.custom,
-							message: `Hermes zone '${zone.id}' env secret '${secretName}' must be API_SERVER_KEY, assigned to DISCORD_BOT_TOKEN, or use injection 'http-mediation'.`,
+							message: `Hermes zone '${zone.id}' env secret '${secretName}' must be the root API_SERVER_KEY, assigned to a profile API_SERVER_KEY or DISCORD_BOT_TOKEN target, or use injection 'http-mediation'.`,
 							path: ['zones', zoneIndex, 'secrets', secretName],
 						});
 					}

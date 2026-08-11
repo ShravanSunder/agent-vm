@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	managedHermesToolPortalPluginName,
 	parseHermesManagedConfiguration,
+	validateHermesConfigurationAdmission,
 } from './hermes-managed-configuration.js';
 
 describe('Hermes managed configuration', () => {
@@ -237,5 +238,22 @@ plugins:
 ${forbiddenPolicy}
 `),
 		).toThrow("port-binding platform 'api_server'");
+	});
+
+	it('admits only an explicitly disabled api_server in a native named profile config', () => {
+		const configurationSource = `
+platforms:
+  api_server:
+    enabled: false
+`;
+
+		expect(() => validateHermesConfigurationAdmission(configurationSource)).toThrow(
+			"port-binding platform 'api_server'",
+		);
+		expect(() =>
+			validateHermesConfigurationAdmission(configurationSource, {
+				allowDisabledApiServer: true,
+			}),
+		).not.toThrow();
 	});
 });

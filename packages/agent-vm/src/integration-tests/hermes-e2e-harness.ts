@@ -54,7 +54,26 @@ const hermesGatewayLocalPackageNames = [
 	'gateway-runtime',
 ] as const;
 
-export const hermesE2eApiServerKey = 'hermes-e2e-api-server-key';
+export const hermesE2eRootApiServerKey = 'hermes-e2e-root-api-server-key';
+
+export function hermesE2eProfileApiServerKey(agentId: string): string {
+	return `hermes-e2e-${agentId}-profile-api-server-key`;
+}
+
+export function hermesE2eProfileApiServerKeyEnvironmentName(agentId: string): string {
+	return `API_SERVER_KEY_${agentId.toUpperCase().replaceAll(/[^A-Z0-9]/gu, '_')}_E2E`;
+}
+
+export function buildHermesE2eProfileApiServerKeySecrets(
+	agentIds: readonly string[],
+): Readonly<Record<string, string>> {
+	return Object.fromEntries(
+		agentIds.map((agentId) => [
+			hermesE2eProfileApiServerKeyEnvironmentName(agentId),
+			hermesE2eProfileApiServerKey(agentId),
+		]),
+	);
+}
 
 function getHermesE2eZone(systemConfig: LoadedSystemConfig): HermesE2eProject['zone'] {
 	const zone = systemConfig.zones[0];
@@ -302,7 +321,10 @@ export async function scaffoldHermesE2eProject(options: {
 			profileSecretProjectionsByAgent: Object.fromEntries(
 				options.agents.map((agentId) => [
 					agentId,
-					{ DISCORD_BOT_TOKEN: `DISCORD_BOT_TOKEN_${agentId.toUpperCase()}` },
+					{
+						API_SERVER_KEY: hermesE2eProfileApiServerKeyEnvironmentName(agentId),
+						DISCORD_BOT_TOKEN: `DISCORD_BOT_TOKEN_${agentId.toUpperCase()}`,
+					},
 				]),
 			),
 			port: openClawZone.gateway.port,
@@ -318,8 +340,22 @@ export async function scaffoldHermesE2eProject(options: {
 				audience: 'gateway',
 				injection: 'env',
 				source: 'config',
-				value: hermesE2eApiServerKey,
+				value: hermesE2eRootApiServerKey,
 			},
+			...Object.fromEntries(
+				options.agents.map((agentId) => {
+					const environmentName = hermesE2eProfileApiServerKeyEnvironmentName(agentId);
+					return [
+						environmentName,
+						{
+							audience: 'gateway' as const,
+							envVar: environmentName,
+							injection: 'env' as const,
+							source: 'environment' as const,
+						},
+					];
+				}),
+			),
 		},
 	};
 	const zone = getHermesE2eZone(openClawProject.systemConfig);

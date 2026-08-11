@@ -6,12 +6,14 @@ import type { GatewayZoneConfig, ManagedGatewayLifecycle } from '@agent-vm/gatew
 import {
 	loadHermesManagedConfiguration,
 	validateHermesNativeConfigurationFile,
+	validateHermesNativeProfileConfigurationFile,
 } from './hermes-managed-configuration.js';
 
 const hermesProfileNamePattern = /^[a-z0-9][a-z0-9_-]{0,63}$/u;
 const hermesProfilesDirectoryName = 'profiles';
 const stockHermesReservedDefaultProfileName = 'default';
 const hermesRootConfigurationFileName = 'config.yaml';
+const hermesNamedProfileConfigurationSource = 'platforms:\n  api_server:\n    enabled: false\n';
 type FileSystemEntryStatus = Awaited<ReturnType<typeof lstat>>;
 type GatewayHostStateSecretResolver = Parameters<
 	NonNullable<ManagedGatewayLifecycle['prepareHostState']>
@@ -170,9 +172,12 @@ async function ensureHermesRootConfigurationFile(zone: GatewayZoneConfig): Promi
 	await ensureHermesConfigurationFile(hermesRootConfigurationPath(zone));
 }
 
-async function ensureHermesConfigurationFile(configurationFilePath: string): Promise<void> {
+async function ensureHermesConfigurationFile(
+	configurationFilePath: string,
+	initialSource = '{}\n',
+): Promise<void> {
 	try {
-		await writeFile(configurationFilePath, '{}\n', {
+		await writeFile(configurationFilePath, initialSource, {
 			encoding: 'utf8',
 			flag: 'wx',
 			mode: 0o600,
@@ -193,6 +198,14 @@ async function validateExistingHermesConfigurationFile(
 ): Promise<void> {
 	if ((await readPathStatus(configurationFilePath)) !== undefined) {
 		await validateHermesNativeConfigurationFile(configurationFilePath);
+	}
+}
+
+async function validateExistingHermesProfileConfigurationFile(
+	configurationFilePath: string,
+): Promise<void> {
+	if ((await readPathStatus(configurationFilePath)) !== undefined) {
+		await validateHermesNativeProfileConfigurationFile(configurationFilePath);
 	}
 }
 
@@ -291,7 +304,7 @@ export async function preflightHermesProfileDirectories(
 	await Promise.all(
 		expectedProfileNames.map(
 			async (profileName) =>
-				await validateExistingHermesConfigurationFile(
+				await validateExistingHermesProfileConfigurationFile(
 					hermesProfileConfigurationPath(zone, profileName),
 				),
 		),
@@ -343,7 +356,10 @@ export async function prepareHermesProfileDirectories(
 	await Promise.all(
 		expectedProfileNames.map(
 			async (profileName) =>
-				await ensureHermesConfigurationFile(hermesProfileConfigurationPath(zone, profileName)),
+				await ensureHermesConfigurationFile(
+					hermesProfileConfigurationPath(zone, profileName),
+					hermesNamedProfileConfigurationSource,
+				),
 		),
 	);
 
@@ -356,7 +372,7 @@ export async function prepareHermesProfileDirectories(
 	await Promise.all(
 		expectedProfileNames.map(
 			async (profileName) =>
-				await validateHermesNativeConfigurationFile(
+				await validateHermesNativeProfileConfigurationFile(
 					hermesProfileConfigurationPath(zone, profileName),
 				),
 		),

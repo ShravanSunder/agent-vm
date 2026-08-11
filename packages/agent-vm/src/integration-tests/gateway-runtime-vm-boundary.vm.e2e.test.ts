@@ -179,11 +179,13 @@ const semanticSnapshot = gatewayControlContracts.deriveGatewayRuntimePortalSeman
 		{
 			agentId: 'main',
 			frameworkIdentity: { agentId: 'main', kind: 'openclaw' },
+			toolPortalNamespaceNames: [],
 			toolPortalProfileId: 'main-profile',
 		},
 		{
 			agentId: 'research',
 			frameworkIdentity: { agentId: 'research', kind: 'openclaw' },
+			toolPortalNamespaceNames: [],
 			toolPortalProfileId: 'research-profile',
 		},
 	],

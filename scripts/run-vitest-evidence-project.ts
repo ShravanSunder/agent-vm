@@ -54,6 +54,7 @@ const localToolVmPackageEvidenceProjects = new Set([
 	'e2e-hermes',
 	'e2e-openclaw',
 	'e2e-vm',
+	'e2e-vm-managed-gateway',
 	'e2e-vm-mediation',
 	'e2e-worker',
 ]);

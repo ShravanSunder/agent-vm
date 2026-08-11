@@ -1,0 +1,27 @@
+name: Set up Agent VM Node workspace
+description: Install the pinned Node and pnpm toolchain, workspace dependencies, and optional build.
+inputs:
+  build:
+    description: Build the workspace after installing dependencies.
+    required: false
+    default: 'true'
+runs:
+  using: composite
+  steps:
+    - name: Set up pnpm
+      uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+
+    - name: Set up Node
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      with:
+        node-version: 24.7.0
+        cache: pnpm
+
+    - name: Install Node workspace
+      shell: bash
+      run: pnpm install --frozen-lockfile
+
+    - name: Build
+      if: inputs.build == 'true'
+      shell: bash
+      run: pnpm build

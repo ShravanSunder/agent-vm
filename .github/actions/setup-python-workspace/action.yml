@@ -1,0 +1,18 @@
+name: Set up Agent VM Python workspace
+description: Install the pinned uv and Python toolchain plus frozen workspace dependencies.
+runs:
+  using: composite
+  steps:
+    - name: Set up uv
+      uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v9.0.0
+      with:
+        version: '0.11.31'
+        enable-cache: true
+        cache-dependency-glob: uv.lock
+
+    - name: Install Python workspace
+      shell: bash
+      run: |
+        set -euo pipefail
+        uv python install 3.13
+        uv sync --all-packages --frozen

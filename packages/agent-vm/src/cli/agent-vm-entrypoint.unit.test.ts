@@ -176,7 +176,25 @@ function createCliBuildHermesSystemConfig(): LoadedSystemConfig {
 					zoneRuntimeDir: './runtime/shravan',
 					profilesByAgent: { shravan: 'main' },
 					profileSecretProjectionsByAgent: {
-						shravan: { DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN' },
+						shravan: {
+							API_SERVER_KEY: 'API_SERVER_KEY_SHRAVAN',
+							DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN',
+						},
+					},
+				},
+				secrets: {
+					...zone.secrets,
+					API_SERVER_KEY_SHRAVAN: {
+						audience: 'gateway',
+						envVar: 'API_SERVER_KEY_SHRAVAN',
+						injection: 'env',
+						source: 'environment',
+					},
+					DISCORD_BOT_TOKEN: {
+						audience: 'gateway',
+						envVar: 'DISCORD_BOT_TOKEN',
+						injection: 'env',
+						source: 'environment',
 					},
 				},
 			},

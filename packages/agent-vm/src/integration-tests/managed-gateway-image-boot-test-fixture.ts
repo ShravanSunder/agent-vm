@@ -52,6 +52,7 @@ function serviceConfig(verifierPublicKeyPem: string, identitySuffix?: string): o
 			{
 				agentId: 'main',
 				frameworkIdentity: { agentId: 'main', kind: 'openclaw' },
+				toolPortalNamespaceNames: [],
 				toolPortalProfileId: 'default',
 			},
 		],
@@ -216,7 +217,7 @@ export async function createManagedGatewayImageBootFixture(props: {
 			repoRoot: process.cwd(),
 			systemConfig: project.systemConfig,
 		});
-		await prepareGatewayE2eProjectImages({ project });
+		await prepareGatewayE2eProjectImages({ imageFamilies: ['gateway'], project });
 		const preparedImage = await readPreparedManagedVmImage({
 			buildConfigPath: gatewayProfile.buildConfig,
 			cacheDir: path.join(project.systemConfig.cacheDir, 'gateway-images', profileName),

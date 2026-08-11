@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { setTimeout as waitForRetryInterval } from 'node:timers/promises';
 import { promisify } from 'node:util';
+import { gunzipSync, gzipSync } from 'node:zlib';
 
 import type { ManagedVmCreateRequest } from '@agent-vm/managed-vm';
 import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
@@ -105,6 +106,7 @@ interface WorkerE2eZone extends Omit<LoadedSystemConfig['zones'][number], 'gatew
 interface LocalNpmPackageTarball {
 	readonly packageDirectory: string;
 	readonly packageName: string;
+	readonly repoRoot: string;
 }
 
 export interface LocalDockerPackageTarball {
@@ -246,6 +248,7 @@ export interface ManagedVmE2ePrerequisiteOptions {
 }
 
 export interface PrepareGatewayE2eProjectImagesOptions {
+	readonly imageFamilies?: readonly E2eImageTarget['family'][];
 	readonly project: GatewayE2eImageProject;
 	readonly runBuild?: typeof runBuildCommand;
 }
@@ -538,7 +541,9 @@ function managedGatewayBootProjectionsEqual(
 
 async function collectE2eImageTargets(
 	project: GatewayE2eImageProject,
+	imageFamilies: readonly E2eImageTarget['family'][] = ['gateway', 'toolVm'],
 ): Promise<readonly E2eImageTarget[]> {
+	const selectedFamilies = new Set(imageFamilies);
 	const createImageTarget = async (
 		family: 'gateway' | 'toolVm',
 		profileName: string,
@@ -554,7 +559,9 @@ async function collectE2eImageTargets(
 				family === 'gateway' ? 'gateway-images' : 'tool-vm-images',
 				profileName,
 			),
-			e2eManifestEligible: profile.source === undefined,
+			e2eManifestEligible:
+				profile.source === undefined ||
+				(family === 'gateway' && selectedFamilies.size === 1 && selectedFamilies.has('gateway')),
 			family,
 			...(managedGatewayBoot === undefined ? {} : { managedGatewayBoot }),
 			name: profileName,
@@ -573,16 +580,21 @@ async function collectE2eImageTargets(
 		}
 		return target;
 	};
-	const gatewayTargets = await Promise.all(
-		Object.entries(project.systemConfig.imageProfiles.gateways).map(
-			async ([profileName, profile]) => await createImageTarget('gateway', profileName, profile),
-		),
-	);
-	const toolVmTargets = await Promise.all(
-		Object.entries(project.systemConfig.imageProfiles.toolVms).map(
-			async ([profileName, profile]) => await createImageTarget('toolVm', profileName, profile),
-		),
-	);
+	const gatewayTargets = selectedFamilies.has('gateway')
+		? await Promise.all(
+				Object.entries(project.systemConfig.imageProfiles.gateways).map(
+					async ([profileName, profile]) =>
+						await createImageTarget('gateway', profileName, profile),
+				),
+			)
+		: [];
+	const toolVmTargets = selectedFamilies.has('toolVm')
+		? await Promise.all(
+				Object.entries(project.systemConfig.imageProfiles.toolVms).map(
+					async ([profileName, profile]) => await createImageTarget('toolVm', profileName, profile),
+				),
+			)
+		: [];
 	return [...gatewayTargets, ...toolVmTargets];
 }
 
@@ -768,16 +780,23 @@ async function recordPreparedE2eImages(
 	});
 }
 
-export async function findReusableGatewayImageDirectory(
-	currentProjectRoot: string,
-	gatewayBuildConfigPath: string,
-	imageProfileName = 'worker',
-): Promise<string | null> {
+export async function findReusableGatewayImageDirectory(options: {
+	readonly currentProjectRoot: string;
+	readonly gatewayBuildConfigPath: string;
+	readonly imageProfileName?: string;
+	readonly managedGatewayBoot?: ManagedGatewayImageBootProjection;
+}): Promise<string | null> {
+	const imageProfileName = options.imageProfileName ?? 'worker';
 	const explicitE2eCacheRoot = process.env.AGENT_VM_E2E_CACHE_DIR;
 	if (!explicitE2eCacheRoot) {
 		return null;
 	}
-	const requiredFingerprint = await computeFingerprintFromConfigPath(gatewayBuildConfigPath);
+	const requiredFingerprint = await computeFingerprintFromConfigPath(
+		options.gatewayBuildConfigPath,
+		options.managedGatewayBoot === undefined
+			? {}
+			: { managedGatewayBoot: options.managedGatewayBoot },
+	);
 	if (!(await pathExists(explicitE2eCacheRoot))) {
 		return null;
 	}
@@ -787,7 +806,7 @@ export async function findReusableGatewayImageDirectory(
 		.map((entry) => path.join(explicitE2eCacheRoot, entry.name));
 
 	for (const e2eRunDirectory of e2eRunDirectories) {
-		if (e2eRunDirectory === currentProjectRoot) {
+		if (e2eRunDirectory === options.currentProjectRoot) {
 			continue;
 		}
 		const candidateImageDirectories = [
@@ -810,19 +829,26 @@ export async function seedGatewayImageCacheIfAvailable(options: {
 	readonly currentProjectRoot: string;
 	readonly gatewayBuildConfigPath: string;
 	readonly imageProfileName?: string;
+	readonly managedGatewayBoot?: ManagedGatewayImageBootProjection;
 }): Promise<void> {
 	const imageProfileName = options.imageProfileName ?? 'worker';
-	const reusableImageDir = await findReusableGatewayImageDirectory(
-		options.currentProjectRoot,
-		options.gatewayBuildConfigPath,
+	const reusableImageDir = await findReusableGatewayImageDirectory({
+		currentProjectRoot: options.currentProjectRoot,
+		gatewayBuildConfigPath: options.gatewayBuildConfigPath,
 		imageProfileName,
-	);
+		...(options.managedGatewayBoot === undefined
+			? {}
+			: { managedGatewayBoot: options.managedGatewayBoot }),
+	});
 	if (!reusableImageDir) {
 		return;
 	}
 
 	const requiredFingerprint = await computeFingerprintFromConfigPath(
 		options.gatewayBuildConfigPath,
+		options.managedGatewayBoot === undefined
+			? {}
+			: { managedGatewayBoot: options.managedGatewayBoot },
 	);
 	const activeImageDir = path.join(
 		options.activeCacheDir,
@@ -842,7 +868,11 @@ export async function seedGatewayImageCacheIfAvailable(options: {
 export async function prepareGatewayE2eProjectImages(
 	options: PrepareGatewayE2eProjectImagesOptions,
 ): Promise<void> {
-	if (process.env.AGENT_VM_E2E_USE_LOCAL_TOOL_VM_PACKAGES === '1') {
+	const imageFamilies = options.imageFamilies ?? ['gateway', 'toolVm'];
+	if (
+		imageFamilies.includes('toolVm') &&
+		process.env.AGENT_VM_E2E_USE_LOCAL_TOOL_VM_PACKAGES === '1'
+	) {
 		const managedToolVmProfileNames = Object.entries(
 			options.project.systemConfig.imageProfiles.toolVms,
 		)
@@ -857,18 +887,42 @@ export async function prepareGatewayE2eProjectImages(
 			});
 		}
 	}
-	const imageTargets = await collectE2eImageTargets(options.project);
+	const imageTargets = await collectE2eImageTargets(options.project, imageFamilies);
+	if (imageTargets.length === 0) {
+		if (process.env.AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE === '1') {
+			throw new Error('strict prepared e2e image cache required; no selected image targets.');
+		}
+		return;
+	}
 	if (await materializePreparedE2eImagesFromManifest(options.project, imageTargets)) {
 		return;
+	}
+	if (process.env.AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE === '1') {
+		const targetSummary = imageTargets
+			.map(
+				(target) =>
+					`${target.family}/${target.name}#${target.recipeFingerprint}${
+						target.e2eManifestEligible ? '' : ' (not manifest-eligible)'
+					}`,
+			)
+			.join(', ');
+		throw new Error(
+			`strict prepared e2e image cache required; unable to materialize ${targetSummary || 'no selected image targets'}.`,
+		);
 	}
 	await Promise.all(
 		Object.entries(options.project.systemConfig.imageProfiles.gateways).map(
 			async ([profileName, gatewayProfile]) => {
+				const managedGatewayBoot = managedGatewayBootProjectionForE2eTarget(
+					'gateway',
+					gatewayProfile,
+				);
 				await seedGatewayImageCacheIfAvailable({
 					activeCacheDir: options.project.systemConfig.cacheDir,
 					currentProjectRoot: options.project.tempRoot,
 					gatewayBuildConfigPath: gatewayProfile.buildConfig,
 					imageProfileName: profileName,
+					...(managedGatewayBoot === undefined ? {} : { managedGatewayBoot }),
 				});
 			},
 		),
@@ -1017,22 +1071,165 @@ function cacheSafeLocalPackageName(packageName: string): string {
 }
 
 async function computeLocalPackagePackFingerprint(
+	repoRoot: string,
 	packageDirectory: string,
 	packPlan: LocalPackagePackPlan,
 ): Promise<string> {
 	const hash = crypto.createHash('sha256');
 	hash.update(`${packPlan.name}\0${packPlan.version}\0${packPlan.filename}\0`);
+	const stableBuildInputPaths = [
+		'.node-version',
+		'.npmrc',
+		'.pnpmfile.cjs',
+		'mise.toml',
+		'package.json',
+		'pnpm-lock.yaml',
+		'pnpm-workspace.yaml',
+		'tsconfig.base.json',
+		'tsconfig.json',
+	] as const;
+	for (const relativePath of stableBuildInputPaths) {
+		const filePath = path.join(repoRoot, relativePath);
+		// oxlint-disable-next-line no-await-in-loop -- ordered optional-input probing keeps cache keys deterministic
+		if (!(await pathExists(filePath))) {
+			continue;
+		}
+		hash.update(`build:${relativePath}\0`);
+		// oxlint-disable-next-line no-await-in-loop -- ordered hashing keeps cache keys deterministic
+		hash.update(await fs.readFile(filePath));
+		hash.update('\0');
+	}
+	const packageSourceFiles = (await listDirectoryFiles(packageDirectory)).filter((filePath) => {
+		const relativePath = path.relative(packageDirectory, filePath).split(path.sep).join('/');
+		return !relativePath.startsWith('dist/') && !relativePath.startsWith('node_modules/');
+	});
+	for (const filePath of packageSourceFiles) {
+		const relativePath = path.relative(packageDirectory, filePath).split(path.sep).join('/');
+		hash.update(`source:${relativePath}\0`);
+		// oxlint-disable-next-line no-await-in-loop -- ordered hashing keeps cache keys deterministic
+		hash.update(await fs.readFile(filePath));
+		hash.update('\0');
+	}
 	for (const file of packPlan.files.toSorted((left, right) =>
 		left.path.localeCompare(right.path),
 	)) {
+		if (file.path.startsWith('dist/')) {
+			continue;
+		}
+		hash.update(`package:${file.path}\0`);
 		const filePath = path.join(packageDirectory, file.path);
 		// oxlint-disable-next-line no-await-in-loop -- ordered hashing keeps cache keys deterministic
 		const fileContents = await fs.readFile(filePath);
-		hash.update(`${file.path}\0`);
 		hash.update(fileContents);
 		hash.update('\0');
 	}
 	return hash.digest('hex').slice(0, 24);
+}
+
+const tarBlockSize = 512;
+
+function readTarHeaderField(header: Buffer, offset: number, length: number): string {
+	const field = header.toString('utf8', offset, offset + length);
+	const nulIndex = field.indexOf('\0');
+	return (nulIndex === -1 ? field : field.slice(0, nulIndex)).trim();
+}
+
+function readTarEntrySize(header: Buffer): number {
+	const encodedSize = readTarHeaderField(header, 124, 12);
+	if (encodedSize.length === 0) {
+		return 0;
+	}
+	const size = Number.parseInt(encodedSize, 8);
+	if (!Number.isSafeInteger(size) || size < 0) {
+		throw new Error(`Invalid tar entry size: ${encodedSize}`);
+	}
+	return size;
+}
+
+function rewriteTarEntrySizeAndChecksum(header: Buffer, size: number): void {
+	header.fill(0x20, 124, 136);
+	header.write(`${size.toString(8).padStart(11, '0')}\0`, 124, 'ascii');
+	header.fill(0x20, 148, 156);
+	let checksum = 0;
+	for (const byte of header) {
+		checksum += byte;
+	}
+	header.write(`${checksum.toString(8).padStart(6, '0')}\0 `, 148, 'ascii');
+}
+
+const npmDependencyMapKeys = new Set([
+	'dependencies',
+	'devDependencies',
+	'optionalDependencies',
+	'peerDependencies',
+	'peerDependenciesMeta',
+]);
+
+function canonicalizeNpmManifest(value: unknown): unknown {
+	if (!isJsonRecord(value)) {
+		return value;
+	}
+	return Object.fromEntries(
+		Object.entries(value).map(([key, entry]) => {
+			if (!npmDependencyMapKeys.has(key) || !isJsonRecord(entry)) {
+				return [key, entry];
+			}
+			return [
+				key,
+				Object.fromEntries(
+					Object.entries(entry).toSorted(([left], [right]) => left.localeCompare(right)),
+				),
+			];
+		}),
+	);
+}
+
+async function canonicalizePackedNpmTarball(tarballPath: string): Promise<void> {
+	const compressedArchive = await fs.readFile(tarballPath);
+	const archive = gunzipSync(compressedArchive);
+	const outputChunks: Buffer[] = [];
+	let offset = 0;
+	let manifestFound = false;
+	while (offset + tarBlockSize <= archive.length) {
+		const header = Buffer.from(archive.subarray(offset, offset + tarBlockSize));
+		if (header.every((byte) => byte === 0)) {
+			break;
+		}
+		const entrySize = readTarEntrySize(header);
+		const paddedEntrySize = Math.ceil(entrySize / tarBlockSize) * tarBlockSize;
+		const entryEnd = offset + tarBlockSize + paddedEntrySize;
+		if (entryEnd > archive.length) {
+			throw new Error(`Truncated tar entry in ${tarballPath}`);
+		}
+		const entryName = readTarHeaderField(header, 0, 100);
+		const entryData = archive.subarray(offset + tarBlockSize, offset + tarBlockSize + entrySize);
+		if (entryName === 'package/package.json') {
+			const manifest = JSON.parse(entryData.toString('utf8')) as unknown;
+			const trailingNewline = entryData.toString('utf8').endsWith('\n');
+			const canonicalManifest = Buffer.from(
+				`${JSON.stringify(canonicalizeNpmManifest(manifest), null, 2)}${trailingNewline ? '\n' : ''}`,
+				'utf8',
+			);
+			rewriteTarEntrySizeAndChecksum(header, canonicalManifest.length);
+			outputChunks.push(header, canonicalManifest);
+			const canonicalPadding =
+				canonicalManifest.length % tarBlockSize === 0
+					? 0
+					: tarBlockSize - (canonicalManifest.length % tarBlockSize);
+			if (canonicalPadding > 0) {
+				outputChunks.push(Buffer.alloc(canonicalPadding));
+			}
+			manifestFound = true;
+		} else {
+			outputChunks.push(archive.subarray(offset, entryEnd));
+		}
+		offset = entryEnd;
+	}
+	if (!manifestFound) {
+		throw new Error(`Packed npm tarball is missing package/package.json: ${tarballPath}`);
+	}
+	outputChunks.push(Buffer.alloc(tarBlockSize * 2));
+	await fs.writeFile(tarballPath, gzipSync(Buffer.concat(outputChunks)));
 }
 
 async function packLocalPackageTarball(props: LocalNpmPackageTarball): Promise<string> {
@@ -1041,6 +1238,7 @@ async function packLocalPackageTarball(props: LocalNpmPackageTarball): Promise<s
 	await assertLocalPackageFilesExist(props);
 	const packPlan = resolveLocalPackagePackPlan(props.packageDirectory, props.packageName);
 	const packFingerprint = await computeLocalPackagePackFingerprint(
+		props.repoRoot,
 		props.packageDirectory,
 		packPlan,
 	);
@@ -1067,6 +1265,7 @@ async function packLocalPackageTarball(props: LocalNpmPackageTarball): Promise<s
 		});
 		const packedTarballPath = path.join(packDirectory, packPlan.filename);
 		await fs.access(packedTarballPath);
+		await canonicalizePackedNpmTarball(packedTarballPath);
 		await fs.mkdir(cachedPackageDirectory, { recursive: true });
 		const temporaryCachedTarballPath = path.join(
 			cachedPackageDirectory,
@@ -1158,6 +1357,7 @@ export async function packLocalAgentVmPackageTarball(options: {
 	return await packLocalPackageTarball({
 		packageDirectory: path.join(options.repoRoot, 'packages', options.packageName),
 		packageName: options.packageName,
+		repoRoot: options.repoRoot,
 	});
 }
 
@@ -2016,6 +2216,7 @@ export async function prepareLocalWorkerPackageForGatewayImage(repoRoot: string)
 	return await packLocalPackageTarball({
 		packageDirectory: path.join(repoRoot, 'packages', 'agent-vm-worker'),
 		packageName: 'agent-vm-worker',
+		repoRoot,
 	});
 }
 

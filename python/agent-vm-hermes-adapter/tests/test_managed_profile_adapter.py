@@ -4,13 +4,19 @@ import threading
 import unittest
 
 from agent_vm_agent_portal_sdk.gateway_runtime_client import GatewayRuntimeClient
+from pydantic import ValidationError
 
 from agent_vm_hermes_adapter import (
+    CanonicalManagedAgentProjection,
     HermesManagedAdapter,
     HermesManagedAdapterConfig,
     HermesProfileAdmissionError,
 )
 from agent_vm_hermes_adapter.managed_gateway_runtime_client_loop import GatewayRuntimeClientLoop
+from agent_vm_hermes_adapter.managed_profile_adapter import (
+    ManagedTrustedContext,
+    build_managed_trusted_context,
+)
 
 PROJECTION_COHORT_DIGEST = (
     "projection-cohort:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -22,11 +28,17 @@ class FakeSessionSource:
         self.profile = profile
 
 
-def build_projection(*, agent_id: str, profile_name: str) -> dict[str, object]:
+def build_projection(
+    *,
+    agent_id: str,
+    profile_name: str,
+    tool_portal_namespace_names: tuple[str, ...] = ("filesystem",),
+) -> dict[str, object]:
     return {
         "agentId": agent_id,
         "frameworkIdentity": {"kind": "hermes", "profileName": profile_name},
         "profileAssignmentRevision": f"revision-{agent_id}",
+        "toolPortalNamespaceNames": list(tool_portal_namespace_names),
         "toolPortalProfileId": f"policy-{agent_id}",
     }
 
@@ -61,19 +73,104 @@ class HermesManagedAdapterTests(unittest.TestCase):
         researcher = adapter.admit_session_source(FakeSessionSource("researcher"))
         reviewer = adapter.admit_session_source(FakeSessionSource("reviewer"))
 
-        self.assertEqual(researcher["agentId"], "researcher")
-        self.assertEqual(reviewer["agentId"], "reviewer")
+        self.assertEqual(researcher.agent_id, "researcher")
+        self.assertEqual(reviewer.agent_id, "reviewer")
         self.assertEqual(
-            set(researcher),
+            set(researcher.model_dump(by_alias=True)),
             {
                 "agentId",
                 "frameworkIdentity",
                 "profileAssignmentRevision",
+                "toolPortalNamespaceNames",
                 "toolPortalProfileId",
             },
         )
+        self.assertIsInstance(researcher, CanonicalManagedAgentProjection)
+        self.assertEqual(researcher.tool_portal_namespace_names, ("filesystem",))
         self.assertIs(adapter.gateway_runtime_client_for_profile("researcher"), client)
         self.assertIs(adapter.gateway_runtime_client_for_profile("reviewer"), client)
+
+    def test_rejects_missing_unsorted_and_duplicate_namespace_names(self) -> None:
+        missing_names = build_projection(agent_id="reviewer", profile_name="reviewer")
+        del missing_names["toolPortalNamespaceNames"]
+
+        cases = (
+            missing_names,
+            build_projection(
+                agent_id="reviewer",
+                profile_name="reviewer",
+                tool_portal_namespace_names=("zeta", "alpha"),
+            ),
+            build_projection(
+                agent_id="reviewer",
+                profile_name="reviewer",
+                tool_portal_namespace_names=("alpha", "alpha"),
+            ),
+            build_projection(
+                agent_id="reviewer",
+                profile_name="reviewer",
+                tool_portal_namespace_names=("",),
+            ),
+        )
+
+        for projection in cases:
+            with self.subTest(projection=projection):
+                with self.assertRaises(ValidationError):
+                    CanonicalManagedAgentProjection.model_validate(projection)
+                with self.assertRaises(ValidationError):
+                    build_adapter_config((projection,))
+
+    def test_projection_and_nested_identity_are_immutable(self) -> None:
+        projection = build_adapter_config(
+            (build_projection(agent_id="reviewer", profile_name="reviewer"),)
+        ).profiles[0]
+
+        with self.assertRaises(ValidationError):
+            setattr(projection, "agent_id", "changed")
+        with self.assertRaises(ValidationError):
+            setattr(projection.framework_identity, "profile_name", "changed")
+        with self.assertRaises(ValidationError):
+            setattr(projection, "tool_portal_namespace_names", ("filesystem", "zeta"))
+
+    def test_builds_exact_trusted_context_wire_shape_without_session(self) -> None:
+        projection = build_adapter_config(
+            (build_projection(agent_id="reviewer", profile_name="reviewer"),)
+        ).profiles[0]
+
+        trusted_context = build_managed_trusted_context(projection)
+
+        self.assertIsInstance(trusted_context, ManagedTrustedContext)
+        self.assertEqual(
+            trusted_context.model_dump(by_alias=True, mode="json", exclude_none=True),
+            {
+                "principal": {
+                    "agentId": "reviewer",
+                    "frameworkIdentity": {"kind": "hermes", "profileName": "reviewer"},
+                    "profileAssignmentRevision": "revision-reviewer",
+                    "toolPortalProfileId": "policy-reviewer",
+                },
+            },
+        )
+
+    def test_builds_exact_trusted_context_wire_shape_with_session(self) -> None:
+        projection = build_adapter_config(
+            (build_projection(agent_id="reviewer", profile_name="reviewer"),)
+        ).profiles[0]
+
+        trusted_context = build_managed_trusted_context(projection, session_id="session-1")
+
+        self.assertEqual(
+            trusted_context.model_dump(by_alias=True, mode="json", exclude_none=True),
+            {
+                "correlation": {"sessionId": "session-1"},
+                "principal": {
+                    "agentId": "reviewer",
+                    "frameworkIdentity": {"kind": "hermes", "profileName": "reviewer"},
+                    "profileAssignmentRevision": "revision-reviewer",
+                    "toolPortalProfileId": "policy-reviewer",
+                },
+            },
+        )
 
     def test_rejects_missing_default_and_unknown_profiles(self) -> None:
         adapter = HermesManagedAdapter(
@@ -122,9 +219,9 @@ class HermesManagedAdapterTests(unittest.TestCase):
             )
         )
 
-        self.assertEqual(adapter_config.profiles[0]["agentId"], opaque_agent_id)
-        self.assertNotIn("selfRoot", adapter_config.profiles[0])
-        self.assertNotIn("workRoot", adapter_config.profiles[0])
+        self.assertEqual(adapter_config.profiles[0].agent_id, opaque_agent_id)
+        self.assertNotIn("selfRoot", adapter_config.profiles[0].model_dump(by_alias=True))
+        self.assertNotIn("workRoot", adapter_config.profiles[0].model_dump(by_alias=True))
 
     def test_rejects_retired_projection_roots(self) -> None:
         for field_name, field_value in (

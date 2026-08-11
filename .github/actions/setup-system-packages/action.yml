@@ -1,0 +1,25 @@
+name: Set up Agent VM system packages
+description: Restore and install the host packages required by E2E proof lanes.
+runs:
+  using: composite
+  steps:
+    - name: Restore apt package cache
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: .cache/apt-packages
+        key: ${{ runner.os }}-apt-v1-age-qemu-system-arm-qemu-system-x86-xz-utils
+
+    - name: Install system packages
+      shell: bash
+      env:
+        APT_CACHE_DIR: .cache/apt-packages
+      run: |
+        set -euo pipefail
+        mkdir -p "${APT_CACHE_DIR}"
+        sudo mkdir -p /var/cache/apt/archives
+        sudo cp -f "${APT_CACHE_DIR}"/*.deb /var/cache/apt/archives/ 2>/dev/null || true
+        sudo apt-get update
+        sudo apt-get install -y --download-only age qemu-system-arm qemu-system-x86 xz-utils
+        sudo find /var/cache/apt/archives -maxdepth 1 -name '*.deb' -exec cp -n {} "${APT_CACHE_DIR}/" \;
+        sudo chown -R "${USER}:${USER}" "${APT_CACHE_DIR}"
+        sudo apt-get install -y age qemu-system-arm qemu-system-x86 xz-utils

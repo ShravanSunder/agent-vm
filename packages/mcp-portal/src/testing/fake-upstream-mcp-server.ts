@@ -25,12 +25,14 @@ export interface FakeUpstreamHttpRequestRecord {
 export interface StartedFakeUpstreamMcpServer {
 	readonly calls: readonly FakeUpstreamToolCallRecord[];
 	readonly close: () => Promise<void>;
+	readonly firstListToolsRequest: Promise<void>;
 	readonly requests: readonly FakeUpstreamHttpRequestRecord[];
 	readonly port: number;
 	readonly url: string;
 }
 
 export interface FakeUpstreamMcpServerOptions {
+	readonly emptyTools?: boolean;
 	readonly emitProgress?: boolean;
 }
 
@@ -125,7 +127,12 @@ export async function startFakeUpstreamMcpServer(
 ): Promise<StartedFakeUpstreamMcpServer> {
 	const calls: FakeUpstreamToolCallRecord[] = [];
 	const requests: FakeUpstreamHttpRequestRecord[] = [];
-	const tools = createFakeUpstreamTools();
+	let resolveFirstListToolsRequest: (() => void) | undefined;
+	const firstListToolsRequest = new Promise<void>((resolve) => {
+		resolveFirstListToolsRequest = resolve;
+	});
+	let hasObservedListToolsRequest = false;
+	const tools = options.emptyTools === true ? [] : createFakeUpstreamTools();
 	const toolsByName = new Map(tools.map((tool) => [tool.name, tool]));
 	const app = new Hono();
 
@@ -145,7 +152,13 @@ export async function startFakeUpstreamMcpServer(
 			{ capabilities: { tools: { listChanged: false } } },
 		);
 
-		server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
+		server.setRequestHandler(ListToolsRequestSchema, async () => {
+			if (!hasObservedListToolsRequest) {
+				hasObservedListToolsRequest = true;
+				resolveFirstListToolsRequest?.();
+			}
+			return { tools };
+		});
 		server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
 			const tool = toolsByName.get(request.params.name);
 			if (tool === undefined) {
@@ -183,6 +196,7 @@ export async function startFakeUpstreamMcpServer(
 		close: async () => {
 			await closeServer(startedServer.server);
 		},
+		firstListToolsRequest,
 		port: startedServer.port,
 		requests,
 		url: `http://127.0.0.1:${String(startedServer.port)}/mcp`,

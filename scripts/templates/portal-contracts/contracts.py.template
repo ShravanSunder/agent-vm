@@ -393,6 +393,14 @@ def _execute_refinements(  # noqa: PLR0912
             items = _require_mapping(normalized_value).get(t.cast("str", operation["path"]))
             if isinstance(items, list) and len(items) != len(set(t.cast("list[str]", items))):
                 raise _portable_error(error_code, "String items must be unique.")
+        elif operation_kind == "sorted-unique-string-items":
+            items = _require_mapping(normalized_value).get(t.cast("str", operation["path"]))
+            if isinstance(items, list):
+                string_items = t.cast("list[object]", items)
+                if all(isinstance(item, str) for item in string_items):
+                    namespace_names = t.cast("list[str]", string_items)
+                    if len(namespace_names) != len(set(namespace_names)) or namespace_names != sorted(namespace_names):
+                        raise _portable_error(error_code, "String items must be sorted and unique.")
         elif operation_kind == "work-relative-path":
             field_names = set(t.cast("list[str]", operation["fieldNames"]))
             for item in _walk(normalized_value):

@@ -31,6 +31,7 @@ function createToolPortalPluginConfig(): {
 					readonly kind: 'openclaw';
 				};
 				readonly profileAssignmentRevision: string;
+				readonly toolPortalNamespaceNames: readonly string[];
 				readonly toolPortalProfileId: string;
 			}
 		>
@@ -53,6 +54,7 @@ function createToolPortalPluginConfig(): {
 				agentId: 'shravan',
 				frameworkIdentity: { agentId: 'shravan', kind: 'openclaw' },
 				profileAssignmentRevision: 'profile-revision-a',
+				toolPortalNamespaceNames: [],
 				toolPortalProfileId: 'profile-a',
 			},
 		},

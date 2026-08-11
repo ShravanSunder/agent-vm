@@ -94,7 +94,10 @@ const hermesSystemConfig = {
 				imageProfile: 'hermes',
 				profilesByAgent: { beta: 'beta' },
 				profileSecretProjectionsByAgent: {
-					beta: { DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN' },
+					beta: {
+						API_SERVER_KEY: 'API_SERVER_KEY_BETA',
+						DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN',
+					},
 				},
 				cpus: 2,
 				memory: '2G',
@@ -105,7 +108,14 @@ const hermesSystemConfig = {
 				zoneRuntimeDir: './runtime/hermes',
 			},
 			id: 'hermes-zone',
-			secrets: {},
+			secrets: {
+				API_SERVER_KEY_BETA: {
+					audience: 'gateway',
+					envVar: 'API_SERVER_KEY_BETA',
+					injection: 'env',
+					source: 'environment',
+				},
+			},
 		},
 	],
 } satisfies SystemConfig;

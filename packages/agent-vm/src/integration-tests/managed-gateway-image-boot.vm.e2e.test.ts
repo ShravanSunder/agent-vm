@@ -32,6 +32,46 @@ const processObservationRetryIntervalMs = 100;
 const stableSiblingTerminationObservationCount = 10;
 const toolPortalReadinessPath = '/run/agent-vm/gateway-runtime/tool-portal.readiness.json';
 
+type ManagedGatewayTestGroup =
+	| 'core'
+	| 'input-missing-tool-portal'
+	| 'input-missing-framework'
+	| 'input-read-only-environment'
+	| 'termination-tool-portal'
+	| 'termination-openclaw'
+	| 'worker-stock';
+
+function selectManagedGatewayTestGroup(
+	value: string | undefined,
+): ManagedGatewayTestGroup | 'none' | undefined {
+	if (value === undefined || value.length === 0) {
+		return undefined;
+	}
+	if (value === 'none') {
+		return 'none';
+	}
+	if (
+		value === 'core' ||
+		value === 'input-missing-tool-portal' ||
+		value === 'input-missing-framework' ||
+		value === 'input-read-only-environment' ||
+		value === 'termination-tool-portal' ||
+		value === 'termination-openclaw' ||
+		value === 'worker-stock'
+	) {
+		return value;
+	}
+	throw new Error(`Unsupported AGENT_VM_MANAGED_GATEWAY_TEST_GROUP: ${value}`);
+}
+
+const selectedManagedGatewayTestGroup = selectManagedGatewayTestGroup(
+	process.env.AGENT_VM_MANAGED_GATEWAY_TEST_GROUP,
+);
+
+function shouldRegisterManagedGatewayTest(group: ManagedGatewayTestGroup): boolean {
+	return selectedManagedGatewayTestGroup === undefined || selectedManagedGatewayTestGroup === group;
+}
+
 interface GuestProcessObservation {
 	readonly argv: readonly string[];
 	readonly command: string;
@@ -615,300 +655,320 @@ async function waitForManagedGatewaySiblingProcesses(
 }
 
 describeLiveVmIntegration('Managed Gateway image-owned sibling boot', () => {
-	it('boots one Tool Portal root and one real OpenClaw root without controller launch authority', async () => {
-		const fixture = await startManagedGatewayImageBootFixture({
-			sessionLabel: 'managed-gateway-image-owned-sibling-boot',
-		});
-
-		try {
-			const preparedImage = fixture.preparedImage;
-			expect(preparedImage.fingerprint).toMatch(/^[a-f0-9]{16}$/u);
-			expect(preparedImage.managedGatewayBoot).toEqual({
-				frameworkBootEntry: 'openclaw-framework-service',
-				kind: 'managed-gateway-exact-two-role',
-			});
-			const initScript = await readFile(
-				path.join(preparedImage.imagePath, 'agent-vm-rootfs-init-extra.sh'),
-				'utf8',
-			);
-			const initScriptSha256 = createHash('sha256').update(initScript).digest('hex');
-			expect({ fingerprint: preparedImage.fingerprint, initScriptSha256 }).toMatchObject({
-				fingerprint: expect.stringMatching(/^[a-f0-9]{16}$/u),
-				initScriptSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
-			});
-			expect(initScript).toContain('/usr/local/bin/agent-vm-gateway-runtime');
-			expect(initScript).toContain('/usr/local/bin/openclaw gateway --port 18789');
-			expect(initScript).toContain(
-				'managed_gateway_environment_input_root=/run/agent-vm/managed-gateway-environment',
-			);
-			expect(initScript).toContain(
-				'managed_gateway_structured_input_root=/run/agent-vm/managed-gateway',
-			);
-			expect(initScript).not.toContain('managed-gateway-inputs');
-			expect(initScript).toContain('tool-portal.environment.sh');
-			expect(initScript).toContain('framework.environment.sh');
-			expect(initScript.includes(managedGatewayBootSecretCanary)).toBe(false);
-
-			const observation = await waitForManagedGatewaySiblingProcesses(fixture.vm);
-			const toolPortalProcesses = matchingRoleProcesses(observation, 'tool-portal');
-			const openClawProcesses = matchingRoleProcesses(observation, 'openclaw');
-
-			expect(toolPortalProcesses).toHaveLength(1);
-			expect(openClawProcesses).toHaveLength(1);
-			expect(toolPortalProcesses[0]?.parentProcessId).toBe(1);
-			expect(openClawProcesses[0]?.parentProcessId).toBe(1);
-			expect(toolPortalProcesses[0]?.processId).not.toBe(openClawProcesses[0]?.processId);
-			expect(toolPortalProcesses[0]).toMatchObject({ groupId: 0, userId: 0 });
-			expect(openClawProcesses[0]).toMatchObject({ groupId: 0, userId: 0 });
-			expect(toolPortalProcesses[0]?.executablePath).toMatch(/\/node$/u);
-			expect(openClawProcesses[0]?.executablePath).toMatch(/\/node$/u);
-			expect(toolPortalProcesses[0]?.startIdentity).toMatch(/^\d+$/u);
-			expect(openClawProcesses[0]?.startIdentity).toMatch(/^\d+$/u);
-			expect(BigInt(toolPortalProcesses[0]?.startIdentity ?? '0')).toBeLessThan(
-				BigInt(observation.observerStartIdentity),
-			);
-			expect(BigInt(openClawProcesses[0]?.startIdentity ?? '0')).toBeLessThan(
-				BigInt(observation.observerStartIdentity),
-			);
-			expect(
-				[...toolPortalProcesses, ...openClawProcesses].some((process) =>
-					process.argv.some(
-						(argument) =>
-							argument.includes('\0') || argument.includes(managedGatewayBootSecretCanary),
-					),
-				),
-			).toBe(false);
-			expect(residentBootLaunchers(observation)).toEqual([]);
-			expect(observation.fatalEvidence).toBeNull();
-			expect(observation.readinessEvidence).toMatchObject({
-				kind: 'tool-portal-role-readiness',
-				serviceIdentity: {
-					processEpoch: 'process-epoch-image-owned',
-					role: 'tool-portal',
-					serviceId: 'tool-portal-image-owned',
-				},
-				uds: {
-					attachment: { status: 'awaiting-attachment' },
-					publication: { status: 'published' },
-				},
-			});
-			const bootInputMountObservation = await fixture.vm.exec([
-				'/bin/sh',
-				'-c',
-				[
-					`test ! -e ${managedGatewayBootEnvironmentGuestRoot}/tool-portal.environment.sh`,
-					`test ! -e ${managedGatewayBootEnvironmentGuestRoot}/framework.environment.sh`,
-					`test -f ${managedGatewayBootEnvironmentGuestRoot}/openclaw-gateway-token.environment.sh`,
-					`test -f ${managedGatewayBootEnvironmentGuestRoot}/openclaw-all-secrets.environment.sh`,
-					`test -f ${managedGatewayBootInputGuestRoot}/tool-portal-service.json`,
-					`test -f ${managedGatewayBootInputGuestRoot}/framework-service.json`,
-					`test ! -e /run/agent-vm/gateway-runtime/tool-portal-service.json`,
-					`test ! -e /run/agent-vm/gateway-runtime/framework-service.json`,
-				].join(' && '),
-			]);
-			expect(bootInputMountObservation).toMatchObject({
-				exitCode: 0,
-				ok: true,
-			});
-
-			const authShellResult = await fixture.vm.exec([
-				'/bin/sh',
-				'-c',
-				wrapWithOpenClawShellEnvironment(
-					'test "$OPENCLAW_CONFIG_PATH" = "/home/openclaw/.openclaw/state/effective-openclaw.json" && command -v openclaw >/dev/null',
-				),
-			]);
-			expect(authShellResult).toMatchObject({
-				exitCode: 0,
-				ok: true,
-			});
-
-			const tokenAuthShellResult = await fixture.vm.exec([
-				'/bin/sh',
-				'-c',
-				wrapWithOpenClawGatewayTokenShellEnvironment(
-					`test "$OPENCLAW_GATEWAY_TOKEN" = "${managedGatewayBootSecretCanary}" && test "$OPENCLAW_CONFIG_PATH" = "/home/openclaw/.openclaw/state/effective-openclaw.json"`,
-				),
-			]);
-			expect(tokenAuthShellResult).toMatchObject({
-				exitCode: 0,
-				ok: true,
-			});
-		} finally {
-			await fixture.close();
-		}
-	}, 900_000);
-
-	it('keeps OpenClaw running when the Tool Portal boot input is missing', async () => {
-		const fixture = await startManagedGatewayImageBootFixture({
-			omittedInputFileName: 'tool-portal-service.json',
-			sessionLabel: 'managed-gateway-image-owned-missing-tool-portal-input',
-		});
-		try {
-			const observation = await waitForStableManagedGatewayPartialStart(fixture.vm, 'openclaw');
-			const openClawProcesses = matchingRoleProcesses(observation, 'openclaw');
-			expect(openClawProcesses).toHaveLength(1);
-			expect(openClawProcesses[0]).toMatchObject({
-				argv: ['openclaw'],
-				groupId: 0,
-				parentProcessId: 1,
-				userId: 0,
-			});
-			expect(matchingRoleProcesses(observation, 'tool-portal')).toEqual([]);
-			expect(residentBootLaunchers(observation)).toEqual([]);
-			expect(observation.readinessEvidence).toBeNull();
-			expect(observation.fatalEvidence).toBeNull();
-		} finally {
-			await fixture.close();
-		}
-	}, 900_000);
-
-	it('keeps Tool Portal ready when the OpenClaw boot input is missing', async () => {
-		const fixture = await startManagedGatewayImageBootFixture({
-			omittedInputFileName: 'framework-service.json',
-			sessionLabel: 'managed-gateway-image-owned-missing-framework-input',
-		});
-		try {
-			const observation = await waitForStableManagedGatewayPartialStart(fixture.vm, 'tool-portal');
-			const toolPortalProcesses = matchingRoleProcesses(observation, 'tool-portal');
-			expect(toolPortalProcesses).toHaveLength(1);
-			expect(toolPortalProcesses[0]).toMatchObject({
-				groupId: 0,
-				parentProcessId: 1,
-				userId: 0,
-			});
-			expect(matchingRoleProcesses(observation, 'openclaw')).toEqual([]);
-			expect(residentBootLaunchers(observation)).toEqual([]);
-			expect(observation.readinessEvidence).toMatchObject({
-				serviceIdentity: {
-					role: 'tool-portal',
-					serviceId: 'tool-portal-image-owned',
-				},
-			});
-			expect(observation.fatalEvidence).toBeNull();
-		} finally {
-			await fixture.close();
-		}
-	}, 900_000);
-
-	it('starts neither sibling when environment-script unlink is denied', async () => {
-		const fixture = await startManagedGatewayImageBootFixture({
-			environmentMountAccess: 'read-only',
-			sessionLabel: 'managed-gateway-image-owned-environment-unlink-denied',
-		});
-		try {
-			const observation = await waitForStableManagedGatewayNoSiblingStart(fixture.vm);
-			expect(matchingRoleProcesses(observation, 'tool-portal')).toEqual([]);
-			expect(matchingRoleProcesses(observation, 'openclaw')).toEqual([]);
-			expect(residentBootLaunchers(observation)).toEqual([]);
-			expect(observation.readinessEvidence).toBeNull();
-			expect(observation.fatalEvidence).toBeNull();
-		} finally {
-			await fixture.close();
-		}
-	}, 900_000);
-
-	it.each(['tool-portal', 'openclaw'] as const)(
-		'terminates the exact %s sibling without restarting it or disturbing its peer',
-		async (terminatedRole) => {
+	if (shouldRegisterManagedGatewayTest('core')) {
+		it('boots one Tool Portal root and one real OpenClaw root without controller launch authority', async () => {
 			const fixture = await startManagedGatewayImageBootFixture({
-				sessionLabel: `managed-gateway-image-owned-${terminatedRole}-termination`,
+				sessionLabel: 'managed-gateway-image-owned-sibling-boot',
 			});
-			let fixtureClosed = false;
 
 			try {
-				const hostProcessId = requirePositiveHostProcessId(fixture.vm);
-				const initialObservation = await waitForManagedGatewaySiblingProcesses(fixture.vm);
-				const terminatedProcess = requireSingleRoleProcess(initialObservation, terminatedRole);
-				const survivorRole = otherManagedGatewaySiblingRole(terminatedRole);
-				const survivorProcess = requireSingleRoleProcess(initialObservation, survivorRole);
-
-				await terminateExactManagedGatewaySibling(fixture.vm, terminatedProcess);
-				const terminalObservation = await waitForTerminatedManagedGatewaySibling({
-					terminatedProcess,
-					terminatedRole,
-					vm: fixture.vm,
-					survivorProcess,
-					survivorRole,
+				const preparedImage = fixture.preparedImage;
+				expect(preparedImage.fingerprint).toMatch(/^[a-f0-9]{16}$/u);
+				expect(preparedImage.managedGatewayBoot).toEqual({
+					frameworkBootEntry: 'openclaw-framework-service',
+					kind: 'managed-gateway-exact-two-role',
 				});
-
-				expect(matchingRoleProcesses(terminalObservation, terminatedRole)).toEqual([]);
-				expect(requireSingleRoleProcess(terminalObservation, survivorRole)).toMatchObject({
-					processId: survivorProcess.processId,
-					startIdentity: survivorProcess.startIdentity,
-				});
-				expect(residentBootLaunchers(terminalObservation)).toEqual([]);
-
-				await fixture.close();
-				fixtureClosed = true;
-				await waitForHostProcessAbsence(hostProcessId);
-			} finally {
-				if (!fixtureClosed) await fixture.close();
-			}
-		},
-		900_000,
-	);
-
-	it('keeps a stock Worker image free of managed Gateway sibling roles', async () => {
-		const project = await scaffoldWorkerE2eProject({
-			architecture: process.arch === 'arm64' ? 'aarch64' : 'x86_64',
-			prefix: 'agent-vm-e2e-harness-worker-without-managed-gateway-boot-',
-			zoneId: 'worker-without-managed-gateway-boot',
-		});
-		const profileName = project.zone.gateway.imageProfile;
-		const workerProfile = project.systemConfig.imageProfiles.gateways[profileName];
-		if (workerProfile === undefined) {
-			throw new Error(`Worker image profile '${profileName}' is missing.`);
-		}
-		let vm: ManagedVm | undefined;
-
-		try {
-			await prepareGatewayE2eProjectImages({ project });
-			const preparedImage = await readPreparedManagedVmImage({
-				buildConfigPath: workerProfile.buildConfig,
-				cacheDir: path.join(project.systemConfig.cacheDir, 'gateway-images', profileName),
-			});
-			if (preparedImage === undefined) {
-				throw new Error(
-					'Worker managed image preparation did not publish a prepared-image receipt.',
+				const initScript = await readFile(
+					path.join(preparedImage.imagePath, 'agent-vm-rootfs-init-extra.sh'),
+					'utf8',
 				);
-			}
-			expect(preparedImage.managedGatewayBoot).toBeUndefined();
-			const initScript = await readFile(
-				path.join(preparedImage.imagePath, 'agent-vm-rootfs-init-extra.sh'),
-				'utf8',
-			);
-			expect(initScript).not.toContain('agent-vm-gateway-runtime');
-			expect(initScript).not.toContain('openclaw gateway');
-			expect(initScript).not.toContain('agent-vm-hermes-gateway');
+				const initScriptSha256 = createHash('sha256').update(initScript).digest('hex');
+				expect({ fingerprint: preparedImage.fingerprint, initScriptSha256 }).toMatchObject({
+					fingerprint: expect.stringMatching(/^[a-f0-9]{16}$/u),
+					initScriptSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+				});
+				expect(initScript).toContain('/usr/local/bin/agent-vm-gateway-runtime');
+				expect(initScript).toContain('/usr/local/bin/openclaw gateway --port 18789');
+				expect(initScript).toContain(
+					'managed_gateway_environment_input_root=/run/agent-vm/managed-gateway-environment',
+				);
+				expect(initScript).toContain(
+					'managed_gateway_structured_input_root=/run/agent-vm/managed-gateway',
+				);
+				expect(initScript).not.toContain('managed-gateway-inputs');
+				expect(initScript).toContain('tool-portal.environment.sh');
+				expect(initScript).toContain('framework.environment.sh');
+				expect(initScript.includes(managedGatewayBootSecretCanary)).toBe(false);
 
-			vm = await createManagedVmRuntimeComposition().managedVmFactory.createManagedVm({
-				allowedHosts: [],
-				environment: {},
-				imageReference: preparedImage.imagePath,
-				mediatedSecrets: [],
-				mounts: {},
-				resources: {
-					cpuCount: project.zone.gateway.cpus,
-					memory: project.zone.gateway.memory,
-				},
-				rootfsMode: 'cow',
-				...(project.zone.gateway.runtimeRootfsSize === undefined
-					? {}
-					: { runtimeRootfsSize: project.zone.gateway.runtimeRootfsSize }),
-				sessionLabel: 'worker-without-managed-gateway-boot',
-				tcpHosts: [],
+				const observation = await waitForManagedGatewaySiblingProcesses(fixture.vm);
+				const toolPortalProcesses = matchingRoleProcesses(observation, 'tool-portal');
+				const openClawProcesses = matchingRoleProcesses(observation, 'openclaw');
+
+				expect(toolPortalProcesses).toHaveLength(1);
+				expect(openClawProcesses).toHaveLength(1);
+				expect(toolPortalProcesses[0]?.parentProcessId).toBe(1);
+				expect(openClawProcesses[0]?.parentProcessId).toBe(1);
+				expect(toolPortalProcesses[0]?.processId).not.toBe(openClawProcesses[0]?.processId);
+				expect(toolPortalProcesses[0]).toMatchObject({ groupId: 0, userId: 0 });
+				expect(openClawProcesses[0]).toMatchObject({ groupId: 0, userId: 0 });
+				expect(toolPortalProcesses[0]?.executablePath).toMatch(/\/node$/u);
+				expect(openClawProcesses[0]?.executablePath).toMatch(/\/node$/u);
+				expect(toolPortalProcesses[0]?.startIdentity).toMatch(/^\d+$/u);
+				expect(openClawProcesses[0]?.startIdentity).toMatch(/^\d+$/u);
+				expect(BigInt(toolPortalProcesses[0]?.startIdentity ?? '0')).toBeLessThan(
+					BigInt(observation.observerStartIdentity),
+				);
+				expect(BigInt(openClawProcesses[0]?.startIdentity ?? '0')).toBeLessThan(
+					BigInt(observation.observerStartIdentity),
+				);
+				expect(
+					[...toolPortalProcesses, ...openClawProcesses].some((process) =>
+						process.argv.some(
+							(argument) =>
+								argument.includes('\0') || argument.includes(managedGatewayBootSecretCanary),
+						),
+					),
+				).toBe(false);
+				expect(residentBootLaunchers(observation)).toEqual([]);
+				expect(observation.fatalEvidence).toBeNull();
+				expect(observation.readinessEvidence).toMatchObject({
+					kind: 'tool-portal-role-readiness',
+					serviceIdentity: {
+						processEpoch: 'process-epoch-image-owned',
+						role: 'tool-portal',
+						serviceId: 'tool-portal-image-owned',
+					},
+					uds: {
+						attachment: { status: 'awaiting-attachment' },
+						publication: { status: 'published' },
+					},
+				});
+				const bootInputMountObservation = await fixture.vm.exec([
+					'/bin/sh',
+					'-c',
+					[
+						`test ! -e ${managedGatewayBootEnvironmentGuestRoot}/tool-portal.environment.sh`,
+						`test ! -e ${managedGatewayBootEnvironmentGuestRoot}/framework.environment.sh`,
+						`test -f ${managedGatewayBootEnvironmentGuestRoot}/openclaw-gateway-token.environment.sh`,
+						`test -f ${managedGatewayBootEnvironmentGuestRoot}/openclaw-all-secrets.environment.sh`,
+						`test -f ${managedGatewayBootInputGuestRoot}/tool-portal-service.json`,
+						`test -f ${managedGatewayBootInputGuestRoot}/framework-service.json`,
+						`test ! -e /run/agent-vm/gateway-runtime/tool-portal-service.json`,
+						`test ! -e /run/agent-vm/gateway-runtime/framework-service.json`,
+					].join(' && '),
+				]);
+				expect(bootInputMountObservation).toMatchObject({
+					exitCode: 0,
+					ok: true,
+				});
+
+				const authShellResult = await fixture.vm.exec([
+					'/bin/sh',
+					'-c',
+					wrapWithOpenClawShellEnvironment(
+						'test "$OPENCLAW_CONFIG_PATH" = "/home/openclaw/.openclaw/state/effective-openclaw.json" && command -v openclaw >/dev/null',
+					),
+				]);
+				expect(authShellResult).toMatchObject({
+					exitCode: 0,
+					ok: true,
+				});
+
+				const tokenAuthShellResult = await fixture.vm.exec([
+					'/bin/sh',
+					'-c',
+					wrapWithOpenClawGatewayTokenShellEnvironment(
+						`test "$OPENCLAW_GATEWAY_TOKEN" = "${managedGatewayBootSecretCanary}" && test "$OPENCLAW_CONFIG_PATH" = "/home/openclaw/.openclaw/state/effective-openclaw.json"`,
+					),
+				]);
+				expect(tokenAuthShellResult).toMatchObject({
+					exitCode: 0,
+					ok: true,
+				});
+			} finally {
+				await fixture.close();
+			}
+		}, 900_000);
+	}
+
+	if (shouldRegisterManagedGatewayTest('input-missing-tool-portal')) {
+		it('keeps OpenClaw running when the Tool Portal boot input is missing', async () => {
+			const fixture = await startManagedGatewayImageBootFixture({
+				omittedInputFileName: 'tool-portal-service.json',
+				sessionLabel: 'managed-gateway-image-owned-missing-tool-portal-input',
 			});
-			await vm.start();
-			const observation = await observeManagedGatewayBoot(vm);
-			expect(matchingRoleProcesses(observation, 'tool-portal')).toEqual([]);
-			expect(matchingRoleProcesses(observation, 'openclaw')).toEqual([]);
-			expect(residentBootLaunchers(observation)).toEqual([]);
-			expect(observation.readinessEvidence).toBeNull();
-			expect(observation.fatalEvidence).toBeNull();
-		} finally {
-			await vm?.close();
-			await removeE2eTempRoot(project.tempRoot);
-		}
-	}, 900_000);
+			try {
+				const observation = await waitForStableManagedGatewayPartialStart(fixture.vm, 'openclaw');
+				const openClawProcesses = matchingRoleProcesses(observation, 'openclaw');
+				expect(openClawProcesses).toHaveLength(1);
+				expect(openClawProcesses[0]).toMatchObject({
+					argv: ['openclaw'],
+					groupId: 0,
+					parentProcessId: 1,
+					userId: 0,
+				});
+				expect(matchingRoleProcesses(observation, 'tool-portal')).toEqual([]);
+				expect(residentBootLaunchers(observation)).toEqual([]);
+				expect(observation.readinessEvidence).toBeNull();
+				expect(observation.fatalEvidence).toBeNull();
+			} finally {
+				await fixture.close();
+			}
+		}, 900_000);
+	}
+
+	if (shouldRegisterManagedGatewayTest('input-missing-framework')) {
+		it('keeps Tool Portal ready when the OpenClaw boot input is missing', async () => {
+			const fixture = await startManagedGatewayImageBootFixture({
+				omittedInputFileName: 'framework-service.json',
+				sessionLabel: 'managed-gateway-image-owned-missing-framework-input',
+			});
+			try {
+				const observation = await waitForStableManagedGatewayPartialStart(
+					fixture.vm,
+					'tool-portal',
+				);
+				const toolPortalProcesses = matchingRoleProcesses(observation, 'tool-portal');
+				expect(toolPortalProcesses).toHaveLength(1);
+				expect(toolPortalProcesses[0]).toMatchObject({
+					groupId: 0,
+					parentProcessId: 1,
+					userId: 0,
+				});
+				expect(matchingRoleProcesses(observation, 'openclaw')).toEqual([]);
+				expect(residentBootLaunchers(observation)).toEqual([]);
+				expect(observation.readinessEvidence).toMatchObject({
+					serviceIdentity: {
+						role: 'tool-portal',
+						serviceId: 'tool-portal-image-owned',
+					},
+				});
+				expect(observation.fatalEvidence).toBeNull();
+			} finally {
+				await fixture.close();
+			}
+		}, 900_000);
+	}
+
+	if (shouldRegisterManagedGatewayTest('input-read-only-environment')) {
+		it('starts neither sibling when environment-script unlink is denied', async () => {
+			const fixture = await startManagedGatewayImageBootFixture({
+				environmentMountAccess: 'read-only',
+				sessionLabel: 'managed-gateway-image-owned-environment-unlink-denied',
+			});
+			try {
+				const observation = await waitForStableManagedGatewayNoSiblingStart(fixture.vm);
+				expect(matchingRoleProcesses(observation, 'tool-portal')).toEqual([]);
+				expect(matchingRoleProcesses(observation, 'openclaw')).toEqual([]);
+				expect(residentBootLaunchers(observation)).toEqual([]);
+				expect(observation.readinessEvidence).toBeNull();
+				expect(observation.fatalEvidence).toBeNull();
+			} finally {
+				await fixture.close();
+			}
+		}, 900_000);
+	}
+
+	const selectedTerminationRoles = (['tool-portal', 'openclaw'] as const).filter((role) =>
+		shouldRegisterManagedGatewayTest(
+			role === 'tool-portal' ? 'termination-tool-portal' : 'termination-openclaw',
+		),
+	);
+	if (selectedTerminationRoles.length > 0) {
+		it.each(selectedTerminationRoles)(
+			'terminates the exact %s sibling without restarting it or disturbing its peer',
+			async (terminatedRole) => {
+				const fixture = await startManagedGatewayImageBootFixture({
+					sessionLabel: `managed-gateway-image-owned-${terminatedRole}-termination`,
+				});
+				let fixtureClosed = false;
+
+				try {
+					const hostProcessId = requirePositiveHostProcessId(fixture.vm);
+					const initialObservation = await waitForManagedGatewaySiblingProcesses(fixture.vm);
+					const terminatedProcess = requireSingleRoleProcess(initialObservation, terminatedRole);
+					const survivorRole = otherManagedGatewaySiblingRole(terminatedRole);
+					const survivorProcess = requireSingleRoleProcess(initialObservation, survivorRole);
+
+					await terminateExactManagedGatewaySibling(fixture.vm, terminatedProcess);
+					const terminalObservation = await waitForTerminatedManagedGatewaySibling({
+						terminatedProcess,
+						terminatedRole,
+						vm: fixture.vm,
+						survivorProcess,
+						survivorRole,
+					});
+
+					expect(matchingRoleProcesses(terminalObservation, terminatedRole)).toEqual([]);
+					expect(requireSingleRoleProcess(terminalObservation, survivorRole)).toMatchObject({
+						processId: survivorProcess.processId,
+						startIdentity: survivorProcess.startIdentity,
+					});
+					expect(residentBootLaunchers(terminalObservation)).toEqual([]);
+
+					await fixture.close();
+					fixtureClosed = true;
+					await waitForHostProcessAbsence(hostProcessId);
+				} finally {
+					if (!fixtureClosed) await fixture.close();
+				}
+			},
+			900_000,
+		);
+	}
+
+	if (shouldRegisterManagedGatewayTest('worker-stock')) {
+		it('keeps a stock Worker image free of managed Gateway sibling roles', async () => {
+			const project = await scaffoldWorkerE2eProject({
+				architecture: process.arch === 'arm64' ? 'aarch64' : 'x86_64',
+				prefix: 'agent-vm-e2e-harness-worker-without-managed-gateway-boot-',
+				zoneId: 'worker-without-managed-gateway-boot',
+			});
+			const profileName = project.zone.gateway.imageProfile;
+			const workerProfile = project.systemConfig.imageProfiles.gateways[profileName];
+			if (workerProfile === undefined) {
+				throw new Error(`Worker image profile '${profileName}' is missing.`);
+			}
+			let vm: ManagedVm | undefined;
+
+			try {
+				await prepareGatewayE2eProjectImages({ imageFamilies: ['gateway'], project });
+				const preparedImage = await readPreparedManagedVmImage({
+					buildConfigPath: workerProfile.buildConfig,
+					cacheDir: path.join(project.systemConfig.cacheDir, 'gateway-images', profileName),
+				});
+				if (preparedImage === undefined) {
+					throw new Error(
+						'Worker managed image preparation did not publish a prepared-image receipt.',
+					);
+				}
+				expect(preparedImage.managedGatewayBoot).toBeUndefined();
+				const initScript = await readFile(
+					path.join(preparedImage.imagePath, 'agent-vm-rootfs-init-extra.sh'),
+					'utf8',
+				);
+				expect(initScript).not.toContain('agent-vm-gateway-runtime');
+				expect(initScript).not.toContain('openclaw gateway');
+				expect(initScript).not.toContain('agent-vm-hermes-gateway');
+
+				vm = await createManagedVmRuntimeComposition().managedVmFactory.createManagedVm({
+					allowedHosts: [],
+					environment: {},
+					imageReference: preparedImage.imagePath,
+					mediatedSecrets: [],
+					mounts: {},
+					resources: {
+						cpuCount: project.zone.gateway.cpus,
+						memory: project.zone.gateway.memory,
+					},
+					rootfsMode: 'cow',
+					...(project.zone.gateway.runtimeRootfsSize === undefined
+						? {}
+						: { runtimeRootfsSize: project.zone.gateway.runtimeRootfsSize }),
+					sessionLabel: 'worker-without-managed-gateway-boot',
+					tcpHosts: [],
+				});
+				await vm.start();
+				const observation = await observeManagedGatewayBoot(vm);
+				expect(matchingRoleProcesses(observation, 'tool-portal')).toEqual([]);
+				expect(matchingRoleProcesses(observation, 'openclaw')).toEqual([]);
+				expect(residentBootLaunchers(observation)).toEqual([]);
+				expect(observation.readinessEvidence).toBeNull();
+				expect(observation.fatalEvidence).toBeNull();
+			} finally {
+				await vm?.close();
+				await removeE2eTempRoot(project.tempRoot);
+			}
+		}, 900_000);
+	}
 });

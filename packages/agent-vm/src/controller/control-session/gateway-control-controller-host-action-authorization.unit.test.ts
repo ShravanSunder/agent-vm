@@ -263,12 +263,24 @@ function configureFixtureAsHermes(systemConfig: LoadedSystemConfig): void {
 			port: zone.gateway.port,
 			profilesByAgent: { main: 'researcher' },
 			profileSecretProjectionsByAgent: {
-				main: { DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN' },
+				main: {
+					API_SERVER_KEY: 'API_SERVER_KEY_MAIN',
+					DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN',
+				},
 			},
 			stateDir: zone.gateway.stateDir,
 			type: 'hermes',
 			zoneFilesDir: zone.gateway.zoneFilesDir,
 			zoneRuntimeDir: zone.gateway.zoneRuntimeDir,
+		},
+		secrets: {
+			...zone.secrets,
+			API_SERVER_KEY_MAIN: {
+				audience: 'gateway',
+				envVar: 'API_SERVER_KEY_MAIN',
+				injection: 'env',
+				source: 'environment',
+			},
 		},
 	};
 }

@@ -97,12 +97,24 @@ describe('validateControllerSelectedToolVmDirectory', () => {
 				port: 18_793,
 				profilesByAgent: { main: 'researcher' },
 				profileSecretProjectionsByAgent: {
-					main: { DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN' },
+					main: {
+						API_SERVER_KEY: 'API_SERVER_KEY_MAIN',
+						DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN',
+					},
 				},
 				stateDir: stateDirectory,
 				type: 'hermes' as const,
 				zoneFilesDir: zoneFilesDirectory,
 				zoneRuntimeDir: zoneRuntimeDirectory,
+			},
+			secrets: {
+				...zone.secrets,
+				API_SERVER_KEY_MAIN: {
+					audience: 'gateway',
+					envVar: 'API_SERVER_KEY_MAIN',
+					injection: 'env',
+					source: 'environment',
+				},
 			},
 		} satisfies ZoneConfig;
 

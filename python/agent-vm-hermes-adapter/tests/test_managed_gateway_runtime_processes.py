@@ -277,6 +277,7 @@ def build_projection(*, agent_id: str) -> dict[str, object]:
         "agentId": agent_id,
         "frameworkIdentity": {"kind": "hermes", "profileName": agent_id},
         "profileAssignmentRevision": f"revision-{agent_id}",
+        "toolPortalNamespaceNames": ["filesystem", "github"],
         "toolPortalProfileId": f"policy-{agent_id}",
     }
 

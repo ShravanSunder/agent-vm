@@ -39,6 +39,7 @@ const reservedHermesProfileProjectionSourceNames: ReadonlySet<string> = new Set(
 	'API_SERVER_KEY',
 	'API_SERVER_PORT',
 	'GATEWAY_MULTIPLEX_PROFILES',
+	'HERMES_ALLOW_ROOT_GATEWAY',
 	'HERMES_HOME',
 	'HERMES_MANAGED',
 	'HERMES_MANAGED_DIR',
@@ -96,7 +97,7 @@ export function isReservedHermesProfileProjectionSourceName(sourceName: string):
 
 export function isReservedHermesProfileProjectionTargetName(targetName: string): boolean {
 	return (
-		isReservedHermesProfileProjectionSourceName(targetName) ||
+		(targetName !== 'API_SERVER_KEY' && isReservedHermesProfileProjectionSourceName(targetName)) ||
 		hermesProfileGlobalEnvironmentNames.has(targetName) ||
 		hermesProfileGlobalEnvironmentPrefixes.some((prefix) => targetName.startsWith(prefix))
 	);
@@ -253,6 +254,7 @@ function buildHermesFrameworkEnvironment(
 		'API_SERVER_HOST',
 		'API_SERVER_PORT',
 		'GATEWAY_MULTIPLEX_PROFILES',
+		'HERMES_ALLOW_ROOT_GATEWAY',
 		'HERMES_MANAGED_DIR',
 		'HERMES_HOME',
 	] as const) {
@@ -270,6 +272,7 @@ function buildHermesFrameworkEnvironment(
 		API_SERVER_HOST: '0.0.0.0',
 		API_SERVER_PORT: String(hermesGatewayGuestPort),
 		GATEWAY_MULTIPLEX_PROFILES: 'true',
+		HERMES_ALLOW_ROOT_GATEWAY: '1',
 		HERMES_HOME: protectedHermesHomeVmPath,
 		HOME: '/home/hermes',
 		NODE_EXTRA_CA_CERTS: '/run/gondolin/ca-certificates.crt',

@@ -6,158 +6,268 @@ on:
   pull_request:
     branches: [master]
 
+permissions:
+  contents: read
+
 jobs:
-  check:
+  validation:
+    name: Validation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v4
-
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          node-version: 24
-          cache: pnpm
+          persist-credentials: false
 
-      - uses: astral-sh/setup-uv@v9.0.0
+      - parallel:
+          - name: Set up Node workspace
+            uses: ./.github/actions/setup-agent-vm
+            with:
+              build: 'false'
+
+          - name: Set up Python workspace
+            uses: ./.github/actions/setup-python-workspace
+
+      - name: Quality checks
+        run: pnpm check
+
+      - parallel:
+          - name: Unit tests
+            run: pnpm test:unit
+
+          - name: Integration tests
+            run: pnpm test:integration
+
+          - name: Host Python tests
+            run: pnpm python:test:host
+
+          - name: Hermes adapter tests in pinned runtime
+            run: pnpm python:test:hermes
+
+          - name: E2E inventory
+            run: pnpm test:e2e:inventory
+
+  e2e-image-cache:
+    name: Prepare E2E image cache
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          version: '0.11.31'
+          persist-credentials: false
 
-      - name: Install Python 3.13
-        run: uv python install 3.13
+      - name: Resolve prepared image cache identity
+        id: image-key
+        uses: ./.github/actions/resolve-e2e-image-cache-key
 
-      - name: Install Python workspace
-        run: uv sync --all-packages --frozen
+      - parallel:
+          - name: Find prepared OpenClaw image cache
+            id: openclaw-image
+            uses: ./.github/actions/restore-e2e-image-cache
+            with:
+              family: openclaw
+              input-hash: ${{ steps.image-key.outputs.input-hash }}
+              lookup-only: 'true'
 
-      - run: pnpm install --frozen-lockfile
+          - name: Find prepared Worker image cache
+            id: worker-image
+            uses: ./.github/actions/restore-e2e-image-cache
+            with:
+              family: worker
+              input-hash: ${{ steps.image-key.outputs.input-hash }}
+              lookup-only: 'true'
 
-      - name: Cache apt packages
-        uses: actions/cache@v4
-        with:
-          path: .cache/apt-packages
-          key: ${{ runner.os }}-apt-v1-age-qemu-system-arm-qemu-system-x86-xz-utils
+      - parallel:
+          - name: Set up Node workspace for image preparation
+            if: steps.openclaw-image.outputs.cache-hit != 'true' || steps.worker-image.outputs.cache-hit != 'true'
+            uses: ./.github/actions/setup-agent-vm
 
-      - name: Install system packages
+          - name: Set up system packages for image preparation
+            if: steps.openclaw-image.outputs.cache-hit != 'true' || steps.worker-image.outputs.cache-hit != 'true'
+            uses: ./.github/actions/setup-system-packages
+
+      - name: Prepare current E2E images
+        if: steps.openclaw-image.outputs.cache-hit != 'true' || steps.worker-image.outputs.cache-hit != 'true'
         env:
-          APT_CACHE_DIR: .cache/apt-packages
-        run: |
-          set -euo pipefail
-          mkdir -p "${APT_CACHE_DIR}"
-          sudo mkdir -p /var/cache/apt/archives
-          sudo cp -f "${APT_CACHE_DIR}"/*.deb /var/cache/apt/archives/ 2>/dev/null || true
-          sudo apt-get update
-          sudo apt-get install -y --download-only age qemu-system-arm qemu-system-x86 xz-utils
-          sudo find /var/cache/apt/archives -maxdepth 1 -name '*.deb' -exec cp -n {} "${APT_CACHE_DIR}/" \;
-          sudo chown -R "${USER}:${USER}" "${APT_CACHE_DIR}"
-          sudo apt-get install -y age qemu-system-arm qemu-system-x86 xz-utils
+          AGENT_VM_E2E_CACHE_DIR: /tmp/agent-vm-e2e-cache
+        run: pnpm exec tsx scripts/prepare-e2e-image-cache.ts
 
-      - name: Resolve Gondolin Zig version
-        id: zig-version
-        run: |
-          set -euo pipefail
-          ZON_PATH="$(find node_modules -path '*/@earendil-works/gondolin/dist/guest/build.zig.zon' -print -quit)"
-          ZIG_VERSION="$(sed -n 's/.*\.minimum_zig_version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "${ZON_PATH}")"
-          if [[ -z "${ZIG_VERSION}" ]]; then
-            echo "Could not resolve Gondolin minimum Zig version from ${ZON_PATH}" >&2
-            exit 1
-          fi
-          case "$(uname -m)" in
-            x86_64) ZIG_ARCH="x86_64" ;;
-            aarch64|arm64) ZIG_ARCH="aarch64" ;;
-            *) echo "Unsupported CI architecture: $(uname -m)" >&2; exit 1 ;;
-          esac
-          echo "version=${ZIG_VERSION}" >> "${GITHUB_OUTPUT}"
-          echo "arch=${ZIG_ARCH}" >> "${GITHUB_OUTPUT}"
-          echo "Gondolin requires Zig ${ZIG_VERSION} (${ZIG_ARCH})"
+      - parallel:
+          - name: Save prepared OpenClaw image cache
+            if: steps.openclaw-image.outputs.cache-hit != 'true'
+            uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+            with:
+              path: |
+                /tmp/agent-vm-e2e-cache/openclaw
+                /tmp/agent-vm-e2e-cache/local-package-tarballs
+              key: ${{ steps.openclaw-image.outputs.primary-key }}
 
-      - name: Cache Zig tarballs
-        uses: actions/cache@v4
+          - name: Save prepared Worker image cache
+            if: steps.worker-image.outputs.cache-hit != 'true'
+            uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+            with:
+              path: /tmp/agent-vm-e2e-cache/worker
+              key: ${{ steps.worker-image.outputs.primary-key }}
+
+  e2e-host:
+    name: E2E (${{ matrix.lane }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        lane:
+          - host-docker
+          - host
+          - vm-mediation
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          path: .cache/zig
-          key: ${{ runner.os }}-zig-${{ steps.zig-version.outputs.arch }}-${{ steps.zig-version.outputs.version }}
+          persist-credentials: false
 
-      - name: Install Zig for Gondolin e2e tests
+      - parallel:
+          - name: Set up Node workspace
+            uses: ./.github/actions/setup-agent-vm
+
+          - name: Set up system packages
+            uses: ./.github/actions/setup-system-packages
+
+          - name: Set up Python workspace
+            if: matrix.lane == 'host'
+            uses: ./.github/actions/setup-python-workspace
+
+      - name: Run E2E lane
         env:
-          ZIG_ARCH: ${{ steps.zig-version.outputs.arch }}
-          ZIG_VERSION: ${{ steps.zig-version.outputs.version }}
+          AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1'
+        run: pnpm run test:e2e:${{ matrix.lane }}
+
+  e2e-vm:
+    name: E2E (${{ matrix.lane }})
+    needs: e2e-image-cache
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - lane: e2e-vm-shard-1
+            managed-gateway-test-group: ''
+            shard: 1/6
+          - lane: e2e-vm-shard-2
+            managed-gateway-test-group: ''
+            shard: 2/6
+          - lane: e2e-vm-shard-3
+            managed-gateway-test-group: ''
+            shard: 3/6
+          - lane: e2e-vm-shard-4
+            managed-gateway-test-group: ''
+            shard: 4/6
+          - lane: e2e-vm-shard-5
+            managed-gateway-test-group: ''
+            shard: 5/6
+          - lane: e2e-vm-shard-6
+            managed-gateway-test-group: ''
+            shard: 6/6
+          - lane: e2e-vm-managed-gateway-core
+            managed-gateway-test-group: core
+            shard: ''
+          - lane: e2e-vm-managed-gateway-inputs
+            managed-gateway-test-group: input-missing-tool-portal
+            shard: ''
+          - lane: e2e-vm-managed-gateway-inputs-framework
+            managed-gateway-test-group: input-missing-framework
+            shard: ''
+          - lane: e2e-vm-managed-gateway-inputs-read-only
+            managed-gateway-test-group: input-read-only-environment
+            shard: ''
+          - lane: e2e-vm-managed-gateway-termination-tool-portal
+            managed-gateway-test-group: termination-tool-portal
+            shard: ''
+          - lane: e2e-vm-managed-gateway-termination-openclaw
+            managed-gateway-test-group: termination-openclaw
+            shard: ''
+          - lane: e2e-vm-managed-gateway-worker
+            managed-gateway-test-group: worker-stock
+            shard: ''
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Resolve prepared image cache identity
+        id: image-key
+        uses: ./.github/actions/resolve-e2e-image-cache-key
+
+      - parallel:
+          - name: Restore prepared OpenClaw image cache
+            id: openclaw-image
+            uses: ./.github/actions/restore-e2e-image-cache
+            with:
+              family: openclaw
+              input-hash: ${{ steps.image-key.outputs.input-hash }}
+
+          - name: Set up Agent VM workspace
+            uses: ./.github/actions/setup-agent-vm
+
+      - name: Restore prepared Worker image cache
+        id: worker-image
+        uses: ./.github/actions/restore-e2e-image-cache
+        with:
+          family: worker
+          input-hash: ${{ steps.image-key.outputs.input-hash }}
+
+      - name: Set up system packages
+        uses: ./.github/actions/setup-system-packages
+
+      - name: Require prepared image caches
+        env:
+          OPENCLAW_CACHE_HIT: ${{ steps.openclaw-image.outputs.cache-hit }}
+          WORKER_CACHE_HIT: ${{ steps.worker-image.outputs.cache-hit }}
         run: |
           set -euo pipefail
-          mkdir -p .cache/zig
-          ZIG_ARCHIVE=".cache/zig/zig-${ZIG_ARCH}-linux-${ZIG_VERSION}.tar.xz"
-          ZIG_URL="https://ziglang.org/download/${ZIG_VERSION}/zig-${ZIG_ARCH}-linux-${ZIG_VERSION}.tar.xz"
-          if [[ ! -s "${ZIG_ARCHIVE}" ]]; then
-            for attempt in $(seq 1 30); do
-              if curl \
-                --fail \
-                --location \
-                --show-error \
-                --continue-at - \
-                --connect-timeout 15 \
-                --speed-limit 1024 \
-                --speed-time 60 \
-                --max-time 300 \
-                --output "${ZIG_ARCHIVE}" \
-                "${ZIG_URL}"; then
-                break
-              fi
-              echo "Zig download attempt ${attempt} failed; retrying with resume"
-            done
-          fi
-          test -s "${ZIG_ARCHIVE}"
-          xz --test "${ZIG_ARCHIVE}"
-          if [[ ! -x "/opt/zig-${ZIG_ARCH}-linux-${ZIG_VERSION}/zig" ]]; then
-            sudo tar -xJf "${ZIG_ARCHIVE}" -C /opt
-          fi
-          sudo ln -sf "/opt/zig-${ZIG_ARCH}-linux-${ZIG_VERSION}/zig" /usr/local/bin/zig
-          zig version
+          test "${OPENCLAW_CACHE_HIT}" = true
+          test "${WORKER_CACHE_HIT}" = true
 
-      - name: Build
-        run: pnpm build
+      - name: Run VM shard
+        if: matrix.shard != ''
+        env:
+          AGENT_VM_E2E_CACHE_DIR: /tmp/agent-vm-e2e-cache
+          AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1'
+        run: pnpm run test:e2e:vm -- --shard=${{ matrix.shard }}
 
-      - name: Test taxonomy audit
-        run: pnpm test:taxonomy
+      - name: Run managed Gateway group
+        if: matrix.managed-gateway-test-group != ''
+        env:
+          AGENT_VM_E2E_CACHE_DIR: /tmp/agent-vm-e2e-cache
+          AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE: '1'
+          AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1'
+          AGENT_VM_MANAGED_GATEWAY_TEST_GROUP: ${{ matrix.managed-gateway-test-group }}
+        run: pnpm run test:e2e:vm-managed-gateway
 
-      - name: Portal architecture audit
-        run: pnpm test:portal-architecture
-
-      - name: Portal package export audit
-        run: pnpm test:portal-exports
-
-      - name: Generated portal contract freshness
-        run: pnpm exec tsx scripts/generate-portal-contracts.ts --check-clean
-
-      - name: Python tests
-        run: uv run pytest python
-
-      - name: Python format check
-        run: pnpm python:fmt:check
-
-      - name: Python lint
-        run: pnpm python:lint
-
-      - name: Python typecheck
-        run: pnpm python:typecheck
-
-      - name: Lint
-        run: pnpm lint
-
-      - name: Type-aware lint
-        run: pnpm lint:types
-
-      - name: Format check
-        run: pnpm fmt:check
-
-      - name: Typecheck
-        run: pnpm typecheck
-
-      - name: Unit tests
-        run: pnpm test:unit
-
-      - name: Integration tests
-        run: pnpm test:integration
-
-      - name: E2E inventory
-        run: pnpm test:e2e:inventory
-
-      - name: Default 4-lane E2E proofs
-        run: AGENT_VM_E2E_SKIP_WORKSPACE_BUILD=1 pnpm test:e2e
+  check:
+    name: check
+    if: always()
+    needs:
+      - validation
+      - e2e-image-cache
+      - e2e-host
+      - e2e-vm
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every CI lane to pass
+        env:
+          VALIDATION_RESULT: ${{ needs.validation.result }}
+          E2E_IMAGE_CACHE_RESULT: ${{ needs.e2e-image-cache.result }}
+          E2E_HOST_RESULT: ${{ needs.e2e-host.result }}
+          E2E_VM_RESULT: ${{ needs.e2e-vm.result }}
+        run: |
+          set -euo pipefail
+          results=(
+            "validation=${VALIDATION_RESULT}"
+            "e2e-image-cache=${E2E_IMAGE_CACHE_RESULT}"
+            "e2e-host=${E2E_HOST_RESULT}"
+            "e2e-vm=${E2E_VM_RESULT}"
+          )
+          printf '%s\n' "${results[@]}"
+          for result in "${results[@]}"; do
+            if [[ "${result##*=}" != success ]]; then
+              echo "CI lane did not pass: ${result}" >&2
+              exit 1
+            fi
+          done

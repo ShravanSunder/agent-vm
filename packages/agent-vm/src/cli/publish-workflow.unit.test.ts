@@ -58,31 +58,34 @@ describe('publish workflow', () => {
 		}
 	});
 
-	it('caches Gondolin Zig tarballs in CI and publish workflows', async () => {
-		const workflowPaths = [
-			path.join(process.cwd(), '.github', 'workflows', 'ci.yml'),
-			path.join(process.cwd(), '.github', 'workflows', 'publish.yml'),
-		];
-		const workflows = await Promise.all(
-			workflowPaths.map(async (workflowPath: string): Promise<string> => {
-				return fs.readFile(workflowPath, 'utf8');
-			}),
-		);
+	it('installs Gondolin Zig only for explicit source-build publication', async () => {
+		const [ciWorkflow, publishWorkflow, sharedSetupAction] = await Promise.all([
+			fs.readFile(path.join(process.cwd(), '.github', 'workflows', 'ci.yml'), 'utf8'),
+			fs.readFile(path.join(process.cwd(), '.github', 'workflows', 'publish.yml'), 'utf8'),
+			fs.readFile(
+				path.join(process.cwd(), '.github', 'actions', 'setup-agent-vm', 'action.yml'),
+				'utf8',
+			),
+		]);
 
-		for (const workflow of workflows) {
-			expect(workflow).toContain('Resolve Gondolin Zig version');
-			expect(workflow).toContain('Cache Zig tarballs');
-			expect(workflow).toContain('path: .cache/zig');
-			expect(workflow).toContain(
-				'key: ${{ runner.os }}-zig-${{ steps.zig-version.outputs.arch }}-${{ steps.zig-version.outputs.version }}',
-			);
-			expect(workflow).toContain('--continue-at -');
-			expect(workflow).toContain('--speed-limit 1024');
-			expect(workflow).toContain('xz --test "${ZIG_ARCHIVE}"');
-			expect(workflow).toContain('sudo tar -xJf "${ZIG_ARCHIVE}" -C /opt');
-			expect(workflow).not.toContain('curl -fsSL "https://ziglang.org');
-			expect(workflow).not.toContain('-o /tmp/zig.tar.xz');
-		}
+		expect(ciWorkflow).toContain('./.github/actions/setup-agent-vm');
+
+		expect(publishWorkflow).toContain('Resolve Gondolin Zig version');
+		expect(publishWorkflow).toContain('Cache Zig tarballs');
+		expect(publishWorkflow).toContain('path: .cache/zig');
+		expect(publishWorkflow).toContain(
+			'key: ${{ runner.os }}-zig-${{ steps.zig-version.outputs.arch }}-${{ steps.zig-version.outputs.version }}',
+		);
+		expect(publishWorkflow).toContain('--continue-at -');
+		expect(publishWorkflow).toContain('--speed-limit 1024');
+		expect(publishWorkflow).toContain('xz --test "${ZIG_ARCHIVE}"');
+		expect(publishWorkflow).toContain('sudo tar -xJf "${ZIG_ARCHIVE}" -C /opt');
+		expect(publishWorkflow).not.toContain('curl -fsSL "https://ziglang.org');
+		expect(publishWorkflow).not.toContain('-o /tmp/zig.tar.xz');
+
+		expect(sharedSetupAction).not.toContain('Resolve Gondolin Zig version');
+		expect(sharedSetupAction).not.toContain('Cache Zig tarballs');
+		expect(sharedSetupAction).not.toContain('ziglang.org');
 	});
 
 	it('ensures managed base images exist as multi-arch manifest lists before optional npm publish', async () => {
@@ -180,6 +183,14 @@ describe('publish workflow', () => {
 		expect(publishScript.indexOf('--config.ignore-scripts=true')).toBeGreaterThan(
 			publishScript.indexOf('pnpm -r publish'),
 		);
+		expect(publishScript.indexOf('NPM_TOKEN="$(op read "$OP_REF")"')).toBeLessThan(
+			publishScript.indexOf('pnpm build'),
+		);
+		expect(publishScript.indexOf('PYPI_TOKEN="$(op read "$PYPI_OP_REF")"')).toBeLessThan(
+			publishScript.indexOf('pnpm build'),
+		);
+		expect(publishScript).toContain('NPM_TOKEN="${AGENT_VM_NPM_TOKEN-}"');
+		expect(publishScript).toContain('PYPI_TOKEN="${AGENT_VM_PYPI_TOKEN-}"');
 	});
 
 	it('publishes Python packages from isolated explicit artifacts with optional 1Password auth', async () => {
@@ -195,6 +206,7 @@ describe('publish workflow', () => {
 			'bash scripts/publish-python-local.sh',
 		);
 		expect(publishScript).toContain('AGENT_VM_PYPI_TOKEN_OP_REF');
+		expect(publishScript).toContain('AGENT_VM_PYPI_TOKEN');
 		expect(publishScript).not.toMatch(/AGENT_VM_PYPI_TOKEN_OP_REF:-/u);
 		expect(publishScript).toContain('PYTHON_DIST_DIR="$(mktemp -d)"');
 		expect(publishScript).toContain('--out-dir "$PYTHON_DIST_DIR"');
@@ -214,6 +226,32 @@ describe('publish workflow', () => {
 		expect(publishScript).toContain('export UV_PUBLISH_TOKEN');
 		expect(publishScript).toContain('unset PYPI_TOKEN');
 		expect(publishScript).not.toContain('.pypirc');
+	});
+
+	it('publishes npm and Python packages through one verified release entrypoint', async () => {
+		const publishScript = await fs.readFile(
+			path.join(process.cwd(), 'scripts', 'publish-local.sh'),
+			'utf8',
+		);
+
+		expect(publishScript).toContain(
+			'PYPI_OP_REF="${AGENT_VM_PYPI_TOKEN_OP_REF:-op://Dev/PyPI/api-token}"',
+		);
+		expect(publishScript).toContain('scripts/publish-python-local.sh --dry-run');
+		expect(publishScript).toContain(
+			'AGENT_VM_PYPI_TOKEN="$PYPI_TOKEN" scripts/publish-python-local.sh',
+		);
+		expect(publishScript).toContain('verify_published_release');
+		expect(publishScript).toContain('npm view "$package_name@$release_version" version');
+		expect(publishScript).toContain(
+			'https://pypi.org/pypi/${python_package}/${release_version}/json',
+		);
+		expect(publishScript.indexOf('scripts/publish-python-local.sh')).toBeLessThan(
+			publishScript.indexOf('pnpm -r publish'),
+		);
+		expect(publishScript.indexOf('pnpm -r publish')).toBeLessThan(
+			publishScript.lastIndexOf('verify_published_release'),
+		);
 	});
 
 	it('keeps npm and Python release versions synchronized', async () => {

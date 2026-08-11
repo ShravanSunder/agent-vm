@@ -24,7 +24,9 @@ import {
 } from './e2e-harness.js';
 import { waitForProtocolRetryInterval } from './e2e-protocol-wait.js';
 import {
-	hermesE2eApiServerKey,
+	buildHermesE2eProfileApiServerKeySecrets,
+	hermesE2eProfileApiServerKey,
+	hermesE2eProfileApiServerKeyEnvironmentName,
 	scaffoldHermesE2eProject,
 	useLocalHermesGatewayImagePackages,
 	type HermesE2eProject,
@@ -69,6 +71,8 @@ const contentCanaries = forbiddenCanaries.filter(
 
 interface FakeProviderRequestObservation {
 	readonly host: string | undefined;
+	readonly toolNames: readonly string[];
+	readonly toolResultContents: readonly string[];
 }
 
 interface FakeProvider {
@@ -105,6 +109,39 @@ async function readRequestBody(request: IncomingMessage): Promise<string> {
 		chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
 	}
 	return Buffer.concat(chunks).toString('utf8');
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function observeFakeProviderRequest(
+	host: string | undefined,
+	requestBody: string,
+): FakeProviderRequestObservation {
+	const parsed: unknown = JSON.parse(requestBody);
+	if (!isObjectRecord(parsed)) {
+		return { host, toolNames: [], toolResultContents: [] };
+	}
+	const tools = Array.isArray(parsed.tools) ? parsed.tools : [];
+	const messages = Array.isArray(parsed.messages) ? parsed.messages : [];
+	return {
+		host,
+		toolNames: tools.flatMap((tool) => {
+			if (!isObjectRecord(tool) || !isObjectRecord(tool.function)) return [];
+			return typeof tool.function.name === 'string' ? [tool.function.name] : [];
+		}),
+		toolResultContents: messages.flatMap((message) => {
+			if (
+				!isObjectRecord(message) ||
+				message.role !== 'tool' ||
+				typeof message.content !== 'string'
+			) {
+				return [];
+			}
+			return [message.content];
+		}),
+	};
 }
 
 function captureOtlpMediation(options: {
@@ -146,8 +183,8 @@ async function startFakeProvider(): Promise<FakeProvider> {
 			writeJson(response, 404, { error: 'unhandled fake provider route' });
 			return;
 		}
-		await readRequestBody(request);
-		observations.push({ host: request.headers.host });
+		const requestBody = await readRequestBody(request);
+		observations.push(observeFakeProviderRequest(request.headers.host, requestBody));
 		if (request.headers.host?.startsWith(primaryModelHost) === true) {
 			writeJson(response, 500, {
 				error: {
@@ -308,6 +345,13 @@ function renderHermesFrameworkObservabilityConfiguration(providerPort: number): 
 		"  mode: 'off'",
 		'code_execution:',
 		'  mode: project',
+		// The fake provider intentionally calls the managed plugin tool by its
+		// concrete name. Hermes v0.20 normally defers non-core plugin tools
+		// behind tool_search, so disable that progressive-disclosure layer for
+		// this direct observability probe.
+		'tools:',
+		'  tool_search:',
+		'    enabled: off',
 		'',
 	].join('\n');
 }
@@ -450,6 +494,7 @@ async function runSignalNegativeGatewayBoot(options: {
 			source: 'environment',
 		};
 		systemZone.gateway.profileSecretProjectionsByAgent.main = {
+			API_SERVER_KEY: hermesE2eProfileApiServerKeyEnvironmentName('main'),
 			DISCORD_BOT_TOKEN: discordSecretEnvironmentName,
 		};
 		systemZone.egressHosts = [
@@ -479,6 +524,7 @@ async function runSignalNegativeGatewayBoot(options: {
 		await prepareGatewayE2eProjectImages({ project });
 		harness = await startE2eControllerRuntime({
 			secrets: {
+				...buildHermesE2eProfileApiServerKeySecrets(['main']),
 				[discordSecretEnvironmentName]: forbiddenCanariesByField.discordSecret,
 				GITHUB_TOKEN: 'unused-hermes-framework-otel-github-token',
 			},
@@ -509,7 +555,7 @@ async function runSignalNegativeGatewayBoot(options: {
 					stream: false,
 				}),
 				headers: {
-					authorization: `Bearer ${hermesE2eApiServerKey}`,
+					authorization: `Bearer ${hermesE2eProfileApiServerKey('main')}`,
 					'content-type': 'application/json',
 					'x-hermes-session-id': `${options.disabledSignal}-signal-negative-session`,
 				},
@@ -631,6 +677,7 @@ describeHermesFrameworkObservabilityE2e(
 				source: 'environment',
 			};
 			systemZone.gateway.profileSecretProjectionsByAgent.main = {
+				API_SERVER_KEY: hermesE2eProfileApiServerKeyEnvironmentName('main'),
 				DISCORD_BOT_TOKEN: discordSecretEnvironmentName,
 			};
 			systemZone.egressHosts = [
@@ -668,6 +715,7 @@ describeHermesFrameworkObservabilityE2e(
 			await prepareObservabilityStack({ config: observabilityRuntimeConfig, wait: true });
 			harness = await startE2eControllerRuntime({
 				secrets: {
+					...buildHermesE2eProfileApiServerKeySecrets(['main']),
 					[discordSecretEnvironmentName]: forbiddenCanariesByField.discordSecret,
 					GITHUB_TOKEN: 'unused-hermes-framework-otel-github-token',
 				},
@@ -725,7 +773,7 @@ describeHermesFrameworkObservabilityE2e(
 						stream: false,
 					}),
 					headers: {
-						authorization: `Bearer ${hermesE2eApiServerKey}`,
+						authorization: `Bearer ${hermesE2eProfileApiServerKey('main')}`,
 						'content-type': 'application/json',
 						'x-hermes-session-id': forbiddenCanariesByField.identity,
 					},
@@ -780,6 +828,8 @@ describeHermesFrameworkObservabilityE2e(
 				query: '"resource_attr:service.name":"agent-vm-hermes"',
 			});
 			const frameworkToolPortalTraces = await waitForVictoriaText({
+				diagnostics: async () =>
+					`${JSON.stringify(providerObservations)}\n${await readTelemetryDiagnostics()}`,
 				endpoint: tracesEndpoint,
 				expected: 'hermes.tool_portal.operation',
 				query: '"resource_attr:service.name":"agent-vm-hermes"',

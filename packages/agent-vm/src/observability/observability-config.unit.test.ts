@@ -173,13 +173,22 @@ describe('createObservabilityRuntimeConfig', () => {
 			config: '/tmp/hermes/config.yaml',
 			profilesByAgent: { main: 'main-profile' },
 			profileSecretProjectionsByAgent: {
-				main: { DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN' },
+				main: {
+					API_SERVER_KEY: 'API_SERVER_KEY_MAIN',
+					DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN',
+				},
 			},
 		};
 		delete firstZone.secrets.OPENCLAW_GATEWAY_TOKEN;
 		firstZone.secrets.DISCORD_BOT_TOKEN = {
 			source: 'environment',
 			envVar: 'DISCORD_BOT_TOKEN',
+			injection: 'env',
+			audience: 'gateway',
+		};
+		firstZone.secrets.API_SERVER_KEY_MAIN = {
+			source: 'environment',
+			envVar: 'API_SERVER_KEY_MAIN',
 			injection: 'env',
 			audience: 'gateway',
 		};

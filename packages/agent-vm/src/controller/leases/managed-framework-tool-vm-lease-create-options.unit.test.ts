@@ -155,7 +155,10 @@ function configureFixtureAsHermes(systemConfig: LoadedSystemConfig): void {
 			port: gateway.port,
 			profilesByAgent: { main: 'researcher' },
 			profileSecretProjectionsByAgent: {
-				main: { DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN' },
+				main: {
+					API_SERVER_KEY: 'API_SERVER_KEY_MAIN',
+					DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN',
+				},
 			},
 			stateDir: gateway.stateDir,
 			type: 'hermes',
@@ -164,6 +167,15 @@ function configureFixtureAsHermes(systemConfig: LoadedSystemConfig): void {
 					? path.join(testRoot, 'zone-a', 'zone-files')
 					: gateway.zoneFilesDir,
 			zoneRuntimeDir: gateway.zoneRuntimeDir,
+		},
+		secrets: {
+			...zone.secrets,
+			API_SERVER_KEY_MAIN: {
+				audience: 'gateway',
+				envVar: 'API_SERVER_KEY_MAIN',
+				injection: 'env',
+				source: 'environment',
+			},
 		},
 	};
 }

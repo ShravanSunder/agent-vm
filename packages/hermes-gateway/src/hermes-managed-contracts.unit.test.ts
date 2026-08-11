@@ -18,6 +18,7 @@ function createHermesZone(toolPortalMaterial: unknown): GatewayZoneConfig {
 			cpus: 2,
 			profileSecretProjectionsByAgent: {
 				researcher: {
+					API_SERVER_KEY: 'API_SERVER_KEY_RESEARCHER',
 					DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_RESEARCHER',
 					OPENROUTER_API_KEY: 'OPENROUTER_API_KEY_RESEARCHER',
 				},
@@ -37,6 +38,12 @@ function createHermesZone(toolPortalMaterial: unknown): GatewayZoneConfig {
 			API_SERVER_KEY: {
 				audience: 'gateway',
 				envVar: 'HERMES_API_SERVER_KEY',
+				injection: 'env',
+				source: 'environment',
+			},
+			API_SERVER_KEY_RESEARCHER: {
+				audience: 'gateway',
+				envVar: 'API_SERVER_KEY_RESEARCHER',
 				injection: 'env',
 				source: 'environment',
 			},
@@ -101,11 +108,13 @@ describe('managed Hermes package contracts', () => {
 
 	it('pins the researched Hermes Python distribution and source revision', () => {
 		expect(HERMES_AGENT_DISTRIBUTION).toEqual({
+			containerImage:
+				'docker.io/nousresearch/hermes-agent@sha256:16788311e2fa3035456bdc1bafb8ec2b1777db64ebf020af9bb7eb73c3712c9e',
 			distributionName: 'hermes-agent',
-			projectVersion: '0.19.0',
+			projectVersion: '0.20.0',
 			pythonRequirement: '>=3.11,<3.14',
 			sourceRepository: 'https://github.com/NousResearch/hermes-agent.git',
-			sourceRevision: '3ef6bbd201263d354fd83ec55b3c306ded2eb72a',
+			sourceRevision: '3c27eb6234bf91b8ceee9e9071591b31e9b148cb',
 		});
 	});
 
@@ -114,6 +123,7 @@ describe('managed Hermes package contracts', () => {
 			'AGENT_VM_HERMES_MANAGED_CONFIG_PATH',
 			'API_SERVER_KEY',
 			'GATEWAY_MULTIPLEX_PROFILES',
+			'HERMES_ALLOW_ROOT_GATEWAY',
 			'HERMES_HOME',
 			'HOME',
 			'LD_AUDIT',
@@ -129,7 +139,7 @@ describe('managed Hermes package contracts', () => {
 			expect(isReservedHermesProfileProjectionSourceName(sourceName)).toBe(true);
 		}
 		for (const targetName of [
-			'API_SERVER_KEY',
+			'HERMES_ALLOW_ROOT_GATEWAY',
 			'HERMES_HOME',
 			'HERMES_KANBAN_DB',
 			'HERMES_TELEGRAM_BATCH_DELAY',
@@ -144,6 +154,7 @@ describe('managed Hermes package contracts', () => {
 		] as const) {
 			expect(isReservedHermesProfileProjectionTargetName(targetName)).toBe(true);
 		}
+		expect(isReservedHermesProfileProjectionTargetName('API_SERVER_KEY')).toBe(false);
 		expect(isReservedHermesProfileProjectionSourceName('OPENROUTER_API_KEY_SOURCE')).toBe(false);
 		expect(isReservedHermesProfileProjectionTargetName('OPENROUTER_API_KEY')).toBe(false);
 	});
@@ -230,6 +241,7 @@ describe('managed Hermes package contracts', () => {
 		const bootInputs = await hermesLifecycle.buildFrameworkServiceBootInputs({
 			resolvedSecrets: {
 				API_SERVER_KEY: 'test-only-key',
+				API_SERVER_KEY_RESEARCHER: 'researcher-profile-test-only-key',
 				DISCORD_BOT_TOKEN_RESEARCHER: 'discord-test-only-key',
 				OPENROUTER_API_KEY_RESEARCHER: 'provider-test-only-key',
 			},
@@ -240,6 +252,7 @@ describe('managed Hermes package contracts', () => {
 			...material,
 			profileEnvironmentSourceNamesByProfile: {
 				researcher: {
+					API_SERVER_KEY: 'API_SERVER_KEY_RESEARCHER',
 					DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_RESEARCHER',
 					OPENROUTER_API_KEY: 'OPENROUTER_API_KEY_RESEARCHER',
 				},
@@ -255,6 +268,7 @@ describe('managed Hermes package contracts', () => {
 			API_SERVER_KEY: 'test-only-key',
 			DISCORD_BOT_TOKEN_RESEARCHER: 'discord-test-only-key',
 			GATEWAY_MULTIPLEX_PROFILES: 'true',
+			HERMES_ALLOW_ROOT_GATEWAY: '1',
 			HERMES_HOME: '/home/hermes/.hermes',
 			OTEL_BLRP_MAX_EXPORT_BATCH_SIZE: '64',
 			OTEL_BLRP_MAX_QUEUE_SIZE: '256',
@@ -437,12 +451,30 @@ describe('managed Hermes package contracts', () => {
 			projectNamespace: 'deployment-a',
 			resolvedSecrets: {
 				API_SERVER_KEY: 'test-only-key',
+				API_SERVER_KEY_BETA: 'beta-profile-test-only-key',
+				API_SERVER_KEY_RESEARCHER: 'researcher-profile-test-only-key',
+				DISCORD_BOT_TOKEN_BETA: 'beta-discord-test-only-key',
 				DISCORD_BOT_TOKEN_RESEARCHER: 'discord-test-only-key',
 			},
 			zoneRuntimeDir: '/deployment/runtime',
 			tcpPool: { basePort: 22_000, size: 2 },
 			zone: {
 				...baseZone,
+				secrets: {
+					...baseZone.secrets,
+					API_SERVER_KEY_BETA: {
+						audience: 'gateway',
+						envVar: 'API_SERVER_KEY_BETA',
+						injection: 'env',
+						source: 'environment',
+					},
+					DISCORD_BOT_TOKEN_BETA: {
+						audience: 'gateway',
+						envVar: 'DISCORD_BOT_TOKEN_BETA',
+						injection: 'env',
+						source: 'environment',
+					},
+				},
 				gateway: {
 					...baseHermesGateway,
 					profilesByAgent: {
@@ -451,9 +483,11 @@ describe('managed Hermes package contracts', () => {
 					},
 					profileSecretProjectionsByAgent: {
 						beta: {
+							API_SERVER_KEY: 'API_SERVER_KEY_BETA',
 							DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_BETA',
 						},
 						researcher: {
+							API_SERVER_KEY: 'API_SERVER_KEY_RESEARCHER',
 							DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_RESEARCHER',
 							OPENROUTER_API_KEY: 'OPENROUTER_API_KEY_RESEARCHER',
 						},
@@ -463,6 +497,7 @@ describe('managed Hermes package contracts', () => {
 		});
 
 		expect(requirements.environment).not.toHaveProperty('API_SERVER_KEY');
+		expect(requirements.environment).not.toHaveProperty('HERMES_ALLOW_ROOT_GATEWAY');
 		expect(requirements.environment).toMatchObject({
 			HERMES_HOME: '/home/hermes/.hermes',
 		});
@@ -496,8 +531,12 @@ describe('managed Hermes package contracts', () => {
 		});
 	});
 
-	it('protects generated multiplex and removed managed-directory environment names', async () => {
-		for (const environmentName of ['GATEWAY_MULTIPLEX_PROFILES', 'HERMES_MANAGED_DIR'] as const) {
+	it('protects generated framework environment names from runtime overrides', async () => {
+		for (const environmentName of [
+			'GATEWAY_MULTIPLEX_PROFILES',
+			'HERMES_ALLOW_ROOT_GATEWAY',
+			'HERMES_MANAGED_DIR',
+		] as const) {
 			const zone = {
 				...createHermesZone(createHermesAdapterMaterial()),
 				runtimeEnvironment: { [environmentName]: 'deployment-authored-override' },
@@ -509,6 +548,32 @@ describe('managed Hermes package contracts', () => {
 				}),
 			).rejects.toThrow(`cannot override '${environmentName}'`);
 		}
+	});
+
+	it('rejects deployment-secret overrides of the fixed root gateway allowance', async () => {
+		const baseZone = createHermesZone(createHermesAdapterMaterial());
+		const zone = {
+			...baseZone,
+			secrets: {
+				...baseZone.secrets,
+				HERMES_ALLOW_ROOT_GATEWAY: {
+					audience: 'gateway',
+					envVar: 'HERMES_ALLOW_ROOT_GATEWAY',
+					injection: 'env',
+					source: 'environment',
+				},
+			},
+		} satisfies GatewayZoneConfig;
+
+		await expect(
+			hermesLifecycle.buildFrameworkServiceBootInputs({
+				resolvedSecrets: {
+					API_SERVER_KEY: 'test-only-key',
+					HERMES_ALLOW_ROOT_GATEWAY: 'deployment-authored-override',
+				},
+				zone,
+			}),
+		).rejects.toThrow("cannot override 'HERMES_ALLOW_ROOT_GATEWAY'");
 	});
 
 	it('rejects missing, malformed, and wrong-framework immutable input', async () => {
@@ -558,15 +623,15 @@ describe('managed Hermes package contracts', () => {
 		});
 
 		expect(recipe.kind).toBe('hermes-managed-image-recipe');
-		expect(recipe.installSpecifier).toBe('hermes-agent[messaging]==0.19.0');
+		expect(recipe.baseImage).toBe(HERMES_AGENT_DISTRIBUTION.containerImage);
 		expect(recipe.frameworkBootEntry).toBe('hermes-gateway');
 		expect(recipe.buildNetworkAccess).toEqual({
 			aptPackages: 'public-debian-repositories',
-			containerImages: ['node:24-slim', 'ghcr.io/astral-sh/uv:0.11.31'],
-			kind: 'public-package-indexes-required',
+			containerImages: [HERMES_AGENT_DISTRIBUTION.containerImage],
+			kind: 'upstream-hermes-image-with-public-package-indexes',
 			npmPackages: 'public-npm-registry',
 			pythonPackages: 'public-python-package-index',
-			pythonRuntime: 'public-python-build-standalone-download',
+			pythonRuntime: 'upstream-hermes-image',
 		});
 		expect(recipe.buildConfig).toEqual({
 			arch: 'x86_64',
@@ -581,17 +646,9 @@ describe('managed Hermes package contracts', () => {
 			oci: { image: 'agent-vm-hermes:latest', pullPolicy: 'never' },
 			rootfs: { label: 'gondolin-root', sizeMb: 4096 },
 		});
-		expect(recipe.dockerfile).toContain('FROM node:24-slim');
-		expect(recipe.dockerfile).toContain('COPY --from=ghcr.io/astral-sh/uv:0.11.31');
+		expect(recipe.dockerfile).toContain(`FROM ${HERMES_AGENT_DISTRIBUTION.containerImage}`);
 		expect(recipe.dockerfile).toContain('npm install -g pnpm@10.33.0');
-		expect(recipe.dockerfile).toContain('uv python install 3.13');
-		expect(recipe.dockerfile).toContain(
-			'uv venv --python /usr/local/bin/python3 /opt/agent-vm/hermes-venv',
-		);
-		expect(recipe.dockerfile).toContain(
-			'uv pip install --python /opt/agent-vm/hermes-venv/bin/python',
-		);
-		expect(recipe.dockerfile).not.toContain('uv pip install --python /usr/local/bin/python3');
+		expect(recipe.dockerfile).toContain('uv pip install --python /opt/hermes/.venv/bin/python');
 		expect(recipe.dockerfile).toContain(
 			'COPY local-agent-vm/agent_vm_agent_portal_sdk-0.0.116-py3-none-any.whl /tmp/agent_vm_agent_portal_sdk-0.0.116-py3-none-any.whl',
 		);
@@ -604,19 +661,17 @@ describe('managed Hermes package contracts', () => {
 		expect(recipe.dockerfile).toContain(
 			'COPY local-agent-vm/agent-vm-gateway-runtime-0.0.116.tgz /opt/agent-vm/local-packages/agent-vm-gateway-runtime-0.0.116.tgz',
 		);
-		expect(recipe.dockerfile).toContain("'hermes-agent[messaging]==0.19.0'");
+		expect(recipe.dockerfile).not.toContain('hermes-agent[messaging]');
+		expect(recipe.dockerfile).not.toContain('git clone');
+		expect(recipe.dockerfile).not.toContain('HERMES_ALLOW_ROOT_GATEWAY');
+		expect(recipe.dockerfile).not.toContain('install.sh');
 		expect(recipe.dockerfile).toContain('pnpm install --prod --ignore-scripts');
 		expect(recipe.dockerfile).toContain('/usr/local/bin/agent-vm-hermes-gateway');
 		expect(recipe.dockerfile).toContain('/etc/profile.d/hermes-env.sh');
+		expect(recipe.dockerfile).toContain('test -f /opt/hermes/ui-tui/dist/entry.js');
+		expect(recipe.dockerfile).toContain('export HERMES_TUI_DIR=/opt/hermes/ui-tui');
 		expect(recipe.dockerfile).toContain(
-			'hermes_tui_dist="$(/opt/agent-vm/hermes-venv/bin/python -c',
-		);
-		expect(recipe.dockerfile).toContain('test -f "$hermes_tui_dist/entry.js"');
-		expect(recipe.dockerfile).toContain('ln -sfn "$hermes_tui_dist" /opt/agent-vm/hermes-tui/dist');
-		expect(recipe.dockerfile).toContain('test -f /opt/agent-vm/hermes-tui/dist/entry.js');
-		expect(recipe.dockerfile).toContain('export HERMES_TUI_DIR=/opt/agent-vm/hermes-tui');
-		expect(recipe.dockerfile).toContain(
-			'export PATH=/opt/agent-vm/hermes-venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+			'export PATH=/opt/hermes/.venv/bin:/opt/hermes/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
 		);
 		expect(recipe.dockerfile).toContain('export SSL_CERT_FILE=/run/gondolin/ca-certificates.crt');
 		expect(recipe.dockerfile).toContain(
@@ -631,7 +686,7 @@ describe('managed Hermes package contracts', () => {
 		expect(recipe.dockerfile).not.toContain(
 			'node_modules/.bin/agent-vm-gateway-runtime /usr/local/bin/agent-vm-gateway-runtime',
 		);
-		expect(recipe.dockerfile).not.toMatch(/CMD|ENTRYPOINT|systemd|launchd|s6|supervis/iu);
+		expect(recipe.dockerfile).not.toMatch(/CMD|ENTRYPOINT/iu);
 		expect(recipe.dockerfile).not.toMatch(
 			/(?:ARG|ENV|RUN)\s+[^\n]*(?:TOKEN|SECRET|CREDENTIAL)|\.npmrc|\.docker\/config\.json|\.netrc|_authToken|_password|_secret/iu,
 		);
@@ -657,20 +712,18 @@ describe('managed Hermes package contracts', () => {
 		);
 		expect(recipe.dockerfile).toContain("'agent-vm-agent-portal-sdk==0.0.116'");
 		expect(recipe.dockerfile).toContain("'agent-vm-hermes-adapter==0.0.116'");
-		expect(recipe.dockerfile).toContain("'hermes-agent[messaging]==0.19.0'");
+		expect(recipe.dockerfile).not.toContain('hermes-agent[messaging]');
 		expect(recipe.dockerfile).toContain('--default-index https://pypi.org/simple');
+		expect(recipe.dockerfile).toContain('--exclude-newer-package agent-vm-agent-portal-sdk=false');
+		expect(recipe.dockerfile).toContain('--exclude-newer-package agent-vm-hermes-adapter=false');
+		expect(recipe.dockerfile).not.toContain('--no-config');
 		expect(recipe.dockerfile).toContain(
 			'gateway_runtime_bin="/opt/agent-vm/registry-packages/node_modules/@agent-vm/gateway-runtime/dist/bin/gateway-runtime.js"',
 		);
 		expect(recipe.dockerfile).toContain('/usr/local/bin/agent-vm-gateway-runtime');
 		expect(recipe.dockerfile).toContain('/usr/local/bin/agent-vm-hermes-gateway');
-		expect(recipe.dockerfile).toContain(
-			'hermes_tui_dist="$(/opt/agent-vm/hermes-venv/bin/python -c',
-		);
-		expect(recipe.dockerfile).toContain('test -f "$hermes_tui_dist/entry.js"');
-		expect(recipe.dockerfile).toContain('ln -sfn "$hermes_tui_dist" /opt/agent-vm/hermes-tui/dist');
-		expect(recipe.dockerfile).toContain('test -f /opt/agent-vm/hermes-tui/dist/entry.js');
-		expect(recipe.dockerfile).toContain('export HERMES_TUI_DIR=/opt/agent-vm/hermes-tui');
+		expect(recipe.dockerfile).toContain('test -f /opt/hermes/ui-tui/dist/entry.js');
+		expect(recipe.dockerfile).toContain('export HERMES_TUI_DIR=/opt/hermes/ui-tui');
 		expect(recipe.dockerfile).toContain(
 			'metadata.version("agent-vm-agent-portal-sdk") == "0.0.116"',
 		);
