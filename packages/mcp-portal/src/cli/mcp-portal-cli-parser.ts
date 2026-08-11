@@ -18,12 +18,12 @@ const agentOverrideSchema = z.string().regex(/^[^=]+=[^=]+$/u);
 const credentialProxyUrlSchema = z
 	.string()
 	.url()
-	.refine((value) => {
+	.refine((value: string): boolean => {
 		if (!URL.canParse(value)) return false;
 		const url = new URL(value);
 		return url.protocol === 'http:' || url.protocol === 'https:';
 	}, 'Expected an HTTP(S) URL.')
-	.transform((value) => new URL(value).toString());
+	.transform((value: string): string => new URL(value).toString());
 const portalToolNameSchema = z.enum([
 	'mcp_portal_list',
 	'mcp_portal_search',

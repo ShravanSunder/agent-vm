@@ -16,7 +16,7 @@ const environmentVariableNameSchema = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$
 const toolPortalHttpEndpointSchema = z
 	.string()
 	.url()
-	.refine((value) => {
+	.refine((value: string): boolean => {
 		if (!URL.canParse(value)) return false;
 		const url = new URL(value);
 		return (
