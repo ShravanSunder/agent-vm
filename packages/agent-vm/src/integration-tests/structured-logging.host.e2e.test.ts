@@ -907,7 +907,7 @@ describe('structured logging process roots', () => {
 						child.rootKind === 'agent-vm'
 							? {
 									allowedPlainLinePattern:
-										/^ {0,2}(?:Resolving 1Password secrets|Controller API on :\d+|Starting selected gateway zones)(?:\.\.\.| done)?$/u,
+										/^(?:\(node:\d+\) ExperimentalWarning: SQLite is an experimental feature and might change at any time|\(Use `node --trace-warnings \.\.\.` to show where the warning was created\)| {0,2}(?:Resolving 1Password secrets|Controller API on :\d+|Starting selected gateway zones)(?:\.\.\.| done)?)$/u,
 								}
 							: {},
 					);
