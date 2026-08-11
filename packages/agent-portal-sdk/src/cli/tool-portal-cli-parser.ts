@@ -13,6 +13,19 @@ import { z } from 'zod';
 const operationSchema = z.enum(['artifact-read', 'call', 'describe', 'list', 'search']);
 const transportKindSchema = z.enum(['http', 'scoped-stdio']);
 const environmentVariableNameSchema = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/u);
+const toolPortalHttpEndpointSchema = z
+	.string()
+	.url()
+	.refine((value) => {
+		if (!URL.canParse(value)) return false;
+		const url = new URL(value);
+		return (
+			(url.protocol === 'http:' || url.protocol === 'https:') &&
+			url.username.length === 0 &&
+			url.password.length === 0 &&
+			url.hash.length === 0
+		);
+	}, 'Expected an HTTP(S) URL without credentials or a fragment.');
 const absolutePathSchema = z.string().min(1).refine(path.isAbsolute, {
 	message: 'Scoped stdio configuration path must be absolute.',
 });
@@ -81,7 +94,7 @@ function createHttpTransportParser(): Parser<'sync', ToolPortalHttpTransportArgu
 		),
 		endpoint: option(
 			'--endpoint',
-			zod(z.string().min(1), {
+			zod(toolPortalHttpEndpointSchema, {
 				metavar: 'URL',
 				placeholder: 'https://example.test/mcp',
 			}),

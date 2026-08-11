@@ -55,21 +55,6 @@ interface ToolPortalCliTransportResult {
 	readonly transport: ToolPortalMcpTransport;
 }
 
-function parseHttpEndpoint(endpoint: string): URL {
-	const parsedEndpoint = new URL(endpoint);
-	if (
-		!['http:', 'https:'].includes(parsedEndpoint.protocol) ||
-		parsedEndpoint.username.length > 0 ||
-		parsedEndpoint.password.length > 0 ||
-		parsedEndpoint.hash.length > 0
-	) {
-		throw new Error(
-			'Tool Portal HTTP endpoint must be an HTTP(S) URL without credentials or a fragment.',
-		);
-	}
-	return parsedEndpoint;
-}
-
 async function createCliTransport(
 	arguments_: ToolPortalCliArguments,
 	environment: NodeJS.ProcessEnv,
@@ -84,7 +69,7 @@ async function createCliTransport(
 			authorization,
 			transport: createNodeToolPortalMcpTransport({
 				authorization,
-				endpoint: parseHttpEndpoint(arguments_.transport.endpoint),
+				endpoint: new URL(arguments_.transport.endpoint),
 				kind: 'http',
 			}),
 		};

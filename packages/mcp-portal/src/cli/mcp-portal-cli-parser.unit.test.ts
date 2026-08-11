@@ -97,6 +97,35 @@ describe('mcp-portal Optique parser', () => {
 		expect(invalidToolOutput.stderr.join('')).toMatch(/tool|invalid|expected/u);
 	});
 
+	it.each([
+		['a malformed URL', 'not-a-url'],
+		['an URL with credentials', 'https://user:password@example.test/mcp'],
+		['an URL with a fragment', 'https://example.test/mcp#fragment'],
+		['a non-HTTP URL', 'ftp://example.test/mcp'],
+	] as const)('rejects %s at the proxy URL parser boundary', (_description, proxyUrl) => {
+		const output = createIo();
+
+		const result = runMcpPortalCliParser(
+			[
+				'mcp-proxy',
+				'print-client-config',
+				'--agent',
+				'agent',
+				'--config-dir',
+				'/config',
+				'--master-key-fingerprint',
+				'sha256:fingerprint',
+				'--proxy-url',
+				proxyUrl,
+			],
+			output.io,
+		);
+
+		expect(result.kind).toBe('parse-error');
+		expect(output.stderr.join('')).toMatch(/proxy-url|URL|invalid|expected/u);
+		expect(output.stdout).toEqual([]);
+	});
+
 	it('keeps the parser tree synchronous and constructible without running operations', () => {
 		expect(mcpPortalCliParser).toBeDefined();
 	});

@@ -63,14 +63,6 @@ async function readCatalogFile(catalogPath: string): Promise<PortalCatalogFile> 
 	return catalogFileSchema.parse(parsedJson);
 }
 
-function normalizeCredentialProxyUrl(value: string): string {
-	const url = new URL(value);
-	if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-		throw new Error(`Invalid --proxy-url protocol "${url.protocol}". Expected http or https.`);
-	}
-	return url.toString();
-}
-
 type RequiredPortalRuntimeProps = Required<Pick<AgentVmMcpPortalRuntimeProps, 'env'>> &
 	Pick<AgentVmMcpPortalRuntimeProps, 'secretResolver'>;
 
@@ -158,7 +150,7 @@ async function printClientConfig(
 	const proxyUrl =
 		proxyUrlOverride === undefined
 			? credentialProxyUrlFromConfig(requireCredentialMcpProxy(portalConfig.mcpProxy), agentId)
-			: normalizeCredentialProxyUrl(proxyUrlOverride);
+			: new URL(proxyUrlOverride).toString();
 	const authorizationHeaderName = portalConfig.mcpProxy?.auth.headerName ?? 'authorization';
 	const authorizationHeaderValue = `Bearer ${bearer}`;
 	const clientConfig = {

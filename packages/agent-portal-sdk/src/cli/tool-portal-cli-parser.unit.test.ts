@@ -66,6 +66,35 @@ describe('Tool Portal Optique CLI parser', () => {
 	});
 
 	it.each([
+		['a malformed URL', 'not-a-url'],
+		['an URL with credentials', 'https://user:password@example.test/mcp'],
+		['an URL with a fragment', 'https://example.test/mcp#fragment'],
+		['a non-HTTP URL', 'ftp://example.test/mcp'],
+	] as const)('rejects %s at the HTTP endpoint parser boundary', (_description, endpoint) => {
+		const stderr: string[] = [];
+		const result = runToolPortalCliParser(
+			[
+				'list',
+				'--input-json',
+				'{}',
+				'--transport',
+				'http',
+				'--endpoint',
+				endpoint,
+				'--authorization-env',
+				'TOOL_PORTAL_AUTH',
+			],
+			{
+				stderr: { write: (text: string): boolean => (stderr.push(text), true) },
+				stdout: { write: (): boolean => true },
+			},
+		);
+
+		expect(result.kind).toBe('parse-error');
+		expect(stderr.join('')).toMatch(/endpoint|URL|invalid|expected/u);
+	});
+
+	it.each([
 		['rejects duplicate options', ['list', '--input-json', '{}', '--input-json', '{}']],
 		['rejects unknown options', ['list', '--input-json', '{}', '--unknown', 'value']],
 		['rejects missing required options', ['list', '--input-json', '{}', '--transport', 'http']],

@@ -15,6 +15,20 @@ import type { PortalServerCliArgs } from './serve-command.js';
 const nonEmptyStringSchema = z.string().min(1);
 const portSchema = z.coerce.number().int().min(0).max(65_535);
 const agentOverrideSchema = z.string().regex(/^[^=]+=[^=]+$/u);
+const credentialProxyUrlSchema = z
+	.string()
+	.url()
+	.refine((value) => {
+		if (!URL.canParse(value)) return false;
+		const url = new URL(value);
+		return (
+			(url.protocol === 'http:' || url.protocol === 'https:') &&
+			url.username.length === 0 &&
+			url.password.length === 0 &&
+			url.hash.length === 0
+		);
+	}, 'Expected an HTTP(S) URL without credentials or a fragment.')
+	.transform((value) => new URL(value).toString());
 const portalToolNameSchema = z.enum([
 	'mcp_portal_list',
 	'mcp_portal_search',
@@ -37,6 +51,13 @@ function agentOverrideValueParser(): ReturnType<typeof zod<string>> {
 	return zod(agentOverrideSchema, {
 		metavar: 'AGENT=PROFILE',
 		placeholder: 'agent=profile',
+	});
+}
+
+function credentialProxyUrlValueParser(): ReturnType<typeof zod<string>> {
+	return zod(credentialProxyUrlSchema, {
+		metavar: 'URL',
+		placeholder: 'http://localhost',
 	});
 }
 
@@ -177,7 +198,7 @@ function createPrintClientConfigCommand(): Parser<'sync', PrintClientConfigComma
 					'--master-key-fingerprint',
 					stringValueParser('FINGERPRINT', 'sha256:...'),
 				),
-				proxyUrl: optional(option('--proxy-url', stringValueParser('URL', 'http://localhost'))),
+				proxyUrl: optional(option('--proxy-url', credentialProxyUrlValueParser())),
 			}),
 			({ agentId, configDir, expectedFingerprint, proxyUrl }): PrintClientConfigCommand => ({
 				command: 'mcp-proxy.print-client-config',
