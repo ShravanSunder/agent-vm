@@ -39,7 +39,10 @@ class GatewayRuntimeClientLoop:
     def _run(self) -> None:
         asyncio.set_event_loop(self._loop)
         self._started.set()
-        self._loop.run_forever()
+        try:
+            self._loop.run_forever()
+        finally:
+            self._loop.close()
 
     def submit[TResult](
         self,
@@ -84,10 +87,19 @@ class GatewayRuntimeClientLoop:
         )
         return len(still_pending)
 
+    async def _stop_loop_after_pending_tasks_finish(self) -> None:
+        current_task = asyncio.current_task(loop=self._loop)
+        while pending_tasks := [
+            task
+            for task in asyncio.all_tasks(loop=self._loop)
+            if task is not current_task and not task.done()
+        ]:
+            _ = await asyncio.gather(*pending_tasks, return_exceptions=True)
+        self._loop.stop()
+
     def close(self, *, disconnect: bool) -> None:
         if self._closed:
             return
-        pending_task_count: int | None = None
         try:
             try:
                 pending_task_count = self.run(
@@ -111,23 +123,18 @@ class GatewayRuntimeClientLoop:
                 _LOGGER.warning("Gateway Runtime client disconnect did not complete")
             finally:
                 try:
-                    pending_task_count = self.run(
+                    _ = self.run(
                         self._cancel_pending_tasks(),
                         timeout=_SHUTDOWN_OPERATION_TIMEOUT_SECONDS,
                     )
                 except concurrent.futures.TimeoutError:
-                    pending_task_count = None
                     _LOGGER.warning("Gateway Runtime client loop final drain did not complete")
         finally:
             self._closed = True
-            self._loop.call_soon_threadsafe(self._loop.stop)
+            _ = asyncio.run_coroutine_threadsafe(
+                self._stop_loop_after_pending_tasks_finish(),
+                self._loop,
+            )
             self._thread.join(timeout=_SHUTDOWN_OPERATION_TIMEOUT_SECONDS)
             if self._thread.is_alive():
-                message = "Gateway Runtime client loop did not stop"
-                raise RuntimeError(message)
-            if pending_task_count == 0:
-                self._loop.close()
-            else:
-                _LOGGER.warning(
-                    "Gateway Runtime event loop retained because owned tasks remain pending"
-                )
+                _LOGGER.warning("Gateway Runtime event loop retained until owned tasks finish")

@@ -160,6 +160,91 @@ class GatewayRuntimeClientLoopOrderTests(unittest.TestCase):
 
         self.assertTrue(residual_task_finalized.is_set())
 
+    def test_close_keeps_loop_running_until_deferred_cancellation_finishes(self) -> None:
+        cancellation_observed = threading.Event()
+        release_cancellation = threading.Event()
+        task_finalized = threading.Event()
+
+        async def defer_cancellation_cleanup() -> None:
+            try:
+                while not release_cancellation.is_set():
+                    try:
+                        await asyncio.to_thread(release_cancellation.wait)
+                    except asyncio.CancelledError:
+                        cancellation_observed.set()
+            finally:
+                task_finalized.set()
+
+        client_loop = GatewayRuntimeClientLoop(_RecordingClient())
+        client_loop.submit(defer_cancellation_cleanup())
+        self.assertTrue(client_loop.run(asyncio.sleep(0), timeout=1) is None)
+        with (
+            patch.object(
+                client_loop_module,
+                "_CANCELLATION_DRAIN_TIMEOUT_SECONDS",
+                0.01,
+            ),
+            patch.object(
+                client_loop_module,
+                "_SHUTDOWN_OPERATION_TIMEOUT_SECONDS",
+                0.1,
+            ),
+        ):
+            client_loop.close(disconnect=False)
+
+        self.assertTrue(cancellation_observed.is_set())
+        release_cancellation.set()
+        self.assertTrue(task_finalized.wait(timeout=1))
+
+    def test_close_waits_for_child_created_during_final_cancellation(self) -> None:
+        child_started = threading.Event()
+        release_child = threading.Event()
+        child_finalized = threading.Event()
+
+        async def create_child_during_final_cancellation() -> None:
+            cancellation_count = 0
+            while True:
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    cancellation_count += 1
+                    if cancellation_count == 1:
+                        continue
+
+                    async def finish_child_cleanup() -> None:
+                        try:
+                            await asyncio.to_thread(release_child.wait)
+                        finally:
+                            child_finalized.set()
+
+                    _ = asyncio.create_task(finish_child_cleanup())
+                    child_started.set()
+                    return
+
+        client_loop = GatewayRuntimeClientLoop(_RecordingClient())
+        client_loop.submit(create_child_during_final_cancellation())
+        self.assertTrue(client_loop.run(asyncio.sleep(0), timeout=1) is None)
+        with (
+            patch.object(
+                client_loop_module,
+                "_CANCELLATION_DRAIN_TIMEOUT_SECONDS",
+                0.01,
+            ),
+            patch.object(
+                client_loop_module,
+                "_SHUTDOWN_OPERATION_TIMEOUT_SECONDS",
+                0.1,
+            ),
+        ):
+            client_loop.close(disconnect=False)
+
+        self.assertTrue(child_started.is_set())
+        release_child.set()
+        self.assertTrue(child_finalized.wait(timeout=1))
+        client_loop._thread.join(timeout=1)
+        self.assertFalse(client_loop._thread.is_alive())
+        self.assertTrue(client_loop._loop.is_closed())
+
 
 if __name__ == "__main__":
     unittest.main()
