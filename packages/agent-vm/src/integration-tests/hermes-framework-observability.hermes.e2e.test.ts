@@ -4,7 +4,6 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import path from 'node:path';
 
 import type { ManagedVmCreateRequest } from '@agent-vm/managed-vm';
-import { execa } from 'execa';
 import { afterAll, describe, expect, it } from 'vitest';
 
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
@@ -13,7 +12,6 @@ import { controllerFixedGatewayRuntimeArtifactLimits } from '../gateway/managed-
 import { createObservabilityRuntimeConfig } from '../observability/observability-config.js';
 import { prepareObservabilityStack } from '../observability/observability-lifecycle.js';
 import {
-	canRunManagedVmE2e,
 	currentE2eArchitecture,
 	findAvailablePort,
 	prepareGatewayE2eProjectImages,
@@ -28,20 +26,22 @@ import {
 	hermesE2eProfileApiServerKey,
 	hermesE2eProfileApiServerKeyEnvironmentName,
 	scaffoldHermesE2eProject,
+	shouldRunHermesE2e,
 	useLocalHermesGatewayImagePackages,
 	type HermesE2eProject,
 } from './hermes-e2e-harness.js';
 import {
 	expectProviderTransitionLogs,
+	readObservabilityStackDiagnostics,
 	requireTraceIdForSpan,
 	selectStoredHermesFrameworkLogs,
+	stopObservabilityStack,
 	waitForVictoriaMetric,
 	waitForVictoriaText,
 } from './hermes-framework-observability-e2e-support.js';
 
 const architecture = currentE2eArchitecture();
-const runHermesFrameworkObservabilityE2e =
-	process.env.AGENT_VM_HERMES_E2E === '1' && (await canRunManagedVmE2e({ architecture }));
+const runHermesFrameworkObservabilityE2e = await shouldRunHermesE2e({ architecture });
 const describeHermesFrameworkObservabilityE2e = runHermesFrameworkObservabilityE2e
 	? describe
 	: describe.skip;
@@ -370,67 +370,15 @@ async function waitForRootApiHealth(gatewayPort: number): Promise<void> {
 	throw new Error('Timed out waiting for the Hermes root API health endpoint.');
 }
 
-async function stopObservabilityStack(project: HermesE2eProject): Promise<void> {
-	const observability = project.systemConfig.host.observability;
-	if (observability?.enabled !== true || observability.stack.mode !== 'managed') return;
-	const composePath = path.join(
-		project.systemConfig.controllerRuntimeDir,
-		'observability',
-		project.systemConfig.host.projectNamespace,
-		'docker-compose.observability.yml',
-	);
-	await execa(
-		'docker',
-		[
-			'compose',
-			'--project-name',
-			project.systemConfig.host.projectNamespace,
-			'--file',
-			composePath,
-			'down',
-			'--volumes',
-		],
-		{
-			reject: false,
-			timeout: 30_000,
-		},
-	);
-}
-
-async function readObservabilityStackDiagnostics(project: HermesE2eProject): Promise<string> {
-	const composePath = path.join(
-		project.systemConfig.controllerRuntimeDir,
-		'observability',
-		project.systemConfig.host.projectNamespace,
-		'docker-compose.observability.yml',
-	);
-	const result = await execa(
-		'docker',
-		[
-			'compose',
-			'--project-name',
-			project.systemConfig.host.projectNamespace,
-			'--file',
-			composePath,
-			'logs',
-			'--no-color',
-			'--tail',
-			'200',
-			'otel-collector',
-		],
-		{ reject: false, timeout: 30_000 },
-	);
-	return `${result.stdout}\n${result.stderr}`;
-}
-
 async function runSignalNegativeGatewayBoot(options: {
 	readonly disabledPath: '/v1/logs' | '/v1/metrics' | '/v1/traces';
 	readonly disabledSignal: 'logs' | 'metrics' | 'traces';
 }): Promise<void> {
-	const repoRoot = path.resolve(process.cwd());
+	const repoRoot = process.cwd();
 	const provider = await startFakeProvider();
 	let harness: E2eHarnessRuntime | undefined;
 	let project: HermesE2eProject | undefined;
+	let operationFailure: { readonly error: unknown } | undefined;
 	const capturedRequests: CapturedOtlpRequest[] = [];
 	try {
 		const ports = await Promise.all(
@@ -575,10 +523,29 @@ async function runSignalNegativeGatewayBoot(options: {
 				requestPaths.filter((requestPath) => requestPath === enabledPath).length,
 			).toBeGreaterThanOrEqual(1);
 		}
-	} finally {
-		await harness?.close({ preserveTempRoot: true });
-		await provider.close();
-		if (project !== undefined) await removeE2eTempRoot(project.tempRoot);
+	} catch (error: unknown) {
+		operationFailure = { error };
+	}
+	const cleanupResults = await Promise.allSettled([
+		harness?.close({ preserveTempRoot: true }) ?? Promise.resolve(),
+		provider.close(),
+		project === undefined ? Promise.resolve() : removeE2eTempRoot(project.tempRoot),
+	]);
+	const cleanupErrors = cleanupResults.flatMap((result): readonly unknown[] =>
+		result.status === 'rejected' ? [result.reason] : [],
+	);
+	if (operationFailure !== undefined && cleanupErrors.length > 0) {
+		throw new AggregateError(
+			[operationFailure.error, ...cleanupErrors],
+			'Hermes disabled-signal E2E operation and cleanup failed.',
+			{ cause: operationFailure.error },
+		);
+	}
+	if (operationFailure !== undefined) {
+		throw operationFailure.error;
+	}
+	if (cleanupErrors.length > 0) {
+		throw new AggregateError(cleanupErrors, 'Hermes disabled-signal E2E cleanup failed.');
 	}
 }
 

@@ -7,6 +7,7 @@ import type { ImageArchitecture } from '../cli/init-command.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import {
 	buildLocalPythonWheel,
+	canRunManagedVmE2e,
 	copyLocalPackageTarballsToDockerContext,
 	createLocalDockerPackageTarball,
 	localDockerPackageDependencyName,
@@ -17,6 +18,7 @@ import {
 	scaffoldOpenClawE2eProject,
 	useLocalToolVmMcpPortalPackageTarballs,
 	type LocalDockerPackageTarball,
+	type ManagedVmE2ePrerequisiteOptions,
 } from './e2e-harness.js';
 
 interface HermesE2eZone extends Omit<LoadedSystemConfig['zones'][number], 'gateway'> {
@@ -40,6 +42,22 @@ export interface RenderHermesManagedE2eConfigurationOptions {
 	readonly fakeModelBaseUrl?: string;
 	readonly fakeModelHost: string;
 	readonly fakeModelName: string;
+}
+
+export async function shouldRunHermesE2e(
+	options: ManagedVmE2ePrerequisiteOptions & {
+		readonly env?: Partial<Record<'AGENT_VM_HERMES_E2E', string>>;
+	},
+): Promise<boolean> {
+	const env = options.env ?? process.env;
+	if (env.AGENT_VM_HERMES_E2E !== '1') return false;
+	const prerequisitesAvailable = await canRunManagedVmE2e(options);
+	if (!prerequisitesAvailable) {
+		throw new Error(
+			'AGENT_VM_HERMES_E2E=1 explicitly requested live Hermes proof, but Docker, QEMU, or the pinned Zig version is unavailable.',
+		);
+	}
+	return true;
 }
 
 const hermesGatewayLocalPackageNames = [

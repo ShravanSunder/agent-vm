@@ -1,6 +1,10 @@
+import path from 'node:path';
+
+import { execa } from 'execa';
 import { expect } from 'vitest';
 
 import { waitForProtocolRetryInterval } from './e2e-protocol-wait.js';
+import type { HermesE2eProject } from './hermes-e2e-harness.js';
 
 /* oxlint-disable eslint/no-await-in-loop -- helpers wait on external protocol state */
 
@@ -63,6 +67,58 @@ export function selectStoredHermesFrameworkLogs(records: string): string {
 			);
 		})
 		.join('\n');
+}
+
+export async function stopObservabilityStack(project: HermesE2eProject): Promise<void> {
+	const observability = project.systemConfig.host.observability;
+	if (observability?.enabled !== true || observability.stack.mode !== 'managed') return;
+	const composePath = path.join(
+		project.systemConfig.controllerRuntimeDir,
+		'observability',
+		project.systemConfig.host.projectNamespace,
+		'docker-compose.observability.yml',
+	);
+	await execa(
+		'docker',
+		[
+			'compose',
+			'--project-name',
+			project.systemConfig.host.projectNamespace,
+			'--file',
+			composePath,
+			'down',
+			'--volumes',
+		],
+		{ reject: false, timeout: 30_000 },
+	);
+}
+
+export async function readObservabilityStackDiagnostics(
+	project: HermesE2eProject,
+): Promise<string> {
+	const composePath = path.join(
+		project.systemConfig.controllerRuntimeDir,
+		'observability',
+		project.systemConfig.host.projectNamespace,
+		'docker-compose.observability.yml',
+	);
+	const result = await execa(
+		'docker',
+		[
+			'compose',
+			'--project-name',
+			project.systemConfig.host.projectNamespace,
+			'--file',
+			composePath,
+			'logs',
+			'--no-color',
+			'--tail',
+			'200',
+			'otel-collector',
+		],
+		{ reject: false, timeout: 30_000 },
+	);
+	return `${result.stdout}\n${result.stderr}`;
 }
 
 export async function waitForVictoriaMetric(

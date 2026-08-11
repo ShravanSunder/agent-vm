@@ -58,6 +58,7 @@ import {
 import {
 	renderHermesManagedE2eConfiguration,
 	scaffoldHermesE2eProject,
+	shouldRunHermesE2e,
 	useLocalHermesGatewayImagePackages,
 } from './hermes-e2e-harness.js';
 
@@ -143,6 +144,40 @@ afterEach(async () => {
 			await fs.rm(temporaryRoot, { force: true, recursive: true });
 		}),
 	);
+});
+
+describe('shouldRunHermesE2e', () => {
+	it('keeps inventory mode skipped when live Hermes proof is not requested', async () => {
+		expect(
+			await shouldRunHermesE2e({
+				architecture: 'aarch64',
+				commandExists: () => false,
+				env: {},
+			}),
+		).toBe(false);
+	});
+
+	it('fails explicit Hermes proof when managed VM prerequisites are unavailable', async () => {
+		await expect(
+			shouldRunHermesE2e({
+				architecture: 'aarch64',
+				commandExists: () => false,
+				env: { AGENT_VM_HERMES_E2E: '1' },
+			}),
+		).rejects.toThrow('explicitly requested live Hermes proof');
+	});
+
+	it('runs explicit Hermes proof when managed VM prerequisites are available', async () => {
+		expect(
+			await shouldRunHermesE2e({
+				architecture: 'aarch64',
+				commandExists: () => true,
+				env: { AGENT_VM_HERMES_E2E: '1' },
+				resolveRequiredZigVersion: async () => '0.16.0',
+				resolveZigVersion: async () => '0.16.0',
+			}),
+		).toBe(true);
+	});
 });
 
 describe('shouldRunWorkerGatewayE2e', () => {
@@ -590,6 +625,18 @@ describe('startE2eControllerRuntime', () => {
 
 	it('removes OpenClaw control-link smoke temp roots', async () => {
 		const temporaryRoot = await createTemporaryRoot('openclaw-control-link-e2e-');
+
+		await removeE2eTempRoot(temporaryRoot);
+
+		await expect(fs.access(temporaryRoot)).rejects.toThrow();
+	});
+
+	it.each([
+		'hermes-framework-observability-e2e-',
+		'hermes-framework-otel-signals-disabled-e2e-',
+		'hermes-tool-portal-orientation-e2e-',
+	])('removes owned Hermes temp roots with prefix %s', async (prefix) => {
+		const temporaryRoot = await createTemporaryRoot(prefix);
 
 		await removeE2eTempRoot(temporaryRoot);
 
