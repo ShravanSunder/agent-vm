@@ -19,8 +19,9 @@ The LogTape/OTEL cutover is based on it and must not reopen CLI architecture.
   `tool-portal`, `mcp-portal`, and `agent-vm-gateway-runtime`.
 - Maintainers extending commands without duplicating parser and TypeScript
   types.
-- Operators diagnosing controller, worker, gateway, Tool Portal, MCP Portal,
-  and active plugin behavior locally or through the existing OTLP path.
+- Operators diagnosing controller, worker, gateway, the Tool Portal CLI, MCP
+  Portal, the managed common Tool Portal service, and active plugin behavior
+  locally or through the existing OTLP path.
 - Library integrators who must retain control of process-wide logging policy.
 - Protocol and automation consumers that depend on exact stdout/result bytes.
 
@@ -64,10 +65,12 @@ Priority: required.
 
 ### U5 — General diagnostics use LogTape
 
-Active packages that emit general operational diagnostics MUST emit categorized
-`@logtape/logtape` records. Tool Portal and MCP Portal are included wherever
-they emit general diagnostics. A package that emits no general diagnostics does
-not gain a ceremonial LogTape dependency.
+Active repository-hosted TypeScript packages that emit general operational
+diagnostics MUST emit categorized `@logtape/logtape` records. The Tool Portal
+CLI and MCP Portal are included wherever they emit general diagnostics. A
+package that emits no general diagnostics does not gain a ceremonial LogTape
+dependency. Code embedded in a foreign application process MUST use that
+host's logging interface and MUST NOT configure a competing LogTape runtime.
 
 Priority: required.
 
@@ -111,6 +114,18 @@ and non-disruptive logging failure.
 
 Priority: required.
 
+### U10 — Managed application OTEL remains end to end
+
+Managed Agent VM OpenClaw and Hermes zones MUST continue to export their
+framework telemetry and managed common Tool Portal telemetry end to end through
+the controller-authored mediated OTLP path. Producer identities, per-signal
+toggles, source policies, admission limits, and Python Hermes ownership MUST
+remain intact. The TypeScript LogTape cutover MUST complement this path without
+rewriting, reinterpreting, or taking ownership of either managed framework's
+telemetry contract.
+
+Priority: required.
+
 ## Boundaries and non-goals
 
 - `packages/openclaw-mcp-portal-plugin` is deprecated and excluded.
@@ -122,7 +137,12 @@ Priority: required.
 - No shared logging package, logging daemon, broker, durable queue, persistence,
   or new collector.
 - No replacement or repackaging of typed logs, metrics, traces, health events,
-  or Tool Portal telemetry.
+  or managed common Tool Portal telemetry.
+- No LogTape configuration inside the foreign OpenClaw application process or
+  the Python Hermes framework process. OpenClaw integration uses its host logger;
+  Python Hermes retains its fail-closed OpenTelemetry environment contract.
+- No managed Worker-zone OTLP path; Worker zones continue to reject enabled
+  zone observability.
 - No guarantee that abrupt termination flushes buffered telemetry.
 
-`U1` through `U9` are the complete accepted requirements for this program.
+`U1` through `U10` are the complete accepted requirements for this program.

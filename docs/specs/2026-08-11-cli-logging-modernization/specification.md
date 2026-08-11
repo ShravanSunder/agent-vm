@@ -110,9 +110,12 @@ owning package and domain, a fixed bounded message, an appropriate level, and
 allowlisted structured fields. Human-readable prefix strings such as
 `[agent-vm]` MUST NOT be the category mechanism.
 
-Tool Portal and MCP Portal MUST follow the same classification. Tool Portal MAY
-remain dependency-free only if its production surface has no admitted general
-diagnostic after classification.
+The Tool Portal CLI and MCP Portal MUST follow the same classification. The
+Tool Portal CLI MAY remain dependency-free only if its production surface has
+no admitted general diagnostic after classification. Code embedded in the
+foreign OpenClaw application process MUST use OpenClaw's host logger when
+available and MAY retain one bounded direct-stderr warning fallback when the
+host supplies no logger; it MUST NOT configure LogTape in that process.
 
 Traces to: U5, U8.
 
@@ -124,6 +127,14 @@ delimited structured stderr and MUST add an `@logtape/otel` sink when the
 root's existing configuration or standard OTEL environment supplies an
 endpoint. Explicitly disabled repository observability MUST NOT be overridden
 by ambient OTEL variables.
+
+Each configured OTLP sink MUST receive an explicit root-owned `service.name`;
+it MUST NOT inherit a managed framework identity from ambient environment.
+Agent VM uses `agent-vm-controller`, Worker uses `agent-vm-worker`, Gateway
+Runtime uses `agent-vm-tool-portal`, and MCP Portal uses
+`agent-vm-mcp-portal`. Gateway Runtime MUST enable its LogTape OTLP sink only
+when its loaded observability configuration is `otlp-http` with `logs: true`;
+structured stderr remains enabled when OTLP logging is disabled.
 
 Reusable libraries and plugins MAY call `getLogger()` but MUST NOT configure
 LogTape, construct sinks, select global levels, reset configuration, or own
@@ -151,7 +162,8 @@ The following MUST remain direct and MUST NOT pass through LogTape:
 
 - CLI help, version, parse diagnostics, command results, and credential output;
 - readiness, retirement, health, and other machine-readable stdout payloads;
-- MCP/Tool Portal protocol results and listening/readiness contracts;
+- MCP Portal and Tool Portal CLI protocol results and listening/readiness
+  contracts;
 - interactive prompts and progress;
 - raw stdout/stderr relays from child processes;
 - generated scripts and test-fixture protocols.
@@ -192,9 +204,34 @@ configuration or replace the authoritative product close result.
 
 Traces to: U7, U8.
 
+### S11 — Managed OpenClaw and Hermes observability continuity
+
+For an observability-enabled managed OpenClaw or Hermes zone, Agent VM MUST
+preserve the existing controller-authored mediated OTLP HTTP path for both the
+framework producer and the managed common Tool Portal service. The fixed
+producer identities remain `agent-vm-openclaw`, `agent-vm-hermes`, and
+`agent-vm-tool-portal`; framework and Tool Portal signal toggles, source
+policies, admission limits, and resource attributes remain independently
+owned by the existing managed observability configuration.
+
+The TypeScript LogTape roots MUST NOT write, reinterpret, or derive behavior
+from the reserved managed Hermes `OTEL_*` and `AGENT_VM_HERMES_OTEL_*`
+environment contract. The controller-authored environment remains
+authoritative, the Python Hermes adapter continues to validate and operate that
+contract, and no LogTape configuration runs inside the Hermes framework
+process. The OpenClaw framework's existing telemetry owner likewise remains
+separate from LogTape.
+
+Worker zones MUST continue to reject enabled zone observability. Managed Worker
+proof therefore covers structured stderr only; standard OTEL logs environment
+support for a standalone Worker process is not evidence of a managed Worker
+OTLP path.
+
+Traces to: U6, U7, U10.
+
 ## Compatibility and cutover obligations
 
-### S11 — Two stacked hard cutovers
+### S12 — Two stacked hard cutovers
 
 The Optique pull request MUST contain the complete CLI cutover and no LogTape
 behavior. The LogTape pull request MUST be based on the accepted Optique state
@@ -206,7 +243,7 @@ Configuration schemas, controller/worker routes, runtime protocols, operation
 semantics, and package exports outside the owned CLI/logging surfaces MUST NOT
 change.
 
-Traces to: U1, U3, U5, U7.
+Traces to: U1, U3, U5, U7, U10.
 
 ## Required proof
 
@@ -214,15 +251,17 @@ Traces to: U1, U3, U5, U7.
 | --- | --- |
 | S1 | Manifest, lockfile, source, test, and active-doc scans prove Optique presence and zero active `cmd-ts` or manual-parser residue. |
 | S2 | Parser units cover reused schemas, narrowed schemas, coercion/transformation, safe placeholders, boundary values, and invalid values. |
-| S3 | Import/purity tests prove parser construction does not load effect owners; dispatcher tests prove one operation and exhaustive typing. |
+| S3 | Import/purity tests prove parser construction does not load effect owners; dispatcher tests prove one operation and exhaustive typing; a source/AST boundary test proves each exported command union is exactly `InferValue<typeof rootParser>` and rejects a second handwritten command-union declaration. |
 | S4 | Built-binary host E2E covers all five binaries: help, valid, existing boundary, missing/invalid, streams, status, and safe effect; `agent-vm` version is covered. |
 | S5–S6 | Static classification plus logger-capture units prove categories, levels, fields, root-only configuration, and library isolation. |
-| S7 | A production-shaped OTLP receiver observes a causal record from every configured root; disabled, absent, and unavailable endpoint paths preserve product behavior. |
+| S7 | A production-shaped OTLP receiver observes a causal record from every root actually configured for OTLP; explicit service identities and disabled, absent, unavailable, and signal-disabled endpoint paths preserve product behavior. Managed Worker is excluded from collector proof because it has no managed OTLP path. |
 | S8 | Built-process transcripts prove protected stdout/stderr bytes and show help/version paths are independent of logging setup/disposal. |
 | S9 | Misuse tests reject/omit secrets, content, raw errors/stacks, and unsafe URLs while retaining bounded diagnostic context. |
 | S10 | Lifecycle tests prove product-close-before-logging-dispose, one disposal, original-result precedence, and containment when both disposal and fallback writing fail. |
-| S11 | Each PR passes targeted units/integration/host E2E, workspace build, formatting, lint, typecheck, taxonomy, and `pnpm check`; outside-suite smoke invokes every affected built root. |
+| S11 | Real managed OpenClaw and Hermes zone E2E observes the fixed framework and `agent-vm-tool-portal` identities through mediation, exercises signal toggles, and proves prohibited content remains absent; Hermes proof also exercises the Python-owned fail-closed environment contract. |
+| S12 | Each PR passes targeted units/integration/host E2E, workspace build, formatting, lint, typecheck, taxonomy, and `pnpm check`; outside-suite smoke invokes every affected built root. |
 
-VM boot is required only when a changed logging root cannot otherwise be
-reached through a production-shaped process proof. Parser-only behavior does
-not require a VM boot.
+VM boot is required for the managed OpenClaw and Hermes observability continuity
+proof and only otherwise when a changed logging root cannot be reached through
+a production-shaped process proof. Parser-only behavior does not require a VM
+boot.

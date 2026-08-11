@@ -79,13 +79,16 @@ const workerCommandParser = or(
 	command("health", object({ command: constant("health") })),
 );
 
-type WorkerCommand = InferValue<typeof workerCommandParser>;
+export type WorkerCommand = InferValue<typeof workerCommandParser>;
 ```
 
-The exact Optique inference helper follows the installed public API. The
-important invariant is that the parser is the single source of the command
-union. No parallel `WorkerCommand` variants or manual `Omit`/`Pick` structures
-repeat it.
+The exact Optique inference helper follows the installed public API. Every
+exported command type is exactly `InferValue<typeof rootParser>`, and each
+dispatcher accepts that alias directly. Its default arm assigns the remaining
+value to `never`. A source/AST boundary test in each parser-owning package
+rejects a second handwritten command-union declaration. The parser is therefore
+the mechanically enforced single source of the command union; no parallel
+variants or manual `Omit`/`Pick` structures repeat it.
 
 Zod is the single source for value domains. A schema output type is inferred
 with `z.infer`. Optique owns presence, optionality, defaults, command nesting,
@@ -148,7 +151,7 @@ imports: `@optique/core`, `@optique/run`, `@optique/zod`, and Zod.
 | `agent-vm-worker` | `runSafely` → `cmd-ts` handler → health request or server creation; serve discards the server handle | `run()` → `health` operation or `runWorkerServeLifecycle`; lifecycle retains server/control-service handles | health JSON and listening text remain direct; coordinator/server behavior remains operation-owned |
 | `tool-portal` | `parseCliArguments` → transport/client creation → portal invocation | `run()` → inferred portal command → dispatcher → the same transport/invocation operation | canonical result JSON, sanitized CLI error, cancellation, client close, and exit classes remain direct |
 | `mcp-portal` | manual top-level branching plus `parsePortalServerCliArgs` → administration/call/server operations | one `run()` parser → exhaustive dispatcher; `serve` alone enters the existing server lifetime path | usage, credentials, client config, results, listening output, and injected `PortalServerLogger` contract remain |
-| Gateway Runtime | `configPathFromArguments` → config load → service start → signal → retire | `run()` validates the absolute config path → dispatcher → the same config/service lifecycle | readiness/retirement JSON, fatal evidence, service retirement, and typed Tool Portal telemetry remain |
+| Gateway Runtime | `configPathFromArguments` → config load → service start → signal → retire | `run()` validates the absolute config path → dispatcher → the same config/service lifecycle | readiness/retirement JSON, fatal evidence, service retirement, and typed managed common Tool Portal telemetry remain |
 
 The removed edges are the `cmd-ts` handlers, manual command branching, and
 post-parse value classification. The added edges are package parsers and
@@ -182,8 +185,11 @@ typed domain telemetry
 
 Classification is semantic, not a bulk replacement of every
 `process.stderr.write` or `console.*` occurrence. Test fixtures, generated
-programs, and raw relays remain direct. The active OpenClaw plugin is a library
-logger consumer. The deprecated MCP Portal plugin is untouched.
+programs, and raw relays remain direct. The active OpenClaw plugin executes in
+a foreign OpenClaw application process: it uses the host logger when supplied
+and retains one bounded direct-stderr warning fallback for direct embedding.
+It does not configure or assume a LogTape sink. The deprecated MCP Portal
+plugin is untouched.
 
 The material current-to-proposed diagnostic ownership is:
 
@@ -191,9 +197,9 @@ The material current-to-proposed diagnostic ownership is:
 | --- | --- | --- | --- |
 | Agent VM controller domains | domain helper or callback → prefixed stderr | domain category → LogTape | CLI/results, readiness JSON, raw child/build streams, typed controller telemetry |
 | Worker runtime | shared stderr helper → stderr | worker domain category → LogTape | CLI diagnostics, listening/health output, validation subprocess streams |
-| Gateway Runtime | fixed/general failure diagnostics → stderr | gateway category → LogTape after config load | readiness/retirement JSON, fatal evidence, typed Tool Portal telemetry |
+| Gateway Runtime | fixed/general failure diagnostics → stderr | gateway category → LogTape after config load | readiness/retirement JSON, fatal evidence, typed managed common Tool Portal telemetry |
 | MCP Portal server | `PortalServerLogger` default adapter → stderr JSON | same injected event seam → categorized LogTape adapter | usage, credentials, result/client-config JSON, listening output |
-| active OpenClaw plugin | default warning adapter → direct stderr | default adapter → categorized library logger | host-injected warning callback remains host-owned |
+| active OpenClaw plugin | default warning adapter → direct stderr | OpenClaw host logger when available | bounded direct-stderr fallback remains only when direct embedding supplies no host logger; OpenClaw owns process logging and OTEL policy |
 | Tool Portal CLI | canonical result or bounded CLI failure only | no admitted general diagnostic and therefore no LogTape root/dependency | all current stdout/stderr bytes and client-close precedence |
 
 Current diagnostic anchors include the Agent VM controller/lease/health/zone
@@ -224,15 +230,20 @@ libraries/plugins --------------------> getLogger() only
 ```
 
 Root-local configuration returns an owned async-disposable handle. It is a
-small process adapter, not a general CLI or logging framework. Each root keeps
-its own endpoint/resource mapping because the existing authorities differ:
+small process adapter, not a general CLI or logging framework. Each root passes
+an explicit service identity and keeps its own endpoint/toggle mapping because
+the existing authorities differ:
 
-- Agent VM uses the resolved controller observability setting. Explicit
-  disabled state suppresses ambient OTEL discovery.
-- Gateway Runtime uses its loaded discriminated observability configuration.
-  Explicit disabled state suppresses ambient discovery.
-- Worker and standalone MCP Portal use standard OTEL logs environment
-  discovery because they have no repository endpoint authority.
+| Root | LogTape `service.name` | OTLP authority |
+| --- | --- | --- |
+| Agent VM | `agent-vm-controller` | resolved controller observability; explicit disabled state suppresses ambient discovery |
+| Worker | `agent-vm-worker` | standard OTEL logs environment only for standalone/non-managed hosting; managed Worker has structured stderr only |
+| Gateway Runtime | `agent-vm-tool-portal` | loaded `otlp-http` configuration only when `logs: true`; `disabled` or `logs: false` suppresses the sink but not structured stderr |
+| MCP Portal | `agent-vm-mcp-portal` | standard OTEL logs environment because no repository endpoint authority exists |
+
+Gateway Runtime is the managed common Tool Portal service process, so its
+general records deliberately use `agent-vm-tool-portal`; they never inherit
+`agent-vm-openclaw` or `agent-vm-hermes` from ambient environment.
 
 When an endpoint is a collector base URL, the root derives its logs endpoint
 once according to the current typed telemetry convention. The LogTape OTEL sink
@@ -346,7 +357,7 @@ controller runtime
   -> controller OTel log/metric/trace providers
 
 Gateway Runtime
-  -> Tool Portal telemetry runtime
+  -> managed common Tool Portal telemetry runtime
   -> gateway OTel log/metric/trace providers
 ```
 
@@ -354,6 +365,33 @@ LogTape may export to the same collector, but it does not share providers,
 schemas, shutdown handles, admission limits, or lifecycle authority. General
 records do not write health state, task state, leases, readiness, or recovery
 decisions.
+
+### Managed application telemetry boundary
+
+Agent VM remains the authority that resolves zone observability and constructs
+the mediated collector route. It passes separate, fixed producer contracts to
+the managed application and managed common Tool Portal service:
+
+```text
+Agent VM zone observability
+  -> mediated OTLP HTTP collector route
+       -> OpenClaw framework       service.name=agent-vm-openclaw
+       -> or Hermes framework      service.name=agent-vm-hermes
+       -> common Tool Portal       service.name=agent-vm-tool-portal
+```
+
+For Hermes, `hermes-lifecycle.ts` continues to write the reserved `OTEL_*` and
+`AGENT_VM_HERMES_OTEL_*` environment contract. The Python Hermes adapter alone
+loads and fail-closed validates it. TypeScript LogTape setup neither writes nor
+interprets those variables, and no LogTape runtime is configured in the Python
+framework process. OpenClaw's framework telemetry likewise stays owned by its
+existing diagnostics runtime; the plugin's host logger integration does not
+create a second telemetry owner.
+
+Worker zones continue to reject enabled zone observability. The managed Worker
+path therefore ends at structured stderr and gains no controller mediation or
+zone schema. A standalone Worker may use standard OTEL logs environment through
+its own root adapter, but that is a separate hosting mode.
 
 ## Failure and concurrency model
 
@@ -373,15 +411,16 @@ source changeset without data migration.
 | Contract | Structural seam | Proof |
 | --- | --- | --- |
 | S1–S2 | package parser definitions and Zod schemas | residue/package scan; parser value units |
-| S3 | parser import graph and exhaustive dispatcher | import/purity test; one-dispatch units; typecheck |
+| S3 | parser import graph, inferred alias, and exhaustive dispatcher | import/purity test; one-dispatch units; typecheck; source/AST rejection of handwritten command unions |
 | S4 | real executable root and current operation seams | all-five built-binary host E2E and outside-suite smoke |
 | S5 | classified emission inventory and category literals | static inventory plus captured logger records |
 | S6 | root-local configuration; logger-only libraries | import/configuration isolation tests |
-| S7 | separate LogTape provider and real receiver boundary | causal OTLP receiver proof; typed-provider regression tests |
+| S7 | separate LogTape provider, explicit service identity, and real receiver boundary | causal OTLP receiver proof for configured roots; disabled/signal-toggle tests; typed-provider regression tests |
 | S8 | existing direct writers | byte/channel process transcripts including CLI-only failure injection |
 | S9 | package-local property conversion | forbidden-field and bound tests at logger-call seam |
 | S10 | product close and logging disposal handles | ordering, repeated signal, setup/export/disposal/fallback failure tests |
-| S11 | two branch diffs | per-PR residue scan, build, package inspection, full quality and relevant E2E gates |
+| S11 | controller mediation plus existing OpenClaw and Hermes framework owners | real managed OpenClaw and Hermes VM E2E observes framework and common Tool Portal identities, signal toggles, and safe-content policy |
+| S12 | two branch diffs | per-PR residue scan, build, package inspection, full quality and relevant E2E gates |
 
 The production proof path must execute real built roots. A captured in-memory
 sink proves record construction only; it does not substitute for stderr or OTLP
@@ -393,11 +432,14 @@ delivery. A fake parser does not substitute for built-binary CLI proof.
   repository-wide CLI runner;
 - no manually duplicated command union or effectful parser-definition module;
 - no library-owned LogTape configuration or disposal;
+- no LogTape runtime inside the foreign OpenClaw application or Python Hermes
+  framework process;
 - no protected output through LogTape;
 - no typed telemetry provider passed to LogTape;
 - no content capture or arbitrary structured object logging;
 - no new shared package, service, broker, persistence, queue, collector, or
   lifecycle authority;
+- no managed Worker-zone observability path or schema;
 - no changes to `packages/openclaw-mcp-portal-plugin`.
 
 ## Library references
