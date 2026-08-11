@@ -41,7 +41,7 @@ describe('repo resource contract loader', () => {
 			expect(capturedRecords).toHaveLength(1);
 			expect(capturedRecords[0]).toMatchObject({
 				category: ['agent-vm', 'controller', 'resource'],
-				level: 'warning',
+				level: 'info',
 				message: ['Controller diagnostic'],
 				properties: { event: 'diagnostic' },
 			});

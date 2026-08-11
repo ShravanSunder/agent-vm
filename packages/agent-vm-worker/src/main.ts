@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import { run } from '@optique/run';
-
 import {
 	configureProcessLogging,
 	workerProcessLoggingShutdownFailureMessage,

@@ -162,7 +162,11 @@ export async function runGatewayRuntimeStartLifecycle<
 		throw error;
 	} finally {
 		await logging.shutdown().catch(() => {
-			props.writeStderr(gatewayRuntimeLoggingShutdownFailure);
+			try {
+				props.writeStderr(gatewayRuntimeLoggingShutdownFailure);
+			} catch {
+				// Preserve the product result when the fallback diagnostic writer fails.
+			}
 		});
 		retirementSignal.cleanup();
 	}
