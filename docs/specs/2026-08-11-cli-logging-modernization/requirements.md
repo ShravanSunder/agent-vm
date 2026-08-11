@@ -37,10 +37,23 @@ Priority: required.
 
 ### U2 — Zod owns CLI value domains
 
-Every CLI value domain MUST be expressed by a Zod schema and connected to
-Optique through `@optique/zod`. Existing exact-domain schemas MUST be reused.
-CLI-only narrower domains MUST have named adjacent schemas. TypeScript value
-types MUST be inferred from their schemas rather than duplicated manually.
+Every scalar or repeated value-bearing CLI option and argument MUST have one
+authoritative Zod v4 schema connected to Optique through `@optique/zod`. That
+schema MUST own the accepted value domain, coercion, transformation,
+optionality, fixed CLI default, collection shape, and output type. Existing
+exact-domain schemas MUST be reused; CLI-only narrower domains MUST have named
+adjacent schemas. TypeScript value types MUST use `z.infer`. CLI token presence,
+absence, and repetition MUST be mechanically projected from the same schema
+rather than independently declared as value semantics in Optique.
+
+A fallback chosen only after parsing from configuration, environment, or
+runtime state is operation resolution, not a fixed CLI default. Its CLI schema
+MUST still own whether the parsed value may be absent; the existing operation
+MUST remain the sole owner of the contextual fallback.
+
+Presence-only switches are CLI grammar rather than value-bearing arguments;
+Optique MAY own their absent/present syntax without inventing a second value
+domain.
 
 Priority: required.
 

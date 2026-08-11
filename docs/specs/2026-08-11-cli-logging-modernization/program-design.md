@@ -11,7 +11,8 @@ telemetry intact:
 ```text
 argv
   -> package-owned Optique parser
-  -> @optique/zod value parser
+  -> Zod v4 schema-owned value and absence contract
+  -> @optique/zod provided-token parser
   -> parser-inferred discriminated command
   -> exhaustive package dispatcher
   -> existing operation
@@ -40,7 +41,7 @@ executable root
   owns argv, terminal streams, version metadata, and process status
 
 parser definition
-  owns Optique command composition, descriptions, and Zod value parsers
+  owns Optique command composition/descriptions and named Zod v4 schemas
 
 dispatcher
   owns exhaustive command-variant-to-operation selection
@@ -58,22 +59,117 @@ existing effectful bodies move behind named operation functions. This is an
 ownership extraction, not an operation redesign. Existing dependency injection
 and `CliIo` seams remain authoritative.
 
-### Parser composition and types
+### Zod v4 schema authority
+
+Each scalar or repeated value-bearing CLI field has one named Zod v4 schema.
+Its output type is `z.infer<typeof schema>`. The schema owns the value domain,
+coercion, transformation, optionality, fixed CLI default, collection shape,
+and output type. Optique owns the field's command-line name and aliases, its
+position in the command tree, help composition, suggestions, and token
+collection.
+
+`@optique/zod` validates a token only after Optique has matched that token; it
+does not receive absent options. Each package that has optional, defaulted, or
+repeated values therefore keeps two narrow package-local functions adjacent to
+its parser definitions: `projectZodScalarPresence()` and, only where repetition
+exists, `projectZodRepeatedOption()`. They translate the public Zod v4 shape
+into official Optique parser modifiers while retaining the same schema as value
+authority.
+
+```text
+named Zod v4 schema
+  ├─ outer ZodOptional ──> optional(option/argument(..., zod(same schema)))
+  ├─ outer ZodDefault  ──> withDefault(
+  │                           option/argument(..., zod(same schema)),
+  │                           schema.parse(undefined)
+  │                         )
+  └─ otherwise         ──> option/argument(..., zod(same schema))
+```
+
+The projection uses only public Zod v4 APIs: exported `ZodOptional` and
+`ZodDefault` classes for wrapper identity, `unwrap()` where the public type
+relationship must be inspected, and `parse(undefined)` to obtain the schema's
+own default output. It never reads `_def`, `_zod`, or another private shape.
+Outer-wrapper order remains meaningful exactly as it is in Zod: for example,
+`.default(value).optional()` is optional, while `.optional().default(value)`
+has a default.
+
+CLI defaults are fixed and side-effect-free. Dynamic or async default factories
+are excluded because parser construction and help must observe the same value.
+`zod()` placeholders remain explicitly supplied, output-safe stand-ins for
+deferred resolution; they do not participate in absence classification and
+are never CLI defaults.
+
+`projectZodScalarPresence()` is not a runner, command builder, handler facade,
+or old parser compatibility layer. It accepts only a schema and an already
+composed official Optique value parser; it does not accept command names,
+aliases, descriptions, dispatchers, streams, or operations. Keeping it
+package-local avoids a repository-wide CLI framework and leaves every package
+visibly composed from official Optique primitives.
+
+`projectZodRepeatedOption()` exists only because one CLI occurrence is an
+element while the command field is a collection. The authoritative schema
+has the public shape `ZodDefault<ZodArray<TElement>>` for the current
+zero-or-more contracts. The projection unwraps the public default and array
+wrappers, passes the public element schema to `zod()`, collects one-or-more
+occurrences with Optique `multiple()`, preserves `undefined` when there were no
+occurrences, then parses `undefined | readonly TElement[]` through the full
+array schema. That final parse supplies the schema-owned empty default and the
+`z.infer` collection output.
+
+```text
+z.array(elementSchema).default([])
+  -> unwrap public default and array wrappers
+  -> zod(elementSchema) validates each supplied token
+  -> optional(multiple(element option, { min: 1 })) distinguishes absence
+  -> fullArraySchema.parse(undefined | collectedElements)
+  -> z.infer<typeof fullArraySchema>
+```
+
+The admitted repeated schemas have only element validation plus a fixed empty
+default, so the final parse cannot introduce a new aggregate failure after
+each element succeeds. A future length constraint, collection transform, or
+non-empty default is not silently added to this mapper; it requires an official
+parser-visible failure design first. This keeps the projection narrow instead
+of growing it into a general Zod-to-Optique framework.
+
+Configuration-, environment-, working-directory-, or runtime-dependent
+fallback remains outside both projections. Its schema is outer-optional and
+produces `undefined`; the existing operation resolves that value later. MCP
+Portal's absent proxy port, for example, remains a configured-port fallback
+rather than becoming a fixed CLI default.
+
+Presence-only switches remain Optique `flag()` parsers because no value token
+exists for `@optique/zod` to validate. They are not used as a substitute for a
+value-bearing boolean option.
+
+### Parser composition and command types
 
 Every leaf parser is an Optique `object()` containing its inputs and a
 `constant()` literal discriminator. Nested `command()` and `or()` composition
 build user-facing paths. The root output type is inferred from the root parser:
 
 ```typescript
+const workerPortSchema = z.coerce
+	.number()
+	.int()
+	.min(0)
+	.max(65_535)
+	.default(18_789);
+
 const workerCommandParser = or(
 	command(
 		"serve",
 		object({
 			command: constant("serve"),
-			port: option(
-				"--port",
-				zod(workerPortSchema, { placeholder: 0 }),
-			),
+			port: projectZodScalarPresence({
+				schema: workerPortSchema,
+				parser: option(
+					"-p",
+					"--port",
+					zod(workerPortSchema, { placeholder: 18_789 }),
+				),
+			}),
 		}),
 	),
 	command("health", object({ command: constant("health") })),
@@ -90,11 +186,9 @@ rejects a second handwritten command-union declaration. The parser is therefore
 the mechanically enforced single source of the command union; no parallel
 variants or manual `Omit`/`Pick` structures repeat it.
 
-Zod is the single source for value domains. A schema output type is inferred
-with `z.infer`. Optique owns presence, optionality, defaults, command nesting,
-help, and suggestions. Zod owns coercion, transformation, enum/literal choice,
-and value constraints. Defaults are Optique defaults; `zod()` placeholders are
-only deferred-resolution stand-ins and never user defaults.
+Value schemas are never recreated as TypeScript unions or as independent
+Optique optional/default declarations. Optique parser inference owns only the
+assembled command shape and discriminated command union.
 
 ### Execution path
 
@@ -142,6 +236,37 @@ catch and reformat an already reported operation error.
 No parser is shared across packages merely to avoid small grammar repetition.
 Each CLI-owning package directly declares the narrow runtime dependencies it
 imports: `@optique/core`, `@optique/run`, `@optique/zod`, and Zod.
+
+### Schema-owned absence and default ledger
+
+Fixed CLI defaults move into the named schema and appear nowhere else. Values
+that depend on configuration, environment, the working directory, another
+argument, or runtime state remain optional schema outputs and are resolved only
+by the existing operation.
+
+| Surface | Zod-owned parser result | Operation-owned resolution |
+| --- | --- | --- |
+| Agent VM shared options | `--config` defaults to `config/system.json`; `--zone` is optional | commands that require a zone retain their existing post-parse requirement check |
+| Agent VM init | zone id defaults to `default`; type is the narrow `openclaw \| worker` enum; preset name and comma-separated agent ids use named transforms; preset/secrets/architecture/paths/namespace/keychain values are optional | preset-dependent secrets, architecture, and path-mode selection; prompt/scaffold work |
+| Agent VM manual/config | manual config defaults to `config/system.jsonc`; default zone defaults to `default`; reset phase defaults to `all` | target directory remains optional and resolves from injected/current working directory |
+| Agent VM authentication | repeated profile ids use `z.array(profileIdSchema).default([])`; agent/token/zone values are optional | omitted token remains interactive; configured-profile selection remains operation-owned |
+| Worker | port defaults to `18789` with integer range `0..65535`; config and state-dir are optional | `WORKER_CONFIG_PATH`, loaded state directory, and `WORK_DIR` remain runtime/config fallbacks |
+| Tool Portal | approval-token environment name is optional only in the `call` variant; all other transport values are variant-required | credential lookup, file loading, transport creation, and request-schema validation remain operations |
+| MCP Portal | call tool defaults to `mcp_portal_call`; repeated agent overrides use `z.array(agentOverrideSchema).default([])`; port and proxy URL are optional | absent serve port uses configured proxy port; known-agent lookup and secret/config resolution remain operations |
+| Gateway Runtime | absolute NUL-free config path is required | protected-file and service-config validation remain operations |
+
+Presence-only switches are the sole absence exception: Optique `flag()` owns
+their grammar and produces `false` when absent because there is no value token
+or separate value domain for Zod to parse. The exact fixed defaults
+`config/system.json`, `config/system.jsonc`, `default`, `all`, `[]`,
+`mcp_portal_call`, and `18789` are each declared only by their corresponding
+named Zod schema.
+
+The MCP fingerprint remains a required string because current behavior does
+not validate the documented-looking `sha256:` shape. The hard cutover does not
+silently tighten that domain. Disabled `mcp-proxy write-credential` adopts
+Optique's strict grammar rather than retaining acceptance of ignored unknown
+flags; the command remains disabled and returns its existing failure class.
 
 ### Current-to-proposed root ledger
 
@@ -410,7 +535,7 @@ source changeset without data migration.
 
 | Contract | Structural seam | Proof |
 | --- | --- | --- |
-| S1–S2 | package parser definitions and Zod schemas | residue/package scan; parser value units |
+| S1–S2 | package parser definitions, Zod v4 schemas, and package-local scalar/array projections | residue/package scan; scalar and repeated parser units; source/AST rejection of private Zod introspection or duplicated optional/default/array declarations |
 | S3 | parser import graph, inferred alias, and exhaustive dispatcher | import/purity test; one-dispatch units; typecheck; source/AST rejection of handwritten command unions |
 | S4 | real executable root and current operation seams | all-five built-binary host E2E and outside-suite smoke |
 | S5 | classified emission inventory and category literals | static inventory plus captured logger records |
@@ -430,6 +555,11 @@ delivery. A fake parser does not substitute for built-binary CLI proof.
 
 - no `cmd-ts`, manual argv parser, compatibility facade, dual parser, or custom
   repository-wide CLI runner;
+- no independent Optique optional/default declaration for a value-bearing
+  field; missing-token behavior is projected from its Zod v4 schema;
+- no independently typed or defaulted repeated-value collection; the Zod array
+  schema supplies its element domain, collection output, and fixed default;
+- no private Zod `_def`/`_zod` introspection or dynamic CLI default factory;
 - no manually duplicated command union or effectful parser-definition module;
 - no library-owned LogTape configuration or disposal;
 - no LogTape runtime inside the foreign OpenClaw application or Python Hermes
@@ -448,6 +578,19 @@ delivery. A fake parser does not substitute for built-binary CLI proof.
   process-integrated argv, help/version, terminal output, and exit behavior.
 - [Optique Zod integration](https://optique.dev/integrations/zod#zod-integration):
   Zod schemas provide value validation and output-safe placeholders.
+- [Optique `zod()` source at `325fa7e6`](https://github.com/dahlia/optique/blob/325fa7e6b66df8dc0fe901a4b71055c75a38c139/packages/zod/src/index.ts#L686-L715):
+  the integration calls the supplied schema for one provided input token.
+- [Optique modifier source at `325fa7e6`](https://github.com/dahlia/optique/blob/325fa7e6b66df8dc0fe901a4b71055c75a38c139/packages/core/src/modifiers.ts#L671-L730):
+  `optional()` owns unmatched-parser absence;
+  [`withDefault()`](https://github.com/dahlia/optique/blob/325fa7e6b66df8dc0fe901a4b71055c75a38c139/packages/core/src/modifiers.ts#L1038-L1087)
+  and
+  [`multiple()`](https://github.com/dahlia/optique/blob/325fa7e6b66df8dc0fe901a4b71055c75a38c139/packages/core/src/modifiers.ts#L2095-L2118)
+  own the official parser mechanics projected from the schema.
+- [Zod v4.4.3 public wrapper APIs](https://github.com/colinhacks/zod/blob/1fb56a5c18c27102dbc92260a4007c7732a0ccca/packages/zod/src/v4/classic/schemas.ts#L2057-L2165):
+  `ZodOptional`, `ZodDefault`, and public `unwrap()` behavior are available
+  without repository code inspecting private representation; the
+  [public `ZodArray.element` field](https://github.com/colinhacks/zod/blob/1fb56a5c18c27102dbc92260a4007c7732a0ccca/packages/zod/src/v4/classic/schemas.ts#L1317-L1349)
+  exposes the repeated element schema.
 - [LogTape](https://logtape.org/) and
   [`@logtape/otel`](https://github.com/dahlia/logtape): categorized library
   loggers feed root-configured structured and OpenTelemetry sinks.

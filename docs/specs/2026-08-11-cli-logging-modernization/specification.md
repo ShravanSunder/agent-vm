@@ -42,22 +42,63 @@ Traces to: U1, U3.
 
 ### S2 — Zod-backed values and schema-derived types
 
-Every option or argument value with a domain MUST use `zod(schema, options)`
-from `@optique/zod`. Each options object MUST contain a placeholder that is a
-safe value of the schema's output type. Numeric and other non-string inputs
-MUST use coercing or transforming schemas. Boolean-valued arguments MUST use
-the integration's CLI boolean behavior; presence-only switches MAY use
-Optique's flag primitive.
+Every scalar value-bearing option or argument MUST use one named Zod v4 schema
+and pass that exact schema object to `zod(schema, options)` from
+`@optique/zod` for provided-token validation. Numeric and other non-string
+inputs MUST use Zod coercion or transformation. Boolean-valued arguments MUST
+use the integration's CLI boolean behavior.
+
+The schema's outermost Zod v4 wrapper MUST be the sole declaration of
+missing-token behavior:
+
+- a schema without an outer `ZodOptional` or `ZodDefault` is required;
+- an outer `ZodOptional` makes the CLI value optional;
+- an outer `ZodDefault` supplies the CLI default, and that default value MUST
+  appear only in the schema's `.default(...)` declaration.
+
+Parser composition MUST mechanically project those three states onto official
+Optique required, `optional()`, or `withDefault()` behavior. Call sites MUST NOT
+repeat an independent optional marker, default literal, default constant, or
+handwritten value type. The projection MUST use Zod v4's public exported schema
+classes and public parsing/unwrap behavior; it MUST NOT inspect `_def`, `_zod`,
+or other private Zod representation. CLI defaults MUST be synchronous,
+deterministic values so help output and runtime parsing observe the same value.
+
+A repeated value MUST use one named Zod array schema as the authoritative
+collection contract. Its public element schema MUST be the value parser passed
+to `@optique/zod`; Optique's official repetition modifier MAY only collect the
+validated elements. Absence versus one-or-more occurrences MUST remain
+distinguishable until the full array schema parses the collected value, so the
+array schema itself supplies an empty or other fixed default and its
+`z.infer` output becomes the command field type. A handwritten item union,
+independent empty-array default, or array type MUST NOT duplicate that schema.
+The current repeated options have element constraints plus fixed empty-array
+defaults; new aggregate constraints or collection transforms require an
+official parser-visible Zod failure path rather than a throwing mapper.
+
+Each `zod()` options object MUST contain a placeholder that is safe for the
+schema's output type. A placeholder is only Optique's deferred-resolution
+stand-in: it MUST NOT determine requiredness, optionality, or a user-visible
+default.
 
 An existing Zod schema MUST be reused when it describes the exact CLI domain.
 A narrower CLI domain MUST use a named adjacent schema. In particular,
 `agent-vm init --type` remains `openclaw | worker`, not the wider gateway type
 domain. Command option/value types MUST use `z.infer` or Optique parser
-inference and MUST NOT repeat a schema-owned union manually.
+inference and MUST NOT repeat a schema-owned union manually. Presence-only
+switches MAY use Optique's flag primitive because they have no supplied value
+token; this exception MUST NOT be used for an option that accepts a value.
 
 `zodAsync()` and async parsing MUST NOT be introduced unless a current command
 already has an accepted async validation contract. Filesystem, network,
 credential, and runtime checks remain operation-owned.
+
+An absent value whose effective value is selected later from configuration,
+environment, current working directory, or runtime state MUST remain a
+Zod-optional parser output. The post-parse operation retains that contextual
+fallback; it MUST NOT be copied into a Zod `.default()` or Optique
+`withDefault()` declaration. This applies, for example, to MCP Portal's
+configured proxy-port fallback and Worker's configuration-path fallback.
 
 Traces to: U2, U3, U4.
 
@@ -250,7 +291,7 @@ Traces to: U1, U3, U5, U7, U10.
 | Obligation | Required evidence |
 | --- | --- |
 | S1 | Manifest, lockfile, source, test, and active-doc scans prove Optique presence and zero active `cmd-ts` or manual-parser residue. |
-| S2 | Parser units cover reused schemas, narrowed schemas, coercion/transformation, safe placeholders, boundary values, and invalid values. |
+| S2 | Parser units cover reused and narrowed Zod v4 schemas, scalar required/optional/default projection, repeated-array projection and empty default, contextual fallback remaining operation-owned, coercion/transformation, safe placeholders, help requiredness/default rendering, boundary values, and invalid values. A source/AST boundary test rejects private Zod introspection and independently declared option defaults/optionality/array types. |
 | S3 | Import/purity tests prove parser construction does not load effect owners; dispatcher tests prove one operation and exhaustive typing; a source/AST boundary test proves each exported command union is exactly `InferValue<typeof rootParser>` and rejects a second handwritten command-union declaration. |
 | S4 | Built-binary host E2E covers all five binaries: help, valid, existing boundary, missing/invalid, streams, status, and safe effect; `agent-vm` version is covered. |
 | S5–S6 | Static classification plus logger-capture units prove categories, levels, fields, root-only configuration, and library isolation. |
