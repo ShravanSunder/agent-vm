@@ -33,6 +33,14 @@ export interface ProcessLoggingHandle {
 	readonly shutdown: () => Promise<void>;
 }
 
+function createNonClosingWritableProxy(destination: Writable): Writable {
+	return new Writable({
+		write: (chunk: Buffer | string, encoding, callback): void => {
+			destination.write(chunk, encoding, callback);
+		},
+	});
+}
+
 export interface ProcessLoggingDependencies {
 	readonly configure?: (config: GatewayRuntimeProcessLoggingConfig) => Promise<void>;
 	readonly dispose?: () => Promise<void>;
@@ -119,7 +127,7 @@ export async function configureProcessLogging(
 	const disposeImpl = props.dependencies?.dispose ?? dispose;
 	const createStreamSink = props.dependencies?.getStreamSink ?? getStreamSink;
 	const createOpenTelemetrySink = props.dependencies?.getOpenTelemetrySink ?? getOpenTelemetrySink;
-	const stderrSink = createStreamSink(Writable.toWeb(props.stderr), {
+	const stderrSink = createStreamSink(Writable.toWeb(createNonClosingWritableProxy(props.stderr)), {
 		formatter: getJsonLinesFormatter(),
 		nonBlocking: { bufferSize: 1 },
 	});

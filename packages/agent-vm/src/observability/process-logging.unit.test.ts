@@ -65,7 +65,7 @@ describe('configureProcessLogging', () => {
 			message: 'Controller startup degraded',
 		});
 		expect(record.properties).toEqual({ attempt: 2, failureClass: 'transport' });
-		expect(stderr.getFinalizationCount()).toBe(1);
+		expect(stderr.getFinalizationCount()).toBe(0);
 	});
 
 	it('fails on duplicate process configuration without replacing the active sink', async () => {
@@ -91,7 +91,7 @@ describe('configureProcessLogging', () => {
 			.filter((record) => record.logger === 'agent-vm.controller.runtime');
 		expect(records).toHaveLength(1);
 		expect(secondStderr.chunks).toHaveLength(0);
-		expect(secondStderr.getFinalizationCount()).toBe(1);
+		expect(secondStderr.getFinalizationCount()).toBe(0);
 	});
 
 	it('appends the controller collector logs path exactly once', () => {
@@ -171,6 +171,6 @@ describe('configureProcessLogging', () => {
 
 		expect(secondShutdown).toBe(firstShutdown);
 		await Promise.all([firstShutdown, secondShutdown]);
-		expect(stderr.getFinalizationCount()).toBe(1);
+		expect(stderr.getFinalizationCount()).toBe(0);
 	});
 });

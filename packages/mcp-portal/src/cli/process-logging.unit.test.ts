@@ -151,6 +151,7 @@ describe('MCP Portal process logging', () => {
 				durationMs: 12,
 			});
 			expect(output.properties).not.toHaveProperty('clientAddress');
+			expect(stderr.writableEnded).toBe(false);
 		} finally {
 			await logging.shutdown();
 		}
