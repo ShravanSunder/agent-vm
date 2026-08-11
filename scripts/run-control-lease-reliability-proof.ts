@@ -81,6 +81,29 @@ function sha256(value: string): string {
 function parseCapturedScenarioCounts(
 	result: SpawnCaptureResult,
 ): ReliabilityScenarioExecutionCounts {
+	const vitestSummaryMatch = /Tests\s+(?<summary>.+?)\s+\((?<totalTests>\d+)\)/u.exec(
+		result.output,
+	);
+	const fileSummaryMatch = /Test Files\s+(?<summary>.+?)\s+\((?<fileCount>\d+)\)/u.exec(
+		result.output,
+	);
+	if (vitestSummaryMatch?.groups !== undefined) {
+		const summary = vitestSummaryMatch.groups.summary ?? '';
+		const totalTests = Number(vitestSummaryMatch.groups.totalTests);
+		const passedTests = Number(/(?<count>\d+) passed/u.exec(summary)?.groups?.count ?? 0);
+		const failedTests = Number(/(?<count>\d+) failed/u.exec(summary)?.groups?.count ?? 0);
+		const skippedTests = Number(/(?<count>\d+) skipped/u.exec(summary)?.groups?.count ?? 0);
+		const todoTests = Number(/(?<count>\d+) todo/u.exec(summary)?.groups?.count ?? 0);
+		return {
+			exitCode: result.exitCode,
+			failedTests,
+			fileCount: Number(fileSummaryMatch?.groups?.fileCount ?? 0),
+			passedTests,
+			skippedTests,
+			todoTests,
+			totalTests,
+		};
+	}
 	const summaryMatch =
 		/(?<totalTests>\d+) tests, (?<fileCount>\d+) files, (?<skippedTests>\d+) skipped, (?<todoTests>\d+) todo/u.exec(
 			result.output,
@@ -175,8 +198,17 @@ export async function runControlLeaseReliabilityScenarios(
 		// Reliability scenarios intentionally run serially to avoid competing for VM resources.
 		// eslint-disable-next-line no-await-in-loop
 		const counts = await executeScenario({
-			args: ['tsx', 'scripts/run-vitest-evidence-project.ts', scenario.project, scenario.testFile],
+			args: [
+				'vitest',
+				'run',
+				'--config',
+				'vitest.config.ts',
+				'--project',
+				scenario.project,
+				scenario.testFile,
+			],
 			environment: {
+				AGENT_VM_E2E_USE_LOCAL_TOOL_VM_PACKAGES: '1',
 				AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1',
 				AGENT_VM_RELIABILITY_DIRTY_HASH: bindings.dirtyHash,
 				AGENT_VM_RELIABILITY_EVIDENCE_FILE: evidenceFilePath,

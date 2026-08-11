@@ -32,46 +32,6 @@ const processObservationRetryIntervalMs = 100;
 const stableSiblingTerminationObservationCount = 10;
 const toolPortalReadinessPath = '/run/agent-vm/gateway-runtime/tool-portal.readiness.json';
 
-type ManagedGatewayTestGroup =
-	| 'core'
-	| 'input-missing-tool-portal'
-	| 'input-missing-framework'
-	| 'input-read-only-environment'
-	| 'termination-tool-portal'
-	| 'termination-openclaw'
-	| 'worker-stock';
-
-function selectManagedGatewayTestGroup(
-	value: string | undefined,
-): ManagedGatewayTestGroup | 'none' | undefined {
-	if (value === undefined || value.length === 0) {
-		return undefined;
-	}
-	if (value === 'none') {
-		return 'none';
-	}
-	if (
-		value === 'core' ||
-		value === 'input-missing-tool-portal' ||
-		value === 'input-missing-framework' ||
-		value === 'input-read-only-environment' ||
-		value === 'termination-tool-portal' ||
-		value === 'termination-openclaw' ||
-		value === 'worker-stock'
-	) {
-		return value;
-	}
-	throw new Error(`Unsupported AGENT_VM_MANAGED_GATEWAY_TEST_GROUP: ${value}`);
-}
-
-const selectedManagedGatewayTestGroup = selectManagedGatewayTestGroup(
-	process.env.AGENT_VM_MANAGED_GATEWAY_TEST_GROUP,
-);
-
-function shouldRegisterManagedGatewayTest(group: ManagedGatewayTestGroup): boolean {
-	return selectedManagedGatewayTestGroup === undefined || selectedManagedGatewayTestGroup === group;
-}
-
 interface GuestProcessObservation {
 	readonly argv: readonly string[];
 	readonly command: string;
@@ -655,8 +615,10 @@ async function waitForManagedGatewaySiblingProcesses(
 }
 
 describeLiveVmIntegration('Managed Gateway image-owned sibling boot', () => {
-	if (shouldRegisterManagedGatewayTest('core')) {
-		it('boots one Tool Portal root and one real OpenClaw root without controller launch authority', async () => {
+	it(
+		'boots one Tool Portal root and one real OpenClaw root without controller launch authority',
+		{ tags: ['managed-gateway-startup'], timeout: 900_000 },
+		async () => {
 			const fixture = await startManagedGatewayImageBootFixture({
 				sessionLabel: 'managed-gateway-image-owned-sibling-boot',
 			});
@@ -778,11 +740,13 @@ describeLiveVmIntegration('Managed Gateway image-owned sibling boot', () => {
 			} finally {
 				await fixture.close();
 			}
-		}, 900_000);
-	}
+		},
+	);
 
-	if (shouldRegisterManagedGatewayTest('input-missing-tool-portal')) {
-		it('keeps OpenClaw running when the Tool Portal boot input is missing', async () => {
+	it(
+		'keeps OpenClaw running when the Tool Portal boot input is missing',
+		{ tags: ['managed-gateway-degraded-input'], timeout: 900_000 },
+		async () => {
 			const fixture = await startManagedGatewayImageBootFixture({
 				omittedInputFileName: 'tool-portal-service.json',
 				sessionLabel: 'managed-gateway-image-owned-missing-tool-portal-input',
@@ -804,11 +768,13 @@ describeLiveVmIntegration('Managed Gateway image-owned sibling boot', () => {
 			} finally {
 				await fixture.close();
 			}
-		}, 900_000);
-	}
+		},
+	);
 
-	if (shouldRegisterManagedGatewayTest('input-missing-framework')) {
-		it('keeps Tool Portal ready when the OpenClaw boot input is missing', async () => {
+	it(
+		'keeps Tool Portal ready when the OpenClaw boot input is missing',
+		{ tags: ['managed-gateway-degraded-input'], timeout: 900_000 },
+		async () => {
 			const fixture = await startManagedGatewayImageBootFixture({
 				omittedInputFileName: 'framework-service.json',
 				sessionLabel: 'managed-gateway-image-owned-missing-framework-input',
@@ -837,11 +803,13 @@ describeLiveVmIntegration('Managed Gateway image-owned sibling boot', () => {
 			} finally {
 				await fixture.close();
 			}
-		}, 900_000);
-	}
+		},
+	);
 
-	if (shouldRegisterManagedGatewayTest('input-read-only-environment')) {
-		it('starts neither sibling when environment-script unlink is denied', async () => {
+	it(
+		'starts neither sibling when environment-script unlink is denied',
+		{ tags: ['managed-gateway-degraded-input'], timeout: 900_000 },
+		async () => {
 			const fixture = await startManagedGatewayImageBootFixture({
 				environmentMountAccess: 'read-only',
 				sessionLabel: 'managed-gateway-image-owned-environment-unlink-denied',
@@ -856,59 +824,54 @@ describeLiveVmIntegration('Managed Gateway image-owned sibling boot', () => {
 			} finally {
 				await fixture.close();
 			}
-		}, 900_000);
-	}
-
-	const selectedTerminationRoles = (['tool-portal', 'openclaw'] as const).filter((role) =>
-		shouldRegisterManagedGatewayTest(
-			role === 'tool-portal' ? 'termination-tool-portal' : 'termination-openclaw',
-		),
+		},
 	);
-	if (selectedTerminationRoles.length > 0) {
-		it.each(selectedTerminationRoles)(
-			'terminates the exact %s sibling without restarting it or disturbing its peer',
-			async (terminatedRole) => {
-				const fixture = await startManagedGatewayImageBootFixture({
-					sessionLabel: `managed-gateway-image-owned-${terminatedRole}-termination`,
+
+	it.each(['tool-portal', 'openclaw'] as const)(
+		'terminates the exact %s sibling without restarting it or disturbing its peer',
+		{ tags: ['managed-gateway-lifecycle'], timeout: 900_000 },
+		async (terminatedRole) => {
+			const fixture = await startManagedGatewayImageBootFixture({
+				sessionLabel: `managed-gateway-image-owned-${terminatedRole}-termination`,
+			});
+			let fixtureClosed = false;
+
+			try {
+				const hostProcessId = requirePositiveHostProcessId(fixture.vm);
+				const initialObservation = await waitForManagedGatewaySiblingProcesses(fixture.vm);
+				const terminatedProcess = requireSingleRoleProcess(initialObservation, terminatedRole);
+				const survivorRole = otherManagedGatewaySiblingRole(terminatedRole);
+				const survivorProcess = requireSingleRoleProcess(initialObservation, survivorRole);
+
+				await terminateExactManagedGatewaySibling(fixture.vm, terminatedProcess);
+				const terminalObservation = await waitForTerminatedManagedGatewaySibling({
+					terminatedProcess,
+					terminatedRole,
+					vm: fixture.vm,
+					survivorProcess,
+					survivorRole,
 				});
-				let fixtureClosed = false;
 
-				try {
-					const hostProcessId = requirePositiveHostProcessId(fixture.vm);
-					const initialObservation = await waitForManagedGatewaySiblingProcesses(fixture.vm);
-					const terminatedProcess = requireSingleRoleProcess(initialObservation, terminatedRole);
-					const survivorRole = otherManagedGatewaySiblingRole(terminatedRole);
-					const survivorProcess = requireSingleRoleProcess(initialObservation, survivorRole);
+				expect(matchingRoleProcesses(terminalObservation, terminatedRole)).toEqual([]);
+				expect(requireSingleRoleProcess(terminalObservation, survivorRole)).toMatchObject({
+					processId: survivorProcess.processId,
+					startIdentity: survivorProcess.startIdentity,
+				});
+				expect(residentBootLaunchers(terminalObservation)).toEqual([]);
 
-					await terminateExactManagedGatewaySibling(fixture.vm, terminatedProcess);
-					const terminalObservation = await waitForTerminatedManagedGatewaySibling({
-						terminatedProcess,
-						terminatedRole,
-						vm: fixture.vm,
-						survivorProcess,
-						survivorRole,
-					});
+				await fixture.close();
+				fixtureClosed = true;
+				await waitForHostProcessAbsence(hostProcessId);
+			} finally {
+				if (!fixtureClosed) await fixture.close();
+			}
+		},
+	);
 
-					expect(matchingRoleProcesses(terminalObservation, terminatedRole)).toEqual([]);
-					expect(requireSingleRoleProcess(terminalObservation, survivorRole)).toMatchObject({
-						processId: survivorProcess.processId,
-						startIdentity: survivorProcess.startIdentity,
-					});
-					expect(residentBootLaunchers(terminalObservation)).toEqual([]);
-
-					await fixture.close();
-					fixtureClosed = true;
-					await waitForHostProcessAbsence(hostProcessId);
-				} finally {
-					if (!fixtureClosed) await fixture.close();
-				}
-			},
-			900_000,
-		);
-	}
-
-	if (shouldRegisterManagedGatewayTest('worker-stock')) {
-		it('keeps a stock Worker image free of managed Gateway sibling roles', async () => {
+	it(
+		'keeps a stock Worker image free of managed Gateway sibling roles',
+		{ tags: ['managed-gateway-startup'], timeout: 900_000 },
+		async () => {
 			const project = await scaffoldWorkerE2eProject({
 				architecture: process.arch === 'arm64' ? 'aarch64' : 'x86_64',
 				prefix: 'agent-vm-e2e-harness-worker-without-managed-gateway-boot-',
@@ -969,6 +932,6 @@ describeLiveVmIntegration('Managed Gateway image-owned sibling boot', () => {
 				await vm?.close();
 				await removeE2eTempRoot(project.tempRoot);
 			}
-		}, 900_000);
-	}
+		},
+	);
 });
