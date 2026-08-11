@@ -313,11 +313,17 @@ async function createServiceConfig(
 			{
 				agentId: 'agent-a',
 				frameworkIdentity: { kind: 'hermes', profileName: 'agent-a-profile' },
+				toolPortalNamespaceNames: [
+					...(options.includeControllerHostAction === true ? ['controller'] : []),
+					...(options.includeMcpProvider === true ? ['github'] : []),
+					'sandbox',
+				],
 				toolPortalProfileId: 'profile-a',
 			},
 			{
 				agentId: 'agent-b',
 				frameworkIdentity: { kind: 'hermes', profileName: 'agent-b-profile' },
+				toolPortalNamespaceNames: [],
 				toolPortalProfileId: 'profile-b',
 			},
 		],

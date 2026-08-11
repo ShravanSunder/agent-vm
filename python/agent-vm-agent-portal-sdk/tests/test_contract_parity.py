@@ -56,6 +56,35 @@ def test_portable_contract_json_schema_accessor_rejects_unknown_schema_id() -> N
         _ = get_portable_contract_json_schema(unknown_schema_id)
 
 
+@pytest.mark.parametrize(
+    "namespace_names",
+    [
+        pytest.param(["github", "filesystem"], id="unsorted"),
+        pytest.param(["filesystem", "filesystem"], id="duplicate"),
+    ],
+)
+def test_generated_managed_agent_projection_adapter_rejects_noncanonical_namespace_names(
+    namespace_names: list[str],
+) -> None:
+    # Arrange
+    contract_adapter: TypeAdapter[object] = PORTABLE_CONTRACT_ADAPTERS["gateway.managed-agent-projection"]
+    projection = {
+        "agentId": "agent-a",
+        "frameworkIdentity": {"agentId": "agent-a", "kind": "openclaw"},
+        "profileAssignmentRevision": "profile-assignment-a",
+        "toolPortalNamespaceNames": namespace_names,
+        "toolPortalProfileId": "engineering",
+    }
+
+    # Act / Assert
+    with pytest.raises(ValidationError) as captured_validation_error:
+        _ = contract_adapter.validate_python(projection, strict=True)
+
+    assert _portable_validation_error_codes(captured_validation_error.value) == frozenset(
+        {"gateway.managed-agent-projection.namespace-names"},
+    )
+
+
 def _require_fixture_object(value: object, *, label: str) -> FixtureObject:
     if not isinstance(value, dict):
         pytest.fail(f"{label} must be a JSON object with string keys.")

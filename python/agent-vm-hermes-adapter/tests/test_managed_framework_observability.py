@@ -238,8 +238,12 @@ class ManagedFrameworkObservabilityTests(unittest.TestCase):
 
         started = sink.provider_starts[0][2]
         completed = sink.provider_completions[0][1]
-        self.assertEqual(len(t.cast("str", started.model)), 256)
-        self.assertEqual(len(t.cast("str", started.provider)), 128)
+        self.assertIsInstance(started.model, str)
+        self.assertIsInstance(started.provider, str)
+        assert isinstance(started.model, str)
+        assert isinstance(started.provider, str)
+        self.assertEqual(len(started.model), 256)
+        self.assertEqual(len(started.provider), 128)
         self.assertEqual(started.api_mode, ApiMode.UNKNOWN)
         self.assertIsNone(started.api_call_count)
         self.assertEqual(
@@ -543,12 +547,16 @@ class ManagedFrameworkObservabilityTests(unittest.TestCase):
         self.assertFalse(worker.is_alive())
 
         turn_handles = {record.platform_class: handle for handle, record in sink.turn_starts}
-        provider_parents = {
-            t.cast("str", record.provider): parent for parent, _, record in sink.provider_starts
-        }
-        tool_parents = {
-            t.cast("str", record.tool_name): parent for parent, record in sink.tool_calls
-        }
+        provider_parents: dict[str, object | None] = {}
+        for parent, _, record in sink.provider_starts:
+            self.assertIsInstance(record.provider, str)
+            assert isinstance(record.provider, str)
+            provider_parents[record.provider] = parent
+        tool_parents: dict[str, object | None] = {}
+        for parent, record in sink.tool_calls:
+            self.assertIsInstance(record.tool_name, str)
+            assert isinstance(record.tool_name, str)
+            tool_parents[record.tool_name] = parent
         self.assertEqual(provider_parents["provider-a"], turn_handles["discord"])
         self.assertEqual(provider_parents["provider-b"], turn_handles["slack"])
         self.assertEqual(tool_parents["terminal"], turn_handles["discord"])

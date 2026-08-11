@@ -9,6 +9,7 @@
 			"profileName": "reviewer"
 		},
 		"profileAssignmentRevision": "profile-assignment-b",
+		"toolPortalNamespaceNames": ["filesystem"],
 		"toolPortalProfileId": "review"
 	},
 	"expectation": {
@@ -20,9 +21,10 @@
 				"profileName": "reviewer"
 			},
 			"profileAssignmentRevision": "profile-assignment-b",
+			"toolPortalNamespaceNames": ["filesystem"],
 			"toolPortalProfileId": "review"
 		},
-		"canonicalJson": "{\"agentId\":\"agent-b\",\"frameworkIdentity\":{\"kind\":\"hermes\",\"profileName\":\"reviewer\"},\"profileAssignmentRevision\":\"profile-assignment-b\",\"toolPortalProfileId\":\"review\"}",
-		"refinementIdentities": []
+		"canonicalJson": "{\"agentId\":\"agent-b\",\"frameworkIdentity\":{\"kind\":\"hermes\",\"profileName\":\"reviewer\"},\"profileAssignmentRevision\":\"profile-assignment-b\",\"toolPortalNamespaceNames\":[\"filesystem\"],\"toolPortalProfileId\":\"review\"}",
+		"refinementIdentities": ["gateway.managed-agent-projection.namespace-names"]
 	}
 }

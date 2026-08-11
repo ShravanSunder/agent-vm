@@ -10,11 +10,12 @@
 		},
 		"profileAssignmentRevision": "profile-assignment-a",
 		"profileId": "retired-profile-selector",
+		"toolPortalNamespaceNames": [],
 		"toolPortalProfileId": "engineering"
 	},
 	"expectation": {
 		"kind": "rejected",
 		"errorCodes": ["portable.object.unknown-field"],
-		"refinementIdentities": []
+		"refinementIdentities": ["gateway.managed-agent-projection.namespace-names"]
 	}
 }

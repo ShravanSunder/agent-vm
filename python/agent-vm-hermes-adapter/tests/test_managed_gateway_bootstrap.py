@@ -1,3 +1,4 @@
+import concurrent.futures
 import json
 import os
 import stat
@@ -28,6 +29,12 @@ from agent_vm_hermes_adapter.managed_profile_adapter import (
     HermesManagedAdapter,
     HermesManagedAdapterConfig,
 )
+from agent_vm_hermes_adapter.managed_tool_portal.cache import PluginStateCache
+from agent_vm_hermes_adapter.managed_tool_portal.models import (
+    EvictionReason,
+    InjectionCacheKey,
+    InjectionMarker,
+)
 from agent_vm_hermes_adapter.managed_tool_portal_capability_tools import (
     MANAGED_TOOL_PORTAL_TOOL_NAMES,
 )
@@ -47,6 +54,7 @@ def build_projection(*, agent_id: str, profile_name: str) -> dict[str, object]:
         "agentId": agent_id,
         "frameworkIdentity": {"kind": "hermes", "profileName": profile_name},
         "profileAssignmentRevision": f"revision-{agent_id}",
+        "toolPortalNamespaceNames": ["filesystem", "github"],
         "toolPortalProfileId": f"policy-{agent_id}",
     }
 
@@ -188,6 +196,9 @@ class FakeTerminalToolModule:
         self._resolve_container_task_id: Callable[[str | None], str] = lambda task_id: (
             task_id or "default"
         )
+
+    def has_active_environments(self) -> bool:
+        return bool(self._active_environments)
 
     def replace_create_environment(self, value: Callable[..., object]) -> None:
         self._create_environment = value
@@ -1348,12 +1359,18 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
                 adapter: HermesManagedAdapter,
                 current_projection: Callable[[], CanonicalManagedAgentProjection],
                 telemetry: HermesToolPortalTelemetry,
+                inventory_coordinator: managed_gateway_bootstrap.InventoryCoordinator,
+                injection_state_cache: PluginStateCache[InjectionCacheKey, InjectionMarker],
+                gateway_epoch: str,
             ) -> None:
                 events.append("managed-runtime")
                 original_configure(
                     adapter=adapter,
                     current_projection=current_projection,
                     telemetry=telemetry,
+                    inventory_coordinator=inventory_coordinator,
+                    injection_state_cache=injection_state_cache,
+                    gateway_epoch=gateway_epoch,
                 )
 
             with (
@@ -1406,6 +1423,180 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
                 "managed-policy-close",
             ],
         )
+
+    def test_eager_inventory_submission_is_nonblocking_and_fenced_before_disconnect(self) -> None:
+        terminal_tool_module = FakeTerminalToolModule()
+        telemetry = FakeHermesToolPortalTelemetry()
+        events: list[str] = []
+
+        class RecordingGatewayRuntimeClient(FakeGatewayRuntimeClient):
+            @t.override
+            async def connect(self) -> None:
+                events.append("connect")
+                await super().connect()
+
+            @t.override
+            async def disconnect(self) -> None:
+                events.append("disconnect")
+                await super().disconnect()
+
+        class RecordingProcessHooks:
+            def __init__(self, **kwargs: object) -> None:
+                del kwargs
+
+            def install(self) -> None:
+                events.append("process-install")
+
+            def close(self) -> None:
+                events.append("process-close")
+
+        class RecordingPolicyBindings:
+            def install(self) -> None:
+                events.append("policy-install")
+
+            def close(self) -> None:
+                events.append("policy-close")
+
+        original_submit = HermesManagedAdapter.submit_gateway_runtime_coroutine
+        original_hooks_install = HermesManagedEnvironmentHooks.install
+        original_hooks_close = HermesManagedEnvironmentHooks.close
+        original_configure = managed_gateway_bootstrap.configure_managed_tool_portal_plugin
+
+        def record_submit(
+            adapter: HermesManagedAdapter,
+            coroutine: t.Coroutine[object, object, object],
+        ) -> object:
+            events.append("submit")
+            return original_submit(adapter, coroutine)
+
+        def record_hooks_install(hooks: HermesManagedEnvironmentHooks) -> None:
+            events.append("hooks-install")
+            original_hooks_install(hooks)
+
+        def record_hooks_close(hooks: HermesManagedEnvironmentHooks) -> None:
+            events.append("hooks-close")
+            original_hooks_close(hooks)
+
+        def record_configuration(
+            *,
+            adapter: HermesManagedAdapter,
+            current_projection: Callable[[], CanonicalManagedAgentProjection],
+            telemetry: HermesToolPortalTelemetry,
+            inventory_coordinator: managed_gateway_bootstrap.InventoryCoordinator,
+            injection_state_cache: PluginStateCache[InjectionCacheKey, InjectionMarker],
+            gateway_epoch: str,
+        ) -> None:
+            events.append("configure")
+            original_configure(
+                adapter=adapter,
+                current_projection=current_projection,
+                telemetry=telemetry,
+                inventory_coordinator=inventory_coordinator,
+                injection_state_cache=injection_state_cache,
+                gateway_epoch=gateway_epoch,
+            )
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            configuration_path = temporary_root / "framework-service.json"
+            protected_hermes_home = temporary_root / "protected-hermes-home"
+            configuration_path.write_text(json.dumps(build_material()), encoding="utf-8")
+            materialize_profile_cohort(protected_hermes_home)
+
+            inventory_coordinator = Mock()
+            inventory_coordinator.start_population.side_effect = lambda projection: events.append(
+                f"inventory-start:{projection.profile_name}"
+            )
+            inventory_coordinator.close.side_effect = lambda: events.append("inventory-close")
+            injection_state_cache = Mock()
+            injection_state_cache.close.side_effect = lambda reason: events.append(
+                "injection-close"
+            )
+
+            def stock_gateway_runner() -> None:
+                events.append("run-gateway")
+
+            with (
+                patch.object(
+                    managed_gateway_bootstrap,
+                    "GatewayRuntimeClient",
+                    RecordingGatewayRuntimeClient,
+                ),
+                patch.object(
+                    managed_gateway_bootstrap,
+                    "create_hermes_tool_portal_telemetry_from_environment",
+                    return_value=telemetry,
+                ),
+                patch.object(
+                    managed_gateway_bootstrap,
+                    "HermesManagedProcessHooks",
+                    RecordingProcessHooks,
+                ),
+                patch.object(
+                    managed_gateway_bootstrap,
+                    "_HermesManagedPolicyReadBindings",
+                    RecordingPolicyBindings,
+                ),
+                patch.object(
+                    managed_gateway_bootstrap,
+                    "InventoryCoordinator",
+                    return_value=inventory_coordinator,
+                ),
+                patch.object(
+                    managed_gateway_bootstrap,
+                    "PluginStateCache",
+                    return_value=injection_state_cache,
+                ),
+                patch.object(
+                    HermesManagedAdapter,
+                    "submit_gateway_runtime_coroutine",
+                    record_submit,
+                ),
+                patch.object(
+                    HermesManagedEnvironmentHooks,
+                    "install",
+                    record_hooks_install,
+                ),
+                patch.object(
+                    HermesManagedEnvironmentHooks,
+                    "close",
+                    record_hooks_close,
+                ),
+                patch.object(
+                    managed_gateway_bootstrap,
+                    "configure_managed_tool_portal_plugin",
+                    side_effect=record_configuration,
+                ),
+                patch(
+                    "hermes_cli.plugins.discover_plugins",
+                    side_effect=lambda **kwargs: events.append(f"discover:{kwargs.get('force')}"),
+                ),
+                patch.dict(
+                    os.environ,
+                    {"SOURCE_RESEARCHER": "test-researcher", "SOURCE_REVIEWER": "test-reviewer"},
+                    clear=False,
+                ),
+            ):
+                managed_gateway_bootstrap.run_managed_hermes_gateway(
+                    configuration_path=configuration_path,
+                    managed_configuration_loader=managed_plugin_configuration,
+                    protected_hermes_home=protected_hermes_home,
+                    stock_gateway_runner=stock_gateway_runner,
+                    terminal_tool_module=terminal_tool_module,
+                )
+
+        self.assertLess(events.index("connect"), events.index("configure"))
+        first_submit_index = events.index("submit")
+        self.assertLess(events.index("configure"), first_submit_index)
+        self.assertLess(first_submit_index, events.index("hooks-install"))
+        self.assertLess(events.index("hooks-install"), events.index("process-install"))
+        self.assertLess(events.index("process-install"), events.index("policy-install"))
+        self.assertLess(events.index("policy-install"), events.index("discover:True"))
+        self.assertLess(events.index("discover:True"), events.index("run-gateway"))
+        self.assertIn("inventory-start:researcher", events)
+        self.assertIn("inventory-start:reviewer", events)
+        self.assertLess(events.index("inventory-close"), events.index("injection-close"))
+        self.assertLess(events.index("injection-close"), events.index("disconnect"))
 
     def test_clears_plugin_runtime_when_stock_gateway_fails(self) -> None:
         terminal_tool_module = FakeTerminalToolModule()
@@ -1469,6 +1660,60 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
             hermes_gateway_run.GatewayRunner.__dict__["_load_provider_routing"],
             original_provider_routing_descriptor,
         )
+
+    def test_inventory_shutdown_failures_do_not_prevent_injection_cache_close(self) -> None:
+        injection_state_cache = Mock()
+        inventory_coordinator = Mock()
+
+        class ClosedLoopAdapter:
+            def submit_gateway_runtime_coroutine(
+                self,
+                coroutine: t.Coroutine[object, object, None],
+            ) -> t.Never:
+                coroutine.close()
+                raise RuntimeError("Gateway Runtime client loop is closed")
+
+        class TimedOutSubmission(concurrent.futures.Future[None]):
+            def __init__(self) -> None:
+                super().__init__()
+                self.result_timeouts: list[float | None] = []
+                self.cancel_calls = 0
+
+            @t.override
+            def result(self, timeout: float | None = None) -> None:
+                self.result_timeouts.append(timeout)
+                raise concurrent.futures.TimeoutError
+
+            @t.override
+            def cancel(self) -> bool:
+                self.cancel_calls += 1
+                return True
+
+        timed_out_submission = TimedOutSubmission()
+
+        class TimedOutAdapter:
+            def submit_gateway_runtime_coroutine(
+                self,
+                coroutine: t.Coroutine[object, object, None],
+            ) -> concurrent.futures.Future[None]:
+                coroutine.close()
+                return timed_out_submission
+
+        for adapter in (ClosedLoopAdapter(), TimedOutAdapter()):
+            with self.subTest(adapter=type(adapter).__name__):
+                managed_gateway_bootstrap._close_managed_tool_portal_state(
+                    adapter=adapter,
+                    inventory_coordinator=inventory_coordinator,
+                    injection_state_cache=injection_state_cache,
+                )
+
+        self.assertEqual(injection_state_cache.close.call_count, 2)
+        injection_state_cache.close.assert_called_with(EvictionReason.RUNTIME_SHUTDOWN)
+        self.assertEqual(
+            timed_out_submission.result_timeouts,
+            [managed_gateway_bootstrap._INVENTORY_SHUTDOWN_TIMEOUT_SECONDS],
+        )
+        self.assertEqual(timed_out_submission.cancel_calls, 1)
 
     def test_shuts_down_telemetry_when_gateway_runtime_connect_fails(self) -> None:
         telemetry = FakeHermesToolPortalTelemetry()
@@ -1624,8 +1869,12 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
             managed_gateway_bootstrap._validate_managed_profile_cohort(
                 protected_hermes_home=protected_hermes_home,
                 agent_projections=(
-                    build_projection(agent_id="researcher", profile_name="researcher"),
-                    build_projection(agent_id="reviewer", profile_name="reviewer"),
+                    CanonicalManagedAgentProjection.model_validate(
+                        build_projection(agent_id="researcher", profile_name="researcher")
+                    ),
+                    CanonicalManagedAgentProjection.model_validate(
+                        build_projection(agent_id="reviewer", profile_name="reviewer")
+                    ),
                 ),
             )
 

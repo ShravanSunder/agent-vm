@@ -52,6 +52,7 @@ function serviceConfig(verifierPublicKeyPem: string, identitySuffix?: string): o
 			{
 				agentId: 'main',
 				frameworkIdentity: { agentId: 'main', kind: 'openclaw' },
+				toolPortalNamespaceNames: [],
 				toolPortalProfileId: 'default',
 			},
 		],

@@ -70,6 +70,9 @@ const publicRuntimeExports = [
 	createNodeToolPortalMcpTransport,
 ] as const;
 
+declare const managedAgentProjection: ManagedAgentProjection;
+void managedAgentProjection.toolPortalNamespaceNames;
+
 type PublicTypeExports = readonly [
 	PortalCallResult,
 	PortalAdapterEnvelope,
