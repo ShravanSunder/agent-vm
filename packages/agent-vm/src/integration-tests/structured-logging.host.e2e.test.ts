@@ -417,11 +417,13 @@ async function createGatewayRuntimeProofFixture(options: {
 			{
 				agentId: 'agent-a',
 				frameworkIdentity: { kind: 'hermes', profileName: 'agent-a-profile' },
+				toolPortalNamespaceNames: [],
 				toolPortalProfileId: 'profile-a',
 			},
 			{
 				agentId: 'agent-b',
 				frameworkIdentity: { kind: 'hermes', profileName: 'agent-b-profile' },
+				toolPortalNamespaceNames: [],
 				toolPortalProfileId: 'profile-b',
 			},
 		],
