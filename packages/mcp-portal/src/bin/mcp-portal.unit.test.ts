@@ -279,6 +279,36 @@ describe('mcp-portal CLI', () => {
 		}
 	});
 
+	it('preserves portal startup failure when shutdown and fallback writing both fail', async () => {
+		const fallbackFailure = new Error('stderr fallback failed');
+		const stderrChunks: string[] = [];
+		const stderrSpy = vi
+			.spyOn(process.stderr, 'write')
+			.mockImplementationOnce(() => {
+				throw fallbackFailure;
+			})
+			.mockImplementation((chunk) => {
+				stderrChunks.push(String(chunk));
+				return true;
+			});
+
+		try {
+			await expect(
+				runMcpPortal(['mcp-proxy', 'serve', '--config-dir', '/tmp/not-used'], {
+					configureProcessLogging: async () => ({
+						shutdown: async (): Promise<void> => {
+							throw new Error('logging shutdown failed');
+						},
+					}),
+				}),
+			).resolves.toBe(1);
+			expect(stderrChunks.join('')).not.toContain('stderr fallback failed');
+			expect(stderrChunks.join('')).toContain('not-used');
+		} finally {
+			stderrSpy.mockRestore();
+		}
+	});
+
 	it('generates catalog JSON and TypeScript helper files', async () => {
 		const workspace = await mkdtemp(join(tmpdir(), 'mcp-portal-'));
 		try {

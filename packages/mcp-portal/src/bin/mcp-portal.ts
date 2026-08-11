@@ -404,7 +404,11 @@ async function dispatchMcpPortalCommand(
 				try {
 					await logging.shutdown();
 				} catch {
-					process.stderr.write('mcp-portal: logging shutdown failed\n');
+					try {
+						process.stderr.write('mcp-portal: logging shutdown failed\n');
+					} catch {
+						// Preserve the product result when the fallback diagnostic writer fails.
+					}
 				}
 			};
 			try {

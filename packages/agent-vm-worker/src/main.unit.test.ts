@@ -206,13 +206,69 @@ describe('agent-vm-worker cli', () => {
 		}
 	});
 
+	it('does not configure or shut down logging for help output', async () => {
+		const stdoutChunks: string[] = [];
+		const shutdown = vi.fn(async (): Promise<void> => undefined);
+		const configureLogging = vi.fn(async () => ({ shutdown }));
+
+		await expect(
+			runWorkerProcess({
+				argv: ['--help'],
+				io: {
+					stdout: new Writable({
+						write: (chunk, _encoding, callback): void => {
+							stdoutChunks.push(String(chunk));
+							callback();
+						},
+					}),
+					stderr: new Writable({ write: (_chunk, _encoding, callback): void => callback() }),
+				},
+				configureProcessLogging: configureLogging,
+			}),
+		).resolves.toBeUndefined();
+
+		expect(configureLogging).not.toHaveBeenCalled();
+		expect(shutdown).not.toHaveBeenCalled();
+		expect(stdoutChunks.join('')).toContain('agent-vm-worker');
+	});
+
+	it('preserves a worker operation failure when shutdown and fallback writing both fail', async () => {
+		const operationFailure = new Error('worker operation failed');
+		const fallbackFailure = new Error('stderr fallback failed');
+		const shutdown = vi.fn(async (): Promise<void> => {
+			throw new Error('logging shutdown failed');
+		});
+		const operations: WorkerCliOperations = {
+			runHealth: async (): Promise<void> => undefined,
+			runServe: async (): Promise<void> => {
+				throw operationFailure;
+			},
+		};
+
+		await expect(
+			runWorkerProcess({
+				argv: ['serve'],
+				io: {
+					stdout: new Writable({ write: (_chunk, _encoding, callback): void => callback() }),
+					stderr: new Writable({
+						write: (): never => {
+							throw fallbackFailure;
+						},
+					}),
+				},
+				operations,
+				configureProcessLogging: async () => ({ shutdown }),
+			}),
+		).rejects.toBe(operationFailure);
+	});
+
 	it('keeps process logging setup failure bounded at the worker root', async () => {
 		const stderrChunks: string[] = [];
 		const setupError = new Error('connect https://collector.invalid/v1/logs with stack details');
 		let startupError: unknown;
 		try {
 			await runWorkerProcess({
-				argv: ['--help'],
+				argv: ['serve'],
 				io: {
 					stderr: new Writable({
 						write: (chunk: Uint8Array, _encoding, callback): void => {
@@ -246,7 +302,7 @@ describe('agent-vm-worker cli', () => {
 		expect(stderrChunks).toEqual(['Worker process logging setup failed.\n']);
 	});
 
-	it('reports secondary logging shutdown failure without changing a successful help result', async () => {
+	it('reports secondary logging shutdown failure without changing a successful serve result', async () => {
 		const stderrChunks: string[] = [];
 		const stderr = new Writable({
 			write: (chunk: Uint8Array, _encoding, callback): void => {
@@ -259,11 +315,16 @@ describe('agent-vm-worker cli', () => {
 				throw new Error('logging shutdown failed');
 			},
 		}));
+		const operations: WorkerCliOperations = {
+			runHealth: async (): Promise<void> => undefined,
+			runServe: async (): Promise<void> => undefined,
+		};
 
 		await expect(
 			runWorkerProcess({
-				argv: ['--help'],
+				argv: ['serve'],
 				io: { stdout: stderr, stderr },
+				operations,
 				configureProcessLogging: configureLogging,
 			}),
 		).resolves.toBeUndefined();

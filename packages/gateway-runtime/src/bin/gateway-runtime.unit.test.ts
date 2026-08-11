@@ -348,4 +348,35 @@ describe('Gateway Runtime start lifecycle', () => {
 		);
 		expect(JSON.stringify(records)).not.toContain('secret retirement detail');
 	});
+
+	it('preserves retirement failure when logging shutdown and fallback writing both fail', async () => {
+		const retirementFailure = new Error('retirement failed');
+		const fallbackFailure = new Error('stderr fallback failed');
+
+		await expect(
+			runGatewayRuntimeStartLifecycle({
+				config: { observability: { kind: 'disabled' } },
+				configureLogging: async (): Promise<{ shutdown: () => Promise<void> }> => ({
+					shutdown: async (): Promise<void> => {
+						throw new Error('logging shutdown failed');
+					},
+				}),
+				startService: async () => ({
+					readiness: { kind: 'ready' },
+					retire: async (): Promise<never> => {
+						throw retirementFailure;
+					},
+				}),
+				waitForRetirementSignal: async (): Promise<GatewayRuntimeRetirementSignal> => ({
+					cleanup: (): void => undefined,
+					signal: 'SIGTERM',
+				}),
+				writeFatalEvidence: async (): Promise<void> => undefined,
+				writeStderr: (): void => {
+					throw fallbackFailure;
+				},
+				writeStdout: (): void => undefined,
+			}),
+		).rejects.toBe(retirementFailure);
+	});
 });
