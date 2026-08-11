@@ -81,8 +81,9 @@ function sha256(value: string): string {
 function parseCapturedScenarioCounts(
 	result: SpawnCaptureResult,
 ): ReliabilityScenarioExecutionCounts {
-	const vitestSummaryMatch =
-		/Tests\s+(?<summary>.+?)\s+\((?<totalTests>\d+)\)/u.exec(result.output);
+	const vitestSummaryMatch = /Tests\s+(?<summary>.+?)\s+\((?<totalTests>\d+)\)/u.exec(
+		result.output,
+	);
 	const fileSummaryMatch = /Test Files\s+(?<summary>.+?)\s+\((?<fileCount>\d+)\)/u.exec(
 		result.output,
 	);

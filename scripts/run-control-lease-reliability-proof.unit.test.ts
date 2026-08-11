@@ -119,7 +119,7 @@ describe('runControlLeaseReliabilityScenarios', () => {
 				'e2e-vm',
 				scenarios[1].testFile,
 			],
-				environment: {
+			environment: {
 				AGENT_VM_E2E_USE_LOCAL_TOOL_VM_PACKAGES: '1',
 				AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1',
 				AGENT_VM_RELIABILITY_DIRTY_HASH: bindings.dirtyHash,
