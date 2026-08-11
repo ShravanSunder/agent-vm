@@ -142,48 +142,26 @@ jobs:
     name: E2E (${{ matrix.lane }})
     needs: e2e-image-cache
     runs-on: ubuntu-latest
+    env:
+      AGENT_VM_E2E_CACHE_DIR: /tmp/agent-vm-e2e-cache
+      AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1'
     strategy:
       fail-fast: false
       matrix:
         include:
           - lane: e2e-vm-shard-1
-            managed-gateway-test-group: ''
             shard: 1/6
           - lane: e2e-vm-shard-2
-            managed-gateway-test-group: ''
             shard: 2/6
           - lane: e2e-vm-shard-3
-            managed-gateway-test-group: ''
             shard: 3/6
           - lane: e2e-vm-shard-4
-            managed-gateway-test-group: ''
             shard: 4/6
           - lane: e2e-vm-shard-5
-            managed-gateway-test-group: ''
             shard: 5/6
           - lane: e2e-vm-shard-6
-            managed-gateway-test-group: ''
             shard: 6/6
-          - lane: e2e-vm-managed-gateway-core
-            managed-gateway-test-group: core
-            shard: ''
-          - lane: e2e-vm-managed-gateway-inputs
-            managed-gateway-test-group: input-missing-tool-portal
-            shard: ''
-          - lane: e2e-vm-managed-gateway-inputs-framework
-            managed-gateway-test-group: input-missing-framework
-            shard: ''
-          - lane: e2e-vm-managed-gateway-inputs-read-only
-            managed-gateway-test-group: input-read-only-environment
-            shard: ''
-          - lane: e2e-vm-managed-gateway-termination-tool-portal
-            managed-gateway-test-group: termination-tool-portal
-            shard: ''
-          - lane: e2e-vm-managed-gateway-termination-openclaw
-            managed-gateway-test-group: termination-openclaw
-            shard: ''
-          - lane: e2e-vm-managed-gateway-worker
-            managed-gateway-test-group: worker-stock
+          - lane: e2e-vm-managed-gateway
             shard: ''
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -226,19 +204,26 @@ jobs:
 
       - name: Run VM shard
         if: matrix.shard != ''
-        env:
-          AGENT_VM_E2E_CACHE_DIR: /tmp/agent-vm-e2e-cache
-          AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1'
         run: pnpm run test:e2e:vm -- --shard=${{ matrix.shard }}
 
-      - name: Run managed Gateway group
-        if: matrix.managed-gateway-test-group != ''
-        env:
-          AGENT_VM_E2E_CACHE_DIR: /tmp/agent-vm-e2e-cache
-          AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE: '1'
-          AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1'
-          AGENT_VM_MANAGED_GATEWAY_TEST_GROUP: ${{ matrix.managed-gateway-test-group }}
-        run: pnpm run test:e2e:vm-managed-gateway
+      - parallel:
+          - name: Run managed Gateway startup tests
+            if: matrix.lane == 'e2e-vm-managed-gateway'
+            env:
+              AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE: '1'
+            run: pnpm run test:e2e:vm-managed-gateway -- --tags-filter=managed-gateway-startup
+
+          - name: Run managed Gateway degraded-input tests
+            if: matrix.lane == 'e2e-vm-managed-gateway'
+            env:
+              AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE: '1'
+            run: pnpm run test:e2e:vm-managed-gateway -- --tags-filter=managed-gateway-degraded-input
+
+          - name: Run managed Gateway lifecycle tests
+            if: matrix.lane == 'e2e-vm-managed-gateway'
+            env:
+              AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE: '1'
+            run: pnpm run test:e2e:vm-managed-gateway -- --tags-filter=managed-gateway-lifecycle
 
   check:
     name: check

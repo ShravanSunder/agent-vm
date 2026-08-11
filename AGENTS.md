@@ -115,9 +115,9 @@ fast formatting and linting.
   - Worker gateway/runtime: `mise exec -- pnpm test:e2e:worker`.
   - 1Password test account: `pnpm test:e2e:secrets`.
   - LLM/model roundtrip: `pnpm test:e2e:llm`.
-  Proof lanes run through `scripts/run-vitest-evidence-project.ts` and must
-  fail on zero tests, skipped tests, or todo tests. Only `test:e2e:inventory`
-  may skip.
+  Proof lanes run directly through their named Vitest projects and use
+  Vitest's exit status for pass/fail. `test:e2e:inventory` is the discovery
+  lane and may report skipped tests by design.
 - E2E VM/OpenClaw/Hermes/Worker lanes require Docker, QEMU, and the pinned Zig from
   `mise.toml`. Use `mise exec --` for those lanes. The e2e harness uses a
   shared rebuildable image/local-package cache by default and honors

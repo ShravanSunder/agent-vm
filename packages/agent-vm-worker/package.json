@@ -37,7 +37,7 @@
 		"test": "pnpm test:unit",
 		"test:unit": "vitest run --root ../../ --config vitest.config.ts --project unit packages/agent-vm-worker/src",
 		"test:integration": "vitest run --root ../../ --config vitest.config.ts --project integration packages/agent-vm-worker/src",
-		"test:e2e:worker": "AGENT_VM_WORKER_E2E=1 tsx ../../scripts/run-vitest-evidence-project.ts e2e-worker packages/agent-vm-worker/src",
+		"test:e2e:worker": "AGENT_VM_E2E_USE_LOCAL_TOOL_VM_PACKAGES=1 AGENT_VM_WORKER_E2E=1 vitest run --root ../../ --config vitest.config.ts --project e2e-worker packages/agent-vm-worker/src",
 		"start": "node ./dist/main.js"
 	},
 	"dependencies": {
