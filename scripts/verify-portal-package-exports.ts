@@ -197,7 +197,7 @@ const requiredPortalNamedExports = {
 		'createGatewayRuntimeToolPortalComposition',
 	],
 	'@agent-vm/mcp-portal': ['UpstreamMcpError', 'createUpstreamMcpClientRuntime'],
-	'@agent-vm/mcp-portal/cli': ['buildProfilePolicyMaps', 'parsePortalServerCliArgs'],
+	'@agent-vm/mcp-portal/cli': ['buildProfilePolicyMaps'],
 	'@agent-vm/mcp-portal/core': [
 		'createPortalPolicyApprovalEvaluator',
 		'createPortalCore',

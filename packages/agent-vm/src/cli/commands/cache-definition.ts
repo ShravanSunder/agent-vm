@@ -1,53 +1,30 @@
-// oxlint-disable typescript-eslint/explicit-function-return-type
-import { command, subcommands } from 'cmd-ts';
+import { command, constant, object, or } from '@optique/core';
 
-import type { CliDependencies, CliIo } from '../agent-vm-cli-support.js';
-import { runCacheCommand } from '../cache-commands.js';
 import {
+	cliDescription,
 	createConfigOption,
 	createConfirmFlag,
-	loadSystemConfigFromOption,
 } from './command-definition-support.js';
 
-export function createCacheSubcommands(io: CliIo, dependencies: CliDependencies) {
-	return subcommands({
-		name: 'cache',
-		description: 'Manage image cache state',
-		cmds: {
-			list: command({
-				name: 'list',
-				description: 'List gateway/tool cache entries',
-				args: {
-					config: createConfigOption(),
-				},
-				handler: async ({ config }) => {
-					await (dependencies.runCacheCommand ?? runCacheCommand)(
-						{
-							subcommand: 'list',
-							systemConfig: await loadSystemConfigFromOption(config, dependencies),
-						},
-						io,
-					);
-				},
+export const cacheCommandParser = command(
+	'cache',
+	or(
+		command(
+			'list',
+			object({
+				command: constant('cache.list'),
+				options: object({ config: createConfigOption() }),
 			}),
-			clean: command({
-				name: 'clean',
-				description: 'Delete stale cache entries',
-				args: {
-					config: createConfigOption(),
-					confirm: createConfirmFlag(),
-				},
-				handler: async ({ config, confirm }) => {
-					await (dependencies.runCacheCommand ?? runCacheCommand)(
-						{
-							confirm,
-							subcommand: 'clean',
-							systemConfig: await loadSystemConfigFromOption(config, dependencies),
-						},
-						io,
-					);
-				},
+			{ description: cliDescription('List gateway/tool cache entries') },
+		),
+		command(
+			'clean',
+			object({
+				command: constant('cache.clean'),
+				options: object({ config: createConfigOption(), confirm: createConfirmFlag() }),
 			}),
-		},
-	});
-}
+			{ description: cliDescription('Delete stale cache entries') },
+		),
+	),
+	{ description: cliDescription('Manage image cache state') },
+);

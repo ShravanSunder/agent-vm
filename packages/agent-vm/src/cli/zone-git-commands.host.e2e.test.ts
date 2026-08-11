@@ -31,7 +31,7 @@ describe('retired whole-zone Git CLI', () => {
 		// Assert
 		expect(commandResult.exitCode).not.toBe(0);
 		expect(`${commandResult.stdout}\n${commandResult.stderr}`).toContain(
-			'Not a valid subcommand name',
+			'Unexpected option or subcommand: `zone-git`',
 		);
 	});
 });

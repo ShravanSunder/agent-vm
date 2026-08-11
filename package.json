@@ -24,6 +24,7 @@
 		"python:build": "uv build --all-packages",
 		"python:publish": "bash scripts/publish-python-local.sh",
 		"test:taxonomy": "tsx scripts/audit-test-taxonomy.ts",
+		"test:cli-architecture": "tsx scripts/audit-optique-cli-boundaries.ts",
 		"test:portal-architecture": "tsx scripts/audit-portal-architecture.ts",
 		"test:portal-exports": "tsx scripts/verify-portal-package-exports.ts",
 		"test:managed-vm-boundaries": "tsx scripts/audit-managed-vm-boundaries.ts",

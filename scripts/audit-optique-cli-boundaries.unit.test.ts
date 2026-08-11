@@ -87,6 +87,91 @@ describe('Optique CLI architecture audit', () => {
 		expect(findings).toEqual([]);
 	});
 
+	it('rejects a repeated projection that lets Optique synthesize an empty collection', async () => {
+		// Arrange
+		const projectionWithoutMinimum = admittedParser.replace(
+			'multiple(fixtureRootParser, { min: 1 })',
+			'multiple(fixtureRootParser)',
+		);
+
+		// Act
+		const findings = await auditFixture([
+			{ content: admittedRoot, relativePath: 'packages/fixture/src/bin/fixture-cli.ts' },
+			{
+				content: projectionWithoutMinimum,
+				relativePath: 'packages/fixture/src/cli/fixture-cli-parser.ts',
+			},
+		]);
+
+		// Assert
+		expect(findings.join('\n')).toMatch(/preserve absence with min: 1/u);
+	});
+
+	it('accepts official Optique subpaths, pure paths, schema-only imports, and presence flags', async () => {
+		// Arrange
+		const root = `
+import { realpathSync } from 'node:fs';
+import { run } from '@optique/run';
+import { defaultDependencies } from '../cli/fixture-cli-support.js';
+import { fixtureRootParser } from '../cli/fixture-cli-parser.js';
+void realpathSync;
+void defaultDependencies;
+const command = run(fixtureRootParser, { help: 'both' });
+void command;
+`;
+		const parser = `
+import path from 'node:path';
+import { object } from '@optique/core/constructs';
+import { withDefault } from '@optique/core/modifiers';
+import type { InferValue } from '@optique/core/parser';
+import { flag, option } from '@optique/core/primitives';
+import { zod } from '@optique/zod';
+import { fixtureNameSchema, type FixtureDomain } from '../domain/fixture-domain.js';
+void path;
+void object;
+void (undefined as FixtureDomain | undefined);
+const enabled = withDefault(flag('--enabled'), false);
+export const fixtureRootParser = option('--name', zod(fixtureNameSchema, { placeholder: '' }));
+export type FixtureCommand = InferValue<typeof fixtureRootParser>;
+void enabled;
+`;
+
+		// Act
+		const findings = await auditFixture([
+			{ content: root, relativePath: 'packages/fixture/src/bin/fixture-cli.ts' },
+			{ content: parser, relativePath: 'packages/fixture/src/cli/fixture-cli-parser.ts' },
+			{
+				content: `export const defaultDependencies = {};`,
+				relativePath: 'packages/fixture/src/cli/fixture-cli-support.ts',
+			},
+			{
+				content: `import { z } from 'zod';\nexport const fixtureNameSchema = z.string();\nexport type FixtureDomain = string;`,
+				relativePath: 'packages/fixture/src/domain/fixture-domain.ts',
+			},
+		]);
+
+		// Assert
+		expect(findings).toEqual([]);
+	});
+
+	it('does not classify unrelated reachable contracts as parser modules', async () => {
+		// Arrange
+		const parser = `${admittedParser}\nimport type { RuntimeCommand } from '../domain/runtime-contract.js';\nvoid (undefined as RuntimeCommand | undefined);`;
+
+		// Act
+		const findings = await auditFixture([
+			{ content: admittedRoot, relativePath: 'packages/fixture/src/bin/fixture-cli.ts' },
+			{ content: parser, relativePath: 'packages/fixture/src/cli/fixture-cli-parser.ts' },
+			{
+				content: `export type RuntimeCommand = { kind: 'one' } | { kind: 'two' };`,
+				relativePath: 'packages/fixture/src/domain/runtime-contract.ts',
+			},
+		]);
+
+		// Assert
+		expect(findings).toEqual([]);
+	});
+
 	it.each([
 		['cmd-ts import', `import { command } from 'cmd-ts';\nvoid command;`, /cmd-ts/u],
 		[

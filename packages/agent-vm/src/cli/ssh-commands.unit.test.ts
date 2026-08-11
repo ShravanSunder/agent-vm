@@ -194,8 +194,9 @@ describe('runSshCommand', () => {
 				stderr: { write: () => true },
 				stdout: { write: () => true },
 			},
-			restArguments: ['--zone', 'shravan'],
+			allSecrets: false,
 			systemConfig,
+			zoneId: 'shravan',
 		});
 
 		expect(enableZoneSsh).toHaveBeenCalledWith('shravan', {
@@ -245,8 +246,9 @@ describe('runSshCommand', () => {
 				stderr: { write: () => true },
 				stdout: { write: () => true },
 			},
-			restArguments: ['--zone', 'shravan', '--all-secrets'],
+			allSecrets: true,
 			systemConfig,
+			zoneId: 'shravan',
 		});
 
 		expect(enableZoneSsh).toHaveBeenCalledWith('shravan', {
@@ -293,8 +295,9 @@ describe('runSshCommand', () => {
 					stderr: { write: () => true },
 					stdout: { write: () => true },
 				},
-				restArguments: ['--zone', 'shravan'],
+				allSecrets: false,
 				systemConfig,
+				zoneId: 'shravan',
 			}),
 		).rejects.toThrow(
 			'Controller did not enable OPENCLAW_GATEWAY_TOKEN for this SSH session. Check the zone gateway.ssh.secretEnv policy and configured OPENCLAW_GATEWAY_TOKEN secret.',
@@ -302,58 +305,6 @@ describe('runSshCommand', () => {
 		expect(enableZoneSsh).toHaveBeenCalledWith('shravan', {
 			secretEnv: 'gateway-token',
 		});
-		expect(runInteractiveProcess).not.toHaveBeenCalled();
-	});
-
-	it('rejects --print for ssh sessions', async () => {
-		await expect(
-			runSshCommand({
-				dependencies: {
-					...defaultCliDependencies,
-					createControllerClient: () =>
-						createControllerClientStub(async () => ({
-							command: 'ssh -i /tmp/key -p 2222 root@127.0.0.1',
-						})),
-				},
-				io: {
-					stderr: { write: () => true },
-					stdout: { write: () => true },
-				},
-				restArguments: ['--zone', 'shravan', '--print'],
-				systemConfig,
-			}),
-		).rejects.toThrow('--print is not supported');
-	});
-
-	it('keeps controller ssh interactive-only instead of exposing remote command execution', async () => {
-		const runInteractiveProcess = vi.fn(
-			async (_command: string, _arguments: readonly string[]): Promise<void> => {},
-		);
-		const enableZoneSsh = vi.fn(async () => ({
-			host: '127.0.0.1',
-			identityFile: '/tmp/key',
-			port: 2222,
-			user: 'root',
-		}));
-
-		await expect(
-			runSshCommand({
-				dependencies: {
-					...defaultCliDependencies,
-					createControllerClient: () => createControllerClientStub(enableZoneSsh),
-					runInteractiveProcess,
-				},
-				io: {
-					stderr: { write: () => true },
-					stdout: { write: () => true },
-				},
-				restArguments: ['--zone', 'shravan', '--', 'openclaw', 'auth', 'login'],
-				systemConfig,
-			}),
-		).rejects.toThrow(
-			'controller ssh opens an interactive shell only; remote commands are not supported.',
-		);
-		expect(enableZoneSsh).not.toHaveBeenCalled();
 		expect(runInteractiveProcess).not.toHaveBeenCalled();
 	});
 
@@ -385,8 +336,9 @@ describe('runSshCommand', () => {
 				stderr: { write: () => true },
 				stdout: { write: () => true },
 			},
-			restArguments: ['--zone', 'shravan'],
+			allSecrets: false,
 			systemConfig: systemConfigWithAdminAccess,
+			zoneId: 'shravan',
 		});
 
 		expect(enableZoneSsh).toHaveBeenCalledWith('shravan', {
@@ -428,8 +380,9 @@ describe('runSshCommand', () => {
 				runInteractiveProcess,
 			},
 			io: { stderr: { write: () => true }, stdout: { write: () => true } },
-			restArguments: ['--zone', 'hermes-zone'],
+			allSecrets: false,
 			systemConfig: hermesSystemConfig,
+			zoneId: 'hermes-zone',
 		});
 
 		expect(enableZoneSsh).toHaveBeenCalledWith('hermes-zone', { secretEnv: 'default' });
@@ -454,8 +407,9 @@ describe('runSshCommand', () => {
 					createControllerClient: () => createControllerClientStub(enableZoneSsh),
 				},
 				io: { stderr: { write: () => true }, stdout: { write: () => true } },
-				restArguments: ['--zone', 'hermes-zone', '--all-secrets'],
+				allSecrets: true,
 				systemConfig: hermesSystemConfig,
+				zoneId: 'hermes-zone',
 			}),
 		).rejects.toThrow('--all-secrets is supported only for OpenClaw zones');
 		expect(enableZoneSsh).not.toHaveBeenCalled();
@@ -479,8 +433,9 @@ describe('runSshCommand', () => {
 					runInteractiveProcess,
 				},
 				io: { stderr: { write: () => true }, stdout: { write: () => true } },
-				restArguments: ['--zone', 'worker-zone'],
+				allSecrets: false,
 				systemConfig: workerSystemConfig,
+				zoneId: 'worker-zone',
 			}),
 		).rejects.toThrow(
 			"controller ssh is not implemented for gateway type 'worker'; use the Worker task APIs.",
@@ -503,8 +458,9 @@ describe('runSshCommand', () => {
 					stderr: { write: () => true },
 					stdout: { write: () => true },
 				},
-				restArguments: ['--zone', 'shravan'],
+				allSecrets: false,
 				systemConfig,
+				zoneId: 'shravan',
 			}),
 		).rejects.toThrow('Controller returned incomplete SSH access details.');
 	});
@@ -531,31 +487,10 @@ describe('runSshCommand', () => {
 					stderr: { write: () => true },
 					stdout: { write: () => true },
 				},
-				restArguments: ['--zone', 'shravan'],
+				allSecrets: false,
 				systemConfig,
+				zoneId: 'shravan',
 			}),
 		).rejects.toThrow('Failed to open SSH session to root@127.0.0.1:2222');
-	});
-
-	it('requires --zone explicitly', async () => {
-		await expect(
-			runSshCommand({
-				dependencies: {
-					...defaultCliDependencies,
-					createControllerClient: () =>
-						createControllerClientStub(async () => ({
-							host: '127.0.0.1',
-							port: 2222,
-							user: 'root',
-						})),
-				},
-				io: {
-					stderr: { write: () => true },
-					stdout: { write: () => true },
-				},
-				restArguments: [],
-				systemConfig,
-			}),
-		).rejects.toThrow('--zone is required');
 	});
 });

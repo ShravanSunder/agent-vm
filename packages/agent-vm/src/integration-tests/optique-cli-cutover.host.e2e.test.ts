@@ -169,18 +169,18 @@ describe('Optique cutover built CLI contract', () => {
 	);
 
 	it.each([
-		{ arguments_: ['health', '--port', '-1'], boundary: '-1' },
-		{ arguments_: ['health', '--port', '65536'], boundary: '65536' },
+		{ arguments_: ['health', '--port', '-1'], boundary: '-1', constraint: '>=0' },
+		{ arguments_: ['health', '--port', '65536'], boundary: '65536', constraint: '<=65535' },
 	])(
 		'agent-vm-worker rejects out-of-range port $boundary before health IO',
-		async ({ arguments_, boundary }) => {
+		async ({ arguments_, constraint }) => {
 			// Arrange / Act
 			const result = await runBuiltCli('agent-vm-worker', arguments_);
 
 			// Assert
 			expect(result.exitCode).not.toBe(0);
 			expect(result.stdout).toBe('');
-			expect(result.stderr).toContain(boundary);
+			expect(result.stderr).toContain(constraint);
 			expect(result.stderr.toLowerCase()).toContain('port');
 			expect(result.stderr).not.toContain('Health check failed: fetch failed');
 			expectNoOrdinaryStack(result.stderr);
@@ -201,7 +201,7 @@ describe('Optique cutover built CLI contract', () => {
 		// Assert
 		expect(result.exitCode).not.toBe(0);
 		expect(result.stdout).toBe('');
-		expect(result.stderr).toContain('65536');
+		expect(result.stderr).toContain('<=65535');
 		expect(result.stderr.toLowerCase()).toContain('port');
 		expect(result.stderr).not.toContain('ENOENT');
 		expectNoOrdinaryStack(result.stderr);

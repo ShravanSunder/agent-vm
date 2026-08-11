@@ -83,15 +83,14 @@ const DEFAULT_EXPORT_FILES = [
 	'scripts/verify-portal-package-exports.ts',
 ] as const;
 const PARSER_FILE_NAME_PATTERN =
-	/(?:cli-parser|command-parser|parser-support|definition|command-definition-support|create-app|serve-command|schema|types?|constants?|contracts?)[.]ts$/u;
+	/(?:cli-parser|command-parser|parser-support|definition|command-definition-support|create-app|serve-command|schema)[.]ts$/u;
 const PARSER_SOURCE_MARKER_PATTERN =
-	/(?:from\s+['"](?:cmd-ts|@optique\/(?:core|zod))['"]|function\s+(?:parseCliArguments|parsePortalServerCliArgs|configPathFromArguments)\b)/u;
+	/(?:from\s+['"](?:cmd-ts|@optique\/(?:core(?:\/[^'"]+)?|zod))['"]|function\s+(?:parseCliArguments|parsePortalServerCliArgs|configPathFromArguments)\b)/u;
 const NODE_EFFECT_OWNER_IMPORT_PATTERN =
 	/^node:(?:child_process|fs(?:\/promises)?|http|https|net)$/u;
 const DISPATCHER_OR_OPERATION_FILE_NAME_PATTERN = /(?:dispatcher|operation)[.]ts$/u;
 const ROOT_SUPPORT_FILE_NAME_PATTERN =
-	/(?:terminal|version|entrypoint-identity|executable-identity)(?:-support)?[.]ts$/u;
-const PARSER_RUNTIME_MODULES = new Set(['@optique/core', '@optique/zod', 'zod']);
+	/(?:cli-support|terminal|version|entrypoint-identity|executable-identity)(?:-support)?[.]ts$/u;
 const CUSTOM_EXIT_PROTOCOL_NAME_PATTERN =
 	/(?:ReportedCliError|Cli\w*(?:Exit|Outcome|Signal)|\w*(?:Exit|Outcome|Signal)Protocol)/u;
 const MANUAL_PARSER_NAME_PATTERN =
@@ -130,6 +129,36 @@ function importedBindingsFrom(
 			}
 		} else if (importedBindings !== undefined && ts.isNamespaceImport(importedBindings)) {
 			namespaceBindings.add(importedBindings.name.text);
+		}
+	}
+	return { namedBindings: namedBindingsByLocalName, namespaceBindings };
+}
+
+function importedBindingsFromPrefix(
+	sourceFile: ts.SourceFile,
+	moduleSpecifierPrefix: string,
+): ImportedBindings {
+	const namedBindingsByLocalName = new Map<string, string>();
+	const namespaceBindings = new Set<string>();
+	for (const statement of sourceFile.statements) {
+		if (!ts.isImportDeclaration(statement)) continue;
+		const importedModule = moduleSpecifierText(statement);
+		if (
+			importedModule !== moduleSpecifierPrefix &&
+			importedModule?.startsWith(`${moduleSpecifierPrefix}/`) !== true
+		) {
+			continue;
+		}
+		const bindings = statement.importClause?.namedBindings;
+		if (bindings !== undefined && ts.isNamedImports(bindings)) {
+			for (const element of bindings.elements) {
+				namedBindingsByLocalName.set(
+					element.name.text,
+					(element.propertyName ?? element.name).text,
+				);
+			}
+		} else if (bindings !== undefined && ts.isNamespaceImport(bindings)) {
+			namespaceBindings.add(bindings.name.text);
 		}
 	}
 	return { namedBindings: namedBindingsByLocalName, namespaceBindings };
@@ -247,13 +276,37 @@ function isRuntimeImportDeclaration(node: ts.ImportDeclaration): boolean {
 function isApprovedDomainSchemaImport(node: ts.ImportDeclaration, importedModule: string): boolean {
 	const namedBindings = node.importClause?.namedBindings;
 	return (
-		importedModule.startsWith('@agent-vm/') &&
+		(importedModule.startsWith('.') || importedModule.startsWith('@agent-vm/')) &&
 		namedBindings !== undefined &&
 		ts.isNamedImports(namedBindings) &&
 		namedBindings.elements.every(
 			(element) =>
 				element.isTypeOnly || /schema$/iu.test((element.propertyName ?? element.name).text),
 		)
+	);
+}
+
+function isApprovedParserRuntimeModule(importedModule: string): boolean {
+	return (
+		importedModule === '@optique/core' ||
+		importedModule.startsWith('@optique/core/') ||
+		importedModule === '@optique/zod' ||
+		importedModule === 'node:path' ||
+		importedModule === 'zod'
+	);
+}
+
+function isPresenceOnlyFlagDefault(
+	node: ts.CallExpression,
+	optiqueCoreBindings: ImportedBindings,
+): boolean {
+	const [parserArgument, defaultArgument] = node.arguments;
+	return (
+		importedCallName(node, optiqueCoreBindings) === 'withDefault' &&
+		parserArgument !== undefined &&
+		ts.isCallExpression(parserArgument) &&
+		importedCallName(parserArgument, optiqueCoreBindings) === 'flag' &&
+		defaultArgument?.kind === ts.SyntaxKind.FalseKeyword
 	);
 }
 
@@ -402,7 +455,7 @@ function auditInventoryEntry(
 	for (const reachableFile of reachableFiles) {
 		const sourceFile = sourceFiles.get(reachableFile);
 		if (sourceFile === undefined) continue;
-		const optiqueCoreBindings = importedBindingsFrom(sourceFile, '@optique/core');
+		const optiqueCoreBindings = importedBindingsFromPrefix(sourceFile, '@optique/core');
 		const optiqueZodBindings = importedBindingsFrom(sourceFile, '@optique/zod');
 		const cmdTsBindings = importedBindingsFrom(sourceFile, 'cmd-ts');
 		const parserModule = isParserModule(entry, sourceFile);
@@ -435,12 +488,13 @@ function auditInventoryEntry(
 					if (
 						importedLocalFilePath !== undefined &&
 						(importedLocalSourceFile === undefined ||
-							!isParserModule(entry, importedLocalSourceFile))
+							!isParserModule(entry, importedLocalSourceFile)) &&
+						!isApprovedDomainSchemaImport(node, importedModule)
 					) {
 						insertFinding(sourceFile, node, `parser module imports effect owner ${importedModule}`);
 					} else if (
 						importedLocalFilePath === undefined &&
-						!PARSER_RUNTIME_MODULES.has(importedModule) &&
+						!isApprovedParserRuntimeModule(importedModule) &&
 						!isApprovedDomainSchemaImport(node, importedModule)
 					) {
 						const ownerKind = NODE_EFFECT_OWNER_IMPORT_PATTERN.test(importedModule)
@@ -454,6 +508,7 @@ function auditInventoryEntry(
 					isRuntimeImportDeclaration(node) &&
 					importedModule !== undefined &&
 					importedModule !== '@optique/run' &&
+					importedModule !== 'node:fs' &&
 					importedModule !== 'node:path' &&
 					importedModule !== 'node:url' &&
 					!(
@@ -602,11 +657,31 @@ function auditInventoryEntry(
 							? functionName === 'projectZodRepeatedOption'
 							: functionName === 'projectZodScalarPresence' ||
 								functionName === 'projectZodRepeatedOption';
-					if (!allowedProjection) {
+					if (!allowedProjection && !isPresenceOnlyFlagDefault(node, optiqueCoreBindings)) {
 						insertFinding(
 							sourceFile,
 							node,
 							`${optiqueCoreCallName} duplicates schema-owned presence outside an admitted projection`,
+						);
+					}
+					if (
+						optiqueCoreCallName === 'multiple' &&
+						allowedProjection &&
+						!node.arguments.some(
+							(argument) =>
+								ts.isObjectLiteralExpression(argument) &&
+								argument.properties.some(
+									(property) =>
+										ts.isPropertyAssignment(property) &&
+										property.name.getText(sourceFile) === 'min' &&
+										property.initializer.getText(sourceFile) === '1',
+								),
+						)
+					) {
+						insertFinding(
+							sourceFile,
+							node,
+							'multiple inside a repeated projection must preserve absence with min: 1',
 						);
 					}
 				}

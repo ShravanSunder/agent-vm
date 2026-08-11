@@ -9,7 +9,7 @@ import { managedVmImageAssetFileNames } from '../../build/gondolin-managed-vm-bu
 import type { ManagedGatewayImageBootProjection } from '../../build/gondolin-managed-vm-build-tooling.js';
 import { writePreparedManagedVmImage } from '../../build/prepared-gondolin-image-cache.js';
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../../config/system-config.js';
-import { isGatewayImageCached } from './controller-definition.js';
+import { isGatewayImageCached } from './controller-command-operation.js';
 
 const temporaryDirectories: string[] = [];
 

@@ -11,10 +11,9 @@ import {
 	applyAgentOverrides,
 	createServeSecretResolver,
 	handlePortalServerError,
-	parsePortalServerCliArgs,
 	startPortalServer,
 	type PortalServerLogEvent,
-} from './serve-command.js';
+} from './portal-server-operation.js';
 
 const startedServers: { readonly close: () => Promise<void> }[] = [];
 const externalMasterKey = Buffer.from('0123456789abcdef0123456789abcdef');
@@ -42,7 +41,7 @@ async function createPortalConfigDir(): Promise<string> {
 	return configDir;
 }
 
-async function createProxyConfigDir(): Promise<string> {
+async function createProxyConfigDir(configuredPort = 18_791): Promise<string> {
 	const configDir = await mkdtemp(join(tmpdir(), 'agent-vm-mcp-proxy-'));
 	await writeFile(
 		join(configDir, 'mcp.config.jsonc'),
@@ -57,7 +56,7 @@ async function createProxyConfigDir(): Promise<string> {
 			},
 			mcpProxy: {
 				auth: { headerName: 'authorization' },
-				server: { host: '127.0.0.1', port: 18_791 },
+				server: { host: '127.0.0.1', port: configuredPort },
 			},
 			profiles: { default: { namespaces: {} } },
 			schemaVersion: 1,
@@ -74,24 +73,18 @@ function createFakeOnePasswordResolver(): SecretResolver {
 	};
 }
 
-describe('parsePortalServerCliArgs', () => {
-	it('requires a config directory', () => {
-		expect(() => parsePortalServerCliArgs([])).toThrow(/config-dir/u);
+async function findAvailablePort(): Promise<number> {
+	const server = createServer();
+	await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+	const address = server.address();
+	if (address === null || typeof address === 'string') {
+		throw new Error('Available-port probe did not expose a TCP port.');
+	}
+	await new Promise<void>((resolve, reject) => {
+		server.close((error) => (error === undefined ? resolve() : reject(error)));
 	});
-
-	it('parses launch-only agent profile overrides', () => {
-		expect(
-			parsePortalServerCliArgs([
-				'--config-dir',
-				'/config',
-				'--port',
-				'0',
-				'--agent',
-				'shravan=builder',
-			]),
-		).toEqual({ agentOverrides: ['shravan=builder'], configDir: '/config', port: 0 });
-	});
-});
+	return address.port;
+}
 
 describe('applyAgentOverrides', () => {
 	it('updates configured agents and rejects unknown agents', () => {
@@ -198,6 +191,21 @@ describe('createServeSecretResolver', () => {
 });
 
 describe('startPortalServer', () => {
+	it('uses the configured proxy port when the CLI port is absent', async () => {
+		const configuredPort = await findAvailablePort();
+		const configDir = await createProxyConfigDir(configuredPort);
+		const startedServer = await startPortalServer({
+			args: { agentOverrides: [], configDir },
+			env: {
+				MCP_PORTAL_MASTER_KEY: externalMasterKeyText,
+			},
+			logger: { log: () => undefined },
+		});
+		startedServers.push(startedServer);
+
+		expect(startedServer.port).toBe(configuredPort);
+	});
+
 	it('logs post-listen server errors without rejecting the resolved listener', () => {
 		const rejectedErrors: Error[] = [];
 		const loggedEvents: PortalServerLogEvent[] = [];

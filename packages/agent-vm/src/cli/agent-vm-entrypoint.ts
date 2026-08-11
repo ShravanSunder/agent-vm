@@ -2,6 +2,13 @@
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
+import { run } from '@optique/run';
+
+import { defaultCliDependencies } from './agent-vm-cli-support.js';
+import { dispatchAgentVmCommand } from './agent-vm-command-dispatcher.js';
+import { agentVmRootParser } from './agent-vm-command-parser.js';
+import { resolveCliVersion } from './cli-version.js';
+
 function loadOptionalLocalEnvironmentFile(environmentFilePath: string = '.env.local'): void {
 	try {
 		process.loadEnvFile(environmentFilePath);
@@ -12,46 +19,12 @@ function loadOptionalLocalEnvironmentFile(environmentFilePath: string = '.env.lo
 
 		throw new Error(
 			`Failed to load ${environmentFilePath}: ${error instanceof Error ? error.message : String(error)}`,
-			{
-				cause: error,
-			},
+			{ cause: error },
 		);
 	}
 }
 
 loadOptionalLocalEnvironmentFile();
-
-import { runSafely } from 'cmd-ts';
-
-import {
-	defaultCliDependencies,
-	type CliDependencies,
-	type CliIo,
-} from './agent-vm-cli-support.js';
-import { resolveCliVersion } from './cli-version.js';
-import { createAgentVmApp } from './commands/create-app.js';
-
-export class ReportedCliError extends Error {}
-
-export async function runAgentVmCli(
-	argv: readonly string[],
-	io: CliIo,
-	dependencies: CliDependencies = defaultCliDependencies,
-): Promise<void> {
-	const cliVersion = await (dependencies.resolveCliVersion ?? resolveCliVersion)();
-	const result = await runSafely(createAgentVmApp(io, dependencies, cliVersion), [...argv]);
-	if (!('error' in result)) {
-		return;
-	}
-	const outputStream = result.error.config.into === 'stderr' ? io.stderr : io.stdout;
-	outputStream.write(result.error.config.message);
-	if (!result.error.config.message.endsWith('\n')) {
-		outputStream.write('\n');
-	}
-	if (result.error.config.exitCode !== 0) {
-		throw new ReportedCliError(result.error.config.message);
-	}
-}
 
 export { loadOptionalLocalEnvironmentFile };
 
@@ -59,21 +32,7 @@ export function handleCliMainError(
 	error: unknown,
 	stderr: Pick<NodeJS.WriteStream, 'write'>,
 ): void {
-	if (error instanceof ReportedCliError) {
-		return;
-	}
-	if (error instanceof Error) {
-		stderr.write(`${error.message}\n`);
-		return;
-	}
-	stderr.write(`${String(error)}\n`);
-}
-
-async function main(): Promise<void> {
-	await runAgentVmCli(process.argv.slice(2), {
-		stderr: process.stderr,
-		stdout: process.stdout,
-	});
+	stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
 }
 
 export function isCliEntrypoint(importMetaUrl: string, argvEntryPath: string | undefined): boolean {
@@ -85,6 +44,23 @@ export function isCliEntrypoint(importMetaUrl: string, argvEntryPath: string | u
 	} catch {
 		return false;
 	}
+}
+
+async function main(): Promise<void> {
+	const cliVersion = await (defaultCliDependencies.resolveCliVersion ?? resolveCliVersion)();
+	const command = run(agentVmRootParser, {
+		help: 'both',
+		programName: 'agent-vm',
+		showDefault: true,
+		stderr: (text) => process.stderr.write(`${text}\n`),
+		stdout: (text) => process.stdout.write(`${text}\n`),
+		version: cliVersion,
+	});
+	await dispatchAgentVmCommand(
+		command,
+		{ stderr: process.stderr, stdout: process.stdout },
+		defaultCliDependencies,
+	);
 }
 
 if (isCliEntrypoint(import.meta.url, process.argv[1])) {

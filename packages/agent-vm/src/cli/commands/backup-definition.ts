@@ -1,79 +1,51 @@
-// oxlint-disable typescript-eslint/explicit-function-return-type
-import { command, positional, string, subcommands } from 'cmd-ts';
+import { argument, command, constant, object, or } from '@optique/core';
+import { zod } from '@optique/zod';
+import { z } from 'zod';
 
-import { type CliDependencies, type CliIo, requireZone } from '../agent-vm-cli-support.js';
-import { runBackupCommand } from '../backup-commands.js';
 import {
-	appendZoneArgument,
+	cliDescription,
 	createConfigOption,
 	createZoneOption,
-	loadSystemConfigFromOption,
 } from './command-definition-support.js';
 
-export function createBackupSubcommands(io: CliIo, dependencies: CliDependencies) {
-	return subcommands({
-		name: 'backup',
-		description: 'Manage encrypted zone backups',
-		cmds: {
-			create: command({
-				name: 'create',
-				description: 'Create a zone backup',
-				args: {
+const backupPathSchema = z.string().min(1);
+
+const backupZoneOptionsParser = object({ config: createConfigOption(), zone: createZoneOption() });
+
+export const backupCommandParser = command(
+	'backup',
+	or(
+		command(
+			'create',
+			object({
+				command: constant('backup.create'),
+				options: backupZoneOptionsParser,
+			}),
+			{ description: cliDescription('Create a zone backup') },
+		),
+		command(
+			'list',
+			object({
+				command: constant('backup.list'),
+				options: backupZoneOptionsParser,
+			}),
+			{ description: cliDescription('List backups for a zone') },
+		),
+		command(
+			'restore',
+			object({
+				command: constant('backup.restore'),
+				options: object({
+					backupPath: argument(
+						zod(backupPathSchema, { metavar: 'PATH', placeholder: 'backup.age' }),
+						{ description: cliDescription('Path to the encrypted backup file') },
+					),
 					config: createConfigOption(),
 					zone: createZoneOption(),
-				},
-				handler: async ({ config, zone }) => {
-					const systemConfig = await loadSystemConfigFromOption(config, dependencies);
-					const selectedZone = requireZone(systemConfig, zone);
-					await runBackupCommand({
-						dependencies,
-						io,
-						restArguments: appendZoneArgument(['create'], selectedZone.id),
-						systemConfig,
-					});
-				},
+				}),
 			}),
-			list: command({
-				name: 'list',
-				description: 'List backups for a zone',
-				args: {
-					config: createConfigOption(),
-					zone: createZoneOption(),
-				},
-				handler: async ({ config, zone }) => {
-					const systemConfig = await loadSystemConfigFromOption(config, dependencies);
-					const selectedZone = requireZone(systemConfig, zone);
-					await runBackupCommand({
-						dependencies,
-						io,
-						restArguments: appendZoneArgument(['list'], selectedZone.id),
-						systemConfig,
-					});
-				},
-			}),
-			restore: command({
-				name: 'restore',
-				description: 'Restore a backup into a zone',
-				args: {
-					backupPath: positional({
-						displayName: 'path',
-						type: string,
-						description: 'Path to the encrypted backup file',
-					}),
-					config: createConfigOption(),
-					zone: createZoneOption(),
-				},
-				handler: async ({ backupPath, config, zone }) => {
-					const systemConfig = await loadSystemConfigFromOption(config, dependencies);
-					const selectedZone = requireZone(systemConfig, zone);
-					await runBackupCommand({
-						dependencies,
-						io,
-						restArguments: appendZoneArgument(['restore', backupPath], selectedZone.id),
-						systemConfig,
-					});
-				},
-			}),
-		},
-	});
-}
+			{ description: cliDescription('Restore a backup into a zone') },
+		),
+	),
+	{ description: cliDescription('Manage encrypted zone backups') },
+);

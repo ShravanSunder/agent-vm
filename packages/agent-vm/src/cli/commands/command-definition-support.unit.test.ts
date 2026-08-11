@@ -2,12 +2,21 @@ import { describe, expect, it } from 'vitest';
 import { ZodError } from 'zod';
 
 import { requireZone } from '../agent-vm-cli-support.js';
-import { loadSystemConfigFromOption, parseGatewayType } from './command-definition-support.js';
+import { cliDescription } from './command-definition-support.js';
+import { loadSystemConfigFromCliOption } from './command-operation-support.js';
 
-describe('loadSystemConfigFromOption', () => {
+describe('cliDescription', () => {
+	it('creates plain help text instead of a quoted value term', () => {
+		expect(cliDescription('Boot the controller and gateway')).toEqual([
+			{ text: 'Boot the controller and gateway', type: 'text' },
+		]);
+	});
+});
+
+describe('loadSystemConfigFromCliOption', () => {
 	it('formats system config validation errors for CLI output', async () => {
 		await expect(
-			loadSystemConfigFromOption(undefined, {
+			loadSystemConfigFromCliOption('config/system.json', {
 				loadSystemConfig: async () => {
 					throw new ZodError([
 						{
@@ -30,7 +39,7 @@ describe('loadSystemConfigFromOption', () => {
 
 	it('formats invalid JSON errors for CLI output', async () => {
 		await expect(
-			loadSystemConfigFromOption('./broken-system.json', {
+			loadSystemConfigFromCliOption('./broken-system.json', {
 				loadSystemConfig: async () => {
 					throw new SyntaxError('Unexpected token ] in JSON at position 42');
 				},
@@ -120,13 +129,5 @@ describe('requireZone', () => {
 				'nope',
 			),
 		).toThrow("Unknown zone 'nope'.");
-	});
-});
-
-describe('parseGatewayType', () => {
-	it('throws when the gateway type is missing', () => {
-		expect(() => parseGatewayType(undefined)).toThrow(
-			"Gateway type is required. Expected 'openclaw' or 'worker'.",
-		);
 	});
 });

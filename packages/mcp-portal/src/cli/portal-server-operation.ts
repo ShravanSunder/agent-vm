@@ -1,6 +1,5 @@
 import { createHmac } from 'node:crypto';
 import { join } from 'node:path';
-import { parseArgs } from 'node:util';
 
 import {
 	loadMcpConfig,
@@ -208,40 +207,6 @@ export interface ProfilePolicyMaps {
 		Record<string, Readonly<Record<string, readonly string[]>>>
 	>;
 	readonly hiddenToolsByAgent: Readonly<Record<string, readonly PortalToolSelector[]>>;
-}
-
-function parsePort(value: string | undefined): number | undefined {
-	if (value === undefined) {
-		return undefined;
-	}
-	const port = Number(value);
-	if (!Number.isInteger(port) || port < 0 || port > 65_535) {
-		throw new Error(`Invalid --port value "${value}".`);
-	}
-	return port;
-}
-
-export function parsePortalServerCliArgs(argv: readonly string[]): PortalServerCliArgs {
-	const parsed = parseArgs({
-		args: [...argv],
-		options: {
-			agent: { multiple: true, type: 'string' },
-			'config-dir': { type: 'string' },
-			port: { short: 'p', type: 'string' },
-		},
-		strict: true,
-	});
-	const configDir = parsed.values['config-dir'];
-	if (typeof configDir !== 'string' || configDir.length === 0) {
-		throw new Error('--config-dir <path> is required.');
-	}
-	const rawAgentOverrides = parsed.values.agent;
-	const args = {
-		agentOverrides: Array.isArray(rawAgentOverrides) ? rawAgentOverrides : [],
-		configDir,
-	};
-	const port = parsePort(parsed.values.port);
-	return port === undefined ? args : { ...args, port };
 }
 
 export function applyAgentOverrides(
