@@ -91,7 +91,8 @@ inventory task
   -> validate the complete aggregate attempt
   -> on success classify all names and render orientation
   -> on retryable failure log and retry while attempts/deadline remain
-  -> publish one ready or failed terminal value
+  -> on retry/deadline/malformed exhaustion publish a ready all-unavailable value
+  -> on invalid or withdrawn authority publish terminal failure without orientation
 ```
 
 The inventory coordinator owns its futures and cancellation. One initial attempt
@@ -106,7 +107,7 @@ Hermes pre_llm_call(epoch, projection, session_id)
   -> validate current admitted profile context
   -> build InventoryKey
   -> observe inventory exactly once
-  -> unresolved/failed/evicted: return no context
+  -> unresolved/terminal authority failure/evicted: return no context
   -> ready without rendered orientation: return no context
   -> ready: build InjectionKey
   -> mark_if_absent(InjectionKey, InjectionMarker)
@@ -141,8 +142,8 @@ one injection attempt through its owned hook, not a provider delivery protocol.
 | Failure | Containment |
 | --- | --- |
 | Portal request, timeout, or malformed aggregate result | Discard the complete attempt, log bounded metadata, retry within the shared budget |
-| Invalid or withdrawn profile authority | Publish typed terminal failure; never render orientation |
-| Retry budget or deadline exhausted | Publish terminal failure or the specification's fail-closed complete inventory result; user turns continue |
+| Retry, deadline, or malformed-response budget exhausted | Publish a ready `InventoryReadyValue` marking every projected namespace unavailable and render its injectible unavailable orientation; user turns continue |
+| Invalid or withdrawn profile authority | Publish terminal `ExhaustedState` with `invalid_authority`; suppress orientation and keep user turns running |
 | Render cannot fit | Store typed render failure; user turns return no context and do not mark |
 | Inventory unresolved when a turn arrives | Return no context and do not mark |
 | Runtime closes during inventory | Cancel owned task and reject late publication |

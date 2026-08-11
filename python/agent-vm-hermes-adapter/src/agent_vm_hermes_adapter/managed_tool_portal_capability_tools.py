@@ -87,7 +87,9 @@ def _safe_model_dump(model: BaseModel) -> dict[str, object]:
     )
     if not isinstance(dumped, dict):
         raise TypeError("validated model did not produce a JSON object")
-    return dumped
+    if not all(isinstance(key, str) for key in dumped):
+        raise TypeError("validated model produced a JSON object with a non-string key")
+    return {key: value for key, value in dumped.items() if isinstance(key, str)}
 
 
 def _validate_tool_name(value: str) -> ManagedToolName:

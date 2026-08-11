@@ -7,7 +7,7 @@ import typing as t
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from .cache import (
+from agent_vm_hermes_adapter.managed_tool_portal.cache import (
     CacheSnapshot,
     EvictionReason,
     PluginStateCache,
@@ -15,7 +15,7 @@ from .cache import (
     PopulationFailureClass,
     PopulationStarted,
 )
-from .inventory_contracts import (
+from agent_vm_hermes_adapter.managed_tool_portal.inventory_contracts import (
     PORTAL_BATCH_MAX_ITEMS,
     InventoryListItemRequest,
     InventoryListRequest,
@@ -26,13 +26,13 @@ from .inventory_contracts import (
     InventoryProjection,
     validate_inventory_portal_list_result,
 )
-from .models import (
+from agent_vm_hermes_adapter.managed_tool_portal.models import (
     InventoryCacheKey,
     InventoryReadyValue,
     NamespaceAvailability,
     NamespaceInventory,
 )
-from .renderer import render_orientation
+from agent_vm_hermes_adapter.managed_tool_portal.renderer import render_orientation
 
 INVENTORY_DEADLINE_SECONDS = 60.0
 INVENTORY_ATTEMPT_SLICE_ENDS: tuple[float, float, float] = (20.0, 40.0, 60.0)

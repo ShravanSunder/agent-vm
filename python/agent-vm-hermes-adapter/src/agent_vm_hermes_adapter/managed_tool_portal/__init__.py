@@ -1,6 +1,6 @@
 """Typed managed Tool Portal cache, inventory, and orientation primitives."""
 
-from .cache import (
+from agent_vm_hermes_adapter.managed_tool_portal.cache import (
     CacheClosedError,
     CacheSnapshot,
     CacheTransitionError,
@@ -14,7 +14,7 @@ from .cache import (
     PublicationResult,
     TransitionResult,
 )
-from .models import (
+from agent_vm_hermes_adapter.managed_tool_portal.models import (
     EvictedState,
     EvictionReason,
     EvictionRecord,
@@ -33,7 +33,7 @@ from .models import (
     RenderedOrientation,
     UnresolvedState,
 )
-from .renderer import (
+from agent_vm_hermes_adapter.managed_tool_portal.renderer import (
     MAX_DISPLAYED_NAMESPACE_COUNT,
     MAX_ORIENTATION_UTF8_BYTES,
     render_orientation,

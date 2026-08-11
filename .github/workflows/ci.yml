@@ -202,15 +202,15 @@ jobs:
               family: openclaw
               input-hash: ${{ steps.image-key.outputs.input-hash }}
 
-          - name: Restore prepared Worker image cache
-            id: worker-image
-            uses: ./.github/actions/restore-e2e-image-cache
-            with:
-              family: worker
-              input-hash: ${{ steps.image-key.outputs.input-hash }}
-
           - name: Set up Agent VM workspace
             uses: ./.github/actions/setup-agent-vm
+
+      - name: Restore prepared Worker image cache
+        id: worker-image
+        uses: ./.github/actions/restore-e2e-image-cache
+        with:
+          family: worker
+          input-hash: ${{ steps.image-key.outputs.input-hash }}
 
       - name: Set up system packages
         uses: ./.github/actions/setup-system-packages

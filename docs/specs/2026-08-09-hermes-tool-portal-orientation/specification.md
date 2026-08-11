@@ -46,6 +46,13 @@ failed attempt MUST produce one bounded structured log with profile/epoch
 correlation, attempt number, failure class, and retry disposition, without raw
 diagnostics, credentials, or tool data.
 
+Exhaustion caused by retryable transport failure, timeout, or malformed response
+MUST publish a `ReadyState` containing an `InventoryReadyValue` whose complete
+projected namespace inventory marks every namespace `unavailable`. Its renderer
+MUST produce an injectible orientation that states the namespaces are
+unavailable. Invalid or withdrawn authority alone MUST publish terminal
+`ExhaustedState` with `invalid_authority` and MUST suppress orientation.
+
 Inventory MUST NOT refresh within an epoch. A successor epoch MUST start new
 inventory and MUST NOT observe predecessor values.
 
@@ -82,7 +89,9 @@ For each `pre_llm_call`, the plugin MUST sample inventory state once through a
 nonblocking in-memory read.
 
 - If inventory is unresolved or terminally failed, the hook MUST return no
-  orientation and MUST NOT mark the identity.
+  orientation and MUST NOT mark the identity. Terminal failure here means the
+  invalid or withdrawn authority outcome; retry, deadline, and malformed-response
+  exhaustion is instead a ready all-unavailable inventory.
 - If inventory is ready, the hook MUST atomically mark the identity if absent.
 - The caller that successfully creates the mark MUST return the ready orientation.
 - A caller observing an existing mark MUST return no orientation.
@@ -126,9 +135,11 @@ required beyond the presence of the injection identity.
 ### C1 — Background inventory
 
 No later than 60 seconds after inventory begins, the profile has either a ready
-complete availability value or a typed terminal failure. No more than three
-attempts occur. Gateway readiness and user calls remain independent of that
-outcome.
+complete availability value or a typed terminal authority failure. Retry,
+deadline, and malformed-response exhaustion is the ready value with every
+projected namespace unavailable; invalid or withdrawn authority is the only
+terminal failure. No more than three attempts occur. Gateway readiness and user
+calls remain independent of that outcome.
 
 ### C2 — User turn
 

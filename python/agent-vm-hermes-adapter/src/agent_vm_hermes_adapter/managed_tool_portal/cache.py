@@ -7,7 +7,7 @@ from collections import deque
 
 from pydantic import BaseModel, ConfigDict
 
-from .models import (
+from agent_vm_hermes_adapter.managed_tool_portal.models import (
     EvictedState,
     EvictionReason,
     EvictionRecord,

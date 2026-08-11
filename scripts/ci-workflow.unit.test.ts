@@ -70,7 +70,8 @@ describe('CI workflow topology', () => {
 		expect(workflow).toContain(
 			'      - parallel:\n          - name: Restore prepared OpenClaw image cache',
 		);
-		expect(workflow).toContain('          - name: Restore prepared Worker image cache');
+		expect(workflow).toContain('      - name: Restore prepared Worker image cache');
+		expect(workflow).not.toContain('\n          - name: Restore prepared Worker image cache\n');
 		expect(workflow).toContain('          - name: Set up Agent VM workspace');
 		expect(workflow).toContain(
 			'          - name: Set up Python workspace\n' +
@@ -85,6 +86,10 @@ describe('CI workflow topology', () => {
 			'          - name: Set up Agent VM workspace',
 			parallelPreparationStart,
 		);
+		const workerCacheRestorePosition = workflow.indexOf(
+			'      - name: Restore prepared Worker image cache',
+			parallelPreparationStart,
+		);
 		const cacheHitBarrierPosition = workflow.indexOf(
 			'      - name: Require prepared image caches',
 			parallelPreparationStart,
@@ -93,7 +98,8 @@ describe('CI workflow topology', () => {
 		expect(parallelPreparationStart).toBeGreaterThanOrEqual(0);
 		expect(cacheHitBarrierPosition).toBeGreaterThan(parallelPreparationStart);
 		expect(workspaceSetupPosition).toBeGreaterThan(parallelPreparationStart);
-		expect(workspaceSetupPosition).toBeLessThan(cacheHitBarrierPosition);
+		expect(workerCacheRestorePosition).toBeGreaterThan(workspaceSetupPosition);
+		expect(workerCacheRestorePosition).toBeLessThan(cacheHitBarrierPosition);
 		expect(cacheHitBarrierPosition).toBeGreaterThan(workspaceSetupPosition);
 		expect(vmPreparationBlock).toContain(
 			'\n      - name: Set up system packages\n        uses: ./.github/actions/setup-system-packages',

@@ -2,7 +2,7 @@
 
 from agent_vm_agent_portal_sdk import encode_canonical_json
 
-from .models import (
+from agent_vm_hermes_adapter.managed_tool_portal.models import (
     NamespaceInventory,
     OrientationRenderFailure,
     RenderedOrientation,

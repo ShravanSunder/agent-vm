@@ -9,16 +9,16 @@ from agent_vm_agent_portal_sdk.gateway_runtime_client import (
 )
 from pydantic import BaseModel
 
-from ..managed_profile_adapter import (
+from agent_vm_hermes_adapter.managed_profile_adapter import (
     CanonicalManagedAgentProjection,
     HermesProfileAdmissionError,
     build_managed_trusted_context,
 )
-from .inventory import (
+from agent_vm_hermes_adapter.managed_tool_portal.inventory import (
     InventoryAttemptLog,
     InventoryAuthorityError,
 )
-from .inventory_contracts import (
+from agent_vm_hermes_adapter.managed_tool_portal.inventory_contracts import (
     InventoryListRequest,
     InventoryPortalListResult,
     InventoryProjection,

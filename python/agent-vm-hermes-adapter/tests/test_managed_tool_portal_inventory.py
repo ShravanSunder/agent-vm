@@ -809,7 +809,9 @@ class ManagedToolPortalInventoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(late_gateway.cancelled_call_count, 1)
         late_gateway.release_late_response.set()
         await late_gateway.late_result_returned.wait()
-        self.assertEqual(snapshot.inventory.namespaces[0].status, "unavailable")
+        late_snapshot = _require_ready(coordinator.read_snapshot(projection.cache_key()))
+        self.assertEqual(late_snapshot.inventory.namespaces[0].status, "unavailable")
+        self.assertEqual(late_snapshot.inventory.inventory_id, snapshot.inventory.inventory_id)
 
     async def test_projection_is_strict_and_unresolved_state_is_nonblocking_before_start(
         self,

@@ -5,23 +5,24 @@ import typing as t
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from ..managed_framework_observability import ManagedFrameworkObservability
-from ..managed_profile_adapter import (
+from agent_vm_hermes_adapter.managed_framework_observability import ManagedFrameworkObservability
+from agent_vm_hermes_adapter.managed_profile_adapter import (
     CanonicalManagedAgentProjection,
     HermesManagedAdapter,
     HermesProfileAdmissionError,
     HermesSessionSource,
 )
-from ..managed_tool_portal_observability import HermesToolPortalTelemetry
-from .cache import MarkInserted, PluginStateCache
-from .inventory import InventoryCoordinator, InventoryProjection
-from .models import (
+from agent_vm_hermes_adapter.managed_tool_portal.cache import MarkInserted, PluginStateCache
+from agent_vm_hermes_adapter.managed_tool_portal.inventory import InventoryCoordinator
+from agent_vm_hermes_adapter.managed_tool_portal.inventory_contracts import InventoryProjection
+from agent_vm_hermes_adapter.managed_tool_portal.models import (
     InjectionCacheKey,
     InjectionMarker,
     InventoryReadyValue,
     ReadyState,
     RenderedOrientation,
 )
+from agent_vm_hermes_adapter.managed_tool_portal_observability import HermesToolPortalTelemetry
 
 _LOGGER = logging.getLogger(__name__)
 

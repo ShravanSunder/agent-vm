@@ -1,3 +1,4 @@
+import concurrent.futures
 import json
 import os
 import stat
@@ -30,6 +31,7 @@ from agent_vm_hermes_adapter.managed_profile_adapter import (
 )
 from agent_vm_hermes_adapter.managed_tool_portal.cache import PluginStateCache
 from agent_vm_hermes_adapter.managed_tool_portal.models import (
+    EvictionReason,
     InjectionCacheKey,
     InjectionMarker,
 )
@@ -194,6 +196,9 @@ class FakeTerminalToolModule:
         self._resolve_container_task_id: Callable[[str | None], str] = lambda task_id: (
             task_id or "default"
         )
+
+    def has_active_environments(self) -> bool:
+        return bool(self._active_environments)
 
     def replace_create_environment(self, value: Callable[..., object]) -> None:
         self._create_environment = value
@@ -1655,6 +1660,60 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
             hermes_gateway_run.GatewayRunner.__dict__["_load_provider_routing"],
             original_provider_routing_descriptor,
         )
+
+    def test_inventory_shutdown_failures_do_not_prevent_injection_cache_close(self) -> None:
+        injection_state_cache = Mock()
+        inventory_coordinator = Mock()
+
+        class ClosedLoopAdapter:
+            def submit_gateway_runtime_coroutine(
+                self,
+                coroutine: t.Coroutine[object, object, None],
+            ) -> t.Never:
+                coroutine.close()
+                raise RuntimeError("Gateway Runtime client loop is closed")
+
+        class TimedOutSubmission(concurrent.futures.Future[None]):
+            def __init__(self) -> None:
+                super().__init__()
+                self.result_timeouts: list[float | None] = []
+                self.cancel_calls = 0
+
+            @t.override
+            def result(self, timeout: float | None = None) -> None:
+                self.result_timeouts.append(timeout)
+                raise concurrent.futures.TimeoutError
+
+            @t.override
+            def cancel(self) -> bool:
+                self.cancel_calls += 1
+                return True
+
+        timed_out_submission = TimedOutSubmission()
+
+        class TimedOutAdapter:
+            def submit_gateway_runtime_coroutine(
+                self,
+                coroutine: t.Coroutine[object, object, None],
+            ) -> concurrent.futures.Future[None]:
+                coroutine.close()
+                return timed_out_submission
+
+        for adapter in (ClosedLoopAdapter(), TimedOutAdapter()):
+            with self.subTest(adapter=type(adapter).__name__):
+                managed_gateway_bootstrap._close_managed_tool_portal_state(
+                    adapter=adapter,
+                    inventory_coordinator=inventory_coordinator,
+                    injection_state_cache=injection_state_cache,
+                )
+
+        self.assertEqual(injection_state_cache.close.call_count, 2)
+        injection_state_cache.close.assert_called_with(EvictionReason.RUNTIME_SHUTDOWN)
+        self.assertEqual(
+            timed_out_submission.result_timeouts,
+            [managed_gateway_bootstrap._INVENTORY_SHUTDOWN_TIMEOUT_SECONDS],
+        )
+        self.assertEqual(timed_out_submission.cancel_calls, 1)
 
     def test_shuts_down_telemetry_when_gateway_runtime_connect_fails(self) -> None:
         telemetry = FakeHermesToolPortalTelemetry()

@@ -5,7 +5,7 @@ import typing as t
 from agent_vm_agent_portal_sdk.contracts import PORTABLE_CONTRACT_ADAPTERS
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from .models import InventoryCacheKey
+from agent_vm_hermes_adapter.managed_tool_portal.models import InventoryCacheKey
 
 PORTAL_BATCH_MAX_ITEMS = 50
 

@@ -30,7 +30,7 @@ def _require_started(
     result: PopulationStarted[InventoryCacheKey, _InventoryValue]
     | PopulationAlreadyStarted[InventoryCacheKey, _InventoryValue],
 ) -> PopulationStarted[InventoryCacheKey, _InventoryValue]:
-    if not isinstance(result, PopulationStarted):
+    if isinstance(result, PopulationAlreadyStarted):
         raise AssertionError("expected a newly started population")
     return result
 
@@ -46,7 +46,7 @@ def _require_populating(
 def _require_ready(
     snapshot: CacheSnapshot[InventoryCacheKey, _InventoryValue],
 ) -> ReadyState[_InventoryValue]:
-    if not isinstance(snapshot, ReadyState):
+    if snapshot.kind != "ready":
         raise AssertionError("expected a ready snapshot")
     return snapshot
 

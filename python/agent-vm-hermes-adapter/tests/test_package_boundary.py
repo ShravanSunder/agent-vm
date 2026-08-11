@@ -10,12 +10,15 @@ from hermes_cli.plugins import VALID_HOOKS
 
 PACKAGE_ROOT = pathlib.Path(__file__).parents[1]
 SOURCE_ROOT = PACKAGE_ROOT / "src" / "agent_vm_hermes_adapter"
+MANAGED_TOOL_PORTAL_PACKAGE_FILES = tuple(
+    sorted((SOURCE_ROOT / "managed_tool_portal").glob("*.py"))
+)
 MANAGED_TOOL_PORTAL_SOURCE_FILES = (
     SOURCE_ROOT / "managed_tool_portal_capability_tools.py",
-    *sorted((SOURCE_ROOT / "managed_tool_portal").glob("*.py")),
+    *MANAGED_TOOL_PORTAL_PACKAGE_FILES,
 )
-MANAGED_TOOL_PORTAL_TEST_FILES = (
-    *sorted((PACKAGE_ROOT / "tests").glob("test_managed_tool_portal_*.py")),
+MANAGED_TOOL_PORTAL_TEST_FILES = tuple(
+    sorted((PACKAGE_ROOT / "tests").glob("test_managed_tool_portal_*.py"))
 )
 
 
@@ -27,6 +30,11 @@ def _qualified_name(node: ast.expr) -> str:
     return ""
 
 
+def _is_dataclass_decorator(decorator: ast.expr) -> bool:
+    target = decorator.func if isinstance(decorator, ast.Call) else decorator
+    return _qualified_name(target) in {"dataclass", "dataclasses.dataclass"}
+
+
 def _assignment_name(target: ast.expr) -> str:
     if isinstance(target, ast.Name):
         return target.id
@@ -36,6 +44,42 @@ def _assignment_name(target: ast.expr) -> str:
 
 
 class PackageBoundaryTests(unittest.TestCase):
+    def test_boundary_file_inventory_is_explicit_and_file_only(self) -> None:
+        self.assertTrue(MANAGED_TOOL_PORTAL_SOURCE_FILES[0].is_file())
+        self.assertGreater(len(MANAGED_TOOL_PORTAL_PACKAGE_FILES), 0)
+        self.assertGreater(len(MANAGED_TOOL_PORTAL_TEST_FILES), 0)
+        self.assertTrue(
+            all(
+                source_file.is_file()
+                for source_file in (
+                    *MANAGED_TOOL_PORTAL_SOURCE_FILES,
+                    *MANAGED_TOOL_PORTAL_TEST_FILES,
+                )
+            ),
+        )
+
+    def test_dataclass_decorator_detection_covers_bare_and_called_forms(self) -> None:
+        cases = (
+            ("@dataclass\nclass Example: pass", True),
+            ("@dataclasses.dataclass\nclass Example: pass", True),
+            ("@dataclass()\nclass Example: pass", True),
+            ("@dataclasses.dataclass(frozen=True)\nclass Example: pass", True),
+            ("@dataclass_factory\nclass Example: pass", False),
+            ("@dataclasses.dataclass_factory\nclass Example: pass", False),
+        )
+        for source, expected in cases:
+            with self.subTest(source=source):
+                class_node = ast.parse(source).body[0]
+                if not isinstance(class_node, ast.ClassDef):
+                    self.fail("fixture must parse to a class definition")
+                self.assertEqual(
+                    any(
+                        _is_dataclass_decorator(decorator)
+                        for decorator in class_node.decorator_list
+                    ),
+                    expected,
+                )
+
     def test_managed_tool_portal_boundary_forbids_untyped_escape_hatches(self) -> None:
         violations: list[str] = []
         boundary_files = MANAGED_TOOL_PORTAL_SOURCE_FILES + MANAGED_TOOL_PORTAL_TEST_FILES
@@ -55,16 +99,14 @@ class PackageBoundaryTests(unittest.TestCase):
                     "hasattr",
                 }:
                     violations.append(f"{location}: {_qualified_name(node.func)}")
-                elif (
-                    isinstance(node, ast.Call)
-                    and _qualified_name(node.func).split(".")[-1] == "dataclass"
-                ):
-                    violations.append(f"{location}: dataclass")
-                elif isinstance(node, ast.ClassDef) and any(
-                    _qualified_name(base).split(".")[-1] in {"NamedTuple", "TypedDict"}
-                    for base in node.bases
-                ):
-                    violations.append(f"{location}: forbidden structural container")
+                elif isinstance(node, ast.ClassDef):
+                    if any(_is_dataclass_decorator(decorator) for decorator in node.decorator_list):
+                        violations.append(f"{location}: dataclass")
+                    elif any(
+                        _qualified_name(base).split(".")[-1] in {"NamedTuple", "TypedDict"}
+                        for base in node.bases
+                    ):
+                        violations.append(f"{location}: forbidden structural container")
                 elif (
                     isinstance(node, ast.Subscript)
                     and _qualified_name(node.value).split(".")[-1] == "Callable"

@@ -24,7 +24,7 @@ prompt.
 | U2 | must | Show only bounded namespace availability, not tool schemas, tool descriptions, or the full catalog. |
 | U3 | must | Derive availability once per admitted profile and Gateway epoch, out of band from session calls, and reuse it across sessions. |
 | U4 | must | Inject the orientation at most once for each exact `(Gateway epoch, admitted profile identity, session_id)` identity. |
-| U5 | must | If inventory is not ready, let the turn continue without waiting and preserve eligibility for a later turn. |
+| U5 | must | If inventory is unresolved, let the turn continue without waiting and preserve eligibility for a later turn; retry, deadline, and malformed-response exhaustion resolves to a ready all-unavailable value. |
 | U6 | must | Preserve prompt-cache stability by leaving the system prompt and tool-schema prefix unchanged. |
 | U7 | must | Keep plugin state typed, process-local, Pydantic-v2 validated at consumer boundaries, and explicit about validity and eviction. |
 | U8 | must | Bound inventory to one initial attempt plus at most two retries within one 60-second overall deadline, with redacted failure logging. |
@@ -34,17 +34,23 @@ prompt.
 ```text
 Gateway startup
   -> start one background inventory per admitted profile
-  -> cache the profile's ready or terminal inventory for this Gateway epoch
+  -> cache the profile's ready inventory or terminal authority failure for this Gateway epoch
 
 pre_llm_call(epoch, profile, session_id)
   -> read inventory state without waiting
-  -> if unresolved or failed: return no orientation and do not mark the session
+  -> if unresolved or terminal authority failure: return no orientation and do not mark the session
   -> if ready and session was already marked: return no orientation
   -> if ready and session was not marked: atomically mark it and return orientation
 ```
 
 Returning the orientation from `pre_llm_call` is the injection event. The
 plugin does not prove or track later provider delivery.
+
+Retry, deadline, and malformed-response exhaustion publishes a ready
+`InventoryReadyValue` whose complete projected namespace inventory is
+`unavailable`; its rendered orientation remains eligible for injection and
+states that the namespaces are unavailable. Invalid or withdrawn authority
+alone publishes terminal exhausted failure and suppresses orientation.
 
 ## Boundaries
 
