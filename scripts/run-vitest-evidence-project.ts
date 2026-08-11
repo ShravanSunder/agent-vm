@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url';
 interface VitestJsonAssertionResult {
 	readonly fullName: string;
 	readonly status: string;
+	readonly tags: readonly string[];
 }
 
 interface VitestJsonTestResult {
@@ -19,6 +20,20 @@ interface VitestJsonResults {
 	readonly numTodoTests: number;
 	readonly numTotalTests: number;
 	readonly testResults: readonly VitestJsonTestResult[];
+}
+
+interface ValidateProofProjectResultsOptions {
+	readonly projectName: string;
+	readonly resultFilePath?: string;
+	readonly results: VitestJsonResults;
+	readonly selectedTags?: readonly string[];
+}
+
+interface RunVitestProjectOptions {
+	readonly env: Readonly<Record<string, string>>;
+	readonly filters: readonly string[];
+	readonly outputFilePath: string;
+	readonly projectName: string;
 }
 
 interface EvidenceValidationResult {
@@ -122,10 +137,16 @@ function parseAssertionResult(value: unknown): VitestJsonAssertionResult {
 	}
 	const fullName = value.fullName;
 	const status = value.status;
-	if (typeof fullName !== 'string' || typeof status !== 'string') {
-		throw new Error('Vitest JSON assertion result must include fullName and status.');
+	const tags = value.tags;
+	if (
+		typeof fullName !== 'string' ||
+		typeof status !== 'string' ||
+		!Array.isArray(tags) ||
+		!tags.every((tag) => typeof tag === 'string')
+	) {
+		throw new Error('Vitest JSON assertion result must include fullName, status, and tags.');
 	}
-	return { fullName, status };
+	return { fullName, status, tags };
 }
 
 function parseTestResult(value: unknown): VitestJsonTestResult {
@@ -161,24 +182,59 @@ export function parseVitestJsonResults(rawJson: string): VitestJsonResults {
 }
 
 export function validateProofProjectResults(
-	projectName: string,
-	results: VitestJsonResults,
-	resultFilePath?: string,
+	options: ValidateProofProjectResultsOptions,
 ): EvidenceValidationResult {
+	const { projectName, resultFilePath, results, selectedTags } = options;
+	const selectedAssertions =
+		selectedTags === undefined
+			? undefined
+			: results.testResults.flatMap((testResult) =>
+					testResult.assertionResults.filter((assertionResult) =>
+						selectedTags.every((selectedTag) => assertionResult.tags.includes(selectedTag)),
+					),
+				);
+	const selectedPassedTests =
+		selectedAssertions?.filter((assertionResult) => assertionResult.status === 'passed').length ??
+		0;
+	const selectedTodoTests =
+		selectedAssertions?.filter((assertionResult) => assertionResult.status === 'todo').length ?? 0;
 	const messages: string[] = [];
-	if (results.numTotalTests === 0) {
-		messages.push(`${projectName}: expected at least one test, found zero.`);
-	}
-	if (results.numPendingTests > 0) {
+	if (selectedAssertions === undefined) {
+		if (results.numTotalTests === 0) {
+			messages.push(`${projectName}: expected at least one test, found zero.`);
+		}
+		if (results.numPendingTests > 0) {
+			messages.push(
+				`${projectName}: expected zero skipped tests, found ${String(results.numPendingTests)}.`,
+			);
+		}
+		if (results.numTodoTests > 0) {
+			messages.push(
+				`${projectName}: expected zero todo tests, found ${String(results.numTodoTests)}.`,
+			);
+		}
+	} else if (selectedAssertions.length === 0) {
+		messages.push(`${projectName}: expected at least one tag-selected test, found zero.`);
+	} else if (selectedPassedTests !== selectedAssertions.length) {
 		messages.push(
-			`${projectName}: expected zero skipped tests, found ${String(results.numPendingTests)}.`,
+			`${projectName}: expected all ${String(selectedAssertions.length)} tag-selected tests to pass, found ${String(selectedPassedTests)} passed.`,
 		);
 	}
-	if (results.numTodoTests > 0) {
-		messages.push(
-			`${projectName}: expected zero todo tests, found ${String(results.numTodoTests)}.`,
-		);
-	}
+	const summaryTotalTests = selectedAssertions?.length ?? results.numTotalTests;
+	const summaryPendingTests =
+		selectedAssertions === undefined
+			? results.numPendingTests
+			: Math.max(selectedAssertions.length - selectedPassedTests - selectedTodoTests, 0);
+	const summaryTodoTests =
+		selectedAssertions === undefined ? results.numTodoTests : selectedTodoTests;
+	const summaryTestFiles =
+		selectedTags === undefined
+			? results.testResults.length
+			: results.testResults.filter((testResult) =>
+					testResult.assertionResults.some((assertionResult) =>
+						selectedTags.every((selectedTag) => assertionResult.tags.includes(selectedTag)),
+					),
+				).length;
 
 	return {
 		messages,
@@ -187,12 +243,12 @@ export function validateProofProjectResults(
 			resultFilePath === undefined
 				? undefined
 				: {
-						pendingTests: results.numPendingTests,
+						pendingTests: summaryPendingTests,
 						projectName,
 						resultFilePath,
-						testFiles: results.testResults.length,
-						todoTests: results.numTodoTests,
-						totalTests: results.numTotalTests,
+						testFiles: summaryTestFiles,
+						todoTests: summaryTodoTests,
+						totalTests: summaryTotalTests,
 					},
 	};
 }
@@ -201,12 +257,7 @@ export function formatVitestEvidenceSummary(summary: VitestEvidenceSummary): str
 	return `${summary.projectName}: ${String(summary.totalTests)} tests, ${String(summary.testFiles)} files, ${String(summary.pendingTests)} skipped, ${String(summary.todoTests)} todo, result=${summary.resultFilePath}`;
 }
 
-async function runVitestProject(
-	projectName: string,
-	outputFilePath: string,
-	filters: readonly string[],
-	env: Readonly<Record<string, string>>,
-): Promise<void> {
+async function runVitestProject(options: RunVitestProjectOptions): Promise<void> {
 	await new Promise<void>((resolve, reject) => {
 		const child = spawn(
 			'pnpm',
@@ -216,13 +267,17 @@ async function runVitestProject(
 				'--config',
 				'vitest.config.ts',
 				'--project',
-				projectName,
+				options.projectName,
 				'--reporter=default',
 				'--reporter=json',
-				`--outputFile.json=${outputFilePath}`,
-				...filters,
+				`--outputFile.json=${options.outputFilePath}`,
+				...options.filters,
 			],
-			{ cwd: repositoryRoot, env: { ...process.env, ...env }, stdio: 'inherit' },
+			{
+				cwd: repositoryRoot,
+				env: { ...process.env, ...options.env },
+				stdio: 'inherit',
+			},
 		);
 		child.on('error', reject);
 		child.on('exit', (code, signal) => {
@@ -233,12 +288,49 @@ async function runVitestProject(
 			reject(
 				new Error(
 					signal === null
-						? `Vitest project ${projectName} exited with code ${String(code)}.`
-						: `Vitest project ${projectName} exited with signal ${signal}.`,
+						? `Vitest project ${options.projectName} exited with code ${String(code)}.`
+						: `Vitest project ${options.projectName} exited with signal ${signal}.`,
 				),
 			);
 		});
 	});
+}
+
+function requireSimpleTagName(tagExpression: string): string {
+	if (!/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u.test(tagExpression)) {
+		throw new Error(
+			`Vitest evidence projects support only simple positive tag filters, received: ${tagExpression}`,
+		);
+	}
+	return tagExpression;
+}
+
+export function resolveSimpleVitestTagSelection(
+	filters: readonly string[],
+): readonly string[] | undefined {
+	const selectedTags: string[] = [];
+	for (let filterIndex = 0; filterIndex < filters.length; filterIndex += 1) {
+		const filter = filters[filterIndex];
+		if (filter === '--tags-filter' || filter === '--tagsFilter') {
+			const tagExpression = filters[filterIndex + 1];
+			if (tagExpression === undefined) {
+				throw new Error(`${filter} requires a tag expression.`);
+			}
+			selectedTags.push(requireSimpleTagName(tagExpression));
+			filterIndex += 1;
+			continue;
+		}
+		const tagExpression =
+			filter?.startsWith('--tags-filter=') === true
+				? filter.slice('--tags-filter='.length)
+				: filter?.startsWith('--tagsFilter=') === true
+					? filter.slice('--tagsFilter='.length)
+					: undefined;
+		if (tagExpression !== undefined) {
+			selectedTags.push(requireSimpleTagName(tagExpression));
+		}
+	}
+	return selectedTags.length === 0 ? undefined : [...new Set(selectedTags)];
 }
 
 export async function runEvidenceProject(
@@ -261,11 +353,22 @@ export async function runEvidenceProject(
 		`${JSON.stringify(observability.state, null, '\t')}\n`,
 		'utf8',
 	);
+	const selectedTags = resolveSimpleVitestTagSelection(filters);
 
-	await runVitestProject(projectName, outputFilePath, filters, observability.env);
+	await runVitestProject({
+		env: observability.env,
+		filters,
+		outputFilePath,
+		projectName,
+	});
 
 	const results = parseVitestJsonResults(await readFile(outputFilePath, 'utf8'));
-	return validateProofProjectResults(projectName, results, outputFilePath);
+	return validateProofProjectResults({
+		projectName,
+		resultFilePath: outputFilePath,
+		results,
+		...(selectedTags === undefined ? {} : { selectedTags }),
+	});
 }
 
 export function normalizeVitestFilters(filters: readonly string[]): readonly string[] {

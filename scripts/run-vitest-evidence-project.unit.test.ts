@@ -5,6 +5,7 @@ import {
 	formatVitestEvidenceSummary,
 	normalizeVitestFilters,
 	parseVitestJsonResults,
+	resolveSimpleVitestTagSelection,
 	resolveVitestJsonOutputFilePath,
 	validateProofProjectResults,
 } from './run-vitest-evidence-project.js';
@@ -75,6 +76,24 @@ describe('normalizeVitestFilters', () => {
 			'packages/**/*.vm.e2e.test.ts',
 		]);
 	});
+
+	it('resolves simple positive tag filters in either CLI spelling', () => {
+		expect(
+			resolveSimpleVitestTagSelection([
+				'--tags-filter=managed-gateway-startup',
+				'--tagsFilter',
+				'managed-gateway-lifecycle',
+			]),
+		).toEqual(['managed-gateway-startup', 'managed-gateway-lifecycle']);
+	});
+
+	it('rejects tag expressions that cannot be validated from assertion tags', () => {
+		expect(() =>
+			resolveSimpleVitestTagSelection(['--tags-filter=managed-gateway-startup || smoke']),
+		).toThrowError(
+			'Vitest evidence projects support only simple positive tag filters, received: managed-gateway-startup || smoke',
+		);
+	});
 });
 
 describe('parseVitestJsonResults', () => {
@@ -90,6 +109,7 @@ describe('parseVitestJsonResults', () => {
 							{
 								fullName: 'e2e proof passes',
 								status: 'passed',
+								tags: ['e2e-proof'],
 							},
 						],
 						name: '/repo/packages/example.vm.e2e.test.ts',
@@ -100,16 +120,20 @@ describe('parseVitestJsonResults', () => {
 
 		expect(results.numTotalTests).toBe(1);
 		expect(results.testResults[0]?.assertionResults[0]?.fullName).toBe('e2e proof passes');
+		expect(results.testResults[0]?.assertionResults[0]?.tags).toEqual(['e2e-proof']);
 	});
 });
 
 describe('validateProofProjectResults', () => {
 	it('fails proof projects that run zero tests', () => {
-		const result = validateProofProjectResults('e2e-vm', {
-			numPendingTests: 0,
-			numTodoTests: 0,
-			numTotalTests: 0,
-			testResults: [],
+		const result = validateProofProjectResults({
+			projectName: 'e2e-vm',
+			results: {
+				numPendingTests: 0,
+				numTodoTests: 0,
+				numTotalTests: 0,
+				testResults: [],
+			},
 		});
 
 		expect(result.ok).toBe(false);
@@ -117,11 +141,14 @@ describe('validateProofProjectResults', () => {
 	});
 
 	it('fails proof projects that skip tests', () => {
-		const result = validateProofProjectResults('e2e-openclaw', {
-			numPendingTests: 2,
-			numTodoTests: 1,
-			numTotalTests: 3,
-			testResults: [],
+		const result = validateProofProjectResults({
+			projectName: 'e2e-openclaw',
+			results: {
+				numPendingTests: 2,
+				numTodoTests: 1,
+				numTotalTests: 3,
+				testResults: [],
+			},
 		});
 
 		expect(result.ok).toBe(false);
@@ -132,11 +159,14 @@ describe('validateProofProjectResults', () => {
 	});
 
 	it('passes proof projects with tests and no skips', () => {
-		const result = validateProofProjectResults('e2e-worker', {
-			numPendingTests: 0,
-			numTodoTests: 0,
-			numTotalTests: 4,
-			testResults: [],
+		const result = validateProofProjectResults({
+			projectName: 'e2e-worker',
+			results: {
+				numPendingTests: 0,
+				numTodoTests: 0,
+				numTotalTests: 4,
+				testResults: [],
+			},
 		});
 
 		expect(result.ok).toBe(true);
@@ -144,16 +174,16 @@ describe('validateProofProjectResults', () => {
 	});
 
 	it('includes proof counts and artifact path when result path is provided', () => {
-		const result = validateProofProjectResults(
-			'e2e-vm',
-			{
+		const result = validateProofProjectResults({
+			projectName: 'e2e-vm',
+			resultFilePath: '/repo/tmp/vitest-results/e2e-vm/results.json',
+			results: {
 				numPendingTests: 0,
 				numTodoTests: 0,
 				numTotalTests: 10,
 				testResults: [{ assertionResults: [], name: '/repo/packages/example.vm.e2e.test.ts' }],
 			},
-			'/repo/tmp/vitest-results/e2e-vm/results.json',
-		);
+		});
 
 		expect(result.summary).toEqual({
 			pendingTests: 0,
@@ -169,5 +199,103 @@ describe('validateProofProjectResults', () => {
 		expect(formatVitestEvidenceSummary(result.summary)).toBe(
 			'e2e-vm: 10 tests, 1 files, 0 skipped, 0 todo, result=/repo/tmp/vitest-results/e2e-vm/results.json',
 		);
+	});
+
+	it('ignores nonmatching tag skips when every selected test passed', () => {
+		const result = validateProofProjectResults({
+			projectName: 'e2e-vm-managed-gateway',
+			results: {
+				numPendingTests: 1,
+				numTodoTests: 0,
+				numTotalTests: 2,
+				testResults: [
+					{
+						assertionResults: [
+							{
+								fullName: 'selected startup proof',
+								status: 'passed',
+								tags: ['managed-gateway-startup'],
+							},
+							{
+								fullName: 'unselected lifecycle proof',
+								status: 'skipped',
+								tags: ['managed-gateway-lifecycle'],
+							},
+						],
+						name: '/repo/packages/managed-gateway.vm.e2e.test.ts',
+					},
+				],
+			},
+			selectedTags: ['managed-gateway-startup'],
+		});
+
+		expect(result.ok).toBe(true);
+		expect(result.messages).toEqual([]);
+	});
+
+	it.each(['skipped', 'todo'] as const)(
+		'fails when a tag-selected test is %s',
+		(selectedStatus) => {
+			const result = validateProofProjectResults({
+				projectName: 'e2e-vm-managed-gateway',
+				results: {
+					numPendingTests: selectedStatus === 'skipped' ? 2 : 1,
+					numTodoTests: selectedStatus === 'todo' ? 1 : 0,
+					numTotalTests: 2,
+					testResults: [
+						{
+							assertionResults: [
+								{
+									fullName: `selected ${selectedStatus} startup proof`,
+									status: selectedStatus,
+									tags: ['managed-gateway-startup'],
+								},
+								{
+									fullName: 'unselected lifecycle proof',
+									status: 'skipped',
+									tags: ['managed-gateway-lifecycle'],
+								},
+							],
+							name: '/repo/packages/managed-gateway.vm.e2e.test.ts',
+						},
+					],
+				},
+				selectedTags: ['managed-gateway-startup'],
+			});
+
+			expect(result.ok).toBe(false);
+			expect(result.messages).toEqual([
+				'e2e-vm-managed-gateway: expected all 1 tag-selected tests to pass, found 0 passed.',
+			]);
+		},
+	);
+
+	it('fails when a tag filter selects no tests', () => {
+		const result = validateProofProjectResults({
+			projectName: 'e2e-vm-managed-gateway',
+			results: {
+				numPendingTests: 1,
+				numTodoTests: 0,
+				numTotalTests: 1,
+				testResults: [
+					{
+						assertionResults: [
+							{
+								fullName: 'unselected lifecycle proof',
+								status: 'skipped',
+								tags: ['managed-gateway-lifecycle'],
+							},
+						],
+						name: '/repo/packages/managed-gateway.vm.e2e.test.ts',
+					},
+				],
+			},
+			selectedTags: ['managed-gateway-startup'],
+		});
+
+		expect(result.ok).toBe(false);
+		expect(result.messages).toEqual([
+			'e2e-vm-managed-gateway: expected at least one tag-selected test, found zero.',
+		]);
 	});
 });
