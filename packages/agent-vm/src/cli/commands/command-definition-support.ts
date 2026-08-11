@@ -10,7 +10,7 @@ import {
 import { zod } from '@optique/zod';
 import { z } from 'zod';
 
-import { zoneIdSchema } from '../../config/system-config.js';
+import { zoneIdSchema } from '../../config/system-config-identifier-schemas.js';
 import { projectZodScalarPresence } from '../agent-vm-parser-support.js';
 
 export const systemConfigPathSchema = z.string().min(1).default('config/system.json');
@@ -20,7 +20,11 @@ export function cliDescription(description: string): Message {
 	return [text(description)];
 }
 
-export function createConfigOption(): Parser<'sync', string, unknown> {
+export function createConfigOption(): Parser<
+	'sync',
+	z.infer<typeof systemConfigPathSchema>,
+	unknown
+> {
 	return projectZodScalarPresence({
 		parser: option(
 			'-c',
@@ -35,7 +39,7 @@ export function createConfigOption(): Parser<'sync', string, unknown> {
 	});
 }
 
-export function createZoneOption(): Parser<'sync', string | undefined, unknown> {
+export function createZoneOption(): Parser<'sync', z.infer<typeof optionalZoneIdSchema>, unknown> {
 	return projectZodScalarPresence({
 		parser: option(
 			'-z',

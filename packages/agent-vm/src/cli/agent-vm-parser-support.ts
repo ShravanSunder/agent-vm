@@ -2,7 +2,7 @@ import { map, multiple, optional, withDefault, type Parser } from '@optique/core
 import { ZodDefault, ZodOptional, type z } from 'zod';
 
 interface ProjectZodScalarPresenceProps<TSchema extends z.ZodType, TParserState> {
-	readonly parser: Parser<'sync', z.output<TSchema>, TParserState>;
+	readonly parser: Parser<'sync', z.infer<TSchema>, TParserState>;
 	readonly schema: TSchema;
 }
 
@@ -17,7 +17,7 @@ function assertSchemaDoesNotMixAbsenceWrappers(schema: z.ZodType): void {
 
 export function projectZodScalarPresence<TSchema extends z.ZodType, TParserState>(
 	props: ProjectZodScalarPresenceProps<TSchema, TParserState>,
-): Parser<'sync', z.output<TSchema>>;
+): Parser<'sync', z.infer<TSchema>>;
 export function projectZodScalarPresence(
 	props: ProjectZodScalarPresenceProps<z.ZodType, unknown>,
 ): Parser {
@@ -36,7 +36,7 @@ interface ProjectZodRepeatedOptionProps<
 	TArraySchema extends z.ZodDefault<z.ZodArray<TElementSchema>>,
 	TParserState,
 > {
-	readonly parser: Parser<'sync', z.output<TElementSchema>, TParserState>;
+	readonly parser: Parser<'sync', z.infer<TElementSchema>, TParserState>;
 	readonly schema: TArraySchema;
 }
 
@@ -46,7 +46,7 @@ export function projectZodRepeatedOption<
 	TParserState,
 >(
 	props: ProjectZodRepeatedOptionProps<TElementSchema, TArraySchema, TParserState>,
-): Parser<'sync', z.output<TArraySchema>>;
+): Parser<'sync', z.infer<TArraySchema>>;
 export function projectZodRepeatedOption(
 	props: ProjectZodRepeatedOptionProps<z.ZodType, z.ZodDefault<z.ZodArray<z.ZodType>>, unknown>,
 ): Parser {

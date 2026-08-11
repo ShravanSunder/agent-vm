@@ -135,9 +135,27 @@ describe('Optique CLI architecture audit', () => {
 		expect(findings.join('\n')).toMatch(/fixed default literal.*schema/u);
 	});
 
-	it('rejects schema-named imports from an operation owner', async () => {
+	it('rejects schema-named imports from a module without a pure schema-owner name', async () => {
 		// Arrange
-		const parser = `${admittedParser}\nimport { operationValueSchema } from '../operations/fixture-command.js';\nvoid operationValueSchema;`;
+		const parser = `${admittedParser}\nimport { operationValueSchema } from '../runtime/fixture-runtime.js';\nvoid operationValueSchema;`;
+
+		// Act
+		const findings = await auditFixture([
+			{ content: admittedRoot, relativePath: 'packages/fixture/src/bin/fixture-cli.ts' },
+			{ content: parser, relativePath: 'packages/fixture/src/cli/fixture-cli-parser.ts' },
+			{
+				content: `import { readFile } from 'node:fs/promises';\nimport { z } from 'zod';\nvoid readFile;\nexport const operationValueSchema = z.string();`,
+				relativePath: 'packages/fixture/src/runtime/fixture-runtime.ts',
+			},
+		]);
+
+		// Assert
+		expect(findings.join('\n')).toMatch(/effect owner.*fixture-runtime/u);
+	});
+
+	it('accepts schema-named imports from a pure local schema owner', async () => {
+		// Arrange
+		const parser = `${admittedParser}\nimport { operationValueSchema } from '../schemas/fixture-value-schemas.js';\nvoid operationValueSchema;`;
 
 		// Act
 		const findings = await auditFixture([
@@ -145,12 +163,65 @@ describe('Optique CLI architecture audit', () => {
 			{ content: parser, relativePath: 'packages/fixture/src/cli/fixture-cli-parser.ts' },
 			{
 				content: `import { z } from 'zod';\nexport const operationValueSchema = z.string();`,
-				relativePath: 'packages/fixture/src/operations/fixture-command.ts',
+				relativePath: 'packages/fixture/src/schemas/fixture-value-schemas.ts',
 			},
 		]);
 
 		// Assert
-		expect(findings.join('\n')).toMatch(/effect owner.*fixture-command/u);
+		expect(findings).toEqual([]);
+	});
+
+	it('rejects schema-named imports from an effectful file with a schema-owner name', async () => {
+		// Arrange
+		const parser = `${admittedParser}\nimport { operationValueSchema } from '../schemas/fixture-value-schemas.js';\nvoid operationValueSchema;`;
+
+		// Act
+		const findings = await auditFixture([
+			{ content: admittedRoot, relativePath: 'packages/fixture/src/bin/fixture-cli.ts' },
+			{ content: parser, relativePath: 'packages/fixture/src/cli/fixture-cli-parser.ts' },
+			{
+				content: `import { readFile } from 'node:fs/promises';\nimport { z } from 'zod';\nvoid readFile;\nexport const operationValueSchema = z.string();`,
+				relativePath: 'packages/fixture/src/schemas/fixture-value-schemas.ts',
+			},
+		]);
+
+		// Assert
+		expect(findings.join('\n')).toMatch(/effect owner.*fixture-value-schemas/u);
+	});
+
+	it('rejects an explicit zod output type argument', async () => {
+		// Arrange
+		const parser = admittedParser.replace('zod(z.string()', 'zod<string>(z.string()');
+
+		// Act
+		const findings = await auditFixture([
+			{ content: admittedRoot, relativePath: 'packages/fixture/src/bin/fixture-cli.ts' },
+			{ content: parser, relativePath: 'packages/fixture/src/cli/fixture-cli-parser.ts' },
+		]);
+
+		// Assert
+		expect(findings.join('\n')).toMatch(/infer its output.*without a type argument/u);
+	});
+
+	it('rejects a handwritten scalar Parser output type', async () => {
+		// Arrange
+		const parser = admittedParser
+			.replace(
+				"import { type InferValue, multiple, option, optional, withDefault } from '@optique/core';",
+				"import { type InferValue, multiple, option, optional, type Parser, withDefault } from '@optique/core';",
+			)
+			.concat(
+				"\nfunction createNameParser(): Parser<'sync', string> { return fixtureRootParser; }\nvoid createNameParser;\n",
+			);
+
+		// Act
+		const findings = await auditFixture([
+			{ content: admittedRoot, relativePath: 'packages/fixture/src/bin/fixture-cli.ts' },
+			{ content: parser, relativePath: 'packages/fixture/src/cli/fixture-cli-parser.ts' },
+		]);
+
+		// Assert
+		expect(findings.join('\n')).toMatch(/Zod schema inference.*handwritten scalar/u);
 	});
 
 	it('accepts official Optique subpaths, pure paths, schema-only imports, and presence flags', async () => {
@@ -172,7 +243,7 @@ import { withDefault } from '@optique/core/modifiers';
 import type { InferValue } from '@optique/core/parser';
 import { flag, option } from '@optique/core/primitives';
 import { zod } from '@optique/zod';
-import { fixtureNameSchema, type FixtureDomain } from '../domain/fixture-domain.js';
+import { fixtureNameSchema, type FixtureDomain } from '../domain/fixture-domain-schemas.js';
 void path;
 void object;
 void (undefined as FixtureDomain | undefined);
@@ -192,7 +263,7 @@ void enabled;
 			},
 			{
 				content: `import { z } from 'zod';\nexport const fixtureNameSchema = z.string();\nexport type FixtureDomain = string;`,
-				relativePath: 'packages/fixture/src/domain/fixture-domain.ts',
+				relativePath: 'packages/fixture/src/domain/fixture-domain-schemas.ts',
 			},
 		]);
 

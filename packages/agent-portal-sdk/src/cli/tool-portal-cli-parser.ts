@@ -39,13 +39,13 @@ const toolPortalScopedStdioConfigPathSchema = z.string().min(1).refine(path.isAb
 });
 
 interface ZodScalarPresenceProps<TSchema extends z.ZodType, TState> {
-	readonly parser: Parser<'sync', z.output<TSchema>, TState>;
+	readonly parser: Parser<'sync', z.infer<TSchema>, TState>;
 	readonly schema: TSchema;
 }
 
 export function projectZodScalarPresence<TSchema extends z.ZodType, TState>(
 	props: ZodScalarPresenceProps<TSchema, TState>,
-): Parser<'sync', z.output<TSchema>>;
+): Parser<'sync', z.infer<TSchema>>;
 export function projectZodScalarPresence(props: {
 	readonly parser: Parser;
 	readonly schema: z.ZodType;
@@ -107,7 +107,7 @@ const toolPortalTransportParser = map(
 	([, transport]) => transport,
 );
 
-function createInputJsonOption(): Parser<'sync', string> {
+function createInputJsonOption(): Parser<'sync', z.infer<typeof toolPortalInputJsonSchema>> {
 	return option(
 		'--input-json',
 		zod(toolPortalInputJsonSchema, { metavar: 'JSON', placeholder: '{}' }),

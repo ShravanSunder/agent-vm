@@ -1,7 +1,8 @@
 import { lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
 
-import { agentIdSchema, type SystemConfig } from '../../config/system-config.js';
+import { agentIdSchema } from '../../config/system-config-identifier-schemas.js';
+import type { SystemConfig } from '../../config/system-config.js';
 
 type ZoneConfig = SystemConfig['zones'][number];
 

@@ -26,8 +26,8 @@ export function projectZodScalarPresence<
 	TParserState,
 >(
 	schema: TSchema,
-	parser: Parser<TMode, z.output<TSchema>, TParserState>,
-): Parser<TMode, z.output<TSchema>>;
+	parser: Parser<TMode, z.infer<TSchema>, TParserState>,
+): Parser<TMode, z.infer<TSchema>>;
 export function projectZodScalarPresence(schema: z.ZodType, parser: Parser<Mode>): Parser<Mode> {
 	if (schema instanceof z.ZodOptional) {
 		if (schema.unwrap() instanceof z.ZodDefault) {

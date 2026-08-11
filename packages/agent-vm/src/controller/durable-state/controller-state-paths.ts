@@ -1,6 +1,6 @@
 import path from 'node:path';
 
-import { zoneIdSchema } from '../../config/system-config.js';
+import { zoneIdSchema } from '../../config/system-config-identifier-schemas.js';
 
 export interface ControllerStateRoot {
 	readonly directoryPath: string;

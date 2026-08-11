@@ -2,7 +2,7 @@ import { argument, command, constant, object, option, or } from '@optique/core';
 import { zod } from '@optique/zod';
 import { z } from 'zod';
 
-import { agentIdSchema } from '../../config/system-config.js';
+import { agentIdSchema } from '../../config/system-config-identifier-schemas.js';
 import { projectZodRepeatedOption, projectZodScalarPresence } from '../agent-vm-parser-support.js';
 import {
 	cliDescription,

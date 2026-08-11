@@ -49,16 +49,16 @@ const agentOverridesSchema = z.array(agentOverrideSchema).default([]);
 
 export function projectZodScalarPresence<TSchema extends ZodOptional<z.ZodType>, TState>(
 	schema: TSchema,
-	parser: Parser<'sync', z.output<TSchema>, TState>,
-): Parser<'sync', z.output<TSchema>>;
+	parser: Parser<'sync', z.infer<TSchema>, TState>,
+): Parser<'sync', z.infer<TSchema>>;
 export function projectZodScalarPresence<TSchema extends ZodDefault<z.ZodType>, TState>(
 	schema: TSchema,
-	parser: Parser<'sync', z.output<TSchema>, TState>,
-): Parser<'sync', z.output<TSchema>>;
+	parser: Parser<'sync', z.infer<TSchema>, TState>,
+): Parser<'sync', z.infer<TSchema>>;
 export function projectZodScalarPresence<TSchema extends z.ZodType, TState>(
 	schema: TSchema,
-	parser: Parser<'sync', z.output<TSchema>, TState>,
-): Parser<'sync', z.output<TSchema>>;
+	parser: Parser<'sync', z.infer<TSchema>, TState>,
+): Parser<'sync', z.infer<TSchema>>;
 export function projectZodScalarPresence(schema: z.ZodType, parser: Parser): Parser {
 	if (schema instanceof ZodOptional) {
 		if (schema.unwrap() instanceof ZodDefault) {
@@ -81,8 +81,8 @@ export function projectZodRepeatedOption<
 	TSchema extends ZodDefault<z.ZodArray<TElementSchema>>,
 >(
 	schema: TSchema,
-	elementParser: Parser<'sync', z.output<TElementSchema>, TState>,
-): Parser<'sync', z.output<TSchema>> {
+	elementParser: Parser<'sync', z.infer<TElementSchema>, TState>,
+): Parser<'sync', z.infer<TSchema>> {
 	return map(optional(multiple(elementParser, { min: 1 })), (values) => schema.parse(values));
 }
 
@@ -105,7 +105,7 @@ const generateHelperCommandParser = command(
 		command: constant('generate-helper'),
 		outputDirectory: projectZodScalarPresence(
 			outputDirectorySchema,
-			option('--out', zod<string>(outputDirectorySchema, { placeholder: 'generated' })),
+			option('--out', zod(outputDirectorySchema, { placeholder: 'generated' })),
 		),
 	}),
 );
@@ -115,22 +115,22 @@ const callCommandParser = command(
 	object({
 		agentId: projectZodScalarPresence(
 			agentIdSchema,
-			option('--agent', zod<string>(agentIdSchema, { placeholder: 'agent' })),
+			option('--agent', zod(agentIdSchema, { placeholder: 'agent' })),
 		),
 		command: constant('call'),
 		configDir: projectZodScalarPresence(
 			configDirectorySchema,
-			option('--config-dir', zod<string>(configDirectorySchema, { placeholder: 'config' })),
+			option('--config-dir', zod(configDirectorySchema, { placeholder: 'config' })),
 		),
 		inputPath: projectZodScalarPresence(
 			inputPathSchema,
-			option('--input', zod<string>(inputPathSchema, { placeholder: 'request.json' })),
+			option('--input', zod(inputPathSchema, { placeholder: 'request.json' })),
 		),
 		toolName: projectZodScalarPresence(
 			portalToolSchema,
 			option(
 				'--tool',
-				zod<z.output<typeof portalToolSchema>>(portalToolSchema, {
+				zod(portalToolSchema, {
 					metavar: 'PORTAL_TOOL',
 					placeholder: portalToolSchema.parse(undefined),
 				}),
@@ -155,7 +155,7 @@ const serveCommandParser = command(
 		command: constant('mcp-proxy.serve'),
 		configDir: projectZodScalarPresence(
 			configDirectorySchema,
-			option('--config-dir', zod<string>(configDirectorySchema, { placeholder: 'config' })),
+			option('--config-dir', zod(configDirectorySchema, { placeholder: 'config' })),
 		),
 		port: projectZodScalarPresence(
 			portSchema,
@@ -169,19 +169,16 @@ const printClientConfigCommandParser = command(
 	object({
 		agentId: projectZodScalarPresence(
 			agentIdSchema,
-			option('--agent', zod<string>(agentIdSchema, { placeholder: 'agent' })),
+			option('--agent', zod(agentIdSchema, { placeholder: 'agent' })),
 		),
 		command: constant('mcp-proxy.print-client-config'),
 		configDir: projectZodScalarPresence(
 			configDirectorySchema,
-			option('--config-dir', zod<string>(configDirectorySchema, { placeholder: 'config' })),
+			option('--config-dir', zod(configDirectorySchema, { placeholder: 'config' })),
 		),
 		expectedFingerprint: projectZodScalarPresence(
 			fingerprintSchema,
-			option(
-				'--master-key-fingerprint',
-				zod<string>(fingerprintSchema, { placeholder: 'fingerprint' }),
-			),
+			option('--master-key-fingerprint', zod(fingerprintSchema, { placeholder: 'fingerprint' })),
 		),
 		proxyUrl: projectZodScalarPresence(
 			optionalProxyUrlSchema,

@@ -23,10 +23,8 @@ import {
 } from '../build/managed-vm-build-tooling.js';
 import { loadJsonConfigFile } from '../config/json-config-file.js';
 import { resolveConfigPath } from '../config/path-resolver.js';
-import {
-	createSystemConfigSchemaArtifact,
-	projectNamespaceSchema,
-} from '../config/system-config.js';
+import { projectNamespaceSchema } from '../config/system-config-identifier-schemas.js';
+import { createSystemConfigSchemaArtifact } from '../config/system-config.js';
 import { buildDefaultProjectNamespace } from '../runtime/project-namespace.js';
 import {
 	type GatewayType,

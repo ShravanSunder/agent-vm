@@ -286,8 +286,40 @@ function isApprovedDomainSchemaImport(node: ts.ImportDeclaration, importedModule
 	);
 }
 
-function isKnownOperationOwnerFilePath(filePath: string): boolean {
-	return /(?:^|\/)[^/]+-(?:command|commands|operation|operations)[.]ts$/u.test(filePath);
+function isApprovedLocalSchemaOwnerFilePath(filePath: string): boolean {
+	return /(?:^|\/)[^/]+-schemas?[.]ts$/u.test(filePath);
+}
+
+function isPureLocalSchemaOwnerSourceFile(sourceFile: ts.SourceFile): boolean {
+	if (!isApprovedLocalSchemaOwnerFilePath(sourceFile.fileName)) return false;
+	return sourceFile.statements.every((statement) => {
+		if (!ts.isImportDeclaration(statement) || !isRuntimeImportDeclaration(statement)) return true;
+		return moduleSpecifierText(statement) === 'zod';
+	});
+}
+
+function containsHandwrittenScalarType(typeNode: ts.TypeNode): boolean {
+	if (
+		typeNode.kind === ts.SyntaxKind.StringKeyword ||
+		typeNode.kind === ts.SyntaxKind.NumberKeyword ||
+		typeNode.kind === ts.SyntaxKind.BigIntKeyword
+	) {
+		return true;
+	}
+	return ts.isUnionTypeNode(typeNode) && typeNode.types.some(containsHandwrittenScalarType);
+}
+
+function isHandwrittenSchemaOutputParserType(
+	node: ts.TypeReferenceNode,
+	optiqueCoreBindings: ImportedBindings,
+): boolean {
+	const outputType = node.typeArguments?.[1];
+	return (
+		ts.isIdentifier(node.typeName) &&
+		optiqueCoreBindings.namedBindings.get(node.typeName.text) === 'Parser' &&
+		outputType !== undefined &&
+		containsHandwrittenScalarType(outputType)
+	);
 }
 
 function isApprovedParserRuntimeModule(importedModule: string): boolean {
@@ -534,7 +566,8 @@ function auditInventoryEntry(
 					const approvedDomainSchemaImport =
 						isApprovedDomainSchemaImport(node, importedModule) &&
 						(importedLocalFilePath === undefined ||
-							!isKnownOperationOwnerFilePath(importedLocalFilePath));
+							(importedLocalSourceFile !== undefined &&
+								isPureLocalSchemaOwnerSourceFile(importedLocalSourceFile)));
 					if (
 						importedLocalFilePath !== undefined &&
 						(importedLocalSourceFile === undefined ||
@@ -643,6 +676,17 @@ function auditInventoryEntry(
 				insertFinding(sourceFile, node, 'private Zod _def/_zod representation access is forbidden');
 			}
 			if (
+				parserModule &&
+				ts.isTypeReferenceNode(node) &&
+				isHandwrittenSchemaOutputParserType(node, optiqueCoreBindings)
+			) {
+				insertFinding(
+					sourceFile,
+					node,
+					'Parser output must use Zod schema inference instead of a handwritten scalar type',
+				);
+			}
+			if (
 				cliArchitectureModule &&
 				ts.isPropertyAssignment(node) &&
 				node.name.getText(sourceFile) === 'onExit'
@@ -663,6 +707,17 @@ function auditInventoryEntry(
 				const optiqueCoreCallName = importedCallName(node, optiqueCoreBindings);
 				const cmdTsCallName = importedCallName(node, cmdTsBindings);
 				const localCallName = ts.isIdentifier(node.expression) ? node.expression.text : undefined;
+				if (
+					parserModule &&
+					importedCallName(node, optiqueZodBindings) === 'zod' &&
+					(node.typeArguments?.length ?? 0) > 0
+				) {
+					insertFinding(
+						sourceFile,
+						node,
+						'zod() must infer its output from the supplied schema without a type argument',
+					);
+				}
 				if (parserModule && localCallName === 'projectZodScalarPresence') {
 					const projectedSchemaExpression = projectionSchemaExpression(node);
 					const providedTokenSchemaExpressions = zodSchemaExpressions(node, optiqueZodBindings);
