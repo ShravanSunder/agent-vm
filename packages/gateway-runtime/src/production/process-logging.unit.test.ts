@@ -83,19 +83,38 @@ describe('Gateway Runtime process logging', () => {
 			stderr: captured.stream,
 			observability: disabledObservability(),
 		});
-		getLogger(['agent-vm', 'gateway-runtime', 'process']).warning('Gateway runtime started', {
-			attempt: 1,
-		});
+		const messages = [
+			'Gateway runtime started',
+			'Gateway runtime is ready',
+			'Gateway runtime is serving',
+		];
+		for (const message of messages) {
+			getLogger(['agent-vm', 'gateway-runtime', 'process']).warning(message, { attempt: 1 });
+		}
 
 		await logging.shutdown();
 
-		const record = JSON.parse(captured.text()) as Readonly<Record<string, unknown>>;
-		expect(record).toMatchObject({
-			level: 'WARN',
-			logger: 'agent-vm.gateway-runtime.process',
-			message: 'Gateway runtime started',
-			properties: { attempt: 1 },
-		});
+		const records = captured
+			.text()
+			.trim()
+			.split('\n')
+			.map((line) => JSON.parse(line) as Readonly<Record<string, unknown>>);
+		expect(records).toHaveLength(messages.length);
+		expect(
+			records.map((record) => ({
+				level: record.level,
+				logger: record.logger,
+				message: record.message,
+				properties: record.properties,
+			})),
+		).toEqual(
+			messages.map((message) => ({
+				level: 'WARN',
+				logger: 'agent-vm.gateway-runtime.process',
+				message,
+				properties: { attempt: 1 },
+			})),
+		);
 		expect(captured.ended()).toBe(false);
 	});
 
@@ -119,6 +138,7 @@ describe('Gateway Runtime process logging', () => {
 			observability: otlpHttpObservability(),
 		});
 
+		expect(getOpenTelemetrySink).toHaveBeenCalledTimes(1);
 		expect(getOpenTelemetrySink).toHaveBeenCalledWith(
 			expect.objectContaining({
 				diagnostics: false,
@@ -148,6 +168,8 @@ describe('Gateway Runtime process logging', () => {
 		const getStreamSink = vi.fn(() => createAsyncDisposableSink());
 		const getOpenTelemetrySink = vi.fn((options: OpenTelemetrySinkOptions): OpenTelemetrySink => {
 			expect(options).not.toHaveProperty('otlpExporterConfig');
+			expect(options).toMatchObject({ diagnostics: false });
+			expect(options).not.toHaveProperty('additionalResource');
 			return createAsyncDisposableSink() as OpenTelemetrySink;
 		});
 
@@ -160,6 +182,7 @@ describe('Gateway Runtime process logging', () => {
 			}),
 			stderr: new Writable({ write: (_chunk, _encoding, callback): void => callback() }),
 			observability: disabledObservability(),
+			resourceAttributes: { 'agent_vm.zone.id': 'disabled-zone' },
 		});
 
 		expect(getOpenTelemetrySink).toHaveBeenCalledTimes(1);

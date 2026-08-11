@@ -88,6 +88,36 @@ describe.sequential('worker process logging', () => {
 		await disposeTestLogging();
 	});
 
+	it('flushes multiple rapid records before shutdown completes', async () => {
+		const chunks: string[] = [];
+		const stderr = new Writable({
+			write: (chunk: Uint8Array, _encoding, callback): void => {
+				chunks.push(Buffer.from(chunk).toString('utf8'));
+				setImmediate(callback);
+			},
+		});
+		logging = await configureProcessLogging({ stderr });
+
+		const logger = getLogger(['agent-vm', 'worker', 'rapid-records']);
+		for (const message of ['first record', 'second record', 'third record', 'fourth record']) {
+			logger.info(message);
+		}
+
+		await logging.shutdown();
+
+		const records = chunks
+			.join('')
+			.trim()
+			.split('\n')
+			.map((line) => JSON.parse(line) as Record<string, unknown>);
+		expect(records.map((record) => record.message)).toEqual([
+			'first record',
+			'second record',
+			'third record',
+			'fourth record',
+		]);
+	});
+
 	it('throws on duplicate process setup instead of replacing the active sink', async () => {
 		await configureForTest();
 

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { Writable } from 'node:stream';
 
 import type { SecretResolver } from '@agent-vm/secret-management';
-import { reset } from '@logtape/logtape';
+import { dispose, reset } from '@logtape/logtape';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { deriveAgentBearerToken } from '../portal-auth/agent-bearer-token.js';
@@ -51,6 +51,7 @@ class CaptureWritable extends Writable {
 afterEach(async () => {
 	const serversToClose = startedServers.splice(0);
 	await Promise.all(serversToClose.map((startedServer) => startedServer.close()));
+	await dispose().catch(() => undefined);
 	await reset();
 });
 

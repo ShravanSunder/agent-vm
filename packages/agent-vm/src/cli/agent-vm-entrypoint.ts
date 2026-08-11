@@ -48,55 +48,63 @@ import { runOptiqueCliParser } from './optique-cli-support.js';
 
 export class ReportedCliError extends Error {}
 
+export interface DispatchAgentVmCommandOptions {
+	readonly commandValue: AgentVmCommand;
+	readonly dependencies: CliDependencies;
+	readonly executionOptions?: ControllerStartExecutionOptions | undefined;
+	readonly io: CliIo;
+}
+
 export async function dispatchAgentVmCommand(
-	commandValue: AgentVmCommand,
-	io: CliIo,
-	dependencies: CliDependencies,
-	executionOptions: ControllerStartExecutionOptions = {},
+	options: DispatchAgentVmCommandOptions,
 ): Promise<void> {
-	switch (commandValue.command) {
+	switch (options.commandValue.command) {
 		case 'init':
-			await runInitCommand(io, dependencies, commandValue.options);
+			await runInitCommand(options.io, options.dependencies, options.commandValue.options);
 			return;
 		case 'build':
-			await runBuildCommandOperation(io, dependencies, commandValue.options);
+			await runBuildCommandOperation(
+				options.io,
+				options.dependencies,
+				options.commandValue.options,
+			);
 			return;
 		case 'validate':
-			await runValidateCommand(io, dependencies, commandValue.options);
+			await runValidateCommand(options.io, options.dependencies, options.commandValue.options);
 			return;
 		case 'doctor':
-			await runDoctorCommand(io, dependencies, commandValue.options);
+			await runDoctorCommand(options.io, options.dependencies, options.commandValue.options);
 			return;
 		case 'cache.list':
 		case 'cache.clean':
-			await runCacheCommandOperation(io, dependencies, commandValue);
+			await runCacheCommandOperation(options.io, options.dependencies, options.commandValue);
 			return;
 		case 'config.reset-instructions':
-			await runConfigCommand(io, dependencies, commandValue.options);
+			await runConfigCommand(options.io, options.dependencies, options.commandValue.options);
 			return;
 		case 'manual.update':
-			await runManualCommand(io, dependencies, commandValue.options);
+			await runManualCommand(options.io, options.dependencies, options.commandValue.options);
 			return;
 		case 'migrate.images':
-			await runMigrateCommand(io, dependencies, commandValue.options);
+			await runMigrateCommand(options.io, options.dependencies, options.commandValue.options);
 			return;
 		case 'paths.show':
-			await runPathsCommand(io, dependencies, commandValue.options);
+			await runPathsCommand(options.io, options.dependencies, options.commandValue.options);
 			return;
 		case 'resources.init':
 		case 'resources.validate':
 		case 'resources.update':
-			await runResourcesCommand(io, dependencies, commandValue);
+			await runResourcesCommand(options.io, options.dependencies, options.commandValue);
 			return;
 		case 'backup.create':
 		case 'backup.list':
 		case 'backup.restore':
-			await runBackupCommandOperation(io, dependencies, commandValue);
+			await runBackupCommandOperation(options.io, options.dependencies, options.commandValue);
 			return;
 		case 'auth.1password':
 		case 'auth.codex-harness':
 		case 'auth.openclaw.login':
-			await runAuthCommand(io, dependencies, commandValue);
+			await runAuthCommand(options.io, options.dependencies, options.commandValue);
 			return;
 		case 'controller.start':
 		case 'controller.stop':
@@ -111,31 +119,39 @@ export async function dispatchAgentVmCommand(
 		case 'controller.logs':
 		case 'controller.credentials.check':
 		case 'controller.credentials.refresh':
-			await runControllerCommand(io, dependencies, commandValue, executionOptions);
+			await runControllerCommand({
+				commandValue: options.commandValue,
+				dependencies: options.dependencies,
+				executionOptions: options.executionOptions,
+				io: options.io,
+			});
 			return;
 		default: {
-			const unreachableCommand: never = commandValue;
+			const unreachableCommand: never = options.commandValue;
 			throw new Error(`Unhandled agent-vm command: ${String(unreachableCommand)}`);
 		}
 	}
 }
 
-export async function runAgentVmCli(
-	argv: readonly string[],
-	io: CliIo,
-	dependencies: CliDependencies = defaultCliDependencies,
-	executionOptions: ControllerStartExecutionOptions = {},
-): Promise<void> {
+export interface RunAgentVmCliOptions {
+	readonly argv: readonly string[];
+	readonly dependencies?: CliDependencies | undefined;
+	readonly executionOptions?: ControllerStartExecutionOptions | undefined;
+	readonly io: CliIo;
+}
+
+export async function runAgentVmCli(options: RunAgentVmCliOptions): Promise<void> {
+	const dependencies = options.dependencies ?? defaultCliDependencies;
 	const cliVersion = await (dependencies.resolveCliVersion ?? resolveCliVersion)();
 	const parseErrorChunks: string[] = [];
 	const result = runOptiqueCliParser({
-		argv,
+		argv: options.argv,
 		io: {
-			stdout: io.stdout,
+			stdout: options.io.stdout,
 			stderr: {
 				write: (chunk: string | Uint8Array): boolean => {
 					parseErrorChunks.push(String(chunk));
-					return io.stderr.write(chunk);
+					return options.io.stderr.write(chunk);
 				},
 			},
 		},
@@ -149,7 +165,12 @@ export async function runAgentVmCli(
 	if (result.kind === 'parse-error') {
 		throw new ReportedCliError(parseErrorChunks.join('') || 'CLI argument parsing failed.');
 	}
-	await dispatchAgentVmCommand(result.value, io, dependencies, executionOptions);
+	await dispatchAgentVmCommand({
+		commandValue: result.value,
+		dependencies,
+		executionOptions: options.executionOptions,
+		io: options.io,
+	});
 }
 
 export { loadOptionalLocalEnvironmentFile };
@@ -169,15 +190,15 @@ export function handleCliMainError(
 }
 
 async function main(): Promise<void> {
-	await runAgentVmCli(
-		process.argv.slice(2),
-		{
+	await runAgentVmCli({
+		argv: process.argv.slice(2),
+		dependencies: defaultCliDependencies,
+		executionOptions: { processRoot: true },
+		io: {
 			stderr: process.stderr,
 			stdout: process.stdout,
 		},
-		defaultCliDependencies,
-		{ processRoot: true },
-	);
+	});
 }
 
 export function isCliEntrypoint(importMetaUrl: string, argvEntryPath: string | undefined): boolean {

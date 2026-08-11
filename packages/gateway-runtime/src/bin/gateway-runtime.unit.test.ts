@@ -4,8 +4,36 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
 	runGatewayRuntimeStartLifecycle,
 	type GatewayRuntimeRetirementSignal,
+	type GatewayRuntimeSignalTarget,
 	waitForRetirementSignal,
 } from './gateway-runtime.js';
+
+interface FakeSignalTarget extends GatewayRuntimeSignalTarget {
+	readonly escalatedSignals: NodeJS.Signals[];
+	readonly emit: (signal: 'SIGINT' | 'SIGTERM') => void;
+	readonly listenerCount: (signal: 'SIGINT' | 'SIGTERM') => number;
+}
+
+function createFakeSignalTarget(): FakeSignalTarget {
+	const listeners = new Map<'SIGINT' | 'SIGTERM', () => void>();
+	const escalatedSignals: NodeJS.Signals[] = [];
+	return {
+		escalate: (signal): void => {
+			escalatedSignals.push(signal);
+		},
+		escalatedSignals,
+		emit: (signal): void => {
+			listeners.get(signal)?.();
+		},
+		listenerCount: (signal): number => (listeners.has(signal) ? 1 : 0),
+		off: (signal, listener): void => {
+			if (listeners.get(signal) === listener) listeners.delete(signal);
+		},
+		on: (signal, listener): void => {
+			listeners.set(signal, listener);
+		},
+	};
+}
 
 afterEach(async () => {
 	await dispose().catch(() => undefined);
@@ -30,18 +58,50 @@ async function configureDiagnosticCapture(records: LogRecord[]): Promise<void> {
 }
 
 describe('Gateway Runtime start lifecycle', () => {
-	it('keeps the signal listener for a pending close and cleans it after retirement', async () => {
-		const initialTermListenerCount = process.listenerCount('SIGTERM');
-		const pendingSignal = waitForRetirementSignal();
+	it('resolves the first signal, escalates a repeated signal, and cleans up idempotently', async () => {
+		const signalTarget = createFakeSignalTarget();
+		const pendingSignal = waitForRetirementSignal(signalTarget);
 
-		process.emit('SIGTERM');
+		signalTarget.emit('SIGTERM');
 		const firstSignal = await pendingSignal;
-		process.emit('SIGTERM');
 
 		expect(firstSignal).toMatchObject({ signal: 'SIGTERM' });
-		expect(process.listenerCount('SIGTERM')).toBeGreaterThan(initialTermListenerCount);
+		expect(signalTarget.listenerCount('SIGTERM')).toBe(1);
+		signalTarget.emit('SIGTERM');
+		expect(signalTarget.escalatedSignals).toEqual(['SIGTERM']);
+		expect(signalTarget.listenerCount('SIGTERM')).toBe(0);
 		firstSignal.cleanup();
-		expect(process.listenerCount('SIGTERM')).toBe(initialTermListenerCount);
+		firstSignal.cleanup();
+		expect(signalTarget.listenerCount('SIGTERM')).toBe(0);
+	});
+
+	it('preserves logging configuration failure as the error cause', async () => {
+		const configurationFailure = new Error('secret logging configuration detail');
+
+		await expect(
+			runGatewayRuntimeStartLifecycle({
+				config: { observability: { kind: 'disabled' } },
+				configureLogging: async (): Promise<never> => {
+					throw configurationFailure;
+				},
+				startService: async () => ({
+					readiness: { kind: 'ready' },
+					retire: async (): Promise<Readonly<Record<string, string>>> => ({
+						kind: 'retired',
+					}),
+				}),
+				waitForRetirementSignal: async (): Promise<GatewayRuntimeRetirementSignal> => ({
+					cleanup: (): void => undefined,
+					signal: 'SIGTERM',
+				}),
+				writeFatalEvidence: async (): Promise<void> => undefined,
+				writeStderr: (): void => undefined,
+				writeStdout: (): void => undefined,
+			}),
+		).rejects.toMatchObject({
+			cause: configurationFailure,
+			message: 'Gateway runtime process logging setup failed.',
+		});
 	});
 
 	it('configures logging before service start and disposes it after retirement', async () => {
@@ -140,12 +200,16 @@ describe('Gateway Runtime start lifecycle', () => {
 	it('reports secondary LogTape shutdown failure after startup failure', async () => {
 		const stderr: string[] = [];
 		const fatalEvidence = vi.fn(async (): Promise<void> => undefined);
+		const events: string[] = [];
+		let loggingLive = true;
 
 		await expect(
 			runGatewayRuntimeStartLifecycle({
 				config: { observability: { kind: 'disabled' } },
 				configureLogging: async (): Promise<{ shutdown: () => Promise<void> }> => ({
 					shutdown: async (): Promise<void> => {
+						events.push('shutdown');
+						loggingLive = false;
 						throw new Error('sink failure');
 					},
 				}),
@@ -156,7 +220,10 @@ describe('Gateway Runtime start lifecycle', () => {
 					cleanup: (): void => undefined,
 					signal: 'SIGTERM',
 				}),
-				writeFatalEvidence: fatalEvidence,
+				writeFatalEvidence: async (): Promise<void> => {
+					events.push(`fatal-evidence:${String(loggingLive)}`);
+					await fatalEvidence();
+				},
 				writeStderr: (text: string): void => {
 					stderr.push(text);
 				},
@@ -165,7 +232,48 @@ describe('Gateway Runtime start lifecycle', () => {
 		).rejects.toThrow('primary startup failure');
 
 		expect(fatalEvidence).toHaveBeenCalledTimes(1);
+		expect(events).toEqual(['fatal-evidence:true', 'shutdown']);
 		expect(stderr).toEqual(['Gateway runtime logging shutdown failed.\n']);
+	});
+
+	it('keeps startup failure primary when fatal evidence fails and emits bounded evidence diagnostics', async () => {
+		const records: LogRecord[] = [];
+		const stderr: string[] = [];
+		await configureDiagnosticCapture(records);
+
+		await expect(
+			runGatewayRuntimeStartLifecycle({
+				config: { observability: { kind: 'disabled' } },
+				configureLogging: async (): Promise<{ shutdown: () => Promise<void> }> => ({
+					shutdown: async (): Promise<void> => undefined,
+				}),
+				startService: async (): Promise<never> => {
+					throw new Error('secret startup detail');
+				},
+				waitForRetirementSignal: async (): Promise<GatewayRuntimeRetirementSignal> => ({
+					cleanup: (): void => undefined,
+					signal: 'SIGTERM',
+				}),
+				writeFatalEvidence: async (): Promise<void> => {
+					throw new Error('secret evidence detail');
+				},
+				writeStderr: (text: string): void => {
+					stderr.push(text);
+				},
+				writeStdout: (): void => undefined,
+			}),
+		).rejects.toThrow('secret startup detail');
+
+		expect(records).toContainEqual(
+			expect.objectContaining({
+				category: ['agent-vm', 'gateway-runtime', 'process'],
+				level: 'error',
+				properties: { event: 'fatal-evidence-write-failed', failureClass: 'startup' },
+				rawMessage: 'Gateway runtime fatal evidence write failed.',
+			}),
+		);
+		expect(JSON.stringify(records)).not.toContain('secret evidence detail');
+		expect(stderr).toEqual([]);
 	});
 
 	it('logs startup failure without capturing the thrown error or changing fatal evidence', async () => {

@@ -12,6 +12,7 @@ import { writePreparedManagedVmImage } from '../../build/prepared-gondolin-image
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../../config/system-config.js';
 import type { ControllerRuntime } from '../../controller/controller-runtime-types.js';
 import type { ProcessLoggingHandle } from '../../observability/process-logging.js';
+import type { ControllerOfflineCleanupResult } from '../../operations/controller-offline-cleanup.js';
 import { defaultCliDependencies } from '../agent-vm-cli-support.js';
 import {
 	createProcessShutdownSignalWaiter,
@@ -19,6 +20,8 @@ import {
 	resolveControllerProcessLoggingStderr,
 	runControllerCommand,
 	runControllerStartLifecycle,
+	type ProcessShutdownSignalWaiter,
+	type ProcessShutdownSignalTarget,
 } from './controller-definition.js';
 
 const temporaryDirectories: string[] = [];
@@ -157,6 +160,24 @@ async function createGatewayImageCacheFixture(
 	);
 }
 
+function createCompleteCleanupResult(
+	systemConfig: LoadedSystemConfig,
+): ControllerOfflineCleanupResult {
+	const zone = systemConfig.zones.find((candidateZone) => candidateZone.id === 'coding-agent');
+	if (zone === undefined) {
+		throw new Error('Expected the coding-agent fixture zone.');
+	}
+	return {
+		results: [
+			{
+				ownershipDisposition: 'complete',
+				stateDir: zone.gateway.stateDir,
+				zoneId: zone.id,
+			},
+		],
+	};
+}
+
 afterEach(async () => {
 	await Promise.all(
 		temporaryDirectories
@@ -274,6 +295,13 @@ function createLifecycleLoggingHandle(shutdown: () => Promise<void>): ProcessLog
 	return { shutdown };
 }
 
+function createResolvedShutdownSignalWaiter(): ProcessShutdownSignalWaiter {
+	return {
+		signal: Promise.resolve(),
+		cleanup: vi.fn(),
+	};
+}
+
 describe('runControllerStartLifecycle', () => {
 	it('uses the injected full stderr stream for process-root logging', () => {
 		const injectedStderr = new Writable({
@@ -309,8 +337,11 @@ describe('runControllerStartLifecycle', () => {
 				events.push('runtime.close');
 			}),
 			selectedZoneId: 'zone-1',
-			waitForShutdownSignal: async () => {
-				events.push('signal');
+			shutdownSignalWaiter: {
+				signal: Promise.resolve().then(() => {
+					events.push('signal');
+				}),
+				cleanup: vi.fn(),
 			},
 		});
 
@@ -333,18 +364,18 @@ describe('runControllerStartLifecycle', () => {
 				}),
 		);
 		let resolveSignal: (() => void) | undefined;
-		const waitForShutdownSignal = vi.fn(
-			() =>
-				new Promise<void>((resolve) => {
-					resolveSignal = resolve;
-				}),
-		);
+		const shutdownSignalWaiter: ProcessShutdownSignalWaiter = {
+			signal: new Promise<void>((resolve) => {
+				resolveSignal = resolve;
+			}),
+			cleanup: vi.fn(),
+		};
 		const lifecycle = runControllerStartLifecycle({
 			io: { stderr: { write: () => true }, stdout: { write: () => true } },
 			logging: createLifecycleLoggingHandle(async () => {}),
 			runtime: createLifecycleRuntime(close),
 			selectedZoneId: 'zone-1',
-			waitForShutdownSignal,
+			shutdownSignalWaiter,
 		});
 
 		resolveSignal?.();
@@ -353,7 +384,7 @@ describe('runControllerStartLifecycle', () => {
 		await lifecycle;
 
 		expect(close).toHaveBeenCalledOnce();
-		expect(waitForShutdownSignal).toHaveBeenCalledOnce();
+		expect(shutdownSignalWaiter.cleanup).toHaveBeenCalledOnce();
 	});
 
 	it('keeps a product close error primary when logging disposal also fails', async () => {
@@ -378,7 +409,7 @@ describe('runControllerStartLifecycle', () => {
 					throw productError;
 				}),
 				selectedZoneId: 'zone-1',
-				waitForShutdownSignal: async () => {},
+				shutdownSignalWaiter: createResolvedShutdownSignalWaiter(),
 			}),
 		).rejects.toBe(productError);
 
@@ -386,8 +417,17 @@ describe('runControllerStartLifecycle', () => {
 	});
 
 	it('shares one close path across a second signal while product shutdown is pending', async () => {
-		const initialSigintListenerCount = process.listenerCount('SIGINT');
-		const initialSigtermListenerCount = process.listenerCount('SIGTERM');
+		const listeners = new Map<'SIGINT' | 'SIGTERM', () => void>();
+		const target: ProcessShutdownSignalTarget = {
+			on: (signal, listener) => {
+				listeners.set(signal, listener);
+			},
+			off: (signal, listener) => {
+				if (listeners.get(signal) === listener) {
+					listeners.delete(signal);
+				}
+			},
+		};
 		let resolveClose: (() => void) | undefined;
 		const close = vi.fn(
 			() =>
@@ -397,31 +437,220 @@ describe('runControllerStartLifecycle', () => {
 		);
 		const loggingShutdown = vi.fn(async () => {});
 		const lifecycle = runControllerStartLifecycle({
-			createShutdownSignalWaiter: createProcessShutdownSignalWaiter,
 			io: { stderr: { write: () => true }, stdout: { write: () => true } },
 			logging: createLifecycleLoggingHandle(loggingShutdown),
 			runtime: createLifecycleRuntime(close),
 			selectedZoneId: 'zone-1',
+			shutdownSignalWaiter: createProcessShutdownSignalWaiter({ target }),
 		});
 
-		process.emit('SIGTERM');
+		listeners.get('SIGTERM')?.();
 		await Promise.resolve();
-		process.emit('SIGINT');
+		listeners.get('SIGINT')?.();
 		expect(close).toHaveBeenCalledOnce();
 		expect(loggingShutdown).not.toHaveBeenCalled();
-		expect(process.listenerCount('SIGINT')).toBe(initialSigintListenerCount + 1);
-		expect(process.listenerCount('SIGTERM')).toBe(initialSigtermListenerCount + 1);
+		expect(listeners).toHaveProperty('size', 2);
 
 		resolveClose?.();
 		await lifecycle;
 
 		expect(loggingShutdown).toHaveBeenCalledOnce();
-		expect(process.listenerCount('SIGINT')).toBe(initialSigintListenerCount);
-		expect(process.listenerCount('SIGTERM')).toBe(initialSigtermListenerCount);
+		expect(listeners).toHaveProperty('size', 0);
+	});
+
+	it('resolves and cleans an injected process shutdown signal waiter', async () => {
+		const listeners = new Map<'SIGINT' | 'SIGTERM', () => void>();
+		const target: ProcessShutdownSignalTarget = {
+			on: (signal, listener) => {
+				listeners.set(signal, listener);
+			},
+			off: (signal, listener) => {
+				if (listeners.get(signal) === listener) {
+					listeners.delete(signal);
+				}
+			},
+		};
+		const waiter = createProcessShutdownSignalWaiter({ target });
+
+		listeners.get('SIGTERM')?.();
+		await waiter.signal;
+		waiter.cleanup();
+
+		expect(listeners).toHaveProperty('size', 0);
+	});
+
+	it('registers the shutdown waiter before startup and handles a signal during startup', async () => {
+		const events: string[] = [];
+		const systemConfig = await createGatewayImageCacheFixture('signal-during-startup-fingerprint');
+		const shutdownSignalWaiter = createResolvedShutdownSignalWaiter();
+		const createShutdownSignalWaiter = vi.fn(() => {
+			events.push('create-waiter');
+			return shutdownSignalWaiter;
+		});
+		const startControllerRuntime = vi.fn(async () => {
+			events.push('start-runtime');
+			return createLifecycleRuntime(async () => {
+				events.push('runtime.close');
+			});
+		});
+		const loggingShutdown = vi.fn(async () => {
+			events.push('logging.shutdown');
+		});
+
+		await runControllerCommand({
+			commandValue: {
+				command: 'controller.start',
+				options: { config: systemConfig.systemConfigPath, zone: 'coding-agent' },
+			},
+			dependencies: {
+				...defaultCliDependencies,
+				isGatewayImageCached: async () => true,
+				loadSystemConfig: async () => systemConfig,
+				startControllerRuntime,
+			},
+			executionOptions: {
+				configureProcessLogging: async () => createLifecycleLoggingHandle(loggingShutdown),
+				createShutdownSignalWaiter,
+				processRoot: true,
+			},
+			io: {
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+		});
+
+		expect(events).toEqual(['create-waiter', 'start-runtime', 'runtime.close', 'logging.shutdown']);
+		expect(createShutdownSignalWaiter).toHaveBeenCalledOnce();
+		expect(shutdownSignalWaiter.cleanup).toHaveBeenCalledOnce();
+	});
+
+	it('cleans the shutdown waiter when runtime startup fails', async () => {
+		const systemConfig = await createGatewayImageCacheFixture('startup-failure-waiter-fingerprint');
+		const shutdownSignalWaiter = createResolvedShutdownSignalWaiter();
+		const startError = new Error('runtime startup failed');
+
+		await expect(
+			runControllerCommand({
+				commandValue: {
+					command: 'controller.start',
+					options: { config: systemConfig.systemConfigPath, zone: 'coding-agent' },
+				},
+				dependencies: {
+					...defaultCliDependencies,
+					isGatewayImageCached: async () => true,
+					loadSystemConfig: async () => systemConfig,
+					startControllerRuntime: async () => {
+						throw startError;
+					},
+				},
+				executionOptions: {
+					configureProcessLogging: async () => createLifecycleLoggingHandle(async () => {}),
+					createShutdownSignalWaiter: () => shutdownSignalWaiter,
+					processRoot: true,
+				},
+				io: {
+					stderr: { write: () => true },
+					stdout: { write: () => true },
+				},
+			}),
+		).rejects.toBe(startError);
+
+		expect(shutdownSignalWaiter.cleanup).toHaveBeenCalledOnce();
 	});
 });
 
 describe('controller process-root setup', () => {
+	it('configures and shuts down process logging around controller cleanup', async () => {
+		const systemConfig = await createGatewayImageCacheFixture('cleanup-logging-fingerprint');
+		const events: string[] = [];
+		const stdoutChunks: string[] = [];
+		const configureProcessLogging = vi.fn(async () => ({
+			shutdown: async () => {
+				events.push('logging.shutdown');
+			},
+		}));
+		const cleanupResult = createCompleteCleanupResult(systemConfig);
+
+		await runControllerCommand({
+			commandValue: {
+				command: 'controller.cleanup',
+				options: {
+					config: systemConfig.systemConfigPath,
+					force: false,
+					zone: 'coding-agent',
+				},
+			},
+			dependencies: {
+				...defaultCliDependencies,
+				loadSystemConfig: async () => systemConfig,
+				runControllerOfflineCleanup: async () => {
+					events.push('cleanup');
+					return cleanupResult;
+				},
+			},
+			executionOptions: {
+				configureProcessLogging,
+				processRoot: true,
+			},
+			io: {
+				stderr: { write: () => true },
+				stdout: {
+					write: (chunk: string | Uint8Array) => {
+						stdoutChunks.push(String(chunk));
+						return true;
+					},
+				},
+			},
+		});
+
+		expect(events).toEqual(['cleanup', 'logging.shutdown']);
+		expect(configureProcessLogging).toHaveBeenCalledOnce();
+		expect(stdoutChunks).toEqual([`${JSON.stringify(cleanupResult, null, 2)}\n`]);
+	});
+
+	it('preserves cleanup results when process logging setup fails', async () => {
+		const systemConfig = await createGatewayImageCacheFixture(
+			'cleanup-logging-failure-fingerprint',
+		);
+		const stderrChunks: string[] = [];
+		const cleanupResult = createCompleteCleanupResult(systemConfig);
+		const configureProcessLogging = vi.fn(async () => {
+			throw new Error('logging setup failed');
+		});
+
+		await runControllerCommand({
+			commandValue: {
+				command: 'controller.cleanup',
+				options: {
+					config: systemConfig.systemConfigPath,
+					force: false,
+					zone: 'coding-agent',
+				},
+			},
+			dependencies: {
+				...defaultCliDependencies,
+				loadSystemConfig: async () => systemConfig,
+				runControllerOfflineCleanup: async () => cleanupResult,
+			},
+			executionOptions: {
+				configureProcessLogging,
+				processRoot: true,
+			},
+			io: {
+				stderr: {
+					write: (chunk: string | Uint8Array) => {
+						stderrChunks.push(String(chunk));
+						return true;
+					},
+				},
+				stdout: { write: () => true },
+			},
+		});
+
+		expect(configureProcessLogging).toHaveBeenCalledOnce();
+		expect(stderrChunks).toEqual(['Controller process logging setup failed.\n']);
+	});
+
 	it('reports a bounded startup failure when process logging setup rejects', async () => {
 		const systemConfig = await createGatewayImageCacheFixture('setup-failure-fingerprint');
 		const stderrChunks: string[] = [];
@@ -430,8 +659,23 @@ describe('controller process-root setup', () => {
 		);
 
 		await expect(
-			runControllerCommand(
-				{
+			runControllerCommand({
+				commandValue: {
+					command: 'controller.start',
+					options: { config: systemConfig.systemConfigPath, zone: 'coding-agent' },
+				},
+				dependencies: {
+					...defaultCliDependencies,
+					isGatewayImageCached: async () => true,
+					loadSystemConfig: async () => systemConfig,
+				},
+				executionOptions: {
+					configureProcessLogging: async () => {
+						throw rawSetupError;
+					},
+					processRoot: true,
+				},
+				io: {
 					stderr: {
 						write: (chunk: string | Uint8Array): boolean => {
 							stderrChunks.push(String(chunk));
@@ -440,22 +684,7 @@ describe('controller process-root setup', () => {
 					},
 					stdout: { write: () => true },
 				},
-				{
-					...defaultCliDependencies,
-					isGatewayImageCached: async () => true,
-					loadSystemConfig: async () => systemConfig,
-				},
-				{
-					command: 'controller.start',
-					options: { config: systemConfig.systemConfigPath, zone: 'coding-agent' },
-				},
-				{
-					configureProcessLogging: async () => {
-						throw rawSetupError;
-					},
-					processRoot: true,
-				},
-			),
+			}),
 		).rejects.toThrow('Controller process logging setup failed.');
 
 		expect(stderrChunks).toEqual([]);

@@ -34,12 +34,15 @@ export interface WorkerProcessIo {
 	readonly stderr: Writable;
 }
 
-export async function dispatchWorkerCommand(
-	commandValue: WorkerCommand,
-	io: CliIo,
-	operations: WorkerCliOperations = defaultWorkerCliOperations,
-	logging?: ProcessLoggingHandle,
-): Promise<void> {
+export interface DispatchWorkerCommandOptions {
+	readonly commandValue: WorkerCommand;
+	readonly io: CliIo;
+	readonly operations?: WorkerCliOperations | undefined;
+	readonly logging?: ProcessLoggingHandle | undefined;
+}
+
+export async function dispatchWorkerCommand(options: DispatchWorkerCommandOptions): Promise<void> {
+	const { commandValue, io, operations = defaultWorkerCliOperations, logging } = options;
 	switch (commandValue.command) {
 		case 'serve':
 			await operations.runServe(commandValue.options, io, logging);
@@ -54,12 +57,20 @@ export async function dispatchWorkerCommand(
 	}
 }
 
-export async function runAgentVmWorkerCli(
-	argv: readonly string[],
-	io: CliIo = { stdout: process.stdout, stderr: process.stderr },
-	operations: WorkerCliOperations = defaultWorkerCliOperations,
-	logging?: ProcessLoggingHandle,
-): Promise<void> {
+export interface RunAgentVmWorkerCliOptions {
+	readonly argv: readonly string[];
+	readonly io?: CliIo | undefined;
+	readonly operations?: WorkerCliOperations | undefined;
+	readonly logging?: ProcessLoggingHandle | undefined;
+}
+
+export async function runAgentVmWorkerCli(options: RunAgentVmWorkerCliOptions): Promise<void> {
+	const {
+		argv,
+		io = { stdout: process.stdout, stderr: process.stderr },
+		operations = defaultWorkerCliOperations,
+		logging,
+	} = options;
 	const parseErrorChunks: string[] = [];
 	const result = runOptiqueCliParser({
 		argv,
@@ -81,7 +92,7 @@ export async function runAgentVmWorkerCli(
 	if (result.kind === 'parse-error') {
 		throw new ReportedCliError(parseErrorChunks.join('') || 'CLI argument parsing failed.');
 	}
-	await dispatchWorkerCommand(result.value, io, operations, logging);
+	await dispatchWorkerCommand({ commandValue: result.value, io, operations, logging });
 }
 
 export function handleCliMainError(
@@ -112,16 +123,16 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<v
 	let logging: ProcessLoggingHandle;
 	try {
 		logging = await configureLogging({ stderr: options.io.stderr });
-	} catch {
-		throw new Error('Worker process logging setup failed.');
+	} catch (error: unknown) {
+		throw new Error('Worker process logging setup failed.', { cause: error });
 	}
 	try {
-		await runAgentVmWorkerCli(
-			options.argv,
-			options.io,
-			options.operations ?? defaultWorkerCliOperations,
+		await runAgentVmWorkerCli({
+			argv: options.argv,
+			io: options.io,
+			operations: options.operations ?? defaultWorkerCliOperations,
 			logging,
-		);
+		});
 	} finally {
 		await logging.shutdown().catch(() => {
 			options.io.stderr.write(workerProcessLoggingShutdownFailureMessage);

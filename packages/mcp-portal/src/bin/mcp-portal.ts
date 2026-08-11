@@ -392,8 +392,8 @@ async function dispatchMcpPortalCommand(
 			try {
 				const configureLogging = runtimeProps.configureProcessLogging ?? configureProcessLogging;
 				logging = await configureLogging({ stderr: process.stderr });
-			} catch {
-				throw new Error('mcp-portal: process logging setup failed.');
+			} catch (error: unknown) {
+				throw new Error('mcp-portal: process logging setup failed.', { cause: error });
 			}
 			let loggingShutdownAttempted = false;
 			const shutdownLogging = async (): Promise<void> => {

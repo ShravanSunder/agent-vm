@@ -119,11 +119,11 @@ describe('agent-vm-worker cli', () => {
 				receivedOptions.push(options);
 			},
 		};
-		await runAgentVmWorkerCli(
-			['serve', '--config', '', '--state-dir', ''],
-			createSilentIo(),
+		await runAgentVmWorkerCli({
+			argv: ['serve', '--config', '', '--state-dir', ''],
+			io: createSilentIo(),
 			operations,
-		);
+		});
 
 		expect(receivedOptions).toEqual([{ config: '', port: 18_789, stateDir: '' }]);
 	});
@@ -177,7 +177,7 @@ describe('agent-vm-worker cli', () => {
 			},
 		};
 
-		await runAgentVmWorkerCli(['serve', '--port', '19123'], io, operations);
+		await runAgentVmWorkerCli({ argv: ['serve', '--port', '19123'], io, operations });
 
 		expect(serveCalls).toBe(1);
 		expect(receivedIo).toBe(io);
@@ -208,6 +208,7 @@ describe('agent-vm-worker cli', () => {
 
 	it('keeps process logging setup failure bounded at the worker root', async () => {
 		const stderrChunks: string[] = [];
+		const setupError = new Error('connect https://collector.invalid/v1/logs with stack details');
 		let startupError: unknown;
 		try {
 			await runWorkerProcess({
@@ -224,7 +225,7 @@ describe('agent-vm-worker cli', () => {
 					}),
 				},
 				configureProcessLogging: async () => {
-					throw new Error('connect https://collector.invalid/v1/logs with stack details');
+					throw setupError;
 				},
 			});
 		} catch (error: unknown) {
@@ -232,7 +233,10 @@ describe('agent-vm-worker cli', () => {
 		}
 
 		expect(startupError).toBeInstanceOf(Error);
-		expect((startupError as Error).message).toBe('Worker process logging setup failed.');
+		expect(startupError).toMatchObject({
+			message: 'Worker process logging setup failed.',
+			cause: setupError,
+		});
 		handleCliMainError(startupError, {
 			write: (chunk: string | Uint8Array): boolean => {
 				stderrChunks.push(String(chunk));
@@ -274,23 +278,26 @@ describe('agent-vm-worker cli', () => {
 			runServe: async (): Promise<void> => undefined,
 		};
 
-		await expect(runAgentVmWorkerCli(['health'], createSilentIo(), operations)).rejects.toThrow(
-			'health operation failed',
-		);
+		await expect(
+			runAgentVmWorkerCli({ argv: ['health'], io: createSilentIo(), operations }),
+		).rejects.toThrow('health operation failed');
 	});
 
 	it('prints top-level help through injected stdout', async () => {
 		const stdoutChunks: string[] = [];
 
 		await expect(
-			runAgentVmWorkerCli(['--help'], {
-				stdout: {
-					write: (chunk: string | Uint8Array) => {
-						stdoutChunks.push(String(chunk));
-						return true;
+			runAgentVmWorkerCli({
+				argv: ['--help'],
+				io: {
+					stdout: {
+						write: (chunk: string | Uint8Array) => {
+							stdoutChunks.push(String(chunk));
+							return true;
+						},
 					},
+					stderr: { write: () => true },
 				},
-				stderr: { write: () => true },
 			}),
 		).resolves.toBeUndefined();
 
@@ -303,14 +310,17 @@ describe('agent-vm-worker cli', () => {
 		const stdoutChunks: string[] = [];
 
 		await expect(
-			runAgentVmWorkerCli(['serve', '--help'], {
-				stdout: {
-					write: (chunk: string | Uint8Array) => {
-						stdoutChunks.push(String(chunk));
-						return true;
+			runAgentVmWorkerCli({
+				argv: ['serve', '--help'],
+				io: {
+					stdout: {
+						write: (chunk: string | Uint8Array) => {
+							stdoutChunks.push(String(chunk));
+							return true;
+						},
 					},
+					stderr: { write: () => true },
 				},
-				stderr: { write: () => true },
 			}),
 		).resolves.toBeUndefined();
 
@@ -329,9 +339,9 @@ describe('agent-vm-worker cli', () => {
 			runServe: async (): Promise<void> => undefined,
 		};
 
-		await runAgentVmWorkerCli(
-			['health', '-h'],
-			{
+		await runAgentVmWorkerCli({
+			argv: ['health', '-h'],
+			io: {
 				stdout: {
 					write: (chunk: string | Uint8Array) => {
 						stdoutChunks.push(String(chunk));
@@ -341,7 +351,7 @@ describe('agent-vm-worker cli', () => {
 				stderr: { write: () => true },
 			},
 			operations,
-		);
+		});
 
 		expect(stdoutChunks.join('')).toContain('health');
 		expect(stdoutChunks.join('')).toContain('--port');
@@ -354,14 +364,17 @@ describe('agent-vm-worker cli', () => {
 		);
 		const stdoutChunks: string[] = [];
 
-		await runAgentVmWorkerCli(['health'], {
-			stdout: {
-				write: (chunk: string | Uint8Array) => {
-					stdoutChunks.push(String(chunk));
-					return true;
+		await runAgentVmWorkerCli({
+			argv: ['health'],
+			io: {
+				stdout: {
+					write: (chunk: string | Uint8Array) => {
+						stdoutChunks.push(String(chunk));
+						return true;
+					},
 				},
+				stderr: { write: () => true },
 			},
-			stderr: { write: () => true },
 		});
 
 		expect(stdoutChunks.join('')).toBe('{\n  "status": "ok"\n}\n');
@@ -374,12 +387,15 @@ describe('agent-vm-worker cli', () => {
 		const stderrChunks: string[] = [];
 
 		await expect(
-			runAgentVmWorkerCli(['health', '--port', '19999'], {
-				stdout: { write: () => true },
-				stderr: {
-					write: (chunk: string | Uint8Array) => {
-						stderrChunks.push(String(chunk));
-						return true;
+			runAgentVmWorkerCli({
+				argv: ['health', '--port', '19999'],
+				io: {
+					stdout: { write: () => true },
+					stderr: {
+						write: (chunk: string | Uint8Array) => {
+							stderrChunks.push(String(chunk));
+							return true;
+						},
 					},
 				},
 			}),

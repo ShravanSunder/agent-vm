@@ -327,8 +327,10 @@ agent-vm entrypoint
 
 `controller-runtime.ts`, heartbeat, git, lease, health, route, zone-runtime,
 gateway-recovery, and resource-loader helpers lose only their direct general
-diagnostic writer. The repo-resource loader's generated child stdout and its
-JSON parse protocol remain unchanged.
+diagnostic writer. `gateway-zone-orchestrator.ts` retains its injected
+`writeLog` seam, but that callback is supplied by the controller-owned LogTape
+adapter rather than becoming a second logging owner. The repo-resource
+loader's generated child stdout and its JSON parse protocol remain unchanged.
 
 ### Worker diagnostics
 
@@ -511,10 +513,13 @@ The concrete root edges are explicit:
   the portal server before disposing LogTape. CLI-only commands that do not
   start a server configure no root sink and preserve their protected output.
 
-If disposal fails, the root emits a bounded fixed diagnostic only when the
-stderr path is still available and preserves the product's startup/retirement
-or CLI status. Repeated shutdown signals share one promise; no second global
-dispose or replacement configuration is attempted.
+If disposal fails, the root writes a bounded fixed diagnostic through the
+original root stderr writer, which remains open because the LogTape stream sink
+wraps it in a non-closing proxy. The fallback never uses the disposed sink and
+preserves the product's startup/retirement or CLI status. Full and partial sink
+disposal failures are tested separately; repeated shutdown signals share one
+promise, and no second global dispose or replacement configuration is
+attempted.
 
 Tests that configure process-global LogTape must dispose/reset it in their
 process harness. Tests that exercise library code without root configuration
@@ -536,9 +541,9 @@ provider.
 
 | Executable/root | Existing authority | Exact LogTape exporter URL | Resource identity | Setup/no-endpoint behavior |
 | --- | --- | --- | --- | --- |
-| Agent VM controller (`agent-vm-entrypoint.ts`) | enabled repository observability config, resolved by controller telemetry (`controller-telemetry.ts`) | `${formatCollectorHttpEndpoint(config)}/v1/logs`, with trailing slashes removed once | existing controller service identity and bounded development attributes | configure after CLI/config resolution and before `startControllerRuntime`; disabled config omits explicit URL and allows env discovery, otherwise no-op |
+| Agent VM controller (`agent-vm-entrypoint.ts`) | enabled repository observability config, resolved by controller telemetry (`controller-telemetry.ts`) | `${formatCollectorHttpEndpoint(config)}/v1/logs`, with trailing slashes removed once | existing controller service identity and bounded development attributes | configure after CLI/config resolution and before `startControllerRuntime`; explicit disabled config registers no OTLP route and cannot use ambient endpoint discovery; an absent repository config may use standard environment discovery |
 | Worker (`agent-vm-worker/src/main.ts`) | no worker-specific repository endpoint authority | no explicit URL; `@logtape/otel` reads `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` then `OTEL_EXPORTER_OTLP_ENDPOINT` | `agent-vm-worker` plus fixed worker runtime identity only | configure before worker construction; absent env endpoint selects LogTape no-op |
-| Gateway Runtime (`gateway-runtime.ts`) | loaded `observability` discriminated config; `gateway-runtime-tool-portal-telemetry.ts` currently appends `/v1/logs` to its base endpoint | `${config.observability.endpoint}/v1/logs` for `otlp-http`; no explicit URL for `disabled` | existing `agent-vm-tool-portal` identity and attachment epoch/zone attributes | configure after service config load and before production service start; disabled/no endpoint is no-op |
+| Gateway Runtime (`gateway-runtime.ts`) | loaded `observability` discriminated config; `gateway-runtime-tool-portal-telemetry.ts` currently appends `/v1/logs` to its base endpoint | `${config.observability.endpoint}/v1/logs` for `otlp-http`; an explicit no-op provider for `disabled` | existing `agent-vm-tool-portal` identity and attachment epoch/zone attributes | configure after service config load and before production service start; disabled config cannot use ambient endpoint discovery |
 | Standalone MCP Portal (`mcp-portal.ts`) | no repository OTLP endpoint authority | no explicit URL; standard LogTape OTEL environment discovery | `agent-vm-mcp-portal` fixed process identity plus bounded mode metadata | configure before server start only; absent env endpoint is no-op; CLI-only credential/result commands retain protected output |
 | Tool Portal CLI (`agent-portal-sdk` `tool-portal`) | protected CLI/protocol output only | not applicable; no LogTape root | not applicable | no configuration or dependency; stdout/stderr contracts remain direct |
 

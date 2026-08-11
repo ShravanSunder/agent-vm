@@ -35,6 +35,40 @@ afterEach(async () => {
 });
 
 describe('writeControllerDiagnostic', () => {
+	it('uses info for diagnostics and warning for classified failures', () => {
+		writeControllerDiagnostic('runtime', 'Controller heartbeat is healthy.');
+		writeControllerDiagnostic('runtime', 'Controller startup failed.');
+
+		expect(capturedRecords.map((record) => record.level)).toEqual(['info', 'warning']);
+	});
+
+	it('classifies connection refusal as unavailable while access refusal remains rejected', () => {
+		expect(createControllerDiagnosticProperties('connect ECONNREFUSED')).toEqual({
+			event: 'failure',
+			failureClass: 'unavailable',
+			errorSummary: 'connect ECONNREFUSED',
+		});
+		expect(createControllerDiagnosticProperties('connection refused by gateway')).toEqual({
+			event: 'failure',
+			failureClass: 'unavailable',
+			errorSummary: 'connection refused by gateway',
+		});
+		expect(createControllerDiagnosticProperties('access denied by gateway')).toEqual({
+			event: 'failure',
+			failureClass: 'rejected',
+			errorSummary: 'access denied by gateway',
+		});
+	});
+
+	it('retains a safe diagnostic summary after truncating it to the bound', () => {
+		const message = 'safe diagnostic '.repeat(40);
+
+		expect(createControllerDiagnosticProperties(message)).toEqual({
+			event: 'diagnostic',
+			errorSummary: message.trim().slice(0, 256),
+		});
+	});
+
 	it('emits the six stable controller categories', () => {
 		for (const domain of ['runtime', 'heartbeat', 'git', 'lease', 'gateway', 'resource'] as const) {
 			writeControllerDiagnostic(domain, `diagnostic for ${domain}`);
@@ -64,7 +98,10 @@ describe('writeControllerDiagnostic', () => {
 		);
 
 		expect(properties).toEqual({ event: 'failure', failureClass: 'failure' });
-		expect(capturedRecords[0]?.properties).toEqual(properties);
+		expect(capturedRecords[0]?.properties).toEqual({
+			event: 'failure',
+			failureClass: 'failure',
+		});
 		expect(JSON.stringify(capturedRecords[0])).not.toMatch(
 			/example\.test|private\/repo|task-123|secret|response payload/u,
 		);

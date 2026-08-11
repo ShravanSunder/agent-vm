@@ -203,22 +203,31 @@ export interface ControllerStartExecutionOptions {
 	readonly configureProcessLogging?:
 		| ((options: ProcessLoggingOptions) => Promise<ProcessLoggingHandle>)
 		| undefined;
-	readonly processRoot?: boolean;
-	readonly processLoggingStderr?: NodeJS.WritableStream;
+	readonly createShutdownSignalWaiter?: (() => ProcessShutdownSignalWaiter) | undefined;
+	readonly processRoot?: boolean | undefined;
+	readonly processLoggingStderr?: NodeJS.WritableStream | undefined;
 }
 
 export interface ControllerStartLifecycleOptions {
-	readonly createShutdownSignalWaiter?: () => ProcessShutdownSignalWaiter;
 	readonly io: CliIo;
 	readonly logging: ProcessLoggingHandle;
 	readonly runtime: ControllerRuntime;
 	readonly selectedZoneId: string;
-	readonly waitForShutdownSignal?: () => Promise<void>;
+	readonly shutdownSignalWaiter: ProcessShutdownSignalWaiter;
 }
 
 export interface ProcessShutdownSignalWaiter {
 	readonly signal: Promise<void>;
 	readonly cleanup: () => void;
+}
+
+export interface ProcessShutdownSignalTarget {
+	on(signal: 'SIGINT' | 'SIGTERM', listener: () => void): void;
+	off(signal: 'SIGINT' | 'SIGTERM', listener: () => void): void;
+}
+
+export interface CreateProcessShutdownSignalWaiterOptions {
+	readonly target?: ProcessShutdownSignalTarget | undefined;
 }
 
 function isNodeWritableStream(value: CliIo['stderr']): value is NodeJS.WritableStream {
@@ -244,7 +253,10 @@ export function resolveControllerProcessLoggingStderr(
 	);
 }
 
-export function createProcessShutdownSignalWaiter(): ProcessShutdownSignalWaiter {
+export function createProcessShutdownSignalWaiter(
+	options: CreateProcessShutdownSignalWaiterOptions = {},
+): ProcessShutdownSignalWaiter {
+	const target = options.target ?? process;
 	let resolveSignal: (() => void) | undefined;
 	let signaled = false;
 	let cleanedUp = false;
@@ -258,8 +270,8 @@ export function createProcessShutdownSignalWaiter(): ProcessShutdownSignalWaiter
 		signaled = true;
 		resolveSignal?.();
 	};
-	process.on('SIGINT', onSignal);
-	process.on('SIGTERM', onSignal);
+	target.on('SIGINT', onSignal);
+	target.on('SIGTERM', onSignal);
 	return {
 		signal,
 		cleanup: (): void => {
@@ -267,8 +279,8 @@ export function createProcessShutdownSignalWaiter(): ProcessShutdownSignalWaiter
 				return;
 			}
 			cleanedUp = true;
-			process.off('SIGINT', onSignal);
-			process.off('SIGTERM', onSignal);
+			target.off('SIGINT', onSignal);
+			target.off('SIGTERM', onSignal);
 		},
 	};
 }
@@ -297,17 +309,35 @@ async function reportSecondaryLoggingShutdownFailure(io: CliIo): Promise<void> {
 	}
 }
 
+async function reportSecondaryLoggingSetupFailure(io: CliIo): Promise<void> {
+	try {
+		io.stderr.write('Controller process logging setup failed.\n');
+	} catch {
+		// Cleanup remains authoritative when stderr itself is unavailable.
+	}
+}
+
+async function configureControllerProcessLogging(
+	io: CliIo,
+	systemConfig: LoadedSystemConfig,
+	executionOptions: ControllerStartExecutionOptions,
+): Promise<ProcessLoggingHandle> {
+	const configureLogging = executionOptions.configureProcessLogging ?? configureProcessLogging;
+	try {
+		return await configureLogging({
+			observabilityConfig: createObservabilityRuntimeConfig(systemConfig),
+			serviceName: 'agent-vm-controller',
+			stderr: resolveControllerProcessLoggingStderr(io, executionOptions),
+		});
+	} catch {
+		throw new Error('Controller process logging setup failed.');
+	}
+}
+
 export async function runControllerStartLifecycle(
 	options: ControllerStartLifecycleOptions,
 ): Promise<void> {
 	writeControllerStartReadiness(options.io, options.runtime, options.selectedZoneId);
-	const shutdownSignalWaiter =
-		options.waitForShutdownSignal === undefined
-			? (options.createShutdownSignalWaiter ?? createProcessShutdownSignalWaiter)()
-			: {
-					signal: options.waitForShutdownSignal(),
-					cleanup: (): void => undefined,
-				};
 
 	let closePromise: Promise<void> | undefined;
 	const closeRuntime = (): Promise<void> => {
@@ -316,7 +346,7 @@ export async function runControllerStartLifecycle(
 	};
 	let productCloseError: unknown;
 	try {
-		await shutdownSignalWaiter.signal;
+		await options.shutdownSignalWaiter.signal;
 		try {
 			await closeRuntime();
 		} catch (error) {
@@ -331,7 +361,7 @@ export async function runControllerStartLifecycle(
 			throw productCloseError;
 		}
 	} finally {
-		shutdownSignalWaiter.cleanup();
+		options.shutdownSignalWaiter.cleanup();
 	}
 }
 
@@ -467,12 +497,15 @@ export function createControllerSubcommands(): Parser<'sync', ControllerCommand>
 	);
 }
 
-export async function runControllerCommand(
-	io: CliIo,
-	dependencies: CliDependencies,
-	commandValue: ControllerCommand,
-	executionOptions: ControllerStartExecutionOptions = {},
-): Promise<void> {
+export interface RunControllerCommandOptions {
+	readonly commandValue: ControllerCommand;
+	readonly dependencies: CliDependencies;
+	readonly executionOptions?: ControllerStartExecutionOptions | undefined;
+	readonly io: CliIo;
+}
+
+export async function runControllerCommand(options: RunControllerCommandOptions): Promise<void> {
+	const { commandValue, dependencies, executionOptions = {}, io } = options;
 	if (commandValue.command === 'controller.start') {
 		const systemConfig = await loadSystemConfigFromOption(
 			commandValue.options.config,
@@ -484,7 +517,6 @@ export async function runControllerCommand(
 			selectedZone.id,
 			dependencies,
 		);
-		const processLoggingConfig = createObservabilityRuntimeConfig(systemConfig);
 		if (!executionOptions.processRoot) {
 			const runTask = await createRunTask(io);
 			const runtime = await dependencies.startControllerRuntime(
@@ -500,19 +532,13 @@ export async function runControllerCommand(
 			writeControllerStartReadiness(io, runtime, selectedZone.id);
 			return;
 		}
-		let logging: ProcessLoggingHandle;
-		try {
-			const configureLogging = executionOptions.configureProcessLogging ?? configureProcessLogging;
-			logging = await configureLogging({
-				observabilityConfig: processLoggingConfig,
-				serviceName: 'agent-vm-controller',
-				stderr: resolveControllerProcessLoggingStderr(io, executionOptions),
-			});
-		} catch {
-			throw new Error('Controller process logging setup failed.');
-		}
+		const logging = await configureControllerProcessLogging(io, systemConfig, executionOptions);
 		let runtimeStarted = false;
+		let shutdownSignalWaiter: ProcessShutdownSignalWaiter | undefined;
 		try {
+			shutdownSignalWaiter = (
+				executionOptions.createShutdownSignalWaiter ?? createProcessShutdownSignalWaiter
+			)();
 			const runTask = await createRunTask(io);
 			const runtime = await dependencies.startControllerRuntime(
 				{
@@ -530,9 +556,11 @@ export async function runControllerCommand(
 				logging,
 				runtime,
 				selectedZoneId: selectedZone.id,
+				shutdownSignalWaiter,
 			});
 		} catch (error) {
 			if (!runtimeStarted) {
+				shutdownSignalWaiter?.cleanup();
 				try {
 					await logging.shutdown();
 				} catch {
@@ -549,12 +577,30 @@ export async function runControllerCommand(
 			dependencies,
 		);
 		const selectedZone = requireZone(systemConfig, commandValue.options.zone);
-		const result = await dependencies.runControllerOfflineCleanup({
-			force: commandValue.options.force,
-			systemConfig,
-			zoneId: selectedZone.id,
-		});
-		io.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+		let logging: ProcessLoggingHandle | undefined;
+		if (executionOptions.processRoot) {
+			try {
+				logging = await configureControllerProcessLogging(io, systemConfig, executionOptions);
+			} catch {
+				await reportSecondaryLoggingSetupFailure(io);
+			}
+		}
+		try {
+			const result = await dependencies.runControllerOfflineCleanup({
+				force: commandValue.options.force,
+				systemConfig,
+				zoneId: selectedZone.id,
+			});
+			io.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+		} finally {
+			if (logging !== undefined) {
+				try {
+					await logging.shutdown();
+				} catch {
+					await reportSecondaryLoggingShutdownFailure(io);
+				}
+			}
+		}
 		return;
 	}
 	if (commandValue.command === 'controller.ssh') {

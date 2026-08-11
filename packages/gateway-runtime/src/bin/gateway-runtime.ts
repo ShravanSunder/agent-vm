@@ -20,38 +20,60 @@ import {
 } from './gateway-runtime-cli-parser.js';
 
 const gatewayRuntimeLoggingShutdownFailure = 'Gateway runtime logging shutdown failed.\n';
+const gatewayRuntimeFatalEvidenceFailure = 'Gateway runtime fatal evidence write failed.\n';
+const gatewayRuntimeStartupFailure = 'Gateway runtime service startup failed.\n';
 const gatewayRuntimeProcessLogger = getLogger(['agent-vm', 'gateway-runtime', 'process']);
+
+type GatewayRuntimeRetirementSignalName = 'SIGINT' | 'SIGTERM';
 
 export interface GatewayRuntimeRetirementSignal {
 	readonly cleanup: () => void;
 	readonly signal: NodeJS.Signals;
 }
 
-export function waitForRetirementSignal(): Promise<GatewayRuntimeRetirementSignal> {
+export interface GatewayRuntimeSignalTarget {
+	readonly escalate?: (signal: GatewayRuntimeRetirementSignalName) => void;
+	readonly off: (signal: GatewayRuntimeRetirementSignalName, listener: () => void) => void;
+	readonly on: (signal: GatewayRuntimeRetirementSignalName, listener: () => void) => void;
+}
+
+function escalateGatewayRuntimeSignal(signal: GatewayRuntimeRetirementSignalName): void {
+	process.kill(process.pid, signal);
+}
+
+export function waitForRetirementSignal(
+	signalTarget: GatewayRuntimeSignalTarget = process,
+): Promise<GatewayRuntimeRetirementSignal> {
 	return new Promise<GatewayRuntimeRetirementSignal>((resolve) => {
 		let signalObserved = false;
 		let listenersCleaned = false;
-		const observeSignal = (signal: NodeJS.Signals): void => {
-			if (signalObserved) return;
-			signalObserved = true;
-			resolve({
-				cleanup: (): void => {
-					if (listenersCleaned) return;
-					listenersCleaned = true;
-					process.off('SIGINT', onSigint);
-					process.off('SIGTERM', onSigterm);
-				},
-				signal,
-			});
-		};
+		const escalateSignal = signalTarget.escalate ?? escalateGatewayRuntimeSignal;
 		const onSigint = (): void => {
 			observeSignal('SIGINT');
 		};
 		const onSigterm = (): void => {
 			observeSignal('SIGTERM');
 		};
-		process.on('SIGINT', onSigint);
-		process.on('SIGTERM', onSigterm);
+		const cleanup = (): void => {
+			if (listenersCleaned) return;
+			listenersCleaned = true;
+			signalTarget.off('SIGINT', onSigint);
+			signalTarget.off('SIGTERM', onSigterm);
+		};
+		const observeSignal = (signal: GatewayRuntimeRetirementSignalName): void => {
+			if (signalObserved) {
+				cleanup();
+				escalateSignal(signal);
+				return;
+			}
+			signalObserved = true;
+			resolve({
+				cleanup,
+				signal,
+			});
+		};
+		signalTarget.on('SIGINT', onSigint);
+		signalTarget.on('SIGTERM', onSigterm);
 	});
 }
 
@@ -81,19 +103,51 @@ export async function runGatewayRuntimeStartLifecycle<
 	TConfig,
 	TService extends GatewayRuntimeStartLifecycleService,
 >(props: GatewayRuntimeStartLifecycleProps<TConfig, TService>): Promise<void> {
-	const logging = await props.configureLogging(props.config);
+	let logging: ProcessLoggingHandle;
+	try {
+		logging = await props.configureLogging(props.config);
+	} catch (error: unknown) {
+		throw new Error('Gateway runtime process logging setup failed.', { cause: error });
+	}
 	let service: TService;
 	try {
 		service = await props.startService(props.config);
 	} catch (error: unknown) {
-		gatewayRuntimeProcessLogger.error('Gateway runtime service startup failed.', {
-			event: 'startup-failed',
-			failureClass: 'startup',
-		});
+		try {
+			await props.writeFatalEvidence();
+		} catch {
+			try {
+				gatewayRuntimeProcessLogger.error('Gateway runtime fatal evidence write failed.', {
+					event: 'fatal-evidence-write-failed',
+					failureClass: 'startup',
+				});
+			} catch {
+				try {
+					props.writeStderr(gatewayRuntimeFatalEvidenceFailure);
+				} catch {
+					// Keep the primary startup failure when diagnostics are unavailable.
+				}
+			}
+		}
+		try {
+			gatewayRuntimeProcessLogger.error('Gateway runtime service startup failed.', {
+				event: 'startup-failed',
+				failureClass: 'startup',
+			});
+		} catch {
+			try {
+				props.writeStderr(gatewayRuntimeStartupFailure);
+			} catch {
+				// Keep the primary startup failure when diagnostics are unavailable.
+			}
+		}
 		await logging.shutdown().catch(() => {
-			props.writeStderr(gatewayRuntimeLoggingShutdownFailure);
+			try {
+				props.writeStderr(gatewayRuntimeLoggingShutdownFailure);
+			} catch {
+				// Keep the primary startup failure when diagnostics are unavailable.
+			}
 		});
-		await props.writeFatalEvidence().catch(() => undefined);
 		throw error;
 	}
 	const retirementSignalPromise = props.waitForRetirementSignal();

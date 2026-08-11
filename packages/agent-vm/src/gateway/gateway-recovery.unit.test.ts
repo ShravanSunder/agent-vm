@@ -1,4 +1,5 @@
 import type { ManagedVmExactProcessTerminationCapability } from '@agent-vm/managed-vm';
+import { configure, dispose, reset, type LogRecord } from '@logtape/logtape';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ControllerManagedGatewayRuntimeRecordTarget } from '../controller/durable-state/controller-state-record-paths.js';
@@ -625,6 +626,46 @@ describe('cleanupRecordedGatewayRuntime', () => {
 			"Found persisted gateway runtime for zone 'shravan' (pid 48282, vm gateway-vm-123).",
 			"Removed stale gateway runtime record for zone 'shravan' after terminating recorded gateway pid 48282.",
 		]);
+	});
+
+	it('classifies a connection-refused cleanup failure as unavailable', async () => {
+		const capturedRecords: LogRecord[] = [];
+		await configure({
+			loggers: [
+				{
+					category: ['agent-vm', 'controller', 'gateway'],
+					lowestLevel: 'trace',
+					sinks: ['capture'],
+				},
+			],
+			reset: true,
+			sinks: {
+				capture: (record): void => {
+					capturedRecords.push(record);
+				},
+			},
+		});
+		try {
+			const processTermination = createExactProcessTerminationFixture();
+			const result = await cleanupRecordedGatewayRuntime(createGatewayRecoveryOptions(), {
+				...processTermination,
+				deleteManagedGatewayRuntimeRecord: async () => {
+					throw new Error('connect ECONNREFUSED');
+				},
+				loadManagedGatewayRuntimeRecordResult: async () =>
+					loadedGatewayRuntimeRecord(createGatewayRuntimeRecord()),
+				readTcpListenPortOwner: async () => null,
+			});
+
+			expect(result).toMatchObject({ cleanedUp: false });
+			expect(capturedRecords.at(-1)?.properties).toEqual({
+				event: 'failure',
+				failureClass: 'unavailable',
+			});
+		} finally {
+			await dispose().catch(() => {});
+			await reset();
+		}
 	});
 
 	it('warns and skips when the recorded pid owns the port but is not a managed VM command', async () => {

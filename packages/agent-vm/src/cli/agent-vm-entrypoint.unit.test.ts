@@ -300,9 +300,9 @@ describe('runAgentVmCli', () => {
 	it('prints the resolved package version', async () => {
 		const outputs: string[] = [];
 
-		await runAgentVmCli(
-			['-v'],
-			{
+		await runAgentVmCli({
+			argv: ['-v'],
+			io: {
 				stderr: { write: () => true },
 				stdout: {
 					write: (chunk: string | Uint8Array) => {
@@ -311,11 +311,11 @@ describe('runAgentVmCli', () => {
 					},
 				},
 			},
-			{
+			dependencies: {
 				...defaultCliDependencies,
 				resolveCliVersion: async () => '9.8.7',
 			},
-		);
+		});
 
 		expect(outputs.join('')).toBe('9.8.7\n');
 	});
@@ -329,19 +329,19 @@ describe('runAgentVmCli', () => {
 		}));
 
 		await expect(
-			runAgentVmCli(
-				['config', 'reset-instructions', '--zone', 'cache'],
-				{
+			runAgentVmCli({
+				argv: ['config', 'reset-instructions', '--zone', 'cache'],
+				io: {
 					stderr: { write: () => true },
 					stdout: { write: () => true },
 				},
-				{
+				dependencies: {
 					...defaultCliDependencies,
 					loadSystemConfig,
 					resolveCliVersion: async () => '9.8.7',
 					scaffoldAgentVmProject,
 				},
-			),
+			}),
 		).rejects.toBeInstanceOf(ReportedCliError);
 
 		expect(loadSystemConfig).not.toHaveBeenCalled();
@@ -371,9 +371,18 @@ describe('runAgentVmCli', () => {
 			skipped: [],
 		}));
 
-		await runAgentVmCli(
-			['init', 'test-zone', '--type', 'openclaw', '--secrets', '1password', '--arch', 'aarch64'],
-			{
+		await runAgentVmCli({
+			argv: [
+				'init',
+				'test-zone',
+				'--type',
+				'openclaw',
+				'--secrets',
+				'1password',
+				'--arch',
+				'aarch64',
+			],
+			io: {
 				stderr: { write: () => true },
 				stdout: {
 					write: (chunk: string | Uint8Array) => {
@@ -382,12 +391,12 @@ describe('runAgentVmCli', () => {
 					},
 				},
 			},
-			{
+			dependencies: {
 				...defaultCliDependencies,
 				getCurrentWorkingDirectory: () => '/tmp/agent-vm-init',
 				scaffoldAgentVmProject,
 			},
-		);
+		});
 
 		expect(scaffoldAgentVmProject).toHaveBeenCalledWith(
 			expect.objectContaining({
@@ -412,8 +421,8 @@ describe('runAgentVmCli', () => {
 		}));
 		const promptAndStoreServiceAccountToken = vi.fn(async () => true);
 
-		await runAgentVmCli(
-			[
+		await runAgentVmCli({
+			argv: [
 				'init',
 				'test-zone',
 				'--type',
@@ -425,17 +434,17 @@ describe('runAgentVmCli', () => {
 				'--onepassword-keychain-account-name',
 				'shravan-claw',
 			],
-			{
+			io: {
 				stderr: { write: () => true },
 				stdout: { write: () => true },
 			},
-			{
+			dependencies: {
 				...defaultCliDependencies,
 				getCurrentWorkingDirectory: () => '/tmp/agent-vm-init',
 				promptAndStoreServiceAccountToken,
 				scaffoldAgentVmProject,
 			},
-		);
+		});
 
 		expect(scaffoldAgentVmProject).toHaveBeenCalledWith(
 			expect.objectContaining({
@@ -457,8 +466,8 @@ describe('runAgentVmCli', () => {
 			resolveManagedVmMinimumZigVersion: async () => '0.15.2',
 		} satisfies CliDependencies;
 
-		await runAgentVmCli(
-			[
+		await runAgentVmCli({
+			argv: [
 				'init',
 				'test-zone',
 				'--type',
@@ -470,15 +479,15 @@ describe('runAgentVmCli', () => {
 				'--onepassword-keychain-account-name',
 				'configured-account',
 			],
-			{
+			io: {
 				stderr: { write: () => true },
 				stdout: { write: () => true },
 			},
-			dependencies,
-		);
+			dependencies: dependencies,
+		});
 
-		await runAgentVmCli(
-			[
+		await runAgentVmCli({
+			argv: [
 				'init',
 				'test-zone',
 				'--type',
@@ -490,12 +499,12 @@ describe('runAgentVmCli', () => {
 				'--onepassword-keychain-account-name',
 				'ignored-new-account',
 			],
-			{
+			io: {
 				stderr: { write: () => true },
 				stdout: { write: () => true },
 			},
-			dependencies,
-		);
+			dependencies: dependencies,
+		});
 
 		expect(promptAndStoreServiceAccountToken).toHaveBeenNthCalledWith(2, {
 			account: '1p-service-account--configured-account',
@@ -512,8 +521,8 @@ describe('runAgentVmCli', () => {
 			skipped: [],
 		}));
 
-		await runAgentVmCli(
-			[
+		await runAgentVmCli({
+			argv: [
 				'init',
 				'test-zone',
 				'--type',
@@ -525,16 +534,16 @@ describe('runAgentVmCli', () => {
 				'--openclaw-agents',
 				'sun',
 			],
-			{
+			io: {
 				stderr: { write: () => true },
 				stdout: { write: () => true },
 			},
-			{
+			dependencies: {
 				...defaultCliDependencies,
 				getCurrentWorkingDirectory: () => '/tmp/agent-vm-init',
 				scaffoldAgentVmProject,
 			},
-		);
+		});
 
 		expect(scaffoldAgentVmProject).toHaveBeenCalledWith(
 			expect.objectContaining({
@@ -550,8 +559,8 @@ describe('runAgentVmCli', () => {
 			skipped: [],
 		}));
 
-		await runAgentVmCli(
-			[
+		await runAgentVmCli({
+			argv: [
 				'init',
 				'test-zone',
 				'--type',
@@ -563,16 +572,16 @@ describe('runAgentVmCli', () => {
 				'--openclaw-agents',
 				'sun,shravan,alevtina',
 			],
-			{
+			io: {
 				stderr: { write: () => true },
 				stdout: { write: () => true },
 			},
-			{
+			dependencies: {
 				...defaultCliDependencies,
 				getCurrentWorkingDirectory: () => '/tmp/agent-vm-init',
 				scaffoldAgentVmProject,
 			},
-		);
+		});
 
 		expect(scaffoldAgentVmProject).toHaveBeenCalledWith(
 			expect.objectContaining({
@@ -596,9 +605,9 @@ describe('runAgentVmCli', () => {
 			updated: [],
 		}));
 
-		await runAgentVmCli(
-			['resources', 'init'],
-			{
+		await runAgentVmCli({
+			argv: ['resources', 'init'],
+			io: {
 				stderr: { write: () => true },
 				stdout: {
 					write: (chunk: string | Uint8Array) => {
@@ -607,12 +616,12 @@ describe('runAgentVmCli', () => {
 					},
 				},
 			},
-			{
+			dependencies: {
 				...defaultCliDependencies,
 				getCurrentWorkingDirectory: () => '/tmp/repo',
 				initRepoResources,
 			},
-		);
+		});
 
 		expect(initRepoResources).toHaveBeenCalledWith({
 			targetDir: '/tmp/repo',
@@ -631,9 +640,9 @@ describe('runAgentVmCli', () => {
 			updated: [],
 		}));
 
-		await runAgentVmCli(
-			['resources', 'init', '--json'],
-			{
+		await runAgentVmCli({
+			argv: ['resources', 'init', '--json'],
+			io: {
 				stderr: { write: () => true },
 				stdout: {
 					write: (chunk: string | Uint8Array) => {
@@ -642,12 +651,12 @@ describe('runAgentVmCli', () => {
 					},
 				},
 			},
-			{
+			dependencies: {
 				...defaultCliDependencies,
 				getCurrentWorkingDirectory: () => '/tmp/repo',
 				initRepoResources,
 			},
-		);
+		});
 
 		expect(outputs.join('')).toContain('"created"');
 		expect(outputs.join('')).toContain('.agent-vm/repo-resources.ts');
@@ -659,9 +668,9 @@ describe('runAgentVmCli', () => {
 			valid: true as const,
 		}));
 
-		await runAgentVmCli(
-			['resources', 'validate'],
-			{
+		await runAgentVmCli({
+			argv: ['resources', 'validate'],
+			io: {
 				stderr: { write: () => true },
 				stdout: {
 					write: (chunk: string | Uint8Array) => {
@@ -670,12 +679,12 @@ describe('runAgentVmCli', () => {
 					},
 				},
 			},
-			{
+			dependencies: {
 				...defaultCliDependencies,
 				getCurrentWorkingDirectory: () => '/tmp/repo',
 				validateRepoResources,
 			},
-		);
+		});
 
 		expect(validateRepoResources).toHaveBeenCalledWith({
 			targetDir: '/tmp/repo',
@@ -689,9 +698,9 @@ describe('runAgentVmCli', () => {
 			updated: ['.agent-vm/repo-resources.d.ts', '.agent-vm/AGENTS.md', '.agent-vm/README.md'],
 		}));
 
-		await runAgentVmCli(
-			['resources', 'update'],
-			{
+		await runAgentVmCli({
+			argv: ['resources', 'update'],
+			io: {
 				stderr: { write: () => true },
 				stdout: {
 					write: (chunk: string | Uint8Array) => {
@@ -700,12 +709,12 @@ describe('runAgentVmCli', () => {
 					},
 				},
 			},
-			{
+			dependencies: {
 				...defaultCliDependencies,
 				getCurrentWorkingDirectory: () => '/tmp/repo',
 				updateRepoResources,
 			},
-		);
+		});
 
 		expect(updateRepoResources).toHaveBeenCalledWith({
 			targetDir: '/tmp/repo',
@@ -719,9 +728,9 @@ describe('runAgentVmCli', () => {
 			updated: ['docs/manual/README.md', 'AGENTS.md', 'CLAUDE.md'],
 		}));
 
-		await runAgentVmCli(
-			['manual', 'update', '--agents'],
-			{
+		await runAgentVmCli({
+			argv: ['manual', 'update', '--agents'],
+			io: {
 				stderr: { write: () => true },
 				stdout: {
 					write: (chunk: string | Uint8Array) => {
@@ -730,12 +739,12 @@ describe('runAgentVmCli', () => {
 					},
 				},
 			},
-			{
+			dependencies: {
 				...defaultCliDependencies,
 				getCurrentWorkingDirectory: () => '/tmp/agent-vm-manual',
 				updateAgentVmManual,
 			},
-		);
+		});
 
 		expect(updateAgentVmManual).toHaveBeenCalledWith({
 			defaultZoneId: 'default',
@@ -754,18 +763,27 @@ describe('runAgentVmCli', () => {
 			skipped: [],
 		}));
 
-		await runAgentVmCli(
-			['init', 'test-zone', '--type', 'worker', '--secrets', 'environment', '--arch', 'x86_64'],
-			{
+		await runAgentVmCli({
+			argv: [
+				'init',
+				'test-zone',
+				'--type',
+				'worker',
+				'--secrets',
+				'environment',
+				'--arch',
+				'x86_64',
+			],
+			io: {
 				stderr: { write: () => true },
 				stdout: { write: () => true },
 			},
-			{
+			dependencies: {
 				...defaultCliDependencies,
 				getCurrentWorkingDirectory: () => '/tmp/agent-vm-init',
 				scaffoldAgentVmProject,
 			},
-		);
+		});
 
 		expect(scaffoldAgentVmProject).toHaveBeenCalledWith(
 			expect.objectContaining({
@@ -787,8 +805,8 @@ describe('runAgentVmCli', () => {
 			skipped: [],
 		}));
 
-		await runAgentVmCli(
-			[
+		await runAgentVmCli({
+			argv: [
 				'init',
 				'coding-agent',
 				'--type',
@@ -802,16 +820,16 @@ describe('runAgentVmCli', () => {
 				'--namespace',
 				'agent-vm',
 			],
-			{
+			io: {
 				stderr: { write: () => true },
 				stdout: { write: () => true },
 			},
-			{
+			dependencies: {
 				...defaultCliDependencies,
 				getCurrentWorkingDirectory: () => '/tmp/agent-vm-init',
 				scaffoldAgentVmProject,
 			},
-		);
+		});
 
 		expect(scaffoldAgentVmProject).toHaveBeenCalledWith({
 			gatewayType: 'worker',
@@ -834,8 +852,8 @@ describe('runAgentVmCli', () => {
 			skipped: [],
 		}));
 
-		await runAgentVmCli(
-			[
+		await runAgentVmCli({
+			argv: [
 				'init',
 				'coding-agent',
 				'--type',
@@ -845,16 +863,16 @@ describe('runAgentVmCli', () => {
 				'--arch',
 				'aarch64',
 			],
-			{
+			io: {
 				stderr: { write: () => true },
 				stdout: { write: () => true },
 			},
-			{
+			dependencies: {
 				...defaultCliDependencies,
 				getCurrentWorkingDirectory: () => '/tmp/agent-vm-init',
 				scaffoldAgentVmProject,
 			},
-		);
+		});
 
 		expect(scaffoldAgentVmProject).toHaveBeenCalledWith({
 			architecture: 'aarch64',
@@ -876,18 +894,18 @@ describe('runAgentVmCli', () => {
 			skipped: [],
 		}));
 
-		await runAgentVmCli(
-			['init', 'coding-agent', '--type', 'worker', '--preset', 'macos-local'],
-			{
+		await runAgentVmCli({
+			argv: ['init', 'coding-agent', '--type', 'worker', '--preset', 'macos-local'],
+			io: {
 				stderr: { write: () => true },
 				stdout: { write: () => true },
 			},
-			{
+			dependencies: {
 				...defaultCliDependencies,
 				getCurrentWorkingDirectory: () => '/tmp/agent-vm-init',
 				scaffoldAgentVmProject,
 			},
-		);
+		});
 
 		expect(scaffoldAgentVmProject).toHaveBeenCalledWith({
 			architecture: 'aarch64',
@@ -909,18 +927,18 @@ describe('runAgentVmCli', () => {
 			skipped: [],
 		}));
 
-		await runAgentVmCli(
-			['init', 'coding-agent', '--type', 'worker', '--preset', 'container-arm64'],
-			{
+		await runAgentVmCli({
+			argv: ['init', 'coding-agent', '--type', 'worker', '--preset', 'container-arm64'],
+			io: {
 				stderr: { write: () => true },
 				stdout: { write: () => true },
 			},
-			{
+			dependencies: {
 				...defaultCliDependencies,
 				getCurrentWorkingDirectory: () => '/tmp/agent-vm-init',
 				scaffoldAgentVmProject,
 			},
-		);
+		});
 
 		expect(scaffoldAgentVmProject).toHaveBeenCalledWith({
 			architecture: 'aarch64',
@@ -942,18 +960,26 @@ describe('runAgentVmCli', () => {
 			skipped: [],
 		}));
 
-		await runAgentVmCli(
-			['init', 'coding-agent', '--type', 'worker', '--preset', 'container-x86', '--overwrite'],
-			{
+		await runAgentVmCli({
+			argv: [
+				'init',
+				'coding-agent',
+				'--type',
+				'worker',
+				'--preset',
+				'container-x86',
+				'--overwrite',
+			],
+			io: {
 				stderr: { write: () => true },
 				stdout: { write: () => true },
 			},
-			{
+			dependencies: {
 				...defaultCliDependencies,
 				getCurrentWorkingDirectory: () => '/tmp/agent-vm-init',
 				scaffoldAgentVmProject,
 			},
-		);
+		});
 
 		expect(scaffoldAgentVmProject).toHaveBeenCalledWith(
 			expect.objectContaining({
@@ -964,53 +990,53 @@ describe('runAgentVmCli', () => {
 
 	it('rejects init when --type is missing', async () => {
 		await expect(
-			runAgentVmCli(
-				['init', 'test-zone', '--secrets', '1password'],
-				{
+			runAgentVmCli({
+				argv: ['init', 'test-zone', '--secrets', '1password'],
+				io: {
 					stderr: { write: () => true },
 					stdout: { write: () => true },
 				},
-				defaultCliDependencies,
-			),
+				dependencies: defaultCliDependencies,
+			}),
 		).rejects.toThrow(/type/u);
 	});
 
 	it('rejects init when --secrets is missing', async () => {
 		await expect(
-			runAgentVmCli(
-				['init', 'test-zone', '--type', 'worker'],
-				{
+			runAgentVmCli({
+				argv: ['init', 'test-zone', '--type', 'worker'],
+				io: {
 					stderr: { write: () => true },
 					stdout: { write: () => true },
 				},
-				defaultCliDependencies,
-			),
+				dependencies: defaultCliDependencies,
+			}),
 		).rejects.toThrow(/Secrets provider/u);
 	});
 
 	it('rejects init when --secrets is invalid', async () => {
 		await expect(
-			runAgentVmCli(
-				['init', 'test-zone', '--type', 'worker', '--secrets', 'bogus'],
-				{
+			runAgentVmCli({
+				argv: ['init', 'test-zone', '--type', 'worker', '--secrets', 'bogus'],
+				io: {
 					stderr: { write: () => true },
 					stdout: { write: () => true },
 				},
-				defaultCliDependencies,
-			),
+				dependencies: defaultCliDependencies,
+			}),
 		).rejects.toThrow(/secrets|1password|environment|Invalid option/u);
 	});
 
 	it('rejects init when --arch is missing', async () => {
 		await expect(
-			runAgentVmCli(
-				['init', 'test-zone', '--type', 'worker', '--secrets', 'environment'],
-				{
+			runAgentVmCli({
+				argv: ['init', 'test-zone', '--type', 'worker', '--secrets', 'environment'],
+				io: {
 					stderr: { write: () => true },
 					stdout: { write: () => true },
 				},
-				defaultCliDependencies,
-			),
+				dependencies: defaultCliDependencies,
+			}),
 		).rejects.toThrow(/Architecture is required/u);
 	});
 
@@ -1025,8 +1051,8 @@ describe('runAgentVmCli', () => {
 			throw new Error('Expected primary zone in test system config');
 		}
 
-		await runAgentVmCli(
-			[
+		await runAgentVmCli({
+			argv: [
 				'config',
 				'reset-instructions',
 				'--config',
@@ -1036,7 +1062,7 @@ describe('runAgentVmCli', () => {
 				'--phase',
 				'wrapup',
 			],
-			{
+			io: {
 				stderr: { write: () => true },
 				stdout: {
 					write: (chunk: string | Uint8Array) => {
@@ -1045,7 +1071,7 @@ describe('runAgentVmCli', () => {
 					},
 				},
 			},
-			{
+			dependencies: {
 				...defaultCliDependencies,
 				loadSystemConfig: vi.fn(async () => ({
 					...systemConfig,
@@ -1064,7 +1090,7 @@ describe('runAgentVmCli', () => {
 				})),
 				resetWorkerInstructions,
 			},
-		);
+		});
 
 		expect(resetWorkerInstructions).toHaveBeenCalledWith({
 			workerConfigPath: '/tmp/worker.json',
@@ -1076,18 +1102,18 @@ describe('runAgentVmCli', () => {
 	it('routes build to the build command handler', async () => {
 		const runBuildCommand = vi.fn(async () => {});
 
-		await runAgentVmCli(
-			['build', '--config', './custom-system.json'],
-			{
+		await runAgentVmCli({
+			argv: ['build', '--config', './custom-system.json'],
+			io: {
 				stderr: { write: () => true },
 				stdout: { write: () => true },
 			},
-			{
+			dependencies: {
 				...defaultCliDependencies,
 				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
 				runBuildCommand,
 			},
-		);
+		});
 
 		expect(runBuildCommand).toHaveBeenCalledWith(
 			{
@@ -1126,9 +1152,9 @@ describe('runAgentVmCli', () => {
 		});
 
 		try {
-			await runAgentVmCli(
-				['build', '--config', './custom-system.json'],
-				{
+			await runAgentVmCli({
+				argv: ['build', '--config', './custom-system.json'],
+				io: {
 					stderr: {
 						write: (chunk: string | Uint8Array) => {
 							stderrChunks.push(String(chunk));
@@ -1137,12 +1163,12 @@ describe('runAgentVmCli', () => {
 					},
 					stdout: { write: () => true },
 				},
-				{
+				dependencies: {
 					...defaultCliDependencies,
 					loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
 					runBuildCommand,
 				},
-			);
+			});
 		} finally {
 			Object.defineProperty(process.stdout, 'isTTY', {
 				configurable: true,
@@ -1166,18 +1192,18 @@ describe('runAgentVmCli', () => {
 	it('passes build --force through to the build command handler', async () => {
 		const runBuildCommand = vi.fn(async () => {});
 
-		await runAgentVmCli(
-			['build', '--force', '--config', './custom-system.json'],
-			{
+		await runAgentVmCli({
+			argv: ['build', '--force', '--config', './custom-system.json'],
+			io: {
 				stderr: { write: () => true },
 				stdout: { write: () => true },
 			},
-			{
+			dependencies: {
 				...defaultCliDependencies,
 				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
 				runBuildCommand,
 			},
-		);
+		});
 
 		expect(runBuildCommand).toHaveBeenCalledWith(
 			expect.objectContaining({
@@ -1193,18 +1219,18 @@ describe('runAgentVmCli', () => {
 	it('passes build --no-observability through to the build command handler', async () => {
 		const runBuildCommand = vi.fn(async () => {});
 
-		await runAgentVmCli(
-			['build', '--no-observability', '--config', './custom-system.json'],
-			{
+		await runAgentVmCli({
+			argv: ['build', '--no-observability', '--config', './custom-system.json'],
+			io: {
 				stderr: { write: () => true },
 				stdout: { write: () => true },
 			},
-			{
+			dependencies: {
 				...defaultCliDependencies,
 				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
 				runBuildCommand,
 			},
-		);
+		});
 
 		expect(runBuildCommand).toHaveBeenCalledWith(
 			expect.objectContaining({
@@ -1220,18 +1246,18 @@ describe('runAgentVmCli', () => {
 	it('routes cache clean through the cache command handler', async () => {
 		const runCacheCommand = vi.fn(async () => {});
 
-		await runAgentVmCli(
-			['cache', 'clean', '--confirm', '--config', './custom-system.json'],
-			{
+		await runAgentVmCli({
+			argv: ['cache', 'clean', '--confirm', '--config', './custom-system.json'],
+			io: {
 				stderr: { write: () => true },
 				stdout: { write: () => true },
 			},
-			{
+			dependencies: {
 				...defaultCliDependencies,
 				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
 				runCacheCommand,
 			},
-		);
+		});
 
 		expect(runCacheCommand).toHaveBeenCalledWith(
 			{
@@ -1250,18 +1276,18 @@ describe('runAgentVmCli', () => {
 	it('routes cache list through the cache command handler', async () => {
 		const runCacheCommand = vi.fn(async () => {});
 
-		await runAgentVmCli(
-			['cache', 'list', '--config', './custom-system.json'],
-			{
+		await runAgentVmCli({
+			argv: ['cache', 'list', '--config', './custom-system.json'],
+			io: {
 				stderr: { write: () => true },
 				stdout: { write: () => true },
 			},
-			{
+			dependencies: {
 				...defaultCliDependencies,
 				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
 				runCacheCommand,
 			},
-		);
+		});
 
 		expect(runCacheCommand).toHaveBeenCalledWith(
 			{
@@ -1283,9 +1309,9 @@ describe('runAgentVmCli', () => {
 			checks: [{ name: 'system-config', ok: true }],
 		}));
 
-		await runAgentVmCli(
-			['validate', '--config', './custom-system.json'],
-			{
+		await runAgentVmCli({
+			argv: ['validate', '--config', './custom-system.json'],
+			io: {
 				stderr: { write: () => true },
 				stdout: {
 					write: (chunk: string | Uint8Array) => {
@@ -1294,12 +1320,12 @@ describe('runAgentVmCli', () => {
 					},
 				},
 			},
-			{
+			dependencies: {
 				...defaultCliDependencies,
 				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
 				runConfigValidation,
 			},
-		);
+		});
 
 		expect(runConfigValidation).toHaveBeenCalledWith({
 			systemConfig: expect.objectContaining({
@@ -1318,20 +1344,20 @@ describe('runAgentVmCli', () => {
 		const createSecretResolver = vi.fn(async () => onePasswordResolver);
 		const systemConfig = createCliBuildSystemConfig();
 
-		await runAgentVmCli(
-			['validate', '--config', './custom-system.json', '--mcp-live'],
-			{
+		await runAgentVmCli({
+			argv: ['validate', '--config', './custom-system.json', '--mcp-live'],
+			io: {
 				stderr: { write: () => true },
 				stdout: { write: () => true },
 			},
-			{
+			dependencies: {
 				...defaultCliDependencies,
 				createSecretResolver,
 				loadSystemConfig: vi.fn(async () => systemConfig),
 				resolveServiceAccountToken: vi.fn(async () => 'service-account-token'),
 				runConfigValidation,
 			},
-		);
+		});
 
 		expect(createSecretResolver).toHaveBeenCalledWith({
 			serviceAccountToken: 'service-account-token',
@@ -1353,8 +1379,8 @@ describe('runAgentVmCli', () => {
 			stdout: 'openai-codex:test@example.com\n',
 		}));
 
-		await runAgentVmCli(
-			[
+		await runAgentVmCli({
+			argv: [
 				'auth',
 				'openclaw',
 				'login',
@@ -1366,11 +1392,11 @@ describe('runAgentVmCli', () => {
 				'--profile-id',
 				'openai-codex:test@example.com',
 			],
-			{
+			io: {
 				stderr: { write: () => true },
 				stdout: { write: () => true },
 			},
-			{
+			dependencies: {
 				...defaultCliDependencies,
 				createControllerClient: () =>
 					createControllerClientStub(async () => ({
@@ -1384,7 +1410,7 @@ describe('runAgentVmCli', () => {
 				runCommand,
 				runInteractiveProcess,
 			},
-		);
+		});
 
 		expect(runInteractiveProcess).toHaveBeenCalledWith('ssh', [
 			'-t',
@@ -1425,15 +1451,15 @@ describe('runAgentVmCli', () => {
 			},
 		};
 
-		await runAgentVmCli(
-			[
+		await runAgentVmCli({
+			argv: [
 				'auth',
 				'1password',
 				'op://agent-vm/1p-service-account-shravan-claw/credential',
 				'--config',
 				'config/system.jsonc',
 			],
-			{
+			io: {
 				stderr: { write: () => true },
 				stdout: {
 					write: (chunk: string | Uint8Array) => {
@@ -1442,13 +1468,13 @@ describe('runAgentVmCli', () => {
 					},
 				},
 			},
-			{
+			dependencies: {
 				...defaultCliDependencies,
 				loadSystemConfig: vi.fn(async () => systemConfig),
 				runCommand,
 				storeServiceAccountToken,
 			},
-		);
+		});
 
 		expect(runCommand).toHaveBeenCalledWith('op', [
 			'read',
@@ -1469,8 +1495,8 @@ describe('runAgentVmCli', () => {
 			stdout: 'openai-codex:test@example.com\n',
 		}));
 
-		await runAgentVmCli(
-			[
+		await runAgentVmCli({
+			argv: [
 				'auth',
 				'openclaw',
 				'login',
@@ -1480,11 +1506,11 @@ describe('runAgentVmCli', () => {
 				'--all-configured-profiles',
 				'--device-code',
 			],
-			{
+			io: {
 				stderr: { write: () => true },
 				stdout: { write: () => true },
 			},
-			{
+			dependencies: {
 				...defaultCliDependencies,
 				createControllerClient: () =>
 					createControllerClientStub(async () => ({
@@ -1498,7 +1524,7 @@ describe('runAgentVmCli', () => {
 				runCommand,
 				runInteractiveProcess,
 			},
-		);
+		});
 
 		expect(runInteractiveProcess).toHaveBeenCalledWith(
 			'ssh',
@@ -1519,8 +1545,8 @@ describe('runAgentVmCli', () => {
 			stdout: 'openai-codex:test@example.com\n',
 		}));
 
-		await runAgentVmCli(
-			[
+		await runAgentVmCli({
+			argv: [
 				'auth',
 				'openclaw',
 				'login',
@@ -1530,7 +1556,7 @@ describe('runAgentVmCli', () => {
 				'--all-configured-profiles',
 				'--dry-run',
 			],
-			{
+			io: {
 				stderr: { write: () => true },
 				stdout: {
 					write: (chunk: string) => {
@@ -1539,14 +1565,14 @@ describe('runAgentVmCli', () => {
 					},
 				},
 			},
-			{
+			dependencies: {
 				...defaultCliDependencies,
 				createControllerClient: vi.fn(),
 				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
 				runCommand,
 				runInteractiveProcess,
 			},
-		);
+		});
 
 		expect(runInteractiveProcess).not.toHaveBeenCalled();
 		expect(runCommand).not.toHaveBeenCalled();
@@ -1564,8 +1590,8 @@ describe('runAgentVmCli', () => {
 			stdout: 'openai-codex:test@example.com\n',
 		}));
 
-		await runAgentVmCli(
-			[
+		await runAgentVmCli({
+			argv: [
 				'auth',
 				'openclaw',
 				'login',
@@ -1577,11 +1603,11 @@ describe('runAgentVmCli', () => {
 				'--profile-id',
 				'openai-codex:test@example.com',
 			],
-			{
+			io: {
 				stderr: { write: () => true },
 				stdout: { write: () => true },
 			},
-			{
+			dependencies: {
 				...defaultCliDependencies,
 				createControllerClient: () =>
 					createControllerClientStub(async () => ({
@@ -1595,7 +1621,7 @@ describe('runAgentVmCli', () => {
 				runCommand,
 				runInteractiveProcess,
 			},
-		);
+		});
 
 		expect(runInteractiveProcess).toHaveBeenCalledTimes(1);
 		const sshArguments = vi.mocked(runInteractiveProcess).mock.calls[0]?.[1];
@@ -1623,13 +1649,21 @@ describe('runAgentVmCli', () => {
 			stdout: 'openai-codex:test@example.com\n',
 		}));
 
-		await runAgentVmCli(
-			['auth', 'openclaw', 'login', 'openai', '--zone', 'shravan', '--all-configured-profiles'],
-			{
+		await runAgentVmCli({
+			argv: [
+				'auth',
+				'openclaw',
+				'login',
+				'openai',
+				'--zone',
+				'shravan',
+				'--all-configured-profiles',
+			],
+			io: {
 				stderr: { write: () => true },
 				stdout: { write: () => true },
 			},
-			{
+			dependencies: {
 				...defaultCliDependencies,
 				createControllerClient: () =>
 					createControllerClientStub(async () => ({
@@ -1643,7 +1677,7 @@ describe('runAgentVmCli', () => {
 				runCommand,
 				runInteractiveProcess,
 			},
-		);
+		});
 
 		expect(runInteractiveProcess).toHaveBeenCalledTimes(1);
 		const firstSshArguments = vi.mocked(runInteractiveProcess).mock.calls[0]?.[1];
@@ -1662,9 +1696,16 @@ describe('runAgentVmCli', () => {
 	it('auth openclaw without --zone shows available zones', async () => {
 		const stderrChunks: string[] = [];
 		await expect(
-			runAgentVmCli(
-				['auth', 'openclaw', 'login', 'codex', '--profile-id', 'openai-codex:test@example.com'],
-				{
+			runAgentVmCli({
+				argv: [
+					'auth',
+					'openclaw',
+					'login',
+					'codex',
+					'--profile-id',
+					'openai-codex:test@example.com',
+				],
+				io: {
 					stderr: {
 						write: (s: string) => {
 							stderrChunks.push(s);
@@ -1673,11 +1714,11 @@ describe('runAgentVmCli', () => {
 					},
 					stdout: { write: () => true },
 				},
-				{
+				dependencies: {
 					...defaultCliDependencies,
 					loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
 				},
-			),
+			}),
 		).rejects.toThrow(/--zone is required/u);
 	});
 
@@ -1692,18 +1733,18 @@ describe('runAgentVmCli', () => {
 			);
 
 			await expect(
-				runAgentVmCli(
-					['auth', 'openclaw', 'login', 'openai', '--zone', 'shravan'],
-					{
+				runAgentVmCli({
+					argv: ['auth', 'openclaw', 'login', 'openai', '--zone', 'shravan'],
+					io: {
 						stderr: { write: () => true },
 						stdout: { write: () => true },
 					},
-					{
+					dependencies: {
 						...defaultCliDependencies,
 						loadSystemConfig: vi.fn(async () => loadSystemConfig()),
 						runInteractiveProcess,
 					},
-				),
+				}),
 			).rejects.toThrow("Zone 'shravan' does not support OpenClaw auth login.");
 
 			expect(runInteractiveProcess).not.toHaveBeenCalled();
@@ -1714,9 +1755,9 @@ describe('runAgentVmCli', () => {
 		const stdoutChunks: string[] = [];
 
 		await expect(
-			runAgentVmCli(
-				['--help'],
-				{
+			runAgentVmCli({
+				argv: ['--help'],
+				io: {
 					stderr: { write: () => true },
 					stdout: {
 						write: (chunk: string | Uint8Array) => {
@@ -1725,8 +1766,8 @@ describe('runAgentVmCli', () => {
 						},
 					},
 				},
-				defaultCliDependencies,
-			),
+				dependencies: defaultCliDependencies,
+			}),
 		).resolves.toBeUndefined();
 
 		expect(stdoutChunks.join('')).toContain('agent-vm');
@@ -1735,27 +1776,27 @@ describe('runAgentVmCli', () => {
 
 	it('rejects an invalid gateway type value', async () => {
 		await expect(
-			runAgentVmCli(
-				['init', 'test-zone', '--type', 'banana', '--secrets', '1password'],
-				{
+			runAgentVmCli({
+				argv: ['init', 'test-zone', '--type', 'banana', '--secrets', '1password'],
+				io: {
 					stderr: { write: () => true },
 					stdout: { write: () => true },
 				},
-				defaultCliDependencies,
-			),
+				dependencies: defaultCliDependencies,
+			}),
 		).rejects.toThrow(/openclaw|worker/u);
 	});
 
 	it('rejects Hermes init until a Hermes scaffold contract exists', async () => {
 		await expect(
-			runAgentVmCli(
-				['init', 'test-zone', '--type', 'hermes', '--secrets', '1password'],
-				{
+			runAgentVmCli({
+				argv: ['init', 'test-zone', '--type', 'hermes', '--secrets', '1password'],
+				io: {
 					stderr: { write: () => true },
 					stdout: { write: () => true },
 				},
-				defaultCliDependencies,
-			),
+				dependencies: defaultCliDependencies,
+			}),
 		).rejects.toThrow("Expected 'openclaw' or 'worker', got 'hermes'");
 	});
 
@@ -1763,9 +1804,9 @@ describe('runAgentVmCli', () => {
 		const stdoutChunks: string[] = [];
 
 		await expect(
-			runAgentVmCli(
-				['controller', '--help'],
-				{
+			runAgentVmCli({
+				argv: ['controller', '--help'],
+				io: {
 					stderr: { write: () => true },
 					stdout: {
 						write: (chunk: string | Uint8Array) => {
@@ -1774,8 +1815,8 @@ describe('runAgentVmCli', () => {
 						},
 					},
 				},
-				defaultCliDependencies,
-			),
+				dependencies: defaultCliDependencies,
+			}),
 		).resolves.toBeUndefined();
 
 		expect(stdoutChunks.join('')).toContain('controller');
@@ -1798,13 +1839,13 @@ describe('runAgentVmCli', () => {
 
 	it('surfaces system config validation errors with friendly paths', async () => {
 		await expect(
-			runAgentVmCli(
-				['build'],
-				{
+			runAgentVmCli({
+				argv: ['build'],
+				io: {
 					stderr: { write: () => true },
 					stdout: { write: () => true },
 				},
-				{
+				dependencies: {
 					...defaultCliDependencies,
 					loadSystemConfig: async () => {
 						throw new ZodError([
@@ -1818,7 +1859,7 @@ describe('runAgentVmCli', () => {
 						]);
 					},
 				},
-			),
+			}),
 		).rejects.toThrow(
 			[
 				'Invalid config/system.json configuration:',
@@ -1878,9 +1919,9 @@ describe('runAgentVmCli', () => {
 			),
 		);
 
-		await runAgentVmCli(
-			['doctor', '--json'],
-			{
+		await runAgentVmCli({
+			argv: ['doctor', '--json'],
+			io: {
 				stderr: {
 					write: () => true,
 				},
@@ -1891,7 +1932,7 @@ describe('runAgentVmCli', () => {
 					},
 				},
 			},
-			{
+			dependencies: {
 				buildControllerStatus: () => ({
 					controllerPort: 18800,
 					toolVmProfiles: ['standard'],
@@ -2003,10 +2044,10 @@ describe('runAgentVmCli', () => {
 				startControllerRuntime: vi.fn(async () => createStartedControllerRuntime()),
 				startGatewayZone: vi.fn(async () => undefined as never),
 			},
-		);
-		await runAgentVmCli(
-			['controller', 'status'],
-			{
+		});
+		await runAgentVmCli({
+			argv: ['controller', 'status'],
+			io: {
 				stderr: {
 					write: () => true,
 				},
@@ -2017,7 +2058,7 @@ describe('runAgentVmCli', () => {
 					},
 				},
 			},
-			{
+			dependencies: {
 				buildControllerStatus: () => ({
 					controllerPort: 18800,
 					toolVmProfiles: ['standard'],
@@ -2120,7 +2161,7 @@ describe('runAgentVmCli', () => {
 				startControllerRuntime: vi.fn(async () => createStartedControllerRuntime()),
 				startGatewayZone: vi.fn(async () => undefined as never),
 			},
-		);
+		});
 
 		expect(outputs.join('\n')).toContain('"ok": true');
 		expect(outputs.join('\n')).toContain('"controllerPort": 18800');
@@ -2132,9 +2173,9 @@ describe('runAgentVmCli', () => {
 
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
 
-		await runAgentVmCli(
-			['controller', 'start', '--zone', 'shravan'],
-			{
+		await runAgentVmCli({
+			argv: ['controller', 'start', '--zone', 'shravan'],
+			io: {
 				stderr: {
 					write: () => true,
 				},
@@ -2142,7 +2183,7 @@ describe('runAgentVmCli', () => {
 					write: () => true,
 				},
 			},
-			{
+			dependencies: {
 				buildControllerStatus: () => ({
 					controllerPort: 18800,
 					toolVmProfiles: ['standard'],
@@ -2278,7 +2319,7 @@ describe('runAgentVmCli', () => {
 				startControllerRuntime,
 				startGatewayZone: vi.fn(async () => undefined as never),
 			},
-		);
+		});
 
 		expect(startControllerRuntime).toHaveBeenCalledWith(
 			expect.objectContaining({
@@ -2294,9 +2335,9 @@ describe('runAgentVmCli', () => {
 		const outputs: string[] = [];
 		const baseSystemConfig = createCliBuildSystemConfig();
 
-		await runAgentVmCli(
-			['controller', 'start', '--zone', 'shravan'],
-			{
+		await runAgentVmCli({
+			argv: ['controller', 'start', '--zone', 'shravan'],
+			io: {
 				stderr: {
 					write: () => true,
 				},
@@ -2307,7 +2348,7 @@ describe('runAgentVmCli', () => {
 					},
 				},
 			},
-			{
+			dependencies: {
 				...defaultCliDependencies,
 				isGatewayImageCached: async () => true,
 				loadSystemConfig: async () => baseSystemConfig,
@@ -2334,7 +2375,7 @@ describe('runAgentVmCli', () => {
 						}) as never,
 				),
 			},
-		);
+		});
 
 		expect(JSON.parse(outputs.join(''))).toEqual({
 			controllerPort: 18800,
@@ -2351,19 +2392,19 @@ describe('runAgentVmCli', () => {
 		const startControllerRuntime = vi.fn();
 
 		await expect(
-			runAgentVmCli(
-				['controller', 'start', '--zone', 'shravan'],
-				{
+			runAgentVmCli({
+				argv: ['controller', 'start', '--zone', 'shravan'],
+				io: {
 					stderr: { write: () => true },
 					stdout: { write: () => true },
 				},
-				{
+				dependencies: {
 					...defaultCliDependencies,
 					isGatewayImageCached: async () => false,
 					loadSystemConfig: async () => createCliBuildSystemConfig(),
 					startControllerRuntime,
 				},
-			),
+			}),
 		).rejects.toThrow(/Gateway image not cached|agent-vm build/u);
 
 		expect(startControllerRuntime).not.toHaveBeenCalled();
@@ -2377,13 +2418,13 @@ describe('runAgentVmCli', () => {
 		}
 
 		await expect(
-			runAgentVmCli(
-				['controller', 'start'],
-				{
+			runAgentVmCli({
+				argv: ['controller', 'start'],
+				io: {
 					stderr: { write: () => true },
 					stdout: { write: () => true },
 				},
-				{
+				dependencies: {
 					...defaultCliDependencies,
 					isGatewayImageCached: async () => true,
 					loadSystemConfig: async () => ({
@@ -2397,7 +2438,7 @@ describe('runAgentVmCli', () => {
 						],
 					}),
 				},
-			),
+			}),
 		).rejects.toThrow(/--zone is required\. Available zones:/u);
 	});
 
@@ -2415,13 +2456,13 @@ describe('runAgentVmCli', () => {
 			}),
 		);
 
-		await runAgentVmCli(
-			['controller', 'start', '--zone', 'alevtina'],
-			{
+		await runAgentVmCli({
+			argv: ['controller', 'start', '--zone', 'alevtina'],
+			io: {
 				stderr: { write: () => true },
 				stdout: { write: () => true },
 			},
-			{
+			dependencies: {
 				...defaultCliDependencies,
 				isGatewayImageCached: async () => true,
 				loadSystemConfig: async () => ({
@@ -2436,7 +2477,7 @@ describe('runAgentVmCli', () => {
 				}),
 				startControllerRuntime,
 			},
-		);
+		});
 
 		expect(startControllerRuntime).toHaveBeenCalledWith(
 			expect.objectContaining({
@@ -2625,9 +2666,9 @@ describe('runAgentVmCli', () => {
 				['controller', 'credentials', 'refresh', '--zone', 'shravan'],
 			] as const) {
 				// oxlint-disable-next-line no-await-in-loop -- commands intentionally run serially against shared mocks
-				await runAgentVmCli(
-					command,
-					{
+				await runAgentVmCli({
+					argv: command,
+					io: {
 						stderr: {
 							write: () => true,
 						},
@@ -2638,8 +2679,8 @@ describe('runAgentVmCli', () => {
 							},
 						},
 					},
-					baseDependencies,
-				);
+					dependencies: baseDependencies,
+				});
 			}
 		} finally {
 			if (previousGatewayToken === undefined) {
@@ -2666,13 +2707,13 @@ describe('runAgentVmCli', () => {
 			async () => {},
 		);
 
-		await runAgentVmCli(
-			['controller', 'ssh', '--zone', 'shravan'],
-			{
+		await runAgentVmCli({
+			argv: ['controller', 'ssh', '--zone', 'shravan'],
+			io: {
 				stderr: { write: () => true },
 				stdout: { write: () => true },
 			},
-			{
+			dependencies: {
 				...defaultCliDependencies,
 				createControllerClient: () =>
 					createControllerClientStub(async () => ({
@@ -2684,7 +2725,7 @@ describe('runAgentVmCli', () => {
 				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
 				runInteractiveProcess,
 			},
-		);
+		});
 
 		expect(runInteractiveProcess).toHaveBeenCalledWith(
 			'ssh',
@@ -2716,19 +2757,19 @@ describe('runAgentVmCli', () => {
 			user: 'root',
 		}));
 
-		await runAgentVmCli(
-			['controller', 'ssh', '--zone', 'shravan', '--all-secrets'],
-			{
+		await runAgentVmCli({
+			argv: ['controller', 'ssh', '--zone', 'shravan', '--all-secrets'],
+			io: {
 				stderr: { write: () => true },
 				stdout: { write: () => true },
 			},
-			{
+			dependencies: {
 				...defaultCliDependencies,
 				createControllerClient: () => createControllerClientStub(enableZoneSsh),
 				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
 				runInteractiveProcess,
 			},
-		);
+		});
 
 		expect(enableZoneSsh).toHaveBeenCalledWith('shravan', { secretEnv: 'all-secrets' });
 		const firstSshCall = vi.mocked(runInteractiveProcess).mock.calls[0];
@@ -2757,19 +2798,19 @@ describe('runAgentVmCli', () => {
 			user: 'root',
 		}));
 
-		await runAgentVmCli(
-			['auth', 'codex-harness', '--zone', 'shravan', '--agent', 'shravan'],
-			{
+		await runAgentVmCli({
+			argv: ['auth', 'codex-harness', '--zone', 'shravan', '--agent', 'shravan'],
+			io: {
 				stderr: { write: () => true },
 				stdout: { write: () => true },
 			},
-			{
+			dependencies: {
 				...defaultCliDependencies,
 				createControllerClient: () => createControllerClientStub(enableZoneSsh),
 				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfigWithAgents()),
 				runInteractiveProcess,
 			},
-		);
+		});
 
 		expect(enableZoneSsh).toHaveBeenCalledWith('shravan', { secretEnv: 'default' });
 		const sshArguments = vi.mocked(runInteractiveProcess).mock.calls[0]?.[1];
@@ -2812,13 +2853,13 @@ describe('runAgentVmCli', () => {
 		);
 
 		await expect(
-			runAgentVmCli(
-				['auth', 'codex-harness', '--zone', 'shravan', '--agent', '../main'],
-				{
+			runAgentVmCli({
+				argv: ['auth', 'codex-harness', '--zone', 'shravan', '--agent', '../main'],
+				io: {
 					stderr: { write: () => true },
 					stdout: { write: () => true },
 				},
-				{
+				dependencies: {
 					...defaultCliDependencies,
 					createControllerClient: () =>
 						createControllerClientStub(async () => ({
@@ -2830,7 +2871,7 @@ describe('runAgentVmCli', () => {
 					loadSystemConfig: vi.fn(async () => createCliBuildSystemConfigWithAgents()),
 					runInteractiveProcess,
 				},
-			),
+			}),
 		).rejects.toThrow('agent id must start with a lowercase letter or number');
 
 		expect(runInteractiveProcess).not.toHaveBeenCalled();
@@ -2842,19 +2883,19 @@ describe('runAgentVmCli', () => {
 		);
 
 		await expect(
-			runAgentVmCli(
-				['auth', 'codex-harness', '--zone', 'shravan', '--agent', 'shravan'],
-				{
+			runAgentVmCli({
+				argv: ['auth', 'codex-harness', '--zone', 'shravan', '--agent', 'shravan'],
+				io: {
 					stderr: { write: () => true },
 					stdout: { write: () => true },
 				},
-				{
+				dependencies: {
 					...defaultCliDependencies,
 					createControllerClient: vi.fn(),
 					loadSystemConfig: vi.fn(async () => createCliBuildWorkerSystemConfig()),
 					runInteractiveProcess,
 				},
-			),
+			}),
 		).rejects.toThrow("auth codex-harness requires an OpenClaw zone, got 'worker'");
 
 		expect(runInteractiveProcess).not.toHaveBeenCalled();
@@ -2866,19 +2907,19 @@ describe('runAgentVmCli', () => {
 		);
 
 		await expect(
-			runAgentVmCli(
-				['auth', 'codex-harness', '--zone', 'shravan', '--agent', 'shravan', '--all-agents'],
-				{
+			runAgentVmCli({
+				argv: ['auth', 'codex-harness', '--zone', 'shravan', '--agent', 'shravan', '--all-agents'],
+				io: {
 					stderr: { write: () => true },
 					stdout: { write: () => true },
 				},
-				{
+				dependencies: {
 					...defaultCliDependencies,
 					createControllerClient: vi.fn(),
 					loadSystemConfig: vi.fn(async () => createCliBuildSystemConfigWithAgents()),
 					runInteractiveProcess,
 				},
-			),
+			}),
 		).rejects.toThrow('Use either --agent or --all-agents, not both.');
 
 		expect(runInteractiveProcess).not.toHaveBeenCalled();
@@ -2890,19 +2931,19 @@ describe('runAgentVmCli', () => {
 		);
 
 		await expect(
-			runAgentVmCli(
-				['auth', 'codex-harness', '--zone', 'shravan'],
-				{
+			runAgentVmCli({
+				argv: ['auth', 'codex-harness', '--zone', 'shravan'],
+				io: {
 					stderr: { write: () => true },
 					stdout: { write: () => true },
 				},
-				{
+				dependencies: {
 					...defaultCliDependencies,
 					createControllerClient: vi.fn(),
 					loadSystemConfig: vi.fn(async () => createCliBuildSystemConfigWithAgents()),
 					runInteractiveProcess,
 				},
-			),
+			}),
 		).rejects.toThrow('auth codex-harness requires --agent <agentId> or --all-agents.');
 
 		expect(runInteractiveProcess).not.toHaveBeenCalled();
@@ -2914,19 +2955,19 @@ describe('runAgentVmCli', () => {
 		);
 
 		await expect(
-			runAgentVmCli(
-				['auth', 'codex-harness', '--zone', 'shravan', '--all-agents'],
-				{
+			runAgentVmCli({
+				argv: ['auth', 'codex-harness', '--zone', 'shravan', '--all-agents'],
+				io: {
 					stderr: { write: () => true },
 					stdout: { write: () => true },
 				},
-				{
+				dependencies: {
 					...defaultCliDependencies,
 					createControllerClient: vi.fn(),
 					loadSystemConfig: vi.fn(async () => createCliBuildSystemConfigWithoutConfiguredAgents()),
 					runInteractiveProcess,
 				},
-			),
+			}),
 		).rejects.toThrow(
 			"Zone 'shravan' has no configured agents; use --agent <agentId> for a one-off login.",
 		);
@@ -2939,13 +2980,13 @@ describe('runAgentVmCli', () => {
 			async (_command: string, _arguments_: readonly string[]): Promise<void> => {},
 		);
 
-		await runAgentVmCli(
-			['auth', 'codex-harness', '--zone', 'shravan', '--all-agents'],
-			{
+		await runAgentVmCli({
+			argv: ['auth', 'codex-harness', '--zone', 'shravan', '--all-agents'],
+			io: {
 				stderr: { write: () => true },
 				stdout: { write: () => true },
 			},
-			{
+			dependencies: {
 				...defaultCliDependencies,
 				createControllerClient: () =>
 					createControllerClientStub(async () => ({
@@ -2957,7 +2998,7 @@ describe('runAgentVmCli', () => {
 				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfigWithAgents()),
 				runInteractiveProcess,
 			},
-		);
+		});
 
 		expect(runInteractiveProcess).toHaveBeenCalledTimes(2);
 		const firstSshArguments = vi.mocked(runInteractiveProcess).mock.calls[0]?.[1];
@@ -2972,13 +3013,13 @@ describe('runAgentVmCli', () => {
 	it('routes controller stop through the controller client', async () => {
 		const stopController = vi.fn(async () => ({ ok: true }));
 
-		await runAgentVmCli(
-			['controller', 'stop'],
-			{
+		await runAgentVmCli({
+			argv: ['controller', 'stop'],
+			io: {
 				stderr: { write: () => true },
 				stdout: { write: () => true },
 			},
-			{
+			dependencies: {
 				...defaultCliDependencies,
 				createControllerClient: () => ({
 					destroyZone: async () => ({}),
@@ -3008,7 +3049,7 @@ describe('runAgentVmCli', () => {
 				}),
 				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
 			},
-		);
+		});
 
 		expect(stopController).toHaveBeenCalled();
 	});
@@ -3026,9 +3067,9 @@ describe('runAgentVmCli', () => {
 			],
 		}));
 
-		await runAgentVmCli(
-			['controller', 'cleanup', '--config', './config/system.json', '--zone', 'shravan'],
-			{
+		await runAgentVmCli({
+			argv: ['controller', 'cleanup', '--config', './config/system.json', '--zone', 'shravan'],
+			io: {
 				stderr: { write: () => true },
 				stdout: {
 					write: (chunk: string | Uint8Array) => {
@@ -3037,13 +3078,13 @@ describe('runAgentVmCli', () => {
 					},
 				},
 			},
-			{
+			dependencies: {
 				...defaultCliDependencies,
 				createControllerClient,
 				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
 				runControllerOfflineCleanup,
 			},
-		);
+		});
 
 		expect(createControllerClient).not.toHaveBeenCalled();
 		expect(runControllerOfflineCleanup).toHaveBeenCalledWith({
@@ -3069,18 +3110,26 @@ describe('runAgentVmCli', () => {
 	it('passes controller cleanup force through offline cleanup', async () => {
 		const runControllerOfflineCleanup = vi.fn(async () => ({ results: [] }));
 
-		await runAgentVmCli(
-			['controller', 'cleanup', '--config', './config/system.json', '--zone', 'shravan', '--force'],
-			{
+		await runAgentVmCli({
+			argv: [
+				'controller',
+				'cleanup',
+				'--config',
+				'./config/system.json',
+				'--zone',
+				'shravan',
+				'--force',
+			],
+			io: {
 				stderr: { write: () => true },
 				stdout: { write: () => true },
 			},
-			{
+			dependencies: {
 				...defaultCliDependencies,
 				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
 				runControllerOfflineCleanup,
 			},
-		);
+		});
 
 		expect(runControllerOfflineCleanup).toHaveBeenCalledWith({
 			force: true,
@@ -3105,9 +3154,9 @@ describe('runAgentVmCli', () => {
 		});
 
 		await expect(
-			runAgentVmCli(
-				['controller', 'cleanup', '--config', './config/system.json', '--zone', 'shravan'],
-				{
+			runAgentVmCli({
+				argv: ['controller', 'cleanup', '--config', './config/system.json', '--zone', 'shravan'],
+				io: {
 					stderr: {
 						write: (chunk: string | Uint8Array) => {
 							stderrChunks.push(String(chunk));
@@ -3121,12 +3170,12 @@ describe('runAgentVmCli', () => {
 						},
 					},
 				},
-				{
+				dependencies: {
 					...defaultCliDependencies,
 					loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
 					runControllerOfflineCleanup,
 				},
-			),
+			}),
 		).rejects.toBe(reconciliationError);
 
 		expect(runControllerOfflineCleanup).toHaveBeenCalledOnce();
@@ -3149,46 +3198,46 @@ describe('runAgentVmCli', () => {
 		);
 
 		await expect(
-			runAgentVmCli(
-				['controller', 'lease', 'list'],
-				{
+			runAgentVmCli({
+				argv: ['controller', 'lease', 'list'],
+				io: {
 					stderr: { write: () => true },
 					stdout: { write: () => true },
 				},
-				{
+				dependencies: {
 					...defaultCliDependencies,
 					createControllerClient,
 					loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
 				},
-			),
+			}),
 		).rejects.toThrow('lease');
 		await expect(
-			runAgentVmCli(
-				['controller', 'lease', 'peek', 'lease-123'],
-				{
+			runAgentVmCli({
+				argv: ['controller', 'lease', 'peek', 'lease-123'],
+				io: {
 					stderr: { write: () => true },
 					stdout: { write: () => true },
 				},
-				{
+				dependencies: {
 					...defaultCliDependencies,
 					createControllerClient,
 					loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
 				},
-			),
+			}),
 		).rejects.toThrow('lease');
 		await expect(
-			runAgentVmCli(
-				['controller', 'lease', 'release', 'lease-123'],
-				{
+			runAgentVmCli({
+				argv: ['controller', 'lease', 'release', 'lease-123'],
+				io: {
 					stderr: { write: () => true },
 					stdout: { write: () => true },
 				},
-				{
+				dependencies: {
 					...defaultCliDependencies,
 					createControllerClient,
 					loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
 				},
-			),
+			}),
 		).rejects.toThrow('lease');
 
 		expect(createControllerClient).not.toHaveBeenCalled();
@@ -3204,9 +3253,9 @@ describe('runAgentVmCli', () => {
 			},
 		]);
 
-		await runAgentVmCli(
-			['backup', 'list', '--zone', 'shravan'],
-			{
+		await runAgentVmCli({
+			argv: ['backup', 'list', '--zone', 'shravan'],
+			io: {
 				stderr: { write: () => true },
 				stdout: {
 					write: (chunk: string | Uint8Array) => {
@@ -3215,7 +3264,7 @@ describe('runAgentVmCli', () => {
 					},
 				},
 			},
-			{
+			dependencies: {
 				buildControllerStatus: () => ({
 					controllerPort: 18800,
 					toolVmProfiles: ['standard'],
@@ -3330,7 +3379,7 @@ describe('runAgentVmCli', () => {
 				resolveServiceAccountToken: async () => 'mock-token',
 				startGatewayZone: vi.fn(async () => undefined as never),
 			},
-		);
+		});
 
 		expect(listBackups).toHaveBeenCalledWith(
 			expect.objectContaining({ backupDir: './state/shravan/backups', zoneId: 'shravan' }),
@@ -3340,17 +3389,17 @@ describe('runAgentVmCli', () => {
 
 	it('requires --zone for backup list', async () => {
 		await expect(
-			runAgentVmCli(
-				['backup', 'list'],
-				{
+			runAgentVmCli({
+				argv: ['backup', 'list'],
+				io: {
 					stderr: { write: () => true },
 					stdout: { write: () => true },
 				},
-				{
+				dependencies: {
 					...defaultCliDependencies,
 					loadSystemConfig: async () => createCliBuildSystemConfig(),
 				},
-			),
+			}),
 		).rejects.toThrow(/--zone/u);
 	});
 
@@ -3365,9 +3414,9 @@ describe('runAgentVmCli', () => {
 
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'test-token';
 
-		await runAgentVmCli(
-			['backup', 'create', '--zone', 'shravan'],
-			{
+		await runAgentVmCli({
+			argv: ['backup', 'create', '--zone', 'shravan'],
+			io: {
 				stderr: { write: () => true },
 				stdout: {
 					write: (chunk: string | Uint8Array) => {
@@ -3376,7 +3425,7 @@ describe('runAgentVmCli', () => {
 					},
 				},
 			},
-			{
+			dependencies: {
 				buildControllerStatus: () => ({
 					controllerPort: 18800,
 					toolVmProfiles: ['standard'],
@@ -3506,7 +3555,7 @@ describe('runAgentVmCli', () => {
 				resolveServiceAccountToken: async () => 'mock-token',
 				startGatewayZone: vi.fn(async () => undefined as never),
 			},
-		);
+		});
 
 		expect(createBackup).toHaveBeenCalledWith(
 			expect.objectContaining({

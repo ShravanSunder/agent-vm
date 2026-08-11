@@ -123,7 +123,6 @@ export async function configureProcessLogging(
 ): Promise<ProcessLoggingHandle> {
 	const stderrSink = getStreamSink(Writable.toWeb(createNonClosingWritableProxy(options.stderr)), {
 		formatter: getJsonLinesFormatter({ properties: 'nest:properties' }),
-		nonBlocking: { bufferSize: 1 },
 	});
 	const otelSink = getOpenTelemetrySink({
 		diagnostics: false,

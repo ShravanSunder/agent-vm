@@ -69,15 +69,16 @@ function createOpenTelemetrySinkOptions(
 	observability: GatewayRuntimeToolPortalObservabilityConfig,
 	resourceAttributes: Readonly<Record<string, string>> | undefined,
 ): OpenTelemetrySinkOptions {
-	const resource =
-		resourceAttributes === undefined ? undefined : resourceFromAttributes(resourceAttributes);
 	if (observability.kind === 'disabled') {
 		return {
+			diagnostics: false,
 			exceptionAttributes: false,
 			loggerProvider: disabledLoggerProvider,
 			objectRenderer: 'json',
 		};
 	}
+	const resource =
+		resourceAttributes === undefined ? undefined : resourceFromAttributes(resourceAttributes);
 	return {
 		...(resource === undefined ? {} : { additionalResource: resource }),
 		diagnostics: false,
@@ -129,7 +130,7 @@ export async function configureProcessLogging(
 	const createOpenTelemetrySink = props.dependencies?.getOpenTelemetrySink ?? getOpenTelemetrySink;
 	const stderrSink = createStreamSink(Writable.toWeb(createNonClosingWritableProxy(props.stderr)), {
 		formatter: getJsonLinesFormatter(),
-		nonBlocking: { bufferSize: 1 },
+		nonBlocking: true,
 	});
 	let otelSink: OpenTelemetrySink | undefined;
 	try {
