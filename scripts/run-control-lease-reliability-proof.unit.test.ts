@@ -89,12 +89,16 @@ describe('runControlLeaseReliabilityScenarios', () => {
 
 		expect(executeScenario).toHaveBeenNthCalledWith(1, {
 			args: [
-				'tsx',
-				'scripts/run-vitest-evidence-project.ts',
+				'vitest',
+				'run',
+				'--config',
+				'vitest.config.ts',
+				'--project',
 				'e2e-openclaw',
 				scenarios[0].testFile,
 			],
 			environment: {
+				AGENT_VM_E2E_USE_LOCAL_TOOL_VM_PACKAGES: '1',
 				AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1',
 				AGENT_VM_RELIABILITY_DIRTY_HASH: bindings.dirtyHash,
 				AGENT_VM_RELIABILITY_EVIDENCE_FILE: '/owned/evidence/control-session-recovery.json',
@@ -106,8 +110,17 @@ describe('runControlLeaseReliabilityScenarios', () => {
 			operationId: scenarios[0].operationId,
 		});
 		expect(executeScenario).toHaveBeenNthCalledWith(2, {
-			args: ['tsx', 'scripts/run-vitest-evidence-project.ts', 'e2e-vm', scenarios[1].testFile],
-			environment: {
+			args: [
+				'vitest',
+				'run',
+				'--config',
+				'vitest.config.ts',
+				'--project',
+				'e2e-vm',
+				scenarios[1].testFile,
+			],
+				environment: {
+				AGENT_VM_E2E_USE_LOCAL_TOOL_VM_PACKAGES: '1',
 				AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1',
 				AGENT_VM_RELIABILITY_DIRTY_HASH: bindings.dirtyHash,
 				AGENT_VM_RELIABILITY_EVIDENCE_FILE: '/owned/evidence/controller-restart-cleanup.json',
