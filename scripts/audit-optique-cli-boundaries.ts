@@ -328,6 +328,41 @@ function nodeContainsImportedCall(
 	return containsCall;
 }
 
+function projectionSchemaExpression(node: ts.CallExpression): ts.Expression | undefined {
+	const [firstArgument] = node.arguments;
+	if (firstArgument === undefined) return undefined;
+	if (!ts.isObjectLiteralExpression(firstArgument)) return firstArgument;
+	for (const property of firstArgument.properties) {
+		if (
+			ts.isPropertyAssignment(property) &&
+			property.name.getText() === 'schema' &&
+			ts.isExpression(property.initializer)
+		) {
+			return property.initializer;
+		}
+		if (ts.isShorthandPropertyAssignment(property) && property.name.text === 'schema') {
+			return property.name;
+		}
+	}
+	return undefined;
+}
+
+function zodSchemaExpressions(
+	node: ts.CallExpression,
+	optiqueZodBindings: ImportedBindings,
+): readonly ts.Expression[] {
+	const schemaExpressions: ts.Expression[] = [];
+	const visit = (child: ts.Node): void => {
+		if (ts.isCallExpression(child) && importedCallName(child, optiqueZodBindings) === 'zod') {
+			const [schemaExpression] = child.arguments;
+			if (schemaExpression !== undefined) schemaExpressions.push(schemaExpression);
+		}
+		ts.forEachChild(child, visit);
+	};
+	visit(node);
+	return schemaExpressions;
+}
+
 function isProcessArgvExpression(node: ts.Expression): boolean {
 	return (
 		ts.isPropertyAccessExpression(node) &&
@@ -467,6 +502,13 @@ function auditInventoryEntry(
 			optiqueCoreBindings.namedBindings.get('InferValue') === 'InferValue';
 
 		const visit = (node: ts.Node): void => {
+			if (parserModule && ts.isStringLiteralLike(node) && /\bdefault\s*:/iu.test(node.text)) {
+				insertFinding(
+					sourceFile,
+					node,
+					'fixed default literal must appear only in its Zod schema declaration',
+				);
+			}
 			if (ts.isImportDeclaration(node)) {
 				const importedModule = moduleSpecifierText(node);
 				const importedLocalFilePath =
@@ -612,6 +654,27 @@ function auditInventoryEntry(
 			if (ts.isCallExpression(node)) {
 				const optiqueCoreCallName = importedCallName(node, optiqueCoreBindings);
 				const cmdTsCallName = importedCallName(node, cmdTsBindings);
+				const localCallName = ts.isIdentifier(node.expression) ? node.expression.text : undefined;
+				if (parserModule && localCallName === 'projectZodScalarPresence') {
+					const projectedSchemaExpression = projectionSchemaExpression(node);
+					const providedTokenSchemaExpressions = zodSchemaExpressions(node, optiqueZodBindings);
+					if (
+						projectedSchemaExpression === undefined ||
+						!ts.isIdentifier(projectedSchemaExpression) ||
+						providedTokenSchemaExpressions.length === 0 ||
+						providedTokenSchemaExpressions.some(
+							(schemaExpression) =>
+								!ts.isIdentifier(schemaExpression) ||
+								schemaExpression.text !== projectedSchemaExpression.text,
+						)
+					) {
+						insertFinding(
+							sourceFile,
+							node,
+							'presence projection and zod() must reuse the exact named Zod schema object',
+						);
+					}
+				}
 				if (
 					sourceFile.fileName === entry.executableRoot &&
 					importedCallName(node, rootRunBindings) === 'run'

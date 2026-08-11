@@ -1,4 +1,5 @@
 import { readFile, stat } from 'node:fs/promises';
+import { createServer, type Server } from 'node:http';
 import path from 'node:path';
 
 import { execa } from 'execa';
@@ -91,6 +92,44 @@ function expectNoOrdinaryStack(stderr: string): void {
 	expect(stderr).not.toContain('node:internal');
 }
 
+interface RunningWorkerHealthServer {
+	readonly close: () => Promise<void>;
+	readonly port: number;
+}
+
+async function startWorkerHealthServer(): Promise<RunningWorkerHealthServer> {
+	const server = createServer((request, response) => {
+		if (request.url !== '/health') {
+			response.writeHead(404).end();
+			return;
+		}
+		response.writeHead(200, { 'content-type': 'application/json' });
+		response.end(JSON.stringify({ status: 'ok' }));
+	});
+	await new Promise<void>((resolve, reject) => {
+		server.once('error', reject);
+		server.listen(0, () => {
+			server.off('error', reject);
+			resolve();
+		});
+	});
+	const address = server.address();
+	if (address === null || typeof address === 'string') {
+		await closeHttpServer(server);
+		throw new Error('Worker health fixture did not bind a TCP port.');
+	}
+	return { close: async () => await closeHttpServer(server), port: address.port };
+}
+
+async function closeHttpServer(server: Server): Promise<void> {
+	await new Promise<void>((resolve, reject) => {
+		server.close((error) => {
+			if (error === undefined) resolve();
+			else reject(error);
+		});
+	});
+}
+
 beforeAll(async () => {
 	const targets = await Promise.all(cliPackageInventory.map(resolveBuiltCliTarget));
 	builtCliTargets = new Map(targets.map((target) => [target.executableName, target]));
@@ -124,6 +163,68 @@ describe('Optique cutover built CLI contract', () => {
 			expectNoOrdinaryStack(result.stderr);
 		},
 	);
+
+	it.each([
+		{ arguments_: ['init', '--help'], executableName: 'agent-vm' },
+		{ arguments_: ['health', '--help'], executableName: 'agent-vm-worker' },
+		{ arguments_: ['call', '--help'], executableName: 'tool-portal' },
+		{ arguments_: ['mcp-proxy', 'serve', '--help'], executableName: 'mcp-portal' },
+	] as const)(
+		'$executableName exposes successful reachable leaf help on stdout',
+		async ({ arguments_, executableName }) => {
+			// Arrange / Act
+			const result = await runBuiltCli(executableName, arguments_);
+
+			// Assert
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout.trim().length).toBeGreaterThan(0);
+			expect(result.stderr).toBe('');
+			expectNoOrdinaryStack(result.stderr);
+		},
+	);
+
+	it('agent-vm-worker executes a valid built health operation against a real listener', async () => {
+		// Arrange
+		const healthServer = await startWorkerHealthServer();
+
+		try {
+			// Act
+			const result = await runBuiltCli('agent-vm-worker', [
+				'health',
+				'--port',
+				String(healthServer.port),
+			]);
+
+			// Assert
+			expect(result.exitCode).toBe(0);
+			expect(JSON.parse(result.stdout)).toEqual({ status: 'ok' });
+			expect(result.stderr).toBe('');
+		} finally {
+			await healthServer.close();
+		}
+	});
+
+	it('agent-vm init leaf help renders its Zod default exactly once', async () => {
+		// Arrange / Act
+		const result = await runBuiltCli('agent-vm', ['init', '--help']);
+
+		// Assert
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout.match(/"default"/gu)).toHaveLength(1);
+		expect(result.stderr).toBe('');
+	});
+
+	it('agent-vm-worker accepts port zero and reaches the health operation', async () => {
+		// Arrange / Act
+		const result = await runBuiltCli('agent-vm-worker', ['health', '--port', '0']);
+
+		// Assert
+		expect(result.exitCode).not.toBe(0);
+		expect(result.stdout).toBe('');
+		expect(result.stderr).toContain('Health check failed');
+		expect(result.stderr).not.toContain('>=0');
+		expectNoOrdinaryStack(result.stderr);
+	});
 
 	it('preserves the existing agent-vm version surface', async () => {
 		// Arrange / Act

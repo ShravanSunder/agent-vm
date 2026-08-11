@@ -107,6 +107,34 @@ describe('Optique CLI architecture audit', () => {
 		expect(findings.join('\n')).toMatch(/preserve absence with min: 1/u);
 	});
 
+	it('rejects recreated Zod schema expressions inside a scalar projection', async () => {
+		// Arrange
+		const parser = `${admittedParser}\nconst optionalNameSchema = z.string().optional();\nconst projectedName = projectZodScalarPresence(optionalNameSchema.optional(), option('--projected-name', zod(optionalNameSchema.optional(), { placeholder: '' })));\nvoid projectedName;`;
+
+		// Act
+		const findings = await auditFixture([
+			{ content: admittedRoot, relativePath: 'packages/fixture/src/bin/fixture-cli.ts' },
+			{ content: parser, relativePath: 'packages/fixture/src/cli/fixture-cli-parser.ts' },
+		]);
+
+		// Assert
+		expect(findings.join('\n')).toMatch(/exact named Zod schema object/u);
+	});
+
+	it('rejects fixed-default literals repeated in parser help descriptions', async () => {
+		// Arrange
+		const parser = `${admittedParser}\nconst defaultNameSchema = z.string().default('fixture');\nconst description = 'Name (default: fixture)';\nvoid defaultNameSchema;\nvoid description;`;
+
+		// Act
+		const findings = await auditFixture([
+			{ content: admittedRoot, relativePath: 'packages/fixture/src/bin/fixture-cli.ts' },
+			{ content: parser, relativePath: 'packages/fixture/src/cli/fixture-cli-parser.ts' },
+		]);
+
+		// Assert
+		expect(findings.join('\n')).toMatch(/fixed default literal.*schema/u);
+	});
+
 	it('accepts official Optique subpaths, pure paths, schema-only imports, and presence flags', async () => {
 		// Arrange
 		const root = `

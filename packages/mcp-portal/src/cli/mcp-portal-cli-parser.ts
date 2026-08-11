@@ -37,6 +37,7 @@ const proxyUrlSchema = z.string().transform((value, context) => {
 		return z.NEVER;
 	}
 });
+const optionalProxyUrlSchema = proxyUrlSchema.optional();
 const portalToolSchema = z
 	.enum(['mcp_portal_list', 'mcp_portal_search', 'mcp_portal_describe', 'mcp_portal_call'])
 	.default('mcp_portal_call');
@@ -183,10 +184,10 @@ const printClientConfigCommandParser = command(
 			),
 		),
 		proxyUrl: projectZodScalarPresence(
-			proxyUrlSchema.optional(),
+			optionalProxyUrlSchema,
 			option(
 				'--proxy-url',
-				zod(proxyUrlSchema.optional(), {
+				zod(optionalProxyUrlSchema, {
 					metavar: 'URL',
 					placeholder: 'http://127.0.0.1:18791',
 				}),

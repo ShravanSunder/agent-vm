@@ -87,7 +87,7 @@ export const initCommandParser = command(
 						placeholder: initZoneIdSchema.parse(undefined),
 					}),
 					{
-						description: cliDescription('Zone identifier (default: "default")'),
+						description: cliDescription('Zone identifier'),
 					},
 				),
 				schema: initZoneIdSchema,
