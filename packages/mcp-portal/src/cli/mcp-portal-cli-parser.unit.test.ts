@@ -99,8 +99,6 @@ describe('mcp-portal Optique parser', () => {
 
 	it.each([
 		['a malformed URL', 'not-a-url'],
-		['an URL with credentials', 'https://user:password@example.test/mcp'],
-		['an URL with a fragment', 'https://example.test/mcp#fragment'],
 		['a non-HTTP URL', 'ftp://example.test/mcp'],
 	] as const)('rejects %s at the proxy URL parser boundary', (_description, proxyUrl) => {
 		const output = createIo();
@@ -123,6 +121,39 @@ describe('mcp-portal Optique parser', () => {
 
 		expect(result.kind).toBe('parse-error');
 		expect(output.stderr.join('')).toMatch(/proxy-url|URL|invalid|expected/u);
+		expect(output.stdout).toEqual([]);
+	});
+
+	it.each([
+		['an URL with credentials', 'https://user:password@example.test/mcp'],
+		['an URL with a fragment', 'https://example.test/mcp#fragment'],
+	] as const)('preserves %s in the accepted proxy URL domain', (_description, proxyUrl) => {
+		const output = createIo();
+
+		const result = runMcpPortalCliParser(
+			[
+				'mcp-proxy',
+				'print-client-config',
+				'--agent',
+				'agent',
+				'--config-dir',
+				'/config',
+				'--master-key-fingerprint',
+				'sha256:fingerprint',
+				'--proxy-url',
+				proxyUrl,
+			],
+			output.io,
+		);
+
+		expect(result).toMatchObject({
+			kind: 'parsed',
+			value: {
+				command: 'mcp-proxy.print-client-config',
+				options: { proxyUrl: new URL(proxyUrl).toString() },
+			},
+		});
+		expect(output.stderr).toEqual([]);
 		expect(output.stdout).toEqual([]);
 	});
 
