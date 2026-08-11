@@ -49,6 +49,9 @@ Current source evidence establishes the following boundaries:
 - Controller general diagnostics are emitted by direct stderr helpers in
   `controller-runtime.ts`, worker-task, git, heartbeat, lease, health,
   route, zone-runtime, gateway-recovery, and repo-resource-loader paths.
+  `gateway/gateway-zone-orchestrator.ts` emits operational diagnostics through
+  the controller-owned `writeLog` callback and therefore follows the same
+  controller logger without owning another sink or logger lifecycle.
 - Worker general diagnostics converge on
   `agent-vm-worker/src/shared/stderr.ts`; worker protocol responses and child
   process streams have different owners.
@@ -141,6 +144,12 @@ When a process root starts, it MUST configure a process-local JSONL stderr sink
 for the in-scope categories it owns. Each emitted record MUST be one complete
 JSON object followed by one newline on stderr. The sink MUST not write to
 stdout.
+
+If process-root logging setup itself fails before a sink exists, the root MAY
+write one fixed, bounded setup-failure line directly to stderr. This is the
+only pre-configuration exception; it MUST NOT include the raw cause, stack,
+configuration, endpoint, path, or credential material, and it MUST preserve
+the existing failure status.
 
 The process root owns configuration and shutdown. Importing an in-scope
 library, running a library function in a host process, or importing a test
@@ -400,11 +409,11 @@ belong in Program Design and the implementation plan.
 | ID | Contract to prove | Evidence class | Required observation |
 | --- | --- | --- | --- |
 | V1 | R1 categories and safe properties | automated behavior + state/data inspection | Representative diagnostics have stable categories, levels, bounded fields, and no raw error/stack/property leakage. |
-| V2 | R2 structured stderr | API/process transcript | A real process root emits parseable JSONL stderr and does not interleave records into stdout. |
+| V2 | R2 structured stderr | API/process transcript | A real process root emits parseable JSONL stderr and does not interleave records into stdout; a forced pre-configuration setup failure emits only the one fixed bounded stderr line. |
 | V3 | R3 OTLP routing/degradation | log observation + runtime evidence | Configured collector receives matching category/level/safe fields; absent/unavailable collector leaves local behavior intact. |
 | V4 | R4 library neutrality | automated behavior + dependency inspection | Importing libraries/configuring injected seams does not change global LogTape configuration or dispose a host-owned sink. |
 | V5 | R5 typed telemetry separation | automated behavior + telemetry observation | Existing typed telemetry records/providers/lifecycle remain unchanged while general diagnostics are emitted separately. |
-| V6 | R6 protected channels | host process transcript | Stdout/protocol/help/result/raw relay bytes remain unchanged and logging emits only to stderr/OTLP. |
+| V6 | R6 protected channels | host process transcript | Stdout/protocol/help/result/raw relay bytes remain unchanged; configured logging emits only to stderr/OTLP, and the bounded pre-configuration setup-failure line never enters stdout. |
 | V7 | R7 privacy | security analysis + misuse cases | Credential, content, raw stream, stack, and credentialed-URL cases are omitted/redacted; bounded safe context remains. |
 | V8 | R8 boundaries | dependency/source inspection | Deprecated plugin and parser-only boundaries have no unauthorized LogTape/parser changes. |
 | V9 | R9 disposal/failure | integration/runtime evidence | Root shutdown disposes owned sinks after product shutdown, and sink failure does not alter product outcome. |

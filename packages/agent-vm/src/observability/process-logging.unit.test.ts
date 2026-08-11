@@ -3,6 +3,7 @@ import { Writable } from 'node:stream';
 import { dispose, getConfig, getLogger, reset } from '@logtape/logtape';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { EnabledObservabilityRuntimeConfig } from './observability-config.js';
 import {
 	configureProcessLogging,
 	createBoundedDiagnosticProperties,
@@ -33,12 +34,93 @@ function createCapturingWritable(): {
 	};
 }
 
+function createEnabledObservabilityConfig(): EnabledObservabilityRuntimeConfig {
+	return {
+		enabled: true,
+		stackMode: 'external',
+		runtimeDir: '/tmp/observability-runtime',
+		bindAddress: '127.0.0.1',
+		ports: {
+			collectorGrpc: 4317,
+			collectorHealth: 13133,
+			collectorHttp: 4318,
+			logs: 9428,
+			metrics: 8428,
+			traces: 14268,
+		},
+		prepareOnBuild: false,
+		waitOnBuild: false,
+		controllerStartPolicy: 'degraded',
+		startupCheckTimeoutMs: 500,
+		zones: [],
+	};
+}
+
 afterEach(async () => {
 	await dispose().catch(() => {});
 	await reset();
 });
 
 describe('configureProcessLogging', () => {
+	it('delivers every record from a burst to a slow stderr stream', async () => {
+		const chunks: string[] = [];
+		const stderr = new Writable({
+			write: (chunk: Buffer | string, _encoding, callback) => {
+				setImmediate(() => {
+					chunks.push(chunk.toString());
+					callback();
+				});
+			},
+		});
+		const logging = await configureProcessLogging({
+			serviceName: 'agent-vm-controller',
+			stderr,
+		});
+
+		const recordCount = 32;
+		for (let index = 0; index < recordCount; index += 1) {
+			getLogger(['agent-vm', 'controller', 'burst']).info('Burst record', { index });
+		}
+
+		await logging.shutdown();
+
+		expect(chunks).toHaveLength(recordCount);
+	});
+
+	it('does not create an ambient OTLP sink when observability is disabled', async () => {
+		const stderr = createCapturingWritable();
+		const previousEndpoint = process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT;
+		process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT = 'not-a-valid-url';
+		try {
+			const logging = await configureProcessLogging({
+				observabilityConfig: { enabled: false },
+				serviceName: 'agent-vm-controller',
+				stderr: stderr.stream,
+			});
+
+			const config = getConfig();
+			expect(config?.sinks).not.toHaveProperty('otel');
+			getLogger(['agent-vm', 'controller', 'runtime']).warn('Disabled observability probe');
+			await logging.shutdown();
+		} finally {
+			if (previousEndpoint === undefined) delete process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT;
+			else process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT = previousEndpoint;
+		}
+	});
+
+	it('creates the configured OTLP sink when observability is enabled', async () => {
+		const stderr = createCapturingWritable();
+		const logging = await configureProcessLogging({
+			observabilityConfig: createEnabledObservabilityConfig(),
+			serviceName: 'agent-vm-controller',
+			stderr: stderr.stream,
+		});
+
+		const config = getConfig();
+		expect(config?.sinks).toHaveProperty('otel');
+		await logging.shutdown();
+	});
+
 	it('writes one bounded JSONL record to the supplied stderr stream', async () => {
 		const stderr = createCapturingWritable();
 		const logging = await configureProcessLogging({

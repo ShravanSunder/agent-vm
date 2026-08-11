@@ -65,8 +65,10 @@ explicit:
   `controller/http/controller-zone-operation-routes.ts`,
   `controller/leases/{lease-manager,tool-vm-lease-liveness,tool-vm-recovery}.ts`,
   `controller/zone-runtimes/{zone-runtime-registry,worker-zone-runtime,managed-gateway-zone-runtime}.ts`,
-  `gateway/gateway-recovery.ts`, `controller/task-state-reader.ts`, and
-  `resources/repo-resource-contract-loader.ts`.
+  `gateway/gateway-recovery.ts`, `gateway/gateway-zone-orchestrator.ts`,
+  `controller/task-state-reader.ts`, and `resources/repo-resource-contract-loader.ts`.
+  The orchestrator retains its injected `writeLog` seam and is proved to route
+  through the controller-owned logger; it does not configure LogTape itself.
 - Worker root/lifecycle: `packages/agent-vm-worker/src/main.ts` and
   `packages/agent-vm-worker/src/worker-cli-operations.ts`. Worker diagnostic
   owners are `coordinator/{coordinator,coordinator-helpers,task-runner}.ts`,
@@ -134,7 +136,9 @@ instead of inventing a compatibility wrapper.
 Implement the package-local `configureProcessLogging` and idempotent shutdown
 handle. It accepts the existing stderr stream and existing observability
 authority, appending `/v1/logs` exactly once when the controller collector is
-configured; otherwise it follows the specified no-endpoint behavior. It uses a
+configured. An explicit disabled observability config cannot fall through to
+ambient OTEL endpoint discovery; an absent repository config follows the
+specified environment/no-endpoint behavior. It uses a
 separate LogTape-managed OTLP provider, never the typed controller provider.
 Configure before `startControllerRuntime`; retain the handle in a root-only
 `runControllerStartLifecycle`; await runtime close and existing typed telemetry
@@ -173,7 +177,8 @@ focused host transcript test.
 
 Configure after the gateway service config is loaded and before production
 service start. For `otlp-http`, append `/v1/logs` once to the existing endpoint;
-for disabled observability, use the no-endpoint no-op. Keep the independent
+for disabled observability, use the explicit no-op provider so ambient OTEL
+environment variables cannot override the discriminated config. Keep the independent
 typed Tool Portal provider and its shutdown unchanged. Dispose LogTape only
 after retirement and typed telemetry shutdown. Startup failure before setup
 uses the existing bounded fixed failure line; it never emits a raw error or
@@ -291,7 +296,10 @@ proof at `packages/agent-vm/src/integration-tests/structured-logging.host.e2e.te
 and any narrowly scoped root test fixtures required by it.
 
 Build the four active roots and launch production-shaped child processes with
-isolated temp state. Parse every stderr line as one JSON object and assert
+deployment, runtime, state, and zone-file roots created under a harness-owned
+OS-temporary project directory. `AGENT_VM_E2E_CACHE_DIR` is reserved for the
+shared rebuildable image cache and is not deployment state. Parse every stderr
+line as one JSON object and assert
 category/level/message/properties, while asserting stdout protocol bytes are
 unchanged and free of logging records. Exercise configured OTLP with a
 production-shaped HTTP receiver and verify matching safe records, absent

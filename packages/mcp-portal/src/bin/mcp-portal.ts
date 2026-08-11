@@ -2,8 +2,8 @@
 
 import { basename } from 'node:path';
 
-import { run } from '@optique/run';
 import type { SecretResolver } from '@agent-vm/secret-management';
+import { run } from '@optique/run';
 
 import {
 	configureProcessLogging,
@@ -41,8 +41,11 @@ export async function runMcpPortalCommandWithProcessLogging(
 	try {
 		const configureLogging = props.configureProcessLogging ?? configureProcessLogging;
 		logging = await configureLogging({ stderr: process.stderr });
-	} catch {
-		writeMcpPortalDiagnostic('mcp-portal: process logging setup failed.\n');
+	} catch (error: unknown) {
+		const loggingSetupFailure = new Error('mcp-portal: process logging setup failed.', {
+			cause: error,
+		});
+		writeMcpPortalDiagnostic(`${loggingSetupFailure.message}\n`);
 		return 1;
 	}
 
@@ -53,7 +56,11 @@ export async function runMcpPortalCommandWithProcessLogging(
 		try {
 			await logging.shutdown();
 		} catch {
-			writeMcpPortalDiagnostic('mcp-portal: logging shutdown failed\n');
+			try {
+				process.stderr.write('mcp-portal: logging shutdown failed\n');
+			} catch {
+				// Preserve the product result when the fallback diagnostic writer fails.
+			}
 		}
 	};
 	try {

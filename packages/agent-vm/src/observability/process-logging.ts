@@ -5,7 +5,6 @@ import {
 	dispose,
 	getJsonLinesFormatter,
 	getStreamSink,
-	type LogLevel,
 	type Sink,
 } from '@logtape/logtape';
 import { getOpenTelemetrySink } from '@logtape/otel';
@@ -130,20 +129,11 @@ async function disposeSink(sink: Sink & AsyncDisposable): Promise<void> {
 	await sink[Symbol.asyncDispose]();
 }
 
-export async function configureProcessLogging(
-	options: ProcessLoggingOptions,
-): Promise<ProcessLoggingHandle> {
-	const stderrSink = getStreamSink(Writable.toWeb(createNonClosingWritableProxy(options.stderr)), {
-		formatter: getJsonLinesFormatter({
-			categorySeparator: '.',
-			message: 'rendered',
-			properties: 'nest:properties',
-		}),
-		nonBlocking: { bufferSize: 1 },
-	});
-	const otelSink = createOtlpSink(options);
-	const lowestLevel: LogLevel = 'trace';
-	try {
+async function configureLogTapeSinks(
+	stderrSink: Sink & AsyncDisposable,
+	otelSink: ReturnType<typeof getOpenTelemetrySink> | undefined,
+): Promise<void> {
+	if (otelSink === undefined) {
 		await configure({
 			reset: false,
 			loggers: [
@@ -155,8 +145,8 @@ export async function configureProcessLogging(
 				},
 				{
 					category: [...processLoggingCategory],
-					lowestLevel,
-					sinks: ['stderr', 'otel'],
+					lowestLevel: 'trace',
+					sinks: ['stderr'],
 				},
 				{
 					category: [...otelDiagnosticsCategory],
@@ -165,13 +155,55 @@ export async function configureProcessLogging(
 					sinks: ['stderr'],
 				},
 			],
-			sinks: {
-				otel: otelSink,
-				stderr: stderrSink,
-			},
+			sinks: { stderr: stderrSink },
 		});
+		return;
+	}
+
+	await configure({
+		reset: false,
+		loggers: [
+			{
+				category: [...logtapeMetaCategory],
+				lowestLevel: 'warning',
+				parentSinks: 'override',
+				sinks: ['stderr'],
+			},
+			{
+				category: [...processLoggingCategory],
+				lowestLevel: 'trace',
+				sinks: ['stderr', 'otel'],
+			},
+			{
+				category: [...otelDiagnosticsCategory],
+				lowestLevel: 'warning',
+				parentSinks: 'override',
+				sinks: ['stderr'],
+			},
+		],
+		sinks: { otel: otelSink, stderr: stderrSink },
+	});
+}
+
+export async function configureProcessLogging(
+	options: ProcessLoggingOptions,
+): Promise<ProcessLoggingHandle> {
+	const stderrSink = getStreamSink(Writable.toWeb(createNonClosingWritableProxy(options.stderr)), {
+		formatter: getJsonLinesFormatter({
+			categorySeparator: '.',
+			message: 'rendered',
+			properties: 'nest:properties',
+		}),
+	});
+	const otelSink =
+		options.observabilityConfig?.enabled === false ? undefined : createOtlpSink(options);
+	try {
+		await configureLogTapeSinks(stderrSink, otelSink);
 	} catch (error: unknown) {
-		await Promise.allSettled([disposeSink(stderrSink), disposeSink(otelSink)]);
+		await Promise.allSettled([
+			disposeSink(stderrSink),
+			...(otelSink === undefined ? [] : [disposeSink(otelSink)]),
+		]);
 		throw error;
 	}
 

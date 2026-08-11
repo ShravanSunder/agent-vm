@@ -381,6 +381,14 @@ function credentialVersionsByAgent(
 	);
 }
 
+/**
+ * Starts the standalone MCP Portal HTTP server.
+ *
+ * The default logger emits through the process-local LogTape configuration. A
+ * direct embedder must configure LogTape at its process root or provide a
+ * `PortalServerLogger` through `logger`; otherwise server diagnostics are not
+ * emitted to stderr.
+ */
 export async function startPortalServer(
 	props: StartPortalServerProps,
 ): Promise<{ readonly close: () => Promise<void>; readonly port: number }> {

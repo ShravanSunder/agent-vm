@@ -3,6 +3,7 @@ import { generateKeyPairSync } from 'node:crypto';
 import { once } from 'node:events';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -10,6 +11,8 @@ import { pathToFileURL } from 'node:url';
 import { managedToolPortalConfigSchema, mcpConfigSchema } from '@agent-vm/config-contracts';
 import { deriveGatewayRuntimePortalSemanticSnapshot } from '@agent-vm/gateway-control-contracts';
 import { describe, expect, it } from 'vitest';
+
+import { withProtocolDeadline } from './e2e-protocol-wait.js';
 
 interface ChildResult {
 	readonly exitCode: number | null;
@@ -21,8 +24,6 @@ type ProductionRootKind = 'agent-vm' | 'agent-vm-worker' | 'gateway-runtime' | '
 
 interface ProductionRootChildDefinition {
 	readonly category: readonly string[];
-	readonly configuration: string;
-	readonly adapterModulePath: string;
 	readonly cliSupportModulePath?: string;
 	readonly name: string;
 	readonly packageRoot: string;
@@ -39,6 +40,16 @@ interface OtlpReceiver {
 	readonly close: () => Promise<void>;
 	readonly endpoint: string;
 	readonly requests: Buffer[];
+	readonly waitForRequests: (
+		predicate: (requests: readonly Buffer[]) => boolean,
+		description: string,
+	) => Promise<void>;
+}
+
+interface OtlpRequestWaiter {
+	readonly predicate: (requests: readonly Buffer[]) => boolean;
+	readonly reject: (error: Error) => void;
+	readonly resolve: () => void;
 }
 
 type OtlpAttributeValue =
@@ -59,43 +70,17 @@ interface StructuredStderrAssertionOptions {
 
 const repositoryRoot = path.resolve(process.cwd());
 const childCompletionMarker = 'structured-logging-host-proof-complete\n';
+const productionRootChildTimeoutMs = 20_000;
+const otlpReceiverWaitTimeoutMs = 10_000;
+// Four successful roots plus one startup-failure root run sequentially.
+const sequentialProductionRootHostProofChildCount = 5;
+const sequentialProductionRootHostProofTimeoutMs =
+	productionRootChildTimeoutMs * sequentialProductionRootHostProofChildCount +
+	otlpReceiverWaitTimeoutMs * sequentialProductionRootHostProofChildCount +
+	10_000;
 
 function packageDistPath(...segments: readonly string[]): string {
 	return path.join(repositoryRoot, ...segments);
-}
-
-function createAgentVmObservabilityConfig(collectorHttpPort: number): string {
-	return JSON.stringify({
-		bindAddress: '127.0.0.1',
-		controllerStartPolicy: 'off',
-		enabled: true,
-		ports: { collectorHttp: collectorHttpPort },
-		prepareOnBuild: false,
-		runtimeDir: '/tmp/agent-vm-structured-logging-proof',
-		stackMode: 'external',
-		startupCheckTimeoutMs: 1,
-		waitOnBuild: false,
-		zones: [],
-	});
-}
-
-function createGatewayObservabilityConfig(endpoint: string): string {
-	return JSON.stringify({
-		admissionLimits: {
-			maxExportBatchRecords: 64,
-			maxQueuedRecordsPerSignal: 256,
-			maxRecordBytes: 65_536,
-		},
-		endpoint,
-		flushIntervalMs: 1,
-		kind: 'otlp-http',
-		logs: true,
-		metrics: true,
-		sampleRate: 1,
-		serviceName: 'agent-vm-tool-portal',
-		sourcePolicy: { admitBaggage: false, captureContent: false },
-		traces: true,
-	});
 }
 
 function createProductionRootChildCode(definition: ProductionRootChildDefinition): string {
@@ -107,7 +92,6 @@ function createProductionRootChildCode(definition: ProductionRootChildDefinition
 	const workerConfigPath = JSON.stringify(definition.workerConfigPath);
 	return `
 const { getLogger } = await import('@logtape/logtape');
-const adapter = await import(${JSON.stringify(definition.adapterModulePath)});
 const root = await import(${JSON.stringify(definition.rootModulePath)});
 const category = ${category};
 const emitRecord = () => getLogger(category).warning('Structured logging host proof record.', {
@@ -145,15 +129,15 @@ if (${rootKind} === 'agent-vm') {
 \t\t}
 \t\treturn result;
 \t});
-\tawait root.runAgentVmCli(
-\t\t['controller', 'start', '--config', ${systemConfigPath}, '--zone', 'host-proof'],
-\t\t{ stderr: process.stderr, stdout: process.stdout },
-\t\t{
+\tawait root.runAgentVmCli({
+\t\targv: ['controller', 'start', '--config', ${systemConfigPath}, '--zone', 'host-proof'],
+\t\tdependencies: {
 \t\t\t...defaultCliDependencies,
 \t\t\tisGatewayImageCached: async () => true,
 \t\t},
-\t\t{ processLoggingStderr: process.stderr, processRoot: true },
-\t);
+\t\texecutionOptions: { processLoggingStderr: process.stderr, processRoot: true },
+\t\tio: { stderr: process.stderr, stdout: process.stdout },
+\t});
 \tprocess.stdout.write = originalWrite;
 \tprocess.stdout.write(${JSON.stringify(childCompletionMarker)});
 } else if (${rootKind} === 'agent-vm-worker') {
@@ -174,17 +158,6 @@ if (${rootKind} === 'agent-vm') {
 \t});
 \tprocess.stdout.write = originalWrite;
 \tprocess.stdout.write(${JSON.stringify(childCompletionMarker)});
-} else if (${rootKind} === 'gateway-runtime') {
-\tawait root.runGatewayRuntimeStartLifecycle({
-\t\tconfig: ${definition.configuration},
-\t\tconfigureLogging: async (config) => await adapter.configureProcessLogging({ ...config, stderr: process.stderr }),
-\t\tstartService: async () => { emitRecord(); return { readiness: { kind: 'host-proof-ready' }, retire: async () => ({ kind: 'host-proof-retired' }) }; },
-\t\twaitForRetirementSignal: async () => ({ cleanup: () => undefined, signal: 'SIGTERM' }),
-\t\twriteFatalEvidence: async () => undefined,
-\t\twriteStderr: (text) => process.stderr.write(text),
-\t\twriteStdout: (text) => process.stdout.write(text),
-\t});
-\tprocess.stdout.write(${JSON.stringify(childCompletionMarker)});
 } else {
 \tconst originalWrite = process.stdout.write.bind(process.stdout);
 \tprocess.stdout.write = ((chunk, ...args) => {
@@ -203,9 +176,10 @@ if (${rootKind} === 'agent-vm') {
 }
 
 function createGatewayHostProofPreload(definition: ProductionRootChildDefinition): string {
-	const logtapeModulePath = pathToFileURL(
-		path.join(definition.packageRoot, 'node_modules', '@logtape', 'logtape', 'dist', 'mod.js'),
-	).href;
+	const packageRequire = createRequire(
+		pathToFileURL(path.join(definition.packageRoot, 'package.json')).href,
+	);
+	const logtapeModulePath = pathToFileURL(packageRequire.resolve('@logtape/logtape')).href;
 	const source = `
 import { getLogger } from ${JSON.stringify(logtapeModulePath)};
 const logger = getLogger(${JSON.stringify(definition.category)});
@@ -255,7 +229,7 @@ async function runProductionRootChild(
 			...definition.environment,
 		},
 		stdio: ['ignore', 'pipe', 'pipe'],
-		timeout: 20_000,
+		timeout: productionRootChildTimeoutMs,
 	});
 	const stdoutChunks: Buffer[] = [];
 	const stderrChunks: Buffer[] = [];
@@ -282,11 +256,21 @@ async function runProductionRootChild(
 
 async function createOtlpReceiver(): Promise<OtlpReceiver> {
 	const requests: Buffer[] = [];
+	const pendingWaiters = new Set<OtlpRequestWaiter>();
+	const notifyWaiters = (): void => {
+		for (const waiter of pendingWaiters) {
+			if (!waiter.predicate(requests)) {
+				continue;
+			}
+			waiter.resolve();
+		}
+	};
 	const server = createServer((request, response): void => {
 		const chunks: Buffer[] = [];
 		request.on('data', (chunk: Buffer) => chunks.push(chunk));
 		request.on('end', (): void => {
 			requests.push(Buffer.concat(chunks));
+			notifyWaiters();
 			response.statusCode = 200;
 			response.end();
 		});
@@ -298,13 +282,54 @@ async function createOtlpReceiver(): Promise<OtlpReceiver> {
 		server.close();
 		throw new Error('Structured logging OTLP receiver did not expose a TCP address.');
 	}
+	const waitForRequests = async (
+		predicate: (requests: readonly Buffer[]) => boolean,
+		description: string,
+	): Promise<void> => {
+		if (predicate(requests)) {
+			return;
+		}
+		let registeredWaiter: OtlpRequestWaiter | undefined;
+		const waiterPromise = new Promise<void>((resolve, reject) => {
+			const waiter: OtlpRequestWaiter = {
+				predicate,
+				reject: (error): void => {
+					pendingWaiters.delete(waiter);
+					reject(error);
+				},
+				resolve: (): void => {
+					pendingWaiters.delete(waiter);
+					resolve();
+				},
+			};
+			registeredWaiter = waiter;
+			pendingWaiters.add(waiter);
+		});
+		try {
+			await withProtocolDeadline(
+				waiterPromise,
+				`Waiting for ${description}`,
+				otlpReceiverWaitTimeoutMs,
+			);
+		} finally {
+			if (registeredWaiter !== undefined) {
+				pendingWaiters.delete(registeredWaiter);
+			}
+		}
+	};
 	return {
 		close: async (): Promise<void> => {
+			const closePromise = once(server, 'close');
 			server.close();
-			await once(server, 'close');
+			server.closeAllConnections();
+			for (const waiter of pendingWaiters) {
+				waiter.reject(new Error('OTLP receiver closed while waiting for requests.'));
+			}
+			await closePromise;
 		},
 		endpoint: `http://127.0.0.1:${String(address.port)}/v1/logs`,
 		requests,
+		waitForRequests,
 	};
 }
 
@@ -321,6 +346,35 @@ async function allocateTcpPort(): Promise<number> {
 	server.close();
 	await closePromise;
 	return address.port;
+}
+
+function boundStructuredStderrLine(line: string): string {
+	const normalizedLine = line.replace(/[\r\n\t]/gu, ' ');
+	return normalizedLine.length > 200 ? `${normalizedLine.slice(0, 197)}...` : normalizedLine;
+}
+
+function parseStructuredJsonLines(
+	stderr: string,
+	expectedRoot: string,
+): readonly Record<string, unknown>[] {
+	const records: Record<string, unknown>[] = [];
+	for (const [index, line] of stderr.split('\n').entries()) {
+		if (!line.startsWith('{')) {
+			continue;
+		}
+		try {
+			const parsed: unknown = JSON.parse(line);
+			if (!isRecord(parsed)) {
+				throw new Error('record is not a JSON object');
+			}
+			records.push(parsed);
+		} catch {
+			throw new Error(
+				`${expectedRoot} stderr contained invalid JSONL at line ${String(index + 1)}: ${boundStructuredStderrLine(line)}`,
+			);
+		}
+	}
+	return records;
 }
 
 function assertStructuredStderr(
@@ -340,7 +394,6 @@ function assertStructuredStderr(
 		lines.length,
 		`${expectedLogger} stdout: ${result.stdout} stderr: ${result.stderr}`,
 	).toBeGreaterThanOrEqual(1);
-	const structuredLines = lines.filter((line) => line.startsWith('{'));
 	const plainLines = lines.filter((line) => !line.startsWith('{'));
 	if (options.allowedPlainLinePattern === undefined) {
 		expect(plainLines).toEqual([]);
@@ -350,7 +403,7 @@ function assertStructuredStderr(
 			`${expectedLogger} unexpected plain stderr: ${plainLines.join(' | ')}`,
 		).toBe(true);
 	}
-	const records = structuredLines.map((line) => JSON.parse(line) as Record<string, unknown>);
+	const records = parseStructuredJsonLines(result.stderr, expectedLogger);
 	expect(records).toContainEqual(
 		expect.objectContaining({
 			level: 'WARN',
@@ -365,11 +418,8 @@ function assertGatewayStartupFailure(result: ChildResult): void {
 	expect(result.exitCode).toBe(1);
 	expect(result.stdout).toBe('');
 	expect(result.stderr).toContain('Gateway runtime service failed.\n');
-	const structuredLines = result.stderr
-		.split('\n')
-		.filter((line) => line.startsWith('{'))
-		.map((line) => JSON.parse(line) as Readonly<Record<string, unknown>>);
-	expect(structuredLines).toContainEqual(
+	const records = parseStructuredJsonLines(result.stderr, 'agent-vm.gateway-runtime.process');
+	expect(records).toContainEqual(
 		expect.objectContaining({
 			level: 'ERROR',
 			logger: 'agent-vm.gateway-runtime.process',
@@ -383,12 +433,8 @@ function assertGatewayRuntimeSuccess(result: ChildResult): void {
 	expect(result.exitCode, result.stderr).toBe(0);
 	expect(result.stdout).toContain('tool-portal-role-readiness');
 	expect(result.stdout).toContain('"kind":"retired"');
-	const structuredLines = result.stderr
-		.trim()
-		.split('\n')
-		.filter((line) => line.length > 0);
-	expect(structuredLines).toHaveLength(1);
-	expect(JSON.parse(structuredLines[0] ?? '')).toEqual(
+	const records = parseStructuredJsonLines(result.stderr, 'agent-vm.gateway-runtime.process');
+	expect(records).toContainEqual(
 		expect.objectContaining({
 			level: 'WARN',
 			logger: 'agent-vm.gateway-runtime.process',
@@ -516,15 +562,40 @@ function isExpectedOtlpHostProofRecord(
 	);
 }
 
-function assertOtlpHostProofRecord(
-	requestWindow: readonly Buffer[],
+function isExpectedOtlpGatewayStartupFailureRecord(
+	record: OtlpLogRecord,
 	category: readonly string[],
-): void {
-	const records = requestWindow.flatMap((request) => readOtlpJsonLogRecords(request));
-	expect(
-		records.some((record) => isExpectedOtlpHostProofRecord(record, category)),
-		`OTLP request window did not contain the expected ${category.join('.')} record`,
-	).toBe(true);
+): boolean {
+	const categoryAttribute = record.attributes.get('category');
+	const eventAttribute = record.attributes.get('event');
+	const failureClassAttribute = record.attributes.get('failureClass');
+	return (
+		record.body === 'Gateway runtime service startup failed.' &&
+		record.severityNumber === 17 &&
+		record.severityText === 'error' &&
+		record.attributes.size === 3 &&
+		categoryAttribute?.kind === 'string-array' &&
+		categoryAttribute.value.join('.') === category.join('.') &&
+		eventAttribute?.kind === 'string' &&
+		eventAttribute.value === 'startup-failed' &&
+		failureClassAttribute?.kind === 'string' &&
+		failureClassAttribute.value === 'startup'
+	);
+}
+
+async function assertOtlpHostProofRecord(
+	receiver: OtlpReceiver,
+	requestWindowStart: number,
+	category: readonly string[],
+): Promise<void> {
+	await receiver.waitForRequests(
+		(requests) =>
+			requests
+				.slice(requestWindowStart)
+				.flatMap((request) => readOtlpJsonLogRecords(request))
+				.some((record) => isExpectedOtlpHostProofRecord(record, category)),
+		`the expected ${category.join('.')} OTLP host-proof record`,
+	);
 }
 
 async function createMcpPortalProofConfigDir(): Promise<string> {
@@ -737,9 +808,17 @@ async function createGatewayRuntimeProofFixture(options: {
 		{ mode: 0o600 },
 	);
 	if (options.failStartup) {
+		// A directory at the readiness path intentionally makes startup fail with EISDIR.
 		await mkdir(path.join(runtimeRoot, 'tool-portal.readiness.json'), { mode: 0o700 });
 	}
 	return { configPath, root, runtimeRoot };
+}
+
+async function cleanupFixtureRoot(root: string | undefined): Promise<void> {
+	if (root === undefined) {
+		return;
+	}
+	await rm(root, { force: true, recursive: true }).catch(() => undefined);
 }
 
 async function createWorkerProofFixture(): Promise<WorkerProofFixture> {
@@ -774,95 +853,152 @@ async function createWorkerProofFixture(): Promise<WorkerProofFixture> {
 }
 
 describe('structured logging process roots', () => {
-	it('keeps four built process children on JSONL stderr and protected stdout', async () => {
-		const receiver = await createOtlpReceiver();
-		const mcpConfigDir = await createMcpPortalProofConfigDir();
-		const workerFixture = await createWorkerProofFixture();
-		const controllerFixture = await createAgentVmProofFixture(
-			Number(new URL(receiver.endpoint).port),
-		);
-		const gatewayFixture = await createGatewayRuntimeProofFixture({
-			collectorEndpoint: receiver.endpoint,
-			failStartup: false,
-		});
-		const failingGatewayFixture = await createGatewayRuntimeProofFixture({
-			collectorEndpoint: receiver.endpoint,
-			failStartup: true,
-		});
-		try {
-			const collectorUrl = receiver.endpoint;
-			const children = [
-				{
-					category: ['agent-vm', 'controller', 'runtime'],
-					configuration: `{ observabilityConfig: ${createAgentVmObservabilityConfig(Number(new URL(collectorUrl).port))}, serviceName: 'agent-vm-host-proof', stderr: process.stderr }`,
-					adapterModulePath: packageDistPath(
-						'packages',
-						'agent-vm',
-						'dist',
-						'observability',
-						'process-logging.js',
-					),
-					cliSupportModulePath: packageDistPath(
-						'packages',
-						'agent-vm',
-						'dist',
-						'cli',
-						'agent-vm-cli-support.js',
-					),
-					name: 'agent-vm',
-					packageRoot: packageDistPath('packages', 'agent-vm'),
-					rootKind: 'agent-vm',
-					rootModulePath: packageDistPath(
-						'packages',
-						'agent-vm',
-						'dist',
-						'cli',
-						'agent-vm-entrypoint.js',
-					),
-					systemConfigPath: controllerFixture.configPath,
-				},
-				{
-					category: ['agent-vm', 'worker', 'server'],
-					configuration: '{ stderr: process.stderr }',
-					environment: {
-						AGENT_VM_WORKER_CONTROL_BOOT_ID: undefined,
-						AGENT_VM_WORKER_CONTROL_CONTROLLER_EPOCH: undefined,
-						AGENT_VM_WORKER_CONTROL_GENERATION_ID: undefined,
-						AGENT_VM_WORKER_CONTROL_PEER_ID: undefined,
-						AGENT_VM_WORKER_CONTROL_PUBLIC_KEY_PEM: undefined,
-						AGENT_VM_ZONE_ID: undefined,
-						MCP_PORTAL_MASTER_KEY:
-							'0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
-						OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: collectorUrl,
-						WORK_DIR: workerFixture.workDirectory,
+	it(
+		'keeps four built process children on JSONL stderr and protected stdout',
+		{ timeout: sequentialProductionRootHostProofTimeoutMs },
+		async () => {
+			let receiver: OtlpReceiver | undefined;
+			let mcpConfigDir: string | undefined;
+			let workerFixture: WorkerProofFixture | undefined;
+			let controllerFixture: AgentVmProofFixture | undefined;
+			let gatewayFixture: GatewayRuntimeProofFixture | undefined;
+			let failingGatewayFixture: GatewayRuntimeProofFixture | undefined;
+			try {
+				const createdReceiver = await createOtlpReceiver();
+				receiver = createdReceiver;
+				const createdMcpConfigDir = await createMcpPortalProofConfigDir();
+				mcpConfigDir = createdMcpConfigDir;
+				const createdWorkerFixture = await createWorkerProofFixture();
+				workerFixture = createdWorkerFixture;
+				const createdControllerFixture = await createAgentVmProofFixture(
+					Number(new URL(createdReceiver.endpoint).port),
+				);
+				controllerFixture = createdControllerFixture;
+				const createdGatewayFixture = await createGatewayRuntimeProofFixture({
+					collectorEndpoint: createdReceiver.endpoint,
+					failStartup: false,
+				});
+				gatewayFixture = createdGatewayFixture;
+				const createdFailingGatewayFixture = await createGatewayRuntimeProofFixture({
+					collectorEndpoint: createdReceiver.endpoint,
+					failStartup: true,
+				});
+				failingGatewayFixture = createdFailingGatewayFixture;
+				const collectorUrl = createdReceiver.endpoint;
+				const children = [
+					{
+						category: ['agent-vm', 'controller', 'runtime'],
+						cliSupportModulePath: packageDistPath(
+							'packages',
+							'agent-vm',
+							'dist',
+							'cli',
+							'agent-vm-cli-support.js',
+						),
+						name: 'agent-vm',
+						packageRoot: packageDistPath('packages', 'agent-vm'),
+						rootKind: 'agent-vm',
+						rootModulePath: packageDistPath(
+							'packages',
+							'agent-vm',
+							'dist',
+							'cli',
+							'agent-vm-entrypoint.js',
+						),
+						systemConfigPath: createdControllerFixture.configPath,
 					},
-					adapterModulePath: packageDistPath(
-						'packages',
-						'agent-vm-worker',
-						'dist',
-						'shared',
-						'process-logging.js',
-					),
-					name: 'agent-vm-worker',
-					packageRoot: packageDistPath('packages', 'agent-vm-worker'),
-					rootKind: 'agent-vm-worker',
-					rootModulePath: packageDistPath('packages', 'agent-vm-worker', 'dist', 'main.js'),
-					workerConfigPath: workerFixture.configPath,
-				},
-				{
+					{
+						category: ['agent-vm', 'worker', 'server'],
+						environment: {
+							AGENT_VM_WORKER_CONTROL_BOOT_ID: undefined,
+							AGENT_VM_WORKER_CONTROL_CONTROLLER_EPOCH: undefined,
+							AGENT_VM_WORKER_CONTROL_GENERATION_ID: undefined,
+							AGENT_VM_WORKER_CONTROL_PEER_ID: undefined,
+							AGENT_VM_WORKER_CONTROL_PUBLIC_KEY_PEM: undefined,
+							AGENT_VM_ZONE_ID: undefined,
+							MCP_PORTAL_MASTER_KEY:
+								'0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+							OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: collectorUrl,
+							WORK_DIR: createdWorkerFixture.workDirectory,
+						},
+						name: 'agent-vm-worker',
+						packageRoot: packageDistPath('packages', 'agent-vm-worker'),
+						rootKind: 'agent-vm-worker',
+						rootModulePath: packageDistPath('packages', 'agent-vm-worker', 'dist', 'main.js'),
+						workerConfigPath: createdWorkerFixture.configPath,
+					},
+					{
+						category: ['agent-vm', 'gateway-runtime', 'process'],
+						name: 'gateway-runtime',
+						packageRoot: packageDistPath('packages', 'gateway-runtime'),
+						rootKind: 'gateway-runtime',
+						gatewayConfigPath: createdGatewayFixture.configPath,
+						rootModulePath: packageDistPath(
+							'packages',
+							'gateway-runtime',
+							'dist',
+							'bin',
+							'gateway-runtime.js',
+						),
+					},
+					{
+						category: ['agent-vm', 'mcp-portal', 'server'],
+						environment: {
+							MCP_PORTAL_MASTER_KEY:
+								'0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+							OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: collectorUrl,
+						},
+						name: 'mcp-portal',
+						packageRoot: packageDistPath('packages', 'mcp-portal'),
+						rootKind: 'mcp-portal',
+						rootModulePath: packageDistPath(
+							'packages',
+							'mcp-portal',
+							'dist',
+							'bin',
+							'mcp-portal.js',
+						),
+						mcpConfigDir: createdMcpConfigDir,
+					},
+				] satisfies readonly ProductionRootChildDefinition[];
+
+				let requestWindowStart = createdReceiver.requests.length;
+				for (const child of children) {
+					// oxlint-disable-next-line no-await-in-loop -- each child owns the next causal OTLP request window.
+					const result = await runProductionRootChild(child);
+					if (child.rootKind === 'gateway-runtime') {
+						assertGatewayRuntimeSuccess(result);
+					} else {
+						assertStructuredStderr(
+							result,
+							child.category.join('.'),
+							child.rootKind === 'agent-vm'
+								? {
+										allowedPlainLinePattern:
+											/^(?:\(node:\d+\) ExperimentalWarning: SQLite is an experimental feature and might change at any time|\(Use `node --trace-warnings \.\.\.` to show where the warning was created\)| {0,2}(?:Resolving 1Password secrets|Controller API on :\d+|Starting selected gateway zones)(?:\.\.\.| done)?)$/u,
+									}
+								: {},
+						);
+					}
+					if (child.rootKind === 'agent-vm-worker') {
+						expect(result.stdout).toContain('[agent-vm-worker] Server listening on');
+					}
+					if (child.rootKind === 'agent-vm') {
+						expect(result.stdout).toContain('"ingress": null');
+						expect(result.stdout).toContain('"vmId": null');
+						expect(result.stdout).toContain('"zoneId": "host-proof"');
+					}
+					// oxlint-disable-next-line no-await-in-loop -- each child owns the next causal OTLP request window.
+					await assertOtlpHostProofRecord(createdReceiver, requestWindowStart, child.category);
+					requestWindowStart = createdReceiver.requests.length;
+				}
+				const failureRequestWindowStart = createdReceiver.requests.length;
+				const gatewayFailureResult = await runProductionRootChild({
 					category: ['agent-vm', 'gateway-runtime', 'process'],
-					configuration: `{ observability: ${createGatewayObservabilityConfig(collectorUrl)} }`,
-					adapterModulePath: packageDistPath(
-						'packages',
-						'gateway-runtime',
-						'dist',
-						'production',
-						'process-logging.js',
-					),
-					name: 'gateway-runtime',
+					gatewayConfigPath: createdFailingGatewayFixture.configPath,
+					name: 'gateway-runtime-startup-failure',
 					packageRoot: packageDistPath('packages', 'gateway-runtime'),
 					rootKind: 'gateway-runtime',
-					gatewayConfigPath: gatewayFixture.configPath,
 					rootModulePath: packageDistPath(
 						'packages',
 						'gateway-runtime',
@@ -870,116 +1006,46 @@ describe('structured logging process roots', () => {
 						'bin',
 						'gateway-runtime.js',
 					),
-				},
-				{
-					category: ['agent-vm', 'mcp-portal', 'server'],
-					configuration: '{ stderr: process.stderr }',
-					environment: {
-						MCP_PORTAL_MASTER_KEY:
-							'0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
-						OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: collectorUrl,
-					},
-					adapterModulePath: packageDistPath(
-						'packages',
-						'mcp-portal',
-						'dist',
-						'cli',
-						'process-logging.js',
-					),
-					name: 'mcp-portal',
-					packageRoot: packageDistPath('packages', 'mcp-portal'),
-					rootKind: 'mcp-portal',
-					rootModulePath: packageDistPath('packages', 'mcp-portal', 'dist', 'bin', 'mcp-portal.js'),
-					mcpConfigDir,
-				},
-			] satisfies readonly ProductionRootChildDefinition[];
-
-			let requestWindowStart = receiver.requests.length;
-			for (const child of children) {
-				// oxlint-disable-next-line no-await-in-loop -- each child owns the next causal OTLP request window.
-				const result = await runProductionRootChild(child);
-				if (child.rootKind === 'gateway-runtime') {
-					assertGatewayRuntimeSuccess(result);
-				} else {
-					assertStructuredStderr(
-						result,
-						child.category.join('.'),
-						child.rootKind === 'agent-vm'
-							? {
-									allowedPlainLinePattern:
-										/^(?:\(node:\d+\) ExperimentalWarning: SQLite is an experimental feature and might change at any time|\(Use `node --trace-warnings \.\.\.` to show where the warning was created\)| {0,2}(?:Resolving 1Password secrets|Controller API on :\d+|Starting selected gateway zones)(?:\.\.\.| done)?)$/u,
-								}
-							: {},
-					);
-				}
-				if (child.rootKind === 'agent-vm-worker') {
-					expect(result.stdout).toContain('[agent-vm-worker] Server listening on');
-				}
-				if (child.rootKind === 'agent-vm') {
-					expect(result.stdout).toContain('"ingress": null');
-					expect(result.stdout).toContain('"vmId": null');
-					expect(result.stdout).toContain('"zoneId": "host-proof"');
-				}
-				assertOtlpHostProofRecord(receiver.requests.slice(requestWindowStart), child.category);
-				requestWindowStart = receiver.requests.length;
+				});
+				assertGatewayStartupFailure(gatewayFailureResult);
+				await createdReceiver.waitForRequests(
+					(requests) =>
+						requests
+							.slice(failureRequestWindowStart)
+							.flatMap((request) => readOtlpJsonLogRecords(request))
+							.some((record) =>
+								isExpectedOtlpGatewayStartupFailureRecord(record, [
+									'agent-vm',
+									'gateway-runtime',
+									'process',
+								]),
+							),
+					'the expected gateway-runtime startup-failed OTLP record',
+				);
+			} finally {
+				await Promise.all([
+					receiver?.close().catch(() => undefined) ?? Promise.resolve(),
+					cleanupFixtureRoot(controllerFixture?.root),
+					cleanupFixtureRoot(failingGatewayFixture?.root),
+					cleanupFixtureRoot(gatewayFixture?.root),
+					cleanupFixtureRoot(mcpConfigDir),
+					cleanupFixtureRoot(workerFixture?.root),
+				]);
 			}
-			const failureRequestWindowStart = receiver.requests.length;
-			const gatewayFailureResult = await runProductionRootChild({
-				category: ['agent-vm', 'gateway-runtime', 'process'],
-				configuration: '{}',
-				adapterModulePath: packageDistPath(
-					'packages',
-					'gateway-runtime',
-					'dist',
-					'production',
-					'process-logging.js',
-				),
-				gatewayConfigPath: failingGatewayFixture.configPath,
-				name: 'gateway-runtime-startup-failure',
-				packageRoot: packageDistPath('packages', 'gateway-runtime'),
-				rootKind: 'gateway-runtime',
-				rootModulePath: packageDistPath(
-					'packages',
-					'gateway-runtime',
-					'dist',
-					'bin',
-					'gateway-runtime.js',
-				),
-			});
-			assertGatewayStartupFailure(gatewayFailureResult);
-			expect(receiver.requests.length).toBeGreaterThan(failureRequestWindowStart);
-		} finally {
-			await receiver.close();
-			await Promise.all([
-				rm(controllerFixture.root, { force: true, recursive: true }),
-				rm(failingGatewayFixture.root, { force: true, recursive: true }),
-				rm(gatewayFixture.root, { force: true, recursive: true }),
-				rm(mcpConfigDir, { force: true, recursive: true }),
-				rm(workerFixture.root, { force: true, recursive: true }),
-			]);
-		}
-	});
+		},
+	);
 
 	it('keeps product success when the OTLP receiver is unavailable', async () => {
-		const receiver = await createOtlpReceiver();
-		const unavailableEndpoint = receiver.endpoint;
-		await receiver.close();
+		const unavailableCollectorPort = await allocateTcpPort();
+		const unavailableEndpoint = `http://127.0.0.1:${String(unavailableCollectorPort)}/v1/logs`;
 		const workerFixture = await createWorkerProofFixture();
 		try {
 			const result = await runProductionRootChild({
 				category: ['agent-vm', 'worker', 'server'],
-				configuration: '{ stderr: process.stderr }',
 				environment: {
 					OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: unavailableEndpoint,
 					WORK_DIR: workerFixture.workDirectory,
 				},
-				adapterModulePath: packageDistPath(
-					'packages',
-					'agent-vm-worker',
-					'dist',
-					'shared',
-					'process-logging.js',
-				),
 				name: 'agent-vm-worker-unavailable-collector',
 				packageRoot: packageDistPath('packages', 'agent-vm-worker'),
 				rootKind: 'agent-vm-worker',
@@ -988,6 +1054,7 @@ describe('structured logging process roots', () => {
 			});
 			expect(result.exitCode).toBe(0);
 			expect(result.stdout).toContain(childCompletionMarker);
+			assertStructuredStderr(result, 'agent-vm.worker.server');
 			expect(result.stderr).not.toContain('Failed to initialize OpenTelemetry logger');
 		} finally {
 			await rm(workerFixture.root, { force: true, recursive: true });
@@ -999,15 +1066,7 @@ describe('structured logging process roots', () => {
 		try {
 			const result = await runProductionRootChild({
 				category: ['agent-vm', 'worker', 'server'],
-				configuration: '{ stderr: process.stderr }',
 				environment: { WORK_DIR: workerFixture.workDirectory },
-				adapterModulePath: packageDistPath(
-					'packages',
-					'agent-vm-worker',
-					'dist',
-					'shared',
-					'process-logging.js',
-				),
 				name: 'agent-vm-worker-no-endpoint',
 				packageRoot: packageDistPath('packages', 'agent-vm-worker'),
 				rootKind: 'agent-vm-worker',
