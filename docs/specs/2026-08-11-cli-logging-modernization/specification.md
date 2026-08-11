@@ -51,10 +51,19 @@ use the integration's CLI boolean behavior.
 The schema's outermost Zod v4 wrapper MUST be the sole declaration of
 missing-token behavior:
 
-- a schema without an outer `ZodOptional` or `ZodDefault` is required;
-- an outer `ZodOptional` makes the CLI value optional;
-- an outer `ZodDefault` supplies the CLI default, and that default value MUST
-  appear only in the schema's `.default(...)` declaration.
+- a schema with no `ZodOptional` or `ZodDefault` wrapper is required;
+- one outer `ZodOptional` with no nested `ZodDefault` makes the CLI value
+  optional;
+- one outer `ZodDefault` with no nested `ZodOptional` supplies the CLI default,
+  and that default value MUST appear only in the schema's `.default(...)`
+  declaration.
+
+A CLI value schema MUST NOT mix `ZodOptional` and `ZodDefault` in either wrapper
+order. Zod v4 applies a default even through an outer optional wrapper, whereas
+Optique `optional()` returns `undefined` when the parser is absent; admitting a
+mixed stack would therefore create a repository-specific absence meaning that
+disagrees with the authoritative schema. The current CLI inventory requires no
+mixed stack.
 
 Parser composition MUST mechanically project those three states onto official
 Optique required, `optional()`, or `withDefault()` behavior. Call sites MUST NOT
@@ -291,7 +300,7 @@ Traces to: U1, U3, U5, U7, U10.
 | Obligation | Required evidence |
 | --- | --- |
 | S1 | Manifest, lockfile, source, test, and active-doc scans prove Optique presence and zero active `cmd-ts` or manual-parser residue. |
-| S2 | Parser units cover reused and narrowed Zod v4 schemas, scalar required/optional/default projection, repeated-array projection and empty default, contextual fallback remaining operation-owned, coercion/transformation, safe placeholders, help requiredness/default rendering, boundary values, and invalid values. A source/AST boundary test rejects private Zod introspection and independently declared option defaults/optionality/array types. |
+| S2 | Parser units cover reused and narrowed Zod v4 schemas, scalar required/optional/default projection, rejection of both mixed optional/default wrapper orders, repeated-array projection and empty default, contextual fallback remaining operation-owned, coercion/transformation, safe placeholders, help requiredness/default rendering, boundary values, and invalid values. A source/AST boundary test rejects mixed absence wrappers, private Zod introspection, and independently declared option defaults/optionality/array types. |
 | S3 | Import/purity tests prove parser construction does not load effect owners; dispatcher tests prove one operation and exhaustive typing; a source/AST boundary test proves each exported command union is exactly `InferValue<typeof rootParser>` and rejects a second handwritten command-union declaration. |
 | S4 | Built-binary host E2E covers all five binaries: help, valid, existing boundary, missing/invalid, streams, status, and safe effect; `agent-vm` version is covered. |
 | S5–S6 | Static classification plus logger-capture units prove categories, levels, fields, root-only configuration, and library isolation. |

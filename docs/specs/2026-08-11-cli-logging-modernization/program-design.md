@@ -78,21 +78,25 @@ authority.
 
 ```text
 named Zod v4 schema
-  ├─ outer ZodOptional ──> optional(option/argument(..., zod(same schema)))
-  ├─ outer ZodDefault  ──> withDefault(
+  ├─ no absence wrapper ──> option/argument(..., zod(same schema))
+  ├─ one outer ZodOptional, no nested ZodDefault
+  │                      ──> optional(option/argument(..., zod(same schema)))
+  ├─ one outer ZodDefault, no nested ZodOptional
+  │                      ──> withDefault(
   │                           option/argument(..., zod(same schema)),
   │                           schema.parse(undefined)
   │                         )
-  └─ otherwise         ──> option/argument(..., zod(same schema))
+  └─ mixed optional/default wrappers ──> rejected at construction
 ```
 
 The projection uses only public Zod v4 APIs: exported `ZodOptional` and
 `ZodDefault` classes for wrapper identity, `unwrap()` where the public type
 relationship must be inspected, and `parse(undefined)` to obtain the schema's
 own default output. It never reads `_def`, `_zod`, or another private shape.
-Outer-wrapper order remains meaningful exactly as it is in Zod: for example,
-`.default(value).optional()` is optional, while `.optional().default(value)`
-has a default.
+It admits only required, simply optional, or simply defaulted schema forms.
+Both `.default(value).optional()` and `.optional().default(value)` are rejected:
+Zod v4 applies the inner default through an outer optional wrapper, so mapping
+that shape to Optique `optional()` would return a different absent value.
 
 CLI defaults are fixed and side-effect-free. Dynamic or async default factories
 are excluded because parser construction and help must observe the same value.
@@ -535,7 +539,7 @@ source changeset without data migration.
 
 | Contract | Structural seam | Proof |
 | --- | --- | --- |
-| S1–S2 | package parser definitions, Zod v4 schemas, and package-local scalar/array projections | residue/package scan; scalar and repeated parser units; source/AST rejection of private Zod introspection or duplicated optional/default/array declarations |
+| S1–S2 | package parser definitions, Zod v4 schemas, and package-local scalar/array projections | residue/package scan; scalar and repeated parser units; construction and source/AST rejection of mixed wrappers, private Zod introspection, or duplicated optional/default/array declarations |
 | S3 | parser import graph, inferred alias, and exhaustive dispatcher | import/purity test; one-dispatch units; typecheck; source/AST rejection of handwritten command unions |
 | S4 | real executable root and current operation seams | all-five built-binary host E2E and outside-suite smoke |
 | S5 | classified emission inventory and category literals | static inventory plus captured logger records |
@@ -557,6 +561,7 @@ delivery. A fake parser does not substitute for built-binary CLI proof.
   repository-wide CLI runner;
 - no independent Optique optional/default declaration for a value-bearing
   field; missing-token behavior is projected from its Zod v4 schema;
+- no CLI schema that mixes `ZodOptional` and `ZodDefault` in either order;
 - no independently typed or defaulted repeated-value collection; the Zod array
   schema supplies its element domain, collection output, and fixed default;
 - no private Zod `_def`/`_zod` introspection or dynamic CLI default factory;
@@ -590,7 +595,9 @@ delivery. A fake parser does not substitute for built-binary CLI proof.
   `ZodOptional`, `ZodDefault`, and public `unwrap()` behavior are available
   without repository code inspecting private representation; the
   [public `ZodArray.element` field](https://github.com/colinhacks/zod/blob/1fb56a5c18c27102dbc92260a4007c7732a0ccca/packages/zod/src/v4/classic/schemas.ts#L1317-L1349)
-  exposes the repeated element schema.
+  exposes the repeated element schema. Zod's
+  [v4.4.3 default test](https://github.com/colinhacks/zod/blob/1fb56a5c18c27102dbc92260a4007c7732a0ccca/packages/zod/src/v4/classic/tests/default.test.ts#L44-L53)
+  establishes why mixed optional/default wrapper stacks are rejected.
 - [LogTape](https://logtape.org/) and
   [`@logtape/otel`](https://github.com/dahlia/logtape): categorized library
   loggers feed root-configured structured and OpenTelemetry sinks.
