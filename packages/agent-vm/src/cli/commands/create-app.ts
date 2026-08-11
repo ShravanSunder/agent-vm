@@ -1,51 +1,40 @@
-import { or } from '@optique/core/constructs';
-import type { Parser } from '@optique/core/parser';
+// oxlint-disable typescript-eslint/explicit-function-return-type
+import { subcommands } from 'cmd-ts';
 
-import { createAuthSubcommands, type AuthCommand } from './auth-definition.js';
-import { createBackupSubcommands, type BackupCommand } from './backup-definition.js';
-import { createBuildCommand, type BuildCommand } from './build-definition.js';
-import { createCacheSubcommands, type CacheCommand } from './cache-definition.js';
-import { createConfigSubcommands, type ConfigCommand } from './config-definition.js';
-import { createControllerSubcommands, type ControllerCommand } from './controller-definition.js';
-import { createDoctorCommand, type DoctorCommand } from './doctor-definition.js';
-import { createInitCommand, type InitCommand } from './init-definition.js';
-import { createManualSubcommands, type ManualCommand } from './manual-definition.js';
-import { createMigrateSubcommands, type MigrateCommand } from './migrate-definition.js';
-import { createPathsSubcommands, type PathsCommand } from './paths-definition.js';
-import { createResourcesSubcommands, type ResourcesCommand } from './resources-definition.js';
-import { createValidateCommand, type ValidateCommand } from './validate-definition.js';
+import type { CliDependencies, CliIo } from '../agent-vm-cli-support.js';
+import { createAuthSubcommands } from './auth-definition.js';
+import { createBackupSubcommands } from './backup-definition.js';
+import { createBuildCommand } from './build-definition.js';
+import { createCacheSubcommands } from './cache-definition.js';
+import { createConfigSubcommands } from './config-definition.js';
+import { createControllerSubcommands } from './controller-definition.js';
+import { createDoctorCommand } from './doctor-definition.js';
+import { createInitCommand } from './init-definition.js';
+import { createManualSubcommands } from './manual-definition.js';
+import { createMigrateSubcommands } from './migrate-definition.js';
+import { createPathsSubcommands } from './paths-definition.js';
+import { createResourcesSubcommands } from './resources-definition.js';
+import { createValidateCommand } from './validate-definition.js';
 
-export type AgentVmCommand =
-	| InitCommand
-	| ManualCommand
-	| MigrateCommand
-	| ResourcesCommand
-	| BuildCommand
-	| ValidateCommand
-	| DoctorCommand
-	| CacheCommand
-	| ConfigCommand
-	| PathsCommand
-	| BackupCommand
-	| AuthCommand
-	| ControllerCommand;
-
-export function createAgentVmParser(): Parser<'sync', AgentVmCommand> {
-	return or(
-		createInitCommand(),
-		createManualSubcommands(),
-		createMigrateSubcommands(),
-		createResourcesSubcommands(),
-		createBuildCommand(),
-		createValidateCommand(),
-		createDoctorCommand(),
-		createCacheSubcommands(),
-		createConfigSubcommands(),
-		createPathsSubcommands(),
-		createBackupSubcommands(),
-		createAuthSubcommands(),
-		createControllerSubcommands(),
-	);
+export function createAgentVmApp(io: CliIo, dependencies: CliDependencies, cliVersion: string) {
+	return subcommands({
+		name: 'agent-vm',
+		version: cliVersion,
+		description: 'Gondolin-based VM controller for Worker and OpenClaw agents',
+		cmds: {
+			init: createInitCommand(io, dependencies),
+			manual: createManualSubcommands(io, dependencies),
+			migrate: createMigrateSubcommands(io, dependencies),
+			resources: createResourcesSubcommands(io, dependencies),
+			build: createBuildCommand(io, dependencies),
+			validate: createValidateCommand(io, dependencies),
+			doctor: createDoctorCommand(io, dependencies),
+			cache: createCacheSubcommands(io, dependencies),
+			config: createConfigSubcommands(io, dependencies),
+			paths: createPathsSubcommands(io, dependencies),
+			backup: createBackupSubcommands(io, dependencies),
+			auth: createAuthSubcommands(io, dependencies),
+			controller: createControllerSubcommands(io, dependencies),
+		},
+	});
 }
-
-export const createAgentVmApp = createAgentVmParser;

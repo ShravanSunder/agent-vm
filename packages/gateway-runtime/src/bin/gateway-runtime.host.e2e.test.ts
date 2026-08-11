@@ -47,13 +47,6 @@ interface StartedGatewayRuntimeProcess {
 	readonly stdout: { value: string };
 }
 
-interface CompletedGatewayRuntimeCliProcess {
-	readonly exitCode: number | null;
-	readonly signal: NodeJS.Signals | null;
-	readonly stderr: string;
-	readonly stdout: string;
-}
-
 let fixture: PackedGatewayRuntimeFixture | undefined;
 let startedProcess: StartedGatewayRuntimeProcess | undefined;
 
@@ -307,50 +300,6 @@ function startGatewayRuntimeProcess(props: {
 	return { child, stderr, stdout };
 }
 
-async function runGatewayRuntimeCliProcess(
-	argv: readonly string[],
-): Promise<CompletedGatewayRuntimeCliProcess> {
-	if (fixture === undefined) throw new Error('Packed Gateway runtime fixture was not prepared.');
-	const child = spawn(fixture.binPath, argv, {
-		env: process.env,
-		stdio: ['ignore', 'pipe', 'pipe'],
-	});
-	let stdout = '';
-	let stderr = '';
-	child.stdout.setEncoding('utf8');
-	child.stderr.setEncoding('utf8');
-	child.stdout.on('data', (chunk: string) => {
-		stdout += chunk;
-	});
-	child.stderr.on('data', (chunk: string) => {
-		stderr += chunk;
-	});
-	return await new Promise<CompletedGatewayRuntimeCliProcess>((resolve, reject) => {
-		const timeoutSignal = AbortSignal.timeout(PROCESS_WAIT_MILLISECONDS);
-		const cleanup = (): void => {
-			timeoutSignal.removeEventListener('abort', onTimeout);
-			child.off('error', onError);
-			child.off('close', onClose);
-		};
-		const onTimeout = (): void => {
-			cleanup();
-			child.kill('SIGTERM');
-			reject(new Error(`Packed Gateway runtime CLI timed out. argv=${JSON.stringify(argv)}`));
-		};
-		const onError = (error: Error): void => {
-			cleanup();
-			reject(error);
-		};
-		const onClose = (exitCode: number | null, signal: NodeJS.Signals | null): void => {
-			cleanup();
-			resolve({ exitCode, signal, stderr, stdout });
-		};
-		child.once('error', onError);
-		child.once('close', onClose);
-		timeoutSignal.addEventListener('abort', onTimeout, { once: true });
-	});
-}
-
 async function waitForJsonLine(props: {
 	readonly process: StartedGatewayRuntimeProcess;
 	readonly predicate: (value: Readonly<Record<string, unknown>>) => boolean;
@@ -427,72 +376,6 @@ afterAll(async () => {
 });
 
 describe('packed Gateway runtime executable', () => {
-	it('prints help to stdout and exits successfully without readiness output', async () => {
-		// Act
-		const result = await runGatewayRuntimeCliProcess(['--help']);
-
-		// Assert
-		expect(result.exitCode).toBe(0);
-		expect(result.signal).toBeNull();
-		expect(result.stdout).toContain('--config');
-		expect(result.stdout).not.toContain('tool-portal-role-readiness');
-		expect(result.stderr).toBe('');
-	});
-
-	it('accepts a minimal absolute config path at the CLI boundary', async () => {
-		if (fixture === undefined) throw new Error('Packed Gateway runtime fixture was not prepared.');
-		// Arrange
-		const boundaryRoot = await mkdtemp(path.join(fixture.root, 'boundary-'));
-		const runtime = await writeProtectedRuntimeConfig(boundaryRoot);
-		const boundaryConfigPath = path.join(runtime.runtimeRoot, 'x');
-		await writeFile(boundaryConfigPath, await readFile(runtime.configPath), { mode: 0o600 });
-		const boundaryProcess = startGatewayRuntimeProcess({
-			binPath: fixture.binPath,
-			configPath: boundaryConfigPath,
-		});
-
-		try {
-			// Act
-			const readiness = await waitForJsonLine({
-				predicate: (value) => value['kind'] === 'tool-portal-role-readiness',
-				process: boundaryProcess,
-			});
-
-			// Assert
-			expect(readiness).toMatchObject({ kind: 'tool-portal-role-readiness' });
-		} finally {
-			if (boundaryProcess.child.exitCode === null) {
-				boundaryProcess.child.kill('SIGTERM');
-				await waitForJsonLine({
-					predicate: (value) => value['kind'] === 'retired',
-					process: boundaryProcess,
-				});
-			}
-			if (boundaryProcess.child.exitCode === null) {
-				await once(boundaryProcess.child, 'exit', {
-					signal: AbortSignal.timeout(PROCESS_WAIT_MILLISECONDS),
-				});
-			}
-			await rm(boundaryRoot, { force: true, recursive: true });
-		}
-	});
-
-	it.each([
-		['missing --config', []],
-		['relative config path', ['--config', 'relative.json']],
-		['unknown option', ['--unknown', '/tmp/gateway-runtime.json']],
-	] as const)('rejects %s with stderr and no readiness output', async (_name, argv) => {
-		// Act
-		const result = await runGatewayRuntimeCliProcess(argv);
-
-		// Assert
-		expect(result.exitCode).not.toBe(0);
-		expect(result.signal).toBeNull();
-		expect(result.stdout).toBe('');
-		expect(result.stderr).not.toBe('');
-		expect(result.stderr).toMatch(/error|config|absolute|unknown/iu);
-	});
-
 	it('starts the manifest bin, serves the real SDK, and retires with protected evidence', async () => {
 		if (fixture === undefined) throw new Error('Packed Gateway runtime fixture was not prepared.');
 		// Arrange

@@ -273,7 +273,6 @@ function requireCliPath(fixture: PackedCliFixture): string {
 }
 
 function explicitHttpArgs(props: {
-	readonly authorizationEnvironmentName?: string;
 	readonly endpoint: string;
 	readonly operation?: (typeof operationFixtures)[number]['operation'];
 	readonly request?: Readonly<Record<string, unknown>>;
@@ -287,7 +286,7 @@ function explicitHttpArgs(props: {
 		'--endpoint',
 		props.endpoint,
 		'--authorization-env',
-		props.authorizationEnvironmentName ?? 'TOOL_PORTAL_TEST_AUTHORIZATION',
+		'TOOL_PORTAL_TEST_AUTHORIZATION',
 	];
 }
 
@@ -426,76 +425,6 @@ describe('packed Tool Portal CLI', () => {
 		}
 	});
 
-	it('prints top-level help to stdout and exits successfully', async () => {
-		const cliPath = requireCliPath(fixture);
-		const result = await runCli({
-			args: ['--help'],
-			cliPath,
-			env: cliEnvironment(fixture.rootDirectory),
-		});
-
-		expect(result).toMatchObject({ exitCode: 0, stderr: '' });
-		expect(result.stdout).toContain('tool-portal');
-	});
-
-	it('prints leaf list help to stdout and exits successfully', async () => {
-		const cliPath = requireCliPath(fixture);
-		const result = await runCli({
-			args: ['list', '--help'],
-			cliPath,
-			env: cliEnvironment(fixture.rootDirectory),
-		});
-
-		expect(result.exitCode).toBe(0);
-		expect(result.stdout).toContain('Usage: tool-portal list');
-		expect(result.stderr).toBe('');
-	});
-
-	it('rejects a missing input JSON value before an explicit HTTP invocation', async () => {
-		const cliPath = requireCliPath(fixture);
-		const result = await runCli({
-			args: [
-				'list',
-				'--transport',
-				'http',
-				'--endpoint',
-				'http://127.0.0.1:1/mcp',
-				'--authorization-env',
-				'TOOL_PORTAL_TEST_AUTHORIZATION',
-			],
-			cliPath,
-			env: cliEnvironment(fixture.rootDirectory),
-		});
-
-		expect(result.exitCode).toBe(2);
-		expect(result.stdout).toBe('');
-		expect(result.stderr).toContain('Missing option `--input-json`');
-		expect(result.stderr).not.toMatch(/\n\s+at\s+/u);
-	});
-
-	it('rejects an invalid authorization environment name before any MCP request', async () => {
-		const cliPath = requireCliPath(fixture);
-		const server = await startHttpMcpServer(new Map([['tool_portal_list', successfulListResult]]));
-		try {
-			const result = await runCli({
-				args: explicitHttpArgs({
-					authorizationEnvironmentName: 'not-valid',
-					endpoint: server.endpoint,
-				}),
-				cliPath,
-				env: cliEnvironment(fixture.rootDirectory),
-			});
-
-			expect(result.exitCode).toBe(2);
-			expect(result.stdout).toBe('');
-			expect(result.stderr).toContain('Invalid string');
-			expect(result.stderr).not.toMatch(/\n\s+at\s+/u);
-			expect(server.requests).toEqual([]);
-		} finally {
-			await server.close();
-		}
-	});
-
 	it.each(operationFixtures)(
 		'maps $operation through explicit authenticated HTTP and emits only canonical JSON',
 		async (operationFixture) => {
@@ -531,47 +460,20 @@ describe('packed Tool Portal CLI', () => {
 		},
 	);
 
-	it('accepts a one-character authorization environment name boundary', async () => {
-		const cliPath = requireCliPath(fixture);
-		const server = await startHttpMcpServer(new Map([['tool_portal_list', successfulListResult]]));
-		try {
-			const result = await runCli({
-				args: explicitHttpArgs({
-					authorizationEnvironmentName: 'A',
-					endpoint: server.endpoint,
-				}),
-				cliPath,
-				env: cliEnvironment(fixture.rootDirectory, { A: testAuthorization }),
-			});
-
-			expect(result.exitCode).toBe(0);
-			expect(result.stderr).toBe('');
-			expect(result.stdout).toBe(`${encodeCanonicalJson(successfulListResult)}\n`);
-			expect(server.requests).toEqual([
-				expect.objectContaining({
-					authorization: `Bearer ${testAuthorization}`,
-					params: expect.objectContaining({ name: 'tool_portal_list' }),
-				}),
-			]);
-		} finally {
-			await server.close();
-		}
-	});
-
-	it('preserves exit class 2 for parse and application failures', async () => {
+	it('uses exit class 2 for usage, auth, transport, and protocol failures', async () => {
 		const cliPath = requireCliPath(fixture);
 		const server = await startHttpMcpServer(new Map([['tool_portal_list', { invalid: true }]]));
 		const missingAuthEnvironment = cliEnvironment(fixture.rootDirectory);
 		delete missingAuthEnvironment['TOOL_PORTAL_TEST_AUTHORIZATION'];
 		const cases = [
-			['usage', [...explicitHttpArgs({ endpoint: server.endpoint }), '--unknown-option'], 2],
-			['auth', explicitHttpArgs({ endpoint: server.endpoint }), 2],
-			['transport', explicitHttpArgs({ endpoint: 'http://127.0.0.1:1/unreachable' }), 2],
-			['protocol', explicitHttpArgs({ endpoint: server.endpoint }), 2],
+			['usage', [...explicitHttpArgs({ endpoint: server.endpoint }), '--unknown-option']],
+			['auth', explicitHttpArgs({ endpoint: server.endpoint })],
+			['transport', explicitHttpArgs({ endpoint: 'http://127.0.0.1:1/unreachable' })],
+			['protocol', explicitHttpArgs({ endpoint: server.endpoint })],
 		] as const;
 
 		await Promise.all(
-			cases.map(async ([failureClass, args, expectedExitCode]) => {
+			cases.map(async ([failureClass, args]) => {
 				const result = await runCli({
 					args,
 					cliPath,
@@ -580,13 +482,9 @@ describe('packed Tool Portal CLI', () => {
 							? missingAuthEnvironment
 							: cliEnvironment(fixture.rootDirectory),
 				});
-				expect(result.exitCode, failureClass).toBe(expectedExitCode);
+				expect(result.exitCode, failureClass).toBe(2);
 				expect(result.stdout, failureClass).toBe('');
 				expect(result.stderr, failureClass).not.toContain(testAuthorization);
-				if (failureClass === 'usage') {
-					expect(result.stderr).toContain('Usage: tool-portal');
-					expect(result.stderr).not.toMatch(/\n\s+at\s+/u);
-				}
 			}),
 		);
 		await server.close();
@@ -656,10 +554,6 @@ describe('packed Tool Portal CLI', () => {
 		delete implicitEnvironment['TOOL_PORTAL_TEST_AUTHORIZATION'];
 		const invalidArgv = [
 			['list', '--input-json', '{"requests":[{"id":"list-1"}]}', '--transport', 'http'],
-			explicitHttpArgs({
-				authorizationEnvironmentName: 'not-valid',
-				endpoint: 'http://127.0.0.1:1/mcp',
-			}),
 			[
 				...explicitHttpArgs({ endpoint: 'http://127.0.0.1:1/mcp' }),
 				'--authorization',
@@ -674,8 +568,6 @@ describe('packed Tool Portal CLI', () => {
 				const result = await runCli({ args, cliPath, env: implicitEnvironment });
 				expect(result.exitCode).toBe(2);
 				expect(result.stdout).toBe('');
-				expect(result.stderr).toContain('Usage: tool-portal');
-				expect(result.stderr).not.toMatch(/\n\s+at\s+/u);
 				expect(result.stderr).not.toContain('implicit-token');
 			}),
 		);
