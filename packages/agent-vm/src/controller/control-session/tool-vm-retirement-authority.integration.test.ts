@@ -52,17 +52,21 @@ describe('Tool VM retirement authority causal integration', () => {
 	});
 
 	it('contains command expiry and reacquires after SSH failure with exact predecessor fencing', async () => {
+		let nowMs = Date.now();
 		const fixture = await createCausalFixture({
 			commandResultTimeoutMs: 1_000,
 			commandTtlMs: 50,
+			now: () => nowMs,
 		});
 
 		try {
 			const acceptedSession = fixture.gatewayService.getCurrentAcceptedSession();
 			const firstAcquisition = fixture.activeUseRuntime.acquisitionPort.acquire({ trustedContext });
+			await fixture.firstLeaseCreationObserved;
+			nowMs += 51;
+			fixture.firstLeaseCreationMayFinish.resolve();
 			await expect(firstAcquisition).resolves.toMatchObject({ kind: 'not-bound' });
 			expect(fixture.gatewayService.getCurrentAcceptedSession()).toBe(acceptedSession);
-			fixture.firstLeaseCreationMayFinish.resolve();
 			await fixture.stalePublicationRejected.promise;
 			expect(fixture.leaseManager.listLeases()).toHaveLength(1);
 			expect(fixture.publishedBindingRuntime.readState({ trustedContext }).kind).toBe('unbound');
