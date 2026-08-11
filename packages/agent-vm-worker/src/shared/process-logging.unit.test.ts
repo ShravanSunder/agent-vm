@@ -121,7 +121,7 @@ describe.sequential('worker process logging', () => {
 		const secondShutdown = logging?.shutdown();
 		expect(secondShutdown).toBe(firstShutdown);
 		await firstShutdown;
-		expect(capture.stderr.writableEnded).toBe(true);
+		expect(capture.stderr.writableEnded).toBe(false);
 		expect(getConfig()).not.toBeNull();
 		logging = undefined;
 	});

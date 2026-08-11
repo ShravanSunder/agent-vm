@@ -26,6 +26,15 @@ export interface ProcessLoggingHandle {
 	readonly shutdown: () => Promise<void>;
 }
 
+function createNonClosingWritableProxy(destination: NodeJS.WritableStream): Writable {
+	return new Writable({
+		write: (chunk: Buffer | string, encoding, callback): void => {
+			if (typeof chunk === 'string') destination.write(chunk, encoding, callback);
+			else destination.write(chunk, callback);
+		},
+	});
+}
+
 export interface ProcessLoggingOptions {
 	readonly observabilityConfig?: ObservabilityRuntimeConfig | undefined;
 	readonly serviceName: string;
@@ -124,7 +133,7 @@ async function disposeSink(sink: Sink & AsyncDisposable): Promise<void> {
 export async function configureProcessLogging(
 	options: ProcessLoggingOptions,
 ): Promise<ProcessLoggingHandle> {
-	const stderrSink = getStreamSink(Writable.toWeb(options.stderr), {
+	const stderrSink = getStreamSink(Writable.toWeb(createNonClosingWritableProxy(options.stderr)), {
 		formatter: getJsonLinesFormatter({
 			categorySeparator: '.',
 			message: 'rendered',

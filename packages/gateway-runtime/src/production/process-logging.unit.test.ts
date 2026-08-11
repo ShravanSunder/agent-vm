@@ -76,7 +76,7 @@ afterEach(async () => {
 });
 
 describe('Gateway Runtime process logging', () => {
-	it('creates JSONL stderr and closes its writer when the root shuts down', async () => {
+	it('creates JSONL stderr without closing the caller-owned writer', async () => {
 		const captured = createCapturedWritable();
 
 		const logging = await configureProcessLogging({
@@ -96,7 +96,7 @@ describe('Gateway Runtime process logging', () => {
 			message: 'Gateway runtime started',
 			properties: { attempt: 1 },
 		});
-		expect(captured.ended()).toBe(true);
+		expect(captured.ended()).toBe(false);
 	});
 
 	it('appends the OTLP logs path exactly once and keeps the typed provider out', async () => {

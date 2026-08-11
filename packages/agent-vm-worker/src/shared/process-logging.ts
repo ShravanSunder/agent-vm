@@ -18,6 +18,14 @@ export interface ProcessLoggingHandle {
 	readonly shutdown: () => Promise<void>;
 }
 
+function createNonClosingWritableProxy(destination: Writable): Writable {
+	return new Writable({
+		write: (chunk: Buffer | string, encoding, callback): void => {
+			destination.write(chunk, encoding, callback);
+		},
+	});
+}
+
 export interface ProcessLoggingOptions {
 	readonly stderr: Writable;
 }
@@ -113,7 +121,7 @@ async function disposeSink(sink: Sink & AsyncDisposable): Promise<void> {
 export async function configureProcessLogging(
 	options: ProcessLoggingOptions,
 ): Promise<ProcessLoggingHandle> {
-	const stderrSink = getStreamSink(Writable.toWeb(options.stderr), {
+	const stderrSink = getStreamSink(Writable.toWeb(createNonClosingWritableProxy(options.stderr)), {
 		formatter: getJsonLinesFormatter({ properties: 'nest:properties' }),
 		nonBlocking: { bufferSize: 1 },
 	});
