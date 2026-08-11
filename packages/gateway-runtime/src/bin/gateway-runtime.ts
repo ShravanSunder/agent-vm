@@ -94,8 +94,9 @@ export async function runGatewayRuntimeStartLifecycle<
 		await props.writeFatalEvidence().catch(() => undefined);
 		throw error;
 	}
+	const retirementSignalPromise = props.waitForRetirementSignal();
 	props.writeStdout(`${JSON.stringify(service.readiness)}\n`);
-	const retirementSignal = await props.waitForRetirementSignal();
+	const retirementSignal = await retirementSignalPromise;
 	try {
 		const retirement = await service.retire();
 		props.writeStdout(`${JSON.stringify(retirement)}\n`);

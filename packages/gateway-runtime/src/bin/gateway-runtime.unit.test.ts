@@ -86,6 +86,7 @@ describe('Gateway Runtime start lifecycle', () => {
 				stderr.push(text);
 			},
 			writeStdout: (text: string): void => {
+				events.push(`write-stdout:${text.trim()}`);
 				stdout.push(text);
 			},
 		});
@@ -94,7 +95,9 @@ describe('Gateway Runtime start lifecycle', () => {
 			'configure-logging',
 			'start-service',
 			'wait-for-signal',
+			'write-stdout:{"kind":"ready"}',
 			'retire',
+			'write-stdout:{"kind":"retired"}',
 			'dispose-logging',
 			'cleanup-signal',
 		]);

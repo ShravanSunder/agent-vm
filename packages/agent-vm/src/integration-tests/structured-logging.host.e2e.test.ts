@@ -47,10 +47,6 @@ function packageDistPath(...segments: readonly string[]): string {
 	return path.join(repositoryRoot, ...segments);
 }
 
-async function waitForProtocolRetryInterval(): Promise<void> {
-	await new Promise<void>((resolve) => setTimeout(resolve, 20));
-}
-
 function createAgentVmObservabilityConfig(collectorHttpPort: number): string {
 	return JSON.stringify({
 		bindAddress: '127.0.0.1',
@@ -166,7 +162,7 @@ if (${rootKind} === 'agent-vm') {
 \t\tconst result = originalWrite(chunk, ...args);
 \t\tif (String(chunk).startsWith('listening port=')) {
 \t\t\temitRecord();
-\t\t\tsetTimeout(() => process.kill(process.pid, 'SIGTERM'), 1000);
+\t\t\tsetImmediate(() => process.kill(process.pid, 'SIGTERM'));
 \t\t}
 \t\treturn result;
 \t});
@@ -206,7 +202,7 @@ async function runProductionRootChild(
 			Buffer.concat(stdoutChunks).includes('tool-portal-role-readiness')
 		) {
 			gatewayRetirementRequested = true;
-			void waitForProtocolRetryInterval().then(() => child.kill('SIGTERM'));
+			setImmediate(() => child.kill('SIGTERM'));
 		}
 	});
 	child.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
