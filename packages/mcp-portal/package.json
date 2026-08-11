@@ -83,7 +83,7 @@
 		"@modelcontextprotocol/sdk": "^1.29.0",
 		"@optique/core": "1.2.0",
 		"@optique/zod": "1.2.0",
-		"hono": "^4.12.18",
+		"hono": "^4.12.34",
 		"zod": "^4.4.3"
 	},
 	"devDependencies": {
