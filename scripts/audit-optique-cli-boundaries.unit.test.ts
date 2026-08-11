@@ -135,6 +135,24 @@ describe('Optique CLI architecture audit', () => {
 		expect(findings.join('\n')).toMatch(/fixed default literal.*schema/u);
 	});
 
+	it('rejects schema-named imports from an operation owner', async () => {
+		// Arrange
+		const parser = `${admittedParser}\nimport { operationValueSchema } from '../operations/fixture-command.js';\nvoid operationValueSchema;`;
+
+		// Act
+		const findings = await auditFixture([
+			{ content: admittedRoot, relativePath: 'packages/fixture/src/bin/fixture-cli.ts' },
+			{ content: parser, relativePath: 'packages/fixture/src/cli/fixture-cli-parser.ts' },
+			{
+				content: `import { z } from 'zod';\nexport const operationValueSchema = z.string();`,
+				relativePath: 'packages/fixture/src/operations/fixture-command.ts',
+			},
+		]);
+
+		// Assert
+		expect(findings.join('\n')).toMatch(/effect owner.*fixture-command/u);
+	});
+
 	it('accepts official Optique subpaths, pure paths, schema-only imports, and presence flags', async () => {
 		// Arrange
 		const root = `

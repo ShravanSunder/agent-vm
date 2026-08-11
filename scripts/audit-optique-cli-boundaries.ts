@@ -286,6 +286,10 @@ function isApprovedDomainSchemaImport(node: ts.ImportDeclaration, importedModule
 	);
 }
 
+function isKnownOperationOwnerFilePath(filePath: string): boolean {
+	return /(?:^|\/)[^/]+-(?:command|commands|operation|operations)[.]ts$/u.test(filePath);
+}
+
 function isApprovedParserRuntimeModule(importedModule: string): boolean {
 	return (
 		importedModule === '@optique/core' ||
@@ -527,17 +531,21 @@ function auditInventoryEntry(
 					insertFinding(sourceFile, node, 'active parser imports forbidden node:util parseArgs');
 				}
 				if (parserModule && isRuntimeImportDeclaration(node) && importedModule !== undefined) {
+					const approvedDomainSchemaImport =
+						isApprovedDomainSchemaImport(node, importedModule) &&
+						(importedLocalFilePath === undefined ||
+							!isKnownOperationOwnerFilePath(importedLocalFilePath));
 					if (
 						importedLocalFilePath !== undefined &&
 						(importedLocalSourceFile === undefined ||
 							!isParserModule(entry, importedLocalSourceFile)) &&
-						!isApprovedDomainSchemaImport(node, importedModule)
+						!approvedDomainSchemaImport
 					) {
 						insertFinding(sourceFile, node, `parser module imports effect owner ${importedModule}`);
 					} else if (
 						importedLocalFilePath === undefined &&
 						!isApprovedParserRuntimeModule(importedModule) &&
-						!isApprovedDomainSchemaImport(node, importedModule)
+						!approvedDomainSchemaImport
 					) {
 						const ownerKind = NODE_EFFECT_OWNER_IMPORT_PATTERN.test(importedModule)
 							? 'effect owner'

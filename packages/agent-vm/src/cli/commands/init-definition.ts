@@ -4,7 +4,12 @@ import { z } from 'zod';
 
 import { agentIdSchema, projectNamespaceSchema, zoneIdSchema } from '../../config/system-config.js';
 import { projectZodScalarPresence } from '../agent-vm-parser-support.js';
-import { imageArchitectureSchema, secretsProviderSchema } from '../init-command.js';
+import {
+	imageArchitectureSchema,
+	scaffoldGatewayTypeSchema,
+	scaffoldPathModeSchema,
+	secretsProviderSchema,
+} from '../init-command-schemas.js';
 import { cliDescription, createPresenceFlag } from './command-definition-support.js';
 
 const initPresets = {
@@ -35,11 +40,10 @@ export const initPresetSchema = z
 	.enum(['macos-local', 'container-x86', 'container-arm64'])
 	.transform((presetName) => initPresets[presetName])
 	.optional();
-export const initGatewayTypeSchema = z.enum(['openclaw', 'worker']);
 export const initZoneIdSchema = zoneIdSchema.default('default');
 export const initSecretsProviderSchema = secretsProviderSchema.optional();
 export const initImageArchitectureSchema = imageArchitectureSchema.optional();
-export const initPathModeSchema = z.enum(['local', 'pod', 'user-dir']).optional();
+export const initPathModeSchema = scaffoldPathModeSchema.optional();
 export const initProjectNamespaceSchema = projectNamespaceSchema.optional();
 export const initOnePasswordAccountNameSchema = z.string().min(1).optional();
 export const openClawAgentsSchema = z
@@ -95,10 +99,10 @@ export const initCommandParser = command(
 			type: projectZodScalarPresence({
 				parser: option(
 					'--type',
-					zod(initGatewayTypeSchema, { metavar: 'TYPE', placeholder: 'openclaw' as const }),
+					zod(scaffoldGatewayTypeSchema, { metavar: 'TYPE', placeholder: 'openclaw' as const }),
 					{ description: cliDescription('Gateway type: openclaw or worker') },
 				),
-				schema: initGatewayTypeSchema,
+				schema: scaffoldGatewayTypeSchema,
 			}),
 			preset: projectZodScalarPresence({
 				parser: option(

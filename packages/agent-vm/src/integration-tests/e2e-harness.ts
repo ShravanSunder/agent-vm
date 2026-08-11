@@ -30,7 +30,8 @@ import {
 } from '../build/prepared-gondolin-image-cache.js';
 import { isZigVersionAtLeast, resolveHostZigVersion } from '../build/zig-compatibility.js';
 import { runBuildCommand } from '../cli/build-command.js';
-import { scaffoldAgentVmProject, type ImageArchitecture } from '../cli/init-command.js';
+import type { ImageArchitecture } from '../cli/init-command-schemas.js';
+import { scaffoldAgentVmProject } from '../cli/init-command.js';
 import { createManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
 import { loadJsonConfigFile } from '../config/json-config-file.js';
 import { loadSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';

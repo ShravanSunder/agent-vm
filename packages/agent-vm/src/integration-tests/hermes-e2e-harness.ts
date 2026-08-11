@@ -3,7 +3,7 @@ import path from 'node:path';
 
 import { renderHermesManagedImageRecipe } from '@agent-vm/hermes-gateway';
 
-import type { ImageArchitecture } from '../cli/init-command.js';
+import type { ImageArchitecture } from '../cli/init-command-schemas.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import {
 	buildLocalPythonWheel,

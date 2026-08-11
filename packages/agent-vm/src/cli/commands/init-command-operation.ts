@@ -1,12 +1,11 @@
 import { loadSystemConfig } from '../../config/system-config.js';
 import { type CliDependencies, type CliIo } from '../agent-vm-cli-support.js';
 import type { AgentVmCommand } from '../agent-vm-command-parser.js';
+import { imageArchitectureSchema, secretsProviderSchema } from '../init-command-schemas.js';
 import {
-	imageArchitectureSchema,
 	promptAndStoreServiceAccountToken,
 	resolveScaffoldSystemConfigPath,
 	scaffoldAgentVmProject,
-	secretsProviderSchema,
 } from '../init-command.js';
 
 type InitCommand = Extract<AgentVmCommand, { readonly command: 'init' }>;
