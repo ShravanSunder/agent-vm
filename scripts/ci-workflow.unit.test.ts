@@ -1,15 +1,84 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
+
+const managedGatewayCiTags = [
+	'managed-gateway-startup',
+	'managed-gateway-degraded-input',
+	'managed-gateway-lifecycle',
+] as const;
 
 async function readRepositoryFile(relativePath: string): Promise<string> {
 	return await fs.readFile(path.join(process.cwd(), relativePath), 'utf8');
 }
 
+function isManagedGatewayTestDeclaration(callExpression: ts.CallExpression): boolean {
+	if (ts.isIdentifier(callExpression.expression)) {
+		return callExpression.expression.text === 'it';
+	}
+	if (!ts.isCallExpression(callExpression.expression)) {
+		return false;
+	}
+	const eachExpression = callExpression.expression.expression;
+	return (
+		ts.isPropertyAccessExpression(eachExpression) &&
+		ts.isIdentifier(eachExpression.expression) &&
+		eachExpression.expression.text === 'it' &&
+		eachExpression.name.text === 'each'
+	);
+}
+
+function readManagedGatewayTestTags(sourceText: string): readonly (readonly string[])[] {
+	const sourceFile = ts.createSourceFile(
+		'managed-gateway-image-boot.vm.e2e.test.ts',
+		sourceText,
+		ts.ScriptTarget.Latest,
+		true,
+		ts.ScriptKind.TS,
+	);
+	const testTags: string[][] = [];
+
+	function visit(node: ts.Node): void {
+		if (ts.isCallExpression(node) && isManagedGatewayTestDeclaration(node)) {
+			const optionsArgument = node.arguments[1];
+			if (optionsArgument === undefined || !ts.isObjectLiteralExpression(optionsArgument)) {
+				testTags.push([]);
+			} else {
+				const tagsProperty = optionsArgument.properties.find(
+					(property): property is ts.PropertyAssignment =>
+						ts.isPropertyAssignment(property) &&
+						ts.isIdentifier(property.name) &&
+						property.name.text === 'tags',
+				);
+				if (tagsProperty === undefined || !ts.isArrayLiteralExpression(tagsProperty.initializer)) {
+					testTags.push([]);
+				} else {
+					testTags.push(
+						tagsProperty.initializer.elements.flatMap((element) =>
+							ts.isStringLiteral(element) ? [element.text] : [],
+						),
+					);
+				}
+			}
+		}
+		ts.forEachChild(node, visit);
+	}
+
+	visit(sourceFile);
+	return testTags;
+}
+
 describe('CI workflow topology', () => {
 	it('keeps every required proof lane behind one aggregate check', async () => {
-		const workflow = await readRepositoryFile('.github/workflows/ci.yml');
+		const [workflow, vitestConfig, managedGatewayTest] = await Promise.all([
+			readRepositoryFile('.github/workflows/ci.yml'),
+			readRepositoryFile('vitest.config.ts'),
+			readRepositoryFile(
+				'packages/agent-vm/src/integration-tests/managed-gateway-image-boot.vm.e2e.test.ts',
+			),
+		]);
 
 		for (const jobName of ['validation:', 'e2e-image-cache:', 'e2e-host:', 'e2e-vm:', 'check:']) {
 			expect(workflow).toContain(`  ${jobName}`);
@@ -25,29 +94,28 @@ describe('CI workflow topology', () => {
 			'pnpm run test:e2e:${{ matrix.lane }}',
 			'pnpm run test:e2e:vm -- --shard=${{ matrix.shard }}',
 			'pnpm run test:e2e:vm-managed-gateway',
-			'managed-gateway-test-group: core',
-			'managed-gateway-test-group: input-missing-tool-portal',
-			'managed-gateway-test-group: input-missing-framework',
-			'managed-gateway-test-group: input-read-only-environment',
-			'managed-gateway-test-group: termination-tool-portal',
-			'managed-gateway-test-group: termination-openclaw',
-			'managed-gateway-test-group: worker-stock',
-			'AGENT_VM_MANAGED_GATEWAY_TEST_GROUP: ${{ matrix.managed-gateway-test-group }}',
+			'--tags-filter=managed-gateway-startup',
+			'--tags-filter=managed-gateway-degraded-input',
+			'--tags-filter=managed-gateway-lifecycle',
 			"AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE: '1'",
 		]) {
 			expect(workflow).toContain(command);
 		}
-		for (const managedGatewayGroup of [
-			'core',
-			'input-missing-tool-portal',
-			'input-missing-framework',
-			'input-read-only-environment',
-			'termination-tool-portal',
-			'termination-openclaw',
-			'worker-stock',
-		]) {
-			expect(workflow).toContain(`managed-gateway-test-group: ${managedGatewayGroup}`);
+		for (const managedGatewayTag of managedGatewayCiTags) {
+			expect(vitestConfig).toContain(`name: '${managedGatewayTag}'`);
 		}
+		const managedGatewayTestTags = readManagedGatewayTestTags(managedGatewayTest);
+		expect(managedGatewayTestTags.length).toBeGreaterThan(0);
+		for (const testTags of managedGatewayTestTags) {
+			expect(testTags).toHaveLength(1);
+			expect(managedGatewayCiTags).toContain(testTags[0]);
+		}
+		expect(new Set(managedGatewayTestTags.flat())).toEqual(new Set(managedGatewayCiTags));
+		expect(workflow.match(/lane: e2e-vm-managed-gateway/gu)).toHaveLength(1);
+		expect(workflow).not.toContain('managed-gateway-test-group:');
+		expect(workflow).not.toContain('AGENT_VM_MANAGED_GATEWAY_TEST_GROUP');
+		expect(managedGatewayTest).not.toContain('AGENT_VM_MANAGED_GATEWAY_TEST_GROUP');
+		expect(managedGatewayTest).not.toContain('shouldRegisterManagedGatewayTest');
 		for (const shard of ['1/6', '2/6', '3/6', '4/6', '5/6', '6/6']) {
 			expect(workflow).toContain(`shard: ${shard}`);
 		}

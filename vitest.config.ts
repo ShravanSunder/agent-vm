@@ -155,6 +155,20 @@ export default defineConfig({
 		fileParallelism: true,
 		maxWorkers: '75%',
 		exclude: ['**/node_modules/**'],
+		tags: [
+			{
+				name: 'managed-gateway-startup',
+				description: 'Managed Gateway image boot and stock-image boundary proofs.',
+			},
+			{
+				name: 'managed-gateway-degraded-input',
+				description: 'Managed Gateway behavior when one or more boot inputs are unusable.',
+			},
+			{
+				name: 'managed-gateway-lifecycle',
+				description: 'Managed Gateway sibling process termination and containment proofs.',
+			},
+		],
 		globalSetup: [
 			repoPath('packages/agent-vm/src/integration-tests/e2e-workspace-build-global-setup.ts'),
 		],
