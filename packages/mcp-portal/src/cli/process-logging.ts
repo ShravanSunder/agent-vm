@@ -15,6 +15,7 @@ import type { PortalServerLogEvent, PortalServerLogger } from './serve-command.j
 const portalServerLogger = getLogger(['agent-vm', 'mcp-portal', 'server']);
 const maxSafeIdentifierLength = 128;
 const maxSafeReasonLength = 64;
+const unsafeIdentifierSyntaxPattern = /(?:\/\/|[?&#=%@])/u;
 
 type PortalServerLogLevel = 'error' | 'info' | 'warn';
 
@@ -42,8 +43,12 @@ export interface ConfigureProcessLoggingProps {
 }
 
 function boundedIdentifier(value: string): string {
-	const normalized = value
-		.trim()
+	const trimmed = value.trim();
+	if (unsafeIdentifierSyntaxPattern.test(trimmed)) {
+		return 'unknown';
+	}
+
+	const normalized = trimmed
 		.replaceAll(/[^A-Za-z0-9_.:-]/gu, '_')
 		.slice(0, maxSafeIdentifierLength);
 	return normalized.length === 0 ? 'unknown' : normalized;
