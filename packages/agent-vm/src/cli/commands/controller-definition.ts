@@ -1,10 +1,8 @@
+// oxlint-disable typescript-eslint/explicit-function-return-type
 import path from 'node:path';
 
 import type { ManagedVmImageBuildResult } from '@agent-vm/managed-vm';
-import { object, or } from '@optique/core/constructs';
-import { map } from '@optique/core/modifiers';
-import type { Parser } from '@optique/core/parser';
-import { command } from '@optique/core/primitives';
+import { command, flag, subcommands } from 'cmd-ts';
 
 import { computeFingerprintFromConfigPath } from '../../build/gondolin-image-builder.js';
 import type { ManagedGatewayImageBootProjection } from '../../build/gondolin-managed-vm-build-tooling.js';
@@ -15,7 +13,6 @@ import { managedGatewayBootProjectionForGatewayType } from '../build-command.js'
 import { runControllerOperationCommand } from '../controller-operation-commands.js';
 import { createRunTask } from '../run-task.js';
 import { runSshCommand } from '../ssh-commands.js';
-import { cliDescription, createPresenceFlag } from './command-definition-support.js';
 import {
 	appendZoneArgument,
 	createConfigOption,
@@ -58,6 +55,52 @@ async function resolveExpectedGatewayFingerprint(
 	}
 }
 
+function createControllerOperationSubcommand(
+	io: CliIo,
+	dependencies: CliDependencies,
+	options: {
+		readonly name:
+			| 'destroy'
+			| 'health'
+			| 'health-snapshot'
+			| 'logs'
+			| 'service-health'
+			| 'status'
+			| 'stop'
+			| 'upgrade';
+		readonly description: string;
+		readonly supportsPurge?: boolean;
+		readonly supportsZone?: boolean;
+	},
+) {
+	return command({
+		name: options.name,
+		description: options.description,
+		args: {
+			config: createConfigOption(),
+			...(options.supportsZone ? { zone: createZoneOption() } : {}),
+			...(options.supportsPurge ? { purge: createPurgeFlag() } : {}),
+		},
+		handler: async ({ config, ...rest }) => {
+			const systemConfig = await loadSystemConfigFromOption(config, dependencies);
+			const zoneFlag = options.supportsZone && 'zone' in rest ? rest.zone : undefined;
+			const selectedZone = options.supportsZone ? requireZone(systemConfig, zoneFlag) : undefined;
+			const argumentPrefix =
+				options.supportsPurge && 'purge' in rest && rest.purge ? ['--purge'] : [];
+			const restArguments = selectedZone
+				? appendZoneArgument(argumentPrefix, selectedZone.id)
+				: argumentPrefix;
+			await runControllerOperationCommand({
+				dependencies,
+				io,
+				restArguments,
+				subcommand: options.name,
+				systemConfig,
+			});
+		},
+	});
+}
+
 async function resolveCachedGatewayImage(
 	systemConfig: LoadedSystemConfig,
 	zoneId: string,
@@ -88,10 +131,10 @@ async function resolveCachedGatewayImage(
 			: { fingerprintInput: preparedGatewayImage.fingerprintInput }),
 		...(managedGatewayBoot === undefined ? {} : { managedGatewayBoot }),
 	});
-	if (
-		expectedFingerprint === undefined ||
-		preparedGatewayImage.fingerprint !== expectedFingerprint
-	) {
+	if (expectedFingerprint === undefined) {
+		return undefined;
+	}
+	if (preparedGatewayImage.fingerprint !== expectedFingerprint) {
 		return undefined;
 	}
 	return {
@@ -130,320 +173,189 @@ async function requireGatewayImageCache(
 	);
 }
 
-type ControllerOperationName =
-	| 'destroy'
-	| 'health'
-	| 'health-snapshot'
-	| 'logs'
-	| 'service-health'
-	| 'status'
-	| 'stop'
-	| 'upgrade';
-
-interface ControllerConfigOptions {
-	readonly config: string;
-}
-
-interface ControllerZoneOptions extends ControllerConfigOptions {
-	readonly zone: string | undefined;
-}
-
-interface ControllerDestroyOptions extends ControllerZoneOptions {
-	readonly purge: boolean;
-}
-
-type ControllerOperationOptionsByName = {
-	readonly destroy: ControllerDestroyOptions;
-	readonly health: ControllerZoneOptions;
-	readonly 'health-snapshot': ControllerZoneOptions;
-	readonly logs: ControllerZoneOptions;
-	readonly 'service-health': ControllerZoneOptions;
-	readonly status: ControllerConfigOptions;
-	readonly stop: ControllerConfigOptions;
-	readonly upgrade: ControllerZoneOptions;
-};
-
-type ControllerOperationCommandFor<TName extends ControllerOperationName> = {
-	readonly command: `controller.${TName}`;
-	readonly options: ControllerOperationOptionsByName[TName];
-};
-
-type ControllerOperationCommand = {
-	[TName in ControllerOperationName]: ControllerOperationCommandFor<TName>;
-}[ControllerOperationName];
-
-export type ControllerCommand =
-	| { readonly command: 'controller.start'; readonly options: ControllerZoneOptions }
-	| {
-			readonly command: 'controller.cleanup';
-			readonly options: ControllerZoneOptions & { readonly force: boolean };
-	  }
-	| {
-			readonly command: 'controller.ssh';
-			readonly options: ControllerZoneOptions & { readonly allSecrets: boolean };
-	  }
-	| {
-			readonly command: 'controller.credentials.check';
-			readonly options: ControllerZoneOptions;
-	  }
-	| {
-			readonly command: 'controller.credentials.refresh';
-			readonly options: ControllerZoneOptions;
-	  }
-	| ControllerOperationCommand;
-
-function createControllerOperationParser<TName extends ControllerOperationName>(
-	name: TName,
-	description: string,
-	optionsParser: Parser<'sync', ControllerOperationOptionsByName[TName]>,
-): Parser<'sync', ControllerOperationCommandFor<TName>> {
-	return command(
-		name,
-		map(optionsParser, (options) => ({ command: `controller.${name}` as const, options })),
-		{ description: cliDescription(description) },
-	);
-}
-
-export function createControllerSubcommands(): Parser<'sync', ControllerCommand> {
-	const start = command(
-		'start',
-		map(object({ config: createConfigOption(), zone: createZoneOption() }), (options) => ({
-			command: 'controller.start' as const,
-			options,
-		})),
-		{ description: cliDescription('Boot the controller and gateway') },
-	);
-	const cleanup = command(
-		'cleanup',
-		map(
-			object({
-				config: createConfigOption(),
-				force: createPresenceFlag(
-					'--force',
-					'Allow cleanup even if the controller health endpoint is reachable',
-				),
-				zone: createZoneOption(),
-			}),
-			(options) => ({ command: 'controller.cleanup' as const, options }),
-		),
-		{
-			description: cliDescription('Reconcile exact VM ownership without contacting the controller'),
-		},
-	);
-	const ssh = command(
-		'ssh',
-		map(
-			object({
-				allSecrets: createPresenceFlag(
-					'--all-secrets',
-					'Load every raw gateway environment secret in the SSH shell',
-				),
-				config: createConfigOption(),
-				zone: createZoneOption(),
-			}),
-			(options) => ({ command: 'controller.ssh' as const, options }),
-		),
-		{ description: cliDescription('Open an SSH session into the gateway VM') },
-	);
-	const credentialsCheck = command(
-		'check',
-		map(object({ config: createConfigOption(), zone: createZoneOption() }), (options) => ({
-			command: 'controller.credentials.check' as const,
-			options,
-		})),
-		{
-			description: cliDescription(
-				'Check zone credential resolution without refreshing the gateway',
-			),
-		},
-	);
-	const credentialsRefresh = command(
-		'refresh',
-		map(object({ config: createConfigOption(), zone: createZoneOption() }), (options) => ({
-			command: 'controller.credentials.refresh' as const,
-			options,
-		})),
-		{ description: cliDescription('Refresh zone credentials') },
-	);
-	const credentials = command('credentials', or(credentialsCheck, credentialsRefresh), {
-		description: cliDescription('Manage credentials'),
-	});
-	return command(
-		'controller',
-		or(
-			start,
-			createControllerOperationParser(
-				'stop',
-				'Stop the controller',
-				object({ config: createConfigOption() }),
-			),
-			cleanup,
-			createControllerOperationParser(
-				'status',
-				'Show controller status',
-				object({ config: createConfigOption() }),
-			),
-			createControllerOperationParser(
-				'health',
-				'Run the configured live gateway health probe for a zone',
-				object({ config: createConfigOption(), zone: createZoneOption() }),
-			),
-			createControllerOperationParser(
-				'health-snapshot',
-				'Show the latest in-memory health snapshot for a zone',
-				object({ config: createConfigOption(), zone: createZoneOption() }),
-			),
-			createControllerOperationParser(
-				'service-health',
-				'Run the live gateway service liveness probe for a zone',
-				object({ config: createConfigOption(), zone: createZoneOption() }),
-			),
-			ssh,
-			createControllerOperationParser(
-				'destroy',
-				'Destroy a zone runtime',
-				object({
+export function createControllerSubcommands(io: CliIo, dependencies: CliDependencies) {
+	return subcommands({
+		name: 'controller',
+		description: 'Manage the VM controller',
+		cmds: {
+			start: command({
+				name: 'start',
+				description: 'Boot the controller and gateway',
+				args: {
 					config: createConfigOption(),
-					purge: createPurgeFlag(),
 					zone: createZoneOption(),
-				}),
-			),
-			createControllerOperationParser(
-				'upgrade',
-				'Upgrade a zone runtime',
-				object({ config: createConfigOption(), zone: createZoneOption() }),
-			),
-			createControllerOperationParser(
-				'logs',
-				'Show gateway logs',
-				object({ config: createConfigOption(), zone: createZoneOption() }),
-			),
-			credentials,
-		),
-		{ description: cliDescription('Manage the VM controller') },
-	);
-}
+				},
+				handler: async ({ config, zone }) => {
+					const systemConfig = await loadSystemConfigFromOption(config, dependencies);
+					const selectedZone = requireZone(systemConfig, zone);
 
-export async function runControllerCommand(
-	io: CliIo,
-	dependencies: CliDependencies,
-	commandValue: ControllerCommand,
-): Promise<void> {
-	if (commandValue.command === 'controller.start') {
-		const systemConfig = await loadSystemConfigFromOption(
-			commandValue.options.config,
-			dependencies,
-		);
-		const selectedZone = requireZone(systemConfig, commandValue.options.zone);
-		const prebuiltImage = await requireGatewayImageCache(
-			systemConfig,
-			selectedZone.id,
-			dependencies,
-		);
-		const runTask = await createRunTask(io);
-		const runtime = await dependencies.startControllerRuntime(
-			{
-				...(prebuiltImage === undefined
-					? {}
-					: { prebuiltGatewayImages: { [selectedZone.id]: prebuiltImage } }),
-				systemConfig,
-				zoneIds: [selectedZone.id],
-			},
-			{ runTask },
-		);
-		const startedZone = runtime.zones.find((runtimeZone) => runtimeZone.zoneId === selectedZone.id);
-		io.stdout.write(
-			`${JSON.stringify({ controllerPort: runtime.controllerPort, ingress: startedZone?.gateway?.ingress ?? null, vmId: startedZone?.gateway?.vm.id ?? null, zoneId: selectedZone.id }, null, 2)}\n`,
-		);
-		return;
-	}
-	if (commandValue.command === 'controller.cleanup') {
-		const systemConfig = await loadSystemConfigFromOption(
-			commandValue.options.config,
-			dependencies,
-		);
-		const selectedZone = requireZone(systemConfig, commandValue.options.zone);
-		const result = await dependencies.runControllerOfflineCleanup({
-			force: commandValue.options.force,
-			systemConfig,
-			zoneId: selectedZone.id,
-		});
-		io.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-		return;
-	}
-	if (commandValue.command === 'controller.ssh') {
-		const systemConfig = await loadSystemConfigFromOption(
-			commandValue.options.config,
-			dependencies,
-		);
-		const selectedZone = requireZone(systemConfig, commandValue.options.zone);
-		await runSshCommand({
-			dependencies,
-			io,
-			restArguments: [
-				'--zone',
-				selectedZone.id,
-				...(commandValue.options.allSecrets ? ['--all-secrets'] : []),
-			],
-			systemConfig,
-		});
-		return;
-	}
-	if (
-		commandValue.command === 'controller.credentials.check' ||
-		commandValue.command === 'controller.credentials.refresh'
-	) {
-		const systemConfig = await loadSystemConfigFromOption(
-			commandValue.options.config,
-			dependencies,
-		);
-		const selectedZone = requireZone(systemConfig, commandValue.options.zone);
-		const action = commandValue.command.endsWith('.check') ? 'check' : 'refresh';
-		await runControllerOperationCommand({
-			dependencies,
-			io,
-			restArguments: appendZoneArgument([action], selectedZone.id),
-			subcommand: 'credentials',
-			systemConfig,
-		});
-		return;
-	}
-	const systemConfig = await loadSystemConfigFromOption(commandValue.options.config, dependencies);
-	const selectedZone =
-		'zone' in commandValue.options
-			? requireZone(systemConfig, commandValue.options.zone)
-			: undefined;
-	const operationName: ControllerOperationName = (() => {
-		switch (commandValue.command) {
-			case 'controller.destroy':
-				return 'destroy';
-			case 'controller.health':
-				return 'health';
-			case 'controller.health-snapshot':
-				return 'health-snapshot';
-			case 'controller.logs':
-				return 'logs';
-			case 'controller.service-health':
-				return 'service-health';
-			case 'controller.status':
-				return 'status';
-			case 'controller.stop':
-				return 'stop';
-			case 'controller.upgrade':
-				return 'upgrade';
-			default: {
-				const unreachableCommand: never = commandValue;
-				throw new Error(`Unhandled controller command: ${String(unreachableCommand)}`);
-			}
-		}
-	})();
-	const prefix =
-		commandValue.command === 'controller.destroy' && commandValue.options.purge ? ['--purge'] : [];
-	await runControllerOperationCommand({
-		dependencies,
-		io,
-		restArguments: selectedZone ? appendZoneArgument(prefix, selectedZone.id) : prefix,
-		subcommand: operationName,
-		systemConfig,
+					const prebuiltImage = await requireGatewayImageCache(
+						systemConfig,
+						selectedZone.id,
+						dependencies,
+					);
+					const runTask = await createRunTask(io);
+					const runtime = await dependencies.startControllerRuntime(
+						{
+							...(prebuiltImage === undefined
+								? {}
+								: {
+										prebuiltGatewayImages: { [selectedZone.id]: prebuiltImage },
+									}),
+							systemConfig,
+							zoneIds: [selectedZone.id],
+						},
+						{ runTask },
+					);
+					const startedZone = runtime.zones.find(
+						(runtimeZone) => runtimeZone.zoneId === selectedZone.id,
+					);
+					io.stdout.write(
+						`${JSON.stringify(
+							{
+								controllerPort: runtime.controllerPort,
+								ingress: startedZone?.gateway?.ingress ?? null,
+								vmId: startedZone?.gateway?.vm.id ?? null,
+								zoneId: selectedZone.id,
+							},
+							null,
+							2,
+						)}\n`,
+					);
+				},
+			}),
+			stop: createControllerOperationSubcommand(io, dependencies, {
+				description: 'Stop the controller',
+				name: 'stop',
+			}),
+			cleanup: command({
+				name: 'cleanup',
+				description: 'Reconcile exact VM ownership without contacting the controller',
+				args: {
+					config: createConfigOption(),
+					force: flag({
+						long: 'force',
+						description: 'Allow cleanup even if the controller health endpoint is reachable',
+					}),
+					zone: createZoneOption(),
+				},
+				handler: async ({ config, force, zone }) => {
+					const systemConfig = await loadSystemConfigFromOption(config, dependencies);
+					const selectedZone = requireZone(systemConfig, zone);
+					const result = await dependencies.runControllerOfflineCleanup({
+						force,
+						systemConfig,
+						zoneId: selectedZone.id,
+					});
+					io.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+				},
+			}),
+			status: createControllerOperationSubcommand(io, dependencies, {
+				description: 'Show controller status',
+				name: 'status',
+			}),
+			health: createControllerOperationSubcommand(io, dependencies, {
+				description: 'Run the configured live gateway health probe for a zone',
+				name: 'health',
+				supportsZone: true,
+			}),
+			'health-snapshot': createControllerOperationSubcommand(io, dependencies, {
+				description: 'Show the latest in-memory health snapshot for a zone',
+				name: 'health-snapshot',
+				supportsZone: true,
+			}),
+			'service-health': createControllerOperationSubcommand(io, dependencies, {
+				description: 'Run the live gateway service liveness probe for a zone',
+				name: 'service-health',
+				supportsZone: true,
+			}),
+			ssh: command({
+				name: 'ssh',
+				description: 'Open an SSH session into the gateway VM',
+				args: {
+					allSecrets: flag({
+						long: 'all-secrets',
+						description: 'Load every raw gateway environment secret in the SSH shell',
+					}),
+					config: createConfigOption(),
+					zone: createZoneOption(),
+				},
+				handler: async ({ allSecrets, config, zone }) => {
+					const systemConfig = await loadSystemConfigFromOption(config, dependencies);
+					const selectedZone = requireZone(systemConfig, zone);
+					const restArguments = [
+						'--zone',
+						selectedZone.id,
+						...(allSecrets ? ['--all-secrets'] : []),
+					];
+					await runSshCommand({
+						dependencies,
+						io,
+						restArguments,
+						systemConfig,
+					});
+				},
+			}),
+			destroy: createControllerOperationSubcommand(io, dependencies, {
+				description: 'Destroy a zone runtime',
+				name: 'destroy',
+				supportsPurge: true,
+				supportsZone: true,
+			}),
+			upgrade: createControllerOperationSubcommand(io, dependencies, {
+				description: 'Upgrade a zone runtime',
+				name: 'upgrade',
+				supportsZone: true,
+			}),
+			logs: createControllerOperationSubcommand(io, dependencies, {
+				description: 'Show gateway logs',
+				name: 'logs',
+				supportsZone: true,
+			}),
+			credentials: subcommands({
+				name: 'credentials',
+				description: 'Manage credentials',
+				cmds: {
+					check: command({
+						name: 'check',
+						description: 'Check zone credential resolution without refreshing the gateway',
+						args: {
+							config: createConfigOption(),
+							zone: createZoneOption(),
+						},
+						handler: async ({ config, zone }) => {
+							const systemConfig = await loadSystemConfigFromOption(config, dependencies);
+							const selectedZone = requireZone(systemConfig, zone);
+							await runControllerOperationCommand({
+								dependencies,
+								io,
+								restArguments: appendZoneArgument(['check'], selectedZone.id),
+								subcommand: 'credentials',
+								systemConfig,
+							});
+						},
+					}),
+					refresh: command({
+						name: 'refresh',
+						description: 'Refresh zone credentials',
+						args: {
+							config: createConfigOption(),
+							zone: createZoneOption(),
+						},
+						handler: async ({ config, zone }) => {
+							const systemConfig = await loadSystemConfigFromOption(config, dependencies);
+							const selectedZone = requireZone(systemConfig, zone);
+							await runControllerOperationCommand({
+								dependencies,
+								io,
+								restArguments: appendZoneArgument(['refresh'], selectedZone.id),
+								subcommand: 'credentials',
+								systemConfig,
+							});
+						},
+					}),
+				},
+			}),
+		},
 	});
 }

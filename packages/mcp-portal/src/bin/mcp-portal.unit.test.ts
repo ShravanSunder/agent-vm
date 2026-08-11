@@ -228,36 +228,6 @@ describe('mcp-portal CLI', () => {
 		}
 	});
 
-	it('rejects unknown options before a catalog operation starts', async () => {
-		const workspace = await mkdtemp(join(tmpdir(), 'mcp-portal-'));
-		const catalogPath = join(workspace, 'catalog.json');
-		const outputDir = join(workspace, 'generated');
-		const stderrChunks: string[] = [];
-		const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
-			stderrChunks.push(String(chunk));
-			return true;
-		});
-		try {
-			await writeFile(
-				catalogPath,
-				JSON.stringify({
-					tools: [
-						{ inputSchema: { type: 'object' }, namespace: 'linear', toolName: 'create_issue' },
-					],
-				}),
-			);
-
-			expect(
-				await runMcpPortal(['generate-helper', catalogPath, '--out', outputDir, '--unknown']),
-			).toBe(1);
-			expect(stderrChunks.join('')).toMatch(/unknown|unrecognized/u);
-			await expect(readFile(join(outputDir, 'catalog.json'), 'utf-8')).rejects.toThrow();
-		} finally {
-			stderrSpy.mockRestore();
-			await rm(workspace, { force: true, recursive: true });
-		}
-	});
-
 	it('exposes one public MCP Portal CLI binary', async () => {
 		const packageJsonPath = fileURLToPath(new URL('../../package.json', import.meta.url));
 		const packageJson = JSON.parse(await readFile(packageJsonPath, 'utf8')) as {

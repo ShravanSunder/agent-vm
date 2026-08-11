@@ -1,18 +1,10 @@
-// oxlint-disable eslint/no-await-in-loop -- path sizing walks the filesystem sequentially to avoid EMFILE on large trees
+// oxlint-disable typescript-eslint/explicit-function-return-type, eslint/no-await-in-loop -- path sizing walks the filesystem sequentially to avoid EMFILE on large trees
 import fs from 'node:fs/promises';
 
-import { object } from '@optique/core/constructs';
-import { map } from '@optique/core/modifiers';
-import type { Parser } from '@optique/core/parser';
-import { command } from '@optique/core/primitives';
+import { command, flag, subcommands } from 'cmd-ts';
 
 import type { CliDependencies, CliIo } from '../agent-vm-cli-support.js';
-import { cliDescription } from './command-definition-support.js';
-import {
-	createConfigOption,
-	createPresenceFlag,
-	loadSystemConfigFromOption,
-} from './command-definition-support.js';
+import { createConfigOption, loadSystemConfigFromOption } from './command-definition-support.js';
 
 interface ResolvedPathEntry {
 	readonly label: string;
@@ -86,70 +78,71 @@ async function buildResolvedPathEntry(
 	};
 }
 
-export interface PathsCommandOptions {
-	readonly config: string;
-	readonly sizes: boolean;
-}
-
-export interface PathsCommand {
-	readonly command: 'paths.show';
-	readonly options: PathsCommandOptions;
-}
-
-export function createPathsSubcommands(): Parser<'sync', PathsCommand> {
-	return command(
-		'paths',
-		command(
-			'show',
-			map(
-				object({
+export function createPathsSubcommands(io: CliIo, dependencies: CliDependencies) {
+	return subcommands({
+		name: 'paths',
+		description: 'Inspect paths resolved from system.json',
+		cmds: {
+			show: command({
+				name: 'show',
+				description: 'Print all resolved paths and their on-disk size',
+				args: {
 					config: createConfigOption(),
-					sizes: createPresenceFlag('--sizes', 'Walk each path and print disk usage (slower)'),
-				}),
-				(options) => ({ command: 'paths.show' as const, options }),
-			),
-			{ description: cliDescription('Print all resolved paths and their on-disk size') },
-		),
-		{ description: cliDescription('Inspect paths resolved from system.json') },
-	);
-}
+					sizes: flag({
+						long: 'sizes',
+						description: 'Walk each path and print disk usage (slower)',
+					}),
+				},
+				handler: async ({ config, sizes }) => {
+					const systemConfig = await loadSystemConfigFromOption(config, dependencies);
+					const zoneEntryPromises = systemConfig.zones.flatMap((zone) => {
+						const backupDir = zone.gateway.backupDir ?? `${zone.gateway.stateDir}/backups`;
+						const entries = [
+							buildResolvedPathEntry(`zone[${zone.id}].stateDir`, zone.gateway.stateDir, sizes),
+							buildResolvedPathEntry(`zone[${zone.id}].backupDir`, backupDir, sizes),
+							buildResolvedPathEntry(
+								`zone[${zone.id}].zoneRuntimeDir`,
+								zone.gateway.zoneRuntimeDir,
+								sizes,
+							),
+						];
+						if (zone.gateway.type === 'worker') {
+							return entries;
+						}
+						return [
+							...entries,
+							buildResolvedPathEntry(
+								`zone[${zone.id}].zoneFilesDir`,
+								zone.gateway.zoneFilesDir,
+								sizes,
+							),
+						];
+					});
+					const entries: ResolvedPathEntry[] = await Promise.all([
+						buildResolvedPathEntry('storageRootDir', systemConfig.storageRootDir, sizes),
+						buildResolvedPathEntry('cacheDir', systemConfig.cacheDir, sizes),
+						buildResolvedPathEntry('controllerStateDir', systemConfig.controllerStateDir, sizes),
+						buildResolvedPathEntry(
+							'controllerRuntimeDir',
+							systemConfig.controllerRuntimeDir,
+							sizes,
+						),
+						...zoneEntryPromises,
+					]);
 
-export async function runPathsCommand(
-	io: CliIo,
-	dependencies: CliDependencies,
-	options: PathsCommandOptions,
-): Promise<void> {
-	const systemConfig = await loadSystemConfigFromOption(options.config, dependencies);
-	const sizes = options.sizes;
-	const zoneEntryPromises = systemConfig.zones.flatMap((zone) => {
-		const backupDir = zone.gateway.backupDir ?? `${zone.gateway.stateDir}/backups`;
-		const entries = [
-			buildResolvedPathEntry(`zone[${zone.id}].stateDir`, zone.gateway.stateDir, sizes),
-			buildResolvedPathEntry(`zone[${zone.id}].backupDir`, backupDir, sizes),
-			buildResolvedPathEntry(`zone[${zone.id}].zoneRuntimeDir`, zone.gateway.zoneRuntimeDir, sizes),
-		];
-		if (zone.gateway.type === 'worker') {
-			return entries;
-		}
-		return [
-			...entries,
-			buildResolvedPathEntry(`zone[${zone.id}].zoneFilesDir`, zone.gateway.zoneFilesDir, sizes),
-		];
+					const labelWidth = entries.reduce(
+						(width, entry) => Math.max(width, entry.label.length),
+						0,
+					);
+					const lines: string[] = [];
+					for (const entry of entries) {
+						const existsMark = entry.exists ? '✓' : '✗';
+						const sizeText = sizes ? `  ${formatBytes(entry.sizeBytes)}` : '';
+						lines.push(`${existsMark} ${entry.label.padEnd(labelWidth)}  ${entry.path}${sizeText}`);
+					}
+					io.stdout.write(`${lines.join('\n')}\n`);
+				},
+			}),
+		},
 	});
-	const entries: ResolvedPathEntry[] = await Promise.all([
-		buildResolvedPathEntry('storageRootDir', systemConfig.storageRootDir, sizes),
-		buildResolvedPathEntry('cacheDir', systemConfig.cacheDir, sizes),
-		buildResolvedPathEntry('controllerStateDir', systemConfig.controllerStateDir, sizes),
-		buildResolvedPathEntry('controllerRuntimeDir', systemConfig.controllerRuntimeDir, sizes),
-		...zoneEntryPromises,
-	]);
-
-	const labelWidth = entries.reduce((width, entry) => Math.max(width, entry.label.length), 0);
-	const lines: string[] = [];
-	for (const entry of entries) {
-		const existsMark = entry.exists ? '✓' : '✗';
-		const sizeText = sizes ? `  ${formatBytes(entry.sizeBytes)}` : '';
-		lines.push(`${existsMark} ${entry.label.padEnd(labelWidth)}  ${entry.path}${sizeText}`);
-	}
-	io.stdout.write(`${lines.join('\n')}\n`);
 }

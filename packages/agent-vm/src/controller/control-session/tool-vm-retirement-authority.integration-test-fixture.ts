@@ -192,6 +192,7 @@ export interface CausalFixture {
 	readonly activeUseRuntime: ReturnType<typeof createGatewayControlOperationActiveUseRuntime>;
 	readonly connectionRotationCompleted: Promise<void>;
 	readonly evidence: readonly CausalEvidence[];
+	readonly firstLeaseCreationObserved: Promise<void>;
 	readonly firstLeaseCreationMayFinish: Deferred;
 	readonly gatewayService: GatewayControlService;
 	readonly gatewaySshCloseStarted: Promise<void>;
@@ -315,6 +316,7 @@ export async function createCausalFixture(options: {
 		}),
 	);
 	const firstLeaseCreationMayFinish = deferred();
+	const firstLeaseCreationObserved = deferred();
 	const predecessorDestructionObserved = deferred();
 	const predecessorExactAbsenceMayFinish = deferred();
 	const stalePublicationRejected = deferred();
@@ -343,6 +345,7 @@ export async function createCausalFixture(options: {
 			if (isMainSuccessor) mainSuccessorLeaseId = currentLeaseId;
 			if (currentVmIndex === 0) {
 				record('waiting-acquire-observed', currentLeaseId, currentLeafGeneration, 1, agentId);
+				firstLeaseCreationObserved.resolve();
 				await firstLeaseCreationMayFinish.promise;
 			}
 			if (isMainSuccessor && predecessorExactAbsenceBarrierArmed) {
@@ -870,6 +873,7 @@ export async function createCausalFixture(options: {
 			}
 			currentFixture.emitTransportFailure({ kind: 'transport-error' });
 		},
+		firstLeaseCreationObserved: firstLeaseCreationObserved.promise,
 		firstLeaseCreationMayFinish,
 		gatewayService,
 		gatewaySshCloseStarted: gatewaySshCloseStarted.promise,

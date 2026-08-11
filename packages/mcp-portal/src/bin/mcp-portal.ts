@@ -14,18 +14,17 @@ import { z } from 'zod';
 
 import { portalToolRecordSchema, type PortalToolRecord } from '../catalog-types.js';
 import {
-	runMcpPortalCliParser,
-	type McpPortalCommand,
-	type CallCommand,
-	type PrintClientConfigCommand,
-} from '../cli/mcp-portal-cli-parser.js';
-import {
 	buildProfilePolicyMaps,
 	createServeSecretResolver,
 	deriveApprovalHmacKeysFromMasterKey,
+	parsePortalServerCliArgs,
 	startPortalServer,
 } from '../cli/serve-command.js';
-import { createPortalCore, type PortalCoreEvent } from '../core/portal-core.js';
+import {
+	createPortalCore,
+	type PortalCoreEvent,
+	type PortalCoreToolName,
+} from '../core/portal-core.js';
 import { resolveUpstreamServers } from '../core/provider-runtime.js';
 import {
 	createPortalAgentRuntimeRecords,
@@ -61,6 +60,37 @@ async function readCatalogFile(catalogPath: string): Promise<PortalCatalogFile> 
 	const rawCatalog = await readFile(catalogPath, 'utf-8');
 	const parsedJson = JSON.parse(rawCatalog) as unknown;
 	return catalogFileSchema.parse(parsedJson);
+}
+
+function parseOutputDirectory(args: readonly string[]): string | null {
+	const outputFlagIndex = args.indexOf('--out');
+	if (outputFlagIndex === -1) {
+		return null;
+	}
+
+	return args[outputFlagIndex + 1] ?? null;
+}
+
+function printUsage(): void {
+	process.stderr.write('Usage: mcp-portal validate <catalog.json>\n');
+	process.stderr.write('Usage: mcp-portal generate-helper <catalog.json> --out <directory>\n');
+	process.stderr.write(
+		'Usage: mcp-portal mcp-proxy serve --config-dir <directory> [--port <port>]\n',
+	);
+	process.stderr.write(
+		'Usage: mcp-portal call --config-dir <directory> --agent <agent-id> --input <request.json> [--tool <portal-tool-name>]\n',
+	);
+	process.stderr.write(
+		'Usage: mcp-portal mcp-proxy print-client-config --config-dir <directory> --agent <agent-id> --master-key-fingerprint <sha256:...> [--proxy-url <url>]\n',
+	);
+}
+
+function readFlag(args: readonly string[], name: string): string | null {
+	const index = args.indexOf(name);
+	if (index === -1) {
+		return null;
+	}
+	return args[index + 1] ?? null;
 }
 
 function normalizeCredentialProxyUrl(value: string): string {
@@ -122,15 +152,22 @@ function printDisabledCredentialWriter(): number {
 }
 
 async function printClientConfig(
-	command: PrintClientConfigCommand,
+	args: readonly string[],
 	runtimeProps: RequiredPortalRuntimeProps,
 ): Promise<number> {
-	const { agentId, configDir, expectedFingerprint, proxyUrl: proxyUrlOverride } = command.options;
+	const configDir = readFlag(args, '--config-dir');
+	const agentId = readFlag(args, '--agent');
+	const expectedFingerprint = readFlag(args, '--master-key-fingerprint');
+	const proxyUrlOverride = readFlag(args, '--proxy-url');
+	if (configDir === null || agentId === null || expectedFingerprint === null) {
+		printUsage();
+		return 1;
+	}
 	const portalConfig = await loadMcpPortalConfig(join(configDir, 'mcp-portal.config.jsonc'));
 	if (portalConfig.externalAuth === undefined) {
 		throw new Error('print-client-config requires externalAuth.masterKey.');
 	}
-	if (portalConfig.mcpProxy === undefined && proxyUrlOverride === undefined) {
+	if (portalConfig.mcpProxy === undefined && proxyUrlOverride === null) {
 		throw new Error('print-client-config requires mcpProxy server settings or --proxy-url.');
 	}
 	if (portalConfig.agents[agentId] === undefined) {
@@ -156,7 +193,7 @@ async function printClientConfig(
 		masterKey,
 	});
 	const proxyUrl =
-		proxyUrlOverride === undefined
+		proxyUrlOverride === null
 			? credentialProxyUrlFromConfig(requireCredentialMcpProxy(portalConfig.mcpProxy), agentId)
 			: normalizeCredentialProxyUrl(proxyUrlOverride);
 	const authorizationHeaderName = portalConfig.mcpProxy?.auth.headerName ?? 'authorization';
@@ -182,11 +219,6 @@ async function printClientConfig(
 	return 0;
 }
 
-function assertNever(value: never): never {
-	void value;
-	throw new Error('Unhandled MCP Portal command.');
-}
-
 function requireCredentialMcpProxy(
 	mcpProxy: McpPortalConfig['mcpProxy'],
 ): NonNullable<McpPortalConfig['mcpProxy']> {
@@ -205,6 +237,13 @@ function credentialProxyUrlFromConfig(
 		: mcpProxy.server.host;
 	return `http://${host}:${String(mcpProxy.server.port)}/agents/${encodeURIComponent(agentId)}/mcp`;
 }
+
+const portalCoreToolNames = new Set<string>([
+	'mcp_portal_list',
+	'mcp_portal_search',
+	'mcp_portal_describe',
+	'mcp_portal_call',
+]);
 
 type PortalShutdownSignal = 'SIGINT' | 'SIGTERM';
 interface PortalSignalTarget {
@@ -246,6 +285,18 @@ export async function waitUntilPortalServerShutdown(props: {
 	}
 }
 
+function isPortalCoreToolName(value: string): value is PortalCoreToolName {
+	return portalCoreToolNames.has(value);
+}
+
+function parsePortalCoreToolName(value: string | null): PortalCoreToolName {
+	const toolName = value ?? 'mcp_portal_call';
+	if (!isPortalCoreToolName(toolName)) {
+		throw new Error(`Unknown MCP Portal tool "${toolName}".`);
+	}
+	return toolName;
+}
+
 function writePortalCoreEventToStderr(event: PortalCoreEvent): void {
 	if (event.kind === 'progress' && event.message !== undefined) {
 		process.stderr.write(`${event.message}\n`);
@@ -282,10 +333,17 @@ async function resolveCliApprovalHmacKeys(props: {
 }
 
 async function runCallCommand(
-	command: CallCommand,
+	args: readonly string[],
 	runtimeProps: RequiredPortalRuntimeProps,
 ): Promise<number> {
-	const { agentId, configDir, inputPath, toolName } = command.options;
+	const configDir = readFlag(args, '--config-dir');
+	const agentId = readFlag(args, '--agent');
+	const inputPath = readFlag(args, '--input');
+	if (configDir === null || agentId === null || inputPath === null) {
+		printUsage();
+		return 1;
+	}
+	const toolName = parsePortalCoreToolName(readFlag(args, '--tool'));
 	const input = JSON.parse(await readFile(inputPath, 'utf8')) as unknown;
 	const secretResolver = await createCliSecretResolver(runtimeProps);
 	const resolveSecret = (secret: SecretValue): Promise<string> =>
@@ -339,75 +397,89 @@ async function runCallCommand(
 	}
 }
 
-async function dispatchMcpPortalCommand(
-	command: McpPortalCommand,
-	runtimeProps: RequiredPortalRuntimeProps,
-): Promise<number> {
-	switch (command.command) {
-		case 'call':
-			return await runCallCommand(command, runtimeProps);
-		case 'generate-helper': {
-			const catalog = await readCatalogFile(command.options.catalogPath);
-			await mkdir(command.options.outputDirectory, { recursive: true });
-			await writeFile(
-				join(command.options.outputDirectory, 'catalog.json'),
-				JSON.stringify(catalog, null, '\t'),
-			);
-			await writeFile(
-				join(command.options.outputDirectory, 'catalog.ts'),
-				generateTypescriptCatalogArtifact(catalog),
-			);
-			return 0;
-		}
-		case 'mcp-proxy.print-client-config':
-			return await printClientConfig(command, runtimeProps);
-		case 'mcp-proxy.serve': {
-			const injectedSecretResolver = runtimeProps.secretResolver;
-			const server = await startPortalServer({
-				args: command.options,
-				env: runtimeProps.env,
-				...(injectedSecretResolver === undefined
-					? {}
-					: {
-							resolveSecret: (secret) =>
-								resolveSecretValue(secret, {
-									env: runtimeProps.env,
-									secretResolver: injectedSecretResolver,
-								}),
-						}),
-			});
-			await waitUntilPortalServerShutdown({ server });
-			return 0;
-		}
-		case 'mcp-proxy.write-credential':
-			return printDisabledCredentialWriter();
-		case 'validate':
-			await readCatalogFile(command.options.catalogPath);
-			return 0;
-		default:
-			return assertNever(command);
-	}
-}
-
 export async function runMcpPortal(
 	args: readonly string[],
 	props: AgentVmMcpPortalRuntimeProps = {},
 ): Promise<number> {
+	const [command, catalogPath, ...restArgs] = args;
 	const runtimeProps = {
 		env: props.env ?? process.env,
 		...(props.secretResolver !== undefined ? { secretResolver: props.secretResolver } : {}),
 	};
-	const parseResult = runMcpPortalCliParser(args, {
-		stderr: process.stderr,
-		stdout: process.stdout,
-	});
-	if (parseResult.kind !== 'parsed') {
-		return parseResult.exitCode;
+	if (!command) {
+		printUsage();
+		return 1;
 	}
 
 	try {
-		return await dispatchMcpPortalCommand(parseResult.value, runtimeProps);
-	} catch (error: unknown) {
+		if (command === 'mcp-proxy') {
+			const [mcpProxyCommand, ...mcpProxyArgs] = args.slice(1);
+			if (mcpProxyCommand === 'serve') {
+				const injectedSecretResolver = runtimeProps.secretResolver;
+				const server = await startPortalServer({
+					args: parsePortalServerCliArgs(mcpProxyArgs),
+					env: runtimeProps.env,
+					...(injectedSecretResolver !== undefined
+						? {
+								resolveSecret: (secret) =>
+									resolveSecretValue(secret, {
+										env: runtimeProps.env,
+										secretResolver: injectedSecretResolver,
+									}),
+							}
+						: {}),
+				});
+				await waitUntilPortalServerShutdown({ server });
+				return 0;
+			}
+			if (mcpProxyCommand === 'write-credential') {
+				return printDisabledCredentialWriter();
+			}
+			if (mcpProxyCommand === 'print-client-config') {
+				return await printClientConfig(mcpProxyArgs, runtimeProps);
+			}
+			printUsage();
+			return 1;
+		}
+		if (command === 'serve') {
+			printUsage();
+			return 1;
+		}
+		if (command === 'write-credential') {
+			printUsage();
+			return 1;
+		}
+		if (command === 'call') {
+			return await runCallCommand(args.slice(1), runtimeProps);
+		}
+		if (!catalogPath) {
+			printUsage();
+			return 1;
+		}
+		const catalog = await readCatalogFile(catalogPath);
+		switch (command) {
+			case 'validate':
+				return 0;
+			case 'generate-helper': {
+				const outputDirectory = parseOutputDirectory(restArgs);
+				if (!outputDirectory) {
+					printUsage();
+					return 1;
+				}
+
+				await mkdir(outputDirectory, { recursive: true });
+				await writeFile(join(outputDirectory, 'catalog.json'), JSON.stringify(catalog, null, '\t'));
+				await writeFile(
+					join(outputDirectory, 'catalog.ts'),
+					generateTypescriptCatalogArtifact(catalog),
+				);
+				return 0;
+			}
+			default:
+				printUsage();
+				return 1;
+		}
+	} catch (error) {
 		process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
 		return 1;
 	}

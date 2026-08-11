@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { ZodError } from 'zod';
 
 import { requireZone } from '../agent-vm-cli-support.js';
-import { loadSystemConfigFromOption } from './command-definition-support.js';
+import { loadSystemConfigFromOption, parseGatewayType } from './command-definition-support.js';
 
 describe('loadSystemConfigFromOption', () => {
 	it('formats system config validation errors for CLI output', async () => {
@@ -120,5 +120,13 @@ describe('requireZone', () => {
 				'nope',
 			),
 		).toThrow("Unknown zone 'nope'.");
+	});
+});
+
+describe('parseGatewayType', () => {
+	it('throws when the gateway type is missing', () => {
+		expect(() => parseGatewayType(undefined)).toThrow(
+			"Gateway type is required. Expected 'openclaw' or 'worker'.",
+		);
 	});
 });
