@@ -37,8 +37,11 @@ assert metadata.version("agent-vm-hermes-adapter") == "0.0.134"
 				/workspace/python/agent-vm-hermes-adapter
 		else
 			/opt/hermes/.venv/bin/ty check \
+				--project /workspace/python/agent-vm-hermes-adapter \
+				--config "environment.root = [\"/workspace/python/agent-vm-hermes-adapter/src\"]" \
 				--extra-search-path /opt/hermes \
 				--python /opt/hermes/.venv/bin/python \
-				/workspace/python/agent-vm-hermes-adapter
+				/workspace/python/agent-vm-hermes-adapter/src \
+				/workspace/python/agent-vm-hermes-adapter/tests
 		fi
 	'

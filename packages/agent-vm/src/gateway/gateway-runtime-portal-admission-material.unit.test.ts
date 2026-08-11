@@ -12,7 +12,7 @@ import {
 	GatewayRuntimePortalAdmissionMaterialSchema,
 	type GatewayRuntimePortalSemanticSnapshot,
 	type ManagedAgentProjection,
-	type ManagedAgentProjectionInput,
+	type ManagedFrameworkAgentProjectionInput,
 } from '@agent-vm/gateway-control-contracts';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
@@ -28,7 +28,7 @@ type GatewayRuntimeAdmissionConfigPlan = Pick<
 >;
 
 interface ExpectedMaterializationProps {
-	readonly agentProjections: readonly ManagedAgentProjectionInput[];
+	readonly agentProjections: readonly ManagedFrameworkAgentProjectionInput[];
 	readonly effectivePlan: GatewayRuntimeAdmissionConfigPlan;
 	readonly surfaceEligibilityByProfile: GatewayRuntimePortalSemanticSnapshot['surfaceEligibilityByProfile'];
 }
@@ -282,6 +282,7 @@ describe('Gateway runtime portal admission materialization', () => {
 						agentId: 'agent-a',
 						frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
 						profileAssignmentRevision: agentProjection.profileAssignmentRevision,
+						toolPortalNamespaceNames: ['filesystem', 'github'],
 						toolPortalProfileId: 'code-builder',
 					},
 					'agent-b': {
@@ -289,6 +290,7 @@ describe('Gateway runtime portal admission materialization', () => {
 						frameworkIdentity: { agentId: 'agent-b', kind: 'openclaw' },
 						profileAssignmentRevision: requireAgentProjection(semanticSnapshot, 'agent-b')
 							.profileAssignmentRevision,
+						toolPortalNamespaceNames: ['filesystem', 'github'],
 						toolPortalProfileId: 'code-reviewer',
 					},
 				},
@@ -310,6 +312,91 @@ describe('Gateway runtime portal admission materialization', () => {
 			'effectiveMcpConfig',
 			'effectiveToolPortalConfig',
 			'semanticSnapshot',
+		]);
+	});
+
+	it('projects the sorted protected Tool Portal namespace names for every profile', () => {
+		// Arrange
+		const props = createMaterializationProps();
+
+		// Act
+		const materialization = materializeGatewayRuntimePortalAdmission(props);
+		const builderProjection = requireAgentProjection(materialization.semanticSnapshot, 'agent-a');
+		const reviewerProjection = requireAgentProjection(materialization.semanticSnapshot, 'agent-b');
+
+		// Assert
+		expect(builderProjection.toolPortalNamespaceNames).toEqual(['filesystem', 'github']);
+		expect(reviewerProjection.toolPortalNamespaceNames).toEqual(['filesystem', 'github']);
+	});
+
+	it('derives admitted namespace names from the protected_uds eligibility intersection', () => {
+		// Arrange
+		const props = createMaterializationProps();
+		const changedSurfaceProps: MaterializeGatewayRuntimePortalAdmissionProps = {
+			...props,
+			surfaceEligibilityByProfile: {
+				...props.surfaceEligibilityByProfile,
+				'code-builder': {
+					filesystem: ['protected_uds'],
+					github: ['mcp'],
+				},
+			},
+		};
+
+		// Act
+		const materialization = materializeGatewayRuntimePortalAdmission(changedSurfaceProps);
+		const builderProjection = requireAgentProjection(materialization.semanticSnapshot, 'agent-a');
+
+		// Assert
+		expect(builderProjection.toolPortalNamespaceNames).toEqual(['filesystem']);
+	});
+
+	it('derives admitted namespace names in Unicode code-point order', () => {
+		// Arrange
+		const privateUseNamespace = '\uE000';
+		const supplementaryNamespace = '\u{10000}';
+		const props = createMaterializationProps();
+		const codeBuilderProfile = requireToolPortalProfile(
+			props.effectivePlan.effectiveToolPortalConfig,
+			'code-builder',
+		);
+		const githubNamespace = requireToolPortalNamespace(codeBuilderProfile, 'github');
+		const effectiveToolPortalConfig = toolPortalConfigSchema.parse({
+			...props.effectivePlan.effectiveToolPortalConfig,
+			profiles: {
+				...props.effectivePlan.effectiveToolPortalConfig.profiles,
+				'code-builder': {
+					...codeBuilderProfile,
+					namespaces: {
+						[privateUseNamespace]: githubNamespace,
+						[supplementaryNamespace]: githubNamespace,
+					},
+				},
+			},
+		});
+		const codePointProps: MaterializeGatewayRuntimePortalAdmissionProps = {
+			...props,
+			effectivePlan: {
+				...props.effectivePlan,
+				effectiveToolPortalConfig,
+			},
+			surfaceEligibilityByProfile: {
+				...props.surfaceEligibilityByProfile,
+				'code-builder': {
+					[privateUseNamespace]: ['protected_uds'],
+					[supplementaryNamespace]: ['protected_uds'],
+				},
+			},
+		};
+
+		// Act
+		const materialization = materializeGatewayRuntimePortalAdmission(codePointProps);
+		const builderProjection = requireAgentProjection(materialization.semanticSnapshot, 'agent-a');
+
+		// Assert
+		expect(builderProjection.toolPortalNamespaceNames).toEqual([
+			privateUseNamespace,
+			supplementaryNamespace,
 		]);
 	});
 
@@ -369,11 +456,11 @@ describe('Gateway runtime portal admission materialization', () => {
 	it.each([
 		[
 			'missing agent',
-			(projections: readonly ManagedAgentProjectionInput[]) => projections.slice(0, 1),
+			(projections: readonly ManagedFrameworkAgentProjectionInput[]) => projections.slice(0, 1),
 		],
 		[
 			'extra agent',
-			(projections: readonly ManagedAgentProjectionInput[]) => [
+			(projections: readonly ManagedFrameworkAgentProjectionInput[]) => [
 				...projections,
 				{
 					agentId: 'agent-c',

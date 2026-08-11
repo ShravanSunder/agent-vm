@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 
+import { compareUnicodeCodePointStrings } from '@agent-vm/agent-portal-sdk';
 import type {
 	FormattedSecretValue,
 	ManagedToolPortalConfig,
@@ -183,9 +184,16 @@ export interface DeriveGatewayRuntimePortalSemanticSnapshotProps {
 	readonly toolPortalConfig: ManagedToolPortalConfig;
 }
 
+export interface ManagedFrameworkAgentProjectionInput {
+	readonly agentId: string;
+	readonly frameworkIdentity: GatewayRuntimeFrameworkIdentity;
+	readonly toolPortalProfileId: string;
+}
+
 export interface ManagedAgentProjectionInput {
 	readonly agentId: string;
 	readonly frameworkIdentity: GatewayRuntimeFrameworkIdentity;
+	readonly toolPortalNamespaceNames: readonly string[];
 	readonly toolPortalProfileId: string;
 }
 
@@ -405,9 +413,23 @@ function frameworkIdentityKey(identity: GatewayRuntimeFrameworkIdentity): string
 		: `hermes:${identity.profileName}`;
 }
 
+function assertSortedUniqueToolPortalNamespaceNames(namespaceNames: readonly string[]): void {
+	if (new Set(namespaceNames).size !== namespaceNames.length) {
+		throw new Error('Managed Agent Projection Tool Portal namespace names must be unique.');
+	}
+	const sortedNamespaceNames = [...namespaceNames].toSorted(compareUnicodeCodePointStrings);
+	if (
+		namespaceNames.some((namespaceName, index) => namespaceName !== sortedNamespaceNames[index])
+	) {
+		throw new Error('Managed Agent Projection Tool Portal namespace names must be sorted.');
+	}
+}
+
 function assertExactManagedAgentProjectionInputs(props: {
 	readonly agentProjections: readonly ManagedAgentProjectionInput[];
 	readonly configuredAgents: ManagedToolPortalConfig['agents'];
+	readonly surfaceEligibilityByProfile: GatewayRuntimePortalSemanticSnapshot['surfaceEligibilityByProfile'];
+	readonly toolPortalConfig: ManagedToolPortalConfig;
 }): void {
 	const projectionAgentIds = props.agentProjections.map((projection) => projection.agentId);
 	if (new Set(projectionAgentIds).size !== projectionAgentIds.length) {
@@ -436,6 +458,30 @@ function assertExactManagedAgentProjectionInputs(props: {
 		throw new Error('Managed Agent Projection framework identities must be unique.');
 	}
 	for (const projection of props.agentProjections) {
+		assertSortedUniqueToolPortalNamespaceNames(projection.toolPortalNamespaceNames);
+		const profile = props.toolPortalConfig.profiles[projection.toolPortalProfileId];
+		if (profile === undefined) {
+			throw new Error(
+				`Managed Agent Projection Tool Portal profile '${projection.toolPortalProfileId}' is missing.`,
+			);
+		}
+		const profileSurfaceEligibility =
+			props.surfaceEligibilityByProfile[projection.toolPortalProfileId];
+		const expectedNamespaceNames = Object.keys(profile.namespaces)
+			.filter((namespaceName) =>
+				profileSurfaceEligibility?.[namespaceName]?.includes('protected_uds'),
+			)
+			.toSorted(compareUnicodeCodePointStrings);
+		if (
+			expectedNamespaceNames.length !== projection.toolPortalNamespaceNames.length ||
+			expectedNamespaceNames.some(
+				(namespaceName, index) => namespaceName !== projection.toolPortalNamespaceNames[index],
+			)
+		) {
+			throw new Error(
+				`Managed Agent Projection Tool Portal namespace names must exactly match the effective protected_uds namespace intersection for profile '${projection.toolPortalProfileId}'.`,
+			);
+		}
 		if (
 			projection.frameworkIdentity.kind === 'openclaw' &&
 			projection.frameworkIdentity.agentId !== projection.agentId
@@ -454,6 +500,7 @@ function assertExactManagedAgentProjectionInputs(props: {
 export function deriveManagedAgentProjection(
 	input: ManagedAgentProjectionInput,
 ): ManagedAgentProjection {
+	assertSortedUniqueToolPortalNamespaceNames(input.toolPortalNamespaceNames);
 	return ManagedAgentProjectionSchema.parse({
 		...input,
 		profileAssignmentRevision: revision('profile-assignment', input),
@@ -476,6 +523,8 @@ export function deriveGatewayRuntimePortalSemanticSnapshot(
 	assertExactManagedAgentProjectionInputs({
 		agentProjections: props.agentProjections,
 		configuredAgents: props.toolPortalConfig.agents,
+		surfaceEligibilityByProfile: props.surfaceEligibilityByProfile,
+		toolPortalConfig: props.toolPortalConfig,
 	});
 	const projections = props.agentProjections
 		.map((projection) => deriveManagedAgentProjection(projection))
@@ -538,6 +587,7 @@ export function assertGatewayRuntimePortalSemanticSnapshotMatchesInputs(
 		agentProjections: Object.values(props.semanticSnapshot.agentProjections).map((projection) => ({
 			agentId: projection.agentId,
 			frameworkIdentity: projection.frameworkIdentity,
+			toolPortalNamespaceNames: projection.toolPortalNamespaceNames,
 			toolPortalProfileId: projection.toolPortalProfileId,
 		})),
 		mcpConfig: props.mcpConfig,

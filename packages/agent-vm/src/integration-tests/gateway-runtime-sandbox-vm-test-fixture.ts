@@ -1242,6 +1242,7 @@ export async function createStockGatewayRuntimeSandboxVmHarness(): Promise<Stock
 					agentId: 'gateway-agent',
 					frameworkIdentity: { agentId: 'gateway-agent', kind: 'openclaw' },
 					profileAssignmentRevision: gatewayProfileAssignmentRevision,
+					toolPortalNamespaceNames: ['sandbox'],
 					toolPortalProfileId: 'sandbox-user',
 				},
 			},

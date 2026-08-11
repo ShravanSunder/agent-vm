@@ -62,6 +62,7 @@ const gondolinToolPortalAgentProjectionFields = new Set([
 	'agentId',
 	'frameworkIdentity',
 	'profileAssignmentRevision',
+	'toolPortalNamespaceNames',
 	'toolPortalProfileId',
 ]);
 const gondolinToolPortalAttachmentFields = new Set([
@@ -579,6 +580,37 @@ function isBoundedOpaqueIdentifier(value: unknown): value is string {
 	);
 }
 
+function compareUnicodeCodePointStrings(left: string, right: string): number {
+	const leftCodePoints = Array.from(left, (character) => character.codePointAt(0) ?? 0);
+	const rightCodePoints = Array.from(right, (character) => character.codePointAt(0) ?? 0);
+	const sharedLength = Math.min(leftCodePoints.length, rightCodePoints.length);
+	for (let index = 0; index < sharedLength; index += 1) {
+		const leftCodePoint = leftCodePoints[index] ?? 0;
+		const rightCodePoint = rightCodePoints[index] ?? 0;
+		if (leftCodePoint !== rightCodePoint) {
+			return leftCodePoint - rightCodePoint;
+		}
+	}
+	return leftCodePoints.length - rightCodePoints.length;
+}
+
+function isSortedUniqueNonEmptyStringArray(value: unknown): value is readonly string[] {
+	if (!Array.isArray(value)) {
+		return false;
+	}
+	let previousName: string | undefined;
+	for (const item of value) {
+		if (typeof item !== 'string' || item.length === 0) {
+			return false;
+		}
+		if (previousName !== undefined && compareUnicodeCodePointStrings(item, previousName) <= 0) {
+			return false;
+		}
+		previousName = item;
+	}
+	return true;
+}
+
 function isManagedOpenClawAttachmentMetadata(value: unknown): value is Readonly<{
 	readonly configuredAgentIds: readonly string[];
 }> {
@@ -660,6 +692,7 @@ function assertManagedGondolinToolPortalConfig(
 		if (
 			projection.agentId !== agentId ||
 			!isBoundedOpaqueIdentifier(projection.profileAssignmentRevision) ||
+			!isSortedUniqueNonEmptyStringArray(projection.toolPortalNamespaceNames) ||
 			!isBoundedOpaqueIdentifier(projection.toolPortalProfileId) ||
 			!isObjectRecord(projection.frameworkIdentity) ||
 			projection.frameworkIdentity.kind !== 'openclaw' ||

@@ -1,10 +1,25 @@
 import { z } from 'zod';
 
+import { NamespaceNameSchema } from '../contract-primitives/index.js';
 import { withPortableSuperRefinement } from '../portable-contracts/portable-refinement-authoring.js';
 import {
 	BoundedOpaqueIdentifierSchema,
 	PositiveSafeIntegerSchema,
 } from './contract-foundations.js';
+
+export function compareUnicodeCodePointStrings(left: string, right: string): number {
+	const leftCodePoints = Array.from(left, (character) => character.codePointAt(0) ?? 0);
+	const rightCodePoints = Array.from(right, (character) => character.codePointAt(0) ?? 0);
+	const sharedLength = Math.min(leftCodePoints.length, rightCodePoints.length);
+	for (let index = 0; index < sharedLength; index += 1) {
+		const leftCodePoint = leftCodePoints[index] ?? 0;
+		const rightCodePoint = rightCodePoints[index] ?? 0;
+		if (leftCodePoint !== rightCodePoint) {
+			return leftCodePoint - rightCodePoint;
+		}
+	}
+	return leftCodePoints.length - rightCodePoints.length;
+}
 
 export const GatewayRuntimeFrameworkKindSchema = z.enum(['openclaw', 'hermes']);
 export const GatewayRuntimeManagedPluginClientKindSchema = z.enum([
@@ -31,15 +46,44 @@ export const GatewayRuntimeProjectionCohortDigestSchema = z
 	.string()
 	.regex(/^projection-cohort:[a-f0-9]{64}$/u);
 
-export const ManagedAgentProjectionSchema = z
-	.object({
-		agentId: BoundedOpaqueIdentifierSchema,
-		frameworkIdentity: GatewayRuntimeFrameworkIdentitySchema,
-		profileAssignmentRevision: BoundedOpaqueIdentifierSchema,
-		toolPortalProfileId: BoundedOpaqueIdentifierSchema,
-	})
-	.strict()
-	.readonly();
+export const ManagedAgentProjectionSchema = withPortableSuperRefinement({
+	refinement: (projection, context) => {
+		if (
+			new Set(projection.toolPortalNamespaceNames).size !==
+			projection.toolPortalNamespaceNames.length
+		) {
+			context.addIssue({
+				code: 'custom',
+				message: 'Managed Agent Projection Tool Portal namespace names must be unique.',
+				path: ['toolPortalNamespaceNames'],
+			});
+		}
+		const sortedNamespaceNames = [...projection.toolPortalNamespaceNames].toSorted(
+			compareUnicodeCodePointStrings,
+		);
+		if (
+			projection.toolPortalNamespaceNames.some(
+				(namespaceName, index) => namespaceName !== sortedNamespaceNames[index],
+			)
+		) {
+			context.addIssue({
+				code: 'custom',
+				message: 'Managed Agent Projection Tool Portal namespace names must be sorted.',
+				path: ['toolPortalNamespaceNames'],
+			});
+		}
+	},
+	refinementIdentity: 'gateway.managed-agent-projection.namespace-names',
+	schema: z
+		.object({
+			agentId: BoundedOpaqueIdentifierSchema,
+			frameworkIdentity: GatewayRuntimeFrameworkIdentitySchema,
+			profileAssignmentRevision: BoundedOpaqueIdentifierSchema,
+			toolPortalNamespaceNames: z.array(NamespaceNameSchema).readonly(),
+			toolPortalProfileId: BoundedOpaqueIdentifierSchema,
+		})
+		.strict(),
+}).readonly();
 
 export const GatewayRuntimeAttachmentMetadataSchema = withPortableSuperRefinement({
 	refinement: (metadata, context) => {

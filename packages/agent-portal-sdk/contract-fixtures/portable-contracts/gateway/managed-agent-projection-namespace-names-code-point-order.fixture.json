@@ -1,0 +1,30 @@
+{
+	"caseId": "gateway-managed-agent-projection-namespace-names-code-point-order",
+	"schemaId": "gateway.managed-agent-projection",
+	"tags": ["accepted", "code-point-order", "managed-agent-projection", "namespace-names"],
+	"input": {
+		"agentId": "agent-a",
+		"frameworkIdentity": {
+			"agentId": "agent-a",
+			"kind": "openclaw"
+		},
+		"profileAssignmentRevision": "profile-assignment-a",
+		"toolPortalNamespaceNames": ["\uE000", "\uD800\uDC00"],
+		"toolPortalProfileId": "profile-a"
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"agentId": "agent-a",
+			"frameworkIdentity": {
+				"agentId": "agent-a",
+				"kind": "openclaw"
+			},
+			"profileAssignmentRevision": "profile-assignment-a",
+			"toolPortalNamespaceNames": ["\uE000", "\uD800\uDC00"],
+			"toolPortalProfileId": "profile-a"
+		},
+		"canonicalJson": "{\"agentId\":\"agent-a\",\"frameworkIdentity\":{\"agentId\":\"agent-a\",\"kind\":\"openclaw\"},\"profileAssignmentRevision\":\"profile-assignment-a\",\"toolPortalNamespaceNames\":[\"\",\"𐀀\"],\"toolPortalProfileId\":\"profile-a\"}",
+		"refinementIdentities": ["gateway.managed-agent-projection.namespace-names"]
+	}
+}

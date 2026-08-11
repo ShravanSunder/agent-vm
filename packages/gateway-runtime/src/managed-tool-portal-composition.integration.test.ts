@@ -93,6 +93,7 @@ const semanticSnapshot = {
 			agentId: 'agent-a',
 			frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
 			profileAssignmentRevision: 'profile-assignment:agent-a:1',
+			toolPortalNamespaceNames: ['github', 'private_github'],
 			toolPortalProfileId: 'code-builder',
 		},
 	},

@@ -228,6 +228,9 @@ function mapPortableIssue(props: {
 		if (props.issue.message.includes('duplicate configured agent id')) {
 			return 'gateway.attachment.duplicate-agent-id';
 		}
+		if (props.issue.message.includes('Managed Agent Projection Tool Portal namespace names')) {
+			return 'gateway.managed-agent-projection.namespace-names';
+		}
 		if (props.issue.message.includes('server-selected work root')) {
 			return 'sandbox.path.not-work-relative';
 		}
@@ -411,7 +414,7 @@ const canonicalGatewayContractDefinitions = {
 		schema: GatewayRuntimeAttachmentMetadataSchema,
 	},
 	'gateway.managed-agent-projection': {
-		refinementIdentities: [],
+		refinementIdentities: ['gateway.managed-agent-projection.namespace-names'],
 		schema: ManagedAgentProjectionSchema,
 	},
 	'gateway.trusted-invocation-context': {

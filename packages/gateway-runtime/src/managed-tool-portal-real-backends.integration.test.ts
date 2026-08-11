@@ -111,6 +111,7 @@ const semanticSnapshot = {
 			agentId: 'agent-gate-c',
 			frameworkIdentity: { agentId: 'agent-gate-c', kind: 'openclaw' },
 			profileAssignmentRevision: 'profile-assignment-gate-c-1',
+			toolPortalNamespaceNames: ['controller', 'github', 'sandbox'],
 			toolPortalProfileId: 'gate-c-profile',
 		},
 	},

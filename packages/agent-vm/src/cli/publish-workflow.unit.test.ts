@@ -58,7 +58,7 @@ describe('publish workflow', () => {
 		}
 	});
 
-	it('caches Gondolin Zig tarballs in CI and publish workflows', async () => {
+	it('installs Gondolin Zig only for explicit source-build publication', async () => {
 		const [ciWorkflow, publishWorkflow, sharedSetupAction] = await Promise.all([
 			fs.readFile(path.join(process.cwd(), '.github', 'workflows', 'ci.yml'), 'utf8'),
 			fs.readFile(path.join(process.cwd(), '.github', 'workflows', 'publish.yml'), 'utf8'),
@@ -70,20 +70,22 @@ describe('publish workflow', () => {
 
 		expect(ciWorkflow).toContain('./.github/actions/setup-agent-vm');
 
-		for (const workflow of [publishWorkflow, sharedSetupAction]) {
-			expect(workflow).toContain('Resolve Gondolin Zig version');
-			expect(workflow).toContain('Cache Zig tarballs');
-			expect(workflow).toContain('path: .cache/zig');
-			expect(workflow).toContain(
-				'key: ${{ runner.os }}-zig-${{ steps.zig-version.outputs.arch }}-${{ steps.zig-version.outputs.version }}',
-			);
-			expect(workflow).toContain('--continue-at -');
-			expect(workflow).toContain('--speed-limit 1024');
-			expect(workflow).toContain('xz --test "${ZIG_ARCHIVE}"');
-			expect(workflow).toContain('sudo tar -xJf "${ZIG_ARCHIVE}" -C /opt');
-			expect(workflow).not.toContain('curl -fsSL "https://ziglang.org');
-			expect(workflow).not.toContain('-o /tmp/zig.tar.xz');
-		}
+		expect(publishWorkflow).toContain('Resolve Gondolin Zig version');
+		expect(publishWorkflow).toContain('Cache Zig tarballs');
+		expect(publishWorkflow).toContain('path: .cache/zig');
+		expect(publishWorkflow).toContain(
+			'key: ${{ runner.os }}-zig-${{ steps.zig-version.outputs.arch }}-${{ steps.zig-version.outputs.version }}',
+		);
+		expect(publishWorkflow).toContain('--continue-at -');
+		expect(publishWorkflow).toContain('--speed-limit 1024');
+		expect(publishWorkflow).toContain('xz --test "${ZIG_ARCHIVE}"');
+		expect(publishWorkflow).toContain('sudo tar -xJf "${ZIG_ARCHIVE}" -C /opt');
+		expect(publishWorkflow).not.toContain('curl -fsSL "https://ziglang.org');
+		expect(publishWorkflow).not.toContain('-o /tmp/zig.tar.xz');
+
+		expect(sharedSetupAction).not.toContain('Resolve Gondolin Zig version');
+		expect(sharedSetupAction).not.toContain('Cache Zig tarballs');
+		expect(sharedSetupAction).not.toContain('ziglang.org');
 	});
 
 	it('ensures managed base images exist as multi-arch manifest lists before optional npm publish', async () => {

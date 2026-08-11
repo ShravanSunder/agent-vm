@@ -10,9 +10,143 @@ from hermes_cli.plugins import VALID_HOOKS
 
 PACKAGE_ROOT = pathlib.Path(__file__).parents[1]
 SOURCE_ROOT = PACKAGE_ROOT / "src" / "agent_vm_hermes_adapter"
+MANAGED_TOOL_PORTAL_PACKAGE_FILES = tuple(
+    sorted((SOURCE_ROOT / "managed_tool_portal").glob("*.py"))
+)
+MANAGED_TOOL_PORTAL_SOURCE_FILES = (
+    SOURCE_ROOT / "managed_tool_portal_capability_tools.py",
+    *MANAGED_TOOL_PORTAL_PACKAGE_FILES,
+)
+MANAGED_TOOL_PORTAL_TEST_FILES = tuple(
+    sorted((PACKAGE_ROOT / "tests").glob("test_managed_tool_portal_*.py"))
+)
+
+
+def _qualified_name(node: ast.expr) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return f"{_qualified_name(node.value)}.{node.attr}"
+    return ""
+
+
+def _is_dataclass_decorator(decorator: ast.expr) -> bool:
+    target = decorator.func if isinstance(decorator, ast.Call) else decorator
+    return _qualified_name(target) in {"dataclass", "dataclasses.dataclass"}
+
+
+def _assignment_name(target: ast.expr) -> str:
+    if isinstance(target, ast.Name):
+        return target.id
+    if isinstance(target, ast.Attribute):
+        return target.attr
+    return ""
 
 
 class PackageBoundaryTests(unittest.TestCase):
+    def test_boundary_file_inventory_is_explicit_and_file_only(self) -> None:
+        self.assertTrue(MANAGED_TOOL_PORTAL_SOURCE_FILES[0].is_file())
+        self.assertGreater(len(MANAGED_TOOL_PORTAL_PACKAGE_FILES), 0)
+        self.assertGreater(len(MANAGED_TOOL_PORTAL_TEST_FILES), 0)
+        self.assertTrue(
+            all(
+                source_file.is_file()
+                for source_file in (
+                    *MANAGED_TOOL_PORTAL_SOURCE_FILES,
+                    *MANAGED_TOOL_PORTAL_TEST_FILES,
+                )
+            ),
+        )
+
+    def test_dataclass_decorator_detection_covers_bare_and_called_forms(self) -> None:
+        cases = (
+            ("@dataclass\nclass Example: pass", True),
+            ("@dataclasses.dataclass\nclass Example: pass", True),
+            ("@dataclass()\nclass Example: pass", True),
+            ("@dataclasses.dataclass(frozen=True)\nclass Example: pass", True),
+            ("@dataclass_factory\nclass Example: pass", False),
+            ("@dataclasses.dataclass_factory\nclass Example: pass", False),
+        )
+        for source, expected in cases:
+            with self.subTest(source=source):
+                class_node = ast.parse(source).body[0]
+                if not isinstance(class_node, ast.ClassDef):
+                    self.fail("fixture must parse to a class definition")
+                self.assertEqual(
+                    any(
+                        _is_dataclass_decorator(decorator)
+                        for decorator in class_node.decorator_list
+                    ),
+                    expected,
+                )
+
+    def test_managed_tool_portal_boundary_forbids_untyped_escape_hatches(self) -> None:
+        violations: list[str] = []
+        boundary_files = MANAGED_TOOL_PORTAL_SOURCE_FILES + MANAGED_TOOL_PORTAL_TEST_FILES
+        for source_file in boundary_files:
+            syntax_tree = ast.parse(source_file.read_text(encoding="utf-8"))
+            for node in ast.walk(syntax_tree):
+                if not isinstance(node, ast.stmt | ast.expr):
+                    continue
+                location = f"{source_file.relative_to(PACKAGE_ROOT)}:{node.lineno}"
+                if isinstance(node, ast.Name) and node.id == "Any":
+                    violations.append(f"{location}: Any")
+                elif isinstance(node, ast.Attribute) and node.attr == "Any":
+                    violations.append(f"{location}: Any")
+                elif isinstance(node, ast.Call) and _qualified_name(node.func).split(".")[-1] in {
+                    "cast",
+                    "getattr",
+                    "hasattr",
+                }:
+                    violations.append(f"{location}: {_qualified_name(node.func)}")
+                elif isinstance(node, ast.ClassDef):
+                    if any(_is_dataclass_decorator(decorator) for decorator in node.decorator_list):
+                        violations.append(f"{location}: dataclass")
+                    elif any(
+                        _qualified_name(base).split(".")[-1] in {"NamedTuple", "TypedDict"}
+                        for base in node.bases
+                    ):
+                        violations.append(f"{location}: forbidden structural container")
+                elif (
+                    isinstance(node, ast.Subscript)
+                    and _qualified_name(node.value).split(".")[-1] == "Callable"
+                    and "..." in ast.unparse(node.slice)
+                ):
+                    violations.append(f"{location}: variadic Callable")
+                elif (
+                    isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+                    and (node.args.vararg is not None or node.args.kwarg is not None)
+                    and (
+                        node.name == "__call__"
+                        or "callback" in node.name.lower()
+                        or "hook" in node.name.lower()
+                    )
+                ):
+                    violations.append(f"{location}: untyped variadic adapter")
+                elif isinstance(node, ast.AnnAssign):
+                    annotation = ast.unparse(node.annotation).replace(" ", "")
+                    assignment_name = _assignment_name(node.target).lower()
+                    is_loose_object_dictionary = annotation in {
+                        "dict[str,object]",
+                        "Mapping[str,object]",
+                        "t.Mapping[str,object]",
+                    }
+                    state_name_fragments = (
+                        "binding",
+                        "cache",
+                        "callback",
+                        "entry",
+                        "hook",
+                        "runtime",
+                        "state",
+                    )
+                    if is_loose_object_dictionary and any(
+                        fragment in assignment_name for fragment in state_name_fragments
+                    ):
+                        violations.append(f"{location}: loose state dictionary")
+
+        self.assertEqual(violations, [])
+
     def test_runtime_imports_only_the_gateway_runtime_client_sdk_seam(self) -> None:
         imported_modules: set[str] = set()
         for source_file in SOURCE_ROOT.glob("*.py"):
