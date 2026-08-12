@@ -22,6 +22,8 @@ interface CliExecutionResult {
 }
 
 const repositoryRoot = process.cwd();
+const nodeSqliteExperimentalWarningPattern =
+	/^\(node:\d+\) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n\(Use `node --trace-warnings \.\.\.` to show where the warning was created\)\n?/u;
 const cliPackageInventory = [
 	{ executableName: 'agent-vm', packageDirectory: 'packages/agent-vm' },
 	{ executableName: 'agent-vm-worker', packageDirectory: 'packages/agent-vm-worker' },
@@ -85,7 +87,11 @@ async function runBuiltCli(
 	if (result.exitCode === undefined) {
 		throw new Error(`${executableName} terminated without an exit code.`);
 	}
-	return { exitCode: result.exitCode, stderr: result.stderr, stdout: result.stdout };
+	return {
+		exitCode: result.exitCode,
+		stderr: result.stderr.replace(nodeSqliteExperimentalWarningPattern, ''),
+		stdout: result.stdout,
+	};
 }
 
 function expectNoOrdinaryStack(stderr: string): void {
