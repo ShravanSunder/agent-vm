@@ -20,21 +20,36 @@ interface ChildResult {
 	readonly stdout: string;
 }
 
-type ProductionRootKind = 'agent-vm' | 'agent-vm-worker' | 'gateway-runtime' | 'mcp-portal';
-
-interface ProductionRootChildDefinition {
+interface ProductionRootChildDefinitionBase {
 	readonly category: readonly string[];
-	readonly cliSupportModulePath?: string;
+	readonly environment?: Readonly<Record<string, string | undefined>>;
 	readonly name: string;
 	readonly packageRoot: string;
-	readonly rootKind: ProductionRootKind;
 	readonly rootModulePath: string;
-	readonly systemConfigPath?: string;
-	readonly environment?: Readonly<Record<string, string | undefined>>;
-	readonly gatewayConfigPath?: string;
-	readonly mcpConfigDir?: string;
-	readonly workerConfigPath?: string;
 }
+
+type ProductionRootChildDefinition =
+	| (ProductionRootChildDefinitionBase & {
+			readonly cliSupportModulePath: string;
+			readonly commandDispatcherModulePath: string;
+			readonly parserModulePath: string;
+			readonly rootKind: 'agent-vm';
+			readonly systemConfigPath: string;
+	  })
+	| (ProductionRootChildDefinitionBase & {
+			readonly commandDispatcherModulePath: string;
+			readonly parserModulePath: string;
+			readonly rootKind: 'agent-vm-worker';
+			readonly workerConfigPath: string;
+	  })
+	| (ProductionRootChildDefinitionBase & {
+			readonly gatewayConfigPath: string;
+			readonly rootKind: 'gateway-runtime';
+	  })
+	| (ProductionRootChildDefinitionBase & {
+			readonly mcpConfigDir: string;
+			readonly rootKind: 'mcp-portal';
+	  });
 
 interface OtlpReceiver {
 	readonly close: () => Promise<void>;
@@ -83,16 +98,28 @@ function packageDistPath(...segments: readonly string[]): string {
 	return path.join(repositoryRoot, ...segments);
 }
 
-function createProductionRootChildCode(definition: ProductionRootChildDefinition): string {
+function createProductionRootChildCode(
+	definition: Extract<
+		ProductionRootChildDefinition,
+		{ readonly rootKind: 'agent-vm' | 'agent-vm-worker' }
+	>,
+): string {
 	const category = JSON.stringify(definition.category);
 	const rootKind = JSON.stringify(definition.rootKind);
-	const mcpConfigDir = JSON.stringify(definition.mcpConfigDir);
-	const cliSupportModulePath = JSON.stringify(definition.cliSupportModulePath);
-	const systemConfigPath = JSON.stringify(definition.systemConfigPath);
-	const workerConfigPath = JSON.stringify(definition.workerConfigPath);
+	const cliSupportModulePath = JSON.stringify(
+		definition.rootKind === 'agent-vm' ? definition.cliSupportModulePath : undefined,
+	);
+	const commandDispatcherModulePath = JSON.stringify(definition.commandDispatcherModulePath);
+	const parserModulePath = JSON.stringify(definition.parserModulePath);
+	const systemConfigPath = JSON.stringify(
+		definition.rootKind === 'agent-vm' ? definition.systemConfigPath : undefined,
+	);
+	const workerConfigPath = JSON.stringify(
+		definition.rootKind === 'agent-vm-worker' ? definition.workerConfigPath : undefined,
+	);
 	return `
 const { getLogger } = await import('@logtape/logtape');
-const root = await import(${JSON.stringify(definition.rootModulePath)});
+const { run } = await import('@optique/run');
 const category = ${category};
 const emitRecord = () => getLogger(category).warning('Structured logging host proof record.', {
 \tevent: 'host-proof',
@@ -100,6 +127,8 @@ const emitRecord = () => getLogger(category).warning('Structured logging host pr
 });
 if (${rootKind} === 'agent-vm') {
 \tconst { defaultCliDependencies } = await import(${cliSupportModulePath});
+\tconst { agentVmRootParser } = await import(${parserModulePath});
+\tconst { defaultAgentVmCommandOperations, dispatchAgentVmCommand } = await import(${commandDispatcherModulePath});
 \tconst originalWrite = process.stdout.write.bind(process.stdout);
 \tlet shutdownScheduled = false;
 \tprocess.stdout.write = ((chunk, ...args) => {
@@ -129,18 +158,24 @@ if (${rootKind} === 'agent-vm') {
 \t\t}
 \t\treturn result;
 \t});
-\tawait root.runAgentVmCli({
-\t\targv: ['controller', 'start', '--config', ${systemConfigPath}, '--zone', 'host-proof'],
-\t\tdependencies: {
+\tconst command = run(agentVmRootParser, {
+\t\targs: ['controller', 'start', '--config', ${systemConfigPath}, '--zone', 'host-proof'],
+\t});
+\tawait dispatchAgentVmCommand(
+\t\tcommand,
+\t\t{ stderr: process.stderr, stdout: process.stdout },
+\t\t{
 \t\t\t...defaultCliDependencies,
 \t\t\tisGatewayImageCached: async () => true,
 \t\t},
-\t\texecutionOptions: { processLoggingStderr: process.stderr, processRoot: true },
-\t\tio: { stderr: process.stderr, stdout: process.stdout },
-\t});
+\t\tdefaultAgentVmCommandOperations,
+\t\t{ processLoggingStderr: process.stderr, processRoot: true },
+\t);
 \tprocess.stdout.write = originalWrite;
 \tprocess.stdout.write(${JSON.stringify(childCompletionMarker)});
-} else if (${rootKind} === 'agent-vm-worker') {
+} else {
+\tconst { workerCommandParser } = await import(${parserModulePath});
+\tconst { dispatchWorkerCommand } = await import(${commandDispatcherModulePath});
 \tconst originalWrite = process.stdout.write.bind(process.stdout);
 \tlet shutdownScheduled = false;
 \tprocess.stdout.write = ((chunk, ...args) => {
@@ -152,34 +187,33 @@ if (${rootKind} === 'agent-vm') {
 \t\t}
 \t\treturn result;
 \t});
-\tawait root.runWorkerProcess({
-\t\targv: ['serve', '--config', ${workerConfigPath}, '--port', '0'],
-\t\tio: { stderr: process.stderr, stdout: process.stdout },
+\tconst command = run(workerCommandParser, {
+\t\targs: ['serve', '--config', ${workerConfigPath}, '--port', '0'],
 \t});
-\tprocess.stdout.write = originalWrite;
-\tprocess.stdout.write(${JSON.stringify(childCompletionMarker)});
-} else {
-\tconst originalWrite = process.stdout.write.bind(process.stdout);
-\tprocess.stdout.write = ((chunk, ...args) => {
-\t\tconst result = originalWrite(chunk, ...args);
-\t\tif (String(chunk).startsWith('listening port=')) {
-\t\t\temitRecord();
-\t\t\tsetImmediate(() => process.kill(process.pid, 'SIGTERM'));
-\t\t}
-\t\treturn result;
-\t});
-\tawait root.runMcpPortal(['mcp-proxy', 'serve', '--config-dir', ${mcpConfigDir}, '--port', '0'], { env: process.env });
+\tawait dispatchWorkerCommand(command);
 \tprocess.stdout.write = originalWrite;
 \tprocess.stdout.write(${JSON.stringify(childCompletionMarker)});
 }
 `;
 }
 
-function createGatewayHostProofPreload(definition: ProductionRootChildDefinition): string {
+function createProductionRootHostProofPreload(
+	definition: Extract<
+		ProductionRootChildDefinition,
+		{ readonly rootKind: 'gateway-runtime' | 'mcp-portal' }
+	>,
+): string {
 	const packageRequire = createRequire(
 		pathToFileURL(path.join(definition.packageRoot, 'package.json')).href,
 	);
 	const logtapeModulePath = pathToFileURL(packageRequire.resolve('@logtape/logtape')).href;
+	const readinessMarker =
+		definition.rootKind === 'gateway-runtime' ? 'tool-portal-role-readiness' : 'listening port=';
+	const gracefulShutdownHook =
+		definition.rootKind === 'mcp-portal'
+			? `process.once('beforeExit', () => originalWrite(${JSON.stringify(childCompletionMarker)}));
+setImmediate(() => process.kill(process.pid, 'SIGTERM'));`
+			: '';
 	const source = `
 import { getLogger } from ${JSON.stringify(logtapeModulePath)};
 const logger = getLogger(${JSON.stringify(definition.category)});
@@ -190,12 +224,13 @@ process.stdout.write = ((chunk, ...args) => {
 	const result = originalWrite(chunk, ...args);
 	if (!hostProofEmitted) {
 		stdoutBuffer += String(chunk);
-		if (stdoutBuffer.includes('tool-portal-role-readiness')) {
+		if (stdoutBuffer.includes(${JSON.stringify(readinessMarker)})) {
 			hostProofEmitted = true;
 			logger.warning('Structured logging host proof record.', {
 				event: 'host-proof',
 				attempt: 1,
 			});
+			${gracefulShutdownHook}
 		}
 	}
 	return result;
@@ -207,15 +242,31 @@ process.stdout.write = ((chunk, ...args) => {
 async function runProductionRootChild(
 	definition: ProductionRootChildDefinition,
 ): Promise<ChildResult> {
-	const childArguments =
-		definition.rootKind === 'gateway-runtime'
-			? [definition.rootModulePath, '--config', definition.gatewayConfigPath ?? '']
-			: ['--input-type=module', '--eval', createProductionRootChildCode(definition)];
-	const gatewayHostProofImport =
-		definition.rootKind === 'gateway-runtime'
-			? `--import=${createGatewayHostProofPreload(definition)}`
-			: undefined;
-	const nodeOptions = [process.env.NODE_OPTIONS, gatewayHostProofImport]
+	let childArguments: readonly string[];
+	let productionRootHostProofImport: string | undefined;
+	switch (definition.rootKind) {
+		case 'gateway-runtime':
+			childArguments = [definition.rootModulePath, '--config', definition.gatewayConfigPath];
+			productionRootHostProofImport = `--import=${createProductionRootHostProofPreload(definition)}`;
+			break;
+		case 'mcp-portal':
+			childArguments = [
+				definition.rootModulePath,
+				'mcp-proxy',
+				'serve',
+				'--config-dir',
+				definition.mcpConfigDir,
+				'--port',
+				'0',
+			];
+			productionRootHostProofImport = `--import=${createProductionRootHostProofPreload(definition)}`;
+			break;
+		case 'agent-vm':
+		case 'agent-vm-worker':
+			childArguments = ['--input-type=module', '--eval', createProductionRootChildCode(definition)];
+			break;
+	}
+	const nodeOptions = [process.env.NODE_OPTIONS, productionRootHostProofImport]
 		.filter((value): value is string => value !== undefined && value.length > 0)
 		.join(' ');
 	const child = spawn(process.execPath, childArguments, {
@@ -895,8 +946,22 @@ describe('structured logging process roots', () => {
 							'cli',
 							'agent-vm-cli-support.js',
 						),
+						commandDispatcherModulePath: packageDistPath(
+							'packages',
+							'agent-vm',
+							'dist',
+							'cli',
+							'agent-vm-command-dispatcher.js',
+						),
 						name: 'agent-vm',
 						packageRoot: packageDistPath('packages', 'agent-vm'),
+						parserModulePath: packageDistPath(
+							'packages',
+							'agent-vm',
+							'dist',
+							'cli',
+							'agent-vm-command-parser.js',
+						),
 						rootKind: 'agent-vm',
 						rootModulePath: packageDistPath(
 							'packages',
@@ -921,8 +986,20 @@ describe('structured logging process roots', () => {
 							OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: collectorUrl,
 							WORK_DIR: createdWorkerFixture.workDirectory,
 						},
+						commandDispatcherModulePath: packageDistPath(
+							'packages',
+							'agent-vm-worker',
+							'dist',
+							'worker-cli-dispatcher.js',
+						),
 						name: 'agent-vm-worker',
 						packageRoot: packageDistPath('packages', 'agent-vm-worker'),
+						parserModulePath: packageDistPath(
+							'packages',
+							'agent-vm-worker',
+							'dist',
+							'worker-cli-parser.js',
+						),
 						rootKind: 'agent-vm-worker',
 						rootModulePath: packageDistPath('packages', 'agent-vm-worker', 'dist', 'main.js'),
 						workerConfigPath: createdWorkerFixture.configPath,
@@ -1042,12 +1119,24 @@ describe('structured logging process roots', () => {
 		try {
 			const result = await runProductionRootChild({
 				category: ['agent-vm', 'worker', 'server'],
+				commandDispatcherModulePath: packageDistPath(
+					'packages',
+					'agent-vm-worker',
+					'dist',
+					'worker-cli-dispatcher.js',
+				),
 				environment: {
 					OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: unavailableEndpoint,
 					WORK_DIR: workerFixture.workDirectory,
 				},
 				name: 'agent-vm-worker-unavailable-collector',
 				packageRoot: packageDistPath('packages', 'agent-vm-worker'),
+				parserModulePath: packageDistPath(
+					'packages',
+					'agent-vm-worker',
+					'dist',
+					'worker-cli-parser.js',
+				),
 				rootKind: 'agent-vm-worker',
 				rootModulePath: packageDistPath('packages', 'agent-vm-worker', 'dist', 'main.js'),
 				workerConfigPath: workerFixture.configPath,
@@ -1066,9 +1155,21 @@ describe('structured logging process roots', () => {
 		try {
 			const result = await runProductionRootChild({
 				category: ['agent-vm', 'worker', 'server'],
+				commandDispatcherModulePath: packageDistPath(
+					'packages',
+					'agent-vm-worker',
+					'dist',
+					'worker-cli-dispatcher.js',
+				),
 				environment: { WORK_DIR: workerFixture.workDirectory },
 				name: 'agent-vm-worker-no-endpoint',
 				packageRoot: packageDistPath('packages', 'agent-vm-worker'),
+				parserModulePath: packageDistPath(
+					'packages',
+					'agent-vm-worker',
+					'dist',
+					'worker-cli-parser.js',
+				),
 				rootKind: 'agent-vm-worker',
 				rootModulePath: packageDistPath('packages', 'agent-vm-worker', 'dist', 'main.js'),
 				workerConfigPath: workerFixture.configPath,
