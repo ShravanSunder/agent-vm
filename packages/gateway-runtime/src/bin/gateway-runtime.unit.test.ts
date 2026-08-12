@@ -6,7 +6,7 @@ import {
 	type GatewayRuntimeRetirementSignal,
 	type GatewayRuntimeSignalTarget,
 	waitForRetirementSignal,
-} from './gateway-runtime.js';
+} from './gateway-runtime-cli-operation.js';
 
 interface FakeSignalTarget extends GatewayRuntimeSignalTarget {
 	readonly escalatedSignals: NodeJS.Signals[];

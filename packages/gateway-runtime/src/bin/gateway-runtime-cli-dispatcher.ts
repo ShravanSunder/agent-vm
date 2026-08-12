@@ -1,4 +1,4 @@
-import { runGatewayRuntimeStartLifecycle } from './gateway-runtime-cli-operation.js';
+import { runGatewayRuntimeStartCommand } from './gateway-runtime-cli-operation.js';
 import type { GatewayRuntimeCommand } from './gateway-runtime-cli-parser.js';
 
 export interface GatewayRuntimeCommandOperations {
@@ -8,7 +8,7 @@ export interface GatewayRuntimeCommandOperations {
 }
 
 const defaultGatewayRuntimeCommandOperations = {
-	runStartLifecycle: runGatewayRuntimeStartLifecycle,
+	runStartLifecycle: runGatewayRuntimeStartCommand,
 } satisfies GatewayRuntimeCommandOperations;
 
 function assertNever(value: never): never {

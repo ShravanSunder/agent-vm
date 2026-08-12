@@ -12,7 +12,11 @@ import {
 } from './control-session/worker-control-service.js';
 import { createCoordinator, type Coordinator } from './coordinator/coordinator.js';
 import { createApp } from './server.js';
-import type { ProcessLoggingHandle } from './shared/process-logging.js';
+import {
+	configureProcessLogging,
+	workerProcessLoggingShutdownFailureMessage,
+	type ProcessLoggingHandle,
+} from './shared/process-logging.js';
 import type { WorkerCommand } from './worker-cli-parser.js';
 
 type WorkerHealthCommand = Extract<WorkerCommand, { readonly command: 'health' }>;
@@ -121,7 +125,11 @@ export async function runWorkerServeShutdownLifecycle(
 		try {
 			await options.logging?.shutdown();
 		} catch {
-			// The process root reports logging shutdown failure without replacing the product result.
+			try {
+				process.stderr.write(workerProcessLoggingShutdownFailureMessage);
+			} catch {
+				// Preserve the product result when the diagnostic writer is unavailable.
+			}
 		}
 		if (productCloseFailed) throw productCloseError;
 	} finally {
@@ -142,6 +150,14 @@ export async function runWorkerServeLifecycle(
 	command: WorkerServeCommand,
 	logging?: ProcessLoggingHandle,
 ): Promise<void> {
+	let processLogging = logging;
+	if (processLogging === undefined) {
+		try {
+			processLogging = await configureProcessLogging({ stderr: process.stderr });
+		} catch (error: unknown) {
+			throw new Error('Worker process logging setup failed.', { cause: error });
+		}
+	}
 	const configPath = command.config ?? process.env.WORKER_CONFIG_PATH ?? undefined;
 	const baseConfig = await loadWorkerConfig(configPath);
 	const config = command.stateDir ? { ...baseConfig, stateDir: command.stateDir } : baseConfig;
@@ -210,7 +226,7 @@ export async function runWorkerServeLifecycle(
 		await runWorkerServeShutdownLifecycle({
 			server: { close: () => closeHttpServer(server) },
 			workerControlService,
-			logging,
+			logging: processLogging,
 		});
 	}
 }

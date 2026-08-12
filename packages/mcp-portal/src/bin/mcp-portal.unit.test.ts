@@ -5,8 +5,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { createStaticSecretResolver } from '@agent-vm/secret-management';
-import { parseSync } from '@optique/core/parser';
 import { getConfig } from '@logtape/logtape';
+import { parseSync } from '@optique/core/parser';
 import { describe, expect, it, vi } from 'vitest';
 
 import { mcpPortalRootParser } from '../cli/mcp-portal-cli-parser.js';
@@ -19,13 +19,11 @@ import {
 	startFakeUpstreamMcpServer,
 } from '../testing/fake-upstream-mcp-server.js';
 import {
-	waitUntilPortalServerShutdown,
-} from './mcp-portal-command-dispatcher.js';
-import {
 	runMcpPortalCommandWithProcessLogging,
-	shouldRunMcpPortalEntrypoint,
+	waitUntilPortalServerShutdown,
 	type AgentVmMcpPortalRuntimeProps,
-} from './mcp-portal.js';
+} from './mcp-portal-command-dispatcher.js';
+import { shouldRunMcpPortalEntrypoint } from './mcp-portal.js';
 
 const parserRejected = Symbol('parser-rejected');
 
@@ -307,6 +305,10 @@ describe('mcp-portal CLI', () => {
 		const stderrChunks: string[] = [];
 		const stderrSpy = vi
 			.spyOn(process.stderr, 'write')
+			.mockImplementationOnce((chunk) => {
+				stderrChunks.push(String(chunk));
+				return true;
+			})
 			.mockImplementationOnce(() => {
 				throw fallbackFailure;
 			})

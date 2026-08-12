@@ -9,7 +9,6 @@ import { dispose, reset } from '@logtape/logtape';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { deriveAgentBearerToken } from '../portal-auth/agent-bearer-token.js';
-import { configureProcessLogging } from './process-logging.js';
 import {
 	applyAgentOverrides,
 	createServeSecretResolver,
@@ -17,6 +16,7 @@ import {
 	startPortalServer,
 	type PortalServerLogEvent,
 } from './portal-server-operation.js';
+import { configureProcessLogging } from './process-logging.js';
 
 const startedServers: { readonly close: () => Promise<void> }[] = [];
 const externalMasterKey = Buffer.from('0123456789abcdef0123456789abcdef');

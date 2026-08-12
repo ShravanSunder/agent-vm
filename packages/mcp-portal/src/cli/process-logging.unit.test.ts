@@ -3,13 +3,13 @@ import { Writable } from 'node:stream';
 import { dispose, reset, type Config, type Sink } from '@logtape/logtape';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import type { PortalServerLogEvent } from './portal-server-operation.js';
 import {
 	configureProcessLogging,
 	createPortalServerLogger,
 	mapPortalServerLogEvent,
 	type ProcessLoggingDependencies,
 } from './process-logging.js';
-import type { PortalServerLogEvent } from './serve-command.js';
 
 type PortalApprovalLogEvent = Extract<
 	PortalServerLogEvent,

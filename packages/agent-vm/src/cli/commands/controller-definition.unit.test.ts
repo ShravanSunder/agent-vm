@@ -2,16 +2,101 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { computeFingerprintFromConfigPath } from '../../build/gondolin-image-builder.js';
 import { managedVmImageAssetFileNames } from '../../build/gondolin-managed-vm-build-tooling.js';
 import type { ManagedGatewayImageBootProjection } from '../../build/gondolin-managed-vm-build-tooling.js';
 import { writePreparedManagedVmImage } from '../../build/prepared-gondolin-image-cache.js';
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../../config/system-config.js';
-import { isGatewayImageCached } from './controller-command-operation.js';
+import {
+	createProcessShutdownSignalWaiter,
+	isGatewayImageCached,
+	runControllerStartProcessLifecycle,
+} from './controller-command-operation.js';
 
 const temporaryDirectories: string[] = [];
+
+describe('controller process lifecycle', () => {
+	it('closes the runtime before process logging and removes signal listeners', async () => {
+		const events: string[] = [];
+		const cleanup = vi.fn();
+
+		await runControllerStartProcessLifecycle({
+			io: { stderr: { write: () => true }, stdout: { write: () => true } },
+			logging: {
+				shutdown: async (): Promise<void> => {
+					events.push('logging.shutdown');
+				},
+			},
+			runtime: {
+				close: async (): Promise<void> => {
+					events.push('runtime.close');
+				},
+				controllerPort: 18_800,
+				zones: [],
+			},
+			selectedZoneId: 'zone-1',
+			shutdownSignalWaiter: { cleanup, signal: Promise.resolve() },
+		});
+
+		expect(events).toEqual(['runtime.close', 'logging.shutdown']);
+		expect(cleanup).toHaveBeenCalledOnce();
+	});
+
+	it('keeps product shutdown failure primary when logging disposal also fails', async () => {
+		const productFailure = new Error('runtime close failed');
+		const stderrChunks: string[] = [];
+
+		await expect(
+			runControllerStartProcessLifecycle({
+				io: {
+					stderr: {
+						write: (chunk: string | Uint8Array): boolean => {
+							stderrChunks.push(String(chunk));
+							return true;
+						},
+					},
+					stdout: { write: () => true },
+				},
+				logging: {
+					shutdown: async (): Promise<void> => {
+						throw new Error('logging shutdown failed');
+					},
+				},
+				runtime: {
+					close: async (): Promise<void> => {
+						throw productFailure;
+					},
+					controllerPort: 18_800,
+					zones: [],
+				},
+				selectedZoneId: 'zone-1',
+				shutdownSignalWaiter: { cleanup: () => undefined, signal: Promise.resolve() },
+			}),
+		).rejects.toBe(productFailure);
+		expect(stderrChunks).toEqual(['Controller process logging shutdown failed.\n']);
+	});
+
+	it('resolves only once and cleans both process signal listeners', async () => {
+		const listeners = new Map<'SIGINT' | 'SIGTERM', () => void>();
+		const waiter = createProcessShutdownSignalWaiter({
+			off: (signal, listener): void => {
+				if (listeners.get(signal) === listener) listeners.delete(signal);
+			},
+			on: (signal, listener): void => {
+				listeners.set(signal, listener);
+			},
+		});
+
+		listeners.get('SIGTERM')?.();
+		listeners.get('SIGINT')?.();
+		await waiter.signal;
+		waiter.cleanup();
+
+		expect(listeners).toHaveLength(0);
+	});
+});
 
 async function createTemporaryDirectory(): Promise<string> {
 	const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-controller-cache-'));

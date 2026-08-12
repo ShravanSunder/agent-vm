@@ -12,7 +12,7 @@ import {
 } from '@logtape/logtape';
 import { getOpenTelemetrySink } from '@logtape/otel';
 
-import type { PortalServerLogEvent, PortalServerLogger } from './serve-command.js';
+import type { PortalServerLogEvent, PortalServerLogger } from './portal-server-operation.js';
 
 const portalServerLogger = getLogger(['agent-vm', 'mcp-portal', 'server']);
 const maxSafeIdentifierLength = 128;
