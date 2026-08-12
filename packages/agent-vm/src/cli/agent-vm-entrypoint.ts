@@ -49,12 +49,18 @@ export function isCliEntrypoint(importMetaUrl: string, argvEntryPath: string | u
 async function main(): Promise<void> {
 	const cliVersion = await (defaultCliDependencies.resolveCliVersion ?? resolveCliVersion)();
 	const command = run(agentVmRootParser, {
-		help: 'both',
+		help: {
+			command: true,
+			option: { names: ['--help', '-h'] },
+		},
 		programName: 'agent-vm',
 		showDefault: true,
 		stderr: (text) => process.stderr.write(`${text}\n`),
 		stdout: (text) => process.stdout.write(`${text}\n`),
-		version: cliVersion,
+		version: {
+			option: { names: ['--version', '-v'] },
+			value: cliVersion,
+		},
 	});
 	await dispatchAgentVmCommand(
 		command,

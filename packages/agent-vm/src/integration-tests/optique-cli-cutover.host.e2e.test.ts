@@ -164,6 +164,19 @@ describe('Optique cutover built CLI contract', () => {
 		},
 	);
 
+	it.each(['agent-vm', 'agent-vm-worker'] as const)(
+		'$executableName preserves the supported -h help alias',
+		async (executableName) => {
+			// Arrange / Act
+			const result = await runBuiltCli(executableName, ['-h']);
+
+			// Assert
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout.trim().length).toBeGreaterThan(0);
+			expect(result.stderr).toBe('');
+		},
+	);
+
 	it.each([
 		{ arguments_: ['init', '--help'], executableName: 'agent-vm' },
 		{ arguments_: ['health', '--help'], executableName: 'agent-vm-worker' },
@@ -228,11 +241,25 @@ describe('Optique cutover built CLI contract', () => {
 
 	it('preserves the existing agent-vm version surface', async () => {
 		// Arrange / Act
-		const result = await runBuiltCli('agent-vm', ['--version']);
+		const longVersionResult = await runBuiltCli('agent-vm', ['--version']);
+		const shortVersionResult = await runBuiltCli('agent-vm', ['-v']);
+
+		// Assert
+		expect(longVersionResult.exitCode).toBe(0);
+		expect(longVersionResult.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/u);
+		expect(longVersionResult.stderr).toBe('');
+		expect(shortVersionResult).toEqual(longVersionResult);
+	});
+
+	it('describes controller cleanup force semantics without weakening the health warning', async () => {
+		// Arrange / Act
+		const result = await runBuiltCli('agent-vm', ['controller', 'cleanup', '--help']);
 
 		// Assert
 		expect(result.exitCode).toBe(0);
-		expect(result.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/u);
+		expect(result.stdout).toContain(
+			'Allow cleanup even if the controller health endpoint is reachable',
+		);
 		expect(result.stderr).toBe('');
 	});
 

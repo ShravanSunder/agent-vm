@@ -276,13 +276,34 @@ function isRuntimeImportDeclaration(node: ts.ImportDeclaration): boolean {
 function isApprovedDomainSchemaImport(node: ts.ImportDeclaration, importedModule: string): boolean {
 	const namedBindings = node.importClause?.namedBindings;
 	return (
-		(importedModule.startsWith('.') || importedModule.startsWith('@agent-vm/')) &&
+		importedModule.startsWith('.') &&
 		namedBindings !== undefined &&
 		ts.isNamedImports(namedBindings) &&
 		namedBindings.elements.every(
 			(element) =>
 				element.isTypeOnly || /schema$/iu.test((element.propertyName ?? element.name).text),
 		)
+	);
+}
+
+function isRepeatedElementSchemaProjection(
+	schemaExpression: ts.Expression,
+	projectedSchemaIdentifier: ts.Identifier,
+): boolean {
+	if (
+		!ts.isPropertyAccessExpression(schemaExpression) ||
+		schemaExpression.name.text !== 'element' ||
+		!ts.isCallExpression(schemaExpression.expression)
+	) {
+		return false;
+	}
+	const unwrapCall = schemaExpression.expression;
+	return (
+		unwrapCall.arguments.length === 0 &&
+		ts.isPropertyAccessExpression(unwrapCall.expression) &&
+		unwrapCall.expression.name.text === 'unwrap' &&
+		ts.isIdentifier(unwrapCall.expression.expression) &&
+		unwrapCall.expression.expression.text === projectedSchemaIdentifier.text
 	);
 }
 
@@ -735,6 +756,25 @@ function auditInventoryEntry(
 							sourceFile,
 							node,
 							'presence projection and zod() must reuse the exact named Zod schema object',
+						);
+					}
+				}
+				if (parserModule && localCallName === 'projectZodRepeatedOption') {
+					const projectedSchemaExpression = projectionSchemaExpression(node);
+					const providedTokenSchemaExpressions = zodSchemaExpressions(node, optiqueZodBindings);
+					if (
+						projectedSchemaExpression === undefined ||
+						!ts.isIdentifier(projectedSchemaExpression) ||
+						providedTokenSchemaExpressions.length === 0 ||
+						providedTokenSchemaExpressions.some(
+							(schemaExpression) =>
+								!isRepeatedElementSchemaProjection(schemaExpression, projectedSchemaExpression),
+						)
+					) {
+						insertFinding(
+							sourceFile,
+							node,
+							'repeated projection and zod() must reuse the exact named Zod array schema element',
 						);
 					}
 				}

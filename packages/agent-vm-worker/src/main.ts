@@ -7,7 +7,10 @@ import { workerCommandParser } from './worker-cli-parser.js';
 
 export async function main(): Promise<void> {
 	const command = run(workerCommandParser, {
-		help: 'both',
+		help: {
+			command: true,
+			option: { names: ['--help', '-h'] },
+		},
 		showDefault: true,
 	});
 	await dispatchWorkerCommand(command);

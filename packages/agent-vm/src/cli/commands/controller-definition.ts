@@ -33,7 +33,10 @@ export const controllerCommandParser = command(
 				command: constant('controller.cleanup'),
 				options: object({
 					config: createConfigOption(),
-					force: createPresenceFlag('--force', 'Allow cleanup if controller health is reachable'),
+					force: createPresenceFlag(
+						'--force',
+						'Allow cleanup even if the controller health endpoint is reachable',
+					),
 					zone: createZoneOption(),
 				}),
 			}),

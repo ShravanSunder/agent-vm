@@ -121,6 +121,27 @@ describe('Optique CLI architecture audit', () => {
 		expect(findings.join('\n')).toMatch(/exact named Zod schema object/u);
 	});
 
+	it('rejects a repeated projection whose element parser uses a different array schema', async () => {
+		// Arrange
+		const parser = `${admittedParser}
+const repeatedNameSchema = z.array(z.string()).default([]);
+const differentRepeatedNameSchema = z.array(z.string()).default([]);
+const projectedNames = projectZodRepeatedOption({
+	schema: repeatedNameSchema,
+	parser: option('--name', zod(differentRepeatedNameSchema.unwrap().element, { placeholder: '' })),
+});
+void projectedNames;`;
+
+		// Act
+		const findings = await auditFixture([
+			{ content: admittedRoot, relativePath: 'packages/fixture/src/bin/fixture-cli.ts' },
+			{ content: parser, relativePath: 'packages/fixture/src/cli/fixture-cli-parser.ts' },
+		]);
+
+		// Assert
+		expect(findings.join('\n')).toMatch(/repeated projection.*exact named Zod array schema/u);
+	});
+
 	it('rejects fixed-default literals repeated in parser help descriptions', async () => {
 		// Arrange
 		const parser = `${admittedParser}\nconst defaultNameSchema = z.string().default('fixture');\nconst description = 'Name (default: fixture)';\nvoid defaultNameSchema;\nvoid description;`;
@@ -685,7 +706,7 @@ void serve;
 		expect(findings.join('\n')).toMatch(/forbidden runtime module @hono\/node-server/u);
 	});
 
-	it('accepts named schema-only imports from an approved domain package', async () => {
+	it('rejects named schema imports from a bare package barrel whose purity is unresolved', async () => {
 		// Arrange
 		const parser = `${admittedParser}
 import { systemConfigSchema } from '@agent-vm/config-contracts';
@@ -699,7 +720,7 @@ void systemConfigSchema;
 		]);
 
 		// Assert
-		expect(findings).toEqual([]);
+		expect(findings.join('\n')).toMatch(/forbidden runtime module @agent-vm\/config-contracts/u);
 	});
 
 	it('permits an effect-owning operation reachable from a pure parser dispatcher', async () => {

@@ -1,6 +1,6 @@
 import path from 'node:path';
 
-import { conditional, object, or } from '@optique/core/constructs';
+import { object, or } from '@optique/core/constructs';
 import { map, optional, withDefault } from '@optique/core/modifiers';
 import type { InferValue, Parser } from '@optique/core/parser';
 import { command, constant, option } from '@optique/core/primitives';
@@ -8,6 +8,10 @@ import { zod } from '@optique/zod';
 import { z } from 'zod';
 
 const toolPortalTransportKindSchema = z.enum(['http', 'scoped-stdio']);
+const toolPortalHttpTransportKindSchema = toolPortalTransportKindSchema.extract(['http']);
+const toolPortalScopedStdioTransportKindSchema = toolPortalTransportKindSchema.extract([
+	'scoped-stdio',
+]);
 const toolPortalInputJsonSchema = z.string().min(1);
 const toolPortalEnvironmentVariableNameSchema = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/u);
 const toolPortalOptionalApprovalEnvironmentNameSchema =
@@ -65,46 +69,62 @@ export function projectZodScalarPresence(props: {
 	return props.parser;
 }
 
-const toolPortalTransportParser = map(
-	conditional(
-		option(
+const toolPortalHttpTransportParser = map(
+	object({
+		authorizationEnvironmentName: option(
+			'--authorization-env',
+			zod(toolPortalEnvironmentVariableNameSchema, {
+				metavar: 'ENV_NAME',
+				placeholder: 'TOOL_PORTAL_AUTH',
+			}),
+		),
+		endpoint: option(
+			'--endpoint',
+			zod(toolPortalHttpEndpointSchema, {
+				metavar: 'URL',
+				placeholder: 'https://example.test/mcp',
+			}),
+		),
+		kind: constant('http'),
+		transportKind: option(
 			'--transport',
-			zod(toolPortalTransportKindSchema, {
+			zod(toolPortalHttpTransportKindSchema, {
 				metavar: 'TRANSPORT',
 				placeholder: 'http',
 			}),
 		),
-		{
-			http: object({
-				authorizationEnvironmentName: option(
-					'--authorization-env',
-					zod(toolPortalEnvironmentVariableNameSchema, {
-						metavar: 'ENV_NAME',
-						placeholder: 'TOOL_PORTAL_AUTH',
-					}),
-				),
-				endpoint: option(
-					'--endpoint',
-					zod(toolPortalHttpEndpointSchema, {
-						metavar: 'URL',
-						placeholder: 'https://example.test/mcp',
-					}),
-				),
-				kind: constant('http'),
+	}),
+	({ authorizationEnvironmentName, endpoint, kind }) => ({
+		authorizationEnvironmentName,
+		endpoint,
+		kind,
+	}),
+);
+
+const toolPortalScopedStdioTransportParser = map(
+	object({
+		kind: constant('scoped-stdio'),
+		scopedStdioConfigPath: option(
+			'--stdio-config',
+			zod(toolPortalScopedStdioConfigPathSchema, {
+				metavar: 'PATH',
+				placeholder: '/tmp/tool-portal.json',
 			}),
-			'scoped-stdio': object({
-				kind: constant('scoped-stdio'),
-				scopedStdioConfigPath: option(
-					'--stdio-config',
-					zod(toolPortalScopedStdioConfigPathSchema, {
-						metavar: 'PATH',
-						placeholder: '/tmp/tool-portal.json',
-					}),
-				),
+		),
+		transportKind: option(
+			'--transport',
+			zod(toolPortalScopedStdioTransportKindSchema, {
+				metavar: 'TRANSPORT',
+				placeholder: 'scoped-stdio',
 			}),
-		},
-	),
-	([, transport]) => transport,
+		),
+	}),
+	({ kind, scopedStdioConfigPath }) => ({ kind, scopedStdioConfigPath }),
+);
+
+const toolPortalTransportParser = or(
+	toolPortalHttpTransportParser,
+	toolPortalScopedStdioTransportParser,
 );
 
 function createInputJsonOption(): Parser<'sync', z.infer<typeof toolPortalInputJsonSchema>> {

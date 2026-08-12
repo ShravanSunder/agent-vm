@@ -77,6 +77,51 @@ describe('Tool Portal Optique CLI parser', () => {
 		});
 	});
 
+	it('parses HTTP branch options before the transport selector', () => {
+		expect(
+			parseToolPortalArguments([
+				'list',
+				'--input-json',
+				'{}',
+				'--endpoint',
+				'https://example.test/mcp',
+				'--authorization-env',
+				'TOOL_PORTAL_AUTH',
+				'--transport',
+				'http',
+			]),
+		).toEqual({
+			inputJson: '{}',
+			operation: 'list',
+			transport: {
+				authorizationEnvironmentName: 'TOOL_PORTAL_AUTH',
+				endpoint: 'https://example.test/mcp',
+				kind: 'http',
+			},
+		});
+	});
+
+	it('parses scoped-stdio branch options before the transport selector', () => {
+		expect(
+			parseToolPortalArguments([
+				'search',
+				'--input-json',
+				'{"query":"status"}',
+				'--stdio-config',
+				'/tmp/tool-portal.json',
+				'--transport',
+				'scoped-stdio',
+			]),
+		).toEqual({
+			inputJson: '{"query":"status"}',
+			operation: 'search',
+			transport: {
+				kind: 'scoped-stdio',
+				scopedStdioConfigPath: '/tmp/tool-portal.json',
+			},
+		});
+	});
+
 	it('leaves the call approval token absent when the option is absent', () => {
 		expect(
 			parseToolPortalArguments([
