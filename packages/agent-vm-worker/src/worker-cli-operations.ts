@@ -189,7 +189,13 @@ export async function runWorkerServeLifecycle(
 	const config = command.stateDir ? { ...baseConfig, stateDir: command.stateDir } : baseConfig;
 	const workDir = process.env.WORK_DIR ?? '/work';
 	const startTime = Date.now();
-	const workerControlOptions = createWorkerControlServiceOptionsFromEnvironment();
+	let workerControlOptions: ReturnType<typeof createWorkerControlServiceOptionsFromEnvironment>;
+	try {
+		workerControlOptions = createWorkerControlServiceOptionsFromEnvironment();
+	} catch (error: unknown) {
+		await closeWorkerStartupResources({ logging: processLogging });
+		throw error;
+	}
 	const coordinatorRef: { current?: Coordinator | undefined } = {};
 	function requireCoordinator(): Coordinator {
 		if (coordinatorRef.current === undefined) {

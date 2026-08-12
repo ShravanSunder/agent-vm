@@ -3,6 +3,7 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { WORKER_CONTROL_ENV_NAMES } from './control-session/worker-control-service.js';
 import {
 	runWorkerHealthOperation,
 	runWorkerServeLifecycle,
@@ -96,6 +97,37 @@ describe('worker serve shutdown lifecycle', () => {
 		).rejects.toThrow(missingConfigPath);
 
 		expect(shutdownCalls).toBe(1);
+	});
+
+	it('disposes process logging when worker control configuration fails after config loading', async () => {
+		let shutdownCalls = 0;
+		const previousEnvironment = new Map<string, string | undefined>();
+		for (const name of Object.values(WORKER_CONTROL_ENV_NAMES)) {
+			previousEnvironment.set(name, process.env[name]);
+			delete process.env[name];
+		}
+		process.env[WORKER_CONTROL_ENV_NAMES.bootId] = 'boot-id';
+
+		try {
+			await expect(
+				runWorkerServeLifecycle(
+					{ command: 'serve', config: undefined, port: 0, stateDir: undefined },
+					{
+						shutdown: async (): Promise<void> => {
+							shutdownCalls += 1;
+							throw new Error('logging shutdown failed');
+						},
+					},
+				),
+			).rejects.toThrow('Worker control service configuration is incomplete');
+
+			expect(shutdownCalls).toBe(1);
+		} finally {
+			for (const [name, value] of previousEnvironment) {
+				if (value === undefined) delete process.env[name];
+				else process.env[name] = value;
+			}
+		}
 	});
 
 	it('waits for a shutdown signal, closes server then control service, and disposes logging last', async () => {
