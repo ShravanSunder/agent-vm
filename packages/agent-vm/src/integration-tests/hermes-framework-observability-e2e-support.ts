@@ -8,6 +8,22 @@ import type { HermesE2eProject } from './hermes-e2e-harness.js';
 
 /* oxlint-disable eslint/no-await-in-loop -- helpers wait on external protocol state */
 
+export interface HermesObservabilityStackProject {
+	readonly systemConfig: {
+		readonly controllerRuntimeDir: string;
+		readonly host: {
+			readonly observability?:
+				| { readonly enabled: false }
+				| {
+						readonly enabled: true;
+						readonly stack: { readonly mode: 'external' | 'managed' };
+				  }
+				| undefined;
+			readonly projectNamespace: string;
+		};
+	};
+}
+
 export function expectProviderTransitionLogs(options: {
 	readonly fallbackModelName: string;
 	readonly logs: string;
@@ -69,7 +85,27 @@ export function selectStoredHermesFrameworkLogs(records: string): string {
 		.join('\n');
 }
 
-export async function stopObservabilityStack(project: HermesE2eProject): Promise<void> {
+export function rejectedCleanupReasons(
+	results: readonly PromiseSettledResult<unknown>[],
+): readonly unknown[] {
+	return results.flatMap((result): readonly unknown[] =>
+		result.status === 'rejected' ? [result.reason] : [],
+	);
+}
+
+export async function settleCleanupPhases(
+	createPhasePromises: readonly (() => readonly Promise<unknown>[])[],
+): Promise<readonly unknown[]> {
+	const cleanupErrors: unknown[] = [];
+	for (const createPromises of createPhasePromises) {
+		cleanupErrors.push(...rejectedCleanupReasons(await Promise.allSettled(createPromises())));
+	}
+	return cleanupErrors;
+}
+
+export async function stopObservabilityStack(
+	project: HermesObservabilityStackProject,
+): Promise<void> {
 	const observability = project.systemConfig.host.observability;
 	if (observability?.enabled !== true || observability.stack.mode !== 'managed') return;
 	const composePath = path.join(
@@ -78,7 +114,7 @@ export async function stopObservabilityStack(project: HermesE2eProject): Promise
 		project.systemConfig.host.projectNamespace,
 		'docker-compose.observability.yml',
 	);
-	await execa(
+	const result = await execa(
 		'docker',
 		[
 			'compose',
@@ -91,6 +127,11 @@ export async function stopObservabilityStack(project: HermesE2eProject): Promise
 		],
 		{ reject: false, timeout: 30_000 },
 	);
+	if (result.failed) {
+		throw new Error(`Failed to stop the managed observability stack: ${result.shortMessage}`, {
+			cause: result,
+		});
+	}
 }
 
 export async function readObservabilityStackDiagnostics(

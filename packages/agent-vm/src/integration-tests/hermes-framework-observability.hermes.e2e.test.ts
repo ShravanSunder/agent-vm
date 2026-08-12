@@ -4,7 +4,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import path from 'node:path';
 
 import type { ManagedVmCreateRequest } from '@agent-vm/managed-vm';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import type { GatewayZoneVmOperations } from '../gateway/gateway-zone-support.js';
@@ -35,6 +35,7 @@ import {
 	readObservabilityStackDiagnostics,
 	requireTraceIdForSpan,
 	selectStoredHermesFrameworkLogs,
+	settleCleanupPhases,
 	stopObservabilityStack,
 	waitForVictoriaMetric,
 	waitForVictoriaText,
@@ -526,14 +527,11 @@ async function runSignalNegativeGatewayBoot(options: {
 	} catch (error: unknown) {
 		operationFailure = { error };
 	}
-	const cleanupResults = await Promise.allSettled([
-		harness?.close({ preserveTempRoot: true }) ?? Promise.resolve(),
-		provider.close(),
-		project === undefined ? Promise.resolve() : removeE2eTempRoot(project.tempRoot),
+	const cleanupErrors = await settleCleanupPhases([
+		() => [harness?.close({ preserveTempRoot: true }) ?? Promise.resolve()],
+		() => [provider.close()],
+		() => [project === undefined ? Promise.resolve() : removeE2eTempRoot(project.tempRoot)],
 	]);
-	const cleanupErrors = cleanupResults.flatMap((result): readonly unknown[] =>
-		result.status === 'rejected' ? [result.reason] : [],
-	);
 	if (operationFailure !== undefined && cleanupErrors.length > 0) {
 		throw new AggregateError(
 			[operationFailure.error, ...cleanupErrors],
@@ -558,15 +556,28 @@ describeHermesFrameworkObservabilityE2e(
 		let gatewayVm: Pick<GatewayZoneVmOperations, 'exec'> | undefined;
 		const capturedOtlpRequests: CapturedOtlpRequest[] = [];
 
-		afterAll(async () => {
-			try {
-				await harness?.close({ preserveTempRoot: true });
-			} finally {
-				await Promise.allSettled([
-					provider?.close(),
-					project === undefined ? Promise.resolve() : stopObservabilityStack(project),
-				]);
-				if (project !== undefined) await removeE2eTempRoot(project.tempRoot);
+		afterEach(async () => {
+			const cleanupHarness = harness;
+			const cleanupProvider = provider;
+			const cleanupProject = project;
+			harness = undefined;
+			provider = undefined;
+			project = undefined;
+			gatewayVm = undefined;
+			const cleanupErrors = await settleCleanupPhases([
+				() => [cleanupHarness?.close({ preserveTempRoot: true }) ?? Promise.resolve()],
+				() => [
+					cleanupProvider?.close() ?? Promise.resolve(),
+					cleanupProject === undefined ? Promise.resolve() : stopObservabilityStack(cleanupProject),
+				],
+				() => [
+					cleanupProject === undefined
+						? Promise.resolve()
+						: removeE2eTempRoot(cleanupProject.tempRoot),
+				],
+			]);
+			if (cleanupErrors.length > 0) {
+				throw new AggregateError(cleanupErrors, 'Hermes observability E2E cleanup failed.');
 			}
 		});
 
