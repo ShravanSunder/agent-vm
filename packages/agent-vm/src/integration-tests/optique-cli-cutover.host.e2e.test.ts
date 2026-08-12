@@ -1,6 +1,7 @@
 import { readFile, stat } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { execa } from 'execa';
 import { beforeAll, describe, expect, it } from 'vitest';
@@ -136,6 +137,23 @@ beforeAll(async () => {
 });
 
 describe('Optique cutover built CLI contract', () => {
+	it('preserves Agent VM identifier schemas through the built root package export', async () => {
+		// Arrange
+		const agentVmPackageEntrypoint = path.join(repositoryRoot, 'packages/agent-vm/dist/index.js');
+
+		// Act
+		const agentVmPackage: unknown = await import(pathToFileURL(agentVmPackageEntrypoint).href);
+
+		// Assert
+		for (const schemaExportName of [
+			'agentIdSchema',
+			'projectNamespaceSchema',
+			'zoneIdSchema',
+		] as const) {
+			expect(Reflect.has(Object(agentVmPackage), schemaExportName)).toBe(true);
+		}
+	});
+
 	it('resolves all five executable paths only from package manifests and built dist output', () => {
 		// Arrange / Act
 		const targets = [...builtCliTargets.values()];

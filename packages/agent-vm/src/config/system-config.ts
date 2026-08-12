@@ -27,6 +27,8 @@ import {
 	zoneIdSchema,
 } from './system-config-identifier-schemas.js';
 
+export { agentIdSchema, projectNamespaceSchema, zoneIdSchema };
+
 const gatewayTypeValues = ['openclaw', 'hermes', 'worker'] as const;
 
 function escapeRegExpLiteral(value: string): string {
