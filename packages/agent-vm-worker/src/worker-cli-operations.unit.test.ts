@@ -1,7 +1,11 @@
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
 	runWorkerHealthOperation,
+	runWorkerServeLifecycle,
 	runWorkerServeShutdownLifecycle,
 } from './worker-cli-operations.js';
 
@@ -75,6 +79,25 @@ function createFakeSignalTarget(): FakeSignalTarget {
 }
 
 describe('worker serve shutdown lifecycle', () => {
+	it('disposes process logging when worker startup fails before server creation', async () => {
+		let shutdownCalls = 0;
+		const missingConfigPath = join(tmpdir(), `agent-vm-missing-worker-${String(process.pid)}.json`);
+
+		await expect(
+			runWorkerServeLifecycle(
+				{ command: 'serve', config: missingConfigPath, port: 0, stateDir: undefined },
+				{
+					shutdown: async (): Promise<void> => {
+						shutdownCalls += 1;
+						throw new Error('logging shutdown failed');
+					},
+				},
+			),
+		).rejects.toThrow(missingConfigPath);
+
+		expect(shutdownCalls).toBe(1);
+	});
+
 	it('waits for a shutdown signal, closes server then control service, and disposes logging last', async () => {
 		const signalTarget = createFakeSignalTarget();
 		const events: string[] = [];

@@ -125,10 +125,7 @@ export function mapPortalServerLogEvent(event: PortalServerLogEvent): PortalServ
 				category,
 				level: 'error',
 				message: 'MCP Portal server error',
-				properties: {
-					failureClass: 'server',
-					failureReason: boundedReason(event.message),
-				},
+				properties: { failureClass: 'server' },
 			};
 		case 'mcp_proxy_auth':
 			return {

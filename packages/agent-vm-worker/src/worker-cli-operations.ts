@@ -95,6 +95,20 @@ export interface WorkerServeShutdownLifecycleOptions {
 	readonly signalTarget?: WorkerSignalTarget | undefined;
 }
 
+async function shutdownWorkerProcessLogging(
+	logging: ProcessLoggingHandle | undefined,
+): Promise<void> {
+	try {
+		await logging?.shutdown();
+	} catch {
+		try {
+			process.stderr.write(workerProcessLoggingShutdownFailureMessage);
+		} catch {
+			// Preserve the product result when the diagnostic writer is unavailable.
+		}
+	}
+}
+
 /**
  * Wait for retirement, close product resources in order, then dispose logging.
  * Product shutdown failures remain the primary result; logging is diagnostic.
@@ -122,15 +136,7 @@ export async function runWorkerServeShutdownLifecycle(
 			}
 		}
 
-		try {
-			await options.logging?.shutdown();
-		} catch {
-			try {
-				process.stderr.write(workerProcessLoggingShutdownFailureMessage);
-			} catch {
-				// Preserve the product result when the diagnostic writer is unavailable.
-			}
-		}
+		await shutdownWorkerProcessLogging(options.logging);
 		if (productCloseFailed) throw productCloseError;
 	} finally {
 		shutdownWaiter.cleanup();
@@ -146,6 +152,20 @@ function closeHttpServer(server: HttpServer): Promise<void> {
 	});
 }
 
+interface WorkerStartupResources {
+	readonly logging: ProcessLoggingHandle | undefined;
+	readonly server?: HttpServer | undefined;
+	readonly workerControlService?: Pick<WorkerControlService, 'close'> | undefined;
+}
+
+async function closeWorkerStartupResources(resources: WorkerStartupResources): Promise<void> {
+	await (
+		resources.server === undefined ? Promise.resolve() : closeHttpServer(resources.server)
+	).catch(() => undefined);
+	await resources.workerControlService?.close().catch(() => undefined);
+	await shutdownWorkerProcessLogging(resources.logging);
+}
+
 export async function runWorkerServeLifecycle(
 	command: WorkerServeCommand,
 	logging?: ProcessLoggingHandle,
@@ -159,7 +179,13 @@ export async function runWorkerServeLifecycle(
 		}
 	}
 	const configPath = command.config ?? process.env.WORKER_CONFIG_PATH ?? undefined;
-	const baseConfig = await loadWorkerConfig(configPath);
+	let baseConfig: Awaited<ReturnType<typeof loadWorkerConfig>>;
+	try {
+		baseConfig = await loadWorkerConfig(configPath);
+	} catch (error: unknown) {
+		await closeWorkerStartupResources({ logging: processLogging });
+		throw error;
+	}
 	const config = command.stateDir ? { ...baseConfig, stateDir: command.stateDir } : baseConfig;
 	const workDir = process.env.WORK_DIR ?? '/work';
 	const startTime = Date.now();
@@ -178,11 +204,16 @@ export async function runWorkerServeLifecycle(
 					...workerControlOptions,
 					applicationMessageHandler: createWorkerControlApplicationMessageHandler(),
 				});
-	coordinatorRef.current = await createCoordinator({
-		config,
-		workDir,
-		...(workerControlService === undefined ? {} : { workerControlService }),
-	});
+	try {
+		coordinatorRef.current = await createCoordinator({
+			config,
+			workDir,
+			...(workerControlService === undefined ? {} : { workerControlService }),
+		});
+	} catch (error: unknown) {
+		await closeWorkerStartupResources({ logging: processLogging, workerControlService });
+		throw error;
+	}
 	const coordinator = requireCoordinator();
 	const defaultExecutor = resolvePhaseExecutor(config, {});
 
@@ -204,29 +235,43 @@ export async function runWorkerServeLifecycle(
 		workerControlService,
 	});
 
-	const server = await new Promise<ServerType>((resolve, reject) => {
-		const pendingServer = serve(
-			{
-				fetch: app.fetch,
-				port: command.port,
-			},
-			(info) => {
-				pendingServer.off('error', reject);
-				writeStdout(
-					{ stdout: process.stdout },
-					`[agent-vm-worker] Server listening on http://localhost:${info.port}`,
-				);
-				resolve(pendingServer);
-			},
-		);
-		pendingServer.once('error', reject);
-	});
+	let server: ServerType | undefined;
+	try {
+		server = await new Promise<ServerType>((resolve, reject) => {
+			const pendingServer = serve(
+				{
+					fetch: app.fetch,
+					port: command.port,
+				},
+				(info) => {
+					pendingServer.off('error', reject);
+					writeStdout(
+						{ stdout: process.stdout },
+						`[agent-vm-worker] Server listening on http://localhost:${info.port}`,
+					);
+					resolve(pendingServer);
+				},
+			);
+			pendingServer.once('error', reject);
+		});
+		if (server instanceof HttpServer) {
+			attachWorkerControlUpgradeHandler({ server, workerControlService });
+		}
+	} catch (error: unknown) {
+		await closeWorkerStartupResources({
+			logging: processLogging,
+			server: server instanceof HttpServer ? server : undefined,
+			workerControlService,
+		});
+		throw error;
+	}
 	if (server instanceof HttpServer) {
-		attachWorkerControlUpgradeHandler({ server, workerControlService });
 		await runWorkerServeShutdownLifecycle({
 			server: { close: () => closeHttpServer(server) },
 			workerControlService,
 			logging: processLogging,
 		});
+		return;
 	}
+	await closeWorkerStartupResources({ logging: processLogging, workerControlService });
 }

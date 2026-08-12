@@ -166,17 +166,17 @@ describe('MCP Portal process logging', () => {
 		}
 	});
 
-	it('keeps a bounded server error discriminator for triage', () => {
+	it('keeps only a fixed server error classification for triage', () => {
 		const record = mapPortalServerLogEvent({
 			event: 'server_error',
 			level: 'error',
-			message: `${'bind failure '.repeat(20)}secret`,
+			message: 'Bearer opaque-credential https://user:password@example.invalid',
 		});
 
-		expect(record.properties.failureClass).toBe('server');
-		expect(record.properties.failureReason).toMatch(/^[A-Za-z0-9_-]+$/u);
-		expect(record.properties.failureReason).toHaveLength(64);
-		expect(record.properties.failureReason).not.toContain('secret');
+		expect(record.properties).toEqual({ failureClass: 'server' });
+		expect(JSON.stringify(record)).not.toMatch(
+			/Bearer|opaque-credential|password|example\.invalid/u,
+		);
 	});
 
 	it('bounds and sanitizes an unsafe approval reason before logging', () => {

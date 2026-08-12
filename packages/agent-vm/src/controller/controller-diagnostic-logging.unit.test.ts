@@ -46,27 +46,28 @@ describe('writeControllerDiagnostic', () => {
 		expect(createControllerDiagnosticProperties('connect ECONNREFUSED')).toEqual({
 			event: 'failure',
 			failureClass: 'unavailable',
-			errorSummary: 'connect ECONNREFUSED',
 		});
 		expect(createControllerDiagnosticProperties('connection refused by gateway')).toEqual({
 			event: 'failure',
 			failureClass: 'unavailable',
-			errorSummary: 'connection refused by gateway',
 		});
 		expect(createControllerDiagnosticProperties('access denied by gateway')).toEqual({
 			event: 'failure',
 			failureClass: 'rejected',
-			errorSummary: 'access denied by gateway',
 		});
 	});
 
-	it('retains a safe diagnostic summary after truncating it to the bound', () => {
-		const message = 'safe diagnostic '.repeat(40);
-
-		expect(createControllerDiagnosticProperties(message)).toEqual({
-			event: 'diagnostic',
-			errorSummary: message.trim().slice(0, 256),
-		});
+	it('omits arbitrary summaries even when they do not match known secret words', () => {
+		for (const message of [
+			'Controller flush failed: ghp_opaquecredential',
+			'Controller flush failed: sk-opaquecredential',
+			'Controller flush failed: Bearer opaquecredential',
+		]) {
+			expect(createControllerDiagnosticProperties(message)).toEqual({
+				event: 'failure',
+				failureClass: 'failure',
+			});
+		}
 	});
 
 	it('emits the six stable controller categories', () => {
