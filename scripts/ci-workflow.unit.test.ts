@@ -103,6 +103,12 @@ describe('CI workflow topology', () => {
 		}
 		for (const managedGatewayTag of managedGatewayCiTags) {
 			expect(vitestConfig).toContain(`name: '${managedGatewayTag}'`);
+			expect(workflow).toContain(
+				`pnpm run test:e2e:vm-managed-gateway --tags-filter=${managedGatewayTag}`,
+			);
+			expect(workflow).not.toContain(
+				`pnpm run test:e2e:vm-managed-gateway -- --tags-filter=${managedGatewayTag}`,
+			);
 		}
 		const managedGatewayTestTags = readManagedGatewayTestTags(managedGatewayTest);
 		expect(managedGatewayTestTags.length).toBeGreaterThan(0);

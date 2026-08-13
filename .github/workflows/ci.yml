@@ -211,19 +211,19 @@ jobs:
             if: matrix.lane == 'e2e-vm-managed-gateway'
             env:
               AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE: '1'
-            run: pnpm run test:e2e:vm-managed-gateway -- --tags-filter=managed-gateway-startup
+            run: pnpm run test:e2e:vm-managed-gateway --tags-filter=managed-gateway-startup
 
           - name: Run managed Gateway degraded-input tests
             if: matrix.lane == 'e2e-vm-managed-gateway'
             env:
               AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE: '1'
-            run: pnpm run test:e2e:vm-managed-gateway -- --tags-filter=managed-gateway-degraded-input
+            run: pnpm run test:e2e:vm-managed-gateway --tags-filter=managed-gateway-degraded-input
 
           - name: Run managed Gateway lifecycle tests
             if: matrix.lane == 'e2e-vm-managed-gateway'
             env:
               AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE: '1'
-            run: pnpm run test:e2e:vm-managed-gateway -- --tags-filter=managed-gateway-lifecycle
+            run: pnpm run test:e2e:vm-managed-gateway --tags-filter=managed-gateway-lifecycle
 
   check:
     name: check
