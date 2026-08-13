@@ -236,6 +236,7 @@ describe('GatewayRuntimeLocalExecTransport', () => {
 			expect(Buffer.concat(stdout).toString()).toBe('remote stdout');
 			expect(stderrReadCount).toBe(2);
 			expect(Buffer.concat(stderr).toString()).toBe('remote stderr');
+			await transport.finalize(spec.finalizeToken);
 			expect(await pathDoesNotExist(dirname(socketPath))).toBe(true);
 		} finally {
 			releaseFirstWrite.resolve(undefined);
