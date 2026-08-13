@@ -82,7 +82,7 @@ describe('isToolVmLeaseVmLive', () => {
 			category: ['agent-vm', 'controller', 'lease'],
 			level: 'warning',
 			message: ['Controller diagnostic'],
-			properties: { event: 'failure', failureClass: 'failure' },
+			properties: { event: 'lease-liveness-failed', failureClass: 'failure' },
 		});
 	});
 

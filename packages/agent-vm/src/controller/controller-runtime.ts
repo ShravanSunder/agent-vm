@@ -41,6 +41,7 @@ import {
 	createGatewayControlProcessAdmissionCoordinator,
 } from './control-session/index.js';
 import { writeControllerDiagnostic } from './controller-diagnostic-logging.js';
+import type { ControllerDiagnosticLevel } from './controller-diagnostic-logging.js';
 import {
 	createControllerRuntimeOperations,
 	createStopControllerOperation,
@@ -152,8 +153,17 @@ function resolveToolVmRootBinding(
 	};
 }
 
-function writeControllerRuntimeLog(message: string): void {
-	writeControllerDiagnostic('runtime', message);
+function writeControllerRuntimeLog(
+	message: string,
+	level: ControllerDiagnosticLevel = 'warning',
+): void {
+	void message;
+	writeControllerDiagnostic(
+		'runtime',
+		level === 'warning'
+			? { event: 'runtime-diagnostic', failureClass: 'failure', level }
+			: { event: 'runtime-diagnostic', level },
+	);
 }
 
 function formatUnknownError(error: unknown): string {
@@ -462,6 +472,7 @@ async function startControllerRuntimeWithOwnershipLock(
 	const hostNetworkDefaults = dependencies.configureManagedVmHostNetworkDefaults();
 	writeControllerRuntimeLog(
 		`Host network defaults: dnsResultOrder=${hostNetworkDefaults.dnsResultOrder} autoSelectFamily=${hostNetworkDefaults.autoSelectFamily}`,
+		'info',
 	);
 	const runTaskStep =
 		dependencies.runTask ?? (async (_title: string, fn: () => Promise<void>) => await fn());
@@ -1253,7 +1264,7 @@ async function startControllerRuntimeWithOwnershipLock(
 			config: observabilityStartupCheck,
 		})
 			.then(() => {
-				writeControllerRuntimeLog('Host observability stack is ready.');
+				writeControllerRuntimeLog('Host observability stack is ready.', 'info');
 			})
 			.catch((error: unknown) => {
 				writeControllerRuntimeLog(

@@ -65,7 +65,12 @@ class GitPushFailedAfterRetriesError extends Error {
 }
 
 function writePushFlowLog(message: string): void {
-	writeControllerDiagnostic('git', message);
+	void message;
+	writeControllerDiagnostic('git', {
+		event: 'controller-operation-failed',
+		level: 'warning',
+		failureClass: 'failure',
+	});
 }
 
 function buildPushUrl(repoUrl: string, githubToken: string): string {

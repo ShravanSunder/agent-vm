@@ -94,7 +94,12 @@ async function parseJsonBodyWithSchema<TSchema extends z.ZodType>(
 }
 
 function writeControllerRouteLog(message: string): void {
-	writeControllerDiagnostic('gateway', message);
+	void message;
+	writeControllerDiagnostic('gateway', {
+		event: 'controller-operation-failed',
+		level: 'warning',
+		failureClass: 'failure',
+	});
 }
 
 function errorMessage(error: unknown, fallbackError: string): string {

@@ -96,7 +96,7 @@ describe('event-log', () => {
 
 			expect(events).toHaveLength(1);
 			expect(events[0]?.data.event).toBe('task-completed');
-			await new Promise<void>((resolve) => setImmediate(resolve));
+			await logging.shutdown();
 			expect(chunks.join('')).toContain('event-log-tail-incomplete');
 			expect(chunks.join('')).not.toContain(filePath);
 		} finally {

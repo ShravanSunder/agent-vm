@@ -12,13 +12,25 @@ import {
 	type ResolvedRepoResourcesDescription,
 	type ResolvedRepoResourcesFinal,
 } from '../config/resource-contracts/index.js';
-import { writeControllerDiagnostic } from '../controller/controller-diagnostic-logging.js';
+import {
+	writeControllerDiagnostic,
+	type ControllerDiagnosticLevel,
+} from '../controller/controller-diagnostic-logging.js';
 
 const REPO_RESOURCES_PATH = path.join('.agent-vm', 'repo-resources.ts');
 const REPO_CONTRACT_TIMEOUT_MS = 30_000;
 
-function writeRepoContractLoaderLog(message: string): void {
-	writeControllerDiagnostic('resource', message);
+function writeRepoContractLoaderLog(
+	message: string,
+	level: ControllerDiagnosticLevel = 'warning',
+): void {
+	void message;
+	writeControllerDiagnostic(
+		'resource',
+		level === 'warning'
+			? { event: 'resource-loader-diagnostic', failureClass: 'failure', level }
+			: { event: 'resource-loader-diagnostic', level },
+	);
 }
 
 function getErrorStderr(error: unknown): string | null {
@@ -111,6 +123,7 @@ export async function loadRepoResourceDescriptionContract(options: {
 	if (!(await fileExists(contractPath))) {
 		writeRepoContractLoaderLog(
 			`${options.repoId}: no ${REPO_RESOURCES_PATH}; skipping repo resource setup.`,
+			'info',
 		);
 		return null;
 	}

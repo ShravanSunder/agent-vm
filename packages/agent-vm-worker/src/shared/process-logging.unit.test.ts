@@ -70,7 +70,7 @@ describe.sequential('worker process logging', () => {
 		getLogger(['agent-vm', 'worker', 'server']).info('worker listening', {
 			port: 18_789,
 		});
-		await new Promise<void>((resolve) => setImmediate(resolve));
+		await disposeTestLogging();
 
 		const records = capture.chunks
 			.join('')
@@ -84,8 +84,6 @@ describe.sequential('worker process logging', () => {
 			message: 'worker listening',
 			properties: { port: 18_789 },
 		});
-
-		await disposeTestLogging();
 	});
 
 	it('flushes multiple rapid records before shutdown completes', async () => {
@@ -133,14 +131,13 @@ describe.sequential('worker process logging', () => {
 		try {
 			const capture = await configureForTest();
 			getLogger(['agent-vm', 'worker', 'coordinator']).warning('collector absent');
-			await new Promise<void>((resolve) => setImmediate(resolve));
+			await disposeTestLogging();
 			expect(capture.chunks.join('')).toContain('collector absent');
 		} finally {
 			if (previousLogsEndpoint === undefined) delete process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT;
 			else process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT = previousLogsEndpoint;
 			if (previousEndpoint === undefined) delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
 			else process.env.OTEL_EXPORTER_OTLP_ENDPOINT = previousEndpoint;
-			await disposeTestLogging();
 		}
 	});
 
@@ -178,6 +175,32 @@ describe.sequential('worker process logging', () => {
 		});
 		expect(properties).not.toHaveProperty('stdout');
 		expect(properties).not.toHaveProperty('stderr');
+	});
+
+	it('preserves safe JavaScript Error class names', () => {
+		expect(toSafeWorkerLogProperties({ error: new TypeError('raw command output') })).toEqual({
+			errorClass: 'TypeError',
+		});
+	});
+
+	it('ignores records emitted after shutdown without an unhandled rejection', async () => {
+		const capture = await configureForTest();
+		const unhandledRejections: unknown[] = [];
+		const onUnhandledRejection = (reason: unknown): void => {
+			unhandledRejections.push(reason);
+		};
+		process.on('unhandledRejection', onUnhandledRejection);
+		try {
+			await disposeTestLogging();
+			expect(() =>
+				getLogger(['agent-vm', 'worker', 'late-record']).warning('late record'),
+			).not.toThrow();
+			await new Promise<void>((resolve) => setImmediate(resolve));
+			expect(unhandledRejections).toEqual([]);
+			expect(capture.chunks.join('')).toBe('');
+		} finally {
+			process.off('unhandledRejection', onUnhandledRejection);
+		}
 	});
 
 	it('omits unsafe event, failure, and correlation values', () => {

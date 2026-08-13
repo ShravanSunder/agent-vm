@@ -159,7 +159,12 @@ export interface CreateGatewayServiceHealthMonitorOptions {
 }
 
 function writeGatewayServiceHealthMonitorLog(message: string): void {
-	writeControllerDiagnostic('gateway', message);
+	void message;
+	writeControllerDiagnostic('gateway', {
+		event: 'gateway-health-diagnostic',
+		level: 'warning',
+		failureClass: 'failure',
+	});
 }
 
 const unknownGatewayServiceHealthTarget = {

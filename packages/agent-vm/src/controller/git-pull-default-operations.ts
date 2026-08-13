@@ -454,11 +454,12 @@ async function recordControllerGitPullEvent(options: {
 }): Promise<void> {
 	try {
 		await options.recordEvent?.(options.event);
-	} catch (error) {
-		writeControllerDiagnostic(
-			'git',
-			`Failed to record ${options.event.event}: ${errorMessage(error)}`,
-		);
+	} catch {
+		writeControllerDiagnostic('git', {
+			event: 'controller-operation-failed',
+			level: 'warning',
+			failureClass: 'failure',
+		});
 	}
 }
 

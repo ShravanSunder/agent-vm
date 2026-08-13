@@ -55,7 +55,12 @@ export function createZoneRuntimeRegistry(options: {
 	const writeLog =
 		options.writeLog ??
 		((message: string): void => {
-			writeControllerDiagnostic('gateway', message);
+			void message;
+			writeControllerDiagnostic('gateway', {
+				event: 'gateway-health-diagnostic',
+				level: 'warning',
+				failureClass: 'failure',
+			});
 		});
 
 	for (const zoneId of runtimeZoneIds) {

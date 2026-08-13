@@ -303,7 +303,7 @@ describe('cleanupRecordedGatewayRuntime', () => {
 	});
 
 	it('warns and skips malformed records during in-process recovery without mutating', async () => {
-		const logMessages: string[] = [];
+		const logRecords: Array<readonly [message: string, level: 'info' | 'warning']> = [];
 		const processTermination = createExactProcessTerminationFixture();
 
 		await expect(
@@ -314,8 +314,8 @@ describe('cleanupRecordedGatewayRuntime', () => {
 					kind: 'parse-error',
 					path: '/state/shravan/gateway-runtime.json',
 				}),
-				log: (message) => {
-					logMessages.push(message);
+				log: (message, level) => {
+					logRecords.push([message, level]);
 				},
 			}),
 		).resolves.toEqual({
@@ -328,7 +328,9 @@ describe('cleanupRecordedGatewayRuntime', () => {
 				path: '/state/shravan/gateway-runtime.json',
 			},
 		});
-		expect(logMessages.join('\n')).toContain('Malformed gateway runtime record');
+		expect(logRecords).toEqual([
+			[expect.stringContaining('Malformed gateway runtime record'), 'warning'],
+		]);
 	});
 
 	it('throws on malformed records during offline cleanup', async () => {
@@ -593,7 +595,7 @@ describe('cleanupRecordedGatewayRuntime', () => {
 	});
 
 	it('terminates an owned recorded qemu process, deletes the runtime record, and reports cleanup', async () => {
-		const logMessages: string[] = [];
+		const logRecords: Array<readonly [message: string, level: 'info' | 'warning']> = [];
 		const processFixture = createTerminatingProcessIdentityFixture();
 		const deleteManagedGatewayRuntimeRecord = vi.fn(async () => {});
 
@@ -603,8 +605,8 @@ describe('cleanupRecordedGatewayRuntime', () => {
 				exactProcessTermination: processFixture.exactProcessTermination,
 				loadManagedGatewayRuntimeRecordResult: async () =>
 					loadedGatewayRuntimeRecord(createGatewayRuntimeRecord()),
-				log: (message) => {
-					logMessages.push(message);
+				log: (message, level) => {
+					logRecords.push([message, level]);
 				},
 				readProcessIdentity: processFixture.readProcessIdentity,
 				readTcpListenPortOwner: async () => ({
@@ -622,9 +624,15 @@ describe('cleanupRecordedGatewayRuntime', () => {
 			expect.objectContaining({ identity: expect.objectContaining({ hostProcessId: 48_282 }) }),
 		);
 		expect(deleteManagedGatewayRuntimeRecord).toHaveBeenCalledWith(gatewayRuntimeRecordTarget);
-		expect(logMessages).toEqual([
-			"Found persisted gateway runtime for zone 'shravan' (pid 48282, vm gateway-vm-123).",
-			"Removed stale gateway runtime record for zone 'shravan' after terminating recorded gateway pid 48282.",
+		expect(logRecords).toEqual([
+			[
+				"Found persisted gateway runtime for zone 'shravan' (pid 48282, vm gateway-vm-123).",
+				'info',
+			],
+			[
+				"Removed stale gateway runtime record for zone 'shravan' after terminating recorded gateway pid 48282.",
+				'info',
+			],
 		]);
 	});
 
@@ -659,8 +667,8 @@ describe('cleanupRecordedGatewayRuntime', () => {
 
 			expect(result).toMatchObject({ cleanedUp: false });
 			expect(capturedRecords.at(-1)?.properties).toEqual({
-				event: 'failure',
-				failureClass: 'unavailable',
+				event: 'gateway-recovery-diagnostic',
+				failureClass: 'failure',
 			});
 		} finally {
 			await dispose().catch(() => {});

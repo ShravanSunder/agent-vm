@@ -8,48 +8,49 @@ export type ControllerDiagnosticDomain =
 	| 'resource'
 	| 'runtime';
 
+export type ControllerDiagnosticEvent =
+	| 'controller-diagnostic'
+	| 'controller-operation-failed'
+	| 'gateway-health-diagnostic'
+	| 'gateway-recovery-diagnostic'
+	| 'heartbeat-diagnostic'
+	| 'lease-diagnostic'
+	| 'lease-liveness-failed'
+	| 'resource-loader-diagnostic'
+	| 'runtime-diagnostic'
+	| 'task-state-diagnostic';
+
+export type ControllerDiagnosticLevel = 'info' | 'warning';
+export type ControllerDiagnosticFailureClass = 'failure' | 'rejected' | 'timeout' | 'unavailable';
+
+export type ControllerDiagnosticDescriptor =
+	| {
+			readonly event: ControllerDiagnosticEvent;
+			readonly level: 'info';
+	  }
+	| {
+			readonly event: ControllerDiagnosticEvent;
+			readonly failureClass: ControllerDiagnosticFailureClass;
+			readonly level: 'warning';
+	  };
+
 type ControllerDiagnosticProperties = Readonly<Record<string, string>>;
 
-function classifyDiagnosticEvent(message: string): 'diagnostic' | 'failure' {
-	return /degrad|denied|error|fail|invalid|missing|refus|unable|unsafe/iu.test(message)
-		? 'failure'
-		: 'diagnostic';
-}
-
-function classifyDiagnosticFailure(message: string): string | undefined {
-	if (/timeout|timed out/iu.test(message)) {
-		return 'timeout';
-	}
-	if (/ECONNREFUSED|connection refused|unavailable|missing|not found/iu.test(message)) {
-		return 'unavailable';
-	}
-	if (/denied|refus|unsafe/iu.test(message)) {
-		return 'rejected';
-	}
-	if (/degrad|error|fail|invalid|unable/iu.test(message)) {
-		return 'failure';
-	}
-	return undefined;
-}
-
 export function createControllerDiagnosticProperties(
-	message: string,
+	descriptor: ControllerDiagnosticDescriptor,
 ): ControllerDiagnosticProperties {
-	const event = classifyDiagnosticEvent(message);
-	const failureClass = classifyDiagnosticFailure(message);
-	return {
-		event,
-		...(failureClass === undefined ? {} : { failureClass }),
-	};
+	return descriptor.level === 'warning'
+		? { event: descriptor.event, failureClass: descriptor.failureClass }
+		: { event: descriptor.event };
 }
 
 export function writeControllerDiagnostic(
 	domain: ControllerDiagnosticDomain,
-	message: string,
+	descriptor: ControllerDiagnosticDescriptor,
 ): void {
-	const properties = createControllerDiagnosticProperties(message);
+	const properties = createControllerDiagnosticProperties(descriptor);
 	const logger = getLogger(['agent-vm', 'controller', domain]);
-	if (properties.event === 'failure') {
+	if (descriptor.level === 'warning') {
 		logger.warn('Controller diagnostic', properties);
 		return;
 	}

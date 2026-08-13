@@ -25,10 +25,12 @@ export async function isToolVmLeaseVmLive(lease: {
 		return probeResult !== false && probeResult.exitCode === 0;
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		writeControllerDiagnostic(
-			'lease',
-			`liveness check failed for lease '${lease.id}' in zone '${lease.zoneId}': ${message}`,
-		);
+		void message;
+		writeControllerDiagnostic('lease', {
+			event: 'lease-liveness-failed',
+			level: 'warning',
+			failureClass: 'failure',
+		});
 		return false;
 	} finally {
 		if (timeoutHandle !== undefined) {

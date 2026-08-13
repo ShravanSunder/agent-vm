@@ -255,4 +255,28 @@ describe('configureProcessLogging', () => {
 		await Promise.all([firstShutdown, secondShutdown]);
 		expect(stderr.getFinalizationCount()).toBe(0);
 	});
+
+	it('ignores records emitted after shutdown without an unhandled rejection', async () => {
+		const stderr = createCapturingWritable();
+		const logging = await configureProcessLogging({
+			serviceName: 'agent-vm-controller',
+			stderr: stderr.stream,
+		});
+		const unhandledRejections: unknown[] = [];
+		const onUnhandledRejection = (reason: unknown): void => {
+			unhandledRejections.push(reason);
+		};
+		process.on('unhandledRejection', onUnhandledRejection);
+		try {
+			await logging.shutdown();
+			expect(() =>
+				getLogger(['agent-vm', 'controller', 'late-record']).warning('late record'),
+			).not.toThrow();
+			await new Promise<void>((resolve) => setImmediate(resolve));
+			expect(unhandledRejections).toEqual([]);
+			expect(stderr.chunks).toHaveLength(0);
+		} finally {
+			process.off('unhandledRejection', onUnhandledRejection);
+		}
+	});
 });

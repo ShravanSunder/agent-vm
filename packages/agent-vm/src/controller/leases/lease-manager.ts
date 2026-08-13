@@ -326,7 +326,12 @@ function formatLeaseManagerError(error: unknown): string {
 }
 
 function writeLeaseManagerWarning(message: string): void {
-	writeControllerDiagnostic('lease', message);
+	void message;
+	writeControllerDiagnostic('lease', {
+		event: 'lease-diagnostic',
+		level: 'warning',
+		failureClass: 'failure',
+	});
 }
 
 function assertCompatibleAgentLeaseRequest(

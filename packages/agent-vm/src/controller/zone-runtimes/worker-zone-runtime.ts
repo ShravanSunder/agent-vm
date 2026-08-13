@@ -96,7 +96,12 @@ async function recordActiveTaskEvent(options: {
 }
 
 function writeWorkerZoneRuntimeLog(message: string): void {
-	writeControllerDiagnostic('gateway', message);
+	void message;
+	writeControllerDiagnostic('gateway', {
+		event: 'gateway-health-diagnostic',
+		level: 'warning',
+		failureClass: 'failure',
+	});
 }
 
 async function closeActiveWorkerTask(activeTask: ActiveWorkerTask): Promise<void> {

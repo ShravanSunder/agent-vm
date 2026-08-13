@@ -346,4 +346,22 @@ describe('MCP Portal process logging', () => {
 			await first.shutdown();
 		}
 	});
+
+	it('ignores records emitted after shutdown without an unhandled rejection', async () => {
+		const logging = await configureProcessLogging({ stderr: new CaptureWritable() });
+		const logger = createPortalServerLogger();
+		const unhandledRejections: unknown[] = [];
+		const onUnhandledRejection = (reason: unknown): void => {
+			unhandledRejections.push(reason);
+		};
+		process.on('unhandledRejection', onUnhandledRejection);
+		try {
+			await logging.shutdown();
+			expect(() => logger.log(allPortalServerEvents[1])).not.toThrow();
+			await new Promise<void>((resolve) => setImmediate(resolve));
+			expect(unhandledRejections).toEqual([]);
+		} finally {
+			process.off('unhandledRejection', onUnhandledRejection);
+		}
+	});
 });

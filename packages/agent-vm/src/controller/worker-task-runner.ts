@@ -189,7 +189,12 @@ function deepMerge(base: unknown, override: unknown): unknown {
 }
 
 function writeStderr(message: string): void {
-	writeControllerDiagnostic('runtime', message);
+	void message;
+	writeControllerDiagnostic('runtime', {
+		event: 'runtime-diagnostic',
+		level: 'warning',
+		failureClass: 'failure',
+	});
 }
 
 function toError(error: unknown): Error {

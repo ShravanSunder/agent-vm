@@ -194,6 +194,7 @@ export async function configureProcessLogging(
 			message: 'rendered',
 			properties: 'nest:properties',
 		}),
+		nonBlocking: true,
 	});
 	const otelSink =
 		options.observabilityConfig?.enabled === false ? undefined : createOtlpSink(options);

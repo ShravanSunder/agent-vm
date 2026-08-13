@@ -239,7 +239,7 @@ describe('codex-executor', () => {
 			);
 			expect(mockStartThread).toHaveBeenCalled();
 			expect(executor.getThreadId()).toBe('thread-2');
-			await new Promise<void>((resolve) => setImmediate(resolve));
+			await logging.shutdown();
 			expect(chunks.join('')).toContain('executor-thread-resume-failed');
 			expect(chunks.join('')).not.toContain('expired-thread');
 		} finally {

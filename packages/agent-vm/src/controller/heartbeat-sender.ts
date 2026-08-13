@@ -23,7 +23,12 @@ export interface HeartbeatHandle {
 }
 
 function defaultLogWarning(message: string): void {
-	writeControllerDiagnostic('heartbeat', message);
+	void message;
+	writeControllerDiagnostic('heartbeat', {
+		event: 'heartbeat-diagnostic',
+		level: 'warning',
+		failureClass: 'failure',
+	});
 }
 
 export function startHeartbeatSender(

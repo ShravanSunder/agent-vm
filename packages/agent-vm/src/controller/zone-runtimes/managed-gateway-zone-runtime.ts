@@ -35,7 +35,10 @@ import { runControllerDestroy as runControllerDestroyDefault } from '../../opera
 import { runControllerUpgrade as runControllerUpgradeDefault } from '../../operations/upgrade-zone.js';
 import { runControllerLogs as runControllerLogsDefault } from '../../operations/zone-logs.js';
 import { isProcessAlive as defaultIsProcessAlive } from '../../shared/managed-vm-process.js';
-import { writeControllerDiagnostic } from '../controller-diagnostic-logging.js';
+import {
+	writeControllerDiagnostic,
+	type ControllerDiagnosticLevel,
+} from '../controller-diagnostic-logging.js';
 import type { ControllerManagedGatewayRuntimeRecordTarget } from '../durable-state/controller-state-record-paths.js';
 import { gatewayIdentitiesEqual } from '../vm-ownership/vm-ownership-contracts.js';
 import {
@@ -208,8 +211,17 @@ function buildManagedGatewayCombinedLogsCommand(
 	].join('; ');
 }
 
-function writeManagedGatewayZoneRuntimeLog(message: string): void {
-	writeControllerDiagnostic('gateway', message);
+function writeManagedGatewayZoneRuntimeLog(
+	message: string,
+	level: ControllerDiagnosticLevel = 'warning',
+): void {
+	void message;
+	writeControllerDiagnostic(
+		'gateway',
+		level === 'warning'
+			? { event: 'gateway-health-diagnostic', failureClass: 'failure', level }
+			: { event: 'gateway-health-diagnostic', level },
+	);
 }
 
 function unavailableReasonForState(state: GatewayZoneLifecycleState): string | undefined {
@@ -977,6 +989,9 @@ export function createManagedGatewayZoneRuntime(
 							: 'connect_error';
 					writeManagedGatewayZoneRuntimeLog(
 						`control attachment attempt for zone '${options.zone.id}' process '${outcome.processEpoch}' attachment ${String(outcome.attachmentGeneration)}: ${attemptResult}`,
+						outcome.kind === 'hello_response' && outcome.outcome === 'accepted'
+							? 'info'
+							: 'warning',
 					);
 				},
 			});

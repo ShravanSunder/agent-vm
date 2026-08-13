@@ -43,7 +43,7 @@ describe('repo resource contract loader', () => {
 				category: ['agent-vm', 'controller', 'resource'],
 				level: 'info',
 				message: ['Controller diagnostic'],
-				properties: { event: 'diagnostic' },
+				properties: { event: 'resource-loader-diagnostic' },
 			});
 		} finally {
 			await dispose().catch(() => {});

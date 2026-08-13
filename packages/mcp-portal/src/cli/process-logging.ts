@@ -235,6 +235,7 @@ export async function configureProcessLogging(
 				message: 'rendered',
 				properties: 'nest:properties',
 			}),
+			nonBlocking: true,
 		});
 		otelSink = getOpenTelemetrySinkImpl({
 			diagnostics: false,

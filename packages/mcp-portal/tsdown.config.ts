@@ -9,7 +9,6 @@ export default defineConfig({
 		'src/mcp-proxy/index.ts',
 		'src/mcp-provider-backend/index.ts',
 		'src/cli/index.ts',
-		'src/cli/process-logging.ts',
 		'src/portal-config/index.ts',
 		'src/portal-auth/agent-bearer-token.ts',
 		'src/portal-auth/hmac-env.ts',

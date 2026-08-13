@@ -65,6 +65,14 @@ function boundSafeClassification(value: string): string | undefined {
 	return boundedValue;
 }
 
+function boundSafeErrorClass(value: string): string | undefined {
+	const boundedValue = boundSafeString(value);
+	if (boundedValue === undefined || !/^[A-Za-z][A-Za-z0-9]*(?:Error)?$/u.test(boundedValue)) {
+		return undefined;
+	}
+	return boundedValue;
+}
+
 function boundSafeCorrelationId(value: string): string | undefined {
 	const boundedValue = boundSafeString(value);
 	if (
@@ -108,7 +116,7 @@ export function toSafeWorkerLogProperties(
 	if (context.error !== undefined) {
 		properties.errorClass =
 			context.error instanceof Error
-				? (boundSafeClassification(context.error.name) ?? 'Error')
+				? (boundSafeErrorClass(context.error.name) ?? 'Error')
 				: 'UnknownError';
 	}
 	return properties;
@@ -123,9 +131,12 @@ export async function configureProcessLogging(
 ): Promise<ProcessLoggingHandle> {
 	const stderrSink = getStreamSink(Writable.toWeb(createNonClosingWritableProxy(options.stderr)), {
 		formatter: getJsonLinesFormatter({ properties: 'nest:properties' }),
+		nonBlocking: true,
 	});
 	const otelSink = getOpenTelemetrySink({
 		diagnostics: false,
+		exceptionAttributes: false,
+		objectRenderer: 'json',
 		serviceName: 'agent-vm-worker',
 	});
 	try {
@@ -142,11 +153,13 @@ export async function configureProcessLogging(
 					category: ['logtape', 'meta', 'otel'],
 					sinks: ['stderr'],
 					lowestLevel: 'warning',
+					parentSinks: 'override',
 				},
 				{
 					category: ['logtape', 'meta'],
 					sinks: ['stderr'],
 					lowestLevel: 'warning',
+					parentSinks: 'override',
 				},
 			],
 		});

@@ -28,7 +28,12 @@ export interface WriteTaskFailureSentinelOptions {
 }
 
 function writeTaskStateReaderLog(message: string): void {
-	writeControllerDiagnostic('runtime', message);
+	void message;
+	writeControllerDiagnostic('runtime', {
+		event: 'task-state-diagnostic',
+		level: 'warning',
+		failureClass: 'failure',
+	});
 }
 
 function isNodeErrorWithCode(error: unknown, code: string): boolean {

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
 	createControllerDiagnosticProperties,
 	writeControllerDiagnostic,
+	type ControllerDiagnosticDescriptor,
 } from './controller-diagnostic-logging.js';
 
 const capturedRecords: LogRecord[] = [];
@@ -21,9 +22,7 @@ beforeEach(async () => {
 		reset: true,
 		sinks: {
 			capture: (record): void => {
-				if (record.category[0] === 'agent-vm') {
-					capturedRecords.push(record);
-				}
+				if (record.category[0] === 'agent-vm') capturedRecords.push(record);
 			},
 		},
 	});
@@ -35,44 +34,42 @@ afterEach(async () => {
 });
 
 describe('writeControllerDiagnostic', () => {
-	it('uses info for diagnostics and warning for classified failures', () => {
-		writeControllerDiagnostic('runtime', 'Controller heartbeat is healthy.');
-		writeControllerDiagnostic('runtime', 'Controller startup failed.');
+	it('uses the explicit descriptor level and failure class', () => {
+		const diagnostic: ControllerDiagnosticDescriptor = {
+			event: 'runtime-diagnostic',
+			level: 'info',
+		};
+		writeControllerDiagnostic('runtime', diagnostic);
+		writeControllerDiagnostic('runtime', {
+			event: 'controller-operation-failed',
+			level: 'warning',
+			failureClass: 'unavailable',
+		});
 
 		expect(capturedRecords.map((record) => record.level)).toEqual(['info', 'warning']);
+		expect(capturedRecords.map((record) => record.properties)).toEqual([
+			{ event: 'runtime-diagnostic' },
+			{ event: 'controller-operation-failed', failureClass: 'unavailable' },
+		]);
 	});
 
-	it('classifies connection refusal as unavailable while access refusal remains rejected', () => {
-		expect(createControllerDiagnosticProperties('connect ECONNREFUSED')).toEqual({
-			event: 'failure',
-			failureClass: 'unavailable',
-		});
-		expect(createControllerDiagnosticProperties('connection refused by gateway')).toEqual({
-			event: 'failure',
-			failureClass: 'unavailable',
-		});
-		expect(createControllerDiagnosticProperties('access denied by gateway')).toEqual({
-			event: 'failure',
-			failureClass: 'rejected',
+	it('does not derive event or severity from prose', () => {
+		const diagnostic: ControllerDiagnosticDescriptor = {
+			event: 'runtime-diagnostic',
+			level: 'info',
+		};
+
+		expect(createControllerDiagnosticProperties(diagnostic)).toEqual({
+			event: 'runtime-diagnostic',
 		});
 	});
 
-	it('omits arbitrary summaries even when they do not match known secret words', () => {
-		for (const message of [
-			'Controller flush failed: ghp_opaquecredential',
-			'Controller flush failed: sk-opaquecredential',
-			'Controller flush failed: Bearer opaquecredential',
-		]) {
-			expect(createControllerDiagnosticProperties(message)).toEqual({
-				event: 'failure',
-				failureClass: 'failure',
-			});
-		}
-	});
-
-	it('emits the six stable controller categories', () => {
+	it('emits stable controller categories', () => {
 		for (const domain of ['runtime', 'heartbeat', 'git', 'lease', 'gateway', 'resource'] as const) {
-			writeControllerDiagnostic(domain, `diagnostic for ${domain}`);
+			writeControllerDiagnostic(domain, {
+				event: 'controller-diagnostic',
+				level: 'info',
+			});
 		}
 
 		expect(capturedRecords.map((record) => record.category.join('.'))).toEqual([
@@ -88,22 +85,18 @@ describe('writeControllerDiagnostic', () => {
 		);
 	});
 
-	it('omits raw error, URL, path, task, and secret content from properties', () => {
-		const properties = createControllerDiagnosticProperties(
-			'Failed to fetch https://example.test/repos/acme/repo?token=secret at /private/repo for task task-123: Error: private response payload',
-		);
-
-		writeControllerDiagnostic(
-			'git',
-			'Failed to fetch https://example.test/repos/acme/repo?token=secret at /private/repo for task task-123: Error: private response payload',
-		);
-
-		expect(properties).toEqual({ event: 'failure', failureClass: 'failure' });
-		expect(capturedRecords[0]?.properties).toEqual({
-			event: 'failure',
+	it('keeps diagnostics bounded to the typed allowlist', () => {
+		const properties = createControllerDiagnosticProperties({
+			event: 'controller-operation-failed',
+			level: 'warning',
 			failureClass: 'failure',
 		});
-		expect(JSON.stringify(capturedRecords[0])).not.toMatch(
+
+		expect(properties).toEqual({
+			event: 'controller-operation-failed',
+			failureClass: 'failure',
+		});
+		expect(JSON.stringify(properties)).not.toMatch(
 			/example\.test|private\/repo|task-123|secret|response payload/u,
 		);
 	});
