@@ -57,6 +57,25 @@ describe('rejectedCleanupReasons', () => {
 });
 
 describe('settleCleanupPhases', () => {
+	it('continues after a phase factory throws synchronously', async () => {
+		const phaseFactoryFailure = new Error('phase factory failed');
+		const startedPhases: string[] = [];
+
+		const cleanupErrors = await settleCleanupPhases([
+			() => {
+				startedPhases.push('throwing-phase');
+				throw phaseFactoryFailure;
+			},
+			() => {
+				startedPhases.push('following-phase');
+				return [Promise.resolve()];
+			},
+		]);
+
+		expect(startedPhases).toEqual(['throwing-phase', 'following-phase']);
+		expect(cleanupErrors).toEqual([phaseFactoryFailure]);
+	});
+
 	it('runs phases in order and retains failures from every phase', async () => {
 		const startedPhases: string[] = [];
 		const harnessFailure = new Error('harness cleanup failed');

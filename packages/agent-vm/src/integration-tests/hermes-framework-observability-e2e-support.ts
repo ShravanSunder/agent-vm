@@ -98,7 +98,11 @@ export async function settleCleanupPhases(
 ): Promise<readonly unknown[]> {
 	const cleanupErrors: unknown[] = [];
 	for (const createPromises of createPhasePromises) {
-		cleanupErrors.push(...rejectedCleanupReasons(await Promise.allSettled(createPromises())));
+		try {
+			cleanupErrors.push(...rejectedCleanupReasons(await Promise.allSettled(createPromises())));
+		} catch (error: unknown) {
+			cleanupErrors.push(error);
+		}
 	}
 	return cleanupErrors;
 }
