@@ -418,11 +418,7 @@ void enabled;
 			/InferValue.*fixtureRootParser/u,
 		],
 		['private Zod representation', `const shape = schema._def;\nvoid shape;`, /private Zod/u],
-		[
-			'private Zod v4 representation',
-			`const shape = schema._zod;\nvoid shape;`,
-			/private Zod/u,
-		],
+		['private Zod v4 representation', `const shape = schema._zod;\nvoid shape;`, /private Zod/u],
 		[
 			'mixed default then optional wrappers',
 			`const schema = z.string().default('x').optional();\nvoid schema;`,
