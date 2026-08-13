@@ -162,6 +162,32 @@ describe('Optique CLI architecture audit', () => {
 		expect(findings).toEqual([]);
 	});
 
+	it('resolves schema bindings from module scope instead of a nested shadow', async () => {
+		// Arrange
+		const parserWithNestedShadow = `${admittedParser}
+function createNestedSchema(): unknown {
+	const commandValueSchema = z.string().optional();
+	return commandValueSchema;
+}
+const commandValueSchema = z.string();
+const commandValueParser = option('--value', zod(commandValueSchema, { placeholder: '' }));
+void createNestedSchema;
+void commandValueParser;
+`;
+
+		// Act
+		const findings = await auditFixture([
+			{ content: admittedRoot, relativePath: 'packages/fixture/src/bin/fixture-cli.ts' },
+			{
+				content: parserWithNestedShadow,
+				relativePath: 'packages/fixture/src/cli/fixture-cli-parser.ts',
+			},
+		]);
+
+		// Assert
+		expect(findings).toEqual([]);
+	});
+
 	it('rejects a repeated projection that lets Optique synthesize an empty collection', async () => {
 		// Arrange
 		const projectionWithoutMinimum = admittedParser.replace(

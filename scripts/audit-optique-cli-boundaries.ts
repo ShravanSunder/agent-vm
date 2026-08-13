@@ -384,21 +384,14 @@ function findVariableDeclaration(
 	sourceFile: ts.SourceFile,
 	identifierName: string,
 ): ts.VariableDeclaration | undefined {
-	let declaration: ts.VariableDeclaration | undefined;
-	const visit = (node: ts.Node): void => {
-		if (declaration !== undefined) return;
-		if (
-			ts.isVariableDeclaration(node) &&
-			ts.isIdentifier(node.name) &&
-			node.name.text === identifierName
-		) {
-			declaration = node;
-			return;
-		}
-		ts.forEachChild(node, visit);
-	};
-	visit(sourceFile);
-	return declaration;
+	for (const statement of sourceFile.statements) {
+		if (!ts.isVariableStatement(statement)) continue;
+		const declaration = statement.declarationList.declarations.find(
+			(candidate) => ts.isIdentifier(candidate.name) && candidate.name.text === identifierName,
+		);
+		if (declaration !== undefined) return declaration;
+	}
+	return undefined;
 }
 
 interface ImportedSchemaDeclaration {
