@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises';
+
 import { option, parseSync } from '@optique/core';
 import { zod } from '@optique/zod';
 import { describe, expect, it } from 'vitest';
@@ -18,6 +20,13 @@ function parseWorkerCommand(argumentsToParse: readonly string[]): WorkerCommand 
 }
 
 describe('worker CLI parser', () => {
+	it('keeps parser construction free of runtime operation effects', async () => {
+		const parserSource = await readFile(new URL('./worker-cli-parser.ts', import.meta.url), 'utf8');
+
+		expect(parserSource).not.toMatch(/node:(?:child_process|fs|http|net)/u);
+		expect(parserSource).not.toMatch(/process\.|run[A-Z]\w*Operation|createNode\w*Transport/u);
+	});
+
 	it('parses serve with the schema-owned port default', () => {
 		expect(parseWorkerCommand(['serve'])).toEqual({
 			command: 'serve',
@@ -58,7 +67,7 @@ describe('worker CLI parser', () => {
 		});
 	});
 
-	it.each(['-1', '65536', '1.5', 'not-a-number'])(
+	it.each(['', '   ', '-1', '65536', '1.5', 'not-a-number'])(
 		'rejects invalid port value %s before dispatch',
 		(port) => {
 			expect(parseSync(workerCommandParser, ['health', '--port', port]).success).toBe(false);

@@ -185,7 +185,7 @@ describe('Optique cutover built CLI contract', () => {
 
 			// Assert
 			expect(result.exitCode).toBe(0);
-			expect(result.stdout.trim().length).toBeGreaterThan(0);
+			expect(result.stdout).toContain(executableName);
 			expect(result.stderr).toBe('');
 			expectNoOrdinaryStack(result.stderr);
 		},

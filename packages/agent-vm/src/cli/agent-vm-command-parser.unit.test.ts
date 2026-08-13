@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises';
+
 import { parseSync } from '@optique/core';
 import { describe, expect, it } from 'vitest';
 
@@ -320,6 +322,16 @@ const commandContractFixtures = [
 }>;
 
 describe('agent-vm Optique command parser', () => {
+	it('keeps parser construction free of runtime operation effects', async () => {
+		const parserSource = await readFile(
+			new URL('./agent-vm-command-parser.ts', import.meta.url),
+			'utf8',
+		);
+
+		expect(parserSource).not.toMatch(/node:(?:child_process|fs|http|net)/u);
+		expect(parserSource).not.toMatch(/process\.|run[A-Z]\w*Operation|createNode\w*Transport/u);
+	});
+
 	it('preserves the exact option contract for every current command leaf', () => {
 		for (const { argv, expected } of commandContractFixtures) {
 			expect(parseAgentVmCommand(argv), argv.join(' ')).toStrictEqual(expected);

@@ -245,6 +245,81 @@ void projectedNames;`;
 		expect(findings.join('\n')).toMatch(/Zod schema inference.*handwritten scalar/u);
 	});
 
+	it('rejects a handwritten literal-union Parser output type', async () => {
+		// Arrange
+		const parser = admittedParser
+			.replace(
+				"import { type InferValue, multiple, option, optional, withDefault } from '@optique/core';",
+				"import { type InferValue, multiple, option, optional, type Parser, withDefault } from '@optique/core';",
+			)
+			.concat(
+				"\nfunction createCommandParser(): Parser<'sync', 'serve' | 'health'> { return fixtureRootParser; }\nvoid createCommandParser;\n",
+			);
+
+		// Act
+		const findings = await auditFixture([
+			{ content: admittedRoot, relativePath: 'packages/fixture/src/bin/fixture-cli.ts' },
+			{ content: parser, relativePath: 'packages/fixture/src/cli/fixture-cli-parser.ts' },
+		]);
+
+		// Assert
+		expect(findings.join('\n')).toMatch(/Zod schema inference.*handwritten scalar/u);
+	});
+
+	it.each([
+		[
+			'optional',
+			"const optionalNameSchema = z.string().optional();\nconst bypassParser = option('--name', zod(optionalNameSchema, { placeholder: undefined }));\nvoid bypassParser;",
+		],
+		[
+			'default',
+			"const defaultNameSchema = z.string().default('fixture');\nconst bypassParser = option('--name', zod(defaultNameSchema, { placeholder: 'fixture' }));\nvoid bypassParser;",
+		],
+	])(
+		'rejects a %s Zod schema passed to zod() without presence projection',
+		async (_caseName, source) => {
+			// Arrange / Act
+			const findings = await auditFixture([
+				{ content: admittedRoot, relativePath: 'packages/fixture/src/bin/fixture-cli.ts' },
+				{
+					content: `${admittedParser}\n${source}`,
+					relativePath: 'packages/fixture/src/cli/fixture-cli-parser.ts',
+				},
+			]);
+
+			// Assert
+			expect(findings.join('\n')).toMatch(
+				/Zod optional\/default schema.*projectZodScalarPresence/u,
+			);
+		},
+	);
+
+	it('accepts optional and default Zod schemas passed through presence projection', async () => {
+		// Arrange
+		const parser = `${admittedParser}
+const optionalNameSchema = z.string().optional();
+const defaultNameSchema = z.string().default('fixture');
+const projectedOptionalParser = projectZodScalarPresence(
+		optionalNameSchema,
+		option('--optional-name', zod(optionalNameSchema, { placeholder: undefined })),
+);
+const projectedDefaultParser = projectZodScalarPresence(
+		defaultNameSchema,
+		option('--default-name', zod(defaultNameSchema, { placeholder: 'fixture' })),
+);
+void projectedOptionalParser;
+void projectedDefaultParser;`;
+
+		// Act
+		const findings = await auditFixture([
+			{ content: admittedRoot, relativePath: 'packages/fixture/src/bin/fixture-cli.ts' },
+			{ content: parser, relativePath: 'packages/fixture/src/cli/fixture-cli-parser.ts' },
+		]);
+
+		// Assert
+		expect(findings).toEqual([]);
+	});
+
 	it('accepts official Optique subpaths, pure paths, schema-only imports, and presence flags', async () => {
 		// Arrange
 		const root = `

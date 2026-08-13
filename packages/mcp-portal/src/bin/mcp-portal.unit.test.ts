@@ -24,12 +24,14 @@ import {
 } from './mcp-portal-command-dispatcher.js';
 import { shouldRunMcpPortalEntrypoint } from './mcp-portal.js';
 
+const parserRejected = Symbol('parser-rejected');
+
 async function runMcpPortal(
 	args: readonly string[],
 	props: AgentVmMcpPortalRuntimeProps = {},
-): Promise<number> {
+): Promise<number | typeof parserRejected> {
 	const parsed = parseSync(mcpPortalRootParser, args);
-	if (!parsed.success) return 1;
+	if (!parsed.success) return parserRejected;
 	return await runMcpPortalCommand(parsed.value, props);
 }
 
@@ -53,6 +55,11 @@ const externalMasterKey = Buffer.from('0123456789abcdef0123456789abcdef');
 const externalMasterKeyText = externalMasterKey.toString('base64url');
 
 describe('mcp-portal CLI', () => {
+	it('distinguishes parser rejection from an operation failure', async () => {
+		expect(await runMcpPortal(['validate'])).toBe(parserRejected);
+		expect(parserRejected).not.toBe(1);
+	});
+
 	it('closes the serve runtime when a shutdown signal arrives', async () => {
 		const signalTarget = new FakeSignalTarget();
 		const close = vi.fn(async () => undefined);
@@ -98,7 +105,9 @@ describe('mcp-portal CLI', () => {
 				}),
 			);
 
-			await expect(runMcpPortal(['serve', '--config-dir', workspace])).resolves.toBe(1);
+			await expect(runMcpPortal(['serve', '--config-dir', workspace])).resolves.toBe(
+				parserRejected,
+			);
 			expect(
 				await runMcpPortal([
 					'mcp-proxy',

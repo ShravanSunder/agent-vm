@@ -11,6 +11,7 @@ export async function main(): Promise<void> {
 			command: true,
 			option: { names: ['--help', '-h'] },
 		},
+		programName: 'agent-vm-worker',
 		showDefault: true,
 	});
 	await dispatchWorkerCommand(command);

@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises';
+
 import { parseSync } from '@optique/core/parser';
 import { constant, option } from '@optique/core/primitives';
 import { zod } from '@optique/zod';
@@ -19,6 +21,16 @@ function parseArguments(argumentsToParse: readonly string[]): unknown {
 }
 
 describe('MCP Portal Optique parser', () => {
+	it('keeps parser construction free of runtime operation effects', async () => {
+		const parserSource = await readFile(
+			new URL('./mcp-portal-cli-parser.ts', import.meta.url),
+			'utf8',
+		);
+
+		expect(parserSource).not.toMatch(/node:(?:child_process|fs|http|net)/u);
+		expect(parserSource).not.toMatch(/process\.|run[A-Z]\w*Operation|createNode\w*Transport/u);
+	});
+
 	it.each([
 		{
 			args: ['validate', 'catalog.json'],
@@ -104,6 +116,8 @@ describe('MCP Portal Optique parser', () => {
 		{ args: ['serve'] },
 		{ args: ['write-credential'] },
 		{ args: ['mcp-proxy', 'write-credential', '--config-dir', '/ignored'] },
+		{ args: ['mcp-proxy', 'serve', '--config-dir', '/config', '--port', ''] },
+		{ args: ['mcp-proxy', 'serve', '--config-dir', '/config', '--port', '   '] },
 		{ args: ['mcp-proxy', 'serve', '--config-dir', '/config', '--port', '65536'] },
 		{ args: ['mcp-proxy', 'serve', '--config-dir', '/config', '--port', '1.5'] },
 		{ args: ['mcp-proxy', 'serve', '--config-dir', '/config', '--agent', 'missing-profile'] },

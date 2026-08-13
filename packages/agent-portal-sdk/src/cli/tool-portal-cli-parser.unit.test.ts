@@ -147,7 +147,23 @@ describe('Tool Portal Optique CLI parser', () => {
 	it.each([
 		['duplicate option', ['list', '--input-json', '{}', '--input-json', '{}']],
 		['unknown option', ['list', '--input-json', '{}', '--unknown', 'value']],
+		[
+			'missing HTTP authorization environment option',
+			[
+				'list',
+				'--input-json',
+				'{}',
+				'--transport',
+				'http',
+				'--endpoint',
+				'https://example.test/mcp',
+			],
+		],
 		['missing HTTP endpoint', ['list', '--input-json', '{}', '--transport', 'http']],
+		[
+			'missing scoped stdio configuration option',
+			['list', '--input-json', '{}', '--transport', 'scoped-stdio'],
+		],
 		[
 			'HTTP-only option on scoped stdio',
 			[

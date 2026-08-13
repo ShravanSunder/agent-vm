@@ -41,7 +41,12 @@ const optionalProxyUrlSchema = proxyUrlSchema.optional();
 const portalToolSchema = z
 	.enum(['mcp_portal_list', 'mcp_portal_search', 'mcp_portal_describe', 'mcp_portal_call'])
 	.default('mcp_portal_call');
-const portSchema = z.coerce.number().int().min(0).max(65_535).optional();
+const portSchema = z
+	.string()
+	.trim()
+	.min(1)
+	.pipe(z.coerce.number<string>().int().min(0).max(65_535))
+	.optional();
 const agentOverrideSchema = z.string().regex(/^[^=]+=[^=]+$/u, {
 	message: 'Expected <agentId>=<profile>.',
 });

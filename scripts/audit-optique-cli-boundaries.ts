@@ -327,6 +327,7 @@ function containsHandwrittenScalarType(typeNode: ts.TypeNode): boolean {
 	) {
 		return true;
 	}
+	if (ts.isLiteralTypeNode(typeNode)) return true;
 	return ts.isUnionTypeNode(typeNode) && typeNode.types.some(containsHandwrittenScalarType);
 }
 
@@ -351,6 +352,132 @@ function isApprovedParserRuntimeModule(importedModule: string): boolean {
 		importedModule === 'node:path' ||
 		importedModule === 'zod'
 	);
+}
+
+function containsZodPresenceWrapperCall(expression: ts.Expression): boolean {
+	if (ts.isCallExpression(expression)) {
+		if (
+			ts.isPropertyAccessExpression(expression.expression) &&
+			['optional', 'default'].includes(expression.expression.name.text)
+		) {
+			return true;
+		}
+		return containsZodPresenceWrapperCall(expression.expression);
+	}
+	if (ts.isPropertyAccessExpression(expression)) {
+		return containsZodPresenceWrapperCall(expression.expression);
+	}
+	return ts.isParenthesizedExpression(expression)
+		? containsZodPresenceWrapperCall(expression.expression)
+		: false;
+}
+
+function findVariableDeclaration(
+	sourceFile: ts.SourceFile,
+	identifierName: string,
+): ts.VariableDeclaration | undefined {
+	let declaration: ts.VariableDeclaration | undefined;
+	const visit = (node: ts.Node): void => {
+		if (declaration !== undefined) return;
+		if (
+			ts.isVariableDeclaration(node) &&
+			ts.isIdentifier(node.name) &&
+			node.name.text === identifierName
+		) {
+			declaration = node;
+			return;
+		}
+		ts.forEachChild(node, visit);
+	};
+	visit(sourceFile);
+	return declaration;
+}
+
+interface ImportedSchemaDeclaration {
+	readonly sourceFile: ts.SourceFile;
+	readonly identifierName: string;
+}
+
+function findImportedSchemaDeclaration(
+	sourceFile: ts.SourceFile,
+	identifierName: string,
+	sourceFiles: ReadonlyMap<string, ts.SourceFile>,
+): ImportedSchemaDeclaration | undefined {
+	for (const statement of sourceFile.statements) {
+		if (!ts.isImportDeclaration(statement)) continue;
+		const importedModule = moduleSpecifierText(statement);
+		if (importedModule?.startsWith('.') !== true) continue;
+		const namedBindings = statement.importClause?.namedBindings;
+		if (namedBindings === undefined || !ts.isNamedImports(namedBindings)) continue;
+		const importedBinding = namedBindings.elements.find(
+			(element) => element.name.text === identifierName,
+		);
+		if (importedBinding === undefined) continue;
+		const importedFilePath = localTypeScriptImportPath(sourceFile.fileName, importedModule);
+		const importedSourceFile = sourceFiles.get(importedFilePath);
+		if (importedSourceFile === undefined) return undefined;
+		return {
+			sourceFile: importedSourceFile,
+			identifierName: (importedBinding.propertyName ?? importedBinding.name).text,
+		};
+	}
+	return undefined;
+}
+
+function schemaExpressionUsesPresenceWrapper(
+	expression: ts.Expression,
+	sourceFile: ts.SourceFile,
+	sourceFiles: ReadonlyMap<string, ts.SourceFile>,
+	visitedSchemaBindings: ReadonlySet<string> = new Set<string>(),
+): boolean {
+	if (containsZodPresenceWrapperCall(expression)) return true;
+	if (!ts.isIdentifier(expression)) return false;
+	const bindingKey = `${sourceFile.fileName}\0${expression.text}`;
+	if (visitedSchemaBindings.has(bindingKey)) return false;
+	const nextVisitedSchemaBindings = new Set(visitedSchemaBindings);
+	nextVisitedSchemaBindings.add(bindingKey);
+	const localDeclaration = findVariableDeclaration(sourceFile, expression.text);
+	if (localDeclaration?.initializer !== undefined) {
+		return schemaExpressionUsesPresenceWrapper(
+			localDeclaration.initializer,
+			sourceFile,
+			sourceFiles,
+			nextVisitedSchemaBindings,
+		);
+	}
+	const importedDeclaration = findImportedSchemaDeclaration(
+		sourceFile,
+		expression.text,
+		sourceFiles,
+	);
+	if (importedDeclaration === undefined) return false;
+	const importedVariableDeclaration = findVariableDeclaration(
+		importedDeclaration.sourceFile,
+		importedDeclaration.identifierName,
+	);
+	return importedVariableDeclaration?.initializer === undefined
+		? false
+		: schemaExpressionUsesPresenceWrapper(
+				importedVariableDeclaration.initializer,
+				importedDeclaration.sourceFile,
+				sourceFiles,
+				nextVisitedSchemaBindings,
+			);
+}
+
+function isWithinZodPresenceProjection(node: ts.Node): boolean {
+	let currentNode = node.parent;
+	while (currentNode !== undefined) {
+		if (
+			ts.isCallExpression(currentNode) &&
+			ts.isIdentifier(currentNode.expression) &&
+			currentNode.expression.text === 'projectZodScalarPresence'
+		) {
+			return true;
+		}
+		currentNode = currentNode.parent;
+	}
+	return false;
 }
 
 function isPresenceOnlyFlagDefault(
@@ -741,6 +868,19 @@ function auditInventoryEntry(
 				const optiqueCoreCallName = importedCallName(node, optiqueCoreBindings);
 				const cmdTsCallName = importedCallName(node, cmdTsBindings);
 				const localCallName = ts.isIdentifier(node.expression) ? node.expression.text : undefined;
+				if (
+					parserModule &&
+					importedCallName(node, optiqueZodBindings) === 'zod' &&
+					node.arguments[0] !== undefined &&
+					schemaExpressionUsesPresenceWrapper(node.arguments[0], sourceFile, sourceFiles) &&
+					!isWithinZodPresenceProjection(node)
+				) {
+					insertFinding(
+						sourceFile,
+						node,
+						'Zod optional/default schema must pass through projectZodScalarPresence before zod()',
+					);
+				}
 				if (
 					parserModule &&
 					importedCallName(node, optiqueZodBindings) === 'zod' &&

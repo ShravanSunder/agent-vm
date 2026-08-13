@@ -8,6 +8,7 @@ import { toolPortalRootParser } from './tool-portal-cli-parser.js';
 const command = run(toolPortalRootParser, {
 	errorExitCode: 2,
 	help: 'both',
+	programName: 'tool-portal',
 	showDefault: true,
 });
 

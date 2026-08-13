@@ -39,7 +39,12 @@ export function projectZodScalarPresence(schema: z.ZodType, parser: Parser<Mode>
 	return parser;
 }
 
-const workerPortSchema = z.coerce.number().int().min(0).max(65_535).default(18_789);
+const workerPortSchema = z
+	.string()
+	.trim()
+	.min(1)
+	.pipe(z.coerce.number<string>().int().min(0).max(65_535))
+	.default(18_789);
 const workerConfigPathSchema = z.string().optional();
 const workerStateDirectorySchema = z.string().optional();
 
