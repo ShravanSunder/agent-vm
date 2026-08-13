@@ -64,12 +64,12 @@ class GitPushFailedAfterRetriesError extends Error {
 	}
 }
 
-function writePushFlowLog(message: string): void {
-	void message;
+function writePushFlowLog(operation: string, attempt?: number): void {
 	writeControllerDiagnostic('git', {
 		event: 'controller-operation-failed',
 		level: 'warning',
 		failureClass: 'failure',
+		telemetry: { operation, ...(attempt === undefined ? {} : { attempt }) },
 	});
 }
 
@@ -128,10 +128,8 @@ async function recordPushEvent(options: {
 }): Promise<void> {
 	try {
 		await options.recordEvent?.(options.event);
-	} catch (error) {
-		writePushFlowLog(
-			`Failed to record ${options.event.event}: ${error instanceof Error ? error.message : String(error)}`,
-		);
+	} catch {
+		writePushFlowLog('record-controller-git-event');
 	}
 }
 
@@ -271,9 +269,7 @@ async function fetchRemoteRefs(options: {
 			}),
 		onRetry: async ({ attempt, delayMs, result }) => {
 			const detail = scrubGithubTokenFromOutput(`${result.stdout}\n${result.stderr}`).trim();
-			writePushFlowLog(
-				`git fetch failed for ${options.repoUrl} ${options.defaultBranch} on attempt ${attempt}; retrying in ${delayMs / 1000}s: ${detail}`,
-			);
+			writePushFlowLog('fetch-default-branch-retry', attempt);
 			await recordPushEvent({
 				recordEvent: options.recordEvent,
 				event: {
@@ -333,9 +329,7 @@ async function pushBranch(options: {
 			}),
 		onRetry: async ({ attempt, delayMs, result }) => {
 			const detail = scrubGithubTokenFromOutput(`${result.stdout}\n${result.stderr}`).trim();
-			writePushFlowLog(
-				`git push failed for ${options.repoUrl} ${sanitizedBranchName} on attempt ${attempt}; retrying in ${delayMs / 1000}s: ${detail}`,
-			);
+			writePushFlowLog('push-branch-retry', attempt);
 			await recordPushEvent({
 				recordEvent: options.recordEvent,
 				event: {
@@ -359,9 +353,7 @@ async function pushBranch(options: {
 	const lastErrorDetail = scrubGithubTokenFromOutput(
 		`${retryResult.result.stdout}\n${retryResult.result.stderr}`,
 	).trim();
-	writePushFlowLog(
-		`git push failed for ${options.repoUrl} ${sanitizedBranchName} after ${retryResult.attempts} attempts: ${lastErrorDetail}`,
-	);
+	writePushFlowLog('push-branch-failed', retryResult.attempts);
 	const failureMessage =
 		retryResult.attempts > 1
 			? `git push failed\n${GIT_PUSH_RETRY_AFTER_MESSAGE}\n${lastErrorDetail}`
@@ -392,9 +384,7 @@ async function fetchPushedBranchRef(options: {
 			}),
 		onRetry: async ({ attempt, delayMs, result }) => {
 			const detail = scrubGithubTokenFromOutput(`${result.stdout}\n${result.stderr}`).trim();
-			writePushFlowLog(
-				`post-push git fetch failed for ${options.repoUrl} ${options.branchName} on attempt ${attempt}; retrying in ${delayMs / 1000}s: ${detail}`,
-			);
+			writePushFlowLog('fetch-pushed-branch-retry', attempt);
 			await recordPushEvent({
 				recordEvent: options.recordEvent,
 				event: {

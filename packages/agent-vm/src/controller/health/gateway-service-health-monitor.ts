@@ -158,14 +158,18 @@ export interface CreateGatewayServiceHealthMonitorOptions {
 	readonly zoneIds: readonly string[];
 }
 
-function writeGatewayServiceHealthMonitorLog(
-	message: string,
-	telemetry: {
-		readonly operation?: string | undefined;
-		readonly zoneId?: string | undefined;
-	} = {},
-): void {
-	void message;
+type GatewayServiceHealthDiagnosticOperation =
+	| 'gateway-recovery-budget-classification'
+	| 'gateway-service-health-probe'
+	| 'gateway-vm-recovery-while-stopped'
+	| 'scheduled-gateway-health-tick'
+	| 'gateway-channel-provider-recovery-while-stopped'
+	| 'gateway-control-session-recovery';
+
+function writeGatewayServiceHealthMonitorLog(telemetry: {
+	readonly operation: GatewayServiceHealthDiagnosticOperation;
+	readonly zoneId?: string | undefined;
+}): void {
 	writeControllerDiagnostic('gateway', {
 		event: 'gateway-health-diagnostic',
 		level: 'warning',
@@ -287,12 +291,11 @@ export function createGatewayServiceHealthMonitor(
 	): GatewayVmRecoveryBudgetClass => {
 		try {
 			return options.classifyRecoveryBudgetClass?.(request) ?? 'gateway-vm-restart';
-		} catch (error) {
-			writeGatewayServiceHealthMonitorLog(
-				`recovery budget classification failed for zone '${request.zoneId}': ${
-					error instanceof Error ? error.message : String(error)
-				}`,
-			);
+		} catch {
+			writeGatewayServiceHealthMonitorLog({
+				operation: 'gateway-recovery-budget-classification',
+				zoneId: request.zoneId,
+			});
 			return 'gateway-vm-restart';
 		}
 	};
@@ -619,9 +622,10 @@ export function createGatewayServiceHealthMonitor(
 			return;
 		}
 		if (stopped) {
-			writeGatewayServiceHealthMonitorLog(
-				`recovery requested for zone '${props.decision.zoneId}' but monitor is stopped`,
-			);
+			writeGatewayServiceHealthMonitorLog({
+				operation: 'gateway-vm-recovery-while-stopped',
+				zoneId: props.decision.zoneId,
+			});
 			return;
 		}
 
@@ -726,9 +730,10 @@ export function createGatewayServiceHealthMonitor(
 				if (!(error instanceof GatewayRecoveryDeadlineExceededError)) {
 					controlSessionRecoveryRetryAtMsByEventKey.delete(eventKey);
 				}
-				writeGatewayServiceHealthMonitorLog(
-					`control-session recovery failed for zone '${props.zoneId}'`,
-				);
+				writeGatewayServiceHealthMonitorLog({
+					operation: 'gateway-control-session-recovery',
+					zoneId: props.zoneId,
+				});
 			}
 			return;
 		}
@@ -840,9 +845,10 @@ export function createGatewayServiceHealthMonitor(
 			return;
 		}
 		if (stopped) {
-			writeGatewayServiceHealthMonitorLog(
-				`recovery requested for zone '${decision.zoneId}' but monitor is stopped`,
-			);
+			writeGatewayServiceHealthMonitorLog({
+				operation: 'gateway-channel-provider-recovery-while-stopped',
+				zoneId: decision.zoneId,
+			});
 			return;
 		}
 
@@ -916,11 +922,11 @@ export function createGatewayServiceHealthMonitor(
 								zoneId: result.zoneId,
 							});
 						}
-					} catch (error) {
-						writeGatewayServiceHealthMonitorLog(
-							`probe failed for zone '${zoneId}': ${error instanceof Error ? error.message : String(error)}`,
-							{ operation: 'gateway-service-health-probe', zoneId },
-						);
+					} catch {
+						writeGatewayServiceHealthMonitorLog({
+							operation: 'gateway-service-health-probe',
+							zoneId,
+						});
 						const observedAtMs = options.now();
 						options.healthEventStore.record({
 							kind: 'gateway-service-health',
@@ -988,10 +994,10 @@ export function createGatewayServiceHealthMonitor(
 			timer = setIntervalImpl(async () => {
 				try {
 					await tick();
-				} catch (error) {
-					writeGatewayServiceHealthMonitorLog(
-						`scheduled tick failed: ${error instanceof Error ? error.message : String(error)}`,
-					);
+				} catch {
+					writeGatewayServiceHealthMonitorLog({
+						operation: 'scheduled-gateway-health-tick',
+					});
 				}
 			}, options.intervalMs);
 			timer.unref?.();

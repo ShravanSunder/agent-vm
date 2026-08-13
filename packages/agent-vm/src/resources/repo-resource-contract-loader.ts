@@ -21,15 +21,19 @@ const REPO_RESOURCES_PATH = path.join('.agent-vm', 'repo-resources.ts');
 const REPO_CONTRACT_TIMEOUT_MS = 30_000;
 
 function writeRepoContractLoaderLog(
-	message: string,
+	operation: string,
 	level: ControllerDiagnosticLevel = 'warning',
 ): void {
-	void message;
 	writeControllerDiagnostic(
 		'resource',
 		level === 'warning'
-			? { event: 'resource-loader-diagnostic', failureClass: 'failure', level }
-			: { event: 'resource-loader-diagnostic', level },
+			? {
+					event: 'resource-loader-diagnostic',
+					failureClass: 'failure',
+					level,
+					telemetry: { operation },
+				}
+			: { event: 'resource-loader-diagnostic', level, telemetry: { operation } },
 	);
 }
 
@@ -121,10 +125,7 @@ export async function loadRepoResourceDescriptionContract(options: {
 }): Promise<ResolvedRepoResourcesDescription | null> {
 	const contractPath = path.join(options.repoDir, REPO_RESOURCES_PATH);
 	if (!(await fileExists(contractPath))) {
-		writeRepoContractLoaderLog(
-			`${options.repoId}: no ${REPO_RESOURCES_PATH}; skipping repo resource setup.`,
-			'info',
-		);
+		writeRepoContractLoaderLog('repo-resource-description-contract-absent', 'info');
 		return null;
 	}
 

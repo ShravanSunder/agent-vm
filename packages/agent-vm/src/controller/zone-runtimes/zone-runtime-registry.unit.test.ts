@@ -1668,7 +1668,11 @@ describe('createZoneRuntimeRegistry', () => {
 
 		await registry.startSelectedZones();
 
-		expect(writeLog).toHaveBeenCalledWith("Failed to start zone 'alevtina': alevtina boot failed");
+		expect(writeLog).toHaveBeenCalledWith(
+			"Failed to start zone 'alevtina': alevtina boot failed",
+			'warning',
+			{ operation: 'start-gateway-zone', zoneId: 'alevtina' },
+		);
 		expect(registry.getSnapshotByZone()).toEqual({
 			alevtina: {
 				lastError: 'alevtina boot failed',

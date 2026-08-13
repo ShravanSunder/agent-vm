@@ -81,6 +81,7 @@ interface OtlpLogRecord {
 
 interface StructuredStderrAssertionOptions {
 	readonly allowedPlainLinePattern?: RegExp;
+	readonly expectedRecord?: unknown;
 }
 
 const repositoryRoot = path.resolve(process.cwd());
@@ -144,7 +145,7 @@ if (${rootKind} === 'agent-vm') {
 \t\t\t\tif (!healthResponse.ok) {
 \t\t\t\t\tthrow new Error('Controller health probe did not report readiness.');
 \t\t\t\t}
-\t\t\t\temitRecord();
+\t\t\t\tif (${rootKind} !== 'agent-vm') emitRecord();
 \t\t\t\tsetImmediate(() => process.kill(process.pid, 'SIGTERM'));
 \t\t\t})().catch((error) => {
 \t\t\t\tprocess.stderr.write(
@@ -456,12 +457,13 @@ function assertStructuredStderr(
 	}
 	const records = parseStructuredJsonLines(result.stderr, expectedLogger);
 	expect(records).toContainEqual(
-		expect.objectContaining({
-			level: 'WARN',
-			logger: expectedLogger,
-			message: 'Structured logging host proof record.',
-			properties: { attempt: 1, event: 'host-proof' },
-		}),
+		options.expectedRecord ??
+			expect.objectContaining({
+				level: 'WARN',
+				logger: expectedLogger,
+				message: 'Structured logging host proof record.',
+				properties: { attempt: 1, event: 'host-proof' },
+			}),
 	);
 }
 
@@ -613,6 +615,27 @@ function isExpectedOtlpHostProofRecord(
 	);
 }
 
+function isExpectedOtlpControllerDiagnosticRecord(
+	record: OtlpLogRecord,
+	category: readonly string[],
+): boolean {
+	const categoryAttribute = record.attributes.get('category');
+	const eventAttribute = record.attributes.get('event');
+	const operationAttribute = record.attributes.get('operation');
+	return (
+		record.body === 'Controller diagnostic' &&
+		record.severityNumber === 9 &&
+		record.severityText === 'info' &&
+		record.attributes.size === 3 &&
+		categoryAttribute?.kind === 'string-array' &&
+		categoryAttribute.value.join('.') === category.join('.') &&
+		eventAttribute?.kind === 'string' &&
+		eventAttribute.value === 'runtime-diagnostic' &&
+		operationAttribute?.kind === 'string' &&
+		operationAttribute.value === 'configure-host-network-defaults'
+	);
+}
+
 function isExpectedOtlpGatewayStartupFailureRecord(
 	record: OtlpLogRecord,
 	category: readonly string[],
@@ -646,6 +669,21 @@ async function assertOtlpHostProofRecord(
 				.flatMap((request) => readOtlpJsonLogRecords(request))
 				.some((record) => isExpectedOtlpHostProofRecord(record, category)),
 		`the expected ${category.join('.')} OTLP host-proof record`,
+	);
+}
+
+async function assertOtlpControllerDiagnosticRecord(
+	receiver: OtlpReceiver,
+	requestWindowStart: number,
+	category: readonly string[],
+): Promise<void> {
+	await receiver.waitForRequests(
+		(requests) =>
+			requests
+				.slice(requestWindowStart)
+				.flatMap((request) => readOtlpJsonLogRecords(request))
+				.some((record) => isExpectedOtlpControllerDiagnosticRecord(record, category)),
+		`the expected ${category.join('.')} OTLP controller diagnostic record`,
 	);
 }
 
@@ -1053,6 +1091,15 @@ describe('structured logging process roots', () => {
 								? {
 										allowedPlainLinePattern:
 											/^(?:\(node:\d+\) ExperimentalWarning: SQLite is an experimental feature and might change at any time|\(Use `node --trace-warnings \.\.\.` to show where the warning was created\)| {0,2}(?:Resolving 1Password secrets|Controller API on :\d+|Starting selected gateway zones)(?:\.\.\.| done)?)$/u,
+										expectedRecord: expect.objectContaining({
+											level: 'INFO',
+											logger: 'agent-vm.controller.runtime',
+											message: 'Controller diagnostic',
+											properties: {
+												event: 'runtime-diagnostic',
+												operation: 'configure-host-network-defaults',
+											},
+										}),
 									}
 								: {},
 						);
@@ -1066,7 +1113,17 @@ describe('structured logging process roots', () => {
 						expect(result.stdout).toContain('"zoneId": "host-proof"');
 					}
 					// oxlint-disable-next-line no-await-in-loop -- each child owns the next causal OTLP request window.
-					await assertOtlpHostProofRecord(createdReceiver, requestWindowStart, child.category);
+					if (child.rootKind === 'agent-vm') {
+						// oxlint-disable-next-line eslint/no-await-in-loop -- each child owns the next causal OTLP request window.
+						await assertOtlpControllerDiagnosticRecord(
+							createdReceiver,
+							requestWindowStart,
+							child.category,
+						);
+					} else {
+						// oxlint-disable-next-line eslint/no-await-in-loop -- each child owns the next causal OTLP request window.
+						await assertOtlpHostProofRecord(createdReceiver, requestWindowStart, child.category);
+					}
 					requestWindowStart = createdReceiver.requests.length;
 				}
 				const failureRequestWindowStart = createdReceiver.requests.length;

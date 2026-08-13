@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { appendEvent, workerConfigSchema, type TaskConfig } from '@agent-vm/agent-vm-worker';
+import { configure, dispose, reset, type LogRecord } from '@logtape/logtape';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { SystemConfig } from '../config/system-config.js';
@@ -10,12 +11,16 @@ import { createTaskStateReader, writeTaskFailureSentinel } from './task-state-re
 
 let stateDir: string;
 
+const capturedDiagnosticRecords: LogRecord[] = [];
+
 beforeEach(async () => {
 	stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'task-state-reader-'));
 });
 
 afterEach(async () => {
 	await fs.rm(stateDir, { recursive: true, force: true });
+	await dispose().catch(() => {});
+	await reset();
 });
 
 function makeSystemConfig(): SystemConfig {
@@ -171,5 +176,68 @@ describe('createTaskStateReader', () => {
 
 		expect(state?.status).toBe('failed');
 		expect(state?.failureReason).toContain('file creation');
+	});
+
+	it('preserves operation context across real task-state diagnostics', async () => {
+		capturedDiagnosticRecords.length = 0;
+		await configure({
+			loggers: [
+				{
+					category: ['agent-vm', 'controller', 'runtime'],
+					lowestLevel: 'trace',
+					sinks: ['capture'],
+				},
+			],
+			reset: true,
+			sinks: {
+				capture: (record): void => {
+					capturedDiagnosticRecords.push(record);
+				},
+			},
+		});
+		const reader = createTaskStateReader({ systemConfig: makeSystemConfig() });
+		const malformedSentinelTaskId = 'malformed-sentinel';
+		const malformedSentinelPath = path.join(
+			stateDir,
+			'tasks',
+			malformedSentinelTaskId,
+			'state',
+			'tasks',
+			`${malformedSentinelTaskId}.failed`,
+		);
+		await fs.mkdir(path.dirname(malformedSentinelPath), { recursive: true });
+		await fs.writeFile(malformedSentinelPath, '{');
+
+		await expect(reader.read('zone-1', malformedSentinelTaskId)).rejects.toThrow();
+
+		const malformedLogTaskId = 'malformed-log';
+		const malformedLogPath = path.join(
+			stateDir,
+			'tasks',
+			malformedLogTaskId,
+			'state',
+			'tasks',
+			`${malformedLogTaskId}.jsonl`,
+		);
+		await fs.mkdir(path.dirname(malformedLogPath), { recursive: true });
+		await fs.writeFile(
+			malformedLogPath,
+			JSON.stringify({ ts: new Date().toISOString(), data: { event: 'task-failed' } }),
+		);
+
+		await expect(reader.read('zone-1', malformedLogTaskId)).rejects.toThrow();
+
+		expect(capturedDiagnosticRecords.map((record) => record.properties)).toEqual([
+			{
+				event: 'task-state-diagnostic',
+				failureClass: 'failure',
+				operation: 'read-task-failure-sentinel',
+			},
+			{
+				event: 'task-state-diagnostic',
+				failureClass: 'failure',
+				operation: 'read-task-state-log',
+			},
+		]);
 	});
 });

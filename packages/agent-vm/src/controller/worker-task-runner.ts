@@ -188,12 +188,12 @@ function deepMerge(base: unknown, override: unknown): unknown {
 	return override ?? base;
 }
 
-function writeStderr(message: string): void {
-	void message;
+function writeStderr(operation: string, attempt: number): void {
 	writeControllerDiagnostic('runtime', {
 		event: 'runtime-diagnostic',
 		level: 'warning',
 		failureClass: 'failure',
+		telemetry: { attempt, operation },
 	});
 }
 
@@ -1261,9 +1261,7 @@ export async function executeWorkerTask(
 				}
 				consecutivePollFailures += 1;
 				const message = error instanceof Error ? error.message : String(error);
-				writeStderr(
-					`[worker-task-runner] Poll failure ${consecutivePollFailures} for task ${prepared.taskId}: ${message}`,
-				);
+				writeStderr('poll-worker-task-status', consecutivePollFailures);
 				if (consecutivePollFailures >= 3) {
 					throw new Error(
 						`Worker task status polling failed ${String(consecutivePollFailures)} consecutive times for task ${prepared.taskId}; last error: ${message}`,

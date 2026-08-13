@@ -19,12 +19,12 @@ export interface RequestHeartbeatRegistryProps {
 	readonly logWarning?: (message: string) => void;
 }
 
-function defaultLogWarning(message: string): void {
-	void message;
+function defaultLogWarning(_message: string): void {
 	writeControllerDiagnostic('heartbeat', {
 		event: 'heartbeat-diagnostic',
 		level: 'warning',
 		failureClass: 'failure',
+		telemetry: { operation: 'release-unknown-request-task' },
 	});
 }
 

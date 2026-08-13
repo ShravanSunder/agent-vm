@@ -669,6 +669,8 @@ describe('cleanupRecordedGatewayRuntime', () => {
 			expect(capturedRecords.at(-1)?.properties).toEqual({
 				event: 'gateway-recovery-diagnostic',
 				failureClass: 'failure',
+				operation: 'delete-gateway-runtime-record',
+				zoneId: 'shravan',
 			});
 		} finally {
 			await dispose().catch(() => {});

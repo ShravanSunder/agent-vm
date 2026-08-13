@@ -228,6 +228,79 @@ describe('createGatewayServiceHealthMonitor', () => {
 		});
 	});
 
+	it('distinguishes recovery classification and probe failures with bounded operation context', async () => {
+		const capturedRecords: LogRecord[] = [];
+		await configure({
+			loggers: [
+				{
+					category: ['agent-vm', 'controller', 'gateway'],
+					lowestLevel: 'trace',
+					sinks: ['capture'],
+				},
+			],
+			reset: true,
+			sinks: {
+				capture: (record): void => {
+					capturedRecords.push(record);
+				},
+			},
+		});
+		const classificationFailure = new Error('classification failed with private details');
+		const probeFailure = new Error('probe failed with private details');
+
+		try {
+			const classificationMonitor = createGatewayServiceHealthMonitor({
+				classifyRecoveryBudgetClass: () => {
+					throw classificationFailure;
+				},
+				gatewayServiceAutoRestart,
+				healthEventStore: new HealthEventStore({ eventHistoryLimit: 20, staleAfterMs: 30_000 }),
+				intervalMs: 10_000,
+				now: () => 12_000,
+				probeZoneHealth: vi.fn(),
+				staleAfterMs: 30_000,
+				zoneIds: ['beta'],
+			});
+			await classificationMonitor.recoverFromTerminalAttachmentLoss({
+				sourceKey: gatewayRecoverySourceKey,
+				zoneId: 'beta',
+			});
+
+			const probeMonitor = createGatewayServiceHealthMonitor({
+				gatewayServiceAutoRestart,
+				healthEventStore: new HealthEventStore({ eventHistoryLimit: 20, staleAfterMs: 30_000 }),
+				intervalMs: 10_000,
+				now: () => 12_000,
+				probeZoneHealth: vi.fn(async () => {
+					throw probeFailure;
+				}),
+				staleAfterMs: 30_000,
+				zoneIds: ['beta'],
+			});
+			await probeMonitor.tick();
+		} finally {
+			await dispose().catch(() => {});
+			await reset();
+		}
+
+		expect(capturedRecords.map((record) => record.properties)).toEqual([
+			{
+				event: 'gateway-health-diagnostic',
+				failureClass: 'failure',
+				operation: 'gateway-recovery-budget-classification',
+				zoneId: 'beta',
+			},
+			{
+				event: 'gateway-health-diagnostic',
+				failureClass: 'failure',
+				operation: 'gateway-service-health-probe',
+				zoneId: 'beta',
+			},
+		]);
+		expect(JSON.stringify(capturedRecords)).not.toContain(classificationFailure.message);
+		expect(JSON.stringify(capturedRecords)).not.toContain(probeFailure.message);
+	});
+
 	it('stops the scheduled monitor timer', async () => {
 		const clearIntervalImpl = vi.fn();
 		const unref = vi.fn();
