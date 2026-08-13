@@ -95,6 +95,10 @@ const CUSTOM_EXIT_PROTOCOL_NAME_PATTERN =
 	/(?:ReportedCliError|Cli\w*(?:Exit|Outcome|Signal)|\w*(?:Exit|Outcome|Signal)Protocol)/u;
 const MANUAL_PARSER_NAME_PATTERN =
 	/^(?:configPathFromArguments|parseCliArguments|parseNamedOptions|parseOutputDirectory|parsePortalServerCliArgs|printUsage|readFlag)$/u;
+const CMD_TS_RESIDUE_PATTERN = /\bcmd-ts\b/u;
+const RESIDUE_EXCLUDED_PATH_PATTERN =
+	/^(?:docs\/archive(?:\/|$)|docs\/superpowers\/plans(?:\/|$))/u;
+const RESIDUE_SKIPPED_DIRECTORY_NAMES = new Set(['.git', 'node_modules', 'tmp']);
 
 function normalizeFilePath(filePath: string): string {
 	return filePath.replaceAll('\\', '/');
@@ -560,6 +564,10 @@ function isProcessArgvExpression(node: ts.Expression): boolean {
 	);
 }
 
+function isProcessPropertyAccess(node: ts.PropertyAccessExpression): boolean {
+	return ts.isIdentifier(node.expression) && node.expression.text === 'process';
+}
+
 function isAllowedExecutableIdentityRead(
 	node: ts.ElementAccessExpression,
 	entry: OptiqueCliBoundaryInventoryEntry,
@@ -869,6 +877,14 @@ function auditInventoryEntry(
 				)
 			) {
 				insertFinding(sourceFile, node, 'manual process.argv access is forbidden');
+			}
+			if (
+				parserModule &&
+				ts.isPropertyAccessExpression(node) &&
+				isProcessPropertyAccess(node) &&
+				node.name.text !== 'argv'
+			) {
+				insertFinding(sourceFile, node, `manual process.${node.name.text} access is forbidden`);
 			}
 			if (ts.isCallExpression(node)) {
 				const optiqueCoreCallName = importedCallName(node, optiqueCoreBindings);
@@ -1186,6 +1202,64 @@ async function listProductionTypeScriptFiles(
 	return files;
 }
 
+function isOptiqueResidueScanTarget(filePath: string): boolean {
+	if (RESIDUE_EXCLUDED_PATH_PATTERN.test(filePath)) return false;
+	return (
+		filePath === 'pnpm-lock.yaml' ||
+		path.posix.basename(filePath) === 'package.json' ||
+		/\.mdx?$/u.test(filePath)
+	);
+}
+
+async function listOptiqueResidueScanTargets(
+	repositoryRoot: string,
+	relativeDirectory = '',
+): Promise<readonly string[]> {
+	const directoryEntries = await readdir(path.join(repositoryRoot, relativeDirectory), {
+		withFileTypes: true,
+	});
+	const discoveredFiles = await Promise.all(
+		directoryEntries.map(async (directoryEntry): Promise<readonly string[]> => {
+			if (directoryEntry.isDirectory()) {
+				if (RESIDUE_SKIPPED_DIRECTORY_NAMES.has(directoryEntry.name)) return [];
+				const relativePath = normalizeFilePath(path.join(relativeDirectory, directoryEntry.name));
+				return await listOptiqueResidueScanTargets(repositoryRoot, relativePath);
+			}
+			const relativePath = normalizeFilePath(path.join(relativeDirectory, directoryEntry.name));
+			return directoryEntry.isFile() && isOptiqueResidueScanTarget(relativePath)
+				? [relativePath]
+				: [];
+		}),
+	);
+	return discoveredFiles.flat();
+}
+
+export async function auditRepositoryOptiqueCliResidue(
+	repositoryRoot: string = process.cwd(),
+): Promise<readonly OptiqueCliBoundaryAuditFinding[]> {
+	const targets = await listOptiqueResidueScanTargets(repositoryRoot);
+	const findings = (
+		await Promise.all(
+			targets.map(async (filePath): Promise<readonly OptiqueCliBoundaryAuditFinding[]> => {
+				const sourceText = await readFile(path.join(repositoryRoot, filePath), 'utf8');
+				return sourceText.split(/\r?\n/u).flatMap((line, lineIndex) =>
+					CMD_TS_RESIDUE_PATTERN.test(line)
+						? [
+								{
+									executableName: 'repository-residue',
+									filePath,
+									line: lineIndex + 1,
+									reason: 'active repository surface contains forbidden cmd-ts residue',
+								},
+							]
+						: [],
+				);
+			}),
+		)
+	).flat();
+	return findings.toSorted(compareFindings);
+}
+
 async function discoverParserFiles(
 	repositoryRoot: string,
 	seed: DefaultInventorySeed,
@@ -1232,7 +1306,10 @@ export async function auditRepositoryOptiqueCliBoundaries(
 }
 
 async function main(): Promise<void> {
-	const findings = await auditRepositoryOptiqueCliBoundaries();
+	const findings = [
+		...(await auditRepositoryOptiqueCliBoundaries()),
+		...(await auditRepositoryOptiqueCliResidue()),
+	].toSorted(compareFindings);
 	if (findings.length === 0) {
 		process.stdout.write(
 			`Optique CLI architecture audit passed for ${String(DEFAULT_INVENTORY_SEEDS.length)} active roots.\n`,

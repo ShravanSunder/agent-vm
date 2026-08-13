@@ -8,6 +8,7 @@ import {
 	DEFAULT_INVENTORY_SEEDS,
 	auditOptiqueCliBoundaries,
 	auditRepositoryOptiqueCliBoundaries,
+	auditRepositoryOptiqueCliResidue,
 	type OptiqueCliBoundaryInventoryEntry,
 } from './audit-optique-cli-boundaries.js';
 
@@ -51,6 +52,20 @@ async function auditFixture(
 		},
 	] satisfies readonly OptiqueCliBoundaryInventoryEntry[];
 	const findings = await auditOptiqueCliBoundaries({ inventory, repositoryRoot });
+	return findings.map((finding) => `${finding.filePath}:${String(finding.line)} ${finding.reason}`);
+}
+
+async function auditResidueFixture(files: readonly FixtureFile[]): Promise<readonly string[]> {
+	const repositoryRoot = await mkdtemp(path.join(os.tmpdir(), 'optique-cli-residue-audit-'));
+	createdDirectories.push(repositoryRoot);
+	await Promise.all(
+		files.map(async (file) => {
+			const filePath = path.join(repositoryRoot, file.relativePath);
+			await mkdir(path.dirname(filePath), { recursive: true });
+			await writeFile(filePath, file.content, 'utf8');
+		}),
+	);
+	const findings = await auditRepositoryOptiqueCliResidue(repositoryRoot);
 	return findings.map((finding) => `${finding.filePath}:${String(finding.line)} ${finding.reason}`);
 }
 
@@ -100,6 +115,40 @@ describe('Optique CLI architecture audit', () => {
 				);
 			}),
 		);
+	});
+
+	it('audits the real repository for active cmd-ts residue', async () => {
+		// Arrange / Act
+		const findings = await auditRepositoryOptiqueCliResidue();
+
+		// Assert
+		expect(findings).toEqual([]);
+	});
+
+	it('finds cmd-ts residue in active manifests, lockfiles, and documentation only', async () => {
+		// Arrange / Act
+		const findings = await auditResidueFixture([
+			{ content: '{ "dependencies": { "cmd-ts": "1.0.0" } }\n', relativePath: 'package.json' },
+			{ content: '  cmd-ts:\n    version: 1.0.0\n', relativePath: 'pnpm-lock.yaml' },
+			{ content: 'The active migration mentions cmd-ts.\n', relativePath: 'README.md' },
+			{ content: 'cmd-ts is historical context.\n', relativePath: 'docs/archive/migration.md' },
+			{
+				content: 'cmd-ts is retained in the plan history.\n',
+				relativePath: 'docs/superpowers/plans/migration.md',
+			},
+			{
+				content: 'const fixture = "cmd-ts";\n',
+				relativePath: 'scripts/fixture.unit.test.ts',
+			},
+		]);
+
+		// Assert
+		expect(findings).toHaveLength(3);
+		expect(findings.map((finding) => finding.split(':')[0])).toEqual([
+			'package.json',
+			'pnpm-lock.yaml',
+			'README.md',
+		]);
 	});
 
 	it('accepts the direct runner, exact inferred alias, and admitted projection owners', async () => {
@@ -631,6 +680,23 @@ import './parser-owned-argv.js';
 
 		// Assert
 		expect(findings.join('\n')).toMatch(/manual process\.argv/u);
+	});
+
+	it.each([
+		['process.env', 'const selectedEnvironment = process.env;\nvoid selectedEnvironment;'],
+		['process.cwd', 'const selectedDirectory = process.cwd();\nvoid selectedDirectory;'],
+	])('rejects %s in a package-local parser module', async (_caseName, source) => {
+		// Arrange
+		const parser = `${admittedParser}\n${source}`;
+
+		// Act
+		const findings = await auditFixture([
+			{ content: admittedRoot, relativePath: 'packages/fixture/src/bin/fixture-cli.ts' },
+			{ content: parser, relativePath: 'packages/fixture/src/cli/fixture-cli-parser.ts' },
+		]);
+
+		// Assert
+		expect(findings.join('\n')).toMatch(/manual process\.(?:env|cwd)/u);
 	});
 
 	it.each([
