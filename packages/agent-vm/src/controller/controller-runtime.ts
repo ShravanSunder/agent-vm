@@ -157,7 +157,6 @@ function resolveToolVmRootBinding(
 }
 
 function writeControllerRuntimeLog(
-	_message: string,
 	level: ControllerDiagnosticLevel = 'warning',
 	telemetry: ControllerDiagnosticTelemetry = { operation: 'controller-runtime-callback' },
 ): void {
@@ -210,7 +209,7 @@ async function flushControllerTelemetry(
 	try {
 		await controllerTelemetry.forceFlush();
 	} catch {
-		writeControllerRuntimeLog('controller-telemetry-flush-failed', 'warning', {
+		writeControllerRuntimeLog('warning', {
 			operation: 'controller-telemetry-flush',
 		});
 	}
@@ -225,7 +224,7 @@ async function shutdownControllerTelemetry(
 	try {
 		await controllerTelemetry.shutdown();
 	} catch {
-		writeControllerRuntimeLog('controller-telemetry-shutdown-failed', 'warning', {
+		writeControllerRuntimeLog('warning', {
 			operation: 'controller-telemetry-shutdown',
 		});
 	}
@@ -477,7 +476,7 @@ async function startControllerRuntimeWithOwnershipLock(
 		createGatewayEpochId: randomUUID,
 	});
 	dependencies.configureManagedVmHostNetworkDefaults();
-	writeControllerRuntimeLog('host-network-defaults-applied', 'info', {
+	writeControllerRuntimeLog('info', {
 		operation: 'configure-host-network-defaults',
 	});
 	const runTaskStep =
@@ -588,7 +587,7 @@ async function startControllerRuntimeWithOwnershipLock(
 				proof: createControllerTelemetryProofAttributes(),
 			});
 		} catch {
-			writeControllerRuntimeLog('controller-telemetry-startup-failed', 'warning', {
+			writeControllerRuntimeLog('warning', {
 				operation: 'start-controller-telemetry',
 			});
 		}
@@ -802,7 +801,7 @@ async function startControllerRuntimeWithOwnershipLock(
 	const reaperTimer = (dependencies.setIntervalImpl ?? setInterval)(
 		() =>
 			reapToolVmLeases().catch(() =>
-				writeControllerRuntimeLog('tool-vm-lease-reaper-failed', 'warning', {
+				writeControllerRuntimeLog('warning', {
 					operation: 'reap-tool-vm-leases',
 				}),
 			),
@@ -838,14 +837,10 @@ async function startControllerRuntimeWithOwnershipLock(
 									.getManagedGatewayRuntime(transition.gateway.zoneId)
 									.getLifecycleState();
 							} catch {
-								writeControllerRuntimeLog(
-									'gateway-runtime-attachment-loss-zone-unavailable',
-									'warning',
-									{
-										operation: 'resolve-gateway-runtime-for-attachment-loss',
-										zoneId: transition.gateway.zoneId,
-									},
-								);
+								writeControllerRuntimeLog('warning', {
+									operation: 'resolve-gateway-runtime-for-attachment-loss',
+									zoneId: transition.gateway.zoneId,
+								});
 								return;
 							}
 							if (
@@ -867,14 +862,10 @@ async function startControllerRuntimeWithOwnershipLock(
 									zoneId: gatewayIdentity.zoneId,
 								})
 								.catch(() => {
-									writeControllerRuntimeLog(
-										'gateway-runtime-attachment-loss-recovery-failed',
-										'warning',
-										{
-											operation: 'recover-gateway-runtime-attachment-loss',
-											zoneId: gatewayIdentity.zoneId,
-										},
-									);
+									writeControllerRuntimeLog('warning', {
+										operation: 'recover-gateway-runtime-attachment-loss',
+										zoneId: gatewayIdentity.zoneId,
+									});
 								});
 						},
 						preflightGatewayZoneStart: async (preflightOptions, preflightDependencies) => {
@@ -1067,7 +1058,7 @@ async function startControllerRuntimeWithOwnershipLock(
 		closeControllerServer: async () => {
 			(dependencies.setTimeoutImpl ?? setTimeout)(() => {
 				void serverRef.current?.close().catch(() => {
-					writeControllerRuntimeLog('controller-http-server-close-failed', 'warning', {
+					writeControllerRuntimeLog('warning', {
 						operation: 'close-controller-http-server',
 					});
 				});
@@ -1214,7 +1205,7 @@ async function startControllerRuntimeWithOwnershipLock(
 				? 'gateway-vm-cold-start'
 				: 'gateway-vm-restart';
 		} catch {
-			writeControllerRuntimeLog('gateway-vm-recovery-budget-classification-failed', 'warning', {
+			writeControllerRuntimeLog('warning', {
 				operation: 'classify-gateway-vm-recovery-budget',
 				zoneId: request.zoneId,
 			});
@@ -1281,12 +1272,12 @@ async function startControllerRuntimeWithOwnershipLock(
 			config: observabilityStartupCheck,
 		})
 			.then(() => {
-				writeControllerRuntimeLog('host-observability-stack-ready', 'info', {
+				writeControllerRuntimeLog('info', {
 					operation: 'check-host-observability-stack',
 				});
 			})
 			.catch(() => {
-				writeControllerRuntimeLog('host-observability-stack-degraded', 'warning', {
+				writeControllerRuntimeLog('warning', {
 					operation: 'check-host-observability-stack',
 				});
 			});
@@ -1375,7 +1366,7 @@ async function startControllerRuntimeWithOwnershipLock(
 							zoneId: gatewayIdentity.zoneId,
 						};
 					} catch {
-						writeControllerRuntimeLog('gateway-recovery-source-key-resolution-failed', 'warning', {
+						writeControllerRuntimeLog('warning', {
 							operation: 'resolve-gateway-recovery-source-key',
 							zoneId,
 						});

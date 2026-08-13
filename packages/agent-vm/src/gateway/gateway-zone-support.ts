@@ -38,6 +38,10 @@ import type {
 	GatewayDisposableControlSessionClient,
 	GatewayControlSessionMaterial,
 } from '../controller/control-session/index.js';
+import type {
+	ControllerDiagnosticLevel,
+	ControllerDiagnosticTelemetry,
+} from '../controller/controller-diagnostic-logging.js';
 import type { HealthEventStore } from '../controller/health/health-event-store.js';
 import type { OpenClawRuntimeStatusStore } from '../controller/openclaw-runtime-status.js';
 import type { GatewayVmLifecycleAuthority } from '../controller/vm-ownership/gateway-vm-lifecycle-authority.js';
@@ -126,7 +130,10 @@ export interface StartGatewayZoneOptions {
 	readonly systemConfig: LoadedSystemConfig;
 	readonly tcpHostsOverride?: Record<string, string>;
 	readonly vfsMountsOverride?: ManagedVmCreateRequest['mounts'];
-	readonly writeLog?: (message: string) => void;
+	readonly writeLog?: (
+		level: ControllerDiagnosticLevel,
+		telemetry?: ControllerDiagnosticTelemetry,
+	) => void;
 	readonly zoneId: string;
 	readonly zoneOverride?: GatewayZone;
 }

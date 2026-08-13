@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { generateKeyPairSync } from 'node:crypto';
 import { once } from 'node:events';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -12,6 +12,9 @@ import { managedToolPortalConfigSchema, mcpConfigSchema } from '@agent-vm/config
 import { deriveGatewayRuntimePortalSemanticSnapshot } from '@agent-vm/gateway-control-contracts';
 import { describe, expect, it } from 'vitest';
 
+import { computeFingerprintFromConfigPath } from '../build/gondolin-image-builder.js';
+import { managedVmImageAssetFileNames } from '../build/gondolin-managed-vm-build-tooling.js';
+import { writePreparedManagedVmImage } from '../build/prepared-gondolin-image-cache.js';
 import { withProtocolDeadline } from './e2e-protocol-wait.js';
 
 interface ChildResult {
@@ -30,15 +33,10 @@ interface ProductionRootChildDefinitionBase {
 
 type ProductionRootChildDefinition =
 	| (ProductionRootChildDefinitionBase & {
-			readonly cliSupportModulePath: string;
-			readonly commandDispatcherModulePath: string;
-			readonly parserModulePath: string;
 			readonly rootKind: 'agent-vm';
 			readonly systemConfigPath: string;
 	  })
 	| (ProductionRootChildDefinitionBase & {
-			readonly commandDispatcherModulePath: string;
-			readonly parserModulePath: string;
 			readonly rootKind: 'agent-vm-worker';
 			readonly workerConfigPath: string;
 	  })
@@ -75,6 +73,7 @@ type OtlpAttributeValue =
 interface OtlpLogRecord {
 	readonly attributes: ReadonlyMap<string, OtlpAttributeValue>;
 	readonly body: string;
+	readonly resourceServiceName: string | undefined;
 	readonly severityNumber: number;
 	readonly severityText: string;
 }
@@ -99,122 +98,36 @@ function packageDistPath(...segments: readonly string[]): string {
 	return path.join(repositoryRoot, ...segments);
 }
 
-function createProductionRootChildCode(
-	definition: Extract<
-		ProductionRootChildDefinition,
-		{ readonly rootKind: 'agent-vm' | 'agent-vm-worker' }
-	>,
-): string {
-	const category = JSON.stringify(definition.category);
-	const rootKind = JSON.stringify(definition.rootKind);
-	const cliSupportModulePath = JSON.stringify(
-		definition.rootKind === 'agent-vm' ? definition.cliSupportModulePath : undefined,
-	);
-	const commandDispatcherModulePath = JSON.stringify(definition.commandDispatcherModulePath);
-	const parserModulePath = JSON.stringify(definition.parserModulePath);
-	const systemConfigPath = JSON.stringify(
-		definition.rootKind === 'agent-vm' ? definition.systemConfigPath : undefined,
-	);
-	const workerConfigPath = JSON.stringify(
-		definition.rootKind === 'agent-vm-worker' ? definition.workerConfigPath : undefined,
-	);
-	return `
-const { getLogger } = await import('@logtape/logtape');
-const { run } = await import('@optique/run');
-const category = ${category};
-const emitRecord = () => getLogger(category).warning('Structured logging host proof record.', {
-\tevent: 'host-proof',
-\tattempt: 1,
-});
-if (${rootKind} === 'agent-vm') {
-\tconst { defaultCliDependencies } = await import(${cliSupportModulePath});
-\tconst { agentVmRootParser } = await import(${parserModulePath});
-\tconst { defaultAgentVmCommandOperations, dispatchAgentVmCommand } = await import(${commandDispatcherModulePath});
-\tconst originalWrite = process.stdout.write.bind(process.stdout);
-\tlet shutdownScheduled = false;
-\tprocess.stdout.write = ((chunk, ...args) => {
-\t\tconst result = originalWrite(chunk, ...args);
-\t\tif (!shutdownScheduled && String(chunk).includes('"zoneId": "host-proof"')) {
-\t\t\tshutdownScheduled = true;
-\t\t\tvoid (async () => {
-\t\t\t\tconst readiness = JSON.parse(String(chunk));
-\t\t\t\tconst healthResponse = await fetch(
-\t\t\t\t\t'http://127.0.0.1:' + String(readiness.controllerPort) + '/health',
-\t\t\t\t\t{ signal: AbortSignal.timeout(2_000) },
-\t\t\t\t);
-\t\t\t\tif (!healthResponse.ok) {
-\t\t\t\t\tthrow new Error('Controller health probe did not report readiness.');
-\t\t\t\t}
-\t\t\t\tif (${rootKind} !== 'agent-vm') emitRecord();
-\t\t\t\tsetImmediate(() => process.kill(process.pid, 'SIGTERM'));
-\t\t\t})().catch((error) => {
-\t\t\t\tprocess.stderr.write(
-\t\t\t\t\t'Controller host-proof listener check failed: ' +
-\t\t\t\t\t(error instanceof Error ? error.message : String(error)) +
-\t\t\t\t\t'\\n',
-\t\t\t\t);
-\t\t\t\tprocess.exitCode = 1;
-\t\t\t\tsetImmediate(() => process.kill(process.pid, 'SIGTERM'));
-\t\t\t});
-\t\t}
-\t\treturn result;
-\t});
-\tconst command = run(agentVmRootParser, {
-\t\targs: ['controller', 'start', '--config', ${systemConfigPath}, '--zone', 'host-proof'],
-\t});
-\tawait dispatchAgentVmCommand(
-\t\tcommand,
-\t\t{ stderr: process.stderr, stdout: process.stdout },
-\t\t{
-\t\t\t...defaultCliDependencies,
-\t\t\tisGatewayImageCached: async () => true,
-\t\t},
-\t\tdefaultAgentVmCommandOperations,
-\t\t{ processLoggingStderr: process.stderr, processRoot: true },
-\t);
-\tprocess.stdout.write = originalWrite;
-\tprocess.stdout.write(${JSON.stringify(childCompletionMarker)});
-} else {
-\tconst { workerCommandParser } = await import(${parserModulePath});
-\tconst { dispatchWorkerCommand } = await import(${commandDispatcherModulePath});
-\tconst originalWrite = process.stdout.write.bind(process.stdout);
-\tlet shutdownScheduled = false;
-\tprocess.stdout.write = ((chunk, ...args) => {
-\t\tconst result = originalWrite(chunk, ...args);
-\t\tif (!shutdownScheduled && String(chunk).includes('[agent-vm-worker] Server listening on')) {
-\t\t\tshutdownScheduled = true;
-\t\t\temitRecord();
-\t\t\tsetImmediate(() => process.kill(process.pid, 'SIGTERM'));
-\t\t}
-\t\treturn result;
-\t});
-\tconst command = run(workerCommandParser, {
-\t\targs: ['serve', '--config', ${workerConfigPath}, '--port', '0'],
-\t});
-\tawait dispatchWorkerCommand(command);
-\tprocess.stdout.write = originalWrite;
-\tprocess.stdout.write(${JSON.stringify(childCompletionMarker)});
-}
-`;
-}
-
-function createProductionRootHostProofPreload(
-	definition: Extract<
-		ProductionRootChildDefinition,
-		{ readonly rootKind: 'gateway-runtime' | 'mcp-portal' }
-	>,
-): string {
+function createProductionRootHostProofPreload(definition: ProductionRootChildDefinition): string {
 	const packageRequire = createRequire(
 		pathToFileURL(path.join(definition.packageRoot, 'package.json')).href,
 	);
 	const logtapeModulePath = pathToFileURL(packageRequire.resolve('@logtape/logtape')).href;
 	const readinessMarker =
-		definition.rootKind === 'gateway-runtime' ? 'tool-portal-role-readiness' : 'listening port=';
+		definition.rootKind === 'gateway-runtime'
+			? 'tool-portal-role-readiness'
+			: definition.rootKind === 'mcp-portal'
+				? 'listening port='
+				: definition.rootKind === 'agent-vm-worker'
+					? '[agent-vm-worker] Server listening on'
+					: '"zoneId": "host-proof"';
+	const emitHostProofRecord = definition.rootKind !== 'agent-vm';
+	const hostProofEmission = emitHostProofRecord
+		? `logger.warning('Structured logging host proof record.', {
+				event: 'host-proof',
+				attempt: 1,
+			});`
+		: '';
 	const gracefulShutdownHook =
 		definition.rootKind === 'mcp-portal'
 			? `process.once('beforeExit', () => originalWrite(${JSON.stringify(childCompletionMarker)}));
 setImmediate(() => process.kill(process.pid, 'SIGTERM'));`
-			: '';
+			: definition.rootKind === 'agent-vm' || definition.rootKind === 'agent-vm-worker'
+				? definition.rootKind === 'agent-vm'
+					? `originalWrite(${JSON.stringify(childCompletionMarker)});`
+					: `originalWrite(${JSON.stringify(childCompletionMarker)});
+setImmediate(() => process.kill(process.pid, 'SIGTERM'));`
+				: '';
 	const source = `
 import { getLogger } from ${JSON.stringify(logtapeModulePath)};
 const logger = getLogger(${JSON.stringify(definition.category)});
@@ -227,10 +140,7 @@ process.stdout.write = ((chunk, ...args) => {
 		stdoutBuffer += String(chunk);
 		if (stdoutBuffer.includes(${JSON.stringify(readinessMarker)})) {
 			hostProofEmitted = true;
-			logger.warning('Structured logging host proof record.', {
-				event: 'host-proof',
-				attempt: 1,
-			});
+			${hostProofEmission}
 			${gracefulShutdownHook}
 		}
 	}
@@ -246,6 +156,29 @@ async function runProductionRootChild(
 	let childArguments: readonly string[];
 	let productionRootHostProofImport: string | undefined;
 	switch (definition.rootKind) {
+		case 'agent-vm':
+			childArguments = [
+				definition.rootModulePath,
+				'controller',
+				'start',
+				'--config',
+				definition.systemConfigPath,
+				'--zone',
+				'host-proof',
+			];
+			productionRootHostProofImport = `--import=${createProductionRootHostProofPreload(definition)}`;
+			break;
+		case 'agent-vm-worker':
+			childArguments = [
+				definition.rootModulePath,
+				'serve',
+				'--config',
+				definition.workerConfigPath,
+				'--port',
+				'0',
+			];
+			productionRootHostProofImport = `--import=${createProductionRootHostProofPreload(definition)}`;
+			break;
 		case 'gateway-runtime':
 			childArguments = [definition.rootModulePath, '--config', definition.gatewayConfigPath];
 			productionRootHostProofImport = `--import=${createProductionRootHostProofPreload(definition)}`;
@@ -261,10 +194,6 @@ async function runProductionRootChild(
 				'0',
 			];
 			productionRootHostProofImport = `--import=${createProductionRootHostProofPreload(definition)}`;
-			break;
-		case 'agent-vm':
-		case 'agent-vm-worker':
-			childArguments = ['--input-type=module', '--eval', createProductionRootChildCode(definition)];
 			break;
 	}
 	const nodeOptions = [process.env.NODE_OPTIONS, productionRootHostProofImport]
@@ -285,15 +214,18 @@ async function runProductionRootChild(
 	});
 	const stdoutChunks: Buffer[] = [];
 	const stderrChunks: Buffer[] = [];
-	let gatewayRetirementRequested = false;
+	let retirementRequested = false;
 	child.stdout.on('data', (chunk: Buffer) => {
 		stdoutChunks.push(chunk);
 		if (
-			definition.rootKind === 'gateway-runtime' &&
-			!gatewayRetirementRequested &&
-			Buffer.concat(stdoutChunks).includes('tool-portal-role-readiness')
+			!retirementRequested &&
+			(definition.rootKind === 'gateway-runtime'
+				? Buffer.concat(stdoutChunks).includes('tool-portal-role-readiness')
+				: definition.rootKind === 'agent-vm'
+					? Buffer.concat(stdoutChunks).includes('"zoneId": "host-proof"')
+					: false)
 		) {
-			gatewayRetirementRequested = true;
+			retirementRequested = true;
 			setImmediate(() => child.kill('SIGTERM'));
 		}
 	});
@@ -563,6 +495,11 @@ function readOtlpJsonLogRecords(request: Buffer): readonly OtlpLogRecord[] {
 		if (!isRecord(resourceLog) || !Array.isArray(resourceLog.scopeLogs)) {
 			continue;
 		}
+		const resourceAttributes =
+			isRecord(resourceLog.resource) && Array.isArray(resourceLog.resource.attributes)
+				? readOtlpAttributes(resourceLog.resource.attributes)
+				: new Map<string, OtlpAttributeValue>();
+		const resourceServiceName = resourceAttributes.get('service.name');
 		for (const scopeLog of resourceLog.scopeLogs) {
 			if (!isRecord(scopeLog) || !Array.isArray(scopeLog.logRecords)) {
 				continue;
@@ -585,6 +522,8 @@ function readOtlpJsonLogRecords(request: Buffer): readonly OtlpLogRecord[] {
 				records.push({
 					attributes: readOtlpAttributes(logRecord.attributes),
 					body,
+					resourceServiceName:
+						resourceServiceName?.kind === 'string' ? resourceServiceName.value : undefined,
 					severityNumber,
 					severityText,
 				});
@@ -597,12 +536,14 @@ function readOtlpJsonLogRecords(request: Buffer): readonly OtlpLogRecord[] {
 function isExpectedOtlpHostProofRecord(
 	record: OtlpLogRecord,
 	category: readonly string[],
+	serviceName: string,
 ): boolean {
 	const categoryAttribute = record.attributes.get('category');
 	const eventAttribute = record.attributes.get('event');
 	const attemptAttribute = record.attributes.get('attempt');
 	return (
 		record.body === 'Structured logging host proof record.' &&
+		record.resourceServiceName === serviceName &&
 		record.severityNumber === 13 &&
 		record.severityText === 'warning' &&
 		record.attributes.size === 3 &&
@@ -618,12 +559,14 @@ function isExpectedOtlpHostProofRecord(
 function isExpectedOtlpControllerDiagnosticRecord(
 	record: OtlpLogRecord,
 	category: readonly string[],
+	serviceName: string,
 ): boolean {
 	const categoryAttribute = record.attributes.get('category');
 	const eventAttribute = record.attributes.get('event');
 	const operationAttribute = record.attributes.get('operation');
 	return (
 		record.body === 'Controller diagnostic' &&
+		record.resourceServiceName === serviceName &&
 		record.severityNumber === 9 &&
 		record.severityText === 'info' &&
 		record.attributes.size === 3 &&
@@ -639,12 +582,14 @@ function isExpectedOtlpControllerDiagnosticRecord(
 function isExpectedOtlpGatewayStartupFailureRecord(
 	record: OtlpLogRecord,
 	category: readonly string[],
+	serviceName: string,
 ): boolean {
 	const categoryAttribute = record.attributes.get('category');
 	const eventAttribute = record.attributes.get('event');
 	const failureClassAttribute = record.attributes.get('failureClass');
 	return (
 		record.body === 'Gateway runtime service startup failed.' &&
+		record.resourceServiceName === serviceName &&
 		record.severityNumber === 17 &&
 		record.severityText === 'error' &&
 		record.attributes.size === 3 &&
@@ -661,13 +606,14 @@ async function assertOtlpHostProofRecord(
 	receiver: OtlpReceiver,
 	requestWindowStart: number,
 	category: readonly string[],
+	serviceName: string,
 ): Promise<void> {
 	await receiver.waitForRequests(
 		(requests) =>
 			requests
 				.slice(requestWindowStart)
 				.flatMap((request) => readOtlpJsonLogRecords(request))
-				.some((record) => isExpectedOtlpHostProofRecord(record, category)),
+				.some((record) => isExpectedOtlpHostProofRecord(record, category, serviceName)),
 		`the expected ${category.join('.')} OTLP host-proof record`,
 	);
 }
@@ -676,13 +622,14 @@ async function assertOtlpControllerDiagnosticRecord(
 	receiver: OtlpReceiver,
 	requestWindowStart: number,
 	category: readonly string[],
+	serviceName: string,
 ): Promise<void> {
 	await receiver.waitForRequests(
 		(requests) =>
 			requests
 				.slice(requestWindowStart)
 				.flatMap((request) => readOtlpJsonLogRecords(request))
-				.some((record) => isExpectedOtlpControllerDiagnosticRecord(record, category)),
+				.some((record) => isExpectedOtlpControllerDiagnosticRecord(record, category, serviceName)),
 		`the expected ${category.join('.')} OTLP controller diagnostic record`,
 	);
 }
@@ -720,10 +667,32 @@ interface AgentVmProofFixture {
 
 async function createAgentVmProofFixture(collectorHttpPort: number): Promise<AgentVmProofFixture> {
 	const root = await mkdtemp(path.join(tmpdir(), 'agent-vm-logtape-controller-proof-'));
+	const canonicalRoot = await realpath(root);
 	const controllerPort = await allocateTcpPort();
-	const configDirectory = path.join(root, 'config');
-	const storageDirectory = path.join(root, 'storage');
-	await Promise.all([mkdir(configDirectory), mkdir(storageDirectory)]);
+	const configDirectory = path.join(canonicalRoot, 'config');
+	const storageDirectory = path.join(canonicalRoot, 'storage');
+	const cacheDirectory = path.join(storageDirectory, 'cache');
+	const buildConfigPath = path.join(canonicalRoot, 'worker-build-config.json');
+	const gatewayImageCacheDirectory = path.join(cacheDirectory, 'gateway-images', 'worker');
+	await Promise.all([
+		mkdir(configDirectory),
+		mkdir(storageDirectory),
+		writeFile(buildConfigPath, JSON.stringify({ arch: 'aarch64', distro: 'alpine' })),
+	]);
+	const gatewayImageFingerprint = await computeFingerprintFromConfigPath(buildConfigPath);
+	const gatewayImagePath = path.join(gatewayImageCacheDirectory, gatewayImageFingerprint);
+	await mkdir(gatewayImagePath, { recursive: true });
+	await Promise.all(
+		managedVmImageAssetFileNames.map((fileName) =>
+			writeFile(path.join(gatewayImagePath, fileName), ''),
+		),
+	);
+	await writePreparedManagedVmImage({
+		buildConfigPath,
+		cacheDir: gatewayImageCacheDirectory,
+		fingerprint: gatewayImageFingerprint,
+		imagePath: gatewayImagePath,
+	});
 	const configPath = path.join(configDirectory, 'system.json');
 	await writeFile(
 		configPath,
@@ -744,7 +713,7 @@ async function createAgentVmProofFixture(collectorHttpPort: number): Promise<Age
 			imageProfiles: {
 				gateways: {
 					worker: {
-						buildConfig: '../vm-images/worker/build-config.json',
+						buildConfig: buildConfigPath,
 						type: 'worker',
 					},
 				},
@@ -977,29 +946,8 @@ describe('structured logging process roots', () => {
 				const children = [
 					{
 						category: ['agent-vm', 'controller', 'runtime'],
-						cliSupportModulePath: packageDistPath(
-							'packages',
-							'agent-vm',
-							'dist',
-							'cli',
-							'agent-vm-cli-support.js',
-						),
-						commandDispatcherModulePath: packageDistPath(
-							'packages',
-							'agent-vm',
-							'dist',
-							'cli',
-							'agent-vm-command-dispatcher.js',
-						),
 						name: 'agent-vm',
 						packageRoot: packageDistPath('packages', 'agent-vm'),
-						parserModulePath: packageDistPath(
-							'packages',
-							'agent-vm',
-							'dist',
-							'cli',
-							'agent-vm-command-parser.js',
-						),
 						rootKind: 'agent-vm',
 						rootModulePath: packageDistPath(
 							'packages',
@@ -1024,20 +972,8 @@ describe('structured logging process roots', () => {
 							OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: collectorUrl,
 							WORK_DIR: createdWorkerFixture.workDirectory,
 						},
-						commandDispatcherModulePath: packageDistPath(
-							'packages',
-							'agent-vm-worker',
-							'dist',
-							'worker-cli-dispatcher.js',
-						),
 						name: 'agent-vm-worker',
 						packageRoot: packageDistPath('packages', 'agent-vm-worker'),
-						parserModulePath: packageDistPath(
-							'packages',
-							'agent-vm-worker',
-							'dist',
-							'worker-cli-parser.js',
-						),
 						rootKind: 'agent-vm-worker',
 						rootModulePath: packageDistPath('packages', 'agent-vm-worker', 'dist', 'main.js'),
 						workerConfigPath: createdWorkerFixture.configPath,
@@ -1119,10 +1055,20 @@ describe('structured logging process roots', () => {
 							createdReceiver,
 							requestWindowStart,
 							child.category,
+							'agent-vm-controller',
 						);
 					} else {
 						// oxlint-disable-next-line eslint/no-await-in-loop -- each child owns the next causal OTLP request window.
-						await assertOtlpHostProofRecord(createdReceiver, requestWindowStart, child.category);
+						await assertOtlpHostProofRecord(
+							createdReceiver,
+							requestWindowStart,
+							child.category,
+							child.rootKind === 'agent-vm-worker'
+								? 'agent-vm-worker'
+								: child.rootKind === 'gateway-runtime'
+									? 'agent-vm-tool-portal'
+									: 'agent-vm-mcp-portal',
+						);
 					}
 					requestWindowStart = createdReceiver.requests.length;
 				}
@@ -1148,11 +1094,11 @@ describe('structured logging process roots', () => {
 							.slice(failureRequestWindowStart)
 							.flatMap((request) => readOtlpJsonLogRecords(request))
 							.some((record) =>
-								isExpectedOtlpGatewayStartupFailureRecord(record, [
-									'agent-vm',
-									'gateway-runtime',
-									'process',
-								]),
+								isExpectedOtlpGatewayStartupFailureRecord(
+									record,
+									['agent-vm', 'gateway-runtime', 'process'],
+									'agent-vm-tool-portal',
+								),
 							),
 					'the expected gateway-runtime startup-failed OTLP record',
 				);
@@ -1176,24 +1122,12 @@ describe('structured logging process roots', () => {
 		try {
 			const result = await runProductionRootChild({
 				category: ['agent-vm', 'worker', 'server'],
-				commandDispatcherModulePath: packageDistPath(
-					'packages',
-					'agent-vm-worker',
-					'dist',
-					'worker-cli-dispatcher.js',
-				),
 				environment: {
 					OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: unavailableEndpoint,
 					WORK_DIR: workerFixture.workDirectory,
 				},
 				name: 'agent-vm-worker-unavailable-collector',
 				packageRoot: packageDistPath('packages', 'agent-vm-worker'),
-				parserModulePath: packageDistPath(
-					'packages',
-					'agent-vm-worker',
-					'dist',
-					'worker-cli-parser.js',
-				),
 				rootKind: 'agent-vm-worker',
 				rootModulePath: packageDistPath('packages', 'agent-vm-worker', 'dist', 'main.js'),
 				workerConfigPath: workerFixture.configPath,
@@ -1212,21 +1146,9 @@ describe('structured logging process roots', () => {
 		try {
 			const result = await runProductionRootChild({
 				category: ['agent-vm', 'worker', 'server'],
-				commandDispatcherModulePath: packageDistPath(
-					'packages',
-					'agent-vm-worker',
-					'dist',
-					'worker-cli-dispatcher.js',
-				),
 				environment: { WORK_DIR: workerFixture.workDirectory },
 				name: 'agent-vm-worker-no-endpoint',
 				packageRoot: packageDistPath('packages', 'agent-vm-worker'),
-				parserModulePath: packageDistPath(
-					'packages',
-					'agent-vm-worker',
-					'dist',
-					'worker-cli-parser.js',
-				),
 				rootKind: 'agent-vm-worker',
 				rootModulePath: packageDistPath('packages', 'agent-vm-worker', 'dist', 'main.js'),
 				workerConfigPath: workerFixture.configPath,

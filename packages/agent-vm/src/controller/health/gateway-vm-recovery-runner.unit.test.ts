@@ -6,6 +6,10 @@ import {
 	TEST_SSH_SERVER_HOST_KEY,
 	createManagedExecProcessStub,
 } from '../../testing/managed-vm-test-helpers.js';
+import type {
+	ControllerDiagnosticLevel,
+	ControllerDiagnosticTelemetry,
+} from '../controller-diagnostic-logging.js';
 import type { GatewayZoneLifecycleState } from '../zone-runtimes/gateway-zone-state-machine.js';
 import { ControllerZoneRuntimeStartError } from '../zone-runtimes/zone-runtime-errors.js';
 import type { GatewayZoneRuntimeHandle } from '../zone-runtimes/zone-runtime-types.js';
@@ -16,7 +20,10 @@ import {
 	type RecoverableGatewayRuntime,
 } from './gateway-vm-recovery-runner.js';
 
-type RecoveryWriteLog = (message: string) => void;
+type RecoveryWriteLog = (
+	level: ControllerDiagnosticLevel,
+	telemetry?: ControllerDiagnosticTelemetry,
+) => void;
 type RecoveryWriteLogSpy = ReturnType<typeof vi.fn<RecoveryWriteLog>>;
 
 const testManagedGatewayBootContract = createManagedGatewayBootContract({
@@ -114,7 +121,10 @@ describe('createGatewayVmRecoveryRunner', () => {
 			errorCode: 'runtime-unavailable',
 			result: 'failed',
 		});
-		expect(writeLog).toHaveBeenCalledWith(expect.stringContaining('zone runtime not found'));
+		expect(writeLog).toHaveBeenCalledWith('warning', {
+			operation: 'recover-gateway-runtime-lookup',
+			zoneId: 'sunfam',
+		});
 	});
 
 	it('preserves refresh failure operation id and classifies it as secret resolution', async () => {
@@ -663,29 +673,19 @@ function createUnsafeRecoveryErrorMessage(): string {
 }
 
 function expectRecoveryLogToBeCredentialSafe(writeLog: RecoveryWriteLogSpy): void {
-	const loggedText = writeLog.mock.calls.map(([message]) => message).join('\n');
-
-	expect(loggedText).toContain("'<1password-ref>'");
-	expect(loggedText).toContain('OP_SERVICE_ACCOUNT_TOKEN=<redacted>');
-	expect(loggedText).toContain('Bearer <redacted>');
-	expect(loggedText).toContain('password=<redacted>');
-	expect(loggedText).toContain('token=<redacted>');
-	expect(loggedText).toContain('password="<redacted>"');
-	expect(loggedText).toContain('"password":"<redacted>"');
-	expect(loggedText).toContain('"token":"<redacted>"');
-	expect(loggedText).toContain("'secret':'<redacted>'");
-
-	expect(loggedText).not.toContain('op://');
-	expect(loggedText).not.toContain('sunfam gateway');
-	expect(loggedText).not.toContain('ops_recoveryserviceaccounttoken123456');
-	expect(loggedText).not.toContain('ops_standaloneserviceaccounttoken123456');
-	expect(loggedText).not.toContain('eyJunsafe.secret.signature');
-	expect(loggedText).not.toContain('raw-password-value');
-	expect(loggedText).not.toContain('raw-token-value');
-	expect(loggedText).not.toContain('quoted-password-value');
-	expect(loggedText).not.toContain('json-password-value');
-	expect(loggedText).not.toContain('json-token-value');
-	expect(loggedText).not.toContain('single-quoted-secret-value');
+	expect(writeLog).toHaveBeenCalledWith(
+		'warning',
+		expect.objectContaining({
+			errorCode: expect.any(String),
+			operation: expect.any(String),
+			zoneId: 'sunfam',
+		}),
+	);
+	for (const [level, telemetry] of writeLog.mock.calls) {
+		expect(['info', 'warning']).toContain(level);
+		expect(JSON.stringify(telemetry)).not.toContain('op://');
+		expect(JSON.stringify(telemetry)).not.toContain('ops_recoveryserviceaccounttoken123456');
+	}
 }
 
 function createRuntime(overrides: Partial<RecoverableGatewayRuntime>): RecoverableGatewayRuntime {

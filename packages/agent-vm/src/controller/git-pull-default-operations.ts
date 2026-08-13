@@ -459,6 +459,7 @@ async function recordControllerGitPullEvent(options: {
 			event: 'controller-operation-failed',
 			level: 'warning',
 			failureClass: 'failure',
+			telemetry: { operation: 'record-controller-git-pull-event' },
 		});
 	}
 }

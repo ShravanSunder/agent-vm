@@ -49,6 +49,7 @@ import {
 	createGatewayControlSessionMaterial,
 	resolveGatewayControlSessionMaterialPath,
 } from '../controller/control-session/index.js';
+import type { ControllerDiagnosticTelemetry } from '../controller/controller-diagnostic-logging.js';
 import {
 	createControllerStateRoot,
 	type ControllerGatewayStateRoot,
@@ -2005,7 +2006,8 @@ describe('startGatewayZone', () => {
 	it('coalesces duplicate control-attempt logs without exposing transport identities', async () => {
 		const vmId = 'vm-safe-control-attempt-log';
 		const { managedVm } = createHealthyGatewayVmStub(vmId, 28_411);
-		const writeLog = vi.fn<(message: string) => void>();
+		const writeLog =
+			vi.fn<(level: 'info' | 'warning', telemetry?: ControllerDiagnosticTelemetry) => void>();
 		let connectedMaterial: Parameters<GatewayControlSessionConnector>[0]['material'] | undefined;
 		const connectGatewayControlSession = vi.fn<GatewayControlSessionConnector>(
 			async (connectOptions) => {
@@ -2053,14 +2055,14 @@ describe('startGatewayZone', () => {
 			},
 		);
 
-		expect(writeLog.mock.calls.map(([message]) => message)).toEqual([
-			"Gateway control attachment for zone 'shravan': connect_error.",
-			"Gateway control attachment for zone 'shravan': hello_response:accepted.",
+		expect(writeLog.mock.calls).toEqual([
+			['warning', { operation: 'gateway-control-attachment-attempt', zoneId: 'shravan' }],
+			['info', { operation: 'gateway-control-attachment-attempt', zoneId: 'shravan' }],
 		]);
 		if (connectedMaterial === undefined) {
 			throw new Error('Expected captured Gateway control material.');
 		}
-		const loggedOutput = writeLog.mock.calls.map(([message]) => message).join('\n');
+		const loggedOutput = JSON.stringify(writeLog.mock.calls);
 		expect(loggedOutput).not.toContain(connectedMaterial.processEpoch);
 		expect(loggedOutput).not.toContain(testControlConnectionId);
 		expect(loggedOutput).not.toContain(testControlSessionId);
@@ -6094,7 +6096,8 @@ describe('startGatewayZone', () => {
 					taskTitles.push(title);
 					await fn();
 				},
-				writeLog: (message) => loggedMessages.push(message),
+				writeLog: (_level, telemetry) =>
+					loggedMessages.push(telemetry?.operation ?? 'unknown-operation'),
 				secretResolver: createOpenClawSecretResolver({
 					DISCORD_BOT_TOKEN: 'discord-token',
 					OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',

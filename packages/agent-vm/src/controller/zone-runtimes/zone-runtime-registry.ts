@@ -49,8 +49,7 @@ export function createZoneRuntimeRegistry(options: {
 	readonly systemConfig: LoadedSystemConfig;
 	readonly zoneIds?: readonly string[];
 	readonly writeLog?: (
-		message: string,
-		level?: ControllerDiagnosticLevel,
+		level: ControllerDiagnosticLevel,
 		telemetry?: ControllerDiagnosticTelemetry,
 	) => void;
 }): ZoneRuntimeRegistry {
@@ -63,7 +62,6 @@ export function createZoneRuntimeRegistry(options: {
 	const writeLog =
 		options.writeLog ??
 		((
-			_message: string,
 			level: ControllerDiagnosticLevel = 'warning',
 			telemetry: ControllerDiagnosticTelemetry = { operation: 'zone-runtime-registry' },
 		): void => {
@@ -183,9 +181,8 @@ export function createZoneRuntimeRegistry(options: {
 					.map(async (runtime) => {
 						try {
 							await runtime.start();
-						} catch (error) {
-							const message = error instanceof Error ? error.message : String(error);
-							writeLog(`Failed to start zone '${runtime.zoneId}': ${message}`, 'warning', {
+						} catch {
+							writeLog('warning', {
 								operation: 'start-gateway-zone',
 								zoneId: runtime.zoneId,
 							});
