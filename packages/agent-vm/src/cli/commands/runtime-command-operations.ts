@@ -133,6 +133,9 @@ export async function runConfigCommandOperation(
 				: undefined
 			: systemConfig.zones.find((zone) => zone.id === command.options.zone);
 	if (!selectedZone) {
+		if (command.options.zone === undefined && systemConfig.zones.length === 0) {
+			throw new Error('No zones configured in the system config.');
+		}
 		throw new Error(
 			command.options.zone === undefined
 				? 'Multiple zones configured; pass --zone <zone-id>.'

@@ -41,6 +41,6 @@ describe('worker CLI operations', () => {
 				{ command: 'health', port: 19_999 },
 				{ stdout: { write: () => true } },
 			),
-		).rejects.toThrow('Health check failed: Health check failed: 503');
+		).rejects.toThrow('Health check failed: HTTP 503');
 	});
 });

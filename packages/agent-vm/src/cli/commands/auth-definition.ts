@@ -48,6 +48,7 @@ const openClawLoginParser = command(
 				parser: option(
 					'--agent',
 					zod(optionalAgentIdSchema, { metavar: 'AGENT_ID', placeholder: undefined }),
+					{ description: cliDescription('OpenClaw agent id') },
 				),
 				schema: optionalAgentIdSchema,
 			}),
@@ -68,7 +69,9 @@ const openClawLoginParser = command(
 				),
 				schema: authenticationProfileIdsSchema,
 			}),
-			provider: argument(zod(providerSchema, { metavar: 'PROVIDER', placeholder: 'openai' })),
+			provider: argument(zod(providerSchema, { metavar: 'PROVIDER', placeholder: 'openai' }), {
+				description: cliDescription('Provider to authenticate'),
+			}),
 			zone: createZoneOption(),
 		}),
 	}),
@@ -84,6 +87,7 @@ const codexHarnessParser = command(
 				parser: option(
 					'--agent',
 					zod(optionalAgentIdSchema, { metavar: 'AGENT_ID', placeholder: undefined }),
+					{ description: cliDescription('OpenClaw agent id') },
 				),
 				schema: optionalAgentIdSchema,
 			}),

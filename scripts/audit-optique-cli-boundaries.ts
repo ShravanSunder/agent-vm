@@ -1064,7 +1064,9 @@ export async function auditRepositoryOptiqueCliBoundaries(
 async function main(): Promise<void> {
 	const findings = await auditRepositoryOptiqueCliBoundaries();
 	if (findings.length === 0) {
-		process.stdout.write('Optique CLI architecture audit passed for 5 active roots.\n');
+		process.stdout.write(
+			`Optique CLI architecture audit passed for ${String(DEFAULT_INVENTORY_SEEDS.length)} active roots.\n`,
+		);
 		return;
 	}
 	process.stderr.write(

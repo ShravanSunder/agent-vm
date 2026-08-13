@@ -31,7 +31,7 @@ export async function runWorkerHealthOperation(
 	try {
 		const response = await fetch(`http://localhost:${command.port}/health`);
 		if (!response.ok) {
-			throw new Error(`Health check failed: ${response.status}`);
+			throw new Error(`HTTP ${String(response.status)}`);
 		}
 		const responseBody: unknown = await response.json();
 		writeStdout(io, JSON.stringify(responseBody, null, 2));

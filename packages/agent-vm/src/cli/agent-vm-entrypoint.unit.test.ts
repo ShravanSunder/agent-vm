@@ -1039,6 +1039,21 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 		expect(stdoutChunks.join('')).toContain('"changed"');
 	});
 
+	it('reports an empty system config instead of claiming multiple zones exist', async () => {
+		const systemConfig = createCliBuildSystemConfig();
+
+		await expect(
+			parseAndDispatchAgentVmCommandForTest(
+				['config', 'reset-instructions', '--config', 'config/system.json', '--phase', 'wrapup'],
+				{ stderr: { write: () => true }, stdout: { write: () => true } },
+				{
+					...defaultCliDependencies,
+					loadSystemConfig: vi.fn(async () => ({ ...systemConfig, zones: [] })),
+				},
+			),
+		).rejects.toThrow('No zones configured in the system config.');
+	});
+
 	it('routes build to the build command handler', async () => {
 		const runBuildCommand = vi.fn(async () => {});
 
