@@ -31,37 +31,9 @@ interface ChildExit {
 	readonly signal: NodeJS.Signals | null;
 }
 
-const CHILD_PROTOCOL_DEADLINE_MS = 10_000;
-
 function childStderrDiagnostic(stderr: readonly Buffer[]): string {
 	const contents = Buffer.concat(stderr).toString().trim();
 	return contents.length === 0 ? '<empty>' : contents.slice(-2_000);
-}
-
-async function withProtocolDeadline<TValue>(
-	promise: Promise<TValue>,
-	label: string,
-	stderr: readonly Buffer[],
-): Promise<TValue> {
-	let timeout: ReturnType<typeof setTimeout> | undefined;
-	try {
-		return await Promise.race([
-			promise,
-			new Promise<never>((_resolve, reject) => {
-				timeout = setTimeout(
-					() =>
-						reject(
-							new Error(
-								`${label} exceeded ${String(CHILD_PROTOCOL_DEADLINE_MS)}ms deadline; stderr: ${childStderrDiagnostic(stderr)}`,
-							),
-						),
-					CHILD_PROTOCOL_DEADLINE_MS,
-				);
-			}),
-		]);
-	} finally {
-		if (timeout !== undefined) clearTimeout(timeout);
-	}
 }
 
 function observeChildExit(
@@ -90,23 +62,19 @@ async function waitForProgressBeforeChildExit(
 	label: string,
 	stderr: readonly Buffer[],
 ): Promise<void> {
-	await withProtocolDeadline(
-		Promise.race([
-			progress,
-			childExit.then((exit) => {
-				throw new Error(
-					`${label} closed before protocol progress (code=${String(exit.code)}, signal=${String(exit.signal)}); stderr: ${childStderrDiagnostic(stderr)}`,
-				);
-			}),
-		]),
-		label,
-		stderr,
-	);
+	await Promise.race([
+		progress,
+		childExit.then((exit) => {
+			throw new Error(
+				`${label} closed before protocol progress (code=${String(exit.code)}, signal=${String(exit.signal)}); stderr: ${childStderrDiagnostic(stderr)}`,
+			);
+		}),
+	]);
 }
 
-function terminateChild(child: ChildProcess): void {
-	if (child.exitCode === null && child.signalCode === null && !child.killed) {
-		child.kill('SIGTERM');
+function forceTerminateChild(child: ChildProcess): void {
+	if (child.exitCode === null && child.signalCode === null) {
+		child.kill('SIGKILL');
 	}
 }
 
@@ -260,7 +228,7 @@ describe('GatewayRuntimeLocalExecTransport', () => {
 			);
 			expect(maximumActiveWriteCount).toBe(1);
 			releaseFirstWrite.resolve(undefined);
-			const exit = await withProtocolDeadline(childExit, 'Local exec helper exit', stderr);
+			const exit = await childExit;
 
 			expect(exit).toEqual({ code: 17, signal: null });
 			expect(Buffer.concat(receivedInput)).toEqual(localInput);
@@ -271,15 +239,8 @@ describe('GatewayRuntimeLocalExecTransport', () => {
 			expect(await pathDoesNotExist(dirname(socketPath))).toBe(true);
 		} finally {
 			releaseFirstWrite.resolve(undefined);
-			terminateChild(child);
-			try {
-				await withProtocolDeadline(childExit, 'Local exec helper cleanup', stderr);
-			} catch {
-				child.kill('SIGKILL');
-				await withProtocolDeadline(childExit, 'Local exec helper forced cleanup', stderr).catch(
-					() => undefined,
-				);
-			}
+			forceTerminateChild(child);
+			await childExit.catch(() => undefined);
 			await transport.finalize(spec.finalizeToken);
 			await transport.close();
 		}
@@ -306,10 +267,8 @@ describe('GatewayRuntimeLocalExecTransport', () => {
 				/closed before protocol progress \(code=23, signal=null\); stderr: intentional early exit/,
 			);
 		} finally {
-			terminateChild(child);
-			await withProtocolDeadline(childExit, 'Early-exit helper cleanup', stderr).catch(
-				() => undefined,
-			);
+			forceTerminateChild(child);
+			await childExit.catch(() => undefined);
 		}
 	});
 
