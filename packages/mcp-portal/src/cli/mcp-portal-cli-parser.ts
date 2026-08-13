@@ -77,6 +77,11 @@ export function projectZodScalarPresence(schema: z.ZodType, parser: Parser): Par
 		}
 		return withDefault(parser, schema.parse(undefined));
 	}
+	if (schema.safeParse(undefined).success) {
+		throw new TypeError(
+			'CLI value schemas accepting undefined must use ZodOptional or ZodDefault.',
+		);
+	}
 	return parser;
 }
 

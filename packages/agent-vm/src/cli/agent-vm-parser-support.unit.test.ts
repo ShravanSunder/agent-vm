@@ -62,6 +62,18 @@ describe('Agent VM Zod presence projection', () => {
 		).toThrow(/must not mix ZodOptional and ZodDefault/u);
 	});
 
+	it.each([
+		z.string().prefault('fallback'),
+		z.string().catch('fallback'),
+		z.string().default('fallback').pipe(z.string()),
+	])('rejects unsupported schemas that accept undefined', (schema) => {
+		const parser = option('--value', zod(schema, { placeholder: 'fallback' }));
+
+		expect(() => projectZodScalarPresence({ parser, schema })).toThrow(
+			/accepting undefined must use ZodOptional or ZodDefault/u,
+		);
+	});
+
 	it('projects repeated authentication profile ids with a schema-owned empty default', () => {
 		const profileIdSchema = z.string().regex(/^profile:/u);
 		const profileIdsSchema = z.array(profileIdSchema).default([]);

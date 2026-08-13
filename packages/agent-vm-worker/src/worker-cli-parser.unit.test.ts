@@ -87,4 +87,16 @@ describe('worker CLI parser', () => {
 
 		expect(() => projectZodScalarPresence(mixedSchema, parser)).toThrow(/optional and default/u);
 	});
+
+	it.each([
+		z.string().prefault('fallback'),
+		z.string().catch('fallback'),
+		z.string().default('fallback').pipe(z.string()),
+	])('rejects unsupported schemas that accept undefined', (schema) => {
+		const parser = option('--value', zod(schema, { placeholder: 'fallback' }));
+
+		expect(() => projectZodScalarPresence(schema, parser)).toThrow(
+			/accepting undefined must use ZodOptional or ZodDefault/u,
+		);
+	});
 });

@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { access, mkdtemp, stat } from 'node:fs/promises';
+import { access, mkdtemp, stat, watch } from 'node:fs/promises';
 import { createConnection, type Socket } from 'node:net';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -129,6 +129,22 @@ async function pathDoesNotExist(path: string): Promise<boolean> {
 	}
 }
 
+async function waitForPathRemoval(path: string, label: string): Promise<void> {
+	const filesystemEvents = watch(dirname(path));
+	const eventIterator = filesystemEvents[Symbol.asyncIterator]();
+	const waitForRemovalEvent = async (): Promise<void> => {
+		if (await pathDoesNotExist(path)) return;
+		const event = await eventIterator.next();
+		if (event.done) throw new Error(`${label} filesystem watcher closed before removal.`);
+		await waitForRemovalEvent();
+	};
+	try {
+		await waitForRemovalEvent();
+	} finally {
+		await eventIterator.return?.();
+	}
+}
+
 async function connectLocalSocket(socketPath: string): Promise<Socket> {
 	const socket = createConnection(socketPath);
 	await new Promise<void>((resolve, reject) => {
@@ -236,7 +252,7 @@ describe('GatewayRuntimeLocalExecTransport', () => {
 			expect(Buffer.concat(stdout).toString()).toBe('remote stdout');
 			expect(stderrReadCount).toBe(2);
 			expect(Buffer.concat(stderr).toString()).toBe('remote stderr');
-			await transport.finalize(spec.finalizeToken);
+			await waitForPathRemoval(dirname(socketPath), 'Automatic local exec reservation cleanup');
 			expect(await pathDoesNotExist(dirname(socketPath))).toBe(true);
 		} finally {
 			releaseFirstWrite.resolve(undefined);
@@ -249,11 +265,46 @@ describe('GatewayRuntimeLocalExecTransport', () => {
 
 	it('fails fast when the helper exits before protocol progress', async () => {
 		const stalledProgress = createDeferred<void>();
+		const temporaryDirectory = await mkdtemp('/tmp/agent-vm-local-exec-early-exit-');
+		const cancelled = createDeferred<void>();
+		let expire: (() => void) | undefined;
+		const scheduler: GatewayRuntimeLocalExecReservationScheduler = {
+			schedule(callback) {
+				expire = callback;
+				return { cancel: () => undefined };
+			},
+		};
+		const transport = new GatewayRuntimeLocalExecTransport({
+			helperArgv: [
+				process.execPath,
+				'-e',
+				"process.stderr.write('intentional early exit\\n'); process.exit(23);",
+			],
+			reservationScheduler: scheduler,
+			temporaryDirectory,
+		});
+		const operation: GatewayRuntimeLocalExecOperation = {
+			cancel: async () => cancelled.resolve(undefined),
+			closeStdin: async () => undefined,
+			readStderr: async () => ({ kind: 'end' }),
+			readStdout: async () => ({ kind: 'end' }),
+			wait: async () => ({ exitCode: null }),
+			writeStdin: async () => undefined,
+		};
+		const spec = await transport.reserve(operation);
+		const socketPath = requireValue(
+			spec.env[GATEWAY_RUNTIME_LOCAL_EXEC_SOCKET_ENV],
+			'local exec socket path',
+		);
 		const stderr: Buffer[] = [];
-		const child = spawn(process.execPath, [
-			'-e',
-			"process.stderr.write('intentional early exit\\n'); process.exit(23);",
-		]);
+		const child = spawn(
+			requireValue(spec.argv[0], 'local exec helper command'),
+			spec.argv.slice(1),
+			{
+				env: { ...process.env, ...spec.env },
+				stdio: ['pipe', 'pipe', 'pipe'],
+			},
+		);
 		child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
 		const childExit = observeChildExit(child, 'Early-exit local exec helper', stderr);
 		try {
@@ -267,9 +318,18 @@ describe('GatewayRuntimeLocalExecTransport', () => {
 			).rejects.toThrow(
 				/closed before protocol progress \(code=23, signal=null\); stderr: intentional early exit/,
 			);
+			expect(await pathDoesNotExist(dirname(socketPath))).toBe(false);
+			expire?.();
+			await cancelled.promise;
+			await transport.finalize(spec.finalizeToken);
+			await waitForPathRemoval(dirname(socketPath), 'Early-exit reservation cleanup');
 		} finally {
 			forceTerminateChild(child);
 			await childExit.catch(() => undefined);
+			expire?.();
+			await cancelled.promise.catch(() => undefined);
+			await transport.finalize(spec.finalizeToken).catch(() => undefined);
+			await transport.close();
 		}
 	});
 

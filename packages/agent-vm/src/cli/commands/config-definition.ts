@@ -1,12 +1,10 @@
 import { command, constant, object, option } from '@optique/core';
 import { zod } from '@optique/zod';
-import { z } from 'zod';
 
 import { zoneIdSchema } from '../../config/system-config-identifier-schemas.js';
 import { projectZodScalarPresence } from '../agent-vm-parser-support.js';
 import { cliDescription, createConfigOption } from './command-definition-support.js';
-
-export const instructionResetPhaseSchema = z.enum(['plan', 'work', 'wrapup', 'all']).default('all');
+import { instructionResetPhaseSchema } from './config-command-schemas.js';
 const optionalResetZoneSchema = zoneIdSchema.optional();
 
 export const configCommandParser = command(

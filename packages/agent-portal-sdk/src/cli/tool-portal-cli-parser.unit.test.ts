@@ -262,4 +262,16 @@ describe('Tool Portal Optique CLI parser', () => {
 			).toThrow('must not mix ZodOptional and ZodDefault');
 		},
 	);
+
+	it.each([
+		z.string().prefault('fallback'),
+		z.string().catch('fallback'),
+		z.string().default('fallback').pipe(z.string()),
+	])('rejects unsupported schemas that accept undefined', (schema) => {
+		const parser = option('--value', zod(schema, { placeholder: 'fallback' }));
+
+		expect(() => projectZodScalarPresence({ parser, schema })).toThrow(
+			/accepting undefined must use ZodOptional or ZodDefault/u,
+		);
+	});
 });

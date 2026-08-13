@@ -28,6 +28,11 @@ export function projectZodScalarPresence(
 	if (props.schema instanceof ZodDefault) {
 		return withDefault(props.parser, props.schema.parse(undefined));
 	}
+	if (props.schema.safeParse(undefined).success) {
+		throw new TypeError(
+			'CLI value schemas accepting undefined must use ZodOptional or ZodDefault.',
+		);
+	}
 	return props.parser;
 }
 

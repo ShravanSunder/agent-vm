@@ -66,6 +66,11 @@ const openClawLoginParser = command(
 						metavar: 'PROFILE_ID',
 						placeholder: 'profile',
 					}),
+					{
+						description: cliDescription(
+							'Profile id to create or refresh. Can be passed more than once.',
+						),
+					},
 				),
 				schema: authenticationProfileIdsSchema,
 			}),

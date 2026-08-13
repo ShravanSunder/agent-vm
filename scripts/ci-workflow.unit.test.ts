@@ -92,7 +92,7 @@ describe('CI workflow topology', () => {
 			'pnpm python:test:hermes',
 			'pnpm test:e2e:inventory',
 			'pnpm run test:e2e:${{ matrix.lane }}',
-			'pnpm run test:e2e:vm -- --shard=${{ matrix.shard }}',
+			'pnpm run test:e2e:vm --shard=${{ matrix.shard }}',
 			'pnpm run test:e2e:vm-managed-gateway',
 			'--tags-filter=managed-gateway-startup',
 			'--tags-filter=managed-gateway-degraded-input',
@@ -125,6 +125,7 @@ describe('CI workflow topology', () => {
 		for (const shard of ['1/6', '2/6', '3/6', '4/6', '5/6', '6/6']) {
 			expect(workflow).toContain(`shard: ${shard}`);
 		}
+		expect(workflow).not.toContain('pnpm run test:e2e:vm -- --shard=');
 		for (const hostLane of ['host-docker', 'host', 'vm-mediation']) {
 			expect(workflow).toContain(`- ${hostLane}`);
 		}

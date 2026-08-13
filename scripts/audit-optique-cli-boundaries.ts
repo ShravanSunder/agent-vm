@@ -26,7 +26,7 @@ export interface AuditOptiqueCliBoundariesProps {
 	readonly repositoryRoot: string;
 }
 
-interface DefaultInventorySeed {
+export interface DefaultInventorySeed {
 	readonly commandTypeAlias: string;
 	readonly executableName: string;
 	readonly executableRoot: string;
@@ -35,7 +35,7 @@ interface DefaultInventorySeed {
 	readonly valueBearing: boolean;
 }
 
-const DEFAULT_INVENTORY_SEEDS = [
+export const DEFAULT_INVENTORY_SEEDS = [
 	{
 		commandTypeAlias: 'AgentVmCommand',
 		executableName: 'agent-vm',
@@ -314,6 +314,10 @@ function isApprovedLocalSchemaOwnerFilePath(filePath: string): boolean {
 function isPureLocalSchemaOwnerSourceFile(sourceFile: ts.SourceFile): boolean {
 	if (!isApprovedLocalSchemaOwnerFilePath(sourceFile.fileName)) return false;
 	return sourceFile.statements.every((statement) => {
+		if (ts.isExportDeclaration(statement)) {
+			return statement.moduleSpecifier === undefined;
+		}
+		if (ts.isImportEqualsDeclaration(statement) && !statement.isTypeOnly) return false;
 		if (!ts.isImportDeclaration(statement) || !isRuntimeImportDeclaration(statement)) return true;
 		return moduleSpecifierText(statement) === 'zod';
 	});
@@ -732,7 +736,9 @@ function auditInventoryEntry(
 					if (
 						importedLocalFilePath !== undefined &&
 						(importedLocalSourceFile === undefined ||
-							!isParserModule(entry, importedLocalSourceFile)) &&
+							!isParserModule(entry, importedLocalSourceFile) ||
+							(isApprovedDomainSchemaImport(node, importedModule) &&
+								!approvedDomainSchemaImport)) &&
 						!approvedDomainSchemaImport
 					) {
 						insertFinding(sourceFile, node, `parser module imports effect owner ${importedModule}`);

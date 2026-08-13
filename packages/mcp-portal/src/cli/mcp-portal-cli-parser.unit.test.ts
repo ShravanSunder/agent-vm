@@ -134,6 +134,16 @@ describe('MCP Portal Optique parser', () => {
 		).toThrow(/mixes ZodOptional and ZodDefault/u);
 	});
 
+	it.each([
+		z.string().prefault('fallback'),
+		z.string().catch('fallback'),
+		z.string().default('fallback').pipe(z.string()),
+	])('rejects unsupported schemas that accept undefined', (schema) => {
+		expect(() => projectZodScalarPresence(schema, constant('value'))).toThrow(
+			/accepting undefined must use ZodOptional or ZodDefault/u,
+		);
+	});
+
 	it('lets the repeated array schema own the empty default', () => {
 		const repeatedSchema = z.array(z.string().min(1)).default([]);
 		const parser = projectZodRepeatedOption(

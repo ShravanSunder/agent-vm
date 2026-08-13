@@ -1,11 +1,13 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+	DEFAULT_INVENTORY_SEEDS,
 	auditOptiqueCliBoundaries,
+	auditRepositoryOptiqueCliBoundaries,
 	type OptiqueCliBoundaryInventoryEntry,
 } from './audit-optique-cli-boundaries.js';
 
@@ -76,6 +78,30 @@ export function projectZodRepeatedOption(value: ZodDefault<ZodArray>): unknown {
 `;
 
 describe('Optique CLI architecture audit', () => {
+	it('audits the real CLI roots and keeps inventory seeds aligned with package bins', async () => {
+		// Arrange / Act
+		const findings = await auditRepositoryOptiqueCliBoundaries();
+
+		// Assert
+		expect(findings).toEqual([]);
+		expect(new Set(DEFAULT_INVENTORY_SEEDS.map((seed) => seed.executableName)).size).toBe(
+			DEFAULT_INVENTORY_SEEDS.length,
+		);
+		await Promise.all(
+			DEFAULT_INVENTORY_SEEDS.map(async (seed): Promise<void> => {
+				const packageDirectory = seed.executableRoot.split('/').slice(0, 2).join('/');
+				const packageManifest = JSON.parse(
+					await readFile(path.join(process.cwd(), packageDirectory, 'package.json'), 'utf8'),
+				) as { readonly bin?: Readonly<Record<string, string>> };
+				const manifestBinPath = packageManifest.bin?.[seed.executableName];
+				expect(manifestBinPath).toBeDefined();
+				expect(path.posix.normalize(path.posix.join(packageDirectory, manifestBinPath ?? ''))).toBe(
+					seed.executableRoot.replace('/src/', '/dist/').replace(/\.ts$/u, '.js'),
+				);
+			}),
+		);
+	});
+
 	it('accepts the direct runner, exact inferred alias, and admitted projection owners', async () => {
 		// Arrange / Act
 		const findings = await auditFixture([
@@ -762,7 +788,32 @@ void fixtureSchema;
 		]);
 
 		// Assert
-		expect(findings.join('\n')).toMatch(/fixture-schema\.ts.*effect owner/u);
+		expect(findings.join('\n')).toMatch(/effect owner.*fixture-schema\.js/u);
+	});
+
+	it('rejects a schema owner that re-exports through an effect owner', async () => {
+		// Arrange
+		const parser = `${admittedParser}
+import { fixtureSchema } from './fixture-schema.js';
+void fixtureSchema;
+`;
+
+		// Act
+		const findings = await auditFixture([
+			{ content: admittedRoot, relativePath: 'packages/fixture/src/bin/fixture-cli.ts' },
+			{ content: parser, relativePath: 'packages/fixture/src/cli/fixture-cli-parser.ts' },
+			{
+				content: `export { effectSchema as fixtureSchema } from './effect-owner.js';`,
+				relativePath: 'packages/fixture/src/cli/fixture-schema.ts',
+			},
+			{
+				content: `import { readFile } from 'node:fs/promises';\nexport const effectSchema = readFile;`,
+				relativePath: 'packages/fixture/src/cli/effect-owner.ts',
+			},
+		]);
+
+		// Assert
+		expect(findings.join('\n')).toMatch(/effect owner.*fixture-schema\.js/u);
 	});
 
 	it('rejects an unknown external runtime import from a parser module', async () => {

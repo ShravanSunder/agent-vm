@@ -204,7 +204,7 @@ jobs:
 
       - name: Run VM shard
         if: matrix.shard != ''
-        run: pnpm run test:e2e:vm -- --shard=${{ matrix.shard }}
+        run: pnpm run test:e2e:vm --shard=${{ matrix.shard }}
 
       - parallel:
           - name: Run managed Gateway startup tests
