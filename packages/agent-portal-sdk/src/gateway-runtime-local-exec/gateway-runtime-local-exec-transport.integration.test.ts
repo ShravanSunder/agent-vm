@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { access, mkdtemp, stat } from 'node:fs/promises';
 import { createConnection, type Socket } from 'node:net';
 import { dirname } from 'node:path';
@@ -24,6 +24,90 @@ interface Deferred<TValue> {
 	readonly promise: Promise<TValue>;
 	readonly reject: (error: Error) => void;
 	readonly resolve: (value: TValue) => void;
+}
+
+interface ChildExit {
+	readonly code: number | null;
+	readonly signal: NodeJS.Signals | null;
+}
+
+const CHILD_PROTOCOL_DEADLINE_MS = 10_000;
+
+function childStderrDiagnostic(stderr: readonly Buffer[]): string {
+	const contents = Buffer.concat(stderr).toString().trim();
+	return contents.length === 0 ? '<empty>' : contents.slice(-2_000);
+}
+
+async function withProtocolDeadline<TValue>(
+	promise: Promise<TValue>,
+	label: string,
+	stderr: readonly Buffer[],
+): Promise<TValue> {
+	let timeout: ReturnType<typeof setTimeout> | undefined;
+	try {
+		return await Promise.race([
+			promise,
+			new Promise<never>((_resolve, reject) => {
+				timeout = setTimeout(
+					() =>
+						reject(
+							new Error(
+								`${label} exceeded ${String(CHILD_PROTOCOL_DEADLINE_MS)}ms deadline; stderr: ${childStderrDiagnostic(stderr)}`,
+							),
+						),
+					CHILD_PROTOCOL_DEADLINE_MS,
+				);
+			}),
+		]);
+	} finally {
+		if (timeout !== undefined) clearTimeout(timeout);
+	}
+}
+
+function observeChildExit(
+	child: ChildProcess,
+	label: string,
+	stderr: readonly Buffer[],
+): Promise<ChildExit> {
+	if (child.exitCode !== null || child.signalCode !== null) {
+		return Promise.resolve({ code: child.exitCode, signal: child.signalCode });
+	}
+	return new Promise<ChildExit>((resolve, reject) => {
+		child.once('error', (error: Error) => {
+			reject(
+				new Error(`${label} failed: ${error.message}; stderr: ${childStderrDiagnostic(stderr)}`, {
+					cause: error,
+				}),
+			);
+		});
+		child.once('close', (code, signal) => resolve({ code, signal }));
+	});
+}
+
+async function waitForProgressBeforeChildExit(
+	progress: Promise<void>,
+	childExit: Promise<ChildExit>,
+	label: string,
+	stderr: readonly Buffer[],
+): Promise<void> {
+	await withProtocolDeadline(
+		Promise.race([
+			progress,
+			childExit.then((exit) => {
+				throw new Error(
+					`${label} closed before protocol progress (code=${String(exit.code)}, signal=${String(exit.signal)}); stderr: ${childStderrDiagnostic(stderr)}`,
+				);
+			}),
+		]),
+		label,
+		stderr,
+	);
+}
+
+function terminateChild(child: ChildProcess): void {
+	if (child.exitCode === null && child.signalCode === null && !child.killed) {
+		child.kill('SIGTERM');
+	}
 }
 
 function createDeferred<TValue>(): Deferred<TValue> {
@@ -164,25 +248,69 @@ describe('GatewayRuntimeLocalExecTransport', () => {
 		const stderr: Buffer[] = [];
 		child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
 		child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
+		const childExit = observeChildExit(child, 'Local exec helper', stderr);
 		const localInput = Buffer.alloc(96 * 1024, 0x61);
-		child.stdin.end(localInput);
-		await firstWriteStarted.promise;
-		expect(maximumActiveWriteCount).toBe(1);
-		releaseFirstWrite.resolve(undefined);
-		const exit = await new Promise<{
-			readonly code: number | null;
-			readonly signal: NodeJS.Signals | null;
-		}>((resolve) => child.once('close', (code, signal) => resolve({ code, signal })));
+		try {
+			child.stdin.end(localInput);
+			await waitForProgressBeforeChildExit(
+				firstWriteStarted.promise,
+				childExit,
+				'Local exec helper first stdin relay',
+				stderr,
+			);
+			expect(maximumActiveWriteCount).toBe(1);
+			releaseFirstWrite.resolve(undefined);
+			const exit = await withProtocolDeadline(childExit, 'Local exec helper exit', stderr);
 
-		expect(exit).toEqual({ code: 17, signal: null });
-		expect(Buffer.concat(receivedInput)).toEqual(localInput);
-		expect(maximumActiveWriteCount).toBe(1);
-		expect(Buffer.concat(stdout).toString()).toBe('remote stdout');
-		expect(stderrReadCount).toBe(2);
-		expect(Buffer.concat(stderr).toString()).toBe('remote stderr');
-		expect(await pathDoesNotExist(dirname(socketPath))).toBe(true);
-		await transport.finalize(spec.finalizeToken);
-		await transport.close();
+			expect(exit).toEqual({ code: 17, signal: null });
+			expect(Buffer.concat(receivedInput)).toEqual(localInput);
+			expect(maximumActiveWriteCount).toBe(1);
+			expect(Buffer.concat(stdout).toString()).toBe('remote stdout');
+			expect(stderrReadCount).toBe(2);
+			expect(Buffer.concat(stderr).toString()).toBe('remote stderr');
+			expect(await pathDoesNotExist(dirname(socketPath))).toBe(true);
+		} finally {
+			releaseFirstWrite.resolve(undefined);
+			terminateChild(child);
+			try {
+				await withProtocolDeadline(childExit, 'Local exec helper cleanup', stderr);
+			} catch {
+				child.kill('SIGKILL');
+				await withProtocolDeadline(childExit, 'Local exec helper forced cleanup', stderr).catch(
+					() => undefined,
+				);
+			}
+			await transport.finalize(spec.finalizeToken);
+			await transport.close();
+		}
+	});
+
+	it('fails fast when the helper exits before protocol progress', async () => {
+		const stalledProgress = createDeferred<void>();
+		const stderr: Buffer[] = [];
+		const child = spawn(process.execPath, [
+			'-e',
+			"process.stderr.write('intentional early exit\\n'); process.exit(23);",
+		]);
+		child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
+		const childExit = observeChildExit(child, 'Early-exit local exec helper', stderr);
+		try {
+			await expect(
+				waitForProgressBeforeChildExit(
+					stalledProgress.promise,
+					childExit,
+					'Early-exit local exec helper',
+					stderr,
+				),
+			).rejects.toThrow(
+				/closed before protocol progress \(code=23, signal=null\); stderr: intentional early exit/,
+			);
+		} finally {
+			terminateChild(child);
+			await withProtocolDeadline(childExit, 'Early-exit helper cleanup', stderr).catch(
+				() => undefined,
+			);
+		}
 	});
 
 	it('expires an unused reservation, cancels its operation, and removes private files', async () => {
