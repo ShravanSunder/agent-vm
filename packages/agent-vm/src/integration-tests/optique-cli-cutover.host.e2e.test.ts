@@ -266,6 +266,28 @@ describe('Optique cutover built CLI contract', () => {
 		expectNoOrdinaryStack(result.stderr);
 	});
 
+	it('agent-vm-worker renders the schema-owned default port in built leaf help', async () => {
+		// Arrange / Act
+		const result = await runBuiltCli('agent-vm-worker', ['serve', '--help']);
+
+		// Assert
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout.match(/18789/gu)).toHaveLength(1);
+		expect(result.stderr).toBe('');
+	});
+
+	it('agent-vm-worker accepts the maximum port and reaches the health operation', async () => {
+		// Arrange / Act
+		const result = await runBuiltCli('agent-vm-worker', ['health', '--port', '65535']);
+
+		// Assert
+		expect(result.exitCode).not.toBe(0);
+		expect(result.stdout).toBe('');
+		expect(result.stderr).toContain('Health check failed');
+		expect(result.stderr).not.toContain('<=65535');
+		expectNoOrdinaryStack(result.stderr);
+	});
+
 	it('preserves the existing agent-vm version surface', async () => {
 		// Arrange / Act
 		const longVersionResult = await runBuiltCli('agent-vm', ['--version']);
@@ -361,4 +383,27 @@ describe('Optique cutover built CLI contract', () => {
 		expect(result.stderr).not.toContain('ENOENT');
 		expectNoOrdinaryStack(result.stderr);
 	});
+
+	it.each(['0', '65535'] as const)(
+		'mcp-portal accepts boundary port %s before loading server configuration',
+		async (port) => {
+			// Arrange / Act
+			const result = await runBuiltCli('mcp-portal', [
+				'mcp-proxy',
+				'serve',
+				'--config-dir',
+				'/definitely-not-loaded',
+				'--port',
+				port,
+			]);
+
+			// Assert
+			expect(result.exitCode).not.toBe(0);
+			expect(result.stdout).toBe('');
+			expect(result.stderr).toContain('ENOENT');
+			expect(result.stderr).not.toContain('>=0');
+			expect(result.stderr).not.toContain('<=65535');
+			expectNoOrdinaryStack(result.stderr);
+		},
+	);
 });
