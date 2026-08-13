@@ -7,7 +7,27 @@ import {
 	resolveE2eGlobalCacheRoot,
 	runE2eWorkspaceBuild,
 	shouldBuildWorkspaceForE2e,
+	shouldOwnE2eWorkspaceGlobalSetup,
 } from './e2e-workspace-build-global-setup.js';
+
+function createWorkspaceSetupOwnershipProject(isRootProject: boolean): {
+	isRootProject(): boolean;
+	provide(key: 'agentVmE2eCacheRoot', value: string): void;
+} {
+	return {
+		isRootProject: (): boolean => isRootProject,
+		provide: (): void => undefined,
+	};
+}
+
+describe('shouldOwnE2eWorkspaceGlobalSetup', () => {
+	it('assigns the inherited global setup to the root project only', () => {
+		expect(shouldOwnE2eWorkspaceGlobalSetup(createWorkspaceSetupOwnershipProject(true))).toBe(true);
+		expect(shouldOwnE2eWorkspaceGlobalSetup(createWorkspaceSetupOwnershipProject(false))).toBe(
+			false,
+		);
+	});
+});
 
 describe('shouldBuildWorkspaceForE2e', () => {
 	it('skips the workspace build for ordinary ungated e2e inventory runs', () => {

@@ -6,8 +6,12 @@ type E2eWorkspaceBuildResult = 'built' | 'skipped';
 
 type E2eWorkspaceBuildEnvironment = Partial<Record<string, string>>;
 
-interface E2eWorkspaceBuildProject {
+interface E2eCacheRootProject {
 	provide(key: 'agentVmE2eCacheRoot', value: string): void;
+}
+
+interface E2eWorkspaceBuildProject extends E2eCacheRootProject {
+	isRootProject(): boolean;
 }
 
 interface E2eWorkspaceBuildExecOptions {
@@ -27,7 +31,7 @@ interface RunE2eWorkspaceBuildOptions {
 
 interface ConfigureE2eCacheRootOptions {
 	readonly env?: E2eWorkspaceBuildEnvironment;
-	readonly project?: E2eWorkspaceBuildProject;
+	readonly project?: E2eCacheRootProject;
 	readonly tmpdir?: string;
 }
 
@@ -92,7 +96,12 @@ export function runE2eWorkspaceBuild(
 	return 'built';
 }
 
-export function setup(project?: E2eWorkspaceBuildProject): void {
-	configureE2eCacheRootForGlobalSetup(project === undefined ? {} : { project });
+export function shouldOwnE2eWorkspaceGlobalSetup(project: E2eWorkspaceBuildProject): boolean {
+	return project.isRootProject();
+}
+
+export function setup(project: E2eWorkspaceBuildProject): void {
+	if (!shouldOwnE2eWorkspaceGlobalSetup(project)) return;
+	configureE2eCacheRootForGlobalSetup({ project });
 	runE2eWorkspaceBuild({ cwd: process.cwd() });
 }

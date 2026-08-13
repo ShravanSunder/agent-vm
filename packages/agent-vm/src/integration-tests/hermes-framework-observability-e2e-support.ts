@@ -1,8 +1,28 @@
+import path from 'node:path';
+
+import { execa } from 'execa';
 import { expect } from 'vitest';
 
 import { waitForProtocolRetryInterval } from './e2e-protocol-wait.js';
+import type { HermesE2eProject } from './hermes-e2e-harness.js';
 
 /* oxlint-disable eslint/no-await-in-loop -- helpers wait on external protocol state */
+
+export interface HermesObservabilityStackProject {
+	readonly systemConfig: {
+		readonly controllerRuntimeDir: string;
+		readonly host: {
+			readonly observability?:
+				| { readonly enabled: false }
+				| {
+						readonly enabled: true;
+						readonly stack: { readonly mode: 'external' | 'managed' };
+				  }
+				| undefined;
+			readonly projectNamespace: string;
+		};
+	};
+}
 
 export function expectProviderTransitionLogs(options: {
 	readonly fallbackModelName: string;
@@ -63,6 +83,87 @@ export function selectStoredHermesFrameworkLogs(records: string): string {
 			);
 		})
 		.join('\n');
+}
+
+export function rejectedCleanupReasons(
+	results: readonly PromiseSettledResult<unknown>[],
+): readonly unknown[] {
+	return results.flatMap((result): readonly unknown[] =>
+		result.status === 'rejected' ? [result.reason] : [],
+	);
+}
+
+export async function settleCleanupPhases(
+	createPhasePromises: readonly (() => readonly Promise<unknown>[])[],
+): Promise<readonly unknown[]> {
+	const cleanupErrors: unknown[] = [];
+	for (const createPromises of createPhasePromises) {
+		try {
+			cleanupErrors.push(...rejectedCleanupReasons(await Promise.allSettled(createPromises())));
+		} catch (error: unknown) {
+			cleanupErrors.push(error);
+		}
+	}
+	return cleanupErrors;
+}
+
+export async function stopObservabilityStack(
+	project: HermesObservabilityStackProject,
+): Promise<void> {
+	const observability = project.systemConfig.host.observability;
+	if (observability?.enabled !== true || observability.stack.mode !== 'managed') return;
+	const composePath = path.join(
+		project.systemConfig.controllerRuntimeDir,
+		'observability',
+		project.systemConfig.host.projectNamespace,
+		'docker-compose.observability.yml',
+	);
+	const result = await execa(
+		'docker',
+		[
+			'compose',
+			'--project-name',
+			project.systemConfig.host.projectNamespace,
+			'--file',
+			composePath,
+			'down',
+			'--volumes',
+		],
+		{ reject: false, timeout: 30_000 },
+	);
+	if (result.failed) {
+		throw new Error(`Failed to stop the managed observability stack: ${result.shortMessage}`, {
+			cause: result,
+		});
+	}
+}
+
+export async function readObservabilityStackDiagnostics(
+	project: HermesE2eProject,
+): Promise<string> {
+	const composePath = path.join(
+		project.systemConfig.controllerRuntimeDir,
+		'observability',
+		project.systemConfig.host.projectNamespace,
+		'docker-compose.observability.yml',
+	);
+	const result = await execa(
+		'docker',
+		[
+			'compose',
+			'--project-name',
+			project.systemConfig.host.projectNamespace,
+			'--file',
+			composePath,
+			'logs',
+			'--no-color',
+			'--tail',
+			'200',
+			'otel-collector',
+		],
+		{ reject: false, timeout: 30_000 },
+	);
+	return `${result.stdout}\n${result.stderr}`;
 }
 
 export async function waitForVictoriaMetric(

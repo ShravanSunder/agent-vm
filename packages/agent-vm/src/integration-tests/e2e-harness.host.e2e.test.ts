@@ -50,7 +50,6 @@ import {
 	scaffoldWorkerE2eProject,
 	seedGatewayImageCacheIfAvailable,
 	shouldCleanupE2eDockerImages,
-	shouldRunWorkerGatewayE2e,
 	useLocalOpenClawGatewayImagePackages,
 	useLocalOpenClawPluginGatewayImage,
 	useLocalToolVmMcpPortalPackage,
@@ -143,77 +142,6 @@ afterEach(async () => {
 			await fs.rm(temporaryRoot, { force: true, recursive: true });
 		}),
 	);
-});
-
-describe('shouldRunWorkerGatewayE2e', () => {
-	it('requires explicit opt-in even when credentials and commands are available', async () => {
-		expect(
-			await shouldRunWorkerGatewayE2e({
-				architecture: 'aarch64',
-				commandExists: () => true,
-				env: { AGENT_VM_TEST_OPENAI_API_KEY: 'test-token' },
-				resolveRequiredZigVersion: async () => '0.16.0',
-				resolveZigVersion: async () => '0.16.0',
-			}),
-		).toBe(false);
-	});
-
-	it('requires a model credential when explicitly enabled', async () => {
-		expect(
-			await shouldRunWorkerGatewayE2e({
-				architecture: 'aarch64',
-				commandExists: () => true,
-				env: { AGENT_VM_WORKER_E2E: '1' },
-				resolveRequiredZigVersion: async () => '0.16.0',
-				resolveZigVersion: async () => '0.16.0',
-			}),
-		).toBe(false);
-	});
-
-	it('requires QEMU and Docker when explicitly enabled', async () => {
-		expect(
-			await shouldRunWorkerGatewayE2e({
-				architecture: 'aarch64',
-				commandExists: (command) => command !== 'docker',
-				env: {
-					AGENT_VM_WORKER_E2E: '1',
-					AGENT_VM_TEST_OPENAI_API_KEY: 'test-token',
-				},
-				resolveRequiredZigVersion: async () => '0.16.0',
-				resolveZigVersion: async () => '0.16.0',
-			}),
-		).toBe(false);
-	});
-
-	it('requires a compatible Zig version when explicitly enabled', async () => {
-		expect(
-			await shouldRunWorkerGatewayE2e({
-				architecture: 'aarch64',
-				commandExists: () => true,
-				env: {
-					AGENT_VM_WORKER_E2E: '1',
-					AGENT_VM_TEST_OPENAI_API_KEY: 'test-token',
-				},
-				resolveRequiredZigVersion: async () => '0.16.0',
-				resolveZigVersion: async () => '0.15.2',
-			}),
-		).toBe(false);
-	});
-
-	it('allows the worker gateway smoke when opt-in, credentials, commands, and Zig are compatible', async () => {
-		expect(
-			await shouldRunWorkerGatewayE2e({
-				architecture: 'aarch64',
-				commandExists: () => true,
-				env: {
-					AGENT_VM_WORKER_E2E: '1',
-					AGENT_VM_TEST_OPENAI_API_KEY: 'test-token',
-				},
-				resolveRequiredZigVersion: async () => '0.16.0',
-				resolveZigVersion: async () => '0.16.0',
-			}),
-		).toBe(true);
-	});
 });
 
 describe('scaffoldGatewayE2eProject', () => {
@@ -590,6 +518,18 @@ describe('startE2eControllerRuntime', () => {
 
 	it('removes OpenClaw control-link smoke temp roots', async () => {
 		const temporaryRoot = await createTemporaryRoot('openclaw-control-link-e2e-');
+
+		await removeE2eTempRoot(temporaryRoot);
+
+		await expect(fs.access(temporaryRoot)).rejects.toThrow();
+	});
+
+	it.each([
+		'hermes-framework-observability-e2e-',
+		'hermes-framework-otel-signals-disabled-e2e-',
+		'hermes-tool-portal-orientation-e2e-',
+	])('removes owned Hermes temp roots with prefix %s', async (prefix) => {
+		const temporaryRoot = await createTemporaryRoot(prefix);
 
 		await removeE2eTempRoot(temporaryRoot);
 

@@ -78,14 +78,25 @@ export async function startE2eGatewayZoneForController(
 	options: Parameters<typeof startGatewayZoneForControllerDefault>[0],
 	testHooks: {
 		readonly connectGatewayControlSession?: GatewayControlSessionConnector;
+		readonly onManagedVmCreateRequest?: (request: ManagedVmCreateRequest) => void;
 	} = {},
 ): Promise<Awaited<ReturnType<typeof startGatewayZoneForControllerDefault>>> {
+	const managedVmFactory =
+		testHooks.onManagedVmCreateRequest === undefined
+			? managedVmRuntimeComposition.managedVmFactory
+			: {
+					createManagedVm: async (request: ManagedVmCreateRequest) => {
+						testHooks.onManagedVmCreateRequest?.(request);
+						return await managedVmRuntimeComposition.managedVmFactory.createManagedVm(request);
+					},
+				};
 	return await startGatewayZoneForControllerDefault(options, {
 		...managedVmRuntimeComposition,
 		...(testHooks.connectGatewayControlSession === undefined
 			? {}
 			: { connectGatewayControlSession: testHooks.connectGatewayControlSession }),
 		gatewayRuntimeArtifactLimits: controllerFixedGatewayRuntimeArtifactLimits,
+		managedVmFactory,
 	});
 }
 
@@ -170,7 +181,10 @@ const e2eTempRootPrefixes = [
 	'openclaw-process-recovery-e2e-',
 	'openclaw-subagent-lease-e2e-',
 	'openclaw-workspace-git-e2e-',
+	'hermes-framework-observability-e2e-',
+	'hermes-framework-otel-',
 	'hermes-managed-base-environment-e2e-',
+	'hermes-tool-portal-orientation-e2e-',
 	'worker-loop-e2e-',
 ] as const;
 
