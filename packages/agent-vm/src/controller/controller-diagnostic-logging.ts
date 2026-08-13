@@ -1,5 +1,7 @@
 import { getLogger } from '@logtape/logtape';
 
+import { createBoundedDiagnosticProperties } from '../observability/process-logging.js';
+
 export type ControllerDiagnosticDomain =
 	| 'gateway'
 	| 'git'
@@ -23,7 +25,18 @@ export type ControllerDiagnosticEvent =
 export type ControllerDiagnosticLevel = 'info' | 'warning';
 export type ControllerDiagnosticFailureClass = 'failure' | 'rejected' | 'timeout' | 'unavailable';
 
-export type ControllerDiagnosticDescriptor =
+export interface ControllerDiagnosticTelemetry {
+	readonly attempt?: number | undefined;
+	readonly durationMs?: number | undefined;
+	readonly errorClass?: string | undefined;
+	readonly errorCode?: string | undefined;
+	readonly leaseId?: string | undefined;
+	readonly operation?: string | undefined;
+	readonly statusCode?: number | undefined;
+	readonly zoneId?: string | undefined;
+}
+
+export type ControllerDiagnosticDescriptor = (
 	| {
 			readonly event: ControllerDiagnosticEvent;
 			readonly level: 'info';
@@ -32,16 +45,21 @@ export type ControllerDiagnosticDescriptor =
 			readonly event: ControllerDiagnosticEvent;
 			readonly failureClass: ControllerDiagnosticFailureClass;
 			readonly level: 'warning';
-	  };
+	  }
+) & {
+	readonly telemetry?: ControllerDiagnosticTelemetry | undefined;
+};
 
-type ControllerDiagnosticProperties = Readonly<Record<string, string>>;
+type ControllerDiagnosticProperties = Readonly<Record<string, boolean | number | string>>;
 
 export function createControllerDiagnosticProperties(
 	descriptor: ControllerDiagnosticDescriptor,
 ): ControllerDiagnosticProperties {
-	return descriptor.level === 'warning'
-		? { event: descriptor.event, failureClass: descriptor.failureClass }
-		: { event: descriptor.event };
+	return createBoundedDiagnosticProperties({
+		...descriptor.telemetry,
+		event: descriptor.event,
+		...(descriptor.level === 'warning' ? { failureClass: descriptor.failureClass } : {}),
+	});
 }
 
 export function writeControllerDiagnostic(

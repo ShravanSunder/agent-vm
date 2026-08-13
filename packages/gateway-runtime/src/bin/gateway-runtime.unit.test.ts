@@ -197,6 +197,30 @@ describe('Gateway Runtime start lifecycle', () => {
 		expect(stderr).toEqual(['Gateway runtime logging shutdown failed.\n']);
 	});
 
+	it('shuts down logging when readiness output fails', async () => {
+		const readinessFailure = new Error('readiness writer failed');
+		const shutdown = vi.fn(async (): Promise<void> => undefined);
+
+		await expect(
+			runGatewayRuntimeStartLifecycle({
+				config: { observability: { kind: 'disabled' } },
+				configureLogging: async () => ({ shutdown }),
+				startService: async () => ({
+					readiness: { kind: 'ready' },
+					retire: async (): Promise<Readonly<Record<string, string>>> => ({ kind: 'retired' }),
+				}),
+				waitForRetirementSignal: () => new Promise<never>(() => undefined),
+				writeFatalEvidence: async (): Promise<void> => undefined,
+				writeStderr: (): void => undefined,
+				writeStdout: (): never => {
+					throw readinessFailure;
+				},
+			}),
+		).rejects.toBe(readinessFailure);
+
+		expect(shutdown).toHaveBeenCalledTimes(1);
+	});
+
 	it('reports secondary LogTape shutdown failure after startup failure', async () => {
 		const stderr: string[] = [];
 		const fatalEvidence = vi.fn(async (): Promise<void> => undefined);

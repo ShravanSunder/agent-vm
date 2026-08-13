@@ -82,8 +82,15 @@ describe('isToolVmLeaseVmLive', () => {
 			category: ['agent-vm', 'controller', 'lease'],
 			level: 'warning',
 			message: ['Controller diagnostic'],
-			properties: { event: 'lease-liveness-failed', failureClass: 'failure' },
+			properties: {
+				event: 'lease-liveness-failed',
+				failureClass: 'failure',
+				leaseId: 'lease-1',
+				operation: 'tool-vm-lease-liveness',
+				zoneId: 'shravan',
+			},
 		});
+		expect(JSON.stringify(capturedRecords[0]?.properties)).not.toContain(failure.message);
 	});
 
 	it('aborts the VM probe and returns false at exactly five seconds', async () => {

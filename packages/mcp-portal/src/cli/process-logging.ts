@@ -67,13 +67,6 @@ function boundedIdentifier(value: string): string {
 	return normalized.length === 0 ? 'unknown' : normalized;
 }
 
-function boundedDurationMs(value: number): number {
-	if (!Number.isFinite(value) || value < 0) {
-		return 0;
-	}
-	return Math.min(Math.trunc(value), Number.MAX_SAFE_INTEGER);
-}
-
 function boundedReason(value: string): string {
 	const normalized = value
 		.trim()
@@ -136,8 +129,7 @@ export function mapPortalServerLogEvent(event: PortalServerLogEvent): PortalServ
 					{
 						clientAddressClass: classifyClientAddress(event.clientAddress),
 						decision: event.decision,
-						durationMs: boundedDurationMs(event.timeMs),
-						scope: boundedIdentifier(event.agentId),
+						...(event.decision === 'allow' ? { scope: boundedIdentifier(event.agentId) } : {}),
 					},
 					event.reason,
 				),
@@ -148,9 +140,7 @@ export function mapPortalServerLogEvent(event: PortalServerLogEvent): PortalServ
 				level: 'warn',
 				message: 'MCP Portal proxy audit failed',
 				properties: {
-					durationMs: boundedDurationMs(event.timeMs),
 					failureClass: 'auth-audit',
-					scope: boundedIdentifier(event.agentId),
 				},
 			};
 		case 'mcp_portal_approval':
@@ -161,7 +151,6 @@ export function mapPortalServerLogEvent(event: PortalServerLogEvent): PortalServ
 				properties: propertiesWithOptionalReason(
 					{
 						decision: event.decision,
-						durationMs: boundedDurationMs(event.timeMs),
 						scope: boundedIdentifier(event.agentId),
 					},
 					event.reason,
@@ -173,7 +162,6 @@ export function mapPortalServerLogEvent(event: PortalServerLogEvent): PortalServ
 				level: 'warn',
 				message: 'MCP Portal approval audit failed',
 				properties: {
-					durationMs: boundedDurationMs(event.timeMs),
 					failureClass: 'approval-audit',
 					scope: boundedIdentifier(event.agentId),
 				},
@@ -278,7 +266,7 @@ export async function configureProcessLogging(
 	let shutdownPromise: Promise<void> | undefined;
 	return {
 		shutdown: (): Promise<void> => {
-			shutdownPromise ??= disposeImpl();
+			shutdownPromise ??= Promise.resolve().then(disposeImpl);
 			return shutdownPromise;
 		},
 	};

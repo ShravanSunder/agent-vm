@@ -120,25 +120,28 @@ export async function runGatewayRuntimeStartLifecycle<
 		});
 		throw error;
 	}
-	const retirementSignalPromise = props.waitForRetirementSignal();
-	props.writeStdout(`${JSON.stringify(service.readiness)}\n`);
-	const retirementSignal = await retirementSignalPromise;
+	let retirementSignal: GatewayRuntimeRetirementSignal | undefined;
 	try {
-		const retirement = await service.retire();
-		props.writeStdout(`${JSON.stringify(retirement)}\n`);
-	} catch (error: unknown) {
-		gatewayRuntimeProcessLogger.error('Gateway runtime service retirement failed.', {
-			event: 'retirement-failed',
-			failureClass: 'retirement',
-		});
-		throw error;
+		const retirementSignalPromise = props.waitForRetirementSignal();
+		props.writeStdout(`${JSON.stringify(service.readiness)}\n`);
+		retirementSignal = await retirementSignalPromise;
+		try {
+			const retirement = await service.retire();
+			props.writeStdout(`${JSON.stringify(retirement)}\n`);
+		} catch (error: unknown) {
+			gatewayRuntimeProcessLogger.error('Gateway runtime service retirement failed.', {
+				event: 'retirement-failed',
+				failureClass: 'retirement',
+			});
+			throw error;
+		}
 	} finally {
 		await logging.shutdown().catch(() => {
 			try {
 				props.writeStderr(gatewayRuntimeLoggingShutdownFailure);
 			} catch {}
 		});
-		retirementSignal.cleanup();
+		retirementSignal?.cleanup();
 	}
 }
 

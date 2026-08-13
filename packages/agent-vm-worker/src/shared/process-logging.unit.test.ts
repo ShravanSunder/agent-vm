@@ -153,7 +153,7 @@ describe.sequential('worker process logging', () => {
 		logging = undefined;
 	});
 
-	it('keeps only bounded safe worker context and omits captured streams', () => {
+	it('keeps only bounded safe worker context', () => {
 		const properties = toSafeWorkerLogProperties({
 			event: 'task-failed',
 			failureClass: 'executor-error',
@@ -161,8 +161,6 @@ describe.sequential('worker process logging', () => {
 			attempt: 2,
 			durationMs: 42,
 			error: new Error('raw command stdout must not be logged'),
-			stdout: 'captured stdout',
-			stderr: 'captured stderr',
 		});
 
 		expect(properties).toEqual({
@@ -173,8 +171,6 @@ describe.sequential('worker process logging', () => {
 			durationMs: 42,
 			errorClass: 'Error',
 		});
-		expect(properties).not.toHaveProperty('stdout');
-		expect(properties).not.toHaveProperty('stderr');
 	});
 
 	it('preserves safe JavaScript Error class names', () => {

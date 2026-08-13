@@ -344,14 +344,9 @@ export async function runControllerCommandOperation(
 			dependencies,
 		);
 		const selectedZone = requireZone(systemConfig, commandValue.options.zone);
-		let logging: ProcessLoggingHandle | undefined;
-		if (executionOptions.processRoot) {
-			try {
-				logging = await configureControllerLogging(io, systemConfig, executionOptions);
-			} catch {
-				writeSecondaryLoggingFailure(io, 'Controller process logging setup failed.\n');
-			}
-		}
+		const logging = executionOptions.processRoot
+			? await configureControllerLogging(io, systemConfig, executionOptions)
+			: undefined;
 		try {
 			const result = await dependencies.runControllerOfflineCleanup({
 				force: commandValue.options.force,

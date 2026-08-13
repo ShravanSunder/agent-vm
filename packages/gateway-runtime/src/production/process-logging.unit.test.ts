@@ -56,6 +56,14 @@ function otlpHttpObservability(): GatewayRuntimeToolPortalObservabilityConfig {
 	};
 }
 
+function otlpHttpObservabilityWithLogsDisabled(): GatewayRuntimeToolPortalObservabilityConfig {
+	const observability = otlpHttpObservability();
+	if (observability.kind !== 'otlp-http') {
+		throw new Error('Expected OTLP HTTP observability test fixture.');
+	}
+	return { ...observability, logs: false };
+}
+
 function createTestDependencies(options: {
 	readonly configure: NonNullable<ProcessLoggingDependencies['configure']>;
 	readonly dispose: NonNullable<ProcessLoggingDependencies['dispose']>;
@@ -215,6 +223,31 @@ describe('Gateway Runtime process logging', () => {
 			if (previousEndpoint === undefined) delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
 			else process.env.OTEL_EXPORTER_OTLP_ENDPOINT = previousEndpoint;
 		}
+	});
+
+	it('does not export logs when the typed observability provider disables them', async () => {
+		const configure = vi.fn(async (_config: Config<string, string>): Promise<void> => undefined);
+		const sink = createAsyncDisposableSink();
+		const getOpenTelemetrySink = vi.fn((options: OpenTelemetrySinkOptions): OpenTelemetrySink => {
+			expect(options).not.toHaveProperty('otlpExporterConfig');
+			expect(options.loggerProvider).toBeDefined();
+			expect(options).not.toHaveProperty('additionalResource');
+			return sink as OpenTelemetrySink;
+		});
+
+		await configureProcessLogging({
+			dependencies: createTestDependencies({
+				configure,
+				dispose: async (): Promise<void> => undefined,
+				getOpenTelemetrySink,
+				getStreamSink: () => sink,
+			}),
+			observability: otlpHttpObservabilityWithLogsDisabled(),
+			resourceAttributes: { 'agent_vm.zone.id': 'disabled-logs-zone' },
+			stderr: new Writable({ write: (_chunk, _encoding, callback): void => callback() }),
+		});
+
+		expect(getOpenTelemetrySink).toHaveBeenCalledTimes(1);
 	});
 
 	it('routes OTLP diagnostics to stderr only', async () => {

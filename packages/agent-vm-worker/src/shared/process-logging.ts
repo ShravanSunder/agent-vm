@@ -37,8 +37,6 @@ export interface WorkerLogContext {
 	readonly attempt?: number | undefined;
 	readonly durationMs?: number | undefined;
 	readonly error?: unknown;
-	readonly stdout?: string | undefined;
-	readonly stderr?: string | undefined;
 }
 
 function boundSafeString(value: string): string | undefined {

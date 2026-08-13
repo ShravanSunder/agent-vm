@@ -38,6 +38,10 @@ describe('writeControllerDiagnostic', () => {
 		const diagnostic: ControllerDiagnosticDescriptor = {
 			event: 'runtime-diagnostic',
 			level: 'info',
+			telemetry: {
+				operation: 'controller-start',
+				zoneId: 'zone-a',
+			},
 		};
 		writeControllerDiagnostic('runtime', diagnostic);
 		writeControllerDiagnostic('runtime', {
@@ -48,7 +52,7 @@ describe('writeControllerDiagnostic', () => {
 
 		expect(capturedRecords.map((record) => record.level)).toEqual(['info', 'warning']);
 		expect(capturedRecords.map((record) => record.properties)).toEqual([
-			{ event: 'runtime-diagnostic' },
+			{ event: 'runtime-diagnostic', operation: 'controller-start', zoneId: 'zone-a' },
 			{ event: 'controller-operation-failed', failureClass: 'unavailable' },
 		]);
 	});
@@ -90,14 +94,43 @@ describe('writeControllerDiagnostic', () => {
 			event: 'controller-operation-failed',
 			level: 'warning',
 			failureClass: 'failure',
+			telemetry: {
+				attempt: 2,
+				leaseId: 'lease-123',
+				statusCode: 503,
+				zoneId: 'zone-a',
+			},
 		});
 
 		expect(properties).toEqual({
+			attempt: 2,
 			event: 'controller-operation-failed',
 			failureClass: 'failure',
+			leaseId: 'lease-123',
+			statusCode: 503,
+			zoneId: 'zone-a',
 		});
 		expect(JSON.stringify(properties)).not.toMatch(
 			/example\.test|private\/repo|task-123|secret|response payload/u,
 		);
+	});
+
+	it('omits credential-shaped telemetry while retaining safe fields', () => {
+		const properties = createControllerDiagnosticProperties({
+			event: 'lease-liveness-failed',
+			failureClass: 'failure',
+			level: 'warning',
+			telemetry: {
+				leaseId: 'ghp_0123456789abcdefghijklmnopqrstuvwxyz',
+				operation: 'tool-vm-lease-liveness',
+				zoneId: 'Bearer opaque-credential-value',
+			},
+		});
+
+		expect(properties).toEqual({
+			event: 'lease-liveness-failed',
+			failureClass: 'failure',
+			operation: 'tool-vm-lease-liveness',
+		});
 	});
 });

@@ -18,6 +18,8 @@ const processLoggingCategory = ['agent-vm'] as const;
 const logtapeMetaCategory = ['logtape', 'meta'] as const;
 const otelDiagnosticsCategory = ['logtape', 'meta', 'otel'] as const;
 const maxDiagnosticStringLength = 256;
+const diagnosticCredentialPattern =
+	/https?:\/\/|op:\/\/|authorization|bearer\s+\S+|cookie|password|private\s+key|prompt|response|secret|token|(?:api[_-]?key|credential)\s*=|(?:^|[^a-z0-9])(?:gh[pousr]_|github_pat_|sk-(?:proj-)?|xox[baprs]-|ya29\.)[a-z0-9._-]+|(?:^|[^a-z0-9])eyJ[a-z0-9_-]*\.[a-z0-9_-]+\.[a-z0-9_-]+/iu;
 
 type BoundedDiagnosticValue = boolean | number | string;
 
@@ -53,10 +55,12 @@ export interface BoundedDiagnosticPropertiesInput {
 	readonly errorSummary?: string | undefined;
 	readonly event?: string | undefined;
 	readonly failureClass?: string | undefined;
+	readonly leaseId?: string | undefined;
 	readonly operation?: string | undefined;
 	readonly statusCode?: number | undefined;
 	readonly unsafeError?: unknown;
 	readonly unsafePayload?: unknown;
+	readonly zoneId?: string | undefined;
 }
 
 export function resolveProcessLoggingOtlpEndpoint(
@@ -81,9 +85,7 @@ export function createBoundedDiagnosticProperties(
 		if (
 			normalized.length === 0 ||
 			normalized.length > maxDiagnosticStringLength ||
-			/https?:\/\/|op:\/\/|authorization|cookie|password|private\s+key|prompt|response|secret|token/iu.test(
-				normalized,
-			)
+			diagnosticCredentialPattern.test(normalized)
 		) {
 			return;
 		}
@@ -102,8 +104,10 @@ export function createBoundedDiagnosticProperties(
 	addBoundedString('errorSummary', input.errorSummary);
 	addBoundedString('event', input.event);
 	addBoundedString('failureClass', input.failureClass);
+	addBoundedString('leaseId', input.leaseId);
 	addBoundedString('operation', input.operation);
 	addBoundedNumber('statusCode', input.statusCode);
+	addBoundedString('zoneId', input.zoneId);
 	return properties;
 }
 

@@ -69,7 +69,7 @@ function createOpenTelemetrySinkOptions(
 	observability: GatewayRuntimeToolPortalObservabilityConfig,
 	resourceAttributes: Readonly<Record<string, string>> | undefined,
 ): OpenTelemetrySinkOptions {
-	if (observability.kind === 'disabled') {
+	if (observability.kind === 'disabled' || !observability.logs) {
 		return {
 			diagnostics: false,
 			exceptionAttributes: false,

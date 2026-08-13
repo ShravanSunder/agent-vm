@@ -158,12 +158,19 @@ export interface CreateGatewayServiceHealthMonitorOptions {
 	readonly zoneIds: readonly string[];
 }
 
-function writeGatewayServiceHealthMonitorLog(message: string): void {
+function writeGatewayServiceHealthMonitorLog(
+	message: string,
+	telemetry: {
+		readonly operation?: string | undefined;
+		readonly zoneId?: string | undefined;
+	} = {},
+): void {
 	void message;
 	writeControllerDiagnostic('gateway', {
 		event: 'gateway-health-diagnostic',
 		level: 'warning',
 		failureClass: 'failure',
+		telemetry,
 	});
 }
 
@@ -912,6 +919,7 @@ export function createGatewayServiceHealthMonitor(
 					} catch (error) {
 						writeGatewayServiceHealthMonitorLog(
 							`probe failed for zone '${zoneId}': ${error instanceof Error ? error.message : String(error)}`,
+							{ operation: 'gateway-service-health-probe', zoneId },
 						);
 						const observedAtMs = options.now();
 						options.healthEventStore.record({

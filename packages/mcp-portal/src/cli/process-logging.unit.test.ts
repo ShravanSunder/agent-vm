@@ -1,7 +1,7 @@
 import { Writable } from 'node:stream';
 
 import { dispose, reset, type Config, type Sink } from '@logtape/logtape';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { PortalServerLogEvent } from './portal-server-operation.js';
 import {
@@ -82,6 +82,7 @@ function createTrackedSink(): TrackedSink {
 
 function createTestLoggingDependencies(options: {
 	readonly configure: NonNullable<ProcessLoggingDependencies['configure']>;
+	readonly dispose?: NonNullable<ProcessLoggingDependencies['dispose']>;
 	readonly getConfig: NonNullable<ProcessLoggingDependencies['getConfig']>;
 	readonly getOpenTelemetrySink: NonNullable<ProcessLoggingDependencies['getOpenTelemetrySink']>;
 	readonly getStreamSink: NonNullable<ProcessLoggingDependencies['getStreamSink']>;
@@ -89,6 +90,7 @@ function createTestLoggingDependencies(options: {
 }): ProcessLoggingDependencies {
 	return {
 		configure: options.configure,
+		...(options.dispose === undefined ? {} : { dispose: options.dispose }),
 		getConfig: options.getConfig,
 		getOpenTelemetrySink: options.getOpenTelemetrySink,
 		getStreamSink: options.getStreamSink,
@@ -110,7 +112,7 @@ const allPortalServerEvents = [
 		event: 'mcp_proxy_auth',
 		level: 'warn',
 		reason: 'signature-mismatch',
-		timeMs: 12.5,
+		timeMs: 1_786_595_400_012,
 	},
 	{
 		agentId: 'agent/one',
@@ -118,7 +120,7 @@ const allPortalServerEvents = [
 		event: 'mcp_proxy_auth_audit_error',
 		level: 'warn',
 		message: 'raw audit failure',
-		timeMs: 25,
+		timeMs: 1_786_595_400_025,
 	},
 	{
 		agentId: 'agent/one',
@@ -126,7 +128,7 @@ const allPortalServerEvents = [
 		event: 'mcp_portal_approval',
 		level: 'info',
 		reason: 'per_call_evaluation',
-		timeMs: 8,
+		timeMs: 1_786_595_400_008,
 		verifierReason: 'raw verifier reason',
 	},
 	{
@@ -134,7 +136,7 @@ const allPortalServerEvents = [
 		event: 'mcp_portal_approval_audit_error',
 		level: 'warn',
 		message: 'raw approval audit failure',
-		timeMs: 9,
+		timeMs: 1_786_595_400_009,
 	},
 	{
 		agentScopeId: 'scope/one',
@@ -179,6 +181,47 @@ describe('MCP Portal process logging', () => {
 		);
 	});
 
+	it('omits epoch timestamps instead of reporting them as durations', () => {
+		for (const event of allPortalServerEvents.slice(1, 5)) {
+			const record = mapPortalServerLogEvent(event);
+
+			expect(record.properties).not.toHaveProperty('durationMs');
+			expect(JSON.stringify(record.properties)).not.toContain('1786595400');
+		}
+	});
+
+	it('omits unresolved request-path scope while retaining authenticated scope', () => {
+		const denied = mapPortalServerLogEvent({
+			agentId: 'unregistered-agent',
+			clientAddress: '127.0.0.1',
+			decision: 'deny',
+			event: 'mcp_proxy_auth',
+			level: 'warn',
+			reason: 'unknown_agent',
+			timeMs: 1_786_595_400_000,
+		});
+		const allowed = mapPortalServerLogEvent({
+			agentId: 'registered-agent',
+			clientAddress: '127.0.0.1',
+			decision: 'allow',
+			event: 'mcp_proxy_auth',
+			level: 'info',
+			timeMs: 1_786_595_400_001,
+		});
+		const auditFailure = mapPortalServerLogEvent({
+			agentId: 'path-derived-agent',
+			clientAddress: '127.0.0.1',
+			event: 'mcp_proxy_auth_audit_error',
+			level: 'warn',
+			message: 'raw audit failure',
+			timeMs: 1_786_595_400_002,
+		});
+
+		expect(denied.properties).not.toHaveProperty('scope');
+		expect(allowed.properties.scope).toBe('registered-agent');
+		expect(auditFailure.properties).not.toHaveProperty('scope');
+	});
+
 	it('bounds and sanitizes an unsafe approval reason before logging', () => {
 		const unsafeReason = `${'secret/token?'.repeat(20)}tail`;
 		const event = {
@@ -187,7 +230,7 @@ describe('MCP Portal process logging', () => {
 			event: 'mcp_portal_approval',
 			level: 'warn',
 			reason: unsafeReason as PortalApprovalLogEvent['reason'],
-			timeMs: 8,
+			timeMs: 1_786_595_400_008,
 		} satisfies PortalApprovalLogEvent;
 
 		const record = mapPortalServerLogEvent(event);
@@ -208,7 +251,7 @@ describe('MCP Portal process logging', () => {
 			decision: 'deny',
 			event: 'mcp_portal_approval',
 			level: 'warn',
-			timeMs: 8,
+			timeMs: 1_786_595_400_008,
 		} satisfies PortalServerLogEvent;
 
 		const record = mapPortalServerLogEvent(event);
@@ -242,10 +285,9 @@ describe('MCP Portal process logging', () => {
 				clientAddressClass: 'private',
 				decision: 'deny',
 				reason: 'signature-mismatch',
-				scope: 'agent_one',
-				durationMs: 12,
 			});
 			expect(output?.properties).not.toHaveProperty('clientAddress');
+			expect(output?.properties).not.toHaveProperty('scope');
 			expect(stderr.writableEnded).toBe(false);
 		} finally {
 			await logging.shutdown();
@@ -345,6 +387,32 @@ describe('MCP Portal process logging', () => {
 		} finally {
 			await first.shutdown();
 		}
+	});
+
+	it('shares one rejected shutdown when dispose throws synchronously', async () => {
+		const shutdownFailure = new Error('synchronous dispose failure');
+		const sink = createTrackedSink();
+		const disposeImpl = vi.fn((): Promise<void> => {
+			throw shutdownFailure;
+		});
+		const logging = await configureProcessLogging({
+			dependencies: createTestLoggingDependencies({
+				configure: async (): Promise<void> => undefined,
+				dispose: disposeImpl,
+				getConfig: (): null => null,
+				getOpenTelemetrySink: () => sink.sink,
+				getStreamSink: () => sink.sink,
+				reset: async (): Promise<void> => undefined,
+			}),
+			stderr: new CaptureWritable(),
+		});
+
+		const firstShutdown = logging.shutdown();
+		const secondShutdown = logging.shutdown();
+
+		expect(secondShutdown).toBe(firstShutdown);
+		await expect(firstShutdown).rejects.toBe(shutdownFailure);
+		expect(disposeImpl).toHaveBeenCalledTimes(1);
 	});
 
 	it('ignores records emitted after shutdown without an unhandled rejection', async () => {

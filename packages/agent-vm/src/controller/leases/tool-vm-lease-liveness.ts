@@ -30,6 +30,11 @@ export async function isToolVmLeaseVmLive(lease: {
 			event: 'lease-liveness-failed',
 			level: 'warning',
 			failureClass: 'failure',
+			telemetry: {
+				leaseId: lease.id,
+				operation: 'tool-vm-lease-liveness',
+				zoneId: lease.zoneId,
+			},
 		});
 		return false;
 	} finally {

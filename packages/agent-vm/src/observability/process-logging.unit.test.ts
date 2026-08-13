@@ -150,6 +150,22 @@ describe('configureProcessLogging', () => {
 		expect(stderr.getFinalizationCount()).toBe(0);
 	});
 
+	it.each([
+		['GitHub token', 'ghp_0123456789abcdefghijklmnopqrstuvwxyz'],
+		['OpenAI API key', 'sk-proj-0123456789abcdefghijklmnopqrstuvwxyz'],
+		['bearer credential', 'Bearer opaque-credential-value'],
+		['JWT credential', 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.signature'],
+		['credential assignment', 'API_KEY=opaque-credential-value'],
+	])('omits a %s from bounded string properties', (_description, credentialValue) => {
+		expect(
+			createBoundedDiagnosticProperties({
+				errorCode: credentialValue,
+				errorSummary: credentialValue,
+				operation: credentialValue,
+			}),
+		).toEqual({});
+	});
+
 	it('fails on duplicate process configuration without replacing the active sink', async () => {
 		const firstStderr = createCapturingWritable();
 		const secondStderr = createCapturingWritable();

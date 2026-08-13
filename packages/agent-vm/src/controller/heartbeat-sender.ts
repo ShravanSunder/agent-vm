@@ -22,12 +22,22 @@ export interface HeartbeatHandle {
 	readonly stop: () => void;
 }
 
-function defaultLogWarning(message: string): void {
+function defaultLogWarning(
+	message: string,
+	telemetry: {
+		readonly attempt?: number | undefined;
+		readonly statusCode?: number | undefined;
+	},
+): void {
 	void message;
 	writeControllerDiagnostic('heartbeat', {
 		event: 'heartbeat-diagnostic',
 		level: 'warning',
 		failureClass: 'failure',
+		telemetry: {
+			...telemetry,
+			operation: 'caller-heartbeat',
+		},
 	});
 }
 
@@ -39,7 +49,19 @@ export function startHeartbeatSender(
 	const setIntervalFn = props.setIntervalImpl ?? setInterval;
 	const clearIntervalFn = props.clearIntervalImpl ?? clearInterval;
 	const fetchFn = props.fetchImpl ?? fetch;
-	const logWarning = props.logWarning ?? defaultLogWarning;
+	const logWarning = (
+		message: string,
+		telemetry: {
+			readonly attempt?: number | undefined;
+			readonly statusCode?: number | undefined;
+		},
+	): void => {
+		if (props.logWarning !== undefined) {
+			props.logWarning(message);
+			return;
+		}
+		defaultLogWarning(message, telemetry);
+	};
 	const url = `${props.callerUrl.replace(/\/$/, '')}/tasks/${encodeURIComponent(requestTaskId)}/heartbeat`;
 
 	let stopped = false;
@@ -61,15 +83,19 @@ export function startHeartbeatSender(
 		}
 	}
 
-	function recordHeartbeatFailure(message: string): void {
+	function recordHeartbeatFailure(
+		message: string,
+		telemetry: { readonly statusCode?: number | undefined } = {},
+	): void {
 		consecutiveFailureCount += 1;
 		if (consecutiveFailureCount === 1) {
-			logWarning(message);
+			logWarning(message, { attempt: consecutiveFailureCount, ...telemetry });
 			return;
 		}
 		if (consecutiveFailureCount === 3) {
 			logWarning(
 				`task ${requestTaskId}: heartbeat has failed 3 consecutive times; the caller may treat this run as stalled`,
+				{ attempt: consecutiveFailureCount, ...telemetry },
 			);
 			return;
 		}
@@ -79,6 +105,7 @@ export function startHeartbeatSender(
 		) {
 			logWarning(
 				`task ${requestTaskId}: heartbeat has failed ${String(consecutiveFailureCount)} consecutive times; still retrying`,
+				{ attempt: consecutiveFailureCount, ...telemetry },
 			);
 		}
 	}
@@ -104,6 +131,7 @@ export function startHeartbeatSender(
 			if (TERMINAL_STATUS_CODES.has(response.status)) {
 				logWarning(
 					`task ${requestTaskId}: caller returned HTTP ${String(response.status)} from ${url} - stopping heartbeat permanently`,
+					{ statusCode: response.status },
 				);
 				stopTicker();
 				return;
@@ -111,6 +139,7 @@ export function startHeartbeatSender(
 			if (!response.ok) {
 				recordHeartbeatFailure(
 					`task ${requestTaskId}: caller returned HTTP ${String(response.status)} from ${url}`,
+					{ statusCode: response.status },
 				);
 				return;
 			}
