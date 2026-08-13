@@ -487,6 +487,10 @@ async function readSourceFile(repositoryRoot: string, filePath: string): Promise
 	);
 }
 
+function isFileNotFoundError(error: unknown): error is NodeJS.ErrnoException {
+	return error instanceof Error && 'code' in error && error.code === 'ENOENT';
+}
+
 function isParserModule(
 	entry: OptiqueCliBoundaryInventoryEntry,
 	sourceFile: ts.SourceFile,
@@ -538,6 +542,15 @@ function auditInventoryEntry(
 			reason,
 		});
 	};
+	for (const parserFile of entry.parserFiles) {
+		if (sourceFiles.has(parserFile)) continue;
+		findings.push({
+			executableName: entry.executableName,
+			filePath: parserFile,
+			line: 1,
+			reason: 'configured parser file is missing',
+		});
+	}
 
 	const rootRunBindings = importedBindingsFrom(rootSourceFile, '@optique/run');
 	const rootImportsRun = [...rootRunBindings.namedBindings.values()].includes('run');
@@ -910,15 +923,31 @@ export async function auditOptiqueCliBoundaries(
 			return { entry, reachableFiles };
 		}),
 	);
-	const allFiles = new Set<string>(props.additionalExportFiles ?? []);
-	await Promise.all(
-		[...allFiles].map(async (filePath) => {
-			sourceFiles.set(filePath, await readSourceFile(props.repositoryRoot, filePath));
-		}),
-	);
+	const exportFiles = new Set<string>(props.additionalExportFiles ?? []);
+	const missingExportFiles = (
+		await Promise.all(
+			[...exportFiles].map(async (filePath): Promise<string | undefined> => {
+				try {
+					sourceFiles.set(filePath, await readSourceFile(props.repositoryRoot, filePath));
+					return undefined;
+				} catch (error: unknown) {
+					if (isFileNotFoundError(error)) return filePath;
+					throw error;
+				}
+			}),
+		)
+	).filter((filePath): filePath is string => filePath !== undefined);
 	const findings = expandedInventory.flatMap(({ entry, reachableFiles }) =>
 		auditInventoryEntry(entry, sourceFiles, reachableFiles),
 	);
+	for (const filePath of missingExportFiles) {
+		findings.push({
+			executableName: 'configured-export',
+			filePath,
+			line: 1,
+			reason: 'configured export file is missing',
+		});
+	}
 	for (const filePath of props.additionalExportFiles ?? []) {
 		const sourceFile = sourceFiles.get(filePath);
 		if (sourceFile === undefined) continue;
@@ -935,7 +964,7 @@ export async function auditOptiqueCliBoundaries(
 		visit(sourceFile);
 		if (hasRetiredParserExport) {
 			findings.push({
-				executableName: 'mcp-portal',
+				executableName: 'configured-export',
 				filePath,
 				line: 1,
 				reason: 'retired parsePortalServerCliArgs export remains active',
@@ -959,16 +988,15 @@ async function loadReachableCliFiles(
 	sourceFiles: Map<string, ts.SourceFile>,
 ): Promise<readonly string[]> {
 	const visitedFiles = new Set<string>();
-	const explicitParserFiles = new Set(entry.parserFiles);
-	const visitFile = async (filePath: string, required: boolean): Promise<void> => {
+	const visitFile = async (filePath: string): Promise<void> => {
 		if (visitedFiles.has(filePath)) return;
 		visitedFiles.add(filePath);
 		let sourceFile: ts.SourceFile;
 		try {
 			sourceFile = await readSourceFile(repositoryRoot, filePath);
 		} catch (error: unknown) {
-			if (required) throw error;
-			return;
+			if (isFileNotFoundError(error)) return;
+			throw error;
 		}
 		sourceFiles.set(filePath, sourceFile);
 		const localImports = sourceFile.statements.flatMap((statement) => {
@@ -978,15 +1006,11 @@ async function loadReachableCliFiles(
 				? [localTypeScriptImportPath(filePath, importedModule)]
 				: [];
 		});
-		await Promise.all(
-			localImports.map(async (importedFile) => await visitFile(importedFile, false)),
-		);
+		await Promise.all(localImports.map(async (importedFile) => await visitFile(importedFile)));
 	};
 	await Promise.all([
-		visitFile(entry.executableRoot, true),
-		...entry.parserFiles.map(
-			async (parserFile) => await visitFile(parserFile, explicitParserFiles.has(parserFile)),
-		),
+		visitFile(entry.executableRoot),
+		...entry.parserFiles.map(async (parserFile) => await visitFile(parserFile)),
 	]);
 	return [...visitedFiles].filter((filePath) => sourceFiles.has(filePath)).toSorted();
 }

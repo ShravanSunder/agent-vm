@@ -835,4 +835,40 @@ void decodeFixture;
 			/parsePortalServerCliArgs export/u,
 		);
 	});
+
+	it('reports a configured export file that is missing', async () => {
+		// Arrange
+		const repositoryRoot = await mkdtemp(path.join(os.tmpdir(), 'optique-cli-audit-export-'));
+		createdDirectories.push(repositoryRoot);
+
+		// Act
+		const findings = await auditOptiqueCliBoundaries({
+			additionalExportFiles: ['scripts/missing-exports.ts'],
+			inventory: [],
+			repositoryRoot,
+		});
+
+		// Assert
+		expect(findings).toEqual([
+			{
+				executableName: 'configured-export',
+				filePath: 'scripts/missing-exports.ts',
+				line: 1,
+				reason: 'configured export file is missing',
+			},
+		]);
+	});
+
+	it('reports a configured parser file that is missing', async () => {
+		// Arrange / Act
+		const findings = await auditFixture(
+			[{ content: admittedRoot, relativePath: 'packages/fixture/src/bin/fixture-cli.ts' }],
+			{ parserFiles: ['packages/fixture/src/cli/missing-parser.ts'] },
+		);
+
+		// Assert
+		expect(findings).toContain(
+			'packages/fixture/src/cli/missing-parser.ts:1 configured parser file is missing',
+		);
+	});
 });

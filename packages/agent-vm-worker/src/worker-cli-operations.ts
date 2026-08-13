@@ -1,6 +1,6 @@
 import { Server as HttpServer } from 'node:http';
 
-import { serve } from '@hono/node-server';
+import { serve, type ServerType } from '@hono/node-server';
 
 import { loadWorkerConfig, resolvePhaseExecutor } from './config/worker-config.js';
 import { createWorkerControlApplicationMessageHandler } from './control-session/worker-control-application-handler.js';
@@ -90,18 +90,23 @@ export async function runWorkerServeLifecycle(command: WorkerServeCommand): Prom
 		workerControlService,
 	});
 
-	const server = serve(
-		{
-			fetch: app.fetch,
-			port: command.port,
-		},
-		(info) => {
-			writeStdout(
-				{ stdout: process.stdout },
-				`[agent-vm-worker] Server listening on http://localhost:${info.port}`,
-			);
-		},
-	);
+	const server = await new Promise<ServerType>((resolve, reject) => {
+		const pendingServer = serve(
+			{
+				fetch: app.fetch,
+				port: command.port,
+			},
+			(info) => {
+				pendingServer.off('error', reject);
+				writeStdout(
+					{ stdout: process.stdout },
+					`[agent-vm-worker] Server listening on http://localhost:${info.port}`,
+				);
+				resolve(pendingServer);
+			},
+		);
+		pendingServer.once('error', reject);
+	});
 	if (server instanceof HttpServer) {
 		attachWorkerControlUpgradeHandler({ server, workerControlService });
 	}
