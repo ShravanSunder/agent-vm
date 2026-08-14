@@ -79,6 +79,7 @@ export function createTaskEventRecorder(
 	stateDir: string,
 	tasks: Map<string, TaskState>,
 	closedTaskIds: Set<string>,
+	onFatalPersistenceFailure: () => Promise<void> = scheduleFatalWorkerProcessExit,
 ): TaskEventRecorder {
 	function logPath(taskId: string): string {
 		return join(stateDir, 'tasks', `${taskId}.jsonl`);
@@ -116,10 +117,7 @@ export function createTaskEventRecorder(
 					error,
 				}),
 			);
-			process.exitCode = 1;
-			setImmediate(() => {
-				process.exit(1);
-			});
+			await onFatalPersistenceFailure();
 		}
 	}
 
@@ -130,6 +128,13 @@ export function createTaskEventRecorder(
 		},
 		recordTaskFailure,
 	};
+}
+
+async function scheduleFatalWorkerProcessExit(): Promise<void> {
+	process.exitCode = 1;
+	setImmediate(() => {
+		process.exit(1);
+	});
 }
 
 export interface TaskEventRecorder {

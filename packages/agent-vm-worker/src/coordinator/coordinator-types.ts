@@ -13,6 +13,7 @@ export interface CreateTaskInput {
 
 export interface CoordinatorDeps {
 	readonly config: WorkerConfig;
+	readonly onFatalPersistenceFailure?: (() => Promise<void>) | undefined;
 	readonly workDir?: string;
 	readonly workerControlService?: Pick<
 		WorkerControlService,

@@ -25,6 +25,16 @@ const TOOL_PORTAL_NATIVE_TOOL_NAMES = [
 	'tool_portal_call',
 ] as const;
 
+interface JsonSchemaNode {
+	readonly additionalProperties?: boolean | JsonSchemaNode;
+	readonly items?: JsonSchemaNode;
+	readonly minLength?: number;
+	readonly properties?: Readonly<Record<string, JsonSchemaNode>>;
+	readonly required?: readonly string[];
+	readonly type?: string;
+	readonly uniqueItems?: boolean;
+}
+
 function createToolPortalPluginConfig(): {
 	readonly agentProjections: Readonly<
 		Record<
@@ -112,17 +122,7 @@ describe('createAgentVmPlugin', () => {
 		const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as {
 			readonly activation?: { readonly onStartup?: boolean };
 			readonly cliBackends?: readonly string[];
-			readonly configSchema?: {
-				readonly properties?: Record<
-					string,
-					{
-						readonly additionalProperties?: boolean;
-						readonly required?: readonly string[];
-						readonly type?: string;
-					}
-				>;
-				readonly required?: readonly string[];
-			};
+			readonly configSchema?: JsonSchemaNode;
 			readonly contracts?: { readonly tools?: readonly string[] };
 			readonly toolMetadata?: Record<string, { readonly optional?: boolean }>;
 		};
@@ -146,6 +146,18 @@ describe('createAgentVmPlugin', () => {
 			required: ['agentProjections', 'attachment'],
 			type: 'object',
 		});
+		const toolPortalSchema = manifest.configSchema?.properties?.toolPortal;
+		const agentProjectionsSchema = toolPortalSchema?.properties?.agentProjections;
+		const projectionSchema =
+			typeof agentProjectionsSchema?.additionalProperties === 'object'
+				? agentProjectionsSchema.additionalProperties
+				: undefined;
+		expect(projectionSchema?.properties?.toolPortalNamespaceNames).toMatchObject({
+			items: { minLength: 1, type: 'string' },
+			type: 'array',
+			uniqueItems: true,
+		});
+		expect(projectionSchema?.required).toContain('toolPortalNamespaceNames');
 		expect(manifest.configSchema?.properties).not.toHaveProperty('controlSession');
 	});
 

@@ -17,6 +17,7 @@ import {
 	workerProcessLoggingShutdownFailureMessage,
 	type ProcessLoggingHandle,
 } from './shared/process-logging.js';
+import { closeLocalToolMcpServers } from './work-executor/local-tool-mcp-server.js';
 import type { WorkerCommand } from './worker-cli-parser.js';
 
 type WorkerHealthCommand = Extract<WorkerCommand, { readonly command: 'health' }>;
@@ -89,6 +90,7 @@ function waitForWorkerShutdownSignal(
 }
 
 export interface WorkerServeShutdownLifecycleOptions {
+	readonly closeLocalToolServers?: (() => Promise<void>) | undefined;
 	readonly server: { readonly close: () => Promise<void> };
 	readonly workerControlService?: Pick<WorkerControlService, 'close'> | undefined;
 	readonly logging?: ProcessLoggingHandle | undefined;
@@ -120,12 +122,18 @@ export async function runWorkerServeShutdownLifecycle(
 	let productCloseFailed = false;
 	let productCloseError: unknown;
 	try {
+		await shutdownWaiter.signal;
 		try {
-			await shutdownWaiter.signal;
 			await options.server.close();
 		} catch (error: unknown) {
 			productCloseFailed = true;
 			productCloseError = error;
+		}
+		try {
+			await (options.closeLocalToolServers ?? closeLocalToolMcpServers)();
+		} catch (error: unknown) {
+			if (!productCloseFailed) productCloseError = error;
+			productCloseFailed = true;
 		}
 		if (options.workerControlService !== undefined) {
 			try {
@@ -213,6 +221,10 @@ export async function runWorkerServeLifecycle(
 	try {
 		coordinatorRef.current = await createCoordinator({
 			config,
+			onFatalPersistenceFailure: async (): Promise<void> => {
+				await shutdownWorkerProcessLogging(processLogging);
+				process.exit(1);
+			},
 			workDir,
 			...(workerControlService === undefined ? {} : { workerControlService }),
 		});

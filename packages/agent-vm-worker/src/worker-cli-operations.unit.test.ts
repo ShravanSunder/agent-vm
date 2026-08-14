@@ -135,6 +135,9 @@ describe('worker serve shutdown lifecycle', () => {
 		const events: string[] = [];
 		const lifecycle = runWorkerServeShutdownLifecycle({
 			signalTarget,
+			closeLocalToolServers: async (): Promise<void> => {
+				events.push('local-tools.close');
+			},
 			server: {
 				close: async (): Promise<void> => {
 					events.push('server.close');
@@ -156,7 +159,12 @@ describe('worker serve shutdown lifecycle', () => {
 		signalTarget.emit('SIGTERM');
 		await lifecycle;
 
-		expect(events).toEqual(['server.close', 'control.close', 'logging.shutdown']);
+		expect(events).toEqual([
+			'server.close',
+			'local-tools.close',
+			'control.close',
+			'logging.shutdown',
+		]);
 		expect(signalTarget.listeners).toHaveLength(0);
 	});
 

@@ -90,7 +90,12 @@ export async function createCoordinator(deps: CoordinatorDeps): Promise<Coordina
 	const tasks = await hydrateTaskStates(deps.config.stateDir);
 	const closedTaskIds = new Set<string>();
 	const taskStatusWaiters = new Map<string, TaskStatusWaiter[]>();
-	const baseEventRecorder = createTaskEventRecorder(deps.config.stateDir, tasks, closedTaskIds);
+	const baseEventRecorder = createTaskEventRecorder(
+		deps.config.stateDir,
+		tasks,
+		closedTaskIds,
+		deps.onFatalPersistenceFailure,
+	);
 	const runtimeEventPublisher =
 		deps.workerControlService === undefined
 			? undefined

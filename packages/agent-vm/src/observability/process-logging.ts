@@ -7,12 +7,15 @@ import {
 	getStreamSink,
 	type Sink,
 } from '@logtape/logtape';
-import { getOpenTelemetrySink } from '@logtape/otel';
+import { getOpenTelemetrySink, type OpenTelemetrySinkExporterOptions } from '@logtape/otel';
+import { resourceFromAttributes } from '@opentelemetry/resources';
 
+import type { TelemetryAttributes } from './health-event-telemetry.js';
 import type {
 	EnabledObservabilityRuntimeConfig,
 	ObservabilityRuntimeConfig,
 } from './observability-config.js';
+import { formatHttpHost } from './observability-readiness.js';
 
 const processLoggingCategory = ['agent-vm'] as const;
 const logtapeMetaCategory = ['logtape', 'meta'] as const;
@@ -38,6 +41,7 @@ function createNonClosingWritableProxy(destination: NodeJS.WritableStream): Writ
 
 export interface ProcessLoggingOptions {
 	readonly observabilityConfig?: ObservabilityRuntimeConfig | undefined;
+	readonly resourceAttributes?: TelemetryAttributes | undefined;
 	readonly serviceName: string;
 	readonly stderr: NodeJS.WritableStream;
 }
@@ -69,7 +73,7 @@ export function resolveProcessLoggingOtlpEndpoint(
 	if (options === undefined) {
 		return undefined;
 	}
-	const host = options.bindAddress === '::1' ? '[::1]' : options.bindAddress;
+	const host = formatHttpHost(options.bindAddress);
 	return `http://${host}:${String(options.collectorHttpPort)}/v1/logs`;
 }
 
@@ -111,7 +115,9 @@ export function createBoundedDiagnosticProperties(
 	return properties;
 }
 
-function createOtlpSink(options: ProcessLoggingOptions): ReturnType<typeof getOpenTelemetrySink> {
+export function createProcessLoggingOtelSinkOptions(
+	options: ProcessLoggingOptions,
+): OpenTelemetrySinkExporterOptions {
 	const endpoint = resolveProcessLoggingOtlpEndpoint(
 		options.observabilityConfig?.enabled !== true
 			? undefined
@@ -120,13 +126,20 @@ function createOtlpSink(options: ProcessLoggingOptions): ReturnType<typeof getOp
 					collectorHttpPort: options.observabilityConfig.ports.collectorHttp,
 				},
 	);
-	return getOpenTelemetrySink({
+	return {
+		...(options.resourceAttributes === undefined
+			? {}
+			: { additionalResource: resourceFromAttributes(options.resourceAttributes) }),
 		...(endpoint === undefined ? {} : { otlpExporterConfig: { url: endpoint } }),
 		diagnostics: false,
 		exceptionAttributes: false,
 		objectRenderer: 'json',
 		serviceName: options.serviceName,
-	});
+	};
+}
+
+function createOtlpSink(options: ProcessLoggingOptions): ReturnType<typeof getOpenTelemetrySink> {
+	return getOpenTelemetrySink(createProcessLoggingOtelSinkOptions(options));
 }
 
 async function disposeSink(sink: Sink & AsyncDisposable): Promise<void> {

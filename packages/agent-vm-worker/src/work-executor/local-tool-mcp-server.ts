@@ -20,7 +20,12 @@ interface LocalToolMcpServer {
 }
 
 const localToolServerCache = new Map<string, LocalToolMcpServer>();
-let registeredCleanup = false;
+
+export async function closeLocalToolMcpServers(): Promise<void> {
+	const servers = [...localToolServerCache.values()];
+	localToolServerCache.clear();
+	await Promise.all(servers.map(async (server) => await server.close()));
+}
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -195,25 +200,6 @@ export async function getOrCreateLocalToolMcpServer(
 	const port = await findOpenPort();
 	const app = buildMcpApp(tools);
 	const serverHandle: ServerType = serve({ fetch: app.fetch, port });
-
-	if (!registeredCleanup) {
-		const closeAllServers = (): void => {
-			for (const server of localToolServerCache.values()) {
-				void server.close();
-			}
-			localToolServerCache.clear();
-		};
-		process.once('exit', closeAllServers);
-		process.once('SIGINT', () => {
-			closeAllServers();
-			process.exit(130);
-		});
-		process.once('SIGTERM', () => {
-			closeAllServers();
-			process.exit(143);
-		});
-		registeredCleanup = true;
-	}
 
 	const server = {
 		url: `http://127.0.0.1:${port}/mcp`,

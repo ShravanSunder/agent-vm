@@ -7,6 +7,8 @@ import type { ManagedGatewayImageBootProjection } from '../../build/gondolin-man
 import { readPreparedManagedVmImage } from '../../build/prepared-gondolin-image-cache.js';
 import type { LoadedSystemConfig } from '../../config/system-config.js';
 import type { ControllerRuntime } from '../../controller/controller-runtime-types.js';
+import { resolveControllerTelemetryIdentity } from '../../observability/controller-telemetry-identity.js';
+import { createControllerTelemetryResourceAttributes } from '../../observability/controller-telemetry.js';
 import { createObservabilityRuntimeConfig } from '../../observability/observability-config.js';
 import {
 	configureProcessLogging,
@@ -16,6 +18,7 @@ import {
 import { type CliDependencies, type CliIo, requireZone } from '../agent-vm-cli-support.js';
 import type { AgentVmCommand } from '../agent-vm-command-parser.js';
 import { managedGatewayBootProjectionForGatewayType } from '../build-command.js';
+import { resolveCliVersion } from '../cli-version.js';
 import { runControllerOperationCommand } from '../controller-operation-commands.js';
 import { createRunTask } from '../run-task.js';
 import { runSshCommand } from '../ssh-commands.js';
@@ -145,6 +148,9 @@ export interface ControllerCommandExecutionOptions {
 	readonly createShutdownSignalWaiter?: (() => ProcessShutdownSignalWaiter) | undefined;
 	readonly processLoggingStderr?: NodeJS.WritableStream | undefined;
 	readonly processRoot?: boolean | undefined;
+	readonly resolveControllerTelemetryIdentity?:
+		| typeof resolveControllerTelemetryIdentity
+		| undefined;
 }
 
 export interface ProcessShutdownSignalWaiter {
@@ -228,11 +234,31 @@ function resolveProcessLoggingStderr(
 async function configureControllerLogging(
 	io: CliIo,
 	systemConfig: LoadedSystemConfig,
+	dependencies: CliDependencies,
 	executionOptions: ControllerCommandExecutionOptions,
 ): Promise<ProcessLoggingHandle> {
 	try {
+		const observabilityConfig = createObservabilityRuntimeConfig(systemConfig);
+		let resourceAttributes:
+			| ReturnType<typeof createControllerTelemetryResourceAttributes>
+			| undefined;
+		if (observabilityConfig.enabled) {
+			const serviceVersion = await (dependencies.resolveCliVersion ?? resolveCliVersion)();
+			const identity = await (
+				executionOptions.resolveControllerTelemetryIdentity ?? resolveControllerTelemetryIdentity
+			)({
+				cwd: path.resolve(path.dirname(systemConfig.systemConfigPath), '..'),
+				serviceVersion,
+			});
+			resourceAttributes = createControllerTelemetryResourceAttributes({
+				identity,
+				projectNamespace: systemConfig.host.projectNamespace,
+				stackMode: observabilityConfig.stackMode,
+			});
+		}
 		return await (executionOptions.configureProcessLogging ?? configureProcessLogging)({
-			observabilityConfig: createObservabilityRuntimeConfig(systemConfig),
+			observabilityConfig,
+			...(resourceAttributes === undefined ? {} : { resourceAttributes }),
 			serviceName: 'agent-vm-controller',
 			stderr: resolveProcessLoggingStderr(io, executionOptions),
 		});
@@ -300,7 +326,12 @@ export async function runControllerCommandOperation(
 			writeControllerReadiness(io, runtime, selectedZone.id);
 			return;
 		}
-		const logging = await configureControllerLogging(io, systemConfig, executionOptions);
+		const logging = await configureControllerLogging(
+			io,
+			systemConfig,
+			dependencies,
+			executionOptions,
+		);
 		const shutdownSignalWaiter = (
 			executionOptions.createShutdownSignalWaiter ?? createProcessShutdownSignalWaiter
 		)();
@@ -345,7 +376,7 @@ export async function runControllerCommandOperation(
 		);
 		const selectedZone = requireZone(systemConfig, commandValue.options.zone);
 		const logging = executionOptions.processRoot
-			? await configureControllerLogging(io, systemConfig, executionOptions)
+			? await configureControllerLogging(io, systemConfig, dependencies, executionOptions)
 			: undefined;
 		try {
 			const result = await dependencies.runControllerOfflineCleanup({

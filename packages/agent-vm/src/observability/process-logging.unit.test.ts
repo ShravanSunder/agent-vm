@@ -7,6 +7,7 @@ import type { EnabledObservabilityRuntimeConfig } from './observability-config.j
 import {
 	configureProcessLogging,
 	createBoundedDiagnosticProperties,
+	createProcessLoggingOtelSinkOptions,
 	resolveProcessLoggingOtlpEndpoint,
 } from './process-logging.js';
 
@@ -119,6 +120,25 @@ describe('configureProcessLogging', () => {
 		const config = getConfig();
 		expect(config?.sinks).toHaveProperty('otel');
 		await logging.shutdown();
+	});
+
+	it('preserves bounded controller development identity on general OTLP logs', () => {
+		const sinkOptions = createProcessLoggingOtelSinkOptions({
+			observabilityConfig: createEnabledObservabilityConfig(),
+			resourceAttributes: {
+				'dev.branch.name': 'feat/logtape-otel',
+				'dev.repo.hash': 'repo-hash',
+				'dev.worktree.hash': 'worktree-hash',
+			},
+			serviceName: 'agent-vm-controller',
+			stderr: createCapturingWritable().stream,
+		});
+
+		expect(sinkOptions.additionalResource?.attributes).toMatchObject({
+			'dev.branch.name': 'feat/logtape-otel',
+			'dev.repo.hash': 'repo-hash',
+			'dev.worktree.hash': 'worktree-hash',
+		});
 	});
 
 	it('writes one bounded JSONL record to the supplied stderr stream', async () => {
