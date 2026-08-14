@@ -33,7 +33,7 @@ async function resolveSkillContent(skills: readonly SkillReference[]): Promise<s
 					promptLogger.warn(
 						'Worker prompt skill was not found; skipping it.',
 						toSafeWorkerLogProperties({
-							event: 'prompt-skill-not-found',
+							event: 'instruction-skill-not-found',
 							failureClass: 'unavailable',
 						}),
 					);
@@ -43,7 +43,7 @@ async function resolveSkillContent(skills: readonly SkillReference[]): Promise<s
 				promptLogger.error(
 					'Worker prompt skill could not be loaded.',
 					toSafeWorkerLogProperties({
-						event: 'prompt-skill-load-failed',
+						event: 'instruction-skill-load-failed',
 						failureClass: 'load-failed',
 						error,
 					}),

@@ -2,16 +2,44 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, test } from 'vitest';
+import { configure, dispose, reset, type LogRecord } from '@logtape/logtape';
+import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 
 import { buildRoleSystemPrompt } from './prompt-assembler.js';
 
 describe('buildRoleSystemPrompt', () => {
 	const tmpDirs: string[] = [];
+	const capturedRecords: LogRecord[] = [];
+
+	beforeEach(async () => {
+		capturedRecords.length = 0;
+		await configure({
+			loggers: [
+				{
+					category: ['agent-vm', 'worker', 'coordinator'],
+					lowestLevel: 'trace',
+					sinks: ['capture'],
+				},
+				{
+					category: ['logtape', 'meta'],
+					lowestLevel: 'error',
+					sinks: ['capture'],
+				},
+			],
+			reset: true,
+			sinks: {
+				capture: (record): void => {
+					capturedRecords.push(record);
+				},
+			},
+		});
+	});
 
 	afterEach(async () => {
 		const dirs = tmpDirs.splice(0);
 		await Promise.all(dirs.map((dir) => rm(dir, { recursive: true, force: true })));
+		await dispose().catch(() => {});
+		await reset();
 	});
 
 	test('composes base and role-specific defaults with branchPrefix', async () => {
@@ -89,7 +117,7 @@ describe('buildRoleSystemPrompt', () => {
 		expect(output).toContain('Skill body');
 	});
 
-	test('skips missing skills but throws on unreadable skill paths', async () => {
+	test('skips a missing skill and emits a filterable event', async () => {
 		const dir = await mkdtemp(join(tmpdir(), 'prompt-skill-dir-'));
 		tmpDirs.push(dir);
 
@@ -102,6 +130,15 @@ describe('buildRoleSystemPrompt', () => {
 			skills: [{ name: 'missing-skill', path: join(dir, 'missing.md') }],
 		});
 		expect(output).not.toContain('missing-skill');
+		expect(capturedRecords.at(-1)?.properties).toMatchObject({
+			event: 'instruction-skill-not-found',
+			failureClass: 'unavailable',
+		});
+	});
+
+	test('throws for an unreadable skill path and emits a filterable event', async () => {
+		const dir = await mkdtemp(join(tmpdir(), 'prompt-skill-dir-'));
+		tmpDirs.push(dir);
 
 		await expect(
 			buildRoleSystemPrompt({
@@ -113,5 +150,9 @@ describe('buildRoleSystemPrompt', () => {
 				skills: [{ name: 'directory-skill', path: dir }],
 			}),
 		).rejects.toThrow(/Skill load failed/);
+		expect(capturedRecords.at(-1)?.properties).toMatchObject({
+			event: 'instruction-skill-load-failed',
+			failureClass: 'load-failed',
+		});
 	});
 });

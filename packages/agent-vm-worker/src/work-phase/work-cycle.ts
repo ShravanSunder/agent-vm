@@ -166,7 +166,7 @@ export async function runWorkCycle(props: RunWorkCycleProps): Promise<WorkCycleR
 			coordinatorLogger.warn(
 				'Worker reviewer response was malformed; nudging once.',
 				toSafeWorkerLogProperties({
-					event: 'reviewer-response-malformed',
+					event: 'reviewer-reply-malformed',
 					failureClass: 'invalid-review',
 					attempt: cycle,
 					error,

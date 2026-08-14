@@ -1,4 +1,5 @@
-import { describe, expect, test, vi } from 'vitest';
+import { configure, dispose, reset, type LogRecord } from '@logtape/logtape';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import type { PersistentThread } from '../work-executor/persistent-thread.js';
 import { runWorkCycle } from './work-cycle.js';
@@ -16,6 +17,37 @@ function buildThread(responses: readonly string[]): PersistentThread {
 }
 
 describe('runWorkCycle', () => {
+	const capturedRecords: LogRecord[] = [];
+
+	beforeEach(async () => {
+		capturedRecords.length = 0;
+		await configure({
+			loggers: [
+				{
+					category: ['agent-vm', 'worker', 'coordinator'],
+					lowestLevel: 'trace',
+					sinks: ['capture'],
+				},
+				{
+					category: ['logtape', 'meta'],
+					lowestLevel: 'error',
+					sinks: ['capture'],
+				},
+			],
+			reset: true,
+			sinks: {
+				capture: (record): void => {
+					capturedRecords.push(record);
+				},
+			},
+		});
+	});
+
+	afterEach(async () => {
+		await dispose().catch(() => {});
+		await reset();
+	});
+
 	test('cycleCount=1 runs work → review → work (always revises after review)', async () => {
 		const workThread = buildThread([
 			JSON.stringify({ summary: 'w0', commitShas: [], remainingConcerns: '' }),
@@ -188,6 +220,12 @@ describe('runWorkCycle', () => {
 
 		expect(reviewThread.send).toHaveBeenCalledTimes(2);
 		expect(result.review.summary).toBe('fixed');
+		expect(capturedRecords).toHaveLength(1);
+		expect(capturedRecords[0]?.properties).toMatchObject({
+			event: 'reviewer-reply-malformed',
+			failureClass: 'invalid-review',
+			attempt: 1,
+		});
 	});
 
 	test('throws when validationResults items are malformed', async () => {
