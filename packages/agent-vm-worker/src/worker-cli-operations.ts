@@ -241,7 +241,7 @@ export async function runWorkerServeLifecycle(
 		workerControlService,
 	});
 
-	let server: ServerType | undefined;
+	let server: ReturnType<typeof serve> | undefined;
 	try {
 		server = await new Promise<ServerType>((resolve, reject) => {
 			const pendingServer = serve(
