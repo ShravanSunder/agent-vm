@@ -97,9 +97,16 @@ async function parseJsonBodyWithSchema<TSchema extends z.ZodType>(
 	return { ok: true, data: parsedPayload.data };
 }
 
+type ControllerRouteDiagnosticOperation =
+	| 'execute-worker-task'
+	| 'pull-default-for-task'
+	| 'push-task-branches'
+	| 'record-task-failed-event'
+	| 'write-task-failure-sentinel';
+
 function writeControllerRouteLog(
 	domain: ControllerDiagnosticDomain,
-	operation: string,
+	operation: ControllerRouteDiagnosticOperation,
 	telemetry: ControllerDiagnosticTelemetry = { operation },
 ): void {
 	writeControllerDiagnostic(domain, {

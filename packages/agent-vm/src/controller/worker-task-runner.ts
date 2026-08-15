@@ -188,7 +188,10 @@ function deepMerge(base: unknown, override: unknown): unknown {
 	return override ?? base;
 }
 
-function writeWorkerTaskPollDiagnostic(operation: string, attempt: number): void {
+function writeWorkerTaskPollDiagnostic(
+	operation: 'poll-worker-task-status',
+	attempt: number,
+): void {
 	writeControllerDiagnostic('runtime', {
 		event: 'runtime-diagnostic',
 		level: 'warning',

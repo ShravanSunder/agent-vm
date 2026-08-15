@@ -64,7 +64,18 @@ class GitPushFailedAfterRetriesError extends Error {
 	}
 }
 
-function writePushFlowLog(operation: string, attempt?: number, outcome?: string): void {
+type GitPushDiagnosticOperation =
+	| 'fetch-default-branch-retry'
+	| 'fetch-pushed-branch-retry'
+	| 'push-branch-failed'
+	| 'push-branch-retry'
+	| 'record-controller-git-event';
+
+function writePushFlowLog(
+	operation: GitPushDiagnosticOperation,
+	attempt?: number,
+	outcome?: string,
+): void {
 	writeControllerDiagnostic('git', {
 		event: 'controller-operation-failed',
 		level: 'warning',

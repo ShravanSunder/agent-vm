@@ -24,11 +24,11 @@ const disabledLogger: Logger = {
 	emit: (): void => undefined,
 };
 
-function ignoreRecordsAfterDisposal(sink: Sink & AsyncDisposable): Sink & AsyncDisposable {
+function ignoreRecordsAfterDisposal<TSink extends Sink & AsyncDisposable>(sink: TSink): TSink {
 	let disposed = false;
-	const guardedSink: Sink & AsyncDisposable = (record): void => {
+	const guardedSink = Object.assign((record: Parameters<Sink>[0]): void => {
 		if (!disposed) sink(record);
-	};
+	}, sink);
 	guardedSink[Symbol.asyncDispose] = async (): Promise<void> => {
 		if (disposed) return;
 		disposed = true;
@@ -149,8 +149,10 @@ export async function configureProcessLogging(
 	);
 	let otelSink: OpenTelemetrySink | undefined;
 	try {
-		otelSink = createOpenTelemetrySink(
-			createOpenTelemetrySinkOptions(props.observability, props.resourceAttributes),
+		otelSink = ignoreRecordsAfterDisposal(
+			createOpenTelemetrySink(
+				createOpenTelemetrySinkOptions(props.observability, props.resourceAttributes),
+			),
 		);
 		await configureImpl(createGatewayRuntimeProcessLoggingConfig(stderrSink, otelSink));
 	} catch (error: unknown) {

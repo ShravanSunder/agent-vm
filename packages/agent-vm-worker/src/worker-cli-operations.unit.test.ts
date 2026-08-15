@@ -269,4 +269,32 @@ describe('worker serve shutdown lifecycle', () => {
 		await loggingShutdown.promise;
 		expect(signalTarget.listeners).toHaveLength(0);
 	});
+
+	it('preserves the first product close failure when later closes also fail', async () => {
+		const signalTarget = createFakeSignalTarget();
+		const firstProductFailure = new Error('local tool close failed');
+		const lifecycle = runWorkerServeShutdownLifecycle({
+			signalTarget,
+			closeLocalToolServers: async (): Promise<void> => {
+				throw firstProductFailure;
+			},
+			server: {
+				close: async (): Promise<void> => {
+					throw new Error('server close failed later');
+				},
+			},
+			workerControlService: {
+				close: async (): Promise<void> => {
+					throw new Error('control close failed later');
+				},
+			},
+			logging: {
+				shutdown: async (): Promise<void> => undefined,
+			},
+		});
+
+		signalTarget.emit('SIGTERM');
+		await expect(lifecycle).rejects.toBe(firstProductFailure);
+		expect(signalTarget.listeners).toHaveLength(0);
+	});
 });

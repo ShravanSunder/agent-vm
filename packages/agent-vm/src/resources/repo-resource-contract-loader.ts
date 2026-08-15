@@ -21,7 +21,7 @@ const REPO_RESOURCES_PATH = path.join('.agent-vm', 'repo-resources.ts');
 const REPO_CONTRACT_TIMEOUT_MS = 30_000;
 
 function writeRepoContractLoaderLog(
-	operation: string,
+	operation: 'repo-resource-description-contract-absent',
 	level: ControllerDiagnosticLevel = 'warning',
 ): void {
 	writeControllerDiagnostic(

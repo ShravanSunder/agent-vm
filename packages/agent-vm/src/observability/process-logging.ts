@@ -33,11 +33,11 @@ export interface ProcessLoggingHandle {
 	readonly shutdown: () => Promise<void>;
 }
 
-function ignoreRecordsAfterDisposal(sink: Sink & AsyncDisposable): Sink & AsyncDisposable {
+function ignoreRecordsAfterDisposal<TSink extends Sink & AsyncDisposable>(sink: TSink): TSink {
 	let disposed = false;
-	const guardedSink: Sink & AsyncDisposable = (record): void => {
+	const guardedSink = Object.assign((record: Parameters<Sink>[0]): void => {
 		if (!disposed) sink(record);
-	};
+	}, sink);
 	guardedSink[Symbol.asyncDispose] = async (): Promise<void> => {
 		if (disposed) return;
 		disposed = true;
@@ -263,7 +263,10 @@ export async function configureProcessLogging(
 	);
 	let otelSink: ReturnType<typeof getOpenTelemetrySink> | undefined;
 	try {
-		otelSink = options.observabilityConfig?.enabled === false ? undefined : createOtlpSink(options);
+		otelSink =
+			options.observabilityConfig?.enabled === false
+				? undefined
+				: ignoreRecordsAfterDisposal(createOtlpSink(options));
 		await configureLogTapeSinks(stderrSink, otelSink);
 	} catch (error: unknown) {
 		await Promise.allSettled([

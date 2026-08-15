@@ -212,10 +212,19 @@ function buildManagedGatewayCombinedLogsCommand(
 	].join('; ');
 }
 
+type ManagedGatewayZoneRuntimeDiagnosticOperation =
+	| 'append-gateway-lifecycle-operation-record'
+	| 'close-gateway-control-session'
+	| 'gateway-control-attachment-attempt'
+	| 'record-gateway-cleanup-debt'
+	| 'record-pending-gateway-vm-containment-failure'
+	| 'stale-gateway-start-cleanup';
+
 function writeManagedGatewayZoneRuntimeLog(
-	operation: string,
-	level: ControllerDiagnosticLevel = 'warning',
-	telemetry: ControllerDiagnosticTelemetry = { operation },
+	level: ControllerDiagnosticLevel,
+	telemetry: ControllerDiagnosticTelemetry & {
+		readonly operation: ManagedGatewayZoneRuntimeDiagnosticOperation;
+	},
 ): void {
 	writeControllerDiagnostic(
 		'gateway',
@@ -580,7 +589,7 @@ export function createManagedGatewayZoneRuntime(
 				zoneRuntimeDir: options.zone.gateway.zoneRuntimeDir,
 			});
 		} catch {
-			writeManagedGatewayZoneRuntimeLog('append-gateway-lifecycle-operation-record', 'warning', {
+			writeManagedGatewayZoneRuntimeLog('warning', {
 				operation: 'append-gateway-lifecycle-operation-record',
 				zoneId: options.zone.id,
 			});
@@ -640,7 +649,7 @@ export function createManagedGatewayZoneRuntime(
 					operationTrigger: operationContext.operationTrigger,
 					previousGateway: gatewayIdentityFor(staleGateway),
 				});
-				writeManagedGatewayZoneRuntimeLog('record-gateway-cleanup-debt', 'warning', {
+				writeManagedGatewayZoneRuntimeLog('warning', {
 					operation: 'record-gateway-cleanup-debt',
 					outcome: formatGatewayCleanupOutcome(destroyResult),
 					zoneId: options.zone.id,
@@ -833,14 +842,10 @@ export function createManagedGatewayZoneRuntime(
 						operationTrigger: operationContext.operationTrigger,
 						previousGateway: gatewayIdentityFor(operationContext.previousGateway),
 					}).catch(() => {
-						writeManagedGatewayZoneRuntimeLog(
-							'record-pending-gateway-vm-containment-failure',
-							'warning',
-							{
-								operation: 'record-pending-gateway-vm-containment-failure',
-								zoneId: options.zone.id,
-							},
-						);
+						writeManagedGatewayZoneRuntimeLog('warning', {
+							operation: 'record-pending-gateway-vm-containment-failure',
+							zoneId: options.zone.id,
+						});
 					});
 				})
 				.finally(() => {
@@ -915,7 +920,7 @@ export function createManagedGatewayZoneRuntime(
 			try {
 				activeGateway?.controlSession?.closeForControllerShutdown();
 			} catch {
-				writeManagedGatewayZoneRuntimeLog('close-gateway-control-session', 'warning', {
+				writeManagedGatewayZoneRuntimeLog('warning', {
 					operation: 'close-gateway-control-session',
 					zoneId: options.zone.id,
 				});
@@ -959,7 +964,7 @@ export function createManagedGatewayZoneRuntime(
 						operationTrigger,
 						previousGateway: gatewayIdentityFor(previousGateway),
 					});
-					writeManagedGatewayZoneRuntimeLog('record-gateway-cleanup-debt', 'warning', {
+					writeManagedGatewayZoneRuntimeLog('warning', {
 						operation: 'record-gateway-cleanup-debt',
 						outcome: formatGatewayCleanupOutcome(destroyResult),
 						zoneId: options.zone.id,
@@ -1019,7 +1024,6 @@ export function createManagedGatewayZoneRuntime(
 							? `hello_response:${outcome.outcome}`
 							: 'connect_error';
 					writeManagedGatewayZoneRuntimeLog(
-						'gateway-control-attachment-attempt',
 						outcome.kind === 'hello_response' && outcome.outcome === 'accepted'
 							? 'info'
 							: 'warning',
@@ -1057,7 +1061,7 @@ export function createManagedGatewayZoneRuntime(
 							operationTrigger,
 							previousGateway: gatewayIdentityFor(operationContext?.previousGateway),
 						});
-						writeManagedGatewayZoneRuntimeLog('record-gateway-cleanup-debt', 'warning', {
+						writeManagedGatewayZoneRuntimeLog('warning', {
 							operation: 'record-gateway-cleanup-debt',
 							outcome: formatGatewayCleanupOutcome(destroyResult),
 							zoneId: options.zone.id,
@@ -1086,7 +1090,7 @@ export function createManagedGatewayZoneRuntime(
 						operationTrigger,
 						previousGateway: gatewayIdentityFor(operationContext?.previousGateway),
 					});
-					writeManagedGatewayZoneRuntimeLog('stale-gateway-start-cleanup-failed', 'warning', {
+					writeManagedGatewayZoneRuntimeLog('warning', {
 						operation: 'stale-gateway-start-cleanup',
 						zoneId: options.zone.id,
 					});

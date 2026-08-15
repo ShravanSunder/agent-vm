@@ -1,6 +1,6 @@
 import { Writable } from 'node:stream';
 
-import { dispose, reset, type Config, type Sink } from '@logtape/logtape';
+import { dispose, reset, type Config, type LogRecord, type Sink } from '@logtape/logtape';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { PortalServerLogEvent } from './portal-server-operation.js';
@@ -63,22 +63,43 @@ function parseJsonLines<TRecord>(chunks: readonly string[]): TRecord[] {
 
 interface TrackedSink {
 	readonly disposeCount: () => number;
+	readonly recordCount: () => number;
 	readonly sink: Sink & AsyncDisposable & { readonly ready: Promise<void> };
 }
 
 function createTrackedSink(): TrackedSink {
 	let disposalCount = 0;
-	const sink = Object.assign((_record: Parameters<Sink>[0]): void => undefined, {
-		ready: Promise.resolve(),
-		[Symbol.asyncDispose]: async (): Promise<void> => {
-			disposalCount += 1;
+	let recordedCount = 0;
+	const sink = Object.assign(
+		(_record: Parameters<Sink>[0]): void => {
+			recordedCount += 1;
 		},
-	});
+		{
+			ready: Promise.resolve(),
+			[Symbol.asyncDispose]: async (): Promise<void> => {
+				disposalCount += 1;
+			},
+		},
+	);
 	return {
 		disposeCount: (): number => disposalCount,
+		recordCount: (): number => recordedCount,
 		sink,
 	};
 }
+
+function isSink(value: unknown): value is Sink {
+	return typeof value === 'function';
+}
+
+const lateLogRecord = {
+	category: ['agent-vm', 'mcp-portal', 'server'],
+	level: 'warning',
+	message: ['late record'],
+	properties: {},
+	rawMessage: 'late record',
+	timestamp: 0,
+} satisfies LogRecord;
 
 function createTestLoggingDependencies(options: {
 	readonly configure: NonNullable<ProcessLoggingDependencies['configure']>;
@@ -300,9 +321,13 @@ describe('MCP Portal process logging', () => {
 		const setupError = new Error('configuration failed after installation');
 		const stderrSink = createTrackedSink();
 		const otelSink = createTrackedSink();
+		let configuredOtelSink: Sink | undefined;
 		const configure = async <TSinkId extends string, TFilterId extends string>(
-			_config: Config<TSinkId, TFilterId>,
+			config: Config<TSinkId, TFilterId>,
 		): Promise<void> => {
+			configuredOtelSink = Object.values(config.sinks).find(
+				(sink): sink is Sink => isSink(sink) && sink !== stderrSink.sink,
+			);
 			throw setupError;
 		};
 		const dependencies = createTestLoggingDependencies({
@@ -322,6 +347,8 @@ describe('MCP Portal process logging', () => {
 		).rejects.toBe(setupError);
 		expect(stderrSink.disposeCount()).toBe(1);
 		expect(otelSink.disposeCount()).toBe(1);
+		configuredOtelSink?.(lateLogRecord);
+		expect(otelSink.recordCount()).toBe(0);
 	});
 
 	it('rejects duplicate process setup instead of replacing the active sink', async () => {

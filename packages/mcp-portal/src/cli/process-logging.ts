@@ -17,11 +17,11 @@ const maxSafeIdentifierLength = 128;
 const maxSafeReasonLength = 64;
 const unsafeIdentifierSyntaxPattern = /(?:\/\/|[?&#=%@])/u;
 
-function ignoreRecordsAfterDisposal(sink: Sink & AsyncDisposable): Sink & AsyncDisposable {
+function ignoreRecordsAfterDisposal<TSink extends Sink & AsyncDisposable>(sink: TSink): TSink {
 	let disposed = false;
-	const guardedSink: Sink & AsyncDisposable = (record): void => {
+	const guardedSink = Object.assign((record: Parameters<Sink>[0]): void => {
 		if (!disposed) sink(record);
-	};
+	}, sink);
 	guardedSink[Symbol.asyncDispose] = async (): Promise<void> => {
 		if (disposed) return;
 		disposed = true;
@@ -232,11 +232,13 @@ export async function configureProcessLogging(
 				}),
 			}),
 		);
-		otelSink = getOpenTelemetrySinkImpl({
-			diagnostics: false,
-			exceptionAttributes: false,
-			serviceName: 'agent-vm-mcp-portal',
-		});
+		otelSink = ignoreRecordsAfterDisposal(
+			getOpenTelemetrySinkImpl({
+				diagnostics: false,
+				exceptionAttributes: false,
+				serviceName: 'agent-vm-mcp-portal',
+			}),
+		);
 		const config = {
 			loggers: [
 				{ category: 'agent-vm', sinks: ['stderr', 'otel'] },

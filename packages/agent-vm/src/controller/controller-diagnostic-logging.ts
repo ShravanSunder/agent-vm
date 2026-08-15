@@ -40,10 +40,6 @@ export interface ControllerDiagnosticTelemetry {
 	readonly zoneId?: string | undefined;
 }
 
-export type ControllerDiagnosticLogContext = ControllerDiagnosticTelemetry & {
-	readonly operation: string;
-};
-
 export type ControllerDiagnosticDescriptor = (
 	| {
 			readonly event: ControllerDiagnosticEvent;

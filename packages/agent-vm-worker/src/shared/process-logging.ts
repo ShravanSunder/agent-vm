@@ -20,11 +20,11 @@ export interface ProcessLoggingHandle {
 	readonly shutdown: () => Promise<void>;
 }
 
-function ignoreRecordsAfterDisposal(sink: Sink & AsyncDisposable): Sink & AsyncDisposable {
+function ignoreRecordsAfterDisposal<TSink extends Sink & AsyncDisposable>(sink: TSink): TSink {
 	let disposed = false;
-	const guardedSink: Sink & AsyncDisposable = (record): void => {
+	const guardedSink = Object.assign((record: Parameters<Sink>[0]): void => {
 		if (!disposed) sink(record);
-	};
+	}, sink);
 	guardedSink[Symbol.asyncDispose] = async (): Promise<void> => {
 		if (disposed) return;
 		disposed = true;
@@ -168,12 +168,14 @@ export async function configureProcessLogging(
 	);
 	let otelSink: ReturnType<typeof getOpenTelemetrySink> | undefined;
 	try {
-		otelSink = getOpenTelemetrySink({
-			diagnostics: false,
-			exceptionAttributes: false,
-			objectRenderer: 'json',
-			serviceName: 'agent-vm-worker',
-		});
+		otelSink = ignoreRecordsAfterDisposal(
+			getOpenTelemetrySink({
+				diagnostics: false,
+				exceptionAttributes: false,
+				objectRenderer: 'json',
+				serviceName: 'agent-vm-worker',
+			}),
+		);
 		await configure({
 			reset: false,
 			sinks: { stderr: stderrSink, otel: otelSink },

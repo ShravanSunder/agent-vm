@@ -153,8 +153,8 @@ export async function runWorkerServeShutdownLifecycle(
 		}
 		const serverCloseResult = await serverCloseResultPromise;
 		if (!serverCloseResult.ok) {
+			if (!productCloseFailed) productCloseError = serverCloseResult.error;
 			productCloseFailed = true;
-			productCloseError = serverCloseResult.error;
 		}
 
 		await shutdownWorkerProcessLogging(options.logging);
