@@ -186,6 +186,32 @@ describe('configureProcessLogging', () => {
 		).toEqual({});
 	});
 
+	it('retains bounded classified identifiers that name sensitive domains', async () => {
+		const stderr = createCapturingWritable();
+		const logging = await configureProcessLogging({
+			serviceName: 'agent-vm-controller',
+			stderr: stderr.stream,
+		});
+		getLogger(['agent-vm', 'controller', 'gateway']).warn('Gateway recovery failed.', {
+			...createBoundedDiagnosticProperties({
+				errorCode: 'secret-resolution-failed',
+				event: 'secret-refresh-failed',
+				failureClass: 'secret-unavailable',
+				operation: 'refresh-secret-resolver',
+			}),
+		});
+
+		await logging.shutdown();
+
+		const record = JSON.parse(stderr.chunks[0] ?? '{}') as Record<string, unknown>;
+		expect(record.properties).toEqual({
+			errorCode: 'secret-resolution-failed',
+			event: 'secret-refresh-failed',
+			failureClass: 'secret-unavailable',
+			operation: 'refresh-secret-resolver',
+		});
+	});
+
 	it('fails on duplicate process configuration without replacing the active sink', async () => {
 		const firstStderr = createCapturingWritable();
 		const secondStderr = createCapturingWritable();

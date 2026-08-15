@@ -21,6 +21,9 @@ const processLoggingCategory = ['agent-vm'] as const;
 const logtapeMetaCategory = ['logtape', 'meta'] as const;
 const otelDiagnosticsCategory = ['logtape', 'meta', 'otel'] as const;
 const maxDiagnosticStringLength = 256;
+const diagnosticIdentifierPattern = /^[a-z0-9][a-z0-9._:-]{0,255}$/iu;
+const diagnosticIdentifierCredentialPattern =
+	/^(?:gh[pousr]_|github_pat_|sk-(?:proj-)?|xox[baprs]-|ya29\.|eyJ[a-z0-9_-]*\.[a-z0-9_-]+\.[a-z0-9_-]+)/iu;
 const diagnosticCredentialPattern =
 	/https?:\/\/|op:\/\/|authorization|bearer\s+\S+|cookie|password|private\s+key|prompt|response|secret|token|(?:api[_-]?key|credential)\s*=|(?:^|[^a-z0-9])(?:gh[pousr]_|github_pat_|sk-(?:proj-)?|xox[baprs]-|ya29\.)[a-z0-9._-]+|(?:^|[^a-z0-9])eyJ[a-z0-9_-]*\.[a-z0-9_-]+\.[a-z0-9_-]+/iu;
 
@@ -81,6 +84,19 @@ export function createBoundedDiagnosticProperties(
 	input: BoundedDiagnosticPropertiesInput,
 ): Readonly<Record<string, BoundedDiagnosticValue>> {
 	const properties: Record<string, BoundedDiagnosticValue> = {};
+	const addBoundedIdentifier = (key: string, value: string | undefined): void => {
+		if (value === undefined) {
+			return;
+		}
+		const normalized = value.replace(/[\r\n\t]/gu, ' ').trim();
+		if (
+			!diagnosticIdentifierPattern.test(normalized) ||
+			diagnosticIdentifierCredentialPattern.test(normalized)
+		) {
+			return;
+		}
+		properties[key] = normalized;
+	};
 	const addBoundedString = (key: string, value: string | undefined): void => {
 		if (value === undefined) {
 			return;
@@ -103,13 +119,13 @@ export function createBoundedDiagnosticProperties(
 
 	addBoundedNumber('attempt', input.attempt);
 	addBoundedNumber('durationMs', input.durationMs);
-	addBoundedString('errorClass', input.errorClass);
-	addBoundedString('errorCode', input.errorCode);
+	addBoundedIdentifier('errorClass', input.errorClass);
+	addBoundedIdentifier('errorCode', input.errorCode);
 	addBoundedString('errorSummary', input.errorSummary);
-	addBoundedString('event', input.event);
-	addBoundedString('failureClass', input.failureClass);
+	addBoundedIdentifier('event', input.event);
+	addBoundedIdentifier('failureClass', input.failureClass);
 	addBoundedString('leaseId', input.leaseId);
-	addBoundedString('operation', input.operation);
+	addBoundedIdentifier('operation', input.operation);
 	addBoundedNumber('statusCode', input.statusCode);
 	addBoundedString('zoneId', input.zoneId);
 	return properties;

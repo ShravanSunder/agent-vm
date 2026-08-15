@@ -399,6 +399,29 @@ function assertStructuredStderr(
 	);
 }
 
+function assertStdoutExcludesStructuredLogRecords(result: ChildResult): void {
+	for (const line of result.stdout.split('\n')) {
+		try {
+			const value: unknown = JSON.parse(line);
+			if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+				continue;
+			}
+			expect(
+				typeof Reflect.get(value, 'level') === 'string' &&
+					typeof Reflect.get(value, 'logger') === 'string' &&
+					typeof Reflect.get(value, 'message') === 'string' &&
+					typeof Reflect.get(value, 'timestamp') === 'string',
+				`stdout contains a structured LogTape record: ${line}`,
+			).toBe(false);
+		} catch (error: unknown) {
+			if (error instanceof SyntaxError) {
+				continue;
+			}
+			throw error;
+		}
+	}
+}
+
 function assertGatewayStartupFailure(result: ChildResult): void {
 	expect(result.exitCode).toBe(1);
 	expect(result.stdout).toBe('');
@@ -1040,6 +1063,7 @@ describe('structured logging process roots', () => {
 								: {},
 						);
 					}
+					assertStdoutExcludesStructuredLogRecords(result);
 					if (child.rootKind === 'agent-vm-worker') {
 						expect(result.stdout).toContain('[agent-vm-worker] Server listening on');
 					}

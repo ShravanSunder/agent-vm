@@ -168,6 +168,18 @@ function writeControllerRuntimeLog(
 	);
 }
 
+function writeControllerGatewayRecoveryLog(
+	level: ControllerDiagnosticLevel = 'warning',
+	telemetry: ControllerDiagnosticTelemetry = { operation: 'gateway-recovery-callback' },
+): void {
+	writeControllerDiagnostic(
+		'gateway',
+		level === 'warning'
+			? { event: 'gateway-recovery-diagnostic', failureClass: 'failure', level, telemetry }
+			: { event: 'gateway-recovery-diagnostic', level, telemetry },
+	);
+}
+
 function formatUnknownError(error: unknown): string {
 	if (error instanceof Error) {
 		return error.message;
@@ -1183,7 +1195,7 @@ async function startControllerRuntimeWithOwnershipLock(
 		getRuntimeReadiness: () => runtimeReadiness.get(),
 		now,
 		restartTimeoutMs: controllerHealthConfig.gatewayServiceAutoRestart.restartTimeoutMs,
-		writeLog: writeControllerRuntimeLog,
+		writeLog: writeControllerGatewayRecoveryLog,
 	});
 	const classifyRecoveryBudgetClass = (request: {
 		readonly consecutiveFailures: number;
