@@ -23,6 +23,7 @@ import type {
 import { terminateRecordedManagedVmProcess } from '../../shared/controller-managed-vm-termination.js';
 import type { readProcessIdentity } from '../../shared/managed-vm-process.js';
 import { readTcpListenPortOwner } from '../../shared/port-owner.js';
+import { writeControllerDiagnostic } from '../controller-diagnostic-logging.js';
 import type { ControllerToolLeaseRecordsTarget } from '../durable-state/controller-state-record-paths.js';
 import { settleGatewayChildDestructionTasks } from '../vm-ownership/gateway-child-destruction.js';
 import type {
@@ -320,12 +321,25 @@ function assertValidToolVmUsePolicy(policy: ToolVmUsePolicy): void {
 	}
 }
 
-function formatLeaseManagerError(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
-}
+type LeaseManagerDiagnosticOperation =
+	| 'tool-vm-lease-creation-cleanup'
+	| 'tool-vm-lease-eviction-cleanup'
+	| 'tool-vm-lease-eviction-completion'
+	| 'tool-vm-lease-release-access-fence'
+	| 'tool-vm-lease-release-cleanup'
+	| 'tool-vm-lease-replacement-cleanup';
 
-function writeLeaseManagerWarning(message: string): void {
-	process.stderr.write(`[lease-manager] ${message}\n`);
+function writeLeaseManagerWarning(telemetry: {
+	readonly leaseId: string;
+	readonly operation: LeaseManagerDiagnosticOperation;
+	readonly zoneId: string;
+}): void {
+	writeControllerDiagnostic('lease', {
+		event: 'lease-diagnostic',
+		level: 'warning',
+		failureClass: 'failure',
+		telemetry,
+	});
 }
 
 function assertCompatibleAgentLeaseRequest(
@@ -792,9 +806,11 @@ export function createLeaseManager(options: {
 			});
 		} catch (error) {
 			options.tcpPool.quarantine(lease.tcpSlot);
-			writeLeaseManagerWarning(
-				`failed to close evicted lease '${lease.id}' in zone '${lease.zoneId}': ${formatLeaseManagerError(error)}. Quarantining tcp slot ${lease.tcpSlot} and preserving runtime record for next-startup cleanup.`,
-			);
+			writeLeaseManagerWarning({
+				leaseId: lease.id,
+				operation: 'tool-vm-lease-eviction-cleanup',
+				zoneId: lease.zoneId,
+			});
 			throw error;
 		}
 	}
@@ -836,10 +852,12 @@ export function createLeaseManager(options: {
 			notifyRetirement: reason,
 			reason,
 		});
-		void retirement.completion.catch((error: unknown) => {
-			writeLeaseManagerWarning(
-				`failed to close evicted lease '${lease.id}' in zone '${lease.zoneId}': ${formatLeaseManagerError(error)}. Quarantining tcp slot ${lease.tcpSlot} and preserving runtime record for next-startup cleanup.`,
-			);
+		void retirement.completion.catch(() => {
+			writeLeaseManagerWarning({
+				leaseId: lease.id,
+				operation: 'tool-vm-lease-eviction-completion',
+				zoneId: lease.zoneId,
+			});
 		});
 		await retirement.accessFenced;
 		return retirement;
@@ -1122,9 +1140,11 @@ export function createLeaseManager(options: {
 					reason: 'create-failed',
 				});
 			} catch (cleanupError) {
-				writeLeaseManagerWarning(
-					`failed to close partially-created lease VM for zone '${leaseOptions.zoneId}' agent '${leaseOptions.agentId}': ${formatLeaseManagerError(cleanupError)}. Quarantining tcp slot ${tcpSlot} for exact retry.`,
-				);
+				writeLeaseManagerWarning({
+					leaseId: authority.leaseId,
+					operation: 'tool-vm-lease-creation-cleanup',
+					zoneId: leaseOptions.zoneId,
+				});
 				throw createToolVmLeaseRetainedCleanupError({
 					agentId: leaseOptions.agentId,
 					cleanupError,
@@ -1310,9 +1330,11 @@ export function createLeaseManager(options: {
 					});
 					return await createReplacementLeaseWhileLocked({ leaseOptions, retirement }).catch(
 						(error: unknown) => {
-							writeLeaseManagerWarning(
-								`failed to replace lease '${currentLease.id}' in zone '${currentLease.zoneId}': ${formatLeaseManagerError(error)}. Quarantining tcp slot ${currentLease.tcpSlot} and refusing successor admission.`,
-							);
+							writeLeaseManagerWarning({
+								leaseId: currentLease.id,
+								operation: 'tool-vm-lease-replacement-cleanup',
+								zoneId: currentLease.zoneId,
+							});
 							throw error;
 						},
 					);
@@ -1730,9 +1752,11 @@ export function createLeaseManager(options: {
 					try {
 						await admittedRetirement.accessFenced;
 					} catch (error) {
-						writeLeaseManagerWarning(
-							`failed to close released lease '${currentLease.id}' in zone '${currentLease.zoneId}': ${formatLeaseManagerError(error)}. Quarantining tcp slot ${currentLease.tcpSlot} and preserving runtime record for exact retry.`,
-						);
+						writeLeaseManagerWarning({
+							leaseId: currentLease.id,
+							operation: 'tool-vm-lease-release-access-fence',
+							zoneId: currentLease.zoneId,
+						});
 						throw error;
 					}
 					return admittedRetirement;
@@ -1742,9 +1766,11 @@ export function createLeaseManager(options: {
 			try {
 				await retirement.completion;
 			} catch (error) {
-				writeLeaseManagerWarning(
-					`failed to close released lease '${lease.id}' in zone '${lease.zoneId}': ${formatLeaseManagerError(error)}. Quarantining tcp slot ${lease.tcpSlot} and preserving runtime record for exact retry.`,
-				);
+				writeLeaseManagerWarning({
+					leaseId: lease.id,
+					operation: 'tool-vm-lease-release-cleanup',
+					zoneId: lease.zoneId,
+				});
 				throw error;
 			}
 			await retirement.retirementAcknowledgement;

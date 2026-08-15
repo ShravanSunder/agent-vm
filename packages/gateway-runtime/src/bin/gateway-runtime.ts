@@ -12,6 +12,10 @@ const command = run(gatewayRuntimeRootParser, {
 });
 
 void dispatchGatewayRuntimeCommand(command).catch(() => {
-	process.stderr.write('Gateway runtime service failed.\n');
+	try {
+		process.stderr.write('Gateway runtime service failed.\n');
+	} catch {
+		// Preserve the process result when stderr is unavailable.
+	}
 	process.exitCode = 1;
 });

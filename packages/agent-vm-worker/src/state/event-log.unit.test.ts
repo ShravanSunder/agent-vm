@@ -1,10 +1,13 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Writable } from 'node:stream';
 
+import { getConfig, reset } from '@logtape/logtape';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { workerConfigSchema } from '../config/worker-config.js';
+import { configureProcessLogging } from '../shared/process-logging.js';
 import { appendEvent, replayEvents } from './event-log.js';
 
 function buildWorkerConfigInput(): Record<string, unknown> {
@@ -70,7 +73,7 @@ describe('event-log', () => {
 		await expect(replayEvents(filePath)).rejects.toThrow('Corrupt event at line 1');
 	});
 
-	it('skips an incomplete final line and logs to stderr', async () => {
+	it('skips an incomplete final line and emits a bounded state diagnostic', async () => {
 		tempDir = await mkdtemp(join(tmpdir(), 'worker-event-log-'));
 		const filePath = join(tempDir, 'tasks', 'task-1.jsonl');
 		await appendEvent(filePath, { event: 'task-completed' });
@@ -79,14 +82,26 @@ describe('event-log', () => {
 			`${await readFile(filePath, 'utf8')}{"event":"task-accepted"`,
 			'utf8',
 		);
-		const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+		const chunks: string[] = [];
+		const stderr = new Writable({
+			write: (chunk: Uint8Array, _encoding, callback): void => {
+				chunks.push(Buffer.from(chunk).toString('utf8'));
+				callback();
+			},
+		});
+		const logging = await configureProcessLogging({ stderr });
 
-		const events = await replayEvents(filePath);
+		try {
+			const events = await replayEvents(filePath);
 
-		expect(events).toHaveLength(1);
-		expect(events[0]?.data.event).toBe('task-completed');
-		expect(stderrSpy).toHaveBeenCalledWith(
-			expect.stringContaining('Skipping incomplete final line'),
-		);
+			expect(events).toHaveLength(1);
+			expect(events[0]?.data.event).toBe('task-completed');
+			await logging.shutdown();
+			expect(chunks.join('')).toContain('event-log-tail-incomplete');
+			expect(chunks.join('')).not.toContain(filePath);
+		} finally {
+			await logging.shutdown();
+			if (getConfig() !== null) await reset();
+		}
 	});
 });

@@ -1,3 +1,4 @@
+import { configure, dispose, reset, type LogRecord } from '@logtape/logtape';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import type { ActiveWorkerTask } from './active-task-registry.js';
@@ -1004,6 +1005,22 @@ describe('git-pull-default-operations', () => {
 	});
 
 	test('does not fail the pull when task event recording fails', async () => {
+		const capturedRecords: LogRecord[] = [];
+		await configure({
+			loggers: [
+				{
+					category: ['agent-vm', 'controller', 'git'],
+					lowestLevel: 'trace',
+					sinks: ['capture'],
+				},
+			],
+			reset: true,
+			sinks: {
+				capture: (record): void => {
+					capturedRecords.push(record);
+				},
+			},
+		});
 		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
 			const gitArgs = extractGitArgs(args);
 			const joined = gitArgs.join(' ');
@@ -1027,16 +1044,35 @@ describe('git-pull-default-operations', () => {
 			return { stdout: '', stderr: '', exitCode: 1 };
 		});
 
-		await expect(
-			pullDefaultForTask({
-				activeTask,
-				repoUrl: 'https://github.com/acme/widgets.git',
-				githubToken: 'token',
-				recordEvent: vi.fn(async () => {
-					throw new Error('event log unavailable');
+		try {
+			await expect(
+				pullDefaultForTask({
+					activeTask,
+					repoUrl: 'https://github.com/acme/widgets.git',
+					githubToken: 'token',
+					recordEvent: vi.fn(async () => {
+						throw new Error('event log unavailable');
+					}),
 				}),
-			}),
-		).resolves.toMatchObject({ kind: 'advanced', success: true });
+			).resolves.toMatchObject({ kind: 'advanced', success: true });
+			expect(capturedRecords.map((record) => record.properties)).toEqual([
+				{
+					event: 'controller-operation-failed',
+					failureClass: 'failure',
+					operation: 'record-controller-git-pull-event',
+					outcome: 'controller-git-pull-started',
+				},
+				{
+					event: 'controller-operation-failed',
+					failureClass: 'failure',
+					operation: 'record-controller-git-pull-event',
+					outcome: 'controller-git-pull-succeeded',
+				},
+			]);
+		} finally {
+			await dispose().catch(() => {});
+			await reset();
+		}
 	});
 
 	test('soft-fails when branch-state git reads fail after fetch', async () => {

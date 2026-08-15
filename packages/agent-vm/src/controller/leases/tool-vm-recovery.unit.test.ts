@@ -183,15 +183,15 @@ describe('cleanupRecordedToolVmRuntimes', () => {
 			tcpSlot: 0,
 		});
 		const processTermination = createExactProcessTerminationFixture();
-		const logMessages: string[] = [];
+		const logRecords: Array<readonly [message: string, level: 'info' | 'warning']> = [];
 
 		const result = await cleanupRecordedToolVmRuntimes(
 			createCleanupOptions({ mode: 'in-process-recovery' }),
 			{
 				...processTermination,
 				loadAllToolVmRuntimeRecords: async () => loadedToolVmRuntimeRecords(record),
-				log: (message) => {
-					logMessages.push(message);
+				log: (message, level) => {
+					logRecords.push([message, level]);
 				},
 				portForSlot: () => 19_500,
 				readTcpListenPortOwner: async () => ({ command: 'qemu-system-aarch64', pid: 222 }),
@@ -201,7 +201,10 @@ describe('cleanupRecordedToolVmRuntimes', () => {
 		expect(processTermination.terminateRecordedHostProcess).not.toHaveBeenCalled();
 		expect(result.cleanedCount).toBe(0);
 		expect(result.warnings.join('\n')).toContain('cannot reuse port 19500');
-		expect(logMessages.join('\n')).toContain('cannot reuse port 19500');
+		expect(logRecords).toContainEqual([
+			expect.stringContaining('cannot reuse port 19500'),
+			'warning',
+		]);
 	});
 
 	it('throws in offline cleanup when a tool VM port is held by a different pid', async () => {
@@ -277,6 +280,7 @@ describe('cleanupRecordedToolVmRuntimes', () => {
 		const deleteToolVmRuntimeRecord = vi.fn(async () => {});
 		const record = createToolVmRuntimeRecord();
 		const processFixture = createStatefulToolVmProcessFixture([record]);
+		const logRecords: Array<readonly [message: string, level: 'info' | 'warning']> = [];
 		const result = await cleanupRecordedToolVmRuntimes(
 			{
 				expectedConfigPath: '/deployments/shravan-claw/config/system.json',
@@ -288,7 +292,9 @@ describe('cleanupRecordedToolVmRuntimes', () => {
 				...processFixture,
 				deleteToolVmRuntimeRecord,
 				loadAllToolVmRuntimeRecords: async () => loadedToolVmRuntimeRecords(record),
-				log: () => {},
+				log: (message, level) => {
+					logRecords.push([message, level]);
+				},
 			},
 		);
 		expect(processFixture.terminateRecordedHostProcess).toHaveBeenCalledWith(
@@ -300,11 +306,13 @@ describe('cleanupRecordedToolVmRuntimes', () => {
 			killedPids: [48282],
 			quarantinedCount: 0,
 		});
+		expect(logRecords.map(([, level]) => level)).toEqual(['info', 'info']);
 	});
 
 	it('skips signaling when the recorded pid is already dead and still deletes the record', async () => {
 		const processTermination = createExactProcessTerminationFixture();
 		const readProcessCommand = vi.fn(async () => null);
+		const readProcessIdentity = vi.fn(async () => null);
 		const deleteToolVmRuntimeRecord = vi.fn(async () => {});
 		const result = await cleanupRecordedToolVmRuntimes(
 			{
@@ -320,6 +328,7 @@ describe('cleanupRecordedToolVmRuntimes', () => {
 					loadedToolVmRuntimeRecords(createToolVmRuntimeRecord()),
 				log: () => {},
 				readProcessCommand,
+				readProcessIdentity,
 			},
 		);
 		expect(processTermination.terminateRecordedHostProcess).toHaveBeenCalledOnce();

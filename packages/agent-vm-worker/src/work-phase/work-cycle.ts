@@ -1,4 +1,5 @@
 /* oxlint-disable eslint/no-await-in-loop -- cycle turns are stateful and sequential */
+import { getLogger } from '@logtape/logtape';
 import { z } from 'zod';
 
 import type { WorkCycleConfig } from '../config/worker-config.js';
@@ -7,8 +8,8 @@ import {
 	buildWorkReviewMessage,
 	buildWorkReviseMessage,
 } from '../prompt/message-builders.js';
+import { toSafeWorkerLogProperties } from '../shared/process-logging.js';
 import { reviewResultSchema, type ReviewResult } from '../shared/review-result.js';
-import { writeStderr } from '../shared/stderr.js';
 import {
 	verificationCommandResultSchema,
 	type VerificationCommandResult,
@@ -18,6 +19,8 @@ import type {
 	PersistentThread,
 	PersistentThreadResponse,
 } from '../work-executor/persistent-thread.js';
+
+const coordinatorLogger = getLogger(['agent-vm', 'worker', 'coordinator']);
 
 export interface RunWorkCycleProps {
 	readonly spec: string;
@@ -160,24 +163,38 @@ export async function runWorkCycle(props: RunWorkCycleProps): Promise<WorkCycleR
 			if (!message.includes('does not match ReviewResult schema')) {
 				throw error;
 			}
-			writeStderr(
-				`[work-cycle] reviewer cycle ${String(cycle)} returned malformed review JSON; nudging once: ${
-					message
-				}`,
+			coordinatorLogger.warn(
+				'Worker reviewer response was malformed; nudging once.',
+				toSafeWorkerLogProperties({
+					event: 'reviewer-reply-malformed',
+					failureClass: 'invalid-review',
+					attempt: cycle,
+					error,
+				}),
 			);
 			reviewResponse = await props.reviewThread.send(MALFORMED_REVIEW_NUDGE);
 			parsedReview = parseWorkReview(reviewResponse.response);
 		}
 
 		if (props.validationCommandList.length > 0 && parsedReview.validationResults.length === 0) {
-			writeStderr(
-				`[work-cycle] reviewer cycle ${String(cycle)} returned empty validationResults; nudging once`,
+			coordinatorLogger.warn(
+				'Worker reviewer response omitted validation results; nudging once.',
+				toSafeWorkerLogProperties({
+					event: 'reviewer-validation-results-missing',
+					failureClass: 'incomplete-review',
+					attempt: cycle,
+				}),
 			);
 			reviewResponse = await props.reviewThread.send(REVIEWER_NUDGE);
 			parsedReview = parseWorkReview(reviewResponse.response);
 			if (parsedReview.validationResults.length === 0) {
-				writeStderr(
-					`[work-cycle] reviewer cycle ${String(cycle)} returned empty validationResults after nudge; proceeding`,
+				coordinatorLogger.warn(
+					'Worker reviewer response still omitted validation results after nudge; proceeding.',
+					toSafeWorkerLogProperties({
+						event: 'reviewer-validation-results-missing-after-nudge',
+						failureClass: 'incomplete-review',
+						attempt: cycle,
+					}),
 				);
 				parsedReview = { ...parsedReview, validationSkipped: true };
 			}

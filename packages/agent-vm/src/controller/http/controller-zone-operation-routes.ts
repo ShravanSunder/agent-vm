@@ -1,6 +1,11 @@
 import { type Context, type Hono } from 'hono';
 import type { z } from 'zod';
 
+import {
+	writeControllerDiagnostic,
+	type ControllerDiagnosticDomain,
+	type ControllerDiagnosticTelemetry,
+} from '../controller-diagnostic-logging.js';
 import { scrubGithubTokenFromOutput } from '../git-auth-support.js';
 import { PullDefaultValidationError } from '../git-pull-default-operations.js';
 import { PushBranchesValidationError } from '../git-push-operations.js';
@@ -92,8 +97,24 @@ async function parseJsonBodyWithSchema<TSchema extends z.ZodType>(
 	return { ok: true, data: parsedPayload.data };
 }
 
-function writeControllerRouteLog(message: string): void {
-	process.stderr.write(`[controller-zone-operation-routes] ${message}\n`);
+type ControllerRouteDiagnosticOperation =
+	| 'execute-worker-task'
+	| 'pull-default-for-task'
+	| 'push-task-branches'
+	| 'record-task-failed-event'
+	| 'write-task-failure-sentinel';
+
+function writeControllerRouteLog(
+	domain: ControllerDiagnosticDomain,
+	operation: ControllerRouteDiagnosticOperation,
+	telemetry: ControllerDiagnosticTelemetry = { operation },
+): void {
+	writeControllerDiagnostic(domain, {
+		event: 'controller-operation-failed',
+		level: 'warning',
+		failureClass: 'failure',
+		telemetry,
+	});
 }
 
 function errorMessage(error: unknown, fallbackError: string): string {
@@ -436,15 +457,17 @@ export function registerControllerZoneOperationRoutes(
 
 				void executeWorkerTask(prepared).catch(async (error: unknown) => {
 					const message = error instanceof Error ? error.message : String(error);
-					writeControllerRouteLog(
-						`executeWorkerTask failed for task '${prepared.taskId}': ${message}`,
-					);
+					writeControllerRouteLog('runtime', 'execute-worker-task', {
+						operation: 'execute-worker-task',
+						zoneId: context.req.param('zoneId'),
+					});
 					try {
 						await prepared.recordEvent({ event: 'task-failed', reason: message });
-					} catch (logError) {
-						writeControllerRouteLog(
-							`Failed to record task-failed event for '${prepared.taskId}': ${logError instanceof Error ? logError.message : String(logError)}`,
-						);
+					} catch {
+						writeControllerRouteLog('runtime', 'record-task-failed-event', {
+							operation: 'record-task-failed-event',
+							zoneId: context.req.param('zoneId'),
+						});
 						try {
 							await writeTaskFailureSentinel({
 								config: buildTaskConfigFromPreparedInput({
@@ -457,10 +480,11 @@ export function registerControllerZoneOperationRoutes(
 								stateDir: prepared.preStartResult.stateDir,
 								taskId: prepared.taskId,
 							});
-						} catch (sentinelError) {
-							writeControllerRouteLog(
-								`Failed to write task-failed sentinel for '${prepared.taskId}': ${sentinelError instanceof Error ? sentinelError.message : String(sentinelError)}`,
-							);
+						} catch {
+							writeControllerRouteLog('runtime', 'write-task-failure-sentinel', {
+								operation: 'write-task-failure-sentinel',
+								zoneId: context.req.param('zoneId'),
+							});
 						}
 					}
 				});
@@ -563,9 +587,11 @@ export function registerControllerZoneOperationRoutes(
 					return context.json(zoneRuntimeErrorBody(error), runtimeStatus);
 				}
 				const responseBody = buildErrorResponseBody(error, 'push-branches-failed');
-				writeControllerRouteLog(
-					`push-branches failed for zone '${context.req.param('zoneId')}' task '${context.req.param('taskId')}': ${responseBody.error}`,
-				);
+				writeControllerRouteLog('git', 'push-task-branches', {
+					operation: 'push-task-branches',
+					statusCode: error instanceof PushBranchesValidationError ? 400 : 500,
+					zoneId: context.req.param('zoneId'),
+				});
 				return context.json(responseBody, error instanceof PushBranchesValidationError ? 400 : 500);
 			}
 		});
@@ -600,16 +626,11 @@ export function registerControllerZoneOperationRoutes(
 					return context.json(zoneRuntimeErrorBody(error), runtimeStatus);
 				}
 				const isValidationError = error instanceof PullDefaultValidationError;
-				const logDetail = scrubGithubTokenFromOutput(
-					error instanceof Error
-						? isValidationError
-							? error.message
-							: (error.stack ?? error.message)
-						: String(error),
-				);
-				writeControllerRouteLog(
-					`pull-default failed for zone '${context.req.param('zoneId')}' task '${context.req.param('taskId')}': ${logDetail}`,
-				);
+				writeControllerRouteLog('git', 'pull-default-for-task', {
+					operation: 'pull-default-for-task',
+					statusCode: isValidationError ? 400 : 500,
+					zoneId: context.req.param('zoneId'),
+				});
 				return context.json(
 					scrubErrorResponseBody(buildErrorResponseBody(error, 'pull-default-failed')),
 					isValidationError ? 400 : 500,

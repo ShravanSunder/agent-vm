@@ -19,6 +19,10 @@ export async function main(): Promise<void> {
 }
 
 void main().catch((error: unknown) => {
-	process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+	try {
+		process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+	} catch {
+		// Preserve the process failure when stderr is unavailable.
+	}
 	process.exitCode = 1;
 });

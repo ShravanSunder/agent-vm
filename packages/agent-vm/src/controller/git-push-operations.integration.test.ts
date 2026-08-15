@@ -1,3 +1,4 @@
+import { configure, dispose, reset, type LogRecord } from '@logtape/logtape';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ActiveWorkerTask } from './active-task-registry.js';
@@ -693,16 +694,51 @@ describe('git-push-operations', () => {
 		const recordEvent = vi.fn(async () => {
 			throw new Error('event log unavailable');
 		});
-
-		const result = await pushBranchesForTask({
-			activeTask: buildActiveTask(),
-			branches: [{ repoUrl: 'https://github.com/acme/widgets.git', branchName: 'agent/task-1' }],
-			githubToken: 'token',
-			recordEvent,
+		const capturedRecords: LogRecord[] = [];
+		await configure({
+			loggers: [
+				{
+					category: ['agent-vm', 'controller', 'git'],
+					lowestLevel: 'trace',
+					sinks: ['capture'],
+				},
+			],
+			reset: true,
+			sinks: {
+				capture: (record): void => {
+					capturedRecords.push(record);
+				},
+			},
 		});
 
-		expect(result.results[0]).toMatchObject({ branch: 'agent/task-1', success: true });
-		expect(recordEvent).toHaveBeenCalled();
+		try {
+			const result = await pushBranchesForTask({
+				activeTask: buildActiveTask(),
+				branches: [{ repoUrl: 'https://github.com/acme/widgets.git', branchName: 'agent/task-1' }],
+				githubToken: 'token',
+				recordEvent,
+			});
+
+			expect(result.results[0]).toMatchObject({ branch: 'agent/task-1', success: true });
+			expect(recordEvent).toHaveBeenCalled();
+			expect(capturedRecords.map((record) => record.properties)).toEqual([
+				{
+					event: 'controller-operation-failed',
+					failureClass: 'failure',
+					operation: 'record-controller-git-event',
+					outcome: 'controller-git-push-started',
+				},
+				{
+					event: 'controller-operation-failed',
+					failureClass: 'failure',
+					operation: 'record-controller-git-event',
+					outcome: 'controller-git-push-succeeded',
+				},
+			]);
+		} finally {
+			await dispose().catch(() => {});
+			await reset();
+		}
 	});
 
 	it('soft-fails when local head already matches remote branch', async () => {

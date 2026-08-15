@@ -10,6 +10,7 @@ import {
 } from '@agent-vm/agent-vm-worker';
 
 import type { SystemConfig } from '../config/system-config.js';
+import { writeControllerDiagnostic } from './controller-diagnostic-logging.js';
 
 export interface TaskStateReader {
 	readonly read: (zoneId: string, taskId: string) => Promise<TaskState | null>;
@@ -26,8 +27,15 @@ export interface WriteTaskFailureSentinelOptions {
 	readonly taskId: string;
 }
 
-function writeTaskStateReaderLog(message: string): void {
-	process.stderr.write(`[task-state-reader] ${message}\n`);
+function writeTaskStateReaderLog(
+	operation: 'read-task-failure-sentinel' | 'access-task-state-log' | 'invalid-task-state-log',
+): void {
+	writeControllerDiagnostic('runtime', {
+		event: 'task-state-diagnostic',
+		level: 'warning',
+		failureClass: 'failure',
+		telemetry: { operation },
+	});
 }
 
 function isNodeErrorWithCode(error: unknown, code: string): boolean {
@@ -68,8 +76,7 @@ async function readTaskFailureSentinel(
 		if (isNodeErrorWithCode(error, 'ENOENT')) {
 			return null;
 		}
-		const message = error instanceof Error ? error.message : String(error);
-		writeTaskStateReaderLog(`Unable to read task failure sentinel ${sentinelPath}: ${message}`);
+		writeTaskStateReaderLog('read-task-failure-sentinel');
 		throw error;
 	}
 }
@@ -104,8 +111,7 @@ export function createTaskStateReader(options: CreateTaskStateReaderOptions): Ta
 				if (isNodeErrorWithCode(error, 'ENOENT')) {
 					return await readTaskFailureSentinel(taskStateDir, taskId);
 				}
-				const message = error instanceof Error ? error.message : String(error);
-				writeTaskStateReaderLog(`Unable to access task state log ${filePath}: ${message}`);
+				writeTaskStateReaderLog('access-task-state-log');
 				throw error;
 			}
 			const state = await loadTaskStateFromLog(filePath);
@@ -115,7 +121,7 @@ export function createTaskStateReader(options: CreateTaskStateReaderOptions): Ta
 					return sentinelState;
 				}
 				const message = `Task state log ${filePath} is empty or does not begin with task-accepted.`;
-				writeTaskStateReaderLog(message);
+				writeTaskStateReaderLog('invalid-task-state-log');
 				throw new Error(message);
 			}
 			return state;

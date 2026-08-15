@@ -80,6 +80,8 @@
 		"@agent-vm/secret-management": "workspace:*",
 		"@hono/mcp": "^0.3.0",
 		"@hono/node-server": "^2.0.2",
+		"@logtape/logtape": "2.3.0",
+		"@logtape/otel": "2.3.0",
 		"@modelcontextprotocol/sdk": "^1.29.0",
 		"@optique/core": "^1.2.0",
 		"@optique/run": "^1.2.0",

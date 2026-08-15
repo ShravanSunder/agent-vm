@@ -40,6 +40,11 @@ import {
 	createGatewayControlLeaseRpcOperations,
 	createGatewayControlProcessAdmissionCoordinator,
 } from './control-session/index.js';
+import { writeControllerDiagnostic } from './controller-diagnostic-logging.js';
+import type {
+	ControllerDiagnosticLevel,
+	ControllerDiagnosticTelemetry,
+} from './controller-diagnostic-logging.js';
 import {
 	createControllerRuntimeOperations,
 	createStopControllerOperation,
@@ -151,8 +156,40 @@ function resolveToolVmRootBinding(
 	};
 }
 
-function writeControllerRuntimeLog(message: string): void {
-	process.stderr.write(`[agent-vm] ${message}\n`);
+function writeControllerRuntimeLog(
+	level: ControllerDiagnosticLevel = 'warning',
+	telemetry: ControllerDiagnosticTelemetry = { operation: 'controller-runtime-callback' },
+): void {
+	writeControllerDiagnostic(
+		'runtime',
+		level === 'warning'
+			? { event: 'runtime-diagnostic', failureClass: 'failure', level, telemetry }
+			: { event: 'runtime-diagnostic', level, telemetry },
+	);
+}
+
+function writeControllerGatewayLog(
+	level: ControllerDiagnosticLevel = 'warning',
+	telemetry: ControllerDiagnosticTelemetry = { operation: 'gateway-runtime-callback' },
+): void {
+	writeControllerDiagnostic(
+		'gateway',
+		level === 'warning'
+			? { event: 'gateway-health-diagnostic', failureClass: 'failure', level, telemetry }
+			: { event: 'gateway-health-diagnostic', level, telemetry },
+	);
+}
+
+function writeControllerGatewayRecoveryLog(
+	level: ControllerDiagnosticLevel = 'warning',
+	telemetry: ControllerDiagnosticTelemetry = { operation: 'gateway-recovery-callback' },
+): void {
+	writeControllerDiagnostic(
+		'gateway',
+		level === 'warning'
+			? { event: 'gateway-recovery-diagnostic', failureClass: 'failure', level, telemetry }
+			: { event: 'gateway-recovery-diagnostic', level, telemetry },
+	);
 }
 
 function formatUnknownError(error: unknown): string {
@@ -195,8 +232,10 @@ async function flushControllerTelemetry(
 	}
 	try {
 		await controllerTelemetry.forceFlush();
-	} catch (error) {
-		writeControllerRuntimeLog(`Controller telemetry flush failed: ${formatUnknownError(error)}`);
+	} catch {
+		writeControllerRuntimeLog('warning', {
+			operation: 'controller-telemetry-flush',
+		});
 	}
 }
 
@@ -208,8 +247,10 @@ async function shutdownControllerTelemetry(
 	}
 	try {
 		await controllerTelemetry.shutdown();
-	} catch (error) {
-		writeControllerRuntimeLog(`Controller telemetry shutdown failed: ${formatUnknownError(error)}`);
+	} catch {
+		writeControllerRuntimeLog('warning', {
+			operation: 'controller-telemetry-shutdown',
+		});
 	}
 }
 
@@ -459,9 +500,11 @@ async function startControllerRuntimeWithOwnershipLock(
 		createGatewayEpochId: randomUUID,
 	});
 	const hostNetworkDefaults = dependencies.configureManagedVmHostNetworkDefaults();
-	writeControllerRuntimeLog(
-		`Host network defaults: dnsResultOrder=${hostNetworkDefaults.dnsResultOrder} autoSelectFamily=${hostNetworkDefaults.autoSelectFamily}`,
-	);
+	writeControllerRuntimeLog('info', {
+		autoSelectFamily: hostNetworkDefaults.autoSelectFamily,
+		dnsResultOrder: hostNetworkDefaults.dnsResultOrder,
+		operation: 'configure-host-network-defaults',
+	});
 	const runTaskStep =
 		dependencies.runTask ?? (async (_title: string, fn: () => Promise<void>) => await fn());
 	const secretResolver = await runTaskWithResult(
@@ -569,10 +612,10 @@ async function startControllerRuntimeWithOwnershipLock(
 				projectNamespace: options.systemConfig.host.projectNamespace,
 				proof: createControllerTelemetryProofAttributes(),
 			});
-		} catch (error) {
-			writeControllerRuntimeLog(
-				`Controller telemetry disabled after startup failure: ${formatUnknownError(error)}`,
-			);
+		} catch {
+			writeControllerRuntimeLog('warning', {
+				operation: 'start-controller-telemetry',
+			});
 		}
 	}
 	const healthEventStore = new HealthEventStore({
@@ -783,10 +826,10 @@ async function startControllerRuntimeWithOwnershipLock(
 	};
 	const reaperTimer = (dependencies.setIntervalImpl ?? setInterval)(
 		() =>
-			reapToolVmLeases().catch((error: unknown) =>
-				writeControllerRuntimeLog(
-					`Tool VM lease reaper failed: ${error instanceof Error ? error.message : String(error)}`,
-				),
+			reapToolVmLeases().catch(() =>
+				writeControllerRuntimeLog('warning', {
+					operation: 'reap-tool-vm-leases',
+				}),
 			),
 		60_000,
 	);
@@ -819,10 +862,11 @@ async function startControllerRuntimeWithOwnershipLock(
 								lifecycleState = registry
 									.getManagedGatewayRuntime(transition.gateway.zoneId)
 									.getLifecycleState();
-							} catch (error) {
-								writeControllerRuntimeLog(
-									`Ignoring Gateway runtime attachment loss for unavailable zone '${transition.gateway.zoneId}': ${formatUnknownError(error)}`,
-								);
+							} catch {
+								writeControllerRuntimeLog('warning', {
+									operation: 'resolve-gateway-runtime-for-attachment-loss',
+									zoneId: transition.gateway.zoneId,
+								});
 								return;
 							}
 							if (
@@ -843,10 +887,11 @@ async function startControllerRuntimeWithOwnershipLock(
 									},
 									zoneId: gatewayIdentity.zoneId,
 								})
-								.catch((error: unknown) => {
-									writeControllerRuntimeLog(
-										`Gateway runtime attachment-loss recovery failed for zone '${gatewayIdentity.zoneId}': ${formatUnknownError(error)}`,
-									);
+								.catch(() => {
+									writeControllerRuntimeLog('warning', {
+										operation: 'recover-gateway-runtime-attachment-loss',
+										zoneId: gatewayIdentity.zoneId,
+									});
 								});
 						},
 						preflightGatewayZoneStart: async (preflightOptions, preflightDependencies) => {
@@ -874,7 +919,7 @@ async function startControllerRuntimeWithOwnershipLock(
 									controlSession: { controllerEpoch },
 									runtimeEnvironment,
 									runtimePluginConfigs,
-									writeLog: writeControllerRuntimeLog,
+									writeLog: writeControllerGatewayLog,
 								},
 								{
 									...effectivePreflightDependencies,
@@ -948,7 +993,7 @@ async function startControllerRuntimeWithOwnershipLock(
 									controllerGatewayRecordTargetsFor(zoneId).managedGatewayRuntimeRecord,
 								secretResolver: startOptions?.secretResolver ?? secretResolver,
 								systemConfig: options.systemConfig,
-								writeLog: writeControllerRuntimeLog,
+								writeLog: writeControllerGatewayLog,
 								zoneId,
 							};
 							if (dependencies.checkObservabilityStackReadiness === undefined) {
@@ -1028,7 +1073,7 @@ async function startControllerRuntimeWithOwnershipLock(
 						})(),
 		...(options.startupFailures ? { startupFailures: options.startupFailures } : {}),
 		systemConfig: options.systemConfig,
-		writeLog: writeControllerRuntimeLog,
+		writeLog: writeControllerGatewayLog,
 		...(options.zoneIds ? { zoneIds: options.zoneIds } : {}),
 	});
 
@@ -1038,10 +1083,10 @@ async function startControllerRuntimeWithOwnershipLock(
 		clearReaperTimer,
 		closeControllerServer: async () => {
 			(dependencies.setTimeoutImpl ?? setTimeout)(() => {
-				void serverRef.current?.close().catch((error: unknown) => {
-					writeControllerRuntimeLog(
-						`Failed to close controller HTTP server after stop request: ${formatUnknownError(error)}`,
-					);
+				void serverRef.current?.close().catch(() => {
+					writeControllerRuntimeLog('warning', {
+						operation: 'close-controller-http-server',
+					});
 				});
 			}, 100);
 		},
@@ -1164,7 +1209,7 @@ async function startControllerRuntimeWithOwnershipLock(
 		getRuntimeReadiness: () => runtimeReadiness.get(),
 		now,
 		restartTimeoutMs: controllerHealthConfig.gatewayServiceAutoRestart.restartTimeoutMs,
-		writeLog: writeControllerRuntimeLog,
+		writeLog: writeControllerGatewayRecoveryLog,
 	});
 	const classifyRecoveryBudgetClass = (request: {
 		readonly consecutiveFailures: number;
@@ -1185,10 +1230,11 @@ async function startControllerRuntimeWithOwnershipLock(
 			return action.kind === 'cold-start-gateway' || action.kind === 'refresh-secret-resolver'
 				? 'gateway-vm-cold-start'
 				: 'gateway-vm-restart';
-		} catch (error) {
-			writeControllerRuntimeLog(
-				`Gateway VM recovery budget classification failed for zone '${request.zoneId}': ${formatUnknownError(error)}`,
-			);
+		} catch {
+			writeControllerGatewayRecoveryLog('warning', {
+				operation: 'classify-gateway-vm-recovery-budget',
+				zoneId: request.zoneId,
+			});
 			return 'gateway-vm-restart';
 		}
 	};
@@ -1252,12 +1298,14 @@ async function startControllerRuntimeWithOwnershipLock(
 			config: observabilityStartupCheck,
 		})
 			.then(() => {
-				writeControllerRuntimeLog('Host observability stack is ready.');
+				writeControllerRuntimeLog('info', {
+					operation: 'check-host-observability-stack',
+				});
 			})
-			.catch((error: unknown) => {
-				writeControllerRuntimeLog(
-					`Host observability stack degraded: ${formatUnknownError(error)}`,
-				);
+			.catch(() => {
+				writeControllerRuntimeLog('warning', {
+					operation: 'check-host-observability-stack',
+				});
 			});
 	}
 	try {
@@ -1343,10 +1391,11 @@ async function startControllerRuntimeWithOwnershipLock(
 							generationId: gatewayIdentity.generationId,
 							zoneId: gatewayIdentity.zoneId,
 						};
-					} catch (error) {
-						writeControllerRuntimeLog(
-							`Gateway recovery source key resolution failed for zone '${zoneId}': ${formatUnknownError(error)}`,
-						);
+					} catch {
+						writeControllerGatewayRecoveryLog('warning', {
+							operation: 'resolve-gateway-recovery-source-key',
+							zoneId,
+						});
 						return undefined;
 					}
 				},

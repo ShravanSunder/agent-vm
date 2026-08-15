@@ -131,6 +131,11 @@
 									"minLength": 1,
 									"maxLength": 256
 								},
+								"toolPortalNamespaceNames": {
+									"type": "array",
+									"items": { "type": "string", "minLength": 1 },
+									"uniqueItems": true
+								},
 								"toolPortalProfileId": {
 									"type": "string",
 									"minLength": 1,
@@ -141,6 +146,7 @@
 								"agentId",
 								"frameworkIdentity",
 								"profileAssignmentRevision",
+								"toolPortalNamespaceNames",
 								"toolPortalProfileId"
 							]
 						}

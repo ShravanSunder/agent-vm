@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { ToolDefinition } from './executor-interface.js';
-import { getOrCreateLocalToolMcpServer } from './local-tool-mcp-server.js';
+import {
+	closeLocalToolMcpServers,
+	getOrCreateLocalToolMcpServer,
+} from './local-tool-mcp-server.js';
 
 async function postJson(
 	url: string,
@@ -66,10 +69,25 @@ describe('local-tool-mcp-server', () => {
 	let serverUrl: string | null = null;
 
 	afterEach(async () => {
-		if (serverUrl) {
-			// cache cleanup is process-global; keep the server alive for the process lifetime
-			serverUrl = null;
-		}
+		await closeLocalToolMcpServers();
+		serverUrl = null;
+	});
+
+	it('leaves process signal ownership with the worker root lifecycle', async () => {
+		const sigintListenerCount = process.listenerCount('SIGINT');
+		const sigtermListenerCount = process.listenerCount('SIGTERM');
+		const server = await getOrCreateLocalToolMcpServer([
+			{
+				name: 'signal-owner-probe',
+				description: 'Proves local tool servers do not own process signals',
+				inputSchema: {},
+				execute: async () => ({ success: true }),
+			},
+		]);
+		serverUrl = server?.url ?? null;
+
+		expect(process.listenerCount('SIGINT')).toBe(sigintListenerCount);
+		expect(process.listenerCount('SIGTERM')).toBe(sigtermListenerCount);
 	});
 
 	it('returns a stable cached server for the same tool signature', async () => {

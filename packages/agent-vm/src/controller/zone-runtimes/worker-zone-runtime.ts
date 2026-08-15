@@ -10,6 +10,10 @@ import type { LoadedSystemConfig } from '../../config/system-config.js';
 import { runControllerDestroy as runControllerDestroyDefault } from '../../operations/destroy-zone.js';
 import { containsManagedVmTerminationUnprovenError } from '../../shared/controller-managed-vm-termination.js';
 import type { ActiveTaskRegistry, ActiveWorkerTask } from '../active-task-registry.js';
+import {
+	writeControllerDiagnostic,
+	type ControllerDiagnosticTelemetry,
+} from '../controller-diagnostic-logging.js';
 import type { ControllerWorkerTaskRuntimeRecordTarget } from '../durable-state/controller-state-record-paths.js';
 import { pullDefaultForTask, type PullDefaultRequest } from '../git-pull-default-operations.js';
 import {
@@ -94,8 +98,13 @@ async function recordActiveTaskEvent(options: {
 	await appendEvent(options.eventLogPath, options.event);
 }
 
-function writeWorkerZoneRuntimeLog(message: string): void {
-	process.stderr.write(`[worker-zone-runtime] ${message}\n`);
+function writeWorkerZoneRuntimeLog(telemetry: ControllerDiagnosticTelemetry): void {
+	writeControllerDiagnostic('runtime', {
+		event: 'runtime-diagnostic',
+		level: 'warning',
+		failureClass: 'rejected',
+		telemetry,
+	});
 }
 
 async function closeActiveWorkerTask(activeTask: ActiveWorkerTask): Promise<void> {
@@ -199,13 +208,19 @@ export function createWorkerZoneRuntime(
 		const occupiedTaskCount = options.activeTaskRegistry.countOccupiedForZone(zoneId);
 		if (occupiedTaskCount > activeTasks.length) {
 			const message = `Zone '${zoneId}' has ${String(occupiedTaskCount - activeTasks.length)} worker task reservation(s) still preparing and cannot be destroyed safely yet.`;
-			writeWorkerZoneRuntimeLog(`destroy refused: ${message}`);
+			writeWorkerZoneRuntimeLog({
+				operation: 'destroy-refused-preparing-reservations',
+				zoneId,
+			});
 			throw new ControllerZoneTaskNotReadyError(zoneId, null, message);
 		}
 		const preparingTask = activeTasks.find((activeTask) => !activeTask.workerIngress);
 		if (preparingTask) {
 			const message = `Task '${preparingTask.taskId}' in zone '${zoneId}' is still preparing and cannot be destroyed safely yet.`;
-			writeWorkerZoneRuntimeLog(`destroy refused: ${message}`);
+			writeWorkerZoneRuntimeLog({
+				operation: 'destroy-refused-preparing-task',
+				zoneId,
+			});
 			throw new ControllerZoneTaskNotReadyError(zoneId, preparingTask.taskId, message);
 		}
 		const closeResults = await Promise.allSettled(

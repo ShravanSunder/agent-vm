@@ -5,7 +5,7 @@ import { basename } from 'node:path';
 import { run } from '@optique/run';
 
 import { mcpPortalRootParser } from '../cli/mcp-portal-cli-parser.js';
-import { runMcpPortalCommand } from './mcp-portal-command-dispatcher.js';
+import { runMcpPortalCommandWithProcessLogging } from './mcp-portal-command-dispatcher.js';
 
 export function shouldRunMcpPortalEntrypoint(argvPath: string | undefined): boolean {
 	const entrypointName = argvPath === undefined ? undefined : basename(argvPath);
@@ -23,5 +23,5 @@ if (shouldRunMcpPortalEntrypoint(process.argv[1])) {
 		programName: 'mcp-portal',
 		showDefault: true,
 	});
-	process.exitCode = await runMcpPortalCommand(command);
+	process.exitCode = await runMcpPortalCommandWithProcessLogging(command);
 }

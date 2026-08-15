@@ -8,6 +8,7 @@ import type {
 	ManagedVmHostProcessIdentity,
 	ManagedVmSshAccess,
 } from '@agent-vm/managed-vm';
+import { configure, dispose, reset, type LogRecord } from '@logtape/logtape';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -424,6 +425,78 @@ describe('createLeaseManager stock Gondolin lifecycle', () => {
 			]),
 		);
 		expect(harness.tcpPool.allocate()).toBe(0);
+	});
+
+	it('distinguishes lease cleanup failure call sites with bounded operation context', async () => {
+		const capturedRecords: LogRecord[] = [];
+		await configure({
+			loggers: [
+				{
+					category: ['agent-vm', 'controller', 'lease'],
+					lowestLevel: 'trace',
+					sinks: ['capture'],
+				},
+			],
+			reset: true,
+			sinks: {
+				capture: (record): void => {
+					capturedRecords.push(record);
+				},
+			},
+		});
+		const partialCleanupFailure = new Error('partial cleanup failed with private details');
+		const releaseCleanupFailure = new Error('release cleanup failed with private details');
+		const partialCreateHarness = createHarness({
+			createManagedVm: async ({ events, id, pid, runtime }) =>
+				createManagedVmStub({
+					events,
+					id,
+					pid,
+					runtime,
+					sshFailure: new Error('ssh bootstrap failed'),
+				}),
+			deleteRuntimeRecord: async () => {
+				throw partialCleanupFailure;
+			},
+		});
+
+		try {
+			await expect(
+				partialCreateHarness.leaseManager.createLease(createLeaseOptions()),
+			).rejects.toBeInstanceOf(AggregateError);
+
+			const releaseHarness = createHarness({
+				deleteRuntimeRecord: async () => {
+					throw releaseCleanupFailure;
+				},
+			});
+			const lease = await releaseHarness.leaseManager.createLease(createLeaseOptions());
+			await expect(releaseHarness.leaseManager.releaseLease(lease.id)).rejects.toThrow(
+				releaseCleanupFailure,
+			);
+		} finally {
+			await dispose().catch(() => {});
+			await reset();
+		}
+
+		expect(capturedRecords.map((record) => record.properties)).toEqual([
+			{
+				event: 'lease-diagnostic',
+				failureClass: 'failure',
+				leaseId: 'lease-1',
+				operation: 'tool-vm-lease-creation-cleanup',
+				zoneId: 'shravan',
+			},
+			{
+				event: 'lease-diagnostic',
+				failureClass: 'failure',
+				leaseId: 'lease-1',
+				operation: 'tool-vm-lease-release-cleanup',
+				zoneId: 'shravan',
+			},
+		]);
+		expect(JSON.stringify(capturedRecords)).not.toContain(partialCleanupFailure.message);
+		expect(JSON.stringify(capturedRecords)).not.toContain(releaseCleanupFailure.message);
 	});
 
 	it('rejects a malformed SSH server identity before lease admission and destroys the VM', async () => {

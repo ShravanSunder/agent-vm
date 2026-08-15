@@ -1,3 +1,4 @@
+import { configure, dispose, reset, type LogRecord } from '@logtape/logtape';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -170,6 +171,22 @@ describe('createGatewayServiceHealthMonitor', () => {
 	});
 
 	it('records failed gateway service health when a probe throws', async () => {
+		const capturedRecords: LogRecord[] = [];
+		await configure({
+			loggers: [
+				{
+					category: ['agent-vm', 'controller', 'gateway'],
+					lowestLevel: 'trace',
+					sinks: ['capture'],
+				},
+			],
+			reset: true,
+			sinks: {
+				capture: (record): void => {
+					capturedRecords.push(record);
+				},
+			},
+		});
 		const healthEventStore = new HealthEventStore({
 			eventHistoryLimit: 20,
 			staleAfterMs: 30_000,
@@ -186,7 +203,12 @@ describe('createGatewayServiceHealthMonitor', () => {
 			zoneIds: ['beta'],
 		});
 
-		await monitor.tick();
+		try {
+			await monitor.tick();
+		} finally {
+			await dispose().catch(() => {});
+			await reset();
+		}
 
 		expect(healthEventStore.listLatestEventsForZone('beta')).toEqual([
 			expect.objectContaining({
@@ -197,6 +219,86 @@ describe('createGatewayServiceHealthMonitor', () => {
 				zoneId: 'beta',
 			}),
 		]);
+		expect(capturedRecords).toHaveLength(1);
+		expect(capturedRecords[0]?.properties).toEqual({
+			event: 'gateway-health-diagnostic',
+			failureClass: 'failure',
+			operation: 'gateway-service-health-probe',
+			zoneId: 'beta',
+		});
+	});
+
+	it('distinguishes recovery classification and probe failures with bounded operation context', async () => {
+		const capturedRecords: LogRecord[] = [];
+		await configure({
+			loggers: [
+				{
+					category: ['agent-vm', 'controller', 'gateway'],
+					lowestLevel: 'trace',
+					sinks: ['capture'],
+				},
+			],
+			reset: true,
+			sinks: {
+				capture: (record): void => {
+					capturedRecords.push(record);
+				},
+			},
+		});
+		const classificationFailure = new Error('classification failed with private details');
+		const probeFailure = new Error('probe failed with private details');
+
+		try {
+			const classificationMonitor = createGatewayServiceHealthMonitor({
+				classifyRecoveryBudgetClass: () => {
+					throw classificationFailure;
+				},
+				gatewayServiceAutoRestart,
+				healthEventStore: new HealthEventStore({ eventHistoryLimit: 20, staleAfterMs: 30_000 }),
+				intervalMs: 10_000,
+				now: () => 12_000,
+				probeZoneHealth: vi.fn(),
+				staleAfterMs: 30_000,
+				zoneIds: ['beta'],
+			});
+			await classificationMonitor.recoverFromTerminalAttachmentLoss({
+				sourceKey: gatewayRecoverySourceKey,
+				zoneId: 'beta',
+			});
+
+			const probeMonitor = createGatewayServiceHealthMonitor({
+				gatewayServiceAutoRestart,
+				healthEventStore: new HealthEventStore({ eventHistoryLimit: 20, staleAfterMs: 30_000 }),
+				intervalMs: 10_000,
+				now: () => 12_000,
+				probeZoneHealth: vi.fn(async () => {
+					throw probeFailure;
+				}),
+				staleAfterMs: 30_000,
+				zoneIds: ['beta'],
+			});
+			await probeMonitor.tick();
+		} finally {
+			await dispose().catch(() => {});
+			await reset();
+		}
+
+		expect(capturedRecords.map((record) => record.properties)).toEqual([
+			{
+				event: 'gateway-health-diagnostic',
+				failureClass: 'failure',
+				operation: 'gateway-recovery-budget-classification',
+				zoneId: 'beta',
+			},
+			{
+				event: 'gateway-health-diagnostic',
+				failureClass: 'failure',
+				operation: 'gateway-service-health-probe',
+				zoneId: 'beta',
+			},
+		]);
+		expect(JSON.stringify(capturedRecords)).not.toContain(classificationFailure.message);
+		expect(JSON.stringify(capturedRecords)).not.toContain(probeFailure.message);
 	});
 
 	it('stops the scheduled monitor timer', async () => {

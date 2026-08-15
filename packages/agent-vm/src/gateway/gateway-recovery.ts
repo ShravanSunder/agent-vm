@@ -1,5 +1,10 @@
 import type { ManagedVmExactProcessTerminationCapability } from '@agent-vm/managed-vm';
 
+import {
+	writeControllerDiagnostic,
+	type ControllerDiagnosticLevel,
+	type ControllerDiagnosticTelemetry,
+} from '../controller/controller-diagnostic-logging.js';
 import type { ControllerManagedGatewayRuntimeRecordTarget } from '../controller/durable-state/controller-state-record-paths.js';
 import { terminateRecordedManagedVmProcess } from '../shared/controller-managed-vm-termination.js';
 import { isManagedVmProcess } from '../shared/managed-vm-process.js';
@@ -18,8 +23,16 @@ import {
 	loadManagedGatewayRuntimeRecordResult,
 } from './gateway-runtime-record.js';
 
-function writeRecoveryLog(message: string): void {
-	process.stderr.write(`[agent-vm] ${message}\n`);
+function writeRecoveryLog(
+	level: ControllerDiagnosticLevel,
+	telemetry: ControllerDiagnosticTelemetry = { operation: 'gateway-recovery' },
+): void {
+	writeControllerDiagnostic(
+		'gateway',
+		level === 'warning'
+			? { event: 'gateway-recovery-diagnostic', failureClass: 'failure', level, telemetry }
+			: { event: 'gateway-recovery-diagnostic', level, telemetry },
+	);
 }
 
 function expectedGatewaySessionLabel(projectNamespace: string, zoneId: string): string {
@@ -214,7 +227,10 @@ export interface GatewayRecoveryDependencies {
 	readonly deleteManagedGatewayRuntimeRecord?: typeof deleteManagedGatewayRuntimeRecord;
 	readonly exactProcessTermination: ManagedVmExactProcessTerminationCapability;
 	readonly loadManagedGatewayRuntimeRecordResult?: typeof loadManagedGatewayRuntimeRecordResult;
-	readonly log?: (message: string) => void;
+	readonly log?: (
+		level: ControllerDiagnosticLevel,
+		telemetry?: ControllerDiagnosticTelemetry,
+	) => void;
 	readonly readProcessIdentity?: typeof readProcessIdentity;
 	readonly readTcpListenPortOwner?: (port: number) => Promise<PortOwner | null>;
 }
@@ -266,7 +282,10 @@ export async function preflightRecordedGatewayRuntimeCleanup(
 		if (options.mode !== 'in-process-recovery') {
 			throw new Error(cleanupWarning, { cause: runtimeRecordResult.error });
 		}
-		log(`Skipping ${cleanupWarning}`);
+		log('warning', {
+			operation: 'load-gateway-runtime-record',
+			zoneId: options.zoneId,
+		});
 		return {
 			cleanupWarning,
 			ownershipEvidence: {
@@ -290,7 +309,10 @@ export async function preflightRecordedGatewayRuntimeCleanup(
 			throw new Error(scopeMismatch.warning);
 		}
 		const cleanupWarning = `${scopeMismatch.warning} Skipping the stale runtime record without signaling its recorded process during in-process recovery.`;
-		log(cleanupWarning);
+		log('warning', {
+			operation: 'validate-gateway-runtime-record-scope',
+			zoneId: options.zoneId,
+		});
 		return {
 			cleanupWarning,
 			ownershipEvidence: scopeMismatch.evidence,
@@ -306,7 +328,10 @@ export async function preflightRecordedGatewayRuntimeCleanup(
 			throw new Error(portOwnershipProof.warning);
 		}
 		const cleanupWarning = `Skipping ${portOwnershipProof.warning}`;
-		log(cleanupWarning);
+		log('warning', {
+			operation: 'verify-gateway-port-ownership',
+			zoneId: options.zoneId,
+		});
 		return {
 			cleanupWarning,
 			ownershipEvidence: portOwnershipProof.evidence,
@@ -351,7 +376,10 @@ export async function cleanupRecordedGatewayRuntime(
 		if (options.mode !== 'in-process-recovery') {
 			throw new Error(cleanupWarning, { cause: runtimeRecordResult.error });
 		}
-		log(`Skipping ${cleanupWarning}`);
+		log('warning', {
+			operation: 'load-gateway-runtime-record',
+			zoneId: options.zoneId,
+		});
 		return {
 			cleanedUp: false,
 			cleanupWarning,
@@ -377,7 +405,10 @@ export async function cleanupRecordedGatewayRuntime(
 			throw new Error(scopeMismatch.warning);
 		}
 		const cleanupWarning = `${scopeMismatch.warning} Skipping the stale runtime record without signaling its recorded process during in-process recovery.`;
-		log(cleanupWarning);
+		log('warning', {
+			operation: 'validate-gateway-runtime-record-scope',
+			zoneId: options.zoneId,
+		});
 		return {
 			cleanedUp: false,
 			cleanupWarning,
@@ -385,9 +416,7 @@ export async function cleanupRecordedGatewayRuntime(
 			ownershipEvidence: scopeMismatch.evidence,
 		};
 	}
-	log(
-		`Found persisted gateway runtime for zone '${runtimeRecord.zoneId}' (pid ${runtimeRecord.qemuPid}, vm ${runtimeRecord.vmId}).`,
-	);
+	log('info', { operation: 'inspect-gateway-runtime-record', zoneId: runtimeRecord.zoneId });
 
 	const portOwnershipProof = await verifyGatewayPortOwnership({
 		...(expectedControllerPid === undefined ? {} : { expectedControllerPid }),
@@ -399,7 +428,10 @@ export async function cleanupRecordedGatewayRuntime(
 			throw new Error(portOwnershipProof.warning);
 		}
 		const cleanupWarning = `Skipping ${portOwnershipProof.warning}`;
-		log(cleanupWarning);
+		log('warning', {
+			operation: 'verify-gateway-port-ownership',
+			zoneId: runtimeRecord.zoneId,
+		});
 		return {
 			cleanedUp: false,
 			cleanupWarning,
@@ -416,18 +448,17 @@ export async function cleanupRecordedGatewayRuntime(
 		);
 	} catch (error) {
 		const cleanupWarning = `Failed to remove stale gateway runtime record for zone '${runtimeRecord.zoneId}' at '${options.runtimeRecordTarget.filePath}': ${error instanceof Error ? error.message : JSON.stringify(error)}`;
-		log(cleanupWarning);
+		log('warning', {
+			operation: 'delete-gateway-runtime-record',
+			zoneId: runtimeRecord.zoneId,
+		});
 		return {
 			cleanedUp: false,
 			cleanupWarning,
 			killedPid,
 		};
 	}
-	log(
-		killedPid === null
-			? `Removed stale gateway runtime record for zone '${runtimeRecord.zoneId}' after confirming the recorded process was already gone.`
-			: `Removed stale gateway runtime record for zone '${runtimeRecord.zoneId}' after terminating recorded gateway pid ${killedPid}.`,
-	);
+	log('info', { operation: 'remove-gateway-runtime-record', zoneId: runtimeRecord.zoneId });
 
 	return {
 		cleanedUp: true,

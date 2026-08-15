@@ -69,6 +69,7 @@ import {
 	type ControlSessionClient,
 	type WorkerControlRpcOperations,
 } from './control-session/index.js';
+import { writeControllerDiagnostic } from './controller-diagnostic-logging.js';
 import type { ControllerWorkerTaskRuntimeRecordTarget } from './durable-state/controller-state-record-paths.js';
 import { buildGithubAuthConfigArgs, scrubGithubTokenFromOutput } from './git-auth-support.js';
 import {
@@ -187,8 +188,16 @@ function deepMerge(base: unknown, override: unknown): unknown {
 	return override ?? base;
 }
 
-function writeStderr(message: string): void {
-	process.stderr.write(`${message}\n`);
+function writeWorkerTaskPollDiagnostic(
+	operation: 'poll-worker-task-status',
+	attempt: number,
+): void {
+	writeControllerDiagnostic('runtime', {
+		event: 'runtime-diagnostic',
+		level: 'warning',
+		failureClass: 'failure',
+		telemetry: { attempt, operation },
+	});
 }
 
 function toError(error: unknown): Error {
@@ -1255,9 +1264,7 @@ export async function executeWorkerTask(
 				}
 				consecutivePollFailures += 1;
 				const message = error instanceof Error ? error.message : String(error);
-				writeStderr(
-					`[worker-task-runner] Poll failure ${consecutivePollFailures} for task ${prepared.taskId}: ${message}`,
-				);
+				writeWorkerTaskPollDiagnostic('poll-worker-task-status', consecutivePollFailures);
 				if (consecutivePollFailures >= 3) {
 					throw new Error(
 						`Worker task status polling failed ${String(consecutivePollFailures)} consecutive times for task ${prepared.taskId}; last error: ${message}`,

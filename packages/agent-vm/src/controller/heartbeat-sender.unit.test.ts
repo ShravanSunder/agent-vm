@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { configure, dispose, reset, type LogRecord } from '@logtape/logtape';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { startHeartbeatSender } from './heartbeat-sender.js';
 
@@ -48,6 +49,11 @@ describe('startHeartbeatSender', () => {
 		fakeTimer = createFakeInterval();
 		fetchMock = vi.fn<typeof fetch>(async () => new Response(null, { status: 204 }));
 		warnings.length = 0;
+	});
+
+	afterEach(async () => {
+		await dispose().catch(() => {});
+		await reset();
 	});
 
 	it('fires immediately on start', async () => {
@@ -117,6 +123,45 @@ describe('startHeartbeatSender', () => {
 		await Promise.resolve();
 
 		expect(warnings[0]).toContain('HTTP 503');
+	});
+
+	it('emits bounded typed context through the default diagnostic logger', async () => {
+		const capturedRecords: LogRecord[] = [];
+		await configure({
+			loggers: [
+				{
+					category: ['agent-vm', 'controller', 'heartbeat'],
+					lowestLevel: 'trace',
+					sinks: ['capture'],
+				},
+			],
+			reset: true,
+			sinks: {
+				capture: (record): void => {
+					capturedRecords.push(record);
+				},
+			},
+		});
+		fetchMock.mockResolvedValueOnce(new Response(null, { status: 503 }));
+
+		startHeartbeatSender('task-1', {
+			callerUrl: 'http://caller:3000',
+			setIntervalImpl: fakeTimer.setIntervalImpl,
+			clearIntervalImpl: fakeTimer.clearIntervalImpl,
+			fetchImpl: fetchMock,
+		});
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(capturedRecords).toHaveLength(1);
+		expect(capturedRecords[0]?.properties).toEqual({
+			attempt: 1,
+			event: 'heartbeat-diagnostic',
+			failureClass: 'failure',
+			operation: 'caller-heartbeat',
+			reason: 'http-response',
+			statusCode: 503,
+		});
 	});
 
 	it('logs warnings for transport errors', async () => {

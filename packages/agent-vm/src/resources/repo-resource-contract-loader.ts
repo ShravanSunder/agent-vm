@@ -12,12 +12,29 @@ import {
 	type ResolvedRepoResourcesDescription,
 	type ResolvedRepoResourcesFinal,
 } from '../config/resource-contracts/index.js';
+import {
+	writeControllerDiagnostic,
+	type ControllerDiagnosticLevel,
+} from '../controller/controller-diagnostic-logging.js';
 
 const REPO_RESOURCES_PATH = path.join('.agent-vm', 'repo-resources.ts');
 const REPO_CONTRACT_TIMEOUT_MS = 30_000;
 
-function writeRepoContractLoaderLog(message: string): void {
-	process.stderr.write(`[repo-resource-contract-loader] ${message}\n`);
+function writeRepoContractLoaderLog(
+	operation: 'repo-resource-description-contract-absent',
+	level: ControllerDiagnosticLevel = 'warning',
+): void {
+	writeControllerDiagnostic(
+		'resource',
+		level === 'warning'
+			? {
+					event: 'resource-loader-diagnostic',
+					failureClass: 'failure',
+					level,
+					telemetry: { operation },
+				}
+			: { event: 'resource-loader-diagnostic', level, telemetry: { operation } },
+	);
 }
 
 function getErrorStderr(error: unknown): string | null {
@@ -108,9 +125,7 @@ export async function loadRepoResourceDescriptionContract(options: {
 }): Promise<ResolvedRepoResourcesDescription | null> {
 	const contractPath = path.join(options.repoDir, REPO_RESOURCES_PATH);
 	if (!(await fileExists(contractPath))) {
-		writeRepoContractLoaderLog(
-			`${options.repoId}: no ${REPO_RESOURCES_PATH}; skipping repo resource setup.`,
-		);
+		writeRepoContractLoaderLog('repo-resource-description-contract-absent', 'info');
 		return null;
 	}
 

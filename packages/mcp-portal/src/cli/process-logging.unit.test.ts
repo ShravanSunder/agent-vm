@@ -1,0 +1,406 @@
+import { Writable } from 'node:stream';
+
+import { dispose, reset, type Config, type LogRecord, type Sink } from '@logtape/logtape';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import type { PortalServerLogEvent } from './portal-server-operation.js';
+import {
+	configureProcessLogging,
+	createPortalServerLogger,
+	mapPortalServerLogEvent,
+	type ProcessLoggingDependencies,
+} from './process-logging.js';
+
+type PortalApprovalLogEvent = Extract<
+	PortalServerLogEvent,
+	{ readonly event: 'mcp_portal_approval' }
+>;
+
+class CaptureWritable extends Writable {
+	readonly chunks: string[] = [];
+	private pendingWrite: (() => void) | undefined;
+
+	constructor() {
+		super({
+			write: (chunk, _encoding, callback) => {
+				const text = String(chunk);
+				const midpoint = Math.floor(text.length / 2);
+				this.chunks.push(text.slice(0, midpoint));
+				this.chunks.push(text.slice(midpoint));
+				callback();
+				this.pendingWrite?.();
+				this.pendingWrite = undefined;
+			},
+		});
+	}
+
+	waitForWrite(): Promise<void> {
+		if (this.chunks.length > 0) {
+			return Promise.resolve();
+		}
+		return new Promise((resolve) => {
+			this.pendingWrite = resolve;
+		});
+	}
+}
+
+function parseJsonLines<TRecord>(chunks: readonly string[]): TRecord[] {
+	const records: TRecord[] = [];
+	for (const [lineIndex, line] of chunks.join('').split(/\r?\n/u).entries()) {
+		if (line.length === 0) {
+			continue;
+		}
+		try {
+			records.push(JSON.parse(line) as TRecord);
+		} catch (error: unknown) {
+			throw new Error(`Malformed JSONL stderr record at line ${String(lineIndex + 1)}: ${line}`, {
+				cause: error,
+			});
+		}
+	}
+	return records;
+}
+
+interface TrackedSink {
+	readonly disposeCount: () => number;
+	readonly recordCount: () => number;
+	readonly sink: Sink & AsyncDisposable & { readonly ready: Promise<void> };
+}
+
+function createTrackedSink(): TrackedSink {
+	let disposalCount = 0;
+	let recordedCount = 0;
+	const sink = Object.assign(
+		(_record: Parameters<Sink>[0]): void => {
+			recordedCount += 1;
+		},
+		{
+			ready: Promise.resolve(),
+			[Symbol.asyncDispose]: async (): Promise<void> => {
+				disposalCount += 1;
+			},
+		},
+	);
+	return {
+		disposeCount: (): number => disposalCount,
+		recordCount: (): number => recordedCount,
+		sink,
+	};
+}
+
+function isSink(value: unknown): value is Sink {
+	return typeof value === 'function';
+}
+
+const lateLogRecord = {
+	category: ['agent-vm', 'mcp-portal', 'server'],
+	level: 'warning',
+	message: ['late record'],
+	properties: {},
+	rawMessage: 'late record',
+	timestamp: 0,
+} satisfies LogRecord;
+
+function createTestLoggingDependencies(options: {
+	readonly configure: NonNullable<ProcessLoggingDependencies['configure']>;
+	readonly dispose?: NonNullable<ProcessLoggingDependencies['dispose']>;
+	readonly getOpenTelemetrySink: NonNullable<ProcessLoggingDependencies['getOpenTelemetrySink']>;
+	readonly getStreamSink: NonNullable<ProcessLoggingDependencies['getStreamSink']>;
+}): ProcessLoggingDependencies {
+	return {
+		configure: options.configure,
+		...(options.dispose === undefined ? {} : { dispose: options.dispose }),
+		getOpenTelemetrySink: options.getOpenTelemetrySink,
+		getStreamSink: options.getStreamSink,
+	};
+}
+
+const allPortalServerEvents = [
+	{
+		event: 'server_error',
+		level: 'error',
+		message: 'raw server failure',
+		stack: 'raw stack',
+	},
+	{
+		agentId: 'agent/one',
+		clientAddress: '192.168.1.10',
+		decision: 'deny',
+		event: 'mcp_proxy_auth',
+		level: 'warn',
+		reason: 'signature-mismatch',
+		timeMs: 1_786_595_400_012,
+	},
+	{
+		agentId: 'agent/one',
+		clientAddress: '10.0.0.1',
+		event: 'mcp_proxy_auth_audit_error',
+		level: 'warn',
+		message: 'raw audit failure',
+		timeMs: 1_786_595_400_025,
+	},
+	{
+		agentId: 'agent/one',
+		decision: 'allow',
+		event: 'mcp_portal_approval',
+		level: 'info',
+		reason: 'per_call_evaluation',
+		timeMs: 1_786_595_400_008,
+		verifierReason: 'raw verifier reason',
+	},
+	{
+		agentId: 'agent/one',
+		event: 'mcp_portal_approval_audit_error',
+		level: 'warn',
+		message: 'raw approval audit failure',
+		timeMs: 1_786_595_400_009,
+	},
+	{
+		agentScopeId: 'scope/one',
+		event: 'upstream_close_error',
+		level: 'warn',
+		message: 'raw upstream failure',
+		namespace: 'private-namespace',
+	},
+] as const;
+
+describe('MCP Portal process logging', () => {
+	afterEach(async () => {
+		await dispose().catch(() => undefined);
+		await reset();
+	});
+
+	it('maps every typed server event to a fixed safe record', () => {
+		for (const event of allPortalServerEvents) {
+			const record = mapPortalServerLogEvent(event);
+
+			expect(record.category).toEqual(['agent-vm', 'mcp-portal', 'server']);
+			expect(record.message).not.toContain('raw');
+			expect(record.properties).not.toHaveProperty('event');
+			expect(record.properties).not.toHaveProperty('message');
+			expect(record.properties).not.toHaveProperty('stack');
+			expect(record.properties).not.toHaveProperty('clientAddress');
+			expect(record.properties).not.toHaveProperty('verifierReason');
+			expect(JSON.stringify(record.properties)).not.toContain('private-namespace');
+		}
+	});
+
+	it('keeps only a fixed server error classification for triage', () => {
+		const record = mapPortalServerLogEvent({
+			event: 'server_error',
+			level: 'error',
+			message: 'Bearer opaque-credential https://user:password@example.invalid',
+		});
+
+		expect(record.properties).toEqual({ failureClass: 'server' });
+		expect(JSON.stringify(record)).not.toMatch(
+			/Bearer|opaque-credential|password|example\.invalid/u,
+		);
+	});
+
+	it('omits epoch timestamps instead of reporting them as durations', () => {
+		for (const event of allPortalServerEvents.slice(1, 5)) {
+			const record = mapPortalServerLogEvent(event);
+
+			expect(record.properties).not.toHaveProperty('durationMs');
+			expect(JSON.stringify(record.properties)).not.toContain('1786595400');
+		}
+	});
+
+	it('omits unresolved request-path scope while retaining authenticated scope', () => {
+		const denied = mapPortalServerLogEvent({
+			agentId: 'unregistered-agent',
+			clientAddress: '127.0.0.1',
+			decision: 'deny',
+			event: 'mcp_proxy_auth',
+			level: 'warn',
+			reason: 'unknown_agent',
+			timeMs: 1_786_595_400_000,
+		});
+		const allowed = mapPortalServerLogEvent({
+			agentId: 'registered-agent',
+			clientAddress: '127.0.0.1',
+			decision: 'allow',
+			event: 'mcp_proxy_auth',
+			level: 'info',
+			timeMs: 1_786_595_400_001,
+		});
+		const auditFailure = mapPortalServerLogEvent({
+			agentId: 'path-derived-agent',
+			clientAddress: '127.0.0.1',
+			event: 'mcp_proxy_auth_audit_error',
+			level: 'warn',
+			message: 'raw audit failure',
+			timeMs: 1_786_595_400_002,
+		});
+
+		expect(denied.properties).not.toHaveProperty('scope');
+		expect(allowed.properties.scope).toBe('registered-agent');
+		expect(auditFailure.properties).not.toHaveProperty('scope');
+	});
+
+	it('bounds and sanitizes an unsafe approval reason before logging', () => {
+		const unsafeReason = `${'secret/token?'.repeat(20)}tail`;
+		const event = {
+			agentId: 'agent/one',
+			decision: 'deny',
+			event: 'mcp_portal_approval',
+			level: 'warn',
+			reason: unsafeReason as PortalApprovalLogEvent['reason'],
+			timeMs: 1_786_595_400_008,
+		} satisfies PortalApprovalLogEvent;
+
+		const record = mapPortalServerLogEvent(event);
+		const reason = record.properties.reason;
+
+		expect(typeof reason).toBe('string');
+		expect(reason).toHaveLength(64);
+		expect(reason).not.toContain('/');
+		expect(reason).not.toContain('?');
+		expect(reason).not.toContain(unsafeReason);
+	});
+
+	it('does not preserve credentials from a credential-bearing URL-like scope', () => {
+		const credentialBearingScope =
+			'https://scope-user:scope-secret@example.invalid/mcp?token=query-secret';
+		const event = {
+			agentId: credentialBearingScope,
+			decision: 'deny',
+			event: 'mcp_portal_approval',
+			level: 'warn',
+			timeMs: 1_786_595_400_008,
+		} satisfies PortalServerLogEvent;
+
+		const record = mapPortalServerLogEvent(event);
+
+		expect(record.properties.scope).toBe('unknown');
+		expect(JSON.stringify(record.properties)).not.toContain('scope-secret');
+		expect(JSON.stringify(record.properties)).not.toContain('query-secret');
+	});
+
+	it('routes the default typed logger to bounded JSONL stderr', async () => {
+		const stderr = new CaptureWritable();
+		const logging = await configureProcessLogging({ stderr });
+		try {
+			createPortalServerLogger().log(allPortalServerEvents[1]);
+			createPortalServerLogger().log(allPortalServerEvents[3]);
+			await stderr.waitForWrite();
+			await logging.shutdown();
+
+			const records = parseJsonLines<{
+				readonly logger?: string;
+				readonly level?: string;
+				readonly message?: string;
+				readonly properties?: Readonly<Record<string, unknown>>;
+			}>(stderr.chunks);
+			expect(records).toHaveLength(2);
+			const output = records[0];
+			expect(output?.logger).toBe('agent-vm.mcp-portal.server');
+			expect(output?.level).toBe('WARN');
+			expect(output?.message).toBe('MCP Portal proxy authentication decision');
+			expect(output?.properties).toMatchObject({
+				clientAddressClass: 'private',
+				decision: 'deny',
+				reason: 'signature-mismatch',
+			});
+			expect(output?.properties).not.toHaveProperty('clientAddress');
+			expect(output?.properties).not.toHaveProperty('scope');
+			expect(stderr.writableEnded).toBe(false);
+		} finally {
+			await logging.shutdown();
+		}
+	});
+
+	it('reports malformed JSONL stderr with the offending line', () => {
+		expect(() => parseJsonLines(['{"complete":true}\n{"broken"\n'])).toThrow(
+			'Malformed JSONL stderr record at line 2: {"broken"',
+		);
+	});
+
+	it('disposes only this invocation after configuration installs then fails', async () => {
+		const setupError = new Error('configuration failed after installation');
+		const stderrSink = createTrackedSink();
+		const otelSink = createTrackedSink();
+		let configuredOtelSink: Sink | undefined;
+		const configure = async <TSinkId extends string, TFilterId extends string>(
+			config: Config<TSinkId, TFilterId>,
+		): Promise<void> => {
+			configuredOtelSink = Object.values(config.sinks).find(
+				(sink): sink is Sink => isSink(sink) && sink !== stderrSink.sink,
+			);
+			throw setupError;
+		};
+		const dependencies = createTestLoggingDependencies({
+			configure,
+			getOpenTelemetrySink: () => otelSink.sink,
+			getStreamSink: (_stream, options) => {
+				expect(options).not.toMatchObject({ nonBlocking: true });
+				return stderrSink.sink;
+			},
+		});
+
+		await expect(
+			configureProcessLogging({
+				dependencies,
+				stderr: new CaptureWritable(),
+			}),
+		).rejects.toBe(setupError);
+		expect(stderrSink.disposeCount()).toBe(1);
+		expect(otelSink.disposeCount()).toBe(1);
+		configuredOtelSink?.(lateLogRecord);
+		expect(otelSink.recordCount()).toBe(0);
+	});
+
+	it('rejects duplicate process setup instead of replacing the active sink', async () => {
+		const first = await configureProcessLogging({ stderr: new CaptureWritable() });
+		try {
+			await expect(configureProcessLogging({ stderr: new CaptureWritable() })).rejects.toThrow(
+				/already configured|configuration/iu,
+			);
+		} finally {
+			await first.shutdown();
+		}
+	});
+
+	it('shares one rejected shutdown when dispose throws synchronously', async () => {
+		const shutdownFailure = new Error('synchronous dispose failure');
+		const sink = createTrackedSink();
+		const disposeImpl = vi.fn((): Promise<void> => {
+			throw shutdownFailure;
+		});
+		const logging = await configureProcessLogging({
+			dependencies: createTestLoggingDependencies({
+				configure: async (): Promise<void> => undefined,
+				dispose: disposeImpl,
+				getOpenTelemetrySink: () => sink.sink,
+				getStreamSink: () => sink.sink,
+			}),
+			stderr: new CaptureWritable(),
+		});
+
+		const firstShutdown = logging.shutdown();
+		const secondShutdown = logging.shutdown();
+
+		expect(secondShutdown).toBe(firstShutdown);
+		await expect(firstShutdown).rejects.toBe(shutdownFailure);
+		expect(disposeImpl).toHaveBeenCalledTimes(1);
+	});
+
+	it('ignores records emitted after shutdown without an unhandled rejection', async () => {
+		const logging = await configureProcessLogging({ stderr: new CaptureWritable() });
+		const logger = createPortalServerLogger();
+		const unhandledRejections: unknown[] = [];
+		const onUnhandledRejection = (reason: unknown): void => {
+			unhandledRejections.push(reason);
+		};
+		process.on('unhandledRejection', onUnhandledRejection);
+		try {
+			await logging.shutdown();
+			expect(() => logger.log(allPortalServerEvents[1])).not.toThrow();
+			await new Promise<void>((resolve) => setImmediate(resolve));
+			expect(unhandledRejections).toEqual([]);
+		} finally {
+			process.off('unhandledRejection', onUnhandledRejection);
+		}
+	});
+});

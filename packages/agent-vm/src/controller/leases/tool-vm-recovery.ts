@@ -11,6 +11,11 @@ import {
 	readTcpListenPortOwner as defaultReadTcpListenPortOwner,
 	type PortOwner,
 } from '../../shared/port-owner.js';
+import {
+	writeControllerDiagnostic,
+	type ControllerDiagnosticLevel,
+	type ControllerDiagnosticTelemetry,
+} from '../controller-diagnostic-logging.js';
 import type { ControllerToolLeaseRecordsTarget } from '../durable-state/controller-state-record-paths.js';
 import type { ToolVmRuntimeRecord } from './tool-vm-runtime-record.js';
 import {
@@ -18,8 +23,17 @@ import {
 	loadAllToolVmRuntimeRecords,
 } from './tool-vm-runtime-record.js';
 
-function writeRecoveryLog(message: string): void {
-	process.stderr.write(`[agent-vm] ${message}\n`);
+function writeRecoveryLog(
+	_message: string,
+	level: ControllerDiagnosticLevel,
+	telemetry: ControllerDiagnosticTelemetry = { operation: 'tool-vm-recovery' },
+): void {
+	writeControllerDiagnostic(
+		'lease',
+		level === 'warning'
+			? { event: 'lease-diagnostic', failureClass: 'failure', level, telemetry }
+			: { event: 'lease-diagnostic', level, telemetry },
+	);
 }
 
 // All five fences are required — there is no legacy/fallback path for tool
@@ -121,7 +135,11 @@ export interface ToolVmRecoveryDependencies {
 	readonly deleteToolVmRuntimeRecord?: typeof deleteToolVmRuntimeRecord;
 	readonly exactProcessTermination: ManagedVmExactProcessTerminationCapability;
 	readonly loadAllToolVmRuntimeRecords?: typeof loadAllToolVmRuntimeRecords;
-	readonly log?: (message: string) => void;
+	readonly log?: (
+		message: string,
+		level: ControllerDiagnosticLevel,
+		telemetry?: ControllerDiagnosticTelemetry,
+	) => void;
 	readonly portForSlot?: (slot: number) => number;
 	readonly readProcessCommand?: (pid: number) => Promise<string | null>;
 	readonly readProcessIdentity?: typeof readProcessIdentity;
@@ -179,7 +197,7 @@ export async function cleanupRecordedToolVmRuntimes(
 			if (options.mode !== 'in-process-recovery') {
 				throw new Error(warning);
 			}
-			log(warning);
+			log(warning, 'warning', { operation: 'load-tool-vm-runtime-record' });
 			warnings.push(warning);
 			continue;
 		}
@@ -197,13 +215,23 @@ export async function cleanupRecordedToolVmRuntimes(
 				throw new Error(scopeMismatch);
 			}
 			const warning = `${scopeMismatch} Skipping the stale runtime record without signaling its recorded process during in-process recovery.`;
-			log(warning);
+			log(warning, 'warning', {
+				operation: 'validate-tool-vm-runtime-record-scope',
+				leaseId: runtimeRecord.leaseId,
+				zoneId: runtimeRecord.zoneId,
+			});
 			warnings.push(warning);
 			continue;
 		}
 
 		log(
 			`Found persisted tool VM runtime for lease '${runtimeRecord.leaseId}' (zone '${runtimeRecord.zoneId}', slot ${runtimeRecord.tcpSlot}, pid ${runtimeRecord.qemuPid}, vm ${runtimeRecord.vmId}).`,
+			'info',
+			{
+				operation: 'inspect-tool-vm-runtime-record',
+				leaseId: runtimeRecord.leaseId,
+				zoneId: runtimeRecord.zoneId,
+			},
 		);
 		validRuntimeRecords.push(runtimeRecord);
 	}
@@ -223,13 +251,17 @@ export async function cleanupRecordedToolVmRuntimes(
 
 	const cleanupReadyRuntimeRecords: ProvenToolVmRuntimeRecord[] = [];
 	for (const provenRuntimeRecord of provenRuntimeRecords) {
-		const { portOwnershipProof } = provenRuntimeRecord;
+		const { portOwnershipProof, runtimeRecord } = provenRuntimeRecord;
 		if (portOwnershipProof.kind === 'unproven') {
 			if (options.mode !== 'in-process-recovery') {
 				throw new Error(portOwnershipProof.warning);
 			}
 			const warning = `Skipping ${portOwnershipProof.warning}`;
-			log(warning);
+			log(warning, 'warning', {
+				operation: 'verify-tool-vm-port-ownership',
+				leaseId: runtimeRecord.leaseId,
+				zoneId: runtimeRecord.zoneId,
+			});
 			warnings.push(warning);
 			continue;
 		}
@@ -261,7 +293,11 @@ export async function cleanupRecordedToolVmRuntimes(
 				await deleteRecord(options.recordsTarget, runtimeRecord.recordId);
 			} catch (error) {
 				const warning = `Failed to remove stale tool VM runtime record for lease '${runtimeRecord.leaseId}' at '${options.recordsTarget.directoryPath}': ${error instanceof Error ? error.message : JSON.stringify(error)}`;
-				log(warning);
+				log(warning, 'warning', {
+					operation: 'delete-tool-vm-runtime-record',
+					leaseId: runtimeRecord.leaseId,
+					zoneId: runtimeRecord.zoneId,
+				});
 				return {
 					cleanedCount: 0,
 					killedPids: killedPid === null ? [] : [killedPid],
@@ -272,6 +308,12 @@ export async function cleanupRecordedToolVmRuntimes(
 				killedPid === null
 					? `Removed stale tool VM runtime record for lease '${runtimeRecord.leaseId}' after confirming the recorded process was already gone.`
 					: `Removed stale tool VM runtime record for lease '${runtimeRecord.leaseId}' after terminating recorded tool VM pid ${killedPid}.`,
+				'info',
+				{
+					operation: 'remove-tool-vm-runtime-record',
+					leaseId: runtimeRecord.leaseId,
+					zoneId: runtimeRecord.zoneId,
+				},
 			);
 			return {
 				cleanedCount: 1,

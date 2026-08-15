@@ -1,7 +1,10 @@
 import type { CliDependencies, CliIo } from './agent-vm-cli-support.js';
 import type { AgentVmCommand } from './agent-vm-command-parser.js';
 import { runAuthCommandOperation } from './commands/auth-command-operation.js';
-import { runControllerCommandOperation } from './commands/controller-command-operation.js';
+import {
+	runControllerCommandOperation,
+	type ControllerCommandExecutionOptions,
+} from './commands/controller-command-operation.js';
 import { runInitCommandOperation } from './commands/init-command-operation.js';
 import {
 	runBackupCommandOperation,
@@ -32,7 +35,12 @@ export interface AgentVmCommandOperationSet {
 	readonly build: Operation<'build'>;
 	readonly cache: Operation<'cache.list' | 'cache.clean'>;
 	readonly config: Operation<'config.reset-instructions'>;
-	readonly controller: Operation<Extract<AgentVmCommand['command'], `controller.${string}`>>;
+	readonly controller: (
+		io: CliIo,
+		dependencies: CliDependencies,
+		command: CommandWithName<Extract<AgentVmCommand['command'], `controller.${string}`>>,
+		executionOptions?: ControllerCommandExecutionOptions,
+	) => Promise<void>;
 	readonly doctor: Operation<'doctor'>;
 	readonly init: Operation<'init'>;
 	readonly manual: Operation<'manual.update'>;
@@ -42,7 +50,7 @@ export interface AgentVmCommandOperationSet {
 	readonly validate: Operation<'validate'>;
 }
 
-const defaultCommandOperations = {
+export const defaultAgentVmCommandOperations = {
 	auth: runAuthCommandOperation,
 	backup: runBackupCommandOperation,
 	build: runBuildCommandOperation,
@@ -62,7 +70,8 @@ export async function dispatchAgentVmCommand(
 	command: AgentVmCommand,
 	io: CliIo,
 	dependencies: CliDependencies,
-	operations: AgentVmCommandOperationSet = defaultCommandOperations,
+	operations: AgentVmCommandOperationSet = defaultAgentVmCommandOperations,
+	controllerExecutionOptions: ControllerCommandExecutionOptions = {},
 ): Promise<void> {
 	switch (command.command) {
 		case 'init':
@@ -109,7 +118,7 @@ export async function dispatchAgentVmCommand(
 		case 'controller.logs':
 		case 'controller.credentials.check':
 		case 'controller.credentials.refresh':
-			return await operations.controller(io, dependencies, command);
+			return await operations.controller(io, dependencies, command, controllerExecutionOptions);
 		default: {
 			const unreachableCommand: never = command;
 			throw new Error(`Unhandled agent-vm command: ${String(unreachableCommand)}`);

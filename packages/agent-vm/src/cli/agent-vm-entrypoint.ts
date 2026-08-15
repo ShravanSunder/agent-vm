@@ -5,7 +5,10 @@ import { fileURLToPath } from 'node:url';
 import { run } from '@optique/run';
 
 import { defaultCliDependencies } from './agent-vm-cli-support.js';
-import { dispatchAgentVmCommand } from './agent-vm-command-dispatcher.js';
+import {
+	defaultAgentVmCommandOperations,
+	dispatchAgentVmCommand,
+} from './agent-vm-command-dispatcher.js';
 import { agentVmRootParser } from './agent-vm-command-parser.js';
 import { resolveCliVersion } from './cli-version.js';
 import { cliDescription } from './commands/command-definition-support.js';
@@ -68,6 +71,8 @@ async function main(): Promise<void> {
 		command,
 		{ stderr: process.stderr, stdout: process.stdout },
 		defaultCliDependencies,
+		defaultAgentVmCommandOperations,
+		{ processRoot: true },
 	);
 }
 

@@ -1,5 +1,10 @@
 import type { LoadedSystemConfig } from '../../config/system-config.js';
 import {
+	writeControllerDiagnostic,
+	type ControllerDiagnosticLevel,
+	type ControllerDiagnosticTelemetry,
+} from '../controller-diagnostic-logging.js';
+import {
 	classifyGatewayStartError,
 	deriveGatewayDiagnosisSnapshot,
 	type GatewayDiagnosisSnapshot,
@@ -43,7 +48,10 @@ export function createZoneRuntimeRegistry(options: {
 	}[];
 	readonly systemConfig: LoadedSystemConfig;
 	readonly zoneIds?: readonly string[];
-	readonly writeLog?: (message: string) => void;
+	readonly writeLog?: (
+		level: ControllerDiagnosticLevel,
+		telemetry?: ControllerDiagnosticTelemetry,
+	) => void;
 }): ZoneRuntimeRegistry {
 	const runtimeZoneIds = options.zoneIds ?? options.systemConfig.zones.map((zone) => zone.id);
 	const startupFailuresByZoneId = new Map(
@@ -53,8 +61,24 @@ export function createZoneRuntimeRegistry(options: {
 	const runtimesByZoneId = new Map<string, ControllerZoneRuntime>();
 	const writeLog =
 		options.writeLog ??
-		((message: string): void => {
-			process.stderr.write(`[zone-runtime-registry] ${message}\n`);
+		((
+			level: ControllerDiagnosticLevel = 'warning',
+			telemetry: ControllerDiagnosticTelemetry = { operation: 'zone-runtime-registry' },
+		): void => {
+			if (level === 'warning') {
+				writeControllerDiagnostic('gateway', {
+					event: 'gateway-health-diagnostic',
+					failureClass: 'failure',
+					level,
+					telemetry,
+				});
+				return;
+			}
+			writeControllerDiagnostic('gateway', {
+				event: 'gateway-health-diagnostic',
+				level,
+				telemetry,
+			});
 		});
 
 	for (const zoneId of runtimeZoneIds) {
@@ -157,9 +181,11 @@ export function createZoneRuntimeRegistry(options: {
 					.map(async (runtime) => {
 						try {
 							await runtime.start();
-						} catch (error) {
-							const message = error instanceof Error ? error.message : String(error);
-							writeLog(`Failed to start zone '${runtime.zoneId}': ${message}`);
+						} catch {
+							writeLog('warning', {
+								operation: 'start-gateway-zone',
+								zoneId: runtime.zoneId,
+							});
 							// Partial start: failed runtimes retain their own failed snapshot.
 						}
 					}),

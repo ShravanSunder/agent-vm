@@ -110,6 +110,7 @@ import {
 	type GatewayZone,
 	type GatewayControlSessionConnector,
 	type GatewayControlSessionMaterialFactory,
+	type GatewayZoneDestroyResult,
 	type GatewayZonePreflightOptions,
 	type GatewayZoneStartResult,
 	type StartGatewayZoneOptions,
@@ -274,6 +275,15 @@ type ManagedGatewayZone = GatewayZone & {
 
 function isManagedGatewayZone(zone: GatewayZone): zone is ManagedGatewayZone {
 	return zone.gateway.type === 'openclaw' || zone.gateway.type === 'hermes';
+}
+
+function formatGatewayCleanupOutcome(
+	destroyResult: Extract<
+		GatewayZoneDestroyResult,
+		{ readonly kind: 'destroyed-cleanup-incomplete' }
+	>,
+): string {
+	return [...new Set(destroyResult.cleanupFailures.map(({ stage }) => stage))].toSorted().join(':');
 }
 
 function frameworkIdentitiesMatch(
@@ -563,17 +573,20 @@ async function checkGatewayObservabilityStartup(options: {
 			checkObservabilityStackReadiness: options.checkObservabilityStackReadiness,
 			config: observabilityStartupCheck,
 		});
-		options.writeLog?.(`Host observability stack is ready for zone '${options.zoneId}'.`);
+		options.writeLog?.('info', {
+			operation: 'check-host-observability-stack',
+			zoneId: options.zoneId,
+		});
 	};
 	if (observabilityStartupCheck.controllerStartPolicy === 'require-ready') {
 		await options.runTaskStep('Checking host observability stack', checkStack);
 		return;
 	}
-	void checkStack().catch((error: unknown) => {
-		const message = error instanceof Error ? error.message : String(error);
-		options.writeLog?.(
-			`Host observability stack degraded for zone '${options.zoneId}': ${message}`,
-		);
+	void checkStack().catch(() => {
+		options.writeLog?.('warning', {
+			operation: 'check-host-observability-stack',
+			zoneId: options.zoneId,
+		});
 	});
 }
 
@@ -2104,9 +2117,11 @@ async function startGatewayZoneImplementation(
 	const containManagedGatewayVm = async (): Promise<void> => {
 		const result = await destructionTransaction.destroyGateway();
 		if (result.kind === 'destroyed-cleanup-incomplete') {
-			options.writeLog?.(
-				`Managed Gateway VM '${exactManagedVm.id}' was destroyed with incomplete cleanup stages: ${result.cleanupFailures.map((failure) => failure.stage).join(', ')}.`,
-			);
+			options.writeLog?.('warning', {
+				operation: 'destroy-managed-gateway-cleanup-incomplete',
+				outcome: formatGatewayCleanupOutcome(result),
+				zoneId: zone.id,
+			});
 		}
 	};
 
@@ -2482,9 +2497,11 @@ async function startGatewayZoneImplementation(
 							reason: event.reason,
 						});
 					} catch (error) {
-						options.writeLog?.(
-							`Gateway Tool VM binding retirement publication failed for lease '${event.leaseId}' (reason '${event.reason}') in zone '${zone.id}': ${error instanceof Error ? error.message : 'unknown error'}.`,
-						);
+						options.writeLog?.('warning', {
+							leaseId: event.leaseId,
+							operation: 'retire-gateway-tool-vm-binding',
+							zoneId: zone.id,
+						});
 						throw error;
 					}
 				});
@@ -2520,7 +2537,12 @@ async function startGatewayZoneImplementation(
 							if (lastLoggedControlAttemptOutcome !== boundedOutcome) {
 								lastLoggedControlAttemptOutcome = boundedOutcome;
 								options.writeLog?.(
-									`Gateway control attachment for zone '${zone.id}': ${boundedOutcome}.`,
+									boundedOutcome === 'hello_response:accepted' ? 'info' : 'warning',
+									{
+										operation: 'gateway-control-attachment-attempt',
+										outcome: boundedOutcome,
+										zoneId: zone.id,
+									},
 								);
 							}
 							options.onControlSessionAttemptOutcome?.({

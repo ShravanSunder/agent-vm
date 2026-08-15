@@ -1,3 +1,4 @@
+import { writeControllerDiagnostic } from './controller-diagnostic-logging.js';
 import {
 	type HeartbeatHandle,
 	type HeartbeatSenderProps,
@@ -18,8 +19,13 @@ export interface RequestHeartbeatRegistryProps {
 	readonly logWarning?: (message: string) => void;
 }
 
-function defaultLogWarning(message: string): void {
-	process.stderr.write(`[request-heartbeat-registry] ${message}\n`);
+function defaultLogWarning(_message: string): void {
+	writeControllerDiagnostic('heartbeat', {
+		event: 'heartbeat-diagnostic',
+		level: 'warning',
+		failureClass: 'failure',
+		telemetry: { operation: 'release-unknown-request-task' },
+	});
 }
 
 export class RequestHeartbeatRegistry {

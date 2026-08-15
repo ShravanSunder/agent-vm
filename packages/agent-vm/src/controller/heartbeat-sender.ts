@@ -1,3 +1,5 @@
+import { writeControllerDiagnostic } from './controller-diagnostic-logging.js';
+
 const HEARTBEAT_CADENCE_MS_DEFAULT = 10_000;
 const HEARTBEAT_REQUEST_TIMEOUT_MS = 5_000;
 const HEARTBEAT_FAILURE_REWARN_INTERVAL = 10;
@@ -20,8 +22,24 @@ export interface HeartbeatHandle {
 	readonly stop: () => void;
 }
 
-function defaultLogWarning(message: string): void {
-	process.stderr.write(`[heartbeat] ${message}\n`);
+function defaultLogWarning(
+	message: string,
+	telemetry: {
+		readonly attempt?: number | undefined;
+		readonly reason?: string | undefined;
+		readonly statusCode?: number | undefined;
+	},
+): void {
+	void message;
+	writeControllerDiagnostic('heartbeat', {
+		event: 'heartbeat-diagnostic',
+		level: 'warning',
+		failureClass: 'failure',
+		telemetry: {
+			...telemetry,
+			operation: 'caller-heartbeat',
+		},
+	});
 }
 
 export function startHeartbeatSender(
@@ -32,7 +50,20 @@ export function startHeartbeatSender(
 	const setIntervalFn = props.setIntervalImpl ?? setInterval;
 	const clearIntervalFn = props.clearIntervalImpl ?? clearInterval;
 	const fetchFn = props.fetchImpl ?? fetch;
-	const logWarning = props.logWarning ?? defaultLogWarning;
+	const logWarning = (
+		message: string,
+		telemetry: {
+			readonly attempt?: number | undefined;
+			readonly reason?: string | undefined;
+			readonly statusCode?: number | undefined;
+		},
+	): void => {
+		if (props.logWarning !== undefined) {
+			props.logWarning(message);
+			return;
+		}
+		defaultLogWarning(message, telemetry);
+	};
 	const url = `${props.callerUrl.replace(/\/$/, '')}/tasks/${encodeURIComponent(requestTaskId)}/heartbeat`;
 
 	let stopped = false;
@@ -54,15 +85,22 @@ export function startHeartbeatSender(
 		}
 	}
 
-	function recordHeartbeatFailure(message: string): void {
+	function recordHeartbeatFailure(
+		message: string,
+		telemetry: {
+			readonly reason: 'http-response' | 'transport';
+			readonly statusCode?: number | undefined;
+		},
+	): void {
 		consecutiveFailureCount += 1;
 		if (consecutiveFailureCount === 1) {
-			logWarning(message);
+			logWarning(message, { attempt: consecutiveFailureCount, ...telemetry });
 			return;
 		}
 		if (consecutiveFailureCount === 3) {
 			logWarning(
 				`task ${requestTaskId}: heartbeat has failed 3 consecutive times; the caller may treat this run as stalled`,
+				{ attempt: consecutiveFailureCount, ...telemetry },
 			);
 			return;
 		}
@@ -72,6 +110,7 @@ export function startHeartbeatSender(
 		) {
 			logWarning(
 				`task ${requestTaskId}: heartbeat has failed ${String(consecutiveFailureCount)} consecutive times; still retrying`,
+				{ attempt: consecutiveFailureCount, ...telemetry },
 			);
 		}
 	}
@@ -97,6 +136,7 @@ export function startHeartbeatSender(
 			if (TERMINAL_STATUS_CODES.has(response.status)) {
 				logWarning(
 					`task ${requestTaskId}: caller returned HTTP ${String(response.status)} from ${url} - stopping heartbeat permanently`,
+					{ reason: 'http-terminal', statusCode: response.status },
 				);
 				stopTicker();
 				return;
@@ -104,6 +144,7 @@ export function startHeartbeatSender(
 			if (!response.ok) {
 				recordHeartbeatFailure(
 					`task ${requestTaskId}: caller returned HTTP ${String(response.status)} from ${url}`,
+					{ reason: 'http-response', statusCode: response.status },
 				);
 				return;
 			}
@@ -113,7 +154,9 @@ export function startHeartbeatSender(
 				return;
 			}
 			const message = error instanceof Error ? error.message : String(error);
-			recordHeartbeatFailure(`task ${requestTaskId}: heartbeat POST failed to ${url}: ${message}`);
+			recordHeartbeatFailure(`task ${requestTaskId}: heartbeat POST failed to ${url}: ${message}`, {
+				reason: 'transport',
+			});
 		} finally {
 			clearTimeout(timeoutHandle);
 			if (activeTimeoutHandle === timeoutHandle) {

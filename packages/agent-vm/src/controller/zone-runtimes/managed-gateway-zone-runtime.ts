@@ -35,6 +35,11 @@ import { runControllerDestroy as runControllerDestroyDefault } from '../../opera
 import { runControllerUpgrade as runControllerUpgradeDefault } from '../../operations/upgrade-zone.js';
 import { runControllerLogs as runControllerLogsDefault } from '../../operations/zone-logs.js';
 import { isProcessAlive as defaultIsProcessAlive } from '../../shared/managed-vm-process.js';
+import {
+	writeControllerDiagnostic,
+	type ControllerDiagnosticLevel,
+	type ControllerDiagnosticTelemetry,
+} from '../controller-diagnostic-logging.js';
 import type { ControllerManagedGatewayRuntimeRecordTarget } from '../durable-state/controller-state-record-paths.js';
 import { gatewayIdentitiesEqual } from '../vm-ownership/vm-ownership-contracts.js';
 import {
@@ -207,8 +212,26 @@ function buildManagedGatewayCombinedLogsCommand(
 	].join('; ');
 }
 
-function writeManagedGatewayZoneRuntimeLog(message: string): void {
-	process.stderr.write(`[managed-gateway-zone-runtime] ${message}\n`);
+type ManagedGatewayZoneRuntimeDiagnosticOperation =
+	| 'append-gateway-lifecycle-operation-record'
+	| 'close-gateway-control-session'
+	| 'gateway-control-attachment-attempt'
+	| 'record-gateway-cleanup-debt'
+	| 'record-pending-gateway-vm-containment-failure'
+	| 'stale-gateway-start-cleanup';
+
+function writeManagedGatewayZoneRuntimeLog(
+	level: ControllerDiagnosticLevel,
+	telemetry: ControllerDiagnosticTelemetry & {
+		readonly operation: ManagedGatewayZoneRuntimeDiagnosticOperation;
+	},
+): void {
+	writeControllerDiagnostic(
+		'gateway',
+		level === 'warning'
+			? { event: 'gateway-health-diagnostic', failureClass: 'failure', level, telemetry }
+			: { event: 'gateway-health-diagnostic', level, telemetry },
+	);
 }
 
 function unavailableReasonForState(state: GatewayZoneLifecycleState): string | undefined {
@@ -250,6 +273,22 @@ function gatewayIdentityFor(
 	};
 }
 
+type GatewayCleanupFailureStage = Extract<
+	GatewayZoneDestroyResult,
+	{ readonly kind: 'destroyed-cleanup-incomplete' }
+>['cleanupFailures'][number]['stage'];
+
+function formatGatewayCleanupOutcome(destroyResult: GatewayZoneDestroyResult): string | undefined {
+	if (destroyResult.kind === 'destroyed-clean') {
+		return undefined;
+	}
+	const cleanupStages = new Set<GatewayCleanupFailureStage>();
+	for (const { stage } of destroyResult.cleanupFailures) {
+		cleanupStages.add(stage);
+	}
+	return [...cleanupStages].toSorted().join(':');
+}
+
 function formatGatewayCleanupDebt(
 	activeGateway: Pick<GatewayZoneRuntimeHandle, 'gatewayIdentity'>,
 	destroyResult: GatewayZoneDestroyResult,
@@ -257,8 +296,7 @@ function formatGatewayCleanupDebt(
 	if (destroyResult.kind === 'destroyed-clean') {
 		return undefined;
 	}
-	const cleanupStages = destroyResult.cleanupFailures.map(({ stage }) => stage).join(', ');
-	return `Gateway VM '${activeGateway.gatewayIdentity.gatewayVmId}' was destroyed, but cleanup remains incomplete at: ${cleanupStages}.`;
+	return `Gateway VM '${activeGateway.gatewayIdentity.gatewayVmId}' was destroyed, but cleanup remains incomplete at: ${formatGatewayCleanupOutcome(destroyResult)}.`;
 }
 
 function cleanupStageSucceeded(
@@ -550,10 +588,11 @@ export function createManagedGatewayZoneRuntime(
 				record: operationRecord,
 				zoneRuntimeDir: options.zone.gateway.zoneRuntimeDir,
 			});
-		} catch (error) {
-			writeManagedGatewayZoneRuntimeLog(
-				`failed to append gateway lifecycle operation record for zone '${options.zone.id}': ${formatUnknownError(error)}`,
-			);
+		} catch {
+			writeManagedGatewayZoneRuntimeLog('warning', {
+				operation: 'append-gateway-lifecycle-operation-record',
+				zoneId: options.zone.id,
+			});
 		}
 	};
 
@@ -610,7 +649,11 @@ export function createManagedGatewayZoneRuntime(
 					operationTrigger: operationContext.operationTrigger,
 					previousGateway: gatewayIdentityFor(staleGateway),
 				});
-				writeManagedGatewayZoneRuntimeLog(cleanupDebt);
+				writeManagedGatewayZoneRuntimeLog('warning', {
+					operation: 'record-gateway-cleanup-debt',
+					outcome: formatGatewayCleanupOutcome(destroyResult),
+					zoneId: options.zone.id,
+				});
 			}
 		} catch (error) {
 			staleGatewayPendingClose = staleGateway;
@@ -798,10 +841,11 @@ export function createManagedGatewayZoneRuntime(
 						operationId: operationContext.operationId,
 						operationTrigger: operationContext.operationTrigger,
 						previousGateway: gatewayIdentityFor(operationContext.previousGateway),
-					}).catch((recordError: unknown) => {
-						writeManagedGatewayZoneRuntimeLog(
-							`failed to record pending Gateway VM containment failure for zone '${options.zone.id}': ${formatUnknownError(recordError)}`,
-						);
+					}).catch(() => {
+						writeManagedGatewayZoneRuntimeLog('warning', {
+							operation: 'record-pending-gateway-vm-containment-failure',
+							zoneId: options.zone.id,
+						});
 					});
 				})
 				.finally(() => {
@@ -875,10 +919,11 @@ export function createManagedGatewayZoneRuntime(
 		if (closeForControllerShutdown) {
 			try {
 				activeGateway?.controlSession?.closeForControllerShutdown();
-			} catch (error) {
-				writeManagedGatewayZoneRuntimeLog(
-					`Failed to close the control session for controller shutdown in zone '${options.zone.id}': ${formatUnknownError(error)}`,
-				);
+			} catch {
+				writeManagedGatewayZoneRuntimeLog('warning', {
+					operation: 'close-gateway-control-session',
+					zoneId: options.zone.id,
+				});
 			}
 		}
 		try {
@@ -919,7 +964,11 @@ export function createManagedGatewayZoneRuntime(
 						operationTrigger,
 						previousGateway: gatewayIdentityFor(previousGateway),
 					});
-					writeManagedGatewayZoneRuntimeLog(cleanupDebt);
+					writeManagedGatewayZoneRuntimeLog('warning', {
+						operation: 'record-gateway-cleanup-debt',
+						outcome: formatGatewayCleanupOutcome(destroyResult),
+						zoneId: options.zone.id,
+					});
 				}
 			}
 			gateway = undefined;
@@ -970,12 +1019,19 @@ export function createManagedGatewayZoneRuntime(
 			const startedGateway = await startGateway({
 				...startOptions,
 				onControlSessionAttemptOutcome: (outcome) => {
-					const attemptResult =
+					const boundedOutcome =
 						outcome.kind === 'hello_response'
 							? `hello_response:${outcome.outcome}`
 							: 'connect_error';
 					writeManagedGatewayZoneRuntimeLog(
-						`control attachment attempt for zone '${options.zone.id}' process '${outcome.processEpoch}' attachment ${String(outcome.attachmentGeneration)}: ${attemptResult}`,
+						outcome.kind === 'hello_response' && outcome.outcome === 'accepted'
+							? 'info'
+							: 'warning',
+						{
+							operation: 'gateway-control-attachment-attempt',
+							outcome: boundedOutcome,
+							zoneId: options.zone.id,
+						},
 					);
 				},
 			});
@@ -1005,7 +1061,11 @@ export function createManagedGatewayZoneRuntime(
 							operationTrigger,
 							previousGateway: gatewayIdentityFor(operationContext?.previousGateway),
 						});
-						writeManagedGatewayZoneRuntimeLog(cleanupDebt);
+						writeManagedGatewayZoneRuntimeLog('warning', {
+							operation: 'record-gateway-cleanup-debt',
+							outcome: formatGatewayCleanupOutcome(destroyResult),
+							zoneId: options.zone.id,
+						});
 					}
 					lastError = `stale-generation-closed: Closed stale gateway start for zone '${options.zone.id}'.`;
 					lifecycleState = classifyLastError(lastError);
@@ -1030,9 +1090,10 @@ export function createManagedGatewayZoneRuntime(
 						operationTrigger,
 						previousGateway: gatewayIdentityFor(operationContext?.previousGateway),
 					});
-					writeManagedGatewayZoneRuntimeLog(
-						`stale gateway start cleanup failed for zone '${options.zone.id}': ${formatUnknownError(error)}`,
-					);
+					writeManagedGatewayZoneRuntimeLog('warning', {
+						operation: 'stale-gateway-start-cleanup',
+						zoneId: options.zone.id,
+					});
 				}
 				return;
 			}

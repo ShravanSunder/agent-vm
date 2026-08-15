@@ -23,6 +23,7 @@ import {
 	isCliEntrypoint,
 	loadOptionalLocalEnvironmentFile,
 } from './agent-vm-entrypoint.js';
+import { runControllerCommandOperation } from './commands/controller-command-operation.js';
 import { parseAgentIds } from './commands/init-definition.js';
 
 function createCliBuildSystemConfig(): LoadedSystemConfig {
@@ -3012,6 +3013,50 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 			}),
 			zoneId: 'shravan',
 		});
+	});
+
+	it('aborts controller cleanup when process logging setup fails', async () => {
+		const commandResult = parseSync(agentVmRootParser, [
+			'controller',
+			'cleanup',
+			'--config',
+			'./config/system.json',
+			'--zone',
+			'shravan',
+		]);
+		if (!commandResult.success || commandResult.value.command !== 'controller.cleanup') {
+			throw new Error('Expected controller cleanup command to parse.');
+		}
+		const runControllerOfflineCleanup = vi.fn(async () => ({ results: [] }));
+		const stdoutChunks: string[] = [];
+
+		await expect(
+			runControllerCommandOperation(
+				{
+					stderr: { write: () => true },
+					stdout: {
+						write: (chunk: string | Uint8Array): boolean => {
+							stdoutChunks.push(String(chunk));
+							return true;
+						},
+					},
+				},
+				{
+					...defaultCliDependencies,
+					loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
+					runControllerOfflineCleanup,
+				},
+				commandResult.value,
+				{
+					configureProcessLogging: vi.fn(async () => {
+						throw new Error('sink unavailable');
+					}),
+					processRoot: true,
+				},
+			),
+		).rejects.toThrow('Controller process logging setup failed.');
+		expect(runControllerOfflineCleanup).not.toHaveBeenCalled();
+		expect(stdoutChunks).toEqual([]);
 	});
 
 	it('propagates exact reconciliation failure without writing a success result', async () => {

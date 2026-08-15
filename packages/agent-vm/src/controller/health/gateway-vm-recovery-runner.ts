@@ -1,5 +1,7 @@
-import { redactOnePasswordReferences } from '@agent-vm/secret-management';
-
+import type {
+	ControllerDiagnosticLevel,
+	ControllerDiagnosticTelemetry,
+} from '../controller-diagnostic-logging.js';
 import type { ControllerRuntimeReadiness } from '../http/controller-http-route-support.js';
 import type { GatewayEpochIdentity } from '../vm-ownership/vm-ownership-contracts.js';
 import type { GatewayZoneLifecycleState } from '../zone-runtimes/gateway-zone-state-machine.js';
@@ -23,7 +25,10 @@ export interface CreateGatewayVmRecoveryRunnerOptions {
 	readonly now: () => number;
 	readonly restartTimeoutMs: number;
 	readonly setTimeoutImpl?: ((callback: () => void, delayMs: number) => NodeJS.Timeout) | undefined;
-	readonly writeLog: (message: string) => void;
+	readonly writeLog: (
+		level: ControllerDiagnosticLevel,
+		telemetry?: ControllerDiagnosticTelemetry,
+	) => void;
 }
 
 function gatewayRecoverySourceMatchesManagedVm(
@@ -70,31 +75,6 @@ function formatUnknownError(error: unknown): string {
 		return error.message;
 	}
 	return typeof error === 'string' ? error : JSON.stringify(error);
-}
-
-const serviceAccountTokenEnvPattern = /\b(OP_SERVICE_ACCOUNT_TOKEN=)[^\s;]+/gu;
-const onePasswordServiceAccountTokenPattern = /\bops_[A-Za-z0-9._=-]{16,}\b/gu;
-const bearerCredentialPattern = /\b(Bearer\s+)[^\s;,'")]+/giu;
-const credentialAssignmentPattern =
-	/(["']?)(password|passwd|token|secret)\1(\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s;,'")]+)/giu;
-
-function redactCredentialAssignment(
-	_match: string,
-	keyQuote: string,
-	keyName: string,
-	separator: string,
-	value: string,
-): string {
-	const valueQuote = value.startsWith('"') ? '"' : value.startsWith("'") ? "'" : '';
-	return `${keyQuote}${keyName}${keyQuote}${separator}${valueQuote}<redacted>${valueQuote}`;
-}
-
-function formatRecoveryLogError(error: unknown): string {
-	return redactOnePasswordReferences(formatUnknownError(error))
-		.replaceAll(serviceAccountTokenEnvPattern, '$1<redacted>')
-		.replaceAll(onePasswordServiceAccountTokenPattern, '<redacted>')
-		.replaceAll(bearerCredentialPattern, '$1<redacted>')
-		.replaceAll(credentialAssignmentPattern, redactCredentialAssignment);
 }
 
 function getUnknownErrorCode(error: unknown): string | undefined {
@@ -200,10 +180,11 @@ export function createGatewayVmRecoveryRunner(
 		let runtime: RecoverableGatewayRuntime;
 		try {
 			runtime = options.getRecoverableGatewayRuntime(request.zoneId);
-		} catch (error) {
-			options.writeLog(
-				`Gateway VM recovery failed to find managed Gateway runtime for zone '${request.zoneId}': ${formatRecoveryLogError(error)}`,
-			);
+		} catch {
+			options.writeLog('warning', {
+				operation: 'recover-gateway-runtime-lookup',
+				zoneId: request.zoneId,
+			});
 			return {
 				action: 'observe-only',
 				elapsedMs: elapsedMs(),
@@ -241,9 +222,10 @@ export function createGatewayVmRecoveryRunner(
 			},
 		});
 		if (recoveryAction.kind === 'refresh-secret-resolver') {
-			options.writeLog(
-				`Refreshing gateway secret resolver for zone '${request.zoneId}' after ${request.consecutiveFailures} consecutive ${request.reason} observations.`,
-			);
+			options.writeLog('info', {
+				operation: 'refresh-gateway-credentials',
+				zoneId: request.zoneId,
+			});
 			const refreshAbortController = new AbortController();
 			try {
 				await runWithDeadline(
@@ -255,13 +237,16 @@ export function createGatewayVmRecoveryRunner(
 						refreshAbortController.abort(new Error('gateway recovery action deadline exceeded')),
 				);
 			} catch (error) {
-				options.writeLog(
-					`Gateway VM recovery credential refresh failed for zone '${request.zoneId}': ${formatRecoveryLogError(error)}`,
-				);
+				const errorCode = classifyGatewayRecoveryRuntimeError(runtime, error);
+				options.writeLog('warning', {
+					errorCode,
+					operation: 'refresh-gateway-credentials',
+					zoneId: request.zoneId,
+				});
 				return {
 					action: 'gateway-vm-cold-start',
 					elapsedMs: elapsedMs(),
-					errorCode: classifyGatewayRecoveryRuntimeError(runtime, error),
+					errorCode,
 					...(operationIdForRecoveryError(error) === undefined
 						? {}
 						: { operationId: operationIdForRecoveryError(error) }),
@@ -276,9 +261,10 @@ export function createGatewayVmRecoveryRunner(
 			});
 		}
 		if (recoveryAction.kind === 'cold-start-gateway') {
-			options.writeLog(
-				`Auto cold-starting gateway VM for zone '${request.zoneId}' after ${request.consecutiveFailures} consecutive ${request.reason} observations.`,
-			);
+			options.writeLog('info', {
+				operation: 'cold-start-gateway',
+				zoneId: request.zoneId,
+			});
 			let coldStartResult: ManagedGatewayZoneRestartResult;
 			try {
 				coldStartResult = await runWithDeadline(
@@ -288,13 +274,16 @@ export function createGatewayVmRecoveryRunner(
 					}),
 				);
 			} catch (error) {
-				options.writeLog(
-					`Gateway VM recovery cold-start failed for zone '${request.zoneId}': ${formatRecoveryLogError(error)}`,
-				);
+				const errorCode = classifyGatewayRecoveryRuntimeError(runtime, error);
+				options.writeLog('warning', {
+					errorCode,
+					operation: 'cold-start-gateway',
+					zoneId: request.zoneId,
+				});
 				return {
 					action: 'gateway-vm-cold-start',
 					elapsedMs: elapsedMs(),
-					errorCode: classifyGatewayRecoveryRuntimeError(runtime, error),
+					errorCode,
 					...(operationIdForRecoveryError(error) === undefined
 						? {}
 						: { operationId: operationIdForRecoveryError(error) }),
@@ -330,9 +319,10 @@ export function createGatewayVmRecoveryRunner(
 		const oldGateway = oldSnapshot.gateway;
 		const oldBootedAt = oldSnapshot.bootedAt;
 		const oldHostPid = oldGateway.vm.hostPid;
-		options.writeLog(
-			`Auto-restarting gateway VM for zone '${request.zoneId}' after ${request.consecutiveFailures} consecutive ${request.reason} observations.`,
-		);
+		options.writeLog('info', {
+			operation: 'restart-gateway',
+			zoneId: request.zoneId,
+		});
 
 		let restartResult: ManagedGatewayZoneRestartResult;
 		try {
@@ -343,13 +333,16 @@ export function createGatewayVmRecoveryRunner(
 				}),
 			);
 		} catch (error) {
-			options.writeLog(
-				`Gateway VM recovery restart failed for zone '${request.zoneId}': ${formatRecoveryLogError(error)}`,
-			);
+			const errorCode = classifyGatewayRecoveryRuntimeError(runtime, error);
+			options.writeLog('warning', {
+				errorCode,
+				operation: 'restart-gateway',
+				zoneId: request.zoneId,
+			});
 			return {
 				action: 'gateway-vm-restart',
 				elapsedMs: elapsedMs(),
-				errorCode: classifyGatewayRecoveryRuntimeError(runtime, error),
+				errorCode,
 				...(oldBootedAt === undefined ? {} : { oldBootedAt }),
 				...(oldHostPid === undefined ? {} : { oldHostPid }),
 				oldVmId: oldGateway.vm.id,

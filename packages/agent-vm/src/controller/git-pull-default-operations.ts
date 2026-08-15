@@ -2,6 +2,7 @@ import type { TaskEvent } from '@agent-vm/agent-vm-worker';
 import { execa } from 'execa';
 
 import type { ActiveWorkerTask, HostGitDir } from './active-task-registry.js';
+import { writeControllerDiagnostic } from './controller-diagnostic-logging.js';
 import { scrubGithubTokenFromOutput } from './git-auth-support.js';
 import { runGitCommandWithTransientRetries, type GitCommandResult } from './git-retry-support.js';
 import { buildHostGitArgs } from './host-git-command.js';
@@ -453,10 +454,16 @@ async function recordControllerGitPullEvent(options: {
 }): Promise<void> {
 	try {
 		await options.recordEvent?.(options.event);
-	} catch (error) {
-		process.stderr.write(
-			`[git-pull-default] Failed to record ${options.event.event}: ${errorMessage(error)}\n`,
-		);
+	} catch {
+		writeControllerDiagnostic('git', {
+			event: 'controller-operation-failed',
+			level: 'warning',
+			failureClass: 'failure',
+			telemetry: {
+				operation: 'record-controller-git-pull-event',
+				outcome: options.event.event,
+			},
+		});
 	}
 }
 

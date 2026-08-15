@@ -20,6 +20,11 @@ import {
 	deriveApprovalHmacKeysFromMasterKey,
 	startPortalServer,
 } from '../cli/portal-server-operation.js';
+import {
+	configureProcessLogging,
+	type ConfigureProcessLoggingProps,
+	type ProcessLoggingHandle,
+} from '../cli/process-logging.js';
 import { createPortalCore, type PortalCoreEvent } from '../core/portal-core.js';
 import { resolveUpstreamServers } from '../core/provider-runtime.js';
 import {
@@ -48,8 +53,49 @@ export interface PortalCatalogFile {
 }
 
 export interface AgentVmMcpPortalRuntimeProps {
+	readonly configureProcessLogging?:
+		| ((props: ConfigureProcessLoggingProps) => Promise<ProcessLoggingHandle>)
+		| undefined;
 	readonly env?: Readonly<Record<string, string | undefined>>;
 	readonly secretResolver?: SecretResolver;
+}
+
+function writeMcpPortalDiagnostic(text: string): void {
+	try {
+		process.stderr.write(text);
+	} catch {
+		// Preserve the product result when the diagnostic writer is unavailable.
+	}
+}
+
+export async function runMcpPortalCommandWithProcessLogging(
+	command: McpPortalCommand,
+	props: AgentVmMcpPortalRuntimeProps = {},
+): Promise<number> {
+	if (command.command !== 'mcp-proxy.serve') {
+		return await runMcpPortalCommand(command, props);
+	}
+	let logging: ProcessLoggingHandle;
+	try {
+		logging = await (props.configureProcessLogging ?? configureProcessLogging)({
+			stderr: process.stderr,
+		});
+	} catch (error: unknown) {
+		const setupFailure = new Error('mcp-portal: process logging setup failed.', {
+			cause: error,
+		});
+		writeMcpPortalDiagnostic(`${setupFailure.message}\n`);
+		return 1;
+	}
+	try {
+		return await runMcpPortalCommand(command, props);
+	} finally {
+		try {
+			await logging.shutdown();
+		} catch {
+			writeMcpPortalDiagnostic('mcp-portal: logging shutdown failed\n');
+		}
+	}
 }
 
 async function readCatalogFile(catalogPath: string): Promise<PortalCatalogFile> {
@@ -190,40 +236,60 @@ function credentialProxyUrlFromConfig(
 type PortalShutdownSignal = 'SIGINT' | 'SIGTERM';
 interface PortalSignalTarget {
 	readonly off: (signal: PortalShutdownSignal, listener: () => void) => void;
-	readonly once: (signal: PortalShutdownSignal, listener: () => void) => void;
+	readonly on: (signal: PortalShutdownSignal, listener: () => void) => void;
 }
 
 export interface RunningPortalServer {
 	readonly close: () => Promise<void>;
 }
 
+interface PortalShutdownSignalWaiter {
+	readonly cleanup: () => void;
+	readonly signal: Promise<PortalShutdownSignal>;
+}
+
 function waitForPortalShutdownSignal(
 	signalTarget: PortalSignalTarget = process,
-): Promise<PortalShutdownSignal> {
+): PortalShutdownSignalWaiter {
 	const signals = ['SIGINT', 'SIGTERM'] satisfies readonly PortalShutdownSignal[];
-	return new Promise((resolve) => {
-		const listeners = new Map<PortalShutdownSignal, () => void>();
-		for (const signal of signals) {
-			const listener = (): void => {
-				for (const [registeredSignal, registeredListener] of listeners) {
-					signalTarget.off(registeredSignal, registeredListener);
-				}
-				resolve(signal);
-			};
-			listeners.set(signal, listener);
-			signalTarget.once(signal, listener);
-		}
+	const listeners = new Map<PortalShutdownSignal, () => void>();
+	let resolveSignal: ((signal: PortalShutdownSignal) => void) | undefined;
+	let observed = false;
+	const signal = new Promise<PortalShutdownSignal>((resolve) => {
+		resolveSignal = resolve;
 	});
+	for (const registeredSignal of signals) {
+		const listener = (): void => {
+			if (observed) return;
+			observed = true;
+			resolveSignal?.(registeredSignal);
+		};
+		listeners.set(registeredSignal, listener);
+		signalTarget.on(registeredSignal, listener);
+	}
+	return {
+		cleanup: (): void => {
+			for (const [registeredSignal, listener] of listeners) {
+				signalTarget.off(registeredSignal, listener);
+			}
+			listeners.clear();
+		},
+		signal,
+	};
 }
 
 export async function waitUntilPortalServerShutdown(props: {
+	readonly onShutdownComplete?: (() => Promise<void>) | undefined;
 	readonly server: RunningPortalServer;
 	readonly signalTarget?: PortalSignalTarget;
 }): Promise<void> {
+	const shutdownWaiter = waitForPortalShutdownSignal(props.signalTarget);
 	try {
-		await waitForPortalShutdownSignal(props.signalTarget);
-	} finally {
+		await shutdownWaiter.signal;
 		await props.server.close();
+		await props.onShutdownComplete?.();
+	} finally {
+		shutdownWaiter.cleanup();
 	}
 }
 
@@ -390,7 +456,11 @@ export async function runMcpPortalCommand(
 				return assertNever(command);
 		}
 	} catch (error: unknown) {
-		process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+		try {
+			process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+		} catch {
+			// Preserve the command result when the direct diagnostic writer is unavailable.
+		}
 		return 1;
 	}
 }

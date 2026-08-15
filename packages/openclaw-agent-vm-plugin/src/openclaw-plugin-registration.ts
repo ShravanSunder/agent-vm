@@ -3,6 +3,7 @@ import {
 	type GatewayRuntimeClientOptions,
 	type GatewayRuntimeTraceContext,
 } from '@agent-vm/agent-portal-sdk/gateway-runtime-client';
+import { getLogger } from '@logtape/logtape';
 
 import {
 	type AgentVmPluginConfigInput,
@@ -24,6 +25,7 @@ import {
 } from './openclaw-gateway-runtime-trace-context.js';
 import type {
 	OpenClawHttpRouteRegistrationApi,
+	OpenClawPluginLogger,
 	OpenClawSandboxBackendRegistrationApi,
 	OpenClawPluginServiceRegistrationApi,
 	OpenClawToolRegistrationApi,
@@ -37,8 +39,12 @@ import {
 type OpenClawGatewayRuntimeClient = Pick<GatewayRuntimeClient, 'connect' | 'disconnect'> &
 	OpenClawToolPortalClient;
 
+const openClawPluginLogger = getLogger(['agent-vm', 'openclaw-plugin']);
+const maximumOpenClawPluginWarningLength = 256;
+
 interface AgentVmPluginRegistrationApi {
 	readonly config?: AgentVmPluginConfigJsonObject;
+	readonly logger?: OpenClawPluginLogger | undefined;
 	readonly pluginConfig: AgentVmPluginConfigInput;
 	readonly registerHttpRoute?: OpenClawHttpRouteRegistrationApi['registerHttpRoute'];
 	readonly registerService?: OpenClawPluginServiceRegistrationApi['registerService'];
@@ -48,6 +54,25 @@ interface AgentVmPluginRegistrationApi {
 		readonly config?: {
 			readonly current?: () => AgentVmPluginConfigJsonObject;
 		};
+	};
+}
+
+function createOpenClawPluginWarningLogger(
+	api: Pick<AgentVmPluginRegistrationApi, 'logger'>,
+): Pick<OpenClawPluginLogger, 'warn'> {
+	if (api.logger !== undefined) {
+		return api.logger;
+	}
+	return {
+		warn: (message: string): void => {
+			const boundedMessage = message
+				.replace(/[\r\n\t]/gu, ' ')
+				.trim()
+				.slice(0, maximumOpenClawPluginWarningLength);
+			openClawPluginLogger.warn('OpenClaw plugin warning: {warning}', {
+				warning: boundedMessage,
+			});
+		},
 	};
 }
 
@@ -130,6 +155,7 @@ export function registerAgentVmPlugin(
 		}
 		return;
 	}
+	const warningLogger = createOpenClawPluginWarningLogger(api);
 
 	const pluginConfig = resolveAgentVmPluginConfig(api.pluginConfig);
 	const toolPortalConfig = pluginConfig.toolPortal;
@@ -139,9 +165,7 @@ export function registerAgentVmPlugin(
 				agentProjections: toolPortalConfig.agentProjections,
 				api: { registerTool },
 				clientProvider: getOpenClawGatewayRuntimeClient,
-				logger: {
-					warn: (message) => process.stderr.write(`${message}\n`),
-				},
+				logger: warningLogger,
 			});
 		}
 		return;
@@ -182,9 +206,7 @@ export function registerAgentVmPlugin(
 		agentProjections: toolPortalConfig.agentProjections,
 		api: { registerTool },
 		clientProvider: getOpenClawGatewayRuntimeClient,
-		logger: {
-			warn: (message) => process.stderr.write(`${message}\n`),
-		},
+		logger: warningLogger,
 	});
 	options.onGatewayRuntimeClientCreated?.({
 		agentProjections: toolPortalConfig.agentProjections,

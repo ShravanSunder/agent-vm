@@ -6,6 +6,15 @@ import { workerConfigSchema } from '@agent-vm/agent-vm-worker';
 import { TOOL_VM_WORK_GUEST_ROOT } from '@agent-vm/gateway-lifecycle';
 import { describe, expect, it, vi } from 'vitest';
 
+const { writeControllerDiagnosticMock } = vi.hoisted(() => ({
+	writeControllerDiagnosticMock: vi.fn(),
+}));
+
+vi.mock('../controller-diagnostic-logging.js', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../controller-diagnostic-logging.js')>();
+	return { ...actual, writeControllerDiagnostic: writeControllerDiagnosticMock };
+});
+
 import {
 	TEST_SSH_SERVER_HOST_KEY,
 	createManagedExecProcessStub,
@@ -1075,6 +1084,7 @@ describe('createControllerApp', () => {
 	});
 
 	it('scrubs token-bearing pull-default errors from route logs and responses', async () => {
+		writeControllerDiagnosticMock.mockClear();
 		const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 		const pullDefaultForTask = vi.fn(async () => {
 			throw new Error('boom https://x-access-token:secret-token@github.com/acme/widgets.git');
@@ -1119,6 +1129,13 @@ describe('createControllerApp', () => {
 			error: 'boom https://x-access-token:***@github.com/acme/widgets.git',
 		});
 		expect(stderrSpy.mock.calls.join('\n')).not.toContain('secret-token');
+		expect(writeControllerDiagnosticMock).toHaveBeenCalledWith(
+			'git',
+			expect.objectContaining({
+				event: 'controller-operation-failed',
+				telemetry: expect.objectContaining({ operation: 'pull-default-for-task' }),
+			}),
+		);
 		stderrSpy.mockRestore();
 	});
 
@@ -1444,6 +1461,13 @@ describe('createControllerApp', () => {
 				}),
 			);
 		});
+		expect(writeControllerDiagnosticMock).toHaveBeenCalledWith(
+			'runtime',
+			expect.objectContaining({
+				event: 'controller-operation-failed',
+				telemetry: expect.objectContaining({ operation: 'execute-worker-task' }),
+			}),
+		);
 	});
 
 	it('writes a task-failed sentinel when background failure event recording fails', async () => {

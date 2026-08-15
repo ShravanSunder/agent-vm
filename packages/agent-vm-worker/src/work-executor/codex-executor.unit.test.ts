@@ -1,9 +1,12 @@
 /* oxlint-disable typescript-eslint/no-unsafe-assignment -- expect matchers intentionally carry loose matcher types in tests */
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Writable } from 'node:stream';
 
+import { getConfig, reset } from '@logtape/logtape';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { configureProcessLogging } from '../shared/process-logging.js';
 import { createWorkExecutor } from './executor-factory.js';
 import type { ExecutorResult, StructuredInput, WorkExecutor } from './executor-interface.js';
 
@@ -217,20 +220,32 @@ describe('codex-executor', () => {
 			capabilities: { mcpServers: [], tools: [] },
 		});
 
-		const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
-		await executor.resumeOrRebuild('expired-thread', [{ type: 'text', text: 'context' }]);
+		const chunks: string[] = [];
+		const stderr = new Writable({
+			write: (chunk: Uint8Array, _encoding, callback): void => {
+				chunks.push(Buffer.from(chunk).toString('utf8'));
+				callback();
+			},
+		});
+		const logging = await configureProcessLogging({ stderr });
+		try {
+			await executor.resumeOrRebuild('expired-thread', [{ type: 'text', text: 'context' }]);
 
-		expect(mockResumeThread).toHaveBeenCalledWith(
-			'expired-thread',
-			expect.objectContaining({
-				model: 'latest',
-			}),
-		);
-		expect(mockStartThread).toHaveBeenCalled();
-		expect(executor.getThreadId()).toBe('thread-2');
-		expect(stderrSpy).toHaveBeenCalledWith(
-			expect.stringContaining('Failed to resume thread expired-thread; rebuilding thread instead'),
-		);
+			expect(mockResumeThread).toHaveBeenCalledWith(
+				'expired-thread',
+				expect.objectContaining({
+					model: 'latest',
+				}),
+			);
+			expect(mockStartThread).toHaveBeenCalled();
+			expect(executor.getThreadId()).toBe('thread-2');
+			await logging.shutdown();
+			expect(chunks.join('')).toContain('executor-thread-resume-failed');
+			expect(chunks.join('')).not.toContain('expired-thread');
+		} finally {
+			await logging.shutdown();
+			if (getConfig() !== null) await reset();
+		}
 	});
 
 	it('resumeOrRebuild() rethrows non-recoverable resume errors', async () => {
