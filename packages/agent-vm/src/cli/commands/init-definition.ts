@@ -40,6 +40,11 @@ const initPresets = {
 	},
 } as const;
 
+const initPresetDescription =
+	'macos-local: user-dir paths (storageRootDir ~/.agent-vm/<projectNamespace> with derived global and zone paths, backupDir ~/.agent-vm-backups/<zone>), aarch64, 1password, .env.local; ' +
+	'container-x86: container runtime paths (/var/agent-vm/<projectNamespace>), x86_64, environment secrets; ' +
+	'container-arm64: container runtime paths (/var/agent-vm/<projectNamespace>), aarch64, environment secrets';
+
 export const initPresetSchema = z
 	.enum(['macos-local', 'container-x86', 'container-arm64'])
 	.transform((presetName) => initPresets[presetName])
@@ -113,9 +118,7 @@ export const initCommandParser = command(
 					'--preset',
 					zod(initPresetSchema, { metavar: 'PRESET', placeholder: undefined }),
 					{
-						description: cliDescription(
-							'Deployment preset: macos-local, container-x86, or container-arm64',
-						),
+						description: cliDescription(`Preset group. ${initPresetDescription}`),
 					},
 				),
 				schema: initPresetSchema,
@@ -124,7 +127,11 @@ export const initCommandParser = command(
 				parser: option(
 					'--secrets',
 					zod(initSecretsProviderSchema, { metavar: 'PROVIDER', placeholder: undefined }),
-					{ description: cliDescription('Secrets provider: 1password or environment') },
+					{
+						description: cliDescription(
+							'Secrets provider: 1password (local dev) or environment (CI, container, shell)',
+						),
+					},
 				),
 				schema: initSecretsProviderSchema,
 			}),
@@ -140,7 +147,11 @@ export const initCommandParser = command(
 				parser: option(
 					'--paths',
 					zod(initPathModeSchema, { metavar: 'PATHS', placeholder: undefined }),
-					{ description: cliDescription('Path profile: local, pod, or user-dir') },
+					{
+						description: cliDescription(
+							'Path profile to scaffold: local (sibling-of-config), pod (/var/agent-vm/<projectNamespace>), or user-dir (~/.agent-vm/<projectNamespace>). Every profile scopes storageRootDir by projectNamespace. Defaults from preset.',
+						),
+					},
 				),
 				schema: initPathModeSchema,
 			}),
@@ -148,11 +159,18 @@ export const initCommandParser = command(
 				parser: option(
 					'--namespace',
 					zod(initProjectNamespaceSchema, { metavar: 'NAMESPACE', placeholder: undefined }),
-					{ description: cliDescription('Project namespace override') },
+					{
+						description: cliDescription(
+							'Project namespace override; otherwise derive it deterministically from the target path',
+						),
+					},
 				),
 				schema: initProjectNamespaceSchema,
 			}),
-			overwrite: createPresenceFlag('--overwrite', 'Overwrite existing scaffolded files'),
+			overwrite: createPresenceFlag(
+				'--overwrite',
+				'Overwrite existing scaffolded files; otherwise skip existing files',
+			),
 			agents: projectZodScalarPresence({
 				parser: option(
 					'--openclaw-agents',
@@ -167,7 +185,7 @@ export const initCommandParser = command(
 					zod(initOnePasswordAccountNameSchema, { metavar: 'ACCOUNT', placeholder: undefined }),
 					{
 						description: cliDescription(
-							'Keychain account suffix for the 1Password service account token',
+							'Keychain account suffix for the 1Password service account token, stored as 1p-service-account--<name>.',
 						),
 					},
 				),

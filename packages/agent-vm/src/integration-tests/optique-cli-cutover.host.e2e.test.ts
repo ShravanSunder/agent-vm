@@ -334,6 +334,32 @@ describe('Optique cutover built CLI contract', () => {
 	});
 
 	it.each([
+		{
+			arguments_: ['auth', 'openclaw', 'login', '--help'],
+			description: 'Print the resolved login plan without opening SSH or changing auth.',
+		},
+		{
+			arguments_: ['controller', 'credentials', 'check', '--help'],
+			description: 'Check zone credential resolution without refreshing the gateway',
+		},
+		{
+			arguments_: ['init', '--help'],
+			description: 'Overwrite existing scaffolded files; otherwise skip existing files',
+		},
+	] as const)(
+		'preserves operator-relevant help semantics for agent-vm $arguments_',
+		async ({ arguments_, description }) => {
+			// Arrange / Act
+			const result = await runBuiltCli('agent-vm', arguments_);
+
+			// Assert
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toContain(description);
+			expect(result.stderr).toBe('');
+		},
+	);
+
+	it.each([
 		{ arguments_: ['unknown-command'], executableName: 'agent-vm' },
 		{ arguments_: ['serve', '--port', 'not-a-port'], executableName: 'agent-vm-worker' },
 		{

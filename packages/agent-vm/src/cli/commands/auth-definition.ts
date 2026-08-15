@@ -26,7 +26,11 @@ const onePasswordParser = command(
 			tokenReference: projectZodScalarPresence({
 				parser: argument(
 					zod(tokenReferenceSchema, { metavar: 'TOKEN_REF_OR_URL', placeholder: undefined }),
-					{ description: cliDescription('1Password ref or URL; omit to paste token') },
+					{
+						description: cliDescription(
+							'1Password ref or URL to read with `op read`; omit to paste token.',
+						),
+					},
 				),
 				schema: tokenReferenceSchema,
 			}),
@@ -48,17 +52,27 @@ const openClawLoginParser = command(
 				parser: option(
 					'--agent',
 					zod(optionalAgentIdSchema, { metavar: 'AGENT_ID', placeholder: undefined }),
-					{ description: cliDescription('OpenClaw agent id') },
+					{
+						description: cliDescription(
+							'OpenClaw agent id whose isolated auth profile store should receive auth.',
+						),
+					},
 				),
 				schema: optionalAgentIdSchema,
 			}),
 			allConfiguredProfiles: createPresenceFlag(
 				'--all-configured-profiles',
-				'Login every configured profile id',
+				'Login every profile id from gateway.authLogin.providers.<provider>.profileIds.',
 			),
 			config: createConfigOption(),
-			deviceCode: createPresenceFlag('--device-code', 'Use the provider device-code flow'),
-			dryRun: createPresenceFlag('--dry-run', 'Print the resolved login plan'),
+			deviceCode: createPresenceFlag(
+				'--device-code',
+				'Use the provider device-code flow instead of browser callback auth.',
+			),
+			dryRun: createPresenceFlag(
+				'--dry-run',
+				'Print the resolved login plan without opening SSH or changing auth.',
+			),
 			profileIds: projectZodRepeatedOption({
 				parser: option(
 					'--profile-id',
@@ -75,7 +89,7 @@ const openClawLoginParser = command(
 				schema: authenticationProfileIdsSchema,
 			}),
 			provider: argument(zod(providerSchema, { metavar: 'PROVIDER', placeholder: 'openai' }), {
-				description: cliDescription('Provider to authenticate'),
+				description: cliDescription('Provider name (for example: openai).'),
 			}),
 			zone: createZoneOption(),
 		}),
@@ -92,13 +106,17 @@ const codexHarnessParser = command(
 				parser: option(
 					'--agent',
 					zod(optionalAgentIdSchema, { metavar: 'AGENT_ID', placeholder: undefined }),
-					{ description: cliDescription('OpenClaw agent id') },
+					{
+						description: cliDescription(
+							'OpenClaw agent id whose isolated CODEX_HOME should receive auth.',
+						),
+					},
 				),
 				schema: optionalAgentIdSchema,
 			}),
 			allAgents: createPresenceFlag(
 				'--all-agents',
-				'Run native Codex CLI device auth for every configured zone agent',
+				'Run native Codex CLI device auth once for every configured zone agent.',
 			),
 			config: createConfigOption(),
 			zone: createZoneOption(),
@@ -114,7 +132,7 @@ export const authCommandParser = command(
 	or(
 		onePasswordParser,
 		command('openclaw', openClawLoginParser, {
-			description: cliDescription('Run OpenClaw-managed provider auth'),
+			description: cliDescription('Run OpenClaw-managed provider auth for a gateway zone.'),
 		}),
 		codexHarnessParser,
 	),

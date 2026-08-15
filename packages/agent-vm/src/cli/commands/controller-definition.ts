@@ -118,7 +118,11 @@ export const controllerCommandParser = command(
 						command: constant('controller.credentials.check'),
 						options: controllerZoneOptionsParser,
 					}),
-					{ description: cliDescription('Check zone credential resolution') },
+					{
+						description: cliDescription(
+							'Check zone credential resolution without refreshing the gateway',
+						),
+					},
 				),
 				command(
 					'refresh',
