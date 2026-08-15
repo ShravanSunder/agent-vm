@@ -159,6 +159,7 @@ describe('startHeartbeatSender', () => {
 			event: 'heartbeat-diagnostic',
 			failureClass: 'failure',
 			operation: 'caller-heartbeat',
+			reason: 'http-response',
 			statusCode: 503,
 		});
 	});

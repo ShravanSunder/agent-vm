@@ -63,6 +63,20 @@ afterEach(async () => {
 });
 
 describe('configureProcessLogging', () => {
+	it('delivers a stderr record without waiting for buffered shutdown flush', async () => {
+		const stderr = createCapturingWritable();
+		const logging = await configureProcessLogging({
+			serviceName: 'agent-vm-controller',
+			stderr: stderr.stream,
+		});
+
+		getLogger(['agent-vm', 'controller', 'immediate-record']).warning('controller warning');
+		await new Promise<void>((resolve) => setImmediate(resolve));
+
+		expect(stderr.chunks.join('')).toContain('controller warning');
+		await logging.shutdown();
+	});
+
 	it('delivers every record from a burst to a slow stderr stream', async () => {
 		const chunks: string[] = [];
 		const stderr = new Writable({
@@ -209,6 +223,18 @@ describe('configureProcessLogging', () => {
 			event: 'secret-refresh-failed',
 			failureClass: 'secret-unavailable',
 			operation: 'refresh-secret-resolver',
+		});
+	});
+
+	it('retains valid zone and lease identifiers that contain sensitive-domain words', () => {
+		expect(
+			createBoundedDiagnosticProperties({
+				leaseId: 'token-refresh-lease',
+				zoneId: 'secret-management-zone',
+			}),
+		).toEqual({
+			leaseId: 'token-refresh-lease',
+			zoneId: 'secret-management-zone',
 		});
 	});
 

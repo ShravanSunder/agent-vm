@@ -96,7 +96,11 @@ describe('writeControllerDiagnostic', () => {
 			failureClass: 'failure',
 			telemetry: {
 				attempt: 2,
+				autoSelectFamily: false,
+				dnsResultOrder: 'ipv4first',
 				leaseId: 'lease-123',
+				outcome: 'hello_response:accepted',
+				reason: 'http-response',
 				statusCode: 503,
 				zoneId: 'zone-a',
 			},
@@ -104,9 +108,13 @@ describe('writeControllerDiagnostic', () => {
 
 		expect(properties).toEqual({
 			attempt: 2,
+			autoSelectFamily: false,
+			dnsResultOrder: 'ipv4first',
 			event: 'controller-operation-failed',
 			failureClass: 'failure',
 			leaseId: 'lease-123',
+			outcome: 'hello_response:accepted',
+			reason: 'http-response',
 			statusCode: 503,
 			zoneId: 'zone-a',
 		});
@@ -131,6 +139,22 @@ describe('writeControllerDiagnostic', () => {
 			event: 'lease-liveness-failed',
 			failureClass: 'failure',
 			operation: 'tool-vm-lease-liveness',
+		});
+	});
+
+	it('retains valid zone and lease identifiers that contain sensitive-domain words', () => {
+		const properties = createControllerDiagnosticProperties({
+			event: 'lease-diagnostic',
+			level: 'info',
+			telemetry: {
+				leaseId: 'token-refresh-lease',
+				zoneId: 'secret-management-zone',
+			},
+		});
+
+		expect(properties).toMatchObject({
+			leaseId: 'token-refresh-lease',
+			zoneId: 'secret-management-zone',
 		});
 	});
 });

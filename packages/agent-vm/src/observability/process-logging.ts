@@ -33,6 +33,19 @@ export interface ProcessLoggingHandle {
 	readonly shutdown: () => Promise<void>;
 }
 
+function ignoreRecordsAfterDisposal(sink: Sink & AsyncDisposable): Sink & AsyncDisposable {
+	let disposed = false;
+	const guardedSink: Sink & AsyncDisposable = (record): void => {
+		if (!disposed) sink(record);
+	};
+	guardedSink[Symbol.asyncDispose] = async (): Promise<void> => {
+		if (disposed) return;
+		disposed = true;
+		await sink[Symbol.asyncDispose]();
+	};
+	return guardedSink;
+}
+
 function createNonClosingWritableProxy(destination: NodeJS.WritableStream): Writable {
 	return new Writable({
 		write: (chunk: Buffer | string, encoding, callback): void => {
@@ -56,6 +69,8 @@ export interface ProcessLoggingOtlpEndpointOptions {
 
 export interface BoundedDiagnosticPropertiesInput {
 	readonly attempt?: number | undefined;
+	readonly autoSelectFamily?: boolean | string | undefined;
+	readonly dnsResultOrder?: string | undefined;
 	readonly durationMs?: number | undefined;
 	readonly errorClass?: string | undefined;
 	readonly errorCode?: string | undefined;
@@ -64,6 +79,8 @@ export interface BoundedDiagnosticPropertiesInput {
 	readonly failureClass?: string | undefined;
 	readonly leaseId?: string | undefined;
 	readonly operation?: string | undefined;
+	readonly outcome?: string | undefined;
+	readonly reason?: string | undefined;
 	readonly statusCode?: number | undefined;
 	readonly unsafeError?: unknown;
 	readonly unsafePayload?: unknown;
@@ -116,18 +133,32 @@ export function createBoundedDiagnosticProperties(
 			properties[key] = value;
 		}
 	};
+	const addBoundedBooleanOrIdentifier = (
+		key: string,
+		value: boolean | string | undefined,
+	): void => {
+		if (typeof value === 'boolean') {
+			properties[key] = value;
+			return;
+		}
+		addBoundedIdentifier(key, value);
+	};
 
 	addBoundedNumber('attempt', input.attempt);
+	addBoundedBooleanOrIdentifier('autoSelectFamily', input.autoSelectFamily);
+	addBoundedIdentifier('dnsResultOrder', input.dnsResultOrder);
 	addBoundedNumber('durationMs', input.durationMs);
 	addBoundedIdentifier('errorClass', input.errorClass);
 	addBoundedIdentifier('errorCode', input.errorCode);
 	addBoundedString('errorSummary', input.errorSummary);
 	addBoundedIdentifier('event', input.event);
 	addBoundedIdentifier('failureClass', input.failureClass);
-	addBoundedString('leaseId', input.leaseId);
+	addBoundedIdentifier('leaseId', input.leaseId);
 	addBoundedIdentifier('operation', input.operation);
+	addBoundedIdentifier('outcome', input.outcome);
+	addBoundedIdentifier('reason', input.reason);
 	addBoundedNumber('statusCode', input.statusCode);
-	addBoundedString('zoneId', input.zoneId);
+	addBoundedIdentifier('zoneId', input.zoneId);
 	return properties;
 }
 
@@ -221,17 +252,18 @@ async function configureLogTapeSinks(
 export async function configureProcessLogging(
 	options: ProcessLoggingOptions,
 ): Promise<ProcessLoggingHandle> {
-	const stderrSink = getStreamSink(Writable.toWeb(createNonClosingWritableProxy(options.stderr)), {
-		formatter: getJsonLinesFormatter({
-			categorySeparator: '.',
-			message: 'rendered',
-			properties: 'nest:properties',
+	const stderrSink = ignoreRecordsAfterDisposal(
+		getStreamSink(Writable.toWeb(createNonClosingWritableProxy(options.stderr)), {
+			formatter: getJsonLinesFormatter({
+				categorySeparator: '.',
+				message: 'rendered',
+				properties: 'nest:properties',
+			}),
 		}),
-		nonBlocking: true,
-	});
-	const otelSink =
-		options.observabilityConfig?.enabled === false ? undefined : createOtlpSink(options);
+	);
+	let otelSink: ReturnType<typeof getOpenTelemetrySink> | undefined;
 	try {
+		otelSink = options.observabilityConfig?.enabled === false ? undefined : createOtlpSink(options);
 		await configureLogTapeSinks(stderrSink, otelSink);
 	} catch (error: unknown) {
 		await Promise.allSettled([

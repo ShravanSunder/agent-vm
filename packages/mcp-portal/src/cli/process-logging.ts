@@ -17,6 +17,19 @@ const maxSafeIdentifierLength = 128;
 const maxSafeReasonLength = 64;
 const unsafeIdentifierSyntaxPattern = /(?:\/\/|[?&#=%@])/u;
 
+function ignoreRecordsAfterDisposal(sink: Sink & AsyncDisposable): Sink & AsyncDisposable {
+	let disposed = false;
+	const guardedSink: Sink & AsyncDisposable = (record): void => {
+		if (!disposed) sink(record);
+	};
+	guardedSink[Symbol.asyncDispose] = async (): Promise<void> => {
+		if (disposed) return;
+		disposed = true;
+		await sink[Symbol.asyncDispose]();
+	};
+	return guardedSink;
+}
+
 type PortalServerLogLevel = 'error' | 'info' | 'warn';
 
 export interface PortalServerLogRecord {
@@ -210,14 +223,15 @@ export async function configureProcessLogging(
 	let stderrSink: (Sink & AsyncDisposable) | undefined;
 	let otelSink: (Sink & AsyncDisposable) | undefined;
 	try {
-		stderrSink = getStreamSinkImpl(Writable.toWeb(createNonClosingWritableProxy(props.stderr)), {
-			formatter: getJsonLinesFormatter({
-				categorySeparator: '.',
-				message: 'rendered',
-				properties: 'nest:properties',
+		stderrSink = ignoreRecordsAfterDisposal(
+			getStreamSinkImpl(Writable.toWeb(createNonClosingWritableProxy(props.stderr)), {
+				formatter: getJsonLinesFormatter({
+					categorySeparator: '.',
+					message: 'rendered',
+					properties: 'nest:properties',
+				}),
 			}),
-			nonBlocking: true,
-		});
+		);
 		otelSink = getOpenTelemetrySinkImpl({
 			diagnostics: false,
 			exceptionAttributes: false,

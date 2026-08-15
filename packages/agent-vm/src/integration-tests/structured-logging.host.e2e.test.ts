@@ -66,6 +66,7 @@ interface OtlpRequestWaiter {
 }
 
 type OtlpAttributeValue =
+	| { readonly kind: 'boolean'; readonly value: boolean }
 	| { readonly kind: 'integer'; readonly value: number }
 	| { readonly kind: 'string'; readonly value: string }
 	| { readonly kind: 'string-array'; readonly value: readonly string[] };
@@ -446,6 +447,11 @@ function assertGatewayRuntimeSuccess(result: ChildResult): void {
 	expect(result.exitCode, result.stderr).toBe(0);
 	expect(result.stdout).toContain('tool-portal-role-readiness');
 	expect(result.stdout).toContain('"kind":"retired"');
+	const plainLines = result.stderr
+		.trim()
+		.split('\n')
+		.filter((line) => line.length > 0 && !line.startsWith('{'));
+	expect(plainLines).toEqual([]);
 	const records = parseStructuredJsonLines(result.stderr, 'agent-vm.gateway-runtime.process');
 	expect(records).toContainEqual(
 		expect.objectContaining({
@@ -467,6 +473,9 @@ function readOtlpAttributeValue(value: unknown): OtlpAttributeValue | undefined 
 	}
 	if (typeof value.stringValue === 'string') {
 		return { kind: 'string', value: value.stringValue };
+	}
+	if (typeof value.boolValue === 'boolean') {
+		return { kind: 'boolean', value: value.boolValue };
 	}
 	const integerValue = value.intValue;
 	if (typeof integerValue === 'number' && Number.isInteger(integerValue)) {
@@ -590,6 +599,8 @@ function isExpectedOtlpControllerDiagnosticRecord(
 	serviceName: string,
 ): boolean {
 	const categoryAttribute = record.attributes.get('category');
+	const autoSelectFamilyAttribute = record.attributes.get('autoSelectFamily');
+	const dnsResultOrderAttribute = record.attributes.get('dnsResultOrder');
 	const eventAttribute = record.attributes.get('event');
 	const operationAttribute = record.attributes.get('operation');
 	return (
@@ -597,9 +608,13 @@ function isExpectedOtlpControllerDiagnosticRecord(
 		record.resourceServiceName === serviceName &&
 		record.severityNumber === 9 &&
 		record.severityText === 'info' &&
-		record.attributes.size === 3 &&
+		record.attributes.size === 5 &&
 		categoryAttribute?.kind === 'string-array' &&
 		categoryAttribute.value.join('.') === category.join('.') &&
+		autoSelectFamilyAttribute?.kind === 'boolean' &&
+		autoSelectFamilyAttribute.value === false &&
+		dnsResultOrderAttribute?.kind === 'string' &&
+		dnsResultOrderAttribute.value === 'ipv4first' &&
 		eventAttribute?.kind === 'string' &&
 		eventAttribute.value === 'runtime-diagnostic' &&
 		operationAttribute?.kind === 'string' &&
@@ -1059,10 +1074,12 @@ describe('structured logging process roots', () => {
 											level: 'INFO',
 											logger: 'agent-vm.controller.runtime',
 											message: 'Controller diagnostic',
-											properties: {
+											properties: expect.objectContaining({
+												autoSelectFamily: false,
+												dnsResultOrder: 'ipv4first',
 												event: 'runtime-diagnostic',
 												operation: 'configure-host-network-defaults',
-											},
+											}),
 										}),
 									}
 								: {},

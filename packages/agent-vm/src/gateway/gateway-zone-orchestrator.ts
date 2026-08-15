@@ -2527,6 +2527,7 @@ async function startGatewayZoneImplementation(
 								lastLoggedControlAttemptOutcome = boundedOutcome;
 								options.writeLog?.(boundedOutcome === 'connect_error' ? 'warning' : 'info', {
 									operation: 'gateway-control-attachment-attempt',
+									outcome: boundedOutcome,
 									zoneId: zone.id,
 								});
 							}

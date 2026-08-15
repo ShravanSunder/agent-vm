@@ -997,6 +997,10 @@ export function createManagedGatewayZoneRuntime(
 			const startedGateway = await startGateway({
 				...startOptions,
 				onControlSessionAttemptOutcome: (outcome) => {
+					const boundedOutcome =
+						outcome.kind === 'hello_response'
+							? `hello_response:${outcome.outcome}`
+							: 'connect_error';
 					writeManagedGatewayZoneRuntimeLog(
 						'gateway-control-attachment-attempt',
 						outcome.kind === 'hello_response' && outcome.outcome === 'accepted'
@@ -1004,6 +1008,7 @@ export function createManagedGatewayZoneRuntime(
 							: 'warning',
 						{
 							operation: 'gateway-control-attachment-attempt',
+							outcome: boundedOutcome,
 							zoneId: options.zone.id,
 						},
 					);

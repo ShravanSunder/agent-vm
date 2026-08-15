@@ -27,11 +27,15 @@ export type ControllerDiagnosticFailureClass = 'failure' | 'rejected' | 'timeout
 
 export interface ControllerDiagnosticTelemetry {
 	readonly attempt?: number | undefined;
+	readonly autoSelectFamily?: boolean | string | undefined;
+	readonly dnsResultOrder?: string | undefined;
 	readonly durationMs?: number | undefined;
 	readonly errorClass?: string | undefined;
 	readonly errorCode?: string | undefined;
 	readonly leaseId?: string | undefined;
 	readonly operation?: string | undefined;
+	readonly outcome?: string | undefined;
+	readonly reason?: string | undefined;
 	readonly statusCode?: number | undefined;
 	readonly zoneId?: string | undefined;
 }

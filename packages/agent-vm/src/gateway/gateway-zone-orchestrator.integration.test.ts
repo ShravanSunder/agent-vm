@@ -2056,8 +2056,22 @@ describe('startGatewayZone', () => {
 		);
 
 		expect(writeLog.mock.calls).toEqual([
-			['warning', { operation: 'gateway-control-attachment-attempt', zoneId: 'shravan' }],
-			['info', { operation: 'gateway-control-attachment-attempt', zoneId: 'shravan' }],
+			[
+				'warning',
+				{
+					operation: 'gateway-control-attachment-attempt',
+					outcome: 'connect_error',
+					zoneId: 'shravan',
+				},
+			],
+			[
+				'info',
+				{
+					operation: 'gateway-control-attachment-attempt',
+					outcome: 'hello_response:accepted',
+					zoneId: 'shravan',
+				},
+			],
 		]);
 		if (connectedMaterial === undefined) {
 			throw new Error('Expected captured Gateway control material.');

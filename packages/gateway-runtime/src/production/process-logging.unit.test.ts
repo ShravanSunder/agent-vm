@@ -146,6 +146,10 @@ describe('Gateway Runtime process logging', () => {
 			observability: otlpHttpObservability(),
 		});
 
+		expect(getStreamSink).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.not.objectContaining({ nonBlocking: true }),
+		);
 		expect(getOpenTelemetrySink).toHaveBeenCalledTimes(1);
 		expect(getOpenTelemetrySink).toHaveBeenCalledWith(
 			expect.objectContaining({

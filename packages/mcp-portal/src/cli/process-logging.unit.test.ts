@@ -308,7 +308,10 @@ describe('MCP Portal process logging', () => {
 		const dependencies = createTestLoggingDependencies({
 			configure,
 			getOpenTelemetrySink: () => otelSink.sink,
-			getStreamSink: () => stderrSink.sink,
+			getStreamSink: (_stream, options) => {
+				expect(options).not.toMatchObject({ nonBlocking: true });
+				return stderrSink.sink;
+			},
 		});
 
 		await expect(

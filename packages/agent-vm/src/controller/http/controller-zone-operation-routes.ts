@@ -98,9 +98,9 @@ async function parseJsonBodyWithSchema<TSchema extends z.ZodType>(
 }
 
 function writeControllerRouteLog(
+	domain: ControllerDiagnosticDomain,
 	operation: string,
 	telemetry: ControllerDiagnosticTelemetry = { operation },
-	domain: ControllerDiagnosticDomain = 'gateway',
 ): void {
 	writeControllerDiagnostic(domain, {
 		event: 'controller-operation-failed',
@@ -450,14 +450,14 @@ export function registerControllerZoneOperationRoutes(
 
 				void executeWorkerTask(prepared).catch(async (error: unknown) => {
 					const message = error instanceof Error ? error.message : String(error);
-					writeControllerRouteLog('execute-worker-task', {
+					writeControllerRouteLog('runtime', 'execute-worker-task', {
 						operation: 'execute-worker-task',
 						zoneId: context.req.param('zoneId'),
 					});
 					try {
 						await prepared.recordEvent({ event: 'task-failed', reason: message });
 					} catch {
-						writeControllerRouteLog('record-task-failed-event', {
+						writeControllerRouteLog('runtime', 'record-task-failed-event', {
 							operation: 'record-task-failed-event',
 							zoneId: context.req.param('zoneId'),
 						});
@@ -474,7 +474,7 @@ export function registerControllerZoneOperationRoutes(
 								taskId: prepared.taskId,
 							});
 						} catch {
-							writeControllerRouteLog('write-task-failure-sentinel', {
+							writeControllerRouteLog('runtime', 'write-task-failure-sentinel', {
 								operation: 'write-task-failure-sentinel',
 								zoneId: context.req.param('zoneId'),
 							});
@@ -580,15 +580,11 @@ export function registerControllerZoneOperationRoutes(
 					return context.json(zoneRuntimeErrorBody(error), runtimeStatus);
 				}
 				const responseBody = buildErrorResponseBody(error, 'push-branches-failed');
-				writeControllerRouteLog(
-					'push-task-branches',
-					{
-						operation: 'push-task-branches',
-						statusCode: error instanceof PushBranchesValidationError ? 400 : 500,
-						zoneId: context.req.param('zoneId'),
-					},
-					'git',
-				);
+				writeControllerRouteLog('git', 'push-task-branches', {
+					operation: 'push-task-branches',
+					statusCode: error instanceof PushBranchesValidationError ? 400 : 500,
+					zoneId: context.req.param('zoneId'),
+				});
 				return context.json(responseBody, error instanceof PushBranchesValidationError ? 400 : 500);
 			}
 		});
@@ -623,15 +619,11 @@ export function registerControllerZoneOperationRoutes(
 					return context.json(zoneRuntimeErrorBody(error), runtimeStatus);
 				}
 				const isValidationError = error instanceof PullDefaultValidationError;
-				writeControllerRouteLog(
-					'pull-default-for-task',
-					{
-						operation: 'pull-default-for-task',
-						statusCode: isValidationError ? 400 : 500,
-						zoneId: context.req.param('zoneId'),
-					},
-					'git',
-				);
+				writeControllerRouteLog('git', 'pull-default-for-task', {
+					operation: 'pull-default-for-task',
+					statusCode: isValidationError ? 400 : 500,
+					zoneId: context.req.param('zoneId'),
+				});
 				return context.json(
 					scrubErrorResponseBody(buildErrorResponseBody(error, 'pull-default-failed')),
 					isValidationError ? 400 : 500,

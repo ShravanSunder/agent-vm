@@ -26,6 +26,7 @@ function defaultLogWarning(
 	message: string,
 	telemetry: {
 		readonly attempt?: number | undefined;
+		readonly reason?: string | undefined;
 		readonly statusCode?: number | undefined;
 	},
 ): void {
@@ -53,6 +54,7 @@ export function startHeartbeatSender(
 		message: string,
 		telemetry: {
 			readonly attempt?: number | undefined;
+			readonly reason?: string | undefined;
 			readonly statusCode?: number | undefined;
 		},
 	): void => {
@@ -85,7 +87,10 @@ export function startHeartbeatSender(
 
 	function recordHeartbeatFailure(
 		message: string,
-		telemetry: { readonly statusCode?: number | undefined } = {},
+		telemetry: {
+			readonly reason: 'http-response' | 'transport';
+			readonly statusCode?: number | undefined;
+		},
 	): void {
 		consecutiveFailureCount += 1;
 		if (consecutiveFailureCount === 1) {
@@ -131,7 +136,7 @@ export function startHeartbeatSender(
 			if (TERMINAL_STATUS_CODES.has(response.status)) {
 				logWarning(
 					`task ${requestTaskId}: caller returned HTTP ${String(response.status)} from ${url} - stopping heartbeat permanently`,
-					{ statusCode: response.status },
+					{ reason: 'http-terminal', statusCode: response.status },
 				);
 				stopTicker();
 				return;
@@ -139,7 +144,7 @@ export function startHeartbeatSender(
 			if (!response.ok) {
 				recordHeartbeatFailure(
 					`task ${requestTaskId}: caller returned HTTP ${String(response.status)} from ${url}`,
-					{ statusCode: response.status },
+					{ reason: 'http-response', statusCode: response.status },
 				);
 				return;
 			}
@@ -149,7 +154,9 @@ export function startHeartbeatSender(
 				return;
 			}
 			const message = error instanceof Error ? error.message : String(error);
-			recordHeartbeatFailure(`task ${requestTaskId}: heartbeat POST failed to ${url}: ${message}`);
+			recordHeartbeatFailure(`task ${requestTaskId}: heartbeat POST failed to ${url}: ${message}`, {
+				reason: 'transport',
+			});
 		} finally {
 			clearTimeout(timeoutHandle);
 			if (activeTimeoutHandle === timeoutHandle) {

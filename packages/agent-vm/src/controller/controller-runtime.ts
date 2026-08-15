@@ -499,8 +499,10 @@ async function startControllerRuntimeWithOwnershipLock(
 		controllerEpoch,
 		createGatewayEpochId: randomUUID,
 	});
-	dependencies.configureManagedVmHostNetworkDefaults();
+	const hostNetworkDefaults = dependencies.configureManagedVmHostNetworkDefaults();
 	writeControllerRuntimeLog('info', {
+		autoSelectFamily: hostNetworkDefaults.autoSelectFamily,
+		dnsResultOrder: hostNetworkDefaults.dnsResultOrder,
 		operation: 'configure-host-network-defaults',
 	});
 	const runTaskStep =

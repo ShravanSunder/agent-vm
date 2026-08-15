@@ -1461,6 +1461,13 @@ describe('createControllerApp', () => {
 				}),
 			);
 		});
+		expect(writeControllerDiagnosticMock).toHaveBeenCalledWith(
+			'runtime',
+			expect.objectContaining({
+				event: 'controller-operation-failed',
+				telemetry: expect.objectContaining({ operation: 'execute-worker-task' }),
+			}),
+		);
 	});
 
 	it('writes a task-failed sentinel when background failure event recording fails', async () => {

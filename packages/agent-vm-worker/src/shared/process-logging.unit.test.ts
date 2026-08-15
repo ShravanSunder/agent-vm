@@ -116,6 +116,15 @@ describe.sequential('worker process logging', () => {
 		]);
 	});
 
+	it('delivers a stderr record without waiting for buffered shutdown flush', async () => {
+		const capture = await configureForTest();
+
+		getLogger(['agent-vm', 'worker', 'immediate-record']).warning('worker warning');
+		await new Promise<void>((resolve) => setImmediate(resolve));
+
+		expect(capture.chunks.join('')).toContain('worker warning');
+	});
+
 	it('throws on duplicate process setup instead of replacing the active sink', async () => {
 		await configureForTest();
 

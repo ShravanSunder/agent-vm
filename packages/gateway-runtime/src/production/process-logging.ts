@@ -23,6 +23,20 @@ const disabledLogger: Logger = {
 	enabled: (): boolean => false,
 	emit: (): void => undefined,
 };
+
+function ignoreRecordsAfterDisposal(sink: Sink & AsyncDisposable): Sink & AsyncDisposable {
+	let disposed = false;
+	const guardedSink: Sink & AsyncDisposable = (record): void => {
+		if (!disposed) sink(record);
+	};
+	guardedSink[Symbol.asyncDispose] = async (): Promise<void> => {
+		if (disposed) return;
+		disposed = true;
+		await sink[Symbol.asyncDispose]();
+	};
+	return guardedSink;
+}
+
 const disabledLoggerProvider: LoggerProvider = {
 	getLogger: (): Logger => disabledLogger,
 };
@@ -128,10 +142,11 @@ export async function configureProcessLogging(
 	const disposeImpl = props.dependencies?.dispose ?? dispose;
 	const createStreamSink = props.dependencies?.getStreamSink ?? getStreamSink;
 	const createOpenTelemetrySink = props.dependencies?.getOpenTelemetrySink ?? getOpenTelemetrySink;
-	const stderrSink = createStreamSink(Writable.toWeb(createNonClosingWritableProxy(props.stderr)), {
-		formatter: getJsonLinesFormatter(),
-		nonBlocking: true,
-	});
+	const stderrSink = ignoreRecordsAfterDisposal(
+		createStreamSink(Writable.toWeb(createNonClosingWritableProxy(props.stderr)), {
+			formatter: getJsonLinesFormatter(),
+		}),
+	);
 	let otelSink: OpenTelemetrySink | undefined;
 	try {
 		otelSink = createOpenTelemetrySink(

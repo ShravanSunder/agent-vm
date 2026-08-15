@@ -20,6 +20,19 @@ export interface ProcessLoggingHandle {
 	readonly shutdown: () => Promise<void>;
 }
 
+function ignoreRecordsAfterDisposal(sink: Sink & AsyncDisposable): Sink & AsyncDisposable {
+	let disposed = false;
+	const guardedSink: Sink & AsyncDisposable = (record): void => {
+		if (!disposed) sink(record);
+	};
+	guardedSink[Symbol.asyncDispose] = async (): Promise<void> => {
+		if (disposed) return;
+		disposed = true;
+		await sink[Symbol.asyncDispose]();
+	};
+	return guardedSink;
+}
+
 function createNonClosingWritableProxy(destination: Writable): Writable {
 	return new Writable({
 		write: (chunk: Buffer | string, encoding, callback): void => {
@@ -128,17 +141,19 @@ async function disposeSink(sink: Sink & AsyncDisposable): Promise<void> {
 export async function configureProcessLogging(
 	options: ProcessLoggingOptions,
 ): Promise<ProcessLoggingHandle> {
-	const stderrSink = getStreamSink(Writable.toWeb(createNonClosingWritableProxy(options.stderr)), {
-		formatter: getJsonLinesFormatter({ properties: 'nest:properties' }),
-		nonBlocking: true,
-	});
-	const otelSink = getOpenTelemetrySink({
-		diagnostics: false,
-		exceptionAttributes: false,
-		objectRenderer: 'json',
-		serviceName: 'agent-vm-worker',
-	});
+	const stderrSink = ignoreRecordsAfterDisposal(
+		getStreamSink(Writable.toWeb(createNonClosingWritableProxy(options.stderr)), {
+			formatter: getJsonLinesFormatter({ properties: 'nest:properties' }),
+		}),
+	);
+	let otelSink: ReturnType<typeof getOpenTelemetrySink> | undefined;
 	try {
+		otelSink = getOpenTelemetrySink({
+			diagnostics: false,
+			exceptionAttributes: false,
+			objectRenderer: 'json',
+			serviceName: 'agent-vm-worker',
+		});
 		await configure({
 			reset: false,
 			sinks: { stderr: stderrSink, otel: otelSink },
@@ -163,7 +178,10 @@ export async function configureProcessLogging(
 			],
 		});
 	} catch (error: unknown) {
-		await Promise.allSettled([disposeSink(stderrSink), disposeSink(otelSink)]);
+		await Promise.allSettled([
+			disposeSink(stderrSink),
+			...(otelSink === undefined ? [] : [disposeSink(otelSink)]),
+		]);
 		throw error;
 	}
 
