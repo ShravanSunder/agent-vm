@@ -304,9 +304,11 @@ describe('CI workflow topology', () => {
 
 		expect(workflow).toContain('permissions:\n  contents: read');
 		expect(workflow).toContain('persist-credentials: false');
+		expect(preparationScript).toContain('useLocalOpenClawGatewayImagePackages');
 		expect(preparationScript).toContain('useLocalOpenClawPluginGatewayImage');
-		expect(preparationScript).toContain(
-			"imageFamilies: ['gateway'],\n\t\t\tproject: openClawPluginProject",
+		expect(preparationScript.match(/imageFamilies: \['gateway', 'toolVm'\]/gu)).toHaveLength(2);
+		expect(preparationScript).toMatch(
+			/prepareGatewayE2eProjectImages\(\{\s+imageFamilies: \['gateway'\],\s+project: workerProject,/u,
 		);
 
 		expect(cacheAction).toContain('Restore prepared OpenClaw image cache');
