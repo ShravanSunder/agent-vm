@@ -3,11 +3,9 @@ import { Writable } from 'node:stream';
 import {
 	configure,
 	dispose,
-	getConfig,
 	getJsonLinesFormatter,
 	getLogger,
 	getStreamSink,
-	reset,
 	type Sink,
 } from '@logtape/logtape';
 import { getOpenTelemetrySink } from '@logtape/otel';
@@ -49,10 +47,8 @@ export interface ConfigureProcessLoggingProps {
 export interface ProcessLoggingDependencies {
 	readonly configure?: typeof configure;
 	readonly dispose?: typeof dispose;
-	readonly getConfig?: typeof getConfig;
 	readonly getOpenTelemetrySink?: typeof getOpenTelemetrySink;
 	readonly getStreamSink?: typeof getStreamSink;
-	readonly reset?: typeof reset;
 }
 
 function boundedIdentifier(value: string): string {
@@ -209,13 +205,10 @@ export async function configureProcessLogging(
 ): Promise<ProcessLoggingHandle> {
 	const configureImpl = props.dependencies?.configure ?? configure;
 	const disposeImpl = props.dependencies?.dispose ?? dispose;
-	const getConfigImpl = props.dependencies?.getConfig ?? getConfig;
 	const getOpenTelemetrySinkImpl = props.dependencies?.getOpenTelemetrySink ?? getOpenTelemetrySink;
 	const getStreamSinkImpl = props.dependencies?.getStreamSink ?? getStreamSink;
-	const resetImpl = props.dependencies?.reset ?? reset;
 	let stderrSink: (Sink & AsyncDisposable) | undefined;
 	let otelSink: (Sink & AsyncDisposable) | undefined;
-	let processLoggingConfig: Parameters<typeof configure>[0] | undefined;
 	try {
 		stderrSink = getStreamSinkImpl(Writable.toWeb(createNonClosingWritableProxy(props.stderr)), {
 			formatter: getJsonLinesFormatter({
@@ -249,17 +242,12 @@ export async function configureProcessLogging(
 			reset: false,
 			sinks: { otel: otelSink, stderr: stderrSink },
 		} satisfies Parameters<typeof configure>[0];
-		processLoggingConfig = config;
 		await configureImpl(config);
 	} catch (error: unknown) {
-		if (processLoggingConfig !== undefined && getConfigImpl() === processLoggingConfig) {
-			await resetImpl().catch(() => undefined);
-		} else {
-			await Promise.allSettled([
-				...(stderrSink === undefined ? [] : [disposeSink(stderrSink)]),
-				...(otelSink === undefined ? [] : [disposeSink(otelSink)]),
-			]);
-		}
+		await Promise.allSettled([
+			...(stderrSink === undefined ? [] : [disposeSink(stderrSink)]),
+			...(otelSink === undefined ? [] : [disposeSink(otelSink)]),
+		]);
 		throw error;
 	}
 

@@ -1,5 +1,7 @@
+import { EventEmitter, once } from 'node:events';
 import { createServer, type Server } from 'node:http';
-import type { AddressInfo } from 'node:net';
+import { connect, type AddressInfo } from 'node:net';
+import type { Duplex } from 'node:stream';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -42,7 +44,10 @@ vi.mock('./coordinator/coordinator.js', () => ({
 }));
 vi.mock('./server.js', () => ({ createApp: workerOperationMocks.createApp }));
 
-import { runWorkerServeLifecycle } from './worker-cli-operations.js';
+import {
+	runWorkerServeLifecycle,
+	runWorkerServeShutdownLifecycle,
+} from './worker-cli-operations.js';
 
 const createdServers: Server[] = [];
 
@@ -97,5 +102,76 @@ describe('worker CLI serve startup', () => {
 				stateDir: undefined,
 			}),
 		).rejects.toMatchObject({ code: 'EADDRINUSE' });
+	});
+});
+
+describe('worker CLI serve shutdown', () => {
+	it('closes an upgraded control socket before awaiting HTTP server shutdown', async () => {
+		// Arrange
+		const server = createServer();
+		const upgradedSockets = new Set<Duplex>();
+		server.on('upgrade', (_request, socket) => {
+			upgradedSockets.add(socket);
+			socket.once('close', () => upgradedSockets.delete(socket));
+			socket.write(
+				'HTTP/1.1 101 Switching Protocols\r\nUpgrade: worker-control\r\nConnection: Upgrade\r\n\r\n',
+			);
+		});
+		server.listen(0, '127.0.0.1');
+		await once(server, 'listening');
+		const address = server.address();
+		if (address === null || typeof address === 'string') {
+			throw new Error('Expected the worker shutdown test server to have a TCP address.');
+		}
+		const client = connect(address.port, '127.0.0.1');
+		await once(client, 'connect');
+		client.write(
+			'GET /worker-control HTTP/1.1\r\nHost: worker.test\r\nUpgrade: worker-control\r\nConnection: Upgrade\r\n\r\n',
+		);
+		await once(client, 'data');
+		const signalTarget = new EventEmitter();
+		const loggingShutdown = vi.fn(async (): Promise<void> => undefined);
+		const lifecycle = runWorkerServeShutdownLifecycle({
+			server: {
+				close: async (): Promise<void> => {
+					const upgradedSocketCloseEvents = [...upgradedSockets].map(async (socket) => {
+						await once(socket, 'close');
+					});
+					await Promise.all([
+						new Promise<void>((resolve, reject) => {
+							server.close((error) => (error === undefined ? resolve() : reject(error)));
+						}),
+						...upgradedSocketCloseEvents,
+					]);
+				},
+			},
+			signalTarget,
+			workerControlService: {
+				close: async (): Promise<void> => {
+					const upgradedSocketCloseEvents = [...upgradedSockets].map(async (socket) => {
+						const closeEvent = once(socket, 'close');
+						socket.destroy();
+						await closeEvent;
+					});
+					await Promise.all(upgradedSocketCloseEvents);
+				},
+			},
+			logging: { shutdown: loggingShutdown },
+		});
+
+		try {
+			// Act
+			signalTarget.emit('SIGTERM');
+			await lifecycle;
+
+			// Assert
+			expect(upgradedSockets).toHaveLength(0);
+			expect(loggingShutdown).toHaveBeenCalledOnce();
+			expect(server.listening).toBe(false);
+		} finally {
+			client.destroy();
+			for (const socket of upgradedSockets) socket.destroy();
+			server.closeAllConnections();
+		}
 	});
 });

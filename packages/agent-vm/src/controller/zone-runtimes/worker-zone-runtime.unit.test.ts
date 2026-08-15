@@ -1,5 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 
+const { writeControllerDiagnosticMock } = vi.hoisted(() => ({
+	writeControllerDiagnosticMock: vi.fn(),
+}));
+
+vi.mock('../controller-diagnostic-logging.js', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../controller-diagnostic-logging.js')>();
+	return { ...actual, writeControllerDiagnostic: writeControllerDiagnosticMock };
+});
+
 import type { LoadedSystemConfig, SystemConfig } from '../../config/system-config.js';
 import { ManagedVmTerminationUnprovenError } from '../../shared/controller-managed-vm-termination.js';
 import type { ActiveWorkerTask } from '../active-task-registry.js';
@@ -211,6 +220,34 @@ function createActiveTaskRegistryStub(
 }
 
 describe('createWorkerZoneRuntime destroy orchestration', () => {
+	it('classifies a preparing-task destroy refusal as a runtime rejection', async () => {
+		writeControllerDiagnosticMock.mockClear();
+		const activeTask = createActiveWorkerTask('task-booting', null);
+		const runtime = createWorkerZoneRuntime({
+			activeTaskRegistry: createActiveTaskRegistryStub(activeTask, vi.fn()),
+			controllerGithubToken: null,
+			controllerEpoch: workerControllerEpoch,
+			requestHeartbeatRegistry: {
+				acquire: vi.fn(),
+				release: vi.fn(),
+			},
+			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			systemConfig: loadedSystemConfig,
+			zone: workerZone,
+		});
+
+		await expect(runtime.destroy(false)).rejects.toThrow('still preparing');
+
+		expect(writeControllerDiagnosticMock).toHaveBeenCalledWith('runtime', {
+			event: 'runtime-diagnostic',
+			failureClass: 'rejected',
+			level: 'warning',
+			telemetry: {
+				operation: 'destroy-refused-preparing-task',
+				zoneId: 'worker-zone',
+			},
+		});
+	});
 	it('retains active ownership when Worker execution nests unproven VM destruction', async () => {
 		const prepared = createPreparedWorkerTask('task-owner-unsafe');
 		const activeTask = createActiveWorkerTask(prepared.taskId, {

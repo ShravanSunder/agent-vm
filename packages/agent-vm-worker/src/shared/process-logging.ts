@@ -11,6 +11,8 @@ import { getOpenTelemetrySink } from '@logtape/otel';
 
 const workerLogCategory = ['agent-vm', 'worker'] as const;
 const maximumSafeStringLength = 128;
+const diagnosticIdentifierCredentialPattern =
+	/^(?:gh[pousr]_|github_pat_|sk-(?:proj-)?|xox[baprs]-|ya29\.|eyJ[a-z0-9_-]*\.[a-z0-9_-]+\.[a-z0-9_-]+)/iu;
 export const workerProcessLoggingShutdownFailureMessage =
 	'Worker process logging shutdown failed.\n';
 
@@ -54,9 +56,7 @@ function boundSafeClassification(value: string): string | undefined {
 	if (
 		boundedValue === undefined ||
 		!/^[a-z][a-z0-9]*(?:[-_.][a-z0-9]+)*$/u.test(boundedValue) ||
-		/(?:auth|command|content|cookie|password|payload|private|prompt|response|secret|stderr|stdout|token)/u.test(
-			boundedValue,
-		)
+		diagnosticIdentifierCredentialPattern.test(boundedValue)
 	) {
 		return undefined;
 	}
@@ -76,6 +76,7 @@ function boundSafeCorrelationId(value: string): string | undefined {
 	if (
 		boundedValue === undefined ||
 		!/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u.test(boundedValue) ||
+		diagnosticIdentifierCredentialPattern.test(boundedValue) ||
 		boundedValue.includes('://') ||
 		boundedValue.startsWith('op:') ||
 		/(?:auth|command|content|cookie|password|payload|private|prompt|response|secret|stderr|stdout|token)/iu.test(

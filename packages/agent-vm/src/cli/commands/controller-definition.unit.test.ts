@@ -78,6 +78,38 @@ describe('controller process lifecycle', () => {
 		expect(stderrChunks).toEqual(['Controller process logging shutdown failed.\n']);
 	});
 
+	it('closes the runtime, logging, and signal waiter when readiness output fails', async () => {
+		const readinessFailure = new Error('readiness writer failed');
+		const runtimeClose = vi.fn(async (): Promise<void> => undefined);
+		const loggingShutdown = vi.fn(async (): Promise<void> => undefined);
+		const cleanup = vi.fn();
+
+		await expect(
+			runControllerStartProcessLifecycle({
+				io: {
+					stderr: { write: () => true },
+					stdout: {
+						write: (): never => {
+							throw readinessFailure;
+						},
+					},
+				},
+				logging: { shutdown: loggingShutdown },
+				runtime: {
+					close: runtimeClose,
+					controllerPort: 18_800,
+					zones: [],
+				},
+				selectedZoneId: 'zone-1',
+				shutdownSignalWaiter: { cleanup, signal: new Promise<never>(() => undefined) },
+			}),
+		).rejects.toBe(readinessFailure);
+
+		expect(runtimeClose).toHaveBeenCalledOnce();
+		expect(loggingShutdown).toHaveBeenCalledOnce();
+		expect(cleanup).toHaveBeenCalledOnce();
+	});
+
 	it('resolves only once and cleans both process signal listeners', async () => {
 		const listeners = new Map<'SIGINT' | 'SIGTERM', () => void>();
 		const waiter = createProcessShutdownSignalWaiter({

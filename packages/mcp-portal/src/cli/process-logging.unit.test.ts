@@ -83,18 +83,14 @@ function createTrackedSink(): TrackedSink {
 function createTestLoggingDependencies(options: {
 	readonly configure: NonNullable<ProcessLoggingDependencies['configure']>;
 	readonly dispose?: NonNullable<ProcessLoggingDependencies['dispose']>;
-	readonly getConfig: NonNullable<ProcessLoggingDependencies['getConfig']>;
 	readonly getOpenTelemetrySink: NonNullable<ProcessLoggingDependencies['getOpenTelemetrySink']>;
 	readonly getStreamSink: NonNullable<ProcessLoggingDependencies['getStreamSink']>;
-	readonly reset: NonNullable<ProcessLoggingDependencies['reset']>;
 }): ProcessLoggingDependencies {
 	return {
 		configure: options.configure,
 		...(options.dispose === undefined ? {} : { dispose: options.dispose }),
-		getConfig: options.getConfig,
 		getOpenTelemetrySink: options.getOpenTelemetrySink,
 		getStreamSink: options.getStreamSink,
-		reset: options.reset,
 	};
 }
 
@@ -300,56 +296,10 @@ describe('MCP Portal process logging', () => {
 		);
 	});
 
-	it('resets and disposes this invocation after configuration installs then fails', async () => {
+	it('disposes only this invocation after configuration installs then fails', async () => {
 		const setupError = new Error('configuration failed after installation');
 		const stderrSink = createTrackedSink();
 		const otelSink = createTrackedSink();
-		let currentConfig: Config<string, string> | null = null;
-		let resetCount = 0;
-		const configure = async <TSinkId extends string, TFilterId extends string>(
-			config: Config<TSinkId, TFilterId>,
-		): Promise<void> => {
-			currentConfig = config;
-			throw setupError;
-		};
-		const dependencies = createTestLoggingDependencies({
-			configure,
-			getConfig: (): Config<string, string> | null => currentConfig,
-			getOpenTelemetrySink: () => otelSink.sink,
-			getStreamSink: () => stderrSink.sink,
-			reset: async (): Promise<void> => {
-				resetCount += 1;
-				currentConfig = null;
-				await Promise.all([
-					stderrSink.sink[Symbol.asyncDispose](),
-					otelSink.sink[Symbol.asyncDispose](),
-				]);
-			},
-		});
-
-		await expect(
-			configureProcessLogging({
-				dependencies,
-				stderr: new CaptureWritable(),
-			}),
-		).rejects.toBe(setupError);
-		expect(resetCount).toBe(1);
-		expect(stderrSink.disposeCount()).toBe(1);
-		expect(otelSink.disposeCount()).toBe(1);
-		expect(currentConfig).toBeNull();
-	});
-
-	it('preserves a pre-existing configuration when setup fails before replacement', async () => {
-		const setupError = new Error('configuration rejected');
-		const stderrSink = createTrackedSink();
-		const otelSink = createTrackedSink();
-		const existingSink = createTrackedSink();
-		const existingConfig: Config<string, string> = {
-			loggers: [{ category: 'existing', sinks: ['existing'] }],
-			reset: false,
-			sinks: { existing: existingSink.sink },
-		};
-		let resetCount = 0;
 		const configure = async <TSinkId extends string, TFilterId extends string>(
 			_config: Config<TSinkId, TFilterId>,
 		): Promise<void> => {
@@ -357,12 +307,8 @@ describe('MCP Portal process logging', () => {
 		};
 		const dependencies = createTestLoggingDependencies({
 			configure,
-			getConfig: (): Config<string, string> => existingConfig,
 			getOpenTelemetrySink: () => otelSink.sink,
 			getStreamSink: () => stderrSink.sink,
-			reset: async (): Promise<void> => {
-				resetCount += 1;
-			},
 		});
 
 		await expect(
@@ -371,11 +317,8 @@ describe('MCP Portal process logging', () => {
 				stderr: new CaptureWritable(),
 			}),
 		).rejects.toBe(setupError);
-		expect(resetCount).toBe(0);
 		expect(stderrSink.disposeCount()).toBe(1);
 		expect(otelSink.disposeCount()).toBe(1);
-		expect(existingSink.disposeCount()).toBe(0);
-		expect(dependencies.getConfig?.()).toBe(existingConfig);
 	});
 
 	it('rejects duplicate process setup instead of replacing the active sink', async () => {
@@ -399,10 +342,8 @@ describe('MCP Portal process logging', () => {
 			dependencies: createTestLoggingDependencies({
 				configure: async (): Promise<void> => undefined,
 				dispose: disposeImpl,
-				getConfig: (): null => null,
 				getOpenTelemetrySink: () => sink.sink,
 				getStreamSink: () => sink.sink,
-				reset: async (): Promise<void> => undefined,
 			}),
 			stderr: new CaptureWritable(),
 		});

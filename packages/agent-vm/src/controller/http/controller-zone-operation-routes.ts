@@ -3,6 +3,7 @@ import type { z } from 'zod';
 
 import {
 	writeControllerDiagnostic,
+	type ControllerDiagnosticDomain,
 	type ControllerDiagnosticTelemetry,
 } from '../controller-diagnostic-logging.js';
 import { scrubGithubTokenFromOutput } from '../git-auth-support.js';
@@ -99,8 +100,9 @@ async function parseJsonBodyWithSchema<TSchema extends z.ZodType>(
 function writeControllerRouteLog(
 	operation: string,
 	telemetry: ControllerDiagnosticTelemetry = { operation },
+	domain: ControllerDiagnosticDomain = 'gateway',
 ): void {
-	writeControllerDiagnostic('gateway', {
+	writeControllerDiagnostic(domain, {
 		event: 'controller-operation-failed',
 		level: 'warning',
 		failureClass: 'failure',
@@ -578,11 +580,15 @@ export function registerControllerZoneOperationRoutes(
 					return context.json(zoneRuntimeErrorBody(error), runtimeStatus);
 				}
 				const responseBody = buildErrorResponseBody(error, 'push-branches-failed');
-				writeControllerRouteLog('push-task-branches', {
-					operation: 'push-task-branches',
-					statusCode: error instanceof PushBranchesValidationError ? 400 : 500,
-					zoneId: context.req.param('zoneId'),
-				});
+				writeControllerRouteLog(
+					'push-task-branches',
+					{
+						operation: 'push-task-branches',
+						statusCode: error instanceof PushBranchesValidationError ? 400 : 500,
+						zoneId: context.req.param('zoneId'),
+					},
+					'git',
+				);
 				return context.json(responseBody, error instanceof PushBranchesValidationError ? 400 : 500);
 			}
 		});
@@ -617,11 +623,15 @@ export function registerControllerZoneOperationRoutes(
 					return context.json(zoneRuntimeErrorBody(error), runtimeStatus);
 				}
 				const isValidationError = error instanceof PullDefaultValidationError;
-				writeControllerRouteLog('pull-default-for-task', {
-					operation: 'pull-default-for-task',
-					statusCode: isValidationError ? 400 : 500,
-					zoneId: context.req.param('zoneId'),
-				});
+				writeControllerRouteLog(
+					'pull-default-for-task',
+					{
+						operation: 'pull-default-for-task',
+						statusCode: isValidationError ? 400 : 500,
+						zoneId: context.req.param('zoneId'),
+					},
+					'git',
+				);
 				return context.json(
 					scrubErrorResponseBody(buildErrorResponseBody(error, 'pull-default-failed')),
 					isValidationError ? 400 : 500,

@@ -1229,7 +1229,7 @@ async function startControllerRuntimeWithOwnershipLock(
 				? 'gateway-vm-cold-start'
 				: 'gateway-vm-restart';
 		} catch {
-			writeControllerRuntimeLog('warning', {
+			writeControllerGatewayRecoveryLog('warning', {
 				operation: 'classify-gateway-vm-recovery-budget',
 				zoneId: request.zoneId,
 			});
@@ -1390,7 +1390,7 @@ async function startControllerRuntimeWithOwnershipLock(
 							zoneId: gatewayIdentity.zoneId,
 						};
 					} catch {
-						writeControllerRuntimeLog('warning', {
+						writeControllerGatewayRecoveryLog('warning', {
 							operation: 'resolve-gateway-recovery-source-key',
 							zoneId,
 						});

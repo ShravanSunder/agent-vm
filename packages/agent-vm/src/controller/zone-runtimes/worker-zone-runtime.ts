@@ -99,10 +99,10 @@ async function recordActiveTaskEvent(options: {
 }
 
 function writeWorkerZoneRuntimeLog(telemetry: ControllerDiagnosticTelemetry): void {
-	writeControllerDiagnostic('gateway', {
-		event: 'gateway-health-diagnostic',
+	writeControllerDiagnostic('runtime', {
+		event: 'runtime-diagnostic',
 		level: 'warning',
-		failureClass: 'failure',
+		failureClass: 'rejected',
 		telemetry,
 	});
 }

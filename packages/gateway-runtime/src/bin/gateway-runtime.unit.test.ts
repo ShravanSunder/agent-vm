@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
 	runGatewayRuntimeStartLifecycle,
-	type GatewayRuntimeRetirementSignal,
+	type GatewayRuntimeRetirementSignalWaiter,
 	type GatewayRuntimeSignalTarget,
 	waitForRetirementSignal,
 } from './gateway-runtime-cli-operation.js';
@@ -60,18 +60,18 @@ async function configureDiagnosticCapture(records: LogRecord[]): Promise<void> {
 describe('Gateway Runtime start lifecycle', () => {
 	it('resolves the first signal, escalates a repeated signal, and cleans up idempotently', async () => {
 		const signalTarget = createFakeSignalTarget();
-		const pendingSignal = waitForRetirementSignal(signalTarget);
+		const signalWaiter = waitForRetirementSignal(signalTarget);
 
 		signalTarget.emit('SIGTERM');
-		const firstSignal = await pendingSignal;
+		const firstSignal = await signalWaiter.signal;
 
-		expect(firstSignal).toMatchObject({ signal: 'SIGTERM' });
+		expect(firstSignal).toBe('SIGTERM');
 		expect(signalTarget.listenerCount('SIGTERM')).toBe(1);
 		signalTarget.emit('SIGTERM');
 		expect(signalTarget.escalatedSignals).toEqual(['SIGTERM']);
 		expect(signalTarget.listenerCount('SIGTERM')).toBe(0);
-		firstSignal.cleanup();
-		firstSignal.cleanup();
+		signalWaiter.cleanup();
+		signalWaiter.cleanup();
 		expect(signalTarget.listenerCount('SIGTERM')).toBe(0);
 	});
 
@@ -90,9 +90,9 @@ describe('Gateway Runtime start lifecycle', () => {
 						kind: 'retired',
 					}),
 				}),
-				waitForRetirementSignal: async (): Promise<GatewayRuntimeRetirementSignal> => ({
+				waitForRetirementSignal: (): GatewayRuntimeRetirementSignalWaiter => ({
 					cleanup: (): void => undefined,
-					signal: 'SIGTERM',
+					signal: Promise.resolve('SIGTERM'),
 				}),
 				writeFatalEvidence: async (): Promise<void> => undefined,
 				writeStderr: (): void => undefined,
@@ -130,13 +130,13 @@ describe('Gateway Runtime start lifecycle', () => {
 				events.push('start-service');
 				return service;
 			},
-			waitForRetirementSignal: async (): Promise<GatewayRuntimeRetirementSignal> => {
+			waitForRetirementSignal: (): GatewayRuntimeRetirementSignalWaiter => {
 				events.push('wait-for-signal');
 				return {
 					cleanup: (): void => {
 						events.push('cleanup-signal');
 					},
-					signal: 'SIGTERM',
+					signal: Promise.resolve('SIGTERM'),
 				};
 			},
 			writeFatalEvidence: async (): Promise<void> => {
@@ -180,9 +180,9 @@ describe('Gateway Runtime start lifecycle', () => {
 				readiness: { kind: 'ready' },
 				retire: async (): Promise<Readonly<Record<string, string>>> => ({ kind: 'retired' }),
 			}),
-			waitForRetirementSignal: async (): Promise<GatewayRuntimeRetirementSignal> => ({
+			waitForRetirementSignal: (): GatewayRuntimeRetirementSignalWaiter => ({
 				cleanup: (): void => undefined,
-				signal: 'SIGTERM',
+				signal: Promise.resolve('SIGTERM'),
 			}),
 			writeFatalEvidence: async (): Promise<void> => undefined,
 			writeStderr: (text: string): void => {
@@ -200,6 +200,7 @@ describe('Gateway Runtime start lifecycle', () => {
 	it('shuts down logging when readiness output fails', async () => {
 		const readinessFailure = new Error('readiness writer failed');
 		const shutdown = vi.fn(async (): Promise<void> => undefined);
+		const cleanup = vi.fn();
 
 		await expect(
 			runGatewayRuntimeStartLifecycle({
@@ -209,7 +210,10 @@ describe('Gateway Runtime start lifecycle', () => {
 					readiness: { kind: 'ready' },
 					retire: async (): Promise<Readonly<Record<string, string>>> => ({ kind: 'retired' }),
 				}),
-				waitForRetirementSignal: () => new Promise<never>(() => undefined),
+				waitForRetirementSignal: () => ({
+					cleanup,
+					signal: new Promise<never>(() => undefined),
+				}),
 				writeFatalEvidence: async (): Promise<void> => undefined,
 				writeStderr: (): void => undefined,
 				writeStdout: (): never => {
@@ -219,6 +223,7 @@ describe('Gateway Runtime start lifecycle', () => {
 		).rejects.toBe(readinessFailure);
 
 		expect(shutdown).toHaveBeenCalledTimes(1);
+		expect(cleanup).toHaveBeenCalledOnce();
 	});
 
 	it('reports secondary LogTape shutdown failure after startup failure', async () => {
@@ -240,9 +245,9 @@ describe('Gateway Runtime start lifecycle', () => {
 				startService: async (): Promise<never> => {
 					throw new Error('primary startup failure');
 				},
-				waitForRetirementSignal: async (): Promise<GatewayRuntimeRetirementSignal> => ({
+				waitForRetirementSignal: (): GatewayRuntimeRetirementSignalWaiter => ({
 					cleanup: (): void => undefined,
-					signal: 'SIGTERM',
+					signal: Promise.resolve('SIGTERM'),
 				}),
 				writeFatalEvidence: async (): Promise<void> => {
 					events.push(`fatal-evidence:${String(loggingLive)}`);
@@ -274,9 +279,9 @@ describe('Gateway Runtime start lifecycle', () => {
 				startService: async (): Promise<never> => {
 					throw new Error('secret startup detail');
 				},
-				waitForRetirementSignal: async (): Promise<GatewayRuntimeRetirementSignal> => ({
+				waitForRetirementSignal: (): GatewayRuntimeRetirementSignalWaiter => ({
 					cleanup: (): void => undefined,
-					signal: 'SIGTERM',
+					signal: Promise.resolve('SIGTERM'),
 				}),
 				writeFatalEvidence: async (): Promise<void> => {
 					throw new Error('secret evidence detail');
@@ -314,9 +319,9 @@ describe('Gateway Runtime start lifecycle', () => {
 				startService: async (): Promise<never> => {
 					throw new Error('secret startup detail');
 				},
-				waitForRetirementSignal: async (): Promise<GatewayRuntimeRetirementSignal> => ({
+				waitForRetirementSignal: (): GatewayRuntimeRetirementSignalWaiter => ({
 					cleanup: (): void => undefined,
-					signal: 'SIGTERM',
+					signal: Promise.resolve('SIGTERM'),
 				}),
 				writeFatalEvidence: fatalEvidence,
 				writeStderr: (): void => undefined,
@@ -352,9 +357,9 @@ describe('Gateway Runtime start lifecycle', () => {
 						throw new Error('secret retirement detail');
 					},
 				}),
-				waitForRetirementSignal: async (): Promise<GatewayRuntimeRetirementSignal> => ({
+				waitForRetirementSignal: (): GatewayRuntimeRetirementSignalWaiter => ({
 					cleanup: (): void => undefined,
-					signal: 'SIGTERM',
+					signal: Promise.resolve('SIGTERM'),
 				}),
 				writeFatalEvidence: async (): Promise<void> => undefined,
 				writeStderr: (): void => undefined,
@@ -391,9 +396,9 @@ describe('Gateway Runtime start lifecycle', () => {
 						throw retirementFailure;
 					},
 				}),
-				waitForRetirementSignal: async (): Promise<GatewayRuntimeRetirementSignal> => ({
+				waitForRetirementSignal: (): GatewayRuntimeRetirementSignalWaiter => ({
 					cleanup: (): void => undefined,
-					signal: 'SIGTERM',
+					signal: Promise.resolve('SIGTERM'),
 				}),
 				writeFatalEvidence: async (): Promise<void> => undefined,
 				writeStderr: (): void => {

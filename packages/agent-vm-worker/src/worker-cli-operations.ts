@@ -111,6 +111,19 @@ async function shutdownWorkerProcessLogging(
 	}
 }
 
+type ProductCloseResult = { readonly ok: true } | { readonly error: unknown; readonly ok: false };
+
+function captureProductCloseResult(close: () => Promise<void>): Promise<ProductCloseResult> {
+	try {
+		return close().then(
+			() => ({ ok: true }) as const,
+			(error: unknown) => ({ error, ok: false }) as const,
+		);
+	} catch (error: unknown) {
+		return Promise.resolve({ error, ok: false });
+	}
+}
+
 /**
  * Wait for retirement, close product resources in order, then dispose logging.
  * Product shutdown failures remain the primary result; logging is diagnostic.
@@ -123,12 +136,7 @@ export async function runWorkerServeShutdownLifecycle(
 	let productCloseError: unknown;
 	try {
 		await shutdownWaiter.signal;
-		try {
-			await options.server.close();
-		} catch (error: unknown) {
-			productCloseFailed = true;
-			productCloseError = error;
-		}
+		const serverCloseResultPromise = captureProductCloseResult(options.server.close);
 		try {
 			await (options.closeLocalToolServers ?? closeLocalToolMcpServers)();
 		} catch (error: unknown) {
@@ -142,6 +150,11 @@ export async function runWorkerServeShutdownLifecycle(
 				if (!productCloseFailed) productCloseError = error;
 				productCloseFailed = true;
 			}
+		}
+		const serverCloseResult = await serverCloseResultPromise;
+		if (!serverCloseResult.ok) {
+			productCloseFailed = true;
+			productCloseError = serverCloseResult.error;
 		}
 
 		await shutdownWorkerProcessLogging(options.logging);

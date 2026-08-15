@@ -426,6 +426,11 @@ function assertGatewayStartupFailure(result: ChildResult): void {
 	expect(result.exitCode).toBe(1);
 	expect(result.stdout).toBe('');
 	expect(result.stderr).toContain('Gateway runtime service failed.\n');
+	const plainLines = result.stderr
+		.trim()
+		.split('\n')
+		.filter((line) => line.length > 0 && !line.startsWith('{'));
+	expect(plainLines).toEqual(['Gateway runtime service failed.']);
 	const records = parseStructuredJsonLines(result.stderr, 'agent-vm.gateway-runtime.process');
 	expect(records).toContainEqual(
 		expect.objectContaining({

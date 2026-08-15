@@ -168,6 +168,54 @@ describe('worker serve shutdown lifecycle', () => {
 		expect(signalTarget.listeners).toHaveLength(0);
 	});
 
+	it('closes the control service before awaiting upgraded HTTP connection shutdown', async () => {
+		const signalTarget = createFakeSignalTarget();
+		const serverCloseCompletion = Promise.withResolvers<void>();
+		const events: string[] = [];
+		const lifecycle = runWorkerServeShutdownLifecycle({
+			signalTarget,
+			closeLocalToolServers: async (): Promise<void> => {
+				events.push('local-tools.close');
+			},
+			server: {
+				close: async (): Promise<void> => {
+					events.push('server.close.start');
+					await serverCloseCompletion.promise;
+					events.push('server.close.complete');
+				},
+			},
+			workerControlService: {
+				close: async (): Promise<void> => {
+					events.push('control.close');
+					serverCloseCompletion.resolve();
+				},
+			},
+			logging: {
+				shutdown: async (): Promise<void> => {
+					events.push('logging.shutdown');
+				},
+			},
+		});
+
+		signalTarget.emit('SIGTERM');
+		await Promise.resolve();
+		await Promise.resolve();
+		try {
+			expect(events).toContain('control.close');
+		} finally {
+			serverCloseCompletion.resolve();
+			await lifecycle;
+		}
+
+		expect(events).toEqual([
+			'server.close.start',
+			'local-tools.close',
+			'control.close',
+			'server.close.complete',
+			'logging.shutdown',
+		]);
+	});
+
 	it('shares one close promise when shutdown signals race', async () => {
 		const signalTarget = createFakeSignalTarget();
 		const closeGate = Promise.withResolvers<void>();

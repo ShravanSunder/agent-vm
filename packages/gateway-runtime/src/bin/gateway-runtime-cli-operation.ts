@@ -17,9 +17,9 @@ const gatewayRuntimeStartupFailure = 'Gateway runtime service startup failed.\n'
 const gatewayRuntimeProcessLogger = getLogger(['agent-vm', 'gateway-runtime', 'process']);
 type GatewayRuntimeRetirementSignalName = 'SIGINT' | 'SIGTERM';
 
-export interface GatewayRuntimeRetirementSignal {
+export interface GatewayRuntimeRetirementSignalWaiter {
 	readonly cleanup: () => void;
-	readonly signal: NodeJS.Signals;
+	readonly signal: Promise<GatewayRuntimeRetirementSignalName>;
 }
 
 export interface GatewayRuntimeSignalTarget {
@@ -30,31 +30,34 @@ export interface GatewayRuntimeSignalTarget {
 
 export function waitForRetirementSignal(
 	signalTarget: GatewayRuntimeSignalTarget = process,
-): Promise<GatewayRuntimeRetirementSignal> {
-	return new Promise((resolve) => {
-		let observed = false;
-		let cleaned = false;
-		const escalate = signalTarget.escalate ?? ((signal) => process.kill(process.pid, signal));
-		const cleanup = (): void => {
-			if (cleaned) return;
-			cleaned = true;
-			signalTarget.off('SIGINT', onSigint);
-			signalTarget.off('SIGTERM', onSigterm);
-		};
-		const observe = (signal: GatewayRuntimeRetirementSignalName): void => {
-			if (observed) {
-				cleanup();
-				escalate(signal);
-				return;
-			}
-			observed = true;
-			resolve({ cleanup, signal });
-		};
-		const onSigint = (): void => observe('SIGINT');
-		const onSigterm = (): void => observe('SIGTERM');
-		signalTarget.on('SIGINT', onSigint);
-		signalTarget.on('SIGTERM', onSigterm);
+): GatewayRuntimeRetirementSignalWaiter {
+	let resolveSignal: ((signal: GatewayRuntimeRetirementSignalName) => void) | undefined;
+	const signal = new Promise<GatewayRuntimeRetirementSignalName>((resolve) => {
+		resolveSignal = resolve;
 	});
+	let observed = false;
+	let cleaned = false;
+	const escalate = signalTarget.escalate ?? ((signal) => process.kill(process.pid, signal));
+	const cleanup = (): void => {
+		if (cleaned) return;
+		cleaned = true;
+		signalTarget.off('SIGINT', onSigint);
+		signalTarget.off('SIGTERM', onSigterm);
+	};
+	const observe = (observedSignal: GatewayRuntimeRetirementSignalName): void => {
+		if (observed) {
+			cleanup();
+			escalate(observedSignal);
+			return;
+		}
+		observed = true;
+		resolveSignal?.(observedSignal);
+	};
+	const onSigint = (): void => observe('SIGINT');
+	const onSigterm = (): void => observe('SIGTERM');
+	signalTarget.on('SIGINT', onSigint);
+	signalTarget.on('SIGTERM', onSigterm);
+	return { cleanup, signal };
 }
 
 interface GatewayRuntimeStartLifecycleService {
@@ -69,7 +72,7 @@ export interface GatewayRuntimeStartLifecycleProps<
 	readonly config: TConfig;
 	readonly configureLogging: (config: TConfig) => Promise<ProcessLoggingHandle>;
 	readonly startService: (config: TConfig) => Promise<TService>;
-	readonly waitForRetirementSignal: () => Promise<GatewayRuntimeRetirementSignal>;
+	readonly waitForRetirementSignal: () => GatewayRuntimeRetirementSignalWaiter;
 	readonly writeFatalEvidence: () => Promise<void>;
 	readonly writeStderr: (text: string) => void;
 	readonly writeStdout: (text: string) => void;
@@ -120,11 +123,10 @@ export async function runGatewayRuntimeStartLifecycle<
 		});
 		throw error;
 	}
-	let retirementSignal: GatewayRuntimeRetirementSignal | undefined;
+	const retirementSignalWaiter = props.waitForRetirementSignal();
 	try {
-		const retirementSignalPromise = props.waitForRetirementSignal();
 		props.writeStdout(`${JSON.stringify(service.readiness)}\n`);
-		retirementSignal = await retirementSignalPromise;
+		await retirementSignalWaiter.signal;
 		try {
 			const retirement = await service.retire();
 			props.writeStdout(`${JSON.stringify(retirement)}\n`);
@@ -141,7 +143,7 @@ export async function runGatewayRuntimeStartLifecycle<
 				props.writeStderr(gatewayRuntimeLoggingShutdownFailure);
 			} catch {}
 		});
-		retirementSignal?.cleanup();
+		retirementSignalWaiter.cleanup();
 	}
 }
 

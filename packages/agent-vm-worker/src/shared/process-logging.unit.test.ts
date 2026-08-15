@@ -223,6 +223,28 @@ describe.sequential('worker process logging', () => {
 		}
 	});
 
+	it('retains safe classification words that describe authentication and commands', () => {
+		expect(
+			toSafeWorkerLogProperties({
+				event: 'worker-control-auth-rejected',
+				failureClass: 'unauthorized',
+			}),
+		).toEqual({
+			event: 'worker-control-auth-rejected',
+			failureClass: 'unauthorized',
+		});
+	});
+
+	it('omits credential-shaped correlation identifiers', () => {
+		for (const correlationId of [
+			'ghp_0123456789abcdefghijklmnopqrstuvwxyz',
+			'sk-proj-0123456789abcdefghijklmnopqrstuvwxyz',
+			'xoxb-0123456789-abcdefghijklmnopqrstuvwxyz',
+		]) {
+			expect(toSafeWorkerLogProperties({ correlationId })).not.toHaveProperty('correlationId');
+		}
+	});
+
 	it('keeps Worker diagnostic owners off the direct stderr helper', async () => {
 		const ownerFiles = [
 			'../coordinator/coordinator.ts',

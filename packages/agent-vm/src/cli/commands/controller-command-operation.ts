@@ -274,14 +274,18 @@ export async function runControllerStartProcessLifecycle(options: {
 	readonly selectedZoneId: string;
 	readonly shutdownSignalWaiter: ProcessShutdownSignalWaiter;
 }): Promise<void> {
-	writeControllerReadiness(options.io, options.runtime, options.selectedZoneId);
 	let productCloseError: unknown;
 	try {
-		await options.shutdownSignalWaiter.signal;
+		try {
+			writeControllerReadiness(options.io, options.runtime, options.selectedZoneId);
+			await options.shutdownSignalWaiter.signal;
+		} catch (error: unknown) {
+			productCloseError = error;
+		}
 		try {
 			await options.runtime.close();
 		} catch (error: unknown) {
-			productCloseError = error;
+			productCloseError ??= error;
 		}
 		try {
 			await options.logging.shutdown();
