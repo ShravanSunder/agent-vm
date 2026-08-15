@@ -74,6 +74,8 @@ PORTAL_CALL_SUCCESS: JsonObject = {
     "ok": True,
 }
 
+_EXPECTED_MAXIMUM_PENDING_REQUESTS = 64
+
 
 async def _read_test_frame(reader: asyncio.StreamReader) -> CapturedFrame:
     header_with_delimiter = await reader.readuntil(b"\r\n\r\n")
@@ -452,6 +454,194 @@ async def _exercise_remote_error_without_poisoning_connection(
             _ = await asyncio.gather(*tuple(server_tasks), return_exceptions=True)
 
 
+async def _exercise_concurrent_requests_with_reversed_responses(
+    socket_path: str,
+) -> tuple[tuple[CapturedFrame, CapturedFrame], tuple[Mapping[str, object], Mapping[str, object]]]:
+    server_tasks: set[asyncio.Task[None]] = set()
+    server_result: asyncio.Future[tuple[CapturedFrame, CapturedFrame]] = asyncio.get_running_loop().create_future()
+
+    async def handle_client(
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ) -> None:
+        try:
+            first_request = await _read_test_frame(reader)
+            second_request = await _read_test_frame(reader)
+            writer.write(
+                _encode_test_frame(
+                    {
+                        "id": second_request[2].get("id"),
+                        "jsonrpc": "2.0",
+                        "result": {"kind": "second-request-succeeded"},
+                    },
+                ),
+            )
+            writer.write(
+                _encode_test_frame(
+                    {
+                        "id": first_request[2].get("id"),
+                        "jsonrpc": "2.0",
+                        "result": {"kind": "first-request-succeeded"},
+                    },
+                ),
+            )
+            await writer.drain()
+            server_result.set_result((first_request, second_request))
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+    def accept_client(
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ) -> None:
+        server_task = asyncio.create_task(handle_client(reader, writer))
+        server_tasks.add(server_task)
+
+    server = await asyncio.start_unix_server(accept_client, path=socket_path)
+    transport = GatewayRuntimeUdsTransport()
+    try:
+        await transport.connect(socket_path)
+        first_result, second_result = await asyncio.wait_for(
+            asyncio.gather(
+                transport.request("portal.list", {"requestId": "request-first"}),
+                transport.request("portal.list", {"requestId": "request-second"}),
+            ),
+            timeout=1,
+        )
+        captured_frames = await asyncio.wait_for(server_result, timeout=1)
+        return captured_frames, (first_result, second_result)
+    finally:
+        await transport.disconnect()
+        server.close()
+        await server.wait_closed()
+        if server_tasks:
+            _ = await asyncio.gather(*tuple(server_tasks), return_exceptions=True)
+
+
+async def _exercise_pending_request_limit(socket_path: str) -> GatewayRuntimeUdsTransportError:
+    server_tasks: set[asyncio.Task[None]] = set()
+    requests_received = asyncio.Event()
+
+    async def handle_client(
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ) -> None:
+        try:
+            for _ in range(_EXPECTED_MAXIMUM_PENDING_REQUESTS):
+                await _read_test_frame(reader)
+            requests_received.set()
+            await reader.read()
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+    def accept_client(
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ) -> None:
+        server_task = asyncio.create_task(handle_client(reader, writer))
+        server_tasks.add(server_task)
+
+    server = await asyncio.start_unix_server(accept_client, path=socket_path)
+    transport = GatewayRuntimeUdsTransport()
+    pending_requests: list[asyncio.Task[Mapping[str, object]]] = []
+    try:
+        await transport.connect(socket_path)
+        pending_requests = [
+            asyncio.create_task(transport.request("portal.list", {"requestId": f"pending-{request_index}"}))
+            for request_index in range(_EXPECTED_MAXIMUM_PENDING_REQUESTS)
+        ]
+        await asyncio.wait_for(requests_received.wait(), timeout=1)
+        with pytest.raises(GatewayRuntimeUdsTransportError) as captured_error:
+            await asyncio.wait_for(
+                transport.request("portal.list", {"requestId": "over-capacity"}),
+                timeout=1,
+            )
+        return captured_error.value
+    finally:
+        await transport.disconnect()
+        if pending_requests:
+            _ = await asyncio.gather(*pending_requests, return_exceptions=True)
+        server.close()
+        await server.wait_closed()
+        if server_tasks:
+            _ = await asyncio.gather(*tuple(server_tasks), return_exceptions=True)
+
+
+async def _exercise_write_failure_with_multiple_pending_requests(
+    socket_path: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[tuple[BaseException, BaseException, BaseException], GatewayRuntimeUdsTransportError]:
+    server_tasks: set[asyncio.Task[None]] = set()
+    first_two_writes_drained = asyncio.Event()
+
+    async def handle_client(
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ) -> None:
+        try:
+            await reader.read()
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+    def accept_client(
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ) -> None:
+        server_task = asyncio.create_task(handle_client(reader, writer))
+        server_tasks.add(server_task)
+
+    server = await asyncio.start_unix_server(accept_client, path=socket_path)
+    transport = GatewayRuntimeUdsTransport()
+    request_tasks: list[asyncio.Task[Mapping[str, object]]] = []
+    try:
+        await transport.connect(socket_path)
+        writer = transport._writer
+        assert writer is not None
+        original_drain = writer.drain
+        drain_count = 0
+
+        async def fail_third_drain() -> None:
+            nonlocal drain_count
+            drain_count += 1
+            if drain_count == 3:
+                raise ConnectionResetError("injected request write failure")
+            await original_drain()
+            if drain_count == 2:
+                first_two_writes_drained.set()
+
+        monkeypatch.setattr(writer, "drain", fail_third_drain)
+        request_tasks = [
+            asyncio.create_task(transport.request("portal.list", {"requestId": "pending-first"})),
+            asyncio.create_task(transport.request("portal.list", {"requestId": "pending-second"})),
+        ]
+        await asyncio.wait_for(first_two_writes_drained.wait(), timeout=1)
+        request_tasks.append(
+            asyncio.create_task(transport.request("portal.list", {"requestId": "write-fails"})),
+        )
+        request_results = await asyncio.wait_for(
+            asyncio.gather(*request_tasks, return_exceptions=True),
+            timeout=1,
+        )
+        assert all(isinstance(request_result, BaseException) for request_result in request_results)
+        with pytest.raises(GatewayRuntimeUdsTransportError) as disconnected_error:
+            await transport.request("portal.list", {"requestId": "after-write-failure"})
+        return (
+            t.cast("tuple[BaseException, BaseException, BaseException]", tuple(request_results)),
+            disconnected_error.value,
+        )
+    finally:
+        await transport.disconnect()
+        if request_tasks:
+            _ = await asyncio.gather(*request_tasks, return_exceptions=True)
+        server.close()
+        await server.wait_closed()
+        if server_tasks:
+            _ = await asyncio.gather(*tuple(server_tasks), return_exceptions=True)
+
+
 def test_gateway_runtime_uds_transport_exchanges_content_length_frames_over_real_unix_socket() -> None:
     # Arrange
     expected_request: JsonObject = {
@@ -568,6 +758,52 @@ def test_gateway_runtime_uds_transport_preserves_remote_error_without_poisoning_
     assert second_result == {"kind": "second-request-succeeded"}
 
 
+def test_gateway_runtime_uds_transport_correlates_concurrent_responses_by_request_id() -> None:
+    # Arrange
+    with TemporaryDirectory(prefix="agent-vm-uds-correlation-", dir="/tmp") as socket_directory:
+        socket_path = Path(socket_directory) / "gateway-runtime.sock"
+
+        # Act
+        (first_request, second_request), (first_result, second_result) = asyncio.run(
+            _exercise_concurrent_requests_with_reversed_responses(str(socket_path)),
+        )
+
+    # Assert
+    assert first_request[2]["id"] == 1
+    assert second_request[2]["id"] == 2
+    assert first_result == {"kind": "first-request-succeeded"}
+    assert second_result == {"kind": "second-request-succeeded"}
+
+
+def test_gateway_runtime_uds_transport_bounds_pending_requests() -> None:
+    # Arrange
+    with TemporaryDirectory(prefix="agent-vm-uds-pending-limit-", dir="/tmp") as socket_directory:
+        socket_path = Path(socket_directory) / "gateway-runtime.sock"
+
+        # Act
+        captured_error = asyncio.run(_exercise_pending_request_limit(str(socket_path)))
+
+    # Assert
+    assert captured_error.code == "pending-request-limit-exceeded"
+
+
+def test_gateway_runtime_uds_transport_write_failure_fails_all_pending_requests(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Arrange
+    with TemporaryDirectory(prefix="agent-vm-uds-write-failure-", dir="/tmp") as socket_directory:
+        socket_path = Path(socket_directory) / "gateway-runtime.sock"
+
+        # Act
+        request_errors, disconnected_error = asyncio.run(
+            _exercise_write_failure_with_multiple_pending_requests(str(socket_path), monkeypatch),
+        )
+
+    # Assert
+    assert all(isinstance(request_error, GatewayRuntimeUdsTransportError) and request_error.code == "request-write-failed" for request_error in request_errors)
+    assert disconnected_error.code == "not-connected"
+
+
 def test_gateway_runtime_uds_transport_disconnect_is_idempotent_and_requests_fail_closed() -> None:
     # Arrange
     transport = GatewayRuntimeUdsTransport()
@@ -675,6 +911,11 @@ def test_gateway_runtime_uds_transport_disconnect_is_idempotent_and_requests_fai
             _encode_test_frame({"id": 2, "jsonrpc": "2.0", "result": {}}),
             "unexpected-response",
             id="mismatched-response-id",
+        ),
+        pytest.param(
+            _encode_test_frame({"id": True, "jsonrpc": "2.0", "result": {}}),
+            "unexpected-response",
+            id="boolean-response-id",
         ),
         pytest.param(
             _encode_test_frame(
