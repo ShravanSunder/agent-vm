@@ -29,7 +29,7 @@ docker run --rm \
 import importlib.metadata as metadata
 
 assert metadata.version("hermes-agent") == "0.20.0"
-assert metadata.version("agent-vm-hermes-adapter") == "0.0.136"
+assert metadata.version("agent-vm-hermes-adapter") == "0.0.137"
 '\''
 		if [[ "${AGENT_VM_HERMES_CHECK_KIND}" == "test" ]]; then
 			/opt/hermes/.venv/bin/python -m pytest \

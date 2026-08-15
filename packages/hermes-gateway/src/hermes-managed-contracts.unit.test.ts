@@ -707,9 +707,13 @@ describe('managed Hermes package contracts', () => {
 			},
 		});
 
+		expect(recipe.dockerfile).toContain('"@agent-vm/gateway-runtime":"0.0.116"');
+		expect(recipe.dockerfile).toContain('"hono":"4.12.24"');
+		expect(recipe.dockerfile).toContain('"@hono/node-server":"2.0.4"');
 		expect(recipe.dockerfile).toContain(
-			"pnpm add --prod --ignore-scripts --save-exact --registry=https://registry.npmjs.org/ '@agent-vm/gateway-runtime@0.0.116'",
+			'pnpm install --prod --ignore-scripts --registry=https://registry.npmjs.org/',
 		);
+		expect(recipe.dockerfile).not.toContain('pnpm add');
 		expect(recipe.dockerfile).toContain("'agent-vm-agent-portal-sdk==0.0.116'");
 		expect(recipe.dockerfile).toContain("'agent-vm-hermes-adapter==0.0.116'");
 		expect(recipe.dockerfile).not.toContain('hermes-agent[messaging]');

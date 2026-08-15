@@ -2,6 +2,8 @@ import { HERMES_AGENT_DISTRIBUTION } from './hermes-distribution.js';
 import { managedHermesShellEnvironmentPath } from './hermes-shell-environment.js';
 
 const HERMES_GATEWAY_PNPM_VERSION = '10.33.0';
+const HERMES_GATEWAY_RUNTIME_HONO_VERSION = '4.12.24';
+const HERMES_GATEWAY_RUNTIME_NODE_SERVER_VERSION = '2.0.4';
 const HERMES_GATEWAY_CONTAINER_IMAGES: readonly [typeof HERMES_AGENT_DISTRIBUTION.containerImage] =
 	[HERMES_AGENT_DISTRIBUTION.containerImage];
 
@@ -197,12 +199,24 @@ function renderHermesManagedImagePublicRegistryInstallLines(
 	);
 	const gatewayRuntimeExecutablePath =
 		'/opt/agent-vm/registry-packages/node_modules/@agent-vm/gateway-runtime/dist/bin/gateway-runtime.js';
+	const registryPackageManifest = JSON.stringify({
+		dependencies: {
+			'@agent-vm/gateway-runtime': agentVmVersion,
+		},
+		private: true,
+		pnpm: {
+			overrides: {
+				'@hono/node-server': HERMES_GATEWAY_RUNTIME_NODE_SERVER_VERSION,
+				hono: HERMES_GATEWAY_RUNTIME_HONO_VERSION,
+			},
+		},
+	});
 
 	return [
 		'RUN mkdir -p /opt/agent-vm/registry-packages && \\',
 		'    cd /opt/agent-vm/registry-packages && \\',
-		'    pnpm init --bare && \\',
-		`    pnpm add --prod --ignore-scripts --save-exact --registry=https://registry.npmjs.org/ '@agent-vm/gateway-runtime@${agentVmVersion}' && \\`,
+		`    printf '%s\\n' '${registryPackageManifest}' > package.json && \\`,
+		'    pnpm install --prod --ignore-scripts --registry=https://registry.npmjs.org/ && \\',
 		`    gateway_runtime_bin="${gatewayRuntimeExecutablePath}" && \\`,
 		'    test -f "$gateway_runtime_bin" && chmod 755 "$gateway_runtime_bin" && \\',
 		'    ln -sfn "$gateway_runtime_bin" /usr/local/bin/agent-vm-gateway-runtime && \\',
