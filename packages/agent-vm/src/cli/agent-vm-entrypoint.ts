@@ -8,6 +8,7 @@ import { defaultCliDependencies } from './agent-vm-cli-support.js';
 import { dispatchAgentVmCommand } from './agent-vm-command-dispatcher.js';
 import { agentVmRootParser } from './agent-vm-command-parser.js';
 import { resolveCliVersion } from './cli-version.js';
+import { cliDescription } from './commands/command-definition-support.js';
 
 function loadOptionalLocalEnvironmentFile(environmentFilePath: string = '.env.local'): void {
 	try {
@@ -49,6 +50,7 @@ export function isCliEntrypoint(importMetaUrl: string, argvEntryPath: string | u
 async function main(): Promise<void> {
 	const cliVersion = await (defaultCliDependencies.resolveCliVersion ?? resolveCliVersion)();
 	const command = run(agentVmRootParser, {
+		brief: cliDescription('Gondolin-based VM controller for Worker and OpenClaw agents'),
 		help: {
 			command: true,
 			option: { names: ['--help', '-h'] },

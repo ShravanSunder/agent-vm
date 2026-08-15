@@ -3,10 +3,11 @@
 import { run } from '@optique/run';
 
 import { dispatchWorkerCommand } from './worker-cli-dispatcher.js';
-import { workerCommandParser } from './worker-cli-parser.js';
+import { workerCliBrief, workerCommandParser } from './worker-cli-parser.js';
 
 export async function main(): Promise<void> {
 	const command = run(workerCommandParser, {
+		brief: workerCliBrief,
 		help: {
 			command: true,
 			option: { names: ['--help', '-h'] },

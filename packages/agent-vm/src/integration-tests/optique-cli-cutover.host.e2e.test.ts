@@ -8,6 +8,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 
 interface CliPackageInventoryEntry {
 	readonly executableName: string;
+	readonly helpDescription: string | undefined;
 	readonly packageDirectory: string;
 }
 
@@ -25,12 +26,29 @@ const repositoryRoot = process.cwd();
 const nodeSqliteExperimentalWarningLinePattern =
 	/^(?:\(node:\d+\) ExperimentalWarning: SQLite is an experimental feature and might change at any time|\(Use `node --trace-warnings \.\.\.` to show where the warning was created\))$/u;
 const cliPackageInventory = [
-	{ executableName: 'agent-vm', packageDirectory: 'packages/agent-vm' },
-	{ executableName: 'agent-vm-worker', packageDirectory: 'packages/agent-vm-worker' },
-	{ executableName: 'tool-portal', packageDirectory: 'packages/agent-portal-sdk' },
-	{ executableName: 'mcp-portal', packageDirectory: 'packages/mcp-portal' },
+	{
+		executableName: 'agent-vm',
+		helpDescription: 'Gondolin-based VM controller for Worker and OpenClaw agents',
+		packageDirectory: 'packages/agent-vm',
+	},
+	{
+		executableName: 'agent-vm-worker',
+		helpDescription: 'Configurable task worker for Gondolin VMs',
+		packageDirectory: 'packages/agent-vm-worker',
+	},
+	{
+		executableName: 'tool-portal',
+		helpDescription: undefined,
+		packageDirectory: 'packages/agent-portal-sdk',
+	},
+	{
+		executableName: 'mcp-portal',
+		helpDescription: undefined,
+		packageDirectory: 'packages/mcp-portal',
+	},
 	{
 		executableName: 'agent-vm-gateway-runtime',
+		helpDescription: undefined,
 		packageDirectory: 'packages/gateway-runtime',
 	},
 ] as const satisfies readonly CliPackageInventoryEntry[];
@@ -179,13 +197,16 @@ describe('Optique cutover built CLI contract', () => {
 
 	it.each(cliPackageInventory)(
 		'$executableName exposes standard successful top-level help on stdout',
-		async ({ executableName }) => {
+		async ({ executableName, helpDescription }) => {
 			// Arrange / Act
 			const result = await runBuiltCli(executableName, ['--help']);
 
 			// Assert
 			expect(result.exitCode).toBe(0);
 			expect(result.stdout).toContain(executableName);
+			if (helpDescription !== undefined) {
+				expect(result.stdout).toContain(helpDescription);
+			}
 			expect(result.stderr).toBe('');
 			expectNoOrdinaryStack(result.stderr);
 		},

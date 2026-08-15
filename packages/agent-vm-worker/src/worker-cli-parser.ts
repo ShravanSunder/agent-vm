@@ -53,6 +53,8 @@ const workerPortSchema = z
 const workerConfigPathSchema = z.string().optional();
 const workerStateDirectorySchema = z.string().optional();
 
+export const workerCliBrief = message`Configurable task worker for Gondolin VMs`;
+
 function createWorkerPortParser(
 	description: Message,
 ): Parser<'sync', z.infer<typeof workerPortSchema>> {
