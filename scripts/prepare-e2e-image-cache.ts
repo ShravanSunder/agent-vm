@@ -59,7 +59,7 @@ async function main(): Promise<void> {
 			project: openClawPluginProject,
 		});
 		await prepareGatewayE2eProjectImages({
-			imageFamilies: ['gateway', 'toolVm'],
+			imageFamilies: ['gateway'],
 			project: workerProject,
 		});
 		process.stdout.write(`Prepared E2E image cache at ${process.env.AGENT_VM_E2E_CACHE_DIR}\n`);
