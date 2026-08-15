@@ -1,5 +1,5 @@
-import { spawn } from 'node:child_process';
-import { access, mkdtemp, stat } from 'node:fs/promises';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { access, mkdtemp, stat, watch } from 'node:fs/promises';
 import { createConnection, type Socket } from 'node:net';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,6 +24,58 @@ interface Deferred<TValue> {
 	readonly promise: Promise<TValue>;
 	readonly reject: (error: Error) => void;
 	readonly resolve: (value: TValue) => void;
+}
+
+interface ChildExit {
+	readonly code: number | null;
+	readonly signal: NodeJS.Signals | null;
+}
+
+function childStderrDiagnostic(stderr: readonly Buffer[]): string {
+	const contents = Buffer.concat(stderr).toString().trim();
+	return contents.length === 0 ? '<empty>' : contents.slice(-2_000);
+}
+
+function observeChildExit(
+	child: ChildProcess,
+	label: string,
+	stderr: readonly Buffer[],
+): Promise<ChildExit> {
+	if (child.exitCode !== null || child.signalCode !== null) {
+		return Promise.resolve({ code: child.exitCode, signal: child.signalCode });
+	}
+	return new Promise<ChildExit>((resolve, reject) => {
+		child.once('error', (error: Error) => {
+			reject(
+				new Error(`${label} failed: ${error.message}; stderr: ${childStderrDiagnostic(stderr)}`, {
+					cause: error,
+				}),
+			);
+		});
+		child.once('close', (code, signal) => resolve({ code, signal }));
+	});
+}
+
+async function waitForProgressBeforeChildExit(
+	progress: Promise<void>,
+	childExit: Promise<ChildExit>,
+	label: string,
+	stderr: readonly Buffer[],
+): Promise<void> {
+	await Promise.race([
+		progress,
+		childExit.then((exit) => {
+			throw new Error(
+				`${label} closed before protocol progress (code=${String(exit.code)}, signal=${String(exit.signal)}); stderr: ${childStderrDiagnostic(stderr)}`,
+			);
+		}),
+	]);
+}
+
+function forceTerminateChild(child: ChildProcess): void {
+	if (child.exitCode === null && child.signalCode === null) {
+		child.kill('SIGKILL');
+	}
 }
 
 function createDeferred<TValue>(): Deferred<TValue> {
@@ -74,6 +126,22 @@ async function pathDoesNotExist(path: string): Promise<boolean> {
 		return false;
 	} catch {
 		return true;
+	}
+}
+
+async function waitForPathRemoval(path: string, label: string): Promise<void> {
+	const filesystemEvents = watch(dirname(path));
+	const eventIterator = filesystemEvents[Symbol.asyncIterator]();
+	const waitForRemovalEvent = async (): Promise<void> => {
+		if (await pathDoesNotExist(path)) return;
+		const event = await eventIterator.next();
+		if (event.done) throw new Error(`${label} filesystem watcher closed before removal.`);
+		await waitForRemovalEvent();
+	};
+	try {
+		await waitForRemovalEvent();
+	} finally {
+		await eventIterator.return?.();
 	}
 }
 
@@ -164,25 +232,105 @@ describe('GatewayRuntimeLocalExecTransport', () => {
 		const stderr: Buffer[] = [];
 		child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
 		child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
+		const childExit = observeChildExit(child, 'Local exec helper', stderr);
 		const localInput = Buffer.alloc(96 * 1024, 0x61);
-		child.stdin.end(localInput);
-		await firstWriteStarted.promise;
-		expect(maximumActiveWriteCount).toBe(1);
-		releaseFirstWrite.resolve(undefined);
-		const exit = await new Promise<{
-			readonly code: number | null;
-			readonly signal: NodeJS.Signals | null;
-		}>((resolve) => child.once('close', (code, signal) => resolve({ code, signal })));
+		try {
+			child.stdin.end(localInput);
+			await waitForProgressBeforeChildExit(
+				firstWriteStarted.promise,
+				childExit,
+				'Local exec helper first stdin relay',
+				stderr,
+			);
+			expect(maximumActiveWriteCount).toBe(1);
+			releaseFirstWrite.resolve(undefined);
+			const exit = await childExit;
 
-		expect(exit).toEqual({ code: 17, signal: null });
-		expect(Buffer.concat(receivedInput)).toEqual(localInput);
-		expect(maximumActiveWriteCount).toBe(1);
-		expect(Buffer.concat(stdout).toString()).toBe('remote stdout');
-		expect(stderrReadCount).toBe(2);
-		expect(Buffer.concat(stderr).toString()).toBe('remote stderr');
-		expect(await pathDoesNotExist(dirname(socketPath))).toBe(true);
-		await transport.finalize(spec.finalizeToken);
-		await transport.close();
+			expect(exit).toEqual({ code: 17, signal: null });
+			expect(Buffer.concat(receivedInput)).toEqual(localInput);
+			expect(maximumActiveWriteCount).toBe(1);
+			expect(Buffer.concat(stdout).toString()).toBe('remote stdout');
+			expect(stderrReadCount).toBe(2);
+			expect(Buffer.concat(stderr).toString()).toBe('remote stderr');
+			await waitForPathRemoval(dirname(socketPath), 'Automatic local exec reservation cleanup');
+			expect(await pathDoesNotExist(dirname(socketPath))).toBe(true);
+		} finally {
+			releaseFirstWrite.resolve(undefined);
+			forceTerminateChild(child);
+			await childExit.catch(() => undefined);
+			await transport.finalize(spec.finalizeToken);
+			await transport.close();
+		}
+	});
+
+	it('fails fast when the helper exits before protocol progress', async () => {
+		const stalledProgress = createDeferred<void>();
+		const temporaryDirectory = await mkdtemp('/tmp/agent-vm-local-exec-early-exit-');
+		const cancelled = createDeferred<void>();
+		let expire: (() => void) | undefined;
+		const scheduler: GatewayRuntimeLocalExecReservationScheduler = {
+			schedule(callback) {
+				expire = callback;
+				return { cancel: () => undefined };
+			},
+		};
+		const transport = new GatewayRuntimeLocalExecTransport({
+			helperArgv: [
+				process.execPath,
+				'-e',
+				"process.stderr.write('intentional early exit\\n'); process.exit(23);",
+			],
+			reservationScheduler: scheduler,
+			temporaryDirectory,
+		});
+		const operation: GatewayRuntimeLocalExecOperation = {
+			cancel: async () => cancelled.resolve(undefined),
+			closeStdin: async () => undefined,
+			readStderr: async () => ({ kind: 'end' }),
+			readStdout: async () => ({ kind: 'end' }),
+			wait: async () => ({ exitCode: null }),
+			writeStdin: async () => undefined,
+		};
+		const spec = await transport.reserve(operation);
+		const socketPath = requireValue(
+			spec.env[GATEWAY_RUNTIME_LOCAL_EXEC_SOCKET_ENV],
+			'local exec socket path',
+		);
+		const stderr: Buffer[] = [];
+		const child = spawn(
+			requireValue(spec.argv[0], 'local exec helper command'),
+			spec.argv.slice(1),
+			{
+				env: { ...process.env, ...spec.env },
+				stdio: ['pipe', 'pipe', 'pipe'],
+			},
+		);
+		child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
+		const childExit = observeChildExit(child, 'Early-exit local exec helper', stderr);
+		try {
+			await expect(
+				waitForProgressBeforeChildExit(
+					stalledProgress.promise,
+					childExit,
+					'Early-exit local exec helper',
+					stderr,
+				),
+			).rejects.toThrow(
+				/closed before protocol progress \(code=23, signal=null\); stderr: intentional early exit/,
+			);
+			expect(await pathDoesNotExist(dirname(socketPath))).toBe(false);
+			expire?.();
+			await cancelled.promise;
+			await transport.finalize(spec.finalizeToken);
+			await waitForPathRemoval(dirname(socketPath), 'Early-exit reservation cleanup');
+		} finally {
+			forceTerminateChild(child);
+			await childExit.catch(() => undefined);
+			expire?.();
+			await cancelled.promise.catch(() => undefined);
+			await transport.finalize(spec.finalizeToken).catch(() => undefined);
+			await transport.close();
+		}
 	});
 
 	it('expires an unused reservation, cancels its operation, and removes private files', async () => {

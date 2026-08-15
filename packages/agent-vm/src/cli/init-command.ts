@@ -14,11 +14,7 @@ import {
 	createConfigContractSchemaArtifacts,
 	mcpPortalConfigSchemaPaths,
 } from '@agent-vm/config-contracts';
-import type {
-	EgressHostConfig,
-	GatewayType as ConfiguredGatewayType,
-	VmAudience,
-} from '@agent-vm/gateway-lifecycle';
+import type { EgressHostConfig, VmAudience } from '@agent-vm/gateway-lifecycle';
 import { z } from 'zod';
 
 import {
@@ -27,11 +23,16 @@ import {
 } from '../build/managed-vm-build-tooling.js';
 import { loadJsonConfigFile } from '../config/json-config-file.js';
 import { resolveConfigPath } from '../config/path-resolver.js';
-import {
-	createSystemConfigSchemaArtifact,
-	projectNamespaceSchema,
-} from '../config/system-config.js';
+import { projectNamespaceSchema } from '../config/system-config-identifier-schemas.js';
+import { createSystemConfigSchemaArtifact } from '../config/system-config.js';
 import { buildDefaultProjectNamespace } from '../runtime/project-namespace.js';
+import {
+	type GatewayType,
+	type HostSystemType,
+	type ImageArchitecture,
+	type ScaffoldPathMode,
+	type SecretsProvider,
+} from './init-command-schemas.js';
 import {
 	getKeychainTokenSource,
 	hasServiceAccountToken,
@@ -44,13 +45,6 @@ import {
 	renderVmHostSystemStartScript,
 	renderVmHostSystemSystemdUnit,
 } from './vm-host-system-templates.js';
-
-export const secretsProviderSchema = z.enum(['1password', 'environment']);
-export type SecretsProvider = z.infer<typeof secretsProviderSchema>;
-export const imageArchitectureSchema = z.enum(['aarch64', 'x86_64']);
-export type ImageArchitecture = z.infer<typeof imageArchitectureSchema>;
-export type HostSystemType = 'bare-metal' | 'container';
-export type GatewayType = Extract<ConfiguredGatewayType, 'openclaw' | 'worker'>;
 
 export interface ScaffoldAgentVmProjectOptions {
 	readonly agents?: readonly string[];
@@ -90,8 +84,6 @@ export interface PromptAndStoreTokenDependencies {
 	readonly storeKeychainToken?: (token: string) => void;
 	readonly createReadlineInterface?: () => readline.Interface;
 }
-
-export type ScaffoldPathMode = 'local' | 'pod' | 'user-dir';
 
 interface ScaffoldPathProfile {
 	readonly storageRootDir: string;

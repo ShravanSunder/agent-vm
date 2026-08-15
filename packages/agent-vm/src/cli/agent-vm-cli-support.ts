@@ -187,22 +187,6 @@ export function writeJson(io: CliIo, value: unknown): void {
 	io.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 }
 
-export function resolveConfigPath(argv: readonly string[]): string {
-	const configFlagIndex = argv.indexOf('--config');
-	if (configFlagIndex >= 0) {
-		return argv[configFlagIndex + 1] ?? 'config/system.json';
-	}
-	return 'config/system.json';
-}
-
-export function readZoneFlag(argv: readonly string[]): string | undefined {
-	const zoneFlagIndex = argv.indexOf('--zone');
-	if (zoneFlagIndex >= 0) {
-		return argv[zoneFlagIndex + 1];
-	}
-	return undefined;
-}
-
 export function resolveControllerBaseUrl(systemConfig: SystemConfig): string {
 	return `http://127.0.0.1:${systemConfig.host.controllerPort}`;
 }

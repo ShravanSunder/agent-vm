@@ -167,8 +167,9 @@ describe('runBackupCommand', () => {
 					},
 				},
 			},
-			restArguments: ['list', '--zone', 'shravan'],
+			subcommand: 'list',
 			systemConfig,
+			zoneId: 'shravan',
 		});
 
 		expect(listBackups).toHaveBeenCalledWith({
@@ -240,8 +241,9 @@ describe('runBackupCommand', () => {
 				stderr: { write: () => true },
 				stdout: { write: () => true },
 			},
-			restArguments: ['create', '--zone', 'shravan'],
+			subcommand: 'create',
 			systemConfig,
+			zoneId: 'shravan',
 		});
 
 		await expect(identityPromise).resolves.toBe('test-environment-backup-identity');
@@ -255,72 +257,10 @@ describe('runBackupCommand', () => {
 		});
 	});
 
-	it('throws when restore is missing a backup path', async () => {
-		const systemConfig = createBackupSystemConfig();
-
-		await expect(
-			runBackupCommand({
-				dependencies: {
-					...defaultCliDependencies,
-					buildControllerStatus: () => ({ controllerPort: 18800, toolVmProfiles: [], zones: [] }),
-					createAgeBackupEncryption: () => ({ decrypt: async () => {}, encrypt: async () => {} }),
-					createControllerClient: () => ({
-						destroyZone: async () => ({}),
-						enableZoneSsh: async () => ({}),
-						getControllerStatus: async () => ({}),
-						getZoneLogs: async () => ({}),
-						peekLease: async () => ({
-							agentId: 'main',
-							createdAt: 1,
-							idleTtlMs: 6_000_000,
-							lastUsedAt: 1,
-							leaseId: 'lease-123',
-							profileId: 'standard',
-							ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
-							tcpSlot: 0,
-							transport: 'ssh-sandbox' as const,
-							workdir: '/workspace',
-
-							zoneId: 'shravan',
-						}),
-						listLeases: async () => [],
-						refreshZoneCredentials: async () => ({}),
-						releaseLease: async () => {},
-						stopController: async () => ({}),
-						upgradeZone: async () => ({}),
-					}),
-					createSecretResolver: async () => ({
-						resolve: async () => '',
-						resolveAll: async () => ({}),
-					}),
-					createZoneBackupManager: () => ({
-						createBackup: async () => ({ backupPath: '', timestamp: '', zoneId: '' }),
-						listBackups: () => [],
-						restoreBackup: async () => ({ stateDir: '', zoneFilesDir: '', zoneId: '' }),
-					}),
-					loadSystemConfig: async () => systemConfig,
-					resolveServiceAccountToken: async () => 'token',
-					runControllerDoctor: () => ({ checks: [], ok: true }),
-				},
-				io: {
-					stderr: { write: () => true },
-					stdout: { write: () => true },
-				},
-				restArguments: ['restore', '--zone', 'shravan'],
-				systemConfig,
-			}),
-		).rejects.toThrow('Usage: agent-vm backup restore <path> [--zone <id>]');
-	});
-
 	it.each(['create', 'restore'] as const)(
 		'requires gateway.backupIdentity for backup %s',
 		async (backupSubcommand) => {
 			const systemConfig = createBackupSystemConfig();
-			const restArguments =
-				backupSubcommand === 'restore'
-					? ['restore', '/tmp/backup.tar.age', '--zone', 'shravan']
-					: ['create', '--zone', 'shravan'];
-
 			await expect(
 				runBackupCommand({
 					dependencies: defaultCliDependencies,
@@ -328,8 +268,11 @@ describe('runBackupCommand', () => {
 						stderr: { write: () => true },
 						stdout: { write: () => true },
 					},
-					restArguments,
+					...(backupSubcommand === 'restore'
+						? { backupPath: '/tmp/backup.tar.age', subcommand: 'restore' as const }
+						: { subcommand: 'create' as const }),
 					systemConfig,
+					zoneId: 'shravan',
 				}),
 			).rejects.toThrow(
 				`Zone 'shravan' must configure gateway.backupIdentity for backup ${backupSubcommand}.`,
@@ -405,8 +348,10 @@ describe('runBackupCommand', () => {
 					},
 				},
 			},
-			restArguments: ['restore', '/tmp/backup.tar.age', '--zone', 'shravan'],
+			backupPath: '/tmp/backup.tar.age',
+			subcommand: 'restore',
 			systemConfig,
+			zoneId: 'shravan',
 		});
 
 		await expect(identityPromise).resolves.toBe('test-inline-backup-identity');
@@ -416,22 +361,6 @@ describe('runBackupCommand', () => {
 			zoneFilesDir: 'storage/shravan/zone-files',
 		});
 		expect(outputs.join('')).toContain('"zoneId": "shravan"');
-	});
-
-	it('requires --zone explicitly', async () => {
-		const systemConfig = createBackupSystemConfig();
-
-		await expect(
-			runBackupCommand({
-				dependencies: defaultCliDependencies,
-				io: {
-					stderr: { write: () => true },
-					stdout: { write: () => true },
-				},
-				restArguments: ['list'],
-				systemConfig,
-			}),
-		).rejects.toThrow('--zone is required');
 	});
 
 	it('uses gateway.backupDir when set, not the legacy stateDir/backups', async () => {
@@ -493,8 +422,9 @@ describe('runBackupCommand', () => {
 				stderr: { write: () => true },
 				stdout: { write: () => true },
 			},
-			restArguments: ['list', '--zone', 'shravan'],
+			subcommand: 'list',
 			systemConfig,
+			zoneId: 'shravan',
 		});
 
 		expect(listBackups).toHaveBeenCalledWith({

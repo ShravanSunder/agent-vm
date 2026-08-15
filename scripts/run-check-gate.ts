@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export type CheckGateCommandId =
 	| 'build'
+	| 'cli-architecture'
 	| 'lint'
 	| 'managed-vm-boundaries'
 	| 'managed-vm-contracts'
@@ -79,6 +80,12 @@ export function createCheckGatePlan(): readonly CheckGatePhase[] {
 		},
 		{
 			commands: [
+				{
+					args: ['run', 'test:cli-architecture'],
+					command: 'pnpm',
+					id: 'cli-architecture',
+					label: 'Optique CLI architecture audit',
+				},
 				{
 					args: ['run', 'check:package-versions'],
 					command: 'pnpm',

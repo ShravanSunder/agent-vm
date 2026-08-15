@@ -7,17 +7,17 @@ import {
 	type CliDependencies,
 	type CliIo,
 	createResolverFromSystemConfig,
-	readZoneFlag,
 	requireZone,
 	resolveControllerBaseUrl,
 } from './agent-vm-cli-support.js';
 import { formatZodError } from './format-zod-error.js';
 
 interface RunSshCommandOptions {
+	readonly allSecrets: boolean;
 	readonly dependencies: CliDependencies;
 	readonly io: CliIo;
-	readonly restArguments: readonly string[];
 	readonly systemConfig: SystemConfig;
+	readonly zoneId: string;
 }
 
 export const zoneSshAccessResponseSchema = z
@@ -69,17 +69,8 @@ export async function runSshCommand(options: RunSshCommandOptions): Promise<void
 	const controllerClient = options.dependencies.createControllerClient({
 		baseUrl: resolveControllerBaseUrl(options.systemConfig),
 	});
-	if (options.restArguments.includes('--')) {
-		throw new Error(
-			'controller ssh opens an interactive shell only; remote commands are not supported.',
-		);
-	}
-	const requestAllSecrets = options.restArguments.includes('--all-secrets');
-	const restArguments = options.restArguments.filter((argument) => argument !== '--all-secrets');
-	if (restArguments.includes('--print')) {
-		throw new Error('--print is not supported for controller ssh.');
-	}
-	const zone = requireZone(options.systemConfig, readZoneFlag(restArguments));
+	const requestAllSecrets = options.allSecrets;
+	const zone = requireZone(options.systemConfig, options.zoneId);
 	const lifecycle = loadGatewayLifecycle(zone.gateway.type);
 	if (lifecycle.executionModel !== 'managed-gateway') {
 		throw new Error(

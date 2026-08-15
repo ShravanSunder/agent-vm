@@ -466,7 +466,7 @@ describe('runControllerOperationCommand', () => {
 							},
 						},
 					},
-					restArguments: ['--zone', 'shravan'],
+					zoneId: 'shravan',
 					subcommand,
 					systemConfig,
 				});
@@ -532,9 +532,10 @@ describe('runControllerOperationCommand', () => {
 						},
 					},
 				},
-				restArguments: ['refresh', '--zone', 'shravan'],
+				credentialsAction: 'refresh',
 				subcommand: 'credentials',
 				systemConfig,
+				zoneId: 'shravan',
 			});
 		} finally {
 			if (previousGatewayToken === undefined) {
@@ -599,9 +600,10 @@ describe('runControllerOperationCommand', () => {
 						},
 					},
 				},
-				restArguments: ['check', '--zone', 'shravan'],
+				credentialsAction: 'check',
 				subcommand: 'credentials',
 				systemConfig,
+				zoneId: 'shravan',
 			});
 		} finally {
 			if (previousGatewayToken === undefined) {
@@ -690,7 +692,7 @@ describe('runControllerOperationCommand', () => {
 					},
 				},
 			},
-			restArguments: ['--json'],
+			json: true,
 			subcommand: 'doctor',
 			systemConfig,
 		});
@@ -775,7 +777,6 @@ describe('runControllerOperationCommand', () => {
 					},
 				},
 			},
-			restArguments: [],
 			subcommand: 'doctor',
 			systemConfig,
 		});
@@ -837,7 +838,6 @@ describe('runControllerOperationCommand', () => {
 						},
 					},
 				},
-				restArguments: [],
 				subcommand: 'doctor',
 				systemConfig,
 			});
@@ -877,7 +877,7 @@ describe('runControllerOperationCommand', () => {
 						},
 					},
 				},
-				restArguments: ['--show-passed'],
+				showPassed: true,
 				subcommand: 'doctor',
 				systemConfig,
 			});
@@ -945,7 +945,7 @@ describe('runControllerOperationCommand', () => {
 						},
 					},
 				},
-				restArguments: ['--show-passed'],
+				showPassed: true,
 				subcommand: 'doctor',
 				systemConfig,
 			});
@@ -1009,7 +1009,7 @@ describe('runControllerOperationCommand', () => {
 					},
 				},
 			},
-			restArguments: ['--json'],
+			json: true,
 			subcommand: 'doctor',
 			systemConfig,
 		});
@@ -1108,7 +1108,7 @@ describe('runControllerOperationCommand', () => {
 						},
 					},
 				},
-				restArguments: ['--json'],
+				json: true,
 				subcommand: 'doctor',
 				systemConfig: onePasswordSystemConfig,
 			});
@@ -1208,7 +1208,7 @@ describe('runControllerOperationCommand', () => {
 						},
 					},
 				},
-				restArguments: ['--json'],
+				json: true,
 				subcommand: 'doctor',
 				systemConfig: onePasswordSystemConfig,
 			});
@@ -1293,7 +1293,7 @@ describe('runControllerOperationCommand', () => {
 						},
 					},
 				},
-				restArguments: ['--json'],
+				json: true,
 				subcommand: 'doctor',
 				systemConfig: onePasswordSystemConfig,
 			});
@@ -1393,7 +1393,7 @@ printf '{"ok":true}\\n'
 					},
 				},
 			},
-			restArguments: ['--json'],
+			json: true,
 			subcommand: 'doctor',
 			systemConfig,
 		});
@@ -1494,7 +1494,7 @@ printf '{"ok":true}\\n'
 					},
 				},
 			},
-			restArguments: ['--json'],
+			json: true,
 			subcommand: 'doctor',
 			systemConfig,
 		});
@@ -1578,7 +1578,7 @@ printf '{"ok":true}\\n'
 					},
 				},
 			},
-			restArguments: ['--json'],
+			json: true,
 			subcommand: 'doctor',
 			systemConfig: createOpenClawSystemConfig(toolVmBuildConfigPath, systemConfigPath),
 		});
@@ -1674,7 +1674,7 @@ printf '{"ok":true}\\n'
 					},
 				},
 			},
-			restArguments: ['--json'],
+			json: true,
 			subcommand: 'doctor',
 			systemConfig: createManagedBaseOpenClawSystemConfig(
 				gatewayBuildConfigPath,
@@ -1755,7 +1755,7 @@ printf '{"ok":true}\\n'
 					},
 				},
 			},
-			restArguments: ['--json'],
+			json: true,
 			subcommand: 'doctor',
 			systemConfig: createManagedBaseOpenClawSystemConfig(
 				missingGatewayBuildConfigPath,
@@ -1868,7 +1868,7 @@ printf '{"ok":true}\\n'
 					},
 				},
 			},
-			restArguments: ['--json'],
+			json: true,
 			subcommand: 'doctor',
 			systemConfig: resolvedPathSystemConfig,
 		});
@@ -1965,7 +1965,7 @@ printf '{"ok":true}\\n'
 					},
 				},
 			},
-			restArguments: ['--json'],
+			json: true,
 			subcommand: 'doctor',
 			systemConfig: createWorkerSystemConfig(workerConfigPath, systemConfigPath),
 		});

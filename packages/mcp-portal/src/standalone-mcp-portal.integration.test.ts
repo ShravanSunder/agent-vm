@@ -7,7 +7,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { describe, expect, it } from 'vitest';
 
-import { startPortalServer } from './cli/serve-command.js';
+import { startPortalServer } from './cli/portal-server-operation.js';
 import { deriveAgentBearerToken } from './portal-auth/agent-bearer-token.js';
 import {
 	fakeUpstreamNamespace,

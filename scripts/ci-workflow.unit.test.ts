@@ -15,24 +15,24 @@ async function readRepositoryFile(relativePath: string): Promise<string> {
 }
 
 function isManagedGatewayTestDeclaration(callExpression: ts.CallExpression): boolean {
-	if (ts.isIdentifier(callExpression.expression)) {
-		return callExpression.expression.text === 'it';
-	}
-	if (!ts.isCallExpression(callExpression.expression)) {
+	if (
+		ts.isCallExpression(callExpression.parent) &&
+		callExpression.parent.expression === callExpression
+	) {
 		return false;
 	}
-	const eachExpression = callExpression.expression.expression;
-	return (
-		ts.isPropertyAccessExpression(eachExpression) &&
-		ts.isIdentifier(eachExpression.expression) &&
-		eachExpression.expression.text === 'it' &&
-		eachExpression.name.text === 'each'
-	);
+	let expression: ts.Expression = callExpression.expression;
+	while (ts.isCallExpression(expression)) expression = expression.expression;
+	while (ts.isPropertyAccessExpression(expression)) expression = expression.expression;
+	return ts.isIdentifier(expression) && ['it', 'test'].includes(expression.text);
 }
 
-function readManagedGatewayTestTags(sourceText: string): readonly (readonly string[])[] {
+function readManagedGatewayTestTags(
+	sourceText: string,
+	fileName: string,
+): readonly (readonly string[])[] {
 	const sourceFile = ts.createSourceFile(
-		'managed-gateway-image-boot.vm.e2e.test.ts',
+		fileName,
 		sourceText,
 		ts.ScriptTarget.Latest,
 		true,
@@ -70,15 +70,85 @@ function readManagedGatewayTestTags(sourceText: string): readonly (readonly stri
 	return testTags;
 }
 
+function readManagedGatewayIncludeFiles(vitestConfigSource: string): readonly string[] {
+	const sourceFile = ts.createSourceFile(
+		'vitest.config.ts',
+		vitestConfigSource,
+		ts.ScriptTarget.Latest,
+		true,
+		ts.ScriptKind.TS,
+	);
+	let includeFiles: readonly string[] | undefined;
+	const visit = (node: ts.Node): void => {
+		if (includeFiles !== undefined || !ts.isObjectLiteralExpression(node)) {
+			ts.forEachChild(node, visit);
+			return;
+		}
+		const nameProperty = node.properties.find(
+			(property): property is ts.PropertyAssignment =>
+				ts.isPropertyAssignment(property) &&
+				ts.isIdentifier(property.name) &&
+				property.name.text === 'name' &&
+				ts.isStringLiteral(property.initializer) &&
+				property.initializer.text === 'e2e-vm-managed-gateway',
+		);
+		if (nameProperty === undefined) {
+			ts.forEachChild(node, visit);
+			return;
+		}
+		const includeProperty = node.properties.find(
+			(property): property is ts.PropertyAssignment =>
+				ts.isPropertyAssignment(property) &&
+				ts.isIdentifier(property.name) &&
+				property.name.text === 'include',
+		);
+		if (
+			includeProperty === undefined ||
+			!ts.isArrayLiteralExpression(includeProperty.initializer)
+		) {
+			includeFiles = [];
+			return;
+		}
+		includeFiles = includeProperty.initializer.elements.flatMap((element) =>
+			ts.isStringLiteral(element) ? [element.text] : [],
+		);
+	};
+	visit(sourceFile);
+	return includeFiles ?? [];
+}
+
+it('recognizes test and it declaration modifiers in managed-gateway fixtures', () => {
+	// Arrange
+	const fixture = `
+test.skip('skipped', { tags: ['managed-gateway-startup'] }, () => {});
+test.each([1])('table', { tags: ['managed-gateway-degraded-input'] }, () => {});
+it.only.each([1])('table modifier', { tags: ['managed-gateway-lifecycle'] }, () => {});
+it.concurrent('concurrent', { tags: ['managed-gateway-startup'] }, () => {});
+`;
+
+	// Act / Assert
+	expect(readManagedGatewayTestTags(fixture, 'managed-gateway-fixture.ts')).toEqual([
+		['managed-gateway-startup'],
+		['managed-gateway-degraded-input'],
+		['managed-gateway-lifecycle'],
+		['managed-gateway-startup'],
+	]);
+});
+
 describe('CI workflow topology', () => {
 	it('keeps every required proof lane behind one aggregate check', async () => {
-		const [workflow, vitestConfig, managedGatewayTest] = await Promise.all([
+		const [workflow, vitestConfig] = await Promise.all([
 			readRepositoryFile('.github/workflows/ci.yml'),
 			readRepositoryFile('vitest.config.ts'),
-			readRepositoryFile(
-				'packages/agent-vm/src/integration-tests/managed-gateway-image-boot.vm.e2e.test.ts',
-			),
 		]);
+		const managedGatewayTestFiles = readManagedGatewayIncludeFiles(vitestConfig);
+		expect(managedGatewayTestFiles.length).toBeGreaterThan(0);
+		const managedGatewayTests = await Promise.all(
+			managedGatewayTestFiles.map(async (filePath) => ({
+				filePath,
+				sourceText: await readRepositoryFile(filePath),
+			})),
+		);
 
 		for (const jobName of ['validation:', 'e2e-image-cache:', 'e2e-host:', 'e2e-vm:', 'check:']) {
 			expect(workflow).toContain(`  ${jobName}`);
@@ -92,7 +162,7 @@ describe('CI workflow topology', () => {
 			'pnpm python:test:hermes',
 			'pnpm test:e2e:inventory',
 			'pnpm run test:e2e:${{ matrix.lane }}',
-			'pnpm run test:e2e:vm -- --shard=${{ matrix.shard }}',
+			'pnpm run test:e2e:vm --shard=${{ matrix.shard }}',
 			'pnpm run test:e2e:vm-managed-gateway',
 			'--tags-filter=managed-gateway-startup',
 			'--tags-filter=managed-gateway-degraded-input',
@@ -103,8 +173,16 @@ describe('CI workflow topology', () => {
 		}
 		for (const managedGatewayTag of managedGatewayCiTags) {
 			expect(vitestConfig).toContain(`name: '${managedGatewayTag}'`);
+			expect(workflow).toContain(
+				`pnpm run test:e2e:vm-managed-gateway --tags-filter=${managedGatewayTag}`,
+			);
+			expect(workflow).not.toContain(
+				`pnpm run test:e2e:vm-managed-gateway -- --tags-filter=${managedGatewayTag}`,
+			);
 		}
-		const managedGatewayTestTags = readManagedGatewayTestTags(managedGatewayTest);
+		const managedGatewayTestTags = managedGatewayTests.flatMap(({ filePath, sourceText }) =>
+			readManagedGatewayTestTags(sourceText, filePath),
+		);
 		expect(managedGatewayTestTags.length).toBeGreaterThan(0);
 		for (const testTags of managedGatewayTestTags) {
 			expect(testTags).toHaveLength(1);
@@ -114,11 +192,14 @@ describe('CI workflow topology', () => {
 		expect(workflow.match(/lane: e2e-vm-managed-gateway/gu)).toHaveLength(1);
 		expect(workflow).not.toContain('managed-gateway-test-group:');
 		expect(workflow).not.toContain('AGENT_VM_MANAGED_GATEWAY_TEST_GROUP');
-		expect(managedGatewayTest).not.toContain('AGENT_VM_MANAGED_GATEWAY_TEST_GROUP');
-		expect(managedGatewayTest).not.toContain('shouldRegisterManagedGatewayTest');
+		for (const { sourceText } of managedGatewayTests) {
+			expect(sourceText).not.toContain('AGENT_VM_MANAGED_GATEWAY_TEST_GROUP');
+			expect(sourceText).not.toContain('shouldRegisterManagedGatewayTest');
+		}
 		for (const shard of ['1/6', '2/6', '3/6', '4/6', '5/6', '6/6']) {
 			expect(workflow).toContain(`shard: ${shard}`);
 		}
+		expect(workflow).not.toContain('pnpm run test:e2e:vm -- --shard=');
 		for (const hostLane of ['host-docker', 'host', 'vm-mediation']) {
 			expect(workflow).toContain(`- ${hostLane}`);
 		}

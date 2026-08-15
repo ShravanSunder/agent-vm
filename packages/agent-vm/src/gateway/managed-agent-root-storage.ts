@@ -1,7 +1,7 @@
 import { chmod, lstat, mkdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
 
-import { agentIdSchema } from '../config/system-config.js';
+import { agentIdSchema } from '../config/system-config-identifier-schemas.js';
 
 export interface ManagedAgentWorkspacePaths {
 	readonly agentId: string;

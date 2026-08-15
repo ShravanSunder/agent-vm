@@ -5,17 +5,19 @@ import {
 	createResolverFromSystemConfig,
 	type CliDependencies,
 	type CliIo,
-	readZoneFlag,
 	requireZone,
 	writeJson,
 } from './agent-vm-cli-support.js';
 
-interface RunBackupCommandOptions {
+type RunBackupCommandOptions = {
 	readonly dependencies: CliDependencies;
 	readonly io: CliIo;
-	readonly restArguments: readonly string[];
 	readonly systemConfig: LoadedSystemConfig;
-}
+	readonly zoneId: string;
+} & (
+	| { readonly subcommand: 'create' | 'list' }
+	| { readonly backupPath: string; readonly subcommand: 'restore' }
+);
 
 type BackupIdentityReference = NonNullable<
 	LoadedSystemConfig['zones'][number]['gateway']['backupIdentity']
@@ -37,12 +39,12 @@ function toSecretRef(reference: BackupIdentityReference): SecretRef {
 }
 
 export async function runBackupCommand(options: RunBackupCommandOptions): Promise<void> {
-	const backupSubcommand = options.restArguments[0];
-	const zone = requireZone(options.systemConfig, readZoneFlag(options.restArguments));
+	const backupSubcommand = options.subcommand;
+	const zone = requireZone(options.systemConfig, options.zoneId);
 	const zoneId = zone.id;
 	const backupDir = zone.gateway.backupDir ?? `${zone.gateway.stateDir}/backups`;
 
-	if (backupSubcommand === 'list') {
+	if (options.subcommand === 'list') {
 		const backupManager = options.dependencies.createZoneBackupManager({
 			decrypt: async () => {},
 			encrypt: async () => {},
@@ -50,17 +52,6 @@ export async function runBackupCommand(options: RunBackupCommandOptions): Promis
 		writeJson(options.io, backupManager.listBackups({ backupDir, zoneId }));
 		return;
 	}
-	if (backupSubcommand !== 'create' && backupSubcommand !== 'restore') {
-		throw new Error(`Unknown backup subcommand '${backupSubcommand ?? 'undefined'}'.`);
-	}
-	const restoreBackupPath = backupSubcommand === 'restore' ? options.restArguments[1] : undefined;
-	if (
-		backupSubcommand === 'restore' &&
-		(!restoreBackupPath || restoreBackupPath.startsWith('--'))
-	) {
-		throw new Error('Usage: agent-vm backup restore <path> [--zone <id>]');
-	}
-
 	const backupIdentity = zone.gateway.backupIdentity;
 	if (backupIdentity === undefined) {
 		throw new Error(
@@ -77,7 +68,7 @@ export async function runBackupCommand(options: RunBackupCommandOptions): Promis
 	});
 	const backupManager = options.dependencies.createZoneBackupManager(backupEncryption);
 
-	if (backupSubcommand === 'create') {
+	if (options.subcommand === 'create') {
 		writeJson(
 			options.io,
 			await backupManager.createBackup({
@@ -91,14 +82,13 @@ export async function runBackupCommand(options: RunBackupCommandOptions): Promis
 		);
 		return;
 	}
-
-	if (restoreBackupPath === undefined) {
-		throw new Error('Backup restore path was not initialized.');
+	if (options.subcommand !== 'restore') {
+		throw new Error('Unsupported backup command.');
 	}
 	writeJson(
 		options.io,
 		await backupManager.restoreBackup({
-			backupPath: restoreBackupPath,
+			backupPath: options.backupPath,
 			stateDir: zone.gateway.stateDir,
 			...(zone.gateway.type !== 'worker' ? { zoneFilesDir: zone.gateway.zoneFilesDir } : {}),
 		}),

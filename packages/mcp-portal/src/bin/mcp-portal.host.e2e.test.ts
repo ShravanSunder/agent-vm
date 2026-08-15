@@ -246,8 +246,8 @@ async function startPortalProcess(props: {
 	readonly configDir: string;
 	readonly port: number;
 }): Promise<StartedPortalProcess> {
-	const binPath = join(process.cwd(), 'node_modules/.bin/tsx');
-	const sourcePath = join(process.cwd(), 'packages/mcp-portal/src/bin/mcp-portal.ts');
+	const binPath = process.execPath;
+	const sourcePath = join(process.cwd(), 'packages/mcp-portal/dist/bin/mcp-portal.js');
 	await access(binPath);
 	await access(sourcePath);
 	const output: ChildOutput = { stderr: '', stdout: '' };

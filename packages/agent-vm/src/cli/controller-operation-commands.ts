@@ -29,7 +29,6 @@ import {
 	createResolverFromSystemConfig,
 	type CliDependencies,
 	type CliIo,
-	readZoneFlag,
 	requireZone,
 	resolveControllerBaseUrl,
 	writeJson,
@@ -44,8 +43,11 @@ interface RunControllerOperationCommandOptions {
 		options: CollectDynamicDoctorChecksOptions,
 	) => Promise<readonly DoctorCheck[]>;
 	readonly dependencies: CliDependencies;
+	readonly credentialsAction?: 'check' | 'refresh';
 	readonly io: CliIo;
-	readonly restArguments: readonly string[];
+	readonly json?: boolean;
+	readonly purge?: boolean;
+	readonly showPassed?: boolean;
 	readonly subcommand:
 		| 'credentials'
 		| 'destroy'
@@ -58,6 +60,7 @@ interface RunControllerOperationCommandOptions {
 		| 'stop'
 		| 'upgrade';
 	readonly systemConfig: LoadedSystemConfig;
+	readonly zoneId?: string;
 }
 
 interface ImageProfileDoctorTarget {
@@ -588,12 +591,12 @@ export async function runControllerOperationCommand(
 				failed,
 				checks,
 			} satisfies DoctorCommandResult;
-			if (options.restArguments.includes('--json')) {
+			if (options.json === true) {
 				writeJson(options.io, result);
 				return;
 			}
 			writeDoctorText(options.io, result, {
-				showPassed: options.restArguments.includes('--show-passed'),
+				showPassed: options.showPassed === true,
 			});
 			return;
 		}
@@ -601,7 +604,7 @@ export async function runControllerOperationCommand(
 			writeJson(options.io, await controllerClient.getControllerStatus());
 			return;
 		case 'health': {
-			const zoneId = requireZone(options.systemConfig, readZoneFlag(options.restArguments)).id;
+			const zoneId = requireZone(options.systemConfig, options.zoneId).id;
 			if (!controllerClient.getZoneHealth) {
 				throw new Error('Controller client does not support zone health.');
 			}
@@ -609,7 +612,7 @@ export async function runControllerOperationCommand(
 			return;
 		}
 		case 'health-snapshot': {
-			const zoneId = requireZone(options.systemConfig, readZoneFlag(options.restArguments)).id;
+			const zoneId = requireZone(options.systemConfig, options.zoneId).id;
 			if (!controllerClient.getZoneHealthSnapshot) {
 				throw new Error('Controller client does not support zone health snapshots.');
 			}
@@ -617,7 +620,7 @@ export async function runControllerOperationCommand(
 			return;
 		}
 		case 'service-health': {
-			const zoneId = requireZone(options.systemConfig, readZoneFlag(options.restArguments)).id;
+			const zoneId = requireZone(options.systemConfig, options.zoneId).id;
 			if (!controllerClient.getZoneServiceHealth) {
 				throw new Error('Controller client does not support zone service health.');
 			}
@@ -628,32 +631,27 @@ export async function runControllerOperationCommand(
 			writeJson(options.io, await controllerClient.stopController());
 			return;
 		case 'destroy': {
-			const zoneId = requireZone(options.systemConfig, readZoneFlag(options.restArguments)).id;
-			writeJson(
-				options.io,
-				await controllerClient.destroyZone(zoneId, options.restArguments.includes('--purge')),
-			);
+			const zoneId = requireZone(options.systemConfig, options.zoneId).id;
+			writeJson(options.io, await controllerClient.destroyZone(zoneId, options.purge === true));
 			return;
 		}
 		case 'upgrade': {
-			const zoneId = requireZone(options.systemConfig, readZoneFlag(options.restArguments)).id;
+			const zoneId = requireZone(options.systemConfig, options.zoneId).id;
 			writeJson(options.io, await controllerClient.upgradeZone(zoneId));
 			return;
 		}
 		case 'logs': {
-			const zoneId = requireZone(options.systemConfig, readZoneFlag(options.restArguments)).id;
+			const zoneId = requireZone(options.systemConfig, options.zoneId).id;
 			writeJson(options.io, await controllerClient.getZoneLogs(zoneId));
 			return;
 		}
 		case 'credentials': {
-			const credentialsSubcommand = options.restArguments[0];
+			const credentialsSubcommand = options.credentialsAction;
 			if (credentialsSubcommand !== 'refresh' && credentialsSubcommand !== 'check') {
-				throw new Error(
-					`Unknown controller credentials subcommand '${options.restArguments[0] ?? 'undefined'}'.`,
-				);
+				throw new Error('Controller credentials action was not initialized.');
 			}
 
-			const zoneId = requireZone(options.systemConfig, readZoneFlag(options.restArguments)).id;
+			const zoneId = requireZone(options.systemConfig, options.zoneId).id;
 			const secretResolver = await createResolverFromSystemConfig(
 				options.systemConfig,
 				options.dependencies,

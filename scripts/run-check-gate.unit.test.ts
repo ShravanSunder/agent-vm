@@ -53,6 +53,7 @@ describe('check gate plan', () => {
 		]);
 		expect(plan[0]?.commands.map((command) => command.id)).toEqual(['build']);
 		expect(plan[1]?.commands.map((command) => command.id)).toEqual([
+			'cli-architecture',
 			'package-versions',
 			'zod-version',
 			'test-taxonomy',
@@ -113,7 +114,8 @@ describe('check gate runner', () => {
 
 		expect(summary.ok).toBe(true);
 		expect(startedCommandIds.slice(0, 1)).toEqual(['build']);
-		expect(startedCommandIds.slice(1, 13)).toEqual([
+		expect(startedCommandIds.slice(1, 14)).toEqual([
+			'cli-architecture',
 			'package-versions',
 			'zod-version',
 			'test-taxonomy',
@@ -128,7 +130,8 @@ describe('check gate runner', () => {
 			'format',
 		]);
 		expect(completedCommandIds.slice(0, 1)).toEqual(['build']);
-		expect(completedCommandIds.slice(1, 13)).toEqual([
+		expect(completedCommandIds.slice(1, 14)).toEqual([
+			'cli-architecture',
 			'package-versions',
 			'zod-version',
 			'test-taxonomy',
@@ -164,6 +167,7 @@ describe('check gate runner', () => {
 		expect(summary.ok).toBe(false);
 		expect(runCommandIds).toEqual([
 			'build',
+			'cli-architecture',
 			'package-versions',
 			'zod-version',
 			'test-taxonomy',

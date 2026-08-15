@@ -1,38 +1,23 @@
-// oxlint-disable typescript-eslint/explicit-function-return-type
-import { command, flag } from 'cmd-ts';
+import { command, constant, object } from '@optique/core';
 
-import type { CliDependencies, CliIo } from '../agent-vm-cli-support.js';
-import { runBuildCommand } from '../build-command.js';
-import { createRunTask, createRunTaskGroup } from '../run-task.js';
-import { createConfigOption, loadSystemConfigFromOption } from './command-definition-support.js';
+import {
+	cliDescription,
+	createConfigOption,
+	createPresenceFlag,
+} from './command-definition-support.js';
 
-export function createBuildCommand(_io: CliIo, dependencies: CliDependencies) {
-	return command({
-		name: 'build',
-		description: 'Build Docker OCI images and Gondolin VM assets',
-		args: {
+export const buildCommandParser = command(
+	'build',
+	object({
+		command: constant('build'),
+		options: object({
 			config: createConfigOption(),
-			force: flag({
-				long: 'force',
-				description: 'Force rebuild, ignoring cache',
-			}),
-			noObservability: flag({
-				long: 'no-observability',
-				description: 'Skip configured host observability preparation for this build run',
-			}),
-		},
-		handler: async ({ config, force, noObservability }) => {
-			const systemConfig = await loadSystemConfigFromOption(config, dependencies);
-			const runTask = await createRunTask(_io);
-			const runTaskGroup = await createRunTaskGroup(_io, runTask);
-			await (dependencies.runBuildCommand ?? runBuildCommand)(
-				{
-					forceRebuild: force,
-					skipObservability: noObservability,
-					systemConfig,
-				},
-				{ runTask, runTaskGroup },
-			);
-		},
-	});
-}
+			force: createPresenceFlag('--force', 'Force rebuild, ignoring cache'),
+			noObservability: createPresenceFlag(
+				'--no-observability',
+				'Skip configured host observability preparation for this build run',
+			),
+		}),
+	}),
+	{ description: cliDescription('Build Docker OCI images and Gondolin VM assets') },
+);

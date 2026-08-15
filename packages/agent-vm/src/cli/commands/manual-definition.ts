@@ -1,68 +1,63 @@
-// oxlint-disable typescript-eslint/explicit-function-return-type
-import { command, flag, option, optional, string, subcommands } from 'cmd-ts';
+import { command, constant, object, option } from '@optique/core';
+import { zod } from '@optique/zod';
+import { z } from 'zod';
 
-import type { CliDependencies, CliIo } from '../agent-vm-cli-support.js';
-import { writeJson } from '../agent-vm-cli-support.js';
-import { updateAgentVmManual } from '../manual-commands.js';
+import { zoneIdSchema } from '../../config/system-config-identifier-schemas.js';
+import { projectZodScalarPresence } from '../agent-vm-parser-support.js';
+import { cliDescription, createPresenceFlag } from './command-definition-support.js';
 
-function writePathGroup(io: CliIo, label: string, paths: readonly string[]): void {
-	for (const filePath of paths) {
-		io.stdout.write(`  ${label} ${filePath}\n`);
-	}
-}
+const manualConfigPathSchema = z.string().min(1).default('config/system.jsonc');
+const manualDefaultZoneSchema = zoneIdSchema.default('default');
+const manualTargetDirectorySchema = z.string().min(1).optional();
 
-export function createManualSubcommands(io: CliIo, dependencies: CliDependencies) {
-	return subcommands({
-		name: 'manual',
-		description: 'Update generated deployment manual files',
-		cmds: {
-			update: command({
-				name: 'update',
-				description: 'Update generated agent-vm deployment manual files',
-				args: {
-					agents: flag({
-						long: 'agents',
-						description: 'Also refresh AGENTS.md and CLAUDE.md',
-					}),
-					config: option({
-						type: optional(string),
-						long: 'config',
-						description: 'Deployment system config path documented in the manual',
-						defaultValue: () => 'config/system.jsonc',
-					}),
-					defaultZone: option({
-						type: optional(string),
-						long: 'default-zone',
-						description: 'Default zone id to mention in generated agent instructions',
-						defaultValue: () => 'default',
-					}),
-					json: flag({
-						long: 'json',
-						description: 'Print machine-readable JSON output',
-					}),
-					targetDir: option({
-						type: optional(string),
-						long: 'target-dir',
-						description: 'Deployment directory to update',
-					}),
-				},
-				handler: async ({ agents, config, defaultZone, json, targetDir }) => {
-					const resolvedTargetDir =
-						targetDir ?? dependencies.getCurrentWorkingDirectory?.() ?? process.cwd();
-					const result = await (dependencies.updateAgentVmManual ?? updateAgentVmManual)({
-						defaultZoneId: defaultZone ?? 'default',
-						systemConfigPath: config ?? 'config/system.jsonc',
-						targetDir: resolvedTargetDir,
-						updateAgentIndex: agents,
-					});
-					if (json) {
-						writeJson(io, result);
-						return;
-					}
-					io.stdout.write('Updated generated agent-vm manual files\n');
-					writePathGroup(io, 'updated', result.updated);
-				},
+export const manualCommandParser = command(
+	'manual',
+	command(
+		'update',
+		object({
+			command: constant('manual.update'),
+			options: object({
+				agents: createPresenceFlag('--agents', 'Also refresh AGENTS.md and CLAUDE.md'),
+				config: projectZodScalarPresence({
+					parser: option(
+						'--config',
+						zod(manualConfigPathSchema, {
+							metavar: 'PATH',
+							placeholder: manualConfigPathSchema.parse(undefined),
+						}),
+						{
+							description: cliDescription('Deployment system config path documented in the manual'),
+						},
+					),
+					schema: manualConfigPathSchema,
+				}),
+				defaultZone: projectZodScalarPresence({
+					parser: option(
+						'--default-zone',
+						zod(manualDefaultZoneSchema, {
+							metavar: 'ZONE_ID',
+							placeholder: manualDefaultZoneSchema.parse(undefined),
+						}),
+						{
+							description: cliDescription(
+								'Default zone id to mention in generated agent instructions',
+							),
+						},
+					),
+					schema: manualDefaultZoneSchema,
+				}),
+				json: createPresenceFlag('--json', 'Print machine-readable JSON output'),
+				targetDir: projectZodScalarPresence({
+					parser: option(
+						'--target-dir',
+						zod(manualTargetDirectorySchema, { metavar: 'PATH', placeholder: undefined }),
+						{ description: cliDescription('Deployment directory to update') },
+					),
+					schema: manualTargetDirectorySchema,
+				}),
 			}),
-		},
-	});
-}
+		}),
+		{ description: cliDescription('Update generated agent-vm deployment manual files') },
+	),
+	{ description: cliDescription('Update generated deployment manual files') },
+);

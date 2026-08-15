@@ -1,7 +1,8 @@
 import { shellQuote, wrapWithOpenClawShellEnvironment } from '@agent-vm/openclaw-gateway';
 import { execa } from 'execa';
 
-import { agentIdSchema, type SystemConfig } from '../config/system-config.js';
+import { agentIdSchema } from '../config/system-config-identifier-schemas.js';
+import type { SystemConfig } from '../config/system-config.js';
 import {
 	type CliDependencies,
 	type CliIo,

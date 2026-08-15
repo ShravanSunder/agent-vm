@@ -1,94 +1,64 @@
-// oxlint-disable typescript-eslint/explicit-function-return-type
-import { flag, option, optional, string } from 'cmd-ts';
-import { ZodError } from 'zod';
+import {
+	flag,
+	option,
+	text,
+	withDefault,
+	type Message,
+	type OptionName,
+	type Parser,
+} from '@optique/core';
+import { zod } from '@optique/zod';
+import { z } from 'zod';
 
-import type { LoadedSystemConfig } from '../../config/system-config.js';
-import type { CliDependencies } from '../agent-vm-cli-support.js';
-import { formatZodError } from '../format-zod-error.js';
-import type { GatewayType, SecretsProvider } from '../init-command.js';
-import { secretsProviderSchema } from '../init-command.js';
+import { zoneIdSchema } from '../../config/system-config-identifier-schemas.js';
+import { projectZodScalarPresence } from '../agent-vm-parser-support.js';
 
-export function createConfigOption() {
-	return option({
-		type: optional(string),
-		long: 'config',
-		short: 'c',
-		description: 'Path to config/system.jsonc or config/system.json',
-		defaultValue: () => 'config/system.json',
+export const systemConfigPathSchema = z.string().min(1).default('config/system.json');
+export const optionalZoneIdSchema = zoneIdSchema.optional();
+
+export function cliDescription(description: string): Message {
+	return [text(description)];
+}
+
+export function createConfigOption(): Parser<
+	'sync',
+	z.infer<typeof systemConfigPathSchema>,
+	unknown
+> {
+	return projectZodScalarPresence({
+		parser: option(
+			'-c',
+			'--config',
+			zod(systemConfigPathSchema, {
+				metavar: 'PATH',
+				placeholder: systemConfigPathSchema.parse(undefined),
+			}),
+			{ description: cliDescription('Path to config/system.jsonc or config/system.json') },
+		),
+		schema: systemConfigPathSchema,
 	});
 }
 
-export function createZoneOption() {
-	return option({
-		type: optional(string),
-		long: 'zone',
-		short: 'z',
-		description: 'Zone identifier (lists available zones when omitted)',
+export function createZoneOption(): Parser<'sync', z.infer<typeof optionalZoneIdSchema>, unknown> {
+	return projectZodScalarPresence({
+		parser: option(
+			'-z',
+			'--zone',
+			zod(optionalZoneIdSchema, { metavar: 'ZONE_ID', placeholder: undefined }),
+			{ description: cliDescription('Zone identifier (lists available zones when omitted)') },
+		),
+		schema: optionalZoneIdSchema,
 	});
 }
 
-export function createConfirmFlag() {
-	return flag({
-		long: 'confirm',
-		description: 'Confirm the destructive action',
-	});
+export function createPresenceFlag(name: OptionName, description: string): Parser<'sync', boolean> {
+	return withDefault(flag(name, { description: cliDescription(description) }), false);
 }
 
-export function createPurgeFlag() {
-	return flag({
-		long: 'purge',
-		description: 'Remove persisted zone state and workspaces',
-	});
+export function createConfirmFlag(): Parser<'sync', boolean> {
+	return createPresenceFlag('--confirm', 'Confirm the destructive action');
 }
 
-export function loadSystemConfigFromOption(
-	configPath: string | undefined,
-	dependencies: Pick<CliDependencies, 'loadSystemConfig'>,
-): Promise<LoadedSystemConfig> {
-	const resolvedConfigPath = configPath ?? 'config/system.json';
-	return dependencies.loadSystemConfig(resolvedConfigPath).catch((error: unknown) => {
-		if (error instanceof ZodError) {
-			throw new Error(formatZodError(`Invalid ${resolvedConfigPath} configuration:`, error), {
-				cause: error,
-			});
-		}
-		if (error instanceof SyntaxError) {
-			throw new Error(`Invalid JSON in ${resolvedConfigPath}: ${error.message}`, {
-				cause: error,
-			});
-		}
-		throw error;
-	});
-}
-
-export function appendZoneArgument(arguments_: string[], zoneId: string): readonly string[] {
-	return [...arguments_, '--zone', zoneId];
-}
-
-export function parseGatewayType(gatewayType: string | undefined): GatewayType {
-	if (gatewayType === 'openclaw') {
-		return gatewayType;
-	}
-	if (gatewayType === 'worker') {
-		return gatewayType;
-	}
-
-	throw new Error(
-		`Gateway type is required. Expected 'openclaw' or 'worker'${gatewayType ? `, got '${gatewayType}'` : ''}.`,
-	);
-}
-
-export function parseSecretsProvider(secretsProvider: string | undefined): SecretsProvider {
-	if (secretsProvider === undefined) {
-		throw new Error(
-			`Secrets provider is required. Expected one of: ${secretsProviderSchema.options.join(', ')}.`,
-		);
-	}
-	const parsed = secretsProviderSchema.safeParse(secretsProvider);
-	if (!parsed.success) {
-		throw new Error(
-			`Invalid secrets provider '${secretsProvider}'. Expected one of: ${secretsProviderSchema.options.join(', ')}.`,
-		);
-	}
-	return parsed.data;
+export function createPurgeFlag(): Parser<'sync', boolean> {
+	return createPresenceFlag('--purge', 'Remove persisted zone state and workspaces');
 }

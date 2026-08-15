@@ -94,6 +94,9 @@
 	},
 	"dependencies": {
 		"@modelcontextprotocol/sdk": "^1.29.0",
+		"@optique/core": "^1.2.0",
+		"@optique/run": "^1.2.0",
+		"@optique/zod": "^1.2.0",
 		"zod": "^4.4.3"
 	},
 	"devDependencies": {

@@ -11,7 +11,7 @@ import {
 	loadWorkerConfigDraft,
 } from '@agent-vm/agent-vm-worker';
 
-export type InstructionResetPhase = 'plan' | 'work' | 'wrapup' | 'all';
+import type { InstructionResetPhase } from './commands/config-command-schemas.js';
 
 export interface ResetWorkerInstructionsOptions {
 	readonly workerConfigPath: string;

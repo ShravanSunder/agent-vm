@@ -47,6 +47,12 @@ interface StartedGatewayRuntimeProcess {
 	readonly stdout: { value: string };
 }
 
+interface GatewayRuntimeCliResult {
+	readonly exitCode: number;
+	readonly stderr: string;
+	readonly stdout: string;
+}
+
 let fixture: PackedGatewayRuntimeFixture | undefined;
 let startedProcess: StartedGatewayRuntimeProcess | undefined;
 
@@ -68,6 +74,30 @@ async function runCommand(command: string, arguments_: readonly string[]): Promi
 				: String(error);
 		throw new Error(`Command ${command} failed: ${diagnostic}`, { cause: error });
 	}
+}
+
+async function executeGatewayRuntimeCli(
+	binPath: string,
+	arguments_: readonly string[],
+): Promise<GatewayRuntimeCliResult> {
+	return await new Promise<GatewayRuntimeCliResult>((resolve, reject) => {
+		execFileCallback(
+			binPath,
+			arguments_,
+			{ encoding: 'utf8', timeout: PROCESS_WAIT_MILLISECONDS },
+			(error, stdout, stderr) => {
+				if (error !== null && typeof error.code !== 'number') {
+					reject(error);
+					return;
+				}
+				resolve({
+					exitCode: error === null || typeof error.code !== 'number' ? 0 : error.code,
+					stderr,
+					stdout,
+				});
+			},
+		);
+	});
 }
 
 async function sha256File(filePath: string): Promise<string> {
@@ -376,6 +406,41 @@ afterAll(async () => {
 });
 
 describe('packed Gateway runtime executable', () => {
+	it('prints standard help without starting the runtime lifecycle', async () => {
+		if (fixture === undefined) throw new Error('Packed Gateway runtime fixture was not prepared.');
+
+		const result = await executeGatewayRuntimeCli(fixture.binPath, ['--help']);
+
+		expect(result).toMatchObject({ exitCode: 0, stderr: '' });
+		expect(result.stdout).toContain('Usage:');
+		expect(result.stdout).toContain('--config');
+		expect(result.stdout).not.toContain('Gateway runtime service failed.');
+	});
+
+	it.each([
+		['missing config option', []],
+		['relative config path', ['--config', 'config/gateway-runtime.json']],
+		['unknown option', ['--config', '/tmp/gateway-runtime.json', '--unknown']],
+		[
+			'duplicate config option',
+			['--config', '/tmp/gateway-runtime.json', '--config', '/tmp/other.json'],
+		],
+	] as const)(
+		'rejects %s through standard parser stderr and status',
+		async (_description, args) => {
+			if (fixture === undefined)
+				throw new Error('Packed Gateway runtime fixture was not prepared.');
+
+			const result = await executeGatewayRuntimeCli(fixture.binPath, args);
+
+			expect(result.exitCode).toBe(1);
+			expect(result.stdout).toBe('');
+			expect(result.stderr).toContain('Usage:');
+			expect(result.stderr).not.toContain('Gateway runtime service failed.');
+			expect(result.stderr).not.toMatch(/\n\s+at\s/u);
+		},
+	);
+
 	it('starts the manifest bin, serves the real SDK, and retires with protected evidence', async () => {
 		if (fixture === undefined) throw new Error('Packed Gateway runtime fixture was not prepared.');
 		// Arrange

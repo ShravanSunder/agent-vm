@@ -5,8 +5,10 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { createStaticSecretResolver } from '@agent-vm/secret-management';
+import { parseSync } from '@optique/core/parser';
 import { describe, expect, it, vi } from 'vitest';
 
+import { mcpPortalRootParser } from '../cli/mcp-portal-cli-parser.js';
 import {
 	deriveAgentBearerToken,
 	formatMasterKeyFingerprint,
@@ -16,10 +18,22 @@ import {
 	startFakeUpstreamMcpServer,
 } from '../testing/fake-upstream-mcp-server.js';
 import {
-	runMcpPortal,
-	shouldRunMcpPortalEntrypoint,
+	runMcpPortalCommand,
 	waitUntilPortalServerShutdown,
-} from './mcp-portal.js';
+	type AgentVmMcpPortalRuntimeProps,
+} from './mcp-portal-command-dispatcher.js';
+import { shouldRunMcpPortalEntrypoint } from './mcp-portal.js';
+
+const parserRejected = Symbol('parser-rejected');
+
+async function runMcpPortal(
+	args: readonly string[],
+	props: AgentVmMcpPortalRuntimeProps = {},
+): Promise<number | typeof parserRejected> {
+	const parsed = parseSync(mcpPortalRootParser, args);
+	if (!parsed.success) return parserRejected;
+	return await runMcpPortalCommand(parsed.value, props);
+}
 
 class FakeSignalTarget {
 	private readonly emitter = new EventEmitter();
@@ -41,6 +55,11 @@ const externalMasterKey = Buffer.from('0123456789abcdef0123456789abcdef');
 const externalMasterKeyText = externalMasterKey.toString('base64url');
 
 describe('mcp-portal CLI', () => {
+	it('distinguishes parser rejection from an operation failure', async () => {
+		expect(await runMcpPortal(['validate'])).toBe(parserRejected);
+		expect(parserRejected).not.toBe(1);
+	});
+
 	it('closes the serve runtime when a shutdown signal arrives', async () => {
 		const signalTarget = new FakeSignalTarget();
 		const close = vi.fn(async () => undefined);
@@ -86,7 +105,9 @@ describe('mcp-portal CLI', () => {
 				}),
 			);
 
-			await expect(runMcpPortal(['serve', '--config-dir', workspace])).resolves.toBe(1);
+			await expect(runMcpPortal(['serve', '--config-dir', workspace])).resolves.toBe(
+				parserRejected,
+			);
 			expect(
 				await runMcpPortal([
 					'mcp-proxy',
@@ -604,20 +625,7 @@ describe('mcp-portal CLI', () => {
 			return true;
 		});
 		try {
-			expect(
-				await runMcpPortal([
-					'mcp-proxy',
-					'write-credential',
-					'--config-dir',
-					'/tmp/unused',
-					'--agent',
-					'shravan',
-					'--out',
-					'/tmp/unused.json',
-					'--master-key-fingerprint',
-					'sha256:not-used',
-				]),
-			).toBe(1);
+			expect(await runMcpPortal(['mcp-proxy', 'write-credential'])).toBe(1);
 			expect(stderrChunks.join('')).toContain('print-client-config');
 			expect(stderrChunks.join('')).toContain('disabled');
 		} finally {
