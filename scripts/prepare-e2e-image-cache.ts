@@ -4,6 +4,7 @@ import {
 	removeE2eTempRoot,
 	scaffoldOpenClawE2eProject,
 	scaffoldWorkerE2eProject,
+	useLocalOpenClawGatewayImagePackages,
 	useLocalOpenClawPluginGatewayImage,
 } from '../packages/agent-vm/src/integration-tests/e2e-harness.js';
 
@@ -36,7 +37,16 @@ async function main(): Promise<void> {
 			zoneId: 'ci-worker-image-cache',
 		});
 		workerTempRoot = workerProject.tempRoot;
-		await prepareGatewayE2eProjectImages({ imageFamilies: ['gateway'], project: openClawProject });
+		await useLocalOpenClawGatewayImagePackages({
+			profileName: openClawProject.zone.gateway.imageProfile,
+			projectRoot: openClawProject.tempRoot,
+			repoRoot: process.cwd(),
+			systemConfig: openClawProject.systemConfig,
+		});
+		await prepareGatewayE2eProjectImages({
+			imageFamilies: ['gateway', 'toolVm'],
+			project: openClawProject,
+		});
 		const pluginProfileName = openClawPluginProject.zone.gateway.imageProfile;
 		await useLocalOpenClawPluginGatewayImage({
 			profileName: pluginProfileName,
@@ -45,10 +55,13 @@ async function main(): Promise<void> {
 			systemConfig: openClawPluginProject.systemConfig,
 		});
 		await prepareGatewayE2eProjectImages({
-			imageFamilies: ['gateway'],
+			imageFamilies: ['gateway', 'toolVm'],
 			project: openClawPluginProject,
 		});
-		await prepareGatewayE2eProjectImages({ imageFamilies: ['gateway'], project: workerProject });
+		await prepareGatewayE2eProjectImages({
+			imageFamilies: ['gateway', 'toolVm'],
+			project: workerProject,
+		});
 		process.stdout.write(`Prepared E2E image cache at ${process.env.AGENT_VM_E2E_CACHE_DIR}\n`);
 	} finally {
 		await Promise.all([
