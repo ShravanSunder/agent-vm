@@ -410,7 +410,7 @@ function assertStdoutExcludesStructuredLogRecords(result: ChildResult): void {
 				typeof Reflect.get(value, 'level') === 'string' &&
 					typeof Reflect.get(value, 'logger') === 'string' &&
 					typeof Reflect.get(value, 'message') === 'string' &&
-					typeof Reflect.get(value, 'timestamp') === 'string',
+					typeof Reflect.get(value, '@timestamp') === 'string',
 				`stdout contains a structured LogTape record: ${line}`,
 			).toBe(false);
 		} catch (error: unknown) {

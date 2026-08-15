@@ -168,6 +168,18 @@ function writeControllerRuntimeLog(
 	);
 }
 
+function writeControllerGatewayLog(
+	level: ControllerDiagnosticLevel = 'warning',
+	telemetry: ControllerDiagnosticTelemetry = { operation: 'gateway-runtime-callback' },
+): void {
+	writeControllerDiagnostic(
+		'gateway',
+		level === 'warning'
+			? { event: 'gateway-health-diagnostic', failureClass: 'failure', level, telemetry }
+			: { event: 'gateway-health-diagnostic', level, telemetry },
+	);
+}
+
 function writeControllerGatewayRecoveryLog(
 	level: ControllerDiagnosticLevel = 'warning',
 	telemetry: ControllerDiagnosticTelemetry = { operation: 'gateway-recovery-callback' },
@@ -905,7 +917,7 @@ async function startControllerRuntimeWithOwnershipLock(
 									controlSession: { controllerEpoch },
 									runtimeEnvironment,
 									runtimePluginConfigs,
-									writeLog: writeControllerRuntimeLog,
+									writeLog: writeControllerGatewayLog,
 								},
 								{
 									...effectivePreflightDependencies,
@@ -979,7 +991,7 @@ async function startControllerRuntimeWithOwnershipLock(
 									controllerGatewayRecordTargetsFor(zoneId).managedGatewayRuntimeRecord,
 								secretResolver: startOptions?.secretResolver ?? secretResolver,
 								systemConfig: options.systemConfig,
-								writeLog: writeControllerRuntimeLog,
+								writeLog: writeControllerGatewayLog,
 								zoneId,
 							};
 							if (dependencies.checkObservabilityStackReadiness === undefined) {
@@ -1059,7 +1071,7 @@ async function startControllerRuntimeWithOwnershipLock(
 						})(),
 		...(options.startupFailures ? { startupFailures: options.startupFailures } : {}),
 		systemConfig: options.systemConfig,
-		writeLog: writeControllerRuntimeLog,
+		writeLog: writeControllerGatewayLog,
 		...(options.zoneIds ? { zoneIds: options.zoneIds } : {}),
 	});
 

@@ -8,6 +8,7 @@ import { deriveGatewayControlStablePrincipal } from '@agent-vm/gateway-control-c
 import type { AgentVmHealthEvent } from '@agent-vm/gateway-lifecycle';
 import type { ManagedVm } from '@agent-vm/managed-vm';
 import type { SecretResolver } from '@agent-vm/secret-management';
+import { configure, dispose, reset, type LogRecord } from '@logtape/logtape';
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
@@ -15,6 +16,7 @@ import type { GatewayExpectedAdmissionCohort } from '../gateway/gateway-aggregat
 import type {
 	GatewayZoneDestroyResult,
 	ManagedGatewayZoneStartResult,
+	StartGatewayZoneOptions,
 } from '../gateway/gateway-zone-support.js';
 import { createManagedGatewayBootContract } from '../gateway/managed-gateway-boot-contract.js';
 import {
@@ -474,6 +476,8 @@ afterEach(async () => {
 	} else {
 		process.env.AGENT_VM_OBSERVABILITY_QUERY_START = previousObservabilityQueryStart;
 	}
+	await dispose().catch(() => {});
+	await reset();
 	await rm(controllerRuntimeTestRoot, { force: true, recursive: true });
 });
 
@@ -1856,7 +1860,7 @@ describe('startControllerRuntime', () => {
 		if (!observabilityZone) {
 			throw new Error('Expected observability test zone.');
 		}
-		const startGatewayZone = vi.fn(async () => ({
+		const startGatewayZone = vi.fn(async (_startOptions: StartGatewayZoneOptions) => ({
 			image: {
 				built: true,
 				fingerprint: 'gateway-image',
@@ -1899,6 +1903,22 @@ describe('startControllerRuntime', () => {
 			async (_options: CheckObservabilityStackReadinessOptions) =>
 				({ ok: true, status: 'ready' }) as const,
 		);
+		const capturedLogRecords: LogRecord[] = [];
+		await configure({
+			loggers: [
+				{
+					category: ['agent-vm', 'controller'],
+					lowestLevel: 'trace',
+					sinks: ['capture'],
+				},
+			],
+			reset: true,
+			sinks: {
+				capture: (record): void => {
+					capturedLogRecords.push(record);
+				},
+			},
+		});
 
 		const runtime = await startControllerRuntime(
 			{
@@ -1934,6 +1954,17 @@ describe('startControllerRuntime', () => {
 		expect('retention' in runtimeConfig).toBe(false);
 		expect('projectName' in runtimeConfig).toBe(false);
 		expect(startGatewayZone).toHaveBeenCalledOnce();
+		const startGatewayZoneCall = startGatewayZone.mock.calls[0];
+		if (!startGatewayZoneCall) {
+			throw new Error('Expected startGatewayZone options.');
+		}
+		startGatewayZoneCall[0].writeLog?.('info', { operation: 'verify-gateway-category' });
+		expect(capturedLogRecords).toContainEqual(
+			expect.objectContaining({
+				category: ['agent-vm', 'controller', 'gateway'],
+				properties: expect.objectContaining({ operation: 'verify-gateway-category' }),
+			}),
+		);
 		await expect(runtime.close()).resolves.toBeUndefined();
 	});
 
