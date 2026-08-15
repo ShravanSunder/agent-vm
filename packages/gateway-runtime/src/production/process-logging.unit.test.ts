@@ -307,6 +307,30 @@ describe('Gateway Runtime process logging', () => {
 		expect(disposeImpl).toHaveBeenCalledTimes(1);
 	});
 
+	it('ignores records emitted after shutdown without an unhandled rejection', async () => {
+		const captured = createCapturedWritable();
+		const logging = await configureProcessLogging({
+			stderr: captured.stream,
+			observability: disabledObservability(),
+		});
+		const unhandledRejections: unknown[] = [];
+		const onUnhandledRejection = (reason: unknown): void => {
+			unhandledRejections.push(reason);
+		};
+		process.on('unhandledRejection', onUnhandledRejection);
+		try {
+			await logging.shutdown();
+			expect(() =>
+				getLogger(['agent-vm', 'gateway-runtime', 'late-record']).warning('late record'),
+			).not.toThrow();
+			await new Promise<void>((resolve) => setImmediate(resolve));
+			expect(unhandledRejections).toEqual([]);
+			expect(captured.text()).toBe('');
+		} finally {
+			process.off('unhandledRejection', onUnhandledRejection);
+		}
+	});
+
 	it('does not replace an active root configuration', async () => {
 		const first = await configureProcessLogging({
 			stderr: new Writable({ write: (_chunk, _encoding, callback): void => callback() }),
