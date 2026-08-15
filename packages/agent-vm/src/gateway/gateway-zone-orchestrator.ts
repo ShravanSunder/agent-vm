@@ -110,6 +110,7 @@ import {
 	type GatewayZone,
 	type GatewayControlSessionConnector,
 	type GatewayControlSessionMaterialFactory,
+	type GatewayZoneDestroyResult,
 	type GatewayZonePreflightOptions,
 	type GatewayZoneStartResult,
 	type StartGatewayZoneOptions,
@@ -274,6 +275,15 @@ type ManagedGatewayZone = GatewayZone & {
 
 function isManagedGatewayZone(zone: GatewayZone): zone is ManagedGatewayZone {
 	return zone.gateway.type === 'openclaw' || zone.gateway.type === 'hermes';
+}
+
+function formatGatewayCleanupOutcome(
+	destroyResult: Extract<
+		GatewayZoneDestroyResult,
+		{ readonly kind: 'destroyed-cleanup-incomplete' }
+	>,
+): string {
+	return [...new Set(destroyResult.cleanupFailures.map(({ stage }) => stage))].toSorted().join(':');
 }
 
 function frameworkIdentitiesMatch(
@@ -2109,6 +2119,7 @@ async function startGatewayZoneImplementation(
 		if (result.kind === 'destroyed-cleanup-incomplete') {
 			options.writeLog?.('warning', {
 				operation: 'destroy-managed-gateway-cleanup-incomplete',
+				outcome: formatGatewayCleanupOutcome(result),
 				zoneId: zone.id,
 			});
 		}
@@ -2525,11 +2536,14 @@ async function startGatewayZoneImplementation(
 									: 'connect_error';
 							if (lastLoggedControlAttemptOutcome !== boundedOutcome) {
 								lastLoggedControlAttemptOutcome = boundedOutcome;
-								options.writeLog?.(boundedOutcome === 'connect_error' ? 'warning' : 'info', {
-									operation: 'gateway-control-attachment-attempt',
-									outcome: boundedOutcome,
-									zoneId: zone.id,
-								});
+								options.writeLog?.(
+									boundedOutcome === 'hello_response:accepted' ? 'info' : 'warning',
+									{
+										operation: 'gateway-control-attachment-attempt',
+										outcome: boundedOutcome,
+										zoneId: zone.id,
+									},
+								);
 							}
 							options.onControlSessionAttemptOutcome?.({
 								...outcome,

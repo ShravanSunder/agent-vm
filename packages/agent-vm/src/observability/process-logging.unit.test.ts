@@ -238,6 +238,20 @@ describe('configureProcessLogging', () => {
 		});
 	});
 
+	it('retains identifiers at the 128-character bound', () => {
+		const identifier = `secret-${'a'.repeat(121)}`;
+
+		expect(createBoundedDiagnosticProperties({ operation: identifier })).toEqual({
+			operation: identifier,
+		});
+	});
+
+	it('omits identifiers over the 128-character bound', () => {
+		const identifier = `secret-${'a'.repeat(122)}`;
+
+		expect(createBoundedDiagnosticProperties({ operation: identifier })).toEqual({});
+	});
+
 	it('fails on duplicate process configuration without replacing the active sink', async () => {
 		const firstStderr = createCapturingWritable();
 		const secondStderr = createCapturingWritable();

@@ -227,6 +227,8 @@ describe('Gateway Runtime process logging', () => {
 			if (previousEndpoint === undefined) delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
 			else process.env.OTEL_EXPORTER_OTLP_ENDPOINT = previousEndpoint;
 		}
+
+		expect(getOpenTelemetrySink).toHaveBeenCalledTimes(1);
 	});
 
 	it('does not export logs when the typed observability provider disables them', async () => {

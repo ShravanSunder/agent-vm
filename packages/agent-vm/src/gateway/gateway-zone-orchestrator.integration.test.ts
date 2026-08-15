@@ -1854,6 +1854,59 @@ describe('startGatewayZone', () => {
 		).toBe(false);
 	});
 
+	it('retains bounded cleanup stages in managed Gateway containment logs without cleanup errors', async () => {
+		const vmId = 'vm-managed-cleanup-stage-log';
+		const ownership = createTestVmOwnershipHarness(vmId, createTestGatewayEpochIdentity(vmId));
+		const { configureIngressRoutes, managedVm } = createHealthyGatewayVmStub(vmId, 28_415);
+		const writeLog =
+			vi.fn<(level: 'info' | 'warning', telemetry?: ControllerDiagnosticTelemetry) => void>();
+		configureIngressRoutes.mockImplementation((routes) => {
+			if (routes.length === 0) {
+				throw new Error('secret-bearing ingress cleanup detail');
+			}
+		});
+
+		await expect(
+			startGatewayZone(
+				{
+					createVmOwnership: ownership.createVmOwnership,
+					secretResolver: createOpenClawSecretResolver({
+						DISCORD_BOT_TOKEN: 'discord-token',
+						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
+						PERPLEXITY_API_KEY: 'pplx-key',
+					}),
+					systemConfig: await createSystemConfig(),
+					writeLog,
+					zoneId: 'shravan',
+				},
+				{
+					createGatewayControlSessionMaterial: createExactTestGatewayControlSessionMaterial,
+					gatewayReadinessMaxAttempts: 1,
+					gatewayReadinessRetryDelayMs: 0,
+					managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
+					managedVmImages: testManagedVmImages,
+				},
+				'controller-internal',
+				{ dispatchRuntimeReadiness: false },
+			),
+		).rejects.toThrow();
+
+		const cleanupLog = writeLog.mock.calls.find(
+			([, telemetry]) => telemetry?.operation === 'destroy-managed-gateway-cleanup-incomplete',
+		);
+		expect(cleanupLog).toEqual([
+			'warning',
+			{
+				operation: 'destroy-managed-gateway-cleanup-incomplete',
+				outcome: 'ingress-withdrawal',
+				zoneId: 'shravan',
+			},
+		]);
+		expect(JSON.stringify(writeLog.mock.calls)).not.toContain(
+			'secret-bearing ingress cleanup detail',
+		);
+	});
+
 	it('captures Tool Portal startup evidence before containing an initial control attachment failure', async () => {
 		// Arrange
 		const vmId = 'vm-managed-control-attachment-failure';
@@ -2023,10 +2076,40 @@ describe('startGatewayZone', () => {
 				connectOptions.onAttemptOutcome?.({
 					attachmentGeneration: 3,
 					kind: 'hello_response',
-					outcome: 'accepted',
+					outcome: 'rejected',
 				});
 				connectOptions.onAttemptOutcome?.({
 					attachmentGeneration: 4,
+					kind: 'hello_response',
+					outcome: 'rejected',
+				});
+				connectOptions.onAttemptOutcome?.({
+					attachmentGeneration: 5,
+					kind: 'hello_response',
+					outcome: 'generation_mismatch',
+				});
+				connectOptions.onAttemptOutcome?.({
+					attachmentGeneration: 6,
+					kind: 'hello_response',
+					outcome: 'generation_mismatch',
+				});
+				connectOptions.onAttemptOutcome?.({
+					attachmentGeneration: 7,
+					kind: 'hello_response',
+					outcome: 'stale_attachment',
+				});
+				connectOptions.onAttemptOutcome?.({
+					attachmentGeneration: 8,
+					kind: 'hello_response',
+					outcome: 'stale_attachment',
+				});
+				connectOptions.onAttemptOutcome?.({
+					attachmentGeneration: 9,
+					kind: 'hello_response',
+					outcome: 'accepted',
+				});
+				connectOptions.onAttemptOutcome?.({
+					attachmentGeneration: 10,
 					kind: 'hello_response',
 					outcome: 'accepted',
 				});
@@ -2061,6 +2144,30 @@ describe('startGatewayZone', () => {
 				{
 					operation: 'gateway-control-attachment-attempt',
 					outcome: 'connect_error',
+					zoneId: 'shravan',
+				},
+			],
+			[
+				'warning',
+				{
+					operation: 'gateway-control-attachment-attempt',
+					outcome: 'hello_response:rejected',
+					zoneId: 'shravan',
+				},
+			],
+			[
+				'warning',
+				{
+					operation: 'gateway-control-attachment-attempt',
+					outcome: 'hello_response:generation_mismatch',
+					zoneId: 'shravan',
+				},
+			],
+			[
+				'warning',
+				{
+					operation: 'gateway-control-attachment-attempt',
+					outcome: 'hello_response:stale_attachment',
 					zoneId: 'shravan',
 				},
 			],

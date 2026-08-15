@@ -28,7 +28,7 @@ export interface WriteTaskFailureSentinelOptions {
 }
 
 function writeTaskStateReaderLog(
-	operation: 'read-task-failure-sentinel' | 'read-task-state-log',
+	operation: 'read-task-failure-sentinel' | 'access-task-state-log' | 'invalid-task-state-log',
 ): void {
 	writeControllerDiagnostic('runtime', {
 		event: 'task-state-diagnostic',
@@ -111,7 +111,7 @@ export function createTaskStateReader(options: CreateTaskStateReaderOptions): Ta
 				if (isNodeErrorWithCode(error, 'ENOENT')) {
 					return await readTaskFailureSentinel(taskStateDir, taskId);
 				}
-				writeTaskStateReaderLog('read-task-state-log');
+				writeTaskStateReaderLog('access-task-state-log');
 				throw error;
 			}
 			const state = await loadTaskStateFromLog(filePath);
@@ -121,7 +121,7 @@ export function createTaskStateReader(options: CreateTaskStateReaderOptions): Ta
 					return sentinelState;
 				}
 				const message = `Task state log ${filePath} is empty or does not begin with task-accepted.`;
-				writeTaskStateReaderLog('read-task-state-log');
+				writeTaskStateReaderLog('invalid-task-state-log');
 				throw new Error(message);
 			}
 			return state;

@@ -264,6 +264,22 @@ function gatewayIdentityFor(
 	};
 }
 
+type GatewayCleanupFailureStage = Extract<
+	GatewayZoneDestroyResult,
+	{ readonly kind: 'destroyed-cleanup-incomplete' }
+>['cleanupFailures'][number]['stage'];
+
+function formatGatewayCleanupOutcome(destroyResult: GatewayZoneDestroyResult): string | undefined {
+	if (destroyResult.kind === 'destroyed-clean') {
+		return undefined;
+	}
+	const cleanupStages = new Set<GatewayCleanupFailureStage>();
+	for (const { stage } of destroyResult.cleanupFailures) {
+		cleanupStages.add(stage);
+	}
+	return [...cleanupStages].toSorted().join(':');
+}
+
 function formatGatewayCleanupDebt(
 	activeGateway: Pick<GatewayZoneRuntimeHandle, 'gatewayIdentity'>,
 	destroyResult: GatewayZoneDestroyResult,
@@ -271,8 +287,7 @@ function formatGatewayCleanupDebt(
 	if (destroyResult.kind === 'destroyed-clean') {
 		return undefined;
 	}
-	const cleanupStages = destroyResult.cleanupFailures.map(({ stage }) => stage).join(', ');
-	return `Gateway VM '${activeGateway.gatewayIdentity.gatewayVmId}' was destroyed, but cleanup remains incomplete at: ${cleanupStages}.`;
+	return `Gateway VM '${activeGateway.gatewayIdentity.gatewayVmId}' was destroyed, but cleanup remains incomplete at: ${formatGatewayCleanupOutcome(destroyResult)}.`;
 }
 
 function cleanupStageSucceeded(
@@ -627,6 +642,7 @@ export function createManagedGatewayZoneRuntime(
 				});
 				writeManagedGatewayZoneRuntimeLog('record-gateway-cleanup-debt', 'warning', {
 					operation: 'record-gateway-cleanup-debt',
+					outcome: formatGatewayCleanupOutcome(destroyResult),
 					zoneId: options.zone.id,
 				});
 			}
@@ -945,6 +961,7 @@ export function createManagedGatewayZoneRuntime(
 					});
 					writeManagedGatewayZoneRuntimeLog('record-gateway-cleanup-debt', 'warning', {
 						operation: 'record-gateway-cleanup-debt',
+						outcome: formatGatewayCleanupOutcome(destroyResult),
 						zoneId: options.zone.id,
 					});
 				}
@@ -1042,6 +1059,7 @@ export function createManagedGatewayZoneRuntime(
 						});
 						writeManagedGatewayZoneRuntimeLog('record-gateway-cleanup-debt', 'warning', {
 							operation: 'record-gateway-cleanup-debt',
+							outcome: formatGatewayCleanupOutcome(destroyResult),
 							zoneId: options.zone.id,
 						});
 					}

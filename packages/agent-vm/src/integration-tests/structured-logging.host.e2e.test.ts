@@ -26,6 +26,7 @@ interface ChildResult {
 interface ProductionRootChildDefinitionBase {
 	readonly category: readonly string[];
 	readonly environment?: Readonly<Record<string, string | undefined>>;
+	readonly forcePreconfiguredLogging?: boolean;
 	readonly name: string;
 	readonly packageRoot: string;
 	readonly rootModulePath: string;
@@ -104,6 +105,27 @@ function createProductionRootHostProofPreload(definition: ProductionRootChildDef
 		pathToFileURL(path.join(definition.packageRoot, 'package.json')).href,
 	);
 	const logtapeModulePath = pathToFileURL(packageRequire.resolve('@logtape/logtape')).href;
+	const logtapeEsmModulePath = pathToFileURL(
+		path.join(
+			path.dirname(packageRequire.resolve('@logtape/logtape/package.json')),
+			'dist',
+			'mod.js',
+		),
+	).href;
+	const preloadLogtapeImports = definition.forcePreconfiguredLogging
+		? `import { configure } from ${JSON.stringify(logtapeEsmModulePath)};
+import { getLogger } from ${JSON.stringify(logtapeModulePath)};`
+		: `import { getLogger } from ${JSON.stringify(logtapeModulePath)};`;
+	const preconfigureLogging = definition.forcePreconfiguredLogging
+		? `await configure({
+	reset: false,
+	sinks: { preconfigured: () => undefined },
+	loggers: [
+		{ category: ['agent-vm', 'test-preload'], lowestLevel: 'trace', sinks: ['preconfigured'] },
+		{ category: ['logtape', 'meta'], lowestLevel: 'warning', parentSinks: 'override', sinks: ['preconfigured'] },
+	],
+});`
+		: '';
 	const readinessMarker =
 		definition.rootKind === 'gateway-runtime'
 			? 'tool-portal-role-readiness'
@@ -130,7 +152,8 @@ setImmediate(() => process.kill(process.pid, 'SIGTERM'));`
 setImmediate(() => process.kill(process.pid, 'SIGTERM'));`
 				: '';
 	const source = `
-import { getLogger } from ${JSON.stringify(logtapeModulePath)};
+${preloadLogtapeImports}
+${preconfigureLogging}
 const logger = getLogger(${JSON.stringify(definition.category)});
 const originalWrite = process.stdout.write.bind(process.stdout);
 let stdoutBuffer = '';
@@ -1160,6 +1183,29 @@ describe('structured logging process roots', () => {
 			}
 		},
 	);
+
+	it('keeps Worker logging setup failure bounded before root configuration', async () => {
+		const workerFixture = await createWorkerProofFixture();
+		try {
+			const result = await runProductionRootChild({
+				category: ['agent-vm', 'worker', 'server'],
+				environment: {
+					WORK_DIR: workerFixture.workDirectory,
+				},
+				forcePreconfiguredLogging: true,
+				name: 'agent-vm-worker-logging-setup-failure',
+				packageRoot: packageDistPath('packages', 'agent-vm-worker'),
+				rootKind: 'agent-vm-worker',
+				rootModulePath: packageDistPath('packages', 'agent-vm-worker', 'dist', 'main.js'),
+				workerConfigPath: workerFixture.configPath,
+			});
+			expect(result.exitCode).toBe(1);
+			expect(result.stdout).toBe('');
+			expect(result.stderr).toBe('Worker process logging setup failed.\n');
+		} finally {
+			await cleanupFixtureRoot(workerFixture.root);
+		}
+	});
 
 	it('keeps product success when the OTLP receiver is unavailable', async () => {
 		const unavailableCollectorPort = await allocateTcpPort();

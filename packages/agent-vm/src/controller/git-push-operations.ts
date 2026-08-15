@@ -64,12 +64,16 @@ class GitPushFailedAfterRetriesError extends Error {
 	}
 }
 
-function writePushFlowLog(operation: string, attempt?: number): void {
+function writePushFlowLog(operation: string, attempt?: number, outcome?: string): void {
 	writeControllerDiagnostic('git', {
 		event: 'controller-operation-failed',
 		level: 'warning',
 		failureClass: 'failure',
-		telemetry: { operation, ...(attempt === undefined ? {} : { attempt }) },
+		telemetry: {
+			operation,
+			...(attempt === undefined ? {} : { attempt }),
+			...(outcome === undefined ? {} : { outcome }),
+		},
 	});
 }
 
@@ -129,7 +133,7 @@ async function recordPushEvent(options: {
 	try {
 		await options.recordEvent?.(options.event);
 	} catch {
-		writePushFlowLog('record-controller-git-event');
+		writePushFlowLog('record-controller-git-event', undefined, options.event.event);
 	}
 }
 

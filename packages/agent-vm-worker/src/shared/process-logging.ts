@@ -84,6 +84,24 @@ function boundSafeErrorClass(value: string): string | undefined {
 	return boundedValue;
 }
 
+function boundSafeErrorCode(value: unknown): string | undefined {
+	if (typeof value !== 'string') return undefined;
+	const boundedValue = boundSafeString(value);
+	if (
+		boundedValue === undefined ||
+		!/^[A-Z][A-Z0-9_]{0,127}$/u.test(boundedValue) ||
+		diagnosticIdentifierCredentialPattern.test(boundedValue)
+	) {
+		return undefined;
+	}
+	return boundedValue;
+}
+
+function extractSafeErrorCode(error: unknown): string | undefined {
+	if (typeof error !== 'object' || error === null || !('code' in error)) return undefined;
+	return boundSafeErrorCode(error.code);
+}
+
 function boundSafeCorrelationId(value: string): string | undefined {
 	const boundedValue = boundSafeString(value);
 	if (
@@ -130,6 +148,8 @@ export function toSafeWorkerLogProperties(
 			context.error instanceof Error
 				? (boundSafeErrorClass(context.error.name) ?? 'Error')
 				: 'UnknownError';
+		const errorCode = extractSafeErrorCode(context.error);
+		if (errorCode !== undefined) properties.errorCode = errorCode;
 	}
 	return properties;
 }

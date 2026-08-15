@@ -21,7 +21,7 @@ const processLoggingCategory = ['agent-vm'] as const;
 const logtapeMetaCategory = ['logtape', 'meta'] as const;
 const otelDiagnosticsCategory = ['logtape', 'meta', 'otel'] as const;
 const maxDiagnosticStringLength = 256;
-const diagnosticIdentifierPattern = /^[a-z0-9][a-z0-9._:-]{0,255}$/iu;
+const diagnosticIdentifierPattern = /^[a-z0-9][a-z0-9._:-]{0,127}$/iu;
 const diagnosticIdentifierCredentialPattern =
 	/^(?:gh[pousr]_|github_pat_|sk-(?:proj-)?|xox[baprs]-|ya29\.|eyJ[a-z0-9_-]*\.[a-z0-9_-]+\.[a-z0-9_-]+)/iu;
 const diagnosticCredentialPattern =

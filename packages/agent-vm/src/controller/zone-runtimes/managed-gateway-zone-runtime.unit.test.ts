@@ -43,6 +43,15 @@ import {
 } from './managed-gateway-zone-runtime.js';
 import type { GatewayZoneRuntimeHandle } from './zone-runtime-types.js';
 
+const { writeControllerDiagnosticMock } = vi.hoisted(() => ({
+	writeControllerDiagnosticMock: vi.fn(),
+}));
+
+vi.mock('../controller-diagnostic-logging.js', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../controller-diagnostic-logging.js')>();
+	return { ...actual, writeControllerDiagnostic: writeControllerDiagnosticMock };
+});
+
 const managedGatewayZoneRuntimeTestRoot = path.join(
 	tmpdir(),
 	`agent-vm-managed-gateway-zone-runtime-test-${process.pid}`,
@@ -240,6 +249,7 @@ const testGatewayRuntimeArtifactLimits = Object.freeze({
 }) satisfies GatewayRuntimeArtifactLimits;
 
 afterEach(async () => {
+	writeControllerDiagnosticMock.mockClear();
 	await rm(managedGatewayZoneRuntimeTestRoot, { force: true, recursive: true });
 });
 
@@ -1790,6 +1800,7 @@ describe('createManagedGatewayZoneRuntime stop and restart safety', () => {
 	});
 
 	it('admits a preflighted successor after proven destruction with bounded cleanup debt', async () => {
+		writeControllerDiagnosticMock.mockClear();
 		const closeGateway = vi.fn(async () => undefined);
 		const destroyGateway = vi.fn(async () => {
 			await closeGateway();
@@ -1798,6 +1809,14 @@ describe('createManagedGatewayZoneRuntime stop and restart safety', () => {
 					{
 						error: new Error('secret-bearing boot-input cleanup detail'),
 						stage: 'managed-boot-input-release',
+					},
+					{
+						error: new Error('secret-bearing runtime-record cleanup detail'),
+						stage: 'runtime-record-deletion',
+					},
+					{
+						error: new Error('duplicate secret-bearing runtime-record cleanup detail'),
+						stage: 'runtime-record-deletion',
 					},
 				] as const,
 				kind: 'destroyed-cleanup-incomplete',
@@ -1882,6 +1901,19 @@ describe('createManagedGatewayZoneRuntime stop and restart safety', () => {
 		);
 		expect(operationRecords.map(({ errorMessage }) => errorMessage).join('\n')).not.toContain(
 			'secret-bearing boot-input cleanup detail',
+		);
+		expect(writeControllerDiagnosticMock).toHaveBeenCalledWith('gateway', {
+			event: 'gateway-health-diagnostic',
+			failureClass: 'failure',
+			level: 'warning',
+			telemetry: {
+				operation: 'record-gateway-cleanup-debt',
+				outcome: 'managed-boot-input-release:runtime-record-deletion',
+				zoneId: 'shravan',
+			},
+		});
+		expect(JSON.stringify(writeControllerDiagnosticMock.mock.calls)).not.toContain(
+			'secret-bearing runtime-record cleanup detail',
 		);
 		expect(runtime.getSnapshot()).toMatchObject({
 			gateway: { vm: { id: 'gateway-vm-replacement' } },

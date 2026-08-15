@@ -210,6 +210,10 @@ describe('createTaskStateReader', () => {
 
 		await expect(reader.read('zone-1', malformedSentinelTaskId)).rejects.toThrow();
 
+		const accessFailureTaskId = 'access-failure';
+		await fs.writeFile(path.join(stateDir, 'tasks', accessFailureTaskId), 'not a directory');
+		await expect(reader.read('zone-1', accessFailureTaskId)).rejects.toThrow();
+
 		const malformedLogTaskId = 'malformed-log';
 		const malformedLogPath = path.join(
 			stateDir,
@@ -236,7 +240,12 @@ describe('createTaskStateReader', () => {
 			{
 				event: 'task-state-diagnostic',
 				failureClass: 'failure',
-				operation: 'read-task-state-log',
+				operation: 'access-task-state-log',
+			},
+			{
+				event: 'task-state-diagnostic',
+				failureClass: 'failure',
+				operation: 'invalid-task-state-log',
 			},
 		]);
 	});

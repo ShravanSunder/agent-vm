@@ -163,13 +163,16 @@ describe.sequential('worker process logging', () => {
 	});
 
 	it('keeps only bounded safe worker context', () => {
+		const error = Object.assign(new Error('raw command stdout must not be logged'), {
+			code: 'ENOSPC',
+		});
 		const properties = toSafeWorkerLogProperties({
 			event: 'task-failed',
 			failureClass: 'executor-error',
 			correlationId: 'worker-operation-1',
 			attempt: 2,
 			durationMs: 42,
-			error: new Error('raw command stdout must not be logged'),
+			error,
 		});
 
 		expect(properties).toEqual({
@@ -179,7 +182,34 @@ describe.sequential('worker process logging', () => {
 			attempt: 2,
 			durationMs: 42,
 			errorClass: 'Error',
+			errorCode: 'ENOSPC',
 		});
+	});
+
+	it('retains safe codes from unknown Error-like values', () => {
+		expect(
+			toSafeWorkerLogProperties({
+				error: { code: 'ENOENT', message: 'raw file path must not be logged' },
+			}),
+		).toEqual({
+			errorClass: 'UnknownError',
+			errorCode: 'ENOENT',
+		});
+	});
+
+	it('omits credential-shaped and unsafe error codes', () => {
+		for (const code of [
+			'ghp_0123456789abcdefghijklmnopqrstuvwxyz',
+			'op://vault/item/password',
+			'password=secret-value',
+			'/private/task-repo/file.txt',
+		]) {
+			const properties = toSafeWorkerLogProperties({
+				error: Object.assign(new Error('raw error message must not be logged'), { code }),
+			});
+
+			expect(properties).toEqual({ errorClass: 'Error' });
+		}
 	});
 
 	it('preserves safe JavaScript Error class names', () => {
