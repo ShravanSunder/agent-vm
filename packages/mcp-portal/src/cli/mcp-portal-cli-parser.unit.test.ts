@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 
+import { formatMessage } from '@optique/core/message';
 import { parseSync } from '@optique/core/parser';
 import { constant, option } from '@optique/core/primitives';
 import { zod } from '@optique/zod';
@@ -18,6 +19,14 @@ function parseArguments(argumentsToParse: readonly string[]): unknown {
 		throw new Error('Expected MCP Portal arguments to parse successfully.');
 	}
 	return result.value;
+}
+
+function parseFailureMessage(argumentsToParse: readonly string[]): string {
+	const result = parseSync(mcpPortalRootParser, argumentsToParse);
+	if (result.success) {
+		throw new Error('Expected MCP Portal arguments to fail parsing.');
+	}
+	return formatMessage(result.error);
 }
 
 describe('MCP Portal Optique parser', () => {
@@ -110,6 +119,66 @@ describe('MCP Portal Optique parser', () => {
 		expect(
 			parseArguments(['mcp-proxy', 'serve', '--config-dir', '/config', '--port', '65535']),
 		).toMatchObject({ port: 65_535 });
+	});
+
+	it('parses a non-default portal tool through the Zod enum domain', () => {
+		expect(
+			parseArguments([
+				'call',
+				'--config-dir',
+				'/config',
+				'--agent',
+				'agent',
+				'--input',
+				'request.json',
+				'--tool',
+				'mcp_portal_search',
+			]),
+		).toMatchObject({ toolName: 'mcp_portal_search' });
+	});
+
+	it.each([
+		{
+			expectedFragments: ['Invalid proxy URL protocol', 'ftp:', 'Expected http or https.'],
+			proxyUrl: 'ftp://proxy.example.test',
+		},
+		{ expectedFragments: ['Invalid proxy URL.'], proxyUrl: 'not a URL' },
+	] as const)(
+		'reports the Zod proxy URL constraint for $proxyUrl',
+		({ expectedFragments, proxyUrl }) => {
+			const message = parseFailureMessage([
+				'mcp-proxy',
+				'print-client-config',
+				'--config-dir',
+				'/config',
+				'--agent',
+				'agent',
+				'--master-key-fingerprint',
+				'sha256:current',
+				'--proxy-url',
+				proxyUrl,
+			]);
+
+			for (const expectedFragment of expectedFragments) {
+				expect(message).toContain(expectedFragment);
+			}
+		},
+	);
+
+	it('rejects a portal tool outside the Zod enum domain', () => {
+		const message = parseFailureMessage([
+			'call',
+			'--config-dir',
+			'/config',
+			'--agent',
+			'agent',
+			'--input',
+			'request.json',
+			'--tool',
+			'raw_shell',
+		]);
+
+		expect(message).toContain('Invalid option');
 	});
 
 	it.each([

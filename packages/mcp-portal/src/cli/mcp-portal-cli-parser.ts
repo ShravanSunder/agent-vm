@@ -115,7 +115,10 @@ const generateHelperCommandParser = command(
 		command: constant('generate-helper'),
 		outputDirectory: projectZodScalarPresence(
 			outputDirectorySchema,
-			option('--out', zod(outputDirectorySchema, { placeholder: 'generated' })),
+			option(
+				'--out',
+				zod(outputDirectorySchema, { metavar: 'DIRECTORY', placeholder: 'generated' }),
+			),
 		),
 	}),
 );
@@ -125,16 +128,22 @@ const callCommandParser = command(
 	object({
 		agentId: projectZodScalarPresence(
 			agentIdSchema,
-			option('--agent', zod(agentIdSchema, { placeholder: 'agent' })),
+			option('--agent', zod(agentIdSchema, { metavar: 'AGENT_ID', placeholder: 'agent' })),
 		),
 		command: constant('call'),
 		configDir: projectZodScalarPresence(
 			configDirectorySchema,
-			option('--config-dir', zod(configDirectorySchema, { placeholder: 'config' })),
+			option(
+				'--config-dir',
+				zod(configDirectorySchema, { metavar: 'DIRECTORY', placeholder: 'config' }),
+			),
 		),
 		inputPath: projectZodScalarPresence(
 			inputPathSchema,
-			option('--input', zod(inputPathSchema, { placeholder: 'request.json' })),
+			option(
+				'--input',
+				zod(inputPathSchema, { metavar: 'REQUEST_JSON', placeholder: 'request.json' }),
+			),
 		),
 		toolName: projectZodScalarPresence(
 			portalToolSchema,
@@ -165,7 +174,10 @@ const serveCommandParser = command(
 		command: constant('mcp-proxy.serve'),
 		configDir: projectZodScalarPresence(
 			configDirectorySchema,
-			option('--config-dir', zod(configDirectorySchema, { placeholder: 'config' })),
+			option(
+				'--config-dir',
+				zod(configDirectorySchema, { metavar: 'DIRECTORY', placeholder: 'config' }),
+			),
 		),
 		port: projectZodScalarPresence(
 			portSchema,
@@ -179,16 +191,25 @@ const printClientConfigCommandParser = command(
 	object({
 		agentId: projectZodScalarPresence(
 			agentIdSchema,
-			option('--agent', zod(agentIdSchema, { placeholder: 'agent' })),
+			option('--agent', zod(agentIdSchema, { metavar: 'AGENT_ID', placeholder: 'agent' })),
 		),
 		command: constant('mcp-proxy.print-client-config'),
 		configDir: projectZodScalarPresence(
 			configDirectorySchema,
-			option('--config-dir', zod(configDirectorySchema, { placeholder: 'config' })),
+			option(
+				'--config-dir',
+				zod(configDirectorySchema, { metavar: 'DIRECTORY', placeholder: 'config' }),
+			),
 		),
 		expectedFingerprint: projectZodScalarPresence(
 			fingerprintSchema,
-			option('--master-key-fingerprint', zod(fingerprintSchema, { placeholder: 'fingerprint' })),
+			option(
+				'--master-key-fingerprint',
+				zod(fingerprintSchema, {
+					metavar: 'SHA256_FINGERPRINT',
+					placeholder: 'fingerprint',
+				}),
+			),
 		),
 		proxyUrl: projectZodScalarPresence(
 			optionalProxyUrlSchema,

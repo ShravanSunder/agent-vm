@@ -244,6 +244,28 @@ describe('Optique cutover built CLI contract', () => {
 		},
 	);
 
+	it('mcp-portal preserves format-specific option metavars in rendered help', async () => {
+		// Arrange / Act
+		const callHelp = await runBuiltCli('mcp-portal', ['call', '--help']);
+		const helperHelp = await runBuiltCli('mcp-portal', ['generate-helper', '--help']);
+		const proxyHelp = await runBuiltCli('mcp-portal', [
+			'mcp-proxy',
+			'print-client-config',
+			'--help',
+		]);
+
+		// Assert
+		for (const result of [callHelp, helperHelp, proxyHelp]) {
+			expect(result.exitCode).toBe(0);
+			expect(result.stderr).toBe('');
+		}
+		expect(callHelp.stdout).toContain('--agent AGENT_ID');
+		expect(callHelp.stdout).toContain('--config-dir DIRECTORY');
+		expect(callHelp.stdout).toContain('--input REQUEST_JSON');
+		expect(helperHelp.stdout).toContain('--out DIRECTORY');
+		expect(proxyHelp.stdout).toContain('--master-key-fingerprint SHA256_FINGERPRINT');
+	});
+
 	it('agent-vm-worker executes a valid built health operation against a real listener', async () => {
 		// Arrange
 		const healthServer = await startWorkerHealthServer();
