@@ -319,6 +319,24 @@ describe('Optique cutover built CLI contract', () => {
 		expect(result.stderr).toBe('');
 	});
 
+	it('agent-vm-worker preserves command and option descriptions in built help', async () => {
+		// Arrange / Act
+		const rootHelp = await runBuiltCli('agent-vm-worker', ['--help']);
+		const serveHelp = await runBuiltCli('agent-vm-worker', ['serve', '--help']);
+
+		// Assert
+		for (const result of [rootHelp, serveHelp]) {
+			expect(result.exitCode).toBe(0);
+			expect(result.stderr).toBe('');
+		}
+		expect(rootHelp.stdout).toContain('Start the agent-vm-worker HTTP server');
+		expect(rootHelp.stdout).toContain('Check worker health');
+		expect(serveHelp.stdout).toContain('--config PATH');
+		expect(serveHelp.stdout).toContain('Path to worker config JSON');
+		expect(serveHelp.stdout).toContain('--state-dir PATH');
+		expect(serveHelp.stdout).toContain('State directory path');
+	});
+
 	it('agent-vm-worker accepts the maximum port and reaches the health operation', async () => {
 		// Arrange / Act
 		const result = await runBuiltCli('agent-vm-worker', ['health', '--port', '65535']);
