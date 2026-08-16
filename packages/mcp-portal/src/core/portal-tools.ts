@@ -15,6 +15,7 @@ import type { ToolSearchResult } from '../search-index.js';
 import { decodeToolRef } from '../tool-ref.js';
 import { createToolSummary, type ToolSchemaHint, type ToolSummary } from '../tool-summary.js';
 import { upstreamMcpFailureDetailsFromUnknown } from '../upstream-mcp-errors.js';
+import type { UpstreamMcpFailureClass } from '../upstream-mcp-errors.js';
 import { validatePortalToolArguments } from './portal-call-validation.js';
 
 export interface PortalToolSuccess {
@@ -60,11 +61,14 @@ interface PortalSafeUpstreamMcpFailureDetails {
 	readonly attemptTransport?: string;
 	readonly causeMessage: string;
 	readonly elapsedMs: number;
+	readonly failureClass?: UpstreamMcpFailureClass;
 	readonly hint?: string;
+	readonly httpStatusCode?: number;
 	readonly kind: 'upstream_mcp_failed';
 	readonly namespace: string;
 	readonly operation: string;
 	readonly phase: string;
+	readonly providerErrorMessage?: string;
 	readonly timeoutMs?: number;
 	readonly toolName?: string;
 	readonly transport: PortalSafeTransportDiagnostic;
@@ -305,11 +309,16 @@ function safeUpstreamMcpFailureDetailsFromUnknown(
 			: { attemptTransport: upstream.attemptTransport }),
 		causeMessage: safeUpstreamMcpCauseMessage(),
 		elapsedMs: upstream.elapsedMs,
+		...(upstream.failureClass === undefined ? {} : { failureClass: upstream.failureClass }),
 		...(upstream.hint === undefined ? {} : { hint: upstream.hint }),
+		...(upstream.httpStatusCode === undefined ? {} : { httpStatusCode: upstream.httpStatusCode }),
 		kind: upstream.kind,
 		namespace: upstream.namespace,
 		operation: upstream.operation,
 		phase: upstream.phase,
+		...(upstream.providerErrorMessage === undefined
+			? {}
+			: { providerErrorMessage: upstream.providerErrorMessage }),
 		...(upstream.timeoutMs === undefined ? {} : { timeoutMs: upstream.timeoutMs }),
 		...(upstream.toolName === undefined ? {} : { toolName: upstream.toolName }),
 		transport: { kind: upstream.transport.kind },
@@ -576,7 +585,9 @@ function describeToolOutput(props: {
 
 	if (props.includeJsonSchema) {
 		result.inputSchema = props.tool.inputSchema;
-		result.outputSchema = props.tool.outputSchema;
+		if (props.tool.outputSchema !== undefined) {
+			result.outputSchema = props.tool.outputSchema;
+		}
 	}
 	if (props.includeZod) {
 		result.zod = { experimental: true, source: 'z.fromJSONSchema(inputSchema)' };
@@ -620,7 +631,9 @@ function searchOutputWithFullSchema(
 
 	if (tool) {
 		result.inputSchema = tool.inputSchema;
-		result.outputSchema = tool.outputSchema;
+		if (tool.outputSchema !== undefined) {
+			result.outputSchema = tool.outputSchema;
+		}
 	}
 
 	return result;

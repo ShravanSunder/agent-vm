@@ -32,8 +32,11 @@ export interface StartedFakeUpstreamMcpServer {
 }
 
 export interface FakeUpstreamMcpServerOptions {
+	readonly callHttpStatusCode?: 400 | 401 | 403 | 429 | 500;
+	readonly callHttpStatusToolName?: string;
 	readonly emptyTools?: boolean;
 	readonly emitProgress?: boolean;
+	readonly toolErrorMessageByToolName?: Readonly<Record<string, string>>;
 }
 
 interface StartedHonoServer {
@@ -146,6 +149,25 @@ export async function startFakeUpstreamMcpServer(
 	});
 
 	app.all('/mcp', async (context) => {
+		const requestMethods = await readJsonRpcMethodsFromRequest(context);
+		const requestBody = await context.req.raw
+			.clone()
+			.json()
+			.catch(() => undefined);
+		const calledToolName =
+			isObjectRecord(requestBody) &&
+			isObjectRecord(requestBody['params']) &&
+			typeof requestBody['params']['name'] === 'string'
+				? requestBody['params']['name']
+				: undefined;
+		if (
+			options.callHttpStatusCode !== undefined &&
+			requestMethods.includes('tools/call') &&
+			(options.callHttpStatusToolName === undefined ||
+				calledToolName === options.callHttpStatusToolName)
+		) {
+			return context.text('provider response detail must not escape', options.callHttpStatusCode);
+		}
 		const transport = new WebStandardStreamableHTTPServerTransport();
 		const server = new Server(
 			{ name: 'portal-upstream-fixture', version: '1.0.0' },
@@ -164,6 +186,13 @@ export async function startFakeUpstreamMcpServer(
 			if (tool === undefined) {
 				return {
 					content: [{ text: `Unknown tool ${request.params.name}`, type: 'text' }],
+					isError: true,
+				};
+			}
+			const toolErrorMessage = options.toolErrorMessageByToolName?.[tool.name];
+			if (toolErrorMessage !== undefined) {
+				return {
+					content: [{ text: toolErrorMessage, type: 'text' }],
 					isError: true,
 				};
 			}

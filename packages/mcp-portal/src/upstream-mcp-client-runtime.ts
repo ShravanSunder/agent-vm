@@ -6,6 +6,7 @@ import {
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import {
 	StreamableHTTPClientTransport,
+	StreamableHTTPError,
 	type StreamableHTTPClientTransportOptions,
 } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { normalizeHeaders, type Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
@@ -17,6 +18,7 @@ import {
 	isUpstreamMcpError,
 	messageFromUnknownError,
 	transportSummaryFromServer,
+	type UpstreamMcpFailureClass,
 } from './upstream-mcp-errors.js';
 import {
 	redactThrownError,
@@ -152,6 +154,7 @@ interface PendingClient {
 
 const defaultConnectionTimeoutMs = 12_000;
 const defaultMaxResponseBytes = 4 * 1_024 * 1_024;
+const maxProviderErrorMessageCharacters = 2_000;
 const inheritedStdioRuntimeEnvNames = [
 	'NODE_EXTRA_CA_CERTS',
 	'NODE_OPTIONS',
@@ -162,6 +165,69 @@ const inheritedStdioRuntimeEnvNames = [
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isMcpToolErrorResult(value: unknown): boolean {
+	return isObjectRecord(value) && value.isError === true;
+}
+
+function providerErrorMessageFromMcpToolError(value: unknown): string | undefined {
+	if (!isObjectRecord(value) || !Array.isArray(value.content)) {
+		return undefined;
+	}
+	const message = value.content
+		.flatMap((contentBlock): readonly string[] => {
+			if (
+				!isObjectRecord(contentBlock) ||
+				contentBlock.type !== 'text' ||
+				typeof contentBlock.text !== 'string'
+			) {
+				return [];
+			}
+			return [contentBlock.text.trim()];
+		})
+		.filter((text) => text.length > 0)
+		.join('\n');
+	if (message.length === 0) {
+		return undefined;
+	}
+	if (message.length <= maxProviderErrorMessageCharacters) {
+		return message;
+	}
+	return `${message.slice(0, maxProviderErrorMessageCharacters)}…`;
+}
+
+function failureClassFromHttpStatus(httpStatusCode: number): UpstreamMcpFailureClass {
+	if (httpStatusCode === 401) return 'authentication';
+	if (httpStatusCode === 403) return 'authorization';
+	if (httpStatusCode === 429) return 'rate_limit';
+	if (httpStatusCode >= 400 && httpStatusCode < 500) return 'invalid_request';
+	return 'provider_error';
+}
+
+function safeFailureFromUnknown(
+	error: unknown,
+	redactionValues: readonly string[],
+): {
+	readonly causeMessage: string;
+	readonly failureClass?: UpstreamMcpFailureClass;
+	readonly httpStatusCode?: number;
+} {
+	if (
+		error instanceof StreamableHTTPError &&
+		typeof error.code === 'number' &&
+		Number.isInteger(error.code) &&
+		error.code >= 100 &&
+		error.code <= 599
+	) {
+		return {
+			causeMessage: 'Remote MCP request failed.',
+			failureClass: failureClassFromHttpStatus(error.code),
+			httpStatusCode: error.code,
+		};
+	}
+	const redactedError = redactThrownError(error, { exactValues: redactionValues });
+	return { causeMessage: messageFromUnknownError(redactedError) };
 }
 
 function isTransport(value: unknown): value is Transport {
@@ -547,12 +613,18 @@ export function createUpstreamMcpClientRuntime(
 				});
 				return client;
 			} catch (error) {
-				const redactedError = redactThrownError(error, { exactValues: redactionValues });
+				const safeFailure = safeFailureFromUnknown(error, redactionValues);
 				await closeClientAfterFailureOnce(client);
 				const structuredError = createUpstreamMcpError({
 					attemptTransport: transportKind,
-					causeMessage: messageFromUnknownError(redactedError),
+					causeMessage: safeFailure.causeMessage,
 					elapsedMs: elapsedMsSince(startedAt),
+					...(safeFailure.failureClass === undefined
+						? {}
+						: { failureClass: safeFailure.failureClass }),
+					...(safeFailure.httpStatusCode === undefined
+						? {}
+						: { httpStatusCode: safeFailure.httpStatusCode }),
 					namespace: server.namespace,
 					operation: `MCP ${transportKind} connect for namespace "${server.namespace}"`,
 					phase: 'connect',
@@ -650,7 +722,29 @@ export function createUpstreamMcpClientRuntime(
 						},
 					);
 					assertUpstreamResponseSize(upstreamResult, maxResponseBytes);
-					return redactUpstreamResponse(upstreamResult, { exactValues: redactionValues });
+					const redactedUpstreamResult = redactUpstreamResponse(upstreamResult, {
+						exactValues: redactionValues,
+					});
+					if (isMcpToolErrorResult(redactedUpstreamResult)) {
+						if (server === undefined) {
+							throw new Error(`Unknown upstream MCP namespace "${call.namespace}".`);
+						}
+						const providerErrorMessage =
+							providerErrorMessageFromMcpToolError(redactedUpstreamResult);
+						throw createUpstreamMcpError({
+							causeMessage: 'Remote MCP tool returned an error result.',
+							elapsedMs: elapsedMsSince(startedAt),
+							failureClass: 'tool_error',
+							namespace: call.namespace,
+							operation: `MCP callTool ${call.namespace}.${call.toolName}`,
+							phase: 'call_tool',
+							...(providerErrorMessage === undefined ? {} : { providerErrorMessage }),
+							timeoutMs: timeoutMsForServer(server),
+							toolName: call.toolName,
+							transport: transportSummaryFromServer(server),
+						});
+					}
+					return redactedUpstreamResult;
 				} finally {
 					timeoutAbort.dispose();
 				}
@@ -663,12 +757,18 @@ export function createUpstreamMcpClientRuntime(
 				if (isUpstreamMcpError(error)) {
 					throw error;
 				}
-				const redactedError = redactThrownError(error, { exactValues: redactionValues });
+				const safeFailure = safeFailureFromUnknown(error, redactionValues);
 				const server = serversByNamespace.get(call.namespace);
 				if (server !== undefined) {
 					throw createUpstreamMcpError({
-						causeMessage: messageFromUnknownError(redactedError),
+						causeMessage: safeFailure.causeMessage,
 						elapsedMs: elapsedMsSince(startedAt),
+						...(safeFailure.failureClass === undefined
+							? {}
+							: { failureClass: safeFailure.failureClass }),
+						...(safeFailure.httpStatusCode === undefined
+							? {}
+							: { httpStatusCode: safeFailure.httpStatusCode }),
 						namespace: call.namespace,
 						operation: `MCP callTool ${call.namespace}.${call.toolName}`,
 						phase: 'call_tool',
@@ -677,7 +777,7 @@ export function createUpstreamMcpClientRuntime(
 						transport: transportSummaryFromServer(server),
 					});
 				}
-				throw redactedError;
+				throw redactThrownError(error, { exactValues: redactionValues });
 			}
 		},
 		async closeAgentScope(agentScopeId: string): Promise<void> {

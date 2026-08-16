@@ -46,6 +46,16 @@ const unavailableNamespace = 'orientation-unavailable';
 const modelHost = 'orientation-model.provider.test';
 const modelName = 'hermes-orientation-e2e';
 const sessionId = 'hermes-orientation-session';
+const describePrompt = 'describe-remote-tool-without-output-schema';
+const describeSuccessMarker = 'hermes-remote-describe-succeeded';
+const authenticationPrompt = 'call-remote-tool-with-rejected-credential';
+const authenticationSuccessMarker = 'hermes-remote-authentication-error-visible';
+const localSchemaErrorPrompt = 'call-remote-tool-with-locally-invalid-schema';
+const localSchemaErrorSuccessMarker = 'hermes-local-schema-error-visible';
+const remoteSchemaErrorPrompt = 'call-remote-tool-returning-schema-error';
+const remoteSchemaErrorSuccessMarker = 'hermes-remote-schema-error-visible';
+const remoteProviderErrorCanary = 'provider response detail must not escape';
+const remoteSchemaSecretCanary = 'schema-secret-must-not-escape';
 const orientationMarker =
 	'Tool Portal exposes profile-authorized capabilities through four operations:';
 const operationNames = [
@@ -100,12 +110,15 @@ function parseProviderObservation(requestBody: string): ProviderObservation {
 	return { messages };
 }
 
-function writeServerSentCompletion(response: ServerResponse): void {
+function writeServerSentCompletion(
+	response: ServerResponse,
+	content = 'orientation-e2e-response',
+): void {
 	const chunks = [
 		{
 			choices: [
 				{
-					delta: { content: 'orientation-e2e-response', role: 'assistant' },
+					delta: { content, role: 'assistant' },
 					finish_reason: null,
 					index: 0,
 				},
@@ -128,6 +141,49 @@ function writeServerSentCompletion(response: ServerResponse): void {
 	response.end('data: [DONE]\n\n');
 }
 
+function writeServerSentToolCall(
+	response: ServerResponse,
+	options: { readonly argumentsValue: unknown; readonly id: string; readonly name: string },
+): void {
+	const toolCall = {
+		function: { arguments: JSON.stringify(options.argumentsValue), name: options.name },
+		id: options.id,
+		index: 0,
+		type: 'function',
+	} as const;
+	response.writeHead(200, { 'content-type': 'text/event-stream' });
+	response.write(
+		`data: ${JSON.stringify({
+			choices: [
+				{
+					delta: { content: null, role: 'assistant', tool_calls: [toolCall] },
+					finish_reason: null,
+					index: 0,
+				},
+			],
+			created: 1,
+			id: options.id,
+			model: modelName,
+			object: 'chat.completion.chunk',
+		})}\n\n`,
+	);
+	response.write(
+		`data: ${JSON.stringify({
+			choices: [{ delta: {}, finish_reason: 'tool_calls', index: 0 }],
+			created: 1,
+			id: options.id,
+			model: modelName,
+			object: 'chat.completion.chunk',
+		})}\n\n`,
+	);
+	response.end('data: [DONE]\n\n');
+}
+
+function messagesAfterLatestUser(observation: ProviderObservation): readonly ProviderMessage[] {
+	const latestUserIndex = observation.messages.findLastIndex(({ role }) => role === 'user');
+	return latestUserIndex < 0 ? [] : observation.messages.slice(latestUserIndex + 1);
+}
+
 async function startRecordingProvider(): Promise<RecordingProvider> {
 	const observations: ProviderObservation[] = [];
 	// oxlint-disable-next-line typescript/no-misused-promises -- request body consumption is async
@@ -137,7 +193,142 @@ async function startRecordingProvider(): Promise<RecordingProvider> {
 			response.writeHead(404).end();
 			return;
 		}
-		observations.push(parseProviderObservation(await readRequestBody(request)));
+		const observation = parseProviderObservation(await readRequestBody(request));
+		observations.push(observation);
+		const latestUserContent = observation.messages.findLast(({ role }) => role === 'user')?.content;
+		const latestToolResult = messagesAfterLatestUser(observation).find(
+			({ role }) => role === 'tool',
+		)?.content;
+		if (latestUserContent === describePrompt) {
+			if (latestToolResult === undefined) {
+				writeServerSentToolCall(response, {
+					argumentsValue: {
+						arguments: {
+							requests: [
+								{
+									id: 'describe-read',
+									includeJsonSchema: true,
+									tools: [{ name: 'read_thing', namespace: fakeUpstreamNamespace }],
+								},
+							],
+						},
+						name: 'tool_portal_describe',
+					},
+					id: 'hermes-remote-describe-call',
+					name: 'tool_call',
+				});
+				return;
+			}
+			const describeSucceeded =
+				/"status"\s*:\s*"ok"/u.test(latestToolResult) &&
+				/"inputSchema"\s*:/u.test(latestToolResult) &&
+				!/"outputSchema"\s*:/u.test(latestToolResult);
+			writeServerSentCompletion(
+				response,
+				describeSucceeded ? describeSuccessMarker : 'hermes-remote-describe-failed',
+			);
+			return;
+		}
+		if (latestUserContent === authenticationPrompt) {
+			if (latestToolResult === undefined) {
+				writeServerSentToolCall(response, {
+					argumentsValue: {
+						arguments: {
+							calls: [
+								{
+									arguments: { title: 'hello' },
+									id: 'remote-authentication',
+									name: 'read_thing',
+									namespace: fakeUpstreamNamespace,
+								},
+							],
+						},
+						name: 'tool_portal_call',
+					},
+					id: 'hermes-remote-authentication-call',
+					name: 'tool_call',
+				});
+				return;
+			}
+			const authenticationFailureIsVisible =
+				/"code"\s*:\s*"not_authorized"/u.test(latestToolResult) &&
+				latestToolResult.includes('Remote capability authentication failed.') &&
+				!latestToolResult.includes(remoteProviderErrorCanary);
+			writeServerSentCompletion(
+				response,
+				authenticationFailureIsVisible
+					? authenticationSuccessMarker
+					: 'hermes-remote-authentication-error-hidden',
+			);
+			return;
+		}
+		if (latestUserContent === localSchemaErrorPrompt) {
+			if (latestToolResult === undefined) {
+				writeServerSentToolCall(response, {
+					argumentsValue: {
+						arguments: {
+							calls: [
+								{
+									arguments: { title: 42 },
+									id: 'local-schema-error',
+									name: 'read_thing',
+									namespace: fakeUpstreamNamespace,
+								},
+							],
+						},
+						name: 'tool_portal_call',
+					},
+					id: 'hermes-local-schema-error-call',
+					name: 'tool_call',
+				});
+				return;
+			}
+			const localSchemaFailureIsVisible =
+				/"code"\s*:\s*"validation_failed"/u.test(latestToolResult) &&
+				latestToolResult.includes('title: expected string');
+			writeServerSentCompletion(
+				response,
+				localSchemaFailureIsVisible
+					? localSchemaErrorSuccessMarker
+					: 'hermes-local-schema-error-hidden',
+			);
+			return;
+		}
+		if (latestUserContent === remoteSchemaErrorPrompt) {
+			if (latestToolResult === undefined) {
+				writeServerSentToolCall(response, {
+					argumentsValue: {
+						arguments: {
+							calls: [
+								{
+									arguments: { title: 'schema probe' },
+									id: 'remote-schema-error',
+									name: 'write_thing',
+									namespace: fakeUpstreamNamespace,
+								},
+							],
+						},
+						name: 'tool_portal_call',
+					},
+					id: 'hermes-remote-schema-error-call',
+					name: 'tool_call',
+				});
+				return;
+			}
+			const remoteSchemaFailureIsVisible =
+				/"code"\s*:\s*"execution_failed"/u.test(latestToolResult) &&
+				latestToolResult.includes(
+					'Input validation failed at $.search_recency: expected day, week, or month.',
+				) &&
+				!latestToolResult.includes(remoteSchemaSecretCanary);
+			writeServerSentCompletion(
+				response,
+				remoteSchemaFailureIsVisible
+					? remoteSchemaErrorSuccessMarker
+					: 'hermes-remote-schema-error-hidden',
+			);
+			return;
+		}
 		writeServerSentCompletion(response);
 	});
 	await new Promise<void>((resolve, reject) => {
@@ -208,7 +399,7 @@ async function writeToolPortalConfiguration(options: {
 									backend: { kind: 'mcp_provider' },
 									calls: {
 										requiresApproval: { allow: [] },
-										withoutApproval: { allow: ['read_thing'] },
+										withoutApproval: { allow: ['read_thing', 'write_thing'] },
 									},
 									tools: { allow: ['read_thing', 'write_thing'] },
 								},
@@ -250,7 +441,7 @@ async function waitForRootApiHealth(gatewayPort: number): Promise<void> {
 async function requestHermesTurn(options: {
 	readonly gatewayPort: number;
 	readonly prompt: string;
-}): Promise<void> {
+}): Promise<string> {
 	const response = await fetch(
 		`http://127.0.0.1:${String(options.gatewayPort)}/p/${agentId}/v1/chat/completions`,
 		{
@@ -273,7 +464,7 @@ async function requestHermesTurn(options: {
 			`Hermes orientation turn failed with HTTP ${String(response.status)}: ${await response.text()}`,
 		);
 	}
-	await response.text();
+	return await response.text();
 }
 
 function requireLatestUserContent(observation: ProviderObservation): string {
@@ -319,7 +510,13 @@ describeHermesToolPortalOrientationE2e('e2e: Hermes Tool Portal session orientat
 	it('starts eager inventory before messages and injects exact user context at most once', async () => {
 		const repoRoot = path.resolve(process.cwd());
 		[availableUpstream, unavailableUpstream, provider] = await Promise.all([
-			startFakeUpstreamMcpServer(),
+			startFakeUpstreamMcpServer({
+				callHttpStatusCode: 401,
+				callHttpStatusToolName: 'read_thing',
+				toolErrorMessageByToolName: {
+					write_thing: `Input validation failed at $.search_recency: expected day, week, or month. Authorization: Bearer ${remoteSchemaSecretCanary}`,
+				},
+			}),
 			startFakeUpstreamMcpServer({ emptyTools: true }),
 			startRecordingProvider(),
 		]);
@@ -463,5 +660,31 @@ describeHermesToolPortalOrientationE2e('e2e: Hermes Tool Portal session orientat
 			for (const content of systemContents(observation))
 				expect(content).not.toContain(orientationMarker);
 		}
+
+		const describeResponse = await requestHermesTurn({
+			gatewayPort: project.gatewayPort,
+			prompt: describePrompt,
+		});
+		expect(describeResponse).toContain(describeSuccessMarker);
+
+		const authenticationResponse = await requestHermesTurn({
+			gatewayPort: project.gatewayPort,
+			prompt: authenticationPrompt,
+		});
+		expect(authenticationResponse).toContain(authenticationSuccessMarker);
+		expect(authenticationResponse).not.toContain(remoteProviderErrorCanary);
+
+		const localSchemaErrorResponse = await requestHermesTurn({
+			gatewayPort: project.gatewayPort,
+			prompt: localSchemaErrorPrompt,
+		});
+		expect(localSchemaErrorResponse).toContain(localSchemaErrorSuccessMarker);
+
+		const remoteSchemaErrorResponse = await requestHermesTurn({
+			gatewayPort: project.gatewayPort,
+			prompt: remoteSchemaErrorPrompt,
+		});
+		expect(remoteSchemaErrorResponse).toContain(remoteSchemaErrorSuccessMarker);
+		expect(remoteSchemaErrorResponse).not.toContain(remoteSchemaSecretCanary);
 	}, 900_000);
 });

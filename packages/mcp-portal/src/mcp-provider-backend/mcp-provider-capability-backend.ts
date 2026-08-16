@@ -15,7 +15,6 @@ import {
 	PortalSearchResultSchema,
 	JsonValueSchema,
 	type PortalError,
-	type PortalErrorCode,
 	type SafeDiagnostic,
 	type JsonValue,
 } from '@agent-vm/agent-portal-sdk';
@@ -45,6 +44,7 @@ import type {
 	PortalToolResult,
 } from '../core/index.js';
 import type { PortalAgentScopeSource } from '../portal-access-policy.js';
+import { portalErrorFromUnknown, safeDiagnosticForCode } from './mcp-provider-model-errors.js';
 
 export interface McpProviderCapabilityBackendCallOptions {
 	readonly operationIdsByCallId?: Readonly<Record<string, string>>;
@@ -799,17 +799,6 @@ function errorItem(props: {
 	};
 }
 
-function portalErrorFromUnknown(error: unknown): PortalError {
-	const errorRecord = isRecord(error) ? error : {};
-	const codeValue = errorRecord.code ?? errorRecord.kind;
-	const code = typeof codeValue === 'string' ? safeCode(codeValue) : 'execution_failed';
-	return {
-		code,
-		message: safeErrorMessageForCode(code),
-		safeDiagnostic: safeDiagnosticForCode(code),
-	};
-}
-
 function safeDiagnosticsFromCoreResult(
 	coreResult: PortalCoreResult,
 	projection: ToolPortalMcpProjection,
@@ -832,103 +821,6 @@ function safeDiagnosticFromAuditEvent(auditEvent: PortalBatchDiagnostic): SafeDi
 			? { safeParams: { namespace: auditEvent.namespace } }
 			: {}),
 	};
-}
-
-function safeDiagnosticForCode(code: string): SafeDiagnostic {
-	const diagnosticCode = safeDiagnosticCode(code);
-	return {
-		code: diagnosticCode,
-		level: diagnosticCode === 'approval_required' ? 'warn' : 'error',
-		safeMessage: safeErrorMessageForCode(diagnosticCode),
-	};
-}
-
-function safeErrorMessageForCode(code: string): string {
-	const diagnosticCode = safeDiagnosticCode(code);
-	if (diagnosticCode === 'approval_required') {
-		return 'Operator approval is required.';
-	}
-	if (diagnosticCode === 'capability_denied') {
-		return 'Requested capability is not allowed.';
-	}
-	if (diagnosticCode === 'validation_failed') {
-		return 'Capability input did not match the expected schema.';
-	}
-	if (diagnosticCode === 'provider_unavailable') {
-		return 'Capability provider is unavailable.';
-	}
-	if (diagnosticCode === 'timeout') {
-		return 'Capability execution timed out.';
-	}
-	if (diagnosticCode === 'cancelled') {
-		return 'Capability execution was cancelled.';
-	}
-	return 'Capability execution failed.';
-}
-
-function safeDiagnosticCode(code: string): SafeDiagnostic['code'] {
-	if (code === 'approval_required') {
-		return 'approval_required';
-	}
-	if (
-		code === 'capability_denied' ||
-		code === 'unknown_or_denied_tool' ||
-		code === 'call_blocked'
-	) {
-		return 'capability_denied';
-	}
-	if (
-		code === 'invalid_portal_input' ||
-		code === 'input_validation' ||
-		code === 'validation_failed'
-	) {
-		return 'validation_failed';
-	}
-	if (code === 'timeout') {
-		return 'timeout';
-	}
-	if (code === 'cancelled') {
-		return 'cancelled';
-	}
-	if (
-		code === 'provider_unavailable' ||
-		code === 'namespace_unavailable' ||
-		code === 'upstream_discovery_failed' ||
-		code === 'upstream_mcp_failed'
-	) {
-		return 'provider_unavailable';
-	}
-	return 'execution_failed';
-}
-
-function safeCode(code: string): PortalErrorCode {
-	if (
-		code === 'invalid_request' ||
-		code === 'not_found' ||
-		code === 'not_authorized' ||
-		code === 'approval_required' ||
-		code === 'capability_denied' ||
-		code === 'validation_failed' ||
-		code === 'provider_unavailable' ||
-		code === 'execution_failed' ||
-		code === 'cancelled' ||
-		code === 'timeout'
-	) {
-		return code;
-	}
-	const diagnosticCode = safeDiagnosticCode(code);
-	if (
-		diagnosticCode === 'provider_unavailable' ||
-		diagnosticCode === 'capability_denied' ||
-		diagnosticCode === 'approval_required' ||
-		diagnosticCode === 'validation_failed' ||
-		diagnosticCode === 'execution_failed' ||
-		diagnosticCode === 'timeout' ||
-		diagnosticCode === 'cancelled'
-	) {
-		return diagnosticCode;
-	}
-	return 'execution_failed';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

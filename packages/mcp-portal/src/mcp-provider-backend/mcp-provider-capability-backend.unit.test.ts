@@ -1,5 +1,6 @@
 import {
 	PortalCallResultSchema,
+	PortalDescribeResultSchema,
 	PortalListResultSchema,
 	PortalSearchResultSchema,
 } from '@agent-vm/agent-portal-sdk';
@@ -8,6 +9,7 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createPortalCore } from '../core/index.js';
+import { createUpstreamMcpError } from '../upstream-mcp-errors.js';
 import { createMcpProviderCapabilityBackend } from './index.js';
 
 const githubTools = [
@@ -85,6 +87,43 @@ function createBackendFixture(options?: {
 }
 
 describe('MCP provider capability backend', () => {
+	it('describes a remote MCP tool without an optional output schema', async () => {
+		// Arrange
+		const backend = createBackendFixture();
+
+		// Act
+		const result = await backend.describe({
+			requests: [
+				{
+					id: 'describe-issue',
+					includeJsonSchema: true,
+					tools: [{ name: 'get_issue', namespace: 'github' }],
+				},
+			],
+		});
+
+		// Assert
+		expect(PortalDescribeResultSchema.parse(result)).toMatchObject({
+			items: [
+				{
+					id: 'describe-issue',
+					status: 'ok',
+					value: {
+						tools: [
+							{
+								inputSchema: expect.objectContaining({ type: 'object' }),
+								name: 'get_issue',
+								namespace: 'github',
+							},
+						],
+					},
+				},
+			],
+			ok: true,
+		});
+		expect(JSON.stringify(result)).not.toContain('outputSchema');
+	});
+
 	it('preserves direct OpenClaw scope identity while allowing Tool Portal service scope identity', () => {
 		// Arrange
 		const core = createPortalCore({
@@ -479,6 +518,139 @@ describe('MCP provider capability backend', () => {
 		expect(serializedResult).not.toContain('/usr/local/bin/provider');
 	});
 
+	it('gives the model a safe actionable error for remote MCP authentication failures', async () => {
+		// Arrange
+		const callUpstreamTool = vi.fn(async () => {
+			throw createUpstreamMcpError({
+				causeMessage: 'Error POSTing to endpoint: credential detail must not escape',
+				elapsedMs: 12,
+				failureClass: 'authentication',
+				httpStatusCode: 401,
+				namespace: 'github',
+				operation: 'MCP callTool github.get_issue',
+				phase: 'call_tool',
+				toolName: 'get_issue',
+				transport: { kind: 'streamable-http', url: 'https://provider.example.test/mcp' },
+			});
+		});
+		const backend = createBackendFixture({ callUpstreamTool });
+
+		// Act
+		const result = await backend.call({
+			calls: [
+				{
+					arguments: { number: 42 },
+					id: 'read-issue',
+					namespace: 'github',
+					name: 'get_issue',
+				},
+			],
+		});
+
+		// Assert
+		expect(PortalCallResultSchema.parse(result)).toMatchObject({
+			items: [
+				{
+					error: {
+						code: 'not_authorized',
+						message:
+							'Remote capability authentication failed. Ask the operator to verify its provider credential.',
+					},
+					id: 'read-issue',
+					status: 'error',
+				},
+			],
+			ok: false,
+		});
+		const serializedResult = JSON.stringify(result);
+		expect(serializedResult).not.toContain('credential detail');
+		expect(serializedResult).not.toContain('provider.example.test');
+	});
+
+	it.each([
+		{
+			expectedCode: 'not_authorized',
+			expectedMessage: 'Remote capability provider denied access.',
+			expectedRetryable: undefined,
+			failureClass: 'authorization',
+		},
+		{
+			expectedCode: 'validation_failed',
+			expectedMessage: 'Remote capability provider rejected the request.',
+			expectedRetryable: undefined,
+			failureClass: 'invalid_request',
+		},
+		{
+			expectedCode: 'provider_unavailable',
+			expectedMessage: 'Remote capability provider is rate limited.',
+			expectedRetryable: true,
+			failureClass: 'rate_limit',
+		},
+		{
+			expectedCode: 'provider_unavailable',
+			expectedMessage: 'Remote capability provider failed.',
+			expectedRetryable: true,
+			failureClass: 'provider_error',
+		},
+		{
+			expectedCode: 'execution_failed',
+			expectedMessage:
+				'Remote capability reported an execution error: Input validation failed at $.search_recency: expected day, week, or month.',
+			expectedRetryable: undefined,
+			failureClass: 'tool_error',
+		},
+	] as const)(
+		'maps remote MCP $failureClass failures to a safe model-facing error',
+		async ({ expectedCode, expectedMessage, expectedRetryable, failureClass }) => {
+			// Arrange
+			const callUpstreamTool = vi.fn(async () => {
+				throw createUpstreamMcpError({
+					causeMessage: 'provider response detail must not escape',
+					elapsedMs: 12,
+					failureClass,
+					namespace: 'github',
+					operation: 'MCP callTool github.get_issue',
+					phase: 'call_tool',
+					...(failureClass === 'tool_error'
+						? {
+								providerErrorMessage:
+									'Input validation failed at $.search_recency: expected day, week, or month.',
+							}
+						: {}),
+					toolName: 'get_issue',
+					transport: { kind: 'streamable-http', url: 'https://provider.example.test/mcp' },
+				});
+			});
+			const backend = createBackendFixture({ callUpstreamTool });
+
+			// Act
+			const result = await backend.call({
+				calls: [
+					{
+						arguments: { number: 42 },
+						id: 'read-issue',
+						namespace: 'github',
+						name: 'get_issue',
+					},
+				],
+			});
+
+			// Assert
+			const parsedResult = PortalCallResultSchema.parse(result);
+			const firstItem = parsedResult.items[0];
+			expect(firstItem).toMatchObject({
+				error: {
+					code: expectedCode,
+					message: expect.stringContaining(expectedMessage),
+				},
+				status: 'error',
+			});
+			if (firstItem?.status !== 'error') throw new Error('Expected an error item.');
+			expect(firstItem.error.retryable).toBe(expectedRetryable);
+			expect(JSON.stringify(parsedResult)).not.toContain('provider response detail');
+		},
+	);
+
 	it('maps upstream input validation failures to schema errors on the capability surface', async () => {
 		const callUpstreamTool = vi.fn(async () => ({ ok: true }));
 		const backend = createBackendFixture({ callUpstreamTool });
@@ -499,7 +671,7 @@ describe('MCP provider capability backend', () => {
 				{
 					error: {
 						code: 'validation_failed',
-						message: 'Capability input did not match the expected schema.',
+						message: expect.stringMatching(/number.*expected number/u),
 					},
 					id: 'read-issue',
 					operationId: expect.stringMatching(/\S+/u),
