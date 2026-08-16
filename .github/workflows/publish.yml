@@ -1,9 +1,7 @@
-name: Publish
+name: Managed Images
 
-# Publishes managed GHCR base images. npm publishing is optional and
-# disabled by default until npm Trusted Publishing is configured for
-# each @agent-vm/* package. Use scripts/publish-local.sh from master
-# for npm releases today.
+# Publishes managed GHCR base images. npm and PyPI packages use the separate
+# release.yml workflow because managed image tags are an independent train.
 
 on:
   push:
@@ -21,11 +19,6 @@ on:
           - rebuild
           - retag
           - skip
-      publish_npm:
-        description: 'Publish npm packages after ensuring base image tags'
-        required: true
-        default: false
-        type: boolean
       managed_image_tag:
         description: 'Optional managed GHCR image tag to create; defaults to packages/agent-vm/managed-images.json'
         required: false
@@ -42,7 +35,6 @@ jobs:
     runs-on: ubuntu-latest
 
     permissions:
-      id-token: write
       contents: read
       packages: write
 
@@ -58,10 +50,6 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org/
           cache: pnpm
-
-      - name: Upgrade npm to >= 11.5.1 (Trusted Publishing requirement)
-        if: github.event_name == 'workflow_dispatch' && inputs.publish_npm
-        run: npm install -g npm@latest
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -167,16 +155,11 @@ jobs:
           REQUESTED_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.base_images_mode || 'auto' }}
           REQUESTED_MANAGED_IMAGE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.managed_image_tag || '' }}
           REQUESTED_SOURCE_MANAGED_IMAGE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.source_managed_image_tag || '' }}
-          PUBLISH_NPM: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_npm }}
         run: |
           set -euo pipefail
           PACKAGE_VERSION="$(node -p "require('./packages/agent-vm/package.json').version")"
           MANAGED_IMAGE_TAG="$(node -e "console.log(require('./packages/agent-vm/managed-images.json').baseImages['tool-vm'].tag)")"
           IMAGE_TAG="${REQUESTED_MANAGED_IMAGE_TAG:-${MANAGED_IMAGE_TAG}}"
-          if [[ "${PUBLISH_NPM}" == "true" && "${IMAGE_TAG}" != "${MANAGED_IMAGE_TAG}" ]]; then
-            echo "Cannot publish npm with managed_image_tag override; update packages/agent-vm/managed-images.json instead." >&2
-            exit 1
-          fi
           PREVIOUS_VERSION="$(git tag --sort=-v:refname --list 'v*.*.*' | sed 's/^v//' | grep -v "^${PACKAGE_VERSION}$" | head -n 1 || true)"
           SOURCE_IMAGE_TAG="${REQUESTED_SOURCE_MANAGED_IMAGE_TAG}"
           if [[ -z "${PREVIOUS_VERSION}" ]]; then
@@ -214,11 +197,11 @@ jobs:
         uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
-        if: steps.base_images.outputs.mode != 'skip' || github.event_name != 'workflow_dispatch' || inputs.publish_npm
+        if: steps.base_images.outputs.mode != 'skip' || github.event_name != 'workflow_dispatch'
         uses: docker/setup-buildx-action@v4
 
       - name: Log in to GHCR
-        if: steps.base_images.outputs.mode != 'skip' || github.event_name != 'workflow_dispatch' || inputs.publish_npm
+        if: steps.base_images.outputs.mode != 'skip' || github.event_name != 'workflow_dispatch'
         env:
           GHCR_TOKEN: ${{ github.token }}
           GHCR_USER: ${{ github.actor }}
@@ -266,7 +249,7 @@ jobs:
           done
 
       - name: Verify managed base image tags
-        if: steps.base_images.outputs.mode != 'skip' || github.event_name != 'workflow_dispatch' || inputs.publish_npm
+        if: steps.base_images.outputs.mode != 'skip' || github.event_name != 'workflow_dispatch'
         env:
           IMAGE_TAG: ${{ steps.base_images.outputs.image_tag }}
         run: |
@@ -291,7 +274,3 @@ jobs:
               });
             ' "${IMAGE}"
           done
-
-      - name: Publish to npm via OIDC
-        if: github.event_name == 'workflow_dispatch' && inputs.publish_npm
-        run: pnpm -r publish --access=public --no-git-checks

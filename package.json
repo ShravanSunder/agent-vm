@@ -23,6 +23,7 @@
 		"python:test:hermes": "bash scripts/run-hermes-python-tests.sh test",
 		"python:build": "uv build --all-packages",
 		"python:publish": "bash scripts/publish-python-local.sh",
+		"release:version": "tsx scripts/set-release-version.ts",
 		"test:taxonomy": "tsx scripts/audit-test-taxonomy.ts",
 		"test:cli-architecture": "tsx scripts/audit-optique-cli-boundaries.ts",
 		"test:portal-architecture": "tsx scripts/audit-portal-architecture.ts",

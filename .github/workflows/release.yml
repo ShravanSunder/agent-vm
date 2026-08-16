@@ -1,0 +1,123 @@
+name: Release Packages
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [master]
+
+concurrency:
+  group: release-packages
+  cancel-in-progress: false
+
+jobs:
+  publish-packages:
+    name: Publish npm and PyPI packages
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      release-required: ${{ steps.release-metadata.outputs.release-required }}
+      release-sha: ${{ steps.release-metadata.outputs.release-sha }}
+      release-version: ${{ steps.release-metadata.outputs.release-version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Detect committed release version change
+        id: release-metadata
+        env:
+          EXPECTED_RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          RELEASE_SHA="$(git rev-parse HEAD)"
+          if [[ "${RELEASE_SHA}" != "${EXPECTED_RELEASE_SHA}" ]]; then
+            echo "Checked out ${RELEASE_SHA}, expected ${EXPECTED_RELEASE_SHA}" >&2
+            exit 1
+          fi
+          RELEASE_VERSION="$(node -p "require('./packages/agent-vm/package.json').version")"
+          PREVIOUS_VERSION="$(git show HEAD^:packages/agent-vm/package.json | node -e '
+            let source = "";
+            process.stdin.setEncoding("utf8");
+            process.stdin.on("data", (chunk) => { source += chunk; });
+            process.stdin.on("end", () => console.log(JSON.parse(source).version));
+          ')"
+          if [[ "${RELEASE_VERSION}" == "${PREVIOUS_VERSION}" ]]; then
+            RELEASE_REQUIRED="false"
+          else
+            RELEASE_REQUIRED="true"
+          fi
+          {
+            echo "release-required=${RELEASE_REQUIRED}"
+            echo "release-sha=${RELEASE_SHA}"
+            echo "release-version=${RELEASE_VERSION}"
+          } >> "${GITHUB_OUTPUT}"
+          echo "release ${RELEASE_VERSION}: required=${RELEASE_REQUIRED}, sha=${RELEASE_SHA}"
+
+      - name: Set up Node workspace
+        if: steps.release-metadata.outputs.release-required == 'true'
+        uses: ./.github/actions/setup-agent-vm
+        with:
+          build: 'false'
+
+      - name: Upgrade npm for trusted publishing
+        if: steps.release-metadata.outputs.release-required == 'true'
+        run: npm install --global npm@11.19.0
+
+      - name: Set up Python workspace
+        if: steps.release-metadata.outputs.release-required == 'true'
+        uses: ./.github/actions/setup-python-workspace
+
+      - name: Set up Docker Buildx for managed image verification
+        if: steps.release-metadata.outputs.release-required == 'true'
+        uses: docker/setup-buildx-action@v4
+
+      - name: Publish and verify synchronized release
+        if: steps.release-metadata.outputs.release-required == 'true'
+        run: scripts/publish-trusted-release.sh
+
+  create-release:
+    name: Create verified tag and GitHub release
+    needs: publish-packages
+    if: needs.publish-packages.outputs.release-required == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.publish-packages.outputs.release-sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Create or verify release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ needs.publish-packages.outputs.release-sha }}
+          RELEASE_VERSION: ${{ needs.publish-packages.outputs.release-version }}
+        run: |
+          set -euo pipefail
+          TAG_NAME="v${RELEASE_VERSION}"
+          if git rev-parse --quiet --verify "refs/tags/${TAG_NAME}^{commit}" >/dev/null; then
+            TAGGED_SHA="$(git rev-parse "refs/tags/${TAG_NAME}^{commit}")"
+            if [[ "${TAGGED_SHA}" != "${RELEASE_SHA}" ]]; then
+              echo "${TAG_NAME} points to ${TAGGED_SHA}, expected ${RELEASE_SHA}" >&2
+              exit 1
+            fi
+          fi
+          if gh release view "${TAG_NAME}" >/dev/null 2>&1; then
+            echo "GitHub release ${TAG_NAME} already exists at ${RELEASE_SHA}"
+          elif git rev-parse --quiet --verify "refs/tags/${TAG_NAME}^{commit}" >/dev/null; then
+            gh release create "${TAG_NAME}" --verify-tag --title "${TAG_NAME}" --generate-notes
+          else
+            gh release create \
+              "${TAG_NAME}" \
+              --target "${RELEASE_SHA}" \
+              --title "${TAG_NAME}" \
+              --generate-notes
+          fi
