@@ -341,11 +341,28 @@ the OpenClaw gateway overlay tarballs. Then run beta's normal
 ## Release Process
 
 Keep every published `@agent-vm/*` package version in sync for normal releases.
-`pnpm check` and `scripts/publish-local.sh` both fail when package versions
+Create the release PR with `pnpm release:version -- <version>` so all npm and
+Python manifests, the Hermes adapter SDK pin, `pnpm-lock.yaml`, and `uv.lock`
+move together. `pnpm check` and both publishing paths fail when package versions
 drift.
 If any package version has already been published incorrectly, do not try to
 reuse that version. Bump the whole package set to a fresh patch version and
 publish all packages together.
+
+After a release PR merges, `.github/workflows/release.yml` waits for the exact
+`master` CI commit to pass, publishes missing npm and PyPI artifacts through
+GitHub OIDC, verifies the complete registry train, then creates the tag and
+GitHub release in a separate contents-write job. Rerun the same failed workflow
+to recover a partial cross-registry publication; never reuse the version from a
+different commit.
+
+Trusted publishing is external registry state. Every npm package must trust the
+`release.yml` workflow, configured with
+`npm trust github <package> --file release.yml --repo ShravanSunder/agent-vm --allow-publish --yes`.
+Both PyPI projects must name the same owner, repository, and workflow. Configure
+those relationships before the first OIDC release. `scripts/publish-local.sh`
+remains the break-glass publisher and retains the release-specific 1Password
+path described above.
 
 Managed image release pins are a separate release train from npm package
 versions. Do not change `packages/agent-vm/managed-images.json` base image tags
@@ -368,10 +385,10 @@ fingerprints rely on image recipe contents plus the package/runtime version
 inputs. Cache-contract changes must ship with a package version bump for the
 full `@agent-vm/*` set.
 
-Publish only after the release PR is merged and local `master` is
-fast-forwarded to `origin/master`. After publishing, verify with `npm view` for
-every package and inspect the published `@agent-vm/agent-vm` tarball before
-calling the release done.
+For break-glass local publishing, publish only after the release PR is merged
+and local `master` is fast-forwarded to `origin/master`. After either publishing
+path, verify every npm and Python artifact and inspect the published
+`@agent-vm/agent-vm` tarball before calling the release done.
 
 ## Security Invariants
 

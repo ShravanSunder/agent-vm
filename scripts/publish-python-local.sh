@@ -2,19 +2,22 @@
 #
 # Builds and publishes the agent-vm Python packages to PyPI.
 #
-# Live authentication is resolved from 1Password into the uv process
-# environment. Dry-run mode never reads 1Password and requires no token.
+# Local authentication is resolved from 1Password into the uv process
+# environment. CI trusted-publishing mode requires GitHub OIDC and no token.
+# Dry-run mode only builds and validates the explicit artifacts.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 DRY_RUN="false"
+TRUSTED_PUBLISHING="false"
 case "${1:-}" in
 	"") ;;
 	--dry-run) DRY_RUN="true" ;;
+	--trusted-publishing) TRUSTED_PUBLISHING="true" ;;
 	*)
-		echo "[python-publish] error: expected no arguments or --dry-run" >&2
+		echo "[python-publish] error: expected no arguments, --dry-run, or --trusted-publishing" >&2
 		exit 1
 		;;
 esac
@@ -63,38 +66,42 @@ if [[ "$PYTHON_ARTIFACT_COUNT" -ne 4 ]]; then
 	exit 1
 fi
 
-PUBLISH_ARGS=(
-	--trusted-publishing never
-	--check-url https://pypi.org/simple
-)
-
 if [[ "$DRY_RUN" == "true" ]]; then
 	echo "[python-publish] checking SDK artifacts without uploading"
-	uv publish --dry-run "${PUBLISH_ARGS[@]}" "${SDK_ARTIFACTS[@]}"
+	uv publish --dry-run --trusted-publishing never --check-url https://pypi.org/simple "${SDK_ARTIFACTS[@]}"
 	echo "[python-publish] checking Hermes adapter artifacts without uploading"
-	uv publish --dry-run "${PUBLISH_ARGS[@]}" "${ADAPTER_ARTIFACTS[@]}"
+	uv publish --dry-run --trusted-publishing never --check-url https://pypi.org/simple "${ADAPTER_ARTIFACTS[@]}"
 	echo "[python-publish] dry-run complete"
 	exit 0
 fi
 
-PYPI_TOKEN="${AGENT_VM_PYPI_TOKEN-}"
-if [[ -z "$PYPI_TOKEN" ]]; then
-	if [[ -z "${AGENT_VM_PYPI_TOKEN_OP_REF-}" ]]; then
-		echo "[python-publish] error: a resolved PyPI token or 1Password reference is required" >&2
+PUBLISH_ARGS=(--check-url https://pypi.org/simple)
+
+if [[ "$TRUSTED_PUBLISHING" == "true" ]]; then
+	PUBLISH_ARGS+=(--trusted-publishing always)
+	echo "[python-publish] using GitHub OIDC trusted publishing"
+else
+	PUBLISH_ARGS+=(--trusted-publishing never)
+
+	PYPI_TOKEN="${AGENT_VM_PYPI_TOKEN-}"
+	if [[ -z "$PYPI_TOKEN" ]]; then
+		if [[ -z "${AGENT_VM_PYPI_TOKEN_OP_REF-}" ]]; then
+			echo "[python-publish] error: a resolved PyPI token or 1Password reference is required" >&2
+			exit 1
+		fi
+		if ! command -v op >/dev/null 2>&1; then
+			echo "[python-publish] error: 1Password CLI (op) not on PATH" >&2
+			exit 1
+		fi
+		PYPI_TOKEN="$(op read "$AGENT_VM_PYPI_TOKEN_OP_REF")"
+	fi
+	if [[ -z "$PYPI_TOKEN" ]]; then
+		echo "[python-publish] error: 1Password returned an empty PyPI token" >&2
 		exit 1
 	fi
-	if ! command -v op >/dev/null 2>&1; then
-		echo "[python-publish] error: 1Password CLI (op) not on PATH" >&2
-		exit 1
-	fi
-	PYPI_TOKEN="$(op read "$AGENT_VM_PYPI_TOKEN_OP_REF")"
+	export UV_PUBLISH_TOKEN="$PYPI_TOKEN"
+	unset PYPI_TOKEN
 fi
-if [[ -z "$PYPI_TOKEN" ]]; then
-	echo "[python-publish] error: 1Password returned an empty PyPI token" >&2
-	exit 1
-fi
-export UV_PUBLISH_TOKEN="$PYPI_TOKEN"
-unset PYPI_TOKEN
 
 echo "[python-publish] publishing SDK artifacts"
 uv publish "${PUBLISH_ARGS[@]}" "${SDK_ARTIFACTS[@]}"

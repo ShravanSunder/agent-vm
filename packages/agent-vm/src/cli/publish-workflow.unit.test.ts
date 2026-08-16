@@ -88,7 +88,7 @@ describe('publish workflow', () => {
 		expect(sharedSetupAction).not.toContain('ziglang.org');
 	});
 
-	it('ensures managed base images exist as multi-arch manifest lists before optional npm publish', async () => {
+	it('publishes managed base images as multi-arch manifest lists independently of packages', async () => {
 		const workflow = await fs.readFile(
 			path.join(process.cwd(), '.github', 'workflows', 'publish.yml'),
 			'utf8',
@@ -97,17 +97,12 @@ describe('publish workflow', () => {
 		expect(workflow).toContain('base_images_mode');
 		expect(workflow).toContain('managed_image_tag');
 		expect(workflow).toContain('source_managed_image_tag');
-		expect(workflow).toContain('default: false');
 		expect(workflow).toContain('Cache apt packages');
 		expect(workflow).toContain('Install Zig for Gondolin e2e tests');
 		expect(workflow).toContain('Detect managed base image changes');
-		expect(workflow).toContain(
-			"PUBLISH_NPM: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_npm }}",
-		);
 		expect(workflow).toContain('MANAGED_IMAGE_TAG="$(node -e');
-		expect(workflow).toContain(
-			'Cannot publish npm with managed_image_tag override; update packages/agent-vm/managed-images.json instead.',
-		);
+		expect(workflow).not.toContain('publish_npm');
+		expect(workflow).not.toContain('Publish to npm via OIDC');
 		expect(workflow).not.toContain(
 			'IMAGE_VERSION="${REQUESTED_IMAGE_VERSION:-${PACKAGE_VERSION}}"',
 		);
@@ -122,9 +117,6 @@ describe('publish workflow', () => {
 		expect(workflow).toContain('--platform linux/amd64,linux/arm64');
 		expect(workflow).toContain('--push');
 		expect(workflow).toContain('docker buildx imagetools inspect --raw');
-		expect(workflow.indexOf('Verify managed base image tags')).toBeLessThan(
-			workflow.indexOf('Publish to npm via OIDC'),
-		);
 		expect(workflow).not.toMatch(/docker build -t/u);
 		expect(workflow).not.toMatch(/docker push "ghcr\.io\/shravansunder\/agent-vm-/u);
 	});
@@ -212,7 +204,9 @@ describe('publish workflow', () => {
 		expect(publishScript).toContain('--out-dir "$PYTHON_DIST_DIR"');
 		expect(publishScript).not.toContain('dist/*');
 		expect(publishScript).toContain('--trusted-publishing never');
+		expect(publishScript).toContain('--trusted-publishing always');
 		expect(publishScript).toContain('--check-url https://pypi.org/simple');
+		expect(publishScript).toContain('uv publish --dry-run');
 
 		const sdkPublishIndex = publishScript.indexOf('"${SDK_ARTIFACTS[@]}"');
 		const adapterPublishIndex = publishScript.indexOf('"${ADAPTER_ARTIFACTS[@]}"');
@@ -226,6 +220,79 @@ describe('publish workflow', () => {
 		expect(publishScript).toContain('export UV_PUBLISH_TOKEN');
 		expect(publishScript).toContain('unset PYPI_TOKEN');
 		expect(publishScript).not.toContain('.pypirc');
+	});
+
+	it('publishes the synchronized package train from the exact successful master CI commit', async () => {
+		const [agentsGuidance, managedImagesWorkflow, releaseWorkflow, trustedPublishScript] =
+			await Promise.all([
+				fs.readFile(path.join(process.cwd(), 'AGENTS.md'), 'utf8'),
+				fs.readFile(path.join(process.cwd(), '.github', 'workflows', 'publish.yml'), 'utf8'),
+				fs.readFile(path.join(process.cwd(), '.github', 'workflows', 'release.yml'), 'utf8'),
+				fs.readFile(path.join(process.cwd(), 'scripts', 'publish-trusted-release.sh'), 'utf8'),
+			]);
+
+		expect(agentsGuidance).toContain('pnpm release:version -- <version>');
+		expect(agentsGuidance).toContain('.github/workflows/release.yml');
+		expect(agentsGuidance).toContain('npm trust github <package>');
+		expect(agentsGuidance).toContain('remains the break-glass publisher');
+
+		expect(managedImagesWorkflow).not.toContain('id-token: write');
+		expect(managedImagesWorkflow).not.toContain('Publish to npm via OIDC');
+		expect(managedImagesWorkflow).not.toContain('publish_npm');
+
+		expect(releaseWorkflow).toContain('workflow_run:');
+		expect(releaseWorkflow).toContain('workflows: [CI]');
+		expect(releaseWorkflow).toContain('branches: [master]');
+		expect(releaseWorkflow).toContain("github.event.workflow_run.conclusion == 'success'");
+		expect(releaseWorkflow).toContain('ref: ${{ github.event.workflow_run.head_sha }}');
+		expect(releaseWorkflow).toContain('persist-credentials: false');
+		expect(releaseWorkflow).toContain('if [[ "${RELEASE_VERSION}" == "${PREVIOUS_VERSION}" ]]');
+		expect(releaseWorkflow).toContain('RELEASE_REQUIRED="false"');
+		expect(releaseWorkflow).toContain('RELEASE_REQUIRED="true"');
+		expect(releaseWorkflow).toContain('id-token: write');
+		expect(releaseWorkflow).toContain('contents: read');
+		expect(releaseWorkflow).toContain('contents: write');
+		expect(releaseWorkflow).toContain('scripts/publish-trusted-release.sh');
+		expect(releaseWorkflow).toContain('gh release create');
+		expect(releaseWorkflow.indexOf('id-token: write')).toBeLessThan(
+			releaseWorkflow.indexOf('contents: write'),
+		);
+		const publishJob = releaseWorkflow.slice(
+			releaseWorkflow.indexOf('  publish-packages:'),
+			releaseWorkflow.indexOf('  create-release:'),
+		);
+		const releaseJob = releaseWorkflow.slice(releaseWorkflow.indexOf('  create-release:'));
+		expect(publishJob).toContain('id-token: write');
+		expect(publishJob).not.toContain('contents: write');
+		expect(releaseJob).toContain('contents: write');
+		expect(releaseJob).not.toContain('id-token: write');
+		expect(releaseJob).toContain('if [[ "${TAGGED_SHA}" != "${RELEASE_SHA}" ]]');
+		expect(releaseJob).toContain('points to ${TAGGED_SHA}, expected ${RELEASE_SHA}');
+
+		expect(trustedPublishScript).toContain('bash scripts/check-package-version-sync.sh');
+		expect(trustedPublishScript).toContain('pnpm build');
+		expect(trustedPublishScript).toContain('scripts/publish-python-local.sh --trusted-publishing');
+		expect(trustedPublishScript).toContain('npm view "$package_name@$release_version" version');
+		expect(trustedPublishScript).toContain('--filter "$package_name"');
+		expect(trustedPublishScript).toContain('pack \\');
+		expect(trustedPublishScript).toContain('npm publish "$package_tarball"');
+		expect(trustedPublishScript).toContain('--config.ignore-scripts=true');
+		expect(trustedPublishScript).toContain('MANAGED_BASE_IMAGE_MANIFEST');
+		expect(trustedPublishScript).toContain("['linux/amd64', 'linux/arm64']");
+		expect(trustedPublishScript).toContain('NPM_PACKAGE_NAMES_PATH=');
+		expect(trustedPublishScript).toContain('npm_package_count=');
+		expect(trustedPublishScript.match(/fs\.readdirSync\('packages'\)/gu)).toHaveLength(1);
+		const npmExistingVersionIndex = trustedPublishScript.indexOf(
+			'npm view "$package_name@$release_version" version',
+		);
+		const npmSkipIndex = trustedPublishScript.indexOf('continue', npmExistingVersionIndex);
+		const npmPublishIndex = trustedPublishScript.indexOf('npm publish "$package_tarball"');
+		expect(npmExistingVersionIndex).toBeGreaterThan(-1);
+		expect(npmSkipIndex).toBeGreaterThan(npmExistingVersionIndex);
+		expect(npmPublishIndex).toBeGreaterThan(npmSkipIndex);
+		expect(trustedPublishScript).not.toContain('NPM_TOKEN');
+		expect(trustedPublishScript).not.toContain('PYPI_TOKEN');
+		expect(trustedPublishScript).not.toContain('op read');
 	});
 
 	it('publishes npm and Python packages through one verified release entrypoint', async () => {
