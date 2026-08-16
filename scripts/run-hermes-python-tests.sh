@@ -27,9 +27,20 @@ docker run --rm \
 			/workspace/python/agent-vm-hermes-adapter
 		/opt/hermes/.venv/bin/python -c '\''
 import importlib.metadata as metadata
+import pathlib
+import tomllib
+
+repository_root = pathlib.Path("/workspace")
+sdk_project = tomllib.loads(
+	(repository_root / "python/agent-vm-agent-portal-sdk/pyproject.toml").read_text()
+)
+adapter_project = tomllib.loads(
+	(repository_root / "python/agent-vm-hermes-adapter/pyproject.toml").read_text()
+)
 
 assert metadata.version("hermes-agent") == "0.20.0"
-assert metadata.version("agent-vm-hermes-adapter") == "0.0.138"
+assert metadata.version("agent-vm-agent-portal-sdk") == sdk_project["project"]["version"]
+assert metadata.version("agent-vm-hermes-adapter") == adapter_project["project"]["version"]
 '\''
 		if [[ "${AGENT_VM_HERMES_CHECK_KIND}" == "test" ]]; then
 			/opt/hermes/.venv/bin/python -m pytest \
