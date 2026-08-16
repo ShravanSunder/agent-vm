@@ -1,11 +1,11 @@
 [project]
 name = "agent-vm-hermes-adapter"
-version = "0.0.139"
+version = "0.0.140"
 description = "Partial managed Hermes profile adapter for agent-vm."
 requires-python = ">=3.13,<3.14"
 license = "MIT"
 dependencies = [
-	"agent-vm-agent-portal-sdk==0.0.139",
+	"agent-vm-agent-portal-sdk==0.0.140",
 	"opentelemetry-api==1.44.0",
 	"opentelemetry-exporter-otlp-proto-http==1.44.0",
 	"opentelemetry-sdk==1.44.0",

@@ -1,9 +1,13 @@
 {
 	"name": "@agent-vm/hermes-gateway",
-	"version": "0.0.139",
+	"version": "0.0.140",
 	"description": "Managed Hermes Gateway lifecycle and image contracts.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ShravanSunder/agent-vm.git"
+	},
 	"files": [
 		"dist"
 	],

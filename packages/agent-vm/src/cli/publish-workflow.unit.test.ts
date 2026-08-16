@@ -7,6 +7,53 @@ const publishNpmTokenOpRef = 'op://agent-vm/npm-token-agent-vm-publish/credentia
 const staleNpmTokenOpRef = ['op://agent-vm', 'npm-token', 'credential'].join('/');
 
 describe('publish workflow', () => {
+	it('declares trusted-publishing repository provenance for every public Agent VM package', async () => {
+		const packageDirectories = await fs.readdir(path.join(process.cwd(), 'packages'), {
+			withFileTypes: true,
+		});
+		const expectedRepositoryUrl = 'git+https://github.com/ShravanSunder/agent-vm.git';
+		const packageManifests = await Promise.all(
+			packageDirectories
+				.filter((entry) => entry.isDirectory())
+				.map(async (packageDirectory) => {
+					const packageJsonPath = path.join(
+						process.cwd(),
+						'packages',
+						packageDirectory.name,
+						'package.json',
+					);
+					try {
+						return JSON.parse(await fs.readFile(packageJsonPath, 'utf8')) as {
+							readonly name?: string;
+							readonly private?: boolean;
+							readonly repository?: { readonly url?: string };
+						};
+					} catch (error: unknown) {
+						if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+							return undefined;
+						}
+						throw error;
+					}
+				}),
+		);
+
+		for (const packageJson of packageManifests) {
+			if (
+				packageJson === undefined ||
+				!packageJson.name?.startsWith('@agent-vm/') ||
+				packageJson.private === true
+			) {
+				continue;
+			}
+			const publicPackageJson: {
+				readonly name?: string;
+				readonly repository?: { readonly url?: string };
+			} = packageJson;
+
+			expect(publicPackageJson.repository?.url, publicPackageJson.name).toBe(expectedRepositoryUrl);
+		}
+	});
+
 	it('does not define publish lifecycle scripts other than the workspace rebuild prepack', async () => {
 		const packageDirectories = await fs.readdir(path.join(process.cwd(), 'packages'), {
 			withFileTypes: true,
