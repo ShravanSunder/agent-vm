@@ -416,6 +416,10 @@ agent-vm-worker          → Worker process, runs inside VM (standalone)
 agent-vm                 → Controller CLI + HTTP server; composes the selected provider
 ```
 
+Hermes itself is an upstream Docker image, not a library dependency. Agent VM
+overlays its own `hermes-gateway` and Python adapter components into that
+managed image; do not model upstream Hermes as an npm or Python library.
+
 `agent-vm` has a regular runtime dependency on `gondolin-vm-adapter`, but only
 `packages/agent-vm/src/composition/gondolin-managed-vm-provider.ts` and
 `packages/agent-vm/src/build/gondolin-managed-vm-build-tooling.ts` may import

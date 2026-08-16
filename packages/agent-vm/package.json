@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/agent-vm",
-	"version": "0.0.136",
+	"version": "0.0.138",
 	"description": "Controller CLI and HTTP server for sandboxed VM coding agents.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {
@@ -55,7 +55,7 @@
 		"@agent-vm/secret-management": "workspace:*",
 		"@agent-vm/worker-control-contracts": "workspace:*",
 		"@agent-vm/worker-gateway": "workspace:*",
-		"@hono/node-server": "^2.0.2",
+		"@hono/node-server": "2.0.4",
 		"@logtape/logtape": "2.3.0",
 		"@logtape/otel": "2.3.0",
 		"@opentelemetry/api": "1.9.1",
@@ -73,7 +73,7 @@
 		"@optique/zod": "^1.2.0",
 		"ansis": "^4.3.0",
 		"execa": "^9.6.1",
-		"hono": "^4.12.34",
+		"hono": "4.12.24",
 		"jsonc-parser": "^3.3.1",
 		"socket.io-client": "4.8.1",
 		"tasuku": "^2.3.0",

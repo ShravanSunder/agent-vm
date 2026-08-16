@@ -118,8 +118,8 @@ importers:
         specifier: workspace:*
         version: link:../worker-gateway
       '@hono/node-server':
-        specifier: ^2.0.2
-        version: 2.0.2(hono@4.13.1)
+        specifier: 2.0.4
+        version: 2.0.4(hono@4.12.24)
       '@logtape/logtape':
         specifier: 2.3.0
         version: 2.3.0
@@ -172,8 +172,8 @@ importers:
         specifier: ^9.6.1
         version: 9.6.1
       hono:
-        specifier: ^4.12.34
-        version: 4.13.1
+        specifier: 4.12.24
+        version: 4.12.24
       jsonc-parser:
         specifier: ^3.3.1
         version: 3.3.1
@@ -209,11 +209,11 @@ importers:
         specifier: workspace:*
         version: link:../worker-control-contracts
       '@hono/node-server':
-        specifier: ^2.0.2
-        version: 2.0.2(hono@4.13.1)
+        specifier: 2.0.4
+        version: 2.0.4(hono@4.12.24)
       '@hono/zod-validator':
         specifier: ^0.8.0
-        version: 0.8.0(hono@4.13.1)(zod@4.4.3)
+        version: 0.8.0(hono@4.12.24)(zod@4.4.3)
       '@logtape/logtape':
         specifier: 2.3.0
         version: 2.3.0
@@ -242,8 +242,8 @@ importers:
         specifier: ^9.6.1
         version: 9.6.1
       hono:
-        specifier: ^4.12.34
-        version: 4.13.1
+        specifier: 4.12.24
+        version: 4.12.24
       jsonc-parser:
         specifier: ^3.3.1
         version: 3.3.1
@@ -482,10 +482,10 @@ importers:
         version: link:../secret-management
       '@hono/mcp':
         specifier: ^0.3.0
-        version: 0.3.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(hono-rate-limiter@0.5.3(hono@4.13.1))(hono@4.13.1)(zod@4.4.3)
+        version: 0.3.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(hono-rate-limiter@0.5.3(hono@4.12.24))(hono@4.12.24)(zod@4.4.3)
       '@hono/node-server':
-        specifier: ^2.0.2
-        version: 2.0.2(hono@4.13.1)
+        specifier: 2.0.4
+        version: 2.0.4(hono@4.12.24)
       '@logtape/logtape':
         specifier: 2.3.0
         version: 2.3.0
@@ -505,8 +505,8 @@ importers:
         specifier: ^1.2.0
         version: 1.2.0(zod@4.4.3)
       hono:
-        specifier: ^4.12.34
-        version: 4.13.1
+        specifier: 4.12.24
+        version: 4.12.24
       zod:
         specifier: ^4.4.3
         version: 4.4.3
@@ -919,8 +919,8 @@ packages:
     peerDependencies:
       hono: ^4
 
-  '@hono/node-server@2.0.2':
-    resolution: {integrity: sha512-tXlTi1h/4V7sDe7i97IVP+9re9ZU7wXZZggnR5ucCRclf1+AX6YhGStrR5w8bLj+3Mlyl0pKfBh9gqTqqnGKfQ==}
+  '@hono/node-server@2.0.4':
+    resolution: {integrity: sha512-Ut3y0dMMPWy6bZ2kVfx25EOVbZlm15dhF4mOsezMlhpNHy+4MkU1qN9Y6lnruYi4wPmFzimGX2X7LF/FwHli4A==}
     engines: {node: '>=20'}
     peerDependencies:
       hono: ^4
@@ -2446,6 +2446,10 @@ packages:
       unstorage:
         optional: true
 
+  hono@4.12.24:
+    resolution: {integrity: sha512-I36D1s+HgQc55KbhEr4iybfxv/9o1zdpw+XEM6dJa91LqQD0HCoSGdxpRJCZE+aavs87j4V3Ls2OJzq8C/U4iw==}
+    engines: {node: '>=16.9.0'}
+
   hono@4.13.1:
     resolution: {integrity: sha512-kdJoFVv2xmayw6cY09H7AbMJMt8Jn5jdlEdXsP7AGBdF2DIptVlKlOLKXP41yPip4/a3yQPv9gVcJYI8YY04dw==}
     engines: {node: '>=16.9.0'}
@@ -3824,11 +3828,11 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@hono/mcp@0.3.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(hono-rate-limiter@0.5.3(hono@4.13.1))(hono@4.13.1)(zod@4.4.3)':
+  '@hono/mcp@0.3.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(hono-rate-limiter@0.5.3(hono@4.12.24))(hono@4.12.24)(zod@4.4.3)':
     dependencies:
       '@modelcontextprotocol/sdk': 1.29.0(zod@4.4.3)
-      hono: 4.13.1
-      hono-rate-limiter: 0.5.3(hono@4.13.1)
+      hono: 4.12.24
+      hono-rate-limiter: 0.5.3(hono@4.12.24)
       pkce-challenge: 5.0.1
       zod: 4.4.3
 
@@ -3836,13 +3840,13 @@ snapshots:
     dependencies:
       hono: 4.13.1
 
-  '@hono/node-server@2.0.2(hono@4.13.1)':
+  '@hono/node-server@2.0.4(hono@4.12.24)':
     dependencies:
-      hono: 4.13.1
+      hono: 4.12.24
 
-  '@hono/zod-validator@0.8.0(hono@4.13.1)(zod@4.4.3)':
+  '@hono/zod-validator@0.8.0(hono@4.12.24)(zod@4.4.3)':
     dependencies:
-      hono: 4.13.1
+      hono: 4.12.24
       zod: 4.4.3
 
   '@inquirer/ansi@2.0.7':
@@ -5216,9 +5220,11 @@ snapshots:
 
   highlight.js@11.11.1: {}
 
-  hono-rate-limiter@0.5.3(hono@4.13.1):
+  hono-rate-limiter@0.5.3(hono@4.12.24):
     dependencies:
-      hono: 4.13.1
+      hono: 4.12.24
+
+  hono@4.12.24: {}
 
   hono@4.13.1: {}
 

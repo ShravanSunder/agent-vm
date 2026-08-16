@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/tool-portal",
-	"version": "0.0.136",
+	"version": "0.0.138",
 	"description": "Cross-backend capability service and explicitly configured standalone projections.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {
