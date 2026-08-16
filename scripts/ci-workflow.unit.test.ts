@@ -137,9 +137,10 @@ it.concurrent('concurrent', { tags: ['managed-gateway-startup'] }, () => {});
 
 describe('CI workflow topology', () => {
 	it('keeps every required proof lane behind one aggregate check', async () => {
-		const [workflow, vitestConfig] = await Promise.all([
+		const [workflow, vitestConfig, hermesPythonTestScript] = await Promise.all([
 			readRepositoryFile('.github/workflows/ci.yml'),
 			readRepositoryFile('vitest.config.ts'),
+			readRepositoryFile('scripts/run-hermes-python-tests.sh'),
 		]);
 		const managedGatewayTestFiles = readManagedGatewayIncludeFiles(vitestConfig);
 		expect(managedGatewayTestFiles.length).toBeGreaterThan(0);
@@ -171,6 +172,17 @@ describe('CI workflow topology', () => {
 		]) {
 			expect(workflow).toContain(command);
 		}
+		expect(hermesPythonTestScript).toContain('python/agent-vm-agent-portal-sdk/pyproject.toml');
+		expect(hermesPythonTestScript).toContain('python/agent-vm-hermes-adapter/pyproject.toml');
+		expect(hermesPythonTestScript).toContain(
+			'metadata.version("agent-vm-agent-portal-sdk") == sdk_project["project"]["version"]',
+		);
+		expect(hermesPythonTestScript).toContain(
+			'metadata.version("agent-vm-hermes-adapter") == adapter_project["project"]["version"]',
+		);
+		expect(hermesPythonTestScript).not.toMatch(
+			/metadata\.version\("agent-vm-(?:agent-portal-sdk|hermes-adapter)"\) == "\d+\.\d+\.\d+"/u,
+		);
 		for (const managedGatewayTag of managedGatewayCiTags) {
 			expect(vitestConfig).toContain(`name: '${managedGatewayTag}'`);
 			expect(workflow).toContain(
