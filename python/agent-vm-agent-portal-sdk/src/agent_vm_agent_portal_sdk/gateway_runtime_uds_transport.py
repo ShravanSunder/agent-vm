@@ -1,6 +1,7 @@
 """Strict bounded asyncio transport for the private Gateway-runtime UDS."""
 
 import asyncio
+import contextlib
 import json
 import typing as t
 from collections.abc import Mapping
@@ -8,6 +9,8 @@ from collections.abc import Mapping
 _HEADER_DELIMITER = b"\r\n\r\n"
 _MAXIMUM_CONTENT_BYTES = 1024 * 1024
 _MAXIMUM_HEADER_BYTES = 8 * 1024
+_MAXIMUM_PENDING_REQUESTS = 64
+_MAXIMUM_SAFE_INTEGER = (1 << 53) - 1
 _CANCELLED_RESPONSE_DRAIN_SECONDS = 5
 
 
@@ -151,13 +154,15 @@ async def _read_frame(reader: asyncio.StreamReader) -> Mapping[str, object]:
 
 
 class GatewayRuntimeUdsTransport:
-    """One persistent request/response connection with bounded serialized writes."""
+    """One persistent connection with serialized writes and ID-correlated responses."""
 
     def __init__(self) -> None:
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
-        self._request_lock = asyncio.Lock()
+        self._write_lock = asyncio.Lock()
         self._next_request_id = 1
+        self._pending_responses: dict[int, asyncio.Future[Mapping[str, object]]] = {}
+        self._response_reader_task: asyncio.Task[None] | None = None
         self._cancelled_response_drain_tasks: set[asyncio.Task[None]] = set()
 
     async def connect(self, socket_path: str) -> None:
@@ -167,6 +172,7 @@ class GatewayRuntimeUdsTransport:
                 "Gateway runtime UDS transport is already connected.",
             )
         self._reader, self._writer = await asyncio.open_unix_connection(socket_path)
+        self._response_reader_task = asyncio.create_task(self._read_responses())
 
     async def handshake(
         self,
@@ -179,119 +185,207 @@ class GatewayRuntimeUdsTransport:
         method: str,
         params: Mapping[str, object],
     ) -> Mapping[str, object]:
-        await self._request_lock.acquire()
-        release_request_lock = True
+        request_id: int | None = None
+        response_future: asyncio.Future[Mapping[str, object]] | None = None
         try:
-            reader = self._reader
-            writer = self._writer
-            if reader is None or writer is None:
-                _raise_transport_error(
-                    "not-connected",
-                    "Gateway runtime UDS transport is not connected.",
+            async with self._write_lock:
+                writer = self._writer
+                if self._reader is None or writer is None:
+                    _raise_transport_error(
+                        "not-connected",
+                        "Gateway runtime UDS transport is not connected.",
+                    )
+                if len(self._pending_responses) >= _MAXIMUM_PENDING_REQUESTS:
+                    _raise_transport_error(
+                        "pending-request-limit-exceeded",
+                        "Gateway runtime pending request limit was reached.",
+                    )
+                request_id = self._allocate_request_id()
+                frame = _encode_frame(
+                    {
+                        "id": request_id,
+                        "jsonrpc": "2.0",
+                        "method": method,
+                        "params": dict(params),
+                    },
                 )
-            request_id = self._next_request_id
-            self._next_request_id += 1
-            try:
-                writer.write(
-                    _encode_frame(
-                        {
-                            "id": request_id,
-                            "jsonrpc": "2.0",
-                            "method": method,
-                            "params": dict(params),
-                        },
-                    ),
+                response_future = asyncio.get_running_loop().create_future()
+                self._pending_responses[request_id] = response_future
+                await self._write_request_frame(
+                    frame=frame,
+                    request_id=request_id,
+                    response_future=response_future,
+                    writer=writer,
                 )
-                await writer.drain()
-                response = await _read_frame(reader)
-            except asyncio.CancelledError:
-                writer.write(
-                    _encode_frame(
-                        {
-                            "jsonrpc": "2.0",
-                            "method": "notifications/cancelled",
-                            "params": {"requestId": request_id},
-                        },
-                    ),
-                )
+            response = await asyncio.shield(response_future)
+        except asyncio.CancelledError:
+            if request_id is not None and response_future is not None and not response_future.done():
                 try:
-                    await asyncio.shield(writer.drain())
+                    await asyncio.shield(self._send_cancellation(request_id))
                 except Exception:
                     await self._close_connection()
                     raise
                 drain_task = asyncio.create_task(
                     self._discard_cancelled_response(
-                        reader=reader,
-                        request_id=request_id,
+                        response_future=response_future,
                     ),
                 )
                 self._cancelled_response_drain_tasks.add(drain_task)
                 drain_task.add_done_callback(self._cancelled_response_drain_tasks.discard)
-                release_request_lock = False
-                raise
-            if response.get("id") != request_id:
-                _raise_transport_error(
-                    "unexpected-response",
-                    "Gateway runtime response id does not match the pending request.",
+            raise
+        except BaseException:
+            if request_id is not None and response_future is not None:
+                if self._pending_responses.get(request_id) is response_future:
+                    del self._pending_responses[request_id]
+                if not response_future.done():
+                    response_future.cancel()
+            raise
+
+        if "error" in response:
+            error_object = response["error"]
+            if isinstance(error_object, dict):
+                error_mapping = t.cast("dict[object, object]", error_object)
+                error_code = error_mapping.get("code")
+                error_data = error_mapping.get("data")
+                error_message = error_mapping.get("message")
+                raise GatewayRuntimeUdsRemoteError(
+                    str(error_code),
+                    error_message if isinstance(error_message, str) else "Gateway runtime request failed.",
+                    data=(
+                        t.cast("Mapping[str, object]", error_data) if isinstance(error_data, dict) and all(isinstance(key, str) for key in error_data) else None
+                    ),
                 )
-            if "error" in response:
-                error_object = response["error"]
-                if isinstance(error_object, dict):
-                    error_mapping = t.cast("dict[object, object]", error_object)
-                    error_code = error_mapping.get("code")
-                    error_data = error_mapping.get("data")
-                    error_message = error_mapping.get("message")
-                    raise GatewayRuntimeUdsRemoteError(
-                        str(error_code),
-                        error_message if isinstance(error_message, str) else "Gateway runtime request failed.",
-                        data=(
-                            t.cast("Mapping[str, object]", error_data)
-                            if isinstance(error_data, dict) and all(isinstance(key, str) for key in error_data)
-                            else None
-                        ),
+            _raise_transport_error(
+                "invalid-remote-error",
+                "Gateway runtime returned an invalid error object.",
+            )
+        result = response.get("result")
+        if not isinstance(result, dict):
+            _raise_transport_error(
+                "invalid-result",
+                "Gateway runtime response result must be an object.",
+            )
+        return t.cast("Mapping[str, object]", result)
+
+    def _allocate_request_id(self) -> int:
+        if self._next_request_id > _MAXIMUM_SAFE_INTEGER:
+            _raise_transport_error(
+                "request-id-exhausted",
+                "Gateway runtime request id space is exhausted.",
+            )
+        request_id = self._next_request_id
+        self._next_request_id += 1
+        return request_id
+
+    async def _write_request_frame(
+        self,
+        *,
+        frame: bytes,
+        request_id: int,
+        response_future: asyncio.Future[Mapping[str, object]],
+        writer: asyncio.StreamWriter,
+    ) -> None:
+        try:
+            writer.write(frame)
+            await writer.drain()
+        except Exception as error:
+            write_error = GatewayRuntimeUdsTransportError(
+                "request-write-failed",
+                "Gateway runtime request write failed.",
+            )
+            if self._pending_responses.get(request_id) is response_future:
+                del self._pending_responses[request_id]
+            response_future.cancel()
+            await self._close_connection(pending_error=write_error)
+            raise write_error from error
+
+    async def _send_cancellation(self, request_id: int) -> None:
+        async with self._write_lock:
+            writer = self._writer
+            if writer is None:
+                return
+            writer.write(
+                _encode_frame(
+                    {
+                        "jsonrpc": "2.0",
+                        "method": "notifications/cancelled",
+                        "params": {"requestId": request_id},
+                    },
+                ),
+            )
+            await writer.drain()
+
+    async def _read_responses(self) -> None:
+        reader = self._reader
+        if reader is None:
+            return
+        try:
+            while self._reader is reader:
+                response = await _read_frame(reader)
+                response_id = response.get("id")
+                if type(response_id) is not int or not 1 <= response_id <= _MAXIMUM_SAFE_INTEGER:
+                    _raise_transport_error(
+                        "unexpected-response",
+                        "Gateway runtime response id does not match a pending request.",
                     )
-                _raise_transport_error(
-                    "invalid-remote-error",
-                    "Gateway runtime returned an invalid error object.",
-                )
-            result = response.get("result")
-            if not isinstance(result, dict):
-                _raise_transport_error(
-                    "invalid-result",
-                    "Gateway runtime response result must be an object.",
-                )
-            return t.cast("Mapping[str, object]", result)
-        finally:
-            if release_request_lock:
-                self._request_lock.release()
+                response_future = self._pending_responses.pop(response_id, None)
+                if response_future is None:
+                    _raise_transport_error(
+                        "unexpected-response",
+                        "Gateway runtime response id does not match a pending request.",
+                    )
+                if not response_future.done():
+                    response_future.set_result(response)
+        except asyncio.CancelledError:
+            raise
+        except BaseException as error:
+            self._fail_pending_responses(error)
+            await self._close_connection(cancel_response_reader=False)
+
+    def _fail_pending_responses(self, error: BaseException) -> None:
+        pending_responses = tuple(self._pending_responses.values())
+        self._pending_responses.clear()
+        for response_future in pending_responses:
+            if not response_future.done():
+                response_future.set_exception(error)
 
     async def _discard_cancelled_response(
         self,
         *,
-        reader: asyncio.StreamReader,
-        request_id: int,
+        response_future: asyncio.Future[Mapping[str, object]],
     ) -> None:
         try:
             async with asyncio.timeout(_CANCELLED_RESPONSE_DRAIN_SECONDS):
-                response = await _read_frame(reader)
-            if response.get("id") != request_id:
-                _raise_transport_error(
-                    "unexpected-response",
-                    "Gateway runtime cancelled response id does not match the discarded request.",
-                )
+                _ = await asyncio.shield(response_future)
         except BaseException:
             await self._close_connection()
-        finally:
-            self._request_lock.release()
 
-    async def _close_connection(self) -> None:
+    async def _close_connection(
+        self,
+        *,
+        cancel_response_reader: bool = True,
+        pending_error: BaseException | None = None,
+    ) -> None:
         writer = self._writer
         self._reader = None
         self._writer = None
-        if writer is None:
-            return
-        writer.close()
-        await writer.wait_closed()
+        response_reader_task = self._response_reader_task
+        self._response_reader_task = None
+        if cancel_response_reader and response_reader_task is not None and response_reader_task is not asyncio.current_task():
+            response_reader_task.cancel()
+            _ = await asyncio.gather(response_reader_task, return_exceptions=True)
+        self._fail_pending_responses(
+            pending_error
+            if pending_error is not None
+            else GatewayRuntimeUdsTransportError(
+                "not-connected",
+                "Gateway runtime UDS transport is not connected.",
+            ),
+        )
+        if writer is not None:
+            writer.close()
+            with contextlib.suppress(ConnectionError, OSError):
+                await writer.wait_closed()
 
     async def disconnect(self) -> None:
         await self._close_connection()
