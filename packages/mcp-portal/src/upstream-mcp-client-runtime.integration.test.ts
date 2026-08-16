@@ -636,6 +636,99 @@ describe('upstream MCP client runtime', () => {
 		}
 	});
 
+	it('rejects a real streamable HTTP MCP tool error result', async () => {
+		// Arrange
+		const upstream = await startFakeUpstreamMcpServer({
+			toolErrorMessageByToolName: {
+				read_thing:
+					'Input validation failed at $.search_recency: expected day, week, or month. Authorization: Bearer schema-secret',
+			},
+		});
+		const runtime = createUpstreamMcpClientRuntime({
+			servers: [
+				{
+					namespace: fakeUpstreamNamespace,
+					transport: 'streamable-http',
+					url: upstream.url,
+				},
+			],
+		});
+
+		try {
+			// Act / Assert
+			await expect(
+				runtime.callTool({
+					arguments: { title: 'schema probe' },
+					agentScopeId: 'agent-scope-a',
+					namespace: fakeUpstreamNamespace,
+					toolName: 'read_thing',
+				}),
+			).rejects.toMatchObject({
+				details: {
+					failureClass: 'tool_error',
+					kind: 'upstream_mcp_failed',
+					namespace: fakeUpstreamNamespace,
+					phase: 'call_tool',
+					providerErrorMessage:
+						'Input validation failed at $.search_recency: expected day, week, or month. Authorization: [REDACTED]',
+					transport: { kind: 'streamable-http' },
+				},
+			});
+		} finally {
+			await runtime.closeAgentScope('agent-scope-a');
+			await upstream.close();
+		}
+	});
+
+	it.each([
+		{ expectedFailureClass: 'invalid_request', httpStatusCode: 400 },
+		{ expectedFailureClass: 'authentication', httpStatusCode: 401 },
+		{ expectedFailureClass: 'authorization', httpStatusCode: 403 },
+		{ expectedFailureClass: 'rate_limit', httpStatusCode: 429 },
+		{ expectedFailureClass: 'provider_error', httpStatusCode: 500 },
+	] as const)(
+		'classifies remote streamable HTTP $httpStatusCode failures as $expectedFailureClass without preserving response text',
+		async ({ expectedFailureClass, httpStatusCode }) => {
+			// Arrange
+			const upstream = await startFakeUpstreamMcpServer({ callHttpStatusCode: httpStatusCode });
+			const runtime = createUpstreamMcpClientRuntime({
+				servers: [
+					{
+						namespace: fakeUpstreamNamespace,
+						transport: 'streamable-http',
+						url: upstream.url,
+					},
+				],
+			});
+
+			try {
+				// Act
+				const call = runtime.callTool({
+					arguments: { title: 'hello' },
+					agentScopeId: 'agent-scope-a',
+					namespace: fakeUpstreamNamespace,
+					toolName: 'read_thing',
+				});
+
+				// Assert
+				await expect(call).rejects.toMatchObject({
+					details: {
+						causeMessage: 'Remote MCP request failed.',
+						failureClass: expectedFailureClass,
+						httpStatusCode,
+						kind: 'upstream_mcp_failed',
+						namespace: fakeUpstreamNamespace,
+						phase: 'call_tool',
+					},
+				});
+				await expect(call).rejects.not.toThrow(/provider response detail/u);
+			} finally {
+				await runtime.closeAgentScope('agent-scope-a');
+				await upstream.close();
+			}
+		},
+	);
+
 	it('redacts exact upstream header values from call results', async () => {
 		const client: UpstreamMcpClientLike = {
 			callTool: vi.fn(async () => ({
