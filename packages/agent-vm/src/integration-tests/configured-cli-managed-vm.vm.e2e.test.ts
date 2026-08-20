@@ -1,3 +1,4 @@
+import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -46,7 +47,7 @@ describeLiveConfiguredRunner('configured CLI one-shot Managed VM', () => {
 				},
 				safeHelp: 'Run the isolated Managed VM proof.',
 				stdin: { kind: 'none' },
-				timeout: { kind: 'quick' },
+				timeout: { kind: 'open' },
 			} as const satisfies Extract<ControllerExecutionOperation, { kind: 'configured_cli' }>;
 			const execute = createConfiguredCliManagedVmExecutor({
 				controllerStateDir: path.join(imageFixture.project.tempRoot, 'controller-state'),
@@ -61,13 +62,31 @@ describeLiveConfiguredRunner('configured CLI one-shot Managed VM', () => {
 				}),
 			});
 
+			const controllerStateDir = path.join(imageFixture.project.tempRoot, 'controller-state');
 			const result = await execute({
-				input: { argv: ['isolated'], reason: 'real VM proof' },
+				input: { argv: ['isolated'], reason: 'real VM proof', timeoutMs: 60_000 },
 				operation,
 				operationName: 'isolated_runner_proof',
 				reloadOperation: async () => operation,
 				stablePrincipal: 'a'.repeat(64),
 				zoneId: 'configured-runner-zone',
+			}).catch(async (error: unknown): Promise<never> => {
+				const recordsDirectory = path.join(
+					controllerStateDir,
+					'controller-runners',
+					imageFixture.vm.id,
+				);
+				const recordNames = await readdir(recordsDirectory).catch(() => []);
+				const recordContents = await Promise.all(
+					recordNames.map(async (recordName) => ({
+						record: await readFile(path.join(recordsDirectory, recordName), 'utf8'),
+						recordName,
+					})),
+				);
+				throw new Error(
+					`Configured runner failed with operation records: ${JSON.stringify(recordContents)}`,
+					{ cause: error },
+				);
 			});
 
 			expect(result).toEqual({

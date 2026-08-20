@@ -102,6 +102,7 @@ const packageEntrypointUrl = import.meta.resolve('@agent-vm/gateway-runtime');
 const packageEntrypoint = fileURLToPath(packageEntrypointUrl);
 const gatewayRuntime = await import(packageEntrypointUrl);
 const gatewayRuntimeClient = await import('@agent-vm/agent-portal-sdk/gateway-runtime-client');
+const configContracts = await import('@agent-vm/config-contracts');
 const gatewayControlContracts = await import('@agent-vm/gateway-control-contracts');
 assert.equal(
 	'createManagedFrameworkChildSupervisor' in gatewayRuntime,
@@ -193,6 +194,8 @@ const semanticSnapshot = gatewayControlContracts.deriveGatewayRuntimePortalSeman
 	surfaceEligibilityByProfile: { 'main-profile': {}, 'research-profile': {} },
 	toolPortalConfig,
 });
+const gatewayRuntimeToolPortalConfig =
+	configContracts.createGatewayRuntimeManagedToolPortalConfig(toolPortalConfig);
 const attachment = {
 	attachmentGeneration: 7,
 	clientKind: 'openclaw-managed-plugin',
@@ -242,6 +245,10 @@ await writeFile(serviceConfigPath, JSON.stringify({
 		},
 		listen: { host: '127.0.0.1', port: 18790 },
 	},
+	gatewayRuntimeInputRevision: gatewayControlContracts.deriveGatewayRuntimeInputRevision({
+		mcpConfig,
+		toolPortalConfig: gatewayRuntimeToolPortalConfig,
+	}),
 	mcpConfigPath,
 	observability: { kind: 'disabled' },
 	runtimeRoot,
@@ -252,7 +259,7 @@ await writeFile(serviceConfigPath, JSON.stringify({
 		role: 'tool-portal',
 		serviceId: 'tool-portal-vm',
 	},
-	toolPortalConfig,
+	toolPortalConfig: gatewayRuntimeToolPortalConfig,
 }), { mode: 0o600 });
 await Promise.all([chmod(mcpConfigPath, 0o600), chmod(serviceConfigPath, 0o600)]);
 
