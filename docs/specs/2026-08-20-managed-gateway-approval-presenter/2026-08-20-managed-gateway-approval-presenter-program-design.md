@@ -157,12 +157,31 @@ const ConfiguredCliExecutionTargetSchema = z.discriminatedUnion('kind', [
   }).strict(),
   z.object({
     kind: z.literal('ephemeral_managed_vm'),
-    imageReference: z.string().min(1),
+    imageReference: ControlFreeImageRecipePathSchema,
     guestCwd: AbsoluteControlFreePathSchema,
     environment: ConfiguredCliEnvironmentPolicySchema,
     allowedHosts: z.array(z.string().min(1)).default([]),
   }).strict(),
 ])
+
+const PreparedManagedVmImageIdentityPayloadSchema = z.object({
+  schemaVersion: z.literal(1),
+  imageReference: z.string().min(1),
+  fingerprint: z.string().min(1),
+}).strict()
+
+const PreparedManagedVmImageIdentitySchema = z.string()
+  .startsWith('agent-vm-prepared-image:v1:')
+  .transform(decodeBase64UrlJson)
+  .pipe(PreparedManagedVmImageIdentityPayloadSchema)
+
+const NormalizedEphemeralManagedVmTargetSchema = z.object({
+  kind: z.literal('ephemeral_managed_vm'),
+  preparedImage: PreparedManagedVmImageIdentityPayloadSchema,
+  guestCwd: AbsoluteControlFreePathSchema,
+  environment: ConfiguredCliEnvironmentPolicySchema,
+  allowedHosts: z.array(z.string().min(1)),
+}).strict()
 
 const ControllerConfiguredCliOperationSchema = z.object({
   kind: z.literal('configured_cli'),
@@ -267,7 +286,7 @@ const NormalizedControllerExecutionSchema = z.discriminatedUnion('kind', [
 ])
 ```
 
-The normalized ephemeral target stores immutable `imageReference` and prepared-image `imageFingerprint`; mutable or unresolved references never enter a current generation.
+The authored parser accepts only `ControlFreeImageRecipePathSchema` in `executionTarget.imageReference` and rejects the reserved `agent-vm-prepared-image:` prefix. The effective-generation loader requires `PreparedManagedVmImageIdentitySchema` in that same persisted field, decodes it once, and constructs `NormalizedEphemeralManagedVmTargetSchema`. An authored recipe string, malformed prefix/base64url/JSON, unknown schema version, extra field, or missing/empty returned value cannot enter the normalized registry. The normalized target stores the decoded provider-local `preparedImage.imageReference` and `preparedImage.fingerprint`; unresolved recipes never enter a current generation.
 
 ### Gateway-safe projection and public request
 
@@ -381,7 +400,9 @@ authored config + registered definitions + prepared image inventory
  controller-only        Gateway-only      semantic cohort
 ```
 
-The prepared image inventory is supplied by the existing application image-preparation path and `ManagedVmImageCapability.prepareImage`; this design adds no image-profile registry or second image authority. The compiler consumes the resolved immutable reference/fingerprint already produced by that owner.
+The existing effective-config materializer is the preparation caller. For each distinct authored ephemeral `imageReference`, it resolves the recipe path relative to the authored Tool Portal config directory and calls `ManagedVmImageCapability.prepareImage` with `cacheDir/gateways/<zoneId>/tool-portal-effective/controller-execution-images/<recipe-path-digest>`. Static configuration validation checks only the authored shape; Gateway startup preflight and runtime materialization require successful preparation.
+
+The returned pair is validated by `PreparedManagedVmImageIdentityPayloadSchema`, encoded as base64url canonical JSON after the literal `agent-vm-prepared-image:v1:` prefix, and persisted only in the atomic effective Tool Portal generation at the operation's existing `executionTarget.imageReference` field. That field choice is an internal authored/effective parser boundary, not an authored format, image profile, registry entry, or second image authority. The effective loader decodes the pair into the normalized target; the compiler hashes the fingerprint into policy freshness; the controller executor passes only the provider-local reference to `ManagedVmFactory`. The safe Gateway projection carries neither the authored recipe, prepared reference, fingerprint, nor encoded identity.
 
 For every effective profile the compiler:
 
@@ -404,6 +425,20 @@ controllerExecutionPolicyRevision → bindingRevision → activeRevision
 ```
 
 Changing target, timeout class, requested/resolved timeout, immutable image fingerprint, or any other trusted field stales old challenges/reservations and produces zero dispatch effects.
+
+The image path is therefore:
+
+```text
+tool-portal.config.jsonc recipe path
+  -> effective-config materializer
+  -> ManagedVmImageCapability.prepareImage
+  -> strict prepared identity(reference + fingerprint)
+  -> bindingRevision / approval freshness
+  -> controller executor decode
+  -> ManagedVmFactory.createManagedVm(provider-local reference)
+```
+
+Preparation failure, a malformed controller-only identity, or a missing reference/fingerprint fails before VM creation. Re-materializing changed recipe contents yields a changed prepared fingerprint and therefore a changed binding revision; an old challenge or reservation cannot dispatch it.
 
 ## Broad CLI validation and timeout semantics
 
@@ -550,7 +585,9 @@ user → Hermes tool handler → initial portal.call
   ← replacement item merged by original id/order
 ```
 
-The in-repo Hermes adapter owns `pending[(session_key, request_id)]`, payload `gwappr:<request_id>:approve|deny`, matching originating surface/session/request, bounded unauthorized feedback, and exact cleanup on admitted resolution, expiry, cancellation, session end, or Gateway shutdown. Unauthorized interaction is not a presenter outcome and never removes the entry. Native identity remains framework-owned.
+The pinned Hermes `tools.clarify_gateway` module owns the transient pending entry, session index, callback resolution, blocking wait, and one-shot removal. The Agent VM adapter owns only its bounded captured route and one presentation call. It derives `clarify_id = "gwappr-" + challengeId`, registers exactly that id with the captured Hermes session key and choices `Approve | Deny`, schedules the captured platform adapter's `send_clarify` on the captured Gateway event loop, and waits through `wait_for_response` only until the controller challenge expiry. It maps only the exact returned choices to the generic outcome.
+
+Pinned platform callbacks perform their existing actor admission before calling `resolve_gateway_clarify`; an unauthorized native interaction receives framework-bounded feedback, sends no decision RPC, and leaves the Hermes clarify entry pending. `wait_for_response` removes the exact entry on resolution or timeout. Existing Hermes session/Gateway teardown calls `clear_session`; the Agent VM route store does not clear a whole Hermes session or invent a second callback payload/registry. If native send fails, the presenter resolves only its own `clarify_id` with the existing primitive so its waiter can remove that exact entry. This path never reads or writes Hermes `tools.approval` FIFO, YOLO, session, or permanent approval caches. Native identity remains framework-owned.
 
 The existing pinned Hermes `pre_gateway_dispatch` hook already supplies the live Gateway object and `MessageEvent.source`. The Agent VM hook preserves a bounded immutable route containing the admitted profile/session source, the Gateway-selected platform adapter from `_adapter_for_source(source)`, and the existing actor-admission callback `_is_user_authorized(source)`. The tool handler preserves trusted `session_id` rather than deleting it and uses that route to call the adapter's existing native interaction surface. This is a version-pinned in-repo integration: it changes no upstream Hermes source, creates no fork or monkeypatch, and does not reuse Hermes command-approval FIFO/YOLO/session/permanent caches.
 
@@ -566,7 +603,7 @@ Batch coordination keeps approval-free items byte-identical and unrepeated; prot
 
 | State | Owner | Transition/guard | Illegal path |
 | --- | --- | --- | --- |
-| Authored | Deployment config | Strict backend/operation/timeout/target parse | Old umbrella, mixed variants, target override, mutable image, overlap reject. |
+| Authored | Deployment config | Strict backend/operation/timeout/target parse | Old umbrella, mixed variants, target override, invalid recipe path, overlap reject. |
 | Compiled | Controller Execution Compiler | Definitions/applicability/images/profile invariants pass | Partial registry/projection generation forbidden. |
 | Current | Atomic manifest | Select matching registry/projection/digest | Mixed generation cannot authorize. |
 | Superseded | Manifest | New complete generation current | Old challenge/reservation cannot dispatch. |
@@ -645,7 +682,7 @@ Neither target auto-replays after process start/dispatch arm. Recovery truth is 
 - RPC response window bounds provisioning + runtime + cleanup/delivery, while command timeout bounds only execution.
 - The derived RPC lifetime and controller shutdown are the only target cancellation owners; Gateway/framework/model payloads gain no cancellation operation.
 - Output streams are drained concurrently and bounded per stream.
-- Hermes pending entries serialize exact `(session_key, request_id)` resolution; unauthorized/mismatched callbacks cannot remove them.
+- Hermes `tools.clarify_gateway` serializes exact `(session_key, clarify_id)` resolution; platform actor admission rejects unauthorized callbacks before resolution, and mismatched ids cannot remove the entry.
 - `tool_vm_runner` retains existing active-use/current-generation checks and process-group lifecycle independently.
 
 ## Trust and containment boundaries
