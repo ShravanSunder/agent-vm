@@ -45,7 +45,12 @@ class FakeGateway:
 
     def _session_key_for_source(self, source: object) -> str:
         del source
-        return "session-a"
+        return "routing-key-a"
+
+
+class FakeSessionStore:
+    def peek_session_id(self, session_key: str) -> str | None:
+        return "session-a" if session_key == "routing-key-a" else None
 
 
 def _presentation_request() -> BaseModel:
@@ -78,15 +83,23 @@ def test_route_capture_requires_existing_gateway_actor_admission() -> None:
     source = FakeSource(profile="researcher")
 
     async def capture_routes() -> tuple[object, object]:
-        denied = routes.capture(gateway=FakeGateway(authorized=False), source=source)
-        admitted = routes.capture(gateway=FakeGateway(authorized=True), source=source)
+        denied = routes.capture(
+            gateway=FakeGateway(authorized=False),
+            session_store=FakeSessionStore(),
+            source=source,
+        )
+        admitted = routes.capture(
+            gateway=FakeGateway(authorized=True),
+            session_store=FakeSessionStore(),
+            source=source,
+        )
         return denied, admitted
 
     denied, admitted = asyncio.run(capture_routes())
 
     assert denied is None
     assert admitted is not None
-    assert routes.read("session-a") is admitted
+    assert routes.read_by_session_id("session-a") is admitted
 
 
 def test_presenter_projects_only_approve_and_deny_as_decisions() -> None:
@@ -95,6 +108,7 @@ def test_presenter_projects_only_approve_and_deny_as_decisions() -> None:
     async def capture_route() -> None:
         _ = routes.capture(
             gateway=FakeGateway(authorized=True),
+            session_store=FakeSessionStore(),
             source=FakeSource(profile="researcher"),
         )
 

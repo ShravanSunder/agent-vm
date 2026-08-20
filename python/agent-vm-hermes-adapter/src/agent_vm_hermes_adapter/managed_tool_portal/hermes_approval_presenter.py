@@ -35,6 +35,11 @@ class HermesApprovalSessionSource(HermesSessionSource, t.Protocol):
 
 
 @t.runtime_checkable
+class HermesApprovalSessionStore(t.Protocol):
+    def peek_session_id(self, session_key: str) -> str | None: ...
+
+
+@t.runtime_checkable
 class HermesApprovalGateway(t.Protocol):
     def _adapter_for_source(
         self,
@@ -49,7 +54,7 @@ class HermesApprovalGateway(t.Protocol):
 class HermesGatewayApprovalRoute:
     """Bounded session route; native actor identity never leaves Hermes."""
 
-    __slots__ = ("adapter", "gateway_loop", "session_key", "source")
+    __slots__ = ("adapter", "gateway_loop", "session_key", "session_store", "source")
 
     def __init__(
         self,
@@ -57,11 +62,13 @@ class HermesGatewayApprovalRoute:
         adapter: HermesApprovalPlatformAdapter,
         gateway_loop: asyncio.AbstractEventLoop,
         session_key: str,
+        session_store: HermesApprovalSessionStore,
         source: HermesApprovalSessionSource,
     ) -> None:
         self.adapter = adapter
         self.gateway_loop = gateway_loop
         self.session_key = session_key
+        self.session_store = session_store
         self.source = source
 
 
@@ -69,15 +76,19 @@ class HermesGatewayApprovalRouteStore:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._routes_by_session_key: dict[str, HermesGatewayApprovalRoute] = {}
+        self._session_keys_by_session_id: dict[str, str] = {}
 
     def capture(
         self,
         *,
         gateway: object,
+        session_store: object,
         source: HermesSessionSource,
     ) -> HermesGatewayApprovalRoute | None:
-        if not isinstance(gateway, HermesApprovalGateway) or not isinstance(
-            source, HermesApprovalSessionSource
+        if (
+            not isinstance(gateway, HermesApprovalGateway)
+            or not isinstance(session_store, HermesApprovalSessionStore)
+            or not isinstance(source, HermesApprovalSessionSource)
         ):
             return None
         if not gateway._is_user_authorized(source):
@@ -96,23 +107,54 @@ class HermesGatewayApprovalRouteStore:
             adapter=adapter,
             gateway_loop=gateway_loop,
             session_key=session_key,
+            session_store=session_store,
             source=source,
         )
         with self._lock:
             self._routes_by_session_key[session_key] = route
+            current_session_id = session_store.peek_session_id(session_key)
+            if current_session_id:
+                self._session_keys_by_session_id[current_session_id] = session_key
         return route
 
-    def read(self, session_key: str) -> HermesGatewayApprovalRoute | None:
+    def read_by_session_id(self, session_id: str) -> HermesGatewayApprovalRoute | None:
         with self._lock:
-            return self._routes_by_session_key.get(session_key)
+            indexed_session_key = self._session_keys_by_session_id.get(session_id)
+            if indexed_session_key is not None:
+                indexed_route = self._routes_by_session_key.get(indexed_session_key)
+                if (
+                    indexed_route is not None
+                    and indexed_route.session_store.peek_session_id(indexed_session_key)
+                    == session_id
+                ):
+                    return indexed_route
+                _ = self._session_keys_by_session_id.pop(session_id, None)
+            for route in self._routes_by_session_key.values():
+                try:
+                    if route.session_store.peek_session_id(route.session_key) == session_id:
+                        self._session_keys_by_session_id[session_id] = route.session_key
+                        return route
+                except Exception:
+                    continue
+            return None
 
-    def clear(self, session_key: str) -> None:
+    def clear_by_session_id(self, session_id: str) -> None:
         with self._lock:
-            _ = self._routes_by_session_key.pop(session_key, None)
+            indexed_session_key = self._session_keys_by_session_id.pop(session_id, None)
+            if indexed_session_key is not None:
+                _ = self._routes_by_session_key.pop(indexed_session_key, None)
+            matching_session_keys = [
+                session_key
+                for session_key, route in self._routes_by_session_key.items()
+                if route.session_store.peek_session_id(session_key) == session_id
+            ]
+            for session_key in matching_session_keys:
+                _ = self._routes_by_session_key.pop(session_key, None)
 
     def close(self) -> None:
         with self._lock:
             self._routes_by_session_key.clear()
+            self._session_keys_by_session_id.clear()
 
 
 def _presentation_question(request: dict[str, object]) -> str:
@@ -182,8 +224,8 @@ class HermesGatewayApprovalPresenter:
     def __init__(self, routes: HermesGatewayApprovalRouteStore) -> None:
         self._routes = routes
 
-    async def present(self, session_key: str, request: BaseModel) -> BaseModel:
-        route = self._routes.read(session_key)
+    async def present(self, session_id: str, request: BaseModel) -> BaseModel:
+        route = self._routes.read_by_session_id(session_id)
         if route is None:
             return _approval_outcome({"kind": "unavailable", "reason": "presenter-missing"})
         request_mapping = request.model_dump(
@@ -206,7 +248,7 @@ class HermesGatewayApprovalPresenter:
             return _approval_outcome({"kind": "approved"})
         if response.casefold() == "deny":
             return _approval_outcome({"kind": "denied"})
-        if self._routes.read(session_key) is None:
+        if self._routes.read_by_session_id(session_id) is None:
             return _approval_outcome(
                 {"kind": "cancelled", "reason": "session-ended"},
             )

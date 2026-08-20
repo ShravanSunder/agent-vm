@@ -91,7 +91,12 @@ class Gateway:
 
     def _session_key_for_source(self, source):
         assert source is source_fixture
-        return "session-approval-e2e"
+        return "routing-key-approval-e2e"
+
+
+class SessionStore:
+    def peek_session_id(self, session_key):
+        return "session-approval-e2e" if session_key == "routing-key-approval-e2e" else None
 
 
 def presentation_request(challenge_id):
@@ -120,7 +125,11 @@ gateway_thread = threading.Thread(target=gateway_loop.run_forever)
 gateway_thread.start()
 try:
     async def capture(gateway):
-        return routes.capture(gateway=gateway, source=source_fixture)
+        return routes.capture(
+            gateway=gateway,
+            session_store=SessionStore(),
+            source=source_fixture,
+        )
 
     denied_origin = asyncio.run_coroutine_threadsafe(
         capture(Gateway(adapter, authorized=False)), gateway_loop
@@ -147,9 +156,9 @@ try:
     approved_mapping = approved.model_dump(by_alias=True, exclude_none=True, mode="json")
     denied_mapping = denied.model_dump(by_alias=True, exclude_none=True, mode="json")
 
-    register("ordinary-clarify", "session-approval-e2e", "ordinary", ["Continue"])
-    routes.clear("session-approval-e2e")
-    assert has_pending("session-approval-e2e") is True
+    register("ordinary-clarify", "routing-key-approval-e2e", "ordinary", ["Continue"])
+    routes.clear_by_session_id("session-approval-e2e")
+    assert has_pending("routing-key-approval-e2e") is True
     assert resolve_gateway_clarify("ordinary-clarify", "Continue") is True
     assert wait_for_response("ordinary-clarify", 1) == "Continue"
 
@@ -199,12 +208,12 @@ describeHermesApprovalPresenterE2e('e2e: pinned Hermes native approval presenter
 				{
 					clarifyId: 'gwappr-11111111-1111-4111-8111-111111111111',
 					decision: 'Approve',
-					sessionKey: 'session-approval-e2e',
+					sessionKey: 'routing-key-approval-e2e',
 				},
 				{
 					clarifyId: 'gwappr-22222222-2222-4222-8222-222222222222',
 					decision: 'Deny',
-					sessionKey: 'session-approval-e2e',
+					sessionKey: 'routing-key-approval-e2e',
 				},
 			],
 			ordinaryClarifyPreserved: true,

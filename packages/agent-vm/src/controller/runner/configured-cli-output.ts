@@ -8,7 +8,16 @@ type ConfiguredCliOutputPolicy = Extract<
 >['output'];
 
 function truncateUtf8(value: Uint8Array, maximumBytes: number): string {
-	return Buffer.from(value).subarray(0, maximumBytes).toString('utf8');
+	const bounded = Buffer.from(value).subarray(0, maximumBytes);
+	const decoder = new TextDecoder('utf-8', { fatal: true });
+	for (let removedBytes = 0; removedBytes <= 3; removedBytes += 1) {
+		try {
+			return decoder.decode(bounded.subarray(0, bounded.byteLength - removedBytes));
+		} catch {
+			// A valid UTF-8 scalar spans at most four bytes, so only the final scalar can be partial.
+		}
+	}
+	return '';
 }
 
 export function fixedSafeConfiguredCliStderrSummary(stderr: Uint8Array): string {

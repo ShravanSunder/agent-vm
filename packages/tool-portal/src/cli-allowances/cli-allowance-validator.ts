@@ -89,6 +89,16 @@ function validateFlagRules(props: {
 	readonly argvTail: readonly string[];
 	readonly flagRules: readonly CliFlagRule[];
 }): CliAllowanceValidationResult {
+	for (const token of props.argvTail) {
+		if (!token.startsWith('-') || token === '--') continue;
+		const parsedFlag = parseFlagToken(token);
+		const deniedRule = props.flagRules.find(
+			(rule) => rule.kind === 'deny' && rule.names.includes(parsedFlag.name),
+		);
+		if (deniedRule !== undefined) {
+			return invalidCliAllowance(`CLI argv flag "${parsedFlag.name}" is denied by policy.`);
+		}
+	}
 	let tokenIndex = 0;
 	while (tokenIndex < props.argvTail.length) {
 		const token = props.argvTail[tokenIndex];

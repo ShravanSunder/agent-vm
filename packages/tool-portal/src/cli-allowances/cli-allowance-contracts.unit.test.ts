@@ -116,6 +116,35 @@ describe('CLI allowance contracts', () => {
 		}
 	});
 
+	it('does not let a separated allowed value consume an explicitly denied flag', () => {
+		const allowance = CliAllowanceSchema.parse({
+			commands: [
+				{
+					flagRules: [
+						{ kind: 'allowed_values', names: ['--scope'], values: ['--force'] },
+						{ kind: 'deny', names: ['--force'] },
+					],
+					path: ['apply'],
+				},
+			],
+			deniedPatterns: [],
+			stdin: { kind: 'none' },
+			timeout: { kind: 'quick' },
+		});
+
+		for (const argv of [
+			['apply', '--scope', '--force'],
+			['apply', '--', '--scope', '--force'],
+		]) {
+			expect(
+				validateCliAllowanceInvocation({
+					allowance,
+					input: CliAllowanceInputSchema.parse({ argv, reason: 'deny inspection proof' }),
+				}),
+			).toMatchObject({ ok: false });
+		}
+	});
+
 	it('rejects control characters and invalid stdin before execution', () => {
 		expect(
 			CliAllowanceInputSchema.safeParse({

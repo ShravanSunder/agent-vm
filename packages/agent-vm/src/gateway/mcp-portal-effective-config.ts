@@ -298,6 +298,17 @@ function assertManagedControllerExecutionPolicy(props: {
 	readonly namespacePolicy: ToolPortalNamespacePolicy;
 	readonly profileId: string;
 }): void {
+	if (
+		props.namespaceId !== 'controller_execution' &&
+		props.namespacePolicy.backend.kind === 'controller_execution' &&
+		Object.values(props.namespacePolicy.backend.operations).some(
+			(operation) => operation.kind === 'registered_action',
+		)
+	) {
+		throw new Error(
+			`tool-portal: managed profile "${props.profileId}" namespace "${props.namespaceId}" cannot remap definition-owned registered controller execution actions.`,
+		);
+	}
 	if (props.namespacePolicy.tools.allow === '*') {
 		throw new Error(
 			`tool-portal: managed profile "${props.profileId}" namespace "${props.namespaceId}" tools must explicitly allow controller execution operations.`,

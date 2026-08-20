@@ -15,6 +15,7 @@ import type {
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import { createConfiguredCliManagedVmExecutor } from './configured-cli-managed-vm-executor.js';
+import { ConfiguredControllerExecutionError } from './configured-controller-execution-error.js';
 
 const operation = {
 	commands: [{ flagRules: [], path: ['inspect'] }],
@@ -135,6 +136,34 @@ function createManagedVmFixture(): {
 }
 
 describe('configured CLI Managed VM production executor', () => {
+	it('preserves proven not-dispatched certainty for an already-aborted signal', async () => {
+		const fixture = createManagedVmFixture();
+		const execute = createConfiguredCliManagedVmExecutor({
+			controllerStateDir: testRoot,
+			managedVmExactProcessTermination: { terminateRecordedHostProcess: vi.fn() },
+			managedVmFactory: { createManagedVm: fixture.createManagedVm },
+			readProcessIdentity: vi.fn(async () => null),
+			resolveGatewayIdentity: vi.fn(async () => gatewayIdentity),
+		});
+		const cancellation = new AbortController();
+		cancellation.abort(
+			new ConfiguredControllerExecutionError('timeout', 'Controller execution window expired.'),
+		);
+
+		await expect(
+			execute({
+				input: { argv: ['inspect'], reason: 'pre-create cancellation proof' },
+				operation,
+				operationName: 'isolated_inspect',
+				reloadOperation: vi.fn(async () => operation),
+				signal: cancellation.signal,
+				stablePrincipal: 'a'.repeat(64),
+				zoneId: 'zone-a',
+			}),
+		).rejects.toMatchObject({ code: 'not_dispatched' });
+		expect(fixture.createManagedVm).not.toHaveBeenCalled();
+	});
+
 	it('creates one VM, revalidates after provisioning, executes once, and proves exact containment', async () => {
 		const fixture = createManagedVmFixture();
 		const terminateRecordedHostProcess = vi.fn(async () => {

@@ -63,7 +63,7 @@ export async function executeConfiguredCliOnControllerHost(props: {
 	}
 	if (props.signal?.aborted === true) {
 		throw new ConfiguredControllerExecutionError(
-			'cancelled',
+			'not_dispatched',
 			'Configured CLI execution was cancelled before spawn.',
 		);
 	}

@@ -63,6 +63,21 @@ afterEach(() => {
 });
 
 describe('configured CLI controller-host executor', () => {
+	it('preserves proven not-dispatched certainty for an already-aborted signal', async () => {
+		process.env.AGENT_VM_HOST_EXECUTOR_TEST_VALUE = 'visible';
+		const cancellation = new AbortController();
+		cancellation.abort();
+
+		await expect(
+			executeConfiguredCliOnControllerHost({
+				input: { argv: ['inspect'], reason: 'pre-spawn cancellation proof' },
+				operation,
+				signal: cancellation.signal,
+			}),
+		).rejects.toMatchObject({ code: 'not_dispatched' });
+		expect(spawnMock).not.toHaveBeenCalled();
+	});
+
 	it('spawns exact array argv with fixed cwd, allowlisted environment, bounded stdin, and no shell', async () => {
 		process.env.AGENT_VM_HOST_EXECUTOR_TEST_VALUE = 'visible';
 		process.env.AGENT_VM_HOST_EXECUTOR_FORBIDDEN = 'hidden';

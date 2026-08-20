@@ -188,7 +188,12 @@ export function createConfiguredCliManagedVmExecutor(
 		if (!validation.ok) {
 			throw new ConfiguredControllerExecutionError('validation_failed', validation.error.message);
 		}
-		request.signal?.throwIfAborted();
+		if (request.signal?.aborted === true) {
+			throw new ConfiguredControllerExecutionError(
+				'not_dispatched',
+				'Configured Managed VM execution was cancelled before creation.',
+			);
+		}
 		const gatewayIdentity = await props.resolveGatewayIdentity(request.zoneId);
 		const initialAuthorization = authorizationSnapshot({
 			input: request.input,

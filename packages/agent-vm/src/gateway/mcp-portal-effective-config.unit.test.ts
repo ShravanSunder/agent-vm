@@ -1055,6 +1055,40 @@ describe('MCP Portal effective config materialization', () => {
 		).rejects.toThrow(/unknown registered controller execution action/u);
 	});
 
+	it('rejects registered controller execution actions outside their definition-owned namespace', async () => {
+		await expect(
+			planMcpPortalEffectiveConfigFromConfig(
+				createPlanPropsForTest({
+					mcpConfig: { providers: {}, schemaVersion: 1 },
+					toolPortalConfig: {
+						agents: { shravan: { profile: 'default' } },
+						mode: 'managed',
+						profiles: {
+							default: {
+								namespaces: {
+									custom_actions: {
+										backend: {
+											kind: 'controller_execution',
+											operations: {
+												controller_host_probe: { kind: 'registered_action' },
+											},
+										},
+										calls: {
+											requiresApproval: { allow: [] },
+											withoutApproval: { allow: ['controller_host_probe'] },
+										},
+										tools: { allow: ['controller_host_probe'] },
+									},
+								},
+							},
+						},
+						schemaVersion: 1,
+					},
+				}),
+			),
+		).rejects.toThrow(/cannot remap definition-owned registered controller execution actions/u);
+	});
+
 	it('resolves 1Password provider secrets once and writes environment-only effective configs', async () => {
 		const mcpConfig = {
 			providers: {

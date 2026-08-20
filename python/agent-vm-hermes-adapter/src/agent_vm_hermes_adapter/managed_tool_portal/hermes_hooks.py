@@ -157,7 +157,7 @@ class _PreGatewayDispatchHook:
         session_store: object = None,
         telemetry_schema_version: object = None,
     ) -> dict[str, str]:
-        del session_store, telemetry_schema_version
+        del telemetry_schema_version
         if not isinstance(event, HermesGatewayMessageEvent):
             return {
                 "action": "skip",
@@ -172,6 +172,7 @@ class _PreGatewayDispatchHook:
             }
         _ = self._runtime.approval_routes.capture(
             gateway=gateway,
+            session_store=session_store,
             source=event.source,
         )
         return {"action": "allow"}
@@ -441,7 +442,7 @@ class _OnSessionEndHook:
             telemetry_schema_version,
         )
         if isinstance(session_id, str) and session_id:
-            self._runtime.approval_routes.clear(session_id)
+            self._runtime.approval_routes.clear_by_session_id(session_id)
         if self._runtime.telemetry.observer_hooks_enabled:
             self._runtime.framework_observability.on_session_end(
                 turn_id=turn_id,
