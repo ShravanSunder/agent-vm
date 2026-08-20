@@ -1,3 +1,4 @@
+import type { ManagedToolPortalConfig } from '@agent-vm/config-contracts';
 import type {
 	GatewayRuntimeToolPortalDispatchAuthorityForBackendKind,
 	GatewayRuntimeTrustedInvocationContext,
@@ -18,6 +19,55 @@ const commandId = '22222222-2222-7222-8222-222222222222';
 const callerContextId = '33333333-3333-4333-8333-333333333333';
 const responseMessageId = '44444444-4444-4444-8444-444444444444';
 const expectedHead = '0123456789abcdef0123456789abcdef01234567';
+const toolPortalConfig = {
+	agents: { 'agent-a': { profile: 'profile-a' } },
+	mode: 'managed',
+	profiles: {
+		'profile-a': {
+			namespaces: {
+				controller_execution: {
+					backend: {
+						kind: 'controller_execution',
+						operations: {
+							inspect_host: {
+								commands: [{ flagRules: [], path: ['inspect'] }],
+								deniedPatterns: [],
+								executablePath: '/usr/bin/printf',
+								executionTarget: {
+									cwd: '/tmp',
+									environment: { kind: 'empty' },
+									kind: 'controller_host',
+								},
+								kind: 'configured_cli',
+								mandatoryArgvPrefix: ['--'],
+								output: {
+									modelVisibleStderr: 'none',
+									overflow: 'truncate',
+									stderrMaxBytes: 1024,
+									stdoutMaxBytes: 1024,
+								},
+								safeHelp: 'Inspect the host fixture.',
+								stdin: { kind: 'none' },
+								timeout: { kind: 'quick' },
+							},
+							controller_host_probe: { kind: 'registered_action' },
+							workspace_git_push: { kind: 'registered_action' },
+						},
+					},
+					calls: {
+						requiresApproval: { allow: ['workspace_git_push'], deny: [] },
+						withoutApproval: { allow: ['controller_host_probe', 'inspect_host'], deny: [] },
+					},
+					tools: {
+						allow: ['controller_host_probe', 'inspect_host', 'workspace_git_push'],
+						deny: [],
+					},
+				},
+			},
+		},
+	},
+	schemaVersion: 1,
+} satisfies ManagedToolPortalConfig;
 const trustedContext = {
 	correlation: { runId: 'run-a', sessionId: 'session-a', toolCallId: 'tool-call-a' },
 	principal: {
@@ -108,13 +158,16 @@ function createFixture(
 					operation: 'tool_portal_controller_execution',
 					payload: {
 						controllerExecution: {
-							actionId: 'workspace_git_push',
-							result: {
-								branch: 'agent/agent-a',
-								localHead: expectedHead,
-								pushedCommits: [],
-								remoteHead: expectedHead,
+							action: {
+								actionId: 'workspace_git_push',
+								result: {
+									branch: 'agent/agent-a',
+									localHead: expectedHead,
+									pushedCommits: [],
+									remoteHead: expectedHead,
+								},
 							},
+							kind: 'registered_action',
 						},
 						responseToMessageId: responseMessageId,
 						result: 'ok',
@@ -129,6 +182,7 @@ function createFixture(
 			createCommandId: () => commandId,
 			now: () => 1_000,
 			owningGeneration: 'runtime-generation-a',
+			toolPortalConfig,
 		}),
 		register,
 		sendCommand,
@@ -167,18 +221,21 @@ describe('Gateway Control controller-execution adapter', () => {
 				kind: 'command',
 				operation: 'tool_portal_controller_execution',
 				payload: {
-					actionId: 'workspace_git_push',
-					callerContext: { callerContextId },
-					correlation: {
-						capability: {
-							name: 'workspace_git_push',
-							namespace: 'controller_execution',
+					action: {
+						actionId: 'workspace_git_push',
+						callerContext: { callerContextId },
+						correlation: {
+							capability: {
+								name: 'workspace_git_push',
+								namespace: 'controller_execution',
+							},
+							requestId: 'request-a',
+							runId: 'run-a',
+							toolCallId: 'tool-call-a',
 						},
-						requestId: 'request-a',
-						runId: 'run-a',
-						toolCallId: 'tool-call-a',
+						expectedHead,
 					},
-					expectedHead,
+					kind: 'registered_action',
 				},
 			},
 		});
@@ -190,7 +247,7 @@ describe('Gateway Control controller-execution adapter', () => {
 					outcome: { kind: 'completed' },
 					owningGeneration: 'runtime-generation-a',
 					status: 'ok',
-					value: { actionId: 'workspace_git_push' },
+					value: { action: { actionId: 'workspace_git_push' }, kind: 'registered_action' },
 				},
 			],
 			ok: true,
@@ -219,11 +276,74 @@ describe('Gateway Control controller-execution adapter', () => {
 				idempotencyKey: `controller-execution:${operationId}:sha256:${'c'.repeat(64)}`,
 				message: expect.objectContaining({
 					payload: expect.objectContaining({
-						approvalReservation: approvalReservationDispatchAuthority.reservation,
+						action: expect.objectContaining({
+							approvalReservation: approvalReservationDispatchAuthority.reservation,
+						}),
 					}),
 				}),
 			}),
 		);
+	});
+
+	it('routes a validated configured CLI input with a target-derived quick RPC window', async () => {
+		const fixture = createFixture({
+			sendCommand: async () => ({
+				acceptedSession,
+				messageId: responseMessageId,
+				response: {
+					kind: 'command_result',
+					operation: 'tool_portal_controller_execution',
+					payload: {
+						controllerExecution: {
+							kind: 'configured_cli',
+							operationName: 'inspect_host',
+							result: {
+								exitCode: 0,
+								stderrTruncated: false,
+								stdout: 'inspected',
+								stdoutTruncated: false,
+							},
+						},
+						responseToMessageId: responseMessageId,
+						result: 'ok',
+					},
+				},
+			}),
+		});
+
+		const result = await fixture.backend.call(
+			{
+				calls: [
+					{
+						arguments: { argv: ['inspect', 'target'], reason: 'verify host fixture' },
+						id: 'configured-call',
+						name: 'inspect_host',
+						namespace: 'controller_execution',
+					},
+				],
+			},
+			callOptions(),
+		);
+
+		expect(fixture.sendCommand).toHaveBeenCalledWith(
+			expect.objectContaining({
+				commandResultTimeoutMs: 15_000,
+				createdAtMs: 1_000,
+				expiresAtMs: 16_000,
+				message: expect.objectContaining({
+					payload: expect.objectContaining({
+						capability: { name: 'inspect_host', namespace: 'controller_execution' },
+						input: { argv: ['inspect', 'target'], reason: 'verify host fixture' },
+						kind: 'configured_cli',
+						operationName: 'inspect_host',
+					}),
+				}),
+			}),
+		);
+		expect(result).toMatchObject({
+			items: [{ status: 'ok', value: { kind: 'configured_cli', operationName: 'inspect_host' } }],
+			ok: true,
+		});
 	});
 
 	it('rejects non-exact workspace arguments before registration or dispatch', async () => {

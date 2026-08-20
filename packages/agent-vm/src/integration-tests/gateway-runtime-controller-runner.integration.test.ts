@@ -80,7 +80,7 @@ const validRequest = {
 	operationName: 'refresh-package-metadata',
 } as const satisfies ControllerExecutionRequest;
 
-describe('gateway runtime typed controller host actions', () => {
+describe('gateway runtime typed controller execution actions', () => {
 	it('executes a registered typed action only after complete controller authority recomputation', async () => {
 		const authorizationEvents: string[] = [];
 		const registry = createControllerExecutionRegistry({
@@ -167,7 +167,7 @@ describe('gateway runtime typed controller host actions', () => {
 		expect(recomputeAuthorization).not.toHaveBeenCalled();
 	});
 
-	it('preserves ambiguous replay-forbidden truth after host-action dispatch begins', async () => {
+	it('preserves ambiguous replay-forbidden truth after controller execution begins', async () => {
 		const failingAction = defineControllerExecution({
 			actionName: 'refresh-package-metadata',
 			execute: async (): Promise<JsonObject> => {
@@ -189,7 +189,7 @@ describe('gateway runtime typed controller host actions', () => {
 			diagnostics: [],
 			error: {
 				code: 'execution_failed',
-				message: 'Controller host action execution state is unknown.',
+				message: 'Controller execution state is unknown.',
 			},
 			kind: 'ambiguous',
 			reason: 'dispatch-state-unknown',
@@ -210,7 +210,7 @@ describe('gateway runtime typed controller host actions', () => {
 			diagnostics: [],
 			error: {
 				code: 'not_authorized',
-				message: 'Controller host action authority could not be recomputed.',
+				message: 'Controller execution authority could not be recomputed.',
 			},
 			kind: 'not-dispatched',
 			reason: 'stale-authority',

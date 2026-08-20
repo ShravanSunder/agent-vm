@@ -31,6 +31,7 @@ import {
 	assertGatewayControlEnvelopeDeliveryPolicy,
 	classifyGatewayControlAdmission,
 	deriveGatewayControlDeliveryPolicy,
+	deriveGatewayControlControllerExecutionRpcWindow,
 	gatewayControlCommandExecutionTimeoutMsByOperation,
 	gatewayControlDeliveryPolicyByKind,
 	gatewayControlDeliveryPolicyByOperation,
@@ -332,6 +333,34 @@ describe('gateway control contract', () => {
 		expect(Object.keys(gatewayControlCommandExecutionTimeoutMsByOperation).toSorted()).toEqual(
 			[...GatewayControlRpcOperationSchema.options].toSorted(),
 		);
+	});
+
+	it('derives configured controller execution RPC windows from target and timeout class', () => {
+		expect(
+			deriveGatewayControlControllerExecutionRpcWindow({
+				input: { argv: ['inspect'], reason: 'quick proof' },
+				nowMs: 1_000,
+				targetKind: 'controller_host',
+				timeoutKind: 'quick',
+			}),
+		).toEqual({
+			expiresAtMs: 16_000,
+			fixedDeliveryCleanupMarginMs: 10_000,
+			provisioningBudgetMs: 0,
+			resolvedCommandRuntimeMs: 5_000,
+		});
+		expect(
+			deriveGatewayControlControllerExecutionRpcWindow({
+				input: { argv: ['inspect'], reason: 'open proof', timeoutMs: 28_800_000 },
+				nowMs: 1_000,
+				targetKind: 'ephemeral_managed_vm',
+				timeoutKind: 'open',
+			}),
+		).toMatchObject({
+			expiresAtMs: 28_991_000,
+			provisioningBudgetMs: 180_000,
+			resolvedCommandRuntimeMs: 28_800_000,
+		});
 	});
 
 	it('exports domain JSON schemas matching the reviewed static artifact', async () => {
@@ -659,8 +688,8 @@ describe('gateway control contract', () => {
 		}
 	});
 
-	it('keeps controller_execution payload narrow to reviewed host-action intents', () => {
-		const validWorkspaceGitPayload = {
+	it('keeps controller_execution payload narrow to registered and configured intents', () => {
+		const validWorkspaceGitAction = {
 			actionId: 'workspace_git_push',
 			callerContext: {
 				callerContextId: '44444444-4444-4444-8444-444444444444',
@@ -674,7 +703,11 @@ describe('gateway control contract', () => {
 			},
 			expectedHead: '0123456789abcdef0123456789abcdef01234567',
 		};
-		const validHostProbePayload = {
+		const validWorkspaceGitPayload = {
+			action: validWorkspaceGitAction,
+			kind: 'registered_action',
+		};
+		const validHostProbeAction = {
 			actionId: 'controller_host_probe',
 			callerContext: {
 				callerContextId: '44444444-4444-4444-8444-444444444444',
@@ -686,6 +719,10 @@ describe('gateway control contract', () => {
 				},
 				toolCallId: 'tool-call-123',
 			},
+		};
+		const validHostProbePayload = {
+			action: validHostProbeAction,
+			kind: 'registered_action',
 		};
 		const approvalReservation = {
 			approvalId: '11111111-1111-4111-8111-111111111111',
@@ -704,8 +741,8 @@ describe('gateway control contract', () => {
 			stablePrincipal: 'b'.repeat(64),
 		} as const;
 		const approvedHostProbePayload = {
-			...validHostProbePayload,
-			approvalReservation,
+			action: { ...validHostProbeAction, approvalReservation },
+			kind: 'registered_action',
 		};
 
 		expect(
@@ -717,6 +754,24 @@ describe('gateway control contract', () => {
 		expect(
 			GatewayControlToolPortalControllerExecutionPayloadSchema.parse(approvedHostProbePayload),
 		).toEqual(approvedHostProbePayload);
+		const configuredPayload = {
+			callerContext: validHostProbeAction.callerContext,
+			capability: { name: 'inspect_host', namespace: 'controller_execution' },
+			correlation: validHostProbeAction.correlation,
+			input: { argv: ['inspect'], reason: 'contract proof' },
+			kind: 'configured_cli',
+			operationName: 'inspect_host',
+		};
+		expect(
+			GatewayControlToolPortalControllerExecutionPayloadSchema.parse(configuredPayload),
+		).toEqual(configuredPayload);
+		expect(
+			GatewayControlToolPortalControllerExecutionPayloadSchema.safeParse({
+				...configuredPayload,
+				expiresAtMs: 123,
+				targetKind: 'controller_host',
+			}).success,
+		).toBe(false);
 
 		for (const invalidPayload of [
 			{ ...validWorkspaceGitPayload, agentId: 'main' },
@@ -1047,15 +1102,21 @@ describe('gateway control contract', () => {
 				operation: 'tool_portal_controller_execution',
 				payload: {
 					controllerExecution: {
-						actionId: 'workspace_git_push',
-						result: {
-							branch: 'main',
-							localHead: '0123456789abcdef0123456789abcdef01234567',
-							pushedCommits: [
-								{ sha: '0123456789abcdef0123456789abcdef01234567', subject: 'docs: update memory' },
-							],
-							remoteHead: '0123456789abcdef0123456789abcdef01234567',
+						action: {
+							actionId: 'workspace_git_push',
+							result: {
+								branch: 'main',
+								localHead: '0123456789abcdef0123456789abcdef01234567',
+								pushedCommits: [
+									{
+										sha: '0123456789abcdef0123456789abcdef01234567',
+										subject: 'docs: update memory',
+									},
+								],
+								remoteHead: '0123456789abcdef0123456789abcdef01234567',
+							},
 						},
+						kind: 'registered_action',
 					},
 					responseToMessageId: '22222222-2222-4222-8222-222222222222',
 					result: 'ok',
@@ -1097,15 +1158,21 @@ describe('gateway control contract', () => {
 		};
 
 		const controllerExecutionResult = {
-			actionId: 'workspace_git_push',
-			result: {
-				branch: 'main',
-				localHead: '0123456789abcdef0123456789abcdef01234567',
-				pushedCommits: [
-					{ sha: '0123456789abcdef0123456789abcdef01234567', subject: 'docs: update memory' },
-				],
-				remoteHead: '0123456789abcdef0123456789abcdef01234567',
+			action: {
+				actionId: 'workspace_git_push',
+				result: {
+					branch: 'main',
+					localHead: '0123456789abcdef0123456789abcdef01234567',
+					pushedCommits: [
+						{
+							sha: '0123456789abcdef0123456789abcdef01234567',
+							subject: 'docs: update memory',
+						},
+					],
+					remoteHead: '0123456789abcdef0123456789abcdef01234567',
+				},
 			},
+			kind: 'registered_action',
 		};
 
 		expect(
@@ -1193,15 +1260,21 @@ describe('gateway control contract', () => {
 			zoneId: 'zone-a',
 		};
 		const controllerExecutionResult = {
-			actionId: 'workspace_git_push',
-			result: {
-				branch: 'main',
-				localHead: '0123456789abcdef0123456789abcdef01234567',
-				pushedCommits: [
-					{ sha: '0123456789abcdef0123456789abcdef01234567', subject: 'docs: update memory' },
-				],
-				remoteHead: '0123456789abcdef0123456789abcdef01234567',
+			action: {
+				actionId: 'workspace_git_push',
+				result: {
+					branch: 'main',
+					localHead: '0123456789abcdef0123456789abcdef01234567',
+					pushedCommits: [
+						{
+							sha: '0123456789abcdef0123456789abcdef01234567',
+							subject: 'docs: update memory',
+						},
+					],
+					remoteHead: '0123456789abcdef0123456789abcdef01234567',
+				},
 			},
+			kind: 'registered_action',
 		};
 
 		expect(

@@ -179,10 +179,10 @@ const staleAuthorityError = {
 
 const ambiguousError = {
 	code: 'execution_failed',
-	message: 'Controller host-action dispatch state is unknown.',
+	message: 'Controller execution dispatch state is unknown.',
 } as const satisfies PortalError;
 
-describe('controller host-action Tool Portal backend port', () => {
+describe('controller execution Tool Portal backend port', () => {
 	it('exposes a backend-kind-bound port over one narrow grouped controller RPC', () => {
 		const dispatch: ControllerExecutionRpcPort['dispatch'] = async (props: {
 			readonly request: { readonly kind: 'controller-execution-dispatch' };

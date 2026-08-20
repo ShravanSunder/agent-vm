@@ -119,13 +119,13 @@ function createRegisteredActionCatalog(
 			action.summary.toolRef !== action.descriptor.toolRef
 		) {
 			throw new TypeError(
-				'Controller host-action summary and descriptor must identify one capability.',
+				'Controller execution summary and descriptor must identify one capability.',
 			);
 		}
 		const key = capabilityKey(action.summary.namespace, action.summary.name);
 		if (byCapabilityKey.has(key)) {
 			throw new TypeError(
-				`Controller host action ${action.summary.namespace}.${action.summary.name} is registered more than once.`,
+				`Controller execution ${action.summary.namespace}.${action.summary.name} is registered more than once.`,
 			);
 		}
 		byCapabilityKey.set(key, action);
@@ -186,21 +186,21 @@ function deniedError(message: string): PortalError {
 function invalidArgumentsError(): PortalError {
 	return {
 		code: 'validation_failed',
-		message: 'Controller host-action arguments do not match the registered schema.',
+		message: 'Controller execution arguments do not match the registered schema.',
 	};
 }
 
 function invalidDispatchBatchError(): PortalError {
 	return {
 		code: 'invalid_request',
-		message: 'Controller host-action authority binds exactly one call.',
+		message: 'Controller execution authority binds exactly one call.',
 	};
 }
 
 function ambiguousDispatchError(): PortalError {
 	return {
 		code: 'execution_failed',
-		message: 'Controller host-action dispatch state is unknown.',
+		message: 'Controller execution dispatch state is unknown.',
 	};
 }
 
@@ -360,7 +360,7 @@ async function dispatchControllerExecution(props: {
 }
 
 function assertNeverRpcResult(result: never): never {
-	throw new TypeError(`Unsupported controller host-action RPC result: ${String(result)}`);
+	throw new TypeError(`Unsupported controller execution RPC result: ${String(result)}`);
 }
 
 function capabilitySelected(props: {
@@ -463,7 +463,7 @@ export function createControllerExecutionBackendPort(
 					if (action === undefined) {
 						return notDispatchedCallItem({
 							error: deniedError(
-								`Controller host action ${call.namespace}.${call.name} is not registered.`,
+								`Controller execution ${call.namespace}.${call.name} is not registered.`,
 							),
 							id: call.id,
 							operationId: expectedBinding.operationId,

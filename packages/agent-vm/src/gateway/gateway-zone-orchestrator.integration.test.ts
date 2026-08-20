@@ -6208,6 +6208,12 @@ describe('startGatewayZone', () => {
 				controlSession: { controllerEpoch: 'controller-epoch-test' },
 				gatewayControlControllerExecutions: {
 					authorizeControllerExecution: vi.fn(async () => ({ authorized: true }) as const),
+					executeConfiguredCli: vi.fn(async () => ({
+						exitCode: 0,
+						stderrTruncated: false,
+						stdout: '',
+						stdoutTruncated: false,
+					})),
 					pushWorkspaceGit,
 					runControllerHostProbe: vi.fn(async () => ({
 						entryNames: ['agent-vm-host-probe.txt'],
@@ -6629,15 +6635,18 @@ describe('startGatewayZone', () => {
 					kind: 'command',
 					operation: 'tool_portal_controller_execution',
 					payload: {
-						actionId: 'workspace_git_push',
-						callerContext: { callerContextId: hostActionCallerContextId },
-						correlation: {
-							capability: {
-								name: 'workspace_git_push',
-								namespace: 'controller_execution',
+						action: {
+							actionId: 'workspace_git_push',
+							callerContext: { callerContextId: hostActionCallerContextId },
+							correlation: {
+								capability: {
+									name: 'workspace_git_push',
+									namespace: 'controller_execution',
+								},
 							},
+							expectedHead: pushedWorkspaceGitHead,
 						},
-						expectedHead: pushedWorkspaceGitHead,
+						kind: 'registered_action',
 					},
 				},
 			}),
@@ -6670,13 +6679,16 @@ describe('startGatewayZone', () => {
 			operation: 'tool_portal_controller_execution',
 			payload: {
 				controllerExecution: {
-					actionId: 'workspace_git_push',
-					result: {
-						branch: 'agent/main',
-						localHead: pushedWorkspaceGitHead,
-						pushedCommits: [{ sha: pushedWorkspaceGitHead, subject: 'docs: update memory' }],
-						remoteHead: pushedWorkspaceGitHead,
+					action: {
+						actionId: 'workspace_git_push',
+						result: {
+							branch: 'agent/main',
+							localHead: pushedWorkspaceGitHead,
+							pushedCommits: [{ sha: pushedWorkspaceGitHead, subject: 'docs: update memory' }],
+							remoteHead: pushedWorkspaceGitHead,
+						},
 					},
+					kind: 'registered_action',
 				},
 				result: 'ok',
 			},

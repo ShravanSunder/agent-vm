@@ -44,6 +44,7 @@ import {
 
 import type { ControllerApprovalArmDispatchResult } from '../approval/controller-approval-ledger.js';
 import type { OpenClawRuntimeStatusReport } from '../openclaw-runtime-status.js';
+import { ConfiguredControllerExecutionError } from '../runner/configured-controller-execution-error.js';
 import type { GatewayEpochIdentity } from '../vm-ownership/vm-ownership-contracts.js';
 import { WorkspaceGitPushRejectedError } from '../workspace-git/workspace-git-operations.js';
 import type { ControlSessionDomainHandler } from './control-session-dispatcher.js';
@@ -157,6 +158,8 @@ export interface GatewayControlLeaseRpcRejection {
 export interface GatewayControlControllerExecutionOperations {
 	authorizeControllerExecution(options: {
 		readonly callerContext: GatewayControlTrustedCallerContext;
+		readonly createdAtMs: number;
+		readonly expiresAtMs: number | undefined;
 		readonly payload: GatewayControlToolPortalControllerExecutionPayload;
 		readonly session: GatewayControlAcceptedSessionRef;
 	}): Promise<
@@ -169,10 +172,26 @@ export interface GatewayControlControllerExecutionOperations {
 				readonly safeMessage: string;
 		  }
 	>;
-	pushWorkspaceGit(options: {
+	executeConfiguredCli(options: {
 		readonly callerContext: GatewayControlTrustedCallerContext;
 		readonly payload: Extract<
 			GatewayControlToolPortalControllerExecutionPayload,
+			{ readonly kind: 'configured_cli' }
+		>;
+		readonly session: GatewayControlAcceptedSessionRef;
+	}): Promise<
+		Extract<
+			GatewayControlToolPortalControllerExecutionResult,
+			{ readonly kind: 'configured_cli' }
+		>['result']
+	>;
+	pushWorkspaceGit(options: {
+		readonly callerContext: GatewayControlTrustedCallerContext;
+		readonly payload: Extract<
+			Extract<
+				GatewayControlToolPortalControllerExecutionPayload,
+				{ readonly kind: 'registered_action' }
+			>['action'],
 			{ readonly actionId: 'workspace_git_push' }
 		>;
 		readonly session: GatewayControlAcceptedSessionRef;
@@ -180,7 +199,10 @@ export interface GatewayControlControllerExecutionOperations {
 	runControllerHostProbe(options: {
 		readonly callerContext: GatewayControlTrustedCallerContext;
 		readonly payload: Extract<
-			GatewayControlToolPortalControllerExecutionPayload,
+			Extract<
+				GatewayControlToolPortalControllerExecutionPayload,
+				{ readonly kind: 'registered_action' }
+			>['action'],
 			{ readonly actionId: 'controller_host_probe' }
 		>;
 		readonly session: GatewayControlAcceptedSessionRef;
@@ -368,8 +390,12 @@ export function resolveGatewayControlInboundStablePrincipal(options: {
 		case 'lease_use_heartbeat':
 		case 'lease_use_start':
 		case 'tool_vm_binding_request':
-		case 'tool_portal_controller_execution':
 			callerContextId = options.message.payload.callerContext.callerContextId;
+			break;
+		case 'tool_portal_controller_execution':
+			callerContextId = controllerExecutionCallerContextRef(
+				options.message.payload,
+			).callerContextId;
 			break;
 		case 'lease_get':
 		case 'lease_peek':
@@ -801,20 +827,35 @@ function currentApprovalAuthorityContext(
 	};
 }
 
+function controllerExecutionCallerContextRef(
+	payload: GatewayControlToolPortalControllerExecutionPayload,
+): { readonly callerContextId: string } {
+	return payload.kind === 'configured_cli' ? payload.callerContext : payload.action.callerContext;
+}
+
+function controllerExecutionApprovalReservation(
+	payload: GatewayControlToolPortalControllerExecutionPayload,
+): GatewayRuntimeApprovalDispatchReservation | undefined {
+	return payload.kind === 'configured_cli'
+		? payload.approvalReservation
+		: payload.action.approvalReservation;
+}
+
 async function executeToolPortalControllerExecution(options: {
 	readonly actions: GatewayControlControllerExecutionOperations | undefined;
 	readonly approvalLedger: GatewayControlApprovalLedgerOperations | undefined;
 	readonly approvalAuthorityContext: GatewayRuntimeApprovalAuthorityContext;
 	readonly callerContexts: GatewayControlCallerContextRegistry;
+	readonly createdAtMs: number;
+	readonly expiresAtMs: number | undefined;
 	readonly payload: GatewayControlToolPortalControllerExecutionPayload;
 	readonly propagateMutationFailure?: boolean;
 	readonly responseToMessageId: string;
 	readonly session: GatewayControlCallerContextSessionRef;
 }): Promise<GatewayControlCommandResultPayload> {
 	if (options.actions === undefined) {
-		const callerContext = options.callerContexts.resolve(
-			options.payload.callerContext.callerContextId,
-		);
+		const callerContextRef = controllerExecutionCallerContextRef(options.payload);
+		const callerContext = options.callerContexts.resolve(callerContextRef.callerContextId);
 		if (callerContext?.purpose === 'tool_portal_controller_execution') {
 			options.callerContexts.release(callerContext.callerContextId);
 		}
@@ -822,21 +863,21 @@ async function executeToolPortalControllerExecution(options: {
 			error: {
 				errorClass: 'controller_execution_unconfigured',
 				retryable: false,
-				safeMessage: 'controller host action handler is not configured',
+				safeMessage: 'controller execution handler is not configured',
 			},
 			responseToMessageId: options.responseToMessageId,
 			result: 'rejected',
 		});
 	}
 	const callerContext = options.callerContexts.resolve(
-		options.payload.callerContext.callerContextId,
+		controllerExecutionCallerContextRef(options.payload).callerContextId,
 	);
 	if (callerContext === undefined) {
 		return commandResultPayload({
 			error: {
 				errorClass: 'controller_execution_caller_context_absent',
 				retryable: false,
-				safeMessage: 'controller host action caller context is not registered',
+				safeMessage: 'controller execution caller context is not registered',
 			},
 			responseToMessageId: options.responseToMessageId,
 			result: 'rejected',
@@ -858,7 +899,7 @@ async function executeToolPortalControllerExecution(options: {
 			error: {
 				errorClass: 'controller_execution_caller_context_stale',
 				retryable: false,
-				safeMessage: 'controller host action caller context does not match session',
+				safeMessage: 'controller execution caller context does not match session',
 			},
 			responseToMessageId: options.responseToMessageId,
 			result: 'rejected',
@@ -867,6 +908,8 @@ async function executeToolPortalControllerExecution(options: {
 	try {
 		const authorization = await options.actions.authorizeControllerExecution({
 			callerContext,
+			createdAtMs: options.createdAtMs,
+			expiresAtMs: options.expiresAtMs,
 			payload: options.payload,
 			session: options.session,
 		});
@@ -881,14 +924,14 @@ async function executeToolPortalControllerExecution(options: {
 				result: 'rejected',
 			});
 		}
-		const approvalReservation = options.payload.approvalReservation;
+		const approvalReservation = controllerExecutionApprovalReservation(options.payload);
 		if (approvalReservation !== undefined) {
 			if (approvalReservation.stablePrincipal !== callerContext.stablePrincipal) {
 				return commandResultPayload({
 					error: {
 						errorClass: 'controller_execution_approval_principal_mismatch',
 						retryable: false,
-						safeMessage: 'controller host action approval does not match the caller',
+						safeMessage: 'controller execution approval does not match the caller',
 					},
 					responseToMessageId: options.responseToMessageId,
 					result: 'rejected',
@@ -903,7 +946,7 @@ async function executeToolPortalControllerExecution(options: {
 					error: {
 						errorClass: `controller_execution_approval_${armResult.reason.replaceAll('-', '_')}`,
 						retryable: false,
-						safeMessage: 'controller host action approval is no longer dispatchable',
+						safeMessage: 'controller execution approval is no longer dispatchable',
 					},
 					responseToMessageId: options.responseToMessageId,
 					result: 'rejected',
@@ -914,7 +957,7 @@ async function executeToolPortalControllerExecution(options: {
 					error: {
 						errorClass: 'controller_execution_approval_dispatch_armed',
 						retryable: false,
-						safeMessage: 'controller host action approval dispatch state is ambiguous',
+						safeMessage: 'controller execution approval dispatch state is ambiguous',
 					},
 					responseToMessageId: options.responseToMessageId,
 					result: 'failed',
@@ -940,24 +983,40 @@ async function executeToolPortalControllerExecution(options: {
 					error: {
 						errorClass: 'controller_execution_approval_grant_mismatch',
 						retryable: false,
-						safeMessage: 'controller host action approval grant is invalid',
+						safeMessage: 'controller execution approval grant is invalid',
 					},
 					responseToMessageId: options.responseToMessageId,
 					result: 'failed',
 				});
 			}
 		}
-		switch (options.payload.actionId) {
+		if (options.payload.kind === 'configured_cli') {
+			const result = await options.actions.executeConfiguredCli({
+				callerContext,
+				payload: options.payload,
+				session: options.session,
+			});
+			return commandResultPayload({
+				controllerExecution: {
+					kind: 'configured_cli',
+					operationName: options.payload.operationName,
+					result,
+				},
+				responseToMessageId: options.responseToMessageId,
+				result: 'ok',
+			});
+		}
+		switch (options.payload.action.actionId) {
 			case 'workspace_git_push': {
 				const result = await options.actions.pushWorkspaceGit({
 					callerContext,
-					payload: options.payload,
+					payload: options.payload.action,
 					session: options.session,
 				});
 				return commandResultPayload({
 					controllerExecution: {
-						actionId: 'workspace_git_push',
-						result,
+						action: { actionId: 'workspace_git_push', result },
+						kind: 'registered_action',
 					},
 					responseToMessageId: options.responseToMessageId,
 					result: 'ok',
@@ -966,23 +1025,43 @@ async function executeToolPortalControllerExecution(options: {
 			case 'controller_host_probe': {
 				const result = await options.actions.runControllerHostProbe({
 					callerContext,
-					payload: options.payload,
+					payload: options.payload.action,
 					session: options.session,
 				});
 				return commandResultPayload({
 					controllerExecution: {
-						actionId: 'controller_host_probe',
-						result,
+						action: { actionId: 'controller_host_probe', result },
+						kind: 'registered_action',
 					},
 					responseToMessageId: options.responseToMessageId,
 					result: 'ok',
 				});
 			}
 		}
-		return assertUnreachableControllerExecution(options.payload);
+		return assertUnreachableControllerExecution(options.payload.action);
 	} catch (error) {
+		if (error instanceof ConfiguredControllerExecutionError) {
+			const result =
+				error.code === 'cancelled'
+					? 'cancelled'
+					: error.code === 'timeout'
+						? 'timeout'
+						: error.code === 'not_dispatched' || error.code === 'validation_failed'
+							? 'rejected'
+							: 'failed';
+			return commandResultPayload({
+				error: {
+					errorClass: `controller_execution_${error.code}`,
+					retryable: false,
+					safeMessage: 'configured controller execution did not complete',
+				},
+				responseToMessageId: options.responseToMessageId,
+				result,
+			});
+		}
 		if (
-			options.payload.actionId === 'workspace_git_push' &&
+			options.payload.kind === 'registered_action' &&
+			options.payload.action.actionId === 'workspace_git_push' &&
 			error instanceof WorkspaceGitPushRejectedError
 		) {
 			return commandResultPayload({
@@ -997,7 +1076,8 @@ async function executeToolPortalControllerExecution(options: {
 		}
 		if (
 			options.propagateMutationFailure === true &&
-			options.payload.actionId === 'workspace_git_push'
+			options.payload.kind === 'registered_action' &&
+			options.payload.action.actionId === 'workspace_git_push'
 		) {
 			throw error;
 		}
@@ -1005,7 +1085,7 @@ async function executeToolPortalControllerExecution(options: {
 			error: {
 				errorClass: 'controller_execution_failed',
 				retryable: true,
-				safeMessage: 'controller host action failed',
+				safeMessage: 'controller execution failed',
 			},
 			responseToMessageId: options.responseToMessageId,
 			result: 'failed',
@@ -1016,7 +1096,7 @@ async function executeToolPortalControllerExecution(options: {
 }
 
 function assertUnreachableControllerExecution(payload: never): never {
-	throw new Error(`unsupported controller host action: ${JSON.stringify(payload)}`);
+	throw new Error(`unsupported controller execution action: ${JSON.stringify(payload)}`);
 }
 
 function isLeaseRpcRejection(
@@ -1271,7 +1351,8 @@ export function createGatewayControlDomainHandler(
 				!(
 					message.kind === 'command' &&
 					message.operation === 'tool_portal_controller_execution' &&
-					message.payload.actionId === 'workspace_git_push'
+					message.payload.kind === 'registered_action' &&
+					message.payload.action.actionId === 'workspace_git_push'
 				)
 			) {
 				throw new Error('gateway semantic failure does not belong to a mutating operation');
@@ -1295,7 +1376,8 @@ export function createGatewayControlDomainHandler(
 			if (
 				message.kind === 'command' &&
 				message.operation === 'tool_portal_controller_execution' &&
-				message.payload.actionId === 'workspace_git_push'
+				message.payload.kind === 'registered_action' &&
+				message.payload.action.actionId === 'workspace_git_push'
 			) {
 				const completedPayload = GatewayControlRpcResponsePayloadSchema.parse(completedValue);
 				return GatewayControlRpcCommandResultMessageSchema.parse({
@@ -1330,7 +1412,8 @@ export function createGatewayControlDomainHandler(
 			if (
 				message.kind === 'command' &&
 				message.operation === 'tool_portal_controller_execution' &&
-				message.payload.actionId === 'workspace_git_push'
+				message.payload.kind === 'registered_action' &&
+				message.payload.action.actionId === 'workspace_git_push'
 			) {
 				const requiredAttachmentGeneration = requireSemanticEnvelopeField(
 					attachmentGeneration,
@@ -1361,6 +1444,8 @@ export function createGatewayControlDomainHandler(
 							approvalLedger: options.approvalLedger,
 							approvalAuthorityContext: currentApprovalAuthorityContext(options),
 							callerContexts: options.callerContexts,
+							createdAtMs: envelope.createdAtMs,
+							expiresAtMs: envelope.expiresAtMs,
 							payload: message.payload,
 							propagateMutationFailure: true,
 							responseToMessageId: envelope.messageId,
@@ -1377,7 +1462,7 @@ export function createGatewayControlDomainHandler(
 							processEpoch,
 							sessionId,
 						},
-						target: `controller_execution:${message.payload.actionId}:${message.payload.callerContext.callerContextId}`,
+						target: `controller_execution:${message.payload.action.actionId}:${message.payload.action.callerContext.callerContextId}`,
 						validUntilMs,
 					},
 					payload: parseGatewaySemanticJsonValue(message.payload),
@@ -1819,9 +1904,12 @@ export function createGatewayControlDomainHandler(
 					throw new Error('lease_use_end must execute through semantic preparation');
 				}
 				case 'tool_portal_controller_execution':
-					if (message.payload.actionId === 'workspace_git_push') {
+					if (
+						message.payload.kind === 'registered_action' &&
+						message.payload.action.actionId === 'workspace_git_push'
+					) {
 						throw new Error(
-							'workspace_git_push controller host action must execute through semantic preparation',
+							'workspace_git_push controller execution action must execute through semantic preparation',
 						);
 					}
 					return GatewayControlRpcCommandResultMessageSchema.parse({
@@ -1832,6 +1920,8 @@ export function createGatewayControlDomainHandler(
 							approvalLedger: options.approvalLedger,
 							approvalAuthorityContext: currentApprovalAuthorityContext(options),
 							callerContexts: options.callerContexts,
+							createdAtMs: envelope.createdAtMs,
+							expiresAtMs: envelope.expiresAtMs,
 							payload: message.payload,
 							responseToMessageId: envelope.messageId,
 							session: callerContextSession,

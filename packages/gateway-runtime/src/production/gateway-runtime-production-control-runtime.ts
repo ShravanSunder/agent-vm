@@ -228,6 +228,7 @@ export async function createGatewayRuntimeProductionControlRuntime(
 			controlCommandClient,
 			createCommandId: uuidv7,
 			owningGeneration: props.owningGeneration,
+			toolPortalConfig: props.toolPortalConfig,
 		});
 	} catch (error: unknown) {
 		await callerContextRegistrationClient.close().catch(() => undefined);

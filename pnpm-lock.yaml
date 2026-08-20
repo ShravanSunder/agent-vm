@@ -111,6 +111,9 @@ importers:
       '@agent-vm/secret-management':
         specifier: workspace:*
         version: link:../secret-management
+      '@agent-vm/tool-portal':
+        specifier: workspace:*
+        version: link:../tool-portal
       '@agent-vm/worker-control-contracts':
         specifier: workspace:*
         version: link:../worker-control-contracts

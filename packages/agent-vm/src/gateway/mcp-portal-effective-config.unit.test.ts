@@ -480,7 +480,7 @@ describe('MCP Portal effective config materialization', () => {
 		expect(plan.effectiveToolPortalConfig).toEqual(parseToolPortalConfigForTest(toolPortalConfig));
 	});
 
-	it('preserves explicit reviewed controller host action namespaces for the authored profile', async () => {
+	it('preserves explicit controller execution namespaces for the authored profile', async () => {
 		const plan = await planMcpPortalEffectiveConfigFromConfig(
 			createPlanPropsForTest({
 				mcpConfig: { providers: {}, schemaVersion: 1 },
@@ -755,7 +755,7 @@ describe('MCP Portal effective config materialization', () => {
 		).toEqual({ allow: '*', deny: [] });
 	});
 
-	it('rejects broad authored controller host action policy for workspace Git host actions', async () => {
+	it('rejects broad authored controller execution policy for registered workspace Git', async () => {
 		await expect(
 			planMcpPortalEffectiveConfigFromConfig(
 				createPlanPropsForTest({
@@ -829,7 +829,7 @@ describe('MCP Portal effective config materialization', () => {
 					workspaceGitPushAgentEligibility: { eligibleAgentIds: ['shravan'] },
 				}),
 			),
-		).rejects.toThrow(/namespace "controller_execution" supports only reviewed/u);
+		).rejects.toThrow(/unknown registered controller execution action/u);
 	});
 
 	it('resolves 1Password provider secrets once and writes environment-only effective configs', async () => {

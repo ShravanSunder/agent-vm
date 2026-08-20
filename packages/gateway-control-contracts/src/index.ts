@@ -4,6 +4,11 @@ import {
 	GatewayStablePrincipalDigestSchema,
 } from '@agent-vm/agent-portal-sdk/contracts';
 import {
+	configuredCliInputSchema,
+	resolveConfiguredCliTimeout,
+	type ConfiguredCliInput,
+} from '@agent-vm/config-contracts';
+import {
 	CONTROL_PROTOCOL_VERSION,
 	ControlCorrelationSchema,
 	ControlRpcErrorSchema,
@@ -493,11 +498,33 @@ export const GatewayControlControllerHostProbePayloadSchema = z
 	})
 	.strict();
 
+export const GatewayControlConfiguredCliControllerExecutionPayloadSchema = z
+	.object({
+		approvalReservation: GatewayRuntimeControllerExecutionDispatchReservationSchema.optional(),
+		callerContext: GatewayControlCallerContextRefSchema,
+		capability: z.object({ name: z.string().min(1), namespace: z.string().min(1) }).strict(),
+		correlation: GatewayControlToolCallCorrelationSchema,
+		input: configuredCliInputSchema,
+		kind: z.literal('configured_cli'),
+		operationName: z.string().min(1),
+	})
+	.strict();
+
+export const GatewayControlRegisteredActionControllerExecutionPayloadSchema = z
+	.object({
+		action: z.discriminatedUnion('actionId', [
+			GatewayControlWorkspaceGitPushControllerExecutionPayloadSchema,
+			GatewayControlControllerHostProbePayloadSchema,
+		]),
+		kind: z.literal('registered_action'),
+	})
+	.strict();
+
 export const GatewayControlToolPortalControllerExecutionPayloadSchema = z.discriminatedUnion(
-	'actionId',
+	'kind',
 	[
-		GatewayControlWorkspaceGitPushControllerExecutionPayloadSchema,
-		GatewayControlControllerHostProbePayloadSchema,
+		GatewayControlRegisteredActionControllerExecutionPayloadSchema,
+		GatewayControlConfiguredCliControllerExecutionPayloadSchema,
 	],
 );
 
@@ -538,11 +565,37 @@ export const GatewayControlControllerHostProbeActionResultSchema = z
 	})
 	.strict();
 
+export const GatewayControlConfiguredCliControllerExecutionResultSchema = z
+	.object({
+		kind: z.literal('configured_cli'),
+		operationName: z.string().min(1),
+		result: z
+			.object({
+				exitCode: z.number().int(),
+				stderrSummary: z.string().optional(),
+				stderrTruncated: z.boolean(),
+				stdout: z.string(),
+				stdoutTruncated: z.boolean(),
+			})
+			.strict(),
+	})
+	.strict();
+
+export const GatewayControlRegisteredActionControllerExecutionResultSchema = z
+	.object({
+		action: z.discriminatedUnion('actionId', [
+			GatewayControlWorkspaceGitPushControllerExecutionResultSchema,
+			GatewayControlControllerHostProbeActionResultSchema,
+		]),
+		kind: z.literal('registered_action'),
+	})
+	.strict();
+
 export const GatewayControlToolPortalControllerExecutionResultSchema = z.discriminatedUnion(
-	'actionId',
+	'kind',
 	[
-		GatewayControlWorkspaceGitPushControllerExecutionResultSchema,
-		GatewayControlControllerHostProbeActionResultSchema,
+		GatewayControlRegisteredActionControllerExecutionResultSchema,
+		GatewayControlConfiguredCliControllerExecutionResultSchema,
 	],
 );
 
@@ -1275,6 +1328,43 @@ export const gatewayControlCommandExecutionTimeoutMsByOperation = {
 	tool_portal_admission_reserve: 10_000,
 	tool_portal_dispatch_arm: 10_000,
 } as const satisfies Record<GatewayControlRpcOperation, number>;
+
+const controllerExecutionProvisioningBudgetMsByTarget = {
+	controller_host: 0,
+	ephemeral_managed_vm: 180_000,
+} as const;
+const controllerExecutionDeliveryCleanupMarginMs = 10_000;
+
+export interface GatewayControlControllerExecutionRpcWindow {
+	readonly expiresAtMs: number;
+	readonly fixedDeliveryCleanupMarginMs: number;
+	readonly provisioningBudgetMs: number;
+	readonly resolvedCommandRuntimeMs: number;
+}
+
+export function deriveGatewayControlControllerExecutionRpcWindow(props: {
+	readonly input: ConfiguredCliInput;
+	readonly nowMs: number;
+	readonly targetKind: keyof typeof controllerExecutionProvisioningBudgetMsByTarget;
+	readonly timeoutKind: 'open' | 'quick';
+}): GatewayControlControllerExecutionRpcWindow {
+	const resolvedTimeout = resolveConfiguredCliTimeout({
+		input: props.input,
+		kind: props.timeoutKind,
+	});
+	const provisioningBudgetMs = controllerExecutionProvisioningBudgetMsByTarget[props.targetKind];
+	const expiresAtMs =
+		props.nowMs +
+		provisioningBudgetMs +
+		resolvedTimeout.resolvedTimeoutMs +
+		controllerExecutionDeliveryCleanupMarginMs;
+	return {
+		expiresAtMs,
+		fixedDeliveryCleanupMarginMs: controllerExecutionDeliveryCleanupMarginMs,
+		provisioningBudgetMs,
+		resolvedCommandRuntimeMs: resolvedTimeout.resolvedTimeoutMs,
+	};
+}
 
 export type GatewayControlRpcOperation = z.infer<typeof GatewayControlRpcOperationSchema>;
 export type GatewayControlRpcMessage = z.infer<typeof GatewayControlRpcMessageSchema>;

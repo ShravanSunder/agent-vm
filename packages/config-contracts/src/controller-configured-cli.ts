@@ -201,6 +201,34 @@ export type ConfiguredCliStdinPolicy = z.infer<typeof configuredCliStdinPolicySc
 export type ConfiguredCliTimeoutPolicy = z.infer<typeof configuredCliTimeoutPolicySchema>;
 export type ControllerExecutionOperation = z.infer<typeof controllerExecutionOperationSchema>;
 
+export type ResolvedConfiguredCliTimeout =
+	| {
+			readonly kind: 'quick';
+			readonly requestedTimeoutMs: null;
+			readonly resolvedTimeoutMs: 5_000;
+	  }
+	| {
+			readonly kind: 'open';
+			readonly requestedTimeoutMs: number | null;
+			readonly resolvedTimeoutMs: number;
+	  };
+
+export function resolveConfiguredCliTimeout(props: {
+	readonly input: ConfiguredCliInput;
+	readonly kind: ConfiguredCliTimeoutPolicy['kind'];
+}): ResolvedConfiguredCliTimeout {
+	if (props.kind === 'quick') {
+		quickConfiguredCliInputSchema.parse(props.input);
+		return { kind: 'quick', requestedTimeoutMs: null, resolvedTimeoutMs: 5_000 };
+	}
+	const input = openConfiguredCliInputSchema.parse(props.input);
+	return {
+		kind: 'open',
+		requestedTimeoutMs: input.timeoutMs ?? null,
+		resolvedTimeoutMs: input.timeoutMs ?? 120_000,
+	};
+}
+
 function isTokenPrefix(left: readonly string[], right: readonly string[]): boolean {
 	return left.length <= right.length && left.every((token, index) => token === right[index]);
 }

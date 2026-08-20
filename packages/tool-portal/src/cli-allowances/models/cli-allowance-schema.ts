@@ -10,6 +10,7 @@ import {
 	configuredCliTimeoutPolicySchema,
 	openConfiguredCliInputSchema,
 	quickConfiguredCliInputSchema,
+	resolveConfiguredCliTimeout,
 	type ConfiguredCliAllowedCommand,
 	type ConfiguredCliFlagRule,
 	type ConfiguredCliInput,
@@ -39,30 +40,11 @@ export type CliTimeoutPolicy = ConfiguredCliTimeoutPolicy;
 export type CliAllowance = ConfiguredCliPolicy;
 export type CliAllowanceInput = ConfiguredCliInput;
 
-export type ResolvedCliAllowanceTimeout =
-	| {
-			readonly kind: 'quick';
-			readonly requestedTimeoutMs: null;
-			readonly resolvedTimeoutMs: 5_000;
-	  }
-	| {
-			readonly kind: 'open';
-			readonly requestedTimeoutMs: number | null;
-			readonly resolvedTimeoutMs: number;
-	  };
+export type ResolvedCliAllowanceTimeout = ReturnType<typeof resolveConfiguredCliTimeout>;
 
 export function resolveCliAllowanceTimeout(props: {
 	readonly input: CliAllowanceInput;
 	readonly kind: CliTimeoutPolicy['kind'];
 }): ResolvedCliAllowanceTimeout {
-	if (props.kind === 'quick') {
-		QuickCliAllowanceInputSchema.parse(props.input);
-		return { kind: 'quick', requestedTimeoutMs: null, resolvedTimeoutMs: 5_000 };
-	}
-	const input = OpenCliAllowanceInputSchema.parse(props.input);
-	return {
-		kind: 'open',
-		requestedTimeoutMs: input.timeoutMs ?? null,
-		resolvedTimeoutMs: input.timeoutMs ?? 120_000,
-	};
+	return resolveConfiguredCliTimeout(props);
 }

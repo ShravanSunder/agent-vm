@@ -492,6 +492,12 @@ describe('gateway-control approval RPC integration', () => {
 		}));
 		const controllerExecutions = {
 			authorizeControllerExecution: async () => ({ authorized: true as const }),
+			executeConfiguredCli: async () => ({
+				exitCode: 0,
+				stderrTruncated: false,
+				stdout: '',
+				stdoutTruncated: false,
+			}),
 			pushWorkspaceGit: async () => {
 				throw new Error('Controller approval integration must not push Git.');
 			},
@@ -542,15 +548,18 @@ describe('gateway-control approval RPC integration', () => {
 			kind: 'command',
 			operation: 'tool_portal_controller_execution',
 			payload: {
-				actionId: 'controller_host_probe',
-				approvalReservation: controllerApprovalReservation,
-				callerContext: { callerContextId },
-				correlation: {
-					capability: {
-						name: 'controller_host_probe',
-						namespace: 'controller_execution',
+				action: {
+					actionId: 'controller_host_probe',
+					approvalReservation: controllerApprovalReservation,
+					callerContext: { callerContextId },
+					correlation: {
+						capability: {
+							name: 'controller_host_probe',
+							namespace: 'controller_execution',
+						},
 					},
 				},
+				kind: 'registered_action',
 			},
 		});
 
@@ -588,7 +597,10 @@ describe('gateway-control approval RPC integration', () => {
 		expect(firstResponse).toMatchObject({
 			operation: 'tool_portal_controller_execution',
 			payload: {
-				controllerExecution: { actionId: 'controller_host_probe' },
+				controllerExecution: {
+					action: { actionId: 'controller_host_probe' },
+					kind: 'registered_action',
+				},
 				result: 'ok',
 			},
 		});

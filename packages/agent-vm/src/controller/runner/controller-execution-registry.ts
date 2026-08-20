@@ -55,7 +55,7 @@ export function defineControllerExecution<TInput extends JsonObject, TResult ext
 	props: DefineControllerExecutionProps<TInput, TResult>,
 ): RegisteredControllerExecution {
 	if (props.actionName.length === 0) {
-		throw new Error('Controller host action name must be non-empty.');
+		throw new Error('Controller execution action name must be non-empty.');
 	}
 	return {
 		actionName: props.actionName,
@@ -111,7 +111,7 @@ export function createControllerExecutionRegistry(
 	const actionsByName = new Map<string, RegisteredControllerExecution>();
 	for (const action of options.actions) {
 		if (actionsByName.has(action.actionName)) {
-			throw new Error(`Duplicate controller host action '${action.actionName}'.`);
+			throw new Error(`Duplicate controller execution action '${action.actionName}'.`);
 		}
 		actionsByName.set(action.actionName, action);
 	}
@@ -122,7 +122,7 @@ export function createControllerExecutionRegistry(
 			if (!parsedRequest.success) {
 				return rejectedResult({
 					code: 'validation_failed',
-					message: 'Controller host action request failed strict validation.',
+					message: 'Controller execution request failed strict validation.',
 					reason: 'public-authority-or-policy-override',
 				});
 			}
@@ -136,7 +136,7 @@ export function createControllerExecutionRegistry(
 			) {
 				return rejectedResult({
 					code: 'validation_failed',
-					message: 'Controller host action arguments do not match the dispatch intent.',
+					message: 'Controller execution arguments do not match the dispatch intent.',
 					reason: 'public-authority-or-policy-override',
 				});
 			}
@@ -144,7 +144,7 @@ export function createControllerExecutionRegistry(
 			if (action === undefined) {
 				return rejectedResult({
 					code: 'capability_denied',
-					message: 'Controller host action is not registered.',
+					message: 'Controller execution action is not registered.',
 					reason: 'denied',
 				});
 			}
@@ -152,7 +152,7 @@ export function createControllerExecutionRegistry(
 			if (parsedInput.kind === 'invalid') {
 				return rejectedResult({
 					code: 'validation_failed',
-					message: 'Controller host action arguments failed capability validation.',
+					message: 'Controller execution arguments failed capability validation.',
 					reason: 'public-authority-or-policy-override',
 				});
 			}
@@ -162,7 +162,7 @@ export function createControllerExecutionRegistry(
 			} catch {
 				return rejectedResult({
 					code: 'not_authorized',
-					message: 'Controller host action authority could not be recomputed.',
+					message: 'Controller execution authority could not be recomputed.',
 					reason: 'stale-authority',
 				});
 			}
@@ -192,7 +192,7 @@ export function createControllerExecutionRegistry(
 					diagnostics: [],
 					error: {
 						code: 'execution_failed',
-						message: 'Controller host action execution state is unknown.',
+						message: 'Controller execution state is unknown.',
 					},
 					kind: 'ambiguous',
 					reason: 'dispatch-state-unknown',

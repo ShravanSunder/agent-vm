@@ -1,18 +1,28 @@
 import type {
 	CapabilityDescriptor,
+	JsonObject,
 	CapabilitySummary,
 	PortalError,
 } from '@agent-vm/agent-portal-sdk';
+import { JsonObjectSchema } from '@agent-vm/agent-portal-sdk';
+import {
+	configuredCliInputSchema,
+	openConfiguredCliInputSchema,
+	quickConfiguredCliInputSchema,
+	type ControllerExecutionOperation,
+	type ManagedToolPortalConfig,
+} from '@agent-vm/config-contracts';
 import type {
 	ControllerExecutionAuthorityBinding,
 	ControllerExecutionResult,
 } from '@agent-vm/controller-execution-contracts';
 import {
+	deriveGatewayControlControllerExecutionRpcWindow,
 	GatewayControlToolPortalControllerExecutionPayloadSchema,
 	gatewayControlCommandExecutionTimeoutMsByOperation,
 	type GatewayControlToolPortalControllerExecutionPayload,
 } from '@agent-vm/gateway-control-contracts';
-import type { ToolPortalBackendPort } from '@agent-vm/tool-portal';
+import { validateCliAllowanceInvocation, type ToolPortalBackendPort } from '@agent-vm/tool-portal';
 import { z } from 'zod/v4';
 
 import type { GatewayControlCallerContextRegistrationClient } from '../control-endpoint/gateway-control-caller-context-registration-client.js';
@@ -21,6 +31,7 @@ import {
 	createControllerExecutionBackendPort,
 	defineControllerExecutionRegistration,
 	type ControllerExecutionDispatchRequest,
+	type ControllerExecutionRegistration,
 	type ControllerExecutionRpcPort,
 } from './controller-execution-backend-port.js';
 
@@ -83,7 +94,7 @@ const controllerHostProbeDescriptor = {
 	toolRef: `${controllerExecutionNamespace}.${controllerHostProbeName}`,
 } as const satisfies CapabilityDescriptor;
 
-const registeredControllerExecutions = Object.freeze([
+const builtInControllerExecutions = Object.freeze([
 	defineControllerExecutionRegistration({
 		argumentsSchema: WorkspaceGitPushArgumentsSchema,
 		descriptor: workspaceGitPushDescriptor,
@@ -102,6 +113,126 @@ export interface CreateGatewayControlControllerExecutionBackendPortProps {
 	readonly createCommandId: () => string;
 	readonly now?: () => number;
 	readonly owningGeneration: string;
+	readonly toolPortalConfig: ManagedToolPortalConfig;
+}
+
+function configuredInputSchema(
+	operation: Extract<ControllerExecutionOperation, { kind: 'configured_cli' }>,
+): typeof quickConfiguredCliInputSchema | typeof openConfiguredCliInputSchema {
+	return operation.timeout.kind === 'quick'
+		? quickConfiguredCliInputSchema
+		: openConfiguredCliInputSchema;
+}
+
+function configuredRegistration(props: {
+	readonly name: string;
+	readonly namespace: string;
+	readonly operation: Extract<ControllerExecutionOperation, { kind: 'configured_cli' }>;
+}): ControllerExecutionRegistration {
+	const inputSchema = configuredInputSchema(props.operation);
+	const toolRef = `${props.namespace}.${props.name}`;
+	return {
+		descriptor: {
+			annotations: { authority: 'controller_execution', operationKind: 'configured_cli' },
+			inputSchema: JsonObjectSchema.parse(z.toJSONSchema(inputSchema)),
+			name: props.name,
+			namespace: props.namespace,
+			outputSchema: { type: 'object' },
+			related: [],
+			toolRef,
+		},
+		parseArguments: (argumentsValue: JsonObject) => {
+			const parsedInput = inputSchema.safeParse(argumentsValue);
+			if (!parsedInput.success) return { kind: 'invalid' };
+			const validation = validateCliAllowanceInvocation({
+				allowance: props.operation,
+				input: parsedInput.data,
+			});
+			return validation.ok
+				? { kind: 'valid', value: JsonObjectSchema.parse(parsedInput.data) }
+				: { kind: 'invalid' };
+		},
+		summary: {
+			description: props.operation.safeHelp,
+			input: {
+				optional: props.operation.timeout.kind === 'open' ? ['stdin', 'timeoutMs'] : ['stdin'],
+				propertyCount: props.operation.timeout.kind === 'open' ? 4 : 3,
+				required: ['argv', 'reason'],
+				type: 'object',
+			},
+			name: props.name,
+			namespace: props.namespace,
+			safety: { destructiveHint: true, readOnlyHint: false },
+			title: props.name,
+			toolRef,
+		},
+	};
+}
+
+function controllerExecutionRegistrations(
+	config: ManagedToolPortalConfig,
+): readonly ControllerExecutionRegistration[] {
+	const builtInByName = new Map(
+		builtInControllerExecutions.map((registration) => [registration.summary.name, registration]),
+	);
+	const registrationByToolRef = new Map<string, ControllerExecutionRegistration>();
+	const policyByToolRef = new Map<string, string>();
+	for (const profile of Object.values(config.profiles)) {
+		for (const [namespace, namespacePolicy] of Object.entries(profile.namespaces)) {
+			if (namespacePolicy.backend.kind !== 'controller_execution') continue;
+			for (const [name, operation] of Object.entries(namespacePolicy.backend.operations)) {
+				const toolRef = `${namespace}.${name}`;
+				const policy = JSON.stringify(operation);
+				const existingPolicy = policyByToolRef.get(toolRef);
+				if (existingPolicy !== undefined) {
+					if (existingPolicy !== policy) {
+						throw new Error(`Controller execution operation '${toolRef}' differs across profiles.`);
+					}
+					continue;
+				}
+				const registration =
+					operation.kind === 'configured_cli'
+						? configuredRegistration({ name, namespace, operation })
+						: registeredRegistration({
+								base: builtInByName.get(name),
+								name,
+								namespace,
+							});
+				registrationByToolRef.set(toolRef, registration);
+				policyByToolRef.set(toolRef, policy);
+			}
+		}
+	}
+	return [...registrationByToolRef.values()];
+}
+
+function configuredOperationForRequest(
+	config: ManagedToolPortalConfig,
+	request: ControllerExecutionDispatchRequest,
+): Extract<ControllerExecutionOperation, { kind: 'configured_cli' }> | undefined {
+	for (const profile of Object.values(config.profiles)) {
+		const namespacePolicy = profile.namespaces[request.action.capability.namespace];
+		if (namespacePolicy?.backend.kind !== 'controller_execution') continue;
+		const operation = namespacePolicy.backend.operations[request.action.capability.name];
+		if (operation?.kind === 'configured_cli') return operation;
+	}
+	return undefined;
+}
+
+function registeredRegistration(props: {
+	readonly base: ControllerExecutionRegistration | undefined;
+	readonly name: string;
+	readonly namespace: string;
+}): ControllerExecutionRegistration {
+	if (props.base === undefined) {
+		throw new Error(`Controller execution registered action '${props.name}' is not defined.`);
+	}
+	const toolRef = `${props.namespace}.${props.name}`;
+	return {
+		...props.base,
+		descriptor: { ...props.base.descriptor, namespace: props.namespace, toolRef },
+		summary: { ...props.base.summary, namespace: props.namespace, toolRef },
+	};
 }
 
 function authorityBinding(
@@ -151,19 +282,28 @@ function controllerActionPayload(props: {
 		case workspaceGitPushName: {
 			const argumentsValue = WorkspaceGitPushArgumentsSchema.parse(props.request.action.arguments);
 			return GatewayControlToolPortalControllerExecutionPayloadSchema.parse({
-				...common,
-				actionId: workspaceGitPushName,
-				expectedHead: argumentsValue.expectedHead,
+				action: {
+					...common,
+					actionId: workspaceGitPushName,
+					expectedHead: argumentsValue.expectedHead,
+				},
+				kind: 'registered_action',
 			});
 		}
 		case controllerHostProbeName:
 			ControllerHostProbeArgumentsSchema.parse(props.request.action.arguments);
 			return GatewayControlToolPortalControllerExecutionPayloadSchema.parse({
-				...common,
-				actionId: controllerHostProbeName,
+				action: { ...common, actionId: controllerHostProbeName },
+				kind: 'registered_action',
 			});
 		default:
-			throw new Error('Controller host action is not registered for Gateway Control dispatch.');
+			return GatewayControlToolPortalControllerExecutionPayloadSchema.parse({
+				...common,
+				capability: props.request.action.capability,
+				input: props.request.action.arguments,
+				kind: 'configured_cli',
+				operationName: props.request.action.capability.name,
+			});
 	}
 }
 
@@ -195,7 +335,7 @@ function ambiguousResult(props: {
 		diagnostics: [],
 		error: {
 			code: props.code ?? 'execution_failed',
-			message: props.message ?? 'Controller host-action dispatch state is unknown.',
+			message: props.message ?? 'Controller execution dispatch state is unknown.',
 		},
 		kind: 'ambiguous',
 		reason: 'dispatch-state-unknown',
@@ -225,7 +365,7 @@ function resultFromControllerResponse(props: {
 			diagnostics: [],
 			kind: 'completed',
 			retryClass: 'forbidden',
-			value: payload.controllerExecution,
+			value: JsonObjectSchema.parse(payload.controllerExecution),
 		};
 	}
 	if (payload.result === 'rejected') {
@@ -263,7 +403,7 @@ function createGatewayControlControllerExecutionRpcPort(
 				return notDispatchedResult({
 					binding,
 					code: 'cancelled',
-					message: 'Controller host action was cancelled before dispatch.',
+					message: 'Controller execution was cancelled before dispatch.',
 					reason: 'stale-authority',
 				});
 			}
@@ -279,7 +419,7 @@ function createGatewayControlControllerExecutionRpcPort(
 				return notDispatchedResult({
 					binding,
 					code: 'not_authorized',
-					message: 'Controller host-action caller registration failed.',
+					message: 'Controller execution caller registration failed.',
 					reason: 'stale-authority',
 				});
 			}
@@ -287,27 +427,46 @@ function createGatewayControlControllerExecutionRpcPort(
 				return notDispatchedResult({
 					binding,
 					code: 'cancelled',
-					message: 'Controller host action was cancelled before dispatch.',
+					message: 'Controller execution was cancelled before dispatch.',
 					reason: 'stale-authority',
 				});
 			}
 			const commandId = props.createCommandId();
+			const payload = controllerActionPayload({
+				callerContextId: callerContext.callerContextId,
+				request,
+			});
+			const commandCreatedAtMs = now();
+			const configuredOperation = configuredOperationForRequest(props.toolPortalConfig, request);
+			const configuredRpcWindow =
+				configuredOperation === undefined
+					? undefined
+					: deriveGatewayControlControllerExecutionRpcWindow({
+							input: configuredCliInputSchema.parse(request.action.arguments),
+							nowMs: commandCreatedAtMs,
+							targetKind: configuredOperation.executionTarget.kind,
+							timeoutKind: configuredOperation.timeout.kind,
+						});
 			let response: Awaited<ReturnType<GatewayRuntimeControlCommandClient['sendCommand']>>;
 			try {
 				response = await props.controlCommandClient.sendCommand({
 					admissionPrincipal: callerContext.admissionPrincipal,
 					commandId,
+					...(configuredRpcWindow === undefined
+						? {}
+						: {
+								commandResultTimeoutMs: configuredRpcWindow.expiresAtMs - commandCreatedAtMs,
+								createdAtMs: commandCreatedAtMs,
+							}),
 					expiresAtMs:
+						configuredRpcWindow?.expiresAtMs ??
 						now() +
-						gatewayControlCommandExecutionTimeoutMsByOperation.tool_portal_controller_execution,
+							gatewayControlCommandExecutionTimeoutMsByOperation.tool_portal_controller_execution,
 					idempotencyKey: idempotencyKey(binding),
 					message: {
 						kind: 'command',
 						operation: 'tool_portal_controller_execution',
-						payload: controllerActionPayload({
-							callerContextId: callerContext.callerContextId,
-							request,
-						}),
+						payload,
 					},
 				});
 			} catch {
@@ -324,7 +483,7 @@ export function createGatewayControlControllerExecutionBackendPort(
 ): ToolPortalBackendPort<'controller_execution'> {
 	return createControllerExecutionBackendPort({
 		controllerRpc: createGatewayControlControllerExecutionRpcPort(props),
-		registeredActions: registeredControllerExecutions,
+		registeredActions: controllerExecutionRegistrations(props.toolPortalConfig),
 		runtime: { owningGeneration: props.owningGeneration },
 	});
 }

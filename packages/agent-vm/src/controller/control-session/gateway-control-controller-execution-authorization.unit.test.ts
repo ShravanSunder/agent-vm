@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import {
 	GatewayControlWorkspaceGitPushControllerExecutionPayloadSchema,
+	type GatewayControlToolPortalControllerExecutionPayload,
 	type GatewayRuntimeControllerExecutionDispatchReservation,
 } from '@agent-vm/gateway-control-contracts';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -72,7 +73,8 @@ const noSecretResolutionDuringTest = {
 async function writeToolPortalAuthoredConfig(
 	props: {
 		readonly agentId?: string;
-		readonly controllerExecutionTools?: readonly ('controller_host_probe' | 'workspace_git_push')[];
+		readonly configuredOperation?: boolean;
+		readonly controllerExecutionTools?: readonly string[];
 		readonly controllerExecutionPolicy?: boolean;
 		readonly profileId?: string;
 		readonly requiresApproval?: boolean;
@@ -90,6 +92,31 @@ async function writeToolPortalAuthoredConfig(
 					backend: {
 						kind: 'controller_execution',
 						operations: {
+							...(props.configuredOperation === true
+								? {
+										inspect_host: {
+											commands: [{ path: ['inspect'] }],
+											deniedPatterns: [],
+											executablePath: '/usr/bin/printf',
+											executionTarget: {
+												cwd: '/tmp',
+												environment: { kind: 'empty' },
+												kind: 'controller_host',
+											},
+											kind: 'configured_cli',
+											mandatoryArgvPrefix: [],
+											output: {
+												modelVisibleStderr: 'none',
+												overflow: 'truncate',
+												stderrMaxBytes: 1024,
+												stdoutMaxBytes: 1024,
+											},
+											safeHelp: 'Inspect host state.',
+											stdin: { kind: 'none' },
+											timeout: { kind: 'quick' },
+										},
+									}
+								: {}),
 							controller_host_probe: { kind: 'registered_action' },
 							workspace_git_push: { kind: 'registered_action' },
 							push_branch: { kind: 'registered_action' },
@@ -332,35 +359,25 @@ function createWorkspaceGitPushPayload(
 		readonly capabilityName?: string;
 		readonly capabilityNamespace?: string;
 	} = {},
-): {
-	readonly actionId: 'workspace_git_push';
-	readonly approvalReservation?: GatewayRuntimeControllerExecutionDispatchReservation;
-	readonly callerContext: {
-		readonly callerContextId: string;
-	};
-	readonly correlation: {
-		readonly capability: {
-			readonly name: string;
-			readonly namespace: string;
-		};
-	};
-	readonly expectedHead: string;
-} {
+): Extract<GatewayControlToolPortalControllerExecutionPayload, { kind: 'registered_action' }> {
 	return {
-		actionId: 'workspace_git_push' as const,
-		...(overrides.approvalReservation === undefined
-			? {}
-			: { approvalReservation: overrides.approvalReservation }),
-		callerContext: {
-			callerContextId: trustedCallerContext.callerContextId,
-		},
-		correlation: {
-			capability: {
-				name: overrides.capabilityName ?? 'workspace_git_push',
-				namespace: overrides.capabilityNamespace ?? 'controller_execution',
+		action: {
+			actionId: 'workspace_git_push',
+			...(overrides.approvalReservation === undefined
+				? {}
+				: { approvalReservation: overrides.approvalReservation }),
+			callerContext: {
+				callerContextId: trustedCallerContext.callerContextId,
 			},
+			correlation: {
+				capability: {
+					name: overrides.capabilityName ?? 'workspace_git_push',
+					namespace: overrides.capabilityNamespace ?? 'controller_execution',
+				},
+			},
+			expectedHead: '0123456789abcdef0123456789abcdef01234567',
 		},
-		expectedHead: '0123456789abcdef0123456789abcdef01234567',
+		kind: 'registered_action',
 	};
 }
 
@@ -386,29 +403,21 @@ function createControllerHostProbePayload(
 		readonly capabilityName?: string;
 		readonly capabilityNamespace?: string;
 	} = {},
-): {
-	readonly actionId: 'controller_host_probe';
-	readonly callerContext: {
-		readonly callerContextId: string;
-	};
-	readonly correlation: {
-		readonly capability: {
-			readonly name: string;
-			readonly namespace: string;
-		};
-	};
-} {
+): Extract<GatewayControlToolPortalControllerExecutionPayload, { kind: 'registered_action' }> {
 	return {
-		actionId: 'controller_host_probe' as const,
-		callerContext: {
-			callerContextId: trustedCallerContext.callerContextId,
-		},
-		correlation: {
-			capability: {
-				name: overrides.capabilityName ?? 'controller_host_probe',
-				namespace: overrides.capabilityNamespace ?? 'controller_execution',
+		action: {
+			actionId: 'controller_host_probe',
+			callerContext: {
+				callerContextId: trustedCallerContext.callerContextId,
+			},
+			correlation: {
+				capability: {
+					name: overrides.capabilityName ?? 'controller_host_probe',
+					namespace: overrides.capabilityNamespace ?? 'controller_execution',
+				},
 			},
 		},
+		kind: 'registered_action',
 	};
 }
 
@@ -442,7 +451,7 @@ describe('authorizeGatewayControlControllerExecution', () => {
 		).resolves.toEqual({
 			authorized: false,
 			errorClass: 'controller_execution_policy_denied',
-			safeMessage: 'controller host action policy denied the requested capability',
+			safeMessage: 'controller execution policy denied the requested capability',
 		});
 		await expect(
 			authorizeGatewayControlControllerExecution({
@@ -476,7 +485,7 @@ describe('authorizeGatewayControlControllerExecution', () => {
 		).resolves.toEqual({ authorized: true });
 	});
 
-	it('rejects controller host actions from Worker zones', async () => {
+	it('rejects controller execution from Worker zones', async () => {
 		const systemConfig = await createSystemConfigFixture();
 		const zone = systemConfig.zones[0];
 		if (zone === undefined) {
@@ -506,7 +515,7 @@ describe('authorizeGatewayControlControllerExecution', () => {
 		).resolves.toEqual({
 			authorized: false,
 			errorClass: 'controller_execution_zone_unsupported',
-			safeMessage: 'controller host action zone is not supported',
+			safeMessage: 'controller execution zone is not supported',
 		});
 	});
 
@@ -524,6 +533,37 @@ describe('authorizeGatewayControlControllerExecution', () => {
 			authorizeGatewayControlControllerExecution({
 				callerContext: trustedCallerContext,
 				payload: createControllerHostProbePayload(),
+				session: acceptedSession,
+				systemConfig,
+			}),
+		).resolves.toEqual({ authorized: true });
+	});
+
+	it('authorizes configured CLI from the current effective operation definition', async () => {
+		const systemConfig = await createSystemConfigFixture({
+			configDir: await writeToolPortalAuthoredConfig({
+				configuredOperation: true,
+				controllerExecutionTools: ['inspect_host'],
+			}),
+			workspaceGit: false,
+		});
+		await writeEffectiveToolPortalSnapshot(systemConfig);
+
+		await expect(
+			authorizeGatewayControlControllerExecution({
+				callerContext: trustedCallerContext,
+				createdAtMs: 1_000,
+				expiresAtMs: 16_000,
+				payload: {
+					callerContext: { callerContextId: trustedCallerContext.callerContextId },
+					capability: { name: 'inspect_host', namespace: 'controller_execution' },
+					correlation: {
+						capability: { name: 'inspect_host', namespace: 'controller_execution' },
+					},
+					input: { argv: ['inspect'], reason: 'authorization proof' },
+					kind: 'configured_cli',
+					operationName: 'inspect_host',
+				},
 				session: acceptedSession,
 				systemConfig,
 			}),
@@ -567,7 +607,7 @@ describe('authorizeGatewayControlControllerExecution', () => {
 		).resolves.toEqual({
 			authorized: false,
 			errorClass: 'controller_execution_capability_mismatch',
-			safeMessage: 'controller host action capability is not authorized',
+			safeMessage: 'controller execution capability is not authorized',
 		});
 	});
 
@@ -587,7 +627,7 @@ describe('authorizeGatewayControlControllerExecution', () => {
 		).resolves.toEqual({
 			authorized: false,
 			errorClass: 'controller_execution_policy_denied',
-			safeMessage: 'controller host action policy denied the requested capability',
+			safeMessage: 'controller execution policy denied the requested capability',
 		});
 	});
 
@@ -607,7 +647,7 @@ describe('authorizeGatewayControlControllerExecution', () => {
 		).resolves.toEqual({
 			authorized: false,
 			errorClass: 'controller_execution_not_configured',
-			safeMessage: 'controller host action is not configured for this agent',
+			safeMessage: 'controller execution is not configured for this agent',
 		});
 	});
 
@@ -621,7 +661,7 @@ describe('authorizeGatewayControlControllerExecution', () => {
 		'rejects workspace_git_push wire payload identity or routing field %s',
 		(forbiddenFieldName, forbiddenFieldValue) => {
 			const payloadWithForbiddenAuthority = {
-				...createWorkspaceGitPushPayload(),
+				...createWorkspaceGitPushPayload().action,
 				[forbiddenFieldName]: forbiddenFieldValue,
 			};
 
@@ -634,7 +674,7 @@ describe('authorizeGatewayControlControllerExecution', () => {
 	);
 
 	it('limits workspace_git_push action arguments to expectedHead', () => {
-		expect(Object.keys(createWorkspaceGitPushPayload()).toSorted()).toEqual([
+		expect(Object.keys(createWorkspaceGitPushPayload().action).toSorted()).toEqual([
 			'actionId',
 			'callerContext',
 			'correlation',
@@ -655,7 +695,7 @@ describe('authorizeGatewayControlControllerExecution', () => {
 		).resolves.toEqual({
 			authorized: false,
 			errorClass: 'controller_execution_capability_mismatch',
-			safeMessage: 'controller host action capability is not authorized',
+			safeMessage: 'controller execution capability is not authorized',
 		});
 	});
 
@@ -667,8 +707,9 @@ describe('authorizeGatewayControlControllerExecution', () => {
 				callerContext: trustedCallerContext,
 				payload: {
 					...createWorkspaceGitPushPayload(),
-					correlation: {
-						toolCallId: 'tool-call-without-capability',
+					action: {
+						...createWorkspaceGitPushPayload().action,
+						correlation: { toolCallId: 'tool-call-without-capability' },
 					},
 				},
 				session: acceptedSession,
@@ -677,7 +718,7 @@ describe('authorizeGatewayControlControllerExecution', () => {
 		).resolves.toEqual({
 			authorized: false,
 			errorClass: 'controller_execution_capability_mismatch',
-			safeMessage: 'controller host action capability is not authorized',
+			safeMessage: 'controller execution capability is not authorized',
 		});
 	});
 
@@ -703,7 +744,7 @@ describe('authorizeGatewayControlControllerExecution', () => {
 		).resolves.toEqual({
 			authorized: false,
 			errorClass: 'controller_execution_not_configured',
-			safeMessage: 'controller host action is not configured for this agent',
+			safeMessage: 'controller execution is not configured for this agent',
 		});
 	});
 
@@ -720,11 +761,11 @@ describe('authorizeGatewayControlControllerExecution', () => {
 		).resolves.toEqual({
 			authorized: false,
 			errorClass: 'controller_execution_policy_unavailable',
-			safeMessage: 'controller host action policy is unavailable',
+			safeMessage: 'controller execution policy is unavailable',
 		});
 	});
 
-	it('rejects zones without Tool Portal controller host action configuration', async () => {
+	it('rejects zones without Tool Portal controller execution configuration', async () => {
 		const systemConfig = await createSystemConfigFixture({ toolPortal: false });
 
 		await expect(
@@ -737,11 +778,11 @@ describe('authorizeGatewayControlControllerExecution', () => {
 		).resolves.toEqual({
 			authorized: false,
 			errorClass: 'controller_execution_not_configured',
-			safeMessage: 'controller host action is not configured for this zone',
+			safeMessage: 'controller execution is not configured for this zone',
 		});
 	});
 
-	it('rejects zones without effective Tool Portal controller host action policy', async () => {
+	it('rejects zones without effective Tool Portal controller execution policy', async () => {
 		const systemConfig = await createSystemConfigFixture({
 			configDir: await writeToolPortalAuthoredConfig({ controllerExecutionPolicy: false }),
 		});
@@ -757,7 +798,7 @@ describe('authorizeGatewayControlControllerExecution', () => {
 		).resolves.toEqual({
 			authorized: false,
 			errorClass: 'controller_execution_policy_denied',
-			safeMessage: 'controller host action policy denied the requested capability',
+			safeMessage: 'controller execution policy denied the requested capability',
 		});
 	});
 });

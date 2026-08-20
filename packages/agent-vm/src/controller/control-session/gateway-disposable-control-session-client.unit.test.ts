@@ -308,15 +308,18 @@ function toolPortalControllerExecutionMessage(): unknown {
 		kind: 'command',
 		operation: 'tool_portal_controller_execution',
 		payload: {
-			actionId: 'workspace_git_push',
-			callerContext: { callerContextId: '77777777-7777-4777-8777-777777777777' },
-			correlation: {
-				capability: {
-					name: 'workspace_git_push',
-					namespace: 'controller_execution',
+			action: {
+				actionId: 'workspace_git_push',
+				callerContext: { callerContextId: '77777777-7777-4777-8777-777777777777' },
+				correlation: {
+					capability: {
+						name: 'workspace_git_push',
+						namespace: 'controller_execution',
+					},
 				},
+				expectedHead: '0123456789abcdef0123456789abcdef01234567',
 			},
-			expectedHead: '0123456789abcdef0123456789abcdef01234567',
+			kind: 'registered_action',
 		},
 	};
 }

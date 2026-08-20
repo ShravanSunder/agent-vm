@@ -328,6 +328,7 @@ describe('Gateway Runtime production control runtime', () => {
 			controlCommandClient: expect.any(Object),
 			createCommandId: expect.any(Function),
 			owningGeneration: 'runtime-generation-a',
+			toolPortalConfig: expect.any(Object),
 		});
 		expect(
 			runtime.controllerExecutionBackendPortFactory({

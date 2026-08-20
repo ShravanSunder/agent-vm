@@ -5,6 +5,7 @@ import {
 	type ToolPortalToolSelector,
 } from '@agent-vm/config-contracts';
 import type { GatewayControlToolPortalControllerExecutionPayload } from '@agent-vm/gateway-control-contracts';
+import { deriveGatewayControlControllerExecutionRpcWindow } from '@agent-vm/gateway-control-contracts';
 
 import type { SystemConfig } from '../../config/system-config.js';
 import { loadMcpPortalEffectiveToolPortalConfigSnapshot } from '../../gateway/mcp-portal-effective-config.js';
@@ -20,6 +21,8 @@ const controllerHostProbeEnvGate = 'AGENT_VM_E2E_CONTROLLER_HOST_PROBE';
 
 export interface GatewayControlControllerExecutionAuthorizationRequest {
 	readonly callerContext: GatewayControlTrustedCallerContext;
+	readonly createdAtMs?: number;
+	readonly expiresAtMs?: number;
 	readonly payload: GatewayControlToolPortalControllerExecutionPayload;
 	readonly session: GatewayControlAcceptedSessionRef;
 	readonly systemConfig: SystemConfig;
@@ -62,15 +65,21 @@ function isSupportedControllerExecutionName(
 export async function authorizeGatewayControlControllerExecution(
 	request: GatewayControlControllerExecutionAuthorizationRequest,
 ): Promise<GatewayControlControllerExecutionAuthorizationResult> {
-	const capability = request.payload.correlation?.capability;
+	const capability =
+		request.payload.kind === 'configured_cli'
+			? request.payload.capability
+			: request.payload.action.correlation?.capability;
 	if (
-		capability?.namespace !== controllerExecutionNamespace ||
-		!isSupportedControllerExecutionName(capability.name) ||
-		capability.name !== request.payload.actionId
+		capability === undefined ||
+		(request.payload.kind === 'registered_action' &&
+			(capability.namespace !== controllerExecutionNamespace ||
+				!isSupportedControllerExecutionName(capability.name) ||
+				capability.name !== request.payload.action.actionId)) ||
+		(request.payload.kind === 'configured_cli' && capability.name !== request.payload.operationName)
 	) {
 		return rejectAuthorization(
 			'controller_execution_capability_mismatch',
-			'controller host action capability is not authorized',
+			'controller execution capability is not authorized',
 		);
 	}
 
@@ -80,28 +89,32 @@ export async function authorizeGatewayControlControllerExecution(
 	if (zone === undefined || zone.gateway.type === 'worker') {
 		return rejectAuthorization(
 			'controller_execution_zone_unsupported',
-			'controller host action zone is not supported',
+			'controller execution zone is not supported',
 		);
 	}
 	if (zone.toolPortal === undefined) {
 		return rejectAuthorization(
 			'controller_execution_not_configured',
-			'controller host action is not configured for this zone',
+			'controller execution is not configured for this zone',
 		);
 	}
-	if (request.payload.actionId === workspaceGitPushToolName) {
+	if (
+		request.payload.kind === 'registered_action' &&
+		request.payload.action.actionId === workspaceGitPushToolName
+	) {
 		const configuredAgent = zone.agents?.find(
 			(agent) => agent.id === request.callerContext.agentId,
 		);
 		if (configuredAgent?.workspaceGit?.mode !== 'remote') {
 			return rejectAuthorization(
 				'controller_execution_not_configured',
-				'controller host action is not configured for this agent',
+				'controller execution is not configured for this agent',
 			);
 		}
 	}
 	if (
-		request.payload.actionId === controllerHostProbeToolName &&
+		request.payload.kind === 'registered_action' &&
+		request.payload.action.actionId === controllerHostProbeToolName &&
 		process.env[controllerHostProbeEnvGate] !== '1'
 	) {
 		return rejectAuthorization(
@@ -109,10 +122,6 @@ export async function authorizeGatewayControlControllerExecution(
 			'controller host probe is not enabled',
 		);
 	}
-	if (request.payload.approvalReservation !== undefined) {
-		return { authorized: true };
-	}
-
 	let effectiveConfig: Awaited<ReturnType<typeof loadMcpPortalEffectiveToolPortalConfigSnapshot>>;
 	try {
 		effectiveConfig = await loadMcpPortalEffectiveToolPortalConfigSnapshot(
@@ -121,7 +130,7 @@ export async function authorizeGatewayControlControllerExecution(
 	} catch {
 		return rejectAuthorization(
 			'controller_execution_policy_unavailable',
-			'controller host action policy is unavailable',
+			'controller execution policy is unavailable',
 		);
 	}
 
@@ -134,19 +143,55 @@ export async function authorizeGatewayControlControllerExecution(
 	} catch {
 		return rejectAuthorization(
 			'controller_execution_policy_denied',
-			'controller host action policy denied the requested capability',
+			'controller execution policy denied the requested capability',
 		);
 	}
 	const namespaceProjection = projection.namespaces[capability.namespace];
+	const agentConfig =
+		effectiveConfig.effectiveToolPortalConfig.agents[request.callerContext.agentId];
+	const profileConfig =
+		agentConfig === undefined
+			? undefined
+			: effectiveConfig.effectiveToolPortalConfig.profiles[agentConfig.profile];
+	const namespacePolicy = profileConfig?.namespaces[capability.namespace];
+	const configuredOperation =
+		namespacePolicy?.backend.kind === 'controller_execution'
+			? namespacePolicy.backend.operations[capability.name]
+			: undefined;
+	if (configuredOperation?.kind === 'configured_cli' && request.payload.kind === 'configured_cli') {
+		if (request.createdAtMs === undefined) {
+			return rejectAuthorization(
+				'controller_execution_window_mismatch',
+				'controller execution response window does not match current policy',
+			);
+		}
+		const expectedWindow = deriveGatewayControlControllerExecutionRpcWindow({
+			input: request.payload.input,
+			nowMs: request.createdAtMs,
+			targetKind: configuredOperation.executionTarget.kind,
+			timeoutKind: configuredOperation.timeout.kind,
+		});
+		if (request.expiresAtMs !== expectedWindow.expiresAtMs) {
+			return rejectAuthorization(
+				'controller_execution_window_mismatch',
+				'controller execution response window does not match current policy',
+			);
+		}
+	}
 	if (
 		namespaceProjection === undefined ||
+		configuredOperation?.kind !== request.payload.kind ||
 		!selectorIncludesTool(namespaceProjection.tools, capability.name) ||
-		!selectorIncludesTool(namespaceProjection.calls.withoutApproval, capability.name) ||
-		selectorIncludesTool(namespaceProjection.calls.requiresApproval, capability.name)
+		((request.payload.kind === 'configured_cli'
+			? request.payload.approvalReservation
+			: request.payload.action.approvalReservation) === undefined
+			? !selectorIncludesTool(namespaceProjection.calls.withoutApproval, capability.name) ||
+				selectorIncludesTool(namespaceProjection.calls.requiresApproval, capability.name)
+			: !selectorIncludesTool(namespaceProjection.calls.requiresApproval, capability.name))
 	) {
 		return rejectAuthorization(
 			'controller_execution_policy_denied',
-			'controller host action policy denied the requested capability',
+			'controller execution policy denied the requested capability',
 		);
 	}
 

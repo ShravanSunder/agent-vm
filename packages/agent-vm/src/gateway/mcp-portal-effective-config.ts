@@ -227,7 +227,7 @@ function assertManagedControllerExecutionPolicy(props: {
 }): void {
 	if (props.namespacePolicy.tools.allow === '*') {
 		throw new Error(
-			`tool-portal: managed profile "${props.profileId}" namespace "${props.namespaceId}" tools must explicitly allow reviewed controller host actions.`,
+			`tool-portal: managed profile "${props.profileId}" namespace "${props.namespaceId}" tools must explicitly allow controller execution operations.`,
 		);
 	}
 	if (
@@ -235,7 +235,7 @@ function assertManagedControllerExecutionPolicy(props: {
 		props.namespacePolicy.calls.withoutApproval.allow === '*'
 	) {
 		throw new Error(
-			`tool-portal: managed profile "${props.profileId}" namespace "${props.namespaceId}" calls must explicitly allow reviewed controller host actions.`,
+			`tool-portal: managed profile "${props.profileId}" namespace "${props.namespaceId}" calls must explicitly allow controller execution operations.`,
 		);
 	}
 	const allowedTools = new Set(props.namespacePolicy.tools.allow);
@@ -244,14 +244,18 @@ function assertManagedControllerExecutionPolicy(props: {
 		...props.namespacePolicy.calls.withoutApproval.allow,
 	]);
 	for (const toolName of [...allowedTools, ...allowedCalls]) {
-		if (!managedControllerExecutionTools.has(toolName)) {
+		const operation =
+			props.namespacePolicy.backend.kind === 'controller_execution'
+				? props.namespacePolicy.backend.operations[toolName]
+				: undefined;
+		if (operation?.kind === 'registered_action' && !managedControllerExecutionTools.has(toolName)) {
 			throw new Error(
-				`tool-portal: managed profile "${props.profileId}" namespace "${props.namespaceId}" supports only reviewed controller host actions.`,
+				`tool-portal: managed profile "${props.profileId}" namespace "${props.namespaceId}" references an unknown registered controller execution action.`,
 			);
 		}
 		if (!allowedTools.has(toolName) || !allowedCalls.has(toolName)) {
 			throw new Error(
-				`tool-portal: managed profile "${props.profileId}" namespace "${props.namespaceId}" must include each reviewed controller host action in tools and exactly one call selector.`,
+				`tool-portal: managed profile "${props.profileId}" namespace "${props.namespaceId}" must include each controller execution operation in tools and exactly one call selector.`,
 			);
 		}
 	}

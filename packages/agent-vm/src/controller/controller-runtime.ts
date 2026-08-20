@@ -15,6 +15,7 @@ import {
 import type { GatewayControlSessionAttachmentGap } from '../gateway/gateway-zone-support.js';
 import { resolveManagedAgentRootPaths } from '../gateway/managed-agent-root-storage.js';
 import { controllerFixedGatewayRuntimeArtifactLimits } from '../gateway/managed-gateway-runtime-input-builders.js';
+import { loadMcpPortalEffectiveToolPortalConfigSnapshot } from '../gateway/mcp-portal-effective-config.js';
 import { resolveControllerTelemetryIdentity as resolveControllerTelemetryIdentityDefault } from '../observability/controller-telemetry-identity.js';
 import {
 	createGatewayTelemetryResourceAttributesEnvironmentValue,
@@ -97,6 +98,7 @@ import { createManagedFrameworkToolVmLeaseCreateOptionsResolver } from './leases
 import { createTcpPool } from './leases/tcp-pool.js';
 import { OpenClawRuntimeStatusStore } from './openclaw-runtime-status.js';
 import { RequestHeartbeatRegistry } from './request-heartbeat-registry.js';
+import { executeConfiguredCliOnControllerHost } from './runner/configured-cli-host-executor.js';
 import { acquireControllerOwnershipLock as acquireControllerOwnershipLockDefault } from './vm-ownership/controller-ownership-lock.js';
 import { createGatewayDestructionBudget } from './vm-ownership/gateway-destruction-budget.js';
 import { createGatewayOwnershipCoordinator } from './vm-ownership/gateway-ownership-coordinator.js';
@@ -779,13 +781,48 @@ async function startControllerRuntimeWithOwnershipLock(
 		};
 	};
 	const gatewayControlControllerExecutions: GatewayControlControllerExecutionOperations = {
-		authorizeControllerExecution: async ({ callerContext, payload, session }) =>
+		authorizeControllerExecution: async ({
+			callerContext,
+			createdAtMs,
+			expiresAtMs,
+			payload,
+			session,
+		}) =>
 			await authorizeGatewayControlControllerExecution({
 				callerContext,
+				createdAtMs,
+				...(expiresAtMs === undefined ? {} : { expiresAtMs }),
 				payload,
 				session,
 				systemConfig: options.systemConfig,
 			}),
+		executeConfiguredCli: async ({ callerContext, payload, session }) => {
+			const effectiveConfig = await loadMcpPortalEffectiveToolPortalConfigSnapshot(
+				path.join(
+					options.systemConfig.cacheDir,
+					'gateways',
+					session.zoneId,
+					'tool-portal-effective',
+				),
+			);
+			const agentConfig = effectiveConfig.effectiveToolPortalConfig.agents[callerContext.agentId];
+			const profileConfig =
+				agentConfig === undefined
+					? undefined
+					: effectiveConfig.effectiveToolPortalConfig.profiles[agentConfig.profile];
+			const namespacePolicy = profileConfig?.namespaces[payload.capability.namespace];
+			const operation =
+				namespacePolicy?.backend.kind === 'controller_execution'
+					? namespacePolicy.backend.operations[payload.operationName]
+					: undefined;
+			if (operation?.kind !== 'configured_cli') {
+				throw new Error('Configured controller execution operation is unavailable.');
+			}
+			if (operation.executionTarget.kind !== 'controller_host') {
+				throw new Error('Configured controller execution target is not available in this slice.');
+			}
+			return await executeConfiguredCliOnControllerHost({ input: payload.input, operation });
+		},
 		pushWorkspaceGit: async ({ callerContext, payload, session }) => {
 			const result = await pushWorkspaceGitFromController(callerContext.agentId, session.zoneId, {
 				expectedHead: payload.expectedHead,
