@@ -17,7 +17,10 @@ import type {
 } from './gateway-control-endpoint-contracts.js';
 
 export interface GatewayControlCallerContextRegistrationRequest {
-	readonly purpose?: 'tool_portal_controller_execution' | 'tool_vm_lease';
+	readonly purpose?:
+		| 'tool_portal_approval_decision'
+		| 'tool_portal_controller_execution'
+		| 'tool_vm_lease';
 	readonly trustedContext: GatewayRuntimeTrustedInvocationContext;
 }
 

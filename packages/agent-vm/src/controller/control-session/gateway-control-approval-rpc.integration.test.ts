@@ -139,6 +139,7 @@ function createEnvelope(props: {
 	readonly operation: Extract<
 		GatewayControlRpcOperation,
 		| 'tool_portal_admission_reserve'
+		| 'tool_portal_approval_decide'
 		| 'tool_portal_controller_execution'
 		| 'tool_portal_dispatch_arm'
 	>;
@@ -203,6 +204,7 @@ function createApprovalDispatcher(
 		readonly callerContexts?: GatewayControlCallerContextRegistry;
 		readonly controllerExecutions?: GatewayControlControllerExecutionOperations;
 		readonly gateway?: GatewayEpochIdentity;
+		readonly managedApprovalAuthority?: { readonly approverId: string };
 		readonly session?: GatewayControlCallerContextSessionRef;
 	} = {},
 ): ReturnType<typeof createControlSessionDispatcher> {
@@ -232,6 +234,9 @@ function createApprovalDispatcher(
 				? {}
 				: { controllerExecutions: props.controllerExecutions }),
 			gateway: props.gateway ?? gateway,
+			...(props.managedApprovalAuthority === undefined
+				? {}
+				: { managedApprovalAuthority: props.managedApprovalAuthority }),
 			session,
 		}),
 	);
@@ -247,6 +252,7 @@ async function dispatchApprovalCommand(props: {
 	if (
 		props.message.kind !== 'command' ||
 		(props.message.operation !== 'tool_portal_admission_reserve' &&
+			props.message.operation !== 'tool_portal_approval_decide' &&
 			props.message.operation !== 'tool_portal_dispatch_arm')
 	) {
 		throw new Error('Approval RPC test helper received a non-approval command.');
@@ -301,6 +307,7 @@ describe('gateway-control approval RPC integration', () => {
 				operationId: OPERATION_ID,
 				reason: 'stale-fingerprint' as const,
 			})),
+			decide: vi.fn(async () => ({ kind: 'rejected' as const, reason: 'not-found' as const })),
 			requestApproval,
 		} satisfies GatewayControlApprovalLedgerOperations;
 		const dispatcher = createApprovalDispatcher({ approvalLedger });
@@ -347,6 +354,135 @@ describe('gateway-control approval RPC integration', () => {
 			}),
 		).rejects.toThrow();
 		expect(requestApproval).toHaveBeenCalledOnce();
+	});
+
+	it('records a managed Gateway decision through an exact-session caller context', async () => {
+		// Arrange
+		const approvalLedger = await createDurableApprovalLedger();
+		const stablePrincipal = deriveGatewayControlStablePrincipal({
+			principal: approvalIntent.trustedContext.principal,
+		});
+		const callerContextId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+		const callerContexts = createStaticCallerContextRegistry([
+			{
+				agentId: approvalIntent.trustedContext.principal.agentId,
+				...acceptedSession,
+				callerContextId,
+				principal: approvalIntent.trustedContext.principal,
+				purpose: 'tool_portal_approval_decision',
+				stablePrincipal,
+			},
+		]);
+		const dispatcher = createApprovalDispatcher({
+			approvalLedger,
+			callerContexts,
+			managedApprovalAuthority: { approverId: 'hermes-operator' },
+		});
+		const pendingResponse = await dispatchApprovalCommand({
+			dispatcher,
+			message: {
+				kind: 'command',
+				operation: 'tool_portal_admission_reserve',
+				payload: { intent: approvalIntent },
+			},
+			sequence: 2,
+		});
+		const challenge = pendingResponse.payload.approvalAdmission;
+		if (challenge?.kind !== 'approval-required') {
+			throw new Error('Expected one pending approval challenge.');
+		}
+
+		// Act
+		const decisionResponse = await dispatchApprovalCommand({
+			dispatcher,
+			message: {
+				kind: 'command',
+				operation: 'tool_portal_approval_decide',
+				payload: {
+					callerContext: { callerContextId },
+					decision: { challengeId: challenge.challenge.approvalId, decision: 'approve' },
+				},
+			},
+			sequence: 3,
+		});
+
+		// Assert
+		expect(decisionResponse.payload.approvalDecision).toEqual({
+			kind: 'recorded',
+			state: 'approved',
+		});
+		expect(await approvalLedger.read(challenge.challenge.approvalId)).toMatchObject({
+			decision: {
+				operator: {
+					approverId: 'hermes-operator',
+					provenance: 'managed-gateway',
+					stablePrincipal,
+				},
+			},
+			kind: 'approved',
+		});
+	});
+
+	it('rejects a managed Gateway decision when the caller principal does not own the challenge', async () => {
+		// Arrange
+		const approvalLedger = await createDurableApprovalLedger();
+		const attackerPrincipal = {
+			...approvalIntent.trustedContext.principal,
+			agentId: 'agent-attacker',
+			frameworkIdentity: { agentId: 'agent-attacker', kind: 'openclaw' as const },
+		};
+		const callerContextId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+		const callerContexts = createStaticCallerContextRegistry([
+			{
+				agentId: attackerPrincipal.agentId,
+				...acceptedSession,
+				callerContextId,
+				principal: attackerPrincipal,
+				purpose: 'tool_portal_approval_decision',
+				stablePrincipal: deriveGatewayControlStablePrincipal({ principal: attackerPrincipal }),
+			},
+		]);
+		const dispatcher = createApprovalDispatcher({
+			approvalLedger,
+			callerContexts,
+			managedApprovalAuthority: { approverId: 'hermes-operator' },
+		});
+		const pendingResponse = await dispatchApprovalCommand({
+			dispatcher,
+			message: {
+				kind: 'command',
+				operation: 'tool_portal_admission_reserve',
+				payload: { intent: approvalIntent },
+			},
+			sequence: 4,
+		});
+		const challenge = pendingResponse.payload.approvalAdmission;
+		if (challenge?.kind !== 'approval-required') {
+			throw new Error('Expected one pending approval challenge.');
+		}
+
+		// Act
+		const decisionResponse = await dispatchApprovalCommand({
+			dispatcher,
+			message: {
+				kind: 'command',
+				operation: 'tool_portal_approval_decide',
+				payload: {
+					callerContext: { callerContextId },
+					decision: { challengeId: challenge.challenge.approvalId, decision: 'approve' },
+				},
+			},
+			sequence: 5,
+		});
+
+		// Assert
+		expect(decisionResponse.payload.approvalDecision).toEqual({
+			kind: 'rejected',
+			reason: 'principal-mismatch',
+		});
+		expect(await approvalLedger.read(challenge.challenge.approvalId)).toMatchObject({
+			kind: 'pending',
+		});
 	});
 
 	it('fails closed with a strict failure result when no approval ledger is configured', async () => {

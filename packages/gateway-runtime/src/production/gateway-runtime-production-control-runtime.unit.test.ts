@@ -219,6 +219,11 @@ function observableDependencies(): {
 		createApprovalPort: vi.fn(
 			() => ({ armDispatch: vi.fn(), reserveDispatch: vi.fn() }) satisfies ToolPortalApprovalPort,
 		),
+		createApprovalDecisionOperations: vi.fn(() => ({
+			decide: async (): Promise<never> => {
+				throw new Error('unused approval decision');
+			},
+		})),
 		createArtifactWriter: vi.fn(
 			(): GatewayRuntimeToolVmRunnerArtifactWriter => ({
 				write: async (): Promise<never> => {

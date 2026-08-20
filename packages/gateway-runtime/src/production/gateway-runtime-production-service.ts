@@ -651,6 +651,7 @@ export async function startGatewayRuntimeProductionService(
 		const startedControlHeartbeatPublisher = controlHeartbeatPublisher;
 
 		const dispatcher = createGatewayRuntimePrivateUdsDispatcher({
+			approvalOperations: startedControlRuntime.approvalDecisionOperations,
 			artifactOperations: startedComposition.privateUdsProjection.artifactOperations,
 			portalOperations: startedComposition.privateUdsProjection.portalOperations,
 			sandboxDispatch: startedTelemetryRuntime.wrapSandboxDispatch(

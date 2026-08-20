@@ -1,0 +1,18 @@
+{
+	"caseId": "gateway-approval-decision-result-recorded",
+	"schemaId": "gateway.approval.decision-result",
+	"tags": ["accepted"],
+	"input": {
+		"kind": "recorded",
+		"state": "approved"
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"kind": "recorded",
+			"state": "approved"
+		},
+		"canonicalJson": "{\"kind\":\"recorded\",\"state\":\"approved\"}",
+		"refinementIdentities": []
+	}
+}

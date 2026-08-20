@@ -10,7 +10,11 @@ import type {
 } from '../http/controller-approval-routes.js';
 
 type ZoneConfig = LoadedSystemConfig['zones'][number];
-type HostSecretReference = NonNullable<ZoneConfig['approvalAccess']>['approvers'][number]['secret'];
+type BearerApprovalAuthority = Extract<
+	NonNullable<ZoneConfig['approvalAccess']>['approvers'][number],
+	{ readonly kind: 'bearer' }
+>;
+type HostSecretReference = BearerApprovalAuthority['secret'];
 
 interface ResolvedApprovalCredential {
 	readonly credential: string;
@@ -100,12 +104,14 @@ export async function createControllerApprovalBearerAuthenticator(props: {
 					? await props.secretResolver.resolve(secretRefFromHostReference(zone.adminAccess.secret))
 					: null,
 			approverCredentials: await Promise.all(
-				(zone.approvalAccess?.approvers ?? []).map(async (approver) => ({
-					approver,
-					credential: await props.secretResolver.resolve(
-						secretRefFromHostReference(approver.secret),
-					),
-				})),
+				(zone.approvalAccess?.approvers ?? [])
+					.filter((approver): approver is BearerApprovalAuthority => approver.kind === 'bearer')
+					.map(async (approver) => ({
+						approver,
+						credential: await props.secretResolver.resolve(
+							secretRefFromHostReference(approver.secret),
+						),
+					})),
 			),
 			zoneId: zone.id,
 		})),

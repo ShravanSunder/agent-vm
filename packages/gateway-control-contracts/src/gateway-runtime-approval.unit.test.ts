@@ -762,7 +762,7 @@ describe('Gateway runtime approval contracts', () => {
 
 	it.each(['approve', 'deny'] as const)('parses the exact %s decision command', (decision) => {
 		// Arrange
-		const command = { approvalId: APPROVAL_ID, decision } as const;
+		const command = { challengeId: APPROVAL_ID, decision } as const;
 
 		// Act / Assert
 		expect(GatewayRuntimeApprovalDecisionCommandSchema.parse(command)).toEqual(command);
@@ -780,17 +780,17 @@ describe('Gateway runtime approval contracts', () => {
 		[
 			'decision UUID',
 			GatewayRuntimeApprovalDecisionCommandSchema,
-			{ approvalId: 'approval-1', decision: 'approve' },
+			{ challengeId: 'approval-1', decision: 'approve' },
 		],
 		[
 			'decision spelling',
 			GatewayRuntimeApprovalDecisionCommandSchema,
-			{ approvalId: APPROVAL_ID, decision: 'approved' },
+			{ challengeId: APPROVAL_ID, decision: 'approved' },
 		],
 		[
 			'decision authority',
 			GatewayRuntimeApprovalDecisionCommandSchema,
-			{ approvalId: APPROVAL_ID, approverToken: 'operator-token', decision: 'approve' },
+			{ challengeId: APPROVAL_ID, approverToken: 'operator-token', decision: 'approve' },
 		],
 		['revoke UUID', GatewayRuntimeApprovalRevokeCommandSchema, { approvalId: 'approval-1' }],
 		[

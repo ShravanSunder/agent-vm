@@ -127,6 +127,7 @@ describe('gateway control contract', () => {
 			'recovery_command',
 			'runtime_status',
 			'tool_portal_admission_reserve',
+			'tool_portal_approval_decide',
 			'tool_portal_controller_execution',
 			'tool_portal_dispatch_arm',
 			'tool_vm_binding_publish',

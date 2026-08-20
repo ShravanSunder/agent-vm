@@ -48,6 +48,7 @@ function createManagedGitReadOnlySshEgressOptions(options: {
 }
 
 export const workerLifecycle: DirectProcessGatewayLifecycle = {
+	capabilities: { nativeApprovalPresenter: false },
 	executionModel: 'direct-process',
 	buildVmRequirements({
 		projectNamespace,

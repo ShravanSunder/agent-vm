@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 
+import { GatewayApprovalDecisionRequestSchema } from '@agent-vm/agent-portal-sdk';
 import { GatewayStablePrincipalDigestSchema } from '@agent-vm/agent-portal-sdk/contracts';
 import {
 	jsonObjectSchema,
@@ -289,12 +290,7 @@ export const GatewayRuntimeApprovalArmDispatchResultSchema = z.discriminatedUnio
 		.strict(),
 ]);
 
-export const GatewayRuntimeApprovalDecisionCommandSchema = z
-	.object({
-		approvalId: z.string().uuid(),
-		decision: z.enum(['approve', 'deny']),
-	})
-	.strict();
+export const GatewayRuntimeApprovalDecisionCommandSchema = GatewayApprovalDecisionRequestSchema;
 
 export const GatewayRuntimeApprovalRevokeCommandSchema = z
 	.object({

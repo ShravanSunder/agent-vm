@@ -412,6 +412,7 @@ describe('managed private-UDS approval exactly-once dispatch', () => {
 			semanticSnapshot,
 		});
 		const privateUdsDispatcher = createGatewayRuntimePrivateUdsDispatcher({
+			approvalOperations: { decide: async () => ({ kind: 'rejected', reason: 'not-found' }) },
 			artifactOperations: {
 				read: async (): Promise<never> => {
 					throw new Error('Artifact reads are outside the private-UDS approval proof.');

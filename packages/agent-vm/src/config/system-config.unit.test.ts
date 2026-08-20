@@ -47,6 +47,7 @@ interface ValidZoneToolPortalConfigInput {
 
 interface ValidApprovalApproverInput {
 	readonly approverId: string;
+	readonly kind: 'bearer';
 	readonly secret: {
 		readonly envVar: string;
 		readonly source: 'environment';
@@ -231,6 +232,7 @@ function createValidZoneToolPortalConfigInput(): ValidZoneToolPortalConfigInput 
 function createApprovalApproverInput(): ValidApprovalApproverInput {
 	return {
 		approverId: 'primary-operator',
+		kind: 'bearer',
 		secret: {
 			envVar: 'AGENT_VM_PRIMARY_APPROVAL_SECRET',
 			source: 'environment',
@@ -392,6 +394,7 @@ describe('loadSystemConfig', () => {
 			approvers: [
 				{
 					approverId: 'primary-operator',
+					kind: 'bearer',
 					secret: {
 						envVar: 'AGENT_VM_PRIMARY_APPROVAL_SECRET',
 						source: 'environment',
@@ -399,6 +402,7 @@ describe('loadSystemConfig', () => {
 				},
 				{
 					approverId: 'recovery-operator',
+					kind: 'bearer',
 					secret: {
 						source: 'config',
 						value: 'test-only-recovery-approval-secret',
@@ -416,6 +420,7 @@ describe('loadSystemConfig', () => {
 			approvers: [
 				{
 					approverId: 'primary-operator',
+					kind: 'bearer',
 					secret: {
 						envVar: 'AGENT_VM_PRIMARY_APPROVAL_SECRET',
 						source: 'environment',
@@ -423,6 +428,7 @@ describe('loadSystemConfig', () => {
 				},
 				{
 					approverId: 'recovery-operator',
+					kind: 'bearer',
 					secret: {
 						source: 'config',
 						value: 'test-only-recovery-approval-secret',
@@ -464,8 +470,8 @@ describe('loadSystemConfig', () => {
 	});
 
 	test.each([
-		['missing', { secret: createApprovalApproverInput().secret }],
-		['empty', { approverId: '', secret: createApprovalApproverInput().secret }],
+		['missing', { kind: 'bearer', secret: createApprovalApproverInput().secret }],
+		['empty', { approverId: '', kind: 'bearer', secret: createApprovalApproverInput().secret }],
 	] as const)('rejects an approval access approver with a %s approverId', (_caseName, approver) => {
 		// Arrange
 		const config = createValidSystemConfigInput();
@@ -488,6 +494,80 @@ describe('loadSystemConfig', () => {
 
 		// Act / Assert
 		expect(() => parseSystemConfigInputForTest(config)).toThrow(/must be unique/u);
+	});
+
+	test('loads one managed Gateway approval authority without a bearer secret', () => {
+		// Arrange
+		const config = createValidSystemConfigInput();
+		configureFirstZoneAsHermes(config);
+		config.zones[0].approvalAccess = {
+			approvers: [{ approverId: 'hermes-operator', kind: 'managed_gateway' }],
+			audience: 'agent-vm-controller-approval',
+		};
+
+		// Act
+		const loadedConfig = parseSystemConfigInputForTest(config);
+
+		// Assert
+		expect(loadedConfig.zones[0]?.approvalAccess?.approvers).toEqual([
+			{ approverId: 'hermes-operator', kind: 'managed_gateway' },
+		]);
+	});
+
+	test('rejects managed Gateway approval authority for an unsupported OpenClaw presenter', () => {
+		// Arrange
+		const config = createValidSystemConfigInput();
+		config.zones[0].approvalAccess = {
+			approvers: [{ approverId: 'managed-operator', kind: 'managed_gateway' }],
+			audience: 'agent-vm-controller-approval',
+		};
+
+		// Act / Assert
+		expect(() => parseSystemConfigInputForTest(config)).toThrow(/only Hermes supports it/u);
+	});
+
+	test('rejects more than one managed Gateway approval authority', () => {
+		// Arrange
+		const config = createValidSystemConfigInput();
+		config.zones[0].approvalAccess = {
+			approvers: [
+				{ approverId: 'primary-hermes-operator', kind: 'managed_gateway' },
+				{ approverId: 'secondary-hermes-operator', kind: 'managed_gateway' },
+			],
+			audience: 'agent-vm-controller-approval',
+		};
+
+		// Act / Assert
+		expect(() => parseSystemConfigInputForTest(config)).toThrow(/at most one managed_gateway/u);
+	});
+
+	test.each([
+		['bearer authority without a secret', { approverId: 'primary-operator', kind: 'bearer' }],
+		[
+			'managed Gateway authority with a secret',
+			{
+				approverId: 'hermes-operator',
+				kind: 'managed_gateway',
+				secret: createApprovalApproverInput().secret,
+			},
+		],
+		[
+			'authority without an explicit kind',
+			{
+				approverId: 'primary-operator',
+				secret: createApprovalApproverInput().secret,
+			},
+		],
+	] as const)('rejects %s', (_caseName, approver) => {
+		// Arrange
+		const config = createValidSystemConfigInput();
+		config.zones[0].approvalAccess = {
+			approvers: [approver],
+			audience: 'agent-vm-controller-approval',
+		};
+
+		// Act / Assert
+		expect(() => parseSystemConfigInputForTest(config)).toThrow();
 	});
 
 	test.each([
@@ -564,6 +644,7 @@ describe('loadSystemConfig', () => {
 			approvers: [
 				{
 					approverId: 'primary-operator',
+					kind: 'bearer',
 					secret: {
 						ref: 'op://agent-vm-testing/approval-secret/credential',
 						source: '1password',
@@ -609,6 +690,7 @@ describe('loadSystemConfig', () => {
 			approvers: [
 				{
 					approverId: 'primary-operator',
+					kind: 'bearer',
 					secret: {
 						ref: 'op://agent-vm-testing/approval-secret/credential',
 						source: '1password',
@@ -625,6 +707,7 @@ describe('loadSystemConfig', () => {
 		expect(loadedConfig.zones[0]?.approvalAccess?.approvers).toEqual([
 			{
 				approverId: 'primary-operator',
+				kind: 'bearer',
 				secret: {
 					ref: 'op://agent-vm-testing/approval-secret/credential',
 					source: '1password',

@@ -4,6 +4,7 @@ export * from './backends/index.js';
 export * from './controller-execution/index.js';
 export * from './control-endpoint/index.js';
 export * from './gateway-runtime-approval-port.js';
+export * from './gateway-runtime-approval-decision-operations.js';
 export * from './managed-tool-portal-composition.js';
 export * from './production/gateway-runtime-private-uds-dispatcher.js';
 export * from './production/gateway-runtime-production-sandbox-dispatcher.js';

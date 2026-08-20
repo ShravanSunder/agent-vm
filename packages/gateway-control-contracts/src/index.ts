@@ -1,4 +1,8 @@
 import {
+	GatewayApprovalDecisionRequestSchema,
+	GatewayApprovalDecisionResultSchema,
+} from '@agent-vm/agent-portal-sdk';
+import {
 	type GatewayRuntimeTrustedInvocationPrincipal,
 	GatewayRuntimeTrustedInvocationPrincipalSchema,
 	GatewayStablePrincipalDigestSchema,
@@ -86,6 +90,7 @@ export const GatewayControlRpcOperationSchema = z.enum([
 	'tool_vm_binding_publish',
 	'tool_vm_binding_request',
 	'tool_portal_controller_execution',
+	'tool_portal_approval_decide',
 	'tool_portal_admission_reserve',
 	'tool_portal_dispatch_arm',
 	'operation_cancel',
@@ -162,7 +167,11 @@ export const GatewayControlCallerContextAgentAuthoritySchema = z
 
 export interface GatewayControlCallerContextProofPayloadInput {
 	readonly principal: GatewayRuntimeTrustedInvocationPrincipal;
-	readonly purpose?: 'tool_vm_lease' | 'tool_portal_controller_execution' | undefined;
+	readonly purpose?:
+		| 'tool_portal_approval_decision'
+		| 'tool_vm_lease'
+		| 'tool_portal_controller_execution'
+		| undefined;
 	readonly zoneId: string;
 }
 
@@ -197,7 +206,13 @@ export const GatewayControlCallerContextRegisterPayloadSchema = z
 				agentAuthority: GatewayControlCallerContextAgentAuthoritySchema,
 				principal: GatewayRuntimeTrustedInvocationPrincipalSchema,
 				proof: GatewayControlCallerContextProofSchema,
-				purpose: z.enum(['tool_vm_lease', 'tool_portal_controller_execution']).optional(),
+				purpose: z
+					.enum([
+						'tool_vm_lease',
+						'tool_portal_controller_execution',
+						'tool_portal_approval_decision',
+					])
+					.optional(),
 				zoneId: z.string().min(1),
 			})
 			.strict(),
@@ -641,6 +656,13 @@ export const GatewayControlToolPortalAdmissionReservePayloadSchema = z
 	})
 	.strict();
 
+export const GatewayControlToolPortalApprovalDecisionPayloadSchema = z
+	.object({
+		callerContext: GatewayControlCallerContextRefSchema,
+		decision: GatewayApprovalDecisionRequestSchema,
+	})
+	.strict();
+
 export const GatewayControlToolPortalDispatchArmPayloadSchema = z
 	.object({
 		reservation: GatewayRuntimeGatewayDispatchReservationSchema,
@@ -785,6 +807,7 @@ export const GatewayControlRpcDomainCorrelationSchema = ControlCorrelationSchema
 const GatewayControlRpcForbiddenResponseFieldsSchema = {
 	activeOperationId: z.never().optional(),
 	approvalAdmission: z.never().optional(),
+	approvalDecision: z.never().optional(),
 	approvalDispatch: z.never().optional(),
 	approvalRequired: z.never().optional(),
 	callerContext: z.never().optional(),
@@ -983,6 +1006,22 @@ export const GatewayControlRpcApprovalAdmissionResponsePayloadSchema = z.discrim
 	],
 );
 
+export const GatewayControlRpcApprovalDecisionResponsePayloadSchema = z.discriminatedUnion(
+	'result',
+	[
+		GatewayControlRpcResponseCorrelationSchema.extend({
+			...GatewayControlRpcForbiddenResponseFieldsSchema,
+			approvalDecision: GatewayApprovalDecisionResultSchema,
+			result: z.literal('ok'),
+		}).strict(),
+		GatewayControlRpcResponseCorrelationSchema.extend({
+			...GatewayControlRpcForbiddenResponseFieldsSchema,
+			error: GatewayControlRpcErrorSchema,
+			result: GatewayControlRpcErrorResponseResultSchema,
+		}).strict(),
+	],
+);
+
 export const GatewayControlRpcApprovalDispatchResponsePayloadSchema = z.discriminatedUnion(
 	'result',
 	[
@@ -1008,6 +1047,7 @@ export const GatewayControlRpcResponsePayloadSchema = z.union([
 	GatewayControlRpcControllerExecutionResponsePayloadSchema,
 	GatewayControlRpcOperationCancelResponsePayloadSchema,
 	GatewayControlRpcApprovalAdmissionResponsePayloadSchema,
+	GatewayControlRpcApprovalDecisionResponsePayloadSchema,
 	GatewayControlRpcApprovalDispatchResponsePayloadSchema,
 ]);
 
@@ -1074,6 +1114,13 @@ const GatewayControlRpcApprovalAdmissionCommandResultMessageSchema =
 		payload: GatewayControlRpcApprovalAdmissionResponsePayloadSchema,
 	}).strict();
 
+const GatewayControlRpcApprovalDecisionCommandResultMessageSchema =
+	GatewayControlRpcDomainCorrelationSchema.extend({
+		kind: z.literal('command_result'),
+		operation: z.literal('tool_portal_approval_decide'),
+		payload: GatewayControlRpcApprovalDecisionResponsePayloadSchema,
+	}).strict();
+
 const GatewayControlRpcApprovalDispatchCommandResultMessageSchema =
 	GatewayControlRpcDomainCorrelationSchema.extend({
 		kind: z.literal('command_result'),
@@ -1113,6 +1160,7 @@ export const GatewayControlRpcCommandResultMessageSchema = z.discriminatedUnion(
 	GatewayControlRpcOperationCancelCommandResultMessageSchema,
 	GatewayControlRpcRecoveryCommandResultMessageSchema,
 	GatewayControlRpcApprovalAdmissionCommandResultMessageSchema,
+	GatewayControlRpcApprovalDecisionCommandResultMessageSchema,
 	GatewayControlRpcApprovalDispatchCommandResultMessageSchema,
 	GatewayControlRpcToolVmBindingRequestCommandResultMessageSchema,
 	GatewayControlRpcToolVmBindingPublishCommandResultMessageSchema,
@@ -1188,6 +1236,11 @@ export const GatewayControlRpcCommandMessageSchema = z.discriminatedUnion('opera
 		kind: z.literal('command'),
 		operation: z.literal('tool_portal_controller_execution'),
 		payload: GatewayControlToolPortalControllerExecutionPayloadSchema,
+	}).strict(),
+	GatewayControlRpcDomainCorrelationSchema.extend({
+		kind: z.literal('command'),
+		operation: z.literal('tool_portal_approval_decide'),
+		payload: GatewayControlToolPortalApprovalDecisionPayloadSchema,
 	}).strict(),
 	GatewayControlRpcDomainCorrelationSchema.extend({
 		kind: z.literal('command'),
@@ -1269,6 +1322,7 @@ export const gatewayControlDeliveryPolicyByOperation = {
 	tool_vm_binding_publish: 'critical_idempotent',
 	tool_vm_binding_request: 'critical_idempotent',
 	tool_portal_controller_execution: 'single_use_critical',
+	tool_portal_approval_decide: 'single_use_critical',
 	tool_portal_admission_reserve: 'single_use_critical',
 	tool_portal_dispatch_arm: 'single_use_critical',
 } as const satisfies Record<GatewayControlRpcOperation, ControlDeliveryPolicy>;
@@ -1325,6 +1379,7 @@ export const gatewayControlCommandExecutionTimeoutMsByOperation = {
 	tool_vm_binding_publish: 10_000,
 	tool_vm_binding_request: 180_000,
 	tool_portal_controller_execution: 120_000,
+	tool_portal_approval_decide: 10_000,
 	tool_portal_admission_reserve: 10_000,
 	tool_portal_dispatch_arm: 10_000,
 } as const satisfies Record<GatewayControlRpcOperation, number>;

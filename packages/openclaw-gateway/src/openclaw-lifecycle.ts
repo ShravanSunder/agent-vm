@@ -1322,6 +1322,7 @@ export async function buildOpenClawFrameworkServiceBootInputs(
 }
 
 export const openclawLifecycle = {
+	capabilities: { nativeApprovalPresenter: false },
 	executionModel: 'managed-gateway',
 	interactiveSsh: {
 		buildSession: ({ requestAllSecrets }: { readonly requestAllSecrets: boolean }) => ({

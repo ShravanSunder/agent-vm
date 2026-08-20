@@ -2417,12 +2417,16 @@ async function startGatewayZoneImplementation(
 						},
 						readCurrentAuthority: () => currentBindingPublicationAuthority,
 					});
+		const managedApprovalAuthority = zone.approvalAccess?.approvers.find(
+			(approver) => approver.kind === 'managed_gateway',
+		);
 		dispatcher.register(
 			'gateway_control',
 			createGatewayControlDomainHandler({
 				...(options.gatewayControlApprovalLedger === undefined
 					? {}
 					: { approvalLedger: options.gatewayControlApprovalLedger }),
+				...(managedApprovalAuthority === undefined ? {} : { managedApprovalAuthority }),
 				callerContexts,
 				...(bindingPublication === undefined ? {} : { bindingPublication }),
 				gateway: gatewayIdentity,

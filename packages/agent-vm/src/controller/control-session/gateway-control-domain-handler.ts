@@ -1,3 +1,4 @@
+import type { GatewayApprovalDecisionResult } from '@agent-vm/agent-portal-sdk';
 import type { ControlEnvelope } from '@agent-vm/control-protocol-contracts';
 import {
 	type GatewayControlLeaseCreateIntentPayload,
@@ -42,7 +43,11 @@ import {
 	type AgentVmHealthEvent,
 } from '@agent-vm/gateway-lifecycle';
 
-import type { ControllerApprovalArmDispatchResult } from '../approval/controller-approval-ledger.js';
+import type {
+	ControllerApprovalArmDispatchResult,
+	ControllerApprovalDecisionResult,
+	ControllerApprovalOperatorIdentity,
+} from '../approval/controller-approval-ledger.js';
 import type { OpenClawRuntimeStatusReport } from '../openclaw-runtime-status.js';
 import { ConfiguredControllerExecutionError } from '../runner/configured-controller-execution-error.js';
 import type { GatewayEpochIdentity } from '../vm-ownership/vm-ownership-contracts.js';
@@ -216,6 +221,7 @@ export interface GatewayControlDomainHandlerOptions {
 	readonly controllerExecutions?: GatewayControlControllerExecutionOperations;
 	readonly gateway: GatewayEpochIdentity;
 	readonly leaseRpc?: GatewayControlLeaseRpcOperations;
+	readonly managedApprovalAuthority?: { readonly approverId: string };
 	readonly now?: () => number;
 	readonly recordGatewayRuntimeReadiness?: (snapshot: GatewayRuntimeReadinessSnapshot) => void;
 	readonly recordHealthEvent?: (event: AgentVmHealthEvent) => void;
@@ -253,6 +259,12 @@ export interface GatewayControlApprovalLedgerOperations {
 		readonly authorityContext: GatewayRuntimeApprovalAuthorityContext;
 		readonly reservation: GatewayRuntimeApprovalDispatchReservation;
 	}) => Promise<ControllerApprovalArmDispatchResult>;
+	readonly decide: (props: {
+		readonly approvalId: string;
+		readonly authorityContext: GatewayRuntimeApprovalAuthorityContext;
+		readonly decision: 'approve' | 'deny';
+		readonly operator: ControllerApprovalOperatorIdentity;
+	}) => Promise<ControllerApprovalDecisionResult>;
 	readonly requestApproval: (props: {
 		readonly authorityContext: GatewayRuntimeApprovalAuthorityContext;
 		readonly intent: GatewayRuntimeApprovalChallengeIntent;
@@ -339,7 +351,10 @@ export type GatewayControlInboundPrincipalResolution =
 			readonly status: 'lease_rejected';
 	  }
 	| {
-			readonly operation: 'tool_portal_controller_execution' | 'tool_vm_binding_request';
+			readonly operation:
+				| 'tool_portal_approval_decide'
+				| 'tool_portal_controller_execution'
+				| 'tool_vm_binding_request';
 			readonly reason:
 				| 'caller_context_absent'
 				| 'caller_context_session_mismatch'
@@ -397,6 +412,9 @@ export function resolveGatewayControlInboundStablePrincipal(options: {
 				options.message.payload,
 			).callerContextId;
 			break;
+		case 'tool_portal_approval_decide':
+			callerContextId = options.message.payload.callerContext.callerContextId;
+			break;
 		case 'lease_get':
 		case 'lease_peek':
 			callerContextId = options.message.payload.callerContext?.callerContextId;
@@ -430,7 +448,9 @@ export function resolveGatewayControlInboundStablePrincipal(options: {
 			operation:
 				options.message.operation === 'tool_vm_binding_request'
 					? 'tool_vm_binding_request'
-					: 'tool_portal_controller_execution',
+					: options.message.operation === 'tool_portal_approval_decide'
+						? 'tool_portal_approval_decide'
+						: 'tool_portal_controller_execution',
 			reason: 'caller_context_absent',
 			status: 'principal_rejected',
 		};
@@ -455,6 +475,7 @@ export function resolveGatewayControlInboundStablePrincipal(options: {
 		case 'lease_use_start':
 			break;
 		case 'tool_vm_binding_request':
+		case 'tool_portal_approval_decide':
 		case 'tool_portal_controller_execution':
 			return {
 				operation,
@@ -756,6 +777,7 @@ function commandResultPayload(options: {
 	readonly activeOperationId?: string;
 	readonly admissionPrincipal?: string;
 	readonly approvalAdmission?: GatewayRuntimeApprovalAdmissionResult;
+	readonly approvalDecision?: GatewayApprovalDecisionResult;
 	readonly approvalDispatch?: GatewayRuntimeApprovalArmDispatchResult;
 	readonly bindingRequest?: GatewayControlToolVmBindingRequestResult;
 	readonly callerContextId?: string;
@@ -788,6 +810,9 @@ function commandResultPayload(options: {
 		...(options.approvalAdmission === undefined
 			? {}
 			: { approvalAdmission: options.approvalAdmission }),
+		...(options.approvalDecision === undefined
+			? {}
+			: { approvalDecision: options.approvalDecision }),
 		...(options.approvalDispatch === undefined
 			? {}
 			: { approvalDispatch: options.approvalDispatch }),
@@ -813,6 +838,15 @@ function assertApprovalLedgerConfigured(
 		throw new Error('gateway control approval ledger is not configured');
 	}
 	return approvalLedger;
+}
+
+function projectManagedGatewayApprovalDecisionResult(
+	result: ControllerApprovalDecisionResult,
+): GatewayApprovalDecisionResult {
+	if (result.kind === 'recorded') {
+		return { kind: 'recorded', state: result.decision === 'approve' ? 'approved' : 'denied' };
+	}
+	return { kind: 'rejected', reason: result.reason };
 }
 
 function currentApprovalAuthorityContext(
@@ -1677,6 +1711,44 @@ export function createGatewayControlDomainHandler(
 							result: 'rejected',
 						}),
 					});
+				case 'tool_portal_approval_decide': {
+					const callerContextResolution = options.callerContexts.resolveForSession({
+						callerContextId: message.payload.callerContext.callerContextId,
+						session: callerContextSession,
+					});
+					let approvalDecision: GatewayApprovalDecisionResult;
+					if (
+						callerContextResolution.status !== 'ok' ||
+						callerContextResolution.callerContext.purpose !== 'tool_portal_approval_decision' ||
+						options.managedApprovalAuthority === undefined
+					) {
+						approvalDecision = { kind: 'rejected', reason: 'presenter-not-authorized' };
+					} else {
+						const callerContext = callerContextResolution.callerContext;
+						approvalDecision = projectManagedGatewayApprovalDecisionResult(
+							await assertApprovalLedgerConfigured(options.approvalLedger).decide({
+								approvalId: message.payload.decision.challengeId,
+								authorityContext: currentApprovalAuthorityContext(options),
+								decision: message.payload.decision.decision,
+								operator: {
+									approverId: options.managedApprovalAuthority.approverId,
+									audience: 'agent-vm-controller-approval',
+									provenance: 'managed-gateway',
+									stablePrincipal: callerContext.stablePrincipal,
+								},
+							}),
+						);
+					}
+					return GatewayControlRpcCommandResultMessageSchema.parse({
+						kind: 'command_result',
+						operation: message.operation,
+						payload: commandResultPayload({
+							approvalDecision,
+							responseToMessageId: envelope.messageId,
+							result: 'ok',
+						}),
+					});
+				}
 				case 'tool_portal_admission_reserve': {
 					const approvalAdmission = await assertApprovalLedgerConfigured(
 						options.approvalLedger,

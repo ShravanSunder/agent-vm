@@ -1,0 +1,32 @@
+{
+	"caseId": "gateway-approval-presentation-request",
+	"schemaId": "gateway.approval.presentation-request",
+	"tags": ["accepted", "byte-bound"],
+	"input": {
+		"allowedDecisions": ["approve", "deny"],
+		"challengeId": "11111111-1111-4111-8111-111111111111",
+		"display": {
+			"argumentsPreview": "{\"path\":\"README.md\"}"
+		},
+		"expiresAt": "2026-08-20T21:00:00.000Z",
+		"itemId": "call-a",
+		"name": "read",
+		"namespace": "files"
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"allowedDecisions": ["approve", "deny"],
+			"challengeId": "11111111-1111-4111-8111-111111111111",
+			"display": {
+				"argumentsPreview": "{\"path\":\"README.md\"}"
+			},
+			"expiresAt": "2026-08-20T21:00:00.000Z",
+			"itemId": "call-a",
+			"name": "read",
+			"namespace": "files"
+		},
+		"canonicalJson": "{\"allowedDecisions\":[\"approve\",\"deny\"],\"challengeId\":\"11111111-1111-4111-8111-111111111111\",\"display\":{\"argumentsPreview\":\"{\\\"path\\\":\\\"README.md\\\"}\"},\"expiresAt\":\"2026-08-20T21:00:00.000Z\",\"itemId\":\"call-a\",\"name\":\"read\",\"namespace\":\"files\"}",
+		"refinementIdentities": []
+	}
+}

@@ -34,6 +34,7 @@ describe('Gateway runtime private UDS dispatcher', () => {
 	it('maps every frozen method family to one server-authorized operation group', () => {
 		// Arrange
 		const expectedGroups = new Map([
+			['approval.decide', 'approval'],
 			['portal.list', 'portal'],
 			['artifact.read', 'artifact.read'],
 			['sandbox.environment.open', 'sandbox.environment'],
@@ -87,6 +88,35 @@ describe('Gateway runtime private UDS dispatcher', () => {
 		]);
 	});
 
+	it('routes one strict approval decision with the original trusted context', async () => {
+		const decide = vi.fn(async () => ({ kind: 'recorded' as const, state: 'approved' as const }));
+		const dispatcher = createGatewayRuntimePrivateUdsDispatcher({
+			approvalOperations: { decide },
+			artifactOperations: { read: vi.fn() },
+			portalOperations: {
+				call: vi.fn(),
+				describe: vi.fn(),
+				list: vi.fn(),
+				search: vi.fn(),
+			},
+			sandboxDispatch: vi.fn(),
+		});
+		const decision = {
+			challengeId: '11111111-1111-4111-8111-111111111111',
+			decision: 'approve' as const,
+		};
+
+		const result = await dispatcher.dispatch({
+			connectionId: 'connection-a',
+			method: 'approval.decide',
+			params: { publicRequest: decision, trustedContext },
+			signal: new AbortController().signal,
+		});
+
+		expect(result).toEqual({ kind: 'recorded', state: 'approved' });
+		expect(decide).toHaveBeenCalledWith({ publicRequest: decision, trustedContext });
+	});
+
 	it('validates the trusted envelope and routes portal plus sandbox calls through one projection', async () => {
 		// Arrange
 		const list = vi.fn(async () => ({
@@ -103,6 +133,7 @@ describe('Gateway runtime private UDS dispatcher', () => {
 			logicalCwd: 'workspace',
 		}));
 		const dispatcher = createGatewayRuntimePrivateUdsDispatcher({
+			approvalOperations: { decide: vi.fn() },
 			artifactOperations: { read: vi.fn() },
 			portalOperations: {
 				call: vi.fn(),
@@ -167,6 +198,7 @@ describe('Gateway runtime private UDS dispatcher', () => {
 			logicalCwd: 'workspace',
 		}));
 		const dispatcher = createGatewayRuntimePrivateUdsDispatcher({
+			approvalOperations: { decide: vi.fn() },
 			artifactOperations: { read: vi.fn() },
 			portalOperations: { call: vi.fn(), describe: vi.fn(), list, search: vi.fn() },
 			sandboxDispatch,
@@ -226,6 +258,7 @@ describe('Gateway runtime private UDS dispatcher', () => {
 		// Arrange
 		const traceDispatches: Parameters<GatewayRuntimeTraceContextDispatch>[0][] = [];
 		const dispatcher = createGatewayRuntimePrivateUdsDispatcher({
+			approvalOperations: { decide: vi.fn() },
 			artifactOperations: { read: vi.fn() },
 			portalOperations: {
 				call: vi.fn(),
@@ -296,6 +329,7 @@ describe('Gateway runtime private UDS dispatcher', () => {
 		const list = vi.fn();
 		const traceContextDispatch = vi.fn();
 		const dispatcher = createGatewayRuntimePrivateUdsDispatcher({
+			approvalOperations: { decide: vi.fn() },
 			artifactOperations: { read: vi.fn() },
 			portalOperations: { call: vi.fn(), describe: vi.fn(), list, search: vi.fn() },
 			sandboxDispatch: vi.fn(),
@@ -323,6 +357,7 @@ describe('Gateway runtime private UDS dispatcher', () => {
 		// Arrange
 		const sandboxDispatch = vi.fn();
 		const dispatcher = createGatewayRuntimePrivateUdsDispatcher({
+			approvalOperations: { decide: vi.fn() },
 			artifactOperations: { read: vi.fn() },
 			portalOperations: {
 				call: vi.fn(),
@@ -359,6 +394,7 @@ describe('Gateway runtime private UDS dispatcher', () => {
 	it('rejects an invalid sandbox backend result at the boundary', async () => {
 		// Arrange
 		const dispatcher = createGatewayRuntimePrivateUdsDispatcher({
+			approvalOperations: { decide: vi.fn() },
 			artifactOperations: { read: vi.fn() },
 			portalOperations: {
 				call: vi.fn(),

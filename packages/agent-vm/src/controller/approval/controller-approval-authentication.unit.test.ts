@@ -98,7 +98,10 @@ function createSystemConfig(
 				? {}
 				: { adminAccess: { mode: 'secret', secret: definition.adminSecret } }),
 			approvalAccess: {
-				approvers: [...definition.approvers],
+				approvers: definition.approvers.map((approver) => ({
+					...approver,
+					kind: 'bearer' as const,
+				})),
 				audience: GATEWAY_RUNTIME_APPROVAL_AUDIENCE,
 			},
 			egressHosts: [{ audience: 'gateway', host: 'example.com' }],
@@ -339,6 +342,9 @@ describe('controller approval bearer authentication', () => {
 		// Assert
 		if (firstResult.kind !== 'authenticated' || rotatedResult.kind !== 'authenticated') {
 			throw new Error('Expected both configured approval credentials to authenticate.');
+		}
+		if (firstResult.operator.provenance !== 'approval-access') {
+			throw new Error('Expected bearer authentication to return approval-access provenance.');
 		}
 		expect(firstResult.operator.credentialId).toBe(EXPECTED_ENVIRONMENT_CREDENTIAL_ID);
 		expect(rotatedResult.operator).toEqual(firstResult.operator);

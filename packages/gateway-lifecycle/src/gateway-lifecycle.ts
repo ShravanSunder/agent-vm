@@ -312,6 +312,9 @@ export interface BuildGatewayVmRequirementsOptions {
 }
 
 export interface GatewayLifecycleBase {
+	readonly capabilities?: {
+		readonly nativeApprovalPresenter: boolean;
+	};
 	/**
 	 * How to run interactive auth for this gateway type.
 	 * Absent means the gateway type does not support interactive auth.

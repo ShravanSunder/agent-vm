@@ -1354,6 +1354,7 @@ export async function createStockGatewayRuntimeSandboxVmHarness(): Promise<Stock
 			acquisitionPort,
 		});
 		const privateUdsDispatcher = createGatewayRuntimePrivateUdsDispatcher({
+			approvalOperations: { decide: async () => ({ kind: 'rejected', reason: 'not-found' }) },
 			artifactOperations: managedToolPortalComposition.privateUdsProjection.artifactOperations,
 			portalOperations: managedToolPortalComposition.privateUdsProjection.portalOperations,
 			sandboxDispatch: productionSandboxDispatcher.dispatch,

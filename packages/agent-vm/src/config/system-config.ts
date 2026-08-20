@@ -266,23 +266,31 @@ const zoneAdminAccessSchema = z.discriminatedUnion('mode', [
 		.strict(),
 ]);
 
+const zoneApprovalAuthoritySchema = z.discriminatedUnion('kind', [
+	z
+		.object({
+			approverId: z.string().min(1).max(1024),
+			kind: z.literal('bearer'),
+			secret: hostSecretReferenceSchema,
+		})
+		.strict(),
+	z
+		.object({
+			approverId: z.string().min(1).max(1024),
+			kind: z.literal('managed_gateway'),
+		})
+		.strict(),
+]);
+
 const zoneApprovalAccessSchema = z
 	.object({
-		approvers: z
-			.array(
-				z
-					.object({
-						approverId: z.string().min(1).max(1024),
-						secret: hostSecretReferenceSchema,
-					})
-					.strict(),
-			)
-			.min(1),
+		approvers: z.array(zoneApprovalAuthoritySchema).min(1),
 		audience: z.literal(GATEWAY_RUNTIME_APPROVAL_AUDIENCE),
 	})
 	.strict()
 	.superRefine((approvalAccess, context) => {
 		const seenApproverIds = new Set<string>();
+		let managedGatewayAuthorityCount = 0;
 		for (const [index, approver] of approvalAccess.approvers.entries()) {
 			if (seenApproverIds.has(approver.approverId)) {
 				context.addIssue({
@@ -292,6 +300,14 @@ const zoneApprovalAccessSchema = z
 				});
 			}
 			seenApproverIds.add(approver.approverId);
+			if (approver.kind === 'managed_gateway') managedGatewayAuthorityCount += 1;
+		}
+		if (managedGatewayAuthorityCount > 1) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: 'approvalAccess permits at most one managed_gateway authority per zone.',
+				path: ['approvers'],
+			});
 		}
 	});
 
@@ -961,7 +977,7 @@ const systemConfigSchema = z
 				zone.gateway.backupIdentity?.source === '1password' ||
 				(zone.adminAccess?.mode === 'secret' && zone.adminAccess.secret.source === '1password') ||
 				zone.approvalAccess?.approvers.some(
-					(approver) => approver.secret.source === '1password',
+					(approver) => approver.kind === 'bearer' && approver.secret.source === '1password',
 				) === true ||
 				(zone.gateway.type === 'openclaw' &&
 					(zone.gateway.authProfilesRef?.source === '1password' ||
@@ -1025,6 +1041,18 @@ const systemConfigSchema = z
 			{ readonly agentId: string; readonly zoneId: string }
 		>();
 		for (const [zoneIndex, zone] of config.zones.entries()) {
+			if (
+				zone.gateway.type !== 'hermes' &&
+				zone.approvalAccess?.approvers.some((approver) => approver.kind === 'managed_gateway') ===
+					true
+			) {
+				context.addIssue({
+					code: z.ZodIssueCode.custom,
+					message:
+						'managed_gateway approval authority requires a Gateway lifecycle with native approval presentation; only Hermes supports it.',
+					path: ['zones', zoneIndex, 'approvalAccess', 'approvers'],
+				});
+			}
 			const zoneAgents = zone.agents ?? [];
 			const zoneAgentIds = new Set(zoneAgents.map((agent) => agent.id));
 			const isManagedAgentGateway = zone.gateway.type !== 'worker';
