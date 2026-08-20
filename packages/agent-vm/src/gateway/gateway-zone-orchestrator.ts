@@ -1122,6 +1122,7 @@ function applyRuntimeMcpPortalMaterialization(props: {
 async function buildRuntimeMcpPortalMaterialization(props: {
 	readonly cacheDir: string;
 	readonly controlSessionMaterial: GatewayControlSessionMaterial | undefined;
+	readonly managedVmImages: GatewayManagerDependencies['managedVmImages'];
 	readonly mode: 'preflight' | 'write';
 	readonly secretResolver: StartGatewayZoneOptions['secretResolver'];
 	readonly zone: GatewayZone;
@@ -1151,6 +1152,7 @@ async function buildRuntimeMcpPortalMaterialization(props: {
 		approvalAccessConfigured: zone.approvalAccess !== undefined,
 		authoredConfigDir: zone.toolPortal.configDir,
 		effectiveHostConfigDir,
+		managedVmImages: props.managedVmImages,
 		allowedRawEnvSecretNames,
 		declaredAgentIds: (zone.agents ?? []).map((agent) => agent.id),
 		secretResolver: props.secretResolver,
@@ -1276,7 +1278,7 @@ export async function preflightGatewayZoneStart(
 
 async function preflightGatewayZoneStartPrerequisites(
 	options: GatewayZonePreflightOptions,
-	dependencies: Pick<GatewayManagerDependencies, 'loadGatewayLifecycle'> = {},
+	dependencies: Pick<GatewayManagerDependencies, 'loadGatewayLifecycle' | 'managedVmImages'>,
 ): Promise<GatewayZoneStartPrerequisitePreflightResult> {
 	const zone = options.zoneOverride ?? findGatewayZone(options.systemConfig, options.zoneId);
 	const mappedLifecycleZone = mapSystemGatewayZoneToLifecycleZone(zone, {
@@ -1302,6 +1304,7 @@ async function preflightGatewayZoneStartPrerequisites(
 		buildRuntimeMcpPortalMaterialization({
 			cacheDir: options.systemConfig.cacheDir,
 			controlSessionMaterial,
+			managedVmImages: dependencies.managedVmImages,
 			mode: 'preflight',
 			secretResolver: cachingSecretResolver.resolver,
 			zone,
@@ -1491,6 +1494,7 @@ async function startGatewayZoneImplementation(
 			await buildRuntimeMcpPortalMaterialization({
 				cacheDir: options.systemConfig.cacheDir,
 				controlSessionMaterial,
+				managedVmImages: dependencies.managedVmImages,
 				mode: 'write',
 				secretResolver: startupSecretResolver,
 				zone,

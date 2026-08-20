@@ -114,4 +114,14 @@ describe('configured CLI controller-host executor', () => {
 		).rejects.toBeInstanceOf(ConfiguredControllerExecutionError);
 		expect(spawnMock).not.toHaveBeenCalled();
 	});
+
+	it('rejects a missing inherited environment value before process creation', async () => {
+		await expect(
+			executeConfiguredCliOnControllerHost({
+				input: { argv: ['inspect'], reason: 'missing environment' },
+				operation,
+			}),
+		).rejects.toThrow('AGENT_VM_HOST_EXECUTOR_TEST_VALUE');
+		expect(spawnMock).not.toHaveBeenCalled();
+	});
 });

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import {
+	deriveGatewayRuntimePortalBindingRevision,
 	GatewayControlWorkspaceGitPushControllerExecutionPayloadSchema,
 	type GatewayControlToolPortalControllerExecutionPayload,
 	type GatewayRuntimeControllerExecutionDispatchReservation,
@@ -10,7 +11,10 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { LoadedSystemConfig } from '../../config/system-config.js';
-import { writeMcpPortalEffectiveConfig } from '../../gateway/mcp-portal-effective-config.js';
+import {
+	loadMcpPortalEffectiveToolPortalConfigSnapshot,
+	writeMcpPortalEffectiveConfig,
+} from '../../gateway/mcp-portal-effective-config.js';
 import type {
 	GatewayControlAcceptedSessionRef,
 	GatewayControlTrustedCallerContext,
@@ -74,6 +78,7 @@ async function writeToolPortalAuthoredConfig(
 	props: {
 		readonly agentId?: string;
 		readonly configuredOperation?: boolean;
+		readonly configuredExecutablePath?: string;
 		readonly controllerExecutionTools?: readonly string[];
 		readonly controllerExecutionPolicy?: boolean;
 		readonly profileId?: string;
@@ -97,7 +102,7 @@ async function writeToolPortalAuthoredConfig(
 										inspect_host: {
 											commands: [{ path: ['inspect'] }],
 											deniedPatterns: [],
-											executablePath: '/usr/bin/printf',
+											executablePath: props.configuredExecutablePath ?? '/usr/bin/printf',
 											executionTarget: {
 												cwd: '/tmp',
 												environment: { kind: 'empty' },
@@ -391,6 +396,7 @@ const approvalReservation = {
 		zoneId: acceptedSession.zoneId,
 	},
 	backendKind: 'controller_execution',
+	bindingRevision: 'binding:current',
 	expiresAt: '2026-07-20T16:05:00.000Z',
 	fingerprint: `sha256:${'c'.repeat(64)}`,
 	operationId: '66666666-6666-4666-8666-666666666666',
@@ -440,6 +446,15 @@ describe('authorizeGatewayControlControllerExecution', () => {
 		const configDir = await writeToolPortalAuthoredConfig({ requiresApproval: true });
 		const systemConfig = await createSystemConfigFixture({ configDir });
 		await writeEffectiveToolPortalSnapshot(systemConfig, { approvalAccessConfigured: true });
+		const effectiveConfig = await loadMcpPortalEffectiveToolPortalConfigSnapshot(
+			path.join(systemConfig.cacheDir, 'gateways', acceptedSession.zoneId, 'tool-portal-effective'),
+		);
+		const currentApprovalReservation = {
+			...approvalReservation,
+			bindingRevision: deriveGatewayRuntimePortalBindingRevision(
+				effectiveConfig.effectiveToolPortalConfig,
+			),
+		};
 
 		await expect(
 			authorizeGatewayControlControllerExecution({
@@ -456,7 +471,9 @@ describe('authorizeGatewayControlControllerExecution', () => {
 		await expect(
 			authorizeGatewayControlControllerExecution({
 				callerContext: trustedCallerContext,
-				payload: createWorkspaceGitPushPayload({ approvalReservation }),
+				payload: createWorkspaceGitPushPayload({
+					approvalReservation: currentApprovalReservation,
+				}),
 				session: acceptedSession,
 				systemConfig,
 			}),
@@ -568,6 +585,57 @@ describe('authorizeGatewayControlControllerExecution', () => {
 				systemConfig,
 			}),
 		).resolves.toEqual({ authorized: true });
+	});
+
+	it('rejects an approved configured CLI reservation after trusted operation policy changes', async () => {
+		const configDir = await writeToolPortalAuthoredConfig({
+			configuredOperation: true,
+			controllerExecutionTools: ['inspect_host'],
+			requiresApproval: true,
+		});
+		const systemConfig = await createSystemConfigFixture({ configDir, workspaceGit: false });
+		await writeEffectiveToolPortalSnapshot(systemConfig, { approvalAccessConfigured: true });
+		const originalSnapshot = await loadMcpPortalEffectiveToolPortalConfigSnapshot(
+			path.join(systemConfig.cacheDir, 'gateways', acceptedSession.zoneId, 'tool-portal-effective'),
+		);
+		const originalReservation = {
+			...approvalReservation,
+			bindingRevision: deriveGatewayRuntimePortalBindingRevision(
+				originalSnapshot.effectiveToolPortalConfig,
+			),
+		};
+		await writeToolPortalAuthoredConfig({
+			configuredExecutablePath: '/usr/bin/false',
+			configuredOperation: true,
+			controllerExecutionTools: ['inspect_host'],
+			requiresApproval: true,
+		});
+		await writeEffectiveToolPortalSnapshot(systemConfig, { approvalAccessConfigured: true });
+
+		await expect(
+			authorizeGatewayControlControllerExecution({
+				callerContext: trustedCallerContext,
+				createdAtMs: 1_000,
+				expiresAtMs: 16_000,
+				payload: {
+					approvalReservation: originalReservation,
+					callerContext: { callerContextId: trustedCallerContext.callerContextId },
+					capability: { name: 'inspect_host', namespace: 'controller_execution' },
+					correlation: {
+						capability: { name: 'inspect_host', namespace: 'controller_execution' },
+					},
+					input: { argv: ['inspect'], reason: 'stale policy proof' },
+					kind: 'configured_cli',
+					operationName: 'inspect_host',
+				},
+				session: acceptedSession,
+				systemConfig,
+			}),
+		).resolves.toEqual({
+			authorized: false,
+			errorClass: 'controller_execution_policy_stale',
+			safeMessage: 'controller execution approval does not match current trusted policy',
+		});
 	});
 
 	it('rejects controller_host_probe when the e2e probe gate is disabled', async () => {

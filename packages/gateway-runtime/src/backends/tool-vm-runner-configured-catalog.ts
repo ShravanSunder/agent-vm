@@ -4,7 +4,7 @@ import {
 	type CapabilitySummary,
 } from '@agent-vm/agent-portal-sdk';
 import type {
-	ToolPortalConfig,
+	GatewayRuntimeManagedToolPortalConfig,
 	ToolPortalSandboxSshOperationDefinition,
 } from '@agent-vm/config-contracts';
 
@@ -361,7 +361,7 @@ function compileConfiguredOperation(props: {
 }
 
 export function compileGatewayRuntimeToolVmRunnerConfiguredCatalog(
-	config: ToolPortalConfig,
+	config: GatewayRuntimeManagedToolPortalConfig,
 ): GatewayRuntimeToolVmRunnerCapabilityCatalog {
 	const profileCatalogs: [string, GatewayRuntimeToolVmRunnerCapabilityCatalogEntry[]][] = [];
 	for (const [profileId, profile] of Object.entries(config.profiles)) {

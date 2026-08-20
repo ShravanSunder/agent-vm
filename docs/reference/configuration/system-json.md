@@ -613,8 +613,13 @@ operations. Configured CLI binds exactly one `controller_host` or
 `open` (120-second default, caller override up to 8 hours). The Gateway never
 selects the target, executable, image, environment, or raw controller deadline.
 The ephemeral target is a fresh one-shot Managed VM; it does not reuse a leased
-Tool VM. `tool_vm_runner` remains the separate Gateway-to-leased-Tool-VM direct
-SSH backend and sends no per-command controller execution RPC.
+Tool VM. Its authored `imageReference` is a Managed VM image recipe path relative
+to `tool-portal.config.jsonc`; Gateway startup prepares that recipe and binds the
+returned provider-local reference and fingerprint into the controller-only
+effective policy. Preparation failure blocks startup, and prepared image details
+never enter the Gateway projection. `tool_vm_runner` remains the separate
+Gateway-to-leased-Tool-VM direct SSH backend and sends no per-command controller
+execution RPC.
 
 For an MCP-backed managed namespace, the namespace id matches the provider
 namespace in `mcp.config.jsonc` and explicitly selects `mcp_provider`:

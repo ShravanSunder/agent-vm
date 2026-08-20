@@ -2,7 +2,10 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import type { ControllerExecutionOperation } from '@agent-vm/config-contracts';
+import {
+	encodeConfiguredCliPreparedImageIdentity,
+	type ControllerExecutionOperation,
+} from '@agent-vm/config-contracts';
 import type {
 	ManagedVm,
 	ManagedVmCreateRequest,
@@ -21,7 +24,11 @@ const operation = {
 		allowedHosts: [],
 		environment: { kind: 'empty' },
 		guestCwd: '/run',
-		imageReference: '/images/immutable-fingerprint-a',
+		imageReference: encodeConfiguredCliPreparedImageIdentity({
+			fingerprint: 'fingerprint-a',
+			imageReference: '/images/prepared-a',
+			schemaVersion: 1,
+		}),
 		kind: 'ephemeral_managed_vm',
 	},
 	kind: 'configured_cli',
@@ -51,6 +58,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+	delete process.env.AGENT_VM_CONFIGURED_VM_REQUIRED_ENV;
 	await rm(testRoot, { force: true, recursive: true });
 });
 
@@ -162,6 +170,9 @@ describe('configured CLI Managed VM production executor', () => {
 			stdoutTruncated: false,
 		});
 		expect(fixture.createManagedVm).toHaveBeenCalledOnce();
+		expect(fixture.createManagedVm).toHaveBeenCalledWith(
+			expect.objectContaining({ imageReference: '/images/prepared-a' }),
+		);
 		expect(fixture.exec).toHaveBeenCalledOnce();
 		expect(reloadOperation).toHaveBeenCalledOnce();
 		expect(fixture.close).toHaveBeenCalledOnce();
@@ -180,7 +191,11 @@ describe('configured CLI Managed VM production executor', () => {
 			...operation,
 			executionTarget: {
 				...operation.executionTarget,
-				imageReference: '/images/immutable-fingerprint-b',
+				imageReference: encodeConfiguredCliPreparedImageIdentity({
+					fingerprint: 'fingerprint-b',
+					imageReference: '/images/prepared-b',
+					schemaVersion: 1,
+				}),
 			},
 		} satisfies Extract<ControllerExecutionOperation, { kind: 'configured_cli' }>;
 		const execute = createConfiguredCliManagedVmExecutor({
@@ -208,5 +223,68 @@ describe('configured CLI Managed VM production executor', () => {
 		expect(fixture.exec).not.toHaveBeenCalled();
 		expect(fixture.close).toHaveBeenCalledOnce();
 		expect(terminateRecordedHostProcess).toHaveBeenCalledOnce();
+	});
+
+	it('creates no VM from an authored or malformed effective image identity', async () => {
+		const fixture = createManagedVmFixture();
+		const unpreparedOperation = {
+			...operation,
+			executionTarget: {
+				...operation.executionTarget,
+				imageReference: '../../vm-images/controller-runners/default/build-config.json',
+			},
+		} satisfies Extract<ControllerExecutionOperation, { kind: 'configured_cli' }>;
+		const execute = createConfiguredCliManagedVmExecutor({
+			controllerStateDir: testRoot,
+			managedVmExactProcessTermination: { terminateRecordedHostProcess: vi.fn() },
+			managedVmFactory: { createManagedVm: fixture.createManagedVm },
+			readProcessIdentity: vi.fn(async () => null),
+			resolveGatewayIdentity: vi.fn(async () => gatewayIdentity),
+		});
+
+		await expect(
+			execute({
+				input: { argv: ['inspect'], reason: 'unprepared image proof' },
+				operation: unpreparedOperation,
+				operationName: 'isolated_inspect',
+				reloadOperation: vi.fn(async () => unpreparedOperation),
+				stablePrincipal: 'a'.repeat(64),
+				zoneId: 'zone-a',
+			}),
+		).rejects.toThrow('was not prepared');
+		expect(fixture.createManagedVm).not.toHaveBeenCalled();
+	});
+
+	it('creates no VM when one inherited environment value is missing', async () => {
+		const fixture = createManagedVmFixture();
+		const operationWithMissingEnvironment = {
+			...operation,
+			executionTarget: {
+				...operation.executionTarget,
+				environment: {
+					kind: 'inherit_allowlist',
+					names: ['AGENT_VM_CONFIGURED_VM_REQUIRED_ENV'],
+				},
+			},
+		} satisfies Extract<ControllerExecutionOperation, { kind: 'configured_cli' }>;
+		const execute = createConfiguredCliManagedVmExecutor({
+			controllerStateDir: testRoot,
+			managedVmExactProcessTermination: { terminateRecordedHostProcess: vi.fn() },
+			managedVmFactory: { createManagedVm: fixture.createManagedVm },
+			readProcessIdentity: vi.fn(async () => null),
+			resolveGatewayIdentity: vi.fn(async () => gatewayIdentity),
+		});
+
+		await expect(
+			execute({
+				input: { argv: ['inspect'], reason: 'missing environment proof' },
+				operation: operationWithMissingEnvironment,
+				operationName: 'isolated_inspect',
+				reloadOperation: vi.fn(async () => operationWithMissingEnvironment),
+				stablePrincipal: 'a'.repeat(64),
+				zoneId: 'zone-a',
+			}),
+		).rejects.toThrow('AGENT_VM_CONFIGURED_VM_REQUIRED_ENV');
+		expect(fixture.createManagedVm).not.toHaveBeenCalled();
 	});
 });

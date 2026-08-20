@@ -117,6 +117,7 @@ export const GatewayRuntimeControllerExecutionDispatchReservationSchema = z
 	.object({
 		...approvalDispatchAuthorityShape,
 		backendKind: z.literal(toolPortalBackendKindSchema.enum.controller_execution),
+		bindingRevision: z.string().min(1),
 		reservationId: z.string().uuid(),
 	})
 	.strict();

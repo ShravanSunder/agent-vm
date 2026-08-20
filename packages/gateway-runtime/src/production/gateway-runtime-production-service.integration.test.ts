@@ -10,6 +10,7 @@ import {
 	type GatewayRuntimeClientTrustedInvocationContext,
 } from '@agent-vm/agent-portal-sdk/gateway-runtime-client';
 import {
+	createGatewayRuntimeManagedToolPortalConfig,
 	managedToolPortalConfigSchema,
 	mcpConfigSchema,
 	type FormattedSecretValue,
@@ -29,6 +30,7 @@ import {
 	type ControlReadyRequestCredential,
 } from '@agent-vm/control-protocol-contracts';
 import {
+	deriveGatewayRuntimeInputRevision,
 	deriveGatewayRuntimePortalSemanticSnapshot,
 	GatewayControlHelloResponseSchema,
 	GatewayControlRpcMessageSchema,
@@ -354,6 +356,8 @@ async function createServiceConfig(
 		format: 'pem',
 		type: 'spki',
 	});
+	const gatewayRuntimeToolPortalConfig =
+		createGatewayRuntimeManagedToolPortalConfig(toolPortalConfig);
 	return {
 		artifactLimits: {
 			maximumArtifactBytes: 1_024,
@@ -389,6 +393,10 @@ async function createServiceConfig(
 			},
 			listen: { host: '127.0.0.1', port: 0 },
 		},
+		gatewayRuntimeInputRevision: deriveGatewayRuntimeInputRevision({
+			mcpConfig,
+			toolPortalConfig: gatewayRuntimeToolPortalConfig,
+		}),
 		mcpConfigPath: path.join(temporaryRoot, 'mcp.config.json'),
 		observability: { kind: 'disabled' },
 		runtimeRoot,
@@ -399,7 +407,7 @@ async function createServiceConfig(
 			role: 'tool-portal',
 			serviceId: 'tool-portal-zone-a',
 		},
-		toolPortalConfig,
+		toolPortalConfig: gatewayRuntimeToolPortalConfig,
 	};
 }
 

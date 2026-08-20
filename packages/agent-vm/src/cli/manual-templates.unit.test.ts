@@ -424,6 +424,9 @@ describe('manual templates', () => {
 			'controller_host or a fresh one-shot ephemeral_managed_vm',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'imageReference is a Managed VM image recipe path relative to tool-portal.config.jsonc',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
 			'tool_vm_runner remains direct Gateway-to-leased-Tool-VM SSH',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(

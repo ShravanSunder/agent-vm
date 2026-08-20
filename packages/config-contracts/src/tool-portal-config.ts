@@ -1,6 +1,13 @@
 import { z } from 'zod';
 
-import { controllerExecutionOperationSchema } from './controller-configured-cli.js';
+import {
+	configuredCliAllowedCommandSchema,
+	configuredCliPatternRuleSchema,
+	configuredCliTimeoutPolicySchema,
+	controllerExecutionOperationSchema,
+	controllerRegisteredOperationSchema,
+	effectiveControllerExecutionOperationSchema,
+} from './controller-configured-cli.js';
 import { loadJsonConfigFile } from './json-config-file.js';
 import { secretValueSchema } from './secret-value.js';
 
@@ -305,6 +312,159 @@ export const managedToolPortalConfigSchema = z
 
 export type ManagedToolPortalConfig = z.infer<typeof managedToolPortalConfigSchema>;
 
+const effectiveToolPortalControllerExecutionBackendBindingSchema = z
+	.object({
+		kind: z.literal('controller_execution'),
+		operations: z
+			.record(z.string().min(1), effectiveControllerExecutionOperationSchema)
+			.refine((operations) => Object.keys(operations).length > 0),
+	})
+	.strict();
+
+const effectiveToolPortalBackendBindingSchema = z.discriminatedUnion('kind', [
+	z.object({ kind: z.literal('mcp_provider') }).strict(),
+	effectiveToolPortalControllerExecutionBackendBindingSchema,
+	toolPortalSandboxSshBackendBindingSchema,
+]);
+
+const effectiveToolPortalNamespacePolicySchema = z
+	.object({
+		backend: effectiveToolPortalBackendBindingSchema,
+		calls: toolPortalCallPolicySchema,
+		tools: toolPortalToolSelectorSchema,
+	})
+	.strict();
+
+const effectiveToolPortalProfileDefinitionSchema = z
+	.object({
+		namespaces: z.record(z.string().min(1), effectiveToolPortalNamespacePolicySchema),
+	})
+	.strict();
+
+export const effectiveManagedToolPortalConfigSchema = z
+	.object({
+		$schema: z.string().min(1).optional(),
+		agents: z.record(z.string().min(1), toolPortalAgentConfigSchema).default({}),
+		mode: z.literal('managed'),
+		profiles: z.record(z.string().min(1), effectiveToolPortalProfileDefinitionSchema),
+		schemaVersion: z.literal(1),
+	})
+	.strict();
+
+export type EffectiveManagedToolPortalConfig = z.infer<
+	typeof effectiveManagedToolPortalConfigSchema
+>;
+
+export const gatewayRuntimeConfiguredCliOperationSchema = z
+	.object({
+		commands: z.array(configuredCliAllowedCommandSchema).min(1),
+		deniedPatterns: z.array(configuredCliPatternRuleSchema),
+		kind: z.literal('configured_cli'),
+		safeHelp: z.string().min(1).max(4_000),
+		targetKind: z.enum(['controller_host', 'ephemeral_managed_vm']),
+		timeout: configuredCliTimeoutPolicySchema,
+	})
+	.strict();
+
+export const gatewayRuntimeControllerExecutionOperationSchema = z.discriminatedUnion('kind', [
+	controllerRegisteredOperationSchema,
+	gatewayRuntimeConfiguredCliOperationSchema,
+]);
+
+export type GatewayRuntimeControllerExecutionOperation = z.infer<
+	typeof gatewayRuntimeControllerExecutionOperationSchema
+>;
+
+export const gatewayRuntimeControllerExecutionBackendBindingSchema = z
+	.object({
+		kind: z.literal('controller_execution'),
+		operations: z
+			.record(z.string().min(1), gatewayRuntimeControllerExecutionOperationSchema)
+			.refine((operations) => Object.keys(operations).length > 0),
+	})
+	.strict();
+
+const gatewayRuntimeToolPortalBackendBindingSchema = z.discriminatedUnion('kind', [
+	z.object({ kind: z.literal('mcp_provider') }).strict(),
+	gatewayRuntimeControllerExecutionBackendBindingSchema,
+	toolPortalSandboxSshBackendBindingSchema,
+]);
+
+const gatewayRuntimeToolPortalNamespacePolicySchema = z
+	.object({
+		backend: gatewayRuntimeToolPortalBackendBindingSchema,
+		calls: toolPortalCallPolicySchema,
+		tools: toolPortalToolSelectorSchema,
+	})
+	.strict();
+
+const gatewayRuntimeToolPortalProfileDefinitionSchema = z
+	.object({
+		namespaces: z.record(z.string().min(1), gatewayRuntimeToolPortalNamespacePolicySchema),
+	})
+	.strict();
+
+export const gatewayRuntimeManagedToolPortalConfigSchema = z
+	.object({
+		agents: z.record(z.string().min(1), toolPortalAgentConfigSchema),
+		mode: z.literal('managed'),
+		profiles: z.record(z.string().min(1), gatewayRuntimeToolPortalProfileDefinitionSchema),
+		schemaVersion: z.literal(1),
+	})
+	.strict();
+
+export type GatewayRuntimeManagedToolPortalConfig = z.infer<
+	typeof gatewayRuntimeManagedToolPortalConfigSchema
+>;
+
+export function createGatewayRuntimeManagedToolPortalConfig(
+	config: ManagedToolPortalConfig,
+): GatewayRuntimeManagedToolPortalConfig {
+	return gatewayRuntimeManagedToolPortalConfigSchema.parse({
+		agents: config.agents,
+		mode: 'managed',
+		profiles: Object.fromEntries(
+			Object.entries(config.profiles).map(([profileId, profile]) => [
+				profileId,
+				{
+					namespaces: Object.fromEntries(
+						Object.entries(profile.namespaces).map(([namespaceId, namespacePolicy]) => [
+							namespaceId,
+							{
+								...namespacePolicy,
+								backend:
+									namespacePolicy.backend.kind !== 'controller_execution'
+										? namespacePolicy.backend
+										: {
+												kind: 'controller_execution',
+												operations: Object.fromEntries(
+													Object.entries(namespacePolicy.backend.operations).map(
+														([operationName, operation]) => [
+															operationName,
+															operation.kind === 'registered_action'
+																? operation
+																: {
+																		commands: operation.commands,
+																		deniedPatterns: operation.deniedPatterns,
+																		kind: operation.kind,
+																		safeHelp: operation.safeHelp,
+																		targetKind: operation.executionTarget.kind,
+																		timeout: operation.timeout,
+																	},
+														],
+													),
+												),
+											},
+							},
+						]),
+					),
+				},
+			]),
+		),
+		schemaVersion: 1,
+	});
+}
+
 export const standaloneToolPortalConfigSchema = z
 	.object({
 		...toolPortalCommonConfigShape,
@@ -485,7 +645,7 @@ export type ToolPortalControllerExecutionProjection = z.infer<
 
 export interface CreateToolPortalMcpProjectionProps {
 	readonly agentId: string;
-	readonly config: ToolPortalConfig;
+	readonly config: GatewayRuntimeManagedToolPortalConfig | ToolPortalConfig;
 }
 
 export function createToolPortalMcpProjection(
@@ -524,7 +684,7 @@ export function createToolPortalMcpProjection(
 
 export interface CreateToolPortalControllerExecutionProjectionProps {
 	readonly agentId: string;
-	readonly config: ToolPortalConfig;
+	readonly config: GatewayRuntimeManagedToolPortalConfig | ToolPortalConfig;
 }
 
 export function createToolPortalControllerExecutionProjection(

@@ -476,6 +476,9 @@ export function createControllerApprovalLedger(
 							approvalId,
 							authorityContext,
 							backendKind: intent.backendKind,
+							...(intent.backendKind === 'controller_execution'
+								? { bindingRevision: intent.semanticRevisions.bindingRevision }
+								: {}),
 							expiresAt: currentRecord.challenge.expiresAt,
 							fingerprint,
 							operationId: intent.operationId,

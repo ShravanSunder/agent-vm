@@ -15,7 +15,14 @@ export function fixedSafeConfiguredCliStderrSummary(stderr: Uint8Array): string 
 	try {
 		const sanitized = Buffer.from(stderr)
 			.toString('utf8')
-			.replaceAll(/\b(?:token|password|secret|authorization)\s*[:=]\s*\S+/giu, '[REDACTED]')
+			.replaceAll(
+				/-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----/gu,
+				'[REDACTED]',
+			)
+			.replaceAll(
+				/\b(?:api[-_ ]?key|authorization|cookie|password|private[-_ ]?key|refresh[-_ ]?token|secret|set-cookie|token)\s*[:=]\s*\S+/giu,
+				'[REDACTED]',
+			)
 			.replaceAll(/\b(?:Bearer|Basic)\s+\S+/giu, '[REDACTED]');
 		return truncateUtf8(Buffer.from(sanitized, 'utf8'), 4_096);
 	} catch {

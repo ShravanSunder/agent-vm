@@ -1,4 +1,7 @@
-import type { ManagedToolPortalConfig } from '@agent-vm/config-contracts';
+import {
+	createGatewayRuntimeManagedToolPortalConfig,
+	type ManagedToolPortalConfig,
+} from '@agent-vm/config-contracts';
 import type { ToolPortalApprovalPort } from '@agent-vm/tool-portal';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -151,7 +154,7 @@ function runtimeProps(
 		},
 		controlEndpoint: endpoint,
 		owningGeneration: 'runtime-generation-a',
-		toolPortalConfig: toolPortalConfig(),
+		toolPortalConfig: createGatewayRuntimeManagedToolPortalConfig(toolPortalConfig()),
 		zoneId: 'zone-a',
 	};
 }

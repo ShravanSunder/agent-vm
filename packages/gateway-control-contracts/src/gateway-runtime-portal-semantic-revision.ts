@@ -3,8 +3,10 @@ import { createHash } from 'node:crypto';
 import { compareUnicodeCodePointStrings } from '@agent-vm/agent-portal-sdk';
 import type {
 	FormattedSecretValue,
+	GatewayRuntimeManagedToolPortalConfig,
 	ManagedToolPortalConfig,
 	McpConfig,
+	ToolPortalConfig,
 } from '@agent-vm/config-contracts';
 
 import {
@@ -416,6 +418,25 @@ function revision(domain: string, material: object): string {
 	return `${domain}:${digest}`;
 }
 
+export function deriveGatewayRuntimePortalBindingRevision(
+	toolPortalConfig: ToolPortalConfig,
+): string {
+	if (toolPortalConfig.mode !== 'managed') {
+		throw new Error('Gateway runtime binding revision requires managed Tool Portal config.');
+	}
+	return revision('binding', normalizedBindingInputs(toolPortalConfig));
+}
+
+export function deriveGatewayRuntimeInputRevision(props: {
+	readonly mcpConfig: McpConfig;
+	readonly toolPortalConfig: GatewayRuntimeManagedToolPortalConfig;
+}): string {
+	return revision('gateway-runtime-input', {
+		mcpProviders: normalizedMcpProviders(props.mcpConfig.providers),
+		toolPortalConfig: props.toolPortalConfig,
+	});
+}
+
 function frameworkIdentityKey(identity: GatewayRuntimeFrameworkIdentity): string {
 	return identity.kind === 'openclaw'
 		? `openclaw:${identity.agentId}`
@@ -559,7 +580,7 @@ export function deriveGatewayRuntimePortalSemanticSnapshot(
 			toolPortalConfig: props.toolPortalConfig,
 		}),
 	);
-	const bindingRevision = revision('binding', normalizedBindingInputs(props.toolPortalConfig));
+	const bindingRevision = deriveGatewayRuntimePortalBindingRevision(props.toolPortalConfig);
 	const schemaRevision = revision('schema', {
 		mcpConfigSchemaVersion: props.mcpConfig.schemaVersion,
 		toolPortalConfigSchemaVersion: props.toolPortalConfig.schemaVersion,

@@ -47,6 +47,7 @@ function validServiceConfig(runtimeRoot: string): GatewayRuntimeServiceConfig {
 			},
 			listen: { host: '127.0.0.1', port: 18790 },
 		},
+		gatewayRuntimeInputRevision: `gateway-runtime-input:${'a'.repeat(64)}`,
 		mcpConfigPath: path.join(runtimeRoot, 'mcp.config.json'),
 		observability: { kind: 'disabled' },
 		runtimeRoot,

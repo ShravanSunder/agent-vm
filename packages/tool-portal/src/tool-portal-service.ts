@@ -13,12 +13,14 @@ import {
 	type PortalSearchResult,
 } from '@agent-vm/agent-portal-sdk';
 import {
+	createGatewayRuntimeManagedToolPortalConfig,
+	gatewayRuntimeManagedToolPortalConfigSchema,
+	type GatewayRuntimeManagedToolPortalConfig,
+	managedToolPortalConfigSchema,
 	type ManagedToolPortalConfig,
 	type StandaloneToolPortalConfig,
-	managedToolPortalConfigSchema,
 	type ToolPortalBackendBinding,
 	type ToolPortalBackendKind,
-	type ToolPortalConfig,
 } from '@agent-vm/config-contracts';
 import {
 	type GatewayRuntimeApprovalAdmissionResult,
@@ -195,7 +197,7 @@ export interface CreateManagedToolPortalCapabilityCoreProps {
 		readonly mcpProvider: ToolPortalBackendPort<'mcp_provider'>;
 		readonly toolVmRunner: ToolPortalBackendPort<'tool_vm_runner'>;
 	};
-	readonly config: ManagedToolPortalConfig;
+	readonly config: GatewayRuntimeManagedToolPortalConfig | ManagedToolPortalConfig;
 	readonly semanticSnapshot: GatewayRuntimePortalSemanticSnapshot;
 }
 
@@ -209,7 +211,7 @@ export interface CreateStandaloneV1ToolPortalServiceProps {
 }
 
 function resolveManagedInvocation(props: {
-	readonly config: ManagedToolPortalConfig;
+	readonly config: GatewayRuntimeManagedToolPortalConfig;
 	readonly options: ToolPortalManagedServiceInvocationOptions;
 	readonly semanticSnapshot: GatewayRuntimePortalSemanticSnapshot;
 }): {
@@ -282,7 +284,7 @@ function assertNeverApprovalAdmission(admission: never): never {
 
 function managedBackendEntriesForInvocation(props: {
 	readonly backendPorts: CreateManagedToolPortalCapabilityCoreProps['backendPorts'];
-	readonly config: ToolPortalConfig;
+	readonly config: GatewayRuntimeManagedToolPortalConfig;
 	readonly operationOptions: ToolPortalInvocationOptions;
 	readonly profileId: string;
 	readonly semanticSnapshot: GatewayRuntimePortalSemanticSnapshot;
@@ -420,7 +422,12 @@ function controllerAdmissionItem(props: {
 export function createManagedToolPortalCapabilityCore(
 	props: CreateManagedToolPortalCapabilityCoreProps,
 ): ToolPortalCapabilityCore<'managed'> {
-	const config = managedToolPortalConfigSchema.parse(props.config);
+	const projectedConfig = gatewayRuntimeManagedToolPortalConfigSchema.safeParse(props.config);
+	const config = projectedConfig.success
+		? projectedConfig.data
+		: createGatewayRuntimeManagedToolPortalConfig(
+				managedToolPortalConfigSchema.parse(props.config),
+			);
 	const semanticSnapshot = deepFreeze(
 		GatewayRuntimePortalSemanticSnapshotSchema.parse(props.semanticSnapshot),
 	);

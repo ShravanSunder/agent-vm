@@ -5,7 +5,7 @@ import {
 	SANDBOX_MAXIMUM_LIST_ITEMS,
 	SANDBOX_MAXIMUM_OPERATION_MILLISECONDS,
 } from '@agent-vm/agent-portal-sdk';
-import type { ManagedToolPortalConfig } from '@agent-vm/config-contracts';
+import type { GatewayRuntimeManagedToolPortalConfig } from '@agent-vm/config-contracts';
 import type { ToolPortalApprovalPort, ToolPortalBackendPort } from '@agent-vm/tool-portal';
 import { v7 as uuidv7 } from 'uuid';
 
@@ -120,7 +120,7 @@ export interface CreateGatewayRuntimeProductionControlRuntimeProps {
 	readonly controlAuthority: GatewayRuntimeProductionControlAuthority;
 	readonly controlEndpoint: GatewayControlEndpoint;
 	readonly owningGeneration: string;
-	readonly toolPortalConfig: ManagedToolPortalConfig;
+	readonly toolPortalConfig: GatewayRuntimeManagedToolPortalConfig;
 	readonly zoneId: string;
 }
 

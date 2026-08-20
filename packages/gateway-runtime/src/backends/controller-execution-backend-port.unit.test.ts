@@ -99,6 +99,7 @@ const approvalReservationDispatchAuthority = {
 			zoneId: 'zone-a',
 		},
 		backendKind: 'controller_execution',
+		bindingRevision: 'binding:current',
 		expiresAt: '2026-07-13T22:00:00.000Z',
 		fingerprint: `sha256:${'b'.repeat(64)}`,
 		operationId: '33333333-3333-5333-8333-333333333333',

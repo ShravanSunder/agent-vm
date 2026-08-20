@@ -7,10 +7,10 @@ import type {
 import { JsonObjectSchema } from '@agent-vm/agent-portal-sdk';
 import {
 	configuredCliInputSchema,
+	type GatewayRuntimeControllerExecutionOperation,
+	type GatewayRuntimeManagedToolPortalConfig,
 	openConfiguredCliInputSchema,
 	quickConfiguredCliInputSchema,
-	type ControllerExecutionOperation,
-	type ManagedToolPortalConfig,
 } from '@agent-vm/config-contracts';
 import type {
 	ControllerExecutionAuthorityBinding,
@@ -113,11 +113,11 @@ export interface CreateGatewayControlControllerExecutionBackendPortProps {
 	readonly createCommandId: () => string;
 	readonly now?: () => number;
 	readonly owningGeneration: string;
-	readonly toolPortalConfig: ManagedToolPortalConfig;
+	readonly toolPortalConfig: GatewayRuntimeManagedToolPortalConfig;
 }
 
 function configuredInputSchema(
-	operation: Extract<ControllerExecutionOperation, { kind: 'configured_cli' }>,
+	operation: Extract<GatewayRuntimeControllerExecutionOperation, { kind: 'configured_cli' }>,
 ): typeof quickConfiguredCliInputSchema | typeof openConfiguredCliInputSchema {
 	return operation.timeout.kind === 'quick'
 		? quickConfiguredCliInputSchema
@@ -127,7 +127,10 @@ function configuredInputSchema(
 function configuredRegistration(props: {
 	readonly name: string;
 	readonly namespace: string;
-	readonly operation: Extract<ControllerExecutionOperation, { kind: 'configured_cli' }>;
+	readonly operation: Extract<
+		GatewayRuntimeControllerExecutionOperation,
+		{ kind: 'configured_cli' }
+	>;
 }): ControllerExecutionRegistration {
 	const inputSchema = configuredInputSchema(props.operation);
 	const toolRef = `${props.namespace}.${props.name}`;
@@ -145,7 +148,12 @@ function configuredRegistration(props: {
 			const parsedInput = inputSchema.safeParse(argumentsValue);
 			if (!parsedInput.success) return { kind: 'invalid' };
 			const validation = validateCliAllowanceInvocation({
-				allowance: props.operation,
+				allowance: {
+					commands: props.operation.commands,
+					deniedPatterns: props.operation.deniedPatterns,
+					stdin: { deniedPatterns: [], kind: 'bounded_text', maxBytes: 1_048_576 },
+					timeout: props.operation.timeout,
+				},
 				input: parsedInput.data,
 			});
 			return validation.ok
@@ -170,7 +178,7 @@ function configuredRegistration(props: {
 }
 
 function controllerExecutionRegistrations(
-	config: ManagedToolPortalConfig,
+	config: GatewayRuntimeManagedToolPortalConfig,
 ): readonly ControllerExecutionRegistration[] {
 	const builtInByName = new Map(
 		builtInControllerExecutions.map((registration) => [registration.summary.name, registration]),
@@ -207,9 +215,9 @@ function controllerExecutionRegistrations(
 }
 
 function configuredOperationForRequest(
-	config: ManagedToolPortalConfig,
+	config: GatewayRuntimeManagedToolPortalConfig,
 	request: ControllerExecutionDispatchRequest,
-): Extract<ControllerExecutionOperation, { kind: 'configured_cli' }> | undefined {
+): Extract<GatewayRuntimeControllerExecutionOperation, { kind: 'configured_cli' }> | undefined {
 	for (const profile of Object.values(config.profiles)) {
 		const namespacePolicy = profile.namespaces[request.action.capability.namespace];
 		if (namespacePolicy?.backend.kind !== 'controller_execution') continue;
@@ -444,7 +452,7 @@ function createGatewayControlControllerExecutionRpcPort(
 					: deriveGatewayControlControllerExecutionRpcWindow({
 							input: configuredCliInputSchema.parse(request.action.arguments),
 							nowMs: commandCreatedAtMs,
-							targetKind: configuredOperation.executionTarget.kind,
+							targetKind: configuredOperation.targetKind,
 							timeoutKind: configuredOperation.timeout.kind,
 						});
 			let response: Awaited<ReturnType<GatewayRuntimeControlCommandClient['sendCommand']>>;

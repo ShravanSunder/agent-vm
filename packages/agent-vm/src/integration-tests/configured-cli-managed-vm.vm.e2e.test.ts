@@ -1,6 +1,9 @@
 import path from 'node:path';
 
-import type { ControllerExecutionOperation } from '@agent-vm/config-contracts';
+import {
+	encodeConfiguredCliPreparedImageIdentity,
+	type ControllerExecutionOperation,
+} from '@agent-vm/config-contracts';
 import { describe, expect, it } from 'vitest';
 
 import { createManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
@@ -26,7 +29,11 @@ describeLiveConfiguredRunner('configured CLI one-shot Managed VM', () => {
 					allowedHosts: [],
 					environment: { kind: 'empty' },
 					guestCwd: '/tmp',
-					imageReference: imageFixture.preparedImage.imagePath,
+					imageReference: encodeConfiguredCliPreparedImageIdentity({
+						fingerprint: imageFixture.preparedImage.fingerprint,
+						imageReference: imageFixture.preparedImage.imagePath,
+						schemaVersion: 1,
+					}),
 					kind: 'ephemeral_managed_vm',
 				},
 				kind: 'configured_cli',

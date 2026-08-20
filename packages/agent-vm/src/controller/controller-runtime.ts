@@ -3,7 +3,10 @@ import { mkdir, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { ControllerExecutionOperation } from '@agent-vm/config-contracts';
-import type { GatewayRuntimeApprovalAuthorityContext } from '@agent-vm/gateway-control-contracts';
+import {
+	deriveGatewayRuntimePortalBindingRevision,
+	type GatewayRuntimeApprovalAuthorityContext,
+} from '@agent-vm/gateway-control-contracts';
 import type { AgentVmHealthEvent } from '@agent-vm/gateway-lifecycle';
 import { createSecretResolver as createOnePasswordSecretResolver } from '@agent-vm/secret-management';
 
@@ -820,6 +823,7 @@ async function startControllerRuntimeWithOwnershipLock(
 				systemConfig: options.systemConfig,
 			}),
 		executeConfiguredCli: async ({ callerContext, payload, session }) => {
+			const expectedBindingRevision = payload.approvalReservation?.bindingRevision;
 			const loadCurrentOperation = async (): Promise<
 				Extract<ControllerExecutionOperation, { kind: 'configured_cli' }>
 			> => {
@@ -831,6 +835,15 @@ async function startControllerRuntimeWithOwnershipLock(
 						'tool-portal-effective',
 					),
 				);
+				if (
+					expectedBindingRevision !== undefined &&
+					expectedBindingRevision !==
+						deriveGatewayRuntimePortalBindingRevision(effectiveConfig.effectiveToolPortalConfig)
+				) {
+					throw new Error(
+						'Configured controller execution approval does not match current trusted policy.',
+					);
+				}
 				const agentConfig = effectiveConfig.effectiveToolPortalConfig.agents[callerContext.agentId];
 				const profileConfig =
 					agentConfig === undefined

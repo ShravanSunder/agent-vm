@@ -125,6 +125,78 @@ const absoluteControlFreePathSchema = z.string().startsWith('/').refine(isContro
 	message: 'Configured CLI paths must not contain control characters.',
 });
 
+export const CONFIGURED_CLI_PREPARED_IMAGE_IDENTITY_PREFIX = 'agent-vm-prepared-image:v1:';
+
+export const configuredCliPreparedImageIdentityPayloadSchema = z
+	.object({
+		fingerprint: z.string().min(1),
+		imageReference: z.string().min(1),
+		schemaVersion: z.literal(1),
+	})
+	.strict();
+
+export type ConfiguredCliPreparedImageIdentity = z.infer<
+	typeof configuredCliPreparedImageIdentityPayloadSchema
+>;
+
+export function encodeConfiguredCliPreparedImageIdentity(
+	payload: ConfiguredCliPreparedImageIdentity,
+): string {
+	const parsedPayload = configuredCliPreparedImageIdentityPayloadSchema.parse(payload);
+	const canonicalPayload = JSON.stringify({
+		fingerprint: parsedPayload.fingerprint,
+		imageReference: parsedPayload.imageReference,
+		schemaVersion: parsedPayload.schemaVersion,
+	});
+	return `${CONFIGURED_CLI_PREPARED_IMAGE_IDENTITY_PREFIX}${Buffer.from(canonicalPayload).toString('base64url')}`;
+}
+
+export function decodeConfiguredCliPreparedImageIdentity(
+	identity: string,
+): ConfiguredCliPreparedImageIdentity {
+	if (!identity.startsWith(CONFIGURED_CLI_PREPARED_IMAGE_IDENTITY_PREFIX)) {
+		throw new Error('Configured CLI effective image identity has an invalid prefix.');
+	}
+	const encodedPayload = identity.slice(CONFIGURED_CLI_PREPARED_IMAGE_IDENTITY_PREFIX.length);
+	if (!/^[A-Za-z0-9_-]+$/u.test(encodedPayload)) {
+		throw new Error('Configured CLI effective image identity is not canonical base64url.');
+	}
+	let untrustedPayload: unknown;
+	try {
+		untrustedPayload = JSON.parse(Buffer.from(encodedPayload, 'base64url').toString('utf8'));
+	} catch {
+		throw new Error('Configured CLI effective image identity is not valid JSON.');
+	}
+	const payload = configuredCliPreparedImageIdentityPayloadSchema.parse(untrustedPayload);
+	if (encodeConfiguredCliPreparedImageIdentity(payload) !== identity) {
+		throw new Error('Configured CLI effective image identity is not canonical.');
+	}
+	return payload;
+}
+
+export const configuredCliPreparedImageIdentitySchema = z.string().refine(
+	(value) => {
+		try {
+			decodeConfiguredCliPreparedImageIdentity(value);
+			return true;
+		} catch {
+			return false;
+		}
+	},
+	{ message: 'Configured CLI effective image identity is malformed.' },
+);
+
+export const configuredCliImageRecipePathSchema = z
+	.string()
+	.min(1)
+	.refine(isControlFreeText, {
+		message: 'Configured CLI image recipe paths must not contain control characters.',
+	})
+	.refine((value) => !value.startsWith('agent-vm-prepared-image:'), {
+		message:
+			'Configured CLI authored image references cannot use the reserved prepared-image prefix.',
+	});
+
 export const configuredCliExecutionTargetSchema = z.discriminatedUnion('kind', [
 	z
 		.object({
@@ -138,7 +210,26 @@ export const configuredCliExecutionTargetSchema = z.discriminatedUnion('kind', [
 			allowedHosts: z.array(z.string().min(1)).default([]),
 			environment: configuredCliEnvironmentPolicySchema,
 			guestCwd: absoluteControlFreePathSchema,
-			imageReference: z.string().min(1),
+			imageReference: configuredCliImageRecipePathSchema,
+			kind: z.literal('ephemeral_managed_vm'),
+		})
+		.strict(),
+]);
+
+export const configuredCliEffectiveExecutionTargetSchema = z.discriminatedUnion('kind', [
+	z
+		.object({
+			cwd: absoluteControlFreePathSchema,
+			environment: configuredCliEnvironmentPolicySchema,
+			kind: z.literal('controller_host'),
+		})
+		.strict(),
+	z
+		.object({
+			allowedHosts: z.array(z.string().min(1)).default([]),
+			environment: configuredCliEnvironmentPolicySchema,
+			guestCwd: absoluteControlFreePathSchema,
+			imageReference: configuredCliPreparedImageIdentitySchema,
 			kind: z.literal('ephemeral_managed_vm'),
 		})
 		.strict(),
@@ -173,6 +264,22 @@ export const controllerExecutionOperationSchema = z.discriminatedUnion('kind', [
 	controllerConfiguredCliOperationSchema,
 ]);
 
+export const effectiveControllerConfiguredCliOperationSchema = configuredCliPolicySchema
+	.safeExtend({
+		executablePath: absoluteControlFreePathSchema,
+		executionTarget: configuredCliEffectiveExecutionTargetSchema,
+		kind: z.literal('configured_cli'),
+		mandatoryArgvPrefix: z.array(configuredCliArgvTokenSchema).max(64),
+		output: configuredCliOutputPolicySchema,
+		safeHelp: z.string().min(1).max(4_000),
+	})
+	.strict();
+
+export const effectiveControllerExecutionOperationSchema = z.discriminatedUnion('kind', [
+	controllerRegisteredOperationSchema,
+	effectiveControllerConfiguredCliOperationSchema,
+]);
+
 const configuredCliCommonInputShape = {
 	argv: z.array(configuredCliArgvTokenSchema).min(1).max(100),
 	reason: z.string().min(1).max(2_000),
@@ -200,6 +307,9 @@ export type ConfiguredCliPolicy = z.infer<typeof configuredCliPolicySchema>;
 export type ConfiguredCliStdinPolicy = z.infer<typeof configuredCliStdinPolicySchema>;
 export type ConfiguredCliTimeoutPolicy = z.infer<typeof configuredCliTimeoutPolicySchema>;
 export type ControllerExecutionOperation = z.infer<typeof controllerExecutionOperationSchema>;
+export type EffectiveControllerExecutionOperation = z.infer<
+	typeof effectiveControllerExecutionOperationSchema
+>;
 
 export type ResolvedConfiguredCliTimeout =
 	| {

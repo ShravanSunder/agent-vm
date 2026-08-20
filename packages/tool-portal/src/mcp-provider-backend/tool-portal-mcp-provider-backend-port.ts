@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import type { PortalCallRequest } from '@agent-vm/agent-portal-sdk';
 import {
 	createToolPortalMcpProjection,
+	type GatewayRuntimeManagedToolPortalConfig,
 	type ManagedToolPortalConfig,
 	type StandaloneToolPortalConfig,
 } from '@agent-vm/config-contracts';
@@ -27,7 +28,7 @@ import type {
 export interface CreateManagedToolPortalMcpProviderBackendPortProps {
 	readonly backendFactory: ManagedMcpProviderBackendFactory;
 	readonly mode: 'managed';
-	readonly toolPortalConfig: ManagedToolPortalConfig;
+	readonly toolPortalConfig: GatewayRuntimeManagedToolPortalConfig | ManagedToolPortalConfig;
 }
 
 export interface CreateStandaloneV1ToolPortalMcpProviderBackendPortProps {
@@ -80,7 +81,10 @@ function providerBackendForInvocation(props: {
 	readonly agentId: string;
 	readonly backendFactory: ManagedMcpProviderBackendFactory;
 	readonly sessionKey: string;
-	readonly toolPortalConfig: ManagedToolPortalConfig | StandaloneToolPortalConfig;
+	readonly toolPortalConfig:
+		| GatewayRuntimeManagedToolPortalConfig
+		| ManagedToolPortalConfig
+		| StandaloneToolPortalConfig;
 }): McpProviderCapabilityBackend {
 	const projection = createToolPortalMcpProjection({
 		agentId: props.agentId,

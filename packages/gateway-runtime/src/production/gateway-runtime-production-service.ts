@@ -8,7 +8,7 @@ import {
 	CONTROL_SESSION_TIMING_MS,
 } from '@agent-vm/control-protocol-contracts';
 import {
-	assertGatewayRuntimePortalSemanticSnapshotMatchesInputs,
+	deriveGatewayRuntimeInputRevision,
 	createGatewayRuntimeReadinessSnapshot,
 	GATEWAY_RUNTIME_READINESS_SNAPSHOT_VERSION,
 	GatewayRuntimeFatalEvidenceSchema,
@@ -524,11 +524,16 @@ export async function startGatewayRuntimeProductionService(
 	props: StartGatewayRuntimeProductionServiceProps,
 ): Promise<GatewayRuntimeProductionService> {
 	const mcpConfig = await loadGatewayRuntimeMcpConfig(props.config.mcpConfigPath);
-	assertGatewayRuntimePortalSemanticSnapshotMatchesInputs({
-		mcpConfig,
-		semanticSnapshot: props.config.semanticSnapshot,
-		toolPortalConfig: props.config.toolPortalConfig,
-	});
+	if (
+		deriveGatewayRuntimeInputRevision({
+			mcpConfig,
+			toolPortalConfig: props.config.toolPortalConfig,
+		}) !== props.config.gatewayRuntimeInputRevision
+	) {
+		throw new Error(
+			'Gateway runtime semantic snapshot does not match the protected Tool Portal and MCP inputs.',
+		);
+	}
 	const paths = createGatewayRuntimePaths({ runtimeRoot: props.config.runtimeRoot });
 	await prepareGatewayRuntimeDirectory(paths);
 	const configuredEvidencePaths = evidencePaths(props.config.runtimeRoot);

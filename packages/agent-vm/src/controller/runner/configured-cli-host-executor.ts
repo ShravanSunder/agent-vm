@@ -6,6 +6,7 @@ import {
 	validateCliAllowanceInvocation,
 } from '@agent-vm/tool-portal/cli-allowances';
 
+import { resolveConfiguredCliEnvironment } from './configured-cli-environment.js';
 import { fixedSafeConfiguredCliStderrSummary } from './configured-cli-output.js';
 import { ConfiguredControllerExecutionError } from './configured-controller-execution-error.js';
 
@@ -16,18 +17,6 @@ export interface ConfiguredCliHostExecutionResult {
 	readonly stderrTruncated: boolean;
 	readonly stdout: string;
 	readonly stdoutTruncated: boolean;
-}
-
-function resolveEnvironment(
-	policy: ConfiguredCliOperation['executionTarget']['environment'],
-): Readonly<Record<string, string>> {
-	if (policy.kind === 'empty') return {};
-	return Object.fromEntries(
-		policy.names.flatMap((name) => {
-			const value = process.env[name];
-			return value === undefined ? [] : [[name, value]];
-		}),
-	);
 }
 
 function appendBoundedChunk(props: {
@@ -84,7 +73,7 @@ export async function executeConfiguredCliOnControllerHost(props: {
 		[...props.operation.mandatoryArgvPrefix, ...validation.argv],
 		{
 			cwd: props.operation.executionTarget.cwd,
-			env: resolveEnvironment(props.operation.executionTarget.environment),
+			env: resolveConfiguredCliEnvironment(props.operation.executionTarget.environment),
 			shell: false,
 			stdio: ['pipe', 'pipe', 'pipe'],
 		},

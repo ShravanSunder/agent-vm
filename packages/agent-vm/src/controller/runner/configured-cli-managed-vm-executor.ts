@@ -4,6 +4,7 @@ import path from 'node:path';
 import { encodeCanonicalJson, JsonObjectSchema } from '@agent-vm/agent-portal-sdk';
 import type { GatewayStablePrincipalDigest } from '@agent-vm/agent-portal-sdk/contracts';
 import {
+	decodeConfiguredCliPreparedImageIdentity,
 	resolveConfiguredCliTimeout,
 	type ConfiguredCliInput,
 	type ControllerExecutionOperation,
@@ -16,6 +17,7 @@ import type {
 import { validateCliAllowanceInvocation } from '@agent-vm/tool-portal/cli-allowances';
 
 import type { ProcessIdentity } from '../../shared/managed-vm-process.js';
+import { resolveConfiguredCliEnvironment } from './configured-cli-environment.js';
 import { createConfiguredCliManagedVmRunnerFactory } from './configured-cli-managed-vm-factory.js';
 import { ConfiguredControllerExecutionError } from './configured-controller-execution-error.js';
 import {
@@ -44,18 +46,6 @@ export interface CreateConfiguredCliManagedVmExecutorProps {
 	) => Promise<ConfiguredCliManagedVmGatewayIdentity>;
 }
 
-function resolveEnvironment(
-	policy: ConfiguredCliOperation['executionTarget']['environment'],
-): Readonly<Record<string, string>> {
-	if (policy.kind === 'empty') return {};
-	return Object.fromEntries(
-		policy.names.flatMap((name) => {
-			const value = process.env[name];
-			return value === undefined ? [] : [[name, value]];
-		}),
-	);
-}
-
 function digestJson(value: unknown): string {
 	const jsonValue = JsonObjectSchema.parse(value);
 	return `sha256:${createHash('sha256').update(encodeCanonicalJson(jsonValue)).digest('hex')}`;
@@ -73,6 +63,17 @@ function authorizationSnapshot(props: {
 			'Configured CLI operation is not an ephemeral Managed VM target.',
 		);
 	}
+	let preparedImage: ReturnType<typeof decodeConfiguredCliPreparedImageIdentity>;
+	try {
+		preparedImage = decodeConfiguredCliPreparedImageIdentity(
+			props.operation.executionTarget.imageReference,
+		);
+	} catch {
+		throw new ConfiguredControllerExecutionError(
+			'validation_failed',
+			'Configured CLI Managed VM image was not prepared by the effective-config owner.',
+		);
+	}
 	const timeout = resolveConfiguredCliTimeout({
 		input: props.input,
 		kind: props.operation.timeout.kind,
@@ -88,12 +89,10 @@ function authorizationSnapshot(props: {
 		cancellation: { timeoutMs: timeout.resolvedTimeoutMs },
 		cwd: { kind: 'fixed', path: props.operation.executionTarget.guestCwd },
 		egress: { allowedHosts: props.operation.executionTarget.allowedHosts },
-		environment: resolveEnvironment(props.operation.executionTarget.environment),
+		environment: resolveConfiguredCliEnvironment(props.operation.executionTarget.environment),
 		executablePath: props.operation.executablePath,
-		imageFingerprint: digestJson({
-			imageReference: props.operation.executionTarget.imageReference,
-		}),
-		imageReference: props.operation.executionTarget.imageReference,
+		imageFingerprint: preparedImage.fingerprint,
+		imageReference: preparedImage.imageReference,
 		mandatoryArgvPrefix: props.operation.mandatoryArgvPrefix,
 		output: props.operation.output,
 		target: { kind: 'ephemeral_managed_vm', zoneId: props.zoneId },

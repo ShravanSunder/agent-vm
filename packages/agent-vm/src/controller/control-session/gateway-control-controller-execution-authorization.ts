@@ -5,7 +5,10 @@ import {
 	type ToolPortalToolSelector,
 } from '@agent-vm/config-contracts';
 import type { GatewayControlToolPortalControllerExecutionPayload } from '@agent-vm/gateway-control-contracts';
-import { deriveGatewayControlControllerExecutionRpcWindow } from '@agent-vm/gateway-control-contracts';
+import {
+	deriveGatewayControlControllerExecutionRpcWindow,
+	deriveGatewayRuntimePortalBindingRevision,
+} from '@agent-vm/gateway-control-contracts';
 
 import type { SystemConfig } from '../../config/system-config.js';
 import { loadMcpPortalEffectiveToolPortalConfigSnapshot } from '../../gateway/mcp-portal-effective-config.js';
@@ -158,6 +161,20 @@ export async function authorizeGatewayControlControllerExecution(
 		namespacePolicy?.backend.kind === 'controller_execution'
 			? namespacePolicy.backend.operations[capability.name]
 			: undefined;
+	const approvalReservation =
+		request.payload.kind === 'configured_cli'
+			? request.payload.approvalReservation
+			: request.payload.action.approvalReservation;
+	if (
+		approvalReservation !== undefined &&
+		approvalReservation.bindingRevision !==
+			deriveGatewayRuntimePortalBindingRevision(effectiveConfig.effectiveToolPortalConfig)
+	) {
+		return rejectAuthorization(
+			'controller_execution_policy_stale',
+			'controller execution approval does not match current trusted policy',
+		);
+	}
 	if (configuredOperation?.kind === 'configured_cli' && request.payload.kind === 'configured_cli') {
 		if (request.createdAtMs === undefined) {
 			return rejectAuthorization(
@@ -182,9 +199,7 @@ export async function authorizeGatewayControlControllerExecution(
 		namespaceProjection === undefined ||
 		configuredOperation?.kind !== request.payload.kind ||
 		!selectorIncludesTool(namespaceProjection.tools, capability.name) ||
-		((request.payload.kind === 'configured_cli'
-			? request.payload.approvalReservation
-			: request.payload.action.approvalReservation) === undefined
+		(approvalReservation === undefined
 			? !selectorIncludesTool(namespaceProjection.calls.withoutApproval, capability.name) ||
 				selectorIncludesTool(namespaceProjection.calls.requiresApproval, capability.name)
 			: !selectorIncludesTool(namespaceProjection.calls.requiresApproval, capability.name))

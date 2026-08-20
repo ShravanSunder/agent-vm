@@ -1,7 +1,9 @@
 import type { GatewayRuntimeAttachmentMetadata } from '@agent-vm/agent-portal-sdk/gateway-runtime-client';
+import { createGatewayRuntimeManagedToolPortalConfig } from '@agent-vm/config-contracts';
 import {
 	GATEWAY_RUNTIME_TOOL_PORTAL_PRODUCTION_CONTROL_ENDPOINT,
 	assertGatewayRuntimePortalSemanticSnapshotMatchesInputs,
+	deriveGatewayRuntimeInputRevision,
 	type GatewayRuntimePortalAdmissionMaterial,
 	type ManagedAgentProjection,
 } from '@agent-vm/gateway-control-contracts';
@@ -258,6 +260,9 @@ export function buildManagedGatewayRuntimeServiceConfig(
 					endpoint: `http://${props.observability.collector.host}:${props.observability.collector.httpPort}`,
 					kind: 'otlp-http',
 				} as const);
+	const gatewayRuntimeToolPortalConfig = createGatewayRuntimeManagedToolPortalConfig(
+		props.portalAdmission.effectiveToolPortalConfig,
+	);
 	return GatewayRuntimeServiceConfigSchema.parse({
 		artifactLimits: props.artifactLimits,
 		attachment: {
@@ -285,6 +290,10 @@ export function buildManagedGatewayRuntimeServiceConfig(
 			},
 			listen: GATEWAY_RUNTIME_TOOL_PORTAL_PRODUCTION_CONTROL_ENDPOINT,
 		},
+		gatewayRuntimeInputRevision: deriveGatewayRuntimeInputRevision({
+			mcpConfig: props.portalAdmission.effectiveMcpConfig,
+			toolPortalConfig: gatewayRuntimeToolPortalConfig,
+		}),
 		mcpConfigPath: managedGatewayRuntimeMcpConfigPath,
 		observability,
 		runtimeRoot: managedGatewayRuntimeRoot,
@@ -295,6 +304,6 @@ export function buildManagedGatewayRuntimeServiceConfig(
 			role: props.cohort.toolPortalIdentity.role,
 			serviceId: props.cohort.toolPortalIdentity.serviceId,
 		},
-		toolPortalConfig: props.portalAdmission.effectiveToolPortalConfig,
+		toolPortalConfig: gatewayRuntimeToolPortalConfig,
 	});
 }

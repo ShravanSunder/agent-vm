@@ -135,6 +135,39 @@ describe('CLI allowance contracts', () => {
 		).toMatchObject({ ok: false });
 	});
 
+	it('enforces the configured JSON stdin schema', () => {
+		const jsonAllowance = CliAllowanceSchema.parse({
+			commands: [{ path: ['apply'] }],
+			deniedPatterns: [],
+			stdin: {
+				kind: 'json',
+				maxBytes: 128,
+				schema: {
+					additionalProperties: false,
+					properties: { mode: { const: 'safe', type: 'string' } },
+					required: ['mode'],
+					type: 'object',
+				},
+			},
+			timeout: { kind: 'quick' },
+		});
+
+		expect(
+			validateCliAllowanceInvocation({
+				allowance: jsonAllowance,
+				input: { argv: ['apply'], reason: 'valid JSON', stdin: '{"mode":"safe"}' },
+			}),
+		).toMatchObject({ ok: true });
+		for (const stdin of ['{"mode":"unsafe"}', '{"mode":"safe","extra":true}', '[]']) {
+			expect(
+				validateCliAllowanceInvocation({
+					allowance: jsonAllowance,
+					input: { argv: ['apply'], reason: 'invalid schema', stdin },
+				}),
+			).toMatchObject({ ok: false });
+		}
+	});
+
 	it('rejects duplicate and proper-prefix-overlapping command definitions', () => {
 		for (const commands of [
 			[{ path: ['remove'] }, { path: ['remove'] }],

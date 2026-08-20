@@ -1787,6 +1787,10 @@
 																		"type": "string",
 																		"const": "controller_execution"
 																	},
+																	"bindingRevision": {
+																		"type": "string",
+																		"minLength": 1
+																	},
 																	"reservationId": {
 																		"type": "string",
 																		"format": "uuid",
@@ -1801,6 +1805,7 @@
 																	"operationId",
 																	"stablePrincipal",
 																	"backendKind",
+																	"bindingRevision",
 																	"reservationId"
 																],
 																"additionalProperties": false
@@ -1950,6 +1955,10 @@
 																		"type": "string",
 																		"const": "controller_execution"
 																	},
+																	"bindingRevision": {
+																		"type": "string",
+																		"minLength": 1
+																	},
 																	"reservationId": {
 																		"type": "string",
 																		"format": "uuid",
@@ -1964,6 +1973,7 @@
 																	"operationId",
 																	"stablePrincipal",
 																	"backendKind",
+																	"bindingRevision",
 																	"reservationId"
 																],
 																"additionalProperties": false
@@ -2110,6 +2120,10 @@
 														"type": "string",
 														"const": "controller_execution"
 													},
+													"bindingRevision": {
+														"type": "string",
+														"minLength": 1
+													},
 													"reservationId": {
 														"type": "string",
 														"format": "uuid",
@@ -2124,6 +2138,7 @@
 													"operationId",
 													"stablePrincipal",
 													"backendKind",
+													"bindingRevision",
 													"reservationId"
 												],
 												"additionalProperties": false
@@ -6567,6 +6582,10 @@
 																				"type": "string",
 																				"const": "controller_execution"
 																			},
+																			"bindingRevision": {
+																				"type": "string",
+																				"minLength": 1
+																			},
 																			"reservationId": {
 																				"type": "string",
 																				"format": "uuid",
@@ -6581,6 +6600,7 @@
 																			"operationId",
 																			"stablePrincipal",
 																			"backendKind",
+																			"bindingRevision",
 																			"reservationId"
 																		],
 																		"additionalProperties": false

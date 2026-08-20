@@ -109,22 +109,10 @@ class HermesGatewayApprovalRouteStore:
     def clear(self, session_key: str) -> None:
         with self._lock:
             _ = self._routes_by_session_key.pop(session_key, None)
-        _clear_hermes_clarify_session(session_key)
 
     def close(self) -> None:
         with self._lock:
-            session_keys = tuple(self._routes_by_session_key)
             self._routes_by_session_key.clear()
-        for session_key in session_keys:
-            _clear_hermes_clarify_session(session_key)
-
-
-def _clear_hermes_clarify_session(session_key: str) -> None:
-    try:
-        from tools.clarify_gateway import clear_session
-    except ImportError:
-        return
-    _ = clear_session(session_key)
 
 
 def _presentation_question(request: dict[str, object]) -> str:

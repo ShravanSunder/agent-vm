@@ -735,6 +735,7 @@ describe('gateway control contract', () => {
 				zoneId: 'zone-a',
 			},
 			backendKind: 'controller_execution',
+			bindingRevision: 'binding:current',
 			expiresAt: '2026-07-20T16:05:00.000Z',
 			fingerprint: `sha256:${'a'.repeat(64)}`,
 			operationId: '22222222-2222-4222-8222-222222222222',

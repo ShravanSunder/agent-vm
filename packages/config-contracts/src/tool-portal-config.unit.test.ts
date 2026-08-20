@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+	createGatewayRuntimeManagedToolPortalConfig,
 	createToolPortalControllerExecutionProjection,
 	createToolPortalMcpProjection,
+	managedToolPortalConfigSchema,
 	ToolPortalControllerExecutionProjectionSchema,
 	toolPortalConfigSchema,
 	ToolPortalMcpProjectionSchema,
@@ -142,7 +144,7 @@ describe('tool portal config contract', () => {
 						allowedHosts: [],
 						environment: { kind: 'empty' },
 						guestCwd: '/run',
-						imageReference: 'runner@sha256:immutable',
+						imageReference: '../../vm-images/controller-runners/default/build-config.json',
 						kind: 'ephemeral_managed_vm',
 					},
 					kind: 'configured_cli',
@@ -178,6 +180,32 @@ describe('tool portal config contract', () => {
 		};
 
 		expect(toolPortalConfigSchema.safeParse(config).success).toBe(true);
+		expect(
+			toolPortalConfigSchema.safeParse({
+				...config,
+				profiles: {
+					'code-builder': {
+						namespaces: {
+							isolated: {
+								...config.profiles['code-builder'].namespaces.isolated,
+								backend: {
+									...configuredBackend,
+									operations: {
+										inspect: {
+											...configuredBackend.operations.inspect,
+											executionTarget: {
+												...configuredBackend.operations.inspect.executionTarget,
+												imageReference: 'agent-vm-prepared-image:v1:forged',
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			}).success,
+		).toBe(false);
 		expect(
 			toolPortalConfigSchema.safeParse({
 				...config,
@@ -693,5 +721,82 @@ describe('tool portal config contract', () => {
 			},
 			profile: 'code-builder',
 		});
+	});
+
+	it('projects configured controller execution policy without controller-trusted runner fields', () => {
+		const configuredOperation = {
+			commands: [{ path: ['inspect'], flagRules: [] }],
+			deniedPatterns: [],
+			executablePath: '/usr/bin/inspect-host',
+			executionTarget: {
+				allowedHosts: [],
+				environment: { kind: 'empty' },
+				guestCwd: '/run/operation',
+				imageReference: '/images/runner/build-config.json',
+				kind: 'ephemeral_managed_vm',
+			},
+			kind: 'configured_cli',
+			mandatoryArgvPrefix: ['--fixed'],
+			output: {
+				modelVisibleStderr: 'none',
+				overflow: 'truncate',
+				stderrMaxBytes: 1024,
+				stdoutMaxBytes: 1024,
+			},
+			safeHelp: 'Inspect one host resource.',
+			stdin: { kind: 'none' },
+			timeout: { kind: 'quick' },
+		} as const;
+		const fullConfig = managedToolPortalConfigSchema.parse({
+			...validManagedToolPortalConfig,
+			profiles: {
+				'code-builder': {
+					namespaces: {
+						...validManagedToolPortalConfig.profiles['code-builder'].namespaces,
+						local: {
+							...validManagedToolPortalConfig.profiles['code-builder'].namespaces.local,
+							backend: {
+								kind: 'controller_execution',
+								operations: { inspect_host: configuredOperation },
+							},
+							calls: {
+								requiresApproval: { allow: ['inspect_host'], deny: [] },
+								withoutApproval: { allow: [], deny: [] },
+							},
+							tools: { allow: ['inspect_host'], deny: [] },
+						},
+					},
+				},
+			},
+		});
+
+		const projected = createGatewayRuntimeManagedToolPortalConfig(fullConfig);
+		const projectedOperation =
+			projected.profiles['code-builder']?.namespaces.local?.backend.kind === 'controller_execution'
+				? projected.profiles['code-builder'].namespaces.local.backend.operations.inspect_host
+				: undefined;
+
+		expect(projectedOperation).toEqual({
+			commands: [{ path: ['inspect'], flagRules: [] }],
+			deniedPatterns: [],
+			kind: 'configured_cli',
+			safeHelp: 'Inspect one host resource.',
+			targetKind: 'ephemeral_managed_vm',
+			timeout: { kind: 'quick' },
+		});
+		const serializedProjection = JSON.stringify(projectedOperation);
+		for (const forbiddenField of [
+			'executablePath',
+			'mandatoryArgvPrefix',
+			'executionTarget',
+			'imageReference',
+			'guestCwd',
+			'environment',
+			'allowedHosts',
+			'stdin',
+			'output',
+		]) {
+			expect(serializedProjection).not.toContain(`"${forbiddenField}"`);
+		}
 	});
 });

@@ -2,11 +2,14 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import {
+	decodeConfiguredCliPreparedImageIdentity,
 	mcpConfigSchema,
 	toolPortalConfigSchema,
+	type ControllerExecutionOperation,
 	type McpConfig,
 	type ToolPortalConfig,
 } from '@agent-vm/config-contracts';
+import { deriveGatewayRuntimePortalBindingRevision } from '@agent-vm/gateway-control-contracts';
 import type { SecretResolver } from '@agent-vm/secret-management';
 import type { SecretRef } from '@agent-vm/secret-management';
 import { describe, expect, it, vi } from 'vitest';
@@ -33,6 +36,55 @@ function createDefaultToolPortalConfigInput(): unknown {
 							withoutApproval: { allow: '*' },
 						},
 						tools: { allow: '*' },
+					},
+				},
+			},
+		},
+		schemaVersion: 1,
+	};
+}
+
+function createEphemeralConfiguredCliToolPortalConfigInput(): unknown {
+	return {
+		agents: { shravan: { profile: 'default' } },
+		mode: 'managed',
+		profiles: {
+			default: {
+				namespaces: {
+					controller: {
+						backend: {
+							kind: 'controller_execution',
+							operations: {
+								isolated: {
+									commands: [{ path: ['run'] }],
+									deniedPatterns: [],
+									executablePath: '/usr/bin/printf',
+									executionTarget: {
+										allowedHosts: [],
+										environment: { kind: 'empty' },
+										guestCwd: '/run',
+										imageReference: '../../vm-images/controller-runners/default/build-config.json',
+										kind: 'ephemeral_managed_vm',
+									},
+									kind: 'configured_cli',
+									mandatoryArgvPrefix: [],
+									output: {
+										modelVisibleStderr: 'none',
+										overflow: 'fail',
+										stderrMaxBytes: 1024,
+										stdoutMaxBytes: 1024,
+									},
+									safeHelp: 'Run one isolated operation.',
+									stdin: { kind: 'none' },
+									timeout: { kind: 'quick' },
+								},
+							},
+						},
+						calls: {
+							requiresApproval: { allow: [] },
+							withoutApproval: { allow: ['isolated'] },
+						},
+						tools: { allow: ['isolated'] },
 					},
 				},
 			},
@@ -111,7 +163,122 @@ function createSecretResolver(values: Readonly<Record<string, string>>): TestSec
 	} satisfies SecretResolver & { readonly resolveAllMock: typeof resolveAll };
 }
 
+function createConfiguredCliOperationForOverlapTest(props: {
+	readonly commandPath: readonly string[];
+	readonly mandatoryArgvPrefix: readonly string[];
+	readonly safeHelp: string;
+}): Extract<ControllerExecutionOperation, { kind: 'configured_cli' }> {
+	return {
+		commands: [{ flagRules: [], path: [...props.commandPath] }],
+		deniedPatterns: [],
+		executablePath: '/usr/bin/example',
+		executionTarget: {
+			cwd: '/var/empty',
+			environment: { kind: 'empty' },
+			kind: 'controller_host',
+		},
+		kind: 'configured_cli',
+		mandatoryArgvPrefix: [...props.mandatoryArgvPrefix],
+		output: {
+			modelVisibleStderr: 'none',
+			overflow: 'fail',
+			stderrMaxBytes: 1024,
+			stdoutMaxBytes: 1024,
+		},
+		safeHelp: props.safeHelp,
+		stdin: { kind: 'none' },
+		timeout: { kind: 'quick' },
+	};
+}
+
 describe('MCP Portal effective config materialization', () => {
+	it('prepares ephemeral configured CLI images into the atomic effective identity', async () => {
+		const authoredConfigDir = path.join(tmpdir(), 'agent-vm-authored-tool-portal');
+		const effectiveHostConfigDir = path.join(tmpdir(), 'agent-vm-effective-tool-portal');
+		const prepareImage = vi.fn(async () => ({
+			built: true,
+			fingerprint: 'fingerprint-prepared-a',
+			imageReference: '/cache/prepared-image-a',
+		}));
+		const props = createPlanPropsForTest({
+			mcpConfig: { providers: {}, schemaVersion: 1 },
+			toolPortalConfig: createEphemeralConfiguredCliToolPortalConfigInput(),
+		});
+
+		const result = await resolveMcpPortalEffectiveConfigFromConfig({
+			...props,
+			authoredConfigDir,
+			effectiveHostConfigDir,
+			managedVmImages: { prepareImage },
+		});
+		const operation =
+			result.effectiveToolPortalConfig.profiles.default?.namespaces.controller?.backend.kind ===
+			'controller_execution'
+				? result.effectiveToolPortalConfig.profiles.default.namespaces.controller.backend.operations
+						.isolated
+				: undefined;
+		if (
+			operation?.kind !== 'configured_cli' ||
+			operation.executionTarget.kind !== 'ephemeral_managed_vm'
+		) {
+			throw new Error('Expected prepared configured CLI fixture operation.');
+		}
+
+		expect(prepareImage).toHaveBeenCalledWith({
+			cacheDirectory: expect.stringMatching(
+				/agent-vm-effective-tool-portal\/controller-execution-images\/[a-f0-9]{64}$/u,
+			),
+			recipePath: path.resolve(
+				authoredConfigDir,
+				'../../vm-images/controller-runners/default/build-config.json',
+			),
+		});
+		expect(
+			decodeConfiguredCliPreparedImageIdentity(operation.executionTarget.imageReference),
+		).toEqual({
+			fingerprint: 'fingerprint-prepared-a',
+			imageReference: '/cache/prepared-image-a',
+			schemaVersion: 1,
+		});
+	});
+
+	it('fails closed when ephemeral image preparation is unavailable', async () => {
+		await expect(
+			resolveMcpPortalEffectiveConfigFromConfig({
+				...createPlanPropsForTest({
+					mcpConfig: { providers: {}, schemaVersion: 1 },
+					toolPortalConfig: createEphemeralConfiguredCliToolPortalConfigInput(),
+				}),
+				authoredConfigDir: path.join(tmpdir(), 'agent-vm-authored-tool-portal'),
+			}),
+		).rejects.toThrow('require the existing Managed VM image preparation capability');
+	});
+
+	it('changes binding freshness when prepared bytes change behind one recipe path', async () => {
+		let fingerprint = 'fingerprint-prepared-a';
+		const props = {
+			...createPlanPropsForTest({
+				mcpConfig: { providers: {}, schemaVersion: 1 },
+				toolPortalConfig: createEphemeralConfiguredCliToolPortalConfigInput(),
+			}),
+			authoredConfigDir: path.join(tmpdir(), 'agent-vm-authored-tool-portal'),
+			managedVmImages: {
+				prepareImage: async () => ({
+					built: true,
+					fingerprint,
+					imageReference: `/cache/${fingerprint}`,
+				}),
+			},
+		};
+		const first = await resolveMcpPortalEffectiveConfigFromConfig(props);
+		fingerprint = 'fingerprint-prepared-b';
+		const second = await resolveMcpPortalEffectiveConfigFromConfig(props);
+
+		expect(deriveGatewayRuntimePortalBindingRevision(first.effectiveToolPortalConfig)).not.toBe(
+			deriveGatewayRuntimePortalBindingRevision(second.effectiveToolPortalConfig),
+		);
+	});
+
 	it('reports HTTP provider URL hosts as required gateway egress', async () => {
 		const mcpConfig = {
 			providers: {
@@ -596,6 +763,62 @@ describe('MCP Portal effective config materialization', () => {
 			},
 			tools: { allow: ['controller_host_probe'], deny: [] },
 		});
+	});
+
+	it('rejects effective configured CLI aliases across operations and namespaces', async () => {
+		await expect(
+			planMcpPortalEffectiveConfigFromConfig(
+				createPlanPropsForTest({
+					approvalAccessConfigured: true,
+					mcpConfig: { providers: {}, schemaVersion: 1 },
+					toolPortalConfig: {
+						agents: { shravan: { profile: 'default' } },
+						mode: 'managed',
+						profiles: {
+							default: {
+								namespaces: {
+									approval_free: {
+										backend: {
+											kind: 'controller_execution',
+											operations: {
+												remove_any: createConfiguredCliOperationForOverlapTest({
+													commandPath: ['remove'],
+													mandatoryArgvPrefix: [],
+													safeHelp: 'Remove one item.',
+												}),
+											},
+										},
+										calls: {
+											requiresApproval: { allow: [] },
+											withoutApproval: { allow: ['remove_any'] },
+										},
+										tools: { allow: ['remove_any'] },
+									},
+									protected: {
+										backend: {
+											kind: 'controller_execution',
+											operations: {
+												remove_all: createConfiguredCliOperationForOverlapTest({
+													commandPath: ['all'],
+													mandatoryArgvPrefix: ['remove'],
+													safeHelp: 'Remove all items.',
+												}),
+											},
+										},
+										calls: {
+											requiresApproval: { allow: ['remove_all'] },
+											withoutApproval: { allow: [] },
+										},
+										tools: { allow: ['remove_all'] },
+									},
+								},
+							},
+						},
+						schemaVersion: 1,
+					},
+				}),
+			),
+		).rejects.toThrow(/effective configured CLI command/u);
 	});
 
 	it('rejects workspace Git push materialization for an ineligible agent', async () => {

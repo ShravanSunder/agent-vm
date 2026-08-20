@@ -1,101 +1,107 @@
-import { toolPortalConfigSchema, type ToolPortalConfig } from '@agent-vm/config-contracts';
+import {
+	createGatewayRuntimeManagedToolPortalConfig,
+	managedToolPortalConfigSchema,
+	type GatewayRuntimeManagedToolPortalConfig,
+} from '@agent-vm/config-contracts';
 import { describe, expect, it } from 'vitest';
 
 import { compileGatewayRuntimeToolVmRunnerConfiguredCatalog } from './tool-vm-runner-configured-catalog.js';
 
-function parsedToolPortalConfig(): ToolPortalConfig {
-	return toolPortalConfigSchema.parse({
-		agents: {
-			'agent-builder': { profile: 'code-builder' },
-			'agent-reviewer': { profile: 'reviewer' },
-		},
-		mode: 'managed',
-		profiles: {
-			'code-builder': {
-				namespaces: {
-					sandbox: {
-						backend: {
-							kind: 'tool_vm_runner',
-							operations: {
-								process_cancel: {
-									description: 'Cancel one bounded build process.',
-									kind: 'process.cancel',
+function parsedToolPortalConfig(): GatewayRuntimeManagedToolPortalConfig {
+	return createGatewayRuntimeManagedToolPortalConfig(
+		managedToolPortalConfigSchema.parse({
+			agents: {
+				'agent-builder': { profile: 'code-builder' },
+				'agent-reviewer': { profile: 'reviewer' },
+			},
+			mode: 'managed',
+			profiles: {
+				'code-builder': {
+					namespaces: {
+						sandbox: {
+							backend: {
+								kind: 'tool_vm_runner',
+								operations: {
+									process_cancel: {
+										description: 'Cancel one bounded build process.',
+										kind: 'process.cancel',
+									},
+									process_logs: {
+										description: 'Read bounded build-process logs.',
+										kind: 'process.logs',
+									},
+									process_start: {
+										description: 'Start the fixed build watcher.',
+										executable: '/usr/bin/watch-build',
+										kind: 'process.start',
+										mandatoryArgvPrefix: ['--fixed'],
+										maxRuntimeMs: 30_000,
+										retainOutputBytes: 4_096,
+										workingDirectory: 'repo',
+									},
+									process_status: {
+										description: 'Read bounded build-process status.',
+										kind: 'process.status',
+									},
+									process_wait: {
+										description: 'Wait briefly for bounded build-process completion.',
+										kind: 'process.wait',
+										timeoutMs: 500,
+									},
+									read_file: {
+										description: 'Read one bounded source file.',
+										kind: 'filesystem.read',
+									},
+									run_checks: {
+										description: 'Run the configured unit checks.',
+										executable: '/usr/bin/pnpm',
+										kind: 'command.fixed',
+										mandatoryArgvPrefix: ['test:unit'],
+										workingDirectory: 'repo',
+									},
+									write_file: {
+										description: 'Write one bounded source file.',
+										kind: 'filesystem.write',
+									},
 								},
-								process_logs: {
-									description: 'Read bounded build-process logs.',
-									kind: 'process.logs',
-								},
-								process_start: {
-									description: 'Start the fixed build watcher.',
-									executable: '/usr/bin/watch-build',
-									kind: 'process.start',
-									mandatoryArgvPrefix: ['--fixed'],
-									maxRuntimeMs: 30_000,
-									retainOutputBytes: 4_096,
-									workingDirectory: 'repo',
-								},
-								process_status: {
-									description: 'Read bounded build-process status.',
-									kind: 'process.status',
-								},
-								process_wait: {
-									description: 'Wait briefly for bounded build-process completion.',
-									kind: 'process.wait',
-									timeoutMs: 500,
-								},
-								read_file: {
-									description: 'Read one bounded source file.',
-									kind: 'filesystem.read',
-								},
-								run_checks: {
-									description: 'Run the configured unit checks.',
-									executable: '/usr/bin/pnpm',
-									kind: 'command.fixed',
-									mandatoryArgvPrefix: ['test:unit'],
-									workingDirectory: 'repo',
-								},
-								write_file: {
-									description: 'Write one bounded source file.',
-									kind: 'filesystem.write',
-								},
+								profile: 'sandbox_ssh',
 							},
-							profile: 'sandbox_ssh',
+							calls: {
+								requiresApproval: { allow: [], deny: [] },
+								withoutApproval: { allow: '*', deny: [] },
+							},
+							tools: { allow: '*', deny: [] },
 						},
-						calls: {
-							requiresApproval: { allow: [], deny: [] },
-							withoutApproval: { allow: '*', deny: [] },
+					},
+				},
+				reviewer: {
+					namespaces: {
+						sandbox: {
+							backend: {
+								kind: 'tool_vm_runner',
+								operations: {
+									run_checks: {
+										description: 'Run the reviewer check command.',
+										executable: '/usr/bin/true',
+										kind: 'command.fixed',
+										mandatoryArgvPrefix: [],
+										workingDirectory: '.',
+									},
+								},
+								profile: 'sandbox_ssh',
+							},
+							calls: {
+								requiresApproval: { allow: [], deny: [] },
+								withoutApproval: { allow: ['run_checks'], deny: [] },
+							},
+							tools: { allow: ['run_checks'], deny: [] },
 						},
-						tools: { allow: '*', deny: [] },
 					},
 				},
 			},
-			reviewer: {
-				namespaces: {
-					sandbox: {
-						backend: {
-							kind: 'tool_vm_runner',
-							operations: {
-								run_checks: {
-									description: 'Run the reviewer check command.',
-									executable: '/usr/bin/true',
-									kind: 'command.fixed',
-									mandatoryArgvPrefix: [],
-									workingDirectory: '.',
-								},
-							},
-							profile: 'sandbox_ssh',
-						},
-						calls: {
-							requiresApproval: { allow: [], deny: [] },
-							withoutApproval: { allow: ['run_checks'], deny: [] },
-						},
-						tools: { allow: ['run_checks'], deny: [] },
-					},
-				},
-			},
-		},
-		schemaVersion: 1,
-	});
+			schemaVersion: 1,
+		}),
+	);
 }
 
 describe('configured Tool VM runner catalog compiler', () => {

@@ -1,4 +1,7 @@
-import type { ManagedToolPortalConfig } from '@agent-vm/config-contracts';
+import {
+	createGatewayRuntimeManagedToolPortalConfig,
+	type ManagedToolPortalConfig,
+} from '@agent-vm/config-contracts';
 import type {
 	GatewayRuntimeToolPortalDispatchAuthorityForBackendKind,
 	GatewayRuntimeTrustedInvocationContext,
@@ -121,6 +124,7 @@ const approvalReservationDispatchAuthority = {
 			zoneId: acceptedSession.zoneId,
 		},
 		backendKind: 'controller_execution',
+		bindingRevision: 'binding:current',
 		expiresAt: '2026-07-20T16:05:00.000Z',
 		fingerprint: `sha256:${'c'.repeat(64)}`,
 		operationId,
@@ -182,7 +186,7 @@ function createFixture(
 			createCommandId: () => commandId,
 			now: () => 1_000,
 			owningGeneration: 'runtime-generation-a',
-			toolPortalConfig,
+			toolPortalConfig: createGatewayRuntimeManagedToolPortalConfig(toolPortalConfig),
 		}),
 		register,
 		sendCommand,

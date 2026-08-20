@@ -2,19 +2,26 @@ import { createHash } from 'node:crypto';
 
 import type { PortalCallRequest, PortalCallResult } from '@agent-vm/agent-portal-sdk';
 import type {
+	GatewayRuntimeManagedToolPortalConfig,
 	ToolPortalBackendKind,
 	ToolPortalConfig,
-	ToolPortalNamespacePolicy,
+	ToolPortalCallPolicy,
 	ToolPortalToolSelector,
 } from '@agent-vm/config-contracts';
 
 export type PortalCallItem = PortalCallResult['items'][number];
 
+export interface ToolPortalRuntimeNamespacePolicy {
+	readonly backend: { readonly kind: ToolPortalBackendKind };
+	readonly calls: ToolPortalCallPolicy;
+	readonly tools: ToolPortalToolSelector;
+}
+
 export type ToolPortalCallPolicyDecision =
 	| {
 			readonly backendKind: ToolPortalBackendKind;
 			readonly kind: 'requires-approval' | 'without-approval';
-			readonly policy: ToolPortalNamespacePolicy;
+			readonly policy: ToolPortalRuntimeNamespacePolicy;
 	  }
 	| { readonly kind: 'denied' };
 
@@ -216,7 +223,7 @@ function selectorIncludesTool(selector: ToolPortalToolSelector, toolName: string
 
 export function callPolicyDecision(props: {
 	readonly call: PortalCallRequest['calls'][number];
-	readonly config: ToolPortalConfig;
+	readonly config: GatewayRuntimeManagedToolPortalConfig | ToolPortalConfig;
 	readonly profileId: string;
 	readonly semanticSnapshot: {
 		readonly surfaceEligibilityByProfile: Readonly<

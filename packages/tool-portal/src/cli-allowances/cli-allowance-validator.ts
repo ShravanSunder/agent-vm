@@ -1,3 +1,5 @@
+import { z } from 'zod/v4';
+
 import type {
 	CliAllowedCommand,
 	CliAllowance,
@@ -154,8 +156,10 @@ function validateStdin(
 				);
 	}
 	try {
-		JSON.parse(stdin);
-		return { argv: [], ok: true };
+		const parsedJson: unknown = JSON.parse(stdin);
+		return z.fromJSONSchema(allowance.stdin.schema).safeParse(parsedJson).success
+			? { argv: [], ok: true }
+			: invalidCliAllowance('CLI stdin does not match its configured JSON schema.');
 	} catch {
 		return invalidCliAllowance('CLI stdin must contain valid JSON.');
 	}
