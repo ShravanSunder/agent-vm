@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { controllerExecutionOperationSchema } from './controller-configured-cli.js';
 import { loadJsonConfigFile } from './json-config-file.js';
 import { secretValueSchema } from './secret-value.js';
 
@@ -32,7 +33,7 @@ export type ToolPortalCallPolicy = z.infer<typeof toolPortalCallPolicySchema>;
 
 export const toolPortalBackendKindSchema = z.enum([
 	'mcp_provider',
-	'controller_host_action',
+	'controller_execution',
 	'tool_vm_runner',
 ]);
 
@@ -143,9 +144,24 @@ export type ToolPortalSandboxSshBackendBinding = z.infer<
 	typeof toolPortalSandboxSshBackendBindingSchema
 >;
 
+export const toolPortalControllerExecutionBackendBindingSchema = z
+	.object({
+		kind: z.literal(toolPortalBackendKindSchema.enum.controller_execution),
+		operations: z
+			.record(z.string().min(1), controllerExecutionOperationSchema)
+			.refine((operations) => Object.keys(operations).length > 0, {
+				message: 'Controller execution bindings must configure at least one operation.',
+			}),
+	})
+	.strict();
+
+export type ToolPortalControllerExecutionBackendBinding = z.infer<
+	typeof toolPortalControllerExecutionBackendBindingSchema
+>;
+
 export const toolPortalBackendBindingSchema = z.discriminatedUnion('kind', [
 	z.object({ kind: z.literal(toolPortalBackendKindSchema.enum.mcp_provider) }).strict(),
-	z.object({ kind: z.literal(toolPortalBackendKindSchema.enum.controller_host_action) }).strict(),
+	toolPortalControllerExecutionBackendBindingSchema,
 	toolPortalSandboxSshBackendBindingSchema,
 ]);
 
@@ -328,7 +344,10 @@ export const toolPortalConfigSchema = z
 
 		for (const [profileId, profile] of Object.entries(config.profiles)) {
 			for (const [namespaceId, namespacePolicy] of Object.entries(profile.namespaces)) {
-				if (namespacePolicy.backend.kind !== 'tool_vm_runner') {
+				if (
+					namespacePolicy.backend.kind !== 'tool_vm_runner' &&
+					namespacePolicy.backend.kind !== 'controller_execution'
+				) {
 					continue;
 				}
 				const operationNames = new Set(Object.keys(namespacePolicy.backend.operations));
@@ -345,7 +364,7 @@ export const toolPortalConfigSchema = z
 						if (!operationNames.has(operationName)) {
 							context.addIssue({
 								code: z.ZodIssueCode.custom,
-								message: `Tool VM runner selector references missing operation "${operationName}".`,
+								message: `${namespacePolicy.backend.kind} selector references missing operation "${operationName}".`,
 								path: ['profiles', profileId, 'namespaces', namespaceId, ...selectorPath],
 							});
 						}
@@ -445,26 +464,23 @@ export const ToolPortalMcpProjectionSchema = z
 
 export type ToolPortalMcpProjection = z.infer<typeof ToolPortalMcpProjectionSchema>;
 
-export const ToolPortalControllerHostActionProjectionNamespaceSchema =
+export const ToolPortalControllerExecutionProjectionNamespaceSchema =
 	ToolPortalMcpProjectionNamespaceSchema;
 
-export type ToolPortalControllerHostActionProjectionNamespace = z.infer<
-	typeof ToolPortalControllerHostActionProjectionNamespaceSchema
+export type ToolPortalControllerExecutionProjectionNamespace = z.infer<
+	typeof ToolPortalControllerExecutionProjectionNamespaceSchema
 >;
 
-export const ToolPortalControllerHostActionProjectionSchema = z
+export const ToolPortalControllerExecutionProjectionSchema = z
 	.object({
 		agentId: z.string().min(1),
-		namespaces: z.record(
-			z.string().min(1),
-			ToolPortalControllerHostActionProjectionNamespaceSchema,
-		),
+		namespaces: z.record(z.string().min(1), ToolPortalControllerExecutionProjectionNamespaceSchema),
 		profile: z.string().min(1),
 	})
 	.strict();
 
-export type ToolPortalControllerHostActionProjection = z.infer<
-	typeof ToolPortalControllerHostActionProjectionSchema
+export type ToolPortalControllerExecutionProjection = z.infer<
+	typeof ToolPortalControllerExecutionProjectionSchema
 >;
 
 export interface CreateToolPortalMcpProjectionProps {
@@ -506,14 +522,14 @@ export function createToolPortalMcpProjection(
 	});
 }
 
-export interface CreateToolPortalControllerHostActionProjectionProps {
+export interface CreateToolPortalControllerExecutionProjectionProps {
 	readonly agentId: string;
 	readonly config: ToolPortalConfig;
 }
 
-export function createToolPortalControllerHostActionProjection(
-	props: CreateToolPortalControllerHostActionProjectionProps,
-): ToolPortalControllerHostActionProjection {
+export function createToolPortalControllerExecutionProjection(
+	props: CreateToolPortalControllerExecutionProjectionProps,
+): ToolPortalControllerExecutionProjection {
 	const agentConfig = props.config.agents[props.agentId];
 	if (agentConfig === undefined) {
 		throw new Error(`Tool Portal agent "${props.agentId}" is not configured.`);
@@ -528,7 +544,7 @@ export function createToolPortalControllerHostActionProjection(
 
 	const namespaces = Object.fromEntries(
 		Object.entries(profileConfig.namespaces)
-			.filter(([, namespacePolicy]) => namespacePolicy.backend.kind === 'controller_host_action')
+			.filter(([, namespacePolicy]) => namespacePolicy.backend.kind === 'controller_execution')
 			.map(([namespace, namespacePolicy]) => [
 				namespace,
 				{
@@ -538,7 +554,7 @@ export function createToolPortalControllerHostActionProjection(
 			]),
 	);
 
-	return ToolPortalControllerHostActionProjectionSchema.parse({
+	return ToolPortalControllerExecutionProjectionSchema.parse({
 		agentId: props.agentId,
 		namespaces,
 		profile: agentConfig.profile,

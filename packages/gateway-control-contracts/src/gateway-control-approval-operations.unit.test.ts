@@ -274,7 +274,7 @@ describe('gateway-control approval operations', () => {
 				payload: {
 					reservation: {
 						...approvalDispatchReservation,
-						backendKind: 'controller_host_action',
+						backendKind: 'controller_execution',
 					},
 				},
 			}).success,

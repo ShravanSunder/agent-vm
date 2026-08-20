@@ -39,9 +39,9 @@ export interface GatewayRuntimeManagedToolPortalBackendFactoryRuntime {
 }
 
 export interface GatewayRuntimeManagedToolPortalBackendPortFactories {
-	readonly controllerHostAction: (
+	readonly controllerExecution: (
 		runtime: GatewayRuntimeManagedToolPortalBackendFactoryRuntime,
-	) => ToolPortalBackendPort<'controller_host_action'>;
+	) => ToolPortalBackendPort<'controller_execution'>;
 	readonly mcpProvider: (
 		runtime: GatewayRuntimeManagedToolPortalBackendFactoryRuntime,
 	) => ToolPortalBackendPort<'mcp_provider'>;
@@ -98,7 +98,7 @@ export async function createGatewayRuntimeManagedToolPortalComposition<TUdsProje
 		registerArtifactAuthority: artifactAuthorityRegistry.register,
 	} satisfies GatewayRuntimeManagedToolPortalBackendFactoryRuntime;
 	const backendPorts = {
-		controllerHostAction: props.backendPortFactories.controllerHostAction(backendFactoryRuntime),
+		controllerExecution: props.backendPortFactories.controllerExecution(backendFactoryRuntime),
 		mcpProvider: props.backendPortFactories.mcpProvider(backendFactoryRuntime),
 		toolVmRunner: props.backendPortFactories.toolVmRunner(backendFactoryRuntime),
 	} satisfies CreateManagedToolPortalCapabilityCoreProps['backendPorts'];

@@ -84,7 +84,7 @@ export const GatewayRuntimeUdsPublicationSnapshotSchema = z
 	.readonly();
 
 export const GatewayRuntimeRequiredBackendKindSchema = z.enum([
-	'controller_host_action',
+	'controller_execution',
 	'mcp_provider',
 	'tool_vm_runner',
 ]);

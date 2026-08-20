@@ -24,7 +24,7 @@ import {
 	GatewayControlRpcMessageSchema,
 	GatewayControlRpcOperationSchema,
 	GatewayControlToolVmBindingPublicationSchema,
-	GatewayControlToolPortalControllerHostActionPayloadSchema,
+	GatewayControlToolPortalControllerExecutionPayloadSchema,
 	createGatewayRuntimeReadinessSnapshot,
 	buildGatewayControlJsonSchemas,
 	assertGatewayControlDomainRegistered,
@@ -71,7 +71,7 @@ describe('gateway control contract', () => {
 
 	it('exports only workspace Git host-action vocabulary', () => {
 		expectTypeOf<typeof GatewayControlContracts>().toHaveProperty(
-			'GatewayControlWorkspaceGitPushControllerHostActionPayloadSchema',
+			'GatewayControlWorkspaceGitPushControllerExecutionPayloadSchema',
 		);
 		expectTypeOf<typeof GatewayControlContracts>().toHaveProperty(
 			'GatewayControlWorkspaceGitPushResultSchema',
@@ -126,7 +126,7 @@ describe('gateway control contract', () => {
 			'recovery_command',
 			'runtime_status',
 			'tool_portal_admission_reserve',
-			'tool_portal_controller_host_action',
+			'tool_portal_controller_execution',
 			'tool_portal_dispatch_arm',
 			'tool_vm_binding_publish',
 			'tool_vm_binding_request',
@@ -327,7 +327,7 @@ describe('gateway control contract', () => {
 			2_000,
 		);
 		expect(
-			gatewayControlCommandExecutionTimeoutMsByOperation.tool_portal_controller_host_action,
+			gatewayControlCommandExecutionTimeoutMsByOperation.tool_portal_controller_execution,
 		).toBeGreaterThan(2_000);
 		expect(Object.keys(gatewayControlCommandExecutionTimeoutMsByOperation).toSorted()).toEqual(
 			[...GatewayControlRpcOperationSchema.options].toSorted(),
@@ -659,7 +659,7 @@ describe('gateway control contract', () => {
 		}
 	});
 
-	it('keeps controller_host_action payload narrow to reviewed host-action intents', () => {
+	it('keeps controller_execution payload narrow to reviewed host-action intents', () => {
 		const validWorkspaceGitPayload = {
 			actionId: 'workspace_git_push',
 			callerContext: {
@@ -668,7 +668,7 @@ describe('gateway control contract', () => {
 			correlation: {
 				capability: {
 					name: 'workspace_git_push',
-					namespace: 'controller_host_action',
+					namespace: 'controller_execution',
 				},
 				toolCallId: 'tool-call-123',
 			},
@@ -682,7 +682,7 @@ describe('gateway control contract', () => {
 			correlation: {
 				capability: {
 					name: 'controller_host_probe',
-					namespace: 'controller_host_action',
+					namespace: 'controller_execution',
 				},
 				toolCallId: 'tool-call-123',
 			},
@@ -696,7 +696,7 @@ describe('gateway control contract', () => {
 				runtimeEpoch: 'runtime-epoch-a',
 				zoneId: 'zone-a',
 			},
-			backendKind: 'controller_host_action',
+			backendKind: 'controller_execution',
 			expiresAt: '2026-07-20T16:05:00.000Z',
 			fingerprint: `sha256:${'a'.repeat(64)}`,
 			operationId: '22222222-2222-4222-8222-222222222222',
@@ -709,13 +709,13 @@ describe('gateway control contract', () => {
 		};
 
 		expect(
-			GatewayControlToolPortalControllerHostActionPayloadSchema.parse(validWorkspaceGitPayload),
+			GatewayControlToolPortalControllerExecutionPayloadSchema.parse(validWorkspaceGitPayload),
 		).toEqual(validWorkspaceGitPayload);
 		expect(
-			GatewayControlToolPortalControllerHostActionPayloadSchema.parse(validHostProbePayload),
+			GatewayControlToolPortalControllerExecutionPayloadSchema.parse(validHostProbePayload),
 		).toEqual(validHostProbePayload);
 		expect(
-			GatewayControlToolPortalControllerHostActionPayloadSchema.parse(approvedHostProbePayload),
+			GatewayControlToolPortalControllerExecutionPayloadSchema.parse(approvedHostProbePayload),
 		).toEqual(approvedHostProbePayload);
 
 		for (const invalidPayload of [
@@ -736,7 +736,7 @@ describe('gateway control contract', () => {
 			{ ...validHostProbePayload, actionId: 'host_shell_exec' },
 		]) {
 			expect(
-				GatewayControlToolPortalControllerHostActionPayloadSchema.safeParse(invalidPayload).success,
+				GatewayControlToolPortalControllerExecutionPayloadSchema.safeParse(invalidPayload).success,
 			).toBe(false);
 		}
 	});
@@ -1044,9 +1044,9 @@ describe('gateway control contract', () => {
 		expect(
 			GatewayControlRpcCommandResultMessageSchema.safeParse({
 				kind: 'command_result',
-				operation: 'tool_portal_controller_host_action',
+				operation: 'tool_portal_controller_execution',
 				payload: {
-					controllerHostAction: {
+					controllerExecution: {
 						actionId: 'workspace_git_push',
 						result: {
 							branch: 'main',
@@ -1096,7 +1096,7 @@ describe('gateway control contract', () => {
 			zoneId: 'zone-a',
 		};
 
-		const controllerHostActionResult = {
+		const controllerExecutionResult = {
 			actionId: 'workspace_git_push',
 			result: {
 				branch: 'main',
@@ -1161,7 +1161,7 @@ describe('gateway control contract', () => {
 				kind: 'command_result',
 				operation: 'lease_create',
 				payload: {
-					controllerHostAction: controllerHostActionResult,
+					controllerExecution: controllerExecutionResult,
 					responseToMessageId: '22222222-2222-4222-8222-222222222222',
 					result: 'ok',
 				},
@@ -1171,9 +1171,9 @@ describe('gateway control contract', () => {
 		expect(
 			GatewayControlRpcCommandResultMessageSchema.safeParse({
 				kind: 'command_result',
-				operation: 'tool_portal_controller_host_action',
+				operation: 'tool_portal_controller_execution',
 				payload: {
-					controllerHostAction: controllerHostActionResult,
+					controllerExecution: controllerExecutionResult,
 					responseToMessageId: '22222222-2222-4222-8222-222222222222',
 					result: 'ok',
 				},
@@ -1192,7 +1192,7 @@ describe('gateway control contract', () => {
 			workdir: '/workspace',
 			zoneId: 'zone-a',
 		};
-		const controllerHostActionResult = {
+		const controllerExecutionResult = {
 			actionId: 'workspace_git_push',
 			result: {
 				branch: 'main',
@@ -1231,7 +1231,7 @@ describe('gateway control contract', () => {
 		expect(
 			GatewayControlRpcCommandResultMessageSchema.safeParse({
 				kind: 'command_result',
-				operation: 'tool_portal_controller_host_action',
+				operation: 'tool_portal_controller_execution',
 				payload: {
 					responseToMessageId: '22222222-2222-4222-8222-222222222222',
 					result: 'ok',
@@ -1242,11 +1242,11 @@ describe('gateway control contract', () => {
 		expect(
 			GatewayControlRpcCommandResultMessageSchema.safeParse({
 				kind: 'command_result',
-				operation: 'tool_portal_controller_host_action',
+				operation: 'tool_portal_controller_execution',
 				payload: {
-					controllerHostAction: controllerHostActionResult,
+					controllerExecution: controllerExecutionResult,
 					error: {
-						errorClass: 'controller_host_action_denied',
+						errorClass: 'controller_execution_denied',
 						retryable: false,
 						safeMessage: 'controller host action denied',
 					},

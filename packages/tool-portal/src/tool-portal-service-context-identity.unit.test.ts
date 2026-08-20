@@ -83,7 +83,7 @@ async function captureDirectDispatch(props: {
 	});
 	const result = await fixture.capabilityCore.call({ calls: [props.call] }, props.options);
 	const callInvocation = [
-		...fixture.controllerHostAction.invocations,
+		...fixture.controllerExecution.invocations,
 		...fixture.mcpProvider.invocations,
 		...fixture.toolVmRunner.invocations,
 	].find(

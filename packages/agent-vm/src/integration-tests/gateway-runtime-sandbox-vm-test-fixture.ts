@@ -1310,7 +1310,7 @@ export async function createStockGatewayRuntimeSandboxVmHarness(): Promise<Stock
 			authenticatedPrivateUdsOperationGroups:
 				GATEWAY_RUNTIME_AUTHENTICATED_PRIVATE_UDS_OPERATION_GROUPS,
 			backendPortFactories: {
-				controllerHostAction: () => createUnusedBackendPort('controller_host_action'),
+				controllerExecution: () => createUnusedBackendPort('controller_execution'),
 				mcpProvider: () => createUnusedBackendPort('mcp_provider'),
 				toolVmRunner: (artifactRuntime) =>
 					createGatewayRuntimeToolVmRunnerBackendPort({

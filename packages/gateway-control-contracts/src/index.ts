@@ -23,7 +23,7 @@ import {
 	GatewayRuntimeApprovalAdmissionResultSchema,
 	GatewayRuntimeApprovalArmDispatchResultSchema,
 	GatewayRuntimeApprovalChallengeIntentSchema,
-	GatewayRuntimeControllerHostActionDispatchReservationSchema,
+	GatewayRuntimeControllerExecutionDispatchReservationSchema,
 	GatewayRuntimeGatewayDispatchReservationSchema,
 } from './gateway-runtime-approval.js';
 import { GatewayRuntimeReadinessSnapshotSchema } from './gateway-runtime-readiness-snapshot.js';
@@ -80,7 +80,7 @@ export const GatewayControlRpcOperationSchema = z.enum([
 	'runtime_status',
 	'tool_vm_binding_publish',
 	'tool_vm_binding_request',
-	'tool_portal_controller_host_action',
+	'tool_portal_controller_execution',
 	'tool_portal_admission_reserve',
 	'tool_portal_dispatch_arm',
 	'operation_cancel',
@@ -157,7 +157,7 @@ export const GatewayControlCallerContextAgentAuthoritySchema = z
 
 export interface GatewayControlCallerContextProofPayloadInput {
 	readonly principal: GatewayRuntimeTrustedInvocationPrincipal;
-	readonly purpose?: 'tool_vm_lease' | 'tool_portal_controller_host_action' | undefined;
+	readonly purpose?: 'tool_vm_lease' | 'tool_portal_controller_execution' | undefined;
 	readonly zoneId: string;
 }
 
@@ -192,7 +192,7 @@ export const GatewayControlCallerContextRegisterPayloadSchema = z
 				agentAuthority: GatewayControlCallerContextAgentAuthoritySchema,
 				principal: GatewayRuntimeTrustedInvocationPrincipalSchema,
 				proof: GatewayControlCallerContextProofSchema,
-				purpose: z.enum(['tool_vm_lease', 'tool_portal_controller_host_action']).optional(),
+				purpose: z.enum(['tool_vm_lease', 'tool_portal_controller_execution']).optional(),
 				zoneId: z.string().min(1),
 			})
 			.strict(),
@@ -474,10 +474,10 @@ const GatewayControlGitObjectIdSchema = z
 		'expected an exact lowercase SHA-1 or SHA-256 object id',
 	);
 
-export const GatewayControlWorkspaceGitPushControllerHostActionPayloadSchema = z
+export const GatewayControlWorkspaceGitPushControllerExecutionPayloadSchema = z
 	.object({
 		actionId: z.literal('workspace_git_push'),
-		approvalReservation: GatewayRuntimeControllerHostActionDispatchReservationSchema.optional(),
+		approvalReservation: GatewayRuntimeControllerExecutionDispatchReservationSchema.optional(),
 		callerContext: GatewayControlCallerContextRefSchema,
 		correlation: GatewayControlToolCallCorrelationSchema,
 		expectedHead: GatewayControlGitObjectIdSchema,
@@ -487,16 +487,16 @@ export const GatewayControlWorkspaceGitPushControllerHostActionPayloadSchema = z
 export const GatewayControlControllerHostProbePayloadSchema = z
 	.object({
 		actionId: z.literal('controller_host_probe'),
-		approvalReservation: GatewayRuntimeControllerHostActionDispatchReservationSchema.optional(),
+		approvalReservation: GatewayRuntimeControllerExecutionDispatchReservationSchema.optional(),
 		callerContext: GatewayControlCallerContextRefSchema,
 		correlation: GatewayControlToolCallCorrelationSchema,
 	})
 	.strict();
 
-export const GatewayControlToolPortalControllerHostActionPayloadSchema = z.discriminatedUnion(
+export const GatewayControlToolPortalControllerExecutionPayloadSchema = z.discriminatedUnion(
 	'actionId',
 	[
-		GatewayControlWorkspaceGitPushControllerHostActionPayloadSchema,
+		GatewayControlWorkspaceGitPushControllerExecutionPayloadSchema,
 		GatewayControlControllerHostProbePayloadSchema,
 	],
 );
@@ -524,7 +524,7 @@ export const GatewayControlControllerHostProbeResultSchema = z
 	})
 	.strict();
 
-export const GatewayControlWorkspaceGitPushControllerHostActionResultSchema = z
+export const GatewayControlWorkspaceGitPushControllerExecutionResultSchema = z
 	.object({
 		actionId: z.literal('workspace_git_push'),
 		result: GatewayControlWorkspaceGitPushResultSchema,
@@ -538,10 +538,10 @@ export const GatewayControlControllerHostProbeActionResultSchema = z
 	})
 	.strict();
 
-export const GatewayControlToolPortalControllerHostActionResultSchema = z.discriminatedUnion(
+export const GatewayControlToolPortalControllerExecutionResultSchema = z.discriminatedUnion(
 	'actionId',
 	[
-		GatewayControlWorkspaceGitPushControllerHostActionResultSchema,
+		GatewayControlWorkspaceGitPushControllerExecutionResultSchema,
 		GatewayControlControllerHostProbeActionResultSchema,
 	],
 );
@@ -736,7 +736,7 @@ const GatewayControlRpcForbiddenResponseFieldsSchema = {
 	approvalRequired: z.never().optional(),
 	callerContext: z.never().optional(),
 	bindingRequest: z.never().optional(),
-	controllerHostAction: z.never().optional(),
+	controllerExecution: z.never().optional(),
 	error: z.never().optional(),
 	lease: z.never().optional(),
 	leaseRejectionReason: z.never().optional(),
@@ -881,12 +881,12 @@ export const GatewayControlRpcLeaseUseResponsePayloadSchema = z.discriminatedUni
 	}).strict(),
 ]);
 
-export const GatewayControlRpcControllerHostActionResponsePayloadSchema = z.discriminatedUnion(
+export const GatewayControlRpcControllerExecutionResponsePayloadSchema = z.discriminatedUnion(
 	'result',
 	[
 		GatewayControlRpcResponseCorrelationSchema.extend({
 			...GatewayControlRpcForbiddenResponseFieldsSchema,
-			controllerHostAction: GatewayControlToolPortalControllerHostActionResultSchema,
+			controllerExecution: GatewayControlToolPortalControllerExecutionResultSchema,
 			result: z.literal('ok'),
 		}).strict(),
 		GatewayControlRpcResponseCorrelationSchema.extend({
@@ -952,7 +952,7 @@ export const GatewayControlRpcResponsePayloadSchema = z.union([
 	GatewayControlRpcToolVmBindingRequestResponsePayloadSchema,
 	GatewayControlRpcLeaseResponsePayloadSchema,
 	GatewayControlRpcLeaseUseResponsePayloadSchema,
-	GatewayControlRpcControllerHostActionResponsePayloadSchema,
+	GatewayControlRpcControllerExecutionResponsePayloadSchema,
 	GatewayControlRpcOperationCancelResponsePayloadSchema,
 	GatewayControlRpcApprovalAdmissionResponsePayloadSchema,
 	GatewayControlRpcApprovalDispatchResponsePayloadSchema,
@@ -993,11 +993,11 @@ const GatewayControlRpcLeaseUseCommandResultMessageSchema =
 		payload: GatewayControlRpcLeaseUseResponsePayloadSchema,
 	}).strict();
 
-const GatewayControlRpcControllerHostActionCommandResultMessageSchema =
+const GatewayControlRpcControllerExecutionCommandResultMessageSchema =
 	GatewayControlRpcDomainCorrelationSchema.extend({
 		kind: z.literal('command_result'),
-		operation: z.literal('tool_portal_controller_host_action'),
-		payload: GatewayControlRpcControllerHostActionResponsePayloadSchema,
+		operation: z.literal('tool_portal_controller_execution'),
+		payload: GatewayControlRpcControllerExecutionResponsePayloadSchema,
 	}).strict();
 
 const GatewayControlRpcOperationCancelCommandResultMessageSchema =
@@ -1056,7 +1056,7 @@ export const GatewayControlRpcCommandResultMessageSchema = z.discriminatedUnion(
 	GatewayControlRpcPrivateLeaseCommandResultMessageSchema,
 	GatewayControlRpcPublicLeaseCommandResultMessageSchema,
 	GatewayControlRpcLeaseUseCommandResultMessageSchema,
-	GatewayControlRpcControllerHostActionCommandResultMessageSchema,
+	GatewayControlRpcControllerExecutionCommandResultMessageSchema,
 	GatewayControlRpcOperationCancelCommandResultMessageSchema,
 	GatewayControlRpcRecoveryCommandResultMessageSchema,
 	GatewayControlRpcApprovalAdmissionCommandResultMessageSchema,
@@ -1133,8 +1133,8 @@ export const GatewayControlRpcCommandMessageSchema = z.discriminatedUnion('opera
 	}).strict(),
 	GatewayControlRpcDomainCorrelationSchema.extend({
 		kind: z.literal('command'),
-		operation: z.literal('tool_portal_controller_host_action'),
-		payload: GatewayControlToolPortalControllerHostActionPayloadSchema,
+		operation: z.literal('tool_portal_controller_execution'),
+		payload: GatewayControlToolPortalControllerExecutionPayloadSchema,
 	}).strict(),
 	GatewayControlRpcDomainCorrelationSchema.extend({
 		kind: z.literal('command'),
@@ -1215,7 +1215,7 @@ export const gatewayControlDeliveryPolicyByOperation = {
 	runtime_status: 'latest_wins',
 	tool_vm_binding_publish: 'critical_idempotent',
 	tool_vm_binding_request: 'critical_idempotent',
-	tool_portal_controller_host_action: 'single_use_critical',
+	tool_portal_controller_execution: 'single_use_critical',
 	tool_portal_admission_reserve: 'single_use_critical',
 	tool_portal_dispatch_arm: 'single_use_critical',
 } as const satisfies Record<GatewayControlRpcOperation, ControlDeliveryPolicy>;
@@ -1271,7 +1271,7 @@ export const gatewayControlCommandExecutionTimeoutMsByOperation = {
 	runtime_status: 5_000,
 	tool_vm_binding_publish: 10_000,
 	tool_vm_binding_request: 180_000,
-	tool_portal_controller_host_action: 120_000,
+	tool_portal_controller_execution: 120_000,
 	tool_portal_admission_reserve: 10_000,
 	tool_portal_dispatch_arm: 10_000,
 } as const satisfies Record<GatewayControlRpcOperation, number>;
@@ -1355,11 +1355,11 @@ export type GatewayControlRuntimeStatusPayload = z.infer<
 export type GatewayControlControllerHostProbeResult = z.infer<
 	typeof GatewayControlControllerHostProbeResultSchema
 >;
-export type GatewayControlToolPortalControllerHostActionPayload = z.infer<
-	typeof GatewayControlToolPortalControllerHostActionPayloadSchema
+export type GatewayControlToolPortalControllerExecutionPayload = z.infer<
+	typeof GatewayControlToolPortalControllerExecutionPayloadSchema
 >;
-export type GatewayControlToolPortalControllerHostActionResult = z.infer<
-	typeof GatewayControlToolPortalControllerHostActionResultSchema
+export type GatewayControlToolPortalControllerExecutionResult = z.infer<
+	typeof GatewayControlToolPortalControllerExecutionResultSchema
 >;
 export type GatewayControlWorkspaceGitPushResult = z.infer<
 	typeof GatewayControlWorkspaceGitPushResultSchema

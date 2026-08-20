@@ -34,8 +34,8 @@ import { createUnstartedToolVm, type ToolVmRootBinding } from '../tool-vm/tool-v
 import { ActiveTaskRegistry } from './active-task-registry.js';
 import { createControllerApprovalBearerAuthenticator } from './approval/controller-approval-authentication.js';
 import { createControllerApprovalLedger } from './approval/controller-approval-ledger.js';
-import { authorizeGatewayControlControllerHostAction } from './control-session/gateway-control-controller-host-action-authorization.js';
-import type { GatewayControlControllerHostActionOperations } from './control-session/gateway-control-domain-handler.js';
+import { authorizeGatewayControlControllerExecution } from './control-session/gateway-control-controller-execution-authorization.js';
+import type { GatewayControlControllerExecutionOperations } from './control-session/gateway-control-domain-handler.js';
 import {
 	createGatewayControlLeaseRpcOperations,
 	createGatewayControlProcessAdmissionCoordinator,
@@ -778,9 +778,9 @@ async function startControllerRuntimeWithOwnershipLock(
 			probeKind: 'controller_cache_dir_listing',
 		};
 	};
-	const gatewayControlControllerHostActions: GatewayControlControllerHostActionOperations = {
-		authorizeControllerHostAction: async ({ callerContext, payload, session }) =>
-			await authorizeGatewayControlControllerHostAction({
+	const gatewayControlControllerExecutions: GatewayControlControllerExecutionOperations = {
+		authorizeControllerExecution: async ({ callerContext, payload, session }) =>
+			await authorizeGatewayControlControllerExecution({
 				callerContext,
 				payload,
 				session,
@@ -974,7 +974,7 @@ async function startControllerRuntimeWithOwnershipLock(
 									? { prebuiltImage: startOptions.prebuiltImage }
 									: {}),
 								runTask: runTaskStep,
-								gatewayControlControllerHostActions,
+								gatewayControlControllerExecutions,
 								gatewayControlApprovalLedger: approvalLedger,
 								gatewayControlBindingPublicationSource: gatewayControlLeaseRpc,
 								gatewayControlLeaseRpc,

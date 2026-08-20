@@ -56,7 +56,7 @@ export interface McpPortalEffectiveConfigPlan {
 export type McpPortalEffectiveConfigWriteResult = McpPortalEffectiveConfigPlan;
 
 const effectiveConfigManifestFileName = 'tool-portal-effective-manifest.json';
-const managedControllerHostActionTools = new Set(['controller_host_probe', 'workspace_git_push']);
+const managedControllerExecutionTools = new Set(['controller_host_probe', 'workspace_git_push']);
 
 interface EffectiveConfigManifest {
 	readonly mcpConfigFile: string;
@@ -220,7 +220,7 @@ function assertToolPortalAgentsMatchDeclaredAgents(props: {
 	}
 }
 
-function assertManagedControllerHostActionPolicy(props: {
+function assertManagedControllerExecutionPolicy(props: {
 	readonly namespaceId: string;
 	readonly namespacePolicy: ToolPortalNamespacePolicy;
 	readonly profileId: string;
@@ -244,7 +244,7 @@ function assertManagedControllerHostActionPolicy(props: {
 		...props.namespacePolicy.calls.withoutApproval.allow,
 	]);
 	for (const toolName of [...allowedTools, ...allowedCalls]) {
-		if (!managedControllerHostActionTools.has(toolName)) {
+		if (!managedControllerExecutionTools.has(toolName)) {
 			throw new Error(
 				`tool-portal: managed profile "${props.profileId}" namespace "${props.namespaceId}" supports only reviewed controller host actions.`,
 			);
@@ -270,7 +270,7 @@ function selectorAllowsTool(
 function profileAllowsWorkspaceGitPush(profile: ToolPortalConfig['profiles'][string]): boolean {
 	return Object.values(profile.namespaces).some(
 		(namespacePolicy) =>
-			namespacePolicy.backend.kind === 'controller_host_action' &&
+			namespacePolicy.backend.kind === 'controller_execution' &&
 			selectorAllowsTool(namespacePolicy.tools, 'workspace_git_push') &&
 			(selectorAllowsTool(namespacePolicy.calls.requiresApproval, 'workspace_git_push') ||
 				selectorAllowsTool(namespacePolicy.calls.withoutApproval, 'workspace_git_push')),
@@ -325,10 +325,10 @@ function assertManagedToolPortalConfig(props: {
 	}
 	for (const [profileId, profile] of Object.entries(props.toolPortalConfig.profiles)) {
 		for (const [namespaceId, namespacePolicy] of Object.entries(profile.namespaces)) {
-			if (namespacePolicy.backend.kind !== 'controller_host_action') {
+			if (namespacePolicy.backend.kind !== 'controller_execution') {
 				continue;
 			}
-			assertManagedControllerHostActionPolicy({
+			assertManagedControllerExecutionPolicy({
 				namespaceId,
 				namespacePolicy,
 				profileId,

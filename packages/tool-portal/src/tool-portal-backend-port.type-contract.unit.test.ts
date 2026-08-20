@@ -32,8 +32,8 @@ const toolVmRunnerPort: ToolPortalBackendPort<'tool_vm_runner'> = {
 	search: rejectUnexpectedBackendInvocation,
 };
 
-const controllerHostActionPort: ToolPortalBackendPort<'controller_host_action'> = {
-	backendKind: 'controller_host_action',
+const controllerExecutionPort: ToolPortalBackendPort<'controller_execution'> = {
+	backendKind: 'controller_execution',
 	call: rejectUnexpectedBackendInvocation,
 	describe: rejectUnexpectedBackendInvocation,
 	list: rejectUnexpectedBackendInvocation,
@@ -65,7 +65,7 @@ declare const portalSearchRequest: PortalSearchRequest;
 declare const invocationOptions: ToolPortalInvocationOptions;
 declare const mcpProviderCallOptions: ToolPortalBackendCallOptions<'mcp_provider'>;
 declare const toolVmRunnerCallOptions: ToolPortalBackendCallOptions<'tool_vm_runner'>;
-declare const controllerHostActionCallOptions: ToolPortalBackendCallOptions<'controller_host_action'>;
+declare const controllerExecutionCallOptions: ToolPortalBackendCallOptions<'controller_execution'>;
 
 function assertBackendPortInvocationContract(): void {
 	void mcpProviderPort.describe(portalDescribeRequest, invocationOptions);
@@ -73,7 +73,7 @@ function assertBackendPortInvocationContract(): void {
 	void mcpProviderPort.search(portalSearchRequest, invocationOptions);
 	void mcpProviderPort.call(portalCallRequest, mcpProviderCallOptions);
 	void toolVmRunnerPort.call(portalCallRequest, toolVmRunnerCallOptions);
-	void controllerHostActionPort.call(portalCallRequest, controllerHostActionCallOptions);
+	void controllerExecutionPort.call(portalCallRequest, controllerExecutionCallOptions);
 
 	// @ts-expect-error Backend catalog reads require explicit trusted invocation options.
 	void mcpProviderPort.describe(portalDescribeRequest);
@@ -88,9 +88,9 @@ function assertBackendPortInvocationContract(): void {
 	// @ts-expect-error MCP providers cannot consume Tool VM runner dispatch authority.
 	void mcpProviderPort.call(portalCallRequest, toolVmRunnerCallOptions);
 	// @ts-expect-error Tool VM runners cannot consume controller host-action dispatch authority.
-	void toolVmRunnerPort.call(portalCallRequest, controllerHostActionCallOptions);
+	void toolVmRunnerPort.call(portalCallRequest, controllerExecutionCallOptions);
 	// @ts-expect-error Controller host actions cannot consume MCP-provider dispatch authority.
-	void controllerHostActionPort.call(portalCallRequest, mcpProviderCallOptions);
+	void controllerExecutionPort.call(portalCallRequest, mcpProviderCallOptions);
 	void unqualifiedToolPortalBackendPort;
 }
 
@@ -99,8 +99,8 @@ describe('Tool Portal frozen backend port type contract', () => {
 		expect([
 			mcpProviderPort.backendKind,
 			toolVmRunnerPort.backendKind,
-			controllerHostActionPort.backendKind,
-		]).toEqual(['mcp_provider', 'tool_vm_runner', 'controller_host_action']);
+			controllerExecutionPort.backendKind,
+		]).toEqual(['mcp_provider', 'tool_vm_runner', 'controller_execution']);
 		expectTypeOf<
 			Parameters<typeof mcpProviderPort.describe>[1]
 		>().toEqualTypeOf<ToolPortalInvocationOptions>();
@@ -116,8 +116,8 @@ describe('Tool Portal frozen backend port type contract', () => {
 		expectTypeOf<Parameters<typeof toolVmRunnerPort.call>[1]>().toEqualTypeOf<
 			ToolPortalBackendCallOptions<'tool_vm_runner'>
 		>();
-		expectTypeOf<Parameters<typeof controllerHostActionPort.call>[1]>().toEqualTypeOf<
-			ToolPortalBackendCallOptions<'controller_host_action'>
+		expectTypeOf<Parameters<typeof controllerExecutionPort.call>[1]>().toEqualTypeOf<
+			ToolPortalBackendCallOptions<'controller_execution'>
 		>();
 	});
 

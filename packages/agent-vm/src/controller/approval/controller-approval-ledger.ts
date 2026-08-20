@@ -5,7 +5,7 @@ import {
 	GatewayRuntimeApprovalAuthorityContextSchema,
 	GatewayRuntimeApprovalChallengeIntentSchema,
 	GatewayRuntimeApprovalChallengeSchema,
-	GatewayRuntimeControllerHostActionDispatchReservationSchema,
+	GatewayRuntimeControllerExecutionDispatchReservationSchema,
 	GatewayRuntimeApprovalDispatchGrantSchema,
 	GatewayRuntimeApprovalDispatchReservationSchema,
 	deriveGatewayRuntimeApprovalFingerprint,
@@ -59,8 +59,8 @@ const ControllerApprovalRevocationSchema = z
 	})
 	.strict();
 
-const ControllerHostActionDispatchGrantSchema =
-	GatewayRuntimeControllerHostActionDispatchReservationSchema.omit({
+const ControllerExecutionDispatchGrantSchema =
+	GatewayRuntimeControllerExecutionDispatchReservationSchema.omit({
 		reservationId: true,
 	})
 		.extend({ grantId: z.string().uuid() })
@@ -68,7 +68,7 @@ const ControllerHostActionDispatchGrantSchema =
 
 const ControllerApprovalDispatchGrantSchema = z.union([
 	GatewayRuntimeApprovalDispatchGrantSchema,
-	ControllerHostActionDispatchGrantSchema,
+	ControllerExecutionDispatchGrantSchema,
 ]);
 
 type ControllerApprovalDispatchGrant = z.infer<typeof ControllerApprovalDispatchGrantSchema>;

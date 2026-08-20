@@ -238,9 +238,9 @@ function observableDependencies(): {
 				throw new Error('unused command');
 			},
 		})),
-		createControllerHostActionBackendPort: vi.fn(() =>
+		createControllerExecutionBackendPort: vi.fn(() =>
 			createGatewayRuntimeUnavailableBackendPort({
-				backendKind: 'controller_host_action',
+				backendKind: 'controller_execution',
 				owningGeneration: 'runtime-generation-a',
 			}),
 		),
@@ -323,18 +323,18 @@ describe('Gateway Runtime production control runtime', () => {
 		});
 		expect(runtime.acquisitionPort).toBe(observed.acquisitionPort);
 		expect(runtime.applicationMessageHandler).toBe(observed.applicationMessageHandler);
-		expect(observed.dependencies.createControllerHostActionBackendPort).toHaveBeenCalledWith({
+		expect(observed.dependencies.createControllerExecutionBackendPort).toHaveBeenCalledWith({
 			callerContextRegistrationClient: expect.any(Object),
 			controlCommandClient: expect.any(Object),
 			createCommandId: expect.any(Function),
 			owningGeneration: 'runtime-generation-a',
 		});
 		expect(
-			runtime.controllerHostActionBackendPortFactory({
+			runtime.controllerExecutionBackendPortFactory({
 				artifactStore: artifactStore(),
 				registerArtifactAuthority: () => ({ kind: 'registered' }),
 			}).backendKind,
-		).toBe('controller_host_action');
+		).toBe('controller_execution');
 
 		runtime.toolVmRunnerBackendPortFactory({
 			artifactStore: artifactStore(),

@@ -386,7 +386,7 @@ export function validateGatewayControlCallerContextRegistration(options: {
 		throw new Error('Gateway control caller context rejected invalid agent authority proof.');
 	}
 	if (
-		evidence.purpose === 'tool_portal_controller_host_action' &&
+		evidence.purpose === 'tool_portal_controller_execution' &&
 		options.zone.toolPortal === undefined
 	) {
 		throw new Error(
@@ -2426,9 +2426,9 @@ async function startGatewayZoneImplementation(
 				callerContexts,
 				...(bindingPublication === undefined ? {} : { bindingPublication }),
 				gateway: gatewayIdentity,
-				...(options.gatewayControlControllerHostActions === undefined
+				...(options.gatewayControlControllerExecutions === undefined
 					? {}
-					: { controllerHostActions: options.gatewayControlControllerHostActions }),
+					: { controllerExecutions: options.gatewayControlControllerExecutions }),
 				...(options.gatewayControlLeaseRpc === undefined
 					? {}
 					: { leaseRpc: options.gatewayControlLeaseRpc }),

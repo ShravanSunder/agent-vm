@@ -1,19 +1,19 @@
 import { encodeCanonicalJson, type JsonObject, type JsonValue } from '@agent-vm/agent-portal-sdk';
 import {
-	ControllerHostActionRequestSchema,
+	ControllerExecutionRequestSchema,
 	type ControllerExecutionResult,
-	type ControllerHostActionRequest,
+	type ControllerExecutionRequest,
 	type ValidatedCliInvocation,
 } from '@agent-vm/controller-execution-contracts';
 import type { z } from 'zod';
 
-export interface ControllerHostActionCredentialAuthority {
+export interface ControllerExecutionCredentialAuthority {
 	readonly credentialProfileId: string;
 	readonly custodyMode: 'controller_durable_state' | 'ephemeral_material';
 }
 
-export interface ControllerHostActionTrustedAuthority {
-	readonly credentials: readonly ControllerHostActionCredentialAuthority[];
+export interface ControllerExecutionTrustedAuthority {
+	readonly credentials: readonly ControllerExecutionCredentialAuthority[];
 	readonly invocation: ValidatedCliInvocation;
 	readonly mandatoryArgvPrefix: readonly string[];
 	readonly target: {
@@ -22,38 +22,38 @@ export interface ControllerHostActionTrustedAuthority {
 	};
 }
 
-export interface ControllerHostActionExecutionProps<TInput extends JsonObject> {
-	readonly authority: ControllerHostActionTrustedAuthority;
+export interface ControllerExecutionExecutionProps<TInput extends JsonObject> {
+	readonly authority: ControllerExecutionTrustedAuthority;
 	readonly input: TInput;
-	readonly request: ControllerHostActionRequest;
+	readonly request: ControllerExecutionRequest;
 }
 
-export interface DefineControllerHostActionProps<
+export interface DefineControllerExecutionProps<
 	TInput extends JsonObject,
 	TResult extends JsonValue,
 > {
 	readonly actionName: string;
-	readonly execute: (props: ControllerHostActionExecutionProps<TInput>) => Promise<TResult>;
+	readonly execute: (props: ControllerExecutionExecutionProps<TInput>) => Promise<TResult>;
 	readonly inputSchema: z.ZodType<TInput>;
 }
 
-type ControllerHostActionInputParseResult =
+type ControllerExecutionInputParseResult =
 	| { readonly input: JsonObject; readonly kind: 'valid' }
 	| { readonly kind: 'invalid' };
 
-export interface RegisteredControllerHostAction {
+export interface RegisteredControllerExecution {
 	readonly actionName: string;
 	readonly execute: (props: {
-		readonly authority: ControllerHostActionTrustedAuthority;
+		readonly authority: ControllerExecutionTrustedAuthority;
 		readonly input: JsonObject;
-		readonly request: ControllerHostActionRequest;
+		readonly request: ControllerExecutionRequest;
 	}) => Promise<JsonValue>;
-	readonly parseInput: (input: JsonObject) => ControllerHostActionInputParseResult;
+	readonly parseInput: (input: JsonObject) => ControllerExecutionInputParseResult;
 }
 
-export function defineControllerHostAction<TInput extends JsonObject, TResult extends JsonValue>(
-	props: DefineControllerHostActionProps<TInput, TResult>,
-): RegisteredControllerHostAction {
+export function defineControllerExecution<TInput extends JsonObject, TResult extends JsonValue>(
+	props: DefineControllerExecutionProps<TInput, TResult>,
+): RegisteredControllerExecution {
 	if (props.actionName.length === 0) {
 		throw new Error('Controller host action name must be non-empty.');
 	}
@@ -70,14 +70,14 @@ export function defineControllerHostAction<TInput extends JsonObject, TResult ex
 	};
 }
 
-export interface CreateControllerHostActionRegistryOptions {
-	readonly actions: readonly RegisteredControllerHostAction[];
+export interface CreateControllerExecutionRegistryOptions {
+	readonly actions: readonly RegisteredControllerExecution[];
 	readonly recomputeAuthorization: (
-		request: ControllerHostActionRequest,
-	) => Promise<ControllerHostActionTrustedAuthority>;
+		request: ControllerExecutionRequest,
+	) => Promise<ControllerExecutionTrustedAuthority>;
 }
 
-export interface ControllerHostActionRegistry {
+export interface ControllerExecutionRegistry {
 	execute(request: unknown): Promise<ControllerExecutionResult>;
 	hasAction(actionName: string): boolean;
 	listActionNames(): readonly string[];
@@ -105,10 +105,10 @@ function canonicalJsonMatches(left: JsonObject, right: JsonObject): boolean {
 	return encodeCanonicalJson(left) === encodeCanonicalJson(right);
 }
 
-export function createControllerHostActionRegistry(
-	options: CreateControllerHostActionRegistryOptions,
-): ControllerHostActionRegistry {
-	const actionsByName = new Map<string, RegisteredControllerHostAction>();
+export function createControllerExecutionRegistry(
+	options: CreateControllerExecutionRegistryOptions,
+): ControllerExecutionRegistry {
+	const actionsByName = new Map<string, RegisteredControllerExecution>();
 	for (const action of options.actions) {
 		if (actionsByName.has(action.actionName)) {
 			throw new Error(`Duplicate controller host action '${action.actionName}'.`);
@@ -118,7 +118,7 @@ export function createControllerHostActionRegistry(
 
 	return {
 		execute: async (request) => {
-			const parsedRequest = ControllerHostActionRequestSchema.safeParse(request);
+			const parsedRequest = ControllerExecutionRequestSchema.safeParse(request);
 			if (!parsedRequest.success) {
 				return rejectedResult({
 					code: 'validation_failed',
@@ -140,7 +140,7 @@ export function createControllerHostActionRegistry(
 					reason: 'public-authority-or-policy-override',
 				});
 			}
-			const action = actionsByName.get(validatedRequest.hostActionName);
+			const action = actionsByName.get(validatedRequest.operationName);
 			if (action === undefined) {
 				return rejectedResult({
 					code: 'capability_denied',
@@ -156,7 +156,7 @@ export function createControllerHostActionRegistry(
 					reason: 'public-authority-or-policy-override',
 				});
 			}
-			let authority: ControllerHostActionTrustedAuthority;
+			let authority: ControllerExecutionTrustedAuthority;
 			try {
 				authority = await options.recomputeAuthorization(validatedRequest);
 			} catch {

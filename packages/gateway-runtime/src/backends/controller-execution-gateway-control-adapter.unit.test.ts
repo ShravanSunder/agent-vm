@@ -11,7 +11,7 @@ import type {
 	GatewayRuntimeControlCommandRequest,
 } from '../control-endpoint/gateway-control-command-client.js';
 import type { GatewayControlAcceptedSession } from '../control-endpoint/gateway-control-endpoint-contracts.js';
-import { createGatewayControlControllerHostActionBackendPort } from './controller-host-action-gateway-control-adapter.js';
+import { createGatewayControlControllerExecutionBackendPort } from './controller-execution-gateway-control-adapter.js';
 
 const operationId = '11111111-1111-5111-8111-111111111111';
 const commandId = '22222222-2222-7222-8222-222222222222';
@@ -43,13 +43,13 @@ const acceptedSession = Object.freeze({
 
 function callOptions(
 	signal?: AbortSignal,
-	dispatchAuthority: GatewayRuntimeToolPortalDispatchAuthorityForBackendKind<'controller_host_action'> = {
-		backendKind: 'controller_host_action',
+	dispatchAuthority: GatewayRuntimeToolPortalDispatchAuthorityForBackendKind<'controller_execution'> = {
+		backendKind: 'controller_execution',
 		fingerprint: `sha256:${'a'.repeat(64)}`,
 		kind: 'without-approval',
 		operationId,
 	},
-): ToolPortalBackendCallOptions<'controller_host_action'> {
+): ToolPortalBackendCallOptions<'controller_execution'> {
 	return {
 		dispatchAuthority,
 		...(signal === undefined ? {} : { signal }),
@@ -59,7 +59,7 @@ function callOptions(
 }
 
 const approvalReservationDispatchAuthority = {
-	backendKind: 'controller_host_action',
+	backendKind: 'controller_execution',
 	kind: 'controller-approval-reservation',
 	reservation: {
 		approvalId: '77777777-7777-4777-8777-777777777777',
@@ -70,14 +70,14 @@ const approvalReservationDispatchAuthority = {
 			runtimeEpoch: acceptedSession.generationId,
 			zoneId: acceptedSession.zoneId,
 		},
-		backendKind: 'controller_host_action',
+		backendKind: 'controller_execution',
 		expiresAt: '2026-07-20T16:05:00.000Z',
 		fingerprint: `sha256:${'c'.repeat(64)}`,
 		operationId,
 		reservationId: '88888888-8888-4888-8888-888888888888',
 		stablePrincipal: 'b'.repeat(64),
 	},
-} as const satisfies GatewayRuntimeToolPortalDispatchAuthorityForBackendKind<'controller_host_action'>;
+} as const satisfies GatewayRuntimeToolPortalDispatchAuthorityForBackendKind<'controller_execution'>;
 
 function createFixture(
 	props: {
@@ -85,7 +85,7 @@ function createFixture(
 		readonly register?: GatewayControlCallerContextRegistrationClient['register'];
 	} = {},
 ): {
-	readonly backend: ReturnType<typeof createGatewayControlControllerHostActionBackendPort>;
+	readonly backend: ReturnType<typeof createGatewayControlControllerExecutionBackendPort>;
 	readonly register: ReturnType<
 		typeof vi.fn<GatewayControlCallerContextRegistrationClient['register']>
 	>;
@@ -105,9 +105,9 @@ function createFixture(
 				messageId: responseMessageId,
 				response: {
 					kind: 'command_result',
-					operation: 'tool_portal_controller_host_action',
+					operation: 'tool_portal_controller_execution',
 					payload: {
-						controllerHostAction: {
+						controllerExecution: {
 							actionId: 'workspace_git_push',
 							result: {
 								branch: 'agent/agent-a',
@@ -123,7 +123,7 @@ function createFixture(
 			})),
 	);
 	return {
-		backend: createGatewayControlControllerHostActionBackendPort({
+		backend: createGatewayControlControllerExecutionBackendPort({
 			callerContextRegistrationClient: { close: async () => undefined, register },
 			controlCommandClient: { sendCommand },
 			createCommandId: () => commandId,
@@ -135,7 +135,7 @@ function createFixture(
 	};
 }
 
-describe('Gateway Control controller-host-action adapter', () => {
+describe('Gateway Control controller-execution adapter', () => {
 	it('registers the caller and routes workspace_git_push through the existing narrow command', async () => {
 		const fixture = createFixture();
 
@@ -146,7 +146,7 @@ describe('Gateway Control controller-host-action adapter', () => {
 						arguments: { expectedHead },
 						id: 'call-a',
 						name: 'workspace_git_push',
-						namespace: 'controller_host_action',
+						namespace: 'controller_execution',
 					},
 				],
 				requestId: 'request-a',
@@ -155,24 +155,24 @@ describe('Gateway Control controller-host-action adapter', () => {
 		);
 
 		expect(fixture.register).toHaveBeenCalledWith({
-			purpose: 'tool_portal_controller_host_action',
+			purpose: 'tool_portal_controller_execution',
 			trustedContext,
 		});
 		expect(fixture.sendCommand).toHaveBeenCalledWith({
 			admissionPrincipal: 'b'.repeat(64),
 			commandId,
 			expiresAtMs: 121_000,
-			idempotencyKey: `controller-host-action:${operationId}:sha256:${'a'.repeat(64)}`,
+			idempotencyKey: `controller-execution:${operationId}:sha256:${'a'.repeat(64)}`,
 			message: {
 				kind: 'command',
-				operation: 'tool_portal_controller_host_action',
+				operation: 'tool_portal_controller_execution',
 				payload: {
 					actionId: 'workspace_git_push',
 					callerContext: { callerContextId },
 					correlation: {
 						capability: {
 							name: 'workspace_git_push',
-							namespace: 'controller_host_action',
+							namespace: 'controller_execution',
 						},
 						requestId: 'request-a',
 						runId: 'run-a',
@@ -207,7 +207,7 @@ describe('Gateway Control controller-host-action adapter', () => {
 						arguments: {},
 						id: 'probe-approved',
 						name: 'controller_host_probe',
-						namespace: 'controller_host_action',
+						namespace: 'controller_execution',
 					},
 				],
 			},
@@ -216,7 +216,7 @@ describe('Gateway Control controller-host-action adapter', () => {
 
 		expect(fixture.sendCommand).toHaveBeenCalledWith(
 			expect.objectContaining({
-				idempotencyKey: `controller-host-action:${operationId}:sha256:${'c'.repeat(64)}`,
+				idempotencyKey: `controller-execution:${operationId}:sha256:${'c'.repeat(64)}`,
 				message: expect.objectContaining({
 					payload: expect.objectContaining({
 						approvalReservation: approvalReservationDispatchAuthority.reservation,
@@ -236,7 +236,7 @@ describe('Gateway Control controller-host-action adapter', () => {
 						arguments: { expectedHead: expectedHead.toUpperCase() },
 						id: 'call-invalid',
 						name: 'workspace_git_push',
-						namespace: 'controller_host_action',
+						namespace: 'controller_execution',
 					},
 				],
 			},
@@ -258,7 +258,7 @@ describe('Gateway Control controller-host-action adapter', () => {
 						arguments: {},
 						id: 'probe-a',
 						name: 'controller_host_probe',
-						namespace: 'controller_host_action',
+						namespace: 'controller_execution',
 					},
 				],
 			},
@@ -284,7 +284,7 @@ describe('Gateway Control controller-host-action adapter', () => {
 						arguments: {},
 						id: 'probe-cancelled',
 						name: 'controller_host_probe',
-						namespace: 'controller_host_action',
+						namespace: 'controller_execution',
 					},
 				],
 			},
@@ -306,10 +306,10 @@ describe('Gateway Control controller-host-action adapter', () => {
 				messageId: responseMessageId,
 				response: {
 					kind: 'command_result',
-					operation: 'tool_portal_controller_host_action',
+					operation: 'tool_portal_controller_execution',
 					payload: {
 						error: {
-							errorClass: 'controller_host_action_denied',
+							errorClass: 'controller_execution_denied',
 							retryable: false,
 							safeMessage: 'controller denied the host action',
 						},
@@ -327,7 +327,7 @@ describe('Gateway Control controller-host-action adapter', () => {
 						arguments: {},
 						id: 'probe-denied',
 						name: 'controller_host_probe',
-						namespace: 'controller_host_action',
+						namespace: 'controller_execution',
 					},
 				],
 			},
@@ -358,7 +358,7 @@ describe('Gateway Control controller-host-action adapter', () => {
 						arguments: {},
 						id: 'probe-a',
 						name: 'controller_host_probe',
-						namespace: 'controller_host_action',
+						namespace: 'controller_execution',
 					},
 				],
 			},

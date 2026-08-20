@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	ControllerDispatchIntentSchema,
 	ControllerExecutionResultSchema,
-	ControllerHostActionRequestSchema,
+	ControllerExecutionRequestSchema,
 	ManagedVmArtifactReadRequestSchema,
 	ManagedVmExecRequestSchema,
 } from './index.js';
@@ -267,19 +267,19 @@ describe('controller execution contracts', () => {
 
 	it('does not allow host actions to become generic subprocess requests', () => {
 		expect(
-			ControllerHostActionRequestSchema.parse({
+			ControllerExecutionRequestSchema.parse({
 				canonicalArguments: { branch: 'feature-a' },
 				dispatch: validDispatchIntent,
-				hostActionName: 'git.push_branch',
+				operationName: 'git.push_branch',
 			}),
-		).toMatchObject({ hostActionName: 'git.push_branch' });
+		).toMatchObject({ operationName: 'git.push_branch' });
 
 		expect(
-			ControllerHostActionRequestSchema.safeParse({
+			ControllerExecutionRequestSchema.safeParse({
 				canonicalArguments: { branch: 'feature-a' },
 				command: 'git push',
 				dispatch: validDispatchIntent,
-				hostActionName: 'git.push_branch',
+				operationName: 'git.push_branch',
 			}).success,
 		).toBe(false);
 	});

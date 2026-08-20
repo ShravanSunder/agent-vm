@@ -28,7 +28,7 @@ import type {
 	ControlSessionDispatcher,
 	ControlSessionFenceRegistry,
 	ConnectGatewayControlSessionOptions,
-	GatewayControlControllerHostActionOperations,
+	GatewayControlControllerExecutionOperations,
 	GatewayControlAttemptOutcome,
 	GatewayControlAttachmentGapTransition,
 	GatewayControlBindingPublicationSource,
@@ -101,7 +101,7 @@ export interface StartGatewayZoneOptions {
 		readonly zoneId: string;
 	}) => Promise<GatewayVmLifecycleAuthority>;
 	readonly environmentOverride?: Record<string, string>;
-	readonly gatewayControlControllerHostActions?: GatewayControlControllerHostActionOperations;
+	readonly gatewayControlControllerExecutions?: GatewayControlControllerExecutionOperations;
 	readonly gatewayControlApprovalLedger?: ControllerApprovalLedger;
 	readonly gatewayControlBindingPublicationSource?: GatewayControlBindingPublicationSource;
 	readonly gatewayControlLeaseRpc?: GatewayControlLeaseRpcOperations;

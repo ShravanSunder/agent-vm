@@ -103,7 +103,7 @@ function createRuntimeReadinessSnapshotInput(
 		kind: 'tool-portal-role-readiness',
 		providerRevision: 'provider-1',
 		requiredBackends: {
-			readyBackendKinds: ['controller_host_action', 'mcp_provider', 'tool_vm_runner'],
+			readyBackendKinds: ['controller_execution', 'mcp_provider', 'tool_vm_runner'],
 			revision: 'required-backends-1',
 			status: 'ready',
 		},

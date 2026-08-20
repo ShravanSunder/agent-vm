@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-	createToolPortalControllerHostActionProjection,
+	createToolPortalControllerExecutionProjection,
 	createToolPortalMcpProjection,
-	ToolPortalControllerHostActionProjectionSchema,
+	ToolPortalControllerExecutionProjectionSchema,
 	toolPortalConfigSchema,
 	ToolPortalMcpProjectionSchema,
 } from './tool-portal-config.js';
@@ -25,7 +25,10 @@ const validManagedToolPortalConfig = {
 					tools: { allow: ['get_issue', 'create_issue'], deny: ['delete_repo'] },
 				},
 				local: {
-					backend: { kind: 'controller_host_action' },
+					backend: {
+						kind: 'controller_execution',
+						operations: { push_branch: { kind: 'registered_action' } },
+					},
 					calls: {
 						requiresApproval: { allow: ['push_branch'], deny: [] },
 						withoutApproval: { allow: [], deny: [] },
@@ -121,6 +124,71 @@ describe('tool portal config contract', () => {
 					'code-builder': {
 						extends: 'base',
 						...validManagedToolPortalConfig.profiles['code-builder'],
+					},
+				},
+			}).success,
+		).toBe(false);
+	});
+
+	it('parses registered and configured controller execution operations and rejects the old backend', () => {
+		const configuredBackend = {
+			kind: 'controller_execution',
+			operations: {
+				inspect: {
+					commands: [{ path: ['inspect'] }],
+					deniedPatterns: [],
+					executablePath: '/usr/local/bin/inspect',
+					executionTarget: {
+						allowedHosts: [],
+						environment: { kind: 'empty' },
+						guestCwd: '/run',
+						imageReference: 'runner@sha256:immutable',
+						kind: 'ephemeral_managed_vm',
+					},
+					kind: 'configured_cli',
+					mandatoryArgvPrefix: [],
+					output: {
+						modelVisibleStderr: 'fixed_safe_summary',
+						overflow: 'truncate',
+						stderrMaxBytes: 65_536,
+						stdoutMaxBytes: 65_536,
+					},
+					safeHelp: 'Inspect one isolated input.',
+					stdin: { kind: 'none' },
+					timeout: { kind: 'quick' },
+				},
+			},
+		} as const;
+		const config = {
+			...validManagedToolPortalConfig,
+			profiles: {
+				'code-builder': {
+					namespaces: {
+						isolated: {
+							backend: configuredBackend,
+							calls: {
+								requiresApproval: { allow: [], deny: [] },
+								withoutApproval: { allow: ['inspect'], deny: [] },
+							},
+							tools: { allow: ['inspect'], deny: [] },
+						},
+					},
+				},
+			},
+		};
+
+		expect(toolPortalConfigSchema.safeParse(config).success).toBe(true);
+		expect(
+			toolPortalConfigSchema.safeParse({
+				...config,
+				profiles: {
+					'code-builder': {
+						namespaces: {
+							isolated: {
+								...config.profiles['code-builder'].namespaces.isolated,
+								backend: { kind: 'controller_host_action' },
+							},
+						},
 					},
 				},
 			}).success,
@@ -270,7 +338,7 @@ describe('tool portal config contract', () => {
 		for (const acceptedBackend of [
 			{ kind: 'mcp_provider' },
 			validSandboxRunnerBackend,
-			{ kind: 'controller_host_action' },
+			validManagedToolPortalConfig.profiles['code-builder'].namespaces.local.backend,
 		]) {
 			const namespacePolicy =
 				acceptedBackend.kind === 'tool_vm_runner'
@@ -282,10 +350,12 @@ describe('tool portal config contract', () => {
 							},
 							tools: { allow: ['read_file', 'write_file'], deny: [] },
 						}
-					: {
-							...validManagedToolPortalConfig.profiles['code-builder'].namespaces.github,
-							backend: acceptedBackend,
-						};
+					: acceptedBackend.kind === 'controller_execution'
+						? validManagedToolPortalConfig.profiles['code-builder'].namespaces.local
+						: {
+								...validManagedToolPortalConfig.profiles['code-builder'].namespaces.github,
+								backend: acceptedBackend,
+							};
 			expect(
 				toolPortalConfigSchema.safeParse({
 					...validManagedToolPortalConfig,
@@ -300,7 +370,7 @@ describe('tool portal config contract', () => {
 			).toBe(true);
 		}
 
-		for (const legacyBackendKind of ['mcp', 'credentialed_runner']) {
+		for (const legacyBackendKind of ['mcp', 'credentialed_runner', 'controller_host_action']) {
 			expect(
 				toolPortalConfigSchema.safeParse({
 					...validManagedToolPortalConfig,
@@ -319,7 +389,7 @@ describe('tool portal config contract', () => {
 		}
 	});
 
-	it.each(['controller_host_action', 'tool_vm_runner'] as const)(
+	it.each(['controller_execution', 'tool_vm_runner'] as const)(
 		'rejects the privileged %s backend in standalone mode',
 		(backendKind) => {
 			const managedNamespace = validManagedToolPortalConfig.profiles['code-builder'].namespaces;
@@ -604,13 +674,13 @@ describe('tool portal config contract', () => {
 		});
 	});
 
-	it('builds a controller host action projection containing only controller namespaces', () => {
-		const projection = createToolPortalControllerHostActionProjection({
+	it('builds a controller execution projection containing only controller namespaces', () => {
+		const projection = createToolPortalControllerExecutionProjection({
 			agentId: 'agent-a',
 			config: toolPortalConfigSchema.parse(validManagedToolPortalConfig),
 		});
 
-		expect(ToolPortalControllerHostActionProjectionSchema.parse(projection)).toEqual({
+		expect(ToolPortalControllerExecutionProjectionSchema.parse(projection)).toEqual({
 			agentId: 'agent-a',
 			namespaces: {
 				local: {

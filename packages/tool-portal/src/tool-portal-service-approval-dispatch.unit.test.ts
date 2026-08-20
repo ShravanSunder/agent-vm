@@ -120,7 +120,7 @@ describe('ToolPortalCapabilityCore approval dispatch', () => {
 						arguments: {},
 						id: 'controller-host-approval-call',
 						name: 'controller_host_probe',
-						namespace: 'controller_host_action',
+						namespace: 'controller_execution',
 					},
 				],
 			},
@@ -131,7 +131,7 @@ describe('ToolPortalCapabilityCore approval dispatch', () => {
 			throw new Error('Expected one controller-host approval reservation intent.');
 		}
 		const expectedReservation = createApprovalReservation(reserveIntent);
-		const controllerCallInvocations = fixture.controllerHostAction.invocations.filter(
+		const controllerCallInvocations = fixture.controllerExecution.invocations.filter(
 			(
 				invocation,
 			): invocation is Extract<RecordedBackendInvocation, { readonly operation: 'call' }> =>
@@ -145,21 +145,21 @@ describe('ToolPortalCapabilityCore approval dispatch', () => {
 		expect(fixture.mcpProvider.invocations).toHaveLength(0);
 		expect(fixture.toolVmRunner.invocations).toHaveLength(0);
 		expect(reserveIntent).toMatchObject({
-			backendKind: 'controller_host_action',
+			backendKind: 'controller_execution',
 			call: {
 				id: 'controller-host-approval-call',
 				name: 'controller_host_probe',
-				namespace: 'controller_host_action',
+				namespace: 'controller_execution',
 			},
 		});
 		expect(expectedReservation).toMatchObject({
 			authorityContext: AUTHORITY_CONTEXT,
-			backendKind: 'controller_host_action',
+			backendKind: 'controller_execution',
 			operationId: reserveIntent.operationId,
 			stablePrincipal: STABLE_PRINCIPAL,
 		});
 		expect(controllerCallInvocations[0]?.options.dispatchAuthority).toEqual({
-			backendKind: 'controller_host_action',
+			backendKind: 'controller_execution',
 			kind: 'controller-approval-reservation',
 			reservation: expectedReservation,
 		});
@@ -324,7 +324,7 @@ describe('ToolPortalCapabilityCore approval dispatch', () => {
 						arguments: {},
 						id: 'controller-host-approval-call',
 						name: 'controller_host_probe',
-						namespace: 'controller_host_action',
+						namespace: 'controller_execution',
 					},
 				],
 			},

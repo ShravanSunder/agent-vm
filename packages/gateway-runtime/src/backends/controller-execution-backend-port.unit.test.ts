@@ -14,10 +14,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
 import {
-	createControllerHostActionBackendPort,
-	defineControllerHostActionRegistration,
-	type ControllerHostActionRpcPort,
-} from './controller-host-action-backend-port.js';
+	createControllerExecutionBackendPort,
+	defineControllerExecutionRegistration,
+	type ControllerExecutionRpcPort,
+} from './controller-execution-backend-port.js';
 
 const RefreshPackageMetadataArgumentsSchema = z
 	.object({ packageName: z.string().startsWith('@agent-vm/') })
@@ -39,7 +39,7 @@ const refreshPackageMetadataSummary = {
 } as const satisfies CapabilitySummary;
 
 const refreshPackageMetadataDescriptor = {
-	annotations: { authority: 'controller_host_action' },
+	annotations: { authority: 'controller_execution' },
 	inputSchema: {
 		additionalProperties: false,
 		properties: {
@@ -62,7 +62,7 @@ const refreshPackageMetadataDescriptor = {
 	toolRef: 'controller.refresh-package-metadata',
 } as const satisfies CapabilityDescriptor;
 
-const refreshPackageMetadataRegistration = defineControllerHostActionRegistration({
+const refreshPackageMetadataRegistration = defineControllerExecutionRegistration({
 	argumentsSchema: RefreshPackageMetadataArgumentsSchema,
 	descriptor: refreshPackageMetadataDescriptor,
 	summary: refreshPackageMetadataSummary,
@@ -80,14 +80,14 @@ const trustedContext = {
 } as const satisfies GatewayRuntimeTrustedInvocationContext;
 
 const directDispatchAuthority = {
-	backendKind: 'controller_host_action',
+	backendKind: 'controller_execution',
 	fingerprint: `sha256:${'a'.repeat(64)}`,
 	kind: 'without-approval',
 	operationId: '11111111-1111-5111-8111-111111111111',
-} as const satisfies GatewayRuntimeToolPortalDispatchAuthorityForBackendKind<'controller_host_action'>;
+} as const satisfies GatewayRuntimeToolPortalDispatchAuthorityForBackendKind<'controller_execution'>;
 
 const approvalReservationDispatchAuthority = {
-	backendKind: 'controller_host_action',
+	backendKind: 'controller_execution',
 	kind: 'controller-approval-reservation',
 	reservation: {
 		approvalId: '22222222-2222-5222-8222-222222222222',
@@ -98,14 +98,14 @@ const approvalReservationDispatchAuthority = {
 			runtimeEpoch: 'runtime-epoch-a',
 			zoneId: 'zone-a',
 		},
-		backendKind: 'controller_host_action',
+		backendKind: 'controller_execution',
 		expiresAt: '2026-07-13T22:00:00.000Z',
 		fingerprint: `sha256:${'b'.repeat(64)}`,
 		operationId: '33333333-3333-5333-8333-333333333333',
 		reservationId: '44444444-4444-5444-8444-444444444444',
 		stablePrincipal: 'c'.repeat(64),
 	},
-} as const satisfies GatewayRuntimeToolPortalDispatchAuthorityForBackendKind<'controller_host_action'>;
+} as const satisfies GatewayRuntimeToolPortalDispatchAuthorityForBackendKind<'controller_execution'>;
 
 const portalCallRequest = {
 	calls: [
@@ -120,8 +120,8 @@ const portalCallRequest = {
 } as const satisfies PortalCallRequest;
 
 function callOptions(
-	dispatchAuthority: GatewayRuntimeToolPortalDispatchAuthorityForBackendKind<'controller_host_action'> = directDispatchAuthority,
-): ToolPortalBackendCallOptions<'controller_host_action'> {
+	dispatchAuthority: GatewayRuntimeToolPortalDispatchAuthorityForBackendKind<'controller_execution'> = directDispatchAuthority,
+): ToolPortalBackendCallOptions<'controller_execution'> {
 	return {
 		dispatchAuthority,
 		surfaceClass: 'mcp',
@@ -130,7 +130,7 @@ function callOptions(
 }
 
 function authorityBinding(
-	dispatchAuthority: GatewayRuntimeToolPortalDispatchAuthorityForBackendKind<'controller_host_action'>,
+	dispatchAuthority: GatewayRuntimeToolPortalDispatchAuthorityForBackendKind<'controller_execution'>,
 ): { readonly fingerprint: string; readonly operationId: string } {
 	return dispatchAuthority.kind === 'without-approval'
 		? {
@@ -144,7 +144,7 @@ function authorityBinding(
 }
 
 function completedRpcResult(
-	dispatchAuthority: GatewayRuntimeToolPortalDispatchAuthorityForBackendKind<'controller_host_action'> = directDispatchAuthority,
+	dispatchAuthority: GatewayRuntimeToolPortalDispatchAuthorityForBackendKind<'controller_execution'> = directDispatchAuthority,
 ): ControllerExecutionResult {
 	return {
 		binding: authorityBinding(dispatchAuthority),
@@ -158,9 +158,9 @@ function completedRpcResult(
 }
 
 function createBackendPort(
-	dispatch: ControllerHostActionRpcPort['dispatch'],
-): ToolPortalBackendPort<'controller_host_action'> {
-	return createControllerHostActionBackendPort({
+	dispatch: ControllerExecutionRpcPort['dispatch'],
+): ToolPortalBackendPort<'controller_execution'> {
+	return createControllerExecutionBackendPort({
 		controllerRpc: { dispatch },
 		registeredActions: [refreshPackageMetadataRegistration],
 		runtime: { owningGeneration: 'runtime-epoch-a' },
@@ -184,23 +184,22 @@ const ambiguousError = {
 
 describe('controller host-action Tool Portal backend port', () => {
 	it('exposes a backend-kind-bound port over one narrow grouped controller RPC', () => {
-		const dispatch: ControllerHostActionRpcPort['dispatch'] = async (props: {
-			readonly request: { readonly kind: 'controller-host-action-dispatch' };
+		const dispatch: ControllerExecutionRpcPort['dispatch'] = async (props: {
+			readonly request: { readonly kind: 'controller-execution-dispatch' };
 			readonly signal: AbortSignal | undefined;
 		}): Promise<ControllerExecutionResult> => {
 			const { request, signal } = props;
-			expect(request.kind).toBe('controller-host-action-dispatch');
+			expect(request.kind).toBe('controller-execution-dispatch');
 			expect(signal).toBeUndefined();
 			return completedRpcResult();
 		};
-		const backendPort: ToolPortalBackendPort<'controller_host_action'> =
-			createBackendPort(dispatch);
+		const backendPort: ToolPortalBackendPort<'controller_execution'> = createBackendPort(dispatch);
 
-		expect(backendPort.backendKind).toBe('controller_host_action');
+		expect(backendPort.backendKind).toBe('controller_execution');
 	});
 
 	it('dispatches a registered typed action with complete trusted invocation and direct authority', async () => {
-		const dispatch = vi.fn<ControllerHostActionRpcPort['dispatch']>(async () =>
+		const dispatch = vi.fn<ControllerExecutionRpcPort['dispatch']>(async () =>
 			completedRpcResult(),
 		);
 		const backendPort = createBackendPort(dispatch);
@@ -243,14 +242,14 @@ describe('controller host-action Tool Portal backend port', () => {
 					callId: 'call-a',
 					requestId: 'request-a',
 				},
-				kind: 'controller-host-action-dispatch',
+				kind: 'controller-execution-dispatch',
 			},
 			signal: undefined,
 		});
 	});
 
 	it('preserves the complete approval reservation for controller-side atomic consumption', async () => {
-		const dispatch = vi.fn<ControllerHostActionRpcPort['dispatch']>(async () =>
+		const dispatch = vi.fn<ControllerExecutionRpcPort['dispatch']>(async () =>
 			completedRpcResult(approvalReservationDispatchAuthority),
 		);
 		const backendPort = createBackendPort(dispatch);
@@ -284,7 +283,7 @@ describe('controller host-action Tool Portal backend port', () => {
 		['credential selection', { credentialProfileId: 'attacker' }],
 		['endpoint selection', { endpoint: 'https://attacker.test' }],
 	] as const)('rejects public %s before controller RPC dispatch', async (_name, publicOverride) => {
-		const dispatch = vi.fn<ControllerHostActionRpcPort['dispatch']>(async () =>
+		const dispatch = vi.fn<ControllerExecutionRpcPort['dispatch']>(async () =>
 			completedRpcResult(),
 		);
 		const backendPort = createBackendPort(dispatch);
@@ -322,7 +321,7 @@ describe('controller host-action Tool Portal backend port', () => {
 	it.each(['execute-command', '/zones/zone-a/execute-command', 'unregistered-action'])(
 		'rejects the unregistered %s action without using the admin command route',
 		async (actionName) => {
-			const dispatch = vi.fn<ControllerHostActionRpcPort['dispatch']>(async () =>
+			const dispatch = vi.fn<ControllerExecutionRpcPort['dispatch']>(async () =>
 				completedRpcResult(),
 			);
 			const backendPort = createBackendPort(dispatch);

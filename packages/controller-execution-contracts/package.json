@@ -32,9 +32,9 @@
 			"types": "./dist/controller-execution-data-boundary/index.d.ts",
 			"import": "./dist/controller-execution-data-boundary/index.js"
 		},
-		"./controller-host-action-boundary": {
-			"types": "./dist/controller-host-action-boundary/index.d.ts",
-			"import": "./dist/controller-host-action-boundary/index.js"
+		"./controller-execution-request-boundary": {
+			"types": "./dist/controller-execution-request-boundary/index.d.ts",
+			"import": "./dist/controller-execution-request-boundary/index.js"
 		},
 		"./tool-vm-runner-boundary": {
 			"types": "./dist/tool-vm-runner-boundary/index.d.ts",

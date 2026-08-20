@@ -144,7 +144,7 @@ function composeArtifactProjections(
 		reserveDispatch: (): Promise<never> =>
 			Promise.reject(new Error('Approval admission is not expected in artifact projection tests.')),
 	} satisfies ToolPortalApprovalPort;
-	const controllerHostActionPort = createUnusedBackendPort('controller_host_action');
+	const controllerExecutionPort = createUnusedBackendPort('controller_execution');
 	const mcpProviderPort = createUnusedBackendPort('mcp_provider');
 	const toolVmRunnerPort = createUnusedBackendPort('tool_vm_runner');
 	const privateUdsFactoryCalls: GatewayRuntimePrivateUdsProjectionFactoryProps[] = [];
@@ -160,7 +160,7 @@ function composeArtifactProjections(
 			createManagedToolPortalCapabilityCore({
 				approvalPort: props.approvalPort,
 				backendPorts: {
-					controllerHostAction: controllerHostActionPort,
+					controllerExecution: controllerExecutionPort,
 					mcpProvider: mcpProviderPort,
 					toolVmRunner: toolVmRunnerPort,
 				},

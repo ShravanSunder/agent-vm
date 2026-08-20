@@ -475,7 +475,7 @@ function assertRequiredBackendKindsReady(
 ): readonly ToolPortalBackendKind[] {
 	const requiredKinds = requiredBackendKinds(config);
 	const readyKinds = new Set<ToolPortalBackendKind>([
-		'controller_host_action',
+		'controller_execution',
 		'mcp_provider',
 		'tool_vm_runner',
 	]);
@@ -606,9 +606,9 @@ export async function startGatewayRuntimeProductionService(
 			authenticatedPrivateUdsOperationGroups:
 				GATEWAY_RUNTIME_AUTHENTICATED_PRIVATE_UDS_OPERATION_GROUPS,
 			backendPortFactories: {
-				controllerHostAction: (runtime) =>
+				controllerExecution: (runtime) =>
 					startedTelemetryRuntime.wrapBackendPort(
-						startedControlRuntime.controllerHostActionBackendPortFactory(runtime),
+						startedControlRuntime.controllerExecutionBackendPortFactory(runtime),
 					),
 				mcpProvider: () =>
 					startedTelemetryRuntime.wrapBackendPort(

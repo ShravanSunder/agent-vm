@@ -8,9 +8,9 @@ import type {
 	ControllerExecutionResult,
 } from '@agent-vm/controller-execution-contracts';
 import {
-	GatewayControlToolPortalControllerHostActionPayloadSchema,
+	GatewayControlToolPortalControllerExecutionPayloadSchema,
 	gatewayControlCommandExecutionTimeoutMsByOperation,
-	type GatewayControlToolPortalControllerHostActionPayload,
+	type GatewayControlToolPortalControllerExecutionPayload,
 } from '@agent-vm/gateway-control-contracts';
 import type { ToolPortalBackendPort } from '@agent-vm/tool-portal';
 import { z } from 'zod/v4';
@@ -18,13 +18,13 @@ import { z } from 'zod/v4';
 import type { GatewayControlCallerContextRegistrationClient } from '../control-endpoint/gateway-control-caller-context-registration-client.js';
 import type { GatewayRuntimeControlCommandClient } from '../control-endpoint/gateway-control-command-client.js';
 import {
-	createControllerHostActionBackendPort,
-	defineControllerHostActionRegistration,
-	type ControllerHostActionDispatchRequest,
-	type ControllerHostActionRpcPort,
-} from './controller-host-action-backend-port.js';
+	createControllerExecutionBackendPort,
+	defineControllerExecutionRegistration,
+	type ControllerExecutionDispatchRequest,
+	type ControllerExecutionRpcPort,
+} from './controller-execution-backend-port.js';
 
-const controllerHostActionNamespace = 'controller_host_action';
+const controllerExecutionNamespace = 'controller_execution';
 const workspaceGitPushName = 'workspace_git_push';
 const controllerHostProbeName = 'controller_host_probe';
 const GitObjectIdSchema = z
@@ -37,14 +37,14 @@ const workspaceGitPushSummary = {
 	description: 'Push the current agent workspace Git branch through controller-owned credentials.',
 	input: { optional: [], propertyCount: 1, required: ['expectedHead'], type: 'object' },
 	name: workspaceGitPushName,
-	namespace: controllerHostActionNamespace,
+	namespace: controllerExecutionNamespace,
 	safety: { destructiveHint: true, readOnlyHint: false },
 	title: 'Push workspace Git branch',
-	toolRef: `${controllerHostActionNamespace}.${workspaceGitPushName}`,
+	toolRef: `${controllerExecutionNamespace}.${workspaceGitPushName}`,
 } as const satisfies CapabilitySummary;
 
 const workspaceGitPushDescriptor = {
-	annotations: { authority: 'controller_host_action' },
+	annotations: { authority: 'controller_execution' },
 	inputSchema: {
 		additionalProperties: false,
 		properties: {
@@ -57,46 +57,46 @@ const workspaceGitPushDescriptor = {
 		type: 'object',
 	},
 	name: workspaceGitPushName,
-	namespace: controllerHostActionNamespace,
+	namespace: controllerExecutionNamespace,
 	outputSchema: { type: 'object' },
 	related: [],
-	toolRef: `${controllerHostActionNamespace}.${workspaceGitPushName}`,
+	toolRef: `${controllerExecutionNamespace}.${workspaceGitPushName}`,
 } as const satisfies CapabilityDescriptor;
 
 const controllerHostProbeSummary = {
 	description: 'Run the fixed read-only controller host availability probe.',
 	input: { optional: [], propertyCount: 0, required: [], type: 'object' },
 	name: controllerHostProbeName,
-	namespace: controllerHostActionNamespace,
+	namespace: controllerExecutionNamespace,
 	safety: { readOnlyHint: true },
 	title: 'Probe controller host',
-	toolRef: `${controllerHostActionNamespace}.${controllerHostProbeName}`,
+	toolRef: `${controllerExecutionNamespace}.${controllerHostProbeName}`,
 } as const satisfies CapabilitySummary;
 
 const controllerHostProbeDescriptor = {
-	annotations: { authority: 'controller_host_action' },
+	annotations: { authority: 'controller_execution' },
 	inputSchema: { additionalProperties: false, properties: {}, type: 'object' },
 	name: controllerHostProbeName,
-	namespace: controllerHostActionNamespace,
+	namespace: controllerExecutionNamespace,
 	outputSchema: { type: 'object' },
 	related: [],
-	toolRef: `${controllerHostActionNamespace}.${controllerHostProbeName}`,
+	toolRef: `${controllerExecutionNamespace}.${controllerHostProbeName}`,
 } as const satisfies CapabilityDescriptor;
 
-const registeredControllerHostActions = Object.freeze([
-	defineControllerHostActionRegistration({
+const registeredControllerExecutions = Object.freeze([
+	defineControllerExecutionRegistration({
 		argumentsSchema: WorkspaceGitPushArgumentsSchema,
 		descriptor: workspaceGitPushDescriptor,
 		summary: workspaceGitPushSummary,
 	}),
-	defineControllerHostActionRegistration({
+	defineControllerExecutionRegistration({
 		argumentsSchema: ControllerHostProbeArgumentsSchema,
 		descriptor: controllerHostProbeDescriptor,
 		summary: controllerHostProbeSummary,
 	}),
 ]);
 
-export interface CreateGatewayControlControllerHostActionBackendPortProps {
+export interface CreateGatewayControlControllerExecutionBackendPortProps {
 	readonly callerContextRegistrationClient: GatewayControlCallerContextRegistrationClient;
 	readonly controlCommandClient: GatewayRuntimeControlCommandClient;
 	readonly createCommandId: () => string;
@@ -105,7 +105,7 @@ export interface CreateGatewayControlControllerHostActionBackendPortProps {
 }
 
 function authorityBinding(
-	request: ControllerHostActionDispatchRequest,
+	request: ControllerExecutionDispatchRequest,
 ): ControllerExecutionAuthorityBinding {
 	const authority = request.authority.dispatchAuthority;
 	return authority.kind === 'without-approval'
@@ -116,7 +116,7 @@ function authorityBinding(
 			};
 }
 
-function commandCorrelation(request: ControllerHostActionDispatchRequest): {
+function commandCorrelation(request: ControllerExecutionDispatchRequest): {
 	readonly capability: { readonly name: string; readonly namespace: string };
 	readonly requestId?: string;
 	readonly runId?: string;
@@ -137,8 +137,8 @@ function commandCorrelation(request: ControllerHostActionDispatchRequest): {
 
 function controllerActionPayload(props: {
 	readonly callerContextId: string;
-	readonly request: ControllerHostActionDispatchRequest;
-}): GatewayControlToolPortalControllerHostActionPayload {
+	readonly request: ControllerExecutionDispatchRequest;
+}): GatewayControlToolPortalControllerExecutionPayload {
 	const dispatchAuthority = props.request.authority.dispatchAuthority;
 	const common = {
 		...(dispatchAuthority.kind === 'controller-approval-reservation'
@@ -150,7 +150,7 @@ function controllerActionPayload(props: {
 	switch (props.request.action.capability.name) {
 		case workspaceGitPushName: {
 			const argumentsValue = WorkspaceGitPushArgumentsSchema.parse(props.request.action.arguments);
-			return GatewayControlToolPortalControllerHostActionPayloadSchema.parse({
+			return GatewayControlToolPortalControllerExecutionPayloadSchema.parse({
 				...common,
 				actionId: workspaceGitPushName,
 				expectedHead: argumentsValue.expectedHead,
@@ -158,7 +158,7 @@ function controllerActionPayload(props: {
 		}
 		case controllerHostProbeName:
 			ControllerHostProbeArgumentsSchema.parse(props.request.action.arguments);
-			return GatewayControlToolPortalControllerHostActionPayloadSchema.parse({
+			return GatewayControlToolPortalControllerExecutionPayloadSchema.parse({
 				...common,
 				actionId: controllerHostProbeName,
 			});
@@ -213,7 +213,7 @@ function resultFromControllerResponse(props: {
 		ReturnType<GatewayRuntimeControlCommandClient['sendCommand']>
 	>['response'];
 }): ControllerExecutionResult {
-	if (props.response.operation !== 'tool_portal_controller_host_action') {
+	if (props.response.operation !== 'tool_portal_controller_execution') {
 		return ambiguousResult({ binding: props.binding });
 	}
 	const payload = props.response.payload;
@@ -225,7 +225,7 @@ function resultFromControllerResponse(props: {
 			diagnostics: [],
 			kind: 'completed',
 			retryClass: 'forbidden',
-			value: payload.controllerHostAction,
+			value: payload.controllerExecution,
 		};
 	}
 	if (payload.result === 'rejected') {
@@ -249,12 +249,12 @@ function resultFromControllerResponse(props: {
 }
 
 function idempotencyKey(binding: ControllerExecutionAuthorityBinding): string {
-	return `controller-host-action:${binding.operationId}:${binding.fingerprint}`;
+	return `controller-execution:${binding.operationId}:${binding.fingerprint}`;
 }
 
-function createGatewayControlControllerHostActionRpcPort(
-	props: CreateGatewayControlControllerHostActionBackendPortProps,
-): ControllerHostActionRpcPort {
+function createGatewayControlControllerExecutionRpcPort(
+	props: CreateGatewayControlControllerExecutionBackendPortProps,
+): ControllerExecutionRpcPort {
 	const now = props.now ?? Date.now;
 	return {
 		dispatch: async ({ request, signal }) => {
@@ -272,7 +272,7 @@ function createGatewayControlControllerHostActionRpcPort(
 			>;
 			try {
 				callerContext = await props.callerContextRegistrationClient.register({
-					purpose: 'tool_portal_controller_host_action',
+					purpose: 'tool_portal_controller_execution',
 					trustedContext: request.authority.invocation.trustedContext,
 				});
 			} catch {
@@ -299,11 +299,11 @@ function createGatewayControlControllerHostActionRpcPort(
 					commandId,
 					expiresAtMs:
 						now() +
-						gatewayControlCommandExecutionTimeoutMsByOperation.tool_portal_controller_host_action,
+						gatewayControlCommandExecutionTimeoutMsByOperation.tool_portal_controller_execution,
 					idempotencyKey: idempotencyKey(binding),
 					message: {
 						kind: 'command',
-						operation: 'tool_portal_controller_host_action',
+						operation: 'tool_portal_controller_execution',
 						payload: controllerActionPayload({
 							callerContextId: callerContext.callerContextId,
 							request,
@@ -319,12 +319,12 @@ function createGatewayControlControllerHostActionRpcPort(
 	};
 }
 
-export function createGatewayControlControllerHostActionBackendPort(
-	props: CreateGatewayControlControllerHostActionBackendPortProps,
-): ToolPortalBackendPort<'controller_host_action'> {
-	return createControllerHostActionBackendPort({
-		controllerRpc: createGatewayControlControllerHostActionRpcPort(props),
-		registeredActions: registeredControllerHostActions,
+export function createGatewayControlControllerExecutionBackendPort(
+	props: CreateGatewayControlControllerExecutionBackendPortProps,
+): ToolPortalBackendPort<'controller_execution'> {
+	return createControllerExecutionBackendPort({
+		controllerRpc: createGatewayControlControllerExecutionRpcPort(props),
+		registeredActions: registeredControllerExecutions,
 		runtime: { owningGeneration: props.owningGeneration },
 	});
 }

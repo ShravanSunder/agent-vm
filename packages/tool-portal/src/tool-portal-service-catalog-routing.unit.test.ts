@@ -74,7 +74,7 @@ describe('ToolPortalCapabilityCore catalog routing', () => {
 		});
 	});
 
-	it('selects mcp_provider, controller_host_action, and tool_vm_runner backend ports without a second router', async () => {
+	it('selects mcp_provider, controller_execution, and tool_vm_runner backend ports without a second router', async () => {
 		// Arrange
 		const fixture = createServiceFixture();
 
@@ -86,7 +86,7 @@ describe('ToolPortalCapabilityCore catalog routing', () => {
 					{
 						arguments: {},
 						id: 'host-call',
-						namespace: 'controller_host_action',
+						namespace: 'controller_execution',
 						name: 'workspace_git_push',
 					},
 					{ arguments: {}, id: 'vm-call', namespace: 'sandbox', name: 'exec' },
@@ -98,13 +98,13 @@ describe('ToolPortalCapabilityCore catalog routing', () => {
 		// Assert
 		expect(result.items.map(({ id }) => id)).toEqual(['mcp-call', 'host-call', 'vm-call']);
 		expect(fixture.mcpProvider.invocations).toHaveLength(1);
-		expect(fixture.controllerHostAction.invocations).toHaveLength(1);
+		expect(fixture.controllerExecution.invocations).toHaveLength(1);
 		expect(fixture.toolVmRunner.invocations).toHaveLength(1);
 		expect(
 			PortalCallRequestSchema.parse(fixture.mcpProvider.invocations[0]?.request).calls,
 		).toHaveLength(1);
 		expect(
-			PortalCallRequestSchema.parse(fixture.controllerHostAction.invocations[0]?.request).calls,
+			PortalCallRequestSchema.parse(fixture.controllerExecution.invocations[0]?.request).calls,
 		).toHaveLength(1);
 		expect(
 			PortalCallRequestSchema.parse(fixture.toolVmRunner.invocations[0]?.request).calls,
@@ -133,14 +133,14 @@ describe('ToolPortalCapabilityCore catalog routing', () => {
 
 		// Assert
 		expect({
-			controllerHostActionInvocationCount: fixture.controllerHostAction.invocations.length,
+			controllerExecutionInvocationCount: fixture.controllerExecution.invocations.length,
 			mcpProviderInvocationCount: fixture.mcpProvider.invocations.length,
 			mcpProviderRequest,
 			resultItemIds: result.items.map(({ id }) => id),
 			toolVmRunnerInvocationCount: fixture.toolVmRunner.invocations.length,
 			toolVmRunnerRequest,
 		}).toEqual({
-			controllerHostActionInvocationCount: 0,
+			controllerExecutionInvocationCount: 0,
 			mcpProviderInvocationCount: 1,
 			mcpProviderRequest: {
 				...request,
@@ -177,14 +177,14 @@ describe('ToolPortalCapabilityCore catalog routing', () => {
 
 		// Assert
 		expect({
-			controllerHostActionInvocationCount: fixture.controllerHostAction.invocations.length,
+			controllerExecutionInvocationCount: fixture.controllerExecution.invocations.length,
 			mcpProviderInvocationCount: fixture.mcpProvider.invocations.length,
 			mcpProviderRequest,
 			resultItemIds: result.items.map(({ id }) => id),
 			toolVmRunnerInvocationCount: fixture.toolVmRunner.invocations.length,
 			toolVmRunnerRequest,
 		}).toEqual({
-			controllerHostActionInvocationCount: 0,
+			controllerExecutionInvocationCount: 0,
 			mcpProviderInvocationCount: 1,
 			mcpProviderRequest: {
 				...request,
@@ -212,12 +212,12 @@ describe('ToolPortalCapabilityCore catalog routing', () => {
 
 		// Assert
 		expect({
-			controllerHostActionRequest: fixture.controllerHostAction.invocations[0]?.request,
+			controllerExecutionRequest: fixture.controllerExecution.invocations[0]?.request,
 			mcpProviderRequest: fixture.mcpProvider.invocations[0]?.request,
 			resultItemIds: result.items.map(({ id }) => id),
 			toolVmRunnerRequest: fixture.toolVmRunner.invocations[0]?.request,
 		}).toEqual({
-			controllerHostActionRequest: request,
+			controllerExecutionRequest: request,
 			mcpProviderRequest: request,
 			resultItemIds: ['search-all'],
 			toolVmRunnerRequest: request,
@@ -252,14 +252,14 @@ describe('ToolPortalCapabilityCore catalog routing', () => {
 
 		// Assert
 		expect({
-			controllerHostActionInvocationCount: fixture.controllerHostAction.invocations.length,
+			controllerExecutionInvocationCount: fixture.controllerExecution.invocations.length,
 			mcpProviderInvocationCount: fixture.mcpProvider.invocations.length,
 			mcpProviderRequest,
 			resultItemIds: result.items.map(({ id }) => id),
 			toolVmRunnerInvocationCount: fixture.toolVmRunner.invocations.length,
 			toolVmRunnerRequest,
 		}).toEqual({
-			controllerHostActionInvocationCount: 0,
+			controllerExecutionInvocationCount: 0,
 			mcpProviderInvocationCount: 1,
 			mcpProviderRequest: {
 				...request,

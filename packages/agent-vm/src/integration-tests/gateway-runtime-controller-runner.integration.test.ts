@@ -1,16 +1,16 @@
 import type { JsonObject } from '@agent-vm/agent-portal-sdk';
 import type {
-	ControllerHostActionRequest,
+	ControllerExecutionRequest,
 	ValidatedCliInvocation,
 } from '@agent-vm/controller-execution-contracts';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
 import {
-	createControllerHostActionRegistry,
-	defineControllerHostAction,
-	type ControllerHostActionTrustedAuthority,
-} from '../controller/runner/controller-host-action-registry.js';
+	createControllerExecutionRegistry,
+	defineControllerExecution,
+	type ControllerExecutionTrustedAuthority,
+} from '../controller/runner/controller-execution-registry.js';
 
 const RefreshPackageMetadataInputSchema = z
 	.object({ packageName: z.string().startsWith('@agent-vm/') })
@@ -56,14 +56,14 @@ const completeTrustedAuthority = {
 	invocation: validatedInvocation,
 	mandatoryArgvPrefix: ['view'],
 	target: { kind: 'controller-host', osContextId: 'agent-vm-controller' },
-} as const satisfies ControllerHostActionTrustedAuthority;
+} as const satisfies ControllerExecutionTrustedAuthority;
 
 const executeRefreshPackageMetadata = vi.fn(
 	async ({ input }: { readonly input: { readonly packageName: string } }) =>
 		({ packageName: input.packageName }) satisfies JsonObject,
 );
 
-const registeredAction = defineControllerHostAction({
+const registeredAction = defineControllerExecution({
 	actionName: 'refresh-package-metadata',
 	execute: executeRefreshPackageMetadata,
 	inputSchema: RefreshPackageMetadataInputSchema,
@@ -77,13 +77,13 @@ const validRequest = {
 		capability: { name: 'refresh-package-metadata', namespace: 'controller' },
 		trustedScope: { agentId: 'agent-a', profileId: 'standard' },
 	},
-	hostActionName: 'refresh-package-metadata',
-} as const satisfies ControllerHostActionRequest;
+	operationName: 'refresh-package-metadata',
+} as const satisfies ControllerExecutionRequest;
 
 describe('gateway runtime typed controller host actions', () => {
 	it('executes a registered typed action only after complete controller authority recomputation', async () => {
 		const authorizationEvents: string[] = [];
-		const registry = createControllerHostActionRegistry({
+		const registry = createControllerExecutionRegistry({
 			actions: [registeredAction],
 			recomputeAuthorization: async () => {
 				authorizationEvents.push('authorization-recomputed');
@@ -112,7 +112,7 @@ describe('gateway runtime typed controller host actions', () => {
 	});
 
 	it.each([
-		['unregistered action', { ...validRequest, hostActionName: 'execute-command' }],
+		['unregistered action', { ...validRequest, operationName: 'execute-command' }],
 		['malformed typed input', { ...validRequest, canonicalArguments: { packageName: 'npm' } }],
 		[
 			'unknown typed input field',
@@ -129,7 +129,7 @@ describe('gateway runtime typed controller host actions', () => {
 		['target override', { ...validRequest, target: 'host-root' }],
 	] as const)('rejects %s before invoking host code', async (_name, attackerRequest) => {
 		executeRefreshPackageMetadata.mockClear();
-		const registry = createControllerHostActionRegistry({
+		const registry = createControllerExecutionRegistry({
 			actions: [registeredAction],
 			recomputeAuthorization: async () => completeTrustedAuthority,
 		});
@@ -145,7 +145,7 @@ describe('gateway runtime typed controller host actions', () => {
 
 	it('rejects mismatched duplicated canonical arguments before recomputation', async () => {
 		const recomputeAuthorization = vi.fn(async () => completeTrustedAuthority);
-		const registry = createControllerHostActionRegistry({
+		const registry = createControllerExecutionRegistry({
 			actions: [registeredAction],
 			recomputeAuthorization,
 		});
@@ -168,14 +168,14 @@ describe('gateway runtime typed controller host actions', () => {
 	});
 
 	it('preserves ambiguous replay-forbidden truth after host-action dispatch begins', async () => {
-		const failingAction = defineControllerHostAction({
+		const failingAction = defineControllerExecution({
 			actionName: 'refresh-package-metadata',
 			execute: async (): Promise<JsonObject> => {
 				throw new Error('host action connection failed after dispatch');
 			},
 			inputSchema: RefreshPackageMetadataInputSchema,
 		});
-		const registry = createControllerHostActionRegistry({
+		const registry = createControllerExecutionRegistry({
 			actions: [failingAction],
 			recomputeAuthorization: async () => completeTrustedAuthority,
 		});
@@ -198,7 +198,7 @@ describe('gateway runtime typed controller host actions', () => {
 	});
 
 	it('preserves proven not-dispatched truth when authority recomputation fails', async () => {
-		const registry = createControllerHostActionRegistry({
+		const registry = createControllerExecutionRegistry({
 			actions: [registeredAction],
 			recomputeAuthorization: async () => {
 				throw new Error('authority lookup failed');
@@ -219,7 +219,7 @@ describe('gateway runtime typed controller host actions', () => {
 	});
 
 	it('does not register the HTTP execute-command route as a Tool Portal backend', () => {
-		const registry = createControllerHostActionRegistry({
+		const registry = createControllerExecutionRegistry({
 			actions: [registeredAction],
 			recomputeAuthorization: async () => completeTrustedAuthority,
 		});

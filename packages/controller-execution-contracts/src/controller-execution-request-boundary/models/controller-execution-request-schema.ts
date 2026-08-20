@@ -3,12 +3,12 @@ import { z } from 'zod';
 
 import { ControllerDispatchIntentSchema } from '../../controller-dispatch-boundary/models/controller-dispatch-intent-schema.js';
 
-export const ControllerHostActionRequestSchema = z
+export const ControllerExecutionRequestSchema = z
 	.object({
 		canonicalArguments: JsonObjectSchema,
 		dispatch: ControllerDispatchIntentSchema,
-		hostActionName: z.string().min(1),
+		operationName: z.string().min(1),
 	})
 	.strict();
 
-export type ControllerHostActionRequest = z.infer<typeof ControllerHostActionRequestSchema>;
+export type ControllerExecutionRequest = z.infer<typeof ControllerExecutionRequestSchema>;

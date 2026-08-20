@@ -191,7 +191,7 @@ export interface ToolPortalService<TMode extends ToolPortalServiceMode> {
 export interface CreateManagedToolPortalCapabilityCoreProps {
 	readonly approvalPort: ToolPortalApprovalPort;
 	readonly backendPorts: {
-		readonly controllerHostAction: ToolPortalBackendPort<'controller_host_action'>;
+		readonly controllerExecution: ToolPortalBackendPort<'controller_execution'>;
 		readonly mcpProvider: ToolPortalBackendPort<'mcp_provider'>;
 		readonly toolVmRunner: ToolPortalBackendPort<'tool_vm_runner'>;
 	};
@@ -257,12 +257,12 @@ function backendPortForKind(
 	backendPorts: CreateManagedToolPortalCapabilityCoreProps['backendPorts'],
 	kind: ToolPortalBackendBinding['kind'],
 ):
-	| ToolPortalBackendPort<'controller_host_action'>
+	| ToolPortalBackendPort<'controller_execution'>
 	| ToolPortalBackendPort<'mcp_provider'>
 	| ToolPortalBackendPort<'tool_vm_runner'> {
 	switch (kind) {
-		case 'controller_host_action':
-			return backendPorts.controllerHostAction;
+		case 'controller_execution':
+			return backendPorts.controllerExecution;
 		case 'mcp_provider':
 			return backendPorts.mcpProvider;
 		case 'tool_vm_runner':
@@ -456,8 +456,8 @@ export function createManagedToolPortalCapabilityCore(
 			const request = { calls: [propsForCall.call] };
 			const result = await (async (): Promise<PortalCallResult> => {
 				switch (propsForCall.authority.backendKind) {
-					case 'controller_host_action':
-						return await props.backendPorts.controllerHostAction.call(request, {
+					case 'controller_execution':
+						return await props.backendPorts.controllerExecution.call(request, {
 							...propsForCall.operationOptions,
 							dispatchAuthority: propsForCall.authority,
 						});
@@ -564,10 +564,10 @@ export function createManagedToolPortalCapabilityCore(
 				owningGeneration: semanticSnapshot.activeRevision,
 			});
 		}
-		if (admission.reservation.backendKind === 'controller_host_action') {
+		if (admission.reservation.backendKind === 'controller_execution') {
 			return await dispatchCall({
 				authority: {
-					backendKind: 'controller_host_action',
+					backendKind: 'controller_execution',
 					kind: 'controller-approval-reservation',
 					reservation: admission.reservation,
 				},

@@ -112,10 +112,10 @@ export const GatewayRuntimeMcpProviderDispatchReservationSchema = z
 	})
 	.strict();
 
-export const GatewayRuntimeControllerHostActionDispatchReservationSchema = z
+export const GatewayRuntimeControllerExecutionDispatchReservationSchema = z
 	.object({
 		...approvalDispatchAuthorityShape,
-		backendKind: z.literal(toolPortalBackendKindSchema.enum.controller_host_action),
+		backendKind: z.literal(toolPortalBackendKindSchema.enum.controller_execution),
 		reservationId: z.string().uuid(),
 	})
 	.strict();
@@ -130,7 +130,7 @@ export const GatewayRuntimeToolVmRunnerDispatchReservationSchema = z
 
 export const GatewayRuntimeApprovalDispatchReservationSchema = z.discriminatedUnion('backendKind', [
 	GatewayRuntimeMcpProviderDispatchReservationSchema,
-	GatewayRuntimeControllerHostActionDispatchReservationSchema,
+	GatewayRuntimeControllerExecutionDispatchReservationSchema,
 	GatewayRuntimeToolVmRunnerDispatchReservationSchema,
 ]);
 
@@ -180,10 +180,10 @@ export const GatewayRuntimeToolVmRunnerDirectDispatchAuthoritySchema = z
 	})
 	.strict();
 
-export const GatewayRuntimeControllerHostActionDirectDispatchAuthoritySchema = z
+export const GatewayRuntimeControllerExecutionDirectDispatchAuthoritySchema = z
 	.object({
 		...directDispatchAuthorityShape,
-		backendKind: z.literal(toolPortalBackendKindSchema.enum.controller_host_action),
+		backendKind: z.literal(toolPortalBackendKindSchema.enum.controller_execution),
 	})
 	.strict();
 
@@ -203,21 +203,21 @@ export const GatewayRuntimeToolVmRunnerApprovalGrantDispatchAuthoritySchema = z
 	})
 	.strict();
 
-export const GatewayRuntimeControllerHostActionApprovalReservationDispatchAuthoritySchema = z
+export const GatewayRuntimeControllerExecutionApprovalReservationDispatchAuthoritySchema = z
 	.object({
-		backendKind: z.literal(toolPortalBackendKindSchema.enum.controller_host_action),
+		backendKind: z.literal(toolPortalBackendKindSchema.enum.controller_execution),
 		kind: z.literal('controller-approval-reservation'),
-		reservation: GatewayRuntimeControllerHostActionDispatchReservationSchema,
+		reservation: GatewayRuntimeControllerExecutionDispatchReservationSchema,
 	})
 	.strict();
 
 export const GatewayRuntimeToolPortalDispatchAuthoritySchema = z.union([
 	GatewayRuntimeMcpProviderDirectDispatchAuthoritySchema,
 	GatewayRuntimeToolVmRunnerDirectDispatchAuthoritySchema,
-	GatewayRuntimeControllerHostActionDirectDispatchAuthoritySchema,
+	GatewayRuntimeControllerExecutionDirectDispatchAuthoritySchema,
 	GatewayRuntimeMcpProviderApprovalGrantDispatchAuthoritySchema,
 	GatewayRuntimeToolVmRunnerApprovalGrantDispatchAuthoritySchema,
-	GatewayRuntimeControllerHostActionApprovalReservationDispatchAuthoritySchema,
+	GatewayRuntimeControllerExecutionApprovalReservationDispatchAuthoritySchema,
 ]);
 
 export const GatewayRuntimeApprovalNotDispatchedReasonSchema = z.enum([
@@ -315,8 +315,8 @@ export type GatewayRuntimeApprovalDispatchReservation = z.infer<
 export type GatewayRuntimeGatewayDispatchReservation = z.infer<
 	typeof GatewayRuntimeGatewayDispatchReservationSchema
 >;
-export type GatewayRuntimeControllerHostActionDispatchReservation = z.infer<
-	typeof GatewayRuntimeControllerHostActionDispatchReservationSchema
+export type GatewayRuntimeControllerExecutionDispatchReservation = z.infer<
+	typeof GatewayRuntimeControllerExecutionDispatchReservationSchema
 >;
 export type GatewayRuntimeApprovalDispatchGrant = z.infer<
 	typeof GatewayRuntimeApprovalDispatchGrantSchema

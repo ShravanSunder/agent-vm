@@ -292,7 +292,7 @@ describe('standalone-v1 ToolPortalService seam', () => {
 				approvalCoordinator: fixture.approvalCoordinator,
 				backendPorts: {
 					// @ts-expect-error Standalone version 1 accepts only the MCP-provider port.
-					controllerHostAction: vi.fn(),
+					controllerExecution: vi.fn(),
 					mcpProvider: fixture.backend.port,
 				},
 				config: standaloneConfig,
@@ -303,13 +303,16 @@ describe('standalone-v1 ToolPortalService seam', () => {
 		expect(createInvalidStandaloneService).toBeTypeOf('function');
 	});
 
-	it.each(['controller_host_action', 'tool_vm_runner'] as const)(
+	it.each(['controller_execution', 'tool_vm_runner'] as const)(
 		'rejects the privileged %s backend during standalone service startup',
 		(backendKind) => {
 			const fixture = createStandaloneFixture();
 			const privilegedBackend: ToolPortalBackendBinding =
-				backendKind === 'controller_host_action'
-					? { kind: backendKind }
+				backendKind === 'controller_execution'
+					? {
+							kind: backendKind,
+							operations: { controller_host_probe: { kind: 'registered_action' } },
+						}
 					: {
 							kind: backendKind,
 							operations: {

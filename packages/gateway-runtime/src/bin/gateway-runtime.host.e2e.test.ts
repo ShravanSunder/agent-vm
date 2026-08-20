@@ -513,7 +513,7 @@ describe('packed Gateway runtime executable', () => {
 				'rejectUnavailableGatewayRuntimeSandboxDispatch',
 			);
 		}
-		expect(fixture.runtimeBinSource).not.toContain("backendKind: 'controller_host_action'");
+		expect(fixture.runtimeBinSource).not.toContain("backendKind: 'controller_execution'");
 		expect(readiness).toMatchObject({
 			controlEndpoint: {
 				identity: { processEpoch: 'process-epoch-packed', zoneId: 'zone-packed' },

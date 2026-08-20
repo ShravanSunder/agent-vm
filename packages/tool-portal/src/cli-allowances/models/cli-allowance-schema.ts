@@ -1,64 +1,68 @@
-import { CapabilityReferenceSchema } from '@agent-vm/agent-portal-sdk';
 import {
-	ArtifactPolicySchema,
-	CancellationPolicySchema,
-	CwdPolicySchema,
-	EgressPolicySchema,
-	EnvironmentPolicySchema,
-	OutputPolicySchema,
-} from '@agent-vm/controller-execution-contracts';
-import { z } from 'zod';
+	configuredCliAllowedCommandSchema,
+	configuredCliArgvTokenSchema,
+	configuredCliFlagNameSchema,
+	configuredCliFlagRuleSchema,
+	configuredCliInputSchema,
+	configuredCliPatternRuleSchema,
+	configuredCliPolicySchema,
+	configuredCliStdinPolicySchema,
+	configuredCliTimeoutPolicySchema,
+	openConfiguredCliInputSchema,
+	quickConfiguredCliInputSchema,
+	type ConfiguredCliAllowedCommand,
+	type ConfiguredCliFlagRule,
+	type ConfiguredCliInput,
+	type ConfiguredCliPatternRule,
+	type ConfiguredCliPolicy,
+	type ConfiguredCliStdinPolicy,
+	type ConfiguredCliTimeoutPolicy,
+} from '@agent-vm/config-contracts';
 
-export const CliArgvTokenSchema = z.string().min(1);
+export const CliArgvTokenSchema = configuredCliArgvTokenSchema;
+export const CliPatternRuleSchema = configuredCliPatternRuleSchema;
+export const CliFlagNameSchema = configuredCliFlagNameSchema;
+export const CliFlagRuleSchema = configuredCliFlagRuleSchema;
+export const CliAllowedCommandSchema = configuredCliAllowedCommandSchema;
+export const CliStdinPolicySchema = configuredCliStdinPolicySchema;
+export const CliTimeoutPolicySchema = configuredCliTimeoutPolicySchema;
+export const CliAllowanceSchema = configuredCliPolicySchema;
+export const QuickCliAllowanceInputSchema = quickConfiguredCliInputSchema;
+export const OpenCliAllowanceInputSchema = openConfiguredCliInputSchema;
+export const CliAllowanceInputSchema = configuredCliInputSchema;
 
-export const CliFlagRuleSchema = z
-	.object({
-		allowedValues: z.array(z.string()).optional(),
-		flag: CliArgvTokenSchema,
-		value: z.enum(['none', 'string', 'number', 'enum', 'path', 'host']).default('none'),
-	})
-	.strict()
-	.superRefine((rule, context) => {
-		if (rule.value === 'enum' && (rule.allowedValues ?? []).length === 0) {
-			context.addIssue({
-				code: z.ZodIssueCode.custom,
-				message: 'Enum CLI flags must define allowedValues.',
-				path: ['allowedValues'],
-			});
-		}
-	});
+export type CliPatternRule = ConfiguredCliPatternRule;
+export type CliFlagRule = ConfiguredCliFlagRule;
+export type CliAllowedCommand = ConfiguredCliAllowedCommand;
+export type CliStdinPolicy = ConfiguredCliStdinPolicy;
+export type CliTimeoutPolicy = ConfiguredCliTimeoutPolicy;
+export type CliAllowance = ConfiguredCliPolicy;
+export type CliAllowanceInput = ConfiguredCliInput;
 
-export type CliFlagRule = z.infer<typeof CliFlagRuleSchema>;
+export type ResolvedCliAllowanceTimeout =
+	| {
+			readonly kind: 'quick';
+			readonly requestedTimeoutMs: null;
+			readonly resolvedTimeoutMs: 5_000;
+	  }
+	| {
+			readonly kind: 'open';
+			readonly requestedTimeoutMs: number | null;
+			readonly resolvedTimeoutMs: number;
+	  };
 
-export const CliAllowanceSchema = z
-	.object({
-		allowedFlags: z.array(CliFlagRuleSchema).default([]),
-		allowedSubcommands: z.array(z.array(CliArgvTokenSchema).min(1)).min(1),
-		approval: z.enum(['required', 'conditional']),
-		artifacts: ArtifactPolicySchema,
-		capability: CapabilityReferenceSchema,
-		cancellation: CancellationPolicySchema,
-		credentialProfileId: z.string().min(1),
-		custodyMode: z.enum(['ephemeral_material', 'controller_durable_state']),
-		cwd: CwdPolicySchema,
-		deniedFlags: z.array(CliArgvTokenSchema),
-		deniedPatterns: z.array(z.string()),
-		egress: EgressPolicySchema,
-		environment: EnvironmentPolicySchema,
-		executablePath: z.string().startsWith('/'),
-		inputSchemaId: z.string().min(1),
-		output: OutputPolicySchema,
-		safeHelp: z.string().max(4_000),
-	})
-	.strict();
-
-export type CliAllowance = z.infer<typeof CliAllowanceSchema>;
-
-export const CliAllowanceInputSchema = z
-	.object({
-		argv: z.array(CliArgvTokenSchema).max(100),
-		reason: z.string().min(1),
-	})
-	.strict();
-
-export type CliAllowanceInput = z.infer<typeof CliAllowanceInputSchema>;
+export function resolveCliAllowanceTimeout(props: {
+	readonly input: CliAllowanceInput;
+	readonly kind: CliTimeoutPolicy['kind'];
+}): ResolvedCliAllowanceTimeout {
+	if (props.kind === 'quick') {
+		QuickCliAllowanceInputSchema.parse(props.input);
+		return { kind: 'quick', requestedTimeoutMs: null, resolvedTimeoutMs: 5_000 };
+	}
+	const input = OpenCliAllowanceInputSchema.parse(props.input);
+	return {
+		kind: 'open',
+		requestedTimeoutMs: input.timeoutMs ?? null,
+		resolvedTimeoutMs: input.timeoutMs ?? 120_000,
+	};
+}

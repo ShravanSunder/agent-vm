@@ -127,7 +127,11 @@ type NormalizedBindingInputs = Readonly<
 		Readonly<
 			Record<
 				string,
-				| { readonly kind: 'controller_host_action' | 'mcp_provider' }
+				| { readonly kind: 'mcp_provider' }
+				| {
+						readonly kind: 'controller_execution';
+						readonly operations: Readonly<Record<string, CanonicalJsonValue>>;
+				  }
 				| {
 						readonly kind: 'tool_vm_runner';
 						readonly operations: Readonly<
@@ -379,7 +383,12 @@ function normalizedBindingInputs(config: ManagedToolPortalConfig): NormalizedBin
 								),
 								profile: namespacePolicy.backend.profile,
 							}
-						: { kind: namespacePolicy.backend.kind },
+						: namespacePolicy.backend.kind === 'controller_execution'
+							? {
+									kind: namespacePolicy.backend.kind,
+									operations: namespacePolicy.backend.operations,
+								}
+							: { kind: namespacePolicy.backend.kind },
 				]),
 			),
 		]),

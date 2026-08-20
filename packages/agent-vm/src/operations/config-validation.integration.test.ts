@@ -381,7 +381,7 @@ async function writeManagedToolPortalConfigFiles(
 	);
 }
 
-async function writeManagedToolPortalConfigWithControllerHostAction(
+async function writeManagedToolPortalConfigWithControllerExecution(
 	rootPath: string,
 	actionTools: readonly ('controller_host_probe' | 'workspace_git_push')[] = ['workspace_git_push'],
 ): Promise<void> {
@@ -398,8 +398,16 @@ async function writeManagedToolPortalConfigWithControllerHostAction(
 			profiles: {
 				default: {
 					namespaces: {
-						controller_host_action: {
-							backend: { kind: 'controller_host_action' },
+						controller_execution: {
+							backend: {
+								kind: 'controller_execution',
+								operations: {
+									controller_host_probe: { kind: 'registered_action' },
+									workspace_git_push: { kind: 'registered_action' },
+									push_branch: { kind: 'registered_action' },
+									protected_uds: { kind: 'registered_action' },
+								},
+							},
 							calls: {
 								requiresApproval: { allow: [] },
 								withoutApproval: { allow: actionTools },
@@ -1039,8 +1047,16 @@ describe('runConfigValidation', () => {
 				profiles: {
 					default: {
 						namespaces: {
-							controller_host_action: {
-								backend: { kind: 'controller_host_action' },
+							controller_execution: {
+								backend: {
+									kind: 'controller_execution',
+									operations: {
+										controller_host_probe: { kind: 'registered_action' },
+										workspace_git_push: { kind: 'registered_action' },
+										push_branch: { kind: 'registered_action' },
+										protected_uds: { kind: 'registered_action' },
+									},
+								},
 								calls: {
 									requiresApproval: { allow: [] },
 									withoutApproval: { allow: ['workspace_git_push'] },
@@ -1117,8 +1133,16 @@ describe('runConfigValidation', () => {
 				profiles: {
 					default: {
 						namespaces: {
-							controller_host_action: {
-								backend: { kind: 'controller_host_action' },
+							controller_execution: {
+								backend: {
+									kind: 'controller_execution',
+									operations: {
+										controller_host_probe: { kind: 'registered_action' },
+										workspace_git_push: { kind: 'registered_action' },
+										push_branch: { kind: 'registered_action' },
+										protected_uds: { kind: 'registered_action' },
+									},
+								},
 								calls: {
 									requiresApproval: { allow: [] },
 									withoutApproval: { allow: ['controller_host_probe'] },
@@ -1994,7 +2018,7 @@ describe('runConfigValidation', () => {
 		const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
 		await addManagedToolPortalReferencesToOpenClawFixture(temporaryDirectoryPath);
 		await addRemoteWorkspaceGitToOpenClawFixture(temporaryDirectoryPath);
-		await writeManagedToolPortalConfigWithControllerHostAction(temporaryDirectoryPath);
+		await writeManagedToolPortalConfigWithControllerExecution(temporaryDirectoryPath);
 		const systemConfig = await loadSystemConfig(systemConfigPath);
 
 		const result = await runConfigValidation({
@@ -2018,7 +2042,7 @@ describe('runConfigValidation', () => {
 		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
 		const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
 		await addManagedToolPortalReferencesToOpenClawFixture(temporaryDirectoryPath);
-		await writeManagedToolPortalConfigWithControllerHostAction(temporaryDirectoryPath, [
+		await writeManagedToolPortalConfigWithControllerExecution(temporaryDirectoryPath, [
 			'controller_host_probe',
 		]);
 		const systemConfig = await loadSystemConfig(systemConfigPath);
@@ -2042,7 +2066,7 @@ describe('runConfigValidation', () => {
 		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
 		const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
 		await addManagedToolPortalReferencesToOpenClawFixture(temporaryDirectoryPath);
-		await writeManagedToolPortalConfigWithControllerHostAction(temporaryDirectoryPath, [
+		await writeManagedToolPortalConfigWithControllerExecution(temporaryDirectoryPath, [
 			'workspace_git_push',
 		]);
 		const systemConfig = await loadSystemConfig(systemConfigPath);
@@ -2086,7 +2110,7 @@ describe('runConfigValidation', () => {
 			}
 			agents.push({ id: 'local-agent', workspaceGit: { mode: 'local' } });
 		});
-		await writeManagedToolPortalConfigWithControllerHostAction(temporaryDirectoryPath);
+		await writeManagedToolPortalConfigWithControllerExecution(temporaryDirectoryPath);
 		await updateJsonFile(
 			path.join(
 				temporaryDirectoryPath,

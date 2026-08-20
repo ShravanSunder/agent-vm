@@ -493,8 +493,16 @@ describe('MCP Portal effective config materialization', () => {
 					profiles: {
 						default: {
 							namespaces: {
-								controller_host_action: {
-									backend: { kind: 'controller_host_action' },
+								controller_execution: {
+									backend: {
+										kind: 'controller_execution',
+										operations: {
+											controller_host_probe: { kind: 'registered_action' },
+											workspace_git_push: { kind: 'registered_action' },
+											push_branch: { kind: 'registered_action' },
+											protected_uds: { kind: 'registered_action' },
+										},
+									},
 									calls: {
 										requiresApproval: { allow: [] },
 										withoutApproval: {
@@ -514,9 +522,17 @@ describe('MCP Portal effective config materialization', () => {
 		);
 
 		expect(
-			plan.effectiveToolPortalConfig.profiles.default?.namespaces.controller_host_action,
+			plan.effectiveToolPortalConfig.profiles.default?.namespaces.controller_execution,
 		).toEqual({
-			backend: { kind: 'controller_host_action' },
+			backend: {
+				kind: 'controller_execution',
+				operations: {
+					controller_host_probe: { kind: 'registered_action' },
+					workspace_git_push: { kind: 'registered_action' },
+					push_branch: { kind: 'registered_action' },
+					protected_uds: { kind: 'registered_action' },
+				},
+			},
 			calls: {
 				requiresApproval: { allow: [], deny: [] },
 				withoutApproval: { allow: ['workspace_git_push', 'controller_host_probe'], deny: [] },
@@ -524,7 +540,7 @@ describe('MCP Portal effective config materialization', () => {
 			tools: { allow: ['workspace_git_push', 'controller_host_probe'], deny: [] },
 		});
 		expect(
-			plan.effectiveToolPortalConfig.profiles.readonly?.namespaces.controller_host_action,
+			plan.effectiveToolPortalConfig.profiles.readonly?.namespaces.controller_execution,
 		).toBeUndefined();
 	});
 
@@ -538,8 +554,16 @@ describe('MCP Portal effective config materialization', () => {
 					profiles: {
 						default: {
 							namespaces: {
-								controller_host_action: {
-									backend: { kind: 'controller_host_action' },
+								controller_execution: {
+									backend: {
+										kind: 'controller_execution',
+										operations: {
+											controller_host_probe: { kind: 'registered_action' },
+											workspace_git_push: { kind: 'registered_action' },
+											push_branch: { kind: 'registered_action' },
+											protected_uds: { kind: 'registered_action' },
+										},
+									},
 									calls: {
 										requiresApproval: { allow: [] },
 										withoutApproval: { allow: ['controller_host_probe'] },
@@ -555,9 +579,17 @@ describe('MCP Portal effective config materialization', () => {
 		);
 
 		expect(
-			plan.effectiveToolPortalConfig.profiles.default?.namespaces.controller_host_action,
+			plan.effectiveToolPortalConfig.profiles.default?.namespaces.controller_execution,
 		).toEqual({
-			backend: { kind: 'controller_host_action' },
+			backend: {
+				kind: 'controller_execution',
+				operations: {
+					controller_host_probe: { kind: 'registered_action' },
+					workspace_git_push: { kind: 'registered_action' },
+					push_branch: { kind: 'registered_action' },
+					protected_uds: { kind: 'registered_action' },
+				},
+			},
 			calls: {
 				requiresApproval: { allow: [], deny: [] },
 				withoutApproval: { allow: ['controller_host_probe'], deny: [] },
@@ -577,8 +609,16 @@ describe('MCP Portal effective config materialization', () => {
 						profiles: {
 							default: {
 								namespaces: {
-									controller_host_action: {
-										backend: { kind: 'controller_host_action' },
+									controller_execution: {
+										backend: {
+											kind: 'controller_execution',
+											operations: {
+												controller_host_probe: { kind: 'registered_action' },
+												workspace_git_push: { kind: 'registered_action' },
+												push_branch: { kind: 'registered_action' },
+												protected_uds: { kind: 'registered_action' },
+											},
+										},
 										calls: {
 											requiresApproval: { allow: [] },
 											withoutApproval: { allow: ['workspace_git_push'] },
@@ -613,8 +653,16 @@ describe('MCP Portal effective config materialization', () => {
 						profiles: {
 							shared: {
 								namespaces: {
-									controller_host_action: {
-										backend: { kind: 'controller_host_action' },
+									controller_execution: {
+										backend: {
+											kind: 'controller_execution',
+											operations: {
+												controller_host_probe: { kind: 'registered_action' },
+												workspace_git_push: { kind: 'registered_action' },
+												push_branch: { kind: 'registered_action' },
+												protected_uds: { kind: 'registered_action' },
+											},
+										},
 										calls: {
 											requiresApproval: { allow: [] },
 											withoutApproval: { allow: ['workspace_git_push'] },
@@ -718,8 +766,16 @@ describe('MCP Portal effective config materialization', () => {
 						profiles: {
 							default: {
 								namespaces: {
-									controller_host_action: {
-										backend: { kind: 'controller_host_action' },
+									controller_execution: {
+										backend: {
+											kind: 'controller_execution',
+											operations: {
+												controller_host_probe: { kind: 'registered_action' },
+												workspace_git_push: { kind: 'registered_action' },
+												push_branch: { kind: 'registered_action' },
+												protected_uds: { kind: 'registered_action' },
+											},
+										},
 										calls: {
 											requiresApproval: { allow: [] },
 											withoutApproval: { allow: '*' },
@@ -734,10 +790,10 @@ describe('MCP Portal effective config materialization', () => {
 					workspaceGitPushAgentEligibility: { eligibleAgentIds: ['shravan'] },
 				}),
 			),
-		).rejects.toThrow(/namespace "controller_host_action" tools must explicitly allow/u);
+		).rejects.toThrow(/namespace "controller_execution" tools must explicitly allow/u);
 	});
 
-	it('rejects unknown controller host action tools for managed OpenClaw', async () => {
+	it('rejects unknown registered controller execution tools for managed OpenClaw', async () => {
 		await expect(
 			planMcpPortalEffectiveConfigFromConfig(
 				createPlanPropsForTest({
@@ -748,8 +804,17 @@ describe('MCP Portal effective config materialization', () => {
 						profiles: {
 							default: {
 								namespaces: {
-									controller_host_action: {
-										backend: { kind: 'controller_host_action' },
+									controller_execution: {
+										backend: {
+											kind: 'controller_execution',
+											operations: {
+												controller_host_probe: { kind: 'registered_action' },
+												host_shell_exec: { kind: 'registered_action' },
+												workspace_git_push: { kind: 'registered_action' },
+												push_branch: { kind: 'registered_action' },
+												protected_uds: { kind: 'registered_action' },
+											},
+										},
 										calls: {
 											requiresApproval: { allow: [] },
 											withoutApproval: { allow: ['workspace_git_push', 'host_shell_exec'] },
@@ -764,7 +829,7 @@ describe('MCP Portal effective config materialization', () => {
 					workspaceGitPushAgentEligibility: { eligibleAgentIds: ['shravan'] },
 				}),
 			),
-		).rejects.toThrow(/namespace "controller_host_action" supports only reviewed/u);
+		).rejects.toThrow(/namespace "controller_execution" supports only reviewed/u);
 	});
 
 	it('resolves 1Password provider secrets once and writes environment-only effective configs', async () => {

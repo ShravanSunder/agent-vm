@@ -415,7 +415,7 @@ describe('manual templates', () => {
 			'every namespace must select an explicit backend.kind',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
-			'mcp_provider, controller_host_action, or tool_vm_runner',
+			'mcp_provider, controller_execution, or tool_vm_runner',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
 			'config/schemas/*.schema.json',

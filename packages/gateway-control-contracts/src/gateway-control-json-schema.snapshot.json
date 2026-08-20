@@ -742,7 +742,7 @@
 											},
 											"purpose": {
 												"type": "string",
-												"enum": ["tool_vm_lease", "tool_portal_controller_host_action"]
+												"enum": ["tool_vm_lease", "tool_portal_controller_execution"]
 											},
 											"zoneId": {
 												"type": "string",
@@ -1704,7 +1704,7 @@
 							},
 							"operation": {
 								"type": "string",
-								"const": "tool_portal_controller_host_action"
+								"const": "tool_portal_controller_execution"
 							},
 							"payload": {
 								"oneOf": [
@@ -1776,7 +1776,7 @@
 													},
 													"backendKind": {
 														"type": "string",
-														"const": "controller_host_action"
+														"const": "controller_execution"
 													},
 													"reservationId": {
 														"type": "string",
@@ -1934,7 +1934,7 @@
 													},
 													"backendKind": {
 														"type": "string",
-														"const": "controller_host_action"
+														"const": "controller_execution"
 													},
 													"reservationId": {
 														"type": "string",
@@ -2074,7 +2074,7 @@
 										"properties": {
 											"backendKind": {
 												"type": "string",
-												"enum": ["mcp_provider", "controller_host_action", "tool_vm_runner"]
+												"enum": ["mcp_provider", "controller_execution", "tool_vm_runner"]
 											},
 											"call": {
 												"type": "object",
@@ -2814,7 +2814,7 @@
 												"type": "array",
 												"items": {
 													"type": "string",
-													"enum": ["controller_host_action", "mcp_provider", "tool_vm_runner"]
+													"enum": ["controller_execution", "mcp_provider", "tool_vm_runner"]
 												}
 											},
 											"revision": {
@@ -3793,7 +3793,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -3842,7 +3842,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -3975,7 +3975,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -4024,7 +4024,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -4144,7 +4144,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -4289,7 +4289,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -4368,7 +4368,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -4502,7 +4502,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -4628,7 +4628,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -4707,7 +4707,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -4841,7 +4841,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -4917,7 +4917,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -4996,7 +4996,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -5100,7 +5100,7 @@
 							},
 							"operation": {
 								"type": "string",
-								"const": "tool_portal_controller_host_action"
+								"const": "tool_portal_controller_execution"
 							},
 							"payload": {
 								"oneOf": [
@@ -5130,7 +5130,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"oneOf": [
 													{
 														"type": "object",
@@ -5228,7 +5228,7 @@
 												"const": "ok"
 											}
 										},
-										"required": ["responseToMessageId", "controllerHostAction", "result"],
+										"required": ["responseToMessageId", "controllerExecution", "result"],
 										"additionalProperties": false
 									},
 									{
@@ -5257,7 +5257,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -5379,7 +5379,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -5430,7 +5430,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -5550,7 +5550,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -5599,7 +5599,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -5738,7 +5738,7 @@
 																				"type": "string",
 																				"enum": [
 																					"mcp_provider",
-																					"controller_host_action",
+																					"controller_execution",
 																					"tool_vm_runner"
 																				]
 																			},
@@ -6100,7 +6100,7 @@
 																			},
 																			"backendKind": {
 																				"type": "string",
-																				"const": "controller_host_action"
+																				"const": "controller_execution"
 																			},
 																			"reservationId": {
 																				"type": "string",
@@ -6268,7 +6268,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -6317,7 +6317,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -6662,7 +6662,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -6711,7 +6711,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -6847,7 +6847,7 @@
 												"required": ["agentId", "stablePrincipal", "status"],
 												"additionalProperties": false
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -6896,7 +6896,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -7016,7 +7016,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -7065,7 +7065,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -7177,7 +7177,7 @@
 			"runtime_status",
 			"tool_vm_binding_publish",
 			"tool_vm_binding_request",
-			"tool_portal_controller_host_action",
+			"tool_portal_controller_execution",
 			"tool_portal_admission_reserve",
 			"tool_portal_dispatch_arm",
 			"operation_cancel",

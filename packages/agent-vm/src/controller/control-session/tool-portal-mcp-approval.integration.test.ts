@@ -401,8 +401,8 @@ describe('managed private-UDS approval exactly-once dispatch', () => {
 		const capabilityCore = createManagedToolPortalCapabilityCore({
 			approvalPort,
 			backendPorts: {
-				controllerHostAction: unexpectedBackendPort(
-					'controller_host_action',
+				controllerExecution: unexpectedBackendPort(
+					'controller_execution',
 					'controller host action',
 				),
 				mcpProvider: createRecordingMcpProviderBackend(backendInvocations),
