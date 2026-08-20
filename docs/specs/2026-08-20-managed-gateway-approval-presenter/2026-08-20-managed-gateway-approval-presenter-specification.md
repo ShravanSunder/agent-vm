@@ -138,7 +138,7 @@ Trace: U2, U3, U4 → O2, O3, O4.
 
 An `approved` or `denied` presenter outcome MUST be submitted through a private authenticated Gateway Runtime decision operation. The controller MUST derive zone, managed agent, profile, and Gateway authority from the accepted attachment/control session; those fields MUST NOT be accepted from public/model input.
 
-The framework adapter MUST accompany the private decision request with the same non-public trusted invocation context used for the originating Portal call. Gateway Runtime MUST validate that context against the accepted attachment and derive the stable admission principal before sending the controller command. The decision payload itself remains limited to challenge id and decision.
+The framework adapter MUST accompany the private UDS decision request with the same non-public trusted invocation context used for the originating Portal call. Gateway Runtime MUST validate that context against the accepted attachment, register it through the existing caller-context authority with purpose `tool_portal_approval_decision`, and send the controller command with an opaque current-session caller-context reference beside the semantic decision value. The semantic decision value remains limited to challenge id and decision; it carries no principal, profile, agent, zone, or authority field. The controller resolves the opaque reference against the accepted Control session and derives the stable admission principal before recording the decision.
 
 The controller MUST confirm that:
 

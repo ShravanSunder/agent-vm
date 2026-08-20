@@ -86,8 +86,6 @@ async function writeWorkspaceGitToolPortalConfigs(options: {
 							operations: {
 								controller_host_probe: { kind: 'registered_action' },
 								workspace_git_push: { kind: 'registered_action' },
-								push_branch: { kind: 'registered_action' },
-								protected_uds: { kind: 'registered_action' },
 							},
 						},
 						calls: {
@@ -322,11 +320,14 @@ describeOpenClawWorkspaceGitSmoke('smoke: OpenClaw workspace Git through Tool Po
 			id: 'probe-controller-host',
 			status: 'ok',
 			value: {
-				actionId: 'controller_host_probe',
-				result: {
-					entryNames: ['agent-vm-host-probe.txt'],
-					probeKind: 'controller_cache_dir_listing',
+				action: {
+					actionId: 'controller_host_probe',
+					result: {
+						entryNames: ['agent-vm-host-probe.txt'],
+						probeKind: 'controller_cache_dir_listing',
+					},
 				},
+				kind: 'registered_action',
 			},
 		});
 
@@ -402,12 +403,15 @@ describeOpenClawWorkspaceGitSmoke('smoke: OpenClaw workspace Git through Tool Po
 			id: 'push-zone',
 			status: 'ok',
 			value: {
-				actionId: 'workspace_git_push',
-				result: {
-					branch: workspaceGitBranch,
-					localHead: committedHead,
-					remoteHead: committedHead,
+				action: {
+					actionId: 'workspace_git_push',
+					result: {
+						branch: workspaceGitBranch,
+						localHead: committedHead,
+						remoteHead: committedHead,
+					},
 				},
+				kind: 'registered_action',
 			},
 		});
 		await expect(

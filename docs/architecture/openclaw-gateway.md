@@ -371,6 +371,11 @@ absent. Standalone MCP Portal is a separate mode: external clients use
 serve` adapter owns its bearer and HMAC behavior. Managed Gateway policy never
 consumes that standalone auth material as authority.
 
+OpenClaw has no managed-Gateway native approval presenter in this release.
+`approvalAccess` may retain explicit `kind: "bearer"` operators for the
+controller HTTP approval surface, but an OpenClaw zone rejects
+`kind: "managed_gateway"`. Hermes is the sole native presenter implementation.
+
 See [MCP Portal](../subsystems/mcp-portal.md) for the portal API, schema,
 approval, and redaction model.
 

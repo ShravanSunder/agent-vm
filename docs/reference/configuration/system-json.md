@@ -583,7 +583,7 @@ fields are:
 - `mode` must be `"managed"`.
 - `profiles.<name>.namespaces` defines the profile's namespace policy.
 - `profiles.<name>.namespaces.<namespaceId>.backend.kind` explicitly binds
-  the namespace to `mcp_provider`, `controller_host_action`, or
+  the namespace to `mcp_provider`, `controller_execution`, or
   `tool_vm_runner`. Declaring a backend kind does not by itself prove that a
   later backend/runtime cutover is deployed.
 - Each namespace colocates `tools.allow`, `tools.deny`,
@@ -598,6 +598,23 @@ Any managed namespace that effectively admits at least one tool through
 and gateway preflight fail closed when that authority is absent. No
 `approvalAccess` default is inferred from OpenClaw plugin approvals,
 `adminAccess`, or standalone MCP Portal auth.
+
+Every `approvalAccess.approvers[]` entry has an explicit `kind`. Bearer
+operators use `{ kind: "bearer", approverId, secret }`. A zone may instead or
+also declare one `{ kind: "managed_gateway", approverId }`; only Hermes
+declares the native presenter capability in this release. OpenClaw and Worker
+zones reject `managed_gateway` authority rather than falling back to another
+approval surface. Bearer HTTP approval remains available alongside Hermes
+native presentation.
+
+`controller_execution` contains named `registered_action | configured_cli`
+operations. Configured CLI binds exactly one `controller_host` or
+`ephemeral_managed_vm` target. Its timeout is `quick` (fixed 5 seconds) or
+`open` (120-second default, caller override up to 8 hours). The Gateway never
+selects the target, executable, image, environment, or raw controller deadline.
+The ephemeral target is a fresh one-shot Managed VM; it does not reuse a leased
+Tool VM. `tool_vm_runner` remains the separate Gateway-to-leased-Tool-VM direct
+SSH backend and sends no per-command controller execution RPC.
 
 For an MCP-backed managed namespace, the namespace id matches the provider
 namespace in `mcp.config.jsonc` and explicitly selects `mcp_provider`:

@@ -272,6 +272,7 @@ async function addApprovalAccessToOpenClawFixture(rootPath: string): Promise<voi
 			approvers: [
 				{
 					approverId: 'primary-operator',
+					kind: 'bearer',
 					secret: {
 						envVar: 'AGENT_VM_PRIMARY_APPROVAL_SECRET',
 						source: 'environment',

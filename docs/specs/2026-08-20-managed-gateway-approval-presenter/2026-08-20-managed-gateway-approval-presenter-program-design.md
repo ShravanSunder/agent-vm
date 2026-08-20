@@ -540,7 +540,9 @@ user → Hermes tool handler → initial portal.call
   → Hermes Gateway Approval Interaction(session, request)
       unauthorized actor → bounded feedback; pending entry remains; no RPC/effect
       admitted actor → approved | denied | cancelled
-  → private approval.decide(challengeId, decision, trusted context)
+  → private UDS approval.decide(challengeId, decision, trusted context)
+  → existing caller_context_register(purpose=tool_portal_approval_decision)
+  → Gateway Control approval decision { callerContext, decision }
   → controller ledger recorded | rejected
   → exact resubmission only when approved
   → current policy recomputes target + timeout + fingerprint
@@ -552,9 +554,9 @@ The in-repo Hermes adapter owns `pending[(session_key, request_id)]`, payload `g
 
 The existing pinned Hermes `pre_gateway_dispatch` hook already supplies the live Gateway object and `MessageEvent.source`. The Agent VM hook preserves a bounded immutable route containing the admitted profile/session source, the Gateway-selected platform adapter from `_adapter_for_source(source)`, and the existing actor-admission callback `_is_user_authorized(source)`. The tool handler preserves trusted `session_id` rather than deleting it and uses that route to call the adapter's existing native interaction surface. This is a version-pinned in-repo integration: it changes no upstream Hermes source, creates no fork or monkeypatch, and does not reuse Hermes command-approval FIFO/YOLO/session/permanent caches.
 
-The generic presentation request/outcome and Framework Approval Bridge remain framework-neutral. Hermes is the only concrete presenter wired in this release. OpenClaw and Worker lifecycles declare no presenter capability, receive no adapter/UI implementation, and fail preflight if selected for `managed_gateway` approval.
+The generic presentation request/outcome and Framework Approval Bridge live in the portable Python Agent Portal SDK so a framework integration can coordinate its native interaction with the request/response-only private UDS. They remain framework-neutral. Hermes is the only concrete presenter wired in this release. OpenClaw and Worker lifecycles declare no presenter capability, receive no adapter/UI implementation, and fail validation/preflight if selected for `managed_gateway` approval.
 
-Gateway Runtime exposes `approval.decide` only over authenticated private UDS. It validates the original trusted context, derives stable principal, and sends challenge id + decision over Gateway Control. The controller selects the sole managed authority and calls the existing ledger. Presenter outcome alone never authorizes execution.
+Gateway Runtime exposes `approval.decide` only over authenticated private UDS. It validates the original trusted context, reuses `caller_context_register` with the approval-decision purpose, and sends one strict Gateway Control wrapper containing the resulting opaque caller-context reference plus the canonical `{ challengeId, decision }` value. The controller resolves the caller context against the accepted session, derives stable principal, selects the sole managed authority, and calls the existing ledger. No principal is caller-authored, and presenter outcome alone never authorizes execution.
 
 Batch coordination keeps approval-free items byte-identical and unrepeated; protected items are independent and replace only their original ids. Denied/cancelled/unavailable never reconcile through dispatch. Only an approved `already-decided`/unknown decision transport may perform one identical Portal resubmission. Aggregate status and original order are recomputed/preserved.
 
