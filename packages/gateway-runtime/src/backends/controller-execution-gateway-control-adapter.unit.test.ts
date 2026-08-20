@@ -28,6 +28,39 @@ const toolPortalConfig = {
 	profiles: {
 		'profile-a': {
 			namespaces: {
+				custom_controller: {
+					backend: {
+						kind: 'controller_execution',
+						operations: {
+							workspace_git_push: {
+								commands: [{ flagRules: [], path: ['increment'] }],
+								deniedPatterns: [],
+								executablePath: '/usr/bin/printf',
+								executionTarget: {
+									cwd: '/tmp',
+									environment: { kind: 'empty' },
+									kind: 'controller_host',
+								},
+								kind: 'configured_cli',
+								mandatoryArgvPrefix: ['--'],
+								output: {
+									modelVisibleStderr: 'none',
+									overflow: 'truncate',
+									stderrMaxBytes: 1024,
+									stdoutMaxBytes: 1024,
+								},
+								safeHelp: 'Prove operation-kind routing is namespace aware.',
+								stdin: { kind: 'none' },
+								timeout: { kind: 'quick' },
+							},
+						},
+					},
+					calls: {
+						requiresApproval: { allow: [], deny: [] },
+						withoutApproval: { allow: ['workspace_git_push'], deny: [] },
+					},
+					tools: { allow: ['workspace_git_push'], deny: [] },
+				},
 				controller_execution: {
 					backend: {
 						kind: 'controller_execution',
@@ -348,6 +381,58 @@ describe('Gateway Control controller-execution adapter', () => {
 			items: [{ status: 'ok', value: { kind: 'configured_cli', operationName: 'inspect_host' } }],
 			ok: true,
 		});
+	});
+
+	it('routes by the configured operation discriminant instead of a built-in action name', async () => {
+		const fixture = createFixture({
+			sendCommand: async () => ({
+				acceptedSession,
+				messageId: responseMessageId,
+				response: {
+					kind: 'command_result',
+					operation: 'tool_portal_controller_execution',
+					payload: {
+						controllerExecution: {
+							kind: 'configured_cli',
+							operationName: 'workspace_git_push',
+							result: {
+								exitCode: 0,
+								stderrTruncated: false,
+								stdout: '1',
+								stdoutTruncated: false,
+							},
+						},
+						responseToMessageId: responseMessageId,
+						result: 'ok',
+					},
+				},
+			}),
+		});
+
+		await fixture.backend.call(
+			{
+				calls: [
+					{
+						arguments: { argv: ['increment'], reason: 'prove exact operation routing' },
+						id: 'configured-built-in-name',
+						name: 'workspace_git_push',
+						namespace: 'custom_controller',
+					},
+				],
+			},
+			callOptions(),
+		);
+
+		expect(fixture.sendCommand).toHaveBeenCalledWith(
+			expect.objectContaining({
+				message: expect.objectContaining({
+					payload: expect.objectContaining({
+						capability: { name: 'workspace_git_push', namespace: 'custom_controller' },
+						kind: 'configured_cli',
+					}),
+				}),
+			}),
+		);
 	});
 
 	it('rejects non-exact workspace arguments before registration or dispatch', async () => {

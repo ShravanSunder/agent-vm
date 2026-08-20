@@ -2105,6 +2105,7 @@ describe('gateway control domain handler', () => {
 			callerContext: expect.objectContaining({ agentId: 'main' }),
 			payload: configuredPayload,
 			session: acceptedSession,
+			signal: expect.any(AbortSignal),
 		});
 		expect(pushWorkspaceGit).not.toHaveBeenCalled();
 		expect(response).toMatchObject({
@@ -2117,6 +2118,64 @@ describe('gateway control domain handler', () => {
 				result: 'ok',
 			},
 		});
+	});
+
+	it('aborts configured CLI work when the controller execution window expires', async () => {
+		vi.useFakeTimers();
+		try {
+			const executeConfiguredCli = vi.fn(
+				async ({ signal }: { readonly signal: AbortSignal }) =>
+					await new Promise<never>((_resolve, reject) => {
+						const rejectFromAbort = (): void => reject(signal.reason);
+						signal.addEventListener('abort', rejectFromAbort, { once: true });
+						if (signal.aborted) rejectFromAbort();
+					}),
+			);
+			const callerContexts = createRegisteredCallerContexts({
+				purpose: 'tool_portal_controller_execution',
+			});
+			const dispatcher = createGatewayControlTestDispatcher();
+			dispatcher.register(
+				'gateway_control',
+				createTestGatewayControlDomainHandler({
+					callerContexts,
+					controllerExecutions: createAuthorizedControllerExecutions(vi.fn(), {
+						executeConfiguredCli,
+					}),
+					now: () => 1,
+					session: acceptedSession,
+				}),
+			);
+			const responsePromise = dispatcher.dispatch({
+				envelope: createEnvelope('tool_portal_controller_execution', { expiresAtMs: 100 }),
+				payload: {
+					kind: 'command',
+					operation: 'tool_portal_controller_execution',
+					payload: {
+						...callerContextPayload,
+						capability: { name: 'inspect_host', namespace: 'controller_execution' },
+						correlation: {
+							capability: { name: 'inspect_host', namespace: 'controller_execution' },
+						},
+						input: { argv: ['inspect'], reason: 'expiry proof' },
+						kind: 'configured_cli',
+						operationName: 'inspect_host',
+					},
+				},
+			});
+
+			await vi.advanceTimersByTimeAsync(99);
+
+			await expect(responsePromise).resolves.toMatchObject({
+				payload: {
+					error: { errorClass: 'controller_execution_timeout' },
+					result: 'timeout',
+				},
+			});
+			expect(executeConfiguredCli).toHaveBeenCalledTimes(1);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it('rejects tool_portal_controller_execution when callerContextId was registered for a lease', async () => {

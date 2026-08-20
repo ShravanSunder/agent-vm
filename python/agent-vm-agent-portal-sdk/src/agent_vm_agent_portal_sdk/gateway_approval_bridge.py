@@ -164,7 +164,11 @@ async def execute_portal_call_with_approval(
         )
         if not isinstance(presentation_request, BaseModel):
             raise TypeError("Approval presentation request did not produce a typed model.")
-        presentation_outcome = await present_approval(presentation_request)
+        try:
+            presentation_outcome = await present_approval(presentation_request)
+        except Exception:
+            final_items.append(_project_non_dispatch_result(item, code="provider_unavailable"))
+            continue
         outcome = _model_mapping(presentation_outcome)
         outcome_kind = outcome["kind"]
         if outcome_kind == "cancelled":

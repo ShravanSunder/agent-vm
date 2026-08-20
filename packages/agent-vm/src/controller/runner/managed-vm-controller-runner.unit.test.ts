@@ -353,6 +353,24 @@ describe('managed VM controller runner authorization', () => {
 		expect(createRunner).toHaveBeenCalledOnce();
 	});
 
+	it('does not create a runner when the controller-owned call signal is already aborted', async () => {
+		const runnerVm = createRunnerFactory();
+		const runner = createManagedVmControllerRunner(createRunnerOptions(runnerVm.factory));
+		const cancellation = new AbortController();
+		cancellation.abort(
+			new ConfiguredControllerExecutionError('timeout', 'Controller execution window expired.'),
+		);
+
+		await expect(
+			runner.execute(createDispatchRequest(), { signal: cancellation.signal }),
+		).resolves.toMatchObject({
+			kind: 'not-dispatched',
+			reason: 'runner-setup-failed',
+		});
+		expect(runnerVm.createRunner).not.toHaveBeenCalled();
+		expect(runnerVm.executeRunner).not.toHaveBeenCalled();
+	});
+
 	it('forbids replay when execution fails after dispatch is armed', async () => {
 		const runnerVm = createRunnerFactory();
 		runnerVm.executeRunner.mockRejectedValueOnce(new Error('execution transport failed'));

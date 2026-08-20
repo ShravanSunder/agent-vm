@@ -487,12 +487,23 @@ export const GatewayControlRuntimeStatusPayloadSchema = z
 	})
 	.strict();
 
-const GatewayControlGitObjectIdSchema = z
+export const GatewayControlGitObjectIdSchema = z
 	.string()
 	.regex(
 		/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u,
 		'expected an exact lowercase SHA-1 or SHA-256 object id',
 	);
+
+export const GatewayControlWorkspaceGitPushArgumentsSchema = z
+	.object({ expectedHead: GatewayControlGitObjectIdSchema })
+	.strict();
+
+export const GatewayControlControllerHostProbeArgumentsSchema = z.object({}).strict();
+
+export const gatewayControlRegisteredControllerExecutionActionIds = [
+	'controller_host_probe',
+	'workspace_git_push',
+] as const;
 
 export const GatewayControlWorkspaceGitPushControllerExecutionPayloadSchema = z
 	.object({
@@ -500,7 +511,7 @@ export const GatewayControlWorkspaceGitPushControllerExecutionPayloadSchema = z
 		approvalReservation: GatewayRuntimeControllerExecutionDispatchReservationSchema.optional(),
 		callerContext: GatewayControlCallerContextRefSchema,
 		correlation: GatewayControlToolCallCorrelationSchema,
-		expectedHead: GatewayControlGitObjectIdSchema,
+		...GatewayControlWorkspaceGitPushArgumentsSchema.shape,
 	})
 	.strict();
 

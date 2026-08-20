@@ -18,7 +18,10 @@ import type {
 } from '@agent-vm/controller-execution-contracts';
 import {
 	deriveGatewayControlControllerExecutionRpcWindow,
+	GatewayControlControllerHostProbeArgumentsSchema,
 	GatewayControlToolPortalControllerExecutionPayloadSchema,
+	GatewayControlWorkspaceGitPushArgumentsSchema,
+	gatewayControlRegisteredControllerExecutionActionIds,
 	gatewayControlCommandExecutionTimeoutMsByOperation,
 	type GatewayControlToolPortalControllerExecutionPayload,
 } from '@agent-vm/gateway-control-contracts';
@@ -36,13 +39,8 @@ import {
 } from './controller-execution-backend-port.js';
 
 const controllerExecutionNamespace = 'controller_execution';
-const workspaceGitPushName = 'workspace_git_push';
-const controllerHostProbeName = 'controller_host_probe';
-const GitObjectIdSchema = z
-	.string()
-	.regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u, 'expected an exact lowercase Git object id');
-const WorkspaceGitPushArgumentsSchema = z.object({ expectedHead: GitObjectIdSchema }).strict();
-const ControllerHostProbeArgumentsSchema = z.object({}).strict();
+const [controllerHostProbeName, workspaceGitPushName] =
+	gatewayControlRegisteredControllerExecutionActionIds;
 
 const workspaceGitPushSummary = {
 	description: 'Push the current agent workspace Git branch through controller-owned credentials.',
@@ -96,12 +94,12 @@ const controllerHostProbeDescriptor = {
 
 const builtInControllerExecutions = Object.freeze([
 	defineControllerExecutionRegistration({
-		argumentsSchema: WorkspaceGitPushArgumentsSchema,
+		argumentsSchema: GatewayControlWorkspaceGitPushArgumentsSchema,
 		descriptor: workspaceGitPushDescriptor,
 		summary: workspaceGitPushSummary,
 	}),
 	defineControllerExecutionRegistration({
-		argumentsSchema: ControllerHostProbeArgumentsSchema,
+		argumentsSchema: GatewayControlControllerHostProbeArgumentsSchema,
 		descriptor: controllerHostProbeDescriptor,
 		summary: controllerHostProbeSummary,
 	}),
@@ -214,15 +212,15 @@ function controllerExecutionRegistrations(
 	return [...registrationByToolRef.values()];
 }
 
-function configuredOperationForRequest(
+function operationForRequest(
 	config: GatewayRuntimeManagedToolPortalConfig,
 	request: ControllerExecutionDispatchRequest,
-): Extract<GatewayRuntimeControllerExecutionOperation, { kind: 'configured_cli' }> | undefined {
+): GatewayRuntimeControllerExecutionOperation | undefined {
 	for (const profile of Object.values(config.profiles)) {
 		const namespacePolicy = profile.namespaces[request.action.capability.namespace];
 		if (namespacePolicy?.backend.kind !== 'controller_execution') continue;
 		const operation = namespacePolicy.backend.operations[request.action.capability.name];
-		if (operation?.kind === 'configured_cli') return operation;
+		if (operation !== undefined) return operation;
 	}
 	return undefined;
 }
@@ -276,6 +274,7 @@ function commandCorrelation(request: ControllerExecutionDispatchRequest): {
 
 function controllerActionPayload(props: {
 	readonly callerContextId: string;
+	readonly operation: GatewayRuntimeControllerExecutionOperation;
 	readonly request: ControllerExecutionDispatchRequest;
 }): GatewayControlToolPortalControllerExecutionPayload {
 	const dispatchAuthority = props.request.authority.dispatchAuthority;
@@ -286,9 +285,20 @@ function controllerActionPayload(props: {
 		callerContext: { callerContextId: props.callerContextId },
 		correlation: commandCorrelation(props.request),
 	};
+	if (props.operation.kind === 'configured_cli') {
+		return GatewayControlToolPortalControllerExecutionPayloadSchema.parse({
+			...common,
+			capability: props.request.action.capability,
+			input: props.request.action.arguments,
+			kind: 'configured_cli',
+			operationName: props.request.action.capability.name,
+		});
+	}
 	switch (props.request.action.capability.name) {
 		case workspaceGitPushName: {
-			const argumentsValue = WorkspaceGitPushArgumentsSchema.parse(props.request.action.arguments);
+			const argumentsValue = GatewayControlWorkspaceGitPushArgumentsSchema.parse(
+				props.request.action.arguments,
+			);
 			return GatewayControlToolPortalControllerExecutionPayloadSchema.parse({
 				action: {
 					...common,
@@ -299,19 +309,15 @@ function controllerActionPayload(props: {
 			});
 		}
 		case controllerHostProbeName:
-			ControllerHostProbeArgumentsSchema.parse(props.request.action.arguments);
+			GatewayControlControllerHostProbeArgumentsSchema.parse(props.request.action.arguments);
 			return GatewayControlToolPortalControllerExecutionPayloadSchema.parse({
 				action: { ...common, actionId: controllerHostProbeName },
 				kind: 'registered_action',
 			});
 		default:
-			return GatewayControlToolPortalControllerExecutionPayloadSchema.parse({
-				...common,
-				capability: props.request.action.capability,
-				input: props.request.action.arguments,
-				kind: 'configured_cli',
-				operationName: props.request.action.capability.name,
-			});
+			throw new Error(
+				`Controller execution registered action '${props.request.action.capability.name}' is not defined.`,
+			);
 	}
 }
 
@@ -440,12 +446,22 @@ function createGatewayControlControllerExecutionRpcPort(
 				});
 			}
 			const commandId = props.createCommandId();
+			const operation = operationForRequest(props.toolPortalConfig, request);
+			if (operation === undefined) {
+				return notDispatchedResult({
+					binding,
+					code: 'capability_denied',
+					message: 'Controller execution operation is not current.',
+					reason: 'stale-authority',
+				});
+			}
 			const payload = controllerActionPayload({
 				callerContextId: callerContext.callerContextId,
+				operation,
 				request,
 			});
 			const commandCreatedAtMs = now();
-			const configuredOperation = configuredOperationForRequest(props.toolPortalConfig, request);
+			const configuredOperation = operation.kind === 'configured_cli' ? operation : undefined;
 			const configuredRpcWindow =
 				configuredOperation === undefined
 					? undefined

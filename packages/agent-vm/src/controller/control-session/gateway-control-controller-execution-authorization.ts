@@ -8,6 +8,7 @@ import type { GatewayControlToolPortalControllerExecutionPayload } from '@agent-
 import {
 	deriveGatewayControlControllerExecutionRpcWindow,
 	deriveGatewayRuntimePortalBindingRevision,
+	gatewayControlRegisteredControllerExecutionActionIds,
 } from '@agent-vm/gateway-control-contracts';
 
 import type { SystemConfig } from '../../config/system-config.js';
@@ -18,8 +19,8 @@ import type {
 } from './gateway-control-caller-context.js';
 
 const controllerExecutionNamespace = 'controller_execution';
-const workspaceGitPushToolName = 'workspace_git_push';
-const controllerHostProbeToolName = 'controller_host_probe';
+const [controllerHostProbeToolName, workspaceGitPushToolName] =
+	gatewayControlRegisteredControllerExecutionActionIds;
 const controllerHostProbeEnvGate = 'AGENT_VM_E2E_CONTROLLER_HOST_PROBE';
 
 export interface GatewayControlControllerExecutionAuthorizationRequest {

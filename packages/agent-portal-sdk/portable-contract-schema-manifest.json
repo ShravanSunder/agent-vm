@@ -1,6 +1,7 @@
 {
 	"protocolVersion": 1,
 	"refinements": [
+		"gateway.approval.arguments-preview.utf8-bytes",
 		"gateway.attachment.unique-agent-ids",
 		"gateway.managed-agent-projection.namespace-names",
 		"portal.artifact-read.default-truncated",
@@ -3449,7 +3450,7 @@
 				],
 				"additionalProperties": false
 			},
-			"refinementIdentities": []
+			"refinementIdentities": ["gateway.approval.arguments-preview.utf8-bytes"]
 		},
 		"gateway.attachment.metadata": {
 			"jsonSchema": {

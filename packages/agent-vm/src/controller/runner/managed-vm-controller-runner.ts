@@ -57,6 +57,7 @@ export interface ManagedVmControllerRunnerExecRequest {
 	readonly cwd: string;
 	readonly environment: Readonly<Record<string, string>>;
 	readonly output: ControllerRunnerAuthorizationSnapshot['output'];
+	readonly signal?: AbortSignal;
 	readonly stdin?: string;
 	readonly timeoutMs: number;
 }
@@ -89,7 +90,10 @@ export interface ManagedVmControllerRunnerFactory {
 }
 
 export interface ManagedVmControllerRunner {
-	execute(request: unknown): Promise<ControllerExecutionResult>;
+	execute(
+		request: unknown,
+		options?: { readonly signal?: AbortSignal },
+	): Promise<ControllerExecutionResult>;
 }
 
 export interface ControllerRunnerCurrentEpochContext {
@@ -244,7 +248,10 @@ export function createManagedVmControllerRunner(
 	options: CreateManagedVmControllerRunnerOptions,
 ): ManagedVmControllerRunner {
 	return {
-		execute: async (untrustedRequest: unknown): Promise<ControllerExecutionResult> => {
+		execute: async (
+			untrustedRequest: unknown,
+			executionOptions: { readonly signal?: AbortSignal } = {},
+		): Promise<ControllerExecutionResult> => {
 			const parsedRequest = ControllerRunnerDispatchRequestSchema.safeParse(untrustedRequest);
 			if (!parsedRequest.success) {
 				return notDispatchedResult({ reason: 'public-authority-or-policy-override' });
@@ -295,16 +302,19 @@ export function createManagedVmControllerRunner(
 			});
 
 			try {
+				executionOptions.signal?.throwIfAborted();
 				const reservation = await options.operationLedger.reserve(operationAuthority);
 				if (reservation.kind === 'rejected') {
 					return notDispatchedResult({ binding, reason: reservation.reason });
 				}
 				await options.operationLedger.recordCreationStarted({ operationId: request.operationId });
 				runnerVm = await options.runnerFactory.create(options.initialAuthorization);
+				executionOptions.signal?.throwIfAborted();
 				await options.operationLedger.recordVmCreated({
 					operationId: request.operationId,
 					vmId: runnerVm.id,
 				});
+				executionOptions.signal?.throwIfAborted();
 				await runnerVm.start();
 				const hostProcessId = assertPositiveHostProcessId(runnerVm.getHostProcessId());
 				const processIdentity = await options.readProcessIdentity(hostProcessId);
@@ -336,6 +346,7 @@ export function createManagedVmControllerRunner(
 					if (!isCurrentEpochContext(options.trustedAuthorityContext, currentEpochContext)) {
 						result = notDispatchedResult({ binding, reason: 'current-epoch-changed' });
 					} else {
+						executionOptions.signal?.throwIfAborted();
 						await options.operationLedger.recordDispatchArmed({ operationId: request.operationId });
 						dispatchArmed = true;
 						await options.operationLedger.recordRunning({ operationId: request.operationId });
@@ -348,6 +359,7 @@ export function createManagedVmControllerRunner(
 							cwd: authorization.cwd.path,
 							environment: authorization.environment,
 							output: authorization.output,
+							...(executionOptions.signal === undefined ? {} : { signal: executionOptions.signal }),
 							...(request.input.stdin === undefined ? {} : { stdin: request.input.stdin }),
 							timeoutMs: authorization.cancellation.timeoutMs,
 						});

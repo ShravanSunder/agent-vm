@@ -112,6 +112,7 @@ export function createConfiguredCliManagedVmExecutor(
 	readonly operation: ConfiguredCliOperation;
 	readonly operationName: string;
 	readonly reloadOperation: () => Promise<ConfiguredCliOperation>;
+	readonly signal?: AbortSignal;
 	readonly stablePrincipal: GatewayStablePrincipalDigest;
 	readonly zoneId: string;
 }) => Promise<{
@@ -187,6 +188,7 @@ export function createConfiguredCliManagedVmExecutor(
 		if (!validation.ok) {
 			throw new ConfiguredControllerExecutionError('validation_failed', validation.error.message);
 		}
+		request.signal?.throwIfAborted();
 		const gatewayIdentity = await props.resolveGatewayIdentity(request.zoneId);
 		const initialAuthorization = authorizationSnapshot({
 			input: request.input,
@@ -219,11 +221,14 @@ export function createConfiguredCliManagedVmExecutor(
 			validatePublicInput: (input) =>
 				validateCliAllowanceInvocation({ allowance: request.operation, input }).ok,
 		});
-		const result = await runner.execute({
-			authorizationFingerprint: initialAuthorization.authorizationFingerprint,
-			input: request.input,
-			operationId,
-		});
+		const result = await runner.execute(
+			{
+				authorizationFingerprint: initialAuthorization.authorizationFingerprint,
+				input: request.input,
+				operationId,
+			},
+			request.signal === undefined ? {} : { signal: request.signal },
+		);
 		if (result.kind !== 'completed') {
 			throw new ConfiguredControllerExecutionError(
 				result.kind === 'not-dispatched'

@@ -16,6 +16,7 @@ import {
 	type ToolPortalNamespacePolicy,
 	type ToolPortalConfig,
 } from '@agent-vm/config-contracts';
+import { gatewayControlRegisteredControllerExecutionActionIds } from '@agent-vm/gateway-control-contracts';
 import type { ManagedVmImageCapability } from '@agent-vm/managed-vm';
 import type { MediatedSecretSpec, SecretRef, SecretResolver } from '@agent-vm/secret-management';
 
@@ -63,7 +64,9 @@ export interface McpPortalEffectiveConfigPlan {
 export type McpPortalEffectiveConfigWriteResult = McpPortalEffectiveConfigPlan;
 
 const effectiveConfigManifestFileName = 'tool-portal-effective-manifest.json';
-const managedControllerExecutionTools = new Set(['controller_host_probe', 'workspace_git_push']);
+const managedControllerExecutionTools: ReadonlySet<string> = new Set(
+	gatewayControlRegisteredControllerExecutionActionIds,
+);
 
 interface EffectiveConfigManifest {
 	readonly mcpConfigFile: string;

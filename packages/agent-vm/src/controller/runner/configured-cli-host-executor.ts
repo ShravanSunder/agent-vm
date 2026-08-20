@@ -96,13 +96,22 @@ export async function executeConfiguredCliOnControllerHost(props: {
 			child.kill('SIGKILL');
 			reject(error);
 		};
-		const abortExecution = (): void =>
+		const abortExecution = (): void => {
+			const reason = props.signal?.reason;
 			settleFailure(
-				new ConfiguredControllerExecutionError(
-					'cancelled',
-					'Configured CLI execution was cancelled.',
-				),
+				reason instanceof ConfiguredControllerExecutionError
+					? reason
+					: new ConfiguredControllerExecutionError(
+							'cancelled',
+							'Configured CLI execution was cancelled.',
+						),
 			);
+		};
+		props.signal?.addEventListener('abort', abortExecution, { once: true });
+		if (props.signal?.aborted === true) {
+			abortExecution();
+			return;
+		}
 
 		child.once('error', () =>
 			settleFailure(
@@ -127,7 +136,6 @@ export async function executeConfiguredCliOnControllerHost(props: {
 					),
 				timeout.resolvedTimeoutMs,
 			);
-			props.signal?.addEventListener('abort', abortExecution, { once: true });
 			child.stdin.end(props.input.stdin);
 		});
 		child.stdout.on('data', (chunk: Buffer) => {

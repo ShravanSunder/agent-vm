@@ -124,4 +124,23 @@ describe('configured CLI controller-host executor', () => {
 		).rejects.toThrow('AGENT_VM_HOST_EXECUTOR_TEST_VALUE');
 		expect(spawnMock).not.toHaveBeenCalled();
 	});
+
+	it('observes cancellation registered immediately after spawn returns', async () => {
+		process.env.AGENT_VM_HOST_EXECUTOR_TEST_VALUE = 'visible';
+		const fixture = createFakeChildProcess();
+		spawnMock.mockReturnValue(fixture.child);
+		const cancellation = new AbortController();
+		const execution = executeConfiguredCliOnControllerHost({
+			input: { argv: ['inspect'], reason: 'cancellation race proof' },
+			operation,
+			signal: cancellation.signal,
+		});
+
+		cancellation.abort(
+			new ConfiguredControllerExecutionError('cancelled', 'Controller is shutting down.'),
+		);
+
+		await expect(execution).rejects.toMatchObject({ code: 'cancelled' });
+		expect(fixture.child.kill).toHaveBeenCalledWith('SIGKILL');
+	});
 });

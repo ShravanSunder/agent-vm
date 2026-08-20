@@ -48,8 +48,21 @@ function createRunnerHandle(props: {
 			});
 		},
 		exec: async (request) => {
-			const cancellation = new AbortController();
-			const commandTimer = setTimeout(() => cancellation.abort(), request.timeoutMs);
+			const commandTimeout = new AbortController();
+			const commandTimer = setTimeout(
+				() =>
+					commandTimeout.abort(
+						new ConfiguredControllerExecutionError(
+							'timeout',
+							'Configured Managed VM execution timed out.',
+						),
+					),
+				request.timeoutMs,
+			);
+			const executionSignal =
+				request.signal === undefined
+					? commandTimeout.signal
+					: AbortSignal.any([commandTimeout.signal, request.signal]);
 			try {
 				const process = vm.exec(request.argv, {
 					cwd: request.cwd,
@@ -60,7 +73,7 @@ function createRunnerHandle(props: {
 						windowBytes: Math.max(request.output.stderrMaxBytes, request.output.stdoutMaxBytes),
 					},
 					pty: false,
-					signal: cancellation.signal,
+					signal: executionSignal,
 					...(request.stdin === undefined ? {} : { stdin: request.stdin }),
 				});
 				const stdoutChunks: Buffer[] = [];
@@ -93,11 +106,13 @@ function createRunnerHandle(props: {
 					stdout,
 				});
 			} catch (error) {
-				if (cancellation.signal.aborted) {
-					throw new ConfiguredControllerExecutionError(
-						'timeout',
-						'Configured Managed VM execution timed out.',
-					);
+				if (executionSignal.aborted) {
+					throw executionSignal.reason instanceof ConfiguredControllerExecutionError
+						? executionSignal.reason
+						: new ConfiguredControllerExecutionError(
+								'cancelled',
+								'Configured Managed VM execution was cancelled.',
+							);
 				}
 				throw error;
 			} finally {

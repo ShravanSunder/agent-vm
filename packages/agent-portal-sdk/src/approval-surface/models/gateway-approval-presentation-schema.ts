@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { ItemIdSchema } from '../../contract-primitives/models/request-id-schema.js';
+import { withPortableSuperRefinement } from '../../portable-contracts/portable-refinement-authoring.js';
 
 const MAXIMUM_APPROVAL_DISPLAY_DEPTH = 6;
 const MAXIMUM_APPROVAL_DISPLAY_ENTRIES = 32;
@@ -15,21 +16,36 @@ const credentialKeyPattern =
 const credentialValuePattern =
 	/(?:-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:bearer|basic)\s+\S+|\b(?:api[ _-]?key|token|password|secret|authorization|cookie)\s*[:=]\s*\S+)/iu;
 
-export const GatewayApprovalPresentationRequestSchema = z
-	.object({
-		allowedDecisions: z.tuple([z.literal('approve'), z.literal('deny')]),
-		challengeId: z.string().uuid(),
-		display: z
-			.object({
-				argumentsPreview: z.string().max(MAXIMUM_APPROVAL_DISPLAY_BYTES),
-			})
-			.strict(),
-		expiresAt: z.string().datetime(),
-		itemId: ItemIdSchema,
-		name: z.string().min(1).max(256),
-		namespace: z.string().min(1).max(256),
-	})
-	.strict();
+export const GatewayApprovalPresentationRequestSchema = withPortableSuperRefinement({
+	refinement: (request, context) => {
+		if (
+			new TextEncoder().encode(request.display.argumentsPreview).byteLength >
+			MAXIMUM_APPROVAL_DISPLAY_BYTES
+		) {
+			context.addIssue({
+				code: 'custom',
+				message: 'Approval argument preview exceeds the portable UTF-8 byte bound.',
+				path: ['display', 'argumentsPreview'],
+			});
+		}
+	},
+	refinementIdentity: 'gateway.approval.arguments-preview.utf8-bytes',
+	schema: z
+		.object({
+			allowedDecisions: z.tuple([z.literal('approve'), z.literal('deny')]),
+			challengeId: z.string().uuid(),
+			display: z
+				.object({
+					argumentsPreview: z.string().max(MAXIMUM_APPROVAL_DISPLAY_BYTES),
+				})
+				.strict(),
+			expiresAt: z.string().datetime(),
+			itemId: ItemIdSchema,
+			name: z.string().min(1).max(256),
+			namespace: z.string().min(1).max(256),
+		})
+		.strict(),
+});
 
 export const ApprovalPresentationOutcomeSchema = z.discriminatedUnion('kind', [
 	z.object({ kind: z.literal('approved') }).strict(),

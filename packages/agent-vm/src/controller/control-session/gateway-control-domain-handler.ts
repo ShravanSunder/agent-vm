@@ -183,6 +183,7 @@ export interface GatewayControlControllerExecutionOperations {
 			GatewayControlToolPortalControllerExecutionPayload,
 			{ readonly kind: 'configured_cli' }
 		>;
+		readonly signal: AbortSignal;
 		readonly session: GatewayControlAcceptedSessionRef;
 	}): Promise<
 		Extract<
@@ -882,6 +883,7 @@ async function executeToolPortalControllerExecution(options: {
 	readonly callerContexts: GatewayControlCallerContextRegistry;
 	readonly createdAtMs: number;
 	readonly expiresAtMs: number | undefined;
+	readonly now: () => number;
 	readonly payload: GatewayControlToolPortalControllerExecutionPayload;
 	readonly propagateMutationFailure?: boolean;
 	readonly responseToMessageId: string;
@@ -1025,11 +1027,42 @@ async function executeToolPortalControllerExecution(options: {
 			}
 		}
 		if (options.payload.kind === 'configured_cli') {
-			const result = await options.actions.executeConfiguredCli({
-				callerContext,
-				payload: options.payload,
-				session: options.session,
-			});
+			const commandCancellation = new AbortController();
+			const remainingMilliseconds =
+				options.expiresAtMs === undefined ? undefined : options.expiresAtMs - options.now();
+			let expiryTimer: ReturnType<typeof setTimeout> | undefined;
+			if (remainingMilliseconds !== undefined) {
+				if (remainingMilliseconds <= 0) {
+					commandCancellation.abort(
+						new ConfiguredControllerExecutionError(
+							'timeout',
+							'Controller execution window expired.',
+						),
+					);
+				} else {
+					expiryTimer = setTimeout(
+						() =>
+							commandCancellation.abort(
+								new ConfiguredControllerExecutionError(
+									'timeout',
+									'Controller execution window expired.',
+								),
+							),
+						remainingMilliseconds,
+					);
+				}
+			}
+			let result: Awaited<ReturnType<typeof options.actions.executeConfiguredCli>>;
+			try {
+				result = await options.actions.executeConfiguredCli({
+					callerContext,
+					payload: options.payload,
+					session: options.session,
+					signal: commandCancellation.signal,
+				});
+			} finally {
+				if (expiryTimer !== undefined) clearTimeout(expiryTimer);
+			}
 			return commandResultPayload({
 				controllerExecution: {
 					kind: 'configured_cli',
@@ -1480,6 +1513,7 @@ export function createGatewayControlDomainHandler(
 							callerContexts: options.callerContexts,
 							createdAtMs: envelope.createdAtMs,
 							expiresAtMs: envelope.expiresAtMs,
+							now,
 							payload: message.payload,
 							propagateMutationFailure: true,
 							responseToMessageId: envelope.messageId,
@@ -1994,6 +2028,7 @@ export function createGatewayControlDomainHandler(
 							callerContexts: options.callerContexts,
 							createdAtMs: envelope.createdAtMs,
 							expiresAtMs: envelope.expiresAtMs,
+							now,
 							payload: message.payload,
 							responseToMessageId: envelope.messageId,
 							session: callerContextSession,

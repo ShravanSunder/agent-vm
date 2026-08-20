@@ -33,6 +33,11 @@ export type PortableRefinementOperation =
 	  }
 	| {
 			readonly fieldNames: readonly string[];
+			readonly kind: 'maximum-utf8-bytes';
+			readonly maximum: number;
+	  }
+	| {
+			readonly fieldNames: readonly string[];
 			readonly kind: 'reject-reserved-values';
 			readonly values: readonly string[];
 	  }
@@ -157,6 +162,13 @@ export const PORTABLE_REFINEMENT_DESCRIPTORS = [
 			kind: 'default-values',
 			values: { '/requests/*/schemaDetail': 'summary' },
 		},
+	},
+	{
+		description: 'Gateway approval argument previews remain inside the portable UTF-8 byte bound.',
+		errorCode: 'gateway.approval.arguments-preview.above-maximum',
+		identity: 'gateway.approval.arguments-preview.utf8-bytes',
+		kind: 'structural-validation',
+		operation: { fieldNames: ['argumentsPreview'], kind: 'maximum-utf8-bytes', maximum: 4_096 },
 	},
 	{
 		description: 'Gateway attachment metadata cannot repeat an admitted agent identity.',

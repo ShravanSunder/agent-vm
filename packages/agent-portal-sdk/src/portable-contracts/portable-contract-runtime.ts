@@ -428,7 +428,7 @@ const canonicalGatewayContractDefinitions = {
 		schema: ApprovalPresentationOutcomeSchema,
 	},
 	'gateway.approval.presentation-request': {
-		refinementIdentities: [],
+		refinementIdentities: ['gateway.approval.arguments-preview.utf8-bytes'],
 		schema: GatewayApprovalPresentationRequestSchema,
 	},
 	'gateway.attachment.metadata': {

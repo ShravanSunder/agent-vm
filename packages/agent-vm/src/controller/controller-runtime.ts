@@ -105,6 +105,7 @@ import { OpenClawRuntimeStatusStore } from './openclaw-runtime-status.js';
 import { RequestHeartbeatRegistry } from './request-heartbeat-registry.js';
 import { executeConfiguredCliOnControllerHost } from './runner/configured-cli-host-executor.js';
 import { createConfiguredCliManagedVmExecutor } from './runner/configured-cli-managed-vm-executor.js';
+import { ConfiguredControllerExecutionError } from './runner/configured-controller-execution-error.js';
 import { acquireControllerOwnershipLock as acquireControllerOwnershipLockDefault } from './vm-ownership/controller-ownership-lock.js';
 import { createGatewayDestructionBudget } from './vm-ownership/gateway-destruction-budget.js';
 import { createGatewayOwnershipCoordinator } from './vm-ownership/gateway-ownership-coordinator.js';
@@ -491,6 +492,7 @@ async function startControllerRuntimeWithOwnershipLock(
 	controllerStateRoot: ControllerStateRoot,
 ): Promise<ControllerRuntime> {
 	const now = dependencies.now ?? Date.now;
+	const controllerShutdown = new AbortController();
 	const controllerEpoch = dependencies.controllerEpoch ?? randomUUID();
 	const gatewayControlProcessAdmissionCoordinator =
 		createGatewayControlProcessAdmissionCoordinator();
@@ -822,7 +824,8 @@ async function startControllerRuntimeWithOwnershipLock(
 				session,
 				systemConfig: options.systemConfig,
 			}),
-		executeConfiguredCli: async ({ callerContext, payload, session }) => {
+		executeConfiguredCli: async ({ callerContext, payload, session, signal }) => {
+			const executionSignal = AbortSignal.any([signal, controllerShutdown.signal]);
 			const expectedBindingRevision = payload.approvalReservation?.bindingRevision;
 			const loadCurrentOperation = async (): Promise<
 				Extract<ControllerExecutionOperation, { kind: 'configured_cli' }>
@@ -861,12 +864,17 @@ async function startControllerRuntimeWithOwnershipLock(
 			};
 			const operation = await loadCurrentOperation();
 			return operation.executionTarget.kind === 'controller_host'
-				? await executeConfiguredCliOnControllerHost({ input: payload.input, operation })
+				? await executeConfiguredCliOnControllerHost({
+						input: payload.input,
+						operation,
+						signal: executionSignal,
+					})
 				: await executeConfiguredCliInManagedVm({
 						input: payload.input,
 						operation,
 						operationName: payload.operationName,
 						reloadOperation: loadCurrentOperation,
+						signal: executionSignal,
 						stablePrincipal: callerContext.stablePrincipal,
 						zoneId: session.zoneId,
 					});
@@ -1414,6 +1422,9 @@ async function startControllerRuntimeWithOwnershipLock(
 			observedAtMs: now(),
 		});
 	} catch (error) {
+		controllerShutdown.abort(
+			new ConfiguredControllerExecutionError('cancelled', 'Controller startup was aborted.'),
+		);
 		runtimeReadiness.set('stopping');
 		controllerTelemetry?.recordControllerLifecycleEvent({
 			eventName: 'controller-start-failed',
@@ -1498,6 +1509,9 @@ async function startControllerRuntimeWithOwnershipLock(
 	return {
 		async close(): Promise<void> {
 			runtimeReadiness.set('stopping');
+			controllerShutdown.abort(
+				new ConfiguredControllerExecutionError('cancelled', 'Controller is shutting down.'),
+			);
 			controllerTelemetry?.recordControllerLifecycleEvent({
 				eventName: 'controller-stopping',
 				observedAtMs: now(),

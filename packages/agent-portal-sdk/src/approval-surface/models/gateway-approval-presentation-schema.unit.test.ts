@@ -23,6 +23,20 @@ describe('Gateway approval presentation contracts', () => {
 		expect(GatewayApprovalPresentationRequestSchema.parse(request)).toEqual(request);
 	});
 
+	it('rejects a presentation preview whose UTF-8 encoding exceeds the byte bound', () => {
+		const request = {
+			allowedDecisions: ['approve', 'deny'],
+			challengeId: '998c404a-5c35-49ea-8479-1d856b122b7b',
+			display: { argumentsPreview: '🙂'.repeat(1_025) },
+			expiresAt: '2026-08-20T21:00:00.000Z',
+			itemId: 'call-a',
+			name: 'read-file',
+			namespace: 'controller',
+		} as const;
+
+		expect(GatewayApprovalPresentationRequestSchema.safeParse(request).success).toBe(false);
+	});
+
 	it.each([
 		['standing approval decision', { kind: 'approved', scope: 'session' }],
 		['unknown decision', { kind: 'always' }],

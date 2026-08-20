@@ -126,6 +126,33 @@ def test_bridge_denial_records_no_retry_and_projects_proven_not_dispatched() -> 
     assert t.cast("JsonObject", t.cast("list[JsonObject]", result_mapping["items"])[1]["error"])["code"] == "capability_denied"
 
 
+def test_bridge_contains_presenter_failure_to_the_protected_item() -> None:
+    async def call_portal(_request: Mapping[str, object]) -> BaseModel:
+        return _model("portal.call.result", INITIAL_RESULT)
+
+    async def present(_request: BaseModel) -> BaseModel:
+        raise RuntimeError("native presenter failed")
+
+    async def decide(_request: Mapping[str, object]) -> BaseModel:
+        raise AssertionError("presenter failure must not submit a decision")
+
+    result = asyncio.run(
+        execute_portal_call_with_approval(
+            REQUEST,
+            call_portal=call_portal,
+            decide_approval=decide,
+            present_approval=present,
+        ),
+    )
+
+    result_mapping = result.model_dump(by_alias=True, exclude_none=True, mode="json")
+    result_items = t.cast("list[JsonObject]", result_mapping["items"])
+    initial_items = t.cast("list[JsonObject]", INITIAL_RESULT["items"])
+    assert result_items[0] == initial_items[0]
+    assert result_items[1]["status"] == "error"
+    assert t.cast("JsonObject", result_items[1]["error"])["code"] == "provider_unavailable"
+
+
 def test_display_sanitizer_is_deterministic_and_bounded() -> None:
     oversized = {f"field-{index:02}": "x" * 300 for index in range(40)}
     first = sanitize_gateway_approval_arguments(oversized)
