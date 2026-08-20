@@ -22,6 +22,9 @@ from agent_vm_hermes_adapter.managed_tool_portal.cache import (
     PopulationStarted,
     ReadyState,
 )
+from agent_vm_hermes_adapter.managed_tool_portal.hermes_approval_presenter import (
+    HermesGatewayApprovalRouteStore,
+)
 from agent_vm_hermes_adapter.managed_tool_portal.hermes_hooks import (
     _PreLlmCallHook,
 )
@@ -226,6 +229,7 @@ class _Runtime:
             value_model=InjectionMarker,
         )
         self.gateway_epoch = epoch
+        self.approval_routes = HermesGatewayApprovalRouteStore()
 
     def current_projection(self) -> CanonicalManagedAgentProjection:
         return self.selected_projection

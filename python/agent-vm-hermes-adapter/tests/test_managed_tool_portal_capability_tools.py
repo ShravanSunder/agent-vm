@@ -6,7 +6,10 @@ from collections.abc import Mapping
 from contextlib import contextmanager
 from unittest.mock import patch
 
-from agent_vm_agent_portal_sdk.contracts import get_portable_contract_json_schema
+from agent_vm_agent_portal_sdk.contracts import (
+    PORTABLE_CONTRACT_ADAPTERS,
+    get_portable_contract_json_schema,
+)
 from agent_vm_agent_portal_sdk.gateway_runtime_client import (
     GatewayRuntimeClient,
     GatewayRuntimeTraceContext,
@@ -213,6 +216,105 @@ class FakeGatewayRuntimeClient(GatewayRuntimeClient):
     @t.override
     async def disconnect(self) -> None:
         return None
+
+
+def portable_model(schema_id: str, value: Mapping[str, object]) -> BaseModel:
+    model = PORTABLE_CONTRACT_ADAPTERS[schema_id].validate_python(value)
+    if not isinstance(model, BaseModel):
+        raise AssertionError(f"{schema_id} did not produce a typed model")
+    return model
+
+
+class ApprovalJourneyPortalOperations:
+    def __init__(self) -> None:
+        self.calls: list[tuple[dict[str, object], dict[str, object]]] = []
+
+    async def call(
+        self,
+        request: dict[str, object],
+        *,
+        trusted_context: dict[str, object],
+    ) -> BaseModel:
+        self.calls.append((request, trusted_context))
+        if len(self.calls) == 1:
+            return portable_model(
+                "portal.call.result",
+                {
+                    "items": [
+                        {
+                            "approvalChallenge": {
+                                "challengeId": "11111111-1111-4111-8111-111111111111",
+                                "expiresAt": "2099-08-20T21:00:00.000Z",
+                            },
+                            "error": {
+                                "code": "approval_required",
+                                "message": "Approval required.",
+                            },
+                            "id": "call-1",
+                            "operationId": "operation-1",
+                            "outcome": {
+                                "certainty": "proven",
+                                "kind": "not-dispatched",
+                                "retryClass": "safe-before-dispatch",
+                            },
+                            "owningGeneration": "generation-1",
+                            "status": "approval_required",
+                        }
+                    ],
+                    "ok": False,
+                },
+            )
+        return portable_model(
+            "portal.call.result",
+            {
+                "items": [
+                    {
+                        "id": "call-1",
+                        "operationId": "operation-1",
+                        "outcome": {
+                            "certainty": "proven",
+                            "completion": "succeeded",
+                            "kind": "completed",
+                            "retryClass": "forbidden",
+                        },
+                        "owningGeneration": "generation-1",
+                        "status": "ok",
+                        "value": {"effectCount": 1},
+                    }
+                ],
+                "ok": True,
+            },
+        )
+
+
+class ApprovalJourneyOperations:
+    def __init__(self) -> None:
+        self.decisions: list[tuple[dict[str, object], dict[str, object]]] = []
+
+    async def decide(
+        self,
+        request: dict[str, object],
+        *,
+        trusted_context: dict[str, object],
+    ) -> BaseModel:
+        self.decisions.append((request, trusted_context))
+        return portable_model(
+            "gateway.approval.decision-result",
+            {
+                "kind": "recorded",
+                "state": "approved" if request["decision"] == "approve" else "denied",
+            },
+        )
+
+
+class ApprovalJourneyGatewayRuntimeClient(FakeGatewayRuntimeClient):
+    approvals: ApprovalJourneyOperations
+    portal: ApprovalJourneyPortalOperations
+
+    def __init__(self) -> None:
+        self.identity = object()
+        self.approvals = ApprovalJourneyOperations()
+        self.portal = ApprovalJourneyPortalOperations()
 
 
 class RegisteredTool:
@@ -584,7 +686,7 @@ class ManagedToolPortalCapabilityToolsTests(unittest.TestCase):
                 )
 
     def test_registered_handlers_accept_normal_hermes_model_dispatch_keywords(self) -> None:
-        adapter, _client = build_adapter()
+        adapter, client = build_adapter()
         projection = adapter.projection_for_profile("researcher")
         context = FakeHermesPluginContext()
         configure_plugin_for_profile(adapter, [projection])
@@ -600,8 +702,124 @@ class ManagedToolPortalCapabilityToolsTests(unittest.TestCase):
                         user_task="user request",
                     )
                     self.assertEqual(json.loads(result)["agent_id"], "researcher")
+            session_ids: list[object] = []
+            for call in client.portal.calls:
+                correlation = call.trusted_context["correlation"]
+                self.assertIsInstance(correlation, dict)
+                assert isinstance(correlation, dict)
+                session_ids.append(correlation["sessionId"])
+            self.assertEqual(
+                session_ids,
+                ["session-1"] * len(MANAGED_TOOL_PORTAL_TOOL_NAMES),
+            )
         finally:
             adapter.close(disconnect_gateway_runtime=False)
+
+    def test_approved_native_presentation_retries_only_the_exact_protected_item(self) -> None:
+        client = ApprovalJourneyGatewayRuntimeClient()
+        adapter = HermesManagedAdapter(
+            config=HermesManagedAdapterConfig(
+                profiles=(build_projection(agent_id="researcher"),),
+                projection_cohort_digest=PROJECTION_COHORT_DIGEST,
+                protected_hermes_home="/home/hermes/.hermes",
+            ),
+            gateway_runtime_client=client,
+        )
+        projection = adapter.projection_for_profile("researcher")
+        context = FakeHermesPluginContext()
+        configure_plugin_for_profile(adapter, [projection])
+        register(context)
+
+        async def approve_once(
+            _presenter: object,
+            session_key: str,
+            _request: BaseModel,
+        ) -> BaseModel:
+            self.assertEqual(session_key, "session-approval")
+            return portable_model(
+                "gateway.approval.presentation-outcome",
+                {"kind": "approved"},
+            )
+
+        try:
+            with patch(
+                "agent_vm_hermes_adapter.managed_tool_portal.hermes_approval_presenter.HermesGatewayApprovalPresenter.present",
+                new=approve_once,
+            ):
+                result = context.handler_for("tool_portal_call")(
+                    valid_request_for("tool_portal_call"),
+                    session_id="session-approval",
+                )
+        finally:
+            adapter.close(disconnect_gateway_runtime=False)
+
+        self.assertEqual(json.loads(result)["items"][0]["value"], {"effectCount": 1})
+        self.assertEqual(len(client.portal.calls), 2)
+        self.assertEqual(
+            [call[0]["calls"] for call in client.portal.calls],
+            [
+                valid_request_for("tool_portal_call")["calls"],
+                valid_request_for("tool_portal_call")["calls"],
+            ],
+        )
+        self.assertEqual(
+            client.approvals.decisions[0][0],
+            {
+                "challengeId": "11111111-1111-4111-8111-111111111111",
+                "decision": "approve",
+            },
+        )
+        for _request, trusted_context in [
+            *client.portal.calls,
+            *client.approvals.decisions,
+        ]:
+            correlation = trusted_context["correlation"]
+            self.assertIsInstance(correlation, dict)
+            assert isinstance(correlation, dict)
+            self.assertEqual(correlation["sessionId"], "session-approval")
+
+    def test_denied_native_presentation_records_zero_retry_effects(self) -> None:
+        client = ApprovalJourneyGatewayRuntimeClient()
+        adapter = HermesManagedAdapter(
+            config=HermesManagedAdapterConfig(
+                profiles=(build_projection(agent_id="researcher"),),
+                projection_cohort_digest=PROJECTION_COHORT_DIGEST,
+                protected_hermes_home="/home/hermes/.hermes",
+            ),
+            gateway_runtime_client=client,
+        )
+        projection = adapter.projection_for_profile("researcher")
+        context = FakeHermesPluginContext()
+        configure_plugin_for_profile(adapter, [projection])
+        register(context)
+
+        async def deny_once(
+            _presenter: object,
+            _session_key: str,
+            _request: BaseModel,
+        ) -> BaseModel:
+            return portable_model(
+                "gateway.approval.presentation-outcome",
+                {"kind": "denied"},
+            )
+
+        try:
+            with patch(
+                "agent_vm_hermes_adapter.managed_tool_portal.hermes_approval_presenter.HermesGatewayApprovalPresenter.present",
+                new=deny_once,
+            ):
+                result = context.handler_for("tool_portal_call")(
+                    valid_request_for("tool_portal_call"),
+                    session_id="session-denied",
+                )
+        finally:
+            adapter.close(disconnect_gateway_runtime=False)
+
+        result_mapping = json.loads(result)
+        self.assertFalse(result_mapping["ok"])
+        self.assertEqual(result_mapping["items"][0]["error"]["code"], "capability_denied")
+        self.assertEqual(len(client.portal.calls), 1)
+        self.assertEqual(client.approvals.decisions[0][0]["decision"], "deny")
 
     def test_pre_gateway_dispatch_admits_only_explicit_managed_profiles(self) -> None:
         adapter, _client = build_adapter()

@@ -13,6 +13,9 @@ from agent_vm_hermes_adapter.managed_profile_adapter import (
     HermesSessionSource,
 )
 from agent_vm_hermes_adapter.managed_tool_portal.cache import MarkInserted, PluginStateCache
+from agent_vm_hermes_adapter.managed_tool_portal.hermes_approval_presenter import (
+    HermesGatewayApprovalRouteStore,
+)
 from agent_vm_hermes_adapter.managed_tool_portal.inventory import InventoryCoordinator
 from agent_vm_hermes_adapter.managed_tool_portal.inventory_contracts import InventoryProjection
 from agent_vm_hermes_adapter.managed_tool_portal.models import (
@@ -52,6 +55,9 @@ class ManagedToolPortalHookRuntime(t.Protocol):
 
     @property
     def gateway_epoch(self) -> str: ...
+
+    @property
+    def approval_routes(self) -> HermesGatewayApprovalRouteStore: ...
 
 
 @t.runtime_checkable
@@ -151,7 +157,7 @@ class _PreGatewayDispatchHook:
         session_store: object = None,
         telemetry_schema_version: object = None,
     ) -> dict[str, str]:
-        del gateway, session_store, telemetry_schema_version
+        del session_store, telemetry_schema_version
         if not isinstance(event, HermesGatewayMessageEvent):
             return {
                 "action": "skip",
@@ -164,6 +170,10 @@ class _PreGatewayDispatchHook:
                 "action": "skip",
                 "reason": "managed Hermes profile origin was not admitted",
             }
+        _ = self._runtime.approval_routes.capture(
+            gateway=gateway,
+            source=event.source,
+        )
         return {"action": "allow"}
 
 
@@ -420,7 +430,6 @@ class _OnSessionEndHook:
         telemetry_schema_version: object = None,
     ) -> None:
         del (
-            session_id,
             task_id,
             api_request_id,
             failed,
@@ -431,6 +440,8 @@ class _OnSessionEndHook:
             conversation_history,
             telemetry_schema_version,
         )
+        if isinstance(session_id, str) and session_id:
+            self._runtime.approval_routes.clear(session_id)
         if self._runtime.telemetry.observer_hooks_enabled:
             self._runtime.framework_observability.on_session_end(
                 turn_id=turn_id,

@@ -128,6 +128,7 @@ async def execute_portal_call_with_approval(
     *,
     call_portal: PortalCall,
     decide_approval: DecideApproval,
+    initial_result: BaseModel | None = None,
     present_approval: PresentApproval,
 ) -> BaseModel:
     """Run one Portal call, present protected items, and retry only approved items."""
@@ -137,7 +138,7 @@ async def execute_portal_call_with_approval(
     request_mapping = _model_mapping(validated_request)
     original_calls = t.cast("list[JsonObject]", request_mapping["calls"])
     call_by_id = {t.cast("str", call["id"]): call for call in original_calls}
-    initial_result = await call_portal(request_mapping)
+    initial_result = await call_portal(request_mapping) if initial_result is None else initial_result
     initial_mapping = _model_mapping(initial_result)
     final_items: list[JsonObject] = []
 
@@ -188,7 +189,9 @@ async def execute_portal_call_with_approval(
                 continue
             decision_result = {"kind": "rejected", "reason": "already-decided"}
 
-        if decision_name == "approve" and (decision_result.get("kind") == "recorded" or decision_result.get("reason") == "already-decided"):
+        if decision_name == "approve" and (
+            (decision_result.get("kind") == "recorded" and decision_result.get("state") == "approved") or decision_result.get("reason") == "already-decided"
+        ):
             retry_request = {**request_mapping, "calls": [original_call]}
             retry_result = _model_mapping(await call_portal(retry_request))
             retry_items = t.cast("list[JsonObject]", retry_result["items"])
@@ -196,7 +199,7 @@ async def execute_portal_call_with_approval(
                 raise ValueError("Approved Portal retry did not return the exact protected item.")
             final_items.append(retry_items[0])
             continue
-        if decision_name == "deny" and decision_result.get("kind") == "recorded":
+        if decision_name == "deny" and decision_result.get("kind") == "recorded" and decision_result.get("state") == "denied":
             final_items.append(_project_non_dispatch_result(item, code="capability_denied"))
             continue
         final_items.append(
