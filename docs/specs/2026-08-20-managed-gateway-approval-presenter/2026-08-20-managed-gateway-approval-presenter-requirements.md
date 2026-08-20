@@ -62,7 +62,7 @@ This document owns why that capability exists, who needs it, and its boundary. T
 
 ## Boundary
 
-The work may change managed Tool Portal configuration contracts and generated JSON Schema, controller-execution catalog composition, portable broad-CLI call contracts, CLI allowance validation, controller host and operation-scoped ManagedVm dispatch integration, Gateway Runtime and Gateway Control contracts, approval authority integration, managed Gateway lifecycle capability declarations, and the first framework adapter/presenter implementation.
+The work may change managed Tool Portal configuration contracts and generated JSON Schema, controller-execution catalog composition, portable broad-CLI call contracts, CLI allowance validation, controller host and operation-scoped ManagedVm dispatch integration, Gateway Runtime and Gateway Control contracts, approval authority integration, managed Gateway lifecycle capability declarations, and the first framework adapter/presenter implementation. The generic contracts remain framework-neutral, but Hermes is the only framework presenter implemented in this release; OpenClaw and Worker receive no presenter implementation.
 
 The work remains generic above a framework presenter and above a configured executable. A concrete CLI, deployment, agent, zone, or human-data policy is an example or consumer of this system, not design authority for it.
 
@@ -72,7 +72,7 @@ The work remains generic above a framework presenter and above a configured exec
 - No per-command public input schema, argv template, or mandatory per-flag allowlist for a broad CLI allowance.
 - No caller-authored shell command string and no shell evaluation of caller tokens.
 - No arbitrary caller-selected executable, prefix, cwd, environment, credential, egress policy, target, or output policy.
-- No generic credential profile/reference or controller-materialized environment for `configured_cli`. Credentialed operations require promotion to a reviewed `registered_action` until a separate credential authority is authorized.
+- No generic credential profile/reference, authored environment values, secret references, or credential-bearing environment materialization for `configured_cli`. The reviewed `empty | inherit_allowlist` policy may copy only named existing non-secret controller-process values; credentialed operations require promotion to a reviewed `registered_action` until a separate credential authority is authorized.
 - No configurable stderr redaction profile. `configured_cli` may expose no stderr or one code-owned fixed safe summary.
 - No generic controller-host filesystem sandbox, network/egress sandbox, artifact capture, custody mode, or Managed VM containment guarantee in this release. The reviewed executable and admitted command paths run with the controller process's host OS authority.
 - No renaming, replacement, or reuse of shipping `tool_vm_runner` for operation-scoped ephemeral execution.
@@ -92,6 +92,8 @@ The work remains generic above a framework presenter and above a configured exec
 - No new external relay service, queue, database, or approval ledger.
 - No automatic dispatch after a Gateway process crash unless the exact call is submitted again and the controller independently admits it.
 - No simultaneous implementation of every managed framework presenter; one presenter proves the generic contract.
+- No OpenClaw or Worker approval presenter, framework UI, or adapter implementation in this release.
+- No upstream Hermes change, fork, release, or private monkeypatch. The Hermes presenter integrates through the pinned runtime surface already supplied to the in-repo adapter.
 
 ## Accepted complexity
 

@@ -22,7 +22,7 @@ Shipping `tool_vm_runner` is not part of this umbrella. It remains the Gateway-o
 | `packages/managed-vm/src/managed-vm-contracts.ts` and application composition | Neutral `ManagedVmProvider` exposes image, factory, exact-termination, and VM exec capabilities. | Reuse the provider boundary to resolve immutable prepared images and create one code-owned runner VM per operation. |
 | `packages/gateway-runtime/src/backends/tool-vm-runner-backend-port.ts` | Acquires current caller binding and uses `StrictToolVmSshClient` directly for command/file/process operations. | Intentionally unchanged; add regression enforcement that it makes no per-command controller execution RPC. |
 | `packages/gateway-control-contracts/src/gateway-runtime-portal-semantic-revision.ts` | Controller host binding revision hashes only the backend kind. | Hash normalized controller execution policy including target, timeout, and immutable image fingerprint. |
-| Hermes adapter tool handler | Returns `approval_required` as ordinary output and discards `session_id`. | Preserve trusted framework context and use the request-bound Hermes Gateway Approval Interaction before private decision and exact retry. |
+| Hermes adapter tool handler and `pre_gateway_dispatch` hook | Returns `approval_required` as ordinary output, discards `session_id`, and currently discards the hook-provided live Gateway object. | Preserve the pinned Hermes Gateway/session route in the in-repo adapter, present the request through the selected native adapter, then perform private decision and exact retry. OpenClaw and Worker remain unsupported presenters. |
 
 Existing Tool Portal call policy, controller approval ledger, caller-context registration, private UDS, Gateway Control session, registered action implementations, Managed VM provider abstraction, and leased Tool VM SSH backend remain authoritative.
 
@@ -111,10 +111,9 @@ tool_vm_runner → current caller Tool VM binding → strict SSH → leased Tool
 | Controller Host CLI Executor | Direct child argv/stdin/output/runtime and host certainty | Dispatcher | Host execution behavior changes. |
 | Ephemeral Managed VM Runner | Operation ledger, VM factory/lifecycle, guest exec, containment certainty | Dispatcher | Isolated target behavior changes. |
 | Ephemeral Managed VM Factory | Immutable image to code-owned `ManagedVmCreateRequest` | VM runner | Runner construction policy changes. |
-| Managed VM Guest-Process Start Observation | Exact provider event establishing when guest command runtime begins | VM runner timeout owner | Managed VM exec-start evidence changes. |
 | Fixed CLI stderr sanitizer | Code-owned 4,096-byte safe summary/fallback | Both configured targets | Summary behavior changes. |
 | Framework Approval Bridge | Portable request + framework context, decision, exact retry, batch merge | Hermes adapter | Approval orchestration changes. |
-| Hermes Gateway Approval Interaction | Session/request pending state, actor admission, native rendering/callback cleanup | Framework bridge | Upstream interaction API changes. |
+| Hermes Gateway Approval Interaction | Session/request pending state, existing actor admission, native rendering/callback cleanup | Framework bridge | Pinned Hermes route/interaction binding changes. |
 | Controller Approval Ledger | Exact challenge/decision/expiry/reservation/arm | Tool Portal/controller handler | Approval authority changes. |
 | Tool VM Runner Backend | Current binding, strict SSH, retained process groups/artifacts | Tool Portal only | Intentionally unchanged. |
 
@@ -343,6 +342,8 @@ expiresAtMs = now
 
 Approval waiting occurs before the controller execution RPC and is excluded. The controller repeats the derivation from current trusted policy and rejects an envelope whose response window does not match. The caller/Gateway cannot provide a deadline.
 
+Gateway Control uses this resolved window for the `controller_execution` result wait instead of the current fixed controller-host-action timeout entry. The transport carries no caller-authored timeout field and introduces no second clock or deadline authority.
+
 ### Result certainty is target-specific
 
 One misleading common process result is forbidden. Both branches eventually project into the portable Portal algebra, but they retain different internal evidence:
@@ -363,21 +364,7 @@ type EphemeralManagedVmExecutionResult =
 
 Host pre-spawn is proven not dispatched. After host start, observed direct-child exit/termination does not prove descendant or external-effect containment; retry remains manual/forbidden according to the portable outcome. VM safe terminal results require the lifecycle ledger to record positive containment after close/exact termination. Dispatch-armed or containment-unproven always maps to ambiguous/forbidden. Every mapper exhaustively switches its own union and ends in `never`.
 
-The current neutral `ManagedVm.exec` result proves eventual completion but exposes no distinct guest-start event. The target therefore adds one narrow provider observation required for R14/R20 timing:
-
-```ts
-interface ManagedVmObservedExecRequest {
-  readonly argv: readonly string[]
-  readonly cwd: string
-  readonly environment: Readonly<Record<string, string>>
-  readonly stdin: string | Uint8Array | undefined
-  readonly output: ManagedVmExecStreamingOptions
-  readonly signal: AbortSignal
-  readonly onGuestProcessStarted: () => void
-}
-```
-
-The production runner handle owns this interface and adapts it to the selected `ManagedVmProvider`. It emits `onGuestProcessStarted` exactly once only after the provider accepts guest process creation, before output/result delivery. The timeout owner arms its monotonic clock on that event. Provisioning/setup before the callback cannot consume command runtime; absent or duplicate observation fails closed rather than inferring start from first output or VM boot.
+The current neutral `ManagedVm.exec` surface has no separate guest-start acknowledgement. The runner therefore excludes VM provisioning and final admission from command runtime, then arms the monotonic command timer immediately before invoking `ManagedVm.exec`. This uses the existing provider contract and requires no upstream Gondolin change or new provider observation system.
 
 ## Configuration compilation and freshness
 
@@ -393,6 +380,8 @@ authored config + registered definitions + prepared image inventory
  normalized registry    safe projection   policy revision
  controller-only        Gateway-only      semantic cohort
 ```
+
+The prepared image inventory is supplied by the existing application image-preparation path and `ManagedVmImageCapability.prepareImage`; this design adds no image-profile registry or second image authority. The compiler consumes the resolved immutable reference/fingerprint already produced by that owner.
 
 For every effective profile the compiler:
 
@@ -429,7 +418,7 @@ Path resolution is exact leading-token equality. Configuration guarantees one ma
 - punctuation remains literal data because neither target invokes a shell;
 - control characters and invalid stdin fail before target process start.
 
-Quick input resolves 5,000 ms and rejects `timeoutMs`. Open input resolves omitted timeout to 120,000 ms and accepts only positive integers through 28,800,000 ms. The command clock begins on host `spawn` success or Managed VM guest process start—not at approval, controller request acceptance, image resolution, VM creation, VM start, or identity publication.
+Quick input resolves 5,000 ms and rejects `timeoutMs`. Open input resolves omitted timeout to 120,000 ms and accepts only positive integers through 28,800,000 ms. The command clock begins on host `spawn` success or immediately before `ManagedVm.exec` after provisioning and final admission—not at approval, controller request acceptance, image resolution, VM creation, VM start, or identity publication.
 
 ## Catalog and Gateway composition
 
@@ -495,8 +484,8 @@ configured_cli request
   → record VM id + start + host-process identity
   → recheck authorization/epochs/image fingerprint
   → record dispatch-armed/running
-  → observed vm.exec([executable, ...prefix, ...argv], { pty:false, shell:none })
-  → exact guest-process-start event → arm command clock
+  → arm command clock
+  → vm.exec([executable, ...prefix, ...argv], { pty:false, shell:none })
   → bounded stdin/output/timeout/cancellation
   → record result
   → record containment-started → close/exact termination → contained
@@ -559,9 +548,11 @@ user → Hermes tool handler → initial portal.call
   ← replacement item merged by original id/order
 ```
 
-The upstream Hermes component owns `pending[(session_key, request_id)]`, payload `gwappr:<request_id>:approve|deny`, matching originating surface/session/request, existing `_is_user_authorized(SessionSource)`, bounded unauthorized feedback, and exact cleanup on admitted resolution, expiry, cancellation, session end, or Gateway shutdown. Unauthorized interaction is not a presenter outcome and never removes the entry. Native identity remains framework-owned.
+The in-repo Hermes adapter owns `pending[(session_key, request_id)]`, payload `gwappr:<request_id>:approve|deny`, matching originating surface/session/request, bounded unauthorized feedback, and exact cleanup on admitted resolution, expiry, cancellation, session end, or Gateway shutdown. Unauthorized interaction is not a presenter outcome and never removes the entry. Native identity remains framework-owned.
 
-The Agent VM handler preserves trusted `session_id` rather than deleting it, resolves an immutable route context from Hermes session ownership, and passes only sanitized display/choices to the public upstream API. The API bypasses Hermes command-approval FIFO/YOLO/session/permanent caches. Upstream must merge/release this verified API; Agent VM then pins the first immutable revision containing it before `managed_gateway` preflight can succeed. No private monkeypatch or fork is allowed.
+The existing pinned Hermes `pre_gateway_dispatch` hook already supplies the live Gateway object and `MessageEvent.source`. The Agent VM hook preserves a bounded immutable route containing the admitted profile/session source, the Gateway-selected platform adapter from `_adapter_for_source(source)`, and the existing actor-admission callback `_is_user_authorized(source)`. The tool handler preserves trusted `session_id` rather than deleting it and uses that route to call the adapter's existing native interaction surface. This is a version-pinned in-repo integration: it changes no upstream Hermes source, creates no fork or monkeypatch, and does not reuse Hermes command-approval FIFO/YOLO/session/permanent caches.
+
+The generic presentation request/outcome and Framework Approval Bridge remain framework-neutral. Hermes is the only concrete presenter wired in this release. OpenClaw and Worker lifecycles declare no presenter capability, receive no adapter/UI implementation, and fail preflight if selected for `managed_gateway` approval.
 
 Gateway Runtime exposes `approval.decide` only over authenticated private UDS. It validates the original trusted context, derives stable principal, and sends challenge id + decision over Gateway Control. The controller selects the sole managed authority and calls the existing ledger. Presenter outcome alone never authorizes execution.
 
@@ -626,11 +617,11 @@ Host termination does not equal containment of descendants or external effects.
 | RPC response window mismatch | Controller resolver | Stale/not authorized before target dispatch. |
 | Policy/target/timeout/image changes after challenge | Registry/ledger | Stale fingerprint; zero effects; new intent required. |
 | Host cwd/env/executable unavailable | Host executor | Proven not-started. |
-| Host timeout/cancel/overflow after start | Host executor | Terminate direct child; possible effects remain; no automatic replay. |
+| Host controller-owned timeout/cancel/overflow after start | Host executor | Abort/terminate the direct child through the call-scoped signal; possible effects remain; no automatic replay. |
 | VM image/setup/identity failure before arm | VM runner/ledger | Proven runner-setup-failed; cleanup attempted. |
 | VM failure after arm | VM runner | Ambiguous dispatch-armed until containment. |
 | VM close/exact termination cannot prove absence | VM runner/ledger | Ambiguous containment-unproven; successor blocked. |
-| VM guest timeout/cancel | VM runner | Close/exact termination; safe terminal only if contained, otherwise ambiguous. |
+| VM controller-owned timeout/cancel | VM runner | Abort the existing `ManagedVm.exec` call, then close/exact termination; safe terminal only if contained, otherwise ambiguous. No Gateway cancellation RPC is added. |
 | Fixed stderr sanitizer failure | Code-owned sanitizer | Fixed non-secret unavailable summary; raw stderr hidden. |
 | Tool VM binding/SSH failure | Existing Tool VM runner | Existing not-bound/ambiguous result; no fallback to controller execution. |
 | Unauthorized native actor | Hermes interaction | Fixed bounded feedback, pending prompt/challenge unchanged, no decision/effect. |
@@ -650,6 +641,7 @@ Neither target auto-replays after process start/dispatch arm. Recovery truth is 
 - Host configured operations may run concurrently; no generic CLI lock is invented. Registered definitions retain domain locks.
 - VM provisioning and approval waiting do not consume command runtime. One injected monotonic clock boundary begins at target process start.
 - RPC response window bounds provisioning + runtime + cleanup/delivery, while command timeout bounds only execution.
+- The derived RPC lifetime and controller shutdown are the only target cancellation owners; Gateway/framework/model payloads gain no cancellation operation.
 - Output streams are drained concurrently and bounded per stream.
 - Hermes pending entries serialize exact `(session_key, request_id)` resolution; unauthorized/mismatched callbacks cannot remove them.
 - `tool_vm_runner` retains existing active-use/current-generation checks and process-group lifecycle independently.
@@ -692,7 +684,7 @@ Host configured CLI is uncredentialed but inherits controller OS filesystem/netw
 | Gateway Control | Outer `registered_action | configured_cli` | Old peers fail protocol/preflight; no trusted-field fallback. |
 | Host executor | New production direct executor | Feature remains disabled until exact release is present. |
 | Ephemeral target | Existing scaffold + new production factory/composition | Feature remains disabled until real VM proof passes. |
-| Hermes interaction | First immutable upstream release with public API | Managed authority unavailable until pinned capability is present. |
+| Hermes interaction | In-repo adapter against the pinned Gateway hook/adapter surface | Hermes declares presenter capability; OpenClaw and Worker remain unsupported with no fallback. |
 | Tool VM runner | Existing backend/SSH contracts | No schema, call path, or runtime cutover. |
 | Approval records | Existing ledger + managed operator variant | Old semantic intent becomes stale, never migrated into dispatch. |
 
@@ -730,7 +722,7 @@ It proves:
 - forged target/image/policy/deadline fails before controller execution;
 - quick/open public schemas and controller-derived RPC windows agree;
 - approval-free and approved calls select the configured fake target once; denial/stale/changed target/timeout/image selects zero;
-- requested/resolved timeout is exact intent and runtime starts only on fake process-start event;
+- requested/resolved timeout is exact intent and runtime starts only on host start or the post-provisioning `ManagedVm.exec` boundary;
 - typed registered and both configured targets coexist under one catalog/policy/result path;
 - current policy reload, applicability, batches, bearer approval, unsupported presenter, wrong principal, unauthorized actor, and crash-before-retry retain settled behavior;
 - ephemeral fake provider observes one operation reservation/create/start/identity/arm/exec/close sequence;
@@ -749,16 +741,16 @@ Real `ManagedVmProvider`, production ephemeral factory, production runner, opera
 - prepared immutable image/fingerprint resolution;
 - one fresh VM and one code-owned create request with COW rootfs, no mounts, no SSH enabling/egress, no lease/binding, no reuse/adoption/replacement, no mediation/secrets/TCP mappings, fixed resources;
 - exact guest argv/stdin/guest cwd/empty-or-allowlisted environment;
-- exactly one provider guest-process-start observation before the command timer is armed;
+- command timer arms immediately before `ManagedVm.exec`, after image resolution, VM creation/start, identity publication, and final admission;
 - `allowedHosts: []` network denial and explicitly allowed-host behavior;
-- provisioning excluded from command runtime and clock starts on guest process start;
+- provisioning excluded from command runtime and the clock starts immediately before `ManagedVm.exec`;
 - output/timeout/cancel behavior, identity record before arm, close/exact termination, positive containment, and successor blocking when containment is unproven.
 
 This is the minimum proof of V18. Fake runner/provider evidence cannot substitute.
 
 ### Hermes e2e floor
 
-Updated immutable Hermes image plus real controller, Runtime, Tool Portal, native presenter, ledger, target dispatcher, production host fixture, and real Managed VM fixture prove admitted approval dispatches exactly once on each target; denial/unauthorized actor/changed target or timeout/stale image/duplicate/session mismatch dispatch zero; unauthorized feedback leaves challenge pending and sends no decision RPC; mixed batch order remains stable; crash before retry produces zero effects; and no credential, native identity, target policy, reservation, raw deadline, or unredacted content leaks.
+The updated in-repo Hermes adapter installed on the pinned immutable Hermes image, plus real controller, Runtime, Tool Portal, native presenter, ledger, target dispatcher, production host fixture, and real Managed VM fixture prove admitted approval dispatches exactly once on each target; denial/unauthorized actor/changed target or timeout/stale image/duplicate/session mismatch dispatch zero; unauthorized feedback leaves challenge pending and sends no decision RPC; mixed batch order remains stable; crash before retry produces zero effects; and no credential, native identity, target policy, reservation, raw deadline, or unredacted content leaks.
 
 ### Leased Tool VM regression floor
 
@@ -811,4 +803,6 @@ Stable specification identities are all realized without supersession: R1 select
 - No host containment claim: host target proves invocation, I/O, and runtime only.
 - No per-CLI grammar mirror: executable/image upgrade reopens ordinary admitted grammar.
 - No presenter registry, identity federation, standing approval, or durable presentation state: one first presenter and framework-owned actor identity are sufficient.
+- No OpenClaw or Worker presenter: the generic contract ships with only the Hermes adapter implementation.
+- No upstream framework/provider work: pinned in-repo adapter and existing ManagedVm contracts are the implementation boundary.
 - No automatic dispatch recovery: a current exact call must re-enter controller admission.
