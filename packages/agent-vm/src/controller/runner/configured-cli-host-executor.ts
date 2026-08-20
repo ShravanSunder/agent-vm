@@ -1,8 +1,12 @@
 import { spawn } from 'node:child_process';
 
 import type { ConfiguredCliInput, ControllerExecutionOperation } from '@agent-vm/config-contracts';
-import { resolveCliAllowanceTimeout, validateCliAllowanceInvocation } from '@agent-vm/tool-portal';
+import {
+	resolveCliAllowanceTimeout,
+	validateCliAllowanceInvocation,
+} from '@agent-vm/tool-portal/cli-allowances';
 
+import { fixedSafeConfiguredCliStderrSummary } from './configured-cli-output.js';
 import { ConfiguredControllerExecutionError } from './configured-controller-execution-error.js';
 
 type ConfiguredCliOperation = Extract<ControllerExecutionOperation, { kind: 'configured_cli' }>;
@@ -24,22 +28,6 @@ function resolveEnvironment(
 			return value === undefined ? [] : [[name, value]];
 		}),
 	);
-}
-
-function truncateUtf8(value: Buffer, maximumBytes: number): string {
-	return value.subarray(0, maximumBytes).toString('utf8');
-}
-
-function fixedSafeStderrSummary(stderr: Buffer): string {
-	try {
-		const sanitized = stderr
-			.toString('utf8')
-			.replaceAll(/\b(?:token|password|secret|authorization)\s*[:=]\s*\S+/giu, '[REDACTED]')
-			.replaceAll(/\b(?:Bearer|Basic)\s+\S+/giu, '[REDACTED]');
-		return truncateUtf8(Buffer.from(sanitized, 'utf8'), 4_096);
-	} catch {
-		return 'Command stderr summary unavailable.';
-	}
 }
 
 function appendBoundedChunk(props: {
@@ -195,7 +183,7 @@ export async function executeConfiguredCliOnControllerHost(props: {
 				exitCode: exitCode ?? -1,
 				...(props.operation.output.modelVisibleStderr === 'fixed_safe_summary' &&
 				stderr.byteLength > 0
-					? { stderrSummary: fixedSafeStderrSummary(stderr) }
+					? { stderrSummary: fixedSafeConfiguredCliStderrSummary(stderr) }
 					: {}),
 				stderrTruncated,
 				stdout: Buffer.concat(stdoutChunks).toString('utf8'),

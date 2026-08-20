@@ -19,21 +19,27 @@ import {
 	type CreateManagedVmControllerRunnerOptions,
 	type ManagedVmControllerRunnerFactory,
 	type ManagedVmControllerRunnerExecRequest,
+	type ManagedVmControllerRunnerExecResult,
 	type ManagedVmControllerRunnerHandle,
 } from './managed-vm-controller-runner.js';
 
 const trustedAuthorization = {
-	artifacts: { allowedArtifactIds: ['result-json'], maxBytes: 4096 },
 	authorizationFingerprint: 'fingerprint-a',
-	cancellation: { deadlineMs: 30_000, mode: 'controller-safety-cancel' },
-	credentials: [{ credentialId: 'registry-read', injection: 'http-mediation' }],
+	cancellation: { timeoutMs: 30_000 },
 	cwd: { kind: 'fixed', path: '/work' },
 	egress: { allowedHosts: ['registry.npmjs.org'] },
 	environment: { AGENT_VM_OPERATION_ID: 'operation-a' },
 	executablePath: '/usr/local/bin/npm',
+	imageFingerprint: 'image-fingerprint-a',
+	imageReference: '/images/runner-a',
 	mandatoryArgvPrefix: ['view'],
-	output: { stderr: 'stream', stdout: 'stream', windowBytes: 65_536 },
-	target: { kind: 'new-runner-vm', zoneId: 'zone-a' },
+	output: {
+		modelVisibleStderr: 'fixed_safe_summary',
+		overflow: 'truncate',
+		stderrMaxBytes: 65_536,
+		stdoutMaxBytes: 65_536,
+	},
+	target: { kind: 'ephemeral_managed_vm', zoneId: 'zone-a' },
 } as const satisfies ControllerRunnerAuthorizationSnapshot;
 
 const trustedAuthorityContext = {
@@ -49,6 +55,13 @@ const observedProcessIdentity = {
 	lstart: 'Mon Jul 13 18:00:00 2026',
 } as const satisfies ProcessIdentity;
 
+const successfulExecutionResult = {
+	exitCode: 0,
+	stderrTruncated: false,
+	stdout: 'runner-output',
+	stdoutTruncated: false,
+} as const satisfies ManagedVmControllerRunnerExecResult;
+
 const testLedgerRuntime = {
 	clock: { now: (): Date => new Date('2026-07-13T18:00:00.000Z') },
 } satisfies CreateControllerRunnerOperationLedgerProps['runtime'];
@@ -57,8 +70,8 @@ function createDispatchRequest(
 	overrides: Partial<ControllerRunnerDispatchRequest> = {},
 ): ControllerRunnerDispatchRequest {
 	return {
-		arguments: ['@agent-vm/agent-vm', 'version'],
 		authorizationFingerprint: trustedAuthorization.authorizationFingerprint,
+		input: { argv: ['@agent-vm/agent-vm', 'version'], reason: 'integration proof' },
 		operationId: 'operation-a',
 		...overrides,
 	};
@@ -71,9 +84,13 @@ function createRunnerFactory(
 	} = {},
 ): {
 	readonly closeRunner: Mock<() => Promise<void>>;
-	readonly createRunner: Mock<() => Promise<ManagedVmControllerRunnerHandle>>;
+	readonly createRunner: Mock<
+		(
+			_authorization: ControllerRunnerAuthorizationSnapshot,
+		) => Promise<ManagedVmControllerRunnerHandle>
+	>;
 	readonly executeRunner: Mock<
-		(request: ManagedVmControllerRunnerExecRequest) => Promise<{ readonly exitCode: 0 }>
+		(request: ManagedVmControllerRunnerExecRequest) => Promise<ManagedVmControllerRunnerExecResult>
 	>;
 	readonly factory: ManagedVmControllerRunnerFactory;
 	readonly handle: ManagedVmControllerRunnerHandle;
@@ -82,13 +99,11 @@ function createRunnerFactory(
 	const closeRunner = vi.fn(async (): Promise<void> => {
 		observedEvents.push('runner-closed');
 	});
-	const executeRunner = vi.fn(
-		async (request: ManagedVmControllerRunnerExecRequest): Promise<{ readonly exitCode: 0 }> => {
-			observedEvents.push('dispatch-started');
-			await props.beforeExec?.(request);
-			return { exitCode: 0 };
-		},
-	);
+	const executeRunner = vi.fn(async (request: ManagedVmControllerRunnerExecRequest) => {
+		observedEvents.push('dispatch-started');
+		await props.beforeExec?.(request);
+		return successfulExecutionResult;
+	});
 	const handle = {
 		close: closeRunner,
 		exec: executeRunner,
@@ -98,7 +113,11 @@ function createRunnerFactory(
 			observedEvents.push('runner-started');
 		}),
 	} satisfies ManagedVmControllerRunnerHandle;
-	const createRunner = vi.fn(async (): Promise<ManagedVmControllerRunnerHandle> => handle);
+	const createRunner = vi.fn(
+		async (
+			_authorization: ControllerRunnerAuthorizationSnapshot,
+		): Promise<ManagedVmControllerRunnerHandle> => handle,
+	);
 	return {
 		closeRunner,
 		createRunner,
@@ -117,6 +136,7 @@ function createRunnerOptions(props: {
 		createRunnerId: (request: ControllerRunnerDispatchRequest): string => {
 			return `runner-${request.operationId}`;
 		},
+		initialAuthorization: trustedAuthorization,
 		operationLedger: props.operationLedger,
 		readCurrentEpochContext: async () => props.currentEpochContext ?? trustedAuthorityContext,
 		readProcessIdentity: vi.fn(async (hostProcessId: number) => {
@@ -127,7 +147,7 @@ function createRunnerOptions(props: {
 			trustedAuthorization,
 		runnerFactory: props.runnerFactory,
 		trustedAuthorityContext,
-		validatePublicArguments: (): boolean => true,
+		validatePublicInput: (): boolean => true,
 	};
 }
 
@@ -175,7 +195,7 @@ describe('managed VM controller runner durable integration', () => {
 			diagnostics: [],
 			kind: 'completed',
 			retryClass: 'forbidden',
-			value: { exitCode: 0 },
+			value: successfulExecutionResult,
 		});
 		await expect(operationLedger.load('operation-a')).resolves.toMatchObject({
 			containment: 'proven',
@@ -262,7 +282,7 @@ describe('managed VM controller runner durable integration', () => {
 			diagnostics: [],
 			kind: 'completed',
 			retryClass: 'forbidden',
-			value: { exitCode: 0 },
+			value: successfulExecutionResult,
 		});
 		await expect(runner.execute(createDispatchRequest())).resolves.toEqual({
 			binding: { fingerprint: 'fingerprint-a', operationId: 'operation-a' },
