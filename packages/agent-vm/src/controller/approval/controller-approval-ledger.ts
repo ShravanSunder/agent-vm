@@ -587,6 +587,9 @@ export function createControllerApprovalLedger(
 					approvalId: reservation.approvalId,
 					authorityContext,
 					backendKind: reservation.backendKind,
+					...(reservation.backendKind === 'controller_execution'
+						? { bindingRevision: reservation.bindingRevision }
+						: {}),
 					expiresAt: reservation.expiresAt,
 					fingerprint: reservation.fingerprint,
 					grantId: generateUuid(),

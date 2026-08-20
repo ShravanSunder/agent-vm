@@ -226,7 +226,13 @@ describe('Gateway runtime approval contracts', () => {
 		'parses a complete %s dispatch reservation',
 		(backendKind) => {
 			// Arrange
-			const reservation = { ...validDispatchReservation, backendKind };
+			const reservation = {
+				...validDispatchReservation,
+				backendKind,
+				...(backendKind === 'controller_execution'
+					? { bindingRevision: validSemanticRevisions.bindingRevision }
+					: {}),
+			};
 
 			// Act / Assert
 			expect(GatewayRuntimeApprovalDispatchReservationSchema.parse(reservation)).toEqual(

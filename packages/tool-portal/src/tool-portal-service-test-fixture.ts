@@ -332,6 +332,9 @@ function createApprovalReservation(
 		approvalId: deriveGatewayRuntimeApprovalId(fingerprint),
 		authorityContext: AUTHORITY_CONTEXT,
 		backendKind,
+		...(backendKind === 'controller_execution'
+			? { bindingRevision: intent.semanticRevisions.bindingRevision }
+			: {}),
 		expiresAt: APPROVAL_EXPIRES_AT,
 		fingerprint,
 		operationId: intent.operationId,

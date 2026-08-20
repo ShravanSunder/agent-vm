@@ -261,6 +261,9 @@ function createApprovalPort(): {
 						approvalId: deriveGatewayRuntimeApprovalId(fingerprint),
 						authorityContext,
 						backendKind: intent.backendKind,
+						...(intent.backendKind === 'controller_execution'
+							? { bindingRevision: intent.semanticRevisions.bindingRevision }
+							: {}),
 						expiresAt: '2026-07-13T21:00:00.000Z',
 						fingerprint,
 						operationId: intent.operationId,
