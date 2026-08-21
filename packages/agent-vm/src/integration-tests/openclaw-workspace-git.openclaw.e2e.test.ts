@@ -80,8 +80,14 @@ async function writeWorkspaceGitToolPortalConfigs(options: {
 		profiles: {
 			smoke: {
 				namespaces: {
-					controller_host_action: {
-						backend: { kind: 'controller_host_action' },
+					controller_execution: {
+						backend: {
+							kind: 'controller_execution',
+							operations: {
+								controller_host_probe: { kind: 'registered_action' },
+								workspace_git_push: { kind: 'registered_action' },
+							},
+						},
 						calls: {
 							requiresApproval: { allow: [], deny: [] },
 							withoutApproval: {
@@ -181,7 +187,7 @@ describeOpenClawWorkspaceGitSmoke('smoke: OpenClaw workspace Git through Tool Po
 		}
 	});
 
-	it('replaces the old direct workspace_git_push model tool with Tool Portal controller_host_action', async () => {
+	it('replaces the old direct workspace_git_push model tool with Tool Portal controller_execution', async () => {
 		const repoRoot = path.resolve(process.cwd());
 		const agentId = 'smoke';
 
@@ -212,7 +218,7 @@ describeOpenClawWorkspaceGitSmoke('smoke: OpenClaw workspace Git through Tool Po
 			configDir: toolPortalConfigDir,
 			surfaceEligibilityByProfile: {
 				smoke: {
-					controller_host_action: ['protected_uds'],
+					controller_execution: ['protected_uds'],
 					sandbox: ['protected_uds'],
 				},
 			},
@@ -286,7 +292,7 @@ describeOpenClawWorkspaceGitSmoke('smoke: OpenClaw workspace Git through Tool Po
 			id: 'list-actions',
 			status: 'ok',
 			value: {
-				namespaces: expect.arrayContaining(['controller_host_action', 'sandbox']),
+				namespaces: expect.arrayContaining(['controller_execution', 'sandbox']),
 				tools: expect.arrayContaining([
 					expect.objectContaining({ name: 'workspace_git_push' }),
 					expect.objectContaining({ name: 'controller_host_probe' }),
@@ -303,7 +309,7 @@ describeOpenClawWorkspaceGitSmoke('smoke: OpenClaw workspace Git through Tool Po
 							arguments: {},
 							id: 'probe-controller-host',
 							name: 'controller_host_probe',
-							namespace: 'controller_host_action',
+							namespace: 'controller_execution',
 						},
 					],
 				},
@@ -314,11 +320,14 @@ describeOpenClawWorkspaceGitSmoke('smoke: OpenClaw workspace Git through Tool Po
 			id: 'probe-controller-host',
 			status: 'ok',
 			value: {
-				actionId: 'controller_host_probe',
-				result: {
-					entryNames: ['agent-vm-host-probe.txt'],
-					probeKind: 'controller_cache_dir_listing',
+				action: {
+					actionId: 'controller_host_probe',
+					result: {
+						entryNames: ['agent-vm-host-probe.txt'],
+						probeKind: 'controller_cache_dir_listing',
+					},
 				},
+				kind: 'registered_action',
 			},
 		});
 
@@ -383,7 +392,7 @@ describeOpenClawWorkspaceGitSmoke('smoke: OpenClaw workspace Git through Tool Po
 							arguments: { expectedHead: committedHead },
 							id: 'push-zone',
 							name: 'workspace_git_push',
-							namespace: 'controller_host_action',
+							namespace: 'controller_execution',
 						},
 					],
 				},
@@ -394,12 +403,15 @@ describeOpenClawWorkspaceGitSmoke('smoke: OpenClaw workspace Git through Tool Po
 			id: 'push-zone',
 			status: 'ok',
 			value: {
-				actionId: 'workspace_git_push',
-				result: {
-					branch: workspaceGitBranch,
-					localHead: committedHead,
-					remoteHead: committedHead,
+				action: {
+					actionId: 'workspace_git_push',
+					result: {
+						branch: workspaceGitBranch,
+						localHead: committedHead,
+						remoteHead: committedHead,
+					},
 				},
+				kind: 'registered_action',
 			},
 		});
 		await expect(

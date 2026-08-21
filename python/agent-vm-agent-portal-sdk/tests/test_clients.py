@@ -321,7 +321,17 @@ class GatewayRuntimeArtifactOperations(t.Protocol):
     ) -> BaseModel: ...
 
 
+class GatewayRuntimeApprovalOperations(t.Protocol):
+    async def decide(
+        self,
+        request: Mapping[str, object],
+        *,
+        trusted_context: Mapping[str, object],
+    ) -> BaseModel: ...
+
+
 class GatewayRuntimeClientContract(t.Protocol):
+    approvals: GatewayRuntimeApprovalOperations
     artifacts: GatewayRuntimeArtifactOperations
     portal: GatewayRuntimePortalOperations
 
@@ -979,6 +989,41 @@ def test_gateway_runtime_client_uses_fixed_socket_and_binds_complete_handshake()
     assert transport.connected_socket_paths == [DEFAULT_GATEWAY_RUNTIME_SOCKET_PATH]
     assert transport.handshakes == [CURRENT_ATTACHMENT]
     assert transport.requests == []
+
+
+def test_gateway_runtime_client_sends_one_strict_private_approval_decision() -> None:
+    # Arrange
+    request: JsonObject = {
+        "challengeId": "11111111-1111-4111-8111-111111111111",
+        "decision": "approve",
+    }
+    result: JsonObject = {"kind": "recorded", "state": "approved"}
+    transport = FakeGatewayRuntimeTransport(method_results={"approval.decide": (result,)})
+    client = _gateway_runtime_client_factory()(
+        attachment=CURRENT_ATTACHMENT,
+        transport=transport,
+    )
+    asyncio.run(client.connect())
+
+    # Act
+    decision_result = asyncio.run(
+        client.approvals.decide(
+            request,
+            trusted_context=CURRENT_TRUSTED_INVOCATION_CONTEXT,
+        ),
+    )
+
+    # Assert
+    assert decision_result.model_dump(by_alias=True, mode="json") == result
+    assert transport.requests == [
+        (
+            "approval.decide",
+            {
+                "publicRequest": request,
+                "trustedContext": CURRENT_TRUSTED_INVOCATION_CONTEXT,
+            },
+        ),
+    ]
 
 
 def test_gateway_runtime_client_rejects_calls_before_handshake() -> None:

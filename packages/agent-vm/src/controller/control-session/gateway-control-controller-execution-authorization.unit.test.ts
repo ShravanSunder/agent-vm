@@ -3,24 +3,29 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import {
-	GatewayControlWorkspaceGitPushControllerHostActionPayloadSchema,
-	type GatewayRuntimeControllerHostActionDispatchReservation,
+	deriveGatewayRuntimePortalBindingRevision,
+	GatewayControlWorkspaceGitPushControllerExecutionPayloadSchema,
+	type GatewayControlToolPortalControllerExecutionPayload,
+	type GatewayRuntimeControllerExecutionDispatchReservation,
 } from '@agent-vm/gateway-control-contracts';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { LoadedSystemConfig } from '../../config/system-config.js';
-import { writeMcpPortalEffectiveConfig } from '../../gateway/mcp-portal-effective-config.js';
+import {
+	loadMcpPortalEffectiveToolPortalConfigSnapshot,
+	writeMcpPortalEffectiveConfig,
+} from '../../gateway/mcp-portal-effective-config.js';
 import type {
 	GatewayControlAcceptedSessionRef,
 	GatewayControlTrustedCallerContext,
 } from './gateway-control-caller-context.js';
-import { authorizeGatewayControlControllerHostAction } from './gateway-control-controller-host-action-authorization.js';
+import { authorizeGatewayControlControllerExecution } from './gateway-control-controller-execution-authorization.js';
 
 let testRoot: string;
 let previousControllerHostProbeGate: string | undefined;
 
 beforeEach(async () => {
-	testRoot = await mkdtemp(path.join(tmpdir(), 'agent-vm-controller-host-action-auth-'));
+	testRoot = await mkdtemp(path.join(tmpdir(), 'agent-vm-controller-execution-auth-'));
 	previousControllerHostProbeGate = process.env.AGENT_VM_E2E_CONTROLLER_HOST_PROBE;
 	delete process.env.AGENT_VM_E2E_CONTROLLER_HOST_PROBE;
 });
@@ -56,7 +61,7 @@ const trustedCallerContext = {
 	controllerEpoch: acceptedSession.controllerEpoch,
 	peerId: acceptedSession.peerId,
 	principal: trustedPrincipal,
-	purpose: 'tool_portal_controller_host_action',
+	purpose: 'tool_portal_controller_execution',
 	sessionId: '33333333-3333-4333-8333-333333333333',
 	stablePrincipal: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 	zoneId: acceptedSession.zoneId,
@@ -72,34 +77,66 @@ const noSecretResolutionDuringTest = {
 async function writeToolPortalAuthoredConfig(
 	props: {
 		readonly agentId?: string;
-		readonly controllerHostActionTools?: readonly (
-			| 'controller_host_probe'
-			| 'workspace_git_push'
-		)[];
-		readonly controllerHostActionPolicy?: boolean;
+		readonly configuredOperation?: boolean;
+		readonly configuredExecutablePath?: string;
+		readonly controllerExecutionTools?: readonly string[];
+		readonly controllerExecutionPolicy?: boolean;
 		readonly profileId?: string;
 		readonly requiresApproval?: boolean;
 	} = {},
 ): Promise<string> {
 	const configDir = path.join(testRoot, 'gateway-config');
 	const agentId = props.agentId ?? 'main';
-	const controllerHostActionTools = props.controllerHostActionTools ?? ['workspace_git_push'];
-	const controllerHostActionPolicy = props.controllerHostActionPolicy ?? true;
+	const controllerExecutionTools = props.controllerExecutionTools ?? ['workspace_git_push'];
+	const controllerExecutionPolicy = props.controllerExecutionPolicy ?? true;
 	const profileId = props.profileId ?? 'default';
 	const requiresApproval = props.requiresApproval ?? false;
-	const namespaces = controllerHostActionPolicy
+	const namespaces = controllerExecutionPolicy
 		? {
-				controller_host_action: {
-					backend: { kind: 'controller_host_action' },
-					calls: {
-						requiresApproval: {
-							allow: requiresApproval ? controllerHostActionTools : [],
-						},
-						withoutApproval: {
-							allow: requiresApproval ? [] : controllerHostActionTools,
+				controller_execution: {
+					backend: {
+						kind: 'controller_execution',
+						operations: {
+							...(props.configuredOperation === true
+								? {
+										inspect_host: {
+											commands: [{ path: ['inspect'] }],
+											deniedPatterns: [],
+											executablePath: props.configuredExecutablePath ?? '/usr/bin/printf',
+											executionTarget: {
+												cwd: '/tmp',
+												environment: { kind: 'empty' },
+												kind: 'controller_host',
+											},
+											kind: 'configured_cli',
+											mandatoryArgvPrefix: [],
+											output: {
+												modelVisibleStderr: 'none',
+												overflow: 'truncate',
+												stderrMaxBytes: 1024,
+												stdoutMaxBytes: 1024,
+											},
+											safeHelp: 'Inspect host state.',
+											stdin: { kind: 'none' },
+											timeout: { kind: 'quick' },
+										},
+									}
+								: {}),
+							controller_host_probe: { kind: 'registered_action' },
+							workspace_git_push: { kind: 'registered_action' },
+							push_branch: { kind: 'registered_action' },
+							protected_uds: { kind: 'registered_action' },
 						},
 					},
-					tools: { allow: controllerHostActionTools },
+					calls: {
+						requiresApproval: {
+							allow: requiresApproval ? controllerExecutionTools : [],
+						},
+						withoutApproval: {
+							allow: requiresApproval ? [] : controllerExecutionTools,
+						},
+					},
+					tools: { allow: controllerExecutionTools },
 				},
 			}
 		: {};
@@ -169,7 +206,7 @@ async function createSystemConfigFixture(
 		},
 		host: {
 			controllerPort: 18_800,
-			projectNamespace: 'controller-host-action-auth-test',
+			projectNamespace: 'controller-execution-auth-test',
 		},
 		imageProfiles: {
 			gateways: {
@@ -239,7 +276,7 @@ async function createSystemConfigFixture(
 							toolPortal: {
 								configDir,
 								surfaceEligibilityByProfile: {
-									default: { controller_host_action: ['protected_uds'] },
+									default: { controller_execution: ['protected_uds'] },
 								},
 							},
 						}),
@@ -323,39 +360,29 @@ async function writeEffectiveToolPortalSnapshot(
 
 function createWorkspaceGitPushPayload(
 	overrides: {
-		readonly approvalReservation?: GatewayRuntimeControllerHostActionDispatchReservation;
+		readonly approvalReservation?: GatewayRuntimeControllerExecutionDispatchReservation;
 		readonly capabilityName?: string;
 		readonly capabilityNamespace?: string;
 	} = {},
-): {
-	readonly actionId: 'workspace_git_push';
-	readonly approvalReservation?: GatewayRuntimeControllerHostActionDispatchReservation;
-	readonly callerContext: {
-		readonly callerContextId: string;
-	};
-	readonly correlation: {
-		readonly capability: {
-			readonly name: string;
-			readonly namespace: string;
-		};
-	};
-	readonly expectedHead: string;
-} {
+): Extract<GatewayControlToolPortalControllerExecutionPayload, { kind: 'registered_action' }> {
 	return {
-		actionId: 'workspace_git_push' as const,
-		...(overrides.approvalReservation === undefined
-			? {}
-			: { approvalReservation: overrides.approvalReservation }),
-		callerContext: {
-			callerContextId: trustedCallerContext.callerContextId,
-		},
-		correlation: {
-			capability: {
-				name: overrides.capabilityName ?? 'workspace_git_push',
-				namespace: overrides.capabilityNamespace ?? 'controller_host_action',
+		action: {
+			actionId: 'workspace_git_push',
+			...(overrides.approvalReservation === undefined
+				? {}
+				: { approvalReservation: overrides.approvalReservation }),
+			callerContext: {
+				callerContextId: trustedCallerContext.callerContextId,
 			},
+			correlation: {
+				capability: {
+					name: overrides.capabilityName ?? 'workspace_git_push',
+					namespace: overrides.capabilityNamespace ?? 'controller_execution',
+				},
+			},
+			expectedHead: '0123456789abcdef0123456789abcdef01234567',
 		},
-		expectedHead: '0123456789abcdef0123456789abcdef01234567',
+		kind: 'registered_action',
 	};
 }
 
@@ -368,52 +395,45 @@ const approvalReservation = {
 		runtimeEpoch: 'runtime-epoch-a',
 		zoneId: acceptedSession.zoneId,
 	},
-	backendKind: 'controller_host_action',
+	backendKind: 'controller_execution',
+	bindingRevision: 'binding:current',
 	expiresAt: '2026-07-20T16:05:00.000Z',
 	fingerprint: `sha256:${'c'.repeat(64)}`,
 	operationId: '66666666-6666-4666-8666-666666666666',
 	reservationId: '77777777-7777-4777-8777-777777777777',
 	stablePrincipal: trustedCallerContext.stablePrincipal,
-} as const satisfies GatewayRuntimeControllerHostActionDispatchReservation;
+} as const satisfies GatewayRuntimeControllerExecutionDispatchReservation;
 
 function createControllerHostProbePayload(
 	overrides: {
 		readonly capabilityName?: string;
 		readonly capabilityNamespace?: string;
 	} = {},
-): {
-	readonly actionId: 'controller_host_probe';
-	readonly callerContext: {
-		readonly callerContextId: string;
-	};
-	readonly correlation: {
-		readonly capability: {
-			readonly name: string;
-			readonly namespace: string;
-		};
-	};
-} {
+): Extract<GatewayControlToolPortalControllerExecutionPayload, { kind: 'registered_action' }> {
 	return {
-		actionId: 'controller_host_probe' as const,
-		callerContext: {
-			callerContextId: trustedCallerContext.callerContextId,
-		},
-		correlation: {
-			capability: {
-				name: overrides.capabilityName ?? 'controller_host_probe',
-				namespace: overrides.capabilityNamespace ?? 'controller_host_action',
+		action: {
+			actionId: 'controller_host_probe',
+			callerContext: {
+				callerContextId: trustedCallerContext.callerContextId,
+			},
+			correlation: {
+				capability: {
+					name: overrides.capabilityName ?? 'controller_host_probe',
+					namespace: overrides.capabilityNamespace ?? 'controller_execution',
+				},
 			},
 		},
+		kind: 'registered_action',
 	};
 }
 
-describe('authorizeGatewayControlControllerHostAction', () => {
+describe('authorizeGatewayControlControllerExecution', () => {
 	it('authorizes workspace_git_push from the controller-derived Tool Portal projection', async () => {
 		const systemConfig = await createSystemConfigFixture();
 		await writeEffectiveToolPortalSnapshot(systemConfig);
 
 		await expect(
-			authorizeGatewayControlControllerHostAction({
+			authorizeGatewayControlControllerExecution({
 				callerContext: trustedCallerContext,
 				payload: createWorkspaceGitPushPayload(),
 				session: acceptedSession,
@@ -426,9 +446,18 @@ describe('authorizeGatewayControlControllerHostAction', () => {
 		const configDir = await writeToolPortalAuthoredConfig({ requiresApproval: true });
 		const systemConfig = await createSystemConfigFixture({ configDir });
 		await writeEffectiveToolPortalSnapshot(systemConfig, { approvalAccessConfigured: true });
+		const effectiveConfig = await loadMcpPortalEffectiveToolPortalConfigSnapshot(
+			path.join(systemConfig.cacheDir, 'gateways', acceptedSession.zoneId, 'tool-portal-effective'),
+		);
+		const currentApprovalReservation = {
+			...approvalReservation,
+			bindingRevision: deriveGatewayRuntimePortalBindingRevision(
+				effectiveConfig.effectiveToolPortalConfig,
+			),
+		};
 
 		await expect(
-			authorizeGatewayControlControllerHostAction({
+			authorizeGatewayControlControllerExecution({
 				callerContext: trustedCallerContext,
 				payload: createWorkspaceGitPushPayload(),
 				session: acceptedSession,
@@ -436,13 +465,15 @@ describe('authorizeGatewayControlControllerHostAction', () => {
 			}),
 		).resolves.toEqual({
 			authorized: false,
-			errorClass: 'controller_host_action_policy_denied',
-			safeMessage: 'controller host action policy denied the requested capability',
+			errorClass: 'controller_execution_policy_denied',
+			safeMessage: 'controller execution policy denied the requested capability',
 		});
 		await expect(
-			authorizeGatewayControlControllerHostAction({
+			authorizeGatewayControlControllerExecution({
 				callerContext: trustedCallerContext,
-				payload: createWorkspaceGitPushPayload({ approvalReservation }),
+				payload: createWorkspaceGitPushPayload({
+					approvalReservation: currentApprovalReservation,
+				}),
 				session: acceptedSession,
 				systemConfig,
 			}),
@@ -462,7 +493,7 @@ describe('authorizeGatewayControlControllerHostAction', () => {
 		} satisfies GatewayControlTrustedCallerContext;
 
 		await expect(
-			authorizeGatewayControlControllerHostAction({
+			authorizeGatewayControlControllerExecution({
 				callerContext: hermesCallerContext,
 				payload: createWorkspaceGitPushPayload(),
 				session: acceptedSession,
@@ -471,7 +502,7 @@ describe('authorizeGatewayControlControllerHostAction', () => {
 		).resolves.toEqual({ authorized: true });
 	});
 
-	it('rejects controller host actions from Worker zones', async () => {
+	it('rejects controller execution from Worker zones', async () => {
 		const systemConfig = await createSystemConfigFixture();
 		const zone = systemConfig.zones[0];
 		if (zone === undefined) {
@@ -492,7 +523,7 @@ describe('authorizeGatewayControlControllerHostAction', () => {
 		};
 
 		await expect(
-			authorizeGatewayControlControllerHostAction({
+			authorizeGatewayControlControllerExecution({
 				callerContext: trustedCallerContext,
 				payload: createWorkspaceGitPushPayload(),
 				session: acceptedSession,
@@ -500,8 +531,8 @@ describe('authorizeGatewayControlControllerHostAction', () => {
 			}),
 		).resolves.toEqual({
 			authorized: false,
-			errorClass: 'controller_host_action_zone_unsupported',
-			safeMessage: 'controller host action zone is not supported',
+			errorClass: 'controller_execution_zone_unsupported',
+			safeMessage: 'controller execution zone is not supported',
 		});
 	});
 
@@ -509,14 +540,14 @@ describe('authorizeGatewayControlControllerHostAction', () => {
 		process.env.AGENT_VM_E2E_CONTROLLER_HOST_PROBE = '1';
 		const systemConfig = await createSystemConfigFixture({
 			configDir: await writeToolPortalAuthoredConfig({
-				controllerHostActionTools: ['controller_host_probe'],
+				controllerExecutionTools: ['controller_host_probe'],
 			}),
 			workspaceGit: false,
 		});
 		await writeEffectiveToolPortalSnapshot(systemConfig);
 
 		await expect(
-			authorizeGatewayControlControllerHostAction({
+			authorizeGatewayControlControllerExecution({
 				callerContext: trustedCallerContext,
 				payload: createControllerHostProbePayload(),
 				session: acceptedSession,
@@ -525,17 +556,99 @@ describe('authorizeGatewayControlControllerHostAction', () => {
 		).resolves.toEqual({ authorized: true });
 	});
 
-	it('rejects controller_host_probe when the e2e probe gate is disabled', async () => {
+	it('authorizes configured CLI from the current effective operation definition', async () => {
 		const systemConfig = await createSystemConfigFixture({
 			configDir: await writeToolPortalAuthoredConfig({
-				controllerHostActionTools: ['controller_host_probe'],
+				configuredOperation: true,
+				controllerExecutionTools: ['inspect_host'],
 			}),
 			workspaceGit: false,
 		});
 		await writeEffectiveToolPortalSnapshot(systemConfig);
 
 		await expect(
-			authorizeGatewayControlControllerHostAction({
+			authorizeGatewayControlControllerExecution({
+				callerContext: trustedCallerContext,
+				createdAtMs: 1_000,
+				expiresAtMs: 16_000,
+				payload: {
+					callerContext: { callerContextId: trustedCallerContext.callerContextId },
+					capability: { name: 'inspect_host', namespace: 'controller_execution' },
+					correlation: {
+						capability: { name: 'inspect_host', namespace: 'controller_execution' },
+					},
+					input: { argv: ['inspect'], reason: 'authorization proof' },
+					kind: 'configured_cli',
+					operationName: 'inspect_host',
+				},
+				session: acceptedSession,
+				systemConfig,
+			}),
+		).resolves.toEqual({ authorized: true });
+	});
+
+	it('rejects an approved configured CLI reservation after trusted operation policy changes', async () => {
+		const configDir = await writeToolPortalAuthoredConfig({
+			configuredOperation: true,
+			controllerExecutionTools: ['inspect_host'],
+			requiresApproval: true,
+		});
+		const systemConfig = await createSystemConfigFixture({ configDir, workspaceGit: false });
+		await writeEffectiveToolPortalSnapshot(systemConfig, { approvalAccessConfigured: true });
+		const originalSnapshot = await loadMcpPortalEffectiveToolPortalConfigSnapshot(
+			path.join(systemConfig.cacheDir, 'gateways', acceptedSession.zoneId, 'tool-portal-effective'),
+		);
+		const originalReservation = {
+			...approvalReservation,
+			bindingRevision: deriveGatewayRuntimePortalBindingRevision(
+				originalSnapshot.effectiveToolPortalConfig,
+			),
+		};
+		await writeToolPortalAuthoredConfig({
+			configuredExecutablePath: '/usr/bin/false',
+			configuredOperation: true,
+			controllerExecutionTools: ['inspect_host'],
+			requiresApproval: true,
+		});
+		await writeEffectiveToolPortalSnapshot(systemConfig, { approvalAccessConfigured: true });
+
+		await expect(
+			authorizeGatewayControlControllerExecution({
+				callerContext: trustedCallerContext,
+				createdAtMs: 1_000,
+				expiresAtMs: 16_000,
+				payload: {
+					approvalReservation: originalReservation,
+					callerContext: { callerContextId: trustedCallerContext.callerContextId },
+					capability: { name: 'inspect_host', namespace: 'controller_execution' },
+					correlation: {
+						capability: { name: 'inspect_host', namespace: 'controller_execution' },
+					},
+					input: { argv: ['inspect'], reason: 'stale policy proof' },
+					kind: 'configured_cli',
+					operationName: 'inspect_host',
+				},
+				session: acceptedSession,
+				systemConfig,
+			}),
+		).resolves.toEqual({
+			authorized: false,
+			errorClass: 'controller_execution_policy_stale',
+			safeMessage: 'controller execution approval does not match current trusted policy',
+		});
+	});
+
+	it('rejects controller_host_probe when the e2e probe gate is disabled', async () => {
+		const systemConfig = await createSystemConfigFixture({
+			configDir: await writeToolPortalAuthoredConfig({
+				controllerExecutionTools: ['controller_host_probe'],
+			}),
+			workspaceGit: false,
+		});
+		await writeEffectiveToolPortalSnapshot(systemConfig);
+
+		await expect(
+			authorizeGatewayControlControllerExecution({
 				callerContext: trustedCallerContext,
 				payload: createControllerHostProbePayload(),
 				session: acceptedSession,
@@ -543,7 +656,7 @@ describe('authorizeGatewayControlControllerHostAction', () => {
 			}),
 		).resolves.toEqual({
 			authorized: false,
-			errorClass: 'controller_host_action_not_configured',
+			errorClass: 'controller_execution_not_configured',
 			safeMessage: 'controller host probe is not enabled',
 		});
 	});
@@ -553,7 +666,7 @@ describe('authorizeGatewayControlControllerHostAction', () => {
 		const systemConfig = await createSystemConfigFixture();
 
 		await expect(
-			authorizeGatewayControlControllerHostAction({
+			authorizeGatewayControlControllerExecution({
 				callerContext: trustedCallerContext,
 				payload: createControllerHostProbePayload({ capabilityName: 'workspace_git_push' }),
 				session: acceptedSession,
@@ -561,19 +674,19 @@ describe('authorizeGatewayControlControllerHostAction', () => {
 			}),
 		).resolves.toEqual({
 			authorized: false,
-			errorClass: 'controller_host_action_capability_mismatch',
-			safeMessage: 'controller host action capability is not authorized',
+			errorClass: 'controller_execution_capability_mismatch',
+			safeMessage: 'controller execution capability is not authorized',
 		});
 	});
 
 	it('authorizes from the controller-owned effective Tool Portal snapshot instead of mutable authored files', async () => {
-		const configDir = await writeToolPortalAuthoredConfig({ controllerHostActionPolicy: false });
+		const configDir = await writeToolPortalAuthoredConfig({ controllerExecutionPolicy: false });
 		const systemConfig = await createSystemConfigFixture({ configDir });
 		await writeEffectiveToolPortalSnapshot(systemConfig);
-		await writeToolPortalAuthoredConfig({ controllerHostActionPolicy: true });
+		await writeToolPortalAuthoredConfig({ controllerExecutionPolicy: true });
 
 		await expect(
-			authorizeGatewayControlControllerHostAction({
+			authorizeGatewayControlControllerExecution({
 				callerContext: trustedCallerContext,
 				payload: createWorkspaceGitPushPayload(),
 				session: acceptedSession,
@@ -581,8 +694,8 @@ describe('authorizeGatewayControlControllerHostAction', () => {
 			}),
 		).resolves.toEqual({
 			authorized: false,
-			errorClass: 'controller_host_action_policy_denied',
-			safeMessage: 'controller host action policy denied the requested capability',
+			errorClass: 'controller_execution_policy_denied',
+			safeMessage: 'controller execution policy denied the requested capability',
 		});
 	});
 
@@ -593,7 +706,7 @@ describe('authorizeGatewayControlControllerHostAction', () => {
 		});
 
 		await expect(
-			authorizeGatewayControlControllerHostAction({
+			authorizeGatewayControlControllerExecution({
 				callerContext: trustedCallerContext,
 				payload: createWorkspaceGitPushPayload(),
 				session: acceptedSession,
@@ -601,8 +714,8 @@ describe('authorizeGatewayControlControllerHostAction', () => {
 			}),
 		).resolves.toEqual({
 			authorized: false,
-			errorClass: 'controller_host_action_not_configured',
-			safeMessage: 'controller host action is not configured for this agent',
+			errorClass: 'controller_execution_not_configured',
+			safeMessage: 'controller execution is not configured for this agent',
 		});
 	});
 
@@ -616,12 +729,12 @@ describe('authorizeGatewayControlControllerHostAction', () => {
 		'rejects workspace_git_push wire payload identity or routing field %s',
 		(forbiddenFieldName, forbiddenFieldValue) => {
 			const payloadWithForbiddenAuthority = {
-				...createWorkspaceGitPushPayload(),
+				...createWorkspaceGitPushPayload().action,
 				[forbiddenFieldName]: forbiddenFieldValue,
 			};
 
 			expect(
-				GatewayControlWorkspaceGitPushControllerHostActionPayloadSchema.safeParse(
+				GatewayControlWorkspaceGitPushControllerExecutionPayloadSchema.safeParse(
 					payloadWithForbiddenAuthority,
 				).success,
 			).toBe(false);
@@ -629,7 +742,7 @@ describe('authorizeGatewayControlControllerHostAction', () => {
 	);
 
 	it('limits workspace_git_push action arguments to expectedHead', () => {
-		expect(Object.keys(createWorkspaceGitPushPayload()).toSorted()).toEqual([
+		expect(Object.keys(createWorkspaceGitPushPayload().action).toSorted()).toEqual([
 			'actionId',
 			'callerContext',
 			'correlation',
@@ -641,7 +754,7 @@ describe('authorizeGatewayControlControllerHostAction', () => {
 		const systemConfig = await createSystemConfigFixture();
 
 		await expect(
-			authorizeGatewayControlControllerHostAction({
+			authorizeGatewayControlControllerExecution({
 				callerContext: trustedCallerContext,
 				payload: createWorkspaceGitPushPayload({ capabilityNamespace: 'mcp_provider' }),
 				session: acceptedSession,
@@ -649,8 +762,8 @@ describe('authorizeGatewayControlControllerHostAction', () => {
 			}),
 		).resolves.toEqual({
 			authorized: false,
-			errorClass: 'controller_host_action_capability_mismatch',
-			safeMessage: 'controller host action capability is not authorized',
+			errorClass: 'controller_execution_capability_mismatch',
+			safeMessage: 'controller execution capability is not authorized',
 		});
 	});
 
@@ -658,12 +771,13 @@ describe('authorizeGatewayControlControllerHostAction', () => {
 		const systemConfig = await createSystemConfigFixture();
 
 		await expect(
-			authorizeGatewayControlControllerHostAction({
+			authorizeGatewayControlControllerExecution({
 				callerContext: trustedCallerContext,
 				payload: {
 					...createWorkspaceGitPushPayload(),
-					correlation: {
-						toolCallId: 'tool-call-without-capability',
+					action: {
+						...createWorkspaceGitPushPayload().action,
+						correlation: { toolCallId: 'tool-call-without-capability' },
 					},
 				},
 				session: acceptedSession,
@@ -671,8 +785,8 @@ describe('authorizeGatewayControlControllerHostAction', () => {
 			}),
 		).resolves.toEqual({
 			authorized: false,
-			errorClass: 'controller_host_action_capability_mismatch',
-			safeMessage: 'controller host action capability is not authorized',
+			errorClass: 'controller_execution_capability_mismatch',
+			safeMessage: 'controller execution capability is not authorized',
 		});
 	});
 
@@ -681,7 +795,7 @@ describe('authorizeGatewayControlControllerHostAction', () => {
 		await writeEffectiveToolPortalSnapshot(systemConfig);
 
 		await expect(
-			authorizeGatewayControlControllerHostAction({
+			authorizeGatewayControlControllerExecution({
 				callerContext: {
 					...trustedCallerContext,
 					agentId: 'forged-agent',
@@ -697,8 +811,8 @@ describe('authorizeGatewayControlControllerHostAction', () => {
 			}),
 		).resolves.toEqual({
 			authorized: false,
-			errorClass: 'controller_host_action_not_configured',
-			safeMessage: 'controller host action is not configured for this agent',
+			errorClass: 'controller_execution_not_configured',
+			safeMessage: 'controller execution is not configured for this agent',
 		});
 	});
 
@@ -706,7 +820,7 @@ describe('authorizeGatewayControlControllerHostAction', () => {
 		const systemConfig = await createSystemConfigFixture();
 
 		await expect(
-			authorizeGatewayControlControllerHostAction({
+			authorizeGatewayControlControllerExecution({
 				callerContext: trustedCallerContext,
 				payload: createWorkspaceGitPushPayload(),
 				session: acceptedSession,
@@ -714,16 +828,16 @@ describe('authorizeGatewayControlControllerHostAction', () => {
 			}),
 		).resolves.toEqual({
 			authorized: false,
-			errorClass: 'controller_host_action_policy_unavailable',
-			safeMessage: 'controller host action policy is unavailable',
+			errorClass: 'controller_execution_policy_unavailable',
+			safeMessage: 'controller execution policy is unavailable',
 		});
 	});
 
-	it('rejects zones without Tool Portal controller host action configuration', async () => {
+	it('rejects zones without Tool Portal controller execution configuration', async () => {
 		const systemConfig = await createSystemConfigFixture({ toolPortal: false });
 
 		await expect(
-			authorizeGatewayControlControllerHostAction({
+			authorizeGatewayControlControllerExecution({
 				callerContext: trustedCallerContext,
 				payload: createWorkspaceGitPushPayload(),
 				session: acceptedSession,
@@ -731,19 +845,19 @@ describe('authorizeGatewayControlControllerHostAction', () => {
 			}),
 		).resolves.toEqual({
 			authorized: false,
-			errorClass: 'controller_host_action_not_configured',
-			safeMessage: 'controller host action is not configured for this zone',
+			errorClass: 'controller_execution_not_configured',
+			safeMessage: 'controller execution is not configured for this zone',
 		});
 	});
 
-	it('rejects zones without effective Tool Portal controller host action policy', async () => {
+	it('rejects zones without effective Tool Portal controller execution policy', async () => {
 		const systemConfig = await createSystemConfigFixture({
-			configDir: await writeToolPortalAuthoredConfig({ controllerHostActionPolicy: false }),
+			configDir: await writeToolPortalAuthoredConfig({ controllerExecutionPolicy: false }),
 		});
 		await writeEffectiveToolPortalSnapshot(systemConfig);
 
 		await expect(
-			authorizeGatewayControlControllerHostAction({
+			authorizeGatewayControlControllerExecution({
 				callerContext: trustedCallerContext,
 				payload: createWorkspaceGitPushPayload(),
 				session: acceptedSession,
@@ -751,8 +865,8 @@ describe('authorizeGatewayControlControllerHostAction', () => {
 			}),
 		).resolves.toEqual({
 			authorized: false,
-			errorClass: 'controller_host_action_policy_denied',
-			safeMessage: 'controller host action policy denied the requested capability',
+			errorClass: 'controller_execution_policy_denied',
+			safeMessage: 'controller execution policy denied the requested capability',
 		});
 	});
 });

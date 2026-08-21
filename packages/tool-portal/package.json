@@ -24,6 +24,10 @@
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
 		},
+		"./cli-allowances": {
+			"types": "./dist/cli-allowances/index.d.ts",
+			"import": "./dist/cli-allowances/index.js"
+		},
 		"./standalone-entrypoint": {
 			"types": "./dist/standalone-entrypoint/index.d.ts",
 			"import": "./dist/standalone-entrypoint/index.js"

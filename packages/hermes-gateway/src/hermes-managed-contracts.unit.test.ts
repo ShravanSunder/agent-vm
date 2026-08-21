@@ -90,6 +90,9 @@ function createHermesAdapterMaterial(): Readonly<Record<string, unknown>> {
 }
 
 describe('managed Hermes package contracts', () => {
+	it('declares the native managed approval presenter capability', () => {
+		expect(hermesLifecycle.capabilities).toEqual({ nativeApprovalPresenter: true });
+	});
 	it('wires host-authoritative profile preflight and preparation hooks', () => {
 		expect(hermesLifecycle.preflightHostState).toBeTypeOf('function');
 		expect(hermesLifecycle.prepareHostState).toBeTypeOf('function');

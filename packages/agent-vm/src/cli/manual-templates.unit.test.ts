@@ -339,6 +339,15 @@ describe('manual templates', () => {
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
 			'Static validation and Gateway preflight fail closed when approvalAccess is absent',
 		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'Hermes API_SERVER_KEY authenticates the separate in-VM agent-message API',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'The controller exposes no external approval HTTP routes',
+		);
+		expect(
+			files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content,
+		).not.toContain('kind: bearer carries a secret for the controller HTTP approval routes');
 		expect(
 			files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content,
 		).not.toContain('rejects calls.requiresApproval');
@@ -415,7 +424,19 @@ describe('manual templates', () => {
 			'every namespace must select an explicit backend.kind',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
-			'mcp_provider, controller_host_action, or tool_vm_runner',
+			'mcp_provider, controller_execution, or tool_vm_runner',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'approvalAccess.approvers entries are exactly kind: managed_gateway',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'controller_host or a fresh one-shot ephemeral_managed_vm',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'imageReference is a Managed VM image recipe path relative to tool-portal.config.jsonc',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'tool_vm_runner remains direct Gateway-to-leased-Tool-VM SSH',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
 			'config/schemas/*.schema.json',

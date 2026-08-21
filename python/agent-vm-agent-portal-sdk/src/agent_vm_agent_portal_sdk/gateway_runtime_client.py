@@ -381,6 +381,34 @@ class _GatewayRuntimeArtifactOperations:
         return validated_result
 
 
+class _GatewayRuntimeApprovalOperations:
+    def __init__(self, client: "GatewayRuntimeClient") -> None:
+        self._client = client
+
+    async def decide(
+        self,
+        request: Mapping[str, object],
+        *,
+        trusted_context: Mapping[str, object],
+    ) -> BaseModel:
+        validated_request = PORTABLE_CONTRACT_ADAPTERS["gateway.approval.decision-request"].validate_python(request)
+        if not isinstance(validated_request, BaseModel):
+            error_message = "Gateway approval decision request did not produce a typed model."
+            raise TypeError(error_message)
+        response = await self._client.request(
+            "approval.decide",
+            {
+                "publicRequest": validated_request.model_dump(by_alias=True, mode="json", exclude_none=True),
+                "trustedContext": _validate_trusted_invocation_context(trusted_context),
+            },
+        )
+        validated_result = PORTABLE_CONTRACT_ADAPTERS["gateway.approval.decision-result"].validate_python(response)
+        if not isinstance(validated_result, BaseModel):
+            error_message = "Gateway approval decision result did not produce a typed model."
+            raise TypeError(error_message)
+        return validated_result
+
+
 class GatewayRuntimeClient:
     """One lifecycle-fenced rich client for the current framework attachment."""
 
@@ -412,6 +440,7 @@ class GatewayRuntimeClient:
         self._startup_retry_scheduler = DEFAULT_GATEWAY_RUNTIME_STARTUP_RETRY_SCHEDULER if startup_retry_scheduler is None else startup_retry_scheduler
         self._connected = False
         self._lifecycle_lock = asyncio.Lock()
+        self.approvals = _GatewayRuntimeApprovalOperations(self)
         self.artifacts = _GatewayRuntimeArtifactOperations(self)
         self.portal = _GatewayRuntimePortalOperations(self)
         self.sandbox = GatewayRuntimeSandboxOperations(self)

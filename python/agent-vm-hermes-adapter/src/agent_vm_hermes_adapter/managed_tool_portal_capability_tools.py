@@ -8,6 +8,9 @@ from agent_vm_agent_portal_sdk.contracts import (
     encode_canonical_json,
     get_portable_contract_json_schema,
 )
+from agent_vm_agent_portal_sdk.gateway_approval_bridge import (
+    execute_portal_call_with_approval,
+)
 from pydantic import BaseModel
 
 from .managed_framework_observability import ManagedFrameworkObservability
@@ -17,6 +20,10 @@ from .managed_profile_adapter import (
     build_managed_trusted_context,
 )
 from .managed_tool_portal.cache import PluginStateCache
+from .managed_tool_portal.hermes_approval_presenter import (
+    HermesGatewayApprovalPresenter,
+    HermesGatewayApprovalRouteStore,
+)
 from .managed_tool_portal.hermes_hooks import (
     HermesPluginContext,
     ProjectionResolver,
@@ -57,6 +64,8 @@ class _ManagedToolPortalPluginRuntime:
         "inventory_coordinator",
         "injection_state_cache",
         "gateway_epoch",
+        "approval_presenter",
+        "approval_routes",
     )
 
     def __init__(
@@ -77,6 +86,8 @@ class _ManagedToolPortalPluginRuntime:
         self.inventory_coordinator = inventory_coordinator
         self.injection_state_cache = injection_state_cache
         self.gateway_epoch = gateway_epoch
+        self.approval_routes = HermesGatewayApprovalRouteStore()
+        self.approval_presenter = HermesGatewayApprovalPresenter(self.approval_routes)
 
 
 def _safe_model_dump(model: BaseModel) -> dict[str, object]:
@@ -140,17 +151,27 @@ def _result_json(result: BaseModel) -> str:
     return encode_canonical_json(_safe_model_dump(result))
 
 
+def _result_requires_approval(result: BaseModel) -> bool:
+    items = _safe_model_dump(result).get("items")
+    return isinstance(items, list) and any(
+        isinstance(item, dict) and item.get("status") == "approval_required" for item in items
+    )
+
+
 def _invoke(
     runtime: _ManagedToolPortalPluginRuntime,
     tool_name: ManagedToolName,
     request: object,
+    session_id: str | None = None,
 ) -> str:
     validated_request = _validated_tool_request(tool_name, request)
     with runtime.telemetry.observe_tool_operation(tool_name):
         projection = runtime.current_projection()
         profile_name = _projection_profile_name(projection)
         client = runtime.adapter.gateway_runtime_client_for_profile(profile_name)
-        trusted_context = _safe_model_dump(build_managed_trusted_context(projection))
+        trusted_context = _safe_model_dump(
+            build_managed_trusted_context(projection, session_id=session_id)
+        )
         if tool_name == "tool_portal_list":
             operation = client.portal.list(
                 validated_request,
@@ -167,9 +188,29 @@ def _invoke(
                 trusted_context=trusted_context,
             )
         else:
-            operation = client.portal.call(
+            initial_result = runtime.adapter.run_gateway_runtime_coroutine(
+                client.portal.call(
+                    validated_request,
+                    trusted_context=trusted_context,
+                )
+            )
+            if not _result_requires_approval(initial_result):
+                return _result_json(initial_result)
+            operation = execute_portal_call_with_approval(
                 validated_request,
-                trusted_context=trusted_context,
+                call_portal=lambda retry_request: client.portal.call(
+                    retry_request,
+                    trusted_context=trusted_context,
+                ),
+                decide_approval=lambda decision_request: client.approvals.decide(
+                    decision_request,
+                    trusted_context=trusted_context,
+                ),
+                initial_result=initial_result,
+                present_approval=lambda presentation_request: runtime.approval_presenter.present(
+                    session_id or "",
+                    presentation_request,
+                ),
             )
         return _result_json(runtime.adapter.run_gateway_runtime_coroutine(operation))
 
@@ -191,8 +232,13 @@ class _ToolHandler:
         session_id: object = None,
         user_task: object = None,
     ) -> str:
-        del task_id, session_id, user_task
-        return _invoke(self._runtime, self._tool_name, args)
+        del task_id, user_task
+        return _invoke(
+            self._runtime,
+            self._tool_name,
+            args,
+            session_id=session_id if isinstance(session_id, str) and session_id else None,
+        )
 
 
 _CONFIGURATION_LOCK = threading.Lock()
@@ -234,6 +280,7 @@ def clear_managed_tool_portal_plugin_configuration() -> None:
         runtime = _configured_runtime
         _configured_runtime = None
     if runtime is not None:
+        runtime.approval_routes.close()
         runtime.framework_observability.shutdown()
 
 

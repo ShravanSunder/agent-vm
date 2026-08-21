@@ -7,7 +7,10 @@ import {
 	type SandboxProcessLogsResult,
 	type SandboxProcessStartResult,
 } from '@agent-vm/agent-portal-sdk';
-import { toolPortalConfigSchema } from '@agent-vm/config-contracts';
+import {
+	createGatewayRuntimeManagedToolPortalConfig,
+	managedToolPortalConfigSchema,
+} from '@agent-vm/config-contracts';
 import {
 	deriveGatewayControlStablePrincipal,
 	type GatewayRuntimeTrustedInvocationContext,
@@ -81,7 +84,7 @@ const streams = [
 ] as const;
 
 function processCatalog(): GatewayRuntimeToolVmRunnerCapabilityCatalog {
-	const config = toolPortalConfigSchema.parse({
+	const config = managedToolPortalConfigSchema.parse({
 		agents: { 'agent-a': { profile: 'code-builder' } },
 		mode: 'managed',
 		profiles: {
@@ -131,7 +134,9 @@ function processCatalog(): GatewayRuntimeToolVmRunnerCapabilityCatalog {
 		},
 		schemaVersion: 1,
 	});
-	return compileGatewayRuntimeToolVmRunnerConfiguredCatalog(config);
+	return compileGatewayRuntimeToolVmRunnerConfiguredCatalog(
+		createGatewayRuntimeManagedToolPortalConfig(config),
+	);
 }
 
 interface ProcessFixtureOptions {

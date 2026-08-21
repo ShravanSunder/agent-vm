@@ -1,3 +1,7 @@
+import {
+	createGatewayRuntimeManagedToolPortalConfig,
+	type ManagedToolPortalConfig,
+} from '@agent-vm/config-contracts';
 import type {
 	GatewayRuntimeToolPortalDispatchAuthorityForBackendKind,
 	GatewayRuntimeTrustedInvocationContext,
@@ -11,13 +15,95 @@ import type {
 	GatewayRuntimeControlCommandRequest,
 } from '../control-endpoint/gateway-control-command-client.js';
 import type { GatewayControlAcceptedSession } from '../control-endpoint/gateway-control-endpoint-contracts.js';
-import { createGatewayControlControllerHostActionBackendPort } from './controller-host-action-gateway-control-adapter.js';
+import { createGatewayControlControllerExecutionBackendPort } from './controller-execution-gateway-control-adapter.js';
 
 const operationId = '11111111-1111-5111-8111-111111111111';
 const commandId = '22222222-2222-7222-8222-222222222222';
 const callerContextId = '33333333-3333-4333-8333-333333333333';
 const responseMessageId = '44444444-4444-4444-8444-444444444444';
 const expectedHead = '0123456789abcdef0123456789abcdef01234567';
+const toolPortalConfig = {
+	agents: { 'agent-a': { profile: 'profile-a' } },
+	mode: 'managed',
+	profiles: {
+		'profile-a': {
+			namespaces: {
+				custom_controller: {
+					backend: {
+						kind: 'controller_execution',
+						operations: {
+							workspace_git_push: {
+								commands: [{ flagRules: [], path: ['increment'] }],
+								deniedPatterns: [],
+								executablePath: '/usr/bin/printf',
+								executionTarget: {
+									cwd: '/tmp',
+									environment: { kind: 'empty' },
+									kind: 'controller_host',
+								},
+								kind: 'configured_cli',
+								mandatoryArgvPrefix: ['--'],
+								output: {
+									modelVisibleStderr: 'none',
+									overflow: 'truncate',
+									stderrMaxBytes: 1024,
+									stdoutMaxBytes: 1024,
+								},
+								safeHelp: 'Prove operation-kind routing is namespace aware.',
+								stdin: { kind: 'none' },
+								timeout: { kind: 'quick' },
+							},
+						},
+					},
+					calls: {
+						requiresApproval: { allow: [], deny: [] },
+						withoutApproval: { allow: ['workspace_git_push'], deny: [] },
+					},
+					tools: { allow: ['workspace_git_push'], deny: [] },
+				},
+				controller_execution: {
+					backend: {
+						kind: 'controller_execution',
+						operations: {
+							inspect_host: {
+								commands: [{ flagRules: [], path: ['inspect'] }],
+								deniedPatterns: [],
+								executablePath: '/usr/bin/printf',
+								executionTarget: {
+									cwd: '/tmp',
+									environment: { kind: 'empty' },
+									kind: 'controller_host',
+								},
+								kind: 'configured_cli',
+								mandatoryArgvPrefix: ['--'],
+								output: {
+									modelVisibleStderr: 'none',
+									overflow: 'truncate',
+									stderrMaxBytes: 1024,
+									stdoutMaxBytes: 1024,
+								},
+								safeHelp: 'Inspect the host fixture.',
+								stdin: { kind: 'none' },
+								timeout: { kind: 'quick' },
+							},
+							controller_host_probe: { kind: 'registered_action' },
+							workspace_git_push: { kind: 'registered_action' },
+						},
+					},
+					calls: {
+						requiresApproval: { allow: ['workspace_git_push'], deny: [] },
+						withoutApproval: { allow: ['controller_host_probe', 'inspect_host'], deny: [] },
+					},
+					tools: {
+						allow: ['controller_host_probe', 'inspect_host', 'workspace_git_push'],
+						deny: [],
+					},
+				},
+			},
+		},
+	},
+	schemaVersion: 1,
+} satisfies ManagedToolPortalConfig;
 const trustedContext = {
 	correlation: { runId: 'run-a', sessionId: 'session-a', toolCallId: 'tool-call-a' },
 	principal: {
@@ -43,13 +129,13 @@ const acceptedSession = Object.freeze({
 
 function callOptions(
 	signal?: AbortSignal,
-	dispatchAuthority: GatewayRuntimeToolPortalDispatchAuthorityForBackendKind<'controller_host_action'> = {
-		backendKind: 'controller_host_action',
+	dispatchAuthority: GatewayRuntimeToolPortalDispatchAuthorityForBackendKind<'controller_execution'> = {
+		backendKind: 'controller_execution',
 		fingerprint: `sha256:${'a'.repeat(64)}`,
 		kind: 'without-approval',
 		operationId,
 	},
-): ToolPortalBackendCallOptions<'controller_host_action'> {
+): ToolPortalBackendCallOptions<'controller_execution'> {
 	return {
 		dispatchAuthority,
 		...(signal === undefined ? {} : { signal }),
@@ -59,7 +145,7 @@ function callOptions(
 }
 
 const approvalReservationDispatchAuthority = {
-	backendKind: 'controller_host_action',
+	backendKind: 'controller_execution',
 	kind: 'controller-approval-reservation',
 	reservation: {
 		approvalId: '77777777-7777-4777-8777-777777777777',
@@ -70,14 +156,15 @@ const approvalReservationDispatchAuthority = {
 			runtimeEpoch: acceptedSession.generationId,
 			zoneId: acceptedSession.zoneId,
 		},
-		backendKind: 'controller_host_action',
+		backendKind: 'controller_execution',
+		bindingRevision: 'binding:current',
 		expiresAt: '2026-07-20T16:05:00.000Z',
 		fingerprint: `sha256:${'c'.repeat(64)}`,
 		operationId,
 		reservationId: '88888888-8888-4888-8888-888888888888',
 		stablePrincipal: 'b'.repeat(64),
 	},
-} as const satisfies GatewayRuntimeToolPortalDispatchAuthorityForBackendKind<'controller_host_action'>;
+} as const satisfies GatewayRuntimeToolPortalDispatchAuthorityForBackendKind<'controller_execution'>;
 
 function createFixture(
 	props: {
@@ -85,7 +172,7 @@ function createFixture(
 		readonly register?: GatewayControlCallerContextRegistrationClient['register'];
 	} = {},
 ): {
-	readonly backend: ReturnType<typeof createGatewayControlControllerHostActionBackendPort>;
+	readonly backend: ReturnType<typeof createGatewayControlControllerExecutionBackendPort>;
 	readonly register: ReturnType<
 		typeof vi.fn<GatewayControlCallerContextRegistrationClient['register']>
 	>;
@@ -105,16 +192,19 @@ function createFixture(
 				messageId: responseMessageId,
 				response: {
 					kind: 'command_result',
-					operation: 'tool_portal_controller_host_action',
+					operation: 'tool_portal_controller_execution',
 					payload: {
-						controllerHostAction: {
-							actionId: 'workspace_git_push',
-							result: {
-								branch: 'agent/agent-a',
-								localHead: expectedHead,
-								pushedCommits: [],
-								remoteHead: expectedHead,
+						controllerExecution: {
+							action: {
+								actionId: 'workspace_git_push',
+								result: {
+									branch: 'agent/agent-a',
+									localHead: expectedHead,
+									pushedCommits: [],
+									remoteHead: expectedHead,
+								},
 							},
+							kind: 'registered_action',
 						},
 						responseToMessageId: responseMessageId,
 						result: 'ok',
@@ -123,19 +213,20 @@ function createFixture(
 			})),
 	);
 	return {
-		backend: createGatewayControlControllerHostActionBackendPort({
+		backend: createGatewayControlControllerExecutionBackendPort({
 			callerContextRegistrationClient: { close: async () => undefined, register },
 			controlCommandClient: { sendCommand },
 			createCommandId: () => commandId,
 			now: () => 1_000,
 			owningGeneration: 'runtime-generation-a',
+			toolPortalConfig: createGatewayRuntimeManagedToolPortalConfig(toolPortalConfig),
 		}),
 		register,
 		sendCommand,
 	};
 }
 
-describe('Gateway Control controller-host-action adapter', () => {
+describe('Gateway Control controller-execution adapter', () => {
 	it('registers the caller and routes workspace_git_push through the existing narrow command', async () => {
 		const fixture = createFixture();
 
@@ -146,7 +237,7 @@ describe('Gateway Control controller-host-action adapter', () => {
 						arguments: { expectedHead },
 						id: 'call-a',
 						name: 'workspace_git_push',
-						namespace: 'controller_host_action',
+						namespace: 'controller_execution',
 					},
 				],
 				requestId: 'request-a',
@@ -155,30 +246,33 @@ describe('Gateway Control controller-host-action adapter', () => {
 		);
 
 		expect(fixture.register).toHaveBeenCalledWith({
-			purpose: 'tool_portal_controller_host_action',
+			purpose: 'tool_portal_controller_execution',
 			trustedContext,
 		});
 		expect(fixture.sendCommand).toHaveBeenCalledWith({
 			admissionPrincipal: 'b'.repeat(64),
 			commandId,
 			expiresAtMs: 121_000,
-			idempotencyKey: `controller-host-action:${operationId}:sha256:${'a'.repeat(64)}`,
+			idempotencyKey: `controller-execution:${operationId}:sha256:${'a'.repeat(64)}`,
 			message: {
 				kind: 'command',
-				operation: 'tool_portal_controller_host_action',
+				operation: 'tool_portal_controller_execution',
 				payload: {
-					actionId: 'workspace_git_push',
-					callerContext: { callerContextId },
-					correlation: {
-						capability: {
-							name: 'workspace_git_push',
-							namespace: 'controller_host_action',
+					action: {
+						actionId: 'workspace_git_push',
+						callerContext: { callerContextId },
+						correlation: {
+							capability: {
+								name: 'workspace_git_push',
+								namespace: 'controller_execution',
+							},
+							requestId: 'request-a',
+							runId: 'run-a',
+							toolCallId: 'tool-call-a',
 						},
-						requestId: 'request-a',
-						runId: 'run-a',
-						toolCallId: 'tool-call-a',
+						expectedHead,
 					},
-					expectedHead,
+					kind: 'registered_action',
 				},
 			},
 		});
@@ -190,7 +284,7 @@ describe('Gateway Control controller-host-action adapter', () => {
 					outcome: { kind: 'completed' },
 					owningGeneration: 'runtime-generation-a',
 					status: 'ok',
-					value: { actionId: 'workspace_git_push' },
+					value: { action: { actionId: 'workspace_git_push' }, kind: 'registered_action' },
 				},
 			],
 			ok: true,
@@ -207,7 +301,7 @@ describe('Gateway Control controller-host-action adapter', () => {
 						arguments: {},
 						id: 'probe-approved',
 						name: 'controller_host_probe',
-						namespace: 'controller_host_action',
+						namespace: 'controller_execution',
 					},
 				],
 			},
@@ -216,10 +310,125 @@ describe('Gateway Control controller-host-action adapter', () => {
 
 		expect(fixture.sendCommand).toHaveBeenCalledWith(
 			expect.objectContaining({
-				idempotencyKey: `controller-host-action:${operationId}:sha256:${'c'.repeat(64)}`,
+				idempotencyKey: `controller-execution:${operationId}:sha256:${'c'.repeat(64)}`,
 				message: expect.objectContaining({
 					payload: expect.objectContaining({
-						approvalReservation: approvalReservationDispatchAuthority.reservation,
+						action: expect.objectContaining({
+							approvalReservation: approvalReservationDispatchAuthority.reservation,
+						}),
+					}),
+				}),
+			}),
+		);
+	});
+
+	it('routes a validated configured CLI input with a target-derived quick RPC window', async () => {
+		const fixture = createFixture({
+			sendCommand: async () => ({
+				acceptedSession,
+				messageId: responseMessageId,
+				response: {
+					kind: 'command_result',
+					operation: 'tool_portal_controller_execution',
+					payload: {
+						controllerExecution: {
+							kind: 'configured_cli',
+							operationName: 'inspect_host',
+							result: {
+								exitCode: 0,
+								stderrTruncated: false,
+								stdout: 'inspected',
+								stdoutTruncated: false,
+							},
+						},
+						responseToMessageId: responseMessageId,
+						result: 'ok',
+					},
+				},
+			}),
+		});
+
+		const result = await fixture.backend.call(
+			{
+				calls: [
+					{
+						arguments: { argv: ['inspect', 'target'], reason: 'verify host fixture' },
+						id: 'configured-call',
+						name: 'inspect_host',
+						namespace: 'controller_execution',
+					},
+				],
+			},
+			callOptions(),
+		);
+
+		expect(fixture.sendCommand).toHaveBeenCalledWith(
+			expect.objectContaining({
+				commandResultTimeoutMs: 15_000,
+				createdAtMs: 1_000,
+				expiresAtMs: 16_000,
+				message: expect.objectContaining({
+					payload: expect.objectContaining({
+						capability: { name: 'inspect_host', namespace: 'controller_execution' },
+						input: { argv: ['inspect', 'target'], reason: 'verify host fixture' },
+						kind: 'configured_cli',
+						operationName: 'inspect_host',
+					}),
+				}),
+			}),
+		);
+		expect(result).toMatchObject({
+			items: [{ status: 'ok', value: { kind: 'configured_cli', operationName: 'inspect_host' } }],
+			ok: true,
+		});
+	});
+
+	it('routes by the configured operation discriminant instead of a built-in action name', async () => {
+		const fixture = createFixture({
+			sendCommand: async () => ({
+				acceptedSession,
+				messageId: responseMessageId,
+				response: {
+					kind: 'command_result',
+					operation: 'tool_portal_controller_execution',
+					payload: {
+						controllerExecution: {
+							kind: 'configured_cli',
+							operationName: 'workspace_git_push',
+							result: {
+								exitCode: 0,
+								stderrTruncated: false,
+								stdout: '1',
+								stdoutTruncated: false,
+							},
+						},
+						responseToMessageId: responseMessageId,
+						result: 'ok',
+					},
+				},
+			}),
+		});
+
+		await fixture.backend.call(
+			{
+				calls: [
+					{
+						arguments: { argv: ['increment'], reason: 'prove exact operation routing' },
+						id: 'configured-built-in-name',
+						name: 'workspace_git_push',
+						namespace: 'custom_controller',
+					},
+				],
+			},
+			callOptions(),
+		);
+
+		expect(fixture.sendCommand).toHaveBeenCalledWith(
+			expect.objectContaining({
+				message: expect.objectContaining({
+					payload: expect.objectContaining({
+						capability: { name: 'workspace_git_push', namespace: 'custom_controller' },
+						kind: 'configured_cli',
 					}),
 				}),
 			}),
@@ -236,7 +445,7 @@ describe('Gateway Control controller-host-action adapter', () => {
 						arguments: { expectedHead: expectedHead.toUpperCase() },
 						id: 'call-invalid',
 						name: 'workspace_git_push',
-						namespace: 'controller_host_action',
+						namespace: 'controller_execution',
 					},
 				],
 			},
@@ -258,7 +467,7 @@ describe('Gateway Control controller-host-action adapter', () => {
 						arguments: {},
 						id: 'probe-a',
 						name: 'controller_host_probe',
-						namespace: 'controller_host_action',
+						namespace: 'controller_execution',
 					},
 				],
 			},
@@ -284,7 +493,7 @@ describe('Gateway Control controller-host-action adapter', () => {
 						arguments: {},
 						id: 'probe-cancelled',
 						name: 'controller_host_probe',
-						namespace: 'controller_host_action',
+						namespace: 'controller_execution',
 					},
 				],
 			},
@@ -306,10 +515,10 @@ describe('Gateway Control controller-host-action adapter', () => {
 				messageId: responseMessageId,
 				response: {
 					kind: 'command_result',
-					operation: 'tool_portal_controller_host_action',
+					operation: 'tool_portal_controller_execution',
 					payload: {
 						error: {
-							errorClass: 'controller_host_action_denied',
+							errorClass: 'controller_execution_denied',
 							retryable: false,
 							safeMessage: 'controller denied the host action',
 						},
@@ -327,7 +536,7 @@ describe('Gateway Control controller-host-action adapter', () => {
 						arguments: {},
 						id: 'probe-denied',
 						name: 'controller_host_probe',
-						namespace: 'controller_host_action',
+						namespace: 'controller_execution',
 					},
 				],
 			},
@@ -358,7 +567,7 @@ describe('Gateway Control controller-host-action adapter', () => {
 						arguments: {},
 						id: 'probe-a',
 						name: 'controller_host_probe',
-						namespace: 'controller_host_action',
+						namespace: 'controller_execution',
 					},
 				],
 			},

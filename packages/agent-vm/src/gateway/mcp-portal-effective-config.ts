@@ -1,18 +1,23 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, readdir, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
 	loadMcpConfig,
 	loadToolPortalConfig,
+	effectiveManagedToolPortalConfigSchema,
+	encodeConfiguredCliPreparedImageIdentity,
+	managedToolPortalConfigSchema,
 	mcpPortalConfigSchema,
-	toolPortalConfigSchema,
 	type FormattedSecretValue,
+	type EffectiveManagedToolPortalConfig,
 	type McpConfig,
 	type McpPortalConfig,
 	type ToolPortalNamespacePolicy,
 	type ToolPortalConfig,
 } from '@agent-vm/config-contracts';
+import { gatewayControlRegisteredControllerExecutionActionIds } from '@agent-vm/gateway-control-contracts';
+import type { ManagedVmImageCapability } from '@agent-vm/managed-vm';
 import type { MediatedSecretSpec, SecretRef, SecretResolver } from '@agent-vm/secret-management';
 
 export interface McpPortalEffectiveConfigProps {
@@ -21,6 +26,7 @@ export interface McpPortalEffectiveConfigProps {
 	readonly authoredConfigDir: string;
 	readonly declaredAgentIds?: readonly string[];
 	readonly effectiveHostConfigDir: string;
+	readonly managedVmImages?: ManagedVmImageCapability;
 	readonly secretResolver: SecretResolver;
 	readonly workspaceGitPushAgentEligibility?: WorkspaceGitPushAgentEligibility;
 	readonly zoneId: string;
@@ -29,9 +35,11 @@ export interface McpPortalEffectiveConfigProps {
 export interface McpPortalEffectiveConfigFromConfigProps {
 	readonly approvalAccessConfigured: boolean;
 	readonly allowedRawEnvSecretNames?: readonly string[];
+	readonly authoredConfigDir?: string;
 	readonly declaredAgentIds?: readonly string[];
 	readonly effectiveHostConfigDir: string;
 	readonly mcpConfig: McpConfig;
+	readonly managedVmImages?: ManagedVmImageCapability;
 	readonly secretResolver: SecretResolver;
 	readonly toolPortalConfig: ToolPortalConfig;
 	readonly workspaceGitPushAgentEligibility?: WorkspaceGitPushAgentEligibility;
@@ -56,7 +64,9 @@ export interface McpPortalEffectiveConfigPlan {
 export type McpPortalEffectiveConfigWriteResult = McpPortalEffectiveConfigPlan;
 
 const effectiveConfigManifestFileName = 'tool-portal-effective-manifest.json';
-const managedControllerHostActionTools = new Set(['controller_host_probe', 'workspace_git_push']);
+const managedControllerExecutionTools: ReadonlySet<string> = new Set(
+	gatewayControlRegisteredControllerExecutionActionIds,
+);
 
 interface EffectiveConfigManifest {
 	readonly mcpConfigFile: string;
@@ -66,8 +76,71 @@ interface EffectiveConfigManifest {
 }
 
 export interface McpPortalEffectiveToolPortalConfigSnapshot {
-	readonly effectiveToolPortalConfig: ToolPortalConfig;
+	readonly effectiveToolPortalConfig: EffectiveManagedToolPortalConfig;
 	readonly toolPortalConfigPath: string;
+}
+
+async function prepareConfiguredCliManagedVmImages(props: {
+	readonly authoredConfigDir: string | undefined;
+	readonly effectiveHostConfigDir: string;
+	readonly managedVmImages: ManagedVmImageCapability | undefined;
+	readonly toolPortalConfig: ToolPortalConfig;
+}): Promise<EffectiveManagedToolPortalConfig> {
+	const effectiveConfig = structuredClone(props.toolPortalConfig);
+	if (effectiveConfig.mode !== 'managed') {
+		throw new Error('tool-portal: effective Managed VM image preparation requires managed mode.');
+	}
+	const ephemeralTargets = Object.values(effectiveConfig.profiles).flatMap((profile) =>
+		Object.values(profile.namespaces).flatMap((namespacePolicy) =>
+			namespacePolicy.backend.kind !== 'controller_execution'
+				? []
+				: Object.values(namespacePolicy.backend.operations).flatMap((operation) =>
+						operation.kind === 'configured_cli' &&
+						operation.executionTarget.kind === 'ephemeral_managed_vm'
+							? [operation.executionTarget]
+							: [],
+					),
+		),
+	);
+	if (ephemeralTargets.length === 0) {
+		return effectiveManagedToolPortalConfigSchema.parse(effectiveConfig);
+	}
+	const authoredConfigDir = props.authoredConfigDir;
+	const managedVmImages = props.managedVmImages;
+	if (authoredConfigDir === undefined || managedVmImages === undefined) {
+		throw new Error(
+			'tool-portal: ephemeral managed VM operations require the existing Managed VM image preparation capability.',
+		);
+	}
+	const preparedImagesByRecipePath = new Map<
+		string,
+		Promise<{ readonly fingerprint: string; readonly imageReference: string }>
+	>();
+	await Promise.all(
+		ephemeralTargets.map(async (target): Promise<void> => {
+			const recipePath = path.resolve(authoredConfigDir, target.imageReference);
+			let preparedImage = preparedImagesByRecipePath.get(recipePath);
+			if (preparedImage === undefined) {
+				const recipePathDigest = createHash('sha256').update(recipePath).digest('hex');
+				preparedImage = managedVmImages.prepareImage({
+					cacheDirectory: path.join(
+						props.effectiveHostConfigDir,
+						'controller-execution-images',
+						recipePathDigest,
+					),
+					recipePath,
+				});
+				preparedImagesByRecipePath.set(recipePath, preparedImage);
+			}
+			const prepared = await preparedImage;
+			target.imageReference = encodeConfiguredCliPreparedImageIdentity({
+				fingerprint: prepared.fingerprint,
+				imageReference: prepared.imageReference,
+				schemaVersion: 1,
+			});
+		}),
+	);
+	return effectiveManagedToolPortalConfigSchema.parse(effectiveConfig);
 }
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -220,14 +293,25 @@ function assertToolPortalAgentsMatchDeclaredAgents(props: {
 	}
 }
 
-function assertManagedControllerHostActionPolicy(props: {
+function assertManagedControllerExecutionPolicy(props: {
 	readonly namespaceId: string;
 	readonly namespacePolicy: ToolPortalNamespacePolicy;
 	readonly profileId: string;
 }): void {
+	if (
+		props.namespaceId !== 'controller_execution' &&
+		props.namespacePolicy.backend.kind === 'controller_execution' &&
+		Object.values(props.namespacePolicy.backend.operations).some(
+			(operation) => operation.kind === 'registered_action',
+		)
+	) {
+		throw new Error(
+			`tool-portal: managed profile "${props.profileId}" namespace "${props.namespaceId}" cannot remap definition-owned registered controller execution actions.`,
+		);
+	}
 	if (props.namespacePolicy.tools.allow === '*') {
 		throw new Error(
-			`tool-portal: managed profile "${props.profileId}" namespace "${props.namespaceId}" tools must explicitly allow reviewed controller host actions.`,
+			`tool-portal: managed profile "${props.profileId}" namespace "${props.namespaceId}" tools must explicitly allow controller execution operations.`,
 		);
 	}
 	if (
@@ -235,7 +319,7 @@ function assertManagedControllerHostActionPolicy(props: {
 		props.namespacePolicy.calls.withoutApproval.allow === '*'
 	) {
 		throw new Error(
-			`tool-portal: managed profile "${props.profileId}" namespace "${props.namespaceId}" calls must explicitly allow reviewed controller host actions.`,
+			`tool-portal: managed profile "${props.profileId}" namespace "${props.namespaceId}" calls must explicitly allow controller execution operations.`,
 		);
 	}
 	const allowedTools = new Set(props.namespacePolicy.tools.allow);
@@ -244,15 +328,64 @@ function assertManagedControllerHostActionPolicy(props: {
 		...props.namespacePolicy.calls.withoutApproval.allow,
 	]);
 	for (const toolName of [...allowedTools, ...allowedCalls]) {
-		if (!managedControllerHostActionTools.has(toolName)) {
+		const operation =
+			props.namespacePolicy.backend.kind === 'controller_execution'
+				? props.namespacePolicy.backend.operations[toolName]
+				: undefined;
+		if (operation?.kind === 'registered_action' && !managedControllerExecutionTools.has(toolName)) {
 			throw new Error(
-				`tool-portal: managed profile "${props.profileId}" namespace "${props.namespaceId}" supports only reviewed controller host actions.`,
+				`tool-portal: managed profile "${props.profileId}" namespace "${props.namespaceId}" references an unknown registered controller execution action.`,
 			);
 		}
 		if (!allowedTools.has(toolName) || !allowedCalls.has(toolName)) {
 			throw new Error(
-				`tool-portal: managed profile "${props.profileId}" namespace "${props.namespaceId}" must include each reviewed controller host action in tools and exactly one call selector.`,
+				`tool-portal: managed profile "${props.profileId}" namespace "${props.namespaceId}" must include each controller execution operation in tools and exactly one call selector.`,
 			);
+		}
+	}
+}
+
+function tokensAreEqualOrProperPrefixes(
+	leftTokens: readonly string[],
+	rightTokens: readonly string[],
+): boolean {
+	const sharedLength = Math.min(leftTokens.length, rightTokens.length);
+	return (
+		leftTokens.slice(0, sharedLength).every((token, index) => token === rightTokens[index]) &&
+		(leftTokens.length === sharedLength || rightTokens.length === sharedLength)
+	);
+}
+
+function assertEffectiveConfiguredCliCommandsDoNotOverlap(props: {
+	readonly profile: ToolPortalConfig['profiles'][string];
+	readonly profileId: string;
+}): void {
+	const commandsByExecutable = new Map<
+		string,
+		{ readonly identity: string; readonly tokens: readonly string[] }[]
+	>();
+	for (const [namespaceId, namespacePolicy] of Object.entries(props.profile.namespaces)) {
+		if (namespacePolicy.backend.kind !== 'controller_execution') continue;
+		for (const [operationName, operation] of Object.entries(namespacePolicy.backend.operations)) {
+			if (operation.kind !== 'configured_cli') continue;
+			const commands = commandsByExecutable.get(operation.executablePath) ?? [];
+			for (const command of operation.commands) {
+				commands.push({
+					identity: `${namespaceId}.${operationName}`,
+					tokens: [...operation.mandatoryArgvPrefix, ...command.path],
+				});
+			}
+			commandsByExecutable.set(operation.executablePath, commands);
+		}
+	}
+	for (const [executablePath, commands] of commandsByExecutable) {
+		for (const [leftIndex, leftCommand] of commands.entries()) {
+			for (const rightCommand of commands.slice(leftIndex + 1)) {
+				if (!tokensAreEqualOrProperPrefixes(leftCommand.tokens, rightCommand.tokens)) continue;
+				throw new Error(
+					`tool-portal: managed profile "${props.profileId}" has overlapping effective configured CLI commands for executable "${executablePath}" between "${leftCommand.identity}" and "${rightCommand.identity}".`,
+				);
+			}
 		}
 	}
 }
@@ -270,7 +403,7 @@ function selectorAllowsTool(
 function profileAllowsWorkspaceGitPush(profile: ToolPortalConfig['profiles'][string]): boolean {
 	return Object.values(profile.namespaces).some(
 		(namespacePolicy) =>
-			namespacePolicy.backend.kind === 'controller_host_action' &&
+			namespacePolicy.backend.kind === 'controller_execution' &&
 			selectorAllowsTool(namespacePolicy.tools, 'workspace_git_push') &&
 			(selectorAllowsTool(namespacePolicy.calls.requiresApproval, 'workspace_git_push') ||
 				selectorAllowsTool(namespacePolicy.calls.withoutApproval, 'workspace_git_push')),
@@ -325,15 +458,16 @@ function assertManagedToolPortalConfig(props: {
 	}
 	for (const [profileId, profile] of Object.entries(props.toolPortalConfig.profiles)) {
 		for (const [namespaceId, namespacePolicy] of Object.entries(profile.namespaces)) {
-			if (namespacePolicy.backend.kind !== 'controller_host_action') {
+			if (namespacePolicy.backend.kind !== 'controller_execution') {
 				continue;
 			}
-			assertManagedControllerHostActionPolicy({
+			assertManagedControllerExecutionPolicy({
 				namespaceId,
 				namespacePolicy,
 				profileId,
 			});
 		}
+		assertEffectiveConfiguredCliCommandsDoNotOverlap({ profile, profileId });
 	}
 	assertWorkspaceGitPushAgentEligibility({
 		eligibility: props.workspaceGitPushAgentEligibility,
@@ -508,13 +642,19 @@ async function buildEffectivePlanFromConfig(
 		}
 	}
 
+	const effectiveToolPortalConfig = resolveSecrets
+		? await prepareConfiguredCliManagedVmImages({
+				authoredConfigDir: props.authoredConfigDir,
+				effectiveHostConfigDir: props.effectiveHostConfigDir,
+				managedVmImages: props.managedVmImages,
+				toolPortalConfig: props.toolPortalConfig,
+			})
+		: managedToolPortalConfigSchema.parse(structuredClone(props.toolPortalConfig));
 	return {
 		effectiveConfigDir: props.effectiveHostConfigDir,
 		effectiveMcpConfig: { ...props.mcpConfig, providers: effectiveProviders },
-		effectivePortalConfig: buildManagedEffectivePortalConfig(props.toolPortalConfig),
-		effectiveToolPortalConfig: toolPortalConfigSchema.parse(
-			structuredClone(props.toolPortalConfig),
-		),
+		effectivePortalConfig: buildManagedEffectivePortalConfig(effectiveToolPortalConfig),
+		effectiveToolPortalConfig,
 		requiredGatewayEgressHosts: [...requiredGatewayEgressHosts].toSorted(),
 		resolvedSecretNames: Object.keys(secretRefs).toSorted(),
 		runtimeEnvironment,
@@ -533,7 +673,9 @@ async function buildEffectivePlan(
 	return await buildEffectivePlanFromConfig(
 		{
 			approvalAccessConfigured: props.approvalAccessConfigured,
+			authoredConfigDir: props.authoredConfigDir,
 			effectiveHostConfigDir: props.effectiveHostConfigDir,
+			...(props.managedVmImages === undefined ? {} : { managedVmImages: props.managedVmImages }),
 			mcpConfig,
 			secretResolver: props.secretResolver,
 			toolPortalConfig,
@@ -662,7 +804,7 @@ export async function loadMcpPortalEffectiveToolPortalConfigSnapshot(
 		manifest.toolPortalConfigFile,
 		'toolPortalConfigFile',
 	);
-	const effectiveToolPortalConfig = toolPortalConfigSchema.parse(
+	const effectiveToolPortalConfig = effectiveManagedToolPortalConfigSchema.parse(
 		JSON.parse(await readFile(toolPortalConfigPath, 'utf8')),
 	);
 	return { effectiveToolPortalConfig, toolPortalConfigPath };

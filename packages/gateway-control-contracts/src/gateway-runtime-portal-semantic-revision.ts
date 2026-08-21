@@ -3,8 +3,10 @@ import { createHash } from 'node:crypto';
 import { compareUnicodeCodePointStrings } from '@agent-vm/agent-portal-sdk';
 import type {
 	FormattedSecretValue,
+	GatewayRuntimeManagedToolPortalConfig,
 	ManagedToolPortalConfig,
 	McpConfig,
+	ToolPortalConfig,
 } from '@agent-vm/config-contracts';
 
 import {
@@ -127,7 +129,11 @@ type NormalizedBindingInputs = Readonly<
 		Readonly<
 			Record<
 				string,
-				| { readonly kind: 'controller_host_action' | 'mcp_provider' }
+				| { readonly kind: 'mcp_provider' }
+				| {
+						readonly kind: 'controller_execution';
+						readonly operations: Readonly<Record<string, CanonicalJsonValue>>;
+				  }
 				| {
 						readonly kind: 'tool_vm_runner';
 						readonly operations: Readonly<
@@ -379,7 +385,12 @@ function normalizedBindingInputs(config: ManagedToolPortalConfig): NormalizedBin
 								),
 								profile: namespacePolicy.backend.profile,
 							}
-						: { kind: namespacePolicy.backend.kind },
+						: namespacePolicy.backend.kind === 'controller_execution'
+							? {
+									kind: namespacePolicy.backend.kind,
+									operations: namespacePolicy.backend.operations,
+								}
+							: { kind: namespacePolicy.backend.kind },
 				]),
 			),
 		]),
@@ -405,6 +416,25 @@ function revision(domain: string, material: object): string {
 		.update(canonicalJson(material), 'utf8')
 		.digest('hex');
 	return `${domain}:${digest}`;
+}
+
+export function deriveGatewayRuntimePortalBindingRevision(
+	toolPortalConfig: ToolPortalConfig,
+): string {
+	if (toolPortalConfig.mode !== 'managed') {
+		throw new Error('Gateway runtime binding revision requires managed Tool Portal config.');
+	}
+	return revision('binding', normalizedBindingInputs(toolPortalConfig));
+}
+
+export function deriveGatewayRuntimeInputRevision(props: {
+	readonly mcpConfig: McpConfig;
+	readonly toolPortalConfig: GatewayRuntimeManagedToolPortalConfig;
+}): string {
+	return revision('gateway-runtime-input', {
+		mcpProviders: normalizedMcpProviders(props.mcpConfig.providers),
+		toolPortalConfig: props.toolPortalConfig,
+	});
 }
 
 function frameworkIdentityKey(identity: GatewayRuntimeFrameworkIdentity): string {
@@ -550,7 +580,7 @@ export function deriveGatewayRuntimePortalSemanticSnapshot(
 			toolPortalConfig: props.toolPortalConfig,
 		}),
 	);
-	const bindingRevision = revision('binding', normalizedBindingInputs(props.toolPortalConfig));
+	const bindingRevision = deriveGatewayRuntimePortalBindingRevision(props.toolPortalConfig);
 	const schemaRevision = revision('schema', {
 		mcpConfigSchemaVersion: props.mcpConfig.schemaVersion,
 		toolPortalConfigSchemaVersion: props.toolPortalConfig.schemaVersion,

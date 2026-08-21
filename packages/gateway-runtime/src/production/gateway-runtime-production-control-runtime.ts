@@ -5,14 +5,14 @@ import {
 	SANDBOX_MAXIMUM_LIST_ITEMS,
 	SANDBOX_MAXIMUM_OPERATION_MILLISECONDS,
 } from '@agent-vm/agent-portal-sdk';
-import type { ManagedToolPortalConfig } from '@agent-vm/config-contracts';
+import type { GatewayRuntimeManagedToolPortalConfig } from '@agent-vm/config-contracts';
 import type { ToolPortalApprovalPort, ToolPortalBackendPort } from '@agent-vm/tool-portal';
 import { v7 as uuidv7 } from 'uuid';
 
 import {
-	createGatewayControlControllerHostActionBackendPort,
-	type CreateGatewayControlControllerHostActionBackendPortProps,
-} from '../backends/controller-host-action-gateway-control-adapter.js';
+	createGatewayControlControllerExecutionBackendPort,
+	type CreateGatewayControlControllerExecutionBackendPortProps,
+} from '../backends/controller-execution-gateway-control-adapter.js';
 import {
 	createGatewayRuntimeToolVmRunnerArtifactWriter,
 	type CreateGatewayRuntimeToolVmRunnerArtifactWriterProps,
@@ -47,6 +47,10 @@ import {
 	type CreateGatewayControlPublishedBindingRuntimeProps,
 	type GatewayControlPublishedBindingRuntime,
 } from '../control-endpoint/gateway-control-published-binding-runtime.js';
+import {
+	createGatewayRuntimeApprovalDecisionOperations,
+	type GatewayRuntimeApprovalDecisionOperations,
+} from '../gateway-runtime-approval-decision-operations.js';
 import { createGatewayRuntimeApprovalPort } from '../gateway-runtime-approval-port.js';
 import type { GatewayRuntimeManagedToolPortalBackendPortFactories } from '../managed-tool-portal-composition.js';
 import { createGatewayRuntimeSandboxProcessRegistry } from '../sandbox/sandbox-process-registry.js';
@@ -116,13 +120,14 @@ export interface CreateGatewayRuntimeProductionControlRuntimeProps {
 	readonly controlAuthority: GatewayRuntimeProductionControlAuthority;
 	readonly controlEndpoint: GatewayControlEndpoint;
 	readonly owningGeneration: string;
-	readonly toolPortalConfig: ManagedToolPortalConfig;
+	readonly toolPortalConfig: GatewayRuntimeManagedToolPortalConfig;
 	readonly zoneId: string;
 }
 
 export interface GatewayRuntimeProductionControlRuntimeDependencies {
 	readonly compileConfiguredCatalog: typeof compileGatewayRuntimeToolVmRunnerConfiguredCatalog;
 	readonly createApprovalPort: typeof createGatewayRuntimeApprovalPort;
+	readonly createApprovalDecisionOperations: typeof createGatewayRuntimeApprovalDecisionOperations;
 	readonly createArtifactWriter: (
 		props: CreateGatewayRuntimeToolVmRunnerArtifactWriterProps,
 	) => ReturnType<typeof createGatewayRuntimeToolVmRunnerArtifactWriter>;
@@ -132,9 +137,9 @@ export interface GatewayRuntimeProductionControlRuntimeDependencies {
 	readonly createControlCommandClient: (
 		props: CreateGatewayRuntimeControlCommandClientProps,
 	) => ReturnType<typeof createGatewayRuntimeControlCommandClient>;
-	readonly createControllerHostActionBackendPort: (
-		props: CreateGatewayControlControllerHostActionBackendPortProps,
-	) => ToolPortalBackendPort<'controller_host_action'>;
+	readonly createControllerExecutionBackendPort: (
+		props: CreateGatewayControlControllerExecutionBackendPortProps,
+	) => ToolPortalBackendPort<'controller_execution'>;
 	readonly createBindingPublicationHandler: typeof createGatewayControlBindingPublicationHandler;
 	readonly createOperationActiveUseRuntime: (
 		props: CreateGatewayControlOperationActiveUseRuntimeProps,
@@ -158,8 +163,9 @@ export interface GatewayRuntimeProductionControlRuntimeDependencies {
 export interface GatewayRuntimeProductionControlRuntime {
 	readonly acquisitionPort: GatewayControlOperationActiveUseAcquisitionPort;
 	readonly approvalPort: ToolPortalApprovalPort;
+	readonly approvalDecisionOperations: GatewayRuntimeApprovalDecisionOperations;
 	readonly applicationMessageHandler: GatewayControlApplicationMessageHandler;
-	readonly controllerHostActionBackendPortFactory: GatewayRuntimeManagedToolPortalBackendPortFactories['controllerHostAction'];
+	readonly controllerExecutionBackendPortFactory: GatewayRuntimeManagedToolPortalBackendPortFactories['controllerExecution'];
 	readonly retire: () => Promise<void>;
 	readonly sandboxDispatch: (request: GatewayRuntimeSandboxDispatchRequest) => Promise<unknown>;
 	readonly toolVmRunnerBackendPortFactory: GatewayRuntimeManagedToolPortalBackendPortFactories['toolVmRunner'];
@@ -168,11 +174,12 @@ export interface GatewayRuntimeProductionControlRuntime {
 const defaultDependencies = Object.freeze({
 	compileConfiguredCatalog: compileGatewayRuntimeToolVmRunnerConfiguredCatalog,
 	createApprovalPort: createGatewayRuntimeApprovalPort,
+	createApprovalDecisionOperations: createGatewayRuntimeApprovalDecisionOperations,
 	createArtifactWriter: createGatewayRuntimeToolVmRunnerArtifactWriter,
 	createBindingPublicationHandler: createGatewayControlBindingPublicationHandler,
 	createCallerContextRegistrationClient: createGatewayControlCallerContextRegistrationClient,
 	createControlCommandClient: createGatewayRuntimeControlCommandClient,
-	createControllerHostActionBackendPort: createGatewayControlControllerHostActionBackendPort,
+	createControllerExecutionBackendPort: createGatewayControlControllerExecutionBackendPort,
 	createOperationActiveUseRuntime: createGatewayControlOperationActiveUseRuntime,
 	createProcessRuntime: createStrictToolVmSshProcessRuntime,
 	createProcessRegistry: createGatewayRuntimeSandboxProcessRegistry,
@@ -221,13 +228,18 @@ export async function createGatewayRuntimeProductionControlRuntime(
 		controlCommandClient,
 		controlService,
 	});
-	let controllerHostActionBackendPort: ToolPortalBackendPort<'controller_host_action'>;
+	const approvalDecisionOperations = dependencies.createApprovalDecisionOperations({
+		callerContextRegistrationClient,
+		controlCommandClient,
+	});
+	let controllerExecutionBackendPort: ToolPortalBackendPort<'controller_execution'>;
 	try {
-		controllerHostActionBackendPort = dependencies.createControllerHostActionBackendPort({
+		controllerExecutionBackendPort = dependencies.createControllerExecutionBackendPort({
 			callerContextRegistrationClient,
 			controlCommandClient,
 			createCommandId: uuidv7,
 			owningGeneration: props.owningGeneration,
+			toolPortalConfig: props.toolPortalConfig,
 		});
 	} catch (error: unknown) {
 		await callerContextRegistrationClient.close().catch(() => undefined);
@@ -346,8 +358,9 @@ export async function createGatewayRuntimeProductionControlRuntime(
 	return {
 		acquisitionPort,
 		approvalPort,
+		approvalDecisionOperations,
 		applicationMessageHandler,
-		controllerHostActionBackendPortFactory: () => controllerHostActionBackendPort,
+		controllerExecutionBackendPortFactory: () => controllerExecutionBackendPort,
 		retire,
 		sandboxDispatch: sandboxDispatcher.dispatch,
 		toolVmRunnerBackendPortFactory,

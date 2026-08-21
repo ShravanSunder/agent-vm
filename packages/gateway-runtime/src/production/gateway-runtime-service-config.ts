@@ -3,9 +3,8 @@ import { open, type FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
+	gatewayRuntimeManagedToolPortalConfigSchema,
 	mcpConfigSchema,
-	toolPortalConfigSchema,
-	type ManagedToolPortalConfig,
 	type McpConfig,
 } from '@agent-vm/config-contracts';
 import {
@@ -96,20 +95,6 @@ export type GatewayRuntimeToolPortalObservabilityConfig = z.infer<
 	typeof GatewayRuntimeToolPortalObservabilityConfigSchema
 >;
 
-const GatewayRuntimeManagedToolPortalConfigSchema = toolPortalConfigSchema.transform(
-	(config, context): ManagedToolPortalConfig => {
-		if (config.mode !== 'managed') {
-			context.addIssue({
-				code: 'custom',
-				message: 'Gateway runtime service requires managed Tool Portal configuration.',
-				path: ['mode'],
-			});
-			return z.NEVER;
-		}
-		return config;
-	},
-);
-
 export const GatewayRuntimeServiceConfigSchema = z
 	.object({
 		artifactLimits: z
@@ -161,6 +146,7 @@ export const GatewayRuntimeServiceConfigSchema = z
 					.strict(),
 			})
 			.strict(),
+		gatewayRuntimeInputRevision: z.string().regex(/^gateway-runtime-input:[a-f0-9]{64}$/u),
 		mcpConfigPath: ProtectedAbsolutePathSchema,
 		observability: GatewayRuntimeToolPortalObservabilityConfigSchema,
 		runtimeRoot: ProtectedAbsolutePathSchema,
@@ -173,7 +159,7 @@ export const GatewayRuntimeServiceConfigSchema = z
 				serviceId: z.string().min(1).max(256),
 			})
 			.strict(),
-		toolPortalConfig: GatewayRuntimeManagedToolPortalConfigSchema,
+		toolPortalConfig: gatewayRuntimeManagedToolPortalConfigSchema,
 	})
 	.strict()
 	.superRefine((config, context) => {

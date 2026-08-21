@@ -10,6 +10,7 @@ import {
 	type GatewayRuntimeClientTrustedInvocationContext,
 } from '@agent-vm/agent-portal-sdk/gateway-runtime-client';
 import {
+	createGatewayRuntimeManagedToolPortalConfig,
 	managedToolPortalConfigSchema,
 	mcpConfigSchema,
 	type FormattedSecretValue,
@@ -29,6 +30,7 @@ import {
 	type ControlReadyRequestCredential,
 } from '@agent-vm/control-protocol-contracts';
 import {
+	deriveGatewayRuntimeInputRevision,
 	deriveGatewayRuntimePortalSemanticSnapshot,
 	GatewayControlHelloResponseSchema,
 	GatewayControlRpcMessageSchema,
@@ -231,7 +233,7 @@ async function waitForReadinessEvidenceStatus(props: {
 
 async function createServiceConfig(
 	options: {
-		readonly includeControllerHostAction?: boolean;
+		readonly includeControllerExecution?: boolean;
 		readonly includeMcpProvider?: boolean;
 		readonly includeProcessLogs?: boolean;
 		readonly verifierPublicKeyPem?: string;
@@ -250,10 +252,16 @@ async function createServiceConfig(
 		profiles: {
 			'profile-a': {
 				namespaces: {
-					...(options.includeControllerHostAction === true
+					...(options.includeControllerExecution === true
 						? {
 								controller: {
-									backend: { kind: 'controller_host_action' as const },
+									backend: {
+										kind: 'controller_execution' as const,
+										operations: {
+											controller_host_probe: { kind: 'registered_action' as const },
+											workspace_git_push: { kind: 'registered_action' as const },
+										},
+									},
 									calls: {
 										requiresApproval: { allow: [], deny: [] },
 										withoutApproval: { allow: ['workspace_git_push'], deny: [] },
@@ -314,7 +322,7 @@ async function createServiceConfig(
 				agentId: 'agent-a',
 				frameworkIdentity: { kind: 'hermes', profileName: 'agent-a-profile' },
 				toolPortalNamespaceNames: [
-					...(options.includeControllerHostAction === true ? ['controller'] : []),
+					...(options.includeControllerExecution === true ? ['controller'] : []),
 					...(options.includeMcpProvider === true ? ['github'] : []),
 					'sandbox',
 				],
@@ -330,7 +338,7 @@ async function createServiceConfig(
 		mcpConfig,
 		surfaceEligibilityByProfile: {
 			'profile-a': {
-				...(options.includeControllerHostAction === true
+				...(options.includeControllerExecution === true
 					? { controller: ['protected_uds'] as const }
 					: {}),
 				...(options.includeMcpProvider === true ? { github: ['protected_uds'] as const } : {}),
@@ -348,6 +356,8 @@ async function createServiceConfig(
 		format: 'pem',
 		type: 'spki',
 	});
+	const gatewayRuntimeToolPortalConfig =
+		createGatewayRuntimeManagedToolPortalConfig(toolPortalConfig);
 	return {
 		artifactLimits: {
 			maximumArtifactBytes: 1_024,
@@ -383,6 +393,10 @@ async function createServiceConfig(
 			},
 			listen: { host: '127.0.0.1', port: 0 },
 		},
+		gatewayRuntimeInputRevision: deriveGatewayRuntimeInputRevision({
+			mcpConfig,
+			toolPortalConfig: gatewayRuntimeToolPortalConfig,
+		}),
 		mcpConfigPath: path.join(temporaryRoot, 'mcp.config.json'),
 		observability: { kind: 'disabled' },
 		runtimeRoot,
@@ -393,7 +407,7 @@ async function createServiceConfig(
 			role: 'tool-portal',
 			serviceId: 'tool-portal-zone-a',
 		},
-		toolPortalConfig,
+		toolPortalConfig: gatewayRuntimeToolPortalConfig,
 	};
 }
 
@@ -756,7 +770,7 @@ function createReadinessControlEventCollector(client: Socket): {
 describe('Gateway runtime production service', () => {
 	it('starts its built-in controller host action backend and retires production resources', async () => {
 		// Arrange
-		const config = await createServiceConfig({ includeControllerHostAction: true });
+		const config = await createServiceConfig({ includeControllerExecution: true });
 
 		// Act
 		const service = await startGatewayRuntimeProductionService({ config, dependencies: {} });
@@ -765,7 +779,7 @@ describe('Gateway runtime production service', () => {
 		// Assert
 		expect(service.readiness).toMatchObject({
 			requiredBackends: {
-				readyBackendKinds: ['controller_host_action', 'tool_vm_runner'],
+				readyBackendKinds: ['controller_execution', 'tool_vm_runner'],
 				status: 'ready',
 			},
 			uds: { publication: { status: 'published' } },
@@ -892,7 +906,7 @@ describe('Gateway runtime production service', () => {
 				},
 			});
 			expect(telemetryProbe.backendPortKinds.toSorted()).toEqual([
-				'controller_host_action',
+				'controller_execution',
 				'mcp_provider',
 				'tool_vm_runner',
 			]);

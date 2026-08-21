@@ -1,4 +1,7 @@
-import type { ManagedToolPortalConfig } from '@agent-vm/config-contracts';
+import {
+	createGatewayRuntimeManagedToolPortalConfig,
+	type ManagedToolPortalConfig,
+} from '@agent-vm/config-contracts';
 import type { ToolPortalApprovalPort } from '@agent-vm/tool-portal';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -151,7 +154,7 @@ function runtimeProps(
 		},
 		controlEndpoint: endpoint,
 		owningGeneration: 'runtime-generation-a',
-		toolPortalConfig: toolPortalConfig(),
+		toolPortalConfig: createGatewayRuntimeManagedToolPortalConfig(toolPortalConfig()),
 		zoneId: 'zone-a',
 	};
 }
@@ -219,6 +222,11 @@ function observableDependencies(): {
 		createApprovalPort: vi.fn(
 			() => ({ armDispatch: vi.fn(), reserveDispatch: vi.fn() }) satisfies ToolPortalApprovalPort,
 		),
+		createApprovalDecisionOperations: vi.fn(() => ({
+			decide: async (): Promise<never> => {
+				throw new Error('unused approval decision');
+			},
+		})),
 		createArtifactWriter: vi.fn(
 			(): GatewayRuntimeToolVmRunnerArtifactWriter => ({
 				write: async (): Promise<never> => {
@@ -238,9 +246,9 @@ function observableDependencies(): {
 				throw new Error('unused command');
 			},
 		})),
-		createControllerHostActionBackendPort: vi.fn(() =>
+		createControllerExecutionBackendPort: vi.fn(() =>
 			createGatewayRuntimeUnavailableBackendPort({
-				backendKind: 'controller_host_action',
+				backendKind: 'controller_execution',
 				owningGeneration: 'runtime-generation-a',
 			}),
 		),
@@ -323,18 +331,19 @@ describe('Gateway Runtime production control runtime', () => {
 		});
 		expect(runtime.acquisitionPort).toBe(observed.acquisitionPort);
 		expect(runtime.applicationMessageHandler).toBe(observed.applicationMessageHandler);
-		expect(observed.dependencies.createControllerHostActionBackendPort).toHaveBeenCalledWith({
+		expect(observed.dependencies.createControllerExecutionBackendPort).toHaveBeenCalledWith({
 			callerContextRegistrationClient: expect.any(Object),
 			controlCommandClient: expect.any(Object),
 			createCommandId: expect.any(Function),
 			owningGeneration: 'runtime-generation-a',
+			toolPortalConfig: expect.any(Object),
 		});
 		expect(
-			runtime.controllerHostActionBackendPortFactory({
+			runtime.controllerExecutionBackendPortFactory({
 				artifactStore: artifactStore(),
 				registerArtifactAuthority: () => ({ kind: 'registered' }),
 			}).backendKind,
-		).toBe('controller_host_action');
+		).toBe('controller_execution');
 
 		runtime.toolVmRunnerBackendPortFactory({
 			artifactStore: artifactStore(),

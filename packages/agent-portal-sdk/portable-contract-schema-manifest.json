@@ -1,6 +1,7 @@
 {
 	"protocolVersion": 1,
 	"refinements": [
+		"gateway.approval.arguments-preview.utf8-bytes",
 		"gateway.attachment.unique-agent-ids",
 		"gateway.managed-agent-projection.namespace-names",
 		"portal.artifact-read.default-truncated",
@@ -3258,6 +3259,198 @@
 				}
 			},
 			"refinementIdentities": ["portal.request-id.not-reserved", "portal.result.aggregate-status"]
+		},
+		"gateway.approval.decision-request": {
+			"jsonSchema": {
+				"$schema": "https://json-schema.org/draft/2020-12/schema",
+				"type": "object",
+				"properties": {
+					"challengeId": {
+						"type": "string",
+						"format": "uuid",
+						"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+					},
+					"decision": {
+						"type": "string",
+						"enum": ["approve", "deny"]
+					}
+				},
+				"required": ["challengeId", "decision"],
+				"additionalProperties": false
+			},
+			"refinementIdentities": []
+		},
+		"gateway.approval.decision-result": {
+			"jsonSchema": {
+				"$schema": "https://json-schema.org/draft/2020-12/schema",
+				"oneOf": [
+					{
+						"type": "object",
+						"properties": {
+							"kind": {
+								"type": "string",
+								"const": "recorded"
+							},
+							"state": {
+								"type": "string",
+								"enum": ["approved", "denied"]
+							}
+						},
+						"required": ["kind", "state"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"kind": {
+								"type": "string",
+								"const": "rejected"
+							},
+							"reason": {
+								"type": "string",
+								"enum": [
+									"not-found",
+									"expired",
+									"stale-authority",
+									"principal-mismatch",
+									"already-decided",
+									"presenter-not-authorized"
+								]
+							}
+						},
+						"required": ["kind", "reason"],
+						"additionalProperties": false
+					}
+				]
+			},
+			"refinementIdentities": []
+		},
+		"gateway.approval.presentation-outcome": {
+			"jsonSchema": {
+				"$schema": "https://json-schema.org/draft/2020-12/schema",
+				"oneOf": [
+					{
+						"type": "object",
+						"properties": {
+							"kind": {
+								"type": "string",
+								"const": "approved"
+							}
+						},
+						"required": ["kind"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"kind": {
+								"type": "string",
+								"const": "denied"
+							}
+						},
+						"required": ["kind"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"kind": {
+								"type": "string",
+								"const": "cancelled"
+							},
+							"reason": {
+								"type": "string",
+								"enum": ["challenge-expired", "session-ended", "user-cancelled"]
+							}
+						},
+						"required": ["kind", "reason"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"kind": {
+								"type": "string",
+								"const": "unavailable"
+							},
+							"reason": {
+								"type": "string",
+								"enum": ["presenter-missing", "presentation-failed"]
+							}
+						},
+						"required": ["kind", "reason"],
+						"additionalProperties": false
+					}
+				]
+			},
+			"refinementIdentities": []
+		},
+		"gateway.approval.presentation-request": {
+			"jsonSchema": {
+				"$schema": "https://json-schema.org/draft/2020-12/schema",
+				"type": "object",
+				"properties": {
+					"allowedDecisions": {
+						"type": "array",
+						"prefixItems": [
+							{
+								"type": "string",
+								"const": "approve"
+							},
+							{
+								"type": "string",
+								"const": "deny"
+							}
+						]
+					},
+					"challengeId": {
+						"type": "string",
+						"format": "uuid",
+						"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+					},
+					"display": {
+						"type": "object",
+						"properties": {
+							"argumentsPreview": {
+								"type": "string",
+								"maxLength": 4096
+							}
+						},
+						"required": ["argumentsPreview"],
+						"additionalProperties": false
+					},
+					"expiresAt": {
+						"type": "string",
+						"format": "date-time",
+						"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+					},
+					"itemId": {
+						"type": "string",
+						"minLength": 1
+					},
+					"name": {
+						"type": "string",
+						"minLength": 1,
+						"maxLength": 256
+					},
+					"namespace": {
+						"type": "string",
+						"minLength": 1,
+						"maxLength": 256
+					}
+				},
+				"required": [
+					"allowedDecisions",
+					"challengeId",
+					"display",
+					"expiresAt",
+					"itemId",
+					"name",
+					"namespace"
+				],
+				"additionalProperties": false
+			},
+			"refinementIdentities": ["gateway.approval.arguments-preview.utf8-bytes"]
 		},
 		"gateway.attachment.metadata": {
 			"jsonSchema": {

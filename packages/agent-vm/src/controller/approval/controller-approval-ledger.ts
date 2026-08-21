@@ -5,7 +5,7 @@ import {
 	GatewayRuntimeApprovalAuthorityContextSchema,
 	GatewayRuntimeApprovalChallengeIntentSchema,
 	GatewayRuntimeApprovalChallengeSchema,
-	GatewayRuntimeControllerHostActionDispatchReservationSchema,
+	GatewayRuntimeControllerExecutionDispatchReservationSchema,
 	GatewayRuntimeApprovalDispatchGrantSchema,
 	GatewayRuntimeApprovalDispatchReservationSchema,
 	deriveGatewayRuntimeApprovalFingerprint,
@@ -31,8 +31,8 @@ const ControllerApprovalOperatorIdentitySchema = z
 	.object({
 		approverId: z.string().min(1),
 		audience: z.literal(GATEWAY_RUNTIME_APPROVAL_AUDIENCE),
-		credentialId: z.string().min(1),
-		provenance: z.literal('approval-access'),
+		provenance: z.literal('managed-gateway'),
+		stablePrincipal: z.string().regex(/^[a-f0-9]{64}$/u),
 	})
 	.strict();
 
@@ -59,8 +59,8 @@ const ControllerApprovalRevocationSchema = z
 	})
 	.strict();
 
-const ControllerHostActionDispatchGrantSchema =
-	GatewayRuntimeControllerHostActionDispatchReservationSchema.omit({
+const ControllerExecutionDispatchGrantSchema =
+	GatewayRuntimeControllerExecutionDispatchReservationSchema.omit({
 		reservationId: true,
 	})
 		.extend({ grantId: z.string().uuid() })
@@ -68,7 +68,7 @@ const ControllerHostActionDispatchGrantSchema =
 
 const ControllerApprovalDispatchGrantSchema = z.union([
 	GatewayRuntimeApprovalDispatchGrantSchema,
-	ControllerHostActionDispatchGrantSchema,
+	ControllerExecutionDispatchGrantSchema,
 ]);
 
 type ControllerApprovalDispatchGrant = z.infer<typeof ControllerApprovalDispatchGrantSchema>;
@@ -142,7 +142,12 @@ export type ControllerApprovalDecisionResult =
 	  }
 	| {
 			readonly kind: 'rejected';
-			readonly reason: 'already-decided' | 'expired' | 'not-found' | 'stale-authority';
+			readonly reason:
+				| 'already-decided'
+				| 'expired'
+				| 'not-found'
+				| 'principal-mismatch'
+				| 'stale-authority';
 	  };
 
 export type ControllerApprovalRevocationResult =
@@ -461,6 +466,9 @@ export function createControllerApprovalLedger(
 							approvalId,
 							authorityContext,
 							backendKind: intent.backendKind,
+							...(intent.backendKind === 'controller_execution'
+								? { bindingRevision: intent.semanticRevisions.bindingRevision }
+								: {}),
 							expiresAt: currentRecord.challenge.expiresAt,
 							fingerprint,
 							operationId: intent.operationId,
@@ -569,6 +577,9 @@ export function createControllerApprovalLedger(
 					approvalId: reservation.approvalId,
 					authorityContext,
 					backendKind: reservation.backendKind,
+					...(reservation.backendKind === 'controller_execution'
+						? { bindingRevision: reservation.bindingRevision }
+						: {}),
 					expiresAt: reservation.expiresAt,
 					fingerprint: reservation.fingerprint,
 					grantId: generateUuid(),
@@ -625,6 +636,16 @@ export function createControllerApprovalLedger(
 					return {
 						nextRecord: currentRecord,
 						result: { kind: 'rejected', reason: 'already-decided' } as const,
+					};
+				}
+				if (
+					deriveGatewayControlStablePrincipal({
+						principal: currentRecord.challenge.intent.trustedContext.principal,
+					}) !== operator.stablePrincipal
+				) {
+					return {
+						nextRecord: currentRecord,
+						result: { kind: 'rejected', reason: 'principal-mismatch' } as const,
 					};
 				}
 				const decidedAt = new Date(now()).toISOString();

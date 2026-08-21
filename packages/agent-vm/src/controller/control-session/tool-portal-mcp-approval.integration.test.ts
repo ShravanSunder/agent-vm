@@ -168,8 +168,8 @@ const managedPluginAttachment = {
 const operatorIdentity = {
 	approverId: 'operator-a',
 	audience: GATEWAY_RUNTIME_APPROVAL_AUDIENCE,
-	credentialId: 'approval-credential-a',
-	provenance: 'approval-access',
+	provenance: 'managed-gateway',
+	stablePrincipal: deriveGatewayControlStablePrincipal({ principal: managedPrincipal }),
 } satisfies ControllerApprovalOperatorIdentity;
 
 const portalCallRequest = PortalCallRequestSchema.parse({
@@ -401,8 +401,8 @@ describe('managed private-UDS approval exactly-once dispatch', () => {
 		const capabilityCore = createManagedToolPortalCapabilityCore({
 			approvalPort,
 			backendPorts: {
-				controllerHostAction: unexpectedBackendPort(
-					'controller_host_action',
+				controllerExecution: unexpectedBackendPort(
+					'controller_execution',
 					'controller host action',
 				),
 				mcpProvider: createRecordingMcpProviderBackend(backendInvocations),
@@ -412,6 +412,7 @@ describe('managed private-UDS approval exactly-once dispatch', () => {
 			semanticSnapshot,
 		});
 		const privateUdsDispatcher = createGatewayRuntimePrivateUdsDispatcher({
+			approvalOperations: { decide: async () => ({ kind: 'rejected', reason: 'not-found' }) },
 			artifactOperations: {
 				read: async (): Promise<never> => {
 					throw new Error('Artifact reads are outside the private-UDS approval proof.');

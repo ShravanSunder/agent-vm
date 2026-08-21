@@ -1,4 +1,10 @@
 import {
+	GatewayApprovalDecisionRequestSchema,
+	GatewayApprovalDecisionResultSchema,
+	type GatewayApprovalDecisionRequest,
+	type GatewayApprovalDecisionResult,
+} from '../approval-surface/index.js';
+import {
 	PortalArtifactReadRequestSchema,
 	PortalArtifactReadResultSchema,
 	type PortalArtifactReadRequest,
@@ -319,6 +325,30 @@ class GatewayRuntimeArtifactOperations {
 	}
 }
 
+class GatewayRuntimeApprovalOperations {
+	readonly #client: GatewayRuntimeClient;
+
+	constructor(client: GatewayRuntimeClient) {
+		this.#client = client;
+	}
+
+	async decide(
+		request: GatewayApprovalDecisionRequest,
+		options: GatewayRuntimePortalRequestOptions,
+	): Promise<GatewayApprovalDecisionResult> {
+		const validatedRequest = GatewayApprovalDecisionRequestSchema.parse(request);
+		const result = await this.#client.request(
+			'approval.decide',
+			createGatewayRuntimeRequestParams({
+				publicRequest: validatedRequest,
+				trustedContext: options.trustedContext,
+			}),
+			gatewayRuntimeRequestOptions(options),
+		);
+		return GatewayApprovalDecisionResultSchema.parse(result);
+	}
+}
+
 /** Rich private-UDS client for one current managed-framework attachment. */
 export class GatewayRuntimeClient {
 	readonly #attachment: GatewayRuntimeAttachmentMetadata;
@@ -331,6 +361,7 @@ export class GatewayRuntimeClient {
 	#connecting = false;
 	#handshakeComplete = false;
 	readonly artifacts: GatewayRuntimeArtifactOperations;
+	readonly approvals: GatewayRuntimeApprovalOperations;
 	readonly portal: GatewayRuntimePortalOperations;
 	readonly sandbox: GatewayRuntimeSandboxOperations;
 
@@ -343,6 +374,7 @@ export class GatewayRuntimeClient {
 		this.#traceContextProvider = options.traceContextProvider;
 		this.#transportFactory = options.transportFactory ?? createNodeGatewayRuntimeTransportFactory();
 		this.artifacts = new GatewayRuntimeArtifactOperations(this);
+		this.approvals = new GatewayRuntimeApprovalOperations(this);
 		this.portal = new GatewayRuntimePortalOperations(this);
 		this.sandbox = Object.freeze(new GatewayRuntimeSandboxOperations(this));
 	}

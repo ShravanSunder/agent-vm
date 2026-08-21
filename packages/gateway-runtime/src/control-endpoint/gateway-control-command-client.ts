@@ -35,6 +35,8 @@ export type GatewayRuntimeControlCommandResult = Extract<
 export interface GatewayRuntimeControlCommandRequest {
 	readonly admissionPrincipal?: GatewayStablePrincipalDigest;
 	readonly commandId?: string;
+	readonly commandResultTimeoutMs?: number;
+	readonly createdAtMs?: number;
 	readonly expiresAtMs?: number;
 	readonly idempotencyKey?: string;
 	readonly message: GatewayRuntimeControlCommand;
@@ -88,7 +90,7 @@ export function createGatewayRuntimeControlCommandClient(
 					? undefined
 					: GatewayStablePrincipalDigestSchema.parse(request.admissionPrincipal);
 			const messageId = createMessageId();
-			const createdAtMs = Math.max(1, now());
+			const createdAtMs = Math.max(1, request.createdAtMs ?? now());
 			const deliveryPolicy = deriveGatewayControlDeliveryPolicy({
 				...(request.idempotencyKey === undefined ? {} : { idempotencyKey: request.idempotencyKey }),
 				kind: 'command',
@@ -126,6 +128,7 @@ export function createGatewayRuntimeControlCommandClient(
 				{
 					...(admissionPrincipal === undefined ? {} : { admissionPrincipal }),
 					commandResultTimeoutMs:
+						request.commandResultTimeoutMs ??
 						gatewayControlCommandExecutionTimeoutMsByOperation[message.operation],
 				},
 			);

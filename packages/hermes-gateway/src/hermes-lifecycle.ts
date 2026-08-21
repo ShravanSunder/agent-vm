@@ -321,6 +321,7 @@ export async function buildHermesFrameworkServiceBootInputs(
 }
 
 export const hermesLifecycle = {
+	capabilities: { nativeApprovalPresenter: true },
 	executionModel: 'managed-gateway',
 	interactiveSsh: {
 		buildSession: ({ requestAllSecrets }: { readonly requestAllSecrets: boolean }) => {

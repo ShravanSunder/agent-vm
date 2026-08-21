@@ -23,6 +23,7 @@ import {
 } from './artifacts/artifact-store.js';
 
 export const GATEWAY_RUNTIME_AUTHENTICATED_PRIVATE_UDS_OPERATION_GROUPS = [
+	'approval',
 	'portal',
 	'artifact.read',
 	'sandbox.environment',

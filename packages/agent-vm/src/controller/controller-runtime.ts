@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { GatewayRuntimeApprovalAuthorityContext } from '@agent-vm/gateway-control-contracts';
+import type { ControllerExecutionOperation } from '@agent-vm/config-contracts';
+import { deriveGatewayRuntimePortalBindingRevision } from '@agent-vm/gateway-control-contracts';
 import type { AgentVmHealthEvent } from '@agent-vm/gateway-lifecycle';
 import { createSecretResolver as createOnePasswordSecretResolver } from '@agent-vm/secret-management';
 
@@ -15,6 +16,7 @@ import {
 import type { GatewayControlSessionAttachmentGap } from '../gateway/gateway-zone-support.js';
 import { resolveManagedAgentRootPaths } from '../gateway/managed-agent-root-storage.js';
 import { controllerFixedGatewayRuntimeArtifactLimits } from '../gateway/managed-gateway-runtime-input-builders.js';
+import { loadMcpPortalEffectiveToolPortalConfigSnapshot } from '../gateway/mcp-portal-effective-config.js';
 import { resolveControllerTelemetryIdentity as resolveControllerTelemetryIdentityDefault } from '../observability/controller-telemetry-identity.js';
 import {
 	createGatewayTelemetryResourceAttributesEnvironmentValue,
@@ -29,13 +31,13 @@ import {
 } from '../observability/observability-config.js';
 import { checkObservabilityStackReadiness as checkObservabilityStackReadinessDefault } from '../observability/observability-readiness.js';
 import { reconcileRecordedVmTree as reconcileRecordedVmTreeDefault } from '../operations/controller-offline-cleanup.js';
+import { readProcessIdentity as readManagedVmProcessIdentity } from '../shared/managed-vm-process.js';
 import { runTaskWithResult } from '../shared/run-task.js';
 import { createUnstartedToolVm, type ToolVmRootBinding } from '../tool-vm/tool-vm-lifecycle.js';
 import { ActiveTaskRegistry } from './active-task-registry.js';
-import { createControllerApprovalBearerAuthenticator } from './approval/controller-approval-authentication.js';
 import { createControllerApprovalLedger } from './approval/controller-approval-ledger.js';
-import { authorizeGatewayControlControllerHostAction } from './control-session/gateway-control-controller-host-action-authorization.js';
-import type { GatewayControlControllerHostActionOperations } from './control-session/gateway-control-domain-handler.js';
+import { authorizeGatewayControlControllerExecution } from './control-session/gateway-control-controller-execution-authorization.js';
+import type { GatewayControlControllerExecutionOperations } from './control-session/gateway-control-domain-handler.js';
 import {
 	createGatewayControlLeaseRpcOperations,
 	createGatewayControlProcessAdmissionCoordinator,
@@ -97,6 +99,9 @@ import { createManagedFrameworkToolVmLeaseCreateOptionsResolver } from './leases
 import { createTcpPool } from './leases/tcp-pool.js';
 import { OpenClawRuntimeStatusStore } from './openclaw-runtime-status.js';
 import { RequestHeartbeatRegistry } from './request-heartbeat-registry.js';
+import { executeConfiguredCliOnControllerHost } from './runner/configured-cli-host-executor.js';
+import { createConfiguredCliManagedVmExecutor } from './runner/configured-cli-managed-vm-executor.js';
+import { ConfiguredControllerExecutionError } from './runner/configured-controller-execution-error.js';
 import { acquireControllerOwnershipLock as acquireControllerOwnershipLockDefault } from './vm-ownership/controller-ownership-lock.js';
 import { createGatewayDestructionBudget } from './vm-ownership/gateway-destruction-budget.js';
 import { createGatewayOwnershipCoordinator } from './vm-ownership/gateway-ownership-coordinator.js';
@@ -483,6 +488,7 @@ async function startControllerRuntimeWithOwnershipLock(
 	controllerStateRoot: ControllerStateRoot,
 ): Promise<ControllerRuntime> {
 	const now = dependencies.now ?? Date.now;
+	const controllerShutdown = new AbortController();
 	const controllerEpoch = dependencies.controllerEpoch ?? randomUUID();
 	const gatewayControlProcessAdmissionCoordinator =
 		createGatewayControlProcessAdmissionCoordinator();
@@ -526,10 +532,6 @@ async function startControllerRuntimeWithOwnershipLock(
 					dependencies.createSecretResolver ?? createOnePasswordSecretResolver,
 				),
 		);
-	const authenticateApprovalBearer = await createControllerApprovalBearerAuthenticator({
-		secretResolver,
-		systemConfig: options.systemConfig,
-	});
 	const approvalLedgersByZoneId = new Map(
 		options.systemConfig.zones.filter(isManagedGatewayZone).map(
 			(zone) =>
@@ -778,14 +780,97 @@ async function startControllerRuntimeWithOwnershipLock(
 			probeKind: 'controller_cache_dir_listing',
 		};
 	};
-	const gatewayControlControllerHostActions: GatewayControlControllerHostActionOperations = {
-		authorizeControllerHostAction: async ({ callerContext, payload, session }) =>
-			await authorizeGatewayControlControllerHostAction({
+	const executeConfiguredCliInManagedVm = createConfiguredCliManagedVmExecutor({
+		controllerStateDir: options.systemConfig.controllerStateDir,
+		managedVmExactProcessTermination: dependencies.managedVmExactProcessTermination,
+		managedVmFactory: dependencies.managedVmFactory,
+		now,
+		readProcessIdentity: dependencies.readProcessIdentity ?? readManagedVmProcessIdentity,
+		resolveGatewayIdentity: async (zoneId) => {
+			const lifecycleState = registry.getManagedGatewayRuntime(zoneId).getLifecycleState();
+			if (lifecycleState.kind !== 'running' && lifecycleState.kind !== 'running-degraded') {
+				throw new Error('Configured controller execution Gateway is not running.');
+			}
+			const gatewayIdentity = lifecycleState.gateway.gatewayIdentity;
+			return {
+				controllerEpoch: gatewayIdentity.controllerEpoch,
+				gatewayEpoch: gatewayIdentity.gatewayEpochId,
+				parentGatewayVmId: gatewayIdentity.gatewayVmId,
+				runtimeEpoch: gatewayIdentity.generationId,
+			};
+		},
+	});
+	const gatewayControlControllerExecutions: GatewayControlControllerExecutionOperations = {
+		authorizeControllerExecution: async ({
+			callerContext,
+			createdAtMs,
+			expiresAtMs,
+			payload,
+			session,
+		}) =>
+			await authorizeGatewayControlControllerExecution({
 				callerContext,
+				createdAtMs,
+				...(expiresAtMs === undefined ? {} : { expiresAtMs }),
 				payload,
 				session,
 				systemConfig: options.systemConfig,
 			}),
+		executeConfiguredCli: async ({ callerContext, payload, session, signal }) => {
+			const executionSignal = AbortSignal.any([signal, controllerShutdown.signal]);
+			const expectedBindingRevision = payload.approvalReservation?.bindingRevision;
+			const loadCurrentOperation = async (): Promise<
+				Extract<ControllerExecutionOperation, { kind: 'configured_cli' }>
+			> => {
+				const effectiveConfig = await loadMcpPortalEffectiveToolPortalConfigSnapshot(
+					path.join(
+						options.systemConfig.cacheDir,
+						'gateways',
+						session.zoneId,
+						'tool-portal-effective',
+					),
+				);
+				if (
+					expectedBindingRevision !== undefined &&
+					expectedBindingRevision !==
+						deriveGatewayRuntimePortalBindingRevision(effectiveConfig.effectiveToolPortalConfig)
+				) {
+					throw new Error(
+						'Configured controller execution approval does not match current trusted policy.',
+					);
+				}
+				const agentConfig = effectiveConfig.effectiveToolPortalConfig.agents[callerContext.agentId];
+				const profileConfig =
+					agentConfig === undefined
+						? undefined
+						: effectiveConfig.effectiveToolPortalConfig.profiles[agentConfig.profile];
+				const namespacePolicy = profileConfig?.namespaces[payload.capability.namespace];
+				const currentOperation =
+					namespacePolicy?.backend.kind === 'controller_execution'
+						? namespacePolicy.backend.operations[payload.operationName]
+						: undefined;
+				if (currentOperation?.kind !== 'configured_cli') {
+					throw new Error('Configured controller execution operation is unavailable.');
+				}
+				return currentOperation;
+			};
+			const operation = await loadCurrentOperation();
+			return operation.executionTarget.kind === 'controller_host'
+				? await executeConfiguredCliOnControllerHost({
+						input: payload.input,
+						operation,
+						signal: executionSignal,
+					})
+				: await executeConfiguredCliInManagedVm({
+						input: payload.input,
+						operation,
+						operationName: payload.operationName,
+						reloadOperation: loadCurrentOperation,
+						signal: executionSignal,
+						stablePrincipal: callerContext.stablePrincipal,
+						zoneId: session.zoneId,
+					});
+		},
 		pushWorkspaceGit: async ({ callerContext, payload, session }) => {
 			const result = await pushWorkspaceGitFromController(callerContext.agentId, session.zoneId, {
 				expectedHead: payload.expectedHead,
@@ -974,7 +1059,7 @@ async function startControllerRuntimeWithOwnershipLock(
 									? { prebuiltImage: startOptions.prebuiltImage }
 									: {}),
 								runTask: runTaskStep,
-								gatewayControlControllerHostActions,
+								gatewayControlControllerExecutions,
 								gatewayControlApprovalLedger: approvalLedger,
 								gatewayControlBindingPublicationSource: gatewayControlLeaseRpc,
 								gatewayControlLeaseRpc,
@@ -1239,32 +1324,6 @@ async function startControllerRuntimeWithOwnershipLock(
 		}
 	};
 	const controllerApp = createControllerService({
-		approvalRoutes: {
-			authenticateBearer: authenticateApprovalBearer,
-			readCurrentAuthorityContext: async (
-				zoneId,
-			): Promise<GatewayRuntimeApprovalAuthorityContext | null> => {
-				let runtime;
-				try {
-					runtime = registry.getManagedGatewayRuntime(zoneId);
-				} catch {
-					return null;
-				}
-				const lifecycleState = runtime.getLifecycleState();
-				if (lifecycleState.kind !== 'running' && lifecycleState.kind !== 'running-degraded') {
-					return null;
-				}
-				const { gatewayIdentity } = lifecycleState.gateway;
-				return {
-					controllerEpoch: gatewayIdentity.controllerEpoch,
-					frameworkEpoch: lifecycleState.gateway.expectedCohort.frameworkIdentity.frameworkEpoch,
-					gatewayEpoch: gatewayIdentity.gatewayEpochId,
-					runtimeEpoch: gatewayIdentity.generationId,
-					zoneId: gatewayIdentity.zoneId,
-				};
-			},
-			resolveLedger: (zoneId) => approvalLedgersByZoneId.get(zoneId) ?? null,
-		},
 		healthEventStore,
 		leaseManager,
 		now,
@@ -1329,6 +1388,9 @@ async function startControllerRuntimeWithOwnershipLock(
 			observedAtMs: now(),
 		});
 	} catch (error) {
+		controllerShutdown.abort(
+			new ConfiguredControllerExecutionError('cancelled', 'Controller startup was aborted.'),
+		);
 		runtimeReadiness.set('stopping');
 		controllerTelemetry?.recordControllerLifecycleEvent({
 			eventName: 'controller-start-failed',
@@ -1413,6 +1475,9 @@ async function startControllerRuntimeWithOwnershipLock(
 	return {
 		async close(): Promise<void> {
 			runtimeReadiness.set('stopping');
+			controllerShutdown.abort(
+				new ConfiguredControllerExecutionError('cancelled', 'Controller is shutting down.'),
+			);
 			controllerTelemetry?.recordControllerLifecycleEvent({
 				eventName: 'controller-stopping',
 				observedAtMs: now(),

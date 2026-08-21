@@ -819,8 +819,8 @@ describe('control session client', () => {
 				operator: {
 					approverId: 'operator-approval-wire',
 					audience: GATEWAY_RUNTIME_APPROVAL_AUDIENCE,
-					credentialId: 'credential-approval-wire',
-					provenance: 'approval-access',
+					provenance: 'managed-gateway',
+					stablePrincipal: approvalAdmissionPrincipal,
 				},
 			});
 			const reservationResponse = await emitApprovalCommand({
@@ -833,7 +833,7 @@ describe('control session client', () => {
 			const reservationAdmission = reservationResponse.payload.approvalAdmission;
 			if (
 				reservationAdmission?.kind !== 'dispatch-reserved' ||
-				reservationAdmission.reservation.backendKind === 'controller_host_action'
+				reservationAdmission.reservation.backendKind === 'controller_execution'
 			) {
 				throw new Error('Expected an approved dispatch reservation over gateway control.');
 			}

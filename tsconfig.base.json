@@ -115,6 +115,9 @@
 			"@agent-vm/openclaw-gateway": ["./packages/openclaw-gateway/src/index.ts"],
 			"@agent-vm/secret-management": ["./packages/secret-management/src/index.ts"],
 			"@agent-vm/tool-portal": ["./packages/tool-portal/src/index.ts"],
+			"@agent-vm/tool-portal/cli-allowances": [
+				"./packages/tool-portal/src/cli-allowances/index.ts"
+			],
 			"@agent-vm/tool-portal/testing": ["./packages/tool-portal/src/testing/index.ts"],
 			"@agent-vm/worker-control-contracts": ["./packages/worker-control-contracts/src/index.ts"],
 			"@agent-vm/worker-gateway": ["./packages/worker-gateway/src/index.ts"]

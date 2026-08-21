@@ -63,7 +63,15 @@ const toolPortalConfig = {
 		'gate-c-profile': {
 			namespaces: {
 				controller: {
-					backend: { kind: 'controller_host_action' },
+					backend: {
+						kind: 'controller_execution',
+						operations: {
+							controller_host_probe: { kind: 'registered_action' },
+							workspace_git_push: { kind: 'registered_action' },
+							push_branch: { kind: 'registered_action' },
+							protected_uds: { kind: 'registered_action' },
+						},
+					},
 					calls: {
 						requiresApproval: { allow: ['push_branch'], deny: [] },
 						withoutApproval: { allow: [], deny: [] },
@@ -154,9 +162,9 @@ interface ExpectedBackendPortFactoryRuntime {
 }
 
 interface ExpectedBackendPortFactories {
-	readonly controllerHostAction: (
+	readonly controllerExecution: (
 		runtime: ExpectedBackendPortFactoryRuntime,
-	) => ToolPortalBackendPort<'controller_host_action'>;
+	) => ToolPortalBackendPort<'controller_execution'>;
 	readonly mcpProvider: (
 		runtime: ExpectedBackendPortFactoryRuntime,
 	) => ToolPortalBackendPort<'mcp_provider'>;
@@ -253,6 +261,9 @@ function createApprovalPort(): {
 						approvalId: deriveGatewayRuntimeApprovalId(fingerprint),
 						authorityContext,
 						backendKind: intent.backendKind,
+						...(intent.backendKind === 'controller_execution'
+							? { bindingRevision: intent.semanticRevisions.bindingRevision }
+							: {}),
 						expiresAt: '2026-07-13T21:00:00.000Z',
 						fingerprint,
 						operationId: intent.operationId,
@@ -389,10 +400,10 @@ describe('Gateway runtime managed Tool Portal real backend composition', () => {
 		const backendCalls: RecordedBackendCall[] = [];
 		const factoryRuntimes: ExpectedBackendPortFactoryRuntime[] = [];
 		const backendPortFactories = {
-			controllerHostAction: (runtime) => {
+			controllerExecution: (runtime) => {
 				factoryRuntimes.push(runtime);
 				return createArtifactProducingBackendPort({
-					backendKind: 'controller_host_action',
+					backendKind: 'controller_execution',
 					calls: backendCalls,
 					runtime,
 				});
@@ -445,7 +456,7 @@ describe('Gateway runtime managed Tool Portal real backend composition', () => {
 			const invocations = [
 				{ backendKind: 'tool_vm_runner', name: 'exec', namespace: 'sandbox' },
 				{
-					backendKind: 'controller_host_action',
+					backendKind: 'controller_execution',
 					name: 'push_branch',
 					namespace: 'controller',
 				},
@@ -540,7 +551,7 @@ describe('Gateway runtime managed Tool Portal real backend composition', () => {
 					);
 				}
 				expect(backendCall.dispatchAuthority.kind).toBe(
-					backendCall.backendKind === 'controller_host_action'
+					backendCall.backendKind === 'controller_execution'
 						? 'controller-approval-reservation'
 						: 'approval-grant',
 				);

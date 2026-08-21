@@ -13,12 +13,14 @@ import {
 	type PortalSearchResult,
 } from '@agent-vm/agent-portal-sdk';
 import {
+	createGatewayRuntimeManagedToolPortalConfig,
+	gatewayRuntimeManagedToolPortalConfigSchema,
+	type GatewayRuntimeManagedToolPortalConfig,
+	managedToolPortalConfigSchema,
 	type ManagedToolPortalConfig,
 	type StandaloneToolPortalConfig,
-	managedToolPortalConfigSchema,
 	type ToolPortalBackendBinding,
 	type ToolPortalBackendKind,
-	type ToolPortalConfig,
 } from '@agent-vm/config-contracts';
 import {
 	type GatewayRuntimeApprovalAdmissionResult,
@@ -191,11 +193,11 @@ export interface ToolPortalService<TMode extends ToolPortalServiceMode> {
 export interface CreateManagedToolPortalCapabilityCoreProps {
 	readonly approvalPort: ToolPortalApprovalPort;
 	readonly backendPorts: {
-		readonly controllerHostAction: ToolPortalBackendPort<'controller_host_action'>;
+		readonly controllerExecution: ToolPortalBackendPort<'controller_execution'>;
 		readonly mcpProvider: ToolPortalBackendPort<'mcp_provider'>;
 		readonly toolVmRunner: ToolPortalBackendPort<'tool_vm_runner'>;
 	};
-	readonly config: ManagedToolPortalConfig;
+	readonly config: GatewayRuntimeManagedToolPortalConfig | ManagedToolPortalConfig;
 	readonly semanticSnapshot: GatewayRuntimePortalSemanticSnapshot;
 }
 
@@ -209,7 +211,7 @@ export interface CreateStandaloneV1ToolPortalServiceProps {
 }
 
 function resolveManagedInvocation(props: {
-	readonly config: ManagedToolPortalConfig;
+	readonly config: GatewayRuntimeManagedToolPortalConfig;
 	readonly options: ToolPortalManagedServiceInvocationOptions;
 	readonly semanticSnapshot: GatewayRuntimePortalSemanticSnapshot;
 }): {
@@ -257,12 +259,12 @@ function backendPortForKind(
 	backendPorts: CreateManagedToolPortalCapabilityCoreProps['backendPorts'],
 	kind: ToolPortalBackendBinding['kind'],
 ):
-	| ToolPortalBackendPort<'controller_host_action'>
+	| ToolPortalBackendPort<'controller_execution'>
 	| ToolPortalBackendPort<'mcp_provider'>
 	| ToolPortalBackendPort<'tool_vm_runner'> {
 	switch (kind) {
-		case 'controller_host_action':
-			return backendPorts.controllerHostAction;
+		case 'controller_execution':
+			return backendPorts.controllerExecution;
 		case 'mcp_provider':
 			return backendPorts.mcpProvider;
 		case 'tool_vm_runner':
@@ -282,7 +284,7 @@ function assertNeverApprovalAdmission(admission: never): never {
 
 function managedBackendEntriesForInvocation(props: {
 	readonly backendPorts: CreateManagedToolPortalCapabilityCoreProps['backendPorts'];
-	readonly config: ToolPortalConfig;
+	readonly config: GatewayRuntimeManagedToolPortalConfig;
 	readonly operationOptions: ToolPortalInvocationOptions;
 	readonly profileId: string;
 	readonly semanticSnapshot: GatewayRuntimePortalSemanticSnapshot;
@@ -420,7 +422,12 @@ function controllerAdmissionItem(props: {
 export function createManagedToolPortalCapabilityCore(
 	props: CreateManagedToolPortalCapabilityCoreProps,
 ): ToolPortalCapabilityCore<'managed'> {
-	const config = managedToolPortalConfigSchema.parse(props.config);
+	const projectedConfig = gatewayRuntimeManagedToolPortalConfigSchema.safeParse(props.config);
+	const config = projectedConfig.success
+		? projectedConfig.data
+		: createGatewayRuntimeManagedToolPortalConfig(
+				managedToolPortalConfigSchema.parse(props.config),
+			);
 	const semanticSnapshot = deepFreeze(
 		GatewayRuntimePortalSemanticSnapshotSchema.parse(props.semanticSnapshot),
 	);
@@ -456,8 +463,8 @@ export function createManagedToolPortalCapabilityCore(
 			const request = { calls: [propsForCall.call] };
 			const result = await (async (): Promise<PortalCallResult> => {
 				switch (propsForCall.authority.backendKind) {
-					case 'controller_host_action':
-						return await props.backendPorts.controllerHostAction.call(request, {
+					case 'controller_execution':
+						return await props.backendPorts.controllerExecution.call(request, {
 							...propsForCall.operationOptions,
 							dispatchAuthority: propsForCall.authority,
 						});
@@ -564,10 +571,10 @@ export function createManagedToolPortalCapabilityCore(
 				owningGeneration: semanticSnapshot.activeRevision,
 			});
 		}
-		if (admission.reservation.backendKind === 'controller_host_action') {
+		if (admission.reservation.backendKind === 'controller_execution') {
 			return await dispatchCall({
 				authority: {
-					backendKind: 'controller_host_action',
+					backendKind: 'controller_execution',
 					kind: 'controller-approval-reservation',
 					reservation: admission.reservation,
 				},

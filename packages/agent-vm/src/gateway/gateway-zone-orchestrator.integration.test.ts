@@ -685,7 +685,7 @@ function createTestCallerContextProofInput(options: {
 	readonly agentId: string;
 	readonly principal?: GatewayRuntimeTrustedInvocationPrincipal;
 	readonly proofZoneId?: string;
-	readonly purpose?: 'tool_vm_lease' | 'tool_portal_controller_host_action';
+	readonly purpose?: 'tool_vm_lease' | 'tool_portal_controller_execution';
 }): GatewayControlCallerContextProofPayloadInput {
 	return {
 		principal: options.principal ?? createTestInvocationPrincipal(options.agentId),
@@ -3570,8 +3570,16 @@ describe('startGatewayZone', () => {
 				profiles: {
 					default: {
 						namespaces: {
-							controller_host_action: {
-								backend: { kind: 'controller_host_action' },
+							controller_execution: {
+								backend: {
+									kind: 'controller_execution',
+									operations: {
+										controller_host_probe: { kind: 'registered_action' },
+										workspace_git_push: { kind: 'registered_action' },
+										push_branch: { kind: 'registered_action' },
+										protected_uds: { kind: 'registered_action' },
+									},
+								},
 								calls: {
 									requiresApproval: { allow: [] },
 									withoutApproval: { allow: ['workspace_git_push'] },
@@ -6198,8 +6206,14 @@ describe('startGatewayZone', () => {
 		const result = await startGatewayZone(
 			{
 				controlSession: { controllerEpoch: 'controller-epoch-test' },
-				gatewayControlControllerHostActions: {
-					authorizeControllerHostAction: vi.fn(async () => ({ authorized: true }) as const),
+				gatewayControlControllerExecutions: {
+					authorizeControllerExecution: vi.fn(async () => ({ authorized: true }) as const),
+					executeConfiguredCli: vi.fn(async () => ({
+						exitCode: 0,
+						stderrTruncated: false,
+						stdout: '',
+						stdoutTruncated: false,
+					})),
 					pushWorkspaceGit,
 					runControllerHostProbe: vi.fn(async () => ({
 						entryNames: ['agent-vm-host-probe.txt'],
@@ -6422,7 +6436,7 @@ describe('startGatewayZone', () => {
 				| 'caller_context_register'
 				| 'lease_create'
 				| 'tool_vm_binding_request'
-				| 'tool_portal_controller_host_action';
+				| 'tool_portal_controller_execution';
 			readonly sequence: number;
 		}): ControlEnvelope => ({
 			bootId: connectedOptions.material.processEpoch,
@@ -6581,7 +6595,7 @@ describe('startGatewayZone', () => {
 							agentAuthority: signTestCallerContextAgentAuthority(
 								{
 									...leaseCallerEvidence,
-									purpose: 'tool_portal_controller_host_action',
+									purpose: 'tool_portal_controller_execution',
 								},
 								connectedOptions.material.agentAuthorityKeys.main,
 							),
@@ -6589,11 +6603,11 @@ describe('startGatewayZone', () => {
 							proof: signTestCallerContextProof(
 								{
 									...leaseCallerEvidence,
-									purpose: 'tool_portal_controller_host_action',
+									purpose: 'tool_portal_controller_execution',
 								},
 								connectedOptions.material.callerContextProofKey,
 							),
-							purpose: 'tool_portal_controller_host_action',
+							purpose: 'tool_portal_controller_execution',
 						},
 					},
 				},
@@ -6614,22 +6628,25 @@ describe('startGatewayZone', () => {
 					deliveryPolicy: 'single_use_critical',
 					idempotencyKey: 'workspace-git-push',
 					messageId: '88888888-8888-4888-8888-888888888888',
-					operation: 'tool_portal_controller_host_action',
+					operation: 'tool_portal_controller_execution',
 					sequence: 4,
 				}),
 				payload: {
 					kind: 'command',
-					operation: 'tool_portal_controller_host_action',
+					operation: 'tool_portal_controller_execution',
 					payload: {
-						actionId: 'workspace_git_push',
-						callerContext: { callerContextId: hostActionCallerContextId },
-						correlation: {
-							capability: {
-								name: 'workspace_git_push',
-								namespace: 'controller_host_action',
+						action: {
+							actionId: 'workspace_git_push',
+							callerContext: { callerContextId: hostActionCallerContextId },
+							correlation: {
+								capability: {
+									name: 'workspace_git_push',
+									namespace: 'controller_execution',
+								},
 							},
+							expectedHead: pushedWorkspaceGitHead,
 						},
-						expectedHead: pushedWorkspaceGitHead,
+						kind: 'registered_action',
 					},
 				},
 			}),
@@ -6638,7 +6655,7 @@ describe('startGatewayZone', () => {
 			callerContext: expect.objectContaining({
 				agentId: 'main',
 				callerContextId: hostActionCallerContextId,
-				purpose: 'tool_portal_controller_host_action',
+				purpose: 'tool_portal_controller_execution',
 				zoneId: 'shravan',
 			}),
 			payload: {
@@ -6647,7 +6664,7 @@ describe('startGatewayZone', () => {
 				correlation: {
 					capability: {
 						name: 'workspace_git_push',
-						namespace: 'controller_host_action',
+						namespace: 'controller_execution',
 					},
 				},
 				expectedHead: pushedWorkspaceGitHead,
@@ -6659,16 +6676,19 @@ describe('startGatewayZone', () => {
 		});
 		expect(hostActionResult).toMatchObject({
 			kind: 'command_result',
-			operation: 'tool_portal_controller_host_action',
+			operation: 'tool_portal_controller_execution',
 			payload: {
-				controllerHostAction: {
-					actionId: 'workspace_git_push',
-					result: {
-						branch: 'agent/main',
-						localHead: pushedWorkspaceGitHead,
-						pushedCommits: [{ sha: pushedWorkspaceGitHead, subject: 'docs: update memory' }],
-						remoteHead: pushedWorkspaceGitHead,
+				controllerExecution: {
+					action: {
+						actionId: 'workspace_git_push',
+						result: {
+							branch: 'agent/main',
+							localHead: pushedWorkspaceGitHead,
+							pushedCommits: [{ sha: pushedWorkspaceGitHead, subject: 'docs: update memory' }],
+							remoteHead: pushedWorkspaceGitHead,
+						},
 					},
+					kind: 'registered_action',
 				},
 				result: 'ok',
 			},

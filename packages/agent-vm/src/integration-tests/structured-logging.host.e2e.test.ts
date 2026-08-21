@@ -8,8 +8,15 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { managedToolPortalConfigSchema, mcpConfigSchema } from '@agent-vm/config-contracts';
-import { deriveGatewayRuntimePortalSemanticSnapshot } from '@agent-vm/gateway-control-contracts';
+import {
+	createGatewayRuntimeManagedToolPortalConfig,
+	managedToolPortalConfigSchema,
+	mcpConfigSchema,
+} from '@agent-vm/config-contracts';
+import {
+	deriveGatewayRuntimeInputRevision,
+	deriveGatewayRuntimePortalSemanticSnapshot,
+} from '@agent-vm/gateway-control-contracts';
 import { describe, expect, it } from 'vitest';
 
 import { computeFingerprintFromConfigPath } from '../build/gondolin-image-builder.js';
@@ -862,6 +869,8 @@ async function createGatewayRuntimeProofFixture(options: {
 		surfaceEligibilityByProfile: { 'profile-a': {}, 'profile-b': {} },
 		toolPortalConfig,
 	});
+	const gatewayRuntimeToolPortalConfig =
+		createGatewayRuntimeManagedToolPortalConfig(toolPortalConfig);
 	await writeFile(mcpConfigPath, JSON.stringify(mcpConfig), { mode: 0o600 });
 	const { publicKey } = generateKeyPairSync('ed25519');
 	const configPath = path.join(runtimeRoot, 'service.json');
@@ -902,6 +911,10 @@ async function createGatewayRuntimeProofFixture(options: {
 				},
 				listen: { host: '127.0.0.1', port: 0 },
 			},
+			gatewayRuntimeInputRevision: deriveGatewayRuntimeInputRevision({
+				mcpConfig,
+				toolPortalConfig: gatewayRuntimeToolPortalConfig,
+			}),
 			mcpConfigPath,
 			observability: {
 				admissionLimits: {
@@ -927,7 +940,7 @@ async function createGatewayRuntimeProofFixture(options: {
 				role: 'tool-portal',
 				serviceId: 'tool-portal-host-proof',
 			},
-			toolPortalConfig,
+			toolPortalConfig: gatewayRuntimeToolPortalConfig,
 		}),
 		{ mode: 0o600 },
 	);

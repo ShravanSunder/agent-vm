@@ -11,6 +11,7 @@ describe('loadGatewayLifecycle', () => {
 		expect(lifecycle).toBe(openclawLifecycle);
 		expect(lifecycle.executionModel).toBe('managed-gateway');
 		expectTypeOf(lifecycle.executionModel).toEqualTypeOf<'managed-gateway'>();
+		expect(lifecycle.capabilities).toEqual({ nativeApprovalPresenter: false });
 	});
 
 	it('loads the Hermes lifecycle for Hermes zones', () => {
@@ -18,6 +19,7 @@ describe('loadGatewayLifecycle', () => {
 		expect(lifecycle).toBe(hermesLifecycle);
 		expect(lifecycle.executionModel).toBe('managed-gateway');
 		expectTypeOf(lifecycle.executionModel).toEqualTypeOf<'managed-gateway'>();
+		expect(lifecycle.capabilities).toEqual({ nativeApprovalPresenter: true });
 	});
 
 	it('loads the worker lifecycle for worker zones', () => {
@@ -25,5 +27,6 @@ describe('loadGatewayLifecycle', () => {
 		expect(lifecycle).toBe(workerLifecycle);
 		expect(lifecycle.executionModel).toBe('direct-process');
 		expectTypeOf(lifecycle.executionModel).toEqualTypeOf<'direct-process'>();
+		expect(lifecycle.capabilities).toEqual({ nativeApprovalPresenter: false });
 	});
 });

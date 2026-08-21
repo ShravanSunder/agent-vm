@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
+	deriveGatewayControlStablePrincipal,
 	GATEWAY_RUNTIME_APPROVAL_AUDIENCE,
 	type GatewayRuntimeApprovalAuthorityContext,
 	type GatewayRuntimeApprovalChallenge,
@@ -40,13 +41,6 @@ const successorAuthorityContext = {
 	controllerEpoch: 'controller-epoch-2',
 } satisfies GatewayRuntimeApprovalAuthorityContext;
 
-const operator = {
-	approverId: 'operator-a',
-	audience: GATEWAY_RUNTIME_APPROVAL_AUDIENCE,
-	credentialId: 'approval-credential-a',
-	provenance: 'approval-access',
-} satisfies ControllerApprovalOperatorIdentity;
-
 const baseIntent = {
 	backendKind: 'mcp_provider',
 	call: {
@@ -77,14 +71,23 @@ const baseIntent = {
 	},
 } satisfies GatewayRuntimeApprovalChallengeIntent;
 
-const controllerHostActionIntent = {
+const operator = {
+	approverId: 'operator-a',
+	audience: GATEWAY_RUNTIME_APPROVAL_AUDIENCE,
+	provenance: 'managed-gateway',
+	stablePrincipal: deriveGatewayControlStablePrincipal({
+		principal: baseIntent.trustedContext.principal,
+	}),
+} satisfies ControllerApprovalOperatorIdentity;
+
+const controllerExecutionIntent = {
 	...baseIntent,
-	backendKind: 'controller_host_action',
+	backendKind: 'controller_execution',
 	call: {
 		arguments: {},
-		id: 'controller_host_action.controller_host_probe',
+		id: 'controller_execution.controller_host_probe',
 		name: 'controller_host_probe',
-		namespace: 'controller_host_action',
+		namespace: 'controller_execution',
 	},
 	operationId: SECOND_OPERATION_ID,
 } satisfies GatewayRuntimeApprovalChallengeIntent;
@@ -292,7 +295,7 @@ describe('controller approval ledger durability and authority', () => {
 		});
 		if (
 			reservationResult.kind !== 'dispatch-reserved' ||
-			reservationResult.reservation.backendKind === 'controller_host_action'
+			reservationResult.reservation.backendKind === 'controller_execution'
 		) {
 			throw new Error(`Expected dispatch-reserved, received ${reservationResult.kind}.`);
 		}
@@ -321,20 +324,20 @@ describe('controller approval ledger durability and authority', () => {
 		expect(storedView).toMatchObject({ challenge, kind: 'dispatch-armed' });
 	});
 
-	it('atomically arms one controller-host-action reservation and rejects replay', async () => {
+	it('atomically arms one controller-execution reservation and rejects replay', async () => {
 		// Arrange
 		const { ledger } = await createTestLedgerHarness();
-		const challenge = await requireApprovalChallenge(ledger, controllerHostActionIntent);
+		const challenge = await requireApprovalChallenge(ledger, controllerExecutionIntent);
 		await approveChallenge({ challenge, ledger });
 		const reservationResult = await ledger.requestApproval({
 			authorityContext,
-			intent: controllerHostActionIntent,
+			intent: controllerExecutionIntent,
 		});
 		if (
 			reservationResult.kind !== 'dispatch-reserved' ||
-			reservationResult.reservation.backendKind !== 'controller_host_action'
+			reservationResult.reservation.backendKind !== 'controller_execution'
 		) {
-			throw new Error('Expected a controller-host-action dispatch reservation.');
+			throw new Error('Expected a controller-execution dispatch reservation.');
 		}
 
 		// Act
@@ -352,15 +355,15 @@ describe('controller approval ledger durability and authority', () => {
 			grant: {
 				approvalId: challenge.approvalId,
 				authorityContext,
-				backendKind: 'controller_host_action',
+				backendKind: 'controller_execution',
 				fingerprint: challenge.fingerprint,
-				operationId: controllerHostActionIntent.operationId,
+				operationId: controllerExecutionIntent.operationId,
 			},
 			kind: 'dispatch-armed',
 		});
 		expect(replayResult).toEqual({
 			kind: 'ambiguous',
-			operationId: controllerHostActionIntent.operationId,
+			operationId: controllerExecutionIntent.operationId,
 			reason: 'dispatch-armed',
 		});
 		expect(await ledger.read(challenge.approvalId)).toMatchObject({
@@ -456,7 +459,7 @@ describe('controller approval ledger durability and authority', () => {
 		});
 		if (
 			reservationResult.kind !== 'dispatch-reserved' ||
-			reservationResult.reservation.backendKind === 'controller_host_action'
+			reservationResult.reservation.backendKind === 'controller_execution'
 		) {
 			throw new Error(`Expected dispatch-reserved, received ${reservationResult.kind}.`);
 		}
@@ -499,7 +502,7 @@ describe('controller approval ledger durability and authority', () => {
 		});
 		if (
 			reservationResult.kind !== 'dispatch-reserved' ||
-			reservationResult.reservation.backendKind === 'controller_host_action'
+			reservationResult.reservation.backendKind === 'controller_execution'
 		) {
 			throw new Error(`Expected dispatch-reserved, received ${reservationResult.kind}.`);
 		}
@@ -578,7 +581,7 @@ describe('controller approval ledger durability and authority', () => {
 		});
 		if (
 			reservationResult.kind !== 'dispatch-reserved' ||
-			reservationResult.reservation.backendKind === 'controller_host_action'
+			reservationResult.reservation.backendKind === 'controller_execution'
 		) {
 			throw new Error(`Expected dispatch-reserved, received ${reservationResult.kind}.`);
 		}
@@ -709,7 +712,7 @@ describe('controller approval ledger durability and authority', () => {
 		});
 		if (
 			reservationResult.kind !== 'dispatch-reserved' ||
-			reservationResult.reservation.backendKind === 'controller_host_action'
+			reservationResult.reservation.backendKind === 'controller_execution'
 		) {
 			throw new Error(`Expected dispatch-reserved, received ${reservationResult.kind}.`);
 		}
@@ -803,7 +806,7 @@ describe('controller approval ledger durability and authority', () => {
 		});
 		if (
 			reservationResult.kind !== 'dispatch-reserved' ||
-			reservationResult.reservation.backendKind === 'controller_host_action'
+			reservationResult.reservation.backendKind === 'controller_execution'
 		) {
 			throw new Error(`Expected dispatch-reserved, received ${reservationResult.kind}.`);
 		}
@@ -873,7 +876,7 @@ describe('controller approval ledger durability and authority', () => {
 		});
 		if (
 			reservationResult.kind !== 'dispatch-reserved' ||
-			reservationResult.reservation.backendKind === 'controller_host_action'
+			reservationResult.reservation.backendKind === 'controller_execution'
 		) {
 			throw new Error(`Expected dispatch-reserved, received ${reservationResult.kind}.`);
 		}

@@ -14,8 +14,15 @@ import {
 	GatewayRuntimeClient,
 	type GatewayRuntimeAttachmentMetadata,
 } from '@agent-vm/agent-portal-sdk/gateway-runtime-client';
-import { managedToolPortalConfigSchema, mcpConfigSchema } from '@agent-vm/config-contracts';
-import { deriveGatewayRuntimePortalSemanticSnapshot } from '@agent-vm/gateway-control-contracts';
+import {
+	createGatewayRuntimeManagedToolPortalConfig,
+	managedToolPortalConfigSchema,
+	mcpConfigSchema,
+} from '@agent-vm/config-contracts';
+import {
+	deriveGatewayRuntimeInputRevision,
+	deriveGatewayRuntimePortalSemanticSnapshot,
+} from '@agent-vm/gateway-control-contracts';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 const execFile = promisify(execFileCallback);
@@ -231,6 +238,8 @@ async function writeProtectedRuntimeConfig(root: string): Promise<{
 		surfaceEligibilityByProfile: { 'profile-a': {}, 'profile-b': {} },
 		toolPortalConfig,
 	});
+	const gatewayRuntimeToolPortalConfig =
+		createGatewayRuntimeManagedToolPortalConfig(toolPortalConfig);
 	await writeFile(mcpConfigPath, JSON.stringify(mcpConfig), {
 		mode: 0o600,
 	});
@@ -284,6 +293,10 @@ async function writeProtectedRuntimeConfig(root: string): Promise<{
 				},
 				listen: { host: '127.0.0.1', port: 0 },
 			},
+			gatewayRuntimeInputRevision: deriveGatewayRuntimeInputRevision({
+				mcpConfig,
+				toolPortalConfig: gatewayRuntimeToolPortalConfig,
+			}),
 			mcpConfigPath,
 			observability: { kind: 'disabled' },
 			runtimeRoot,
@@ -294,7 +307,7 @@ async function writeProtectedRuntimeConfig(root: string): Promise<{
 				role: 'tool-portal',
 				serviceId: 'tool-portal-packed',
 			},
-			toolPortalConfig,
+			toolPortalConfig: gatewayRuntimeToolPortalConfig,
 		}),
 		{ mode: 0o600 },
 	);
@@ -513,7 +526,7 @@ describe('packed Gateway runtime executable', () => {
 				'rejectUnavailableGatewayRuntimeSandboxDispatch',
 			);
 		}
-		expect(fixture.runtimeBinSource).not.toContain("backendKind: 'controller_host_action'");
+		expect(fixture.runtimeBinSource).not.toContain("backendKind: 'controller_execution'");
 		expect(readiness).toMatchObject({
 			controlEndpoint: {
 				identity: { processEpoch: 'process-epoch-packed', zoneId: 'zone-packed' },

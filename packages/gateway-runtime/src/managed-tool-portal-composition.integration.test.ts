@@ -486,7 +486,7 @@ describe('Gateway runtime managed Tool Portal production composition', () => {
 				},
 				authenticatedPrivateUdsOperationGroups: ['portal', 'artifact.read'],
 				backendPortFactories: {
-					controllerHostAction: () => createUnusedBackendPort('controller_host_action'),
+					controllerExecution: () => createUnusedBackendPort('controller_execution'),
 					mcpProvider: mcpProviderFactory,
 					toolVmRunner: () => createUnusedBackendPort('tool_vm_runner'),
 				},
@@ -625,7 +625,7 @@ describe('Gateway runtime managed Tool Portal production composition', () => {
 			operationId: 'operation-protected-uds-retained',
 		} satisfies GatewayRuntimeArtifactAuthorization;
 		const observedServiceSurfaceClasses: ToolPortalInvocationOptions['surfaceClass'][] = [];
-		const controllerHostActionPort = createUnusedBackendPort('controller_host_action');
+		const controllerExecutionPort = createUnusedBackendPort('controller_execution');
 		const mcpProviderPort = {
 			...createUnusedBackendPort('mcp_provider'),
 			list: async (request, options) => {
@@ -659,7 +659,7 @@ describe('Gateway runtime managed Tool Portal production composition', () => {
 				},
 				authenticatedPrivateUdsOperationGroups: ['portal', 'artifact.read'],
 				backendPortFactories: {
-					controllerHostAction: () => controllerHostActionPort,
+					controllerExecution: () => controllerExecutionPort,
 					mcpProvider: () => mcpProviderPort,
 					toolVmRunner: () => toolVmRunnerPort,
 				},

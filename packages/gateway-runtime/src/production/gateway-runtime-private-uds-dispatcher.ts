@@ -1,5 +1,7 @@
 import {
 	GatewayRuntimeTrustedInvocationContextSchema,
+	GatewayApprovalDecisionRequestSchema,
+	GatewayApprovalDecisionResultSchema,
 	PortalArtifactReadRequestSchema,
 	PortalArtifactReadResultSchema,
 	PortalCallRequestSchema,
@@ -19,6 +21,7 @@ import {
 } from '@agent-vm/agent-portal-sdk/gateway-runtime-client';
 import { z } from 'zod/v4';
 
+import type { GatewayRuntimeApprovalDecisionOperations } from '../gateway-runtime-approval-decision-operations.js';
 import type {
 	GatewayRuntimeArtifactProjectionOperations,
 	GatewayRuntimePortalProjectionOperations,
@@ -66,6 +69,7 @@ export type GatewayRuntimeTraceContextDispatch = <TResult>(
 ) => Promise<TResult>;
 
 export interface CreateGatewayRuntimePrivateUdsDispatcherProps {
+	readonly approvalOperations: GatewayRuntimeApprovalDecisionOperations;
 	readonly artifactOperations: GatewayRuntimeArtifactProjectionOperations;
 	readonly portalOperations: GatewayRuntimePortalProjectionOperations;
 	readonly sandboxDispatch: (request: GatewayRuntimeSandboxDispatchRequest) => Promise<unknown>;
@@ -190,6 +194,7 @@ function isSandboxMethod(method: string): method is GatewayRuntimeSandboxMethod 
 }
 
 export function resolveGatewayRuntimeOperationGroup(method: string): string | undefined {
+	if (method === 'approval.decide') return 'approval';
 	if (method.startsWith('portal.')) return 'portal';
 	if (method === 'artifact.read') return 'artifact.read';
 	if (method.startsWith('sandbox.environment.')) return 'sandbox.environment';
@@ -230,6 +235,14 @@ export function createGatewayRuntimePrivateUdsDispatcher(
 	return {
 		dispatch: async (request): Promise<unknown> => {
 			switch (request.method) {
+				case 'approval.decide':
+					return await dispatchProjectionRequest({
+						dispatcherProps: props,
+						projection: props.approvalOperations.decide,
+						request,
+						requestSchema: GatewayApprovalDecisionRequestSchema,
+						resultSchema: GatewayApprovalDecisionResultSchema,
+					});
 				case 'portal.list':
 					return await dispatchProjectionRequest({
 						dispatcherProps: props,

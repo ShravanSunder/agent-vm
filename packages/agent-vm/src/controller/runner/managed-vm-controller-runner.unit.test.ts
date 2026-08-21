@@ -1,5 +1,6 @@
 import { describe, expect, expectTypeOf, it, type Mock, vi } from 'vitest';
 
+import { ConfiguredControllerExecutionError } from './configured-controller-execution-error.js';
 import type { ControllerRunnerOperationLedger } from './controller-runner-operation-record.js';
 import {
 	createManagedVmControllerRunner,
@@ -8,26 +9,32 @@ import {
 	type CreateManagedVmControllerRunnerOptions,
 	type ManagedVmControllerRunner,
 	type ManagedVmControllerRunnerExecRequest,
+	type ManagedVmControllerRunnerExecResult,
 	type ManagedVmControllerRunnerFactory,
 	type ManagedVmControllerRunnerHandle,
 } from './managed-vm-controller-runner.js';
 
 const trustedAuthorization = {
-	artifacts: { allowedArtifactIds: ['result-json'], maxBytes: 4096 },
-	cancellation: { deadlineMs: 30_000, mode: 'controller-safety-cancel' },
-	credentials: [{ credentialId: 'registry-read', injection: 'http-mediation' }],
+	cancellation: { timeoutMs: 30_000 },
 	cwd: { kind: 'fixed', path: '/work' },
 	egress: { allowedHosts: ['registry.npmjs.org'] },
 	environment: { AGENT_VM_OPERATION_ID: 'operation-a' },
 	executablePath: '/usr/local/bin/npm',
+	imageFingerprint: 'image-fingerprint-a',
+	imageReference: '/images/runner-a',
 	mandatoryArgvPrefix: ['view'],
-	output: { stderr: 'stream', stdout: 'stream', windowBytes: 65_536 },
-	target: { kind: 'new-runner-vm', zoneId: 'zone-a' },
+	output: {
+		modelVisibleStderr: 'fixed_safe_summary',
+		overflow: 'truncate',
+		stderrMaxBytes: 65_536,
+		stdoutMaxBytes: 65_536,
+	},
+	target: { kind: 'ephemeral_managed_vm', zoneId: 'zone-a' },
 	authorizationFingerprint: 'fingerprint-a',
 } satisfies ControllerRunnerAuthorizationSnapshot;
 
-function validateTestArguments(argumentsToValidate: readonly string[]): boolean {
-	return !argumentsToValidate.some(
+function validateTestInput(input: ControllerRunnerDispatchRequest['input']): boolean {
+	return !input.argv.some(
 		(argument) =>
 			/[;&|`\n\r]/u.test(argument) ||
 			argument.includes('$(') ||
@@ -40,29 +47,36 @@ function validateTestArguments(argumentsToValidate: readonly string[]): boolean 
 
 function createDispatchRequest(): ControllerRunnerDispatchRequest {
 	return {
-		arguments: ['@agent-vm/agent-vm', 'version'],
 		authorizationFingerprint: 'fingerprint-a',
+		input: { argv: ['@agent-vm/agent-vm', 'version'], reason: 'unit proof' },
 		operationId: 'operation-a',
 	};
 }
 
 function createRunnerFactory(observedEvents: string[] = []): {
 	readonly closeRunner: Mock<() => Promise<void>>;
-	readonly createRunner: Mock<() => Promise<ManagedVmControllerRunnerHandle>>;
+	readonly createRunner: Mock<
+		(
+			_authorization: ControllerRunnerAuthorizationSnapshot,
+		) => Promise<ManagedVmControllerRunnerHandle>
+	>;
 	readonly executeRunner: Mock<
-		(request: ManagedVmControllerRunnerExecRequest) => Promise<{ readonly exitCode: 0 }>
+		(request: ManagedVmControllerRunnerExecRequest) => Promise<ManagedVmControllerRunnerExecResult>
 	>;
 	readonly factory: ManagedVmControllerRunnerFactory;
 	readonly handle: ManagedVmControllerRunnerHandle;
 	readonly readHostProcessId: Mock<() => number>;
 } {
 	const closeRunner = vi.fn(async (): Promise<void> => undefined);
-	const executeRunner = vi.fn(
-		async (_request: ManagedVmControllerRunnerExecRequest): Promise<{ readonly exitCode: 0 }> => {
-			observedEvents.push('side-effect');
-			return { exitCode: 0 };
-		},
-	);
+	const executeRunner = vi.fn(async (_request: ManagedVmControllerRunnerExecRequest) => {
+		observedEvents.push('side-effect');
+		return {
+			exitCode: 0,
+			stderrTruncated: false,
+			stdout: 'runner-output',
+			stdoutTruncated: false,
+		};
+	});
 	const readHostProcessId = vi.fn((): number => 12_345);
 	const handle = {
 		close: closeRunner,
@@ -73,10 +87,14 @@ function createRunnerFactory(observedEvents: string[] = []): {
 			observedEvents.push('runner-started');
 		}),
 	} satisfies ManagedVmControllerRunnerHandle;
-	const createRunner = vi.fn(async (): Promise<ManagedVmControllerRunnerHandle> => {
-		observedEvents.push('managed-vm-created');
-		return handle;
-	});
+	const createRunner = vi.fn(
+		async (
+			_authorization: ControllerRunnerAuthorizationSnapshot,
+		): Promise<ManagedVmControllerRunnerHandle> => {
+			observedEvents.push('managed-vm-created');
+			return handle;
+		},
+	);
 	return {
 		closeRunner,
 		createRunner,
@@ -140,6 +158,7 @@ function createRunnerOptions(
 ): CreateManagedVmControllerRunnerOptions {
 	return {
 		createRunnerId: () => 'runner-a',
+		initialAuthorization: trustedAuthorization,
 		operationLedger: createOperationLedger(observedEvents),
 		readCurrentEpochContext: async () => ({
 			controllerEpoch: 'controller-epoch-a',
@@ -163,7 +182,7 @@ function createRunnerOptions(
 			runtimeEpoch: 'runtime-epoch-a',
 			stablePrincipal: 'a'.repeat(64),
 		},
-		validatePublicArguments: validateTestArguments,
+		validatePublicInput: validateTestInput,
 	};
 }
 
@@ -181,10 +200,13 @@ describe('managed VM controller runner authorization', () => {
 	it.each([
 		['null request', null],
 		['array request', []],
-		['missing required fields', { arguments: ['version'] }],
-		['empty arguments', { ...createDispatchRequest(), arguments: [] }],
-		['non-string argument', { ...createDispatchRequest(), arguments: [42] }],
-		['oversized argument', { ...createDispatchRequest(), arguments: ['a'.repeat(4097)] }],
+		['missing required fields', { input: { argv: ['version'], reason: 'missing fields' } }],
+		['empty arguments', { ...createDispatchRequest(), input: { argv: [], reason: 'empty' } }],
+		['non-string argument', { ...createDispatchRequest(), input: { argv: [42], reason: 'bad' } }],
+		[
+			'oversized argument',
+			{ ...createDispatchRequest(), input: { argv: ['a'.repeat(4097)], reason: 'bad' } },
+		],
 		[
 			'empty authorization fingerprint',
 			{ ...createDispatchRequest(), authorizationFingerprint: '' },
@@ -235,7 +257,12 @@ describe('managed VM controller runner authorization', () => {
 			diagnostics: [],
 			kind: 'completed',
 			retryClass: 'forbidden',
-			value: { exitCode: 0 },
+			value: {
+				exitCode: 0,
+				stderrTruncated: false,
+				stdout: 'runner-output',
+				stdoutTruncated: false,
+			},
 		});
 
 		expect(observedEvents).toEqual([
@@ -258,8 +285,10 @@ describe('managed VM controller runner authorization', () => {
 		expect(runnerVm.readHostProcessId).toHaveBeenCalledOnce();
 		expect(runnerVm.executeRunner).toHaveBeenCalledWith({
 			argv: ['/usr/local/bin/npm', 'view', '@agent-vm/agent-vm', 'version'],
-			authorization: trustedAuthorization,
-			operationId: 'operation-a',
+			cwd: '/work',
+			environment: { AGENT_VM_OPERATION_ID: 'operation-a' },
+			output: trustedAuthorization.output,
+			timeoutMs: 30_000,
 		});
 		expect(runnerVm.closeRunner).toHaveBeenCalledOnce();
 		expect(Object.keys(runnerVm.handle).toSorted()).toEqual([
@@ -324,6 +353,24 @@ describe('managed VM controller runner authorization', () => {
 		expect(createRunner).toHaveBeenCalledOnce();
 	});
 
+	it('does not create a runner when the controller-owned call signal is already aborted', async () => {
+		const runnerVm = createRunnerFactory();
+		const runner = createManagedVmControllerRunner(createRunnerOptions(runnerVm.factory));
+		const cancellation = new AbortController();
+		cancellation.abort(
+			new ConfiguredControllerExecutionError('timeout', 'Controller execution window expired.'),
+		);
+
+		await expect(
+			runner.execute(createDispatchRequest(), { signal: cancellation.signal }),
+		).resolves.toMatchObject({
+			kind: 'not-dispatched',
+			reason: 'runner-setup-failed',
+		});
+		expect(runnerVm.createRunner).not.toHaveBeenCalled();
+		expect(runnerVm.executeRunner).not.toHaveBeenCalled();
+	});
+
 	it('forbids replay when execution fails after dispatch is armed', async () => {
 		const runnerVm = createRunnerFactory();
 		runnerVm.executeRunner.mockRejectedValueOnce(new Error('execution transport failed'));
@@ -337,6 +384,23 @@ describe('managed VM controller runner authorization', () => {
 				code: 'execution_failed',
 				message: 'Controller runner dispatch state is unknown after dispatch was armed.',
 			},
+			kind: 'ambiguous',
+			reason: 'dispatch-armed',
+			retryClass: 'forbidden',
+		});
+		expect(runnerVm.closeRunner).toHaveBeenCalledOnce();
+	});
+
+	it('preserves timeout classification after dispatch and still proves containment', async () => {
+		const runnerVm = createRunnerFactory();
+		runnerVm.executeRunner.mockRejectedValueOnce(
+			new ConfiguredControllerExecutionError('timeout', 'command timed out'),
+		);
+		const runner = createManagedVmControllerRunner(createRunnerOptions(runnerVm.factory));
+
+		await expect(runner.execute(createDispatchRequest())).resolves.toMatchObject({
+			certainty: 'side-effects-and-termination-unknown',
+			error: { code: 'timeout' },
 			kind: 'ambiguous',
 			reason: 'dispatch-armed',
 			retryClass: 'forbidden',
@@ -385,16 +449,22 @@ describe('managed VM controller runner authorization', () => {
 	});
 
 	it.each([
-		['shell token', { arguments: ['@agent-vm/agent-vm', ';', 'curl', 'attacker.test'] }],
-		['command substitution', { arguments: ['@agent-vm/agent-vm', '$(id)'] }],
-		['response file', { arguments: ['@attacker/arguments'] }],
-		['launcher', { arguments: ['--script-shell=/bin/sh'] }],
-		['config override', { arguments: ['--userconfig=/tmp/attacker-npmrc'] }],
-		['credential override', { arguments: ['--//registry.npmjs.org/:_authToken=stolen'] }],
-		['endpoint override', { arguments: ['--registry=https://attacker.test'] }],
-		['plugin override', { arguments: ['--plugin=/tmp/attacker-plugin.js'] }],
-		['host override', { arguments: ['--host=attacker.test'] }],
-		['path escape', { arguments: ['../../etc/shadow'] }],
+		[
+			'shell token',
+			{ input: { argv: ['@agent-vm/agent-vm', ';', 'curl', 'attacker.test'], reason: 'bad' } },
+		],
+		['command substitution', { input: { argv: ['@agent-vm/agent-vm', '$(id)'], reason: 'bad' } }],
+		['response file', { input: { argv: ['@attacker/arguments'], reason: 'bad' } }],
+		['launcher', { input: { argv: ['--script-shell=/bin/sh'], reason: 'bad' } }],
+		['config override', { input: { argv: ['--userconfig=/tmp/attacker-npmrc'], reason: 'bad' } }],
+		[
+			'credential override',
+			{ input: { argv: ['--//registry.npmjs.org/:_authToken=stolen'], reason: 'bad' } },
+		],
+		['endpoint override', { input: { argv: ['--registry=https://attacker.test'], reason: 'bad' } }],
+		['plugin override', { input: { argv: ['--plugin=/tmp/attacker-plugin.js'], reason: 'bad' } }],
+		['host override', { input: { argv: ['--host=attacker.test'], reason: 'bad' } }],
+		['path escape', { input: { argv: ['../../etc/shadow'], reason: 'bad' } }],
 	] as const)('rejects the public %s attack before dispatch', async (_name, requestOverride) => {
 		const runnerVm = createRunnerFactory();
 		const runner = createManagedVmControllerRunner(createRunnerOptions(runnerVm.factory));
@@ -414,12 +484,12 @@ describe('managed VM controller runner authorization', () => {
 	it.each([
 		'executablePath',
 		'mandatoryArgvPrefix',
-		'credentials',
 		'cwd',
 		'environment',
 		'egress',
+		'imageFingerprint',
+		'imageReference',
 		'output',
-		'artifacts',
 		'cancellation',
 		'target',
 	] as const)('rejects a public %s authority field before dispatch', async (authorityField) => {

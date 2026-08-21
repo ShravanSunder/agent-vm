@@ -36,7 +36,7 @@ import {
 import {
 	createGatewayControlDomainHandler,
 	type GatewayControlApprovalLedgerOperations,
-	type GatewayControlControllerHostActionOperations,
+	type GatewayControlControllerExecutionOperations,
 } from './gateway-control-domain-handler.js';
 
 const BASE_TIME_MS = Date.parse('2026-07-13T12:00:00.000Z');
@@ -101,14 +101,14 @@ const approvalIntent = {
 	},
 } satisfies GatewayRuntimeApprovalChallengeIntent;
 
-const controllerHostActionIntent = {
+const controllerExecutionIntent = {
 	...approvalIntent,
-	backendKind: 'controller_host_action',
+	backendKind: 'controller_execution',
 	call: {
 		arguments: {},
-		id: 'controller_host_action.controller_host_probe',
+		id: 'controller_execution.controller_host_probe',
 		name: 'controller_host_probe',
-		namespace: 'controller_host_action',
+		namespace: 'controller_execution',
 	},
 	operationId: CONTROLLER_HOST_ACTION_OPERATION_ID,
 } satisfies GatewayRuntimeApprovalChallengeIntent;
@@ -124,8 +124,10 @@ const approvalChallenge = {
 const operatorIdentity = {
 	approverId: 'operator-a',
 	audience: GATEWAY_RUNTIME_APPROVAL_AUDIENCE,
-	credentialId: 'approval-credential-a',
-	provenance: 'approval-access',
+	provenance: 'managed-gateway',
+	stablePrincipal: deriveGatewayControlStablePrincipal({
+		principal: approvalIntent.trustedContext.principal,
+	}),
 } satisfies ControllerApprovalOperatorIdentity;
 
 type GatewayControlCommandResultMessage = Extract<
@@ -139,7 +141,8 @@ function createEnvelope(props: {
 	readonly operation: Extract<
 		GatewayControlRpcOperation,
 		| 'tool_portal_admission_reserve'
-		| 'tool_portal_controller_host_action'
+		| 'tool_portal_approval_decide'
+		| 'tool_portal_controller_execution'
 		| 'tool_portal_dispatch_arm'
 	>;
 	readonly sequence: number;
@@ -201,8 +204,9 @@ function createApprovalDispatcher(
 	props: {
 		readonly approvalLedger?: GatewayControlApprovalLedgerOperations;
 		readonly callerContexts?: GatewayControlCallerContextRegistry;
-		readonly controllerHostActions?: GatewayControlControllerHostActionOperations;
+		readonly controllerExecutions?: GatewayControlControllerExecutionOperations;
 		readonly gateway?: GatewayEpochIdentity;
+		readonly managedApprovalAuthority?: { readonly approverId: string };
 		readonly session?: GatewayControlCallerContextSessionRef;
 	} = {},
 ): ReturnType<typeof createControlSessionDispatcher> {
@@ -228,10 +232,13 @@ function createApprovalDispatcher(
 					agentAuthorityKeys: {},
 					callerContextProofKey: 'approval-rpc-test-caller-context-proof-key',
 				}),
-			...(props.controllerHostActions === undefined
+			...(props.controllerExecutions === undefined
 				? {}
-				: { controllerHostActions: props.controllerHostActions }),
+				: { controllerExecutions: props.controllerExecutions }),
 			gateway: props.gateway ?? gateway,
+			...(props.managedApprovalAuthority === undefined
+				? {}
+				: { managedApprovalAuthority: props.managedApprovalAuthority }),
 			session,
 		}),
 	);
@@ -247,6 +254,7 @@ async function dispatchApprovalCommand(props: {
 	if (
 		props.message.kind !== 'command' ||
 		(props.message.operation !== 'tool_portal_admission_reserve' &&
+			props.message.operation !== 'tool_portal_approval_decide' &&
 			props.message.operation !== 'tool_portal_dispatch_arm')
 	) {
 		throw new Error('Approval RPC test helper received a non-approval command.');
@@ -301,6 +309,7 @@ describe('gateway-control approval RPC integration', () => {
 				operationId: OPERATION_ID,
 				reason: 'stale-fingerprint' as const,
 			})),
+			decide: vi.fn(async () => ({ kind: 'rejected' as const, reason: 'not-found' as const })),
 			requestApproval,
 		} satisfies GatewayControlApprovalLedgerOperations;
 		const dispatcher = createApprovalDispatcher({ approvalLedger });
@@ -347,6 +356,135 @@ describe('gateway-control approval RPC integration', () => {
 			}),
 		).rejects.toThrow();
 		expect(requestApproval).toHaveBeenCalledOnce();
+	});
+
+	it('records a managed Gateway decision through an exact-session caller context', async () => {
+		// Arrange
+		const approvalLedger = await createDurableApprovalLedger();
+		const stablePrincipal = deriveGatewayControlStablePrincipal({
+			principal: approvalIntent.trustedContext.principal,
+		});
+		const callerContextId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+		const callerContexts = createStaticCallerContextRegistry([
+			{
+				agentId: approvalIntent.trustedContext.principal.agentId,
+				...acceptedSession,
+				callerContextId,
+				principal: approvalIntent.trustedContext.principal,
+				purpose: 'tool_portal_approval_decision',
+				stablePrincipal,
+			},
+		]);
+		const dispatcher = createApprovalDispatcher({
+			approvalLedger,
+			callerContexts,
+			managedApprovalAuthority: { approverId: 'hermes-operator' },
+		});
+		const pendingResponse = await dispatchApprovalCommand({
+			dispatcher,
+			message: {
+				kind: 'command',
+				operation: 'tool_portal_admission_reserve',
+				payload: { intent: approvalIntent },
+			},
+			sequence: 2,
+		});
+		const challenge = pendingResponse.payload.approvalAdmission;
+		if (challenge?.kind !== 'approval-required') {
+			throw new Error('Expected one pending approval challenge.');
+		}
+
+		// Act
+		const decisionResponse = await dispatchApprovalCommand({
+			dispatcher,
+			message: {
+				kind: 'command',
+				operation: 'tool_portal_approval_decide',
+				payload: {
+					callerContext: { callerContextId },
+					decision: { challengeId: challenge.challenge.approvalId, decision: 'approve' },
+				},
+			},
+			sequence: 3,
+		});
+
+		// Assert
+		expect(decisionResponse.payload.approvalDecision).toEqual({
+			kind: 'recorded',
+			state: 'approved',
+		});
+		expect(await approvalLedger.read(challenge.challenge.approvalId)).toMatchObject({
+			decision: {
+				operator: {
+					approverId: 'hermes-operator',
+					provenance: 'managed-gateway',
+					stablePrincipal,
+				},
+			},
+			kind: 'approved',
+		});
+	});
+
+	it('rejects a managed Gateway decision when the caller principal does not own the challenge', async () => {
+		// Arrange
+		const approvalLedger = await createDurableApprovalLedger();
+		const attackerPrincipal = {
+			...approvalIntent.trustedContext.principal,
+			agentId: 'agent-attacker',
+			frameworkIdentity: { agentId: 'agent-attacker', kind: 'openclaw' as const },
+		};
+		const callerContextId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+		const callerContexts = createStaticCallerContextRegistry([
+			{
+				agentId: attackerPrincipal.agentId,
+				...acceptedSession,
+				callerContextId,
+				principal: attackerPrincipal,
+				purpose: 'tool_portal_approval_decision',
+				stablePrincipal: deriveGatewayControlStablePrincipal({ principal: attackerPrincipal }),
+			},
+		]);
+		const dispatcher = createApprovalDispatcher({
+			approvalLedger,
+			callerContexts,
+			managedApprovalAuthority: { approverId: 'hermes-operator' },
+		});
+		const pendingResponse = await dispatchApprovalCommand({
+			dispatcher,
+			message: {
+				kind: 'command',
+				operation: 'tool_portal_admission_reserve',
+				payload: { intent: approvalIntent },
+			},
+			sequence: 4,
+		});
+		const challenge = pendingResponse.payload.approvalAdmission;
+		if (challenge?.kind !== 'approval-required') {
+			throw new Error('Expected one pending approval challenge.');
+		}
+
+		// Act
+		const decisionResponse = await dispatchApprovalCommand({
+			dispatcher,
+			message: {
+				kind: 'command',
+				operation: 'tool_portal_approval_decide',
+				payload: {
+					callerContext: { callerContextId },
+					decision: { challengeId: challenge.challenge.approvalId, decision: 'approve' },
+				},
+			},
+			sequence: 5,
+		});
+
+		// Assert
+		expect(decisionResponse.payload.approvalDecision).toEqual({
+			kind: 'rejected',
+			reason: 'principal-mismatch',
+		});
+		expect(await approvalLedger.read(challenge.challenge.approvalId)).toMatchObject({
+			kind: 'pending',
+		});
 	});
 
 	it('fails closed with a strict failure result when no approval ledger is configured', async () => {
@@ -422,7 +560,7 @@ describe('gateway-control approval RPC integration', () => {
 		const reservationAdmission = reservationResponse.payload.approvalAdmission;
 		if (
 			reservationAdmission?.kind !== 'dispatch-reserved' ||
-			reservationAdmission.reservation.backendKind === 'controller_host_action'
+			reservationAdmission.reservation.backendKind === 'controller_execution'
 		) {
 			throw new Error('Expected approved gateway-control admission to reserve dispatch.');
 		}
@@ -454,25 +592,25 @@ describe('gateway-control approval RPC integration', () => {
 		expect(armResponse.payload.result).toBe('ok');
 	});
 
-	it('arms an approved controller-host-action reservation before one controller dispatch', async () => {
+	it('arms an approved controller-execution reservation before one controller dispatch', async () => {
 		// Arrange
 		const approvalLedger = await createDurableApprovalLedger();
 		const stablePrincipal = deriveGatewayControlStablePrincipal({
-			principal: controllerHostActionIntent.trustedContext.principal,
+			principal: controllerExecutionIntent.trustedContext.principal,
 		});
 		const createCallerContext = (callerContextId: string): GatewayControlTrustedCallerContext => ({
-			agentId: controllerHostActionIntent.trustedContext.principal.agentId,
+			agentId: controllerExecutionIntent.trustedContext.principal.agentId,
 			...acceptedSession,
 			callerContextId,
-			principal: controllerHostActionIntent.trustedContext.principal,
-			purpose: 'tool_portal_controller_host_action',
+			principal: controllerExecutionIntent.trustedContext.principal,
+			purpose: 'tool_portal_controller_execution',
 			stablePrincipal,
 		});
 		const firstCallerContextId = '77777777-7777-4777-8777-777777777777';
 		const replayCallerContextId = '88888888-8888-4888-8888-888888888888';
 		const attackerCallerContextId = '99999999-9999-4999-8999-999999999999';
 		const attackerPrincipal = {
-			...controllerHostActionIntent.trustedContext.principal,
+			...controllerExecutionIntent.trustedContext.principal,
 			agentId: 'agent-attacker',
 			frameworkIdentity: { agentId: 'agent-attacker', kind: 'openclaw' as const },
 		};
@@ -490,30 +628,36 @@ describe('gateway-control approval RPC integration', () => {
 			entryNames: ['approval-dispatched'],
 			probeKind: 'controller_cache_dir_listing' as const,
 		}));
-		const controllerHostActions = {
-			authorizeControllerHostAction: async () => ({ authorized: true as const }),
+		const controllerExecutions = {
+			authorizeControllerExecution: async () => ({ authorized: true as const }),
+			executeConfiguredCli: async () => ({
+				exitCode: 0,
+				stderrTruncated: false,
+				stdout: '',
+				stdoutTruncated: false,
+			}),
 			pushWorkspaceGit: async () => {
 				throw new Error('Controller approval integration must not push Git.');
 			},
 			runControllerHostProbe,
-		} satisfies GatewayControlControllerHostActionOperations;
+		} satisfies GatewayControlControllerExecutionOperations;
 		const dispatcher = createApprovalDispatcher({
 			approvalLedger,
 			callerContexts,
-			controllerHostActions,
+			controllerExecutions,
 		});
 		const pendingResponse = await dispatchApprovalCommand({
 			dispatcher,
 			message: {
 				kind: 'command',
 				operation: 'tool_portal_admission_reserve',
-				payload: { intent: controllerHostActionIntent },
+				payload: { intent: controllerExecutionIntent },
 			},
 			sequence: 12,
 		});
 		const pendingAdmission = pendingResponse.payload.approvalAdmission;
 		if (pendingAdmission?.kind !== 'approval-required') {
-			throw new Error('Expected a pending controller-host-action approval challenge.');
+			throw new Error('Expected a pending controller-execution approval challenge.');
 		}
 		await approvalLedger.decide({
 			approvalId: pendingAdmission.challenge.approvalId,
@@ -526,52 +670,55 @@ describe('gateway-control approval RPC integration', () => {
 			message: {
 				kind: 'command',
 				operation: 'tool_portal_admission_reserve',
-				payload: { intent: controllerHostActionIntent },
+				payload: { intent: controllerExecutionIntent },
 			},
 			sequence: 13,
 		});
 		const reservationAdmission = reservationResponse.payload.approvalAdmission;
 		if (
 			reservationAdmission?.kind !== 'dispatch-reserved' ||
-			reservationAdmission.reservation.backendKind !== 'controller_host_action'
+			reservationAdmission.reservation.backendKind !== 'controller_execution'
 		) {
-			throw new Error('Expected an approved controller-host-action reservation.');
+			throw new Error('Expected an approved controller-execution reservation.');
 		}
 		const controllerApprovalReservation = reservationAdmission.reservation;
 		const createHostActionMessage = (callerContextId: string): GatewayControlRpcMessage => ({
 			kind: 'command',
-			operation: 'tool_portal_controller_host_action',
+			operation: 'tool_portal_controller_execution',
 			payload: {
-				actionId: 'controller_host_probe',
-				approvalReservation: controllerApprovalReservation,
-				callerContext: { callerContextId },
-				correlation: {
-					capability: {
-						name: 'controller_host_probe',
-						namespace: 'controller_host_action',
+				action: {
+					actionId: 'controller_host_probe',
+					approvalReservation: controllerApprovalReservation,
+					callerContext: { callerContextId },
+					correlation: {
+						capability: {
+							name: 'controller_host_probe',
+							namespace: 'controller_execution',
+						},
 					},
 				},
+				kind: 'registered_action',
 			},
 		});
 
 		// Act
 		const attackerResponse = await dispatcher.dispatch({
 			envelope: createEnvelope({
-				operation: 'tool_portal_controller_host_action',
+				operation: 'tool_portal_controller_execution',
 				sequence: 14,
 			}),
 			payload: createHostActionMessage(attackerCallerContextId),
 		});
 		const firstResponse = await dispatcher.dispatch({
 			envelope: createEnvelope({
-				operation: 'tool_portal_controller_host_action',
+				operation: 'tool_portal_controller_execution',
 				sequence: 15,
 			}),
 			payload: createHostActionMessage(firstCallerContextId),
 		});
 		const replayResponse = await dispatcher.dispatch({
 			envelope: createEnvelope({
-				operation: 'tool_portal_controller_host_action',
+				operation: 'tool_portal_controller_execution',
 				sequence: 16,
 			}),
 			payload: createHostActionMessage(replayCallerContextId),
@@ -579,29 +726,32 @@ describe('gateway-control approval RPC integration', () => {
 
 		// Assert
 		expect(attackerResponse).toMatchObject({
-			operation: 'tool_portal_controller_host_action',
+			operation: 'tool_portal_controller_execution',
 			payload: {
-				error: { errorClass: 'controller_host_action_approval_principal_mismatch' },
+				error: { errorClass: 'controller_execution_approval_principal_mismatch' },
 				result: 'rejected',
 			},
 		});
 		expect(firstResponse).toMatchObject({
-			operation: 'tool_portal_controller_host_action',
+			operation: 'tool_portal_controller_execution',
 			payload: {
-				controllerHostAction: { actionId: 'controller_host_probe' },
+				controllerExecution: {
+					action: { actionId: 'controller_host_probe' },
+					kind: 'registered_action',
+				},
 				result: 'ok',
 			},
 		});
 		expect(replayResponse).toMatchObject({
-			operation: 'tool_portal_controller_host_action',
+			operation: 'tool_portal_controller_execution',
 			payload: {
-				error: { errorClass: 'controller_host_action_approval_dispatch_armed' },
+				error: { errorClass: 'controller_execution_approval_dispatch_armed' },
 				result: 'failed',
 			},
 		});
 		expect(runControllerHostProbe).toHaveBeenCalledOnce();
 		expect(await approvalLedger.read(pendingAdmission.challenge.approvalId)).toMatchObject({
-			challenge: { intent: controllerHostActionIntent },
+			challenge: { intent: controllerExecutionIntent },
 			kind: 'dispatch-armed',
 		});
 	});
@@ -641,7 +791,7 @@ describe('gateway-control approval RPC integration', () => {
 		const reservationAdmission = reservationResponse.payload.approvalAdmission;
 		if (
 			reservationAdmission?.kind !== 'dispatch-reserved' ||
-			reservationAdmission.reservation.backendKind === 'controller_host_action'
+			reservationAdmission.reservation.backendKind === 'controller_execution'
 		) {
 			throw new Error('Expected an approved reservation before stale epoch proof.');
 		}

@@ -63,8 +63,16 @@ const toolPortalConfig = {
 	profiles: {
 		'code-builder': {
 			namespaces: {
-				controller_host_action: {
-					backend: { kind: 'controller_host_action' },
+				controller_execution: {
+					backend: {
+						kind: 'controller_execution',
+						operations: {
+							controller_host_probe: { kind: 'registered_action' },
+							workspace_git_push: { kind: 'registered_action' },
+							push_branch: { kind: 'registered_action' },
+							protected_uds: { kind: 'registered_action' },
+						},
+					},
 					calls: {
 						requiresApproval: { allow: [], deny: [] },
 						withoutApproval: { allow: ['workspace_git_push'], deny: [] },
@@ -112,14 +120,14 @@ const semanticSnapshot = {
 			agentId: 'agent-a',
 			frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
 			profileAssignmentRevision: 'profile-assignment:agent-a:7',
-			toolPortalNamespaceNames: ['controller_host_action', 'github', 'sandbox'],
+			toolPortalNamespaceNames: ['controller_execution', 'github', 'sandbox'],
 			toolPortalProfileId: 'code-builder',
 		},
 		'agent-b': {
 			agentId: 'agent-b',
 			frameworkIdentity: { agentId: 'agent-b', kind: 'openclaw' },
 			profileAssignmentRevision: 'profile-assignment:agent-b:4',
-			toolPortalNamespaceNames: ['controller_host_action', 'github', 'sandbox'],
+			toolPortalNamespaceNames: ['controller_execution', 'github', 'sandbox'],
 			toolPortalProfileId: 'code-builder',
 		},
 	},
@@ -134,7 +142,7 @@ const semanticSnapshot = {
 	schemaVersion: 1,
 	surfaceEligibilityByProfile: {
 		'code-builder': {
-			controller_host_action: ['protected_uds'],
+			controller_execution: ['protected_uds'],
 			github: ['protected_uds'],
 			sandbox: ['protected_uds'],
 		},
@@ -196,7 +204,7 @@ interface RecordingCompositionFixture {
 	readonly approvalPort: ToolPortalApprovalPort;
 	readonly artifactReadRequests: Parameters<GatewayRuntimeArtifactReader['read']>[0][];
 	readonly backendPorts: {
-		readonly controllerHostAction: RecordingBackendPort<'controller_host_action'>;
+		readonly controllerExecution: RecordingBackendPort<'controller_execution'>;
 		readonly mcpProvider: RecordingBackendPort<'mcp_provider'>;
 		readonly toolVmRunner: RecordingBackendPort<'tool_vm_runner'>;
 	};
@@ -427,10 +435,7 @@ function composeRecordingProjections(
 		}),
 	} satisfies GatewayRuntimeArtifactReader;
 	const backendPorts = {
-		controllerHostAction: createRecordingBackendPort(
-			'controller_host_action',
-			'controller_host_action',
-		),
+		controllerExecution: createRecordingBackendPort('controller_execution', 'controller_execution'),
 		mcpProvider: createRecordingBackendPort('mcp_provider', 'github'),
 		toolVmRunner: createRecordingBackendPort('tool_vm_runner', 'sandbox'),
 	};
@@ -442,7 +447,7 @@ function composeRecordingProjections(
 			createManagedToolPortalCapabilityCore({
 				approvalPort: props.approvalPort,
 				backendPorts: {
-					controllerHostAction: backendPorts.controllerHostAction.port,
+					controllerExecution: backendPorts.controllerExecution.port,
 					mcpProvider: backendPorts.mcpProvider.port,
 					toolVmRunner: backendPorts.toolVmRunner.port,
 				},
@@ -479,7 +484,7 @@ function composeRecordingProjections(
 
 function totalBackendInvocations(fixture: RecordingCompositionFixture): number {
 	return (
-		fixture.backendPorts.controllerHostAction.invocations.length +
+		fixture.backendPorts.controllerExecution.invocations.length +
 		fixture.backendPorts.mcpProvider.invocations.length +
 		fixture.backendPorts.toolVmRunner.invocations.length
 	);

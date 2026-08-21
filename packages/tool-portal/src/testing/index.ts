@@ -13,10 +13,7 @@ export interface CreateToolPortalConfigFixtureProps {
 }
 
 export interface CreateCliAllowanceFixtureProps {
-	readonly credentialProfileId?: string;
-	readonly executablePath?: string;
-	readonly namespace?: string;
-	readonly name?: string;
+	readonly timeoutKind?: 'open' | 'quick';
 }
 
 export function createToolPortalConfigFixture(
@@ -55,48 +52,15 @@ export function createToolPortalConfigFixture(
 export function createCliAllowanceFixture(
 	props: CreateCliAllowanceFixtureProps = {},
 ): CliAllowance {
-	const namespace = props.namespace ?? 'github';
-	const name = props.name ?? 'issue_view';
 	return CliAllowanceSchema.parse({
-		allowedFlags: [{ flag: '--json', value: 'none' }],
-		allowedSubcommands: [['issue', 'view']],
-		approval: 'required',
-		artifacts: {
-			maxArtifacts: 0,
-			mode: 'none',
-			noFollowRequired: true,
-		},
-		capability: {
-			namespace,
-			name,
-		},
-		cancellation: {
-			onCancel: 'close_vm',
-			timeoutMs: 30_000,
-		},
-		credentialProfileId: props.credentialProfileId ?? 'github-readonly',
-		custodyMode: 'ephemeral_material',
-		cwd: { kind: 'fixed', path: '/work' },
-		deniedFlags: ['--config', '--token'],
-		deniedPatterns: ['../'],
-		egress: {
-			allowedHosts: ['api.github.com'],
-			denyEndpointOverrides: true,
-		},
-		environment: {
-			allowedVariables: [],
-			deniedPatterns: [],
-			mode: 'empty',
-		},
-		executablePath: props.executablePath ?? '/usr/local/bin/gh',
-		inputSchemaId: `${namespace}.${name}.input`,
-		output: {
-			modelVisibleStderr: 'safe_summary',
-			redactionProfile: 'default',
-			stderrMaxBytes: 1024,
-			stdoutMaxBytes: 1024,
-			truncationMode: 'truncate',
-		},
-		safeHelp: 'Fixture allowance for tests.',
+		commands: [
+			{
+				flagRules: [{ kind: 'deny', names: ['--config', '--token'] }],
+				path: ['issue', 'view'],
+			},
+		],
+		deniedPatterns: [{ kind: 'literal', value: '../' }],
+		stdin: { kind: 'none' },
+		timeout: { kind: props.timeoutKind ?? 'quick' },
 	});
 }

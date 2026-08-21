@@ -32,7 +32,7 @@ import type {
 import type { ToolPortalBackendPort } from '@agent-vm/tool-portal';
 import type { z } from 'zod';
 
-export interface ControllerHostActionDispatchRequest {
+export interface ControllerExecutionDispatchRequest {
 	readonly action: {
 		readonly arguments: JsonObject;
 		readonly capability: {
@@ -41,7 +41,7 @@ export interface ControllerHostActionDispatchRequest {
 		};
 	};
 	readonly authority: {
-		readonly dispatchAuthority: GatewayRuntimeToolPortalDispatchAuthorityForBackendKind<'controller_host_action'>;
+		readonly dispatchAuthority: GatewayRuntimeToolPortalDispatchAuthorityForBackendKind<'controller_execution'>;
 		readonly invocation: {
 			readonly surfaceClass: GatewayRuntimePortalSurfaceClass;
 			readonly trustedContext: GatewayRuntimeTrustedInvocationContext;
@@ -51,34 +51,34 @@ export interface ControllerHostActionDispatchRequest {
 		readonly callId: string;
 		readonly requestId: string | undefined;
 	};
-	readonly kind: 'controller-host-action-dispatch';
+	readonly kind: 'controller-execution-dispatch';
 }
 
-export interface ControllerHostActionRpcPort {
+export interface ControllerExecutionRpcPort {
 	readonly dispatch: (props: {
-		readonly request: ControllerHostActionDispatchRequest;
+		readonly request: ControllerExecutionDispatchRequest;
 		readonly signal: AbortSignal | undefined;
 	}) => Promise<ControllerExecutionResult>;
 }
 
-export interface ControllerHostActionRegistration {
+export interface ControllerExecutionRegistration {
 	readonly descriptor: CapabilityDescriptor;
-	readonly parseArguments: (argumentsValue: JsonObject) => ControllerHostActionArgumentsResult;
+	readonly parseArguments: (argumentsValue: JsonObject) => ControllerExecutionArgumentsResult;
 	readonly summary: CapabilitySummary;
 }
 
-type ControllerHostActionArgumentsResult =
+type ControllerExecutionArgumentsResult =
 	| { readonly kind: 'valid'; readonly value: JsonObject }
 	| { readonly kind: 'invalid' };
 
-export function defineControllerHostActionRegistration<TArguments extends JsonObject>(props: {
+export function defineControllerExecutionRegistration<TArguments extends JsonObject>(props: {
 	readonly argumentsSchema: z.ZodType<TArguments>;
 	readonly descriptor: CapabilityDescriptor;
 	readonly summary: CapabilitySummary;
-}): ControllerHostActionRegistration {
+}): ControllerExecutionRegistration {
 	return {
 		descriptor: props.descriptor,
-		parseArguments: (argumentsValue): ControllerHostActionArgumentsResult => {
+		parseArguments: (argumentsValue): ControllerExecutionArgumentsResult => {
 			const parsedArguments = props.argumentsSchema.safeParse(argumentsValue);
 			return parsedArguments.success
 				? { kind: 'valid', value: parsedArguments.data }
@@ -88,17 +88,17 @@ export function defineControllerHostActionRegistration<TArguments extends JsonOb
 	};
 }
 
-export interface CreateControllerHostActionBackendPortProps {
-	readonly controllerRpc: ControllerHostActionRpcPort;
-	readonly registeredActions: readonly ControllerHostActionRegistration[];
+export interface CreateControllerExecutionBackendPortProps {
+	readonly controllerRpc: ControllerExecutionRpcPort;
+	readonly registeredActions: readonly ControllerExecutionRegistration[];
 	readonly runtime: {
 		readonly owningGeneration: string;
 	};
 }
 
 interface RegisteredActionCatalog {
-	readonly actions: readonly ControllerHostActionRegistration[];
-	readonly byCapabilityKey: ReadonlyMap<string, ControllerHostActionRegistration>;
+	readonly actions: readonly ControllerExecutionRegistration[];
+	readonly byCapabilityKey: ReadonlyMap<string, ControllerExecutionRegistration>;
 }
 
 function capabilityKey(namespace: string, name: string): string {
@@ -106,12 +106,12 @@ function capabilityKey(namespace: string, name: string): string {
 }
 
 function createRegisteredActionCatalog(
-	registeredActions: readonly ControllerHostActionRegistration[],
+	registeredActions: readonly ControllerExecutionRegistration[],
 ): RegisteredActionCatalog {
 	const actions = registeredActions.toSorted((left, right) =>
 		left.summary.toolRef.localeCompare(right.summary.toolRef),
 	);
-	const byCapabilityKey = new Map<string, ControllerHostActionRegistration>();
+	const byCapabilityKey = new Map<string, ControllerExecutionRegistration>();
 	for (const action of actions) {
 		if (
 			action.summary.namespace !== action.descriptor.namespace ||
@@ -119,13 +119,13 @@ function createRegisteredActionCatalog(
 			action.summary.toolRef !== action.descriptor.toolRef
 		) {
 			throw new TypeError(
-				'Controller host-action summary and descriptor must identify one capability.',
+				'Controller execution summary and descriptor must identify one capability.',
 			);
 		}
 		const key = capabilityKey(action.summary.namespace, action.summary.name);
 		if (byCapabilityKey.has(key)) {
 			throw new TypeError(
-				`Controller host action ${action.summary.namespace}.${action.summary.name} is registered more than once.`,
+				`Controller execution ${action.summary.namespace}.${action.summary.name} is registered more than once.`,
 			);
 		}
 		byCapabilityKey.set(key, action);
@@ -134,7 +134,7 @@ function createRegisteredActionCatalog(
 }
 
 function dispatchAuthorityBinding(
-	authority: GatewayRuntimeToolPortalDispatchAuthorityForBackendKind<'controller_host_action'>,
+	authority: GatewayRuntimeToolPortalDispatchAuthorityForBackendKind<'controller_execution'>,
 ): ControllerExecutionAuthorityBinding {
 	return authority.kind === 'without-approval'
 		? { fingerprint: authority.fingerprint, operationId: authority.operationId }
@@ -186,21 +186,21 @@ function deniedError(message: string): PortalError {
 function invalidArgumentsError(): PortalError {
 	return {
 		code: 'validation_failed',
-		message: 'Controller host-action arguments do not match the registered schema.',
+		message: 'Controller execution arguments do not match the registered schema.',
 	};
 }
 
 function invalidDispatchBatchError(): PortalError {
 	return {
 		code: 'invalid_request',
-		message: 'Controller host-action authority binds exactly one call.',
+		message: 'Controller execution authority binds exactly one call.',
 	};
 }
 
 function ambiguousDispatchError(): PortalError {
 	return {
 		code: 'execution_failed',
-		message: 'Controller host-action dispatch state is unknown.',
+		message: 'Controller execution dispatch state is unknown.',
 	};
 }
 
@@ -267,12 +267,12 @@ function completedCallItem(props: {
 	};
 }
 
-async function dispatchControllerHostAction(props: {
-	readonly action: ControllerHostActionRegistration;
+async function dispatchControllerExecution(props: {
+	readonly action: ControllerExecutionRegistration;
 	readonly call: PortalCallRequest['calls'][number];
-	readonly controllerRpc: ControllerHostActionRpcPort;
+	readonly controllerRpc: ControllerExecutionRpcPort;
 	readonly operationId: string;
-	readonly options: Parameters<ToolPortalBackendPort<'controller_host_action'>['call']>[1];
+	readonly options: Parameters<ToolPortalBackendPort<'controller_execution'>['call']>[1];
 	readonly owningGeneration: string;
 	readonly requestId: string | undefined;
 }): Promise<PortalCallResult['items'][number]> {
@@ -309,7 +309,7 @@ async function dispatchControllerHostAction(props: {
 					callId: props.call.id,
 					requestId: props.requestId,
 				},
-				kind: 'controller-host-action-dispatch',
+				kind: 'controller-execution-dispatch',
 			},
 			signal: props.options.signal,
 		});
@@ -360,11 +360,11 @@ async function dispatchControllerHostAction(props: {
 }
 
 function assertNeverRpcResult(result: never): never {
-	throw new TypeError(`Unsupported controller host-action RPC result: ${String(result)}`);
+	throw new TypeError(`Unsupported controller execution RPC result: ${String(result)}`);
 }
 
 function capabilitySelected(props: {
-	readonly action: ControllerHostActionRegistration;
+	readonly action: ControllerExecutionRegistration;
 	readonly namespaces?: readonly string[] | undefined;
 	readonly refs?: readonly string[] | undefined;
 	readonly tools?: readonly { readonly name: string; readonly namespace: string }[] | undefined;
@@ -389,7 +389,7 @@ function capabilitySelected(props: {
 }
 
 function searchMatchForAction(props: {
-	readonly action: ControllerHostActionRegistration;
+	readonly action: ControllerExecutionRegistration;
 	readonly schemaDetail: 'none' | 'summary' | 'full';
 }): CapabilitySearchMatch {
 	return {
@@ -408,7 +408,7 @@ function searchMatchForAction(props: {
 }
 
 function descriptorForRequest(props: {
-	readonly action: ControllerHostActionRegistration;
+	readonly action: ControllerExecutionRegistration;
 	readonly includeJsonSchema: boolean;
 	readonly includeRelated: boolean;
 	readonly includeTypescriptHelper: boolean;
@@ -434,13 +434,13 @@ function descriptorForRequest(props: {
 	};
 }
 
-export function createControllerHostActionBackendPort(
-	props: CreateControllerHostActionBackendPortProps,
-): ToolPortalBackendPort<'controller_host_action'> {
+export function createControllerExecutionBackendPort(
+	props: CreateControllerExecutionBackendPortProps,
+): ToolPortalBackendPort<'controller_execution'> {
 	const catalog = createRegisteredActionCatalog(props.registeredActions);
 
 	return {
-		backendKind: 'controller_host_action',
+		backendKind: 'controller_execution',
 		async call(request, options): Promise<PortalCallResult> {
 			const parsedRequest = PortalCallRequestSchema.parse(request);
 			const expectedBinding = dispatchAuthorityBinding(options.dispatchAuthority);
@@ -463,14 +463,14 @@ export function createControllerHostActionBackendPort(
 					if (action === undefined) {
 						return notDispatchedCallItem({
 							error: deniedError(
-								`Controller host action ${call.namespace}.${call.name} is not registered.`,
+								`Controller execution ${call.namespace}.${call.name} is not registered.`,
 							),
 							id: call.id,
 							operationId: expectedBinding.operationId,
 							owningGeneration: props.runtime.owningGeneration,
 						});
 					}
-					return await dispatchControllerHostAction({
+					return await dispatchControllerExecution({
 						action,
 						call,
 						controllerRpc: props.controllerRpc,

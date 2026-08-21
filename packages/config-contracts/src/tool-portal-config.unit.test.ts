@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-	createToolPortalControllerHostActionProjection,
+	createGatewayRuntimeManagedToolPortalConfig,
+	createToolPortalControllerExecutionProjection,
 	createToolPortalMcpProjection,
-	ToolPortalControllerHostActionProjectionSchema,
+	managedToolPortalConfigSchema,
+	ToolPortalControllerExecutionProjectionSchema,
 	toolPortalConfigSchema,
 	ToolPortalMcpProjectionSchema,
 } from './tool-portal-config.js';
@@ -25,7 +27,10 @@ const validManagedToolPortalConfig = {
 					tools: { allow: ['get_issue', 'create_issue'], deny: ['delete_repo'] },
 				},
 				local: {
-					backend: { kind: 'controller_host_action' },
+					backend: {
+						kind: 'controller_execution',
+						operations: { push_branch: { kind: 'registered_action' } },
+					},
 					calls: {
 						requiresApproval: { allow: ['push_branch'], deny: [] },
 						withoutApproval: { allow: [], deny: [] },
@@ -121,6 +126,97 @@ describe('tool portal config contract', () => {
 					'code-builder': {
 						extends: 'base',
 						...validManagedToolPortalConfig.profiles['code-builder'],
+					},
+				},
+			}).success,
+		).toBe(false);
+	});
+
+	it('parses registered and configured controller execution operations and rejects the old backend', () => {
+		const configuredBackend = {
+			kind: 'controller_execution',
+			operations: {
+				inspect: {
+					commands: [{ path: ['inspect'] }],
+					deniedPatterns: [],
+					executablePath: '/usr/local/bin/inspect',
+					executionTarget: {
+						allowedHosts: [],
+						environment: { kind: 'empty' },
+						guestCwd: '/run',
+						imageReference: '../../vm-images/controller-runners/default/build-config.json',
+						kind: 'ephemeral_managed_vm',
+					},
+					kind: 'configured_cli',
+					mandatoryArgvPrefix: [],
+					output: {
+						modelVisibleStderr: 'fixed_safe_summary',
+						overflow: 'truncate',
+						stderrMaxBytes: 65_536,
+						stdoutMaxBytes: 65_536,
+					},
+					safeHelp: 'Inspect one isolated input.',
+					stdin: { kind: 'none' },
+					timeout: { kind: 'quick' },
+				},
+			},
+		} as const;
+		const config = {
+			...validManagedToolPortalConfig,
+			profiles: {
+				'code-builder': {
+					namespaces: {
+						isolated: {
+							backend: configuredBackend,
+							calls: {
+								requiresApproval: { allow: [], deny: [] },
+								withoutApproval: { allow: ['inspect'], deny: [] },
+							},
+							tools: { allow: ['inspect'], deny: [] },
+						},
+					},
+				},
+			},
+		};
+
+		expect(toolPortalConfigSchema.safeParse(config).success).toBe(true);
+		expect(
+			toolPortalConfigSchema.safeParse({
+				...config,
+				profiles: {
+					'code-builder': {
+						namespaces: {
+							isolated: {
+								...config.profiles['code-builder'].namespaces.isolated,
+								backend: {
+									...configuredBackend,
+									operations: {
+										inspect: {
+											...configuredBackend.operations.inspect,
+											executionTarget: {
+												...configuredBackend.operations.inspect.executionTarget,
+												imageReference: 'agent-vm-prepared-image:v1:forged',
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			}).success,
+		).toBe(false);
+		expect(
+			toolPortalConfigSchema.safeParse({
+				...config,
+				profiles: {
+					'code-builder': {
+						namespaces: {
+							isolated: {
+								...config.profiles['code-builder'].namespaces.isolated,
+								backend: { kind: 'controller_host_action' },
+							},
+						},
 					},
 				},
 			}).success,
@@ -270,7 +366,7 @@ describe('tool portal config contract', () => {
 		for (const acceptedBackend of [
 			{ kind: 'mcp_provider' },
 			validSandboxRunnerBackend,
-			{ kind: 'controller_host_action' },
+			validManagedToolPortalConfig.profiles['code-builder'].namespaces.local.backend,
 		]) {
 			const namespacePolicy =
 				acceptedBackend.kind === 'tool_vm_runner'
@@ -282,10 +378,12 @@ describe('tool portal config contract', () => {
 							},
 							tools: { allow: ['read_file', 'write_file'], deny: [] },
 						}
-					: {
-							...validManagedToolPortalConfig.profiles['code-builder'].namespaces.github,
-							backend: acceptedBackend,
-						};
+					: acceptedBackend.kind === 'controller_execution'
+						? validManagedToolPortalConfig.profiles['code-builder'].namespaces.local
+						: {
+								...validManagedToolPortalConfig.profiles['code-builder'].namespaces.github,
+								backend: acceptedBackend,
+							};
 			expect(
 				toolPortalConfigSchema.safeParse({
 					...validManagedToolPortalConfig,
@@ -300,7 +398,7 @@ describe('tool portal config contract', () => {
 			).toBe(true);
 		}
 
-		for (const legacyBackendKind of ['mcp', 'credentialed_runner']) {
+		for (const legacyBackendKind of ['mcp', 'credentialed_runner', 'controller_host_action']) {
 			expect(
 				toolPortalConfigSchema.safeParse({
 					...validManagedToolPortalConfig,
@@ -319,7 +417,7 @@ describe('tool portal config contract', () => {
 		}
 	});
 
-	it.each(['controller_host_action', 'tool_vm_runner'] as const)(
+	it.each(['controller_execution', 'tool_vm_runner'] as const)(
 		'rejects the privileged %s backend in standalone mode',
 		(backendKind) => {
 			const managedNamespace = validManagedToolPortalConfig.profiles['code-builder'].namespaces;
@@ -604,13 +702,13 @@ describe('tool portal config contract', () => {
 		});
 	});
 
-	it('builds a controller host action projection containing only controller namespaces', () => {
-		const projection = createToolPortalControllerHostActionProjection({
+	it('builds a controller execution projection containing only controller namespaces', () => {
+		const projection = createToolPortalControllerExecutionProjection({
 			agentId: 'agent-a',
 			config: toolPortalConfigSchema.parse(validManagedToolPortalConfig),
 		});
 
-		expect(ToolPortalControllerHostActionProjectionSchema.parse(projection)).toEqual({
+		expect(ToolPortalControllerExecutionProjectionSchema.parse(projection)).toEqual({
 			agentId: 'agent-a',
 			namespaces: {
 				local: {
@@ -623,5 +721,82 @@ describe('tool portal config contract', () => {
 			},
 			profile: 'code-builder',
 		});
+	});
+
+	it('projects configured controller execution policy without controller-trusted runner fields', () => {
+		const configuredOperation = {
+			commands: [{ path: ['inspect'], flagRules: [] }],
+			deniedPatterns: [],
+			executablePath: '/usr/bin/inspect-host',
+			executionTarget: {
+				allowedHosts: [],
+				environment: { kind: 'empty' },
+				guestCwd: '/run/operation',
+				imageReference: '/images/runner/build-config.json',
+				kind: 'ephemeral_managed_vm',
+			},
+			kind: 'configured_cli',
+			mandatoryArgvPrefix: ['--fixed'],
+			output: {
+				modelVisibleStderr: 'none',
+				overflow: 'truncate',
+				stderrMaxBytes: 1024,
+				stdoutMaxBytes: 1024,
+			},
+			safeHelp: 'Inspect one host resource.',
+			stdin: { kind: 'none' },
+			timeout: { kind: 'quick' },
+		} as const;
+		const fullConfig = managedToolPortalConfigSchema.parse({
+			...validManagedToolPortalConfig,
+			profiles: {
+				'code-builder': {
+					namespaces: {
+						...validManagedToolPortalConfig.profiles['code-builder'].namespaces,
+						local: {
+							...validManagedToolPortalConfig.profiles['code-builder'].namespaces.local,
+							backend: {
+								kind: 'controller_execution',
+								operations: { inspect_host: configuredOperation },
+							},
+							calls: {
+								requiresApproval: { allow: ['inspect_host'], deny: [] },
+								withoutApproval: { allow: [], deny: [] },
+							},
+							tools: { allow: ['inspect_host'], deny: [] },
+						},
+					},
+				},
+			},
+		});
+
+		const projected = createGatewayRuntimeManagedToolPortalConfig(fullConfig);
+		const projectedOperation =
+			projected.profiles['code-builder']?.namespaces.local?.backend.kind === 'controller_execution'
+				? projected.profiles['code-builder'].namespaces.local.backend.operations.inspect_host
+				: undefined;
+
+		expect(projectedOperation).toEqual({
+			commands: [{ path: ['inspect'], flagRules: [] }],
+			deniedPatterns: [],
+			kind: 'configured_cli',
+			safeHelp: 'Inspect one host resource.',
+			targetKind: 'ephemeral_managed_vm',
+			timeout: { kind: 'quick' },
+		});
+		const serializedProjection = JSON.stringify(projectedOperation);
+		for (const forbiddenField of [
+			'executablePath',
+			'mandatoryArgvPrefix',
+			'executionTarget',
+			'imageReference',
+			'guestCwd',
+			'environment',
+			'allowedHosts',
+			'stdin',
+			'output',
+		]) {
+			expect(serializedProjection).not.toContain(`"${forbiddenField}"`);
+		}
 	});
 });

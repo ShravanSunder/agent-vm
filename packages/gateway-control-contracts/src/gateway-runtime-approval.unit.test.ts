@@ -144,7 +144,7 @@ describe('Gateway runtime approval contracts', () => {
 		expect(parsed).toEqual(validChallenge);
 	});
 
-	it.each(['mcp_provider', 'controller_host_action', 'tool_vm_runner'] as const)(
+	it.each(['mcp_provider', 'controller_execution', 'tool_vm_runner'] as const)(
 		'accepts the %s backend kind in the challenge intent',
 		(backendKind) => {
 			// Arrange
@@ -155,7 +155,7 @@ describe('Gateway runtime approval contracts', () => {
 		},
 	);
 
-	it.each(['mcp_provider', 'controller_host_action', 'tool_vm_runner'] as const)(
+	it.each(['mcp_provider', 'controller_execution', 'tool_vm_runner'] as const)(
 		'accepts fingerprint-bound direct dispatch authority for the %s backend',
 		(backendKind) => {
 			// Arrange
@@ -222,11 +222,17 @@ describe('Gateway runtime approval contracts', () => {
 		},
 	);
 
-	it.each(['mcp_provider', 'controller_host_action', 'tool_vm_runner'] as const)(
+	it.each(['mcp_provider', 'controller_execution', 'tool_vm_runner'] as const)(
 		'parses a complete %s dispatch reservation',
 		(backendKind) => {
 			// Arrange
-			const reservation = { ...validDispatchReservation, backendKind };
+			const reservation = {
+				...validDispatchReservation,
+				backendKind,
+				...(backendKind === 'controller_execution'
+					? { bindingRevision: validSemanticRevisions.bindingRevision }
+					: {}),
+			};
 
 			// Act / Assert
 			expect(GatewayRuntimeApprovalDispatchReservationSchema.parse(reservation)).toEqual(
@@ -246,9 +252,9 @@ describe('Gateway runtime approval contracts', () => {
 		},
 	);
 
-	it('rejects a controller-host-action Gateway dispatch grant', () => {
+	it('rejects a controller-execution Gateway dispatch grant', () => {
 		// Arrange
-		const grant = { ...validDispatchGrant, backendKind: 'controller_host_action' };
+		const grant = { ...validDispatchGrant, backendKind: 'controller_execution' };
 
 		// Act / Assert
 		expect(GatewayRuntimeApprovalDispatchGrantSchema.safeParse(grant).success).toBe(false);
@@ -310,12 +316,12 @@ describe('Gateway runtime approval contracts', () => {
 		},
 	);
 
-	it('rejects a controller-host-action reservation arm command', () => {
+	it('rejects a controller-execution reservation arm command', () => {
 		// Arrange
 		const armCommand = {
 			reservation: {
 				...validDispatchReservation,
-				backendKind: 'controller_host_action',
+				backendKind: 'controller_execution',
 			},
 		};
 
@@ -762,7 +768,7 @@ describe('Gateway runtime approval contracts', () => {
 
 	it.each(['approve', 'deny'] as const)('parses the exact %s decision command', (decision) => {
 		// Arrange
-		const command = { approvalId: APPROVAL_ID, decision } as const;
+		const command = { challengeId: APPROVAL_ID, decision } as const;
 
 		// Act / Assert
 		expect(GatewayRuntimeApprovalDecisionCommandSchema.parse(command)).toEqual(command);
@@ -780,17 +786,17 @@ describe('Gateway runtime approval contracts', () => {
 		[
 			'decision UUID',
 			GatewayRuntimeApprovalDecisionCommandSchema,
-			{ approvalId: 'approval-1', decision: 'approve' },
+			{ challengeId: 'approval-1', decision: 'approve' },
 		],
 		[
 			'decision spelling',
 			GatewayRuntimeApprovalDecisionCommandSchema,
-			{ approvalId: APPROVAL_ID, decision: 'approved' },
+			{ challengeId: APPROVAL_ID, decision: 'approved' },
 		],
 		[
 			'decision authority',
 			GatewayRuntimeApprovalDecisionCommandSchema,
-			{ approvalId: APPROVAL_ID, approverToken: 'operator-token', decision: 'approve' },
+			{ challengeId: APPROVAL_ID, approverToken: 'operator-token', decision: 'approve' },
 		],
 		['revoke UUID', GatewayRuntimeApprovalRevokeCommandSchema, { approvalId: 'approval-1' }],
 		[

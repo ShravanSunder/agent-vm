@@ -1,8 +1,15 @@
 import { generateKeyPairSync } from 'node:crypto';
 import path from 'node:path';
 
-import { managedToolPortalConfigSchema, mcpConfigSchema } from '@agent-vm/config-contracts';
-import { deriveGatewayRuntimePortalSemanticSnapshot } from '@agent-vm/gateway-control-contracts';
+import {
+	createGatewayRuntimeManagedToolPortalConfig,
+	managedToolPortalConfigSchema,
+	mcpConfigSchema,
+} from '@agent-vm/config-contracts';
+import {
+	deriveGatewayRuntimeInputRevision,
+	deriveGatewayRuntimePortalSemanticSnapshot,
+} from '@agent-vm/gateway-control-contracts';
 import type { ManagedVm, ManagedVmFinalizableMemoryFile } from '@agent-vm/managed-vm';
 
 import { readPreparedManagedVmImage } from '../build/prepared-gondolin-image-cache.js';
@@ -60,6 +67,8 @@ function serviceConfig(verifierPublicKeyPem: string, identitySuffix?: string): o
 		surfaceEligibilityByProfile: { default: {} },
 		toolPortalConfig,
 	});
+	const gatewayRuntimeToolPortalConfig =
+		createGatewayRuntimeManagedToolPortalConfig(toolPortalConfig);
 	return {
 		artifactLimits: {
 			maximumArtifactBytes: 1_024,
@@ -92,6 +101,10 @@ function serviceConfig(verifierPublicKeyPem: string, identitySuffix?: string): o
 			},
 			listen: { host: '127.0.0.1', port: 18_790 },
 		},
+		gatewayRuntimeInputRevision: deriveGatewayRuntimeInputRevision({
+			mcpConfig,
+			toolPortalConfig: gatewayRuntimeToolPortalConfig,
+		}),
 		mcpConfigPath: `${managedGatewayBootInputGuestRoot}/mcp.config.json`,
 		observability: { kind: 'disabled' },
 		runtimeRoot: '/run/agent-vm/gateway-runtime',
@@ -102,7 +115,7 @@ function serviceConfig(verifierPublicKeyPem: string, identitySuffix?: string): o
 			role: 'tool-portal',
 			serviceId: `tool-portal-${processIdentitySuffix}`,
 		},
-		toolPortalConfig,
+		toolPortalConfig: gatewayRuntimeToolPortalConfig,
 	};
 }
 

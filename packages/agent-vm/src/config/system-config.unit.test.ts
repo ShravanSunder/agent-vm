@@ -47,10 +47,7 @@ interface ValidZoneToolPortalConfigInput {
 
 interface ValidApprovalApproverInput {
 	readonly approverId: string;
-	readonly secret: {
-		readonly envVar: string;
-		readonly source: 'environment';
-	};
+	readonly kind: 'managed_gateway';
 }
 
 interface ValidSystemConfigInput {
@@ -230,11 +227,8 @@ function createValidZoneToolPortalConfigInput(): ValidZoneToolPortalConfigInput 
 
 function createApprovalApproverInput(): ValidApprovalApproverInput {
 	return {
-		approverId: 'primary-operator',
-		secret: {
-			envVar: 'AGENT_VM_PRIMARY_APPROVAL_SECRET',
-			source: 'environment',
-		},
+		approverId: 'hermes-native',
+		kind: 'managed_gateway',
 	};
 }
 
@@ -385,50 +379,18 @@ describe('loadSystemConfig', () => {
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/tokenSource/u);
 	});
 
-	test('loads exact approval access with the fixed approval audience and secret references', () => {
-		// Arrange
+	test('loads exactly one managed Gateway approval authority', () => {
 		const config = createValidSystemConfigInput();
+		configureFirstZoneAsHermes(config);
 		config.zones[0].approvalAccess = {
-			approvers: [
-				{
-					approverId: 'primary-operator',
-					secret: {
-						envVar: 'AGENT_VM_PRIMARY_APPROVAL_SECRET',
-						source: 'environment',
-					},
-				},
-				{
-					approverId: 'recovery-operator',
-					secret: {
-						source: 'config',
-						value: 'test-only-recovery-approval-secret',
-					},
-				},
-			],
+			approvers: [createApprovalApproverInput()],
 			audience: 'agent-vm-controller-approval',
 		};
 
-		// Act
 		const loadedConfig = parseSystemConfigInputForTest(config);
 
-		// Assert
 		expect(loadedConfig.zones[0]?.approvalAccess).toEqual({
-			approvers: [
-				{
-					approverId: 'primary-operator',
-					secret: {
-						envVar: 'AGENT_VM_PRIMARY_APPROVAL_SECRET',
-						source: 'environment',
-					},
-				},
-				{
-					approverId: 'recovery-operator',
-					secret: {
-						source: 'config',
-						value: 'test-only-recovery-approval-secret',
-					},
-				},
-			],
+			approvers: [createApprovalApproverInput()],
 			audience: 'agent-vm-controller-approval',
 		});
 	});
@@ -464,8 +426,8 @@ describe('loadSystemConfig', () => {
 	});
 
 	test.each([
-		['missing', { secret: createApprovalApproverInput().secret }],
-		['empty', { approverId: '', secret: createApprovalApproverInput().secret }],
+		['missing', { kind: 'managed_gateway' }],
+		['empty', { approverId: '', kind: 'managed_gateway' }],
 	] as const)('rejects an approval access approver with a %s approverId', (_caseName, approver) => {
 		// Arrange
 		const config = createValidSystemConfigInput();
@@ -478,16 +440,59 @@ describe('loadSystemConfig', () => {
 		expect(() => parseSystemConfigInputForTest(config)).toThrow(/approverId/u);
 	});
 
-	test('rejects duplicate approval access approver IDs', () => {
+	test('rejects managed Gateway approval authority for an unsupported OpenClaw presenter', () => {
 		// Arrange
 		const config = createValidSystemConfigInput();
 		config.zones[0].approvalAccess = {
-			approvers: [createApprovalApproverInput(), createApprovalApproverInput()],
+			approvers: [{ approverId: 'managed-operator', kind: 'managed_gateway' }],
 			audience: 'agent-vm-controller-approval',
 		};
 
 		// Act / Assert
-		expect(() => parseSystemConfigInputForTest(config)).toThrow(/must be unique/u);
+		expect(() => parseSystemConfigInputForTest(config)).toThrow(/only Hermes supports it/u);
+	});
+
+	test('rejects more than one managed Gateway approval authority', () => {
+		// Arrange
+		const config = createValidSystemConfigInput();
+		config.zones[0].approvalAccess = {
+			approvers: [
+				{ approverId: 'primary-hermes-operator', kind: 'managed_gateway' },
+				{ approverId: 'secondary-hermes-operator', kind: 'managed_gateway' },
+			],
+			audience: 'agent-vm-controller-approval',
+		};
+
+		// Act / Assert
+		expect(() => parseSystemConfigInputForTest(config)).toThrow(/approvers/u);
+	});
+
+	test.each([
+		['removed bearer authority', { approverId: 'primary-operator', kind: 'bearer' }],
+		[
+			'managed Gateway authority with a secret',
+			{
+				approverId: 'hermes-operator',
+				kind: 'managed_gateway',
+				secret: { source: 'environment', envVar: 'REMOVED_APPROVAL_SECRET' },
+			},
+		],
+		[
+			'authority without an explicit kind',
+			{
+				approverId: 'primary-operator',
+			},
+		],
+	] as const)('rejects %s', (_caseName, approver) => {
+		// Arrange
+		const config = createValidSystemConfigInput();
+		config.zones[0].approvalAccess = {
+			approvers: [approver],
+			audience: 'agent-vm-controller-approval',
+		};
+
+		// Act / Assert
+		expect(() => parseSystemConfigInputForTest(config)).toThrow();
 	});
 
 	test.each([
@@ -506,21 +511,6 @@ describe('loadSystemConfig', () => {
 					{
 						...createApprovalApproverInput(),
 						token: 'body-token-must-not-authorize',
-					},
-				],
-				audience: 'agent-vm-controller-approval',
-			},
-		],
-		[
-			'secret body token',
-			{
-				approvers: [
-					{
-						...createApprovalApproverInput(),
-						secret: {
-							...createApprovalApproverInput().secret,
-							token: 'body-token-must-not-authorize',
-						},
 					},
 				],
 				audience: 'agent-vm-controller-approval',
@@ -557,28 +547,6 @@ describe('loadSystemConfig', () => {
 		expect(() => parseSystemConfigInputForTest(config)).toThrow();
 	});
 
-	test('requires host secretsProvider for a 1Password approval secret', () => {
-		// Arrange
-		const config = createValidSystemConfigInput();
-		config.zones[0].approvalAccess = {
-			approvers: [
-				{
-					approverId: 'primary-operator',
-					secret: {
-						ref: 'op://agent-vm-testing/approval-secret/credential',
-						source: '1password',
-					},
-				},
-			],
-			audience: 'agent-vm-controller-approval',
-		};
-
-		// Act / Assert
-		expect(() => parseSystemConfigInputForTest(config)).toThrow(
-			/host\.secretsProvider is required/u,
-		);
-	});
-
 	test('requires host secretsProvider for a 1Password backup identity', () => {
 		const config = createValidSystemConfigInput();
 		const firstZone = config.zones[0];
@@ -593,44 +561,6 @@ describe('loadSystemConfig', () => {
 		expect(() => parseSystemConfigInputForTest(config)).toThrow(
 			/host\.secretsProvider is required/u,
 		);
-	});
-
-	test('loads an exact 1Password approval secret with a host secretsProvider', () => {
-		// Arrange
-		const config = createValidSystemConfigInput();
-		config.host.secretsProvider = {
-			tokenSource: {
-				envVar: 'OP_SERVICE_ACCOUNT_TOKEN',
-				type: 'env',
-			},
-			type: '1password',
-		};
-		config.zones[0].approvalAccess = {
-			approvers: [
-				{
-					approverId: 'primary-operator',
-					secret: {
-						ref: 'op://agent-vm-testing/approval-secret/credential',
-						source: '1password',
-					},
-				},
-			],
-			audience: 'agent-vm-controller-approval',
-		};
-
-		// Act
-		const loadedConfig = parseSystemConfigInputForTest(config);
-
-		// Assert
-		expect(loadedConfig.zones[0]?.approvalAccess?.approvers).toEqual([
-			{
-				approverId: 'primary-operator',
-				secret: {
-					ref: 'op://agent-vm-testing/approval-secret/credential',
-					source: '1password',
-				},
-			},
-		]);
 	});
 
 	test('loads optional gateway and Tool VM runtime rootfs sizes', async () => {

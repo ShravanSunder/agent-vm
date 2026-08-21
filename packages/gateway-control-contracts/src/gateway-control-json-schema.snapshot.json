@@ -742,7 +742,11 @@
 											},
 											"purpose": {
 												"type": "string",
-												"enum": ["tool_vm_lease", "tool_portal_controller_host_action"]
+												"enum": [
+													"tool_vm_lease",
+													"tool_portal_controller_execution",
+													"tool_portal_approval_decision"
+												]
 											},
 											"zoneId": {
 												"type": "string",
@@ -1704,175 +1708,355 @@
 							},
 							"operation": {
 								"type": "string",
-								"const": "tool_portal_controller_host_action"
+								"const": "tool_portal_controller_execution"
 							},
 							"payload": {
 								"oneOf": [
 									{
 										"type": "object",
 										"properties": {
-											"actionId": {
-												"type": "string",
-												"const": "workspace_git_push"
-											},
-											"approvalReservation": {
-												"type": "object",
-												"properties": {
-													"approvalId": {
-														"type": "string",
-														"format": "uuid",
-														"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-													},
-													"authorityContext": {
+											"action": {
+												"oneOf": [
+													{
 														"type": "object",
 														"properties": {
-															"controllerEpoch": {
+															"actionId": {
 																"type": "string",
-																"minLength": 1
+																"const": "workspace_git_push"
 															},
-															"frameworkEpoch": {
-																"type": "string",
-																"minLength": 1
+															"approvalReservation": {
+																"type": "object",
+																"properties": {
+																	"approvalId": {
+																		"type": "string",
+																		"format": "uuid",
+																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																	},
+																	"authorityContext": {
+																		"type": "object",
+																		"properties": {
+																			"controllerEpoch": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"frameworkEpoch": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"gatewayEpoch": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"runtimeEpoch": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"zoneId": {
+																				"type": "string",
+																				"minLength": 1
+																			}
+																		},
+																		"required": [
+																			"controllerEpoch",
+																			"frameworkEpoch",
+																			"gatewayEpoch",
+																			"runtimeEpoch",
+																			"zoneId"
+																		],
+																		"additionalProperties": false
+																	},
+																	"expiresAt": {
+																		"type": "string",
+																		"format": "date-time",
+																		"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+																	},
+																	"fingerprint": {
+																		"type": "string",
+																		"pattern": "^sha256:[a-f0-9]{64}$"
+																	},
+																	"operationId": {
+																		"type": "string",
+																		"format": "uuid",
+																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																	},
+																	"stablePrincipal": {
+																		"type": "string",
+																		"pattern": "^[a-f0-9]{64}$"
+																	},
+																	"backendKind": {
+																		"type": "string",
+																		"const": "controller_execution"
+																	},
+																	"bindingRevision": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"reservationId": {
+																		"type": "string",
+																		"format": "uuid",
+																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																	}
+																},
+																"required": [
+																	"approvalId",
+																	"authorityContext",
+																	"expiresAt",
+																	"fingerprint",
+																	"operationId",
+																	"stablePrincipal",
+																	"backendKind",
+																	"bindingRevision",
+																	"reservationId"
+																],
+																"additionalProperties": false
 															},
-															"gatewayEpoch": {
-																"type": "string",
-																"minLength": 1
+															"callerContext": {
+																"type": "object",
+																"properties": {
+																	"callerContextId": {
+																		"type": "string",
+																		"format": "uuid",
+																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																	}
+																},
+																"required": ["callerContextId"],
+																"additionalProperties": false
 															},
-															"runtimeEpoch": {
-																"type": "string",
-																"minLength": 1
+															"correlation": {
+																"type": "object",
+																"properties": {
+																	"causationId": {
+																		"type": "string",
+																		"format": "uuid",
+																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																	},
+																	"correlationId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"requestId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"runId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"sessionKeyDigest": {
+																		"type": "string",
+																		"minLength": 32
+																	},
+																	"toolCallId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"traceId": {
+																		"type": "string",
+																		"pattern": "^[0-9a-f]{32}$"
+																	},
+																	"capability": {
+																		"type": "object",
+																		"properties": {
+																			"name": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"namespace": {
+																				"type": "string",
+																				"minLength": 1
+																			}
+																		},
+																		"required": ["name", "namespace"],
+																		"additionalProperties": false
+																	}
+																},
+																"additionalProperties": false
 															},
-															"zoneId": {
+															"expectedHead": {
 																"type": "string",
-																"minLength": 1
+																"pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
 															}
 														},
 														"required": [
-															"controllerEpoch",
-															"frameworkEpoch",
-															"gatewayEpoch",
-															"runtimeEpoch",
-															"zoneId"
+															"actionId",
+															"callerContext",
+															"correlation",
+															"expectedHead"
 														],
 														"additionalProperties": false
 													},
-													"expiresAt": {
-														"type": "string",
-														"format": "date-time",
-														"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
-													},
-													"fingerprint": {
-														"type": "string",
-														"pattern": "^sha256:[a-f0-9]{64}$"
-													},
-													"operationId": {
-														"type": "string",
-														"format": "uuid",
-														"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-													},
-													"stablePrincipal": {
-														"type": "string",
-														"pattern": "^[a-f0-9]{64}$"
-													},
-													"backendKind": {
-														"type": "string",
-														"const": "controller_host_action"
-													},
-													"reservationId": {
-														"type": "string",
-														"format": "uuid",
-														"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-													}
-												},
-												"required": [
-													"approvalId",
-													"authorityContext",
-													"expiresAt",
-													"fingerprint",
-													"operationId",
-													"stablePrincipal",
-													"backendKind",
-													"reservationId"
-												],
-												"additionalProperties": false
-											},
-											"callerContext": {
-												"type": "object",
-												"properties": {
-													"callerContextId": {
-														"type": "string",
-														"format": "uuid",
-														"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-													}
-												},
-												"required": ["callerContextId"],
-												"additionalProperties": false
-											},
-											"correlation": {
-												"type": "object",
-												"properties": {
-													"causationId": {
-														"type": "string",
-														"format": "uuid",
-														"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-													},
-													"correlationId": {
-														"type": "string",
-														"minLength": 1
-													},
-													"requestId": {
-														"type": "string",
-														"minLength": 1
-													},
-													"runId": {
-														"type": "string",
-														"minLength": 1
-													},
-													"sessionKeyDigest": {
-														"type": "string",
-														"minLength": 32
-													},
-													"toolCallId": {
-														"type": "string",
-														"minLength": 1
-													},
-													"traceId": {
-														"type": "string",
-														"pattern": "^[0-9a-f]{32}$"
-													},
-													"capability": {
+													{
 														"type": "object",
 														"properties": {
-															"name": {
+															"actionId": {
 																"type": "string",
-																"minLength": 1
+																"const": "controller_host_probe"
 															},
-															"namespace": {
-																"type": "string",
-																"minLength": 1
+															"approvalReservation": {
+																"type": "object",
+																"properties": {
+																	"approvalId": {
+																		"type": "string",
+																		"format": "uuid",
+																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																	},
+																	"authorityContext": {
+																		"type": "object",
+																		"properties": {
+																			"controllerEpoch": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"frameworkEpoch": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"gatewayEpoch": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"runtimeEpoch": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"zoneId": {
+																				"type": "string",
+																				"minLength": 1
+																			}
+																		},
+																		"required": [
+																			"controllerEpoch",
+																			"frameworkEpoch",
+																			"gatewayEpoch",
+																			"runtimeEpoch",
+																			"zoneId"
+																		],
+																		"additionalProperties": false
+																	},
+																	"expiresAt": {
+																		"type": "string",
+																		"format": "date-time",
+																		"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+																	},
+																	"fingerprint": {
+																		"type": "string",
+																		"pattern": "^sha256:[a-f0-9]{64}$"
+																	},
+																	"operationId": {
+																		"type": "string",
+																		"format": "uuid",
+																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																	},
+																	"stablePrincipal": {
+																		"type": "string",
+																		"pattern": "^[a-f0-9]{64}$"
+																	},
+																	"backendKind": {
+																		"type": "string",
+																		"const": "controller_execution"
+																	},
+																	"bindingRevision": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"reservationId": {
+																		"type": "string",
+																		"format": "uuid",
+																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																	}
+																},
+																"required": [
+																	"approvalId",
+																	"authorityContext",
+																	"expiresAt",
+																	"fingerprint",
+																	"operationId",
+																	"stablePrincipal",
+																	"backendKind",
+																	"bindingRevision",
+																	"reservationId"
+																],
+																"additionalProperties": false
+															},
+															"callerContext": {
+																"type": "object",
+																"properties": {
+																	"callerContextId": {
+																		"type": "string",
+																		"format": "uuid",
+																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																	}
+																},
+																"required": ["callerContextId"],
+																"additionalProperties": false
+															},
+															"correlation": {
+																"type": "object",
+																"properties": {
+																	"causationId": {
+																		"type": "string",
+																		"format": "uuid",
+																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																	},
+																	"correlationId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"requestId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"runId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"sessionKeyDigest": {
+																		"type": "string",
+																		"minLength": 32
+																	},
+																	"toolCallId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"traceId": {
+																		"type": "string",
+																		"pattern": "^[0-9a-f]{32}$"
+																	},
+																	"capability": {
+																		"type": "object",
+																		"properties": {
+																			"name": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"namespace": {
+																				"type": "string",
+																				"minLength": 1
+																			}
+																		},
+																		"required": ["name", "namespace"],
+																		"additionalProperties": false
+																	}
+																},
+																"additionalProperties": false
 															}
 														},
-														"required": ["name", "namespace"],
+														"required": ["actionId", "callerContext", "correlation"],
 														"additionalProperties": false
 													}
-												},
-												"additionalProperties": false
+												]
 											},
-											"expectedHead": {
+											"kind": {
 												"type": "string",
-												"pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+												"const": "registered_action"
 											}
 										},
-										"required": ["actionId", "callerContext", "correlation", "expectedHead"],
+										"required": ["action", "kind"],
 										"additionalProperties": false
 									},
 									{
 										"type": "object",
 										"properties": {
-											"actionId": {
-												"type": "string",
-												"const": "controller_host_probe"
-											},
 											"approvalReservation": {
 												"type": "object",
 												"properties": {
@@ -1934,7 +2118,11 @@
 													},
 													"backendKind": {
 														"type": "string",
-														"const": "controller_host_action"
+														"const": "controller_execution"
+													},
+													"bindingRevision": {
+														"type": "string",
+														"minLength": 1
 													},
 													"reservationId": {
 														"type": "string",
@@ -1950,6 +2138,7 @@
 													"operationId",
 													"stablePrincipal",
 													"backendKind",
+													"bindingRevision",
 													"reservationId"
 												],
 												"additionalProperties": false
@@ -1964,6 +2153,21 @@
 													}
 												},
 												"required": ["callerContextId"],
+												"additionalProperties": false
+											},
+											"capability": {
+												"type": "object",
+												"properties": {
+													"name": {
+														"type": "string",
+														"minLength": 1
+													},
+													"namespace": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": ["name", "namespace"],
 												"additionalProperties": false
 											},
 											"correlation": {
@@ -2015,12 +2219,167 @@
 													}
 												},
 												"additionalProperties": false
+											},
+											"input": {
+												"anyOf": [
+													{
+														"type": "object",
+														"properties": {
+															"argv": {
+																"minItems": 1,
+																"maxItems": 100,
+																"type": "array",
+																"items": {
+																	"type": "string",
+																	"minLength": 1,
+																	"maxLength": 4096
+																}
+															},
+															"reason": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 2000
+															},
+															"stdin": {
+																"type": "string",
+																"maxLength": 1048576
+															}
+														},
+														"required": ["argv", "reason"],
+														"additionalProperties": false
+													},
+													{
+														"type": "object",
+														"properties": {
+															"argv": {
+																"minItems": 1,
+																"maxItems": 100,
+																"type": "array",
+																"items": {
+																	"type": "string",
+																	"minLength": 1,
+																	"maxLength": 4096
+																}
+															},
+															"reason": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 2000
+															},
+															"stdin": {
+																"type": "string",
+																"maxLength": 1048576
+															},
+															"timeoutMs": {
+																"type": "integer",
+																"exclusiveMinimum": 0,
+																"maximum": 28800000
+															}
+														},
+														"required": ["argv", "reason"],
+														"additionalProperties": false
+													}
+												]
+											},
+											"kind": {
+												"type": "string",
+												"const": "configured_cli"
+											},
+											"operationName": {
+												"type": "string",
+												"minLength": 1
 											}
 										},
-										"required": ["actionId", "callerContext", "correlation"],
+										"required": [
+											"callerContext",
+											"capability",
+											"correlation",
+											"input",
+											"kind",
+											"operationName"
+										],
 										"additionalProperties": false
 									}
 								]
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "command"
+							},
+							"operation": {
+								"type": "string",
+								"const": "tool_portal_approval_decide"
+							},
+							"payload": {
+								"type": "object",
+								"properties": {
+									"callerContext": {
+										"type": "object",
+										"properties": {
+											"callerContextId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											}
+										},
+										"required": ["callerContextId"],
+										"additionalProperties": false
+									},
+									"decision": {
+										"type": "object",
+										"properties": {
+											"challengeId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"decision": {
+												"type": "string",
+												"enum": ["approve", "deny"]
+											}
+										},
+										"required": ["challengeId", "decision"],
+										"additionalProperties": false
+									}
+								},
+								"required": ["callerContext", "decision"],
+								"additionalProperties": false
 							}
 						},
 						"required": ["kind", "operation", "payload"],
@@ -2074,7 +2433,7 @@
 										"properties": {
 											"backendKind": {
 												"type": "string",
-												"enum": ["mcp_provider", "controller_host_action", "tool_vm_runner"]
+												"enum": ["mcp_provider", "controller_execution", "tool_vm_runner"]
 											},
 											"call": {
 												"type": "object",
@@ -2814,7 +3173,7 @@
 												"type": "array",
 												"items": {
 													"type": "string",
-													"enum": ["controller_host_action", "mcp_provider", "tool_vm_runner"]
+													"enum": ["controller_execution", "mcp_provider", "tool_vm_runner"]
 												}
 											},
 											"revision": {
@@ -3781,6 +4140,9 @@
 											"approvalAdmission": {
 												"not": {}
 											},
+											"approvalDecision": {
+												"not": {}
+											},
 											"approvalDispatch": {
 												"not": {}
 											},
@@ -3793,7 +4155,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -3830,6 +4192,9 @@
 											"approvalAdmission": {
 												"not": {}
 											},
+											"approvalDecision": {
+												"not": {}
+											},
 											"approvalDispatch": {
 												"not": {}
 											},
@@ -3842,7 +4207,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -3950,6 +4315,9 @@
 											"approvalAdmission": {
 												"not": {}
 											},
+											"approvalDecision": {
+												"not": {}
+											},
 											"approvalDispatch": {
 												"not": {}
 											},
@@ -3975,7 +4343,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -4012,6 +4380,9 @@
 											"approvalAdmission": {
 												"not": {}
 											},
+											"approvalDecision": {
+												"not": {}
+											},
 											"approvalDispatch": {
 												"not": {}
 											},
@@ -4024,7 +4395,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -4132,6 +4503,9 @@
 											"approvalAdmission": {
 												"not": {}
 											},
+											"approvalDecision": {
+												"not": {}
+											},
 											"approvalDispatch": {
 												"not": {}
 											},
@@ -4144,7 +4518,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -4277,6 +4651,9 @@
 											"approvalAdmission": {
 												"not": {}
 											},
+											"approvalDecision": {
+												"not": {}
+											},
 											"approvalDispatch": {
 												"not": {}
 											},
@@ -4289,7 +4666,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -4356,6 +4733,9 @@
 											"approvalAdmission": {
 												"not": {}
 											},
+											"approvalDecision": {
+												"not": {}
+											},
 											"approvalDispatch": {
 												"not": {}
 											},
@@ -4368,7 +4748,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -4490,6 +4870,9 @@
 											"approvalAdmission": {
 												"not": {}
 											},
+											"approvalDecision": {
+												"not": {}
+											},
 											"approvalDispatch": {
 												"not": {}
 											},
@@ -4502,7 +4885,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -4616,6 +4999,9 @@
 											"approvalAdmission": {
 												"not": {}
 											},
+											"approvalDecision": {
+												"not": {}
+											},
 											"approvalDispatch": {
 												"not": {}
 											},
@@ -4628,7 +5014,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -4695,6 +5081,9 @@
 											"approvalAdmission": {
 												"not": {}
 											},
+											"approvalDecision": {
+												"not": {}
+											},
 											"approvalDispatch": {
 												"not": {}
 											},
@@ -4707,7 +5096,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -4829,6 +5218,9 @@
 											"approvalAdmission": {
 												"not": {}
 											},
+											"approvalDecision": {
+												"not": {}
+											},
 											"approvalDispatch": {
 												"not": {}
 											},
@@ -4841,7 +5233,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -4905,6 +5297,9 @@
 											"approvalAdmission": {
 												"not": {}
 											},
+											"approvalDecision": {
+												"not": {}
+											},
 											"approvalDispatch": {
 												"not": {}
 											},
@@ -4917,7 +5312,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -4984,6 +5379,9 @@
 											"approvalAdmission": {
 												"not": {}
 											},
+											"approvalDecision": {
+												"not": {}
+											},
 											"approvalDispatch": {
 												"not": {}
 											},
@@ -4996,7 +5394,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -5100,7 +5498,7 @@
 							},
 							"operation": {
 								"type": "string",
-								"const": "tool_portal_controller_host_action"
+								"const": "tool_portal_controller_execution"
 							},
 							"payload": {
 								"oneOf": [
@@ -5118,6 +5516,9 @@
 											"approvalAdmission": {
 												"not": {}
 											},
+											"approvalDecision": {
+												"not": {}
+											},
 											"approvalDispatch": {
 												"not": {}
 											},
@@ -5130,83 +5531,147 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"oneOf": [
 													{
 														"type": "object",
 														"properties": {
-															"actionId": {
-																"type": "string",
-																"const": "workspace_git_push"
-															},
-															"result": {
-																"type": "object",
-																"properties": {
-																	"branch": {
-																		"type": "string",
-																		"minLength": 1
-																	},
-																	"localHead": {
-																		"type": "string",
-																		"pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
-																	},
-																	"pushedCommits": {
-																		"type": "array",
-																		"items": {
-																			"type": "object",
-																			"properties": {
-																				"sha": {
-																					"type": "string",
-																					"pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
-																				},
-																				"subject": {
-																					"type": "string"
-																				}
+															"action": {
+																"oneOf": [
+																	{
+																		"type": "object",
+																		"properties": {
+																			"actionId": {
+																				"type": "string",
+																				"const": "workspace_git_push"
 																			},
-																			"required": ["sha", "subject"],
-																			"additionalProperties": false
-																		}
+																			"result": {
+																				"type": "object",
+																				"properties": {
+																					"branch": {
+																						"type": "string",
+																						"minLength": 1
+																					},
+																					"localHead": {
+																						"type": "string",
+																						"pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+																					},
+																					"pushedCommits": {
+																						"type": "array",
+																						"items": {
+																							"type": "object",
+																							"properties": {
+																								"sha": {
+																									"type": "string",
+																									"pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+																								},
+																								"subject": {
+																									"type": "string"
+																								}
+																							},
+																							"required": ["sha", "subject"],
+																							"additionalProperties": false
+																						}
+																					},
+																					"remoteHead": {
+																						"type": "string",
+																						"pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+																					}
+																				},
+																				"required": [
+																					"branch",
+																					"localHead",
+																					"pushedCommits",
+																					"remoteHead"
+																				],
+																				"additionalProperties": false
+																			}
+																		},
+																		"required": ["actionId", "result"],
+																		"additionalProperties": false
 																	},
-																	"remoteHead": {
-																		"type": "string",
-																		"pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+																	{
+																		"type": "object",
+																		"properties": {
+																			"actionId": {
+																				"type": "string",
+																				"const": "controller_host_probe"
+																			},
+																			"result": {
+																				"type": "object",
+																				"properties": {
+																					"entryNames": {
+																						"maxItems": 64,
+																						"type": "array",
+																						"items": {
+																							"type": "string",
+																							"minLength": 1
+																						}
+																					},
+																					"probeKind": {
+																						"type": "string",
+																						"const": "controller_cache_dir_listing"
+																					}
+																				},
+																				"required": ["entryNames", "probeKind"],
+																				"additionalProperties": false
+																			}
+																		},
+																		"required": ["actionId", "result"],
+																		"additionalProperties": false
 																	}
-																},
-																"required": ["branch", "localHead", "pushedCommits", "remoteHead"],
-																"additionalProperties": false
+																]
+															},
+															"kind": {
+																"type": "string",
+																"const": "registered_action"
 															}
 														},
-														"required": ["actionId", "result"],
+														"required": ["action", "kind"],
 														"additionalProperties": false
 													},
 													{
 														"type": "object",
 														"properties": {
-															"actionId": {
+															"kind": {
 																"type": "string",
-																"const": "controller_host_probe"
+																"const": "configured_cli"
+															},
+															"operationName": {
+																"type": "string",
+																"minLength": 1
 															},
 															"result": {
 																"type": "object",
 																"properties": {
-																	"entryNames": {
-																		"maxItems": 64,
-																		"type": "array",
-																		"items": {
-																			"type": "string",
-																			"minLength": 1
-																		}
+																	"exitCode": {
+																		"type": "integer",
+																		"minimum": -9007199254740991,
+																		"maximum": 9007199254740991
 																	},
-																	"probeKind": {
-																		"type": "string",
-																		"const": "controller_cache_dir_listing"
+																	"stderrSummary": {
+																		"type": "string"
+																	},
+																	"stderrTruncated": {
+																		"type": "boolean"
+																	},
+																	"stdout": {
+																		"type": "string"
+																	},
+																	"stdoutTruncated": {
+																		"type": "boolean"
 																	}
 																},
-																"required": ["entryNames", "probeKind"],
+																"required": [
+																	"exitCode",
+																	"stderrTruncated",
+																	"stdout",
+																	"stdoutTruncated"
+																],
 																"additionalProperties": false
 															}
 														},
-														"required": ["actionId", "result"],
+														"required": ["kind", "operationName", "result"],
 														"additionalProperties": false
 													}
 												]
@@ -5228,7 +5693,7 @@
 												"const": "ok"
 											}
 										},
-										"required": ["responseToMessageId", "controllerHostAction", "result"],
+										"required": ["responseToMessageId", "controllerExecution", "result"],
 										"additionalProperties": false
 									},
 									{
@@ -5245,6 +5710,9 @@
 											"approvalAdmission": {
 												"not": {}
 											},
+											"approvalDecision": {
+												"not": {}
+											},
 											"approvalDispatch": {
 												"not": {}
 											},
@@ -5257,7 +5725,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -5367,6 +5835,9 @@
 											"approvalAdmission": {
 												"not": {}
 											},
+											"approvalDecision": {
+												"not": {}
+											},
 											"approvalDispatch": {
 												"not": {}
 											},
@@ -5379,7 +5850,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -5418,6 +5889,9 @@
 											"approvalAdmission": {
 												"not": {}
 											},
+											"approvalDecision": {
+												"not": {}
+											},
 											"approvalDispatch": {
 												"not": {}
 											},
@@ -5430,7 +5904,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -5538,6 +6012,9 @@
 											"approvalAdmission": {
 												"not": {}
 											},
+											"approvalDecision": {
+												"not": {}
+											},
 											"approvalDispatch": {
 												"not": {}
 											},
@@ -5550,7 +6027,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -5587,6 +6064,9 @@
 											"approvalAdmission": {
 												"not": {}
 											},
+											"approvalDecision": {
+												"not": {}
+											},
 											"approvalDispatch": {
 												"not": {}
 											},
@@ -5599,7 +6079,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -5738,7 +6218,7 @@
 																				"type": "string",
 																				"enum": [
 																					"mcp_provider",
-																					"controller_host_action",
+																					"controller_execution",
 																					"tool_vm_runner"
 																				]
 																			},
@@ -6100,7 +6580,11 @@
 																			},
 																			"backendKind": {
 																				"type": "string",
-																				"const": "controller_host_action"
+																				"const": "controller_execution"
+																			},
+																			"bindingRevision": {
+																				"type": "string",
+																				"minLength": 1
 																			},
 																			"reservationId": {
 																				"type": "string",
@@ -6116,6 +6600,7 @@
 																			"operationId",
 																			"stablePrincipal",
 																			"backendKind",
+																			"bindingRevision",
 																			"reservationId"
 																		],
 																		"additionalProperties": false
@@ -6256,6 +6741,9 @@
 													}
 												]
 											},
+											"approvalDecision": {
+												"not": {}
+											},
 											"approvalDispatch": {
 												"not": {}
 											},
@@ -6268,7 +6756,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -6305,6 +6793,9 @@
 											"approvalAdmission": {
 												"not": {}
 											},
+											"approvalDecision": {
+												"not": {}
+											},
 											"approvalDispatch": {
 												"not": {}
 											},
@@ -6317,7 +6808,220 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
+												"not": {}
+											},
+											"error": {
+												"type": "object",
+												"properties": {
+													"errorClass": {
+														"type": "string",
+														"minLength": 1
+													},
+													"retryable": {
+														"type": "boolean"
+													},
+													"safeMessage": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": ["errorClass"],
+												"additionalProperties": false
+											},
+											"lease": {
+												"not": {}
+											},
+											"leaseRejectionReason": {
+												"not": {}
+											},
+											"leaseUse": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"enum": [
+													"failed",
+													"timeout",
+													"rejected",
+													"cancelled",
+													"stale_generation",
+													"approval_required",
+													"approval_stale"
+												]
+											}
+										},
+										"required": ["responseToMessageId", "error", "result"],
+										"additionalProperties": false
+									}
+								]
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "command_result"
+							},
+							"operation": {
+								"type": "string",
+								"const": "tool_portal_approval_decide"
+							},
+							"payload": {
+								"oneOf": [
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"approvalAdmission": {
+												"not": {}
+											},
+											"approvalDecision": {
+												"oneOf": [
+													{
+														"type": "object",
+														"properties": {
+															"kind": {
+																"type": "string",
+																"const": "recorded"
+															},
+															"state": {
+																"type": "string",
+																"enum": ["approved", "denied"]
+															}
+														},
+														"required": ["kind", "state"],
+														"additionalProperties": false
+													},
+													{
+														"type": "object",
+														"properties": {
+															"kind": {
+																"type": "string",
+																"const": "rejected"
+															},
+															"reason": {
+																"type": "string",
+																"enum": [
+																	"not-found",
+																	"expired",
+																	"stale-authority",
+																	"principal-mismatch",
+																	"already-decided",
+																	"presenter-not-authorized"
+																]
+															}
+														},
+														"required": ["kind", "reason"],
+														"additionalProperties": false
+													}
+												]
+											},
+											"approvalDispatch": {
+												"not": {}
+											},
+											"approvalRequired": {
+												"not": {}
+											},
+											"callerContext": {
+												"not": {}
+											},
+											"bindingRequest": {
+												"not": {}
+											},
+											"controllerExecution": {
+												"not": {}
+											},
+											"error": {
+												"not": {}
+											},
+											"lease": {
+												"not": {}
+											},
+											"leaseRejectionReason": {
+												"not": {}
+											},
+											"leaseUse": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"const": "ok"
+											}
+										},
+										"required": ["responseToMessageId", "approvalDecision", "result"],
+										"additionalProperties": false
+									},
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"approvalAdmission": {
+												"not": {}
+											},
+											"approvalDecision": {
+												"not": {}
+											},
+											"approvalDispatch": {
+												"not": {}
+											},
+											"approvalRequired": {
+												"not": {}
+											},
+											"callerContext": {
+												"not": {}
+											},
+											"bindingRequest": {
+												"not": {}
+											},
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -6423,6 +7127,9 @@
 												"not": {}
 											},
 											"approvalAdmission": {
+												"not": {}
+											},
+											"approvalDecision": {
 												"not": {}
 											},
 											"approvalDispatch": {
@@ -6662,7 +7369,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -6699,6 +7406,9 @@
 											"approvalAdmission": {
 												"not": {}
 											},
+											"approvalDecision": {
+												"not": {}
+											},
 											"approvalDispatch": {
 												"not": {}
 											},
@@ -6711,7 +7421,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -6819,6 +7529,9 @@
 											"approvalAdmission": {
 												"not": {}
 											},
+											"approvalDecision": {
+												"not": {}
+											},
 											"approvalDispatch": {
 												"not": {}
 											},
@@ -6847,7 +7560,7 @@
 												"required": ["agentId", "stablePrincipal", "status"],
 												"additionalProperties": false
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -6884,6 +7597,9 @@
 											"approvalAdmission": {
 												"not": {}
 											},
+											"approvalDecision": {
+												"not": {}
+											},
 											"approvalDispatch": {
 												"not": {}
 											},
@@ -6896,7 +7612,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -7004,6 +7720,9 @@
 											"approvalAdmission": {
 												"not": {}
 											},
+											"approvalDecision": {
+												"not": {}
+											},
 											"approvalDispatch": {
 												"not": {}
 											},
@@ -7016,7 +7735,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -7053,6 +7772,9 @@
 											"approvalAdmission": {
 												"not": {}
 											},
+											"approvalDecision": {
+												"not": {}
+											},
 											"approvalDispatch": {
 												"not": {}
 											},
@@ -7065,7 +7787,7 @@
 											"bindingRequest": {
 												"not": {}
 											},
-											"controllerHostAction": {
+											"controllerExecution": {
 												"not": {}
 											},
 											"error": {
@@ -7177,7 +7899,8 @@
 			"runtime_status",
 			"tool_vm_binding_publish",
 			"tool_vm_binding_request",
-			"tool_portal_controller_host_action",
+			"tool_portal_controller_execution",
+			"tool_portal_approval_decide",
 			"tool_portal_admission_reserve",
 			"tool_portal_dispatch_arm",
 			"operation_cancel",

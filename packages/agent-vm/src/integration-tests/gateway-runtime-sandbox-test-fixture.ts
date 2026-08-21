@@ -396,7 +396,7 @@ export function createGatewayRuntimeSandboxIntegrationHarness(): GatewayRuntimeS
 	const capabilityCore = createManagedToolPortalCapabilityCore({
 		approvalPort,
 		backendPorts: {
-			controllerHostAction: createUnusedBackendPort('controller_host_action'),
+			controllerExecution: createUnusedBackendPort('controller_execution'),
 			mcpProvider: createUnusedBackendPort('mcp_provider'),
 			toolVmRunner: toolVmRunnerPort,
 		},

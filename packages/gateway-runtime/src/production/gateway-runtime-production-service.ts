@@ -8,7 +8,7 @@ import {
 	CONTROL_SESSION_TIMING_MS,
 } from '@agent-vm/control-protocol-contracts';
 import {
-	assertGatewayRuntimePortalSemanticSnapshotMatchesInputs,
+	deriveGatewayRuntimeInputRevision,
 	createGatewayRuntimeReadinessSnapshot,
 	GATEWAY_RUNTIME_READINESS_SNAPSHOT_VERSION,
 	GatewayRuntimeFatalEvidenceSchema,
@@ -475,7 +475,7 @@ function assertRequiredBackendKindsReady(
 ): readonly ToolPortalBackendKind[] {
 	const requiredKinds = requiredBackendKinds(config);
 	const readyKinds = new Set<ToolPortalBackendKind>([
-		'controller_host_action',
+		'controller_execution',
 		'mcp_provider',
 		'tool_vm_runner',
 	]);
@@ -524,11 +524,16 @@ export async function startGatewayRuntimeProductionService(
 	props: StartGatewayRuntimeProductionServiceProps,
 ): Promise<GatewayRuntimeProductionService> {
 	const mcpConfig = await loadGatewayRuntimeMcpConfig(props.config.mcpConfigPath);
-	assertGatewayRuntimePortalSemanticSnapshotMatchesInputs({
-		mcpConfig,
-		semanticSnapshot: props.config.semanticSnapshot,
-		toolPortalConfig: props.config.toolPortalConfig,
-	});
+	if (
+		deriveGatewayRuntimeInputRevision({
+			mcpConfig,
+			toolPortalConfig: props.config.toolPortalConfig,
+		}) !== props.config.gatewayRuntimeInputRevision
+	) {
+		throw new Error(
+			'Gateway runtime semantic snapshot does not match the protected Tool Portal and MCP inputs.',
+		);
+	}
 	const paths = createGatewayRuntimePaths({ runtimeRoot: props.config.runtimeRoot });
 	await prepareGatewayRuntimeDirectory(paths);
 	const configuredEvidencePaths = evidencePaths(props.config.runtimeRoot);
@@ -606,9 +611,9 @@ export async function startGatewayRuntimeProductionService(
 			authenticatedPrivateUdsOperationGroups:
 				GATEWAY_RUNTIME_AUTHENTICATED_PRIVATE_UDS_OPERATION_GROUPS,
 			backendPortFactories: {
-				controllerHostAction: (runtime) =>
+				controllerExecution: (runtime) =>
 					startedTelemetryRuntime.wrapBackendPort(
-						startedControlRuntime.controllerHostActionBackendPortFactory(runtime),
+						startedControlRuntime.controllerExecutionBackendPortFactory(runtime),
 					),
 				mcpProvider: () =>
 					startedTelemetryRuntime.wrapBackendPort(
@@ -651,6 +656,7 @@ export async function startGatewayRuntimeProductionService(
 		const startedControlHeartbeatPublisher = controlHeartbeatPublisher;
 
 		const dispatcher = createGatewayRuntimePrivateUdsDispatcher({
+			approvalOperations: startedControlRuntime.approvalDecisionOperations,
 			artifactOperations: startedComposition.privateUdsProjection.artifactOperations,
 			portalOperations: startedComposition.privateUdsProjection.portalOperations,
 			sandboxDispatch: startedTelemetryRuntime.wrapSandboxDispatch(

@@ -1,6 +1,12 @@
 import { z } from 'zod';
 
 import {
+	ApprovalPresentationOutcomeSchema,
+	GatewayApprovalDecisionRequestSchema,
+	GatewayApprovalDecisionResultSchema,
+	GatewayApprovalPresentationRequestSchema,
+} from '../approval-surface/index.js';
+import {
 	ArtifactReferenceSchema,
 	PortalArtifactReadRequestSchema,
 	PortalArtifactReadResultSchema,
@@ -409,6 +415,22 @@ const portableContractDefinitions = {
 } as const satisfies Readonly<Record<string, PortableContractDefinition>>;
 
 const canonicalGatewayContractDefinitions = {
+	'gateway.approval.decision-request': {
+		refinementIdentities: [],
+		schema: GatewayApprovalDecisionRequestSchema,
+	},
+	'gateway.approval.decision-result': {
+		refinementIdentities: [],
+		schema: GatewayApprovalDecisionResultSchema,
+	},
+	'gateway.approval.presentation-outcome': {
+		refinementIdentities: [],
+		schema: ApprovalPresentationOutcomeSchema,
+	},
+	'gateway.approval.presentation-request': {
+		refinementIdentities: ['gateway.approval.arguments-preview.utf8-bytes'],
+		schema: GatewayApprovalPresentationRequestSchema,
+	},
 	'gateway.attachment.metadata': {
 		refinementIdentities: ['gateway.attachment.unique-agent-ids'],
 		schema: GatewayRuntimeAttachmentMetadataSchema,

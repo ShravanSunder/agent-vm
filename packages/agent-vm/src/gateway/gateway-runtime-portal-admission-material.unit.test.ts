@@ -675,7 +675,16 @@ describe('Gateway runtime portal admission materialization', () => {
 								...codeBuilderProfile.namespaces,
 								github: {
 									...githubNamespace,
-									backend: { kind: 'controller_host_action' },
+									backend: {
+										kind: 'controller_execution',
+										operations: {
+											'issues.archive': { kind: 'registered_action' },
+											'issues.delete': { kind: 'registered_action' },
+											'issues.get': { kind: 'registered_action' },
+											'issues.list': { kind: 'registered_action' },
+											'issues.update': { kind: 'registered_action' },
+										},
+									},
 								},
 							},
 						},

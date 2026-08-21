@@ -45,7 +45,8 @@ export type GatewayControlValidatedCallerRegistration = Omit<
 >;
 
 export type GatewayControlCallerContextPurpose =
-	| 'tool_portal_controller_host_action'
+	| 'tool_portal_approval_decision'
+	| 'tool_portal_controller_execution'
 	| 'tool_vm_lease';
 
 export type GatewayControlCallerContextResolution =

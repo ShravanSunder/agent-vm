@@ -303,20 +303,23 @@ function leaseRenewMessage(leaseId: string): unknown {
 	};
 }
 
-function toolPortalControllerHostActionMessage(): unknown {
+function toolPortalControllerExecutionMessage(): unknown {
 	return {
 		kind: 'command',
-		operation: 'tool_portal_controller_host_action',
+		operation: 'tool_portal_controller_execution',
 		payload: {
-			actionId: 'workspace_git_push',
-			callerContext: { callerContextId: '77777777-7777-4777-8777-777777777777' },
-			correlation: {
-				capability: {
-					name: 'workspace_git_push',
-					namespace: 'controller_host_action',
+			action: {
+				actionId: 'workspace_git_push',
+				callerContext: { callerContextId: '77777777-7777-4777-8777-777777777777' },
+				correlation: {
+					capability: {
+						name: 'workspace_git_push',
+						namespace: 'controller_execution',
+					},
 				},
+				expectedHead: '0123456789abcdef0123456789abcdef01234567',
 			},
-			expectedHead: '0123456789abcdef0123456789abcdef01234567',
+			kind: 'registered_action',
 		},
 	};
 }
@@ -2159,10 +2162,10 @@ describe('Gateway disposable control session client', () => {
 			},
 			initialExtraHeaders: {},
 			nextAttachmentGeneration: () => 1,
-			policyByOperation: { tool_portal_controller_host_action: 'single_use_critical' },
+			policyByOperation: { tool_portal_controller_execution: 'single_use_critical' },
 			refreshExtraHeaders: async () => ({}),
 			resolveInboundStablePrincipal: () => ({
-				operation: 'tool_portal_controller_host_action',
+				operation: 'tool_portal_controller_execution',
 				reason: 'caller_context_stale',
 				status: 'principal_rejected',
 			}),
@@ -2175,11 +2178,11 @@ describe('Gateway disposable control session client', () => {
 					connectionId,
 					kind: 'command',
 					messageId: '55555555-5555-4555-8555-555555555555',
-					operation: 'tool_portal_controller_host_action',
+					operation: 'tool_portal_controller_execution',
 					sequence: 1,
 					sessionId,
 				}),
-				toolPortalControllerHostActionMessage(),
+				toolPortalControllerExecutionMessage(),
 			),
 		).toEqual({ received: true });
 		await flushImmediate();
@@ -2188,7 +2191,7 @@ describe('Gateway disposable control session client', () => {
 		expect(fake.control.acknowledgedPayloads).toContainEqual(
 			expect.objectContaining({
 				kind: 'command_result',
-				operation: 'tool_portal_controller_host_action',
+				operation: 'tool_portal_controller_execution',
 				payload: expect.objectContaining({ result: 'failed' }),
 			}),
 		);
@@ -2220,7 +2223,7 @@ describe('Gateway disposable control session client', () => {
 			policyByOperation: { lease_get: 'acked_idempotent' },
 			refreshExtraHeaders: async () => ({}),
 			resolveInboundStablePrincipal: () => ({
-				operation: 'tool_portal_controller_host_action',
+				operation: 'tool_portal_controller_execution',
 				reason: 'caller_context_stale',
 				status: 'principal_rejected',
 			}),

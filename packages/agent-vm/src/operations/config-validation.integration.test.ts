@@ -2,7 +2,6 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promis
 import os from 'node:os';
 import path from 'node:path';
 
-import { GATEWAY_RUNTIME_APPROVAL_AUDIENCE } from '@agent-vm/gateway-control-contracts';
 import type { UpstreamMcpClientRuntime } from '@agent-vm/mcp-portal';
 import type { SecretResolver } from '@agent-vm/secret-management';
 import { describe, expect, it, vi } from 'vitest';
@@ -256,33 +255,6 @@ async function addManagedToolPortalReferencesToOpenClawFixture(rootPath: string)
 	});
 }
 
-async function addApprovalAccessToOpenClawFixture(rootPath: string): Promise<void> {
-	const systemConfigPath = path.join(rootPath, 'config', 'system.json');
-	await updateJsonFile(systemConfigPath, (systemConfig) => {
-		const zones = systemConfig.zones;
-		if (!Array.isArray(zones)) {
-			throw new Error('Expected zones array.');
-		}
-		const firstZone = zones[0];
-		if (typeof firstZone !== 'object' || firstZone === null || Array.isArray(firstZone)) {
-			throw new Error('Expected first zone object.');
-		}
-		const zone = firstZone as Record<string, unknown>;
-		zone.approvalAccess = {
-			approvers: [
-				{
-					approverId: 'primary-operator',
-					secret: {
-						envVar: 'AGENT_VM_PRIMARY_APPROVAL_SECRET',
-						source: 'environment',
-					},
-				},
-			],
-			audience: GATEWAY_RUNTIME_APPROVAL_AUDIENCE,
-		};
-	});
-}
-
 async function addRemoteWorkspaceGitToOpenClawFixture(rootPath: string): Promise<void> {
 	const systemConfigPath = path.join(rootPath, 'config', 'system.json');
 	await updateJsonFile(systemConfigPath, (systemConfig) => {
@@ -381,7 +353,7 @@ async function writeManagedToolPortalConfigFiles(
 	);
 }
 
-async function writeManagedToolPortalConfigWithControllerHostAction(
+async function writeManagedToolPortalConfigWithControllerExecution(
 	rootPath: string,
 	actionTools: readonly ('controller_host_probe' | 'workspace_git_push')[] = ['workspace_git_push'],
 ): Promise<void> {
@@ -398,8 +370,16 @@ async function writeManagedToolPortalConfigWithControllerHostAction(
 			profiles: {
 				default: {
 					namespaces: {
-						controller_host_action: {
-							backend: { kind: 'controller_host_action' },
+						controller_execution: {
+							backend: {
+								kind: 'controller_execution',
+								operations: {
+									controller_host_probe: { kind: 'registered_action' },
+									workspace_git_push: { kind: 'registered_action' },
+									push_branch: { kind: 'registered_action' },
+									protected_uds: { kind: 'registered_action' },
+								},
+							},
 							calls: {
 								requiresApproval: { allow: [] },
 								withoutApproval: { allow: actionTools },
@@ -1039,8 +1019,16 @@ describe('runConfigValidation', () => {
 				profiles: {
 					default: {
 						namespaces: {
-							controller_host_action: {
-								backend: { kind: 'controller_host_action' },
+							controller_execution: {
+								backend: {
+									kind: 'controller_execution',
+									operations: {
+										controller_host_probe: { kind: 'registered_action' },
+										workspace_git_push: { kind: 'registered_action' },
+										push_branch: { kind: 'registered_action' },
+										protected_uds: { kind: 'registered_action' },
+									},
+								},
 								calls: {
 									requiresApproval: { allow: [] },
 									withoutApproval: { allow: ['workspace_git_push'] },
@@ -1117,8 +1105,16 @@ describe('runConfigValidation', () => {
 				profiles: {
 					default: {
 						namespaces: {
-							controller_host_action: {
-								backend: { kind: 'controller_host_action' },
+							controller_execution: {
+								backend: {
+									kind: 'controller_execution',
+									operations: {
+										controller_host_probe: { kind: 'registered_action' },
+										workspace_git_push: { kind: 'registered_action' },
+										push_branch: { kind: 'registered_action' },
+										protected_uds: { kind: 'registered_action' },
+									},
+								},
 								calls: {
 									requiresApproval: { allow: [] },
 									withoutApproval: { allow: ['controller_host_probe'] },
@@ -1994,7 +1990,7 @@ describe('runConfigValidation', () => {
 		const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
 		await addManagedToolPortalReferencesToOpenClawFixture(temporaryDirectoryPath);
 		await addRemoteWorkspaceGitToOpenClawFixture(temporaryDirectoryPath);
-		await writeManagedToolPortalConfigWithControllerHostAction(temporaryDirectoryPath);
+		await writeManagedToolPortalConfigWithControllerExecution(temporaryDirectoryPath);
 		const systemConfig = await loadSystemConfig(systemConfigPath);
 
 		const result = await runConfigValidation({
@@ -2018,7 +2014,7 @@ describe('runConfigValidation', () => {
 		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
 		const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
 		await addManagedToolPortalReferencesToOpenClawFixture(temporaryDirectoryPath);
-		await writeManagedToolPortalConfigWithControllerHostAction(temporaryDirectoryPath, [
+		await writeManagedToolPortalConfigWithControllerExecution(temporaryDirectoryPath, [
 			'controller_host_probe',
 		]);
 		const systemConfig = await loadSystemConfig(systemConfigPath);
@@ -2042,7 +2038,7 @@ describe('runConfigValidation', () => {
 		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
 		const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
 		await addManagedToolPortalReferencesToOpenClawFixture(temporaryDirectoryPath);
-		await writeManagedToolPortalConfigWithControllerHostAction(temporaryDirectoryPath, [
+		await writeManagedToolPortalConfigWithControllerExecution(temporaryDirectoryPath, [
 			'workspace_git_push',
 		]);
 		const systemConfig = await loadSystemConfig(systemConfigPath);
@@ -2086,7 +2082,7 @@ describe('runConfigValidation', () => {
 			}
 			agents.push({ id: 'local-agent', workspaceGit: { mode: 'local' } });
 		});
-		await writeManagedToolPortalConfigWithControllerHostAction(temporaryDirectoryPath);
+		await writeManagedToolPortalConfigWithControllerExecution(temporaryDirectoryPath);
 		await updateJsonFile(
 			path.join(
 				temporaryDirectoryPath,
@@ -2163,54 +2159,6 @@ describe('runConfigValidation', () => {
 				ok: false,
 			});
 			expect(result.ok).toBe(false);
-		} finally {
-			await rm(temporaryDirectoryPath, { force: true, recursive: true });
-		}
-	});
-
-	it('accepts managed Tool Portal approval-required calls with protected approval access', async () => {
-		// Arrange
-		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
-		try {
-			const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
-			await addManagedToolPortalReferencesToOpenClawFixture(temporaryDirectoryPath);
-			await addApprovalAccessToOpenClawFixture(temporaryDirectoryPath);
-			await writeManagedToolPortalConfigWithProvider(
-				temporaryDirectoryPath,
-				{
-					kind: 'mcp',
-					namespace: 'tavily',
-					transport: {
-						args: ['-y', 'tavily-mcp'],
-						command: 'npx',
-						kind: 'stdio',
-						networkAccess: 'none',
-					},
-				},
-				{
-					requiresApproval: { allow: ['tavily_search'] },
-					withoutApproval: { allow: [] },
-				},
-			);
-			const systemConfig = await loadSystemConfig(systemConfigPath);
-
-			// Act
-			const result = await runConfigValidation({
-				runCommand: successfulOpenClawValidationCommand,
-				systemConfig,
-			});
-
-			// Assert
-			expect(
-				result.checks.find((check) => check.name === 'tool-portal-approval-access-shravan'),
-			).toMatchObject({
-				ok: true,
-			});
-			expect(
-				result.checks.find((check) => check.name === 'tool-portal-effective-config-shravan'),
-			).toMatchObject({
-				ok: true,
-			});
 		} finally {
 			await rm(temporaryDirectoryPath, { force: true, recursive: true });
 		}

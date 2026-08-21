@@ -49,8 +49,14 @@ const mixedBackendConfig = {
 	profiles: {
 		'code-builder': {
 			namespaces: {
-				controller_host_action: {
-					backend: { kind: 'controller_host_action' },
+				controller_execution: {
+					backend: {
+						kind: 'controller_execution',
+						operations: {
+							controller_host_probe: { kind: 'registered_action' },
+							workspace_git_push: { kind: 'registered_action' },
+						},
+					},
 					calls: {
 						requiresApproval: { allow: ['controller_host_probe'], deny: [] },
 						withoutApproval: { allow: ['workspace_git_push'], deny: [] },
@@ -111,14 +117,14 @@ const semanticSnapshot = {
 			agentId: 'agent-a',
 			frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
 			profileAssignmentRevision: 'profile-assignment:agent-a:7',
-			toolPortalNamespaceNames: ['controller_host_action', 'github', 'sandbox'],
+			toolPortalNamespaceNames: ['controller_execution', 'github', 'sandbox'],
 			toolPortalProfileId: 'code-builder',
 		},
 		'agent-b': {
 			agentId: 'agent-b',
 			frameworkIdentity: { agentId: 'agent-b', kind: 'openclaw' },
 			profileAssignmentRevision: 'profile-assignment:agent-b:4',
-			toolPortalNamespaceNames: ['controller_host_action', 'github', 'sandbox'],
+			toolPortalNamespaceNames: ['controller_execution', 'github', 'sandbox'],
 			toolPortalProfileId: 'code-builder',
 		},
 	},
@@ -133,7 +139,7 @@ const semanticSnapshot = {
 	schemaVersion: 1,
 	surfaceEligibilityByProfile: {
 		'code-builder': {
-			controller_host_action: ['protected_uds'],
+			controller_execution: ['protected_uds'],
 			github: ['mcp', 'protected_uds'],
 			sandbox: ['protected_uds'],
 		},
@@ -326,6 +332,9 @@ function createApprovalReservation(
 		approvalId: deriveGatewayRuntimeApprovalId(fingerprint),
 		authorityContext: AUTHORITY_CONTEXT,
 		backendKind,
+		...(backendKind === 'controller_execution'
+			? { bindingRevision: intent.semanticRevisions.bindingRevision }
+			: {}),
 		expiresAt: APPROVAL_EXPIRES_AT,
 		fingerprint,
 		operationId: intent.operationId,
@@ -424,35 +433,35 @@ function createRecordingApprovalPort(props?: {
 function createServiceFixture(props?: {
 	readonly approval?: RecordingApprovalPort;
 	readonly config?: ManagedToolPortalConfig;
-	readonly controllerHostAction?: RecordingBackendPort<'controller_host_action'>;
+	readonly controllerExecution?: RecordingBackendPort<'controller_execution'>;
 	readonly mcpProvider?: RecordingBackendPort<'mcp_provider'>;
 	readonly semanticSnapshot?: GatewayRuntimePortalSemanticSnapshot;
 	readonly toolVmRunner?: RecordingBackendPort<'tool_vm_runner'>;
 }): {
 	readonly approval: RecordingApprovalPort;
-	readonly controllerHostAction: RecordingBackendPort<'controller_host_action'>;
+	readonly controllerExecution: RecordingBackendPort<'controller_execution'>;
 	readonly mcpProvider: RecordingBackendPort<'mcp_provider'>;
 	readonly capabilityCore: ToolPortalCapabilityCore<'managed'>;
 	readonly toolVmRunner: RecordingBackendPort<'tool_vm_runner'>;
 } {
 	const approval = props?.approval ?? createRecordingApprovalPort();
-	const controllerHostAction =
-		props?.controllerHostAction ??
-		createRecordingBackendPort('controller_host_action', 'controller_host_action');
+	const controllerExecution =
+		props?.controllerExecution ??
+		createRecordingBackendPort('controller_execution', 'controller_execution');
 	const mcpProvider = props?.mcpProvider ?? createRecordingBackendPort('mcp_provider', 'github');
 	const toolVmRunner =
 		props?.toolVmRunner ?? createRecordingBackendPort('tool_vm_runner', 'sandbox');
 	const capabilityCore = createManagedToolPortalCapabilityCore({
 		approvalPort: approval.port,
 		backendPorts: {
-			controllerHostAction: controllerHostAction.port,
+			controllerExecution: controllerExecution.port,
 			mcpProvider: mcpProvider.port,
 			toolVmRunner: toolVmRunner.port,
 		},
 		config: props?.config ?? mixedBackendConfig,
 		semanticSnapshot: props?.semanticSnapshot ?? semanticSnapshot,
 	});
-	return { approval, capabilityCore, controllerHostAction, mcpProvider, toolVmRunner };
+	return { approval, capabilityCore, controllerExecution, mcpProvider, toolVmRunner };
 }
 
 function udsOptions(
@@ -463,7 +472,7 @@ function udsOptions(
 
 function totalBackendInvocations(fixture: ReturnType<typeof createServiceFixture>): number {
 	return (
-		fixture.controllerHostAction.invocations.length +
+		fixture.controllerExecution.invocations.length +
 		fixture.mcpProvider.invocations.length +
 		fixture.toolVmRunner.invocations.length
 	);

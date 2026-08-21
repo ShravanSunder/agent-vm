@@ -1,0 +1,16 @@
+{
+	"caseId": "gateway-approval-presentation-outcome-approved",
+	"schemaId": "gateway.approval.presentation-outcome",
+	"tags": ["accepted"],
+	"input": {
+		"kind": "approved"
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"kind": "approved"
+		},
+		"canonicalJson": "{\"kind\":\"approved\"}",
+		"refinementIdentities": []
+	}
+}
