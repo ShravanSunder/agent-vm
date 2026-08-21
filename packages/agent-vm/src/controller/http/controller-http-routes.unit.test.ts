@@ -196,6 +196,38 @@ function createWorkerTaskResultStub(taskId: string): WorkerTaskResult {
 }
 
 describe('createControllerApp', () => {
+	it('does not expose external controller approval HTTP routes', async () => {
+		const app = createControllerAppForTest({
+			leaseManager: {
+				createLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				peekLease: vi.fn(),
+				releaseLease: vi.fn(),
+				renewLease: vi.fn(),
+			},
+		});
+
+		const requests = [
+			new Request('http://localhost/zones/hermes/approvals'),
+			new Request('http://localhost/zones/hermes/approvals/challenge'),
+			new Request('http://localhost/zones/hermes/approvals/challenge/approve', {
+				method: 'POST',
+			}),
+			new Request('http://localhost/zones/hermes/approvals/challenge/deny', {
+				method: 'POST',
+			}),
+			new Request('http://localhost/zones/hermes/approvals/challenge/revoke', {
+				method: 'POST',
+			}),
+		];
+
+		const responses = await Promise.all(
+			requests.map(async (request) => await app.request(request)),
+		);
+
+		expect(responses.map((response) => response.status)).toEqual([404, 404, 404, 404, 404]);
+	});
+
 	it('serializes the exact Tool VM SSH server identity for private HTTP lease responses', async () => {
 		const lease = createLeaseStub('lease-ssh-identity', 3);
 

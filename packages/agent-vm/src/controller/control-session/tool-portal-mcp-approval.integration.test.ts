@@ -168,8 +168,8 @@ const managedPluginAttachment = {
 const operatorIdentity = {
 	approverId: 'operator-a',
 	audience: GATEWAY_RUNTIME_APPROVAL_AUDIENCE,
-	credentialId: 'approval-credential-a',
-	provenance: 'approval-access',
+	provenance: 'managed-gateway',
+	stablePrincipal: deriveGatewayControlStablePrincipal({ principal: managedPrincipal }),
 } satisfies ControllerApprovalOperatorIdentity;
 
 const portalCallRequest = PortalCallRequestSchema.parse({

@@ -44,7 +44,7 @@ Sending complete operation policy to Gateway Runtime would simplify local dispat
 
 ### Managed approval remains controller-authoritative
 
-Hermes renders and authenticates the native actor, but the controller ledger alone decides challenge state and arms dispatch. A Gateway bearer or framework-local command approval would either leak reusable authority or bypass exact intent. The existing private principal-bound Runtime/Control path remains the selected decision seam.
+Hermes renders and authenticates the native actor, but the controller ledger alone decides challenge state and arms dispatch. A Gateway-held reusable approval credential or framework-local command approval would either leak authority or bypass exact intent. The existing private principal-bound Runtime/Control path remains the selected decision seam.
 
 ## Integrated system
 
@@ -763,7 +763,7 @@ It proves:
 - approval-free and approved calls select the configured fake target once; denial/stale/changed target/timeout/image selects zero;
 - requested/resolved timeout is exact intent and runtime starts only on host start or the post-provisioning `ManagedVm.exec` boundary;
 - typed registered and both configured targets coexist under one catalog/policy/result path;
-- current policy reload, applicability, batches, bearer approval, unsupported presenter, wrong principal, unauthorized actor, and crash-before-retry retain settled behavior;
+- current policy reload, applicability, batches, rejection of removed bearer approval config and routes, unsupported presenter, wrong principal, unauthorized actor, and crash-before-retry retain settled behavior;
 - ephemeral fake provider observes one operation reservation/create/start/identity/arm/exec/close sequence;
 - Tool VM runner uses a real acquisition/strict-SSH seam, produces no controller execution RPC call, and receives no ephemeral image; controller execution never acquires its binding.
 
@@ -799,11 +799,11 @@ Gateway Runtime integration with the real Tool VM runner backend and strict SSH 
 
 | Contract | Structural realization | Minimum proof |
 | --- | --- | --- |
-| R1–R3 | Existing selectors, explicit authority union, lifecycle presenter capability | Unit/config integration/Hermes preflight. |
+| R1–R3 | Existing selectors, managed-Gateway-only authority, lifecycle presenter capability | Unit/config integration/Hermes preflight. |
 | R4–R5, R12 | Portable sanitized request + framework context + Hermes actor-bound component | Unit interaction tables, component integration, Hermes e2e. |
 | R6–R8 | Private decision RPC, derived principal, ledger, exact target/timeout intent | Real UDS/Control/ledger integration and Hermes e2e. |
 | R9 | Per-item bridge coordinator/projector | Unit outcome matrix and batch integration/e2e. |
-| R10–R11 | Bearer routes and non-authoritative framework state | Controller HTTP integration and crash e2e. |
+| R10–R11 | Absent external approval routes and non-authoritative framework state | Controller route/config hard-cut integration and crash e2e. |
 | R13 | `controller_execution` operation union + reviewed definition + target-neutral CLI | Schema/JSON Schema and typed/both-target integration. |
 | R14 | Quick/open derived schemas, resolver, RPC window | Unit clocks/resolver and host/VM integration. |
 | R15–R17 | Effective paths, flag/`--` rules, direct argv | Unit tables plus host and VM transcripts. |
@@ -826,11 +826,11 @@ Gateway Runtime integration with the real Tool VM runner backend and strict SSH 
 | V19 | Leased Tool VM regression integration |
 | V20 | Deterministic timeout/window unit + host/VM injected-clock integration |
 
-Stable proof identities are all covered without supersession: V1 by operation/config variants; V2 by preflight; V3 by native interaction; V4 by exact dispatch counts; V5 by batch projection; V6 by crash/presenter failure; V7 by bearer regression; V8 by sanitizer/feedback leakage checks; V9 by strict controller-execution schema; V10 by effective-path uniqueness; V11 by flag and `--` behavior; V12 by target transcripts and invalid-input rejection; V13 by quick/open catalog and safe projection; V14 by private UDS/Control target selection; V15 by host e2e; V16 by managed approval on both targets; V17 by typed/configured coexistence; V18 by real one-shot Managed VM containment; V19 by unchanged leased Tool VM strict SSH; and V20 by timeout/window clocks.
+Stable proof identities are all covered without supersession: V1 by managed-Gateway-only operation/config variants; V2 by preflight; V3 by native interaction; V4 by exact dispatch counts; V5 by batch projection; V6 by crash/presenter failure; V7 by approval-route absence and bearer-config rejection; V8 by sanitizer/feedback leakage checks; V9 by strict controller-execution schema; V10 by effective-path uniqueness; V11 by flag and `--` behavior; V12 by target transcripts and invalid-input rejection; V13 by quick/open catalog and safe projection; V14 by private UDS/Control target selection; V15 by host e2e; V16 by managed approval on both targets; V17 by typed/configured coexistence; V18 by real one-shot Managed VM containment; V19 by unchanged leased Tool VM strict SSH; and V20 by timeout/window clocks.
 
 Accepted needs remain covered without supersession: U1 by unchanged call policy; U2 by native presentation; U3 by exact ledger intent; U4 by framework-owned actor admission; U5 by reuse of existing Runtime/Control/ledger/provider seams; U6 by target-neutral CLI config; U7 by derived quick/open public input; U8 by controller-only target/deadline authority and honest guarantees; U9 by exact paths/flag carve-outs; U10 by reviewed definitions; and U11 by the one-shot Managed VM factory/ledger and explicit Tool VM separation.
 
-Stable specification identities are all realized without supersession: R1 selectors; R2 approval-authority union; R3 presenter capability; R4 bounded actor-bound request; R5 presenter outcome union; R6 controller-only decision; R7 fail-closed decision results; R8 exact target/timeout retry; R9 batch partial success; R10 bearer compatibility; R11 framework non-authority; R12 diagnostics; R13 backend/operation/target union; R14 timeout/public-schema/window derivation; R15 exact paths; R16 optional flag rules and no `--` bypass; R17 array argv; R18 common bounds and target-specific guarantees; R19 catalog and leased Tool VM separation; R20 controller revalidation/dispatch; R21 upgrade review boundary; R22 definition-owned typed actions; and R23 operation-level approval.
+Stable specification identities are all realized without supersession: R1 selectors; R2 managed-Gateway-only approval authority; R3 presenter capability; R4 bounded actor-bound request; R5 presenter outcome union; R6 controller-only decision; R7 fail-closed decision results; R8 exact target/timeout retry; R9 batch partial success; R10 external approval HTTP/config hard cut; R11 framework non-authority; R12 diagnostics; R13 backend/operation/target union; R14 timeout/public-schema/window derivation; R15 exact paths; R16 optional flag rules and no `--` bypass; R17 array argv; R18 common bounds and target-specific guarantees; R19 catalog and leased Tool VM separation; R20 controller revalidation/dispatch; R21 upgrade review boundary; R22 definition-owned typed actions; and R23 operation-level approval.
 
 ## Deliberate simplifications and revisit signals
 

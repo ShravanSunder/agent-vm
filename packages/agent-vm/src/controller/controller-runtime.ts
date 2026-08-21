@@ -3,10 +3,7 @@ import { mkdir, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { ControllerExecutionOperation } from '@agent-vm/config-contracts';
-import {
-	deriveGatewayRuntimePortalBindingRevision,
-	type GatewayRuntimeApprovalAuthorityContext,
-} from '@agent-vm/gateway-control-contracts';
+import { deriveGatewayRuntimePortalBindingRevision } from '@agent-vm/gateway-control-contracts';
 import type { AgentVmHealthEvent } from '@agent-vm/gateway-lifecycle';
 import { createSecretResolver as createOnePasswordSecretResolver } from '@agent-vm/secret-management';
 
@@ -38,7 +35,6 @@ import { readProcessIdentity as readManagedVmProcessIdentity } from '../shared/m
 import { runTaskWithResult } from '../shared/run-task.js';
 import { createUnstartedToolVm, type ToolVmRootBinding } from '../tool-vm/tool-vm-lifecycle.js';
 import { ActiveTaskRegistry } from './active-task-registry.js';
-import { createControllerApprovalBearerAuthenticator } from './approval/controller-approval-authentication.js';
 import { createControllerApprovalLedger } from './approval/controller-approval-ledger.js';
 import { authorizeGatewayControlControllerExecution } from './control-session/gateway-control-controller-execution-authorization.js';
 import type { GatewayControlControllerExecutionOperations } from './control-session/gateway-control-domain-handler.js';
@@ -536,10 +532,6 @@ async function startControllerRuntimeWithOwnershipLock(
 					dependencies.createSecretResolver ?? createOnePasswordSecretResolver,
 				),
 		);
-	const authenticateApprovalBearer = await createControllerApprovalBearerAuthenticator({
-		secretResolver,
-		systemConfig: options.systemConfig,
-	});
 	const approvalLedgersByZoneId = new Map(
 		options.systemConfig.zones.filter(isManagedGatewayZone).map(
 			(zone) =>
@@ -1332,32 +1324,6 @@ async function startControllerRuntimeWithOwnershipLock(
 		}
 	};
 	const controllerApp = createControllerService({
-		approvalRoutes: {
-			authenticateBearer: authenticateApprovalBearer,
-			readCurrentAuthorityContext: async (
-				zoneId,
-			): Promise<GatewayRuntimeApprovalAuthorityContext | null> => {
-				let runtime;
-				try {
-					runtime = registry.getManagedGatewayRuntime(zoneId);
-				} catch {
-					return null;
-				}
-				const lifecycleState = runtime.getLifecycleState();
-				if (lifecycleState.kind !== 'running' && lifecycleState.kind !== 'running-degraded') {
-					return null;
-				}
-				const { gatewayIdentity } = lifecycleState.gateway;
-				return {
-					controllerEpoch: gatewayIdentity.controllerEpoch,
-					frameworkEpoch: lifecycleState.gateway.expectedCohort.frameworkIdentity.frameworkEpoch,
-					gatewayEpoch: gatewayIdentity.gatewayEpochId,
-					runtimeEpoch: gatewayIdentity.generationId,
-					zoneId: gatewayIdentity.zoneId,
-				};
-			},
-			resolveLedger: (zoneId) => approvalLedgersByZoneId.get(zoneId) ?? null,
-		},
 		healthEventStore,
 		leaseManager,
 		now,

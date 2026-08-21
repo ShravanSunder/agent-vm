@@ -819,8 +819,8 @@ describe('control session client', () => {
 				operator: {
 					approverId: 'operator-approval-wire',
 					audience: GATEWAY_RUNTIME_APPROVAL_AUDIENCE,
-					credentialId: 'credential-approval-wire',
-					provenance: 'approval-access',
+					provenance: 'managed-gateway',
+					stablePrincipal: approvalAdmissionPrincipal,
 				},
 			});
 			const reservationResponse = await emitApprovalCommand({

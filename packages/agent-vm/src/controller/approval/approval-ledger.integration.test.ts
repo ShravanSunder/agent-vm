@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
+	deriveGatewayControlStablePrincipal,
 	GATEWAY_RUNTIME_APPROVAL_AUDIENCE,
 	type GatewayRuntimeApprovalAuthorityContext,
 	type GatewayRuntimeApprovalChallenge,
@@ -40,13 +41,6 @@ const successorAuthorityContext = {
 	controllerEpoch: 'controller-epoch-2',
 } satisfies GatewayRuntimeApprovalAuthorityContext;
 
-const operator = {
-	approverId: 'operator-a',
-	audience: GATEWAY_RUNTIME_APPROVAL_AUDIENCE,
-	credentialId: 'approval-credential-a',
-	provenance: 'approval-access',
-} satisfies ControllerApprovalOperatorIdentity;
-
 const baseIntent = {
 	backendKind: 'mcp_provider',
 	call: {
@@ -76,6 +70,15 @@ const baseIntent = {
 		requester: { authenticatedSubjectId: 'subject-a' },
 	},
 } satisfies GatewayRuntimeApprovalChallengeIntent;
+
+const operator = {
+	approverId: 'operator-a',
+	audience: GATEWAY_RUNTIME_APPROVAL_AUDIENCE,
+	provenance: 'managed-gateway',
+	stablePrincipal: deriveGatewayControlStablePrincipal({
+		principal: baseIntent.trustedContext.principal,
+	}),
+} satisfies ControllerApprovalOperatorIdentity;
 
 const controllerExecutionIntent = {
 	...baseIntent,

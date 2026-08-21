@@ -57,7 +57,6 @@ This document owns why that capability exists, who needs it, and its boundary. T
 - Controller approval challenge, ledger, fingerprint, expiry, decision, reservation, and dispatch-arm behavior.
 - Private authenticated Gateway Runtime attachment and Gateway Control session.
 - Portable Portal catalog, call, and item-result contracts, including item-level `approval_required` outcomes.
-- Existing bearer-authenticated controller approval routes for external operators.
 - Promoted typed controller-owned actions and their domain-specific input schemas.
 
 ## Boundary
@@ -88,7 +87,7 @@ The work remains generic above a framework presenter and above a configured exec
 - No replacement for controller approval authority.
 - No model-visible approval credential, proof token, or decision field.
 - No `session`, `always`, YOLO, blanket, or standing approval for managed Tool Portal calls.
-- No new CLI approval workflow or requirement that humans call controller HTTP routes.
+- No external controller approval HTTP route, bearer approval authority, CLI approval workflow, or requirement that humans leave the active Hermes surface.
 - No new external relay service, queue, database, or approval ledger.
 - No automatic dispatch after a Gateway process crash unless the exact call is submitted again and the controller independently admits it.
 - No simultaneous implementation of every managed framework presenter; one presenter proves the generic contract.

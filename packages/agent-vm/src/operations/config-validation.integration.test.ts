@@ -2,7 +2,6 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promis
 import os from 'node:os';
 import path from 'node:path';
 
-import { GATEWAY_RUNTIME_APPROVAL_AUDIENCE } from '@agent-vm/gateway-control-contracts';
 import type { UpstreamMcpClientRuntime } from '@agent-vm/mcp-portal';
 import type { SecretResolver } from '@agent-vm/secret-management';
 import { describe, expect, it, vi } from 'vitest';
@@ -252,34 +251,6 @@ async function addManagedToolPortalReferencesToOpenClawFixture(rootPath: string)
 		zone.toolPortal = {
 			configDir: './gateways/shravan',
 			surfaceEligibilityByProfile: { default: {} },
-		};
-	});
-}
-
-async function addApprovalAccessToOpenClawFixture(rootPath: string): Promise<void> {
-	const systemConfigPath = path.join(rootPath, 'config', 'system.json');
-	await updateJsonFile(systemConfigPath, (systemConfig) => {
-		const zones = systemConfig.zones;
-		if (!Array.isArray(zones)) {
-			throw new Error('Expected zones array.');
-		}
-		const firstZone = zones[0];
-		if (typeof firstZone !== 'object' || firstZone === null || Array.isArray(firstZone)) {
-			throw new Error('Expected first zone object.');
-		}
-		const zone = firstZone as Record<string, unknown>;
-		zone.approvalAccess = {
-			approvers: [
-				{
-					approverId: 'primary-operator',
-					kind: 'bearer',
-					secret: {
-						envVar: 'AGENT_VM_PRIMARY_APPROVAL_SECRET',
-						source: 'environment',
-					},
-				},
-			],
-			audience: GATEWAY_RUNTIME_APPROVAL_AUDIENCE,
 		};
 	});
 }
@@ -2188,54 +2159,6 @@ describe('runConfigValidation', () => {
 				ok: false,
 			});
 			expect(result.ok).toBe(false);
-		} finally {
-			await rm(temporaryDirectoryPath, { force: true, recursive: true });
-		}
-	});
-
-	it('accepts managed Tool Portal approval-required calls with protected approval access', async () => {
-		// Arrange
-		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
-		try {
-			const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
-			await addManagedToolPortalReferencesToOpenClawFixture(temporaryDirectoryPath);
-			await addApprovalAccessToOpenClawFixture(temporaryDirectoryPath);
-			await writeManagedToolPortalConfigWithProvider(
-				temporaryDirectoryPath,
-				{
-					kind: 'mcp',
-					namespace: 'tavily',
-					transport: {
-						args: ['-y', 'tavily-mcp'],
-						command: 'npx',
-						kind: 'stdio',
-						networkAccess: 'none',
-					},
-				},
-				{
-					requiresApproval: { allow: ['tavily_search'] },
-					withoutApproval: { allow: [] },
-				},
-			);
-			const systemConfig = await loadSystemConfig(systemConfigPath);
-
-			// Act
-			const result = await runConfigValidation({
-				runCommand: successfulOpenClawValidationCommand,
-				systemConfig,
-			});
-
-			// Assert
-			expect(
-				result.checks.find((check) => check.name === 'tool-portal-approval-access-shravan'),
-			).toMatchObject({
-				ok: true,
-			});
-			expect(
-				result.checks.find((check) => check.name === 'tool-portal-effective-config-shravan'),
-			).toMatchObject({
-				ok: true,
-			});
 		} finally {
 			await rm(temporaryDirectoryPath, { force: true, recursive: true });
 		}

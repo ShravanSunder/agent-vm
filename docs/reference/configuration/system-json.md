@@ -599,13 +599,14 @@ and gateway preflight fail closed when that authority is absent. No
 `approvalAccess` default is inferred from OpenClaw plugin approvals,
 `adminAccess`, or standalone MCP Portal auth.
 
-Every `approvalAccess.approvers[]` entry has an explicit `kind`. Bearer
-operators use `{ kind: "bearer", approverId, secret }`. A zone may instead or
-also declare one `{ kind: "managed_gateway", approverId }`; only Hermes
-declares the native presenter capability in this release. OpenClaw and Worker
-zones reject `managed_gateway` authority rather than falling back to another
-approval surface. Bearer HTTP approval remains available alongside Hermes
-native presentation.
+Every `approvalAccess.approvers[]` entry is exactly
+`{ kind: "managed_gateway", approverId }`. Secrets, credentials, bearer
+authorities, and other variants are rejected. Only Hermes declares the native
+presenter capability in this release; OpenClaw and Worker zones reject managed
+approval authority rather than falling back to another approval surface. The
+controller exposes no external approval HTTP routes. Hermes's separately
+authenticated in-VM agent-message API uses `API_SERVER_KEY` and is not an
+approval authority.
 
 `controller_execution` contains named `registered_action | configured_cli`
 operations. Configured CLI binds exactly one `controller_host` or

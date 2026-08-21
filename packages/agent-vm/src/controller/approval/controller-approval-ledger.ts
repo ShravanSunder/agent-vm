@@ -27,24 +27,14 @@ import {
 	type CrashDurableRecordStore,
 } from '../durable-state/crash-durable-record-store.js';
 
-const ControllerApprovalOperatorIdentitySchema = z.discriminatedUnion('provenance', [
-	z
-		.object({
-			approverId: z.string().min(1),
-			audience: z.literal(GATEWAY_RUNTIME_APPROVAL_AUDIENCE),
-			credentialId: z.string().min(1),
-			provenance: z.literal('approval-access'),
-		})
-		.strict(),
-	z
-		.object({
-			approverId: z.string().min(1),
-			audience: z.literal(GATEWAY_RUNTIME_APPROVAL_AUDIENCE),
-			provenance: z.literal('managed-gateway'),
-			stablePrincipal: z.string().regex(/^[a-f0-9]{64}$/u),
-		})
-		.strict(),
-]);
+const ControllerApprovalOperatorIdentitySchema = z
+	.object({
+		approverId: z.string().min(1),
+		audience: z.literal(GATEWAY_RUNTIME_APPROVAL_AUDIENCE),
+		provenance: z.literal('managed-gateway'),
+		stablePrincipal: z.string().regex(/^[a-f0-9]{64}$/u),
+	})
+	.strict();
 
 const ControllerApprovalDecisionSchema = z
 	.object({
@@ -649,7 +639,6 @@ export function createControllerApprovalLedger(
 					};
 				}
 				if (
-					operator.provenance === 'managed-gateway' &&
 					deriveGatewayControlStablePrincipal({
 						principal: currentRecord.challenge.intent.trustedContext.principal,
 					}) !== operator.stablePrincipal

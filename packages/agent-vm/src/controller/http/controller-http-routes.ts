@@ -7,10 +7,6 @@ import {
 import { HealthEventStore } from '../health/health-event-store.js';
 import type { ObservedControllerLeaseCreateRequest } from '../leases/observed-lease-create-request.js';
 import { OpenClawRuntimeStatusStore } from '../openclaw-runtime-status.js';
-import {
-	registerControllerApprovalRoutes,
-	type ControllerApprovalRoutePorts,
-} from './controller-approval-routes.js';
 import { registerControllerHealthEventRoutes } from './controller-health-event-routes.js';
 import {
 	type ControllerLeaseManager,
@@ -23,7 +19,6 @@ const defaultHealthEventHistoryLimit = 500;
 const defaultHealthEventStaleAfterMs = 30_000;
 
 export function createControllerApp(options: {
-	readonly approvalRoutes?: ControllerApprovalRoutePorts;
 	readonly controllerPort?: number;
 	readonly leaseManager: ControllerLeaseManager;
 	readonly readIdentityPem?: (identityFilePath: string) => Promise<string>;
@@ -74,9 +69,6 @@ export function createControllerApp(options: {
 		store: healthEventStore,
 		...(options.zoneIds ? { zoneIds: options.zoneIds } : {}),
 	});
-	if (options.approvalRoutes !== undefined) {
-		registerControllerApprovalRoutes(app, options.approvalRoutes);
-	}
 
 	if (options.operations) {
 		const defaultOperations: ControllerRouteOperations = {
@@ -115,7 +107,6 @@ export function createControllerApp(options: {
 }
 
 export function createControllerService(options: {
-	readonly approvalRoutes?: ControllerApprovalRoutePorts;
 	readonly healthEventStore?: HealthEventStore;
 	readonly leaseManager: ControllerLeaseManager;
 	readonly now?: () => number;
@@ -130,7 +121,6 @@ export function createControllerService(options: {
 		options.openClawRuntimeStatusStore ?? new OpenClawRuntimeStatusStore();
 	const controllerHealthConfig = resolveControllerHealthConfig(options.systemConfig);
 	const app = createControllerApp({
-		...(options.approvalRoutes === undefined ? {} : { approvalRoutes: options.approvalRoutes }),
 		controllerPort: options.systemConfig.host.controllerPort,
 		healthEventStore:
 			options.healthEventStore ??

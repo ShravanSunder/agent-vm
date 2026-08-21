@@ -47,28 +47,22 @@ If the same tool is effectively admitted by both selectors, static validation MU
 
 Trace: U1, U3, U5 → O1, O3.
 
-### R2 — Approval authorities use an explicit discriminated union
+### R2 — Approval authority is the managed Gateway
 
-Each `zones[].approvalAccess.approvers[]` entry MUST declare exactly one authority variant:
+Each `zones[].approvalAccess.approvers[]` entry MUST declare the sole supported authority:
 
 ```ts
-type ApprovalAuthorityConfig =
-  | {
-      readonly kind: 'bearer'
-      readonly approverId: string
-      readonly secret: HostSecretReference
-    }
-  | {
-      readonly kind: 'managed_gateway'
-      readonly approverId: string
-    }
+type ApprovalAuthorityConfig = {
+  readonly kind: 'managed_gateway'
+  readonly approverId: string
+}
 ```
 
-The `kind` field MUST be the discriminant. Variant-inapplicable fields MUST be rejected. Existing bearer entries MUST cut over to `kind: "bearer"`; there is no implicit legacy variant.
+The `kind` field MUST equal `managed_gateway`. Unknown kinds, secrets, credentials, and other inapplicable fields MUST be rejected. There is no legacy or external bearer approval variant.
 
 `approverId` MUST remain unique within a zone. At least one configured authority MUST exist when any managed Tool Portal call is effectively admitted through `requiresApproval`.
 
-At most one `kind: "managed_gateway"` authority MAY be configured per zone in this release. If more than one is configured, validation MUST reject the zone rather than selecting one by order. Bearer authorities MAY coexist with the one managed-Gateway authority.
+Exactly one `kind: "managed_gateway"` authority MUST be configured when protected calls are admitted. Validation MUST reject multiple authorities rather than selecting one by order.
 
 Trace: U1, U3, U5 → O1, O3, O5.
 
@@ -148,25 +142,18 @@ The controller MUST confirm that:
 - the challenge authority context and semantic revisions remain current;
 - the challenge has not expired, been revoked, or already reached an incompatible terminal state.
 
-Controller approval operator identity MUST be a discriminated union on `provenance`:
+Controller approval operator identity MUST represent only the authenticated managed Gateway principal:
 
 ```ts
-type ControllerApprovalOperatorIdentity =
-  | {
-      readonly provenance: 'approval-access'
-      readonly approverId: string
-      readonly audience: 'agent-vm-controller-approval'
-      readonly credentialId: string
-    }
-  | {
-      readonly provenance: 'managed-gateway'
-      readonly approverId: string
-      readonly audience: 'agent-vm-controller-approval'
-      readonly stablePrincipal: string
-    }
+type ControllerApprovalOperatorIdentity = {
+  readonly provenance: 'managed-gateway'
+  readonly approverId: string
+  readonly audience: 'agent-vm-controller-approval'
+  readonly stablePrincipal: string
+}
 ```
 
-Variant-inapplicable evidence MUST be rejected. The controller MUST select the zone's sole managed-Gateway authority and derive `stablePrincipal`; neither value is caller-authored.
+Unknown provenance and inapplicable credential evidence MUST be rejected. The controller MUST select the zone's sole managed-Gateway authority and derive `stablePrincipal`; neither value is caller-authored.
 
 The controller records only the configured managed-Gateway authority and stable Gateway principal. It does not receive or authorize against the framework's native human identity.
 
@@ -235,9 +222,9 @@ After replacement/projection, aggregate `ok` MUST be recomputed using the existi
 
 Trace: U2, U3, U4 → O2, O3, O4.
 
-### R10 — Existing bearer approval remains available
+### R10 — External controller approval HTTP is absent
 
-Bearer-configured approvers and authenticated controller approval HTTP routes MUST retain their current behavior after the explicit `kind: "bearer"` cutover. A managed-Gateway authority MUST NOT receive or reuse a bearer credential.
+The controller MUST NOT expose approval listing, reading, approve, deny, or revoke HTTP routes. Configuration MUST reject bearer approval authorities and approval credentials. Agent-message HTTP remains a separate Hermes in-VM API-server surface authenticated by its own `API_SERVER_KEY`; it is not controller approval authority.
 
 Trace: U1, U3, U5 → O3, O5.
 
@@ -738,23 +725,6 @@ One namespace may expose approval-free reads, protected writes, and a promoted t
 
 The example intentionally contains no credential, controller-materialized environment, configurable stderr-redaction, filesystem mount, artifact, custody, SSH, lease, mediation, secret, TCP mapping, resource, or rootfs field. Those are outside `configured_cli`; ephemeral runner resources and copy-on-write/no-mount/no-SSH construction are code-owned.
 
-Valid bearer authority after hard cutover:
-
-```jsonc
-{
-  "approvalAccess": {
-    "audience": "agent-vm-controller-approval",
-    "approvers": [
-      {
-        "kind": "bearer",
-        "approverId": "operations",
-        "secret": { "source": "environment", "envVar": "APPROVAL_TOKEN" }
-      }
-    ]
-  }
-}
-```
-
 Valid native managed-Gateway authority:
 
 ```jsonc
@@ -771,19 +741,19 @@ Valid native managed-Gateway authority:
 }
 ```
 
-Both authority kinds MAY coexist. Their decisions converge on the same controller ledger.
+This is the complete approval-authority shape. Managed Gateway decisions converge on the existing controller ledger through the private Runtime/Control path.
 
 ## Proof obligations
 
 | ID | Observable obligation | Evidence class |
 | --- | --- | --- |
-| V1 | Generic config accepts both explicit variants and rejects mixed/implicit variants. | Automated behavior and generated-schema inspection |
+| V1 | Generic config accepts only explicit `managed_gateway` approval authority and rejects bearer, mixed, implicit, secret-bearing, or duplicate authorities. | Automated behavior and generated-schema inspection |
 | V2 | OpenClaw, Worker, other unsupported Gateways, and missing authorities fail before protected execution; Hermes declares the sole presenter capability. | Automated integration and startup/preflight evidence |
 | V3 | The in-repo Hermes presenter shows one session-and-request-bound approve/deny interaction through the pinned Hermes Gateway surface selected by Program Design; an admitted actor can resolve it, while an unauthorized actor receives bounded feedback and leaves it pending. | Real Hermes interaction or visual evidence with admitted and unauthorized native-surface actors |
 | V4 | Approved exact item dispatches once; changed, denied, expired, duplicated, stale, or unauthorized-actor attempts dispatch zero times; an unauthorized attempt sends no decision RPC and leaves controller challenge state unchanged. | Controller/Gateway integration with decision-call, challenge-state, and backend side-effect observation |
 | V5 | Mixed batches do not repeat approval-free successes, exhaustively map every presenter/decision outcome, recompute aggregate status, and preserve item order. | Cross-process integration with call-count and result inspection |
 | V6 | Framework crash/presenter failure leaves protected work non-dispatched. | Process-boundary integration or real managed-Gateway proof |
-| V7 | Bearer approval remains functional after the discriminated-union cutover. | Controller HTTP integration and config migration proof |
+| V7 | Controller approval HTTP routes are absent and bearer approval configuration is rejected, while Hermes API-server message ingress remains a separate surface. | Controller route inspection and config hard-cut proof |
 | V8 | The fixed display sanitizer enforces depth, collection, string, and byte bounds; unauthorized-actor feedback is bounded and non-secret; credential-shaped values, native human identity, and raw content never enter controller/model-visible output. | Security misuse cases and bounded-output inspection |
 | V9 | Strict `controller_execution` operation, execution-target, timeout, environment, stdin, output, pattern, and flag schemas accept valid variants while rejecting old umbrella names, mixed targets, invalid authored image-recipe paths, unprepared or malformed effective image identities, caller-selected runner construction, unknown registered actions, invalid/duplicate environment names, credential/materialized-environment/configurable-redaction fields, duplicate/proper-prefix-overlapping effective command sequences across different prefix/path splits, approval-free aliases, selector misses, collisions, invalid regex, and standalone controller execution. | Automated schema/effective-config behavior and generated JSON Schema inspection |
 | V10 | Exact command-path matching admits ordinary positional tails and flags, rejects siblings and partial-token matches, and resolves every admitted final executable/prefix/argv invocation to exactly one operation and one effective path. | Table-driven automated behavior covering valid, boundary, same-prefix overlap, cross-prefix overlap, and invalid argv |

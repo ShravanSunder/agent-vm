@@ -339,6 +339,15 @@ describe('manual templates', () => {
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
 			'Static validation and Gateway preflight fail closed when approvalAccess is absent',
 		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'Hermes API_SERVER_KEY authenticates the separate in-VM agent-message API',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'The controller exposes no external approval HTTP routes',
+		);
+		expect(
+			files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content,
+		).not.toContain('kind: bearer carries a secret for the controller HTTP approval routes');
 		expect(
 			files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content,
 		).not.toContain('rejects calls.requiresApproval');
@@ -418,7 +427,7 @@ describe('manual templates', () => {
 			'mcp_provider, controller_execution, or tool_vm_runner',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
-			'kind: managed_gateway carries no bearer secret and is supported only by Hermes',
+			'approvalAccess.approvers entries are exactly kind: managed_gateway',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
 			'controller_host or a fresh one-shot ephemeral_managed_vm',

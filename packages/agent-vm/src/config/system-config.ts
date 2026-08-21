@@ -266,50 +266,19 @@ const zoneAdminAccessSchema = z.discriminatedUnion('mode', [
 		.strict(),
 ]);
 
-const zoneApprovalAuthoritySchema = z.discriminatedUnion('kind', [
-	z
-		.object({
-			approverId: z.string().min(1).max(1024),
-			kind: z.literal('bearer'),
-			secret: hostSecretReferenceSchema,
-		})
-		.strict(),
-	z
-		.object({
-			approverId: z.string().min(1).max(1024),
-			kind: z.literal('managed_gateway'),
-		})
-		.strict(),
-]);
+const zoneApprovalAuthoritySchema = z
+	.object({
+		approverId: z.string().min(1).max(1024),
+		kind: z.literal('managed_gateway'),
+	})
+	.strict();
 
 const zoneApprovalAccessSchema = z
 	.object({
-		approvers: z.array(zoneApprovalAuthoritySchema).min(1),
+		approvers: z.array(zoneApprovalAuthoritySchema).length(1),
 		audience: z.literal(GATEWAY_RUNTIME_APPROVAL_AUDIENCE),
 	})
-	.strict()
-	.superRefine((approvalAccess, context) => {
-		const seenApproverIds = new Set<string>();
-		let managedGatewayAuthorityCount = 0;
-		for (const [index, approver] of approvalAccess.approvers.entries()) {
-			if (seenApproverIds.has(approver.approverId)) {
-				context.addIssue({
-					code: z.ZodIssueCode.custom,
-					message: `approvalAccess approver id "${approver.approverId}" must be unique.`,
-					path: ['approvers', index, 'approverId'],
-				});
-			}
-			seenApproverIds.add(approver.approverId);
-			if (approver.kind === 'managed_gateway') managedGatewayAuthorityCount += 1;
-		}
-		if (managedGatewayAuthorityCount > 1) {
-			context.addIssue({
-				code: z.ZodIssueCode.custom,
-				message: 'approvalAccess permits at most one managed_gateway authority per zone.',
-				path: ['approvers'],
-			});
-		}
-	});
+	.strict();
 
 const gatewaySshSecretEnvSchema = z.enum(['never', 'explicit']);
 
@@ -976,9 +945,6 @@ const systemConfigSchema = z
 				Object.values(zone.secrets).some((secret) => secret.source === '1password') ||
 				zone.gateway.backupIdentity?.source === '1password' ||
 				(zone.adminAccess?.mode === 'secret' && zone.adminAccess.secret.source === '1password') ||
-				zone.approvalAccess?.approvers.some(
-					(approver) => approver.kind === 'bearer' && approver.secret.source === '1password',
-				) === true ||
 				(zone.gateway.type === 'openclaw' &&
 					(zone.gateway.authProfilesRef?.source === '1password' ||
 						Object.values(zone.gateway.authProfilesByAgent ?? {}).some(
