@@ -1,247 +1,270 @@
-# Tool Portal Namespace Guidance Specification
+# Tool Portal Namespace Discovery Summary Specification
 
 Requirements authority: [`requirements.md`](requirements.md)
 
 ## Observable model
 
 ```text
-deployment operator
-  -> authors optional guidance on one Tool Portal profile namespace
-  -> validates the complete profile
+MCP-backed namespace
+  -> mcp.config provider namespace + discovery.summary
+  -> effective Tool Portal namespace discovery
 
-Tool Portal agent
-  -> list | search | describe
-  -> receives authorized tools plus applicable namespace guidance
-  -> uses per-tool descriptions and schemas for the exact call
+controller_execution | tool_vm_runner namespace
+  -> tool-portal profile namespace key + discovery.summary
+  -> effective Tool Portal namespace discovery
+
+effective namespace discovery
+  -> Tool Portal list | search | describe
+  -> Hermes name + availability + optional summary orientation
 
 negative space
-  -> guidance does not alter visibility, admission, approval, or dispatch
-  -> guidance is not injected into the system prompt or user message
+  -> no guidance/instructions field, no duplicated MCP summary,
+     no permission or dispatch effect, no per-tool prompt injection
 ```
 
 ## P1 — Current observable gap
 
-`tool-portal.config.jsonc` namespaces currently contain only `backend`, `tools`,
-and `calls`. Portal discovery returns capability summaries or descriptors but no
-operator-authored namespace context. `configured_cli.safeHelp` can explain one
-operation only. Repeating shared conventions in every operation is verbose and
-can drift; omitting them leaves an agent to reconstruct namespace conventions
-from individual schemas.
+`mcp.config.jsonc` already accepts `{ discovery: { summary? } }` for every MCP
+provider. The normalized semantic revision retains that field, but the managed
+provider runtime and Hermes orientation do not project its text. Hermes renders
+only admitted namespace names and availability. Tool Portal namespace policy
+contains only `backend`, `tools`, and `calls`, so non-MCP namespaces cannot
+declare an equivalent summary.
 
 ## O1 — Desired observable outcome
 
-An operator can attach one bounded plain-text guide to a Tool Portal namespace.
-Every authorized Tool Portal discovery path returns that guide once per
-applicable namespace alongside, but separate from, tool-level metadata.
+Every admitted Tool Portal namespace has one effective optional discovery
+summary. MCP-backed namespaces reuse their provider summary; non-MCP namespaces
+may author the same summary shape. Tool Portal discovery and the existing Hermes
+session-once orientation expose the effective value without changing authority.
 
-## R1 — Namespace configuration admits optional guidance
+## R1 — Discovery contains only a bounded optional summary
 
-The common Tool Portal namespace policy used by managed and standalone modes
-MUST accept exactly one optional `guidance` field:
+The shared discovery shape MUST be exactly:
 
 ```ts
-const ToolPortalNamespacePolicySchema = z
+const NamespaceDiscoverySchema = z
   .object({
-    backend: ToolPortalBackendBindingSchema,
-    calls: ToolPortalCallPolicySchema,
-    guidance: z.string().min(1).max(4_000).optional(),
-    tools: ToolPortalToolSelectorSchema,
+    summary: z.string().min(1).max(500).optional(),
   })
   .strict()
 ```
 
-The field is plain model-visible text. It MUST NOT accept a secret reference,
-file reference, template, variable interpolation, URL fetch, backend-specific
-variant, or structured authority claim. Omission means the namespace has no
-authored guidance. Empty or over-bound values MUST fail configuration
-validation.
+`mcpProviderSchema.discovery` MUST continue to default to `{}` and MUST use this
+bound. Empty, over-bound, structured, or unknown discovery fields MUST fail
+configuration validation.
 
-The same field and bound MUST appear in authored, effective, managed Gateway
-Runtime, and standalone Tool Portal configuration schemas. Generated
-`tool-portal.schema.json` MUST expose the field and bound.
+`discovery.summary` is concise model-visible namespace information. It is not a
+tool description, schema, instruction document, policy object, secret/file
+reference, template, URL, or authority claim.
 
-Trace: U2, U4, U5.
+Trace: U2, U3, U7.
 
-## R2 — Guidance is profile scoped and backend neutral
+## R2 — MCP-backed summaries have one authored owner
 
-Guidance MUST belong to the namespace entry inside one complete Tool Portal
-profile. It MUST NOT inherit or merge from another profile or namespace.
+For an effective Tool Portal namespace whose backend kind is `mcp_provider`,
+the summary MUST resolve from the unique active MCP provider whose authored
+`namespace` equals the Tool Portal namespace key.
 
-For a trusted invocation, Tool Portal MUST derive guidance from the same
-selected profile and active surface eligibility used to derive the scoped
-catalog. A caller MUST NOT supply a profile id, guidance value, or visibility
-override in a list, search, describe, or call request.
+An MCP-backed Tool Portal namespace MUST reject an authored `discovery` field.
+It MUST NOT override, merge, or duplicate the provider summary. If the matched
+provider omits its summary, the effective namespace summary is absent.
 
-The contract MUST behave identically for `mcp_provider`,
-`controller_execution`, and `tool_vm_runner` namespaces when those backend kinds
-are otherwise available in the selected Tool Portal mode. Guidance MUST NOT be
-copied into backend-specific provider configuration or interpreted by a
-backend.
+Missing or ambiguous provider-to-namespace resolution MUST retain the existing
+configuration/preflight failure and MUST NOT select a summary by provider record
+order.
 
-Trace: U2, U3, U4.
+Trace: U2, U5, U7.
 
-## R3 — Portable discovery results carry namespace guidance
+## R3 — Non-MCP Tool Portal namespaces may author discovery summary
 
-The portal-neutral SDK MUST define one strict result value:
+For `controller_execution` and `tool_vm_runner`, the Tool Portal namespace
+policy MUST accept optional `discovery: NamespaceDiscoverySchema.default({})`
+beside `backend`, `tools`, and `calls`.
+
+The namespace identity remains the key in
+`profiles.<profile>.namespaces`; Tool Portal MUST NOT add a duplicate nested
+`namespace` field. Omission produces an effective namespace discovery value
+with no summary.
+
+The authored managed, effective, Gateway Runtime, and generated Tool Portal
+schemas MUST preserve the same field and bound. This specification does not
+make privileged backends available in standalone Tool Portal.
+
+Trace: U3, U5, U7.
+
+## R4 — Effective namespace discovery is profile and surface scoped
+
+Tool Portal MUST derive one immutable effective discovery entry for each
+namespace admitted by the selected complete profile and active surface:
 
 ```ts
-const NamespaceGuidanceSchema = z
+const EffectiveNamespaceDiscoverySchema = z
   .object({
-    guidance: z.string().min(1).max(4_000),
     namespace: NamespaceNameSchema,
+    summary: z.string().min(1).max(500).optional(),
   })
   .strict()
 ```
 
-Successful list, search, and describe item values MUST each contain a required
-`namespaceGuidance` array. The array MUST be empty when no applicable namespace
-has authored guidance. It MUST contain at most one item per namespace and MUST
-be sorted by namespace using the same deterministic namespace ordering as the
-existing portal contracts.
+Entries MUST be unique by namespace and sorted with the existing deterministic
+namespace ordering. The caller MUST NOT supply or override namespace discovery
+metadata. Adding, changing, or removing a summary MUST change the applicable
+catalog/profile semantic revision.
 
-The applicable namespace set is:
+Raw summary text MUST NOT enter call requests, approval presentation, direct or
+approval fingerprint payloads, backend arguments, provider transport, controller
+execution requests, or Tool VM SSH operations. Existing opaque semantic
+revisions may stale older authority after metadata changes.
 
-- for list: guided namespaces present in the successful item's returned
-  `namespaces` value after request filtering;
-- for search: guided namespaces represented by the successful item's returned
-  tool matches after request filtering;
-- for describe: guided namespaces represented by the successful item's returned
-  descriptors after request filtering.
+Trace: U2-U7.
 
-A partial backend result MUST NOT cause guidance for an unrelated or filtered
-namespace to appear. An error item carries its existing error and diagnostics
-and MUST NOT fabricate a successful guidance value.
+## R5 — Portal discovery returns effective namespace discovery
 
-`PortalCallResult` MUST NOT add namespace guidance. Call results remain about
-the exact attempted capability and its outcome.
+Successful list, search, and describe item values MUST contain a required
+`namespaceDiscovery` array of effective entries:
 
-Trace: U1, U3, U4.
+- list returns entries for namespaces in that item's filtered `namespaces`;
+- search returns entries for namespaces represented by returned tool matches;
+- describe returns entries for namespaces represented by returned descriptors.
 
-## R4 — Guidance remains separate from tool metadata
+The array MUST contain exactly one entry for every represented namespace,
+including `{ namespace }` when its summary is absent. It MUST contain at most
+one entry per namespace and use deterministic namespace ordering. Existing tool
+summaries/descriptors, ordering, filtering, pagination, diagnostics, partial
+failure, and aggregate status remain unchanged.
 
-Namespace guidance MUST NOT be duplicated into each `CapabilitySummary`,
-`CapabilitySearchMatch`, or `CapabilityDescriptor`. Existing tool descriptions,
-titles, annotations, schema hints, input/output schemas, safety summaries,
-related values, TypeScript helpers, and Zod artifacts remain unchanged.
+Namespace discovery MUST remain separate from `CapabilitySummary`,
+`CapabilitySearchMatch`, and `CapabilityDescriptor`. `PortalCallResult` MUST NOT
+add namespace discovery metadata. Search MUST NOT index or rank by summary text
+in this slice.
 
-Search MUST NOT index or rank by namespace guidance in this slice. Guidance is
-returned as context for the namespaces already selected by ordinary list,
-search, or describe behavior.
+Trace: U4-U6.
 
-`configured_cli.safeHelp` remains the exact operation description projected
-into that operation's capability summary. Namespace guidance may explain shared
-calling conventions but cannot replace an operation's `safeHelp`.
+## R6 — Hermes orientation renders name, availability, and summary
 
-Trace: U1, U4.
+The existing managed Hermes startup inventory MUST receive the complete sorted
+effective namespace-discovery projection for each admitted profile. Inventory
+availability probes and authority semantics remain unchanged.
 
-## R5 — Guidance changes semantic freshness but not permission meaning
+For every displayed namespace, the deterministic orientation MUST render:
 
-Changing, adding, or removing guidance MUST change the profile/catalog semantic
-revision observed by Gateway Runtime clients so stale discovery snapshots are
-not presented as current. It MUST NOT change which tools are visible or whether
-a call is denied, direct, or approval-required. Existing direct and approval
-fingerprints that already bind common semantic revisions MAY therefore become
-stale after a guidance change; this is freshness invalidation, not new call
-authority.
+```text
+- <canonical namespace>: available | unavailable
+  summary: <canonical JSON summary string, when present>
+```
 
-Raw guidance text MUST NOT enter controller execution requests, approval
-presentation arguments, direct or approval fingerprint payloads, backend call
-arguments, provider requests, or Tool VM SSH operations. Only the existing
-opaque common semantic revisions may reflect that the active catalog changed.
+The summary line is omitted when absent. The renderer MUST encode the complete
+summary with the shared canonical JSON string encoder so LF, CR, quotes,
+backslashes, control characters, and supplementary Unicode remain one
+deterministic escaped line. The complete orientation retains the existing
+maximum of 20 displayed namespaces, 2,000 UTF-8 bytes, LF separators, and no
+trailing newline. The renderer MUST choose the greatest sorted prefix of
+complete namespace entries that fits; it MUST never truncate a summary or emit
+a namespace without its complete available summary. Omitted-count behavior and
+the list/search/describe/call workflow remain unchanged.
 
-Trace: U3, U4.
+The injection identity, nonblocking observation, atomic session-once mark,
+prompt-cache preservation, failure behavior, and no-Portal-I/O session path
+remain exactly as defined by the existing Hermes orientation contract.
 
-## R6 — Existing framework orientation remains unchanged
+Trace: U1, U5, U6.
 
-Hermes's session-once Tool Portal orientation MUST continue to expose bounded
-namespace availability and the list/search/describe/call journey without
-embedding authored namespace guidance. Authored guidance is obtained only by a
-Tool Portal discovery result.
+## R7 — Discovery metadata never changes call authority
 
-No managed framework adapter may mutate its system prompt, tool schemas, or
-user message solely to surface namespace guidance. Framework-specific prompt
-presentation is outside this specification.
+Under a fresh active policy, summary presence or text MUST NOT change tool
+visibility, call admission, direct/approval classification, approval display,
+backend selection, arguments, execution, or result behavior.
 
-Trace: U6.
+`safeHelp` remains required for each `configured_cli` and continues to project
+as that operation's capability description through Tool Portal discovery. MCP
+tool descriptions and schemas remain upstream-owned. Neither is injected into
+the namespace orientation.
 
-## R7 — Failure behavior is deterministic and non-authoritative
+Trace: U5, U6.
 
-Invalid authored guidance MUST fail static configuration validation. A missing
-optional guide MUST NOT fail startup or discovery. If an otherwise successful
-discovery result has no applicable guidance, it MUST return
-`namespaceGuidance: []`.
+## R8 — Failures preserve existing availability truth
 
-Backend discovery failures retain their existing item-level error, diagnostic,
-partial-success, and aggregate-status behavior. Guidance projection MUST NOT
-turn a backend failure into success, suppress an existing diagnostic, or broaden
-the set of namespaces represented by a successful result.
+Invalid authored discovery metadata MUST fail static validation. Missing
+optional summaries MUST NOT fail startup, discovery, or orientation.
 
-Trace: U3, U4, U5.
+Provider discovery/probe failure retains the existing namespace-unavailable
+classification and orientation behavior. A configured summary MAY still explain
+an unavailable namespace, but MUST NOT relabel it available. Partial backend
+discovery failures retain existing item-level error and diagnostic behavior and
+MUST NOT surface unrelated namespace metadata.
+
+Trace: U1, U4, U5, U7.
 
 ## Observable contracts
 
-### C1 — Authored configuration
+### C1 — MCP provider configuration
 
-An operator can omit guidance or author one non-empty string of at most 4,000
-characters on any Tool Portal namespace. Unknown adjacent fields, empty strings,
-and longer strings are rejected by the strict generated and runtime schemas.
+An MCP provider may omit `discovery.summary` or author one non-empty string no
+longer than 500 characters. Its public namespace remains the provider's explicit
+`namespace` field, independent of the provider record key.
 
-### C2 — Agent discovery
+### C2 — Non-MCP Tool Portal configuration
 
-Every successful list, search, or describe item contains a deterministic
-`namespaceGuidance` array derived from the caller's active profile and the
-namespaces represented by that item. An agent never receives guidance for a
-namespace outside that result or outside its active profile/surface.
+A `controller_execution` or `tool_vm_runner` namespace may omit
+`discovery.summary` or author the same bounded shape. Its namespace identity
+remains the `namespaces` record key.
 
-### C3 — Capability execution
+### C3 — Tool Portal discovery
 
-Under the fresh active policy, adding or changing guidance alone does not change
-whether an identical call is visible, admitted, approval-required, or
-dispatchable. Authority derived from an older common semantic revision may fail
-freshness checks. The call and result shapes remain unchanged.
+Each successful list, search, or describe item returns effective summaries only
+for represented namespaces in the caller's selected profile and surface.
+
+### C4 — Hermes model context
+
+The one orientation-bearing model request for a session identity contains each
+displayed namespace's name, availability, and complete optional summary. Later
+requests for the same identity contain no new orientation block.
 
 ## Compatibility and cutover
 
-This is a synchronized hard cut of the portable Tool Portal result contracts.
-All in-repository producers, consumers, generated JSON Schema artifacts, and
-contract fixtures MUST move together. There is no dual result parser and no
-legacy alias for namespace guidance. Existing authored configurations remain
-valid because `guidance` is optional.
+This is a synchronized hard cut across MCP discovery bounds, Tool Portal
+configuration/projections, portable discovery results, managed-agent projection,
+and Hermes adapter models/rendering. All in-repository producers, consumers,
+generated schemas, fixtures, and Python/TypeScript contracts MUST move together.
+There is no `guidance`/`instructions` alias and no dual result parser.
 
-Standalone MCP Portal remains unchanged. This contract applies to Tool Portal
-managed and standalone modes only.
+Existing MCP summaries shorter than the new bound remain valid. Existing Tool
+Portal configurations remain valid because non-MCP `discovery` is optional and
+MCP-backed Tool Portal namespaces continue to source metadata from
+`mcp.config.jsonc`.
 
 ## Proof obligations
 
 | ID | Observable obligation | Evidence class |
 | --- | --- | --- |
-| V1 | Authored/effective/managed/standalone config and generated JSON Schema accept omission and valid guidance while rejecting empty, over-bound, structured, and unknown-field variants. | Automated schema behavior and generated-schema inspection |
-| V2 | Managed and standalone profiles return only the selected profile's guidance for the active surface, with no cross-agent/profile leakage. | Service integration with two agents and distinct complete profiles |
-| V3 | List returns sorted unique guidance for returned namespaces and preserves filtering, pagination fields, diagnostics, and partial failure. | Portable-contract and service integration behavior |
-| V4 | Search and describe return guidance only for namespaces represented by their returned tools and preserve tool ordering and metadata. | Portable-contract and service integration behavior |
-| V5 | MCP-provider, controller-execution, and Tool-VM-runner namespaces expose the same guidance contract without backend-specific interpretation. | Cross-backend Tool Portal integration |
-| V6 | Capability summaries/descriptors and call requests/results remain free of duplicated guidance; search ranking is unchanged. | Contract/schema inspection and search regression behavior |
-| V7 | A guidance-only policy change refreshes discovery revisions and stales prior common-revision authorities while leaving direct, denied, and approval-required classification unchanged under a fresh request. | Semantic-revision and call-policy integration evidence |
-| V8 | Hermes orientation/system-prompt behavior remains byte-stable while an ordinary discovery call returns the authored guide. | Hermes integration or real runtime transcript plus prompt-byte inspection |
-| V9 | A unique raw-guidance marker is absent from controller-execution requests, approval presentation payloads, direct/approval fingerprint inputs, backend/provider calls, and Tool VM SSH operations while the opaque common semantic revision alone reflects the catalog change. | Boundary payload/schema inspection and integration spies at every R5 authority/execution seam |
+| V1 | MCP and Tool Portal authored/effective/generated schemas accept omission and valid summary while rejecting empty, over-bound, unknown, duplicated-source, and backend-inapplicable variants. | Automated schema behavior and generated-schema inspection |
+| V2 | Provider-id and namespace remain distinct; a unique MCP provider summary resolves to the matching effective Tool Portal namespace, while missing/ambiguous matches fail or omit exactly as specified. | Config materialization integration |
+| V3 | Distinct profiles and surfaces return only their admitted effective namespace discovery without cross-agent/profile leakage. | Tool Portal service integration |
+| V4 | List, search, and describe return sorted represented namespace discovery while preserving tool metadata, ordering, filtering, pagination, diagnostics, and partial failure. | Portable-contract and service integration behavior |
+| V5 | MCP-provider, controller-execution, and Tool-VM-runner namespaces produce the same effective discovery shape from their single authored source. | Cross-backend integration |
+| V6 | A unique raw-summary marker is absent from call/approval/fingerprint/backend/controller/SSH payloads while only common semantic revisions reflect the metadata change. | Boundary payload inspection and integration spies |
+| V7 | Hermes rendering covers summary present/absent, available/unavailable, LF, CR, quotes, backslashes, control characters, supplementary Unicode, deterministic canonical encoding and ordering, complete-entry truncation, omitted counts, and the 20-name/2,000-byte limits. | Deterministic renderer behavior |
+| V8 | One real Hermes model request contains the configured MCP and non-MCP summaries with correct availability; a later same-session request contains no orientation; system prompt and tool definitions remain unchanged. | Real Hermes VM end-to-end transcript and model-request inspection |
+| V9 | Fresh calls retain identical visibility, direct/approval classification, backend effects, and per-tool descriptions before and after a summary-only change. | Call-policy and backend regression integration |
 
 Requirement coverage:
 
 | Requirements | Problem | Outcome | Contracts | Proof |
 | --- | --- | --- | --- | --- |
-| U1 | P1 | O1 | R3, R4, C2 | V3, V4, V6 |
-| U2 | P1 | O1 | R1, R2, C1 | V1, V5 |
-| U3 | P1 | O1 | R2, R3, R7, C2 | V2, V3, V4 |
-| U4 | P1 | O1 | R4, R5, R7, C3 | V6, V7, V9 |
-| U5 | P1 | O1 | R1, R7, C1 | V1 |
-| U6 | P1 | O1 | R6, C3 | V8 |
+| U1 | P1 | O1 | R4, R6, R8, C4 | V3, V7, V8 |
+| U2 | P1 | O1 | R1-R2, R4, C1 | V1-V2, V5 |
+| U3 | P1 | O1 | R1, R3-R4, C2 | V1, V3, V5 |
+| U4 | P1 | O1 | R4-R5, R8, C3 | V3-V5 |
+| U5 | P1 | O1 | R4, R6, R8, C3-C4 | V3-V4, V7-V8 |
+| U6 | P1 | O1 | R5-R7 | V4, V6, V9 |
+| U7 | P1 | O1 | R1-R3, R8, C1-C2 | V1-V2 |
 
 ## Undefined behavior and negative space
 
-- Guidance wording, headings, and examples are operator-owned plain text.
-- Tool Portal does not validate factual accuracy or completeness of authored
-  guidance.
-- Discovery callers decide whether and how to use returned guidance.
-- Guidance is not a compatibility promise for an upstream CLI or MCP provider.
-- Guidance does not create prompt-delivery, acknowledgement, refresh, or
-  persistence semantics.
+- Summary wording and factual accuracy are operator-owned.
+- Summary text is not searched, ranked, interpreted, or acknowledged by Tool
+  Portal or Hermes.
+- A summary does not promise upstream provider or CLI compatibility.
+- Discovery metadata creates no prompt-delivery transaction, refresh, polling,
+  persistence, or cross-epoch behavior.

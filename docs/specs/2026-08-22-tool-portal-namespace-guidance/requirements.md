@@ -1,110 +1,132 @@
-# Tool Portal Namespace Guidance Requirements
+# Tool Portal Namespace Discovery Summary Requirements
 
 ## Purpose
 
-Tool Portal can describe individual capabilities, and a configured controller
-CLI can provide per-operation `safeHelp`, but an operator cannot explain the
-shared usage conventions of a namespace once for every capability in that
-namespace. Agents therefore receive exact tool schemas without the small domain
-map needed to use those tools coherently.
+Agent VM already accepts `mcp.config.jsonc.providers.*.discovery.summary` as the
+concise description of an MCP namespace. The value participates in semantic
+freshness, but the managed Hermes orientation currently renders only namespace
+name and `available | unavailable` status. Non-MCP Tool Portal namespaces have
+no equivalent summary field.
 
-The required improvement is one optional, backend-neutral namespace guidance
-field that is visible through normal Tool Portal discovery. It complements
-per-tool descriptions; it does not replace them or create another instruction
-injection system.
+The required improvement is to make the existing MCP discovery summary
+model-visible and extend the same `discovery.summary` vocabulary to non-MCP Tool
+Portal namespaces. The feature reuses the current Hermes session-once
+orientation and ordinary Tool Portal discovery; it does not create a second
+guidance or instruction system.
 
 ## Decision authority and source
 
-The deployment owner authorized this requirement on 2026-08-22: Tool Portal
-must allow general namespace-level guidance in the same cross-backend policy
-surface used by MCP-provider, controller-execution, and Tool-VM-runner
-namespaces. The current source tree is observational evidence for the missing
-field and the existing discovery/result boundaries.
+The deployment owner confirmed on 2026-08-22 that:
+
+- namespace identity and `discovery.summary` are the canonical discovery
+  vocabulary;
+- `discovery` contains only optional `summary` in this slice;
+- existing MCP provider summaries must be injected rather than re-authored;
+- Tool Portal must provide the same summary capability for
+  `controller_execution` and `tool_vm_runner` namespaces;
+- `safeHelp` remains required per configured CLI operation and is supplied
+  through capability discovery rather than prompt injection.
+
+Current configuration schemas, the `shravan-claw` deployment, Tool Portal
+contracts, and the Hermes orientation renderer are observational evidence for
+the existing foundation and missing projection.
 
 ## Consumers
 
-- Managed and standalone Tool Portal agents need shared namespace conventions
-  before choosing or calling an individual capability.
-- Deployment operators need to author those conventions once per complete
-  profile namespace instead of repeating them in every tool description.
-- Backend owners need namespace guidance to remain independent of backend kind
-  and incapable of changing visibility, call admission, approval, or dispatch.
+- A managed Hermes agent needs a concise explanation beside each admitted
+  namespace name and availability status.
+- A Tool Portal caller needs the same effective namespace summary through
+  ordinary list, search, and describe discovery.
+- An MCP deployment operator needs the existing provider summary to remain the
+  sole authored source for MCP-backed namespaces.
+- A Tool Portal operator needs an equivalent summary field for non-MCP backend
+  namespaces.
 
 ## Authorized needs
 
 | ID | Affected class | Priority | Authorized need | Evidence and authority |
 | --- | --- | --- | --- | --- |
-| U1 | Tool Portal agent | Must | Discover concise namespace-level usage guidance through the ordinary list, search, and describe journey. | Owner-authorized, 2026-08-22 |
-| U2 | Deployment operator | Must | Author guidance once on a namespace in a complete Tool Portal profile and reuse it for every backend kind in managed or standalone Tool Portal. | Owner-authorized, 2026-08-22 |
-| U3 | Tool Portal agent | Must | See guidance only for namespaces admitted by the agent's selected profile and active surface. | Existing profile-scoped discovery boundary plus owner-authorized extension |
-| U4 | Capability owner | Must | Keep per-tool descriptions, schemas, `safeHelp`, call policy, and approval semantics unchanged; namespace guidance adds context but no authority. | Existing Tool Portal contract and owner boundary |
-| U5 | Deployment operator | Must | Receive deterministic validation and generated-schema feedback for absent, valid, empty, and over-bound guidance. | Owner-authorized operability need |
-| U6 | Managed Gateway operator | Must | Preserve the existing Hermes session-once orientation and prompt-cache behavior; namespace guidance is fetched through Tool Portal discovery rather than injected into prompts. | Existing Hermes orientation contract and owner boundary |
+| U1 | Hermes agent | Must | Receive each displayed admitted namespace's effective `discovery.summary` beside its name and availability in the existing session-once orientation. | Owner-authorized, 2026-08-22 |
+| U2 | MCP operator | Must | Continue authoring an MCP-backed namespace summary exactly once at `mcp.config.jsonc.providers.*.discovery.summary`. | Owner-authorized, 2026-08-22 |
+| U3 | Tool Portal operator | Must | Author the same optional `discovery.summary` shape for `controller_execution` and `tool_vm_runner` namespaces. | Owner-authorized, 2026-08-22 |
+| U4 | Tool Portal caller | Must | Receive effective namespace discovery metadata through list, search, and describe without duplicating it into every tool. | Owner-authorized extension, 2026-08-22 |
+| U5 | Agent and operator | Must | Preserve exact profile/surface isolation, availability truth, deterministic ordering, prompt-cache behavior, and bounded orientation rendering. | Existing Hermes orientation contract retained by owner |
+| U6 | Capability owner | Must | Keep `safeHelp`, upstream tool descriptions/schemas, visibility, call admission, approval, and backend dispatch behavior unchanged. | Existing Tool Portal contract retained by owner |
+| U7 | Deployment operator | Must | Receive deterministic schema and validation feedback for absent, valid, empty, over-bound, duplicated-source, and backend-inapplicable summary configuration. | Owner-authorized operability need |
 
 All priorities are assigned by the deployment owner.
 
 ## Desired observable journey
 
 ```text
-operator (U2, U5) authors one namespace guide in tool-portal.config.jsonc
-  -> config validation accepts and projects it for the selected profile
-  -> agent (U1, U3) lists, searches, or describes profile-visible capabilities
-  -> discovery result returns the applicable namespace guide once
-  -> agent uses the guide together with exact per-tool descriptions and schemas
-```
+MCP operator (U2)
+  -> authors provider namespace + discovery.summary once in mcp.config.jsonc
+  -> Tool Portal materializes that summary for each admitted MCP namespace
 
-For a Things-like namespace, guidance can explain that `argv` is a JSON token
-array, that callers omit the executable name, which command prefixes exist, and
-which status operations are unavailable. Individual configured operations still
-own their exact `safeHelp`, input schema, and examples.
+Tool Portal operator (U3)
+  -> authors discovery.summary on a non-MCP namespace policy
+  -> Tool Portal materializes the same effective discovery shape
+
+Hermes agent (U1, U5)
+  -> receives name + availability + optional summary once per session identity
+
+Tool Portal caller (U4)
+  -> receives the same effective summary through list, search, or describe
+```
 
 ## Goal boundary
 
 The change may extend:
 
-- the shared managed/standalone Tool Portal namespace configuration contract;
-- profile-scoped effective and Gateway Runtime projections;
+- the existing MCP provider discovery-summary bound;
+- non-MCP Tool Portal namespace configuration;
+- effective/Gateway Runtime namespace discovery projections;
 - portal-neutral list, search, and describe results;
-- generated JSON Schema, manuals, and configuration reference material.
+- the existing Hermes managed Tool Portal projection, inventory, and renderer;
+- generated schema, manuals, and configuration reference material.
 
 The change must preserve:
 
-- complete non-inheriting Tool Portal profiles;
-- existing tool visibility and call selectors;
-- all backend bindings and dispatch behavior;
-- per-tool descriptions, schemas, annotations, and `safeHelp`;
-- Hermes's current bounded availability orientation and cache-safe injection;
-- standalone MCP Portal as a separate product and policy authority.
+- `mcp.config.jsonc` as the sole summary owner for MCP-backed namespaces;
+- complete, non-inheriting Tool Portal profiles and active-surface filtering;
+- existing Hermes startup inventory and session-once `pre_llm_call` injection;
+- per-tool `safeHelp`, descriptions, schemas, and search behavior;
+- Tool Portal visibility, call policy, approval, and backend dispatch;
+- all controller-execution and leased Tool VM boundaries.
 
 ## Acceptable complexity
 
-One optional bounded string on a Tool Portal namespace and one portable
-namespace-guidance result shape are acceptable. A new prompt pipeline, guidance
-database, inheritance system, templating language, dynamic refresh protocol, or
-backend-specific guidance variant is not.
+One bounded `discovery.summary` string shape, one effective namespace-discovery
+projection, and extensions to existing discovery/orientation results are
+acceptable. A new prompt pipeline, provider override/merge rule, summary
+database, inheritance system, templating language, refresh protocol, or
+framework-generic instruction engine is not.
 
 ## Non-goals
 
-- Injecting authored guidance into the system prompt or every user turn.
-- Searching or ranking tools by guidance text.
-- Replacing individual tool descriptions, schemas, examples, or `safeHelp`.
-- Letting guidance grant visibility, direct-call authority, approval, or
+- Adding `guidance`, `instructions`, descriptions, schemas, policy, or arbitrary
+  metadata beneath `discovery`.
+- Re-authoring or overriding an MCP provider summary in
+  `tool-portal.config.jsonc`.
+- Injecting `safeHelp` or every individual tool description into Hermes
+  orientation.
+- Searching or ranking tools by namespace summary text.
+- Changing standalone MCP Portal's legacy OpenClaw prompt-context hook.
+- Letting discovery metadata grant visibility, call authority, approval, or
   execution permission.
-- Adding guidance to standalone MCP Portal configuration in this slice.
-- Guidance inheritance or merging across profiles or namespaces.
-- Secret references, variable interpolation, attachments, rich text, or remote
-  guidance URLs.
+- Adding OpenClaw or Worker prompt injection.
 
 ## Success evidence
 
-Evidence must distinguish configuration acceptance from model-visible runtime
-behavior. It must show schema/editor support, exact profile isolation, stable
-portable list/search/describe results across backend kinds, unchanged call
-classification under fresh policy, absence of raw guidance from authority
-payloads, correct common-revision freshness, unchanged per-tool contracts, and
-unchanged Hermes prompt-orientation behavior.
+Evidence must distinguish authored configuration, effective projection,
+portable discovery, and real Hermes model input. It must show single-source MCP
+summary ownership, non-MCP Tool Portal authoring, exact profile isolation,
+bounded deterministic rendering, summary presence in one real Hermes model
+request, absence on the later same-session request, and unchanged tool/call
+authority and per-tool description behavior.
 
 ## Unresolved decisions
 
-None. Guidance is optional, bounded plain text, profile-and-namespace scoped,
-backend-neutral, discovery-visible, and non-authoritative.
+None. `discovery` contains only optional `summary`; MCP-backed summaries come
+from `mcp.config.jsonc`, non-MCP summaries come from the Tool Portal namespace,
+and both become one effective namespace-discovery value.
