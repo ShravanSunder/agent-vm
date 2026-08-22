@@ -84,6 +84,23 @@ describe('standalone Tool Portal module boundary', () => {
 				},
 				schemaVersion: 1,
 			},
+			mcpConfig: {
+				providers: {
+					github: {
+						discovery: {},
+						kind: 'mcp',
+						namespace: 'github',
+						secretPolicies: {},
+						transport: {
+							headers: {},
+							kind: 'streamable-http',
+							requiredEgressHosts: [],
+							url: 'https://github.example.test/mcp',
+						},
+					},
+				},
+				schemaVersion: 1,
+			},
 			semanticSnapshot: {
 				activeRevision: 'semantic:1',
 				agentProjections: {
@@ -97,6 +114,7 @@ describe('standalone Tool Portal module boundary', () => {
 				bindingRevision: 'binding:1',
 				catalogRevision: 'catalog:1',
 				desiredRevision: 'semantic:1',
+				namespaceDiscoveryByProfile: { 'code-builder': [{ namespace: 'github' }] },
 				profilePolicyRevision: 'policy:1',
 				providerRevision: 'provider:1',
 				schemaRevision: 'schema:1',

@@ -59,9 +59,7 @@ export function compileToolPortalNamespaceDiscoveryByProfile(props: {
 						namespace,
 					});
 				})
-				.toSorted((left, right) =>
-					compareUnicodeCodePointStrings(left.namespace, right.namespace),
-				);
+				.toSorted((left, right) => compareUnicodeCodePointStrings(left.namespace, right.namespace));
 			return [profileId, Object.freeze(namespaceDiscovery)] as const;
 		}),
 	);

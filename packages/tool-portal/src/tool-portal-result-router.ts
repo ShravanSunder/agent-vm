@@ -257,9 +257,7 @@ function namespaceDiscoveryForRepresentedNamespaces<TCallOptions, TReadOptions>(
 	return props.entries
 		.flatMap((entry) => entry.namespaceDiscovery)
 		.filter((entry) => props.representedNamespaces.has(entry.namespace))
-		.toSorted((left, right) =>
-			compareUnicodeCodePointStrings(left.namespace, right.namespace),
-		);
+		.toSorted((left, right) => compareUnicodeCodePointStrings(left.namespace, right.namespace));
 }
 
 export async function mergeToolPortalList<TCallOptions, TReadOptions>(props: {

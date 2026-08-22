@@ -319,9 +319,7 @@ function managedBackendEntriesForInvocation(props: {
 				...profileConfig.namespaces[namespace]?.discovery,
 				namespace,
 			}))
-			.toSorted((left, right) =>
-				compareUnicodeCodePointStrings(left.namespace, right.namespace),
-			),
+			.toSorted((left, right) => compareUnicodeCodePointStrings(left.namespace, right.namespace)),
 		namespaces,
 	}));
 }

@@ -24,7 +24,10 @@ function createToolPortalConfig(): {
 					readonly kind: 'openclaw';
 				};
 				readonly profileAssignmentRevision: string;
-				readonly toolPortalNamespaces: readonly string[];
+				readonly toolPortalNamespaces: readonly {
+					readonly namespace: string;
+					readonly summary?: string;
+				}[];
 				readonly toolPortalProfileId: string;
 			}
 		>
