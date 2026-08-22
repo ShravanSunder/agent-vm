@@ -63,6 +63,7 @@ const toolPortalConfig = {
 		'gate-c-profile': {
 			namespaces: {
 				controller: {
+					discovery: {},
 					backend: {
 						kind: 'controller_execution',
 						operations: {
@@ -87,6 +88,7 @@ const toolPortalConfig = {
 					tools: { allow: ['get_issue'], deny: [] },
 				},
 				sandbox: {
+					discovery: {},
 					backend: {
 						kind: 'tool_vm_runner',
 						operations: {
@@ -119,7 +121,11 @@ const semanticSnapshot = {
 			agentId: 'agent-gate-c',
 			frameworkIdentity: { agentId: 'agent-gate-c', kind: 'openclaw' },
 			profileAssignmentRevision: 'profile-assignment-gate-c-1',
-			toolPortalNamespaceNames: ['controller', 'github', 'sandbox'],
+			toolPortalNamespaces: [
+				{ namespace: 'controller' },
+				{ namespace: 'github' },
+				{ namespace: 'sandbox' },
+			],
 			toolPortalProfileId: 'gate-c-profile',
 		},
 	},

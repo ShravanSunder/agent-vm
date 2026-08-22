@@ -1,6 +1,9 @@
 import { createPrivateKey } from 'node:crypto';
 
-import { mcpConfigSchema, toolPortalConfigSchema } from '@agent-vm/config-contracts';
+import {
+	effectiveManagedToolPortalConfigSchema,
+	mcpConfigSchema,
+} from '@agent-vm/config-contracts';
 import {
 	GatewayRuntimePortalAdmissionMaterialSchema,
 	type GatewayRuntimePortalAdmissionMaterial,
@@ -20,7 +23,7 @@ import {
 } from './managed-gateway-runtime-input-builders.js';
 
 const effectiveMcpConfig = mcpConfigSchema.parse({ providers: {}, schemaVersion: 1 });
-const effectiveToolPortalConfig = toolPortalConfigSchema.parse({
+const effectiveToolPortalConfig = effectiveManagedToolPortalConfigSchema.parse({
 	agents: {
 		'agent-b': { profile: 'profile-b' },
 		'agent-a': { profile: 'profile-a' },

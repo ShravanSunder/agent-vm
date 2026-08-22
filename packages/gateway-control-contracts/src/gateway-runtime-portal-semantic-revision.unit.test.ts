@@ -1,8 +1,8 @@
 import {
-	managedToolPortalConfigSchema,
+	effectiveManagedToolPortalConfigSchema,
 	mcpConfigSchema,
+	type EffectiveManagedToolPortalConfig,
 	type McpConfig,
-	type ManagedToolPortalConfig,
 } from '@agent-vm/config-contracts';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
@@ -34,14 +34,15 @@ function createMcpConfig(): McpConfig {
 	});
 }
 
-function createToolPortalConfig(): ManagedToolPortalConfig {
-	return managedToolPortalConfigSchema.parse({
+function createToolPortalConfig(): EffectiveManagedToolPortalConfig {
+	return effectiveManagedToolPortalConfigSchema.parse({
 		agents: { builder: { profile: 'builder-profile' } },
 		mode: 'managed',
 		profiles: {
 			'builder-profile': {
 				namespaces: {
 					sandbox: {
+						discovery: {},
 						backend: {
 							kind: 'tool_vm_runner',
 							operations: {
@@ -70,14 +71,14 @@ function createToolPortalConfig(): ManagedToolPortalConfig {
 
 function deriveFixtureSnapshot(props: {
 	readonly mcpConfig: McpConfig;
-	readonly toolPortalConfig: ManagedToolPortalConfig;
+	readonly toolPortalConfig: EffectiveManagedToolPortalConfig;
 }): GatewayRuntimePortalSemanticSnapshot {
 	return deriveGatewayRuntimePortalSemanticSnapshot({
 		agentProjections: [
 			{
 				agentId: 'builder',
 				frameworkIdentity: { agentId: 'builder', kind: 'openclaw' },
-				toolPortalNamespaceNames: ['sandbox'],
+				toolPortalNamespaces: [{ namespace: 'sandbox' }],
 				toolPortalProfileId: 'builder-profile',
 			},
 		],
@@ -95,7 +96,7 @@ describe('Gateway Runtime portal semantic revision', () => {
 		const baselineInput: ManagedAgentProjectionInput = {
 			agentId: 'builder',
 			frameworkIdentity: { agentId: 'builder', kind: 'openclaw' as const },
-			toolPortalNamespaceNames: [],
+			toolPortalNamespaces: [],
 			toolPortalProfileId: 'builder-profile',
 		};
 		const baselineProjection = deriveManagedAgentProjection(baselineInput);
@@ -116,7 +117,7 @@ describe('Gateway Runtime portal semantic revision', () => {
 			'agentId',
 			'frameworkIdentity',
 			'profileAssignmentRevision',
-			'toolPortalNamespaceNames',
+			'toolPortalNamespaces',
 			'toolPortalProfileId',
 		]);
 		expectTypeOf<ManagedAgentProjectionInput>().not.toHaveProperty('selfRoot');
@@ -129,20 +130,26 @@ describe('Gateway Runtime portal semantic revision', () => {
 			agentId: 'builder',
 			frameworkIdentity: { agentId: 'builder', kind: 'openclaw' as const },
 			profileAssignmentRevision: 'profile-assignment-a',
-			toolPortalNamespaceNames: ['filesystem', 'github'],
+			toolPortalNamespaces: [{ namespace: 'filesystem' }, { namespace: 'github' }],
 			toolPortalProfileId: 'profile-a',
 		};
 
 		// Act / Assert
 		expect(ManagedAgentProjectionSchema.safeParse(validProjection).success).toBe(true);
 		for (const malformedProjection of [
-			{ ...validProjection, toolPortalNamespaceNames: ['filesystem', 'filesystem'] },
-			{ ...validProjection, toolPortalNamespaceNames: ['github', 'filesystem'] },
+			{
+				...validProjection,
+				toolPortalNamespaces: [{ namespace: 'filesystem' }, { namespace: 'filesystem' }],
+			},
+			{
+				...validProjection,
+				toolPortalNamespaces: [{ namespace: 'github' }, { namespace: 'filesystem' }],
+			},
 		]) {
 			expect(ManagedAgentProjectionSchema.safeParse(malformedProjection).success).toBe(false);
 			expect(() => deriveManagedAgentProjection(malformedProjection)).toThrow('must be');
 		}
-		const { toolPortalNamespaceNames: _names, ...missingNamesProjection } = validProjection;
+		const { toolPortalNamespaces: _names, ...missingNamesProjection } = validProjection;
 		expect(ManagedAgentProjectionSchema.safeParse(missingNamesProjection).success).toBe(false);
 	});
 
@@ -153,7 +160,10 @@ describe('Gateway Runtime portal semantic revision', () => {
 		const validProjection: ManagedAgentProjectionInput = {
 			agentId: 'builder',
 			frameworkIdentity: { agentId: 'builder', kind: 'openclaw' },
-			toolPortalNamespaceNames: [privateUseNamespace, supplementaryNamespace],
+			toolPortalNamespaces: [
+				{ namespace: privateUseNamespace },
+				{ namespace: supplementaryNamespace },
+			],
 			toolPortalProfileId: 'builder-profile',
 		};
 
@@ -161,14 +171,17 @@ describe('Gateway Runtime portal semantic revision', () => {
 		const derivedProjection = deriveManagedAgentProjection(validProjection);
 
 		// Assert
-		expect(derivedProjection.toolPortalNamespaceNames).toEqual([
-			privateUseNamespace,
-			supplementaryNamespace,
+		expect(derivedProjection.toolPortalNamespaces).toEqual([
+			{ namespace: privateUseNamespace },
+			{ namespace: supplementaryNamespace },
 		]);
 		expect(() =>
 			deriveManagedAgentProjection({
 				...validProjection,
-				toolPortalNamespaceNames: [supplementaryNamespace, privateUseNamespace],
+				toolPortalNamespaces: [
+					{ namespace: supplementaryNamespace },
+					{ namespace: privateUseNamespace },
+				],
 			}),
 		).toThrow('must be sorted');
 	});
@@ -176,29 +189,29 @@ describe('Gateway Runtime portal semantic revision', () => {
 	it('includes admitted namespace names in assignment and cohort revisions', () => {
 		// Arrange
 		const mcpConfig = createMcpConfig();
-		const toolPortalConfig = managedToolPortalConfigSchema.parse({
+		const toolPortalConfig = effectiveManagedToolPortalConfigSchema.parse({
 			...createToolPortalConfig(),
 			agents: { builder: { profile: 'builder-profile' } },
 		});
 		const baselineProjection = {
 			agentId: 'builder',
 			frameworkIdentity: { agentId: 'builder', kind: 'openclaw' as const },
-			toolPortalNamespaceNames: ['sandbox'],
+			toolPortalNamespaces: [{ namespace: 'sandbox' }],
 			toolPortalProfileId: 'builder-profile',
 		};
 		const derive = (
-			toolPortalNamespaceNames: readonly string[],
+			toolPortalNamespaces: ManagedAgentProjectionInput['toolPortalNamespaces'],
 			surfaceEligibilityByProfile: GatewayRuntimePortalSemanticSnapshot['surfaceEligibilityByProfile'],
 		): GatewayRuntimePortalSemanticSnapshot =>
 			deriveGatewayRuntimePortalSemanticSnapshot({
-				agentProjections: [{ ...baselineProjection, toolPortalNamespaceNames }],
+				agentProjections: [{ ...baselineProjection, toolPortalNamespaces }],
 				mcpConfig,
 				surfaceEligibilityByProfile,
 				toolPortalConfig,
 			});
 
 		// Act
-		const baseline = derive(['sandbox'], {
+		const baseline = derive([{ namespace: 'sandbox' }], {
 			'builder-profile': { sandbox: ['protected_uds'] },
 		});
 		const changed = derive([], { 'builder-profile': {} });
@@ -227,7 +240,7 @@ describe('Gateway Runtime portal semantic revision', () => {
 					{
 						agentId: 'builder',
 						frameworkIdentity: { agentId: 'builder', kind: 'openclaw' },
-						toolPortalNamespaceNames: [],
+						toolPortalNamespaces: [],
 						toolPortalProfileId: 'builder-profile',
 					},
 				],
@@ -248,7 +261,7 @@ describe('Gateway Runtime portal semantic revision', () => {
 		const stableInput: ManagedAgentProjectionInput = {
 			agentId: 'builder',
 			frameworkIdentity: { agentId: 'builder', kind: 'openclaw' },
-			toolPortalNamespaceNames: [],
+			toolPortalNamespaces: [],
 			toolPortalProfileId: 'builder-profile',
 		};
 		const legacyPathInput = { ...stableInput, [field]: value };
@@ -260,7 +273,7 @@ describe('Gateway Runtime portal semantic revision', () => {
 	it('derives one deterministic cohort digest from the exact sorted complete projection set', () => {
 		// Arrange
 		const mcpConfig = createMcpConfig();
-		const toolPortalConfig = managedToolPortalConfigSchema.parse({
+		const toolPortalConfig = effectiveManagedToolPortalConfigSchema.parse({
 			...createToolPortalConfig(),
 			agents: {
 				builder: { profile: 'builder-profile' },
@@ -271,13 +284,13 @@ describe('Gateway Runtime portal semantic revision', () => {
 			{
 				agentId: 'builder',
 				frameworkIdentity: { kind: 'hermes' as const, profileName: 'builder' },
-				toolPortalNamespaceNames: ['sandbox'],
+				toolPortalNamespaces: [{ namespace: 'sandbox' }],
 				toolPortalProfileId: 'builder-profile',
 			},
 			{
 				agentId: 'reviewer',
 				frameworkIdentity: { kind: 'hermes' as const, profileName: 'reviewer' },
-				toolPortalNamespaceNames: ['sandbox'],
+				toolPortalNamespaces: [{ namespace: 'sandbox' }],
 				toolPortalProfileId: 'builder-profile',
 			},
 		];
@@ -318,7 +331,7 @@ describe('Gateway Runtime portal semantic revision', () => {
 	it('rejects duplicate identities, mixed framework kinds, and config set drift', () => {
 		// Arrange
 		const mcpConfig = createMcpConfig();
-		const toolPortalConfig = managedToolPortalConfigSchema.parse({
+		const toolPortalConfig = effectiveManagedToolPortalConfigSchema.parse({
 			...createToolPortalConfig(),
 			agents: {
 				builder: { profile: 'builder-profile' },
@@ -328,7 +341,7 @@ describe('Gateway Runtime portal semantic revision', () => {
 		const builderProjection: ManagedAgentProjectionInput = {
 			agentId: 'builder',
 			frameworkIdentity: { agentId: 'builder', kind: 'openclaw' as const },
-			toolPortalNamespaceNames: ['sandbox'],
+			toolPortalNamespaces: [{ namespace: 'sandbox' }],
 			toolPortalProfileId: 'builder-profile',
 		};
 		const derive = (

@@ -38,10 +38,10 @@ def _candidate_orientation(
     if total_count == 0:
         lines.append("- (none admitted)")
     else:
-        lines.extend(
-            f"- {encode_canonical_json(item.namespace)}: {item.status}"
-            for item in sorted_namespaces[:displayed_count]
-        )
+        for item in sorted_namespaces[:displayed_count]:
+            lines.append(f"- {encode_canonical_json(item.namespace)}: {item.status}")
+            if item.summary is not None:
+                lines.append(f"  summary: {encode_canonical_json(item.summary)}")
     if omitted_count > 0:
         lines.append(
             f"{omitted_count} namespace names omitted; use tool_portal_list "

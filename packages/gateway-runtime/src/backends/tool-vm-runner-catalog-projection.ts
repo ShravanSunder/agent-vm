@@ -1,12 +1,12 @@
 import type {
 	CapabilityDescriptor,
 	CapabilitySearchMatch,
+	PortalBackendDescribeResult,
+	PortalBackendListResult,
+	PortalBackendSearchResult,
 	PortalDescribeRequest,
-	PortalDescribeResult,
 	PortalListRequest,
-	PortalListResult,
 	PortalSearchRequest,
-	PortalSearchResult,
 } from '@agent-vm/agent-portal-sdk';
 
 import type {
@@ -37,8 +37,8 @@ function selectedCatalogEntries(props: {
 export function listToolVmRunnerCatalog(
 	request: PortalListRequest,
 	catalog: GatewayRuntimeToolVmRunnerProfileCapabilityCatalog,
-): PortalListResult {
-	const items = request.requests.map((requestItem): PortalListResult['items'][number] => {
+): PortalBackendListResult {
+	const items = request.requests.map((requestItem): PortalBackendListResult['items'][number] => {
 		const entries = selectedCatalogEntries({
 			catalog,
 			...(requestItem.namespaces === undefined ? {} : { namespaces: requestItem.namespaces }),
@@ -79,8 +79,8 @@ function searchMatchFromCatalogEntry(
 export function searchToolVmRunnerCatalog(
 	request: PortalSearchRequest,
 	catalog: GatewayRuntimeToolVmRunnerProfileCapabilityCatalog,
-): PortalSearchResult {
-	const items = request.requests.map((requestItem): PortalSearchResult['items'][number] => {
+): PortalBackendSearchResult {
+	const items = request.requests.map((requestItem): PortalBackendSearchResult['items'][number] => {
 		const normalizedQuery = requestItem.query?.trim().toLocaleLowerCase() ?? '';
 		const entries = selectedCatalogEntries({
 			catalog,
@@ -138,17 +138,19 @@ function descriptorForRequest(
 export function describeToolVmRunnerCatalog(
 	request: PortalDescribeRequest,
 	catalog: GatewayRuntimeToolVmRunnerProfileCapabilityCatalog,
-): PortalDescribeResult {
-	const items = request.requests.map((requestItem): PortalDescribeResult['items'][number] => ({
-		id: requestItem.id,
-		status: 'ok',
-		value: {
-			tools: selectedCatalogEntries({
-				catalog,
-				...(requestItem.refs === undefined ? {} : { refs: requestItem.refs }),
-				...(requestItem.tools === undefined ? {} : { tools: requestItem.tools }),
-			}).map((entry) => descriptorForRequest(entry.descriptor, requestItem)),
-		},
-	}));
+): PortalBackendDescribeResult {
+	const items = request.requests.map(
+		(requestItem): PortalBackendDescribeResult['items'][number] => ({
+			id: requestItem.id,
+			status: 'ok',
+			value: {
+				tools: selectedCatalogEntries({
+					catalog,
+					...(requestItem.refs === undefined ? {} : { refs: requestItem.refs }),
+					...(requestItem.tools === undefined ? {} : { tools: requestItem.tools }),
+				}).map((entry) => descriptorForRequest(entry.descriptor, requestItem)),
+			},
+		}),
+	);
 	return { items, ok: true };
 }

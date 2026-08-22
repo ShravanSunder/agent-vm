@@ -15,6 +15,7 @@ from agent_vm_hermes_adapter.managed_tool_portal.inventory import (
     InventoryProjection,
     InventoryRetryDisposition,
 )
+from agent_vm_hermes_adapter.managed_tool_portal.models import NamespaceDiscovery
 
 
 def _projection() -> CanonicalManagedAgentProjection:
@@ -23,7 +24,10 @@ def _projection() -> CanonicalManagedAgentProjection:
             "agentId": "researcher",
             "frameworkIdentity": {"kind": "hermes", "profileName": "researcher"},
             "profileAssignmentRevision": "revision-researcher",
-            "toolPortalNamespaceNames": ["filesystem", "github"],
+            "toolPortalNamespaces": [
+                {"namespace": "filesystem"},
+                {"namespace": "github", "summary": "Repository access."},
+            ],
             "toolPortalProfileId": "policy-researcher",
         }
     )
@@ -36,7 +40,10 @@ def _inventory_projection() -> InventoryProjection:
         agent_id="researcher",
         profile_name="researcher",
         tool_portal_profile_id="policy-researcher",
-        namespace_names=("filesystem", "github"),
+        namespaces=(
+            NamespaceDiscovery(namespace="filesystem"),
+            NamespaceDiscovery(namespace="github", summary="Repository access."),
+        ),
     )
 
 

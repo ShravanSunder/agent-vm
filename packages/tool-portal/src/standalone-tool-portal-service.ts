@@ -5,7 +5,10 @@ import {
 	PortalSearchRequestSchema,
 	type PortalCallRequest,
 } from '@agent-vm/agent-portal-sdk';
-import { toolPortalConfigSchema } from '@agent-vm/config-contracts';
+import {
+	compileToolPortalNamespaceDiscoveryByProfile,
+	toolPortalConfigSchema,
+} from '@agent-vm/config-contracts';
 
 import {
 	deriveStandaloneToolPortalApprovalBatchFingerprint,
@@ -128,7 +131,15 @@ function backendEntriesForInvocation(props: {
 			namespaces.add(namespace);
 		}
 	}
-	return [{ backend: props.backendPort, namespaces }];
+	return [
+		{
+			backend: props.backendPort,
+			namespaceDiscovery: (
+				props.semanticSnapshot.namespaceDiscoveryByProfile[props.profileId] ?? []
+			).filter((entry) => namespaces.has(entry.namespace)),
+			namespaces,
+		},
+	];
 }
 
 function approvalAdmissionItem(props: {
@@ -176,6 +187,16 @@ export function createStandaloneV1ToolPortalService(
 	const semanticSnapshot = deepFreeze(
 		ToolPortalStandaloneSemanticSnapshotSchema.parse(props.semanticSnapshot),
 	);
+	const namespaceDiscoveryByProfile = compileToolPortalNamespaceDiscoveryByProfile({
+		mcpConfig: props.mcpConfig,
+		toolPortalConfig: config,
+	});
+	if (
+		canonicalJson(semanticSnapshot.namespaceDiscoveryByProfile) !==
+		canonicalJson(namespaceDiscoveryByProfile)
+	) {
+		throw new Error('Standalone Tool Portal namespace discovery does not match startup config.');
+	}
 
 	function invocationState(options: ToolPortalStandaloneServiceInvocationOptions): {
 		readonly approvalToken?: string;

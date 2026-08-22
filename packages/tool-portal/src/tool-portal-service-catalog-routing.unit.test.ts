@@ -155,6 +155,63 @@ describe('ToolPortalCapabilityCore catalog routing', () => {
 		});
 	});
 
+	it('attaches one effective namespace-discovery projection only after backend list, search, and describe results return', async () => {
+		// Arrange
+		const fixture = createServiceFixture();
+		const expectedNamespaceDiscovery = [
+			{ namespace: 'controller_execution', summary: 'Controller-operated repository actions.' },
+			{ namespace: 'github', summary: 'GitHub repository tools.' },
+			{ namespace: 'sandbox', summary: 'Leased Tool VM operations.' },
+		];
+
+		// Act
+		const [listResult, searchResult, describeResult] = await Promise.all([
+			fixture.capabilityCore.list({ requests: [{ id: 'list', limit: 20 }] }, udsOptions()),
+			fixture.capabilityCore.search(
+				{ requests: [{ id: 'search', limit: 20, query: 'issue', schemaDetail: 'summary' }] },
+				udsOptions(),
+			),
+			fixture.capabilityCore.describe(
+				{
+					requests: [
+						{
+							id: 'describe',
+							includeJsonSchema: false,
+							includeRelated: false,
+							includeTypescriptHelper: false,
+							includeZod: false,
+						},
+					],
+				},
+				udsOptions(),
+			),
+		]);
+		const backendListResult = await fixture.mcpProvider.port.list(
+			{ requests: [{ id: 'backend-list', limit: 20 }] },
+			{ surfaceClass: 'protected_uds', trustedContext: udsOptions().origin.trustedContext },
+		);
+
+		// Assert
+		expect(listResult.items).toEqual([
+			expect.objectContaining({
+				value: expect.objectContaining({ namespaceDiscovery: expectedNamespaceDiscovery }),
+			}),
+		]);
+		// The recording backend exposes no tools, so these results represent no namespaces.
+		for (const result of [searchResult, describeResult]) {
+			expect(result.items).toEqual([
+				expect.objectContaining({ value: expect.objectContaining({ namespaceDiscovery: [] }) }),
+			]);
+		}
+		expect(backendListResult.items).toEqual([
+			expect.objectContaining({ value: { namespaces: ['github'], tools: [] } }),
+		]);
+		expect(backendListResult.items[0]).not.toHaveProperty('namespaceDiscovery');
+		expect(
+			backendListResult.items[0]?.status === 'ok' && backendListResult.items[0].value,
+		).not.toHaveProperty('namespaceDiscovery');
+	});
+
 	it('admits only namespace-intersecting search cohorts to each backend port', async () => {
 		// Arrange
 		const fixture = createServiceFixture();

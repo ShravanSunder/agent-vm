@@ -9,6 +9,7 @@ import {
 	effectiveControllerExecutionOperationSchema,
 } from './controller-configured-cli.js';
 import { loadJsonConfigFile } from './json-config-file.js';
+import { namespaceDiscoverySchema } from './mcp-config.js';
 import { secretValueSchema } from './secret-value.js';
 
 export const toolPortalToolSelectorSchema = z
@@ -175,13 +176,39 @@ export const toolPortalBackendBindingSchema = z.discriminatedUnion('kind', [
 export type ToolPortalBackendKind = z.infer<typeof toolPortalBackendKindSchema>;
 export type ToolPortalBackendBinding = z.infer<typeof toolPortalBackendBindingSchema>;
 
-export const toolPortalNamespacePolicySchema = z
+const toolPortalNamespacePolicyCommonShape = {
+	calls: toolPortalCallPolicySchema,
+	tools: toolPortalToolSelectorSchema,
+} as const;
+
+const toolPortalMcpNamespacePolicySchema = z
 	.object({
-		backend: toolPortalBackendBindingSchema,
-		calls: toolPortalCallPolicySchema,
-		tools: toolPortalToolSelectorSchema,
+		...toolPortalNamespacePolicyCommonShape,
+		backend: z.object({ kind: z.literal('mcp_provider') }).strict(),
 	})
 	.strict();
+
+const toolPortalControllerExecutionNamespacePolicySchema = z
+	.object({
+		...toolPortalNamespacePolicyCommonShape,
+		backend: toolPortalControllerExecutionBackendBindingSchema,
+		discovery: namespaceDiscoverySchema.default({}),
+	})
+	.strict();
+
+const toolPortalSandboxSshNamespacePolicySchema = z
+	.object({
+		...toolPortalNamespacePolicyCommonShape,
+		backend: toolPortalSandboxSshBackendBindingSchema,
+		discovery: namespaceDiscoverySchema.default({}),
+	})
+	.strict();
+
+export const toolPortalNamespacePolicySchema = z.union([
+	toolPortalMcpNamespacePolicySchema,
+	toolPortalControllerExecutionNamespacePolicySchema,
+	toolPortalSandboxSshNamespacePolicySchema,
+]);
 
 export type ToolPortalNamespacePolicy = z.infer<typeof toolPortalNamespacePolicySchema>;
 
@@ -331,6 +358,7 @@ const effectiveToolPortalNamespacePolicySchema = z
 	.object({
 		backend: effectiveToolPortalBackendBindingSchema,
 		calls: toolPortalCallPolicySchema,
+		discovery: namespaceDiscoverySchema,
 		tools: toolPortalToolSelectorSchema,
 	})
 	.strict();
@@ -394,6 +422,7 @@ const gatewayRuntimeToolPortalNamespacePolicySchema = z
 	.object({
 		backend: gatewayRuntimeToolPortalBackendBindingSchema,
 		calls: toolPortalCallPolicySchema,
+		discovery: namespaceDiscoverySchema,
 		tools: toolPortalToolSelectorSchema,
 	})
 	.strict();
@@ -417,49 +446,66 @@ export type GatewayRuntimeManagedToolPortalConfig = z.infer<
 	typeof gatewayRuntimeManagedToolPortalConfigSchema
 >;
 
+function recordEntries<TValue>(
+	record: Readonly<Record<string, TValue>>,
+): readonly (readonly [string, TValue])[] {
+	return Object.entries(record);
+}
+
+type GatewayRuntimeConfigSourceProfile =
+	| EffectiveManagedToolPortalConfig['profiles'][string]
+	| ManagedToolPortalConfig['profiles'][string];
+type GatewayRuntimeConfigSourceNamespacePolicy =
+	GatewayRuntimeConfigSourceProfile['namespaces'][string];
+
 export function createGatewayRuntimeManagedToolPortalConfig(
-	config: ManagedToolPortalConfig,
+	config: EffectiveManagedToolPortalConfig | ManagedToolPortalConfig,
 ): GatewayRuntimeManagedToolPortalConfig {
 	return gatewayRuntimeManagedToolPortalConfigSchema.parse({
 		agents: config.agents,
 		mode: 'managed',
 		profiles: Object.fromEntries(
-			Object.entries(config.profiles).map(([profileId, profile]) => [
-				profileId,
-				{
-					namespaces: Object.fromEntries(
-						Object.entries(profile.namespaces).map(([namespaceId, namespacePolicy]) => [
-							namespaceId,
-							{
-								...namespacePolicy,
-								backend:
-									namespacePolicy.backend.kind !== 'controller_execution'
-										? namespacePolicy.backend
-										: {
-												kind: 'controller_execution',
-												operations: Object.fromEntries(
-													Object.entries(namespacePolicy.backend.operations).map(
-														([operationName, operation]) => [
-															operationName,
-															operation.kind === 'registered_action'
-																? operation
-																: {
-																		commands: operation.commands,
-																		deniedPatterns: operation.deniedPatterns,
-																		kind: operation.kind,
-																		safeHelp: operation.safeHelp,
-																		targetKind: operation.executionTarget.kind,
-																		timeout: operation.timeout,
-																	},
-														],
-													),
-												),
-											},
-							},
-						]),
-					),
-				},
-			]),
+			recordEntries<GatewayRuntimeConfigSourceProfile>(config.profiles).map(
+				([profileId, profile]) => [
+					profileId,
+					{
+						namespaces: Object.fromEntries(
+							recordEntries<GatewayRuntimeConfigSourceNamespacePolicy>(profile.namespaces).map(
+								([namespaceId, namespacePolicy]) => [
+									namespaceId,
+									{
+										...namespacePolicy,
+										discovery: 'discovery' in namespacePolicy ? namespacePolicy.discovery : {},
+										backend:
+											namespacePolicy.backend.kind !== 'controller_execution'
+												? namespacePolicy.backend
+												: {
+														kind: 'controller_execution',
+														operations: Object.fromEntries(
+															recordEntries(namespacePolicy.backend.operations).map(
+																([operationName, operation]) => [
+																	operationName,
+																	operation.kind === 'registered_action'
+																		? operation
+																		: {
+																				commands: operation.commands,
+																				deniedPatterns: operation.deniedPatterns,
+																				kind: operation.kind,
+																				safeHelp: operation.safeHelp,
+																				targetKind: operation.executionTarget.kind,
+																				timeout: operation.timeout,
+																			},
+																],
+															),
+														),
+													},
+									},
+								],
+							),
+						),
+					},
+				],
+			),
 		),
 		schemaVersion: 1,
 	});
@@ -645,7 +691,10 @@ export type ToolPortalControllerExecutionProjection = z.infer<
 
 export interface CreateToolPortalMcpProjectionProps {
 	readonly agentId: string;
-	readonly config: GatewayRuntimeManagedToolPortalConfig | ToolPortalConfig;
+	readonly config:
+		| EffectiveManagedToolPortalConfig
+		| GatewayRuntimeManagedToolPortalConfig
+		| ToolPortalConfig;
 }
 
 export function createToolPortalMcpProjection(
@@ -684,7 +733,10 @@ export function createToolPortalMcpProjection(
 
 export interface CreateToolPortalControllerExecutionProjectionProps {
 	readonly agentId: string;
-	readonly config: GatewayRuntimeManagedToolPortalConfig | ToolPortalConfig;
+	readonly config:
+		| EffectiveManagedToolPortalConfig
+		| GatewayRuntimeManagedToolPortalConfig
+		| ToolPortalConfig;
 }
 
 export function createToolPortalControllerExecutionProjection(

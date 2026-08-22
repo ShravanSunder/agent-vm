@@ -46,7 +46,7 @@ function createToolPortalPluginConfig(): {
 					readonly kind: 'openclaw';
 				};
 				readonly profileAssignmentRevision: string;
-				readonly toolPortalNamespaceNames: readonly string[];
+				readonly toolPortalNamespaces: readonly string[];
 				readonly toolPortalProfileId: string;
 			}
 		>
@@ -69,7 +69,7 @@ function createToolPortalPluginConfig(): {
 				agentId: 'shravan',
 				frameworkIdentity: { agentId: 'shravan', kind: 'openclaw' },
 				profileAssignmentRevision: 'profile-revision-a',
-				toolPortalNamespaceNames: [],
+				toolPortalNamespaces: [],
 				toolPortalProfileId: 'profile-a',
 			},
 		},
@@ -152,12 +152,12 @@ describe('createAgentVmPlugin', () => {
 			typeof agentProjectionsSchema?.additionalProperties === 'object'
 				? agentProjectionsSchema.additionalProperties
 				: undefined;
-		expect(projectionSchema?.properties?.toolPortalNamespaceNames).toMatchObject({
+		expect(projectionSchema?.properties?.toolPortalNamespaces).toMatchObject({
 			items: { minLength: 1, type: 'string' },
 			type: 'array',
 			uniqueItems: true,
 		});
-		expect(projectionSchema?.required).toContain('toolPortalNamespaceNames');
+		expect(projectionSchema?.required).toContain('toolPortalNamespaces');
 		expect(manifest.configSchema?.properties).not.toHaveProperty('controlSession');
 	});
 

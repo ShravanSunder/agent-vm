@@ -56,6 +56,66 @@ class ManagedToolPortalOrientationRendererTests(unittest.TestCase):
         self.assertLessEqual(first_render.utf8_byte_count, 2_000)
         self.assertEqual(first_render.omitted_count, 0)
 
+    def test_renders_optional_summary_for_available_and_unavailable_namespaces(self) -> None:
+        rendered = _require_rendered(
+            render_orientation(
+                NamespaceInventory(
+                    inventory_id="inventory-a",
+                    namespaces=(
+                        NamespaceAvailability(
+                            namespace="filesystem",
+                            status="available",
+                            summary="Read and write project files.",
+                        ),
+                        NamespaceAvailability(
+                            namespace="github",
+                            status="unavailable",
+                            summary="Repository pull requests.",
+                        ),
+                        NamespaceAvailability(namespace="linear", status="available"),
+                    ),
+                )
+            )
+        )
+
+        self.assertIn(
+            '- "filesystem": available\n  summary: "Read and write project files."',
+            rendered.orientation,
+        )
+        self.assertIn(
+            '- "github": unavailable\n  summary: "Repository pull requests."',
+            rendered.orientation,
+        )
+        self.assertIn('- "linear": available', rendered.orientation)
+        self.assertNotIn('summary: "None"', rendered.orientation)
+
+    def test_summary_uses_canonical_single_line_json_encoding(self) -> None:
+        summary = 'line one\nline two\r"quotes"\\slash\u0001😀'
+        rendered = _require_rendered(
+            render_orientation(
+                NamespaceInventory(
+                    inventory_id="inventory-a",
+                    namespaces=(
+                        NamespaceAvailability(
+                            namespace="deepwiki",
+                            status="available",
+                            summary=summary,
+                        ),
+                    ),
+                )
+            )
+        )
+
+        summary_line = next(
+            line for line in rendered.orientation.splitlines() if line.startswith("  summary: ")
+        )
+        self.assertEqual(
+            summary_line,
+            '  summary: "line one\\nline two\\r\\"quotes\\"\\\\slash\\u0001😀"',
+        )
+        self.assertNotIn("\nline two", summary_line)
+        self.assertNotIn("\r", summary_line)
+
     def test_zero_names_are_explicitly_rendered_without_fabricated_namespace(self) -> None:
         rendered = _require_rendered(render_orientation(_inventory()))
 
@@ -97,6 +157,29 @@ class ManagedToolPortalOrientationRendererTests(unittest.TestCase):
         self.assertIn(
             f"{rendered.omitted_count} namespace names omitted; use tool_portal_list "
             "or tool_portal_search to discover them.",
+            rendered.orientation,
+        )
+
+    def test_byte_budget_never_emits_a_namespace_without_its_summary(self) -> None:
+        inventory = NamespaceInventory(
+            inventory_id="inventory-a",
+            namespaces=tuple(
+                NamespaceAvailability(
+                    namespace=f"namespace-{index:02d}",
+                    status="available",
+                    summary="x" * 400,
+                )
+                for index in range(8)
+            ),
+        )
+
+        rendered = _require_rendered(render_orientation(inventory))
+
+        self.assertGreater(rendered.displayed_count, 0)
+        self.assertLess(rendered.displayed_count, len(inventory.namespaces))
+        self.assertEqual(rendered.orientation.count("  summary: "), rendered.displayed_count)
+        self.assertNotIn(
+            f'"namespace-{rendered.displayed_count:02d}": available',
             rendered.orientation,
         )
 

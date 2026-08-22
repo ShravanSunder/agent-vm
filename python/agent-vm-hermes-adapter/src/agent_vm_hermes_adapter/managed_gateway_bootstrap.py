@@ -179,7 +179,7 @@ def _build_inventory_projection(
         agent_id=projection.agent_id,
         profile_name=_projection_profile_name(projection),
         tool_portal_profile_id=projection.tool_portal_profile_id,
-        namespace_names=projection.tool_portal_namespace_names,
+        namespaces=projection.tool_portal_namespaces,
     )
 
 

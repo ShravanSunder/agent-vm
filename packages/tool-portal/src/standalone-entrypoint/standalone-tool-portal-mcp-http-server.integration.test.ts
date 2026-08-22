@@ -320,7 +320,7 @@ function createServiceFixture(
 						items: request.requests.map(({ id }) => ({
 							id,
 							status: 'ok' as const,
-							value: { tools: [] },
+							value: { namespaceDiscovery: [], tools: [] },
 						})),
 						ok: true,
 					};
@@ -338,7 +338,7 @@ function createServiceFixture(
 						items: request.requests.map(({ id }) => ({
 							id,
 							status: 'ok' as const,
-							value: { namespaces: ['github'], tools: [] },
+							value: { namespaceDiscovery: [], namespaces: ['github'], tools: [] },
 						})),
 						ok: true,
 					};
@@ -354,7 +354,7 @@ function createServiceFixture(
 						items: request.requests.map(({ id }) => ({
 							id,
 							status: 'ok' as const,
-							value: { tools: [] },
+							value: { namespaceDiscovery: [], tools: [] },
 						})),
 						ok: true,
 					};

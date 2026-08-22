@@ -105,6 +105,40 @@ const validSandboxRunnerBackend = {
 } as const;
 
 describe('tool portal config contract', () => {
+	it('accepts discovery summaries only on non-MCP managed namespaces', () => {
+		const nonMcpConfig = {
+			...validManagedToolPortalConfig,
+			profiles: {
+				'code-builder': {
+					namespaces: {
+						...validManagedToolPortalConfig.profiles['code-builder'].namespaces,
+						local: {
+							...validManagedToolPortalConfig.profiles['code-builder'].namespaces.local,
+							discovery: { summary: 'Controller-owned workspace operations.' },
+						},
+					},
+				},
+			},
+		};
+		const duplicateMcpSource = {
+			...validManagedToolPortalConfig,
+			profiles: {
+				'code-builder': {
+					namespaces: {
+						...validManagedToolPortalConfig.profiles['code-builder'].namespaces,
+						github: {
+							...validManagedToolPortalConfig.profiles['code-builder'].namespaces.github,
+							discovery: { summary: 'Duplicate MCP summary.' },
+						},
+					},
+				},
+			},
+		};
+
+		expect(toolPortalConfigSchema.safeParse(nonMcpConfig).success).toBe(true);
+		expect(toolPortalConfigSchema.safeParse(duplicateMcpSource).success).toBe(false);
+	});
+
 	it('parses strict managed and standalone branches', () => {
 		expect(toolPortalConfigSchema.parse(validManagedToolPortalConfig)).toMatchObject({
 			agents: { 'agent-a': { profile: 'code-builder' } },

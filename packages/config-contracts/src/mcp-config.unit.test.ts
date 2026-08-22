@@ -14,6 +14,38 @@ async function writeConfigFile(text: string): Promise<string> {
 }
 
 describe('loadMcpConfig', () => {
+	it('bounds the optional namespace discovery summary', async () => {
+		const validConfigPath = await writeConfigFile(`{
+			"schemaVersion": 1,
+			"providers": {
+				"linear-production": {
+					"kind": "mcp",
+					"namespace": "linear",
+					"discovery": { "summary": "${'s'.repeat(500)}" },
+					"transport": { "kind": "streamable-http", "url": "https://mcp.linear.test/mcp" }
+				}
+			}
+		}`);
+		const overBoundConfigPath = await writeConfigFile(`{
+			"schemaVersion": 1,
+			"providers": {
+				"linear-production": {
+					"kind": "mcp",
+					"namespace": "linear",
+					"discovery": { "summary": "${'s'.repeat(501)}" },
+					"transport": { "kind": "streamable-http", "url": "https://mcp.linear.test/mcp" }
+				}
+			}
+		}`);
+
+		expect(
+			(await loadMcpConfig(validConfigPath)).providers['linear-production']?.discovery,
+		).toEqual({
+			summary: 's'.repeat(500),
+		});
+		await expect(loadMcpConfig(overBoundConfigPath)).rejects.toThrow();
+	});
+
 	it('loads strict upstream MCP provider config from JSONC', async () => {
 		const configPath = await writeConfigFile(`{
 			"schemaVersion": 1,

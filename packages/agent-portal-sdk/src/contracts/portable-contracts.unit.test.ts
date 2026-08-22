@@ -248,7 +248,10 @@ describe('canonical Agent Portal contracts', () => {
 			agentId: 'agent-a',
 			frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
 			profileAssignmentRevision: 'profile-assignment-a',
-			toolPortalNamespaceNames: ['filesystem', 'github'],
+			toolPortalNamespaces: [
+				{ namespace: 'filesystem', summary: 'Workspace files.' },
+				{ namespace: 'github' },
+			],
 			toolPortalProfileId: 'profile-a',
 		} as const;
 		const hermesProjection = {
@@ -293,7 +296,7 @@ describe('canonical Agent Portal contracts', () => {
 			agentId: 'agent-a',
 			frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
 			profileAssignmentRevision: 'profile-assignment-a',
-			toolPortalNamespaceNames: [longNamespaceName],
+			toolPortalNamespaces: [{ namespace: longNamespaceName }],
 			toolPortalProfileId: 'profile-a',
 		} as const;
 
@@ -309,7 +312,10 @@ describe('canonical Agent Portal contracts', () => {
 			agentId: 'agent-a',
 			frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' as const },
 			profileAssignmentRevision: 'profile-assignment-a',
-			toolPortalNamespaceNames: [privateUseNamespace, supplementaryNamespace],
+			toolPortalNamespaces: [
+				{ namespace: privateUseNamespace },
+				{ namespace: supplementaryNamespace },
+			],
 			toolPortalProfileId: 'profile-a',
 		};
 
@@ -317,7 +323,10 @@ describe('canonical Agent Portal contracts', () => {
 		const acceptedResult = ManagedAgentProjectionSchema.safeParse(projection);
 		const reverseResult = ManagedAgentProjectionSchema.safeParse({
 			...projection,
-			toolPortalNamespaceNames: [supplementaryNamespace, privateUseNamespace],
+			toolPortalNamespaces: [
+				{ namespace: supplementaryNamespace },
+				{ namespace: privateUseNamespace },
+			],
 		});
 
 		// Assert

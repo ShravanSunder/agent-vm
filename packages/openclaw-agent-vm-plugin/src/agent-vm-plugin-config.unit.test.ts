@@ -24,7 +24,7 @@ function createToolPortalConfig(): {
 					readonly kind: 'openclaw';
 				};
 				readonly profileAssignmentRevision: string;
-				readonly toolPortalNamespaceNames: readonly string[];
+				readonly toolPortalNamespaces: readonly string[];
 				readonly toolPortalProfileId: string;
 			}
 		>
@@ -36,14 +36,14 @@ function createToolPortalConfig(): {
 				agentId: 'agent-a',
 				frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
 				profileAssignmentRevision: 'profile-revision-a',
-				toolPortalNamespaceNames: ['filesystem', 'github'],
+				toolPortalNamespaces: ['filesystem', 'github'],
 				toolPortalProfileId: 'profile-a',
 			},
 			'agent-b': {
 				agentId: 'agent-b',
 				frameworkIdentity: { agentId: 'agent-b', kind: 'openclaw' },
 				profileAssignmentRevision: 'profile-revision-b',
-				toolPortalNamespaceNames: ['filesystem', 'github'],
+				toolPortalNamespaces: ['filesystem', 'github'],
 				toolPortalProfileId: 'profile-b',
 			},
 		},
@@ -157,7 +157,7 @@ describe('resolveAgentVmPluginConfig', () => {
 							agentId: 'agent-c',
 							frameworkIdentity: { agentId: 'agent-c', kind: 'openclaw' },
 							profileAssignmentRevision: 'profile-revision-c',
-							toolPortalNamespaceNames: ['filesystem', 'github'],
+							toolPortalNamespaces: ['filesystem', 'github'],
 							toolPortalProfileId: 'profile-c',
 						},
 					},

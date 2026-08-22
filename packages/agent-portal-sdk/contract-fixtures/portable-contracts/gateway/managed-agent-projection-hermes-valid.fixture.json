@@ -9,7 +9,7 @@
 			"profileName": "reviewer"
 		},
 		"profileAssignmentRevision": "profile-assignment-b",
-		"toolPortalNamespaceNames": ["filesystem"],
+		"toolPortalNamespaces": [{ "namespace": "filesystem" }],
 		"toolPortalProfileId": "review"
 	},
 	"expectation": {
@@ -21,10 +21,10 @@
 				"profileName": "reviewer"
 			},
 			"profileAssignmentRevision": "profile-assignment-b",
-			"toolPortalNamespaceNames": ["filesystem"],
+			"toolPortalNamespaces": [{ "namespace": "filesystem" }],
 			"toolPortalProfileId": "review"
 		},
-		"canonicalJson": "{\"agentId\":\"agent-b\",\"frameworkIdentity\":{\"kind\":\"hermes\",\"profileName\":\"reviewer\"},\"profileAssignmentRevision\":\"profile-assignment-b\",\"toolPortalNamespaceNames\":[\"filesystem\"],\"toolPortalProfileId\":\"review\"}",
-		"refinementIdentities": ["gateway.managed-agent-projection.namespace-names"]
+		"canonicalJson": "{\"agentId\":\"agent-b\",\"frameworkIdentity\":{\"kind\":\"hermes\",\"profileName\":\"reviewer\"},\"profileAssignmentRevision\":\"profile-assignment-b\",\"toolPortalNamespaces\":[{\"namespace\":\"filesystem\"}],\"toolPortalProfileId\":\"review\"}",
+		"refinementIdentities": ["gateway.managed-agent-projection.namespaces"]
 	}
 }

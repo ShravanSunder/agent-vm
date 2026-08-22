@@ -43,6 +43,10 @@ const discordSecretEnvironmentName = 'DISCORD_BOT_TOKEN_MAIN';
 const availableUpstreamHost = 'orientation-available-mcp.vm.host';
 const unavailableUpstreamHost = 'orientation-unavailable-mcp.vm.host';
 const unavailableNamespace = 'orientation-unavailable';
+const controllerExecutionNamespace = 'controller_execution';
+const availableNamespaceSummary = 'Available orientation E2E upstream';
+const unavailableNamespaceSummary = 'Unavailable orientation E2E upstream';
+const controllerExecutionSummary = 'Controller-owned orientation E2E operations';
 const modelHost = 'orientation-model.provider.test';
 const modelName = 'hermes-orientation-e2e';
 const sessionId = 'hermes-orientation-session';
@@ -366,13 +370,13 @@ async function writeToolPortalConfiguration(options: {
 					$schema: '../../schemas/mcp.schema.json',
 					providers: {
 						available: {
-							discovery: { summary: 'Available orientation E2E upstream' },
+							discovery: { summary: availableNamespaceSummary },
 							kind: 'mcp',
 							namespace: fakeUpstreamNamespace,
 							transport: { kind: 'streamable-http', url: options.availableUpstreamUrl },
 						},
 						unavailable: {
-							discovery: { summary: 'Unavailable orientation E2E upstream' },
+							discovery: { summary: unavailableNamespaceSummary },
 							kind: 'mcp',
 							namespace: unavailableNamespace,
 							transport: { kind: 'streamable-http', url: options.unavailableUpstreamUrl },
@@ -395,6 +399,20 @@ async function writeToolPortalConfiguration(options: {
 					profiles: {
 						[agentId]: {
 							namespaces: {
+								[controllerExecutionNamespace]: {
+									backend: {
+										kind: 'controller_execution',
+										operations: {
+											controller_host_probe: { kind: 'registered_action' },
+										},
+									},
+									calls: {
+										requiresApproval: { allow: [] },
+										withoutApproval: { allow: ['controller_host_probe'] },
+									},
+									discovery: { summary: controllerExecutionSummary },
+									tools: { allow: ['controller_host_probe'] },
+								},
 								[fakeUpstreamNamespace]: {
 									backend: { kind: 'mcp_provider' },
 									calls: {
@@ -550,6 +568,7 @@ describeHermesToolPortalOrientationE2e('e2e: Hermes Tool Portal session orientat
 			configDir: toolPortalConfigDirectory,
 			surfaceEligibilityByProfile: {
 				[agentId]: {
+					[controllerExecutionNamespace]: ['protected_uds'],
 					[fakeUpstreamNamespace]: ['mcp', 'protected_uds'],
 					[unavailableNamespace]: ['mcp', 'protected_uds'],
 				},
@@ -642,6 +661,12 @@ describeHermesToolPortalOrientationE2e('e2e: Hermes Tool Portal session orientat
 			);
 		}
 		expect(orientedUserContent).toContain(`"${unavailableNamespace}": unavailable`);
+		expect(orientedUserContent).toContain(`"${controllerExecutionNamespace}": available`);
+		expect(orientedUserContent).toContain(`summary: ${JSON.stringify(availableNamespaceSummary)}`);
+		expect(orientedUserContent).toContain(
+			`summary: ${JSON.stringify(unavailableNamespaceSummary)}`,
+		);
+		expect(orientedUserContent).toContain(`summary: ${JSON.stringify(controllerExecutionSummary)}`);
 
 		if (gatewayVm === undefined) throw new Error('Hermes orientation E2E did not capture its VM.');
 

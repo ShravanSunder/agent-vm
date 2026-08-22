@@ -1,12 +1,15 @@
 import {
 	PortalCallRequestSchema,
 	PortalCallResultSchema,
+	type PortalBackendDescribeResult,
+	PortalBackendDescribeResultSchema,
+	type PortalBackendListResult,
+	PortalBackendListResultSchema,
+	type PortalBackendSearchResult,
+	PortalBackendSearchResultSchema,
 	PortalDescribeRequestSchema,
-	PortalDescribeResultSchema,
 	PortalListRequestSchema,
-	PortalListResultSchema,
 	PortalSearchRequestSchema,
-	PortalSearchResultSchema,
 	type CapabilityDescriptor,
 	type CapabilitySearchMatch,
 	type CapabilitySummary,
@@ -14,10 +17,7 @@ import {
 	type JsonValue,
 	type PortalCallRequest,
 	type PortalCallResult,
-	type PortalDescribeResult,
 	type PortalError,
-	type PortalListResult,
-	type PortalSearchResult,
 	type SafeDiagnostic,
 } from '@agent-vm/agent-portal-sdk';
 import type {
@@ -486,9 +486,9 @@ export function createControllerExecutionBackendPort(
 				ok: items.every((item) => item.status === 'ok'),
 			});
 		},
-		async describe(request): Promise<PortalDescribeResult> {
+		async describe(request): Promise<PortalBackendDescribeResult> {
 			const parsedRequest = PortalDescribeRequestSchema.parse(request);
-			return PortalDescribeResultSchema.parse({
+			return PortalBackendDescribeResultSchema.parse({
 				items: parsedRequest.requests.map((itemRequest) => ({
 					id: itemRequest.id,
 					status: 'ok',
@@ -515,9 +515,9 @@ export function createControllerExecutionBackendPort(
 				ok: true,
 			});
 		},
-		async list(request): Promise<PortalListResult> {
+		async list(request): Promise<PortalBackendListResult> {
 			const parsedRequest = PortalListRequestSchema.parse(request);
-			return PortalListResultSchema.parse({
+			return PortalBackendListResultSchema.parse({
 				items: parsedRequest.requests.map((itemRequest) => {
 					const selectedActions = catalog.actions.filter((action) =>
 						capabilitySelected({
@@ -542,9 +542,9 @@ export function createControllerExecutionBackendPort(
 				ok: true,
 			});
 		},
-		async search(request): Promise<PortalSearchResult> {
+		async search(request): Promise<PortalBackendSearchResult> {
 			const parsedRequest = PortalSearchRequestSchema.parse(request);
-			return PortalSearchResultSchema.parse({
+			return PortalBackendSearchResultSchema.parse({
 				items: parsedRequest.requests.map((itemRequest) => {
 					const normalizedQuery = itemRequest.query?.trim().toLocaleLowerCase() ?? '';
 					const tools = catalog.actions

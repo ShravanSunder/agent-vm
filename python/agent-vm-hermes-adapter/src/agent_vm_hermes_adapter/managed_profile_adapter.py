@@ -17,14 +17,14 @@ from pydantic import (
 )
 
 from .managed_gateway_runtime_client_loop import GatewayRuntimeClientLoop
+from .managed_tool_portal.models import NamespaceDiscovery
 
 _HERMES_PROFILE_NAME_PATTERN = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
 _PROJECTION_COHORT_DIGEST_PATTERN = re.compile(r"projection-cohort:[a-f0-9]{64}")
 _BOUNDED_IDENTIFIER_MAXIMUM_LENGTH = 256
-type ManagedToolPortalNamespaceName = Annotated[str, Field(min_length=1)]
 
 
-def _coerce_portable_namespace_names(value: object) -> object:
+def _coerce_portable_namespaces(value: object) -> object:
     if isinstance(value, list):
         return tuple(value)
     return value
@@ -80,29 +80,30 @@ class CanonicalManagedAgentProjection(BaseModel):
         min_length=1,
         max_length=_BOUNDED_IDENTIFIER_MAXIMUM_LENGTH,
     )
-    tool_portal_namespace_names: Annotated[
-        tuple[ManagedToolPortalNamespaceName, ...],
-        BeforeValidator(_coerce_portable_namespace_names),
-    ] = Field(alias="toolPortalNamespaceNames", min_length=0)
+    tool_portal_namespaces: Annotated[
+        tuple[NamespaceDiscovery, ...],
+        BeforeValidator(_coerce_portable_namespaces),
+    ] = Field(alias="toolPortalNamespaces", min_length=0)
     tool_portal_profile_id: str = Field(
         alias="toolPortalProfileId",
         min_length=1,
         max_length=_BOUNDED_IDENTIFIER_MAXIMUM_LENGTH,
     )
 
-    @field_validator("tool_portal_namespace_names")
+    @field_validator("tool_portal_namespaces")
     @classmethod
     def _validate_namespace_names(
         cls,
-        namespace_names: tuple[ManagedToolPortalNamespaceName, ...],
-    ) -> tuple[ManagedToolPortalNamespaceName, ...]:
+        namespaces: tuple[NamespaceDiscovery, ...],
+    ) -> tuple[NamespaceDiscovery, ...]:
+        namespace_names = tuple(item.namespace for item in namespaces)
         if len(namespace_names) != len(set(namespace_names)):
             message = "Managed Agent Projection Tool Portal namespace names must be unique."
             raise ValueError(message)
         if namespace_names != tuple(sorted(namespace_names)):
             message = "Managed Agent Projection Tool Portal namespace names must be sorted."
             raise ValueError(message)
-        return namespace_names
+        return namespaces
 
 
 class ManagedTrustedInvocationPrincipal(BaseModel):
@@ -185,7 +186,7 @@ class ManagedTrustedContext(BaseModel):
 
 def _validate_canonical_managed_projection(value: object) -> CanonicalManagedAgentProjection:
     portable_value = (
-        value.model_dump(by_alias=True, mode="json")
+        value.model_dump(by_alias=True, mode="json", exclude_none=True)
         if isinstance(value, CanonicalManagedAgentProjection)
         else value
     )

@@ -8,6 +8,9 @@ import {
 	PortalCallRequestSchema,
 	type PortalCallRequest,
 	type PortalCallResult,
+	type PortalBackendDescribeResult,
+	type PortalBackendListResult,
+	type PortalBackendSearchResult,
 	PortalDescribeRequestSchema,
 	type PortalDescribeRequest,
 	type PortalDescribeResult,
@@ -93,7 +96,7 @@ const semanticSnapshot = {
 			agentId: 'agent-a',
 			frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
 			profileAssignmentRevision: 'profile-assignment:agent-a:1',
-			toolPortalNamespaceNames: ['github', 'private_github'],
+			toolPortalNamespaces: [{ namespace: 'github' }, { namespace: 'private_github' }],
 			toolPortalProfileId: 'code-builder',
 		},
 	},
@@ -262,7 +265,7 @@ function createMatchedMcpProviderPort(
 				ok: true,
 			});
 		},
-		describe: (request, options): Promise<PortalDescribeResult> => {
+		describe: (request, options): Promise<PortalBackendDescribeResult> => {
 			const parsedRequest = PortalDescribeRequestSchema.parse(request);
 			invocations.push({ operation: 'describe', options, request: parsedRequest });
 			return Promise.resolve({
@@ -274,7 +277,7 @@ function createMatchedMcpProviderPort(
 				ok: true,
 			});
 		},
-		list: (request, options): Promise<PortalListResult> => {
+		list: (request, options): Promise<PortalBackendListResult> => {
 			const parsedRequest = PortalListRequestSchema.parse(request);
 			invocations.push({ operation: 'list', options, request: parsedRequest });
 			return Promise.resolve({
@@ -286,7 +289,7 @@ function createMatchedMcpProviderPort(
 				ok: true,
 			});
 		},
-		search: (request, options): Promise<PortalSearchResult> => {
+		search: (request, options): Promise<PortalBackendSearchResult> => {
 			const parsedRequest = PortalSearchRequestSchema.parse(request);
 			invocations.push({ operation: 'search', options, request: parsedRequest });
 			return Promise.resolve({

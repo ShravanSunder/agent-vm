@@ -539,6 +539,14 @@ sibling authored config files in `config/gateways/<zone>/`:
   cross-backend namespace policies, explicit backend bindings, and call/tool
   selectors.
 
+Namespace discovery uses one optional bounded field: `discovery.summary`.
+MCP-backed namespaces author it only at
+`mcp.config.jsonc.providers.<provider>.discovery.summary`; the provider record
+key may differ from its public `namespace`. A `controller_execution` or
+`tool_vm_runner` namespace may instead author `discovery.summary` on its Tool
+Portal namespace policy. MCP-backed Tool Portal policy rejects a duplicate
+`discovery` field rather than overriding or merging the provider value.
+
 Managed OpenClaw does not generate OpenClaw MCP server entries for MCP Portal.
 The `gondolin` plugin registers the four Tool Portal native tools directly and
 calls the Tool Portal service over the private UDS. Hermes uses the same service
@@ -586,12 +594,25 @@ fields are:
   the namespace to `mcp_provider`, `controller_execution`, or
   `tool_vm_runner`. Declaring a backend kind does not by itself prove that a
   later backend/runtime cutover is deployed.
+- `profiles.<name>.namespaces.<namespaceId>.discovery.summary` is an optional
+  1-500 character description for `controller_execution` and
+  `tool_vm_runner`. MCP-backed namespaces source the same metadata only from
+  the matching MCP provider.
 - Each namespace colocates `tools.allow`, `tools.deny`,
   `calls.withoutApproval`, and `calls.requiresApproval`. A visible tool outside
   both call selectors is blocked. The two call selectors must not overlap.
 - `calls.requiresApproval` is valid managed policy. The controller approval
   authority owns challenge, reservation, grant, and dispatch admission; managed
   policy does not use standalone HMAC keys as approval authority.
+
+Successful Tool Portal list, search, and describe items include a required
+`namespaceDiscovery` array for exactly the namespaces represented by that
+item. This metadata does not enter call requests, approval presentation,
+backend arguments, controller execution, or Tool VM SSH. Hermes also renders
+the effective name, availability, and optional summary once per session using
+its existing bounded orientation. `configured_cli.safeHelp` remains separate:
+it is the required per-operation capability description returned through Tool
+Portal discovery, not namespace prompt text.
 
 Any managed namespace that effectively admits at least one tool through
 `calls.requiresApproval` requires `zones[].approvalAccess`. Static validation

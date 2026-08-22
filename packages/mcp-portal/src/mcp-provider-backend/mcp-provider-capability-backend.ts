@@ -5,14 +5,14 @@ import {
 	type PortalCallResult,
 	PortalCallResultSchema,
 	PortalDescribeRequestSchema,
-	type PortalDescribeResult,
-	PortalDescribeResultSchema,
+	type PortalBackendDescribeResult,
+	PortalBackendDescribeResultSchema,
 	PortalListRequestSchema,
-	type PortalListResult,
-	PortalListResultSchema,
+	type PortalBackendListResult,
+	PortalBackendListResultSchema,
 	PortalSearchRequestSchema,
-	type PortalSearchResult,
-	PortalSearchResultSchema,
+	type PortalBackendSearchResult,
+	PortalBackendSearchResultSchema,
 	JsonValueSchema,
 	type PortalError,
 	type SafeDiagnostic,
@@ -59,15 +59,15 @@ export interface McpProviderCapabilityBackend {
 	readonly describe: (
 		request: unknown,
 		options?: McpProviderCapabilityBackendCallOptions,
-	) => Promise<PortalDescribeResult>;
+	) => Promise<PortalBackendDescribeResult>;
 	readonly list: (
 		request: unknown,
 		options?: McpProviderCapabilityBackendCallOptions,
-	) => Promise<PortalListResult>;
+	) => Promise<PortalBackendListResult>;
 	readonly search: (
 		request: unknown,
 		options?: McpProviderCapabilityBackendCallOptions,
-	) => Promise<PortalSearchResult>;
+	) => Promise<PortalBackendSearchResult>;
 }
 
 export interface CreateMcpProviderCapabilityBackendProps {
@@ -333,7 +333,7 @@ export function createMcpProviderCapabilityBackend(
 				}),
 			});
 		},
-		async describe(request, options): Promise<PortalDescribeResult> {
+		async describe(request, options): Promise<PortalBackendDescribeResult> {
 			const parsedRequest = PortalDescribeRequestSchema.parse(request);
 			const projectedRequest = {
 				requests: parsedRequest.requests.map((itemRequest) => {
@@ -370,9 +370,11 @@ export function createMcpProviderCapabilityBackend(
 				scope,
 				toolName: 'mcp_portal_describe',
 			});
-			return PortalDescribeResultSchema.parse(normalizeScalarBatchResult(coreResult, projection));
+			return PortalBackendDescribeResultSchema.parse(
+				normalizeScalarBatchResult(coreResult, projection),
+			);
 		},
-		async list(request, options): Promise<PortalListResult> {
+		async list(request, options): Promise<PortalBackendListResult> {
 			const parsedRequest = PortalListRequestSchema.parse(request);
 			const projectedBatch = projectNamespaceFilteredRequests({
 				emptyValue: { namespaces: [], tools: [] },
@@ -386,7 +388,7 @@ export function createMcpProviderCapabilityBackend(
 				scope,
 				toolName: 'mcp_portal_list',
 			});
-			return PortalListResultSchema.parse(
+			return PortalBackendListResultSchema.parse(
 				mergeScalarBatchResult({
 					coreResult,
 					preflightItems: projectedBatch.preflightItems,
@@ -395,7 +397,7 @@ export function createMcpProviderCapabilityBackend(
 				}),
 			);
 		},
-		async search(request, options): Promise<PortalSearchResult> {
+		async search(request, options): Promise<PortalBackendSearchResult> {
 			const parsedRequest = PortalSearchRequestSchema.parse(request);
 			const projectedBatch = projectNamespaceFilteredRequests({
 				emptyValue: { tools: [] },
@@ -409,7 +411,7 @@ export function createMcpProviderCapabilityBackend(
 				scope,
 				toolName: 'mcp_portal_search',
 			});
-			return PortalSearchResultSchema.parse(
+			return PortalBackendSearchResultSchema.parse(
 				mergeScalarBatchResult({
 					coreResult,
 					preflightItems: projectedBatch.preflightItems,

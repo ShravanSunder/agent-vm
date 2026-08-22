@@ -402,6 +402,19 @@ def _execute_refinements(  # noqa: PLR0912
             items = _require_mapping(normalized_value).get(t.cast("str", operation["path"]))
             if isinstance(items, list) and len(items) != len(set(t.cast("list[str]", items))):
                 raise _portable_error(error_code, "String items must be unique.")
+        elif operation_kind == "sorted-unique-object-field-items":
+            items = _require_mapping(normalized_value).get(t.cast("str", operation["path"]))
+            if isinstance(items, list):
+                field_name = t.cast("str", operation["fieldName"])
+                field_values = [
+                    item.get(field_name)
+                    for item in items
+                    if isinstance(item, dict)
+                ]
+                if len(field_values) == len(items) and all(isinstance(value, str) for value in field_values):
+                    string_field_values = t.cast("list[str]", field_values)
+                    if len(string_field_values) != len(set(string_field_values)) or string_field_values != sorted(string_field_values):
+                        raise _portable_error(error_code, "Object field items must be sorted and unique.")
         elif operation_kind == "sorted-unique-string-items":
             items = _require_mapping(normalized_value).get(t.cast("str", operation["path"]))
             if isinstance(items, list):

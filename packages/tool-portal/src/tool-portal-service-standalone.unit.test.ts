@@ -1,14 +1,16 @@
 import type {
 	PortalCallRequest,
 	PortalCallResult,
-	PortalDescribeResult,
+	PortalBackendDescribeResult,
+	PortalBackendListResult,
+	PortalBackendSearchResult,
 	PortalListRequest,
-	PortalListResult,
-	PortalSearchResult,
 } from '@agent-vm/agent-portal-sdk';
-import type {
-	StandaloneToolPortalConfig,
-	ToolPortalBackendBinding,
+import {
+	mcpConfigSchema,
+	standaloneToolPortalConfigSchema,
+	type McpConfig,
+	type StandaloneToolPortalConfig,
 } from '@agent-vm/config-contracts';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -78,6 +80,22 @@ const standaloneConfig = {
 	schemaVersion: 1,
 } satisfies StandaloneToolPortalConfig;
 
+const standaloneMcpConfig: McpConfig = mcpConfigSchema.parse({
+	providers: {
+		github: {
+			discovery: { summary: 'GitHub repository tools.' },
+			kind: 'mcp',
+			namespace: 'github',
+			transport: {
+				kind: 'streamable-http',
+				requiredEgressHosts: ['api.github.com'],
+				url: 'https://api.github.com/mcp',
+			},
+		},
+	},
+	schemaVersion: 1,
+});
+
 const standaloneSemanticSnapshot = {
 	activeRevision: 'semantic:12',
 	agentProjections: {
@@ -91,6 +109,9 @@ const standaloneSemanticSnapshot = {
 	bindingRevision: 'binding:9',
 	catalogRevision: 'catalog:12',
 	desiredRevision: 'semantic:12',
+	namespaceDiscoveryByProfile: {
+		'code-builder': [{ namespace: 'github', summary: 'GitHub repository tools.' }],
+	},
 	profilePolicyRevision: 'policy:7',
 	providerRevision: 'provider:5',
 	schemaRevision: 'schema:1',
@@ -132,11 +153,11 @@ function createStandaloneBackend(): {
 				ok: true,
 			};
 		},
-		describe: async (request): Promise<PortalDescribeResult> => ({
+		describe: async (request): Promise<PortalBackendDescribeResult> => ({
 			items: request.requests.map(({ id }) => ({ id, status: 'ok', value: { tools: [] } })),
 			ok: true,
 		}),
-		list: async (request): Promise<PortalListResult> => ({
+		list: async (request): Promise<PortalBackendListResult> => ({
 			items: request.requests.map(({ id }) => ({
 				id,
 				status: 'ok',
@@ -144,7 +165,7 @@ function createStandaloneBackend(): {
 			})),
 			ok: true,
 		}),
-		search: async (request): Promise<PortalSearchResult> => ({
+		search: async (request): Promise<PortalBackendSearchResult> => ({
 			items: request.requests.map(({ id }) => ({ id, status: 'ok', value: { tools: [] } })),
 			ok: true,
 		}),
@@ -167,6 +188,7 @@ function createStandaloneFixture(): {
 		approvalCoordinator,
 		backendPorts: { mcpProvider: backend.port },
 		config: standaloneConfig,
+		mcpConfig: standaloneMcpConfig,
 		semanticSnapshot: standaloneSemanticSnapshot,
 	});
 	return { approvalCoordinator, backend, service };
@@ -296,6 +318,7 @@ describe('standalone-v1 ToolPortalService seam', () => {
 					mcpProvider: fixture.backend.port,
 				},
 				config: standaloneConfig,
+				mcpConfig: standaloneMcpConfig,
 				semanticSnapshot: standaloneSemanticSnapshot,
 			});
 		};
@@ -306,8 +329,7 @@ describe('standalone-v1 ToolPortalService seam', () => {
 	it.each(['controller_execution', 'tool_vm_runner'] as const)(
 		'rejects the privileged %s backend during standalone service startup',
 		(backendKind) => {
-			const fixture = createStandaloneFixture();
-			const privilegedBackend: ToolPortalBackendBinding =
+			const privilegedBackend: unknown =
 				backendKind === 'controller_execution'
 					? {
 							kind: backendKind,
@@ -324,27 +346,34 @@ describe('standalone-v1 ToolPortalService seam', () => {
 							profile: 'sandbox_ssh',
 						};
 
-			expect(() =>
-				createToolPortalService({
-					approvalCoordinator: fixture.approvalCoordinator,
-					backendPorts: { mcpProvider: fixture.backend.port },
-					config: {
-						...standaloneConfig,
-						profiles: {
-							'code-builder': {
-								namespaces: {
-									privileged: {
-										backend: privilegedBackend,
-										calls: {
-											requiresApproval: { allow: [], deny: [] },
-											withoutApproval: { allow: '*', deny: [] },
-										},
-										tools: { allow: '*', deny: [] },
-									},
+			const parsedPrivilegedConfig = standaloneToolPortalConfigSchema.parse({
+				...standaloneConfig,
+				profiles: {
+					'code-builder': {
+						namespaces: {
+							privileged: {
+								discovery: {},
+								backend: privilegedBackend,
+								calls: {
+									requiresApproval: { allow: [], deny: [] },
+									withoutApproval: { allow: '*', deny: [] },
 								},
+								tools: { allow: '*', deny: [] },
 							},
 						},
 					},
+				},
+			});
+			expect(() =>
+				createToolPortalService({
+					approvalCoordinator: createStandaloneToolPortalApprovalCoordinator({
+						credentials: [{ agentId: 'agent-a', hmacKey: approvalHmacKey, keyVersion: 1 }],
+						now: () => new Date('2026-07-18T12:00:00.000Z'),
+						serviceGeneration,
+					}),
+					backendPorts: { mcpProvider: createStandaloneBackend().port },
+					config: parsedPrivilegedConfig,
+					mcpConfig: standaloneMcpConfig,
 					semanticSnapshot: standaloneSemanticSnapshot,
 				}),
 			).toThrow('Standalone Tool Portal version 1 does not admit the privileged');

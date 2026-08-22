@@ -30,6 +30,7 @@ from agent_vm_hermes_adapter.managed_tool_portal.inventory import (
 from agent_vm_hermes_adapter.managed_tool_portal.models import (
     InventoryCacheKey,
     InventoryReadyValue,
+    NamespaceDiscovery,
 )
 
 ResponseScriptValue = InventoryPortalListResult | dict[str, object] | BaseException
@@ -139,7 +140,7 @@ def _projection(
         agent_id=f"agent-{profile_name}",
         profile_name=profile_name,
         tool_portal_profile_id=f"portal-{profile_name}",
-        namespace_names=namespaces,
+        namespaces=tuple(NamespaceDiscovery(namespace=namespace) for namespace in namespaces),
     )
 
 
@@ -190,6 +191,7 @@ def _raw_probe_item(
         "id": item_id,
         "status": "ok",
         "value": {
+            "namespaceDiscovery": [{"namespace": namespace}],
             "namespaces": [namespace] if tool else [],
             "tools": [
                 {
@@ -264,6 +266,7 @@ class ManagedToolPortalInventoryTests(unittest.IsolatedAsyncioTestCase):
                     "id": "probe-1-0",
                     "status": "ok",
                     "value": {
+                        "namespaceDiscovery": [{"namespace": "alpha"}],
                         "namespaces": ["alpha"],
                         "tools": [
                             {
@@ -823,7 +826,10 @@ class ManagedToolPortalInventoryTests(unittest.IsolatedAsyncioTestCase):
                 agent_id="agent-a",
                 profile_name="profile-a",
                 tool_portal_profile_id="portal-a",
-                namespace_names=("beta", "alpha"),
+                namespaces=(
+                    NamespaceDiscovery(namespace="beta"),
+                    NamespaceDiscovery(namespace="alpha"),
+                ),
             )
         with self.assertRaises(ValidationError):
             InventoryProjection(
@@ -832,7 +838,10 @@ class ManagedToolPortalInventoryTests(unittest.IsolatedAsyncioTestCase):
                 agent_id="agent-a",
                 profile_name="profile-a",
                 tool_portal_profile_id="portal-a",
-                namespace_names=("alpha", "alpha"),
+                namespaces=(
+                    NamespaceDiscovery(namespace="alpha"),
+                    NamespaceDiscovery(namespace="alpha"),
+                ),
             )
 
         coordinator = InventoryCoordinator(gateway=ScriptedGateway([]))

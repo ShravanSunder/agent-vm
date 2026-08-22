@@ -1,5 +1,9 @@
 import {
+	compareUnicodeCodePointStrings,
 	PortalCallRequestSchema,
+	type PortalBackendDescribeResult,
+	type PortalBackendListResult,
+	type PortalBackendSearchResult,
 	type PortalCallRequest,
 	type PortalCallResult,
 	PortalDescribeRequestSchema,
@@ -18,6 +22,7 @@ import {
 	type GatewayRuntimeManagedToolPortalConfig,
 	managedToolPortalConfigSchema,
 	type ManagedToolPortalConfig,
+	type McpConfig,
 	type StandaloneToolPortalConfig,
 	type ToolPortalBackendBinding,
 	type ToolPortalBackendKind,
@@ -93,15 +98,15 @@ export interface ToolPortalBackendPort<TBackendKind extends ToolPortalBackendKin
 	readonly describe: (
 		request: PortalDescribeRequest,
 		options: ToolPortalInvocationOptions,
-	) => Promise<PortalDescribeResult>;
+	) => Promise<PortalBackendDescribeResult>;
 	readonly list: (
 		request: PortalListRequest,
 		options: ToolPortalInvocationOptions,
-	) => Promise<PortalListResult>;
+	) => Promise<PortalBackendListResult>;
 	readonly search: (
 		request: PortalSearchRequest,
 		options: ToolPortalInvocationOptions,
-	) => Promise<PortalSearchResult>;
+	) => Promise<PortalBackendSearchResult>;
 }
 
 export type ToolPortalStandaloneMcpDispatchAuthority =
@@ -145,15 +150,15 @@ export interface ToolPortalStandaloneMcpBackendPort {
 	readonly describe: (
 		request: PortalDescribeRequest,
 		options: ToolPortalStandaloneMcpBackendReadOptions,
-	) => Promise<PortalDescribeResult>;
+	) => Promise<PortalBackendDescribeResult>;
 	readonly list: (
 		request: PortalListRequest,
 		options: ToolPortalStandaloneMcpBackendReadOptions,
-	) => Promise<PortalListResult>;
+	) => Promise<PortalBackendListResult>;
 	readonly search: (
 		request: PortalSearchRequest,
 		options: ToolPortalStandaloneMcpBackendReadOptions,
-	) => Promise<PortalSearchResult>;
+	) => Promise<PortalBackendSearchResult>;
 }
 
 export interface ToolPortalApprovalPort {
@@ -207,6 +212,7 @@ export interface CreateStandaloneV1ToolPortalServiceProps {
 		readonly mcpProvider: ToolPortalStandaloneMcpBackendPort;
 	};
 	readonly config: StandaloneToolPortalConfig;
+	readonly mcpConfig: McpConfig;
 	readonly semanticSnapshot: ToolPortalStandaloneSemanticSnapshot;
 }
 
@@ -308,6 +314,14 @@ function managedBackendEntriesForInvocation(props: {
 	}
 	return [...namespacesByBackendKind].map(([backendKind, namespaces]) => ({
 		backend: backendPortForKind(props.backendPorts, backendKind),
+		namespaceDiscovery: [...namespaces]
+			.map((namespace) => ({
+				...profileConfig.namespaces[namespace]?.discovery,
+				namespace,
+			}))
+			.toSorted((left, right) =>
+				compareUnicodeCodePointStrings(left.namespace, right.namespace),
+			),
 		namespaces,
 	}));
 }

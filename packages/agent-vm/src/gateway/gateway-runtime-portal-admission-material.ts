@@ -1,9 +1,8 @@
 import { compareUnicodeCodePointStrings } from '@agent-vm/agent-portal-sdk';
 import {
-	managedToolPortalConfigSchema,
-	toolPortalConfigSchema,
+	effectiveManagedToolPortalConfigSchema,
+	type EffectiveManagedToolPortalConfig,
 	type McpConfig,
-	type ManagedToolPortalConfig,
 } from '@agent-vm/config-contracts';
 import {
 	deriveGatewayRuntimePortalSemanticSnapshot,
@@ -28,11 +27,11 @@ export interface MaterializeGatewayRuntimePortalAdmissionProps {
 
 interface GatewayRuntimePortalAdmissionEffectivePlan {
 	readonly effectiveMcpConfig: McpConfig;
-	readonly effectiveToolPortalConfig: ManagedToolPortalConfig;
+	readonly effectiveToolPortalConfig: EffectiveManagedToolPortalConfig;
 }
 
 function deriveManagedAgentProjectionInput(props: {
-	readonly effectiveToolPortalConfig: ManagedToolPortalConfig;
+	readonly effectiveToolPortalConfig: EffectiveManagedToolPortalConfig;
 	readonly frameworkAgentProjection: ManagedFrameworkAgentProjectionInput;
 	readonly surfaceEligibilityByProfile: GatewayRuntimePortalSemanticSnapshot['surfaceEligibilityByProfile'];
 }): ManagedAgentProjectionInput {
@@ -50,12 +49,17 @@ function deriveManagedAgentProjectionInput(props: {
 			`Managed Agent Projection surface eligibility is missing for profile '${props.frameworkAgentProjection.toolPortalProfileId}'.`,
 		);
 	}
-	const toolPortalNamespaceNames = Object.keys(profile.namespaces)
-		.filter((namespaceName) => profileSurfaceEligibility[namespaceName]?.includes('protected_uds'))
-		.toSorted(compareUnicodeCodePointStrings);
+	const toolPortalNamespaces = Object.entries(profile.namespaces)
+		.filter(([namespaceName]) =>
+			profileSurfaceEligibility[namespaceName]?.includes('protected_uds'),
+		)
+		.map(([namespace, namespacePolicy]) => ({ namespace, ...namespacePolicy.discovery }))
+		.toSorted((left, right) =>
+			compareUnicodeCodePointStrings(left.namespace, right.namespace),
+		);
 	return {
 		...props.frameworkAgentProjection,
-		toolPortalNamespaceNames,
+		toolPortalNamespaces,
 	};
 }
 
@@ -64,8 +68,8 @@ export function materializeGatewayRuntimePortalAdmission(
 ): GatewayRuntimePortalAdmissionMaterial {
 	const effectivePlan: GatewayRuntimePortalAdmissionEffectivePlan = {
 		effectiveMcpConfig: props.effectivePlan.effectiveMcpConfig,
-		effectiveToolPortalConfig: managedToolPortalConfigSchema.parse(
-			toolPortalConfigSchema.parse(props.effectivePlan.effectiveToolPortalConfig),
+		effectiveToolPortalConfig: effectiveManagedToolPortalConfigSchema.parse(
+			props.effectivePlan.effectiveToolPortalConfig,
 		),
 	};
 	const agentProjections = props.agentProjections.map((frameworkAgentProjection) =>

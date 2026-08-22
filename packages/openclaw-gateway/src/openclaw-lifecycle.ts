@@ -62,7 +62,7 @@ const gondolinToolPortalAgentProjectionFields = new Set([
 	'agentId',
 	'frameworkIdentity',
 	'profileAssignmentRevision',
-	'toolPortalNamespaceNames',
+	'toolPortalNamespaces',
 	'toolPortalProfileId',
 ]);
 const gondolinToolPortalAttachmentFields = new Set([
@@ -692,7 +692,7 @@ function assertManagedGondolinToolPortalConfig(
 		if (
 			projection.agentId !== agentId ||
 			!isBoundedOpaqueIdentifier(projection.profileAssignmentRevision) ||
-			!isSortedUniqueNonEmptyStringArray(projection.toolPortalNamespaceNames) ||
+			!isSortedUniqueNonEmptyStringArray(projection.toolPortalNamespaces) ||
 			!isBoundedOpaqueIdentifier(projection.toolPortalProfileId) ||
 			!isObjectRecord(projection.frameworkIdentity) ||
 			projection.frameworkIdentity.kind !== 'openclaw' ||

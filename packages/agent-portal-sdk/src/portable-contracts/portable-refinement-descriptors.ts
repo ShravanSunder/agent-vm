@@ -46,6 +46,11 @@ export type PortableRefinementOperation =
 			readonly maximum: number;
 			readonly minimum: number;
 	  }
+	| {
+			readonly fieldName: string;
+			readonly kind: 'sorted-unique-object-field-items';
+			readonly path: string;
+	  }
 	| { readonly kind: 'sorted-unique-string-items'; readonly path: string }
 	| { readonly kind: 'terminal-outcome-algebra' }
 	| { readonly kind: 'unique-string-items'; readonly path: string }
@@ -178,11 +183,15 @@ export const PORTABLE_REFINEMENT_DESCRIPTORS = [
 		operation: { kind: 'unique-string-items', path: 'configuredAgentIds' },
 	},
 	{
-		description: 'Managed Agent Projection namespace names must be sorted and unique.',
-		errorCode: 'gateway.managed-agent-projection.namespace-names',
-		identity: 'gateway.managed-agent-projection.namespace-names',
+		description: 'Managed Agent Projection namespaces must be sorted and unique by namespace.',
+		errorCode: 'gateway.managed-agent-projection.namespaces',
+		identity: 'gateway.managed-agent-projection.namespaces',
 		kind: 'cross-field-validation',
-		operation: { kind: 'sorted-unique-string-items', path: 'toolPortalNamespaceNames' },
+		operation: {
+			fieldName: 'namespace',
+			kind: 'sorted-unique-object-field-items',
+			path: 'toolPortalNamespaces',
+		},
 	},
 	{
 		description: 'Binary chunk byte length equals the decoded canonical base64 payload length.',

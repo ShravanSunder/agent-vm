@@ -63,7 +63,10 @@ def _projection_matches(
         and projection.agent_id == admitted_projection.agent_id
         and projection.profile_name == admitted_projection.framework_identity.profile_name
         and projection.tool_portal_profile_id == admitted_projection.tool_portal_profile_id
-        and projection.namespace_names == admitted_projection.tool_portal_namespace_names
+        and tuple((item.namespace, item.summary) for item in projection.namespaces)
+        == tuple(
+            (item.namespace, item.summary) for item in admitted_projection.tool_portal_namespaces
+        )
     )
 
 

@@ -9,7 +9,7 @@
 			"kind": "openclaw"
 		},
 		"profileAssignmentRevision": "profile-assignment-a",
-		"toolPortalNamespaceNames": [],
+		"toolPortalNamespaces": [],
 		"toolPortalProfileId": "engineering"
 	},
 	"expectation": {
@@ -21,10 +21,10 @@
 				"kind": "openclaw"
 			},
 			"profileAssignmentRevision": "profile-assignment-a",
-			"toolPortalNamespaceNames": [],
+			"toolPortalNamespaces": [],
 			"toolPortalProfileId": "engineering"
 		},
-		"canonicalJson": "{\"agentId\":\"agent-a\",\"frameworkIdentity\":{\"agentId\":\"agent-a\",\"kind\":\"openclaw\"},\"profileAssignmentRevision\":\"profile-assignment-a\",\"toolPortalNamespaceNames\":[],\"toolPortalProfileId\":\"engineering\"}",
-		"refinementIdentities": ["gateway.managed-agent-projection.namespace-names"]
+		"canonicalJson": "{\"agentId\":\"agent-a\",\"frameworkIdentity\":{\"agentId\":\"agent-a\",\"kind\":\"openclaw\"},\"profileAssignmentRevision\":\"profile-assignment-a\",\"toolPortalNamespaces\":[],\"toolPortalProfileId\":\"engineering\"}",
+		"refinementIdentities": ["gateway.managed-agent-projection.namespaces"]
 	}
 }

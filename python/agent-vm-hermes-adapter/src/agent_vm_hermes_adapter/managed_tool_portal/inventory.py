@@ -219,7 +219,7 @@ class InventoryCoordinator:
     ) -> CacheSnapshot[InventoryCacheKey, InventoryReadyValue]:
         key = projection.cache_key()
         try:
-            if not projection.namespace_names:
+            if not projection.namespaces:
                 return self._publish_inventory(population, projection, ())
 
             for attempt_number, slice_end_offset in enumerate(
@@ -289,8 +289,8 @@ class InventoryCoordinator:
     ) -> tuple[tuple[str, bool], ...]:
         observations: list[tuple[str, bool]] = []
         batches = tuple(
-            projection.namespace_names[offset : offset + PORTAL_BATCH_MAX_ITEMS]
-            for offset in range(0, len(projection.namespace_names), PORTAL_BATCH_MAX_ITEMS)
+            projection.namespaces[offset : offset + PORTAL_BATCH_MAX_ITEMS]
+            for offset in range(0, len(projection.namespaces), PORTAL_BATCH_MAX_ITEMS)
         )
         for batch_number, namespace_batch in enumerate(batches):
             if self._clock() >= attempt_deadline:
@@ -298,9 +298,9 @@ class InventoryCoordinator:
             requests = tuple(
                 InventoryListItemRequest(
                     id=f"probe-{attempt_number}-{batch_number * PORTAL_BATCH_MAX_ITEMS + offset}",
-                    namespaces=(namespace,),
+                    namespaces=(namespace_discovery.namespace,),
                 )
-                for offset, namespace in enumerate(namespace_batch)
+                for offset, namespace_discovery in enumerate(namespace_batch)
             )
             request = InventoryListRequest(
                 requestId=f"inventory-{attempt_number}-{batch_number}",
@@ -409,12 +409,13 @@ class InventoryCoordinator:
             inventory_id=_inventory_id(projection),
             namespaces=tuple(
                 NamespaceAvailability(
-                    namespace=namespace,
+                    namespace=namespace_discovery.namespace,
+                    summary=namespace_discovery.summary,
                     status="available"
-                    if availability_by_name.get(namespace, False)
+                    if availability_by_name.get(namespace_discovery.namespace, False)
                     else "unavailable",
                 )
-                for namespace in projection.namespace_names
+                for namespace_discovery in projection.namespaces
             ),
         )
         ready_value = InventoryReadyValue(

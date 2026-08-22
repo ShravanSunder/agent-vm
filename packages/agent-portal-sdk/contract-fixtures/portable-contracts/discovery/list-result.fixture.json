@@ -3,16 +3,28 @@
 	"schemaId": "portal.list.result",
 	"tags": ["accepted", "discovery", "result"],
 	"input": {
-		"items": [{ "id": "list-1", "status": "ok", "value": { "namespaces": [], "tools": [] } }],
+		"items": [
+			{
+				"id": "list-1",
+				"status": "ok",
+				"value": { "namespaceDiscovery": [], "namespaces": [], "tools": [] }
+			}
+		],
 		"ok": true
 	},
 	"expectation": {
 		"kind": "accepted",
 		"normalized": {
-			"items": [{ "id": "list-1", "status": "ok", "value": { "namespaces": [], "tools": [] } }],
+			"items": [
+				{
+					"id": "list-1",
+					"status": "ok",
+					"value": { "namespaceDiscovery": [], "namespaces": [], "tools": [] }
+				}
+			],
 			"ok": true
 		},
-		"canonicalJson": "{\"items\":[{\"id\":\"list-1\",\"status\":\"ok\",\"value\":{\"namespaces\":[],\"tools\":[]}}],\"ok\":true}",
+		"canonicalJson": "{\"items\":[{\"id\":\"list-1\",\"status\":\"ok\",\"value\":{\"namespaceDiscovery\":[],\"namespaces\":[],\"tools\":[]}}],\"ok\":true}",
 		"refinementIdentities": ["portal.request-id.not-reserved", "portal.result.aggregate-status"]
 	}
 }

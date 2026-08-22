@@ -9,13 +9,13 @@
 			"kind": "openclaw"
 		},
 		"profileAssignmentRevision": "profile-assignment-a",
-		"toolPortalNamespaceNames": [],
+		"toolPortalNamespaces": [],
 		"toolPortalProfileId": "engineering",
 		"workRoot": "/zone/agents/agent-a/work"
 	},
 	"expectation": {
 		"kind": "rejected",
 		"errorCodes": ["portable.object.unknown-field"],
-		"refinementIdentities": ["gateway.managed-agent-projection.namespace-names"]
+		"refinementIdentities": ["gateway.managed-agent-projection.namespaces"]
 	}
 }

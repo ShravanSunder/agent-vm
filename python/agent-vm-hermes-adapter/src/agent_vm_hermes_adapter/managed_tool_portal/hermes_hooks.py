@@ -90,7 +90,7 @@ def _inventory_projection(runtime: ManagedToolPortalHookRuntime) -> InventoryPro
         agent_id=projection.agent_id,
         profile_name=projection.framework_identity.profile_name,
         tool_portal_profile_id=projection.tool_portal_profile_id,
-        namespace_names=projection.tool_portal_namespace_names,
+        namespaces=projection.tool_portal_namespaces,
     )
 
 

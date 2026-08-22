@@ -92,7 +92,7 @@ function createService(blockListUntil?: Promise<void>): StandaloneToolPortalProj
 				items: request.requests.map(({ id }) => ({
 					id,
 					status: 'ok' as const,
-					value: { tools: [] },
+					value: { namespaceDiscovery: [], tools: [] },
 				})),
 				ok: true,
 			}),
@@ -103,7 +103,7 @@ function createService(blockListUntil?: Promise<void>): StandaloneToolPortalProj
 				items: request.requests.map(({ id }) => ({
 					id,
 					status: 'ok' as const,
-					value: { namespaces: ['github'], tools: [] },
+					value: { namespaceDiscovery: [], namespaces: ['github'], tools: [] },
 				})),
 				ok: true,
 			};
@@ -113,7 +113,7 @@ function createService(blockListUntil?: Promise<void>): StandaloneToolPortalProj
 				items: request.requests.map(({ id }) => ({
 					id,
 					status: 'ok' as const,
-					value: { tools: [] },
+					value: { namespaceDiscovery: [], tools: [] },
 				})),
 				ok: true,
 			}),

@@ -29,6 +29,7 @@ const toolPortalConfig = {
 		'profile-a': {
 			namespaces: {
 				custom_controller: {
+					discovery: {},
 					backend: {
 						kind: 'controller_execution',
 						operations: {
@@ -62,6 +63,7 @@ const toolPortalConfig = {
 					tools: { allow: ['workspace_git_push'], deny: [] },
 				},
 				controller_execution: {
+					discovery: {},
 					backend: {
 						kind: 'controller_execution',
 						operations: {

@@ -427,6 +427,15 @@ describe('manual templates', () => {
 			'mcp_provider, controller_execution, or tool_vm_runner',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'Namespace discovery uses only optional discovery.summary',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'Successful list/search/describe results return effective namespaceDiscovery',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'configured_cli.safeHelp remains the per-operation capability description',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
 			'approvalAccess.approvers entries are exactly kind: managed_gateway',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(

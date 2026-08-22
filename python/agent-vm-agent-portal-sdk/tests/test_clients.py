@@ -161,7 +161,11 @@ PORTAL_OPERATION_CASES: tuple[PortalOperationCase, ...] = (
                 {
                     "id": "list-project",
                     "status": "ok",
-                    "value": {"namespaces": ["project"], "tools": []},
+                    "value": {
+                        "namespaceDiscovery": [{"namespace": "project"}],
+                        "namespaces": ["project"],
+                        "tools": [],
+                    },
                 },
             ],
             "ok": True,
@@ -179,7 +183,7 @@ PORTAL_OPERATION_CASES: tuple[PortalOperationCase, ...] = (
                 {
                     "id": "search-project",
                     "status": "ok",
-                    "value": {"tools": []},
+                    "value": {"namespaceDiscovery": [], "tools": []},
                 },
             ],
             "ok": True,
@@ -202,7 +206,7 @@ PORTAL_OPERATION_CASES: tuple[PortalOperationCase, ...] = (
                 {
                     "id": "describe-project",
                     "status": "ok",
-                    "value": {"tools": []},
+                    "value": {"namespaceDiscovery": [], "tools": []},
                 },
             ],
             "ok": True,

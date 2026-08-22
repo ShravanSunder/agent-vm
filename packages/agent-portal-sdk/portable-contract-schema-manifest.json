@@ -3,7 +3,7 @@
 	"refinements": [
 		"gateway.approval.arguments-preview.utf8-bytes",
 		"gateway.attachment.unique-agent-ids",
-		"gateway.managed-agent-projection.namespace-names",
+		"gateway.managed-agent-projection.namespaces",
 		"portal.artifact-read.default-truncated",
 		"portal.batch.unique-item-ids",
 		"portal.describe.default-includes",
@@ -1877,9 +1877,28 @@
 														"required": ["namespace", "name", "toolRef"],
 														"additionalProperties": false
 													}
+												},
+												"namespaceDiscovery": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"summary": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 500
+															},
+															"namespace": {
+																"type": "string",
+																"minLength": 1
+															}
+														},
+														"required": ["namespace"],
+														"additionalProperties": false
+													}
 												}
 											},
-											"required": ["tools"],
+											"required": ["tools", "namespaceDiscovery"],
 											"additionalProperties": false
 										}
 									},
@@ -2492,9 +2511,28 @@
 														"required": ["input", "namespace", "safety", "name", "toolRef"],
 														"additionalProperties": false
 													}
+												},
+												"namespaceDiscovery": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"summary": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 500
+															},
+															"namespace": {
+																"type": "string",
+																"minLength": 1
+															}
+														},
+														"required": ["namespace"],
+														"additionalProperties": false
+													}
 												}
 											},
-											"required": ["namespaces", "tools"],
+											"required": ["namespaces", "tools", "namespaceDiscovery"],
 											"additionalProperties": false
 										}
 									},
@@ -3058,9 +3096,28 @@
 														"required": ["input", "namespace", "safety", "name", "toolRef"],
 														"additionalProperties": false
 													}
+												},
+												"namespaceDiscovery": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"summary": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 500
+															},
+															"namespace": {
+																"type": "string",
+																"minLength": 1
+															}
+														},
+														"required": ["namespace"],
+														"additionalProperties": false
+													}
 												}
 											},
-											"required": ["tools"],
+											"required": ["tools", "namespaceDiscovery"],
 											"additionalProperties": false
 										}
 									},
@@ -3574,12 +3631,24 @@
 						"minLength": 1,
 						"maxLength": 256
 					},
-					"toolPortalNamespaceNames": {
+					"toolPortalNamespaces": {
 						"readOnly": true,
 						"type": "array",
 						"items": {
-							"type": "string",
-							"minLength": 1
+							"type": "object",
+							"properties": {
+								"summary": {
+									"type": "string",
+									"minLength": 1,
+									"maxLength": 500
+								},
+								"namespace": {
+									"type": "string",
+									"minLength": 1
+								}
+							},
+							"required": ["namespace"],
+							"additionalProperties": false
 						}
 					},
 					"toolPortalProfileId": {
@@ -3592,12 +3661,12 @@
 					"agentId",
 					"frameworkIdentity",
 					"profileAssignmentRevision",
-					"toolPortalNamespaceNames",
+					"toolPortalNamespaces",
 					"toolPortalProfileId"
 				],
 				"additionalProperties": false
 			},
-			"refinementIdentities": ["gateway.managed-agent-projection.namespace-names"]
+			"refinementIdentities": ["gateway.managed-agent-projection.namespaces"]
 		},
 		"gateway.trusted-invocation-context": {
 			"jsonSchema": {
