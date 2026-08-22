@@ -62,11 +62,15 @@ function createListResult(
 				(capability) =>
 					requestedNamespaces.length === 0 || requestedNamespaces.includes(capability.namespace),
 			);
+			const namespaces = [
+				...new Set(selectedCapabilities.map((capability) => capability.namespace)),
+			];
 			return {
 				id: itemRequest.id,
 				status: 'ok',
 				value: {
-					namespaces: [...new Set(selectedCapabilities.map((capability) => capability.namespace))],
+					namespaceDiscovery: namespaces.map((namespace) => ({ namespace })),
+					namespaces,
 					tools: selectedCapabilities.map((capability) => createCapabilitySummary(capability)),
 				},
 			};
@@ -98,6 +102,9 @@ function createSearchResult(
 				id: itemRequest.id,
 				status: 'ok',
 				value: {
+					namespaceDiscovery: [
+						...new Set(selectedCapabilities.map((capability) => capability.namespace)),
+					].map((namespace) => ({ namespace })),
 					tools: selectedCapabilities.map((capability) => createCapabilitySummary(capability)),
 				},
 			};
@@ -126,6 +133,9 @@ function createDescribeResult(
 				id: itemRequest.id,
 				status: 'ok',
 				value: {
+					namespaceDiscovery: [
+						...new Set(selectedCapabilities.map((capability) => capability.namespace)),
+					].map((namespace) => ({ namespace })),
 					tools: selectedCapabilities.map((capability) => createCapabilityDescriptor(capability)),
 				},
 			};

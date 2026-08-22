@@ -2,9 +2,9 @@ import { Buffer } from 'node:buffer';
 
 import {
 	PortalCallResultSchema,
-	PortalDescribeResultSchema,
-	PortalListResultSchema,
-	PortalSearchResultSchema,
+	PortalBackendDescribeResultSchema,
+	PortalBackendListResultSchema,
+	PortalBackendSearchResultSchema,
 	type ArtifactReference,
 	type JsonObject,
 	type PortalCallResult,
@@ -400,13 +400,13 @@ describe('Gateway runtime Tool VM runner backend port', () => {
 	it('projects only the configured catalog for list, search, and describe without resolving sandbox authority', async () => {
 		const fixture = createBackendFixture();
 
-		const listResult = PortalListResultSchema.parse(
+		const listResult = PortalBackendListResultSchema.parse(
 			await fixture.port.list(
 				{ requests: [{ id: 'list-sandbox', limit: 20, namespaces: ['sandbox'] }] },
 				invocationOptions(),
 			),
 		);
-		const searchResult = PortalSearchResultSchema.parse(
+		const searchResult = PortalBackendSearchResultSchema.parse(
 			await fixture.port.search(
 				{
 					requests: [
@@ -422,7 +422,7 @@ describe('Gateway runtime Tool VM runner backend port', () => {
 				invocationOptions(),
 			),
 		);
-		const describeResult = PortalDescribeResultSchema.parse(
+		const describeResult = PortalBackendDescribeResultSchema.parse(
 			await fixture.port.describe(
 				{
 					requests: [
@@ -473,13 +473,13 @@ describe('Gateway runtime Tool VM runner backend port', () => {
 
 	it('selects list, search, describe, and call catalogs only from the trusted principal profile', async () => {
 		const fixture = createBackendFixture();
-		const privilegedList = PortalListResultSchema.parse(
+		const privilegedList = PortalBackendListResultSchema.parse(
 			await fixture.port.list(
 				{ requests: [{ id: 'list-privileged', limit: 20, namespaces: ['sandbox'] }] },
 				invocationOptions(privilegedTrustedContext),
 			),
 		);
-		const privilegedSearch = PortalSearchResultSchema.parse(
+		const privilegedSearch = PortalBackendSearchResultSchema.parse(
 			await fixture.port.search(
 				{
 					requests: [
@@ -495,7 +495,7 @@ describe('Gateway runtime Tool VM runner backend port', () => {
 				invocationOptions(privilegedTrustedContext),
 			),
 		);
-		const privilegedDescribe = PortalDescribeResultSchema.parse(
+		const privilegedDescribe = PortalBackendDescribeResultSchema.parse(
 			await fixture.port.describe(
 				{
 					requests: [

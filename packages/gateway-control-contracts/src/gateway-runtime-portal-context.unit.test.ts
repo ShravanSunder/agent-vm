@@ -40,7 +40,7 @@ const validSemanticSnapshot = {
 			agentId: 'agent-a',
 			frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
 			profileAssignmentRevision: 'profile-assignment-7',
-			toolPortalNamespaces: ['github'],
+			toolPortalNamespaces: [{ namespace: 'github' }],
 			toolPortalProfileId: 'engineering',
 		},
 	},
