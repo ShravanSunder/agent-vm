@@ -442,18 +442,48 @@ async function writeToolPortalConfiguration(options: {
 	]);
 }
 
-async function waitForRootApiHealth(gatewayPort: number): Promise<void> {
+async function waitForRootApiHealth(options: {
+	readonly controllerUrl: string;
+	readonly gatewayPort: number;
+	readonly resolveVm: () => Pick<GatewayZoneVmOperations, 'exec'> | undefined;
+	readonly zoneId: string;
+}): Promise<void> {
 	const deadline = Date.now() + 60_000;
+	let lastStatus: number | undefined;
+	let lastError: string | undefined;
 	while (Date.now() < deadline) {
 		try {
-			const response = await fetch(`http://127.0.0.1:${String(gatewayPort)}/health`, {
+			const response = await fetch(`http://127.0.0.1:${String(options.gatewayPort)}/health`, {
 				signal: AbortSignal.timeout(2_000),
 			});
+			lastStatus = response.status;
 			if (response.ok) return;
-		} catch {}
+		} catch (error: unknown) {
+			lastError = error instanceof Error ? error.message : String(error);
+		}
 		await waitForProtocolRetryInterval(250);
 	}
-	throw new Error('Timed out waiting for the Hermes orientation E2E health endpoint.');
+	const vm = options.resolveVm();
+	const serviceLogResult = await vm?.exec(
+		'tail -n 200 /var/log/agent-vm/hermes-service.log 2>&1 || true',
+	);
+	const serviceLog = serviceLogResult?.stdout.toString();
+	const [zoneStatus, zoneLogs] = await Promise.all(
+		['status', 'logs'].map(async (operation) => {
+			try {
+				const response = await fetch(
+					`${options.controllerUrl}/zones/${encodeURIComponent(options.zoneId)}/${operation}`,
+					{ signal: AbortSignal.timeout(5_000) },
+				);
+				return `${String(response.status)} ${await response.text()}`;
+			} catch (error: unknown) {
+				return error instanceof Error ? error.message : String(error);
+			}
+		}),
+	);
+	throw new Error(
+		`Timed out waiting for the Hermes orientation E2E health endpoint: ${JSON.stringify({ lastError, lastStatus, serviceLog, zoneLogs, zoneStatus })}`,
+	);
 }
 
 async function requestHermesTurn(options: {
@@ -610,6 +640,13 @@ describeHermesToolPortalOrientationE2e('e2e: Hermes Tool Portal session orientat
 				const result = await startGatewayZone(startOptions, {
 					...dependencies,
 					gatewayRuntimeArtifactLimits: controllerFixedGatewayRuntimeArtifactLimits,
+					managedVmFactory: {
+						createManagedVm: async (request) => {
+							const vm = await dependencies.managedVmFactory.createManagedVm(request);
+							gatewayVm = vm;
+							return vm;
+						},
+					},
 				});
 				if (result.executionModel !== 'managed-gateway') {
 					throw new Error('Hermes orientation E2E requires a managed Gateway VM.');
@@ -624,7 +661,12 @@ describeHermesToolPortalOrientationE2e('e2e: Hermes Tool Portal session orientat
 				[`${modelHost}:${String(provider.port)}`]: `127.0.0.1:${String(provider.port)}`,
 			},
 		});
-		await waitForRootApiHealth(project.gatewayPort);
+		await waitForRootApiHealth({
+			controllerUrl: harness.controllerUrl,
+			gatewayPort: project.gatewayPort,
+			resolveVm: () => gatewayVm,
+			zoneId: systemZone.id,
+		});
 		await availableUpstream.firstListToolsRequest;
 
 		const firstPrompt = 'orientation-turn-one';
