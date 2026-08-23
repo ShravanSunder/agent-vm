@@ -40,41 +40,17 @@ describe('production config artifacts', () => {
 			path.join(os.tmpdir(), 'agent-vm-production-config-'),
 		);
 		createdDirectories.push(projectDirectory);
-		await scaffoldAgentVmProject(
-			{
-				gatewayType: 'openclaw',
-				architecture: 'aarch64',
-				secretsProvider: '1password',
-				targetDir: projectDirectory,
-				writeLocalEnvironmentFile: true,
-				zoneId: 'shravan',
-			},
-			{
-				copyBundledOpenClawPlugin: async (targetDir: string): Promise<'created' | 'skipped'> => {
-					const pluginDirectory = path.join(
-						targetDir,
-						'vm-images',
-						'gateways',
-						'openclaw',
-						'vendor',
-						'gondolin',
-					);
-					await fs.mkdir(pluginDirectory, { recursive: true });
-					await fs.writeFile(
-						path.join(pluginDirectory, 'openclaw.plugin.json'),
-						'{"id":"gondolin"}\n',
-						'utf8',
-					);
-					return 'created';
-				},
-			},
-		);
+		await scaffoldAgentVmProject({
+			gatewayType: 'hermes',
+			architecture: 'aarch64',
+			secretsProvider: '1password',
+			targetDir: projectDirectory,
+			writeLocalEnvironmentFile: true,
+			zoneId: 'shravan',
+		});
 
 		const gatewayBuildConfig = await loadJsonObjectConfigFile(
-			path.join(projectDirectory, 'vm-images', 'gateways', 'openclaw', 'build-config.jsonc'),
-		);
-		const gatewayOverlayConfig = await loadJsonObjectConfigFile(
-			path.join(projectDirectory, 'vm-images', 'gateways', 'openclaw', 'overlay.jsonc'),
+			path.join(projectDirectory, 'vm-images', 'gateways', 'hermes', 'build-config.jsonc'),
 		);
 		const systemConfig = await loadJsonObjectConfigFile(
 			path.join(projectDirectory, 'config', 'system.jsonc'),
@@ -96,10 +72,6 @@ describe('production config artifacts', () => {
 		expect(toolBuildConfig).toMatchObject({
 			arch: 'aarch64',
 		});
-		expect(gatewayOverlayConfig).toMatchObject({
-			extraAptPackages: [],
-			schemaVersion: 1,
-		});
 		expect(toolOverlayConfig).toMatchObject({
 			extraAptPackages: [],
 			schemaVersion: 1,
@@ -107,12 +79,10 @@ describe('production config artifacts', () => {
 		expect(systemConfig).toMatchObject({
 			imageProfiles: {
 				gateways: {
-					openclaw: {
-						source: {
-							base: 'openclaw-gateway',
-							kind: 'managedBase',
-							overlay: '../vm-images/gateways/openclaw/overlay.jsonc',
-						},
+					hermes: {
+						buildConfig: '../vm-images/gateways/hermes/build-config.jsonc',
+						dockerfile: '../vm-images/gateways/hermes/Dockerfile',
+						type: 'hermes',
 					},
 				},
 				toolVms: {
@@ -127,7 +97,7 @@ describe('production config artifacts', () => {
 			},
 		});
 		await expect(
-			pathExists(path.join(projectDirectory, 'vm-images', 'gateways', 'openclaw', 'Dockerfile')),
-		).resolves.toBe(false);
+			pathExists(path.join(projectDirectory, 'vm-images', 'gateways', 'hermes', 'Dockerfile')),
+		).resolves.toBe(true);
 	});
 });

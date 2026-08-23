@@ -6,7 +6,7 @@ export type SecretsProvider = z.infer<typeof secretsProviderSchema>;
 export const imageArchitectureSchema = z.enum(['aarch64', 'x86_64']);
 export type ImageArchitecture = z.infer<typeof imageArchitectureSchema>;
 
-export const scaffoldGatewayTypeSchema = z.enum(['openclaw', 'worker']);
+export const scaffoldGatewayTypeSchema = z.enum(['hermes', 'worker']);
 export type GatewayType = z.infer<typeof scaffoldGatewayTypeSchema>;
 
 export const hostSystemTypeSchema = z.enum(['bare-metal', 'container']);

@@ -11,7 +11,6 @@ import {
 	DEFAULT_WRAPUP_INSTRUCTIONS,
 	loadWorkerConfigDraft,
 } from '@agent-vm/agent-vm-worker';
-import { toolPortalConfigSchema } from '@agent-vm/config-contracts';
 import { afterEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
@@ -53,21 +52,7 @@ async function readGeneratedJsonc(filePath: string): Promise<unknown> {
 	return await loadJsonConfigFile(filePath);
 }
 
-const noGeneratedAgeIdentityDependencies = {
-	copyBundledOpenClawPlugin: async (targetDir: string): Promise<'created' | 'skipped'> => {
-		const pluginDirectory = path.join(
-			targetDir,
-			'vm-images',
-			'gateways',
-			'openclaw',
-			'vendor',
-			'gondolin',
-		);
-		await fs.mkdir(pluginDirectory, { recursive: true });
-		await fs.writeFile(path.join(pluginDirectory, 'openclaw.plugin.json'), '{"id":"gondolin"}\n');
-		return 'created';
-	},
-};
+const noGeneratedAgeIdentityDependencies = {};
 
 const scaffoldedSystemConfigSchema = z.object({
 	$schema: z.string().min(1),
@@ -80,7 +65,7 @@ const scaffoldedSystemConfigSchema = z.object({
 		z.object({
 			id: z.string().min(1),
 			gateway: z.object({
-				type: z.enum(['openclaw', 'worker']),
+				type: z.enum(['hermes', 'worker']),
 			}),
 		}),
 	]),
@@ -102,11 +87,7 @@ const scaffoldedRuntimePathsSchema = z.object({
 		z.object({
 			gateway: z.union([
 				z.object({
-					type: z.literal('openclaw'),
-					controlAuth: z.object({
-						mode: z.literal('token'),
-						secret: z.string().min(1),
-					}),
+					type: z.literal('hermes'),
 					backupDir: z.string().min(1).optional(),
 				}),
 				z.object({
@@ -222,7 +203,7 @@ const generatedSecretReferenceSchema = z.object({
 	ref: z.string().min(1),
 });
 
-const generatedOpenClawToolVmSystemConfigSchema = generatedSystemConfigSchema.extend({
+const generatedManagedGatewayToolVmSystemConfigSchema = generatedSystemConfigSchema.extend({
 	imageProfiles: z.object({
 		toolVms: z.object({
 			default: z.object({
@@ -260,7 +241,6 @@ const generatedManagedImageOverlaySchema = z.object({
 	packageOverrides: z
 		.object({
 			npm: z.array(z.string()).optional(),
-			openclaw: z.array(z.string()).optional(),
 			pnpm: z.record(z.string(), z.string()).optional(),
 		})
 		.optional(),
@@ -282,7 +262,7 @@ describe('scaffoldAgentVmProject', () => {
 			{
 				targetDir,
 				zoneId: 'test-zone',
-				gatewayType: 'openclaw',
+				gatewayType: 'hermes',
 				architecture: 'aarch64',
 				secretsProvider: '1password',
 				writeLocalEnvironmentFile: true,
@@ -304,7 +284,7 @@ describe('scaffoldAgentVmProject', () => {
 		expect(config.host.projectNamespace).toMatch(/^agent-vm-init-test-/u);
 		expect(config.storageRootDir).toBe(`../.agent-vm/${config.host.projectNamespace}`);
 		expect(config.zones[0]?.id).toBe('test-zone');
-		expect(config.zones[0]?.gateway.type).toBe('openclaw');
+		expect(config.zones[0]?.gateway.type).toBe('hermes');
 		expect(systemJsonText).not.toContain('workspaceDir');
 		await expect(
 			readGeneratedJsonc(path.join(targetDir, 'config', 'schemas', 'system.schema.json')),
@@ -331,7 +311,7 @@ describe('scaffoldAgentVmProject', () => {
 				{
 					targetDir,
 					zoneId: 'test-zone',
-					gatewayType: 'openclaw',
+					gatewayType: 'hermes',
 					architecture: 'aarch64',
 					secretsProvider: '1password',
 					projectNamespace: '../escape',
@@ -370,6 +350,57 @@ describe('scaffoldAgentVmProject', () => {
 		await expect(
 			fs.access(path.join(targetDir, 'vm-images', 'gateways', 'worker', 'overlay.jsonc')),
 		).resolves.toBeUndefined();
+	});
+
+	it('scaffolds a complete valid Hermes gateway when requested', async () => {
+		const targetDir = await createTestDirectory();
+
+		const result = await scaffoldAgentVmProject(
+			{
+				agents: ['main'],
+				architecture: 'aarch64',
+				gatewayType: 'hermes',
+				secretsProvider: 'environment',
+				targetDir,
+				zoneId: 'test-zone',
+			},
+			noGeneratedAgeIdentityDependencies,
+		);
+		const loadedSystemConfig = await loadSystemConfig(
+			path.join(targetDir, 'config', 'system.jsonc'),
+		);
+		const zone = loadedSystemConfig.zones[0];
+
+		expect(zone?.gateway.type).toBe('hermes');
+		if (zone?.gateway.type !== 'hermes') {
+			throw new Error('Expected the scaffolded zone to use the Hermes gateway.');
+		}
+		expect(zone.gateway.profilesByAgent).toEqual({ main: 'main' });
+		expect(zone.gateway.profileSecretProjectionsByAgent).toEqual({
+			main: {
+				API_SERVER_KEY: 'HERMES_API_SERVER_KEY_MAIN',
+				DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_MAIN',
+			},
+		});
+		expect(result.created).toEqual(
+			expect.arrayContaining([
+				'config/gateways/test-zone/hermes-managed/config.yaml',
+				'config/gateways/test-zone/mcp.config.jsonc',
+				'config/gateways/test-zone/tool-portal.config.jsonc',
+				'vm-images/gateways/hermes/Dockerfile',
+				'vm-images/gateways/hermes/build-config.jsonc',
+				'vm-images/tool-vms/default/build-config.jsonc',
+			]),
+		);
+		await expect(
+			fs.readFile(
+				path.join(targetDir, 'config', 'gateways', 'test-zone', 'hermes-managed', 'config.yaml'),
+				'utf8',
+			),
+		).resolves.toContain('agent-vm-tool-portal');
+		await expect(
+			fs.readFile(path.join(targetDir, 'vm-images', 'gateways', 'hermes', 'Dockerfile'), 'utf8'),
+		).resolves.toContain('agent-vm-hermes-gateway');
 	});
 
 	it('scaffolds worker.jsonc with editable prompt file references for every default prompt', async () => {
@@ -499,56 +530,14 @@ describe('scaffoldAgentVmProject', () => {
 		]);
 	});
 
-	it('scaffolds openclaw gateways with a managed base image overlay', async () => {
-		const targetDir = await createTestDirectory();
-
-		await scaffoldAgentVmProject(
-			{
-				targetDir,
-				zoneId: 'test-zone',
-				gatewayType: 'openclaw',
-				architecture: 'aarch64',
-				secretsProvider: '1password',
-				writeLocalEnvironmentFile: true,
-			},
-			noGeneratedAgeIdentityDependencies,
-		);
-		const systemConfig = await readGeneratedSystemConfig(targetDir);
-		const overlay = generatedManagedImageOverlaySchema.parse(
-			await readGeneratedJsonc(
-				path.join(targetDir, 'vm-images', 'gateways', 'openclaw', 'overlay.jsonc'),
-			),
-		);
-
-		expect(systemConfig.imageProfiles?.gateways.openclaw?.source).toEqual({
-			kind: 'managedBase',
-			base: 'openclaw-gateway',
-			overlay: '../vm-images/gateways/openclaw/overlay.jsonc',
-		});
-		expect(overlay).toEqual({
-			schemaVersion: 1,
-			extraAptPackages: [],
-			copy: [],
-			runAfterBase: [],
-		});
-		await expect(
-			fs.access(path.join(targetDir, 'vm-images', 'gateways', 'openclaw', 'Dockerfile')),
-		).rejects.toMatchObject({ code: 'ENOENT' });
-		expect(
-			await pathExists(
-				path.join(targetDir, 'vm-images', 'gateways', 'openclaw', 'vendor', 'gondolin'),
-			),
-		).toBe(false);
-	});
-
 	it('scaffolds generated deployment manual files and CLAUDE.md symlink', async () => {
 		const targetDir = await createTestDirectory();
 
 		const result = await scaffoldAgentVmProject(
 			{
 				targetDir,
-				zoneId: 'test-openclaw',
-				gatewayType: 'openclaw',
+				zoneId: 'test-hermes',
+				gatewayType: 'hermes',
 				architecture: 'aarch64',
 				secretsProvider: '1password',
 				writeLocalEnvironmentFile: true,
@@ -583,7 +572,7 @@ describe('scaffoldAgentVmProject', () => {
 			{
 				targetDir,
 				zoneId: 'test-zone',
-				gatewayType: 'openclaw',
+				gatewayType: 'hermes',
 				architecture: 'aarch64',
 				secretsProvider: '1password',
 				writeLocalEnvironmentFile: true,
@@ -604,7 +593,7 @@ describe('scaffoldAgentVmProject', () => {
 			{
 				targetDir,
 				zoneId: 'test-zone',
-				gatewayType: 'openclaw',
+				gatewayType: 'hermes',
 				architecture: 'aarch64',
 				secretsProvider: '1password',
 				writeLocalEnvironmentFile: true,
@@ -638,7 +627,7 @@ describe('scaffoldAgentVmProject', () => {
 			{
 				targetDir,
 				zoneId: 'test-zone',
-				gatewayType: 'openclaw',
+				gatewayType: 'hermes',
 				architecture: 'aarch64',
 				secretsProvider: '1password',
 				onePasswordKeychainAccountName: 'shravan-claw-beta',
@@ -674,7 +663,7 @@ describe('scaffoldAgentVmProject', () => {
 			{
 				targetDir,
 				zoneId: 'test-zone',
-				gatewayType: 'openclaw',
+				gatewayType: 'hermes',
 				architecture: 'aarch64',
 				secretsProvider: '1password',
 				writeLocalEnvironmentFile: true,
@@ -692,7 +681,7 @@ describe('scaffoldAgentVmProject', () => {
 			{
 				targetDir,
 				zoneId: 'test-zone',
-				gatewayType: 'openclaw',
+				gatewayType: 'hermes',
 				architecture: 'aarch64',
 				secretsProvider: '1password',
 				writeLocalEnvironmentFile: true,
@@ -711,7 +700,7 @@ describe('scaffoldAgentVmProject', () => {
 			{
 				targetDir,
 				zoneId: 'my-zone',
-				gatewayType: 'openclaw',
+				gatewayType: 'hermes',
 				architecture: 'aarch64',
 				secretsProvider: '1password',
 			},
@@ -763,7 +752,7 @@ describe('scaffoldAgentVmProject', () => {
 			{
 				targetDir,
 				zoneId: 'shravan',
-				gatewayType: 'openclaw',
+				gatewayType: 'hermes',
 				architecture: 'aarch64',
 				secretsProvider: '1password',
 				paths: 'user-dir',
@@ -787,8 +776,8 @@ describe('scaffoldAgentVmProject', () => {
 			systemConfig.host.projectNamespace,
 		);
 		expect(systemConfig.storageRootDir).toBe(expectedStorageRoot);
-		if (systemConfig.zones[0].gateway.type !== 'openclaw') {
-			throw new Error('Expected OpenClaw scaffold to write an OpenClaw gateway.');
+		if (systemConfig.zones[0].gateway.type !== 'hermes') {
+			throw new Error('Expected Hermes scaffold to write a Hermes gateway.');
 		}
 		expect(systemConfig.zones[0].gateway.backupDir).toBe(
 			path.join(fakeHomeDir, '.agent-vm-backups', 'shravan'),
@@ -809,8 +798,8 @@ describe('scaffoldAgentVmProject', () => {
 		expect(loadedSystemConfig.zones[0]?.gateway.stateDir).toBe(
 			path.join(expectedCanonicalStorageRoot, 'shravan', 'state'),
 		);
-		if (loadedSystemConfig.zones[0]?.gateway.type !== 'openclaw') {
-			throw new Error('Expected loaded scaffold to be an OpenClaw gateway.');
+		if (loadedSystemConfig.zones[0]?.gateway.type !== 'hermes') {
+			throw new Error('Expected loaded scaffold to be a Hermes gateway.');
 		}
 		expect(loadedSystemConfig.zones[0].gateway.zoneFilesDir).toBe(
 			path.join(expectedCanonicalStorageRoot, 'shravan', 'zone-files'),
@@ -834,7 +823,7 @@ describe('scaffoldAgentVmProject', () => {
 			{
 				targetDir,
 				zoneId: 'shravan',
-				gatewayType: 'openclaw',
+				gatewayType: 'hermes',
 				architecture: 'aarch64',
 				secretsProvider: '1password',
 				paths: 'user-dir',
@@ -888,12 +877,12 @@ describe('scaffoldAgentVmProject', () => {
 	});
 
 	it('scaffolds a type-specific gateway config file', async () => {
-		const openClawTargetDir = await createTestDirectory();
+		const hermesTargetDir = await createTestDirectory();
 		await scaffoldAgentVmProject(
 			{
-				targetDir: openClawTargetDir,
+				targetDir: hermesTargetDir,
 				zoneId: 'my-zone',
-				gatewayType: 'openclaw',
+				gatewayType: 'hermes',
 				architecture: 'aarch64',
 				secretsProvider: '1password',
 			},
@@ -914,7 +903,14 @@ describe('scaffoldAgentVmProject', () => {
 
 		expect(
 			await pathExists(
-				path.join(openClawTargetDir, 'config', 'gateways', 'my-zone', 'openclaw.json'),
+				path.join(
+					hermesTargetDir,
+					'config',
+					'gateways',
+					'my-zone',
+					'hermes-managed',
+					'config.yaml',
+				),
 			),
 		).toBe(true);
 		expect(
@@ -922,337 +918,16 @@ describe('scaffoldAgentVmProject', () => {
 		).toBe(true);
 		expect(
 			await pathExists(
-				path.join(workerTargetDir, 'config', 'gateways', 'my-zone', 'openclaw.json'),
+				path.join(
+					workerTargetDir,
+					'config',
+					'gateways',
+					'my-zone',
+					'hermes-managed',
+					'config.yaml',
+				),
 			),
 		).toBe(false);
-	});
-
-	it('scaffolds control-ui allowed origins for the host ingress port', async () => {
-		const targetDir = await createTestDirectory();
-
-		await scaffoldAgentVmProject(
-			{
-				targetDir,
-				zoneId: 'my-zone',
-				gatewayType: 'openclaw',
-				architecture: 'aarch64',
-				secretsProvider: '1password',
-			},
-			noGeneratedAgeIdentityDependencies,
-		);
-
-		const openClawConfig = JSON.parse(
-			await fs.readFile(
-				path.join(targetDir, 'config', 'gateways', 'my-zone', 'openclaw.json'),
-				'utf8',
-			),
-		) as {
-			readonly agents: {
-				readonly defaults: {
-					readonly model: { readonly primary: string };
-					readonly models?: Record<string, { readonly agentRuntime?: { readonly id?: string } }>;
-					readonly thinkingDefault?: string;
-					readonly workspace: string;
-				};
-			};
-			readonly gateway: {
-				readonly controlUi: {
-					readonly allowedOrigins: readonly string[];
-				};
-				readonly http: {
-					readonly endpoints: {
-						readonly chatCompletions: {
-							readonly enabled: boolean;
-						};
-					};
-				};
-			};
-			readonly plugins: {
-				readonly load: {
-					readonly paths: readonly string[];
-				};
-			};
-			readonly approvals: {
-				readonly plugin: {
-					readonly enabled: boolean;
-					readonly mode: string;
-				};
-			};
-			readonly tools: {
-				readonly allow: readonly string[];
-				readonly sandbox: {
-					readonly tools: {
-						readonly alsoAllow: readonly string[];
-					};
-				};
-				readonly web: {
-					readonly fetch: {
-						readonly ssrfPolicy: {
-							readonly allowIpv6UniqueLocalRange: boolean;
-							readonly allowRfc2544BenchmarkRange: boolean;
-						};
-					};
-				};
-			};
-		};
-		const systemConfig = await readGeneratedSystemConfig(targetDir);
-
-		expect(openClawConfig.gateway.controlUi.allowedOrigins).toEqual([
-			'http://127.0.0.1:18791',
-			'http://localhost:18791',
-		]);
-		expect(openClawConfig.plugins.load.paths).toEqual([
-			'/home/openclaw/.openclaw/extensions',
-			'/home/openclaw/.openclaw/extensions/gondolin',
-			'/pnpm/global/5/node_modules/@openclaw',
-			'/pnpm/global/5/node_modules/@agent-vm',
-		]);
-		expect(openClawConfig.gateway.http.endpoints.chatCompletions.enabled).toBe(true);
-		expect(openClawConfig.agents.defaults.model.primary).toBe('openai/gpt-5.5');
-		expect(openClawConfig.agents.defaults.thinkingDefault).toBeUndefined();
-		expect(openClawConfig.agents.defaults.workspace).toBe('/zone/agents/default');
-		expect(systemConfig.zones[0].toolPortal).toEqual({
-			configDir: './gateways/my-zone',
-			surfaceEligibilityByProfile: { default: {} },
-		});
-		expect(openClawConfig.agents.defaults.models).toEqual({
-			'openai/gpt-5.5': {
-				agentRuntime: { id: 'pi' },
-			},
-		});
-		expect(openClawConfig.approvals).toEqual({
-			plugin: {
-				enabled: true,
-				mode: 'session',
-			},
-		});
-		expect(openClawConfig.tools.web.fetch.ssrfPolicy).toEqual({
-			allowIpv6UniqueLocalRange: true,
-			allowRfc2544BenchmarkRange: true,
-		});
-		expect(openClawConfig.tools.allow).toEqual(['*']);
-		expect(openClawConfig.tools.sandbox.tools.alsoAllow).toEqual([
-			'web_search',
-			'web_fetch',
-			'message',
-			'group:plugins',
-		]);
-	});
-
-	it('scaffolds OpenClaw agents with managed Tool Portal assignments', async () => {
-		const targetDir = await createTestDirectory();
-
-		await scaffoldAgentVmProject(
-			{
-				targetDir,
-				zoneId: 'my-zone',
-				gatewayType: 'openclaw',
-				architecture: 'aarch64',
-				agents: ['sun', 'shravan', 'alevtina'],
-				secretsProvider: '1password',
-			},
-			noGeneratedAgeIdentityDependencies,
-		);
-
-		const openClawConfig = JSON.parse(
-			await fs.readFile(
-				path.join(targetDir, 'config', 'gateways', 'my-zone', 'openclaw.json'),
-				'utf8',
-			),
-		) as {
-			readonly agents: {
-				readonly defaults: {
-					readonly workspace: string;
-				};
-				readonly list?: readonly {
-					readonly id: string;
-					readonly identity?: { readonly name?: string };
-					readonly tools?: { readonly deny?: readonly string[] };
-					readonly workspace?: string;
-				}[];
-			};
-			readonly mcp?: {
-				readonly servers?: Record<
-					string,
-					{
-						readonly headers?: Record<string, string>;
-						readonly transport?: string;
-						readonly url?: string;
-					}
-				>;
-			};
-		};
-
-		expect(openClawConfig.agents.defaults.workspace).toBe('/zone/agents/default');
-		expect(openClawConfig.agents.list).toEqual([
-			{
-				id: 'sun',
-				workspace: '/zone/agents/sun',
-				identity: { name: 'Sun' },
-				tools: { deny: [] },
-			},
-			{
-				id: 'shravan',
-				workspace: '/zone/agents/shravan',
-				identity: { name: 'Shravan' },
-				tools: { deny: [] },
-			},
-			{
-				id: 'alevtina',
-				workspace: '/zone/agents/alevtina',
-				identity: { name: 'Alevtina' },
-				tools: { deny: [] },
-			},
-		]);
-		expect(openClawConfig.mcp?.servers?.mcp_portal_sun).toBeUndefined();
-		await expect(
-			readGeneratedJsonc(path.join(targetDir, 'config', 'gateways', 'my-zone', 'mcp.config.jsonc')),
-		).resolves.toMatchObject({
-			$schema: '../../schemas/mcp.schema.json',
-			schemaVersion: 1,
-			providers: {},
-		});
-		const toolPortalConfig = toolPortalConfigSchema.parse(
-			await readGeneratedJsonc(
-				path.join(targetDir, 'config', 'gateways', 'my-zone', 'tool-portal.config.jsonc'),
-			),
-		);
-		expect(toolPortalConfig).toEqual({
-			$schema: '../../schemas/tool-portal.schema.json',
-			schemaVersion: 1,
-			agents: {
-				sun: { profile: 'default' },
-				shravan: { profile: 'default' },
-				alevtina: { profile: 'default' },
-			},
-			mode: 'managed',
-			profiles: { default: { namespaces: {} } },
-		});
-		await expect(
-			pathExists(path.join(targetDir, 'config', 'gateways', 'my-zone', 'mcp-portal.config.jsonc')),
-		).resolves.toBe(false);
-	});
-
-	it('scaffolds control-ui allowed origins from an existing zone ingress port', async () => {
-		const targetDir = await createTestDirectory();
-		await scaffoldAgentVmProject(
-			{
-				targetDir,
-				zoneId: 'shravan',
-				gatewayType: 'openclaw',
-				architecture: 'aarch64',
-				secretsProvider: '1password',
-			},
-			noGeneratedAgeIdentityDependencies,
-		);
-		const systemConfigPath = path.join(targetDir, 'config', 'system.jsonc');
-		const systemConfig = await readGeneratedSystemConfig(targetDir);
-		const parsedSystemConfig = z
-			.object({
-				zones: z.tuple([
-					z.object({
-						id: z.literal('shravan'),
-						gateway: z.object({
-							port: z.number().int().positive(),
-						}),
-					}),
-					z
-						.object({
-							id: z.literal('alevtina'),
-							gateway: z.object({
-								port: z.number().int().positive(),
-							}),
-						})
-						.optional(),
-				]),
-			})
-			.parse({
-				...systemConfig,
-				zones: [
-					systemConfig.zones[0],
-					{
-						...systemConfig.zones[0],
-						id: 'alevtina',
-						gateway: {
-							...systemConfig.zones[0].gateway,
-							config: './gateways/alevtina/openclaw.json',
-							port: 18792,
-						},
-					},
-				],
-			});
-		await fs.writeFile(
-			systemConfigPath,
-			`${JSON.stringify({ ...systemConfig, zones: parsedSystemConfig.zones }, null, '\t')}\n`,
-			'utf8',
-		);
-
-		await scaffoldAgentVmProject(
-			{
-				targetDir,
-				zoneId: 'alevtina',
-				gatewayType: 'openclaw',
-				architecture: 'aarch64',
-				secretsProvider: '1password',
-			},
-			noGeneratedAgeIdentityDependencies,
-		);
-
-		const openClawConfig = z
-			.object({
-				gateway: z.object({
-					controlUi: z.object({
-						allowedOrigins: z.array(z.string()),
-					}),
-				}),
-			})
-			.parse(
-				JSON.parse(
-					await fs.readFile(
-						path.join(targetDir, 'config', 'gateways', 'alevtina', 'openclaw.json'),
-						'utf8',
-					),
-				),
-			);
-
-		expect(openClawConfig.gateway.controlUi.allowedOrigins).toEqual([
-			'http://127.0.0.1:18792',
-			'http://localhost:18792',
-		]);
-	});
-
-	it('fails loudly when an existing system config does not define the scaffolded zone port', async () => {
-		const targetDir = await createTestDirectory();
-		await fs.mkdir(path.join(targetDir, 'config'), { recursive: true });
-		await fs.writeFile(
-			path.join(targetDir, 'config', 'system.json'),
-			`${JSON.stringify(
-				{
-					zones: [
-						{
-							id: 'shravan',
-							gateway: { port: 18791 },
-						},
-					],
-				},
-				null,
-				'\t',
-			)}\n`,
-			'utf8',
-		);
-
-		await expect(
-			scaffoldAgentVmProject(
-				{
-					targetDir,
-					zoneId: 'alevtina',
-					gatewayType: 'openclaw',
-					architecture: 'aarch64',
-					secretsProvider: '1password',
-				},
-				noGeneratedAgeIdentityDependencies,
-			),
-		).rejects.toThrow(/does not define zone 'alevtina'/u);
 	});
 
 	it('does not overwrite an existing system.json', async () => {
@@ -1280,7 +955,7 @@ describe('scaffoldAgentVmProject', () => {
 			{
 				targetDir,
 				zoneId: 'test-zone',
-				gatewayType: 'openclaw',
+				gatewayType: 'hermes',
 				architecture: 'aarch64',
 				secretsProvider: '1password',
 			},
@@ -1350,15 +1025,15 @@ describe('scaffoldAgentVmProject', () => {
 		expect(config.host.githubToken.ref).toBe('op://agent-vm/github-token/credential');
 	});
 
-	it('scaffolds openclaw-appropriate secrets for openclaw type', async () => {
+	it('scaffolds profile-isolated secrets for Hermes gateways', async () => {
 		const targetDir = await createTestDirectory();
 
 		await scaffoldAgentVmProject(
 			{
-				gatewayType: 'openclaw',
+				gatewayType: 'hermes',
 				architecture: 'aarch64',
 				targetDir,
-				zoneId: 'test-openclaw',
+				zoneId: 'test-hermes',
 				secretsProvider: '1password',
 			},
 			noGeneratedAgeIdentityDependencies,
@@ -1367,34 +1042,29 @@ describe('scaffoldAgentVmProject', () => {
 		const config = await readGeneratedSystemConfig(targetDir);
 		const secrets = config.zones[0].secrets;
 
-		expect(secrets).not.toHaveProperty('DISCORD_BOT_TOKEN');
-		expect(secrets).toHaveProperty('OPENCLAW_GATEWAY_TOKEN');
-		expect(secrets).not.toHaveProperty('MCP_PORTAL_SERVER_SECRET');
-		expect(secrets).not.toHaveProperty('ANTHROPIC_API_KEY');
-		expect(generatedSecretReferenceSchema.parse(secrets.PERPLEXITY_API_KEY).ref).toBe(
-			'op://agent-vm/test-openclaw-perplexity/credential',
+		expect(generatedSecretReferenceSchema.parse(secrets.API_SERVER_KEY).ref).toBe(
+			'op://agent-vm/test-hermes-hermes-root-api/credential',
 		);
-		expect(generatedSecretReferenceSchema.parse(secrets.OPENCLAW_GATEWAY_TOKEN).ref).toBe(
-			'op://agent-vm/test-openclaw-gateway-auth/password',
+		expect(generatedSecretReferenceSchema.parse(secrets.HERMES_API_SERVER_KEY_MAIN).ref).toBe(
+			'op://agent-vm/test-hermes-main-hermes-api/credential',
+		);
+		expect(generatedSecretReferenceSchema.parse(secrets.DISCORD_BOT_TOKEN_MAIN).ref).toBe(
+			'op://agent-vm/test-hermes-main-discord/credential',
 		);
 		expect(config.zones[0].adminAccess).toEqual({ mode: 'none' });
-		expect(config.zones[0].gateway.controlAuth).toEqual({
-			mode: 'token',
-			secret: 'OPENCLAW_GATEWAY_TOKEN',
-		});
 		expect(config.zones[0].gateway.ssh).toEqual({ secretEnv: 'explicit' });
-		expect(config.zones[0].gateway.rawEnvSecrets).toBeUndefined();
+		expect(config.zones[0].gateway.profilesByAgent).toEqual({ main: 'main' });
 	});
 
-	it('scaffolds broad model-provider network defaults for openclaw type', async () => {
+	it('scaffolds broad model-provider network defaults for Hermes gateways', async () => {
 		const targetDir = await createTestDirectory();
 
 		await scaffoldAgentVmProject(
 			{
-				gatewayType: 'openclaw',
+				gatewayType: 'hermes',
 				architecture: 'aarch64',
 				targetDir,
-				zoneId: 'test-openclaw',
+				zoneId: 'test-hermes',
 				secretsProvider: '1password',
 			},
 			noGeneratedAgeIdentityDependencies,
@@ -1433,21 +1103,21 @@ describe('scaffoldAgentVmProject', () => {
 		expect(zone).not.toHaveProperty('websocketBypass');
 	});
 
-	it('scaffolds tool VM support for openclaw gateways', async () => {
+	it('scaffolds Tool VM support for Hermes gateways', async () => {
 		const targetDir = await createTestDirectory();
 
 		await scaffoldAgentVmProject(
 			{
-				gatewayType: 'openclaw',
+				gatewayType: 'hermes',
 				architecture: 'aarch64',
 				targetDir,
-				zoneId: 'test-openclaw',
+				zoneId: 'test-hermes',
 				secretsProvider: '1password',
 			},
 			noGeneratedAgeIdentityDependencies,
 		);
 
-		const config = generatedOpenClawToolVmSystemConfigSchema.parse(
+		const config = generatedManagedGatewayToolVmSystemConfigSchema.parse(
 			await readGeneratedSystemConfig(targetDir),
 		);
 
@@ -1463,7 +1133,7 @@ describe('scaffoldAgentVmProject', () => {
 		expect(
 			generatedBuildConfigSchema.parse(
 				await readGeneratedJsonc(
-					path.join(targetDir, 'vm-images', 'gateways', 'openclaw', 'build-config.jsonc'),
+					path.join(targetDir, 'vm-images', 'gateways', 'hermes', 'build-config.jsonc'),
 				),
 			).rootfs.sizeMb,
 		).toBe(4096);
@@ -1503,83 +1173,22 @@ describe('scaffoldAgentVmProject', () => {
 			copy: [],
 			runAfterBase: [],
 		});
-		const openClawConfig = JSON.parse(
-			await fs.readFile(
-				path.join(targetDir, 'config', 'gateways', 'test-openclaw', 'openclaw.json'),
-				'utf8',
+		await expect(
+			fs.access(
+				path.join(targetDir, 'config', 'gateways', 'test-hermes', 'hermes-managed', 'config.yaml'),
 			),
-		) as {
-			readonly gateway?: { readonly auth?: { readonly mode?: string } };
-			readonly agents?: {
-				readonly defaults?: {
-					readonly sandbox?: {
-						readonly backend?: string;
-						readonly mode?: string;
-						readonly scope?: string;
-						readonly workspaceAccess?: string;
-					};
-				};
-			};
-			readonly commands?: { readonly ownerAllowFrom?: readonly string[] };
-			readonly session?: { readonly dmScope?: string };
-			readonly approvals?: {
-				readonly plugin?: {
-					readonly enabled?: boolean;
-					readonly mode?: string;
-				};
-			};
-			readonly mcp?: { readonly servers?: Record<string, unknown> };
-			readonly plugins?: {
-				readonly allow?: readonly string[];
-				readonly slots?: { readonly memory?: string };
-				readonly entries?: Record<
-					string,
-					{
-						readonly enabled?: boolean;
-						readonly hooks?: { readonly allowPromptInjection?: boolean };
-					}
-				>;
-			};
-			readonly tools?: { readonly allow?: readonly string[] };
-		};
-		expect(openClawConfig.gateway?.auth?.mode).toBe('token');
-		expect(openClawConfig.agents?.defaults?.sandbox?.backend).toBe('gondolin');
-		expect(openClawConfig.agents?.defaults?.sandbox?.mode).toBe('all');
-		expect(openClawConfig.agents?.defaults?.sandbox?.scope).toBe('agent');
-		expect(openClawConfig.agents?.defaults?.sandbox?.workspaceAccess).toBe('rw');
-		expect(openClawConfig.session?.dmScope).toBe('per-channel-peer');
-		expect(openClawConfig.approvals).toEqual({
-			plugin: {
-				enabled: true,
-				mode: 'session',
-			},
-		});
-		expect(openClawConfig.commands?.ownerAllowFrom).toEqual([]);
-		expect(openClawConfig.plugins?.allow).toContain('memory-core');
-		expect(openClawConfig.plugins?.allow).toContain('gondolin');
-		expect(openClawConfig.plugins?.allow).not.toContain('mcp-portal');
-		expect(openClawConfig.plugins?.slots?.memory).toBe('memory-core');
-		expect(openClawConfig.plugins?.entries?.gondolin).toMatchObject({
-			enabled: true,
-			config: {
-				zoneId: 'test-openclaw',
-			},
-		});
-		expect(openClawConfig.plugins?.entries?.['memory-core']).toEqual({ enabled: true });
-		expect(openClawConfig.plugins?.entries?.['mcp-portal']).toBeUndefined();
-		expect(openClawConfig.mcp?.servers).toEqual({});
-		expect(openClawConfig.tools?.allow).toEqual(['*']);
+		).resolves.toBeUndefined();
 	});
 
-	it('does not scaffold Discord environment variables for openclaw defaults', async () => {
+	it('scaffolds profile-specific environment variables for Hermes defaults', async () => {
 		const targetDir = await createTestDirectory();
 
 		await scaffoldAgentVmProject(
 			{
-				gatewayType: 'openclaw',
+				gatewayType: 'hermes',
 				architecture: 'aarch64',
 				targetDir,
-				zoneId: 'test-openclaw',
+				zoneId: 'test-hermes',
 				secretsProvider: 'environment',
 				writeLocalEnvironmentFile: true,
 			},
@@ -1588,12 +1197,12 @@ describe('scaffoldAgentVmProject', () => {
 		const envContent = await fs.readFile(path.join(targetDir, '.env.local'), 'utf8');
 		const config = await readGeneratedSystemConfig(targetDir);
 
-		expect(envContent).toContain('# GITHUB_TOKEN=');
-		expect(envContent).toContain('# PERPLEXITY_API_KEY=');
-		expect(envContent).toContain('# OPENCLAW_GATEWAY_TOKEN=');
+		expect(envContent).toContain('# API_SERVER_KEY=');
+		expect(envContent).toContain('# HERMES_API_SERVER_KEY_MAIN=');
+		expect(envContent).toContain('# DISCORD_BOT_TOKEN_MAIN=');
+		expect(envContent).not.toContain('OPENCLAW_GATEWAY_TOKEN');
 		expect(envContent).not.toContain('MCP_PORTAL_SERVER_SECRET');
 		expect(envContent).not.toContain('SSH_ACCESS_TOKEN');
-		expect(envContent).not.toContain('DISCORD_BOT_TOKEN');
 		expect(config.zones[0].adminAccess).toEqual({ mode: 'none' });
 	});
 

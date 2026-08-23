@@ -23,7 +23,7 @@ function createReceipt(operationId: string, index: number): Record<string, unkno
 			},
 		],
 		passedTests: 2,
-		project: operationId === 'controller-restart-cleanup' ? 'e2e-vm' : 'e2e-openclaw',
+		project: operationId === 'controller-restart-cleanup' ? 'e2e-vm' : 'e2e-hermes',
 		receiptId: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
 		runId: 'reliability-run-a',
 		schemaVersion: 1,
@@ -53,7 +53,7 @@ describe('validateReliabilityEvidenceManifest', () => {
 		expect(reliabilityEvidenceManifestSchema.parse(manifest)).toEqual(manifest);
 		expect(
 			validateReliabilityEvidenceManifest(manifest, [
-				{ operationId: 'control-session-recovery', project: 'e2e-openclaw' },
+				{ operationId: 'control-session-recovery', project: 'e2e-hermes' },
 				{ operationId: 'controller-restart-cleanup', project: 'e2e-vm' },
 			]),
 		).toEqual({ findings: [], ok: true });
@@ -117,7 +117,7 @@ describe('validateReliabilityEvidenceManifest', () => {
 			[
 				{
 					operationId: 'control-session-recovery',
-					project: 'e2e-openclaw',
+					project: 'e2e-hermes',
 					requireGenerationIdentity: true,
 					requireProcessIdentity: true,
 					requireQueryIdentity: true,

@@ -42,7 +42,6 @@ describe('shouldBuildWorkspaceForE2e', () => {
 	});
 
 	it('requires one workspace build before live VM e2e runs', () => {
-		expect(shouldBuildWorkspaceForE2e({ AGENT_VM_OPENCLAW_E2E: '1' })).toBe(true);
 		expect(shouldBuildWorkspaceForE2e({ AGENT_VM_HERMES_E2E: '1' })).toBe(true);
 		expect(shouldBuildWorkspaceForE2e({ AGENT_VM_WORKER_E2E: '1' })).toBe(true);
 		expect(shouldBuildWorkspaceForE2e({ AGENT_VM_GONDOLIN_E2E: '1' })).toBe(true);
@@ -53,7 +52,7 @@ describe('shouldBuildWorkspaceForE2e', () => {
 		expect(
 			shouldBuildWorkspaceForE2e({
 				AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1',
-				AGENT_VM_OPENCLAW_E2E: '1',
+				AGENT_VM_HERMES_E2E: '1',
 			}),
 		).toBe(false);
 	});
@@ -80,7 +79,7 @@ describe('configureE2eCacheRootForGlobalSetup', () => {
 	});
 
 	it('makes the live e2e cache root explicit and available to the Vitest project', () => {
-		const env: Record<string, string> = { AGENT_VM_OPENCLAW_E2E: '1' };
+		const env: Record<string, string> = { AGENT_VM_HERMES_E2E: '1' };
 		const provided: [string, string][] = [];
 
 		const cacheRoot = configureE2eCacheRootForGlobalSetup({
@@ -117,7 +116,7 @@ describe('configureE2eCacheRootForGlobalSetup', () => {
 		expect(
 			resolveE2eGlobalCacheRoot({
 				AGENT_VM_E2E_CACHE_DIR: '../custom-e2e-cache',
-				AGENT_VM_OPENCLAW_E2E: '1',
+				AGENT_VM_HERMES_E2E: '1',
 			}),
 		).toBe(path.resolve('../custom-e2e-cache'));
 	});
@@ -144,7 +143,7 @@ describe('runE2eWorkspaceBuild', () => {
 
 		const result = runE2eWorkspaceBuild({
 			cwd: '/repo/agent-vm',
-			env: { AGENT_VM_OPENCLAW_E2E: '1' },
+			env: { AGENT_VM_HERMES_E2E: '1' },
 			execFileSync: (command, args, options) => {
 				commands.push([command, ...args, options.cwd]);
 			},

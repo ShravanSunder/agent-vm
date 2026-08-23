@@ -16,7 +16,7 @@ import {
 } from '../shared/controller-managed-vm-termination.js';
 import { readProcessIdentity, sleep } from '../shared/managed-vm-process.js';
 import { createToolVm } from '../tool-vm/tool-vm-lifecycle.js';
-import { prepareGatewayE2eProjectImages, scaffoldOpenClawE2eProject } from './e2e-harness.js';
+import { prepareGatewayE2eProjectImages, scaffoldWorkerE2eProject } from './e2e-harness.js';
 import { shouldRunLiveVmE2e } from './live-vm-e2e-gates.js';
 
 const execFileAsync = promisify(execFile);
@@ -69,8 +69,8 @@ async function createMediatedEnvSystemConfig(options: {
 			},
 			imageProfiles: {
 				gateways: {
-					openclaw: {
-						type: 'openclaw',
+					worker: {
+						type: 'worker',
 						buildConfig: '/test-fixtures/gateway-build-config.jsonc',
 					},
 				},
@@ -98,14 +98,10 @@ async function createMediatedEnvSystemConfig(options: {
 					defaultToolVmProfile: 'standard',
 					egressHosts: [{ host: 'api.github.com', audience: 'tool-vm' }],
 					gateway: {
-						type: 'openclaw',
-						controlAuth: {
-							mode: 'token',
-							secret: 'OPENCLAW_GATEWAY_TOKEN',
-						},
-						config: './config/shravan/openclaw.json',
+						type: 'worker',
+						config: './config/shravan/worker.jsonc',
 						cpus: 1,
-						imageProfile: 'openclaw',
+						imageProfile: 'worker',
 						memory: '512M',
 						port: 18791,
 					},
@@ -119,12 +115,6 @@ async function createMediatedEnvSystemConfig(options: {
 							audience: 'tool-vm',
 							hosts: ['api.github.com'],
 							agentAccess: ['shravan'],
-						},
-						OPENCLAW_GATEWAY_TOKEN: {
-							source: 'config',
-							value: 'gateway-token-not-for-tool-vm',
-							injection: 'env',
-							audience: 'gateway',
 						},
 					},
 				},
@@ -171,8 +161,7 @@ describeLiveVmIntegration('live: Tool VM mediated placeholder environment', () =
 	});
 
 	it('makes scoped http-mediated placeholders visible only to the allowed Tool VM agent', async () => {
-		const project = await scaffoldOpenClawE2eProject({
-			agents: ['shravan'],
+		const project = await scaffoldWorkerE2eProject({
 			architecture: process.arch === 'arm64' ? 'aarch64' : 'x86_64',
 			prefix: 'agent-vm-live-mediated-env-',
 			zoneId: 'shravan',
@@ -203,8 +192,8 @@ describeLiveVmIntegration('live: Tool VM mediated placeholder environment', () =
 			toolVmBuildConfigPath: preparedToolVmImageProfile.buildConfig,
 		});
 		const zone = systemConfig.zones[0];
-		if (zone?.gateway.type !== 'openclaw') {
-			throw new Error('Expected OpenClaw test zone.');
+		if (zone?.gateway.type !== 'worker') {
+			throw new Error('Expected Worker test zone.');
 		}
 		const profile = systemConfig.toolVmProfiles.standard;
 		if (!profile) {
@@ -217,7 +206,7 @@ describeLiveVmIntegration('live: Tool VM mediated placeholder environment', () =
 			'agents',
 			'shravan',
 		);
-		const hostAgentRoot = path.join(zone.gateway.zoneFilesDir, 'agents', 'shravan');
+		const hostAgentRoot = path.join(temporaryDirectory, 'zone-files', 'agents', 'shravan');
 		await Promise.all([
 			mkdir(hostAgentGitDirectoryRoot, { recursive: true }),
 			mkdir(hostAgentRoot, { recursive: true }),

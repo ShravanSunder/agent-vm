@@ -75,6 +75,8 @@ const providerCredentialEnvironmentName = 'PROVIDER_API_KEY';
 const fakeModelPort = 18_080;
 const frameworkGapMarker = 'HERMES_FRAMEWORK_AVAILABLE_DURING_CONTROL_GAP';
 const toolVmRecoveryMarker = 'HERMES_TOOL_VM_RECOVERY_OK';
+const filesystemMarker = 'HERMES_STOCK_FILESYSTEM_WRITE_READ_OK';
+const filesystemIsolationMarker = 'HERMES_FILESYSTEM_PROFILE_ISOLATION_OK';
 
 interface ManagedGatewayStartObservation {
 	readonly controlSession: GatewayDisposableControlSessionClient;
@@ -824,12 +826,31 @@ describeHermesManagedEnvironmentE2e(
 				start: secondEpoch.start,
 			});
 			await startHermesDeterministicToolCallModelServer({
+				filesystemIsolationMarker,
+				filesystemMarker,
 				frameworkMarker: frameworkGapMarker,
 				port: fakeModelPort,
 				toolVmMarker: toolVmRecoveryMarker,
 				vm: secondEpoch.start.vm,
 			});
 			await expectHermesApiKeyIsolation(project.gatewayPort);
+			expect(
+				await callHermesProfile({
+					apiServerKey: hermesE2eProfileApiServerKey('main'),
+					gatewayPort: project.gatewayPort,
+					profileName: 'main',
+					prompt: 'RUN_FILESYSTEM_WRITE_READ_PROBE',
+				}),
+			).toContain(filesystemMarker);
+			expect(
+				await callHermesProfile({
+					apiServerKey: hermesE2eProfileApiServerKey('beta'),
+					gatewayPort: project.gatewayPort,
+					profileName: 'beta',
+					prompt: 'VERIFY_FILESYSTEM_PROFILE_ISOLATION',
+				}),
+			).toContain(filesystemIsolationMarker);
+			expect(secondEpoch.toolVmCreateRequests).toHaveLength(2);
 
 			const frameworkPort =
 				secondEpoch.start.expectedCohort.ingressIntent.frameworkRootRoute.guestPort;
@@ -885,15 +906,31 @@ describeHermesManagedEnvironmentE2e(
 				minimumAttachmentGeneration: initialAttachmentGeneration + 1,
 				previousSessionId: initialSessionId,
 			});
-			expect(
-				await callHermesProfile({
-					apiServerKey: hermesE2eProfileApiServerKey('main'),
-					gatewayPort: project.gatewayPort,
-					profileName: 'main',
-					prompt: 'RUN_TOOL_VM_RECOVERY_PROBE',
-				}),
-			).toContain(toolVmRecoveryMarker);
-			expect(secondEpoch.toolVmCreateRequests).toHaveLength(1);
+			const toolVmRecoveryResponse = await callHermesProfile({
+				apiServerKey: hermesE2eProfileApiServerKey('main'),
+				gatewayPort: project.gatewayPort,
+				profileName: 'main',
+				prompt: 'RUN_TOOL_VM_RECOVERY_PROBE',
+			});
+			if (!toolVmRecoveryResponse.includes(toolVmRecoveryMarker)) {
+				const [hermesServiceLog, toolPortalServiceLog] = await Promise.all([
+					secondEpoch.start.vm.exec(
+						'tail -n 300 /var/log/agent-vm/hermes-service.log 2>&1 || true',
+					),
+					secondEpoch.start.vm.exec(
+						'tail -n 300 /var/log/agent-vm/tool-portal-service.log 2>&1 || true',
+					),
+				]);
+				throw new Error(
+					`Hermes Tool VM recovery failed: ${JSON.stringify({
+						controlSession: secondEpoch.start.controlSession.getDiagnostics(),
+						hermesServiceLog: hermesServiceLog.stdout,
+						toolPortalServiceLog: toolPortalServiceLog.stdout,
+						toolVmRecoveryResponse,
+					})}`,
+				);
+			}
+			expect(secondEpoch.toolVmCreateRequests).toHaveLength(2);
 			expect(secondEpoch.start.vm.getHostProcessId()).toBe(secondEpoch.start.qemuPid);
 			expect(
 				await readManagedGatewaySiblingProcessIdentity({

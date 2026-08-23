@@ -283,14 +283,12 @@ async function parseAndDispatchAgentVmCommandForTest(
 }
 
 describe('parseAndDispatchAgentVmCommandForTest', () => {
-	it('parses OpenClaw init agent ids with validation and dedupe', () => {
+	it('parses Hermes init agent ids with validation and dedupe', () => {
 		expect(parseAgentIds(' sun,shravan, sun ,alevtina ')).toEqual(['sun', 'shravan', 'alevtina']);
 		expect(() => parseAgentIds(' , , ')).toThrow(
-			'--openclaw-agents must include at least one non-empty agent id.',
+			'--agents must include at least one non-empty agent id.',
 		);
-		expect(() => parseAgentIds('sun,Hello World')).toThrow(
-			"Invalid --openclaw-agents value 'Hello World'",
-		);
+		expect(() => parseAgentIds('sun,Hello World')).toThrow("Invalid --agents value 'Hello World'");
 	});
 
 	it('ignores a missing .env.local file', () => {
@@ -339,7 +337,7 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 		}));
 
 		await parseAndDispatchAgentVmCommandForTest(
-			['init', 'test-zone', '--type', 'openclaw', '--secrets', '1password', '--arch', 'aarch64'],
+			['init', 'test-zone', '--type', 'hermes', '--secrets', '1password', '--arch', 'aarch64'],
 			{
 				stderr: { write: () => true },
 				stdout: {
@@ -358,7 +356,7 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 
 		expect(scaffoldAgentVmProject).toHaveBeenCalledWith(
 			expect.objectContaining({
-				gatewayType: 'openclaw',
+				gatewayType: 'hermes',
 				architecture: 'aarch64',
 				hostSystemType: 'bare-metal',
 				paths: 'local',
@@ -384,7 +382,7 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 				'init',
 				'test-zone',
 				'--type',
-				'openclaw',
+				'hermes',
 				'--secrets',
 				'1password',
 				'--arch',
@@ -429,7 +427,7 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 				'init',
 				'test-zone',
 				'--type',
-				'openclaw',
+				'hermes',
 				'--secrets',
 				'1password',
 				'--arch',
@@ -449,7 +447,7 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 				'init',
 				'test-zone',
 				'--type',
-				'openclaw',
+				'hermes',
 				'--secrets',
 				'1password',
 				'--arch',
@@ -484,12 +482,12 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 				'init',
 				'test-zone',
 				'--type',
-				'openclaw',
+				'hermes',
 				'--secrets',
 				'1password',
 				'--arch',
 				'aarch64',
-				'--openclaw-agents',
+				'--agents',
 				'sun',
 			],
 			{
@@ -510,7 +508,7 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 		);
 	});
 
-	it('passes multi-agent managed OpenClaw init requests to the scaffolder', async () => {
+	it('passes multi-agent managed Hermes init requests to the scaffolder', async () => {
 		const scaffoldAgentVmProject = vi.fn(async () => ({
 			created: ['config/system.jsonc'],
 			keychainStored: false,
@@ -522,12 +520,12 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 				'init',
 				'test-zone',
 				'--type',
-				'openclaw',
+				'hermes',
 				'--secrets',
 				'1password',
 				'--arch',
 				'aarch64',
-				'--openclaw-agents',
+				'--agents',
 				'sun,shravan,alevtina',
 			],
 			{
@@ -1702,20 +1700,37 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 				},
 				defaultCliDependencies,
 			),
-		).rejects.toThrow(/openclaw|worker/u);
+		).rejects.toThrow(/hermes|worker/u);
 	});
 
-	it('rejects Hermes init until a Hermes scaffold contract exists', async () => {
-		await expect(
-			parseAndDispatchAgentVmCommandForTest(
-				['init', 'test-zone', '--type', 'hermes', '--secrets', '1password'],
-				{
-					stderr: { write: () => true },
-					stdout: { write: () => true },
-				},
-				defaultCliDependencies,
-			),
-		).rejects.toThrow(/expected one of.*openclaw.*worker/u);
+	it('passes Hermes gateway type through to init scaffolding', async () => {
+		const scaffoldAgentVmProject = vi.fn(async () => ({
+			created: ['config/system.jsonc'],
+			keychainStored: false,
+			skipped: [],
+		}));
+
+		await parseAndDispatchAgentVmCommandForTest(
+			['init', 'test-zone', '--type', 'hermes', '--secrets', 'environment', '--arch', 'aarch64'],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				...defaultCliDependencies,
+				getCurrentWorkingDirectory: () => '/tmp/agent-vm-hermes-init',
+				scaffoldAgentVmProject,
+			},
+		);
+
+		expect(scaffoldAgentVmProject).toHaveBeenCalledWith(
+			expect.objectContaining({
+				architecture: 'aarch64',
+				gatewayType: 'hermes',
+				targetDir: '/tmp/agent-vm-hermes-init',
+				zoneId: 'test-zone',
+			}),
+		);
 	});
 
 	it('reports regular runtime errors to stderr in the main error handler', () => {

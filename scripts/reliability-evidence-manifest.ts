@@ -6,7 +6,7 @@ export const RELIABILITY_EVIDENCE_PROJECTS = [
 	'e2e-host-docker',
 	'e2e-vm',
 	'e2e-vm-mediation',
-	'e2e-openclaw',
+	'e2e-hermes',
 	'e2e-worker',
 ] as const;
 
@@ -226,7 +226,7 @@ function parseProject(input: unknown, label: string): ReliabilityEvidenceProject
 		case 'e2e-host-docker':
 		case 'e2e-vm':
 		case 'e2e-vm-mediation':
-		case 'e2e-openclaw':
+		case 'e2e-hermes':
 		case 'e2e-worker':
 			return input;
 		default:

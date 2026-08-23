@@ -45,8 +45,6 @@ import {
 	removeE2eDockerImagesForSystemConfig,
 	removeE2eTempRoot,
 	resolveLocalPackagePackArgs,
-	scaffoldGatewayE2eProject,
-	scaffoldOpenClawE2eProject,
 	scaffoldWorkerE2eProject,
 	seedGatewayImageCacheIfAvailable,
 	shouldCleanupE2eDockerImages,
@@ -151,7 +149,8 @@ describe('scaffoldGatewayE2eProject', () => {
 		const smokeCacheRoot = path.join(temporaryRoot, 'shared-smoke-cache');
 		process.env.AGENT_VM_E2E_CACHE_DIR = smokeCacheRoot;
 		try {
-			const openClawProject = await scaffoldOpenClawE2eProject({
+			const openClawProject = await scaffoldHermesE2eProject({
+				agents: ['main'],
 				architecture: 'aarch64',
 				prefix: 'openclaw-control-link-e2e-',
 				zoneId: 'openclaw-smoke',
@@ -163,7 +162,7 @@ describe('scaffoldGatewayE2eProject', () => {
 			});
 			temporaryRoots.push(openClawProject.tempRoot, workerProject.tempRoot);
 
-			expect(openClawProject.systemConfig.cacheDir).toBe(path.join(smokeCacheRoot, 'openclaw'));
+			expect(openClawProject.systemConfig.cacheDir).toBe(path.join(smokeCacheRoot, 'hermes'));
 			expect(workerProject.systemConfig.cacheDir).toBe(path.join(smokeCacheRoot, 'worker'));
 			expect(openClawProject.systemConfig.cacheDir).not.toContain(openClawProject.tempRoot);
 			expect(workerProject.systemConfig.cacheDir).not.toContain(workerProject.tempRoot);
@@ -177,7 +176,8 @@ describe('scaffoldGatewayE2eProject', () => {
 	});
 
 	it('keeps generated e2e runtime and state paths inside owned temp project roots', async () => {
-		const openClawProject = await scaffoldOpenClawE2eProject({
+		const openClawProject = await scaffoldHermesE2eProject({
+			agents: ['main'],
 			architecture: 'aarch64',
 			prefix: 'openclaw-control-link-e2e-',
 			zoneId: 'openclaw-smoke',
@@ -234,17 +234,16 @@ describe('scaffoldGatewayE2eProject', () => {
 		expect(firstFingerprint).toBe(secondFingerprint);
 	});
 
-	it('dispatches through the typed OpenClaw gateway smoke project scaffold', async () => {
-		const project = await scaffoldGatewayE2eProject({
+	it('dispatches through the typed Hermes gateway smoke project scaffold', async () => {
+		const project = await scaffoldHermesE2eProject({
 			agents: ['smoke-agent'],
 			architecture: 'aarch64',
-			kind: 'openclaw',
 			prefix: 'agent-vm-gateway-e2e-project-',
 			zoneId: 'smoke-zone',
 		});
 		temporaryRoots.push(project.tempRoot);
 
-		expect(project.zone.gateway.type).toBe('openclaw');
+		expect(project.zone.gateway.type).toBe('hermes');
 		expect(project.systemConfig.zones[0]?.agents).toEqual([{ id: 'smoke-agent' }]);
 	});
 
@@ -1074,7 +1073,8 @@ describe('prepareGatewayE2eProjectImages', () => {
 		process.env.AGENT_VM_E2E_CACHE_DIR = path.join(temporaryRoot, 'shared-e2e-cache');
 		process.env.AGENT_VM_E2E_USE_LOCAL_TOOL_VM_PACKAGES = '1';
 		try {
-			const project = await scaffoldOpenClawE2eProject({
+			const project = await scaffoldHermesE2eProject({
+				agents: ['main'],
 				architecture: 'aarch64',
 				prefix: 'openclaw-local-tool-vm-packages-',
 				zoneId: 'openclaw-local-tool-vm-packages',
@@ -1622,7 +1622,8 @@ describe('prepareGatewayE2eProjectImages', () => {
 			prefix: 'worker-loop-e2e-',
 			zoneId: 'worker-e2e',
 		});
-		const openClawProject = await scaffoldOpenClawE2eProject({
+		const openClawProject = await scaffoldHermesE2eProject({
+			agents: ['main'],
 			architecture: 'aarch64',
 			prefix: 'openclaw-control-link-e2e-',
 			zoneId: 'openclaw-e2e',
@@ -1633,7 +1634,7 @@ describe('prepareGatewayE2eProjectImages', () => {
 			project.systemConfig.imageProfiles.toolVms = {};
 		}
 		const workerProfile = workerProject.systemConfig.imageProfiles.gateways.worker;
-		const openClawProfile = openClawProject.systemConfig.imageProfiles.gateways.openclaw;
+		const openClawProfile = openClawProject.systemConfig.imageProfiles.gateways.hermes;
 		const workerZone = workerProject.systemConfig.zones[0];
 		const openClawZone = openClawProject.systemConfig.zones[0];
 		if (
@@ -1642,7 +1643,7 @@ describe('prepareGatewayE2eProjectImages', () => {
 			workerZone === undefined ||
 			openClawZone === undefined
 		) {
-			throw new Error('Expected Worker and OpenClaw e2e fixtures.');
+			throw new Error('Expected Worker and Hermes e2e fixtures.');
 		}
 		workerProfile.buildConfig = sharedBuildConfigPath;
 		workerProfile.dockerfile = sharedDockerfilePath;
@@ -1664,9 +1665,9 @@ describe('prepareGatewayE2eProjectImages', () => {
 			if (profile === undefined) throw new Error('Expected shared gateway profile.');
 			builtGatewayTypes.push(profile.type);
 			const managedGatewayBoot =
-				profile.type === 'openclaw'
+				profile.type === 'hermes'
 					? {
-							frameworkBootEntry: 'openclaw-framework-service' as const,
+							frameworkBootEntry: 'hermes-framework-service' as const,
 							kind: 'managed-gateway-exact-two-role' as const,
 						}
 					: undefined;
@@ -1695,7 +1696,7 @@ describe('prepareGatewayE2eProjectImages', () => {
 		await prepareGatewayE2eProjectImages({ project: workerProject, runBuild });
 		await prepareGatewayE2eProjectImages({ project: openClawProject, runBuild });
 
-		expect(builtGatewayTypes).toEqual(['worker', 'openclaw']);
+		expect(builtGatewayTypes).toEqual(['worker', 'hermes']);
 	});
 
 	it('does not materialize managed-source profiles from the e2e manifest', async () => {

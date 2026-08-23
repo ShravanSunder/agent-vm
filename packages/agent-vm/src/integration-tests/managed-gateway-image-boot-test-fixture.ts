@@ -14,20 +14,18 @@ import type { ManagedVm, ManagedVmFinalizableMemoryFile } from '@agent-vm/manage
 
 import { readPreparedManagedVmImage } from '../build/prepared-gondolin-image-cache.js';
 import { createManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
+import { prepareGatewayE2eProjectImages, removeE2eTempRoot } from './e2e-harness.js';
 import {
-	prepareGatewayE2eProjectImages,
-	removeE2eTempRoot,
-	scaffoldOpenClawE2eProject,
-	useLocalOpenClawPluginGatewayImage,
-} from './e2e-harness.js';
+	scaffoldHermesE2eProject,
+	useLocalHermesGatewayImagePackages,
+	type HermesE2eProject,
+} from './hermes-e2e-harness.js';
 
 export const managedGatewayBootInputGuestRoot = '/run/agent-vm/managed-gateway';
 export const managedGatewayBootEnvironmentGuestRoot = '/run/agent-vm/managed-gateway-environment';
-export const managedGatewayBootSecretCanary = 'managed-gateway-image-boot-secret-canary';
 
 export type ManagedGatewayBootInputFileName = 'framework-service.json' | 'tool-portal-service.json';
 
-type OpenClawE2eProject = Awaited<ReturnType<typeof scaffoldOpenClawE2eProject>>;
 type PreparedManagedGatewayImage = NonNullable<
 	Awaited<ReturnType<typeof readPreparedManagedVmImage>>
 >;
@@ -35,7 +33,7 @@ type PreparedManagedGatewayImage = NonNullable<
 export interface ManagedGatewayImageBootFixture {
 	readonly close: () => Promise<void>;
 	readonly preparedImage: PreparedManagedGatewayImage;
-	readonly project: OpenClawE2eProject;
+	readonly project: HermesE2eProject;
 	readonly vm: ManagedVm;
 }
 
@@ -44,7 +42,10 @@ interface ManagedGatewayImageBootInputInventories {
 	readonly structuredInputFiles: readonly ManagedVmFinalizableMemoryFile[];
 }
 
-function serviceConfig(verifierPublicKeyPem: string, identitySuffix?: string): object {
+function createToolPortalServiceConfig(
+	verifierPublicKeyPem: string,
+	identitySuffix?: string,
+): object {
 	const gatewayIdentitySuffix = identitySuffix ?? 'image-boot';
 	const processIdentitySuffix = identitySuffix ?? 'image-owned';
 	const mcpConfig = mcpConfigSchema.parse({ providers: {}, schemaVersion: 1 });
@@ -58,7 +59,7 @@ function serviceConfig(verifierPublicKeyPem: string, identitySuffix?: string): o
 		agentProjections: [
 			{
 				agentId: 'main',
-				frameworkIdentity: { agentId: 'main', kind: 'openclaw' },
+				frameworkIdentity: { kind: 'hermes', profileName: 'main' },
 				toolPortalNamespaceNames: [],
 				toolPortalProfileId: 'default',
 			},
@@ -67,8 +68,7 @@ function serviceConfig(verifierPublicKeyPem: string, identitySuffix?: string): o
 		surfaceEligibilityByProfile: { default: {} },
 		toolPortalConfig,
 	});
-	const gatewayRuntimeToolPortalConfig =
-		createGatewayRuntimeManagedToolPortalConfig(toolPortalConfig);
+	const effectiveToolPortalConfig = createGatewayRuntimeManagedToolPortalConfig(toolPortalConfig);
 	return {
 		artifactLimits: {
 			maximumArtifactBytes: 1_024,
@@ -78,7 +78,7 @@ function serviceConfig(verifierPublicKeyPem: string, identitySuffix?: string): o
 		},
 		attachment: {
 			attachmentGeneration: 1,
-			clientKind: 'openclaw-managed-plugin',
+			clientKind: 'hermes-managed-plugin',
 			configuredAgentIds: ['main'],
 			frameworkEpoch: `framework-epoch-${gatewayIdentitySuffix}`,
 			gatewayEpoch: `gateway-epoch-${gatewayIdentitySuffix}`,
@@ -103,7 +103,7 @@ function serviceConfig(verifierPublicKeyPem: string, identitySuffix?: string): o
 		},
 		gatewayRuntimeInputRevision: deriveGatewayRuntimeInputRevision({
 			mcpConfig,
-			toolPortalConfig: gatewayRuntimeToolPortalConfig,
+			toolPortalConfig: effectiveToolPortalConfig,
 		}),
 		mcpConfigPath: `${managedGatewayBootInputGuestRoot}/mcp.config.json`,
 		observability: { kind: 'disabled' },
@@ -115,27 +115,7 @@ function serviceConfig(verifierPublicKeyPem: string, identitySuffix?: string): o
 			role: 'tool-portal',
 			serviceId: `tool-portal-${processIdentitySuffix}`,
 		},
-		toolPortalConfig: gatewayRuntimeToolPortalConfig,
-	};
-}
-
-function openClawConfig(): object {
-	return {
-		channels: {},
-		gateway: {
-			auth: {
-				mode: 'token',
-				token: { id: 'OPENCLAW_GATEWAY_TOKEN', provider: 'default', source: 'env' },
-			},
-			bind: 'loopback',
-			mode: 'local',
-			port: 18_789,
-		},
-		plugins: {
-			allow: ['memory-core'],
-			entries: { 'memory-core': { enabled: true } },
-			slots: { memory: 'memory-core' },
-		},
+		toolPortalConfig: effectiveToolPortalConfig,
 	};
 }
 
@@ -147,40 +127,40 @@ function createMemoryFile(relativePath: string, contents: string): ManagedVmFina
 	};
 }
 
-function buildProtectedBootInputs(props: {
+function shellSingleQuote(value: string): string {
+	return `'${value.replaceAll("'", `'\"'\"'`)}'`;
+}
+
+function renderEnvironment(environment: Readonly<Record<string, string>>): string {
+	return `${Object.entries(environment)
+		.toSorted(([leftName], [rightName]) => leftName.localeCompare(rightName))
+		.map(([name, value]) => `export ${name}=${shellSingleQuote(value)}`)
+		.join('\n')}\n`;
+}
+
+async function buildProtectedBootInputs(props: {
 	readonly identitySuffix?: string;
 	readonly omittedInputFileName?: ManagedGatewayBootInputFileName;
-}): ManagedGatewayImageBootInputInventories {
+	readonly project: HermesE2eProject;
+}): Promise<ManagedGatewayImageBootInputInventories> {
 	const { publicKey } = generateKeyPairSync('ed25519');
 	const verifierPublicKeyPem = publicKey.export({ format: 'pem', type: 'spki' }).toString();
+	const frameworkBootInputs = {
+		configuration: {},
+		environment: {
+			AGENT_VM_HERMES_MANAGED_CONFIG_PATH: '/run/agent-vm/managed-gateway/framework-service.json',
+			HOME: '/home/hermes',
+			PATH: '/opt/hermes/.venv/bin:/usr/local/bin:/usr/bin:/bin',
+		},
+	};
 	const environmentFiles = [
 		createMemoryFile(
 			'framework.environment.sh',
-			[
-				'export HOME=/home/openclaw',
-				'export OPENCLAW_HOME=/home/openclaw',
-				`export OPENCLAW_CONFIG_PATH=${managedGatewayBootInputGuestRoot}/framework-service.json`,
-				'export OPENCLAW_STATE_DIR=/home/openclaw/.openclaw',
-				`export OPENCLAW_GATEWAY_TOKEN=${managedGatewayBootSecretCanary}`,
-				'export PATH=/pnpm:/usr/local/bin:/usr/bin:/bin',
-				'',
-			].join('\n'),
-		),
-		createMemoryFile(
-			'openclaw-all-secrets.environment.sh',
-			[
-				'export HOME=/home/openclaw',
-				`export OPENCLAW_GATEWAY_TOKEN=${managedGatewayBootSecretCanary}`,
-				'',
-			].join('\n'),
-		),
-		createMemoryFile(
-			'openclaw-gateway-token.environment.sh',
-			`export OPENCLAW_GATEWAY_TOKEN=${managedGatewayBootSecretCanary}\n`,
+			renderEnvironment(frameworkBootInputs.environment),
 		),
 		createMemoryFile(
 			'tool-portal.environment.sh',
-			'export HOME=/home/openclaw\nexport PATH=/pnpm:/usr/local/bin:/usr/bin:/bin\n',
+			'export HOME=/home/hermes\nexport PATH=/pnpm:/usr/local/bin:/usr/bin:/bin\n',
 		),
 	];
 	const structuredInputContents = new Map<
@@ -188,10 +168,10 @@ function buildProtectedBootInputs(props: {
 		string
 	>([
 		['mcp.config.json', `${JSON.stringify({ providers: {}, schemaVersion: 1 })}\n`],
-		['framework-service.json', `${JSON.stringify(openClawConfig())}\n`],
+		['framework-service.json', `${JSON.stringify(frameworkBootInputs.configuration)}\n`],
 		[
 			'tool-portal-service.json',
-			`${JSON.stringify(serviceConfig(verifierPublicKeyPem, props.identitySuffix))}\n`,
+			`${JSON.stringify(createToolPortalServiceConfig(verifierPublicKeyPem, props.identitySuffix))}\n`,
 		],
 	]);
 	if (props.omittedInputFileName !== undefined) {
@@ -211,9 +191,10 @@ export async function createManagedGatewayImageBootFixture(props: {
 	readonly omittedInputFileName?: ManagedGatewayBootInputFileName;
 	readonly sessionLabel: string;
 }): Promise<ManagedGatewayImageBootFixture> {
-	const project = await scaffoldOpenClawE2eProject({
+	const architecture = process.arch === 'arm64' ? 'aarch64' : 'x86_64';
+	const project = await scaffoldHermesE2eProject({
 		agents: ['main'],
-		architecture: process.arch === 'arm64' ? 'aarch64' : 'x86_64',
+		architecture,
 		prefix: 'agent-vm-e2e-harness-managed-gateway-image-boot-',
 		zoneId: 'managed-gateway-image-boot',
 	});
@@ -221,10 +202,11 @@ export async function createManagedGatewayImageBootFixture(props: {
 	try {
 		const profileName = project.zone.gateway.imageProfile;
 		const gatewayProfile = project.systemConfig.imageProfiles.gateways[profileName];
-		if (gatewayProfile === undefined) {
-			throw new Error(`OpenClaw image profile '${profileName}' is missing.`);
+		if (gatewayProfile === undefined || gatewayProfile.type !== 'hermes') {
+			throw new Error(`Hermes image profile '${profileName}' is missing.`);
 		}
-		await useLocalOpenClawPluginGatewayImage({
+		await useLocalHermesGatewayImagePackages({
+			architecture,
 			profileName,
 			projectRoot: project.tempRoot,
 			repoRoot: process.cwd(),
@@ -236,11 +218,10 @@ export async function createManagedGatewayImageBootFixture(props: {
 			cacheDir: path.join(project.systemConfig.cacheDir, 'gateway-images', profileName),
 		});
 		if (preparedImage === undefined) {
-			throw new Error(
-				'OpenClaw managed image preparation did not publish a prepared-image receipt.',
-			);
+			throw new Error('Hermes image preparation did not publish a prepared-image receipt.');
 		}
-		const bootInputs = buildProtectedBootInputs({
+		const bootInputs = await buildProtectedBootInputs({
+			project,
 			...(props.identitySuffix === undefined ? {} : { identitySuffix: props.identitySuffix }),
 			...(props.omittedInputFileName === undefined
 				? {}

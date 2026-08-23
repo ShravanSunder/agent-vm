@@ -246,6 +246,9 @@ class HermesGatewayRuntimeEnvironment(BaseEnvironment):
                 raise RuntimeError("Hermes managed Gateway Runtime environment authority changed")
 
     def resolve_status_kind(self) -> str:
+        with self._cleanup_lock:
+            if self._closed:
+                return "replaced"
         result = self._adapter.run_gateway_runtime_coroutine(
             self.gateway_runtime_client.sandbox.environment.status(
                 {"environment": dict(self._environment_handle)},
@@ -260,6 +263,9 @@ class HermesGatewayRuntimeEnvironment(BaseEnvironment):
         if status_kind not in {"active", "closed", "replaced"}:
             message = f"Unsupported Gateway Runtime environment status {status_kind!r}"
             raise RuntimeError(message)
+        with self._cleanup_lock:
+            if self._closed:
+                return "replaced"
         return status_kind
 
     def start_managed_process(
@@ -529,6 +535,9 @@ class HermesGatewayRuntimeEnvironment(BaseEnvironment):
                 message = "Gateway Runtime completed execution without an exact exit code"
                 raise HermesGatewayRuntimeOutcomeError(message)
             return exit_code
+        except Exception:
+            self.retire_locally()
+            raise
         finally:
             operation_ready.set()
             close_stdout_write()

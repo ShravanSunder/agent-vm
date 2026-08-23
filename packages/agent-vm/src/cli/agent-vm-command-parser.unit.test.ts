@@ -19,7 +19,7 @@ const commandContractFixtures = [
 			'init',
 			'project-zone',
 			'--type',
-			'openclaw',
+			'hermes',
 			'--preset',
 			'container-arm64',
 			'--secrets',
@@ -31,7 +31,7 @@ const commandContractFixtures = [
 			'--namespace',
 			'my-project',
 			'--overwrite',
-			'--openclaw-agents',
+			'--agents',
 			' sun,main,sun ',
 			'--onepassword-keychain-account-name',
 			'team',
@@ -40,7 +40,7 @@ const commandContractFixtures = [
 			command: 'init',
 			options: {
 				zoneId: 'project-zone',
-				type: 'openclaw',
+				type: 'hermes',
 				preset: {
 					architecture: 'aarch64',
 					hostSystemType: 'container',
@@ -338,12 +338,12 @@ describe('agent-vm Optique command parser', () => {
 		}
 	});
 
-	it('keeps the init gateway type narrower than the runtime gateway domain', () => {
+	it('rejects the removed OpenClaw init gateway type', () => {
 		const result = parseSync(agentVmRootParser, [
 			'init',
 			'zone',
 			'--type',
-			'hermes',
+			'openclaw',
 			'--secrets',
 			'environment',
 			'--arch',

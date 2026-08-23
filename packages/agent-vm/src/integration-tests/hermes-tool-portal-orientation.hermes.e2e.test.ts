@@ -54,6 +54,8 @@ const localSchemaErrorPrompt = 'call-remote-tool-with-locally-invalid-schema';
 const localSchemaErrorSuccessMarker = 'hermes-local-schema-error-visible';
 const remoteSchemaErrorPrompt = 'call-remote-tool-returning-schema-error';
 const remoteSchemaErrorSuccessMarker = 'hermes-remote-schema-error-visible';
+const controllerExecutionPrompt = 'call-controller-host-probe-through-tool-portal';
+const controllerExecutionSuccessMarker = 'hermes-controller-execution-succeeded';
 const remoteProviderErrorCanary = 'provider response detail must not escape';
 const remoteSchemaSecretCanary = 'schema-secret-must-not-escape';
 const orientationMarker =
@@ -199,6 +201,39 @@ async function startRecordingProvider(): Promise<RecordingProvider> {
 		const latestToolResult = messagesAfterLatestUser(observation).find(
 			({ role }) => role === 'tool',
 		)?.content;
+		if (latestUserContent === controllerExecutionPrompt) {
+			if (latestToolResult === undefined) {
+				writeServerSentToolCall(response, {
+					argumentsValue: {
+						arguments: {
+							calls: [
+								{
+									arguments: {},
+									id: 'controller-host-probe',
+									name: 'controller_host_probe',
+									namespace: 'controller_execution',
+								},
+							],
+						},
+						name: 'tool_portal_call',
+					},
+					id: 'hermes-controller-execution-call',
+					name: 'tool_call',
+				});
+				return;
+			}
+			const controllerExecutionSucceeded =
+				/"status"\s*:\s*"ok"/u.test(latestToolResult) &&
+				latestToolResult.includes('controller_cache_dir_listing') &&
+				latestToolResult.includes('agent-vm-host-probe.txt');
+			writeServerSentCompletion(
+				response,
+				controllerExecutionSucceeded
+					? controllerExecutionSuccessMarker
+					: 'hermes-controller-execution-failed',
+			);
+			return;
+		}
 		if (latestUserContent === describePrompt) {
 			if (latestToolResult === undefined) {
 				writeServerSentToolCall(response, {
@@ -395,6 +430,19 @@ async function writeToolPortalConfiguration(options: {
 					profiles: {
 						[agentId]: {
 							namespaces: {
+								controller_execution: {
+									backend: {
+										kind: 'controller_execution',
+										operations: {
+											controller_host_probe: { kind: 'registered_action' },
+										},
+									},
+									calls: {
+										requiresApproval: { allow: [] },
+										withoutApproval: { allow: ['controller_host_probe'] },
+									},
+									tools: { allow: ['controller_host_probe'] },
+								},
 								[fakeUpstreamNamespace]: {
 									backend: { kind: 'mcp_provider' },
 									calls: {
@@ -550,6 +598,7 @@ describeHermesToolPortalOrientationE2e('e2e: Hermes Tool Portal session orientat
 			configDir: toolPortalConfigDirectory,
 			surfaceEligibilityByProfile: {
 				[agentId]: {
+					controller_execution: ['protected_uds'],
 					[fakeUpstreamNamespace]: ['mcp', 'protected_uds'],
 					[unavailableNamespace]: ['mcp', 'protected_uds'],
 				},
@@ -584,6 +633,7 @@ describeHermesToolPortalOrientationE2e('e2e: Hermes Tool Portal session orientat
 		harness = await startE2eControllerRuntime({
 			secrets: {
 				...buildHermesE2eProfileApiServerKeySecrets([agentId]),
+				AGENT_VM_E2E_CONTROLLER_HOST_PROBE: '1',
 				[discordSecretEnvironmentName]: 'unused-hermes-orientation-e2e-discord-token',
 				GITHUB_TOKEN: 'unused-hermes-orientation-e2e-github-token',
 			},
@@ -686,5 +736,11 @@ describeHermesToolPortalOrientationE2e('e2e: Hermes Tool Portal session orientat
 		});
 		expect(remoteSchemaErrorResponse).toContain(remoteSchemaErrorSuccessMarker);
 		expect(remoteSchemaErrorResponse).not.toContain(remoteSchemaSecretCanary);
+
+		const controllerExecutionResponse = await requestHermesTurn({
+			gatewayPort: project.gatewayPort,
+			prompt: controllerExecutionPrompt,
+		});
+		expect(controllerExecutionResponse).toContain(controllerExecutionSuccessMarker);
 	}, 900_000);
 });

@@ -609,6 +609,34 @@ class HermesGatewayRuntimeEnvironmentTests(unittest.TestCase):
         ]
         self.assertEqual(environment_operation_names, ["open", "status", "status"])
 
+    def test_execution_dispatch_failure_retires_environment_for_cache_reacquisition(self) -> None:
+        environment = self.factory.create(
+            profile_name="researcher",
+            task_id="session-researcher",
+            cwd="/work",
+            timeout=60,
+        )
+
+        async def reject_stale_execution(
+            request: Mapping[str, object],
+            *,
+            trusted_context: Mapping[str, object],
+        ) -> PortableResult:
+            del request, trusted_context
+            raise RuntimeError("Gateway runtime method dispatch failed.")
+
+        self.client.sandbox.execution.set_override("start", reject_stale_execution)
+
+        process = environment._run_bash("printf stale", timeout=30)
+        with self.assertRaisesRegex(RuntimeError, "method dispatch failed"):
+            _ = process.wait(timeout=2)
+
+        self.assertEqual(environment.resolve_status_kind(), "replaced")
+        environment_operation_names = [
+            operation_name for operation_name, _, _ in self.client.sandbox.environment.calls
+        ]
+        self.assertEqual(environment_operation_names, ["open"])
+
     def test_environment_open_uses_existing_environment_timeout(self) -> None:
         # Arrange
         open_started = threading.Event()

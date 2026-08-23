@@ -101,13 +101,6 @@ export async function startE2eGatewayZoneForController(
 	});
 }
 
-interface OpenClawE2eZone extends Omit<LoadedSystemConfig['zones'][number], 'gateway'> {
-	readonly gateway: Extract<
-		LoadedSystemConfig['zones'][number]['gateway'],
-		{ readonly type: 'openclaw' }
-	>;
-}
-
 interface WorkerE2eZone extends Omit<LoadedSystemConfig['zones'][number], 'gateway'> {
 	readonly gateway: Extract<
 		LoadedSystemConfig['zones'][number]['gateway'],
@@ -222,14 +215,6 @@ export interface E2eHarnessImageCleanupOptions extends E2eHarnessCloseOptions {
 	readonly env?: Partial<Record<'AGENT_VM_E2E_CLEAN_IMAGES', string>>;
 }
 
-export interface OpenClawE2eProject {
-	readonly controllerPort: number;
-	readonly gatewayPort: number;
-	readonly systemConfig: LoadedSystemConfig;
-	readonly tempRoot: string;
-	readonly zone: OpenClawE2eZone;
-}
-
 export interface WorkerE2eProject {
 	readonly controllerPort: number;
 	readonly gatewayPort: number;
@@ -238,21 +223,9 @@ export interface WorkerE2eProject {
 	readonly zone: WorkerE2eZone;
 }
 
-export type GatewayE2eKind = 'openclaw' | 'worker';
-
-export type GatewayE2eProject = OpenClawE2eProject | WorkerE2eProject;
-
 export interface GatewayE2eImageProject {
 	readonly systemConfig: LoadedSystemConfig;
 	readonly tempRoot: string;
-}
-
-export interface ScaffoldGatewayE2eProjectOptions {
-	readonly agents?: readonly string[];
-	readonly architecture: ImageArchitecture;
-	readonly kind: GatewayE2eKind;
-	readonly prefix: string;
-	readonly zoneId: string;
 }
 
 export interface ManagedVmE2ePrerequisiteOptions {
@@ -987,14 +960,6 @@ function applySmokeEnvironment(secrets: E2eHarnessSecretMap): () => void {
 			}
 		}
 	};
-}
-
-export function getOpenClawE2eZone(systemConfig: LoadedSystemConfig): OpenClawE2eProject['zone'] {
-	const zone = systemConfig.zones[0];
-	if (!zone || zone.gateway.type !== 'openclaw') {
-		throw new Error('Expected smoke system config to contain an OpenClaw zone.');
-	}
-	return { ...zone, gateway: zone.gateway };
 }
 
 function getWorkerE2eZone(systemConfig: LoadedSystemConfig): WorkerE2eProject['zone'] {
@@ -2192,41 +2157,6 @@ export async function useLocalOpenClawPluginGatewayImage(options: {
 	}
 }
 
-export async function scaffoldOpenClawE2eProject(options: {
-	readonly agents?: readonly string[];
-	readonly architecture: ImageArchitecture;
-	readonly prefix: string;
-	readonly zoneId: string;
-}): Promise<OpenClawE2eProject> {
-	const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), options.prefix));
-	const controllerPort = await findAvailablePort();
-	const gatewayPort = await findAvailablePort();
-	await scaffoldAgentVmProject({
-		architecture: options.architecture,
-		gatewayType: 'openclaw',
-		secretsProvider: 'environment',
-		targetDir: tempRoot,
-		zoneId: options.zoneId,
-		...(options.agents ? { agents: options.agents } : {}),
-	});
-	const loadedSystemConfig = await loadSystemConfig(path.join(tempRoot, 'config', 'system.json'));
-	const systemConfig: LoadedSystemConfig = {
-		...loadedSystemConfig,
-		cacheDir: path.join(resolveE2eCacheRoot(), 'openclaw'),
-	};
-	systemConfig.host.controllerPort = controllerPort;
-	systemConfig.host.projectNamespace = 'claw-tests-workspace-git';
-	const zone = getOpenClawE2eZone(systemConfig);
-	zone.gateway.port = gatewayPort;
-	return {
-		controllerPort,
-		gatewayPort,
-		systemConfig,
-		tempRoot,
-		zone,
-	};
-}
-
 export async function prepareLocalWorkerPackageForGatewayImage(repoRoot: string): Promise<string> {
 	return await packLocalPackageTarball({
 		packageDirectory: path.join(repoRoot, 'packages', 'agent-vm-worker'),
@@ -2298,24 +2228,6 @@ export async function scaffoldWorkerE2eProject(options: {
 		tempRoot,
 		zone,
 	};
-}
-
-export async function scaffoldGatewayE2eProject(
-	options: ScaffoldGatewayE2eProjectOptions,
-): Promise<GatewayE2eProject> {
-	if (options.kind === 'openclaw') {
-		return await scaffoldOpenClawE2eProject({
-			architecture: options.architecture,
-			prefix: options.prefix,
-			zoneId: options.zoneId,
-			...(options.agents ? { agents: options.agents } : {}),
-		});
-	}
-	return await scaffoldWorkerE2eProject({
-		architecture: options.architecture,
-		prefix: options.prefix,
-		zoneId: options.zoneId,
-	});
 }
 
 export async function writeOpenClawMcpPortalE2eConfigs(options: {

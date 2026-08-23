@@ -10,10 +10,10 @@ import {
 const scenarios = [
 	{
 		operationId: 'control-session-recovery',
-		project: 'e2e-openclaw',
+		project: 'e2e-hermes',
 		requiresQueryIdentity: false,
 		testFile:
-			'packages/agent-vm/src/integration-tests/control-session-recovery.openclaw.e2e.test.ts',
+			'packages/agent-vm/src/integration-tests/hermes-managed-base-environment.hermes.e2e.test.ts',
 	},
 	{
 		operationId: 'controller-restart-cleanup',
@@ -94,7 +94,7 @@ describe('runControlLeaseReliabilityScenarios', () => {
 				'--config',
 				'vitest.config.ts',
 				'--project',
-				'e2e-openclaw',
+				'e2e-hermes',
 				scenarios[0].testFile,
 			],
 			environment: {
