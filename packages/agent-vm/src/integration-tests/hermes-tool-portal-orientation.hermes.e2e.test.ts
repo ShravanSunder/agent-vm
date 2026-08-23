@@ -717,21 +717,6 @@ describeHermesToolPortalOrientationE2e('e2e: Hermes Tool Portal session orientat
 		const finalObservation = provider.observations().at(-1);
 		if (finalObservation === undefined) throw new Error('Expected final provider observation.');
 		expect(requireLatestUserContent(finalObservation)).not.toContain(orientationMarker);
-		const orientationBearingObservations = provider
-			.observations()
-			.filter((observation) => requireLatestUserContent(observation).includes(orientationMarker));
-		expect(orientationBearingObservations).toEqual([orientedObservation]);
-		const expectedSystemContents = systemContents(firstObservation);
-		const expectedTools = firstObservation.tools;
-		expect(expectedSystemContents.length).toBeGreaterThan(0);
-		expect(expectedTools.length).toBeGreaterThan(0);
-		for (const observation of provider.observations()) {
-			expect(systemContents(observation)).toEqual(expectedSystemContents);
-			expect(observation.tools).toEqual(expectedTools);
-			for (const content of systemContents(observation))
-				expect(content).not.toContain(orientationMarker);
-			expect(JSON.stringify(observation.tools)).not.toContain(orientationMarker);
-		}
 
 		const describeResponse = await requestHermesTurn({
 			gatewayPort: project.gatewayPort,
@@ -758,5 +743,21 @@ describeHermesToolPortalOrientationE2e('e2e: Hermes Tool Portal session orientat
 		});
 		expect(remoteSchemaErrorResponse).toContain(remoteSchemaErrorSuccessMarker);
 		expect(remoteSchemaErrorResponse).not.toContain(remoteSchemaSecretCanary);
+
+		const orientationBearingObservations = provider
+			.observations()
+			.filter((observation) => requireLatestUserContent(observation).includes(orientationMarker));
+		expect(orientationBearingObservations).toEqual([orientedObservation]);
+		const expectedSystemContents = systemContents(firstObservation);
+		const expectedTools = firstObservation.tools;
+		expect(expectedSystemContents.length).toBeGreaterThan(0);
+		expect(expectedTools.length).toBeGreaterThan(0);
+		for (const observation of provider.observations()) {
+			expect(systemContents(observation)).toEqual(expectedSystemContents);
+			expect(observation.tools).toEqual(expectedTools);
+			for (const content of systemContents(observation))
+				expect(content).not.toContain(orientationMarker);
+			expect(JSON.stringify(observation.tools)).not.toContain(orientationMarker);
+		}
 	}, 900_000);
 });

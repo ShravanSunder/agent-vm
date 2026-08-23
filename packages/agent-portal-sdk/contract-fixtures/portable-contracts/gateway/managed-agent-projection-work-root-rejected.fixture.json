@@ -16,6 +16,9 @@
 	"expectation": {
 		"kind": "rejected",
 		"errorCodes": ["portable.object.unknown-field"],
-		"refinementIdentities": ["gateway.managed-agent-projection.namespaces"]
+		"refinementIdentities": [
+			"gateway.managed-agent-projection.namespaces",
+			"portal.namespace-discovery.summary-code-points"
+		]
 	}
 }

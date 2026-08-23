@@ -436,7 +436,10 @@ const canonicalGatewayContractDefinitions = {
 		schema: GatewayRuntimeAttachmentMetadataSchema,
 	},
 	'gateway.managed-agent-projection': {
-		refinementIdentities: ['gateway.managed-agent-projection.namespaces'],
+		refinementIdentities: [
+			'gateway.managed-agent-projection.namespaces',
+			'portal.namespace-discovery.summary-code-points',
+		],
 		schema: ManagedAgentProjectionSchema,
 	},
 	'gateway.trusted-invocation-context': {

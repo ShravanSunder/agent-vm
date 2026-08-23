@@ -25,6 +25,9 @@
 			"toolPortalProfileId": "engineering"
 		},
 		"canonicalJson": "{\"agentId\":\"agent-a\",\"frameworkIdentity\":{\"agentId\":\"agent-a\",\"kind\":\"openclaw\"},\"profileAssignmentRevision\":\"profile-assignment-a\",\"toolPortalNamespaces\":[],\"toolPortalProfileId\":\"engineering\"}",
-		"refinementIdentities": ["gateway.managed-agent-projection.namespaces"]
+		"refinementIdentities": [
+			"gateway.managed-agent-projection.namespaces",
+			"portal.namespace-discovery.summary-code-points"
+		]
 	}
 }

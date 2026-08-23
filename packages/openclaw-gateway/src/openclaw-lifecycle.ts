@@ -608,8 +608,8 @@ function isSortedUniqueNamespaceDiscoveryArray(value: unknown): boolean {
 			Object.keys(item).some((fieldName) => fieldName !== 'namespace' && fieldName !== 'summary') ||
 			(item.summary !== undefined &&
 				(typeof item.summary !== 'string' ||
-					item.summary.length === 0 ||
-					item.summary.length > maximumNamespaceDiscoverySummaryCharacters))
+					Array.from(item.summary).length === 0 ||
+					Array.from(item.summary).length > maximumNamespaceDiscoverySummaryCharacters))
 		) {
 			return false;
 		}

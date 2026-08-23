@@ -36,7 +36,7 @@ function createManagedToolPortalPluginConfig(): Readonly<Record<string, unknown>
 				frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
 				profileAssignmentRevision: 'profile-revision-a',
 				toolPortalNamespaces: [
-					{ namespace: 'filesystem', summary: 'Filesystem operations' },
+					{ namespace: 'filesystem', summary: '\u{1F600}'.repeat(500) },
 					{ namespace: 'github' },
 				],
 				toolPortalProfileId: 'profile-a',
@@ -1864,7 +1864,9 @@ describe('openclawLifecycle', () => {
 								agentId: 'agent-a',
 								frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
 								profileAssignmentRevision: 'profile-revision-a',
-								toolPortalNamespaces: [{ namespace: 'filesystem', summary: 'x'.repeat(501) }],
+								toolPortalNamespaces: [
+									{ namespace: 'filesystem', summary: '\u{1F600}'.repeat(501) },
+								],
 								toolPortalProfileId: 'profile-a',
 							},
 							'agent-b': {
