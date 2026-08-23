@@ -3,9 +3,19 @@ import { z } from 'zod';
 import { loadJsonConfigFile } from './json-config-file.js';
 import { formattedSecretValueSchema, type FormattedSecretValue } from './secret-value.js';
 
+const namespaceDiscoverySummaryMaximumCodePoints = 500;
+const namespaceDiscoverySummarySchema = z
+	.string()
+	.min(1)
+	.refine(
+		(summary) => Array.from(summary).length <= namespaceDiscoverySummaryMaximumCodePoints,
+		`Namespace discovery summary must contain at most ${String(namespaceDiscoverySummaryMaximumCodePoints)} Unicode characters.`,
+	)
+	.meta({ maxLength: namespaceDiscoverySummaryMaximumCodePoints });
+
 export const namespaceDiscoverySchema = z
 	.object({
-		summary: z.string().min(1).max(500).optional(),
+		summary: namespaceDiscoverySummarySchema.optional(),
 	})
 	.strict();
 

@@ -10,6 +10,7 @@
 		"portal.json.canonical",
 		"portal.json.max-object-entries",
 		"portal.list.default-limit",
+		"portal.namespace-discovery.summary-code-points",
 		"portal.number.safe-integer",
 		"portal.request-id.not-reserved",
 		"portal.result.aggregate-status",

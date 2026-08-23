@@ -59,6 +59,32 @@ def build_adapter_config(
 
 
 class HermesManagedAdapterTests(unittest.TestCase):
+    def test_counts_namespace_summary_bounds_by_unicode_code_point(self) -> None:
+        supplementary_character = "\U0001f680"
+        valid_projection = build_projection(
+            agent_id="reviewer",
+            profile_name="reviewer",
+            tool_portal_namespaces=(
+                {"namespace": "unicode", "summary": supplementary_character * 500},
+            ),
+        )
+        over_bound_projection = build_projection(
+            agent_id="reviewer",
+            profile_name="reviewer",
+            tool_portal_namespaces=(
+                {"namespace": "unicode", "summary": supplementary_character * 501},
+            ),
+        )
+
+        self.assertEqual(
+            CanonicalManagedAgentProjection.model_validate(valid_projection)
+            .tool_portal_namespaces[0]
+            .summary,
+            supplementary_character * 500,
+        )
+        with self.assertRaises(ValidationError):
+            CanonicalManagedAgentProjection.model_validate(over_bound_projection)
+
     def test_routes_two_canonical_profiles_through_one_injected_client(self) -> None:
         client = build_unconnected_gateway_runtime_client()
         adapter = HermesManagedAdapter(

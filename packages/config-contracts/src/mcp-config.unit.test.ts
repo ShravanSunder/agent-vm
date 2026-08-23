@@ -15,6 +15,7 @@ async function writeConfigFile(text: string): Promise<string> {
 
 describe('loadMcpConfig', () => {
 	it('bounds the optional namespace discovery summary', async () => {
+		const supplementaryCharacter = '\u{1F680}';
 		const validConfigPath = await writeConfigFile(`{
 			"schemaVersion": 1,
 			"providers": {
@@ -37,6 +38,28 @@ describe('loadMcpConfig', () => {
 				}
 			}
 		}`);
+		const validSupplementaryConfigPath = await writeConfigFile(`{
+			"schemaVersion": 1,
+			"providers": {
+				"unicode": {
+					"kind": "mcp",
+					"namespace": "unicode",
+					"discovery": { "summary": "${supplementaryCharacter.repeat(500)}" },
+					"transport": { "kind": "streamable-http", "url": "https://mcp.unicode.test/mcp" }
+				}
+			}
+		}`);
+		const overBoundSupplementaryConfigPath = await writeConfigFile(`{
+			"schemaVersion": 1,
+			"providers": {
+				"unicode": {
+					"kind": "mcp",
+					"namespace": "unicode",
+					"discovery": { "summary": "${supplementaryCharacter.repeat(501)}" },
+					"transport": { "kind": "streamable-http", "url": "https://mcp.unicode.test/mcp" }
+				}
+			}
+		}`);
 
 		expect(
 			(await loadMcpConfig(validConfigPath)).providers['linear-production']?.discovery,
@@ -44,6 +67,10 @@ describe('loadMcpConfig', () => {
 			summary: 's'.repeat(500),
 		});
 		await expect(loadMcpConfig(overBoundConfigPath)).rejects.toThrow();
+		expect(
+			(await loadMcpConfig(validSupplementaryConfigPath)).providers.unicode?.discovery.summary,
+		).toBe(supplementaryCharacter.repeat(500));
+		await expect(loadMcpConfig(overBoundSupplementaryConfigPath)).rejects.toThrow();
 	});
 
 	it('loads strict upstream MCP provider config from JSONC', async () => {

@@ -33,6 +33,11 @@ export type PortableRefinementOperation =
 	  }
 	| {
 			readonly fieldNames: readonly string[];
+			readonly kind: 'maximum-code-points';
+			readonly maximum: number;
+	  }
+	| {
+			readonly fieldNames: readonly string[];
 			readonly kind: 'maximum-utf8-bytes';
 			readonly maximum: number;
 	  }
@@ -174,6 +179,14 @@ export const PORTABLE_REFINEMENT_DESCRIPTORS = [
 		identity: 'gateway.approval.arguments-preview.utf8-bytes',
 		kind: 'structural-validation',
 		operation: { fieldNames: ['argumentsPreview'], kind: 'maximum-utf8-bytes', maximum: 4_096 },
+	},
+	{
+		description:
+			'Namespace discovery summaries remain inside the portable Unicode code-point bound.',
+		errorCode: 'portal.namespace-discovery.summary-above-maximum',
+		identity: 'portal.namespace-discovery.summary-code-points',
+		kind: 'structural-validation',
+		operation: { fieldNames: ['summary'], kind: 'maximum-code-points', maximum: 500 },
 	},
 	{
 		description: 'Gateway attachment metadata cannot repeat an admitted agent identity.',

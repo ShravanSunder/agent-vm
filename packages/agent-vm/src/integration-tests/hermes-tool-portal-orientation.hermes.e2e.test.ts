@@ -76,6 +76,7 @@ interface ProviderMessage {
 
 interface ProviderObservation {
 	readonly messages: readonly ProviderMessage[];
+	readonly tools: readonly unknown[];
 }
 
 interface RecordingProvider {
@@ -98,8 +99,8 @@ async function readRequestBody(request: IncomingMessage): Promise<string> {
 
 function parseProviderObservation(requestBody: string): ProviderObservation {
 	const parsed: unknown = JSON.parse(requestBody);
-	if (!isObjectRecord(parsed) || !Array.isArray(parsed.messages)) {
-		throw new Error('Hermes recording provider expected an OpenAI messages array.');
+	if (!isObjectRecord(parsed) || !Array.isArray(parsed.messages) || !Array.isArray(parsed.tools)) {
+		throw new Error('Hermes recording provider expected OpenAI messages and tools arrays.');
 	}
 	const messages = parsed.messages.flatMap((message): readonly ProviderMessage[] => {
 		if (
@@ -111,7 +112,7 @@ function parseProviderObservation(requestBody: string): ProviderObservation {
 		}
 		return [{ content: message.content, role: message.role }];
 	});
-	return { messages };
+	return { messages, tools: parsed.tools };
 }
 
 function writeServerSentCompletion(
@@ -721,11 +722,15 @@ describeHermesToolPortalOrientationE2e('e2e: Hermes Tool Portal session orientat
 			.filter((observation) => requireLatestUserContent(observation).includes(orientationMarker));
 		expect(orientationBearingObservations).toEqual([orientedObservation]);
 		const expectedSystemContents = systemContents(firstObservation);
+		const expectedTools = firstObservation.tools;
 		expect(expectedSystemContents.length).toBeGreaterThan(0);
+		expect(expectedTools.length).toBeGreaterThan(0);
 		for (const observation of provider.observations()) {
 			expect(systemContents(observation)).toEqual(expectedSystemContents);
+			expect(observation.tools).toEqual(expectedTools);
 			for (const content of systemContents(observation))
 				expect(content).not.toContain(orientationMarker);
+			expect(JSON.stringify(observation.tools)).not.toContain(orientationMarker);
 		}
 
 		const describeResponse = await requestHermesTurn({
