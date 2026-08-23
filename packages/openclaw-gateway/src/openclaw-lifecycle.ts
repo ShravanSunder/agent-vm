@@ -78,6 +78,7 @@ const gondolinToolPortalAttachmentFields = new Set([
 ]);
 const maximumGondolinConfiguredAgents = 128;
 const maximumGondolinOpaqueIdentifierCharacters = 256;
+const maximumNamespaceDiscoverySummaryCharacters = 500;
 
 interface OpenClawSecretRef {
 	readonly id: string;
@@ -594,19 +595,31 @@ function compareUnicodeCodePointStrings(left: string, right: string): number {
 	return leftCodePoints.length - rightCodePoints.length;
 }
 
-function isSortedUniqueNonEmptyStringArray(value: unknown): value is readonly string[] {
+function isSortedUniqueNamespaceDiscoveryArray(value: unknown): boolean {
 	if (!Array.isArray(value)) {
 		return false;
 	}
 	let previousName: string | undefined;
 	for (const item of value) {
-		if (typeof item !== 'string' || item.length === 0) {
+		if (
+			!isObjectRecord(item) ||
+			typeof item.namespace !== 'string' ||
+			item.namespace.length === 0 ||
+			Object.keys(item).some((fieldName) => fieldName !== 'namespace' && fieldName !== 'summary') ||
+			(item.summary !== undefined &&
+				(typeof item.summary !== 'string' ||
+					item.summary.length === 0 ||
+					item.summary.length > maximumNamespaceDiscoverySummaryCharacters))
+		) {
 			return false;
 		}
-		if (previousName !== undefined && compareUnicodeCodePointStrings(item, previousName) <= 0) {
+		if (
+			previousName !== undefined &&
+			compareUnicodeCodePointStrings(item.namespace, previousName) <= 0
+		) {
 			return false;
 		}
-		previousName = item;
+		previousName = item.namespace;
 	}
 	return true;
 }
@@ -692,7 +705,7 @@ function assertManagedGondolinToolPortalConfig(
 		if (
 			projection.agentId !== agentId ||
 			!isBoundedOpaqueIdentifier(projection.profileAssignmentRevision) ||
-			!isSortedUniqueNonEmptyStringArray(projection.toolPortalNamespaces) ||
+			!isSortedUniqueNamespaceDiscoveryArray(projection.toolPortalNamespaces) ||
 			!isBoundedOpaqueIdentifier(projection.toolPortalProfileId) ||
 			!isObjectRecord(projection.frameworkIdentity) ||
 			projection.frameworkIdentity.kind !== 'openclaw' ||

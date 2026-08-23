@@ -46,7 +46,10 @@ function createToolPortalPluginConfig(): {
 					readonly kind: 'openclaw';
 				};
 				readonly profileAssignmentRevision: string;
-				readonly toolPortalNamespaces: readonly string[];
+				readonly toolPortalNamespaces: readonly {
+					readonly namespace: string;
+					readonly summary?: string;
+				}[];
 				readonly toolPortalProfileId: string;
 			}
 		>
@@ -153,7 +156,15 @@ describe('createAgentVmPlugin', () => {
 				? agentProjectionsSchema.additionalProperties
 				: undefined;
 		expect(projectionSchema?.properties?.toolPortalNamespaces).toMatchObject({
-			items: { minLength: 1, type: 'string' },
+			items: {
+				additionalProperties: false,
+				properties: {
+					namespace: { minLength: 1, type: 'string' },
+					summary: { maxLength: 500, minLength: 1, type: 'string' },
+				},
+				required: ['namespace'],
+				type: 'object',
+			},
 			type: 'array',
 			uniqueItems: true,
 		});
