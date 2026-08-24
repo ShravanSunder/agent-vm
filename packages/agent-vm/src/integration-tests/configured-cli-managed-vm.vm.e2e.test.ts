@@ -23,6 +23,7 @@ describeLiveConfiguredRunner('configured CLI one-shot Managed VM', () => {
 		try {
 			const managedVm = createManagedVmRuntimeComposition();
 			const operation = {
+				calls: { deny: [], requiresApproval: [], withoutApproval: 'remaining_admitted' },
 				commands: [{ flagRules: [], path: ['isolated'] }],
 				deniedPatterns: [],
 				executablePath: '/usr/bin/printf',
@@ -49,6 +50,18 @@ describeLiveConfiguredRunner('configured CLI one-shot Managed VM', () => {
 				stdin: { kind: 'none' },
 				timeout: { kind: 'open' },
 			} as const satisfies Extract<ControllerExecutionOperation, { kind: 'configured_cli' }>;
+			const authorization = {
+				evaluation: {
+					authorityKind: 'without_approval',
+					bindingRevision: 'binding:vm-e2e',
+					disposition: 'without_approval',
+					fingerprint: `sha256:${'a'.repeat(64)}`,
+					operationId: '11111111-1111-4111-8111-111111111111',
+					operationName: 'isolated_runner_proof',
+					targetKind: 'ephemeral_managed_vm',
+				},
+				operation,
+			} as const;
 			const execute = createConfiguredCliManagedVmExecutor({
 				controllerStateDir: path.join(imageFixture.project.tempRoot, 'controller-state'),
 				managedVmExactProcessTermination: managedVm.managedVmExactProcessTermination,
@@ -64,10 +77,11 @@ describeLiveConfiguredRunner('configured CLI one-shot Managed VM', () => {
 
 			const controllerStateDir = path.join(imageFixture.project.tempRoot, 'controller-state');
 			const result = await execute({
+				authorization,
 				input: { argv: ['isolated'], reason: 'real VM proof', timeoutMs: 60_000 },
 				operation,
 				operationName: 'isolated_runner_proof',
-				reloadOperation: async () => operation,
+				reloadAuthorization: async () => authorization,
 				stablePrincipal: 'a'.repeat(64),
 				zoneId: 'configured-runner-zone',
 			}).catch(async (error: unknown): Promise<never> => {

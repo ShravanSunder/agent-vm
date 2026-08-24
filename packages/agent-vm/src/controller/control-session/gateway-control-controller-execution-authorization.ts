@@ -10,9 +10,11 @@ import {
 	deriveGatewayRuntimePortalBindingRevision,
 	gatewayControlRegisteredControllerExecutionActionIds,
 } from '@agent-vm/gateway-control-contracts';
+import { evaluateCliAllowanceInvocation } from '@agent-vm/tool-portal/cli-allowances';
 
 import type { SystemConfig } from '../../config/system-config.js';
 import { loadMcpPortalEffectiveToolPortalConfigSnapshot } from '../../gateway/mcp-portal-effective-config.js';
+import type { ConfiguredCliAuthorizedOperation } from '../runner/configured-cli-authorization.js';
 import type {
 	GatewayControlAcceptedSessionRef,
 	GatewayControlTrustedCallerContext,
@@ -35,6 +37,7 @@ export interface GatewayControlControllerExecutionAuthorizationRequest {
 export type GatewayControlControllerExecutionAuthorizationResult =
 	| {
 			readonly authorized: true;
+			readonly configuredCli?: ConfiguredCliAuthorizedOperation;
 	  }
 	| {
 			readonly authorized: false;
@@ -164,13 +167,20 @@ export async function authorizeGatewayControlControllerExecution(
 			: undefined;
 	const approvalReservation =
 		request.payload.kind === 'configured_cli'
-			? request.payload.approvalReservation
+			? request.payload.authority.kind === 'controller_approval_reservation'
+				? request.payload.authority.reservation
+				: undefined
 			: request.payload.action.approvalReservation;
-	if (
-		approvalReservation !== undefined &&
-		approvalReservation.bindingRevision !==
-			deriveGatewayRuntimePortalBindingRevision(effectiveConfig.effectiveToolPortalConfig)
-	) {
+	const expectedBindingRevision =
+		request.payload.kind === 'configured_cli'
+			? request.payload.authority.kind === 'without_approval'
+				? request.payload.authority.bindingRevision
+				: request.payload.authority.reservation.bindingRevision
+			: approvalReservation?.bindingRevision;
+	const currentBindingRevision = deriveGatewayRuntimePortalBindingRevision(
+		effectiveConfig.effectiveToolPortalConfig,
+	);
+	if (expectedBindingRevision !== undefined && expectedBindingRevision !== currentBindingRevision) {
 		return rejectAuthorization(
 			'controller_execution_policy_stale',
 			'controller execution approval does not match current trusted policy',
@@ -199,11 +209,62 @@ export async function authorizeGatewayControlControllerExecution(
 	if (
 		namespaceProjection === undefined ||
 		configuredOperation?.kind !== request.payload.kind ||
-		!selectorIncludesTool(namespaceProjection.tools, capability.name) ||
-		(approvalReservation === undefined
+		!selectorIncludesTool(namespaceProjection.tools, capability.name)
+	) {
+		return rejectAuthorization(
+			'controller_execution_policy_denied',
+			'controller execution policy denied the requested capability',
+		);
+	}
+	if (request.payload.kind === 'configured_cli' && configuredOperation.kind === 'configured_cli') {
+		const baseline = selectorIncludesTool(
+			namespaceProjection.calls.withoutApproval,
+			capability.name,
+		)
+			? 'without_approval'
+			: selectorIncludesTool(namespaceProjection.calls.requiresApproval, capability.name)
+				? 'requires_approval'
+				: 'deny';
+		const evaluation = evaluateCliAllowanceInvocation({
+			allowance: configuredOperation,
+			baseline,
+			input: request.payload.input,
+		});
+		const expectedDisposition =
+			request.payload.authority.kind === 'without_approval'
+				? 'without_approval'
+				: 'requires_approval';
+		if (evaluation.kind === 'denied' || evaluation.disposition !== expectedDisposition) {
+			return rejectAuthorization(
+				'controller_execution_policy_denied',
+				'controller execution policy denied the requested capability',
+			);
+		}
+		const authorityBinding =
+			request.payload.authority.kind === 'without_approval'
+				? request.payload.authority
+				: request.payload.authority.reservation;
+		return {
+			authorized: true,
+			configuredCli: {
+				evaluation: {
+					authorityKind: request.payload.authority.kind,
+					bindingRevision: currentBindingRevision,
+					disposition: evaluation.disposition,
+					fingerprint: authorityBinding.fingerprint,
+					operationId: authorityBinding.operationId,
+					operationName: request.payload.operationName,
+					targetKind: configuredOperation.executionTarget.kind,
+				},
+				operation: configuredOperation,
+			},
+		};
+	}
+	if (
+		approvalReservation === undefined
 			? !selectorIncludesTool(namespaceProjection.calls.withoutApproval, capability.name) ||
 				selectorIncludesTool(namespaceProjection.calls.requiresApproval, capability.name)
-			: !selectorIncludesTool(namespaceProjection.calls.requiresApproval, capability.name))
+			: !selectorIncludesTool(namespaceProjection.calls.requiresApproval, capability.name)
 	) {
 		return rejectAuthorization(
 			'controller_execution_policy_denied',

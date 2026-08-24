@@ -14,9 +14,13 @@ import type {
 	ManagedVmExactProcessTerminationCapability,
 	ManagedVmFactory,
 } from '@agent-vm/managed-vm';
-import { validateCliAllowanceInvocation } from '@agent-vm/tool-portal/cli-allowances';
+import { evaluateCliAllowanceInvocation } from '@agent-vm/tool-portal/cli-allowances';
 
 import type { ProcessIdentity } from '../../shared/managed-vm-process.js';
+import {
+	configuredCliAuthorizedEvaluationsEqual,
+	type ConfiguredCliAuthorizedOperation,
+} from './configured-cli-authorization.js';
 import { resolveConfiguredCliEnvironment } from './configured-cli-environment.js';
 import { createConfiguredCliManagedVmRunnerFactory } from './configured-cli-managed-vm-factory.js';
 import { ConfiguredControllerExecutionError } from './configured-controller-execution-error.js';
@@ -108,10 +112,11 @@ function identityFromRecoverableRecord(
 export function createConfiguredCliManagedVmExecutor(
 	props: CreateConfiguredCliManagedVmExecutorProps,
 ): (request: {
+	readonly authorization: ConfiguredCliAuthorizedOperation;
 	readonly input: ConfiguredCliInput;
 	readonly operation: ConfiguredCliOperation;
 	readonly operationName: string;
-	readonly reloadOperation: () => Promise<ConfiguredCliOperation>;
+	readonly reloadAuthorization: () => Promise<ConfiguredCliAuthorizedOperation>;
 	readonly signal?: AbortSignal;
 	readonly stablePrincipal: GatewayStablePrincipalDigest;
 	readonly zoneId: string;
@@ -181,8 +186,23 @@ export function createConfiguredCliManagedVmExecutor(
 				'Configured CLI operation is not an ephemeral Managed VM target.',
 			);
 		}
-		const validation = validateCliAllowanceInvocation({
-			allowance: request.operation,
+		const currentAuthorization = await request.reloadAuthorization();
+		if (
+			!configuredCliAuthorizedEvaluationsEqual(
+				request.authorization.evaluation,
+				currentAuthorization.evaluation,
+			) ||
+			currentAuthorization.operation.executionTarget.kind !== 'ephemeral_managed_vm'
+		) {
+			throw new ConfiguredControllerExecutionError(
+				'not_dispatched',
+				'Configured CLI authority changed before Managed VM creation.',
+			);
+		}
+		const currentOperation = currentAuthorization.operation;
+		const validation = evaluateCliAllowanceInvocation({
+			allowance: currentOperation,
+			baseline: 'without_approval',
 			input: request.input,
 		});
 		if (!validation.ok) {
@@ -197,7 +217,7 @@ export function createConfiguredCliManagedVmExecutor(
 		const gatewayIdentity = await props.resolveGatewayIdentity(request.zoneId);
 		const initialAuthorization = authorizationSnapshot({
 			input: request.input,
-			operation: request.operation,
+			operation: currentOperation,
 			operationName: request.operationName,
 			zoneId: request.zoneId,
 		});
@@ -209,10 +229,21 @@ export function createConfiguredCliManagedVmExecutor(
 			readCurrentEpochContext: async () => await props.resolveGatewayIdentity(request.zoneId),
 			readProcessIdentity: props.readProcessIdentity,
 			recomputeAuthorization: async () => {
-				const currentOperation = await request.reloadOperation();
+				const reloadedAuthorization = await request.reloadAuthorization();
+				if (
+					!configuredCliAuthorizedEvaluationsEqual(
+						request.authorization.evaluation,
+						reloadedAuthorization.evaluation,
+					)
+				) {
+					throw new ConfiguredControllerExecutionError(
+						'not_dispatched',
+						'Configured CLI authority changed before Managed VM dispatch.',
+					);
+				}
 				return authorizationSnapshot({
 					input: request.input,
-					operation: currentOperation,
+					operation: reloadedAuthorization.operation,
 					operationName: request.operationName,
 					zoneId: request.zoneId,
 				});
@@ -224,7 +255,11 @@ export function createConfiguredCliManagedVmExecutor(
 			}),
 			trustedAuthorityContext: { ...gatewayIdentity, stablePrincipal: request.stablePrincipal },
 			validatePublicInput: (input) =>
-				validateCliAllowanceInvocation({ allowance: request.operation, input }).ok,
+				evaluateCliAllowanceInvocation({
+					allowance: currentOperation,
+					baseline: 'without_approval',
+					input,
+				}).ok,
 		});
 		const result = await runner.execute(
 			{

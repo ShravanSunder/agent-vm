@@ -235,8 +235,8 @@ const requiredPortalNamedExports = {
 	],
 	'@agent-vm/tool-portal': ['createToolPortalMcpProviderBackendPort', 'createToolPortalService'],
 	'@agent-vm/tool-portal/cli-allowances': [
+		'evaluateCliAllowanceInvocation',
 		'resolveCliAllowanceTimeout',
-		'validateCliAllowanceInvocation',
 	],
 	'@agent-vm/tool-portal/testing': ['createCliAllowanceFixture', 'createToolPortalConfigFixture'],
 	'@agent-vm/worker-control-contracts': [

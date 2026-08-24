@@ -35,6 +35,11 @@ const toolPortalConfig = {
 						kind: 'controller_execution',
 						operations: {
 							workspace_git_push: {
+								calls: {
+									deny: [],
+									requiresApproval: [],
+									withoutApproval: 'remaining_admitted',
+								},
 								commands: [{ flagRules: [], path: ['increment'] }],
 								deniedPatterns: [],
 								executablePath: '/usr/bin/printf',
@@ -69,6 +74,11 @@ const toolPortalConfig = {
 						kind: 'controller_execution',
 						operations: {
 							inspect_host: {
+								calls: {
+									deny: [],
+									requiresApproval: [],
+									withoutApproval: 'remaining_admitted',
+								},
 								commands: [{ flagRules: [], path: ['inspect'] }],
 								deniedPatterns: [],
 								executablePath: '/usr/bin/printf',
@@ -134,6 +144,7 @@ function callOptions(
 	signal?: AbortSignal,
 	dispatchAuthority: GatewayRuntimeToolPortalDispatchAuthorityForBackendKind<'controller_execution'> = {
 		backendKind: 'controller_execution',
+		bindingRevision: 'binding:current',
 		fingerprint: `sha256:${'a'.repeat(64)}`,
 		kind: 'without-approval',
 		operationId,

@@ -9,6 +9,12 @@ import type {
 	ToolPortalCallPolicy,
 	ToolPortalToolSelector,
 } from '@agent-vm/config-contracts';
+import {
+	openConfiguredCliInputSchema,
+	quickConfiguredCliInputSchema,
+} from '@agent-vm/config-contracts';
+
+import { evaluateCliAllowanceInvocation } from './cli-allowances/cli-allowance-validator.js';
 
 export type PortalCallItem = PortalCallResult['items'][number];
 
@@ -248,11 +254,38 @@ export function callPolicyDecision(props: {
 	) {
 		return { kind: 'denied' };
 	}
-	if (selectorIncludesTool(policy.calls.withoutApproval, props.call.name)) {
-		return { backendKind: policy.backend.kind, kind: 'without-approval', policy };
+	const baseline = selectorIncludesTool(policy.calls.withoutApproval, props.call.name)
+		? 'without_approval'
+		: selectorIncludesTool(policy.calls.requiresApproval, props.call.name)
+			? 'requires_approval'
+			: 'deny';
+	if (baseline === 'deny') return { kind: 'denied' };
+	if (policy.backend.kind === 'controller_execution') {
+		const operation = policy.backend.operations[props.call.name];
+		if (operation?.kind === 'configured_cli') {
+			const inputSchema =
+				operation.timeout.kind === 'quick'
+					? quickConfiguredCliInputSchema
+					: openConfiguredCliInputSchema;
+			const parsedInput = inputSchema.safeParse(props.call.arguments);
+			if (!parsedInput.success) return { kind: 'denied' };
+			const evaluation = evaluateCliAllowanceInvocation({
+				allowance: operation,
+				baseline,
+				input: parsedInput.data,
+			});
+			if (evaluation.disposition === 'deny') return { kind: 'denied' };
+			return {
+				backendKind: policy.backend.kind,
+				kind:
+					evaluation.disposition === 'requires_approval' ? 'requires-approval' : 'without-approval',
+				policy,
+			};
+		}
 	}
-	if (selectorIncludesTool(policy.calls.requiresApproval, props.call.name)) {
-		return { backendKind: policy.backend.kind, kind: 'requires-approval', policy };
-	}
-	return { kind: 'denied' };
+	return {
+		backendKind: policy.backend.kind,
+		kind: baseline === 'requires_approval' ? 'requires-approval' : 'without-approval',
+		policy,
+	};
 }

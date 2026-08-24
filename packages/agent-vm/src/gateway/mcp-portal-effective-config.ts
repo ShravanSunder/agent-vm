@@ -541,9 +541,17 @@ function selectorEffectivelyAllowsAnyTool(
 
 export function managedToolPortalRequiresApprovalAccess(config: ToolPortalConfig): boolean {
 	return Object.values(config.profiles).some((profile) =>
-		Object.values(profile.namespaces).some((namespacePolicy) =>
-			selectorEffectivelyAllowsAnyTool(namespacePolicy.calls.requiresApproval),
-		),
+		Object.values(profile.namespaces).some((namespacePolicy) => {
+			if (selectorEffectivelyAllowsAnyTool(namespacePolicy.calls.requiresApproval)) return true;
+			if (namespacePolicy.backend.kind !== 'controller_execution') return false;
+			return Object.entries(namespacePolicy.backend.operations).some(
+				([operationName, operation]) =>
+					operation.kind === 'configured_cli' &&
+					operation.calls.requiresApproval.length > 0 &&
+					selectorAllowsTool(namespacePolicy.tools, operationName) &&
+					selectorAllowsTool(namespacePolicy.calls.withoutApproval, operationName),
+			);
+		}),
 	);
 }
 

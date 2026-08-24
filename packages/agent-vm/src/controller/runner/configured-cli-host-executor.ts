@@ -2,10 +2,14 @@ import { spawn } from 'node:child_process';
 
 import type { ConfiguredCliInput, ControllerExecutionOperation } from '@agent-vm/config-contracts';
 import {
+	evaluateCliAllowanceInvocation,
 	resolveCliAllowanceTimeout,
-	validateCliAllowanceInvocation,
 } from '@agent-vm/tool-portal/cli-allowances';
 
+import {
+	configuredCliAuthorizedEvaluationsEqual,
+	type ConfiguredCliAuthorizedOperation,
+} from './configured-cli-authorization.js';
 import { resolveConfiguredCliEnvironment } from './configured-cli-environment.js';
 import { fixedSafeConfiguredCliStderrSummary } from './configured-cli-output.js';
 import { ConfiguredControllerExecutionError } from './configured-controller-execution-error.js';
@@ -44,8 +48,10 @@ function appendBoundedChunk(props: {
 }
 
 export async function executeConfiguredCliOnControllerHost(props: {
+	readonly authorization: ConfiguredCliAuthorizedOperation;
 	readonly input: ConfiguredCliInput;
 	readonly operation: ConfiguredCliOperation;
+	readonly reloadAuthorization: () => Promise<ConfiguredCliAuthorizedOperation>;
 	readonly signal?: AbortSignal;
 }): Promise<ConfiguredCliHostExecutionResult> {
 	if (props.operation.executionTarget.kind !== 'controller_host') {
@@ -54,8 +60,29 @@ export async function executeConfiguredCliOnControllerHost(props: {
 			'Configured CLI target is not controller_host.',
 		);
 	}
-	const validation = validateCliAllowanceInvocation({
-		allowance: props.operation,
+	const currentAuthorization = await props.reloadAuthorization();
+	if (
+		!configuredCliAuthorizedEvaluationsEqual(
+			props.authorization.evaluation,
+			currentAuthorization.evaluation,
+		) ||
+		currentAuthorization.operation.executionTarget.kind !== 'controller_host'
+	) {
+		throw new ConfiguredControllerExecutionError(
+			'not_dispatched',
+			'Configured CLI authority changed before host process creation.',
+		);
+	}
+	const currentOperation = currentAuthorization.operation;
+	if (currentOperation.executionTarget.kind !== 'controller_host') {
+		throw new ConfiguredControllerExecutionError(
+			'not_dispatched',
+			'Configured CLI target changed before host process creation.',
+		);
+	}
+	const validation = evaluateCliAllowanceInvocation({
+		allowance: currentOperation,
+		baseline: 'without_approval',
 		input: props.input,
 	});
 	if (!validation.ok) {
@@ -69,11 +96,11 @@ export async function executeConfiguredCliOnControllerHost(props: {
 	}
 
 	const child = spawn(
-		props.operation.executablePath,
-		[...props.operation.mandatoryArgvPrefix, ...validation.argv],
+		currentOperation.executablePath,
+		[...currentOperation.mandatoryArgvPrefix, ...validation.argv],
 		{
-			cwd: props.operation.executionTarget.cwd,
-			env: resolveConfiguredCliEnvironment(props.operation.executionTarget.environment),
+			cwd: currentOperation.executionTarget.cwd,
+			env: resolveConfiguredCliEnvironment(currentOperation.executionTarget.environment),
 			shell: false,
 			stdio: ['pipe', 'pipe', 'pipe'],
 		},
@@ -124,7 +151,7 @@ export async function executeConfiguredCliOnControllerHost(props: {
 		child.once('spawn', () => {
 			const timeout = resolveCliAllowanceTimeout({
 				input: props.input,
-				kind: props.operation.timeout.kind,
+				kind: currentOperation.timeout.kind,
 			});
 			commandTimer = setTimeout(
 				() =>
@@ -143,8 +170,8 @@ export async function executeConfiguredCliOnControllerHost(props: {
 				const appended = appendBoundedChunk({
 					chunks: stdoutChunks,
 					chunk,
-					maximumBytes: props.operation.output.stdoutMaxBytes,
-					overflow: props.operation.output.overflow,
+					maximumBytes: currentOperation.output.stdoutMaxBytes,
+					overflow: currentOperation.output.overflow,
 					streamName: 'stdout',
 					totalBytes: stdoutBytes,
 				});
@@ -159,8 +186,8 @@ export async function executeConfiguredCliOnControllerHost(props: {
 				const appended = appendBoundedChunk({
 					chunks: stderrChunks,
 					chunk,
-					maximumBytes: props.operation.output.stderrMaxBytes,
-					overflow: props.operation.output.overflow,
+					maximumBytes: currentOperation.output.stderrMaxBytes,
+					overflow: currentOperation.output.overflow,
 					streamName: 'stderr',
 					totalBytes: stderrBytes,
 				});
@@ -178,7 +205,7 @@ export async function executeConfiguredCliOnControllerHost(props: {
 			const stderr = Buffer.concat(stderrChunks);
 			resolve({
 				exitCode: exitCode ?? -1,
-				...(props.operation.output.modelVisibleStderr === 'fixed_safe_summary' &&
+				...(currentOperation.output.modelVisibleStderr === 'fixed_safe_summary' &&
 				stderr.byteLength > 0
 					? { stderrSummary: fixedSafeConfiguredCliStderrSummary(stderr) }
 					: {}),

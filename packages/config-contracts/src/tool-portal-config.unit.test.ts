@@ -172,6 +172,7 @@ describe('tool portal config contract', () => {
 			kind: 'controller_execution',
 			operations: {
 				inspect: {
+					calls: { withoutApproval: 'remaining_admitted' },
 					commands: [{ path: ['inspect'] }],
 					deniedPatterns: [],
 					executablePath: '/usr/local/bin/inspect',
@@ -760,6 +761,7 @@ describe('tool portal config contract', () => {
 
 	it('projects configured controller execution policy without controller-trusted runner fields', () => {
 		const configuredOperation = {
+			calls: { deny: [], requiresApproval: [], withoutApproval: 'remaining_admitted' },
 			commands: [{ path: ['inspect'], flagRules: [] }],
 			deniedPatterns: [],
 			executablePath: '/usr/bin/inspect-host',
@@ -820,10 +822,12 @@ describe('tool portal config contract', () => {
 				: undefined;
 
 		expect(projectedOperation).toEqual({
+			calls: { deny: [], requiresApproval: [], withoutApproval: 'remaining_admitted' },
 			commands: [{ path: ['inspect'], flagRules: [] }],
 			deniedPatterns: [],
 			kind: 'configured_cli',
 			safeHelp: 'Inspect one host resource.',
+			stdin: { kind: 'none' },
 			targetKind: 'ephemeral_managed_vm',
 			timeout: { kind: 'quick' },
 		});
@@ -836,7 +840,6 @@ describe('tool portal config contract', () => {
 			'guestCwd',
 			'environment',
 			'allowedHosts',
-			'stdin',
 			'output',
 		]) {
 			expect(serializedProjection).not.toContain(`"${forbiddenField}"`);

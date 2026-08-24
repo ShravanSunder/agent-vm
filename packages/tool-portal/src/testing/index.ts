@@ -53,12 +53,12 @@ export function createCliAllowanceFixture(
 	props: CreateCliAllowanceFixtureProps = {},
 ): CliAllowance {
 	return CliAllowanceSchema.parse({
-		commands: [
-			{
-				flagRules: [{ kind: 'deny', names: ['--config', '--token'] }],
-				path: ['issue', 'view'],
-			},
-		],
+		calls: {
+			deny: [{ flags: [{ names: ['--config', '--token'] }], path: ['issue', 'view'] }],
+			requiresApproval: [],
+			withoutApproval: 'remaining_admitted',
+		},
+		commands: [{ path: ['issue', 'view'] }],
 		deniedPatterns: [{ kind: 'literal', value: '../' }],
 		stdin: { kind: 'none' },
 		timeout: { kind: props.timeoutKind ?? 'quick' },

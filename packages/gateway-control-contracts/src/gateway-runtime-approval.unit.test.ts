@@ -161,6 +161,7 @@ describe('Gateway runtime approval contracts', () => {
 			// Arrange
 			const authority = {
 				backendKind,
+				...(backendKind === 'controller_execution' ? { bindingRevision: 'binding:current' } : {}),
 				fingerprint: APPROVAL_FINGERPRINT,
 				kind: 'without-approval',
 				operationId: OPERATION_ID,

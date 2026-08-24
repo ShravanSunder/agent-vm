@@ -1,5 +1,6 @@
 import { createHmac } from 'node:crypto';
 
+import { controllerConfiguredCliOperationSchema } from '@agent-vm/config-contracts';
 import {
 	CONTROL_PROTOCOL_VERSION,
 	type ControlEnvelope,
@@ -394,8 +395,46 @@ function createAuthorizedControllerExecutions(
 	pushWorkspaceGit: GatewayControlControllerExecutionOperations['pushWorkspaceGit'],
 	overrides: Partial<GatewayControlControllerExecutionOperations> = {},
 ): GatewayControlControllerExecutionOperations {
+	const operation = controllerConfiguredCliOperationSchema.parse({
+		calls: { withoutApproval: 'remaining_admitted' },
+		commands: [{ path: ['inspect'] }],
+		deniedPatterns: [],
+		executablePath: '/usr/bin/printf',
+		executionTarget: {
+			cwd: '/tmp',
+			environment: { kind: 'empty' },
+			kind: 'controller_host',
+		},
+		kind: 'configured_cli',
+		mandatoryArgvPrefix: [],
+		output: {
+			modelVisibleStderr: 'none',
+			overflow: 'fail',
+			stderrMaxBytes: 1_024,
+			stdoutMaxBytes: 1_024,
+		},
+		safeHelp: 'Inspect one host resource.',
+		stdin: { kind: 'none' },
+		timeout: { kind: 'quick' },
+	});
+	const configuredCli = {
+		evaluation: {
+			authorityKind: 'without_approval' as const,
+			bindingRevision: 'binding:current',
+			disposition: 'without_approval' as const,
+			fingerprint: `sha256:${'d'.repeat(64)}`,
+			operationId: '88888888-8888-4888-8888-888888888888',
+			operationName: 'inspect_host',
+			targetKind: 'controller_host' as const,
+		},
+		operation,
+	};
 	return {
-		authorizeControllerExecution: vi.fn(async () => ({ authorized: true }) as const),
+		authorizeControllerExecution: vi.fn(async ({ payload }) =>
+			payload.kind === 'configured_cli'
+				? ({ authorized: true, configuredCli } as const)
+				: ({ authorized: true } as const),
+		),
 		executeConfiguredCli: vi.fn(async () => ({
 			exitCode: 0,
 			stderrTruncated: false,
@@ -2081,6 +2120,12 @@ describe('gateway control domain handler', () => {
 		);
 		const configuredPayload = {
 			...callerContextPayload,
+			authority: {
+				bindingRevision: 'binding:current',
+				fingerprint: `sha256:${'d'.repeat(64)}`,
+				kind: 'without_approval' as const,
+				operationId: '88888888-8888-4888-8888-888888888888',
+			},
 			capability: { name: 'inspect_host', namespace: 'controller_execution' },
 			correlation: {
 				capability: { name: 'inspect_host', namespace: 'controller_execution' },
@@ -2102,7 +2147,12 @@ describe('gateway control domain handler', () => {
 		});
 
 		expect(executeConfiguredCli).toHaveBeenCalledWith({
+			authorization: expect.objectContaining({
+				evaluation: expect.objectContaining({ disposition: 'without_approval' }),
+			}),
 			callerContext: expect.objectContaining({ agentId: 'main' }),
+			createdAtMs: 1,
+			expiresAtMs: 60_000,
 			payload: configuredPayload,
 			session: acceptedSession,
 			signal: expect.any(AbortSignal),
@@ -2153,6 +2203,12 @@ describe('gateway control domain handler', () => {
 					operation: 'tool_portal_controller_execution',
 					payload: {
 						...callerContextPayload,
+						authority: {
+							bindingRevision: 'binding:current',
+							fingerprint: `sha256:${'d'.repeat(64)}`,
+							kind: 'without_approval',
+							operationId: '88888888-8888-4888-8888-888888888888',
+						},
 						capability: { name: 'inspect_host', namespace: 'controller_execution' },
 						correlation: {
 							capability: { name: 'inspect_host', namespace: 'controller_execution' },

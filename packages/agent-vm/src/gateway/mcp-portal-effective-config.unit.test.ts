@@ -56,6 +56,11 @@ function createEphemeralConfiguredCliToolPortalConfigInput(): unknown {
 							kind: 'controller_execution',
 							operations: {
 								isolated: {
+									calls: {
+										deny: [],
+										requiresApproval: [],
+										withoutApproval: 'remaining_admitted',
+									},
 									commands: [{ path: ['run'] }],
 									deniedPatterns: [],
 									executablePath: '/usr/bin/printf',
@@ -171,6 +176,7 @@ function createConfiguredCliOperationForOverlapTest(props: {
 	readonly safeHelp: string;
 }): Extract<ControllerExecutionOperation, { kind: 'configured_cli' }> {
 	return {
+		calls: { deny: [], requiresApproval: [], withoutApproval: 'remaining_admitted' },
 		commands: [{ flagRules: [], path: [...props.commandPath] }],
 		deniedPatterns: [],
 		executablePath: '/usr/bin/example',
@@ -426,6 +432,60 @@ describe('MCP Portal effective config materialization', () => {
 		await expect(planPromise).rejects.toThrow(
 			/managed calls requiring approval require zones\[\]\.approvalAccess/u,
 		);
+	});
+
+	it('derives approval access from visible direct-baseline configured CLI matchers', async () => {
+		const configuredOperation = createConfiguredCliOperationForOverlapTest({
+			commandPath: ['drive', 'delete'],
+			mandatoryArgvPrefix: [],
+			safeHelp: 'Delete one Drive item.',
+		});
+		configuredOperation.calls.requiresApproval = [
+			{ flags: [{ names: ['--permanent'] }], path: ['drive', 'delete'] },
+		];
+		const toolPortalConfig = {
+			agents: { shravan: { profile: 'default' } },
+			mode: 'managed' as const,
+			profiles: {
+				default: {
+					namespaces: {
+						google: {
+							backend: {
+								kind: 'controller_execution' as const,
+								operations: { gog: configuredOperation },
+							},
+							calls: {
+								requiresApproval: { allow: [] as string[] },
+								withoutApproval: { allow: ['gog'] },
+							},
+							tools: { allow: ['gog'] },
+						},
+					},
+				},
+			},
+			schemaVersion: 1 as const,
+		};
+
+		await expect(
+			planMcpPortalEffectiveConfigFromConfig(
+				createPlanPropsForTest({
+					approvalAccessConfigured: false,
+					mcpConfig: { providers: {}, schemaVersion: 1 },
+					toolPortalConfig,
+				}),
+			),
+		).rejects.toThrow(/managed calls requiring approval require zones\[\]\.approvalAccess/u);
+
+		configuredOperation.calls.requiresApproval = [];
+		await expect(
+			planMcpPortalEffectiveConfigFromConfig(
+				createPlanPropsForTest({
+					approvalAccessConfigured: false,
+					mcpConfig: { providers: {}, schemaVersion: 1 },
+					toolPortalConfig,
+				}),
+			),
+		).resolves.toBeDefined();
 	});
 
 	it('does not report loopback HTTP provider URLs as external gateway egress', async () => {

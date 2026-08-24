@@ -3,35 +3,53 @@ import { z } from 'zod/v4';
 import type {
 	CliAllowedCommand,
 	CliAllowance,
+	CliAllowanceBaseline,
 	CliAllowanceInput,
 	CliFlagRule,
+	CliInvocationDisposition,
+	CliInvocationFlagPredicate,
+	CliInvocationMatcher,
 	CliPatternRule,
 } from './models/cli-allowance-schema.js';
 
-export type CliAllowanceValidationResult =
+export type CliAllowanceEvaluationResult =
 	| {
-			readonly argv: readonly string[];
-			readonly ok: true;
-	  }
-	| {
+			readonly disposition: 'deny';
 			readonly error: {
 				readonly code: string;
 				readonly message: string;
 			};
+			readonly kind: 'denied';
 			readonly ok: false;
+	  }
+	| {
+			readonly argv: readonly string[];
+			readonly disposition: CliInvocationDisposition;
+			readonly kind: 'admitted';
+			readonly matchedCommandPath: readonly string[];
+			readonly matchedDenyRule: boolean;
+			readonly matchedRequiresApprovalRule: boolean;
+			readonly ok: true;
 	  };
 
-export interface ValidateCliAllowanceInvocationProps {
+export interface EvaluateCliAllowanceInvocationProps {
 	readonly allowance: CliAllowance;
+	readonly baseline: CliAllowanceBaseline;
 	readonly input: CliAllowanceInput;
 }
 
-export function validateCliAllowanceInvocation(
-	props: ValidateCliAllowanceInvocationProps,
-): CliAllowanceValidationResult {
+interface CliFlagOccurrence {
+	readonly inlineValue?: string;
+	readonly name: string;
+	readonly separatedValue?: string;
+}
+
+export function evaluateCliAllowanceInvocation(
+	props: EvaluateCliAllowanceInvocationProps,
+): CliAllowanceEvaluationResult {
 	const command = findMatchingCommand(props.allowance.commands, props.input.argv);
 	if (command === undefined) {
-		return invalidCliAllowance('CLI argv does not match an allowed command path.');
+		return deniedCliAllowance('CLI argv does not match an allowed command path.');
 	}
 
 	const deniedArgumentPattern = firstMatchingPattern(
@@ -39,26 +57,47 @@ export function validateCliAllowanceInvocation(
 		props.input.argv,
 	);
 	if (deniedArgumentPattern !== undefined) {
-		return invalidCliAllowance(
+		return deniedCliAllowance(
 			`CLI argv matched denied ${deniedArgumentPattern.kind} pattern "${deniedArgumentPattern.value}".`,
 		);
 	}
 
-	const flagValidation = validateFlagRules({
-		argvTail: props.input.argv.slice(command.path.length),
-		flagRules: command.flagRules,
-	});
-	if (!flagValidation.ok) return flagValidation;
+	const argvTail = props.input.argv.slice(command.path.length);
+	const flagOccurrences = deriveFlagOccurrences(argvTail);
+	const flagValidation = validateFlagRules({ flagOccurrences, flagRules: command.flagRules });
+	if (flagValidation !== undefined) return flagValidation;
 
 	const stdinValidation = validateStdin(props.allowance, props.input.stdin);
-	if (!stdinValidation.ok) return stdinValidation;
+	if (stdinValidation !== undefined) return stdinValidation;
 
-	return { argv: props.input.argv, ok: true };
+	const matchedDenyRule = props.allowance.calls.deny.some((matcher) =>
+		invocationMatcherApplies({ command, flagOccurrences, matcher }),
+	);
+	const matchedRequiresApprovalRule = props.allowance.calls.requiresApproval.some((matcher) =>
+		invocationMatcherApplies({ command, flagOccurrences, matcher }),
+	);
+	const disposition = strongestDisposition({
+		baseline: props.baseline,
+		matchedDenyRule,
+		matchedRequiresApprovalRule,
+	});
+
+	return {
+		argv: props.input.argv,
+		disposition,
+		kind: 'admitted',
+		matchedCommandPath: command.path,
+		matchedDenyRule,
+		matchedRequiresApprovalRule,
+		ok: true,
+	};
 }
 
-function invalidCliAllowance(message: string): CliAllowanceValidationResult {
+function deniedCliAllowance(message: string): CliAllowanceEvaluationResult {
 	return {
+		disposition: 'deny',
 		error: { code: 'cli_allowance_denied', message },
+		kind: 'denied',
 		ok: false,
 	};
 }
@@ -85,51 +124,78 @@ function firstMatchingPattern(
 	);
 }
 
-function validateFlagRules(props: {
-	readonly argvTail: readonly string[];
-	readonly flagRules: readonly CliFlagRule[];
-}): CliAllowanceValidationResult {
-	for (const token of props.argvTail) {
-		if (!token.startsWith('-') || token === '--') continue;
+function deriveFlagOccurrences(argvTail: readonly string[]): readonly CliFlagOccurrence[] {
+	const occurrences: CliFlagOccurrence[] = [];
+	for (const [tokenIndex, token] of argvTail.entries()) {
+		if (token === '--' || !token.startsWith('-')) continue;
 		const parsedFlag = parseFlagToken(token);
-		const deniedRule = props.flagRules.find(
-			(rule) => rule.kind === 'deny' && rule.names.includes(parsedFlag.name),
-		);
-		if (deniedRule !== undefined) {
-			return invalidCliAllowance(`CLI argv flag "${parsedFlag.name}" is denied by policy.`);
-		}
+		const separatedValue = argvTail[tokenIndex + 1];
+		occurrences.push({
+			...(parsedFlag.inlineValue === undefined
+				? separatedValue === undefined
+					? {}
+					: { separatedValue }
+				: { inlineValue: parsedFlag.inlineValue }),
+			name: parsedFlag.name,
+		});
 	}
-	let tokenIndex = 0;
-	while (tokenIndex < props.argvTail.length) {
-		const token = props.argvTail[tokenIndex];
-		if (token === undefined) {
-			return invalidCliAllowance('CLI argv contained an empty slot.');
-		}
-		if (token === '--' || !token.startsWith('-')) {
-			tokenIndex += 1;
-			continue;
-		}
+	return occurrences;
+}
 
-		const parsedFlag = parseFlagToken(token);
-		const matchingRule = props.flagRules.find((rule) => rule.names.includes(parsedFlag.name));
-		if (matchingRule === undefined) {
-			tokenIndex += 1;
-			continue;
-		}
-		if (matchingRule.kind === 'deny') {
-			return invalidCliAllowance(`CLI argv flag "${parsedFlag.name}" is denied by policy.`);
-		}
-
-		const separatedValue = props.argvTail[tokenIndex + 1];
-		const value = parsedFlag.inlineValue ?? separatedValue;
+function validateFlagRules(props: {
+	readonly flagOccurrences: readonly CliFlagOccurrence[];
+	readonly flagRules: readonly CliFlagRule[];
+}): CliAllowanceEvaluationResult | undefined {
+	for (const occurrence of props.flagOccurrences) {
+		const matchingRule = props.flagRules.find((rule) => rule.names.includes(occurrence.name));
+		if (matchingRule === undefined) continue;
+		const value = occurrence.inlineValue ?? occurrence.separatedValue;
 		if (value === undefined || !matchingRule.values.includes(value)) {
-			return invalidCliAllowance(
-				`CLI argv flag "${parsedFlag.name}" requires one configured allowed value.`,
+			return deniedCliAllowance(
+				`CLI argv flag "${occurrence.name}" requires one configured allowed value.`,
 			);
 		}
-		tokenIndex += parsedFlag.inlineValue === undefined ? 2 : 1;
 	}
-	return { argv: props.argvTail, ok: true };
+	return undefined;
+}
+
+function invocationMatcherApplies(props: {
+	readonly command: CliAllowedCommand;
+	readonly flagOccurrences: readonly CliFlagOccurrence[];
+	readonly matcher: CliInvocationMatcher;
+}): boolean {
+	return (
+		tokenArraysEqual(props.command.path, props.matcher.path) &&
+		props.matcher.flags.every((predicate) => flagPredicateApplies(predicate, props.flagOccurrences))
+	);
+}
+
+function flagPredicateApplies(
+	predicate: CliInvocationFlagPredicate,
+	flagOccurrences: readonly CliFlagOccurrence[],
+): boolean {
+	return flagOccurrences.some((occurrence) => {
+		if (!predicate.names.includes(occurrence.name)) return false;
+		if (predicate.values === undefined) return true;
+		const value = occurrence.inlineValue ?? occurrence.separatedValue;
+		return value !== undefined && predicate.values.includes(value);
+	});
+}
+
+function strongestDisposition(props: {
+	readonly baseline: CliAllowanceBaseline;
+	readonly matchedDenyRule: boolean;
+	readonly matchedRequiresApprovalRule: boolean;
+}): CliInvocationDisposition {
+	if (props.baseline === 'deny' || props.matchedDenyRule) return 'deny';
+	if (props.baseline === 'requires_approval' || props.matchedRequiresApprovalRule) {
+		return 'requires_approval';
+	}
+	return 'without_approval';
+}
+
+function tokenArraysEqual(left: readonly string[], right: readonly string[]): boolean {
+	return left.length === right.length && left.every((token, index) => token === right[index]);
 }
 
 function parseFlagToken(token: string): {
@@ -147,30 +213,30 @@ function parseFlagToken(token: string): {
 function validateStdin(
 	allowance: CliAllowance,
 	stdin: string | undefined,
-): CliAllowanceValidationResult {
+): CliAllowanceEvaluationResult | undefined {
 	if (allowance.stdin.kind === 'none') {
 		return stdin === undefined
-			? { argv: [], ok: true }
-			: invalidCliAllowance('CLI stdin is not enabled for this operation.');
+			? undefined
+			: deniedCliAllowance('CLI stdin is not enabled for this operation.');
 	}
-	if (stdin === undefined) return { argv: [], ok: true };
+	if (stdin === undefined) return undefined;
 	if (new TextEncoder().encode(stdin).byteLength > allowance.stdin.maxBytes) {
-		return invalidCliAllowance('CLI stdin exceeds the configured byte limit.');
+		return deniedCliAllowance('CLI stdin exceeds the configured byte limit.');
 	}
 	if (allowance.stdin.kind === 'bounded_text') {
 		const deniedStdinPattern = firstMatchingPattern(allowance.stdin.deniedPatterns, [stdin]);
 		return deniedStdinPattern === undefined
-			? { argv: [], ok: true }
-			: invalidCliAllowance(
+			? undefined
+			: deniedCliAllowance(
 					`CLI stdin matched denied ${deniedStdinPattern.kind} pattern "${deniedStdinPattern.value}".`,
 				);
 	}
 	try {
 		const parsedJson: unknown = JSON.parse(stdin);
 		return z.fromJSONSchema(allowance.stdin.schema).safeParse(parsedJson).success
-			? { argv: [], ok: true }
-			: invalidCliAllowance('CLI stdin does not match its configured JSON schema.');
+			? undefined
+			: deniedCliAllowance('CLI stdin does not match its configured JSON schema.');
 	} catch {
-		return invalidCliAllowance('CLI stdin must contain valid JSON.');
+		return deniedCliAllowance('CLI stdin must contain valid JSON.');
 	}
 }

@@ -186,6 +186,7 @@ export const GatewayRuntimeControllerExecutionDirectDispatchAuthoritySchema = z
 	.object({
 		...directDispatchAuthorityShape,
 		backendKind: z.literal(toolPortalBackendKindSchema.enum.controller_execution),
+		bindingRevision: z.string().min(1),
 	})
 	.strict();
 
