@@ -25,6 +25,7 @@ import { waitForProtocolRetryInterval } from './e2e-protocol-wait.js';
 import {
 	buildHermesE2eProfileApiServerKeySecrets,
 	hermesE2eProfileApiServerKey,
+	hermesE2eProfileApiServerKeyEnvironmentName,
 	renderHermesManagedE2eConfiguration,
 	scaffoldHermesE2eProject,
 	useLocalHermesGatewayImagePackages,
@@ -39,7 +40,6 @@ const describeHermesToolPortalOrientationE2e = runHermesToolPortalOrientationE2e
 	: describe.skip;
 
 const agentId = 'main';
-const discordSecretEnvironmentName = 'DISCORD_BOT_TOKEN_MAIN';
 const availableUpstreamHost = 'orientation-available-mcp.vm.host';
 const unavailableUpstreamHost = 'orientation-unavailable-mcp.vm.host';
 const unavailableNamespace = 'orientation-unavailable';
@@ -579,6 +579,12 @@ describeHermesToolPortalOrientationE2e('e2e: Hermes Tool Portal session orientat
 		if (systemZone === undefined || systemZone.gateway.type !== 'hermes') {
 			throw new Error('Expected the Hermes Tool Portal orientation E2E zone.');
 		}
+		// This proof drives Hermes through its HTTP API and must not activate a channel transport.
+		Object.assign(systemZone.gateway.profileSecretProjectionsByAgent, {
+			[agentId]: {
+				API_SERVER_KEY: hermesE2eProfileApiServerKeyEnvironmentName(agentId),
+			},
+		});
 		const toolPortalConfigDirectory = path.join(project.tempRoot, 'config', 'tool-portal');
 		await mkdir(toolPortalConfigDirectory, { recursive: true });
 		const availableUpstreamUrl = `http://${availableUpstreamHost}:${String(availableUpstream.port)}/mcp`;
@@ -589,12 +595,6 @@ describeHermesToolPortalOrientationE2e('e2e: Hermes Tool Portal session orientat
 			{ audience: 'gateway', host: unavailableUpstreamHost },
 			{ audience: 'gateway', host: modelHost },
 		];
-		systemZone.secrets[discordSecretEnvironmentName] = {
-			audience: 'gateway',
-			envVar: discordSecretEnvironmentName,
-			injection: 'env',
-			source: 'environment',
-		};
 		systemZone.toolPortal = {
 			configDir: toolPortalConfigDirectory,
 			surfaceEligibilityByProfile: {
@@ -634,7 +634,6 @@ describeHermesToolPortalOrientationE2e('e2e: Hermes Tool Portal session orientat
 		harness = await startE2eControllerRuntime({
 			secrets: {
 				...buildHermesE2eProfileApiServerKeySecrets([agentId]),
-				[discordSecretEnvironmentName]: 'unused-hermes-orientation-e2e-discord-token',
 				GITHUB_TOKEN: 'unused-hermes-orientation-e2e-github-token',
 			},
 			startGatewayZone: async (startOptions, dependencies) => {
