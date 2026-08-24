@@ -81,6 +81,7 @@ async function writeWorkspaceGitToolPortalConfigs(options: {
 			smoke: {
 				namespaces: {
 					controller_execution: {
+						discovery: {},
 						backend: {
 							kind: 'controller_execution',
 							operations: {
@@ -101,6 +102,7 @@ async function writeWorkspaceGitToolPortalConfigs(options: {
 						},
 					},
 					sandbox: {
+						discovery: {},
 						backend: {
 							kind: 'tool_vm_runner',
 							operations: {

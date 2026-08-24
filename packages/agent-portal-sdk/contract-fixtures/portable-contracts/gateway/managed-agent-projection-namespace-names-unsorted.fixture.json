@@ -9,12 +9,15 @@
 			"kind": "openclaw"
 		},
 		"profileAssignmentRevision": "profile-assignment-a",
-		"toolPortalNamespaceNames": ["github", "filesystem"],
+		"toolPortalNamespaces": [{ "namespace": "github" }, { "namespace": "filesystem" }],
 		"toolPortalProfileId": "engineering"
 	},
 	"expectation": {
 		"kind": "rejected",
-		"errorCodes": ["gateway.managed-agent-projection.namespace-names"],
-		"refinementIdentities": ["gateway.managed-agent-projection.namespace-names"]
+		"errorCodes": ["gateway.managed-agent-projection.namespaces"],
+		"refinementIdentities": [
+			"gateway.managed-agent-projection.namespaces",
+			"portal.namespace-discovery.summary-code-points"
+		]
 	}
 }

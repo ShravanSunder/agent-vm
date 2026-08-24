@@ -248,7 +248,10 @@ describe('canonical Agent Portal contracts', () => {
 			agentId: 'agent-a',
 			frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
 			profileAssignmentRevision: 'profile-assignment-a',
-			toolPortalNamespaceNames: ['filesystem', 'github'],
+			toolPortalNamespaces: [
+				{ namespace: 'filesystem', summary: 'Workspace files.' },
+				{ namespace: 'github' },
+			],
 			toolPortalProfileId: 'profile-a',
 		} as const;
 		const hermesProjection = {
@@ -293,12 +296,33 @@ describe('canonical Agent Portal contracts', () => {
 			agentId: 'agent-a',
 			frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
 			profileAssignmentRevision: 'profile-assignment-a',
-			toolPortalNamespaceNames: [longNamespaceName],
+			toolPortalNamespaces: [{ namespace: longNamespaceName }],
 			toolPortalProfileId: 'profile-a',
 		} as const;
 
 		// Act / Assert
 		expect(ManagedAgentProjectionSchema.safeParse(projection).success).toBe(true);
+	});
+
+	it('counts namespace summary bounds by Unicode code point', () => {
+		const supplementaryCharacter = '\u{1F680}';
+		const projection = {
+			agentId: 'agent-a',
+			frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' as const },
+			profileAssignmentRevision: 'profile-assignment-a',
+			toolPortalNamespaces: [{ namespace: 'unicode', summary: supplementaryCharacter.repeat(500) }],
+			toolPortalProfileId: 'profile-a',
+		};
+
+		expect(ManagedAgentProjectionSchema.safeParse(projection).success).toBe(true);
+		expect(
+			ManagedAgentProjectionSchema.safeParse({
+				...projection,
+				toolPortalNamespaces: [
+					{ namespace: 'unicode', summary: supplementaryCharacter.repeat(501) },
+				],
+			}).success,
+		).toBe(false);
 	});
 
 	it('orders managed namespace names by Unicode code point', () => {
@@ -309,7 +333,10 @@ describe('canonical Agent Portal contracts', () => {
 			agentId: 'agent-a',
 			frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' as const },
 			profileAssignmentRevision: 'profile-assignment-a',
-			toolPortalNamespaceNames: [privateUseNamespace, supplementaryNamespace],
+			toolPortalNamespaces: [
+				{ namespace: privateUseNamespace },
+				{ namespace: supplementaryNamespace },
+			],
 			toolPortalProfileId: 'profile-a',
 		};
 
@@ -317,7 +344,10 @@ describe('canonical Agent Portal contracts', () => {
 		const acceptedResult = ManagedAgentProjectionSchema.safeParse(projection);
 		const reverseResult = ManagedAgentProjectionSchema.safeParse({
 			...projection,
-			toolPortalNamespaceNames: [supplementaryNamespace, privateUseNamespace],
+			toolPortalNamespaces: [
+				{ namespace: supplementaryNamespace },
+				{ namespace: privateUseNamespace },
+			],
 		});
 
 		// Assert

@@ -1,3 +1,4 @@
+import { EffectiveNamespaceDiscoverySchema } from '@agent-vm/agent-portal-sdk';
 import { z } from 'zod';
 
 import { StandaloneToolPortalAuthenticatedEnvelopeSchema } from './standalone-entrypoint/standalone-tool-portal-bearer-credentials.js';
@@ -40,6 +41,10 @@ export const ToolPortalStandaloneSemanticSnapshotSchema = z
 		desiredRevision: z.string().min(1),
 		profilePolicyRevision: z.string().min(1),
 		providerRevision: z.string().min(1),
+		namespaceDiscoveryByProfile: z.record(
+			z.string().min(1),
+			z.array(EffectiveNamespaceDiscoverySchema),
+		),
 		schemaRevision: z.string().min(1),
 		schemaVersion: z.literal(1),
 		surfaceEligibilityByProfile: z.record(

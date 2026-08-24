@@ -120,7 +120,13 @@ describe('Gateway runtime private UDS dispatcher', () => {
 	it('validates the trusted envelope and routes portal plus sandbox calls through one projection', async () => {
 		// Arrange
 		const list = vi.fn(async () => ({
-			items: [{ id: 'list-1', status: 'ok' as const, value: { namespaces: [], tools: [] } }],
+			items: [
+				{
+					id: 'list-1',
+					status: 'ok' as const,
+					value: { namespaceDiscovery: [], namespaces: [], tools: [] },
+				},
+			],
 			ok: true,
 		}));
 		const sandboxDispatch = vi.fn(async () => ({

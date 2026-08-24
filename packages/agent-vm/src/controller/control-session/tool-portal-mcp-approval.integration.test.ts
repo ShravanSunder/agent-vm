@@ -15,7 +15,10 @@ import {
 	type GatewayRuntimeAttachmentMetadata,
 	type GatewayRuntimeClientTrustedInvocationContext,
 } from '@agent-vm/agent-portal-sdk/gateway-runtime-client';
-import type { ToolPortalBackendKind, ToolPortalConfig } from '@agent-vm/config-contracts';
+import type {
+	GatewayRuntimeManagedToolPortalConfig,
+	ToolPortalBackendKind,
+} from '@agent-vm/config-contracts';
 import {
 	CONTROL_PROTOCOL_VERSION,
 	type ControlEnvelope,
@@ -98,7 +101,7 @@ const semanticSnapshot = {
 			agentId: 'agent-a',
 			frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
 			profileAssignmentRevision: 'profile-assignment:agent-a:7',
-			toolPortalNamespaceNames: ['github'],
+			toolPortalNamespaces: [{ namespace: 'github' }],
 			toolPortalProfileId: 'code-builder',
 		},
 	},
@@ -123,6 +126,7 @@ const toolPortalConfig = {
 		'code-builder': {
 			namespaces: {
 				github: {
+					discovery: {},
 					backend: { kind: 'mcp_provider' },
 					calls: {
 						requiresApproval: { allow: ['create_issue'], deny: [] },
@@ -134,7 +138,7 @@ const toolPortalConfig = {
 		},
 	},
 	schemaVersion: 1,
-} satisfies ToolPortalConfig;
+} satisfies GatewayRuntimeManagedToolPortalConfig;
 
 const managedPrincipal = {
 	agentId: 'agent-a',

@@ -3,7 +3,7 @@ import path from 'node:path';
 
 import {
 	createGatewayRuntimeManagedToolPortalConfig,
-	managedToolPortalConfigSchema,
+	effectiveManagedToolPortalConfigSchema,
 	mcpConfigSchema,
 } from '@agent-vm/config-contracts';
 import {
@@ -48,7 +48,7 @@ function serviceConfig(verifierPublicKeyPem: string, identitySuffix?: string): o
 	const gatewayIdentitySuffix = identitySuffix ?? 'image-boot';
 	const processIdentitySuffix = identitySuffix ?? 'image-owned';
 	const mcpConfig = mcpConfigSchema.parse({ providers: {}, schemaVersion: 1 });
-	const toolPortalConfig = managedToolPortalConfigSchema.parse({
+	const toolPortalConfig = effectiveManagedToolPortalConfigSchema.parse({
 		agents: { main: { profile: 'default' } },
 		mode: 'managed',
 		profiles: { default: { namespaces: {} } },
@@ -59,7 +59,7 @@ function serviceConfig(verifierPublicKeyPem: string, identitySuffix?: string): o
 			{
 				agentId: 'main',
 				frameworkIdentity: { agentId: 'main', kind: 'openclaw' },
-				toolPortalNamespaceNames: [],
+				toolPortalNamespaces: [],
 				toolPortalProfileId: 'default',
 			},
 		],

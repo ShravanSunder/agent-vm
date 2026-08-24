@@ -1,6 +1,6 @@
 import {
 	createGatewayRuntimeManagedToolPortalConfig,
-	managedToolPortalConfigSchema,
+	effectiveManagedToolPortalConfigSchema,
 	type GatewayRuntimeManagedToolPortalConfig,
 } from '@agent-vm/config-contracts';
 import { describe, expect, it } from 'vitest';
@@ -9,7 +9,7 @@ import { compileGatewayRuntimeToolVmRunnerConfiguredCatalog } from './tool-vm-ru
 
 function parsedToolPortalConfig(): GatewayRuntimeManagedToolPortalConfig {
 	return createGatewayRuntimeManagedToolPortalConfig(
-		managedToolPortalConfigSchema.parse({
+		effectiveManagedToolPortalConfigSchema.parse({
 			agents: {
 				'agent-builder': { profile: 'code-builder' },
 				'agent-reviewer': { profile: 'reviewer' },
@@ -19,6 +19,7 @@ function parsedToolPortalConfig(): GatewayRuntimeManagedToolPortalConfig {
 				'code-builder': {
 					namespaces: {
 						sandbox: {
+							discovery: {},
 							backend: {
 								kind: 'tool_vm_runner',
 								operations: {
@@ -77,6 +78,7 @@ function parsedToolPortalConfig(): GatewayRuntimeManagedToolPortalConfig {
 				reviewer: {
 					namespaces: {
 						sandbox: {
+							discovery: {},
 							backend: {
 								kind: 'tool_vm_runner',
 								operations: {

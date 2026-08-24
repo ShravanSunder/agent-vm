@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 
 import type { PortalCallRequest, PortalCallResult } from '@agent-vm/agent-portal-sdk';
 import type {
+	EffectiveManagedToolPortalConfig,
 	GatewayRuntimeManagedToolPortalConfig,
 	ToolPortalBackendKind,
 	ToolPortalConfig,
@@ -223,7 +224,10 @@ function selectorIncludesTool(selector: ToolPortalToolSelector, toolName: string
 
 export function callPolicyDecision(props: {
 	readonly call: PortalCallRequest['calls'][number];
-	readonly config: GatewayRuntimeManagedToolPortalConfig | ToolPortalConfig;
+	readonly config:
+		| EffectiveManagedToolPortalConfig
+		| GatewayRuntimeManagedToolPortalConfig
+		| ToolPortalConfig;
 	readonly profileId: string;
 	readonly semanticSnapshot: {
 		readonly surfaceEligibilityByProfile: Readonly<

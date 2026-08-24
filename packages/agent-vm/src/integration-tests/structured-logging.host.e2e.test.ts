@@ -10,7 +10,7 @@ import { pathToFileURL } from 'node:url';
 
 import {
 	createGatewayRuntimeManagedToolPortalConfig,
-	managedToolPortalConfigSchema,
+	effectiveManagedToolPortalConfigSchema,
 	mcpConfigSchema,
 } from '@agent-vm/config-contracts';
 import {
@@ -838,7 +838,7 @@ async function createGatewayRuntimeProofFixture(options: {
 	await mkdir(runtimeRoot, { mode: 0o700 });
 	const mcpConfigPath = path.join(runtimeRoot, 'mcp.config.json');
 	const mcpConfig = mcpConfigSchema.parse({ providers: {}, schemaVersion: 1 });
-	const toolPortalConfig = managedToolPortalConfigSchema.parse({
+	const toolPortalConfig = effectiveManagedToolPortalConfigSchema.parse({
 		agents: {
 			'agent-a': { profile: 'profile-a' },
 			'agent-b': { profile: 'profile-b' },
@@ -855,13 +855,13 @@ async function createGatewayRuntimeProofFixture(options: {
 			{
 				agentId: 'agent-a',
 				frameworkIdentity: { kind: 'hermes', profileName: 'agent-a-profile' },
-				toolPortalNamespaceNames: [],
+				toolPortalNamespaces: [],
 				toolPortalProfileId: 'profile-a',
 			},
 			{
 				agentId: 'agent-b',
 				frameworkIdentity: { kind: 'hermes', profileName: 'agent-b-profile' },
-				toolPortalNamespaceNames: [],
+				toolPortalNamespaces: [],
 				toolPortalProfileId: 'profile-b',
 			},
 		],

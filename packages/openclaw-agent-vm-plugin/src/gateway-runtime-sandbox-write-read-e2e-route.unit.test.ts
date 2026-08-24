@@ -21,7 +21,7 @@ const PROJECTION = {
 	agentId: 'main',
 	frameworkIdentity: { agentId: 'main', kind: 'openclaw' },
 	profileAssignmentRevision: 'profile-revision-controller-authored',
-	toolPortalNamespaceNames: [],
+	toolPortalNamespaces: [],
 	toolPortalProfileId: 'profile-controller-authored',
 } as const;
 const PROBE_IDENTITY = {

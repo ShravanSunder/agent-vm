@@ -15,12 +15,15 @@
 			"kind": "openclaw"
 		},
 		"profileAssignmentRevision": "profile-assignment-a",
-		"toolPortalNamespaceNames": ["\uD800\uDC00", "\uE000"],
+		"toolPortalNamespaces": [{ "namespace": "\uD800\uDC00" }, { "namespace": "\uE000" }],
 		"toolPortalProfileId": "profile-a"
 	},
 	"expectation": {
 		"kind": "rejected",
-		"errorCodes": ["gateway.managed-agent-projection.namespace-names"],
-		"refinementIdentities": ["gateway.managed-agent-projection.namespace-names"]
+		"errorCodes": ["gateway.managed-agent-projection.namespaces"],
+		"refinementIdentities": [
+			"gateway.managed-agent-projection.namespaces",
+			"portal.namespace-discovery.summary-code-points"
+		]
 	}
 }

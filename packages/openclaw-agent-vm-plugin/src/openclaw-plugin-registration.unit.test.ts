@@ -46,7 +46,10 @@ function createToolPortalPluginConfig(): {
 					readonly kind: 'openclaw';
 				};
 				readonly profileAssignmentRevision: string;
-				readonly toolPortalNamespaceNames: readonly string[];
+				readonly toolPortalNamespaces: readonly {
+					readonly namespace: string;
+					readonly summary?: string;
+				}[];
 				readonly toolPortalProfileId: string;
 			}
 		>
@@ -69,7 +72,7 @@ function createToolPortalPluginConfig(): {
 				agentId: 'shravan',
 				frameworkIdentity: { agentId: 'shravan', kind: 'openclaw' },
 				profileAssignmentRevision: 'profile-revision-a',
-				toolPortalNamespaceNames: [],
+				toolPortalNamespaces: [],
 				toolPortalProfileId: 'profile-a',
 			},
 		},
@@ -152,12 +155,20 @@ describe('createAgentVmPlugin', () => {
 			typeof agentProjectionsSchema?.additionalProperties === 'object'
 				? agentProjectionsSchema.additionalProperties
 				: undefined;
-		expect(projectionSchema?.properties?.toolPortalNamespaceNames).toMatchObject({
-			items: { minLength: 1, type: 'string' },
+		expect(projectionSchema?.properties?.toolPortalNamespaces).toMatchObject({
+			items: {
+				additionalProperties: false,
+				properties: {
+					namespace: { minLength: 1, type: 'string' },
+					summary: { maxLength: 500, minLength: 1, type: 'string' },
+				},
+				required: ['namespace'],
+				type: 'object',
+			},
 			type: 'array',
 			uniqueItems: true,
 		});
-		expect(projectionSchema?.required).toContain('toolPortalNamespaceNames');
+		expect(projectionSchema?.required).toContain('toolPortalNamespaces');
 		expect(manifest.configSchema?.properties).not.toHaveProperty('controlSession');
 	});
 

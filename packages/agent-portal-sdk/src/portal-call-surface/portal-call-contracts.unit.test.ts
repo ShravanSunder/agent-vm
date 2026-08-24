@@ -26,6 +26,7 @@ import {
 	PortalCallResultSchema,
 	PortalDescribeRequestSchema,
 	PortalListRequestSchema,
+	PortalListResultSchema,
 	PortalSearchRequestSchema,
 } from './index.js';
 
@@ -190,6 +191,30 @@ describe('portal call surface contracts', () => {
 		});
 
 		expect(JSON.stringify(result)).not.toContain('approvalToken');
+	});
+
+	it('requires represented namespace discovery on successful read results', () => {
+		const successfulListItem = {
+			id: 'list-1',
+			status: 'ok',
+			value: {
+				namespaceDiscovery: [{ namespace: 'github', summary: 'GitHub repository tools.' }],
+				namespaces: ['github'],
+				tools: [],
+			},
+		} as const;
+
+		expect(
+			PortalListResultSchema.safeParse({ items: [successfulListItem], ok: true }).success,
+		).toBe(true);
+		const { namespaceDiscovery: _namespaceDiscovery, ...valueWithoutDiscovery } =
+			successfulListItem.value;
+		expect(
+			PortalListResultSchema.safeParse({
+				items: [{ ...successfulListItem, value: valueWithoutDiscovery }],
+				ok: true,
+			}).success,
+		).toBe(false);
 	});
 
 	it('rejects unsafe error codes, long messages, and inconsistent batch status', () => {

@@ -17,6 +17,7 @@ from agent_vm_hermes_adapter.managed_profile_adapter import (
     ManagedTrustedContext,
     build_managed_trusted_context,
 )
+from agent_vm_hermes_adapter.managed_tool_portal.models import NamespaceDiscovery
 
 PROJECTION_COHORT_DIGEST = (
     "projection-cohort:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -32,13 +33,13 @@ def build_projection(
     *,
     agent_id: str,
     profile_name: str,
-    tool_portal_namespace_names: tuple[str, ...] = ("filesystem",),
+    tool_portal_namespaces: tuple[dict[str, str], ...] = ({"namespace": "filesystem"},),
 ) -> dict[str, object]:
     return {
         "agentId": agent_id,
         "frameworkIdentity": {"kind": "hermes", "profileName": profile_name},
         "profileAssignmentRevision": f"revision-{agent_id}",
-        "toolPortalNamespaceNames": list(tool_portal_namespace_names),
+        "toolPortalNamespaces": list(tool_portal_namespaces),
         "toolPortalProfileId": f"policy-{agent_id}",
     }
 
@@ -58,6 +59,32 @@ def build_adapter_config(
 
 
 class HermesManagedAdapterTests(unittest.TestCase):
+    def test_counts_namespace_summary_bounds_by_unicode_code_point(self) -> None:
+        supplementary_character = "\U0001f680"
+        valid_projection = build_projection(
+            agent_id="reviewer",
+            profile_name="reviewer",
+            tool_portal_namespaces=(
+                {"namespace": "unicode", "summary": supplementary_character * 500},
+            ),
+        )
+        over_bound_projection = build_projection(
+            agent_id="reviewer",
+            profile_name="reviewer",
+            tool_portal_namespaces=(
+                {"namespace": "unicode", "summary": supplementary_character * 501},
+            ),
+        )
+
+        self.assertEqual(
+            CanonicalManagedAgentProjection.model_validate(valid_projection)
+            .tool_portal_namespaces[0]
+            .summary,
+            supplementary_character * 500,
+        )
+        with self.assertRaises(ValidationError):
+            CanonicalManagedAgentProjection.model_validate(over_bound_projection)
+
     def test_routes_two_canonical_profiles_through_one_injected_client(self) -> None:
         client = build_unconnected_gateway_runtime_client()
         adapter = HermesManagedAdapter(
@@ -81,35 +108,44 @@ class HermesManagedAdapterTests(unittest.TestCase):
                 "agentId",
                 "frameworkIdentity",
                 "profileAssignmentRevision",
-                "toolPortalNamespaceNames",
+                "toolPortalNamespaces",
                 "toolPortalProfileId",
             },
         )
         self.assertIsInstance(researcher, CanonicalManagedAgentProjection)
-        self.assertEqual(researcher.tool_portal_namespace_names, ("filesystem",))
+        self.assertEqual(
+            researcher.tool_portal_namespaces,
+            (NamespaceDiscovery(namespace="filesystem"),),
+        )
         self.assertIs(adapter.gateway_runtime_client_for_profile("researcher"), client)
         self.assertIs(adapter.gateway_runtime_client_for_profile("reviewer"), client)
 
     def test_rejects_missing_unsorted_and_duplicate_namespace_names(self) -> None:
         missing_names = build_projection(agent_id="reviewer", profile_name="reviewer")
-        del missing_names["toolPortalNamespaceNames"]
+        del missing_names["toolPortalNamespaces"]
 
         cases = (
             missing_names,
             build_projection(
                 agent_id="reviewer",
                 profile_name="reviewer",
-                tool_portal_namespace_names=("zeta", "alpha"),
+                tool_portal_namespaces=(
+                    {"namespace": "zeta"},
+                    {"namespace": "alpha"},
+                ),
             ),
             build_projection(
                 agent_id="reviewer",
                 profile_name="reviewer",
-                tool_portal_namespace_names=("alpha", "alpha"),
+                tool_portal_namespaces=(
+                    {"namespace": "alpha"},
+                    {"namespace": "alpha"},
+                ),
             ),
             build_projection(
                 agent_id="reviewer",
                 profile_name="reviewer",
-                tool_portal_namespace_names=("",),
+                tool_portal_namespaces=({"namespace": ""},),
             ),
         )
 
@@ -130,7 +166,7 @@ class HermesManagedAdapterTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             setattr(projection.framework_identity, "profile_name", "changed")
         with self.assertRaises(ValidationError):
-            setattr(projection, "tool_portal_namespace_names", ("filesystem", "zeta"))
+            setattr(projection, "tool_portal_namespaces", ({"namespace": "filesystem"},))
 
     def test_builds_exact_trusted_context_wire_shape_without_session(self) -> None:
         projection = build_adapter_config(

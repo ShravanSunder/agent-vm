@@ -1,5 +1,5 @@
 import { PortalListRequestSchema, type PortalCallRequest } from '@agent-vm/agent-portal-sdk';
-import type { ManagedToolPortalConfig } from '@agent-vm/config-contracts';
+import type { GatewayRuntimeManagedToolPortalConfig } from '@agent-vm/config-contracts';
 import {
 	GatewayRuntimeApprovalFingerprintSchema,
 	GatewayRuntimeTrustedInvocationContextSchema,
@@ -49,12 +49,13 @@ const directFingerprintConfig = {
 						requiresApproval: { allow: [], deny: [] },
 						withoutApproval: { allow: ['get_issue'], deny: [] },
 					},
+					discovery: { summary: 'GitHub repository alias tools.' },
 					tools: { allow: ['get_issue'], deny: [] },
 				},
 			},
 		},
 	},
-} satisfies ManagedToolPortalConfig;
+} satisfies GatewayRuntimeManagedToolPortalConfig;
 
 const directFingerprintSemanticSnapshot = {
 	...semanticSnapshot,

@@ -9,9 +9,9 @@ import {
 	PortalSearchRequestSchema,
 	type PortalSearchRequest,
 	type PortalCallResult,
-	type PortalDescribeResult,
-	type PortalListResult,
-	type PortalSearchResult,
+	type PortalBackendDescribeResult,
+	type PortalBackendListResult,
+	type PortalBackendSearchResult,
 } from '@agent-vm/agent-portal-sdk';
 import {
 	GatewayRuntimeClient,
@@ -19,7 +19,10 @@ import {
 	type GatewayRuntimeRequestOptions,
 	type GatewayRuntimeTransportFactory,
 } from '@agent-vm/agent-portal-sdk/gateway-runtime-client';
-import type { ToolPortalBackendKind, ToolPortalConfig } from '@agent-vm/config-contracts';
+import type {
+	GatewayRuntimeManagedToolPortalConfig,
+	ToolPortalBackendKind,
+} from '@agent-vm/config-contracts';
 import {
 	GatewayRuntimeTrustedInvocationContextSchema,
 	type GatewayRuntimePortalSemanticSnapshot,
@@ -64,6 +67,7 @@ const toolPortalConfig = {
 		'code-builder': {
 			namespaces: {
 				controller_execution: {
+					discovery: {},
 					backend: {
 						kind: 'controller_execution',
 						operations: {
@@ -80,6 +84,7 @@ const toolPortalConfig = {
 					tools: { allow: ['workspace_git_push'], deny: [] },
 				},
 				github: {
+					discovery: {},
 					backend: { kind: 'mcp_provider' },
 					calls: {
 						requiresApproval: { allow: [], deny: [] },
@@ -88,6 +93,7 @@ const toolPortalConfig = {
 					tools: { allow: ['get_issue'], deny: [] },
 				},
 				sandbox: {
+					discovery: {},
 					backend: {
 						kind: 'tool_vm_runner',
 						operations: {
@@ -111,7 +117,7 @@ const toolPortalConfig = {
 		},
 	},
 	schemaVersion: 1,
-} satisfies ToolPortalConfig;
+} satisfies GatewayRuntimeManagedToolPortalConfig;
 
 const semanticSnapshot = {
 	activeRevision: 'semantic:12',
@@ -120,14 +126,22 @@ const semanticSnapshot = {
 			agentId: 'agent-a',
 			frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
 			profileAssignmentRevision: 'profile-assignment:agent-a:7',
-			toolPortalNamespaceNames: ['controller_execution', 'github', 'sandbox'],
+			toolPortalNamespaces: [
+				{ namespace: 'controller_execution' },
+				{ namespace: 'github' },
+				{ namespace: 'sandbox' },
+			],
 			toolPortalProfileId: 'code-builder',
 		},
 		'agent-b': {
 			agentId: 'agent-b',
 			frameworkIdentity: { agentId: 'agent-b', kind: 'openclaw' },
 			profileAssignmentRevision: 'profile-assignment:agent-b:4',
-			toolPortalNamespaceNames: ['controller_execution', 'github', 'sandbox'],
+			toolPortalNamespaces: [
+				{ namespace: 'controller_execution' },
+				{ namespace: 'github' },
+				{ namespace: 'sandbox' },
+			],
 			toolPortalProfileId: 'code-builder',
 		},
 	},
@@ -360,7 +374,7 @@ function createRecordingBackendPort<TBackendKind extends ToolPortalBackendKind>(
 					ok: true,
 				});
 			},
-			describe: (request, options): Promise<PortalDescribeResult> => {
+			describe: (request, options): Promise<PortalBackendDescribeResult> => {
 				invocations.push({ operation: 'describe', options, request });
 				const parsedRequest = PortalDescribeRequestSchema.parse(request);
 				return Promise.resolve({
@@ -372,7 +386,7 @@ function createRecordingBackendPort<TBackendKind extends ToolPortalBackendKind>(
 					ok: true,
 				});
 			},
-			list: (request, options): Promise<PortalListResult> => {
+			list: (request, options): Promise<PortalBackendListResult> => {
 				invocations.push({ operation: 'list', options, request });
 				const parsedRequest = PortalListRequestSchema.parse(request);
 				return Promise.resolve({
@@ -384,7 +398,7 @@ function createRecordingBackendPort<TBackendKind extends ToolPortalBackendKind>(
 					ok: true,
 				});
 			},
-			search: (request, options): Promise<PortalSearchResult> => {
+			search: (request, options): Promise<PortalBackendSearchResult> => {
 				invocations.push({ operation: 'search', options, request });
 				const parsedRequest = PortalSearchRequestSchema.parse(request);
 				return Promise.resolve({

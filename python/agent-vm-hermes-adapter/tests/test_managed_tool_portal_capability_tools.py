@@ -58,6 +58,7 @@ from agent_vm_hermes_adapter.managed_tool_portal.inventory_contracts import (
 from agent_vm_hermes_adapter.managed_tool_portal.models import (
     InjectionCacheKey,
     InjectionMarker,
+    NamespaceDiscovery,
 )
 from agent_vm_hermes_adapter.managed_tool_portal_capability_tools import (
     MANAGED_TOOL_PORTAL_PLUGIN_NAME,
@@ -116,7 +117,10 @@ def build_projection(*, agent_id: str) -> CanonicalManagedAgentProjection:
         agent_id=agent_id,
         framework_identity=ManagedFrameworkIdentity(kind="hermes", profile_name=agent_id),
         profile_assignment_revision=f"revision-{agent_id}",
-        tool_portal_namespace_names=("filesystem", "github"),
+        tool_portal_namespaces=(
+            NamespaceDiscovery(namespace="filesystem"),
+            NamespaceDiscovery(namespace="github"),
+        ),
         tool_portal_profile_id=f"policy-{agent_id}",
     )
 

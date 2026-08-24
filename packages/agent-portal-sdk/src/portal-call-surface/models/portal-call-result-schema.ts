@@ -7,6 +7,7 @@ import {
 	CapabilitySummarySchema,
 } from '../../capability-description-surface/models/capability-descriptor-schema.js';
 import { JsonValueSchema } from '../../contract-primitives/models/json-value-schema.js';
+import { EffectiveNamespaceDiscoverySchema } from '../../contract-primitives/models/namespace-discovery-schema.js';
 import { ItemIdSchema } from '../../contract-primitives/models/request-id-schema.js';
 import { withPortableSuperRefinement } from '../../portable-contracts/portable-refinement-authoring.js';
 import { SafeDiagnosticSchema } from '../../portal-event-surface/models/safe-diagnostic-schema.js';
@@ -183,7 +184,7 @@ function createPortalResultSchema<TItemSchema extends z.ZodType<{ readonly statu
 	});
 }
 
-export const PortalListItemValueSchema = z
+export const PortalBackendListItemValueSchema = z
 	.object({
 		namespaces: z.array(z.string().min(1)),
 		nextCursor: z.string().regex(/^\d+$/u).optional(),
@@ -191,17 +192,54 @@ export const PortalListItemValueSchema = z
 	})
 	.strict();
 
-export const PortalSearchItemValueSchema = z
+export const PortalBackendSearchItemValueSchema = z
 	.object({
 		tools: z.array(CapabilitySearchMatchSchema),
 	})
 	.strict();
 
-export const PortalDescribeItemValueSchema = z
+export const PortalBackendDescribeItemValueSchema = z
 	.object({
 		tools: z.array(CapabilityDescriptorSchema),
 	})
 	.strict();
+
+export const PortalListItemValueSchema = PortalBackendListItemValueSchema.extend({
+	namespaceDiscovery: z.array(EffectiveNamespaceDiscoverySchema),
+}).strict();
+
+export const PortalSearchItemValueSchema = PortalBackendSearchItemValueSchema.extend({
+	namespaceDiscovery: z.array(EffectiveNamespaceDiscoverySchema),
+}).strict();
+
+export const PortalDescribeItemValueSchema = PortalBackendDescribeItemValueSchema.extend({
+	namespaceDiscovery: z.array(EffectiveNamespaceDiscoverySchema),
+}).strict();
+
+export const PortalBackendListItemResultSchema = createPortalItemResultSchema(
+	PortalBackendListItemValueSchema,
+);
+export const PortalBackendSearchItemResultSchema = createPortalItemResultSchema(
+	PortalBackendSearchItemValueSchema,
+);
+export const PortalBackendDescribeItemResultSchema = createPortalItemResultSchema(
+	PortalBackendDescribeItemValueSchema,
+);
+
+export const PortalBackendListResultSchema = createPortalResultSchema(
+	PortalBackendListItemResultSchema,
+);
+export type PortalBackendListResult = z.infer<typeof PortalBackendListResultSchema>;
+
+export const PortalBackendSearchResultSchema = createPortalResultSchema(
+	PortalBackendSearchItemResultSchema,
+);
+export type PortalBackendSearchResult = z.infer<typeof PortalBackendSearchResultSchema>;
+
+export const PortalBackendDescribeResultSchema = createPortalResultSchema(
+	PortalBackendDescribeItemResultSchema,
+);
+export type PortalBackendDescribeResult = z.infer<typeof PortalBackendDescribeResultSchema>;
 
 export const PortalListItemResultSchema = createPortalItemResultSchema(PortalListItemValueSchema);
 export const PortalSearchItemResultSchema = createPortalItemResultSchema(

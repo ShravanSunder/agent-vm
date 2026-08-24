@@ -5,6 +5,7 @@ import path from 'node:path';
 import {
 	loadMcpConfig,
 	loadToolPortalConfig,
+	compileToolPortalNamespaceDiscoveryByProfile,
 	effectiveManagedToolPortalConfigSchema,
 	encodeConfiguredCliPreparedImageIdentity,
 	managedToolPortalConfigSchema,
@@ -50,18 +51,22 @@ export interface WorkspaceGitPushAgentEligibility {
 	readonly eligibleAgentIds: readonly string[];
 }
 
-export interface McpPortalEffectiveConfigPlan {
+export interface McpPortalEffectiveConfigPlan<
+	TToolPortalConfig extends EffectiveManagedToolPortalConfig | ToolPortalConfig =
+		EffectiveManagedToolPortalConfig,
+> {
 	readonly effectiveConfigDir: string;
 	readonly effectiveMcpConfig: McpConfig;
 	readonly effectivePortalConfig: McpPortalConfig;
-	readonly effectiveToolPortalConfig: ToolPortalConfig;
+	readonly effectiveToolPortalConfig: TToolPortalConfig;
 	readonly requiredGatewayEgressHosts: readonly string[];
 	readonly resolvedSecretNames: readonly string[];
 	readonly runtimeEnvironment: Readonly<Record<string, string>>;
 	readonly runtimeMediatedSecrets: Readonly<Record<string, MediatedSecretSpec>>;
 }
 
-export type McpPortalEffectiveConfigWriteResult = McpPortalEffectiveConfigPlan;
+export type McpPortalEffectiveConfigWriteResult =
+	McpPortalEffectiveConfigPlan<EffectiveManagedToolPortalConfig>;
 
 const effectiveConfigManifestFileName = 'tool-portal-effective-manifest.json';
 const managedControllerExecutionTools: ReadonlySet<string> = new Set(
@@ -75,6 +80,17 @@ interface EffectiveConfigManifest {
 	readonly toolPortalConfigFile: string;
 }
 
+function recordEntries<TValue>(
+	record: Readonly<Record<string, TValue>>,
+): readonly (readonly [string, TValue])[] {
+	return Object.entries(record);
+}
+
+type EffectivePortalSourceProfile =
+	| EffectiveManagedToolPortalConfig['profiles'][string]
+	| ToolPortalConfig['profiles'][string];
+type EffectivePortalSourceNamespacePolicy = EffectivePortalSourceProfile['namespaces'][string];
+
 export interface McpPortalEffectiveToolPortalConfigSnapshot {
 	readonly effectiveToolPortalConfig: EffectiveManagedToolPortalConfig;
 	readonly toolPortalConfigPath: string;
@@ -84,6 +100,7 @@ async function prepareConfiguredCliManagedVmImages(props: {
 	readonly authoredConfigDir: string | undefined;
 	readonly effectiveHostConfigDir: string;
 	readonly managedVmImages: ManagedVmImageCapability | undefined;
+	readonly mcpConfig: McpConfig;
 	readonly toolPortalConfig: ToolPortalConfig;
 }): Promise<EffectiveManagedToolPortalConfig> {
 	const effectiveConfig = structuredClone(props.toolPortalConfig);
@@ -102,12 +119,16 @@ async function prepareConfiguredCliManagedVmImages(props: {
 					),
 		),
 	);
-	if (ephemeralTargets.length === 0) {
-		return effectiveManagedToolPortalConfigSchema.parse(effectiveConfig);
-	}
+	const namespaceDiscoveryByProfile = compileToolPortalNamespaceDiscoveryByProfile({
+		mcpConfig: props.mcpConfig,
+		toolPortalConfig: props.toolPortalConfig,
+	});
 	const authoredConfigDir = props.authoredConfigDir;
 	const managedVmImages = props.managedVmImages;
-	if (authoredConfigDir === undefined || managedVmImages === undefined) {
+	if (
+		ephemeralTargets.length > 0 &&
+		(authoredConfigDir === undefined || managedVmImages === undefined)
+	) {
 		throw new Error(
 			'tool-portal: ephemeral managed VM operations require the existing Managed VM image preparation capability.',
 		);
@@ -118,6 +139,9 @@ async function prepareConfiguredCliManagedVmImages(props: {
 	>();
 	await Promise.all(
 		ephemeralTargets.map(async (target): Promise<void> => {
+			if (authoredConfigDir === undefined || managedVmImages === undefined) {
+				throw new Error('Tool Portal Managed VM image preparation is unavailable.');
+			}
 			const recipePath = path.resolve(authoredConfigDir, target.imageReference);
 			let preparedImage = preparedImagesByRecipePath.get(recipePath);
 			if (preparedImage === undefined) {
@@ -140,7 +164,33 @@ async function prepareConfiguredCliManagedVmImages(props: {
 			});
 		}),
 	);
-	return effectiveManagedToolPortalConfigSchema.parse(effectiveConfig);
+	return effectiveManagedToolPortalConfigSchema.parse({
+		...effectiveConfig,
+		profiles: Object.fromEntries(
+			Object.entries(effectiveConfig.profiles).map(([profileId, profile]) => {
+				const discoveryByNamespace = new Map(
+					(namespaceDiscoveryByProfile[profileId] ?? []).map((entry) => [
+						entry.namespace,
+						entry.summary === undefined ? {} : { summary: entry.summary },
+					]),
+				);
+				return [
+					profileId,
+					{
+						namespaces: Object.fromEntries(
+							Object.entries(profile.namespaces).map(([namespace, namespacePolicy]) => [
+								namespace,
+								{
+									...namespacePolicy,
+									discovery: discoveryByNamespace.get(namespace) ?? {},
+								},
+							]),
+						),
+					},
+				] as const;
+			}),
+		),
+	});
 }
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -238,7 +288,9 @@ function providerSecrets(
 	return provider.transport.kind === 'stdio' ? provider.transport.env : provider.transport.headers;
 }
 
-function buildManagedEffectivePortalConfig(toolPortalConfig: ToolPortalConfig): McpPortalConfig {
+function buildManagedEffectivePortalConfig(
+	toolPortalConfig: EffectiveManagedToolPortalConfig | ToolPortalConfig,
+): McpPortalConfig {
 	return mcpPortalConfigSchema.parse({
 		agents: Object.fromEntries(
 			Object.entries(toolPortalConfig.agents).map(([agentId, agent]) => [
@@ -247,20 +299,24 @@ function buildManagedEffectivePortalConfig(toolPortalConfig: ToolPortalConfig): 
 			]),
 		),
 		profiles: Object.fromEntries(
-			Object.entries(toolPortalConfig.profiles).map(([profileId, profile]) => [
-				profileId,
-				{
-					namespaces: Object.fromEntries(
-						Object.entries(profile.namespaces).map(([namespaceId, namespacePolicy]) => [
-							namespaceId,
-							{
-								calls: namespacePolicy.calls,
-								tools: namespacePolicy.tools,
-							},
-						]),
-					),
-				},
-			]),
+			recordEntries<EffectivePortalSourceProfile>(toolPortalConfig.profiles).map(
+				([profileId, profile]) => [
+					profileId,
+					{
+						namespaces: Object.fromEntries(
+							recordEntries<EffectivePortalSourceNamespacePolicy>(profile.namespaces).map(
+								([namespaceId, namespacePolicy]) => [
+									namespaceId,
+									{
+										calls: namespacePolicy.calls,
+										tools: namespacePolicy.tools,
+									},
+								],
+							),
+						),
+					},
+				],
+			),
 		),
 		schemaVersion: 1,
 	});
@@ -557,8 +613,16 @@ function validateProviderNetwork(
 
 async function buildEffectivePlanFromConfig(
 	props: McpPortalEffectiveConfigFromConfigProps,
+	resolveSecrets: false,
+): Promise<McpPortalEffectiveConfigPlan<ToolPortalConfig>>;
+async function buildEffectivePlanFromConfig(
+	props: McpPortalEffectiveConfigFromConfigProps,
+	resolveSecrets: true,
+): Promise<McpPortalEffectiveConfigPlan<EffectiveManagedToolPortalConfig>>;
+async function buildEffectivePlanFromConfig(
+	props: McpPortalEffectiveConfigFromConfigProps,
 	resolveSecrets: boolean,
-): Promise<McpPortalEffectiveConfigPlan> {
+): Promise<McpPortalEffectiveConfigPlan<EffectiveManagedToolPortalConfig | ToolPortalConfig>> {
 	assertToolPortalAgentsMatchDeclaredAgents({
 		...(props.declaredAgentIds === undefined ? {} : { declaredAgentIds: props.declaredAgentIds }),
 		toolPortalConfig: props.toolPortalConfig,
@@ -568,6 +632,10 @@ async function buildEffectivePlanFromConfig(
 		approvalAccessConfigured: props.approvalAccessConfigured,
 		toolPortalConfig: props.toolPortalConfig,
 		workspaceGitPushAgentEligibility: props.workspaceGitPushAgentEligibility,
+	});
+	compileToolPortalNamespaceDiscoveryByProfile({
+		mcpConfig: props.mcpConfig,
+		toolPortalConfig: props.toolPortalConfig,
 	});
 	const requiredGatewayEgressHosts = new Set<string>();
 	const allowedRawEnvSecretNames = new Set(props.allowedRawEnvSecretNames ?? []);
@@ -647,6 +715,7 @@ async function buildEffectivePlanFromConfig(
 				authoredConfigDir: props.authoredConfigDir,
 				effectiveHostConfigDir: props.effectiveHostConfigDir,
 				managedVmImages: props.managedVmImages,
+				mcpConfig: props.mcpConfig,
 				toolPortalConfig: props.toolPortalConfig,
 			})
 		: managedToolPortalConfigSchema.parse(structuredClone(props.toolPortalConfig));
@@ -664,32 +733,40 @@ async function buildEffectivePlanFromConfig(
 
 async function buildEffectivePlan(
 	props: McpPortalEffectiveConfigProps,
+	resolveSecrets: false,
+): Promise<McpPortalEffectiveConfigPlan<ToolPortalConfig>>;
+async function buildEffectivePlan(
+	props: McpPortalEffectiveConfigProps,
+	resolveSecrets: true,
+): Promise<McpPortalEffectiveConfigPlan<EffectiveManagedToolPortalConfig>>;
+async function buildEffectivePlan(
+	props: McpPortalEffectiveConfigProps,
 	resolveSecrets: boolean,
-): Promise<McpPortalEffectiveConfigPlan> {
+): Promise<McpPortalEffectiveConfigPlan<EffectiveManagedToolPortalConfig | ToolPortalConfig>> {
 	const [mcpConfig, toolPortalConfig] = await Promise.all([
 		loadMcpConfig(path.join(props.authoredConfigDir, 'mcp.config.jsonc')),
 		loadToolPortalConfig(path.join(props.authoredConfigDir, 'tool-portal.config.jsonc')),
 	]);
-	return await buildEffectivePlanFromConfig(
-		{
-			approvalAccessConfigured: props.approvalAccessConfigured,
-			authoredConfigDir: props.authoredConfigDir,
-			effectiveHostConfigDir: props.effectiveHostConfigDir,
-			...(props.managedVmImages === undefined ? {} : { managedVmImages: props.managedVmImages }),
-			mcpConfig,
-			secretResolver: props.secretResolver,
-			toolPortalConfig,
-			zoneId: props.zoneId,
-			...(props.allowedRawEnvSecretNames === undefined
-				? {}
-				: { allowedRawEnvSecretNames: props.allowedRawEnvSecretNames }),
-			...(props.declaredAgentIds === undefined ? {} : { declaredAgentIds: props.declaredAgentIds }),
-			...(props.workspaceGitPushAgentEligibility === undefined
-				? {}
-				: { workspaceGitPushAgentEligibility: props.workspaceGitPushAgentEligibility }),
-		},
-		resolveSecrets,
-	);
+	const configProps: McpPortalEffectiveConfigFromConfigProps = {
+		approvalAccessConfigured: props.approvalAccessConfigured,
+		authoredConfigDir: props.authoredConfigDir,
+		effectiveHostConfigDir: props.effectiveHostConfigDir,
+		...(props.managedVmImages === undefined ? {} : { managedVmImages: props.managedVmImages }),
+		mcpConfig,
+		secretResolver: props.secretResolver,
+		toolPortalConfig,
+		zoneId: props.zoneId,
+		...(props.allowedRawEnvSecretNames === undefined
+			? {}
+			: { allowedRawEnvSecretNames: props.allowedRawEnvSecretNames }),
+		...(props.declaredAgentIds === undefined ? {} : { declaredAgentIds: props.declaredAgentIds }),
+		...(props.workspaceGitPushAgentEligibility === undefined
+			? {}
+			: { workspaceGitPushAgentEligibility: props.workspaceGitPushAgentEligibility }),
+	};
+	return resolveSecrets
+		? await buildEffectivePlanFromConfig(configProps, true)
+		: await buildEffectivePlanFromConfig(configProps, false);
 }
 
 async function writeNewFileAndSync(filePath: string, content: string): Promise<void> {
@@ -791,7 +868,7 @@ async function writeEffectiveConfigGeneration(props: {
 
 export async function planMcpPortalEffectiveConfig(
 	props: McpPortalEffectiveConfigProps,
-): Promise<McpPortalEffectiveConfigPlan> {
+): Promise<McpPortalEffectiveConfigPlan<ToolPortalConfig>> {
 	return await buildEffectivePlan(props, false);
 }
 
@@ -812,13 +889,13 @@ export async function loadMcpPortalEffectiveToolPortalConfigSnapshot(
 
 export async function planMcpPortalEffectiveConfigFromConfig(
 	props: McpPortalEffectiveConfigFromConfigProps,
-): Promise<McpPortalEffectiveConfigPlan> {
+): Promise<McpPortalEffectiveConfigPlan<ToolPortalConfig>> {
 	return await buildEffectivePlanFromConfig(props, false);
 }
 
 export async function resolveMcpPortalEffectiveConfigFromConfig(
 	props: McpPortalEffectiveConfigFromConfigProps,
-): Promise<McpPortalEffectiveConfigPlan> {
+): Promise<McpPortalEffectiveConfigWriteResult> {
 	return await buildEffectivePlanFromConfig(props, true);
 }
 

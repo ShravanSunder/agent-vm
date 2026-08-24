@@ -5,11 +5,14 @@ import {
 	PortalSearchRequestSchema,
 	type PortalCallRequest,
 	type PortalCallResult,
-	type PortalDescribeResult,
-	type PortalListResult,
-	type PortalSearchResult,
+	type PortalBackendDescribeResult,
+	type PortalBackendListResult,
+	type PortalBackendSearchResult,
 } from '@agent-vm/agent-portal-sdk';
-import type { ManagedToolPortalConfig, ToolPortalBackendKind } from '@agent-vm/config-contracts';
+import {
+	type GatewayRuntimeManagedToolPortalConfig,
+	type ToolPortalBackendKind,
+} from '@agent-vm/config-contracts';
 import {
 	GatewayRuntimeApprovalAdmissionResultSchema,
 	GatewayRuntimeApprovalArmDispatchResultSchema,
@@ -50,6 +53,7 @@ const mixedBackendConfig = {
 		'code-builder': {
 			namespaces: {
 				controller_execution: {
+					discovery: { summary: 'Controller-operated repository actions.' },
 					backend: {
 						kind: 'controller_execution',
 						operations: {
@@ -64,6 +68,7 @@ const mixedBackendConfig = {
 					tools: { allow: ['controller_host_probe', 'workspace_git_push'], deny: [] },
 				},
 				github: {
+					discovery: { summary: 'GitHub repository tools.' },
 					backend: { kind: 'mcp_provider' },
 					calls: {
 						requiresApproval: {
@@ -78,6 +83,7 @@ const mixedBackendConfig = {
 					},
 				},
 				sandbox: {
+					discovery: { summary: 'Leased Tool VM operations.' },
 					backend: {
 						kind: 'tool_vm_runner',
 						operations: {
@@ -108,7 +114,7 @@ const mixedBackendConfig = {
 		},
 	},
 	schemaVersion: 1,
-} satisfies ManagedToolPortalConfig;
+} satisfies GatewayRuntimeManagedToolPortalConfig;
 
 const semanticSnapshot = {
 	activeRevision: 'semantic:12',
@@ -117,14 +123,22 @@ const semanticSnapshot = {
 			agentId: 'agent-a',
 			frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
 			profileAssignmentRevision: 'profile-assignment:agent-a:7',
-			toolPortalNamespaceNames: ['controller_execution', 'github', 'sandbox'],
+			toolPortalNamespaces: [
+				{ namespace: 'controller_execution', summary: 'Controller-operated repository actions.' },
+				{ namespace: 'github', summary: 'GitHub repository tools.' },
+				{ namespace: 'sandbox' },
+			],
 			toolPortalProfileId: 'code-builder',
 		},
 		'agent-b': {
 			agentId: 'agent-b',
 			frameworkIdentity: { agentId: 'agent-b', kind: 'openclaw' },
 			profileAssignmentRevision: 'profile-assignment:agent-b:4',
-			toolPortalNamespaceNames: ['controller_execution', 'github', 'sandbox'],
+			toolPortalNamespaces: [
+				{ namespace: 'controller_execution', summary: 'Controller-operated repository actions.' },
+				{ namespace: 'github', summary: 'GitHub repository tools.' },
+				{ namespace: 'sandbox' },
+			],
 			toolPortalProfileId: 'code-builder',
 		},
 	},
@@ -204,6 +218,21 @@ interface RecordingBackendPort<TBackendKind extends ToolPortalBackendKind> {
 	readonly port: ToolPortalBackendPort<TBackendKind>;
 }
 
+function providerUnavailableItem(id: string): {
+	readonly error: { readonly code: 'provider_unavailable'; readonly message: string };
+	readonly id: string;
+	readonly status: 'error';
+} {
+	return {
+		error: {
+			code: 'provider_unavailable',
+			message: 'Fixture provider is unavailable.',
+		},
+		id,
+		status: 'error',
+	};
+}
+
 function operationIdFromDispatchAuthority(
 	authority: GatewayRuntimeToolPortalDispatchAuthority,
 ): string {
@@ -227,9 +256,20 @@ function createRecordingBackendPort<TBackendKind extends ToolPortalBackendKind>(
 			readonly options: ToolPortalBackendCallOptions<TBackendKind>;
 			readonly request: PortalCallRequest;
 		}) => void;
+		readonly readErrorOperations?: readonly ('describe' | 'search')[];
+		readonly toolName?: string;
 	},
 ): RecordingBackendPort<TBackendKind> {
 	const invocations: RecordedBackendInvocation[] = [];
+	const toolName = props?.toolName ?? 'fixture_tool';
+	const capabilitySummary = {
+		description: `Fixture capability for ${namespace}.`,
+		input: { optional: [], propertyCount: 0, required: [], type: 'object' },
+		name: toolName,
+		namespace,
+		safety: {},
+		toolRef: `${namespace}:${toolName}`,
+	};
 	return {
 		invocations,
 		port: {
@@ -255,19 +295,33 @@ function createRecordingBackendPort<TBackendKind extends ToolPortalBackendKind>(
 					ok: true,
 				});
 			},
-			describe: (request, options): Promise<PortalDescribeResult> => {
+			describe: (request, options): Promise<PortalBackendDescribeResult> => {
 				invocations.push({ operation: 'describe', options, request });
 				const parsedRequest = PortalDescribeRequestSchema.parse(request);
 				return Promise.resolve({
-					items: parsedRequest.requests.map((item) => ({
-						id: item.id,
-						status: 'ok' as const,
-						value: { tools: [] },
-					})),
-					ok: true,
+					items: parsedRequest.requests.map((item) =>
+						props?.readErrorOperations?.includes('describe')
+							? providerUnavailableItem(item.id)
+							: {
+									id: item.id,
+									status: 'ok' as const,
+									value: {
+										tools: [
+											{
+												annotations: {},
+												name: toolName,
+												namespace,
+												related: [],
+												toolRef: `${namespace}:${toolName}`,
+											},
+										],
+									},
+								},
+					),
+					ok: !props?.readErrorOperations?.includes('describe'),
 				});
 			},
-			list: (request, options): Promise<PortalListResult> => {
+			list: (request, options): Promise<PortalBackendListResult> => {
 				invocations.push({ operation: 'list', options, request });
 				const parsedRequest = PortalListRequestSchema.parse(request);
 				return Promise.resolve({
@@ -279,16 +333,20 @@ function createRecordingBackendPort<TBackendKind extends ToolPortalBackendKind>(
 					ok: true,
 				});
 			},
-			search: (request, options): Promise<PortalSearchResult> => {
+			search: (request, options): Promise<PortalBackendSearchResult> => {
 				invocations.push({ operation: 'search', options, request });
 				const parsedRequest = PortalSearchRequestSchema.parse(request);
 				return Promise.resolve({
-					items: parsedRequest.requests.map((item) => ({
-						id: item.id,
-						status: 'ok' as const,
-						value: { tools: [] },
-					})),
-					ok: true,
+					items: parsedRequest.requests.map((item) =>
+						props?.readErrorOperations?.includes('search')
+							? providerUnavailableItem(item.id)
+							: {
+									id: item.id,
+									status: 'ok' as const,
+									value: { tools: [capabilitySummary] },
+								},
+					),
+					ok: !props?.readErrorOperations?.includes('search'),
 				});
 			},
 		},
@@ -432,7 +490,7 @@ function createRecordingApprovalPort(props?: {
 
 function createServiceFixture(props?: {
 	readonly approval?: RecordingApprovalPort;
-	readonly config?: ManagedToolPortalConfig;
+	readonly config?: GatewayRuntimeManagedToolPortalConfig;
 	readonly controllerExecution?: RecordingBackendPort<'controller_execution'>;
 	readonly mcpProvider?: RecordingBackendPort<'mcp_provider'>;
 	readonly semanticSnapshot?: GatewayRuntimePortalSemanticSnapshot;
@@ -447,10 +505,15 @@ function createServiceFixture(props?: {
 	const approval = props?.approval ?? createRecordingApprovalPort();
 	const controllerExecution =
 		props?.controllerExecution ??
-		createRecordingBackendPort('controller_execution', 'controller_execution');
-	const mcpProvider = props?.mcpProvider ?? createRecordingBackendPort('mcp_provider', 'github');
+		createRecordingBackendPort('controller_execution', 'controller_execution', {
+			toolName: 'workspace_git_push',
+		});
+	const mcpProvider =
+		props?.mcpProvider ??
+		createRecordingBackendPort('mcp_provider', 'github', { toolName: 'get_issue' });
 	const toolVmRunner =
-		props?.toolVmRunner ?? createRecordingBackendPort('tool_vm_runner', 'sandbox');
+		props?.toolVmRunner ??
+		createRecordingBackendPort('tool_vm_runner', 'sandbox', { toolName: 'exec' });
 	const capabilityCore = createManagedToolPortalCapabilityCore({
 		approvalPort: approval.port,
 		backendPorts: {

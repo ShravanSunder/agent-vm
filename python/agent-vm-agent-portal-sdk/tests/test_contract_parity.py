@@ -57,14 +57,20 @@ def test_portable_contract_json_schema_accessor_rejects_unknown_schema_id() -> N
 
 
 @pytest.mark.parametrize(
-    "namespace_names",
+    "namespace_discovery",
     [
-        pytest.param(["github", "filesystem"], id="unsorted"),
-        pytest.param(["filesystem", "filesystem"], id="duplicate"),
+        pytest.param(
+            [{"namespace": "github"}, {"namespace": "filesystem"}],
+            id="unsorted",
+        ),
+        pytest.param(
+            [{"namespace": "filesystem"}, {"namespace": "filesystem"}],
+            id="duplicate",
+        ),
     ],
 )
-def test_generated_managed_agent_projection_adapter_rejects_noncanonical_namespace_names(
-    namespace_names: list[str],
+def test_generated_managed_agent_projection_adapter_rejects_noncanonical_namespace_discovery(
+    namespace_discovery: list[FixtureObject],
 ) -> None:
     # Arrange
     contract_adapter: TypeAdapter[object] = PORTABLE_CONTRACT_ADAPTERS["gateway.managed-agent-projection"]
@@ -72,7 +78,7 @@ def test_generated_managed_agent_projection_adapter_rejects_noncanonical_namespa
         "agentId": "agent-a",
         "frameworkIdentity": {"agentId": "agent-a", "kind": "openclaw"},
         "profileAssignmentRevision": "profile-assignment-a",
-        "toolPortalNamespaceNames": namespace_names,
+        "toolPortalNamespaces": namespace_discovery,
         "toolPortalProfileId": "engineering",
     }
 
@@ -81,7 +87,7 @@ def test_generated_managed_agent_projection_adapter_rejects_noncanonical_namespa
         _ = contract_adapter.validate_python(projection, strict=True)
 
     assert _portable_validation_error_codes(captured_validation_error.value) == frozenset(
-        {"gateway.managed-agent-projection.namespace-names"},
+        {"gateway.managed-agent-projection.namespaces"},
     )
 
 

@@ -71,7 +71,7 @@ const publicRuntimeExports = [
 ] as const;
 
 declare const managedAgentProjection: ManagedAgentProjection;
-void managedAgentProjection.toolPortalNamespaceNames;
+void managedAgentProjection.toolPortalNamespaces;
 
 type PublicTypeExports = readonly [
 	PortalCallResult,

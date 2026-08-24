@@ -22,14 +22,14 @@ import {
 
 type TestSecretResolver = SecretResolver & { readonly resolveAllMock: ReturnType<typeof vi.fn> };
 
-function createDefaultToolPortalConfigInput(): unknown {
+function createDefaultToolPortalConfigInput(namespace = 'deepwiki'): unknown {
 	return {
 		agents: { shravan: { profile: 'default' } },
 		mode: 'managed',
 		profiles: {
 			default: {
 				namespaces: {
-					deepwiki: {
+					[namespace]: {
 						backend: { kind: 'mcp_provider' },
 						calls: {
 							requiresApproval: { allow: [] },
@@ -113,16 +113,18 @@ function createPlanPropsForTest(props: {
 	};
 	readonly zoneId?: string;
 }): McpPortalEffectiveConfigFromConfigProps {
+	const mcpConfig = parseMcpConfigForTest(props.mcpConfig);
+	const firstProviderNamespace = Object.values(mcpConfig.providers)[0]?.namespace ?? 'deepwiki';
 	return {
 		approvalAccessConfigured: props.approvalAccessConfigured ?? false,
 		effectiveHostConfigDir: path.join(tmpdir(), 'agent-vm-tool-portal-effective-test'),
 		...(props.workspaceGitPushAgentEligibility === undefined
 			? {}
 			: { workspaceGitPushAgentEligibility: props.workspaceGitPushAgentEligibility }),
-		mcpConfig: parseMcpConfigForTest(props.mcpConfig),
+		mcpConfig,
 		secretResolver: props.secretResolver ?? createSecretResolver({}),
 		toolPortalConfig: parseToolPortalConfigForTest(
-			props.toolPortalConfig ?? createDefaultToolPortalConfigInput(),
+			props.toolPortalConfig ?? createDefaultToolPortalConfigInput(firstProviderNamespace),
 		),
 		zoneId: props.zoneId ?? 'shravan',
 		...(props.allowedRawEnvSecretNames === undefined
@@ -704,6 +706,7 @@ describe('MCP Portal effective config materialization', () => {
 				requiresApproval: { allow: [], deny: [] },
 				withoutApproval: { allow: ['workspace_git_push', 'controller_host_probe'], deny: [] },
 			},
+			discovery: {},
 			tools: { allow: ['workspace_git_push', 'controller_host_probe'], deny: [] },
 		});
 		expect(
@@ -761,6 +764,7 @@ describe('MCP Portal effective config materialization', () => {
 				requiresApproval: { allow: [], deny: [] },
 				withoutApproval: { allow: ['controller_host_probe'], deny: [] },
 			},
+			discovery: {},
 			tools: { allow: ['controller_host_probe'], deny: [] },
 		});
 	});
@@ -906,7 +910,17 @@ describe('MCP Portal effective config materialization', () => {
 	});
 
 	it('preserves managed MCP namespaces that require approval', async () => {
-		const mcpConfig = { providers: {}, schemaVersion: 1 };
+		const mcpConfig = {
+			providers: {
+				deepwiki: {
+					discovery: { summary: 'Repository documentation and Q&A.' },
+					kind: 'mcp',
+					namespace: 'deepwiki',
+					transport: { kind: 'streamable-http', url: 'https://deepwiki.test/mcp' },
+				},
+			},
+			schemaVersion: 1,
+		};
 
 		const plan = await planMcpPortalEffectiveConfigFromConfig(
 			createPlanPropsForTest({
@@ -945,7 +959,16 @@ describe('MCP Portal effective config materialization', () => {
 	});
 
 	it('preserves managed MCP namespaces that require approval for every tool', async () => {
-		const mcpConfig = { providers: {}, schemaVersion: 1 };
+		const mcpConfig = {
+			providers: {
+				deepwiki: {
+					kind: 'mcp',
+					namespace: 'deepwiki',
+					transport: { kind: 'streamable-http', url: 'https://deepwiki.test/mcp' },
+				},
+			},
+			schemaVersion: 1,
+		};
 
 		const plan = await planMcpPortalEffectiveConfigFromConfig(
 			createPlanPropsForTest({
@@ -976,6 +999,62 @@ describe('MCP Portal effective config materialization', () => {
 		expect(
 			plan.effectiveToolPortalConfig.profiles.default?.namespaces.deepwiki?.calls.requiresApproval,
 		).toEqual({ allow: '*', deny: [] });
+	});
+
+	it('materializes effective discovery from the sole backend-specific summary source', async () => {
+		const plan = await resolveMcpPortalEffectiveConfigFromConfig(
+			createPlanPropsForTest({
+				mcpConfig: {
+					providers: {
+						'deepwiki-production': {
+							discovery: { summary: 'Repository documentation and Q&A.' },
+							kind: 'mcp',
+							namespace: 'deepwiki',
+							transport: { kind: 'streamable-http', url: 'https://deepwiki.test/mcp' },
+						},
+					},
+					schemaVersion: 1,
+				},
+				toolPortalConfig: {
+					agents: { shravan: { profile: 'default' } },
+					mode: 'managed',
+					profiles: {
+						default: {
+							namespaces: {
+								deepwiki: {
+									backend: { kind: 'mcp_provider' },
+									calls: {
+										requiresApproval: { allow: [] },
+										withoutApproval: { allow: '*' },
+									},
+									tools: { allow: '*' },
+								},
+								controller_execution: {
+									backend: {
+										kind: 'controller_execution',
+										operations: {
+											controller_host_probe: { kind: 'registered_action' },
+										},
+									},
+									calls: {
+										requiresApproval: { allow: [] },
+										withoutApproval: { allow: ['controller_host_probe'] },
+									},
+									discovery: { summary: 'Controller-local tools.' },
+									tools: { allow: ['controller_host_probe'] },
+								},
+							},
+						},
+					},
+					schemaVersion: 1,
+				},
+			}),
+		);
+
+		expect(plan.effectiveToolPortalConfig.profiles.default?.namespaces).toMatchObject({
+			deepwiki: { discovery: { summary: 'Repository documentation and Q&A.' } },
+			controller_execution: { discovery: { summary: 'Controller-local tools.' } },
+		});
 	});
 
 	it('rejects broad authored controller execution policy for registered workspace Git', async () => {

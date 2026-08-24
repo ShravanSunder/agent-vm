@@ -7,12 +7,64 @@ import {
 import { describe, expect, it } from 'vitest';
 
 import {
+	createRecordingApprovalPort,
+	createRecordingBackendPort,
 	createServiceFixture,
+	mixedBackendConfig,
 	semanticSnapshot,
 	udsOptions,
 } from './tool-portal-service-test-fixture.js';
+import { createManagedToolPortalCapabilityCore } from './tool-portal-service.js';
 
 describe('ToolPortalCapabilityCore catalog routing', () => {
+	it('rejects authored managed policy that has not passed through effective discovery compilation', () => {
+		// Arrange
+		const { discovery: _discovery, ...authoredGithubPolicy } =
+			mixedBackendConfig.profiles['code-builder'].namespaces.github;
+		const authoredConfig = {
+			...mixedBackendConfig,
+			profiles: {
+				...mixedBackendConfig.profiles,
+				'code-builder': {
+					...mixedBackendConfig.profiles['code-builder'],
+					namespaces: {
+						...mixedBackendConfig.profiles['code-builder'].namespaces,
+						github: authoredGithubPolicy,
+					},
+				},
+			},
+		};
+		const approval = createRecordingApprovalPort();
+		const controllerExecution = createRecordingBackendPort(
+			'controller_execution',
+			'controller_execution',
+		);
+		const mcpProvider = createRecordingBackendPort('mcp_provider', 'github');
+		const toolVmRunner = createRecordingBackendPort('tool_vm_runner', 'sandbox');
+		const untypedCreateCapabilityCore: unknown = createManagedToolPortalCapabilityCore;
+		if (typeof untypedCreateCapabilityCore !== 'function') {
+			throw new Error('Expected the managed Tool Portal capability-core factory.');
+		}
+
+		// Act
+		const createFromAuthoredPolicy = (): unknown =>
+			Reflect.apply(untypedCreateCapabilityCore, undefined, [
+				{
+					approvalPort: approval.port,
+					backendPorts: {
+						controllerExecution: controllerExecution.port,
+						mcpProvider: mcpProvider.port,
+						toolVmRunner: toolVmRunner.port,
+					},
+					config: authoredConfig,
+					semanticSnapshot,
+				},
+			]);
+
+		// Assert
+		expect(createFromAuthoredPolicy).toThrow(/discovery/u);
+	});
+
 	it('owns one immutable semantic snapshot and serves all four operations with trusted options', async () => {
 		// Arrange
 		const fixture = createServiceFixture();
@@ -153,6 +205,141 @@ describe('ToolPortalCapabilityCore catalog routing', () => {
 				requests: request.requests.filter(({ id }) => id === 'list-sandbox'),
 			},
 		});
+	});
+
+	it('attaches one effective namespace-discovery projection only after backend list, search, and describe results return', async () => {
+		// Arrange
+		const fixture = createServiceFixture();
+		const expectedNamespaceDiscovery = [
+			{ namespace: 'controller_execution', summary: 'Controller-operated repository actions.' },
+			{ namespace: 'github', summary: 'GitHub repository tools.' },
+			{ namespace: 'sandbox', summary: 'Leased Tool VM operations.' },
+		];
+
+		// Act
+		const [listResult, searchResult, describeResult] = await Promise.all([
+			fixture.capabilityCore.list({ requests: [{ id: 'list', limit: 20 }] }, udsOptions()),
+			fixture.capabilityCore.search(
+				{ requests: [{ id: 'search', limit: 20, query: 'issue', schemaDetail: 'summary' }] },
+				udsOptions(),
+			),
+			fixture.capabilityCore.describe(
+				{
+					requests: [
+						{
+							id: 'describe',
+							includeJsonSchema: false,
+							includeRelated: false,
+							includeTypescriptHelper: false,
+							includeZod: false,
+						},
+					],
+				},
+				udsOptions(),
+			),
+		]);
+		const backendListResult = await fixture.mcpProvider.port.list(
+			{ requests: [{ id: 'backend-list', limit: 20 }] },
+			{ surfaceClass: 'protected_uds', trustedContext: udsOptions().origin.trustedContext },
+		);
+
+		// Assert
+		expect(listResult.items).toEqual([
+			expect.objectContaining({
+				value: expect.objectContaining({ namespaceDiscovery: expectedNamespaceDiscovery }),
+			}),
+		]);
+		for (const result of [searchResult, describeResult]) {
+			expect(result.items).toEqual([
+				expect.objectContaining({
+					value: expect.objectContaining({ namespaceDiscovery: expectedNamespaceDiscovery }),
+				}),
+			]);
+		}
+		expect(backendListResult.items).toEqual([
+			expect.objectContaining({ value: { namespaces: ['github'], tools: [] } }),
+		]);
+		expect(backendListResult.items[0]).not.toHaveProperty('namespaceDiscovery');
+		expect(
+			backendListResult.items[0]?.status === 'ok' && backendListResult.items[0].value,
+		).not.toHaveProperty('namespaceDiscovery');
+	});
+
+	it('projects represented discovery for successful search and describe items without fabricating metadata on partial errors', async () => {
+		// Arrange
+		const controllerExecution = createRecordingBackendPort(
+			'controller_execution',
+			'controller_execution',
+			{
+				readErrorOperations: ['describe', 'search'],
+				toolName: 'workspace_git_push',
+			},
+		);
+		const fixture = createServiceFixture({ controllerExecution });
+		const expectedGithubDiscovery = [{ namespace: 'github', summary: 'GitHub repository tools.' }];
+
+		// Act
+		const [searchResult, describeResult] = await Promise.all([
+			fixture.capabilityCore.search(
+				{
+					requests: [
+						{
+							id: 'search-success',
+							limit: 20,
+							namespaces: ['github'],
+							query: 'issue',
+							schemaDetail: 'summary',
+						},
+						{
+							id: 'search-error',
+							limit: 20,
+							namespaces: ['controller_execution'],
+							query: 'workspace',
+							schemaDetail: 'summary',
+						},
+					],
+				},
+				udsOptions(),
+			),
+			fixture.capabilityCore.describe(
+				{
+					requests: [
+						{
+							id: 'describe-success',
+							includeJsonSchema: false,
+							includeRelated: false,
+							includeTypescriptHelper: false,
+							includeZod: false,
+							tools: [{ name: 'get_issue', namespace: 'github' }],
+						},
+						{
+							id: 'describe-error',
+							includeJsonSchema: false,
+							includeRelated: false,
+							includeTypescriptHelper: false,
+							includeZod: false,
+							tools: [{ name: 'workspace_git_push', namespace: 'controller_execution' }],
+						},
+					],
+				},
+				udsOptions(),
+			),
+		]);
+
+		// Assert
+		for (const result of [searchResult, describeResult]) {
+			expect(result.ok).toBe(false);
+			expect(result.items[0]).toMatchObject({
+				status: 'ok',
+				value: { namespaceDiscovery: expectedGithubDiscovery },
+			});
+			expect(result.items[1]).toMatchObject({
+				error: { code: 'provider_unavailable' },
+				status: 'error',
+			});
+			expect(result.items[1]).not.toHaveProperty('value');
+			expect(JSON.stringify(result.items[1])).not.toContain('namespaceDiscovery');
+		}
 	});
 
 	it('admits only namespace-intersecting search cohorts to each backend port', async () => {

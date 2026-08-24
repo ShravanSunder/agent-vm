@@ -10,12 +10,15 @@
 		},
 		"profileAssignmentRevision": "profile-assignment-a",
 		"selfRoot": "/zone/agents/agent-a/self",
-		"toolPortalNamespaceNames": [],
+		"toolPortalNamespaces": [],
 		"toolPortalProfileId": "engineering"
 	},
 	"expectation": {
 		"kind": "rejected",
 		"errorCodes": ["portable.object.unknown-field"],
-		"refinementIdentities": ["gateway.managed-agent-projection.namespace-names"]
+		"refinementIdentities": [
+			"gateway.managed-agent-projection.namespaces",
+			"portal.namespace-discovery.summary-code-points"
+		]
 	}
 }

@@ -103,6 +103,7 @@ const sandboxToolPortalConfig = {
 		[sandboxToolPortalProfileId]: {
 			namespaces: {
 				sandbox: {
+					discovery: {},
 					backend: {
 						kind: 'tool_vm_runner',
 						operations: {

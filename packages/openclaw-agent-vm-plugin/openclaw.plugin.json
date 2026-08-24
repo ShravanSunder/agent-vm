@@ -131,9 +131,17 @@
 									"minLength": 1,
 									"maxLength": 256
 								},
-								"toolPortalNamespaceNames": {
+								"toolPortalNamespaces": {
 									"type": "array",
-									"items": { "type": "string", "minLength": 1 },
+									"items": {
+										"type": "object",
+										"additionalProperties": false,
+										"properties": {
+											"namespace": { "type": "string", "minLength": 1 },
+											"summary": { "type": "string", "minLength": 1, "maxLength": 500 }
+										},
+										"required": ["namespace"]
+									},
 									"uniqueItems": true
 								},
 								"toolPortalProfileId": {
@@ -146,7 +154,7 @@
 								"agentId",
 								"frameworkIdentity",
 								"profileAssignmentRevision",
-								"toolPortalNamespaceNames",
+								"toolPortalNamespaces",
 								"toolPortalProfileId"
 							]
 						}

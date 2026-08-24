@@ -3,10 +3,10 @@ import {
 	PortalDescribeRequestSchema,
 	PortalListRequestSchema,
 	PortalSearchRequestSchema,
+	type PortalBackendDescribeResult,
+	type PortalBackendListResult,
+	type PortalBackendSearchResult,
 	type PortalCallResult,
-	type PortalDescribeResult,
-	type PortalListResult,
-	type PortalSearchResult,
 } from '@agent-vm/agent-portal-sdk';
 import type { ToolPortalBackendKind } from '@agent-vm/config-contracts';
 import type { GatewayRuntimeToolPortalDispatchAuthority } from '@agent-vm/gateway-control-contracts';
@@ -70,7 +70,7 @@ function unavailableCallResult(props: {
 	};
 }
 
-function emptyListResult(request: unknown): PortalListResult {
+function emptyListResult(request: unknown): PortalBackendListResult {
 	const parsedRequest = PortalListRequestSchema.parse(request);
 	return {
 		items: parsedRequest.requests.map((item) => ({
@@ -82,7 +82,7 @@ function emptyListResult(request: unknown): PortalListResult {
 	};
 }
 
-function emptySearchResult(request: unknown): PortalSearchResult {
+function emptySearchResult(request: unknown): PortalBackendSearchResult {
 	const parsedRequest = PortalSearchRequestSchema.parse(request);
 	return {
 		items: parsedRequest.requests.map((item) => ({
@@ -94,7 +94,7 @@ function emptySearchResult(request: unknown): PortalSearchResult {
 	};
 }
 
-function emptyDescribeResult(request: unknown): PortalDescribeResult {
+function emptyDescribeResult(request: unknown): PortalBackendDescribeResult {
 	const parsedRequest = PortalDescribeRequestSchema.parse(request);
 	return {
 		items: parsedRequest.requests.map((item) => ({

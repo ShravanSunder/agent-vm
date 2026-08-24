@@ -21,13 +21,13 @@ const successfulListResult = {
 		{
 			id: 'list-1',
 			status: 'ok',
-			value: { namespaces: ['fixture'], tools: [] },
+			value: { namespaceDiscovery: [], namespaces: ['fixture'], tools: [] },
 		},
 	],
 	ok: true,
 } as const;
 const successfulEmptyToolsResult = {
-	items: [{ id: 'empty-tools-1', status: 'ok', value: { tools: [] } }],
+	items: [{ id: 'empty-tools-1', status: 'ok', value: { namespaceDiscovery: [], tools: [] } }],
 	ok: true,
 } as const;
 const successfulCallItem = {

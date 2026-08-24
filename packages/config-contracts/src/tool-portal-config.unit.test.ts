@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
+import { encodeConfiguredCliPreparedImageIdentity } from './controller-configured-cli.js';
 import {
 	createGatewayRuntimeManagedToolPortalConfig,
 	createToolPortalControllerExecutionProjection,
 	createToolPortalMcpProjection,
-	managedToolPortalConfigSchema,
+	effectiveManagedToolPortalConfigSchema,
 	ToolPortalControllerExecutionProjectionSchema,
 	toolPortalConfigSchema,
 	ToolPortalMcpProjectionSchema,
@@ -105,6 +106,40 @@ const validSandboxRunnerBackend = {
 } as const;
 
 describe('tool portal config contract', () => {
+	it('accepts discovery summaries only on non-MCP managed namespaces', () => {
+		const nonMcpConfig = {
+			...validManagedToolPortalConfig,
+			profiles: {
+				'code-builder': {
+					namespaces: {
+						...validManagedToolPortalConfig.profiles['code-builder'].namespaces,
+						local: {
+							...validManagedToolPortalConfig.profiles['code-builder'].namespaces.local,
+							discovery: { summary: 'Controller-owned workspace operations.' },
+						},
+					},
+				},
+			},
+		};
+		const duplicateMcpSource = {
+			...validManagedToolPortalConfig,
+			profiles: {
+				'code-builder': {
+					namespaces: {
+						...validManagedToolPortalConfig.profiles['code-builder'].namespaces,
+						github: {
+							...validManagedToolPortalConfig.profiles['code-builder'].namespaces.github,
+							discovery: { summary: 'Duplicate MCP summary.' },
+						},
+					},
+				},
+			},
+		};
+
+		expect(toolPortalConfigSchema.safeParse(nonMcpConfig).success).toBe(true);
+		expect(toolPortalConfigSchema.safeParse(duplicateMcpSource).success).toBe(false);
+	});
+
 	it('parses strict managed and standalone branches', () => {
 		expect(toolPortalConfigSchema.parse(validManagedToolPortalConfig)).toMatchObject({
 			agents: { 'agent-a': { profile: 'code-builder' } },
@@ -732,7 +767,11 @@ describe('tool portal config contract', () => {
 				allowedHosts: [],
 				environment: { kind: 'empty' },
 				guestCwd: '/run/operation',
-				imageReference: '/images/runner/build-config.json',
+				imageReference: encodeConfiguredCliPreparedImageIdentity({
+					fingerprint: 'sha256:prepared-runner',
+					imageReference: '/images/runner/prepared',
+					schemaVersion: 1,
+				}),
 				kind: 'ephemeral_managed_vm',
 			},
 			kind: 'configured_cli',
@@ -747,14 +786,18 @@ describe('tool portal config contract', () => {
 			stdin: { kind: 'none' },
 			timeout: { kind: 'quick' },
 		} as const;
-		const fullConfig = managedToolPortalConfigSchema.parse({
+		const fullConfig = effectiveManagedToolPortalConfigSchema.parse({
 			...validManagedToolPortalConfig,
 			profiles: {
 				'code-builder': {
 					namespaces: {
-						...validManagedToolPortalConfig.profiles['code-builder'].namespaces,
+						github: {
+							...validManagedToolPortalConfig.profiles['code-builder'].namespaces.github,
+							discovery: {},
+						},
 						local: {
 							...validManagedToolPortalConfig.profiles['code-builder'].namespaces.local,
+							discovery: {},
 							backend: {
 								kind: 'controller_execution',
 								operations: { inspect_host: configuredOperation },

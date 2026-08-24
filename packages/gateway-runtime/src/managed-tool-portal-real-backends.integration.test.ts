@@ -12,7 +12,10 @@ import {
 	type PortalListResult,
 	type PortalSearchResult,
 } from '@agent-vm/agent-portal-sdk';
-import type { ToolPortalBackendKind, ToolPortalConfig } from '@agent-vm/config-contracts';
+import type {
+	GatewayRuntimeManagedToolPortalConfig,
+	ToolPortalBackendKind,
+} from '@agent-vm/config-contracts';
 import {
 	GatewayRuntimeApprovalAdmissionResultSchema,
 	GatewayRuntimeApprovalArmDispatchResultSchema,
@@ -56,6 +59,8 @@ const authorityContext = {
 	zoneId: 'zone-gate-c',
 } as const;
 
+const namespaceSummaryPayloadCanary = 'SUMMARY_MARKER_MUST_NOT_ENTER_MANAGED_PAYLOADS';
+
 const toolPortalConfig = {
 	agents: { 'agent-gate-c': { profile: 'gate-c-profile' } },
 	mode: 'managed',
@@ -63,6 +68,7 @@ const toolPortalConfig = {
 		'gate-c-profile': {
 			namespaces: {
 				controller: {
+					discovery: { summary: namespaceSummaryPayloadCanary },
 					backend: {
 						kind: 'controller_execution',
 						operations: {
@@ -79,6 +85,7 @@ const toolPortalConfig = {
 					tools: { allow: ['push_branch'], deny: [] },
 				},
 				github: {
+					discovery: { summary: namespaceSummaryPayloadCanary },
 					backend: { kind: 'mcp_provider' },
 					calls: {
 						requiresApproval: { allow: [], deny: [] },
@@ -87,6 +94,7 @@ const toolPortalConfig = {
 					tools: { allow: ['get_issue'], deny: [] },
 				},
 				sandbox: {
+					discovery: { summary: namespaceSummaryPayloadCanary },
 					backend: {
 						kind: 'tool_vm_runner',
 						operations: {
@@ -110,7 +118,7 @@ const toolPortalConfig = {
 		},
 	},
 	schemaVersion: 1,
-} satisfies ToolPortalConfig;
+} satisfies GatewayRuntimeManagedToolPortalConfig;
 
 const semanticSnapshot = {
 	activeRevision: 'semantic-gate-c-1',
@@ -119,7 +127,11 @@ const semanticSnapshot = {
 			agentId: 'agent-gate-c',
 			frameworkIdentity: { agentId: 'agent-gate-c', kind: 'openclaw' },
 			profileAssignmentRevision: 'profile-assignment-gate-c-1',
-			toolPortalNamespaceNames: ['controller', 'github', 'sandbox'],
+			toolPortalNamespaces: [
+				{ namespace: 'controller', summary: namespaceSummaryPayloadCanary },
+				{ namespace: 'github', summary: namespaceSummaryPayloadCanary },
+				{ namespace: 'sandbox', summary: namespaceSummaryPayloadCanary },
+			],
 			toolPortalProfileId: 'gate-c-profile',
 		},
 	},
@@ -495,6 +507,13 @@ describe('Gateway runtime managed Tool Portal real backend composition', () => {
 			expect(approval.armedReservations.map((reservation) => reservation.backendKind)).toEqual([
 				'tool_vm_runner',
 			]);
+			expect(
+				JSON.stringify({
+					backendCalls,
+					reservedIntents: approval.reservedIntents,
+					results,
+				}),
+			).not.toContain(namespaceSummaryPayloadCanary);
 			const artifactReadbacks = await Promise.all(
 				results.map(async (result) => ({
 					backendKind: result.invocation.backendKind,
