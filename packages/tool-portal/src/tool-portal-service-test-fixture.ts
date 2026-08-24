@@ -11,7 +11,6 @@ import {
 } from '@agent-vm/agent-portal-sdk';
 import {
 	type GatewayRuntimeManagedToolPortalConfig,
-	type ManagedToolPortalConfig,
 	type ToolPortalBackendKind,
 } from '@agent-vm/config-contracts';
 import {
@@ -447,7 +446,7 @@ function createRecordingApprovalPort(props?: {
 
 function createServiceFixture(props?: {
 	readonly approval?: RecordingApprovalPort;
-	readonly config?: GatewayRuntimeManagedToolPortalConfig | ManagedToolPortalConfig;
+	readonly config?: GatewayRuntimeManagedToolPortalConfig;
 	readonly controllerExecution?: RecordingBackendPort<'controller_execution'>;
 	readonly mcpProvider?: RecordingBackendPort<'mcp_provider'>;
 	readonly semanticSnapshot?: GatewayRuntimePortalSemanticSnapshot;

@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
+import { encodeConfiguredCliPreparedImageIdentity } from './controller-configured-cli.js';
 import {
 	createGatewayRuntimeManagedToolPortalConfig,
 	createToolPortalControllerExecutionProjection,
 	createToolPortalMcpProjection,
-	managedToolPortalConfigSchema,
+	effectiveManagedToolPortalConfigSchema,
 	ToolPortalControllerExecutionProjectionSchema,
 	toolPortalConfigSchema,
 	ToolPortalMcpProjectionSchema,
@@ -766,7 +767,11 @@ describe('tool portal config contract', () => {
 				allowedHosts: [],
 				environment: { kind: 'empty' },
 				guestCwd: '/run/operation',
-				imageReference: '/images/runner/build-config.json',
+				imageReference: encodeConfiguredCliPreparedImageIdentity({
+					fingerprint: 'sha256:prepared-runner',
+					imageReference: '/images/runner/prepared',
+					schemaVersion: 1,
+				}),
 				kind: 'ephemeral_managed_vm',
 			},
 			kind: 'configured_cli',
@@ -781,14 +786,18 @@ describe('tool portal config contract', () => {
 			stdin: { kind: 'none' },
 			timeout: { kind: 'quick' },
 		} as const;
-		const fullConfig = managedToolPortalConfigSchema.parse({
+		const fullConfig = effectiveManagedToolPortalConfigSchema.parse({
 			...validManagedToolPortalConfig,
 			profiles: {
 				'code-builder': {
 					namespaces: {
-						...validManagedToolPortalConfig.profiles['code-builder'].namespaces,
+						github: {
+							...validManagedToolPortalConfig.profiles['code-builder'].namespaces.github,
+							discovery: {},
+						},
 						local: {
 							...validManagedToolPortalConfig.profiles['code-builder'].namespaces.local,
+							discovery: {},
 							backend: {
 								kind: 'controller_execution',
 								operations: { inspect_host: configuredOperation },

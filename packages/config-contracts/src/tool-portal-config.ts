@@ -452,14 +452,12 @@ function recordEntries<TValue>(
 	return Object.entries(record);
 }
 
-type GatewayRuntimeConfigSourceProfile =
-	| EffectiveManagedToolPortalConfig['profiles'][string]
-	| ManagedToolPortalConfig['profiles'][string];
+type GatewayRuntimeConfigSourceProfile = EffectiveManagedToolPortalConfig['profiles'][string];
 type GatewayRuntimeConfigSourceNamespacePolicy =
 	GatewayRuntimeConfigSourceProfile['namespaces'][string];
 
 export function createGatewayRuntimeManagedToolPortalConfig(
-	config: EffectiveManagedToolPortalConfig | ManagedToolPortalConfig,
+	config: EffectiveManagedToolPortalConfig,
 ): GatewayRuntimeManagedToolPortalConfig {
 	return gatewayRuntimeManagedToolPortalConfigSchema.parse({
 		agents: config.agents,
@@ -475,7 +473,6 @@ export function createGatewayRuntimeManagedToolPortalConfig(
 									namespaceId,
 									{
 										...namespacePolicy,
-										discovery: 'discovery' in namespacePolicy ? namespacePolicy.discovery : {},
 										backend:
 											namespacePolicy.backend.kind !== 'controller_execution'
 												? namespacePolicy.backend

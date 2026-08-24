@@ -9,7 +9,7 @@ import {
 } from '@agent-vm/agent-portal-sdk';
 import {
 	createGatewayRuntimeManagedToolPortalConfig,
-	managedToolPortalConfigSchema,
+	effectiveManagedToolPortalConfigSchema,
 } from '@agent-vm/config-contracts';
 import {
 	deriveGatewayControlStablePrincipal,
@@ -84,13 +84,14 @@ const streams = [
 ] as const;
 
 function processCatalog(): GatewayRuntimeToolVmRunnerCapabilityCatalog {
-	const config = managedToolPortalConfigSchema.parse({
+	const config = effectiveManagedToolPortalConfigSchema.parse({
 		agents: { 'agent-a': { profile: 'code-builder' } },
 		mode: 'managed',
 		profiles: {
 			'code-builder': {
 				namespaces: {
 					sandbox: {
+						discovery: {},
 						backend: {
 							kind: 'tool_vm_runner',
 							operations: {

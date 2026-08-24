@@ -12,7 +12,10 @@ import {
 	type PortalListResult,
 	type PortalSearchResult,
 } from '@agent-vm/agent-portal-sdk';
-import type { ToolPortalBackendKind, ToolPortalConfig } from '@agent-vm/config-contracts';
+import type {
+	GatewayRuntimeManagedToolPortalConfig,
+	ToolPortalBackendKind,
+} from '@agent-vm/config-contracts';
 import {
 	GatewayRuntimeApprovalAdmissionResultSchema,
 	GatewayRuntimeApprovalArmDispatchResultSchema,
@@ -80,6 +83,7 @@ const toolPortalConfig = {
 					tools: { allow: ['push_branch'], deny: [] },
 				},
 				github: {
+					discovery: {},
 					backend: { kind: 'mcp_provider' },
 					calls: {
 						requiresApproval: { allow: [], deny: [] },
@@ -112,7 +116,7 @@ const toolPortalConfig = {
 		},
 	},
 	schemaVersion: 1,
-} satisfies ToolPortalConfig;
+} satisfies GatewayRuntimeManagedToolPortalConfig;
 
 const semanticSnapshot = {
 	activeRevision: 'semantic-gate-c-1',

@@ -21,7 +21,10 @@ import {
 	type PortalSearchRequest,
 	type PortalSearchResult,
 } from '@agent-vm/agent-portal-sdk';
-import type { ToolPortalBackendKind, ToolPortalConfig } from '@agent-vm/config-contracts';
+import type {
+	GatewayRuntimeManagedToolPortalConfig,
+	ToolPortalBackendKind,
+} from '@agent-vm/config-contracts';
 import {
 	deriveGatewayRuntimeApprovalFingerprint,
 	deriveGatewayRuntimeApprovalId,
@@ -68,6 +71,7 @@ const toolPortalConfig = {
 		'code-builder': {
 			namespaces: {
 				github: {
+					discovery: {},
 					backend: { kind: 'mcp_provider' },
 					calls: {
 						requiresApproval: { allow: ['create_issue'], deny: [] },
@@ -76,6 +80,7 @@ const toolPortalConfig = {
 					tools: { allow: ['backend_error', 'create_issue', 'get_issue'], deny: [] },
 				},
 				private_github: {
+					discovery: {},
 					backend: { kind: 'mcp_provider' },
 					calls: {
 						requiresApproval: { allow: [], deny: [] },
@@ -87,7 +92,7 @@ const toolPortalConfig = {
 		},
 	},
 	schemaVersion: 1,
-} satisfies ToolPortalConfig;
+} satisfies GatewayRuntimeManagedToolPortalConfig;
 
 const semanticSnapshot = {
 	activeRevision: 'semantic:managed-composition:1',

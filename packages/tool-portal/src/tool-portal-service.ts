@@ -17,11 +17,8 @@ import {
 	type PortalSearchResult,
 } from '@agent-vm/agent-portal-sdk';
 import {
-	createGatewayRuntimeManagedToolPortalConfig,
 	gatewayRuntimeManagedToolPortalConfigSchema,
 	type GatewayRuntimeManagedToolPortalConfig,
-	managedToolPortalConfigSchema,
-	type ManagedToolPortalConfig,
 	type McpConfig,
 	type StandaloneToolPortalConfig,
 	type ToolPortalBackendBinding,
@@ -202,7 +199,7 @@ export interface CreateManagedToolPortalCapabilityCoreProps {
 		readonly mcpProvider: ToolPortalBackendPort<'mcp_provider'>;
 		readonly toolVmRunner: ToolPortalBackendPort<'tool_vm_runner'>;
 	};
-	readonly config: GatewayRuntimeManagedToolPortalConfig | ManagedToolPortalConfig;
+	readonly config: GatewayRuntimeManagedToolPortalConfig;
 	readonly semanticSnapshot: GatewayRuntimePortalSemanticSnapshot;
 }
 
@@ -434,12 +431,7 @@ function controllerAdmissionItem(props: {
 export function createManagedToolPortalCapabilityCore(
 	props: CreateManagedToolPortalCapabilityCoreProps,
 ): ToolPortalCapabilityCore<'managed'> {
-	const projectedConfig = gatewayRuntimeManagedToolPortalConfigSchema.safeParse(props.config);
-	const config = projectedConfig.success
-		? projectedConfig.data
-		: createGatewayRuntimeManagedToolPortalConfig(
-				managedToolPortalConfigSchema.parse(props.config),
-			);
+	const config = gatewayRuntimeManagedToolPortalConfigSchema.parse(props.config);
 	const semanticSnapshot = deepFreeze(
 		GatewayRuntimePortalSemanticSnapshotSchema.parse(props.semanticSnapshot),
 	);

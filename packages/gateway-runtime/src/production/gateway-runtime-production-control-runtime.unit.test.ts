@@ -1,6 +1,6 @@
 import {
 	createGatewayRuntimeManagedToolPortalConfig,
-	type ManagedToolPortalConfig,
+	type EffectiveManagedToolPortalConfig,
 } from '@agent-vm/config-contracts';
 import type { ToolPortalApprovalPort } from '@agent-vm/tool-portal';
 import { describe, expect, it, vi } from 'vitest';
@@ -113,7 +113,7 @@ function processRegistry(): GatewayRuntimeSandboxProcessRegistry {
 	};
 }
 
-function toolPortalConfig(): ManagedToolPortalConfig {
+function toolPortalConfig(): EffectiveManagedToolPortalConfig {
 	return {
 		agents: {},
 		mode: 'managed',

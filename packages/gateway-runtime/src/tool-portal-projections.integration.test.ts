@@ -19,7 +19,10 @@ import {
 	type GatewayRuntimeRequestOptions,
 	type GatewayRuntimeTransportFactory,
 } from '@agent-vm/agent-portal-sdk/gateway-runtime-client';
-import type { ToolPortalBackendKind, ToolPortalConfig } from '@agent-vm/config-contracts';
+import type {
+	GatewayRuntimeManagedToolPortalConfig,
+	ToolPortalBackendKind,
+} from '@agent-vm/config-contracts';
 import {
 	GatewayRuntimeTrustedInvocationContextSchema,
 	type GatewayRuntimePortalSemanticSnapshot,
@@ -81,6 +84,7 @@ const toolPortalConfig = {
 					tools: { allow: ['workspace_git_push'], deny: [] },
 				},
 				github: {
+					discovery: {},
 					backend: { kind: 'mcp_provider' },
 					calls: {
 						requiresApproval: { allow: [], deny: [] },
@@ -113,7 +117,7 @@ const toolPortalConfig = {
 		},
 	},
 	schemaVersion: 1,
-} satisfies ToolPortalConfig;
+} satisfies GatewayRuntimeManagedToolPortalConfig;
 
 const semanticSnapshot = {
 	activeRevision: 'semantic:12',

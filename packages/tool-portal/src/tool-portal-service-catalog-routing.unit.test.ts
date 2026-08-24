@@ -7,12 +7,64 @@ import {
 import { describe, expect, it } from 'vitest';
 
 import {
+	createRecordingApprovalPort,
+	createRecordingBackendPort,
 	createServiceFixture,
+	mixedBackendConfig,
 	semanticSnapshot,
 	udsOptions,
 } from './tool-portal-service-test-fixture.js';
+import { createManagedToolPortalCapabilityCore } from './tool-portal-service.js';
 
 describe('ToolPortalCapabilityCore catalog routing', () => {
+	it('rejects authored managed policy that has not passed through effective discovery compilation', () => {
+		// Arrange
+		const { discovery: _discovery, ...authoredGithubPolicy } =
+			mixedBackendConfig.profiles['code-builder'].namespaces.github;
+		const authoredConfig = {
+			...mixedBackendConfig,
+			profiles: {
+				...mixedBackendConfig.profiles,
+				'code-builder': {
+					...mixedBackendConfig.profiles['code-builder'],
+					namespaces: {
+						...mixedBackendConfig.profiles['code-builder'].namespaces,
+						github: authoredGithubPolicy,
+					},
+				},
+			},
+		};
+		const approval = createRecordingApprovalPort();
+		const controllerExecution = createRecordingBackendPort(
+			'controller_execution',
+			'controller_execution',
+		);
+		const mcpProvider = createRecordingBackendPort('mcp_provider', 'github');
+		const toolVmRunner = createRecordingBackendPort('tool_vm_runner', 'sandbox');
+		const untypedCreateCapabilityCore: unknown = createManagedToolPortalCapabilityCore;
+		if (typeof untypedCreateCapabilityCore !== 'function') {
+			throw new Error('Expected the managed Tool Portal capability-core factory.');
+		}
+
+		// Act
+		const createFromAuthoredPolicy = (): unknown =>
+			Reflect.apply(untypedCreateCapabilityCore, undefined, [
+				{
+					approvalPort: approval.port,
+					backendPorts: {
+						controllerExecution: controllerExecution.port,
+						mcpProvider: mcpProvider.port,
+						toolVmRunner: toolVmRunner.port,
+					},
+					config: authoredConfig,
+					semanticSnapshot,
+				},
+			]);
+
+		// Assert
+		expect(createFromAuthoredPolicy).toThrow(/discovery/u);
+	});
+
 	it('owns one immutable semantic snapshot and serves all four operations with trusted options', async () => {
 		// Arrange
 		const fixture = createServiceFixture();
