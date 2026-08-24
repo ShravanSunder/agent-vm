@@ -13,9 +13,7 @@ const requiredAffectedPackageNames = [
 	'@agent-vm/gateway-lifecycle',
 	'@agent-vm/gondolin-vm-adapter',
 	'@agent-vm/hermes-gateway',
-	'@agent-vm/openclaw-gateway',
 	'@agent-vm/worker-gateway',
-	'@agent-vm/openclaw-agent-vm-plugin',
 	'@agent-vm/agent-vm',
 ] as const;
 
@@ -25,7 +23,13 @@ const closureSeedPackageNames = [
 	'@agent-vm/gondolin-vm-adapter',
 ] as const;
 
-const removedNames = ['@agent-vm/gateway-interface', '@agent-vm/gondolin-adapter'] as const;
+const removedNames = [
+	'@agent-vm/gateway-interface',
+	'@agent-vm/gondolin-adapter',
+	'@agent-vm/openclaw-agent-vm-plugin',
+	'@agent-vm/openclaw-gateway',
+	'@agent-vm/openclaw-mcp-portal-plugin',
+] as const;
 const forbiddenDeclarationFragments = [
 	'@earendil-works/gondolin',
 	'Gondolin',
