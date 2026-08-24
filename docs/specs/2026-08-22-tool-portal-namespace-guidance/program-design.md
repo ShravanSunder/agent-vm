@@ -18,6 +18,8 @@ namespace discovery compiler
  managed config  standalone         managed-agent
  materialization composition         projection
           │         │                   │
+          │         └── derive effective standalone
+          │             catalog + aggregate revisions
           └────┬────┘                   ▼
                ▼                  Hermes inventory
        Tool Portal discovery            │
@@ -47,6 +49,12 @@ Tool Portal discovery
     -> tool-portal-result-router merges capability results
     -> portable item values contain tools and namespace names only
 
+Standalone semantic identity
+  createStandaloneV1ToolPortalService
+    -> accepts caller-supplied snapshot and revision strings
+    -> validates desired revision equals active revision at invocation
+    -> uses caller revisions for operation ids and authority fingerprints
+
 Hermes orientation
   gateway-runtime-portal-admission-material.ts
     -> projects sorted toolPortalNamespaceNames
@@ -65,6 +73,7 @@ Target deltas:
 | MCP config + Tool Portal config → namespace discovery compiler | Added | Resolve one frozen discovery value per namespace from its sole authored source. |
 | Compiler → managed effective Tool Portal config | Changed | Materialize resolved discovery before Gateway startup. |
 | Compiler → standalone Tool Portal composition | Added | Build one frozen profile-scoped discovery projection at standalone startup. |
+| Caller standalone snapshot → effective standalone snapshot | Changed | Treat caller revisions as base material and derive final catalog/aggregate revisions with compiled discovery. |
 | Effective Tool Portal config → Tool Portal list/search/describe | Changed | Project represented namespace discovery beside existing backend results. |
 | Backend read results → final public Tool Portal results | Changed | Parse backend-owned internal results first; attach discovery and validate the required public result only after merge. |
 | Effective Tool Portal config → Managed Agent Projection | Changed | Carry sorted namespace discovery entries instead of bare names. |
@@ -86,9 +95,10 @@ summaries into the effective Tool Portal namespace at that boundary. Non-MCP
 summaries pass through from authored Tool Portal policy.
 
 Standalone Tool Portal already composes its policy and MCP backend at startup.
-It uses the same pure compiler there and freezes the result in its existing
-semantic snapshot. The resolution rule exists once in code; each runtime calls
-it once at its existing configuration boundary.
+It uses the same pure compiler there, validates the caller-supplied projection,
+and derives effective standalone catalog and aggregate revisions from the base
+revisions plus the frozen discovery projection. The resolution rule exists once
+in code; each runtime calls it once at its existing configuration boundary.
 
 Gain:
 
@@ -102,6 +112,9 @@ Cost:
 - authored and effective Tool Portal namespace schemas differ for
   `mcp_provider`: authored policy rejects `discovery`, while effective policy
   contains the resolved provider discovery value.
+- standalone composition exposes derived effective revision values rather than
+  trusting caller-supplied aggregate and catalog revisions after discovery is
+  compiled.
 
 The shared compiler owns that distinction. Revisit only if a future backend
 supplies dynamic namespace metadata that cannot be fixed before runtime
@@ -124,14 +137,14 @@ consistency, and recovery machinery without serving a requirement.
 | --- | --- | --- | --- |
 | Shared discovery schemas | Strict `{ summary? }` and effective `{ namespace, summary? }` portable shapes and bounds | Config loaders, Tool Portal, Gateway contracts, Python adapter | Namespace discovery contract changes. |
 | Effective namespace discovery compiler | Pure single-source resolution from MCP provider or non-MCP Tool Portal policy | Managed materialization, standalone composition, and semantic snapshots | Authored-source or resolution rules change. |
+| Standalone semantic revision derivation | Domain-separated effective catalog and aggregate revisions derived from caller base revisions plus compiled namespace discovery | Standalone Tool Portal calls and approval coordinator | Standalone semantic freshness inputs change. |
 | Backend read-result contracts | Pre-projection list/search/describe values returned by backend ports | Tool Portal result router | Backend discovery contract changes independently of public projection metadata. |
 | Tool Portal discovery projector | Merges internal backend results, filters effective discovery to represented namespaces, and validates final public results | Managed and standalone Tool Portal callers | Portable discovery result behavior changes. |
 | Managed Agent Projection compiler | Complete protected-UDS namespace discovery entries for one profile | Framework adapters | Profile/surface projection changes. |
 | Hermes inventory coordinator | Availability joined with immutable projected summary | Hermes renderer and hook | Inventory probe or availability semantics change. |
 | Hermes orientation renderer | Deterministic bounded name/status/summary text | `pre_llm_call` hook | Model-facing orientation format or bound changes. |
 
-These are responsibilities added to existing owners, not seven new runtime
-services.
+These are responsibilities added to existing owners, not new runtime services.
 
 ## Schema and interface contracts
 
@@ -175,7 +188,61 @@ Standalone Tool Portal composition calls the same compiler after loading its
 Tool Portal policy and the MCP config already used to construct the
 `mcp_provider` backend. It freezes one discovery projection per complete profile
 inside the standalone semantic snapshot and passes only the selected projection
-to each invocation. Privileged backend availability remains unchanged.
+to each invocation.
+
+The caller-supplied standalone snapshot is base identity material, not the final
+authority value. After the discovery projection matches current startup config,
+Tool Portal derives:
+
+```text
+revision(domain, material)
+  = domain + ":" + hex_sha256(domain + NUL + canonical_json(material))
+
+effective catalog revision
+  = revision("standalone-catalog", {
+      baseCatalogRevision,
+      namespaceDiscoveryByProfile
+    })
+
+effective desired revision
+  = revision("standalone-portal-admission", {
+      baseRevision: baseDesiredRevision,
+      catalogRevision: effectiveCatalogRevision
+    })
+
+effective active revision
+  = revision("standalone-portal-admission", {
+      baseRevision: baseActiveRevision,
+      catalogRevision: effectiveCatalogRevision
+    })
+```
+
+`canonical_json` is the existing recursive canonical JSON encoder: omit
+`undefined` object fields, sort object keys by the existing canonical ordering,
+and retain array order. The helper and exact domain labels match the managed
+revision pattern. Equal base active and desired revisions therefore produce
+equal effective revisions; a pre-existing base mismatch remains a mismatch.
+Binding, provider, profile-policy, and schema revisions remain caller-owned
+because discovery does not change those domains. Raw summary text is represented
+only inside the derivation input; call and approval payloads receive the opaque
+derived revisions, never the text. Privileged backend availability remains
+unchanged.
+
+The public standalone construction interface names the supplied value as the
+base semantic snapshot and exposes only the frozen effective semantic snapshot.
+The effective catalog, desired, and active revisions drive:
+
+- deterministic operation ids;
+- direct-dispatch fingerprint semantic revisions;
+- approval-intent and approval-fingerprint semantic revisions; and
+- Tool Portal-created denial, approval-required, not-dispatched, and ambiguous
+  result generations.
+
+The derivation does not replace separately owned identities. Authenticated
+envelope and approval-coordinator `serviceGeneration`, provider session-pool
+keys, and backend-owned successful-result `owningGeneration` remain unchanged.
+Tool Portal continues passing a valid successful backend result through without
+rewriting its provider-owned generation.
 
 ### Backend and public discovery-result interfaces
 
@@ -262,6 +329,27 @@ Managed mode selects the projection from effective Tool Portal config.
 Standalone mode selects the profile projection frozen in its semantic snapshot.
 Neither mode asks a backend to synthesize namespace discovery metadata.
 
+### Standalone semantic freshness
+
+```text
+standalone startup
+  -> parse caller base semantic snapshot
+  -> compile discovery from current MCP + Tool Portal config
+  -> reject projection mismatch
+  -> derive effective catalog revision from base catalog + discovery
+  -> derive effective desired/active revisions from their base values + catalog
+  -> freeze and expose only the effective snapshot
+  -> use effective revisions for operation ids, direct fingerprints,
+     approval intents, and Tool Portal-created result generations
+  -> preserve serviceGeneration, provider session identity,
+     and backend-owned successful-result generation
+```
+
+A summary add/change/remove cannot preserve effective catalog or aggregate
+identity even when a caller reuses every base revision string. There is no
+second revision source and no runtime refresh: composition derives the values
+once for the standalone service lifetime.
+
 ### Hermes orientation
 
 ```text
@@ -287,6 +375,7 @@ No new mutable state is introduced.
 | --- | --- | --- |
 | Authored summary | Deployment config generation | Existing MCP field or new non-MCP Tool Portal field. |
 | Effective discovery | Atomic effective config generation | Derived once before Gateway startup. |
+| Standalone effective revisions | Standalone service lifetime | Derived once from caller base revisions plus the compiled discovery projection. |
 | Managed projection | Gateway epoch/projection cohort | Bare names become immutable discovery entries. |
 | Inventory | Existing process-local profile/epoch cache | Availability entry also retains projected summary. |
 | Injection mark | Existing process-local profile/epoch/session cache | Unchanged. |
@@ -300,6 +389,10 @@ rule is required.
 Failure behavior:
 
 - invalid/duplicate authored summary source fails static materialization;
+- a standalone projection that does not match current startup config fails
+  composition before any effective revision is exposed;
+- a stale caller base revision cannot suppress summary freshness because the
+  effective catalog and aggregate revisions also include compiled discovery;
 - absent summary degrades to existing name/status behavior;
 - provider probe failure keeps `unavailable` while preserving its configured
   summary;
@@ -321,6 +414,7 @@ effective-config compiler -> authored MCP + Tool Portal config
 Tool Portal service       -> effective Tool Portal discovery
 projection compiler       -> effective Tool Portal discovery
 Hermes adapter            -> portable managed projection
+standalone composition    -> caller base revisions + compiled discovery
 ```
 
 Forbidden:
@@ -331,6 +425,7 @@ Tool Portal backends  -X-> discovery-summary resolution
 Tool Portal backends  -X-> final public namespaceDiscovery fields
 summary text          -X-> call policy / approval / backend payload
 mcp_provider policy   -X-> authored Tool Portal summary override
+standalone caller     -X-> final effective catalog/aggregate revisions
 ```
 
 Schema validation, strict effective parsing, projection refinement, and payload
@@ -361,8 +456,8 @@ that train.
 | U2 | Effective discovery compiler | Effective config and provider/namespace resolution inspection | Real config materialization; provider connection may be fake |
 | U3 | Shared schemas + compiler | Authored/effective config acceptance and output | In-process schema/materializer |
 | U4 | Internal backend contracts + Tool Portal discovery projector | Internal pre-merge and final portable results in managed and standalone modes | Real Tool Portal service; backend ports may be controlled |
-| U5 | Projection/inventory/renderer | Profile isolation, concurrency, byte-bound and session-once observations | Real adapter for final session proof |
-| U6 | Existing call policy/backends | Before/after call and payload regression | Existing integration boundaries |
+| U5 | Standalone revision derivation + projection/inventory/renderer | Summary mutation freshness, profile isolation, concurrency, byte-bound and session-once observations | In-process standalone composition plus real adapter for final session proof |
+| U6 | Existing call policy/backends + standalone revision derivation | A before/after summary-only mutation proves only effective catalog/aggregate revisions, operation ids, and fingerprints change; visibility, direct/approval classification, per-tool descriptions, backend invocation/effects, and result behavior remain equivalent; `serviceGeneration`, provider session identity, and backend-owned successful generations remain byte-identical; a unique raw marker is absent from call, approval, backend, controller, and SSH payloads | Existing integration boundaries with controlled backend and boundary spies |
 | U7 | Schemas/materializer | Invalid configuration table | In-process schemas plus startup preflight |
 
 The existing Hermes orientation E2E harness is the production-shaped proof
@@ -379,8 +474,8 @@ session request. Unit and integration evidence cannot replace that proof.
 | U2 | MCP provider discovery → effective compiler | Materialization integration |
 | U3 | Non-MCP Tool Portal discovery → effective compiler | Schema/materialization integration |
 | U4 | Managed/standalone projections → internal backend results → final Tool Portal result projector | Managed and standalone service integration |
-| U5 | Sorted projection + existing cache/injection lifecycle | Projection, renderer, concurrency, and real session proof |
-| U6 | Explicit forbidden authority edges | Call-policy/payload regression |
+| U5 | Standalone revision derivation + sorted projection + existing cache/injection lifecycle | Summary-mutation freshness, projection, renderer, concurrency, and real session proof |
+| U6 | Explicit forbidden authority edges + preserved service/provider generations | Summary-only before/after behavioral equivalence and unique-marker payload regression |
 | U7 | Strict schemas and single-source resolution | Invalid-config/preflight tables |
 
 Every requirement is covered. No requirement needs a new service, store,

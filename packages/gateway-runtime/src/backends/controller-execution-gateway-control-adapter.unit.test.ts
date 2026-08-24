@@ -22,6 +22,7 @@ const commandId = '22222222-2222-7222-8222-222222222222';
 const callerContextId = '33333333-3333-4333-8333-333333333333';
 const responseMessageId = '44444444-4444-4444-8444-444444444444';
 const expectedHead = '0123456789abcdef0123456789abcdef01234567';
+const namespaceSummaryPayloadCanary = 'SUMMARY_MARKER_MUST_NOT_ENTER_CONTROLLER_RPC';
 const toolPortalConfig = {
 	agents: { 'agent-a': { profile: 'profile-a' } },
 	mode: 'managed',
@@ -29,7 +30,7 @@ const toolPortalConfig = {
 		'profile-a': {
 			namespaces: {
 				custom_controller: {
-					discovery: {},
+					discovery: { summary: namespaceSummaryPayloadCanary },
 					backend: {
 						kind: 'controller_execution',
 						operations: {
@@ -63,7 +64,7 @@ const toolPortalConfig = {
 					tools: { allow: ['workspace_git_push'], deny: [] },
 				},
 				controller_execution: {
-					discovery: {},
+					discovery: { summary: namespaceSummaryPayloadCanary },
 					backend: {
 						kind: 'controller_execution',
 						operations: {
@@ -291,6 +292,9 @@ describe('Gateway Control controller-execution adapter', () => {
 			],
 			ok: true,
 		});
+		expect(JSON.stringify(fixture.sendCommand.mock.calls)).not.toContain(
+			namespaceSummaryPayloadCanary,
+		);
 	});
 
 	it('carries the complete controller approval reservation over Gateway Control', async () => {

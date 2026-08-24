@@ -205,12 +205,12 @@ export interface CreateManagedToolPortalCapabilityCoreProps {
 
 export interface CreateStandaloneV1ToolPortalServiceProps {
 	readonly approvalCoordinator: StandaloneToolPortalApprovalCoordinator;
+	readonly baseSemanticSnapshot: ToolPortalStandaloneSemanticSnapshot;
 	readonly backendPorts: {
 		readonly mcpProvider: ToolPortalStandaloneMcpBackendPort;
 	};
 	readonly config: StandaloneToolPortalConfig;
 	readonly mcpConfig: McpConfig;
-	readonly semanticSnapshot: ToolPortalStandaloneSemanticSnapshot;
 }
 
 function resolveManagedInvocation(props: {

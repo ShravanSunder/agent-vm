@@ -218,6 +218,21 @@ interface RecordingBackendPort<TBackendKind extends ToolPortalBackendKind> {
 	readonly port: ToolPortalBackendPort<TBackendKind>;
 }
 
+function providerUnavailableItem(id: string): {
+	readonly error: { readonly code: 'provider_unavailable'; readonly message: string };
+	readonly id: string;
+	readonly status: 'error';
+} {
+	return {
+		error: {
+			code: 'provider_unavailable',
+			message: 'Fixture provider is unavailable.',
+		},
+		id,
+		status: 'error',
+	};
+}
+
 function operationIdFromDispatchAuthority(
 	authority: GatewayRuntimeToolPortalDispatchAuthority,
 ): string {
@@ -241,9 +256,20 @@ function createRecordingBackendPort<TBackendKind extends ToolPortalBackendKind>(
 			readonly options: ToolPortalBackendCallOptions<TBackendKind>;
 			readonly request: PortalCallRequest;
 		}) => void;
+		readonly readErrorOperations?: readonly ('describe' | 'search')[];
+		readonly toolName?: string;
 	},
 ): RecordingBackendPort<TBackendKind> {
 	const invocations: RecordedBackendInvocation[] = [];
+	const toolName = props?.toolName ?? 'fixture_tool';
+	const capabilitySummary = {
+		description: `Fixture capability for ${namespace}.`,
+		input: { optional: [], propertyCount: 0, required: [], type: 'object' },
+		name: toolName,
+		namespace,
+		safety: {},
+		toolRef: `${namespace}:${toolName}`,
+	};
 	return {
 		invocations,
 		port: {
@@ -273,12 +299,26 @@ function createRecordingBackendPort<TBackendKind extends ToolPortalBackendKind>(
 				invocations.push({ operation: 'describe', options, request });
 				const parsedRequest = PortalDescribeRequestSchema.parse(request);
 				return Promise.resolve({
-					items: parsedRequest.requests.map((item) => ({
-						id: item.id,
-						status: 'ok' as const,
-						value: { tools: [] },
-					})),
-					ok: true,
+					items: parsedRequest.requests.map((item) =>
+						props?.readErrorOperations?.includes('describe')
+							? providerUnavailableItem(item.id)
+							: {
+									id: item.id,
+									status: 'ok' as const,
+									value: {
+										tools: [
+											{
+												annotations: {},
+												name: toolName,
+												namespace,
+												related: [],
+												toolRef: `${namespace}:${toolName}`,
+											},
+										],
+									},
+								},
+					),
+					ok: !props?.readErrorOperations?.includes('describe'),
 				});
 			},
 			list: (request, options): Promise<PortalBackendListResult> => {
@@ -297,12 +337,16 @@ function createRecordingBackendPort<TBackendKind extends ToolPortalBackendKind>(
 				invocations.push({ operation: 'search', options, request });
 				const parsedRequest = PortalSearchRequestSchema.parse(request);
 				return Promise.resolve({
-					items: parsedRequest.requests.map((item) => ({
-						id: item.id,
-						status: 'ok' as const,
-						value: { tools: [] },
-					})),
-					ok: true,
+					items: parsedRequest.requests.map((item) =>
+						props?.readErrorOperations?.includes('search')
+							? providerUnavailableItem(item.id)
+							: {
+									id: item.id,
+									status: 'ok' as const,
+									value: { tools: [capabilitySummary] },
+								},
+					),
+					ok: !props?.readErrorOperations?.includes('search'),
 				});
 			},
 		},
@@ -461,10 +505,15 @@ function createServiceFixture(props?: {
 	const approval = props?.approval ?? createRecordingApprovalPort();
 	const controllerExecution =
 		props?.controllerExecution ??
-		createRecordingBackendPort('controller_execution', 'controller_execution');
-	const mcpProvider = props?.mcpProvider ?? createRecordingBackendPort('mcp_provider', 'github');
+		createRecordingBackendPort('controller_execution', 'controller_execution', {
+			toolName: 'workspace_git_push',
+		});
+	const mcpProvider =
+		props?.mcpProvider ??
+		createRecordingBackendPort('mcp_provider', 'github', { toolName: 'get_issue' });
 	const toolVmRunner =
-		props?.toolVmRunner ?? createRecordingBackendPort('tool_vm_runner', 'sandbox');
+		props?.toolVmRunner ??
+		createRecordingBackendPort('tool_vm_runner', 'sandbox', { toolName: 'exec' });
 	const capabilityCore = createManagedToolPortalCapabilityCore({
 		approvalPort: approval.port,
 		backendPorts: {

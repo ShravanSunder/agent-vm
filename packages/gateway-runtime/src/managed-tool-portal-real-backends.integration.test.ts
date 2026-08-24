@@ -59,6 +59,8 @@ const authorityContext = {
 	zoneId: 'zone-gate-c',
 } as const;
 
+const namespaceSummaryPayloadCanary = 'SUMMARY_MARKER_MUST_NOT_ENTER_MANAGED_PAYLOADS';
+
 const toolPortalConfig = {
 	agents: { 'agent-gate-c': { profile: 'gate-c-profile' } },
 	mode: 'managed',
@@ -66,7 +68,7 @@ const toolPortalConfig = {
 		'gate-c-profile': {
 			namespaces: {
 				controller: {
-					discovery: {},
+					discovery: { summary: namespaceSummaryPayloadCanary },
 					backend: {
 						kind: 'controller_execution',
 						operations: {
@@ -83,7 +85,7 @@ const toolPortalConfig = {
 					tools: { allow: ['push_branch'], deny: [] },
 				},
 				github: {
-					discovery: {},
+					discovery: { summary: namespaceSummaryPayloadCanary },
 					backend: { kind: 'mcp_provider' },
 					calls: {
 						requiresApproval: { allow: [], deny: [] },
@@ -92,7 +94,7 @@ const toolPortalConfig = {
 					tools: { allow: ['get_issue'], deny: [] },
 				},
 				sandbox: {
-					discovery: {},
+					discovery: { summary: namespaceSummaryPayloadCanary },
 					backend: {
 						kind: 'tool_vm_runner',
 						operations: {
@@ -126,9 +128,9 @@ const semanticSnapshot = {
 			frameworkIdentity: { agentId: 'agent-gate-c', kind: 'openclaw' },
 			profileAssignmentRevision: 'profile-assignment-gate-c-1',
 			toolPortalNamespaces: [
-				{ namespace: 'controller' },
-				{ namespace: 'github' },
-				{ namespace: 'sandbox' },
+				{ namespace: 'controller', summary: namespaceSummaryPayloadCanary },
+				{ namespace: 'github', summary: namespaceSummaryPayloadCanary },
+				{ namespace: 'sandbox', summary: namespaceSummaryPayloadCanary },
 			],
 			toolPortalProfileId: 'gate-c-profile',
 		},
@@ -505,6 +507,13 @@ describe('Gateway runtime managed Tool Portal real backend composition', () => {
 			expect(approval.armedReservations.map((reservation) => reservation.backendKind)).toEqual([
 				'tool_vm_runner',
 			]);
+			expect(
+				JSON.stringify({
+					backendCalls,
+					reservedIntents: approval.reservedIntents,
+					results,
+				}),
+			).not.toContain(namespaceSummaryPayloadCanary);
 			const artifactReadbacks = await Promise.all(
 				results.map(async (result) => ({
 					backendKind: result.invocation.backendKind,

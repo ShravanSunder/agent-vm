@@ -249,10 +249,11 @@ describe('ToolPortalCapabilityCore catalog routing', () => {
 				value: expect.objectContaining({ namespaceDiscovery: expectedNamespaceDiscovery }),
 			}),
 		]);
-		// The recording backend exposes no tools, so these results represent no namespaces.
 		for (const result of [searchResult, describeResult]) {
 			expect(result.items).toEqual([
-				expect.objectContaining({ value: expect.objectContaining({ namespaceDiscovery: [] }) }),
+				expect.objectContaining({
+					value: expect.objectContaining({ namespaceDiscovery: expectedNamespaceDiscovery }),
+				}),
 			]);
 		}
 		expect(backendListResult.items).toEqual([
@@ -262,6 +263,83 @@ describe('ToolPortalCapabilityCore catalog routing', () => {
 		expect(
 			backendListResult.items[0]?.status === 'ok' && backendListResult.items[0].value,
 		).not.toHaveProperty('namespaceDiscovery');
+	});
+
+	it('projects represented discovery for successful search and describe items without fabricating metadata on partial errors', async () => {
+		// Arrange
+		const controllerExecution = createRecordingBackendPort(
+			'controller_execution',
+			'controller_execution',
+			{
+				readErrorOperations: ['describe', 'search'],
+				toolName: 'workspace_git_push',
+			},
+		);
+		const fixture = createServiceFixture({ controllerExecution });
+		const expectedGithubDiscovery = [{ namespace: 'github', summary: 'GitHub repository tools.' }];
+
+		// Act
+		const [searchResult, describeResult] = await Promise.all([
+			fixture.capabilityCore.search(
+				{
+					requests: [
+						{
+							id: 'search-success',
+							limit: 20,
+							namespaces: ['github'],
+							query: 'issue',
+							schemaDetail: 'summary',
+						},
+						{
+							id: 'search-error',
+							limit: 20,
+							namespaces: ['controller_execution'],
+							query: 'workspace',
+							schemaDetail: 'summary',
+						},
+					],
+				},
+				udsOptions(),
+			),
+			fixture.capabilityCore.describe(
+				{
+					requests: [
+						{
+							id: 'describe-success',
+							includeJsonSchema: false,
+							includeRelated: false,
+							includeTypescriptHelper: false,
+							includeZod: false,
+							tools: [{ name: 'get_issue', namespace: 'github' }],
+						},
+						{
+							id: 'describe-error',
+							includeJsonSchema: false,
+							includeRelated: false,
+							includeTypescriptHelper: false,
+							includeZod: false,
+							tools: [{ name: 'workspace_git_push', namespace: 'controller_execution' }],
+						},
+					],
+				},
+				udsOptions(),
+			),
+		]);
+
+		// Assert
+		for (const result of [searchResult, describeResult]) {
+			expect(result.ok).toBe(false);
+			expect(result.items[0]).toMatchObject({
+				status: 'ok',
+				value: { namespaceDiscovery: expectedGithubDiscovery },
+			});
+			expect(result.items[1]).toMatchObject({
+				error: { code: 'provider_unavailable' },
+				status: 'error',
+			});
+			expect(result.items[1]).not.toHaveProperty('value');
+			expect(JSON.stringify(result.items[1])).not.toContain('namespaceDiscovery');
+		}
 	});
 
 	it('admits only namespace-intersecting search cohorts to each backend port', async () => {

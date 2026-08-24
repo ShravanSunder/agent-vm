@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import {
 	PortalCallRequestSchema,
 	PortalDescribeRequestSchema,
@@ -18,6 +20,7 @@ import {
 import {
 	ToolPortalStandaloneSemanticSnapshotSchema,
 	ToolPortalStandaloneServiceInvocationOptionsSchema,
+	type ToolPortalStandaloneSemanticSnapshot,
 	type ToolPortalStandaloneServiceInvocationOptions,
 } from './standalone-tool-portal-invocation-contracts.js';
 import {
@@ -64,7 +67,7 @@ interface StandaloneCallPlan {
 function resolveStandaloneInvocation(props: {
 	readonly config: CreateStandaloneV1ToolPortalServiceProps['config'];
 	readonly options: ToolPortalStandaloneServiceInvocationOptions;
-	readonly semanticSnapshot: CreateStandaloneV1ToolPortalServiceProps['semanticSnapshot'];
+	readonly semanticSnapshot: ToolPortalStandaloneSemanticSnapshot;
 }): ResolvedStandaloneInvocation {
 	const parsedOptions = ToolPortalStandaloneServiceInvocationOptionsSchema.parse(props.options);
 	if (props.semanticSnapshot.desiredRevision !== props.semanticSnapshot.activeRevision) {
@@ -111,7 +114,7 @@ function backendEntriesForInvocation(props: {
 	readonly config: CreateStandaloneV1ToolPortalServiceProps['config'];
 	readonly operationOptions: ToolPortalStandaloneMcpBackendReadOptions;
 	readonly profileId: string;
-	readonly semanticSnapshot: CreateStandaloneV1ToolPortalServiceProps['semanticSnapshot'];
+	readonly semanticSnapshot: ToolPortalStandaloneSemanticSnapshot;
 }): readonly ToolPortalBackendEntry<
 	ToolPortalStandaloneMcpBackendInvocationOptions,
 	ToolPortalStandaloneMcpBackendReadOptions
@@ -176,6 +179,44 @@ function approvalAdmissionItem(props: {
 	}
 }
 
+function deriveStandaloneRevision(domain: string, material: object): string {
+	const digest = createHash('sha256')
+		.update(`${domain}\0`, 'utf8')
+		.update(canonicalJson(material), 'utf8')
+		.digest('hex');
+	return `${domain}:${digest}`;
+}
+
+function deriveEffectiveStandaloneSemanticSnapshot(options: {
+	readonly baseSemanticSnapshot: ToolPortalStandaloneSemanticSnapshot;
+	readonly namespaceDiscoveryByProfile: ReturnType<
+		typeof compileToolPortalNamespaceDiscoveryByProfile
+	>;
+}): ToolPortalStandaloneSemanticSnapshot {
+	const namespaceDiscoveryByProfile = Object.fromEntries(
+		Object.entries(options.namespaceDiscoveryByProfile).map(([profileId, entries]) => [
+			profileId,
+			entries.map((entry) => ({ ...entry })),
+		]),
+	);
+	const catalogRevision = deriveStandaloneRevision('standalone-catalog', {
+		baseCatalogRevision: options.baseSemanticSnapshot.catalogRevision,
+		namespaceDiscoveryByProfile,
+	});
+	const aggregateRevision = (baseRevision: string): string =>
+		deriveStandaloneRevision('standalone-portal-admission', {
+			baseRevision,
+			catalogRevision,
+		});
+	return ToolPortalStandaloneSemanticSnapshotSchema.parse({
+		...options.baseSemanticSnapshot,
+		activeRevision: aggregateRevision(options.baseSemanticSnapshot.activeRevision),
+		catalogRevision,
+		desiredRevision: aggregateRevision(options.baseSemanticSnapshot.desiredRevision),
+		namespaceDiscoveryByProfile,
+	});
+}
+
 export function createStandaloneV1ToolPortalService(
 	props: CreateStandaloneV1ToolPortalServiceProps,
 ): ToolPortalService<'standalone-v1'> {
@@ -184,19 +225,25 @@ export function createStandaloneV1ToolPortalService(
 		throw new Error('Standalone Tool Portal service requires standalone configuration.');
 	}
 	const config: CreateStandaloneV1ToolPortalServiceProps['config'] = parsedConfig;
-	const semanticSnapshot = deepFreeze(
-		ToolPortalStandaloneSemanticSnapshotSchema.parse(props.semanticSnapshot),
+	const baseSemanticSnapshot = ToolPortalStandaloneSemanticSnapshotSchema.parse(
+		props.baseSemanticSnapshot,
 	);
 	const namespaceDiscoveryByProfile = compileToolPortalNamespaceDiscoveryByProfile({
 		mcpConfig: props.mcpConfig,
 		toolPortalConfig: config,
 	});
 	if (
-		canonicalJson(semanticSnapshot.namespaceDiscoveryByProfile) !==
+		canonicalJson(baseSemanticSnapshot.namespaceDiscoveryByProfile) !==
 		canonicalJson(namespaceDiscoveryByProfile)
 	) {
 		throw new Error('Standalone Tool Portal namespace discovery does not match startup config.');
 	}
+	const semanticSnapshot = deepFreeze(
+		deriveEffectiveStandaloneSemanticSnapshot({
+			baseSemanticSnapshot,
+			namespaceDiscoveryByProfile,
+		}),
+	);
 
 	function invocationState(options: ToolPortalStandaloneServiceInvocationOptions): {
 		readonly approvalToken?: string;
