@@ -155,9 +155,9 @@ Consumers: `agent-vm init`, black-box scaffold validation, generated manuals,
 and deployment operators.
 
 The existing generic scaffold coordinator continues to resolve presets, target
-paths, overwrite policy, atomic generated-file reporting, schema artifacts, and
-manual generation. Framework-specific generated content moves behind two pure
-recipes:
+paths, overwrite policy, incremental generated-file reporting, schema artifacts,
+and manual generation. Hermes-specific image content is produced by its pure
+recipe; existing Worker content remains selected by the coordinator:
 
 ```text
 HermesScaffoldRecipe
@@ -167,16 +167,16 @@ HermesScaffoldRecipe
   -> Hermes managed image build/overlay inputs
   -> Hermes operator guidance
 
-WorkerScaffoldRecipe
+Worker content selection
   -> existing Worker zone/config/prompts/image inputs
 ```
 
-This separation gives the 1,300-line scaffold module one generic write owner
-and two content owners without adding runtime discovery. The recipe selection is
-an exhaustive compile-time switch over `hermes | worker`.
-
-The coordinator constructs and validates the complete file plan before writing.
-An unsupported type or invalid recipe produces no partial deployment.
+This keeps one generic incremental write owner and one Hermes image-content
+owner without adding runtime discovery. Gateway-type selection remains an
+exhaustive compile-time switch over `hermes | worker`. Unsupported CLI inputs and
+invalid Hermes recipe construction fail before the first write. After writes
+begin, existing `writeFileIfMissing` and manual-generation behavior remains
+incremental; no transaction, rollback owner, or staging directory is added.
 
 ### Gateway type and lifecycle contract
 
@@ -318,7 +318,7 @@ defect.
 
 | Behavior | Current path | Target path and edge disposition | Result/error |
 | --- | --- | --- | --- |
-| Scaffold | dispatcher → init operation → generic scaffold → OpenClaw/Worker branches → files | dispatcher → init operation → generic scaffold → Hermes/Worker recipe → validated file plan → files. OpenClaw branch removed; Hermes recipe added; generic preset/path/write edges intentionally unchanged. | Complete created/skipped result; unsupported/invalid input fails before partial output. |
+| Scaffold | dispatcher → init operation → generic scaffold → OpenClaw/Worker branches → incremental files | dispatcher → init operation → generic scaffold → exhaustive Hermes/Worker content selection → existing incremental writes. OpenClaw branch removed; Hermes image recipe added; generic preset/path/write edges intentionally unchanged. | Complete created/skipped result on success; unsupported input or invalid Hermes recipe fails before writes; later I/O failure may leave already-created files. |
 | Config load | system schema → OpenClaw/Hermes/Worker discriminated union → refinements | system schema → Hermes/Worker union → same shared refinements. OpenClaw schema and refinements removed. | Removed type/fields are strict validation errors, never translated. |
 | Gateway startup | controller → managed/Worker branch → lifecycle loader(OpenClaw/Hermes/Worker) → orchestrator → VM | controller → Hermes-managed/Worker branch → lifecycle loader(Hermes/Worker) → same orchestrator → VM. OpenClaw lifecycle and runtime-status edges removed; common managed edges unchanged. | Existing readiness or typed startup failure. |
 | Managed request | OpenClaw or Hermes adapter → client-kind union → Gateway Runtime ternary framework identity → common service | Hermes adapter → exact Hermes attachment → Gateway Runtime exact Hermes identity → same common service. OpenClaw adapter and conditional removed. | Existing canonical result or typed bounded failure. |
@@ -393,20 +393,21 @@ runtime.
 | Failure or overlap | Detection and containment | Recovery owner | Proof seam |
 | --- | --- | --- | --- |
 | OpenClaw config or field supplied | Strict schema rejects before host-state or VM mutation | Operator authors a Hermes or Worker config; no automatic migration | CLI/config negative contract |
-| Hermes scaffold input invalid | Complete recipe/file plan validation fails before writes | Operator corrects input and reruns | Black-box scaffold state inspection |
+| Hermes scaffold input unsupported or recipe construction invalid | CLI parsing or Hermes recipe construction fails before writes | Operator corrects input and reruns | Black-box negative scaffold state inspection |
+| Scaffold filesystem or manual generation fails after writes begin | Existing incremental writer reports failure; already-created files remain visible | Operator corrects the cause and reruns with existing overwrite behavior or removes the incomplete target | Failure-injection unit/integration evidence for the existing partial-write contract |
 | OpenClaw artifact accidentally remains reachable | Static contract/package/residue enforcement fails the cutover | Maintainer removes or explicitly classifies immutable history | Structural and packed-artifact inspection |
 | Hermes attachment claims removed client/framework kind | Exact literal schema rejects handshake/attachment | Gateway replacement under existing recovery authority | Contract and integration denied-case evidence |
 | Orientation inventory is unresolved, exhausted, malformed, or loses authority | Existing typed inventory state either defers injection, publishes ready all-unavailable orientation, or suppresses invalid-authority orientation; user turn continues | Existing Hermes managed Tool Portal plugin | Orientation unit/integration/E2E seams |
-| Hermes runtime or Tool VM failure | Existing health vector, typed operation state, fencing, and recovery classify it | Existing controller/Gateway Runtime owners | Existing integration and real-VM recovery seams |
+| Hermes runtime or Tool VM failure | Existing health vector, typed operation state, fencing, and recovery classify it | Existing controller/Gateway Runtime owners | Green baseline paths use integration and real-VM recovery seams; the known post-reattachment binding-publication race uses exact base-versus-cutover comparison and remains separately visible |
 | Replacement is attempted while an OpenClaw Gateway or Tool VM remains | Pre-cutover exact-process cleanup must complete before replacement; the post-cutover controller fails closed on legacy record parse and never signals an unproved process | Pre-cutover controller and operator own safe termination; cutover controller owns fail-closed refusal | Old-release cleanup/record/ingress evidence followed by new-release rejection evidence |
 | Concurrent Hermes agents operate | Existing profile projection, agent binding, generation, and per-agent connection isolation apply | Existing controller and ToolPortalService owners | Multi-agent isolation evidence |
 | Worker and Hermes run concurrently | Existing zone-runtime and managed VM ownership keep them independent | Existing controller owners | Combined runtime/e2e evidence |
 | Package publication partially succeeds | Existing synchronized release recovery republishes only missing retained artifacts | Existing release workflow | Registry and packed-artifact verification |
 
-No new retry, lock, queue, state store, or recovery loop is introduced. Runtime
-concurrency remains owned by existing managed Gateway and Worker mechanisms.
-The scaffold coordinator's complete-plan-before-write boundary is the only new
-atomicity requirement.
+No new retry, lock, queue, state store, recovery loop, scaffold transaction, or
+rollback mechanism is introduced. Runtime concurrency remains owned by existing
+managed Gateway and Worker mechanisms, and scaffold writes retain their existing
+incremental behavior.
 
 ## Trust and data boundaries
 
@@ -444,7 +445,7 @@ files remain under operator custody.
 | --- | --- | --- | --- |
 | Security and trust | Existing strict schemas, controller authority, profile projection, secret mediation, admin auth, egress/path policy, and generation fencing; impossible OpenClaw identities removed | Reject before authority or contain through existing typed failure/recovery | Allowed/denied integration and real-VM cases plus source/package enforcement |
 | Data lifecycle | No retained semantic OpenClaw config/state reader or writer; operator custody and existing opaque whole-`stateDir` backup remain | Legacy data is not interpreted, migrated, mutated, or deleted; no backup filter or restore promise is added | Negative semantic-reader/source inspection, backup-boundary inspection, and deployment-state observation |
-| Reliability | Existing Hermes exact-two-role boot, health vector, Gateway recovery, Tool VM replacement, and Worker lifecycle | Current bounded degraded/failed states remain visible | Hermes and Worker integration/live proof |
+| Reliability | Existing Hermes exact-two-role boot, health vector, Gateway recovery, Tool VM replacement, and Worker lifecycle | Current bounded degraded/failed states remain visible; known baseline-red recovery behavior is not repaired or hidden | Hermes and Worker integration/live proof plus exact base-versus-cutover comparison for the known recovery stress case |
 | Performance | Compile-time exhaustive Hermes/Worker selection; exact Hermes attachment removes a runtime framework branch | No compatibility or translation fallback | Runtime call-path and performance-regression observation where already required |
 | Observability | Existing controller, Hermes, Gateway Runtime, Tool Portal, and Tool VM identities; OpenClaw identity removed | Unknown/removed identity rejected rather than mislabeled | Schema/telemetry tests and runtime trace inspection |
 | Platform compatibility | Hermes recipe projects existing preset, architecture, image, and host prerequisites | Unsupported prerequisite fails in validate/doctor before readiness | Generated deployment plus platform-appropriate runtime proof |
@@ -455,18 +456,21 @@ files remain under operator custody.
 | Requirement | Realization owner | Observable seam | Real versus replaceable boundary | Enforcement class |
 | --- | --- | --- | --- | --- |
 | R1, R8, R10 | Gateway schemas, package graph, CLI/build/docs/release projections plus ordered predecessor cleanup | Supported values, active-residue inventory, old-release record/ingress cleanup, and new-release rejection | Source/generated artifacts and pre-cutover exact-process cleanup observations must be real | Types, schema, static rule, runtime cleanup guard, artifact and operational inspection |
-| R2 | Generic scaffold coordinator + Hermes recipe | Fresh generated deployment and CLI result | Filesystem and built CLI real; secret values may use test-safe placeholders | Schema, integration, host E2E, manual CLI transcript |
+| R2 | Generic incremental scaffold coordinator + Hermes image recipe | Fresh generated deployment, CLI result, unsupported-input rejection, and documented partial-write failure behavior | Filesystem and built CLI real; secret values may use test-safe placeholders | Schema, integration, host E2E, manual CLI transcript |
 | R3, R4 | Hermes adapter, Gateway Runtime, ToolPortalService, controller Tool VM binding | Managed portal/sandbox result and workspace side effect | Gateway Runtime, Hermes adapter, managed VM, and Tool VM real for final proof; provider/model may use deterministic test boundary where the operation path remains real | Types, runtime guards, integration, Hermes E2E |
 | R3a | Hermes managed Tool Portal plugin, inventory coordinator, typed caches, renderer, and `pre_llm_call` hook | Per-profile startup inventory and zero-or-one session context result | Existing process-local state and hook integration real; bounded Tool Portal responses may use controlled fixtures, with managed Hermes E2E observing the production hook path | Types, atomic cache boundary, unit, integration, Hermes E2E |
-| R5, R6 | Controller and existing health/recovery/telemetry owners | Denied authority, health transition, recovery record, telemetry identity | Real controller/VM for final recovery and mediation claims; injected clocks/fakes valid for deterministic policy decisions | Schema, runtime guard, health check, integration, E2E |
+| R5, R6 | Controller and existing health/recovery/telemetry owners | Denied authority, health transition, recovery record, telemetry identity | Real controller/VM for green recovery and mediation claims; exact base and reviewed identities real for a known baseline-red stress case; injected clocks/fakes valid for deterministic policy decisions | Schema, runtime guard, health check, integration, E2E, differential baseline comparison |
 | R7 | Existing Worker runtime | Worker task API and production-shaped result | Worker host/VM boundary real according to existing taxonomy | Existing unit, integration, host/Worker E2E |
 | R9 | Hermes distribution contract and image recipe | Source revision, version, digest, image fingerprint | Exact pin and packed image inputs real | Type literal, artifact inspection, build/E2E |
 | C4 | Release/package orchestration | Packed dependency graph and registry train | Tarballs/registry responses real for release claim | Static guard, pack inspection, release verification |
 
-The missing proof seam is a named live Hermes filesystem operation that writes
-and reads through the managed environment and selected Tool VM workspace. It
-must traverse the same production adapter and Gateway Runtime path as ordinary
-Hermes file tools; a mocked filesystem or terminal-only marker is insufficient.
+Retained proof must keep each former framework-neutral real boundary visible.
+The live Hermes filesystem seam traverses the production adapter, Gateway
+Runtime, and selected Tool VM workspace. Separate retained live seams own idle
+Tool VM retirement, stale binding reacquisition, and protected
+controller-mediated Hermes SSH. The known baseline-red post-reattachment case
+remains independently runnable as differential non-regression evidence; it is
+not a green cutover gate and authorizes no runtime repair.
 
 ## Accepted-requirement realization
 
@@ -484,9 +488,10 @@ Hermes file tools; a mocked filesystem or terminal-only marker is insufficient.
 
 ## Design debt and revisit signals
 
-- The scaffold coordinator remains responsible for generic filesystem planning
-  and writing. If future Gateway types become authorized, revisit whether a
-  stable recipe interface remains sufficient; do not add dynamic discovery now.
+- The scaffold coordinator remains responsible for generic incremental
+  filesystem writing. If future Gateway types or an all-or-nothing scaffold
+  guarantee become authorized, revisit whether a complete staged file-plan
+  owner is justified; do not add transactions or dynamic discovery now.
 - Historical published OpenClaw artifacts remain externally available until a
   separately authorized deprecation or retention decision. They are not part of
   the active product or release train.

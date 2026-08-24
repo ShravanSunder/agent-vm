@@ -96,6 +96,8 @@ builds, tests, or publishes OpenClaw.
   `pre_llm_call` injection, typed process-local state, and fail-closed authority.
 - Controller ownership of durable lifecycle, leases, credentials, approvals,
   recovery, and termination.
+- Existing Hermes recovery behavior, including known baseline defects; this
+  cutover proves non-regression but does not repair or redesign recovery.
 - Existing secret, workspace, storage, ingress, and trust boundaries.
 
 ### Non-goals
@@ -103,6 +105,8 @@ builds, tests, or publishes OpenClaw.
 - Upgrading Hermes or adopting unreleased Hermes behavior.
 - Redesigning Hermes, Worker, Gateway Runtime, Tool Portal, Tool VM, controller,
   managed VM, Gondolin, storage, or recovery semantics.
+- Repairing the known post-control-reattachment Tool VM binding-publication
+  race or changing Hermes cache, retry, reconnect, or reacquisition behavior.
 - Preserving OpenClaw configuration, state, conversations, auth profiles,
   plugin APIs, command names, image compatibility, or native-plugin behavior.
 - Building an automated OpenClaw-to-Hermes state migration.
@@ -130,7 +134,11 @@ Evidence must establish:
 - a fresh Hermes deployment can be scaffolded, validated, built, started, and
   operated through supported Agent VM surfaces;
 - a real managed Hermes path exercises Tool Portal, Tool VM execution,
-  filesystem behavior, profile isolation, observability, and recovery;
+  filesystem behavior, profile isolation, observability, and the existing
+  recovery paths that are green on the pre-cutover baseline;
+- any known red recovery stress case has matching base-versus-cutover behavior
+  and remains separately visible rather than being deleted, weakened, or
+  presented as a cutover regression;
 - Hermes Tool Portal orientation retains its bounded startup inventory,
   profile/epoch/session isolation, prompt-cache stability, nonblocking failure
   behavior, and existing unit/integration/E2E evidence;

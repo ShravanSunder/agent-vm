@@ -179,6 +179,13 @@ MUST retain their current distinct meanings. Removing OpenClaw MUST NOT collapse
 these health surfaces into one success signal or weaken the current bounded
 recovery, fencing, no-flap, or sibling-containment guarantees.
 
+This cutover MUST NOT change Hermes cache retirement, retry, reconnect,
+reacquisition, or binding-publication behavior. Recovery paths that pass on the
+pre-cutover baseline MUST remain green. A recovery stress case that already
+fails on the exact pre-cutover baseline MAY remain red only when the cutover
+reproduces the same failure boundary, the test remains independently runnable,
+and the result is reported as a pre-existing defect rather than cutover proof.
+
 Hermes framework, Gateway Runtime, Tool Portal, controller, and Tool VM
 telemetry MUST remain attributable to their current service and agent/profile
 identities. OpenClaw telemetry identities and diagnostics extensions MUST NOT be
@@ -251,8 +258,12 @@ Basis: U1, U5, U6, U9. Proof: V3, V6.
 | Hermes admin shell | Opens the protected Hermes-native interactive environment without exposing raw framework secrets by default. |
 | Removed OpenClaw auth command | The CLI reports the command as unsupported or absent; it never forwards to Hermes. |
 
-Generated-file writes follow the existing command's atomicity contract. A
-failed unsupported request MUST NOT leave a deployment that appears valid.
+Unsupported CLI input is rejected before scaffold writes begin. Once a valid
+scaffold starts writing, the command retains its existing incremental-write
+behavior: a later filesystem or manual-generation failure may leave files
+created before the failure. The cutover adds no transactional staging or
+rollback guarantee; the operator may correct the cause and rerun with the
+existing overwrite behavior or remove the incomplete target.
 
 ### C2 — Managed runtime
 
@@ -309,10 +320,10 @@ historical artifacts are undefined until separately authorized.
 | ID | Requirement coverage | Evidence class and pass condition |
 | --- | --- | --- |
 | V1 | R1, R2, C1, C3 | CLI transcript and generated-state inspection show Hermes init succeeds, generated output validates, Worker init is unchanged, and OpenClaw input is rejected without partial output. |
-| V2 | R2–R6 | Real managed Hermes runtime evidence shows Gateway boot, authenticated profile routing, Tool Portal calls, Tool VM execution, filesystem write/read, process/stream behavior, observability, recovery, and protected admin SSH. |
+| V2 | R2–R6 | Real managed Hermes runtime evidence shows Gateway boot, authenticated profile routing, Tool Portal calls, Tool VM execution, filesystem write/read, process/stream behavior, observability, green baseline recovery paths, and protected admin SSH. A known baseline-red recovery stress case uses exact base-versus-cutover comparison and remains separately visible. |
 | V3 | R1, R8–R10 | Static source, schema, declaration, package-graph, generated-artifact, documentation, test-inventory, and build/release inspection finds no unclassified active OpenClaw surface and confirms the immutable Hermes pin. |
 | V4 | R1, R7 | Existing Worker automated and production-shaped behavior evidence remains green with unchanged external task contracts. |
-| V5 | R3–R6 | Allowed and denied security/recovery cases at real or integration boundaries prove profile isolation, secret mediation, approval and admin authorization, stale-generation fencing, typed failure, and sibling-safe containment. |
+| V5 | R3–R6 | Allowed and denied security/recovery cases at real or integration boundaries prove profile isolation, secret mediation, approval and admin authorization, stale-generation fencing, typed failure, and sibling-safe containment. Known baseline-red behavior is evidence only of non-regression when reproduced at both exact identities. |
 | V6 | R8–R10, C4 | Packed and published-artifact inspection proves only remaining packages participate in the synchronized release and contain no OpenClaw runtime assets or dependencies. |
 | V7 | R3a | Existing typed cache, inventory, renderer, hook, concurrency, prompt-cache, and managed Hermes orientation evidence proves bounded per-profile startup, deterministic content, nonblocking session-once injection, failure behavior, and unchanged system/tool prefixes. |
 
@@ -338,6 +349,8 @@ historical artifacts are undefined until separately authorized.
   profiles.
 - Availability or retention duration of historical external registry artifacts.
 - Compatibility with a future Hermes version.
+- Repair or changed semantics for the known post-control-reattachment Tool VM
+  binding-publication race.
 - New behavior for Worker, standalone MCP Portal, or external Tool Portal
   clients beyond the absence of OpenClaw-specific adapter enum values.
 
