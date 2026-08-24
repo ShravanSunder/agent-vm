@@ -41,7 +41,7 @@ const GATEWAY_TWO = {
 
 const PRINCIPAL_REVISION_A = {
 	agentId: 'main',
-	frameworkIdentity: { agentId: 'main', kind: 'openclaw' },
+	frameworkIdentity: { kind: 'hermes', profileName: 'main' },
 	profileAssignmentRevision: 'assignment-main-a',
 	toolPortalProfileId: 'standard',
 } satisfies StableToolVmLeasePrincipal;

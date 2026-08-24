@@ -23,10 +23,10 @@ const expectedCohort = {
 	},
 	frameworkIdentity: {
 		attachmentGeneration: 1,
-		clientKind: 'openclaw-managed-plugin',
+		clientKind: 'hermes-managed-plugin',
 		configuredAgentIds: ['agent-a', 'agent-b'],
 		frameworkEpoch: 'framework-1',
-		frameworkKind: 'openclaw',
+		frameworkKind: 'hermes',
 		projectionCohortDigest:
 			'projection-cohort:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 	},

@@ -13,7 +13,6 @@ const validFences = {
 	controlSession: { generation: 11, id: 'session-a' },
 	gateway: { generation: 8, id: 'gateway-a' },
 	leaseLeaf: { generation: 13, id: 'agent-a' },
-	openClawProcess: { generation: 9, id: 'openclaw-a' },
 } as const;
 
 const validRequest = {
@@ -30,7 +29,7 @@ const validRequest = {
 } as const;
 
 describe('reliabilityFaultApplyRequestSchema', () => {
-	it('accepts a closed action with C/G/P/S/leaf and target generation fences', () => {
+	it('accepts a closed action with controller, control-session, Gateway, and lease fences', () => {
 		expect(reliabilityFaultApplyRequestSchema.parse(validRequest)).toEqual(validRequest);
 		expect(RELIABILITY_FAULT_ACTION_TARGET_KIND[validRequest.action]).toBe(
 			validRequest.target.kind,
@@ -73,7 +72,6 @@ describe('reliabilityFaultApplyRequestSchema', () => {
 			'control-session': validFences.controlSession,
 			gateway: validFences.gateway,
 			'lease-leaf': validFences.leaseLeaf,
-			'openclaw-process': validFences.openClawProcess,
 		} as const;
 		for (const [action, kind] of Object.entries(RELIABILITY_FAULT_ACTION_TARGET_KIND)) {
 			expect(
@@ -84,6 +82,25 @@ describe('reliabilityFaultApplyRequestSchema', () => {
 				}).success,
 			).toBe(true);
 		}
+	});
+
+	it('rejects the retired OpenClaw process fault vocabulary', () => {
+		expect(
+			reliabilityFaultApplyRequestSchema.safeParse({
+				...validRequest,
+				fences: {
+					...validFences,
+					openClawProcess: { generation: 9, id: 'openclaw-a' },
+				},
+			}).success,
+		).toBe(false);
+		expect(
+			reliabilityFaultApplyRequestSchema.safeParse({
+				...validRequest,
+				action: 'terminate-owned-gateway-service',
+				target: { generation: 9, id: 'openclaw-a', kind: 'openclaw-process' },
+			}).success,
+		).toBe(false);
 	});
 
 	it('enforces bounded non-empty validity and nonnegative generations', () => {
@@ -181,6 +198,13 @@ describe('reliabilityFaultReceiptSchema', () => {
 				restorationDeadlineMs: commonReceipt.recordedAtMs + 1,
 				state: 'applied',
 				target: { ...commonReceipt.target, generation: 12 },
+			}).success,
+		).toBe(false);
+		expect(
+			reliabilityFaultReceiptSchema.safeParse({
+				...commonReceipt,
+				reason: 'stale-openclaw-process-generation',
+				state: 'refused',
 			}).success,
 		).toBe(false);
 	});

@@ -27,14 +27,14 @@ type RecoveryWriteLog = (
 type RecoveryWriteLogSpy = ReturnType<typeof vi.fn<RecoveryWriteLog>>;
 
 const testManagedGatewayBootContract = createManagedGatewayBootContract({
-	bootEntry: 'openclaw-gateway',
+	bootEntry: 'hermes-gateway',
 	configurationInputPath: '/run/agent-vm/managed-gateway/framework-service.json',
 	environmentInputPath: '/run/agent-vm/managed-gateway/framework.environment.sh',
-	framework: 'openclaw',
+	framework: 'hermes',
 	ingress: { guestPort: 18_789, kind: 'framework-http' },
 	logIdentity: {
 		guestPath: '/var/log/agent-vm/openclaw-service.log',
-		serviceName: 'agent-vm-openclaw-test',
+		serviceName: 'agent-vm-hermes-test',
 	},
 	readiness: { guestPort: 18_789, kind: 'framework-http', path: '/readyz' },
 	role: 'framework-service',
@@ -46,13 +46,14 @@ const testOpenClawZone = {
 	egressHosts: [],
 	gateway: {
 		config: '/config/openclaw.json',
-		controlAuth: { mode: 'token', secret: 'OPENCLAW_GATEWAY_TOKEN' },
 		cpus: 2,
-		imageProfile: 'openclaw',
+		imageProfile: 'hermes',
 		memory: '2G',
 		port: 18_791,
 		stateDir: '/storage/sunfam/state',
-		type: 'openclaw',
+		type: 'hermes',
+		profileSecretProjectionsByAgent: { main: {} },
+		profilesByAgent: { main: 'main' },
 		zoneFilesDir: '/storage/sunfam/zone-files',
 		zoneRuntimeDir: '/storage/sunfam/runtime',
 	},
@@ -248,7 +249,7 @@ describe('createGatewayVmRecoveryRunner', () => {
 		expectRecoveryLogToBeCredentialSafe(writeLog);
 	});
 
-	it.each(['hermes', 'openclaw'] as const)(
+	it.each(['hermes'] as const)(
 		'passes auto-recovery trigger to $gatewayType runtime actions',
 		async (gatewayType) => {
 			const restart = vi.fn(async () => ({
@@ -691,7 +692,7 @@ function expectRecoveryLogToBeCredentialSafe(writeLog: RecoveryWriteLogSpy): voi
 function createRuntime(overrides: Partial<RecoverableGatewayRuntime>): RecoverableGatewayRuntime {
 	return {
 		coldStart: async () => ({ leaseReleaseFailureCount: 0 }),
-		gatewayType: 'openclaw',
+		gatewayType: 'hermes',
 		getLifecycleState: () => ({ kind: 'stopped' }),
 		getSnapshot: () => ({ lifecycleState: 'stopped' }),
 		refreshCredentials: async () => ({ ok: true, zoneId: 'sunfam' }),
@@ -747,10 +748,10 @@ function createExpectedAdmissionCohort(vmId: string): GatewayExpectedAdmissionCo
 		},
 		frameworkIdentity: {
 			attachmentGeneration: 1,
-			clientKind: 'openclaw-managed-plugin',
+			clientKind: 'hermes-managed-plugin',
 			configuredAgentIds: ['main'],
 			frameworkEpoch: 'framework-epoch-test',
-			frameworkKind: 'openclaw',
+			frameworkKind: 'hermes',
 			projectionCohortDigest:
 				'projection-cohort:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 		},

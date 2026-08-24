@@ -9,7 +9,6 @@ export const RELIABILITY_FAULT_ACTION_TARGET_KIND = {
 	'invalidate-ssh-binding': 'lease-leaf',
 	'isolate-control-until-gateway-generation-changes': 'gateway',
 	'terminate-owned-gateway-runtime': 'gateway',
-	'terminate-owned-gateway-service': 'openclaw-process',
 } as const;
 
 export type ReliabilityFaultAction = keyof typeof RELIABILITY_FAULT_ACTION_TARGET_KIND;
@@ -23,7 +22,6 @@ export const RELIABILITY_FAULT_ACTIONS = [
 	'invalidate-ssh-binding',
 	'isolate-control-until-gateway-generation-changes',
 	'terminate-owned-gateway-runtime',
-	'terminate-owned-gateway-service',
 ] as const satisfies readonly ReliabilityFaultAction[];
 
 export const RELIABILITY_FAULT_MAX_REQUEST_VALIDITY_MS = 30_000;
@@ -37,7 +35,6 @@ export const RELIABILITY_FAULT_MAX_RESTORATION_MS = {
 	'invalidate-ssh-binding': 20_000,
 	'isolate-control-until-gateway-generation-changes': 900_000,
 	'terminate-owned-gateway-runtime': 600_000,
-	'terminate-owned-gateway-service': 60_000,
 } as const satisfies Readonly<Record<ReliabilityFaultAction, number>>;
 
 const ReliabilityFaultBoundedIdSchema = z
@@ -69,7 +66,6 @@ export const ReliabilityFaultGenerationFencesSchema = z
 		controlSession: ReliabilityFaultGenerationFenceSchema,
 		gateway: ReliabilityFaultGenerationFenceSchema,
 		leaseLeaf: ReliabilityFaultGenerationFenceSchema,
-		openClawProcess: ReliabilityFaultGenerationFenceSchema,
 	})
 	.strict();
 
@@ -78,7 +74,6 @@ export const ReliabilityFaultTargetKindSchema = z.enum([
 	'control-session',
 	'gateway',
 	'lease-leaf',
-	'openclaw-process',
 ]);
 
 const reliabilityFaultRequestBaseShape = {
@@ -128,7 +123,6 @@ function createReliabilityFaultRequestVariant<TAction extends ReliabilityFaultAc
 const ReliabilityFaultApplyRequestVariantSchema = z.discriminatedUnion('action', [
 	createReliabilityFaultRequestVariant('disconnect-control-transport'),
 	createReliabilityFaultRequestVariant('induce-control-sequence-gap'),
-	createReliabilityFaultRequestVariant('terminate-owned-gateway-service'),
 	createReliabilityFaultRequestVariant('terminate-owned-gateway-runtime'),
 	createReliabilityFaultRequestVariant('invalidate-ssh-binding'),
 	createReliabilityFaultRequestVariant('drop-result-after-side-effect'),
@@ -150,8 +144,6 @@ function expectedTargetFence(request: {
 			return request.fences.gateway;
 		case 'lease-leaf':
 			return request.fences.leaseLeaf;
-		case 'openclaw-process':
-			return request.fences.openClawProcess;
 		default: {
 			const unreachableTargetKind: never = request.target.kind;
 			throw new Error(`Unsupported reliability target kind: ${String(unreachableTargetKind)}`);
@@ -223,7 +215,6 @@ export const ReliabilityFaultRefusalReasonSchema = z.enum([
 	'stale-control-session-generation',
 	'stale-gateway-generation',
 	'stale-lease-leaf-generation',
-	'stale-openclaw-process-generation',
 	'stale-target-generation',
 	'target-unavailable',
 	'unsupported-action',

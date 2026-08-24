@@ -179,13 +179,13 @@ const semanticSnapshot = gatewayControlContracts.deriveGatewayRuntimePortalSeman
 	agentProjections: [
 		{
 			agentId: 'main',
-			frameworkIdentity: { agentId: 'main', kind: 'openclaw' },
+			frameworkIdentity: { kind: 'hermes', profileName: 'main' },
 			toolPortalNamespaceNames: [],
 			toolPortalProfileId: 'main-profile',
 		},
 		{
 			agentId: 'research',
-			frameworkIdentity: { agentId: 'research', kind: 'openclaw' },
+			frameworkIdentity: { kind: 'hermes', profileName: 'research' },
 			toolPortalNamespaceNames: [],
 			toolPortalProfileId: 'research-profile',
 		},
@@ -198,7 +198,7 @@ const gatewayRuntimeToolPortalConfig =
 	configContracts.createGatewayRuntimeManagedToolPortalConfig(toolPortalConfig);
 const attachment = {
 	attachmentGeneration: 7,
-	clientKind: 'openclaw-managed-plugin',
+	clientKind: 'hermes-managed-plugin',
 	configuredAgentIds: ['main', 'research'],
 	frameworkEpoch: 'framework-epoch-current',
 	gatewayEpoch: 'gateway-epoch-current',
@@ -347,7 +347,7 @@ try {
 				correlation: { sessionId: 'session-vm' },
 				principal: {
 					agentId: 'main',
-					frameworkIdentity: { agentId: 'main', kind: 'openclaw' },
+					frameworkIdentity: { kind: 'hermes', profileName: 'main' },
 					profileAssignmentRevision: mainProjection.profileAssignmentRevision,
 					toolPortalProfileId: 'main-profile',
 				},

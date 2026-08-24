@@ -1,6 +1,5 @@
 export const CONTROL_LEASE_RELIABILITY_OPERATION_IDS = [
 	'control-session-recovery',
-	'openclaw-process-recovery',
 	'active-operation-containment',
 	'lease-leaf-replacement',
 	'gateway-subtree-replacement',
@@ -26,12 +25,6 @@ const integrationTestRoot = 'packages/agent-vm/src/integration-tests';
 export const CONTROL_LEASE_RELIABILITY_SCENARIOS = [
 	{
 		operationId: 'control-session-recovery',
-		project: 'e2e-hermes',
-		requiresQueryIdentity: false,
-		testFile: `${integrationTestRoot}/hermes-managed-base-environment.hermes.e2e.test.ts`,
-	},
-	{
-		operationId: 'openclaw-process-recovery',
 		project: 'e2e-hermes',
 		requiresQueryIdentity: false,
 		testFile: `${integrationTestRoot}/hermes-managed-base-environment.hermes.e2e.test.ts`,

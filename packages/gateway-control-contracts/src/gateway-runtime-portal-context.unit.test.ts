@@ -26,7 +26,7 @@ const validTrustedContext = {
 	},
 	principal: {
 		agentId: 'agent-a',
-		frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
+		frameworkIdentity: { kind: 'hermes', profileName: 'agent-a' },
 		profileAssignmentRevision: 'profile-assignment-7',
 		toolPortalProfileId: 'engineering',
 	},
@@ -38,7 +38,7 @@ const validSemanticSnapshot = {
 	agentProjections: {
 		'agent-a': {
 			agentId: 'agent-a',
-			frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
+			frameworkIdentity: { kind: 'hermes', profileName: 'agent-a' },
 			profileAssignmentRevision: 'profile-assignment-7',
 			toolPortalNamespaceNames: ['github'],
 			toolPortalProfileId: 'engineering',

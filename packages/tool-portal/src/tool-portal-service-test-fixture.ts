@@ -115,14 +115,14 @@ const semanticSnapshot = {
 	agentProjections: {
 		'agent-a': {
 			agentId: 'agent-a',
-			frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
+			frameworkIdentity: { kind: 'hermes', profileName: 'agent-a' },
 			profileAssignmentRevision: 'profile-assignment:agent-a:7',
 			toolPortalNamespaceNames: ['controller_execution', 'github', 'sandbox'],
 			toolPortalProfileId: 'code-builder',
 		},
 		'agent-b': {
 			agentId: 'agent-b',
-			frameworkIdentity: { agentId: 'agent-b', kind: 'openclaw' },
+			frameworkIdentity: { kind: 'hermes', profileName: 'agent-b' },
 			profileAssignmentRevision: 'profile-assignment:agent-b:4',
 			toolPortalNamespaceNames: ['controller_execution', 'github', 'sandbox'],
 			toolPortalProfileId: 'code-builder',
@@ -154,7 +154,7 @@ const agentATrustedContext = {
 	},
 	principal: {
 		agentId: 'agent-a',
-		frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
+		frameworkIdentity: { kind: 'hermes', profileName: 'agent-a' },
 		profileAssignmentRevision: 'profile-assignment:agent-a:7',
 		toolPortalProfileId: 'code-builder',
 	},
@@ -164,7 +164,7 @@ const agentATrustedContext = {
 const agentBTrustedContext = {
 	principal: {
 		agentId: 'agent-b',
-		frameworkIdentity: { agentId: 'agent-b', kind: 'openclaw' },
+		frameworkIdentity: { kind: 'hermes', profileName: 'agent-b' },
 		profileAssignmentRevision: 'profile-assignment:agent-b:4',
 		toolPortalProfileId: 'code-builder',
 	},

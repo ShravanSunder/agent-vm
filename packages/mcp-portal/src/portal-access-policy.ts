@@ -15,8 +15,8 @@ export type PortalAgentIdentity = {
 
 export type PortalAgentScopeSource =
 	| 'cli-operator'
+	| 'managed-gateway-trusted'
 	| 'mcp-proxy-bearer'
-	| 'openclaw-trusted'
 	| 'tool-portal-service';
 
 export interface PortalToolSelector {

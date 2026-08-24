@@ -65,11 +65,11 @@ protocol.
 `identityFile`, and an exact Ed25519 `serverHostKey`. `ManagedVmIngressRoute`
 maps a URL prefix to a guest port with optional prefix stripping.
 
-Gondolin ingress is for inbound HTTP from the host to guest HTTP services. The
-gateway VM uses it to expose OpenClaw: agent-vm sets one route, `/` to the
-OpenClaw guest gateway port, then listens on the configured host-facing gateway
-port. OpenClaw's Control UI, API routes, SSE responses, readiness probes, and
-WebSocket upgrades share that route.
+Gondolin ingress is for inbound HTTP from the host to guest HTTP services.
+Managed Hermes Gateways use it for controller-authored control and admitted
+framework routes on the configured host-facing Gateway port. The controller
+publishes those routes atomically with the admitted Gateway cohort and removes
+them during containment or replacement.
 
 Response buffering must stay disabled for streaming behavior such as SSE. The
 Gondolin default allows WebSockets and streams response bodies; agent-vm keeps
@@ -193,8 +193,8 @@ Only hosts in the `allowedHosts` list can be reached. Requests to unlisted hosts
 ## TCP Host Mapping
 
 TCP host mapping lets processes inside the VM reach selected host-side TCP
-services via synthetic DNS hostnames. In the managed control-plane cutover, this
-is reserved for OpenClaw gateway access to Tool VM SSH ports. Gateway and Worker
+services via synthetic DNS hostnames. In the managed control plane, this is
+reserved for Hermes Gateway access to Tool VM SSH ports. Gateway and Worker
 control traffic uses controller-initiated Gondolin ingress WebSocket upgrades
 instead of raw mapped TCP.
 
@@ -208,7 +208,7 @@ instead of raw mapped TCP.
 When neutral `tcpHosts` mappings are provided, the adapter configures:
 - `dns.mode: 'synthetic'` with `syntheticHostMapping: 'per-host'` -- Gondolin resolves virtual hostnames to per-host RFC2544 IPv4 answers such as `198.19.x.y`
 - `dns.syntheticIPv4: '198.18.0.1'` -- fallback synthetic A answer when no per-host mapping applies
-- `dns.syntheticIPv6: '::ffff:198.18.0.1'` -- shared IPv4-mapped RFC2544 AAAA answer so OpenClaw SSRF checks that validate all A/AAAA answers can accept the fake address under `allowRfc2544BenchmarkRange`
+- `dns.syntheticIPv6: '::ffff:198.18.0.1'` -- shared IPv4-mapped RFC2544 AAAA answer used by the managed synthetic-host policy
 - `tcp.hosts` -- maps each virtual hostname to a real host-side TCP endpoint
 
 The IPv4-mapped AAAA answer is an SSRF-validation compatibility value, not a
@@ -218,21 +218,20 @@ derives mapped-TCP identity from the synthetic IPv4 host map. WebSocket traffic
 uses Gondolin's HTTP upgrade bridge and the `websocketUpgrades` policy instead
 of raw TCP mappings.
 
-`allowedInternalHosts` is a Gondolin HTTP-hook escape hatch, not the fix for
-Discord media SSRF failures. It can relax Gondolin's host-side HTTP internal-IP
-block for matching request hostnames, but it does not change OpenClaw's own
-Discord media SSRF resolver and does not apply to raw mapped TCP.
+`allowedInternalHosts` is a Gondolin HTTP-hook escape hatch. It can relax the
+host-side HTTP internal-IP block for matching request hostnames, but it does
+not apply to raw mapped TCP.
 
 Worker VMs do not map the agent-vm controller endpoint for control traffic.
-OpenClaw Gateway VMs map Tool VM SSH slots from the TCP pool.
+Hermes Gateway VMs map Tool VM SSH slots from the TCP pool.
 
 The managed raw TCP exception is Tool VM SSH:
 
 ```text
 gateway VM -> Tool VM SSH
   tool-<slot>.vm.host:22 -> 127.0.0.1:<tcpPool slot port>
-  Used by OpenClaw command execution, filesystem bridge operations, finalize,
-  and cached-lease probes.
+  Used by Gateway Runtime sandbox/process/filesystem operations and
+  cached-lease probes.
 ```
 
 Mapped TCP is raw forwarding. It does not go through Gondolin HTTP hooks,
@@ -256,7 +255,7 @@ the Gondolin SDK.
 
 Only `ssh-sandbox` is implemented today. It means VM-to-VM SSH over `tcpHosts`:
 the controller creates or reuses the Tool VM, calls `enableSsh()`, returns an
-SSH capability to the OpenClaw gateway, and then leaves command I/O on the
+SSH capability to the Hermes Gateway, and then leaves command I/O on the
 gateway-to-Tool-VM SSH data path. The controller is the control plane, not a
 command/file proxy.
 
@@ -272,9 +271,9 @@ has no native filesystem escape hatch. `ingress-service`
 should mean a warm HTTP service inside a VM exposed through Gondolin ingress.
 Neither is part of the current Tool VM SSH path.
 
-OpenClaw's filesystem bridge remains plugin-owned. It is an OpenClaw
-remote-shell filesystem protocol implemented over SSH; it is not a generic
-Tool VM filesystem API.
+Filesystem, process, stream, and terminal behavior remains owned by the common
+Gateway Runtime sandbox boundary over this SSH transport; Gondolin does not
+expose a native host-filesystem escape hatch.
 
 ---
 

@@ -123,13 +123,7 @@ export function createControllerRuntimeOperations(options: {
 				zone,
 			});
 			const sshAccess = await options.getManagedGatewayRuntime(targetZoneId).enableSsh();
-			return {
-				...sshAccess,
-				secretEnvEnabled: shouldEnableSshSecretEnv({
-					policy: zone.gateway.ssh?.secretEnv ?? 'explicit',
-					request: enableOptions.secretEnv,
-				}),
-			};
+			return sshAccess;
 		},
 		execInZone: async (targetZoneId, command, execOptions) => {
 			const zone = findZone(targetZoneId);
@@ -210,16 +204,6 @@ function timingSafeEqualString(left: string, right: string): boolean {
 		return false;
 	}
 	return timingSafeEqual(leftBuffer, rightBuffer);
-}
-
-export function shouldEnableSshSecretEnv(options: {
-	readonly policy: 'explicit' | 'never';
-	readonly request: 'default' | 'gateway-token' | 'all-secrets';
-}): boolean {
-	if (options.policy === 'never') {
-		return false;
-	}
-	return options.request !== 'default';
 }
 
 async function verifyZoneAdminAccess(options: {

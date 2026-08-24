@@ -233,9 +233,9 @@ async function createToolVmSystemConfig(): Promise<LoadedSystemConfig> {
 			},
 			imageProfiles: {
 				gateways: {
-					openclaw: {
-						type: 'openclaw',
-						buildConfig: '/project/vm-images/gateways/openclaw/build-config.json',
+					hermes: {
+						type: 'hermes',
+						buildConfig: '/project/vm-images/gateways/hermes/build-config.json',
 					},
 					worker: {
 						type: 'worker',
@@ -266,22 +266,31 @@ async function createToolVmSystemConfig(): Promise<LoadedSystemConfig> {
 					egressHosts: [{ host: 'api.anthropic.com', audience: 'gateway' }],
 					agents: [{ id: 'sun' }],
 					gateway: {
-						type: 'openclaw',
-						controlAuth: {
-							mode: 'token',
-							secret: 'OPENCLAW_GATEWAY_TOKEN',
-						},
-						imageProfile: 'openclaw',
+						type: 'hermes',
+						imageProfile: 'hermes',
 						cpus: 2,
 						memory: '2G',
-						config: './config/shravan/openclaw.json',
+						config: './config/shravan/hermes.json',
+						profileSecretProjectionsByAgent: {
+							sun: {
+								API_SERVER_KEY: 'API_SERVER_KEY_SUN',
+								DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_SUN',
+							},
+						},
+						profilesByAgent: { sun: 'sun' },
 						port: 18791,
 					},
 					id: 'shravan',
 					secrets: {
-						OPENCLAW_GATEWAY_TOKEN: {
+						API_SERVER_KEY_SUN: {
 							source: 'environment',
-							envVar: 'OPENCLAW_GATEWAY_TOKEN',
+							envVar: 'API_SERVER_KEY_SUN',
+							injection: 'env',
+							audience: 'gateway',
+						},
+						DISCORD_BOT_TOKEN_SUN: {
+							source: 'environment',
+							envVar: 'DISCORD_BOT_TOKEN_SUN',
 							injection: 'env',
 							audience: 'gateway',
 						},
@@ -309,44 +318,6 @@ async function createWorkMountDirectory(
 	);
 	await mkdir(hostWorkMountDir, { recursive: true });
 	return hostWorkMountDir;
-}
-
-function configureToolVmFixtureAsHermes(systemConfig: LoadedSystemConfig): void {
-	const zone = systemConfig.zones.find((configuredZone) => configuredZone.id === 'shravan');
-	if (zone === undefined || zone.gateway.type !== 'openclaw') {
-		throw new Error('Expected shravan OpenClaw fixture zone');
-	}
-	const zoneIndex = systemConfig.zones.indexOf(zone);
-	systemConfig.zones[zoneIndex] = {
-		...zone,
-		gateway: {
-			config: './config/shravan/hermes.yaml',
-			cpus: zone.gateway.cpus,
-			imageProfile: 'hermes',
-			memory: zone.gateway.memory,
-			port: zone.gateway.port,
-			profilesByAgent: { sun: 'researcher' },
-			profileSecretProjectionsByAgent: {
-				sun: {
-					API_SERVER_KEY: 'API_SERVER_KEY_SUN',
-					DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN',
-				},
-			},
-			stateDir: zone.gateway.stateDir,
-			type: 'hermes',
-			zoneFilesDir: zone.gateway.zoneFilesDir,
-			zoneRuntimeDir: zone.gateway.zoneRuntimeDir,
-		},
-		secrets: {
-			...zone.secrets,
-			API_SERVER_KEY_SUN: {
-				audience: 'gateway',
-				envVar: 'API_SERVER_KEY_SUN',
-				injection: 'env',
-				source: 'environment',
-			},
-		},
-	};
 }
 
 async function createAgentGitDirectoryRoot(options: {
@@ -707,92 +678,86 @@ describe('createToolVm', () => {
 		expect(capturedCreateVmOptions?.runtimeRootfsSize).toBe('16G');
 	});
 
-	it.each(['openclaw', 'hermes'] as const)(
-		'attaches read-only Git SSH egress for a selected %s managed workspace repository',
-		async (gatewayType) => {
-			// Arrange
-			vi.stubEnv('SSH_AUTH_SOCK', '/tmp/agent-vm-test-agent.sock');
-			const managedVm = createManagedVmStub();
-			let capturedCreateVmOptions: CreateVmOptions | undefined;
-			const systemConfig = await createToolVmSystemConfig();
-			if (gatewayType === 'hermes') {
-				configureToolVmFixtureAsHermes(systemConfig);
-			}
-			const zone = systemConfig.zones[0];
-			const standardProfile = systemConfig.toolVmProfiles.standard;
-			if (zone === undefined || standardProfile === undefined) {
-				throw new Error('Expected Tool VM lifecycle test zone and profile.');
-			}
-			zone.agents = [
-				{
-					id: 'sun',
-					workspaceGit: {
-						mode: 'remote',
-						remote: {
-							branch: 'agent/sun',
-							defaultBranch: 'main',
-							repoUrl: 'https://github.com/shravan/sun-workspace.git',
-						},
+	it('attaches read-only Git SSH egress for a selected Hermes managed workspace repository', async () => {
+		// Arrange
+		vi.stubEnv('SSH_AUTH_SOCK', '/tmp/agent-vm-test-agent.sock');
+		const managedVm = createManagedVmStub();
+		let capturedCreateVmOptions: CreateVmOptions | undefined;
+		const systemConfig = await createToolVmSystemConfig();
+		const zone = systemConfig.zones[0];
+		const standardProfile = systemConfig.toolVmProfiles.standard;
+		if (zone === undefined || standardProfile === undefined) {
+			throw new Error('Expected Tool VM lifecycle test zone and profile.');
+		}
+		zone.agents = [
+			{
+				id: 'sun',
+				workspaceGit: {
+					mode: 'remote',
+					remote: {
+						branch: 'agent/sun',
+						defaultBranch: 'main',
+						repoUrl: 'https://github.com/shravan/sun-workspace.git',
 					},
 				},
-			];
-			const requestedWorkspaceRoot = await createWorkMountDirectory(systemConfig, 'agents/sun');
+			},
+		];
+		const requestedWorkspaceRoot = await createWorkMountDirectory(systemConfig, 'agents/sun');
 
-			// Act
-			await createToolVm(
-				{
-					agentId: 'sun',
-					cacheDir: systemConfig.cacheDir,
-					hostWorkspaceRoot: requestedWorkspaceRoot,
-					profile: standardProfile,
-					secretResolver: createSecretResolver({}),
-					systemConfig,
-					tcpSlot: 0,
-					zoneId: 'shravan',
+		// Act
+		await createToolVm(
+			{
+				agentId: 'sun',
+				cacheDir: systemConfig.cacheDir,
+				hostWorkspaceRoot: requestedWorkspaceRoot,
+				profile: standardProfile,
+				secretResolver: createSecretResolver({}),
+				systemConfig,
+				tcpSlot: 0,
+				zoneId: 'shravan',
+			},
+			{
+				createManagedVm: async (createVmOptions) => {
+					capturedCreateVmOptions = createVmOptions;
+					return managedVm;
 				},
-				{
-					createManagedVm: async (createVmOptions) => {
-						capturedCreateVmOptions = createVmOptions;
-						return managedVm;
-					},
-					openOwnedDirectoryBacking: createOwnedDirectoryBackingFixture,
-				},
-			);
+				openOwnedDirectoryBacking: createOwnedDirectoryBackingFixture,
+			},
+		);
 
-			// Assert
-			expect(capturedCreateVmOptions?.sshEgress).toEqual({
-				agentSocket: '/tmp/agent-vm-test-agent.sock',
-				allowedHosts: ['github.com'],
-				allowedRepositories: ['shravan/sun-workspace'],
-				kind: 'git-read-only',
-			});
-			expect(capturedCreateVmOptions?.mounts['/workspace']).toEqual(
-				expect.objectContaining({
-					policy: {
-						hiddenPaths: [],
-						readonlyInputs: [
-							{
-								destinationRelativePath: '.git',
-								sourceRelativePath: '.git',
-							},
-						],
-						temporaryPaths: [],
-						visibility: {
-							kind: 'positive-paths',
-							visiblePaths: [''],
-							writablePaths: [''],
+		// Assert
+		expect(capturedCreateVmOptions?.sshEgress).toEqual({
+			agentSocket: '/tmp/agent-vm-test-agent.sock',
+			allowedHosts: ['github.com'],
+			allowedRepositories: ['shravan/sun-workspace'],
+			kind: 'git-read-only',
+		});
+		expect(capturedCreateVmOptions?.mounts['/workspace']).toEqual(
+			expect.objectContaining({
+				policy: {
+					hiddenPaths: [],
+					readonlyInputs: [
+						{
+							destinationRelativePath: '.git',
+							sourceRelativePath: '.git',
 						},
+					],
+					temporaryPaths: [],
+					visibility: {
+						kind: 'positive-paths',
+						visiblePaths: [''],
+						writablePaths: [''],
 					},
-				}),
-			);
-			expect(capturedCreateVmOptions?.mounts['/gitdirs']).toEqual(
-				expect.objectContaining({
-					access: 'read-write',
-					kind: 'owned-host-directory',
-				}),
-			);
-		},
-	);
+				},
+			}),
+		);
+		expect(capturedCreateVmOptions?.mounts['/gitdirs']).toEqual(
+			expect.objectContaining({
+				access: 'read-write',
+				kind: 'owned-host-directory',
+			}),
+		);
+	});
 
 	it('does not attach Git SSH egress without remote workspace Git', async () => {
 		// Arrange
@@ -1563,10 +1528,7 @@ describe('createToolVm', () => {
 		if (!standardProfile) {
 			throw new Error('Expected standard tool VM profile');
 		}
-		const requestedWorkMountDir = await createWorkMountDirectory(
-			systemConfig,
-			'openclaw-work-mount',
-		);
+		const requestedWorkMountDir = await createWorkMountDirectory(systemConfig, 'hermes-work-mount');
 		const prepareImage = vi.fn(async () => ({
 			built: true,
 			fingerprint: 'tool-fingerprint',
@@ -1613,10 +1575,7 @@ describe('createToolVm', () => {
 		if (!standardProfile) {
 			throw new Error('Expected standard tool VM profile');
 		}
-		const requestedWorkMountDir = await createWorkMountDirectory(
-			systemConfig,
-			'openclaw-work-mount',
-		);
+		const requestedWorkMountDir = await createWorkMountDirectory(systemConfig, 'hermes-work-mount');
 		const imagePath = path.join(systemConfig.cacheDir, 'tool-vm-images', 'prepared-fingerprint');
 		const prepareImage = vi.fn(async () => ({
 			built: false,
@@ -1651,7 +1610,7 @@ describe('createToolVm', () => {
 		expect(capturedCreateVmOptions?.imageReference).toBe(imagePath);
 	});
 
-	it('rejects direct lifecycle calls with host work mount paths outside OpenClaw roots', async () => {
+	it('rejects direct lifecycle calls with host work mount paths outside Hermes roots', async () => {
 		const systemConfig = await createToolVmSystemConfig();
 		const standardProfile = systemConfig.toolVmProfiles.standard;
 		if (!standardProfile) {
@@ -1692,10 +1651,7 @@ describe('createToolVm', () => {
 		if (!standardProfile) {
 			throw new Error('Expected standard tool VM profile');
 		}
-		const requestedWorkMountDir = await createWorkMountDirectory(
-			systemConfig,
-			'openclaw-work-mount',
-		);
+		const requestedWorkMountDir = await createWorkMountDirectory(systemConfig, 'hermes-work-mount');
 		const movedWorkMountDir = path.join(path.dirname(requestedWorkMountDir), 'moved-work-mount');
 		const outsideDirectory = await createTemporaryDirectory();
 		const prepareImage = vi.fn(async () => {
@@ -1738,10 +1694,7 @@ describe('createToolVm', () => {
 		if (!standardProfile) {
 			throw new Error('Expected standard tool VM profile');
 		}
-		const requestedWorkMountDir = await createWorkMountDirectory(
-			systemConfig,
-			'openclaw-work-mount',
-		);
+		const requestedWorkMountDir = await createWorkMountDirectory(systemConfig, 'hermes-work-mount');
 		let workspaceIdentityReadCount = 0;
 		const closeOwnedDirectoryBacking = vi.fn();
 		const createManagedVm = vi.fn();

@@ -25,7 +25,6 @@ const mapping = {
 			id: 'agent-workspace',
 			locations: {
 				'controller-host': '/host/zone/agents/beta',
-				'openclaw-gateway': '/zone/agents/beta',
 				'tool-vm-guest': TOOL_VM_WORK_GUEST_ROOT,
 			},
 			rootPathAllowed: true,
@@ -63,7 +62,6 @@ const mapping = {
 			id: 'workspace-cache',
 			locations: {
 				'controller-host': '/host/cache/workspace',
-				'openclaw-gateway': '/cache/workspace',
 				'tool-vm-guest': '/workspace-cache',
 			},
 			rootPathAllowed: true,
@@ -95,110 +93,11 @@ const invalidGuestLeaseMountMapping = {
 } satisfies RuntimePathMapping;
 void invalidGuestLeaseMountMapping;
 
-const invalidHostlessRealfsMapping = {
-	id: 'invalid-hostless-realfs',
-	roots: [
-		// @ts-expect-error host-realfs roots need a controller or OpenClaw location.
-		{
-			backing: {
-				kind: 'host-realfs',
-				durability: 'durable',
-				backup: 'included',
-			},
-			capabilities: {
-				executionCwd: true,
-				leaseMount: true,
-			},
-			guidanceLabel: 'invalid hostless realfs',
-			id: 'invalid-hostless',
-			locations: {
-				'tool-vm-guest': '/work',
-			},
-			rootPathAllowed: true,
-		},
-	],
-} satisfies RuntimePathMapping;
-void invalidHostlessRealfsMapping;
-
 describe('translateRuntimePath', () => {
 	it('exports the persistent work and disposable scratch roots without the retired workspace root', () => {
 		expect(TOOL_VM_WORK_GUEST_ROOT).toBe('/work');
 		expect(TOOL_VM_SCRATCH_GUEST_ROOT).toBe('/scratch');
 		expect(runtimePathMappingModule).not.toHaveProperty('TOOL_VM_WORKSPACE_GUEST_ROOT');
-	});
-
-	it('maps Tool VM guest work subpaths to OpenClaw gateway paths', () => {
-		const result = translateRuntimePath({
-			inputPath: '/work/app',
-			mapping,
-			purpose: 'executionCwd',
-			sourceNamespace: 'tool-vm-guest',
-			targetNamespace: 'openclaw-gateway',
-		});
-
-		expect(result).toEqual({
-			ok: true,
-			value: {
-				backing: {
-					kind: 'host-realfs',
-					durability: 'durable',
-					backup: 'included',
-				},
-				capabilities: {
-					executionCwd: true,
-					leaseMount: true,
-				},
-				inputNamespace: 'tool-vm-guest',
-				inputPath: '/work/app',
-				mappingId: 'test-tool-vm',
-				outputNamespace: 'openclaw-gateway',
-				outputPath: '/zone/agents/beta/app',
-				relativePath: 'app',
-				rootId: 'agent-workspace',
-			},
-		});
-	});
-
-	it('maps OpenClaw gateway work subpaths back to Tool VM guest paths', () => {
-		const result = translateRuntimePath({
-			inputPath: '/zone/agents/beta/app',
-			mapping,
-			purpose: 'executionCwd',
-			sourceNamespace: 'openclaw-gateway',
-			targetNamespace: 'tool-vm-guest',
-		});
-
-		expect(result).toMatchObject({
-			ok: true,
-			value: {
-				inputNamespace: 'openclaw-gateway',
-				outputNamespace: 'tool-vm-guest',
-				outputPath: '/work/app',
-				relativePath: 'app',
-				rootId: 'agent-workspace',
-			},
-		});
-	});
-
-	it('maps OpenClaw gateway paths to controller host backing paths', () => {
-		const result = translateRuntimePath({
-			inputPath: '/zone/agents/beta/app',
-			mapping,
-			purpose: 'leaseMount',
-			sourceNamespace: 'openclaw-gateway',
-			targetNamespace: 'controller-host',
-		});
-
-		expect(result).toMatchObject({
-			ok: true,
-			value: {
-				inputNamespace: 'openclaw-gateway',
-				outputNamespace: 'controller-host',
-				outputPath: '/host/zone/agents/beta/app',
-				relativePath: 'app',
-				rootId: 'agent-workspace',
-			},
-		});
 	});
 
 	it('allows scratch paths as execution cwd without a lease mount target', () => {
@@ -232,19 +131,19 @@ describe('translateRuntimePath', () => {
 			mapping,
 			purpose: 'leaseMount',
 			sourceNamespace: 'tool-vm-guest',
-			targetNamespace: 'openclaw-gateway',
+			targetNamespace: 'controller-host',
 		});
 
 		expect(result).toEqual({
 			error: {
-				allowedPathForms: ['/work[/subpath]', '/zone/agents/beta[/subpath]'],
+				allowedPathForms: ['/work[/subpath]'],
 				code: 'purpose-not-allowed',
 				inputPath: '/scratch/tmp',
 				mappingId: 'test-tool-vm',
 				message: "Path '/scratch/tmp' matched Tool VM scratch but cannot be used for leaseMount.",
 				purpose: 'leaseMount',
 				retryGuidance:
-					'Use one of the allowed path forms for test-tool-vm leaseMount: /work[/subpath], /zone/agents/beta[/subpath].',
+					'Use one of the allowed path forms for test-tool-vm leaseMount: /work[/subpath].',
 			},
 			ok: false,
 		});
@@ -256,7 +155,7 @@ describe('translateRuntimePath', () => {
 			mapping,
 			purpose: 'executionCwd',
 			sourceNamespace: 'tool-vm-guest',
-			targetNamespace: 'openclaw-gateway',
+			targetNamespace: 'controller-host',
 		});
 
 		expect(result).toMatchObject({
@@ -274,13 +173,13 @@ describe('translateRuntimePath', () => {
 			mapping,
 			purpose: 'executionCwd',
 			sourceNamespace: 'tool-vm-guest',
-			targetNamespace: 'openclaw-gateway',
+			targetNamespace: 'controller-host',
 		});
 
 		expect(result).toMatchObject({
 			ok: true,
 			value: {
-				outputPath: '/cache/workspace/npm',
+				outputPath: '/host/cache/workspace/npm',
 				rootId: 'workspace-cache',
 			},
 		});
@@ -292,7 +191,7 @@ describe('translateRuntimePath', () => {
 			mapping,
 			purpose: 'executionCwd',
 			sourceNamespace: 'tool-vm-guest',
-			targetNamespace: 'openclaw-gateway',
+			targetNamespace: 'controller-host',
 		});
 
 		expect(result).toMatchObject({
@@ -310,25 +209,19 @@ describe('translateRuntimePath', () => {
 			mapping,
 			purpose: 'executionCwd',
 			sourceNamespace: 'tool-vm-guest',
-			targetNamespace: 'openclaw-gateway',
+			targetNamespace: 'controller-host',
 		});
 
 		expect(result).toEqual({
 			error: {
-				allowedPathForms: [
-					'/work[/subpath]',
-					'/zone/agents/beta[/subpath]',
-					'/scratch[/subpath]',
-					'/workspace-cache[/subpath]',
-					'/cache/workspace[/subpath]',
-				],
+				allowedPathForms: ['/work[/subpath]', '/scratch[/subpath]', '/workspace-cache[/subpath]'],
 				code: 'unknown-runtime-path',
 				inputPath: '/workspace/app',
 				mappingId: 'test-tool-vm',
 				message: "Path '/workspace/app' is not part of runtime path mapping 'test-tool-vm'.",
 				purpose: 'executionCwd',
 				retryGuidance:
-					'Use one of the allowed path forms for test-tool-vm executionCwd: /work[/subpath], /zone/agents/beta[/subpath], /scratch[/subpath], /workspace-cache[/subpath], /cache/workspace[/subpath].',
+					'Use one of the allowed path forms for test-tool-vm executionCwd: /work[/subpath], /scratch[/subpath], /workspace-cache[/subpath].',
 			},
 			ok: false,
 		});
@@ -336,7 +229,7 @@ describe('translateRuntimePath', () => {
 
 	it('rejects exact roots when rootPathAllowed is false', () => {
 		const gatewayMapping = {
-			id: 'openclaw-gateway-lease',
+			id: 'controller-host-lease',
 			roots: [
 				{
 					backing: {
@@ -352,7 +245,6 @@ describe('translateRuntimePath', () => {
 					id: 'zone-files',
 					locations: {
 						'controller-host': '/host/zone-files',
-						'openclaw-gateway': '/zone',
 					},
 					rootPathAllowed: false,
 				},
@@ -360,17 +252,17 @@ describe('translateRuntimePath', () => {
 		} satisfies RuntimePathMapping;
 
 		const result = translateRuntimePath({
-			inputPath: '/zone',
+			inputPath: '/host/zone-files',
 			mapping: gatewayMapping,
 			purpose: 'leaseMount',
-			sourceNamespace: 'openclaw-gateway',
+			sourceNamespace: 'controller-host',
 			targetNamespace: 'controller-host',
 		});
 
 		expect(result).toMatchObject({
 			error: {
 				code: 'root-path-not-allowed',
-				inputPath: '/zone',
+				inputPath: '/host/zone-files',
 			},
 			ok: false,
 		});

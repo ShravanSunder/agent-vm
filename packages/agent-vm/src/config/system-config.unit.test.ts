@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -104,10 +104,6 @@ function createValidSystemConfigInput(): ValidSystemConfigInput {
 					type: 'hermes',
 					buildConfig: '../vm-images/gateways/hermes/build-config.json',
 				},
-				openclaw: {
-					type: 'openclaw',
-					buildConfig: '../vm-images/gateways/openclaw/build-config.json',
-				},
 				worker: {
 					type: 'worker',
 					buildConfig: '../vm-images/gateways/worker/build-config.json',
@@ -124,27 +120,36 @@ function createValidSystemConfigInput(): ValidSystemConfigInput {
 			{
 				id: 'shravan',
 				gateway: {
-					type: 'openclaw',
-					controlAuth: {
-						mode: 'token',
-						secret: 'OPENCLAW_GATEWAY_TOKEN',
-					},
-					imageProfile: 'openclaw',
-					memory: '2G',
+					type: 'hermes',
+					imageProfile: 'hermes',
+					memory: '4G',
 					cpus: 2,
-					port: 18791,
-					config: './shravan/openclaw.json',
+					port: 8642,
+					config: './hermes/config.yaml',
+					profilesByAgent: { shravan: 'researcher' },
+					profileSecretProjectionsByAgent: {
+						shravan: {
+							API_SERVER_KEY: 'API_SERVER_KEY_SHRAVAN',
+							DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_SHRAVAN',
+						},
+					},
 				},
 				secrets: {
-					OPENCLAW_GATEWAY_TOKEN: {
+					API_SERVER_KEY_SHRAVAN: {
 						source: 'environment',
-						envVar: 'OPENCLAW_GATEWAY_TOKEN',
+						envVar: 'API_SERVER_KEY_SHRAVAN',
+						injection: 'env',
+						audience: 'gateway',
+					},
+					DISCORD_BOT_TOKEN_SHRAVAN: {
+						source: 'environment',
+						envVar: 'DISCORD_BOT_TOKEN_SHRAVAN',
 						injection: 'env',
 						audience: 'gateway',
 					},
 				},
 				agents: [{ id: 'shravan' }],
-				egressHosts: [{ host: 'discord.com', audience: 'gateway' }],
+				egressHosts: [{ host: 'api.openai.com', audience: 'gateway' }],
 				defaultToolVmProfile: 'standard',
 				agentToolVmProfiles: {},
 			},
@@ -245,15 +250,6 @@ function parseSystemConfigInputForTest(config: ValidSystemConfigInput): LoadedSy
 	return createLoadedSystemConfig(config as unknown as SystemConfigInput, {
 		systemConfigPath: path.join(os.tmpdir(), 'agent-vm-test', 'config', 'system.json'),
 	});
-}
-
-function extractFirstJsonCodeBlock(markdown: string): string {
-	const codeBlockMatch = /```json\n(?<jsonText>[\s\S]*?)\n```/u.exec(markdown);
-	const jsonText = codeBlockMatch?.groups?.jsonText;
-	if (!jsonText) {
-		throw new Error('Expected markdown to contain a JSON code block.');
-	}
-	return jsonText;
 }
 
 function requireRecordProperty(
@@ -438,18 +434,6 @@ describe('loadSystemConfig', () => {
 
 		// Act / Assert
 		expect(() => parseSystemConfigInputForTest(config)).toThrow(/approverId/u);
-	});
-
-	test('rejects managed Gateway approval authority for an unsupported OpenClaw presenter', () => {
-		// Arrange
-		const config = createValidSystemConfigInput();
-		config.zones[0].approvalAccess = {
-			approvers: [{ approverId: 'managed-operator', kind: 'managed_gateway' }],
-			audience: 'agent-vm-controller-approval',
-		};
-
-		// Act / Assert
-		expect(() => parseSystemConfigInputForTest(config)).toThrow(/only Hermes supports it/u);
 	});
 
 	test('rejects more than one managed Gateway approval authority', () => {
@@ -755,13 +739,17 @@ describe('loadSystemConfig', () => {
 		const config = createValidSystemConfigInput();
 		config.imageProfiles = {
 			gateways: {
-				openclaw: {
-					type: 'openclaw',
-					buildConfig: '../vm-images/gateways/openclaw/build-config.jsonc',
+				hermes: {
+					type: 'hermes',
+					buildConfig: '../vm-images/gateways/hermes/build-config.jsonc',
+				},
+				worker: {
+					type: 'worker',
+					buildConfig: '../vm-images/gateways/worker/build-config.jsonc',
 					source: {
 						kind: 'managedBase',
-						base: 'openclaw-gateway',
-						overlay: '../vm-images/gateways/openclaw/overlay.jsonc',
+						base: 'worker-gateway',
+						overlay: '../vm-images/gateways/worker/overlay.jsonc',
 					},
 				},
 			},
@@ -784,12 +772,12 @@ describe('loadSystemConfig', () => {
 
 		const loadedConfig = await loadSystemConfig(configPath);
 
-		expect(loadedConfig.imageProfiles.gateways.openclaw?.source).toMatchObject({
+		expect(loadedConfig.imageProfiles.gateways.worker?.source).toMatchObject({
 			kind: 'managedBase',
-			base: 'openclaw-gateway',
+			base: 'worker-gateway',
 		});
-		expect(loadedConfig.imageProfiles.gateways.openclaw?.source?.overlay).toContain(
-			path.join('vm-images', 'gateways', 'openclaw', 'overlay.jsonc'),
+		expect(loadedConfig.imageProfiles.gateways.worker?.source?.overlay).toContain(
+			path.join('vm-images', 'gateways', 'worker', 'overlay.jsonc'),
 		);
 		expect(loadedConfig.imageProfiles.toolVms.default?.source).toMatchObject({
 			kind: 'managedBase',
@@ -805,16 +793,16 @@ describe('loadSystemConfig', () => {
 		config.zones[0].gateway.ssh = { secretEnv: 'always' };
 		const configPath = await writeSystemConfigForTest('agent-vm-system-ssh-secret-env-', config);
 
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/secretEnv/u);
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/ssh/u);
 	});
 
 	test('rejects a managed base that does not match the image profile family', async () => {
 		const config = createValidSystemConfigInput();
 		config.imageProfiles = {
 			gateways: {
-				openclaw: {
-					type: 'openclaw',
-					buildConfig: '../vm-images/gateways/openclaw/build-config.jsonc',
+				hermes: {
+					type: 'hermes',
+					buildConfig: '../vm-images/gateways/hermes/build-config.jsonc',
 					source: {
 						kind: 'managedBase',
 						base: 'tool-vm',
@@ -838,7 +826,7 @@ describe('loadSystemConfig', () => {
 		);
 
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(
-			"Gateway image profile 'openclaw' type 'openclaw' must use managed base 'openclaw-gateway'.",
+			"Gateway image profile 'hermes' type 'hermes' must not declare a managed base.",
 		);
 	});
 
@@ -854,33 +842,6 @@ describe('loadSystemConfig', () => {
 
 		expect(loadedConfig.systemConfigPath).toBe(jsoncConfigPath);
 		expect(loadedConfig.zones[0]?.id).toBe('shravan');
-	});
-
-	test('loads the OpenClaw guide system.jsonc example when embedded in a full config', async () => {
-		const guideText = await readFile('docs/getting-started/openclaw-guide.md', 'utf8');
-		const guideConfig: unknown = JSON.parse(extractFirstJsonCodeBlock(guideText));
-		if (!isRecord(guideConfig)) {
-			throw new Error('Expected OpenClaw guide config example to be a JSON object.');
-		}
-		const configPath = await writeSystemConfigForTest('agent-vm-openclaw-guide-config-', {
-			...createValidSystemConfigInput(),
-			...guideConfig,
-		});
-
-		const loadedConfig = await loadSystemConfig(configPath);
-
-		const loadedZone = loadedConfig.zones[0];
-		expect(loadedZone?.gateway.type).toBe('openclaw');
-		if (loadedZone?.gateway.type !== 'openclaw') {
-			throw new Error('Expected OpenClaw guide example to load an OpenClaw zone.');
-		}
-		expect(loadedZone.gateway.authProfilesByAgent).toEqual({
-			shravan: {
-				source: 'environment',
-				envVar: 'SHRAVAN_AUTH_PROFILES',
-			},
-		});
-		expect(loadedZone.defaultToolVmProfile).toBe('standard');
 	});
 
 	test('keeps the Tool Portal disabled when the zone omits its configuration', async () => {
@@ -1018,48 +979,12 @@ describe('loadSystemConfig', () => {
 		},
 	);
 
-	test('loads same-zone multi-agent OpenClaw zones with declared per-agent policy', async () => {
-		const config = createValidSystemConfigInput();
-		config.zones[0].agents = [{ id: 'shravan', toolVmProfile: 'standard' }, { id: 'sun' }];
-		config.zones[0].agentToolVmProfiles = { sun: 'standard' };
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-multi-agent-openclaw-',
-			config,
-		);
-
-		const loadedConfig = await loadSystemConfig(configPath);
-		const loadedZone = loadedConfig.zones.at(0);
-		if (loadedZone === undefined) {
-			throw new Error('Expected first loaded zone.');
-		}
-
-		expect(loadedZone.agents).toEqual([
-			{ id: 'shravan', toolVmProfile: 'standard' },
-			{ id: 'sun' },
-		]);
-		expect(loadedZone.agentToolVmProfiles).toEqual({ sun: 'standard' });
-	});
-
-	test('rejects legacy OpenClaw zone tool portal config keys', async () => {
-		const config = createValidSystemConfigInput();
-		config.zones[0].mcp = { configDir: './shravan' };
-		const configPath = await writeSystemConfigForTest('agent-vm-system-legacy-zone-mcp-', config);
-
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/Unrecognized key.*mcp/u);
-	});
-
-	test('rejects duplicate OpenClaw zone agent records', async () => {
-		const config = createValidSystemConfigInput();
-		config.zones[0].agents = [{ id: 'shravan' }, { id: 'shravan' }];
-		const configPath = await writeSystemConfigForTest('agent-vm-system-duplicate-agents-', config);
-
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/duplicate agent id 'shravan'/u);
-	});
-
 	test('rejects worker zones declaring agents or Tool Portal references', async () => {
 		const config = createValidSystemConfigInput();
 		const {
 			controlAuth: _controlAuth,
+			profileSecretProjectionsByAgent: _profileSecretProjectionsByAgent,
+			profilesByAgent: _profilesByAgent,
 			zoneFilesDir: _zoneFilesDir,
 			...workerGateway
 		} = config.zones[0].gateway;
@@ -1109,7 +1034,7 @@ describe('loadSystemConfig', () => {
 				imageProfiles: {
 					gateways: {
 						openclaw: {
-							type: 'openclaw',
+							type: 'hermes',
 							buildConfig: '../vm-images/gateways/openclaw/build-config.json',
 							dockerfile: '../vm-images/gateways/openclaw/Dockerfile',
 						},
@@ -1182,7 +1107,7 @@ describe('loadSystemConfig', () => {
 			imageProfiles: {
 				gateways: {
 					openclaw: {
-						type: 'openclaw',
+						type: 'hermes',
 						buildConfig: path.join(
 							workingDirectoryPath,
 							'vm-images/gateways/openclaw/build-config.json',
@@ -1276,8 +1201,8 @@ describe('loadSystemConfig', () => {
 		expect(config.controllerStateDir).toBe(path.join(expectedRoot, 'controller-state'));
 		expect(config.controllerRuntimeDir).toBe(path.join(expectedRoot, 'controller-runtime'));
 		expect(config.zones[0]?.gateway.stateDir).toBe(path.join(expectedRoot, 'shravan', 'state'));
-		if (config.zones[0]?.gateway.type !== 'openclaw') {
-			throw new Error('Expected fixture zone to be OpenClaw.');
+		if (config.zones[0]?.gateway.type !== 'hermes') {
+			throw new Error('Expected fixture zone to be Hermes.');
 		}
 		expect(config.zones[0].gateway.zoneFilesDir).toBe(
 			path.join(expectedRoot, 'shravan', 'zone-files'),
@@ -1335,17 +1260,6 @@ describe('loadSystemConfig', () => {
 		expect(config.zones[0]?.gateway).not.toHaveProperty('zoneFilesDir');
 	});
 
-	test('rejects retired OpenClaw gateway zoneGit authority', () => {
-		const input = createValidSystemConfigInput();
-		input.zones[0].gateway.zoneGit = {
-			remote: {
-				repoUrl: 'ShravanSunder/sunfam-zone-files',
-			},
-		};
-
-		expect(() => parseSystemConfigInputForTest(input)).toThrow(/zoneGit/u);
-	});
-
 	test('loads strict local and remote per-agent workspace Git policies', async () => {
 		const input = createValidSystemConfigInput();
 		input.zones[0].agents = [
@@ -1361,6 +1275,46 @@ describe('loadSystemConfig', () => {
 			},
 		];
 		input.zones[0].agentToolVmProfiles = {};
+		input.zones[0].gateway.profilesByAgent = {
+			'local-agent': 'local-agent',
+			'remote-agent': 'remote-agent',
+		};
+		input.zones[0].gateway.profileSecretProjectionsByAgent = {
+			'local-agent': {
+				API_SERVER_KEY: 'API_SERVER_KEY_LOCAL',
+				DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_LOCAL',
+			},
+			'remote-agent': {
+				API_SERVER_KEY: 'API_SERVER_KEY_REMOTE',
+				DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_REMOTE',
+			},
+		};
+		delete input.zones[0].secrets.API_SERVER_KEY_SHRAVAN;
+		delete input.zones[0].secrets.DISCORD_BOT_TOKEN_SHRAVAN;
+		input.zones[0].secrets.API_SERVER_KEY_LOCAL = {
+			source: 'environment',
+			envVar: 'API_SERVER_KEY_LOCAL',
+			injection: 'env',
+			audience: 'gateway',
+		};
+		input.zones[0].secrets.API_SERVER_KEY_REMOTE = {
+			source: 'environment',
+			envVar: 'API_SERVER_KEY_REMOTE',
+			injection: 'env',
+			audience: 'gateway',
+		};
+		input.zones[0].secrets.DISCORD_BOT_TOKEN_LOCAL = {
+			source: 'environment',
+			envVar: 'DISCORD_BOT_TOKEN_LOCAL',
+			injection: 'env',
+			audience: 'gateway',
+		};
+		input.zones[0].secrets.DISCORD_BOT_TOKEN_REMOTE = {
+			source: 'environment',
+			envVar: 'DISCORD_BOT_TOKEN_REMOTE',
+			injection: 'env',
+			audience: 'gateway',
+		};
 
 		const parsed = parseSystemConfigInputForTest(input);
 
@@ -1604,11 +1558,9 @@ describe('loadSystemConfig', () => {
 		input.zones[0] = {
 			...input.zones[0],
 			gateway: {
-				type: 'openclaw',
-				controlAuth: {
-					mode: 'token',
-					secret: 'OPENCLAW_GATEWAY_TOKEN',
-				},
+				type: 'hermes',
+				profileSecretProjectionsByAgent: { main: {} },
+				profilesByAgent: { main: 'main' },
 				imageProfile: 'openclaw',
 				memory: '2G',
 				cpus: 2,
@@ -1739,7 +1691,7 @@ describe('loadSystemConfig', () => {
 				imageProfiles: {
 					gateways: {
 						openclaw: {
-							type: 'openclaw',
+							type: 'hermes',
 							buildConfig: '../vm-images/gateways/openclaw/build-config.json',
 							dockerfile: '../vm-images/gateways/openclaw/Dockerfile',
 						},
@@ -1800,7 +1752,7 @@ describe('loadSystemConfig', () => {
 				imageProfiles: {
 					gateways: {
 						openclaw: {
-							type: 'openclaw',
+							type: 'hermes',
 							buildConfig: '../vm-images/gateways/openclaw/build-config.json',
 						},
 						worker: {
@@ -1819,11 +1771,9 @@ describe('loadSystemConfig', () => {
 					{
 						id: 'shravan',
 						gateway: {
-							type: 'openclaw',
-							controlAuth: {
-								mode: 'token',
-								secret: 'OPENCLAW_GATEWAY_TOKEN',
-							},
+							type: 'hermes',
+							profileSecretProjectionsByAgent: { main: {} },
+							profilesByAgent: { main: 'main' },
 							imageProfile: 'openclaw',
 							memory: '2G',
 							cpus: 2,
@@ -1883,7 +1833,7 @@ describe('loadSystemConfig', () => {
 				imageProfiles: {
 					gateways: {
 						openclaw: {
-							type: 'openclaw',
+							type: 'hermes',
 							buildConfig: '../vm-images/gateways/openclaw/build-config.json',
 						},
 						worker: {
@@ -1902,11 +1852,9 @@ describe('loadSystemConfig', () => {
 					{
 						id: 'shravan',
 						gateway: {
-							type: 'openclaw',
-							controlAuth: {
-								mode: 'token',
-								secret: 'OPENCLAW_GATEWAY_TOKEN',
-							},
+							type: 'hermes',
+							profileSecretProjectionsByAgent: { main: {} },
+							profilesByAgent: { main: 'main' },
 							imageProfile: 'openclaw',
 							memory: '2G',
 							cpus: 2,
@@ -2027,6 +1975,13 @@ describe('loadSystemConfig', () => {
 			hosts: ['api.github.com'],
 			agentAccess: 'all',
 		};
+		const shravanProjection = (
+			zone.gateway.profileSecretProjectionsByAgent as Record<string, Record<string, string>>
+		).shravan;
+		if (shravanProjection === undefined) {
+			throw new Error('Expected shravan profile secret projection.');
+		}
+		shravanProjection.GITHUB_TOKEN = 'GITHUB_TOKEN';
 
 		expect(parseSystemConfigInputForTest(config)).toMatchObject({
 			zones: [
@@ -2065,6 +2020,13 @@ describe('loadSystemConfig', () => {
 			hosts: ['api.github.com'],
 			agentAccess: 'all',
 		};
+		const shravanProjection = (
+			zone.gateway.profileSecretProjectionsByAgent as Record<string, Record<string, string>>
+		).shravan;
+		if (shravanProjection === undefined) {
+			throw new Error('Expected shravan profile secret projection.');
+		}
+		shravanProjection.GITHUB_TOKEN = 'GITHUB_TOKEN';
 		const configPath = await writeSystemConfigForTest('agent-vm-system-egress-wildcard-', config);
 
 		await expect(loadSystemConfig(configPath)).resolves.toMatchObject({
@@ -2330,49 +2292,6 @@ describe('loadSystemConfig', () => {
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/hosts/u);
 	});
 
-	test('rejects OpenClaw env secrets not listed in rawEnvSecrets', async () => {
-		const config = createValidSystemConfigInput();
-		const zone = config.zones[0];
-		zone.secrets.DISCORD_BOT_TOKEN = {
-			source: 'environment',
-			envVar: 'DISCORD_BOT_TOKEN',
-			injection: 'env',
-			audience: 'gateway',
-		};
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-openclaw-unlisted-env-secret-',
-			config,
-		);
-
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/rawEnvSecrets/u);
-	});
-
-	test('allows OpenClaw env secrets explicitly listed in rawEnvSecrets', async () => {
-		const config = createValidSystemConfigInput();
-		const zone = config.zones[0];
-		zone.gateway.rawEnvSecrets = ['DISCORD_BOT_TOKEN'];
-		zone.secrets.DISCORD_BOT_TOKEN = {
-			source: 'environment',
-			envVar: 'DISCORD_BOT_TOKEN',
-			injection: 'env',
-			audience: 'gateway',
-		};
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-openclaw-listed-env-secret-',
-			config,
-		);
-
-		await expect(loadSystemConfig(configPath)).resolves.toMatchObject({
-			zones: [
-				{
-					gateway: {
-						rawEnvSecrets: ['DISCORD_BOT_TOKEN'],
-					},
-				},
-			],
-		});
-	});
-
 	test('rejects secret names that cannot be exported safely', async () => {
 		const config = createValidSystemConfigInput();
 		const zone = config.zones[0];
@@ -2423,6 +2342,13 @@ describe('loadSystemConfig', () => {
 		const config = createValidSystemConfigInput();
 		const zone = config.zones[0];
 		zone.agents = [{ id: 'sun' }];
+		zone.gateway.profilesByAgent = { sun: 'sun' };
+		zone.gateway.profileSecretProjectionsByAgent = {
+			sun: {
+				API_SERVER_KEY: 'API_SERVER_KEY_SHRAVAN',
+				DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_SHRAVAN',
+			},
+		};
 		zone.egressHosts = [{ host: 'api.github.com', audience: 'tool-vm' }];
 		zone.secrets.GITHUB_TOKEN = {
 			source: 'environment',
@@ -2467,6 +2393,13 @@ describe('loadSystemConfig', () => {
 		const config = createValidSystemConfigInput();
 		const zone = config.zones[0];
 		zone.agents = [{ id: 'sun' }];
+		zone.gateway.profilesByAgent = { sun: 'sun' };
+		zone.gateway.profileSecretProjectionsByAgent = {
+			sun: {
+				API_SERVER_KEY: 'API_SERVER_KEY_SHRAVAN',
+				DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_SHRAVAN',
+			},
+		};
 		zone.egressHosts = [{ host: 'api.github.com', audience: 'tool-vm' }];
 		zone.secrets.GITHUB_TOKEN = {
 			source: 'environment',
@@ -2494,6 +2427,14 @@ describe('loadSystemConfig', () => {
 		const config = createValidSystemConfigInput();
 		const zone = config.zones[0];
 		zone.agents = [{ id: 'sun' }];
+		zone.gateway.profilesByAgent = { sun: 'sun' };
+		zone.gateway.profileSecretProjectionsByAgent = {
+			sun: {
+				API_SERVER_KEY: 'API_SERVER_KEY_SHRAVAN',
+				DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_SHRAVAN',
+				GITHUB_TOKEN: 'GITHUB_TOKEN',
+			},
+		};
 		zone.egressHosts = [{ host: 'api.github.com', audience: 'both' }];
 		zone.secrets.GITHUB_TOKEN = {
 			source: 'environment',
@@ -2646,132 +2587,6 @@ describe('loadSystemConfig', () => {
 		expect(() => parseSystemConfigInputForTest(config)).toThrow(/egressHosts/u);
 	});
 
-	test('rejects legacy OpenClaw controller auth configuration', async () => {
-		const config = createValidSystemConfigInput();
-		Object.assign(config.zones[0].gateway, {
-			controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
-		});
-
-		expect(() => parseSystemConfigInputForTest(config)).toThrow(
-			/Unrecognized key.*controllerAuth/u,
-		);
-	});
-
-	test('loads OpenClaw control auth from a configured zone secret pointer', async () => {
-		const config = createValidSystemConfigInput();
-		config.zones[0].gateway.controlAuth = {
-			mode: 'token',
-			secret: 'CUSTOM_GATEWAY_TOKEN',
-		};
-		delete config.zones[0].secrets.OPENCLAW_GATEWAY_TOKEN;
-		config.zones[0].secrets.CUSTOM_GATEWAY_TOKEN = {
-			source: 'environment',
-			envVar: 'CUSTOM_GATEWAY_TOKEN',
-			injection: 'env',
-			audience: 'gateway',
-		};
-
-		expect(parseSystemConfigInputForTest(config)).toMatchObject({
-			zones: [
-				{
-					gateway: {
-						controlAuth: {
-							mode: 'token',
-							secret: 'CUSTOM_GATEWAY_TOKEN',
-						},
-					},
-				},
-			],
-		});
-	});
-
-	test('rejects OpenClaw zones without a control auth pointer', async () => {
-		const config = createValidSystemConfigInput();
-		delete config.zones[0].gateway.controlAuth;
-
-		expect(() => parseSystemConfigInputForTest(config)).toThrow(/controlAuth/u);
-	});
-
-	test('rejects OpenClaw zones without the configured control auth secret', async () => {
-		const config = createValidSystemConfigInput();
-		delete config.zones[0].secrets.OPENCLAW_GATEWAY_TOKEN;
-
-		expect(() => parseSystemConfigInputForTest(config)).toThrow(/OPENCLAW_GATEWAY_TOKEN/u);
-	});
-
-	test('rejects OpenClaw gateway token outside gateway env injection', async () => {
-		const config = createValidSystemConfigInput();
-		config.zones[0].agents = [{ id: 'shravan' }];
-		config.zones[0].secrets.OPENCLAW_GATEWAY_TOKEN = {
-			source: 'environment',
-			envVar: 'OPENCLAW_GATEWAY_TOKEN',
-			injection: 'http-mediation',
-			audience: 'tool-vm',
-			hosts: ['openclaw.local'],
-			agentAccess: 'all',
-		};
-
-		expect(() => parseSystemConfigInputForTest(config)).toThrow(/OPENCLAW_GATEWAY_TOKEN/u);
-	});
-
-	test('rejects OpenClaw gateway token with shared audience', async () => {
-		const config = createValidSystemConfigInput();
-		config.zones[0].agents = [{ id: 'shravan' }];
-		config.zones[0].secrets.OPENCLAW_GATEWAY_TOKEN = {
-			source: 'environment',
-			envVar: 'OPENCLAW_GATEWAY_TOKEN',
-			injection: 'http-mediation',
-			audience: 'both',
-			hosts: ['openclaw.local'],
-			agentAccess: 'all',
-		};
-
-		expect(() => parseSystemConfigInputForTest(config)).toThrow(/OPENCLAW_GATEWAY_TOKEN/u);
-	});
-
-	test('rejects runtime auth hints on OpenClaw zones', async () => {
-		const config = createValidSystemConfigInput();
-		const zone = config.zones[0];
-		zone.egressHosts = [
-			...(zone.egressHosts ?? []),
-			{ host: 'api.github.com', audience: 'gateway' },
-		];
-		zone.secrets.GITHUB_TOKEN = {
-			source: 'environment',
-			envVar: 'GITHUB_TOKEN',
-			injection: 'http-mediation',
-			audience: 'gateway',
-			hosts: ['api.github.com'],
-		};
-		zone.runtimeAuthHints = [
-			{
-				kind: 'service-token',
-				secret: 'GITHUB_TOKEN',
-				service: 'github',
-				hosts: ['api.github.com'],
-				tools: ['gh'],
-			},
-		];
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-runtime-auth-gateway-secret-',
-			config,
-		);
-
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/worker gateway runtime/u);
-	});
-
-	test('rejects empty runtime auth hints on OpenClaw zones', async () => {
-		const config = createValidSystemConfigInput();
-		const zone = config.zones[0];
-		zone.runtimeAuthHints = [];
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-runtime-auth-openclaw-empty-',
-			config,
-		);
-
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/worker gateway runtime/u);
-	});
-
 	test('allows omitted runtime auth hints', async () => {
 		const config = createValidSystemConfigInput();
 		const zone = config.zones[0];
@@ -2909,7 +2724,7 @@ describe('loadSystemConfig', () => {
 				imageProfiles: {
 					gateways: {
 						openclaw: {
-							type: 'openclaw',
+							type: 'hermes',
 							buildConfig: '../vm-images/gateways/openclaw/build-config.json',
 						},
 						worker: {
@@ -2928,11 +2743,9 @@ describe('loadSystemConfig', () => {
 					{
 						id: 'shravan',
 						gateway: {
-							type: 'openclaw',
-							controlAuth: {
-								mode: 'token',
-								secret: 'OPENCLAW_GATEWAY_TOKEN',
-							},
+							type: 'hermes',
+							profileSecretProjectionsByAgent: { main: {} },
+							profilesByAgent: { main: 'main' },
 							imageProfile: 'openclaw',
 							memory: '2G',
 							cpus: 2,
@@ -2968,24 +2781,6 @@ describe('loadSystemConfig', () => {
 		);
 
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/unknown defaultToolVmProfile/u);
-	});
-
-	test('requires OpenClaw zones to declare agentToolVmProfiles explicitly', async () => {
-		const config = createValidSystemConfigInput();
-		delete config.zones[0].agentToolVmProfiles;
-
-		expect(() => parseSystemConfigInputForTest(config)).toThrow(
-			/must declare agentToolVmProfiles/u,
-		);
-	});
-
-	test('requires OpenClaw zones to declare at least one trusted agent', () => {
-		const config = createValidSystemConfigInput();
-		delete config.zones[0].agents;
-
-		expect(() => parseSystemConfigInputForTest(config)).toThrow(
-			/must declare at least one trusted agent/u,
-		);
 	});
 
 	test('loads a strict two-agent Hermes gateway with common managed-agent configuration', () => {
@@ -3522,22 +3317,6 @@ describe('loadSystemConfig', () => {
 		expect(() => parseSystemConfigInputForTest(config)).toThrow(/assigned to multiple agents/u);
 	});
 
-	test('keeps OpenClaw authentication and raw environment fields out of Hermes config', () => {
-		for (const [propertyName, propertyValue] of [
-			['controlAuth', { mode: 'token', secret: 'OPENCLAW_GATEWAY_TOKEN' }],
-			['authProfilesRef', { source: 'config', path: './auth-profiles.json' }],
-			['authProfilesByAgent', { shravan: { source: 'config', path: './agent-auth.json' } }],
-			['authLogin', { providers: { anthropic: { profileIds: ['default'] } } }],
-			['rawEnvSecrets', ['HERMES_API_KEY']],
-		] as const) {
-			const config = createValidSystemConfigInput();
-			const zone = configureFirstZoneAsHermes(config);
-			zone.gateway[propertyName] = propertyValue;
-
-			expect(() => parseSystemConfigInputForTest(config)).toThrow(/Unrecognized key/u);
-		}
-	});
-
 	test('does not invent a managed base image for Hermes', () => {
 		const config = createValidSystemConfigInput();
 		configureFirstZoneAsHermes(config);
@@ -3551,15 +3330,6 @@ describe('loadSystemConfig', () => {
 		};
 
 		expect(() => parseSystemConfigInputForTest(config)).toThrow(/must not declare a managed base/u);
-	});
-
-	test('rejects OpenClaw agentToolVmProfiles for undeclared agents', () => {
-		const config = createValidSystemConfigInput();
-		config.zones[0].agentToolVmProfiles = { admin: 'standard' };
-
-		expect(() => parseSystemConfigInputForTest(config)).toThrow(
-			/agentToolVmProfiles\['admin'\] references undeclared agent 'admin'/u,
-		);
 	});
 
 	test('rejects legacy tool VM profile field names', async () => {
@@ -3635,88 +3405,12 @@ describe('loadSystemConfig', () => {
 		expect(() => parseSystemConfigInputForTest(config)).toThrow(/leaseIdleTtl/u);
 	});
 
-	test('loads per-agent auth profiles for OpenClaw zones', async () => {
-		const config = createValidSystemConfigInput();
-		if (config.zones[0].gateway.type !== 'openclaw') {
-			throw new Error('Expected OpenClaw fixture zone');
-		}
-		config.zones[0].gateway.authProfilesByAgent = {
-			shravan: {
-				source: 'environment',
-				envVar: 'SHRAVAN_AUTH_PROFILES',
-			},
-		};
-		const configPath = await writeSystemConfigForTest('agent-vm-system-agent-auth-', config);
-
-		await expect(loadSystemConfig(configPath)).resolves.toMatchObject({
-			zones: [
-				{
-					gateway: {
-						authProfilesByAgent: {
-							shravan: {
-								source: 'environment',
-								envVar: 'SHRAVAN_AUTH_PROFILES',
-							},
-						},
-					},
-				},
-			],
-		});
-	});
-
-	test('loads OpenClaw auth login profile configuration', async () => {
-		const config = createValidSystemConfigInput();
-		if (config.zones[0].gateway.type !== 'openclaw') {
-			throw new Error('Expected OpenClaw fixture zone');
-		}
-		config.zones[0].gateway.authLogin = {
-			defaultAgent: 'main',
-			providers: {
-				openai: {
-					profileIds: [
-						'openai-codex:matches_copse_0i@icloud.com',
-						'openai-codex:shravan.sunder.dev@gmail.com',
-					],
-				},
-			},
-		};
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-openclaw-auth-login-',
-			config,
-		);
-
-		await expect(loadSystemConfig(configPath)).resolves.toMatchObject({
-			zones: [
-				{
-					gateway: {
-						authLogin: {
-							defaultAgent: 'main',
-							providers: {
-								openai: {
-									profileIds: [
-										'openai-codex:matches_copse_0i@icloud.com',
-										'openai-codex:shravan.sunder.dev@gmail.com',
-									],
-								},
-							},
-						},
-					},
-				},
-			],
-		});
-	});
-
 	test('rejects path-unsafe agent identifiers in per-agent maps', async () => {
 		const config = createValidSystemConfigInput();
-		if (config.zones[0].gateway.type !== 'openclaw') {
+		if (config.zones[0].gateway.type !== 'hermes') {
 			throw new Error('Expected OpenClaw fixture zone');
 		}
-		config.zones[0].gateway.authProfilesByAgent = {
-			'../shravan': {
-				source: 'environment',
-				envVar: 'SHRAVAN_AUTH_PROFILES',
-			},
-		};
+		config.zones[0].gateway.profilesByAgent = { '../shravan': 'researcher' };
 		const configPath = await writeSystemConfigForTest(
 			'agent-vm-system-path-unsafe-agent-id-',
 			config,
@@ -3824,71 +3518,15 @@ describe('loadSystemConfig', () => {
 		expect(systemConfig.zones[0]).not.toHaveProperty('defaultToolVmProfile');
 	});
 
-	test('does not apply OpenClaw gateway token constraints to worker zones', async () => {
-		const config = createValidSystemConfigInput();
-		const zone = configureFirstZoneAsWorker(config);
-		zone.egressHosts = [{ host: 'api.openai.com', audience: 'gateway' }];
-		zone.secrets.OPENCLAW_GATEWAY_TOKEN = {
-			source: 'environment',
-			envVar: 'OPENCLAW_GATEWAY_TOKEN',
-			injection: 'http-mediation',
-			audience: 'gateway',
-			hosts: ['api.openai.com'],
-		};
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-worker-openclaw-token-name-',
-			config,
-		);
-
-		await expect(loadSystemConfig(configPath)).resolves.toMatchObject({
-			zones: [{ id: zone.id }],
-		});
-	});
-
-	test('rejects openclaw zones without a tool VM profile', async () => {
-		const config = createValidSystemConfigInput();
-		const zone = config.zones[0];
-		delete zone.defaultToolVmProfile;
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-config-openclaw-missing-tool-vm-profile-',
-			config,
-		);
-
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(
-			/must declare a defaultToolVmProfile/u,
-		);
-	});
-
-	test('rejects openclaw configs with no matching tool VM image profiles', async () => {
-		const config = createValidSystemConfigInput();
-		config.imageProfiles = {
-			gateways: {
-				openclaw: {
-					type: 'openclaw',
-					buildConfig: '../vm-images/gateways/openclaw/build-config.json',
-				},
-			},
-			toolVms: {},
-		};
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-config-empty-tool-vm-profiles-',
-			config,
-		);
-
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/unknown tool VM imageProfile/u);
-	});
-
 	test('rejects zones that reference unknown gateway image profiles', async () => {
 		const config = createValidSystemConfigInput();
 		config.zones = [
 			{
 				id: 'shravan',
 				gateway: {
-					type: 'openclaw',
-					controlAuth: {
-						mode: 'token',
-						secret: 'OPENCLAW_GATEWAY_TOKEN',
-					},
+					type: 'hermes',
+					profileSecretProjectionsByAgent: { main: {} },
+					profilesByAgent: { main: 'main' },
 					imageProfile: 'missing-openclaw',
 					memory: '2G',
 					cpus: 2,
@@ -3923,7 +3561,7 @@ describe('loadSystemConfig', () => {
 				id: 'shravan',
 				gateway: {
 					type: 'worker',
-					imageProfile: 'openclaw',
+					imageProfile: 'hermes',
 					memory: '2G',
 					cpus: 2,
 					port: 18791,
@@ -3932,8 +3570,6 @@ describe('loadSystemConfig', () => {
 				secrets: {},
 				runtimeAuthHints: [],
 				egressHosts: ['discord.com'].map((host) => ({ host, audience: 'gateway' as const })),
-				defaultToolVmProfile: 'standard',
-				agentToolVmProfiles: {},
 			},
 		];
 		const configPath = await writeSystemConfigForTest(
@@ -3983,7 +3619,7 @@ describe('loadSystemConfig', () => {
 		config.imageProfiles = {
 			gateways: {
 				'': {
-					type: 'openclaw',
+					type: 'hermes',
 					buildConfig: '../vm-images/gateways/openclaw/build-config.json',
 				},
 			},
@@ -4178,123 +3814,6 @@ describe('loadSystemConfig', () => {
 		});
 		expect('dataDir' in loadedConfig.host.observability).toBe(false);
 		expect('retention' in loadedConfig.host.observability).toBe(false);
-	});
-
-	test('accepts common OpenClaw producer observability through mediated collector egress', async () => {
-		const config = createValidSystemConfigInput();
-		config.host.observability = {
-			enabled: true,
-			stack: { mode: 'managed', scrubbing: { responsibility: 'agent-vm-managed-collector' } },
-			runner: 'docker-compose',
-			mode: 'collector',
-			dataDir: '../observability',
-			retention: {
-				metrics: { period: '30d', minFreeDiskSpaceBytes: '5GiB' },
-				logs: { period: '14d', maxDiskSpaceUsageBytes: '50GiB' },
-				traces: { period: '7d', maxDiskSpaceUsageBytes: '20GiB' },
-			},
-		};
-		Reflect.set(config.zones[0], 'observability', {
-			enabled: true,
-			openclaw: { diagnosticsFlags: ['scheduler.debug'] },
-			services: {
-				framework: {
-					flushIntervalMs: 5_000,
-					logs: true,
-					metrics: true,
-					sampleRate: 0.5,
-					traces: true,
-				},
-				toolPortal: {
-					flushIntervalMs: 7_500,
-					logs: true,
-					metrics: true,
-					sampleRate: 1,
-					traces: true,
-				},
-			},
-		});
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-zone-observability-hard-cutover-',
-			config,
-		);
-
-		const loadedConfig = await loadSystemConfig(configPath);
-
-		expect(loadedConfig.zones[0]?.observability?.enabled).toBe(true);
-	});
-
-	test('accepts common Hermes producer observability without an OpenClaw extension', async () => {
-		const config = createValidSystemConfigInput();
-		config.host.observability = {
-			enabled: true,
-			stack: { mode: 'managed', scrubbing: { responsibility: 'agent-vm-managed-collector' } },
-			runner: 'docker-compose',
-			mode: 'collector',
-			dataDir: '../observability',
-			retention: {
-				metrics: { period: '30d', minFreeDiskSpaceBytes: '5GiB' },
-				logs: { period: '14d', maxDiskSpaceUsageBytes: '50GiB' },
-				traces: { period: '7d', maxDiskSpaceUsageBytes: '20GiB' },
-			},
-		};
-		const zone = configureFirstZoneAsHermes(config);
-		Reflect.set(zone, 'observability', {
-			enabled: true,
-			services: { framework: {}, toolPortal: {} },
-		});
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-hermes-zone-observability-',
-			config,
-		);
-
-		const loadedConfig = await loadSystemConfig(configPath);
-
-		expect(loadedConfig.zones[0]?.observability).toMatchObject({
-			enabled: true,
-			services: {
-				framework: {
-					flushIntervalMs: 10_000,
-					logs: true,
-					metrics: true,
-					sampleRate: 1,
-					traces: true,
-				},
-				toolPortal: {
-					flushIntervalMs: 10_000,
-					logs: true,
-					metrics: true,
-					sampleRate: 1,
-					traces: true,
-				},
-			},
-		});
-	});
-
-	test('rejects the OpenClaw extension for a Hermes zone', async () => {
-		const config = createValidSystemConfigInput();
-		config.host.observability = {
-			enabled: true,
-			stack: { mode: 'managed', scrubbing: { responsibility: 'agent-vm-managed-collector' } },
-			runner: 'docker-compose',
-			mode: 'collector',
-			dataDir: '../observability',
-			retention: {
-				metrics: { period: '30d' },
-				logs: { period: '14d' },
-				traces: { period: '7d' },
-			},
-		};
-		const zone = configureFirstZoneAsHermes(config);
-		zone.observability = createZoneObservabilityInput({ diagnosticsFlags: ['scheduler.debug'] });
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-hermes-openclaw-observability-extension-',
-			config,
-		);
-
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(
-			/OpenClaw observability extensions require an OpenClaw gateway/u,
-		);
 	});
 
 	test.each(['framework', 'toolPortal'] as const)(
@@ -4592,128 +4111,7 @@ describe('loadSystemConfig', () => {
 			config,
 		);
 
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/managed OpenClaw or Hermes/u);
-	});
-
-	test('rejects OpenClaw observability for custom images without managed diagnostics install', async () => {
-		const config = createValidSystemConfigInput();
-		config.host.observability = {
-			enabled: true,
-			stack: { mode: 'managed', scrubbing: { responsibility: 'agent-vm-managed-collector' } },
-			runner: 'docker-compose',
-			mode: 'collector',
-			dataDir: '../observability',
-			retention: {
-				metrics: { period: '30d', minFreeDiskSpaceBytes: '5GiB' },
-				logs: { period: '14d', maxDiskSpaceUsageBytes: '50GiB' },
-				traces: { period: '7d', maxDiskSpaceUsageBytes: '20GiB' },
-			},
-		};
-		const zone = config.zones[0];
-		if (zone.gateway.type !== 'openclaw') {
-			throw new Error('Expected OpenClaw test zone.');
-		}
-		config.imageProfiles = {
-			gateways: {
-				openclaw: {
-					type: 'openclaw',
-					buildConfig: '../vm-images/gateways/openclaw/custom-build-config.json',
-				},
-				worker: {
-					type: 'worker',
-					buildConfig: '../vm-images/gateways/worker/build-config.json',
-				},
-			},
-			toolVms: {
-				default: {
-					type: 'toolVm',
-					buildConfig: '../vm-images/tool-vms/default/build-config.json',
-				},
-			},
-		};
-		zone.observability = createZoneObservabilityInput();
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-observability-custom-openclaw-image-',
-			config,
-		);
-
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(
-			/requires OpenClaw gateway image profile 'openclaw' to use managed base 'openclaw-gateway'/u,
-		);
-	});
-
-	test.each([
-		'*',
-		'all',
-		'payload-dump',
-		'request.body',
-		'prompt-transcript',
-		'token-debug',
-		'1',
-		'telegram.*',
-		'gateway.http.query',
-		'query.capture',
-		'http.request.header.authorization',
-		'OPENCLAW_DIAGNOSTICS=*',
-	])('rejects sensitive observability diagnostics flag %s', async (diagnosticsFlag) => {
-		const config = createValidSystemConfigInput();
-		config.host.observability = {
-			enabled: true,
-			stack: { mode: 'managed', scrubbing: { responsibility: 'agent-vm-managed-collector' } },
-			runner: 'docker-compose',
-			mode: 'collector',
-			dataDir: '../observability',
-			retention: {
-				metrics: { period: '30d', minFreeDiskSpaceBytes: '5GiB' },
-				logs: { period: '14d', maxDiskSpaceUsageBytes: '50GiB' },
-				traces: { period: '7d', maxDiskSpaceUsageBytes: '20GiB' },
-			},
-		};
-		config.zones[0].observability = createZoneObservabilityInput({
-			diagnosticsFlags: [diagnosticsFlag],
-		});
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-observability-sensitive-flags-',
-			config,
-		);
-
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(
-			/too broad or can capture sensitive content/u,
-		);
-	});
-
-	test('rejects OPENCLAW_DIAGNOSTICS raw env override for observability zones', async () => {
-		const config = createValidSystemConfigInput();
-		config.host.observability = {
-			enabled: true,
-			stack: { mode: 'managed', scrubbing: { responsibility: 'agent-vm-managed-collector' } },
-			runner: 'docker-compose',
-			mode: 'collector',
-			dataDir: '../observability',
-			retention: {
-				metrics: { period: '30d', minFreeDiskSpaceBytes: '5GiB' },
-				logs: { period: '14d', maxDiskSpaceUsageBytes: '50GiB' },
-				traces: { period: '7d', maxDiskSpaceUsageBytes: '20GiB' },
-			},
-		};
-		const zone = config.zones[0];
-		if (zone.gateway.type !== 'openclaw') {
-			throw new Error('Expected OpenClaw test zone.');
-		}
-		zone.gateway.rawEnvSecrets = ['OPENCLAW_DIAGNOSTICS'];
-		zone.secrets.OPENCLAW_DIAGNOSTICS = {
-			source: 'environment',
-			envVar: 'OPENCLAW_DIAGNOSTICS',
-			injection: 'env',
-			audience: 'gateway',
-		};
-		zone.observability = createZoneObservabilityInput();
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-observability-raw-diagnostics-env-',
-			config,
-		);
-
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/OPENCLAW_DIAGNOSTICS/u);
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/managed Hermes/u);
 	});
 
 	test.each([

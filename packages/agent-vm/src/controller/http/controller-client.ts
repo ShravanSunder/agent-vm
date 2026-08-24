@@ -14,7 +14,6 @@ export interface ControllerClient {
 
 export interface EnableZoneSshOptions {
 	readonly adminToken?: string;
-	readonly secretEnv?: 'default' | 'gateway-token' | 'all-secrets';
 }
 
 export interface ExecInZoneOptions {
@@ -50,10 +49,9 @@ export function createControllerClient(options: {
 			enableOptions: EnableZoneSshOptions = {},
 		): Promise<unknown> => {
 			const response = await fetchImpl(`${baseUrl}/zones/${zoneId}/enable-ssh`, {
-				body: JSON.stringify({
-					...(enableOptions.adminToken ? { adminToken: enableOptions.adminToken } : {}),
-					secretEnv: enableOptions.secretEnv ?? 'default',
-				}),
+				body: JSON.stringify(
+					enableOptions.adminToken ? { adminToken: enableOptions.adminToken } : {},
+				),
 				headers: {
 					'content-type': 'application/json',
 				},

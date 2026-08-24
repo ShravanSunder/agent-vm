@@ -44,7 +44,7 @@ export function createLiveRoundtripDeploymentConfig(
 			const zoneRootDir = path.join(options.deploymentRoot, configuredZone.id);
 			const gatewayStateDir = path.join(zoneRootDir, 'state');
 			const zoneRuntimeDir = path.join(zoneRootDir, 'runtime');
-			if (configuredZone.gateway.type === 'openclaw') {
+			if (configuredZone.gateway.type === 'hermes') {
 				return {
 					...configuredZone,
 					gateway: {

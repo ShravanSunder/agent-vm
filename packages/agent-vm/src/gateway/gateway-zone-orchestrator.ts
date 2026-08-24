@@ -65,7 +65,6 @@ import {
 	type ObservabilityRuntimeConfig,
 } from '../observability/observability-config.js';
 import { checkObservabilityStackReadiness as checkObservabilityStackReadinessDefault } from '../observability/observability-readiness.js';
-import { assertOpenClawToolVmRequirements } from '../operations/openclaw-deployment-requirements.js';
 import {
 	terminateLiveManagedVm,
 	type ManagedVmProcessTarget,
@@ -270,11 +269,11 @@ function assertGatewayVmOwnershipMatchesControlIdentity(options: {
 }
 
 type ManagedGatewayZone = GatewayZone & {
-	readonly gateway: Extract<GatewayZone['gateway'], { readonly type: 'hermes' | 'openclaw' }>;
+	readonly gateway: Extract<GatewayZone['gateway'], { readonly type: 'hermes' }>;
 };
 
 function isManagedGatewayZone(zone: GatewayZone): zone is ManagedGatewayZone {
-	return zone.gateway.type === 'openclaw' || zone.gateway.type === 'hermes';
+	return zone.gateway.type === 'hermes';
 }
 
 function formatGatewayCleanupOutcome(
@@ -290,23 +289,13 @@ function frameworkIdentitiesMatch(
 	leftIdentity: GatewayRuntimeFrameworkIdentity,
 	rightIdentity: GatewayRuntimeFrameworkIdentity,
 ): boolean {
-	switch (leftIdentity.kind) {
-		case 'openclaw':
-			return rightIdentity.kind === 'openclaw' && leftIdentity.agentId === rightIdentity.agentId;
-		case 'hermes':
-			return (
-				rightIdentity.kind === 'hermes' && leftIdentity.profileName === rightIdentity.profileName
-			);
-	}
+	return rightIdentity.kind === 'hermes' && leftIdentity.profileName === rightIdentity.profileName;
 }
 
 function requireConfiguredFrameworkIdentity(options: {
 	readonly agentId: string;
 	readonly zone: ManagedGatewayZone;
 }): GatewayRuntimeFrameworkIdentity {
-	if (options.zone.gateway.type === 'openclaw') {
-		return { agentId: options.agentId, kind: 'openclaw' };
-	}
 	const profileName = options.zone.gateway.profilesByAgent[options.agentId];
 	if (profileName === undefined) {
 		throw new Error(
@@ -750,7 +739,7 @@ const managedGatewayProcessIdentityDiagnosticCommand = [
 		'  command_line="$(tr \'\\000\' \' \' < "$process_directory/cmdline" | head -c 2048)"',
 		'  case "$command_line" in',
 		'    *agent-vm-gateway-runtime*) process_role=tool-portal ;;',
-		'    *openclaw*) process_role=openclaw ;;',
+		'    *hermes*) process_role=hermes ;;',
 		'    *) continue ;;',
 		'  esac',
 		'  process_name="$(cat "$process_directory/comm" 2>/dev/null || true)"',
@@ -1136,10 +1125,6 @@ async function buildRuntimeMcpPortalMaterialization(props: {
 			`Managed Gateway zone '${zone.id}' requires controller-issued identity material before Tool Portal admission materialization.`,
 		);
 	}
-	const allowedRawEnvSecretNames =
-		zone.gateway.type === 'openclaw'
-			? ['OPENCLAW_GATEWAY_TOKEN', ...(zone.gateway.rawEnvSecrets ?? [])]
-			: [];
 	const effectiveHostConfigDir = path.join(
 		props.cacheDir,
 		'gateways',
@@ -1153,7 +1138,7 @@ async function buildRuntimeMcpPortalMaterialization(props: {
 		authoredConfigDir: zone.toolPortal.configDir,
 		effectiveHostConfigDir,
 		managedVmImages: props.managedVmImages,
-		allowedRawEnvSecretNames,
+		allowedRawEnvSecretNames: [],
 		declaredAgentIds: (zone.agents ?? []).map((agent) => agent.id),
 		secretResolver: props.secretResolver,
 		workspaceGitPushAgentEligibility: {
@@ -1191,20 +1176,12 @@ async function buildRuntimeMcpPortalMaterialization(props: {
 		);
 	}
 	const portalAdmission = materializeGatewayRuntimePortalAdmission({
-		agentProjections: buildManagedFrameworkAgentProjectionInputs(
-			zone.gateway.type === 'openclaw'
-				? {
-						configuredAgents: zone.agents ?? [],
-						frameworkKind: 'openclaw',
-						toolPortalAgents: materialization.effectiveToolPortalConfig.agents,
-					}
-				: {
-						configuredAgents: zone.agents ?? [],
-						frameworkKind: 'hermes',
-						profilesByAgent: zone.gateway.profilesByAgent,
-						toolPortalAgents: materialization.effectiveToolPortalConfig.agents,
-					},
-		),
+		agentProjections: buildManagedFrameworkAgentProjectionInputs({
+			configuredAgents: zone.agents ?? [],
+			frameworkKind: 'hermes',
+			profilesByAgent: zone.gateway.profilesByAgent,
+			toolPortalAgents: materialization.effectiveToolPortalConfig.agents,
+		}),
 		effectivePlan: materialization,
 		surfaceEligibilityByProfile: zone.toolPortal.surfaceEligibilityByProfile,
 	});
@@ -1340,9 +1317,6 @@ async function preflightGatewayZoneStartPrerequisites(
 			? {}
 			: { runtimePrivateEnvironment: controlSessionRuntimePrivateEnvironment }),
 	};
-	if (zone.gateway.type === 'openclaw') {
-		await assertOpenClawToolVmRequirements({ ...options.systemConfig, zones: [zone] }, zone.id);
-	}
 	await lifecycle.preflightHostState?.(lifecycleZone, cachingSecretResolver.resolver);
 	return { secretResolver: cachingSecretResolver.freeze() };
 }
@@ -1436,12 +1410,7 @@ async function startGatewayZoneImplementation(
 	// group succeeds. If image preparation or validation fails, no writer may
 	// continue beneath a cache root that the caller is now free to tear down or
 	// reuse for a retry.
-	const assertionsPromise =
-		zone.gateway.type === 'openclaw'
-			? runTaskStep('Validating OpenClaw Tool VM requirements', async () => {
-					await assertOpenClawToolVmRequirements(options.systemConfig, zone.id);
-				})
-			: Promise.resolve();
+	const assertionsPromise = Promise.resolve();
 	const resolvedSecretsPromise = runTaskWithResult(
 		runTaskStep,
 		'Resolving zone secrets',
@@ -2196,22 +2165,9 @@ async function startGatewayZoneImplementation(
 			observability: lifecycleZone.observability,
 			portalAdmission: managedPortalMaterialization.portalAdmission,
 		});
-		const frameworkBootInput = (() => {
-			if (frameworkServiceInputs.kind === 'hermes-managed-scope') {
-				return {
-					frameworkInputKind: frameworkServiceInputs.kind,
-				} as const;
-			}
-			if (lifecycleZone.gateway.type !== 'openclaw') {
-				throw new Error(
-					`Managed Gateway configuration-only framework for zone '${zone.id}' must be OpenClaw.`,
-				);
-			}
-			return {
-				frameworkInputKind: frameworkServiceInputs.kind,
-				openClawControlAuthSecretName: lifecycleZone.gateway.controlAuth.secret,
-			} as const;
-		})();
+		if (frameworkServiceInputs.kind !== 'hermes-managed-scope') {
+			throw new Error(`Managed Gateway zone '${zone.id}' requires Hermes framework inputs.`);
+		}
 		const frameworkMediatedEnvironment =
 			managedGatewayMediatedSecretBootProjection?.frameworkEnvironment ?? {};
 		for (const environmentName of Object.keys(frameworkMediatedEnvironment)) {
@@ -2228,7 +2184,6 @@ async function startGatewayZoneImplementation(
 				...frameworkServiceInputs.environment,
 				...frameworkMediatedEnvironment,
 			},
-			...frameworkBootInput,
 			mcpConfig: managedPortalMaterialization.mcpConfig,
 			toolPortalEnvironment,
 			toolPortalServiceConfig,
@@ -2472,13 +2427,6 @@ async function startGatewayZoneImplementation(
 										processEpoch: managedControlSessionMaterial.processEpoch,
 									});
 								}
-							},
-						}),
-				...(options.openClawRuntimeStatusStore === undefined
-					? {}
-					: {
-							recordRuntimeStatus: (report) => {
-								options.openClawRuntimeStatusStore?.record(report);
 							},
 						}),
 				session: {

@@ -125,7 +125,6 @@ describe('gateway control contract', () => {
 			'lease_use_start',
 			'operation_cancel',
 			'recovery_command',
-			'runtime_status',
 			'tool_portal_admission_reserve',
 			'tool_portal_approval_decide',
 			'tool_portal_controller_execution',
@@ -268,7 +267,7 @@ describe('gateway control contract', () => {
 				attachment: {
 					expected: {
 						attachmentGeneration: 1,
-						clientKind: 'openclaw-managed-plugin',
+						clientKind: 'hermes-managed-plugin',
 						configuredAgentIds: ['main'],
 						frameworkEpoch: 'framework-epoch-1',
 						gatewayEpoch: 'gateway-epoch-1',
@@ -473,7 +472,7 @@ describe('gateway control contract', () => {
 				agentAuthority,
 				principal: {
 					agentId: 'main',
-					frameworkIdentity: { agentId: 'main', kind: 'openclaw' },
+					frameworkIdentity: { kind: 'hermes', profileName: 'main' },
 					profileAssignmentRevision: 'assignment-a',
 					toolPortalProfileId: 'engineering',
 				},
@@ -530,12 +529,12 @@ describe('gateway control contract', () => {
 		for (const invalidPrincipal of [
 			{
 				agentId: 'main',
-				frameworkIdentity: { agentId: 'main', kind: 'openclaw' },
+				frameworkIdentity: { kind: 'hermes', profileName: 'main' },
 				profileAssignmentRevision: 'assignment-a',
 			},
 			{
 				agentId: 'main',
-				frameworkIdentity: { agentId: 'main', kind: 'openclaw' },
+				frameworkIdentity: { kind: 'hermes', profileName: 'main' },
 				profileAssignmentRevision: 'assignment-a',
 				toolPortalProfileId: 'engineering',
 				unexpectedAuthority: 'forbidden',

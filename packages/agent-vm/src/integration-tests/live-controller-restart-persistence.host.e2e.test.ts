@@ -38,16 +38,16 @@ import {
 } from '../testing/managed-vm-test-helpers.js';
 
 const testManagedGatewayBootContract = createManagedGatewayBootContract({
-	bootEntry: 'openclaw-gateway',
+	bootEntry: 'hermes-gateway',
 	configurationInputPath: '/run/agent-vm/managed-gateway/framework-service.json',
 	environmentInputPath: '/run/agent-vm/managed-gateway/framework.environment.sh',
-	framework: 'openclaw',
+	framework: 'hermes',
 	ingress: { guestPort: 18_789, kind: 'framework-http' },
 	logIdentity: {
-		guestPath: '/var/log/agent-vm/openclaw-service.log',
-		serviceName: 'agent-vm-openclaw-test',
+		guestPath: '/var/log/agent-vm/hermes-service.log',
+		serviceName: 'agent-vm-hermes',
 	},
-	readiness: { guestPort: 18_789, kind: 'framework-http', path: '/readyz' },
+	readiness: { guestPort: 18_789, kind: 'framework-http', path: '/health' },
 	role: 'framework-service',
 });
 
@@ -104,7 +104,7 @@ function createFixtureGatewayDestroyer(options: {
 function createSystemConfig(
 	controllerPort: number,
 	storageRootDir: string,
-	openClawConfigPath: string,
+	hermesConfigPath: string,
 ): LoadedSystemConfig {
 	return {
 		schemaVersion: 2,
@@ -115,7 +115,7 @@ function createSystemConfig(
 		systemConfigPath: path.join(storageRootDir, 'config', 'system.json'),
 		host: {
 			controllerPort,
-			projectNamespace: 'claw-tests-a1b2c3d4',
+			projectNamespace: 'controller-restart-tests-a1b2c3d4',
 			secretsProvider: {
 				type: '1password',
 				tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
@@ -123,9 +123,9 @@ function createSystemConfig(
 		},
 		imageProfiles: {
 			gateways: {
-				openclaw: {
-					type: 'openclaw',
-					buildConfig: './vm-images/gateways/openclaw/build-config.json',
+				hermes: {
+					type: 'hermes',
+					buildConfig: './vm-images/gateways/hermes/build-config.jsonc',
 				},
 				worker: {
 					type: 'worker',
@@ -144,28 +144,19 @@ function createSystemConfig(
 				agents: [{ id: 'shravan' }],
 				id: 'shravan',
 				gateway: {
-					type: 'openclaw',
-					controlAuth: {
-						mode: 'token',
-						secret: 'OPENCLAW_GATEWAY_TOKEN',
-					},
-					imageProfile: 'openclaw',
+					type: 'hermes',
+					profileSecretProjectionsByAgent: { shravan: {} },
+					profilesByAgent: { shravan: 'shravan' },
+					imageProfile: 'hermes',
 					memory: '2G',
 					cpus: 2,
 					port: controllerPort + 100,
-					config: openClawConfigPath,
+					config: hermesConfigPath,
 					stateDir: path.join(storageRootDir, 'shravan', 'state'),
 					zoneFilesDir: path.join(storageRootDir, 'shravan', 'zone-files'),
 					zoneRuntimeDir: path.join(storageRootDir, 'shravan', 'runtime'),
 				},
-				secrets: {
-					OPENCLAW_GATEWAY_TOKEN: {
-						source: 'environment',
-						envVar: 'OPENCLAW_GATEWAY_TOKEN',
-						injection: 'env',
-						audience: 'gateway',
-					},
-				},
+				secrets: {},
 				egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),
 				defaultToolVmProfile: 'standard',
 				agentToolVmProfiles: {},
@@ -192,7 +183,7 @@ function createManagedGatewayExpectedCohort(options: {
 	readonly gatewayIdentity: GatewayEpochIdentity;
 }): ManagedGatewayRuntimeRecord['expectedCohort'] {
 	const identitySuffix = `${options.gatewayIdentity.zoneId}:${options.gatewayIdentity.generationId}`;
-	const frameworkEpoch = `openclaw-framework:${options.gatewayIdentity.bootId}`;
+	const frameworkEpoch = `hermes-framework:${options.gatewayIdentity.bootId}`;
 	const processEpoch = `tool-portal-process:${options.gatewayIdentity.bootId}`;
 	const runtimeEpoch = `tool-portal-runtime:${options.gatewayIdentity.generationId}`;
 	return {
@@ -210,10 +201,10 @@ function createManagedGatewayExpectedCohort(options: {
 		},
 		frameworkIdentity: {
 			attachmentGeneration: 1,
-			clientKind: 'openclaw-managed-plugin',
+			clientKind: 'hermes-managed-plugin',
 			configuredAgentIds: options.configuredAgentIds,
 			frameworkEpoch,
-			frameworkKind: 'openclaw',
+			frameworkKind: 'hermes',
 			projectionCohortDigest:
 				'projection-cohort:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 		},
@@ -351,7 +342,7 @@ afterEach(() => {
 });
 
 describe('live integration: controller restart persistence', () => {
-	it('preserves state across stop and restart while restoring lease functionality', async () => {
+	it('preserves state and recreates managed Gateway ownership across controller restart', async () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
 		const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'controller-restart-live-'));
 		createdDirectories.push(tempDirectory);
@@ -359,30 +350,25 @@ describe('live integration: controller restart persistence', () => {
 		const stateDirectory = path.join(tempDirectory, 'shravan', 'state');
 		const zoneFilesDirectory = path.join(tempDirectory, 'shravan', 'zone-files');
 		const zoneLeaseDirectory = path.join(zoneFilesDirectory, 'restart-work');
-		const openClawConfigPath = path.join(tempDirectory, 'openclaw.json');
+		const hermesConfigPath = path.join(
+			tempDirectory,
+			'config',
+			'gateways',
+			'shravan',
+			'hermes-managed',
+			'config.yaml',
+		);
 		fs.mkdirSync(stateDirectory, { recursive: true });
 		fs.mkdirSync(zoneLeaseDirectory, { recursive: true });
+		fs.mkdirSync(path.dirname(hermesConfigPath), { recursive: true });
 		fs.writeFileSync(
-			openClawConfigPath,
-			JSON.stringify({
-				agents: {
-					defaults: {
-						sandbox: {
-							backend: 'gondolin',
-							mode: 'all',
-							scope: 'agent',
-							workspaceAccess: 'rw',
-						},
-						workspace: '/zone/agents/default/self',
-					},
-					list: [],
-				},
-			}),
+			hermesConfigPath,
+			'plugins:\n  enabled:\n    - agent-vm-tool-portal\n  disabled: []\n',
 			'utf8',
 		);
 
 		const controllerPort = 18841;
-		const systemConfig = createSystemConfig(controllerPort, tempDirectory, openClawConfigPath);
+		const systemConfig = createSystemConfig(controllerPort, tempDirectory, hermesConfigPath);
 		const zone = systemConfig.zones[0];
 		if (!zone) {
 			throw new Error('Expected restart test zone.');
@@ -621,26 +607,6 @@ describe('live integration: controller restart persistence', () => {
 
 		const leasesResponse = await fetch(`http://127.0.0.1:${controllerPort}/leases`);
 		expect(leasesResponse.status).toBe(404);
-
-		const runtimeStatusResponse = await fetch(
-			`http://127.0.0.1:${controllerPort}/zones/shravan/openclaw-runtime-status`,
-			{
-				body: JSON.stringify({
-					pluginId: 'gondolin',
-					zoneId: 'shravan',
-					findings: [
-						{
-							id: 'openclaw-tool-vm-agents-defaults-sandbox-backend-shravan-defaults',
-							ok: true,
-							hint: 'agents.defaults.sandbox.backend=gondolin',
-						},
-					],
-				}),
-				headers: { 'content-type': 'application/json' },
-				method: 'POST',
-			},
-		);
-		expect(runtimeStatusResponse.status).toBe(404);
 
 		const createLeaseResponse = await fetch(`http://127.0.0.1:${controllerPort}/lease`, {
 			body: JSON.stringify({

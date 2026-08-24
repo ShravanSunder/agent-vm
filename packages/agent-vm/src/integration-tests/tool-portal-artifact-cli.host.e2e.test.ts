@@ -79,8 +79,8 @@ const artifactPrincipalB = {
 } satisfies StandaloneToolPortalFixedCredentialPrincipal;
 
 const storedArtifactFrameworkIdentity = {
-	agentId: artifactPrincipalA.agentId,
-	kind: 'openclaw',
+	kind: 'hermes',
+	profileName: artifactPrincipalA.agentId,
 } as const;
 
 const artifactAuthorization = {

@@ -14,17 +14,12 @@ import {
 import { loadJsonConfigFile } from '../config/json-config-file.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import { resolveZoneSecrets } from '../gateway/credential-manager.js';
-import {
-	collectOpenClawConfigChecks,
-	type ConfigValidationCheck,
-	resolveProjectCheckoutPath,
-} from '../operations/config-validation.js';
+import { resolveProjectCheckoutPath } from '../operations/config-validation.js';
 import {
 	collectManagedImagePackageOverrideDoctorChecks,
 	collectVmHostSystemDoctorCheck,
 	type DoctorCheck,
 } from '../operations/doctor.js';
-import { collectOpenClawDeploymentDoctorChecks } from '../operations/openclaw-deployment-doctor.js';
 import {
 	createResolverFromSystemConfig,
 	type CliDependencies,
@@ -69,7 +64,7 @@ interface ImageProfileDoctorTarget {
 	readonly checkName: string;
 	readonly dockerfile?: string;
 	readonly source?: ManagedImageSource;
-	readonly type: 'hermes' | 'openclaw' | 'toolVm' | 'worker';
+	readonly type: 'hermes' | 'toolVm' | 'worker';
 }
 
 interface DoctorCommandResult {
@@ -288,7 +283,6 @@ export async function collectControllerDoctorEnvironment(
 			'/usr/local/opt/e2fsprogs/sbin/debugfs',
 			'cpio',
 			'lz4',
-			'openclaw',
 		] as const,
 		path.resolve(path.dirname(systemConfig.systemConfigPath), '..', 'node_modules', '.bin'),
 	);
@@ -309,14 +303,6 @@ export async function collectDynamicDoctorChecks(
 	options: CollectDynamicDoctorChecksOptions,
 ): Promise<readonly DoctorCheck[]> {
 	const workerGatewayConfigChecks = await collectWorkerGatewayConfigChecks(options.systemConfig);
-	const openClawConfigChecks = options.availableBinaries.has('openclaw')
-		? convertConfigValidationChecksToDoctorChecks(
-				await collectOpenClawConfigChecks(options.systemConfig),
-			)
-		: [];
-	const openClawDeploymentChecks = await collectOpenClawDeploymentDoctorChecks(
-		options.systemConfig,
-	);
 	const onePasswordHeadlessChecks = await collectOnePasswordHeadlessDoctorChecks({
 		availableBinaries: options.availableBinaries,
 		dependencies: options.dependencies,
@@ -336,8 +322,6 @@ export async function collectDynamicDoctorChecks(
 		...imageProfileDockerfileChecks,
 		...managedImagePackageOverrideChecks,
 		...workerGatewayConfigChecks,
-		...openClawConfigChecks,
-		...openClawDeploymentChecks,
 		...onePasswordHeadlessChecks,
 	] as const;
 }
@@ -387,9 +371,7 @@ async function collectImageProfileDockerfileChecks(
 
 		const ociConfig = isObjectRecord(buildConfig) ? buildConfig.oci : undefined;
 		if (!isObjectRecord(ociConfig) || ociConfig.pullPolicy !== 'never') {
-			if (imageProfileTarget.type !== 'openclaw' || !imageProfileHasProducer(imageProfileTarget)) {
-				continue;
-			}
+			continue;
 		}
 
 		const imageName =
@@ -433,19 +415,6 @@ async function collectWorkerGatewayConfigChecks(
 		}
 	}
 	return checks;
-}
-
-function convertConfigValidationChecksToDoctorChecks(
-	checks: readonly ConfigValidationCheck[],
-): readonly DoctorCheck[] {
-	return checks.map(
-		(check) =>
-			({
-				name: check.name,
-				ok: check.ok,
-				...(check.hint ? { hint: check.hint } : {}),
-			}) satisfies DoctorCheck,
-	);
 }
 
 function formatDoctorCheckStatus(check: DoctorCheck): string {

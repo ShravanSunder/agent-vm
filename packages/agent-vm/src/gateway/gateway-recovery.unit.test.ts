@@ -59,10 +59,10 @@ const expectedCohort: ManagedGatewayRuntimeRecord['expectedCohort'] = {
 	},
 	frameworkIdentity: {
 		attachmentGeneration: 1,
-		clientKind: 'openclaw-managed-plugin',
+		clientKind: 'hermes-managed-plugin',
 		configuredAgentIds: ['agent-a'],
 		frameworkEpoch: 'framework-epoch-a',
-		frameworkKind: 'openclaw',
+		frameworkKind: 'hermes',
 		projectionCohortDigest:
 			'projection-cohort:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 	},
@@ -99,14 +99,14 @@ const expectedCohort: ManagedGatewayRuntimeRecord['expectedCohort'] = {
 };
 
 const bootContract = createManagedGatewayBootContract({
-	bootEntry: 'openclaw-gateway',
+	bootEntry: 'hermes-gateway',
 	configurationInputPath: '/run/agent-vm/managed-gateway/framework-service.json',
 	environmentInputPath: '/run/agent-vm/managed-gateway/framework.environment.sh',
-	framework: 'openclaw',
+	framework: 'hermes',
 	ingress: { guestPort: 18_789, kind: 'framework-http' },
 	logIdentity: {
 		guestPath: '/var/log/agent-vm/openclaw-service.log',
-		serviceName: 'agent-vm-openclaw-test',
+		serviceName: 'agent-vm-hermes-test',
 	},
 	readiness: { guestPort: 18_789, kind: 'framework-http', path: '/readyz' },
 	role: 'framework-service',

@@ -131,7 +131,7 @@ const semanticSnapshot = {
 	agentProjections: {
 		'gateway-agent': {
 			agentId: 'gateway-agent',
-			frameworkIdentity: { agentId: 'gateway-agent', kind: 'openclaw' },
+			frameworkIdentity: { kind: 'hermes', profileName: 'gateway-agent' },
 			profileAssignmentRevision: 'sandbox-profile-assignment-1',
 			toolPortalNamespaceNames: ['sandbox'],
 			toolPortalProfileId: 'sandbox-user',
@@ -159,7 +159,7 @@ const trustedContext = {
 	},
 	principal: {
 		agentId: 'gateway-agent',
-		frameworkIdentity: { agentId: 'gateway-agent', kind: 'openclaw' },
+		frameworkIdentity: { kind: 'hermes', profileName: 'gateway-agent' },
 		profileAssignmentRevision: 'sandbox-profile-assignment-1',
 		toolPortalProfileId: 'sandbox-user',
 	},

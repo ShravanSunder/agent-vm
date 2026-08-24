@@ -68,7 +68,7 @@ describe('requireZone', () => {
 					imageProfiles: {
 						gateways: {
 							openclaw: {
-								type: 'openclaw',
+								type: 'hermes',
 								buildConfig: './vm-images/gateways/openclaw/build-config.json',
 							},
 							worker: {
@@ -98,11 +98,9 @@ describe('requireZone', () => {
 								audience: 'gateway' as const,
 							})),
 							gateway: {
-								type: 'openclaw',
-								controlAuth: {
-									mode: 'token',
-									secret: 'OPENCLAW_GATEWAY_TOKEN',
-								},
+								type: 'hermes',
+								profileSecretProjectionsByAgent: { main: {} },
+								profilesByAgent: { main: 'main' },
 								imageProfile: 'openclaw',
 								cpus: 2,
 								memory: '2G',

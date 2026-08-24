@@ -49,11 +49,9 @@ function createZoneWithSecrets(secrets: Record<string, ZoneSecretConfig>): ZoneC
 		id: 'sunfam',
 		agents: [{ id: 'sun' }, { id: 'mak' }],
 		gateway: {
-			type: 'openclaw',
-			controlAuth: {
-				mode: 'token',
-				secret: 'OPENCLAW_GATEWAY_TOKEN',
-			},
+			type: 'hermes',
+			profileSecretProjectionsByAgent: { main: {} },
+			profilesByAgent: { main: 'main' },
 			imageProfile: 'openclaw',
 			memory: '2G',
 			cpus: 2,

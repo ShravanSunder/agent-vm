@@ -7,62 +7,55 @@ import {
 } from './rootfs-init-extra.js';
 
 describe('managed Gateway rootfs init projection', () => {
-	it.each([
-		['openclaw-framework-service', '/usr/local/bin/openclaw gateway --port 18789'],
-		['hermes-framework-service', '/usr/local/bin/agent-vm-hermes-gateway'],
-	] as const)(
-		'starts the fixed Tool Portal and %s roles without a resident launcher',
-		(frameworkBootEntry, expectedFrameworkCommand) => {
-			// Arrange
-			const bootProjection = {
-				frameworkBootEntry,
-				kind: 'managed-gateway-exact-two-role',
-			} as const;
+	it('starts the fixed Tool Portal and Hermes roles without a resident launcher', () => {
+		// Arrange
+		const bootProjection = {
+			frameworkBootEntry: 'hermes-framework-service',
+			kind: 'managed-gateway-exact-two-role',
+		} as const;
+		const expectedFrameworkCommand = '/usr/local/bin/agent-vm-hermes-gateway';
 
-			// Act
-			const script = renderManagedGatewayRootfsInitScript(bootProjection);
+		// Act
+		const script = renderManagedGatewayRootfsInitScript(bootProjection);
 
-			// Assert
-			expect(script.match(/agent-vm-gateway-runtime --config/gu)).toHaveLength(1);
-			expect(script.match(new RegExp(expectedFrameworkCommand, 'gu'))).toHaveLength(1);
-			expect(script.match(/&\n/gu)).toHaveLength(2);
-			expect(script).toContain('exec /usr/local/bin/agent-vm-gateway-runtime');
-			expect(script).toContain(`exec ${expectedFrameworkCommand}`);
-			expect(script).not.toMatch(/\b(wait|restart|supervis|childRecipe|services\[)\b/iu);
-			expect(script).not.toContain('ManagedVm.exec');
-			expect(script).toContain(
-				'managed_gateway_environment_input_root=/run/agent-vm/managed-gateway-environment',
-			);
-			expect(script).toContain(
-				'managed_gateway_structured_input_root=/run/agent-vm/managed-gateway',
-			);
-			expect(script).not.toMatch(/--reuid|--regid|--init-groups/u);
-			expect(script).not.toContain('exec su ');
-			expect(script).not.toMatch(/entrypoint-dispatch|s6-setuidgid/u);
-			expect(script).toContain(
-				'. /run/agent-vm/managed-gateway-environment/tool-portal.environment.sh || exit 78',
-			);
-			expect(script).toContain(
-				'rm -- /run/agent-vm/managed-gateway-environment/tool-portal.environment.sh || exit 78',
-			);
-			expect(script).toContain(
-				'. /run/agent-vm/managed-gateway-environment/framework.environment.sh || exit 78',
-			);
-			expect(script).toContain(
-				'rm -- /run/agent-vm/managed-gateway-environment/framework.environment.sh || exit 78',
-			);
-			expect(script).not.toContain('framework-service.json config.yaml');
-			expect(script).toContain('install -d -m 0700 /run/agent-vm/gateway-runtime');
-			expect(script).not.toMatch(/\b(cp|install)\b[^\n]*managed-gateway/gu);
-			expect(script).not.toContain('managed_gateway_input_staging_root');
-			expect(script.indexOf('. /run/agent-vm/managed-gateway-environment/')).toBeLessThan(
-				script.indexOf('rm -- /run/agent-vm/managed-gateway-environment/'),
-			);
-			expect(script.indexOf('rm -- /run/agent-vm/managed-gateway-environment/')).toBeLessThan(
-				script.indexOf('exec /usr/local/bin/agent-vm-gateway-runtime'),
-			);
-		},
-	);
+		// Assert
+		expect(script.match(/agent-vm-gateway-runtime --config/gu)).toHaveLength(1);
+		expect(script.match(new RegExp(expectedFrameworkCommand, 'gu'))).toHaveLength(1);
+		expect(script.match(/&\n/gu)).toHaveLength(2);
+		expect(script).toContain('exec /usr/local/bin/agent-vm-gateway-runtime');
+		expect(script).toContain(`exec ${expectedFrameworkCommand}`);
+		expect(script).not.toMatch(/\b(wait|restart|supervis|childRecipe|services\[)\b/iu);
+		expect(script).not.toContain('ManagedVm.exec');
+		expect(script).toContain(
+			'managed_gateway_environment_input_root=/run/agent-vm/managed-gateway-environment',
+		);
+		expect(script).toContain('managed_gateway_structured_input_root=/run/agent-vm/managed-gateway');
+		expect(script).not.toMatch(/--reuid|--regid|--init-groups/u);
+		expect(script).not.toContain('exec su ');
+		expect(script).not.toMatch(/entrypoint-dispatch|s6-setuidgid/u);
+		expect(script).toContain(
+			'. /run/agent-vm/managed-gateway-environment/tool-portal.environment.sh || exit 78',
+		);
+		expect(script).toContain(
+			'rm -- /run/agent-vm/managed-gateway-environment/tool-portal.environment.sh || exit 78',
+		);
+		expect(script).toContain(
+			'. /run/agent-vm/managed-gateway-environment/framework.environment.sh || exit 78',
+		);
+		expect(script).toContain(
+			'rm -- /run/agent-vm/managed-gateway-environment/framework.environment.sh || exit 78',
+		);
+		expect(script).not.toContain('framework-service.json config.yaml');
+		expect(script).toContain('install -d -m 0700 /run/agent-vm/gateway-runtime');
+		expect(script).not.toMatch(/\b(cp|install)\b[^\n]*managed-gateway/gu);
+		expect(script).not.toContain('managed_gateway_input_staging_root');
+		expect(script.indexOf('. /run/agent-vm/managed-gateway-environment/')).toBeLessThan(
+			script.indexOf('rm -- /run/agent-vm/managed-gateway-environment/'),
+		);
+		expect(script.indexOf('rm -- /run/agent-vm/managed-gateway-environment/')).toBeLessThan(
+			script.indexOf('exec /usr/local/bin/agent-vm-gateway-runtime'),
+		);
+	});
 
 	it('isolates both Hermes sibling service environments from Gateway VM bootstrap values', () => {
 		// Arrange
@@ -79,21 +72,6 @@ describe('managed Gateway rootfs init projection', () => {
 		expect(script).not.toContain('exec /bin/sh -c');
 	});
 
-	it('preserves the existing OpenClaw sibling service bootstrap environments', () => {
-		// Arrange
-		const bootProjection = {
-			frameworkBootEntry: 'openclaw-framework-service',
-			kind: 'managed-gateway-exact-two-role',
-		} as const;
-
-		// Act
-		const script = renderManagedGatewayRootfsInitScript(bootProjection);
-
-		// Assert
-		expect(script.match(/exec \/bin\/sh -c 'set -a;/gu)).toHaveLength(2);
-		expect(script).not.toContain('exec /usr/bin/env -i');
-	});
-
 	it('fingerprints the exact managed pair and rejects deployment-authored init authority', async () => {
 		// Arrange
 		const buildConfig = {
@@ -102,13 +80,6 @@ describe('managed Gateway rootfs init projection', () => {
 		} as const;
 
 		// Act
-		const openClaw = await resolveRootfsInitExtra({
-			buildConfig,
-			managedGatewayBoot: {
-				frameworkBootEntry: 'openclaw-framework-service',
-				kind: 'managed-gateway-exact-two-role',
-			},
-		});
 		const hermes = await resolveRootfsInitExtra({
 			buildConfig,
 			managedGatewayBoot: {
@@ -116,18 +87,15 @@ describe('managed Gateway rootfs init projection', () => {
 				kind: 'managed-gateway-exact-two-role',
 			},
 		});
+		const unmanaged = await resolveRootfsInitExtra({ buildConfig });
 
 		// Assert
-		expect(openClaw.content).not.toBe(hermes.content);
-		expect(openClaw.fingerprintInput).not.toEqual(hermes.fingerprintInput);
-		const [openClawFingerprint, hermesFingerprint] = await Promise.all([
+		expect(unmanaged.content).not.toBe(hermes.content);
+		expect(unmanaged.fingerprintInput).not.toEqual(hermes.fingerprintInput);
+		const [unmanagedFingerprint, hermesFingerprint] = await Promise.all([
 			computeEffectiveBuildFingerprint({
 				buildConfig,
 				gondolinVersion: 'gondolin@managed-gateway-test',
-				managedGatewayBoot: {
-					frameworkBootEntry: 'openclaw-framework-service',
-					kind: 'managed-gateway-exact-two-role',
-				},
 			}),
 			computeEffectiveBuildFingerprint({
 				buildConfig,
@@ -138,7 +106,7 @@ describe('managed Gateway rootfs init projection', () => {
 				},
 			}),
 		]);
-		expect(openClawFingerprint.fingerprint).not.toBe(hermesFingerprint.fingerprint);
+		expect(unmanagedFingerprint.fingerprint).not.toBe(hermesFingerprint.fingerprint);
 		await expect(
 			resolveRootfsInitExtra({
 				buildConfig: {
@@ -146,7 +114,7 @@ describe('managed Gateway rootfs init projection', () => {
 					init: { rootfsInitExtra: '/tmp/deployment-authored.sh' },
 				},
 				managedGatewayBoot: {
-					frameworkBootEntry: 'openclaw-framework-service',
+					frameworkBootEntry: 'hermes-framework-service',
 					kind: 'managed-gateway-exact-two-role',
 				},
 			}),

@@ -6,9 +6,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 export type E2eProofLaneId =
 	| 'e2e-host-docker'
 	| 'e2e-host'
+	| 'e2e-hermes'
 	| 'e2e-vm'
-	| 'e2e-vm-managed-gateway'
-	| 'e2e-vm-mediation';
+	| 'e2e-vm-mediation'
+	| 'e2e-worker';
 
 export interface E2eProofLane {
 	readonly args: readonly string[];
@@ -73,11 +74,11 @@ export function createE2eProofLanes(): readonly E2eProofLane[] {
 			label: 'Gondolin VM e2e',
 		},
 		{
-			args: ['run', 'test:e2e:vm-managed-gateway'],
+			args: ['run', 'test:e2e:hermes'],
 			command: 'pnpm',
 			env: { AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1' },
-			id: 'e2e-vm-managed-gateway',
-			label: 'Managed Gateway Gondolin VM e2e',
+			id: 'e2e-hermes',
+			label: 'Hermes managed Gateway e2e',
 		},
 		{
 			args: ['run', 'test:e2e:vm-mediation'],
@@ -85,6 +86,13 @@ export function createE2eProofLanes(): readonly E2eProofLane[] {
 			env: { AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1' },
 			id: 'e2e-vm-mediation',
 			label: 'HTTP mediation e2e',
+		},
+		{
+			args: ['run', 'test:e2e:worker'],
+			command: 'pnpm',
+			env: { AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1' },
+			id: 'e2e-worker',
+			label: 'Worker Gateway e2e',
 		},
 	];
 }

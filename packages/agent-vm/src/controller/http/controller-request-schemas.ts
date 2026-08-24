@@ -2,7 +2,6 @@ import { isToolVmActiveUseId } from '@agent-vm/gateway-lifecycle';
 import { z } from 'zod';
 
 import { workerTaskControllerRequestSchema } from '../../config/resource-contracts/index.js';
-import type { OpenClawRuntimeStatusReport } from '../openclaw-runtime-status.js';
 
 export const controllerToolVmSshFailureKindSchema = z.enum([
 	'active-use-refreshable-failure',
@@ -53,22 +52,6 @@ export const controllerEndActiveUseRequestSchema = z.strictObject({
 	report: controllerToolVmActiveUseOperationReportSchema.optional(),
 });
 
-export const controllerOpenClawRuntimeStatusRequestSchema: z.ZodType<
-	Pick<OpenClawRuntimeStatusReport, 'findings' | 'pluginId' | 'zoneId'>
-> = z.strictObject({
-	findings: z
-		.array(
-			z.strictObject({
-				hint: z.string(),
-				id: z.string().min(1),
-				ok: z.boolean(),
-			}),
-		)
-		.min(1),
-	pluginId: z.literal('gondolin'),
-	zoneId: z.string().min(1),
-});
-
 export const controllerDestroyZoneRequestSchema = z.object({
 	purge: z.boolean().optional(),
 });
@@ -76,7 +59,6 @@ export const controllerDestroyZoneRequestSchema = z.object({
 export const controllerEnableSshRequestSchema = z
 	.object({
 		adminToken: z.string().min(1).optional(),
-		secretEnv: z.enum(['default', 'gateway-token', 'all-secrets']).default('default'),
 	})
 	.strict();
 

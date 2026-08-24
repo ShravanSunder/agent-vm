@@ -36,7 +36,6 @@ import {
 } from '../testing/managed-vm-test-helpers.js';
 import {
 	collectE2eDockerImageTags,
-	disableOpenClawMcpPortalPlugin,
 	findReusableGatewayImageDirectory,
 	packLocalAgentVmPackageTarball,
 	prepareGatewayE2eProjectImages,
@@ -48,8 +47,6 @@ import {
 	scaffoldWorkerE2eProject,
 	seedGatewayImageCacheIfAvailable,
 	shouldCleanupE2eDockerImages,
-	useLocalOpenClawGatewayImagePackages,
-	useLocalOpenClawPluginGatewayImage,
 	useLocalToolVmMcpPortalPackage,
 } from './e2e-harness.js';
 import {
@@ -60,16 +57,15 @@ import {
 
 const temporaryRoots: string[] = [];
 const execFileAsync = promisify(execFile);
-const normalizedDockerContextTimestampMs = Date.UTC(2000, 0, 1, 0, 0, 0, 0);
 const testManagedGatewayBootContract = createManagedGatewayBootContract({
-	bootEntry: 'openclaw-gateway',
+	bootEntry: 'hermes-gateway',
 	configurationInputPath: '/run/agent-vm/managed-gateway/framework-service.json',
 	environmentInputPath: '/run/agent-vm/managed-gateway/framework.environment.sh',
-	framework: 'openclaw',
+	framework: 'hermes',
 	ingress: { guestPort: 18_789, kind: 'framework-http' },
 	logIdentity: {
-		guestPath: '/var/log/agent-vm/openclaw-service.log',
-		serviceName: 'agent-vm-openclaw-test',
+		guestPath: '/var/log/agent-vm/hermes-service.log',
+		serviceName: 'agent-vm-hermes-test',
 	},
 	readiness: { guestPort: 18_789, kind: 'framework-http', path: '/readyz' },
 	role: 'framework-service',
@@ -89,10 +85,10 @@ const testManagedGatewayExpectedCohort = {
 	},
 	frameworkIdentity: {
 		attachmentGeneration: 1,
-		clientKind: 'openclaw-managed-plugin',
+		clientKind: 'hermes-managed-plugin',
 		configuredAgentIds: ['smoke'],
-		frameworkEpoch: 'openclaw-framework-smoke',
-		frameworkKind: 'openclaw',
+		frameworkEpoch: 'hermes-framework-smoke',
+		frameworkKind: 'hermes',
 		projectionCohortDigest:
 			'projection-cohort:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 	},
@@ -121,7 +117,7 @@ const testManagedGatewayExpectedCohort = {
 		serviceId: 'tool-portal-service-smoke',
 	},
 	udsIdentity: {
-		frameworkEpoch: 'openclaw-framework-smoke',
+		frameworkEpoch: 'hermes-framework-smoke',
 		gatewayEpoch: 'gateway-generation-smoke',
 		runtimeEpoch: 'tool-portal-runtime-smoke',
 		socketPath: '/run/agent-vm/gateway-runtime/managed-plugin.sock',
@@ -149,22 +145,22 @@ describe('scaffoldGatewayE2eProject', () => {
 		const smokeCacheRoot = path.join(temporaryRoot, 'shared-smoke-cache');
 		process.env.AGENT_VM_E2E_CACHE_DIR = smokeCacheRoot;
 		try {
-			const openClawProject = await scaffoldHermesE2eProject({
+			const hermesProject = await scaffoldHermesE2eProject({
 				agents: ['main'],
 				architecture: 'aarch64',
-				prefix: 'openclaw-control-link-e2e-',
-				zoneId: 'openclaw-smoke',
+				prefix: 'agent-vm-gateway-e2e-project-',
+				zoneId: 'hermes-smoke',
 			});
 			const workerProject = await scaffoldWorkerE2eProject({
 				architecture: 'aarch64',
 				prefix: 'worker-loop-e2e-',
 				zoneId: 'worker-e2e',
 			});
-			temporaryRoots.push(openClawProject.tempRoot, workerProject.tempRoot);
+			temporaryRoots.push(hermesProject.tempRoot, workerProject.tempRoot);
 
-			expect(openClawProject.systemConfig.cacheDir).toBe(path.join(smokeCacheRoot, 'hermes'));
+			expect(hermesProject.systemConfig.cacheDir).toBe(path.join(smokeCacheRoot, 'hermes'));
 			expect(workerProject.systemConfig.cacheDir).toBe(path.join(smokeCacheRoot, 'worker'));
-			expect(openClawProject.systemConfig.cacheDir).not.toContain(openClawProject.tempRoot);
+			expect(hermesProject.systemConfig.cacheDir).not.toContain(hermesProject.tempRoot);
 			expect(workerProject.systemConfig.cacheDir).not.toContain(workerProject.tempRoot);
 		} finally {
 			if (previousSmokeCacheRoot === undefined) {
@@ -176,20 +172,20 @@ describe('scaffoldGatewayE2eProject', () => {
 	});
 
 	it('keeps generated e2e runtime and state paths inside owned temp project roots', async () => {
-		const openClawProject = await scaffoldHermesE2eProject({
+		const hermesProject = await scaffoldHermesE2eProject({
 			agents: ['main'],
 			architecture: 'aarch64',
-			prefix: 'openclaw-control-link-e2e-',
-			zoneId: 'openclaw-smoke',
+			prefix: 'agent-vm-gateway-e2e-project-',
+			zoneId: 'hermes-smoke',
 		});
 		const workerProject = await scaffoldWorkerE2eProject({
 			architecture: 'aarch64',
 			prefix: 'worker-loop-e2e-',
 			zoneId: 'worker-e2e',
 		});
-		temporaryRoots.push(openClawProject.tempRoot, workerProject.tempRoot);
+		temporaryRoots.push(hermesProject.tempRoot, workerProject.tempRoot);
 
-		for (const project of [openClawProject, workerProject]) {
+		for (const project of [hermesProject, workerProject]) {
 			expect(path.resolve(project.systemConfig.storageRootDir)).toContain(
 				path.resolve(project.tempRoot),
 			);
@@ -407,7 +403,7 @@ describe('startE2eControllerRuntime', () => {
 	it('passes TCP host and VFS mount overrides into the gateway zone startup dependency', async () => {
 		const { startE2eControllerRuntime } = await import('./e2e-harness.js');
 		const capturedGatewayStarts: StartGatewayZoneOptions[] = [];
-		const systemConfig = createMinimalOpenClawSystemConfig();
+		const systemConfig = createMinimalHermesSystemConfig();
 		const zone = systemConfig.zones[0];
 		if (!zone) {
 			throw new Error('Expected smoke system config to contain a zone.');
@@ -416,7 +412,6 @@ describe('startE2eControllerRuntime', () => {
 		const harness = await startE2eControllerRuntime({
 			secrets: {
 				AGENT_VM_TEST_OPENAI_API_KEY: 'test-service-account-token',
-				OPENCLAW_GATEWAY_TOKEN: 'test-gateway-token',
 			},
 			startGatewayZone: async (options) => {
 				capturedGatewayStarts.push(options);
@@ -460,16 +455,15 @@ describe('startE2eControllerRuntime', () => {
 	it('removes owned smoke temp roots when the harness closes', async () => {
 		const { startE2eControllerRuntime } = await import('./e2e-harness.js');
 		const temporaryRoot = await createTemporaryRoot('agent-vm-e2e-harness-');
-		const systemConfig = createMinimalOpenClawSystemConfig(temporaryRoot);
+		const systemConfig = createMinimalHermesSystemConfig(temporaryRoot);
 		const zone = systemConfig.zones[0];
-		if (!zone || zone.gateway.type !== 'openclaw') {
-			throw new Error('Expected smoke system config to contain an OpenClaw zone.');
+		if (!zone || zone.gateway.type !== 'hermes') {
+			throw new Error('Expected smoke system config to contain an Hermes zone.');
 		}
 
 		const harness = await startE2eControllerRuntime({
 			secrets: {
 				AGENT_VM_TEST_OPENAI_API_KEY: 'test-service-account-token',
-				OPENCLAW_GATEWAY_TOKEN: 'test-gateway-token',
 			},
 			startGatewayZone: async () => createManagedGatewayStartResultStub(zone),
 			startHttpServer: async () => ({
@@ -489,16 +483,15 @@ describe('startE2eControllerRuntime', () => {
 	it('preserves an owned smoke temp root only when close requests it explicitly', async () => {
 		const { startE2eControllerRuntime } = await import('./e2e-harness.js');
 		const temporaryRoot = await createTemporaryRoot('agent-vm-e2e-harness-');
-		const systemConfig = createMinimalOpenClawSystemConfig(temporaryRoot);
+		const systemConfig = createMinimalHermesSystemConfig(temporaryRoot);
 		const zone = systemConfig.zones[0];
-		if (!zone || zone.gateway.type !== 'openclaw') {
-			throw new Error('Expected smoke system config to contain an OpenClaw zone.');
+		if (!zone || zone.gateway.type !== 'hermes') {
+			throw new Error('Expected smoke system config to contain an Hermes zone.');
 		}
 
 		const harness = await startE2eControllerRuntime({
 			secrets: {
 				AGENT_VM_TEST_OPENAI_API_KEY: 'test-service-account-token',
-				OPENCLAW_GATEWAY_TOKEN: 'test-gateway-token',
 			},
 			startGatewayZone: async () => createManagedGatewayStartResultStub(zone),
 			startHttpServer: async () => ({
@@ -513,14 +506,6 @@ describe('startE2eControllerRuntime', () => {
 		await harness.close({ preserveTempRoot: true });
 
 		await expect(fs.access(temporaryRoot)).resolves.toBeUndefined();
-	});
-
-	it('removes OpenClaw control-link smoke temp roots', async () => {
-		const temporaryRoot = await createTemporaryRoot('openclaw-control-link-e2e-');
-
-		await removeE2eTempRoot(temporaryRoot);
-
-		await expect(fs.access(temporaryRoot)).rejects.toThrow();
 	});
 
 	it.each([
@@ -547,8 +532,8 @@ describe('startE2eControllerRuntime', () => {
 		const temporaryRoot = await createTemporaryRoot('agent-vm-e2e-harness-');
 		const gatewayBuildConfigPath = path.join(temporaryRoot, 'gateway-build.jsonc');
 		const toolBuildConfigPath = path.join(temporaryRoot, 'tool-build.jsonc');
-		const systemConfig = createMinimalOpenClawSystemConfig(temporaryRoot);
-		const gatewayProfile = systemConfig.imageProfiles.gateways.openclaw;
+		const systemConfig = createMinimalHermesSystemConfig(temporaryRoot);
+		const gatewayProfile = systemConfig.imageProfiles.gateways.hermes;
 		const toolVmProfile = systemConfig.imageProfiles.toolVms.tool;
 		if (gatewayProfile === undefined || toolVmProfile === undefined) {
 			throw new Error('Expected e2e test fixture to define gateway and Tool VM profiles.');
@@ -585,292 +570,11 @@ describe('startE2eControllerRuntime', () => {
 		]);
 	});
 
-	it('writes a local OpenClaw gateway smoke Dockerfile without the old MCP Portal plugin identity', async () => {
-		const temporaryRoot = await createTemporaryRoot('agent-vm-e2e-harness-');
-		const repoRoot = path.join(temporaryRoot, 'repo');
-		const systemConfig = createMinimalOpenClawSystemConfig();
-		systemConfig.imageProfiles.gateways.openclaw = {
-			type: 'openclaw',
-			buildConfig: path.join(temporaryRoot, 'build-config.jsonc'),
-			source: { kind: 'managedBase', base: 'openclaw-gateway' },
-		};
-
-		await createFakeAgentPortalSdkPackage(repoRoot);
-		await createFakeConfigContractsPackage(repoRoot);
-		await createFakeSecretsPackage(repoRoot);
-		await createFakeGondolinVmAdapterPackage(repoRoot);
-		await createFakeGatewayLifecyclePackage(repoRoot);
-		await createFakeGatewayRuntimePackage(repoRoot);
-		await createFakeManagedVmPackage(repoRoot);
-		await createFakeControlProtocolContractsPackage(repoRoot);
-		await createFakeControllerExecutionContractsPackage(repoRoot);
-		await createFakeGatewayControlContractsPackage(repoRoot);
-		await createFakeToolPortalPackage(repoRoot);
-		await createFakePackageDist(repoRoot, 'openclaw-agent-vm-plugin', 'gondolin');
-		await createFakePortalDist(repoRoot);
-
-		await useLocalOpenClawGatewayImagePackages({
-			profileName: 'openclaw',
-			projectRoot: temporaryRoot,
-			repoRoot,
-			systemConfig,
-		});
-
-		const dockerfilePath = systemConfig.imageProfiles.gateways.openclaw.dockerfile;
-		if (dockerfilePath === undefined) {
-			throw new Error('Expected local OpenClaw gateway helper to set dockerfile path.');
-		}
-		expect(dockerfilePath).toBe(
-			path.join(temporaryRoot, 'vm-images', 'gateways', 'openclaw-local-packages', 'Dockerfile'),
-		);
-		const dockerfile = await fs.readFile(dockerfilePath, 'utf8');
-		expect(dockerfile).toContain(
-			'COPY agent-vm-agent-portal-sdk-0.0.0-smoke.tgz /tmp/agent-vm-agent-portal-sdk-0.0.0-smoke.tgz',
-		);
-		expect(dockerfile).toContain(
-			'COPY agent-vm-config-contracts-0.0.0-smoke.tgz /tmp/agent-vm-config-contracts-0.0.0-smoke.tgz',
-		);
-		expect(dockerfile).toContain(
-			'COPY agent-vm-secret-management-0.0.0-smoke.tgz /tmp/agent-vm-secret-management-0.0.0-smoke.tgz',
-		);
-		expect(dockerfile).toContain(
-			'COPY agent-vm-gondolin-vm-adapter-0.0.0-smoke.tgz /tmp/agent-vm-gondolin-vm-adapter-0.0.0-smoke.tgz',
-		);
-		expect(dockerfile).toContain(
-			'COPY agent-vm-gateway-lifecycle-0.0.0-smoke.tgz /tmp/agent-vm-gateway-lifecycle-0.0.0-smoke.tgz',
-		);
-		expect(dockerfile).toContain(
-			'COPY agent-vm-gateway-runtime-0.0.0-smoke.tgz /tmp/agent-vm-gateway-runtime-0.0.0-smoke.tgz',
-		);
-		expect(dockerfile).toContain(
-			'COPY agent-vm-managed-vm-0.0.0-smoke.tgz /tmp/agent-vm-managed-vm-0.0.0-smoke.tgz',
-		);
-		expect(dockerfile).toContain(
-			'COPY agent-vm-control-protocol-contracts-0.0.0-smoke.tgz /tmp/agent-vm-control-protocol-contracts-0.0.0-smoke.tgz',
-		);
-		expect(dockerfile).toContain(
-			'COPY agent-vm-controller-execution-contracts-0.0.0-smoke.tgz /tmp/agent-vm-controller-execution-contracts-0.0.0-smoke.tgz',
-		);
-		expect(dockerfile).toContain(
-			'COPY agent-vm-gateway-control-contracts-0.0.0-smoke.tgz /tmp/agent-vm-gateway-control-contracts-0.0.0-smoke.tgz',
-		);
-		expect(dockerfile).toContain(
-			'COPY agent-vm-mcp-portal-0.0.0-smoke.tgz /tmp/agent-vm-mcp-portal-0.0.0-smoke.tgz',
-		);
-		expect(dockerfile).toContain(
-			'COPY agent-vm-tool-portal-0.0.0-smoke.tgz /tmp/agent-vm-tool-portal-0.0.0-smoke.tgz',
-		);
-		expect(dockerfile).toContain(
-			'COPY agent-vm-openclaw-agent-vm-plugin-0.0.0-smoke.tgz /tmp/agent-vm-openclaw-agent-vm-plugin-0.0.0-smoke.tgz',
-		);
-		expect(dockerfile).not.toContain('agent-vm-openclaw-mcp-portal-plugin-0.0.0-smoke.tgz');
-		expect(dockerfile).toContain('pnpm install --prod --ignore-scripts');
-		expect(dockerfile).toContain('@agent-vm/config-contracts');
-		expect(dockerfile).toContain('@agent-vm/agent-portal-sdk');
-		expect(dockerfile).toContain('file:/tmp/agent-vm-config-contracts-0.0.0-smoke.tgz');
-		expect(dockerfile).toContain('@agent-vm/mcp-portal');
-		expect(dockerfile).toContain('WORKDIR /opt/openclaw-runtime-packages');
-		expect(dockerfile).toContain('"openclaw": "2026.7.1-2"');
-		expect(dockerfile).toContain("openclaw plugins install 'npm:@openclaw/codex' --pin");
-		expect(dockerfile).toContain('RUN pnpm install --prod --ignore-scripts');
-		expect(dockerfile).toContain('"@openai/codex@');
-		expect(dockerfile).not.toContain('RUN pnpm add -g "openclaw@');
-		expect(dockerfile).not.toMatch(/pnpm add -g[^\n]*@agent-vm\/openclaw-agent-vm-plugin@/u);
-		expect(dockerfile).not.toMatch(/pnpm add -g[^\n]*@agent-vm\/openclaw-mcp-portal-plugin@/u);
-		expect(dockerfile).not.toMatch(/pnpm add -g[^\n]*@agent-vm\/mcp-portal@/u);
-		expect(dockerfile).toContain('/usr/local/bin/openclaw');
-		expect(dockerfile).toContain('package_root="/opt/agent-vm/local-packages/node_modules"');
-		expect(dockerfile).toContain(
-			'ln -sfn "$package_root/@agent-vm" "$global_package_root/@agent-vm"',
-		);
-		expect(dockerfile).toContain('/home/openclaw/.openclaw/extensions/gondolin');
-		expect(dockerfile).not.toContain('/opt/agent-vm/e2e-openclaw-gondolin-extension');
-		expect(dockerfile).not.toContain('/home/openclaw/.openclaw/extensions/mcp-portal');
-		expect(dockerfile).not.toContain('portal-server.js');
-		expect(dockerfile).not.toContain('/work/repo/packages/mcp-portal');
-		expect(dockerfile).not.toMatch(/TOKEN|Authorization|\.npmrc|\.netrc|_authToken|Bearer/u);
-		await expect(
-			fs.stat(
-				path.join(
-					temporaryRoot,
-					'vm-images',
-					'gateways',
-					'openclaw-local-packages',
-					'agent-vm-openclaw-agent-vm-plugin-0.0.0-smoke.tgz',
-				),
-			),
-		).resolves.toMatchObject({ mtimeMs: normalizedDockerContextTimestampMs });
-		const toolVmDockerfilePath = systemConfig.imageProfiles.toolVms.tool?.dockerfile;
-		if (toolVmDockerfilePath === undefined) {
-			throw new Error('Expected local OpenClaw gateway helper to set Tool VM dockerfile path.');
-		}
-		const toolVmDockerfile = await fs.readFile(toolVmDockerfilePath, 'utf8');
-		expect(toolVmDockerfile).toContain(
-			'COPY agent-vm-agent-portal-sdk-0.0.0-smoke.tgz /tmp/agent-vm-agent-portal-sdk-0.0.0-smoke.tgz',
-		);
-		expect(toolVmDockerfile).toContain(
-			'COPY agent-vm-config-contracts-0.0.0-smoke.tgz /tmp/agent-vm-config-contracts-0.0.0-smoke.tgz',
-		);
-		expect(toolVmDockerfile).toContain(
-			'COPY agent-vm-secret-management-0.0.0-smoke.tgz /tmp/agent-vm-secret-management-0.0.0-smoke.tgz',
-		);
-		expect(toolVmDockerfile).toContain(
-			'COPY agent-vm-mcp-portal-0.0.0-smoke.tgz /tmp/agent-vm-mcp-portal-0.0.0-smoke.tgz',
-		);
-		expect(toolVmDockerfile).toContain('pnpm install --prod --ignore-scripts');
-		expect(toolVmDockerfile).toContain('@agent-vm/config-contracts');
-		expect(toolVmDockerfile).toContain('file:/tmp/agent-vm-config-contracts-0.0.0-smoke.tgz');
-		expect(toolVmDockerfile).toContain('@agent-vm/mcp-portal');
-		expect(toolVmDockerfile).toContain('file:/tmp/agent-vm-mcp-portal-0.0.0-smoke.tgz');
-		expect(toolVmDockerfile).toContain('/opt/agent-vm/local-packages');
-		expect(toolVmDockerfile).not.toContain('pnpm add -g');
-		expect(toolVmDockerfile).not.toMatch(/TOKEN|Authorization|\.npmrc|\.netrc|_authToken|Bearer/u);
-		await expect(
-			fs.stat(
-				path.join(
-					temporaryRoot,
-					'vm-images',
-					'tool-vms',
-					'tool-local-mcp-portal',
-					'agent-vm-mcp-portal-0.0.0-smoke.tgz',
-				),
-			),
-		).resolves.toMatchObject({ mtimeMs: normalizedDockerContextTimestampMs });
-	});
-
-	it('writes plugin-only OpenClaw smoke images without mutating Tool VM MCP Portal profiles', async () => {
-		const temporaryRoot = await createTemporaryRoot('agent-vm-e2e-harness-');
-		const repoRoot = path.join(temporaryRoot, 'repo');
-		const systemConfig = createMinimalOpenClawSystemConfig();
-		systemConfig.imageProfiles.gateways.openclaw = {
-			type: 'openclaw',
-			buildConfig: path.join(temporaryRoot, 'build-config.jsonc'),
-			source: { kind: 'managedBase', base: 'openclaw-gateway' },
-		};
-		const originalToolVmProfile = { ...systemConfig.imageProfiles.toolVms.tool };
-
-		await createFakeAgentPortalSdkPackage(repoRoot);
-		await createFakeConfigContractsPackage(repoRoot);
-		await createFakeSecretsPackage(repoRoot);
-		await createFakeGondolinVmAdapterPackage(repoRoot);
-		await createFakeGatewayLifecyclePackage(repoRoot);
-		await createFakeGatewayRuntimePackage(repoRoot);
-		await createFakeManagedVmPackage(repoRoot);
-		await createFakeControlProtocolContractsPackage(repoRoot);
-		await createFakeControllerExecutionContractsPackage(repoRoot);
-		await createFakeGatewayControlContractsPackage(repoRoot);
-		await createFakePortalDist(repoRoot);
-		await createFakeToolPortalPackage(repoRoot);
-		await createFakePackageDist(repoRoot, 'openclaw-agent-vm-plugin', 'gondolin');
-
-		await useLocalOpenClawPluginGatewayImage({
-			profileName: 'openclaw',
-			projectRoot: temporaryRoot,
-			repoRoot,
-			systemConfig,
-		});
-
-		const dockerfilePath = systemConfig.imageProfiles.gateways.openclaw.dockerfile;
-		if (dockerfilePath === undefined) {
-			throw new Error('Expected plugin-only helper to set dockerfile path.');
-		}
-		const dockerfile = await fs.readFile(dockerfilePath, 'utf8');
-		expect(dockerfile).toContain(
-			'COPY agent-vm-agent-portal-sdk-0.0.0-smoke.tgz /tmp/agent-vm-agent-portal-sdk-0.0.0-smoke.tgz',
-		);
-		expect(dockerfile).toContain(
-			'COPY agent-vm-config-contracts-0.0.0-smoke.tgz /tmp/agent-vm-config-contracts-0.0.0-smoke.tgz',
-		);
-		expect(dockerfile).toContain(
-			'COPY agent-vm-control-protocol-contracts-0.0.0-smoke.tgz /tmp/agent-vm-control-protocol-contracts-0.0.0-smoke.tgz',
-		);
-		expect(dockerfile).toContain(
-			'COPY agent-vm-gateway-lifecycle-0.0.0-smoke.tgz /tmp/agent-vm-gateway-lifecycle-0.0.0-smoke.tgz',
-		);
-		expect(dockerfile).toContain(
-			'COPY agent-vm-gateway-runtime-0.0.0-smoke.tgz /tmp/agent-vm-gateway-runtime-0.0.0-smoke.tgz',
-		);
-		expect(dockerfile).toContain(
-			'COPY agent-vm-openclaw-agent-vm-plugin-0.0.0-smoke.tgz /tmp/agent-vm-openclaw-agent-vm-plugin-0.0.0-smoke.tgz',
-		);
-		expect(dockerfile).toContain(
-			'COPY agent-vm-gateway-control-contracts-0.0.0-smoke.tgz /tmp/agent-vm-gateway-control-contracts-0.0.0-smoke.tgz',
-		);
-		expect(dockerfile).toContain(
-			'COPY agent-vm-mcp-portal-0.0.0-smoke.tgz /tmp/agent-vm-mcp-portal-0.0.0-smoke.tgz',
-		);
-		expect(dockerfile).toContain(
-			'COPY agent-vm-tool-portal-0.0.0-smoke.tgz /tmp/agent-vm-tool-portal-0.0.0-smoke.tgz',
-		);
-		expect(dockerfile).toContain('WORKDIR /opt/openclaw-runtime-packages');
-		expect(dockerfile).toContain('"openclaw": "2026.7.1-2"');
-		expect(dockerfile).toContain("openclaw plugins install 'npm:@openclaw/codex' --pin");
-		expect(dockerfile).toContain('RUN pnpm install --prod --ignore-scripts');
-		expect(dockerfile).toContain('"@openai/codex@');
-		expect(dockerfile).not.toContain('RUN pnpm add -g "openclaw@');
-		expect(dockerfile).not.toMatch(/pnpm add -g[^\n]*@agent-vm\/openclaw-agent-vm-plugin@/u);
-		expect(dockerfile).not.toMatch(/pnpm add -g[^\n]*@agent-vm\/openclaw-mcp-portal-plugin@/u);
-		expect(dockerfile).not.toMatch(/pnpm add -g[^\n]*@agent-vm\/mcp-portal@/u);
-		expect(dockerfile).toContain('/usr/local/bin/openclaw');
-		expect(dockerfile).toContain(
-			'ln -sfn "$package_root/@agent-vm" "$global_package_root/@agent-vm"',
-		);
-		expect(dockerfile).toContain('@agent-vm/control-protocol-contracts');
-		expect(dockerfile).toContain('file:/tmp/agent-vm-control-protocol-contracts-0.0.0-smoke.tgz');
-		expect(dockerfile).not.toContain('agent-vm-openclaw-mcp-portal-plugin-0.0.0-smoke.tgz');
-		expect(systemConfig.imageProfiles.toolVms.tool).toEqual(originalToolVmProfile);
-	});
-
-	it('writes the e2e Tool VM proof plugin entrypoint only when requested explicitly', async () => {
-		const temporaryRoot = await createTemporaryRoot('agent-vm-e2e-harness-');
-		const repoRoot = path.join(temporaryRoot, 'repo');
-		const systemConfig = createMinimalOpenClawSystemConfig();
-		systemConfig.imageProfiles.gateways.openclaw = {
-			type: 'openclaw',
-			buildConfig: path.join(temporaryRoot, 'build-config.jsonc'),
-			source: { kind: 'managedBase', base: 'openclaw-gateway' },
-		};
-
-		await createFakeAgentPortalSdkPackage(repoRoot);
-		await createFakeConfigContractsPackage(repoRoot);
-		await createFakeSecretsPackage(repoRoot);
-		await createFakeGondolinVmAdapterPackage(repoRoot);
-		await createFakeGatewayLifecyclePackage(repoRoot);
-		await createFakeGatewayRuntimePackage(repoRoot);
-		await createFakeManagedVmPackage(repoRoot);
-		await createFakeControlProtocolContractsPackage(repoRoot);
-		await createFakeControllerExecutionContractsPackage(repoRoot);
-		await createFakeGatewayControlContractsPackage(repoRoot);
-		await createFakePortalDist(repoRoot);
-		await createFakeToolPortalPackage(repoRoot);
-		await createFakePackageDist(repoRoot, 'openclaw-agent-vm-plugin', 'gondolin');
-
-		await useLocalOpenClawPluginGatewayImage({
-			enableToolVmWriteReadE2eRoute: true,
-			profileName: 'openclaw',
-			projectRoot: temporaryRoot,
-			repoRoot,
-			systemConfig,
-		});
-
-		const dockerfilePath = systemConfig.imageProfiles.gateways.openclaw.dockerfile;
-		if (dockerfilePath === undefined) {
-			throw new Error('Expected plugin-only helper to set dockerfile path.');
-		}
-		const dockerfile = await fs.readFile(dockerfilePath, 'utf8');
-		expect(dockerfile).toContain('/opt/agent-vm/e2e-openclaw-gondolin-extension');
-		expect(dockerfile).toContain('openclaw-agent-vm-plugin/dist/e2e.js');
-		expect(dockerfile).toContain(
-			'ln -sfn "$e2e_extension" /home/openclaw/.openclaw/extensions/gondolin',
-		);
-		expect(dockerfile).not.toMatch(/TOKEN|Authorization|\.npmrc|\.netrc|_authToken|Bearer/u);
-	});
-
 	it('writes local MCP Portal Tool VM smoke images only when requested explicitly', async () => {
 		const temporaryRoot = await createTemporaryRoot('agent-vm-e2e-harness-');
 		const repoRoot = path.join(temporaryRoot, 'repo');
-		const systemConfig = createMinimalOpenClawSystemConfig();
-		const originalGatewayProfile = { ...systemConfig.imageProfiles.gateways.openclaw };
+		const systemConfig = createMinimalHermesSystemConfig();
+		const originalGatewayProfile = { ...systemConfig.imageProfiles.gateways.hermes };
 
 		await createFakeAgentPortalSdkPackage(repoRoot);
 		await createFakeSecretsPackage(repoRoot);
@@ -882,7 +586,7 @@ describe('startE2eControllerRuntime', () => {
 			systemConfig,
 		});
 
-		expect(systemConfig.imageProfiles.gateways.openclaw).toEqual(originalGatewayProfile);
+		expect(systemConfig.imageProfiles.gateways.hermes).toEqual(originalGatewayProfile);
 		const toolVmDockerfilePath = systemConfig.imageProfiles.toolVms.tool?.dockerfile;
 		if (toolVmDockerfilePath === undefined) {
 			throw new Error('Expected explicit Tool VM helper to set dockerfile path.');
@@ -908,15 +612,13 @@ describe('startE2eControllerRuntime', () => {
 		expect(toolVmDockerfile).toContain('file:/tmp/agent-vm-config-contracts-0.0.0-smoke.tgz');
 		expect(toolVmDockerfile).toContain('@agent-vm/mcp-portal');
 		expect(toolVmDockerfile).toContain('file:/tmp/agent-vm-mcp-portal-0.0.0-smoke.tgz');
-		expect(toolVmDockerfile).not.toContain('agent-vm-openclaw-agent-vm-plugin-0.0.0-smoke.tgz');
-		expect(toolVmDockerfile).not.toContain('agent-vm-openclaw-mcp-portal-plugin-0.0.0-smoke.tgz');
 		expect(toolVmDockerfile).not.toContain('pnpm add -g');
 	});
 
 	it('fails local package image setup before packing when declared package files are missing', async () => {
 		const temporaryRoot = await createTemporaryRoot('agent-vm-e2e-harness-');
 		const repoRoot = path.join(temporaryRoot, 'repo');
-		const systemConfig = createMinimalOpenClawSystemConfig();
+		const systemConfig = createMinimalHermesSystemConfig();
 		const packageDir = path.join(repoRoot, 'packages', 'mcp-portal');
 
 		await createFakeAgentPortalSdkPackage(repoRoot);
@@ -944,42 +646,6 @@ describe('startE2eControllerRuntime', () => {
 				systemConfig,
 			}),
 		).rejects.toThrow(/declares package file "dist" but it does not exist/u);
-	});
-
-	it('removes MCP Portal plugin loading from OpenClaw smokes that do not exercise portal tools', async () => {
-		const temporaryRoot = await createTemporaryRoot('agent-vm-e2e-harness-');
-		const configPath = path.join(temporaryRoot, 'openclaw.json');
-		await fs.writeFile(
-			configPath,
-			`${JSON.stringify(
-				{
-					plugins: {
-						allow: ['gondolin', 'memory-core', 'mcp-portal'],
-						entries: {
-							gondolin: { enabled: true },
-							'mcp-portal': { enabled: true },
-						},
-						load: {
-							paths: [
-								'/home/openclaw/.openclaw/extensions/gondolin',
-								'/home/openclaw/.openclaw/extensions/mcp-portal',
-							],
-						},
-					},
-				},
-				null,
-				'\t',
-			)}\n`,
-			'utf8',
-		);
-
-		await disableOpenClawMcpPortalPlugin(configPath);
-
-		const rewrittenConfig = await fs.readFile(configPath, 'utf8');
-		expect(rewrittenConfig).toContain('/home/openclaw/.openclaw/extensions/gondolin');
-		expect(rewrittenConfig).toContain('"gondolin"');
-		expect(rewrittenConfig).not.toContain('/home/openclaw/.openclaw/extensions/mcp-portal');
-		expect(rewrittenConfig).not.toContain('"mcp-portal"');
 	});
 });
 
@@ -1018,7 +684,7 @@ describe('findReusableGatewayImageDirectory', () => {
 			'utf8',
 		);
 		const managedGatewayBoot = {
-			frameworkBootEntry: 'openclaw-framework-service',
+			frameworkBootEntry: 'hermes-framework-service',
 			kind: 'managed-gateway-exact-two-role',
 		} satisfies ManagedGatewayImageBootProjection;
 		const fingerprint = await computeFingerprintFromConfigPath(gatewayBuildConfigPath, {
@@ -1027,7 +693,7 @@ describe('findReusableGatewayImageDirectory', () => {
 		const reusableImageDirectory = path.join(
 			previousCacheDir,
 			'gateway-images',
-			'openclaw',
+			'hermes',
 			fingerprint,
 		);
 		await fs.mkdir(reusableImageDirectory, { recursive: true });
@@ -1042,7 +708,7 @@ describe('findReusableGatewayImageDirectory', () => {
 				activeCacheDir,
 				currentProjectRoot,
 				gatewayBuildConfigPath,
-				imageProfileName: 'openclaw',
+				imageProfileName: 'hermes',
 				managedGatewayBoot,
 			});
 		} finally {
@@ -1053,12 +719,7 @@ describe('findReusableGatewayImageDirectory', () => {
 			}
 		}
 
-		const activeImageDirectory = path.join(
-			activeCacheDir,
-			'gateway-images',
-			'openclaw',
-			fingerprint,
-		);
+		const activeImageDirectory = path.join(activeCacheDir, 'gateway-images', 'hermes', fingerprint);
 		await expect(
 			fs.readFile(path.join(activeImageDirectory, 'manifest.json'), 'utf8'),
 		).resolves.toBe('manifest.json\n');
@@ -1076,8 +737,8 @@ describe('prepareGatewayE2eProjectImages', () => {
 			const project = await scaffoldHermesE2eProject({
 				agents: ['main'],
 				architecture: 'aarch64',
-				prefix: 'openclaw-local-tool-vm-packages-',
-				zoneId: 'openclaw-local-tool-vm-packages',
+				prefix: 'hermes-local-tool-vm-packages-',
+				zoneId: 'hermes-local-tool-vm-packages',
 			});
 			temporaryRoots.push(project.tempRoot);
 			const managedToolVmProfile = project.systemConfig.imageProfiles.toolVms.default;
@@ -1114,8 +775,6 @@ describe('prepareGatewayE2eProjectImages', () => {
 						extraAptPackages: ['ripgrep'],
 						packageOverrides: {
 							npm: ['tsx@4.20.3'],
-							openclaw: [],
-							pnpm: {},
 						},
 						copy: [
 							{
@@ -1208,8 +867,6 @@ describe('prepareGatewayE2eProjectImages', () => {
 			expect(derivedOverlay.extraAptPackages).toEqual(['ripgrep']);
 			expect(derivedOverlay.packageOverrides).toEqual({
 				npm: ['tsx@4.20.3'],
-				openclaw: [],
-				pnpm: {},
 			});
 			expect(derivedOverlay.copy).toContainEqual({
 				from: 'managed-overlay/marker.txt',
@@ -1622,39 +1279,39 @@ describe('prepareGatewayE2eProjectImages', () => {
 			prefix: 'worker-loop-e2e-',
 			zoneId: 'worker-e2e',
 		});
-		const openClawProject = await scaffoldHermesE2eProject({
+		const hermesProject = await scaffoldHermesE2eProject({
 			agents: ['main'],
 			architecture: 'aarch64',
-			prefix: 'openclaw-control-link-e2e-',
-			zoneId: 'openclaw-e2e',
+			prefix: 'agent-vm-gateway-e2e-project-',
+			zoneId: 'hermes-e2e',
 		});
-		temporaryRoots.push(workerProject.tempRoot, openClawProject.tempRoot);
-		for (const project of [workerProject, openClawProject]) {
+		temporaryRoots.push(workerProject.tempRoot, hermesProject.tempRoot);
+		for (const project of [workerProject, hermesProject]) {
 			Object.assign(project.systemConfig, { cacheDir: smokeCacheRoot });
 			project.systemConfig.imageProfiles.toolVms = {};
 		}
 		const workerProfile = workerProject.systemConfig.imageProfiles.gateways.worker;
-		const openClawProfile = openClawProject.systemConfig.imageProfiles.gateways.hermes;
+		const hermesProfile = hermesProject.systemConfig.imageProfiles.gateways.hermes;
 		const workerZone = workerProject.systemConfig.zones[0];
-		const openClawZone = openClawProject.systemConfig.zones[0];
+		const hermesZone = hermesProject.systemConfig.zones[0];
 		if (
 			workerProfile === undefined ||
-			openClawProfile === undefined ||
+			hermesProfile === undefined ||
 			workerZone === undefined ||
-			openClawZone === undefined
+			hermesZone === undefined
 		) {
 			throw new Error('Expected Worker and Hermes e2e fixtures.');
 		}
 		workerProfile.buildConfig = sharedBuildConfigPath;
 		workerProfile.dockerfile = sharedDockerfilePath;
 		delete workerProfile.source;
-		openClawProfile.buildConfig = sharedBuildConfigPath;
-		openClawProfile.dockerfile = sharedDockerfilePath;
-		delete openClawProfile.source;
+		hermesProfile.buildConfig = sharedBuildConfigPath;
+		hermesProfile.dockerfile = sharedDockerfilePath;
+		delete hermesProfile.source;
 		workerProject.systemConfig.imageProfiles.gateways = { shared: workerProfile };
-		openClawProject.systemConfig.imageProfiles.gateways = { shared: openClawProfile };
+		hermesProject.systemConfig.imageProfiles.gateways = { shared: hermesProfile };
 		workerZone.gateway.imageProfile = 'shared';
-		openClawZone.gateway.imageProfile = 'shared';
+		hermesZone.gateway.imageProfile = 'shared';
 		const builtGatewayTypes: string[] = [];
 		const runBuild = async ({
 			systemConfig,
@@ -1694,7 +1351,7 @@ describe('prepareGatewayE2eProjectImages', () => {
 		};
 
 		await prepareGatewayE2eProjectImages({ project: workerProject, runBuild });
-		await prepareGatewayE2eProjectImages({ project: openClawProject, runBuild });
+		await prepareGatewayE2eProjectImages({ project: hermesProject, runBuild });
 
 		expect(builtGatewayTypes).toEqual(['worker', 'hermes']);
 	});
@@ -1946,7 +1603,7 @@ function createManagedGatewayStartResultStub(
 	};
 }
 
-function createMinimalOpenClawSystemConfig(projectRoot = '/tmp'): LoadedSystemConfig {
+function createMinimalHermesSystemConfig(projectRoot = '/tmp'): LoadedSystemConfig {
 	return {
 		cacheDir: path.join(projectRoot, 'cache'),
 		controllerRuntimeDir: path.join(projectRoot, 'controller-runtime'),
@@ -1961,8 +1618,8 @@ function createMinimalOpenClawSystemConfig(projectRoot = '/tmp'): LoadedSystemCo
 		},
 		imageProfiles: {
 			gateways: {
-				openclaw: {
-					type: 'openclaw',
+				hermes: {
+					type: 'hermes',
 					buildConfig: '/tmp/build-config.jsonc',
 				},
 			},
@@ -1991,15 +1648,13 @@ function createMinimalOpenClawSystemConfig(projectRoot = '/tmp'): LoadedSystemCo
 				defaultToolVmProfile: 'standard',
 				egressHosts: [],
 				gateway: {
-					type: 'openclaw',
-					controlAuth: {
-						mode: 'token',
-						secret: 'OPENCLAW_GATEWAY_TOKEN',
-					},
+					type: 'hermes',
+					profileSecretProjectionsByAgent: { smoke: {} },
+					profilesByAgent: { smoke: 'smoke' },
 					backupDir: path.join(projectRoot, 'backup'),
-					config: path.join(projectRoot, 'config', 'openclaw.json'),
+					config: path.join(projectRoot, 'config', 'hermes.yaml'),
 					cpus: 1,
-					imageProfile: 'openclaw',
+					imageProfile: 'hermes',
 					memory: '1G',
 					port: 18789,
 					stateDir: path.join(projectRoot, 'smoke', 'state'),
@@ -2007,51 +1662,11 @@ function createMinimalOpenClawSystemConfig(projectRoot = '/tmp'): LoadedSystemCo
 					zoneRuntimeDir: path.join(projectRoot, 'smoke', 'runtime'),
 				},
 				id: 'smoke',
-				secrets: {
-					OPENCLAW_GATEWAY_TOKEN: {
-						audience: 'gateway',
-						envVar: 'OPENCLAW_GATEWAY_TOKEN',
-						injection: 'env',
-						source: 'environment',
-					},
-				},
+				secrets: {},
 			},
 		],
 	};
 }
-
-async function createFakePackageDist(
-	repoRoot: string,
-	packageName: 'openclaw-agent-vm-plugin',
-	pluginId: string,
-): Promise<void> {
-	const packageDir = path.join(repoRoot, 'packages', packageName);
-	const distDir = path.join(packageDir, 'dist');
-	await fs.mkdir(packageDir, { recursive: true });
-	await fs.writeFile(
-		path.join(packageDir, 'package.json'),
-		`${JSON.stringify(
-			{
-				name: `@agent-vm/${packageName}`,
-				version: '0.0.0-smoke',
-				files: ['dist'],
-				type: 'module',
-			},
-			null,
-			'\t',
-		)}\n`,
-		'utf8',
-	);
-	await fs.mkdir(distDir, { recursive: true });
-	await fs.writeFile(
-		path.join(distDir, 'openclaw.plugin.json'),
-		`${JSON.stringify({ id: pluginId, name: pluginId })}\n`,
-		'utf8',
-	);
-	await fs.writeFile(path.join(distDir, 'index.js'), 'export default {};\n', 'utf8');
-	await fs.writeFile(path.join(distDir, 'e2e.js'), 'export default {};\n', 'utf8');
-}
-
 async function createFakeSimplePackage(
 	repoRoot: string,
 	packageName: string,
@@ -2151,78 +1766,4 @@ async function createFakeSecretsPackage(repoRoot: string): Promise<void> {
 		'utf8',
 	);
 	await fs.writeFile(path.join(packageDir, 'dist', 'index.js'), 'export {};\n', 'utf8');
-}
-
-async function createFakeGondolinVmAdapterPackage(repoRoot: string): Promise<void> {
-	const packageDir = path.join(repoRoot, 'packages', 'gondolin-vm-adapter');
-	await fs.mkdir(path.join(packageDir, 'dist'), { recursive: true });
-	await fs.writeFile(
-		path.join(packageDir, 'package.json'),
-		`${JSON.stringify(
-			{
-				dependencies: { '@agent-vm/secret-management': '0.0.0-smoke' },
-				name: '@agent-vm/gondolin-vm-adapter',
-				version: '0.0.0-smoke',
-				files: ['dist'],
-			},
-			null,
-			'\t',
-		)}\n`,
-		'utf8',
-	);
-	await fs.writeFile(path.join(packageDir, 'dist', 'index.js'), 'export {};\n', 'utf8');
-}
-
-async function createFakeGatewayLifecyclePackage(repoRoot: string): Promise<void> {
-	const packageDir = path.join(repoRoot, 'packages', 'gateway-lifecycle');
-	await fs.mkdir(path.join(packageDir, 'dist'), { recursive: true });
-	await fs.writeFile(
-		path.join(packageDir, 'package.json'),
-		`${JSON.stringify(
-			{
-				dependencies: {
-					'@agent-vm/managed-vm': '0.0.0-smoke',
-					'@agent-vm/secret-management': '0.0.0-smoke',
-				},
-				name: '@agent-vm/gateway-lifecycle',
-				version: '0.0.0-smoke',
-				files: ['dist'],
-			},
-			null,
-			'\t',
-		)}\n`,
-		'utf8',
-	);
-	await fs.writeFile(path.join(packageDir, 'dist', 'index.js'), 'export {};\n', 'utf8');
-}
-
-async function createFakeManagedVmPackage(repoRoot: string): Promise<void> {
-	await createFakeSimplePackage(repoRoot, 'managed-vm');
-}
-
-async function createFakeGatewayRuntimePackage(repoRoot: string): Promise<void> {
-	await createFakeSimplePackage(repoRoot, 'gateway-runtime');
-}
-
-async function createFakeControlProtocolContractsPackage(repoRoot: string): Promise<void> {
-	await createFakeSimplePackage(repoRoot, 'control-protocol-contracts');
-}
-
-async function createFakeControllerExecutionContractsPackage(repoRoot: string): Promise<void> {
-	await createFakeSimplePackage(repoRoot, 'controller-execution-contracts');
-}
-
-async function createFakeGatewayControlContractsPackage(repoRoot: string): Promise<void> {
-	await createFakeSimplePackage(repoRoot, 'gateway-control-contracts', {
-		'@agent-vm/control-protocol-contracts': '0.0.0-smoke',
-	});
-}
-
-async function createFakeToolPortalPackage(repoRoot: string): Promise<void> {
-	await createFakeSimplePackage(repoRoot, 'tool-portal', {
-		'@agent-vm/agent-portal-sdk': '0.0.0-smoke',
-		'@agent-vm/config-contracts': '0.0.0-smoke',
-		'@agent-vm/controller-execution-contracts': '0.0.0-smoke',
-		'@agent-vm/mcp-portal': '0.0.0-smoke',
-	});
 }

@@ -46,58 +46,15 @@ export interface GatewayAuthConfig {
 
 export interface GatewayInteractiveSshSession {
 	readonly remoteShellCommand: string;
-	readonly requireSecretEnvironmentEnabled: boolean;
-	readonly secretEnvironment: 'default' | 'gateway-token' | 'all-secrets';
 }
 
 export interface GatewayInteractiveSshConfig {
-	readonly buildSession: (options: {
-		readonly requestAllSecrets: boolean;
-	}) => GatewayInteractiveSshSession;
-}
-
-interface GatewayAuthProfilesRef {
-	readonly source: '1password' | 'config' | 'environment';
-}
-
-interface OnePasswordGatewayAuthProfilesRef extends GatewayAuthProfilesRef {
-	readonly source: '1password';
-	readonly ref: string;
-}
-
-interface EnvironmentGatewayAuthProfilesRef extends GatewayAuthProfilesRef {
-	readonly source: 'environment';
-	readonly envVar: string;
-}
-
-interface ConfigGatewayAuthProfilesRef extends GatewayAuthProfilesRef {
-	readonly source: 'config';
-	readonly value: string;
-}
-
-export type GatewaySshSecretEnvMode = 'always' | 'explicit' | 'never';
-
-export interface GatewaySshConfig {
-	readonly secretEnv: GatewaySshSecretEnvMode;
+	readonly buildSession: () => GatewayInteractiveSshSession;
 }
 
 export interface GatewayIngressConfig {
 	readonly upstreamHeaderTimeoutMs?: number;
 	readonly upstreamResponseTimeoutMs?: number;
-}
-
-export interface OpenClawGatewayControlAuthConfig {
-	readonly mode: 'token';
-	readonly secret: string;
-}
-
-interface OpenClawAuthLoginProviderConfig {
-	readonly profileIds: readonly string[];
-}
-
-interface OpenClawAuthLoginConfig {
-	readonly defaultAgent?: string;
-	readonly providers: Readonly<Record<string, OpenClawAuthLoginProviderConfig>>;
 }
 
 interface GatewayZoneBaseGatewayConfig {
@@ -109,28 +66,6 @@ interface GatewayZoneBaseGatewayConfig {
 	readonly config: string;
 	readonly stateDir: string;
 	readonly runtimeRootfsSize?: string;
-	readonly ssh: GatewaySshConfig;
-}
-
-interface OpenClawGatewayZoneGatewayConfig extends GatewayZoneBaseGatewayConfig {
-	readonly type: 'openclaw';
-	readonly controlAuth: OpenClawGatewayControlAuthConfig;
-	readonly zoneFilesDir: string;
-	readonly authProfilesRef?:
-		| ConfigGatewayAuthProfilesRef
-		| OnePasswordGatewayAuthProfilesRef
-		| EnvironmentGatewayAuthProfilesRef
-		| undefined;
-	readonly authProfilesByAgent?: Readonly<
-		Record<
-			string,
-			| ConfigGatewayAuthProfilesRef
-			| OnePasswordGatewayAuthProfilesRef
-			| EnvironmentGatewayAuthProfilesRef
-		>
-	>;
-	readonly authLogin?: OpenClawAuthLoginConfig;
-	readonly rawEnvSecrets?: readonly string[];
 }
 
 interface HermesGatewayZoneGatewayConfig extends GatewayZoneBaseGatewayConfig {
@@ -146,10 +81,7 @@ interface WorkerGatewayZoneGatewayConfig extends GatewayZoneBaseGatewayConfig {
 	readonly type: 'worker';
 }
 
-type GatewayZoneGatewayConfig =
-	| OpenClawGatewayZoneGatewayConfig
-	| HermesGatewayZoneGatewayConfig
-	| WorkerGatewayZoneGatewayConfig;
+type GatewayZoneGatewayConfig = HermesGatewayZoneGatewayConfig | WorkerGatewayZoneGatewayConfig;
 
 interface OnePasswordSecretSourceConfig {
 	readonly source: '1password';
@@ -187,7 +119,6 @@ export type GatewaySecretConfig = EnvInjectedGatewaySecretConfig | HttpMediatedG
 export const gatewayToolPortalTelemetryServiceName = 'agent-vm-tool-portal' as const;
 export const gatewayFrameworkTelemetryServiceNames = Object.freeze({
 	hermes: 'agent-vm-hermes',
-	openclaw: 'agent-vm-openclaw',
 });
 
 export const gatewayTelemetrySourcePolicy = Object.freeze({
@@ -253,9 +184,6 @@ export interface GatewayZoneObservabilityConfig {
 		readonly targetHttpPort: number;
 	};
 	readonly framework: GatewayFrameworkTelemetryProducerConfig;
-	readonly openclaw?: {
-		readonly diagnosticsFlags: readonly string[];
-	};
 	readonly toolPortal: GatewayToolPortalTelemetryProducerConfig;
 }
 
@@ -358,17 +286,11 @@ interface ManagedFrameworkServiceBootInputsBase {
 	readonly environment: Readonly<Record<string, string>>;
 }
 
-interface ManagedFrameworkServiceConfigurationOnlyBootInputs extends ManagedFrameworkServiceBootInputsBase {
-	readonly kind: 'configuration-only';
-}
-
 interface ManagedHermesFrameworkServiceBootInputs extends ManagedFrameworkServiceBootInputsBase {
 	readonly kind: 'hermes-managed-scope';
 }
 
-export type ManagedFrameworkServiceBootInputs =
-	| ManagedFrameworkServiceConfigurationOnlyBootInputs
-	| ManagedHermesFrameworkServiceBootInputs;
+export type ManagedFrameworkServiceBootInputs = ManagedHermesFrameworkServiceBootInputs;
 
 export interface ManagedGatewayLifecycle extends GatewayLifecycleBase {
 	readonly executionModel: 'managed-gateway';

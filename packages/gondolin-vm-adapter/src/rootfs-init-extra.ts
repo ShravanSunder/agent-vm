@@ -35,7 +35,7 @@ interface ResolveRootfsInitExtraOptions {
  * identities remain adapter-owned image behavior.
  */
 export interface GondolinManagedGatewayBootProjection {
-	readonly frameworkBootEntry: 'hermes-framework-service' | 'openclaw-framework-service';
+	readonly frameworkBootEntry: 'hermes-framework-service';
 	readonly kind: 'managed-gateway-exact-two-role';
 }
 
@@ -54,22 +54,15 @@ const managedGatewayRuntimeRoot = '/run/agent-vm/gateway-runtime';
 const managedGatewayLogRoot = '/var/log/agent-vm';
 
 function frameworkBootCommand(
-	frameworkBootEntry: GondolinManagedGatewayBootProjection['frameworkBootEntry'],
+	_frameworkBootEntry: GondolinManagedGatewayBootProjection['frameworkBootEntry'],
 ): string {
-	switch (frameworkBootEntry) {
-		case 'hermes-framework-service':
-			return '/usr/local/bin/agent-vm-hermes-gateway';
-		case 'openclaw-framework-service':
-			return '/usr/local/bin/openclaw gateway --port 18789';
-	}
+	return '/usr/local/bin/agent-vm-hermes-gateway';
 }
 
 function frameworkLogFileName(
-	frameworkBootEntry: GondolinManagedGatewayBootProjection['frameworkBootEntry'],
+	_frameworkBootEntry: GondolinManagedGatewayBootProjection['frameworkBootEntry'],
 ): string {
-	return frameworkBootEntry === 'openclaw-framework-service'
-		? 'openclaw-service.log'
-		: 'hermes-service.log';
+	return 'hermes-service.log';
 }
 
 export function renderManagedGatewayRootfsInitScript(
@@ -78,8 +71,7 @@ export function renderManagedGatewayRootfsInitScript(
 	const selectedFrameworkBootCommand = frameworkBootCommand(projection.frameworkBootEntry);
 	const selectedFrameworkLogPath = `${managedGatewayLogRoot}/${frameworkLogFileName(projection.frameworkBootEntry)}`;
 	const frameworkBootInputFileNames = 'framework-service.json';
-	const serviceEnvironmentIsolationPrefix =
-		projection.frameworkBootEntry === 'hermes-framework-service' ? '/usr/bin/env -i ' : '';
+	const serviceEnvironmentIsolationPrefix = '/usr/bin/env -i ';
 	return `# Fixed managed Gateway sibling boot entries.
 managed_gateway_environment_input_root=${managedGatewayEnvironmentInputRoot}
 managed_gateway_structured_input_root=${managedGatewayStructuredInputRoot}

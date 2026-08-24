@@ -17,14 +17,14 @@ import {
 import type { GatewayZoneRuntimeHandle } from './zone-runtime-types.js';
 
 const testManagedGatewayBootContract = createManagedGatewayBootContract({
-	bootEntry: 'openclaw-gateway',
+	bootEntry: 'hermes-gateway',
 	configurationInputPath: '/run/agent-vm/managed-gateway/framework-service.json',
 	environmentInputPath: '/run/agent-vm/managed-gateway/framework.environment.sh',
-	framework: 'openclaw',
+	framework: 'hermes',
 	ingress: { guestPort: 18_789, kind: 'framework-http' },
 	logIdentity: {
 		guestPath: '/var/log/agent-vm/openclaw-service.log',
-		serviceName: 'agent-vm-openclaw-test',
+		serviceName: 'agent-vm-hermes-test',
 	},
 	readiness: { guestPort: 18_789, kind: 'framework-http', path: '/readyz' },
 	role: 'framework-service',
@@ -36,13 +36,14 @@ const testOpenClawZone = {
 	egressHosts: [],
 	gateway: {
 		config: '/config/openclaw.json',
-		controlAuth: { mode: 'token', secret: 'OPENCLAW_GATEWAY_TOKEN' },
 		cpus: 2,
 		imageProfile: 'openclaw',
 		memory: '2G',
 		port: 18_791,
 		stateDir: '/state/zone-test',
-		type: 'openclaw',
+		type: 'hermes',
+		profileSecretProjectionsByAgent: { main: {} },
+		profilesByAgent: { main: 'main' },
 		zoneFilesDir: '/zone-files/zone-test',
 		zoneRuntimeDir: '/runtime/zone-test',
 	},
@@ -300,10 +301,10 @@ function createExpectedAdmissionCohort(): GatewayExpectedAdmissionCohort {
 		},
 		frameworkIdentity: {
 			attachmentGeneration: 1,
-			clientKind: 'openclaw-managed-plugin',
+			clientKind: 'hermes-managed-plugin',
 			configuredAgentIds: ['main'],
 			frameworkEpoch: 'framework-epoch-test',
-			frameworkKind: 'openclaw',
+			frameworkKind: 'hermes',
 			projectionCohortDigest:
 				'projection-cohort:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 		},

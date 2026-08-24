@@ -7,7 +7,7 @@ import {
 } from '@agent-vm/gondolin-vm-adapter';
 
 export interface ManagedGatewayImageBootProjection {
-	readonly frameworkBootEntry: 'hermes-framework-service' | 'openclaw-framework-service';
+	readonly frameworkBootEntry: 'hermes-framework-service';
 	readonly kind: 'managed-gateway-exact-two-role';
 }
 

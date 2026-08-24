@@ -63,7 +63,7 @@ const baseIntent = {
 		correlation: { runId: 'run-a', sessionId: 'session-a', toolCallId: 'tool-call-a' },
 		principal: {
 			agentId: 'agent-a',
-			frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
+			frameworkIdentity: { kind: 'hermes', profileName: 'agent-a' },
 			profileAssignmentRevision: 'assignment-1',
 			toolPortalProfileId: 'profile-a',
 		},

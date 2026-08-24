@@ -59,11 +59,11 @@ jobs:
         uses: ./.github/actions/resolve-e2e-image-cache-key
 
       - parallel:
-          - name: Find prepared OpenClaw image cache
-            id: openclaw-image
+          - name: Find prepared Hermes image cache
+            id: hermes-image
             uses: ./.github/actions/restore-e2e-image-cache
             with:
-              family: openclaw
+              family: hermes
               input-hash: ${{ steps.image-key.outputs.input-hash }}
               lookup-only: 'true'
 
@@ -77,28 +77,28 @@ jobs:
 
       - parallel:
           - name: Set up Node workspace for image preparation
-            if: steps.openclaw-image.outputs.cache-hit != 'true' || steps.worker-image.outputs.cache-hit != 'true'
+            if: steps.hermes-image.outputs.cache-hit != 'true' || steps.worker-image.outputs.cache-hit != 'true'
             uses: ./.github/actions/setup-agent-vm
 
           - name: Set up system packages for image preparation
-            if: steps.openclaw-image.outputs.cache-hit != 'true' || steps.worker-image.outputs.cache-hit != 'true'
+            if: steps.hermes-image.outputs.cache-hit != 'true' || steps.worker-image.outputs.cache-hit != 'true'
             uses: ./.github/actions/setup-system-packages
 
       - name: Prepare current E2E images
-        if: steps.openclaw-image.outputs.cache-hit != 'true' || steps.worker-image.outputs.cache-hit != 'true'
+        if: steps.hermes-image.outputs.cache-hit != 'true' || steps.worker-image.outputs.cache-hit != 'true'
         env:
           AGENT_VM_E2E_CACHE_DIR: /tmp/agent-vm-e2e-cache
         run: pnpm exec tsx scripts/prepare-e2e-image-cache.ts
 
       - parallel:
-          - name: Save prepared OpenClaw image cache
-            if: steps.openclaw-image.outputs.cache-hit != 'true'
+          - name: Save prepared Hermes image cache
+            if: steps.hermes-image.outputs.cache-hit != 'true'
             uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
             with:
               path: |
-                /tmp/agent-vm-e2e-cache/openclaw
+                /tmp/agent-vm-e2e-cache/hermes
                 /tmp/agent-vm-e2e-cache/local-package-tarballs
-              key: ${{ steps.openclaw-image.outputs.primary-key }}
+              key: ${{ steps.hermes-image.outputs.primary-key }}
 
           - name: Save prepared Worker image cache
             if: steps.worker-image.outputs.cache-hit != 'true'
@@ -161,7 +161,9 @@ jobs:
             shard: 5/6
           - lane: e2e-vm-shard-6
             shard: 6/6
-          - lane: e2e-vm-managed-gateway
+          - lane: hermes
+            shard: ''
+          - lane: worker
             shard: ''
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -173,11 +175,11 @@ jobs:
         uses: ./.github/actions/resolve-e2e-image-cache-key
 
       - parallel:
-          - name: Restore prepared OpenClaw image cache
-            id: openclaw-image
+          - name: Restore prepared Hermes image cache
+            id: hermes-image
             uses: ./.github/actions/restore-e2e-image-cache
             with:
-              family: openclaw
+              family: hermes
               input-hash: ${{ steps.image-key.outputs.input-hash }}
 
           - name: Set up Agent VM workspace
@@ -195,11 +197,11 @@ jobs:
 
       - name: Require prepared image caches
         env:
-          OPENCLAW_CACHE_HIT: ${{ steps.openclaw-image.outputs.cache-hit }}
+          HERMES_CACHE_HIT: ${{ steps.hermes-image.outputs.cache-hit }}
           WORKER_CACHE_HIT: ${{ steps.worker-image.outputs.cache-hit }}
         run: |
           set -euo pipefail
-          test "${OPENCLAW_CACHE_HIT}" = true
+          test "${HERMES_CACHE_HIT}" = true
           test "${WORKER_CACHE_HIT}" = true
 
       - name: Run VM shard
@@ -207,23 +209,17 @@ jobs:
         run: pnpm run test:e2e:vm --shard=${{ matrix.shard }}
 
       - parallel:
-          - name: Run managed Gateway startup tests
-            if: matrix.lane == 'e2e-vm-managed-gateway'
+          - name: Run Hermes E2E tests
+            if: matrix.lane == 'hermes'
             env:
               AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE: '1'
-            run: pnpm run test:e2e:vm-managed-gateway --tags-filter=managed-gateway-startup
+            run: pnpm run test:e2e:hermes
 
-          - name: Run managed Gateway degraded-input tests
-            if: matrix.lane == 'e2e-vm-managed-gateway'
+          - name: Run Worker E2E tests
+            if: matrix.lane == 'worker'
             env:
               AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE: '1'
-            run: pnpm run test:e2e:vm-managed-gateway --tags-filter=managed-gateway-degraded-input
-
-          - name: Run managed Gateway lifecycle tests
-            if: matrix.lane == 'e2e-vm-managed-gateway'
-            env:
-              AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE: '1'
-            run: pnpm run test:e2e:vm-managed-gateway --tags-filter=managed-gateway-lifecycle
+            run: pnpm run test:e2e:worker
 
   check:
     name: check

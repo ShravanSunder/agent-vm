@@ -70,7 +70,7 @@ def test_generated_managed_agent_projection_adapter_rejects_noncanonical_namespa
     contract_adapter: TypeAdapter[object] = PORTABLE_CONTRACT_ADAPTERS["gateway.managed-agent-projection"]
     projection = {
         "agentId": "agent-a",
-        "frameworkIdentity": {"agentId": "agent-a", "kind": "openclaw"},
+        "frameworkIdentity": {"kind": "hermes", "profileName": "agent-a"},
         "profileAssignmentRevision": "profile-assignment-a",
         "toolPortalNamespaceNames": namespace_names,
         "toolPortalProfileId": "engineering",

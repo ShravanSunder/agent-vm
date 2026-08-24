@@ -48,7 +48,7 @@ describe('managed agent root destruction boundary', () => {
 				gateways: {
 					openclaw: {
 						buildConfig: './vm-images/gateways/openclaw/build-config.json',
-						type: 'openclaw',
+						type: 'hermes',
 					},
 				},
 				toolVms: {
@@ -65,16 +65,14 @@ describe('managed agent root destruction boundary', () => {
 					egressHosts: [],
 					gateway: {
 						config: './config/openclaw.json',
-						controlAuth: {
-							mode: 'token',
-							secret: 'OPENCLAW_GATEWAY_TOKEN',
-						},
 						cpus: 1,
 						imageProfile: 'openclaw',
 						memory: '1G',
 						port: 18791,
 						stateDir,
-						type: 'openclaw',
+						type: 'hermes',
+						profileSecretProjectionsByAgent: { main: {} },
+						profilesByAgent: { main: 'main' },
 						zoneFilesDir,
 						zoneRuntimeDir,
 					},

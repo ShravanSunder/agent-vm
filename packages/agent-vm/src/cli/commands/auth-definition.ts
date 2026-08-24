@@ -1,21 +1,11 @@
-import { argument, command, constant, object, option, or } from '@optique/core';
+import { argument, command, constant, object } from '@optique/core';
 import { zod } from '@optique/zod';
 import { z } from 'zod';
 
-import { agentIdSchema } from '../../config/system-config-identifier-schemas.js';
-import { projectZodRepeatedOption, projectZodScalarPresence } from '../agent-vm-parser-support.js';
-import {
-	cliDescription,
-	createConfigOption,
-	createPresenceFlag,
-	createZoneOption,
-} from './command-definition-support.js';
+import { projectZodScalarPresence } from '../agent-vm-parser-support.js';
+import { cliDescription, createConfigOption } from './command-definition-support.js';
 
 const tokenReferenceSchema = z.string().min(1).optional();
-const optionalAgentIdSchema = agentIdSchema.optional();
-const providerSchema = z.string().min(1);
-const profileIdSchema = z.string().min(1);
-export const authenticationProfileIdsSchema = z.array(profileIdSchema).default([]);
 
 const onePasswordParser = command(
 	'1password',
@@ -43,98 +33,6 @@ const onePasswordParser = command(
 	},
 );
 
-const openClawLoginParser = command(
-	'login',
-	object({
-		command: constant('auth.openclaw.login'),
-		options: object({
-			agent: projectZodScalarPresence({
-				parser: option(
-					'--agent',
-					zod(optionalAgentIdSchema, { metavar: 'AGENT_ID', placeholder: undefined }),
-					{
-						description: cliDescription(
-							'OpenClaw agent id whose isolated auth profile store should receive auth.',
-						),
-					},
-				),
-				schema: optionalAgentIdSchema,
-			}),
-			allConfiguredProfiles: createPresenceFlag(
-				'--all-configured-profiles',
-				'Login every profile id from gateway.authLogin.providers.<provider>.profileIds.',
-			),
-			config: createConfigOption(),
-			deviceCode: createPresenceFlag(
-				'--device-code',
-				'Use the provider device-code flow instead of browser callback auth.',
-			),
-			dryRun: createPresenceFlag(
-				'--dry-run',
-				'Print the resolved login plan without opening SSH or changing auth.',
-			),
-			profileIds: projectZodRepeatedOption({
-				parser: option(
-					'--profile-id',
-					zod(authenticationProfileIdsSchema.unwrap().element, {
-						metavar: 'PROFILE_ID',
-						placeholder: 'profile',
-					}),
-					{
-						description: cliDescription(
-							'Profile id to create or refresh. Can be passed more than once.',
-						),
-					},
-				),
-				schema: authenticationProfileIdsSchema,
-			}),
-			provider: argument(zod(providerSchema, { metavar: 'PROVIDER', placeholder: 'openai' }), {
-				description: cliDescription('Provider name (for example: openai).'),
-			}),
-			zone: createZoneOption(),
-		}),
-	}),
-	{ description: cliDescription('Create or refresh OpenClaw auth profiles for one provider') },
-);
-
-const codexHarnessParser = command(
-	'codex-harness',
-	object({
-		command: constant('auth.codex-harness'),
-		options: object({
-			agent: projectZodScalarPresence({
-				parser: option(
-					'--agent',
-					zod(optionalAgentIdSchema, { metavar: 'AGENT_ID', placeholder: undefined }),
-					{
-						description: cliDescription(
-							'OpenClaw agent id whose isolated CODEX_HOME should receive auth.',
-						),
-					},
-				),
-				schema: optionalAgentIdSchema,
-			}),
-			allAgents: createPresenceFlag(
-				'--all-agents',
-				'Run native Codex CLI device auth once for every configured zone agent.',
-			),
-			config: createConfigOption(),
-			zone: createZoneOption(),
-		}),
-	}),
-	{
-		description: cliDescription('Run native Codex CLI device auth for one or all OpenClaw agents'),
-	},
-);
-
-export const authCommandParser = command(
-	'auth',
-	or(
-		onePasswordParser,
-		command('openclaw', openClawLoginParser, {
-			description: cliDescription('Run OpenClaw-managed provider auth for a gateway zone.'),
-		}),
-		codexHarnessParser,
-	),
-	{ description: cliDescription('Manage gateway auth') },
-);
+export const authCommandParser = command('auth', onePasswordParser, {
+	description: cliDescription('Manage gateway auth'),
+});

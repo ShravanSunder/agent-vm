@@ -1,155 +1,18 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
-
-const managedGatewayCiTags = [
-	'managed-gateway-startup',
-	'managed-gateway-degraded-input',
-	'managed-gateway-lifecycle',
-] as const;
 
 async function readRepositoryFile(relativePath: string): Promise<string> {
 	return await fs.readFile(path.join(process.cwd(), relativePath), 'utf8');
 }
 
-function isManagedGatewayTestDeclaration(callExpression: ts.CallExpression): boolean {
-	if (
-		ts.isCallExpression(callExpression.parent) &&
-		callExpression.parent.expression === callExpression
-	) {
-		return false;
-	}
-	let expression: ts.Expression = callExpression.expression;
-	while (ts.isCallExpression(expression)) expression = expression.expression;
-	while (ts.isPropertyAccessExpression(expression)) expression = expression.expression;
-	return ts.isIdentifier(expression) && ['it', 'test'].includes(expression.text);
-}
-
-function readManagedGatewayTestTags(
-	sourceText: string,
-	fileName: string,
-): readonly (readonly string[])[] {
-	const sourceFile = ts.createSourceFile(
-		fileName,
-		sourceText,
-		ts.ScriptTarget.Latest,
-		true,
-		ts.ScriptKind.TS,
-	);
-	const testTags: string[][] = [];
-
-	function visit(node: ts.Node): void {
-		if (ts.isCallExpression(node) && isManagedGatewayTestDeclaration(node)) {
-			const optionsArgument = node.arguments[1];
-			if (optionsArgument === undefined || !ts.isObjectLiteralExpression(optionsArgument)) {
-				testTags.push([]);
-			} else {
-				const tagsProperty = optionsArgument.properties.find(
-					(property): property is ts.PropertyAssignment =>
-						ts.isPropertyAssignment(property) &&
-						ts.isIdentifier(property.name) &&
-						property.name.text === 'tags',
-				);
-				if (tagsProperty === undefined || !ts.isArrayLiteralExpression(tagsProperty.initializer)) {
-					testTags.push([]);
-				} else {
-					testTags.push(
-						tagsProperty.initializer.elements.flatMap((element) =>
-							ts.isStringLiteral(element) ? [element.text] : [],
-						),
-					);
-				}
-			}
-		}
-		ts.forEachChild(node, visit);
-	}
-
-	visit(sourceFile);
-	return testTags;
-}
-
-function readManagedGatewayIncludeFiles(vitestConfigSource: string): readonly string[] {
-	const sourceFile = ts.createSourceFile(
-		'vitest.config.ts',
-		vitestConfigSource,
-		ts.ScriptTarget.Latest,
-		true,
-		ts.ScriptKind.TS,
-	);
-	let includeFiles: readonly string[] | undefined;
-	const visit = (node: ts.Node): void => {
-		if (includeFiles !== undefined || !ts.isObjectLiteralExpression(node)) {
-			ts.forEachChild(node, visit);
-			return;
-		}
-		const nameProperty = node.properties.find(
-			(property): property is ts.PropertyAssignment =>
-				ts.isPropertyAssignment(property) &&
-				ts.isIdentifier(property.name) &&
-				property.name.text === 'name' &&
-				ts.isStringLiteral(property.initializer) &&
-				property.initializer.text === 'e2e-vm-managed-gateway',
-		);
-		if (nameProperty === undefined) {
-			ts.forEachChild(node, visit);
-			return;
-		}
-		const includeProperty = node.properties.find(
-			(property): property is ts.PropertyAssignment =>
-				ts.isPropertyAssignment(property) &&
-				ts.isIdentifier(property.name) &&
-				property.name.text === 'include',
-		);
-		if (
-			includeProperty === undefined ||
-			!ts.isArrayLiteralExpression(includeProperty.initializer)
-		) {
-			includeFiles = [];
-			return;
-		}
-		includeFiles = includeProperty.initializer.elements.flatMap((element) =>
-			ts.isStringLiteral(element) ? [element.text] : [],
-		);
-	};
-	visit(sourceFile);
-	return includeFiles ?? [];
-}
-
-it('recognizes test and it declaration modifiers in managed-gateway fixtures', () => {
-	// Arrange
-	const fixture = `
-test.skip('skipped', { tags: ['managed-gateway-startup'] }, () => {});
-test.each([1])('table', { tags: ['managed-gateway-degraded-input'] }, () => {});
-it.only.each([1])('table modifier', { tags: ['managed-gateway-lifecycle'] }, () => {});
-it.concurrent('concurrent', { tags: ['managed-gateway-startup'] }, () => {});
-`;
-
-	// Act / Assert
-	expect(readManagedGatewayTestTags(fixture, 'managed-gateway-fixture.ts')).toEqual([
-		['managed-gateway-startup'],
-		['managed-gateway-degraded-input'],
-		['managed-gateway-lifecycle'],
-		['managed-gateway-startup'],
-	]);
-});
-
 describe('CI workflow topology', () => {
 	it('keeps every required proof lane behind one aggregate check', async () => {
-		const [workflow, vitestConfig, hermesPythonTestScript] = await Promise.all([
+		const [workflow, hermesPythonTestScript] = await Promise.all([
 			readRepositoryFile('.github/workflows/ci.yml'),
-			readRepositoryFile('vitest.config.ts'),
 			readRepositoryFile('scripts/run-hermes-python-tests.sh'),
 		]);
-		const managedGatewayTestFiles = readManagedGatewayIncludeFiles(vitestConfig);
-		expect(managedGatewayTestFiles.length).toBeGreaterThan(0);
-		const managedGatewayTests = await Promise.all(
-			managedGatewayTestFiles.map(async (filePath) => ({
-				filePath,
-				sourceText: await readRepositoryFile(filePath),
-			})),
-		);
 
 		for (const jobName of ['validation:', 'e2e-image-cache:', 'e2e-host:', 'e2e-vm:', 'check:']) {
 			expect(workflow).toContain(`  ${jobName}`);
@@ -164,10 +27,8 @@ describe('CI workflow topology', () => {
 			'pnpm test:e2e:inventory',
 			'pnpm run test:e2e:${{ matrix.lane }}',
 			'pnpm run test:e2e:vm --shard=${{ matrix.shard }}',
-			'pnpm run test:e2e:vm-managed-gateway',
-			'--tags-filter=managed-gateway-startup',
-			'--tags-filter=managed-gateway-degraded-input',
-			'--tags-filter=managed-gateway-lifecycle',
+			'pnpm run test:e2e:hermes',
+			'pnpm run test:e2e:worker',
 			"AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE: '1'",
 		]) {
 			expect(workflow).toContain(command);
@@ -183,31 +44,12 @@ describe('CI workflow topology', () => {
 		expect(hermesPythonTestScript).not.toMatch(
 			/metadata\.version\("agent-vm-(?:agent-portal-sdk|hermes-adapter)"\) == "\d+\.\d+\.\d+"/u,
 		);
-		for (const managedGatewayTag of managedGatewayCiTags) {
-			expect(vitestConfig).toContain(`name: '${managedGatewayTag}'`);
-			expect(workflow).toContain(
-				`pnpm run test:e2e:vm-managed-gateway --tags-filter=${managedGatewayTag}`,
-			);
-			expect(workflow).not.toContain(
-				`pnpm run test:e2e:vm-managed-gateway -- --tags-filter=${managedGatewayTag}`,
-			);
-		}
-		const managedGatewayTestTags = managedGatewayTests.flatMap(({ filePath, sourceText }) =>
-			readManagedGatewayTestTags(sourceText, filePath),
-		);
-		expect(managedGatewayTestTags.length).toBeGreaterThan(0);
-		for (const testTags of managedGatewayTestTags) {
-			expect(testTags).toHaveLength(1);
-			expect(managedGatewayCiTags).toContain(testTags[0]);
-		}
-		expect(new Set(managedGatewayTestTags.flat())).toEqual(new Set(managedGatewayCiTags));
-		expect(workflow.match(/lane: e2e-vm-managed-gateway/gu)).toHaveLength(1);
-		expect(workflow).not.toContain('managed-gateway-test-group:');
-		expect(workflow).not.toContain('AGENT_VM_MANAGED_GATEWAY_TEST_GROUP');
-		for (const { sourceText } of managedGatewayTests) {
-			expect(sourceText).not.toContain('AGENT_VM_MANAGED_GATEWAY_TEST_GROUP');
-			expect(sourceText).not.toContain('shouldRegisterManagedGatewayTest');
-		}
+		expect(workflow.match(/lane: hermes/gu)).toHaveLength(1);
+		expect(workflow.match(/lane: worker/gu)).toHaveLength(1);
+		expect(workflow).not.toContain('test:e2e:vm-managed-gateway');
+		expect(workflow).not.toContain('managed-gateway-startup');
+		expect(workflow).not.toContain('managed-gateway-degraded-input');
+		expect(workflow).not.toContain('managed-gateway-lifecycle');
 		for (const shard of ['1/6', '2/6', '3/6', '4/6', '5/6', '6/6']) {
 			expect(workflow).toContain(`shard: ${shard}`);
 		}
@@ -229,7 +71,7 @@ describe('CI workflow topology', () => {
 		expect(workflow).toContain('uses: ./.github/actions/resolve-e2e-image-cache-key');
 		expect(workflow).toContain("lookup-only: 'true'");
 		expect(workflow).toContain(
-			'      - parallel:\n          - name: Restore prepared OpenClaw image cache',
+			'      - parallel:\n          - name: Restore prepared Hermes image cache',
 		);
 		expect(workflow).toContain('      - name: Restore prepared Worker image cache');
 		expect(workflow).not.toContain('\n          - name: Restore prepared Worker image cache\n');
@@ -241,7 +83,7 @@ describe('CI workflow topology', () => {
 		);
 		expect(workflow).not.toContain('\n      - name: Set up Agent VM workspace\n');
 		const parallelPreparationStart = workflow.indexOf(
-			'      - parallel:\n          - name: Restore prepared OpenClaw image cache',
+			'      - parallel:\n          - name: Restore prepared Hermes image cache',
 		);
 		const workspaceSetupPosition = workflow.indexOf(
 			'          - name: Set up Agent VM workspace',
@@ -268,7 +110,7 @@ describe('CI workflow topology', () => {
 		expect(vmPreparationBlock).not.toContain('\n          - name: Set up system packages\n');
 	});
 
-	it('keys prepared images from all package build inputs and prepares both image families', async () => {
+	it('keys and prepares the retained Hermes and Worker image families', async () => {
 		const [workflow, cacheAction, cacheKeyAction, setupAction, preparationScript] =
 			await Promise.all([
 				readRepositoryFile('.github/workflows/ci.yml'),
@@ -296,7 +138,6 @@ describe('CI workflow topology', () => {
 			'packages/**/README*',
 			'packages/**/LICENSE*',
 			'packages/**/LICENCE*',
-			'packages/**/openclaw.plugin.json',
 			'packages/**/contract-fixtures/**',
 			'packages/**/sdk-validate.mjs',
 			'packages/agent-vm/managed-images.json',
@@ -310,41 +151,42 @@ describe('CI workflow topology', () => {
 		expect(cacheKeyAction.match(/E2E_IMAGE_INPUT_HASH:\s*([^\n]+)/gu)).toHaveLength(1);
 		expect(
 			cacheAction.match(
-				/agent-vm-e2e-images-v2-openclaw-\$\{\{ runner\.os \}\}-\$\{\{ inputs\.input-hash \}\}/gu,
+				/agent-vm-e2e-images-v1-hermes-\$\{\{ runner\.os \}\}-\$\{\{ inputs\.input-hash \}\}/gu,
 			),
 		).toHaveLength(1);
 
 		expect(workflow).toContain('permissions:\n  contents: read');
 		expect(workflow).toContain('persist-credentials: false');
-		expect(preparationScript).toContain('useLocalOpenClawGatewayImagePackages');
-		expect(preparationScript).toContain('useLocalOpenClawPluginGatewayImage');
-		expect(preparationScript.match(/imageFamilies: \['gateway', 'toolVm'\]/gu)).toHaveLength(2);
+		expect(preparationScript).toContain('useLocalHermesGatewayImagePackages');
+		expect(preparationScript.match(/imageFamilies: \['gateway', 'toolVm'\]/gu)).toHaveLength(1);
 		expect(preparationScript).toMatch(
 			/prepareGatewayE2eProjectImages\(\{\s+imageFamilies: \['gateway'\],\s+project: workerProject,/u,
 		);
 
-		expect(cacheAction).toContain('Restore prepared OpenClaw image cache');
+		expect(cacheAction).toContain('Restore prepared Hermes image cache');
 		expect(cacheAction).toContain('Restore prepared Worker image cache');
 		expect(cacheAction).toContain('lookup-only: ${{ inputs.lookup-only }}');
 		expect(cacheAction).not.toContain('    - parallel:');
-		expect(workflow).toContain('Save prepared OpenClaw image cache');
+		expect(workflow).toContain('Save prepared Hermes image cache');
 		expect(workflow).toContain('Save prepared Worker image cache');
 		expect(cacheAction).toMatch(
-			/\/tmp\/agent-vm-e2e-cache\/openclaw\n\s+\/tmp\/agent-vm-e2e-cache\/local-package-tarballs/u,
+			/\/tmp\/agent-vm-e2e-cache\/hermes\n\s+\/tmp\/agent-vm-e2e-cache\/local-package-tarballs/u,
 		);
 		expect(
 			`${cacheAction}\n${workflow}`.match(
-				/\/tmp\/agent-vm-e2e-cache\/openclaw\n\s+\/tmp\/agent-vm-e2e-cache\/local-package-tarballs/gu,
+				/\/tmp\/agent-vm-e2e-cache\/hermes\n\s+\/tmp\/agent-vm-e2e-cache\/local-package-tarballs/gu,
 			),
 		).toHaveLength(2);
-		expect(cacheAction).not.toContain('agent-vm-e2e-images-v1-openclaw');
 		expect(cacheAction).not.toContain('restore-keys:');
 		expect(setupAction).not.toContain('    - parallel:');
 		expect(setupAction).not.toContain('Install Zig');
 		expect(setupAction).not.toContain('ziglang.org');
-		expect(preparationScript).toContain('scaffoldOpenClawE2eProject');
+		expect(preparationScript).toContain('scaffoldHermesE2eProject');
 		expect(preparationScript).toContain('scaffoldWorkerE2eProject');
 		expect(preparationScript).toContain('removeE2eTempRoot');
-		expect(preparationScript).toContain('agent-vm-gateway-e2e-plugin-project-');
+		expect(preparationScript).toContain('agent-vm-hermes-e2e-cache-');
+		expect(`${workflow}\n${cacheAction}\n${preparationScript}`.toLowerCase()).not.toContain(
+			'openclaw',
+		);
 	});
 });

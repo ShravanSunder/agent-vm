@@ -409,7 +409,6 @@ export async function runControllerCommandOperation(
 		await runSshCommand({
 			dependencies,
 			io,
-			allSecrets: commandValue.options.allSecrets,
 			zoneId: selectedZone.id,
 			systemConfig,
 		});

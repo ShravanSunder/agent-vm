@@ -34,9 +34,9 @@ function createDestroySystemConfig(tempDirectory: string, stateDir: string): Sys
 		},
 		imageProfiles: {
 			gateways: {
-				openclaw: {
-					type: 'openclaw',
-					buildConfig: './vm-images/gateways/openclaw/build-config.json',
+				hermes: {
+					type: 'hermes',
+					buildConfig: './vm-images/gateways/hermes/build-config.json',
 				},
 			},
 			toolVms: {
@@ -50,21 +50,22 @@ function createDestroySystemConfig(tempDirectory: string, stateDir: string): Sys
 			{
 				id: 'shravan',
 				gateway: {
-					type: 'openclaw',
-					controlAuth: { mode: 'token', secret: 'OPENCLAW_GATEWAY_TOKEN' },
-					imageProfile: 'openclaw',
+					type: 'hermes',
+					imageProfile: 'hermes',
 					memory: '2G',
 					cpus: 2,
 					port: 18791,
-					config: './config/shravan/openclaw.json',
+					config: './config/shravan/hermes.json',
+					profileSecretProjectionsByAgent: { main: {} },
+					profilesByAgent: { main: 'main' },
 					stateDir,
 					zoneFilesDir: path.join(tempDirectory, 'zone-files', 'shravan'),
 					zoneRuntimeDir: path.join(tempDirectory, 'runtime'),
 				},
 				secrets: {
-					OPENCLAW_GATEWAY_TOKEN: {
+					TEST_GATEWAY_TOKEN: {
 						source: 'environment',
-						envVar: 'OPENCLAW_GATEWAY_TOKEN',
+						envVar: 'TEST_GATEWAY_TOKEN',
 						injection: 'env',
 						audience: 'gateway',
 					},
@@ -115,8 +116,8 @@ describe('runControllerDestroy', () => {
 		await mkdir(zoneFilesDir, { recursive: true });
 		const baseSystemConfig = createDestroySystemConfig(tempDirectory, stateDir);
 		const zone = baseSystemConfig.zones[0];
-		if (zone === undefined || zone.gateway.type !== 'openclaw') {
-			throw new Error('Expected OpenClaw fixture zone');
+		if (zone === undefined || zone.gateway.type !== 'hermes') {
+			throw new Error('Expected Hermes fixture zone');
 		}
 		const systemConfig = {
 			...baseSystemConfig,
@@ -173,7 +174,7 @@ describe('runControllerDestroy', () => {
 		const stateDir = path.join(tempDirectory, 'state', 'shravan');
 		const zoneFilesDir = path.join(tempDirectory, 'zone-files', 'shravan');
 		fs.mkdirSync(runtimeLogsDir, { recursive: true });
-		fs.writeFileSync(path.join(runtimeLogsDir, 'openclaw-2026-05-10.log'), 'runtime log');
+		fs.writeFileSync(path.join(runtimeLogsDir, 'hermes-2026-05-10.log'), 'runtime log');
 		fs.mkdirSync(stateDir, { recursive: true });
 		fs.mkdirSync(zoneFilesDir, { recursive: true });
 
@@ -193,9 +194,9 @@ describe('runControllerDestroy', () => {
 			},
 			imageProfiles: {
 				gateways: {
-					openclaw: {
-						type: 'openclaw',
-						buildConfig: './vm-images/gateways/openclaw/build-config.json',
+					hermes: {
+						type: 'hermes',
+						buildConfig: './vm-images/gateways/hermes/build-config.json',
 					},
 					worker: {
 						type: 'worker',
@@ -213,24 +214,22 @@ describe('runControllerDestroy', () => {
 				{
 					id: 'shravan',
 					gateway: {
-						type: 'openclaw',
-						controlAuth: {
-							mode: 'token',
-							secret: 'OPENCLAW_GATEWAY_TOKEN',
-						},
-						imageProfile: 'openclaw',
+						type: 'hermes',
+						imageProfile: 'hermes',
 						memory: '2G',
 						cpus: 2,
 						port: 18791,
-						config: './config/shravan/openclaw.json',
+						config: './config/shravan/hermes.json',
+						profileSecretProjectionsByAgent: { main: {} },
+						profilesByAgent: { main: 'main' },
 						stateDir,
 						zoneFilesDir,
 						zoneRuntimeDir,
 					},
 					secrets: {
-						OPENCLAW_GATEWAY_TOKEN: {
+						TEST_GATEWAY_TOKEN: {
 							source: 'environment',
-							envVar: 'OPENCLAW_GATEWAY_TOKEN',
+							envVar: 'TEST_GATEWAY_TOKEN',
 							injection: 'env',
 							audience: 'gateway',
 						},

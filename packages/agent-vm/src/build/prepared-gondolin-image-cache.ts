@@ -43,10 +43,7 @@ function parseManagedGatewayBootProjection(
 	value: unknown,
 ): ManagedGatewayImageBootProjection | undefined {
 	if (!isRecord(value) || value.kind !== 'managed-gateway-exact-two-role') return undefined;
-	if (
-		value.frameworkBootEntry !== 'openclaw-framework-service' &&
-		value.frameworkBootEntry !== 'hermes-framework-service'
-	) {
+	if (value.frameworkBootEntry !== 'hermes-framework-service') {
 		return undefined;
 	}
 	if (Object.keys(value).length !== 2) return undefined;

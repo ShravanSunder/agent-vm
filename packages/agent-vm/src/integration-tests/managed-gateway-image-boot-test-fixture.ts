@@ -128,7 +128,7 @@ function createMemoryFile(relativePath: string, contents: string): ManagedVmFina
 }
 
 function shellSingleQuote(value: string): string {
-	return `'${value.replaceAll("'", `'\"'\"'`)}'`;
+	return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 function renderEnvironment(environment: Readonly<Record<string, string>>): string {

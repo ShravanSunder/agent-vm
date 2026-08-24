@@ -168,8 +168,7 @@ jobs:
             docker/base-images \
             packages/agent-vm/managed-images.json \
             packages/agent-vm/src/build/managed-image-dockerfile.ts \
-            packages/agent-vm/src/cli/vm-host-system-templates.ts \
-            packages/agent-vm/src/cli/openclaw-plugin-bundle.ts; then
+            packages/agent-vm/src/cli/vm-host-system-templates.ts; then
             AUTO_MODE="skip"
           else
             AUTO_MODE="rebuild"
@@ -218,11 +217,6 @@ jobs:
           docker buildx build \
             --platform linux/amd64,linux/arm64 \
             --push \
-            -t "ghcr.io/shravansunder/agent-vm-managed-openclaw-gateway-base:${IMAGE_TAG}" \
-            docker/base-images/openclaw-gateway
-          docker buildx build \
-            --platform linux/amd64,linux/arm64 \
-            --push \
             -t "ghcr.io/shravansunder/agent-vm-managed-worker-gateway-base:${IMAGE_TAG}" \
             docker/base-images/worker-gateway
           docker buildx build \
@@ -239,7 +233,6 @@ jobs:
         run: |
           set -euo pipefail
           for IMAGE in \
-            "ghcr.io/shravansunder/agent-vm-managed-openclaw-gateway-base" \
             "ghcr.io/shravansunder/agent-vm-managed-worker-gateway-base" \
             "ghcr.io/shravansunder/agent-vm-managed-tool-vm-base"
           do
@@ -255,7 +248,6 @@ jobs:
         run: |
           set -euo pipefail
           for IMAGE in \
-            "ghcr.io/shravansunder/agent-vm-managed-openclaw-gateway-base:${IMAGE_TAG}" \
             "ghcr.io/shravansunder/agent-vm-managed-worker-gateway-base:${IMAGE_TAG}" \
             "ghcr.io/shravansunder/agent-vm-managed-tool-vm-base:${IMAGE_TAG}"
           do

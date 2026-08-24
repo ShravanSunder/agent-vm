@@ -10,7 +10,7 @@ import { runControllerOfflineCleanup as runControllerOfflineCleanupProduction } 
 function createSystemConfig(
 	options: {
 		readonly controllerPort?: number;
-		readonly gatewayType?: 'openclaw' | 'worker';
+		readonly gatewayType?: 'hermes' | 'worker';
 	} = {},
 ): LoadedSystemConfig {
 	const zone =
@@ -34,22 +34,37 @@ function createSystemConfig(
 					defaultToolVmProfile: 'default',
 					egressHosts: [{ audience: 'gateway' as const, host: 'api.openai.com' }],
 					gateway: {
-						controlAuth: {
-							mode: 'token' as const,
-							secret: 'OPENCLAW_GATEWAY_TOKEN',
-						},
-						config: '/deployments/shravan-claw-beta/config/gateways/beta/openclaw.json',
+						config: '/deployments/shravan-claw-beta/config/gateways/beta/hermes.yaml',
 						cpus: 2,
-						imageProfile: 'openclaw',
+						imageProfile: 'hermes',
 						memory: '4G',
 						port: 18891,
-						type: 'openclaw' as const,
+						profileSecretProjectionsByAgent: {
+							main: {
+								API_SERVER_KEY: 'API_SERVER_KEY_MAIN',
+								DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN',
+							},
+						},
+						profilesByAgent: { main: 'main' },
+						type: 'hermes' as const,
 					},
 					id: 'beta',
 					secrets: {
-						OPENCLAW_GATEWAY_TOKEN: {
+						API_SERVER_KEY: {
 							audience: 'gateway' as const,
-							envVar: 'OPENCLAW_GATEWAY_TOKEN',
+							injection: 'env' as const,
+							source: 'config' as const,
+							value: 'test-root-api-server-key',
+						},
+						API_SERVER_KEY_MAIN: {
+							audience: 'gateway' as const,
+							envVar: 'API_SERVER_KEY_MAIN',
+							injection: 'env' as const,
+							source: 'environment' as const,
+						},
+						DISCORD_BOT_TOKEN: {
+							audience: 'gateway' as const,
+							envVar: 'DISCORD_BOT_TOKEN',
 							injection: 'env' as const,
 							source: 'environment' as const,
 						},
@@ -65,10 +80,9 @@ function createSystemConfig(
 			},
 			imageProfiles: {
 				gateways: {
-					openclaw: {
-						type: 'openclaw',
-						buildConfig: './vm-images/gateways/openclaw/build-config.jsonc',
-						source: { kind: 'managedBase', base: 'openclaw-gateway' },
+					hermes: {
+						type: 'hermes',
+						buildConfig: './vm-images/gateways/hermes/build-config.jsonc',
 					},
 					worker: {
 						type: 'worker',

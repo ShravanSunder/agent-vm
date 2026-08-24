@@ -88,10 +88,10 @@ const gatewayToolPortalAdmissionIdentitySchema = z.strictObject({
 const gatewayFrameworkAdmissionIdentitySchema = z
 	.strictObject({
 		attachmentGeneration: z.number().int().nonnegative(),
-		clientKind: z.enum(['hermes-managed-plugin', 'openclaw-managed-plugin']),
+		clientKind: z.literal('hermes-managed-plugin'),
 		configuredAgentIds: z.array(boundedIdentityValueSchema).min(1),
 		frameworkEpoch: boundedIdentityValueSchema,
-		frameworkKind: z.enum(['hermes', 'openclaw']),
+		frameworkKind: z.literal('hermes'),
 		projectionCohortDigest: z.string().regex(/^projection-cohort:[a-f0-9]{64}$/u),
 	})
 	.superRefine((identity, context) => {
@@ -100,14 +100,6 @@ const gatewayFrameworkAdmissionIdentitySchema = z
 				code: 'custom',
 				message: 'Configured managed Gateway agent identities must be unique.',
 				path: ['configuredAgentIds'],
-			});
-		}
-		const expectedClientKind = `${identity.frameworkKind}-managed-plugin`;
-		if (identity.clientKind !== expectedClientKind) {
-			context.addIssue({
-				code: 'custom',
-				message: 'Managed Gateway client kind must match its framework kind.',
-				path: ['clientKind'],
 			});
 		}
 	});

@@ -96,7 +96,7 @@ const semanticSnapshot = {
 	agentProjections: {
 		'agent-a': {
 			agentId: 'agent-a',
-			frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
+			frameworkIdentity: { kind: 'hermes', profileName: 'agent-a' },
 			profileAssignmentRevision: 'profile-assignment:agent-a:7',
 			toolPortalNamespaceNames: ['github'],
 			toolPortalProfileId: 'code-builder',
@@ -138,7 +138,7 @@ const toolPortalConfig = {
 
 const managedPrincipal = {
 	agentId: 'agent-a',
-	frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
+	frameworkIdentity: { kind: 'hermes', profileName: 'agent-a' },
 	profileAssignmentRevision: 'profile-assignment:agent-a:7',
 	toolPortalProfileId: 'code-builder',
 } as const;
@@ -155,7 +155,7 @@ const trustedInvocationContext = {
 
 const managedPluginAttachment = {
 	attachmentGeneration: 1,
-	clientKind: 'openclaw-managed-plugin',
+	clientKind: 'hermes-managed-plugin',
 	configuredAgentIds: [managedPrincipal.agentId],
 	frameworkEpoch: authorityContext.frameworkEpoch,
 	gatewayEpoch: authorityContext.gatewayEpoch,

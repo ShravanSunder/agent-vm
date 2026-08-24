@@ -155,51 +155,6 @@ const managedControlDocumentationResiduePatterns = [
 	},
 ] as const;
 
-const managedOpenClawProcessSupervisorOwnedFiles = new Set([
-	'packages/agent-vm/src/controller/process-supervisor/openclaw-process-supervisor-contracts.ts',
-	'packages/agent-vm/src/controller/process-supervisor/openclaw-process-supervisor.integration.test.ts',
-	'packages/agent-vm/src/controller/process-supervisor/openclaw-process-supervisor.ts',
-	'packages/agent-vm/src/controller/process-supervisor/openclaw-process-supervisor.unit.test.ts',
-]);
-
-const managedOpenClawProcessReliabilityOwnedFiles = new Set([
-	'packages/agent-vm/src/controller/reliability/testing/openclaw-process-reliability-fault-handler.ts',
-	'packages/agent-vm/src/controller/reliability/testing/openclaw-process-reliability-fault-handler.unit.test.ts',
-	'packages/agent-vm/src/controller/reliability/testing/openclaw-process-reliability-fault-target-registry.ts',
-	'packages/agent-vm/src/controller/reliability/testing/openclaw-process-reliability-fault-target-registry.unit.test.ts',
-]);
-
-const managedOpenClawProcessRecoveryOwnedFiles = new Set([
-	'packages/agent-vm/src/controller/zone-runtimes/openclaw-process-recovery.ts',
-	'packages/agent-vm/src/controller/zone-runtimes/openclaw-process-recovery.unit.test.ts',
-]);
-
-const managedOpenClawProcessEpochOwnerFiles = new Set([
-	'packages/agent-vm/src/gateway/openclaw-gateway-process-epoch-owner.ts',
-	'packages/agent-vm/src/gateway/openclaw-gateway-process-epoch-owner.unit.test.ts',
-]);
-
-const managedOpenClawLocalProcessConsumerPatterns = [
-	{
-		message: 'managed OpenClaw must not retain controller-owned process supervisor consumers',
-		patterns: ['OpenClawProcessSupervisor', 'resolveOpenClawProcessSupervisorStateMount'],
-	},
-	{
-		message: 'managed OpenClaw must not retain same-VM process-epoch owner consumers',
-		patterns: ['OpenClawGatewayProcessEpochOwner', 'OpenClawProcessEpochLossBarrier'],
-	},
-	{
-		message:
-			'managed OpenClaw must not retain process-scoped recovery or local-successor consumers',
-		patterns: ['createOpenClawProcessRecoveryCoordinator', 'OpenClawProcessRecovery'],
-	},
-	{
-		message:
-			'managed OpenClaw reliability faults must target the Gateway VM, not an OpenClaw process',
-		patterns: ['OpenClawProcessReliabilityFault'],
-	},
-] as const;
-
 function normalizedFilePath(filePath: string): string {
 	return filePath.split(path.sep).join('/');
 }
@@ -957,44 +912,6 @@ function collectManagedFrameworkChildTopologyViolations(
 	return [];
 }
 
-function collectManagedOpenClawLocalProcessTopologyViolations(
-	file: PortalArchitectureSourceFile,
-): readonly string[] {
-	const filePath = normalizedFilePath(file.filePath);
-	if (managedOpenClawProcessSupervisorOwnedFiles.has(filePath)) {
-		return [
-			`${filePath}: managed OpenClaw must not retain controller-owned process supervisor source or proof`,
-		];
-	}
-	if (managedOpenClawProcessReliabilityOwnedFiles.has(filePath)) {
-		return [
-			`${filePath}: managed OpenClaw reliability faults must target the Gateway VM, not an OpenClaw process`,
-		];
-	}
-	if (managedOpenClawProcessRecoveryOwnedFiles.has(filePath)) {
-		return [
-			`${filePath}: managed OpenClaw must not retain process-scoped recovery or local-successor source or proof`,
-		];
-	}
-	if (managedOpenClawProcessEpochOwnerFiles.has(filePath)) {
-		return [
-			`${filePath}: managed OpenClaw must not retain same-VM process-epoch owner source or proof`,
-		];
-	}
-	if (
-		isTestSourceFile(filePath) ||
-		!filePath.startsWith('packages/agent-vm/src/') ||
-		!filePath.endsWith('.ts')
-	) {
-		return [];
-	}
-	return managedOpenClawLocalProcessConsumerPatterns
-		.filter((consumerPattern) =>
-			consumerPattern.patterns.some((pattern) => file.sourceText.includes(pattern)),
-		)
-		.map((consumerPattern) => `${filePath}: ${consumerPattern.message}`);
-}
-
 export function collectPortalArchitectureViolations(
 	props: CollectPortalArchitectureViolationsProps,
 ): readonly string[] {
@@ -1015,7 +932,6 @@ export function collectPortalArchitectureViolations(
 		...props.files.flatMap(collectManagedControlResidueViolations),
 		...props.files.flatMap(collectGatewayLifecyclePublicRawControlViolations),
 		...props.files.flatMap(collectManagedFrameworkChildTopologyViolations),
-		...props.files.flatMap(collectManagedOpenClawLocalProcessTopologyViolations),
 	];
 	return sortedStrings(violations);
 }

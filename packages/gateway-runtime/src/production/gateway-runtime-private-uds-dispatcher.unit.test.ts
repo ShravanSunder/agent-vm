@@ -14,7 +14,7 @@ const trustedContext = {
 	correlation: { runId: 'run-a', sessionId: 'session-a', toolCallId: 'tool-call-a' },
 	principal: {
 		agentId: 'agent-a',
-		frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
+		frameworkIdentity: { kind: 'hermes', profileName: 'agent-a' },
 		profileAssignmentRevision: 'profile-assignment-a-1',
 		toolPortalProfileId: 'profile-a',
 	},

@@ -1,0 +1,50 @@
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+
+import { describe, expect, it } from 'vitest';
+
+import { auditOpenClawRemoval } from './audit-openclaw-removal.js';
+
+describe('OpenClaw removal audit', () => {
+	it('finds forbidden active packages and production source residue', async () => {
+		const repositoryRoot = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-openclaw-audit-'));
+		try {
+			await mkdir(path.join(repositoryRoot, 'packages', 'openclaw-gateway'), { recursive: true });
+			await writeFile(
+				path.join(repositoryRoot, 'packages', 'openclaw-gateway', 'package.json'),
+				'{}\n',
+				'utf8',
+			);
+			const sourcePath = path.join(repositoryRoot, 'packages', 'example', 'src', 'index.ts');
+			await mkdir(path.dirname(sourcePath), { recursive: true });
+			await writeFile(sourcePath, "export const framework = 'openclaw';\n", 'utf8');
+
+			await expect(auditOpenClawRemoval(repositoryRoot)).resolves.toEqual([
+				'packages/example/src/index.ts contains active OpenClaw residue',
+				'packages/openclaw-gateway remains active',
+			]);
+		} finally {
+			await rm(repositoryRoot, { force: true, recursive: true });
+		}
+	});
+
+	it('finds removed SSH secret-mode residue in production source', async () => {
+		const repositoryRoot = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-ssh-mode-audit-'));
+		try {
+			const sourcePath = path.join(repositoryRoot, 'packages', 'example', 'src', 'ssh.ts');
+			await mkdir(path.dirname(sourcePath), { recursive: true });
+			await writeFile(sourcePath, 'export const requestAllSecrets = false;\n', 'utf8');
+
+			await expect(auditOpenClawRemoval(repositoryRoot)).resolves.toEqual([
+				'packages/example/src/ssh.ts contains removed SSH secret-mode residue',
+			]);
+		} finally {
+			await rm(repositoryRoot, { force: true, recursive: true });
+		}
+	});
+
+	it('finds no active residue in the current repository', async () => {
+		await expect(auditOpenClawRemoval(process.cwd())).resolves.toEqual([]);
+	});
+});

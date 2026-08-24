@@ -97,7 +97,6 @@ import { createIdleReaper } from './leases/idle-reaper.js';
 import { createLeaseManager } from './leases/lease-manager.js';
 import { createManagedFrameworkToolVmLeaseCreateOptionsResolver } from './leases/managed-framework-tool-vm-lease-create-options.js';
 import { createTcpPool } from './leases/tcp-pool.js';
-import { OpenClawRuntimeStatusStore } from './openclaw-runtime-status.js';
 import { RequestHeartbeatRegistry } from './request-heartbeat-registry.js';
 import { executeConfiguredCliOnControllerHost } from './runner/configured-cli-host-executor.js';
 import { createConfiguredCliManagedVmExecutor } from './runner/configured-cli-managed-vm-executor.js';
@@ -260,10 +259,7 @@ async function shutdownControllerTelemetry(
 }
 
 function isManagedGatewayZone(zone: ControllerZoneConfig): zone is ControllerZoneConfig & {
-	readonly gateway: Extract<
-		ControllerZoneConfig['gateway'],
-		{ readonly type: 'hermes' | 'openclaw' }
-	>;
+	readonly gateway: Extract<ControllerZoneConfig['gateway'], { readonly type: 'hermes' }>;
 } {
 	return zone.gateway.type !== 'worker';
 }
@@ -697,7 +693,6 @@ async function startControllerRuntimeWithOwnershipLock(
 		toolLeaseRecordsTargetFor: (zoneId) =>
 			controllerGatewayRecordTargetsFor(zoneId).toolLeaseRecords,
 	});
-	const openClawRuntimeStatusStore = new OpenClawRuntimeStatusStore({ nowMs: now });
 	const resolveManagedFrameworkToolVmLeaseCreateOptions =
 		createManagedFrameworkToolVmLeaseCreateOptionsResolver({
 			...(options.systemConfig.leaseIdleTtl === undefined
@@ -1065,7 +1060,6 @@ async function startControllerRuntimeWithOwnershipLock(
 								gatewayControlLeaseRpc,
 								gatewayControlProcessAdmissionCoordinator,
 								healthEventStore,
-								...(zone.gateway.type === 'openclaw' ? { openClawRuntimeStatusStore } : {}),
 								runtimeEnvironment: createGatewayRuntimeEnvironmentForZone({
 									callerRuntimeEnvironment: startOptions?.runtimeEnvironment,
 									controllerTelemetryRuntimeEnvironment: gatewayTelemetryRuntimeEnvironment,
@@ -1330,7 +1324,6 @@ async function startControllerRuntimeWithOwnershipLock(
 		...(dependencies.onLeaseCreateRequest
 			? { onLeaseCreateRequest: dependencies.onLeaseCreateRequest }
 			: {}),
-		openClawRuntimeStatusStore,
 		operations,
 		...(dependencies.readIdentityPem ? { readIdentityPem: dependencies.readIdentityPem } : {}),
 		runtimeReadiness: () => runtimeReadiness.get(),

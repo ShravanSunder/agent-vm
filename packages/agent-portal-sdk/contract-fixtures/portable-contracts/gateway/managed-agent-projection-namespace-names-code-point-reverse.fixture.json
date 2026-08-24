@@ -11,8 +11,8 @@
 	"input": {
 		"agentId": "agent-a",
 		"frameworkIdentity": {
-			"agentId": "agent-a",
-			"kind": "openclaw"
+			"kind": "hermes",
+			"profileName": "agent-a"
 		},
 		"profileAssignmentRevision": "profile-assignment-a",
 		"toolPortalNamespaceNames": ["\uD800\uDC00", "\uE000"],

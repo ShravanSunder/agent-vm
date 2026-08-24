@@ -53,7 +53,7 @@ export function isCliEntrypoint(importMetaUrl: string, argvEntryPath: string | u
 async function main(): Promise<void> {
 	const cliVersion = await (defaultCliDependencies.resolveCliVersion ?? resolveCliVersion)();
 	const command = run(agentVmRootParser, {
-		brief: cliDescription('Gondolin-based VM controller for Worker and OpenClaw agents'),
+		brief: cliDescription('Gondolin-based VM controller for Hermes and Worker agents'),
 		help: {
 			command: true,
 			option: { names: ['--help', '-h'] },

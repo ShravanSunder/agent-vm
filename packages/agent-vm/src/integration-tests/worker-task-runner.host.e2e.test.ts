@@ -336,7 +336,6 @@ describe('worker-task-runner integration', () => {
 		},
 		imageProfiles: {
 			gateways: {
-				openclaw: { type: 'openclaw', buildConfig: '/tmp/gateway-build.json' },
 				worker: { type: 'worker', buildConfig: '/tmp/gateway-build.json' },
 			},
 			toolVms: {
@@ -356,14 +355,7 @@ describe('worker-task-runner integration', () => {
 					stateDir: '/tmp/agent-vm-worker-storage/shravan/state',
 					zoneRuntimeDir: '/tmp/agent-vm-worker-storage/shravan/runtime',
 				},
-				secrets: {
-					OPENCLAW_GATEWAY_TOKEN: {
-						source: 'environment',
-						envVar: 'OPENCLAW_GATEWAY_TOKEN',
-						injection: 'env',
-						audience: 'gateway',
-					},
-				},
+				secrets: {},
 				egressHosts: ['github.com'].map((host) => ({ host, audience: 'gateway' as const })),
 				defaultToolVmProfile: 'standard',
 				agentToolVmProfiles: {},

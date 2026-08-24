@@ -655,10 +655,9 @@ export function registerControllerZoneOperationRoutes(
 				return parsedPayload.response;
 			}
 			try {
-				const enableSshOptions = {
-					...(parsedPayload.data.adminToken ? { adminToken: parsedPayload.data.adminToken } : {}),
-					secretEnv: parsedPayload.data.secretEnv,
-				};
+				const enableSshOptions = parsedPayload.data.adminToken
+					? { adminToken: parsedPayload.data.adminToken }
+					: {};
 				return context.json(await enableSshForZone(context.req.param('zoneId'), enableSshOptions));
 			} catch (error) {
 				return context.json(zoneRuntimeErrorBody(error), zoneRuntimeErrorStatus(error));

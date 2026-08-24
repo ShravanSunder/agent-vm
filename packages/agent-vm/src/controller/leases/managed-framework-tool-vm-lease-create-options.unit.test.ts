@@ -86,7 +86,7 @@ async function createSystemConfigFixture(
 			gateways: {
 				openclaw: {
 					buildConfig: './vm-images/gateways/openclaw/build-config.json',
-					type: 'openclaw',
+					type: 'hermes',
 				},
 			},
 			toolVms: {
@@ -112,16 +112,14 @@ async function createSystemConfigFixture(
 				egressHosts: [],
 				gateway: {
 					config: path.join(testRoot, 'config', 'zone-a', 'openclaw.json'),
-					controlAuth: {
-						mode: 'token',
-						secret: 'OPENCLAW_GATEWAY_TOKEN',
-					},
 					cpus: 2,
-					imageProfile: 'openclaw',
+					imageProfile: 'hermes',
 					memory: '2G',
 					port: 18_791,
 					stateDir,
-					type: 'openclaw',
+					type: 'hermes',
+					profileSecretProjectionsByAgent: { main: {} },
+					profilesByAgent: { main: 'main' },
 					zoneFilesDir,
 					zoneRuntimeDir,
 				},
@@ -200,7 +198,7 @@ function authorityContextFor(options?: {
 		agentId,
 		principal: {
 			agentId,
-			frameworkIdentity: { agentId, kind: 'openclaw' },
+			frameworkIdentity: { kind: 'hermes', profileName: agentId },
 			profileAssignmentRevision: `assignment-${agentId}`,
 			toolPortalProfileId: 'standard',
 		},

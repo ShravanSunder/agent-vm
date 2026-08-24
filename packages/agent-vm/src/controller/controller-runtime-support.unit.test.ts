@@ -20,7 +20,7 @@ const baseConfig = {
 	imageProfiles: {
 		gateways: {
 			openclaw: {
-				type: 'openclaw',
+				type: 'hermes',
 				buildConfig: './vm-images/gateways/openclaw/build-config.json',
 			},
 			worker: { type: 'worker', buildConfig: './vm-images/gateways/worker/build-config.json' },
@@ -33,11 +33,9 @@ const baseConfig = {
 		{
 			id: 'shravan',
 			gateway: {
-				type: 'openclaw',
-				controlAuth: {
-					mode: 'token',
-					secret: 'OPENCLAW_GATEWAY_TOKEN',
-				},
+				type: 'hermes',
+				profileSecretProjectionsByAgent: { main: {} },
+				profilesByAgent: { main: 'main' },
 				imageProfile: 'openclaw',
 				memory: '2G',
 				cpus: 2,

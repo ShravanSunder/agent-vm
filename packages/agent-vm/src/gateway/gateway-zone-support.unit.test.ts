@@ -11,11 +11,9 @@ function createGatewayZone(ingress?: GatewayZone['gateway']['ingress']): Gateway
 	return {
 		id: 'shravan',
 		gateway: {
-			type: 'openclaw',
-			controlAuth: {
-				mode: 'token',
-				secret: 'OPENCLAW_GATEWAY_TOKEN',
-			},
+			type: 'hermes',
+			profileSecretProjectionsByAgent: { main: {} },
+			profilesByAgent: { main: 'main' },
 			imageProfile: 'openclaw',
 			memory: '2G',
 			cpus: 2,
@@ -136,7 +134,6 @@ describe('mapSystemGatewayZoneToLifecycleZone', () => {
 				},
 			},
 			stateDir: './state/hermes',
-			ssh: { secretEnv: 'explicit' },
 			zoneFilesDir: './zone-files/hermes',
 			profilesByAgent: {
 				researcher: 'research-profile',
@@ -145,14 +142,11 @@ describe('mapSystemGatewayZoneToLifecycleZone', () => {
 		});
 	});
 
-	it('maps fixed OpenClaw, Hermes, and Tool Portal telemetry contracts', () => {
+	it('maps fixed Hermes and Tool Portal telemetry contracts', () => {
 		const zone = {
 			...createGatewayZone(),
 			observability: {
 				enabled: true,
-				openclaw: {
-					diagnosticsFlags: ['scheduler.debug'],
-				},
 				services: {
 					framework: {
 						traces: true,
@@ -222,12 +216,9 @@ describe('mapSystemGatewayZoneToLifecycleZone', () => {
 				logs: true,
 				metrics: true,
 				sampleRate: 0.5,
-				serviceName: 'agent-vm-openclaw',
+				serviceName: 'agent-vm-hermes',
 				sourcePolicy: { admitBaggage: false, captureContent: false },
 				traces: true,
-			},
-			openclaw: {
-				diagnosticsFlags: ['scheduler.debug'],
 			},
 			toolPortal: {
 				admissionLimits: {

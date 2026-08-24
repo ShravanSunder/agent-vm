@@ -21,10 +21,7 @@ interface ReliabilityFaultPattern {
 	readonly scope: 'production' | 'proof';
 }
 
-const AUDIT_SOURCE_ROOTS = [
-	'packages/agent-vm/src',
-	'packages/openclaw-agent-vm-plugin/src',
-] as const;
+const AUDIT_SOURCE_ROOTS = ['packages/agent-vm/src'] as const;
 const RELIABILITY_PROOF_FILE_NAMES = new Set(
 	CONTROL_LEASE_RELIABILITY_SCENARIOS.map(({ testFile }) => path.basename(testFile)),
 );

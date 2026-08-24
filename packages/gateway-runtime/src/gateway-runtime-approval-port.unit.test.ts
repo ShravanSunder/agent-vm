@@ -72,7 +72,7 @@ const approvalIntentA = {
 		correlation: { runId: 'run-a', sessionId: 'session-a', toolCallId: 'tool-call-a' },
 		principal: {
 			agentId: 'agent-a',
-			frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
+			frameworkIdentity: { kind: 'hermes', profileName: 'agent-a' },
 			profileAssignmentRevision: 'profile-assignment:agent-a:7',
 			toolPortalProfileId: 'code-builder',
 		},
@@ -95,7 +95,7 @@ const approvalIntentB = {
 		principal: {
 			...approvalIntentA.trustedContext.principal,
 			agentId: 'agent-b',
-			frameworkIdentity: { agentId: 'agent-b', kind: 'openclaw' },
+			frameworkIdentity: { kind: 'hermes', profileName: 'agent-b' },
 			profileAssignmentRevision: 'profile-assignment:agent-b:4',
 		},
 		requester: { authenticatedSubjectId: 'subject-b' },

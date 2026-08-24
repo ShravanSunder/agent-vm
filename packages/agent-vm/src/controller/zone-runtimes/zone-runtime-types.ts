@@ -63,7 +63,7 @@ export interface ControllerZoneRuntimeBase {
 }
 
 export interface ManagedGatewayZoneRuntime extends ControllerZoneRuntimeBase {
-	readonly gatewayType: 'hermes' | 'openclaw';
+	readonly gatewayType: 'hermes';
 	coldStart(options?: ManagedGatewayZoneRestartOptions): Promise<ManagedGatewayZoneRestartResult>;
 	enableSsh(): ReturnType<ManagedVm['enableSsh']>;
 	exec(command: string): Promise<{

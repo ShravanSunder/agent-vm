@@ -162,7 +162,7 @@ describe('MCP provider capability backend', () => {
 		// Assert
 		expect(createAgentScope).toHaveBeenNthCalledWith(
 			1,
-			expect.objectContaining({ source: 'openclaw-trusted' }),
+			expect.objectContaining({ source: 'managed-gateway-trusted' }),
 		);
 		expect(createAgentScope).toHaveBeenNthCalledWith(
 			2,

@@ -151,38 +151,34 @@ const server = http.createServer(async (request, response) => {
     }
     return;
   }
-  if (wantsToolVm) {
-    if (toolResult !== undefined) {
-      const serializedToolResult = typeof toolResult.content === 'string'
-        ? toolResult.content
-        : JSON.stringify(toolResult.content);
-      if (serializedToolResult.includes(toolVmMarker)) {
-        const message = { role: 'assistant', content: toolVmMarker };
-        if (body.stream === true) {
-          writeSse(response, [completionChunk({ role: 'assistant', content: toolVmMarker }), completionChunk({}, 'stop')]);
-        } else {
-          writeJson(response, message, 'stop');
-        }
-        return;
-      }
-      if (toolResults.length > 1 || !serializedToolResult.includes('Gateway runtime method dispatch failed')) {
-        response.writeHead(500, { 'content-type': 'application/json' });
-        response.end(JSON.stringify({
-          error: {
-            message: 'Tool VM marker was absent from Hermes tool output: ' + serializedToolResult.slice(0, 1000),
-          },
-        }));
-        return;
-      }
+  if (toolResult !== undefined) {
+    const serializedToolResult = typeof toolResult.content === 'string'
+      ? toolResult.content
+      : JSON.stringify(toolResult.content);
+    if (!serializedToolResult.includes(toolVmMarker)) {
+      response.writeHead(500, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({
+        error: {
+          message: 'Tool VM marker was absent from Hermes tool output: ' + serializedToolResult.slice(0, 1000),
+        },
+      }));
+      return;
     }
+    const message = { role: 'assistant', content: toolVmMarker };
+    if (body.stream === true) {
+      writeSse(response, [completionChunk({ role: 'assistant', content: toolVmMarker }), completionChunk({}, 'stop')]);
+    } else {
+      writeJson(response, message, 'stop');
+    }
+    return;
+  }
+  if (wantsToolVm) {
     const argumentsJson = JSON.stringify({
       command: "printf '%s' '" + toolVmMarker + "'",
       workdir: '/work',
     });
     const toolCall = {
-      id: toolResults.length === 0
-        ? 'call-hermes-tool-vm-recovery'
-        : 'call-hermes-tool-vm-recovery-after-stale-retirement',
+      id: 'call-hermes-tool-vm-recovery',
       type: 'function',
       function: { name: 'terminal', arguments: argumentsJson },
     };

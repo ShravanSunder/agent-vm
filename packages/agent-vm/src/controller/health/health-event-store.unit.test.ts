@@ -79,7 +79,7 @@ describe('HealthEventStore', () => {
 		);
 		store.record(
 			gatewayControlSessionEvent({
-				gatewayService: 'openclaw',
+				gatewayService: 'hermes',
 				kind: 'gateway-plugin-health',
 				observedAtMs: 3_000,
 				state: 'ready',

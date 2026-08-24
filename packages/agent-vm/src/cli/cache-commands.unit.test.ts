@@ -17,9 +17,9 @@ function createCacheCommandSystemConfig(): LoadedSystemConfig {
 			},
 			imageProfiles: {
 				gateways: {
-					openclaw: {
-						type: 'openclaw',
-						buildConfig: '/project/vm-images/gateways/openclaw/build-config.json',
+					hermes: {
+						type: 'hermes',
+						buildConfig: '/project/vm-images/gateways/hermes/build-config.json',
 					},
 				},
 				toolVms: {
@@ -47,23 +47,32 @@ function createCacheCommandSystemConfig(): LoadedSystemConfig {
 						audience: 'gateway' as const,
 					})),
 					gateway: {
-						type: 'openclaw',
-						controlAuth: {
-							mode: 'token',
-							secret: 'OPENCLAW_GATEWAY_TOKEN',
+						type: 'hermes',
+						profileSecretProjectionsByAgent: {
+							main: {
+								API_SERVER_KEY: 'API_SERVER_KEY_MAIN',
+								DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_MAIN',
+							},
 						},
-						imageProfile: 'openclaw',
+						profilesByAgent: { main: 'main' },
+						imageProfile: 'hermes',
 						cpus: 2,
 						memory: '2G',
-						config: './config/shravan/openclaw.json',
+						config: './config/shravan/hermes.yaml',
 						port: 18791,
 					},
 					id: 'shravan',
 					agents: [{ id: 'main' }],
 					secrets: {
-						OPENCLAW_GATEWAY_TOKEN: {
+						API_SERVER_KEY_MAIN: {
 							source: 'environment',
-							envVar: 'OPENCLAW_GATEWAY_TOKEN',
+							envVar: 'API_SERVER_KEY_MAIN',
+							injection: 'env',
+							audience: 'gateway',
+						},
+						DISCORD_BOT_TOKEN_MAIN: {
+							source: 'environment',
+							envVar: 'DISCORD_BOT_TOKEN_MAIN',
 							injection: 'env',
 							audience: 'gateway',
 						},
@@ -108,7 +117,7 @@ describe('runCacheCommand', () => {
 		);
 
 		expect(computeFingerprintFromConfigPath).toHaveBeenCalledWith(
-			'/project/vm-images/gateways/openclaw/build-config.json',
+			'/project/vm-images/gateways/hermes/build-config.json',
 		);
 		expect(computeFingerprintFromConfigPath).toHaveBeenCalledWith(
 			'/project/vm-images/tool-vms/default/build-config.json',
@@ -126,11 +135,11 @@ describe('runCacheCommand', () => {
 			deleteStaleImageDirectories,
 			findStaleImageDirectories: async () => [
 				{
-					absolutePath: '/cache/gateway-images/openclaw/stale-fingerprint',
+					absolutePath: '/cache/gateway-images/hermes/stale-fingerprint',
 					family: 'gateway',
 					fingerprint: 'stale-fingerprint',
 					modifiedAtMs: 1,
-					profileName: 'openclaw',
+					profileName: 'hermes',
 					sizeBytes: 1024,
 				},
 			],
@@ -165,11 +174,11 @@ describe('runCacheCommand', () => {
 			deleteStaleImageDirectories,
 			findStaleImageDirectories: async () => [
 				{
-					absolutePath: '/cache/gateway-images/openclaw/stale-fingerprint',
+					absolutePath: '/cache/gateway-images/hermes/stale-fingerprint',
 					family: 'gateway',
 					fingerprint: 'stale-fingerprint',
 					modifiedAtMs: 1,
-					profileName: 'openclaw',
+					profileName: 'hermes',
 					sizeBytes: 1024,
 				},
 			],
@@ -190,11 +199,11 @@ describe('runCacheCommand', () => {
 
 		expect(deleteStaleImageDirectories).toHaveBeenCalledWith([
 			{
-				absolutePath: '/cache/gateway-images/openclaw/stale-fingerprint',
+				absolutePath: '/cache/gateway-images/hermes/stale-fingerprint',
 				family: 'gateway',
 				fingerprint: 'stale-fingerprint',
 				modifiedAtMs: 1,
-				profileName: 'openclaw',
+				profileName: 'hermes',
 				sizeBytes: 1024,
 			},
 		]);
@@ -204,19 +213,19 @@ describe('runCacheCommand', () => {
 		const deleteStaleImageDirectories = vi.fn();
 		const staleEntries = [
 			{
-				absolutePath: '/cache/gateway-images/openclaw/stale-oldest',
+				absolutePath: '/cache/gateway-images/hermes/stale-oldest',
 				family: 'gateway' as const,
 				fingerprint: 'stale-oldest',
 				modifiedAtMs: 1,
-				profileName: 'openclaw',
+				profileName: 'hermes',
 				sizeBytes: 1024,
 			},
 			{
-				absolutePath: '/cache/gateway-images/openclaw/stale-newest',
+				absolutePath: '/cache/gateway-images/hermes/stale-newest',
 				family: 'gateway' as const,
 				fingerprint: 'stale-newest',
 				modifiedAtMs: 2,
-				profileName: 'openclaw',
+				profileName: 'hermes',
 				sizeBytes: 1024,
 			},
 		];

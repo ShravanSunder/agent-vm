@@ -29,23 +29,23 @@ const zoneId = 'shravan';
 const managedVmRuntimeComposition = createManagedVmRuntimeComposition();
 
 const testManagedGatewayBootContract = createManagedGatewayBootContract({
-	bootEntry: 'openclaw-gateway',
+	bootEntry: 'hermes-gateway',
 	configurationInputPath: '/run/agent-vm/managed-gateway/framework-service.json',
 	environmentInputPath: '/run/agent-vm/managed-gateway/framework.environment.sh',
-	framework: 'openclaw',
-	ingress: { guestPort: 18_789, kind: 'framework-http' },
+	framework: 'hermes',
+	ingress: { guestPort: 8642, kind: 'framework-http' },
 	logIdentity: {
-		guestPath: '/var/log/agent-vm/openclaw-service.log',
-		serviceName: 'agent-vm-openclaw-test',
+		guestPath: '/var/log/agent-vm/hermes-service.log',
+		serviceName: 'agent-vm-hermes-test',
 	},
-	readiness: { guestPort: 18_789, kind: 'framework-http', path: '/readyz' },
+	readiness: { guestPort: 8642, kind: 'framework-http', path: '/health' },
 	role: 'framework-service',
 });
 
 const testManagedGatewayImage = {
 	built: false,
 	fingerprint: 'orphan-recovery-test-image',
-	imageReference: 'openclaw-gateway:test',
+	imageReference: 'hermes-gateway:test',
 };
 
 afterEach(() => {
@@ -98,7 +98,7 @@ function createManagedGatewayExpectedCohort(
 	gatewayIdentity: GatewayEpochIdentity,
 ): ManagedGatewayRuntimeRecord['expectedCohort'] {
 	const identitySuffix = `${gatewayIdentity.zoneId}:${gatewayIdentity.generationId}`;
-	const frameworkEpoch = `openclaw-framework:${gatewayIdentity.bootId}`;
+	const frameworkEpoch = `hermes-framework:${gatewayIdentity.bootId}`;
 	const processEpoch = `tool-portal-process:${gatewayIdentity.bootId}`;
 	const runtimeEpoch = `tool-portal-runtime:${gatewayIdentity.generationId}`;
 	return {
@@ -116,10 +116,10 @@ function createManagedGatewayExpectedCohort(
 		},
 		frameworkIdentity: {
 			attachmentGeneration: 1,
-			clientKind: 'openclaw-managed-plugin',
+			clientKind: 'hermes-managed-plugin',
 			configuredAgentIds: ['shravan'],
 			frameworkEpoch,
-			frameworkKind: 'openclaw',
+			frameworkKind: 'hermes',
 			projectionCohortDigest:
 				'projection-cohort:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 		},
@@ -132,7 +132,7 @@ function createManagedGatewayExpectedCohort(
 				stripPrefix: false,
 			},
 			frameworkRootRoute: {
-				guestPort: 18_789,
+				guestPort: 8642,
 				kind: 'framework-root',
 				prefix: '/',
 				stripPrefix: true,
@@ -180,7 +180,7 @@ function createRuntimeRecord(props: {
 			expectedCohort.ingressIntent.frameworkRootRoute,
 		],
 		bootContract: testManagedGatewayBootContract,
-		configPath: '/deployments/claw/config/system.jsonc',
+		configPath: '/deployments/hermes/config/system.jsonc',
 		controllerPort: 18800,
 		createdAt: '2026-04-13T12:34:56.000Z',
 		expectedCohort,
@@ -236,7 +236,7 @@ describe('integration: orphan recovery', () => {
 		await expect(
 			cleanupRecordedGatewayRuntime(
 				{
-					expectedConfigPath: '/deployments/claw/config/system.jsonc',
+					expectedConfigPath: '/deployments/hermes/config/system.jsonc',
 					expectedControllerPort: 18800,
 					projectNamespace: 'claw-tests-a1b2c3d4',
 					runtimeRecordTarget: controllerRecordTargets.managedGatewayRuntimeRecord,
@@ -269,7 +269,7 @@ describe('integration: orphan recovery', () => {
 		await expect(
 			cleanupRecordedGatewayRuntime(
 				{
-					expectedConfigPath: '/deployments/claw/config/system.jsonc',
+					expectedConfigPath: '/deployments/hermes/config/system.jsonc',
 					expectedControllerPort: 18800,
 					projectNamespace: 'claw-tests-a1b2c3d4',
 					runtimeRecordTarget: controllerRecordTargets.managedGatewayRuntimeRecord,
@@ -295,7 +295,7 @@ describe('integration: orphan recovery', () => {
 		await expect(
 			cleanupRecordedGatewayRuntime(
 				{
-					expectedConfigPath: '/deployments/claw/config/system.jsonc',
+					expectedConfigPath: '/deployments/hermes/config/system.jsonc',
 					expectedControllerPort: 18800,
 					projectNamespace: 'claw-tests-a1b2c3d4',
 					runtimeRecordTarget: controllerRecordTargets.managedGatewayRuntimeRecord,
@@ -320,7 +320,7 @@ describe('integration: orphan recovery', () => {
 		await expect(
 			cleanupRecordedGatewayRuntime(
 				{
-					expectedConfigPath: '/deployments/claw/config/system.jsonc',
+					expectedConfigPath: '/deployments/hermes/config/system.jsonc',
 					expectedControllerPort: 18800,
 					projectNamespace: 'claw-tests-a1b2c3d4',
 					runtimeRecordTarget: controllerRecordTargets.managedGatewayRuntimeRecord,

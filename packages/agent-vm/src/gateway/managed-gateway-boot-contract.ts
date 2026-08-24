@@ -37,13 +37,10 @@ export function createManagedGatewayBootContract(
 }
 
 export function projectManagedGatewayBootForImage(
-	contract: ManagedGatewayBootContract,
+	_contract: ManagedGatewayBootContract,
 ): ManagedGatewayImageBootProjection {
 	return {
-		frameworkBootEntry:
-			contract.frameworkService.framework === 'openclaw'
-				? 'openclaw-framework-service'
-				: 'hermes-framework-service',
+		frameworkBootEntry: 'hermes-framework-service',
 		kind: 'managed-gateway-exact-two-role',
 	};
 }

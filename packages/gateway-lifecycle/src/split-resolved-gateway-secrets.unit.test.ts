@@ -183,17 +183,14 @@ describe('splitResolvedGatewaySecrets', () => {
 			{
 				id: 'sunfam',
 				gateway: {
-					type: 'openclaw',
-					controlAuth: {
-						mode: 'token',
-						secret: 'OPENCLAW_GATEWAY_TOKEN',
-					},
+					type: 'hermes',
+					profileSecretProjectionsByAgent: { main: {} },
+					profilesByAgent: { main: 'main' },
 					memory: '2G',
 					cpus: 2,
 					port: 18791,
 					config: './openclaw.json',
 					stateDir: './state',
-					ssh: { secretEnv: 'explicit' },
 					zoneFilesDir: './zone-files',
 				},
 				secrets: {

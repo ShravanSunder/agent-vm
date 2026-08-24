@@ -5,8 +5,8 @@
 	"input": {
 		"agentId": "agent-a",
 		"frameworkIdentity": {
-			"agentId": "agent-a",
-			"kind": "openclaw"
+			"kind": "hermes",
+			"profileName": "agent-a"
 		},
 		"profileAssignmentRevision": "profile-assignment-a",
 		"toolPortalNamespaceNames": ["\uE000", "\uD800\uDC00"],
@@ -17,14 +17,14 @@
 		"normalized": {
 			"agentId": "agent-a",
 			"frameworkIdentity": {
-				"agentId": "agent-a",
-				"kind": "openclaw"
+				"kind": "hermes",
+				"profileName": "agent-a"
 			},
 			"profileAssignmentRevision": "profile-assignment-a",
 			"toolPortalNamespaceNames": ["\uE000", "\uD800\uDC00"],
 			"toolPortalProfileId": "profile-a"
 		},
-		"canonicalJson": "{\"agentId\":\"agent-a\",\"frameworkIdentity\":{\"agentId\":\"agent-a\",\"kind\":\"openclaw\"},\"profileAssignmentRevision\":\"profile-assignment-a\",\"toolPortalNamespaceNames\":[\"\",\"𐀀\"],\"toolPortalProfileId\":\"profile-a\"}",
+		"canonicalJson": "{\"agentId\":\"agent-a\",\"frameworkIdentity\":{\"kind\":\"hermes\",\"profileName\":\"agent-a\"},\"profileAssignmentRevision\":\"profile-assignment-a\",\"toolPortalNamespaceNames\":[\"\",\"𐀀\"],\"toolPortalProfileId\":\"profile-a\"}",
 		"refinementIdentities": ["gateway.managed-agent-projection.namespace-names"]
 	}
 }

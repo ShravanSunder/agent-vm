@@ -176,7 +176,7 @@ before handing it to Gondolin mediation.
 
 Tool VM-reaching mediated secrets also require `agentAccess`. Use
 `agentAccess: "all"` only for a deliberate all-declared-agents placeholder, or a
-non-empty agent id array such as `["sun"]` for per-agent delivery. The OpenClaw
+non-empty agent id array such as `["sun"]` for per-agent delivery. The Hermes
 zone must declare agents before Tool VM secret access can be selected. The Tool
 VM lifecycle selects allowed secret names for the requested `agentId` before
 resolving refs, so a Sun-only GitHub token is not resolved while booting Mak or
@@ -241,14 +241,11 @@ Returns:
 }
 ```
 
-The OpenClaw lifecycle keeps the secret named by `gateway.controlAuth.secret`
-as a gateway environment secret. The effective config references it through
-OpenClaw's env SecretRef shape instead of storing the plaintext token in
-`<stateDir>/effective-openclaw.json`. Other raw environment secrets must be
-named explicitly in `gateway.rawEnvSecrets`; provider API tokens should use
-`http-mediation` unless the integration cannot be mediated at the HTTP boundary.
-Controller-owned workspace Git credentials never enter the Gateway VM
-environment.
+Hermes profile-secret projections are controller-authored, agent-scoped maps
+from zone secret source names to narrowly admitted profile environment target
+names. Raw provider credentials should use `http-mediation` wherever the
+integration can use a placeholder at the HTTP boundary. Controller-owned
+workspace Git credentials never enter the Gateway VM environment.
 
 MCP Portal upstream credentials stay in the gateway VM portal process. The
 portal exposes schema, summaries, helper source, and validated call results to
@@ -283,40 +280,20 @@ environment or mediated secret set.
 
 ---
 
-## Auth Profiles
+## Hermes Profile Secret Projections
 
-`gateway.authProfilesByAgent` maps agent IDs to secrets containing JSON blobs
-of authentication profiles (e.g. OAuth tokens for model providers). Use this
-for new OpenClaw deployments so each agent gets an explicit profile.
+`gateway.profilesByAgent` assigns each declared agent one normalized, unique
+Hermes profile. `gateway.profileSecretProjectionsByAgent` maps zone secret
+source names to admitted Hermes profile environment target names for that same
+agent.
 
-`gateway.authProfilesRef` is still supported as a legacy/shared fallback for
-older single-agent deployments. It writes a profile only for the `main` agent.
-
-Resolution happens in `prepareHostState` (openclaw-lifecycle.ts), which runs
-before the VM boots:
-
-1. Resolve every `authProfilesByAgent[agentId]` secret via the composite
-   secret resolver
-2. Create `<stateDir>/agents/<agentId>/agent/` with mode 0700
-3. Write `auth-profiles.json` atomically with mode 0600
-
-When only legacy `authProfilesRef` is configured, the same write happens for
-`<stateDir>/agents/main/agent/auth-profiles.json`.
-
-The file lands on the host filesystem. The VM accesses it through a `realfs`
-VFS mount of the state directory. The secret content flows through the resolver
-but the resolved value is written to disk on the host, not injected as an
-environment variable.
-
-```
-  authProfilesByAgent[agentId] (1password or env)
-    |
-    secretResolver.resolve(ref)
-    |
-    writeFileAtomically(stateDir/agents/<agentId>/agent/auth-profiles.json)
-    |
-    VM reads via VFS mount of stateDir
-```
+The controller resolves and projects only the selected profile's sources into
+the exact managed-framework boot inputs. Hermes' durable home remains under
+`stateDir`, but each profile `.env` path is shadowed as a temporary filesystem;
+raw profile environment values do not become durable profile files. The schema
+rejects missing agents, undeclared agents, duplicate profiles, reserved source
+names, forbidden targets, and projections that do not match the exact profile
+assignment.
 
 ---
 
@@ -326,7 +303,7 @@ Worker-zone mediated secrets can be described to agents with zone
 `runtimeAuthHints`. The controller turns those hints into generated worker
 runtime instructions under `/agent-vm/agents.md` and
 `/agent-vm/runtime-instructions.md`, and injects the same text into the prompt
-`runtimeInstructions` layer. OpenClaw zones do not consume `runtimeAuthHints`;
+`runtimeInstructions` layer. Hermes zones do not consume `runtimeAuthHints`;
 Tool VM service auth is controlled by Tool VM-audience mediated secrets,
 `agentAccess`, and `egressHosts`.
 
@@ -344,14 +321,12 @@ toolchain setup is not known.
 
 | Secret | Resolved On | Enters VM? | Mechanism |
 |--------|------------|------------|-----------|
-| Zone secret (injection: env, audience: gateway) | Host | Gateway VM only | VM environment variable; OpenClaw requires `gateway.controlAuth.secret` or `gateway.rawEnvSecrets` |
+| Zone secret (injection: env, audience: gateway) | Host | Gateway VM only | Explicit runtime or Hermes profile environment projection |
 | Zone secret (injection: http-mediation, audience: gateway/both) | Host | Placeholder only | Gateway VM Gondolin proxy injects into HTTP requests |
 | Zone secret (injection: http-mediation, audience: tool-vm/both) | Host | Placeholder only for allowed declared agents | Tool VM Gondolin proxy injects into HTTP requests after `agentAccess` filtering |
 | Worker runtimeAuthHints for mediated secrets | Host | Placeholder name only | Generated worker runtime instructions under `/agent-vm` |
-| gateway.controlAuth.secret | Host | Gateway VM only | Env SecretRef plus runtime-only `/run/openclaw/secrets.env` and token-only `/run/openclaw/gateway-token.env`; allowed raw env by default |
 | githubToken | Host | No | Controller-side git push only |
-| gateway.authProfilesByAgent | Host | Indirectly | Per-agent profile written to host disk; VM reads via VFS mount |
-| gateway.authProfilesRef | Host | Indirectly | Legacy main-agent fallback written to host disk; VM reads via VFS mount |
+| Hermes profile-secret projection | Host | Selected profile only | Exact managed-framework environment input; profile `.env` path remains tmpfs |
 | Service account token | Host | No | Used only to authenticate the 1Password SDK/CLI |
 
 All secret resolution happens on the host. The VM never has access to the
@@ -359,7 +334,8 @@ All secret resolution happens on the host. The VM never has access to the
 `env`-injected secrets, the plaintext is visible inside the gateway VM -- this
 is an intentional tradeoff for secrets that the gateway process must use
 directly. The root SSH parent shell does not receive these secrets by default;
-OpenClaw admin commands source the gateway token in a subshell wrapper.
+Hermes protected SSH opens the framework shell without loading the one-time
+framework service environment or raw profile secrets.
 
 ---
 
@@ -374,5 +350,6 @@ OpenClaw admin commands source the gateway token in a subshell wrapper.
 | `credential-manager.ts` | agent-vm | Maps zone config entries to SecretRefs; resolves per-zone secrets |
 | `split-resolved-gateway-secrets.ts` | gateway-interface | Categorizes resolved secrets into env vs mediated |
 | `system-config.ts` | agent-vm | Zod schemas for secret config, injection modes, token sources |
-| `openclaw-lifecycle.ts` | openclaw-gateway | prepareHostState: writes effective config + auth profiles to disk |
+| `hermes-lifecycle.ts` | hermes-gateway | Profile-scoped environment projection and managed VM secret placement |
+| `hermes-profile-directory-materialization.ts` | hermes-gateway | Protected durable profile directories and temporary `.env` paths |
 | `vm-adapter.ts` | gondolin-adapter | Passes `SecretSpec` map to Gondolin `createHttpHooks` for mediation |

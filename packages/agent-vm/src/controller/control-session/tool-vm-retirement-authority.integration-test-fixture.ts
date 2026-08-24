@@ -56,7 +56,7 @@ import { createGatewaySemanticResultLedger } from './gateway-semantic-result-led
 export const trustedContext = Object.freeze({
 	principal: {
 		agentId: 'main',
-		frameworkIdentity: { agentId: 'main', kind: 'openclaw' },
+		frameworkIdentity: { kind: 'hermes', profileName: 'main' },
 		profileAssignmentRevision: 'assignment-main',
 		toolPortalProfileId: 'builder',
 	},
@@ -68,7 +68,7 @@ export const stablePrincipal = deriveGatewayControlStablePrincipal({
 export const unrelatedTrustedContext = Object.freeze({
 	principal: {
 		agentId: 'unrelated',
-		frameworkIdentity: { agentId: 'unrelated', kind: 'openclaw' },
+		frameworkIdentity: { kind: 'hermes', profileName: 'unrelated' },
 		profileAssignmentRevision: 'assignment-unrelated',
 		toolPortalProfileId: 'builder',
 	},

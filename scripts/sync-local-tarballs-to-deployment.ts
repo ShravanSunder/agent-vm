@@ -4,11 +4,6 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 
 import {
-	type PackageOverrides,
-	emptyPackageOverrides,
-	packageOverridesSchema,
-} from '../packages/agent-vm/src/build/package-overrides.ts';
-import {
 	renderHermesManagedImageRecipe,
 	type HermesManagedImageBuildTarget,
 } from '../packages/hermes-gateway/src/index.ts';
@@ -30,28 +25,10 @@ export const AGENT_VM_PACKAGE_NAMES = [
 	'@agent-vm/hermes-gateway',
 	'@agent-vm/managed-vm',
 	'@agent-vm/mcp-portal',
-	'@agent-vm/openclaw-agent-vm-plugin',
-	'@agent-vm/openclaw-gateway',
 	'@agent-vm/secret-management',
 	'@agent-vm/tool-portal',
 	'@agent-vm/worker-control-contracts',
 	'@agent-vm/worker-gateway',
-] as const;
-
-export const OPENCLAW_GATEWAY_TARBALL_PACKAGE_NAMES = [
-	'@agent-vm/agent-portal-sdk',
-	'@agent-vm/config-contracts',
-	'@agent-vm/control-protocol-contracts',
-	'@agent-vm/controller-execution-contracts',
-	'@agent-vm/gateway-control-contracts',
-	'@agent-vm/secret-management',
-	'@agent-vm/gondolin-vm-adapter',
-	'@agent-vm/gateway-lifecycle',
-	'@agent-vm/gateway-runtime',
-	'@agent-vm/managed-vm',
-	'@agent-vm/mcp-portal',
-	'@agent-vm/tool-portal',
-	'@agent-vm/openclaw-agent-vm-plugin',
 ] as const;
 
 export const TOOL_VM_TARBALL_PACKAGE_NAMES = [
@@ -83,7 +60,6 @@ interface BetaTarballPackageEntry {
 }
 
 export interface BetaTarballSyncPlan {
-	readonly gatewayPackages: readonly BetaTarballPackageEntry[];
 	readonly hermesGatewayPackages: readonly BetaTarballPackageEntry[];
 	readonly hostPackageSpecifier: string;
 	readonly packages: readonly BetaTarballPackageEntry[];
@@ -115,20 +91,15 @@ interface OverlayCopyEntry {
 	readonly to: string;
 }
 
-interface OpenClawGatewayOverlay {
+interface ManagedImageOverlay {
 	readonly copy?: readonly OverlayCopyEntry[];
 	readonly extraAptPackages?: readonly string[];
-	readonly extraOpenClawPackages?: readonly string[];
-	readonly openClawPackageOverrides?: readonly string[];
-	readonly packageOverrides?: PackageOverrides;
-	readonly pnpmOverrides?: Record<string, string>;
 	readonly runAfterBase?: readonly string[];
 	readonly [key: string]: unknown;
 }
 
-interface RenderOpenClawGatewayOverlayOptions {
-	readonly existingOverlay: OpenClawGatewayOverlay;
-	readonly managedPackageOverrides?: PackageOverrides;
+interface RenderToolVmOverlayOptions {
+	readonly existingOverlay: ManagedImageOverlay;
 	readonly plan: BetaTarballSyncPlan;
 }
 
@@ -148,7 +119,6 @@ interface ResolvePnpmPackArgsOptions {
 interface RefreshBetaDeploymentTarballArtifactsOptions {
 	readonly deploymentDirectory: string;
 	readonly hermesImage?: HermesBetaImageArtifacts | undefined;
-	readonly managedOpenClawGatewayPackageOverrides: PackageOverrides;
 	readonly plan: BetaTarballSyncPlan;
 	readonly tarballDirectory: string;
 }
@@ -221,13 +191,6 @@ export function createBetaTarballSyncPlan(
 	const packageEntryByName = new Map(
 		packages.map((packageEntry) => [packageEntry.name, packageEntry]),
 	);
-	const gatewayPackages = OPENCLAW_GATEWAY_TARBALL_PACKAGE_NAMES.map((packageName) => {
-		const packageEntry = packageEntryByName.get(packageName);
-		if (!packageEntry) {
-			throw new Error(`Internal error: ${packageName} is missing from package plan.`);
-		}
-		return packageEntry;
-	});
 	const hermesGatewayPackages = HERMES_GATEWAY_TARBALL_PACKAGE_NAMES.map((packageName) => {
 		const packageEntry = packageEntryByName.get(packageName);
 		if (!packageEntry) {
@@ -249,7 +212,6 @@ export function createBetaTarballSyncPlan(
 		throw new Error('Internal error: @agent-vm/agent-vm is missing from package plan.');
 	}
 	return {
-		gatewayPackages,
 		hermesGatewayPackages,
 		hostPackageSpecifier: hostPackageEntry.specifier,
 		packages,
@@ -403,151 +365,7 @@ function renderLocalPackageCleanupCommand(
 	return `rm -f ${cleanupPaths.join(' ')}`;
 }
 
-interface ParsedPackageSpec {
-	readonly name: string;
-	readonly version?: string;
-}
-
-function parsePackageSpec(packageSpec: string): ParsedPackageSpec {
-	if (packageSpec.startsWith('@')) {
-		const scopeSeparatorIndex = packageSpec.indexOf('/');
-		if (scopeSeparatorIndex === -1) {
-			return { name: packageSpec };
-		}
-		const versionSeparatorIndex = packageSpec.indexOf('@', scopeSeparatorIndex + 1);
-		if (versionSeparatorIndex === -1) {
-			return { name: packageSpec };
-		}
-		return {
-			name: packageSpec.slice(0, versionSeparatorIndex),
-			version: packageSpec.slice(versionSeparatorIndex + 1),
-		};
-	}
-
-	const versionSeparatorIndex = packageSpec.indexOf('@');
-	if (versionSeparatorIndex === -1) {
-		return { name: packageSpec };
-	}
-	return {
-		name: packageSpec.slice(0, versionSeparatorIndex),
-		version: packageSpec.slice(versionSeparatorIndex + 1),
-	};
-}
-
-function specName(packageSpec: string): string {
-	return parsePackageSpec(packageSpec).name;
-}
-
-function pruneSpecBucket(
-	overlaySpecs: readonly string[],
-	managedSpecs: readonly string[],
-): readonly string[] {
-	const managedByName = new Map(
-		managedSpecs.map((packageSpec) => [specName(packageSpec), packageSpec]),
-	);
-	return overlaySpecs.filter(
-		(packageSpec) => managedByName.get(specName(packageSpec)) !== packageSpec,
-	);
-}
-
-function prunePnpmBucket(
-	overlayPnpm: Readonly<Record<string, string>>,
-	managedPnpm: Readonly<Record<string, string>>,
-): Readonly<Record<string, string>> {
-	return Object.fromEntries(
-		Object.entries(overlayPnpm).filter(
-			([packageName, version]) => managedPnpm[packageName] !== version,
-		),
-	);
-}
-
-function compactPackageOverrides(packageOverrides: PackageOverrides): PackageOverrides | undefined {
-	const compacted: PackageOverrides = {
-		npm: packageOverrides.npm,
-		openclaw: packageOverrides.openclaw,
-		pnpm: packageOverrides.pnpm,
-	};
-	if (
-		compacted.npm.length === 0 &&
-		compacted.openclaw.length === 0 &&
-		Object.keys(compacted.pnpm).length === 0
-	) {
-		return undefined;
-	}
-	return compacted;
-}
-
-function assertNoLegacyPackageOverrideKeys(existingOverlay: OpenClawGatewayOverlay): void {
-	if (existingOverlay.extraOpenClawPackages !== undefined) {
-		throw new Error('move extraOpenClawPackages to packageOverrides.openclaw');
-	}
-	if (existingOverlay.openClawPackageOverrides !== undefined) {
-		throw new Error('move openClawPackageOverrides to packageOverrides.openclaw');
-	}
-	if (existingOverlay.pnpmOverrides !== undefined) {
-		throw new Error('move pnpmOverrides to packageOverrides.pnpm');
-	}
-}
-
-export function migrateLegacyOpenClawPackageOverrides(
-	existingOverlay: OpenClawGatewayOverlay,
-	options: { readonly managedPackageOverrides?: PackageOverrides } = {},
-): OpenClawGatewayOverlay {
-	assertNoLegacyPackageOverrideKeys(existingOverlay);
-	const {
-		extraOpenClawPackages: _legacyOpenClawPackageOverrides,
-		openClawPackageOverrides: _openClawPackageOverrides,
-		pnpmOverrides: _stalePnpmOverrides,
-		packageOverrides: _packageOverrides,
-		...baseOverlay
-	} = existingOverlay;
-	const parsedPackageOverrides = packageOverridesSchema.parse(
-		existingOverlay.packageOverrides ?? emptyPackageOverrides(),
-	);
-	const managedPackageOverrides = options.managedPackageOverrides ?? emptyPackageOverrides();
-	const packageOverrides = compactPackageOverrides({
-		npm: pruneSpecBucket(parsedPackageOverrides.npm, managedPackageOverrides.npm),
-		openclaw: pruneSpecBucket(parsedPackageOverrides.openclaw, managedPackageOverrides.openclaw),
-		pnpm: prunePnpmBucket(parsedPackageOverrides.pnpm, managedPackageOverrides.pnpm),
-	});
-	return {
-		...baseOverlay,
-		...(packageOverrides ? { packageOverrides } : {}),
-	};
-}
-
-export function renderOpenClawGatewayOverlay(
-	options: RenderOpenClawGatewayOverlayOptions,
-): OpenClawGatewayOverlay {
-	const baseOverlay = migrateLegacyOpenClawPackageOverrides(options.existingOverlay, {
-		managedPackageOverrides: options.managedPackageOverrides,
-	});
-	const copyEntries = renderLocalPackageCopyEntries(
-		options.existingOverlay.copy,
-		options.plan.gatewayPackages,
-	);
-	const runAfterBase = [
-		...(options.existingOverlay.runAfterBase ?? []).filter(
-			(command) => !isAgentVmLocalInstallCommand(command),
-		),
-		...renderLocalPackageInstallStartCommands(options.plan.gatewayPackages),
-		'package_root="$(pnpm root -g)" && mkdir -p "$package_root/@agent-vm" && ln -sfn /opt/agent-vm/local-packages/node_modules/@agent-vm/openclaw-agent-vm-plugin "$package_root/@agent-vm/openclaw-agent-vm-plugin" && ln -sfn /opt/agent-vm/local-packages/node_modules/@agent-vm/mcp-portal "$package_root/@agent-vm/mcp-portal"',
-		'test -f /opt/agent-vm/local-packages/node_modules/@agent-vm/gateway-runtime/dist/bin/gateway-runtime.js && chmod 755 /opt/agent-vm/local-packages/node_modules/@agent-vm/gateway-runtime/dist/bin/gateway-runtime.js && ln -sfn /opt/agent-vm/local-packages/node_modules/@agent-vm/gateway-runtime/dist/bin/gateway-runtime.js /usr/local/bin/agent-vm-gateway-runtime',
-		renderLocalPackageCleanupCommand(options.plan.gatewayPackages),
-	];
-	return {
-		...baseOverlay,
-		copy: copyEntries,
-		runAfterBase,
-	};
-}
-
-export function renderToolVmOverlay(
-	options: RenderOpenClawGatewayOverlayOptions,
-): OpenClawGatewayOverlay {
-	const baseOverlay = migrateLegacyOpenClawPackageOverrides(options.existingOverlay, {
-		managedPackageOverrides: options.managedPackageOverrides,
-	});
+export function renderToolVmOverlay(options: RenderToolVmOverlayOptions): ManagedImageOverlay {
 	const copyEntries = renderLocalPackageCopyEntries(
 		options.existingOverlay.copy,
 		options.plan.toolVmPackages,
@@ -561,7 +379,7 @@ export function renderToolVmOverlay(
 		renderLocalPackageCleanupCommand(options.plan.toolVmPackages),
 	];
 	return {
-		...baseOverlay,
+		...options.existingOverlay,
 		copy: copyEntries,
 		runAfterBase,
 	};
@@ -578,46 +396,6 @@ async function readJsonFile(filePath: string): Promise<JsonRecord> {
 
 async function writeJsonFile(filePath: string, value: JsonRecord): Promise<void> {
 	await writeFile(filePath, `${JSON.stringify(value, null, '\t')}\n`);
-}
-
-async function listManagedImageOverlayPaths(directoryPath: string): Promise<readonly string[]> {
-	let directoryEntries;
-	try {
-		directoryEntries = await readdir(directoryPath, { withFileTypes: true });
-	} catch (error) {
-		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') {
-			return [];
-		}
-		throw error;
-	}
-	const nestedOverlayPaths = await Promise.all(
-		directoryEntries.map(async (directoryEntry) => {
-			const entryPath = path.join(directoryPath, directoryEntry.name);
-			if (directoryEntry.isDirectory()) {
-				return listManagedImageOverlayPaths(entryPath);
-			}
-			if (directoryEntry.isFile() && directoryEntry.name === 'overlay.jsonc') {
-				return [entryPath];
-			}
-			return [];
-		}),
-	);
-	return nestedOverlayPaths.flat();
-}
-
-async function migrateDeploymentOverlayFieldNames(deploymentDirectory: string): Promise<void> {
-	const overlayPaths = await listManagedImageOverlayPaths(
-		path.join(deploymentDirectory, 'vm-images'),
-	);
-	await Promise.all(
-		overlayPaths.map(async (overlayPath) => {
-			const overlay = (await readJsonFile(overlayPath)) as OpenClawGatewayOverlay;
-			if (overlay.extraOpenClawPackages === undefined) {
-				return;
-			}
-			await writeJsonFile(overlayPath, migrateLegacyOpenClawPackageOverrides(overlay));
-		}),
-	);
 }
 
 function readOnlyBuiltDependencies(manifest: JsonRecord): readonly string[] {
@@ -646,31 +424,6 @@ async function readWorkspacePackageVersion(repositoryDirectory: string): Promise
 		throw new Error('packages/agent-vm/package.json must contain a non-empty version.');
 	}
 	return version;
-}
-
-async function readManagedOpenClawGatewayPackageOverrides(
-	repositoryDirectory: string,
-): Promise<PackageOverrides> {
-	const manifest = await readJsonFile(
-		path.join(repositoryDirectory, 'packages', 'agent-vm', 'managed-images.json'),
-	);
-	const baseImages = manifest.baseImages;
-	if (!isJsonRecord(baseImages)) {
-		throw new Error('packages/agent-vm/managed-images.json must contain baseImages.');
-	}
-	const openClawGateway = baseImages['openclaw-gateway'];
-	if (!isJsonRecord(openClawGateway)) {
-		throw new Error(
-			'packages/agent-vm/managed-images.json must contain baseImages.openclaw-gateway.',
-		);
-	}
-	const parsedPackageOverrides = packageOverridesSchema.safeParse(openClawGateway.packageOverrides);
-	if (!parsedPackageOverrides.success) {
-		throw new Error(
-			'packages/agent-vm/managed-images.json must contain baseImages.openclaw-gateway.packageOverrides.',
-		);
-	}
-	return parsedPackageOverrides.data;
 }
 
 async function readHermesBetaImageBuildTarget(
@@ -950,34 +703,6 @@ export async function refreshBetaDeploymentTarballArtifacts(
 		path.join(options.deploymentDirectory, 'pnpm-workspace.yaml'),
 		renderBetaPnpmWorkspace({ onlyBuiltDependencies, plan: options.plan }),
 	);
-	await migrateDeploymentOverlayFieldNames(options.deploymentDirectory);
-
-	const overlayDirectory = path.join(
-		options.deploymentDirectory,
-		'vm-images',
-		'gateways',
-		'openclaw',
-	);
-	const overlayPath = path.join(overlayDirectory, 'overlay.jsonc');
-	await copyOverlayPackageTarballs({
-		overlayDirectory,
-		packageEntries: options.plan.gatewayPackages,
-		tarballDirectory: options.tarballDirectory,
-	});
-	await pruneStaleLocalOverlayFiles({
-		overlayDirectory,
-		packageEntries: options.plan.gatewayPackages,
-	});
-	const overlay = (await readJsonFile(overlayPath)) as OpenClawGatewayOverlay;
-	await writeJsonFile(
-		overlayPath,
-		renderOpenClawGatewayOverlay({
-			existingOverlay: overlay,
-			managedPackageOverrides: options.managedOpenClawGatewayPackageOverrides,
-			plan: options.plan,
-		}),
-	);
-
 	const toolVmOverlayDirectory = path.join(
 		options.deploymentDirectory,
 		'vm-images',
@@ -994,12 +719,11 @@ export async function refreshBetaDeploymentTarballArtifacts(
 		overlayDirectory: toolVmOverlayDirectory,
 		packageEntries: options.plan.toolVmPackages,
 	});
-	const toolVmOverlay = (await readJsonFile(toolVmOverlayPath)) as OpenClawGatewayOverlay;
+	const toolVmOverlay = (await readJsonFile(toolVmOverlayPath)) as ManagedImageOverlay;
 	await writeJsonFile(
 		toolVmOverlayPath,
 		renderToolVmOverlay({
 			existingOverlay: toolVmOverlay,
-			managedPackageOverrides: emptyPackageOverrides(),
 			plan: options.plan,
 		}),
 	);
@@ -1017,9 +741,6 @@ async function syncBetaTarballs(options: SyncBetaTarballsOptions): Promise<void>
 	const hash = options.hash ?? (await getGitShortHash(options.repositoryDirectory));
 	const version = await readWorkspacePackageVersion(options.repositoryDirectory);
 	const hermesImageBuildTarget = await readHermesBetaImageBuildTarget(options.deploymentDirectory);
-	const managedOpenClawGatewayPackageOverrides = await readManagedOpenClawGatewayPackageOverrides(
-		options.repositoryDirectory,
-	);
 	const tarballDirectory = path.join(options.repositoryDirectory, 'tmp', `beta-tarballs-${hash}`);
 	const tarballDirectoryReference = path.relative(options.deploymentDirectory, tarballDirectory);
 	const plan = createBetaTarballSyncPlan({ cacheKey: hash, tarballDirectoryReference, version });
@@ -1050,7 +771,6 @@ async function syncBetaTarballs(options: SyncBetaTarballsOptions): Promise<void>
 	await refreshBetaDeploymentTarballArtifacts({
 		deploymentDirectory: options.deploymentDirectory,
 		...(hermesImage === undefined ? {} : { hermesImage }),
-		managedOpenClawGatewayPackageOverrides,
 		plan,
 		tarballDirectory,
 	});
@@ -1094,7 +814,7 @@ export function parseCliOptions(args: readonly string[]): SyncBetaTarballsOption
 	}
 	if (!deploymentDirectory) {
 		throw new Error(
-			'Usage: tsx scripts/sync-local-tarballs-to-deployment.ts --deployment ../shravan-claw-beta',
+			'Usage: tsx scripts/sync-local-tarballs-to-deployment.ts --deployment <deployment-directory>',
 		);
 	}
 	return {

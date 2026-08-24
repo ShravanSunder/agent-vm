@@ -715,18 +715,9 @@ class HermesManagedEnvironmentHooks:
         with self._resolution_lock:
             current_entry = self._current_environments.get(profile_name)
             if current_entry is not None:
-                try:
-                    status_kind = current_entry.environment.resolve_status_kind()
-                except Exception as error:
-                    _LOGGER.warning(
-                        "Hermes managed environment status probe failed; retiring stale cache: "
-                        "profile=%s failure=%s",
-                        profile_name,
-                        type(error).__name__,
-                    )
-                else:
-                    if status_kind == "active":
-                        return current_entry.cache_identity
+                status_kind = current_entry.environment.resolve_status_kind()
+                if status_kind == "active":
+                    return current_entry.cache_identity
                 self._terminal_tool_module.evict_environment_cache(
                     current_entry.cache_identity,
                     current_entry.environment,

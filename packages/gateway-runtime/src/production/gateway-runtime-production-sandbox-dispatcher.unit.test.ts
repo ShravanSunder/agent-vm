@@ -29,7 +29,7 @@ import { createGatewayRuntimeProductionSandboxDispatcher } from './gateway-runti
 const trustedContext = {
 	principal: {
 		agentId: 'agent-a',
-		frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
+		frameworkIdentity: { kind: 'hermes', profileName: 'agent-a' },
 		profileAssignmentRevision: 'profile-assignment-a-1',
 		toolPortalProfileId: 'profile-a',
 	},
@@ -767,7 +767,7 @@ describe('Gateway Runtime production Sandbox dispatcher', () => {
 			principal: {
 				...trustedContext.principal,
 				agentId: 'agent-b',
-				frameworkIdentity: { agentId: 'agent-b', kind: 'openclaw' as const },
+				frameworkIdentity: { kind: 'hermes' as const, profileName: 'agent-b' },
 			},
 		} satisfies GatewayRuntimeTrustedInvocationContext;
 

@@ -113,7 +113,7 @@ const liveRoundtripFixtureSystemConfig = {
 	imageProfiles: {
 		gateways: {
 			openclaw: {
-				type: 'openclaw',
+				type: 'hermes',
 				buildConfig: './vm-images/gateways/openclaw/build-config.json',
 			},
 		},
@@ -128,12 +128,10 @@ const liveRoundtripFixtureSystemConfig = {
 		{
 			id: 'shravan',
 			gateway: {
-				type: 'openclaw',
+				type: 'hermes',
+				profileSecretProjectionsByAgent: { main: {} },
+				profilesByAgent: { main: 'main' },
 				config: './config/shravan/openclaw.json',
-				controlAuth: {
-					mode: 'token',
-					secret: 'OPENCLAW_GATEWAY_TOKEN',
-				},
 				cpus: 2,
 				imageProfile: 'openclaw',
 				memory: '2G',
@@ -240,7 +238,7 @@ describe('live integration: agent model roundtrip deployment config', () => {
 			expect(path.resolve(liveConfig.controllerRuntimeDir)).toContain(path.resolve(deploymentRoot));
 			for (const zone of liveConfig.zones) {
 				expect(path.resolve(zone.gateway.stateDir)).toContain(path.resolve(deploymentRoot));
-				if (zone.gateway.type === 'openclaw') {
+				if (zone.gateway.type === 'hermes') {
 					expect(path.resolve(zone.gateway.zoneFilesDir)).toContain(path.resolve(deploymentRoot));
 				}
 			}

@@ -68,7 +68,7 @@ describe('gateway lifecycle operation records', () => {
 		).resolves.toEqual(secondRecord);
 	});
 
-	it.each(['hermes', 'openclaw'] as const)(
+	it.each(['hermes', 'worker'] as const)(
 		'round-trips $gatewayType lifecycle records',
 		async (gatewayType) => {
 			await using tempDir = await createTemporaryDirectory();
@@ -154,7 +154,7 @@ function createOperationRecord(
 			hostPid: 5678,
 			vmId: 'gateway-vm-current',
 		},
-		gatewayType: 'openclaw',
+		gatewayType: 'hermes',
 		previousGateway: {
 			hostPid: 4567,
 			vmId: 'gateway-vm-previous',

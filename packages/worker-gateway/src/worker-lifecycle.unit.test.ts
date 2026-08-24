@@ -10,7 +10,6 @@ const zone: GatewayZoneConfig = {
 		config: '/host/config/shravan/worker.json',
 		memory: '2G',
 		port: 18791,
-		ssh: { secretEnv: 'explicit' },
 		stateDir: '/host/state/shravan',
 		type: 'worker',
 	},

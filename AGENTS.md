@@ -20,26 +20,23 @@ Use progressive disclosure when learning this repo:
    section is the canonical name/location/storage table.
 5. Use mode-specific gateway docs only when needed:
    - `docs/architecture/agent-worker-gateway.md` — Agent Worker Gateway, in-VM pipeline, event log, executors.
-   - `docs/architecture/openclaw-gateway.md` — OpenClaw Gateway, long-running gateway VM, tool VM leases.
+   - `docs/reference/configuration/system-json.md` — Hermes managed Gateway configuration, profiles, Tool VM policy, and ingress.
 6. Use subsystem docs for implementation details:
    - `docs/subsystems/controller.md` — HTTP routes, controller runtime, lease manager.
-   - `docs/subsystems/gateway-lifecycle.md` — `GatewayLifecycle`, Agent Worker Gateway vs OpenClaw Gateway implementations.
+   - `docs/subsystems/gateway-lifecycle.md` — `GatewayLifecycle`, Hermes managed Gateway vs Agent Worker Gateway implementations.
    - `docs/subsystems/gondolin-vm-layer.md` — Gondolin adapter, VFS, `tcpHosts`, image build.
    - `docs/subsystems/worker-task-pipeline.md` — host-side Agent Worker task lifecycle, repo resources, teardown.
 
-For gateway serving, streaming, WebSocket, Control UI, or exposed webserver
-port work, read `docs/architecture/openclaw-gateway.md`,
-`docs/subsystems/gondolin-vm-layer.md`, and the `gateway.ingress` section of
+For gateway serving, streaming, WebSocket, or exposed webserver port work, read
+`docs/subsystems/gondolin-vm-layer.md` and the `gateway.ingress` section of
 `docs/reference/configuration/system-json.md` before editing. Keep the boundary
-clear: `zones[].gateway.port` is the host-facing Gondolin ingress listener,
-agent-vm currently routes `/` to the OpenClaw guest gateway port, and arbitrary
-extra guest webservers require explicit ingress routes rather than rootfs-size
-or OpenClaw-only config changes.
+clear: `zones[].gateway.port` is the host-facing Gondolin ingress listener, and
+arbitrary extra guest webservers require explicit ingress routes.
 
 For gateway health, agent-vm controller communication, lease-heartbeat,
 lease-renew, Tool VM SSH, or Gondolin `tcpHosts` timeout debugging, read
 `docs/subsystems/controller.md`, `docs/subsystems/gondolin-vm-layer.md`, and
-`docs/architecture/openclaw-gateway.md` before changing runtime behavior. Keep
+`docs/subsystems/gateway-lifecycle.md` before changing runtime behavior. Keep
 the health boundaries separate: host-side agent-vm controller, gateway VM,
 gateway-service process, gateway-to-controller control link, lease routes, and
 gateway-to-Tool-VM SSH are different failure surfaces.
@@ -95,7 +92,7 @@ fast formatting and linting.
 - Unit tests: `pnpm test:unit`.
 - Integration tests: `pnpm test:integration`.
   Unit and integration Vitest projects use the `threads` pool for fast local and
-  CI feedback. Do not move live VM, OpenClaw, Hermes, Worker, 1Password, LLM, or host
+  CI feedback. Do not move live VM, Hermes, Worker, 1Password, LLM, or host
   e2e lanes onto that pool without proving teardown and process isolation still
   hold.
 - E2E inventory: `pnpm test:e2e:inventory`.
@@ -108,9 +105,7 @@ fast formatting and linting.
 - Additional E2E proof lanes:
   - Host proofs: `pnpm test:e2e:host`.
   - Generic VM/Gondolin: `mise exec -- pnpm test:e2e:vm`.
-  - Managed Gateway VM/Gondolin: `mise exec -- pnpm test:e2e:vm-managed-gateway`.
   - VM/Gondolin HTTP mediation: `mise exec -- pnpm test:e2e:vm-mediation`.
-  - OpenClaw gateway: `mise exec -- pnpm test:e2e:openclaw`.
   - Hermes gateway: `mise exec -- pnpm test:e2e:hermes`.
   - Worker gateway/runtime: `mise exec -- pnpm test:e2e:worker`.
   - 1Password test account: `pnpm test:e2e:secrets`.
@@ -118,7 +113,7 @@ fast formatting and linting.
   Proof lanes run directly through their named Vitest projects and use
   Vitest's exit status for pass/fail. `test:e2e:inventory` is the discovery
   lane and may report skipped tests by design.
-- E2E VM/OpenClaw/Hermes/Worker lanes require Docker, QEMU, and the pinned Zig from
+- E2E VM/Hermes/Worker lanes require Docker, QEMU, and the pinned Zig from
   `mise.toml`. Use `mise exec --` for those lanes. The e2e harness uses a
   shared rebuildable image/local-package cache by default and honors
   `AGENT_VM_E2E_CACHE_DIR` when you want to pin that cache location.
@@ -142,7 +137,6 @@ The suffix is the contract. Do not use plain `*.test.ts` for new tests.
 - Integration tests must use `*.integration.test.ts`.
 - Host e2e tests must use `*.host.e2e.test.ts`.
 - VM e2e tests must use `*.vm.e2e.test.ts`.
-- OpenClaw e2e tests must use `*.openclaw.e2e.test.ts`.
 - Hermes e2e tests must use `*.hermes.e2e.test.ts`.
 - Worker e2e tests must use `*.worker.e2e.test.ts`.
 - 1Password e2e tests must use `*.secrets.e2e.test.ts`.
@@ -224,13 +218,13 @@ layers as e2e.
 - Real VM integration: boots the real Gondolin/QEMU path or a real managed image
   path and proves host/guest wiring, ingress, control link, runtime records, or
   Tool VM SSH with the pinned toolchain active through `mise exec --`.
-- E2E: proves production-shaped behavior from the outside of the system.
-  For OpenClaw reliability, this means a real controller, real OpenClaw gateway
-  VM, real plugin path, real lease/tool path when relevant, and observable user
-  or operator behavior. Fake clients, fake VM factories, schema-only checks, and
+- E2E: proves production-shaped behavior from the outside of the system. For
+  Hermes reliability, this means a real controller, real Hermes Gateway VM,
+  real adapter path, real lease/tool path when relevant, and observable user or
+  operator behavior. Fake clients, fake VM factories, schema-only checks, and
   manual-template checks are useful tests, but they are not e2e evidence.
 
-When a change claims to fix VM, OpenClaw gateway, Tool VM SSH, lease lifecycle,
+When a change claims to fix VM, Hermes Gateway, Tool VM SSH, lease lifecycle,
 gateway recovery, control-link, or provider runtime behavior, the final report
 must climb the pyramid explicitly:
 
@@ -335,7 +329,7 @@ published registry version.
 For beta validation, use `pnpm dev:sync-tarballs -- --deployment
 ../shravan-claw-beta`. It builds once, packs local `@agent-vm/*` tarballs,
 updates beta's host dependency pins, runs `pnpm install` in beta, and refreshes
-the OpenClaw gateway overlay tarballs. Then run beta's normal
+the Hermes Gateway and Tool VM overlay artifacts. Then run beta's normal
 `mise exec -- pnpm build` and `pnpm start` commands.
 
 ## Release Process
@@ -367,18 +361,17 @@ path described above.
 Managed image release pins are a separate release train from npm package
 versions. Do not change `packages/agent-vm/managed-images.json` base image tags
 just to match npm versions. Keep that manifest focused on managed base image
-metadata such as GHCR tags and the OpenClaw upstream version; do not add
-`@agent-vm/*` npm package pins to it.
-Do not change the managed OpenClaw upstream version without explicit maintainer
-permission.
+metadata such as GHCR tags; do not add `@agent-vm/*` npm package pins to it.
+The Hermes upstream distribution pin is
+owned by `@agent-vm/hermes-gateway`, not this manifest, and must not change
+without explicit maintainer permission and qualification.
 
 Before publishing, pack and inspect `@agent-vm/agent-vm` from the exact commit
 that will be released. Confirm the packed `package/package.json` has sibling
 `@agent-vm/*` dependencies on the intended version. Confirm packed
 `package/managed-images.json` has the intended managed image tags and no npm
-package version pins. Generated OpenClaw gateway Dockerfiles derive the
-`@agent-vm/openclaw-agent-vm-plugin` install spec from the installed package
-metadata.
+package version pins. Confirm the packed `@agent-vm/hermes-gateway` artifact
+retains the intended immutable Hermes distribution inputs.
 
 Because there is no separate user-authored image cache identifier, VM image
 fingerprints rely on image recipe contents plus the package/runtime version
@@ -426,9 +419,8 @@ secret-management        → SecretRef/SecretResolver contracts, env + 1Password
 managed-vm               → Backend-neutral VM capabilities and structural contracts
 gateway-lifecycle        → GatewayLifecycle, VM requirements, and process specs (→ managed-vm)
 gondolin-vm-adapter      → Gondolin provider and image tooling (→ managed-vm, Gondolin SDK)
-openclaw-gateway         → OpenClaw lifecycle (→ gateway-lifecycle, managed-vm)
+hermes-gateway           → Hermes lifecycle and managed image recipe (→ gateway-lifecycle, managed-vm)
 worker-gateway           → Worker lifecycle (→ gateway-lifecycle, managed-vm)
-openclaw-agent-vm-plugin → OpenClaw sandbox and Tool Portal bridge
 agent-vm-worker          → Worker process, runs inside VM (standalone)
 agent-vm                 → Controller CLI + HTTP server; composes the selected provider
 ```
@@ -462,15 +454,14 @@ between repo config, state, cache, workspace, or backup directories.
 Lease path vocabulary is intentionally layered; see
 [Lease Path Vocabulary](docs/architecture/storage-model.md#lease-path-vocabulary)
 before renaming or threading these fields. `workMountDir` is the untrusted
-OpenClaw gateway path in `POST /lease`; `hostWorkMountDir` is the
+managed-Gateway caller path in `POST /lease`; `hostWorkMountDir` is the
 controller-validated host path; Tool VMs always see the selected mount at
-`/work`. OpenClaw SDK `workspaceDir` exists only at the plugin boundary and
-must be translated immediately to controller `workMountDir`.
+`/work`.
 
 ## Controller API
 
 - `GET /health` — readiness
-- `GET /zones/:zoneId/health` — live OpenClaw gateway health probe
+- `GET /zones/:zoneId/health` — live managed Gateway health probe
 - `POST /zones/:zoneId/worker-tasks` — start worker task, returns `202 { taskId, status: "accepted" }`
 - `GET /zones/:zoneId/tasks/:taskId` — replayed worker task state snapshot
 - `POST /zones/:zoneId/tasks/:taskId/push-branches` — controller-side git push
@@ -525,7 +516,7 @@ Allowed runtime auth path:
 3. The controller generates `runtimeInstructions` and the agent-facing
    `/agent-vm/agents.md` runtime index at task boot. Worker repo docs live at
    `/work/repos/AGENTS.md` with a `CLAUDE.md` symlink for Claude-compatible
-   discovery. OpenClaw Tool VMs mount the validated lease work mount at `/work`.
+   discovery. Hermes Tool VMs mount the validated lease work mount at `/work`.
 4. Gondolin runtime puts a placeholder in the VM env at boot; the proxy swaps it
    for the real token only on outbound calls to allowed hosts.
 

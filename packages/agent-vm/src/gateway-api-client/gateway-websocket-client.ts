@@ -10,7 +10,7 @@ interface WebSocketLike {
 }
 
 /**
- * Gateway WebSocket protocol frame types, matching the OpenClaw gateway protocol.
+ * Gateway WebSocket protocol frame types for the managed Gateway API.
  *
  * - Request:  `{ type: "req", id, method, params }`
  * - Response: `{ type: "res", id, ok, payload | error }`

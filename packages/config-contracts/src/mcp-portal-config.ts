@@ -205,15 +205,6 @@ export type McpPortalConfig = Omit<ParsedMcpPortalConfig, 'agents'> & {
 	readonly agents: Readonly<Record<string, McpPortalAgentConfig>>;
 };
 
-export const openClawMcpPortalPluginConfigSchema = z
-	.object({
-		configDir: z.string().min(1),
-		binPath: z.string().min(1).optional(),
-	})
-	.strict();
-
-export type OpenClawMcpPortalPluginConfig = z.infer<typeof openClawMcpPortalPluginConfigSchema>;
-
 const defaultProfile: ResolvedMcpPortalProfile = {
 	approval: portalApprovalConfigSchema.parse({}),
 	cache: { catalogTtlMs: 60_000 },

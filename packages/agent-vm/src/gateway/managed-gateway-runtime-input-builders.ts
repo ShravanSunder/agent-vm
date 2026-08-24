@@ -68,10 +68,8 @@ export interface ManagedGatewayFrameworkAdapterMaterial {
 	readonly attachment: GatewayRuntimeAttachmentMetadata;
 }
 
-function frameworkClientKind(
-	frameworkKind: ManagedGatewayBootContract['frameworkService']['framework'],
-): GatewayRuntimeAttachmentMetadata['clientKind'] {
-	return frameworkKind === 'openclaw' ? 'openclaw-managed-plugin' : 'hermes-managed-plugin';
+function frameworkClientKind(): GatewayRuntimeAttachmentMetadata['clientKind'] {
+	return 'hermes-managed-plugin';
 }
 
 function buildManagedGatewayAttachmentMetadata(
@@ -79,7 +77,7 @@ function buildManagedGatewayAttachmentMetadata(
 ): GatewayRuntimeAttachmentMetadata {
 	return Object.freeze({
 		attachmentGeneration: props.generatedIdentity.attachmentGeneration,
-		clientKind: frameworkClientKind(props.bootContract.frameworkService.framework),
+		clientKind: frameworkClientKind(),
 		configuredAgentIds: Object.freeze(
 			Object.keys(props.portalAdmission.effectiveToolPortalConfig.agents).toSorted(),
 		),
@@ -197,7 +195,7 @@ export function buildManagedGatewayFrameworkAdapterMaterial(
 		semanticSnapshot: props.portalAdmission.semanticSnapshot,
 		toolPortalConfig: props.portalAdmission.effectiveToolPortalConfig,
 	});
-	const expectedClientKind = frameworkClientKind(props.cohort.frameworkIdentity.frameworkKind);
+	const expectedClientKind = frameworkClientKind();
 	if (attachment.clientKind !== expectedClientKind) {
 		throw new Error('Managed Gateway adapter framework and client kind do not match.');
 	}

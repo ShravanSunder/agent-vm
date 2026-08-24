@@ -35,7 +35,7 @@ export const GATEWAY_RUNTIME_AUTHENTICATED_PRIVATE_UDS_OPERATION_GROUPS = [
 	'sandbox.terminal',
 ] as const;
 
-const ManagedPluginClientKindSchema = z.enum(['openclaw-managed-plugin', 'hermes-managed-plugin']);
+const ManagedPluginClientKindSchema = z.literal('hermes-managed-plugin');
 const PrivateUdsOperationGroupSchema = z.enum(
 	GATEWAY_RUNTIME_AUTHENTICATED_PRIVATE_UDS_OPERATION_GROUPS,
 );

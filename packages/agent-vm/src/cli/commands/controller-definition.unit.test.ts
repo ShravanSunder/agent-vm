@@ -148,19 +148,22 @@ async function writeFakeImageAssets(imagePath: string): Promise<void> {
 async function createGatewayImageCacheFixture(
 	fingerprint: string,
 	options: {
-		readonly gatewayType?: 'openclaw' | 'worker';
+		readonly gatewayType?: 'hermes' | 'worker';
 		readonly preparedManagedGatewayBoot?: ManagedGatewayImageBootProjection;
 	} = {},
 ): Promise<LoadedSystemConfig> {
 	const gatewayType = options.gatewayType ?? 'worker';
 	const gatewayConfiguration =
-		gatewayType === 'openclaw'
+		gatewayType === 'hermes'
 			? {
-					type: 'openclaw' as const,
-					controlAuth: {
-						mode: 'token' as const,
-						secret: 'OPENCLAW_GATEWAY_TOKEN',
+					type: 'hermes' as const,
+					profileSecretProjectionsByAgent: {
+						'coding-agent': {
+							API_SERVER_KEY: 'API_SERVER_KEY_CODING_AGENT',
+							DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_CODING_AGENT',
+						},
 					},
+					profilesByAgent: { 'coding-agent': 'coding-agent' },
 				}
 			: { type: 'worker' as const };
 	const temporaryDirectoryPath = await createTemporaryDirectory();
@@ -244,19 +247,25 @@ async function createGatewayImageCacheFixture(
 					},
 					id: 'coding-agent',
 					secrets:
-						gatewayType === 'openclaw'
+						gatewayType === 'hermes'
 							? {
-									OPENCLAW_GATEWAY_TOKEN: {
-										audience: 'gateway' as const,
-										envVar: 'OPENCLAW_GATEWAY_TOKEN',
-										injection: 'env' as const,
-										source: 'environment' as const,
+									API_SERVER_KEY_CODING_AGENT: {
+										source: 'environment',
+										envVar: 'API_SERVER_KEY_CODING_AGENT',
+										injection: 'env',
+										audience: 'gateway',
+									},
+									DISCORD_BOT_TOKEN_CODING_AGENT: {
+										source: 'environment',
+										envVar: 'DISCORD_BOT_TOKEN_CODING_AGENT',
+										injection: 'env',
+										audience: 'gateway',
 									},
 								}
 							: {},
-					defaultToolVmProfile: gatewayType === 'openclaw' ? 'standard' : undefined,
-					agentToolVmProfiles: gatewayType === 'openclaw' ? {} : undefined,
-					agents: gatewayType === 'openclaw' ? [{ id: 'coding-agent' }] : undefined,
+					defaultToolVmProfile: gatewayType === 'hermes' ? 'standard' : undefined,
+					agentToolVmProfiles: gatewayType === 'hermes' ? {} : undefined,
+					agents: gatewayType === 'hermes' ? [{ id: 'coding-agent' }] : undefined,
 				},
 			],
 		},
@@ -295,7 +304,7 @@ describe('isGatewayImageCached', () => {
 
 	it('derives the managed Gateway boot projection from the current gateway type', async () => {
 		const systemConfig = await createGatewayImageCacheFixture('current-fingerprint', {
-			gatewayType: 'openclaw',
+			gatewayType: 'hermes',
 			preparedManagedGatewayBoot: {
 				frameworkBootEntry: 'hermes-framework-service',
 				kind: 'managed-gateway-exact-two-role',
@@ -312,7 +321,7 @@ describe('isGatewayImageCached', () => {
 			}),
 		).resolves.toBe(true);
 		expect(observedManagedGatewayBoot).toEqual({
-			frameworkBootEntry: 'openclaw-framework-service',
+			frameworkBootEntry: 'hermes-framework-service',
 			kind: 'managed-gateway-exact-two-role',
 		});
 	});
@@ -329,9 +338,9 @@ describe('isGatewayImageCached', () => {
 		).resolves.toBe(false);
 	});
 
-	it('rejects a stale boot projection through the default fingerprint computation', async () => {
+	it('rejects a stale Hermes boot projection for a Worker image', async () => {
 		const systemConfig = await createGatewayImageCacheFixture('placeholder-fingerprint', {
-			gatewayType: 'openclaw',
+			gatewayType: 'worker',
 		});
 		const buildConfigPath = systemConfig.imageProfiles.gateways.worker?.buildConfig;
 		if (buildConfigPath === undefined) {

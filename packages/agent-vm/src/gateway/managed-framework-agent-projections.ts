@@ -8,13 +8,10 @@ interface BuildManagedFrameworkAgentProjectionInputsBaseProps {
 }
 
 export type BuildManagedFrameworkAgentProjectionInputsProps =
-	| (BuildManagedFrameworkAgentProjectionInputsBaseProps & {
-			readonly frameworkKind: 'openclaw';
-	  })
-	| (BuildManagedFrameworkAgentProjectionInputsBaseProps & {
-			readonly frameworkKind: 'hermes';
-			readonly profilesByAgent: Readonly<Record<string, string>>;
-	  });
+	BuildManagedFrameworkAgentProjectionInputsBaseProps & {
+		readonly frameworkKind: 'hermes';
+		readonly profilesByAgent: Readonly<Record<string, string>>;
+	};
 
 function sameExactStringSet(
 	leftValues: readonly string[],
@@ -74,15 +71,12 @@ function requireHermesProfileName(
 
 function buildManagedFrameworkIdentity(options: {
 	readonly agentId: string;
-	readonly frameworkKind: 'hermes' | 'openclaw';
-	readonly hermesProfilesByAgent: Readonly<Record<string, string>> | undefined;
+	readonly hermesProfilesByAgent: Readonly<Record<string, string>>;
 }): GatewayRuntimeFrameworkIdentity {
-	return options.frameworkKind === 'openclaw'
-		? Object.freeze({ agentId: options.agentId, kind: 'openclaw' })
-		: Object.freeze({
-				kind: 'hermes',
-				profileName: requireHermesProfileName(options.hermesProfilesByAgent, options.agentId),
-			});
+	return Object.freeze({
+		kind: 'hermes',
+		profileName: requireHermesProfileName(options.hermesProfilesByAgent, options.agentId),
+	});
 }
 
 export function buildManagedFrameworkAgentProjectionInputs(
@@ -93,13 +87,10 @@ export function buildManagedFrameworkAgentProjectionInputs(
 		configuredAgentIds,
 		toolPortalAgentIds: Object.keys(props.toolPortalAgents),
 	});
-	const hermesProfilesByAgent =
-		props.frameworkKind === 'hermes'
-			? requireExactHermesProfiles({
-					configuredAgentIds,
-					profilesByAgent: props.profilesByAgent,
-				})
-			: undefined;
+	const hermesProfilesByAgent = requireExactHermesProfiles({
+		configuredAgentIds,
+		profilesByAgent: props.profilesByAgent,
+	});
 
 	return Object.freeze(
 		[...configuredAgentIds].toSorted().map((agentId): ManagedFrameworkAgentProjectionInput => {
@@ -109,7 +100,6 @@ export function buildManagedFrameworkAgentProjectionInputs(
 			}
 			const frameworkIdentity = buildManagedFrameworkIdentity({
 				agentId,
-				frameworkKind: props.frameworkKind,
 				hermesProfilesByAgent,
 			});
 			return Object.freeze({

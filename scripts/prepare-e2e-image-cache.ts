@@ -2,61 +2,45 @@ import {
 	currentE2eArchitecture,
 	prepareGatewayE2eProjectImages,
 	removeE2eTempRoot,
-	scaffoldOpenClawE2eProject,
 	scaffoldWorkerE2eProject,
-	useLocalOpenClawGatewayImagePackages,
-	useLocalOpenClawPluginGatewayImage,
 } from '../packages/agent-vm/src/integration-tests/e2e-harness.js';
+import {
+	scaffoldHermesE2eProject,
+	useLocalHermesGatewayImagePackages,
+} from '../packages/agent-vm/src/integration-tests/hermes-e2e-harness.js';
 
 async function main(): Promise<void> {
 	process.env.AGENT_VM_E2E_CACHE_DIR ??= '/tmp/agent-vm-e2e-cache';
 	process.env.AGENT_VM_E2E_USE_LOCAL_TOOL_VM_PACKAGES = '1';
 	process.env.AGENT_VM_GONDOLIN_E2E = '1';
 
-	let openClawTempRoot: string | undefined;
-	let openClawPluginTempRoot: string | undefined;
+	let hermesTempRoot: string | undefined;
 	let workerTempRoot: string | undefined;
 	try {
-		const openClawProject = await scaffoldOpenClawE2eProject({
+		const architecture = currentE2eArchitecture();
+		const hermesProject = await scaffoldHermesE2eProject({
 			agents: ['main'],
-			architecture: currentE2eArchitecture(),
-			prefix: 'agent-vm-gateway-e2e-project-',
-			zoneId: 'ci-image-cache',
+			architecture,
+			prefix: 'agent-vm-hermes-e2e-cache-',
+			zoneId: 'ci-hermes-image-cache',
 		});
-		openClawTempRoot = openClawProject.tempRoot;
-		const openClawPluginProject = await scaffoldOpenClawE2eProject({
-			agents: ['main'],
-			architecture: currentE2eArchitecture(),
-			prefix: 'agent-vm-gateway-e2e-plugin-project-',
-			zoneId: 'ci-plugin-image-cache',
-		});
-		openClawPluginTempRoot = openClawPluginProject.tempRoot;
+		hermesTempRoot = hermesProject.tempRoot;
 		const workerProject = await scaffoldWorkerE2eProject({
-			architecture: currentE2eArchitecture(),
+			architecture,
 			prefix: 'worker-loop-e2e-',
 			zoneId: 'ci-worker-image-cache',
 		});
 		workerTempRoot = workerProject.tempRoot;
-		await useLocalOpenClawGatewayImagePackages({
-			profileName: openClawProject.zone.gateway.imageProfile,
-			projectRoot: openClawProject.tempRoot,
+		await useLocalHermesGatewayImagePackages({
+			architecture,
+			profileName: hermesProject.zone.gateway.imageProfile,
+			projectRoot: hermesProject.tempRoot,
 			repoRoot: process.cwd(),
-			systemConfig: openClawProject.systemConfig,
+			systemConfig: hermesProject.systemConfig,
 		});
 		await prepareGatewayE2eProjectImages({
 			imageFamilies: ['gateway', 'toolVm'],
-			project: openClawProject,
-		});
-		const pluginProfileName = openClawPluginProject.zone.gateway.imageProfile;
-		await useLocalOpenClawPluginGatewayImage({
-			profileName: pluginProfileName,
-			projectRoot: openClawPluginProject.tempRoot,
-			repoRoot: process.cwd(),
-			systemConfig: openClawPluginProject.systemConfig,
-		});
-		await prepareGatewayE2eProjectImages({
-			imageFamilies: ['gateway', 'toolVm'],
-			project: openClawPluginProject,
+			project: hermesProject,
 		});
 		await prepareGatewayE2eProjectImages({
 			imageFamilies: ['gateway'],
@@ -65,8 +49,7 @@ async function main(): Promise<void> {
 		process.stdout.write(`Prepared E2E image cache at ${process.env.AGENT_VM_E2E_CACHE_DIR}\n`);
 	} finally {
 		await Promise.all([
-			...(openClawTempRoot === undefined ? [] : [removeE2eTempRoot(openClawTempRoot)]),
-			...(openClawPluginTempRoot === undefined ? [] : [removeE2eTempRoot(openClawPluginTempRoot)]),
+			...(hermesTempRoot === undefined ? [] : [removeE2eTempRoot(hermesTempRoot)]),
 			...(workerTempRoot === undefined ? [] : [removeE2eTempRoot(workerTempRoot)]),
 		]);
 	}

@@ -27,8 +27,6 @@ export const pythonManagedGatewayLifecycleFixture = {
 	interactiveSsh: {
 		buildSession: () => ({
 			remoteShellCommand: "bash -lc 'exec bash -l'",
-			requireSecretEnvironmentEnabled: false,
-			secretEnvironment: 'default',
 		}),
 	},
 	buildFrameworkServiceBootInputs(

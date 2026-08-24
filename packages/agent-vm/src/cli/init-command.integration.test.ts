@@ -1052,7 +1052,7 @@ describe('scaffoldAgentVmProject', () => {
 			'op://agent-vm/test-hermes-main-discord/credential',
 		);
 		expect(config.zones[0].adminAccess).toEqual({ mode: 'none' });
-		expect(config.zones[0].gateway.ssh).toEqual({ secretEnv: 'explicit' });
+		expect(config.zones[0].gateway).not.toHaveProperty('ssh');
 		expect(config.zones[0].gateway.profilesByAgent).toEqual({ main: 'main' });
 	});
 

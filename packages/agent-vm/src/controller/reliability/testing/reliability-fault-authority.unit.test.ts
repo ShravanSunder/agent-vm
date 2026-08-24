@@ -12,7 +12,6 @@ const request = {
 		controlSession: { generation: 11, id: 'session-a' },
 		gateway: { generation: 8, id: 'gateway-a' },
 		leaseLeaf: { generation: 13, id: 'agent-a' },
-		openClawProcess: { generation: 9, id: 'openclaw-a' },
 	},
 	issuedAtMs: 1_000,
 	nonce: 'L9g15AipZmeLzG1IR6pB3w',

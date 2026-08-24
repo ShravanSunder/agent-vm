@@ -1,9 +1,7 @@
 export const TOOL_VM_WORK_GUEST_ROOT = '/work';
 export const TOOL_VM_SCRATCH_GUEST_ROOT = '/scratch';
-export const OPENCLAW_STATE_VM_ROOT = '/home/openclaw/.openclaw/state';
-export const OPENCLAW_STATE_SANDBOXES_VM_ROOT = `${OPENCLAW_STATE_VM_ROOT}/sandboxes`;
 
-export type RuntimePathNamespace = 'controller-host' | 'openclaw-gateway' | 'tool-vm-guest';
+export type RuntimePathNamespace = 'controller-host' | 'tool-vm-guest';
 export type RuntimePathPurpose = 'executionCwd' | 'leaseMount';
 
 export interface RuntimePathCapabilities {
@@ -26,17 +24,14 @@ export type RuntimePathLocations = Partial<Record<RuntimePathNamespace, string>>
 export type RuntimePathHostRealfsLocations =
 	| {
 			readonly 'controller-host': string;
-			readonly 'openclaw-gateway'?: string;
 			readonly 'tool-vm-guest'?: string;
 	  }
 	| {
 			readonly 'controller-host'?: string;
-			readonly 'openclaw-gateway': string;
 			readonly 'tool-vm-guest'?: string;
 	  };
 export interface RuntimePathGuestRootfsCowLocations {
 	readonly 'controller-host'?: never;
-	readonly 'openclaw-gateway'?: never;
 	readonly 'tool-vm-guest': string;
 }
 export type RuntimePathGuidanceVisibility = Partial<Record<RuntimePathNamespace, boolean>>;
@@ -126,7 +121,6 @@ interface RuntimePathRootMatch {
 
 const guidanceNamespaceOrder = [
 	'tool-vm-guest',
-	'openclaw-gateway',
 	'controller-host',
 ] as const satisfies readonly RuntimePathNamespace[];
 

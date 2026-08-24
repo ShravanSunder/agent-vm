@@ -23,9 +23,9 @@ const systemConfig = {
 	},
 	imageProfiles: {
 		gateways: {
-			openclaw: {
-				type: 'openclaw',
-				buildConfig: './vm-images/gateways/openclaw/build-config.json',
+			hermes: {
+				type: 'hermes',
+				buildConfig: './vm-images/gateways/hermes/build-config.json',
 			},
 			worker: {
 				type: 'worker',
@@ -43,24 +43,22 @@ const systemConfig = {
 		{
 			id: 'shravan',
 			gateway: {
-				type: 'openclaw',
-				controlAuth: {
-					mode: 'token',
-					secret: 'OPENCLAW_GATEWAY_TOKEN',
-				},
-				imageProfile: 'openclaw',
+				type: 'hermes',
+				imageProfile: 'hermes',
 				memory: '2G',
 				cpus: 2,
 				port: 18791,
-				config: './config/shravan/openclaw.json',
+				config: './config/shravan/hermes.json',
+				profileSecretProjectionsByAgent: { main: {} },
+				profilesByAgent: { main: 'main' },
 				stateDir: './state/shravan',
 				zoneFilesDir: './zone-files/shravan',
 				zoneRuntimeDir: './runtime/shravan',
 			},
 			secrets: {
-				OPENCLAW_GATEWAY_TOKEN: {
+				TEST_GATEWAY_TOKEN: {
 					source: 'environment',
-					envVar: 'OPENCLAW_GATEWAY_TOKEN',
+					envVar: 'TEST_GATEWAY_TOKEN',
 					injection: 'env',
 					audience: 'gateway',
 				},
@@ -72,24 +70,22 @@ const systemConfig = {
 		{
 			id: 'alevtina',
 			gateway: {
-				type: 'openclaw',
-				controlAuth: {
-					mode: 'token',
-					secret: 'OPENCLAW_GATEWAY_TOKEN',
-				},
-				imageProfile: 'openclaw',
+				type: 'hermes',
+				imageProfile: 'hermes',
 				memory: '2G',
 				cpus: 2,
 				port: 18792,
-				config: './config/alevtina/openclaw.json',
+				config: './config/alevtina/hermes.json',
+				profileSecretProjectionsByAgent: { main: {} },
+				profilesByAgent: { main: 'main' },
 				stateDir: './state/alevtina',
 				zoneFilesDir: './zone-files/alevtina',
 				zoneRuntimeDir: './runtime/alevtina',
 			},
 			secrets: {
-				OPENCLAW_GATEWAY_TOKEN: {
+				TEST_GATEWAY_TOKEN: {
 					source: 'environment',
-					envVar: 'OPENCLAW_GATEWAY_TOKEN',
+					envVar: 'TEST_GATEWAY_TOKEN',
 					injection: 'env',
 					audience: 'gateway',
 				},
@@ -135,7 +131,7 @@ describe('buildControllerStatus', () => {
 			zones: [
 				{
 					activeLeaseCount: 0,
-					gatewayType: 'openclaw',
+					gatewayType: 'hermes',
 					id: 'shravan',
 					ingressPort: 18791,
 					lifecycleState: 'stopped',
@@ -145,7 +141,7 @@ describe('buildControllerStatus', () => {
 				},
 				{
 					activeLeaseCount: 0,
-					gatewayType: 'openclaw',
+					gatewayType: 'hermes',
 					id: 'alevtina',
 					ingressPort: 18792,
 					lifecycleState: 'stopped',
@@ -255,7 +251,7 @@ describe('buildControllerStatus', () => {
 				{
 					activeLeaseCount: 2,
 					bootedAt: '2026-04-30T10:00:00.000Z',
-					gatewayType: 'openclaw',
+					gatewayType: 'hermes',
 					id: 'shravan',
 					ingressHost: '127.0.0.1',
 					ingressPort: 18791,
@@ -267,7 +263,7 @@ describe('buildControllerStatus', () => {
 				},
 				{
 					activeLeaseCount: 1,
-					gatewayType: 'openclaw',
+					gatewayType: 'hermes',
 					id: 'alevtina',
 					ingressPort: 18792,
 					lastError: 'gateway boot failed',

@@ -449,7 +449,7 @@ describe('ToolPortalCapabilityCore approval dispatch', () => {
 			authority: 'controller-admin',
 			dispatchAuthority: { kind: 'approval-grant', token: 'forged' },
 			backend: 'tool_vm_runner',
-			frameworkIdentity: { agentId: 'agent-b', kind: 'openclaw' },
+			frameworkIdentity: { kind: 'hermes', profileName: 'agent-b' },
 			profileAssignmentRevision: 'forged-revision',
 			runId: 'forged-run',
 			sessionId: 'forged-session',

@@ -30,7 +30,7 @@ type Operation<TName extends AgentVmCommand['command']> = (
 ) => Promise<void>;
 
 export interface AgentVmCommandOperationSet {
-	readonly auth: Operation<'auth.1password' | 'auth.codex-harness' | 'auth.openclaw.login'>;
+	readonly auth: Operation<'auth.1password'>;
 	readonly backup: Operation<'backup.create' | 'backup.list' | 'backup.restore'>;
 	readonly build: Operation<'build'>;
 	readonly cache: Operation<'cache.list' | 'cache.clean'>;
@@ -102,8 +102,6 @@ export async function dispatchAgentVmCommand(
 		case 'backup.restore':
 			return await operations.backup(io, dependencies, command);
 		case 'auth.1password':
-		case 'auth.codex-harness':
-		case 'auth.openclaw.login':
 			return await operations.auth(io, dependencies, command);
 		case 'controller.start':
 		case 'controller.stop':

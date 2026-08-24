@@ -391,7 +391,6 @@ const defaultSystemConfig = (
 				config: pathProfile.gatewayConfig(zoneId, gatewayType),
 				imageProfile: gatewayType,
 				runtimeRootfsSize: gatewayType === 'hermes' ? '12G' : '8G',
-				ssh: { secretEnv: 'explicit' },
 				...(gatewayType === 'hermes'
 					? {
 							profileSecretProjectionsByAgent: createHermesProfileSecretProjections(agentIds),

@@ -113,10 +113,7 @@ export function createObservabilityRuntimeConfig(
 		if (zone.observability?.enabled !== true) {
 			return [];
 		}
-		const frameworkServiceName =
-			zone.gateway.type === 'openclaw'
-				? gatewayFrameworkTelemetryServiceNames.openclaw
-				: gatewayFrameworkTelemetryServiceNames.hermes;
+		const frameworkServiceName = gatewayFrameworkTelemetryServiceNames.hermes;
 		return [
 			{
 				framework: {

@@ -5,7 +5,6 @@ import { loadWorkerConfigDraft } from '@agent-vm/agent-vm-worker';
 import { loadMcpConfig, loadToolPortalConfig } from '@agent-vm/config-contracts';
 import { loadHermesManagedConfiguration } from '@agent-vm/hermes-gateway';
 import type { SecretResolver } from '@agent-vm/secret-management';
-import { execa } from 'execa';
 
 import { validateManagedImageOverlay } from '../build/managed-image-dockerfile.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
@@ -16,29 +15,16 @@ import {
 import { buildManagedAgentSecretAccessChecks } from './agent-secret-access-checks.js';
 import {
 	type ConfigValidationCheck,
-	type ConfigValidationCommandOptions,
-	type ConfigValidationCommandResult,
-	type ConfigValidationCommandRunner,
 	type ConfigValidationResult,
-	projectRootForSystemConfig,
 	resolveProjectCheckoutPath,
 } from './config-validation-shared.js';
 import { buildRuntimePathIsolationChecks, collectVmHostSystemDoctorCheck } from './doctor.js';
 import { runLiveMcpPortalValidation } from './mcp-portal-live-validation.js';
-import { collectOpenClawDeploymentRequirementFindings } from './openclaw-deployment-requirements.js';
 
-export {
-	type ConfigValidationCheck,
-	type ConfigValidationCommandOptions,
-	type ConfigValidationCommandResult,
-	type ConfigValidationCommandRunner,
-	type ConfigValidationResult,
-	resolveProjectCheckoutPath,
-};
+export { type ConfigValidationCheck, type ConfigValidationResult, resolveProjectCheckoutPath };
 
 export interface RunConfigValidationOptions {
 	readonly mcpLive?: boolean;
-	readonly runCommand?: ConfigValidationCommandRunner;
 	readonly runLiveMcpPortalValidation?: typeof runLiveMcpPortalValidation;
 	readonly secretResolver?: SecretResolver;
 	readonly systemConfig: LoadedSystemConfig;
@@ -56,157 +42,6 @@ const validationOnlySecretResolver = {
 	resolve: async (): Promise<string> => '',
 	resolveAll: async (): Promise<Record<string, string>> => ({}),
 };
-
-function isObjectRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-async function runCommandDefault(
-	command: string,
-	arguments_: readonly string[],
-	options?: ConfigValidationCommandOptions,
-): Promise<ConfigValidationCommandResult> {
-	const execaOptions = {
-		...(options?.cwd ? { cwd: options.cwd } : {}),
-		...(options?.env ? { env: options.env } : {}),
-		...(options?.cwd ? { localDir: options.cwd, preferLocal: true } : {}),
-		reject: false,
-	} as const;
-	const result = await execa(command, [...arguments_], execaOptions);
-	return {
-		exitCode: result.exitCode ?? 1,
-		stderr: result.stderr,
-		stdout: result.stdout,
-	};
-}
-
-function getErrorCode(error: unknown): string | undefined {
-	if (
-		typeof error === 'object' &&
-		error !== null &&
-		'code' in error &&
-		typeof error.code === 'string'
-	) {
-		return error.code;
-	}
-	return undefined;
-}
-
-function parseJsonObject(value: string): Record<string, unknown> | null {
-	if (!value.trim()) {
-		return null;
-	}
-	try {
-		const parsedValue: unknown = JSON.parse(value);
-		if (isObjectRecord(parsedValue)) {
-			return parsedValue;
-		}
-		return null;
-	} catch {
-		return null;
-	}
-}
-
-function formatOpenClawIssue(issue: unknown): string | null {
-	if (typeof issue === 'string') {
-		return issue;
-	}
-	if (!isObjectRecord(issue)) {
-		return null;
-	}
-	const pathValue = issue.path;
-	const messageValue = issue.message;
-	const pathText = Array.isArray(pathValue)
-		? pathValue.map((part) => String(part)).join('.')
-		: typeof pathValue === 'string'
-			? pathValue
-			: '';
-	const messageText = typeof messageValue === 'string' ? messageValue : '';
-	if (pathText && messageText) {
-		return `${pathText}: ${messageText}`;
-	}
-	if (messageText) {
-		return messageText;
-	}
-	if (pathText) {
-		return pathText;
-	}
-	return null;
-}
-
-function getOpenClawIssuePath(issue: unknown): string {
-	if (!isObjectRecord(issue)) {
-		return '';
-	}
-	const pathValue = issue.path;
-	if (Array.isArray(pathValue)) {
-		return pathValue.map((part) => String(part)).join('.');
-	}
-	return typeof pathValue === 'string' ? pathValue : '';
-}
-
-function getOpenClawIssueMessage(issue: unknown): string {
-	if (!isObjectRecord(issue)) {
-		return typeof issue === 'string' ? issue : '';
-	}
-	const messageValue = issue.message;
-	return typeof messageValue === 'string' ? messageValue : '';
-}
-
-function isHostOnlyOpenClawPluginPathIssue(issue: unknown): boolean {
-	return (
-		getOpenClawIssuePath(issue) === 'plugins.load.paths' &&
-		getOpenClawIssueMessage(issue).includes('plugin path not found')
-	);
-}
-
-function getOpenClawValidationIssues(parsedOutput: Record<string, unknown>): readonly unknown[] {
-	const issueValues = parsedOutput.errors ?? parsedOutput.issues;
-	return Array.isArray(issueValues) ? issueValues : [];
-}
-
-function summarizeOpenClawValidationIssues(issues: readonly unknown[]): string | null {
-	const issueTexts = issues
-		.map((issue) => formatOpenClawIssue(issue))
-		.filter((issueText): issueText is string => issueText !== null);
-	return issueTexts.length > 0 ? issueTexts.join('; ') : null;
-}
-
-function summarizeOpenClawValidationOutput(commandResult: ConfigValidationCommandResult): string {
-	const parsedOutput =
-		parseJsonObject(commandResult.stdout) ?? parseJsonObject(commandResult.stderr);
-	if (parsedOutput) {
-		const issueText = summarizeOpenClawValidationIssues(getOpenClawValidationIssues(parsedOutput));
-		if (issueText) {
-			return issueText;
-		}
-		const messageValue = parsedOutput.message;
-		if (typeof messageValue === 'string' && messageValue.length > 0) {
-			return messageValue;
-		}
-	}
-
-	const rawOutput = [commandResult.stderr.trim(), commandResult.stdout.trim()]
-		.filter((value) => value.length > 0)
-		.join('\n');
-	return rawOutput || `OpenClaw config validation exited with ${commandResult.exitCode}.`;
-}
-
-function shouldTreatOpenClawValidationResultAsSuccess(
-	commandResult: ConfigValidationCommandResult,
-): boolean {
-	if (commandResult.exitCode === 0) {
-		const parsedOutput = parseJsonObject(commandResult.stdout);
-		return !parsedOutput || (parsedOutput.ok !== false && parsedOutput.valid !== false);
-	}
-	const parsedOutput =
-		parseJsonObject(commandResult.stdout) ?? parseJsonObject(commandResult.stderr);
-	if (!parsedOutput) {
-		return false;
-	}
-	const issues = getOpenClawValidationIssues(parsedOutput);
-	return issues.length > 0 && issues.every((issue) => isHostOnlyOpenClawPluginPathIssue(issue));
-}
 
 async function collectReadableFileCheck(
 	name: string,
@@ -245,14 +80,6 @@ async function collectWorkerConfigCheck(
 	}
 }
 
-async function collectGatewayConfigCheck(
-	systemConfig: LoadedSystemConfig,
-	zone: LoadedSystemConfig['zones'][number],
-): Promise<ConfigValidationCheck> {
-	const gatewayConfigPath = resolveProjectCheckoutPath(systemConfig, zone.gateway.config);
-	return await collectReadableFileCheck(`gateway-config-${zone.id}`, gatewayConfigPath);
-}
-
 async function collectHermesConfigCheck(
 	systemConfig: LoadedSystemConfig,
 	zone: LoadedSystemConfig['zones'][number],
@@ -272,54 +99,6 @@ async function collectHermesConfigCheck(
 			ok: false,
 		};
 	}
-}
-
-async function collectOpenClawConfigCheck(
-	systemConfig: LoadedSystemConfig,
-	zone: LoadedSystemConfig['zones'][number],
-	runCommand: ConfigValidationCommandRunner,
-): Promise<ConfigValidationCheck> {
-	const gatewayConfigPath = resolveProjectCheckoutPath(systemConfig, zone.gateway.config);
-	try {
-		const commandResult = await runCommand('openclaw', ['config', 'validate', '--json'], {
-			cwd: projectRootForSystemConfig(systemConfig),
-			env: { OPENCLAW_CONFIG_PATH: gatewayConfigPath },
-		});
-		if (shouldTreatOpenClawValidationResultAsSuccess(commandResult)) {
-			return {
-				name: `openclaw-config-${zone.id}`,
-				ok: true,
-				hint: gatewayConfigPath,
-			};
-		}
-		return {
-			name: `openclaw-config-${zone.id}`,
-			ok: false,
-			hint: summarizeOpenClawValidationOutput(commandResult),
-		};
-	} catch (error) {
-		const installHint =
-			getErrorCode(error) === 'ENOENT'
-				? 'OpenClaw CLI not found. Install OpenClaw in this catalog for local schema validation: pnpm add -D openclaw@2026.7.1-2.'
-				: getErrorMessage(error);
-		return {
-			name: `openclaw-config-${zone.id}`,
-			ok: false,
-			hint: installHint,
-		};
-	}
-}
-
-export async function collectOpenClawConfigChecks(
-	systemConfig: LoadedSystemConfig,
-	runCommand: ConfigValidationCommandRunner = runCommandDefault,
-): Promise<readonly ConfigValidationCheck[]> {
-	const openClawZones = systemConfig.zones.filter((zone) => zone.gateway.type === 'openclaw');
-	return await Promise.all(
-		openClawZones.map(
-			async (zone) => await collectOpenClawConfigCheck(systemConfig, zone, runCommand),
-		),
-	);
 }
 
 async function collectGatewayImageProfileChecks(
@@ -430,25 +209,6 @@ function buildZoneToolVmProfileChecks(
 	});
 }
 
-function buildOpenClawAgentSetupChecks(
-	systemConfig: LoadedSystemConfig,
-): readonly ConfigValidationCheck[] {
-	return systemConfig.zones.flatMap((zone) => {
-		if (zone.gateway.type !== 'openclaw') {
-			return [];
-		}
-		const authProfileChecks = Object.keys(zone.gateway.authProfilesByAgent ?? {}).map(
-			(agentId) =>
-				({
-					name: `zone-agent-auth-profile-${zone.id}-${agentId}`,
-					ok: true,
-					hint: 'configured',
-				}) satisfies ConfigValidationCheck,
-		);
-		return authProfileChecks;
-	});
-}
-
 async function collectToolPortalConfigChecks(
 	systemConfig: LoadedSystemConfig,
 	zone: LoadedSystemConfig['zones'][number],
@@ -526,15 +286,11 @@ async function collectToolPortalConfigChecks(
 		});
 	}
 	try {
-		const allowedRawEnvSecretNames =
-			zone.gateway.type === 'openclaw'
-				? ['OPENCLAW_GATEWAY_TOKEN', ...(zone.gateway.rawEnvSecrets ?? [])]
-				: [];
 		await planMcpPortalEffectiveConfig({
 			approvalAccessConfigured: zone.approvalAccess !== undefined,
 			authoredConfigDir: configDir,
 			effectiveHostConfigDir: path.join(systemConfig.cacheDir, zone.id, 'tool-portal-effective'),
-			allowedRawEnvSecretNames,
+			allowedRawEnvSecretNames: [],
 			declaredAgentIds: (zone.agents ?? []).map((agent) => agent.id),
 			secretResolver: validationOnlySecretResolver,
 			workspaceGitPushAgentEligibility: {
@@ -563,14 +319,11 @@ export async function runConfigValidation(
 	options: RunConfigValidationOptions,
 ): Promise<ConfigValidationResult> {
 	const systemConfig = options.systemConfig;
-	const runCommand = options.runCommand ?? runCommandDefault;
 	const zoneConfigChecks = await Promise.all(
 		systemConfig.zones.map(async (zone) => {
 			switch (zone.gateway.type) {
 				case 'hermes':
 					return await collectHermesConfigCheck(systemConfig, zone);
-				case 'openclaw':
-					return await collectGatewayConfigCheck(systemConfig, zone);
 				case 'worker':
 					return await collectWorkerConfigCheck(systemConfig, zone);
 			}
@@ -599,22 +352,12 @@ export async function runConfigValidation(
 		...buildRuntimePathIsolationChecks(systemConfig),
 		...(await collectGatewayImageProfileChecks(systemConfig)),
 		...(await collectToolImageProfileChecks(systemConfig)),
-		...(await collectOpenClawDeploymentRequirementFindings(systemConfig)).map(
-			(finding) =>
-				({
-					name: finding.id,
-					ok: finding.ok,
-					hint: finding.hint,
-				}) satisfies ConfigValidationCheck,
-		),
 		...buildZoneToolVmProfileChecks(systemConfig),
-		...buildOpenClawAgentSetupChecks(systemConfig),
 		...buildManagedAgentSecretAccessChecks(systemConfig),
 		...(vmHostSystemCheck ? [vmHostSystemCheck] : []),
 		...zoneConfigChecks,
 		...toolPortalConfigChecks,
 		...liveMcpPortalChecks,
-		...(await collectOpenClawConfigChecks(systemConfig, runCommand)),
 	] as const satisfies readonly ConfigValidationCheck[];
 
 	return {

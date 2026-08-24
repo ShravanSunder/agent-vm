@@ -27,7 +27,6 @@ function createHermesZone(toolPortalMaterial: unknown): GatewayZoneConfig {
 			port: 8642,
 			profilesByAgent: { researcher: 'researcher' },
 			runtimeRootfsSize: '16G',
-			ssh: { secretEnv: 'never' },
 			stateDir: '/deployment/state/hermes',
 			type: 'hermes',
 		},
@@ -99,14 +98,9 @@ describe('managed Hermes package contracts', () => {
 	});
 
 	it('owns its framework-ready interactive SSH session contract', () => {
-		expect(hermesLifecycle.interactiveSsh.buildSession({ requestAllSecrets: false })).toEqual({
+		expect(hermesLifecycle.interactiveSsh.buildSession()).toEqual({
 			remoteShellCommand: "bash -lc 'source /etc/profile.d/hermes-env.sh && exec bash -l'",
-			requireSecretEnvironmentEnabled: false,
-			secretEnvironment: 'default',
 		});
-		expect(() => hermesLifecycle.interactiveSsh.buildSession({ requestAllSecrets: true })).toThrow(
-			'--all-secrets is supported only for OpenClaw zones.',
-		);
 	});
 
 	it('pins the researched Hermes Python distribution and source revision', () => {
@@ -176,20 +170,6 @@ describe('managed Hermes package contracts', () => {
 		expect(metadata).not.toHaveProperty('argv');
 		expect(metadata).not.toHaveProperty('executable');
 		expect(metadata).not.toHaveProperty('supervisor');
-	});
-
-	it('rejects OpenClaw lifecycle input instead of accepting cross-framework material', () => {
-		const openClawZone = {
-			...createHermesZone(createHermesAdapterMaterial()),
-			gateway: {
-				...createHermesZone(createHermesAdapterMaterial()).gateway,
-				type: 'openclaw',
-			},
-		} as GatewayZoneConfig;
-
-		expect(() => buildHermesFrameworkServiceBootMetadata(openClawZone)).toThrow(
-			/Hermes lifecycle cannot build gateway type 'openclaw'/u,
-		);
 	});
 
 	it('serializes the exact immutable controller material and managed environment', async () => {
@@ -579,16 +559,9 @@ describe('managed Hermes package contracts', () => {
 		).rejects.toThrow("cannot override 'HERMES_ALLOW_ROOT_GATEWAY'");
 	});
 
-	it('rejects missing, malformed, and wrong-framework immutable input', async () => {
+	it('rejects missing and malformed immutable input', async () => {
 		await Promise.all(
-			[
-				undefined,
-				{},
-				{
-					agentProjections: {},
-					attachment: { clientKind: 'openclaw-managed-plugin' },
-				},
-			].map(async (toolPortalMaterial) => {
+			[undefined, {}].map(async (toolPortalMaterial) => {
 				await expect(
 					hermesLifecycle.buildFrameworkServiceBootInputs({
 						resolvedSecrets: { API_SERVER_KEY: 'test-only-key' },

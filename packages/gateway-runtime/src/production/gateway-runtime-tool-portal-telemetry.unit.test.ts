@@ -46,7 +46,7 @@ const enabledObservability = {
 const trustedContext = {
 	principal: {
 		agentId: 'sensitive-agent-id',
-		frameworkIdentity: { agentId: 'sensitive-agent-id', kind: 'openclaw' },
+		frameworkIdentity: { kind: 'hermes', profileName: 'sensitive-agent-id' },
 		profileAssignmentRevision: 'sensitive-profile-revision',
 		toolPortalProfileId: 'sensitive-tool-portal-profile',
 	},
@@ -54,7 +54,7 @@ const trustedContext = {
 } satisfies GatewayRuntimeTrustedInvocationContext;
 
 const telemetryIdentity = {
-	frameworkKind: 'openclaw',
+	frameworkKind: 'hermes',
 	gatewayEpoch: 'sensitive-gateway-epoch',
 	zoneId: 'beta',
 } as const;
@@ -242,7 +242,7 @@ describe('Gateway Runtime Tool Portal telemetry', () => {
 			]);
 		}
 		expect(udsSpan?.attributes).toMatchObject({
-			'agent_vm.framework.kind': 'openclaw',
+			'agent_vm.framework.kind': 'hermes',
 			'agent_vm.operation.name': 'sandbox.exec.start',
 		});
 		expect(udsSpan?.attributes['agent_vm.agent.id_hash']).toMatch(/^[a-f0-9]{16}$/u);

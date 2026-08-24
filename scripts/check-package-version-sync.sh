@@ -20,22 +20,7 @@ WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
 PACKAGE_ROWS_PATH="$WORKDIR/package-rows.tsv"
 PACKAGE_VERSIONS_PATH="$WORKDIR/package-versions.txt"
-DEPRECATED_PACKAGE_VIOLATIONS_PATH="$WORKDIR/deprecated-package-violations.txt"
 PYTHON_PACKAGE_ROWS_PATH="$WORKDIR/python-package-rows.tsv"
-
-find packages -mindepth 2 -maxdepth 2 -name package.json -print0 |
-	xargs -0 jq -r '
-			select(.name == "@agent-vm/openclaw-mcp-portal-plugin" and .private != true) |
-			input_filename
-		' > "$DEPRECATED_PACKAGE_VIOLATIONS_PATH"
-
-if [[ -s "$DEPRECATED_PACKAGE_VIOLATIONS_PATH" ]]; then
-	echo "[publish] error: deprecated managed OpenClaw MCP Portal plugin identity must be private" >&2
-	while IFS= read -r package_file_path; do
-		echo "[publish]   ${package_file_path}" >&2
-	done < "$DEPRECATED_PACKAGE_VIOLATIONS_PATH"
-	exit 1
-fi
 
 find packages -mindepth 2 -maxdepth 2 -name package.json -print0 |
 	xargs -0 jq -r '

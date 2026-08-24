@@ -3,11 +3,11 @@ import { describe, expect, it } from 'vitest';
 import { CONTROL_LEASE_RELIABILITY_SCENARIOS } from './control-lease-reliability-scenarios.js';
 
 describe('CONTROL_LEASE_RELIABILITY_SCENARIOS', () => {
-	it('declares the exact nine retained VM and Hermes proof filters', () => {
-		expect(CONTROL_LEASE_RELIABILITY_SCENARIOS).toHaveLength(9);
+	it('declares the exact eight retained VM and Hermes proof filters', () => {
+		expect(CONTROL_LEASE_RELIABILITY_SCENARIOS).toHaveLength(8);
 		expect(
 			new Set(CONTROL_LEASE_RELIABILITY_SCENARIOS.map(({ operationId }) => operationId)).size,
-		).toBe(9);
+		).toBe(8);
 		expect(CONTROL_LEASE_RELIABILITY_SCENARIOS).toContainEqual({
 			operationId: 'controller-restart-cleanup',
 			project: 'e2e-vm',
@@ -16,7 +16,7 @@ describe('CONTROL_LEASE_RELIABILITY_SCENARIOS', () => {
 		});
 		expect(
 			CONTROL_LEASE_RELIABILITY_SCENARIOS.filter(({ project }) => project === 'e2e-hermes'),
-		).toHaveLength(6);
+		).toHaveLength(5);
 		expect(
 			CONTROL_LEASE_RELIABILITY_SCENARIOS.filter(
 				({ requiresQueryIdentity }) => requiresQueryIdentity,

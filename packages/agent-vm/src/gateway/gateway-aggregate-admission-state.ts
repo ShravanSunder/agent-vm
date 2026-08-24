@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 
-export type ManagedGatewayFrameworkKind = 'hermes' | 'openclaw';
-export type ManagedGatewayClientKind = 'hermes-managed-plugin' | 'openclaw-managed-plugin';
+export type ManagedGatewayFrameworkKind = 'hermes';
+export type ManagedGatewayClientKind = 'hermes-managed-plugin';
 
 export interface GatewayAdmissionFence {
 	readonly controllerEpoch: string;

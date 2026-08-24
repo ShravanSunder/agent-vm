@@ -53,7 +53,7 @@ const callerContextProofKey = 'test-caller-context-proof-key-with-enough-length'
 const agentAuthorityKey = 'test-main-agent-authority-key-with-enough-length';
 const invocationPrincipal = {
 	agentId: 'main',
-	frameworkIdentity: { agentId: 'main', kind: 'openclaw' },
+	frameworkIdentity: { kind: 'hermes', profileName: 'main' },
 	profileAssignmentRevision: 'assignment-main',
 	toolPortalProfileId: 'standard',
 } as const;

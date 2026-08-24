@@ -6,10 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SystemConfig } from '../config/system-config.js';
 import { TEST_SSH_SERVER_HOST_KEY } from '../testing/managed-vm-test-helpers.js';
-import {
-	createControllerRuntimeOperations,
-	shouldEnableSshSecretEnv,
-} from './controller-runtime-operations.js';
+import { createControllerRuntimeOperations } from './controller-runtime-operations.js';
 import type { ControllerZoneAdminAuthError } from './zone-runtimes/zone-runtime-errors.js';
 import { ControllerZoneNotFoundError } from './zone-runtimes/zone-runtime-errors.js';
 import type { ManagedGatewayZoneRuntime } from './zone-runtimes/zone-runtime-types.js';
@@ -36,7 +33,7 @@ const systemConfig = {
 	imageProfiles: {
 		gateways: {
 			openclaw: {
-				type: 'openclaw',
+				type: 'hermes',
 				buildConfig: './vm-images/gateways/openclaw/build-config.json',
 			},
 			worker: { type: 'worker', buildConfig: './vm-images/gateways/worker/build-config.json' },
@@ -50,18 +47,15 @@ const systemConfig = {
 			id: 'shravan',
 			adminAccess: { mode: 'none' },
 			gateway: {
-				type: 'openclaw',
-				controlAuth: {
-					mode: 'token',
-					secret: 'OPENCLAW_GATEWAY_TOKEN',
-				},
+				type: 'hermes',
+				profileSecretProjectionsByAgent: { main: {} },
+				profilesByAgent: { main: 'main' },
 				imageProfile: 'openclaw',
 				memory: '2G',
 				cpus: 2,
 				port: 18791,
 				config: './config/shravan/openclaw.json',
 				stateDir: path.join(controllerRuntimeOperationsTestRoot, 'shravan', 'state'),
-				ssh: { secretEnv: 'explicit' },
 				zoneFilesDir: path.join(controllerRuntimeOperationsTestRoot, 'shravan', 'zone-files'),
 				zoneRuntimeDir: path.join(controllerRuntimeOperationsTestRoot, 'shravan', 'runtime'),
 			},
@@ -81,18 +75,15 @@ const systemConfig = {
 			id: 'alevtina',
 			adminAccess: { mode: 'none' },
 			gateway: {
-				type: 'openclaw',
-				controlAuth: {
-					mode: 'token',
-					secret: 'OPENCLAW_GATEWAY_TOKEN',
-				},
+				type: 'hermes',
+				profileSecretProjectionsByAgent: { main: {} },
+				profilesByAgent: { main: 'main' },
 				imageProfile: 'openclaw',
 				memory: '2G',
 				cpus: 2,
 				port: 18792,
 				config: './config/alevtina/openclaw.json',
 				stateDir: path.join(controllerRuntimeOperationsTestRoot, 'alevtina', 'state'),
-				ssh: { secretEnv: 'explicit' },
 				zoneFilesDir: path.join(controllerRuntimeOperationsTestRoot, 'alevtina', 'zone-files'),
 				zoneRuntimeDir: path.join(controllerRuntimeOperationsTestRoot, 'alevtina', 'runtime'),
 			},
@@ -169,7 +160,6 @@ function createHermesSystemConfig(): SystemConfig {
 							DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN',
 						},
 					},
-					ssh: { secretEnv: 'explicit' },
 					stateDir: path.join(controllerRuntimeOperationsTestRoot, 'hermes-zone', 'state'),
 					type: 'hermes',
 					zoneFilesDir: path.join(controllerRuntimeOperationsTestRoot, 'hermes-zone', 'zone-files'),
@@ -196,7 +186,7 @@ describe('controller runtime operations test fixture paths', () => {
 			systemConfig.controllerRuntimeDir,
 			...systemConfig.zones.flatMap((zone) => [
 				zone.gateway.stateDir,
-				...(zone.gateway.type === 'openclaw' ? [zone.gateway.zoneFilesDir] : []),
+				...(zone.gateway.type === 'hermes' ? [zone.gateway.zoneFilesDir] : []),
 			]),
 		];
 
@@ -396,9 +386,7 @@ describe('createControllerRuntimeOperations', () => {
 			stderr: '',
 			stdout: 'hermes-zone',
 		});
-		await expect(
-			operations.enableSshForZone('hermes-zone', { secretEnv: 'default' }),
-		).resolves.toMatchObject({
+		await expect(operations.enableSshForZone('hermes-zone', {})).resolves.toMatchObject({
 			command: 'ssh hermes-zone',
 		});
 
@@ -511,16 +499,13 @@ describe('createControllerRuntimeOperations', () => {
 			},
 		});
 
-		await expect(
-			operations.enableSshForZone('shravan', { secretEnv: 'default' }),
-		).rejects.toMatchObject({
+		await expect(operations.enableSshForZone('shravan', {})).rejects.toMatchObject({
 			code: 'zone-admin-auth-required',
 			httpStatus: 401,
 		} satisfies Partial<ControllerZoneAdminAuthError>);
 		await expect(
 			operations.enableSshForZone('shravan', {
 				adminToken: 'wrong-admin-token',
-				secretEnv: 'default',
 			}),
 		).rejects.toMatchObject({
 			code: 'zone-admin-auth-denied',
@@ -529,11 +514,9 @@ describe('createControllerRuntimeOperations', () => {
 		await expect(
 			operations.enableSshForZone('shravan', {
 				adminToken: 'expected-admin-token',
-				secretEnv: 'gateway-token',
 			}),
 		).resolves.toMatchObject({
 			host: '127.0.0.1',
-			secretEnvEnabled: true,
 		});
 		expect(enableSsh).toHaveBeenCalledTimes(1);
 		expect(resolveSecret).toHaveBeenLastCalledWith({
@@ -618,18 +601,4 @@ describe('createControllerRuntimeOperations', () => {
 		});
 		expect(exec).toHaveBeenCalledTimes(1);
 	});
-
-	it.each([
-		{ expected: false, policy: 'never', request: 'default' },
-		{ expected: false, policy: 'never', request: 'gateway-token' },
-		{ expected: false, policy: 'never', request: 'all-secrets' },
-		{ expected: false, policy: 'explicit', request: 'default' },
-		{ expected: true, policy: 'explicit', request: 'gateway-token' },
-		{ expected: true, policy: 'explicit', request: 'all-secrets' },
-	] as const)(
-		'resolves ssh secret env policy $policy with request $request',
-		({ expected, policy, request }) => {
-			expect(shouldEnableSshSecretEnv({ policy, request })).toBe(expected);
-		},
-	);
 });

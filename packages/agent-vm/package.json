@@ -50,8 +50,6 @@
 		"@agent-vm/hermes-gateway": "workspace:*",
 		"@agent-vm/managed-vm": "workspace:*",
 		"@agent-vm/mcp-portal": "workspace:*",
-		"@agent-vm/openclaw-agent-vm-plugin": "workspace:*",
-		"@agent-vm/openclaw-gateway": "workspace:*",
 		"@agent-vm/secret-management": "workspace:*",
 		"@agent-vm/tool-portal": "workspace:*",
 		"@agent-vm/worker-control-contracts": "workspace:*",

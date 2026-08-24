@@ -2,7 +2,7 @@
 
 [Overview](../README.md) > [Architecture](overview.md) > Storage Matrix
 
-This matrix is the concrete path policy for OpenClaw gateway VMs and Worker
+This matrix is the concrete path policy for Hermes Gateway VMs and Worker
 gateway VMs. It applies the broader storage classes from
 [Storage Model](storage-model.md) to the actual paths each gateway should use.
 
@@ -10,41 +10,37 @@ The core rule is that storage location defines both performance and backup
 semantics. Do not move files between these classes without explicitly reviewing
 the backup and VFS consequences.
 
-## OpenClaw Gateway VM
+## Hermes Gateway VM
 
-OpenClaw is a long-lived household service. Its durable state should be backed
-up. Its stable boot-time dependencies should be baked into the image/rootfs. Its
-repair caches should stay outside backup.
+Hermes is a long-lived managed service. Its framework home and profile state
+are durable. Stable boot-time dependencies belong in the managed image recipe;
+repair caches and runtime logs stay outside backup.
 
 ```text
 path or data                           backing                backup
 ──────────────────────────────         ─────────────────      ─────────
 
 config/gateways/<zone>/
-openclaw.json, prompts                 git/catalog repo       git only
+hermes config, prompts                 git/catalog repo       git only
                                        desired config         not backup
 
-vm-images/gateways/openclaw/
-build config, overlay                  git/catalog repo       git only
-                                       image customization    not backup
+Hermes managed image recipe             @agent-vm/hermes-      no
+and immutable upstream pin               gateway package        release-owned
 
-/opt/openclaw/plugin-runtime-deps       image/rootfs baked     no
-Discord + stable plugin deps            hot boot deps          rebuild image
+/home/hermes/.hermes                     Shadow -> stateDir      yes
+root config, profiles, framework         durable framework home
+state; profile .env paths are tmpfs
 
-/home/openclaw/.openclaw/state          RealFS stateDir        yes
-auth profiles, effective config,        durable identity
-runtime records, metadata
-
-/home/openclaw/.openclaw/cache          RealFS cacheDir        no
+/home/hermes/.cache                      RealFS cacheDir        no
 repair/download caches                  rebuildable
 
-/zone                                  RealFS zoneFilesDir   yes
-OpenClaw zone files                     long-lived household
-                                       user/agent files
+zoneFilesDir/agents/<agentId>           host durable RealFS    yes
+selected agent workspace                projected to Tool VM
+                                       at /work
 
 /agent-vm/logs                          RealFS zoneRuntimeDir  no
 gateway-boot-latest.log,                zone-lifetime, wiped by
-openclaw-YYYY-MM-DD.log                 destroy-zone --purge
+Hermes and Gateway Runtime logs         destroy-zone --purge
 
 /work/tmp                               rootfs/COW             no
 large temp, TMPDIR target               disposable disk
@@ -62,18 +58,15 @@ tool-leases/<recordId>.json             controllerStateDir     no
 Tool VM recovery record                 controller-only
 recordId UUID; keeps agentId,
 leaseId, vmId, qemuPid; never
-stores OpenClaw scope keys
+stores framework scope keys
 ```
 
-OpenClaw gateways are long-lived, so rootfs/COW paths such as `/work/tmp` and
-`/work/cache` can accumulate over days or weeks. Size the OpenClaw rootfs
-explicitly and add either a periodic `/work` cleanup or an operational restart
-window. Tool VMs and worker tasks are shorter-lived, so they naturally shed this
-rootfs state at lease/task teardown.
-
-OpenClaw gateway `/work` is never the durable zone-files mount. Durable
-outside-world files live under `/zone`; `/work` is reserved for disposable
-rootfs/COW temp and cache paths in the gateway VM.
+Hermes Gateways are long-lived, so rootfs/COW scratch can accumulate across
+requests. Size `runtimeRootfsSize` explicitly and use an operational restart
+window where necessary. Tool VMs and Worker tasks are shorter-lived and shed
+their rootfs state at lease/task teardown. Hermes does not mount a broad
+`zoneFilesDir` root; the controller projects only the selected agent workspace
+into its Tool VM at `/work`.
 
 ## Worker Gateway VM
 
@@ -135,7 +128,7 @@ The backup command currently copies `stateDir` wholesale. Anything under worker
 `stateDir` silently becomes encrypted backup payload when a worker zone is
 backed up.
 
-The backup command also copies managed OpenClaw and Hermes `zoneFilesDir` roots. Worker gitdirs must
+The backup command also copies managed Hermes `zoneFilesDir` roots. Worker gitdirs must
 not be placed there either unless backup gains a worker-specific exclusion
 policy. Gitdirs live in `zoneRuntimeDir`, a non-backup task runtime root, and
 are deleted during task teardown.

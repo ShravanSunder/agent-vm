@@ -34,10 +34,10 @@ const expectedCohort = {
 	},
 	frameworkIdentity: {
 		attachmentGeneration: 1,
-		clientKind: 'openclaw-managed-plugin',
+		clientKind: 'hermes-managed-plugin',
 		configuredAgentIds: ['agent-a'],
 		frameworkEpoch: 'framework-1',
-		frameworkKind: 'openclaw',
+		frameworkKind: 'hermes',
 		projectionCohortDigest:
 			'projection-cohort:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 	},
@@ -119,7 +119,7 @@ function createRuntimeReadinessSnapshotInput(
 				...connectionIdentity,
 				expected: {
 					attachmentGeneration: 1,
-					clientKind: 'openclaw-managed-plugin',
+					clientKind: 'hermes-managed-plugin',
 					configuredAgentIds: ['agent-a'],
 					frameworkEpoch: 'framework-1',
 					gatewayEpoch: 'gateway-1',

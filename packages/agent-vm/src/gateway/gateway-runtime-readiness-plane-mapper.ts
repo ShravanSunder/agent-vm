@@ -43,9 +43,9 @@ function lost<TIdentity>(identity: TIdentity): GatewayAdmissionPlaneObservation<
 }
 
 function frameworkKindFromClientKind(
-	clientKind: GatewayRuntimeReadinessSnapshot['uds']['attachment']['expected']['clientKind'],
+	_clientKind: GatewayRuntimeReadinessSnapshot['uds']['attachment']['expected']['clientKind'],
 ): GatewayFrameworkAdmissionIdentity['frameworkKind'] {
-	return clientKind === 'openclaw-managed-plugin' ? 'openclaw' : 'hermes';
+	return 'hermes';
 }
 
 function actualReadinessIdentities(snapshot: GatewayRuntimeReadinessSnapshot): {

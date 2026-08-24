@@ -117,7 +117,7 @@ const semanticSnapshot = {
 	agentProjections: {
 		'agent-gate-c': {
 			agentId: 'agent-gate-c',
-			frameworkIdentity: { agentId: 'agent-gate-c', kind: 'openclaw' },
+			frameworkIdentity: { kind: 'hermes', profileName: 'agent-gate-c' },
 			profileAssignmentRevision: 'profile-assignment-gate-c-1',
 			toolPortalNamespaceNames: ['controller', 'github', 'sandbox'],
 			toolPortalProfileId: 'gate-c-profile',
@@ -149,7 +149,7 @@ const trustedContext = {
 	},
 	principal: {
 		agentId: 'agent-gate-c',
-		frameworkIdentity: { agentId: 'agent-gate-c', kind: 'openclaw' },
+		frameworkIdentity: { kind: 'hermes', profileName: 'agent-gate-c' },
 		profileAssignmentRevision: 'profile-assignment-gate-c-1',
 		toolPortalProfileId: 'gate-c-profile',
 	},
@@ -446,7 +446,7 @@ describe('Gateway runtime managed Tool Portal real backend composition', () => {
 					backendPortFactories,
 					createPrivateUdsProjection,
 					managedPluginAttachment: {
-						clientKind: 'openclaw-managed-plugin',
+						clientKind: 'hermes-managed-plugin',
 						configuredAgentIds: [trustedContext.principal.agentId],
 						projectionCohortDigest: semanticSnapshot.projectionCohortDigest,
 					},

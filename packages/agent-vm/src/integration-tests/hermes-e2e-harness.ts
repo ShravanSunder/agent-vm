@@ -110,14 +110,13 @@ function renderHermesLocalPackageManifest(tarballs: readonly LocalDockerPackageT
 			`file:./${tarball.archiveName}`,
 		]),
 	);
-	const gatewayRuntimeSpecifier = packageSpecifiers['@agent-vm/gateway-runtime'];
-	if (gatewayRuntimeSpecifier === undefined) {
+	if (packageSpecifiers['@agent-vm/gateway-runtime'] === undefined) {
 		throw new Error('Hermes local image package set requires @agent-vm/gateway-runtime.');
 	}
 	return `${JSON.stringify(
 		{
 			type: 'module',
-			dependencies: { '@agent-vm/gateway-runtime': gatewayRuntimeSpecifier },
+			dependencies: packageSpecifiers,
 			pnpm: { overrides: packageSpecifiers },
 		},
 		null,

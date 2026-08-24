@@ -223,7 +223,7 @@ const systemConfig = {
 	},
 	imageProfiles: {
 		gateways: {
-			openclaw: { type: 'openclaw', buildConfig: '/tmp/gateway-build.json' },
+			openclaw: { type: 'hermes', buildConfig: '/tmp/gateway-build.json' },
 			worker: { type: 'worker', buildConfig: '/tmp/gateway-build.json' },
 		},
 		toolVms: {

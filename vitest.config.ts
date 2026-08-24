@@ -111,9 +111,6 @@ export default defineConfig({
 			'@agent-vm/gateway-runtime': repoPath('packages/gateway-runtime/src/index.ts'),
 			'@agent-vm/hermes-gateway': repoPath('packages/hermes-gateway/src/index.ts'),
 			'@agent-vm/managed-vm': repoPath('packages/managed-vm/src/index.ts'),
-			'@agent-vm/openclaw-agent-vm-plugin': repoPath(
-				'packages/openclaw-agent-vm-plugin/src/index.ts',
-			),
 			'@agent-vm/secret-management': repoPath('packages/secret-management/src/index.ts'),
 			'@agent-vm/mcp-portal/testing/fake-upstream-mcp-server': repoPath(
 				'packages/mcp-portal/src/testing/fake-upstream-mcp-server.ts',
@@ -137,7 +134,6 @@ export default defineConfig({
 				'packages/mcp-portal/src/portal-auth/hmac-token.ts',
 			),
 			'@agent-vm/mcp-portal': repoPath('packages/mcp-portal/src/index.ts'),
-			'@agent-vm/openclaw-gateway': repoPath('packages/openclaw-gateway/src/index.ts'),
 			'@agent-vm/worker-control-contracts': repoPath(
 				'packages/worker-control-contracts/src/index.ts',
 			),

@@ -288,7 +288,7 @@ describe('managed Gateway runtime record', () => {
 		}
 	});
 
-	it('rejects stale Tool Portal runtime/process and framework attachment identities', () => {
+	it('rejects stale Tool Portal runtime, process, and framework epochs', () => {
 		const mismatchedCohorts: readonly GatewayExpectedAdmissionCohort[] = [
 			{
 				...expectedCohort,
@@ -301,13 +301,6 @@ describe('managed Gateway runtime record', () => {
 			{
 				...expectedCohort,
 				udsIdentity: { ...expectedCohort.udsIdentity, frameworkEpoch: 'stale-framework' },
-			},
-			{
-				...expectedCohort,
-				frameworkIdentity: {
-					...expectedCohort.frameworkIdentity,
-					clientKind: 'openclaw-managed-plugin',
-				},
 			},
 		];
 
@@ -354,20 +347,7 @@ describe('managed Gateway runtime record', () => {
 		}
 	});
 
-	it('rejects stale boot framework identity and framework ingress port', () => {
-		expect(() =>
-			managedGatewayRuntimeRecordSchema.parse({
-				...buildSampleRecord(),
-				bootContract: {
-					...bootContract,
-					frameworkService: {
-						...bootContract.frameworkService,
-						bootEntry: 'openclaw-gateway',
-						framework: 'openclaw',
-					},
-				},
-			}),
-		).toThrow(ZodError);
+	it('rejects a mismatched framework ingress port', () => {
 		expect(() =>
 			managedGatewayRuntimeRecordSchema.parse({
 				...buildSampleRecord(),

@@ -92,7 +92,7 @@ describe('Node Gateway runtime UDS transport', () => {
 		const client = new GatewayRuntimeClient({
 			attachment: {
 				attachmentGeneration: 1,
-				clientKind: 'openclaw-managed-plugin',
+				clientKind: 'hermes-managed-plugin',
 				configuredAgentIds: ['main'],
 				frameworkEpoch: 'framework-epoch-1',
 				gatewayEpoch: 'gateway-epoch-1',
@@ -130,7 +130,7 @@ describe('Node Gateway runtime UDS transport', () => {
 						},
 						principal: {
 							agentId: 'agent-a',
-							frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
+							frameworkIdentity: { kind: 'hermes', profileName: 'agent-a' },
 							profileAssignmentRevision: 'profile-assignment:agent-a:1',
 							toolPortalProfileId: 'profile-a',
 						},
@@ -210,7 +210,7 @@ describe('Node Gateway runtime UDS transport', () => {
 		const client = new GatewayRuntimeClient({
 			attachment: {
 				attachmentGeneration: 1,
-				clientKind: 'openclaw-managed-plugin',
+				clientKind: 'hermes-managed-plugin',
 				configuredAgentIds: ['main'],
 				frameworkEpoch: 'framework-epoch-1',
 				gatewayEpoch: 'gateway-epoch-1',
@@ -256,7 +256,7 @@ describe('Node Gateway runtime UDS transport', () => {
 								trustedContext: {
 									principal: {
 										agentId: 'main',
-										frameworkIdentity: { agentId: 'main', kind: 'openclaw' },
+										frameworkIdentity: { kind: 'hermes', profileName: 'main' },
 										profileAssignmentRevision: 'profile-assignment:main:1',
 										toolPortalProfileId: 'profile-main',
 									},
@@ -338,7 +338,7 @@ describe('Node Gateway runtime UDS transport', () => {
 		const client = new GatewayRuntimeClient({
 			attachment: {
 				attachmentGeneration: 1,
-				clientKind: 'openclaw-managed-plugin',
+				clientKind: 'hermes-managed-plugin',
 				configuredAgentIds: ['main'],
 				frameworkEpoch: 'framework-epoch-1',
 				gatewayEpoch: 'gateway-epoch-1',
@@ -364,7 +364,7 @@ describe('Node Gateway runtime UDS transport', () => {
 			trustedContext: {
 				principal: {
 					agentId: 'main',
-					frameworkIdentity: { agentId: 'main', kind: 'openclaw' as const },
+					frameworkIdentity: { kind: 'hermes' as const, profileName: 'main' },
 					profileAssignmentRevision: 'profile-assignment:main:1',
 					toolPortalProfileId: 'profile-main',
 				},

@@ -78,10 +78,10 @@ const testExpectedAdmissionCohort = {
 	},
 	frameworkIdentity: {
 		attachmentGeneration: 1,
-		clientKind: 'openclaw-managed-plugin',
+		clientKind: 'hermes-managed-plugin',
 		configuredAgentIds: ['main'],
-		frameworkEpoch: 'openclaw-framework-epoch-1',
-		frameworkKind: 'openclaw',
+		frameworkEpoch: 'hermes-framework-epoch-1',
+		frameworkKind: 'hermes',
 		projectionCohortDigest:
 			'projection-cohort:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 	},
@@ -110,7 +110,7 @@ const testExpectedAdmissionCohort = {
 		serviceId: 'tool-portal-service-1',
 	},
 	udsIdentity: {
-		frameworkEpoch: 'openclaw-framework-epoch-1',
+		frameworkEpoch: 'hermes-framework-epoch-1',
 		gatewayEpoch: 'gateway-epoch-1',
 		runtimeEpoch: 'tool-portal-runtime-1',
 		socketPath: '/run/agent-vm/gateway-runtime/managed-plugin.sock',
@@ -118,14 +118,14 @@ const testExpectedAdmissionCohort = {
 } satisfies GatewayExpectedAdmissionCohort;
 
 const testManagedGatewayBootContract = createManagedGatewayBootContract({
-	bootEntry: 'openclaw-gateway',
+	bootEntry: 'hermes-gateway',
 	configurationInputPath: '/run/agent-vm/managed-gateway/framework-service.json',
 	environmentInputPath: '/run/agent-vm/managed-gateway/framework.environment.sh',
-	framework: 'openclaw',
+	framework: 'hermes',
 	ingress: { guestPort: 18_789, kind: 'framework-http' },
 	logIdentity: {
-		guestPath: '/var/log/agent-vm/openclaw-service.log',
-		serviceName: 'agent-vm-openclaw-test',
+		guestPath: '/var/log/agent-vm/hermes-service.log',
+		serviceName: 'agent-vm-hermes-test',
 	},
 	readiness: { guestPort: 18_789, kind: 'framework-http', path: '/readyz' },
 	role: 'framework-service',
@@ -143,7 +143,7 @@ const systemConfig = {
 	},
 	imageProfiles: {
 		gateways: {
-			openclaw: { type: 'openclaw', buildConfig: './gateway.json' },
+			hermes: { type: 'hermes', buildConfig: './gateway.json' },
 		},
 		toolVms: {
 			standard: { type: 'toolVm', buildConfig: './tool.json' },
@@ -152,25 +152,24 @@ const systemConfig = {
 	zones: [
 		{
 			id: 'shravan',
+			agents: [{ id: 'main' }],
 			gateway: {
-				type: 'openclaw',
-				controlAuth: {
-					mode: 'token',
-					secret: 'OPENCLAW_GATEWAY_TOKEN',
-				},
-				imageProfile: 'openclaw',
+				type: 'hermes',
+				imageProfile: 'hermes',
 				memory: '2G',
 				cpus: 2,
 				port: 18791,
-				config: './shravan/openclaw.json',
+				config: './shravan/hermes.yaml',
+				profileSecretProjectionsByAgent: { main: {} },
+				profilesByAgent: { main: 'main' },
 				stateDir: path.join(managedGatewayZoneRuntimeTestRoot, 'state', 'shravan'),
 				zoneFilesDir: path.join(managedGatewayZoneRuntimeTestRoot, 'zone-files', 'shravan'),
 				zoneRuntimeDir: path.join(managedGatewayZoneRuntimeTestRoot, 'shravan', 'runtime'),
 			},
 			secrets: {
-				OPENCLAW_GATEWAY_TOKEN: {
+				TEST_GATEWAY_TOKEN: {
 					source: 'environment',
-					envVar: 'OPENCLAW_GATEWAY_TOKEN',
+					envVar: 'TEST_GATEWAY_TOKEN',
 					injection: 'env',
 					audience: 'gateway',
 				},
@@ -391,7 +390,7 @@ function createManagedGatewayZoneRuntime(
 		preflightGatewayZoneStart: async (startOptions) => {
 			const secretResolver = startOptions.secretResolver ?? options.secretResolver;
 			const gatewaySecretRefs = {
-				OPENCLAW_GATEWAY_TOKEN: { ref: 'OPENCLAW_GATEWAY_TOKEN', source: 'environment' },
+				TEST_GATEWAY_TOKEN: { ref: 'TEST_GATEWAY_TOKEN', source: 'environment' },
 			} as const;
 			const resolvedGatewaySecrets = await secretResolver.resolveAll(gatewaySecretRefs);
 			return {
@@ -465,12 +464,12 @@ function isPathInsideDirectory(candidatePath: string, directoryPath: string): bo
 	return relativePath === '' || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath));
 }
 
-function getOpenClawZone(): GatewayZone & {
-	readonly gateway: Extract<GatewayZone['gateway'], { readonly type: 'openclaw' }>;
+function getManagedGatewayZone(): GatewayZone & {
+	readonly gateway: Extract<GatewayZone['gateway'], { readonly type: 'hermes' }>;
 } {
 	const zone = systemConfig.zones.find((candidateZone) => candidateZone.id === 'shravan');
-	if (zone?.gateway.type !== 'openclaw') {
-		throw new Error('Expected shravan OpenClaw test zone.');
+	if (zone?.gateway.type !== 'hermes') {
+		throw new Error('Expected shravan Hermes test zone.');
 	}
 	return zone;
 }
@@ -478,16 +477,16 @@ function getOpenClawZone(): GatewayZone & {
 function getHermesZone(): GatewayZone & {
 	readonly gateway: Extract<GatewayZone['gateway'], { readonly type: 'hermes' }>;
 } {
-	const openClawZone = getOpenClawZone();
+	const managedGatewayZone = getManagedGatewayZone();
 	return {
-		...openClawZone,
+		...managedGatewayZone,
 		agents: [{ id: 'main' }],
 		gateway: {
 			config: './hermes/config.yaml',
-			cpus: openClawZone.gateway.cpus,
+			cpus: managedGatewayZone.gateway.cpus,
 			imageProfile: 'hermes',
-			memory: openClawZone.gateway.memory,
-			port: openClawZone.gateway.port,
+			memory: managedGatewayZone.gateway.memory,
+			port: managedGatewayZone.gateway.port,
 			profilesByAgent: { main: 'main' },
 			profileSecretProjectionsByAgent: {
 				main: {
@@ -495,10 +494,10 @@ function getHermesZone(): GatewayZone & {
 					DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN',
 				},
 			},
-			stateDir: openClawZone.gateway.stateDir,
+			stateDir: managedGatewayZone.gateway.stateDir,
 			type: 'hermes',
-			zoneFilesDir: openClawZone.gateway.zoneFilesDir,
-			zoneRuntimeDir: openClawZone.gateway.zoneRuntimeDir,
+			zoneFilesDir: managedGatewayZone.gateway.zoneFilesDir,
+			zoneRuntimeDir: managedGatewayZone.gateway.zoneRuntimeDir,
 		},
 		id: 'hermes-zone',
 		secrets: {
@@ -515,7 +514,7 @@ function getHermesZone(): GatewayZone & {
 describe('Managed Gateway zone runtime test fixture paths', () => {
 	it.each([
 		{ gatewayType: 'hermes', zone: getHermesZone() },
-		{ gatewayType: 'openclaw', zone: getOpenClawZone() },
+		{ gatewayType: 'hermes', zone: getManagedGatewayZone() },
 	] as const)(
 		'derives the exact $gatewayType runtime discriminant from its zone',
 		({ gatewayType, zone }) => {
@@ -530,7 +529,7 @@ describe('Managed Gateway zone runtime test fixture paths', () => {
 		},
 	);
 
-	it('contains and rejects a direct-process result at the OpenClaw lifecycle boundary', async () => {
+	it('contains and rejects a direct-process result at the Hermes lifecycle boundary', async () => {
 		const destroyGateway = vi.fn(async () => ({ kind: 'destroyed-clean' }) as const);
 		const unexpectedDirectProcessResult = {
 			destroyGateway,
@@ -567,7 +566,7 @@ describe('Managed Gateway zone runtime test fixture paths', () => {
 				getHostProcessId: () => 48_000,
 				id: 'unexpected-direct-process-vm',
 			},
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		} satisfies DirectProcessGatewayZoneStartResult;
 
 		await expect(requireManagedGatewayStartResult(unexpectedDirectProcessResult)).rejects.toThrow(
@@ -622,7 +621,7 @@ describe('Managed Gateway zone runtime test fixture paths', () => {
 				getHostProcessId: () => 48_000,
 				id: 'cleanup-debt-direct-process-vm',
 			},
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		} satisfies DirectProcessGatewayZoneStartResult;
 
 		const rejection = await requireManagedGatewayStartResult(directProcessResult).catch(
@@ -650,8 +649,8 @@ describe('Managed Gateway zone runtime test fixture paths', () => {
 		const generatedPaths = [
 			systemConfig.cacheDir,
 			systemConfig.controllerRuntimeDir,
-			getOpenClawZone().gateway.stateDir,
-			getOpenClawZone().gateway.zoneFilesDir,
+			getManagedGatewayZone().gateway.stateDir,
+			getManagedGatewayZone().gateway.zoneFilesDir,
 		];
 
 		expect(
@@ -699,12 +698,12 @@ describe('createManagedGatewayZoneRuntime host process liveness', () => {
 						configureIngressRoutes: vi.fn(),
 						start: async () => {},
 					},
-					zone: getOpenClawZone(),
+					zone: getManagedGatewayZone(),
 				};
 			},
 			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 
 		await runtime.start();
@@ -742,11 +741,11 @@ describe('createManagedGatewayZoneRuntime host process liveness', () => {
 					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
-				zone: getOpenClawZone(),
+				zone: getManagedGatewayZone(),
 			}),
 			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 		await runtime.start();
 		const currentSource = {
@@ -807,12 +806,12 @@ describe('createManagedGatewayZoneRuntime host process liveness', () => {
 						configureIngressRoutes: vi.fn(),
 						start: async () => {},
 					},
-					zone: getOpenClawZone(),
+					zone: getManagedGatewayZone(),
 				};
 			},
 			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 		await runtime.start();
 		if (recordEvidence === undefined) throw new Error('Expected reconnect evidence recorder.');
@@ -907,12 +906,12 @@ describe('createManagedGatewayZoneRuntime host process liveness', () => {
 						configureIngressRoutes: vi.fn(),
 						start: async () => {},
 					},
-					zone: getOpenClawZone(),
+					zone: getManagedGatewayZone(),
 				};
 			},
 			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 		await runtime.start();
 		if (recordEvidence === undefined) throw new Error('Expected reconnect evidence recorder.');
@@ -1013,12 +1012,12 @@ describe('createManagedGatewayZoneRuntime host process liveness', () => {
 						configureIngressRoutes: vi.fn(),
 						start: async () => {},
 					},
-					zone: getOpenClawZone(),
+					zone: getManagedGatewayZone(),
 				};
 			},
 			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 		await runtime.start();
 		if (recordEvidence === undefined) throw new Error('Expected reconnect evidence recorder.');
@@ -1101,12 +1100,12 @@ describe('createManagedGatewayZoneRuntime host process liveness', () => {
 						configureIngressRoutes: vi.fn(),
 						start: async () => {},
 					},
-					zone: getOpenClawZone(),
+					zone: getManagedGatewayZone(),
 				};
 			},
 			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 		await runtime.start();
 		if (recordEvidence === undefined) throw new Error('Expected reconnect evidence recorder.');
@@ -1159,11 +1158,11 @@ describe('createManagedGatewayZoneRuntime host process liveness', () => {
 					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
-				zone: getOpenClawZone(),
+				zone: getManagedGatewayZone(),
 			}),
 			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 
 		await runtime.start();
@@ -1178,7 +1177,7 @@ describe('createManagedGatewayZoneRuntime host process liveness', () => {
 			zoneId: 'shravan',
 		});
 		const logCommand = gatewayExec.mock.calls.at(-1)?.[0];
-		expect(logCommand).toContain('/var/log/agent-vm/openclaw-service.log');
+		expect(logCommand).toContain('/var/log/agent-vm/hermes-service.log');
 		expect(logCommand).toContain('/var/log/agent-vm/tool-portal-service.log');
 		expect(logCommand).not.toContain('gateway-boot-latest.log');
 	});
@@ -1208,11 +1207,11 @@ describe('createManagedGatewayZoneRuntime host process liveness', () => {
 					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
-				zone: getOpenClawZone(),
+				zone: getManagedGatewayZone(),
 			}),
 			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 
 		await runtime.start();
@@ -1249,11 +1248,11 @@ describe('createManagedGatewayZoneRuntime host process liveness', () => {
 					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
-				zone: getOpenClawZone(),
+				zone: getManagedGatewayZone(),
 			}),
 			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 
 		await runtime.start();
@@ -1286,7 +1285,7 @@ describe('createManagedGatewayZoneRuntime host process liveness', () => {
 			},
 			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 
 		await expect(runtime.start()).rejects.toMatchObject({
@@ -1340,11 +1339,11 @@ describe('createManagedGatewayZoneRuntime credentials refresh', () => {
 					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
-				zone: getOpenClawZone(),
+				zone: getManagedGatewayZone(),
 			}),
 			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 		await runtime.start();
 
@@ -1400,8 +1399,8 @@ describe('createManagedGatewayZoneRuntime credentials refresh', () => {
 				}
 				restartResolverRefs.push(
 					await startOptions.secretResolver.resolveAll({
-						OPENCLAW_GATEWAY_TOKEN: {
-							ref: 'OPENCLAW_GATEWAY_TOKEN',
+						TEST_GATEWAY_TOKEN: {
+							ref: 'TEST_GATEWAY_TOKEN',
 							source: 'environment',
 						},
 					}),
@@ -1428,21 +1427,19 @@ describe('createManagedGatewayZoneRuntime credentials refresh', () => {
 						configureIngressRoutes: vi.fn(),
 						start: async () => {},
 					},
-					zone: getOpenClawZone(),
+					zone: getManagedGatewayZone(),
 				};
 			},
 			secretResolver: staleResolver,
 			systemConfig: loadedSystemConfig,
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 
 		await expect(runtime.refreshCredentials()).resolves.toEqual({ ok: true, zoneId: 'shravan' });
 
 		expect(staleResolveAll).not.toHaveBeenCalled();
 		expect(freshResolveAll).toHaveBeenCalledTimes(1);
-		expect(restartResolverRefs).toEqual([
-			{ OPENCLAW_GATEWAY_TOKEN: 'fresh:OPENCLAW_GATEWAY_TOKEN' },
-		]);
+		expect(restartResolverRefs).toEqual([{ TEST_GATEWAY_TOKEN: 'fresh:TEST_GATEWAY_TOKEN' }]);
 		expect(runtime.getSnapshot()).toMatchObject({
 			gateway: { vm: { id: 'gateway-vm-fresh-resolver' } },
 			lifecycleState: 'running',
@@ -1483,7 +1480,7 @@ describe('createManagedGatewayZoneRuntime credentials refresh', () => {
 			},
 			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 
 		await expect(runtime.refreshCredentials()).rejects.toThrow('1Password SDK failed');
@@ -1535,11 +1532,11 @@ describe('createManagedGatewayZoneRuntime credentials refresh', () => {
 					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
-				zone: getOpenClawZone(),
+				zone: getManagedGatewayZone(),
 			}),
 			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 
 		await runtime.start();
@@ -1580,7 +1577,7 @@ describe('createManagedGatewayZoneRuntime credentials refresh', () => {
 			},
 			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 
 		await expect(runtime.refreshCredentials()).rejects.toMatchObject({
@@ -1640,11 +1637,11 @@ describe('createManagedGatewayZoneRuntime credentials refresh', () => {
 					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
-				zone: getOpenClawZone(),
+				zone: getManagedGatewayZone(),
 			}),
 			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 
 		await runtime.start();
@@ -1699,7 +1696,7 @@ describe('createManagedGatewayZoneRuntime cold-start recovery', () => {
 					getHostProcessId: () => hostPid,
 					id: `gateway-vm-${String(gatewayStartCount)}`,
 				},
-				zone: getOpenClawZone(),
+				zone: getManagedGatewayZone(),
 			};
 		});
 		const runtime = createManagedGatewayZoneRuntime({
@@ -1708,7 +1705,7 @@ describe('createManagedGatewayZoneRuntime cold-start recovery', () => {
 			restartGatewayZone,
 			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 
 		await runtime.start();
@@ -1754,7 +1751,7 @@ describe('createManagedGatewayZoneRuntime cold-start recovery', () => {
 					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
-				zone: getOpenClawZone(),
+				zone: getManagedGatewayZone(),
 			});
 		const runtime = createManagedGatewayZoneRuntime({
 			isProcessAlive: () => true,
@@ -1762,7 +1759,7 @@ describe('createManagedGatewayZoneRuntime cold-start recovery', () => {
 			restartGatewayZone,
 			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 
 		await expect(runtime.start()).rejects.toThrow('Failed to start zone');
@@ -1849,8 +1846,8 @@ describe('createManagedGatewayZoneRuntime stop and restart safety', () => {
 				if (startCount > 1) {
 					replacementStartImages.push(startOptions.prebuiltImage);
 					await (startOptions.secretResolver ?? secretResolver).resolveAll({
-						OPENCLAW_GATEWAY_TOKEN: {
-							ref: 'OPENCLAW_GATEWAY_TOKEN',
+						TEST_GATEWAY_TOKEN: {
+							ref: 'TEST_GATEWAY_TOKEN',
 							source: 'environment',
 						},
 					});
@@ -1878,12 +1875,12 @@ describe('createManagedGatewayZoneRuntime stop and restart safety', () => {
 						start: async () => {},
 					},
 					destroyGateway,
-					zone: getOpenClawZone(),
+					zone: getManagedGatewayZone(),
 				};
 			},
 			secretResolver,
 			systemConfig: loadedSystemConfig,
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 
 		await runtime.start();
@@ -1955,12 +1952,12 @@ describe('createManagedGatewayZoneRuntime stop and restart safety', () => {
 						start: async () => {},
 					},
 					destroyGateway,
-					zone: getOpenClawZone(),
+					zone: getManagedGatewayZone(),
 				};
 			},
 			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 
 		await runtime.start();
@@ -2009,7 +2006,7 @@ describe('createManagedGatewayZoneRuntime stop and restart safety', () => {
 					start: async () => {},
 				},
 				destroyGateway,
-				zone: getOpenClawZone(),
+				zone: getManagedGatewayZone(),
 			};
 		});
 		const runtime = createManagedGatewayZoneRuntime({
@@ -2018,7 +2015,7 @@ describe('createManagedGatewayZoneRuntime stop and restart safety', () => {
 			restartGatewayZone,
 			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 
 		await runtime.start();
@@ -2068,12 +2065,12 @@ describe('createManagedGatewayZoneRuntime stop and restart safety', () => {
 						start: async () => {},
 					},
 					destroyGateway,
-					zone: getOpenClawZone(),
+					zone: getManagedGatewayZone(),
 				};
 			},
 			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 
 		await runtime.start();
@@ -2119,7 +2116,7 @@ describe('createManagedGatewayZoneRuntime stop and restart safety', () => {
 					start: async () => {},
 				},
 				destroyGateway,
-				zone: getOpenClawZone(),
+				zone: getManagedGatewayZone(),
 			}),
 			secretResolver: {
 				resolve: async () => '',
@@ -2128,7 +2125,7 @@ describe('createManagedGatewayZoneRuntime stop and restart safety', () => {
 				},
 			},
 			systemConfig: loadedSystemConfig,
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 
 		await runtime.start();
@@ -2180,7 +2177,7 @@ describe('createManagedGatewayZoneRuntime stop and restart safety', () => {
 					start: async () => {},
 				},
 				destroyGateway,
-				zone: getOpenClawZone(),
+				zone: getManagedGatewayZone(),
 			}),
 			secretResolver: {
 				resolve: async () => 'resolved',
@@ -2190,7 +2187,7 @@ describe('createManagedGatewayZoneRuntime stop and restart safety', () => {
 					),
 			},
 			systemConfig: loadedSystemConfig,
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 
 		await runtime.start();
@@ -2236,11 +2233,11 @@ describe('createManagedGatewayZoneRuntime stop and restart safety', () => {
 					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
-				zone: getOpenClawZone(),
+				zone: getManagedGatewayZone(),
 			}),
 			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 
 		await runtime.start();
@@ -2297,11 +2294,11 @@ describe('createManagedGatewayZoneRuntime stop and restart safety', () => {
 					start: async () => {},
 				},
 				destroyGateway,
-				zone: getOpenClawZone(),
+				zone: getManagedGatewayZone(),
 			}),
 			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 
 		await runtime.start();
@@ -2360,11 +2357,11 @@ describe('createManagedGatewayZoneRuntime stop and restart safety', () => {
 					start: async () => {},
 				},
 				destroyGateway,
-				zone: getOpenClawZone(),
+				zone: getManagedGatewayZone(),
 			}),
 			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 
 		await runtime.start();
@@ -2421,12 +2418,12 @@ describe('createManagedGatewayZoneRuntime stop and restart safety', () => {
 						configureIngressRoutes: vi.fn(),
 						start: async () => {},
 					},
-					zone: getOpenClawZone(),
+					zone: getManagedGatewayZone(),
 				};
 			},
 			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 
 		await runtime.start();
@@ -2486,12 +2483,12 @@ describe('createManagedGatewayZoneRuntime stop and restart safety', () => {
 						configureIngressRoutes: vi.fn(),
 						start: async () => {},
 					},
-					zone: getOpenClawZone(),
+					zone: getManagedGatewayZone(),
 				};
 			},
 			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 
 		await runtime.start();
@@ -2549,7 +2546,7 @@ describe('createManagedGatewayZoneRuntime stop and restart safety', () => {
 						getHostProcessId: () => 48_284 + gatewayStartCount,
 						id: `gateway-vm-${gatewayStartCount}`,
 					},
-					zone: getOpenClawZone(),
+					zone: getManagedGatewayZone(),
 				};
 				if (gatewayStartCount === 2) {
 					return await new Promise<typeof gatewayStartResult>((resolve) => {
@@ -2566,7 +2563,7 @@ describe('createManagedGatewayZoneRuntime stop and restart safety', () => {
 				return { unref: vi.fn() } as unknown as NodeJS.Timeout;
 			},
 			systemConfig: loadedSystemConfig,
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 
 		await runtime.start();
@@ -2604,7 +2601,7 @@ describe('createManagedGatewayZoneRuntime stop and restart safety', () => {
 				getHostProcessId: () => 48_286,
 				id: 'gateway-vm-stale',
 			},
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 		await vi.waitFor(() => {
 			expect(staleGatewayDestroy).toHaveBeenCalledOnce();
@@ -2660,7 +2657,7 @@ describe('createManagedGatewayZoneRuntime stop and restart safety', () => {
 						start: async () => {},
 					},
 					destroyGateway,
-					zone: getOpenClawZone(),
+					zone: getManagedGatewayZone(),
 				};
 			},
 			secretResolver: createResolvingSecretResolver(),
@@ -2671,7 +2668,7 @@ describe('createManagedGatewayZoneRuntime stop and restart safety', () => {
 				return { unref: vi.fn() } as unknown as NodeJS.Timeout;
 			},
 			systemConfig: loadedSystemConfig,
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 
 		await runtime.start();
@@ -2731,7 +2728,7 @@ describe('createManagedGatewayZoneRuntime stop and restart safety', () => {
 						getHostProcessId: () => 48_284 + gatewayStartCount,
 						id: `gateway-vm-${gatewayStartCount}`,
 					},
-					zone: getOpenClawZone(),
+					zone: getManagedGatewayZone(),
 				};
 				if (gatewayStartCount === 2) {
 					return await new Promise<typeof gatewayStartResult>((resolve) => {
@@ -2748,7 +2745,7 @@ describe('createManagedGatewayZoneRuntime stop and restart safety', () => {
 				return { unref: vi.fn() } as unknown as NodeJS.Timeout;
 			},
 			systemConfig: loadedSystemConfig,
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 
 		await runtime.start();
@@ -2776,7 +2773,7 @@ describe('createManagedGatewayZoneRuntime stop and restart safety', () => {
 				getHostProcessId: () => 48_286,
 				id: 'gateway-vm-stale',
 			},
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 		await vi.waitFor(() => {
 			expect(staleGatewayDestroy).toHaveBeenCalledOnce();
@@ -2812,7 +2809,7 @@ describe('createManagedGatewayZoneRuntime stop and restart safety', () => {
 						getHostProcessId: () => 48_284 + gatewayStartCount,
 						id: `gateway-vm-${gatewayStartCount}`,
 					},
-					zone: getOpenClawZone(),
+					zone: getManagedGatewayZone(),
 				};
 				if (gatewayStartCount === 2) {
 					startOptions?.onPendingVmCreation?.({ contain: containPendingCreate });
@@ -2830,7 +2827,7 @@ describe('createManagedGatewayZoneRuntime stop and restart safety', () => {
 				return { unref: vi.fn() } as unknown as NodeJS.Timeout;
 			},
 			systemConfig: loadedSystemConfig,
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 
 		await runtime.start();
@@ -2865,7 +2862,7 @@ describe('createManagedGatewayZoneRuntime stop and restart safety', () => {
 				getHostProcessId: () => 48_286,
 				id: 'gateway-vm-stale',
 			},
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 		await expect(stopPromise).resolves.toBeUndefined();
 		expect(stopSettled).toBe(true);
@@ -2917,7 +2914,7 @@ describe('createManagedGatewayZoneRuntime stop and restart safety', () => {
 							configureIngressRoutes: vi.fn(),
 							start: async () => {},
 						},
-						zone: getOpenClawZone(),
+						zone: getManagedGatewayZone(),
 					};
 				},
 				secretResolver: createResolvingSecretResolver(),
@@ -2928,7 +2925,7 @@ describe('createManagedGatewayZoneRuntime stop and restart safety', () => {
 					return { unref: vi.fn() } as unknown as NodeJS.Timeout;
 				},
 				systemConfig: loadedSystemConfig,
-				zone: getOpenClawZone(),
+				zone: getManagedGatewayZone(),
 			});
 
 			if (timedOperationKind === 'restart') {
@@ -3019,11 +3016,11 @@ describe('createManagedGatewayZoneRuntime stop and restart safety', () => {
 					configureIngressRoutes: vi.fn(),
 					start: async () => {},
 				},
-				zone: getOpenClawZone(),
+				zone: getManagedGatewayZone(),
 			}),
 			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 
 		await expect(runtime.restart()).resolves.toMatchObject({
@@ -3074,12 +3071,12 @@ describe('createManagedGatewayZoneRuntime stop and restart safety', () => {
 						configureIngressRoutes: vi.fn(),
 						start: async () => {},
 					},
-					zone: getOpenClawZone(),
+					zone: getManagedGatewayZone(),
 				};
 			},
 			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 
 		await runtime.start();

@@ -37,7 +37,7 @@ const callerContext: GatewayControlTrustedCallerContext = {
 	peerId: 'gateway-zone-a',
 	principal: {
 		agentId: 'agent-a',
-		frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
+		frameworkIdentity: { kind: 'hermes', profileName: 'agent-a' },
 		profileAssignmentRevision: 'assignment-a',
 		toolPortalProfileId: 'profile-a',
 	},

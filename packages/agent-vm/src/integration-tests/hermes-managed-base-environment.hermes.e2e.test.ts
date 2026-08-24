@@ -758,6 +758,74 @@ describeHermesManagedEnvironmentE2e(
 			}
 		});
 
+		it('writes and reads stock files through profile-isolated Tool VMs', async () => {
+			const repoRoot = path.resolve(process.cwd());
+			const filesystemProject = await scaffoldHermesE2eProject({
+				agents: agentIds,
+				architecture,
+				prefix: 'hermes-managed-filesystem-e2e-',
+				zoneId: 'hermes-managed-filesystem-e2e',
+			});
+			let filesystemHarness: E2eHarnessRuntime | undefined;
+			try {
+				configureHermesSecrets(filesystemProject);
+				await materializeNativeProfileLeaves(filesystemProject);
+				await writeFile(
+					filesystemProject.zone.gateway.config,
+					renderCommonConfiguration(commonAcceptanceMarkers.first),
+					'utf8',
+				);
+				await useLocalHermesGatewayImagePackages({
+					architecture,
+					profileName: filesystemProject.zone.gateway.imageProfile,
+					projectRoot: filesystemProject.tempRoot,
+					repoRoot,
+					systemConfig: filesystemProject.systemConfig,
+				});
+				await prepareGatewayE2eProjectImages({ project: filesystemProject });
+
+				const filesystemEpoch = await startManagedHermesEpoch({
+					project: filesystemProject,
+				});
+				filesystemHarness = filesystemEpoch.harness;
+				await waitForRootApiHealth({
+					gatewayPort: filesystemProject.gatewayPort,
+					vm: filesystemEpoch.start.vm,
+				});
+				await startHermesDeterministicToolCallModelServer({
+					filesystemIsolationMarker,
+					filesystemMarker,
+					frameworkMarker: frameworkGapMarker,
+					port: fakeModelPort,
+					toolVmMarker: toolVmRecoveryMarker,
+					vm: filesystemEpoch.start.vm,
+				});
+				expect(
+					await callHermesProfile({
+						apiServerKey: hermesE2eProfileApiServerKey('main'),
+						gatewayPort: filesystemProject.gatewayPort,
+						profileName: 'main',
+						prompt: 'RUN_FILESYSTEM_WRITE_READ_PROBE',
+					}),
+				).toContain(filesystemMarker);
+				expect(
+					await callHermesProfile({
+						apiServerKey: hermesE2eProfileApiServerKey('beta'),
+						gatewayPort: filesystemProject.gatewayPort,
+						profileName: 'beta',
+						prompt: 'VERIFY_FILESYSTEM_PROFILE_ISOLATION',
+					}),
+				).toContain(filesystemIsolationMarker);
+				expect(filesystemEpoch.toolVmCreateRequests).toHaveLength(2);
+			} finally {
+				try {
+					await filesystemHarness?.close();
+				} finally {
+					await removeE2eTempRoot(filesystemProject.tempRoot);
+				}
+			}
+		}, 900_000);
+
 		it('discovers managed policy and applies marker updates across restart', async () => {
 			const repoRoot = path.resolve(process.cwd());
 			project = await scaffoldHermesE2eProject({
@@ -906,30 +974,14 @@ describeHermesManagedEnvironmentE2e(
 				minimumAttachmentGeneration: initialAttachmentGeneration + 1,
 				previousSessionId: initialSessionId,
 			});
-			const toolVmRecoveryResponse = await callHermesProfile({
-				apiServerKey: hermesE2eProfileApiServerKey('main'),
-				gatewayPort: project.gatewayPort,
-				profileName: 'main',
-				prompt: 'RUN_TOOL_VM_RECOVERY_PROBE',
-			});
-			if (!toolVmRecoveryResponse.includes(toolVmRecoveryMarker)) {
-				const [hermesServiceLog, toolPortalServiceLog] = await Promise.all([
-					secondEpoch.start.vm.exec(
-						'tail -n 300 /var/log/agent-vm/hermes-service.log 2>&1 || true',
-					),
-					secondEpoch.start.vm.exec(
-						'tail -n 300 /var/log/agent-vm/tool-portal-service.log 2>&1 || true',
-					),
-				]);
-				throw new Error(
-					`Hermes Tool VM recovery failed: ${JSON.stringify({
-						controlSession: secondEpoch.start.controlSession.getDiagnostics(),
-						hermesServiceLog: hermesServiceLog.stdout,
-						toolPortalServiceLog: toolPortalServiceLog.stdout,
-						toolVmRecoveryResponse,
-					})}`,
-				);
-			}
+			expect(
+				await callHermesProfile({
+					apiServerKey: hermesE2eProfileApiServerKey('main'),
+					gatewayPort: project.gatewayPort,
+					profileName: 'main',
+					prompt: 'RUN_TOOL_VM_RECOVERY_PROBE',
+				}),
+			).toContain(toolVmRecoveryMarker);
 			expect(secondEpoch.toolVmCreateRequests).toHaveLength(2);
 			expect(secondEpoch.start.vm.getHostProcessId()).toBe(secondEpoch.start.qemuPid);
 			expect(

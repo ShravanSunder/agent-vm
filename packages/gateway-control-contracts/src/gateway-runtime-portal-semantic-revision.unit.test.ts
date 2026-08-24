@@ -76,7 +76,7 @@ function deriveFixtureSnapshot(props: {
 		agentProjections: [
 			{
 				agentId: 'builder',
-				frameworkIdentity: { agentId: 'builder', kind: 'openclaw' },
+				frameworkIdentity: { kind: 'hermes', profileName: 'builder' },
 				toolPortalNamespaceNames: ['sandbox'],
 				toolPortalProfileId: 'builder-profile',
 			},
@@ -94,7 +94,7 @@ describe('Gateway Runtime portal semantic revision', () => {
 		// Arrange
 		const baselineInput: ManagedAgentProjectionInput = {
 			agentId: 'builder',
-			frameworkIdentity: { agentId: 'builder', kind: 'openclaw' as const },
+			frameworkIdentity: { kind: 'hermes' as const, profileName: 'builder' },
 			toolPortalNamespaceNames: [],
 			toolPortalProfileId: 'builder-profile',
 		};
@@ -105,7 +105,7 @@ describe('Gateway Runtime portal semantic revision', () => {
 			{ ...baselineInput, agentId: 'renamed' },
 			{
 				...baselineInput,
-				frameworkIdentity: { agentId: 'renamed', kind: 'openclaw' as const },
+				frameworkIdentity: { kind: 'hermes' as const, profileName: 'renamed' },
 			},
 			{ ...baselineInput, toolPortalProfileId: 'reviewer-profile' },
 		]) {
@@ -127,7 +127,7 @@ describe('Gateway Runtime portal semantic revision', () => {
 		// Arrange
 		const validProjection = {
 			agentId: 'builder',
-			frameworkIdentity: { agentId: 'builder', kind: 'openclaw' as const },
+			frameworkIdentity: { kind: 'hermes' as const, profileName: 'builder' },
 			profileAssignmentRevision: 'profile-assignment-a',
 			toolPortalNamespaceNames: ['filesystem', 'github'],
 			toolPortalProfileId: 'profile-a',
@@ -152,7 +152,7 @@ describe('Gateway Runtime portal semantic revision', () => {
 		const supplementaryNamespace = '\u{10000}';
 		const validProjection: ManagedAgentProjectionInput = {
 			agentId: 'builder',
-			frameworkIdentity: { agentId: 'builder', kind: 'openclaw' },
+			frameworkIdentity: { kind: 'hermes', profileName: 'builder' },
 			toolPortalNamespaceNames: [privateUseNamespace, supplementaryNamespace],
 			toolPortalProfileId: 'builder-profile',
 		};
@@ -182,7 +182,7 @@ describe('Gateway Runtime portal semantic revision', () => {
 		});
 		const baselineProjection = {
 			agentId: 'builder',
-			frameworkIdentity: { agentId: 'builder', kind: 'openclaw' as const },
+			frameworkIdentity: { kind: 'hermes' as const, profileName: 'builder' },
 			toolPortalNamespaceNames: ['sandbox'],
 			toolPortalProfileId: 'builder-profile',
 		};
@@ -226,7 +226,7 @@ describe('Gateway Runtime portal semantic revision', () => {
 				agentProjections: [
 					{
 						agentId: 'builder',
-						frameworkIdentity: { agentId: 'builder', kind: 'openclaw' },
+						frameworkIdentity: { kind: 'hermes', profileName: 'builder' },
 						toolPortalNamespaceNames: [],
 						toolPortalProfileId: 'builder-profile',
 					},
@@ -247,7 +247,7 @@ describe('Gateway Runtime portal semantic revision', () => {
 		// Arrange
 		const stableInput: ManagedAgentProjectionInput = {
 			agentId: 'builder',
-			frameworkIdentity: { agentId: 'builder', kind: 'openclaw' },
+			frameworkIdentity: { kind: 'hermes', profileName: 'builder' },
 			toolPortalNamespaceNames: [],
 			toolPortalProfileId: 'builder-profile',
 		};
@@ -315,7 +315,7 @@ describe('Gateway Runtime portal semantic revision', () => {
 		expect(baseline.projectionCohortDigest).toMatch(/^projection-cohort:[a-f0-9]{64}$/u);
 	});
 
-	it('rejects duplicate identities, mixed framework kinds, and config set drift', () => {
+	it('rejects duplicate identities and config set drift', () => {
 		// Arrange
 		const mcpConfig = createMcpConfig();
 		const toolPortalConfig = managedToolPortalConfigSchema.parse({
@@ -327,7 +327,7 @@ describe('Gateway Runtime portal semantic revision', () => {
 		});
 		const builderProjection: ManagedAgentProjectionInput = {
 			agentId: 'builder',
-			frameworkIdentity: { agentId: 'builder', kind: 'openclaw' as const },
+			frameworkIdentity: { kind: 'hermes' as const, profileName: 'builder' },
 			toolPortalNamespaceNames: ['sandbox'],
 			toolPortalProfileId: 'builder-profile',
 		};
@@ -349,16 +349,6 @@ describe('Gateway Runtime portal semantic revision', () => {
 		expect(() =>
 			derive([builderProjection, { ...builderProjection, agentId: 'reviewer' }]),
 		).toThrow('framework identities');
-		expect(() =>
-			derive([
-				builderProjection,
-				{
-					...builderProjection,
-					agentId: 'reviewer',
-					frameworkIdentity: { kind: 'hermes', profileName: 'reviewer' },
-				},
-			]),
-		).toThrow('framework kind');
 	});
 
 	it('rejects a stale projection revision even when the protected configs still match', () => {

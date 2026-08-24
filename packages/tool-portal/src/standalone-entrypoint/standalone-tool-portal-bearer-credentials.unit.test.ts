@@ -39,7 +39,7 @@ describe('standalone Tool Portal bearer identity', () => {
 	it.each([
 		{
 			...standalonePrincipal,
-			frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
+			frameworkIdentity: { kind: 'hermes', profileName: 'agent-a' },
 		},
 		{
 			...standalonePrincipal,

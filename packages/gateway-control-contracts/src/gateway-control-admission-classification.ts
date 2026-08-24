@@ -80,12 +80,6 @@ export function classifyGatewayControlAdmission(
 					messageClass: 'liveness',
 					status: 'classified',
 				};
-			case 'runtime_status':
-				return {
-					coalesceKey: `runtime-status:${message.payload.statusKind}`,
-					messageClass: 'liveness',
-					status: 'classified',
-				};
 			case 'health_event':
 				return {
 					coalesceKey: diagnosticCoalesceKey(message.payload),

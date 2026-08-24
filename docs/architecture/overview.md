@@ -5,7 +5,7 @@
 System architecture covering all packages, both gateway types, the controller,
 and the Gondolin VM layer. For mode-specific details:
 [Agent Worker Gateway](agent-worker-gateway.md) |
-[OpenClaw Gateway](openclaw-gateway.md) |
+[Hermes configuration](../reference/configuration/system-json.md) |
 [Storage Model](storage-model.md).
 
 ---
@@ -22,8 +22,8 @@ Worker VM or Agent VM because it runs `agent-vm-worker`.
 Target worker storage model: Git metadata lives in a controller-visible RealFS
 gitdir, while the worker edits VM-local rootfs/COW repo files under `/work/repos/<repoId>`.
 The worker requests host-side push/PR work through the controller instead of
-pushing directly. OpenClaw's long-lived files are zone files, not worker
-zone files; the OpenClaw VM path is `/zone`.
+pushing directly. Hermes profile files are durable zone files, not Worker zone
+files.
 
 ```
   Caller (CLI / CI / API)
@@ -45,7 +45,7 @@ zone files; the OpenClaw VM path is `/zone`.
   |  | Gondolin VM                              |       |
   |  |                                          |       |
   |  |  +------------------------------------+  |       |
-  |  |  | Agent (worker :18789 or openclaw)  |  |       |
+  |  |  | Agent (Worker or managed Hermes)   |  |       |
   |  |  +------------------------------------+  |       |
   |  |                                          |       |
   |  |  /work/repos (worker rootfs/COW repo files)     |       |
@@ -78,21 +78,21 @@ The controller POSTs a task to the worker's HTTP API inside the VM, then polls u
 → Full gateway: [agent-worker-gateway.md](agent-worker-gateway.md)
 → Controller-side lifecycle: [subsystems/worker-task-pipeline.md](../subsystems/worker-task-pipeline.md)
 
-### Controller ↔ OpenClaw (OpenClaw Gateway)
+### Controller ↔ Hermes (managed Gateway)
 
-The gateway VM runs long-term. When the agent needs tool execution, the managed
-Gondolin plugin asks the controller for a Tool VM capability over the private
-Socket.IO control session exposed through Gondolin ingress. The controller boots
-a tool VM and returns SSH access details to the plugin; the VM does not call the
-controller's public HTTP lease routes.
+The Gateway VM runs long-term. The Hermes adapter reaches Gateway Runtime over
+its private managed boundary. When an agent needs tool execution, Gateway
+Runtime asks the controller for a Tool VM capability over the private control
+session. The controller boots a Tool VM and returns fenced access details; the
+Gateway VM does not call the controller's public HTTP lease routes.
 
-→ Full gateway: [openclaw-gateway.md](openclaw-gateway.md)
+→ Configuration: [system-json.md](../reference/configuration/system-json.md)
 → Lease manager: [subsystems/controller.md](../subsystems/controller.md#lease-manager)
 
 ### Capability Portals
 
 Agent-facing capability calls are separate from VM execution. Tool Portal is the
-managed OpenClaw capability facade and exposes the native
+managed Hermes capability facade and exposes the native
 `tool_portal_list/search/describe/call` surface. MCP Portal is the MCP-specific
 provider backend for Tool Portal and also remains available through the separate
 `mcp-portal mcp-proxy serve` adapter for external MCP clients.
@@ -101,10 +101,10 @@ Tool Portal is the cross-backend contract layer for capabilities that may come
 from MCP providers, controller-owned host actions, or Tool VM runner-backed
 execution. It uses portal-neutral Zod v4 contracts from
 `@agent-vm/agent-portal-sdk` and composes MCP-backed capabilities through
-`@agent-vm/mcp-portal/mcp-provider-backend`. Managed OpenClaw does not reuse the
+`@agent-vm/mcp-portal/mcp-provider-backend`. Managed Hermes does not reuse the
 standalone model-visible `mcp_portal_*` tool names.
 
-Today, Tool Portal is the managed OpenClaw model-visible portal surface and the
+Today, Tool Portal is the managed Hermes model-visible portal surface and the
 package-level composition layer for backends. MCP Portal remains the MCP
 provider/runtime backend instead of a second policy
 authority.
@@ -172,7 +172,9 @@ resource boundary.
 
 ### Gateway Lifecycle Contract
 
-Both modes implement the same `GatewayLifecycle` interface. The controller calls `buildVmRequirements()` + `buildProcessSpec()` and gets pure data back — it never knows the specifics of Worker or OpenClaw.
+Both modes implement the same `GatewayLifecycle` interface. The controller gets
+neutral VM requirements from both. Hermes supplies managed-framework boot
+metadata and inputs; Worker supplies a direct process spec.
 
 → Deep dive: [subsystems/gateway-lifecycle.md](../subsystems/gateway-lifecycle.md)
 
@@ -205,7 +207,7 @@ start repo services"]
 Eighteen workspace packages compose the system. Dependencies flow downward.
 
 ```
-  openclaw-gateway ----+
+  hermes-gateway ------+
                        +--> gateway-lifecycle --> managed-vm
   worker-gateway ------+                           ^
                                                    |
@@ -223,7 +225,7 @@ Eighteen workspace packages compose the system. Dependencies flow downward.
         +--> gateway-control-contracts
         |          |
         |          v
-        |     openclaw-agent-vm-plugin
+        |        agent-vm
         |          |
         |          v
         |       agent-vm
@@ -244,8 +246,8 @@ Eighteen workspace packages compose the system. Dependencies flow downward.
   config-contracts and secret-management provide shared contracts used by the
   controller, gateways, MCP Portal, Tool Portal, and plugins.
 
-  openclaw-agent-vm-plugin bridges OpenClaw sandbox execution to controller
-  leases and SSH/file access for named Tool VMs.
+  The Hermes Python adapter reaches Gateway Runtime over its private managed
+  attachment and uses controller-authorized Tool VMs.
 ```
 
 | Package | Responsibility |
@@ -258,7 +260,7 @@ Eighteen workspace packages compose the system. Dependencies flow downward.
 | **managed-vm** | Backend-neutral structural contracts for VM creation/runtime, images, diagnostics, and owned host-directory capabilities. It exposes no native provider handle or filesystem escape hatch. |
 | **gondolin-vm-adapter** | Implements `managed-vm` with the Gondolin SDK, including VM translation, owned host directories, image builds, VFS, ingress, SSH, and HTTP mediation. |
 | **gateway-lifecycle** | The gateway contract: `GatewayLifecycle`, neutral `GatewayVmRequirements`, process specs, shared runtime policy, and secret-placement intent. |
-| **openclaw-gateway** | OpenClaw lifecycle: 4 VFS mounts, TCP pool for tool VM SSH, auth profiles, `prepareHostState` writes effective config to disk. |
+| **hermes-gateway** | Hermes lifecycle and immutable managed image recipe: profile directories, exact managed-framework boot inputs, protected interactive SSH, Tool VM TCP hosts, and telemetry projection. |
 | **worker-gateway** | Worker lifecycle: RealFS control mounts (`/state` + task `/gitdirs`), rootfs/COW `/work/repos`, private control-session ingress wiring, no auth, no `prepareHostState`. |
 | **agent-portal-sdk** | Portal-neutral Zod v4 contracts for list/search/describe/call results, capability descriptions, approvals, artifacts, diagnostics, and adapter envelopes. |
 | **mcp-portal** | MCP-specific capability facade, upstream MCP client runtime, scoped catalog/search, schema validation, approval evaluation, external MCP proxy, and MCP provider backend for Tool Portal composition. |
@@ -266,7 +268,6 @@ Eighteen workspace packages compose the system. Dependencies flow downward.
 | **controller-execution-contracts** | Zod contracts for controller dispatch, controller host-action, and Tool VM runner boundaries. |
 | **agent-vm** | The controller and application composition root. Its regular Gondolin adapter dependency is confined to the provider-composition and build-tooling modules; controller domains consume narrow `managed-vm` projections. |
 | **agent-vm-worker** | Runs inside the VM. 6-phase coordinator, Codex/Claude executors with thread persistence, JSONL event sourcing, and control-session-backed controller tools such as `git-push` and `git-pull-default`. |
-| **openclaw-agent-vm-plugin** | Bridge to OpenClaw's sandbox and Tool Portal systems. Registers Gondolin VMs as an OpenClaw sandbox backend, registers Tool Portal native tools, and uses the private gateway control session for controller-owned operations. |
 
 ---
 
@@ -284,14 +285,14 @@ The controller is the host-side process that owns VM lifecycles, serves the HTTP
   3. Create lease manager    createLeaseManager({ tcpPool, createManagedVm })
   4. Start idle reaper       createIdleReaper({ ttlForLease }) on 60s interval
   5. Create zone registry    one runtime per selected configured zone
-  6. Start selected zones    OpenClaw gateways at boot; Worker zones on task submit
+  6. Start selected zones    Hermes Gateways at boot; Worker zones on task submit
   7. Wire HTTP routes        createControllerService() -> Hono app
   8. Bind HTTP server        startControllerHttpServer({ port: config.host.controllerPort })
 ```
 
 For worker-type zones, the gateway is not started at boot. Instead, a per-task
 VM is created on demand when a worker task is submitted (see Agent Worker
-Gateway below). OpenClaw and Worker routes dispatch through the requested
+Gateway below). Hermes and Worker routes dispatch through the requested
 `zoneId`; wrong-type operations return typed HTTP errors instead of using one
 process-wide active zone.
 
@@ -304,14 +305,14 @@ private control-session owned lease handling, and zone operation routes in
 | Method | Path | Purpose | Mode |
 |--------|------|---------|------|
 | `GET` | `/health` | Controller liveness check | Both |
-| `GET` | `/controller-status` | Controller operational status | OpenClaw |
-| `GET` | `/zones/:zoneId/health` | Live gateway health probe | OpenClaw |
-| `GET` | `/zones/:zoneId/logs` | Fetch gateway VM logs | OpenClaw |
-| `POST` | `/zones/:zoneId/credentials/refresh` | Re-resolve zone secrets and update auth | OpenClaw |
-| `POST` | `/zones/:zoneId/destroy` | Stop and destroy a gateway zone | OpenClaw |
-| `POST` | `/zones/:zoneId/upgrade` | Restart gateway zone with fresh image | OpenClaw |
-| `POST` | `/zones/:zoneId/enable-ssh` | Enable SSH access to the gateway VM | OpenClaw |
-| `POST` | `/zones/:zoneId/execute-command` | Execute a shell command in the gateway VM; requires zone admin token when adminAccess is configured | OpenClaw |
+| `GET` | `/controller-status` | Controller operational status | Managed Gateway |
+| `GET` | `/zones/:zoneId/health` | Live gateway health probe | Hermes |
+| `GET` | `/zones/:zoneId/logs` | Fetch gateway VM logs | Hermes |
+| `POST` | `/zones/:zoneId/credentials/refresh` | Re-resolve zone secrets and restart | Hermes |
+| `POST` | `/zones/:zoneId/destroy` | Stop and destroy a gateway zone | Hermes |
+| `POST` | `/zones/:zoneId/upgrade` | Restart gateway zone with fresh image | Hermes |
+| `POST` | `/zones/:zoneId/enable-ssh` | Enable SSH access to the gateway VM | Hermes |
+| `POST` | `/zones/:zoneId/execute-command` | Execute a shell command in the gateway VM; requires zone admin token when adminAccess is configured | Hermes |
 | `POST` | `/zones/:zoneId/worker-tasks` | Submit a worker task (`requestTaskId`, prompt, repos, context) | Worker |
 | `GET` | `/zones/:zoneId/tasks/:taskId` | Read worker task state snapshot | Worker |
 | `POST` | `/stop-controller` | Graceful shutdown: release leases, stop gateway, close server | Both |
@@ -320,7 +321,12 @@ private control-session owned lease handling, and zone operation routes in
 
 **TCP Pool** (`tcp-pool.ts`): Manages a fixed pool of TCP port slots. Each tool VM gets a unique slot mapped to `127.0.0.1:{basePort + slot}`. The gateway VM sees these as `tool-{slot}.vm.host:22` via Gondolin's synthetic DNS. Pool size is configured in `systemConfig.tcpPool.size`.
 
-**Lease Manager** (`lease-manager.ts`): Creates, tracks, and releases tool VM leases. Each lease holds a reference to a `ManagedVm`, a TCP slot, SSH access details, agent identity, work mount identity, and timestamps. Live leases are reused by `zoneId` and `agentId` when the requested profile and validated work mount match, so one OpenClaw agent can keep using the same tool VM while the idle TTL keeps capacity bounded.
+**Lease Manager** (`lease-manager.ts`): Creates, tracks, and releases Tool VM
+leases. Each lease holds a `ManagedVm`, TCP slot, SSH access details, agent
+identity, work-mount identity, and timestamps. Live leases are reused by
+`zoneId` and `agentId` when the requested profile and validated work mount
+match, so one Hermes agent can keep using the same Tool VM while the idle TTL
+keeps capacity bounded.
 
 **Idle Reaper** (`idle-reaper.ts`): Runs on a 60-second interval. Any lease
 with `lastUsedAt` older than its resolved TTL is automatically released. The
@@ -333,17 +339,14 @@ and the default 100 minute fallback.
 
 ## Gateway Abstraction
 
-The `GatewayLifecycle` interface (`gateway-lifecycle` package) is the contract every gateway type must implement. The controller never knows the specifics of OpenClaw or worker -- it calls the lifecycle methods and gets back pure data requirements and process specs.
+The `GatewayLifecycle` interface (`gateway-lifecycle` package) is the contract
+every Gateway type must implement. The controller consumes neutral lifecycle
+data rather than framework-native VM handles.
 
 ### Interface
 
 ```
   GatewayLifecycle
-  |
-  |-- authConfig?                     Static auth configuration (optional)
-  |     listProvidersCommand: string   Shell command to list auth providers
-  |     buildLoginCommand(provider,    Shell command for interactive login
-  |       options?)
   |
   |-- buildVmRequirements(options)   Pure data -> GatewayVmRequirements
   |     environment                    Env vars for the VM
@@ -354,16 +357,15 @@ The `GatewayLifecycle` interface (`gateway-lifecycle` package) is the contract e
   |     rootfsMode                     cow | memory | readonly
   |     sessionLabel                   {namespace}:{zone}:gateway
   |
-  |-- buildProcessSpec(zone, secrets) Pure data -> GatewayProcessSpec
-  |     bootstrapCommand               Setup shell env, install packages
-  |     startCommand                   Launch the gateway process
-  |     healthCheck                    HTTP or command-based readiness probe
-  |     serviceHealthCheck?            Optional service-liveness probe
-  |     guestListenPort                Port the process listens on inside VM
-  |     logPath                        Guest-side log file path
+  |-- executionModel = managed-gateway
+  |     buildFrameworkServiceBootMetadata()
+  |     buildFrameworkServiceBootInputs()
+  |     interactiveSsh
   |
-  |-- prepareHostState?(zone, resolver)  Optional side-effect hook
-        Write auth profiles, merge configs on the host before VM boots
+  |-- executionModel = direct-process
+  |     buildProcessSpec()
+  |
+  |-- prepareHostState?(zone, resolver)
 ```
 
 ### Lifecycle Loader
@@ -372,17 +374,15 @@ The `GatewayLifecycle` interface (`gateway-lifecycle` package) is the contract e
 
 ### How the Implementations Differ
 
-| Concern | OpenClaw (`openclaw-lifecycle.ts`) | Worker (`worker-lifecycle.ts`) |
+| Concern | Hermes (`hermes-lifecycle.ts`) | Worker (`worker-lifecycle.ts`) |
 |---------|------|--------|
-| **authConfig** | Present: `openclaw models auth login` | Absent: no interactive auth |
-| **VFS mounts** | config, cache, state, zone files | state + task gitdirs; `/work/repos` is rootfs/COW |
-| **Environment** | `OPENCLAW_*` vars, `HOME=/home/openclaw` | `WORKER_CONFIG_PATH`, `HOME=/home/coder` |
+| **Execution model** | Managed Gateway with exact framework boot inputs | Direct process |
+| **VFS mounts** | Protected Hermes home, cache, and profile zone files | State + task gitdirs; `/work/repos` is rootfs/COW |
+| **Environment** | Controller-authored Hermes framework/profile environment | `WORKER_CONFIG_PATH`, `HOME=/home/coder` |
 | **TCP hosts** | Tool VM SSH slots only | No controller raw TCP control mapping |
-| **Bootstrap** | Write shell/admin profiles, configure bashrc, write runtime secret env files | Conditionally install worker tarball from `/state/` |
-| **Start command** | Source runtime secrets, then run `openclaw gateway --port 18789` | `agent-vm-worker serve --port 18789 --config ...` |
-| **Readiness check** | HTTP GET `:18789/readyz` | HTTP GET `:18789/health` |
-| **Service-liveness check** | HTTP GET `:18789/health` | HTTP GET `:18789/health` |
-| **prepareHostState** | Writes effective-openclaw.json (config + env SecretRef), writes configured per-agent auth profile files | None |
+| **Bootstrap** | Exact-two-role Gateway Runtime + Hermes service boot | Conditionally install Worker tarball from `/state/` |
+| **Start owner** | Managed-framework boot contract | `agent-vm-worker serve --port 18789 --config ...` |
+| **prepareHostState** | Creates protected Hermes profile directories | None |
 | **Rootfs mode** | `cow` (copy-on-write) | `cow` (copy-on-write) |
 
 Both implementations call `splitResolvedGatewaySecrets()` to partition resolved secrets into environment variables (injection: `env`) and HTTP-mediated secrets (injection: `http-mediation` with required `hosts[]`). See the Secrets Flow section below for the full picture.
@@ -442,7 +442,12 @@ hatch such as `getVmInstance()`.
 
 `gateway-zone-orchestrator.ts` is the boot sequence for any gateway VM, regardless of type. It coordinates the lifecycle, neutral image capability, and injected `ManagedVmFactory`.
 
-Before successor admission, controller startup performs record-based cleanup from schema-v2 Gateway and Tool VM runtime records; controller restart never adopts an existing VM. `startGatewayZone` then owns the new Gateway epoch and its exact runner identity. See [OpenClaw Gateway](openclaw-gateway.md), [Controller](../subsystems/controller.md), and [Gondolin VM Layer](../subsystems/gondolin-vm-layer.md) for the subsystem contracts.
+Before successor admission, controller startup performs record-based cleanup
+from Gateway and Tool VM runtime records; controller restart never adopts an
+existing VM. `startGatewayZone` then owns the new Gateway epoch and its exact
+runner identity. See [Controller](../subsystems/controller.md), [Gateway
+Lifecycle](../subsystems/gateway-lifecycle.md), and [Gondolin VM
+Layer](../subsystems/gondolin-vm-layer.md) for the subsystem contracts.
 
 ```
   startGatewayZone(options)
@@ -468,18 +473,19 @@ Before successor admission, controller startup performs record-based cleanup fro
 
 ---
 
-## OpenClaw Gateway
+## Hermes managed Gateway
 
-OpenClaw Gateway runs a long-lived gateway VM that hosts an interactive chat agent. The gateway VM persists across requests and conversations.
+Hermes runs as the long-lived managed interactive-agent Gateway. Its Gateway VM
+persists across requests and contains exactly the common Gateway Runtime service
+and the Hermes framework service.
 
 ```
   Controller (:18800)
        |
-       |-- Gateway VM (openclaw, long-running)
-       |      |-- OpenClaw process (:18789)
-       |      |-- /home/openclaw/.openclaw/config/  (host: config dir, realfs)
-       |      |-- /home/openclaw/.openclaw/state/   (host: stateDir, realfs)
-       |      |-- /zone/         (host: zoneFilesDir, realfs)
+       |-- Gateway VM (Hermes, long-running)
+       |      |-- Gateway Runtime service
+       |      |-- Hermes framework service
+       |      |-- protected Hermes home and per-profile zone files
        |      |
        |      |-- Serves private control session via Gondolin ingress
        |      |-- Requests tool VM leases through gateway_control_rpc
@@ -489,16 +495,14 @@ OpenClaw Gateway runs a long-lived gateway VM that hosts an interactive chat age
        |-- ...up to tcpPool.size
 ```
 
-The gateway VM boots at controller startup and stays running. Tool VMs are
-created on demand via the private gateway control session -- each gets a TCP
-slot, SSH access, a filtered durable `/workspace`, rootfs/COW `/work`, an
-optional selected `/gitdirs/workspace.git`, and reviewed read-only `/agent-vm`
-inputs. Stable agent identity and trusted controller configuration select those
-capabilities; lease callers do not provide host mount paths. Auth profiles and
-the effective OpenClaw config are written to the host-side state directory
-before the VM boots via `prepareHostState()`. The gateway reaches tool VMs via synthetic DNS
-(`tool-{n}.vm.host:22`). Gateway/controller control traffic uses Socket.IO over
-Gondolin's HTTP upgrade bridge.
+The Gateway VM boots at controller startup and stays running. Tool VMs are
+created on demand through the private Gateway control session. Each receives a
+TCP slot, fenced SSH access, the controller-selected workspace at `/work`, and
+reviewed read-only `/agent-vm` inputs. Stable Hermes profile identity and
+trusted controller configuration select those capabilities; callers do not
+provide host mount paths. `prepareHostState()` creates protected profile
+directories before boot. The Gateway reaches Tool VMs through synthetic DNS
+(`tool-{n}.vm.host:22`).
 
 ---
 
@@ -662,7 +666,7 @@ the system build environment, not an individual gateway or tool VM.
 
 | Image | Config Path | Used By | Rootfs Mode |
 |-------|-------------|---------|-------------|
-| Gateway | `imageProfiles.gateways.<name>.buildConfig` | Gateway VMs (OpenClaw or Worker) | `cow` |
+| Gateway | `imageProfiles.gateways.<name>.buildConfig` | Gateway VMs (Hermes or Worker) | `cow` |
 | Tool | `imageProfiles.toolVms.<name>.buildConfig` | Tool VMs (on-demand code execution) | `cow` |
 
 Gateway and Tool VM images use copy-on-write rootfs so their processes can
@@ -690,10 +694,10 @@ directory.
   |-- leaseIdleTtl      Optional lease idle TTL policy
 ```
 
-Each zone declares its `gateway.type` (`openclaw`, `hermes`, or `worker`), resource
+Each zone declares its `gateway.type` (`hermes` or `worker`), resource
 limits, secret references, and audience-scoped outbound `egressHosts`.
-Gateway VMs receive `gateway | both` egress hosts and secrets; OpenClaw Tool
-VMs receive only `tool-vm | both` mediated secrets and egress hosts. OpenClaw
+Gateway VMs receive `gateway | both` egress hosts and secrets; Hermes Tool VMs
+receive only `tool-vm | both` mediated secrets and egress hosts. Hermes
 zones also declare a fallback `defaultToolVmProfile` and an explicit
 `agentToolVmProfiles` map. `agentToolVmProfiles` can override that fallback for
 `agent:<agentId>` tool leases inside the same zone. Worker-only zones omit Tool
@@ -729,7 +733,7 @@ The system operates across three trust boundaries:
   |  +---------------------------------------------------------------+  |
   |  |  ZONE 2: GATEWAY VM  (partially trusted)                      |  |
   |  |                                                                |  |
-  |  |  Long-running (OpenClaw) or per-task (Worker) process          |  |
+  |  |  Long-running (Hermes) or per-task (Worker) process            |  |
   |  |  Has: gateway-audience env and HTTP-mediated secrets            |  |
   |  |  Can: make outbound HTTP to gateway-audience hosts, reach       |  |
   |  |       controller                                                |  |
@@ -754,11 +758,11 @@ The system operates across three trust boundaries:
 | Document | Scope |
 |----------|-------|
 | [agent-worker-gateway.md](agent-worker-gateway.md) | Agent Worker Gateway: 6-phase state machine, event sourcing, executors, MCP tools |
-| [openclaw-gateway.md](openclaw-gateway.md) | OpenClaw Gateway: interactive gateway, tool VM leases, sandbox plugin |
+| [reference/configuration/system-json.md](../reference/configuration/system-json.md) | Hermes managed Gateway configuration, profiles, secrets, ingress, and Tool VM policy |
 | [reference/configuration/README.md](../reference/configuration/README.md) | Progressive configuration reference |
 | [getting-started/setup.md](../getting-started/setup.md) | Prerequisites, installation, first-run instructions |
 | [subsystems/controller.md](../subsystems/controller.md) | Controller internals: lease lifecycle, TCP pool, idle reaper |
 | [subsystems/secrets-and-credentials.md](../subsystems/secrets-and-credentials.md) | Secret resolution, 1Password integration, HTTP mediation details |
 | [subsystems/gondolin-vm-layer.md](../subsystems/gondolin-vm-layer.md) | Gondolin VM adapter, VFS mounts, rootfs modes, HTTP mediation, image build pipeline |
-| [subsystems/gateway-lifecycle.md](../subsystems/gateway-lifecycle.md) | Gateway abstraction: GatewayLifecycle interface, OpenClaw Gateway vs Agent Worker Gateway |
+| [subsystems/gateway-lifecycle.md](../subsystems/gateway-lifecycle.md) | Gateway abstraction: GatewayLifecycle interface, Hermes managed Gateway vs Agent Worker Gateway |
 | [subsystems/worker-task-pipeline.md](../subsystems/worker-task-pipeline.md) | Controller-side task lifecycle: pre-start, boot, poll, teardown |

@@ -30,7 +30,7 @@ interface ImageProfileMigration {
 	readonly sourcePath: JSONPath;
 	readonly source: {
 		readonly kind: 'managedBase';
-		readonly base: 'openclaw-gateway' | 'tool-vm' | 'worker-gateway';
+		readonly base: 'tool-vm' | 'worker-gateway';
 		readonly overlay: string;
 	};
 }
@@ -53,12 +53,6 @@ function parseMutableSystemConfig(value: unknown): MutableSystemConfig {
 		throw new Error('system config imageProfiles must be an object.');
 	}
 	return value as MutableSystemConfig;
-}
-
-function resolveManagedGatewayBase(
-	profile: MutableImageProfile,
-): 'openclaw-gateway' | 'worker-gateway' {
-	return profile.type === 'openclaw' ? 'openclaw-gateway' : 'worker-gateway';
 }
 
 function resolveOverlayPathFromDockerfile(dockerfilePath: string): string {
@@ -109,10 +103,13 @@ async function migrateImageProfile(props: {
 	if (props.profile.source !== undefined || typeof props.profile.dockerfile !== 'string') {
 		return 'skipped';
 	}
+	if (props.family === 'gateway' && props.profile.type !== 'worker') {
+		return 'skipped';
+	}
 	const overlayPath = resolveOverlayPathFromDockerfile(props.profile.dockerfile);
 	const source = {
 		kind: 'managedBase',
-		base: props.family === 'gateway' ? resolveManagedGatewayBase(props.profile) : 'tool-vm',
+		base: props.family === 'gateway' ? 'worker-gateway' : 'tool-vm',
 		overlay: overlayPath,
 	} as const satisfies ImageProfileMigration['source'];
 	await writeOverlayIfMissing(resolveOverlayFilePath(props.configPath, overlayPath));

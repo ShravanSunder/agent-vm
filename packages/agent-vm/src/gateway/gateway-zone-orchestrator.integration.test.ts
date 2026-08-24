@@ -81,6 +81,7 @@ import {
 import type {
 	GatewayControlSessionConnector,
 	DirectProcessGatewayZoneStartResult,
+	GatewayZone,
 	GatewayZoneStartResult,
 	ManagedGatewayZoneStartResult,
 	PendingGatewayVmCreationContainment,
@@ -195,8 +196,8 @@ const expectedWorkerProcessSpec = Object.freeze({
 	startCommand:
 		'export PNPM_HOME=/pnpm PATH=/pnpm:$PATH && { printf \'worker-boot: NODE_OPTIONS=%s\\n\' "$NODE_OPTIONS" > /tmp/agent-vm-worker.log; } && cd /work && nohup agent-vm-worker serve --port 18789 --config /state/effective-worker.json --state-dir /state >> /tmp/agent-vm-worker.log 2>&1 &',
 });
-const expectedManagedOpenClawReadinessCommand =
-	'curl -sS -o /dev/null -w "%{http_code}" --max-time 2 http://127.0.0.1:18789/readyz 2>/dev/null || true';
+const expectedManagedHermesReadinessCommand =
+	'curl -sS -o /dev/null -w "%{http_code}" --max-time 2 http://127.0.0.1:8642/health 2>/dev/null || true';
 
 function createGatewayZoneToolPortalConfig(
 	configDir: string,
@@ -642,6 +643,13 @@ function resolveTestWorkerRuntimeRecordTarget(
 	});
 }
 
+function requireToolPortalConfigDir(zone: GatewayZone): string {
+	if (zone.toolPortal === undefined) {
+		throw new Error(`Expected test zone '${zone.id}' to configure Tool Portal.`);
+	}
+	return zone.toolPortal.configDir;
+}
+
 const testCallerContextProofKey = 'test-caller-context-proof-key';
 const testAgentAuthorityKeys: Readonly<Record<string, string>> = {
 	main: 'test-main-agent-authority-key-with-enough-length',
@@ -654,7 +662,7 @@ function createTestInvocationPrincipal(
 ): GatewayRuntimeTrustedInvocationPrincipal {
 	return {
 		agentId,
-		frameworkIdentity: { agentId, kind: 'openclaw' },
+		frameworkIdentity: { kind: 'hermes', profileName: agentId },
 		profileAssignmentRevision: `profile-assignment:${agentId}`,
 		toolPortalProfileId: 'default',
 		...overrides,
@@ -804,13 +812,6 @@ vi.mock('../controller/leases/tool-vm-recovery.js', () => ({
 
 const createdDirectories: string[] = [];
 
-const openClawToolVmSandbox = {
-	backend: 'gondolin',
-	mode: 'all',
-	scope: 'agent',
-	workspaceAccess: 'rw',
-} satisfies Record<string, string>;
-
 function createDeferredPromise<TResult>(): DeferredPromise<TResult> {
 	let resolveDeferred: ((result: TResult) => void) | null = null;
 	const promise = new Promise<TResult>((resolve) => {
@@ -849,33 +850,12 @@ afterEach(async () => {
 async function createGatewayConfigPath(): Promise<string> {
 	const workingDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-gateway-zone-'));
 	createdDirectories.push(workingDirectoryPath);
-	const configDirectory = path.join(workingDirectoryPath, 'config', 'shravan');
+	const configDirectory = path.join(workingDirectoryPath, 'config', 'shravan', 'hermes');
 	await mkdir(configDirectory, { recursive: true });
-	const configPath = path.join(configDirectory, 'openclaw.json');
+	const configPath = path.join(configDirectory, 'config.yaml');
 	await writeFile(
 		configPath,
-		JSON.stringify({
-			agents: {
-				defaults: {
-					sandbox: openClawToolVmSandbox,
-					workspace: '/zone/agents/default',
-				},
-			},
-			gateway: {
-				auth: { mode: 'token' },
-				bind: 'loopback',
-				controlUi: {
-					allowedOrigins: ['http://127.0.0.1:18791', 'http://localhost:18791'],
-				},
-			},
-			tools: {
-				sandbox: {
-					tools: {
-						alsoAllow: ['group:plugins'],
-					},
-				},
-			},
-		}),
+		'plugins:\n  enabled:\n    - agent-vm-tool-portal\n  disabled: []\n',
 		'utf8',
 	);
 	return configPath;
@@ -959,7 +939,11 @@ async function createSystemConfig(): Promise<LoadedSystemConfig> {
 	);
 	createdDirectories.push(workingDirectoryPath);
 	const gatewayConfigPath = await createGatewayConfigPath();
-	const toolPortalConfigDir = path.dirname(gatewayConfigPath);
+	const toolPortalConfigDir = path.join(
+		path.dirname(path.dirname(gatewayConfigPath)),
+		'tool-portal',
+	);
+	await mkdir(toolPortalConfigDir, { recursive: true });
 	await writeMinimalMcpPortalConfigs(toolPortalConfigDir);
 	return createLoadedSystemConfig(
 		{
@@ -975,9 +959,9 @@ async function createSystemConfig(): Promise<LoadedSystemConfig> {
 			},
 			imageProfiles: {
 				gateways: {
-					openclaw: {
-						type: 'openclaw',
-						buildConfig: './vm-images/gateways/openclaw/build-config.json',
+					hermes: {
+						type: 'hermes',
+						buildConfig: './vm-images/gateways/hermes/build-config.json',
 					},
 					worker: {
 						type: 'worker',
@@ -1007,21 +991,36 @@ async function createSystemConfig(): Promise<LoadedSystemConfig> {
 					],
 					id: 'shravan',
 					gateway: {
-						type: 'openclaw',
-						controlAuth: {
-							mode: 'token',
-							secret: 'OPENCLAW_GATEWAY_TOKEN',
-						},
-						imageProfile: 'openclaw',
+						type: 'hermes',
+						imageProfile: 'hermes',
 						memory: '2G',
 						cpus: 2,
 						port: 18791,
 						config: gatewayConfigPath,
-						rawEnvSecrets: ['DISCORD_BOT_TOKEN'],
+						profileSecretProjectionsByAgent: {
+							main: {
+								API_SERVER_KEY: 'API_SERVER_KEY_MAIN',
+								DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN',
+								PERPLEXITY_API_KEY: 'PERPLEXITY_API_KEY',
+							},
+						},
+						profilesByAgent: { main: 'main' },
 						runtimeRootfsSize: '12G',
 					},
 					toolPortal: createGatewayZoneToolPortalConfig(toolPortalConfigDir),
 					secrets: {
+						API_SERVER_KEY: {
+							source: 'config',
+							value: 'test-root-api-server-key',
+							injection: 'env',
+							audience: 'gateway',
+						},
+						API_SERVER_KEY_MAIN: {
+							source: 'environment',
+							envVar: 'API_SERVER_KEY_MAIN',
+							injection: 'env',
+							audience: 'gateway',
+						},
 						PERPLEXITY_API_KEY: {
 							source: '1password',
 							ref: 'op://agent-vm/shravan-perplexity/credential',
@@ -1032,12 +1031,6 @@ async function createSystemConfig(): Promise<LoadedSystemConfig> {
 						DISCORD_BOT_TOKEN: {
 							source: '1password',
 							ref: 'op://agent-vm/shravan-discord/bot-token',
-							injection: 'env',
-							audience: 'gateway',
-						},
-						OPENCLAW_GATEWAY_TOKEN: {
-							source: '1password',
-							ref: 'op://agent-vm/shravan-gateway-auth/password',
 							injection: 'env',
 							audience: 'gateway',
 						},
@@ -1068,33 +1061,27 @@ async function createSystemConfig(): Promise<LoadedSystemConfig> {
 
 async function createHermesSystemConfig(): Promise<LoadedSystemConfig> {
 	const systemConfig = await createSystemConfig();
-	const openClawZone = systemConfig.zones[0];
-	if (openClawZone === undefined || openClawZone.gateway.type !== 'openclaw') {
-		throw new Error('Expected the base OpenClaw test zone.');
+	const baseZone = systemConfig.zones[0];
+	if (baseZone === undefined || baseZone.gateway.type !== 'hermes') {
+		throw new Error('Expected the base Hermes test zone.');
 	}
-	const configDir = path.dirname(openClawZone.gateway.config);
-	const hermesManagedConfigDir = path.join(configDir, 'hermes-managed');
-	await mkdir(hermesManagedConfigDir, { recursive: true });
-	await Promise.all([
-		writeFile(
-			path.join(configDir, 'tool-portal.config.jsonc'),
-			JSON.stringify({
-				agents: {
-					main: { profile: 'default' },
-					second: { profile: 'default' },
-				},
-				mode: 'managed',
-				profiles: { default: { namespaces: {} } },
-				schemaVersion: 1,
-			}),
-			'utf8',
-		),
-		writeFile(
-			path.join(hermesManagedConfigDir, 'config.yaml'),
-			'plugins:\n  enabled:\n    - agent-vm-tool-portal\n  disabled: []\n',
-			'utf8',
-		),
-	]);
+	const toolPortalConfigDir = baseZone.toolPortal?.configDir;
+	if (toolPortalConfigDir === undefined) {
+		throw new Error('Expected the base Hermes test zone to configure Tool Portal.');
+	}
+	await writeFile(
+		path.join(toolPortalConfigDir, 'tool-portal.config.jsonc'),
+		JSON.stringify({
+			agents: {
+				main: { profile: 'default' },
+				second: { profile: 'default' },
+			},
+			mode: 'managed',
+			profiles: { default: { namespaces: {} } },
+			schemaVersion: 1,
+		}),
+		'utf8',
+	);
 	return {
 		...systemConfig,
 		imageProfiles: {
@@ -1102,18 +1089,18 @@ async function createHermesSystemConfig(): Promise<LoadedSystemConfig> {
 			gateways: {
 				...systemConfig.imageProfiles.gateways,
 				hermes: {
-					buildConfig: path.join(configDir, 'hermes-image.json'),
+					buildConfig: path.join(path.dirname(baseZone.gateway.config), 'hermes-image.json'),
 					type: 'hermes',
 				},
 			},
 		},
 		zones: [
 			{
-				...openClawZone,
+				...baseZone,
 				agents: [{ id: 'main' }, { id: 'second' }],
 				gateway: {
-					config: path.join(hermesManagedConfigDir, 'config.yaml'),
-					cpus: openClawZone.gateway.cpus,
+					config: baseZone.gateway.config,
+					cpus: baseZone.gateway.cpus,
 					profileSecretProjectionsByAgent: {
 						main: {
 							API_SERVER_KEY: 'API_SERVER_KEY_MAIN',
@@ -1125,48 +1112,48 @@ async function createHermesSystemConfig(): Promise<LoadedSystemConfig> {
 						},
 					},
 					imageProfile: 'hermes',
-					memory: openClawZone.gateway.memory,
-					port: openClawZone.gateway.port,
+					memory: baseZone.gateway.memory,
+					port: baseZone.gateway.port,
 					profilesByAgent: {
 						main: 'beta-main',
 						second: 'beta-second',
 					},
-					runtimeRootfsSize: openClawZone.gateway.runtimeRootfsSize,
-					stateDir: openClawZone.gateway.stateDir,
+					runtimeRootfsSize: baseZone.gateway.runtimeRootfsSize,
+					stateDir: baseZone.gateway.stateDir,
 					type: 'hermes',
-					zoneFilesDir: openClawZone.gateway.zoneFilesDir,
-					zoneRuntimeDir: openClawZone.gateway.zoneRuntimeDir,
+					zoneFilesDir: baseZone.gateway.zoneFilesDir,
+					zoneRuntimeDir: baseZone.gateway.zoneRuntimeDir,
 				},
 				secrets: {
 					API_SERVER_KEY: {
 						audience: 'gateway',
+						envVar: 'API_SERVER_KEY',
 						injection: 'env',
-						source: 'config',
-						value: 'test-hermes-api-server-key',
+						source: 'environment',
 					},
 					API_SERVER_KEY_MAIN: {
 						audience: 'gateway',
+						envVar: 'API_SERVER_KEY_MAIN',
 						injection: 'env',
-						source: 'config',
-						value: 'test-hermes-main-api-server-key',
+						source: 'environment',
 					},
 					API_SERVER_KEY_SECOND: {
 						audience: 'gateway',
+						envVar: 'API_SERVER_KEY_SECOND',
 						injection: 'env',
-						source: 'config',
-						value: 'test-hermes-second-api-server-key',
+						source: 'environment',
 					},
 					DISCORD_BOT_TOKEN_MAIN: {
 						audience: 'gateway',
+						envVar: 'DISCORD_BOT_TOKEN_MAIN',
 						injection: 'env',
-						source: 'config',
-						value: 'test-hermes-main-discord-token',
+						source: 'environment',
 					},
 					DISCORD_BOT_TOKEN_SECOND: {
 						audience: 'gateway',
+						envVar: 'DISCORD_BOT_TOKEN_SECOND',
 						injection: 'env',
-						source: 'config',
-						value: 'test-hermes-second-discord-token',
+						source: 'environment',
 					},
 				},
 			},
@@ -1344,10 +1331,16 @@ function requireManagedGatewayBootInputFile(
 	return new TextDecoder().decode(file.contents);
 }
 
-function createOpenClawSecretResolver(resolvedSecrets: Record<string, string>): SecretResolver {
+function createGatewaySecretResolver(resolvedSecrets: Record<string, string>): SecretResolver {
 	const resolveKnownSecretRef = (secretRef: SecretRef): string => {
 		if (secretRef.source === 'config') {
 			return secretRef.value;
+		}
+		if (secretRef.source === 'environment') {
+			return (
+				resolvedSecrets[secretRef.ref] ??
+				`resolved-${secretRef.ref.toLowerCase().replaceAll('_', '-')}`
+			);
 		}
 
 		if (secretRef.ref === 'op://agent-vm/shravan-discord/bot-token') {
@@ -1357,11 +1350,6 @@ function createOpenClawSecretResolver(resolvedSecrets: Record<string, string>): 
 		if (secretRef.ref === 'op://agent-vm/shravan-perplexity/credential') {
 			return resolvedSecrets.PERPLEXITY_API_KEY ?? 'resolved-perplexity-key';
 		}
-
-		if (secretRef.ref === 'op://agent-vm/shravan-gateway-auth/password') {
-			return resolvedSecrets.OPENCLAW_GATEWAY_TOKEN ?? 'resolved-gateway-token';
-		}
-
 		const resolvedSecret = resolvedSecrets[secretRef.ref];
 		if (resolvedSecret !== undefined) {
 			return resolvedSecret;
@@ -1382,123 +1370,92 @@ function createOpenClawSecretResolver(resolvedSecrets: Record<string, string>): 
 }
 
 describe('startGatewayZone', () => {
-	it.each(['openclaw', 'hermes'] as const)(
-		'reports exact current %s attachment loss once and ignores stale or wrong-kind readiness',
-		async (frameworkKind) => {
-			// Arrange
-			const systemConfig =
-				frameworkKind === 'openclaw'
-					? await createSystemConfig()
-					: await createHermesSystemConfig();
-			const zone = systemConfig.zones[0];
-			if (zone === undefined) {
-				throw new Error(`Expected ${frameworkKind} test zone.`);
-			}
-			const { managedVm } = createHealthyGatewayVmStub(
-				`vm-terminal-attachment-loss-${frameworkKind}`,
-				28_282,
-			);
-			const onGatewayRuntimeAttachmentLost = vi.fn();
-			let readinessDispatch:
-				| {
-						readonly connectOptions: Parameters<GatewayControlSessionConnector>[0];
-						readonly snapshot: GatewayRuntimeReadinessSnapshot;
-				  }
-				| undefined;
+	it('reports exact current Hermes attachment loss once and ignores stale readiness', async () => {
+		// Arrange
+		const systemConfig = await createHermesSystemConfig();
+		const zone = systemConfig.zones[0];
+		if (zone === undefined) {
+			throw new Error('Expected Hermes test zone.');
+		}
+		const { managedVm } = createHealthyGatewayVmStub('vm-terminal-attachment-loss-hermes', 28_282);
+		const onGatewayRuntimeAttachmentLost = vi.fn();
+		let readinessDispatch:
+			| {
+					readonly connectOptions: Parameters<GatewayControlSessionConnector>[0];
+					readonly snapshot: GatewayRuntimeReadinessSnapshot;
+			  }
+			| undefined;
 
-			// Act
-			const result = await startGatewayZone(
-				{
-					onGatewayRuntimeAttachmentLost,
-					secretResolver: createOpenClawSecretResolver({}),
-					systemConfig,
-					zoneId: zone.id,
+		// Act
+		const result = await startGatewayZone(
+			{
+				onGatewayRuntimeAttachmentLost,
+				secretResolver: createGatewaySecretResolver({}),
+				systemConfig,
+				zoneId: zone.id,
+			},
+			{
+				managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
+				managedVmImages: testManagedVmImages,
+			},
+			'controller-internal',
+			{
+				onRuntimeReadinessDispatched: (dispatched) => {
+					readinessDispatch = dispatched;
 				},
-				{
-					managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
-					managedVmImages: testManagedVmImages,
+			},
+		);
+		if (readinessDispatch === undefined) {
+			throw new Error('Expected the test harness to capture runtime readiness dispatch.');
+		}
+		const staleLoss = {
+			...readinessDispatch.snapshot,
+			semanticRevision: 'semantic-revision:stale',
+			uds: {
+				...readinessDispatch.snapshot.uds,
+				attachment: {
+					...readinessDispatch.snapshot.uds.attachment,
+					observationSequence: 2,
+					status: 'attachment-lost' as const,
 				},
-				'controller-internal',
-				{
-					onRuntimeReadinessDispatched: (dispatched) => {
-						readinessDispatch = dispatched;
-					},
+			},
+		} satisfies GatewayRuntimeReadinessSnapshot;
+		const currentLoss = {
+			...staleLoss,
+			semanticRevision: readinessDispatch.snapshot.semanticRevision,
+			uds: {
+				...staleLoss.uds,
+				attachment: {
+					...staleLoss.uds.attachment,
+					observationSequence: 3,
 				},
-			);
-			if (readinessDispatch === undefined) {
-				throw new Error('Expected the test harness to capture runtime readiness dispatch.');
-			}
-			const staleLoss = {
-				...readinessDispatch.snapshot,
-				semanticRevision: 'semantic-revision:stale',
-				uds: {
-					...readinessDispatch.snapshot.uds,
-					attachment: {
-						...readinessDispatch.snapshot.uds.attachment,
-						observationSequence: 2,
-						status: 'attachment-lost' as const,
-					},
-				},
-			} satisfies GatewayRuntimeReadinessSnapshot;
-			const currentLoss = {
-				...staleLoss,
-				semanticRevision: readinessDispatch.snapshot.semanticRevision,
-				uds: {
-					...staleLoss.uds,
-					attachment: {
-						...staleLoss.uds.attachment,
-						observationSequence: 4,
-					},
-				},
-			} satisfies GatewayRuntimeReadinessSnapshot;
-			const wrongFrameworkKindLoss = {
-				...currentLoss,
-				uds: {
-					...currentLoss.uds,
-					attachment: {
-						...currentLoss.uds.attachment,
-						expected: {
-							...currentLoss.uds.attachment.expected,
-							clientKind:
-								frameworkKind === 'openclaw'
-									? ('hermes-managed-plugin' as const)
-									: ('openclaw-managed-plugin' as const),
-						},
-						observationSequence: 3,
-					},
-				},
-			} satisfies GatewayRuntimeReadinessSnapshot;
-			await dispatchTestGatewayRuntimeReadinessSnapshot({
-				connectOptions: readinessDispatch.connectOptions,
-				sequence: 2,
-				snapshot: staleLoss,
-			});
-			await dispatchTestGatewayRuntimeReadinessSnapshot({
-				connectOptions: readinessDispatch.connectOptions,
-				sequence: 3,
-				snapshot: wrongFrameworkKindLoss,
-			});
-			await dispatchTestGatewayRuntimeReadinessSnapshot({
-				connectOptions: readinessDispatch.connectOptions,
-				sequence: 4,
-				snapshot: currentLoss,
-			});
-			await dispatchTestGatewayRuntimeReadinessSnapshot({
-				connectOptions: readinessDispatch.connectOptions,
-				sequence: 5,
-				snapshot: currentLoss,
-			});
+			},
+		} satisfies GatewayRuntimeReadinessSnapshot;
+		await dispatchTestGatewayRuntimeReadinessSnapshot({
+			connectOptions: readinessDispatch.connectOptions,
+			sequence: 2,
+			snapshot: staleLoss,
+		});
+		await dispatchTestGatewayRuntimeReadinessSnapshot({
+			connectOptions: readinessDispatch.connectOptions,
+			sequence: 3,
+			snapshot: currentLoss,
+		});
+		await dispatchTestGatewayRuntimeReadinessSnapshot({
+			connectOptions: readinessDispatch.connectOptions,
+			sequence: 4,
+			snapshot: currentLoss,
+		});
 
-			// Assert
-			const managedResult = requireManagedGatewayResult(result);
-			expect(onGatewayRuntimeAttachmentLost).toHaveBeenCalledOnce();
-			expect(onGatewayRuntimeAttachmentLost).toHaveBeenCalledWith({
-				connectionId: testControlConnectionId,
-				gateway: managedResult.gatewayIdentity,
-				observationSequence: 4,
-			});
-		},
-	);
+		// Assert
+		const managedResult = requireManagedGatewayResult(result);
+		expect(onGatewayRuntimeAttachmentLost).toHaveBeenCalledOnce();
+		expect(onGatewayRuntimeAttachmentLost).toHaveBeenCalledWith({
+			connectionId: testControlConnectionId,
+			gateway: managedResult.gatewayIdentity,
+			observationSequence: 3,
+		});
+	});
 
 	it('builds the image, resolves secrets, creates the vm, and enables ingress', async () => {
 		const taskTitles: string[] = [];
@@ -1529,7 +1486,7 @@ describe('startGatewayZone', () => {
 			getHostProcessId: vi.fn(() => 28282),
 			configureIngressRoutes: configureIngressRoutesMock,
 		};
-		const secretResolver = createOpenClawSecretResolver({
+		const secretResolver = createGatewaySecretResolver({
 			PERPLEXITY_API_KEY: 'resolved-key',
 			DISCORD_BOT_TOKEN: 'resolved-key',
 			OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
@@ -1616,11 +1573,9 @@ describe('startGatewayZone', () => {
 					'api.perplexity.ai',
 				]),
 				environment: expect.objectContaining({
-					HOME: '/home/openclaw',
+					HERMES_HOME: '/home/hermes/.hermes',
+					HOME: '/home/hermes',
 					NODE_EXTRA_CA_CERTS: '/run/gondolin/ca-certificates.crt',
-					OPENCLAW_HOME: '/home/openclaw',
-					OPENCLAW_CONFIG_PATH: '/home/openclaw/.openclaw/state/effective-openclaw.json',
-					OPENCLAW_STATE_DIR: '/home/openclaw/.openclaw/state',
 				}),
 				imageReference: '/tmp/gateway-image',
 				mediatedSecrets: expect.arrayContaining([
@@ -1636,7 +1591,7 @@ describe('startGatewayZone', () => {
 						hostPath: path.join(zone.gateway.zoneRuntimeDir, 'logs'),
 						kind: 'host-directory',
 					},
-					'/home/openclaw/.openclaw/cache': {
+					'/home/hermes/.cache': {
 						access: 'read-write',
 						hostPath: path.join(systemConfig.cacheDir, 'gateways', 'shravan'),
 						kind: 'host-directory',
@@ -1674,7 +1629,7 @@ describe('startGatewayZone', () => {
 		expect(createdVmOptions.environment).not.toHaveProperty('PERPLEXITY_API_KEY');
 		expect(protectedFrameworkEnvironment).toContain("export DISCORD_BOT_TOKEN='resolved-key'");
 		expect(protectedFrameworkEnvironment).toContain(
-			"export OPENCLAW_GATEWAY_TOKEN='resolved-gateway-token'",
+			"export API_SERVER_KEY='test-root-api-server-key'",
 		);
 		expect(createdVmOptions.sshEgress).toBeUndefined();
 		expect(createdVmOptions.tcpHosts).not.toContainEqual(
@@ -1695,7 +1650,7 @@ describe('startGatewayZone', () => {
 				stripPrefix: false,
 			},
 			{
-				port: 18_789,
+				port: 8642,
 				prefix: '/',
 				stripPrefix: true,
 			},
@@ -1705,12 +1660,10 @@ describe('startGatewayZone', () => {
 			bufferResponseBody: false,
 			listenPort: 18791,
 		});
-		// OpenClaw ownership reconciliation is controller-start work, not
-		// gateway-zone startup work. Mutating Tool Portal materialization starts
-		// only after the image, assertions, and secret prerequisites succeed.
+		// Mutating Tool Portal materialization starts only after the image,
+		// assertions, and secret prerequisites succeed.
 		expect(taskTitles).toEqual([
 			'Preflighting gateway start',
-			'Validating OpenClaw Tool VM requirements',
 			'Resolving zone secrets',
 			'Building gateway image',
 			'Materializing Tool Portal runtime',
@@ -1735,8 +1688,8 @@ describe('startGatewayZone', () => {
 		});
 		expect(result).not.toHaveProperty('processSpec');
 		expect(execMock.mock.calls.map(([command]) => command)).toEqual([
-			expectedManagedOpenClawReadinessCommand,
-			expectedManagedOpenClawReadinessCommand,
+			expectedManagedHermesReadinessCommand,
+			expectedManagedHermesReadinessCommand,
 		]);
 	});
 
@@ -1761,7 +1714,7 @@ describe('startGatewayZone', () => {
 		] as const;
 		const oversizedFrameworkLogTail = `${'x'.repeat(20 * 1_024)}\n${rawCredentialValues.join('\n')}\nretained-diagnostic-sentinel`;
 		const exec = vi.fn((command: Parameters<ManagedVm['exec']>[0]) => {
-			if (command === expectedManagedOpenClawReadinessCommand) {
+			if (command === expectedManagedHermesReadinessCommand) {
 				lifecycleEvents.push('readiness');
 				return createManagedExecProcessStub({ stdout: '000' });
 			}
@@ -1781,7 +1734,7 @@ describe('startGatewayZone', () => {
 			if (command[0] === 'sh' && command[2]?.includes('/proc/[0-9]*')) {
 				return createManagedExecProcessStub({
 					stdout:
-						'221 /usr/local/bin/agent-vm-gateway-runtime --config /run/agent-vm/managed-gateway/tool-portal-service.json\n222 /usr/local/bin/openclaw gateway --port 18789',
+						'221 /usr/local/bin/agent-vm-gateway-runtime --config /run/agent-vm/managed-gateway/tool-portal-service.json\n222 /usr/local/bin/hermes gateway --port 18789',
 				});
 			}
 			if (command[0] === 'sh' && command[2]?.includes('/proc/net/tcp')) {
@@ -1799,7 +1752,7 @@ describe('startGatewayZone', () => {
 			await startGatewayZone(
 				{
 					createVmOwnership: ownership.createVmOwnership,
-					secretResolver: createOpenClawSecretResolver({
+					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
 						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
@@ -1826,7 +1779,7 @@ describe('startGatewayZone', () => {
 		}
 
 		expect(caughtError?.message).toMatch(
-			/Managed Gateway aggregate readiness timed out after 1 attempts.*Managed Gateway pre-containment diagnostics.*Framework log tail.*\[gateway log tail truncated\].*retained-diagnostic-sentinel.*Framework process identities.*agent-vm-gateway-runtime.*openclaw gateway.*Listening TCP sockets.*0100007F:4968/su,
+			/Managed Gateway aggregate readiness timed out after 1 attempts.*Managed Gateway pre-containment diagnostics.*Framework log tail.*\[gateway log tail truncated\].*retained-diagnostic-sentinel.*Framework process identities.*agent-vm-gateway-runtime.*hermes gateway.*Listening TCP sockets.*0100007F:4968/su,
 		);
 		expect(caughtError?.message).toContain('[REDACTED]');
 		for (const rawCredentialValue of rawCredentialValues) {
@@ -1870,7 +1823,7 @@ describe('startGatewayZone', () => {
 			startGatewayZone(
 				{
 					createVmOwnership: ownership.createVmOwnership,
-					secretResolver: createOpenClawSecretResolver({
+					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
 						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
@@ -1929,7 +1882,7 @@ describe('startGatewayZone', () => {
 		const diagnosticOutputs = {
 			fatalEvidence: `{"kind":"fatal","detail":"${rawCredentialValues[0]}"}`,
 			processes:
-				'role=tool-portal pid=221 ppid=1 uid=0 command=agent-vm-gateway-runtime\nrole=openclaw pid=222 ppid=1 uid=0 command=openclaw gateway',
+				'role=tool-portal pid=221 ppid=1 uid=0 command=agent-vm-gateway-runtime\nrole=hermes pid=222 ppid=1 uid=0 command=hermes gateway',
 			readinessEvidence: `{"kind":"starting","token":"${rawCredentialValues[1]}"}`,
 			sockets: 'table=/proc/net/tcp local=0100007F:496E state=LISTEN',
 			toolPortalLog: `tool portal failed before bind: password=${rawCredentialValues[2]}`,
@@ -1975,7 +1928,7 @@ describe('startGatewayZone', () => {
 			await startGatewayZone(
 				{
 					createVmOwnership: ownership.createVmOwnership,
-					secretResolver: createOpenClawSecretResolver({
+					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
 						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
@@ -2003,7 +1956,7 @@ describe('startGatewayZone', () => {
 		// Assert
 		expect(caughtError).toBe(controlAttachmentError);
 		expect(caughtError?.message).toMatch(
-			/HTTP 502.*Managed Gateway pre-containment diagnostics.*Tool Portal log tail.*Tool Portal readiness evidence.*Tool Portal fatal evidence.*Framework process identities.*agent-vm-gateway-runtime.*openclaw.*Listening TCP sockets.*0100007F:496E/su,
+			/HTTP 502.*Managed Gateway pre-containment diagnostics.*Tool Portal log tail.*Tool Portal readiness evidence.*Tool Portal fatal evidence.*Framework process identities.*agent-vm-gateway-runtime.*hermes.*Listening TCP sockets.*0100007F:496E/su,
 		);
 		expect(caughtError?.message).toContain('[REDACTED]');
 		for (const rawCredentialValue of rawCredentialValues) {
@@ -2029,7 +1982,7 @@ describe('startGatewayZone', () => {
 			startGatewayZone(
 				{
 					createVmOwnership: ownership.createVmOwnership,
-					secretResolver: createOpenClawSecretResolver({
+					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
 						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
@@ -2121,7 +2074,7 @@ describe('startGatewayZone', () => {
 			{
 				createVmOwnership: createTestVmOwnershipHarness(vmId, createTestGatewayEpochIdentity(vmId))
 					.createVmOwnership,
-				secretResolver: createOpenClawSecretResolver({
+				secretResolver: createGatewaySecretResolver({
 					DISCORD_BOT_TOKEN: 'discord-token',
 					OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
 					PERPLEXITY_API_KEY: 'pplx-key',
@@ -2222,7 +2175,7 @@ describe('startGatewayZone', () => {
 
 		const result = await startGatewayZone(
 			{
-				secretResolver: createOpenClawSecretResolver({
+				secretResolver: createGatewaySecretResolver({
 					DISCORD_BOT_TOKEN: 'discord-token',
 					OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
 					PERPLEXITY_API_KEY: 'pplx-key',
@@ -2289,7 +2242,7 @@ describe('startGatewayZone', () => {
 		};
 		const systemConfig = await createSystemConfig();
 		const zone = systemConfig.zones[0];
-		if (!zone || zone.gateway.type !== 'openclaw') {
+		if (!zone || zone.gateway.type !== 'hermes') {
 			throw new Error('expected OpenClaw test zone');
 		}
 		const systemConfigWithIngressTimeouts: LoadedSystemConfig = {
@@ -2313,7 +2266,7 @@ describe('startGatewayZone', () => {
 				runTask: async (_title, fn) => {
 					await fn();
 				},
-				secretResolver: createOpenClawSecretResolver({
+				secretResolver: createGatewaySecretResolver({
 					PERPLEXITY_API_KEY: 'resolved-key',
 					DISCORD_BOT_TOKEN: 'resolved-key',
 					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
@@ -2360,7 +2313,7 @@ describe('startGatewayZone', () => {
 		};
 		const systemConfig = await createSystemConfig();
 		const zone = systemConfig.zones[0];
-		if (!zone || zone.gateway.type !== 'openclaw') {
+		if (!zone || zone.gateway.type !== 'hermes') {
 			throw new Error('expected OpenClaw test zone');
 		}
 		const systemConfigWithHeaderTimeout: LoadedSystemConfig = {
@@ -2383,7 +2336,7 @@ describe('startGatewayZone', () => {
 				runTask: async (_title, fn) => {
 					await fn();
 				},
-				secretResolver: createOpenClawSecretResolver({
+				secretResolver: createGatewaySecretResolver({
 					PERPLEXITY_API_KEY: 'resolved-key',
 					DISCORD_BOT_TOKEN: 'resolved-key',
 					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
@@ -2429,7 +2382,7 @@ describe('startGatewayZone', () => {
 		};
 		const systemConfig = await createSystemConfig();
 		const zone = systemConfig.zones[0];
-		if (!zone || zone.gateway.type !== 'openclaw') {
+		if (!zone || zone.gateway.type !== 'hermes') {
 			throw new Error('expected OpenClaw test zone');
 		}
 		const systemConfigWithResponseTimeout: LoadedSystemConfig = {
@@ -2452,7 +2405,7 @@ describe('startGatewayZone', () => {
 				runTask: async (_title, fn) => {
 					await fn();
 				},
-				secretResolver: createOpenClawSecretResolver({
+				secretResolver: createGatewaySecretResolver({
 					PERPLEXITY_API_KEY: 'resolved-key',
 					DISCORD_BOT_TOKEN: 'resolved-key',
 					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
@@ -2478,54 +2431,6 @@ describe('startGatewayZone', () => {
 			listenPort: 18791,
 			upstreamResponseTimeoutMs: 120_000,
 		});
-	});
-
-	it('does not clean orphaned gateway runtime before rejecting invalid OpenClaw Tool VM requirements', async () => {
-		const systemConfig = await createSystemConfig();
-		const zone = systemConfig.zones[0];
-		if (!zone || zone.gateway.type !== 'openclaw') {
-			throw new Error('Expected OpenClaw gateway test zone.');
-		}
-		await writeFile(
-			zone.gateway.config,
-			JSON.stringify({
-				agents: {
-					defaults: {
-						sandbox: {
-							backend: 'host',
-							mode: 'all',
-							scope: 'agent',
-							workspaceAccess: 'rw',
-						},
-						workspace: '/zone/agents/default',
-					},
-					list: [],
-				},
-			}),
-			'utf8',
-		);
-		const buildImage = vi.fn(async () => ({
-			built: true,
-			fingerprint: 'fp',
-			imageReference: '/tmp/img',
-		}));
-
-		await expect(
-			startGatewayZone(
-				{
-					secretResolver: createOpenClawSecretResolver({}),
-					systemConfig,
-					zoneId: 'shravan',
-				},
-				{
-					managedVmFactory: unexpectedManagedVmFactory,
-					managedVmImages: { prepareImage: buildImage },
-				},
-			),
-		).rejects.toThrow("OpenClaw zone 'shravan' Tool VM requirements failed");
-
-		expect(cleanupOrphanedGatewayIfPresentMock).not.toHaveBeenCalled();
-		expect(buildImage).not.toHaveBeenCalled();
 	});
 
 	it('does not build the gateway image when secret preflight fails', async () => {
@@ -2562,86 +2467,6 @@ describe('startGatewayZone', () => {
 		expect(buildImage).not.toHaveBeenCalled();
 	});
 
-	it('rejects invalid OpenClaw Tool VM requirements during protected restart preflight', async () => {
-		const systemConfig = await createSystemConfig();
-		const zone = systemConfig.zones[0];
-		if (!zone || zone.gateway.type !== 'openclaw') {
-			throw new Error('Expected OpenClaw gateway test zone.');
-		}
-		await writeFile(
-			zone.gateway.config,
-			JSON.stringify({
-				agents: {
-					defaults: {
-						sandbox: {
-							backend: 'host',
-							mode: 'all',
-							scope: 'agent',
-							workspaceAccess: 'rw',
-						},
-						workspace: '/zone/agents/default',
-					},
-					list: [],
-				},
-			}),
-			'utf8',
-		);
-
-		await expect(
-			preflightGatewayZoneStart(
-				{
-					secretResolver: createOpenClawSecretResolver({
-						DISCORD_BOT_TOKEN: 'resolved-discord-token',
-						OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
-						PERPLEXITY_API_KEY: 'resolved-perplexity-key',
-					}),
-					systemConfig,
-					zoneId: 'shravan',
-				},
-				{ managedVmImages: testManagedVmImages },
-			),
-		).rejects.toThrow("OpenClaw zone 'shravan' Tool VM requirements failed");
-	});
-
-	it('does not consult legacy cleanup or create a gateway VM when OpenClaw image build fails', async () => {
-		const systemConfig = await createSystemConfig();
-		const buildError = new Error('gateway image build failed');
-		const taskTitles: string[] = [];
-		const createManagedVm = vi.fn(async (): Promise<ManagedVm> => {
-			throw new Error('createManagedVm should not run after image build fails');
-		});
-		const buildImage = vi.fn(async () => {
-			throw buildError;
-		});
-
-		await expect(
-			startGatewayZone(
-				{
-					runTask: async (title, run) => {
-						taskTitles.push(title);
-						await run();
-					},
-					secretResolver: createOpenClawSecretResolver({
-						DISCORD_BOT_TOKEN: 'resolved-discord-token',
-						OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
-						PERPLEXITY_API_KEY: 'resolved-perplexity-key',
-					}),
-					systemConfig,
-					zoneId: 'shravan',
-				},
-				{
-					managedVmImages: { prepareImage: buildImage },
-					managedVmFactory: { createManagedVm },
-				},
-			),
-		).rejects.toBe(buildError);
-
-		expect(buildImage).toHaveBeenCalledOnce();
-		expect(taskTitles).not.toContain('Materializing Tool Portal runtime');
-		expect(cleanupOrphanedGatewayIfPresentMock).not.toHaveBeenCalled();
-		expect(createManagedVm).not.toHaveBeenCalled();
-	});
-
 	it('starts mutating Tool Portal materialization only after image preparation completes', async () => {
 		const systemConfig = await createSystemConfig();
 		const imageBuildEntered = createDeferredPromise<void>();
@@ -2656,7 +2481,7 @@ describe('startGatewayZone', () => {
 					await run();
 					taskEvents.push(`${title}:complete`);
 				},
-				secretResolver: createOpenClawSecretResolver({
+				secretResolver: createGatewaySecretResolver({
 					DISCORD_BOT_TOKEN: 'resolved-discord-token',
 					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
 					PERPLEXITY_API_KEY: 'resolved-perplexity-key',
@@ -2690,259 +2515,6 @@ describe('startGatewayZone', () => {
 		);
 	});
 
-	it('surfaces OpenClaw secret failure before image build', async () => {
-		const systemConfig = await createSystemConfig();
-		const secretResolver: SecretResolver = {
-			resolve: async () => {
-				throw new Error('Failed to resolve zone secrets: op failed');
-			},
-			resolveAll: async () => {
-				throw new Error('Failed to resolve zone secrets: op failed');
-			},
-		};
-		const buildImage = vi.fn(async () => ({
-			built: true,
-			fingerprint: 'fp',
-			imageReference: '/tmp/img',
-		}));
-
-		await expect(
-			startGatewayZone(
-				{
-					secretResolver,
-					systemConfig,
-					zoneId: 'shravan',
-				},
-				{
-					managedVmFactory: unexpectedManagedVmFactory,
-					managedVmImages: { prepareImage: buildImage },
-				},
-			),
-		).rejects.toThrow(
-			"Failed to resolve zone secrets for zone 'shravan': Failed to resolve zone secrets: op failed",
-		);
-
-		expect(preflightOrphanedGatewayCleanupIfPresentMock).not.toHaveBeenCalled();
-		expect(buildImage).not.toHaveBeenCalled();
-	});
-
-	it('skips host observability readiness before gateway startup when no OpenClaw zone opted in', async () => {
-		const systemConfig = createObservabilitySystemConfig(await createSystemConfig(), {
-			controllerStartPolicy: 'require-ready',
-		});
-		const taskTitles: string[] = [];
-		const checkObservabilityStackReadiness = vi.fn(async () => ({
-			ok: false as const,
-			reason: 'collector health check failed: connection refused',
-			status: 'unavailable' as const,
-		}));
-		const buildImage = vi.fn(async () => ({
-			built: true,
-			fingerprint: 'fp',
-			imageReference: '/tmp/img',
-		}));
-		const createManagedVm = vi.fn(async (): Promise<ManagedVm> => {
-			throw new Error('createManagedVm should not be called');
-		});
-
-		await expect(
-			startGatewayZone(
-				{
-					runTask: async (title, fn) => {
-						taskTitles.push(title);
-						await fn();
-					},
-					secretResolver: createOpenClawSecretResolver({
-						DISCORD_BOT_TOKEN: 'resolved-discord-token',
-						OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
-						PERPLEXITY_API_KEY: 'resolved-perplexity-key',
-					}),
-					systemConfig,
-					zoneId: 'shravan',
-				},
-				{
-					managedVmImages: { prepareImage: buildImage },
-					checkObservabilityStackReadiness,
-					managedVmFactory: { createManagedVm },
-				},
-			),
-		).rejects.toThrow('createManagedVm should not be called');
-
-		expect(taskTitles).not.toContain('Preflighting gateway runtime ownership');
-		expect(taskTitles).not.toContain('Cleaning orphaned gateway runtime');
-		expect(taskTitles).not.toContain('Checking host observability stack');
-		expect(checkObservabilityStackReadiness).not.toHaveBeenCalled();
-		expect(buildImage).toHaveBeenCalled();
-		expect(createManagedVm).toHaveBeenCalled();
-	});
-
-	it('routes OpenClaw zone observability through mediated HTTP without collector tcpHosts', async () => {
-		const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
-			return new Response('collector-response', {
-				headers: {
-					'content-type': 'application/x-protobuf',
-					'retry-after': '2',
-					'set-cookie': 'must-not-reach-guest=true',
-				},
-				status: 200,
-			});
-		});
-		const systemConfig = createObservabilitySystemConfig(await createSystemConfig(), {
-			controllerStartPolicy: 'off',
-			zoneEnabled: true,
-		});
-		const createManagedVm = vi.fn(
-			async (_options: GatewayManagedVmFactoryOptions): Promise<ManagedVm> => {
-				throw new Error('stop after vm options');
-			},
-		);
-
-		try {
-			await expect(
-				startGatewayZone(
-					{
-						secretResolver: createOpenClawSecretResolver({
-							DISCORD_BOT_TOKEN: 'resolved-discord-token',
-							OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
-							PERPLEXITY_API_KEY: 'resolved-perplexity-key',
-						}),
-						systemConfig,
-						zoneId: 'shravan',
-					},
-					{
-						managedVmImages: {
-							prepareImage: vi.fn(async () => ({
-								built: true,
-								fingerprint: 'fp',
-								imageReference: '/tmp/img',
-							})),
-						},
-						managedVmFactory: { createManagedVm },
-					},
-				),
-			).rejects.toThrow('stop after vm options');
-
-			const vmOptions = createManagedVm.mock.calls[0]?.[0];
-			if (vmOptions === undefined) {
-				throw new Error('Expected gateway VM creation call.');
-			}
-			expect(vmOptions.allowedHosts).toContain('otel-collector.observability.vm.host');
-			expect(vmOptions.allowedHosts).not.toContain('127.0.0.1');
-			expect(vmOptions.mediation).not.toHaveProperty('internalDestinations');
-			expect(vmOptions.tcpHosts).toEqual([
-				{ guestHost: 'tool-0.vm.host:22', target: '127.0.0.1:19000' },
-				{ guestHost: 'tool-1.vm.host:22', target: '127.0.0.1:19001' },
-				{ guestHost: 'tool-2.vm.host:22', target: '127.0.0.1:19002' },
-				{ guestHost: 'tool-3.vm.host:22', target: '127.0.0.1:19003' },
-				{ guestHost: 'tool-4.vm.host:22', target: '127.0.0.1:19004' },
-			]);
-			expect(vmOptions.tcpHosts).not.toContainEqual({
-				guestHost: 'otel-collector.observability.vm.host:4318',
-				target: '127.0.0.1:4318',
-			});
-			expect(vmOptions.mediation?.onRequest).toEqual(expect.any(Function));
-			const otlpSignalRequests = [
-				['/v1/traces', 'trace-payload'],
-				['/v1/metrics', 'metric-payload'],
-				['/v1/logs', 'log-payload'],
-			] as const;
-			await Promise.all(
-				otlpSignalRequests.map(async ([signalPath, payload]) => {
-					const mediatedResponse = await vmOptions.mediation?.onRequest?.(
-						new Request(`http://otel-collector.observability.vm.host:4318${signalPath}`, {
-							body: payload,
-							headers: {
-								authorization: 'Bearer must-not-forward',
-								'content-type': 'application/x-protobuf',
-							},
-							method: 'POST',
-						}),
-					);
-					if (!(mediatedResponse instanceof Response)) {
-						throw new Error(`Expected ${signalPath} request to return a Response.`);
-					}
-					expect(mediatedResponse.status).toBe(200);
-					expect(await mediatedResponse.text()).toBe('collector-response');
-					expect(Object.fromEntries(mediatedResponse.headers)).toEqual({
-						'content-type': 'application/x-protobuf',
-						'retry-after': '2',
-					});
-				}),
-			);
-			expect(fetchMock).toHaveBeenCalledTimes(3);
-			for (const [callIndex, signalPath] of [
-				[0, '/v1/traces'],
-				[1, '/v1/metrics'],
-				[2, '/v1/logs'],
-			] as const) {
-				const [targetUrl, requestInit] = fetchMock.mock.calls[callIndex] ?? [];
-				expect(targetUrl).toBe(`http://127.0.0.1:4318${signalPath}`);
-				expect(requestInit).toEqual(
-					expect.objectContaining({
-						duplex: 'half',
-						headers: new Headers({ 'content-type': 'application/x-protobuf' }),
-						method: 'POST',
-						redirect: 'manual',
-						signal: expect.any(AbortSignal),
-					}),
-				);
-			}
-
-			const directTargetRequest = await vmOptions.mediation?.onRequest?.(
-				new Request('http://127.0.0.1:4318/v1/traces', {
-					body: 'direct-target-payload',
-					headers: { 'content-type': 'application/x-protobuf' },
-					method: 'POST',
-				}),
-			);
-			expect(directTargetRequest).toBeInstanceOf(Response);
-			expect((directTargetRequest as Response).status).toBe(403);
-			expect(fetchMock).toHaveBeenCalledTimes(3);
-		} finally {
-			fetchMock.mockRestore();
-		}
-	});
-
-	it('rejects OpenClaw collector tcpHosts overrides that bypass mediated observability', async () => {
-		const systemConfig = createObservabilitySystemConfig(await createSystemConfig(), {
-			controllerStartPolicy: 'off',
-			zoneEnabled: true,
-		});
-		const createManagedVm = vi.fn(async (): Promise<ManagedVm> => {
-			throw new Error('createManagedVm should not be called');
-		});
-
-		await expect(
-			startGatewayZone(
-				{
-					secretResolver: createOpenClawSecretResolver({
-						DISCORD_BOT_TOKEN: 'resolved-discord-token',
-						OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
-						PERPLEXITY_API_KEY: 'resolved-perplexity-key',
-					}),
-					systemConfig,
-					tcpHostsOverride: {
-						'otel-collector.observability.vm.host:4318': '127.0.0.1:4318',
-					},
-					zoneId: 'shravan',
-				},
-				{
-					managedVmImages: {
-						prepareImage: vi.fn(async () => ({
-							built: true,
-							fingerprint: 'fp',
-							imageReference: '/tmp/img',
-						})),
-					},
-					managedVmFactory: { createManagedVm },
-				},
-			),
-		).rejects.toThrow(
-			"Managed Gateway tcpHostsOverride cannot map observability collector host 'otel-collector.observability.vm.host'",
-		);
-		expect(createManagedVm).not.toHaveBeenCalled();
-	});
-
 	it('rejects Hermes collector tcpHosts overrides that bypass mediated observability', async () => {
 		const systemConfig = await createHermesSystemConfig();
 		const createManagedVm = vi.fn(async (): Promise<ManagedVm> => {
@@ -2952,7 +2524,7 @@ describe('startGatewayZone', () => {
 		await expect(
 			startGatewayZone(
 				{
-					secretResolver: createOpenClawSecretResolver({}),
+					secretResolver: createGatewaySecretResolver({}),
 					systemConfig,
 					tcpHostsOverride: {
 						'otel-collector.observability.vm.host:4318': '127.0.0.1:4318',
@@ -2974,130 +2546,6 @@ describe('startGatewayZone', () => {
 			"Managed Gateway tcpHostsOverride cannot map observability collector host 'otel-collector.observability.vm.host'",
 		);
 		expect(createManagedVm).not.toHaveBeenCalled();
-	});
-
-	it('preflights lifecycle host state without OpenClaw observability before protected restart image work', async () => {
-		const systemConfig = createObservabilitySystemConfig(await createSystemConfig(), {
-			controllerStartPolicy: 'require-ready',
-		});
-		const preflightHostState = vi.fn(async () => {});
-		const buildImage = vi.fn(async () => ({
-			built: true,
-			fingerprint: 'fp',
-			imageReference: '/tmp/img',
-		}));
-
-		await preflightGatewayZoneStart(
-			{
-				secretResolver: createOpenClawSecretResolver({
-					DISCORD_BOT_TOKEN: 'resolved-discord-token',
-					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
-					PERPLEXITY_API_KEY: 'resolved-perplexity-key',
-				}),
-				systemConfig,
-				zoneId: 'shravan',
-			},
-			{
-				checkObservabilityStackReadiness: vi.fn(async () => ({
-					ok: true as const,
-					status: 'ready' as const,
-				})),
-				managedVmImages: {
-					prepareImage: async () => {
-						const result = await buildImage();
-						return result;
-					},
-				},
-				loadGatewayLifecycle: () => ({
-					...loadGatewayLifecycle('openclaw'),
-					preflightHostState,
-				}),
-			},
-		);
-
-		expect(preflightHostState).toHaveBeenCalledWith(
-			expect.not.objectContaining({ observability: expect.anything() }),
-			expect.any(Object),
-		);
-		expect(buildImage).toHaveBeenCalled();
-	});
-
-	it('does not invoke legacy PID cleanup for OpenClaw zones after ownership reconciliation', async () => {
-		const managedVm: ManagedVm = {
-			id: 'vm-tool-cleanup',
-			start: vi.fn(async () => {}),
-			close: vi.fn(async () => completeGatewayVmClose('vm-tool-cleanup')),
-			enableIngress: vi.fn(async () => createTestIngressAccess()),
-			enableSsh: vi.fn(async () => createTestSshAccess()),
-			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
-			getHostProcessId: vi.fn(() => 28301),
-			configureIngressRoutes: vi.fn(),
-		};
-		const systemConfig = await createSystemConfig();
-		const zone = systemConfig.zones[0];
-		if (!zone || zone.gateway.type !== 'openclaw') {
-			throw new Error('Expected OpenClaw gateway test zone.');
-		}
-		await startGatewayZone(
-			{
-				secretResolver: createOpenClawSecretResolver({
-					PERPLEXITY_API_KEY: 'resolved-key',
-					DISCORD_BOT_TOKEN: 'resolved-key',
-					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
-				}),
-				systemConfig,
-				zoneId: 'shravan',
-			},
-			{
-				managedVmImages: {
-					prepareImage: vi.fn(async () => ({
-						built: true,
-						fingerprint: 'fp',
-						imageReference: '/tmp/img',
-					})),
-				},
-				managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
-			},
-		);
-
-		expect(cleanupOrphanedGatewayIfPresentMock).not.toHaveBeenCalled();
-	});
-
-	it('does not preflight or mutate legacy OpenClaw runtime records before exact ownership boot', async () => {
-		const managedVm: ManagedVm = {
-			id: 'vm-ordered-recovery',
-			start: vi.fn(async () => {}),
-			close: vi.fn(async () => completeGatewayVmClose('vm-ordered-recovery')),
-			enableIngress: vi.fn(async () => createTestIngressAccess()),
-			enableSsh: vi.fn(async () => createTestSshAccess()),
-			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
-			getHostProcessId: vi.fn(() => 28303),
-			configureIngressRoutes: vi.fn(),
-		};
-		await startGatewayZone(
-			{
-				secretResolver: createOpenClawSecretResolver({
-					PERPLEXITY_API_KEY: 'resolved-key',
-					DISCORD_BOT_TOKEN: 'resolved-key',
-					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
-				}),
-				systemConfig: await createSystemConfig(),
-				zoneId: 'shravan',
-			},
-			{
-				managedVmImages: {
-					prepareImage: vi.fn(async () => ({
-						built: true,
-						fingerprint: 'fp',
-						imageReference: '/tmp/img',
-					})),
-				},
-				managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
-			},
-		);
-
-		expect(preflightOrphanedGatewayCleanupIfPresentMock).not.toHaveBeenCalled();
-		expect(cleanupOrphanedGatewayIfPresentMock).not.toHaveBeenCalled();
 	});
 
 	it('starts one Worker gateway VM without legacy cleanup phases', async () => {
@@ -3232,7 +2680,7 @@ describe('startGatewayZone', () => {
 
 		await startGatewayZone(
 			{
-				secretResolver: createOpenClawSecretResolver({
+				secretResolver: createGatewaySecretResolver({
 					PERPLEXITY_API_KEY: 'pplx-key',
 					DISCORD_BOT_TOKEN: 'discord-token',
 					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
@@ -3268,10 +2716,10 @@ describe('startGatewayZone', () => {
 	it('materializes the thin Tool Portal adapter into protected framework boot input', async () => {
 		const systemConfig = await createSystemConfig();
 		const baseZone = systemConfig.zones[0];
-		if (baseZone === undefined || baseZone.gateway.type !== 'openclaw') {
+		if (baseZone === undefined || baseZone.gateway.type !== 'hermes') {
 			throw new Error('Expected OpenClaw test zone.');
 		}
-		const configDir = path.dirname(baseZone.gateway.config);
+		const configDir = requireToolPortalConfigDir(baseZone);
 		await writeMinimalMcpPortalConfigs(configDir, undefined, { portalAgentId: 'shravan' });
 		let managedVmCreateRequest: ManagedVmCreateRequest | undefined;
 		const preflightHostState = vi.fn(
@@ -3296,7 +2744,7 @@ describe('startGatewayZone', () => {
 				runtimePluginConfigs: {
 					'observability-test-plugin': { enabled: true },
 				},
-				secretResolver: createOpenClawSecretResolver({
+				secretResolver: createGatewaySecretResolver({
 					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
 				}),
 				systemConfig,
@@ -3304,6 +2752,17 @@ describe('startGatewayZone', () => {
 				zoneOverride: {
 					...baseZone,
 					agents: [{ id: 'shravan' }],
+					gateway: {
+						...baseZone.gateway,
+						profilesByAgent: { shravan: 'shravan' },
+						profileSecretProjectionsByAgent: {
+							shravan: {
+								API_SERVER_KEY: 'API_SERVER_KEY_MAIN',
+								DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN',
+								PERPLEXITY_API_KEY: 'PERPLEXITY_API_KEY',
+							},
+						},
+					},
 					toolPortal: createGatewayZoneToolPortalConfig(configDir),
 				},
 			},
@@ -3322,7 +2781,7 @@ describe('startGatewayZone', () => {
 					}),
 				},
 				loadGatewayLifecycle: () => ({
-					...loadGatewayLifecycle('openclaw'),
+					...loadGatewayLifecycle('hermes'),
 					preflightHostState,
 					prepareHostState,
 				}),
@@ -3344,52 +2803,19 @@ describe('startGatewayZone', () => {
 		);
 		expect(preparedLifecycleZone).toHaveProperty(
 			'runtimePluginConfigs.gondolin.toolPortal.attachment.clientKind',
-			'openclaw-managed-plugin',
+			'hermes-managed-plugin',
 		);
-		const protectedFrameworkConfig = parseJsonObject(
-			requireManagedGatewayBootInputFile(
-				managedVmCreateRequest,
-				managedGatewayBootInputPaths.structuredRoot,
-				'framework-service.json',
-			),
-		);
-		const pluginsConfig = requireObjectProperty(protectedFrameworkConfig, 'plugins');
-		const pluginEntries = requireObjectProperty(pluginsConfig, 'entries');
-		const gondolinEntry = requireObjectProperty(pluginEntries, 'gondolin');
-		const gondolinConfig = requireObjectProperty(gondolinEntry, 'config');
-		const toolPortalConfig = requireObjectProperty(gondolinConfig, 'toolPortal');
-		expect(toolPortalConfig).toMatchObject({
-			agentProjections: {
-				shravan: {
-					agentId: 'shravan',
-					frameworkIdentity: { agentId: 'shravan', kind: 'openclaw' },
-					profileAssignmentRevision: expect.any(String),
-					toolPortalProfileId: 'default',
-				},
-			},
-			attachment: {
-				clientKind: 'openclaw-managed-plugin',
-				configuredAgentIds: ['shravan'],
-				protocolVersion: 1,
-				projectionCohortDigest: expect.stringMatching(/^projection-cohort:[a-f0-9]{64}$/u),
-				schemaVersion: 1,
-			},
-		});
-		expect(gondolinConfig).not.toHaveProperty('controlSession');
-		expect(toolPortalConfig).not.toHaveProperty('configDir');
-		expect(
-			requireObjectProperty(requireObjectProperty(protectedFrameworkConfig, 'mcp'), 'servers'),
-		).toEqual({});
+		expect(managedVmCreateRequest).toBeDefined();
 	});
 
 	it('writes the strict Gateway runtime portal admission artifact during authoritative zone startup', async () => {
 		// Arrange
 		const systemConfig = await createSystemConfig();
 		const baseZone = systemConfig.zones[0];
-		if (baseZone === undefined || baseZone.gateway.type !== 'openclaw') {
+		if (baseZone === undefined || baseZone.gateway.type !== 'hermes') {
 			throw new Error('Expected OpenClaw test zone.');
 		}
-		const configDir = path.dirname(baseZone.gateway.config);
+		const configDir = requireToolPortalConfigDir(baseZone);
 		const resolvedSecretValue = 'resolved-admission-secret-value';
 		const secretRef = 'op://agent-vm/testing/gateway-runtime-admission-secret';
 		await writeMinimalMcpPortalConfigs(
@@ -3431,7 +2857,7 @@ describe('startGatewayZone', () => {
 		// Act
 		await startGatewayZone(
 			{
-				secretResolver: createOpenClawSecretResolver({
+				secretResolver: createGatewaySecretResolver({
 					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
 					[secretRef]: resolvedSecretValue,
 				}),
@@ -3440,6 +2866,17 @@ describe('startGatewayZone', () => {
 				zoneOverride: {
 					...baseZone,
 					agents: [{ id: 'shravan' }],
+					gateway: {
+						...baseZone.gateway,
+						profilesByAgent: { shravan: 'shravan' },
+						profileSecretProjectionsByAgent: {
+							shravan: {
+								API_SERVER_KEY: 'API_SERVER_KEY_MAIN',
+								DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN',
+								PERPLEXITY_API_KEY: 'PERPLEXITY_API_KEY',
+							},
+						},
+					},
 					toolPortal,
 				},
 			},
@@ -3462,7 +2899,7 @@ describe('startGatewayZone', () => {
 		const admittedAgent = admissionMaterial.semanticSnapshot.agentProjections.shravan;
 		expect(admittedAgentIds).toEqual(['shravan']);
 		expect(admittedAgent?.agentId).toBe('shravan');
-		expect(admittedAgent?.frameworkIdentity).toEqual({ agentId: 'shravan', kind: 'openclaw' });
+		expect(admittedAgent?.frameworkIdentity).toEqual({ kind: 'hermes', profileName: 'shravan' });
 		expect(admittedAgent?.toolPortalProfileId).toBe('default');
 		expect(admittedAgent?.profileAssignmentRevision).toMatch(/^profile-assignment:[a-f0-9]{64}$/u);
 		expect(admissionMaterial.semanticSnapshot.projectionCohortDigest).toMatch(
@@ -3478,9 +2915,9 @@ describe('startGatewayZone', () => {
 
 	it('materializes one workspace root for every managed Gateway agent', async () => {
 		// Arrange
-		const systemConfig = await createSystemConfig();
+		const systemConfig = await createHermesSystemConfig();
 		const zone = systemConfig.zones[0];
-		if (zone === undefined || zone.gateway.type !== 'openclaw') {
+		if (zone === undefined || zone.gateway.type !== 'hermes') {
 			throw new Error('Expected OpenClaw test zone.');
 		}
 		const agentIds = ['main', 'second'] as const;
@@ -3498,7 +2935,7 @@ describe('startGatewayZone', () => {
 			writeFile(stateSentinelPath, 'state-preserved\n', 'utf8'),
 			writeFile(controllerStateSentinelPath, 'controller-state-preserved\n', 'utf8'),
 		]);
-		const toolPortalConfigDir = path.dirname(zone.gateway.config);
+		const toolPortalConfigDir = requireToolPortalConfigDir(zone);
 		await writeFile(
 			path.join(toolPortalConfigDir, 'tool-portal.config.jsonc'),
 			JSON.stringify({
@@ -3517,7 +2954,7 @@ describe('startGatewayZone', () => {
 		// Act
 		const result = await startGatewayZone(
 			{
-				secretResolver: createOpenClawSecretResolver({
+				secretResolver: createGatewaySecretResolver({
 					DISCORD_BOT_TOKEN: 'discord-token',
 					OPENCLAW_GATEWAY_TOKEN: 'gateway-token',
 					PERPLEXITY_API_KEY: 'perplexity-key',
@@ -3555,10 +2992,10 @@ describe('startGatewayZone', () => {
 	it('rejects a shared workspace Git push profile assigned to a local-mode agent', async () => {
 		const systemConfig = await createSystemConfig();
 		const baseZone = systemConfig.zones[0];
-		if (baseZone === undefined || baseZone.gateway.type !== 'openclaw') {
+		if (baseZone === undefined || baseZone.gateway.type !== 'hermes') {
 			throw new Error('Expected OpenClaw test zone.');
 		}
-		const configDir = path.dirname(baseZone.gateway.config);
+		const configDir = requireToolPortalConfigDir(baseZone);
 		await writeFile(
 			path.join(configDir, 'tool-portal.config.jsonc'),
 			JSON.stringify({
@@ -3602,7 +3039,7 @@ describe('startGatewayZone', () => {
 						fingerprint: 'fingerprint',
 						imageReference: '/tmp/gateway-image',
 					},
-					secretResolver: createOpenClawSecretResolver({
+					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'resolved-discord-token',
 						OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
 						PERPLEXITY_API_KEY: 'resolved-perplexity-key',
@@ -3615,6 +3052,35 @@ describe('startGatewayZone', () => {
 							...(baseZone.agents ?? []),
 							{ id: 'local-agent', workspaceGit: { mode: 'local' as const } },
 						],
+						gateway: {
+							...baseZone.gateway,
+							profilesByAgent: {
+								...baseZone.gateway.profilesByAgent,
+								'local-agent': 'local-agent',
+							},
+							profileSecretProjectionsByAgent: {
+								...baseZone.gateway.profileSecretProjectionsByAgent,
+								'local-agent': {
+									API_SERVER_KEY: 'API_SERVER_KEY_LOCAL',
+									DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_LOCAL',
+								},
+							},
+						},
+						secrets: {
+							...baseZone.secrets,
+							API_SERVER_KEY_LOCAL: {
+								source: 'environment',
+								envVar: 'API_SERVER_KEY_LOCAL',
+								injection: 'env',
+								audience: 'gateway',
+							},
+							DISCORD_BOT_TOKEN_LOCAL: {
+								source: 'environment',
+								envVar: 'DISCORD_BOT_TOKEN_LOCAL',
+								injection: 'env',
+								audience: 'gateway',
+							},
+						},
 					},
 				},
 				{ managedVmImages: testManagedVmImages },
@@ -3627,10 +3093,10 @@ describe('startGatewayZone', () => {
 	it('does not write MCP Portal effective config files during protected restart preflight', async () => {
 		const systemConfig = await createSystemConfig();
 		const baseZone = systemConfig.zones[0];
-		if (baseZone === undefined || baseZone.gateway.type !== 'openclaw') {
+		if (baseZone === undefined || baseZone.gateway.type !== 'hermes') {
 			throw new Error('Expected OpenClaw test zone.');
 		}
-		const configDir = path.dirname(baseZone.gateway.config);
+		const configDir = requireToolPortalConfigDir(baseZone);
 		await writeMinimalMcpPortalConfigs(configDir, undefined, { portalAgentId: 'shravan' });
 		const effectiveConfigDir = path.join(
 			systemConfig.cacheDir,
@@ -3646,7 +3112,7 @@ describe('startGatewayZone', () => {
 					fingerprint: 'fingerprint',
 					imageReference: '/tmp/gateway-image',
 				},
-				secretResolver: createOpenClawSecretResolver({
+				secretResolver: createGatewaySecretResolver({
 					DISCORD_BOT_TOKEN: 'resolved-discord-token',
 					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
 					PERPLEXITY_API_KEY: 'resolved-perplexity-key',
@@ -3656,6 +3122,17 @@ describe('startGatewayZone', () => {
 				zoneOverride: {
 					...baseZone,
 					agents: [{ id: 'shravan' }],
+					gateway: {
+						...baseZone.gateway,
+						profilesByAgent: { shravan: 'shravan' },
+						profileSecretProjectionsByAgent: {
+							shravan: {
+								API_SERVER_KEY: 'API_SERVER_KEY_MAIN',
+								DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN',
+								PERPLEXITY_API_KEY: 'PERPLEXITY_API_KEY',
+							},
+						},
+					},
 					toolPortal: createGatewayZoneToolPortalConfig(configDir),
 				},
 			},
@@ -3668,11 +3145,11 @@ describe('startGatewayZone', () => {
 	it('deduplicates overlapping MCP Portal and zone secret refs during protected restart preflight', async () => {
 		const systemConfig = await createSystemConfig();
 		const baseZone = systemConfig.zones[0];
-		if (baseZone === undefined || baseZone.gateway.type !== 'openclaw') {
+		if (baseZone === undefined || baseZone.gateway.type !== 'hermes') {
 			throw new Error('Expected OpenClaw test zone.');
 		}
 		const overlappingRef = 'op://agent-vm/shravan-perplexity/credential';
-		const configDir = path.dirname(baseZone.gateway.config);
+		const configDir = requireToolPortalConfigDir(baseZone);
 		await writeMinimalMcpPortalConfigs(
 			configDir,
 			{
@@ -3718,6 +3195,8 @@ describe('startGatewayZone', () => {
 					return 'resolved-gateway-token';
 				case overlappingRef:
 					return 'resolved-shared-perplexity-key';
+				case 'API_SERVER_KEY_MAIN':
+					return 'resolved-api-server-key';
 				default:
 					throw new Error(`Unexpected secret ref: ${secretRef.ref}`);
 			}
@@ -3752,6 +3231,17 @@ describe('startGatewayZone', () => {
 				zoneOverride: {
 					...baseZone,
 					agents: [{ id: 'shravan' }],
+					gateway: {
+						...baseZone.gateway,
+						profilesByAgent: { shravan: 'shravan' },
+						profileSecretProjectionsByAgent: {
+							shravan: {
+								API_SERVER_KEY: 'API_SERVER_KEY_MAIN',
+								DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN',
+								PERPLEXITY_API_KEY: 'PERPLEXITY_API_KEY',
+							},
+						},
+					},
 					toolPortal: createGatewayZoneToolPortalConfig(configDir),
 				},
 			},
@@ -3770,76 +3260,13 @@ describe('startGatewayZone', () => {
 		expect(overlappingResolveCount).toBe(1);
 	});
 
-	it('does not generate OpenClaw mcp.servers entries for managed MCP Portal', async () => {
-		const systemConfig = await createSystemConfig();
-		const baseZone = systemConfig.zones[0];
-		if (baseZone === undefined || baseZone.gateway.type !== 'openclaw') {
-			throw new Error('Expected OpenClaw test zone.');
-		}
-		const configDir = path.dirname(baseZone.gateway.config);
-		await writeMinimalMcpPortalConfigs(configDir, undefined, { portalAgentId: 'shravan' });
-		const lifecycleZones: GatewayZoneConfig[] = [];
-		const managedVm: ManagedVm = {
-			id: 'vm-mcp-native',
-			start: vi.fn(async () => {}),
-			close: vi.fn(async () => completeGatewayVmClose('vm-mcp-native')),
-			enableIngress: vi.fn(async () => createTestIngressAccess()),
-			enableSsh: vi.fn(async () => createTestSshAccess()),
-			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
-			getHostProcessId: vi.fn(() => 28290),
-			configureIngressRoutes: vi.fn(),
-		};
-
-		await startGatewayZone(
-			{
-				secretResolver: createOpenClawSecretResolver({
-					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
-				}),
-				systemConfig,
-				zoneId: 'shravan',
-				zoneOverride: {
-					...baseZone,
-					agents: [{ id: 'shravan' }],
-					toolPortal: createGatewayZoneToolPortalConfig(configDir),
-				},
-			},
-			{
-				managedVmImages: {
-					prepareImage: vi.fn(async () => ({
-						built: true,
-						fingerprint: 'fp',
-						imageReference: '/tmp/img',
-					})),
-				},
-				managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
-				loadGatewayLifecycle: () => ({
-					...loadGatewayLifecycle('openclaw'),
-					buildVmRequirements: (options) => {
-						lifecycleZones.push(options.zone);
-						return {
-							allowedHosts: [],
-							environment: {},
-							mediatedSecrets: {},
-							rootfsMode: 'cow' as const,
-							sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
-							tcpHosts: {},
-							mounts: {},
-						};
-					},
-				}),
-			},
-		);
-
-		expect(lifecycleZones[0]?.runtimeMcpServers).toBeUndefined();
-	});
-
 	it('adds MCP Portal upstream hosts to effective gateway egress', async () => {
 		const systemConfig = await createSystemConfig();
 		const baseZone = systemConfig.zones[0];
-		if (baseZone === undefined || baseZone.gateway.type !== 'openclaw') {
+		if (baseZone === undefined || baseZone.gateway.type !== 'hermes') {
 			throw new Error('Expected OpenClaw test zone.');
 		}
-		const configDir = path.dirname(baseZone.gateway.config);
+		const configDir = requireToolPortalConfigDir(baseZone);
 		await writeMinimalMcpPortalConfigs(configDir, {
 			providers: {
 				deepwiki: {
@@ -3866,7 +3293,7 @@ describe('startGatewayZone', () => {
 
 		await startGatewayZone(
 			{
-				secretResolver: createOpenClawSecretResolver({
+				secretResolver: createGatewaySecretResolver({
 					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
 				}),
 				systemConfig,
@@ -3898,10 +3325,10 @@ describe('startGatewayZone', () => {
 	it('does not duplicate MCP Portal upstream hosts declared for gateway egress', async () => {
 		const systemConfig = await createSystemConfig();
 		const baseZone = systemConfig.zones[0];
-		if (baseZone === undefined || baseZone.gateway.type !== 'openclaw') {
+		if (baseZone === undefined || baseZone.gateway.type !== 'hermes') {
 			throw new Error('Expected OpenClaw test zone.');
 		}
-		const configDir = path.dirname(baseZone.gateway.config);
+		const configDir = requireToolPortalConfigDir(baseZone);
 		await writeMinimalMcpPortalConfigs(configDir, {
 			providers: {
 				deepwiki: {
@@ -3928,7 +3355,7 @@ describe('startGatewayZone', () => {
 
 		await startGatewayZone(
 			{
-				secretResolver: createOpenClawSecretResolver({
+				secretResolver: createGatewaySecretResolver({
 					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
 				}),
 				systemConfig,
@@ -3967,7 +3394,7 @@ describe('startGatewayZone', () => {
 	it('passes websocket upgrade URL policy to the gateway VM request hook', async () => {
 		const systemConfig = await createSystemConfig();
 		const baseZone = systemConfig.zones[0];
-		if (baseZone === undefined || baseZone.gateway.type !== 'openclaw') {
+		if (baseZone === undefined || baseZone.gateway.type !== 'hermes') {
 			throw new Error('Expected OpenClaw test zone.');
 		}
 		const managedVm: ManagedVm = {
@@ -3986,7 +3413,7 @@ describe('startGatewayZone', () => {
 
 		await startGatewayZone(
 			{
-				secretResolver: createOpenClawSecretResolver({
+				secretResolver: createGatewaySecretResolver({
 					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
 				}),
 				systemConfig,
@@ -4052,7 +3479,7 @@ describe('startGatewayZone', () => {
 	it('blocks gateway websocket requests when only Tool VM websocket policy exists', async () => {
 		const systemConfig = await createSystemConfig();
 		const baseZone = systemConfig.zones[0];
-		if (baseZone === undefined || baseZone.gateway.type !== 'openclaw') {
+		if (baseZone === undefined || baseZone.gateway.type !== 'hermes') {
 			throw new Error('Expected OpenClaw test zone.');
 		}
 		const managedVm: ManagedVm = {
@@ -4071,7 +3498,7 @@ describe('startGatewayZone', () => {
 
 		await startGatewayZone(
 			{
-				secretResolver: createOpenClawSecretResolver({
+				secretResolver: createGatewaySecretResolver({
 					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
 				}),
 				systemConfig,
@@ -4121,7 +3548,7 @@ describe('startGatewayZone', () => {
 	it('blocks gateway websocket requests when no websocket policy exists', async () => {
 		const systemConfig = await createSystemConfig();
 		const baseZone = systemConfig.zones[0];
-		if (baseZone === undefined || baseZone.gateway.type !== 'openclaw') {
+		if (baseZone === undefined || baseZone.gateway.type !== 'hermes') {
 			throw new Error('Expected OpenClaw test zone.');
 		}
 		const managedVm: ManagedVm = {
@@ -4140,7 +3567,7 @@ describe('startGatewayZone', () => {
 
 		await startGatewayZone(
 			{
-				secretResolver: createOpenClawSecretResolver({
+				secretResolver: createGatewaySecretResolver({
 					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
 				}),
 				systemConfig,
@@ -4184,10 +3611,10 @@ describe('startGatewayZone', () => {
 	it('passes stdio MCP Portal http-mediation secrets to the gateway VM as generated mediated secrets', async () => {
 		const systemConfig = await createSystemConfig();
 		const baseZone = systemConfig.zones[0];
-		if (baseZone === undefined || baseZone.gateway.type !== 'openclaw') {
+		if (baseZone === undefined || baseZone.gateway.type !== 'hermes') {
 			throw new Error('Expected OpenClaw test zone.');
 		}
-		const configDir = path.dirname(baseZone.gateway.config);
+		const configDir = requireToolPortalConfigDir(baseZone);
 		await writeMinimalMcpPortalConfigs(configDir, {
 			providers: {
 				perplexity: {
@@ -4213,29 +3640,6 @@ describe('startGatewayZone', () => {
 						requiredEgressHosts: ['api.perplexity.ai'],
 					},
 				},
-				vendor: {
-					kind: 'mcp',
-					namespace: 'vendor',
-					secretPolicies: {
-						VENDOR_TOKEN: {
-							hosts: [],
-							injection: 'env',
-						},
-					},
-					transport: {
-						args: ['vendor-mcp'],
-						command: 'node',
-						env: {
-							VENDOR_TOKEN: {
-								name: 'VENDOR_TOKEN',
-								source: 'environment',
-							},
-						},
-						kind: 'stdio',
-						networkAccess: 'declared',
-						requiredEgressHosts: ['api.vendor.example'],
-					},
-				},
 			},
 			schemaVersion: 1,
 		});
@@ -4255,58 +3659,15 @@ describe('startGatewayZone', () => {
 
 		await startGatewayZone(
 			{
-				secretResolver: {
-					resolve: async (secretRef) => {
-						if (secretRef.ref === 'op://agent-vm/shravan-discord/bot-token') {
-							return 'discord-token';
-						}
-						if (secretRef.ref === 'op://agent-vm/shravan-gateway-auth/password') {
-							return 'resolved-gateway-token';
-						}
-						if (secretRef.ref === 'op://agent-vm/sunfam-perplexity/credential') {
-							return 'resolved-pplx-key';
-						}
-						if (secretRef.ref === 'op://agent-vm/shravan-perplexity/credential') {
-							return 'zone-pplx-key';
-						}
-						if (secretRef.ref === 'VENDOR_TOKEN') {
-							return 'resolved-vendor-key';
-						}
-						throw new Error(`Unexpected secret ref: ${secretRef.ref}`);
-					},
-					resolveAll: async (secretRefs) =>
-						Object.fromEntries(
-							Object.entries(secretRefs).map(([secretName, secretRef]) => {
-								if (secretRef.ref === 'op://agent-vm/shravan-discord/bot-token') {
-									return [secretName, 'discord-token'];
-								}
-								if (secretRef.ref === 'op://agent-vm/shravan-gateway-auth/password') {
-									return [secretName, 'resolved-gateway-token'];
-								}
-								if (secretRef.ref === 'op://agent-vm/sunfam-perplexity/credential') {
-									return [secretName, 'resolved-pplx-key'];
-								}
-								if (secretRef.ref === 'op://agent-vm/shravan-perplexity/credential') {
-									return [secretName, 'zone-pplx-key'];
-								}
-								if (secretRef.ref === 'VENDOR_TOKEN') {
-									return [secretName, 'resolved-vendor-key'];
-								}
-								throw new Error(`Unexpected secret ref: ${secretRef.ref}`);
-							}),
-						),
-				},
+				secretResolver: createGatewaySecretResolver({
+					DISCORD_BOT_TOKEN: 'discord-token',
+					PERPLEXITY_API_KEY: 'zone-pplx-key',
+					'op://agent-vm/sunfam-perplexity/credential': 'resolved-pplx-key',
+				}),
 				systemConfig,
 				zoneId: 'shravan',
 				zoneOverride: {
 					...baseZone,
-					gateway: {
-						...baseZone.gateway,
-						rawEnvSecrets: [
-							...(baseZone.gateway.rawEnvSecrets ?? []),
-							'AGENT_VM_MCP_VENDOR_VENDOR_TOKEN',
-						],
-					},
 					toolPortal: createGatewayZoneToolPortalConfig(configDir),
 				},
 			},
@@ -4359,10 +3720,6 @@ describe('startGatewayZone', () => {
 			`export AGENT_VM_MCP_PERPLEXITY_PERPLEXITY_API_KEY='${mediatedSecret.guestPlaceholder}'`,
 		);
 		expect(frameworkEnvironment).not.toContain('AGENT_VM_MCP_PERPLEXITY_PERPLEXITY_API_KEY');
-		expect(toolPortalEnvironment).toContain(
-			"export AGENT_VM_MCP_VENDOR_VENDOR_TOKEN='resolved-vendor-key'",
-		);
-		expect(frameworkEnvironment).not.toContain('AGENT_VM_MCP_VENDOR_VENDOR_TOKEN');
 		expect(toolPortalEnvironment).not.toContain('resolved-pplx-key');
 		expect(frameworkEnvironment).not.toContain('resolved-pplx-key');
 		expect(vmOptions.environment).not.toHaveProperty('AGENT_VM_MCP_PERPLEXITY_PERPLEXITY_API_KEY');
@@ -4371,10 +3728,10 @@ describe('startGatewayZone', () => {
 	it('keeps loopback MCP Portal provider URLs out of gateway egress', async () => {
 		const systemConfig = await createSystemConfig();
 		const baseZone = systemConfig.zones[0];
-		if (baseZone === undefined || baseZone.gateway.type !== 'openclaw') {
+		if (baseZone === undefined || baseZone.gateway.type !== 'hermes') {
 			throw new Error('Expected OpenClaw test zone.');
 		}
-		const configDir = path.dirname(baseZone.gateway.config);
+		const configDir = requireToolPortalConfigDir(baseZone);
 		await writeMinimalMcpPortalConfigs(configDir, {
 			providers: {
 				local_proxy: {
@@ -4399,7 +3756,7 @@ describe('startGatewayZone', () => {
 
 		await startGatewayZone(
 			{
-				secretResolver: createOpenClawSecretResolver({
+				secretResolver: createGatewaySecretResolver({
 					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
 				}),
 				systemConfig,
@@ -4448,7 +3805,7 @@ describe('startGatewayZone', () => {
 				environmentOverride: {
 					DATABASE_URL: 'postgres://app:secret@postgres.local:5432/app',
 				},
-				secretResolver: createOpenClawSecretResolver({
+				secretResolver: createGatewaySecretResolver({
 					PERPLEXITY_API_KEY: 'resolved-key',
 					DISCORD_BOT_TOKEN: 'resolved-key',
 					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
@@ -4583,7 +3940,7 @@ describe('startGatewayZone', () => {
 			getHostProcessId: vi.fn(() => 28283),
 			configureIngressRoutes: configureIngressRoutesMock,
 		};
-		const secretResolver = createOpenClawSecretResolver({
+		const secretResolver = createGatewaySecretResolver({
 			PERPLEXITY_API_KEY: 'pplx-key',
 			DISCORD_BOT_TOKEN: 'discord-token',
 			OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
@@ -4636,33 +3993,16 @@ describe('startGatewayZone', () => {
 			managedGatewayBootInputPaths.environmentRoot,
 			'framework.environment.sh',
 		);
-		const gatewayTokenEnvironment = requireManagedGatewayBootInputFile(
-			vmOptions,
-			managedGatewayBootInputPaths.environmentRoot,
-			'openclaw-gateway-token.environment.sh',
-		);
-		const allSecretsEnvironment = requireManagedGatewayBootInputFile(
-			vmOptions,
-			managedGatewayBootInputPaths.environmentRoot,
-			'openclaw-all-secrets.environment.sh',
-		);
-
 		// Raw framework secrets are scoped to the protected framework process input.
 		expect(protectedFrameworkEnvironment).toContain("export DISCORD_BOT_TOKEN='discord-token'");
 		expect(protectedFrameworkEnvironment).toContain(
-			"export OPENCLAW_GATEWAY_TOKEN='resolved-gateway-token'",
+			"export API_SERVER_KEY='test-root-api-server-key'",
 		);
 		expect(protectedFrameworkEnvironment).toContain(
 			`export PERPLEXITY_API_KEY='${frameworkMediatedSecret.guestPlaceholder}'`,
 		);
-		expect(gatewayTokenEnvironment).toBe(
-			"export OPENCLAW_GATEWAY_TOKEN='resolved-gateway-token'\n",
-		);
-		expect(gatewayTokenEnvironment).not.toContain('DISCORD_BOT_TOKEN');
-		expect(gatewayTokenEnvironment).not.toContain('PERPLEXITY_API_KEY');
-		expect(allSecretsEnvironment).toBe(protectedFrameworkEnvironment);
 		expect(vmOptions.environment).not.toHaveProperty('DISCORD_BOT_TOKEN');
-		expect(vmOptions.environment).not.toHaveProperty('OPENCLAW_GATEWAY_TOKEN');
+		expect(vmOptions.environment).not.toHaveProperty('API_SERVER_KEY');
 
 		// The raw mediated value must not enter the guest environment.
 		expect(vmOptions.environment).not.toHaveProperty('PERPLEXITY_API_KEY');
@@ -4687,7 +4027,7 @@ describe('startGatewayZone', () => {
 
 		await startGatewayZone(
 			{
-				secretResolver: createOpenClawSecretResolver({
+				secretResolver: createGatewaySecretResolver({
 					PERPLEXITY_API_KEY: 'key',
 					DISCORD_BOT_TOKEN: 'token',
 					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
@@ -4749,7 +4089,7 @@ describe('startGatewayZone', () => {
 		await expect(
 			startGatewayZone(
 				{
-					secretResolver: createOpenClawSecretResolver({
+					secretResolver: createGatewaySecretResolver({
 						OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
 					}),
 					systemConfig: await createWorkerSystemConfig(),
@@ -4803,7 +4143,7 @@ describe('startGatewayZone', () => {
 		await expect(
 			startGatewayZone(
 				{
-					secretResolver: createOpenClawSecretResolver({
+					secretResolver: createGatewaySecretResolver({
 						OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
 					}),
 					systemConfig: await createWorkerSystemConfig(),
@@ -4848,7 +4188,7 @@ describe('startGatewayZone', () => {
 		await expect(
 			startGatewayZone(
 				{
-					secretResolver: createOpenClawSecretResolver({
+					secretResolver: createGatewaySecretResolver({
 						OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
 					}),
 					systemConfig: await createWorkerSystemConfig(),
@@ -4893,7 +4233,7 @@ describe('startGatewayZone', () => {
 		await expect(
 			startGatewayZone(
 				{
-					secretResolver: createOpenClawSecretResolver({
+					secretResolver: createGatewaySecretResolver({
 						OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
 					}),
 					systemConfig: await createWorkerSystemConfig(),
@@ -4931,7 +4271,7 @@ describe('startGatewayZone', () => {
 
 		const result = await startGatewayZone(
 			{
-				secretResolver: createOpenClawSecretResolver({
+				secretResolver: createGatewaySecretResolver({
 					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
 				}),
 				systemConfig: await createWorkerSystemConfig(),
@@ -4998,7 +4338,7 @@ describe('startGatewayZone', () => {
 		await expect(
 			startGatewayZone(
 				{
-					secretResolver: createOpenClawSecretResolver({
+					secretResolver: createGatewaySecretResolver({
 						OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
 					}),
 					systemConfig,
@@ -5068,7 +4408,7 @@ describe('startGatewayZone', () => {
 
 		await startGatewayZone(
 			{
-				secretResolver: createOpenClawSecretResolver({
+				secretResolver: createGatewaySecretResolver({
 					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
 				}),
 				systemConfig: await createWorkerSystemConfig(),
@@ -5139,62 +4479,6 @@ describe('startGatewayZone', () => {
 		}
 	});
 
-	it('materializes the managed OpenClaw config path in protected framework input', async () => {
-		const execMock = vi.fn((_command: string) => createManagedExecProcessStub({ stdout: '200' }));
-		let managedVmCreateRequest: ManagedVmCreateRequest | undefined;
-		const managedVm: ManagedVm = {
-			id: 'vm-token',
-			start: vi.fn(async () => {}),
-			close: vi.fn(async () => completeGatewayVmClose('vm-token')),
-			enableIngress: vi.fn(async () => createTestIngressAccess()),
-			enableSsh: vi.fn(async () => createTestSshAccess()),
-			exec: execMock,
-			configureIngressRoutes: vi.fn(),
-			getHostProcessId: vi.fn(() => 28289),
-		};
-
-		await startGatewayZone(
-			{
-				secretResolver: createOpenClawSecretResolver({
-					DISCORD_BOT_TOKEN: 'discord-token',
-					OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
-					PERPLEXITY_API_KEY: 'pplx-key',
-				}),
-				systemConfig: await createSystemConfig(),
-				zoneId: 'shravan',
-			},
-			{
-				managedVmImages: {
-					prepareImage: vi.fn(async () => ({
-						built: true,
-						fingerprint: 'fp',
-						imageReference: '/tmp/img',
-					})),
-				},
-				managedVmFactory: {
-					createManagedVm: vi.fn(async (createRequest) => {
-						managedVmCreateRequest = createRequest;
-						return managedVm;
-					}),
-				},
-			},
-		);
-
-		const protectedFrameworkEnvironment = requireManagedGatewayBootInputFile(
-			managedVmCreateRequest,
-			managedGatewayBootInputPaths.environmentRoot,
-			'framework.environment.sh',
-		);
-		expect(protectedFrameworkEnvironment).toContain(
-			"export OPENCLAW_CONFIG_PATH='/run/agent-vm/managed-gateway/framework-service.json'",
-		);
-		const managedExecCommands = execMock.mock.calls.map(([command]) => command);
-		expect(managedExecCommands).toHaveLength(2);
-		expect(
-			managedExecCommands.every((command) => command === expectedManagedOpenClawReadinessCommand),
-		).toBe(true);
-	});
-
 	it('reserves exact ownership immediately before VM creation and returns the same ownership handle', async () => {
 		const taskTitles: string[] = [];
 		const ownership = createTestVmOwnershipHarness(
@@ -5211,7 +4495,7 @@ describe('startGatewayZone', () => {
 					taskTitles.push(title);
 					await run();
 				},
-				secretResolver: createOpenClawSecretResolver({
+				secretResolver: createGatewaySecretResolver({
 					DISCORD_BOT_TOKEN: 'discord-token',
 					OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
 					PERPLEXITY_API_KEY: 'pplx-key',
@@ -5282,7 +4566,7 @@ describe('startGatewayZone', () => {
 		const startPromise = startGatewayZone(
 			{
 				createVmOwnership: ownership.createVmOwnership,
-				secretResolver: createOpenClawSecretResolver({
+				secretResolver: createGatewaySecretResolver({
 					DISCORD_BOT_TOKEN: 'discord-token',
 					OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
 					PERPLEXITY_API_KEY: 'pplx-key',
@@ -5370,7 +4654,7 @@ describe('startGatewayZone', () => {
 					pendingContainment = containment;
 					containmentPublished.resolve();
 				},
-				secretResolver: createOpenClawSecretResolver({
+				secretResolver: createGatewaySecretResolver({
 					DISCORD_BOT_TOKEN: 'discord-token',
 					OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
 					PERPLEXITY_API_KEY: 'pplx-key',
@@ -5419,7 +4703,7 @@ describe('startGatewayZone', () => {
 				{
 					controlSession: { controllerEpoch: 'controller-epoch-exact' },
 					createVmOwnership: ownership.createVmOwnership,
-					secretResolver: createOpenClawSecretResolver({
+					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
 						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
@@ -5466,7 +4750,7 @@ describe('startGatewayZone', () => {
 			startGatewayZone(
 				{
 					createVmOwnership: ownership.createVmOwnership,
-					secretResolver: createOpenClawSecretResolver({
+					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
 						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
@@ -5511,7 +4795,7 @@ describe('startGatewayZone', () => {
 		await expect(
 			startGatewayZone(
 				{
-					secretResolver: createOpenClawSecretResolver({
+					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
 						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
@@ -5558,7 +4842,7 @@ describe('startGatewayZone', () => {
 		try {
 			await startGatewayZone(
 				{
-					secretResolver: createOpenClawSecretResolver({
+					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
 						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
@@ -5618,7 +4902,7 @@ describe('startGatewayZone', () => {
 		try {
 			await startGatewayZone(
 				{
-					secretResolver: createOpenClawSecretResolver({
+					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
 						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
@@ -5675,7 +4959,7 @@ describe('startGatewayZone', () => {
 			startGatewayZone(
 				{
 					createVmOwnership: ownership.createVmOwnership,
-					secretResolver: createOpenClawSecretResolver({
+					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
 						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
@@ -5726,7 +5010,7 @@ describe('startGatewayZone', () => {
 			await startGatewayZone(
 				{
 					createVmOwnership: ownership.createVmOwnership,
-					secretResolver: createOpenClawSecretResolver({
+					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
 						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
@@ -5778,7 +5062,7 @@ describe('startGatewayZone', () => {
 			startGatewayZone(
 				{
 					createVmOwnership: ownership.createVmOwnership,
-					secretResolver: createOpenClawSecretResolver({
+					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
 						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
@@ -5797,7 +5081,7 @@ describe('startGatewayZone', () => {
 					createGatewayControlSessionMaterial: createExactTestGatewayControlSessionMaterial,
 					managedVmFactory: { createManagedVm },
 					loadGatewayLifecycle: () => ({
-						...loadGatewayLifecycle('openclaw'),
+						...loadGatewayLifecycle('hermes'),
 						prepareHostState,
 					}),
 				},
@@ -5826,7 +5110,7 @@ describe('startGatewayZone', () => {
 			startGatewayZone(
 				{
 					createVmOwnership: ownership.createVmOwnership,
-					secretResolver: createOpenClawSecretResolver({
+					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
 						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
@@ -5863,7 +5147,7 @@ describe('startGatewayZone', () => {
 			startGatewayZone(
 				{
 					createVmOwnership: ownership.createVmOwnership,
-					secretResolver: createOpenClawSecretResolver({
+					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
 						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
@@ -5899,7 +5183,7 @@ describe('startGatewayZone', () => {
 			startGatewayZone(
 				{
 					createVmOwnership: ownership.createVmOwnership,
-					secretResolver: createOpenClawSecretResolver({
+					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
 						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
@@ -5942,7 +5226,7 @@ describe('startGatewayZone', () => {
 
 		await startGatewayZone(
 			{
-				secretResolver: createOpenClawSecretResolver({
+				secretResolver: createGatewaySecretResolver({
 					DISCORD_BOT_TOKEN: 'discord-token',
 					OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
 					PERPLEXITY_API_KEY: 'pplx-key',
@@ -5960,7 +5244,7 @@ describe('startGatewayZone', () => {
 				},
 				managedVmFactory: { createManagedVm },
 				loadGatewayLifecycle: () => ({
-					...loadGatewayLifecycle('openclaw'),
+					...loadGatewayLifecycle('hermes'),
 					prepareHostState,
 				}),
 			},
@@ -5972,50 +5256,6 @@ describe('startGatewayZone', () => {
 		expect(prepareHostState.mock.invocationCallOrder[0] ?? 0).toBeLessThan(
 			startManagedVm.mock.invocationCallOrder[0] ?? 0,
 		);
-	});
-
-	it('starts OpenClaw without consulting legacy foreign-runtime cleanup authority', async () => {
-		const managedVm: ManagedVm = {
-			id: 'vm-quarantine',
-			start: vi.fn(async () => {}),
-			close: vi.fn(async () => completeGatewayVmClose('vm-quarantine')),
-			enableIngress: vi.fn(async () => createTestIngressAccess()),
-			enableSsh: vi.fn(async () => createTestSshAccess()),
-			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
-			getHostProcessId: vi.fn(() => 28293),
-			configureIngressRoutes: vi.fn(),
-		};
-
-		const result = await startGatewayZone(
-			{
-				secretResolver: createOpenClawSecretResolver({
-					DISCORD_BOT_TOKEN: 'discord-token',
-					OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
-					PERPLEXITY_API_KEY: 'pplx-key',
-				}),
-				systemConfig: await createSystemConfig(),
-				zoneId: 'shravan',
-			},
-			{
-				managedVmImages: {
-					prepareImage: vi.fn(async () => ({
-						built: true,
-						fingerprint: 'fp',
-						imageReference: '/tmp/img',
-					})),
-				},
-				managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
-			},
-		);
-
-		expect(cleanupOrphanedGatewayIfPresentMock).not.toHaveBeenCalled();
-		expect(result.vm).not.toBe(managedVm);
-		expect(result.vm).toMatchObject({ id: managedVm.id });
-		expect(result.vm).not.toHaveProperty('close');
-		expect(result.vm).not.toHaveProperty('configureIngressRoutes');
-		expect(result.vm).not.toHaveProperty('enableIngress');
-		expect(result.vm).not.toHaveProperty('start');
-		expect(result.ingress).toEqual({ host: '127.0.0.1', port: 18791 });
 	});
 
 	it('provisions protected Tool Portal authority and connects the control session after ingress', async () => {
@@ -6160,10 +5400,10 @@ describe('startGatewayZone', () => {
 		};
 		const systemConfig = await createSystemConfig();
 		const configuredZone = systemConfig.zones[0];
-		if (configuredZone === undefined || configuredZone.gateway.type !== 'openclaw') {
+		if (configuredZone === undefined || configuredZone.gateway.type !== 'hermes') {
 			throw new Error('Expected OpenClaw test zone.');
 		}
-		const toolPortalConfigDir = path.dirname(configuredZone.gateway.config);
+		const toolPortalConfigDir = requireToolPortalConfigDir(configuredZone);
 		await writeMinimalMcpPortalConfigs(toolPortalConfigDir);
 		const systemConfigWithToolPortal: LoadedSystemConfig = {
 			...systemConfig,
@@ -6233,7 +5473,7 @@ describe('startGatewayZone', () => {
 				},
 				writeLog: (_level, telemetry) =>
 					loggedMessages.push(telemetry?.operation ?? 'unknown-operation'),
-				secretResolver: createOpenClawSecretResolver({
+				secretResolver: createGatewaySecretResolver({
 					DISCORD_BOT_TOKEN: 'discord-token',
 					OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
 					PERPLEXITY_API_KEY: 'pplx-key',
@@ -6700,35 +5940,9 @@ describe('startGatewayZone', () => {
 		expect(requireManagedGatewayResult(result).controlSession).toBe(controlSessionClient);
 
 		const zone = systemConfigWithToolPortal.zones.find((candidate) => candidate.id === 'shravan');
-		if (zone?.gateway.type !== 'openclaw') {
-			throw new Error('Expected OpenClaw test zone.');
+		if (zone?.gateway.type !== 'hermes') {
+			throw new Error('Expected Hermes test zone.');
 		}
-		const effectiveConfig = parseJsonObject(
-			await readFile(path.join(zone.gateway.stateDir, 'effective-openclaw.json'), 'utf8'),
-		);
-		const effectiveGondolinConfig = requireObjectProperty(
-			requireObjectProperty(
-				requireObjectProperty(requireObjectProperty(effectiveConfig, 'plugins'), 'entries'),
-				'gondolin',
-			),
-			'config',
-		);
-		expect(effectiveGondolinConfig).not.toHaveProperty('controlSession');
-		expect(requireObjectProperty(effectiveGondolinConfig, 'toolPortal')).toMatchObject({
-			agentProjections: {
-				main: {
-					agentId: 'main',
-					frameworkIdentity: { agentId: 'main', kind: 'openclaw' },
-					profileAssignmentRevision: expect.any(String),
-					toolPortalProfileId: 'default',
-				},
-			},
-			attachment: {
-				clientKind: 'openclaw-managed-plugin',
-				configuredAgentIds: ['main'],
-				projectionCohortDigest: expect.stringMatching(/^projection-cohort:[a-f0-9]{64}$/u),
-			},
-		});
 		const toolPortalServiceConfig = GatewayRuntimeServiceConfigSchema.parse(
 			JSON.parse(
 				requireManagedGatewayBootInputFile(
@@ -6811,30 +6025,6 @@ describe('startGatewayZone', () => {
 		expect(unsubscribeBindingRetirement).toHaveBeenCalledOnce();
 	});
 
-	it('accepts caller context registration for declared non-default agents in multi-agent OpenClaw zones', async () => {
-		const systemConfig = await createSystemConfig();
-		const zone = systemConfig.zones[0];
-		if (zone === undefined || zone.gateway.type !== 'openclaw') {
-			throw new Error('Expected OpenClaw gateway test zone.');
-		}
-		const multiAgentZone = {
-			...zone,
-			agents: [{ id: 'main' }, { id: 'second' }],
-		};
-		const agentProjections = createTestAgentProjections(['main', 'second']);
-		const callerEvidence = createTestCallerContextProofInput({ agentId: 'second' });
-
-		expect(
-			validateGatewayControlCallerContextRegistration({
-				agentAuthorityKeys: testAgentAuthorityKeys,
-				agentProjections,
-				callerContextProofKey: testCallerContextProofKey,
-				payload: createSignedTestCallerContextRegisterPayload(callerEvidence),
-				zone: multiAgentZone,
-			}),
-		).toBeUndefined();
-	});
-
 	it('accepts caller context registration only for the exact authored Hermes profile', async () => {
 		// Arrange
 		const systemConfig = await createHermesSystemConfig();
@@ -6885,44 +6075,16 @@ describe('startGatewayZone', () => {
 		).toThrow(/framework identity/u);
 	});
 
-	it('rejects caller context registration with a mismatched OpenClaw framework identity', async () => {
-		const systemConfig = await createSystemConfig();
-		const zone = systemConfig.zones[0];
-		if (zone === undefined || zone.gateway.type !== 'openclaw') {
-			throw new Error('Expected OpenClaw gateway test zone.');
-		}
-		const multiAgentZone = {
-			...zone,
-			agents: [{ id: 'main' }, { id: 'second' }],
-		};
-		const agentProjections = createTestAgentProjections(['main', 'second']);
-		const callerEvidence = createTestCallerContextProofInput({
-			agentId: 'second',
-			principal: createTestInvocationPrincipal('second', {
-				frameworkIdentity: { agentId: 'main', kind: 'openclaw' },
-			}),
-		});
-
-		expect(() =>
-			validateGatewayControlCallerContextRegistration({
-				agentAuthorityKeys: testAgentAuthorityKeys,
-				agentProjections,
-				callerContextProofKey: testCallerContextProofKey,
-				payload: createSignedTestCallerContextRegisterPayload(callerEvidence),
-				zone: multiAgentZone,
-			}),
-		).toThrow(/framework identity/u);
-	});
-
 	it('rejects caller context registration outside the immutable projection revision', async () => {
 		const systemConfig = await createSystemConfig();
 		const zone = systemConfig.zones[0];
-		if (zone === undefined || zone.gateway.type !== 'openclaw') {
+		if (zone === undefined || zone.gateway.type !== 'hermes') {
 			throw new Error('Expected OpenClaw gateway test zone.');
 		}
 		const multiAgentZone = {
 			...zone,
 			agents: [{ id: 'main' }, { id: 'second' }],
+			gateway: { ...zone.gateway, profilesByAgent: { main: 'main', second: 'second' } },
 		};
 		const agentProjections = createTestAgentProjections(['main', 'second']);
 		const callerEvidence = createTestCallerContextProofInput({
@@ -6943,44 +6105,16 @@ describe('startGatewayZone', () => {
 		).toThrow(/immutable projection/u);
 	});
 
-	it('rejects caller context registration without per-agent authority proof in multi-agent OpenClaw zones', async () => {
-		const systemConfig = await createSystemConfig();
-		const zone = systemConfig.zones[0];
-		if (zone === undefined || zone.gateway.type !== 'openclaw') {
-			throw new Error('Expected OpenClaw gateway test zone.');
-		}
-		const multiAgentZone = {
-			...zone,
-			agents: [{ id: 'main' }, { id: 'second' }],
-		};
-		const agentProjections = createTestAgentProjections(['main', 'second']);
-		const callerEvidence = createTestCallerContextProofInput({ agentId: 'second' });
-
-		expect(() =>
-			validateGatewayControlCallerContextRegistration({
-				agentAuthorityKeys: testAgentAuthorityKeys,
-				agentProjections,
-				callerContextProofKey: testCallerContextProofKey,
-				payload: {
-					adapterEvidence: {
-						...callerEvidence,
-						proof: signTestCallerContextProof(callerEvidence),
-					},
-				} as unknown as GatewayControlCallerContextRegisterPayload,
-				zone: multiAgentZone,
-			}),
-		).toThrow(/agent authority/u);
-	});
-
 	it('rejects caller context registration when the proof was not issued for the session material', async () => {
 		const systemConfig = await createSystemConfig();
 		const zone = systemConfig.zones[0];
-		if (zone === undefined || zone.gateway.type !== 'openclaw') {
+		if (zone === undefined || zone.gateway.type !== 'hermes') {
 			throw new Error('Expected OpenClaw gateway test zone.');
 		}
 		const multiAgentZone = {
 			...zone,
 			agents: [{ id: 'main' }, { id: 'second' }],
+			gateway: { ...zone.gateway, profilesByAgent: { main: 'main', second: 'second' } },
 		};
 		const agentProjections = createTestAgentProjections(['main', 'second']);
 		const callerEvidence = createTestCallerContextProofInput({ agentId: 'second' });
@@ -7032,7 +6166,7 @@ describe('startGatewayZone', () => {
 		// Act
 		const result = await startGatewayZone(
 			{
-				secretResolver: createOpenClawSecretResolver({
+				secretResolver: createGatewaySecretResolver({
 					API_SERVER_KEY: 'test-hermes-api-server-key',
 					DISCORD_BOT_TOKEN_MAIN: 'test-hermes-main-discord-token',
 					DISCORD_BOT_TOKEN_SECOND: 'test-hermes-second-discord-token',
@@ -7186,7 +6320,7 @@ describe('startGatewayZone', () => {
 
 		const result = await startGatewayZone(
 			{
-				secretResolver: createOpenClawSecretResolver({
+				secretResolver: createGatewaySecretResolver({
 					[sourceRef]: 'test-profile-a-provider-key',
 				}),
 				systemConfig,
@@ -7279,7 +6413,7 @@ describe('startGatewayZone', () => {
 		await expect(
 			startGatewayZone(
 				{
-					secretResolver: createOpenClawSecretResolver({
+					secretResolver: createGatewaySecretResolver({
 						[collisionSourceRef]: 'test-hermes-otel-collision-key',
 					}),
 					systemConfig,
@@ -7295,62 +6429,5 @@ describe('startGatewayZone', () => {
 		);
 		expect(finalizeMemoryMount).not.toHaveBeenCalled();
 		expect(start).not.toHaveBeenCalled();
-	});
-
-	it('exposes managed OpenClaw as an image-owned cohort without controller process authority', async () => {
-		const { exec, managedVm } = createHealthyGatewayVmStub('vm-managed-openclaw-hard-cut', 28_401);
-		const result = await startGatewayZone(
-			{
-				secretResolver: createOpenClawSecretResolver({
-					DISCORD_BOT_TOKEN: 'discord-token',
-					OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
-					PERPLEXITY_API_KEY: 'pplx-key',
-				}),
-				systemConfig: await createSystemConfig(),
-				zoneId: 'shravan',
-			},
-			{
-				managedVmImages: {
-					prepareImage: vi.fn(async () => ({
-						built: true,
-						fingerprint: 'managed-openclaw-hard-cut-image',
-						imageReference: '/tmp/managed-openclaw-hard-cut-image',
-					})),
-				},
-				managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
-			},
-		);
-
-		const managedResult = requireManagedGatewayResult(result);
-		expect(managedResult.bootContract).toMatchObject({
-			contractVersion: 1,
-			frameworkService: {
-				framework: 'openclaw',
-				role: 'framework-service',
-			},
-			kind: 'managed-gateway-exact-two-role',
-			toolPortalService: {
-				role: 'tool-portal-service',
-			},
-		});
-		expect(managedResult.expectedCohort.frameworkIdentity).toMatchObject({
-			configuredAgentIds: ['main'],
-			frameworkKind: 'openclaw',
-		});
-		expect(managedResult).not.toHaveProperty('openClawProcessEpochOwner');
-		expect(managedResult).not.toHaveProperty('processEpoch');
-		expect(managedResult).not.toHaveProperty('processSpec');
-		const managedExecCommands = exec.mock.calls.map(([command]) => command);
-		expect(managedExecCommands).toEqual([
-			expectedManagedOpenClawReadinessCommand,
-			expectedManagedOpenClawReadinessCommand,
-		]);
-		expect(
-			managedExecCommands.some((command) =>
-				typeof command === 'string'
-					? /(?:nohup|bootstrap|start-(?:openclaw|hermes)|gateway-runtime)/u.test(command)
-					: true,
-			),
-		).toBe(false);
 	});
 });

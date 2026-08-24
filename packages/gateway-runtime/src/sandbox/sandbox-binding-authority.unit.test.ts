@@ -10,7 +10,7 @@ const trustedInvocation = {
 	environmentGeneration: 'environment-generation-7',
 	principal: {
 		agentId: 'agent-main',
-		frameworkIdentity: { agentId: 'agent-main', kind: 'openclaw' },
+		frameworkIdentity: { kind: 'hermes', profileName: 'agent-main' },
 		profileAssignmentRevision: 'profile-assignment:agent-main:4',
 		toolPortalProfileId: 'standard',
 	},

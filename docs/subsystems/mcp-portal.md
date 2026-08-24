@@ -3,7 +3,7 @@
 [Overview](../README.md) > Subsystems > MCP Portal
 
 MCP Portal is an MCP-specific provider backend and upstream MCP client
-aggregator. Managed OpenClaw reaches MCP-backed capabilities through Tool
+aggregator. Managed Hermes reaches MCP-backed capabilities through Tool
 Portal. External MCP clients use the separate `mcp-portal mcp-proxy serve`
 adapter.
 
@@ -75,8 +75,8 @@ In standalone MCP Portal mode, the agent sees only:
 - `mcp_portal_describe`
 - `mcp_portal_call`
 
-Managed OpenClaw agents do not see these native MCP Portal tools. Managed
-OpenClaw exposes `tool_portal_list`, `tool_portal_search`,
+Managed Hermes agents do not see these native MCP Portal tools. Managed Hermes
+exposes `tool_portal_list`, `tool_portal_search`,
 `tool_portal_describe`, and `tool_portal_call`; Tool Portal delegates
 MCP-backed capabilities to MCP Portal as an internal backend.
 
@@ -156,7 +156,7 @@ secret value. Omit `format` when the upstream wants that raw value. Add
 scheme. Prefix presentation always inserts exactly one space after the prefix;
 the prefix itself must not contain whitespace.
 
-Managed OpenClaw effective-config generation preserves `format` on the generated
+Managed Gateway effective-config generation preserves `format` on the generated
 provider environment reference, but keeps `runtimeEnvironment` and
 `runtimeMediatedSecrets` raw. The provider runtime applies presentation after
 resolving the current raw value or Gondolin placeholder. This avoids storing
@@ -279,7 +279,7 @@ and content-policy filtering.
 
 ### Runtime diagnostics
 
-MCP Portal returns one result shape in both managed OpenClaw Tool Portal backend
+MCP Portal returns one result shape in both managed Hermes Tool Portal backend
 mode and standalone direct MCP proxy mode:
 
 ```json
@@ -320,16 +320,16 @@ proof before deployment docs may treat them as available.
 
 ## Local E2E Verification
 
-`packages/agent-vm/src/integration-tests/openclaw-mcp-portal.openclaw.e2e.test.ts`
-boots a real controller, a real OpenClaw gateway VM, the OpenClaw plugin loader,
-managed Tool Portal tools, MCP Portal as the MCP-provider backend, and a fake
-upstream MCP server. Run it explicitly:
+The managed Tool Portal/MCP-provider composition is covered by the package
+integration suites, while the retained live framework boundary runs in the
+Hermes E2E project:
 
 ```bash
-mise exec -- pnpm test:e2e:openclaw
+pnpm vitest run packages/gateway-runtime/src/managed-tool-portal-composition.integration.test.ts
+mise exec -- pnpm test:e2e:hermes
 ```
 
-The e2e proof shows the gateway can load the plugin, register managed Tool
-Portal tools, discover fake upstream tools, call read-only tools, and reject
-approval-gated writes without approval. It intentionally avoids real upstream
-credentials.
+The integration proof uses deterministic upstream providers to verify discovery,
+read-only calls, and approval-gated rejection. The Hermes lane proves the real
+managed adapter and Gateway VM boundary; inventory-only skips are not live
+proof.

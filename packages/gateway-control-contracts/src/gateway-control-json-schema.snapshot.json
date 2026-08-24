@@ -671,40 +671,20 @@
 													},
 													"frameworkIdentity": {
 														"readOnly": true,
-														"oneOf": [
-															{
-																"type": "object",
-																"properties": {
-																	"agentId": {
-																		"type": "string",
-																		"minLength": 1,
-																		"maxLength": 256
-																	},
-																	"kind": {
-																		"type": "string",
-																		"const": "openclaw"
-																	}
-																},
-																"required": ["agentId", "kind"],
-																"additionalProperties": false
+														"type": "object",
+														"properties": {
+															"kind": {
+																"type": "string",
+																"const": "hermes"
 															},
-															{
-																"type": "object",
-																"properties": {
-																	"kind": {
-																		"type": "string",
-																		"const": "hermes"
-																	},
-																	"profileName": {
-																		"type": "string",
-																		"minLength": 1,
-																		"maxLength": 256
-																	}
-																},
-																"required": ["kind", "profileName"],
-																"additionalProperties": false
+															"profileName": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 256
 															}
-														]
+														},
+														"required": ["kind", "profileName"],
+														"additionalProperties": false
 													},
 													"profileAssignmentRevision": {
 														"type": "string",
@@ -2543,40 +2523,20 @@
 															},
 															"frameworkIdentity": {
 																"readOnly": true,
-																"oneOf": [
-																	{
-																		"type": "object",
-																		"properties": {
-																			"agentId": {
-																				"type": "string",
-																				"minLength": 1,
-																				"maxLength": 256
-																			},
-																			"kind": {
-																				"type": "string",
-																				"const": "openclaw"
-																			}
-																		},
-																		"required": ["agentId", "kind"],
-																		"additionalProperties": false
+																"type": "object",
+																"properties": {
+																	"kind": {
+																		"type": "string",
+																		"const": "hermes"
 																	},
-																	{
-																		"type": "object",
-																		"properties": {
-																			"kind": {
-																				"type": "string",
-																				"const": "hermes"
-																			},
-																			"profileName": {
-																				"type": "string",
-																				"minLength": 1,
-																				"maxLength": 256
-																			}
-																		},
-																		"required": ["kind", "profileName"],
-																		"additionalProperties": false
+																	"profileName": {
+																		"type": "string",
+																		"minLength": 1,
+																		"maxLength": 256
 																	}
-																]
+																},
+																"required": ["kind", "profileName"],
+																"additionalProperties": false
 															},
 															"profileAssignmentRevision": {
 																"type": "string",
@@ -2984,17 +2944,6 @@
 										"properties": {
 											"action": {
 												"type": "string",
-												"const": "refresh_runtime_status"
-											}
-										},
-										"required": ["action"],
-										"additionalProperties": false
-									},
-									{
-										"type": "object",
-										"properties": {
-											"action": {
-												"type": "string",
 												"const": "restart_control_service"
 											}
 										},
@@ -3244,7 +3193,7 @@
 															},
 															"clientKind": {
 																"type": "string",
-																"enum": ["openclaw-managed-plugin", "hermes-managed-plugin"]
+																"const": "hermes-managed-plugin"
 															},
 															"configuredAgentIds": {
 																"readOnly": true,
@@ -3746,61 +3695,6 @@
 												"type": "string",
 												"enum": ["ok", "failed", "timeout", "degraded"]
 											},
-											"eventKind": {
-												"type": "string",
-												"const": "gateway-plugin-health"
-											}
-										},
-										"required": ["observedAtMs", "result", "eventKind"],
-										"additionalProperties": false
-									},
-									{
-										"type": "object",
-										"properties": {
-											"correlation": {
-												"type": "object",
-												"properties": {
-													"causationId": {
-														"type": "string",
-														"format": "uuid",
-														"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-													},
-													"correlationId": {
-														"type": "string",
-														"minLength": 1
-													},
-													"requestId": {
-														"type": "string",
-														"minLength": 1
-													},
-													"runId": {
-														"type": "string",
-														"minLength": 1
-													},
-													"sessionKeyDigest": {
-														"type": "string",
-														"minLength": 32
-													},
-													"toolCallId": {
-														"type": "string",
-														"minLength": 1
-													},
-													"traceId": {
-														"type": "string",
-														"pattern": "^[0-9a-f]{32}$"
-													}
-												},
-												"additionalProperties": false
-											},
-											"observedAtMs": {
-												"type": "integer",
-												"exclusiveMinimum": 0,
-												"maximum": 9007199254740991
-											},
-											"result": {
-												"type": "string",
-												"enum": ["ok", "failed", "timeout", "degraded"]
-											},
 											"agentId": {
 												"type": "string",
 												"minLength": 1
@@ -3981,100 +3875,6 @@
 										"additionalProperties": false
 									}
 								]
-							}
-						},
-						"required": ["kind", "operation", "payload"],
-						"additionalProperties": false
-					},
-					{
-						"type": "object",
-						"properties": {
-							"causationId": {
-								"type": "string",
-								"format": "uuid",
-								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-							},
-							"correlationId": {
-								"type": "string",
-								"minLength": 1
-							},
-							"requestId": {
-								"type": "string",
-								"minLength": 1
-							},
-							"runId": {
-								"type": "string",
-								"minLength": 1
-							},
-							"sessionKeyDigest": {
-								"type": "string",
-								"minLength": 32
-							},
-							"toolCallId": {
-								"type": "string",
-								"minLength": 1
-							},
-							"traceId": {
-								"type": "string",
-								"pattern": "^[0-9a-f]{32}$"
-							},
-							"kind": {
-								"type": "string",
-								"const": "event"
-							},
-							"operation": {
-								"type": "string",
-								"const": "runtime_status"
-							},
-							"payload": {
-								"type": "object",
-								"properties": {
-									"findings": {
-										"type": "array",
-										"items": {
-											"type": "object",
-											"properties": {
-												"id": {
-													"type": "string",
-													"minLength": 1
-												},
-												"ok": {
-													"type": "boolean"
-												},
-												"safeMessage": {
-													"type": "string",
-													"minLength": 1
-												},
-												"severity": {
-													"type": "string",
-													"enum": ["info", "warning", "error"]
-												}
-											},
-											"required": ["id", "ok"],
-											"additionalProperties": false
-										}
-									},
-									"observedAtMs": {
-										"type": "integer",
-										"exclusiveMinimum": 0,
-										"maximum": 9007199254740991
-									},
-									"providerRuntimeHealth": {
-										"type": "string",
-										"enum": [
-											"healthy",
-											"transitioning",
-											"unhealthy_recoverable",
-											"unhealthy_unrecoverable"
-										]
-									},
-									"statusKind": {
-										"type": "string",
-										"minLength": 1
-									}
-								},
-								"required": ["findings", "observedAtMs", "statusKind"],
-								"additionalProperties": false
 							}
 						},
 						"required": ["kind", "operation", "payload"],
@@ -6330,40 +6130,20 @@
 																							},
 																							"frameworkIdentity": {
 																								"readOnly": true,
-																								"oneOf": [
-																									{
-																										"type": "object",
-																										"properties": {
-																											"agentId": {
-																												"type": "string",
-																												"minLength": 1,
-																												"maxLength": 256
-																											},
-																											"kind": {
-																												"type": "string",
-																												"const": "openclaw"
-																											}
-																										},
-																										"required": ["agentId", "kind"],
-																										"additionalProperties": false
+																								"type": "object",
+																								"properties": {
+																									"kind": {
+																										"type": "string",
+																										"const": "hermes"
 																									},
-																									{
-																										"type": "object",
-																										"properties": {
-																											"kind": {
-																												"type": "string",
-																												"const": "hermes"
-																											},
-																											"profileName": {
-																												"type": "string",
-																												"minLength": 1,
-																												"maxLength": 256
-																											}
-																										},
-																										"required": ["kind", "profileName"],
-																										"additionalProperties": false
+																									"profileName": {
+																										"type": "string",
+																										"minLength": 1,
+																										"maxLength": 256
 																									}
-																								]
+																								},
+																								"required": ["kind", "profileName"],
+																								"additionalProperties": false
 																							},
 																							"profileAssignmentRevision": {
 																								"type": "string",
@@ -7896,7 +7676,6 @@
 			"lease_use_heartbeat",
 			"lease_use_end",
 			"health_event",
-			"runtime_status",
 			"tool_vm_binding_publish",
 			"tool_vm_binding_request",
 			"tool_portal_controller_execution",

@@ -6,7 +6,6 @@ import {
 } from '../../config/system-config.js';
 import { HealthEventStore } from '../health/health-event-store.js';
 import type { ObservedControllerLeaseCreateRequest } from '../leases/observed-lease-create-request.js';
-import { OpenClawRuntimeStatusStore } from '../openclaw-runtime-status.js';
 import { registerControllerHealthEventRoutes } from './controller-health-event-routes.js';
 import {
 	type ControllerLeaseManager,
@@ -36,7 +35,6 @@ export function createControllerApp(options: {
 	readonly zoneDefaultToolVmProfiles?: Record<string, string>;
 	readonly zoneIds?: ReadonlySet<string>;
 	readonly healthEventStore?: HealthEventStore;
-	readonly openClawRuntimeStatusStore?: OpenClawRuntimeStatusStore;
 	readonly now?: () => number;
 	readonly onLeaseCreateRequest?: (request: ObservedControllerLeaseCreateRequest) => void;
 	readonly operations?: Partial<ControllerRouteOperations>;
@@ -111,14 +109,11 @@ export function createControllerService(options: {
 	readonly leaseManager: ControllerLeaseManager;
 	readonly now?: () => number;
 	readonly onLeaseCreateRequest?: (request: ObservedControllerLeaseCreateRequest) => void;
-	readonly openClawRuntimeStatusStore?: OpenClawRuntimeStatusStore;
 	readonly operations?: Partial<ControllerRouteOperations>;
 	readonly readIdentityPem?: (identityFilePath: string) => Promise<string>;
 	readonly runtimeReadiness?: () => ControllerRuntimeReadiness;
 	readonly systemConfig: LoadedSystemConfig;
 }): Hono {
-	const openClawRuntimeStatusStore =
-		options.openClawRuntimeStatusStore ?? new OpenClawRuntimeStatusStore();
 	const controllerHealthConfig = resolveControllerHealthConfig(options.systemConfig);
 	const app = createControllerApp({
 		controllerPort: options.systemConfig.host.controllerPort,
@@ -147,7 +142,6 @@ export function createControllerService(options: {
 					: [[zone.id, zone.agentToolVmProfiles]],
 			),
 		),
-		openClawRuntimeStatusStore,
 		...(options.operations ? { operations: options.operations } : {}),
 	});
 

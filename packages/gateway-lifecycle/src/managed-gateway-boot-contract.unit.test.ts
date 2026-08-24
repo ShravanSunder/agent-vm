@@ -6,17 +6,17 @@ import {
 } from './managed-gateway-boot-contract.js';
 
 function createManagedGatewayBootContractInput(
-	framework: ManagedFrameworkKind = 'openclaw',
+	framework: ManagedFrameworkKind = 'hermes',
 ): Readonly<Record<string, unknown>> {
 	return {
 		contractVersion: 1,
 		frameworkService: {
-			bootEntry: framework === 'openclaw' ? 'openclaw-gateway' : 'hermes-gateway',
+			bootEntry: 'hermes-gateway',
 			configurationInputPath: `/run/agent-vm/boot/${framework}.json`,
 			environmentInputPath: `/run/agent-vm/boot/${framework}.env`,
 			framework,
 			ingress: {
-				guestPort: framework === 'openclaw' ? 18789 : 18889,
+				guestPort: 18889,
 				kind: 'framework-http',
 			},
 			logIdentity: {
@@ -24,7 +24,7 @@ function createManagedGatewayBootContractInput(
 				serviceName: `agent-vm-${framework}`,
 			},
 			readiness: {
-				guestPort: framework === 'openclaw' ? 18789 : 18889,
+				guestPort: 18889,
 				kind: 'framework-http',
 				path: '/readyz',
 			},
@@ -84,7 +84,7 @@ function withServiceField(
 }
 
 describe('managed Gateway boot contract', () => {
-	it.each(['openclaw', 'hermes'] as const)(
+	it.each(['hermes'] as const)(
 		'accepts exactly one Tool Portal service and one %s framework service',
 		(framework) => {
 			const contract = parseManagedGatewayBootContract(
@@ -96,7 +96,7 @@ describe('managed Gateway boot contract', () => {
 				role: 'tool-portal-service',
 			});
 			expect(contract.frameworkService).toMatchObject({
-				bootEntry: framework === 'openclaw' ? 'openclaw-gateway' : 'hermes-gateway',
+				bootEntry: 'hermes-gateway',
 				framework,
 				role: 'framework-service',
 			});
@@ -144,9 +144,9 @@ describe('managed Gateway boot contract', () => {
 			]),
 		],
 		[
-			'OpenClaw and Hermes together',
+			'duplicate framework services',
 			withRootField(createManagedGatewayBootContractInput(), 'frameworkServices', [
-				createManagedGatewayBootContractInput('openclaw').frameworkService,
+				createManagedGatewayBootContractInput('hermes').frameworkService,
 				createManagedGatewayBootContractInput('hermes').frameworkService,
 			]),
 		],
@@ -232,19 +232,19 @@ describe('managed Gateway boot contract', () => {
 		expect(getterInvocations).toBe(0);
 	});
 
-	it.each([
-		['openclaw', 'hermes-gateway'],
-		['hermes', 'openclaw-gateway'],
-	] as const)('rejects %s paired with the wrong closed boot entry', (framework, bootEntry) => {
-		const input = withServiceField(
-			createManagedGatewayBootContractInput(framework),
-			'frameworkService',
-			'bootEntry',
-			bootEntry,
-		);
+	it.each([['hermes', 'unknown-gateway']] as const)(
+		'rejects %s paired with the wrong closed boot entry',
+		(framework, bootEntry) => {
+			const input = withServiceField(
+				createManagedGatewayBootContractInput(framework),
+				'frameworkService',
+				'bootEntry',
+				bootEntry,
+			);
 
-		expect(() => parseManagedGatewayBootContract(input)).toThrow(/bootEntry/u);
-	});
+			expect(() => parseManagedGatewayBootContract(input)).toThrow(/bootEntry/u);
+		},
+	);
 
 	it.each([
 		['relative configuration input', 'configurationInputPath', 'run/config.json'],

@@ -74,7 +74,6 @@ function createHermesZone(options: {
 					},
 				]),
 			),
-			ssh: { secretEnv: 'never' },
 			stateDir: options.stateDirectoryPath,
 			type: 'hermes',
 			zoneFilesDir: '/deployment/zone-files/hermes',

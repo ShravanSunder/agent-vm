@@ -59,7 +59,7 @@ process.on('message', () => {
 			childModuleUrl: pathToFileURL(childModulePath),
 			request: {
 				buildConfigPath: '/project/build-config.json',
-				cacheDir: '/cache/gateway-images/openclaw',
+				cacheDir: '/cache/gateway-images/hermes',
 			},
 			streamPreview: {
 				write(chunk) {
@@ -103,7 +103,7 @@ process.on('message', () => {
 			childModuleUrl: pathToFileURL(childModulePath),
 			request: {
 				buildConfigPath: '/project/build-config.json',
-				cacheDir: '/cache/gateway-images/openclaw',
+				cacheDir: '/cache/gateway-images/hermes',
 			},
 			streamPreview: {
 				write() {
@@ -140,7 +140,7 @@ process.exit(1);
 				childModuleUrl: pathToFileURL(childModulePath),
 				request: {
 					buildConfigPath: '/project/build-config.json',
-					cacheDir: '/cache/gateway-images/openclaw',
+					cacheDir: '/cache/gateway-images/hermes',
 				},
 				streamPreview: {
 					write() {
@@ -180,8 +180,8 @@ process.exit(1);
 
 		const result = await buildManagedVmImage(
 			{
-				buildConfigPath: '/project/vm-images/gateways/openclaw/build-config.json',
-				cacheDir: '/cache/gateway-images/openclaw',
+				buildConfigPath: '/project/vm-images/gateways/hermes/build-config.json',
+				cacheDir: '/cache/gateway-images/hermes',
 				fullReset: true,
 				streamPreview: {
 					write(chunk) {
@@ -198,8 +198,8 @@ process.exit(1);
 		expect(childBuildRequests).toEqual([
 			{
 				request: {
-					buildConfigPath: '/project/vm-images/gateways/openclaw/build-config.json',
-					cacheDir: '/cache/gateway-images/openclaw',
+					buildConfigPath: '/project/vm-images/gateways/hermes/build-config.json',
+					cacheDir: '/cache/gateway-images/hermes',
 					fullReset: true,
 					previewOutput: true,
 				},
@@ -225,8 +225,8 @@ process.exit(1);
 
 		const result = await buildManagedVmImage(
 			{
-				buildConfigPath: '/project/vm-images/gateways/openclaw/build-config.json',
-				cacheDir: '/cache/gateway-images/openclaw',
+				buildConfigPath: '/project/vm-images/gateways/hermes/build-config.json',
+				cacheDir: '/cache/gateway-images/hermes',
 			},
 			dependencies,
 		);
@@ -235,8 +235,8 @@ process.exit(1);
 		expect(childStreamWriteResult).toBe(true);
 		expect(childBuildRequests).toEqual([
 			{
-				buildConfigPath: '/project/vm-images/gateways/openclaw/build-config.json',
-				cacheDir: '/cache/gateway-images/openclaw',
+				buildConfigPath: '/project/vm-images/gateways/hermes/build-config.json',
+				cacheDir: '/cache/gateway-images/hermes',
 			},
 		]);
 	});
@@ -283,8 +283,8 @@ process.exit(1);
 
 		const result = await buildManagedVmImage(
 			{
-				buildConfigPath: '/project/vm-images/gateways/openclaw/build-config.json',
-				cacheDir: '/cache/gateway-images/openclaw',
+				buildConfigPath: '/project/vm-images/gateways/hermes/build-config.json',
+				cacheDir: '/cache/gateway-images/hermes',
 				fullReset: true,
 			},
 			dependencies,
@@ -293,8 +293,8 @@ process.exit(1);
 		expect(result.fingerprint).toBe('abc123');
 		expect(buildImageCalls).toEqual([
 			{
-				cacheDir: '/cache/gateway-images/openclaw',
-				configDir: '/project/vm-images/gateways/openclaw',
+				cacheDir: '/cache/gateway-images/hermes',
+				configDir: '/project/vm-images/gateways/hermes',
 				fullReset: true,
 				gondolinVersion: 'runtime@1',
 				hasOutput: false,
@@ -322,8 +322,8 @@ process.exit(1);
 
 		const result = await runManagedVmImageBuildRequest(
 			{
-				buildConfigPath: '/project/vm-images/gateways/openclaw/build-config.json',
-				cacheDir: '/cache/gateway-images/openclaw',
+				buildConfigPath: '/project/vm-images/gateways/hermes/build-config.json',
+				cacheDir: '/cache/gateway-images/hermes',
 				previewOutput: true,
 			},
 			dependencies,
@@ -367,8 +367,8 @@ process.exit(1);
 			try {
 				return await runManagedVmImageBuildRequest(
 					{
-						buildConfigPath: '/project/vm-images/gateways/openclaw/build-config.json',
-						cacheDir: '/cache/gateway-images/openclaw',
+						buildConfigPath: '/project/vm-images/gateways/hermes/build-config.json',
+						cacheDir: '/cache/gateway-images/hermes',
 						previewOutput: true,
 					},
 					dependencies,

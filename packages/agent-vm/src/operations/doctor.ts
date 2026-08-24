@@ -146,31 +146,6 @@ function buildDockerChecks(
 	];
 }
 
-function hasOpenClawZones(systemConfig: SystemConfig): boolean {
-	return systemConfig.zones.some((zone) => zone.gateway.type === 'openclaw');
-}
-
-function buildOpenClawCliCheck(
-	systemConfig: SystemConfig,
-	availableBinaries: ReadonlySet<string>,
-): readonly DoctorCheck[] {
-	if (!hasOpenClawZones(systemConfig)) {
-		return [];
-	}
-	const openClawCliReady = availableBinaries.has('openclaw');
-	return [
-		{
-			name: 'openclaw-cli',
-			ok: openClawCliReady,
-			...(openClawCliReady
-				? { hint: 'openclaw' }
-				: {
-						hint: 'Install OpenClaw in this catalog for local schema validation: pnpm add -D openclaw@2026.7.1-2.',
-					}),
-		},
-	];
-}
-
 function buildObservabilityEnabledCheck(systemConfig: SystemConfig): DoctorCheck {
 	const observability = systemConfig.host.observability;
 	if (observability?.enabled === true) {
@@ -218,7 +193,7 @@ export function buildRuntimePathIsolationChecks(
 			});
 		}
 		if (
-			zone.gateway.type === 'openclaw' &&
+			zone.gateway.type === 'hermes' &&
 			pathsOverlap(systemConfig.controllerRuntimeDir, zone.gateway.zoneFilesDir)
 		) {
 			failedChecks.push({
@@ -270,7 +245,7 @@ export async function collectManagedAgentRootStorageChecks(
 ): Promise<readonly DoctorCheck[]> {
 	const checksByZone = await Promise.all(
 		systemConfig.zones.map(async (zone): Promise<readonly DoctorCheck[]> => {
-			if (zone.gateway.type !== 'openclaw') {
+			if (zone.gateway.type !== 'hermes') {
 				return [];
 			}
 			const zoneFilesDir = zone.gateway.zoneFilesDir;
@@ -321,7 +296,6 @@ function buildWorkerWorkRootfsChecks(
 					config: zone.gateway.config,
 					memory: zone.gateway.memory,
 					port: zone.gateway.port,
-					ssh: zone.gateway.ssh ?? { secretEnv: 'explicit' },
 					stateDir: zone.gateway.stateDir,
 				},
 				secrets: zone.secrets,
@@ -354,7 +328,7 @@ function buildWorkerWorkRootfsChecks(
 
 function buildZoneToolVmProfileChecks(systemConfig: SystemConfig): readonly DoctorCheck[] {
 	return systemConfig.zones.flatMap((zone) => {
-		if (zone.gateway.type !== 'openclaw') {
+		if (zone.gateway.type !== 'hermes') {
 			return [];
 		}
 		const agentToolVmProfileChecks = Object.entries(zone.agentToolVmProfiles ?? {}).map(
@@ -379,23 +353,6 @@ function buildZoneToolVmProfileChecks(systemConfig: SystemConfig): readonly Doct
 					},
 			...agentToolVmProfileChecks,
 		] as const satisfies readonly DoctorCheck[];
-	});
-}
-
-function buildOpenClawAgentSetupChecks(systemConfig: SystemConfig): readonly DoctorCheck[] {
-	return systemConfig.zones.flatMap((zone) => {
-		if (zone.gateway.type !== 'openclaw') {
-			return [];
-		}
-		const authProfileChecks = Object.keys(zone.gateway.authProfilesByAgent ?? {}).map(
-			(agentId) =>
-				({
-					name: `zone-agent-auth-profile-${zone.id}-${agentId}`,
-					ok: true,
-					hint: 'configured',
-				}) satisfies DoctorCheck,
-		);
-		return authProfileChecks;
 	});
 }
 
@@ -438,17 +395,9 @@ function formatImageProfileHint(profile: {
 function formatPackageOverrideEntries(
 	effectivePackageOverrides: EffectivePackageOverrides,
 ): readonly string[] {
-	return [
-		...effectivePackageOverrides.openclaw.map(
-			(packageEntry) => `${packageEntry.name}@${packageEntry.version}[${packageEntry.source}]`,
-		),
-		...effectivePackageOverrides.npm.map(
-			(packageEntry) => `${packageEntry.name}@${packageEntry.version}[${packageEntry.source}]`,
-		),
-		...effectivePackageOverrides.pnpm.map(
-			(packageEntry) => `${packageEntry.name}@${packageEntry.version}[${packageEntry.source}]`,
-		),
-	];
+	return effectivePackageOverrides.npm.map(
+		(packageEntry) => `${packageEntry.name}@${packageEntry.version}[${packageEntry.source}]`,
+	);
 }
 
 function formatPackageOverrideHint(props: {
@@ -686,7 +635,6 @@ export async function runControllerDoctor(
 		availableBinaries,
 		options.dockerDaemonReady,
 	);
-	const openClawCliChecks = buildOpenClawCliCheck(options.systemConfig, availableBinaries);
 	const workerGatewayVmRequirementsBuilder =
 		options.workerGatewayVmRequirementsBuilder ??
 		((buildOptions: BuildGatewayVmRequirementsOptions): Pick<GatewayVmRequirements, 'mounts'> =>
@@ -785,7 +733,6 @@ export async function runControllerDoctor(
 			availableBinaries,
 		),
 		...dockerChecks,
-		...openClawCliChecks,
 		...gatewayStateAuthorityChecks,
 		...managedAgentRootStorageChecks,
 		...buildRuntimePathIsolationChecks(options.systemConfig),
@@ -821,7 +768,6 @@ export async function runControllerDoctor(
 				}) satisfies DoctorCheck,
 		),
 		...buildZoneToolVmProfileChecks(options.systemConfig),
-		...buildOpenClawAgentSetupChecks(options.systemConfig),
 		...buildManagedAgentSecretAccessChecks(options.systemConfig),
 		...buildLegacyDockerfileImageProfileChecks(options.systemConfig),
 		...options.systemConfig.zones.map(

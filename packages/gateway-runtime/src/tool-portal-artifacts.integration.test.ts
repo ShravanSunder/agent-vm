@@ -71,7 +71,7 @@ const semanticSnapshot = {
 	agentProjections: {
 		'agent-a': {
 			agentId: 'agent-a',
-			frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
+			frameworkIdentity: { kind: 'hermes', profileName: 'agent-a' },
 			profileAssignmentRevision: 'profile-assignment:agent-a:7',
 			toolPortalNamespaceNames: ['github'],
 			toolPortalProfileId: 'code-builder',
@@ -95,7 +95,7 @@ const agentATrustedContext = {
 	correlation: { runId: 'run-a', sessionId: 'session-a', toolCallId: 'tool-call-a' },
 	principal: {
 		agentId: 'agent-a',
-		frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
+		frameworkIdentity: { kind: 'hermes', profileName: 'agent-a' },
 		profileAssignmentRevision: 'profile-assignment:agent-a:7',
 		toolPortalProfileId: 'code-builder',
 	},
@@ -168,7 +168,7 @@ function composeArtifactProjections(
 				semanticSnapshot: props.semanticSnapshot,
 			}),
 		managedPluginAttachment: {
-			clientKind: 'openclaw-managed-plugin',
+			clientKind: 'hermes-managed-plugin',
 			configuredAgentIds: ['agent-a'],
 			projectionCohortDigest: semanticSnapshot.projectionCohortDigest,
 		},
@@ -241,7 +241,7 @@ describe('Gateway runtime Tool Portal artifact projections', () => {
 		const otherPrincipalAuthorization = {
 			...sharedAuthorization,
 			agentId: 'agent-b',
-			frameworkIdentity: { agentId: 'agent-b', kind: 'openclaw' },
+			frameworkIdentity: { kind: 'hermes', profileName: 'agent-b' },
 			operationId: 'other-principal-artifact-operation',
 			profileAssignmentRevision: 'profile-assignment:agent-b:4',
 			toolPortalProfileId: 'code-builder',

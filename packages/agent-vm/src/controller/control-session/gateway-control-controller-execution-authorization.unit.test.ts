@@ -48,7 +48,7 @@ const acceptedSession = {
 
 const trustedPrincipal = {
 	agentId: 'main',
-	frameworkIdentity: { agentId: 'main', kind: 'openclaw' },
+	frameworkIdentity: { kind: 'hermes', profileName: 'main' },
 	profileAssignmentRevision: 'assignment-main',
 	toolPortalProfileId: 'default',
 } as const;
@@ -212,7 +212,7 @@ async function createSystemConfigFixture(
 			gateways: {
 				openclaw: {
 					buildConfig: './vm-images/gateways/openclaw/build-config.json',
-					type: 'openclaw',
+					type: 'hermes',
 				},
 			},
 			toolVms: {
@@ -248,16 +248,14 @@ async function createSystemConfigFixture(
 				egressHosts: [],
 				gateway: {
 					config: path.join(testRoot, 'config', 'zone-a', 'openclaw.json'),
-					controlAuth: {
-						mode: 'token',
-						secret: 'OPENCLAW_GATEWAY_TOKEN',
-					},
 					cpus: 2,
 					imageProfile: 'openclaw',
 					memory: '2G',
 					port: 18_791,
 					stateDir: path.join(testRoot, 'zone-a', 'state'),
-					type: 'openclaw',
+					type: 'hermes',
+					profileSecretProjectionsByAgent: { main: {} },
+					profilesByAgent: { main: 'main' },
 					zoneFilesDir: path.join(testRoot, 'zone-a', 'zone-files'),
 					zoneRuntimeDir: path.join(testRoot, 'zone-a', 'runtime'),
 				},
@@ -287,8 +285,8 @@ async function createSystemConfigFixture(
 
 function configureFixtureAsHermes(systemConfig: LoadedSystemConfig): void {
 	const zone = systemConfig.zones[0];
-	if (zone === undefined || zone.gateway.type !== 'openclaw') {
-		throw new Error('Expected OpenClaw fixture zone');
+	if (zone === undefined || zone.gateway.type !== 'hermes') {
+		throw new Error('Expected Hermes fixture zone');
 	}
 	systemConfig.zones[0] = {
 		...zone,
