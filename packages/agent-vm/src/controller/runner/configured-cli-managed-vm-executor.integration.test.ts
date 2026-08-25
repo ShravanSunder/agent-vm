@@ -123,6 +123,7 @@ function createManagedVmFixture(): {
 	readonly enableSsh: ReturnType<typeof vi.fn>;
 	readonly exec: ReturnType<typeof vi.fn>;
 	readonly getHostProcessId: ReturnType<typeof vi.fn>;
+	readonly start: ReturnType<typeof vi.fn>;
 	readonly vm: ManagedVm;
 } {
 	const exec = vi.fn(() => execProcess(executionResult()));
@@ -134,6 +135,7 @@ function createManagedVmFixture(): {
 		throw new Error('runner SSH is forbidden');
 	});
 	const getHostProcessId = vi.fn((): number | null => 12_345);
+	const start = vi.fn(async () => undefined);
 	const vm = {
 		close,
 		configureIngressRoutes: vi.fn(),
@@ -142,7 +144,7 @@ function createManagedVmFixture(): {
 		exec,
 		getHostProcessId,
 		id: 'runner-vm-a',
-		start: vi.fn(async () => undefined),
+		start,
 	} satisfies ManagedVm;
 	return {
 		close,
@@ -151,6 +153,7 @@ function createManagedVmFixture(): {
 		enableSsh,
 		exec,
 		getHostProcessId,
+		start,
 		vm,
 	};
 }
@@ -225,7 +228,7 @@ describe('configured CLI Managed VM production executor', () => {
 			expect.objectContaining({ imageReference: '/images/prepared-a' }),
 		);
 		expect(fixture.exec).toHaveBeenCalledOnce();
-		expect(reloadAuthorization).toHaveBeenCalledTimes(2);
+		expect(reloadAuthorization).toHaveBeenCalledTimes(3);
 		expect(fixture.close).toHaveBeenCalledOnce();
 		expect(terminateRecordedHostProcess).toHaveBeenCalledOnce();
 		expect(fixture.enableSsh).not.toHaveBeenCalled();
@@ -277,6 +280,51 @@ describe('configured CLI Managed VM production executor', () => {
 		expect(fixture.exec).not.toHaveBeenCalled();
 		expect(fixture.close).not.toHaveBeenCalled();
 		expect(terminateRecordedHostProcess).not.toHaveBeenCalled();
+	});
+
+	it('creates no VM when policy changes after initial reload and before creation', async () => {
+		const fixture = createManagedVmFixture();
+		const changedOperation = {
+			...operation,
+			executionTarget: {
+				...operation.executionTarget,
+				imageReference: encodeConfiguredCliPreparedImageIdentity({
+					fingerprint: 'fingerprint-b',
+					imageReference: '/images/prepared-b',
+					schemaVersion: 1,
+				}),
+			},
+		} satisfies Extract<ControllerExecutionOperation, { kind: 'configured_cli' }>;
+		const reloadAuthorization = vi
+			.fn<() => Promise<ConfiguredCliAuthorizedOperation>>()
+			.mockResolvedValueOnce(authorizationFor(operation))
+			.mockResolvedValue(authorizationFor(changedOperation, 'binding:changed'));
+		const execute = createConfiguredCliManagedVmExecutor({
+			controllerStateDir: testRoot,
+			managedVmExactProcessTermination: { terminateRecordedHostProcess: vi.fn() },
+			managedVmFactory: { createManagedVm: fixture.createManagedVm },
+			readProcessIdentity: vi.fn(async () => ({
+				command: 'qemu-system-aarch64 -name controller-execution',
+				lstart: 'Thu Aug 20 12:00:00 2026',
+			})),
+			resolveGatewayIdentity: vi.fn(async () => gatewayIdentity),
+		});
+
+		await expect(
+			execute({
+				authorization: authorizationFor(operation),
+				input: { argv: ['inspect'], reason: 'pre-creation policy mutation proof' },
+				operation,
+				operationName: 'isolated_inspect',
+				reloadAuthorization,
+				stablePrincipal: 'a'.repeat(64),
+				zoneId: 'zone-a',
+			}),
+		).rejects.toMatchObject({ code: 'not_dispatched' });
+		expect(reloadAuthorization).toHaveBeenCalledTimes(2);
+		expect(fixture.createManagedVm).not.toHaveBeenCalled();
+		expect(fixture.start).not.toHaveBeenCalled();
+		expect(fixture.exec).not.toHaveBeenCalled();
 	});
 
 	it('creates no VM from an authored or malformed effective image identity', async () => {

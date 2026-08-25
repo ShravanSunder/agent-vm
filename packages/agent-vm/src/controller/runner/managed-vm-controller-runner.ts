@@ -307,8 +307,15 @@ export function createManagedVmControllerRunner(
 				if (reservation.kind === 'rejected') {
 					return notDispatchedResult({ binding, reason: reservation.reason });
 				}
+				const creationAuthorization = await options.recomputeAuthorization(request);
+				if (creationAuthorization.authorizationFingerprint !== request.authorizationFingerprint) {
+					return notDispatchedResult({
+						binding,
+						reason: 'authorization-fingerprint-changed',
+					});
+				}
 				await options.operationLedger.recordCreationStarted({ operationId: request.operationId });
-				runnerVm = await options.runnerFactory.create(options.initialAuthorization);
+				runnerVm = await options.runnerFactory.create(creationAuthorization);
 				executionOptions.signal?.throwIfAborted();
 				await options.operationLedger.recordVmCreated({
 					operationId: request.operationId,
