@@ -14,10 +14,12 @@ import type {
 } from '@agent-vm/managed-vm';
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 
+import type { ConfiguredCliAuthorizedOperation } from './configured-cli-authorization.js';
 import { createConfiguredCliManagedVmExecutor } from './configured-cli-managed-vm-executor.js';
 import { ConfiguredControllerExecutionError } from './configured-controller-execution-error.js';
 
 const operation = {
+	calls: { deny: [], requiresApproval: [], withoutApproval: 'remaining_admitted' },
 	commands: [{ flagRules: [], path: ['inspect'] }],
 	deniedPatterns: [],
 	executablePath: '/usr/local/bin/inspect',
@@ -44,6 +46,24 @@ const operation = {
 	stdin: { kind: 'none' },
 	timeout: { kind: 'quick' },
 } as const satisfies Extract<ControllerExecutionOperation, { kind: 'configured_cli' }>;
+
+function authorizationFor(
+	configuredOperation: Extract<ControllerExecutionOperation, { kind: 'configured_cli' }>,
+	bindingRevision = 'binding:current',
+): ConfiguredCliAuthorizedOperation {
+	return {
+		evaluation: {
+			authorityKind: 'without_approval',
+			bindingRevision,
+			disposition: 'without_approval',
+			fingerprint: `sha256:${'a'.repeat(64)}`,
+			operationId: '11111111-1111-4111-8111-111111111111',
+			operationName: 'isolated_inspect',
+			targetKind: 'ephemeral_managed_vm',
+		},
+		operation: configuredOperation,
+	};
+}
 
 const gatewayIdentity = {
 	controllerEpoch: 'controller-epoch-a',
@@ -103,6 +123,7 @@ function createManagedVmFixture(): {
 	readonly enableSsh: ReturnType<typeof vi.fn>;
 	readonly exec: ReturnType<typeof vi.fn>;
 	readonly getHostProcessId: ReturnType<typeof vi.fn>;
+	readonly start: ReturnType<typeof vi.fn>;
 	readonly vm: ManagedVm;
 } {
 	const exec = vi.fn(() => execProcess(executionResult()));
@@ -114,6 +135,7 @@ function createManagedVmFixture(): {
 		throw new Error('runner SSH is forbidden');
 	});
 	const getHostProcessId = vi.fn((): number | null => 12_345);
+	const start = vi.fn(async () => undefined);
 	const vm = {
 		close,
 		configureIngressRoutes: vi.fn(),
@@ -122,7 +144,7 @@ function createManagedVmFixture(): {
 		exec,
 		getHostProcessId,
 		id: 'runner-vm-a',
-		start: vi.fn(async () => undefined),
+		start,
 	} satisfies ManagedVm;
 	return {
 		close,
@@ -131,6 +153,7 @@ function createManagedVmFixture(): {
 		enableSsh,
 		exec,
 		getHostProcessId,
+		start,
 		vm,
 	};
 }
@@ -152,10 +175,11 @@ describe('configured CLI Managed VM production executor', () => {
 
 		await expect(
 			execute({
+				authorization: authorizationFor(operation),
 				input: { argv: ['inspect'], reason: 'pre-create cancellation proof' },
 				operation,
 				operationName: 'isolated_inspect',
-				reloadOperation: vi.fn(async () => operation),
+				reloadAuthorization: vi.fn(async () => authorizationFor(operation)),
 				signal: cancellation.signal,
 				stablePrincipal: 'a'.repeat(64),
 				zoneId: 'zone-a',
@@ -170,7 +194,7 @@ describe('configured CLI Managed VM production executor', () => {
 			fixture.getHostProcessId.mockReturnValue(null);
 			return { hostProcessId: 12_345, kind: 'terminated' as const };
 		});
-		const reloadOperation = vi.fn(async () => operation);
+		const reloadAuthorization = vi.fn(async () => authorizationFor(operation));
 		const execute = createConfiguredCliManagedVmExecutor({
 			controllerStateDir: testRoot,
 			managedVmExactProcessTermination: { terminateRecordedHostProcess },
@@ -184,10 +208,11 @@ describe('configured CLI Managed VM production executor', () => {
 		});
 
 		const result = await execute({
+			authorization: authorizationFor(operation),
 			input: { argv: ['inspect'], reason: 'integration proof' },
 			operation,
 			operationName: 'isolated_inspect',
-			reloadOperation,
+			reloadAuthorization,
 			stablePrincipal: 'a'.repeat(64),
 			zoneId: 'zone-a',
 		});
@@ -203,7 +228,7 @@ describe('configured CLI Managed VM production executor', () => {
 			expect.objectContaining({ imageReference: '/images/prepared-a' }),
 		);
 		expect(fixture.exec).toHaveBeenCalledOnce();
-		expect(reloadOperation).toHaveBeenCalledOnce();
+		expect(reloadAuthorization).toHaveBeenCalledTimes(3);
 		expect(fixture.close).toHaveBeenCalledOnce();
 		expect(terminateRecordedHostProcess).toHaveBeenCalledOnce();
 		expect(fixture.enableSsh).not.toHaveBeenCalled();
@@ -227,6 +252,11 @@ describe('configured CLI Managed VM production executor', () => {
 				}),
 			},
 		} satisfies Extract<ControllerExecutionOperation, { kind: 'configured_cli' }>;
+		const reloadAuthorization = vi
+			.fn<() => Promise<ConfiguredCliAuthorizedOperation>>()
+			.mockResolvedValueOnce(authorizationFor(operation))
+			.mockResolvedValueOnce(authorizationFor(operation))
+			.mockResolvedValue(authorizationFor(changedOperation, 'binding:changed'));
 		const execute = createConfiguredCliManagedVmExecutor({
 			controllerStateDir: testRoot,
 			managedVmExactProcessTermination: { terminateRecordedHostProcess },
@@ -240,18 +270,66 @@ describe('configured CLI Managed VM production executor', () => {
 
 		await expect(
 			execute({
+				authorization: authorizationFor(operation),
 				input: { argv: ['inspect'], reason: 'stale image proof' },
 				operation,
 				operationName: 'isolated_inspect',
-				reloadOperation: vi.fn(async () => changedOperation),
+				reloadAuthorization,
 				stablePrincipal: 'a'.repeat(64),
 				zoneId: 'zone-a',
 			}),
-		).rejects.toThrow('did not complete');
+		).rejects.toMatchObject({ code: 'not_dispatched' });
+		expect(reloadAuthorization).toHaveBeenCalledTimes(3);
 		expect(fixture.createManagedVm).toHaveBeenCalledOnce();
+		expect(fixture.start).toHaveBeenCalledOnce();
 		expect(fixture.exec).not.toHaveBeenCalled();
 		expect(fixture.close).toHaveBeenCalledOnce();
 		expect(terminateRecordedHostProcess).toHaveBeenCalledOnce();
+	});
+
+	it('creates no VM when policy changes after initial reload and before creation', async () => {
+		const fixture = createManagedVmFixture();
+		const changedOperation = {
+			...operation,
+			executionTarget: {
+				...operation.executionTarget,
+				imageReference: encodeConfiguredCliPreparedImageIdentity({
+					fingerprint: 'fingerprint-b',
+					imageReference: '/images/prepared-b',
+					schemaVersion: 1,
+				}),
+			},
+		} satisfies Extract<ControllerExecutionOperation, { kind: 'configured_cli' }>;
+		const reloadAuthorization = vi
+			.fn<() => Promise<ConfiguredCliAuthorizedOperation>>()
+			.mockResolvedValueOnce(authorizationFor(operation))
+			.mockResolvedValue(authorizationFor(changedOperation, 'binding:changed'));
+		const execute = createConfiguredCliManagedVmExecutor({
+			controllerStateDir: testRoot,
+			managedVmExactProcessTermination: { terminateRecordedHostProcess: vi.fn() },
+			managedVmFactory: { createManagedVm: fixture.createManagedVm },
+			readProcessIdentity: vi.fn(async () => ({
+				command: 'qemu-system-aarch64 -name controller-execution',
+				lstart: 'Thu Aug 20 12:00:00 2026',
+			})),
+			resolveGatewayIdentity: vi.fn(async () => gatewayIdentity),
+		});
+
+		await expect(
+			execute({
+				authorization: authorizationFor(operation),
+				input: { argv: ['inspect'], reason: 'pre-creation policy mutation proof' },
+				operation,
+				operationName: 'isolated_inspect',
+				reloadAuthorization,
+				stablePrincipal: 'a'.repeat(64),
+				zoneId: 'zone-a',
+			}),
+		).rejects.toMatchObject({ code: 'not_dispatched' });
+		expect(reloadAuthorization).toHaveBeenCalledTimes(2);
+		expect(fixture.createManagedVm).not.toHaveBeenCalled();
+		expect(fixture.start).not.toHaveBeenCalled();
+		expect(fixture.exec).not.toHaveBeenCalled();
 	});
 
 	it('creates no VM from an authored or malformed effective image identity', async () => {
@@ -273,10 +351,11 @@ describe('configured CLI Managed VM production executor', () => {
 
 		await expect(
 			execute({
+				authorization: authorizationFor(unpreparedOperation),
 				input: { argv: ['inspect'], reason: 'unprepared image proof' },
 				operation: unpreparedOperation,
 				operationName: 'isolated_inspect',
-				reloadOperation: vi.fn(async () => unpreparedOperation),
+				reloadAuthorization: vi.fn(async () => authorizationFor(unpreparedOperation)),
 				stablePrincipal: 'a'.repeat(64),
 				zoneId: 'zone-a',
 			}),
@@ -306,10 +385,11 @@ describe('configured CLI Managed VM production executor', () => {
 
 		await expect(
 			execute({
+				authorization: authorizationFor(operationWithMissingEnvironment),
 				input: { argv: ['inspect'], reason: 'missing environment proof' },
 				operation: operationWithMissingEnvironment,
 				operationName: 'isolated_inspect',
-				reloadOperation: vi.fn(async () => operationWithMissingEnvironment),
+				reloadAuthorization: vi.fn(async () => authorizationFor(operationWithMissingEnvironment)),
 				stablePrincipal: 'a'.repeat(64),
 				zoneId: 'zone-a',
 			}),

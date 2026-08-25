@@ -358,6 +358,31 @@ function approvalGrantDispatchAuthority(
 	}
 }
 
+function directDispatchAuthority(props: {
+	readonly backendKind: ToolPortalBackendKind;
+	readonly bindingRevision: string;
+	readonly fingerprint: `sha256:${string}`;
+	readonly operationId: string;
+}): GatewayRuntimeToolPortalDispatchAuthority {
+	const common = {
+		fingerprint: props.fingerprint,
+		kind: 'without-approval' as const,
+		operationId: props.operationId,
+	};
+	switch (props.backendKind) {
+		case 'controller_execution':
+			return {
+				...common,
+				backendKind: 'controller_execution',
+				bindingRevision: props.bindingRevision,
+			};
+		case 'mcp_provider':
+			return { ...common, backendKind: 'mcp_provider' };
+		case 'tool_vm_runner':
+			return { ...common, backendKind: 'tool_vm_runner' };
+	}
+}
+
 function approvalReservationMatchesIntent(
 	reservation: GatewayRuntimeApprovalDispatchReservation,
 	intent: GatewayRuntimeApprovalChallengeIntent,
@@ -535,7 +560,7 @@ export function createManagedToolPortalCapabilityCore(
 		}
 		if (policyDecision.kind === 'without-approval') {
 			return await dispatchCall({
-				authority: {
+				authority: directDispatchAuthority({
 					backendKind: policyDecision.backendKind,
 					fingerprint: directDispatchFingerprint({
 						backendKind: policyDecision.backendKind,
@@ -544,9 +569,9 @@ export function createManagedToolPortalCapabilityCore(
 						semanticSnapshot,
 						surfaceClass: propsForCall.operationOptions.surfaceClass,
 					}),
-					kind: 'without-approval',
+					bindingRevision: semanticSnapshot.bindingRevision,
 					operationId,
-				},
+				}),
 				call: propsForCall.call,
 				operationId,
 				operationOptions: propsForCall.operationOptions,

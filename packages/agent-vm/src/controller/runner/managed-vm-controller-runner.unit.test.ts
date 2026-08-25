@@ -243,7 +243,7 @@ describe('managed VM controller runner authorization', () => {
 		expect(runnerVm.executeRunner).not.toHaveBeenCalled();
 	});
 
-	it('recomputes every authority field and revalidates the fingerprint immediately before dispatch-armed', async () => {
+	it('recomputes authority immediately before creation and dispatch-armed', async () => {
 		const observedEvents: string[] = [];
 		const runnerVm = createRunnerFactory(observedEvents);
 		const runner = createManagedVmControllerRunner(
@@ -267,6 +267,7 @@ describe('managed VM controller runner authorization', () => {
 
 		expect(observedEvents).toEqual([
 			'reservation-recorded',
+			'authorization-recomputed',
 			'creation-started',
 			'managed-vm-created',
 			'runner-created',

@@ -3,14 +3,26 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import {
+	deriveGatewayControlStablePrincipal,
+	deriveGatewayRuntimeApprovalFingerprint,
+	deriveGatewayRuntimeApprovalId,
 	deriveGatewayRuntimePortalBindingRevision,
 	GatewayControlWorkspaceGitPushControllerExecutionPayloadSchema,
 	type GatewayControlToolPortalControllerExecutionPayload,
 	type GatewayRuntimeControllerExecutionDispatchReservation,
 } from '@agent-vm/gateway-control-contracts';
+import {
+	deterministicOperationId,
+	directDispatchFingerprint,
+} from '@agent-vm/tool-portal/dispatch-authority';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { LoadedSystemConfig } from '../../config/system-config.js';
+import {
+	loadGatewayRuntimePortalAdmissionFile,
+	writeGatewayRuntimePortalAdmissionFile,
+} from '../../gateway/gateway-runtime-portal-admission-file.js';
+import { materializeGatewayRuntimePortalAdmission } from '../../gateway/gateway-runtime-portal-admission-material.js';
 import {
 	loadMcpPortalEffectiveToolPortalConfigSnapshot,
 	writeMcpPortalEffectiveConfig,
@@ -63,9 +75,15 @@ const trustedCallerContext = {
 	principal: trustedPrincipal,
 	purpose: 'tool_portal_controller_execution',
 	sessionId: '33333333-3333-4333-8333-333333333333',
-	stablePrincipal: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+	stablePrincipal: deriveGatewayControlStablePrincipal({ principal: trustedPrincipal }),
 	zoneId: acceptedSession.zoneId,
 } satisfies GatewayControlTrustedCallerContext;
+
+const configuredCliInvocation = {
+	callId: 'configured-cli-call-a',
+	surfaceClass: 'protected_uds',
+	trustedContext: { principal: trustedPrincipal },
+} as const;
 
 const noSecretResolutionDuringTest = {
 	resolve: async () => {
@@ -79,6 +97,8 @@ async function writeToolPortalAuthoredConfig(
 		readonly agentId?: string;
 		readonly configuredOperation?: boolean;
 		readonly configuredExecutablePath?: string;
+		readonly configuredInvocationDeny?: boolean;
+		readonly configuredInvocationApproval?: boolean;
 		readonly controllerExecutionTools?: readonly string[];
 		readonly controllerExecutionPolicy?: boolean;
 		readonly profileId?: string;
@@ -100,6 +120,27 @@ async function writeToolPortalAuthoredConfig(
 							...(props.configuredOperation === true
 								? {
 										inspect_host: {
+											calls: {
+												deny:
+													props.configuredInvocationDeny === true
+														? [
+																{
+																	flags: [{ names: ['--denied'] }],
+																	path: ['inspect'],
+																},
+															]
+														: [],
+												requiresApproval:
+													props.configuredInvocationApproval === true
+														? [
+																{
+																	flags: [{ names: ['--protected'] }],
+																	path: ['inspect'],
+																},
+															]
+														: [],
+												withoutApproval: 'remaining_admitted',
+											},
 											commands: [{ path: ['inspect'] }],
 											deniedPatterns: [],
 											executablePath: props.configuredExecutablePath ?? '/usr/bin/printf',
@@ -335,7 +376,7 @@ async function writeEffectiveToolPortalSnapshot(
 	if (zone === undefined || zone.toolPortal === undefined) {
 		throw new Error('test fixture expected a Tool Portal zone');
 	}
-	await writeMcpPortalEffectiveConfig({
+	const effectivePlan = await writeMcpPortalEffectiveConfig({
 		approvalAccessConfigured: options.approvalAccessConfigured ?? false,
 		allowedRawEnvSecretNames: ['OPENCLAW_GATEWAY_TOKEN'],
 		authoredConfigDir: zone.toolPortal.configDir,
@@ -356,6 +397,117 @@ async function writeEffectiveToolPortalSnapshot(
 		},
 		zoneId: acceptedSession.zoneId,
 	});
+	const effectiveHostConfigDir = path.join(
+		systemConfig.cacheDir,
+		'gateways',
+		acceptedSession.zoneId,
+		'tool-portal-effective',
+	);
+	const portalAdmission = materializeGatewayRuntimePortalAdmission({
+		agentProjections: Object.entries(effectivePlan.effectiveToolPortalConfig.agents).map(
+			([agentId, agent]) => ({
+				agentId,
+				frameworkIdentity:
+					zone.gateway.type === 'hermes'
+						? {
+								kind: 'hermes' as const,
+								profileName: zone.gateway.profilesByAgent[agentId] ?? agent.profile,
+							}
+						: { agentId, kind: 'openclaw' as const },
+				toolPortalProfileId: agent.profile,
+			}),
+		),
+		effectivePlan,
+		surfaceEligibilityByProfile: zone.toolPortal.surfaceEligibilityByProfile,
+	});
+	await writeGatewayRuntimePortalAdmissionFile({
+		directoryPath: effectiveHostConfigDir,
+		material: portalAdmission,
+	});
+}
+
+async function configuredCliDirectAuthority(
+	systemConfig: LoadedSystemConfig,
+	input: { readonly argv: string[]; readonly reason: string },
+): Promise<
+	Extract<
+		GatewayControlToolPortalControllerExecutionPayload,
+		{ kind: 'configured_cli' }
+	>['authority']
+> {
+	const admission = await loadGatewayRuntimePortalAdmissionFile(
+		path.join(systemConfig.cacheDir, 'gateways', acceptedSession.zoneId, 'tool-portal-effective'),
+	);
+	const call = {
+		arguments: input,
+		id: configuredCliInvocation.callId,
+		name: 'inspect_host',
+		namespace: 'controller_execution',
+	};
+	return {
+		bindingRevision: admission.semanticSnapshot.bindingRevision,
+		fingerprint: directDispatchFingerprint({
+			backendKind: 'controller_execution',
+			call,
+			principal: trustedPrincipal,
+			semanticSnapshot: admission.semanticSnapshot,
+			surfaceClass: configuredCliInvocation.surfaceClass,
+		}),
+		kind: 'without_approval',
+		operationId: deterministicOperationId({
+			callId: call.id,
+			semanticRevision: admission.semanticSnapshot.activeRevision,
+			stablePrincipal: trustedCallerContext.stablePrincipal,
+			surfaceClass: configuredCliInvocation.surfaceClass,
+		}),
+	};
+}
+
+async function configuredCliApprovalReservation(
+	systemConfig: LoadedSystemConfig,
+	input: { readonly argv: string[]; readonly reason: string },
+): Promise<GatewayRuntimeControllerExecutionDispatchReservation> {
+	const admission = await loadGatewayRuntimePortalAdmissionFile(
+		path.join(systemConfig.cacheDir, 'gateways', acceptedSession.zoneId, 'tool-portal-effective'),
+	);
+	const operationId = deterministicOperationId({
+		callId: configuredCliInvocation.callId,
+		semanticRevision: admission.semanticSnapshot.activeRevision,
+		stablePrincipal: trustedCallerContext.stablePrincipal,
+		surfaceClass: configuredCliInvocation.surfaceClass,
+	});
+	const intent = {
+		backendKind: 'controller_execution' as const,
+		call: {
+			arguments: input,
+			id: configuredCliInvocation.callId,
+			name: 'inspect_host',
+			namespace: 'controller_execution',
+		},
+		operationId,
+		semanticRevisions: {
+			activeRevision: admission.semanticSnapshot.activeRevision,
+			bindingRevision: admission.semanticSnapshot.bindingRevision,
+			catalogRevision: admission.semanticSnapshot.catalogRevision,
+			profilePolicyRevision: admission.semanticSnapshot.profilePolicyRevision,
+			providerRevision: admission.semanticSnapshot.providerRevision,
+			schemaRevision: admission.semanticSnapshot.schemaRevision,
+		},
+		surfaceClass: configuredCliInvocation.surfaceClass,
+		trustedContext: configuredCliInvocation.trustedContext,
+	};
+	const fingerprint = deriveGatewayRuntimeApprovalFingerprint({
+		authorityContext: approvalReservation.authorityContext,
+		intent,
+	});
+	return {
+		...approvalReservation,
+		approvalId: deriveGatewayRuntimeApprovalId(fingerprint),
+		bindingRevision: admission.semanticSnapshot.bindingRevision,
+		fingerprint,
+		operationId,
+		stablePrincipal: trustedCallerContext.stablePrincipal,
+	};
 }
 
 function createWorkspaceGitPushPayload(
@@ -545,7 +697,6 @@ describe('authorizeGatewayControlControllerExecution', () => {
 			workspaceGit: false,
 		});
 		await writeEffectiveToolPortalSnapshot(systemConfig);
-
 		await expect(
 			authorizeGatewayControlControllerExecution({
 				callerContext: trustedCallerContext,
@@ -565,6 +716,7 @@ describe('authorizeGatewayControlControllerExecution', () => {
 			workspaceGit: false,
 		});
 		await writeEffectiveToolPortalSnapshot(systemConfig);
+		const input = { argv: ['inspect'], reason: 'authorization proof' };
 
 		await expect(
 			authorizeGatewayControlControllerExecution({
@@ -572,19 +724,271 @@ describe('authorizeGatewayControlControllerExecution', () => {
 				createdAtMs: 1_000,
 				expiresAtMs: 16_000,
 				payload: {
+					authority: await configuredCliDirectAuthority(systemConfig, input),
 					callerContext: { callerContextId: trustedCallerContext.callerContextId },
 					capability: { name: 'inspect_host', namespace: 'controller_execution' },
 					correlation: {
 						capability: { name: 'inspect_host', namespace: 'controller_execution' },
 					},
-					input: { argv: ['inspect'], reason: 'authorization proof' },
+					input,
+					invocation: configuredCliInvocation,
 					kind: 'configured_cli',
 					operationName: 'inspect_host',
 				},
 				session: acceptedSession,
 				systemConfig,
 			}),
-		).resolves.toEqual({ authorized: true });
+		).resolves.toMatchObject({
+			authorized: true,
+			configuredCli: {
+				evaluation: {
+					disposition: 'without_approval',
+					operationName: 'inspect_host',
+					targetKind: 'controller_host',
+				},
+			},
+		});
+	});
+
+	it('rejects independently forged direct configured CLI fingerprint and operation identity', async () => {
+		const systemConfig = await createSystemConfigFixture({
+			configDir: await writeToolPortalAuthoredConfig({
+				configuredOperation: true,
+				controllerExecutionTools: ['inspect_host'],
+			}),
+			workspaceGit: false,
+		});
+		await writeEffectiveToolPortalSnapshot(systemConfig);
+		const input = { argv: ['inspect'], reason: 'forged authority proof' };
+		const exactAuthority = await configuredCliDirectAuthority(systemConfig, input);
+		if (exactAuthority.kind !== 'without_approval') {
+			throw new Error('test fixture expected direct configured CLI authority');
+		}
+		const forgedAuthorities = [
+			{ ...exactAuthority, fingerprint: `sha256:${'f'.repeat(64)}` as const },
+			{ ...exactAuthority, operationId: '99999999-9999-4999-8999-999999999999' },
+		];
+
+		await Promise.all(
+			forgedAuthorities.map(async (authority) => {
+				await expect(
+					authorizeGatewayControlControllerExecution({
+						callerContext: trustedCallerContext,
+						createdAtMs: 1_000,
+						expiresAtMs: 16_000,
+						payload: {
+							authority,
+							callerContext: { callerContextId: trustedCallerContext.callerContextId },
+							capability: { name: 'inspect_host', namespace: 'controller_execution' },
+							correlation: {
+								capability: { name: 'inspect_host', namespace: 'controller_execution' },
+							},
+							input,
+							invocation: configuredCliInvocation,
+							kind: 'configured_cli',
+							operationName: 'inspect_host',
+						},
+						session: acceptedSession,
+						systemConfig,
+					}),
+				).resolves.toMatchObject({
+					authorized: false,
+					errorClass: 'controller_execution_authority_mismatch',
+				});
+			}),
+		);
+	});
+
+	it('rejects direct authority when exact invocation now requires approval', async () => {
+		const systemConfig = await createSystemConfigFixture({
+			configDir: await writeToolPortalAuthoredConfig({
+				configuredInvocationApproval: true,
+				configuredOperation: true,
+				controllerExecutionTools: ['inspect_host'],
+			}),
+			workspaceGit: false,
+		});
+		await writeEffectiveToolPortalSnapshot(systemConfig, { approvalAccessConfigured: true });
+		const currentSnapshot = await loadMcpPortalEffectiveToolPortalConfigSnapshot(
+			path.join(systemConfig.cacheDir, 'gateways', acceptedSession.zoneId, 'tool-portal-effective'),
+		);
+
+		await expect(
+			authorizeGatewayControlControllerExecution({
+				callerContext: trustedCallerContext,
+				createdAtMs: 1_000,
+				expiresAtMs: 16_000,
+				payload: {
+					authority: {
+						bindingRevision: deriveGatewayRuntimePortalBindingRevision(
+							currentSnapshot.effectiveToolPortalConfig,
+						),
+						fingerprint: `sha256:${'d'.repeat(64)}`,
+						kind: 'without_approval',
+						operationId: '88888888-8888-4888-8888-888888888888',
+					},
+					callerContext: { callerContextId: trustedCallerContext.callerContextId },
+					capability: { name: 'inspect_host', namespace: 'controller_execution' },
+					correlation: {
+						capability: { name: 'inspect_host', namespace: 'controller_execution' },
+					},
+					input: {
+						argv: ['inspect', '--protected'],
+						reason: 'disposition mismatch proof',
+					},
+					invocation: configuredCliInvocation,
+					kind: 'configured_cli',
+					operationName: 'inspect_host',
+				},
+				session: acceptedSession,
+				systemConfig,
+			}),
+		).resolves.toMatchObject({
+			authorized: false,
+			errorClass: 'controller_execution_policy_denied',
+		});
+	});
+
+	it('rejects direct authority when exact invocation is denied', async () => {
+		const systemConfig = await createSystemConfigFixture({
+			configDir: await writeToolPortalAuthoredConfig({
+				configuredInvocationDeny: true,
+				configuredOperation: true,
+				controllerExecutionTools: ['inspect_host'],
+			}),
+			workspaceGit: false,
+		});
+		await writeEffectiveToolPortalSnapshot(systemConfig);
+		const currentSnapshot = await loadMcpPortalEffectiveToolPortalConfigSnapshot(
+			path.join(systemConfig.cacheDir, 'gateways', acceptedSession.zoneId, 'tool-portal-effective'),
+		);
+
+		await expect(
+			authorizeGatewayControlControllerExecution({
+				callerContext: trustedCallerContext,
+				createdAtMs: 1_000,
+				expiresAtMs: 16_000,
+				payload: {
+					authority: {
+						bindingRevision: deriveGatewayRuntimePortalBindingRevision(
+							currentSnapshot.effectiveToolPortalConfig,
+						),
+						fingerprint: `sha256:${'d'.repeat(64)}`,
+						kind: 'without_approval',
+						operationId: '88888888-8888-4888-8888-888888888888',
+					},
+					callerContext: { callerContextId: trustedCallerContext.callerContextId },
+					capability: { name: 'inspect_host', namespace: 'controller_execution' },
+					correlation: {
+						capability: { name: 'inspect_host', namespace: 'controller_execution' },
+					},
+					input: { argv: ['inspect', '--denied'], reason: 'deny mismatch proof' },
+					invocation: configuredCliInvocation,
+					kind: 'configured_cli',
+					operationName: 'inspect_host',
+				},
+				session: acceptedSession,
+				systemConfig,
+			}),
+		).resolves.toMatchObject({
+			authorized: false,
+			errorClass: 'controller_execution_policy_denied',
+		});
+	});
+
+	it('authorizes approval reservation only for an exact approval-required invocation', async () => {
+		const systemConfig = await createSystemConfigFixture({
+			configDir: await writeToolPortalAuthoredConfig({
+				configuredInvocationApproval: true,
+				configuredOperation: true,
+				controllerExecutionTools: ['inspect_host'],
+			}),
+			workspaceGit: false,
+		});
+		await writeEffectiveToolPortalSnapshot(systemConfig, { approvalAccessConfigured: true });
+		const input = {
+			argv: ['inspect', '--protected'],
+			reason: 'approval authority proof',
+		};
+		const reservation = await configuredCliApprovalReservation(systemConfig, input);
+
+		await expect(
+			authorizeGatewayControlControllerExecution({
+				callerContext: trustedCallerContext,
+				createdAtMs: 1_000,
+				expiresAtMs: 16_000,
+				payload: {
+					authority: { kind: 'controller_approval_reservation', reservation },
+					callerContext: { callerContextId: trustedCallerContext.callerContextId },
+					capability: { name: 'inspect_host', namespace: 'controller_execution' },
+					correlation: {
+						capability: { name: 'inspect_host', namespace: 'controller_execution' },
+					},
+					input,
+					invocation: configuredCliInvocation,
+					kind: 'configured_cli',
+					operationName: 'inspect_host',
+				},
+				session: acceptedSession,
+				systemConfig,
+			}),
+		).resolves.toMatchObject({
+			authorized: true,
+			configuredCli: {
+				evaluation: {
+					authorityKind: 'controller_approval_reservation',
+					disposition: 'requires_approval',
+				},
+			},
+		});
+	});
+
+	it('rejects approval reservation paired with a substituted configured CLI payload', async () => {
+		const systemConfig = await createSystemConfigFixture({
+			configDir: await writeToolPortalAuthoredConfig({
+				configuredInvocationApproval: true,
+				configuredOperation: true,
+				controllerExecutionTools: ['inspect_host'],
+			}),
+			workspaceGit: false,
+		});
+		await writeEffectiveToolPortalSnapshot(systemConfig, { approvalAccessConfigured: true });
+		const approvedInput = {
+			argv: ['inspect', '--protected'],
+			reason: 'original approved payload',
+		};
+		const exactReservation = await configuredCliApprovalReservation(systemConfig, approvedInput);
+
+		await expect(
+			authorizeGatewayControlControllerExecution({
+				callerContext: trustedCallerContext,
+				createdAtMs: 1_000,
+				expiresAtMs: 16_000,
+				payload: {
+					authority: {
+						kind: 'controller_approval_reservation',
+						reservation: exactReservation,
+					},
+					callerContext: { callerContextId: trustedCallerContext.callerContextId },
+					capability: { name: 'inspect_host', namespace: 'controller_execution' },
+					correlation: {
+						capability: { name: 'inspect_host', namespace: 'controller_execution' },
+					},
+					input: {
+						argv: ['inspect', '--protected'],
+						reason: 'substituted approval payload proof',
+					},
+					invocation: configuredCliInvocation,
+					kind: 'configured_cli',
+					operationName: 'inspect_host',
+				},
+				session: acceptedSession,
+				systemConfig,
+			}),
+		).resolves.toMatchObject({
+			authorized: false,
+			errorClass: 'controller_execution_authority_mismatch',
+		});
 	});
 
 	it('rejects an approved configured CLI reservation after trusted operation policy changes', async () => {
@@ -618,13 +1022,17 @@ describe('authorizeGatewayControlControllerExecution', () => {
 				createdAtMs: 1_000,
 				expiresAtMs: 16_000,
 				payload: {
-					approvalReservation: originalReservation,
+					authority: {
+						kind: 'controller_approval_reservation',
+						reservation: originalReservation,
+					},
 					callerContext: { callerContextId: trustedCallerContext.callerContextId },
 					capability: { name: 'inspect_host', namespace: 'controller_execution' },
 					correlation: {
 						capability: { name: 'inspect_host', namespace: 'controller_execution' },
 					},
 					input: { argv: ['inspect'], reason: 'stale policy proof' },
+					invocation: configuredCliInvocation,
 					kind: 'configured_cli',
 					operationName: 'inspect_host',
 				},

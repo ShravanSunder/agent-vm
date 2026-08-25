@@ -136,7 +136,7 @@ type NormalizedBindingInputs = Readonly<
 				| { readonly kind: 'mcp_provider' }
 				| {
 						readonly kind: 'controller_execution';
-						readonly operations: Readonly<Record<string, CanonicalJsonValue>>;
+						readonly operations: Readonly<Record<string, object>>;
 				  }
 				| {
 						readonly kind: 'tool_vm_runner';
@@ -197,6 +197,11 @@ type BindingConfigProfile =
 	| EffectiveManagedToolPortalConfig['profiles'][string]
 	| ManagedToolPortalConfig['profiles'][string];
 type BindingConfigNamespacePolicy = BindingConfigProfile['namespaces'][string];
+type BindingControllerExecutionBackend = Extract<
+	BindingConfigNamespacePolicy['backend'],
+	{ kind: 'controller_execution' }
+>;
+type BindingControllerExecutionOperation = BindingControllerExecutionBackend['operations'][string];
 
 export interface DeriveGatewayRuntimePortalSemanticSnapshotProps {
 	readonly agentProjections: readonly ManagedAgentProjectionInput[];
@@ -410,7 +415,14 @@ function normalizedBindingInputs(
 							: namespacePolicy.backend.kind === 'controller_execution'
 								? {
 										kind: namespacePolicy.backend.kind,
-										operations: namespacePolicy.backend.operations,
+										operations: Object.fromEntries(
+											recordEntries<BindingControllerExecutionOperation>(
+												namespacePolicy.backend.operations,
+											).map(([operationName, operation]) => [
+												operationName,
+												normalizedControllerExecutionOperation(operation),
+											]),
+										),
 									}
 								: { kind: namespacePolicy.backend.kind },
 					],
@@ -418,6 +430,45 @@ function normalizedBindingInputs(
 			),
 		]),
 	);
+}
+
+function normalizedControllerExecutionOperation(
+	operation: BindingControllerExecutionOperation,
+): object {
+	if (operation.kind === 'registered_action') return operation;
+	return {
+		...operation,
+		calls: {
+			deny: normalizedInvocationMatchers(operation.calls.deny),
+			requiresApproval: normalizedInvocationMatchers(operation.calls.requiresApproval),
+			withoutApproval: operation.calls.withoutApproval,
+		},
+	};
+}
+
+function normalizedInvocationMatchers(
+	matchers: Extract<
+		BindingControllerExecutionOperation,
+		{ kind: 'configured_cli' }
+	>['calls']['deny'],
+): readonly object[] {
+	return matchers
+		.map((matcher) => ({
+			flags: matcher.flags
+				.map((predicate) => ({
+					names: predicate.names.toSorted(compareUnicodeCodePointStrings),
+					...(predicate.values === undefined
+						? {}
+						: { values: predicate.values.toSorted(compareUnicodeCodePointStrings) }),
+				}))
+				.toSorted(compareCanonicalJsonValues),
+			path: matcher.path,
+		}))
+		.toSorted(compareCanonicalJsonValues);
+}
+
+function compareCanonicalJsonValues(left: object, right: object): number {
+	return compareUnicodeCodePointStrings(canonicalJson(left), canonicalJson(right));
 }
 
 function canonicalJson(value: object): string {

@@ -149,11 +149,18 @@ or separated-value interpretation. A flag occurrence that lacks the required
 value or carries an unlisted value does not satisfy that disposition matcher;
 existing admission validation may still reject it independently.
 
-Long-form `--flag=value` normalizes to the exact name `--flag` and inline value.
+For every long or short flag-shaped token containing `=`, the first `=` splits
+the exact flag name from its inline value. Thus both `--flag=value` and
+`-f=value` normalize to their exact configured names plus inline values.
 Aliases remain exact independent names; `--force` does not imply `-f`. Compact
-short-option clusters are not decomposed. The token `--` creates no exemption
-from policy inspection. Agent VM MUST NOT implement further CLI-specific
-parsing.
+short-option clusters are not decomposed.
+
+A flag-shaped token MUST remain independently subject to admission and
+disposition inspection even when the same token is also interpreted as the
+separated value of the preceding configured flag. For example, when
+`allowed_values` admits `--scope --force`, a deny or approval predicate for
+`--force` still matches. The token `--` creates no exemption from policy
+inspection. Agent VM MUST NOT implement further CLI-specific parsing.
 
 Positional tokens after the matched command path are ignored by disposition
 matching. They remain ordinary admitted argv data and may occur before, between,

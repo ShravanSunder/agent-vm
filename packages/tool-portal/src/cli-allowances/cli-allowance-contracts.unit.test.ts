@@ -5,15 +5,19 @@ import {
 	CliAllowanceSchema,
 	OpenCliAllowanceInputSchema,
 	QuickCliAllowanceInputSchema,
+	evaluateCliAllowanceInvocation,
 	resolveCliAllowanceTimeout,
-	validateCliAllowanceInvocation,
 } from './index.js';
 
 const cliAllowance = CliAllowanceSchema.parse({
+	calls: {
+		deny: [{ flags: [{ names: ['--token', '-t'] }], path: ['calendar', 'events'] }],
+		requiresApproval: [],
+		withoutApproval: 'remaining_admitted',
+	},
 	commands: [
 		{
 			flagRules: [
-				{ kind: 'deny', names: ['--token', '-t'] },
 				{
 					kind: 'allowed_values',
 					names: ['--format'],
@@ -81,7 +85,13 @@ describe('CLI allowance contracts', () => {
 			timeoutMs: 240_000,
 		});
 
-		expect(validateCliAllowanceInvocation({ allowance: cliAllowance, input })).toMatchObject({
+		expect(
+			evaluateCliAllowanceInvocation({
+				allowance: cliAllowance,
+				baseline: 'without_approval',
+				input,
+			}),
+		).toMatchObject({
 			argv: input.argv,
 			ok: true,
 		});
@@ -90,11 +100,12 @@ describe('CLI allowance contracts', () => {
 	it('rejects sibling and partial command paths', () => {
 		for (const argv of [['calendar', 'all'], ['calendar'], ['calendar-events']]) {
 			expect(
-				validateCliAllowanceInvocation({
+				evaluateCliAllowanceInvocation({
 					allowance: cliAllowance,
+					baseline: 'without_approval',
 					input: CliAllowanceInputSchema.parse({ argv, reason: 'Probe invalid path.' }),
 				}),
-			).toMatchObject({ ok: false });
+			).toMatchObject({ disposition: 'deny' });
 		}
 	});
 
@@ -108,22 +119,25 @@ describe('CLI allowance contracts', () => {
 			['calendar', 'events', 'secret-value'],
 		]) {
 			expect(
-				validateCliAllowanceInvocation({
+				evaluateCliAllowanceInvocation({
 					allowance: cliAllowance,
+					baseline: 'without_approval',
 					input: CliAllowanceInputSchema.parse({ argv, reason: 'Probe invalid policy.' }),
 				}),
-			).toMatchObject({ ok: false });
+			).toMatchObject({ disposition: 'deny' });
 		}
 	});
 
-	it('does not let a separated allowed value consume an explicitly denied flag', () => {
+	it('does not let a separated allowed value consume an invocation-denied flag', () => {
 		const allowance = CliAllowanceSchema.parse({
+			calls: {
+				deny: [{ flags: [{ names: ['--force'] }], path: ['apply'] }],
+				requiresApproval: [],
+				withoutApproval: 'remaining_admitted',
+			},
 			commands: [
 				{
-					flagRules: [
-						{ kind: 'allowed_values', names: ['--scope'], values: ['--force'] },
-						{ kind: 'deny', names: ['--force'] },
-					],
+					flagRules: [{ kind: 'allowed_values', names: ['--scope'], values: ['--force'] }],
 					path: ['apply'],
 				},
 			],
@@ -137,11 +151,12 @@ describe('CLI allowance contracts', () => {
 			['apply', '--', '--scope', '--force'],
 		]) {
 			expect(
-				validateCliAllowanceInvocation({
+				evaluateCliAllowanceInvocation({
 					allowance,
+					baseline: 'without_approval',
 					input: CliAllowanceInputSchema.parse({ argv, reason: 'deny inspection proof' }),
 				}),
-			).toMatchObject({ ok: false });
+			).toMatchObject({ disposition: 'deny' });
 		}
 	});
 
@@ -153,8 +168,9 @@ describe('CLI allowance contracts', () => {
 			}).success,
 		).toBe(false);
 		expect(
-			validateCliAllowanceInvocation({
+			evaluateCliAllowanceInvocation({
 				allowance: cliAllowance,
+				baseline: 'without_approval',
 				input: CliAllowanceInputSchema.parse({
 					argv: ['calendar', 'events'],
 					reason: 'Probe oversized stdin.',
@@ -166,6 +182,7 @@ describe('CLI allowance contracts', () => {
 
 	it('enforces the configured JSON stdin schema', () => {
 		const jsonAllowance = CliAllowanceSchema.parse({
+			calls: { withoutApproval: 'remaining_admitted' },
 			commands: [{ path: ['apply'] }],
 			deniedPatterns: [],
 			stdin: {
@@ -182,15 +199,17 @@ describe('CLI allowance contracts', () => {
 		});
 
 		expect(
-			validateCliAllowanceInvocation({
+			evaluateCliAllowanceInvocation({
 				allowance: jsonAllowance,
+				baseline: 'without_approval',
 				input: { argv: ['apply'], reason: 'valid JSON', stdin: '{"mode":"safe"}' },
 			}),
 		).toMatchObject({ ok: true });
 		for (const stdin of ['{"mode":"unsafe"}', '{"mode":"safe","extra":true}', '[]']) {
 			expect(
-				validateCliAllowanceInvocation({
+				evaluateCliAllowanceInvocation({
 					allowance: jsonAllowance,
+					baseline: 'without_approval',
 					input: { argv: ['apply'], reason: 'invalid schema', stdin },
 				}),
 			).toMatchObject({ ok: false });
@@ -204,6 +223,7 @@ describe('CLI allowance contracts', () => {
 		]) {
 			expect(
 				CliAllowanceSchema.safeParse({
+					calls: { withoutApproval: 'remaining_admitted' },
 					commands,
 					deniedPatterns: [],
 					stdin: { kind: 'none' },

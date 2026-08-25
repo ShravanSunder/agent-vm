@@ -634,6 +634,30 @@ operations. Configured CLI binds exactly one `controller_host` or
 `ephemeral_managed_vm` target. Its timeout is `quick` (fixed 5 seconds) or
 `open` (120-second default, caller override up to 8 hours). The Gateway never
 selects the target, executable, image, environment, or raw controller deadline.
+
+Every `configured_cli` operation requires its own invocation-level `calls`
+policy in addition to the namespace call selectors. Namespace
+`calls.withoutApproval` or `calls.requiresApproval` establishes the operation
+baseline. The operation's `calls.deny` and `calls.requiresApproval` arrays then
+match exact admitted command paths plus optional present flag names and values;
+`calls.withoutApproval` must be the literal `"remaining_admitted"`. All
+matching rules are collected and fixed precedence applies independently of
+authored order:
+
+```text
+deny > requires_approval > without_approval
+```
+
+An empty matcher `flags` array classifies the entire exact command path.
+Predicate names and values are alternatives, predicates within one matcher are
+conjunctive, and matchers within one bucket are alternatives. The old
+`commands[].flagRules[].kind: "deny"` shape is rejected; keep only
+`allowed_values` admission rules there and express path-scoped flag denial in
+`configured_cli.calls.deny`. A visible configured CLI admitted through the
+namespace direct baseline still requires `zones[].approvalAccess` when its
+operation-level `calls.requiresApproval` array is non-empty. Hermes is the sole
+native presenter for those matched invocations in this release.
+
 The ephemeral target is a fresh one-shot Managed VM; it does not reuse a leased
 Tool VM. Its authored `imageReference` is a Managed VM image recipe path relative
 to `tool-portal.config.jsonc`; Gateway startup prepares that recipe and binds the

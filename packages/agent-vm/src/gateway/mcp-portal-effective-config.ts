@@ -92,6 +92,7 @@ type EffectivePortalSourceProfile =
 type EffectivePortalSourceNamespacePolicy = EffectivePortalSourceProfile['namespaces'][string];
 
 export interface McpPortalEffectiveToolPortalConfigSnapshot {
+	readonly effectiveMcpConfig: McpConfig;
 	readonly effectiveToolPortalConfig: EffectiveManagedToolPortalConfig;
 	readonly toolPortalConfigPath: string;
 }
@@ -541,9 +542,17 @@ function selectorEffectivelyAllowsAnyTool(
 
 export function managedToolPortalRequiresApprovalAccess(config: ToolPortalConfig): boolean {
 	return Object.values(config.profiles).some((profile) =>
-		Object.values(profile.namespaces).some((namespacePolicy) =>
-			selectorEffectivelyAllowsAnyTool(namespacePolicy.calls.requiresApproval),
-		),
+		Object.values(profile.namespaces).some((namespacePolicy) => {
+			if (selectorEffectivelyAllowsAnyTool(namespacePolicy.calls.requiresApproval)) return true;
+			if (namespacePolicy.backend.kind !== 'controller_execution') return false;
+			return Object.entries(namespacePolicy.backend.operations).some(
+				([operationName, operation]) =>
+					operation.kind === 'configured_cli' &&
+					operation.calls.requiresApproval.length > 0 &&
+					selectorAllowsTool(namespacePolicy.tools, operationName) &&
+					selectorAllowsTool(namespacePolicy.calls.withoutApproval, operationName),
+			);
+		}),
 	);
 }
 
@@ -876,6 +885,11 @@ export async function loadMcpPortalEffectiveToolPortalConfigSnapshot(
 	effectiveHostConfigDir: string,
 ): Promise<McpPortalEffectiveToolPortalConfigSnapshot> {
 	const manifest = await readEffectiveConfigManifest(effectiveHostConfigDir);
+	const mcpConfigPath = resolveEffectiveConfigManifestFilePath(
+		effectiveHostConfigDir,
+		manifest.mcpConfigFile,
+		'mcpConfigFile',
+	);
 	const toolPortalConfigPath = resolveEffectiveConfigManifestFilePath(
 		effectiveHostConfigDir,
 		manifest.toolPortalConfigFile,
@@ -884,7 +898,8 @@ export async function loadMcpPortalEffectiveToolPortalConfigSnapshot(
 	const effectiveToolPortalConfig = effectiveManagedToolPortalConfigSchema.parse(
 		JSON.parse(await readFile(toolPortalConfigPath, 'utf8')),
 	);
-	return { effectiveToolPortalConfig, toolPortalConfigPath };
+	const effectiveMcpConfig = await loadMcpConfig(mcpConfigPath);
+	return { effectiveMcpConfig, effectiveToolPortalConfig, toolPortalConfigPath };
 }
 
 export async function planMcpPortalEffectiveConfigFromConfig(

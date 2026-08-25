@@ -1,5 +1,6 @@
 import { createHmac } from 'node:crypto';
 
+import { controllerConfiguredCliOperationSchema } from '@agent-vm/config-contracts';
 import {
 	CONTROL_PROTOCOL_VERSION,
 	type ControlEnvelope,
@@ -21,6 +22,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { TEST_SSH_SERVER_HOST_KEY } from '../../testing/managed-vm-test-helpers.js';
 import type { OpenClawRuntimeStatusReport } from '../openclaw-runtime-status.js';
+import { ConfiguredControllerExecutionError } from '../runner/configured-controller-execution-error.js';
 import { WorkspaceGitConflictError } from '../workspace-git/workspace-git-operations.js';
 import {
 	createControlSessionDispatcher,
@@ -394,8 +396,46 @@ function createAuthorizedControllerExecutions(
 	pushWorkspaceGit: GatewayControlControllerExecutionOperations['pushWorkspaceGit'],
 	overrides: Partial<GatewayControlControllerExecutionOperations> = {},
 ): GatewayControlControllerExecutionOperations {
+	const operation = controllerConfiguredCliOperationSchema.parse({
+		calls: { withoutApproval: 'remaining_admitted' },
+		commands: [{ path: ['inspect'] }],
+		deniedPatterns: [],
+		executablePath: '/usr/bin/printf',
+		executionTarget: {
+			cwd: '/tmp',
+			environment: { kind: 'empty' },
+			kind: 'controller_host',
+		},
+		kind: 'configured_cli',
+		mandatoryArgvPrefix: [],
+		output: {
+			modelVisibleStderr: 'none',
+			overflow: 'fail',
+			stderrMaxBytes: 1_024,
+			stdoutMaxBytes: 1_024,
+		},
+		safeHelp: 'Inspect one host resource.',
+		stdin: { kind: 'none' },
+		timeout: { kind: 'quick' },
+	});
+	const configuredCli = {
+		evaluation: {
+			authorityKind: 'without_approval' as const,
+			bindingRevision: 'binding:current',
+			disposition: 'without_approval' as const,
+			fingerprint: `sha256:${'d'.repeat(64)}`,
+			operationId: '88888888-8888-4888-8888-888888888888',
+			operationName: 'inspect_host',
+			targetKind: 'controller_host' as const,
+		},
+		operation,
+	};
 	return {
-		authorizeControllerExecution: vi.fn(async () => ({ authorized: true }) as const),
+		authorizeControllerExecution: vi.fn(async ({ payload }) =>
+			payload.kind === 'configured_cli'
+				? ({ authorized: true, configuredCli } as const)
+				: ({ authorized: true } as const),
+		),
 		executeConfiguredCli: vi.fn(async () => ({
 			exitCode: 0,
 			stderrTruncated: false,
@@ -2081,11 +2121,22 @@ describe('gateway control domain handler', () => {
 		);
 		const configuredPayload = {
 			...callerContextPayload,
+			authority: {
+				bindingRevision: 'binding:current',
+				fingerprint: `sha256:${'d'.repeat(64)}`,
+				kind: 'without_approval' as const,
+				operationId: '88888888-8888-4888-8888-888888888888',
+			},
 			capability: { name: 'inspect_host', namespace: 'controller_execution' },
 			correlation: {
 				capability: { name: 'inspect_host', namespace: 'controller_execution' },
 			},
 			input: { argv: ['inspect'], reason: 'domain handler proof' },
+			invocation: {
+				callId: 'configured-call-a',
+				surfaceClass: 'protected_uds' as const,
+				trustedContext: { principal: invocationPrincipal },
+			},
 			kind: 'configured_cli' as const,
 			operationName: 'inspect_host',
 		};
@@ -2102,7 +2153,12 @@ describe('gateway control domain handler', () => {
 		});
 
 		expect(executeConfiguredCli).toHaveBeenCalledWith({
+			authorization: expect.objectContaining({
+				evaluation: expect.objectContaining({ disposition: 'without_approval' }),
+			}),
 			callerContext: expect.objectContaining({ agentId: 'main' }),
+			createdAtMs: 1,
+			expiresAtMs: 60_000,
 			payload: configuredPayload,
 			session: acceptedSession,
 			signal: expect.any(AbortSignal),
@@ -2116,6 +2172,67 @@ describe('gateway control domain handler', () => {
 					result: { exitCode: 0, stdout: 'configured output' },
 				},
 				result: 'ok',
+			},
+		});
+	});
+
+	it('reports final configured CLI reauthorization denial as rejected before dispatch', async () => {
+		const executeConfiguredCli = vi.fn(async () => {
+			throw new ConfiguredControllerExecutionError(
+				'not_dispatched',
+				'Configured controller execution operation is no longer authorized.',
+			);
+		});
+		const dispatcher = createGatewayControlTestDispatcher();
+		dispatcher.register(
+			'gateway_control',
+			createTestGatewayControlDomainHandler({
+				callerContexts: createRegisteredCallerContexts({
+					purpose: 'tool_portal_controller_execution',
+				}),
+				controllerExecutions: createAuthorizedControllerExecutions(vi.fn(), {
+					executeConfiguredCli,
+				}),
+				session: acceptedSession,
+			}),
+		);
+
+		const response = await dispatcher.dispatch({
+			envelope: createEnvelope('tool_portal_controller_execution', {
+				deliveryPolicy: 'single_use_critical',
+			}),
+			payload: {
+				kind: 'command',
+				operation: 'tool_portal_controller_execution',
+				payload: {
+					...callerContextPayload,
+					authority: {
+						bindingRevision: 'binding:current',
+						fingerprint: `sha256:${'d'.repeat(64)}`,
+						kind: 'without_approval',
+						operationId: '88888888-8888-4888-8888-888888888888',
+					},
+					capability: { name: 'inspect_host', namespace: 'controller_execution' },
+					correlation: {
+						capability: { name: 'inspect_host', namespace: 'controller_execution' },
+					},
+					input: { argv: ['inspect'], reason: 'final reauthorization denial proof' },
+					invocation: {
+						callId: 'configured-call-final-denial',
+						surfaceClass: 'protected_uds',
+						trustedContext: { principal: invocationPrincipal },
+					},
+					kind: 'configured_cli',
+					operationName: 'inspect_host',
+				},
+			},
+		});
+
+		expect(executeConfiguredCli).toHaveBeenCalledTimes(1);
+		expect(response).toMatchObject({
+			payload: {
+				error: { errorClass: 'controller_execution_not_dispatched', retryable: false },
+				result: 'rejected',
 			},
 		});
 	});
@@ -2153,11 +2270,22 @@ describe('gateway control domain handler', () => {
 					operation: 'tool_portal_controller_execution',
 					payload: {
 						...callerContextPayload,
+						authority: {
+							bindingRevision: 'binding:current',
+							fingerprint: `sha256:${'d'.repeat(64)}`,
+							kind: 'without_approval',
+							operationId: '88888888-8888-4888-8888-888888888888',
+						},
 						capability: { name: 'inspect_host', namespace: 'controller_execution' },
 						correlation: {
 							capability: { name: 'inspect_host', namespace: 'controller_execution' },
 						},
 						input: { argv: ['inspect'], reason: 'expiry proof' },
+						invocation: {
+							callId: 'configured-call-a',
+							surfaceClass: 'protected_uds',
+							trustedContext: { principal: invocationPrincipal },
+						},
 						kind: 'configured_cli',
 						operationName: 'inspect_host',
 					},

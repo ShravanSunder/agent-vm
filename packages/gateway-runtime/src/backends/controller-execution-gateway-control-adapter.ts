@@ -25,7 +25,7 @@ import {
 	gatewayControlCommandExecutionTimeoutMsByOperation,
 	type GatewayControlToolPortalControllerExecutionPayload,
 } from '@agent-vm/gateway-control-contracts';
-import { validateCliAllowanceInvocation, type ToolPortalBackendPort } from '@agent-vm/tool-portal';
+import { evaluateCliAllowanceInvocation, type ToolPortalBackendPort } from '@agent-vm/tool-portal';
 import { z } from 'zod/v4';
 
 import type { GatewayControlCallerContextRegistrationClient } from '../control-endpoint/gateway-control-caller-context-registration-client.js';
@@ -145,13 +145,15 @@ function configuredRegistration(props: {
 		parseArguments: (argumentsValue: JsonObject) => {
 			const parsedInput = inputSchema.safeParse(argumentsValue);
 			if (!parsedInput.success) return { kind: 'invalid' };
-			const validation = validateCliAllowanceInvocation({
+			const validation = evaluateCliAllowanceInvocation({
 				allowance: {
+					calls: props.operation.calls,
 					commands: props.operation.commands,
 					deniedPatterns: props.operation.deniedPatterns,
-					stdin: { deniedPatterns: [], kind: 'bounded_text', maxBytes: 1_048_576 },
+					stdin: props.operation.stdin,
 					timeout: props.operation.timeout,
 				},
+				baseline: 'without_approval',
 				input: parsedInput.data,
 			});
 			return validation.ok
@@ -279,17 +281,31 @@ function controllerActionPayload(props: {
 }): GatewayControlToolPortalControllerExecutionPayload {
 	const dispatchAuthority = props.request.authority.dispatchAuthority;
 	const common = {
-		...(dispatchAuthority.kind === 'controller-approval-reservation'
-			? { approvalReservation: dispatchAuthority.reservation }
-			: {}),
 		callerContext: { callerContextId: props.callerContextId },
 		correlation: commandCorrelation(props.request),
 	};
 	if (props.operation.kind === 'configured_cli') {
 		return GatewayControlToolPortalControllerExecutionPayloadSchema.parse({
 			...common,
+			authority:
+				dispatchAuthority.kind === 'without-approval'
+					? {
+							bindingRevision: dispatchAuthority.bindingRevision,
+							fingerprint: dispatchAuthority.fingerprint,
+							kind: 'without_approval',
+							operationId: dispatchAuthority.operationId,
+						}
+					: {
+							kind: 'controller_approval_reservation',
+							reservation: dispatchAuthority.reservation,
+						},
 			capability: props.request.action.capability,
 			input: props.request.action.arguments,
+			invocation: {
+				callId: props.request.correlation.callId,
+				surfaceClass: props.request.authority.invocation.surfaceClass,
+				trustedContext: props.request.authority.invocation.trustedContext,
+			},
 			kind: 'configured_cli',
 			operationName: props.request.action.capability.name,
 		});
@@ -302,6 +318,9 @@ function controllerActionPayload(props: {
 			return GatewayControlToolPortalControllerExecutionPayloadSchema.parse({
 				action: {
 					...common,
+					...(dispatchAuthority.kind === 'controller-approval-reservation'
+						? { approvalReservation: dispatchAuthority.reservation }
+						: {}),
 					actionId: workspaceGitPushName,
 					expectedHead: argumentsValue.expectedHead,
 				},
@@ -311,7 +330,13 @@ function controllerActionPayload(props: {
 		case controllerHostProbeName:
 			GatewayControlControllerHostProbeArgumentsSchema.parse(props.request.action.arguments);
 			return GatewayControlToolPortalControllerExecutionPayloadSchema.parse({
-				action: { ...common, actionId: controllerHostProbeName },
+				action: {
+					...common,
+					...(dispatchAuthority.kind === 'controller-approval-reservation'
+						? { approvalReservation: dispatchAuthority.reservation }
+						: {}),
+					actionId: controllerHostProbeName,
+				},
 				kind: 'registered_action',
 			});
 		default:

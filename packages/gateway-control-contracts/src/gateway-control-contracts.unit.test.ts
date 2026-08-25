@@ -757,16 +757,46 @@ describe('gateway control contract', () => {
 			GatewayControlToolPortalControllerExecutionPayloadSchema.parse(approvedHostProbePayload),
 		).toEqual(approvedHostProbePayload);
 		const configuredPayload = {
+			authority: {
+				bindingRevision: 'binding:current',
+				fingerprint: `sha256:${'d'.repeat(64)}`,
+				kind: 'without_approval',
+				operationId: '55555555-5555-4555-8555-555555555555',
+			},
 			callerContext: validHostProbeAction.callerContext,
 			capability: { name: 'inspect_host', namespace: 'controller_execution' },
 			correlation: validHostProbeAction.correlation,
 			input: { argv: ['inspect'], reason: 'contract proof' },
+			invocation: {
+				callId: 'configured-call',
+				surfaceClass: 'protected_uds',
+				trustedContext: {
+					principal: {
+						agentId: 'main',
+						frameworkIdentity: { agentId: 'main', kind: 'openclaw' },
+						profileAssignmentRevision: 'assignment-a',
+						toolPortalProfileId: 'engineering',
+					},
+				},
+			},
 			kind: 'configured_cli',
 			operationName: 'inspect_host',
 		};
 		expect(
 			GatewayControlToolPortalControllerExecutionPayloadSchema.parse(configuredPayload),
 		).toEqual(configuredPayload);
+		expect(
+			GatewayControlToolPortalControllerExecutionPayloadSchema.parse({
+				...configuredPayload,
+				authority: { kind: 'controller_approval_reservation', reservation: approvalReservation },
+			}),
+		).toMatchObject({ authority: { kind: 'controller_approval_reservation' } });
+		expect(
+			GatewayControlToolPortalControllerExecutionPayloadSchema.safeParse({
+				...configuredPayload,
+				authority: undefined,
+			}).success,
+		).toBe(false);
 		expect(
 			GatewayControlToolPortalControllerExecutionPayloadSchema.safeParse({
 				...configuredPayload,

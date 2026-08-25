@@ -2,7 +2,9 @@ import { z } from 'zod';
 
 import {
 	configuredCliAllowedCommandSchema,
+	configuredCliInvocationCallPolicySchema,
 	configuredCliPatternRuleSchema,
+	configuredCliStdinPolicySchema,
 	configuredCliTimeoutPolicySchema,
 	controllerExecutionOperationSchema,
 	controllerRegisteredOperationSchema,
@@ -385,10 +387,12 @@ export type EffectiveManagedToolPortalConfig = z.infer<
 
 export const gatewayRuntimeConfiguredCliOperationSchema = z
 	.object({
+		calls: configuredCliInvocationCallPolicySchema,
 		commands: z.array(configuredCliAllowedCommandSchema).min(1),
 		deniedPatterns: z.array(configuredCliPatternRuleSchema),
 		kind: z.literal('configured_cli'),
 		safeHelp: z.string().min(1).max(4_000),
+		stdin: configuredCliStdinPolicySchema,
 		targetKind: z.enum(['controller_host', 'ephemeral_managed_vm']),
 		timeout: configuredCliTimeoutPolicySchema,
 	})
@@ -485,10 +489,12 @@ export function createGatewayRuntimeManagedToolPortalConfig(
 																	operation.kind === 'registered_action'
 																		? operation
 																		: {
+																				calls: operation.calls,
 																				commands: operation.commands,
 																				deniedPatterns: operation.deniedPatterns,
 																				kind: operation.kind,
 																				safeHelp: operation.safeHelp,
+																				stdin: operation.stdin,
 																				targetKind: operation.executionTarget.kind,
 																				timeout: operation.timeout,
 																			},

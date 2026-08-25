@@ -39,6 +39,7 @@ describe('configured CLI controller-host production executor', () => {
 		const shellSentinelPath = path.join(testRoot, 'shell-sentinel');
 		const shellLikeToken = `; touch ${shellSentinelPath}`;
 		const operation = {
+			calls: { deny: [], requiresApproval: [], withoutApproval: 'remaining_admitted' },
 			commands: [{ flagRules: [], path: ['inspect'] }],
 			deniedPatterns: [],
 			executablePath: '/usr/bin/python3',
@@ -59,14 +60,28 @@ describe('configured CLI controller-host production executor', () => {
 			stdin: { deniedPatterns: [], kind: 'bounded_text', maxBytes: 1024 },
 			timeout: { kind: 'quick' },
 		} as const satisfies Extract<ControllerExecutionOperation, { kind: 'configured_cli' }>;
+		const authorization = {
+			evaluation: {
+				authorityKind: 'without_approval',
+				bindingRevision: 'binding:host-e2e',
+				disposition: 'without_approval',
+				fingerprint: `sha256:${'a'.repeat(64)}`,
+				operationId: '11111111-1111-4111-8111-111111111111',
+				operationName: 'inspect',
+				targetKind: 'controller_host',
+			},
+			operation,
+		} as const;
 
 		const result = await executeConfiguredCliOnControllerHost({
+			authorization,
 			input: {
 				argv: ['inspect', 'literal argument', shellLikeToken],
 				reason: 'host e2e transcript',
 				stdin: 'fixture stdin',
 			},
 			operation,
+			reloadAuthorization: async () => authorization,
 		});
 
 		expect(result.exitCode).toBe(0);

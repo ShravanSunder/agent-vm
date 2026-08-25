@@ -3,6 +3,7 @@ import {
 	GatewayApprovalDecisionResultSchema,
 } from '@agent-vm/agent-portal-sdk';
 import {
+	GatewayRuntimeTrustedInvocationContextSchema,
 	type GatewayRuntimeTrustedInvocationPrincipal,
 	GatewayRuntimeTrustedInvocationPrincipalSchema,
 	GatewayStablePrincipalDigestSchema,
@@ -32,9 +33,11 @@ import {
 	GatewayRuntimeApprovalAdmissionResultSchema,
 	GatewayRuntimeApprovalArmDispatchResultSchema,
 	GatewayRuntimeApprovalChallengeIntentSchema,
+	GatewayRuntimeApprovalFingerprintSchema,
 	GatewayRuntimeControllerExecutionDispatchReservationSchema,
 	GatewayRuntimeGatewayDispatchReservationSchema,
 } from './gateway-runtime-approval.js';
+import { GatewayRuntimePortalSurfaceClassSchema } from './gateway-runtime-portal-context.js';
 import { GatewayRuntimeReadinessSnapshotSchema } from './gateway-runtime-readiness-snapshot.js';
 
 export * from './gateway-control-admission.js';
@@ -524,13 +527,41 @@ export const GatewayControlControllerHostProbePayloadSchema = z
 	})
 	.strict();
 
+export const GatewayControlConfiguredCliDirectAuthoritySchema = z
+	.object({
+		bindingRevision: z.string().min(1),
+		fingerprint: GatewayRuntimeApprovalFingerprintSchema,
+		kind: z.literal('without_approval'),
+		operationId: z.string().uuid(),
+	})
+	.strict();
+
+export const GatewayControlConfiguredCliApprovalAuthoritySchema = z
+	.object({
+		kind: z.literal('controller_approval_reservation'),
+		reservation: GatewayRuntimeControllerExecutionDispatchReservationSchema,
+	})
+	.strict();
+
+export const GatewayControlConfiguredCliDispatchAuthoritySchema = z.discriminatedUnion('kind', [
+	GatewayControlConfiguredCliDirectAuthoritySchema,
+	GatewayControlConfiguredCliApprovalAuthoritySchema,
+]);
+
 export const GatewayControlConfiguredCliControllerExecutionPayloadSchema = z
 	.object({
-		approvalReservation: GatewayRuntimeControllerExecutionDispatchReservationSchema.optional(),
+		authority: GatewayControlConfiguredCliDispatchAuthoritySchema,
 		callerContext: GatewayControlCallerContextRefSchema,
 		capability: z.object({ name: z.string().min(1), namespace: z.string().min(1) }).strict(),
 		correlation: GatewayControlToolCallCorrelationSchema,
 		input: configuredCliInputSchema,
+		invocation: z
+			.object({
+				callId: z.string().min(1),
+				surfaceClass: GatewayRuntimePortalSurfaceClassSchema,
+				trustedContext: GatewayRuntimeTrustedInvocationContextSchema,
+			})
+			.strict(),
 		kind: z.literal('configured_cli'),
 		operationName: z.string().min(1),
 	})

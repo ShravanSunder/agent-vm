@@ -12,6 +12,7 @@ import { executeConfiguredCliOnControllerHost } from './configured-cli-host-exec
 import { ConfiguredControllerExecutionError } from './configured-controller-execution-error.js';
 
 const operation = {
+	calls: { deny: [], requiresApproval: [], withoutApproval: 'remaining_admitted' },
 	commands: [{ flagRules: [], path: ['inspect'] }],
 	deniedPatterns: [],
 	executablePath: '/usr/bin/example-cli',
@@ -32,6 +33,24 @@ const operation = {
 	stdin: { deniedPatterns: [], kind: 'bounded_text', maxBytes: 1024 },
 	timeout: { kind: 'quick' },
 } as const satisfies Extract<ControllerExecutionOperation, { kind: 'configured_cli' }>;
+
+const authorizedOperation = {
+	evaluation: {
+		authorityKind: 'without_approval',
+		bindingRevision: 'binding:current',
+		disposition: 'without_approval',
+		fingerprint: `sha256:${'a'.repeat(64)}`,
+		operationId: '11111111-1111-4111-8111-111111111111',
+		operationName: 'inspect',
+		targetKind: 'controller_host',
+	},
+	operation,
+} as const;
+
+const authorizationProps = {
+	authorization: authorizedOperation,
+	reloadAuthorization: async () => authorizedOperation,
+};
 
 function createFakeChildProcess(): {
 	readonly child: EventEmitter & {
@@ -70,6 +89,7 @@ describe('configured CLI controller-host executor', () => {
 
 		await expect(
 			executeConfiguredCliOnControllerHost({
+				...authorizationProps,
 				input: { argv: ['inspect'], reason: 'pre-spawn cancellation proof' },
 				operation,
 				signal: cancellation.signal,
@@ -85,6 +105,7 @@ describe('configured CLI controller-host executor', () => {
 		spawnMock.mockReturnValue(fixture.child);
 
 		const execution = executeConfiguredCliOnControllerHost({
+			...authorizationProps,
 			input: {
 				argv: ['inspect', 'target; touch /tmp/forbidden'],
 				reason: 'unit proof',
@@ -123,6 +144,7 @@ describe('configured CLI controller-host executor', () => {
 	it('rejects a denied invocation before process creation', async () => {
 		await expect(
 			executeConfiguredCliOnControllerHost({
+				...authorizationProps,
 				input: { argv: ['other'], reason: 'invalid path' },
 				operation,
 			}),
@@ -133,6 +155,7 @@ describe('configured CLI controller-host executor', () => {
 	it('rejects a missing inherited environment value before process creation', async () => {
 		await expect(
 			executeConfiguredCliOnControllerHost({
+				...authorizationProps,
 				input: { argv: ['inspect'], reason: 'missing environment' },
 				operation,
 			}),
@@ -140,17 +163,46 @@ describe('configured CLI controller-host executor', () => {
 		expect(spawnMock).not.toHaveBeenCalled();
 	});
 
+	it('creates no process when policy changes after controller authorization', async () => {
+		const changedAuthorization = {
+			...authorizedOperation,
+			evaluation: {
+				...authorizedOperation.evaluation,
+				bindingRevision: 'binding:changed',
+			},
+		};
+
+		await expect(
+			executeConfiguredCliOnControllerHost({
+				authorization: authorizedOperation,
+				input: { argv: ['inspect'], reason: 'final policy guard proof' },
+				operation,
+				reloadAuthorization: async () => changedAuthorization,
+			}),
+		).rejects.toMatchObject({ code: 'not_dispatched' });
+		expect(spawnMock).not.toHaveBeenCalled();
+	});
+
 	it('observes cancellation registered immediately after spawn returns', async () => {
 		process.env.AGENT_VM_HOST_EXECUTOR_TEST_VALUE = 'visible';
 		const fixture = createFakeChildProcess();
-		spawnMock.mockReturnValue(fixture.child);
+		let markSpawned: (() => void) | undefined;
+		const spawned = new Promise<void>((resolve) => {
+			markSpawned = resolve;
+		});
+		spawnMock.mockImplementation(() => {
+			markSpawned?.();
+			return fixture.child;
+		});
 		const cancellation = new AbortController();
 		const execution = executeConfiguredCliOnControllerHost({
+			...authorizationProps,
 			input: { argv: ['inspect'], reason: 'cancellation race proof' },
 			operation,
 			signal: cancellation.signal,
 		});
 
+		await spawned;
 		cancellation.abort(
 			new ConfiguredControllerExecutionError('cancelled', 'Controller is shutting down.'),
 		);
