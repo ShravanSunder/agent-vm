@@ -252,6 +252,11 @@ describe('configured CLI Managed VM production executor', () => {
 				}),
 			},
 		} satisfies Extract<ControllerExecutionOperation, { kind: 'configured_cli' }>;
+		const reloadAuthorization = vi
+			.fn<() => Promise<ConfiguredCliAuthorizedOperation>>()
+			.mockResolvedValueOnce(authorizationFor(operation))
+			.mockResolvedValueOnce(authorizationFor(operation))
+			.mockResolvedValue(authorizationFor(changedOperation, 'binding:changed'));
 		const execute = createConfiguredCliManagedVmExecutor({
 			controllerStateDir: testRoot,
 			managedVmExactProcessTermination: { terminateRecordedHostProcess },
@@ -269,17 +274,17 @@ describe('configured CLI Managed VM production executor', () => {
 				input: { argv: ['inspect'], reason: 'stale image proof' },
 				operation,
 				operationName: 'isolated_inspect',
-				reloadAuthorization: vi.fn(async () =>
-					authorizationFor(changedOperation, 'binding:changed'),
-				),
+				reloadAuthorization,
 				stablePrincipal: 'a'.repeat(64),
 				zoneId: 'zone-a',
 			}),
 		).rejects.toMatchObject({ code: 'not_dispatched' });
-		expect(fixture.createManagedVm).not.toHaveBeenCalled();
+		expect(reloadAuthorization).toHaveBeenCalledTimes(3);
+		expect(fixture.createManagedVm).toHaveBeenCalledOnce();
+		expect(fixture.start).toHaveBeenCalledOnce();
 		expect(fixture.exec).not.toHaveBeenCalled();
-		expect(fixture.close).not.toHaveBeenCalled();
-		expect(terminateRecordedHostProcess).not.toHaveBeenCalled();
+		expect(fixture.close).toHaveBeenCalledOnce();
+		expect(terminateRecordedHostProcess).toHaveBeenCalledOnce();
 	});
 
 	it('creates no VM when policy changes after initial reload and before creation', async () => {
