@@ -11,7 +11,7 @@ members = [
 
 [[package]]
 name = "agent-vm-agent-portal-sdk"
-version = "0.0.141"
+version = "0.0.142"
 source = { editable = "python/agent-vm-agent-portal-sdk" }
 dependencies = [
     { name = "httpx" },
@@ -30,7 +30,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-vm-hermes-adapter"
-version = "0.0.141"
+version = "0.0.142"
 source = { editable = "python/agent-vm-hermes-adapter" }
 dependencies = [
     { name = "agent-vm-agent-portal-sdk" },
