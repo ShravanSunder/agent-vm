@@ -92,6 +92,7 @@ type EffectivePortalSourceProfile =
 type EffectivePortalSourceNamespacePolicy = EffectivePortalSourceProfile['namespaces'][string];
 
 export interface McpPortalEffectiveToolPortalConfigSnapshot {
+	readonly effectiveMcpConfig: McpConfig;
 	readonly effectiveToolPortalConfig: EffectiveManagedToolPortalConfig;
 	readonly toolPortalConfigPath: string;
 }
@@ -884,6 +885,11 @@ export async function loadMcpPortalEffectiveToolPortalConfigSnapshot(
 	effectiveHostConfigDir: string,
 ): Promise<McpPortalEffectiveToolPortalConfigSnapshot> {
 	const manifest = await readEffectiveConfigManifest(effectiveHostConfigDir);
+	const mcpConfigPath = resolveEffectiveConfigManifestFilePath(
+		effectiveHostConfigDir,
+		manifest.mcpConfigFile,
+		'mcpConfigFile',
+	);
 	const toolPortalConfigPath = resolveEffectiveConfigManifestFilePath(
 		effectiveHostConfigDir,
 		manifest.toolPortalConfigFile,
@@ -892,7 +898,8 @@ export async function loadMcpPortalEffectiveToolPortalConfigSnapshot(
 	const effectiveToolPortalConfig = effectiveManagedToolPortalConfigSchema.parse(
 		JSON.parse(await readFile(toolPortalConfigPath, 'utf8')),
 	);
-	return { effectiveToolPortalConfig, toolPortalConfigPath };
+	const effectiveMcpConfig = await loadMcpConfig(mcpConfigPath);
+	return { effectiveMcpConfig, effectiveToolPortalConfig, toolPortalConfigPath };
 }
 
 export async function planMcpPortalEffectiveConfigFromConfig(

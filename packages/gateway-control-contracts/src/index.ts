@@ -3,6 +3,7 @@ import {
 	GatewayApprovalDecisionResultSchema,
 } from '@agent-vm/agent-portal-sdk';
 import {
+	GatewayRuntimeTrustedInvocationContextSchema,
 	type GatewayRuntimeTrustedInvocationPrincipal,
 	GatewayRuntimeTrustedInvocationPrincipalSchema,
 	GatewayStablePrincipalDigestSchema,
@@ -36,6 +37,7 @@ import {
 	GatewayRuntimeControllerExecutionDispatchReservationSchema,
 	GatewayRuntimeGatewayDispatchReservationSchema,
 } from './gateway-runtime-approval.js';
+import { GatewayRuntimePortalSurfaceClassSchema } from './gateway-runtime-portal-context.js';
 import { GatewayRuntimeReadinessSnapshotSchema } from './gateway-runtime-readiness-snapshot.js';
 
 export * from './gateway-control-admission.js';
@@ -553,6 +555,13 @@ export const GatewayControlConfiguredCliControllerExecutionPayloadSchema = z
 		capability: z.object({ name: z.string().min(1), namespace: z.string().min(1) }).strict(),
 		correlation: GatewayControlToolCallCorrelationSchema,
 		input: configuredCliInputSchema,
+		invocation: z
+			.object({
+				callId: z.string().min(1),
+				surfaceClass: GatewayRuntimePortalSurfaceClassSchema,
+				trustedContext: GatewayRuntimeTrustedInvocationContextSchema,
+			})
+			.strict(),
 		kind: z.literal('configured_cli'),
 		operationName: z.string().min(1),
 	})

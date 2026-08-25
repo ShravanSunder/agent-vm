@@ -388,6 +388,11 @@ describe('Gateway Control controller-execution adapter', () => {
 					payload: expect.objectContaining({
 						capability: { name: 'inspect_host', namespace: 'controller_execution' },
 						input: { argv: ['inspect', 'target'], reason: 'verify host fixture' },
+						invocation: {
+							callId: 'configured-call',
+							surfaceClass: 'protected_uds',
+							trustedContext,
+						},
 						kind: 'configured_cli',
 						operationName: 'inspect_host',
 					}),

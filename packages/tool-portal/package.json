@@ -28,6 +28,10 @@
 			"types": "./dist/cli-allowances/index.d.ts",
 			"import": "./dist/cli-allowances/index.js"
 		},
+		"./dispatch-authority": {
+			"types": "./dist/dispatch-authority.d.ts",
+			"import": "./dist/dispatch-authority.js"
+		},
 		"./standalone-entrypoint": {
 			"types": "./dist/standalone-entrypoint/index.d.ts",
 			"import": "./dist/standalone-entrypoint/index.js"

@@ -301,6 +301,11 @@ function controllerActionPayload(props: {
 						},
 			capability: props.request.action.capability,
 			input: props.request.action.arguments,
+			invocation: {
+				callId: props.request.correlation.callId,
+				surfaceClass: props.request.authority.invocation.surfaceClass,
+				trustedContext: props.request.authority.invocation.trustedContext,
+			},
 			kind: 'configured_cli',
 			operationName: props.request.action.capability.name,
 		});

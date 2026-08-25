@@ -767,6 +767,18 @@ describe('gateway control contract', () => {
 			capability: { name: 'inspect_host', namespace: 'controller_execution' },
 			correlation: validHostProbeAction.correlation,
 			input: { argv: ['inspect'], reason: 'contract proof' },
+			invocation: {
+				callId: 'configured-call',
+				surfaceClass: 'protected_uds',
+				trustedContext: {
+					principal: {
+						agentId: 'main',
+						frameworkIdentity: { agentId: 'main', kind: 'openclaw' },
+						profileAssignmentRevision: 'assignment-a',
+						toolPortalProfileId: 'engineering',
+					},
+				},
+			},
 			kind: 'configured_cli',
 			operationName: 'inspect_host',
 		};

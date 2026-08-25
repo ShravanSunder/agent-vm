@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { open, rename, rm } from 'node:fs/promises';
+import { open, readFile, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -11,6 +11,15 @@ import {
 export interface WriteGatewayRuntimePortalAdmissionFileProps {
 	readonly directoryPath: string;
 	readonly material: GatewayRuntimePortalAdmissionMaterial;
+}
+
+export async function loadGatewayRuntimePortalAdmissionFile(
+	directoryPath: string,
+): Promise<GatewayRuntimePortalAdmissionMaterial> {
+	const materialPath = path.join(directoryPath, GATEWAY_RUNTIME_PORTAL_ADMISSION_FILE_NAME);
+	return GatewayRuntimePortalAdmissionMaterialSchema.parse(
+		JSON.parse(await readFile(materialPath, 'utf8')),
+	);
 }
 
 export async function writeGatewayRuntimePortalAdmissionFile(

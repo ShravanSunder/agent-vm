@@ -41,6 +41,7 @@ const requiredPortalPackageExports = [
 	'@agent-vm/mcp-portal/testing/fake-upstream-mcp-server',
 	'@agent-vm/tool-portal',
 	'@agent-vm/tool-portal/cli-allowances',
+	'@agent-vm/tool-portal/dispatch-authority',
 	'@agent-vm/tool-portal/standalone-entrypoint',
 	'@agent-vm/tool-portal/testing',
 	'@agent-vm/worker-control-contracts',
@@ -238,6 +239,10 @@ const requiredPortalNamedExports = {
 		'evaluateCliAllowanceInvocation',
 		'resolveCliAllowanceTimeout',
 	],
+	'@agent-vm/tool-portal/dispatch-authority': [
+		'deterministicOperationId',
+		'directDispatchFingerprint',
+	],
 	'@agent-vm/tool-portal/testing': ['createCliAllowanceFixture', 'createToolPortalConfigFixture'],
 	'@agent-vm/worker-control-contracts': [
 		'WorkerControlDomainSchema',
@@ -280,6 +285,7 @@ const requiredPortalNamedExportSpecifiers = [
 	'@agent-vm/mcp-portal/testing/fake-upstream-mcp-server',
 	'@agent-vm/tool-portal',
 	'@agent-vm/tool-portal/cli-allowances',
+	'@agent-vm/tool-portal/dispatch-authority',
 	'@agent-vm/tool-portal/testing',
 	'@agent-vm/worker-control-contracts',
 ] as const satisfies readonly (keyof typeof requiredPortalNamedExports)[];

@@ -2131,6 +2131,11 @@ describe('gateway control domain handler', () => {
 				capability: { name: 'inspect_host', namespace: 'controller_execution' },
 			},
 			input: { argv: ['inspect'], reason: 'domain handler proof' },
+			invocation: {
+				callId: 'configured-call-a',
+				surfaceClass: 'protected_uds' as const,
+				trustedContext: { principal: invocationPrincipal },
+			},
 			kind: 'configured_cli' as const,
 			operationName: 'inspect_host',
 		};
@@ -2214,6 +2219,11 @@ describe('gateway control domain handler', () => {
 							capability: { name: 'inspect_host', namespace: 'controller_execution' },
 						},
 						input: { argv: ['inspect'], reason: 'expiry proof' },
+						invocation: {
+							callId: 'configured-call-a',
+							surfaceClass: 'protected_uds',
+							trustedContext: { principal: invocationPrincipal },
+						},
 						kind: 'configured_cli',
 						operationName: 'inspect_host',
 					},

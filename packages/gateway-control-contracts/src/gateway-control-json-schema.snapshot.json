@@ -2320,6 +2320,130 @@
 													}
 												]
 											},
+											"invocation": {
+												"type": "object",
+												"properties": {
+													"callId": {
+														"type": "string",
+														"minLength": 1
+													},
+													"surfaceClass": {
+														"type": "string",
+														"enum": ["mcp", "protected_uds"]
+													},
+													"trustedContext": {
+														"type": "object",
+														"properties": {
+															"correlation": {
+																"type": "object",
+																"properties": {
+																	"runId": {
+																		"type": "string",
+																		"minLength": 1,
+																		"maxLength": 256
+																	},
+																	"sessionId": {
+																		"type": "string",
+																		"minLength": 1,
+																		"maxLength": 256
+																	},
+																	"sessionKey": {
+																		"type": "string",
+																		"minLength": 1,
+																		"maxLength": 256
+																	},
+																	"toolCallId": {
+																		"type": "string",
+																		"minLength": 1,
+																		"maxLength": 256
+																	}
+																},
+																"additionalProperties": false
+															},
+															"principal": {
+																"type": "object",
+																"properties": {
+																	"agentId": {
+																		"type": "string",
+																		"minLength": 1,
+																		"maxLength": 256
+																	},
+																	"frameworkIdentity": {
+																		"readOnly": true,
+																		"oneOf": [
+																			{
+																				"type": "object",
+																				"properties": {
+																					"agentId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"kind": {
+																						"type": "string",
+																						"const": "openclaw"
+																					}
+																				},
+																				"required": ["agentId", "kind"],
+																				"additionalProperties": false
+																			},
+																			{
+																				"type": "object",
+																				"properties": {
+																					"kind": {
+																						"type": "string",
+																						"const": "hermes"
+																					},
+																					"profileName": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					}
+																				},
+																				"required": ["kind", "profileName"],
+																				"additionalProperties": false
+																			}
+																		]
+																	},
+																	"profileAssignmentRevision": {
+																		"type": "string",
+																		"minLength": 1,
+																		"maxLength": 256
+																	},
+																	"toolPortalProfileId": {
+																		"type": "string",
+																		"minLength": 1,
+																		"maxLength": 256
+																	}
+																},
+																"required": [
+																	"agentId",
+																	"frameworkIdentity",
+																	"profileAssignmentRevision",
+																	"toolPortalProfileId"
+																],
+																"additionalProperties": false
+															},
+															"requester": {
+																"type": "object",
+																"properties": {
+																	"authenticatedSubjectId": {
+																		"type": "string",
+																		"minLength": 1,
+																		"maxLength": 256
+																	}
+																},
+																"required": ["authenticatedSubjectId"],
+																"additionalProperties": false
+															}
+														},
+														"required": ["principal"],
+														"additionalProperties": false
+													}
+												},
+												"required": ["callId", "surfaceClass", "trustedContext"],
+												"additionalProperties": false
+											},
 											"kind": {
 												"type": "string",
 												"const": "configured_cli"
@@ -2335,6 +2459,7 @@
 											"capability",
 											"correlation",
 											"input",
+											"invocation",
 											"kind",
 											"operationName"
 										],

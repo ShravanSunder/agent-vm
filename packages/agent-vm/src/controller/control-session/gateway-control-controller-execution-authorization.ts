@@ -2,17 +2,27 @@ import path from 'node:path';
 
 import {
 	createToolPortalControllerExecutionProjection,
+	jsonObjectSchema,
 	type ToolPortalToolSelector,
 } from '@agent-vm/config-contracts';
 import type { GatewayControlToolPortalControllerExecutionPayload } from '@agent-vm/gateway-control-contracts';
 import {
+	assertGatewayRuntimePortalSemanticSnapshotMatchesInputs,
 	deriveGatewayControlControllerExecutionRpcWindow,
+	deriveGatewayControlStablePrincipal,
+	deriveGatewayRuntimeApprovalFingerprint,
+	deriveGatewayRuntimeApprovalId,
 	deriveGatewayRuntimePortalBindingRevision,
 	gatewayControlRegisteredControllerExecutionActionIds,
 } from '@agent-vm/gateway-control-contracts';
 import { evaluateCliAllowanceInvocation } from '@agent-vm/tool-portal/cli-allowances';
+import {
+	deterministicOperationId,
+	directDispatchFingerprint,
+} from '@agent-vm/tool-portal/dispatch-authority';
 
 import type { SystemConfig } from '../../config/system-config.js';
+import { loadGatewayRuntimePortalAdmissionFile } from '../../gateway/gateway-runtime-portal-admission-file.js';
 import { loadMcpPortalEffectiveToolPortalConfigSnapshot } from '../../gateway/mcp-portal-effective-config.js';
 import type { ConfiguredCliAuthorizedOperation } from '../runner/configured-cli-authorization.js';
 import type {
@@ -129,11 +139,29 @@ export async function authorizeGatewayControlControllerExecution(
 			'controller host probe is not enabled',
 		);
 	}
+	const effectiveConfigDirectory = path.join(
+		request.systemConfig.cacheDir,
+		'gateways',
+		zone.id,
+		'tool-portal-effective',
+	);
 	let effectiveConfig: Awaited<ReturnType<typeof loadMcpPortalEffectiveToolPortalConfigSnapshot>>;
+	let portalAdmission: Awaited<ReturnType<typeof loadGatewayRuntimePortalAdmissionFile>>;
 	try {
-		effectiveConfig = await loadMcpPortalEffectiveToolPortalConfigSnapshot(
-			path.join(request.systemConfig.cacheDir, 'gateways', zone.id, 'tool-portal-effective'),
-		);
+		[effectiveConfig, portalAdmission] = await Promise.all([
+			loadMcpPortalEffectiveToolPortalConfigSnapshot(effectiveConfigDirectory),
+			loadGatewayRuntimePortalAdmissionFile(effectiveConfigDirectory),
+		]);
+		assertGatewayRuntimePortalSemanticSnapshotMatchesInputs({
+			mcpConfig: portalAdmission.effectiveMcpConfig,
+			semanticSnapshot: portalAdmission.semanticSnapshot,
+			toolPortalConfig: portalAdmission.effectiveToolPortalConfig,
+		});
+		assertGatewayRuntimePortalSemanticSnapshotMatchesInputs({
+			mcpConfig: effectiveConfig.effectiveMcpConfig,
+			semanticSnapshot: portalAdmission.semanticSnapshot,
+			toolPortalConfig: effectiveConfig.effectiveToolPortalConfig,
+		});
 	} catch {
 		return rejectAuthorization(
 			'controller_execution_policy_unavailable',
@@ -240,10 +268,73 @@ export async function authorizeGatewayControlControllerExecution(
 				'controller execution policy denied the requested capability',
 			);
 		}
+		if (
+			deriveGatewayControlStablePrincipal({
+				principal: request.payload.invocation.trustedContext.principal,
+			}) !== request.callerContext.stablePrincipal
+		) {
+			return rejectAuthorization(
+				'controller_execution_authority_mismatch',
+				'controller execution authority does not match the requested capability',
+			);
+		}
+		const exactCall = {
+			arguments: jsonObjectSchema.parse(request.payload.input),
+			id: request.payload.invocation.callId,
+			name: capability.name,
+			namespace: capability.namespace,
+		};
+		const expectedOperationId = deterministicOperationId({
+			callId: exactCall.id,
+			semanticRevision: portalAdmission.semanticSnapshot.activeRevision,
+			stablePrincipal: request.callerContext.stablePrincipal,
+			surfaceClass: request.payload.invocation.surfaceClass,
+		});
 		const authorityBinding =
 			request.payload.authority.kind === 'without_approval'
 				? request.payload.authority
 				: request.payload.authority.reservation;
+		const expectedFingerprint =
+			request.payload.authority.kind === 'without_approval'
+				? directDispatchFingerprint({
+						backendKind: 'controller_execution',
+						call: exactCall,
+						principal: request.callerContext.principal,
+						semanticSnapshot: portalAdmission.semanticSnapshot,
+						surfaceClass: request.payload.invocation.surfaceClass,
+					})
+				: deriveGatewayRuntimeApprovalFingerprint({
+						authorityContext: request.payload.authority.reservation.authorityContext,
+						intent: {
+							backendKind: 'controller_execution',
+							call: exactCall,
+							operationId: expectedOperationId,
+							semanticRevisions: {
+								activeRevision: portalAdmission.semanticSnapshot.activeRevision,
+								bindingRevision: portalAdmission.semanticSnapshot.bindingRevision,
+								catalogRevision: portalAdmission.semanticSnapshot.catalogRevision,
+								profilePolicyRevision: portalAdmission.semanticSnapshot.profilePolicyRevision,
+								providerRevision: portalAdmission.semanticSnapshot.providerRevision,
+								schemaRevision: portalAdmission.semanticSnapshot.schemaRevision,
+							},
+							surfaceClass: request.payload.invocation.surfaceClass,
+							trustedContext: request.payload.invocation.trustedContext,
+						},
+					});
+		if (
+			authorityBinding.operationId !== expectedOperationId ||
+			authorityBinding.fingerprint !== expectedFingerprint ||
+			(request.payload.authority.kind === 'controller_approval_reservation' &&
+				(request.payload.authority.reservation.approvalId !==
+					deriveGatewayRuntimeApprovalId(expectedFingerprint) ||
+					request.payload.authority.reservation.stablePrincipal !==
+						request.callerContext.stablePrincipal))
+		) {
+			return rejectAuthorization(
+				'controller_execution_authority_mismatch',
+				'controller execution authority does not match the requested capability',
+			);
+		}
 		return {
 			authorized: true,
 			configuredCli: {
