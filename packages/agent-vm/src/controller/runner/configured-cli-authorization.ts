@@ -1,5 +1,7 @@
 import type { ControllerExecutionOperation } from '@agent-vm/config-contracts';
 
+import { ConfiguredControllerExecutionError } from './configured-controller-execution-error.js';
+
 type ConfiguredCliOperation = Extract<ControllerExecutionOperation, { kind: 'configured_cli' }>;
 
 export interface ConfiguredCliAuthorizedEvaluation {
@@ -15,6 +17,19 @@ export interface ConfiguredCliAuthorizedEvaluation {
 export interface ConfiguredCliAuthorizedOperation {
 	readonly evaluation: ConfiguredCliAuthorizedEvaluation;
 	readonly operation: ConfiguredCliOperation;
+}
+
+export function requireCurrentConfiguredCliAuthorization(authorization: {
+	readonly authorized: boolean;
+	readonly configuredCli?: ConfiguredCliAuthorizedOperation;
+}): ConfiguredCliAuthorizedOperation {
+	if (!authorization.authorized || authorization.configuredCli === undefined) {
+		throw new ConfiguredControllerExecutionError(
+			'not_dispatched',
+			'Configured controller execution operation is no longer authorized.',
+		);
+	}
+	return authorization.configuredCli;
 }
 
 export function configuredCliAuthorizedEvaluationsEqual(

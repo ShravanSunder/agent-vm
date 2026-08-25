@@ -22,6 +22,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { TEST_SSH_SERVER_HOST_KEY } from '../../testing/managed-vm-test-helpers.js';
 import type { OpenClawRuntimeStatusReport } from '../openclaw-runtime-status.js';
+import { ConfiguredControllerExecutionError } from '../runner/configured-controller-execution-error.js';
 import { WorkspaceGitConflictError } from '../workspace-git/workspace-git-operations.js';
 import {
 	createControlSessionDispatcher,
@@ -2171,6 +2172,67 @@ describe('gateway control domain handler', () => {
 					result: { exitCode: 0, stdout: 'configured output' },
 				},
 				result: 'ok',
+			},
+		});
+	});
+
+	it('reports final configured CLI reauthorization denial as rejected before dispatch', async () => {
+		const executeConfiguredCli = vi.fn(async () => {
+			throw new ConfiguredControllerExecutionError(
+				'not_dispatched',
+				'Configured controller execution operation is no longer authorized.',
+			);
+		});
+		const dispatcher = createGatewayControlTestDispatcher();
+		dispatcher.register(
+			'gateway_control',
+			createTestGatewayControlDomainHandler({
+				callerContexts: createRegisteredCallerContexts({
+					purpose: 'tool_portal_controller_execution',
+				}),
+				controllerExecutions: createAuthorizedControllerExecutions(vi.fn(), {
+					executeConfiguredCli,
+				}),
+				session: acceptedSession,
+			}),
+		);
+
+		const response = await dispatcher.dispatch({
+			envelope: createEnvelope('tool_portal_controller_execution', {
+				deliveryPolicy: 'single_use_critical',
+			}),
+			payload: {
+				kind: 'command',
+				operation: 'tool_portal_controller_execution',
+				payload: {
+					...callerContextPayload,
+					authority: {
+						bindingRevision: 'binding:current',
+						fingerprint: `sha256:${'d'.repeat(64)}`,
+						kind: 'without_approval',
+						operationId: '88888888-8888-4888-8888-888888888888',
+					},
+					capability: { name: 'inspect_host', namespace: 'controller_execution' },
+					correlation: {
+						capability: { name: 'inspect_host', namespace: 'controller_execution' },
+					},
+					input: { argv: ['inspect'], reason: 'final reauthorization denial proof' },
+					invocation: {
+						callId: 'configured-call-final-denial',
+						surfaceClass: 'protected_uds',
+						trustedContext: { principal: invocationPrincipal },
+					},
+					kind: 'configured_cli',
+					operationName: 'inspect_host',
+				},
+			},
+		});
+
+		expect(executeConfiguredCli).toHaveBeenCalledTimes(1);
+		expect(response).toMatchObject({
+			payload: {
+				error: { errorClass: 'controller_execution_not_dispatched', retryable: false },
+				result: 'rejected',
 			},
 		});
 	});

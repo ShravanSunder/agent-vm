@@ -96,7 +96,10 @@ import { createManagedFrameworkToolVmLeaseCreateOptionsResolver } from './leases
 import { createTcpPool } from './leases/tcp-pool.js';
 import { OpenClawRuntimeStatusStore } from './openclaw-runtime-status.js';
 import { RequestHeartbeatRegistry } from './request-heartbeat-registry.js';
-import type { ConfiguredCliAuthorizedOperation } from './runner/configured-cli-authorization.js';
+import {
+	requireCurrentConfiguredCliAuthorization,
+	type ConfiguredCliAuthorizedOperation,
+} from './runner/configured-cli-authorization.js';
 import { executeConfiguredCliOnControllerHost } from './runner/configured-cli-host-executor.js';
 import { createConfiguredCliManagedVmExecutor } from './runner/configured-cli-managed-vm-executor.js';
 import { ConfiguredControllerExecutionError } from './runner/configured-controller-execution-error.js';
@@ -833,10 +836,7 @@ async function startControllerRuntimeWithOwnershipLock(
 					session,
 					systemConfig: options.systemConfig,
 				});
-				if (!currentAuthorization.authorized || currentAuthorization.configuredCli === undefined) {
-					throw new Error('Configured controller execution operation is no longer authorized.');
-				}
-				return currentAuthorization.configuredCli;
+				return requireCurrentConfiguredCliAuthorization(currentAuthorization);
 			};
 			const operation = authorization.operation;
 			return operation.executionTarget.kind === 'controller_host'
