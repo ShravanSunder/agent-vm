@@ -396,6 +396,7 @@ interface RuntimeFixtureOptions extends CommandFixtureOptions {
 	readonly callerRegistration?: () => Promise<GatewayControlRegisteredCallerContext>;
 	readonly degradedBindingBecomesReadyAfterReacquire?: boolean;
 	readonly readyBindingBecomesReplacementAfterRequest?: boolean;
+	readonly readyBindingChangesAfterLeaseUseStart?: boolean;
 	readonly ready?: boolean;
 	readonly useIds?: readonly string[];
 }
@@ -479,6 +480,11 @@ function createRuntimeFixture(options: RuntimeFixtureOptions = {}): RuntimeFixtu
 		publishedBindingRuntime: {
 			lookupReadyConnection: () => {
 				bindingLookupCount += 1;
+				if (options.readyBindingChangesAfterLeaseUseStart === true) {
+					return command.requests.some((request) => request.message.operation === 'lease_use_start')
+						? replacementReadyResult
+						: readyResult;
+				}
 				if (options.readyBindingBecomesReplacementAfterRequest === true) {
 					return command.requests.some(
 						(request) => request.message.operation === 'tool_vm_binding_request',
@@ -894,6 +900,40 @@ describe('Gateway control operation active-use runtime', () => {
 			'lease_use_end',
 			'lease_use_start',
 		]);
+	});
+
+	it('retains a potentially committed acquisition use when immediate cleanup fails', async () => {
+		// Arrange
+		const fixture = createRuntimeFixture({
+			failFirstLeaseUseEnd: true,
+			readyBindingChangesAfterLeaseUseStart: true,
+		});
+
+		// Act
+		const failedAcquisition = await fixture.runtime.acquisitionPort.acquire({
+			trustedContext: trustedContextA,
+		});
+		fixture.control.setSession(sessionB);
+		const successor = requireBound(
+			await fixture.runtime.acquisitionPort.acquire({ trustedContext: trustedContextA }),
+		);
+
+		// Assert
+		expect(failedAcquisition).toMatchObject({ kind: 'not-bound', reason: 'unavailable' });
+		expect(successor.operationContext.leaseId).toBe(generationB.leaseId);
+		expect(fixture.command.requests.map((request) => request.message.operation)).toEqual([
+			'lease_use_start',
+			'lease_use_end',
+			'lease_use_end',
+			'lease_use_start',
+		]);
+		expect(fixture.command.requests[2]?.message).toMatchObject({
+			operation: 'lease_use_end',
+			payload: {
+				leaseId: generationA.leaseId,
+				useId: '66666666-6666-4666-8666-666666666666',
+			},
+		});
 	});
 
 	it('keeps replacement-session acquisition unavailable when orphan cleanup fails', async () => {

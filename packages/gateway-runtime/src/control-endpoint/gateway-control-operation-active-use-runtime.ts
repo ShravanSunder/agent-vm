@@ -590,6 +590,7 @@ export function createGatewayControlOperationActiveUseRuntime(
 		}
 
 		let callerContext: GatewayControlRegisteredCallerContext | undefined;
+		let activeUseMayHaveCommitted = false;
 		let useId: string | undefined;
 		try {
 			callerContext = await props.callerContextRegistrationClient.register({
@@ -604,6 +605,7 @@ export function createGatewayControlOperationActiveUseRuntime(
 			}
 			useId = UuidSchema.parse(props.createUseId());
 			const correlation = correlationForControl(request.trustedContext);
+			activeUseMayHaveCommitted = true;
 			const startResponse = await sendAuthorityCommand({
 				admissionPrincipal: callerContext.admissionPrincipal,
 				idempotencyKey: `lease-use-start:${readyBinding.generation.leaseId}:${useId}`,
@@ -618,6 +620,12 @@ export function createGatewayControlOperationActiveUseRuntime(
 					},
 				},
 			});
+			if (
+				startResponse.response.operation === 'lease_use_start' &&
+				startResponse.response.payload.result === 'rejected'
+			) {
+				activeUseMayHaveCommitted = false;
+			}
 			if (
 				!controllerAuthorityRecoveryAttempted &&
 				currentSession(acceptedSession) &&
@@ -710,14 +718,24 @@ export function createGatewayControlOperationActiveUseRuntime(
 				strictSshClient: readyBinding.connection,
 			};
 		} catch {
-			if (callerContext !== undefined && useId !== undefined && currentSession(acceptedSession)) {
-				await bestEffortEndUse({
-					acceptedSession,
-					callerContext,
-					leaseId: readyBinding.generation.leaseId,
-					reason: 'failed',
-					useId,
-				});
+			if (callerContext !== undefined && useId !== undefined && activeUseMayHaveCommitted) {
+				const ended = currentSession(acceptedSession)
+					? await bestEffortEndUse({
+							acceptedSession,
+							callerContext,
+							leaseId: readyBinding.generation.leaseId,
+							reason: 'failed',
+							useId,
+						})
+					: false;
+				if (!ended) {
+					replacementSessionUseEndRuntime.queue({
+						leaseId: readyBinding.generation.leaseId,
+						reason: 'failed',
+						stablePrincipal,
+						useId,
+					});
+				}
 			}
 			return unavailableBinding(request.trustedContext);
 		}
