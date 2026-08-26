@@ -165,38 +165,29 @@ UI/app behavior.
 
 Status: parked product decision, not scheduled implementation.
 
-## Work that remains on the OpenClaw-removal branch
+## Completed cutover work and remaining gate
 
-The following is cutover work, not deferred follow-up:
+The removal implementation, master integration, retained proof ports, pure-
+removal authority restoration, proof-transfer disposition, aggregate Hermes
+proof, exact package inspection, and quality/removal gates are complete.
 
-1. Restore the Requirements, Specification, Program Design, and active plan to
-   the pure-removal boundary; remove the unrelated U10 recovery expansion.
-2. Remove the uncommitted Hermes cached-status runtime repair and its unit test
-   from this branch.
-3. Preserve and verify the real generic process/stream proof already added.
-4. Correct the protected Hermes SSH E2E setup so it configures the loaded
-   `systemConfig.zones[0]` consumed by controller startup; this is test wiring,
-   not a production authorization change.
-5. Port only genuinely missing framework-neutral observations formerly owned by
-   deleted OpenClaw E2E files: idle Tool VM retirement, stale reacquisition,
-   health/replacement/no-flap behavior, and current Tool VM access.
-6. Keep the known Hermes reattachment stress case separately visible as exact
-   baseline-versus-cutover non-regression evidence; do not weaken it or present
-   it as green cutover proof.
-7. Resolve the proof-transfer ledger so every row is `transferred`,
-   `OpenClaw-only delete`, or the one explicit baseline-red differential row.
-8. Integrate the current `origin/master` changes and revalidate the exact
-   resulting branch. Completed by merge commit `02745c94`; the remaining live
-   and package proof still needs to be run at that integrated identity.
-9. Run the full unit, integration, host E2E, generic VM, Hermes-green, Worker,
-   quality, package/residue, built-CLI scaffold/validate/build, and removed-
-   command proof bundle.
-10. Obtain a fresh independent implementation review, then commit/push and enter
-    PR wrap-up only if the review is ready.
+The first final implementation review at `155e7303` found four issues. They were
+accepted and corrected at `46fe6e70`:
+
+1. OpenClaw-specific lint and portal-architecture audit residue was removed, and
+   the dedicated removal audit now covers active quality configuration/tooling.
+2. This WIP was reconciled to one final proof and deferral boundary.
+3. Program Design now treats old-release shutdown as an operator deployment
+   prerequisite; this repository does not boot OpenClaw for PR proof.
+4. The canonical package map now enumerates 17 packages and includes
+   `gateway-runtime`.
+
+One gate remains: a fresh independent review of the corrected identity. PR
+wrap-up begins only if that review returns ready.
 
 ## OpenClaw cutover proof status
 
-| Proof layer | Last evidence | Current status before cleanup |
+| Proof layer | Last evidence | Current status |
 | --- | --- | --- |
 | Core removal implementation | Commits `859bfa43`, `eeae0213`, and `7d833519`; master integration `02745c94` | Committed and integrated with `origin/master` at `cbba8890`; exact master differential adds no OpenClaw line |
 | Unit | `pnpm test:unit` at `1fa07bb1` | 383 files, 4,340/4,340 tests passed; taxonomy passed |
@@ -205,12 +196,12 @@ The following is cutover work, not deferred follow-up:
 | Generic VM E2E | `mise exec -- pnpm test:e2e:vm` at `1fa07bb1` | 11 files, 17/17 real VM tests passed, including process/stream and leaf-replacement proof |
 | Worker E2E | documented private test-key mapping plus `mise exec -- pnpm test:e2e:worker` at `1fa07bb1` | 3 files, 5/5 tests passed with zero skips; the bare command's 2-pass/3-skip result is not used as proof |
 | Retained Hermes files | Exact aggregate command rerun at `c8df1d36` | 5 files, 9/9 real Hermes tests passed with zero skips; the earlier 7/9 startup/root-health result did not reproduce |
-| Package inspection | `pnpm inspect:managed-vm-package-cut --expected-head 1fa07bb1...` | Passed for exactly 17 retained npm packages at synchronized `0.0.142`; packed members and sibling dependency versions inspected |
+| Package inspection | `pnpm inspect:managed-vm-package-cut --expected-head 46fe6e709cce30d4024c907445d67c1f87809deb` | Passed for exactly 17 retained npm packages at synchronized `0.0.142`; packed members and sibling dependency versions inspected |
 | Proof-transfer ledger | Same-or-stronger retained paths are transferred; reattachment remains baseline-red differential evidence; non-equivalent idle/reacquisition/automatic-recovery scenarios are assigned to the separate runtime owner | Resolved for this cutover: no pending row remains and no deferred row authorizes a Hermes behavior change |
-| OpenClaw residue audit | `pnpm exec tsx scripts/audit-openclaw-removal.ts` at `02745c94` | Passed with exit 0; OpenClaw package owners remain deleted and the integrated master differential adds no OpenClaw line |
-| Full quality gate | `UV_CACHE_DIR=/tmp/agent-vm-remove-openclaw-uv-cache pnpm check` after the restart/stress split | 16/16 passed: build, Optique CLI boundary, package/Zod guards, taxonomy, portal and VM boundaries, generated contracts, lint, format, type-aware lint, and typecheck |
+| OpenClaw residue audit | `pnpm exec tsx scripts/audit-openclaw-removal.ts` at `46fe6e70` | Passed with exit 0 after expanding coverage to root quality configuration and active portal-architecture tooling |
+| Full quality gate | `UV_CACHE_DIR=/tmp/agent-vm-remove-openclaw-uv-cache pnpm check` at `46fe6e70` | 16/16 passed in 43.48 seconds: build, Optique CLI boundary, package/Zod guards, taxonomy, portal and VM boundaries, generated contracts, lint, format, type-aware lint, and typecheck |
 | Built CLI manual proof | Fresh OS-temp `macos-local` Hermes scaffold, validate, real Docker/Gondolin build, and removed `--type openclaw` rejection at `1fa07bb1` | Passed; generated runtime shape contains Hermes and Tool VM inputs and no OpenClaw runtime directory/config |
-| Independent implementation review | Earlier review produced proof-transfer corrections | No fresh ready verdict exists for the final cleaned and integrated branch |
+| Independent implementation review | Complete review at `155e7303` | Four findings accepted and corrected at `46fe6e70`; corrected-head review pending |
 
 Final cutover proof is present only when every row above has fresh evidence at
 the same integrated HEAD, every proof-transfer row has its allowed terminal
@@ -237,8 +228,8 @@ presented as runtime proof.
   `16 passed, 0 failed`, exit 0.
 - Dedicated removal command:
   `pnpm exec tsx scripts/audit-openclaw-removal.ts`; exit 0.
-- Still incomplete after the fresh `c8df1d36` Hermes aggregate proof: final
-  exact-HEAD checks and independent implementation review.
+- Exact remediation-head checks are complete at `46fe6e70`; only corrected-head
+  independent review remains.
 
 ### Fresh integrated final-bundle progress at `1fa07bb1`
 
