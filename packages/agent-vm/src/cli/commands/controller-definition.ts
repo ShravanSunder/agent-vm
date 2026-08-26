@@ -5,6 +5,7 @@ import {
 	createConfigOption,
 	createPresenceFlag,
 	createPurgeFlag,
+	createRequiredStringOption,
 	createZoneOption,
 } from './command-definition-support.js';
 
@@ -134,6 +135,35 @@ export const controllerCommandParser = command(
 				),
 			),
 			{ description: cliDescription('Manage credentials') },
+		),
+		command(
+			'credential-runtime',
+			command(
+				'retire',
+				object({
+					command: constant('controller.credential-runtime.retire'),
+					options: object({
+						agent: createRequiredStringOption({
+							description: 'Authenticated managed agent id that owns the runtime',
+							metavar: 'AGENT_ID',
+							name: '--agent',
+						}),
+						config: createConfigOption(),
+						force: createPresenceFlag(
+							'--force',
+							'Cancel an active command before exact runtime retirement',
+						),
+						runtime: createRequiredStringOption({
+							description: 'Authored credentialed runtime id',
+							metavar: 'RUNTIME_ID',
+							name: '--runtime',
+						}),
+						zone: createZoneOption(),
+					}),
+				}),
+				{ description: cliDescription('Retire one controller-owned credentialed runtime') },
+			),
+			{ description: cliDescription('Manage credentialed runtime lifecycle') },
 		),
 	),
 	{ description: cliDescription('Manage the VM controller') },

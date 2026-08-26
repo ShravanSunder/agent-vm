@@ -58,6 +58,8 @@ import {
 	type ControllerRuntimeDependencies,
 	type StartControllerRuntimeOptions,
 } from './controller-runtime-types.js';
+import { createCredentialedRuntimeManager } from './credentialed-runtime/credentialed-runtime-manager.js';
+import { createControllerCredentialedRuntimeRegistryPublisher } from './credentialed-runtime/credentialed-runtime-registry.js';
 import {
 	createControllerStateRoot,
 	resolveControllerGatewayStateRoot,
@@ -781,12 +783,17 @@ async function startControllerRuntimeWithOwnershipLock(
 			probeKind: 'controller_cache_dir_listing',
 		};
 	};
-	const executeConfiguredCliInManagedVm = createConfiguredCliManagedVmExecutor({
+	const credentialedRuntimeRegistryPublisher =
+		createControllerCredentialedRuntimeRegistryPublisher();
+	const credentialedRuntimeManager = createCredentialedRuntimeManager({
 		controllerStateDir: options.systemConfig.controllerStateDir,
-		managedVmExactProcessTermination: dependencies.managedVmExactProcessTermination,
+		exactProcessTermination: dependencies.managedVmExactProcessTermination,
 		managedVmFactory: dependencies.managedVmFactory,
 		now,
 		readProcessIdentity: dependencies.readProcessIdentity ?? readManagedVmProcessIdentity,
+		secretResolver,
+	});
+	const executeConfiguredCliInManagedVm = createConfiguredCliManagedVmExecutor({
 		resolveGatewayIdentity: async (zoneId) => {
 			const lifecycleState = registry.getManagedGatewayRuntime(zoneId).getLifecycleState();
 			if (lifecycleState.kind !== 'running' && lifecycleState.kind !== 'running-degraded') {
@@ -800,6 +807,7 @@ async function startControllerRuntimeWithOwnershipLock(
 				runtimeEpoch: gatewayIdentity.generationId,
 			};
 		},
+		runtimeManager: credentialedRuntimeManager,
 	});
 	const gatewayControlControllerExecutions: GatewayControlControllerExecutionOperations = {
 		authorizeControllerExecution: async ({
@@ -811,6 +819,7 @@ async function startControllerRuntimeWithOwnershipLock(
 		}) =>
 			await authorizeGatewayControlControllerExecution({
 				callerContext,
+				credentialedRuntimeRegistryPublisher,
 				createdAtMs,
 				...(expiresAtMs === undefined ? {} : { expiresAtMs }),
 				payload,
@@ -830,6 +839,7 @@ async function startControllerRuntimeWithOwnershipLock(
 			const reloadAuthorization = async (): Promise<ConfiguredCliAuthorizedOperation> => {
 				const currentAuthorization = await authorizeGatewayControlControllerExecution({
 					callerContext,
+					credentialedRuntimeRegistryPublisher,
 					createdAtMs,
 					...(expiresAtMs === undefined ? {} : { expiresAtMs }),
 					payload,
@@ -895,6 +905,7 @@ async function startControllerRuntimeWithOwnershipLock(
 		// Prefer dead-VM eviction logs over idle-expiry logs when both are true.
 		await leaseManager.reapDeadIdleLeases();
 		await idleReaper.reapExpiredLeases();
+		await credentialedRuntimeManager.reapExpired();
 	};
 	const reaperTimer = (dependencies.setIntervalImpl ?? setInterval)(
 		() =>
@@ -1009,6 +1020,9 @@ async function startControllerRuntimeWithOwnershipLock(
 							const startGatewayZoneOptions = {
 								controlSession: { controllerEpoch },
 								createVmOwnership: createManagedGatewayVmOwnership,
+								credentialedRuntimeRegistryPublisher,
+								onCredentialedRuntimeZoneStopping: async () =>
+									await credentialedRuntimeManager.closeZone(zoneId),
 								...(startOptions?.onPendingVmCreation
 									? { onPendingVmCreation: startOptions.onPendingVmCreation }
 									: {}),
@@ -1256,6 +1270,8 @@ async function startControllerRuntimeWithOwnershipLock(
 				);
 			},
 			getRuntimeStatusByZone: () => registry.getSnapshotByZone(),
+			retireCredentialedRuntime: async (request) =>
+				await credentialedRuntimeManager.retire(request),
 			secretResolver,
 			systemConfig: options.systemConfig,
 		}),
@@ -1367,6 +1383,10 @@ async function startControllerRuntimeWithOwnershipLock(
 			});
 		}
 		await runTaskStep('Starting selected gateway zones', async () => {
+			for (const zoneId of registry.selectedZoneIds) {
+				// oxlint-disable-next-line no-await-in-loop -- exact recovery is intentionally per-zone
+				await credentialedRuntimeManager.recoverZone(zoneId);
+			}
 			await registry.startSelectedZones();
 		});
 		runtimeReadiness.set('ready');

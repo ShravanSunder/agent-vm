@@ -33,6 +33,7 @@ import {
 	resolveControllerBaseUrl,
 	writeJson,
 } from './agent-vm-cli-support.js';
+import { resolveZoneAdminToken } from './ssh-commands.js';
 
 interface RunControllerOperationCommandOptions {
 	readonly collectDoctorEnvironment?: (
@@ -44,12 +45,18 @@ interface RunControllerOperationCommandOptions {
 	) => Promise<readonly DoctorCheck[]>;
 	readonly dependencies: CliDependencies;
 	readonly credentialsAction?: 'check' | 'refresh';
+	readonly credentialRuntimeRetirement?: {
+		readonly agentId: string;
+		readonly force: boolean;
+		readonly runtimeId: string;
+	};
 	readonly io: CliIo;
 	readonly json?: boolean;
 	readonly purge?: boolean;
 	readonly showPassed?: boolean;
 	readonly subcommand:
 		| 'credentials'
+		| 'credential-runtime-retire'
 		| 'destroy'
 		| 'doctor'
 		| 'health'
@@ -672,6 +679,30 @@ export async function runControllerOperationCommand(
 				return;
 			}
 			writeJson(options.io, await controllerClient.refreshZoneCredentials(zoneId));
+			return;
+		}
+		case 'credential-runtime-retire': {
+			const zone = requireZone(options.systemConfig, options.zoneId);
+			const retirement = options.credentialRuntimeRetirement;
+			if (retirement === undefined) {
+				throw new Error('Credentialed runtime retirement input was not initialized.');
+			}
+			const adminToken = await resolveZoneAdminToken({
+				dependencies: options.dependencies,
+				systemConfig: options.systemConfig,
+				zone,
+			});
+			if (controllerClient.retireCredentialedRuntime === undefined) {
+				throw new Error('Controller client does not support credentialed runtime retirement.');
+			}
+			writeJson(
+				options.io,
+				await controllerClient.retireCredentialedRuntime(zone.id, retirement.runtimeId, {
+					...(adminToken === undefined ? {} : { adminToken }),
+					agentId: retirement.agentId,
+					force: retirement.force,
+				}),
+			);
 			return;
 		}
 	}

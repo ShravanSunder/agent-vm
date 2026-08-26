@@ -87,6 +87,14 @@ export const controllerExecuteCommandRequestSchema = z
 	})
 	.strict();
 
+export const controllerRetireCredentialedRuntimeRequestSchema = z
+	.object({
+		adminToken: z.string().min(1).optional(),
+		agentId: z.string().min(1),
+		force: z.boolean(),
+	})
+	.strict();
+
 export const controllerWorkerTaskRequestSchema = workerTaskControllerRequestSchema;
 
 export const controllerPushBranchesRequestSchema = z.object({

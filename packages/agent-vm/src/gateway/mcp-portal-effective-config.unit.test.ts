@@ -24,7 +24,21 @@ type TestSecretResolver = SecretResolver & { readonly resolveAllMock: ReturnType
 
 function createDefaultToolPortalConfigInput(namespace = 'deepwiki'): unknown {
 	return {
-		agents: { shravan: { profile: 'default' } },
+		agents: {
+			shravan: {
+				credentialBindings: {
+					google: {
+						files: {
+							'service-account': {
+								ref: 'op://agent-vm-testing/google/service-account',
+								source: '1password',
+							},
+						},
+					},
+				},
+				profile: 'default',
+			},
+		},
 		mode: 'managed',
 		profiles: {
 			default: {
@@ -46,7 +60,21 @@ function createDefaultToolPortalConfigInput(namespace = 'deepwiki'): unknown {
 
 function createEphemeralConfiguredCliToolPortalConfigInput(): unknown {
 	return {
-		agents: { shravan: { profile: 'default' } },
+		agents: {
+			shravan: {
+				credentialBindings: {
+					google: {
+						files: {
+							'service-account': {
+								ref: 'op://agent-vm-testing/google/service-account',
+								source: '1password',
+							},
+						},
+					},
+				},
+				profile: 'default',
+			},
+		},
 		mode: 'managed',
 		profiles: {
 			default: {
@@ -66,10 +94,21 @@ function createEphemeralConfiguredCliToolPortalConfigInput(): unknown {
 									executablePath: '/usr/bin/printf',
 									executionTarget: {
 										allowedHosts: [],
+										credentialBinding: 'google',
+										credentialEnvironment: {
+											GOG_DATA_DIR: { kind: 'credential_root' },
+										},
+										credentialFiles: [
+											{
+												path: 'sa-c2hyYXZhbkBleGFtcGxlLmNvbQ.json',
+												source: 'service-account',
+											},
+										],
 										environment: { kind: 'empty' },
 										guestCwd: '/run',
 										imageReference: '../../vm-images/controller-runners/default/build-config.json',
 										kind: 'ephemeral_managed_vm',
+										runtimeId: 'google-workspace',
 									},
 									kind: 'configured_cli',
 									mandatoryArgvPrefix: [],
@@ -219,17 +258,15 @@ describe('MCP Portal effective config materialization', () => {
 			effectiveHostConfigDir,
 			managedVmImages: { prepareImage },
 		});
-		const operation =
-			result.effectiveToolPortalConfig.profiles.default?.namespaces.controller?.backend.kind ===
-			'controller_execution'
-				? result.effectiveToolPortalConfig.profiles.default.namespaces.controller.backend.operations
-						.isolated
-				: undefined;
-		if (
-			operation?.kind !== 'configured_cli' ||
-			operation.executionTarget.kind !== 'ephemeral_managed_vm'
-		) {
-			throw new Error('Expected prepared configured CLI fixture operation.');
+		const operation = result.credentialedRuntimeRegistrySnapshot.resolve({
+			agentId: 'shravan',
+			cohortRevision: result.credentialedRuntimeRegistrySnapshot.cohortRevision,
+			namespaceId: 'controller',
+			operationName: 'isolated',
+			profileId: 'default',
+		}).operation;
+		if (operation.executionTarget.kind !== 'ephemeral_managed_vm') {
+			throw new Error('Expected prepared credentialed Managed VM operation.');
 		}
 
 		expect(prepareImage).toHaveBeenCalledWith({

@@ -67,6 +67,15 @@ export interface ControllerRouteOperations {
 	readonly getZoneLogs: (zoneId: string) => Promise<unknown>;
 	readonly getZoneStatus: (zoneId: string) => Promise<unknown>;
 	readonly refreshZoneCredentials: (zoneId: string) => Promise<unknown>;
+	readonly retireCredentialedRuntime?: (
+		zoneId: string,
+		runtimeId: string,
+		options: {
+			readonly adminToken?: string;
+			readonly agentId: string;
+			readonly force: boolean;
+		},
+	) => Promise<unknown>;
 	readonly prepareWorkerTask?: (
 		zoneId: string,
 		input: WorkerTaskInput,

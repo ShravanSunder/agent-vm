@@ -473,6 +473,7 @@ must be translated immediately to controller `workMountDir`.
 - `GET /zones/:zoneId/health` — live OpenClaw gateway health probe
 - `POST /zones/:zoneId/worker-tasks` — start worker task, returns `202 { taskId, status: "accepted" }`
 - `GET /zones/:zoneId/tasks/:taskId` — replayed worker task state snapshot
+- `POST /zones/:zoneId/credentialed-runtimes/:runtimeId/retire` — retire one agent-owned credentialed Managed runtime using existing zone admin authorization
 - `POST /zones/:zoneId/tasks/:taskId/push-branches` — controller-side git push
 - `POST /zones/:zoneId/tasks/:taskId/pull-default` — controller-side default/current branch refresh
 - `POST /zones/:zoneId/tasks/:taskId/close` — request task cancellation

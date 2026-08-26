@@ -2419,6 +2419,7 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 				zoneId: 'shravan',
 			})),
 			refreshZoneCredentials: vi.fn(async () => ({ ok: true, zoneId: 'shravan' })),
+			retireCredentialedRuntime: vi.fn(async () => ({ kind: 'retired' as const })),
 			releaseLease: vi.fn(async () => {}),
 			stopController: vi.fn(async () => ({ ok: true })),
 			upgradeZone: vi.fn(async () => ({ ok: true, zoneId: 'shravan' })),
@@ -2545,6 +2546,18 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 				['controller', 'upgrade', '--zone', 'shravan'],
 				['controller', 'credentials', 'check', '--zone', 'shravan'],
 				['controller', 'credentials', 'refresh', '--zone', 'shravan'],
+				[
+					'controller',
+					'credential-runtime',
+					'retire',
+					'--zone',
+					'shravan',
+					'--agent',
+					'sun',
+					'--runtime',
+					'google-workspace',
+					'--force',
+				],
 			] as const) {
 				// oxlint-disable-next-line no-await-in-loop -- commands intentionally run serially against shared mocks
 				await parseAndDispatchAgentVmCommandForTest(
@@ -2579,6 +2592,11 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 		expect(controllerClient.destroyZone).toHaveBeenCalledWith('shravan', true);
 		expect(controllerClient.upgradeZone).toHaveBeenCalledWith('shravan');
 		expect(controllerClient.refreshZoneCredentials).toHaveBeenCalledWith('shravan');
+		expect(controllerClient.retireCredentialedRuntime).toHaveBeenCalledWith(
+			'shravan',
+			'google-workspace',
+			{ agentId: 'sun', force: true },
+		);
 		expect(outputs.join('\n')).toContain('"zoneId": "shravan"');
 		expect(outputs.join('\n')).toContain('"resolvedSecretCount": 1');
 	});

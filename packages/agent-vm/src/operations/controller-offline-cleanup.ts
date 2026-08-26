@@ -1,6 +1,7 @@
 import type { ManagedVmExactProcessTerminationCapability } from '@agent-vm/managed-vm';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
+import { containCredentialedRuntimeRecords as containCredentialedRuntimeRecordsDefault } from '../controller/credentialed-runtime/credentialed-runtime-record.js';
 import {
 	createControllerStateRoot,
 	resolveControllerGatewayStateRoot,
@@ -66,6 +67,7 @@ async function assertControllerUnavailableForOfflineCleanup(controllerPort: numb
 }
 
 export interface RecordedVmTreeReconciliationDependencies {
+	readonly containCredentialedRuntimeRecords?: typeof containCredentialedRuntimeRecordsDefault;
 	readonly cleanupRecordedGatewayRuntime?: typeof cleanupRecordedGatewayRuntimeDefault;
 	readonly cleanupRecordedToolVmRuntimes?: typeof cleanupRecordedToolVmRuntimesDefault;
 	readonly cleanupRecordedWorkerRuntimes?: typeof cleanupRecordedWorkerRuntimesDefault;
@@ -123,6 +125,18 @@ export async function reconcileRecordedVmTree(options: {
 			{ exactProcessTermination: options.exactProcessTermination },
 		);
 		return;
+	}
+	const unsafeCredentialedRuntimes = await (
+		options.dependencies?.containCredentialedRuntimeRecords ??
+		containCredentialedRuntimeRecordsDefault
+	)({
+		exactProcessTermination: options.exactProcessTermination,
+		recordsDirectoryPath: recordTargets.credentialedRuntimeRecords.directoryPath,
+	});
+	if (unsafeCredentialedRuntimes.length > 0) {
+		throw new Error(
+			`Offline credentialed runtime cleanup for zone '${zone.id}' left ${String(unsafeCredentialedRuntimes.length)} owner-unsafe record(s).`,
+		);
 	}
 	const toolCleanup = await (
 		options.dependencies?.cleanupRecordedToolVmRuntimes ?? cleanupRecordedToolVmRuntimesDefault

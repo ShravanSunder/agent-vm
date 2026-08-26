@@ -2176,10 +2176,13 @@ describe('gateway control domain handler', () => {
 		});
 	});
 
-	it('reports final configured CLI reauthorization denial as rejected before dispatch', async () => {
+	it.each([
+		{ code: 'not_dispatched' as const, retryable: false },
+		{ code: 'runtime_busy' as const, retryable: true },
+	])('reports configured CLI $code as a bounded rejected result', async ({ code, retryable }) => {
 		const executeConfiguredCli = vi.fn(async () => {
 			throw new ConfiguredControllerExecutionError(
-				'not_dispatched',
+				code,
 				'Configured controller execution operation is no longer authorized.',
 			);
 		});
@@ -2231,7 +2234,7 @@ describe('gateway control domain handler', () => {
 		expect(executeConfiguredCli).toHaveBeenCalledTimes(1);
 		expect(response).toMatchObject({
 			payload: {
-				error: { errorClass: 'controller_execution_not_dispatched', retryable: false },
+				error: { errorClass: `controller_execution_${code}`, retryable },
 				result: 'rejected',
 			},
 		});

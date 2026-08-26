@@ -1134,13 +1134,15 @@ async function executeToolPortalControllerExecution(options: {
 					? 'cancelled'
 					: error.code === 'timeout'
 						? 'timeout'
-						: error.code === 'not_dispatched' || error.code === 'validation_failed'
+						: error.code === 'not_dispatched' ||
+							  error.code === 'runtime_busy' ||
+							  error.code === 'validation_failed'
 							? 'rejected'
 							: 'failed';
 			return commandResultPayload({
 				error: {
 					errorClass: `controller_execution_${error.code}`,
-					retryable: false,
+					retryable: error.code === 'runtime_busy',
 					safeMessage: 'configured controller execution did not complete',
 				},
 				responseToMessageId: options.responseToMessageId,

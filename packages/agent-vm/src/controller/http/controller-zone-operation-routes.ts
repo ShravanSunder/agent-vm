@@ -37,6 +37,7 @@ import {
 	controllerExecuteCommandRequestSchema,
 	controllerPullDefaultRequestSchema,
 	controllerPushBranchesRequestSchema,
+	controllerRetireCredentialedRuntimeRequestSchema,
 	controllerWorkerTaskRequestSchema,
 } from './controller-request-schemas.js';
 
@@ -688,6 +689,37 @@ export function registerControllerZoneOperationRoutes(
 			try {
 				return context.json(
 					await execInZone(context.req.param('zoneId'), payload.command, execOptions),
+				);
+			} catch (error) {
+				return context.json(zoneRuntimeErrorBody(error), zoneRuntimeErrorStatus(error));
+			}
+		});
+	}
+
+	if (operations.retireCredentialedRuntime) {
+		const retireCredentialedRuntime = operations.retireCredentialedRuntime;
+		app.post('/zones/:zoneId/credentialed-runtimes/:runtimeId/retire', async (context) => {
+			const notReadyResponse = rejectIfRuntimeNotReady(context);
+			if (notReadyResponse) return notReadyResponse;
+			const parsedPayload = await parseJsonBodyWithSchema(
+				context,
+				controllerRetireCredentialedRuntimeRequestSchema,
+				'invalid-retire-credentialed-runtime-request',
+			);
+			if (!parsedPayload.ok) return parsedPayload.response;
+			try {
+				return context.json(
+					await retireCredentialedRuntime(
+						context.req.param('zoneId'),
+						context.req.param('runtimeId'),
+						{
+							...(parsedPayload.data.adminToken === undefined
+								? {}
+								: { adminToken: parsedPayload.data.adminToken }),
+							agentId: parsedPayload.data.agentId,
+							force: parsedPayload.data.force,
+						},
+					),
 				);
 			} catch (error) {
 				return context.json(zoneRuntimeErrorBody(error), zoneRuntimeErrorStatus(error));

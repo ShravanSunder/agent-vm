@@ -24,6 +24,7 @@ import {
 import type { SystemConfig } from '../../config/system-config.js';
 import { loadGatewayRuntimePortalAdmissionFile } from '../../gateway/gateway-runtime-portal-admission-file.js';
 import { loadMcpPortalEffectiveToolPortalConfigSnapshot } from '../../gateway/mcp-portal-effective-config.js';
+import type { ControllerCredentialedRuntimeRegistryPublisher } from '../credentialed-runtime/credentialed-runtime-registry.js';
 import type { ConfiguredCliAuthorizedOperation } from '../runner/configured-cli-authorization.js';
 import type {
 	GatewayControlAcceptedSessionRef,
@@ -37,6 +38,7 @@ const controllerHostProbeEnvGate = 'AGENT_VM_E2E_CONTROLLER_HOST_PROBE';
 
 export interface GatewayControlControllerExecutionAuthorizationRequest {
 	readonly callerContext: GatewayControlTrustedCallerContext;
+	readonly credentialedRuntimeRegistryPublisher?: ControllerCredentialedRuntimeRegistryPublisher;
 	readonly createdAtMs?: number;
 	readonly expiresAtMs?: number;
 	readonly payload: GatewayControlToolPortalControllerExecutionPayload;
@@ -221,10 +223,14 @@ export async function authorizeGatewayControlControllerExecution(
 				'controller execution response window does not match current policy',
 			);
 		}
+		const targetKind =
+			'executionTarget' in configuredOperation
+				? configuredOperation.executionTarget.kind
+				: configuredOperation.targetKind;
 		const expectedWindow = deriveGatewayControlControllerExecutionRpcWindow({
 			input: request.payload.input,
 			nowMs: request.createdAtMs,
-			targetKind: configuredOperation.executionTarget.kind,
+			targetKind,
 			timeoutKind: configuredOperation.timeout.kind,
 		});
 		if (request.expiresAtMs !== expectedWindow.expiresAtMs) {
@@ -245,6 +251,31 @@ export async function authorizeGatewayControlControllerExecution(
 		);
 	}
 	if (request.payload.kind === 'configured_cli' && configuredOperation.kind === 'configured_cli') {
+		let trustedConfiguredOperation: ConfiguredCliAuthorizedOperation['operation'];
+		let credentialedRuntime: ConfiguredCliAuthorizedOperation['credentialedRuntime'];
+		if ('executionTarget' in configuredOperation) {
+			trustedConfiguredOperation = configuredOperation;
+		} else {
+			try {
+				if (request.credentialedRuntimeRegistryPublisher === undefined) {
+					throw new Error('Credentialed runtime registry is unavailable.');
+				}
+				credentialedRuntime = request.credentialedRuntimeRegistryPublisher.resolve({
+					agentId: request.callerContext.agentId,
+					cohortRevision: currentBindingRevision,
+					namespaceId: capability.namespace,
+					operationName: capability.name,
+					profileId: agentConfig?.profile ?? '',
+					zoneId: request.session.zoneId,
+				});
+				trustedConfiguredOperation = credentialedRuntime.operation;
+			} catch {
+				return rejectAuthorization(
+					'controller_execution_policy_stale',
+					'controller execution policy does not match the current credentialed runtime cohort',
+				);
+			}
+		}
 		const baseline = selectorIncludesTool(
 			namespaceProjection.calls.withoutApproval,
 			capability.name,
@@ -338,6 +369,7 @@ export async function authorizeGatewayControlControllerExecution(
 		return {
 			authorized: true,
 			configuredCli: {
+				...(credentialedRuntime === undefined ? {} : { credentialedRuntime }),
 				evaluation: {
 					authorityKind: request.payload.authority.kind,
 					bindingRevision: currentBindingRevision,
@@ -345,9 +377,9 @@ export async function authorizeGatewayControlControllerExecution(
 					fingerprint: authorityBinding.fingerprint,
 					operationId: authorityBinding.operationId,
 					operationName: request.payload.operationName,
-					targetKind: configuredOperation.executionTarget.kind,
+					targetKind: trustedConfiguredOperation.executionTarget.kind,
 				},
-				operation: configuredOperation,
+				operation: trustedConfiguredOperation,
 			},
 		};
 	}

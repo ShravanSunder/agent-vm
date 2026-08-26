@@ -60,6 +60,15 @@ interface ControllerRuntimeOperations {
 		readonly ok: true;
 		readonly zoneId: string;
 	}>;
+	readonly retireCredentialedRuntime: (
+		targetZoneId: string,
+		runtimeId: string,
+		options: {
+			readonly adminToken?: string;
+			readonly agentId: string;
+			readonly force: boolean;
+		},
+	) => Promise<unknown>;
 	readonly upgradeZone: (targetZoneId: string) => Promise<unknown>;
 }
 
@@ -90,6 +99,12 @@ export function createControllerRuntimeOperations(options: {
 	readonly getRuntimeDiagnosisByZone?: () => ControllerRuntimeStatus['diagnoses'];
 	readonly getObservabilityStatus?: (() => ControllerObservabilityStatus) | undefined;
 	readonly secretResolver: SecretResolver;
+	readonly retireCredentialedRuntime?: (request: {
+		readonly agentId: string;
+		readonly force: boolean;
+		readonly runtimeId: string;
+		readonly zoneId: string;
+	}) => Promise<unknown>;
 	readonly systemConfig: SystemConfig;
 }): ControllerRuntimeOperations {
 	const buildRuntimeStatus = (): ControllerRuntimeStatus => {
@@ -158,6 +173,23 @@ export function createControllerRuntimeOperations(options: {
 		},
 		refreshZoneCredentials: async (targetZoneId) =>
 			await options.getManagedGatewayRuntime(targetZoneId).refreshCredentials(),
+		retireCredentialedRuntime: async (targetZoneId, runtimeId, retireOptions) => {
+			const zone = findZone(targetZoneId);
+			await verifyZoneAdminAccess({
+				providedToken: retireOptions.adminToken,
+				secretResolver: options.secretResolver,
+				zone,
+			});
+			if (options.retireCredentialedRuntime === undefined) {
+				throw new Error('Credentialed runtime retirement is unavailable.');
+			}
+			return await options.retireCredentialedRuntime({
+				agentId: retireOptions.agentId,
+				force: retireOptions.force,
+				runtimeId,
+				zoneId: targetZoneId,
+			});
+		},
 		upgradeZone: async (targetZoneId) =>
 			await options.getManagedGatewayRuntime(targetZoneId).upgrade(),
 	};

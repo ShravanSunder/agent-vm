@@ -12,6 +12,8 @@ import {
 	type GatewayRuntimeControllerExecutionDispatchReservation,
 	type GatewayRuntimePortalSemanticSnapshot,
 } from '@agent-vm/gateway-control-contracts';
+import type { ManagedVmCreateRequest } from '@agent-vm/managed-vm';
+import { createSecretResolver } from '@agent-vm/secret-management';
 import {
 	deterministicOperationId,
 	directDispatchFingerprint,
@@ -25,11 +27,14 @@ import type {
 	GatewayControlTrustedCallerContext,
 } from '../controller/control-session/gateway-control-caller-context.js';
 import { authorizeGatewayControlControllerExecution } from '../controller/control-session/gateway-control-controller-execution-authorization.js';
+import { createCredentialedRuntimeManager } from '../controller/credentialed-runtime/credentialed-runtime-manager.js';
+import { createControllerCredentialedRuntimeRegistryPublisher } from '../controller/credentialed-runtime/credentialed-runtime-registry.js';
 import { createConfiguredCliManagedVmExecutor } from '../controller/runner/configured-cli-managed-vm-executor.js';
 import { writeGatewayRuntimePortalAdmissionFile } from '../gateway/gateway-runtime-portal-admission-file.js';
 import { materializeGatewayRuntimePortalAdmission } from '../gateway/gateway-runtime-portal-admission-material.js';
 import { writeMcpPortalEffectiveConfig } from '../gateway/mcp-portal-effective-config.js';
 import { readProcessIdentity } from '../shared/managed-vm-process.js';
+import { waitForProtocolRetryInterval, withProtocolDeadline } from './e2e-protocol-wait.js';
 import { shouldRunLiveVmE2e } from './live-vm-e2e-gates.js';
 import { startManagedGatewayImageBootFixture } from './managed-gateway-image-boot-test-fixture.js';
 
@@ -71,6 +76,17 @@ const approvalAuthorityContext = {
 	zoneId: acceptedSession.zoneId,
 } as const;
 
+const configuredCliProofScript = [
+	'set -eu;',
+	'case "${2-}" in',
+	'  --write-state) printf retained > /tmp/credential-runtime-marker; printf state-written ;;',
+	'  --read-state) if [ -f /tmp/credential-runtime-marker ]; then cat /tmp/credential-runtime-marker; else printf absent; fi ;;',
+	'  --credential-proof) test "$PROOF_CREDENTIAL_ROOT" = /run/agent-vm/credentials; test -s "$PROOF_CREDENTIAL_FILE"; mode=$(stat -c %a "$PROOF_CREDENTIAL_FILE"); test "$mode" = 600; if printf forbidden > "$PROOF_CREDENTIAL_FILE" 2>/dev/null; then exit 91; fi; printf credential-read-only ;;',
+	'  --hold) printf started; sleep 30 ;;',
+	'  *) printf "runner-output:%s" "$1"; [ "$#" -lt 2 ] || printf "runner-output:%s" "$2" ;;',
+	'esac',
+].join(' ');
+
 function semanticRevisions(
 	semanticSnapshot: GatewayRuntimePortalSemanticSnapshot,
 ): GatewayRuntimeApprovalChallengeIntent['semanticRevisions'] {
@@ -84,11 +100,12 @@ function semanticRevisions(
 	};
 }
 
-describeLiveConfiguredRunner('configured CLI one-shot Managed VM', () => {
-	it('proves direct, denied, unapproved, and approved dispositions with exact VM effects', async () => {
+describeLiveConfiguredRunner('configured CLI reusable credentialed Managed VM', () => {
+	it('proves direct, denied, unapproved, and approved dispositions with one retained VM', async () => {
 		const imageFixture = await startManagedGatewayImageBootFixture({
 			sessionLabel: 'configured-cli-runner-image-fixture',
 		});
+		let closeCredentialedRuntime: (() => Promise<void>) | undefined;
 		try {
 			const configDir = path.join(imageFixture.project.tempRoot, 'configured-cli-policy');
 			await mkdir(configDir, { recursive: true });
@@ -101,7 +118,34 @@ describeLiveConfiguredRunner('configured CLI one-shot Managed VM', () => {
 				path.join(configDir, 'tool-portal.config.jsonc'),
 				`${JSON.stringify(
 					{
-						agents: { main: { profile: 'default' } },
+						agents: {
+							main: {
+								credentialBindings: {
+									proof: {
+										files: {
+											input: {
+												ref: 'op://agent-vm-testing/smoke-test-item1/ref1',
+												source: '1password',
+											},
+										},
+									},
+								},
+								profile: 'default',
+							},
+							secondary: {
+								credentialBindings: {
+									proof: {
+										files: {
+											input: {
+												ref: 'op://agent-vm-testing/smoke-test-item1/ref1',
+												source: '1password',
+											},
+										},
+									},
+								},
+								profile: 'default',
+							},
+						},
 						mode: 'managed',
 						profiles: {
 							default: {
@@ -128,16 +172,26 @@ describeLiveConfiguredRunner('configured CLI one-shot Managed VM', () => {
 													},
 													commands: [{ path: ['isolated'] }],
 													deniedPatterns: [],
-													executablePath: '/usr/bin/printf',
+													executablePath: '/bin/sh',
 													executionTarget: {
 														allowedHosts: [],
+														credentialBinding: 'proof',
+														credentialEnvironment: {
+															PROOF_CREDENTIAL_FILE: {
+																kind: 'credential_file',
+																source: 'input',
+															},
+															PROOF_CREDENTIAL_ROOT: { kind: 'credential_root' },
+														},
+														credentialFiles: [{ path: 'input.txt', source: 'input' }],
 														environment: { kind: 'empty' },
 														guestCwd: '/tmp',
 														imageReference: './configured-cli-image.json',
 														kind: 'ephemeral_managed_vm',
+														runtimeId: 'proof-runtime',
 													},
 													kind: 'configured_cli',
-													mandatoryArgvPrefix: ['runner-output:%s'],
+													mandatoryArgvPrefix: ['-c', configuredCliProofScript, 'proof-command'],
 													output: {
 														modelVisibleStderr: 'none',
 														overflow: 'fail',
@@ -176,7 +230,7 @@ describeLiveConfiguredRunner('configured CLI one-shot Managed VM', () => {
 			const effectivePlan = await writeMcpPortalEffectiveConfig({
 				approvalAccessConfigured: true,
 				authoredConfigDir: configDir,
-				declaredAgentIds: [trustedPrincipal.agentId],
+				declaredAgentIds: [trustedPrincipal.agentId, 'secondary'],
 				effectiveHostConfigDir,
 				managedVmImages: {
 					prepareImage: async () => ({
@@ -189,7 +243,7 @@ describeLiveConfiguredRunner('configured CLI one-shot Managed VM', () => {
 					resolve: async () => {
 						throw new Error('configured CLI VM proof must not resolve secrets');
 					},
-					resolveAll: async () => ({}),
+					resolveAll: async () => ({ input: 'configured CLI VM proof credential' }),
 				},
 				workspaceGitPushAgentEligibility: { eligibleAgentIds: [] },
 				zoneId: acceptedSession.zoneId,
@@ -199,6 +253,11 @@ describeLiveConfiguredRunner('configured CLI one-shot Managed VM', () => {
 					{
 						agentId: trustedPrincipal.agentId,
 						frameworkIdentity: trustedPrincipal.frameworkIdentity,
+						toolPortalProfileId: trustedPrincipal.toolPortalProfileId,
+					},
+					{
+						agentId: 'secondary',
+						frameworkIdentity: { kind: 'hermes', profileName: 'secondary' },
 						toolPortalProfileId: trustedPrincipal.toolPortalProfileId,
 					},
 				],
@@ -211,15 +270,13 @@ describeLiveConfiguredRunner('configured CLI one-shot Managed VM', () => {
 				directoryPath: effectiveHostConfigDir,
 				material: portalAdmission,
 			});
-			const controllerExecutionNamespace =
-				effectivePlan.effectiveToolPortalConfig.profiles.default?.namespaces.controller_execution;
-			if (controllerExecutionNamespace?.backend.kind !== 'controller_execution') {
-				throw new Error('configured CLI VM proof namespace is absent');
-			}
-			const operation = controllerExecutionNamespace.backend.operations.isolated_runner_proof;
-			if (operation?.kind !== 'configured_cli') {
-				throw new Error('configured CLI VM proof operation is absent');
-			}
+			const operation = effectivePlan.credentialedRuntimeRegistrySnapshot.resolve({
+				agentId: trustedPrincipal.agentId,
+				cohortRevision: effectivePlan.credentialedRuntimeRegistrySnapshot.cohortRevision,
+				namespaceId: 'controller_execution',
+				operationName: 'isolated_runner_proof',
+				profileId: trustedPrincipal.toolPortalProfileId,
+			}).operation;
 			const preparedTarget = decodeConfiguredCliPreparedImageIdentity(
 				operation.executionTarget.kind === 'ephemeral_managed_vm'
 					? operation.executionTarget.imageReference
@@ -281,7 +338,7 @@ describeLiveConfiguredRunner('configured CLI one-shot Managed VM', () => {
 				toolVmProfiles: {},
 				zones: [
 					{
-						agents: [{ id: trustedPrincipal.agentId }],
+						agents: [{ id: trustedPrincipal.agentId }, { id: 'secondary' }],
 						approvalAccess: {
 							approvers: [{ approverId: 'hermes-native', kind: 'managed_gateway' }],
 							audience: 'agent-vm-controller-approval',
@@ -313,24 +370,43 @@ describeLiveConfiguredRunner('configured CLI one-shot Managed VM', () => {
 			} satisfies LoadedSystemConfig;
 
 			const managedVm = createManagedVmRuntimeComposition();
+			const testServiceAccountToken = process.env.AGENT_VM_TEST_OP_SERVICE_ACCOUNT_TOKEN;
+			const credentialSecretResolver =
+				testServiceAccountToken === undefined
+					? {
+							resolve: async () => 'configured CLI VM proof credential',
+							resolveAll: async () => ({ input: 'configured CLI VM proof credential' }),
+						}
+					: await createSecretResolver({ serviceAccountToken: testServiceAccountToken });
 			let createdRunnerVmCount = 0;
-			const execute = createConfiguredCliManagedVmExecutor({
-				controllerStateDir: path.join(imageFixture.project.tempRoot, 'controller-state'),
-				managedVmExactProcessTermination: managedVm.managedVmExactProcessTermination,
-				managedVmFactory: {
-					createManagedVm: async (request) => {
-						createdRunnerVmCount += 1;
-						return await managedVm.managedVmFactory.createManagedVm(request);
-					},
+			const managedVmFactory = {
+				createManagedVm: async (request: ManagedVmCreateRequest) => {
+					createdRunnerVmCount += 1;
+					return await managedVm.managedVmFactory.createManagedVm(request);
 				},
+			};
+			const runtimeManager = createCredentialedRuntimeManager({
+				controllerStateDir: path.join(imageFixture.project.tempRoot, 'controller-state'),
+				exactProcessTermination: managedVm.managedVmExactProcessTermination,
+				managedVmFactory,
 				readProcessIdentity,
+				secretResolver: credentialSecretResolver,
+			});
+			closeCredentialedRuntime = async () => await runtimeManager.closeZone(acceptedSession.zoneId);
+			const execute = createConfiguredCliManagedVmExecutor({
 				resolveGatewayIdentity: async () => ({
 					controllerEpoch: 'controller-epoch-configured-runner',
 					gatewayEpoch: 'gateway-epoch-configured-runner',
 					parentGatewayVmId: imageFixture.vm.id,
 					runtimeEpoch: 'runtime-epoch-configured-runner',
 				}),
+				runtimeManager,
 			});
+			const credentialedRuntimeRegistryPublisher =
+				createControllerCredentialedRuntimeRegistryPublisher();
+			credentialedRuntimeRegistryPublisher.activate(
+				effectivePlan.credentialedRuntimeRegistrySnapshot,
+			);
 
 			const runInvocation = async (props: {
 				readonly authority: Extract<
@@ -371,6 +447,7 @@ describeLiveConfiguredRunner('configured CLI one-shot Managed VM', () => {
 				>;
 				const authorization = await authorizeGatewayControlControllerExecution({
 					callerContext: trustedCallerContext,
+					credentialedRuntimeRegistryPublisher,
 					createdAtMs: 1_000,
 					expiresAtMs: deriveGatewayControlControllerExecutionRpcWindow({
 						input: props.input,
@@ -520,13 +597,184 @@ describeLiveConfiguredRunner('configured CLI one-shot Managed VM', () => {
 				stdout: 'runner-output:isolatedrunner-output:--approve',
 				stdoutTruncated: false,
 			});
+			expect(createdRunnerVmCount).toBe(1);
+
+			const credentialProofInput = {
+				argv: ['isolated', '--credential-proof'],
+				reason: 'real VM credential mount proof',
+				timeoutMs: 60_000,
+			};
+			expect(
+				await runInvocation({
+					authority: authorityFor({
+						approved: false,
+						callId: 'credential-proof-call',
+						input: credentialProofInput,
+					}),
+					callId: 'credential-proof-call',
+					input: credentialProofInput,
+				}),
+			).toMatchObject({ exitCode: 0, stdout: 'credential-read-only' });
+
+			const writeStateInput = {
+				argv: ['isolated', '--write-state'],
+				reason: 'write reusable rootfs marker',
+				timeoutMs: 60_000,
+			};
+			const readStateInput = {
+				argv: ['isolated', '--read-state'],
+				reason: 'read reusable rootfs marker',
+				timeoutMs: 60_000,
+			};
+			expect(
+				await runInvocation({
+					authority: authorityFor({
+						approved: false,
+						callId: 'write-state-call',
+						input: writeStateInput,
+					}),
+					callId: 'write-state-call',
+					input: writeStateInput,
+				}),
+			).toMatchObject({ exitCode: 0, stdout: 'state-written' });
+			expect(
+				await runInvocation({
+					authority: authorityFor({
+						approved: false,
+						callId: 'read-state-call',
+						input: readStateInput,
+					}),
+					callId: 'read-state-call',
+					input: readStateInput,
+				}),
+			).toMatchObject({ exitCode: 0, stdout: 'retained' });
+			expect(createdRunnerVmCount).toBe(1);
+
+			const secondaryResolution = effectivePlan.credentialedRuntimeRegistrySnapshot.resolve({
+				agentId: 'secondary',
+				cohortRevision: effectivePlan.credentialedRuntimeRegistrySnapshot.cohortRevision,
+				namespaceId: 'controller_execution',
+				operationName: 'isolated_runner_proof',
+				profileId: trustedPrincipal.toolPortalProfileId,
+			});
+			const secondaryAcquisition = await runtimeManager.acquireCommand({
+				finalAuthorization: async () => true,
+				operationId: 'secondary-agent-operation',
+				ownerIdentity: {
+					controllerEpoch: 'controller-epoch-configured-runner',
+					gatewayEpoch: 'gateway-epoch-configured-runner',
+					parentGatewayVmId: imageFixture.vm.id,
+					runtimeEpoch: 'runtime-epoch-configured-runner',
+					stablePrincipal: 'secondary-agent-stable-principal',
+				},
+				resolution: secondaryResolution,
+			});
+			expect(secondaryAcquisition.kind).toBe('acquired');
+			if (secondaryAcquisition.kind !== 'acquired') {
+				throw new Error('Secondary agent did not acquire its independent runtime.');
+			}
+			try {
+				expect(await secondaryAcquisition.command.exec(readStateInput)).toMatchObject({
+					exitCode: 0,
+					stdout: 'absent',
+				});
+			} finally {
+				await secondaryAcquisition.command.complete({ kind: 'completed' });
+			}
 			expect(createdRunnerVmCount).toBe(2);
+
+			const holdInput = {
+				argv: ['isolated', '--hold'],
+				reason: 'hold the reusable runtime active',
+				timeoutMs: 60_000,
+			};
+			const holdPromise = runInvocation({
+				authority: authorityFor({
+					approved: false,
+					callId: 'hold-call',
+					input: holdInput,
+				}),
+				callId: 'hold-call',
+				input: holdInput,
+			});
+			const recordsDirectory = path.join(
+				imageFixture.project.tempRoot,
+				'controller-state',
+				'zones',
+				acceptedSession.zoneId,
+				'credentialed-runtimes',
+			);
+			await withProtocolDeadline(
+				(async (): Promise<void> => {
+					while (true) {
+						// oxlint-disable-next-line no-await-in-loop -- protocol polling observes the durable active transition
+						const recordNames = await readdir(recordsDirectory).catch(() => []);
+						// oxlint-disable-next-line no-await-in-loop -- each poll reads the current bounded record set together
+						const recordContents = await Promise.all(
+							recordNames.map(
+								async (recordName) =>
+									await readFile(path.join(recordsDirectory, recordName), 'utf8'),
+							),
+						);
+						if (recordContents.some((record) => record.includes('"kind":"current-active"'))) {
+							return;
+						}
+						// oxlint-disable-next-line no-await-in-loop -- the named protocol interval bounds record polling
+						await waitForProtocolRetryInterval(50);
+					}
+				})(),
+				'credentialed runtime active record',
+				5_000,
+			);
+			const busyInput = {
+				argv: ['isolated'],
+				reason: 'prove busy has no late dispatch',
+				timeoutMs: 60_000,
+			};
+			await expect(
+				runInvocation({
+					authority: authorityFor({
+						approved: false,
+						callId: 'busy-call',
+						input: busyInput,
+					}),
+					callId: 'busy-call',
+					input: busyInput,
+				}),
+			).rejects.toMatchObject({ code: 'runtime_busy' });
+			expect(createdRunnerVmCount).toBe(2);
+
+			const retirement = runtimeManager.retire({
+				agentId: trustedPrincipal.agentId,
+				force: true,
+				runtimeId:
+					operation.executionTarget.kind === 'ephemeral_managed_vm'
+						? operation.executionTarget.runtimeId
+						: '',
+				zoneId: acceptedSession.zoneId,
+			});
+			await expect(holdPromise).rejects.toBeDefined();
+			await expect(retirement).resolves.toEqual({ kind: 'retired' });
+
+			expect(
+				await runInvocation({
+					authority: authorityFor({
+						approved: false,
+						callId: 'post-retirement-read-call',
+						input: readStateInput,
+					}),
+					callId: 'post-retirement-read-call',
+					input: readStateInput,
+				}),
+			).toMatchObject({ exitCode: 0, stdout: 'absent' });
+			expect(createdRunnerVmCount).toBe(3);
 		} catch (error: unknown) {
 			const recordsDirectory = path.join(
 				imageFixture.project.tempRoot,
 				'controller-state',
-				'controller-runners',
-				imageFixture.vm.id,
+				'zones',
+				acceptedSession.zoneId,
+				'credentialed-runtimes',
 			);
 			const recordNames = await readdir(recordsDirectory).catch(() => []);
 			const recordContents = await Promise.all(
@@ -540,6 +788,7 @@ describeLiveConfiguredRunner('configured CLI one-shot Managed VM', () => {
 				{ cause: error },
 			);
 		} finally {
+			await closeCredentialedRuntime?.();
 			await imageFixture.close();
 		}
 	}, 300_000);

@@ -2,6 +2,7 @@ export type ConfiguredControllerExecutionErrorCode =
 	| 'cancelled'
 	| 'execution_failed'
 	| 'not_dispatched'
+	| 'runtime_busy'
 	| 'timeout'
 	| 'validation_failed';
 
