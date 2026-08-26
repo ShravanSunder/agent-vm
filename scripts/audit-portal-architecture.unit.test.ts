@@ -60,10 +60,6 @@ describe('portal architecture audit', () => {
 					sourceText: "import { createPortalCore } from '@agent-vm/mcp-portal/core';\n",
 				},
 				{
-					filePath: 'packages/openclaw-agent-vm-plugin/src/tool-portal-native-tools.ts',
-					sourceText: "import { createPortalCore } from '@agent-vm/mcp-portal/core';\n",
-				},
-				{
 					filePath:
 						'packages/tool-portal/src/mcp-backed-capabilities/mcp-backed-capability-dispatcher.integration.test.ts',
 					sourceText: "import { createPortalCore } from '@agent-vm/mcp-portal/core';\n",
@@ -79,7 +75,6 @@ describe('portal architecture audit', () => {
 		expect(violations).toEqual([
 			'packages/agent-portal-sdk/src/portal-call-surface/portal-call-request-parser.ts: agent-portal-sdk must not import runtime portal packages',
 			'packages/controller-execution-contracts/src/controller-dispatch-boundary/controller-dispatch-intent-schema.ts: controller-execution-contracts must not import runtime portal packages',
-			'packages/openclaw-agent-vm-plugin/src/tool-portal-native-tools.ts: OpenClaw plugin must consume MCP providers through Tool Portal, not import MCP Portal directly',
 			'packages/tool-portal/src/mcp-backed-capabilities/mcp-core-dispatcher.ts: Tool Portal must consume MCP Portal through @agent-vm/mcp-portal/mcp-provider-backend, not core internals',
 		]);
 	});
@@ -171,11 +166,6 @@ describe('portal architecture audit', () => {
 		const violations = collectPortalArchitectureViolations({
 			files: [
 				{
-					filePath: 'packages/openclaw-agent-vm-plugin/src/managed-tool-portal-adapter.ts',
-					sourceText:
-						"import { createToolPortalService } from '@agent-vm/tool-portal';\ncreateToolPortalService({});\n",
-				},
-				{
 					filePath: 'packages/agent-portal-sdk/src/cli/tool-portal-cli.ts',
 					sourceText:
 						'export function createCli(): unknown { return createToolPortalService({}); }\n',
@@ -196,12 +186,6 @@ describe('portal architecture audit', () => {
 						'export function createToolPortalService(): ToolPortalService { return service; }\n',
 				},
 				{
-					filePath:
-						'packages/openclaw-agent-vm-plugin/src/managed-tool-portal-adapter.unit.test.ts',
-					sourceText:
-						"import { createToolPortalService } from '@agent-vm/tool-portal';\ncreateToolPortalService({});\n",
-				},
-				{
 					filePath: 'packages/tool-portal/src/tool-portal-service-test-fixture.ts',
 					sourceText:
 						"import { createToolPortalService } from './tool-portal-service.js';\ncreateToolPortalService({});\n",
@@ -212,7 +196,6 @@ describe('portal architecture audit', () => {
 		// Assert
 		expect(violations).toEqual([
 			'packages/agent-portal-sdk/src/cli/tool-portal-cli.ts: only Gateway runtime may construct ToolPortalService',
-			'packages/openclaw-agent-vm-plugin/src/managed-tool-portal-adapter.ts: only Gateway runtime may construct ToolPortalService',
 			'packages/tool-portal/src/duplicate-tool-portal-service.ts: only Gateway runtime may construct ToolPortalService',
 		]);
 	});
@@ -377,10 +360,6 @@ describe('portal architecture audit', () => {
 					sourceText: 'async function routePortalCall(): Promise<unknown> { return {}; }\n',
 				},
 				{
-					filePath: 'packages/openclaw-agent-vm-plugin/src/copied-tool-portal-router.ts',
-					sourceText: 'const mergePortalList = (): unknown => ({});\n',
-				},
-				{
 					filePath: 'packages/tool-portal/src/copied-tool-portal-router.ts',
 					sourceText:
 						'async function routePortalCall(): Promise<unknown> { return {}; }\nasync function mergePortalList(): Promise<unknown> { return {}; }\n',
@@ -401,7 +380,6 @@ describe('portal architecture audit', () => {
 		// Assert
 		expect(violations).toEqual([
 			'packages/gateway-runtime/src/copied-tool-portal-router.ts: Tool Portal semantic router helper routePortalCall must be declared only in packages/tool-portal/src/tool-portal-result-router.ts',
-			'packages/openclaw-agent-vm-plugin/src/copied-tool-portal-router.ts: Tool Portal semantic router helper mergePortalList must be declared only in packages/tool-portal/src/tool-portal-result-router.ts',
 			'packages/tool-portal/src/copied-tool-portal-router.ts: Tool Portal semantic router helper mergePortalList must be declared only in packages/tool-portal/src/tool-portal-result-router.ts',
 			'packages/tool-portal/src/copied-tool-portal-router.ts: Tool Portal semantic router helper routePortalCall must be declared only in packages/tool-portal/src/tool-portal-result-router.ts',
 		]);
@@ -480,35 +458,6 @@ describe('portal architecture audit', () => {
 		]);
 	});
 
-	it('rejects direct model-visible zone_git_push OpenClaw plugin surfaces', () => {
-		const violations = collectPortalArchitectureViolations({
-			files: [
-				{
-					filePath: 'packages/openclaw-agent-vm-plugin/openclaw.plugin.json',
-					sourceText: JSON.stringify({
-						contracts: {
-							tools: ['zone_git_push'],
-						},
-					}),
-				},
-				{
-					filePath: 'packages/openclaw-agent-vm-plugin/src/openclaw-plugin-registration.ts',
-					sourceText: "api.registerTool({ name: 'zone_git_push', execute: async () => ({}) });\n",
-				},
-				{
-					filePath: 'packages/openclaw-agent-vm-plugin/src/zone-git-tool.unit.test.ts',
-					sourceText:
-						"expect(registerTool).toHaveBeenCalledWith(expect.objectContaining({ name: 'zone_git_push' }));\n",
-				},
-			],
-		});
-
-		expect(violations).toEqual([
-			'packages/openclaw-agent-vm-plugin/openclaw.plugin.json: managed OpenClaw must not expose zone_git_push as a direct plugin tool',
-			'packages/openclaw-agent-vm-plugin/src/openclaw-plugin-registration.ts: managed OpenClaw must not register zone_git_push as a direct model-visible tool',
-		]);
-	});
-
 	it('rejects managed raw-control residue in production source files', () => {
 		const violations = collectPortalArchitectureViolations({
 			files: [
@@ -517,18 +466,18 @@ describe('portal architecture audit', () => {
 					sourceText: "environment.CONTROLLER_BASE_URL = 'http://controller.vm.host:18800';\n",
 				},
 				{
-					filePath: 'packages/openclaw-gateway/src/openclaw-lifecycle.ts',
+					filePath: 'packages/hermes-gateway/src/hermes-lifecycle.ts',
 					sourceText: "tcpHosts['controller.vm.host:18800'] = '127.0.0.1:18800';\n",
 				},
 				{
-					filePath: 'packages/openclaw-gateway/src/openclaw-lifecycle.unit.test.ts',
+					filePath: 'packages/hermes-gateway/src/hermes-lifecycle.unit.test.ts',
 					sourceText: "expect(tcpHosts['controller.vm.host:18800']).toBeUndefined();\n",
 				},
 			],
 		});
 
 		expect(violations).toEqual([
-			'packages/openclaw-gateway/src/openclaw-lifecycle.ts: managed control-plane cutover must not use controller.vm.host:18800',
+			'packages/hermes-gateway/src/hermes-lifecycle.ts: managed control-plane cutover must not use controller.vm.host:18800',
 			'packages/worker-gateway/src/worker-lifecycle.ts: managed control-plane cutover must not use CONTROLLER_BASE_URL',
 			'packages/worker-gateway/src/worker-lifecycle.ts: managed control-plane cutover must not use controller.vm.host:18800',
 		]);
@@ -542,7 +491,7 @@ describe('portal architecture audit', () => {
 					sourceText: 'Worker git push calls the controller push-branches API.\n',
 				},
 				{
-					filePath: 'docs/getting-started/openclaw-guide.md',
+					filePath: 'docs/getting-started/hermes-guide.md',
 					sourceText: 'Use controller.vm.host:18800 for managed control callbacks.\n',
 				},
 				{
@@ -555,17 +504,11 @@ describe('portal architecture audit', () => {
 				},
 				{
 					filePath: 'packages/agent-vm/src/cli/manual-templates.ts',
-					sourceText: 'gateway-control-link remains the OpenClaw readiness loop.\n',
+					sourceText: 'gateway-control-link remains the managed readiness loop.\n',
 				},
 				{
 					filePath: 'packages/agent-vm/src/cli/manual-templates.ts',
 					sourceText: 'Tool VM leases still use GET lease and POST renew.\n',
-				},
-				{
-					filePath: 'packages/openclaw-agent-vm-plugin/openclaw.plugin.json',
-					sourceText: JSON.stringify({
-						description: 'Sandbox backend with controller lease API.',
-					}),
 				},
 				{
 					filePath: 'docs/specs/2026-06-30-gateway-control-session-hard-cutover.md',
@@ -576,13 +519,12 @@ describe('portal architecture audit', () => {
 
 		expect(violations).toEqual([
 			'docs/architecture/agent-worker-gateway.md: managed control-plane cutover docs must not teach push-branches API as a current Worker control path',
-			'docs/getting-started/openclaw-guide.md: managed control-plane cutover must not use controller.vm.host:18800',
+			'docs/getting-started/hermes-guide.md: managed control-plane cutover must not use controller.vm.host:18800',
 			'docs/reference/configuration/system-json.md: managed control-plane cutover must not use controller.vm.host:18800',
 			'docs/subsystems/controller.md: managed control-plane cutover docs must not teach push-branches API as a current Worker control path',
 			'packages/agent-vm/src/cli/manual-templates.ts: managed control-plane cutover docs must not teach GET lease as a current VM-facing control path',
 			'packages/agent-vm/src/cli/manual-templates.ts: managed control-plane cutover docs must not teach POST renew as a current VM-facing control path',
 			'packages/agent-vm/src/cli/manual-templates.ts: managed control-plane cutover must not use gateway-control-link',
-			'packages/openclaw-agent-vm-plugin/openclaw.plugin.json: managed control-plane cutover docs must not teach controller lease API as a current VM-facing control path',
 		]);
 	});
 

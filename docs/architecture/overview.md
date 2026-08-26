@@ -204,7 +204,7 @@ start repo services"]
 
 ## Package Dependency Graph
 
-Eighteen workspace packages compose the system. Dependencies flow downward.
+Seventeen workspace packages compose the system. Dependencies flow downward.
 
 ```
   hermes-gateway ------+
@@ -243,6 +243,11 @@ Eighteen workspace packages compose the system. Dependencies flow downward.
                             |
              controller-execution-contracts
 
+  gateway-runtime ---> agent-portal-sdk
+          |-----------> gateway-control-contracts
+          |-----------> mcp-portal
+          +-----------> tool-portal
+
   config-contracts and secret-management provide shared contracts used by the
   controller, gateways, MCP Portal, Tool Portal, and plugins.
 
@@ -265,6 +270,7 @@ Eighteen workspace packages compose the system. Dependencies flow downward.
 | **agent-portal-sdk** | Portal-neutral Zod v4 contracts for list/search/describe/call results, capability descriptions, approvals, artifacts, diagnostics, and adapter envelopes. |
 | **mcp-portal** | MCP-specific capability facade, upstream MCP client runtime, scoped catalog/search, schema validation, approval evaluation, external MCP proxy, and MCP provider backend for Tool Portal composition. |
 | **tool-portal** | Cross-backend capability portal contracts, CLI allowance validation, and in-process entrypoint that dispatches MCP-backed capabilities through the MCP Portal backend and controller-owned host actions. |
+| **gateway-runtime** | Private managed-Gateway attachment, Gateway Control coordination, Tool Portal composition, and common sandbox/process/filesystem/stream execution over controller-authorized Tool VMs. |
 | **controller-execution-contracts** | Zod contracts for controller dispatch, controller host-action, and Tool VM runner boundaries. |
 | **agent-vm** | The controller and application composition root. Its regular Gondolin adapter dependency is confined to the provider-composition and build-tooling modules; controller domains consume narrow `managed-vm` projections. |
 | **agent-vm-worker** | Runs inside the VM. 6-phase coordinator, Codex/Claude executors with thread persistence, JSONL event sourcing, and control-session-backed controller tools such as `git-push` and `git-pull-default`. |

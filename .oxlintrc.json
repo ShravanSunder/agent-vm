@@ -90,10 +90,7 @@
 			}
 		},
 		{
-			"files": [
-				"scripts/live-sandbox-manual.mjs",
-				"packages/openclaw-agent-vm-plugin/sdk-validate.mjs"
-			],
+			"files": ["scripts/live-sandbox-manual.mjs"],
 			"rules": {
 				"typescript/no-unsafe-assignment": "off",
 				"typescript/no-unsafe-call": "off",
@@ -105,9 +102,7 @@
 				"packages/agent-vm/src/backup/backup-restore-operation.ts",
 				"packages/agent-vm/src/gateway/gateway-image-builder.ts",
 				"packages/agent-vm/src/gateway-api-client/gateway-api-client.ts",
-				"packages/agent-vm/src/gateway-api-client/gateway-websocket-client.ts",
-				"packages/openclaw-agent-vm-plugin/src/openclaw-sandbox-sdk-contract.ts",
-				"packages/openclaw-agent-vm-plugin/src/sandbox-backend/sandbox-backend-handle-factory.ts"
+				"packages/agent-vm/src/gateway-api-client/gateway-websocket-client.ts"
 			],
 			"rules": {
 				"typescript/no-unsafe-type-assertion": "off"

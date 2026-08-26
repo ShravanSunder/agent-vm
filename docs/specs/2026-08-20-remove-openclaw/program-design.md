@@ -330,16 +330,16 @@ defect.
 
 ## State and cutover model
 
-No runtime state migration or dual-reader phase exists. The cutover has one
-mandatory release boundary because the post-cutover runtime record schema cannot
-parse an OpenClaw predecessor safely:
+No runtime state migration or dual-reader phase exists. Deployment operators
+have one mandatory release boundary because the post-cutover runtime record
+schema cannot parse an OpenClaw predecessor safely:
 
 ```text
 pre-cutover release + valid OpenClaw config
   -> stop controller-managed OpenClaw Gateway
   -> release Tool VM leases and stop recorded Tool VM processes
   -> exact-process cleanup consumes the still-valid OpenClaw runtime records
-  -> prove Gateway/Tool VM records are cleared and ingress is no longer owned
+	-> operator verifies Gateway/Tool VM records are cleared and ingress is no longer owned
 
 only after that proof
   -> replace binaries, package train, generated contracts, and config together
@@ -347,7 +347,11 @@ only after that proof
 ```
 
 The cutover release never parses legacy records compatibly and never signals a
-process whose exact ownership it cannot prove.
+process whose exact ownership it cannot prove. This repository cutover does not
+boot or operate OpenClaw as a PR-readiness proof. The old-release shutdown is a
+deployment prerequisite performed by an operator before installing the new
+release; the repository proves that guidance is generated and that the new
+release rejects legacy inputs safely.
 
 | State | Authority | Permitted behavior | Illegal behavior and handling |
 | --- | --- | --- | --- |
@@ -399,7 +403,7 @@ runtime.
 | Hermes attachment claims removed client/framework kind | Exact literal schema rejects handshake/attachment | Gateway replacement under existing recovery authority | Contract and integration denied-case evidence |
 | Orientation inventory is unresolved, exhausted, malformed, or loses authority | Existing typed inventory state either defers injection, publishes ready all-unavailable orientation, or suppresses invalid-authority orientation; user turn continues | Existing Hermes managed Tool Portal plugin | Orientation unit/integration/E2E seams |
 | Hermes runtime or Tool VM failure | Existing health vector, typed operation state, fencing, and recovery classify it | Existing controller/Gateway Runtime owners | Green baseline paths use integration and real-VM recovery seams; the known post-reattachment binding-publication race uses exact base-versus-cutover comparison and remains separately visible |
-| Replacement is attempted while an OpenClaw Gateway or Tool VM remains | Pre-cutover exact-process cleanup must complete before replacement; the post-cutover controller fails closed on legacy record parse and never signals an unproved process | Pre-cutover controller and operator own safe termination; cutover controller owns fail-closed refusal | Old-release cleanup/record/ingress evidence followed by new-release rejection evidence |
+| Replacement is attempted while an OpenClaw Gateway or Tool VM remains | Deployment guidance requires pre-cutover exact-process cleanup before replacement; the post-cutover controller fails closed on legacy record parse and never signals an unproved process | Pre-cutover controller and operator own safe termination; cutover controller owns fail-closed refusal | Generated old-release shutdown guidance plus new-release legacy-input/record rejection evidence; live OpenClaw operation is a deployment acceptance step, not a repository PR gate |
 | Concurrent Hermes agents operate | Existing profile projection, agent binding, generation, and per-agent connection isolation apply | Existing controller and ToolPortalService owners | Multi-agent isolation evidence |
 | Worker and Hermes run concurrently | Existing zone-runtime and managed VM ownership keep them independent | Existing controller owners | Combined runtime/e2e evidence |
 | Package publication partially succeeds | Existing synchronized release recovery republishes only missing retained artifacts | Existing release workflow | Registry and packed-artifact verification |
@@ -455,7 +459,7 @@ files remain under operator custody.
 
 | Requirement | Realization owner | Observable seam | Real versus replaceable boundary | Enforcement class |
 | --- | --- | --- | --- | --- |
-| R1, R8, R10 | Gateway schemas, package graph, CLI/build/docs/release projections plus ordered predecessor cleanup | Supported values, active-residue inventory, old-release record/ingress cleanup, and new-release rejection | Source/generated artifacts and pre-cutover exact-process cleanup observations must be real | Types, schema, static rule, runtime cleanup guard, artifact and operational inspection |
+| R1, R8, R10 | Gateway schemas, package graph, CLI/build/docs/release projections plus ordered predecessor guidance | Supported values, active-residue inventory, generated old-release shutdown procedure, and new-release rejection | Source/generated artifacts, current cleanup safety tests, and new-release rejection are repository proof; live old-release cleanup is operator-owned deployment acceptance | Types, schema, static rule, runtime cleanup guard, generated manual, artifact and deployment inspection |
 | R2 | Generic incremental scaffold coordinator + Hermes image recipe | Fresh generated deployment, CLI result, unsupported-input rejection, and documented partial-write failure behavior | Filesystem and built CLI real; secret values may use test-safe placeholders | Schema, integration, host E2E, manual CLI transcript |
 | R3, R4 | Hermes adapter, Gateway Runtime, ToolPortalService, controller Tool VM binding | Managed portal/sandbox result and workspace side effect | Gateway Runtime, Hermes adapter, managed VM, and Tool VM real for final proof; provider/model may use deterministic test boundary where the operation path remains real | Types, runtime guards, integration, Hermes E2E |
 | R3a | Hermes managed Tool Portal plugin, inventory coordinator, typed caches, renderer, and `pre_llm_call` hook | Per-profile startup inventory and zero-or-one session context result | Existing process-local state and hook integration real; bounded Tool Portal responses may use controlled fixtures, with managed Hermes E2E observing the production hook path | Types, atomic cache boundary, unit, integration, Hermes E2E |

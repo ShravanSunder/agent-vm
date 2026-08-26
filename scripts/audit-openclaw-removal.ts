@@ -22,6 +22,7 @@ const currentDocumentationRoots = [
 ] as const;
 
 const operationalFiles = [
+	'.oxlintrc.json',
 	'.github/actions/restore-e2e-image-cache/action.yml',
 	'.github/workflows/ci.yml',
 	'.github/workflows/publish.yml',
@@ -30,6 +31,8 @@ const operationalFiles = [
 	'packages/agent-vm/package.json',
 	'pnpm-lock.yaml',
 	'scripts/check-package-version-sync.sh',
+	'scripts/audit-portal-architecture.ts',
+	'scripts/audit-portal-architecture.unit.test.ts',
 	'scripts/prepare-e2e-image-cache.ts',
 	'scripts/run-e2e-proof-lanes.ts',
 	'scripts/sync-local-tarballs-to-deployment.ts',

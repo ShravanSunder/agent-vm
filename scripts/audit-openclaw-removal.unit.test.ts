@@ -44,6 +44,30 @@ describe('OpenClaw removal audit', () => {
 		}
 	});
 
+	it('finds active OpenClaw residue in root quality config and architecture tooling', async () => {
+		const repositoryRoot = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-quality-audit-'));
+		try {
+			await mkdir(path.join(repositoryRoot, 'scripts'), { recursive: true });
+			await writeFile(
+				path.join(repositoryRoot, '.oxlintrc.json'),
+				'{"overrides":[{"files":["packages/openclaw-example/src/index.ts"]}]}\n',
+				'utf8',
+			);
+			await writeFile(
+				path.join(repositoryRoot, 'scripts', 'audit-portal-architecture.ts'),
+				"const removedPrefix = 'packages/openclaw-example/src/';\n",
+				'utf8',
+			);
+
+			await expect(auditOpenClawRemoval(repositoryRoot)).resolves.toEqual([
+				'.oxlintrc.json contains active OpenClaw residue',
+				'scripts/audit-portal-architecture.ts contains active OpenClaw residue',
+			]);
+		} finally {
+			await rm(repositoryRoot, { force: true, recursive: true });
+		}
+	});
+
 	it('finds no active residue in the current repository', async () => {
 		await expect(auditOpenClawRemoval(process.cwd())).resolves.toEqual([]);
 	});
