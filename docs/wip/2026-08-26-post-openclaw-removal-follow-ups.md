@@ -272,11 +272,43 @@ matches the deleted proof's framework-neutral Tool Portal semantics, so this is
 not resolved by relabeling existing explicit leaf replacement.
 
 The failed test experiment was removed; no red or weakened test was committed.
-The next read-only proof must capture the live effective idle TTL, active-use
-state or release failure evidence through existing seams. If a runtime change is
-required, it is outside this branch's accepted proof-only boundary and needs a
-separate owner decision. Investigation receipt:
+The preserved failed-run roots and current source sharpen the mismatch:
+
+- the deleted OpenClaw case invoked stateless `tool_portal_call` operations and
+  expected each invocation's active use to end before the controller idle
+  reaper ran;
+- stock Hermes intentionally caches one managed `BaseEnvironment` per admitted
+  profile and reuses its open Gateway Runtime environment while its status stays
+  active;
+- the controller idle reaper correctly excludes leases with a nonzero active-use
+  count, so it must not retire a Tool VM that the cached Hermes environment still
+  owns.
+
+Therefore the old 5-second OpenClaw expectation is not a mechanical Hermes test
+port. Making it pass through stock Hermes would require a lifecycle decision
+about when Hermes closes or evicts its cached environment, which this branch is
+not authorized to make. A direct common-runtime proof may still be valid if it
+ends the active use through a real retained product seam; explicit environment
+close or explicit leaf replacement must not be relabeled idle retirement.
+
+If the exact Hermes idle-retirement requirement remains mandatory, it needs a
+separate runtime/design owner decision. Investigation receipt:
 `tmp/debug-workflows/2026-08-26-agent-vm-remove-openclaw-hermes-idle-retirement/debug-investigation.md`.
+
+### Remaining recovery-proof delta
+
+The green Hermes restart test does not fully replace the deleted automatic
+recovery cases. Those cases killed the framework sibling, observed
+controller-driven whole-Gateway VM replacement, reacquired fresh Tool VM leaves,
+and then proved a stable no-flap window. The stronger repeated case performed
+three such replacements before its quiet window.
+
+Current retained evidence proves a clean distinct Gateway restart, healthy
+attachment stability, root API health, and stable sibling identities. It does
+not yet prove fatal-framework-triggered automatic replacement, repeated fresh
+Tool VM access after replacement, or three-recovery no-flap behavior. These
+ledger rows remain pending rather than being inferred from the weaker restart
+case.
 
 ### Reattachment stress separation receipt
 
