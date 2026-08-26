@@ -1,4 +1,5 @@
 import { mkdtemp, rm } from 'node:fs/promises';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -9,11 +10,21 @@ import {
 import type {
 	ManagedVm,
 	ManagedVmCreateRequest,
+	ManagedVmExecOptions,
 	ManagedVmExecProcess,
 	ManagedVmExecResult,
 } from '@agent-vm/managed-vm';
+import { formatMessage, parseSync } from '@optique/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { defaultCliDependencies, type CliIo } from '../../cli/agent-vm-cli-support.js';
+import { dispatchAgentVmCommand } from '../../cli/agent-vm-command-dispatcher.js';
+import { agentVmRootParser } from '../../cli/agent-vm-command-parser.js';
+import type { LoadedSystemConfig } from '../../config/system-config.js';
+import { createControllerRuntimeOperations } from '../controller-runtime-operations.js';
+import { createControllerClient } from '../http/controller-client.js';
+import { createControllerApp } from '../http/controller-http-routes.js';
+import { startControllerHttpServer } from '../http/controller-http-server.js';
 import {
 	createCredentialedRuntimeManager,
 	CredentialedRuntimeIdleTtlMs,
@@ -37,9 +48,11 @@ type ConfiguredOperation = Extract<
 
 interface FakeVmState {
 	closed: boolean;
+	execCallCount: number;
 	finalized: boolean;
 	hostProcessId: number | null;
 	readonly id: string;
+	lastExecSignal: AbortSignal | undefined;
 	readonly requests: readonly ManagedVmCreateRequest[];
 	started: boolean;
 }
@@ -151,43 +164,49 @@ function createFixture(
 		const ordinal = states.length + 1;
 		const state: FakeVmState = {
 			closed: false,
+			execCallCount: 0,
 			finalized: false,
 			hostProcessId: null,
 			id: `credentialed-vm-${String(ordinal)}`,
+			lastExecSignal: undefined,
 			requests: [request],
 			started: false,
 		};
 		states.push(state);
-		const exec = vi.fn((_argv: readonly string[], _options: unknown): ManagedVmExecProcess => {
-			const stdoutBuffer = Buffer.from(`vm:${state.id}`);
-			const result: ManagedVmExecResult = {
-				exitCode: 0,
-				json: <TValue>(): TValue => JSON.parse(stdoutBuffer.toString('utf8')) as TValue,
-				lines: () => [stdoutBuffer.toString('utf8')],
-				ok: true,
-				stderr: '',
-				stderrBuffer: Buffer.alloc(0),
-				stdout: stdoutBuffer.toString('utf8'),
-				stdoutBuffer,
-				toString: () => stdoutBuffer.toString('utf8'),
-			};
-			const resultPromise = Promise.resolve(result);
-			return Object.assign(resultPromise, {
-				[Symbol.asyncIterator]: async function* () {},
-				end: vi.fn(),
-				lines: async function* () {},
-				output: async function* () {
-					yield {
-						data: stdoutBuffer,
-						stream: 'stdout' as const,
-						text: stdoutBuffer.toString('utf8'),
-					};
-				},
-				resize: vi.fn(),
-				result: resultPromise,
-				write: vi.fn(),
-			});
-		});
+		const exec = vi.fn(
+			(_argv: readonly string[], execOptions: ManagedVmExecOptions = {}): ManagedVmExecProcess => {
+				state.execCallCount += 1;
+				state.lastExecSignal = execOptions.signal;
+				const stdoutBuffer = Buffer.from(`vm:${state.id}`);
+				const result: ManagedVmExecResult = {
+					exitCode: 0,
+					json: <TValue>(): TValue => JSON.parse(stdoutBuffer.toString('utf8')) as TValue,
+					lines: () => [stdoutBuffer.toString('utf8')],
+					ok: true,
+					stderr: '',
+					stderrBuffer: Buffer.alloc(0),
+					stdout: stdoutBuffer.toString('utf8'),
+					stdoutBuffer,
+					toString: () => stdoutBuffer.toString('utf8'),
+				};
+				const resultPromise = Promise.resolve(result);
+				return Object.assign(resultPromise, {
+					[Symbol.asyncIterator]: async function* () {},
+					end: vi.fn(),
+					lines: async function* () {},
+					output: async function* () {
+						yield {
+							data: stdoutBuffer,
+							stream: 'stdout' as const,
+							text: stdoutBuffer.toString('utf8'),
+						};
+					},
+					resize: vi.fn(),
+					result: resultPromise,
+					write: vi.fn(),
+				});
+			},
+		);
 		return {
 			close: async () => {
 				state.closed = true;
@@ -269,6 +288,19 @@ async function acquire(
 		ownerIdentity,
 		resolution: runtimeResolution,
 	});
+}
+
+async function findAvailablePort(): Promise<number> {
+	const reservation = createServer();
+	await new Promise<void>((resolve) => reservation.listen(0, '127.0.0.1', resolve));
+	const address = reservation.address();
+	if (address === null || typeof address === 'string') {
+		throw new Error('Port reservation did not expose a TCP port.');
+	}
+	await new Promise<void>((resolve, reject) =>
+		reservation.close((error) => (error ? reject(error) : resolve())),
+	);
+	return address.port;
 }
 
 describe('credentialed runtime manager', () => {
@@ -398,6 +430,48 @@ describe('credentialed runtime manager', () => {
 		expect(reopened.kind).toBe('acquired');
 		if (reopened.kind === 'acquired') await reopened.command.complete({ kind: 'completed' });
 	});
+
+	it.each(['new', 'reused'] as const)(
+		'rechecks the zone fence after final authorization for a %s runtime',
+		async (runtimeState) => {
+			let releaseFinalAuthorization: ((authorized: boolean) => void) | undefined;
+			let markFinalAuthorizationStarted: (() => void) | undefined;
+			const finalAuthorizationStarted = new Promise<void>((resolve) => {
+				markFinalAuthorizationStarted = resolve;
+			});
+			const finalAuthorizationResult = new Promise<boolean>((resolve) => {
+				releaseFinalAuthorization = resolve;
+			});
+			const fixture = createFixture(() => 1_000);
+			if (runtimeState === 'reused') {
+				const initial = await acquire(fixture);
+				if (initial.kind !== 'acquired') throw new Error('Expected initial acquisition.');
+				await initial.command.complete({ kind: 'completed' });
+			}
+
+			const acquiring = fixture.manager.acquireCommand({
+				finalAuthorization: async () => {
+					markFinalAuthorizationStarted?.();
+					return await finalAuthorizationResult;
+				},
+				operationId: `closing-${runtimeState}-runtime`,
+				ownerIdentity,
+				resolution: resolution(),
+			});
+			await finalAuthorizationStarted;
+			const closing = fixture.manager.closeZone('zone-a');
+			releaseFinalAuthorization?.(true);
+			const result = await acquiring;
+			if (result.kind === 'acquired') {
+				await result.command.complete({ kind: 'retire', reason: 'test cleanup' });
+			}
+			await expect(closing).resolves.toBeUndefined();
+
+			expect(result).toMatchObject({ kind: 'not-dispatched' });
+			expect(fixture.states[0]?.execCallCount).toBe(0);
+			expect(fixture.states[0]?.closed).toBe(true);
+		},
+	);
 
 	it('propagates owner-unsafe containment instead of completing zone close', async () => {
 		const fixture = createFixture(() => 1_000);
@@ -534,6 +608,182 @@ describe('credentialed runtime manager', () => {
 		await active.command.complete({ kind: 'retire', reason: 'operator force retirement' });
 		await expect(retirement).resolves.toEqual({ kind: 'retired' });
 		expect(fixture.states[0]?.closed).toBe(true);
+	});
+
+	it('composes CLI, authenticated HTTP, and manager retirement results', async () => {
+		const fixture = createFixture(() => 1_000);
+		const port = await findAvailablePort();
+		const adminToken = 'credential-runtime-admin-token';
+		const systemConfig = {
+			schemaVersion: 2,
+			storageRootDir: testRoot,
+			cacheDir: path.join(testRoot, 'cache'),
+			controllerStateDir: path.join(testRoot, 'controller-state'),
+			controllerRuntimeDir: path.join(testRoot, 'controller-runtime'),
+			systemConfigPath: path.join(testRoot, 'config', 'system.json'),
+			host: {
+				controllerPort: port,
+				projectNamespace: 'credential-runtime-integration',
+			},
+			imageProfiles: {
+				gateways: {
+					hermes: {
+						type: 'hermes',
+						buildConfig: './vm-images/gateways/hermes/build-config.json',
+					},
+				},
+				toolVms: {},
+			},
+			zones: [
+				{
+					id: 'zone-a',
+					adminAccess: {
+						mode: 'secret',
+						secret: { source: 'config', value: adminToken },
+					},
+					gateway: {
+						type: 'hermes',
+						imageProfile: 'hermes',
+						memory: '2G',
+						cpus: 2,
+						port: 18_793,
+						config: './config/hermes/config.yaml',
+						profilesByAgent: {},
+						profileSecretProjectionsByAgent: {},
+						stateDir: path.join(testRoot, 'zone-a', 'state'),
+						zoneFilesDir: path.join(testRoot, 'zone-a', 'zone-files'),
+						zoneRuntimeDir: path.join(testRoot, 'zone-a', 'runtime'),
+					},
+					secrets: {},
+					egressHosts: [{ host: 'www.googleapis.com', audience: 'gateway' }],
+				},
+			],
+			toolVmProfiles: {},
+			tcpPool: { basePort: 19_000, size: 2 },
+		} satisfies LoadedSystemConfig;
+		const unavailableGatewayRuntime = {
+			destroy: async () => ({ ok: true as const, purged: false, zoneId: 'zone-a' }),
+			enableSsh: async () => {
+				throw new Error('not used');
+			},
+			exec: async () => {
+				throw new Error('not used');
+			},
+			getHealth: async () => ({ ok: true, observation: 'not used', zoneId: 'zone-a' }),
+			getLogs: async () => ({ output: '', zoneId: 'zone-a' }),
+			getServiceHealth: async () => ({ ok: true, observation: 'not used', zoneId: 'zone-a' }),
+			refreshCredentials: async () => ({ ok: true as const, zoneId: 'zone-a' }),
+			upgrade: async () => ({ ok: true as const, zoneId: 'zone-a' }),
+		};
+		const operations = createControllerRuntimeOperations({
+			destroyZoneRuntime: async () => ({ ok: true, purged: false, zoneId: 'zone-a' }),
+			getActiveLeases: () => [],
+			getManagedGatewayRuntime: () => unavailableGatewayRuntime,
+			getRuntimeStatusByZone: () => ({}),
+			retireCredentialedRuntime: async (request) => await fixture.manager.retire(request),
+			secretResolver: {
+				resolve: async (secret) =>
+					secret.source === 'config'
+						? secret.value
+						: Promise.reject(new Error('unexpected secret')),
+				resolveAll: async () => ({}),
+			},
+			systemConfig,
+		});
+		const app = createControllerApp({
+			leaseManager: {
+				createLease: async () => {
+					throw new Error('not used');
+				},
+				listLeases: () => [],
+				peekLease: () => undefined,
+				releaseLease: async () => {},
+				renewLease: async () => {
+					throw new Error('not used');
+				},
+			},
+			operations,
+			toolVmProfiles: {},
+			zoneIds: new Set(['zone-a']),
+		});
+		const server = await startControllerHttpServer({ app, port });
+		const controllerClient = createControllerClient({
+			baseUrl: `http://127.0.0.1:${String(port)}`,
+		});
+		const runCliRetirement = async (force: boolean): Promise<unknown> => {
+			const parsed = parseSync(agentVmRootParser, [
+				'controller',
+				'credential-runtime',
+				'retire',
+				'--zone',
+				'zone-a',
+				'--agent',
+				'sun',
+				'--runtime',
+				'google-workspace',
+				...(force ? ['--force'] : []),
+			]);
+			if (!parsed.success) throw new Error(formatMessage(parsed.error));
+			let stdout = '';
+			const io: CliIo = {
+				stderr: { write: () => true },
+				stdout: {
+					write: (chunk) => {
+						stdout += String(chunk);
+						return true;
+					},
+				},
+			};
+			await dispatchAgentVmCommand(parsed.value, io, {
+				...defaultCliDependencies,
+				createControllerClient,
+				loadSystemConfig: async () => systemConfig,
+			});
+			return JSON.parse(stdout) as unknown;
+		};
+
+		try {
+			await expect(
+				controllerClient.retireCredentialedRuntime?.('zone-a', 'google-workspace', {
+					agentId: 'sun',
+					force: false,
+				}),
+			).rejects.toThrow('HTTP 401');
+			await expect(
+				controllerClient.retireCredentialedRuntime?.('zone-a', 'google-workspace', {
+					adminToken: 'wrong-token',
+					agentId: 'sun',
+					force: false,
+				}),
+			).rejects.toThrow('HTTP 403');
+
+			await expect(runCliRetirement(false)).resolves.toEqual({ kind: 'absent' });
+			const active = await acquire(fixture);
+			if (active.kind !== 'acquired') throw new Error('Expected active runtime.');
+			await active.command.exec({ argv: ['calendar', 'list'], reason: 'observe cancellation' });
+			const activeSignal = fixture.states[0]?.lastExecSignal;
+			if (activeSignal === undefined) throw new Error('Expected active command signal.');
+			await expect(runCliRetirement(false)).resolves.toEqual({ kind: 'active', retryable: true });
+			const cancellationObserved = new Promise<void>((resolve) => {
+				activeSignal.addEventListener('abort', () => resolve(), { once: true });
+			});
+			const forcedRetirement = runCliRetirement(true);
+			await cancellationObserved;
+			await active.command.complete({ kind: 'retire', reason: 'operator force retirement' });
+			await expect(forcedRetirement).resolves.toEqual({ kind: 'retired' });
+
+			const replacement = await acquire(fixture);
+			if (replacement.kind !== 'acquired') throw new Error('Expected replacement runtime.');
+			expect(fixture.createManagedVm).toHaveBeenCalledTimes(2);
+			await replacement.command.complete({ kind: 'completed' });
+			fixture.exactTerminate.mockRejectedValueOnce(new Error('forced containment failure'));
+			await expect(runCliRetirement(false)).resolves.toEqual({
+				kind: 'owner-unsafe',
+				retryable: false,
+			});
+		} finally {
+			await server.close();
+		}
 	});
 
 	it.each(['identity-published', 'current-active', 'current-idle', 'retiring'] as const)(

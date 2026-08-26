@@ -462,7 +462,8 @@ export function createCredentialedRuntimeManager(props: {
 				let finalAuthorized = false;
 				if (!closedZoneIds.has(request.resolution.zoneId)) {
 					try {
-						finalAuthorized = await request.finalAuthorization();
+						finalAuthorized =
+							(await request.finalAuthorization()) && !closedZoneIds.has(request.resolution.zoneId);
 					} catch {
 						finalAuthorized = false;
 					}
@@ -479,7 +480,8 @@ export function createCredentialedRuntimeManager(props: {
 				let finalAuthorized = false;
 				if (!closedZoneIds.has(request.resolution.zoneId)) {
 					try {
-						finalAuthorized = await request.finalAuthorization();
+						finalAuthorized =
+							(await request.finalAuthorization()) && !closedZoneIds.has(request.resolution.zoneId);
 					} catch {
 						finalAuthorized = false;
 					}
