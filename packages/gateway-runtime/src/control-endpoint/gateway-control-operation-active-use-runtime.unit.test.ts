@@ -225,6 +225,7 @@ function createControlServiceFixture(): ControlServiceFixture {
 }
 
 interface CommandFixtureOptions {
+	readonly failFirstLeaseUseEnd?: boolean;
 	readonly failLeaseUseEnd?: boolean;
 	readonly rejectFirstLeaseUseStartWith?: GatewayControlLeaseRejectionReason;
 	readonly rejectLeaseUseEndWith?: GatewayControlLeaseRejectionReason;
@@ -242,6 +243,7 @@ function createCommandFixture(
 	resolveCurrentSession: () => GatewayControlAcceptedSession | undefined = () => sessionA,
 ): CommandFixture {
 	const requests: GatewayRuntimeControlCommandRequest[] = [];
+	let leaseUseEndCount = 0;
 	let leaseUseStartCount = 0;
 	const client = {
 		sendCommand: vi.fn(
@@ -329,7 +331,12 @@ function createCommandFixture(
 						};
 					}
 				}
-				if (operation === 'lease_use_end' && options.failLeaseUseEnd === true) {
+				if (operation === 'lease_use_end') leaseUseEndCount += 1;
+				if (
+					operation === 'lease_use_end' &&
+					(options.failLeaseUseEnd === true ||
+						(options.failFirstLeaseUseEnd === true && leaseUseEndCount === 1))
+				) {
 					return {
 						acceptedSession: responseSession,
 						messageId,
@@ -856,6 +863,34 @@ describe('Gateway control operation active-use runtime', () => {
 		expect(successor.operationContext.leaseId).toBe(generationA.leaseId);
 		expect(fixture.command.requests.map((request) => request.message.operation)).toEqual([
 			'lease_use_start',
+			'lease_use_end',
+			'lease_use_start',
+		]);
+	});
+
+	it('retries a failed current-session use end before the first replacement-session active use', async () => {
+		// Arrange
+		const fixture = createRuntimeFixture({ failFirstLeaseUseEnd: true });
+		const predecessor = requireBound(
+			await fixture.runtime.acquisitionPort.acquire({ trustedContext: trustedContextA }),
+		);
+
+		// Act
+		fixture.ssh.emitTransportFailure({ kind: 'transport-close' });
+		await predecessor.retireGroup('failed');
+		fixture.control.setSession(sessionB);
+		const successor = requireBound(
+			await fixture.runtime.acquisitionPort.acquire({ trustedContext: trustedContextA }),
+		);
+
+		// Assert
+		expect(predecessor.operationAuthority.authorize(predecessor.operationContext)).toEqual({
+			kind: 'stale-operation-authority',
+		});
+		expect(successor.operationContext.leaseId).toBe(generationA.leaseId);
+		expect(fixture.command.requests.map((request) => request.message.operation)).toEqual([
+			'lease_use_start',
+			'lease_use_end',
 			'lease_use_end',
 			'lease_use_start',
 		]);

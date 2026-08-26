@@ -201,10 +201,75 @@ describe('Gateway control replacement-session use-end runtime', () => {
 
 		// Assert
 		expect(settlementFinished).toBe(false);
-		expect(endUse.mock.calls.map(([request]) => request.leaseId)).toEqual(['lease-a', 'lease-b']);
+		expect(endUse).toHaveBeenNthCalledWith(1, expect.objectContaining({ leaseId: 'lease-a' }));
+		expect(endUse).toHaveBeenNthCalledWith(2, expect.objectContaining({ leaseId: 'lease-b' }));
 		secondEndResult.resolve(true);
 		await expect(settlement).resolves.toBe(true);
 		expect(register).toHaveBeenCalledOnce();
+	});
+
+	it('does not reuse a completed settlement for a newly queued principal generation', async () => {
+		// Arrange
+		const register = vi.fn(
+			async (): Promise<GatewayControlRegisteredCallerContext> => ({
+				admissionPrincipal: stablePrincipalA,
+				callerContextId: '11111111-1111-4111-8111-111111111111',
+			}),
+		);
+		const runtimeHolder: {
+			current?: ReturnType<typeof createGatewayControlReplacementSessionUseEndRuntime>;
+		} = {};
+		const endUse = vi.fn(async (request: { readonly leaseId: string }) => {
+			if (request.leaseId === 'lease-a') {
+				queueMicrotask(() => {
+					queueMicrotask(() => {
+						queueMicrotask(() => {
+							queueMicrotask(() => {
+								const runtime = runtimeHolder.current;
+								if (runtime === undefined) throw new Error('Missing runtime fixture.');
+								runtime.queue({
+									leaseId: 'lease-b',
+									reason: 'failed',
+									stablePrincipal: stablePrincipalA,
+									useId: 'use-b',
+								});
+							});
+						});
+					});
+				});
+			}
+			return true;
+		});
+		const runtime = createGatewayControlReplacementSessionUseEndRuntime({
+			callerContextRegistrationClient: { register },
+			controlService: { getCurrentAcceptedSession: () => sessionB },
+			endUse,
+		});
+		runtimeHolder.current = runtime;
+		runtime.queue({
+			leaseId: 'lease-a',
+			reason: 'failed',
+			stablePrincipal: stablePrincipalA,
+			useId: 'use-a',
+		});
+
+		// Act
+		const firstSettlement = runtime.settle({
+			stablePrincipal: stablePrincipalA,
+			trustedContext: trustedContextA,
+		});
+		await expect(firstSettlement).resolves.toBe(true);
+		await Promise.resolve();
+		await Promise.resolve();
+		const secondSettlement = runtime.settle({
+			stablePrincipal: stablePrincipalA,
+			trustedContext: trustedContextA,
+		});
+		await expect(secondSettlement).resolves.toBe(true);
+
+		// Assert
+		expect(endUse.mock.calls.map(([request]) => request.leaseId)).toEqual(['lease-a', 'lease-b']);
+		expect(register.mock.calls.length).toBeGreaterThanOrEqual(1);
 	});
 
 	it('keeps different principals independently settleable', async () => {

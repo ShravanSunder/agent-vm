@@ -62,6 +62,7 @@ export function createGatewayControlReplacementSessionUseEndRuntime(
 		GatewayStablePrincipalDigest,
 		{
 			readonly acceptedSession: GatewayControlAcceptedSession;
+			readonly pendingUses: Map<string, PendingReplacementSessionUseEnd>;
 			readonly promise: Promise<boolean>;
 		}
 	>();
@@ -95,7 +96,10 @@ export function createGatewayControlReplacementSessionUseEndRuntime(
 		const acceptedSession = props.controlService.getCurrentAcceptedSession();
 		if (closed || acceptedSession === undefined) return false;
 		const existingSettlement = settlementsByPrincipal.get(request.stablePrincipal);
-		if (existingSettlement?.acceptedSession === acceptedSession) {
+		if (
+			existingSettlement?.acceptedSession === acceptedSession &&
+			existingSettlement.pendingUses === pendingUses
+		) {
 			return await existingSettlement.promise;
 		}
 		const settlementPromise = (async (): Promise<boolean> => {
@@ -112,7 +116,12 @@ export function createGatewayControlReplacementSessionUseEndRuntime(
 					return false;
 				}
 				const drainPendingUses = async (): Promise<boolean> => {
-					if (pendingUses.size === 0) return true;
+					if (pendingUses.size === 0) {
+						if (pendingUsesByPrincipal.get(request.stablePrincipal) === pendingUses) {
+							pendingUsesByPrincipal.delete(request.stablePrincipal);
+						}
+						return true;
+					}
 					const useEndResults = await Promise.all(
 						Array.from(pendingUses.values(), async (pendingUse) => ({
 							ended: await props.endUse({
@@ -136,15 +145,14 @@ export function createGatewayControlReplacementSessionUseEndRuntime(
 					}
 					return await drainPendingUses();
 				};
-				if (!(await drainPendingUses())) return false;
-				pendingUsesByPrincipal.delete(request.stablePrincipal);
-				return true;
+				return await drainPendingUses();
 			} catch {
 				return false;
 			}
 		})();
 		settlementsByPrincipal.set(request.stablePrincipal, {
 			acceptedSession,
+			pendingUses,
 			promise: settlementPromise,
 		});
 		try {

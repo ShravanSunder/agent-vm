@@ -450,7 +450,7 @@ export function createGatewayControlOperationActiveUseRuntime(
 				reason,
 				useId: state.leaseUse.useId,
 			});
-			if (!ended && !currentSession(state.acceptedSession)) {
+			if (!ended) {
 				replacementSessionUseEndRuntime.queue({
 					leaseId: state.operationContext.leaseId,
 					reason,
