@@ -10,16 +10,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import ANY, Mock, call, patch
 
+import agent_vm_hermes_adapter.managed_gateway_bootstrap as managed_gateway_bootstrap
 import hermes_constants
 from agent_vm_agent_portal_sdk.gateway_runtime_client import GatewayRuntimeClient
-from gateway import run as hermes_gateway_run
-from tools import file_tools as hermes_file_tools
-from tools.environments import local as local_environment_module
-from tools.environments import ssh as ssh_environment_module
-from tools.process_registry import ProcessSession
-from tools.process_registry import process_registry as hermes_process_registry
-
-import agent_vm_hermes_adapter.managed_gateway_bootstrap as managed_gateway_bootstrap
 from agent_vm_hermes_adapter.managed_gateway_bootstrap import (
     HermesManagedEnvironmentHooks,
     load_managed_adapter_material,
@@ -42,6 +35,12 @@ from agent_vm_hermes_adapter.managed_tool_portal_capability_tools import (
     register as register_managed_tool_portal_plugin,
 )
 from agent_vm_hermes_adapter.managed_tool_portal_observability import HermesToolPortalTelemetry
+from gateway import run as hermes_gateway_run
+from tools import file_tools as hermes_file_tools
+from tools.environments import local as local_environment_module
+from tools.environments import ssh as ssh_environment_module
+from tools.process_registry import ProcessSession
+from tools.process_registry import process_registry as hermes_process_registry
 
 PROJECTION_COHORT_DIGEST = (
     "projection-cohort:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -269,12 +268,15 @@ class FakeManagedEnvironment:
         self.owning_generation = owning_generation
         self.bound_cache_identity: str | None = None
         self.status_kind = "active"
+        self.status_error: Exception | None = None
         self.retired = False
 
     def bind_cache_identity(self, cache_identity: str) -> None:
         self.bound_cache_identity = cache_identity
 
     def resolve_status_kind(self) -> str:
+        if self.status_error is not None:
+            raise self.status_error
         return self.status_kind
 
     def retire_locally(self) -> None:
@@ -1120,6 +1122,52 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
                 ),
             ]
         )
+
+    def test_reopens_generation_when_cached_status_probe_rejects_stale_authority(self) -> None:
+        adapter = build_adapter()
+        terminal_tool_module = FakeTerminalToolModule()
+        hooks = HermesManagedEnvironmentHooks(
+            adapter=adapter,
+            attachment=build_attachment(),
+            protected_hermes_home=PROTECTED_HERMES_HOME,
+            terminal_tool_module=terminal_tool_module,
+        )
+        stale_environment = FakeManagedEnvironment(owning_generation="tool-vm-generation-stale")
+        replacement_environment = FakeManagedEnvironment(
+            owning_generation="tool-vm-generation-replacement"
+        )
+
+        hooks.install()
+        try:
+            with (
+                patch.object(
+                    hermes_constants,
+                    "get_hermes_home",
+                    return_value=PROTECTED_HERMES_HOME / "profiles" / "researcher",
+                ),
+                patch.object(
+                    hooks._environment_factory,
+                    "create",
+                    side_effect=(stale_environment, replacement_environment),
+                ),
+            ):
+                stale_cache_identity = terminal_tool_module._resolve_container_task_id("session-a")
+                terminal_tool_module._active_environments[stale_cache_identity] = stale_environment
+                stale_environment.status_error = RuntimeError(
+                    "Gateway runtime method dispatch failed."
+                )
+
+                replacement_cache_identity = terminal_tool_module._resolve_container_task_id(
+                    "session-a"
+                )
+        finally:
+            hooks.close()
+            adapter.close(disconnect_gateway_runtime=False)
+
+        self.assertNotEqual(stale_cache_identity, replacement_cache_identity)
+        self.assertTrue(stale_environment.retired)
+        self.assertNotIn(stale_cache_identity, terminal_tool_module._active_environments)
+        self.assertIn("tool-vm-generation-replacement", replacement_cache_identity)
 
     def test_forces_managed_environment_initial_cwd_to_tool_vm_work(self) -> None:
         adapter = build_adapter()
