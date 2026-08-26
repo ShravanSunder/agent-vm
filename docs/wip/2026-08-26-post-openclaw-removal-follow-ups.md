@@ -186,7 +186,8 @@ The following is cutover work, not deferred follow-up:
 7. Resolve the proof-transfer ledger so every row is `transferred`,
    `OpenClaw-only delete`, or the one explicit baseline-red differential row.
 8. Integrate the current `origin/master` changes and revalidate the exact
-   resulting branch; do not assume the August 24 proof remains current.
+   resulting branch. Completed by merge commit `02745c94`; the remaining live
+   and package proof still needs to be run at that integrated identity.
 9. Run the full unit, integration, host E2E, generic VM, Hermes-green, Worker,
    quality, package/residue, built-CLI scaffold/validate/build, and removed-
    command proof bundle.
@@ -197,16 +198,17 @@ The following is cutover work, not deferred follow-up:
 
 | Proof layer | Last evidence | Current status before cleanup |
 | --- | --- | --- |
-| Core removal implementation | Commits `859bfa43`, `eeae0213`, and `7d833519` | Committed; current branch still needs revalidation against newer `origin/master` |
-| Unit | 4,334/4,334 at `eeae0213` | Passed previously; stale after current dirty changes and upstream integration |
-| Integration | 820/820 at `eeae0213` | Passed previously; stale after current dirty changes and upstream integration |
+| Core removal implementation | Commits `859bfa43`, `eeae0213`, and `7d833519`; master integration `02745c94` | Committed and integrated with `origin/master` at `cbba8890`; exact master differential adds no OpenClaw line |
+| Unit | 4,334/4,334 at `eeae0213`; 187/187 focused merge-resolution assertions before `02745c94` | Focused shared-contract/controller/manual proof is fresh; full unit lane remains pending at integrated HEAD |
+| Integration | 820/820 at `eeae0213`; 69/69 focused merge-resolution tests before `02745c94` | Focused orchestrator/approval/managed Tool Portal proof is fresh; full integration lane remains pending at integrated HEAD |
 | Host E2E | 234/234 at `eeae0213` | Passed previously; stale after current dirty changes and upstream integration |
 | Generic VM E2E | 17/17 at `eeae0213` | Passed previously; the new process/stream observation has a separate selected real-VM pass but is uncommitted |
 | Worker E2E | 5/5 at `eeae0213` | Passed previously; must remain green after integration |
 | Retained Hermes files | 7/7 plus stock filesystem/profile 1/1 | Passed previously; protected SSH test is currently red because it mutates a copied zone view |
-| Package inspection | 17 retained packages at synchronized `0.0.141` | Passed previously; `origin/master` now carries release `0.0.142`, so final inspection must use the integrated exact HEAD |
+| Package inspection | Quality gate confirms 17 npm and 2 Python packages synchronized at `0.0.142` | Version synchronization is fresh; final packed-artifact inspection remains pending at integrated HEAD |
 | Proof-transfer ledger | Process/stream row transferred | Incomplete: pending idle retirement, stale reacquisition, health/replacement/no-flap, current Tool VM access, and protected SSH observations remain |
-| Full quality gate | 16/16 at `eeae0213` | Passed previously; no fresh final gate exists for the current worktree |
+| OpenClaw residue audit | `pnpm exec tsx scripts/audit-openclaw-removal.ts` at `02745c94` | Passed with exit 0; OpenClaw package owners remain deleted and the integrated master differential adds no OpenClaw line |
+| Full quality gate | `UV_CACHE_DIR=/tmp/agent-vm-remove-openclaw-uv-cache pnpm check` after merge resolution | 16/16 passed before `02745c94`: build, Optique CLI boundary, package/Zod guards, taxonomy, portal and VM boundaries, generated contracts, lint, format, type-aware lint, and typecheck |
 | Built CLI manual proof | Fresh Hermes scaffold/validate/build passed before the current dirty changes | Must be repeated after cleanup and integration; removed OpenClaw commands must still be rejected |
 | Independent implementation review | Earlier review produced proof-transfer corrections | No fresh ready verdict exists for the final cleaned and integrated branch |
 
@@ -214,6 +216,29 @@ Final cutover proof is present only when every row above has fresh evidence at
 the same integrated HEAD, every proof-transfer row has its allowed terminal
 disposition, and no live lane succeeds by skipping its gate. Inventory-only
 skips are recorded as inventory and never presented as runtime proof.
+
+### Fresh integrated merge receipt
+
+- Integrated source: `origin/master` at `cbba8890`.
+- Merge commit: `02745c94`.
+- Shared conflict policy: OpenClaw-owned files stayed deleted; current master
+  namespace-discovery and credentialed-runtime contracts were retained under
+  Hermes-only managed-agent identities.
+- Focused unit command: eight selected unit files covering portable contracts,
+  Gateway control contracts, semantic revision, manuals, controller HTTP, and
+  control-domain handling; result `187 passed`, exit 0.
+- Focused integration command: four selected files covering Gateway zone
+  orchestration, Tool Portal approval, and managed Tool Portal composition;
+  result `69 passed`, exit 0.
+- Full quality command:
+  `UV_CACHE_DIR=/tmp/agent-vm-remove-openclaw-uv-cache pnpm check`; result
+  `16 passed, 0 failed`, exit 0.
+- Dedicated removal command:
+  `pnpm exec tsx scripts/audit-openclaw-removal.ts`; exit 0.
+- Not yet proven at `02745c94`: full unit/integration counts, live host/VM/
+  Hermes/Worker lanes, packed artifacts, built-CLI scaffold and removed-command
+  behavior, pending transfer-ledger rows, and independent implementation
+  review.
 
 ## Closing state
 
