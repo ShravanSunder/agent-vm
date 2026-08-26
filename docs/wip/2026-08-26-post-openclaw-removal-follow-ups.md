@@ -204,7 +204,7 @@ The following is cutover work, not deferred follow-up:
 | Host E2E | `pnpm test:e2e:host` at `1fa07bb1` with required host permissions | 30 files, 234/234 tests passed; the first sandboxed attempt failed only on blocked uv, Docker, and host-process access |
 | Generic VM E2E | `mise exec -- pnpm test:e2e:vm` at `1fa07bb1` | 11 files, 17/17 real VM tests passed, including process/stream and leaf-replacement proof |
 | Worker E2E | documented private test-key mapping plus `mise exec -- pnpm test:e2e:worker` at `1fa07bb1` | 3 files, 5/5 tests passed with zero skips; the bare command's 2-pass/3-skip result is not used as proof |
-| Retained Hermes files | Selected green files total 9/9 across approval, profile secrets, observability, Tool Portal orientation, stock filesystem/profile/protected SSH, and clean restart | Selected real Hermes proof is green; the complete named lane is not: 7/9 passed and two otherwise-green files failed at Gateway startup/root-health under aggregate execution |
+| Retained Hermes files | Exact aggregate command rerun at `c8df1d36` | 5 files, 9/9 real Hermes tests passed with zero skips; the earlier 7/9 startup/root-health result did not reproduce |
 | Package inspection | `pnpm inspect:managed-vm-package-cut --expected-head 1fa07bb1...` | Passed for exactly 17 retained npm packages at synchronized `0.0.142`; packed members and sibling dependency versions inspected |
 | Proof-transfer ledger | Process/stream, protected SSH, generic Gateway subtree replacement, healthy-attachment no-replacement, and Gateway health stability rows transferred; reattachment row has terminal baseline-red differential evidence | Incomplete: pending idle retirement, stale reacquisition, fatal/repeated recovery, repeated current Tool VM access, and repeated no-flap observations remain |
 | OpenClaw residue audit | `pnpm exec tsx scripts/audit-openclaw-removal.ts` at `02745c94` | Passed with exit 0; OpenClaw package owners remain deleted and the integrated master differential adds no OpenClaw line |
@@ -235,9 +235,8 @@ skips are recorded as inventory and never presented as runtime proof.
   `16 passed, 0 failed`, exit 0.
 - Dedicated removal command:
   `pnpm exec tsx scripts/audit-openclaw-removal.ts`; exit 0.
-- Still incomplete after the `1fa07bb1` bundle: pending transfer-ledger rows,
-  the aggregate Hermes-lane startup interference, and independent
-  implementation review.
+- Still incomplete after the fresh `c8df1d36` Hermes aggregate proof: pending
+  transfer-ledger rows and independent implementation review.
 
 ### Fresh integrated final-bundle progress at `1fa07bb1`
 
@@ -249,9 +248,8 @@ skips are recorded as inventory and never presented as runtime proof.
   gates; inventory only, not runtime proof.
 - Generic VM: 17/17 passed.
 - Worker: 5/5 passed with the test-only model credential mapped; zero skips.
-- Hermes green: 7/7 across approval, profile-secret, observability, and Tool
-  Portal orientation files, plus 1/1 stock filesystem/profile/protected SSH and
-  1/1 independently green restart/healthy-attachment stability.
+- Hermes green: the exact aggregate lane later passed 5 files and 9/9 tests at
+  `c8df1d36`, superseding the selected-file-only receipt for aggregate health.
 - Package cut: exactly 17 retained npm packages packed and inspected at
   `0.0.142`.
 - Built CLI: fresh Hermes scaffold succeeded, static validation returned
@@ -298,23 +296,27 @@ behind `AGENT_VM_HERMES_REATTACHMENT_STRESS=1`.
 
 ### Aggregate Hermes lane receipt
 
-The complete named lane was run after the restart/stress split:
+The earlier complete-lane run produced 7/9 passes: the managed-base harness did
+not observe Gateway start, and observability timed out waiting for root API
+health. Both files passed individually, so the result remained an aggregate
+evidence gap rather than a product diagnosis.
+
+At `c8df1d36`, the smallest suspected two-file collision was run with real host
+permissions:
+
+`AGENT_VM_E2E_SKIP_WORKSPACE_BUILD=1 AGENT_VM_E2E_USE_LOCAL_TOOL_VM_PACKAGES=1 AGENT_VM_HERMES_E2E=1 mise exec -- pnpm exec vitest run --config vitest.config.ts --project e2e-hermes packages/agent-vm/src/integration-tests/hermes-managed-base-environment.hermes.e2e.test.ts packages/agent-vm/src/integration-tests/hermes-framework-observability.hermes.e2e.test.ts --reporter=verbose`
+
+Result: 2 files and 6/6 tests passed, exit 0. This falsified deterministic
+contamination between those two files in the observed order.
+
+The exact complete named lane was then rerun with real host permissions:
 
 `AGENT_VM_E2E_SKIP_WORKSPACE_BUILD=1 mise exec -- pnpm test:e2e:hermes`
 
-Result: 3 files passed, 2 files failed; 7 tests passed and 2 failed.
-
-- `hermes-managed-base-environment.hermes.e2e.test.ts` failed before its stock
-  filesystem assertion because the harness did not observe a managed Gateway
-  start. Its selected filesystem/profile/protected-SSH case passes alone.
-- `hermes-framework-observability.hermes.e2e.test.ts` timed out waiting for the
-  root API health endpoint. Its selected observability case passes alone.
-- The newly separated clean restart case passed in the aggregate.
-
-The aggregate result is an evidence gap and is not relabeled green. No test was
-skipped, retried into success, or weakened. The next investigation must retain
-Gateway startup/service logs for the two aggregate-only failures and determine
-whether shared image/cache/port/observability teardown is the collision.
+Result: 5 files and 9/9 tests passed with zero skips, exit 0, in 311.73 seconds.
+The prior aggregate-only startup/root-health failures did not reproduce. No
+test, timeout, assertion, production behavior, or Hermes runtime behavior was
+changed to obtain the green result.
 
 ## Closing state
 
