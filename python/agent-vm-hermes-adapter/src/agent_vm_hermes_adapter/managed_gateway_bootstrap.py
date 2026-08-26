@@ -724,6 +724,15 @@ class HermesManagedEnvironmentHooks:
                         profile_name,
                         type(error).__name__,
                     )
+                    try:
+                        current_entry.environment.cleanup()
+                    except Exception as cleanup_error:
+                        _LOGGER.warning(
+                            "Hermes managed environment remote cleanup failed; continuing local "
+                            "retirement: profile=%s failure=%s",
+                            profile_name,
+                            type(cleanup_error).__name__,
+                        )
                 else:
                     if status_kind == "active":
                         return current_entry.cache_identity

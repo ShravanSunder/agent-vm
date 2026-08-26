@@ -269,6 +269,8 @@ class FakeManagedEnvironment:
         self.bound_cache_identity: str | None = None
         self.status_kind = "active"
         self.status_error: Exception | None = None
+        self.cleanup_calls = 0
+        self.cleanup_error: Exception | None = None
         self.retired = False
 
     def bind_cache_identity(self, cache_identity: str) -> None:
@@ -278,6 +280,12 @@ class FakeManagedEnvironment:
         if self.status_error is not None:
             raise self.status_error
         return self.status_kind
+
+    def cleanup(self) -> None:
+        self.cleanup_calls += 1
+        if self.cleanup_error is not None:
+            raise self.cleanup_error
+        self.retired = True
 
     def retire_locally(self) -> None:
         self.retired = True
@@ -1156,6 +1164,9 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
                 stale_environment.status_error = RuntimeError(
                     "Gateway runtime method dispatch failed."
                 )
+                stale_environment.cleanup_error = RuntimeError(
+                    "Gateway runtime cleanup dispatch failed."
+                )
 
                 replacement_cache_identity = terminal_tool_module._resolve_container_task_id(
                     "session-a"
@@ -1165,6 +1176,7 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
             adapter.close(disconnect_gateway_runtime=False)
 
         self.assertNotEqual(stale_cache_identity, replacement_cache_identity)
+        self.assertEqual(stale_environment.cleanup_calls, 1)
         self.assertTrue(stale_environment.retired)
         self.assertNotIn(stale_cache_identity, terminal_tool_module._active_environments)
         self.assertIn("tool-vm-generation-replacement", replacement_cache_identity)

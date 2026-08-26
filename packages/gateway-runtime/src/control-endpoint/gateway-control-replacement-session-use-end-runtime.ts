@@ -39,6 +39,11 @@ export interface CreateGatewayControlReplacementSessionUseEndRuntimeProps {
 
 export interface GatewayControlReplacementSessionUseEndRuntime {
 	readonly close: () => void;
+	readonly confirmEnded: (request: {
+		readonly leaseId: string;
+		readonly stablePrincipal: GatewayStablePrincipalDigest;
+		readonly useId: string;
+	}) => void;
 	readonly queue: (request: {
 		readonly leaseId: string;
 		readonly reason: GatewayControlOperationActiveUseReleaseReason;
@@ -67,6 +72,23 @@ export function createGatewayControlReplacementSessionUseEndRuntime(
 		}
 	>();
 	let closed = false;
+
+	function confirmEnded(request: {
+		readonly leaseId: string;
+		readonly stablePrincipal: GatewayStablePrincipalDigest;
+		readonly useId: string;
+	}): void {
+		const pendingUses = pendingUsesByPrincipal.get(request.stablePrincipal);
+		const pendingUse = pendingUses?.get(request.useId);
+		if (pendingUses === undefined || pendingUse?.leaseId !== request.leaseId) return;
+		pendingUses.delete(request.useId);
+		if (
+			pendingUses.size === 0 &&
+			pendingUsesByPrincipal.get(request.stablePrincipal) === pendingUses
+		) {
+			pendingUsesByPrincipal.delete(request.stablePrincipal);
+		}
+	}
 
 	function queue(request: {
 		readonly leaseId: string;
@@ -170,6 +192,7 @@ export function createGatewayControlReplacementSessionUseEndRuntime(
 			pendingUsesByPrincipal.clear();
 			settlementsByPrincipal.clear();
 		},
+		confirmEnded,
 		queue,
 		settle,
 	};

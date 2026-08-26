@@ -442,6 +442,13 @@ export function createGatewayControlOperationActiveUseRuntime(
 		if (state.activeUseEndPromise !== undefined) return state.activeUseEndPromise;
 		state.heartbeatHandle?.cancel();
 		state.heartbeatHandle = undefined;
+		const retainedUse = {
+			leaseId: state.operationContext.leaseId,
+			reason,
+			stablePrincipal: state.operationContext.stablePrincipal,
+			useId: state.leaseUse.useId,
+		};
+		replacementSessionUseEndRuntime.queue(retainedUse);
 		state.activeUseEndPromise = (async (): Promise<void> => {
 			const ended = await bestEffortEndUse({
 				acceptedSession: state.acceptedSession,
@@ -450,13 +457,8 @@ export function createGatewayControlOperationActiveUseRuntime(
 				reason,
 				useId: state.leaseUse.useId,
 			});
-			if (!ended) {
-				replacementSessionUseEndRuntime.queue({
-					leaseId: state.operationContext.leaseId,
-					reason,
-					stablePrincipal: state.operationContext.stablePrincipal,
-					useId: state.leaseUse.useId,
-				});
+			if (ended) {
+				replacementSessionUseEndRuntime.confirmEnded(retainedUse);
 			}
 		})();
 		return state.activeUseEndPromise;

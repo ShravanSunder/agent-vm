@@ -874,6 +874,32 @@ describe('Gateway control operation active-use runtime', () => {
 		]);
 	});
 
+	it('retains the predecessor synchronously when session retirement overlaps acquisition', async () => {
+		// Arrange
+		const fixture = createRuntimeFixture();
+		const predecessor = requireBound(
+			await fixture.runtime.acquisitionPort.acquire({ trustedContext: trustedContextA }),
+		);
+
+		// Act
+		fixture.control.setSession(undefined);
+		fixture.control.setSession(sessionB);
+		const successor = requireBound(
+			await fixture.runtime.acquisitionPort.acquire({ trustedContext: trustedContextA }),
+		);
+
+		// Assert
+		expect(predecessor.operationAuthority.authorize(predecessor.operationContext)).toEqual({
+			kind: 'stale-operation-authority',
+		});
+		expect(successor.operationContext.leaseId).toBe(generationA.leaseId);
+		expect(fixture.command.requests.map((request) => request.message.operation)).toEqual([
+			'lease_use_start',
+			'lease_use_end',
+			'lease_use_start',
+		]);
+	});
+
 	it('retries a failed current-session use end before the first replacement-session active use', async () => {
 		// Arrange
 		const fixture = createRuntimeFixture({ failFirstLeaseUseEnd: true });
