@@ -150,6 +150,7 @@ function managerWithAcquire(
 	return {
 		acquireCommand,
 		closeZone: vi.fn(async () => {}),
+		openZone: vi.fn(),
 		reapExpired: vi.fn(async () => {}),
 		recoverZone: vi.fn(async () => {}),
 		retire: vi.fn(async () => ({ kind: 'absent' as const })),

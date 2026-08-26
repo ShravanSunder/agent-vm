@@ -20,7 +20,14 @@ import {
 	type CredentialedRuntimeManager,
 	type CredentialedRuntimeOwnerIdentity,
 } from './credentialed-runtime-manager.js';
-import { createCredentialedRuntimeRecordStore } from './credentialed-runtime-record.js';
+import {
+	createCredentialedRuntimeRecordWriter,
+	type CredentialedRuntimeRecordWriter,
+} from './credentialed-runtime-record-writer.js';
+import {
+	createCredentialedRuntimeRecordStore,
+	type CredentialedRuntimeRecord,
+} from './credentialed-runtime-record.js';
 import type { CredentialedRuntimeResolution } from './credentialed-runtime-registry.js';
 
 type ConfiguredOperation = Extract<
@@ -41,6 +48,7 @@ interface ManagerFixture {
 	readonly createManagedVm: ReturnType<typeof vi.fn>;
 	readonly exactTerminate: ReturnType<typeof vi.fn>;
 	readonly manager: ReturnType<typeof createCredentialedRuntimeManager>;
+	readonly readProcessIdentity: ReturnType<typeof vi.fn>;
 	readonly resolveAll: ReturnType<typeof vi.fn>;
 	readonly states: FakeVmState[];
 }
@@ -130,9 +138,16 @@ function resolution(
 	};
 }
 
-function createFixture(now: () => number): ManagerFixture {
+function createFixture(
+	now: () => number,
+	options: {
+		readonly beforeManagedVmCreate?: () => Promise<void>;
+		readonly failingRecordKinds?: readonly CredentialedRuntimeRecord['kind'][];
+	} = {},
+): ManagerFixture {
 	const states: FakeVmState[] = [];
 	const createManagedVm = vi.fn(async (request: ManagedVmCreateRequest): Promise<ManagedVm> => {
+		await options.beforeManagedVmCreate?.();
 		const ordinal = states.length + 1;
 		const state: FakeVmState = {
 			closed: false,
@@ -198,6 +213,33 @@ function createFixture(now: () => number): ManagerFixture {
 		},
 	);
 	const resolveAll = vi.fn(async () => ({ 'service-account': '{"type":"service_account"}' }));
+	const readProcessIdentity = vi.fn<
+		(hostProcessId: number) => Promise<{ readonly command: string; readonly lstart: string } | null>
+	>(async (hostProcessId) => ({
+		command: `qemu credentialed ${String(hostProcessId)}`,
+		lstart: `start-${String(hostProcessId)}`,
+	}));
+	const delegateRecordWriter = createCredentialedRuntimeRecordWriter({
+		controllerStateDir: testRoot,
+	});
+	const failingRecordKinds = new Set(options.failingRecordKinds ?? []);
+	const recordWriter: CredentialedRuntimeRecordWriter = {
+		delete: async (zoneId, recordId): Promise<void> =>
+			await delegateRecordWriter.delete(zoneId, recordId),
+		recordsDirectoryPath: (zoneId): string => delegateRecordWriter.recordsDirectoryPath(zoneId),
+		write: async (
+			...writeArguments: Parameters<typeof delegateRecordWriter.write>
+		): Promise<void> => {
+			const [context, build] = writeArguments;
+			await delegateRecordWriter.write(context, (base) => {
+				const record = build(base);
+				if (failingRecordKinds.delete(record.kind)) {
+					throw new Error(`forced ${record.kind} record failure`);
+				}
+				return record;
+			});
+		},
+	};
 	return {
 		createManagedVm,
 		exactTerminate,
@@ -206,13 +248,12 @@ function createFixture(now: () => number): ManagerFixture {
 			exactProcessTermination: { terminateRecordedHostProcess: exactTerminate },
 			managedVmFactory: { createManagedVm },
 			now,
-			readProcessIdentity: async (hostProcessId) => ({
-				command: `qemu credentialed ${String(hostProcessId)}`,
-				lstart: `start-${String(hostProcessId)}`,
-			}),
+			readProcessIdentity,
+			recordWriter,
 			secretResolver: { resolve: vi.fn(), resolveAll },
 			sleep: async () => {},
 		}),
+		readProcessIdentity,
 		resolveAll,
 		states,
 	};
@@ -313,6 +354,128 @@ describe('credentialed runtime manager', () => {
 		if (second.kind === 'acquired') await second.command.complete({ kind: 'completed' });
 	});
 
+	it.each([
+		['missing', null],
+		['replaced', { command: 'unrelated process', lstart: 'different start' }],
+	] as const)(
+		'contains an idle runtime whose process identity is %s before reuse',
+		async (_case, identity) => {
+			const fixture = createFixture(() => 1_000);
+			const first = await acquire(fixture);
+			if (first.kind !== 'acquired') throw new Error('Expected first acquisition.');
+			await first.command.complete({ kind: 'completed' });
+			fixture.readProcessIdentity.mockResolvedValueOnce(identity);
+
+			const second = await acquire(fixture);
+
+			expect(second.kind).toBe('acquired');
+			expect(fixture.states[0]?.closed).toBe(true);
+			expect(fixture.createManagedVm).toHaveBeenCalledTimes(2);
+			if (second.kind === 'acquired') await second.command.complete({ kind: 'completed' });
+		},
+	);
+
+	it('fences acquisition before draining provisioning during zone close', async () => {
+		let releaseProvisioning: (() => void) | undefined;
+		const provisioningGate = new Promise<void>((resolve) => {
+			releaseProvisioning = resolve;
+		});
+		const fixture = createFixture(() => 1_000, {
+			beforeManagedVmCreate: async () => await provisioningGate,
+		});
+		const provisioning = acquire(fixture);
+		await vi.waitFor(() => expect(fixture.createManagedVm).toHaveBeenCalledOnce());
+
+		const closing = fixture.manager.closeZone('zone-a');
+		await expect(acquire(fixture)).resolves.toMatchObject({ kind: 'not-dispatched' });
+		releaseProvisioning?.();
+		await expect(provisioning).resolves.toMatchObject({ kind: 'not-dispatched' });
+		await expect(closing).resolves.toBeUndefined();
+		expect(fixture.states[0]?.closed).toBe(true);
+
+		fixture.manager.openZone('zone-a');
+		const reopened = await acquire(fixture);
+		expect(reopened.kind).toBe('acquired');
+		if (reopened.kind === 'acquired') await reopened.command.complete({ kind: 'completed' });
+	});
+
+	it('propagates owner-unsafe containment instead of completing zone close', async () => {
+		const fixture = createFixture(() => 1_000);
+		const acquired = await acquire(fixture);
+		if (acquired.kind !== 'acquired') throw new Error('Expected acquisition.');
+		await acquired.command.complete({ kind: 'completed' });
+		fixture.exactTerminate.mockRejectedValueOnce(new Error('forced exact termination failure'));
+
+		await expect(fixture.manager.closeZone('zone-a')).rejects.toThrow('owner-unsafe');
+		fixture.manager.openZone('zone-a');
+		await expect(acquire(fixture)).resolves.toMatchObject({ kind: 'owner-unsafe' });
+	});
+
+	it.each(['vm-created', 'identity-published', 'current-active'] as const)(
+		'contains the runtime when the %s durable transition fails',
+		async (failingKind) => {
+			const fixture = createFixture(() => 1_000, { failingRecordKinds: [failingKind] });
+
+			const result = await acquire(fixture);
+
+			expect(result.kind).toMatch(/not-dispatched|owner-unsafe/u);
+			expect(fixture.states[0]?.closed).toBe(true);
+			await expect(fixture.manager.closeZone('zone-a')).resolves.toBeUndefined();
+		},
+	);
+
+	it('retires a completed runtime when current-idle publication fails', async () => {
+		const fixture = createFixture(() => 1_000, { failingRecordKinds: ['current-idle'] });
+		const acquired = await acquire(fixture);
+		if (acquired.kind !== 'acquired') throw new Error('Expected acquisition.');
+
+		await acquired.command.complete({ kind: 'completed' });
+
+		expect(fixture.states[0]?.closed).toBe(true);
+		const replacement = await acquire(fixture);
+		expect(replacement.kind).toBe('acquired');
+		if (replacement.kind === 'acquired') {
+			await replacement.command.complete({ kind: 'completed' });
+		}
+	});
+
+	it('continues exact containment when retiring publication fails', async () => {
+		const fixture = createFixture(() => 1_000, { failingRecordKinds: ['retiring'] });
+		const acquired = await acquire(fixture);
+		if (acquired.kind !== 'acquired') throw new Error('Expected acquisition.');
+		await acquired.command.complete({ kind: 'completed' });
+
+		await expect(
+			fixture.manager.retire({
+				agentId: 'sun',
+				force: false,
+				runtimeId: 'google-workspace',
+				zoneId: 'zone-a',
+			}),
+		).resolves.toEqual({ kind: 'retired' });
+		expect(fixture.states[0]?.closed).toBe(true);
+	});
+
+	it('fences the key when terminal containment evidence cannot be persisted', async () => {
+		const fixture = createFixture(() => 1_000, {
+			failingRecordKinds: ['contained-terminal'],
+		});
+		const acquired = await acquire(fixture);
+		if (acquired.kind !== 'acquired') throw new Error('Expected acquisition.');
+		await acquired.command.complete({ kind: 'completed' });
+
+		await expect(
+			fixture.manager.retire({
+				agentId: 'sun',
+				force: false,
+				runtimeId: 'google-workspace',
+				zoneId: 'zone-a',
+			}),
+		).resolves.toEqual({ kind: 'owner-unsafe', retryable: false });
+		expect(fixture.states[0]?.closed).toBe(true);
+		await expect(acquire(fixture)).resolves.toMatchObject({ kind: 'owner-unsafe' });
+	});
+
 	it('retires a newly created runtime when final authorization changes before the slot', async () => {
 		const fixture = createFixture(() => 1_000);
 		const result = await fixture.manager.acquireCommand({
@@ -324,6 +487,14 @@ describe('credentialed runtime manager', () => {
 		expect(result.kind).toBe('not-dispatched');
 		expect(fixture.states[0]?.closed).toBe(true);
 		expect(fixture.createManagedVm).toHaveBeenCalledOnce();
+	});
+
+	it('contains a started runtime when process identity inspection fails', async () => {
+		const fixture = createFixture(() => 1_000);
+		fixture.readProcessIdentity.mockRejectedValueOnce(new Error('forced identity read failure'));
+
+		await expect(acquire(fixture)).resolves.toMatchObject({ kind: 'not-dispatched' });
+		expect(fixture.states[0]?.closed).toBe(true);
 	});
 
 	it('returns active for ordinary operator retirement and retires when idle', async () => {

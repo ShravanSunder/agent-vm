@@ -121,6 +121,7 @@ export interface StartGatewayZoneOptions {
 	) => void;
 	readonly onGatewayRuntimeAttachmentLost?: (transition: GatewayRuntimeAttachmentLost) => void;
 	readonly onCredentialedRuntimeZoneStopping?: () => Promise<void>;
+	readonly onCredentialedRuntimeZoneStarted?: () => void;
 	readonly prebuiltImage?: ManagedVmImageBuildResult | undefined;
 	readonly runTask?: RunTaskFn;
 	readonly runtimeEnvironment?: Readonly<Record<string, string>>;

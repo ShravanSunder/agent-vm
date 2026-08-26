@@ -2192,6 +2192,17 @@ describe('startGatewayZone', () => {
 
 	it('withdraws control and ingress before exact Gateway runner termination', async () => {
 		const teardownEvents: string[] = [];
+		const credentialedRuntimeRegistryPublisher = {
+			activate: vi.fn(() => {
+				teardownEvents.push('credentialed-zone-activate');
+			}),
+			resolve: vi.fn(() => {
+				throw new Error('not used by Gateway lifecycle proof');
+			}),
+			withdraw: vi.fn(() => {
+				teardownEvents.push('credentialed-registry-withdraw');
+			}),
+		};
 		let runnerAlive = true;
 		const ingressCloseRelease = createDeferredPromise<void>();
 		const controlSessionClose = vi.fn(() => {
@@ -2222,6 +2233,13 @@ describe('startGatewayZone', () => {
 
 		const result = await startGatewayZone(
 			{
+				credentialedRuntimeRegistryPublisher,
+				onCredentialedRuntimeZoneStarted: () => {
+					teardownEvents.push('credentialed-zone-open');
+				},
+				onCredentialedRuntimeZoneStopping: async () => {
+					teardownEvents.push('credentialed-zone-close');
+				},
 				secretResolver: createOpenClawSecretResolver({
 					DISCORD_BOT_TOKEN: 'discord-token',
 					OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
@@ -2255,14 +2273,23 @@ describe('startGatewayZone', () => {
 		);
 
 		requireManagedGatewayResult(result).controlSession?.close();
+		expect(teardownEvents.indexOf('credentialed-zone-open')).toBeLessThan(
+			teardownEvents.indexOf('credentialed-zone-activate'),
+		);
+		teardownEvents.length = 0;
 		const gatewayTermination = result.destroyGateway();
 		await flushPendingEventLoopWork();
+		expect(teardownEvents.indexOf('credentialed-registry-withdraw')).toBeLessThan(
+			teardownEvents.indexOf('credentialed-zone-close'),
+		);
 		expect(teardownEvents).not.toContain('runner-termination');
 		ingressCloseRelease.resolve();
 		await gatewayTermination;
 		await result.destroyGateway();
 
-		expect(teardownEvents[0]).toBe('control-session-close');
+		expect(teardownEvents.indexOf('credentialed-zone-close')).toBeLessThan(
+			teardownEvents.indexOf('control-session-close'),
+		);
 		expect(teardownEvents.indexOf('ingress-close-complete')).toBeLessThan(
 			teardownEvents.indexOf('runner-termination'),
 		);

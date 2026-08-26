@@ -1021,6 +1021,7 @@ async function startControllerRuntimeWithOwnershipLock(
 								controlSession: { controllerEpoch },
 								createVmOwnership: createManagedGatewayVmOwnership,
 								credentialedRuntimeRegistryPublisher,
+								onCredentialedRuntimeZoneStarted: () => credentialedRuntimeManager.openZone(zoneId),
 								onCredentialedRuntimeZoneStopping: async () =>
 									await credentialedRuntimeManager.closeZone(zoneId),
 								...(startOptions?.onPendingVmCreation

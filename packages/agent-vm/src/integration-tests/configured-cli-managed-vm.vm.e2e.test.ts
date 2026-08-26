@@ -13,7 +13,7 @@ import {
 	type GatewayRuntimePortalSemanticSnapshot,
 } from '@agent-vm/gateway-control-contracts';
 import type { ManagedVmCreateRequest } from '@agent-vm/managed-vm';
-import { createSecretResolver } from '@agent-vm/secret-management';
+import { createSecretResolver, type SecretResolver } from '@agent-vm/secret-management';
 import {
 	deterministicOperationId,
 	directDispatchFingerprint,
@@ -81,11 +81,24 @@ const configuredCliProofScript = [
 	'case "${2-}" in',
 	'  --write-state) printf retained > /tmp/credential-runtime-marker; printf state-written ;;',
 	'  --read-state) if [ -f /tmp/credential-runtime-marker ]; then cat /tmp/credential-runtime-marker; else printf absent; fi ;;',
-	'  --credential-proof) test "$PROOF_CREDENTIAL_ROOT" = /run/agent-vm/credentials; test -s "$PROOF_CREDENTIAL_FILE"; mode=$(stat -c %a "$PROOF_CREDENTIAL_FILE"); test "$mode" = 600; if printf forbidden > "$PROOF_CREDENTIAL_FILE" 2>/dev/null; then exit 91; fi; printf credential-read-only ;;',
+	'  --credential-proof) test "$PROOF_CREDENTIAL_ROOT" = /run/agent-vm/credentials; test -s "$PROOF_CREDENTIAL_FILE"; mode=$(stat -c %a "$PROOF_CREDENTIAL_FILE"); test "$mode" = 600; if printf forbidden > "$PROOF_CREDENTIAL_FILE" 2>/dev/null; then exit 91; fi; credential=$(cat "$PROOF_CREDENTIAL_FILE"); if grep -R -F -l -- "$credential" /tmp /root /home 2>/dev/null | grep -q .; then exit 92; fi; printf credential-read-only ;;',
+	'  --host-isolation) test ! -e "$3"; printf host-isolated ;;',
 	'  --hold) printf started; sleep 30 ;;',
 	'  *) printf "runner-output:%s" "$1"; [ "$#" -lt 2 ] || printf "runner-output:%s" "$2" ;;',
 	'esac',
 ].join(' ');
+
+async function readDirectoryTreeText(directoryPath: string): Promise<string> {
+	const relativePaths = await readdir(directoryPath, { recursive: true }).catch(() => []);
+	return (
+		await Promise.all(
+			relativePaths.map(
+				async (relativePath) =>
+					await readFile(path.join(directoryPath, relativePath), 'utf8').catch(() => ''),
+			),
+		)
+	).join('\n');
+}
 
 function semanticRevisions(
 	semanticSnapshot: GatewayRuntimePortalSemanticSnapshot,
@@ -371,13 +384,24 @@ describeLiveConfiguredRunner('configured CLI reusable credentialed Managed VM', 
 
 			const managedVm = createManagedVmRuntimeComposition();
 			const testServiceAccountToken = process.env.AGENT_VM_TEST_OP_SERVICE_ACCOUNT_TOKEN;
-			const credentialSecretResolver =
+			const baseCredentialSecretResolver =
 				testServiceAccountToken === undefined
 					? {
 							resolve: async () => 'configured CLI VM proof credential',
 							resolveAll: async () => ({ input: 'configured CLI VM proof credential' }),
 						}
 					: await createSecretResolver({ serviceAccountToken: testServiceAccountToken });
+			let credentialResolveAllCount = 0;
+			let lastResolvedCredential = '';
+			const credentialSecretResolver = {
+				resolve: async (secretRef) => await baseCredentialSecretResolver.resolve(secretRef),
+				resolveAll: async (secretRefs) => {
+					credentialResolveAllCount += 1;
+					const resolved = await baseCredentialSecretResolver.resolveAll(secretRefs);
+					lastResolvedCredential = resolved.input ?? '';
+					return resolved;
+				},
+			} satisfies SecretResolver;
 			let createdRunnerVmCount = 0;
 			const managedVmFactory = {
 				createManagedVm: async (request: ManagedVmCreateRequest) => {
@@ -615,6 +639,37 @@ describeLiveConfiguredRunner('configured CLI reusable credentialed Managed VM', 
 					input: credentialProofInput,
 				}),
 			).toMatchObject({ exitCode: 0, stdout: 'credential-read-only' });
+			expect(credentialResolveAllCount).toBe(1);
+			expect(lastResolvedCredential.length).toBeGreaterThan(0);
+			const effectiveArtifactText = await readDirectoryTreeText(effectiveHostConfigDir);
+			const controllerRecordText = await readDirectoryTreeText(
+				path.join(imageFixture.project.tempRoot, 'controller-state'),
+			);
+			expect(effectiveArtifactText.includes(lastResolvedCredential)).toBe(false);
+			expect(controllerRecordText.includes(lastResolvedCredential)).toBe(false);
+			expect(effectiveArtifactText.includes('op://agent-vm-testing/')).toBe(false);
+			expect(controllerRecordText.includes('op://agent-vm-testing/')).toBe(false);
+			const controllerHostSentinelPath = path.join(
+				imageFixture.project.tempRoot,
+				'controller-host-only-sentinel',
+			);
+			await writeFile(controllerHostSentinelPath, 'host-only', 'utf8');
+			const hostIsolationInput = {
+				argv: ['isolated', '--host-isolation', controllerHostSentinelPath],
+				reason: 'prove controller host filesystem isolation',
+				timeoutMs: 60_000,
+			};
+			expect(
+				await runInvocation({
+					authority: authorityFor({
+						approved: false,
+						callId: 'host-isolation-call',
+						input: hostIsolationInput,
+					}),
+					callId: 'host-isolation-call',
+					input: hostIsolationInput,
+				}),
+			).toMatchObject({ exitCode: 0, stdout: 'host-isolated' });
 
 			const writeStateInput = {
 				argv: ['isolated', '--write-state'],
@@ -682,6 +737,7 @@ describeLiveConfiguredRunner('configured CLI reusable credentialed Managed VM', 
 				await secondaryAcquisition.command.complete({ kind: 'completed' });
 			}
 			expect(createdRunnerVmCount).toBe(2);
+			expect(credentialResolveAllCount).toBe(2);
 
 			const holdInput = {
 				argv: ['isolated', '--hold'],
@@ -768,6 +824,7 @@ describeLiveConfiguredRunner('configured CLI reusable credentialed Managed VM', 
 				}),
 			).toMatchObject({ exitCode: 0, stdout: 'absent' });
 			expect(createdRunnerVmCount).toBe(3);
+			expect(credentialResolveAllCount).toBe(3);
 		} catch (error: unknown) {
 			const recordsDirectory = path.join(
 				imageFixture.project.tempRoot,

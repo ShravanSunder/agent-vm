@@ -2796,6 +2796,7 @@ async function startGatewayZoneImplementation(
 			toolPortalMaterialization.kind === 'configured' &&
 			toolPortalMaterialization.mode === 'runtime'
 		) {
+			options.onCredentialedRuntimeZoneStarted?.();
 			options.credentialedRuntimeRegistryPublisher?.activate(
 				toolPortalMaterialization.credentialedRuntimeRegistrySnapshot,
 			);
@@ -2804,8 +2805,8 @@ async function startGatewayZoneImplementation(
 			bootContract,
 			controlSession: activeControlSession,
 			destroyGateway: async () => {
-				await options.onCredentialedRuntimeZoneStopping?.();
 				options.credentialedRuntimeRegistryPublisher?.withdraw(zone.id);
+				await options.onCredentialedRuntimeZoneStopping?.();
 				return await destructionTransaction.destroyGateway();
 			},
 			executionModel: 'managed-gateway',
