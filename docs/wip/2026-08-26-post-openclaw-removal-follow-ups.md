@@ -182,18 +182,19 @@ accepted and corrected at `46fe6e70`:
 4. The canonical package map now enumerates 17 packages and includes
    `gateway-runtime`.
 
-The corrected-head review accepted all four remediations and found no runtime
-defect, but identified one proof-authority contradiction: the WIP required every
-lane at one HEAD even though later changes affected only documentation and
-quality tooling. That rule is replaced by consumer-relevance freshness below.
-One gate remains: fresh independent review of the clarified proof boundary.
+The next reviews accepted the four implementation remediations and found no
+runtime or missing-test defect. They identified two proof-authority wording
+errors: first the WIP required one monolithic HEAD, then revision 2 assigned the
+entire unit lane to `1fa07bb1` even though two audit unit files changed later.
+The final model below uses consumer-relevance freshness and composite unit
+coverage. One gate remains: fresh independent review of that final wording.
 
 ## OpenClaw cutover proof status
 
 | Proof layer | Last evidence | Current status |
 | --- | --- | --- |
 | Core removal implementation | Commits `859bfa43`, `eeae0213`, and `7d833519`; master integration `02745c94` | Committed and integrated with `origin/master` at `cbba8890`; exact master differential adds no OpenClaw line |
-| Unit | `pnpm test:unit` at `1fa07bb1` | 383 files, 4,340/4,340 tests passed; taxonomy passed |
+| Unit | Composite: `pnpm test:unit` at `1fa07bb1` plus the two changed audit suites at `46fe6e70` | The full 383-file, 4,340/4,340 baseline covers unchanged unit consumers; current `audit-openclaw-removal` and `audit-portal-architecture` suites add 22/22 for the only later-changed unit files; taxonomy passed |
 | Integration | `pnpm test:integration` at `1fa07bb1` | 61 files, 830/830 tests passed |
 | Host E2E | `pnpm test:e2e:host` at `1fa07bb1` with required host permissions | 30 files, 234/234 tests passed; the first sandboxed attempt failed only on blocked uv, Docker, and host-process access |
 | Generic VM E2E | `mise exec -- pnpm test:e2e:vm` at `1fa07bb1` | 11 files, 17/17 real VM tests passed, including process/stream and leaf-replacement proof |
@@ -204,7 +205,7 @@ One gate remains: fresh independent review of the clarified proof boundary.
 | OpenClaw residue audit | `pnpm exec tsx scripts/audit-openclaw-removal.ts` at `46fe6e70` | Passed with exit 0 after expanding coverage to root quality configuration and active portal-architecture tooling |
 | Full quality gate | `UV_CACHE_DIR=/tmp/agent-vm-remove-openclaw-uv-cache pnpm check` at `46fe6e70` | 16/16 passed in 43.48 seconds: build, Optique CLI boundary, package/Zod guards, taxonomy, portal and VM boundaries, generated contracts, lint, format, type-aware lint, and typecheck |
 | Built CLI manual proof | Fresh OS-temp `macos-local` Hermes scaffold, validate, real Docker/Gondolin build, and removed `--type openclaw` rejection at `1fa07bb1` | Passed; generated runtime shape contains Hermes and Tool VM inputs and no OpenClaw runtime directory/config |
-| Independent implementation review | Complete reviews at `155e7303` and `65783cde` | First review's four findings are corrected; second review accepted those corrections and found only the proof-freshness wording contradiction now repaired |
+| Independent implementation review | Complete reviews at `155e7303`, `65783cde`, and `bfe7a735` | Implementation corrections are accepted; later findings were proof-owner wording defects, with the final composite-unit correction awaiting review |
 
 Final cutover proof is present only when every row above has evidence from the
 most recent identity that changed its observed consumer path, and the final diff
@@ -217,15 +218,17 @@ inventory and never presented as runtime proof.
 
 ### Proof freshness by consumer path
 
-- `1fa07bb1` owns the unit, integration, host E2E, generic VM, Worker, built-CLI,
-  and initial package evidence. After that identity, no production source,
-  configuration, fixture, build input, or test observed by those lanes changed.
+- `1fa07bb1` owns unchanged unit consumers plus the integration, host E2E,
+  generic VM, Worker, built-CLI, and initial package evidence. Later changes do
+  not touch their production source, configuration, fixtures, images, build
+  inputs, or named tests.
 - `c8df1d36` changes only the Hermes E2E test to separate ordinary restart from
   opt-in reattachment stress, and owns the final aggregate Hermes 9/9 result.
-- `46fe6e70` changes only root lint policy, removal/portal audit tooling and
-  tests, canonical architecture text, and the cutover proof contract. It owns
-  the strengthened removal audit, targeted audit 22/22 result, full quality
-  16/16 result, and exact 17-package inspection.
+- `46fe6e70` changes root lint policy, removal/portal audit tooling and their two
+  unit test files, canonical architecture text, and the cutover proof contract.
+  It owns the current versions of those two unit consumers through the targeted
+  22/22 result, plus the strengthened removal audit, full quality 16/16 result,
+  and exact 17-package inspection.
 - `65783cde` and the final receipt commit change only this WIP. They do not alter
   any observed consumer path above.
 
