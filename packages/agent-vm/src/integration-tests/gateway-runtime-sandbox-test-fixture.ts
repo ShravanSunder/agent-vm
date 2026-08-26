@@ -90,6 +90,7 @@ const toolPortalConfig = {
 		'sandbox-user': {
 			namespaces: {
 				sandbox: {
+					discovery: {},
 					backend: {
 						kind: 'tool_vm_runner',
 						operations: {
@@ -133,7 +134,7 @@ const semanticSnapshot = {
 			agentId: 'gateway-agent',
 			frameworkIdentity: { kind: 'hermes', profileName: 'gateway-agent' },
 			profileAssignmentRevision: 'sandbox-profile-assignment-1',
-			toolPortalNamespaceNames: ['sandbox'],
+			toolPortalNamespaces: [{ namespace: 'sandbox' }],
 			toolPortalProfileId: 'sandbox-user',
 		},
 	},

@@ -99,6 +99,7 @@ export interface StartGatewayZoneOptions {
 		readonly sessionLabel: string;
 		readonly zoneId: string;
 	}) => Promise<GatewayVmLifecycleAuthority>;
+	readonly credentialedRuntimeRegistryPublisher?: import('../controller/credentialed-runtime/credentialed-runtime-registry.js').ControllerCredentialedRuntimeRegistryPublisher;
 	readonly environmentOverride?: Record<string, string>;
 	readonly gatewayControlControllerExecutions?: GatewayControlControllerExecutionOperations;
 	readonly gatewayControlApprovalLedger?: ControllerApprovalLedger;
@@ -117,6 +118,8 @@ export interface StartGatewayZoneOptions {
 		transition: GatewayControlSessionReconnectExhausted,
 	) => void;
 	readonly onGatewayRuntimeAttachmentLost?: (transition: GatewayRuntimeAttachmentLost) => void;
+	readonly onCredentialedRuntimeZoneStopping?: () => Promise<void>;
+	readonly onCredentialedRuntimeZoneStarted?: () => void;
 	readonly prebuiltImage?: ManagedVmImageBuildResult | undefined;
 	readonly runTask?: RunTaskFn;
 	readonly runtimeEnvironment?: Readonly<Record<string, string>>;

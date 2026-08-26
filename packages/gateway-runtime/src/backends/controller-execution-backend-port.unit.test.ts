@@ -81,6 +81,7 @@ const trustedContext = {
 
 const directDispatchAuthority = {
 	backendKind: 'controller_execution',
+	bindingRevision: 'binding:current',
 	fingerprint: `sha256:${'a'.repeat(64)}`,
 	kind: 'without-approval',
 	operationId: '11111111-1111-5111-8111-111111111111',

@@ -3,11 +3,23 @@ import { z } from 'zod';
 import { loadJsonConfigFile } from './json-config-file.js';
 import { formattedSecretValueSchema, type FormattedSecretValue } from './secret-value.js';
 
-const mcpProviderDiscoverySchema = z
+const namespaceDiscoverySummaryMaximumCodePoints = 500;
+const namespaceDiscoverySummarySchema = z
+	.string()
+	.min(1)
+	.refine(
+		(summary) => Array.from(summary).length <= namespaceDiscoverySummaryMaximumCodePoints,
+		`Namespace discovery summary must contain at most ${String(namespaceDiscoverySummaryMaximumCodePoints)} Unicode characters.`,
+	)
+	.meta({ maxLength: namespaceDiscoverySummaryMaximumCodePoints });
+
+export const namespaceDiscoverySchema = z
 	.object({
-		summary: z.string().min(1).optional(),
+		summary: namespaceDiscoverySummarySchema.optional(),
 	})
 	.strict();
+
+export type NamespaceDiscovery = z.infer<typeof namespaceDiscoverySchema>;
 
 const remoteTransportUrlSchema = z.url().refine(
 	(value) => {
@@ -79,7 +91,7 @@ export const mcpProviderSchema = z
 	.object({
 		kind: z.literal('mcp'),
 		namespace: z.string().min(1),
-		discovery: mcpProviderDiscoverySchema.default({}),
+		discovery: namespaceDiscoverySchema.default({}),
 		secretPolicies: z.record(z.string().min(1), mcpSecretPolicySchema).default({}),
 		transport: z.discriminatedUnion('kind', [
 			streamableHttpTransportSchema,

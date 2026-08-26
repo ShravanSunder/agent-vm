@@ -11,7 +11,7 @@ import {
 } from '@agent-vm/agent-portal-sdk/gateway-runtime-client';
 import {
 	createGatewayRuntimeManagedToolPortalConfig,
-	managedToolPortalConfigSchema,
+	effectiveManagedToolPortalConfigSchema,
 	mcpConfigSchema,
 	type FormattedSecretValue,
 	type ToolPortalBackendKind,
@@ -243,7 +243,7 @@ async function createServiceConfig(
 	temporaryRoots.push(temporaryRoot);
 	const runtimeRoot = temporaryRoot;
 	const mcpConfig = mcpConfigSchema.parse({ providers: {}, schemaVersion: 1 });
-	const toolPortalConfig = managedToolPortalConfigSchema.parse({
+	const toolPortalConfig = effectiveManagedToolPortalConfigSchema.parse({
 		agents: {
 			'agent-a': { profile: 'profile-a' },
 			'agent-b': { profile: 'profile-b' },
@@ -255,6 +255,7 @@ async function createServiceConfig(
 					...(options.includeControllerExecution === true
 						? {
 								controller: {
+									discovery: {},
 									backend: {
 										kind: 'controller_execution' as const,
 										operations: {
@@ -278,11 +279,13 @@ async function createServiceConfig(
 										requiresApproval: { allow: [], deny: [] },
 										withoutApproval: { allow: ['get_issue'], deny: [] },
 									},
+									discovery: {},
 									tools: { allow: ['get_issue'], deny: [] },
 								},
 							}
 						: {}),
 					sandbox: {
+						discovery: {},
 						backend: {
 							kind: 'tool_vm_runner',
 							operations: {
@@ -321,17 +324,17 @@ async function createServiceConfig(
 			{
 				agentId: 'agent-a',
 				frameworkIdentity: { kind: 'hermes', profileName: 'agent-a-profile' },
-				toolPortalNamespaceNames: [
-					...(options.includeControllerExecution === true ? ['controller'] : []),
-					...(options.includeMcpProvider === true ? ['github'] : []),
-					'sandbox',
+				toolPortalNamespaces: [
+					...(options.includeControllerExecution === true ? [{ namespace: 'controller' }] : []),
+					...(options.includeMcpProvider === true ? [{ namespace: 'github' }] : []),
+					{ namespace: 'sandbox' },
 				],
 				toolPortalProfileId: 'profile-a',
 			},
 			{
 				agentId: 'agent-b',
 				frameworkIdentity: { kind: 'hermes', profileName: 'agent-b-profile' },
-				toolPortalNamespaceNames: [],
+				toolPortalNamespaces: [],
 				toolPortalProfileId: 'profile-b',
 			},
 		],

@@ -32,6 +32,26 @@ describe('standalone Tool Portal module boundary', () => {
 				now: () => new Date('2026-07-18T12:00:00.000Z'),
 				serviceGeneration: 'standalone-service:1',
 			}),
+			baseSemanticSnapshot: {
+				activeRevision: 'semantic:1',
+				agentProjections: {
+					'agent-a': {
+						agentId: 'agent-a',
+						credentialVersion: 1,
+						profileAssignmentRevision: 'profile-assignment:1',
+						toolPortalProfileId: 'code-builder',
+					},
+				},
+				bindingRevision: 'binding:1',
+				catalogRevision: 'catalog:1',
+				desiredRevision: 'semantic:1',
+				namespaceDiscoveryByProfile: { 'code-builder': [{ namespace: 'github' }] },
+				profilePolicyRevision: 'policy:1',
+				providerRevision: 'provider:1',
+				schemaRevision: 'schema:1',
+				schemaVersion: 1,
+				surfaceEligibilityByProfile: { 'code-builder': { github: ['mcp'] } },
+			},
 			backendPorts: {
 				mcpProvider: {
 					backendKind: 'mcp_provider',
@@ -84,24 +104,22 @@ describe('standalone Tool Portal module boundary', () => {
 				},
 				schemaVersion: 1,
 			},
-			semanticSnapshot: {
-				activeRevision: 'semantic:1',
-				agentProjections: {
-					'agent-a': {
-						agentId: 'agent-a',
-						credentialVersion: 1,
-						profileAssignmentRevision: 'profile-assignment:1',
-						toolPortalProfileId: 'code-builder',
+			mcpConfig: {
+				providers: {
+					github: {
+						discovery: {},
+						kind: 'mcp',
+						namespace: 'github',
+						secretPolicies: {},
+						transport: {
+							headers: {},
+							kind: 'streamable-http',
+							requiredEgressHosts: [],
+							url: 'https://github.example.test/mcp',
+						},
 					},
 				},
-				bindingRevision: 'binding:1',
-				catalogRevision: 'catalog:1',
-				desiredRevision: 'semantic:1',
-				profilePolicyRevision: 'policy:1',
-				providerRevision: 'provider:1',
-				schemaRevision: 'schema:1',
 				schemaVersion: 1,
-				surfaceEligibilityByProfile: { 'code-builder': { github: ['mcp'] } },
 			},
 		});
 

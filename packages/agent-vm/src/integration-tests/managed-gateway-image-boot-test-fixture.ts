@@ -3,7 +3,7 @@ import path from 'node:path';
 
 import {
 	createGatewayRuntimeManagedToolPortalConfig,
-	managedToolPortalConfigSchema,
+	effectiveManagedToolPortalConfigSchema,
 	mcpConfigSchema,
 } from '@agent-vm/config-contracts';
 import {
@@ -49,7 +49,7 @@ function createToolPortalServiceConfig(
 	const gatewayIdentitySuffix = identitySuffix ?? 'image-boot';
 	const processIdentitySuffix = identitySuffix ?? 'image-owned';
 	const mcpConfig = mcpConfigSchema.parse({ providers: {}, schemaVersion: 1 });
-	const toolPortalConfig = managedToolPortalConfigSchema.parse({
+	const toolPortalConfig = effectiveManagedToolPortalConfigSchema.parse({
 		agents: { main: { profile: 'default' } },
 		mode: 'managed',
 		profiles: { default: { namespaces: {} } },
@@ -60,7 +60,7 @@ function createToolPortalServiceConfig(
 			{
 				agentId: 'main',
 				frameworkIdentity: { kind: 'hermes', profileName: 'main' },
-				toolPortalNamespaceNames: [],
+				toolPortalNamespaces: [],
 				toolPortalProfileId: 'default',
 			},
 		],

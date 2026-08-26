@@ -1265,6 +1265,48 @@ describe('createControllerApp', () => {
 		expect(execInZone).toHaveBeenCalledWith('shravan', 'pwd', { adminToken: 'admin-token' });
 	});
 
+	it('routes exact credentialed runtime retirement authority without VM or secret fields', async () => {
+		const retireCredentialedRuntime = vi.fn(async () => ({ kind: 'retired' as const }));
+		const app = createControllerAppForTest({
+			toolVmProfiles: {
+				standard: { cpus: 1, imageProfile: 'default', memory: '1G' },
+			},
+			leaseManager: {
+				createLease: vi.fn(async () => {
+					throw new Error('not used');
+				}),
+				listLeases: vi.fn(() => []),
+				peekLease: vi.fn(),
+				releaseLease: vi.fn(async () => {}),
+				renewLease: vi.fn(),
+			},
+			operations: {
+				destroyZone: vi.fn(async () => ({})),
+				getStatus: vi.fn(async () => ({})),
+				getZoneLogs: vi.fn(async () => ({})),
+				refreshZoneCredentials: vi.fn(async () => ({})),
+				retireCredentialedRuntime,
+				upgradeZone: vi.fn(async () => ({})),
+			},
+		});
+
+		const response = await app.request(
+			'/zones/shravan/credentialed-runtimes/google-workspace/retire',
+			{
+				body: JSON.stringify({ adminToken: 'admin-token', agentId: 'sun', force: true }),
+				headers: { 'content-type': 'application/json' },
+				method: 'POST',
+			},
+		);
+		expect(response.status).toBe(200);
+		expect(await response.json()).toEqual({ kind: 'retired' });
+		expect(retireCredentialedRuntime).toHaveBeenCalledWith('shravan', 'google-workspace', {
+			adminToken: 'admin-token',
+			agentId: 'sun',
+			force: true,
+		});
+	});
+
 	it('returns 400 for malformed JSON bodies on controller operation routes', async () => {
 		const app = createControllerAppForTest({
 			toolVmProfiles: {

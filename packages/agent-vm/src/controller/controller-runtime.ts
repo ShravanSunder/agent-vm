@@ -2,8 +2,6 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { ControllerExecutionOperation } from '@agent-vm/config-contracts';
-import { deriveGatewayRuntimePortalBindingRevision } from '@agent-vm/gateway-control-contracts';
 import type { AgentVmHealthEvent } from '@agent-vm/gateway-lifecycle';
 import { createSecretResolver as createOnePasswordSecretResolver } from '@agent-vm/secret-management';
 
@@ -16,7 +14,6 @@ import {
 import type { GatewayControlSessionAttachmentGap } from '../gateway/gateway-zone-support.js';
 import { resolveManagedAgentRootPaths } from '../gateway/managed-agent-root-storage.js';
 import { controllerFixedGatewayRuntimeArtifactLimits } from '../gateway/managed-gateway-runtime-input-builders.js';
-import { loadMcpPortalEffectiveToolPortalConfigSnapshot } from '../gateway/mcp-portal-effective-config.js';
 import { resolveControllerTelemetryIdentity as resolveControllerTelemetryIdentityDefault } from '../observability/controller-telemetry-identity.js';
 import {
 	createGatewayTelemetryResourceAttributesEnvironmentValue,
@@ -61,6 +58,8 @@ import {
 	type ControllerRuntimeDependencies,
 	type StartControllerRuntimeOptions,
 } from './controller-runtime-types.js';
+import { createCredentialedRuntimeManager } from './credentialed-runtime/credentialed-runtime-manager.js';
+import { createControllerCredentialedRuntimeRegistryPublisher } from './credentialed-runtime/credentialed-runtime-registry.js';
 import {
 	createControllerStateRoot,
 	resolveControllerGatewayStateRoot,
@@ -98,6 +97,10 @@ import { createLeaseManager } from './leases/lease-manager.js';
 import { createManagedFrameworkToolVmLeaseCreateOptionsResolver } from './leases/managed-framework-tool-vm-lease-create-options.js';
 import { createTcpPool } from './leases/tcp-pool.js';
 import { RequestHeartbeatRegistry } from './request-heartbeat-registry.js';
+import {
+	requireCurrentConfiguredCliAuthorization,
+	type ConfiguredCliAuthorizedOperation,
+} from './runner/configured-cli-authorization.js';
 import { executeConfiguredCliOnControllerHost } from './runner/configured-cli-host-executor.js';
 import { createConfiguredCliManagedVmExecutor } from './runner/configured-cli-managed-vm-executor.js';
 import { ConfiguredControllerExecutionError } from './runner/configured-controller-execution-error.js';
@@ -775,12 +778,17 @@ async function startControllerRuntimeWithOwnershipLock(
 			probeKind: 'controller_cache_dir_listing',
 		};
 	};
-	const executeConfiguredCliInManagedVm = createConfiguredCliManagedVmExecutor({
+	const credentialedRuntimeRegistryPublisher =
+		createControllerCredentialedRuntimeRegistryPublisher();
+	const credentialedRuntimeManager = createCredentialedRuntimeManager({
 		controllerStateDir: options.systemConfig.controllerStateDir,
-		managedVmExactProcessTermination: dependencies.managedVmExactProcessTermination,
+		exactProcessTermination: dependencies.managedVmExactProcessTermination,
 		managedVmFactory: dependencies.managedVmFactory,
 		now,
 		readProcessIdentity: dependencies.readProcessIdentity ?? readManagedVmProcessIdentity,
+		secretResolver,
+	});
+	const executeConfiguredCliInManagedVm = createConfiguredCliManagedVmExecutor({
 		resolveGatewayIdentity: async (zoneId) => {
 			const lifecycleState = registry.getManagedGatewayRuntime(zoneId).getLifecycleState();
 			if (lifecycleState.kind !== 'running' && lifecycleState.kind !== 'running-degraded') {
@@ -794,6 +802,7 @@ async function startControllerRuntimeWithOwnershipLock(
 				runtimeEpoch: gatewayIdentity.generationId,
 			};
 		},
+		runtimeManager: credentialedRuntimeManager,
 	});
 	const gatewayControlControllerExecutions: GatewayControlControllerExecutionOperations = {
 		authorizeControllerExecution: async ({
@@ -805,62 +814,50 @@ async function startControllerRuntimeWithOwnershipLock(
 		}) =>
 			await authorizeGatewayControlControllerExecution({
 				callerContext,
+				credentialedRuntimeRegistryPublisher,
 				createdAtMs,
 				...(expiresAtMs === undefined ? {} : { expiresAtMs }),
 				payload,
 				session,
 				systemConfig: options.systemConfig,
 			}),
-		executeConfiguredCli: async ({ callerContext, payload, session, signal }) => {
+		executeConfiguredCli: async ({
+			authorization,
+			callerContext,
+			createdAtMs,
+			expiresAtMs,
+			payload,
+			session,
+			signal,
+		}) => {
 			const executionSignal = AbortSignal.any([signal, controllerShutdown.signal]);
-			const expectedBindingRevision = payload.approvalReservation?.bindingRevision;
-			const loadCurrentOperation = async (): Promise<
-				Extract<ControllerExecutionOperation, { kind: 'configured_cli' }>
-			> => {
-				const effectiveConfig = await loadMcpPortalEffectiveToolPortalConfigSnapshot(
-					path.join(
-						options.systemConfig.cacheDir,
-						'gateways',
-						session.zoneId,
-						'tool-portal-effective',
-					),
-				);
-				if (
-					expectedBindingRevision !== undefined &&
-					expectedBindingRevision !==
-						deriveGatewayRuntimePortalBindingRevision(effectiveConfig.effectiveToolPortalConfig)
-				) {
-					throw new Error(
-						'Configured controller execution approval does not match current trusted policy.',
-					);
-				}
-				const agentConfig = effectiveConfig.effectiveToolPortalConfig.agents[callerContext.agentId];
-				const profileConfig =
-					agentConfig === undefined
-						? undefined
-						: effectiveConfig.effectiveToolPortalConfig.profiles[agentConfig.profile];
-				const namespacePolicy = profileConfig?.namespaces[payload.capability.namespace];
-				const currentOperation =
-					namespacePolicy?.backend.kind === 'controller_execution'
-						? namespacePolicy.backend.operations[payload.operationName]
-						: undefined;
-				if (currentOperation?.kind !== 'configured_cli') {
-					throw new Error('Configured controller execution operation is unavailable.');
-				}
-				return currentOperation;
+			const reloadAuthorization = async (): Promise<ConfiguredCliAuthorizedOperation> => {
+				const currentAuthorization = await authorizeGatewayControlControllerExecution({
+					callerContext,
+					credentialedRuntimeRegistryPublisher,
+					createdAtMs,
+					...(expiresAtMs === undefined ? {} : { expiresAtMs }),
+					payload,
+					session,
+					systemConfig: options.systemConfig,
+				});
+				return requireCurrentConfiguredCliAuthorization(currentAuthorization);
 			};
-			const operation = await loadCurrentOperation();
+			const operation = authorization.operation;
 			return operation.executionTarget.kind === 'controller_host'
 				? await executeConfiguredCliOnControllerHost({
+						authorization,
 						input: payload.input,
 						operation,
+						reloadAuthorization,
 						signal: executionSignal,
 					})
 				: await executeConfiguredCliInManagedVm({
+						authorization,
 						input: payload.input,
 						operation,
 						operationName: payload.operationName,
-						reloadOperation: loadCurrentOperation,
+						reloadAuthorization,
 						signal: executionSignal,
 						stablePrincipal: callerContext.stablePrincipal,
 						zoneId: session.zoneId,
@@ -903,6 +900,7 @@ async function startControllerRuntimeWithOwnershipLock(
 		// Prefer dead-VM eviction logs over idle-expiry logs when both are true.
 		await leaseManager.reapDeadIdleLeases();
 		await idleReaper.reapExpiredLeases();
+		await credentialedRuntimeManager.reapExpired();
 	};
 	const reaperTimer = (dependencies.setIntervalImpl ?? setInterval)(
 		() =>
@@ -1017,6 +1015,10 @@ async function startControllerRuntimeWithOwnershipLock(
 							const startGatewayZoneOptions = {
 								controlSession: { controllerEpoch },
 								createVmOwnership: createManagedGatewayVmOwnership,
+								credentialedRuntimeRegistryPublisher,
+								onCredentialedRuntimeZoneStarted: () => credentialedRuntimeManager.openZone(zoneId),
+								onCredentialedRuntimeZoneStopping: async () =>
+									await credentialedRuntimeManager.closeZone(zoneId),
 								...(startOptions?.onPendingVmCreation
 									? { onPendingVmCreation: startOptions.onPendingVmCreation }
 									: {}),
@@ -1263,6 +1265,8 @@ async function startControllerRuntimeWithOwnershipLock(
 				);
 			},
 			getRuntimeStatusByZone: () => registry.getSnapshotByZone(),
+			retireCredentialedRuntime: async (request) =>
+				await credentialedRuntimeManager.retire(request),
 			secretResolver,
 			systemConfig: options.systemConfig,
 		}),
@@ -1373,6 +1377,10 @@ async function startControllerRuntimeWithOwnershipLock(
 			});
 		}
 		await runTaskStep('Starting selected gateway zones', async () => {
+			for (const zoneId of registry.selectedZoneIds) {
+				// oxlint-disable-next-line no-await-in-loop -- exact recovery is intentionally per-zone
+				await credentialedRuntimeManager.recoverZone(zoneId);
+			}
 			await registry.startSelectedZones();
 		});
 		runtimeReadiness.set('ready');

@@ -47,6 +47,7 @@ import type {
 	ControllerApprovalDecisionResult,
 	ControllerApprovalOperatorIdentity,
 } from '../approval/controller-approval-ledger.js';
+import type { ConfiguredCliAuthorizedOperation } from '../runner/configured-cli-authorization.js';
 import { ConfiguredControllerExecutionError } from '../runner/configured-controller-execution-error.js';
 import type { GatewayEpochIdentity } from '../vm-ownership/vm-ownership-contracts.js';
 import { WorkspaceGitPushRejectedError } from '../workspace-git/workspace-git-operations.js';
@@ -168,6 +169,7 @@ export interface GatewayControlControllerExecutionOperations {
 	}): Promise<
 		| {
 				readonly authorized: true;
+				readonly configuredCli?: ConfiguredCliAuthorizedOperation;
 		  }
 		| {
 				readonly authorized: false;
@@ -176,7 +178,10 @@ export interface GatewayControlControllerExecutionOperations {
 		  }
 	>;
 	executeConfiguredCli(options: {
+		readonly authorization: ConfiguredCliAuthorizedOperation;
 		readonly callerContext: GatewayControlTrustedCallerContext;
+		readonly createdAtMs: number;
+		readonly expiresAtMs: number | undefined;
 		readonly payload: Extract<
 			GatewayControlToolPortalControllerExecutionPayload,
 			{ readonly kind: 'configured_cli' }
@@ -838,7 +843,9 @@ function controllerExecutionApprovalReservation(
 	payload: GatewayControlToolPortalControllerExecutionPayload,
 ): GatewayRuntimeApprovalDispatchReservation | undefined {
 	return payload.kind === 'configured_cli'
-		? payload.approvalReservation
+		? payload.authority.kind === 'controller_approval_reservation'
+			? payload.authority.reservation
+			: undefined
 		: payload.action.approvalReservation;
 }
 
@@ -993,6 +1000,17 @@ async function executeToolPortalControllerExecution(options: {
 			}
 		}
 		if (options.payload.kind === 'configured_cli') {
+			if (authorization.configuredCli === undefined) {
+				return commandResultPayload({
+					error: {
+						errorClass: 'controller_execution_policy_denied',
+						retryable: false,
+						safeMessage: 'controller execution policy denied the requested capability',
+					},
+					responseToMessageId: options.responseToMessageId,
+					result: 'rejected',
+				});
+			}
 			const commandCancellation = new AbortController();
 			const remainingMilliseconds =
 				options.expiresAtMs === undefined ? undefined : options.expiresAtMs - options.now();
@@ -1021,7 +1039,10 @@ async function executeToolPortalControllerExecution(options: {
 			let result: Awaited<ReturnType<typeof options.actions.executeConfiguredCli>>;
 			try {
 				result = await options.actions.executeConfiguredCli({
+					authorization: authorization.configuredCli,
 					callerContext,
+					createdAtMs: options.createdAtMs,
+					expiresAtMs: options.expiresAtMs,
 					payload: options.payload,
 					session: options.session,
 					signal: commandCancellation.signal,
@@ -1079,13 +1100,15 @@ async function executeToolPortalControllerExecution(options: {
 					? 'cancelled'
 					: error.code === 'timeout'
 						? 'timeout'
-						: error.code === 'not_dispatched' || error.code === 'validation_failed'
+						: error.code === 'not_dispatched' ||
+							  error.code === 'runtime_busy' ||
+							  error.code === 'validation_failed'
 							? 'rejected'
 							: 'failed';
 			return commandResultPayload({
 				error: {
 					errorClass: `controller_execution_${error.code}`,
-					retryable: false,
+					retryable: error.code === 'runtime_busy',
 					safeMessage: 'configured controller execution did not complete',
 				},
 				responseToMessageId: options.responseToMessageId,

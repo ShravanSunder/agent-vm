@@ -9,12 +9,15 @@
 			"profileName": "agent-a"
 		},
 		"profileAssignmentRevision": "profile-assignment-a",
-		"toolPortalNamespaceNames": ["filesystem", "filesystem"],
+		"toolPortalNamespaces": [{ "namespace": "filesystem" }, { "namespace": "filesystem" }],
 		"toolPortalProfileId": "engineering"
 	},
 	"expectation": {
 		"kind": "rejected",
-		"errorCodes": ["gateway.managed-agent-projection.namespace-names"],
-		"refinementIdentities": ["gateway.managed-agent-projection.namespace-names"]
+		"errorCodes": ["gateway.managed-agent-projection.namespaces"],
+		"refinementIdentities": [
+			"gateway.managed-agent-projection.namespaces",
+			"portal.namespace-discovery.summary-code-points"
+		]
 	}
 }

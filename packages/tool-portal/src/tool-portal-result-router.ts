@@ -2,8 +2,16 @@ import { randomUUID } from 'node:crypto';
 
 import {
 	PortalCallResultSchema,
+	compareUnicodeCodePointStrings,
+	type EffectiveNamespaceDiscovery,
 	type PortalCallRequest,
 	type PortalCallResult,
+	type PortalBackendDescribeResult,
+	PortalBackendDescribeResultSchema,
+	type PortalBackendListResult,
+	PortalBackendListResultSchema,
+	type PortalBackendSearchResult,
+	PortalBackendSearchResultSchema,
 	type PortalDescribeRequest,
 	type PortalDescribeResult,
 	PortalDescribeResultSchema,
@@ -34,12 +42,15 @@ interface ToolPortalResultRouterBackendPort<
 	readonly describe: (
 		request: PortalDescribeRequest,
 		options: TReadOptions,
-	) => Promise<PortalDescribeResult>;
-	readonly list: (request: PortalListRequest, options: TReadOptions) => Promise<PortalListResult>;
+	) => Promise<PortalBackendDescribeResult>;
+	readonly list: (
+		request: PortalListRequest,
+		options: TReadOptions,
+	) => Promise<PortalBackendListResult>;
 	readonly search: (
 		request: PortalSearchRequest,
 		options: TReadOptions,
-	) => Promise<PortalSearchResult>;
+	) => Promise<PortalBackendSearchResult>;
 }
 
 export interface ToolPortalBackendEntry<
@@ -47,6 +58,7 @@ export interface ToolPortalBackendEntry<
 	TReadOptions = TCallOptions,
 > {
 	readonly backend: ToolPortalResultRouterBackendPort<TCallOptions, TReadOptions>;
+	readonly namespaceDiscovery: readonly EffectiveNamespaceDiscovery[];
 	readonly namespaces: ReadonlySet<string>;
 }
 
@@ -238,6 +250,16 @@ function filterToolsToRequestedNamespaces<TTool extends { readonly namespace: st
 		: tools.filter((tool) => selection.namespaces.has(tool.namespace));
 }
 
+function namespaceDiscoveryForRepresentedNamespaces<TCallOptions, TReadOptions>(props: {
+	readonly entries: readonly ToolPortalBackendEntry<TCallOptions, TReadOptions>[];
+	readonly representedNamespaces: ReadonlySet<string>;
+}): readonly EffectiveNamespaceDiscovery[] {
+	return props.entries
+		.flatMap((entry) => entry.namespaceDiscovery)
+		.filter((entry) => props.representedNamespaces.has(entry.namespace))
+		.toSorted((left, right) => compareUnicodeCodePointStrings(left.namespace, right.namespace));
+}
+
 export async function mergeToolPortalList<TCallOptions, TReadOptions>(props: {
 	readonly entries: readonly ToolPortalBackendEntry<TCallOptions, TReadOptions>[];
 	readonly operationOptions: TReadOptions;
@@ -255,7 +277,7 @@ export async function mergeToolPortalList<TCallOptions, TReadOptions>(props: {
 			};
 			return {
 				entry,
-				result: PortalListResultSchema.parse(
+				result: PortalBackendListResultSchema.parse(
 					await entry.backend.list(request, props.operationOptions),
 				),
 			};
@@ -269,9 +291,11 @@ export async function mergeToolPortalList<TCallOptions, TReadOptions>(props: {
 		const backendItems = admittedEntryResults
 			.filter(({ entry }) => backendEntryMatchesNamespaceSelection(entry, namespaceSelection))
 			.map(({ result }) => itemById(result).get(requestItem.id))
-			.filter((item): item is PortalListResult['items'][number] => item !== undefined);
+			.filter((item): item is PortalBackendListResult['items'][number] => item !== undefined);
 		const firstErrorItem = backendItems.find(
-			(item): item is Extract<PortalListResult['items'][number], { readonly status: 'error' }> =>
+			(
+				item,
+			): item is Extract<PortalBackendListResult['items'][number], { readonly status: 'error' }> =>
 				item.status === 'error',
 		);
 		const diagnostics = mergedItemDiagnostics(backendItems);
@@ -284,24 +308,31 @@ export async function mergeToolPortalList<TCallOptions, TReadOptions>(props: {
 			};
 		}
 		const okItems = backendItems.filter(
-			(item): item is Extract<PortalListResult['items'][number], { readonly status: 'ok' }> =>
+			(
+				item,
+			): item is Extract<PortalBackendListResult['items'][number], { readonly status: 'ok' }> =>
 				item.status === 'ok',
 		);
+		const namespaces = [
+			...new Set(
+				okItems
+					.flatMap((item) => item.value.namespaces)
+					.filter(
+						(namespace) =>
+							namespaceSelection.kind === 'all' || namespaceSelection.namespaces.has(namespace),
+					),
+			),
+		].toSorted();
 		return {
 			...(diagnostics.length > 0 ? { diagnostics } : {}),
 			id: requestItem.id,
 			status: 'ok' as const,
 			value: {
-				namespaces: [
-					...new Set(
-						okItems
-							.flatMap((item) => item.value.namespaces)
-							.filter(
-								(namespace) =>
-									namespaceSelection.kind === 'all' || namespaceSelection.namespaces.has(namespace),
-							),
-					),
-				].toSorted(),
+				namespaceDiscovery: namespaceDiscoveryForRepresentedNamespaces({
+					entries: props.entries,
+					representedNamespaces: new Set(namespaces),
+				}),
+				namespaces,
 				tools: filterToolsToRequestedNamespaces(
 					okItems.flatMap((item) => item.value.tools),
 					namespaceSelection,
@@ -340,7 +371,7 @@ export async function mergeToolPortalSearch<TCallOptions, TReadOptions>(props: {
 			};
 			return {
 				entry,
-				result: PortalSearchResultSchema.parse(
+				result: PortalBackendSearchResultSchema.parse(
 					await entry.backend.search(request, props.operationOptions),
 				),
 			};
@@ -354,10 +385,14 @@ export async function mergeToolPortalSearch<TCallOptions, TReadOptions>(props: {
 		const backendItems = admittedEntryResults
 			.filter(({ entry }) => backendEntryMatchesNamespaceSelection(entry, namespaceSelection))
 			.map(({ result }) => itemById(result).get(requestItem.id))
-			.filter((item): item is PortalSearchResult['items'][number] => item !== undefined);
+			.filter((item): item is PortalBackendSearchResult['items'][number] => item !== undefined);
 		const firstErrorItem = backendItems.find(
-			(item): item is Extract<PortalSearchResult['items'][number], { readonly status: 'error' }> =>
-				item.status === 'error',
+			(
+				item,
+			): item is Extract<
+				PortalBackendSearchResult['items'][number],
+				{ readonly status: 'error' }
+			> => item.status === 'error',
 		);
 		const diagnostics = mergedItemDiagnostics(backendItems);
 		if (firstErrorItem !== undefined) {
@@ -369,18 +404,25 @@ export async function mergeToolPortalSearch<TCallOptions, TReadOptions>(props: {
 			};
 		}
 		const okItems = backendItems.filter(
-			(item): item is Extract<PortalSearchResult['items'][number], { readonly status: 'ok' }> =>
+			(
+				item,
+			): item is Extract<PortalBackendSearchResult['items'][number], { readonly status: 'ok' }> =>
 				item.status === 'ok',
+		);
+		const tools = filterToolsToRequestedNamespaces(
+			okItems.flatMap((item) => item.value.tools),
+			namespaceSelection,
 		);
 		return {
 			...(diagnostics.length > 0 ? { diagnostics } : {}),
 			id: requestItem.id,
 			status: 'ok' as const,
 			value: {
-				tools: filterToolsToRequestedNamespaces(
-					okItems.flatMap((item) => item.value.tools),
-					namespaceSelection,
-				),
+				namespaceDiscovery: namespaceDiscoveryForRepresentedNamespaces({
+					entries: props.entries,
+					representedNamespaces: new Set(tools.map((tool) => tool.namespace)),
+				}),
+				tools,
 			},
 		};
 	});
@@ -415,7 +457,7 @@ export async function mergeToolPortalDescribe<TCallOptions, TReadOptions>(props:
 			};
 			return {
 				entry,
-				result: PortalDescribeResultSchema.parse(
+				result: PortalBackendDescribeResultSchema.parse(
 					await entry.backend.describe(request, props.operationOptions),
 				),
 			};
@@ -429,12 +471,14 @@ export async function mergeToolPortalDescribe<TCallOptions, TReadOptions>(props:
 		const backendItems = admittedEntryResults
 			.filter(({ entry }) => backendEntryMatchesNamespaceSelection(entry, namespaceSelection))
 			.map(({ result }) => itemById(result).get(requestItem.id))
-			.filter((item): item is PortalDescribeResult['items'][number] => item !== undefined);
+			.filter((item): item is PortalBackendDescribeResult['items'][number] => item !== undefined);
 		const firstErrorItem = backendItems.find(
 			(
 				item,
-			): item is Extract<PortalDescribeResult['items'][number], { readonly status: 'error' }> =>
-				item.status === 'error',
+			): item is Extract<
+				PortalBackendDescribeResult['items'][number],
+				{ readonly status: 'error' }
+			> => item.status === 'error',
 		);
 		const diagnostics = mergedItemDiagnostics(backendItems);
 		if (firstErrorItem !== undefined) {
@@ -446,18 +490,25 @@ export async function mergeToolPortalDescribe<TCallOptions, TReadOptions>(props:
 			};
 		}
 		const okItems = backendItems.filter(
-			(item): item is Extract<PortalDescribeResult['items'][number], { readonly status: 'ok' }> =>
+			(
+				item,
+			): item is Extract<PortalBackendDescribeResult['items'][number], { readonly status: 'ok' }> =>
 				item.status === 'ok',
+		);
+		const tools = filterToolsToRequestedNamespaces(
+			okItems.flatMap((item) => item.value.tools),
+			namespaceSelection,
 		);
 		return {
 			...(diagnostics.length > 0 ? { diagnostics } : {}),
 			id: requestItem.id,
 			status: 'ok' as const,
 			value: {
-				tools: filterToolsToRequestedNamespaces(
-					okItems.flatMap((item) => item.value.tools),
-					namespaceSelection,
-				),
+				namespaceDiscovery: namespaceDiscoveryForRepresentedNamespaces({
+					entries: props.entries,
+					representedNamespaces: new Set(tools.map((tool) => tool.namespace)),
+				}),
+				tools,
 			},
 		};
 	});

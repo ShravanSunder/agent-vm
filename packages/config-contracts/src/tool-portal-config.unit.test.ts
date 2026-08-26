@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
+import { encodeConfiguredCliPreparedImageIdentity } from './controller-configured-cli.js';
 import {
 	createGatewayRuntimeManagedToolPortalConfig,
+	createEffectiveManagedToolPortalConfig,
 	createToolPortalControllerExecutionProjection,
 	createToolPortalMcpProjection,
-	managedToolPortalConfigSchema,
+	preparedManagedToolPortalConfigSchema,
 	ToolPortalControllerExecutionProjectionSchema,
 	toolPortalConfigSchema,
 	ToolPortalMcpProjectionSchema,
@@ -105,6 +107,40 @@ const validSandboxRunnerBackend = {
 } as const;
 
 describe('tool portal config contract', () => {
+	it('accepts discovery summaries only on non-MCP managed namespaces', () => {
+		const nonMcpConfig = {
+			...validManagedToolPortalConfig,
+			profiles: {
+				'code-builder': {
+					namespaces: {
+						...validManagedToolPortalConfig.profiles['code-builder'].namespaces,
+						local: {
+							...validManagedToolPortalConfig.profiles['code-builder'].namespaces.local,
+							discovery: { summary: 'Controller-owned workspace operations.' },
+						},
+					},
+				},
+			},
+		};
+		const duplicateMcpSource = {
+			...validManagedToolPortalConfig,
+			profiles: {
+				'code-builder': {
+					namespaces: {
+						...validManagedToolPortalConfig.profiles['code-builder'].namespaces,
+						github: {
+							...validManagedToolPortalConfig.profiles['code-builder'].namespaces.github,
+							discovery: { summary: 'Duplicate MCP summary.' },
+						},
+					},
+				},
+			},
+		};
+
+		expect(toolPortalConfigSchema.safeParse(nonMcpConfig).success).toBe(true);
+		expect(toolPortalConfigSchema.safeParse(duplicateMcpSource).success).toBe(false);
+	});
+
 	it('parses strict managed and standalone branches', () => {
 		expect(toolPortalConfigSchema.parse(validManagedToolPortalConfig)).toMatchObject({
 			agents: { 'agent-a': { profile: 'code-builder' } },
@@ -137,15 +173,20 @@ describe('tool portal config contract', () => {
 			kind: 'controller_execution',
 			operations: {
 				inspect: {
+					calls: { withoutApproval: 'remaining_admitted' },
 					commands: [{ path: ['inspect'] }],
 					deniedPatterns: [],
 					executablePath: '/usr/local/bin/inspect',
 					executionTarget: {
 						allowedHosts: [],
+						credentialBinding: 'google',
+						credentialEnvironment: { GOG_DATA_DIR: { kind: 'credential_root' } },
+						credentialFiles: [{ path: 'sa-c3VuQGV4YW1wbGUuY29t.json', source: 'service-account' }],
 						environment: { kind: 'empty' },
 						guestCwd: '/run',
 						imageReference: '../../vm-images/controller-runners/default/build-config.json',
 						kind: 'ephemeral_managed_vm',
+						runtimeId: 'google-workspace',
 					},
 					kind: 'configured_cli',
 					mandatoryArgvPrefix: [],
@@ -163,6 +204,21 @@ describe('tool portal config contract', () => {
 		} as const;
 		const config = {
 			...validManagedToolPortalConfig,
+			agents: {
+				'agent-a': {
+					credentialBindings: {
+						google: {
+							files: {
+								'service-account': {
+									ref: 'op://agent-vm-testing/google/service-account',
+									source: '1password',
+								},
+							},
+						},
+					},
+					profile: 'code-builder',
+				},
+			},
 			profiles: {
 				'code-builder': {
 					namespaces: {
@@ -217,6 +273,101 @@ describe('tool portal config contract', () => {
 								backend: { kind: 'controller_host_action' },
 							},
 						},
+					},
+				},
+			}).success,
+		).toBe(false);
+	});
+
+	it('requires every managed agent using a credentialed operation to declare its own binding', () => {
+		const configuredOperation = {
+			calls: { withoutApproval: 'remaining_admitted' },
+			commands: [{ path: ['calendar', 'list'] }],
+			deniedPatterns: [],
+			executablePath: '/usr/local/bin/gog',
+			executionTarget: {
+				allowedHosts: ['www.googleapis.com'],
+				credentialBinding: 'google',
+				credentialEnvironment: { GOG_DATA_DIR: { kind: 'credential_root' } },
+				credentialFiles: [{ path: 'sa-c3VuQGV4YW1wbGUuY29t.json', source: 'service-account' }],
+				environment: { kind: 'empty' },
+				guestCwd: '/work',
+				imageReference: '../../vm-images/controller-runners/gog/build-config.json',
+				kind: 'ephemeral_managed_vm',
+				runtimeId: 'google-workspace',
+			},
+			kind: 'configured_cli',
+			mandatoryArgvPrefix: [],
+			output: {
+				modelVisibleStderr: 'none',
+				overflow: 'truncate',
+				stderrMaxBytes: 1024,
+				stdoutMaxBytes: 1024,
+			},
+			safeHelp: 'List calendar events.',
+			stdin: { kind: 'none' },
+			timeout: { kind: 'quick' },
+		} as const;
+		const config = {
+			agents: {
+				sun: {
+					credentialBindings: {
+						google: {
+							files: {
+								'service-account': {
+									ref: 'op://agent-vm-testing/google/service-account',
+									source: '1password',
+								},
+							},
+						},
+					},
+					profile: 'google-enabled',
+				},
+			},
+			mode: 'managed',
+			profiles: {
+				'google-enabled': {
+					namespaces: {
+						google: {
+							backend: {
+								kind: 'controller_execution',
+								operations: { calendar_list: configuredOperation },
+							},
+							calls: {
+								requiresApproval: { allow: [], deny: [] },
+								withoutApproval: { allow: ['calendar_list'], deny: [] },
+							},
+							tools: { allow: ['calendar_list'], deny: [] },
+						},
+					},
+				},
+			},
+			schemaVersion: 1,
+		} as const;
+
+		expect(toolPortalConfigSchema.safeParse(config).success).toBe(true);
+		expect(
+			toolPortalConfigSchema.safeParse({
+				...config,
+				agents: { sun: { profile: 'google-enabled' } },
+			}).success,
+		).toBe(false);
+		expect(
+			toolPortalConfigSchema.safeParse({
+				...config,
+				agents: {
+					sun: {
+						credentialBindings: {
+							google: {
+								files: {
+									other: {
+										ref: 'op://agent-vm-testing/google/other',
+										source: '1password',
+									},
+								},
+							},
+						},
+						profile: 'google-enabled',
 					},
 				},
 			}).success,
@@ -725,15 +876,24 @@ describe('tool portal config contract', () => {
 
 	it('projects configured controller execution policy without controller-trusted runner fields', () => {
 		const configuredOperation = {
+			calls: { deny: [], requiresApproval: [], withoutApproval: 'remaining_admitted' },
 			commands: [{ path: ['inspect'], flagRules: [] }],
 			deniedPatterns: [],
 			executablePath: '/usr/bin/inspect-host',
 			executionTarget: {
 				allowedHosts: [],
+				credentialBinding: 'google',
+				credentialEnvironment: { GOG_DATA_DIR: { kind: 'credential_root' } },
+				credentialFiles: [{ path: 'sa-c3VuQGV4YW1wbGUuY29t.json', source: 'service-account' }],
 				environment: { kind: 'empty' },
 				guestCwd: '/run/operation',
-				imageReference: '/images/runner/build-config.json',
+				imageReference: encodeConfiguredCliPreparedImageIdentity({
+					fingerprint: 'sha256:prepared-runner',
+					imageReference: '/images/runner/prepared',
+					schemaVersion: 1,
+				}),
 				kind: 'ephemeral_managed_vm',
+				runtimeId: 'google-workspace',
 			},
 			kind: 'configured_cli',
 			mandatoryArgvPrefix: ['--fixed'],
@@ -747,14 +907,33 @@ describe('tool portal config contract', () => {
 			stdin: { kind: 'none' },
 			timeout: { kind: 'quick' },
 		} as const;
-		const fullConfig = managedToolPortalConfigSchema.parse({
+		const preparedConfig = preparedManagedToolPortalConfigSchema.parse({
 			...validManagedToolPortalConfig,
+			agents: {
+				'agent-a': {
+					credentialBindings: {
+						google: {
+							files: {
+								'service-account': {
+									ref: 'op://agent-vm-testing/google/service-account',
+									source: '1password',
+								},
+							},
+						},
+					},
+					profile: 'code-builder',
+				},
+			},
 			profiles: {
 				'code-builder': {
 					namespaces: {
-						...validManagedToolPortalConfig.profiles['code-builder'].namespaces,
+						github: {
+							...validManagedToolPortalConfig.profiles['code-builder'].namespaces.github,
+							discovery: {},
+						},
 						local: {
 							...validManagedToolPortalConfig.profiles['code-builder'].namespaces.local,
+							discovery: {},
 							backend: {
 								kind: 'controller_execution',
 								operations: { inspect_host: configuredOperation },
@@ -769,6 +948,7 @@ describe('tool portal config contract', () => {
 				},
 			},
 		});
+		const fullConfig = createEffectiveManagedToolPortalConfig(preparedConfig);
 
 		const projected = createGatewayRuntimeManagedToolPortalConfig(fullConfig);
 		const projectedOperation =
@@ -777,10 +957,12 @@ describe('tool portal config contract', () => {
 				: undefined;
 
 		expect(projectedOperation).toEqual({
+			calls: { deny: [], requiresApproval: [], withoutApproval: 'remaining_admitted' },
 			commands: [{ path: ['inspect'], flagRules: [] }],
 			deniedPatterns: [],
 			kind: 'configured_cli',
 			safeHelp: 'Inspect one host resource.',
+			stdin: { kind: 'none' },
 			targetKind: 'ephemeral_managed_vm',
 			timeout: { kind: 'quick' },
 		});
@@ -789,11 +971,14 @@ describe('tool portal config contract', () => {
 			'executablePath',
 			'mandatoryArgvPrefix',
 			'executionTarget',
+			'credentialBinding',
+			'credentialEnvironment',
+			'credentialFiles',
 			'imageReference',
+			'runtimeId',
 			'guestCwd',
 			'environment',
 			'allowedHosts',
-			'stdin',
 			'output',
 		]) {
 			expect(serializedProjection).not.toContain(`"${forbiddenField}"`);

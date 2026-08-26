@@ -47,10 +47,18 @@ class InjectionMarker(_FrozenModel):
 AvailabilityStatus = t.Literal["available", "unavailable"]
 
 
+class NamespaceDiscovery(_FrozenModel):
+    """Immutable effective discovery metadata for one admitted namespace."""
+
+    namespace: str = Field(min_length=1)
+    summary: str | None = Field(default=None, min_length=1, max_length=500)
+
+
 class NamespaceAvailability(_FrozenModel):
     """One admitted namespace and its fail-closed live availability status."""
 
     namespace: str = Field(min_length=1)
+    summary: str | None = Field(default=None, min_length=1, max_length=500)
     status: AvailabilityStatus
 
 

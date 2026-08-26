@@ -5,7 +5,7 @@ import typing as t
 from agent_vm_agent_portal_sdk.contracts import PORTABLE_CONTRACT_ADAPTERS
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from agent_vm_hermes_adapter.managed_tool_portal.models import InventoryCacheKey
+from agent_vm_hermes_adapter.managed_tool_portal.models import InventoryCacheKey, NamespaceDiscovery
 
 PORTAL_BATCH_MAX_ITEMS = 50
 
@@ -22,18 +22,22 @@ class InventoryProjection(_FrozenModel):
     agent_id: str = Field(min_length=1)
     profile_name: str = Field(min_length=1)
     tool_portal_profile_id: str = Field(min_length=1)
-    namespace_names: tuple[str, ...]
+    namespaces: tuple[NamespaceDiscovery, ...]
 
-    @field_validator("namespace_names")
+    @field_validator("namespaces")
     @classmethod
-    def validate_namespace_names(cls, names: tuple[str, ...]) -> tuple[str, ...]:
+    def validate_namespace_names(
+        cls,
+        namespaces: tuple[NamespaceDiscovery, ...],
+    ) -> tuple[NamespaceDiscovery, ...]:
+        names = tuple(item.namespace for item in namespaces)
         if len(names) != len(set(names)):
             raise ValueError("inventory projection namespace names must be unique")
         if names != tuple(sorted(names)):
             raise ValueError("inventory projection namespace names must be sorted")
         if any(not name for name in names):
             raise ValueError("inventory projection namespace names must be non-empty")
-        return names
+        return namespaces
 
     def cache_key(self) -> InventoryCacheKey:
         """Return the complete epoch/profile identity used by the state cache."""
@@ -163,7 +167,13 @@ class _ValidatedCapabilitySummary(_ValidatedPortableModel):
     tool_ref: str = Field(alias="toolRef", min_length=1)
 
 
+class _ValidatedNamespaceDiscovery(_ValidatedPortableModel):
+    namespace: str = Field(min_length=1)
+    summary: str | None = Field(default=None, min_length=1, max_length=500)
+
+
 class _ValidatedPortalListValue(_ValidatedPortableModel):
+    namespace_discovery: list[_ValidatedNamespaceDiscovery] = Field(alias="namespaceDiscovery")
     namespaces: list[str]
     next_cursor: str | None = Field(default=None, alias="nextCursor", pattern=r"^\d+$")
     tools: list[_ValidatedCapabilitySummary]

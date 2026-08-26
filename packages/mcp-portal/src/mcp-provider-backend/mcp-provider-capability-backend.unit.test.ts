@@ -1,8 +1,8 @@
 import {
 	PortalCallResultSchema,
-	PortalDescribeResultSchema,
-	PortalListResultSchema,
-	PortalSearchResultSchema,
+	PortalBackendDescribeResultSchema,
+	PortalBackendListResultSchema,
+	PortalBackendSearchResultSchema,
 } from '@agent-vm/agent-portal-sdk';
 import { ToolPortalMcpProjectionSchema } from '@agent-vm/config-contracts';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
@@ -103,7 +103,7 @@ describe('MCP provider capability backend', () => {
 		});
 
 		// Assert
-		expect(PortalDescribeResultSchema.parse(result)).toMatchObject({
+		expect(PortalBackendDescribeResultSchema.parse(result)).toMatchObject({
 			items: [
 				{
 					id: 'describe-issue',
@@ -258,7 +258,7 @@ describe('MCP provider capability backend', () => {
 			requests: [{ id: 'search-tools', query: 'issue', schemaDetail: 'summary' }],
 		});
 
-		expect(PortalListResultSchema.parse(listResult)).toMatchObject({
+		expect(PortalBackendListResultSchema.parse(listResult)).toMatchObject({
 			items: [
 				{
 					id: 'list-tools',
@@ -267,7 +267,7 @@ describe('MCP provider capability backend', () => {
 			],
 			ok: true,
 		});
-		expect(PortalSearchResultSchema.parse(searchResult)).toMatchObject({
+		expect(PortalBackendSearchResultSchema.parse(searchResult)).toMatchObject({
 			items: [
 				{
 					id: 'search-tools',
@@ -291,7 +291,7 @@ describe('MCP provider capability backend', () => {
 			requests: [{ id: 'search-linear', namespaces: ['linear'], query: 'issue' }],
 		});
 
-		expect(PortalListResultSchema.parse(listResult)).toMatchObject({
+		expect(PortalBackendListResultSchema.parse(listResult)).toMatchObject({
 			items: [
 				{
 					id: 'list-linear',
@@ -301,7 +301,7 @@ describe('MCP provider capability backend', () => {
 			],
 			ok: true,
 		});
-		expect(PortalSearchResultSchema.parse(searchResult)).toMatchObject({
+		expect(PortalBackendSearchResultSchema.parse(searchResult)).toMatchObject({
 			items: [
 				{
 					id: 'search-linear',
@@ -327,7 +327,7 @@ describe('MCP provider capability backend', () => {
 
 		const result = await backend.list({ requests: [{ id: 'list-tools' }] });
 
-		expect(PortalListResultSchema.parse(result)).toMatchObject({ ok: true });
+		expect(PortalBackendListResultSchema.parse(result)).toMatchObject({ ok: true });
 		expect(JSON.stringify(result)).toContain('github');
 		expect(JSON.stringify(result)).not.toContain('linear');
 	});

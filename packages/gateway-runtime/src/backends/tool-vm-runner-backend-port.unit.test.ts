@@ -2,13 +2,14 @@ import { Buffer } from 'node:buffer';
 
 import {
 	PortalCallResultSchema,
-	PortalDescribeResultSchema,
-	PortalListResultSchema,
-	PortalSearchResultSchema,
+	PortalBackendDescribeResultSchema,
+	PortalBackendListResultSchema,
+	PortalBackendSearchResultSchema,
 	type ArtifactReference,
 	type JsonObject,
 	type PortalCallResult,
 } from '@agent-vm/agent-portal-sdk';
+import { gatewayRuntimeManagedToolPortalConfigSchema } from '@agent-vm/config-contracts';
 import {
 	deriveGatewayControlStablePrincipal,
 	type GatewayRuntimeToolPortalDispatchAuthorityForBackendKind,
@@ -33,6 +34,7 @@ import {
 	type GatewayRuntimeToolVmRunnerProfileCapabilityCatalog,
 	type GatewayRuntimeToolVmRunnerSandboxBindingRequest,
 } from './tool-vm-runner-backend-port.js';
+import { compileGatewayRuntimeToolVmRunnerConfiguredCatalog } from './tool-vm-runner-configured-catalog.js';
 
 const trustedContext = {
 	correlation: {
@@ -238,6 +240,7 @@ function unusedProcessRegistry(): GatewayRuntimeSandboxProcessRegistry {
 }
 
 function createBackendFixture(options?: {
+	readonly capabilityCatalog?: GatewayRuntimeToolVmRunnerCapabilityCatalog;
 	readonly rejectStrictHostKey?: boolean;
 	readonly rejectWriteAfterDispatch?: boolean;
 }): BackendFixture {
@@ -325,7 +328,7 @@ function createBackendFixture(options?: {
 				};
 			},
 		},
-		capabilityCatalog,
+		capabilityCatalog: options?.capabilityCatalog ?? capabilityCatalog,
 	});
 	return {
 		artifactWrites,
@@ -387,6 +390,68 @@ async function callCapability(options: {
 }
 
 describe('Gateway runtime Tool VM runner backend port', () => {
+	it('drops namespace summaries before configured execution reaches SSH', async () => {
+		// Arrange
+		const namespaceSummaryPayloadCanary = 'SUMMARY_MARKER_MUST_NOT_ENTER_TOOL_VM_SSH';
+		const configuredCatalog = compileGatewayRuntimeToolVmRunnerConfiguredCatalog(
+			gatewayRuntimeManagedToolPortalConfigSchema.parse({
+				agents: { 'agent-a': { profile: 'code-builder' } },
+				mode: 'managed',
+				profiles: {
+					'code-builder': {
+						namespaces: {
+							sandbox: {
+								discovery: { summary: namespaceSummaryPayloadCanary },
+								backend: {
+									kind: 'tool_vm_runner',
+									operations: {
+										run_checks: {
+											description: 'Run the configured check.',
+											executable: '/usr/bin/true',
+											kind: 'command.fixed',
+											mandatoryArgvPrefix: [],
+											workingDirectory: '.',
+										},
+									},
+									profile: 'sandbox_ssh',
+								},
+								calls: {
+									requiresApproval: { allow: [], deny: [] },
+									withoutApproval: { allow: ['run_checks'], deny: [] },
+								},
+								tools: { allow: ['run_checks'], deny: [] },
+							},
+						},
+					},
+				},
+				schemaVersion: 1,
+			}),
+		);
+		const fixture = createBackendFixture({ capabilityCatalog: configuredCatalog });
+
+		// Act
+		const result = await callCapability({
+			arguments: {},
+			fixture,
+			id: 'call-summary-isolation',
+			name: 'run_checks',
+			operationId: '40000000-0000-4000-8000-000000000099',
+			trustedContext,
+		});
+
+		// Assert
+		expect(result.items[0]).toMatchObject({ status: 'ok' });
+		expect(fixture.sshExecutions).toEqual([{ argv: ['/usr/bin/true'], cwd: '.' }]);
+		expect(
+			JSON.stringify({
+				artifactWrites: fixture.artifactWrites,
+				bindingRequests: fixture.bindingRequests,
+				sshExecutions: fixture.sshExecutions,
+				sshWrites: fixture.sshWrites,
+			}),
+		).not.toContain(namespaceSummaryPayloadCanary);
+	});
+
 	it('implements the exact frozen Tool Portal backend-kind contract', () => {
 		const fixture = createBackendFixture();
 
@@ -400,13 +465,13 @@ describe('Gateway runtime Tool VM runner backend port', () => {
 	it('projects only the configured catalog for list, search, and describe without resolving sandbox authority', async () => {
 		const fixture = createBackendFixture();
 
-		const listResult = PortalListResultSchema.parse(
+		const listResult = PortalBackendListResultSchema.parse(
 			await fixture.port.list(
 				{ requests: [{ id: 'list-sandbox', limit: 20, namespaces: ['sandbox'] }] },
 				invocationOptions(),
 			),
 		);
-		const searchResult = PortalSearchResultSchema.parse(
+		const searchResult = PortalBackendSearchResultSchema.parse(
 			await fixture.port.search(
 				{
 					requests: [
@@ -422,7 +487,7 @@ describe('Gateway runtime Tool VM runner backend port', () => {
 				invocationOptions(),
 			),
 		);
-		const describeResult = PortalDescribeResultSchema.parse(
+		const describeResult = PortalBackendDescribeResultSchema.parse(
 			await fixture.port.describe(
 				{
 					requests: [
@@ -473,13 +538,13 @@ describe('Gateway runtime Tool VM runner backend port', () => {
 
 	it('selects list, search, describe, and call catalogs only from the trusted principal profile', async () => {
 		const fixture = createBackendFixture();
-		const privilegedList = PortalListResultSchema.parse(
+		const privilegedList = PortalBackendListResultSchema.parse(
 			await fixture.port.list(
 				{ requests: [{ id: 'list-privileged', limit: 20, namespaces: ['sandbox'] }] },
 				invocationOptions(privilegedTrustedContext),
 			),
 		);
-		const privilegedSearch = PortalSearchResultSchema.parse(
+		const privilegedSearch = PortalBackendSearchResultSchema.parse(
 			await fixture.port.search(
 				{
 					requests: [
@@ -495,7 +560,7 @@ describe('Gateway runtime Tool VM runner backend port', () => {
 				invocationOptions(privilegedTrustedContext),
 			),
 		);
-		const privilegedDescribe = PortalDescribeResultSchema.parse(
+		const privilegedDescribe = PortalBackendDescribeResultSchema.parse(
 			await fixture.port.describe(
 				{
 					requests: [

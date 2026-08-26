@@ -141,6 +141,9 @@ export default defineConfig({
 			'@agent-vm/tool-portal/cli-allowances': repoPath(
 				'packages/tool-portal/src/cli-allowances/index.ts',
 			),
+			'@agent-vm/tool-portal/dispatch-authority': repoPath(
+				'packages/tool-portal/src/dispatch-authority.ts',
+			),
 			'@agent-vm/tool-portal': repoPath('packages/tool-portal/src/index.ts'),
 			'@agent-vm/tool-portal/testing': repoPath('packages/tool-portal/src/testing/index.ts'),
 		},

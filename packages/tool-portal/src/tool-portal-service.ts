@@ -1,5 +1,9 @@
 import {
+	compareUnicodeCodePointStrings,
 	PortalCallRequestSchema,
+	type PortalBackendDescribeResult,
+	type PortalBackendListResult,
+	type PortalBackendSearchResult,
 	type PortalCallRequest,
 	type PortalCallResult,
 	PortalDescribeRequestSchema,
@@ -13,11 +17,9 @@ import {
 	type PortalSearchResult,
 } from '@agent-vm/agent-portal-sdk';
 import {
-	createGatewayRuntimeManagedToolPortalConfig,
 	gatewayRuntimeManagedToolPortalConfigSchema,
 	type GatewayRuntimeManagedToolPortalConfig,
-	managedToolPortalConfigSchema,
-	type ManagedToolPortalConfig,
+	type McpConfig,
 	type StandaloneToolPortalConfig,
 	type ToolPortalBackendBinding,
 	type ToolPortalBackendKind,
@@ -93,15 +95,15 @@ export interface ToolPortalBackendPort<TBackendKind extends ToolPortalBackendKin
 	readonly describe: (
 		request: PortalDescribeRequest,
 		options: ToolPortalInvocationOptions,
-	) => Promise<PortalDescribeResult>;
+	) => Promise<PortalBackendDescribeResult>;
 	readonly list: (
 		request: PortalListRequest,
 		options: ToolPortalInvocationOptions,
-	) => Promise<PortalListResult>;
+	) => Promise<PortalBackendListResult>;
 	readonly search: (
 		request: PortalSearchRequest,
 		options: ToolPortalInvocationOptions,
-	) => Promise<PortalSearchResult>;
+	) => Promise<PortalBackendSearchResult>;
 }
 
 export type ToolPortalStandaloneMcpDispatchAuthority =
@@ -145,15 +147,15 @@ export interface ToolPortalStandaloneMcpBackendPort {
 	readonly describe: (
 		request: PortalDescribeRequest,
 		options: ToolPortalStandaloneMcpBackendReadOptions,
-	) => Promise<PortalDescribeResult>;
+	) => Promise<PortalBackendDescribeResult>;
 	readonly list: (
 		request: PortalListRequest,
 		options: ToolPortalStandaloneMcpBackendReadOptions,
-	) => Promise<PortalListResult>;
+	) => Promise<PortalBackendListResult>;
 	readonly search: (
 		request: PortalSearchRequest,
 		options: ToolPortalStandaloneMcpBackendReadOptions,
-	) => Promise<PortalSearchResult>;
+	) => Promise<PortalBackendSearchResult>;
 }
 
 export interface ToolPortalApprovalPort {
@@ -197,17 +199,18 @@ export interface CreateManagedToolPortalCapabilityCoreProps {
 		readonly mcpProvider: ToolPortalBackendPort<'mcp_provider'>;
 		readonly toolVmRunner: ToolPortalBackendPort<'tool_vm_runner'>;
 	};
-	readonly config: GatewayRuntimeManagedToolPortalConfig | ManagedToolPortalConfig;
+	readonly config: GatewayRuntimeManagedToolPortalConfig;
 	readonly semanticSnapshot: GatewayRuntimePortalSemanticSnapshot;
 }
 
 export interface CreateStandaloneV1ToolPortalServiceProps {
 	readonly approvalCoordinator: StandaloneToolPortalApprovalCoordinator;
+	readonly baseSemanticSnapshot: ToolPortalStandaloneSemanticSnapshot;
 	readonly backendPorts: {
 		readonly mcpProvider: ToolPortalStandaloneMcpBackendPort;
 	};
 	readonly config: StandaloneToolPortalConfig;
-	readonly semanticSnapshot: ToolPortalStandaloneSemanticSnapshot;
+	readonly mcpConfig: McpConfig;
 }
 
 function resolveManagedInvocation(props: {
@@ -308,6 +311,12 @@ function managedBackendEntriesForInvocation(props: {
 	}
 	return [...namespacesByBackendKind].map(([backendKind, namespaces]) => ({
 		backend: backendPortForKind(props.backendPorts, backendKind),
+		namespaceDiscovery: [...namespaces]
+			.map((namespace) => ({
+				...profileConfig.namespaces[namespace]?.discovery,
+				namespace,
+			}))
+			.toSorted((left, right) => compareUnicodeCodePointStrings(left.namespace, right.namespace)),
 		namespaces,
 	}));
 }
@@ -346,6 +355,31 @@ function approvalGrantDispatchAuthority(
 			return { backendKind: 'tool_vm_runner', grant, kind: 'approval-grant' };
 		default:
 			return assertNeverBackendKind(grant);
+	}
+}
+
+function directDispatchAuthority(props: {
+	readonly backendKind: ToolPortalBackendKind;
+	readonly bindingRevision: string;
+	readonly fingerprint: `sha256:${string}`;
+	readonly operationId: string;
+}): GatewayRuntimeToolPortalDispatchAuthority {
+	const common = {
+		fingerprint: props.fingerprint,
+		kind: 'without-approval' as const,
+		operationId: props.operationId,
+	};
+	switch (props.backendKind) {
+		case 'controller_execution':
+			return {
+				...common,
+				backendKind: 'controller_execution',
+				bindingRevision: props.bindingRevision,
+			};
+		case 'mcp_provider':
+			return { ...common, backendKind: 'mcp_provider' };
+		case 'tool_vm_runner':
+			return { ...common, backendKind: 'tool_vm_runner' };
 	}
 }
 
@@ -422,12 +456,7 @@ function controllerAdmissionItem(props: {
 export function createManagedToolPortalCapabilityCore(
 	props: CreateManagedToolPortalCapabilityCoreProps,
 ): ToolPortalCapabilityCore<'managed'> {
-	const projectedConfig = gatewayRuntimeManagedToolPortalConfigSchema.safeParse(props.config);
-	const config = projectedConfig.success
-		? projectedConfig.data
-		: createGatewayRuntimeManagedToolPortalConfig(
-				managedToolPortalConfigSchema.parse(props.config),
-			);
+	const config = gatewayRuntimeManagedToolPortalConfigSchema.parse(props.config);
 	const semanticSnapshot = deepFreeze(
 		GatewayRuntimePortalSemanticSnapshotSchema.parse(props.semanticSnapshot),
 	);
@@ -531,7 +560,7 @@ export function createManagedToolPortalCapabilityCore(
 		}
 		if (policyDecision.kind === 'without-approval') {
 			return await dispatchCall({
-				authority: {
+				authority: directDispatchAuthority({
 					backendKind: policyDecision.backendKind,
 					fingerprint: directDispatchFingerprint({
 						backendKind: policyDecision.backendKind,
@@ -540,9 +569,9 @@ export function createManagedToolPortalCapabilityCore(
 						semanticSnapshot,
 						surfaceClass: propsForCall.operationOptions.surfaceClass,
 					}),
-					kind: 'without-approval',
+					bindingRevision: semanticSnapshot.bindingRevision,
 					operationId,
-				},
+				}),
 				call: propsForCall.call,
 				operationId,
 				operationOptions: propsForCall.operationOptions,

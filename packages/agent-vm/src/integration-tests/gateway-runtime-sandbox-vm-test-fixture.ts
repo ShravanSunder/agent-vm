@@ -1207,6 +1207,7 @@ export async function createStockGatewayRuntimeSandboxVmHarness(): Promise<Stock
 				'sandbox-user': {
 					namespaces: {
 						sandbox: {
+							discovery: {},
 							backend: {
 								kind: 'tool_vm_runner',
 								operations: {
@@ -1242,7 +1243,7 @@ export async function createStockGatewayRuntimeSandboxVmHarness(): Promise<Stock
 					agentId: 'gateway-agent',
 					frameworkIdentity: { kind: 'hermes', profileName: 'gateway-agent' },
 					profileAssignmentRevision: gatewayProfileAssignmentRevision,
-					toolPortalNamespaceNames: ['sandbox'],
+					toolPortalNamespaces: [{ namespace: 'sandbox' }],
 					toolPortalProfileId: 'sandbox-user',
 				},
 			},

@@ -25,6 +25,7 @@ import { waitForProtocolRetryInterval } from './e2e-protocol-wait.js';
 import {
 	buildHermesE2eProfileApiServerKeySecrets,
 	hermesE2eProfileApiServerKey,
+	hermesE2eProfileApiServerKeyEnvironmentName,
 	renderHermesManagedE2eConfiguration,
 	scaffoldHermesE2eProject,
 	useLocalHermesGatewayImagePackages,
@@ -39,10 +40,13 @@ const describeHermesToolPortalOrientationE2e = runHermesToolPortalOrientationE2e
 	: describe.skip;
 
 const agentId = 'main';
-const discordSecretEnvironmentName = 'DISCORD_BOT_TOKEN_MAIN';
 const availableUpstreamHost = 'orientation-available-mcp.vm.host';
 const unavailableUpstreamHost = 'orientation-unavailable-mcp.vm.host';
 const unavailableNamespace = 'orientation-unavailable';
+const controllerExecutionNamespace = 'controller_execution';
+const availableNamespaceSummary = 'Available orientation E2E upstream';
+const unavailableNamespaceSummary = 'Unavailable orientation E2E upstream';
+const controllerExecutionSummary = 'Controller-owned orientation E2E operations';
 const modelHost = 'orientation-model.provider.test';
 const modelName = 'hermes-orientation-e2e';
 const sessionId = 'hermes-orientation-session';
@@ -74,6 +78,7 @@ interface ProviderMessage {
 
 interface ProviderObservation {
 	readonly messages: readonly ProviderMessage[];
+	readonly tools: readonly unknown[];
 }
 
 interface RecordingProvider {
@@ -96,8 +101,8 @@ async function readRequestBody(request: IncomingMessage): Promise<string> {
 
 function parseProviderObservation(requestBody: string): ProviderObservation {
 	const parsed: unknown = JSON.parse(requestBody);
-	if (!isObjectRecord(parsed) || !Array.isArray(parsed.messages)) {
-		throw new Error('Hermes recording provider expected an OpenAI messages array.');
+	if (!isObjectRecord(parsed) || !Array.isArray(parsed.messages) || !Array.isArray(parsed.tools)) {
+		throw new Error('Hermes recording provider expected OpenAI messages and tools arrays.');
 	}
 	const messages = parsed.messages.flatMap((message): readonly ProviderMessage[] => {
 		if (
@@ -109,7 +114,7 @@ function parseProviderObservation(requestBody: string): ProviderObservation {
 		}
 		return [{ content: message.content, role: message.role }];
 	});
-	return { messages };
+	return { messages, tools: parsed.tools };
 }
 
 function writeServerSentCompletion(
@@ -401,13 +406,13 @@ async function writeToolPortalConfiguration(options: {
 					$schema: '../../schemas/mcp.schema.json',
 					providers: {
 						available: {
-							discovery: { summary: 'Available orientation E2E upstream' },
+							discovery: { summary: availableNamespaceSummary },
 							kind: 'mcp',
 							namespace: fakeUpstreamNamespace,
 							transport: { kind: 'streamable-http', url: options.availableUpstreamUrl },
 						},
 						unavailable: {
-							discovery: { summary: 'Unavailable orientation E2E upstream' },
+							discovery: { summary: unavailableNamespaceSummary },
 							kind: 'mcp',
 							namespace: unavailableNamespace,
 							transport: { kind: 'streamable-http', url: options.unavailableUpstreamUrl },
@@ -430,7 +435,7 @@ async function writeToolPortalConfiguration(options: {
 					profiles: {
 						[agentId]: {
 							namespaces: {
-								controller_execution: {
+								[controllerExecutionNamespace]: {
 									backend: {
 										kind: 'controller_execution',
 										operations: {
@@ -441,6 +446,7 @@ async function writeToolPortalConfiguration(options: {
 										requiresApproval: { allow: [] },
 										withoutApproval: { allow: ['controller_host_probe'] },
 									},
+									discovery: { summary: controllerExecutionSummary },
 									tools: { allow: ['controller_host_probe'] },
 								},
 								[fakeUpstreamNamespace]: {
@@ -472,18 +478,48 @@ async function writeToolPortalConfiguration(options: {
 	]);
 }
 
-async function waitForRootApiHealth(gatewayPort: number): Promise<void> {
+async function waitForRootApiHealth(options: {
+	readonly controllerUrl: string;
+	readonly gatewayPort: number;
+	readonly resolveVm: () => Pick<GatewayZoneVmOperations, 'exec'> | undefined;
+	readonly zoneId: string;
+}): Promise<void> {
 	const deadline = Date.now() + 60_000;
+	let lastStatus: number | undefined;
+	let lastError: string | undefined;
 	while (Date.now() < deadline) {
 		try {
-			const response = await fetch(`http://127.0.0.1:${String(gatewayPort)}/health`, {
+			const response = await fetch(`http://127.0.0.1:${String(options.gatewayPort)}/health`, {
 				signal: AbortSignal.timeout(2_000),
 			});
+			lastStatus = response.status;
 			if (response.ok) return;
-		} catch {}
+		} catch (error: unknown) {
+			lastError = error instanceof Error ? error.message : String(error);
+		}
 		await waitForProtocolRetryInterval(250);
 	}
-	throw new Error('Timed out waiting for the Hermes orientation E2E health endpoint.');
+	const vm = options.resolveVm();
+	const serviceLogResult = await vm?.exec(
+		'tail -n 200 /var/log/agent-vm/hermes-service.log 2>&1 || true',
+	);
+	const serviceLog = serviceLogResult?.stdout.toString();
+	const [zoneStatus, zoneLogs] = await Promise.all(
+		['status', 'logs'].map(async (operation) => {
+			try {
+				const response = await fetch(
+					`${options.controllerUrl}/zones/${encodeURIComponent(options.zoneId)}/${operation}`,
+					{ signal: AbortSignal.timeout(5_000) },
+				);
+				return `${String(response.status)} ${await response.text()}`;
+			} catch (error: unknown) {
+				return error instanceof Error ? error.message : String(error);
+			}
+		}),
+	);
+	throw new Error(
+		`Timed out waiting for the Hermes orientation E2E health endpoint: ${JSON.stringify({ lastError, lastStatus, serviceLog, zoneLogs, zoneStatus })}`,
+	);
 }
 
 async function requestHermesTurn(options: {
@@ -578,6 +614,12 @@ describeHermesToolPortalOrientationE2e('e2e: Hermes Tool Portal session orientat
 		if (systemZone === undefined || systemZone.gateway.type !== 'hermes') {
 			throw new Error('Expected the Hermes Tool Portal orientation E2E zone.');
 		}
+		// This proof drives Hermes through its HTTP API and must not activate a channel transport.
+		Object.assign(systemZone.gateway.profileSecretProjectionsByAgent, {
+			[agentId]: {
+				API_SERVER_KEY: hermesE2eProfileApiServerKeyEnvironmentName(agentId),
+			},
+		});
 		const toolPortalConfigDirectory = path.join(project.tempRoot, 'config', 'tool-portal');
 		await mkdir(toolPortalConfigDirectory, { recursive: true });
 		const availableUpstreamUrl = `http://${availableUpstreamHost}:${String(availableUpstream.port)}/mcp`;
@@ -588,17 +630,11 @@ describeHermesToolPortalOrientationE2e('e2e: Hermes Tool Portal session orientat
 			{ audience: 'gateway', host: unavailableUpstreamHost },
 			{ audience: 'gateway', host: modelHost },
 		];
-		systemZone.secrets[discordSecretEnvironmentName] = {
-			audience: 'gateway',
-			envVar: discordSecretEnvironmentName,
-			injection: 'env',
-			source: 'environment',
-		};
 		systemZone.toolPortal = {
 			configDir: toolPortalConfigDirectory,
 			surfaceEligibilityByProfile: {
 				[agentId]: {
-					controller_execution: ['protected_uds'],
+					[controllerExecutionNamespace]: ['protected_uds'],
 					[fakeUpstreamNamespace]: ['mcp', 'protected_uds'],
 					[unavailableNamespace]: ['mcp', 'protected_uds'],
 				},
@@ -634,13 +670,19 @@ describeHermesToolPortalOrientationE2e('e2e: Hermes Tool Portal session orientat
 			secrets: {
 				...buildHermesE2eProfileApiServerKeySecrets([agentId]),
 				AGENT_VM_E2E_CONTROLLER_HOST_PROBE: '1',
-				[discordSecretEnvironmentName]: 'unused-hermes-orientation-e2e-discord-token',
 				GITHUB_TOKEN: 'unused-hermes-orientation-e2e-github-token',
 			},
 			startGatewayZone: async (startOptions, dependencies) => {
 				const result = await startGatewayZone(startOptions, {
 					...dependencies,
 					gatewayRuntimeArtifactLimits: controllerFixedGatewayRuntimeArtifactLimits,
+					managedVmFactory: {
+						createManagedVm: async (request) => {
+							const vm = await dependencies.managedVmFactory.createManagedVm(request);
+							gatewayVm = vm;
+							return vm;
+						},
+					},
 				});
 				if (result.executionModel !== 'managed-gateway') {
 					throw new Error('Hermes orientation E2E requires a managed Gateway VM.');
@@ -655,7 +697,12 @@ describeHermesToolPortalOrientationE2e('e2e: Hermes Tool Portal session orientat
 				[`${modelHost}:${String(provider.port)}`]: `127.0.0.1:${String(provider.port)}`,
 			},
 		});
-		await waitForRootApiHealth(project.gatewayPort);
+		await waitForRootApiHealth({
+			controllerUrl: harness.controllerUrl,
+			gatewayPort: project.gatewayPort,
+			resolveVm: () => gatewayVm,
+			zoneId: systemZone.id,
+		});
 		await availableUpstream.firstListToolsRequest;
 
 		const firstPrompt = 'orientation-turn-one';
@@ -692,6 +739,12 @@ describeHermesToolPortalOrientationE2e('e2e: Hermes Tool Portal session orientat
 			);
 		}
 		expect(orientedUserContent).toContain(`"${unavailableNamespace}": unavailable`);
+		expect(orientedUserContent).toContain(`"${controllerExecutionNamespace}": available`);
+		expect(orientedUserContent).toContain(`summary: ${JSON.stringify(availableNamespaceSummary)}`);
+		expect(orientedUserContent).toContain(
+			`summary: ${JSON.stringify(unavailableNamespaceSummary)}`,
+		);
+		expect(orientedUserContent).toContain(`summary: ${JSON.stringify(controllerExecutionSummary)}`);
 
 		if (gatewayVm === undefined) throw new Error('Hermes orientation E2E did not capture its VM.');
 
@@ -699,17 +752,6 @@ describeHermesToolPortalOrientationE2e('e2e: Hermes Tool Portal session orientat
 		const finalObservation = provider.observations().at(-1);
 		if (finalObservation === undefined) throw new Error('Expected final provider observation.');
 		expect(requireLatestUserContent(finalObservation)).not.toContain(orientationMarker);
-		const orientationBearingObservations = provider
-			.observations()
-			.filter((observation) => requireLatestUserContent(observation).includes(orientationMarker));
-		expect(orientationBearingObservations).toEqual([orientedObservation]);
-		const expectedSystemContents = systemContents(firstObservation);
-		expect(expectedSystemContents.length).toBeGreaterThan(0);
-		for (const observation of provider.observations()) {
-			expect(systemContents(observation)).toEqual(expectedSystemContents);
-			for (const content of systemContents(observation))
-				expect(content).not.toContain(orientationMarker);
-		}
 
 		const describeResponse = await requestHermesTurn({
 			gatewayPort: project.gatewayPort,
@@ -742,5 +784,21 @@ describeHermesToolPortalOrientationE2e('e2e: Hermes Tool Portal session orientat
 			prompt: controllerExecutionPrompt,
 		});
 		expect(controllerExecutionResponse).toContain(controllerExecutionSuccessMarker);
+
+		const orientationBearingObservations = provider
+			.observations()
+			.filter((observation) => requireLatestUserContent(observation).includes(orientationMarker));
+		expect(orientationBearingObservations).toEqual([orientedObservation]);
+		const expectedSystemContents = systemContents(firstObservation);
+		const expectedTools = firstObservation.tools;
+		expect(expectedSystemContents.length).toBeGreaterThan(0);
+		expect(expectedTools.length).toBeGreaterThan(0);
+		for (const observation of provider.observations()) {
+			expect(systemContents(observation)).toEqual(expectedSystemContents);
+			expect(observation.tools).toEqual(expectedTools);
+			for (const content of systemContents(observation))
+				expect(content).not.toContain(orientationMarker);
+			expect(JSON.stringify(observation.tools)).not.toContain(orientationMarker);
+		}
 	}, 900_000);
 });

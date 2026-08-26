@@ -1,6 +1,9 @@
 import { z } from 'zod';
 
-import { NamespaceNameSchema } from '../contract-primitives/index.js';
+import {
+	EffectiveNamespaceDiscoverySchema,
+	type EffectiveNamespaceDiscovery,
+} from '../contract-primitives/index.js';
 import { withPortableSuperRefinement } from '../portable-contracts/portable-refinement-authoring.js';
 import {
 	BoundedOpaqueIdentifierSchema,
@@ -37,37 +40,41 @@ export const GatewayRuntimeProjectionCohortDigestSchema = z
 export const ManagedAgentProjectionSchema = withPortableSuperRefinement({
 	refinement: (projection, context) => {
 		if (
-			new Set(projection.toolPortalNamespaceNames).size !==
-			projection.toolPortalNamespaceNames.length
+			new Set(
+				projection.toolPortalNamespaces.map(
+					(namespaceDiscovery: EffectiveNamespaceDiscovery) => namespaceDiscovery.namespace,
+				),
+			).size !== projection.toolPortalNamespaces.length
 		) {
 			context.addIssue({
 				code: 'custom',
-				message: 'Managed Agent Projection Tool Portal namespace names must be unique.',
-				path: ['toolPortalNamespaceNames'],
+				message: 'Managed Agent Projection Tool Portal namespaces must be unique.',
+				path: ['toolPortalNamespaces'],
 			});
 		}
-		const sortedNamespaceNames = [...projection.toolPortalNamespaceNames].toSorted(
-			compareUnicodeCodePointStrings,
-		);
+		const sortedNamespaceNames = projection.toolPortalNamespaces
+			.map((namespaceDiscovery: EffectiveNamespaceDiscovery) => namespaceDiscovery.namespace)
+			.toSorted(compareUnicodeCodePointStrings);
 		if (
-			projection.toolPortalNamespaceNames.some(
-				(namespaceName, index) => namespaceName !== sortedNamespaceNames[index],
+			projection.toolPortalNamespaces.some(
+				(namespaceDiscovery: EffectiveNamespaceDiscovery, index: number) =>
+					namespaceDiscovery.namespace !== sortedNamespaceNames[index],
 			)
 		) {
 			context.addIssue({
 				code: 'custom',
-				message: 'Managed Agent Projection Tool Portal namespace names must be sorted.',
-				path: ['toolPortalNamespaceNames'],
+				message: 'Managed Agent Projection Tool Portal namespaces must be sorted.',
+				path: ['toolPortalNamespaces'],
 			});
 		}
 	},
-	refinementIdentity: 'gateway.managed-agent-projection.namespace-names',
+	refinementIdentity: 'gateway.managed-agent-projection.namespaces',
 	schema: z
 		.object({
 			agentId: BoundedOpaqueIdentifierSchema,
 			frameworkIdentity: GatewayRuntimeFrameworkIdentitySchema,
 			profileAssignmentRevision: BoundedOpaqueIdentifierSchema,
-			toolPortalNamespaceNames: z.array(NamespaceNameSchema).readonly(),
+			toolPortalNamespaces: z.array(EffectiveNamespaceDiscoverySchema).readonly(),
 			toolPortalProfileId: BoundedOpaqueIdentifierSchema,
 		})
 		.strict(),

@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/tool-portal",
-	"version": "0.0.141",
+	"version": "0.0.142",
 	"description": "Cross-backend capability service and explicitly configured standalone projections.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {
@@ -27,6 +27,10 @@
 		"./cli-allowances": {
 			"types": "./dist/cli-allowances/index.d.ts",
 			"import": "./dist/cli-allowances/index.js"
+		},
+		"./dispatch-authority": {
+			"types": "./dist/dispatch-authority.d.ts",
+			"import": "./dist/dispatch-authority.js"
 		},
 		"./standalone-entrypoint": {
 			"types": "./dist/standalone-entrypoint/index.d.ts",

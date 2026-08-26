@@ -14,6 +14,65 @@ async function writeConfigFile(text: string): Promise<string> {
 }
 
 describe('loadMcpConfig', () => {
+	it('bounds the optional namespace discovery summary', async () => {
+		const supplementaryCharacter = '\u{1F680}';
+		const validConfigPath = await writeConfigFile(`{
+			"schemaVersion": 1,
+			"providers": {
+				"linear-production": {
+					"kind": "mcp",
+					"namespace": "linear",
+					"discovery": { "summary": "${'s'.repeat(500)}" },
+					"transport": { "kind": "streamable-http", "url": "https://mcp.linear.test/mcp" }
+				}
+			}
+		}`);
+		const overBoundConfigPath = await writeConfigFile(`{
+			"schemaVersion": 1,
+			"providers": {
+				"linear-production": {
+					"kind": "mcp",
+					"namespace": "linear",
+					"discovery": { "summary": "${'s'.repeat(501)}" },
+					"transport": { "kind": "streamable-http", "url": "https://mcp.linear.test/mcp" }
+				}
+			}
+		}`);
+		const validSupplementaryConfigPath = await writeConfigFile(`{
+			"schemaVersion": 1,
+			"providers": {
+				"unicode": {
+					"kind": "mcp",
+					"namespace": "unicode",
+					"discovery": { "summary": "${supplementaryCharacter.repeat(500)}" },
+					"transport": { "kind": "streamable-http", "url": "https://mcp.unicode.test/mcp" }
+				}
+			}
+		}`);
+		const overBoundSupplementaryConfigPath = await writeConfigFile(`{
+			"schemaVersion": 1,
+			"providers": {
+				"unicode": {
+					"kind": "mcp",
+					"namespace": "unicode",
+					"discovery": { "summary": "${supplementaryCharacter.repeat(501)}" },
+					"transport": { "kind": "streamable-http", "url": "https://mcp.unicode.test/mcp" }
+				}
+			}
+		}`);
+
+		expect(
+			(await loadMcpConfig(validConfigPath)).providers['linear-production']?.discovery,
+		).toEqual({
+			summary: 's'.repeat(500),
+		});
+		await expect(loadMcpConfig(overBoundConfigPath)).rejects.toThrow();
+		expect(
+			(await loadMcpConfig(validSupplementaryConfigPath)).providers.unicode?.discovery.summary,
+		).toBe(supplementaryCharacter.repeat(500));
+		await expect(loadMcpConfig(overBoundSupplementaryConfigPath)).rejects.toThrow();
+	});
+
 	it('loads strict upstream MCP provider config from JSONC', async () => {
 		const configPath = await writeConfigFile(`{
 			"schemaVersion": 1,

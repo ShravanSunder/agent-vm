@@ -22,14 +22,28 @@ import {
 
 type TestSecretResolver = SecretResolver & { readonly resolveAllMock: ReturnType<typeof vi.fn> };
 
-function createDefaultToolPortalConfigInput(): unknown {
+function createDefaultToolPortalConfigInput(namespace = 'deepwiki'): unknown {
 	return {
-		agents: { shravan: { profile: 'default' } },
+		agents: {
+			shravan: {
+				credentialBindings: {
+					google: {
+						files: {
+							'service-account': {
+								ref: 'op://agent-vm-testing/google/service-account',
+								source: '1password',
+							},
+						},
+					},
+				},
+				profile: 'default',
+			},
+		},
 		mode: 'managed',
 		profiles: {
 			default: {
 				namespaces: {
-					deepwiki: {
+					[namespace]: {
 						backend: { kind: 'mcp_provider' },
 						calls: {
 							requiresApproval: { allow: [] },
@@ -46,7 +60,21 @@ function createDefaultToolPortalConfigInput(): unknown {
 
 function createEphemeralConfiguredCliToolPortalConfigInput(): unknown {
 	return {
-		agents: { shravan: { profile: 'default' } },
+		agents: {
+			shravan: {
+				credentialBindings: {
+					google: {
+						files: {
+							'service-account': {
+								ref: 'op://agent-vm-testing/google/service-account',
+								source: '1password',
+							},
+						},
+					},
+				},
+				profile: 'default',
+			},
+		},
 		mode: 'managed',
 		profiles: {
 			default: {
@@ -56,15 +84,31 @@ function createEphemeralConfiguredCliToolPortalConfigInput(): unknown {
 							kind: 'controller_execution',
 							operations: {
 								isolated: {
+									calls: {
+										deny: [],
+										requiresApproval: [],
+										withoutApproval: 'remaining_admitted',
+									},
 									commands: [{ path: ['run'] }],
 									deniedPatterns: [],
 									executablePath: '/usr/bin/printf',
 									executionTarget: {
 										allowedHosts: [],
+										credentialBinding: 'google',
+										credentialEnvironment: {
+											GOG_DATA_DIR: { kind: 'credential_root' },
+										},
+										credentialFiles: [
+											{
+												path: 'sa-c2hyYXZhbkBleGFtcGxlLmNvbQ.json',
+												source: 'service-account',
+											},
+										],
 										environment: { kind: 'empty' },
 										guestCwd: '/run',
 										imageReference: '../../vm-images/controller-runners/default/build-config.json',
 										kind: 'ephemeral_managed_vm',
+										runtimeId: 'google-workspace',
 									},
 									kind: 'configured_cli',
 									mandatoryArgvPrefix: [],
@@ -113,16 +157,18 @@ function createPlanPropsForTest(props: {
 	};
 	readonly zoneId?: string;
 }): McpPortalEffectiveConfigFromConfigProps {
+	const mcpConfig = parseMcpConfigForTest(props.mcpConfig);
+	const firstProviderNamespace = Object.values(mcpConfig.providers)[0]?.namespace ?? 'deepwiki';
 	return {
 		approvalAccessConfigured: props.approvalAccessConfigured ?? false,
 		effectiveHostConfigDir: path.join(tmpdir(), 'agent-vm-tool-portal-effective-test'),
 		...(props.workspaceGitPushAgentEligibility === undefined
 			? {}
 			: { workspaceGitPushAgentEligibility: props.workspaceGitPushAgentEligibility }),
-		mcpConfig: parseMcpConfigForTest(props.mcpConfig),
+		mcpConfig,
 		secretResolver: props.secretResolver ?? createSecretResolver({}),
 		toolPortalConfig: parseToolPortalConfigForTest(
-			props.toolPortalConfig ?? createDefaultToolPortalConfigInput(),
+			props.toolPortalConfig ?? createDefaultToolPortalConfigInput(firstProviderNamespace),
 		),
 		zoneId: props.zoneId ?? 'shravan',
 		...(props.allowedRawEnvSecretNames === undefined
@@ -169,6 +215,7 @@ function createConfiguredCliOperationForOverlapTest(props: {
 	readonly safeHelp: string;
 }): Extract<ControllerExecutionOperation, { kind: 'configured_cli' }> {
 	return {
+		calls: { deny: [], requiresApproval: [], withoutApproval: 'remaining_admitted' },
 		commands: [{ flagRules: [], path: [...props.commandPath] }],
 		deniedPatterns: [],
 		executablePath: '/usr/bin/example',
@@ -211,17 +258,15 @@ describe('MCP Portal effective config materialization', () => {
 			effectiveHostConfigDir,
 			managedVmImages: { prepareImage },
 		});
-		const operation =
-			result.effectiveToolPortalConfig.profiles.default?.namespaces.controller?.backend.kind ===
-			'controller_execution'
-				? result.effectiveToolPortalConfig.profiles.default.namespaces.controller.backend.operations
-						.isolated
-				: undefined;
-		if (
-			operation?.kind !== 'configured_cli' ||
-			operation.executionTarget.kind !== 'ephemeral_managed_vm'
-		) {
-			throw new Error('Expected prepared configured CLI fixture operation.');
+		const operation = result.credentialedRuntimeRegistrySnapshot.resolve({
+			agentId: 'shravan',
+			cohortRevision: result.credentialedRuntimeRegistrySnapshot.cohortRevision,
+			namespaceId: 'controller',
+			operationName: 'isolated',
+			profileId: 'default',
+		}).operation;
+		if (operation.executionTarget.kind !== 'ephemeral_managed_vm') {
+			throw new Error('Expected prepared credentialed Managed VM operation.');
 		}
 
 		expect(prepareImage).toHaveBeenCalledWith({
@@ -424,6 +469,60 @@ describe('MCP Portal effective config materialization', () => {
 		await expect(planPromise).rejects.toThrow(
 			/managed calls requiring approval require zones\[\]\.approvalAccess/u,
 		);
+	});
+
+	it('derives approval access from visible direct-baseline configured CLI matchers', async () => {
+		const configuredOperation = createConfiguredCliOperationForOverlapTest({
+			commandPath: ['drive', 'delete'],
+			mandatoryArgvPrefix: [],
+			safeHelp: 'Delete one Drive item.',
+		});
+		configuredOperation.calls.requiresApproval = [
+			{ flags: [{ names: ['--permanent'] }], path: ['drive', 'delete'] },
+		];
+		const toolPortalConfig = {
+			agents: { shravan: { profile: 'default' } },
+			mode: 'managed' as const,
+			profiles: {
+				default: {
+					namespaces: {
+						google: {
+							backend: {
+								kind: 'controller_execution' as const,
+								operations: { gog: configuredOperation },
+							},
+							calls: {
+								requiresApproval: { allow: [] as string[] },
+								withoutApproval: { allow: ['gog'] },
+							},
+							tools: { allow: ['gog'] },
+						},
+					},
+				},
+			},
+			schemaVersion: 1 as const,
+		};
+
+		await expect(
+			planMcpPortalEffectiveConfigFromConfig(
+				createPlanPropsForTest({
+					approvalAccessConfigured: false,
+					mcpConfig: { providers: {}, schemaVersion: 1 },
+					toolPortalConfig,
+				}),
+			),
+		).rejects.toThrow(/managed calls requiring approval require zones\[\]\.approvalAccess/u);
+
+		configuredOperation.calls.requiresApproval = [];
+		await expect(
+			planMcpPortalEffectiveConfigFromConfig(
+				createPlanPropsForTest({
+					approvalAccessConfigured: false,
+					mcpConfig: { providers: {}, schemaVersion: 1 },
+					toolPortalConfig,
+				}),
+			),
+		).resolves.toBeDefined();
 	});
 
 	it('does not report loopback HTTP provider URLs as external gateway egress', async () => {
@@ -704,6 +803,7 @@ describe('MCP Portal effective config materialization', () => {
 				requiresApproval: { allow: [], deny: [] },
 				withoutApproval: { allow: ['workspace_git_push', 'controller_host_probe'], deny: [] },
 			},
+			discovery: {},
 			tools: { allow: ['workspace_git_push', 'controller_host_probe'], deny: [] },
 		});
 		expect(
@@ -761,6 +861,7 @@ describe('MCP Portal effective config materialization', () => {
 				requiresApproval: { allow: [], deny: [] },
 				withoutApproval: { allow: ['controller_host_probe'], deny: [] },
 			},
+			discovery: {},
 			tools: { allow: ['controller_host_probe'], deny: [] },
 		});
 	});
@@ -906,7 +1007,17 @@ describe('MCP Portal effective config materialization', () => {
 	});
 
 	it('preserves managed MCP namespaces that require approval', async () => {
-		const mcpConfig = { providers: {}, schemaVersion: 1 };
+		const mcpConfig = {
+			providers: {
+				deepwiki: {
+					discovery: { summary: 'Repository documentation and Q&A.' },
+					kind: 'mcp',
+					namespace: 'deepwiki',
+					transport: { kind: 'streamable-http', url: 'https://deepwiki.test/mcp' },
+				},
+			},
+			schemaVersion: 1,
+		};
 
 		const plan = await planMcpPortalEffectiveConfigFromConfig(
 			createPlanPropsForTest({
@@ -945,7 +1056,16 @@ describe('MCP Portal effective config materialization', () => {
 	});
 
 	it('preserves managed MCP namespaces that require approval for every tool', async () => {
-		const mcpConfig = { providers: {}, schemaVersion: 1 };
+		const mcpConfig = {
+			providers: {
+				deepwiki: {
+					kind: 'mcp',
+					namespace: 'deepwiki',
+					transport: { kind: 'streamable-http', url: 'https://deepwiki.test/mcp' },
+				},
+			},
+			schemaVersion: 1,
+		};
 
 		const plan = await planMcpPortalEffectiveConfigFromConfig(
 			createPlanPropsForTest({
@@ -976,6 +1096,62 @@ describe('MCP Portal effective config materialization', () => {
 		expect(
 			plan.effectiveToolPortalConfig.profiles.default?.namespaces.deepwiki?.calls.requiresApproval,
 		).toEqual({ allow: '*', deny: [] });
+	});
+
+	it('materializes effective discovery from the sole backend-specific summary source', async () => {
+		const plan = await resolveMcpPortalEffectiveConfigFromConfig(
+			createPlanPropsForTest({
+				mcpConfig: {
+					providers: {
+						'deepwiki-production': {
+							discovery: { summary: 'Repository documentation and Q&A.' },
+							kind: 'mcp',
+							namespace: 'deepwiki',
+							transport: { kind: 'streamable-http', url: 'https://deepwiki.test/mcp' },
+						},
+					},
+					schemaVersion: 1,
+				},
+				toolPortalConfig: {
+					agents: { shravan: { profile: 'default' } },
+					mode: 'managed',
+					profiles: {
+						default: {
+							namespaces: {
+								deepwiki: {
+									backend: { kind: 'mcp_provider' },
+									calls: {
+										requiresApproval: { allow: [] },
+										withoutApproval: { allow: '*' },
+									},
+									tools: { allow: '*' },
+								},
+								controller_execution: {
+									backend: {
+										kind: 'controller_execution',
+										operations: {
+											controller_host_probe: { kind: 'registered_action' },
+										},
+									},
+									calls: {
+										requiresApproval: { allow: [] },
+										withoutApproval: { allow: ['controller_host_probe'] },
+									},
+									discovery: { summary: 'Controller-local tools.' },
+									tools: { allow: ['controller_host_probe'] },
+								},
+							},
+						},
+					},
+					schemaVersion: 1,
+				},
+			}),
+		);
+
+		expect(plan.effectiveToolPortalConfig.profiles.default?.namespaces).toMatchObject({
+			deepwiki: { discovery: { summary: 'Repository documentation and Q&A.' } },
+			controller_execution: { discovery: { summary: 'Controller-local tools.' } },
+		});
 	});
 
 	it('rejects broad authored controller execution policy for registered workspace Git', async () => {

@@ -8,6 +8,9 @@ import {
 	PortalCallRequestSchema,
 	type PortalCallRequest,
 	type PortalCallResult,
+	type PortalBackendDescribeResult,
+	type PortalBackendListResult,
+	type PortalBackendSearchResult,
 	PortalDescribeRequestSchema,
 	type PortalDescribeRequest,
 	type PortalDescribeResult,
@@ -18,7 +21,10 @@ import {
 	type PortalSearchRequest,
 	type PortalSearchResult,
 } from '@agent-vm/agent-portal-sdk';
-import type { ToolPortalBackendKind, ToolPortalConfig } from '@agent-vm/config-contracts';
+import type {
+	GatewayRuntimeManagedToolPortalConfig,
+	ToolPortalBackendKind,
+} from '@agent-vm/config-contracts';
 import {
 	deriveGatewayRuntimeApprovalFingerprint,
 	deriveGatewayRuntimeApprovalId,
@@ -65,6 +71,7 @@ const toolPortalConfig = {
 		'code-builder': {
 			namespaces: {
 				github: {
+					discovery: {},
 					backend: { kind: 'mcp_provider' },
 					calls: {
 						requiresApproval: { allow: ['create_issue'], deny: [] },
@@ -73,6 +80,7 @@ const toolPortalConfig = {
 					tools: { allow: ['backend_error', 'create_issue', 'get_issue'], deny: [] },
 				},
 				private_github: {
+					discovery: {},
 					backend: { kind: 'mcp_provider' },
 					calls: {
 						requiresApproval: { allow: [], deny: [] },
@@ -84,7 +92,7 @@ const toolPortalConfig = {
 		},
 	},
 	schemaVersion: 1,
-} satisfies ToolPortalConfig;
+} satisfies GatewayRuntimeManagedToolPortalConfig;
 
 const semanticSnapshot = {
 	activeRevision: 'semantic:managed-composition:1',
@@ -93,7 +101,7 @@ const semanticSnapshot = {
 			agentId: 'agent-a',
 			frameworkIdentity: { kind: 'hermes', profileName: 'agent-a' },
 			profileAssignmentRevision: 'profile-assignment:agent-a:1',
-			toolPortalNamespaceNames: ['github', 'private_github'],
+			toolPortalNamespaces: [{ namespace: 'github' }, { namespace: 'private_github' }],
 			toolPortalProfileId: 'code-builder',
 		},
 	},
@@ -262,7 +270,7 @@ function createMatchedMcpProviderPort(
 				ok: true,
 			});
 		},
-		describe: (request, options): Promise<PortalDescribeResult> => {
+		describe: (request, options): Promise<PortalBackendDescribeResult> => {
 			const parsedRequest = PortalDescribeRequestSchema.parse(request);
 			invocations.push({ operation: 'describe', options, request: parsedRequest });
 			return Promise.resolve({
@@ -274,7 +282,7 @@ function createMatchedMcpProviderPort(
 				ok: true,
 			});
 		},
-		list: (request, options): Promise<PortalListResult> => {
+		list: (request, options): Promise<PortalBackendListResult> => {
 			const parsedRequest = PortalListRequestSchema.parse(request);
 			invocations.push({ operation: 'list', options, request: parsedRequest });
 			return Promise.resolve({
@@ -286,7 +294,7 @@ function createMatchedMcpProviderPort(
 				ok: true,
 			});
 		},
-		search: (request, options): Promise<PortalSearchResult> => {
+		search: (request, options): Promise<PortalBackendSearchResult> => {
 			const parsedRequest = PortalSearchRequestSchema.parse(request);
 			invocations.push({ operation: 'search', options, request: parsedRequest });
 			return Promise.resolve({

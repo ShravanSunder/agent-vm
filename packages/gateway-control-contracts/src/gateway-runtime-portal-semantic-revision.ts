@@ -1,12 +1,15 @@
 import { createHash } from 'node:crypto';
 
-import { compareUnicodeCodePointStrings } from '@agent-vm/agent-portal-sdk';
+import {
+	compareUnicodeCodePointStrings,
+	type EffectiveNamespaceDiscovery,
+} from '@agent-vm/agent-portal-sdk';
 import type {
+	EffectiveManagedToolPortalConfig,
 	FormattedSecretValue,
 	GatewayRuntimeManagedToolPortalConfig,
 	ManagedToolPortalConfig,
 	McpConfig,
-	ToolPortalConfig,
 } from '@agent-vm/config-contracts';
 
 import {
@@ -76,6 +79,7 @@ interface NormalizedCatalogInputs {
 				Record<
 					string,
 					{
+						readonly discovery: { readonly summary?: string };
 						readonly operations?: Readonly<
 							Record<
 								string,
@@ -123,7 +127,7 @@ interface NormalizedProfilePolicyInputs {
 	readonly surfaceEligibilityByProfile: NormalizedSurfaceEligibility;
 }
 
-type NormalizedBindingInputs = Readonly<
+type NormalizedBindingProfiles = Readonly<
 	Record<
 		string,
 		Readonly<
@@ -132,7 +136,7 @@ type NormalizedBindingInputs = Readonly<
 				| { readonly kind: 'mcp_provider' }
 				| {
 						readonly kind: 'controller_execution';
-						readonly operations: Readonly<Record<string, CanonicalJsonValue>>;
+						readonly operations: Readonly<Record<string, object>>;
 				  }
 				| {
 						readonly kind: 'tool_vm_runner';
@@ -174,6 +178,11 @@ type NormalizedBindingInputs = Readonly<
 	>
 >;
 
+interface NormalizedBindingInputs {
+	readonly credentialedRuntimeRevision?: string;
+	readonly profiles: NormalizedBindingProfiles;
+}
+
 type CanonicalJsonValue =
 	| boolean
 	| null
@@ -183,11 +192,27 @@ type CanonicalJsonValue =
 	| readonly CanonicalJsonValue[]
 	| { readonly [key: string]: CanonicalJsonValue };
 
+function recordEntries<TValue>(
+	record: Readonly<Record<string, TValue>>,
+): readonly (readonly [string, TValue])[] {
+	return Object.entries(record);
+}
+
+type BindingConfigProfile =
+	| EffectiveManagedToolPortalConfig['profiles'][string]
+	| ManagedToolPortalConfig['profiles'][string];
+type BindingConfigNamespacePolicy = BindingConfigProfile['namespaces'][string];
+type BindingControllerExecutionBackend = Extract<
+	BindingConfigNamespacePolicy['backend'],
+	{ kind: 'controller_execution' }
+>;
+type BindingControllerExecutionOperation = BindingControllerExecutionBackend['operations'][string];
+
 export interface DeriveGatewayRuntimePortalSemanticSnapshotProps {
 	readonly agentProjections: readonly ManagedAgentProjectionInput[];
 	readonly mcpConfig: McpConfig;
 	readonly surfaceEligibilityByProfile: GatewayRuntimePortalSemanticSnapshot['surfaceEligibilityByProfile'];
-	readonly toolPortalConfig: ManagedToolPortalConfig;
+	readonly toolPortalConfig: EffectiveManagedToolPortalConfig;
 }
 
 export interface ManagedFrameworkAgentProjectionInput {
@@ -199,14 +224,14 @@ export interface ManagedFrameworkAgentProjectionInput {
 export interface ManagedAgentProjectionInput {
 	readonly agentId: string;
 	readonly frameworkIdentity: GatewayRuntimeFrameworkIdentity;
-	readonly toolPortalNamespaceNames: readonly string[];
+	readonly toolPortalNamespaces: readonly EffectiveNamespaceDiscovery[];
 	readonly toolPortalProfileId: string;
 }
 
 export interface AssertGatewayRuntimePortalSemanticSnapshotMatchesInputsProps {
 	readonly mcpConfig: McpConfig;
 	readonly semanticSnapshot: GatewayRuntimePortalSemanticSnapshot;
-	readonly toolPortalConfig: ManagedToolPortalConfig;
+	readonly toolPortalConfig: EffectiveManagedToolPortalConfig;
 }
 
 function sortedStrings<TString extends string>(values: readonly TString[]): readonly TString[] {
@@ -289,7 +314,7 @@ function normalizedSurfaceEligibility(
 
 function normalizedCatalogInputs(props: {
 	readonly mcpConfig: McpConfig;
-	readonly toolPortalConfig: ManagedToolPortalConfig;
+	readonly toolPortalConfig: EffectiveManagedToolPortalConfig;
 }): NormalizedCatalogInputs {
 	return {
 		profiles: Object.fromEntries(
@@ -299,6 +324,10 @@ function normalizedCatalogInputs(props: {
 					Object.entries(profile.namespaces).map(([namespaceId, namespacePolicy]) => [
 						namespaceId,
 						{
+							discovery:
+								namespacePolicy.discovery.summary === undefined
+									? {}
+									: { summary: namespacePolicy.discovery.summary },
 							...(namespacePolicy.backend.kind === 'tool_vm_runner'
 								? {
 										operations: Object.fromEntries(
@@ -323,7 +352,7 @@ function normalizedCatalogInputs(props: {
 
 function normalizedProfilePolicyInputs(props: {
 	readonly surfaceEligibilityByProfile: GatewayRuntimePortalSemanticSnapshot['surfaceEligibilityByProfile'];
-	readonly toolPortalConfig: ManagedToolPortalConfig;
+	readonly toolPortalConfig: EffectiveManagedToolPortalConfig;
 }): NormalizedProfilePolicyInputs {
 	return {
 		profiles: Object.fromEntries(
@@ -347,54 +376,110 @@ function normalizedProfilePolicyInputs(props: {
 	};
 }
 
-function normalizedBindingInputs(config: ManagedToolPortalConfig): NormalizedBindingInputs {
-	return Object.fromEntries(
-		Object.entries(config.profiles).map(([profileId, profile]) => [
+function normalizedBindingInputs(
+	config: ManagedToolPortalConfig | EffectiveManagedToolPortalConfig,
+): NormalizedBindingInputs {
+	const profiles = Object.fromEntries(
+		recordEntries<BindingConfigProfile>(config.profiles).map(([profileId, profile]) => [
 			profileId,
 			Object.fromEntries(
-				Object.entries(profile.namespaces).map(([namespaceId, namespacePolicy]) => [
-					namespaceId,
-					namespacePolicy.backend.kind === 'tool_vm_runner'
-						? {
-								kind: namespacePolicy.backend.kind,
-								operations: Object.fromEntries(
-									Object.entries(namespacePolicy.backend.operations).map(
-										([operationName, operation]) => [
-											operationName,
-											operation.kind === 'command.fixed'
-												? {
-														executable: operation.executable,
-														kind: operation.kind,
-														mandatoryArgvPrefix: operation.mandatoryArgvPrefix,
-														workingDirectory: operation.workingDirectory,
-													}
-												: operation.kind === 'process.start'
+				recordEntries<BindingConfigNamespacePolicy>(profile.namespaces).map(
+					([namespaceId, namespacePolicy]) => [
+						namespaceId,
+						namespacePolicy.backend.kind === 'tool_vm_runner'
+							? {
+									kind: namespacePolicy.backend.kind,
+									operations: Object.fromEntries(
+										recordEntries(namespacePolicy.backend.operations).map(
+											([operationName, operation]) => [
+												operationName,
+												operation.kind === 'command.fixed'
 													? {
 															executable: operation.executable,
 															kind: operation.kind,
 															mandatoryArgvPrefix: operation.mandatoryArgvPrefix,
-															maxRuntimeMs: operation.maxRuntimeMs,
-															retainOutputBytes: operation.retainOutputBytes,
 															workingDirectory: operation.workingDirectory,
 														}
-													: operation.kind === 'process.wait'
-														? { kind: operation.kind, timeoutMs: operation.timeoutMs }
-														: { kind: operation.kind },
-										],
+													: operation.kind === 'process.start'
+														? {
+																executable: operation.executable,
+																kind: operation.kind,
+																mandatoryArgvPrefix: operation.mandatoryArgvPrefix,
+																maxRuntimeMs: operation.maxRuntimeMs,
+																retainOutputBytes: operation.retainOutputBytes,
+																workingDirectory: operation.workingDirectory,
+															}
+														: operation.kind === 'process.wait'
+															? { kind: operation.kind, timeoutMs: operation.timeoutMs }
+															: { kind: operation.kind },
+											],
+										),
 									),
-								),
-								profile: namespacePolicy.backend.profile,
-							}
-						: namespacePolicy.backend.kind === 'controller_execution'
-							? {
-									kind: namespacePolicy.backend.kind,
-									operations: namespacePolicy.backend.operations,
+									profile: namespacePolicy.backend.profile,
 								}
-							: { kind: namespacePolicy.backend.kind },
-				]),
+							: namespacePolicy.backend.kind === 'controller_execution'
+								? {
+										kind: namespacePolicy.backend.kind,
+										operations: Object.fromEntries(
+											recordEntries<BindingControllerExecutionOperation>(
+												namespacePolicy.backend.operations,
+											).map(([operationName, operation]) => [
+												operationName,
+												normalizedControllerExecutionOperation(operation),
+											]),
+										),
+									}
+								: { kind: namespacePolicy.backend.kind },
+					],
+				),
 			),
 		]),
 	);
+	return {
+		...('credentialedRuntimeRevision' in config && config.credentialedRuntimeRevision !== undefined
+			? { credentialedRuntimeRevision: config.credentialedRuntimeRevision }
+			: {}),
+		profiles,
+	};
+}
+
+function normalizedControllerExecutionOperation(
+	operation: BindingControllerExecutionOperation,
+): object {
+	if (operation.kind === 'registered_action') return operation;
+	return {
+		...operation,
+		calls: {
+			deny: normalizedInvocationMatchers(operation.calls.deny),
+			requiresApproval: normalizedInvocationMatchers(operation.calls.requiresApproval),
+			withoutApproval: operation.calls.withoutApproval,
+		},
+	};
+}
+
+function normalizedInvocationMatchers(
+	matchers: Extract<
+		BindingControllerExecutionOperation,
+		{ kind: 'configured_cli' }
+	>['calls']['deny'],
+): readonly object[] {
+	return matchers
+		.map((matcher) => ({
+			flags: matcher.flags
+				.map((predicate) => ({
+					names: predicate.names.toSorted(compareUnicodeCodePointStrings),
+					...(predicate.values === undefined
+						? {}
+						: { values: predicate.values.toSorted(compareUnicodeCodePointStrings) }),
+				}))
+				.toSorted(compareCanonicalJsonValues),
+			path: matcher.path,
+		}))
+		.toSorted(compareCanonicalJsonValues);
+}
+
+function compareCanonicalJsonValues(left: object, right: object): number {
+	return compareUnicodeCodePointStrings(canonicalJson(left), canonicalJson(right));
 }
 
 function canonicalJson(value: object): string {
@@ -419,11 +504,8 @@ function revision(domain: string, material: object): string {
 }
 
 export function deriveGatewayRuntimePortalBindingRevision(
-	toolPortalConfig: ToolPortalConfig,
+	toolPortalConfig: ManagedToolPortalConfig | EffectiveManagedToolPortalConfig,
 ): string {
-	if (toolPortalConfig.mode !== 'managed') {
-		throw new Error('Gateway runtime binding revision requires managed Tool Portal config.');
-	}
 	return revision('binding', normalizedBindingInputs(toolPortalConfig));
 }
 
@@ -441,23 +523,26 @@ function frameworkIdentityKey(identity: GatewayRuntimeFrameworkIdentity): string
 	return `hermes:${identity.profileName}`;
 }
 
-function assertSortedUniqueToolPortalNamespaceNames(namespaceNames: readonly string[]): void {
-	if (new Set(namespaceNames).size !== namespaceNames.length) {
-		throw new Error('Managed Agent Projection Tool Portal namespace names must be unique.');
+function assertSortedUniqueToolPortalNamespaces(
+	namespaceDiscovery: readonly EffectiveNamespaceDiscovery[],
+): void {
+	const namespaceNames = namespaceDiscovery.map((entry) => entry.namespace);
+	if (new Set(namespaceNames).size !== namespaceDiscovery.length) {
+		throw new Error('Managed Agent Projection Tool Portal namespaces must be unique.');
 	}
 	const sortedNamespaceNames = [...namespaceNames].toSorted(compareUnicodeCodePointStrings);
 	if (
 		namespaceNames.some((namespaceName, index) => namespaceName !== sortedNamespaceNames[index])
 	) {
-		throw new Error('Managed Agent Projection Tool Portal namespace names must be sorted.');
+		throw new Error('Managed Agent Projection Tool Portal namespaces must be sorted.');
 	}
 }
 
 function assertExactManagedAgentProjectionInputs(props: {
 	readonly agentProjections: readonly ManagedAgentProjectionInput[];
-	readonly configuredAgents: ManagedToolPortalConfig['agents'];
+	readonly configuredAgents: EffectiveManagedToolPortalConfig['agents'];
 	readonly surfaceEligibilityByProfile: GatewayRuntimePortalSemanticSnapshot['surfaceEligibilityByProfile'];
-	readonly toolPortalConfig: ManagedToolPortalConfig;
+	readonly toolPortalConfig: EffectiveManagedToolPortalConfig;
 }): void {
 	const projectionAgentIds = props.agentProjections.map((projection) => projection.agentId);
 	if (new Set(projectionAgentIds).size !== projectionAgentIds.length) {
@@ -486,7 +571,7 @@ function assertExactManagedAgentProjectionInputs(props: {
 		throw new Error('Managed Agent Projection framework identities must be unique.');
 	}
 	for (const projection of props.agentProjections) {
-		assertSortedUniqueToolPortalNamespaceNames(projection.toolPortalNamespaceNames);
+		assertSortedUniqueToolPortalNamespaces(projection.toolPortalNamespaces);
 		const profile = props.toolPortalConfig.profiles[projection.toolPortalProfileId];
 		if (profile === undefined) {
 			throw new Error(
@@ -495,19 +580,15 @@ function assertExactManagedAgentProjectionInputs(props: {
 		}
 		const profileSurfaceEligibility =
 			props.surfaceEligibilityByProfile[projection.toolPortalProfileId];
-		const expectedNamespaceNames = Object.keys(profile.namespaces)
-			.filter((namespaceName) =>
+		const expectedNamespaces = Object.entries(profile.namespaces)
+			.filter(([namespaceName]) =>
 				profileSurfaceEligibility?.[namespaceName]?.includes('protected_uds'),
 			)
-			.toSorted(compareUnicodeCodePointStrings);
-		if (
-			expectedNamespaceNames.length !== projection.toolPortalNamespaceNames.length ||
-			expectedNamespaceNames.some(
-				(namespaceName, index) => namespaceName !== projection.toolPortalNamespaceNames[index],
-			)
-		) {
+			.map(([namespace, namespacePolicy]) => ({ namespace, ...namespacePolicy.discovery }))
+			.toSorted((left, right) => compareUnicodeCodePointStrings(left.namespace, right.namespace));
+		if (canonicalJson(expectedNamespaces) !== canonicalJson(projection.toolPortalNamespaces)) {
 			throw new Error(
-				`Managed Agent Projection Tool Portal namespace names must exactly match the effective protected_uds namespace intersection for profile '${projection.toolPortalProfileId}'.`,
+				`Managed Agent Projection Tool Portal namespaces must exactly match the effective protected_uds namespace intersection for profile '${projection.toolPortalProfileId}'.`,
 			);
 		}
 		const configuredAgent = props.configuredAgents[projection.agentId];
@@ -522,7 +603,7 @@ function assertExactManagedAgentProjectionInputs(props: {
 export function deriveManagedAgentProjection(
 	input: ManagedAgentProjectionInput,
 ): ManagedAgentProjection {
-	assertSortedUniqueToolPortalNamespaceNames(input.toolPortalNamespaceNames);
+	assertSortedUniqueToolPortalNamespaces(input.toolPortalNamespaces);
 	return ManagedAgentProjectionSchema.parse({
 		...input,
 		profileAssignmentRevision: revision('profile-assignment', input),
@@ -609,7 +690,7 @@ export function assertGatewayRuntimePortalSemanticSnapshotMatchesInputs(
 		agentProjections: Object.values(props.semanticSnapshot.agentProjections).map((projection) => ({
 			agentId: projection.agentId,
 			frameworkIdentity: projection.frameworkIdentity,
-			toolPortalNamespaceNames: projection.toolPortalNamespaceNames,
+			toolPortalNamespaces: projection.toolPortalNamespaces,
 			toolPortalProfileId: projection.toolPortalProfileId,
 		})),
 		mcpConfig: props.mcpConfig,

@@ -116,6 +116,7 @@ export async function dispatchAgentVmCommand(
 		case 'controller.logs':
 		case 'controller.credentials.check':
 		case 'controller.credentials.refresh':
+		case 'controller.credential-runtime.retire':
 			return await operations.controller(io, dependencies, command, controllerExecutionOptions);
 		default: {
 			const unreachableCommand: never = command;

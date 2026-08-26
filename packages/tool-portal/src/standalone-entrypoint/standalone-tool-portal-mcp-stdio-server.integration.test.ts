@@ -35,7 +35,7 @@ function createService(): StandaloneToolPortalProjectionService {
 			items: request.requests.map(({ id }) => ({
 				id,
 				status: 'ok' as const,
-				value: { namespaces: ['github'], tools: [] },
+				value: { namespaceDiscovery: [], namespaces: ['github'], tools: [] },
 			})),
 			ok: true,
 		})),
@@ -89,7 +89,7 @@ describe('standalone Tool Portal scoped stdio projection', () => {
 				{
 					id: 'list-ok',
 					status: 'ok',
-					value: { namespaces: ['github'], tools: [] },
+					value: { namespaceDiscovery: [], namespaces: ['github'], tools: [] },
 				},
 				{
 					error: { code: 'provider_unavailable', message: 'Provider is unavailable.' },
@@ -153,7 +153,7 @@ describe('standalone Tool Portal scoped stdio projection', () => {
 				{
 					id: 'oversized-list',
 					status: 'ok',
-					value: { namespaces: ['n'.repeat(5_000)], tools: [] },
+					value: { namespaceDiscovery: [], namespaces: ['n'.repeat(5_000)], tools: [] },
 				},
 			],
 			ok: true,

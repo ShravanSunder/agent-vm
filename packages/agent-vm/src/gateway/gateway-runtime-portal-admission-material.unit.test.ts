@@ -1,12 +1,10 @@
 import {
 	mcpConfigSchema,
-	toolPortalConfigSchema,
+	effectiveManagedToolPortalConfigSchema,
+	type EffectiveManagedToolPortalConfig,
 	type McpConfig,
 	type McpProvider,
-	type ToolPortalNamespacePolicy,
 	type ToolPortalSandboxSshBackendBinding,
-	type ToolPortalConfig,
-	type ToolPortalProfileDefinition,
 } from '@agent-vm/config-contracts';
 import {
 	GatewayRuntimePortalAdmissionMaterialSchema,
@@ -77,7 +75,7 @@ function createGatewayRuntimeAdmissionConfigPlan(): GatewayRuntimeAdmissionConfi
 			},
 			schemaVersion: 1,
 		}),
-		effectiveToolPortalConfig: toolPortalConfigSchema.parse({
+		effectiveToolPortalConfig: effectiveManagedToolPortalConfigSchema.parse({
 			agents: {
 				'agent-a': { profile: 'code-builder' },
 				'agent-b': { profile: 'code-reviewer' },
@@ -89,11 +87,13 @@ function createGatewayRuntimeAdmissionConfigPlan(): GatewayRuntimeAdmissionConfi
 						github: {
 							backend: { kind: 'mcp_provider' },
 							calls: githubCallPolicy,
+							discovery: {},
 							tools: githubToolSelector,
 						},
 						filesystem: {
 							backend: { kind: 'mcp_provider' },
 							calls: filesystemCallPolicy,
+							discovery: {},
 							tools: filesystemToolSelector,
 						},
 					},
@@ -103,11 +103,13 @@ function createGatewayRuntimeAdmissionConfigPlan(): GatewayRuntimeAdmissionConfi
 						github: {
 							backend: { kind: 'mcp_provider' },
 							calls: githubCallPolicy,
+							discovery: {},
 							tools: githubToolSelector,
 						},
 						filesystem: {
 							backend: { kind: 'mcp_provider' },
 							calls: filesystemCallPolicy,
+							discovery: {},
 							tools: filesystemToolSelector,
 						},
 					},
@@ -155,9 +157,9 @@ function requireMcpProvider(config: McpConfig, providerId: 'filesystem' | 'githu
 }
 
 function requireToolPortalProfile(
-	config: ToolPortalConfig,
+	config: EffectiveManagedToolPortalConfig,
 	profileId: 'code-builder' | 'code-reviewer',
-): ToolPortalProfileDefinition {
+): EffectiveManagedToolPortalConfig['profiles'][string] {
 	const profile = config.profiles[profileId];
 	if (profile === undefined) {
 		throw new Error(`Expected Tool Portal profile "${profileId}" in test config.`);
@@ -166,9 +168,9 @@ function requireToolPortalProfile(
 }
 
 function requireToolPortalNamespace(
-	profile: ToolPortalProfileDefinition,
+	profile: EffectiveManagedToolPortalConfig['profiles'][string],
 	namespaceId: 'filesystem' | 'github',
-): ToolPortalNamespacePolicy {
+): EffectiveManagedToolPortalConfig['profiles'][string]['namespaces'][string] {
 	const namespacePolicy = profile.namespaces[namespaceId];
 	if (namespacePolicy === undefined) {
 		throw new Error(`Expected Tool Portal namespace "${namespaceId}" in test config.`);
@@ -232,7 +234,7 @@ function withCodeBuilderGithubRunner(
 		...props,
 		effectivePlan: {
 			...props.effectivePlan,
-			effectiveToolPortalConfig: toolPortalConfigSchema.parse({
+			effectiveToolPortalConfig: effectiveManagedToolPortalConfigSchema.parse({
 				...props.effectivePlan.effectiveToolPortalConfig,
 				profiles: {
 					...props.effectivePlan.effectiveToolPortalConfig.profiles,
@@ -242,6 +244,7 @@ function withCodeBuilderGithubRunner(
 							...codeBuilderProfile.namespaces,
 							github: {
 								...githubNamespace,
+								discovery: {},
 								backend: {
 									kind: 'tool_vm_runner',
 									operations,
@@ -282,7 +285,7 @@ describe('Gateway runtime portal admission materialization', () => {
 						agentId: 'agent-a',
 						frameworkIdentity: { kind: 'hermes', profileName: 'agent-a' },
 						profileAssignmentRevision: agentProjection.profileAssignmentRevision,
-						toolPortalNamespaceNames: ['filesystem', 'github'],
+						toolPortalNamespaces: [{ namespace: 'filesystem' }, { namespace: 'github' }],
 						toolPortalProfileId: 'code-builder',
 					},
 					'agent-b': {
@@ -290,7 +293,7 @@ describe('Gateway runtime portal admission materialization', () => {
 						frameworkIdentity: { kind: 'hermes', profileName: 'agent-b' },
 						profileAssignmentRevision: requireAgentProjection(semanticSnapshot, 'agent-b')
 							.profileAssignmentRevision,
-						toolPortalNamespaceNames: ['filesystem', 'github'],
+						toolPortalNamespaces: [{ namespace: 'filesystem' }, { namespace: 'github' }],
 						toolPortalProfileId: 'code-reviewer',
 					},
 				},
@@ -325,8 +328,14 @@ describe('Gateway runtime portal admission materialization', () => {
 		const reviewerProjection = requireAgentProjection(materialization.semanticSnapshot, 'agent-b');
 
 		// Assert
-		expect(builderProjection.toolPortalNamespaceNames).toEqual(['filesystem', 'github']);
-		expect(reviewerProjection.toolPortalNamespaceNames).toEqual(['filesystem', 'github']);
+		expect(builderProjection.toolPortalNamespaces).toEqual([
+			{ namespace: 'filesystem' },
+			{ namespace: 'github' },
+		]);
+		expect(reviewerProjection.toolPortalNamespaces).toEqual([
+			{ namespace: 'filesystem' },
+			{ namespace: 'github' },
+		]);
 	});
 
 	it('derives admitted namespace names from the protected_uds eligibility intersection', () => {
@@ -348,7 +357,7 @@ describe('Gateway runtime portal admission materialization', () => {
 		const builderProjection = requireAgentProjection(materialization.semanticSnapshot, 'agent-a');
 
 		// Assert
-		expect(builderProjection.toolPortalNamespaceNames).toEqual(['filesystem']);
+		expect(builderProjection.toolPortalNamespaces).toEqual([{ namespace: 'filesystem' }]);
 	});
 
 	it('derives admitted namespace names in Unicode code-point order', () => {
@@ -361,7 +370,7 @@ describe('Gateway runtime portal admission materialization', () => {
 			'code-builder',
 		);
 		const githubNamespace = requireToolPortalNamespace(codeBuilderProfile, 'github');
-		const effectiveToolPortalConfig = toolPortalConfigSchema.parse({
+		const effectiveToolPortalConfig = effectiveManagedToolPortalConfigSchema.parse({
 			...props.effectivePlan.effectiveToolPortalConfig,
 			profiles: {
 				...props.effectivePlan.effectiveToolPortalConfig.profiles,
@@ -394,9 +403,9 @@ describe('Gateway runtime portal admission materialization', () => {
 		const builderProjection = requireAgentProjection(materialization.semanticSnapshot, 'agent-a');
 
 		// Assert
-		expect(builderProjection.toolPortalNamespaceNames).toEqual([
-			privateUseNamespace,
-			supplementaryNamespace,
+		expect(builderProjection.toolPortalNamespaces).toEqual([
+			{ namespace: privateUseNamespace },
+			{ namespace: supplementaryNamespace },
 		]);
 	});
 
@@ -525,7 +534,7 @@ describe('Gateway runtime portal admission materialization', () => {
 						},
 					},
 				}),
-				effectiveToolPortalConfig: toolPortalConfigSchema.parse({
+				effectiveToolPortalConfig: effectiveManagedToolPortalConfigSchema.parse({
 					...baselineToolPortalConfig,
 					profiles: {
 						'code-reviewer': {
@@ -665,7 +674,7 @@ describe('Gateway runtime portal admission materialization', () => {
 			...baselineProps,
 			effectivePlan: {
 				...baselineProps.effectivePlan,
-				effectiveToolPortalConfig: toolPortalConfigSchema.parse({
+				effectiveToolPortalConfig: effectiveManagedToolPortalConfigSchema.parse({
 					...baselineProps.effectivePlan.effectiveToolPortalConfig,
 					profiles: {
 						...baselineProps.effectivePlan.effectiveToolPortalConfig.profiles,
@@ -675,6 +684,7 @@ describe('Gateway runtime portal admission materialization', () => {
 								...codeBuilderProfile.namespaces,
 								github: {
 									...githubNamespace,
+									discovery: {},
 									backend: {
 										kind: 'controller_execution',
 										operations: {
@@ -787,7 +797,7 @@ describe('Gateway runtime portal admission materialization', () => {
 			...baselineProps,
 			effectivePlan: {
 				...baselineProps.effectivePlan,
-				effectiveToolPortalConfig: toolPortalConfigSchema.parse({
+				effectiveToolPortalConfig: effectiveManagedToolPortalConfigSchema.parse({
 					...baselineProps.effectivePlan.effectiveToolPortalConfig,
 					profiles: {
 						...baselineProps.effectivePlan.effectiveToolPortalConfig.profiles,
@@ -845,7 +855,7 @@ describe('Gateway runtime portal admission materialization', () => {
 			...baselineProps,
 			effectivePlan: {
 				...baselineProps.effectivePlan,
-				effectiveToolPortalConfig: toolPortalConfigSchema.parse({
+				effectiveToolPortalConfig: effectiveManagedToolPortalConfigSchema.parse({
 					...baselineProps.effectivePlan.effectiveToolPortalConfig,
 					profiles: {
 						...baselineProps.effectivePlan.effectiveToolPortalConfig.profiles,
@@ -933,7 +943,7 @@ describe('Gateway runtime portal admission materialization', () => {
 			),
 			effectivePlan: {
 				...baselineProps.effectivePlan,
-				effectiveToolPortalConfig: toolPortalConfigSchema.parse({
+				effectiveToolPortalConfig: effectiveManagedToolPortalConfigSchema.parse({
 					...baselineProps.effectivePlan.effectiveToolPortalConfig,
 					agents: {
 						...baselineProps.effectivePlan.effectiveToolPortalConfig.agents,

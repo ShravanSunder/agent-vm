@@ -1093,6 +1093,7 @@ type RuntimeMcpPortalMaterialization =
 			readonly mcpConfig: unknown;
 			readonly mode: 'runtime';
 			readonly portalAdmission: GatewayRuntimePortalAdmissionMaterial;
+			readonly credentialedRuntimeRegistrySnapshot: import('../controller/credentialed-runtime/credentialed-runtime-registry.js').ControllerCredentialedRuntimeRegistrySnapshot;
 	  };
 
 function applyRuntimeMcpPortalMaterialization(props: {
@@ -1190,6 +1191,7 @@ async function buildRuntimeMcpPortalMaterialization(props: {
 		material: portalAdmission,
 	});
 	return {
+		credentialedRuntimeRegistrySnapshot: materialization.credentialedRuntimeRegistrySnapshot,
 		kind: 'configured',
 		lifecycle: configuredLifecycle,
 		mcpConfig: materialization.effectiveMcpConfig,
@@ -2738,10 +2740,23 @@ async function startGatewayZoneImplementation(
 				);
 			}
 		});
+		if (
+			toolPortalMaterialization.kind === 'configured' &&
+			toolPortalMaterialization.mode === 'runtime'
+		) {
+			options.onCredentialedRuntimeZoneStarted?.();
+			options.credentialedRuntimeRegistryPublisher?.activate(
+				toolPortalMaterialization.credentialedRuntimeRegistrySnapshot,
+			);
+		}
 		return {
 			bootContract,
 			controlSession: activeControlSession,
-			destroyGateway: async () => await destructionTransaction.destroyGateway(),
+			destroyGateway: async () => {
+				options.credentialedRuntimeRegistryPublisher?.withdraw(zone.id);
+				await options.onCredentialedRuntimeZoneStopping?.();
+				return await destructionTransaction.destroyGateway();
+			},
 			executionModel: 'managed-gateway',
 			expectedCohort,
 			gatewayIdentity,
@@ -2751,6 +2766,7 @@ async function startGatewayZoneImplementation(
 			zone,
 		};
 	} catch (error: unknown) {
+		options.credentialedRuntimeRegistryPublisher?.withdraw(zone.id);
 		let destroyResult: Awaited<ReturnType<typeof destructionTransaction.destroyGateway>>;
 		try {
 			destroyResult = await destructionTransaction.destroyGateway();

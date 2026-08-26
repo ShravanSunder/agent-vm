@@ -1,8 +1,8 @@
 import {
-	managedToolPortalConfigSchema,
+	effectiveManagedToolPortalConfigSchema,
 	mcpConfigSchema,
+	type EffectiveManagedToolPortalConfig,
 	type McpConfig,
-	type ManagedToolPortalConfig,
 } from '@agent-vm/config-contracts';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
@@ -34,14 +34,15 @@ function createMcpConfig(): McpConfig {
 	});
 }
 
-function createToolPortalConfig(): ManagedToolPortalConfig {
-	return managedToolPortalConfigSchema.parse({
+function createToolPortalConfig(): EffectiveManagedToolPortalConfig {
+	return effectiveManagedToolPortalConfigSchema.parse({
 		agents: { builder: { profile: 'builder-profile' } },
 		mode: 'managed',
 		profiles: {
 			'builder-profile': {
 				namespaces: {
 					sandbox: {
+						discovery: {},
 						backend: {
 							kind: 'tool_vm_runner',
 							operations: {
@@ -68,16 +69,82 @@ function createToolPortalConfig(): ManagedToolPortalConfig {
 	});
 }
 
+function createConfiguredCliToolPortalConfig(): EffectiveManagedToolPortalConfig {
+	return effectiveManagedToolPortalConfigSchema.parse({
+		agents: { builder: { profile: 'builder-profile' } },
+		mode: 'managed',
+		profiles: {
+			'builder-profile': {
+				namespaces: {
+					sandbox: {
+						backend: {
+							kind: 'controller_execution',
+							operations: {
+								gog: {
+									calls: {
+										deny: [
+											{
+												flags: [
+													{ names: ['--force', '-f'] },
+													{ names: ['--format'], values: ['json', 'text'] },
+												],
+												path: ['drive', 'delete'],
+											},
+										],
+										requiresApproval: [
+											{
+												flags: [{ names: ['--permanent'] }],
+												path: ['drive', 'delete'],
+											},
+										],
+										withoutApproval: 'remaining_admitted',
+									},
+									commands: [{ flagRules: [], path: ['drive', 'delete'] }],
+									deniedPatterns: [],
+									executablePath: '/usr/bin/gog',
+									executionTarget: {
+										cwd: '/var/empty',
+										environment: { kind: 'empty' },
+										kind: 'controller_host',
+									},
+									kind: 'configured_cli',
+									mandatoryArgvPrefix: [],
+									output: {
+										modelVisibleStderr: 'none',
+										overflow: 'fail',
+										stderrMaxBytes: 1_024,
+										stdoutMaxBytes: 1_024,
+									},
+									safeHelp: 'Run gog with exact argv.',
+									stdin: { kind: 'none' },
+									timeout: { kind: 'quick' },
+								},
+							},
+						},
+						calls: {
+							requiresApproval: { allow: [], deny: [] },
+							withoutApproval: { allow: ['gog'], deny: [] },
+						},
+						discovery: {},
+						tools: { allow: ['gog'], deny: [] },
+					},
+				},
+			},
+		},
+		schemaVersion: 1,
+	});
+}
+
 function deriveFixtureSnapshot(props: {
 	readonly mcpConfig: McpConfig;
-	readonly toolPortalConfig: ManagedToolPortalConfig;
+	readonly toolPortalConfig: EffectiveManagedToolPortalConfig;
 }): GatewayRuntimePortalSemanticSnapshot {
 	return deriveGatewayRuntimePortalSemanticSnapshot({
 		agentProjections: [
 			{
 				agentId: 'builder',
 				frameworkIdentity: { kind: 'hermes', profileName: 'builder' },
-				toolPortalNamespaceNames: ['sandbox'],
+				toolPortalNamespaces: [{ namespace: 'sandbox' }],
 				toolPortalProfileId: 'builder-profile',
 			},
 		],
@@ -95,7 +162,7 @@ describe('Gateway Runtime portal semantic revision', () => {
 		const baselineInput: ManagedAgentProjectionInput = {
 			agentId: 'builder',
 			frameworkIdentity: { kind: 'hermes' as const, profileName: 'builder' },
-			toolPortalNamespaceNames: [],
+			toolPortalNamespaces: [],
 			toolPortalProfileId: 'builder-profile',
 		};
 		const baselineProjection = deriveManagedAgentProjection(baselineInput);
@@ -116,7 +183,7 @@ describe('Gateway Runtime portal semantic revision', () => {
 			'agentId',
 			'frameworkIdentity',
 			'profileAssignmentRevision',
-			'toolPortalNamespaceNames',
+			'toolPortalNamespaces',
 			'toolPortalProfileId',
 		]);
 		expectTypeOf<ManagedAgentProjectionInput>().not.toHaveProperty('selfRoot');
@@ -129,20 +196,26 @@ describe('Gateway Runtime portal semantic revision', () => {
 			agentId: 'builder',
 			frameworkIdentity: { kind: 'hermes' as const, profileName: 'builder' },
 			profileAssignmentRevision: 'profile-assignment-a',
-			toolPortalNamespaceNames: ['filesystem', 'github'],
+			toolPortalNamespaces: [{ namespace: 'filesystem' }, { namespace: 'github' }],
 			toolPortalProfileId: 'profile-a',
 		};
 
 		// Act / Assert
 		expect(ManagedAgentProjectionSchema.safeParse(validProjection).success).toBe(true);
 		for (const malformedProjection of [
-			{ ...validProjection, toolPortalNamespaceNames: ['filesystem', 'filesystem'] },
-			{ ...validProjection, toolPortalNamespaceNames: ['github', 'filesystem'] },
+			{
+				...validProjection,
+				toolPortalNamespaces: [{ namespace: 'filesystem' }, { namespace: 'filesystem' }],
+			},
+			{
+				...validProjection,
+				toolPortalNamespaces: [{ namespace: 'github' }, { namespace: 'filesystem' }],
+			},
 		]) {
 			expect(ManagedAgentProjectionSchema.safeParse(malformedProjection).success).toBe(false);
 			expect(() => deriveManagedAgentProjection(malformedProjection)).toThrow('must be');
 		}
-		const { toolPortalNamespaceNames: _names, ...missingNamesProjection } = validProjection;
+		const { toolPortalNamespaces: _names, ...missingNamesProjection } = validProjection;
 		expect(ManagedAgentProjectionSchema.safeParse(missingNamesProjection).success).toBe(false);
 	});
 
@@ -153,7 +226,10 @@ describe('Gateway Runtime portal semantic revision', () => {
 		const validProjection: ManagedAgentProjectionInput = {
 			agentId: 'builder',
 			frameworkIdentity: { kind: 'hermes', profileName: 'builder' },
-			toolPortalNamespaceNames: [privateUseNamespace, supplementaryNamespace],
+			toolPortalNamespaces: [
+				{ namespace: privateUseNamespace },
+				{ namespace: supplementaryNamespace },
+			],
 			toolPortalProfileId: 'builder-profile',
 		};
 
@@ -161,14 +237,17 @@ describe('Gateway Runtime portal semantic revision', () => {
 		const derivedProjection = deriveManagedAgentProjection(validProjection);
 
 		// Assert
-		expect(derivedProjection.toolPortalNamespaceNames).toEqual([
-			privateUseNamespace,
-			supplementaryNamespace,
+		expect(derivedProjection.toolPortalNamespaces).toEqual([
+			{ namespace: privateUseNamespace },
+			{ namespace: supplementaryNamespace },
 		]);
 		expect(() =>
 			deriveManagedAgentProjection({
 				...validProjection,
-				toolPortalNamespaceNames: [supplementaryNamespace, privateUseNamespace],
+				toolPortalNamespaces: [
+					{ namespace: supplementaryNamespace },
+					{ namespace: privateUseNamespace },
+				],
 			}),
 		).toThrow('must be sorted');
 	});
@@ -176,29 +255,29 @@ describe('Gateway Runtime portal semantic revision', () => {
 	it('includes admitted namespace names in assignment and cohort revisions', () => {
 		// Arrange
 		const mcpConfig = createMcpConfig();
-		const toolPortalConfig = managedToolPortalConfigSchema.parse({
+		const toolPortalConfig = effectiveManagedToolPortalConfigSchema.parse({
 			...createToolPortalConfig(),
 			agents: { builder: { profile: 'builder-profile' } },
 		});
 		const baselineProjection = {
 			agentId: 'builder',
 			frameworkIdentity: { kind: 'hermes' as const, profileName: 'builder' },
-			toolPortalNamespaceNames: ['sandbox'],
+			toolPortalNamespaces: [{ namespace: 'sandbox' }],
 			toolPortalProfileId: 'builder-profile',
 		};
 		const derive = (
-			toolPortalNamespaceNames: readonly string[],
+			toolPortalNamespaces: ManagedAgentProjectionInput['toolPortalNamespaces'],
 			surfaceEligibilityByProfile: GatewayRuntimePortalSemanticSnapshot['surfaceEligibilityByProfile'],
 		): GatewayRuntimePortalSemanticSnapshot =>
 			deriveGatewayRuntimePortalSemanticSnapshot({
-				agentProjections: [{ ...baselineProjection, toolPortalNamespaceNames }],
+				agentProjections: [{ ...baselineProjection, toolPortalNamespaces }],
 				mcpConfig,
 				surfaceEligibilityByProfile,
 				toolPortalConfig,
 			});
 
 		// Act
-		const baseline = derive(['sandbox'], {
+		const baseline = derive([{ namespace: 'sandbox' }], {
 			'builder-profile': { sandbox: ['protected_uds'] },
 		});
 		const changed = derive([], { 'builder-profile': {} });
@@ -227,7 +306,7 @@ describe('Gateway Runtime portal semantic revision', () => {
 					{
 						agentId: 'builder',
 						frameworkIdentity: { kind: 'hermes', profileName: 'builder' },
-						toolPortalNamespaceNames: [],
+						toolPortalNamespaces: [],
 						toolPortalProfileId: 'builder-profile',
 					},
 				],
@@ -248,7 +327,7 @@ describe('Gateway Runtime portal semantic revision', () => {
 		const stableInput: ManagedAgentProjectionInput = {
 			agentId: 'builder',
 			frameworkIdentity: { kind: 'hermes', profileName: 'builder' },
-			toolPortalNamespaceNames: [],
+			toolPortalNamespaces: [],
 			toolPortalProfileId: 'builder-profile',
 		};
 		const legacyPathInput = { ...stableInput, [field]: value };
@@ -260,7 +339,7 @@ describe('Gateway Runtime portal semantic revision', () => {
 	it('derives one deterministic cohort digest from the exact sorted complete projection set', () => {
 		// Arrange
 		const mcpConfig = createMcpConfig();
-		const toolPortalConfig = managedToolPortalConfigSchema.parse({
+		const toolPortalConfig = effectiveManagedToolPortalConfigSchema.parse({
 			...createToolPortalConfig(),
 			agents: {
 				builder: { profile: 'builder-profile' },
@@ -271,13 +350,13 @@ describe('Gateway Runtime portal semantic revision', () => {
 			{
 				agentId: 'builder',
 				frameworkIdentity: { kind: 'hermes' as const, profileName: 'builder' },
-				toolPortalNamespaceNames: ['sandbox'],
+				toolPortalNamespaces: [{ namespace: 'sandbox' }],
 				toolPortalProfileId: 'builder-profile',
 			},
 			{
 				agentId: 'reviewer',
 				frameworkIdentity: { kind: 'hermes' as const, profileName: 'reviewer' },
-				toolPortalNamespaceNames: ['sandbox'],
+				toolPortalNamespaces: [{ namespace: 'sandbox' }],
 				toolPortalProfileId: 'builder-profile',
 			},
 		];
@@ -318,7 +397,7 @@ describe('Gateway Runtime portal semantic revision', () => {
 	it('rejects duplicate identities and config set drift', () => {
 		// Arrange
 		const mcpConfig = createMcpConfig();
-		const toolPortalConfig = managedToolPortalConfigSchema.parse({
+		const toolPortalConfig = effectiveManagedToolPortalConfigSchema.parse({
 			...createToolPortalConfig(),
 			agents: {
 				builder: { profile: 'builder-profile' },
@@ -328,7 +407,7 @@ describe('Gateway Runtime portal semantic revision', () => {
 		const builderProjection: ManagedAgentProjectionInput = {
 			agentId: 'builder',
 			frameworkIdentity: { kind: 'hermes' as const, profileName: 'builder' },
-			toolPortalNamespaceNames: ['sandbox'],
+			toolPortalNamespaces: [{ namespace: 'sandbox' }],
 			toolPortalProfileId: 'builder-profile',
 		};
 		const derive = (
@@ -417,6 +496,75 @@ describe('Gateway Runtime portal semantic revision', () => {
 			}),
 		).toThrow('semantic snapshot does not match');
 	});
+
+	it('keeps configured CLI invocation revisions stable under semantic array reordering', () => {
+		const mcpConfig = createMcpConfig();
+		const toolPortalConfig = createConfiguredCliToolPortalConfig();
+		const baseline = deriveFixtureSnapshot({ mcpConfig, toolPortalConfig });
+		const reorderedConfig = structuredClone(toolPortalConfig);
+		const namespace = reorderedConfig.profiles['builder-profile']?.namespaces.sandbox;
+		const operation =
+			namespace?.backend.kind === 'controller_execution'
+				? namespace.backend.operations.gog
+				: undefined;
+		if (operation?.kind !== 'configured_cli') throw new Error('Missing configured CLI fixture.');
+		const denyMatcher = operation.calls.deny[0];
+		if (denyMatcher === undefined) throw new Error('Missing deny matcher fixture.');
+		operation.calls.deny = [
+			{
+				...denyMatcher,
+				flags: denyMatcher.flags.toReversed().map((predicate) => ({
+					...predicate,
+					names: predicate.names.toReversed(),
+					...(predicate.values === undefined ? {} : { values: predicate.values.toReversed() }),
+				})),
+			},
+		];
+		const reordered = deriveFixtureSnapshot({ mcpConfig, toolPortalConfig: reorderedConfig });
+
+		expect(reordered.bindingRevision).toBe(baseline.bindingRevision);
+		expect(reordered.activeRevision).toBe(baseline.activeRevision);
+	});
+
+	it.each(['path', 'name', 'value', 'bucket'] as const)(
+		'changes configured CLI freshness after a material %s mutation',
+		(mutation) => {
+			const mcpConfig = createMcpConfig();
+			const toolPortalConfig = createConfiguredCliToolPortalConfig();
+			const baseline = deriveFixtureSnapshot({ mcpConfig, toolPortalConfig });
+			const changedConfig = structuredClone(toolPortalConfig);
+			const namespace = changedConfig.profiles['builder-profile']?.namespaces.sandbox;
+			const operation =
+				namespace?.backend.kind === 'controller_execution'
+					? namespace.backend.operations.gog
+					: undefined;
+			if (operation?.kind !== 'configured_cli') throw new Error('Missing configured CLI fixture.');
+			const matcher = operation.calls.deny[0];
+			const predicate = matcher?.flags[1];
+			if (matcher === undefined || predicate?.values === undefined) {
+				throw new Error('Missing matcher mutation fixture.');
+			}
+			switch (mutation) {
+				case 'path':
+					matcher.path = ['drive', 'remove'];
+					break;
+				case 'name':
+					predicate.names = ['--output'];
+					break;
+				case 'value':
+					predicate.values = ['yaml'];
+					break;
+				case 'bucket':
+					operation.calls.requiresApproval.push(matcher);
+					operation.calls.deny = [];
+					break;
+			}
+			const changed = deriveFixtureSnapshot({ mcpConfig, toolPortalConfig: changedConfig });
+
+			expect(changed.bindingRevision).not.toBe(baseline.bindingRevision);
+			expect(changed.activeRevision).not.toBe(baseline.activeRevision);
+		},
+	);
 
 	it('rejects stale revisions after protected MCP provider material changes', () => {
 		// Arrange

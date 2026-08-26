@@ -41,6 +41,7 @@ from agent_vm_hermes_adapter.managed_tool_portal.models import (
     InventoryCacheKey,
     InventoryReadyValue,
     NamespaceAvailability,
+    NamespaceDiscovery,
     NamespaceInventory,
     PopulationFailureClass,
     RenderedOrientation,
@@ -52,7 +53,10 @@ def _projection(*, agent_id: str = "agent-a") -> CanonicalManagedAgentProjection
         agent_id=agent_id,
         framework_identity=ManagedFrameworkIdentity(kind="hermes", profile_name=agent_id),
         profile_assignment_revision=f"revision-{agent_id}",
-        tool_portal_namespace_names=("filesystem", "github"),
+        tool_portal_namespaces=(
+            NamespaceDiscovery(namespace="filesystem"),
+            NamespaceDiscovery(namespace="github", summary="Repository access."),
+        ),
         tool_portal_profile_id=f"portal-{agent_id}",
     )
 
@@ -69,7 +73,7 @@ def _inventory_projection(
         agent_id=selected.agent_id,
         profile_name=selected.framework_identity.profile_name,
         tool_portal_profile_id=selected.tool_portal_profile_id,
-        namespace_names=selected.tool_portal_namespace_names,
+        namespaces=selected.tool_portal_namespaces,
     )
 
 

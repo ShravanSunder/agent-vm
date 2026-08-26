@@ -2,13 +2,18 @@ import { z } from 'zod';
 
 import {
 	configuredCliAllowedCommandSchema,
+	configuredCliInvocationCallPolicySchema,
+	configuredCliCredentialLogicalNameSchema,
 	configuredCliPatternRuleSchema,
+	configuredCliStdinPolicySchema,
 	configuredCliTimeoutPolicySchema,
 	controllerExecutionOperationSchema,
 	controllerRegisteredOperationSchema,
-	effectiveControllerExecutionOperationSchema,
+	effectiveControllerConfiguredCliOperationSchema,
+	effectiveControllerExecutionOperationSchema as preparedControllerExecutionOperationSchema,
 } from './controller-configured-cli.js';
 import { loadJsonConfigFile } from './json-config-file.js';
+import { namespaceDiscoverySchema } from './mcp-config.js';
 import { secretValueSchema } from './secret-value.js';
 
 export const toolPortalToolSelectorSchema = z
@@ -175,13 +180,39 @@ export const toolPortalBackendBindingSchema = z.discriminatedUnion('kind', [
 export type ToolPortalBackendKind = z.infer<typeof toolPortalBackendKindSchema>;
 export type ToolPortalBackendBinding = z.infer<typeof toolPortalBackendBindingSchema>;
 
-export const toolPortalNamespacePolicySchema = z
+const toolPortalNamespacePolicyCommonShape = {
+	calls: toolPortalCallPolicySchema,
+	tools: toolPortalToolSelectorSchema,
+} as const;
+
+const toolPortalMcpNamespacePolicySchema = z
 	.object({
-		backend: toolPortalBackendBindingSchema,
-		calls: toolPortalCallPolicySchema,
-		tools: toolPortalToolSelectorSchema,
+		...toolPortalNamespacePolicyCommonShape,
+		backend: z.object({ kind: z.literal('mcp_provider') }).strict(),
 	})
 	.strict();
+
+const toolPortalControllerExecutionNamespacePolicySchema = z
+	.object({
+		...toolPortalNamespacePolicyCommonShape,
+		backend: toolPortalControllerExecutionBackendBindingSchema,
+		discovery: namespaceDiscoverySchema.default({}),
+	})
+	.strict();
+
+const toolPortalSandboxSshNamespacePolicySchema = z
+	.object({
+		...toolPortalNamespacePolicyCommonShape,
+		backend: toolPortalSandboxSshBackendBindingSchema,
+		discovery: namespaceDiscoverySchema.default({}),
+	})
+	.strict();
+
+export const toolPortalNamespacePolicySchema = z.union([
+	toolPortalMcpNamespacePolicySchema,
+	toolPortalControllerExecutionNamespacePolicySchema,
+	toolPortalSandboxSshNamespacePolicySchema,
+]);
 
 export type ToolPortalNamespacePolicy = z.infer<typeof toolPortalNamespacePolicySchema>;
 
@@ -200,6 +231,37 @@ export const toolPortalAgentConfigSchema = z
 	.strict();
 
 export type ToolPortalAgentConfig = z.infer<typeof toolPortalAgentConfigSchema>;
+
+const toolPortalCredentialFileSecretSchema = z
+	.object({
+		ref: z.string().regex(/^op:\/\//u, '1Password refs must start with op://'),
+		source: z.literal('1password'),
+	})
+	.strict();
+
+export const toolPortalCredentialBindingSchema = z
+	.object({
+		files: z
+			.record(configuredCliCredentialLogicalNameSchema, toolPortalCredentialFileSecretSchema)
+			.refine((files) => Object.keys(files).length > 0, {
+				message: 'Credential bindings must contain at least one file.',
+			})
+			.refine((files) => Object.keys(files).length <= 16, {
+				message: 'Credential bindings must contain at most 16 files.',
+			}),
+	})
+	.strict();
+
+export const managedToolPortalAgentConfigSchema = z
+	.object({
+		credentialBindings: z
+			.record(configuredCliCredentialLogicalNameSchema, toolPortalCredentialBindingSchema)
+			.optional(),
+		profile: z.string().min(1),
+	})
+	.strict();
+
+export type ManagedToolPortalAgentConfig = z.infer<typeof managedToolPortalAgentConfigSchema>;
 
 export const toolPortalStandaloneAgentAuthenticationSchema = z
 	.object({
@@ -298,7 +360,6 @@ export type ToolPortalStandaloneEntrypoints = z.infer<typeof toolPortalStandalon
 
 const toolPortalCommonConfigShape = {
 	$schema: z.string().min(1).optional(),
-	agents: z.record(z.string().min(1), toolPortalAgentConfigSchema).default({}),
 	profiles: z.record(z.string().min(1), toolPortalProfileDefinitionSchema),
 	schemaVersion: z.literal(1),
 } as const;
@@ -306,61 +367,63 @@ const toolPortalCommonConfigShape = {
 export const managedToolPortalConfigSchema = z
 	.object({
 		...toolPortalCommonConfigShape,
+		agents: z.record(z.string().min(1), managedToolPortalAgentConfigSchema).default({}),
 		mode: z.literal('managed'),
 	})
 	.strict();
 
 export type ManagedToolPortalConfig = z.infer<typeof managedToolPortalConfigSchema>;
 
-const effectiveToolPortalControllerExecutionBackendBindingSchema = z
+const preparedToolPortalControllerExecutionBackendBindingSchema = z
 	.object({
 		kind: z.literal('controller_execution'),
 		operations: z
-			.record(z.string().min(1), effectiveControllerExecutionOperationSchema)
+			.record(z.string().min(1), preparedControllerExecutionOperationSchema)
 			.refine((operations) => Object.keys(operations).length > 0),
 	})
 	.strict();
 
-const effectiveToolPortalBackendBindingSchema = z.discriminatedUnion('kind', [
+const preparedToolPortalBackendBindingSchema = z.discriminatedUnion('kind', [
 	z.object({ kind: z.literal('mcp_provider') }).strict(),
-	effectiveToolPortalControllerExecutionBackendBindingSchema,
+	preparedToolPortalControllerExecutionBackendBindingSchema,
 	toolPortalSandboxSshBackendBindingSchema,
 ]);
 
-const effectiveToolPortalNamespacePolicySchema = z
+const preparedToolPortalNamespacePolicySchema = z
 	.object({
-		backend: effectiveToolPortalBackendBindingSchema,
+		backend: preparedToolPortalBackendBindingSchema,
 		calls: toolPortalCallPolicySchema,
+		discovery: namespaceDiscoverySchema,
 		tools: toolPortalToolSelectorSchema,
 	})
 	.strict();
 
-const effectiveToolPortalProfileDefinitionSchema = z
+const preparedToolPortalProfileDefinitionSchema = z
 	.object({
-		namespaces: z.record(z.string().min(1), effectiveToolPortalNamespacePolicySchema),
+		namespaces: z.record(z.string().min(1), preparedToolPortalNamespacePolicySchema),
 	})
 	.strict();
 
-export const effectiveManagedToolPortalConfigSchema = z
+export const preparedManagedToolPortalConfigSchema = z
 	.object({
 		$schema: z.string().min(1).optional(),
-		agents: z.record(z.string().min(1), toolPortalAgentConfigSchema).default({}),
+		agents: z.record(z.string().min(1), managedToolPortalAgentConfigSchema).default({}),
 		mode: z.literal('managed'),
-		profiles: z.record(z.string().min(1), effectiveToolPortalProfileDefinitionSchema),
+		profiles: z.record(z.string().min(1), preparedToolPortalProfileDefinitionSchema),
 		schemaVersion: z.literal(1),
 	})
 	.strict();
 
-export type EffectiveManagedToolPortalConfig = z.infer<
-	typeof effectiveManagedToolPortalConfigSchema
->;
+export type PreparedManagedToolPortalConfig = z.infer<typeof preparedManagedToolPortalConfigSchema>;
 
 export const gatewayRuntimeConfiguredCliOperationSchema = z
 	.object({
+		calls: configuredCliInvocationCallPolicySchema,
 		commands: z.array(configuredCliAllowedCommandSchema).min(1),
 		deniedPatterns: z.array(configuredCliPatternRuleSchema),
 		kind: z.literal('configured_cli'),
 		safeHelp: z.string().min(1).max(4_000),
+		stdin: configuredCliStdinPolicySchema,
 		targetKind: z.enum(['controller_host', 'ephemeral_managed_vm']),
 		timeout: configuredCliTimeoutPolicySchema,
 	})
@@ -374,6 +437,54 @@ export const gatewayRuntimeControllerExecutionOperationSchema = z.discriminatedU
 export type GatewayRuntimeControllerExecutionOperation = z.infer<
 	typeof gatewayRuntimeControllerExecutionOperationSchema
 >;
+
+const effectiveControllerHostConfiguredCliOperationSchema =
+	effectiveControllerConfiguredCliOperationSchema.refine(
+		(operation) => operation.executionTarget.kind === 'controller_host',
+		{ message: 'Persisted effective configured CLI operations may retain only host targets.' },
+	);
+
+const effectiveCredentialedConfiguredCliOperationSchema =
+	gatewayRuntimeConfiguredCliOperationSchema.refine(
+		(operation) => operation.targetKind === 'ephemeral_managed_vm',
+		{ message: 'Credentialed effective operations must project the Managed VM target kind.' },
+	);
+
+const effectiveControllerExecutionOperationSchema = z.union([
+	controllerRegisteredOperationSchema,
+	effectiveControllerHostConfiguredCliOperationSchema,
+	effectiveCredentialedConfiguredCliOperationSchema,
+]);
+
+const effectiveControllerExecutionBackendBindingSchema = z
+	.object({
+		kind: z.literal('controller_execution'),
+		operations: z
+			.record(z.string().min(1), effectiveControllerExecutionOperationSchema)
+			.refine((operations) => Object.keys(operations).length > 0),
+	})
+	.strict();
+
+const effectiveToolPortalBackendBindingSchema = z.discriminatedUnion('kind', [
+	z.object({ kind: z.literal('mcp_provider') }).strict(),
+	effectiveControllerExecutionBackendBindingSchema,
+	toolPortalSandboxSshBackendBindingSchema,
+]);
+
+const effectiveToolPortalNamespacePolicySchema = z
+	.object({
+		backend: effectiveToolPortalBackendBindingSchema,
+		calls: toolPortalCallPolicySchema,
+		discovery: namespaceDiscoverySchema,
+		tools: toolPortalToolSelectorSchema,
+	})
+	.strict();
+
+const effectiveToolPortalProfileDefinitionSchema = z
+	.object({
+		namespaces: z.record(z.string().min(1), effectiveToolPortalNamespacePolicySchema),
+	})
+	.strict();
 
 export const gatewayRuntimeControllerExecutionBackendBindingSchema = z
 	.object({
@@ -394,6 +505,7 @@ const gatewayRuntimeToolPortalNamespacePolicySchema = z
 	.object({
 		backend: gatewayRuntimeToolPortalBackendBindingSchema,
 		calls: toolPortalCallPolicySchema,
+		discovery: namespaceDiscoverySchema,
 		tools: toolPortalToolSelectorSchema,
 	})
 	.strict();
@@ -403,6 +515,92 @@ const gatewayRuntimeToolPortalProfileDefinitionSchema = z
 		namespaces: z.record(z.string().min(1), gatewayRuntimeToolPortalNamespacePolicySchema),
 	})
 	.strict();
+
+export const effectiveManagedToolPortalConfigSchema = z
+	.object({
+		$schema: z.string().min(1).optional(),
+		agents: z.record(z.string().min(1), toolPortalAgentConfigSchema).default({}),
+		credentialedRuntimeRevision: z.string().min(1).optional(),
+		mode: z.literal('managed'),
+		profiles: z.record(z.string().min(1), effectiveToolPortalProfileDefinitionSchema),
+		schemaVersion: z.literal(1),
+	})
+	.strict();
+
+export type EffectiveManagedToolPortalConfig = z.infer<
+	typeof effectiveManagedToolPortalConfigSchema
+>;
+
+function projectedConfiguredCliOperation(
+	operation: Extract<
+		PreparedManagedToolPortalConfig['profiles'][string]['namespaces'][string]['backend'],
+		{ readonly kind: 'controller_execution' }
+	>['operations'][string],
+): GatewayRuntimeControllerExecutionOperation {
+	if (operation.kind === 'registered_action') return operation;
+	return {
+		calls: operation.calls,
+		commands: operation.commands,
+		deniedPatterns: operation.deniedPatterns,
+		kind: 'configured_cli',
+		safeHelp: operation.safeHelp,
+		stdin: operation.stdin,
+		targetKind: operation.executionTarget.kind,
+		timeout: operation.timeout,
+	};
+}
+
+export function createEffectiveManagedToolPortalConfig(
+	config: PreparedManagedToolPortalConfig,
+	options: { readonly credentialedRuntimeRevision?: string } = {},
+): EffectiveManagedToolPortalConfig {
+	return effectiveManagedToolPortalConfigSchema.parse({
+		...(config.$schema === undefined ? {} : { $schema: config.$schema }),
+		agents: Object.fromEntries(
+			Object.entries(config.agents).map(([agentId, agent]) => [
+				agentId,
+				{ profile: agent.profile },
+			]),
+		),
+		...(options.credentialedRuntimeRevision === undefined
+			? {}
+			: { credentialedRuntimeRevision: options.credentialedRuntimeRevision }),
+		mode: 'managed',
+		profiles: Object.fromEntries(
+			Object.entries(config.profiles).map(([profileId, profile]) => [
+				profileId,
+				{
+					namespaces: Object.fromEntries(
+						Object.entries(profile.namespaces).map(([namespaceId, namespacePolicy]) => [
+							namespaceId,
+							{
+								...namespacePolicy,
+								backend:
+									namespacePolicy.backend.kind !== 'controller_execution'
+										? namespacePolicy.backend
+										: {
+												kind: 'controller_execution',
+												operations: Object.fromEntries(
+													Object.entries(namespacePolicy.backend.operations).map(
+														([operationName, operation]) => [
+															operationName,
+															operation.kind === 'configured_cli' &&
+															operation.executionTarget.kind === 'controller_host'
+																? operation
+																: projectedConfiguredCliOperation(operation),
+														],
+													),
+												),
+											},
+							},
+						]),
+					),
+				},
+			]),
+		),
+		schemaVersion: 1,
+	});
+}
 
 export const gatewayRuntimeManagedToolPortalConfigSchema = z
 	.object({
@@ -418,7 +616,7 @@ export type GatewayRuntimeManagedToolPortalConfig = z.infer<
 >;
 
 export function createGatewayRuntimeManagedToolPortalConfig(
-	config: ManagedToolPortalConfig,
+	config: EffectiveManagedToolPortalConfig,
 ): GatewayRuntimeManagedToolPortalConfig {
 	return gatewayRuntimeManagedToolPortalConfigSchema.parse({
 		agents: config.agents,
@@ -441,16 +639,10 @@ export function createGatewayRuntimeManagedToolPortalConfig(
 													Object.entries(namespacePolicy.backend.operations).map(
 														([operationName, operation]) => [
 															operationName,
-															operation.kind === 'registered_action'
+															operation.kind === 'registered_action' ||
+															!('executionTarget' in operation)
 																? operation
-																: {
-																		commands: operation.commands,
-																		deniedPatterns: operation.deniedPatterns,
-																		kind: operation.kind,
-																		safeHelp: operation.safeHelp,
-																		targetKind: operation.executionTarget.kind,
-																		timeout: operation.timeout,
-																	},
+																: projectedConfiguredCliOperation(operation),
 														],
 													),
 												),
@@ -468,6 +660,7 @@ export function createGatewayRuntimeManagedToolPortalConfig(
 export const standaloneToolPortalConfigSchema = z
 	.object({
 		...toolPortalCommonConfigShape,
+		agents: z.record(z.string().min(1), toolPortalAgentConfigSchema).default({}),
 		authentication: toolPortalStandaloneAuthenticationSchema,
 		drain: z
 			.object({
@@ -499,6 +692,56 @@ export const toolPortalConfigSchema = z
 					message: `Tool Portal agent "${agentId}" references missing profile "${agentConfig.profile}".`,
 					path: ['agents', agentId, 'profile'],
 				});
+			}
+		}
+
+		if (config.mode === 'managed') {
+			for (const [agentId, agentConfig] of Object.entries(config.agents)) {
+				const profile = config.profiles[agentConfig.profile];
+				if (profile === undefined) continue;
+				for (const [namespaceId, namespacePolicy] of Object.entries(profile.namespaces)) {
+					if (namespacePolicy.backend.kind !== 'controller_execution') continue;
+					for (const [operationName, operation] of Object.entries(
+						namespacePolicy.backend.operations,
+					)) {
+						if (
+							operation.kind !== 'configured_cli' ||
+							operation.executionTarget.kind !== 'ephemeral_managed_vm'
+						) {
+							continue;
+						}
+						const target = operation.executionTarget;
+						const binding = agentConfig.credentialBindings?.[target.credentialBinding];
+						if (binding === undefined) {
+							context.addIssue({
+								code: z.ZodIssueCode.custom,
+								message: `Tool Portal agent "${agentId}" is missing credential binding "${target.credentialBinding}" required by configured operation "${operationName}".`,
+								path: ['agents', agentId, 'credentialBindings', target.credentialBinding],
+							});
+							continue;
+						}
+						for (const [mappingIndex, mapping] of target.credentialFiles.entries()) {
+							if (binding.files[mapping.source] !== undefined) continue;
+							context.addIssue({
+								code: z.ZodIssueCode.custom,
+								message: `Configured operation "${operationName}" references missing credential source "${mapping.source}" for agent "${agentId}".`,
+								path: [
+									'profiles',
+									agentConfig.profile,
+									'namespaces',
+									namespaceId,
+									'backend',
+									'operations',
+									operationName,
+									'executionTarget',
+									'credentialFiles',
+									mappingIndex,
+									'source',
+								],
+							});
+						}
+					}
+				}
 			}
 		}
 
@@ -645,7 +888,10 @@ export type ToolPortalControllerExecutionProjection = z.infer<
 
 export interface CreateToolPortalMcpProjectionProps {
 	readonly agentId: string;
-	readonly config: GatewayRuntimeManagedToolPortalConfig | ToolPortalConfig;
+	readonly config:
+		| EffectiveManagedToolPortalConfig
+		| GatewayRuntimeManagedToolPortalConfig
+		| ToolPortalConfig;
 }
 
 export function createToolPortalMcpProjection(
@@ -684,7 +930,10 @@ export function createToolPortalMcpProjection(
 
 export interface CreateToolPortalControllerExecutionProjectionProps {
 	readonly agentId: string;
-	readonly config: GatewayRuntimeManagedToolPortalConfig | ToolPortalConfig;
+	readonly config:
+		| EffectiveManagedToolPortalConfig
+		| GatewayRuntimeManagedToolPortalConfig
+		| ToolPortalConfig;
 }
 
 export function createToolPortalControllerExecutionProjection(

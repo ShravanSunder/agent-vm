@@ -223,8 +223,8 @@ describe('manual templates', () => {
 		expect(portal).toContain('calls.requiresApproval requires zone approvalAccess');
 		expect(portal).toContain('Static validation and Gateway preflight fail closed');
 		expect(portal).toContain('Hermes presents managed approvals natively');
-		expect(portal).toContain('controller_host or a fresh one-shot ephemeral_managed_vm');
-		expect(portal).toContain('tool_vm_runner remains direct Gateway-to-leased-Tool-VM SSH');
+		expect(portal).toContain('controller_host or a reusable credentialed ephemeral_managed_vm');
+		expect(portal).toContain('tool_vm_runner remains direct Gateway-to-leased-Tool-VM strict SSH');
 		expect(portal).toContain('Prefer http-mediation for MCP provider API keys');
 		expect(portal).toContain(
 			'Live validate follows only active Tool Portal namespaces whose backend.kind is mcp_provider',
@@ -307,7 +307,7 @@ describe('manual templates', () => {
 		expect(operations).toContain('--force');
 		expect(operations).toContain('never bypasses the ownership lock or exact-evidence checks');
 		expect(operations).toContain(
-			'controllerStateDir/zones/<zoneId>/tool-leases/<recordId>.json first, then controllerStateDir/zones/<zoneId>/gateway-runtime.json',
+			'credentialed runtime records under controllerStateDir/zones/<zoneId>/credentialed-runtimes/<recordId>.json and Tool records under controllerStateDir/zones/<zoneId>/tool-leases/<recordId>.json before controllerStateDir/zones/<zoneId>/gateway-runtime.json',
 		);
 		expect(operations).toContain(
 			'never adopts an old VM, and deletes a record only after exact process and endpoint absence is proven',

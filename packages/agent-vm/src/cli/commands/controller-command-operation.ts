@@ -373,6 +373,26 @@ export async function runControllerCommandOperation(
 		}
 		return;
 	}
+	if (commandValue.command === 'controller.credential-runtime.retire') {
+		const systemConfig = await loadSystemConfigFromCliOption(
+			commandValue.options.config,
+			dependencies,
+		);
+		const selectedZone = requireZone(systemConfig, commandValue.options.zone);
+		await runControllerOperationCommand({
+			credentialRuntimeRetirement: {
+				agentId: commandValue.options.agent,
+				force: commandValue.options.force,
+				runtimeId: commandValue.options.runtime,
+			},
+			dependencies,
+			io,
+			subcommand: 'credential-runtime-retire',
+			systemConfig,
+			zoneId: selectedZone.id,
+		});
+		return;
+	}
 	if (commandValue.command === 'controller.cleanup') {
 		const systemConfig = await loadSystemConfigFromCliOption(
 			commandValue.options.config,

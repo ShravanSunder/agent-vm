@@ -15,20 +15,80 @@ export const configuredCliPatternRuleSchema = z.discriminatedUnion('kind', [
 
 export const configuredCliFlagNameSchema = z.string().regex(/^--?[A-Za-z0-9][A-Za-z0-9_-]*$/u);
 
-export const configuredCliFlagRuleSchema = z.discriminatedUnion('kind', [
-	z
-		.object({
-			kind: z.literal('deny'),
-			names: z.array(configuredCliFlagNameSchema).min(1),
-		})
-		.strict(),
-	z
-		.object({
-			kind: z.literal('allowed_values'),
-			names: z.array(configuredCliFlagNameSchema).min(1),
-			values: z.array(configuredCliArgvTokenSchema).min(1),
-		})
-		.strict(),
+const uniqueConfiguredCliFlagNamesSchema = z
+	.array(configuredCliFlagNameSchema)
+	.min(1)
+	.refine(hasUniqueStrings, { message: 'CLI flag names must be unique.' });
+
+const uniqueConfiguredCliArgvTokensSchema = z
+	.array(configuredCliArgvTokenSchema)
+	.min(1)
+	.refine(hasUniqueStrings, { message: 'CLI argv tokens must be unique.' });
+
+export const configuredCliFlagRuleSchema = z
+	.object({
+		kind: z.literal('allowed_values'),
+		names: uniqueConfiguredCliFlagNamesSchema,
+		values: uniqueConfiguredCliArgvTokensSchema,
+	})
+	.strict();
+
+export const configuredCliInvocationFlagPredicateSchema = z
+	.object({
+		names: uniqueConfiguredCliFlagNamesSchema,
+		values: uniqueConfiguredCliArgvTokensSchema.optional(),
+	})
+	.strict();
+
+export const configuredCliInvocationMatcherSchema = z
+	.object({
+		flags: z.array(configuredCliInvocationFlagPredicateSchema).default([]),
+		path: z.array(configuredCliArgvTokenSchema).min(1).max(100),
+	})
+	.strict()
+	.superRefine((matcher, context) => {
+		const seenPredicateIdentities = new Set<string>();
+		for (const [predicateIndex, predicate] of matcher.flags.entries()) {
+			const identity = configuredCliFlagPredicateIdentity(predicate);
+			if (seenPredicateIdentities.has(identity)) {
+				context.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: 'CLI invocation matcher flag predicates must be semantically unique.',
+					path: ['flags', predicateIndex],
+				});
+			}
+			seenPredicateIdentities.add(identity);
+		}
+	});
+
+export const configuredCliInvocationCallPolicySchema = z
+	.object({
+		deny: z.array(configuredCliInvocationMatcherSchema).default([]),
+		requiresApproval: z.array(configuredCliInvocationMatcherSchema).default([]),
+		withoutApproval: z.literal('remaining_admitted'),
+	})
+	.strict()
+	.superRefine((calls, context) => {
+		for (const bucketName of ['deny', 'requiresApproval'] as const) {
+			const seenMatcherIdentities = new Set<string>();
+			for (const [matcherIndex, matcher] of calls[bucketName].entries()) {
+				const identity = configuredCliInvocationMatcherIdentity(matcher);
+				if (seenMatcherIdentities.has(identity)) {
+					context.addIssue({
+						code: z.ZodIssueCode.custom,
+						message: `CLI invocation ${bucketName} matchers must be semantically unique.`,
+						path: [bucketName, matcherIndex],
+					});
+				}
+				seenMatcherIdentities.add(identity);
+			}
+		}
+	});
+
+export const configuredCliInvocationDispositionSchema = z.enum([
+	'deny',
+	'requires_approval',
+	'without_approval',
 ]);
 
 export const configuredCliAllowedCommandSchema = z
@@ -78,6 +138,7 @@ export const configuredCliTimeoutPolicySchema = z.discriminatedUnion('kind', [
 
 export const configuredCliPolicySchema = z
 	.object({
+		calls: configuredCliInvocationCallPolicySchema,
 		commands: z.array(configuredCliAllowedCommandSchema).min(1),
 		deniedPatterns: z.array(configuredCliPatternRuleSchema).default([]),
 		stdin: configuredCliStdinPolicySchema.default({ kind: 'none' }),
@@ -85,6 +146,20 @@ export const configuredCliPolicySchema = z
 	})
 	.strict()
 	.superRefine((policy, context) => {
+		const admittedPathIdentities = new Set(
+			policy.commands.map((command) => configuredCliPathIdentity(command.path)),
+		);
+		for (const bucketName of ['deny', 'requiresApproval'] as const) {
+			for (const [matcherIndex, matcher] of policy.calls[bucketName].entries()) {
+				if (!admittedPathIdentities.has(configuredCliPathIdentity(matcher.path))) {
+					context.addIssue({
+						code: z.ZodIssueCode.custom,
+						message: 'CLI invocation matcher path must exactly equal an admitted command path.',
+						path: ['calls', bucketName, matcherIndex, 'path'],
+					});
+				}
+			}
+		}
 		for (let leftIndex = 0; leftIndex < policy.commands.length; leftIndex += 1) {
 			const leftPath = policy.commands[leftIndex]?.path;
 			if (leftPath === undefined) continue;
@@ -120,6 +195,117 @@ export const configuredCliEnvironmentPolicySchema = z.discriminatedUnion('kind',
 		})
 		.strict(),
 ]);
+
+export const configuredCliCredentialLogicalNameSchema = z
+	.string()
+	.regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u);
+
+export const configuredCliCredentialRelativePathSchema = z
+	.string()
+	.min(1)
+	.refine((value) => Buffer.byteLength(value, 'utf8') <= 256, {
+		message: 'Configured CLI credential paths must be at most 256 UTF-8 bytes.',
+	})
+	.refine(
+		(value) => {
+			if (value.startsWith('/') || value.includes('\\') || !isControlFreeText(value)) return false;
+			const segments = value.split('/');
+			return segments.every(
+				(segment) =>
+					segment !== '.' && segment !== '..' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u.test(segment),
+			);
+		},
+		{
+			message: 'Configured CLI credential paths must be canonical safe relative paths.',
+		},
+	);
+
+export const configuredCliCredentialFileMappingSchema = z
+	.object({
+		path: configuredCliCredentialRelativePathSchema,
+		source: configuredCliCredentialLogicalNameSchema,
+	})
+	.strict();
+
+export const configuredCliCredentialEnvironmentValueSchema = z.discriminatedUnion('kind', [
+	z.object({ kind: z.literal('credential_root') }).strict(),
+	z
+		.object({
+			kind: z.literal('credential_file'),
+			source: configuredCliCredentialLogicalNameSchema,
+		})
+		.strict(),
+]);
+
+const configuredCliCredentialEnvironmentSchema = z
+	.record(
+		z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/u),
+		configuredCliCredentialEnvironmentValueSchema,
+	)
+	.refine((environment) => Object.keys(environment).length > 0, {
+		message: 'Configured CLI credential environment must not be empty.',
+	})
+	.refine((environment) => Object.keys(environment).length <= 16, {
+		message: 'Configured CLI credential environment must contain at most 16 entries.',
+	});
+
+const configuredCliCredentialFilesSchema = z
+	.array(configuredCliCredentialFileMappingSchema)
+	.min(1)
+	.max(16);
+
+interface CredentialedManagedVmTargetForValidation {
+	readonly credentialEnvironment: Readonly<
+		Record<string, z.infer<typeof configuredCliCredentialEnvironmentValueSchema>>
+	>;
+	readonly credentialFiles: readonly z.infer<typeof configuredCliCredentialFileMappingSchema>[];
+	readonly environment: z.infer<typeof configuredCliEnvironmentPolicySchema>;
+}
+
+function validateCredentialedManagedVmTarget(
+	target: CredentialedManagedVmTargetForValidation,
+	context: z.RefinementCtx,
+): void {
+	const seenSources = new Set<string>();
+	const seenPaths = new Set<string>();
+	for (const [mappingIndex, mapping] of target.credentialFiles.entries()) {
+		if (seenSources.has(mapping.source)) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: 'Configured CLI credential file sources must be unique.',
+				path: ['credentialFiles', mappingIndex, 'source'],
+			});
+		}
+		if (seenPaths.has(mapping.path)) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: 'Configured CLI credential file paths must be unique.',
+				path: ['credentialFiles', mappingIndex, 'path'],
+			});
+		}
+		seenSources.add(mapping.source);
+		seenPaths.add(mapping.path);
+	}
+	for (const [environmentName, value] of Object.entries(target.credentialEnvironment)) {
+		if (value.kind === 'credential_file' && !seenSources.has(value.source)) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: 'Configured CLI credential environment references an unknown file source.',
+				path: ['credentialEnvironment', environmentName, 'source'],
+			});
+		}
+		if (
+			target.environment.kind === 'inherit_allowlist' &&
+			target.environment.names.includes(environmentName)
+		) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: 'Configured CLI credential and inherited environment names must not overlap.',
+				path: ['credentialEnvironment', environmentName],
+			});
+		}
+	}
+}
 
 const absoluteControlFreePathSchema = z.string().startsWith('/').refine(isControlFreeText, {
 	message: 'Configured CLI paths must not contain control characters.',
@@ -208,12 +394,17 @@ export const configuredCliExecutionTargetSchema = z.discriminatedUnion('kind', [
 	z
 		.object({
 			allowedHosts: z.array(z.string().min(1)).default([]),
+			credentialBinding: configuredCliCredentialLogicalNameSchema,
+			credentialEnvironment: configuredCliCredentialEnvironmentSchema,
+			credentialFiles: configuredCliCredentialFilesSchema,
 			environment: configuredCliEnvironmentPolicySchema,
 			guestCwd: absoluteControlFreePathSchema,
 			imageReference: configuredCliImageRecipePathSchema,
 			kind: z.literal('ephemeral_managed_vm'),
+			runtimeId: configuredCliCredentialLogicalNameSchema,
 		})
-		.strict(),
+		.strict()
+		.superRefine(validateCredentialedManagedVmTarget),
 ]);
 
 export const configuredCliEffectiveExecutionTargetSchema = z.discriminatedUnion('kind', [
@@ -227,12 +418,17 @@ export const configuredCliEffectiveExecutionTargetSchema = z.discriminatedUnion(
 	z
 		.object({
 			allowedHosts: z.array(z.string().min(1)).default([]),
+			credentialBinding: configuredCliCredentialLogicalNameSchema,
+			credentialEnvironment: configuredCliCredentialEnvironmentSchema,
+			credentialFiles: configuredCliCredentialFilesSchema,
 			environment: configuredCliEnvironmentPolicySchema,
 			guestCwd: absoluteControlFreePathSchema,
 			imageReference: configuredCliPreparedImageIdentitySchema,
 			kind: z.literal('ephemeral_managed_vm'),
+			runtimeId: configuredCliCredentialLogicalNameSchema,
 		})
-		.strict(),
+		.strict()
+		.superRefine(validateCredentialedManagedVmTarget),
 ]);
 
 export const configuredCliOutputPolicySchema = z
@@ -302,6 +498,22 @@ export const configuredCliInputSchema = z.union([
 export type ConfiguredCliAllowedCommand = z.infer<typeof configuredCliAllowedCommandSchema>;
 export type ConfiguredCliFlagRule = z.infer<typeof configuredCliFlagRuleSchema>;
 export type ConfiguredCliInput = z.infer<typeof configuredCliInputSchema>;
+export type ConfiguredCliCredentialEnvironmentValue = z.infer<
+	typeof configuredCliCredentialEnvironmentValueSchema
+>;
+export type ConfiguredCliCredentialFileMapping = z.infer<
+	typeof configuredCliCredentialFileMappingSchema
+>;
+export type ConfiguredCliInvocationCallPolicy = z.infer<
+	typeof configuredCliInvocationCallPolicySchema
+>;
+export type ConfiguredCliInvocationDisposition = z.infer<
+	typeof configuredCliInvocationDispositionSchema
+>;
+export type ConfiguredCliInvocationFlagPredicate = z.infer<
+	typeof configuredCliInvocationFlagPredicateSchema
+>;
+export type ConfiguredCliInvocationMatcher = z.infer<typeof configuredCliInvocationMatcherSchema>;
 export type ConfiguredCliPatternRule = z.infer<typeof configuredCliPatternRuleSchema>;
 export type ConfiguredCliPolicy = z.infer<typeof configuredCliPolicySchema>;
 export type ConfiguredCliStdinPolicy = z.infer<typeof configuredCliStdinPolicySchema>;
@@ -341,6 +553,32 @@ export function resolveConfiguredCliTimeout(props: {
 
 function isTokenPrefix(left: readonly string[], right: readonly string[]): boolean {
 	return left.length <= right.length && left.every((token, index) => token === right[index]);
+}
+
+function hasUniqueStrings(values: readonly string[]): boolean {
+	return new Set(values).size === values.length;
+}
+
+function configuredCliPathIdentity(pathTokens: readonly string[]): string {
+	return JSON.stringify(pathTokens);
+}
+
+function configuredCliFlagPredicateIdentity(
+	predicate: z.infer<typeof configuredCliInvocationFlagPredicateSchema>,
+): string {
+	return JSON.stringify({
+		names: predicate.names.toSorted(),
+		...(predicate.values === undefined ? {} : { values: predicate.values.toSorted() }),
+	});
+}
+
+function configuredCliInvocationMatcherIdentity(
+	matcher: z.infer<typeof configuredCliInvocationMatcherSchema>,
+): string {
+	return JSON.stringify({
+		flags: matcher.flags.map(configuredCliFlagPredicateIdentity).toSorted(),
+		path: matcher.path,
+	});
 }
 
 function validateRegexPatterns(

@@ -180,13 +180,13 @@ const semanticSnapshot = gatewayControlContracts.deriveGatewayRuntimePortalSeman
 		{
 			agentId: 'main',
 			frameworkIdentity: { kind: 'hermes', profileName: 'main' },
-			toolPortalNamespaceNames: [],
+			toolPortalNamespaces: [],
 			toolPortalProfileId: 'main-profile',
 		},
 		{
 			agentId: 'research',
 			frameworkIdentity: { kind: 'hermes', profileName: 'research' },
-			toolPortalNamespaceNames: [],
+			toolPortalNamespaces: [],
 			toolPortalProfileId: 'research-profile',
 		},
 	],

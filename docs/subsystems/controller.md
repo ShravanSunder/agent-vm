@@ -126,12 +126,22 @@ Registered conditionally -- only when `operations` or `workerTaskRunner` is prov
 | `POST` | `/zones/:zoneId/upgrade` | Rebuild image and restart Gateway | Hermes |
 | `POST` | `/zones/:zoneId/enable-ssh` | Enable SSH into gateway VM | Managed gateways |
 | `POST` | `/zones/:zoneId/execute-command` | Run a shell command inside Gateway VM; requires zone admin token when adminAccess is configured | Hermes |
+| `POST` | `/zones/:zoneId/credentialed-runtimes/:runtimeId/retire` | Retire one agent-owned reusable credentialed Managed runtime; body is `{ agentId, force, adminToken? }` | Managed gateways |
 | `POST` | `/zones/:zoneId/worker-tasks` | Submit a worker task (`requestTaskId`, prompt, repos, context) | Worker |
 | `GET` | `/zones/:zoneId/tasks/:taskId` | Read worker task state snapshot | Worker |
 | `POST` | `/zones/:zoneId/tasks/:taskId/close` | Request task cancellation | Worker |
 | `POST` | `/stop-controller` | Graceful shutdown | Both |
 
 Request bodies are validated with Zod schemas (`controller-request-schemas.ts`). Invalid payloads return 400 with structured `error` and `issues` fields.
+
+Credentialed configured CLI runtimes are controller-local leases keyed by zone,
+authenticated agent, and authored runtime id. They are not exposed through the
+Tool VM lease API. Each admits one active command, returns retryable busy rather
+than queueing, and retires after 15 idle minutes. Their non-secret crash records
+live under `controllerStateDir/zones/<zoneId>/credentialed-runtimes/`; startup
+and offline cleanup contain them before the parent Gateway record. The retire
+route uses existing zone `adminAccess` and returns `retired`, `absent`, `active`,
+or `owner-unsafe` without exposing VM or credential identity.
 
 `agent-vm controller ssh` intentionally exposes only an interactive SSH session.
 It must reject `-- <remote command>` and `--print` so the CLI does not become an

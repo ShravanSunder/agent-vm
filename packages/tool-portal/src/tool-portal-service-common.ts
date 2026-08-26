@@ -1,13 +1,19 @@
-import { createHash } from 'node:crypto';
-
 import type { PortalCallRequest, PortalCallResult } from '@agent-vm/agent-portal-sdk';
 import type {
+	EffectiveManagedToolPortalConfig,
 	GatewayRuntimeManagedToolPortalConfig,
 	ToolPortalBackendKind,
 	ToolPortalConfig,
 	ToolPortalCallPolicy,
 	ToolPortalToolSelector,
 } from '@agent-vm/config-contracts';
+import {
+	openConfiguredCliInputSchema,
+	quickConfiguredCliInputSchema,
+} from '@agent-vm/config-contracts';
+export { deterministicOperationId, directDispatchFingerprint } from './dispatch-authority.js';
+
+import { evaluateCliAllowanceInvocation } from './cli-allowances/cli-allowance-validator.js';
 
 export type PortalCallItem = PortalCallResult['items'][number];
 
@@ -31,33 +37,6 @@ export function deepFreeze<TValue>(value: TValue): TValue {
 	return Object.freeze(value);
 }
 
-export function deterministicOperationId(props: {
-	readonly callId: string;
-	readonly semanticRevision: string;
-	readonly stablePrincipal: string;
-	readonly surfaceClass: string;
-}): string {
-	const digest = createHash('sha256')
-		.update(
-			[
-				'tool-portal-operation-v1',
-				props.semanticRevision,
-				props.surfaceClass,
-				props.stablePrincipal,
-				props.callId,
-			].join('\u0000'),
-			'utf8',
-		)
-		.digest('hex')
-		.slice(0, 32)
-		.split('');
-	digest[12] = '5';
-	const variantNibble = Number.parseInt(digest[16] ?? '0', 16);
-	digest[16] = ((variantNibble & 0x3) | 0x8).toString(16);
-	const hexadecimal = digest.join('');
-	return `${hexadecimal.slice(0, 8)}-${hexadecimal.slice(8, 12)}-${hexadecimal.slice(12, 16)}-${hexadecimal.slice(16, 20)}-${hexadecimal.slice(20)}`;
-}
-
 export function canonicalJson(value: unknown): string {
 	if (value === null || typeof value === 'boolean' || typeof value === 'string') {
 		return JSON.stringify(value);
@@ -78,40 +57,6 @@ export function canonicalJson(value: unknown): string {
 			.join(',')}}`;
 	}
 	throw new TypeError('Tool Portal canonical values must be JSON-compatible.');
-}
-
-export function directDispatchFingerprint(props: {
-	readonly backendKind: ToolPortalBackendKind;
-	readonly call: PortalCallRequest['calls'][number];
-	readonly principal: unknown;
-	readonly semanticSnapshot: {
-		readonly activeRevision: string;
-		readonly bindingRevision: string;
-		readonly catalogRevision: string;
-		readonly profilePolicyRevision: string;
-		readonly providerRevision: string;
-		readonly schemaRevision: string;
-	};
-	readonly surfaceClass: string;
-}): `sha256:${string}` {
-	const fingerprintInput = {
-		backendKind: props.backendKind,
-		capability: { name: props.call.name, namespace: props.call.namespace },
-		canonicalArguments: props.call.arguments,
-		currentGeneration: props.semanticSnapshot.activeRevision,
-		principal: props.principal,
-		semanticRevisions: {
-			activeRevision: props.semanticSnapshot.activeRevision,
-			bindingRevision: props.semanticSnapshot.bindingRevision,
-			catalogRevision: props.semanticSnapshot.catalogRevision,
-			profilePolicyRevision: props.semanticSnapshot.profilePolicyRevision,
-			providerRevision: props.semanticSnapshot.providerRevision,
-			schemaRevision: props.semanticSnapshot.schemaRevision,
-		},
-		surfaceClass: props.surfaceClass,
-		version: 'tool-portal-direct-dispatch-v1',
-	};
-	return `sha256:${createHash('sha256').update(canonicalJson(fingerprintInput), 'utf8').digest('hex')}`;
 }
 
 export function approvalRequiredItem(props: {
@@ -223,7 +168,10 @@ function selectorIncludesTool(selector: ToolPortalToolSelector, toolName: string
 
 export function callPolicyDecision(props: {
 	readonly call: PortalCallRequest['calls'][number];
-	readonly config: GatewayRuntimeManagedToolPortalConfig | ToolPortalConfig;
+	readonly config:
+		| EffectiveManagedToolPortalConfig
+		| GatewayRuntimeManagedToolPortalConfig
+		| ToolPortalConfig;
 	readonly profileId: string;
 	readonly semanticSnapshot: {
 		readonly surfaceEligibilityByProfile: Readonly<
@@ -244,11 +192,38 @@ export function callPolicyDecision(props: {
 	) {
 		return { kind: 'denied' };
 	}
-	if (selectorIncludesTool(policy.calls.withoutApproval, props.call.name)) {
-		return { backendKind: policy.backend.kind, kind: 'without-approval', policy };
+	const baseline = selectorIncludesTool(policy.calls.withoutApproval, props.call.name)
+		? 'without_approval'
+		: selectorIncludesTool(policy.calls.requiresApproval, props.call.name)
+			? 'requires_approval'
+			: 'deny';
+	if (baseline === 'deny') return { kind: 'denied' };
+	if (policy.backend.kind === 'controller_execution') {
+		const operation = policy.backend.operations[props.call.name];
+		if (operation?.kind === 'configured_cli') {
+			const inputSchema =
+				operation.timeout.kind === 'quick'
+					? quickConfiguredCliInputSchema
+					: openConfiguredCliInputSchema;
+			const parsedInput = inputSchema.safeParse(props.call.arguments);
+			if (!parsedInput.success) return { kind: 'denied' };
+			const evaluation = evaluateCliAllowanceInvocation({
+				allowance: operation,
+				baseline,
+				input: parsedInput.data,
+			});
+			if (evaluation.disposition === 'deny') return { kind: 'denied' };
+			return {
+				backendKind: policy.backend.kind,
+				kind:
+					evaluation.disposition === 'requires_approval' ? 'requires-approval' : 'without-approval',
+				policy,
+			};
+		}
 	}
-	if (selectorIncludesTool(policy.calls.requiresApproval, props.call.name)) {
-		return { backendKind: policy.backend.kind, kind: 'requires-approval', policy };
-	}
-	return { kind: 'denied' };
+	return {
+		backendKind: policy.backend.kind,
+		kind: baseline === 'requires_approval' ? 'requires-approval' : 'without-approval',
+		policy,
+	};
 }

@@ -33,6 +33,11 @@ export type PortableRefinementOperation =
 	  }
 	| {
 			readonly fieldNames: readonly string[];
+			readonly kind: 'maximum-code-points';
+			readonly maximum: number;
+	  }
+	| {
+			readonly fieldNames: readonly string[];
 			readonly kind: 'maximum-utf8-bytes';
 			readonly maximum: number;
 	  }
@@ -45,6 +50,11 @@ export type PortableRefinementOperation =
 			readonly kind: 'safe-integer';
 			readonly maximum: number;
 			readonly minimum: number;
+	  }
+	| {
+			readonly fieldName: string;
+			readonly kind: 'sorted-unique-object-field-items';
+			readonly path: string;
 	  }
 	| { readonly kind: 'sorted-unique-string-items'; readonly path: string }
 	| { readonly kind: 'terminal-outcome-algebra' }
@@ -171,6 +181,14 @@ export const PORTABLE_REFINEMENT_DESCRIPTORS = [
 		operation: { fieldNames: ['argumentsPreview'], kind: 'maximum-utf8-bytes', maximum: 4_096 },
 	},
 	{
+		description:
+			'Namespace discovery summaries remain inside the portable Unicode code-point bound.',
+		errorCode: 'portal.namespace-discovery.summary-above-maximum',
+		identity: 'portal.namespace-discovery.summary-code-points',
+		kind: 'structural-validation',
+		operation: { fieldNames: ['summary'], kind: 'maximum-code-points', maximum: 500 },
+	},
+	{
 		description: 'Gateway attachment metadata cannot repeat an admitted agent identity.',
 		errorCode: 'gateway.attachment.duplicate-agent-id',
 		identity: 'gateway.attachment.unique-agent-ids',
@@ -178,11 +196,15 @@ export const PORTABLE_REFINEMENT_DESCRIPTORS = [
 		operation: { kind: 'unique-string-items', path: 'configuredAgentIds' },
 	},
 	{
-		description: 'Managed Agent Projection namespace names must be sorted and unique.',
-		errorCode: 'gateway.managed-agent-projection.namespace-names',
-		identity: 'gateway.managed-agent-projection.namespace-names',
+		description: 'Managed Agent Projection namespaces must be sorted and unique by namespace.',
+		errorCode: 'gateway.managed-agent-projection.namespaces',
+		identity: 'gateway.managed-agent-projection.namespaces',
 		kind: 'cross-field-validation',
-		operation: { kind: 'sorted-unique-string-items', path: 'toolPortalNamespaceNames' },
+		operation: {
+			fieldName: 'namespace',
+			kind: 'sorted-unique-object-field-items',
+			path: 'toolPortalNamespaces',
+		},
 	},
 	{
 		description: 'Binary chunk byte length equals the decoded canonical base64 payload length.',

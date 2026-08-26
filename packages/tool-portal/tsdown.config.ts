@@ -5,6 +5,7 @@ export default defineConfig({
 	dts: true,
 	entry: {
 		'cli-allowances/index': 'src/cli-allowances/index.ts',
+		'dispatch-authority': 'src/dispatch-authority.ts',
 		index: 'src/index.ts',
 		'standalone-entrypoint/index': 'src/standalone-entrypoint/index.ts',
 		'testing/index': 'src/testing/index.ts',

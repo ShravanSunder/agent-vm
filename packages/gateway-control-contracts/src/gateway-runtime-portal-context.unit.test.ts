@@ -40,7 +40,7 @@ const validSemanticSnapshot = {
 			agentId: 'agent-a',
 			frameworkIdentity: { kind: 'hermes', profileName: 'agent-a' },
 			profileAssignmentRevision: 'profile-assignment-7',
-			toolPortalNamespaceNames: ['github'],
+			toolPortalNamespaces: [{ namespace: 'github' }],
 			toolPortalProfileId: 'engineering',
 		},
 	},
