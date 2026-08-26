@@ -115,6 +115,7 @@ $AGENT_VM validate --config config/system.json
 | --- | --- |
 | Understand the docs layout | [docs/README.md](docs/README.md) |
 | Understand system architecture | [docs/architecture/overview.md](docs/architecture/overview.md) |
+| Understand credentialed CLI runtimes | [docs/architecture/credentialed-runtimes.md](docs/architecture/credentialed-runtimes.md) |
 | Configure the Worker gateway | [docs/getting-started/worker-guide.md](docs/getting-started/worker-guide.md) |
 | Look up config fields | [docs/reference/configuration/README.md](docs/reference/configuration/README.md) |
 | Use OpenClaw Gateway | [docs/getting-started/openclaw-guide.md](docs/getting-started/openclaw-guide.md) |

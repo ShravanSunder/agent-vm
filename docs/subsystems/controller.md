@@ -143,6 +143,9 @@ and offline cleanup contain them before the parent Gateway record. The retire
 route uses existing zone `adminAccess` and returns `retired`, `absent`, `active`,
 or `owner-unsafe` without exposing VM or credential identity.
 
+See [Credentialed Managed Runtimes](../architecture/credentialed-runtimes.md)
+for the full ownership, admission, credential-memory, COW, and retirement model.
+
 `agent-vm controller ssh` intentionally exposes only an interactive SSH session.
 It must reject `-- <remote command>` and `--print` so the CLI does not become an
 unreviewed remote-command runner. Command execution inside a gateway VM is a

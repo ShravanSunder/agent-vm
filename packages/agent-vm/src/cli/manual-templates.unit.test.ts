@@ -457,6 +457,12 @@ describe('manual templates', () => {
 			'controller_host or a reusable credentialed ephemeral_managed_vm',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'it does not mean one VM per RPC',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'cancellation or zone shutdown before active admission produces no guest process',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
 			'imageReference remains a recipe path prepared at Gateway startup',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
