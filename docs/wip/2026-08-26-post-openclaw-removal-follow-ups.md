@@ -182,8 +182,11 @@ accepted and corrected at `46fe6e70`:
 4. The canonical package map now enumerates 17 packages and includes
    `gateway-runtime`.
 
-One gate remains: a fresh independent review of the corrected identity. PR
-wrap-up begins only if that review returns ready.
+The corrected-head review accepted all four remediations and found no runtime
+defect, but identified one proof-authority contradiction: the WIP required every
+lane at one HEAD even though later changes affected only documentation and
+quality tooling. That rule is replaced by consumer-relevance freshness below.
+One gate remains: fresh independent review of the clarified proof boundary.
 
 ## OpenClaw cutover proof status
 
@@ -201,14 +204,30 @@ wrap-up begins only if that review returns ready.
 | OpenClaw residue audit | `pnpm exec tsx scripts/audit-openclaw-removal.ts` at `46fe6e70` | Passed with exit 0 after expanding coverage to root quality configuration and active portal-architecture tooling |
 | Full quality gate | `UV_CACHE_DIR=/tmp/agent-vm-remove-openclaw-uv-cache pnpm check` at `46fe6e70` | 16/16 passed in 43.48 seconds: build, Optique CLI boundary, package/Zod guards, taxonomy, portal and VM boundaries, generated contracts, lint, format, type-aware lint, and typecheck |
 | Built CLI manual proof | Fresh OS-temp `macos-local` Hermes scaffold, validate, real Docker/Gondolin build, and removed `--type openclaw` rejection at `1fa07bb1` | Passed; generated runtime shape contains Hermes and Tool VM inputs and no OpenClaw runtime directory/config |
-| Independent implementation review | Complete review at `155e7303` | Four findings accepted and corrected at `46fe6e70`; corrected-head review pending |
+| Independent implementation review | Complete reviews at `155e7303` and `65783cde` | First review's four findings are corrected; second review accepted those corrections and found only the proof-freshness wording contradiction now repaired |
 
-Final cutover proof is present only when every row above has fresh evidence at
-the same integrated HEAD, every proof-transfer row has its allowed terminal
-disposition (`transferred`, `OpenClaw-only delete`, `baseline-red differential`,
-or `deferred runtime-owner qualification`), and no live lane succeeds by
-skipping its gate. Inventory-only skips are recorded as inventory and never
-presented as runtime proof.
+Final cutover proof is present only when every row above has evidence from the
+most recent identity that changed its observed consumer path, and the final diff
+proves no later relevant source, test, fixture, configuration, image, build, or
+runtime change invalidated that evidence. Every proof-transfer row must have its
+allowed terminal disposition (`transferred`, `OpenClaw-only delete`,
+`baseline-red differential`, or `deferred runtime-owner qualification`), and no
+live lane may succeed by skipping its gate. Inventory-only skips are recorded as
+inventory and never presented as runtime proof.
+
+### Proof freshness by consumer path
+
+- `1fa07bb1` owns the unit, integration, host E2E, generic VM, Worker, built-CLI,
+  and initial package evidence. After that identity, no production source,
+  configuration, fixture, build input, or test observed by those lanes changed.
+- `c8df1d36` changes only the Hermes E2E test to separate ordinary restart from
+  opt-in reattachment stress, and owns the final aggregate Hermes 9/9 result.
+- `46fe6e70` changes only root lint policy, removal/portal audit tooling and
+  tests, canonical architecture text, and the cutover proof contract. It owns
+  the strengthened removal audit, targeted audit 22/22 result, full quality
+  16/16 result, and exact 17-package inspection.
+- `65783cde` and the final receipt commit change only this WIP. They do not alter
+  any observed consumer path above.
 
 ### Fresh integrated merge receipt
 
