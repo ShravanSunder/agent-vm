@@ -544,6 +544,7 @@ describe('createControllerRuntimeOperations', () => {
 
 	it('requires the configured zone admin token before executing gateway commands', async () => {
 		const exec = vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: 'shravan' }));
+		const retireCredentialedRuntime = vi.fn(async () => ({ kind: 'retired' as const }));
 		const runtime = {
 			destroy: vi.fn(async (purged: boolean) => ({ ok: true as const, purged, zoneId: 'shravan' })),
 			enableSsh: vi.fn(async () => ({
@@ -581,6 +582,7 @@ describe('createControllerRuntimeOperations', () => {
 			getActiveLeases: () => [],
 			getManagedGatewayRuntime: () => runtime,
 			getRuntimeStatusByZone: () => ({}),
+			retireCredentialedRuntime,
 			secretResolver: {
 				resolve: async () => 'expected-admin-token',
 				resolveAll: async () => ({}),
@@ -617,6 +619,38 @@ describe('createControllerRuntimeOperations', () => {
 			stdout: 'shravan',
 		});
 		expect(exec).toHaveBeenCalledTimes(1);
+		await expect(
+			operations.retireCredentialedRuntime('shravan', 'google-workspace', {
+				agentId: 'sun',
+				force: false,
+			}),
+		).rejects.toMatchObject({
+			code: 'zone-admin-auth-required',
+			httpStatus: 401,
+		} satisfies Partial<ControllerZoneAdminAuthError>);
+		await expect(
+			operations.retireCredentialedRuntime('shravan', 'google-workspace', {
+				adminToken: 'wrong-admin-token',
+				agentId: 'sun',
+				force: false,
+			}),
+		).rejects.toMatchObject({
+			code: 'zone-admin-auth-denied',
+			httpStatus: 403,
+		} satisfies Partial<ControllerZoneAdminAuthError>);
+		await expect(
+			operations.retireCredentialedRuntime('shravan', 'google-workspace', {
+				adminToken: 'expected-admin-token',
+				agentId: 'sun',
+				force: true,
+			}),
+		).resolves.toEqual({ kind: 'retired' });
+		expect(retireCredentialedRuntime).toHaveBeenCalledWith({
+			agentId: 'sun',
+			force: true,
+			runtimeId: 'google-workspace',
+			zoneId: 'shravan',
+		});
 	});
 
 	it.each([

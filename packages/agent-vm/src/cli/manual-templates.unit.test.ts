@@ -454,13 +454,13 @@ describe('manual templates', () => {
 			'approvalAccess.approvers entries are exactly kind: managed_gateway',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
-			'controller_host or a fresh one-shot ephemeral_managed_vm',
+			'controller_host or a reusable credentialed ephemeral_managed_vm',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
-			'imageReference is a Managed VM image recipe path relative to tool-portal.config.jsonc',
+			'imageReference remains a recipe path prepared at Gateway startup',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
-			'tool_vm_runner remains direct Gateway-to-leased-Tool-VM SSH',
+			'tool_vm_runner remains direct Gateway-to-leased-Tool-VM strict SSH',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
 			'config/schemas/*.schema.json',
@@ -552,6 +552,9 @@ describe('manual templates', () => {
 		);
 		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
 			'controllerStateDir/zones/<zoneId>/tool-leases/<recordId>.json',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
+			'controllerStateDir/zones/<zoneId>/credentialed-runtimes/<recordId>.json',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
 			'Controller restart adopts no VM',
@@ -728,7 +731,7 @@ describe('manual templates', () => {
 			'never bypasses the ownership lock or exact-evidence checks',
 		);
 		expect(operations?.content).toContain(
-			'controllerStateDir/zones/<zoneId>/tool-leases/<recordId>.json first, then controllerStateDir/zones/<zoneId>/gateway-runtime.json',
+			'credentialed-runtimes/<recordId>.json and Tool records under controllerStateDir/zones/<zoneId>/tool-leases/<recordId>.json before controllerStateDir/zones/<zoneId>/gateway-runtime.json',
 		);
 		expect(operations?.content).toContain(
 			'never adopts an old VM, and deletes a record only after exact process and endpoint absence is proven',

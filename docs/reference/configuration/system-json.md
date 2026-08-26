@@ -588,6 +588,9 @@ Managed Gateway policy is authored in `tool-portal.config.jsonc`. Its important
 fields are:
 
 - `agents.<agentId>.profile` selects one complete profile.
+- `agents.<agentId>.credentialBindings` optionally declares that agent's
+  controller-only named 1Password file sets for credentialed Managed runtimes.
+  Bindings select credentials but do not grant capabilities beyond the profile.
 - `mode` must be `"managed"`.
 - `profiles.<name>.namespaces` defines the profile's namespace policy.
 - `profiles.<name>.namespaces.<namespaceId>.backend.kind` explicitly binds
@@ -658,14 +661,78 @@ namespace direct baseline still requires `zones[].approvalAccess` when its
 operation-level `calls.requiresApproval` array is non-empty. Hermes is the sole
 native presenter for those matched invocations in this release.
 
-The ephemeral target is a fresh one-shot Managed VM; it does not reuse a leased
-Tool VM. Its authored `imageReference` is a Managed VM image recipe path relative
-to `tool-portal.config.jsonc`; Gateway startup prepares that recipe and binds the
-returned provider-local reference and fingerprint into the controller-only
-effective policy. Preparation failure blocks startup, and prepared image details
-never enter the Gateway projection. `tool_vm_runner` remains the separate
-Gateway-to-leased-Tool-VM direct SSH backend and sends no per-command controller
-execution RPC.
+The credentialed `ephemeral_managed_vm` target is a controller-created reusable
+Managed runtime, not a leased Tool VM and not one VM per call. It requires
+`runtimeId`, `credentialBinding`, 1-16 unique `credentialFiles` mappings, and
+1-16 controller-authored `credentialEnvironment` entries. Environment entries
+resolve only to `{ kind: "credential_root" }` or
+`{ kind: "credential_file", source }`; callers cannot select their names or
+values. Credential paths are read-only and memory-backed while ordinary CLI
+config, state, and cache remain in live COW rootfs.
+
+One agent/runtime executes one command at a time. A concurrent call is
+retryably rejected rather than queued. Compatible independently authorized
+calls reuse the VM until 15 idle minutes elapse; every call still gets its own
+current policy and approval decision. Retirement discards credential memory and
+COW without checkpointing. Gateway startup prepares `imageReference` and binds
+its fingerprint into controller-only compatibility. Persisted Gateway-safe
+config contains only an opaque cohort revision, never credential refs, file
+paths, runtime ids, or prepared image details. `tool_vm_runner` remains direct
+Gateway-to-leased-Tool-VM strict SSH with no per-command controller RPC.
+
+For Gog service accounts, map the 1Password value to Gog's expected
+`sa-<encoded-account>.json` path and set:
+
+```jsonc
+{
+  "agents": {
+    "sun": {
+      "profile": "google-enabled",
+      "credentialBindings": {
+        "google": {
+          "files": {
+            "service-account": {
+              "source": "1password",
+              "ref": "<operator-authored 1Password reference>"
+            }
+          }
+        }
+      }
+    }
+  },
+  "executionTarget": {
+    "kind": "ephemeral_managed_vm",
+    "runtimeId": "google-workspace",
+    "credentialBinding": "google",
+    "credentialFiles": [
+      {
+        "source": "service-account",
+        "path": "sa-<encoded-account>.json"
+      }
+    ],
+    "credentialEnvironment": {
+      "GOG_DATA_DIR": { "kind": "credential_root" }
+    },
+    "imageReference": "./gog-image.jsonc",
+    "guestCwd": "/work",
+    "environment": { "kind": "empty" },
+    "allowedHosts": ["oauth2.googleapis.com", "www.googleapis.com"]
+  }
+}
+```
+
+Gog config/state/cache remain on COW because only `GOG_DATA_DIR` points at the
+credential mount. An unchanged live 1Password ref is resolved again only after
+retirement. For immediate replacement:
+
+```text
+agent-vm controller credential-runtime retire \
+  --zone <zone> --agent <agentId> --runtime <runtimeId> [--force]
+```
+
+The command uses existing zone `adminAccess`. Without `--force`, active work is
+left running and the result is `active`; `--force` cancels it before exact
+cleanup. Other results are `retired`, `absent`, or `owner-unsafe`.
 
 For an MCP-backed managed namespace, the namespace id matches the provider
 namespace in `mcp.config.jsonc` and explicitly selects `mcp_provider`:

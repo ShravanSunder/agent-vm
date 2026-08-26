@@ -127,7 +127,7 @@ interface NormalizedProfilePolicyInputs {
 	readonly surfaceEligibilityByProfile: NormalizedSurfaceEligibility;
 }
 
-type NormalizedBindingInputs = Readonly<
+type NormalizedBindingProfiles = Readonly<
 	Record<
 		string,
 		Readonly<
@@ -177,6 +177,11 @@ type NormalizedBindingInputs = Readonly<
 		>
 	>
 >;
+
+interface NormalizedBindingInputs {
+	readonly credentialedRuntimeRevision?: string;
+	readonly profiles: NormalizedBindingProfiles;
+}
 
 type CanonicalJsonValue =
 	| boolean
@@ -374,7 +379,7 @@ function normalizedProfilePolicyInputs(props: {
 function normalizedBindingInputs(
 	config: ManagedToolPortalConfig | EffectiveManagedToolPortalConfig,
 ): NormalizedBindingInputs {
-	return Object.fromEntries(
+	const profiles = Object.fromEntries(
 		recordEntries<BindingConfigProfile>(config.profiles).map(([profileId, profile]) => [
 			profileId,
 			Object.fromEntries(
@@ -430,6 +435,12 @@ function normalizedBindingInputs(
 			),
 		]),
 	);
+	return {
+		...('credentialedRuntimeRevision' in config && config.credentialedRuntimeRevision !== undefined
+			? { credentialedRuntimeRevision: config.credentialedRuntimeRevision }
+			: {}),
+		profiles,
+	};
 }
 
 function normalizedControllerExecutionOperation(

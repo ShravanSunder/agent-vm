@@ -177,6 +177,8 @@ controller durable authority
 
   The per-zone root contains:
   - `approvals/` for controller-owned approval records;
+  - `credentialed-runtimes/<recordId>.json` for reusable credentialed Managed
+    runtime cleanup records;
   - `gateway-runtime.json` for the managed Gateway cleanup record;
   - `tool-leases/<recordId>.json` for Tool VM cleanup records; and
   - `worker-tasks/<taskId>/gateway-runtime.json` for Worker task cleanup
@@ -190,8 +192,9 @@ controller durable authority
   managed VM process evidence. It never persists framework scope keys.
 
   Controller restart adopts no VM. Startup and scoped offline cleanup process
-  all Tool VM records for a zone before its Gateway record, prove the recorded
-  processes and relevant endpoints absent, and only then permit a fresh tree.
+  all credentialed runtime and Tool VM records for a zone before its Gateway
+  record, prove the recorded processes and relevant endpoints absent, and only
+  then permit a fresh tree.
   Records are deleted only after exact cleanup or already-absent process and
   endpoint state is proven.
 

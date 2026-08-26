@@ -1,12 +1,40 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
-import { controllerPullDefaultResponseSchema } from './controller-request-schemas.js';
+import {
+	controllerPullDefaultResponseSchema,
+	controllerRetireCredentialedRuntimeRequestSchema,
+} from './controller-request-schemas.js';
 import * as controllerRequestSchemas from './controller-request-schemas.js';
 
 describe('controller request schemas', () => {
 	it('does not export the retired VM-facing lease create request schema', () => {
 		expect(controllerRequestSchemas).not.toHaveProperty('controllerLeaseCreateRequestSchema');
+	});
+
+	it('accepts only bounded credentialed runtime retirement authority', () => {
+		expect(
+			controllerRetireCredentialedRuntimeRequestSchema.parse({
+				adminToken: 'admin-token',
+				agentId: 'sun',
+				force: true,
+			}),
+		).toEqual({ adminToken: 'admin-token', agentId: 'sun', force: true });
+		for (const forbiddenField of [
+			'credentialBinding',
+			'credentialRef',
+			'filePath',
+			'leaseId',
+			'vmId',
+		]) {
+			expect(
+				controllerRetireCredentialedRuntimeRequestSchema.safeParse({
+					agentId: 'sun',
+					force: false,
+					[forbiddenField]: 'forbidden',
+				}).success,
+			).toBe(false);
+		}
 	});
 
 	it('converts the production pull-default response schema with native z.toJSONSchema', () => {

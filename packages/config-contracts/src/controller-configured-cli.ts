@@ -196,6 +196,117 @@ export const configuredCliEnvironmentPolicySchema = z.discriminatedUnion('kind',
 		.strict(),
 ]);
 
+export const configuredCliCredentialLogicalNameSchema = z
+	.string()
+	.regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u);
+
+export const configuredCliCredentialRelativePathSchema = z
+	.string()
+	.min(1)
+	.refine((value) => Buffer.byteLength(value, 'utf8') <= 256, {
+		message: 'Configured CLI credential paths must be at most 256 UTF-8 bytes.',
+	})
+	.refine(
+		(value) => {
+			if (value.startsWith('/') || value.includes('\\') || !isControlFreeText(value)) return false;
+			const segments = value.split('/');
+			return segments.every(
+				(segment) =>
+					segment !== '.' && segment !== '..' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u.test(segment),
+			);
+		},
+		{
+			message: 'Configured CLI credential paths must be canonical safe relative paths.',
+		},
+	);
+
+export const configuredCliCredentialFileMappingSchema = z
+	.object({
+		path: configuredCliCredentialRelativePathSchema,
+		source: configuredCliCredentialLogicalNameSchema,
+	})
+	.strict();
+
+export const configuredCliCredentialEnvironmentValueSchema = z.discriminatedUnion('kind', [
+	z.object({ kind: z.literal('credential_root') }).strict(),
+	z
+		.object({
+			kind: z.literal('credential_file'),
+			source: configuredCliCredentialLogicalNameSchema,
+		})
+		.strict(),
+]);
+
+const configuredCliCredentialEnvironmentSchema = z
+	.record(
+		z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/u),
+		configuredCliCredentialEnvironmentValueSchema,
+	)
+	.refine((environment) => Object.keys(environment).length > 0, {
+		message: 'Configured CLI credential environment must not be empty.',
+	})
+	.refine((environment) => Object.keys(environment).length <= 16, {
+		message: 'Configured CLI credential environment must contain at most 16 entries.',
+	});
+
+const configuredCliCredentialFilesSchema = z
+	.array(configuredCliCredentialFileMappingSchema)
+	.min(1)
+	.max(16);
+
+interface CredentialedManagedVmTargetForValidation {
+	readonly credentialEnvironment: Readonly<
+		Record<string, z.infer<typeof configuredCliCredentialEnvironmentValueSchema>>
+	>;
+	readonly credentialFiles: readonly z.infer<typeof configuredCliCredentialFileMappingSchema>[];
+	readonly environment: z.infer<typeof configuredCliEnvironmentPolicySchema>;
+}
+
+function validateCredentialedManagedVmTarget(
+	target: CredentialedManagedVmTargetForValidation,
+	context: z.RefinementCtx,
+): void {
+	const seenSources = new Set<string>();
+	const seenPaths = new Set<string>();
+	for (const [mappingIndex, mapping] of target.credentialFiles.entries()) {
+		if (seenSources.has(mapping.source)) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: 'Configured CLI credential file sources must be unique.',
+				path: ['credentialFiles', mappingIndex, 'source'],
+			});
+		}
+		if (seenPaths.has(mapping.path)) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: 'Configured CLI credential file paths must be unique.',
+				path: ['credentialFiles', mappingIndex, 'path'],
+			});
+		}
+		seenSources.add(mapping.source);
+		seenPaths.add(mapping.path);
+	}
+	for (const [environmentName, value] of Object.entries(target.credentialEnvironment)) {
+		if (value.kind === 'credential_file' && !seenSources.has(value.source)) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: 'Configured CLI credential environment references an unknown file source.',
+				path: ['credentialEnvironment', environmentName, 'source'],
+			});
+		}
+		if (
+			target.environment.kind === 'inherit_allowlist' &&
+			target.environment.names.includes(environmentName)
+		) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: 'Configured CLI credential and inherited environment names must not overlap.',
+				path: ['credentialEnvironment', environmentName],
+			});
+		}
+	}
+}
+
 const absoluteControlFreePathSchema = z.string().startsWith('/').refine(isControlFreeText, {
 	message: 'Configured CLI paths must not contain control characters.',
 });
@@ -283,12 +394,17 @@ export const configuredCliExecutionTargetSchema = z.discriminatedUnion('kind', [
 	z
 		.object({
 			allowedHosts: z.array(z.string().min(1)).default([]),
+			credentialBinding: configuredCliCredentialLogicalNameSchema,
+			credentialEnvironment: configuredCliCredentialEnvironmentSchema,
+			credentialFiles: configuredCliCredentialFilesSchema,
 			environment: configuredCliEnvironmentPolicySchema,
 			guestCwd: absoluteControlFreePathSchema,
 			imageReference: configuredCliImageRecipePathSchema,
 			kind: z.literal('ephemeral_managed_vm'),
+			runtimeId: configuredCliCredentialLogicalNameSchema,
 		})
-		.strict(),
+		.strict()
+		.superRefine(validateCredentialedManagedVmTarget),
 ]);
 
 export const configuredCliEffectiveExecutionTargetSchema = z.discriminatedUnion('kind', [
@@ -302,12 +418,17 @@ export const configuredCliEffectiveExecutionTargetSchema = z.discriminatedUnion(
 	z
 		.object({
 			allowedHosts: z.array(z.string().min(1)).default([]),
+			credentialBinding: configuredCliCredentialLogicalNameSchema,
+			credentialEnvironment: configuredCliCredentialEnvironmentSchema,
+			credentialFiles: configuredCliCredentialFilesSchema,
 			environment: configuredCliEnvironmentPolicySchema,
 			guestCwd: absoluteControlFreePathSchema,
 			imageReference: configuredCliPreparedImageIdentitySchema,
 			kind: z.literal('ephemeral_managed_vm'),
+			runtimeId: configuredCliCredentialLogicalNameSchema,
 		})
-		.strict(),
+		.strict()
+		.superRefine(validateCredentialedManagedVmTarget),
 ]);
 
 export const configuredCliOutputPolicySchema = z
@@ -377,6 +498,12 @@ export const configuredCliInputSchema = z.union([
 export type ConfiguredCliAllowedCommand = z.infer<typeof configuredCliAllowedCommandSchema>;
 export type ConfiguredCliFlagRule = z.infer<typeof configuredCliFlagRuleSchema>;
 export type ConfiguredCliInput = z.infer<typeof configuredCliInputSchema>;
+export type ConfiguredCliCredentialEnvironmentValue = z.infer<
+	typeof configuredCliCredentialEnvironmentValueSchema
+>;
+export type ConfiguredCliCredentialFileMapping = z.infer<
+	typeof configuredCliCredentialFileMappingSchema
+>;
 export type ConfiguredCliInvocationCallPolicy = z.infer<
 	typeof configuredCliInvocationCallPolicySchema
 >;

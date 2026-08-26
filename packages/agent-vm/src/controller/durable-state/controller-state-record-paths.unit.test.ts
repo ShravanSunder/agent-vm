@@ -34,6 +34,11 @@ describe('controller state record paths', () => {
 				kind: 'controller-approval-records',
 				zoneId: 'zone-a',
 			},
+			credentialedRuntimeRecords: {
+				directoryPath: path.join(gatewayStateRoot.directoryPath, 'credentialed-runtimes'),
+				kind: 'controller-credentialed-runtime-records',
+				zoneId: 'zone-a',
+			},
 			managedGatewayRuntimeRecord: {
 				filePath: path.join(gatewayStateRoot.directoryPath, 'gateway-runtime.json'),
 				kind: 'controller-managed-gateway-runtime-record',

@@ -1,8 +1,12 @@
-import type { ControllerExecutionOperation } from '@agent-vm/config-contracts';
+import type { EffectiveControllerExecutionOperation } from '@agent-vm/config-contracts';
 
+import type { CredentialedRuntimeResolution } from '../credentialed-runtime/credentialed-runtime-registry.js';
 import { ConfiguredControllerExecutionError } from './configured-controller-execution-error.js';
 
-type ConfiguredCliOperation = Extract<ControllerExecutionOperation, { kind: 'configured_cli' }>;
+type ConfiguredCliOperation = Extract<
+	EffectiveControllerExecutionOperation,
+	{ kind: 'configured_cli' }
+>;
 
 export interface ConfiguredCliAuthorizedEvaluation {
 	readonly authorityKind: 'controller_approval_reservation' | 'without_approval';
@@ -15,6 +19,7 @@ export interface ConfiguredCliAuthorizedEvaluation {
 }
 
 export interface ConfiguredCliAuthorizedOperation {
+	readonly credentialedRuntime?: CredentialedRuntimeResolution;
 	readonly evaluation: ConfiguredCliAuthorizedEvaluation;
 	readonly operation: ConfiguredCliOperation;
 }

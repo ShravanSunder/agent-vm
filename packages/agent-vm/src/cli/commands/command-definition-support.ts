@@ -55,6 +55,23 @@ export function createPresenceFlag(name: OptionName, description: string): Parse
 	return withDefault(flag(name, { description: cliDescription(description) }), false);
 }
 
+const requiredStringOptionSchema = z.string().min(1);
+
+export function createRequiredStringOption(options: {
+	readonly description: string;
+	readonly metavar: 'AGENT_ID' | 'RUNTIME_ID';
+	readonly name: OptionName;
+}): Parser<'sync', z.infer<typeof requiredStringOptionSchema>, unknown> {
+	return projectZodScalarPresence({
+		parser: option(
+			options.name,
+			zod(requiredStringOptionSchema, { metavar: options.metavar, placeholder: 'value' }),
+			{ description: cliDescription(options.description) },
+		),
+		schema: requiredStringOptionSchema,
+	});
+}
+
 export function createConfirmFlag(): Parser<'sync', boolean> {
 	return createPresenceFlag('--confirm', 'Confirm the destructive action');
 }
