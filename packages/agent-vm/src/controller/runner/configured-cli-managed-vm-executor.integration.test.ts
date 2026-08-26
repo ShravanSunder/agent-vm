@@ -229,6 +229,40 @@ describe('configured CLI credentialed Managed VM executor', () => {
 		expect(reloadAuthorization).toHaveBeenCalledOnce();
 	});
 
+	it('binds cancellation into final admission before runtime acquisition completes', async () => {
+		const currentAuthorization = authorization();
+		const admissionController = new AbortController();
+		const command = commandHandle();
+		const reloadAuthorization = vi.fn(async () => {
+			admissionController.abort(new Error('call expired'));
+			return currentAuthorization;
+		});
+		const acquireCommand = vi.fn(
+			async (request: Parameters<CredentialedRuntimeManager['acquireCommand']>[0]) =>
+				(await request.finalAuthorization())
+					? { command, kind: 'acquired' as const }
+					: { kind: 'not-dispatched' as const, reason: 'stale' },
+		);
+		const execute = executorWithManager(managerWithAcquire(acquireCommand));
+
+		await expect(
+			execute({
+				authorization: currentAuthorization,
+				input: { argv: ['calendar', 'list'], reason: 'expiry proof' },
+				operation: currentAuthorization.operation,
+				operationName: 'calendar_list',
+				reloadAuthorization,
+				signal: admissionController.signal,
+				stablePrincipal: 'a'.repeat(64),
+				zoneId: 'zone-a',
+			}),
+		).rejects.toMatchObject({ code: 'not_dispatched' });
+		expect(acquireCommand).toHaveBeenCalledWith(
+			expect.objectContaining({ admissionSignal: admissionController.signal }),
+		);
+		expect(command.exec).not.toHaveBeenCalled();
+	});
+
 	it('retires the runtime after uncertain command failure', async () => {
 		const command = commandHandle({ execError: new Error('lost result') });
 		const execute = executorWithManager(

@@ -86,10 +86,14 @@ export function createConfiguredCliManagedVmExecutor(
 			);
 		}
 		const gatewayIdentity = await props.resolveGatewayIdentity(request.zoneId);
+		const admissionSignalIsActive = (): boolean => request.signal?.aborted !== true;
 		const acquired = await props.runtimeManager.acquireCommand({
+			...(request.signal === undefined ? {} : { admissionSignal: request.signal }),
 			finalAuthorization: async (): Promise<boolean> => {
+				if (!admissionSignalIsActive()) return false;
 				const current = await request.reloadAuthorization();
 				return (
+					admissionSignalIsActive() &&
 					configuredCliAuthorizedEvaluationsEqual(
 						request.authorization.evaluation,
 						current.evaluation,

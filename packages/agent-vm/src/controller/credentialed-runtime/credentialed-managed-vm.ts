@@ -104,6 +104,14 @@ export async function executeCredentialedManagedVmCommand(props: {
 			? commandTimeout.signal
 			: AbortSignal.any([commandTimeout.signal, props.signal]);
 	try {
+		if (executionSignal.aborted) {
+			throw executionSignal.reason instanceof Error
+				? executionSignal.reason
+				: new ConfiguredControllerExecutionError(
+						'not_dispatched',
+						'Configured Managed VM execution was cancelled before guest process creation.',
+					);
+		}
 		const process = props.vm.exec(
 			[operation.executablePath, ...operation.mandatoryArgvPrefix, ...props.input.argv],
 			{

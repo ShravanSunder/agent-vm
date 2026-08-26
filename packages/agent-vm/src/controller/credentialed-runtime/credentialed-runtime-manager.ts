@@ -116,6 +116,7 @@ function processIdentitiesEqual(
 
 export interface CredentialedRuntimeManager {
 	acquireCommand(request: {
+		readonly admissionSignal?: AbortSignal;
 		readonly finalAuthorization: () => Promise<boolean>;
 		readonly operationId: string;
 		readonly ownerIdentity: CredentialedRuntimeOwnerIdentity;
@@ -281,7 +282,9 @@ export function createCredentialedRuntimeManager(props: {
 
 	const acquireCommand: CredentialedRuntimeManager['acquireCommand'] = async (request) => {
 		const key = runtimeKey(request.resolution);
-		if (closedZoneIds.has(request.resolution.zoneId)) {
+		const admissionInvalidated = (): boolean =>
+			request.admissionSignal?.aborted === true || closedZoneIds.has(request.resolution.zoneId);
+		if (admissionInvalidated()) {
 			return { kind: 'not-dispatched', reason: 'credentialed runtime zone is stopping' };
 		}
 		let zoneKeys = runtimeKeysByZoneId.get(request.resolution.zoneId);
@@ -291,7 +294,7 @@ export function createCredentialedRuntimeManager(props: {
 		}
 		zoneKeys.add(key);
 		return await locks.runExclusive(key, async () => {
-			if (closedZoneIds.has(request.resolution.zoneId)) {
+			if (admissionInvalidated()) {
 				return { kind: 'not-dispatched', reason: 'credentialed runtime zone is stopping' };
 			}
 			if (ownerUnsafeKeys.has(key)) {
@@ -460,10 +463,9 @@ export function createCredentialedRuntimeManager(props: {
 						: { kind: 'owner-unsafe', reason: 'credentialed runtime record is unsafe' };
 				}
 				let finalAuthorized = false;
-				if (!closedZoneIds.has(request.resolution.zoneId)) {
+				if (!admissionInvalidated()) {
 					try {
-						finalAuthorized =
-							(await request.finalAuthorization()) && !closedZoneIds.has(request.resolution.zoneId);
+						finalAuthorized = (await request.finalAuthorization()) && !admissionInvalidated();
 					} catch {
 						finalAuthorized = false;
 					}
@@ -478,10 +480,9 @@ export function createCredentialedRuntimeManager(props: {
 				}
 			} else {
 				let finalAuthorized = false;
-				if (!closedZoneIds.has(request.resolution.zoneId)) {
+				if (!admissionInvalidated()) {
 					try {
-						finalAuthorized =
-							(await request.finalAuthorization()) && !closedZoneIds.has(request.resolution.zoneId);
+						finalAuthorized = (await request.finalAuthorization()) && !admissionInvalidated();
 					} catch {
 						finalAuthorized = false;
 					}
@@ -507,6 +508,7 @@ export function createCredentialedRuntimeManager(props: {
 				recordId: live.recordId,
 				resolution: live.resolution,
 			};
+			live.activeCommand = activeCommand;
 			try {
 				await recordWriter.write(context, ({ common, generation }) => ({
 					...common,
@@ -519,6 +521,7 @@ export function createCredentialedRuntimeManager(props: {
 					vmId: live.vm.id,
 				}));
 			} catch {
+				delete live.activeCommand;
 				activeCommand.resolveFinished();
 				const contained = await retireLiveUnderLock(
 					key,
@@ -529,7 +532,18 @@ export function createCredentialedRuntimeManager(props: {
 					? { kind: 'not-dispatched', reason: 'credentialed runtime record failed' }
 					: { kind: 'owner-unsafe', reason: 'credentialed runtime record is unsafe' };
 			}
-			live.activeCommand = activeCommand;
+			if (admissionInvalidated()) {
+				delete live.activeCommand;
+				activeCommand.resolveFinished();
+				const contained = await retireLiveUnderLock(
+					key,
+					live,
+					'credentialed runtime admission invalidated during active publication',
+				);
+				return contained
+					? { kind: 'not-dispatched', reason: 'credentialed runtime authority changed' }
+					: { kind: 'owner-unsafe', reason: 'stale runtime containment failed' };
+			}
 
 			let completed = false;
 			const commandResolution = request.resolution;

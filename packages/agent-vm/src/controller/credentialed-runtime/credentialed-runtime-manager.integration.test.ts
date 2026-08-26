@@ -1,5 +1,4 @@
 import { mkdtemp, rm } from 'node:fs/promises';
-import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -20,11 +19,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { defaultCliDependencies, type CliIo } from '../../cli/agent-vm-cli-support.js';
 import { dispatchAgentVmCommand } from '../../cli/agent-vm-command-dispatcher.js';
 import { agentVmRootParser } from '../../cli/agent-vm-command-parser.js';
-import type { LoadedSystemConfig } from '../../config/system-config.js';
 import { createControllerRuntimeOperations } from '../controller-runtime-operations.js';
 import { createControllerClient } from '../http/controller-client.js';
 import { createControllerApp } from '../http/controller-http-routes.js';
 import { startControllerHttpServer } from '../http/controller-http-server.js';
+import {
+	createCredentialedRuntimeRetirementTestSystemConfig,
+	createUnavailableCredentialedRuntimeTestGateway,
+	findAvailableCredentialedRuntimeTestPort,
+} from './credentialed-runtime-manager-integration-test-support.js';
 import {
 	createCredentialedRuntimeManager,
 	CredentialedRuntimeIdleTtlMs,
@@ -154,6 +157,7 @@ function resolution(
 function createFixture(
 	now: () => number,
 	options: {
+		readonly afterRecordWrite?: (kind: CredentialedRuntimeRecord['kind']) => Promise<void>;
 		readonly beforeManagedVmCreate?: () => Promise<void>;
 		readonly failingRecordKinds?: readonly CredentialedRuntimeRecord['kind'][];
 	} = {},
@@ -250,13 +254,16 @@ function createFixture(
 			...writeArguments: Parameters<typeof delegateRecordWriter.write>
 		): Promise<void> => {
 			const [context, build] = writeArguments;
+			let writtenKind: CredentialedRuntimeRecord['kind'] | undefined;
 			await delegateRecordWriter.write(context, (base) => {
 				const record = build(base);
+				writtenKind = record.kind;
 				if (failingRecordKinds.delete(record.kind)) {
 					throw new Error(`forced ${record.kind} record failure`);
 				}
 				return record;
 			});
+			if (writtenKind !== undefined) await options.afterRecordWrite?.(writtenKind);
 		},
 	};
 	return {
@@ -288,19 +295,6 @@ async function acquire(
 		ownerIdentity,
 		resolution: runtimeResolution,
 	});
-}
-
-async function findAvailablePort(): Promise<number> {
-	const reservation = createServer();
-	await new Promise<void>((resolve) => reservation.listen(0, '127.0.0.1', resolve));
-	const address = reservation.address();
-	if (address === null || typeof address === 'string') {
-		throw new Error('Port reservation did not expose a TCP port.');
-	}
-	await new Promise<void>((resolve, reject) =>
-		reservation.close((error) => (error ? reject(error) : resolve())),
-	);
-	return address.port;
 }
 
 describe('credentialed runtime manager', () => {
@@ -473,6 +467,61 @@ describe('credentialed runtime manager', () => {
 		},
 	);
 
+	it.each([
+		['new', 'cancel'],
+		['reused', 'cancel'],
+		['new', 'close'],
+		['reused', 'close'],
+	] as const)(
+		'contains a %s runtime when %s invalidates admission during active publication',
+		async (runtimeState, invalidation) => {
+			let pauseActivePublication = false;
+			let markActivePublicationStarted: (() => void) | undefined;
+			let releaseActivePublication: (() => void) | undefined;
+			const activePublicationStarted = new Promise<void>((resolve) => {
+				markActivePublicationStarted = resolve;
+			});
+			const activePublicationGate = new Promise<void>((resolve) => {
+				releaseActivePublication = resolve;
+			});
+			const fixture = createFixture(() => 1_000, {
+				afterRecordWrite: async (kind) => {
+					if (!pauseActivePublication || kind !== 'current-active') return;
+					markActivePublicationStarted?.();
+					await activePublicationGate;
+				},
+			});
+			if (runtimeState === 'reused') {
+				const initial = await acquire(fixture);
+				if (initial.kind !== 'acquired') throw new Error('Expected initial acquisition.');
+				await initial.command.complete({ kind: 'completed' });
+			}
+			pauseActivePublication = true;
+			const admissionController = new AbortController();
+			const acquiring = fixture.manager.acquireCommand({
+				admissionSignal: admissionController.signal,
+				finalAuthorization: async () => true,
+				operationId: `active-publication-${runtimeState}-${invalidation}`,
+				ownerIdentity,
+				resolution: resolution(),
+			});
+			await activePublicationStarted;
+			const closing =
+				invalidation === 'close' ? fixture.manager.closeZone('zone-a') : Promise.resolve();
+			if (invalidation === 'cancel') admissionController.abort(new Error('call expired'));
+			releaseActivePublication?.();
+
+			const result = await acquiring;
+			if (result.kind === 'acquired') {
+				await result.command.complete({ kind: 'retire', reason: 'test cleanup' });
+			}
+			await expect(closing).resolves.toBeUndefined();
+			expect(result).toMatchObject({ kind: 'not-dispatched' });
+			expect(fixture.states[0]?.execCallCount).toBe(0);
+			expect(fixture.states[0]?.closed).toBe(true);
+		},
+	);
+
 	it('propagates owner-unsafe containment instead of completing zone close', async () => {
 		const fixture = createFixture(() => 1_000);
 		const acquired = await acquire(fixture);
@@ -612,69 +661,14 @@ describe('credentialed runtime manager', () => {
 
 	it('composes CLI, authenticated HTTP, and manager retirement results', async () => {
 		const fixture = createFixture(() => 1_000);
-		const port = await findAvailablePort();
+		const port = await findAvailableCredentialedRuntimeTestPort();
 		const adminToken = 'credential-runtime-admin-token';
-		const systemConfig = {
-			schemaVersion: 2,
-			storageRootDir: testRoot,
-			cacheDir: path.join(testRoot, 'cache'),
-			controllerStateDir: path.join(testRoot, 'controller-state'),
-			controllerRuntimeDir: path.join(testRoot, 'controller-runtime'),
-			systemConfigPath: path.join(testRoot, 'config', 'system.json'),
-			host: {
-				controllerPort: port,
-				projectNamespace: 'credential-runtime-integration',
-			},
-			imageProfiles: {
-				gateways: {
-					hermes: {
-						type: 'hermes',
-						buildConfig: './vm-images/gateways/hermes/build-config.json',
-					},
-				},
-				toolVms: {},
-			},
-			zones: [
-				{
-					id: 'zone-a',
-					adminAccess: {
-						mode: 'secret',
-						secret: { source: 'config', value: adminToken },
-					},
-					gateway: {
-						type: 'hermes',
-						imageProfile: 'hermes',
-						memory: '2G',
-						cpus: 2,
-						port: 18_793,
-						config: './config/hermes/config.yaml',
-						profilesByAgent: {},
-						profileSecretProjectionsByAgent: {},
-						stateDir: path.join(testRoot, 'zone-a', 'state'),
-						zoneFilesDir: path.join(testRoot, 'zone-a', 'zone-files'),
-						zoneRuntimeDir: path.join(testRoot, 'zone-a', 'runtime'),
-					},
-					secrets: {},
-					egressHosts: [{ host: 'www.googleapis.com', audience: 'gateway' }],
-				},
-			],
-			toolVmProfiles: {},
-			tcpPool: { basePort: 19_000, size: 2 },
-		} satisfies LoadedSystemConfig;
-		const unavailableGatewayRuntime = {
-			destroy: async () => ({ ok: true as const, purged: false, zoneId: 'zone-a' }),
-			enableSsh: async () => {
-				throw new Error('not used');
-			},
-			exec: async () => {
-				throw new Error('not used');
-			},
-			getHealth: async () => ({ ok: true, observation: 'not used', zoneId: 'zone-a' }),
-			getLogs: async () => ({ output: '', zoneId: 'zone-a' }),
-			getServiceHealth: async () => ({ ok: true, observation: 'not used', zoneId: 'zone-a' }),
-			refreshCredentials: async () => ({ ok: true as const, zoneId: 'zone-a' }),
-			upgrade: async () => ({ ok: true as const, zoneId: 'zone-a' }),
-		};
+		const systemConfig = createCredentialedRuntimeRetirementTestSystemConfig({
+			adminToken,
+			port,
+			testRoot,
+		});
+		const unavailableGatewayRuntime = createUnavailableCredentialedRuntimeTestGateway();
 		const operations = createControllerRuntimeOperations({
 			destroyZoneRuntime: async () => ({ ok: true, purged: false, zoneId: 'zone-a' }),
 			getActiveLeases: () => [],
