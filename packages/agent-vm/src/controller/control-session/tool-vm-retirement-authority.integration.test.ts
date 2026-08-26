@@ -11,6 +11,48 @@ import {
 } from './tool-vm-retirement-authority.integration-test-fixture.js';
 
 describe('Tool VM retirement authority causal integration', () => {
+	it('rebinds a retained Tool VM on the first acquisition after control reattachment', async () => {
+		const fixture = await createCausalFixture({
+			commandResultTimeoutMs: 1_000,
+			commandTtlMs: 1_000,
+		});
+
+		try {
+			fixture.firstLeaseCreationMayFinish.resolve();
+			const predecessor = requireBound(
+				await fixture.activeUseRuntime.acquisitionPort.acquire({ trustedContext }),
+			);
+			expect(predecessor.operationContext.leaseId).toBe('lease-causal-1');
+
+			await fixture.rotateControlConnection();
+			expect(predecessor.operationAuthority.authorize(predecessor.operationContext)).toEqual({
+				kind: 'stale-operation-authority',
+			});
+
+			const recoveredResult = await fixture.activeUseRuntime.acquisitionPort.acquire({
+				trustedContext,
+			});
+			if (recoveredResult.kind !== 'bound') {
+				throw new Error(
+					`First post-reattachment acquisition failed: state=${JSON.stringify(fixture.publishedBindingRuntime.readState({ trustedContext }))}; commands=${JSON.stringify(fixture.commandObservations)}; evidence=${JSON.stringify(fixture.evidence)}`,
+				);
+			}
+			const recovered = recoveredResult;
+			expect(recovered.operationContext.leaseId).toBe('lease-causal-1');
+			expect(fixture.commandObservations.slice(-6)).toEqual([
+				{ operation: 'caller_context_register', result: 'ok' },
+				{ operation: 'lease_use_end', result: 'ok' },
+				{ operation: 'caller_context_register', result: 'ok' },
+				{ operation: 'tool_vm_binding_request', result: 'ok' },
+				{ operation: 'caller_context_register', result: 'ok' },
+				{ operation: 'lease_use_start', result: 'ok' },
+			]);
+			await recovered.endActiveUse('completed');
+		} finally {
+			await fixture.close();
+		}
+	});
+
 	it('rotates the real control connection before stale held binding work can publish', async () => {
 		const fixture = await createCausalFixture({
 			commandResultTimeoutMs: 50,

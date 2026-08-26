@@ -89,6 +89,11 @@ interface CausalEvidence {
 	readonly sequence: number;
 }
 
+interface CausalCommandObservation {
+	readonly operation: string;
+	readonly result: string;
+}
+
 function deferred(): Deferred {
 	let resolvePromise: (() => void) | undefined;
 	const promise = new Promise<void>((resolve) => {
@@ -190,6 +195,7 @@ export function assertPartialOrder(
 
 export interface CausalFixture {
 	readonly activeUseRuntime: ReturnType<typeof createGatewayControlOperationActiveUseRuntime>;
+	readonly commandObservations: readonly CausalCommandObservation[];
 	readonly connectionRotationCompleted: Promise<void>;
 	readonly evidence: readonly CausalEvidence[];
 	readonly firstLeaseCreationObserved: Promise<void>;
@@ -208,6 +214,7 @@ export interface CausalFixture {
 	emitCurrentBindingTransportFailure(): void;
 	rejectNextReadyUseWithStaleGatewayBinding(): void;
 	recordWaitingCallCompleted(acquisition: GatewayControlOperationActiveUseAcquisition): void;
+	rotateControlConnection(): Promise<void>;
 }
 
 export async function createCausalFixture(options: {
@@ -217,6 +224,7 @@ export async function createCausalFixture(options: {
 	readonly now?: () => number;
 }): Promise<CausalFixture> {
 	const now = options.now ?? Date.now;
+	const commandObservations: CausalCommandObservation[] = [];
 	const evidence: CausalEvidence[] = [];
 	const record = (
 		event: string,
@@ -681,6 +689,7 @@ export async function createCausalFixture(options: {
 	let firstAcceptedSession: GatewayControlAcceptedSession | undefined;
 	const rotatedConnectionObserved = deferred();
 	const controllerAuthorityRotated = deferred();
+	let firstControllerAttachmentGeneration: number | undefined;
 	const sessionObservation = gatewayService.observeSessionState((session) => {
 		if (session === undefined) {
 			observedDisconnect = firstAcceptedSession !== undefined;
@@ -704,6 +713,14 @@ export async function createCausalFixture(options: {
 		dispatcher,
 		endpoint: buildGatewayControlEndpoint(gatewayEndpoint.readiness),
 		material,
+		onAttachmentGap: (transition) => {
+			leaseManager.markControlSessionDisconnected({
+				gateway,
+				observedAtMs: transition.observedAtMs,
+				processEpoch: transition.processEpoch,
+				sessionAttachmentGeneration: transition.attachmentGeneration,
+			});
+		},
 		onHelloResponse: (response) => {
 			currentAuthority =
 				response.outcome === 'accepted'
@@ -717,8 +734,12 @@ export async function createCausalFixture(options: {
 							zoneId: material.zoneId,
 						}
 					: undefined;
-			if (response.outcome === 'accepted' && response.attachmentGeneration > 1) {
-				controllerAuthorityRotated.resolve();
+			if (response.outcome === 'accepted') {
+				if (firstControllerAttachmentGeneration === undefined) {
+					firstControllerAttachmentGeneration = response.attachmentGeneration;
+				} else if (response.attachmentGeneration > firstControllerAttachmentGeneration) {
+					controllerAuthorityRotated.resolve();
+				}
 			}
 		},
 		resolveInboundStablePrincipal: ({ envelope, message }) =>
@@ -771,6 +792,10 @@ export async function createCausalFixture(options: {
 				await leaseManager.releaseLease(request.message.payload.leaseId);
 			}
 			const response = await timeoutObservingCommandClient.sendCommand(request);
+			commandObservations.push({
+				operation: request.message.operation,
+				result: response.response.payload.result,
+			});
 			if (
 				request.message.operation === 'lease_reacquire' &&
 				response.response.operation === 'lease_reacquire' &&
@@ -835,12 +860,22 @@ export async function createCausalFixture(options: {
 			return response;
 		},
 	} satisfies GatewayRuntimeControlCommandClient;
-	const callerContextRegistrationClient = createGatewayControlCallerContextRegistrationClient({
+	const realCallerContextRegistrationClient = createGatewayControlCallerContextRegistrationClient({
 		agentAuthorityKeys: material.agentAuthorityKeys,
 		callerContextProofKey: material.callerContextProofKey,
 		controlCommandClient: realCommandClient,
 		controlService: gatewayService,
 	});
+	const callerContextRegistrationClient = {
+		close: async () => await realCallerContextRegistrationClient.close(),
+		register: async (
+			request: Parameters<typeof realCallerContextRegistrationClient.register>[0],
+		) => {
+			const registration = await realCallerContextRegistrationClient.register(request);
+			commandObservations.push({ operation: 'caller_context_register', result: 'ok' });
+			return registration;
+		},
+	};
 	let useIdIndex = 1;
 	const activeUseRuntime = createGatewayControlOperationActiveUseRuntime({
 		callerContextRegistrationClient,
@@ -865,6 +900,7 @@ export async function createCausalFixture(options: {
 			predecessorIdleRetirementArmed = true;
 		},
 		connectionRotationCompleted,
+		commandObservations,
 		evidence,
 		emitCurrentBindingTransportFailure: () => {
 			const currentFixture = strictSshFixtures.at(-1);
@@ -894,6 +930,27 @@ export async function createCausalFixture(options: {
 				currentAuthority?.attachmentGeneration ?? 0,
 				trustedContext.principal.agentId,
 			);
+		},
+		rotateControlConnection: async () => {
+			const controllerClient = controllerClientState.current;
+			if (controllerClient === undefined) {
+				throw new Error('Controller session is not connected.');
+			}
+			const diagnostics = controllerClient.getDiagnostics();
+			const attachmentGeneration = diagnostics.attachmentGeneration;
+			const sessionId = diagnostics.lastHelloResponse?.sessionId;
+			if (attachmentGeneration === undefined || sessionId === undefined) {
+				throw new Error('Controller session has no accepted attachment to rotate.');
+			}
+			const result = controllerClient.fenceCurrentSession({
+				expectedAttachmentGeneration: attachmentGeneration,
+				expectedSessionId: sessionId,
+				reason: 'reliability_test_disconnect',
+			});
+			if (result.status !== 'fenced') {
+				throw new Error('Controller session rotation did not fence the accepted attachment.');
+			}
+			await connectionRotationCompleted;
 		},
 		stalePublicationRejected,
 		successorProvisionalBootObserved: successorProvisionalBootObserved.promise,
