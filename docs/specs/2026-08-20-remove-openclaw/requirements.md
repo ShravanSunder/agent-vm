@@ -107,6 +107,9 @@ builds, tests, or publishes OpenClaw.
   managed VM, Gondolin, storage, or recovery semantics.
 - Repairing the known post-control-reattachment Tool VM binding-publication
   race or changing Hermes cache, retry, reconnect, or reacquisition behavior.
+- Making OpenClaw-specific idle-retirement, automatic-recovery, or repeated
+  replacement timing into new Hermes lifecycle requirements merely because the
+  removed OpenClaw E2E project exercised them.
 - Preserving OpenClaw configuration, state, conversations, auth profiles,
   plugin APIs, command names, image compatibility, or native-plugin behavior.
 - Building an automated OpenClaw-to-Hermes state migration.
@@ -139,6 +142,9 @@ Evidence must establish:
 - any known red recovery stress case has matching base-versus-cutover behavior
   and remains separately visible rather than being deleted, weakened, or
   presented as a cutover regression;
+- removed OpenClaw E2E behavior that is not equivalent to current Hermes
+  lifecycle semantics is explicitly classified and transferred to a separate
+  runtime owner rather than silently weakened, relabeled, or repaired here;
 - Hermes Tool Portal orientation retains its bounded startup inventory,
   profile/epoch/session isolation, prompt-cache stability, nonblocking failure
   behavior, and existing unit/integration/E2E evidence;

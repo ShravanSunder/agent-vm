@@ -206,7 +206,7 @@ The following is cutover work, not deferred follow-up:
 | Worker E2E | documented private test-key mapping plus `mise exec -- pnpm test:e2e:worker` at `1fa07bb1` | 3 files, 5/5 tests passed with zero skips; the bare command's 2-pass/3-skip result is not used as proof |
 | Retained Hermes files | Exact aggregate command rerun at `c8df1d36` | 5 files, 9/9 real Hermes tests passed with zero skips; the earlier 7/9 startup/root-health result did not reproduce |
 | Package inspection | `pnpm inspect:managed-vm-package-cut --expected-head 1fa07bb1...` | Passed for exactly 17 retained npm packages at synchronized `0.0.142`; packed members and sibling dependency versions inspected |
-| Proof-transfer ledger | Process/stream, protected SSH, generic Gateway subtree replacement, healthy-attachment no-replacement, and Gateway health stability rows transferred; reattachment row has terminal baseline-red differential evidence | Incomplete: pending idle retirement, stale reacquisition, fatal/repeated recovery, repeated current Tool VM access, and repeated no-flap observations remain |
+| Proof-transfer ledger | Same-or-stronger retained paths are transferred; reattachment remains baseline-red differential evidence; non-equivalent idle/reacquisition/automatic-recovery scenarios are assigned to the separate runtime owner | Resolved for this cutover: no pending row remains and no deferred row authorizes a Hermes behavior change |
 | OpenClaw residue audit | `pnpm exec tsx scripts/audit-openclaw-removal.ts` at `02745c94` | Passed with exit 0; OpenClaw package owners remain deleted and the integrated master differential adds no OpenClaw line |
 | Full quality gate | `UV_CACHE_DIR=/tmp/agent-vm-remove-openclaw-uv-cache pnpm check` after the restart/stress split | 16/16 passed: build, Optique CLI boundary, package/Zod guards, taxonomy, portal and VM boundaries, generated contracts, lint, format, type-aware lint, and typecheck |
 | Built CLI manual proof | Fresh OS-temp `macos-local` Hermes scaffold, validate, real Docker/Gondolin build, and removed `--type openclaw` rejection at `1fa07bb1` | Passed; generated runtime shape contains Hermes and Tool VM inputs and no OpenClaw runtime directory/config |
@@ -214,8 +214,10 @@ The following is cutover work, not deferred follow-up:
 
 Final cutover proof is present only when every row above has fresh evidence at
 the same integrated HEAD, every proof-transfer row has its allowed terminal
-disposition, and no live lane succeeds by skipping its gate. Inventory-only
-skips are recorded as inventory and never presented as runtime proof.
+disposition (`transferred`, `OpenClaw-only delete`, `baseline-red differential`,
+or `deferred runtime-owner qualification`), and no live lane succeeds by
+skipping its gate. Inventory-only skips are recorded as inventory and never
+presented as runtime proof.
 
 ### Fresh integrated merge receipt
 
@@ -235,8 +237,8 @@ skips are recorded as inventory and never presented as runtime proof.
   `16 passed, 0 failed`, exit 0.
 - Dedicated removal command:
   `pnpm exec tsx scripts/audit-openclaw-removal.ts`; exit 0.
-- Still incomplete after the fresh `c8df1d36` Hermes aggregate proof: pending
-  transfer-ledger rows and independent implementation review.
+- Still incomplete after the fresh `c8df1d36` Hermes aggregate proof: final
+  exact-HEAD checks and independent implementation review.
 
 ### Fresh integrated final-bundle progress at `1fa07bb1`
 
@@ -258,8 +260,9 @@ skips are recorded as inventory and never presented as runtime proof.
 
 ### New cutover proof break — idle retirement and stale reacquisition
 
-The exact idle-retirement and stale-reacquisition rows are still pending. A
-test-only port was attempted twice on the real Hermes path:
+The exact idle-retirement and stale-reacquisition scenarios are deferred to the
+separate runtime owner. Before that disposition, a test-only port was attempted
+twice on the real Hermes path:
 
 1. Hermes BaseEnvironment filesystem write/read with a 5-second configured
    lease TTL.
@@ -307,8 +310,8 @@ Current retained evidence proves a clean distinct Gateway restart, healthy
 attachment stability, root API health, and stable sibling identities. It does
 not yet prove fatal-framework-triggered automatic replacement, repeated fresh
 Tool VM access after replacement, or three-recovery no-flap behavior. These
-ledger rows remain pending rather than being inferred from the weaker restart
-case.
+ledger rows are recorded as deferred runtime-owner qualification rather than
+being inferred from the weaker restart case.
 
 ### Reattachment stress separation receipt
 

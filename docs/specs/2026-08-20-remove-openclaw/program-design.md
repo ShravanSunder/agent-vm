@@ -466,11 +466,14 @@ files remain under operator custody.
 
 Retained proof must keep each former framework-neutral real boundary visible.
 The live Hermes filesystem seam traverses the production adapter, Gateway
-Runtime, and selected Tool VM workspace. Separate retained live seams own idle
-Tool VM retirement, stale binding reacquisition, and protected
-controller-mediated Hermes SSH. The known baseline-red post-reattachment case
-remains independently runnable as differential non-regression evidence; it is
-not a green cutover gate and authorizes no runtime repair.
+Runtime, and selected Tool VM workspace. Protected controller-mediated Hermes
+SSH has a retained live seam. Removed OpenClaw lifecycle scenarios that do not
+map to current Hermes caching, active-use, idle-retirement, or automatic-recovery
+semantics are recorded in the post-removal WIP with a separate runtime owner;
+they do not authorize a Hermes runtime change or block the deletion-only
+cutover. The known baseline-red post-reattachment case remains independently
+runnable as differential non-regression evidence; it is not a green cutover
+gate and authorizes no runtime repair.
 
 ## Accepted-requirement realization
 
@@ -502,6 +505,10 @@ not a green cutover gate and authorizes no runtime repair.
 - Any requested Hermes version change, OpenClaw state migration, second managed
   framework, or mixed-version rollout reopens the Requirements and Specification
   boundary rather than extending this design.
+- Idle-retirement, stale-reacquisition, fatal-framework replacement, and
+  repeated-recovery qualification that requires new Hermes lifecycle behavior
+  belongs to the separate runtime owner recorded in
+  `docs/wip/2026-08-26-post-openclaw-removal-follow-ups.md`.
 
 ## Explicit exclusions
 

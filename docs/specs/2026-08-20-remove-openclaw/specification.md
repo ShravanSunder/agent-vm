@@ -186,6 +186,13 @@ fails on the exact pre-cutover baseline MAY remain red only when the cutover
 reproduces the same failure boundary, the test remains independently runnable,
 and the result is reported as a pre-existing defect rather than cutover proof.
 
+An OpenClaw E2E scenario MUST NOT become a new Hermes lifecycle obligation when
+the retained Hermes runtime has different existing cache, active-use, idle, or
+automatic-recovery semantics. Such a scenario MUST be recorded with its
+observed gap and separate runtime owner. Its deferral is acceptable cutover
+evidence only when the branch preserves current Hermes behavior and retains the
+strongest same-or-equivalent proof that actually fits the retained product.
+
 Hermes framework, Gateway Runtime, Tool Portal, controller, and Tool VM
 telemetry MUST remain attributable to their current service and agent/profile
 identities. OpenClaw telemetry identities and diagnostics extensions MUST NOT be
@@ -320,7 +327,7 @@ historical artifacts are undefined until separately authorized.
 | ID | Requirement coverage | Evidence class and pass condition |
 | --- | --- | --- |
 | V1 | R1, R2, C1, C3 | CLI transcript and generated-state inspection show Hermes init succeeds, generated output validates, Worker init is unchanged, and OpenClaw input is rejected without partial output. |
-| V2 | R2–R6 | Real managed Hermes runtime evidence shows Gateway boot, authenticated profile routing, Tool Portal calls, Tool VM execution, filesystem write/read, process/stream behavior, observability, green baseline recovery paths, and protected admin SSH. A known baseline-red recovery stress case uses exact base-versus-cutover comparison and remains separately visible. |
+| V2 | R2–R6 | Real managed Hermes runtime evidence shows Gateway boot, authenticated profile routing, Tool Portal calls, Tool VM execution, filesystem write/read, process/stream behavior, observability, green baseline recovery paths, and protected admin SSH. A known baseline-red recovery stress case uses exact base-versus-cutover comparison and remains separately visible. Non-equivalent OpenClaw lifecycle scenarios are classified with a separate runtime owner rather than converted into new Hermes behavior. |
 | V3 | R1, R8–R10 | Static source, schema, declaration, package-graph, generated-artifact, documentation, test-inventory, and build/release inspection finds no unclassified active OpenClaw surface and confirms the immutable Hermes pin. |
 | V4 | R1, R7 | Existing Worker automated and production-shaped behavior evidence remains green with unchanged external task contracts. |
 | V5 | R3–R6 | Allowed and denied security/recovery cases at real or integration boundaries prove profile isolation, secret mediation, approval and admin authorization, stale-generation fencing, typed failure, and sibling-safe containment. Known baseline-red behavior is evidence only of non-regression when reproduced at both exact identities. |
