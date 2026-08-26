@@ -82,9 +82,11 @@ Model-visible catalogs, call results, approval displays, diagnostics, and Gatewa
 
 Trace: U5, U6, U10 → O3, O6.
 
-### R3 — A credentialed target declares trusted runtime and binding names
+### R3 — A credentialed target declares trusted runtime, binding, and discovery names
 
-A credentialed `ephemeral_managed_vm` configured CLI operation MUST bind one non-empty authored `runtimeId`, one non-empty `credentialBinding`, and a strict non-empty `credentialFiles` array of at most 16 mappings. Each mapping MUST contain one logical `source` name from the selected agent binding and one unique UTF-8 `path` of at most 256 encoded bytes beneath the code-owned credential root. The path MUST be relative, use `/` separators, and contain only non-empty segments matching `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`; `.` and `..` segments, control characters, symlinks, and duplicate source or destination names MUST be rejected. These are trusted configuration fields and MUST NOT appear in public call input.
+A credentialed `ephemeral_managed_vm` configured CLI operation MUST bind one non-empty authored `runtimeId`, one non-empty `credentialBinding`, a strict non-empty `credentialFiles` array of at most 16 mappings, and a strict non-empty `credentialEnvironment` record of at most 16 entries. Each file mapping MUST contain one logical `source` name from the selected agent binding and one unique UTF-8 `path` of at most 256 encoded bytes beneath the code-owned credential root. The path MUST be relative, use `/` separators, and contain only non-empty segments matching `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`; `.` and `..` segments, control characters, symlinks, and duplicate source or destination names MUST be rejected.
+
+Each `credentialEnvironment` key MUST be a unique environment name matching `^[A-Za-z_][A-Za-z0-9_]*$`. Its value MUST select exactly one controller-generated path: `{ kind: "credential_root" }` resolves to the code-owned credential root, while `{ kind: "credential_file", source: <logical source name> }` resolves to that source's configured destination file. A `credential_file` source MUST occur exactly once in `credentialFiles`. Credential environment names MUST NOT overlap the target's ordinary inherited environment names. Callers MUST NOT provide or override file mappings, discovery environment names, or their resolved absolute paths.
 
 Operations with compatible executable, image, runtime policy, and authentication needs MAY use the same `runtimeId` and `credentialBinding`, allowing Calendar, Gmail, Drive, and other Gog operations for one agent to share a runtime. An operation requiring a different authentication identity, image, or incompatible runtime policy MUST use a different effective runtime identity.
 
@@ -103,6 +105,7 @@ All operations sharing one authored `runtimeId` in an effective profile MUST com
 - rootfs mode, code-owned resources, mount policy, and credential root;
 - allowed hosts and VM-level environment policy;
 - agent credential-binding name, authored binding revision, and credential-file mapping.
+- controller-authored credential-environment mapping.
 
 The runtime-group revision MUST exclude command paths, flag rules, approval disposition, reason, argv, stdin, command timeout, output bounds, and guest cwd when those remain per-call execution policy rather than VM-construction authority. Every call continues to bind its complete current operation policy through the existing per-call semantic revision and approval/direct authority.
 
@@ -164,6 +167,8 @@ The resolved credential value MUST NOT be written to:
 - the ordinary leased Tool VM workspace.
 
 Controller records MAY retain the non-secret authored binding revision, logical file names, destination paths, and lifecycle metadata needed to decide compatibility without retaining credential bytes or a content-derived secret fingerprint. Destroying the runtime MUST remove its memory-backed credential files. A new runtime MUST resolve its durable authentication material from 1Password again.
+
+Before guest start, the controller MUST resolve `credentialEnvironment` only to absolute paths beneath `/run/agent-vm/credentials` and combine those path values with the existing controller-derived ordinary environment. The projection MUST contain no credential bytes. The configured CLI MAY read credentials from those paths, but its mutable config, state, cache, token cache, downloads, and other ordinary writes MUST remain on rootfs/COW. For Gog service-account execution, `GOG_DATA_DIR` points to the credential root containing the correctly mapped service-account file, while Gog config, state, and cache remain on rootfs/COW.
 
 1Password values are resolved only when creating a runtime. Changing the authored binding or file mapping MUST change the runtime-group revision and retire or fence the old runtime. Changing only the value behind an unchanged `op://` reference is not polled while the runtime is live; it becomes effective on the next runtime creation. An operator requiring immediate replacement MUST explicitly retire that agent runtime. Runtime-local CLI caches and mutations are disposable. This release does not promise credential writeback to 1Password or persistence of runtime-mutated authentication state after retirement.
 
@@ -263,8 +268,11 @@ configured_cli.executionTarget
   ├── kind: ephemeral_managed_vm
   ├── runtimeId
   ├── credentialBinding ──────► current agent's bindingId
-  └── credentialFiles
-         └── sourceName ──────► relative path below credential root
+  ├── credentialFiles
+  │      └── sourceName ──────► relative path below credential root
+  └── credentialEnvironment
+         ├── ENV ─────────────► credential root
+         └── ENV ─────────────► one mapped credential file
 ```
 
 Profiles may be shared as policy. Credential bindings and runtime instances are agent-specific. Assigning another agent to a profile grants that profile's capabilities but does not supply a required credential binding; the second agent must receive its own explicit binding before credentialed calls can execute.
@@ -302,7 +310,7 @@ Profiles may be shared as policy. Credential bindings and runtime instances are 
 
 | ID | Observable obligation | Evidence class |
 | --- | --- | --- |
-| V1 | Configuration accepts agent-specific bounded 1Password file sets and credentialed target file mappings, and rejects missing agents/profiles/bindings/sources, non-1Password sources, unsafe or duplicate paths, excess files or bytes, unknown fields, and caller-authored authority. | Automated schema behavior and generated-schema inspection |
+| V1 | Configuration accepts agent-specific bounded 1Password file sets, credentialed target file mappings, and bounded controller-authored credential-environment mappings, and rejects missing agents/profiles/bindings/sources, non-1Password sources, unsafe or duplicate paths, excess files or bytes, invalid or overlapping environment names, unknown file sources, unknown fields, and caller-authored authority. | Automated schema behavior and generated-schema inspection |
 | V2 | Trusted Hermes agent identity selects exactly its immutable Tool Portal profile and credential binding; undeclared, mismatched, or forged identities dispatch zero effects. | Cross-process authorization integration and misuse cases |
 | V3 | Two compatible Gog operations for one agent reuse the same Managed VM while each independently follows direct or approval-required policy. | Controller/Tool Portal integration with runtime identity and effect observation |
 | V4 | Two agents assigned the same profile require separate credential bindings and receive distinct runtime identities, credential-materialization surfaces, mutable state, and VMs. | Cross-process integration with per-agent state and VM observations |
@@ -311,7 +319,7 @@ Profiles may be shared as policy. Credential bindings and runtime instances are 
 | V7 | A completed command's runtime-local state is visible to the next compatible command and absent from a new runtime after retirement. | Real Managed VM state inspection across calls and retirement |
 | V8 | Active work survives idle-reaper passes; reuse before 900,000 ms retains the VM; expiry after 900,000 idle ms retires it; a later call creates a new VM. | Deterministic clock integration plus real Managed VM lifecycle evidence |
 | V9 | Every enumerated runtime-group input change prevents reuse, while a per-call-only policy change stales call authority without unnecessary runtime retirement; ambiguous containment blocks adoption and unsafe succession. | Table-driven compatibility behavior plus controller/VM lifecycle integration |
-| V10 | Runtime creation resolves the correct bounded 1Password file set, enforces paths, sizes, and modes, exposes it only inside the memory-backed credential surface, writes no credential value into rootfs/COW, and stores no credential value or secret-derived fingerprint in SQLite, effective config, runtime records, logs, or results. An unchanged live binding is not re-resolved; explicit retirement causes the next VM to receive the changed value. | 1Password E2E, state inspection, rotation/retirement transcript, and leakage/misuse analysis |
+| V10 | Runtime creation resolves the correct bounded 1Password file set, enforces paths, sizes, and modes, exposes it only inside the memory-backed credential surface, projects only controller-generated credential paths through the authored credential environment, and writes no credential value into rootfs/COW. The real CLI consumes the mounted credential while mutable CLI state remains on COW. SQLite, effective config, runtime records, logs, and results contain no credential value or secret-derived fingerprint. An unchanged live binding is not re-resolved; explicit retirement causes the next VM to receive the changed value. | 1Password E2E, real CLI execution, state inspection, rotation/retirement transcript, and leakage/misuse analysis |
 | V11 | Hermes receives per-call results and approval interactions but no runtime lease, VM identity, credential reference, or credential value. | Real Hermes interaction and private-contract inspection |
 | V12 | Real credentialed configured CLI execution occurs in a Managed VM, cannot observe a controller-host sentinel, uses direct argv, and never enters leased Tool VM SSH. | Real Managed VM E2E plus host-sentinel and Tool VM regression evidence |
 | V13 | Hard-cut configuration and runtime behavior provide no one-shot lifetime, second target, host fallback, or compatibility alias. | Generated-schema inspection, static boundary inspection, and runtime target observation |

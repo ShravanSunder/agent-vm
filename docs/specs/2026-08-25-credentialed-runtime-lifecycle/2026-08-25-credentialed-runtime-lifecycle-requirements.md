@@ -70,6 +70,8 @@ At most one command executes in an agent runtime. A concurrent same-runtime call
 
 Each agent's credential binding resolves a bounded set of named file contents from 1Password into a memory-backed credential surface when a runtime is established. Normal CLI working files and caches use the runtime rootfs/COW overlay. Both may remain only for that runtime's lifetime. A fresh runtime must be establishable from those 1Password-backed files without recovering a credential blob from controller SQLite or a prior runtime record.
 
+The authored credentialed target may bind controller-generated guest credential paths to a bounded set of environment names so a generic CLI can discover either the credential root or one mapped credential file. Callers cannot provide those environment names or values. The CLI's mutable config, state, cache, and other ordinary working files remain on rootfs/COW rather than the read-only credential surface.
+
 ### O7 — Idle retirement is fixed and active-use aware
 
 The runtime becomes idle after its final active command reaches a terminal outcome. A compatible admitted call within 15 minutes may reuse it and begin a new active command. If 15 idle minutes elapse, the controller retires the runtime. Active work is not idle.
@@ -94,6 +96,7 @@ A new runtime starts from a prepared immutable image containing the configured C
 
 - This correction extends configured CLI credential and lifecycle behavior; it does not change `controller_host`, `tool_vm_runner`, registered-action executors, or the existing Hermes approval presenter.
 - It does not expose SSH, shell, filesystem browsing, VM handles, lease handles, runtime selection, credential maintenance, or arbitrary process authority to the model or framework.
+- It does not let callers select credential-discovery environment names or values. Those are trusted runtime-shaping configuration and can resolve only to the code-owned credential root or one configured credential file.
 - It does not create a second per-agent capability-authorization list. Existing agent-to-profile assignment remains the capability grant; agent-specific credential bindings select authentication material.
 - It does not make a Tool Portal profile imply shared authentication or a shared runtime between agents.
 - It does not store credential plaintext or encrypted credential blobs in controller SQLite, runtime records, approval records, or lifecycle ledgers.
@@ -106,7 +109,7 @@ A new runtime starts from a prepared immutable image containing the configured C
 
 ## Accepted complexity
 
-Accepted complexity is one agent-specific credential-binding extension to existing Tool Portal assignment, one reusable lifecycle for the existing credentialed Managed VM target, one active-command slot per agent runtime with no queue, fixed 15-minute idle retirement, a prepared CLI image with a disposable rootfs/COW overlay that is never checkpointed, and reuse of existing controller authority and Managed VM capabilities.
+Accepted complexity is one agent-specific credential-binding extension to existing Tool Portal assignment, one bounded controller-authored credential-discovery environment mapping, one reusable lifecycle for the existing credentialed Managed VM target, one active-command slot per agent runtime with no queue, fixed 15-minute idle retirement, a prepared CLI image with a disposable rootfs/COW overlay that is never checkpointed, and reuse of existing controller authority and Managed VM capabilities.
 
 A second runtime target, shared-agent credential mode, configurable idle TTL, generic writeback system, credential database, external lease API, new presenter, host containment system, or compatibility path requires renewed owner approval.
 
@@ -123,6 +126,7 @@ Completion evidence must separately demonstrate:
 - active work prevents idle retirement, a call within 15 idle minutes reuses the runtime, and a call after retirement establishes a new runtime;
 - agent, runtime, image, authored credential binding, runtime-shaping policy, ownership, health, or containment incompatibility prevents reuse and retires or fences the prior runtime;
 - a fresh runtime resolves its agent-specific authentication from 1Password without reading credentials from controller SQLite or lifecycle records;
+- a real prepared generic CLI discovers the correct mounted credential through controller-authored environment projection while its mutable config, state, and cache remain on rootfs/COW;
 - Hermes and the model receive per-call results but no credential reference, credential value, VM identity, or runtime-lease authority;
 - real Managed VM execution proves the credentialed CLI cannot exercise controller-host filesystem authority and remains separate from leased Tool VM SSH.
 - a new runtime finds the configured CLI already installed, performs no runtime package installation or stopped-runtime restore, and loses a rootfs marker after retirement and replacement.
