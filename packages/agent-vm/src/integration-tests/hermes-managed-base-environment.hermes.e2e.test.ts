@@ -1,18 +1,22 @@
 /* oxlint-disable eslint/no-await-in-loop -- live readiness uses bounded sequential protocol probes */
+import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { promisify } from 'node:util';
 
 import { wrapWithHermesShellEnvironment } from '@agent-vm/hermes-gateway';
 import type { ManagedVmCreateRequest } from '@agent-vm/managed-vm';
 import { afterAll, describe, expect, it } from 'vitest';
 
+import { zoneSshAccessResponseSchema } from '../cli/ssh-commands.js';
 import {
 	connectGatewayControlSession,
 	GATEWAY_CONTROL_RECONNECT_DEADLINE_MS,
 	GATEWAY_CONTROL_RECONNECT_MAX_ATTEMPTS,
 	type GatewayDisposableControlSessionClient,
 } from '../controller/control-session/index.js';
+import { createControllerClient } from '../controller/http/controller-client.js';
 import {
 	startControlTransportReliabilityProxy,
 	type ControlTransportReliabilityProxy,
@@ -77,6 +81,7 @@ const frameworkGapMarker = 'HERMES_FRAMEWORK_AVAILABLE_DURING_CONTROL_GAP';
 const toolVmRecoveryMarker = 'HERMES_TOOL_VM_RECOVERY_OK';
 const filesystemMarker = 'HERMES_STOCK_FILESYSTEM_WRITE_READ_OK';
 const filesystemIsolationMarker = 'HERMES_FILESYSTEM_PROFILE_ISOLATION_OK';
+const execFileAsync = promisify(execFile);
 
 interface ManagedGatewayStartObservation {
 	readonly controlSession: GatewayDisposableControlSessionClient;
@@ -769,6 +774,17 @@ describeHermesManagedEnvironmentE2e(
 			let filesystemHarness: E2eHarnessRuntime | undefined;
 			try {
 				configureHermesSecrets(filesystemProject);
+				const filesystemSystemZone = filesystemProject.systemConfig.zones[0];
+				if (
+					filesystemSystemZone === undefined ||
+					filesystemSystemZone.id !== filesystemProject.zone.id
+				) {
+					throw new Error('Hermes filesystem E2E loaded zone does not match its projection.');
+				}
+				filesystemSystemZone.adminAccess = {
+					mode: 'secret',
+					secret: { source: 'config', value: 'hermes-protected-ssh-e2e-token' },
+				};
 				await materializeNativeProfileLeaves(filesystemProject);
 				await writeFile(
 					filesystemProject.zone.gateway.config,
@@ -817,6 +833,44 @@ describeHermesManagedEnvironmentE2e(
 					}),
 				).toContain(filesystemIsolationMarker);
 				expect(filesystemEpoch.toolVmCreateRequests).toHaveLength(2);
+
+				const controllerClient = createControllerClient({
+					baseUrl: filesystemHarness.controllerUrl,
+				});
+				await expect(
+					controllerClient.enableZoneSsh(filesystemProject.zone.id, {
+						adminToken: 'wrong-hermes-protected-ssh-e2e-token',
+					}),
+				).rejects.toThrow(/HTTP 403/u);
+				const sshAccess = zoneSshAccessResponseSchema.parse(
+					await controllerClient.enableZoneSsh(filesystemProject.zone.id, {
+						adminToken: 'hermes-protected-ssh-e2e-token',
+					}),
+				);
+				if (
+					sshAccess.host === undefined ||
+					sshAccess.identityFile === undefined ||
+					sshAccess.port === undefined
+				) {
+					throw new Error('Controller returned incomplete protected Hermes SSH access.');
+				}
+				const sshResult = await execFileAsync(
+					'ssh',
+					[
+						'-o',
+						'StrictHostKeyChecking=no',
+						'-o',
+						'UserKnownHostsFile=/dev/null',
+						'-i',
+						sshAccess.identityFile,
+						'-p',
+						String(sshAccess.port),
+						`${sshAccess.user ?? 'root'}@${sshAccess.host}`,
+						wrapWithHermesShellEnvironment('printf "%s|%s" "$HERMES_HOME" "$HERMES_TUI_DIR"'),
+					],
+					{ timeout: 30_000 },
+				);
+				expect(sshResult.stdout).toBe('/home/hermes/.hermes|/opt/hermes/ui-tui');
 			} finally {
 				try {
 					await filesystemHarness?.close();

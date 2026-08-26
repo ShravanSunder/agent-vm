@@ -28,8 +28,8 @@ cases retain equal-or-stronger proof through Hermes or generic VM lanes.
 | controller-execution workspace Git route | transferred | `hermes-tool-portal-orientation.hermes.e2e.test.ts` |
 | repeated recovery without flap | pending retained proof | retained Hermes recovery lane must observe repeated recovery without sibling flap |
 | exact idle Tool VM retirement | pending retained proof | explicit leaf replacement does not prove idle-TTL retirement |
-| protected controller-mediated Hermes SSH | pending retained proof | real controller and Hermes VM SSH path; unit stubs and direct VM inspection are insufficient |
-| managed process and bounded stream operations | pending transfer audit | confirm retained real-VM process/stream coverage and port only missing operations |
+| protected controller-mediated Hermes SSH | transferred | `hermes-managed-base-environment.hermes.e2e.test.ts` exercises wrong-token denial, controller-issued access, real SSH, and the Hermes shell environment through the live Gateway VM |
+| managed process and bounded stream operations | transferred | `gateway-runtime-sandbox.vm.e2e.test.ts` exercises real private-UDS process start/wait plus strict-SSH stream write/close/read |
 | OpenClaw plugin, channel, subagent, and native API behavior | OpenClaw-only delete | none |
 
 `transferred` means the retained target passes after the final contract and
