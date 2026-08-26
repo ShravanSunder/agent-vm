@@ -199,17 +199,17 @@ The following is cutover work, not deferred follow-up:
 | Proof layer | Last evidence | Current status before cleanup |
 | --- | --- | --- |
 | Core removal implementation | Commits `859bfa43`, `eeae0213`, and `7d833519`; master integration `02745c94` | Committed and integrated with `origin/master` at `cbba8890`; exact master differential adds no OpenClaw line |
-| Unit | 4,334/4,334 at `eeae0213`; 187/187 focused merge-resolution assertions before `02745c94` | Focused shared-contract/controller/manual proof is fresh; full unit lane remains pending at integrated HEAD |
-| Integration | 820/820 at `eeae0213`; 69/69 focused merge-resolution tests before `02745c94` | Focused orchestrator/approval/managed Tool Portal proof is fresh; full integration lane remains pending at integrated HEAD |
-| Host E2E | 234/234 at `eeae0213` | Passed previously; stale after current dirty changes and upstream integration |
-| Generic VM E2E | 17/17 at `eeae0213` | Passed previously; the new process/stream observation has a separate selected real-VM pass but is uncommitted |
-| Worker E2E | 5/5 at `eeae0213` | Passed previously; must remain green after integration |
-| Retained Hermes files | 7/7 plus stock filesystem/profile 1/1 | Passed previously; protected SSH test is currently red because it mutates a copied zone view |
-| Package inspection | Quality gate confirms 17 npm and 2 Python packages synchronized at `0.0.142` | Version synchronization is fresh; final packed-artifact inspection remains pending at integrated HEAD |
-| Proof-transfer ledger | Process/stream row transferred | Incomplete: pending idle retirement, stale reacquisition, health/replacement/no-flap, current Tool VM access, and protected SSH observations remain |
+| Unit | `pnpm test:unit` at `1fa07bb1` | 383 files, 4,340/4,340 tests passed; taxonomy passed |
+| Integration | `pnpm test:integration` at `1fa07bb1` | 61 files, 830/830 tests passed |
+| Host E2E | `pnpm test:e2e:host` at `1fa07bb1` with required host permissions | 30 files, 234/234 tests passed; the first sandboxed attempt failed only on blocked uv, Docker, and host-process access |
+| Generic VM E2E | `mise exec -- pnpm test:e2e:vm` at `1fa07bb1` | 11 files, 17/17 real VM tests passed, including process/stream and leaf-replacement proof |
+| Worker E2E | documented private test-key mapping plus `mise exec -- pnpm test:e2e:worker` at `1fa07bb1` | 3 files, 5/5 tests passed with zero skips; the bare command's 2-pass/3-skip result is not used as proof |
+| Retained Hermes files | Selected green files total 9/9 across approval, profile secrets, observability, Tool Portal orientation, stock filesystem/profile/protected SSH, and clean restart | Selected real Hermes proof is green; the complete named lane is not: 7/9 passed and two otherwise-green files failed at Gateway startup/root-health under aggregate execution |
+| Package inspection | `pnpm inspect:managed-vm-package-cut --expected-head 1fa07bb1...` | Passed for exactly 17 retained npm packages at synchronized `0.0.142`; packed members and sibling dependency versions inspected |
+| Proof-transfer ledger | Process/stream, protected SSH, generic Gateway subtree replacement, healthy-attachment no-replacement, and Gateway health stability rows transferred; reattachment row has terminal baseline-red differential evidence | Incomplete: pending idle retirement, stale reacquisition, fatal/repeated recovery, repeated current Tool VM access, and repeated no-flap observations remain |
 | OpenClaw residue audit | `pnpm exec tsx scripts/audit-openclaw-removal.ts` at `02745c94` | Passed with exit 0; OpenClaw package owners remain deleted and the integrated master differential adds no OpenClaw line |
-| Full quality gate | `UV_CACHE_DIR=/tmp/agent-vm-remove-openclaw-uv-cache pnpm check` after merge resolution | 16/16 passed before `02745c94`: build, Optique CLI boundary, package/Zod guards, taxonomy, portal and VM boundaries, generated contracts, lint, format, type-aware lint, and typecheck |
-| Built CLI manual proof | Fresh Hermes scaffold/validate/build passed before the current dirty changes | Must be repeated after cleanup and integration; removed OpenClaw commands must still be rejected |
+| Full quality gate | `UV_CACHE_DIR=/tmp/agent-vm-remove-openclaw-uv-cache pnpm check` after the restart/stress split | 16/16 passed: build, Optique CLI boundary, package/Zod guards, taxonomy, portal and VM boundaries, generated contracts, lint, format, type-aware lint, and typecheck |
+| Built CLI manual proof | Fresh OS-temp `macos-local` Hermes scaffold, validate, real Docker/Gondolin build, and removed `--type openclaw` rejection at `1fa07bb1` | Passed; generated runtime shape contains Hermes and Tool VM inputs and no OpenClaw runtime directory/config |
 | Independent implementation review | Earlier review produced proof-transfer corrections | No fresh ready verdict exists for the final cleaned and integrated branch |
 
 Final cutover proof is present only when every row above has fresh evidence at
@@ -235,10 +235,86 @@ skips are recorded as inventory and never presented as runtime proof.
   `16 passed, 0 failed`, exit 0.
 - Dedicated removal command:
   `pnpm exec tsx scripts/audit-openclaw-removal.ts`; exit 0.
-- Not yet proven at `02745c94`: full unit/integration counts, live host/VM/
-  Hermes/Worker lanes, packed artifacts, built-CLI scaffold and removed-command
-  behavior, pending transfer-ledger rows, and independent implementation
-  review.
+- Still incomplete after the `1fa07bb1` bundle: pending transfer-ledger rows,
+  the aggregate Hermes-lane startup interference, and independent
+  implementation review.
+
+### Fresh integrated final-bundle progress at `1fa07bb1`
+
+- Unit: 4,340/4,340 passed.
+- Integration: 830/830 passed.
+- Host E2E: 234/234 passed with the real host permissions required by the
+  lane.
+- E2E inventory: 1 inventory test passed and 38 runtime tests skipped by closed
+  gates; inventory only, not runtime proof.
+- Generic VM: 17/17 passed.
+- Worker: 5/5 passed with the test-only model credential mapped; zero skips.
+- Hermes green: 7/7 across approval, profile-secret, observability, and Tool
+  Portal orientation files, plus 1/1 stock filesystem/profile/protected SSH and
+  1/1 independently green restart/healthy-attachment stability.
+- Package cut: exactly 17 retained npm packages packed and inspected at
+  `0.0.142`.
+- Built CLI: fresh Hermes scaffold succeeded, static validation returned
+  `ok: true`, the real registry-backed Docker/Gondolin build succeeded with
+  Hermes `0.20.0`, and `--type openclaw` was rejected by the Optique parser.
+
+### New cutover proof break — idle retirement and stale reacquisition
+
+The exact idle-retirement and stale-reacquisition rows are still pending. A
+test-only port was attempted twice on the real Hermes path:
+
+1. Hermes BaseEnvironment filesystem write/read with a 5-second configured
+   lease TTL.
+2. Generic Hermes `tool_call -> tool_portal_call -> tool_vm_runner` filesystem
+   write/read with the same TTL.
+
+Both completed their live Tool VM operation, then retained the exact lease
+record and QEMU process beyond a 180-second protocol deadline. The second path
+matches the deleted proof's framework-neutral Tool Portal semantics, so this is
+not resolved by relabeling existing explicit leaf replacement.
+
+The failed test experiment was removed; no red or weakened test was committed.
+The next read-only proof must capture the live effective idle TTL, active-use
+state or release failure evidence through existing seams. If a runtime change is
+required, it is outside this branch's accepted proof-only boundary and needs a
+separate owner decision. Investigation receipt:
+`tmp/debug-workflows/2026-08-26-agent-vm-remove-openclaw-hermes-idle-retirement/debug-investigation.md`.
+
+### Reattachment stress separation receipt
+
+`hermes-managed-base-environment.hermes.e2e.test.ts` now keeps its ordinary
+restart proof green while retaining the same post-control-reattachment tail
+behind `AGENT_VM_HERMES_REATTACHMENT_STRESS=1`.
+
+- Gate closed: 1/1 restart test passed. It proves a distinct second Gateway VM
+  epoch, root API health, unchanged framework and Tool Portal sibling process
+  identities during ordinary work, preserved native profile leaves, and no
+  healthy-attachment replacement.
+- Gate open: the same current-head test remains red on the first affected Tool
+  VM call with `Gateway runtime method dispatch failed`, matching the previously
+  recorded exact-base failure boundary.
+- The assertion still expects `HERMES_TOOL_VM_RECOVERY_OK`; no expected-failure
+  conversion, retry, or second-call fallback was added.
+
+### Aggregate Hermes lane receipt
+
+The complete named lane was run after the restart/stress split:
+
+`AGENT_VM_E2E_SKIP_WORKSPACE_BUILD=1 mise exec -- pnpm test:e2e:hermes`
+
+Result: 3 files passed, 2 files failed; 7 tests passed and 2 failed.
+
+- `hermes-managed-base-environment.hermes.e2e.test.ts` failed before its stock
+  filesystem assertion because the harness did not observe a managed Gateway
+  start. Its selected filesystem/profile/protected-SSH case passes alone.
+- `hermes-framework-observability.hermes.e2e.test.ts` timed out waiting for the
+  root API health endpoint. Its selected observability case passes alone.
+- The newly separated clean restart case passed in the aggregate.
+
+The aggregate result is an evidence gap and is not relabeled green. No test was
+skipped, retried into success, or weakened. The next investigation must retain
+Gateway startup/service logs for the two aggregate-only failures and determine
+whether shared image/cache/port/observability teardown is the collision.
 
 ## Closing state
 

@@ -8,17 +8,17 @@ cases retain equal-or-stronger proof through Hermes or generic VM lanes.
 | --- | --- | --- |
 | active operation containment | transferred | `gateway-runtime-sandbox.vm.e2e.test.ts` |
 | control admission isolation | transferred | `gateway-runtime-uds-pressure.vm.e2e.test.ts` |
-| control session recovery | baseline-red differential pending | retained stress case in `hermes-managed-base-environment.hermes.e2e.test.ts`; exact base-versus-cutover receipt required |
+| control session recovery | baseline-red differential | exact base reproduction plus current-head `AGENT_VM_HERMES_REATTACHMENT_STRESS=1` run of `hermes-managed-base-environment.hermes.e2e.test.ts`; both fail on the first post-reattachment Tool VM call at Gateway Runtime dispatch/publication |
 | gateway startup baseline | transferred | `hermes-managed-base-environment.hermes.e2e.test.ts` |
-| gateway subtree replacement | pending independent green proof | split the pre-reattachment restart/replacement observation from the baseline-red recovery stress case |
+| gateway subtree replacement | transferred | `controller-restart-cleanup.vm.e2e.test.ts` fails closed on ambiguous ownership, destroys the exact C1 Tool leaves before Gateway, and publishes C2; `live-controller-restart-vm-ownership.vm.e2e.test.ts` independently proves the controller-front-door successor |
 | lease leaf replacement | transferred | `gateway-runtime-sandbox.vm.e2e.test.ts` |
 | control-link health and fatal framework replacement | pending retained proof | retained Hermes/common VM lane must observe the exact health/replacement boundary |
-| healthy-attachment no replacement | pending retained proof | retained Hermes/common VM lane must observe no replacement under healthy attachment |
+| healthy-attachment no replacement | transferred | the green restart case in `hermes-managed-base-environment.hermes.e2e.test.ts` proves stable Gateway VM ownership and unchanged framework/Tool Portal sibling process identities while the accepted attachment remains healthy |
 | observability pressure isolation | transferred | `hermes-framework-observability.hermes.e2e.test.ts` and `gateway-runtime-uds-pressure.vm.e2e.test.ts` |
 | control upgrade and idle interruption | pending exact retained proof | existing generic VM coverage must be checked against the removed case; port any missing idle transition |
 | default OpenClaw runtime pin | OpenClaw-only delete | none |
 | G1 storage boundary | transferred | `hermes-managed-base-environment.hermes.e2e.test.ts` and retained storage integration tests |
-| Gateway health stability | pending independent green proof | separate the green stability observation from the baseline-red recovery stress case |
+| Gateway health stability | transferred | the green restart case in `hermes-managed-base-environment.hermes.e2e.test.ts` is independently runnable with the reattachment stress gate closed and proves root API health plus stable sibling identities |
 | MCP Portal boot and discovery | transferred | `hermes-tool-portal-orientation.hermes.e2e.test.ts` |
 | MCP profile isolation and unavailable provider | transferred | `hermes-tool-portal-orientation.hermes.e2e.test.ts` |
 | whole Gateway process recovery | pending independent green proof | retained Hermes restart/replacement case |

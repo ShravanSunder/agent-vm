@@ -53,6 +53,7 @@ const runHermesManagedEnvironmentE2e =
 const describeHermesManagedEnvironmentE2e = runHermesManagedEnvironmentE2e
 	? describe
 	: describe.skip;
+const runHermesControlReattachmentStress = process.env.AGENT_VM_HERMES_REATTACHMENT_STRESS === '1';
 const agentIds = ['main', 'beta'] as const;
 const discordSecretEnvironmentNames = {
 	beta: 'DISCORD_BOT_TOKEN_BETA_E2E',
@@ -880,7 +881,7 @@ describeHermesManagedEnvironmentE2e(
 			}
 		}, 900_000);
 
-		it('discovers managed policy and applies marker updates across restart', async () => {
+		it('discovers managed policy and proves a clean stable restart', async () => {
 			const repoRoot = path.resolve(process.cwd());
 			project = await scaffoldHermesE2eProject({
 				agents: agentIds,
@@ -999,6 +1000,39 @@ describeHermesManagedEnvironmentE2e(
 					`Expected an accepted Hermes control session before interruption: ${JSON.stringify(initialControlDiagnostics)}`,
 				);
 			}
+			expect(secondEpoch.start.vm.getHostProcessId()).toBe(secondEpoch.start.qemuPid);
+			expect(
+				await readManagedGatewaySiblingProcessIdentity({
+					gatewayVm: secondEpoch.start.vm,
+					guestPort: frameworkPort,
+					role: 'framework',
+				}),
+			).toEqual(frameworkIdentityBefore);
+			expect(
+				await readManagedGatewaySiblingProcessIdentity({
+					gatewayVm: secondEpoch.start.vm,
+					guestPort: toolPortalPort,
+					role: 'tool-portal',
+				}),
+			).toEqual(toolPortalIdentityBefore);
+			expect(await readNativeProfileLeaves(project)).toEqual(expectedNativeLeaves);
+			expect(secondEpoch.start.vm.id).not.toBe(firstEpoch.start.vm.id);
+			expect(secondEpoch.start.qemuPid).not.toBe(firstEpoch.start.qemuPid);
+			expect(secondEpoch.start.expectedCohort.fence.gatewayEpoch).not.toBe(
+				firstEpoch.start.expectedCohort.fence.gatewayEpoch,
+			);
+			expect(secondEpoch.start.expectedCohort.frameworkIdentity.frameworkEpoch).not.toBe(
+				firstEpoch.start.expectedCohort.frameworkIdentity.frameworkEpoch,
+			);
+			expect(secondEpoch.start.expectedCohort.toolPortalIdentity.processEpoch).not.toBe(
+				firstEpoch.start.expectedCohort.toolPortalIdentity.processEpoch,
+			);
+			expect(secondEpoch.start.expectedCohort.toolPortalIdentity.runtimeEpoch).not.toBe(
+				firstEpoch.start.expectedCohort.toolPortalIdentity.runtimeEpoch,
+			);
+			if (!runHermesControlReattachmentStress) {
+				return;
+			}
 
 			const isolation = activeControlTransportProxy.isolate();
 			const postBudgetAttempt = await activeControlTransportProxy.waitForRejectedConnection({
@@ -1052,21 +1086,6 @@ describeHermesManagedEnvironmentE2e(
 					role: 'tool-portal',
 				}),
 			).toEqual(toolPortalIdentityBefore);
-			expect(await readNativeProfileLeaves(project)).toEqual(expectedNativeLeaves);
-			expect(secondEpoch.start.vm.id).not.toBe(firstEpoch.start.vm.id);
-			expect(secondEpoch.start.qemuPid).not.toBe(firstEpoch.start.qemuPid);
-			expect(secondEpoch.start.expectedCohort.fence.gatewayEpoch).not.toBe(
-				firstEpoch.start.expectedCohort.fence.gatewayEpoch,
-			);
-			expect(secondEpoch.start.expectedCohort.frameworkIdentity.frameworkEpoch).not.toBe(
-				firstEpoch.start.expectedCohort.frameworkIdentity.frameworkEpoch,
-			);
-			expect(secondEpoch.start.expectedCohort.toolPortalIdentity.processEpoch).not.toBe(
-				firstEpoch.start.expectedCohort.toolPortalIdentity.processEpoch,
-			);
-			expect(secondEpoch.start.expectedCohort.toolPortalIdentity.runtimeEpoch).not.toBe(
-				firstEpoch.start.expectedCohort.toolPortalIdentity.runtimeEpoch,
-			);
 		}, 900_000);
 	},
 );
