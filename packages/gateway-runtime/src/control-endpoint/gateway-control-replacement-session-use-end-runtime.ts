@@ -111,25 +111,33 @@ export function createGatewayControlReplacementSessionUseEndRuntime(
 				) {
 					return false;
 				}
-				const useEndResults = await Promise.all(
-					Array.from(pendingUses.values(), async (pendingUse) => ({
-						ended: await props.endUse({
-							acceptedSession,
-							callerContext,
-							leaseId: pendingUse.leaseId,
-							reason: pendingUse.reason,
-							useId: pendingUse.useId,
-						}),
-						useId: pendingUse.useId,
-					})),
-				);
-				for (const result of useEndResults) {
-					if (result.ended) pendingUses.delete(result.useId);
-				}
-				if (useEndResults.some((result) => !result.ended)) return false;
-				if (pendingUses.size === 0) {
-					pendingUsesByPrincipal.delete(request.stablePrincipal);
-				}
+				const drainPendingUses = async (): Promise<boolean> => {
+					if (pendingUses.size === 0) return true;
+					const useEndResults = await Promise.all(
+						Array.from(pendingUses.values(), async (pendingUse) => ({
+							ended: await props.endUse({
+								acceptedSession,
+								callerContext,
+								leaseId: pendingUse.leaseId,
+								reason: pendingUse.reason,
+								useId: pendingUse.useId,
+							}),
+							pendingUse,
+						})),
+					);
+					for (const result of useEndResults) {
+						if (result.ended && pendingUses.get(result.pendingUse.useId) === result.pendingUse) {
+							pendingUses.delete(result.pendingUse.useId);
+						}
+					}
+					if (useEndResults.some((result) => !result.ended)) return false;
+					if (closed || props.controlService.getCurrentAcceptedSession() !== acceptedSession) {
+						return false;
+					}
+					return await drainPendingUses();
+				};
+				if (!(await drainPendingUses())) return false;
+				pendingUsesByPrincipal.delete(request.stablePrincipal);
 				return true;
 			} catch {
 				return false;

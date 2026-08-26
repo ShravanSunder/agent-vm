@@ -200,6 +200,32 @@ function rejectedLeaseUseRequiresBindingRecovery(
 		case 'runtime_not_ready':
 			return false;
 	}
+	const exhaustiveReason: never = reason;
+	return exhaustiveReason;
+}
+
+function rejectedLeaseUseProvesTerminalAbsence(
+	reason: GatewayControlLeaseRejectionReason,
+): boolean {
+	switch (reason) {
+		case 'lease_absent':
+		case 'lease_authority_absent':
+		case 'lease_force_released':
+		case 'lease_retired':
+		case 'lease_use_tombstoned':
+			return true;
+		case 'caller_context_absent':
+		case 'caller_context_session_mismatch':
+		case 'caller_context_stale':
+		case 'lease_generation_stale':
+		case 'lease_reacquire_required':
+		case 'lease_releasing':
+		case 'ownership_denied':
+		case 'runtime_not_ready':
+			return false;
+	}
+	const exhaustiveReason: never = reason;
+	return exhaustiveReason;
 }
 
 function bindingGenerationsMatch(
@@ -382,7 +408,7 @@ export function createGatewayControlOperationActiveUseRuntime(
 				return false;
 			}
 			if (response.response.payload.result === 'rejected') {
-				return rejectedLeaseUseRequiresBindingRecovery(
+				return rejectedLeaseUseProvesTerminalAbsence(
 					response.response.payload.leaseRejectionReason,
 				);
 			}

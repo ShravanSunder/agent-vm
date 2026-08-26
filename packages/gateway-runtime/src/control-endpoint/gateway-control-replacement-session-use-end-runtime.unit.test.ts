@@ -153,6 +153,60 @@ describe('Gateway control replacement-session use-end runtime', () => {
 		expect(endUse).toHaveBeenCalledOnce();
 	});
 
+	it('drains a same-principal use queued while predecessor cleanup is pending', async () => {
+		// Arrange
+		const firstEndResult = deferred<boolean>();
+		const secondEndResult = deferred<boolean>();
+		const register = vi.fn(
+			async (): Promise<GatewayControlRegisteredCallerContext> => ({
+				admissionPrincipal: stablePrincipalA,
+				callerContextId: '11111111-1111-4111-8111-111111111111',
+			}),
+		);
+		const endUse = vi
+			.fn()
+			.mockImplementationOnce(async () => await firstEndResult.promise)
+			.mockImplementationOnce(async () => await secondEndResult.promise);
+		const runtime = createGatewayControlReplacementSessionUseEndRuntime({
+			callerContextRegistrationClient: { register },
+			controlService: { getCurrentAcceptedSession: () => sessionB },
+			endUse,
+		});
+		runtime.queue({
+			leaseId: 'lease-a',
+			reason: 'failed',
+			stablePrincipal: stablePrincipalA,
+			useId: 'use-a',
+		});
+
+		// Act
+		const settlement = runtime.settle({
+			stablePrincipal: stablePrincipalA,
+			trustedContext: trustedContextA,
+		});
+		await vi.waitFor(() => expect(endUse).toHaveBeenCalledOnce());
+		runtime.queue({
+			leaseId: 'lease-b',
+			reason: 'failed',
+			stablePrincipal: stablePrincipalA,
+			useId: 'use-b',
+		});
+		firstEndResult.resolve(true);
+		await vi.waitFor(() => expect(endUse).toHaveBeenCalledTimes(2));
+		let settlementFinished = false;
+		void settlement.then(() => {
+			settlementFinished = true;
+		});
+		await Promise.resolve();
+
+		// Assert
+		expect(settlementFinished).toBe(false);
+		expect(endUse.mock.calls.map(([request]) => request.leaseId)).toEqual(['lease-a', 'lease-b']);
+		secondEndResult.resolve(true);
+		await expect(settlement).resolves.toBe(true);
+		expect(register).toHaveBeenCalledOnce();
+	});
+
 	it('keeps different principals independently settleable', async () => {
 		// Arrange
 		const register = vi.fn(

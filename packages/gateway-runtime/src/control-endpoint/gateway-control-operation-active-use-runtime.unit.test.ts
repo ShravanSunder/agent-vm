@@ -914,6 +914,45 @@ describe('Gateway control operation active-use runtime', () => {
 		]);
 	});
 
+	it.each([
+		['caller_context_absent', false],
+		['caller_context_session_mismatch', false],
+		['caller_context_stale', false],
+		['lease_absent', true],
+		['lease_authority_absent', true],
+		['lease_force_released', true],
+		['lease_generation_stale', false],
+		['lease_reacquire_required', false],
+		['lease_releasing', false],
+		['lease_retired', true],
+		['lease_use_tombstoned', true],
+		['ownership_denied', false],
+		['runtime_not_ready', false],
+	] satisfies readonly (readonly [GatewayControlLeaseRejectionReason, boolean])[])(
+		'classifies replacement-session lease-use cleanup rejection %s as terminally absent=%s',
+		async (rejectionReason, terminallyAbsent) => {
+			// Arrange
+			const fixture = createRuntimeFixture({ rejectLeaseUseEndWith: rejectionReason });
+			requireBound(
+				await fixture.runtime.acquisitionPort.acquire({ trustedContext: trustedContextA }),
+			);
+
+			// Act
+			fixture.control.setSession(undefined);
+			await vi.waitFor(() => expect(fixture.processRegistries[0]?.retire).toHaveBeenCalledOnce());
+			fixture.control.setSession(sessionB);
+			const result = await fixture.runtime.acquisitionPort.acquire({
+				trustedContext: trustedContextA,
+			});
+
+			// Assert
+			expect(result.kind === 'bound').toBe(terminallyAbsent);
+			expect(
+				fixture.command.requests.filter((request) => request.message.operation === 'lease_use_end'),
+			).toHaveLength(1);
+		},
+	);
+
 	it('makes active-use end, group retirement, and runtime retirement idempotent', async () => {
 		// Arrange
 		const fixture = createRuntimeFixture();
