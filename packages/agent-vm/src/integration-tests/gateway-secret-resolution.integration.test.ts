@@ -95,7 +95,7 @@ describe('smoke: gateway startup secret resolution', () => {
 			controllerStateDir: path.join(tempRoot, 'controller-state'),
 			host: {
 				controllerPort: 18800,
-				projectNamespace: 'claw-tests-a1b2c3d4',
+				projectNamespace: 'agent-vm-tests-a1b2c3d4',
 				secretsProvider: {
 					type: '1password',
 					tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
@@ -130,7 +130,7 @@ describe('smoke: gateway startup secret resolution', () => {
 							injection: 'env',
 							audience: 'gateway',
 						},
-						HERMES_GATEWAY_TOKEN: {
+						TEST_GATEWAY_SECRET: {
 							source: '1password',
 							ref: 'op://agent-vm/secret-smoke-gateway/password',
 							injection: 'env',
@@ -198,7 +198,7 @@ describe('smoke: gateway startup secret resolution', () => {
 				allowedHosts: [],
 				environment: {
 					ENV_ONLY_TOKEN: resolvedSecrets.ENV_ONLY_TOKEN ?? '',
-					HERMES_GATEWAY_TOKEN: resolvedSecrets.HERMES_GATEWAY_TOKEN ?? '',
+					TEST_GATEWAY_SECRET: resolvedSecrets.TEST_GATEWAY_SECRET ?? '',
 				},
 				mediatedSecrets: {
 					PERPLEXITY_API_KEY: {
@@ -282,7 +282,7 @@ describe('smoke: gateway startup secret resolution', () => {
 		expect(innerResolve).not.toHaveBeenCalled();
 		expect(innerResolveAll).toHaveBeenCalledTimes(1);
 		expect(innerResolveAll).toHaveBeenCalledWith({
-			HERMES_GATEWAY_TOKEN: {
+			TEST_GATEWAY_SECRET: {
 				source: '1password',
 				ref: 'op://agent-vm/secret-smoke-gateway/password',
 			},
@@ -294,7 +294,7 @@ describe('smoke: gateway startup secret resolution', () => {
 		expect(capturedCreateRequest).toBeDefined();
 		expect(capturedCreateRequest?.environment).toMatchObject({
 			ENV_ONLY_TOKEN: 'env-only-token',
-			HERMES_GATEWAY_TOKEN: 'resolved:HERMES_GATEWAY_TOKEN',
+			TEST_GATEWAY_SECRET: 'resolved:TEST_GATEWAY_SECRET',
 		});
 		expect(capturedCreateRequest?.environment).not.toHaveProperty('PERPLEXITY_API_KEY');
 		expect(capturedCreateRequest?.mediatedSecrets).toEqual([

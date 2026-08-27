@@ -15,7 +15,7 @@ const systemConfig = {
 	controllerRuntimeDir: './controller-runtime',
 	host: {
 		controllerPort: 18800,
-		projectNamespace: 'claw-tests-a1b2c3d4',
+		projectNamespace: 'agent-vm-tests-a1b2c3d4',
 		secretsProvider: {
 			type: '1password',
 			tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },

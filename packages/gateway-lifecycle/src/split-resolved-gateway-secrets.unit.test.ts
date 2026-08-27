@@ -234,7 +234,7 @@ describe('mergeRuntimeGatewaySecrets', () => {
 		const result = mergeRuntimeGatewaySecrets(
 			{
 				environmentSecrets: {
-					HERMES_GATEWAY_TOKEN: 'gateway-token',
+					TEST_GATEWAY_SECRET: 'gateway-token',
 				},
 				mediatedSecrets: {
 					PERPLEXITY_API_KEY: {
@@ -259,7 +259,7 @@ describe('mergeRuntimeGatewaySecrets', () => {
 		expect(result).toEqual({
 			environmentSecrets: {
 				AGENT_VM_MCP_STDIO_TOKEN: 'stdio-token',
-				HERMES_GATEWAY_TOKEN: 'gateway-token',
+				TEST_GATEWAY_SECRET: 'gateway-token',
 			},
 			mediatedSecrets: {
 				AGENT_VM_MCP_TAVILY_API_KEY: {
@@ -279,20 +279,20 @@ describe('mergeRuntimeGatewaySecrets', () => {
 			mergeRuntimeGatewaySecrets(
 				{
 					environmentSecrets: {
-						HERMES_GATEWAY_TOKEN: 'gateway-token',
+						TEST_GATEWAY_SECRET: 'gateway-token',
 					},
 					mediatedSecrets: {},
 				},
 				{
 					runtimeMediatedSecrets: {
-						HERMES_GATEWAY_TOKEN: {
+						TEST_GATEWAY_SECRET: {
 							hosts: ['api.example.com'],
 							value: 'runtime-token',
 						},
 					},
 				},
 			),
-		).toThrow(/HERMES_GATEWAY_TOKEN.*authored environment secret/u);
+		).toThrow(/TEST_GATEWAY_SECRET.*authored environment secret/u);
 	});
 
 	it('rejects runtime secrets declared for both runtime injection paths', () => {

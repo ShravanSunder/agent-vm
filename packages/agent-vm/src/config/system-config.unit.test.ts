@@ -95,7 +95,7 @@ function createValidSystemConfigInput(): ValidSystemConfigInput {
 		schemaVersion: 2,
 		host: {
 			controllerPort: 18800,
-			projectNamespace: 'claw-tests-a1b2c3d4',
+			projectNamespace: 'agent-vm-tests-a1b2c3d4',
 		},
 		storageRootDir: '../storage',
 		imageProfiles: {
@@ -1020,7 +1020,7 @@ describe('loadSystemConfig', () => {
 				schemaVersion: 2,
 				host: {
 					controllerPort: 18800,
-					projectNamespace: 'claw-tests-a1b2c3d4',
+					projectNamespace: 'agent-vm-tests-a1b2c3d4',
 					githubToken: {
 						source: '1password',
 						ref: 'op://agent-vm/github-token/credential',
@@ -1040,8 +1040,8 @@ describe('loadSystemConfig', () => {
 						},
 						worker: {
 							type: 'worker',
-							buildConfig: '../vm-images/gateways/hermes/build-config.json',
-							dockerfile: '../vm-images/gateways/hermes/Dockerfile',
+							buildConfig: '../vm-images/gateways/worker/build-config.json',
+							dockerfile: '../vm-images/gateways/worker/Dockerfile',
 						},
 					},
 					toolVms: {
@@ -1061,7 +1061,7 @@ describe('loadSystemConfig', () => {
 							memory: '2G',
 							cpus: 2,
 							port: 18791,
-							config: './shravan/hermes.json',
+							config: './shravan/worker.json',
 						},
 						secrets: {
 							ANTHROPIC_API_KEY: {
@@ -1101,7 +1101,7 @@ describe('loadSystemConfig', () => {
 					source: '1password',
 					ref: 'op://agent-vm/github-token/credential',
 				},
-				projectNamespace: 'claw-tests-a1b2c3d4',
+				projectNamespace: 'agent-vm-tests-a1b2c3d4',
 			},
 			cacheDir: path.join(canonicalWorkingDirectoryPath, 'storage', 'cache'),
 			imageProfiles: {
@@ -1118,9 +1118,9 @@ describe('loadSystemConfig', () => {
 						type: 'worker',
 						buildConfig: path.join(
 							workingDirectoryPath,
-							'vm-images/gateways/hermes/build-config.json',
+							'vm-images/gateways/worker/build-config.json',
 						),
-						dockerfile: path.join(workingDirectoryPath, 'vm-images/gateways/hermes/Dockerfile'),
+						dockerfile: path.join(workingDirectoryPath, 'vm-images/gateways/worker/Dockerfile'),
 					},
 				},
 				toolVms: {
@@ -1138,7 +1138,7 @@ describe('loadSystemConfig', () => {
 				{
 					id: 'shravan',
 					gateway: {
-						config: path.join(workingDirectoryPath, 'config', 'shravan', 'hermes.json'),
+						config: path.join(workingDirectoryPath, 'config', 'shravan', 'worker.json'),
 						type: 'worker',
 						imageProfile: 'worker',
 					},
@@ -1681,7 +1681,7 @@ describe('loadSystemConfig', () => {
 				schemaVersion: 2,
 				host: {
 					controllerPort: 18800,
-					projectNamespace: 'claw-tests-a1b2c3d4',
+					projectNamespace: 'agent-vm-tests-a1b2c3d4',
 					secretsProvider: {
 						type: '1password',
 						tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
@@ -1697,8 +1697,8 @@ describe('loadSystemConfig', () => {
 						},
 						worker: {
 							type: 'worker',
-							buildConfig: '../vm-images/gateways/hermes/build-config.json',
-							dockerfile: '../vm-images/gateways/hermes/Dockerfile',
+							buildConfig: '../vm-images/gateways/worker/build-config.json',
+							dockerfile: '../vm-images/gateways/worker/Dockerfile',
 						},
 					},
 					toolVms: {
@@ -1742,7 +1742,7 @@ describe('loadSystemConfig', () => {
 				schemaVersion: 2,
 				host: {
 					controllerPort: 18800,
-					projectNamespace: 'claw-tests-a1b2c3d4',
+					projectNamespace: 'agent-vm-tests-a1b2c3d4',
 					secretsProvider: {
 						type: '1password',
 						tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
@@ -1757,7 +1757,7 @@ describe('loadSystemConfig', () => {
 						},
 						worker: {
 							type: 'worker',
-							buildConfig: '../vm-images/gateways/hermes/build-config.json',
+							buildConfig: '../vm-images/gateways/worker/build-config.json',
 						},
 					},
 					toolVms: {
@@ -1838,7 +1838,7 @@ describe('loadSystemConfig', () => {
 						},
 						worker: {
 							type: 'worker',
-							buildConfig: '../vm-images/gateways/hermes/build-config.json',
+							buildConfig: '../vm-images/gateways/worker/build-config.json',
 						},
 					},
 					toolVms: {
@@ -1862,9 +1862,9 @@ describe('loadSystemConfig', () => {
 							config: './shravan/hermes.json',
 						},
 						secrets: {
-							HERMES_GATEWAY_TOKEN: {
+							TEST_GATEWAY_SECRET: {
 								source: 'environment',
-								envVar: 'HERMES_GATEWAY_TOKEN',
+								envVar: 'TEST_GATEWAY_SECRET',
 								injection: 'env',
 								audience: 'gateway',
 							},
@@ -2714,7 +2714,7 @@ describe('loadSystemConfig', () => {
 				schemaVersion: 2,
 				host: {
 					controllerPort: 18800,
-					projectNamespace: 'claw-tests-a1b2c3d4',
+					projectNamespace: 'agent-vm-tests-a1b2c3d4',
 					secretsProvider: {
 						type: '1password',
 						tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
@@ -2729,7 +2729,7 @@ describe('loadSystemConfig', () => {
 						},
 						worker: {
 							type: 'worker',
-							buildConfig: '../vm-images/gateways/hermes/build-config.json',
+							buildConfig: '../vm-images/gateways/worker/build-config.json',
 						},
 					},
 					toolVms: {
@@ -2753,9 +2753,9 @@ describe('loadSystemConfig', () => {
 							config: './shravan/hermes.json',
 						},
 						secrets: {
-							HERMES_GATEWAY_TOKEN: {
+							TEST_GATEWAY_SECRET: {
 								source: 'environment',
-								envVar: 'HERMES_GATEWAY_TOKEN',
+								envVar: 'TEST_GATEWAY_SECRET',
 								injection: 'env',
 								audience: 'gateway',
 							},
@@ -3534,9 +3534,9 @@ describe('loadSystemConfig', () => {
 					config: './shravan/hermes.json',
 				},
 				secrets: {
-					HERMES_GATEWAY_TOKEN: {
+					TEST_GATEWAY_SECRET: {
 						source: 'environment',
-						envVar: 'HERMES_GATEWAY_TOKEN',
+						envVar: 'TEST_GATEWAY_SECRET',
 						injection: 'env',
 						audience: 'gateway',
 					},

@@ -302,9 +302,9 @@ async function createSystemConfigFixture(
 				},
 				id: 'zone-a',
 				secrets: {
-					HERMES_GATEWAY_TOKEN: {
+					TEST_GATEWAY_SECRET: {
 						audience: 'gateway',
-						envVar: 'HERMES_GATEWAY_TOKEN',
+						envVar: 'TEST_GATEWAY_SECRET',
 						injection: 'env',
 						source: 'environment',
 					},
@@ -377,7 +377,7 @@ async function writeEffectiveToolPortalSnapshot(
 	const hermesGateway = zone.gateway;
 	const effectivePlan = await writeMcpPortalEffectiveConfig({
 		approvalAccessConfigured: options.approvalAccessConfigured ?? false,
-		allowedRawEnvSecretNames: ['HERMES_GATEWAY_TOKEN'],
+		allowedRawEnvSecretNames: ['TEST_GATEWAY_SECRET'],
 		authoredConfigDir: zone.toolPortal.configDir,
 		declaredAgentIds: (zone.agents ?? []).map((agent) => agent.id),
 		effectiveHostConfigDir: path.join(

@@ -15,7 +15,7 @@ const baseConfig = {
 	controllerRuntimeDir: './controller-runtime',
 	host: {
 		controllerPort: 18800,
-		projectNamespace: 'claw-tests-a1b2c3d4',
+		projectNamespace: 'agent-vm-tests-a1b2c3d4',
 	},
 	imageProfiles: {
 		gateways: {

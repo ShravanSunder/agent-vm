@@ -44,7 +44,7 @@ describe('workerLifecycle', () => {
 		const vmRequirements = workerLifecycle.buildVmRequirements({
 			controllerPort: 18800,
 			gatewayCacheDir: '/host/cache/gateways/shravan',
-			projectNamespace: 'claw-tests-a1b2c3d4',
+			projectNamespace: 'agent-vm-tests-a1b2c3d4',
 			resolvedSecrets: { OPENAI_API_KEY: 'openai-token' },
 			zoneRuntimeDir: '/host/runtime',
 			tcpPool: {
@@ -82,7 +82,7 @@ describe('workerLifecycle', () => {
 		expect(vmRequirements.environment.pnpm_config_store_dir).toBe('/work/cache/pnpm/store');
 		expect(vmRequirements.allowedHosts).toEqual(['api.openai.com']);
 		expect(vmRequirements.allowedHosts).not.toContain('controller.vm.host');
-		expect(vmRequirements.sessionLabel).toBe('claw-tests-a1b2c3d4:shravan:gateway');
+		expect(vmRequirements.sessionLabel).toBe('agent-vm-tests-a1b2c3d4:shravan:gateway');
 		expect(vmRequirements.tcpHosts['controller.vm.host:18800']).toBeUndefined();
 		expect(vmRequirements.tcpHosts).toEqual({});
 	});
@@ -93,7 +93,7 @@ describe('workerLifecycle', () => {
 		const vmRequirements = workerLifecycle.buildVmRequirements({
 			controllerPort: 18800,
 			gatewayCacheDir: '/host/cache/gateways/shravan',
-			projectNamespace: 'claw-tests-a1b2c3d4',
+			projectNamespace: 'agent-vm-tests-a1b2c3d4',
 			resolvedSecrets: { OPENAI_API_KEY: 'openai-token' },
 			zoneRuntimeDir: '/host/runtime',
 			tcpPool: {
@@ -112,7 +112,7 @@ describe('workerLifecycle', () => {
 		const vmRequirements = workerLifecycle.buildVmRequirements({
 			controllerPort: 18800,
 			gatewayCacheDir: '/host/cache/gateways/shravan',
-			projectNamespace: 'claw-tests-a1b2c3d4',
+			projectNamespace: 'agent-vm-tests-a1b2c3d4',
 			resolvedSecrets: { OPENAI_API_KEY: 'openai-token' },
 			zoneRuntimeDir: '/host/runtime',
 			tcpPool: {
@@ -139,7 +139,7 @@ describe('workerLifecycle', () => {
 		const vmRequirements = workerLifecycle.buildVmRequirements({
 			controllerPort: 18800,
 			gatewayCacheDir: '/host/cache/gateways/shravan',
-			projectNamespace: 'claw-tests-a1b2c3d4',
+			projectNamespace: 'agent-vm-tests-a1b2c3d4',
 			resolvedSecrets: { OPENAI_API_KEY: 'openai-token' },
 			zoneRuntimeDir: '/host/runtime',
 			tcpPool: {
@@ -182,7 +182,7 @@ describe('workerLifecycle', () => {
 		const vmRequirements = workerLifecycle.buildVmRequirements({
 			controllerPort: 18800,
 			gatewayCacheDir: '/host/cache/gateways/shravan',
-			projectNamespace: 'claw-tests-a1b2c3d4',
+			projectNamespace: 'agent-vm-tests-a1b2c3d4',
 			resolvedSecrets: {
 				OPENAI_API_KEY: 'openai-token',
 				GITHUB_TOKEN: 'github-token',
@@ -231,7 +231,7 @@ describe('workerLifecycle', () => {
 		const vmRequirements = workerLifecycle.buildVmRequirements({
 			controllerPort: 18800,
 			gatewayCacheDir: '/host/cache/gateways/shravan',
-			projectNamespace: 'claw-tests-a1b2c3d4',
+			projectNamespace: 'agent-vm-tests-a1b2c3d4',
 			resolvedSecrets: {
 				OPENAI_API_KEY: 'openai-token',
 				NODE_OPTIONS: '--inspect=0.0.0.0:9229',

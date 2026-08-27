@@ -58,7 +58,7 @@ function createCliBuildSystemConfig(): LoadedSystemConfig {
 		systemConfigPath: './config/system.json',
 		host: {
 			controllerPort: 18800,
-			projectNamespace: 'claw-tests-a1b2c3d4',
+			projectNamespace: 'agent-vm-tests-a1b2c3d4',
 			secretsProvider: {
 				type: '1password',
 				tokenSource: { type: 'env' },
@@ -1485,7 +1485,7 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 					systemConfigPath,
 					host: {
 						controllerPort: 18800,
-						projectNamespace: 'claw-tests-a1b2c3d4',
+						projectNamespace: 'agent-vm-tests-a1b2c3d4',
 						secretsProvider: {
 							type: '1password',
 							tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
@@ -1602,7 +1602,7 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 					systemConfigPath: './config/system.json',
 					host: {
 						controllerPort: 18800,
-						projectNamespace: 'claw-tests-a1b2c3d4',
+						projectNamespace: 'agent-vm-tests-a1b2c3d4',
 						secretsProvider: {
 							type: '1password',
 							tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
@@ -1727,7 +1727,7 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 					systemConfigPath: './config/system.json',
 					host: {
 						controllerPort: 18800,
-						projectNamespace: 'claw-tests-a1b2c3d4',
+						projectNamespace: 'agent-vm-tests-a1b2c3d4',
 						secretsProvider: {
 							type: '1password',
 							tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
@@ -2050,7 +2050,7 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 				systemConfigPath: './config/system.json',
 				host: {
 					controllerPort: 18800,
-					projectNamespace: 'claw-tests-a1b2c3d4',
+					projectNamespace: 'agent-vm-tests-a1b2c3d4',
 					secretsProvider: {
 						type: '1password',
 						tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
@@ -2312,7 +2312,7 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 			force: false,
 			systemConfig: expect.objectContaining({
 				host: expect.objectContaining({
-					projectNamespace: 'claw-tests-a1b2c3d4',
+					projectNamespace: 'agent-vm-tests-a1b2c3d4',
 				}),
 			}),
 			zoneId: 'shravan',
@@ -2348,7 +2348,7 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 			force: true,
 			systemConfig: expect.objectContaining({
 				host: expect.objectContaining({
-					projectNamespace: 'claw-tests-a1b2c3d4',
+					projectNamespace: 'agent-vm-tests-a1b2c3d4',
 				}),
 			}),
 			zoneId: 'shravan',
@@ -2571,7 +2571,7 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 					systemConfigPath: './config/system.json',
 					host: {
 						controllerPort: 18800,
-						projectNamespace: 'claw-tests-a1b2c3d4',
+						projectNamespace: 'agent-vm-tests-a1b2c3d4',
 						secretsProvider: {
 							type: '1password',
 							tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
@@ -2734,7 +2734,7 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 					systemConfigPath: './config/system.json',
 					host: {
 						controllerPort: 18800,
-						projectNamespace: 'claw-tests-a1b2c3d4',
+						projectNamespace: 'agent-vm-tests-a1b2c3d4',
 						secretsProvider: {
 							type: '1password',
 							tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },

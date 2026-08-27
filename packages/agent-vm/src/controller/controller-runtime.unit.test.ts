@@ -487,7 +487,7 @@ const systemConfig = {
 	systemConfigPath: path.join(controllerRuntimeTestRoot, 'config', 'system.json'),
 	host: {
 		controllerPort: 18_800,
-		projectNamespace: 'claw-tests-a1b2c3d4',
+		projectNamespace: 'agent-vm-tests-a1b2c3d4',
 		secretsProvider: {
 			type: '1password',
 			tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
@@ -2178,7 +2178,7 @@ describe('startControllerRuntime', () => {
 					enabled: true,
 					stackMode: 'managed',
 				}),
-				projectNamespace: 'claw-tests-a1b2c3d4',
+				projectNamespace: 'agent-vm-tests-a1b2c3d4',
 				proof: {
 					marker: 'controller-runtime-proof-marker',
 					startedAt: '2026-06-14T14:55:00.000Z',

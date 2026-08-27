@@ -926,7 +926,7 @@ function createHttpHealthGatewayLifecycle(): {
 			environment: {},
 			mediatedSecrets: {},
 			rootfsMode: 'cow',
-			sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
+			sessionLabel: 'agent-vm-tests-a1b2c3d4:shravan:gateway',
 			tcpHosts: {},
 			mounts: {},
 		}),
@@ -951,7 +951,7 @@ async function createSystemConfig(): Promise<LoadedSystemConfig> {
 			storageRootDir: workingDirectoryPath,
 			host: {
 				controllerPort: 18800,
-				projectNamespace: 'claw-tests-a1b2c3d4',
+				projectNamespace: 'agent-vm-tests-a1b2c3d4',
 				secretsProvider: {
 					type: '1password',
 					tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
@@ -1331,6 +1331,22 @@ function requireManagedGatewayBootInputFile(
 	return new TextDecoder().decode(file.contents);
 }
 
+function managedGatewayBootInputFileNames(
+	createRequest: ManagedVmCreateRequest | undefined,
+	guestPath: string,
+): readonly string[] {
+	if (createRequest === undefined) {
+		throw new Error('Expected managed Gateway VM creation request.');
+	}
+	return (
+		managedGatewayBootInputCaptures
+			.get(createRequest)
+			?.get(guestPath)
+			?.files.map((file) => file.relativePath)
+			.toSorted() ?? []
+	);
+}
+
 function createGatewaySecretResolver(resolvedSecrets: Record<string, string>): SecretResolver {
 	const resolveKnownSecretRef = (secretRef: SecretRef): string => {
 		if (secretRef.source === 'config') {
@@ -1489,7 +1505,7 @@ describe('startGatewayZone', () => {
 		const secretResolver = createGatewaySecretResolver({
 			PERPLEXITY_API_KEY: 'resolved-key',
 			DISCORD_BOT_TOKEN: 'resolved-key',
-			HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
+			TEST_GATEWAY_SECRET: 'resolved-gateway-token',
 		});
 		const buildImage = vi.fn(async () => ({
 			built: true,
@@ -1600,7 +1616,7 @@ describe('startGatewayZone', () => {
 				resources: { cpuCount: 2, memory: '2G' },
 				rootfsMode: 'cow',
 				runtimeRootfsSize: '12G',
-				sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
+				sessionLabel: 'agent-vm-tests-a1b2c3d4:shravan:gateway',
 				tcpHosts: expect.not.arrayContaining([
 					expect.objectContaining({ guestHost: 'controller.vm.host:18800' }),
 				]),
@@ -1625,7 +1641,7 @@ describe('startGatewayZone', () => {
 		);
 		expect(createdVmOptions.allowedHosts).not.toContain('controller.vm.host');
 		expect(createdVmOptions.environment).not.toHaveProperty('DISCORD_BOT_TOKEN');
-		expect(createdVmOptions.environment).not.toHaveProperty('HERMES_GATEWAY_TOKEN');
+		expect(createdVmOptions.environment).not.toHaveProperty('TEST_GATEWAY_SECRET');
 		expect(createdVmOptions.environment).not.toHaveProperty('PERPLEXITY_API_KEY');
 		expect(protectedFrameworkEnvironment).toContain("export DISCORD_BOT_TOKEN='resolved-key'");
 		expect(protectedFrameworkEnvironment).toContain(
@@ -1754,7 +1770,7 @@ describe('startGatewayZone', () => {
 					createVmOwnership: ownership.createVmOwnership,
 					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
-						HERMES_GATEWAY_TOKEN: 'gateway-token-123',
+						TEST_GATEWAY_SECRET: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
 					}),
 					systemConfig: await createSystemConfig(),
@@ -1825,7 +1841,7 @@ describe('startGatewayZone', () => {
 					createVmOwnership: ownership.createVmOwnership,
 					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
-						HERMES_GATEWAY_TOKEN: 'gateway-token-123',
+						TEST_GATEWAY_SECRET: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
 					}),
 					systemConfig: await createSystemConfig(),
@@ -1930,7 +1946,7 @@ describe('startGatewayZone', () => {
 					createVmOwnership: ownership.createVmOwnership,
 					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
-						HERMES_GATEWAY_TOKEN: 'gateway-token-123',
+						TEST_GATEWAY_SECRET: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
 					}),
 					systemConfig: await createSystemConfig(),
@@ -1984,7 +2000,7 @@ describe('startGatewayZone', () => {
 					createVmOwnership: ownership.createVmOwnership,
 					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
-						HERMES_GATEWAY_TOKEN: 'gateway-token-123',
+						TEST_GATEWAY_SECRET: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
 					}),
 					systemConfig: await createSystemConfig(),
@@ -2076,7 +2092,7 @@ describe('startGatewayZone', () => {
 					.createVmOwnership,
 				secretResolver: createGatewaySecretResolver({
 					DISCORD_BOT_TOKEN: 'discord-token',
-					HERMES_GATEWAY_TOKEN: 'gateway-token-123',
+					TEST_GATEWAY_SECRET: 'gateway-token-123',
 					PERPLEXITY_API_KEY: 'pplx-key',
 				}),
 				systemConfig: await createSystemConfig(),
@@ -2295,7 +2311,7 @@ describe('startGatewayZone', () => {
 				secretResolver: createGatewaySecretResolver({
 					PERPLEXITY_API_KEY: 'resolved-key',
 					DISCORD_BOT_TOKEN: 'resolved-key',
-					HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
+					TEST_GATEWAY_SECRET: 'resolved-gateway-token',
 				}),
 				systemConfig: systemConfigWithIngressTimeouts,
 				zoneId: 'shravan',
@@ -2365,7 +2381,7 @@ describe('startGatewayZone', () => {
 				secretResolver: createGatewaySecretResolver({
 					PERPLEXITY_API_KEY: 'resolved-key',
 					DISCORD_BOT_TOKEN: 'resolved-key',
-					HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
+					TEST_GATEWAY_SECRET: 'resolved-gateway-token',
 				}),
 				systemConfig: systemConfigWithHeaderTimeout,
 				zoneId: 'shravan',
@@ -2434,7 +2450,7 @@ describe('startGatewayZone', () => {
 				secretResolver: createGatewaySecretResolver({
 					PERPLEXITY_API_KEY: 'resolved-key',
 					DISCORD_BOT_TOKEN: 'resolved-key',
-					HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
+					TEST_GATEWAY_SECRET: 'resolved-gateway-token',
 				}),
 				systemConfig: systemConfigWithResponseTimeout,
 				zoneId: 'shravan',
@@ -2509,7 +2525,7 @@ describe('startGatewayZone', () => {
 				},
 				secretResolver: createGatewaySecretResolver({
 					DISCORD_BOT_TOKEN: 'resolved-discord-token',
-					HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
+					TEST_GATEWAY_SECRET: 'resolved-gateway-token',
 					PERPLEXITY_API_KEY: 'resolved-perplexity-key',
 				}),
 				systemConfig,
@@ -2709,7 +2725,7 @@ describe('startGatewayZone', () => {
 				secretResolver: createGatewaySecretResolver({
 					PERPLEXITY_API_KEY: 'pplx-key',
 					DISCORD_BOT_TOKEN: 'discord-token',
-					HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
+					TEST_GATEWAY_SECRET: 'resolved-gateway-token',
 				}),
 				systemConfig,
 				zoneId: 'shravan',
@@ -2771,7 +2787,7 @@ describe('startGatewayZone', () => {
 					'observability-test-plugin': { enabled: true },
 				},
 				secretResolver: createGatewaySecretResolver({
-					HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
+					TEST_GATEWAY_SECRET: 'resolved-gateway-token',
 				}),
 				systemConfig,
 				zoneId: 'shravan',
@@ -2884,7 +2900,7 @@ describe('startGatewayZone', () => {
 		await startGatewayZone(
 			{
 				secretResolver: createGatewaySecretResolver({
-					HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
+					TEST_GATEWAY_SECRET: 'resolved-gateway-token',
 					[secretRef]: resolvedSecretValue,
 				}),
 				systemConfig,
@@ -2982,7 +2998,7 @@ describe('startGatewayZone', () => {
 			{
 				secretResolver: createGatewaySecretResolver({
 					DISCORD_BOT_TOKEN: 'discord-token',
-					HERMES_GATEWAY_TOKEN: 'gateway-token',
+					TEST_GATEWAY_SECRET: 'gateway-token',
 					PERPLEXITY_API_KEY: 'perplexity-key',
 				}),
 				systemConfig,
@@ -3067,7 +3083,7 @@ describe('startGatewayZone', () => {
 					},
 					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'resolved-discord-token',
-						HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
+						TEST_GATEWAY_SECRET: 'resolved-gateway-token',
 						PERPLEXITY_API_KEY: 'resolved-perplexity-key',
 					}),
 					systemConfig,
@@ -3140,7 +3156,7 @@ describe('startGatewayZone', () => {
 				},
 				secretResolver: createGatewaySecretResolver({
 					DISCORD_BOT_TOKEN: 'resolved-discord-token',
-					HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
+					TEST_GATEWAY_SECRET: 'resolved-gateway-token',
 					PERPLEXITY_API_KEY: 'resolved-perplexity-key',
 				}),
 				systemConfig,
@@ -3320,7 +3336,7 @@ describe('startGatewayZone', () => {
 		await startGatewayZone(
 			{
 				secretResolver: createGatewaySecretResolver({
-					HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
+					TEST_GATEWAY_SECRET: 'resolved-gateway-token',
 				}),
 				systemConfig,
 				zoneId: 'shravan',
@@ -3382,7 +3398,7 @@ describe('startGatewayZone', () => {
 		await startGatewayZone(
 			{
 				secretResolver: createGatewaySecretResolver({
-					HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
+					TEST_GATEWAY_SECRET: 'resolved-gateway-token',
 				}),
 				systemConfig,
 				zoneId: 'shravan',
@@ -3440,7 +3456,7 @@ describe('startGatewayZone', () => {
 		await startGatewayZone(
 			{
 				secretResolver: createGatewaySecretResolver({
-					HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
+					TEST_GATEWAY_SECRET: 'resolved-gateway-token',
 				}),
 				systemConfig,
 				zoneId: 'shravan',
@@ -3525,7 +3541,7 @@ describe('startGatewayZone', () => {
 		await startGatewayZone(
 			{
 				secretResolver: createGatewaySecretResolver({
-					HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
+					TEST_GATEWAY_SECRET: 'resolved-gateway-token',
 				}),
 				systemConfig,
 				zoneId: 'shravan',
@@ -3594,7 +3610,7 @@ describe('startGatewayZone', () => {
 		await startGatewayZone(
 			{
 				secretResolver: createGatewaySecretResolver({
-					HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
+					TEST_GATEWAY_SECRET: 'resolved-gateway-token',
 				}),
 				systemConfig,
 				zoneId: 'shravan',
@@ -3783,7 +3799,7 @@ describe('startGatewayZone', () => {
 		await startGatewayZone(
 			{
 				secretResolver: createGatewaySecretResolver({
-					HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
+					TEST_GATEWAY_SECRET: 'resolved-gateway-token',
 				}),
 				systemConfig,
 				zoneId: 'shravan',
@@ -3834,7 +3850,7 @@ describe('startGatewayZone', () => {
 				secretResolver: createGatewaySecretResolver({
 					PERPLEXITY_API_KEY: 'resolved-key',
 					DISCORD_BOT_TOKEN: 'resolved-key',
-					HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
+					TEST_GATEWAY_SECRET: 'resolved-gateway-token',
 				}),
 				systemConfig: await createSystemConfig(),
 				zoneId: 'shravan',
@@ -3969,7 +3985,7 @@ describe('startGatewayZone', () => {
 		const secretResolver = createGatewaySecretResolver({
 			PERPLEXITY_API_KEY: 'pplx-key',
 			DISCORD_BOT_TOKEN: 'discord-token',
-			HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
+			TEST_GATEWAY_SECRET: 'resolved-gateway-token',
 		});
 		const createManagedVm = vi.fn(
 			async (_request: ManagedVmCreateRequest): Promise<ManagedVm> => managedVm,
@@ -4056,7 +4072,7 @@ describe('startGatewayZone', () => {
 				secretResolver: createGatewaySecretResolver({
 					PERPLEXITY_API_KEY: 'key',
 					DISCORD_BOT_TOKEN: 'token',
-					HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
+					TEST_GATEWAY_SECRET: 'resolved-gateway-token',
 				}),
 				systemConfig: await createSystemConfig(),
 				zoneId: 'shravan',
@@ -4116,7 +4132,7 @@ describe('startGatewayZone', () => {
 			startGatewayZone(
 				{
 					secretResolver: createGatewaySecretResolver({
-						HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
+						TEST_GATEWAY_SECRET: 'resolved-gateway-token',
 					}),
 					systemConfig: await createWorkerSystemConfig(),
 					zoneId: 'shravan',
@@ -4170,7 +4186,7 @@ describe('startGatewayZone', () => {
 			startGatewayZone(
 				{
 					secretResolver: createGatewaySecretResolver({
-						HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
+						TEST_GATEWAY_SECRET: 'resolved-gateway-token',
 					}),
 					systemConfig: await createWorkerSystemConfig(),
 					zoneId: 'shravan',
@@ -4215,7 +4231,7 @@ describe('startGatewayZone', () => {
 			startGatewayZone(
 				{
 					secretResolver: createGatewaySecretResolver({
-						HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
+						TEST_GATEWAY_SECRET: 'resolved-gateway-token',
 					}),
 					systemConfig: await createWorkerSystemConfig(),
 					zoneId: 'shravan',
@@ -4260,7 +4276,7 @@ describe('startGatewayZone', () => {
 			startGatewayZone(
 				{
 					secretResolver: createGatewaySecretResolver({
-						HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
+						TEST_GATEWAY_SECRET: 'resolved-gateway-token',
 					}),
 					systemConfig: await createWorkerSystemConfig(),
 					zoneId: 'shravan',
@@ -4298,7 +4314,7 @@ describe('startGatewayZone', () => {
 		const result = await startGatewayZone(
 			{
 				secretResolver: createGatewaySecretResolver({
-					HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
+					TEST_GATEWAY_SECRET: 'resolved-gateway-token',
 				}),
 				systemConfig: await createWorkerSystemConfig(),
 				zoneId: 'shravan',
@@ -4326,7 +4342,7 @@ describe('startGatewayZone', () => {
 						environment: {},
 						mediatedSecrets: {},
 						rootfsMode: 'cow' as const,
-						sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
+						sessionLabel: 'agent-vm-tests-a1b2c3d4:shravan:gateway',
 						tcpHosts: {},
 						mounts: {},
 					}),
@@ -4365,7 +4381,7 @@ describe('startGatewayZone', () => {
 			startGatewayZone(
 				{
 					secretResolver: createGatewaySecretResolver({
-						HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
+						TEST_GATEWAY_SECRET: 'resolved-gateway-token',
 					}),
 					systemConfig,
 					zoneId: 'shravan',
@@ -4393,7 +4409,7 @@ describe('startGatewayZone', () => {
 							environment: {},
 							mediatedSecrets: {},
 							rootfsMode: 'cow' as const,
-							sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
+							sessionLabel: 'agent-vm-tests-a1b2c3d4:shravan:gateway',
 							tcpHosts: {},
 							mounts: {},
 						}),
@@ -4435,7 +4451,7 @@ describe('startGatewayZone', () => {
 		await startGatewayZone(
 			{
 				secretResolver: createGatewaySecretResolver({
-					HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
+					TEST_GATEWAY_SECRET: 'resolved-gateway-token',
 				}),
 				systemConfig: await createWorkerSystemConfig(),
 				zoneId: 'shravan',
@@ -4523,7 +4539,7 @@ describe('startGatewayZone', () => {
 				},
 				secretResolver: createGatewaySecretResolver({
 					DISCORD_BOT_TOKEN: 'discord-token',
-					HERMES_GATEWAY_TOKEN: 'gateway-token-123',
+					TEST_GATEWAY_SECRET: 'gateway-token-123',
 					PERPLEXITY_API_KEY: 'pplx-key',
 				}),
 				systemConfig: await createSystemConfig(),
@@ -4556,7 +4572,7 @@ describe('startGatewayZone', () => {
 				generationId: testGatewayGenerationId,
 			},
 			kind: 'gateway-epoch',
-			sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
+			sessionLabel: 'agent-vm-tests-a1b2c3d4:shravan:gateway',
 			zoneId: 'shravan',
 		});
 		expect(result.gatewayIdentity).toBe(ownership.vmOwnership.gatewayIdentity);
@@ -4594,7 +4610,7 @@ describe('startGatewayZone', () => {
 				createVmOwnership: ownership.createVmOwnership,
 				secretResolver: createGatewaySecretResolver({
 					DISCORD_BOT_TOKEN: 'discord-token',
-					HERMES_GATEWAY_TOKEN: 'gateway-token-123',
+					TEST_GATEWAY_SECRET: 'gateway-token-123',
 					PERPLEXITY_API_KEY: 'pplx-key',
 				}),
 				systemConfig,
@@ -4682,7 +4698,7 @@ describe('startGatewayZone', () => {
 				},
 				secretResolver: createGatewaySecretResolver({
 					DISCORD_BOT_TOKEN: 'discord-token',
-					HERMES_GATEWAY_TOKEN: 'gateway-token-123',
+					TEST_GATEWAY_SECRET: 'gateway-token-123',
 					PERPLEXITY_API_KEY: 'pplx-key',
 				}),
 				systemConfig: await createSystemConfig(),
@@ -4731,7 +4747,7 @@ describe('startGatewayZone', () => {
 					createVmOwnership: ownership.createVmOwnership,
 					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
-						HERMES_GATEWAY_TOKEN: 'gateway-token-123',
+						TEST_GATEWAY_SECRET: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
 					}),
 					systemConfig: await createSystemConfig(),
@@ -4757,7 +4773,7 @@ describe('startGatewayZone', () => {
 				generationId: testGatewayGenerationId,
 			},
 			kind: 'gateway-epoch',
-			sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
+			sessionLabel: 'agent-vm-tests-a1b2c3d4:shravan:gateway',
 			zoneId: 'shravan',
 		});
 		expect(ownership.attachGatewayVm).not.toHaveBeenCalled();
@@ -4778,7 +4794,7 @@ describe('startGatewayZone', () => {
 					createVmOwnership: ownership.createVmOwnership,
 					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
-						HERMES_GATEWAY_TOKEN: 'gateway-token-123',
+						TEST_GATEWAY_SECRET: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
 					}),
 					systemConfig: await createSystemConfig(),
@@ -4823,7 +4839,7 @@ describe('startGatewayZone', () => {
 				{
 					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
-						HERMES_GATEWAY_TOKEN: 'gateway-token-123',
+						TEST_GATEWAY_SECRET: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
 					}),
 					systemConfig: await createSystemConfig(),
@@ -4870,7 +4886,7 @@ describe('startGatewayZone', () => {
 				{
 					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
-						HERMES_GATEWAY_TOKEN: 'gateway-token-123',
+						TEST_GATEWAY_SECRET: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
 					}),
 					systemConfig: await createSystemConfig(),
@@ -4930,7 +4946,7 @@ describe('startGatewayZone', () => {
 				{
 					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
-						HERMES_GATEWAY_TOKEN: 'gateway-token-123',
+						TEST_GATEWAY_SECRET: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
 					}),
 					systemConfig: await createSystemConfig(),
@@ -4987,7 +5003,7 @@ describe('startGatewayZone', () => {
 					createVmOwnership: ownership.createVmOwnership,
 					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
-						HERMES_GATEWAY_TOKEN: 'gateway-token-123',
+						TEST_GATEWAY_SECRET: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
 					}),
 					systemConfig: await createSystemConfig(),
@@ -5038,7 +5054,7 @@ describe('startGatewayZone', () => {
 					createVmOwnership: ownership.createVmOwnership,
 					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
-						HERMES_GATEWAY_TOKEN: 'gateway-token-123',
+						TEST_GATEWAY_SECRET: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
 					}),
 					systemConfig: await createSystemConfig(),
@@ -5090,7 +5106,7 @@ describe('startGatewayZone', () => {
 					createVmOwnership: ownership.createVmOwnership,
 					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
-						HERMES_GATEWAY_TOKEN: 'gateway-token-123',
+						TEST_GATEWAY_SECRET: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
 					}),
 					systemConfig: await createSystemConfig(),
@@ -5138,7 +5154,7 @@ describe('startGatewayZone', () => {
 					createVmOwnership: ownership.createVmOwnership,
 					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
-						HERMES_GATEWAY_TOKEN: 'gateway-token-123',
+						TEST_GATEWAY_SECRET: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
 					}),
 					systemConfig: await createSystemConfig(),
@@ -5175,7 +5191,7 @@ describe('startGatewayZone', () => {
 					createVmOwnership: ownership.createVmOwnership,
 					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
-						HERMES_GATEWAY_TOKEN: 'gateway-token-123',
+						TEST_GATEWAY_SECRET: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
 					}),
 					systemConfig: await createSystemConfig(),
@@ -5211,7 +5227,7 @@ describe('startGatewayZone', () => {
 					createVmOwnership: ownership.createVmOwnership,
 					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
-						HERMES_GATEWAY_TOKEN: 'gateway-token-123',
+						TEST_GATEWAY_SECRET: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
 					}),
 					systemConfig: await createSystemConfig(),
@@ -5254,7 +5270,7 @@ describe('startGatewayZone', () => {
 			{
 				secretResolver: createGatewaySecretResolver({
 					DISCORD_BOT_TOKEN: 'discord-token',
-					HERMES_GATEWAY_TOKEN: 'gateway-token-123',
+					TEST_GATEWAY_SECRET: 'gateway-token-123',
 					PERPLEXITY_API_KEY: 'pplx-key',
 				}),
 				systemConfig: await createSystemConfig(),
@@ -5501,7 +5517,7 @@ describe('startGatewayZone', () => {
 					loggedMessages.push(telemetry?.operation ?? 'unknown-operation'),
 				secretResolver: createGatewaySecretResolver({
 					DISCORD_BOT_TOKEN: 'discord-token',
-					HERMES_GATEWAY_TOKEN: 'gateway-token-123',
+					TEST_GATEWAY_SECRET: 'gateway-token-123',
 					PERPLEXITY_API_KEY: 'pplx-key',
 				}),
 				systemConfig: systemConfigWithToolPortal,
@@ -6273,20 +6289,12 @@ describe('startGatewayZone', () => {
 		expect(frameworkEnvironment).toContain(
 			"export DISCORD_BOT_TOKEN_SECOND='test-hermes-second-discord-token'",
 		);
-		expect(() =>
-			requireManagedGatewayBootInputFile(
+		expect(
+			managedGatewayBootInputFileNames(
 				managedVmCreateRequest,
 				managedGatewayBootInputPaths.environmentRoot,
-				'hermes-gateway-token.environment.sh',
 			),
-		).toThrow();
-		expect(() =>
-			requireManagedGatewayBootInputFile(
-				managedVmCreateRequest,
-				managedGatewayBootInputPaths.environmentRoot,
-				'hermes-all-secrets.environment.sh',
-			),
-		).toThrow();
+		).toEqual(['framework.environment.sh', 'tool-portal.environment.sh']);
 		expect(managedVmCreateRequest?.environment).not.toHaveProperty('DISCORD_BOT_TOKEN_MAIN');
 		expect(managedVmCreateRequest?.environment).not.toHaveProperty('DISCORD_BOT_TOKEN_SECOND');
 		const toolPortalServiceConfig = GatewayRuntimeServiceConfigSchema.parse(

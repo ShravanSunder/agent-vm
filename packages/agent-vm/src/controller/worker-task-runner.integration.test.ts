@@ -215,7 +215,7 @@ const systemConfig = {
 	systemConfigPath: '/tmp/config/system.json',
 	host: {
 		controllerPort: 18800,
-		projectNamespace: 'claw-tests-a1b2c3d4',
+		projectNamespace: 'agent-vm-tests-a1b2c3d4',
 		secretsProvider: {
 			type: '1password',
 			tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
@@ -245,9 +245,9 @@ const systemConfig = {
 				repoPushPolicies: [],
 			},
 			secrets: {
-				HERMES_GATEWAY_TOKEN: {
+				WORKER_RUNTIME_TOKEN: {
 					source: 'environment',
-					envVar: 'HERMES_GATEWAY_TOKEN',
+					envVar: 'WORKER_RUNTIME_TOKEN',
 					injection: 'env',
 					audience: 'gateway',
 				},

@@ -70,8 +70,11 @@ const classifiedRemovalTestFiles = new Set([
 	'scripts/ci-workflow.unit.test.ts',
 	'scripts/inspect-managed-vm-package-cut.unit.test.ts',
 ]);
+const fixtureAuditSelfTestPath = 'scripts/audit-openclaw-removal.unit.test.ts';
 
 const removedSshSecretModePattern = /--all-secrets|requestAllSecrets|secretEnvEnabled/u;
+const misleadingPositiveFixturePattern =
+	/HERMES_GATEWAY_TOKEN|claw-tests|Hermes-compatible synthetic|Hermes SSRF compatibility|hermes-(?:all-secrets|gateway-token)\.environment\.sh/u;
 
 async function pathExists(filePath: string): Promise<boolean> {
 	try {
@@ -135,6 +138,21 @@ async function collectRemovedSshSecretModeResidue(
 	return violations.filter((violation): violation is string => violation !== undefined);
 }
 
+async function collectMisleadingPositiveFixtureResidue(
+	repositoryRoot: string,
+	filePaths: readonly string[],
+): Promise<readonly string[]> {
+	const violations = await Promise.all(
+		filePaths.map(async (filePath): Promise<string | undefined> => {
+			const sourceText = await readFile(filePath, 'utf8');
+			return misleadingPositiveFixturePattern.test(sourceText)
+				? `${path.relative(repositoryRoot, filePath)} contains misleading framework fixture residue`
+				: undefined;
+		}),
+	);
+	return violations.filter((violation): violation is string => violation !== undefined);
+}
+
 export async function auditOpenClawRemoval(repositoryRoot: string): Promise<readonly string[]> {
 	const forbiddenPathViolations = (
 		await Promise.all(
@@ -185,6 +203,17 @@ export async function auditOpenClawRemoval(repositoryRoot: string): Promise<read
 					path.relative(repositoryRoot, filePath).replaceAll('\\', '/'),
 				),
 		);
+	const allTestFiles = [
+		...new Set([
+			...(await listFilesRecursively(path.join(repositoryRoot, 'packages'))),
+			...(await listFilesRecursively(path.join(repositoryRoot, 'scripts'))),
+		]),
+	]
+		.filter((filePath) => /\.(?:test|spec)\.ts$/u.test(filePath))
+		.filter(
+			(filePath) =>
+				path.relative(repositoryRoot, filePath).replaceAll('\\', '/') !== fixtureAuditSelfTestPath,
+		);
 
 	return [
 		...forbiddenPathViolations,
@@ -193,5 +222,6 @@ export async function auditOpenClawRemoval(repositoryRoot: string): Promise<read
 		...(await collectTextResidue(repositoryRoot, currentDocumentationFiles)),
 		...(await collectTextResidue(repositoryRoot, operationalAbsolutePaths)),
 		...(await collectTextResidue(repositoryRoot, activeTestFiles)),
+		...(await collectMisleadingPositiveFixtureResidue(repositoryRoot, allTestFiles)),
 	].toSorted();
 }

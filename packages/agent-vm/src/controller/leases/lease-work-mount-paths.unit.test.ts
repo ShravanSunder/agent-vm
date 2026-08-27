@@ -49,9 +49,9 @@ describe('validateControllerSelectedToolVmDirectory', () => {
 			},
 			id: 'test-zone',
 			secrets: {
-				HERMES_GATEWAY_TOKEN: {
+				TEST_GATEWAY_SECRET: {
 					audience: 'gateway',
-					envVar: 'HERMES_GATEWAY_TOKEN',
+					envVar: 'TEST_GATEWAY_SECRET',
 					injection: 'env',
 					source: 'environment',
 				},

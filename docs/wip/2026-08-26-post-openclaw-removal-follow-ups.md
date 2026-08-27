@@ -391,6 +391,19 @@ real VM 1/1 with zero skips; full quality 16/16; removal audit exit 0. This
 remediation changes test/audit sources only, so the exact packed-package receipt
 at `3fcf807a240d74268a505613dc5946dfa5cc1711` remains current.
 
+The review follow-up then corrected four over-broad vocabulary substitutions:
+Worker fixtures now use Worker image/config paths and neutral secrets; Gondolin
+synthetic-host tests use managed-VM vocabulary; managed Gateway boot proof
+asserts the exact two allowed environment input files rather than fabricated
+Hermes filenames; and generic project namespaces no longer retain `claw` names.
+The audit now also rejects fabricated Hermes gateway-token vocabulary.
+
+Fresh proof after that correction: unit 383 files and 4,365/4,365; integration
+822/822 by the 821-pass aggregate plus the isolated 14/14 rerun of the sole
+`EMFILE`-affected unchanged file; host E2E 30 files and 234/234; removal audit
+exit 0; full quality 16/16. Package/runtime production inputs remain unchanged
+from the exact `3fcf807a` inspection.
+
 Confirmed:
 
 - OpenClaw runs nowhere in the retained product.

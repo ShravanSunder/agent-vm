@@ -84,6 +84,27 @@ describe('OpenClaw removal audit', () => {
 		}
 	});
 
+	it('finds mechanically fabricated Hermes fixture vocabulary', async () => {
+		const repositoryRoot = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-fixture-audit-'));
+		try {
+			const testPath = path.join(
+				repositoryRoot,
+				'packages',
+				'example',
+				'src',
+				'fixture.unit.test.ts',
+			);
+			await mkdir(path.dirname(testPath), { recursive: true });
+			await writeFile(testPath, "const secretName = 'HERMES_GATEWAY_TOKEN';\n", 'utf8');
+
+			await expect(auditOpenClawRemoval(repositoryRoot)).resolves.toEqual([
+				'packages/example/src/fixture.unit.test.ts contains misleading framework fixture residue',
+			]);
+		} finally {
+			await rm(repositoryRoot, { force: true, recursive: true });
+		}
+	});
+
 	it('finds removed SSH secret-mode residue in production source', async () => {
 		const repositoryRoot = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-ssh-mode-audit-'));
 		try {

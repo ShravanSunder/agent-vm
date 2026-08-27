@@ -193,11 +193,11 @@ function createRuntimeRecord(props: {
 			processIdentity,
 			vmId: gatewayIdentity.gatewayVmId,
 		},
-		projectNamespace: 'claw-tests-a1b2c3d4',
+		projectNamespace: 'agent-vm-tests-a1b2c3d4',
 		qemuPid: props.qemuPid,
 		runtimeKind: 'managed-gateway',
 		schemaVersion: 4,
-		sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
+		sessionLabel: 'agent-vm-tests-a1b2c3d4:shravan:gateway',
 		vmId: `vm-${props.qemuPid}`,
 		zoneId: 'shravan',
 	});
@@ -238,7 +238,7 @@ describe('integration: orphan recovery', () => {
 				{
 					expectedConfigPath: '/deployments/hermes/config/system.jsonc',
 					expectedControllerPort: 18800,
-					projectNamespace: 'claw-tests-a1b2c3d4',
+					projectNamespace: 'agent-vm-tests-a1b2c3d4',
 					runtimeRecordTarget: controllerRecordTargets.managedGatewayRuntimeRecord,
 					zoneId,
 				},
@@ -271,7 +271,7 @@ describe('integration: orphan recovery', () => {
 				{
 					expectedConfigPath: '/deployments/hermes/config/system.jsonc',
 					expectedControllerPort: 18800,
-					projectNamespace: 'claw-tests-a1b2c3d4',
+					projectNamespace: 'agent-vm-tests-a1b2c3d4',
 					runtimeRecordTarget: controllerRecordTargets.managedGatewayRuntimeRecord,
 					zoneId,
 				},
@@ -297,7 +297,7 @@ describe('integration: orphan recovery', () => {
 				{
 					expectedConfigPath: '/deployments/hermes/config/system.jsonc',
 					expectedControllerPort: 18800,
-					projectNamespace: 'claw-tests-a1b2c3d4',
+					projectNamespace: 'agent-vm-tests-a1b2c3d4',
 					runtimeRecordTarget: controllerRecordTargets.managedGatewayRuntimeRecord,
 					zoneId,
 				},
@@ -322,7 +322,7 @@ describe('integration: orphan recovery', () => {
 				{
 					expectedConfigPath: '/deployments/hermes/config/system.jsonc',
 					expectedControllerPort: 18800,
-					projectNamespace: 'claw-tests-a1b2c3d4',
+					projectNamespace: 'agent-vm-tests-a1b2c3d4',
 					runtimeRecordTarget: controllerRecordTargets.managedGatewayRuntimeRecord,
 					zoneId,
 				},

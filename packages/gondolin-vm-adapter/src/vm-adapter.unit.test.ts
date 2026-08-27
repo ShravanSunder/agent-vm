@@ -534,7 +534,7 @@ describe('createManagedVm', () => {
 			{
 				allowedHosts: [],
 				cpus: 1,
-				imagePath: '/vm-images/gateways/hermes',
+				imagePath: '/vm-images/gateways/managed',
 				memory: '1G',
 				rootfsMode: 'memory',
 				secrets: {},
@@ -547,7 +547,7 @@ describe('createManagedVm', () => {
 		expect(startupEvents.slice(0, 2)).toEqual(['host-network-defaults', 'create-vm']);
 	});
 
-	it('uses an IPv4-mapped RFC2544 synthetic AAAA address for Hermes SSRF compatibility', () => {
+	it('uses an IPv4-mapped RFC2544 synthetic AAAA address for managed synthetic hosts', () => {
 		expect(SYNTHETIC_DNS_IPV4_BENCHMARK).toBe('198.18.0.1');
 		expect(SYNTHETIC_DNS_IPV6_IPV4_MAPPED_BENCHMARK).toBe('::ffff:198.18.0.1');
 		expect(net.isIP(SYNTHETIC_DNS_IPV6_IPV4_MAPPED_BENCHMARK)).toBe(6);
@@ -574,7 +574,7 @@ describe('createManagedVm', () => {
 		).resolves.toBe(true);
 	});
 
-	it('uses Hermes-compatible synthetic DNS ranges when TCP host mapping is enabled', async () => {
+	it('uses managed synthetic DNS ranges when TCP host mapping is enabled', async () => {
 		let capturedVmOptions: VMOptions | undefined;
 		let capturedIsIpAllowed: HttpHooks['isIpAllowed'] | undefined;
 		const createHttpHooksMock = vi.fn(
@@ -880,8 +880,8 @@ describe('createManagedVm', () => {
 			{
 				allowedHosts: ['api.openai.com'],
 				cpus: 2,
-				env: { HERMES_LOG_LEVEL: 'debug' },
-				imagePath: '/vm-images/gateways/hermes',
+				env: { MANAGED_VM_LOG_LEVEL: 'debug' },
+				imagePath: '/vm-images/gateways/managed',
 				memory: '2G',
 				rootfsMode: 'memory',
 				secrets: {
@@ -918,7 +918,7 @@ describe('createManagedVm', () => {
 			},
 			env: {
 				HTTPS_PROXY: 'http://proxy.vm.host:8080',
-				HERMES_LOG_LEVEL: 'debug',
+				MANAGED_VM_LOG_LEVEL: 'debug',
 			},
 			httpHooks: {},
 			memory: '2G',
@@ -926,7 +926,7 @@ describe('createManagedVm', () => {
 				mode: 'memory',
 			},
 			sandbox: {
-				imagePath: '/vm-images/gateways/hermes',
+				imagePath: '/vm-images/gateways/managed',
 			},
 			sessionLabel: 'shravan-gateway',
 			tcp: {
@@ -1037,8 +1037,8 @@ describe('createManagedVm', () => {
 			{
 				allowedHosts: ['api.perplexity.ai'],
 				cpus: 1,
-				env: { HERMES_LOG_LEVEL: 'debug' },
-				imagePath: '/vm-images/gateways/hermes',
+				env: { MANAGED_VM_LOG_LEVEL: 'debug' },
+				imagePath: '/vm-images/gateways/managed',
 				memory: '1G',
 				rootfsMode: 'memory',
 				secrets: {
@@ -1063,7 +1063,7 @@ describe('createManagedVm', () => {
 		});
 		expect(capturedVmOptions?.env).toMatchObject({
 			AGENT_VM_MCP_PERPLEXITY_PERPLEXITY_API_KEY: 'GONDOLIN_SECRET_test_placeholder',
-			HERMES_LOG_LEVEL: 'debug',
+			MANAGED_VM_LOG_LEVEL: 'debug',
 		});
 		expect(capturedVmOptions?.httpHooks).toEqual({});
 	});
@@ -1141,7 +1141,7 @@ describe('createManagedVm', () => {
 			{
 				allowedHosts: [],
 				cpus: 1,
-				imagePath: '/vm-images/gateways/hermes',
+				imagePath: '/vm-images/gateways/managed',
 				memory: '1G',
 				rootfsMode: 'memory',
 				secrets: {},
@@ -1181,7 +1181,7 @@ describe('createManagedVm', () => {
 			{
 				allowedHosts: [],
 				cpus: 1,
-				imagePath: '/vm-images/gateways/hermes',
+				imagePath: '/vm-images/gateways/managed',
 				memory: '1G',
 				rootfsMode: 'memory',
 				secrets: {},
@@ -1222,7 +1222,7 @@ describe('createManagedVm', () => {
 			{
 				allowedHosts: [],
 				cpus: 2,
-				imagePath: '/vm-images/gateways/hermes',
+				imagePath: '/vm-images/gateways/managed',
 				memory: '4G',
 				rootfsMode: 'cow',
 				runtimeRootfsSize: '12G',
@@ -1249,7 +1249,7 @@ describe('createManagedVm', () => {
 			{
 				allowedHosts: [],
 				cpus: 2,
-				imagePath: '/vm-images/gateways/hermes',
+				imagePath: '/vm-images/gateways/managed',
 				memory: '4G',
 				rootfsMode: 'cow',
 				secrets: {},
@@ -1274,7 +1274,7 @@ describe('createManagedVm', () => {
 			{
 				allowedHosts: [],
 				cpus: 2,
-				imagePath: '/vm-images/gateways/hermes',
+				imagePath: '/vm-images/gateways/managed',
 				memory: '4G',
 				rootfsMode: 'cow',
 				secrets: {},

@@ -62,7 +62,7 @@ describe('requireZone', () => {
 					schemaVersion: 2,
 					host: {
 						controllerPort: 18800,
-						projectNamespace: 'claw-tests-a1b2c3d4',
+						projectNamespace: 'agent-vm-tests-a1b2c3d4',
 						secretsProvider: { type: '1password', tokenSource: { type: 'env' } },
 					},
 					imageProfiles: {
@@ -112,9 +112,9 @@ describe('requireZone', () => {
 							},
 							id: 'shravan',
 							secrets: {
-								HERMES_GATEWAY_TOKEN: {
+								TEST_GATEWAY_SECRET: {
 									source: 'environment',
-									envVar: 'HERMES_GATEWAY_TOKEN',
+									envVar: 'TEST_GATEWAY_SECRET',
 									injection: 'env',
 									audience: 'gateway',
 								},

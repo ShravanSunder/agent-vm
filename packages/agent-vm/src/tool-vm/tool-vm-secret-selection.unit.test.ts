@@ -38,7 +38,7 @@ function gatewaySecret(): ZoneSecretConfig {
 function rawGatewayEnvSecret(): ZoneSecretConfig {
 	return {
 		source: 'environment',
-		envVar: 'HERMES_GATEWAY_TOKEN',
+		envVar: 'TEST_GATEWAY_SECRET',
 		injection: 'env',
 		audience: 'gateway',
 	};
@@ -73,7 +73,7 @@ describe('Tool VM secret selection', () => {
 		const selected = selectToolVmMediatedSecretNamesForAgent({
 			agentId: 'sun',
 			zone: createZoneWithSecrets({
-				HERMES_GATEWAY_TOKEN: rawGatewayEnvSecret(),
+				TEST_GATEWAY_SECRET: rawGatewayEnvSecret(),
 				SHARED_TOKEN: toolSecret({ agentAccess: 'all', envVar: 'SHARED_TOKEN' }),
 				SUN_TOKEN: toolSecret({ agentAccess: ['sun'], envVar: 'SUN_TOKEN' }),
 				MAK_TOKEN: toolSecret({ agentAccess: ['mak'], envVar: 'MAK_TOKEN' }),
