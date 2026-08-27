@@ -5,8 +5,11 @@
 The `remove-openclaw` branch owns one outcome: remove OpenClaw completely while
 retaining Hermes, Worker, and framework-neutral Agent VM behavior.
 
-This branch must not change Hermes cache, reconnect, retry, reacquisition, or
-binding-publication behavior. OpenClaw configuration, runtime code, packages,
+This branch does not independently redesign Hermes cache, reconnect, retry,
+reacquisition, or binding-publication behavior. The separately owned Hermes
+control-reattachment recovery landed on `origin/master` and is integrated here
+unchanged except for porting its new test principals to this branch's existing
+Hermes-only identity contract. OpenClaw configuration, runtime code, packages,
 plugins, images, commands, tests, and supported documentation are removed rather
 than preserved behind compatibility paths.
 
@@ -16,13 +19,14 @@ than preserved behind compatibility paths.
 
 - Decision: the OpenClaw-removal branch contains no unrelated Hermes runtime
   repair.
-- Why: the repository owner wants a clean OpenClaw cutover and another agent
-  will handle the Hermes reconnect defect separately.
+- Why: the repository owner wants a clean OpenClaw cutover; the Hermes reconnect
+  defect was handled and reviewed on its separate branch before landing on
+  `origin/master`.
 - Rejected alternative: finish the Hermes recovery change in this branch. That
   mixes an independent runtime behavior change with the deletion and makes the
   cutover harder to attribute and verify.
-- Consequence: remove the uncommitted U10 recovery expansion and Python cache
-  repair from this branch before final cutover verification.
+- Consequence: this branch carries the upstream recovery only through the
+  requested master integration and does not add a second implementation.
 - Status: accepted.
 
 ### Retained-behavior proof remains cutover work
@@ -35,9 +39,10 @@ than preserved behind compatibility paths.
   must not change runtime behavior merely to make a proof pass.
 - Status: accepted.
 
-## Deferred Item 1 — Hermes first-call recovery after control reattachment
+## Integrated Item 1 — Hermes first-call recovery after control reattachment
 
-Owner: separate agent/worktree assigned by the repository owner.
+Owner: separate recovery branch, merged to master as `c3a6b1d6` and integrated
+into this cutover through `origin/master` at `0ba4d0e2`.
 
 ### Symptom
 
@@ -54,7 +59,7 @@ Hermes managed environment
   -> controller-authorized Tool VM binding
 ```
 
-### Current behavior
+### Former failing behavior
 
 1. Hermes retains a cached managed-environment handle from the old control
    session.
@@ -66,9 +71,9 @@ Hermes managed environment
 6. Gateway Runtime performs an immediate lookup and reports unavailable, so the
    first operation fails; a later operation may succeed after publication.
 
-### Expected behavior for the separate fix
+### Resolved behavior
 
-The first affected operation should either:
+The first affected operation now either:
 
 - continue on a fresh controller-authorized binding within the existing bounded
   command deadline; or
@@ -79,7 +84,7 @@ The first affected operation should either:
 It must never reuse the stale predecessor generation or replay a potentially
 side-effecting application command.
 
-### Known design constraints
+### Preserved design constraints
 
 - Keep controller durable lease and binding authority unchanged.
 - Keep the existing `publication_pending` controller protocol unless separate
@@ -100,41 +105,20 @@ side-effecting application command.
 - `packages/gateway-control-contracts/src/index.ts`
 - `packages/agent-vm/src/integration-tests/hermes-managed-base-environment.hermes.e2e.test.ts`
 
-### Required proof
+### Integrated proof
 
-- Unit: failed cached-status proof retires only the exact stale local cache entry
-  and creates a distinct generation.
-- Unit/integration: publication arriving after the binding-request response
-  completes the same acquisition without a second request.
-- Unit/integration: the rejected predecessor cannot satisfy the readiness wait;
-  its retirement does not terminate the wait for a successor.
-- Unit/integration: deadline, session replacement, runtime close, connection
-  failure, concurrency coalescing, and principal isolation are deterministic.
-- Hermes E2E: the first post-reattachment terminal/filesystem operation succeeds
-  through the real controller, Gateway VM, Gateway Runtime, and Tool VM path.
+- Focused TypeScript unit: three files, 47/47 passed. This includes the upstream
+  replacement-session use-end runtime and the retained manual contract.
+- Focused controller integration: 4/4 passed for Tool VM retirement authority.
+- Hermes Python adapter: 178/178 passed, including the upstream managed Gateway
+  bootstrap recovery changes.
+- Real Hermes E2E: five files, 9/9 passed with zero skips. The first operation
+  after control reattachment succeeds through the real controller, Gateway VM,
+  Gateway Runtime, and Tool VM path without creating a replacement Tool VM
+  process.
 
-### Proof already captured
-
-| Evidence | Result | What it proves | Limitation |
-| --- | --- | --- | --- |
-| Exact base `a4f0d0e1` and removal branch live reproduction | Both reached the same post-reattachment failure boundary | The defect predates and is not caused by OpenClaw removal | It is red evidence, not a fix |
-| Cached-status unit test before the local correction | 173 passed, 1 failed at the expected escaped status exception | The cache hook could not reach eviction/reacquisition after a failed status probe | The test and correction are intentionally removed from this cutover branch |
-| Pinned Hermes Python suite after the bounded cache correction | 174/174 passed | Exact stale-cache eviction/local retirement can be implemented without Python-suite regression | It did not fix the deeper asynchronous binding-publication race |
-| Live Hermes rerun after cache correction | Fresh acquisition still returned unavailable at `publication_pending` | Cache cleanup is necessary but insufficient; the remaining seam is Gateway Runtime publication coordination | No green first-call recovery exists yet |
-
-Proof status: the separate fix has a source-backed red reproduction and one
-validated partial correction. It does not yet have the required event-driven
-Gateway Runtime implementation, deterministic successor-wait matrix, or green
-real Hermes first-call E2E. The owning agent must not claim completion from the
-174/174 Python result alone.
-
-### Stop conditions
-
-- The proposed fix changes controller authority or public protocol without a
-  separately reviewed design.
-- Passing requires sleeps, polling, command replay, or weakened assertions.
-- The live failure moves outside the cached-environment and binding-publication
-  path described above.
+Proof status: green. The prior `publication_pending` reproduction remains useful
+historical diagnosis, but it is no longer an open or deferred cutover item.
 
 ## Deferred Item 2 — Hermes upstream upgrade qualification
 
@@ -183,29 +167,30 @@ accepted and corrected at `46fe6e70`:
    `gateway-runtime`.
 
 The next reviews accepted the four implementation remediations and found no
-runtime or missing-test defect. They identified two proof-authority wording
-errors: first the WIP required one monolithic HEAD, then revision 2 assigned the
-entire unit lane to `1fa07bb1` even though two audit unit files changed later.
-The final model below uses consumer-relevance freshness and composite unit
-coverage. One gate remains: fresh independent review of that final wording.
+runtime or missing-test defect. Their exact-head verdicts became stale when the
+requested master pull integrated the separately reviewed Hermes recovery and
+the `0.0.143` release train. The final model below uses consumer-relevance
+freshness and records fresh affected-path proof. One gate remains: independent
+review of the final committed merge and proof record.
 
 ## OpenClaw cutover proof status
 
 | Proof layer | Last evidence | Current status |
 | --- | --- | --- |
-| Core removal implementation | Commits `859bfa43`, `eeae0213`, and `7d833519`; master integration `02745c94` | Committed and integrated with `origin/master` at `cbba8890`; exact master differential adds no OpenClaw line |
-| Unit | Composite: `pnpm test:unit` at `1fa07bb1` plus the two changed audit suites at `46fe6e70` | The full 383-file, 4,340/4,340 baseline covers unchanged unit consumers; current `audit-openclaw-removal` and `audit-portal-architecture` suites add 22/22 for the only later-changed unit files; taxonomy passed |
-| Integration | `pnpm test:integration` at `1fa07bb1` | 61 files, 830/830 tests passed |
+| Core removal implementation | Commits `859bfa43`, `eeae0213`, and `7d833519`; current integration of `origin/master` at `0ba4d0e2` | OpenClaw-owned conflicts stayed deleted; upstream Hermes recovery and credentialed-runtime documentation were retained |
+| Unit | Historical full 4,340/4,340 baseline plus current affected-path run | Three current merge-affected files passed 47/47; the new upstream recovery test was ported from its removed OpenClaw principal fixture to the existing Hermes identity contract |
+| Integration | Historical full 830/830 baseline plus current affected-path run | Current Tool VM retirement authority integration passed 4/4 |
 | Host E2E | `pnpm test:e2e:host` at `1fa07bb1` with required host permissions | 30 files, 234/234 tests passed; the first sandboxed attempt failed only on blocked uv, Docker, and host-process access |
 | Generic VM E2E | `mise exec -- pnpm test:e2e:vm` at `1fa07bb1` | 11 files, 17/17 real VM tests passed, including process/stream and leaf-replacement proof |
 | Worker E2E | documented private test-key mapping plus `mise exec -- pnpm test:e2e:worker` at `1fa07bb1` | 3 files, 5/5 tests passed with zero skips; the bare command's 2-pass/3-skip result is not used as proof |
-| Retained Hermes files | Exact aggregate command rerun at `c8df1d36` | 5 files, 9/9 real Hermes tests passed with zero skips; the earlier 7/9 startup/root-health result did not reproduce |
-| Package inspection | `pnpm inspect:managed-vm-package-cut --expected-head 46fe6e709cce30d4024c907445d67c1f87809deb` | Passed for exactly 17 retained npm packages at synchronized `0.0.142`; packed members and sibling dependency versions inspected |
-| Proof-transfer ledger | Same-or-stronger retained paths are transferred; reattachment remains baseline-red differential evidence; non-equivalent idle/reacquisition/automatic-recovery scenarios are assigned to the separate runtime owner | Resolved for this cutover: no pending row remains and no deferred row authorizes a Hermes behavior change |
-| OpenClaw residue audit | `pnpm exec tsx scripts/audit-openclaw-removal.ts` at `46fe6e70` | Passed with exit 0 after expanding coverage to root quality configuration and active portal-architecture tooling |
-| Full quality gate | `UV_CACHE_DIR=/tmp/agent-vm-remove-openclaw-uv-cache pnpm check` at `46fe6e70` | 16/16 passed in 43.48 seconds: build, Optique CLI boundary, package/Zod guards, taxonomy, portal and VM boundaries, generated contracts, lint, format, type-aware lint, and typecheck |
+| Hermes Python adapter | `pnpm python:test:hermes` on the integrated merge tree | 178/178 passed, including the upstream reattachment recovery implementation |
+| Retained Hermes files | Exact aggregate command on the integrated merge tree with required host permissions | 5 files, 9/9 real Hermes tests passed with zero skips in 346.27 seconds, including first-call recovery after reattachment |
+| Package inspection | Pending final committed HEAD | Quality confirms 17 npm and 2 Python packages synchronized at `0.0.143`; exact packed-package inspection runs after the merge/WIP commits |
+| Proof-transfer ledger | Same-or-stronger retained paths are transferred; reattachment is now green upstream recovery evidence; non-equivalent idle/reacquisition/automatic-recovery scenarios remain assigned to their runtime owner | Resolved for this cutover: no pending row authorizes an additional Hermes behavior change |
+| OpenClaw residue audit | `pnpm exec tsx scripts/audit-openclaw-removal.ts` on the integrated merge tree | Passed with exit 0 after the master integration and test-fixture port |
+| Full quality gate | `UV_CACHE_DIR=/tmp/agent-vm-remove-openclaw-uv-cache pnpm check` on the integrated merge tree | 16/16 passed in 46.81 seconds: build, Optique CLI boundary, package/Zod guards, taxonomy, portal and VM boundaries, generated contracts, lint, format, type-aware lint, and typecheck |
 | Built CLI manual proof | Fresh OS-temp `macos-local` Hermes scaffold, validate, real Docker/Gondolin build, and removed `--type openclaw` rejection at `1fa07bb1` | Passed; generated runtime shape contains Hermes and Tool VM inputs and no OpenClaw runtime directory/config |
-| Independent implementation review | Complete reviews at `155e7303`, `65783cde`, and `bfe7a735` | Implementation corrections are accepted; later findings were proof-owner wording defects, with the final composite-unit correction awaiting review |
+| Independent implementation review | Complete reviews at `155e7303`, `65783cde`, and `bfe7a735` | Historical reviews are accepted but stale for the new master integration; one fresh exact-head review remains |
 
 Final cutover proof is present only when every row above has evidence from the
 most recent identity that changed its observed consumer path, and the final diff
@@ -222,36 +207,43 @@ inventory and never presented as runtime proof.
   generic VM, Worker, built-CLI, and initial package evidence. Later changes do
   not touch their production source, configuration, fixtures, images, build
   inputs, or named tests.
-- `c8df1d36` changes only the Hermes E2E test to separate ordinary restart from
-  opt-in reattachment stress, and owns the final aggregate Hermes 9/9 result.
+- `c8df1d36` owned the pre-recovery aggregate Hermes 9/9 result. The current
+  integrated merge tree supersedes it for the changed reattachment consumer.
 - `46fe6e70` changes root lint policy, removal/portal audit tooling and their two
   unit test files, canonical architecture text, and the cutover proof contract.
   It owns the current versions of those two unit consumers through the targeted
   22/22 result, plus the strengthened removal audit, full quality 16/16 result,
   and exact 17-package inspection.
-- `65783cde` and the final receipt commit change only this WIP. They do not alter
-  any observed consumer path above.
+- `0ba4d0e2` adds the separately reviewed Hermes control-reattachment recovery,
+  credentialed-runtime documentation, and synchronized `0.0.143` package train.
+  Fresh focused TypeScript, Python, aggregate Hermes, quality, and removal-audit
+  evidence above supersedes affected historical receipts.
+- The final WIP receipt commit changes documentation only and does not alter an
+  observed runtime consumer path.
 
 ### Fresh integrated merge receipt
 
-- Integrated source: `origin/master` at `cbba8890`.
-- Merge commit: `02745c94`.
+- Integrated source: `origin/master` at `0ba4d0e2`.
+- Merge commit: `2b5d8dc141ebdb5690c2ba4dca3a89a5c284cc98` with parents
+  `a119e42107efeaf352e74d9ba873617db6f3f0e6` and
+  `0ba4d0e23663fb5effabee8681bf67e7a8c01b92`.
 - Shared conflict policy: OpenClaw-owned files stayed deleted; current master
   namespace-discovery and credentialed-runtime contracts were retained under
   Hermes-only managed-agent identities.
-- Focused unit command: eight selected unit files covering portable contracts,
-  Gateway control contracts, semantic revision, manuals, controller HTTP, and
-  control-domain handling; result `187 passed`, exit 0.
-- Focused integration command: four selected files covering Gateway zone
-  orchestration, Tool Portal approval, and managed Tool Portal composition;
-  result `69 passed`, exit 0.
+- Focused unit command: manual templates plus both upstream recovery runtime
+  files; result `47 passed`, exit 0.
+- Focused integration command: Tool VM retirement authority; result `4 passed`,
+  exit 0.
+- Hermes Python adapter command: result `178 passed`, exit 0.
+- Real Hermes aggregate command with host permissions: result `9 passed`, zero
+  skips, exit 0.
 - Full quality command:
   `UV_CACHE_DIR=/tmp/agent-vm-remove-openclaw-uv-cache pnpm check`; result
   `16 passed, 0 failed`, exit 0.
 - Dedicated removal command:
   `pnpm exec tsx scripts/audit-openclaw-removal.ts`; exit 0.
-- Exact remediation-head checks are complete at `46fe6e70`; only corrected-head
-  independent review remains.
+- Exact final-head package inspection and independent review remain after the
+  merge and WIP commits.
 
 ### Fresh integrated final-bundle progress at `1fa07bb1`
 
@@ -263,10 +255,11 @@ inventory and never presented as runtime proof.
   gates; inventory only, not runtime proof.
 - Generic VM: 17/17 passed.
 - Worker: 5/5 passed with the test-only model credential mapped; zero skips.
-- Hermes green: the exact aggregate lane later passed 5 files and 9/9 tests at
-  `c8df1d36`, superseding the selected-file-only receipt for aggregate health.
-- Package cut: exactly 17 retained npm packages packed and inspected at
-  `0.0.142`.
+- Hermes green: the exact aggregate lane now passes 5 files and 9/9 tests on the
+  integrated `0ba4d0e2` merge tree, superseding the pre-recovery receipt.
+- Package cut: the historical exact inspection covered 17 retained npm packages
+  at `0.0.142`; the integrated train is synchronized at `0.0.143` and awaits the
+  final committed-head packed inspection below.
 - Built CLI: fresh Hermes scaffold succeeded, static validation returned
   `ok: true`, the real registry-backed Docker/Gondolin build succeeded with
   Hermes `0.20.0`, and `--type openclaw` was rejected by the Optique parser.
@@ -326,45 +319,31 @@ Tool VM access after replacement, or three-recovery no-flap behavior. These
 ledger rows are recorded as deferred runtime-owner qualification rather than
 being inferred from the weaker restart case.
 
-### Reattachment stress separation receipt
+### Reattachment recovery receipt
 
-`hermes-managed-base-environment.hermes.e2e.test.ts` now keeps its ordinary
-restart proof green while retaining the same post-control-reattachment tail
-behind `AGENT_VM_HERMES_REATTACHMENT_STRESS=1`.
+The upstream recovery is now part of the ordinary
+`hermes-managed-base-environment.hermes.e2e.test.ts` path. The old opt-in
+`AGENT_VM_HERMES_REATTACHMENT_STRESS` separation is gone.
 
-- Gate closed: 1/1 restart test passed. It proves a distinct second Gateway VM
-  epoch, root API health, unchanged framework and Tool Portal sibling process
-  identities during ordinary work, preserved native profile leaves, and no
-  healthy-attachment replacement.
-- Gate open: the same current-head test remains red on the first affected Tool
-  VM call with `Gateway runtime method dispatch failed`, matching the previously
-  recorded exact-base failure boundary.
-- The assertion still expects `HERMES_TOOL_VM_RECOVERY_OK`; no expected-failure
-  conversion, retry, or second-call fallback was added.
+- The first post-reattachment Tool VM operation succeeds.
+- The test observes a fresh `main` lease request while proving that no new Tool
+  VM process was created.
+- The proof retains stock Hermes behavior and does not add command replay,
+  expected-failure conversion, or a second-call fallback.
 
 ### Aggregate Hermes lane receipt
 
-The earlier complete-lane run produced 7/9 passes: the managed-base harness did
-not observe Gateway start, and observability timed out waiting for root API
-health. Both files passed individually, so the result remained an aggregate
-evidence gap rather than a product diagnosis.
+The exact complete named lane was rerun after the master integration with the
+host permissions required by Docker, Gondolin session registration, and the
+production `ps` containment check:
 
-At `c8df1d36`, the smallest suspected two-file collision was run with real host
-permissions:
+`UV_CACHE_DIR=/tmp/agent-vm-remove-openclaw-uv-cache AGENT_VM_E2E_SKIP_WORKSPACE_BUILD=1 mise exec -- pnpm test:e2e:hermes`
 
-`AGENT_VM_E2E_SKIP_WORKSPACE_BUILD=1 AGENT_VM_E2E_USE_LOCAL_TOOL_VM_PACKAGES=1 AGENT_VM_HERMES_E2E=1 mise exec -- pnpm exec vitest run --config vitest.config.ts --project e2e-hermes packages/agent-vm/src/integration-tests/hermes-managed-base-environment.hermes.e2e.test.ts packages/agent-vm/src/integration-tests/hermes-framework-observability.hermes.e2e.test.ts --reporter=verbose`
-
-Result: 2 files and 6/6 tests passed, exit 0. This falsified deterministic
-contamination between those two files in the observed order.
-
-The exact complete named lane was then rerun with real host permissions:
-
-`AGENT_VM_E2E_SKIP_WORKSPACE_BUILD=1 mise exec -- pnpm test:e2e:hermes`
-
-Result: 5 files and 9/9 tests passed with zero skips, exit 0, in 311.73 seconds.
-The prior aggregate-only startup/root-health failures did not reproduce. No
-test, timeout, assertion, production behavior, or Hermes runtime behavior was
-changed to obtain the green result.
+Result: 5 files and 9/9 tests passed with zero skips, exit 0, in 346.27 seconds.
+Earlier sandboxed attempts failed at `uv` cache writes, Buildx metadata,
+Gondolin session registration, and `spawn EPERM`; they are environment receipts,
+not product failures. No test, timeout, assertion, production behavior, or
+Hermes runtime behavior was changed to obtain the green result.
 
 ## Closing state
 
@@ -372,11 +351,12 @@ Confirmed:
 
 - OpenClaw runs nowhere in the retained product.
 - Hermes is the managed interactive Gateway; Worker remains the task Gateway.
-- The Hermes reconnect defect and Hermes upgrade are separate work.
+- The Hermes reconnect defect was fixed separately and is now integrated from
+  master; the Hermes upstream upgrade remains separate work.
 - Proof ports may observe retained behavior but may not redesign it.
 
 Open:
 
-- Exact implementation and release timing for the separate Hermes recovery
-  work.
+- Exact qualification and release timing for the remaining idle-retirement and
+  automatic whole-Gateway recovery scenarios.
 - Any future product requirement for OpenClaw-style session federation.
