@@ -84,6 +84,21 @@ describe('OpenClaw removal audit', () => {
 		}
 	});
 
+	it('finds positive OpenClaw vocabulary in an unclassified Python test', async () => {
+		const repositoryRoot = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-python-test-audit-'));
+		try {
+			const testPath = path.join(repositoryRoot, 'python', 'example', 'tests', 'test_positive.py');
+			await mkdir(path.dirname(testPath), { recursive: true });
+			await writeFile(testPath, "profile_name = 'openclaw'\n", 'utf8');
+
+			await expect(auditOpenClawRemoval(repositoryRoot)).resolves.toEqual([
+				'python/example/tests/test_positive.py contains active OpenClaw residue',
+			]);
+		} finally {
+			await rm(repositoryRoot, { force: true, recursive: true });
+		}
+	});
+
 	it('finds mechanically fabricated Hermes fixture vocabulary', async () => {
 		const repositoryRoot = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-fixture-audit-'));
 		try {

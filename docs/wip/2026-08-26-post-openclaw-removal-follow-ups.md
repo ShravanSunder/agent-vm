@@ -433,6 +433,27 @@ Hermes-only release. This is the R10 predecessor-shutdown safety contract, not
 an executable OpenClaw path in the retained release; the new release cannot
 parse, start, migrate, or delete that predecessor state.
 
+### Initial PR CI corrections
+
+PR #205's first CI run exposed two cutover-owned proof defects. The Python SDK
+handshake-rejection matrix still tried to construct an impossible removed
+client kind; the strict Hermes-only generated schema correctly rejected it
+before the fake transport could return a handshake error. That case now proves
+invalid client-kind rejection at the local generated-contract boundary, while
+the remaining transport rejection matrix uses only constructible Hermes
+attachments. The removal audit now scans Python production and test sources,
+with the intentional Hermes-bootstrap other-framework rejection held by an
+exact occurrence count.
+
+The new Hermes image-cache preparation path also builds local Python wheels but
+the CI job had retained the OpenClaw-era Node/system setup and did not install
+`uv`. The image-preparation job now installs the repository's existing pinned
+`uv 0.11.31` action before running the cache builder. Fresh local proof after
+both corrections: Python host SDK 276/276, focused audit/workflow unit tests
+12/12, direct removal audit exit 0, and full quality 16/16. These changes affect
+tests, audit enforcement, and CI setup, not packed runtime source; the exact
+17-package inspection above remains consumer-current.
+
 Confirmed:
 
 - OpenClaw runs nowhere in the retained product.

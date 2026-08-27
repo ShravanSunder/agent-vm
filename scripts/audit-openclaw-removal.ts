@@ -75,10 +75,11 @@ const classifiedRemovalTestFiles = new Map<string, number>([
 		2,
 	],
 	['scripts/audit-managed-vm-boundaries.unit.test.ts', 13],
-	['scripts/audit-openclaw-removal.unit.test.ts', 32],
+	['scripts/audit-openclaw-removal.unit.test.ts', 36],
 	['scripts/audit-test-taxonomy.unit.test.ts', 1],
 	['scripts/ci-workflow.unit.test.ts', 1],
 	['scripts/inspect-managed-vm-package-cut.unit.test.ts', 4],
+	['python/agent-vm-hermes-adapter/tests/test_managed_gateway_bootstrap.py', 1],
 ]);
 const fixtureAuditSelfTestPath = 'scripts/audit-openclaw-removal.unit.test.ts';
 
@@ -202,6 +203,10 @@ export async function auditOpenClawRemoval(repositoryRoot: string): Promise<read
 				filePath !==
 				path.join(repositoryRoot, 'packages', 'agent-vm', 'src', 'cli', 'manual-templates.ts'),
 		);
+	const pythonSourceFiles = (await listFilesRecursively(path.join(repositoryRoot, 'python')))
+		.filter((filePath) => filePath.includes(`${path.sep}src${path.sep}`))
+		.filter((filePath) => filePath.endsWith('.py'));
+	const activeSourceFiles = [...packageSourceFiles, ...pythonSourceFiles];
 	const currentDocumentationFiles = (
 		await Promise.all(
 			currentDocumentationRoots.map(async (relativePath) => {
@@ -221,10 +226,15 @@ export async function auditOpenClawRemoval(repositoryRoot: string): Promise<read
 	const activeTestFiles = [
 		...new Set([
 			...(await listFilesRecursively(path.join(repositoryRoot, 'packages'))),
+			...(await listFilesRecursively(path.join(repositoryRoot, 'python'))),
 			...(await listFilesRecursively(path.join(repositoryRoot, 'scripts'))),
 		]),
 	]
-		.filter((filePath) => /\.(?:test|spec)\.ts$/u.test(filePath))
+		.filter(
+			(filePath) =>
+				/\.(?:test|spec)\.ts$/u.test(filePath) ||
+				(filePath.endsWith('.py') && filePath.includes(`${path.sep}tests${path.sep}`)),
+		)
 		.filter((filePath) => !operationalAbsolutePathSet.has(filePath))
 		.filter(
 			(filePath) =>
@@ -235,23 +245,28 @@ export async function auditOpenClawRemoval(repositoryRoot: string): Promise<read
 	const allTestFiles = [
 		...new Set([
 			...(await listFilesRecursively(path.join(repositoryRoot, 'packages'))),
+			...(await listFilesRecursively(path.join(repositoryRoot, 'python'))),
 			...(await listFilesRecursively(path.join(repositoryRoot, 'scripts'))),
 		]),
 	]
-		.filter((filePath) => /\.(?:test|spec)\.ts$/u.test(filePath))
+		.filter(
+			(filePath) =>
+				/\.(?:test|spec)\.ts$/u.test(filePath) ||
+				(filePath.endsWith('.py') && filePath.includes(`${path.sep}tests${path.sep}`)),
+		)
 		.filter(
 			(filePath) =>
 				path.relative(repositoryRoot, filePath).replaceAll('\\', '/') !== fixtureAuditSelfTestPath,
 		);
-	const semanticFixtureSourceFiles = [...new Set([...packageSourceFiles, ...allTestFiles])].filter(
+	const semanticFixtureSourceFiles = [...new Set([...activeSourceFiles, ...allTestFiles])].filter(
 		(filePath) =>
 			path.relative(repositoryRoot, filePath).replaceAll('\\', '/') !== fixtureAuditSelfTestPath,
 	);
 
 	return [
 		...forbiddenPathViolations,
-		...(await collectTextResidue(repositoryRoot, packageSourceFiles)),
-		...(await collectRemovedSshSecretModeResidue(repositoryRoot, packageSourceFiles)),
+		...(await collectTextResidue(repositoryRoot, activeSourceFiles)),
+		...(await collectRemovedSshSecretModeResidue(repositoryRoot, activeSourceFiles)),
 		...(await collectTextResidue(repositoryRoot, currentDocumentationFiles)),
 		...(await collectTextResidue(repositoryRoot, operationalAbsolutePaths)),
 		...(await collectTextResidue(repositoryRoot, activeTestFiles)),

@@ -69,6 +69,9 @@ describe('CI workflow topology', () => {
 		expect(workflow).toContain('e2e-host=${E2E_HOST_RESULT}');
 		expect(workflow).toContain('uses: ./.github/actions/restore-e2e-image-cache');
 		expect(workflow).toContain('uses: ./.github/actions/resolve-e2e-image-cache-key');
+		expect(workflow).toContain('name: Set up uv for Hermes image preparation');
+		expect(workflow).toContain('uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a');
+		expect(workflow).toContain("version: '0.11.31'");
 		expect(workflow).toContain("lookup-only: 'true'");
 		expect(workflow).toContain(
 			'      - parallel:\n          - name: Restore prepared Hermes image cache',

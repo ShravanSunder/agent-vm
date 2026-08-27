@@ -84,6 +84,14 @@ jobs:
             if: steps.hermes-image.outputs.cache-hit != 'true' || steps.worker-image.outputs.cache-hit != 'true'
             uses: ./.github/actions/setup-system-packages
 
+          - name: Set up uv for Hermes image preparation
+            if: steps.hermes-image.outputs.cache-hit != 'true' || steps.worker-image.outputs.cache-hit != 'true'
+            uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v9.0.0
+            with:
+              version: '0.11.31'
+              enable-cache: true
+              cache-dependency-glob: uv.lock
+
       - name: Prepare current E2E images
         if: steps.hermes-image.outputs.cache-hit != 'true' || steps.worker-image.outputs.cache-hit != 'true'
         env:
