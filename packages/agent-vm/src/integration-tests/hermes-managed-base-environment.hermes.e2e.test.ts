@@ -44,7 +44,7 @@ import {
 	hermesE2eRootApiServerKey,
 	renderHermesManagedE2eConfiguration,
 	scaffoldHermesE2eProject,
-	useLocalHermesGatewayImagePackages,
+	materializeLocalHermesGatewayImagePackages,
 	type HermesE2eProject,
 } from './hermes-e2e-harness.js';
 
@@ -816,7 +816,7 @@ describeHermesManagedEnvironmentE2e(
 					renderCommonConfiguration(commonAcceptanceMarkers.first),
 					'utf8',
 				);
-				await useLocalHermesGatewayImagePackages({
+				await materializeLocalHermesGatewayImagePackages({
 					architecture,
 					profileName: filesystemProject.zone.gateway.imageProfile,
 					projectRoot: filesystemProject.tempRoot,
@@ -921,7 +921,7 @@ describeHermesManagedEnvironmentE2e(
 				renderCommonConfiguration(commonAcceptanceMarkers.first),
 				'utf8',
 			);
-			await useLocalHermesGatewayImagePackages({
+			await materializeLocalHermesGatewayImagePackages({
 				architecture,
 				profileName: project.zone.gateway.imageProfile,
 				projectRoot: project.tempRoot,

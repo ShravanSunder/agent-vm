@@ -484,6 +484,13 @@ exits 0; and full quality passes 16/16. Because the harness is compiled into
 `18fa9a9947902ee7a8e14ad037949e98440d42e3` and passes for all 17 retained npm
 packages at synchronized `0.0.143`.
 
+The local Hermes package/image setup helper is named
+`materializeLocalHermesGatewayImagePackages`. It is an imperative filesystem
+and recipe-materialization operation, not a React hook. The mechanical rename
+changes no behavior; focused workflow unit proof passes 2/2, the E2E harness
+host file passes 33/33, the direct removal audit exits 0, and full quality
+passes 16/16.
+
 Confirmed:
 
 - OpenClaw runs nowhere in the retained product.

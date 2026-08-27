@@ -17,7 +17,7 @@ import { createManagedVmRuntimeComposition } from '../composition/gondolin-manag
 import { prepareGatewayE2eProjectImages, removeE2eTempRoot } from './e2e-harness.js';
 import {
 	scaffoldHermesE2eProject,
-	useLocalHermesGatewayImagePackages,
+	materializeLocalHermesGatewayImagePackages,
 	type HermesE2eProject,
 } from './hermes-e2e-harness.js';
 
@@ -205,7 +205,7 @@ export async function createManagedGatewayImageBootFixture(props: {
 		if (gatewayProfile === undefined || gatewayProfile.type !== 'hermes') {
 			throw new Error(`Hermes image profile '${profileName}' is missing.`);
 		}
-		await useLocalHermesGatewayImagePackages({
+		await materializeLocalHermesGatewayImagePackages({
 			architecture,
 			profileName,
 			projectRoot: project.tempRoot,

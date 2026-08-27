@@ -177,7 +177,7 @@ describe('CI workflow topology', () => {
 
 		expect(workflow).toContain('permissions:\n  contents: read');
 		expect(workflow).toContain('persist-credentials: false');
-		expect(preparationScript).toContain('useLocalHermesGatewayImagePackages');
+		expect(preparationScript).toContain('materializeLocalHermesGatewayImagePackages');
 		expect(preparationScript.match(/imageFamilies: \['gateway'\]/gu)).toHaveLength(2);
 		expect(preparationScript.match(/imageFamilies: \['toolVm'\]/gu)).toHaveLength(1);
 		expect(preparationScript).toMatch(

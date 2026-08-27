@@ -6,7 +6,7 @@ import {
 } from '../packages/agent-vm/src/integration-tests/e2e-harness.js';
 import {
 	scaffoldHermesE2eProject,
-	useLocalHermesGatewayImagePackages,
+	materializeLocalHermesGatewayImagePackages,
 } from '../packages/agent-vm/src/integration-tests/hermes-e2e-harness.js';
 
 async function main(): Promise<void> {
@@ -31,7 +31,7 @@ async function main(): Promise<void> {
 			zoneId: 'ci-worker-image-cache',
 		});
 		workerTempRoot = workerProject.tempRoot;
-		await useLocalHermesGatewayImagePackages({
+		await materializeLocalHermesGatewayImagePackages({
 			architecture,
 			profileName: hermesProject.zone.gateway.imageProfile,
 			projectRoot: hermesProject.tempRoot,

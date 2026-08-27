@@ -28,7 +28,7 @@ import {
 	hermesE2eProfileApiServerKeyEnvironmentName,
 	renderHermesManagedE2eConfiguration,
 	scaffoldHermesE2eProject,
-	useLocalHermesGatewayImagePackages,
+	materializeLocalHermesGatewayImagePackages,
 	type HermesE2eProject,
 } from './hermes-e2e-harness.js';
 
@@ -657,7 +657,7 @@ describeHermesToolPortalOrientationE2e('e2e: Hermes Tool Portal session orientat
 				'utf8',
 			),
 		]);
-		await useLocalHermesGatewayImagePackages({
+		await materializeLocalHermesGatewayImagePackages({
 			architecture,
 			profileName: project.zone.gateway.imageProfile,
 			projectRoot: project.tempRoot,

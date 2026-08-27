@@ -52,7 +52,7 @@ import {
 import {
 	renderHermesManagedE2eConfiguration,
 	scaffoldHermesE2eProject,
-	useLocalHermesGatewayImagePackages,
+	materializeLocalHermesGatewayImagePackages,
 } from './hermes-e2e-harness.js';
 
 const temporaryRoots: string[] = [];
@@ -262,7 +262,7 @@ describe('scaffoldGatewayE2eProject', () => {
 		);
 		await expect(fs.access(localArtifactDirectory)).rejects.toThrow();
 
-		await useLocalHermesGatewayImagePackages({
+		await materializeLocalHermesGatewayImagePackages({
 			architecture: 'aarch64',
 			profileName: project.zone.gateway.imageProfile,
 			projectRoot: project.tempRoot,

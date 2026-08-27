@@ -161,7 +161,7 @@ export function renderHermesManagedE2eConfiguration(
 	].join('\n');
 }
 
-export async function useLocalHermesGatewayImagePackages(options: {
+export async function materializeLocalHermesGatewayImagePackages(options: {
 	readonly architecture: ImageArchitecture;
 	readonly profileName: string;
 	readonly projectRoot: string;
