@@ -1774,7 +1774,7 @@ export async function scaffoldWorkerE2eProject(options: {
 		cacheDir: path.join(resolveE2eCacheRoot(), 'worker'),
 	};
 	systemConfig.host.controllerPort = controllerPort;
-	systemConfig.host.projectNamespace = 'claw-tests-worker';
+	systemConfig.host.projectNamespace = 'agent-vm-tests-worker';
 	systemConfig.host.secretsProvider = {
 		type: '1password',
 		tokenSource: { type: 'env', envVar: 'AGENT_VM_TEST_OPENAI_API_KEY' },

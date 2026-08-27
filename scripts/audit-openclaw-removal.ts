@@ -1,5 +1,6 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const forbiddenActivePaths = [
 	'docker/base-images/openclaw-gateway',
@@ -46,29 +47,38 @@ const operationalFiles = [
 // These tests intentionally exercise rejection, absence, predecessor guidance,
 // or removal enforcement. Every other active test must use Hermes or
 // framework-neutral vocabulary.
-const classifiedRemovalTestFiles = new Set([
-	'packages/agent-vm/src/build/managed-image-release.unit.test.ts',
-	'packages/agent-vm/src/cli/agent-vm-command-parser.unit.test.ts',
-	'packages/agent-vm/src/cli/init-command.integration.test.ts',
-	'packages/agent-vm/src/cli/manual-templates.unit.test.ts',
-	'packages/agent-vm/src/cli/publish-workflow.unit.test.ts',
-	'packages/agent-vm/src/cli/ssh-commands.unit.test.ts',
-	'packages/agent-vm/src/controller/controller-runtime.unit.test.ts',
-	'packages/agent-vm/src/controller/reliability/testing/reliability-test-fault-contracts.unit.test.ts',
-	'packages/agent-vm/src/controller/zone-runtimes/managed-gateway-zone-runtime.unit.test.ts',
-	'packages/agent-vm/src/gateway/gateway-runtime-record.unit.test.ts',
-	'packages/agent-vm/src/integration-tests/hermes-e2e-harness.integration.test.ts',
-	'packages/agent-vm/src/integration-tests/production-config.integration.test.ts',
-	'packages/gateway-lifecycle/src/managed-gateway-boot-contract.unit.test.ts',
-	'packages/gateway-runtime/src/managed-tool-portal-real-backends.integration.test.ts',
-	'packages/gondolin-vm-adapter/src/managed-gateway-rootfs-init.unit.test.ts',
-	'packages/tool-portal/src/mcp-provider-backend/tool-portal-mcp-provider-backend-port.unit.test.ts',
-	'packages/tool-portal/src/standalone-entrypoint/standalone-tool-portal-module-boundary.unit.test.ts',
-	'scripts/audit-managed-vm-boundaries.unit.test.ts',
-	'scripts/audit-openclaw-removal.unit.test.ts',
-	'scripts/audit-test-taxonomy.unit.test.ts',
-	'scripts/ci-workflow.unit.test.ts',
-	'scripts/inspect-managed-vm-package-cut.unit.test.ts',
+const classifiedRemovalTestFiles = new Map<string, number>([
+	['packages/agent-vm/src/build/managed-image-release.unit.test.ts', 2],
+	['packages/agent-vm/src/cli/agent-vm-command-parser.unit.test.ts', 4],
+	['packages/agent-vm/src/cli/init-command.integration.test.ts', 3],
+	['packages/agent-vm/src/cli/manual-templates.unit.test.ts', 10],
+	['packages/agent-vm/src/cli/publish-workflow.unit.test.ts', 1],
+	['packages/agent-vm/src/cli/ssh-commands.unit.test.ts', 3],
+	['packages/agent-vm/src/controller/controller-runtime.unit.test.ts', 2],
+	[
+		'packages/agent-vm/src/controller/reliability/testing/reliability-test-fault-contracts.unit.test.ts',
+		6,
+	],
+	['packages/agent-vm/src/controller/zone-runtimes/managed-gateway-zone-runtime.unit.test.ts', 2],
+	['packages/agent-vm/src/gateway/gateway-runtime-record.unit.test.ts', 3],
+	['packages/agent-vm/src/integration-tests/hermes-e2e-harness.integration.test.ts', 3],
+	['packages/agent-vm/src/integration-tests/production-config.integration.test.ts', 1],
+	['packages/gateway-lifecycle/src/managed-gateway-boot-contract.unit.test.ts', 3],
+	['packages/gateway-runtime/src/managed-tool-portal-real-backends.integration.test.ts', 1],
+	['packages/gondolin-vm-adapter/src/managed-gateway-rootfs-init.unit.test.ts', 1],
+	[
+		'packages/tool-portal/src/mcp-provider-backend/tool-portal-mcp-provider-backend-port.unit.test.ts',
+		1,
+	],
+	[
+		'packages/tool-portal/src/standalone-entrypoint/standalone-tool-portal-module-boundary.unit.test.ts',
+		2,
+	],
+	['scripts/audit-managed-vm-boundaries.unit.test.ts', 13],
+	['scripts/audit-openclaw-removal.unit.test.ts', 32],
+	['scripts/audit-test-taxonomy.unit.test.ts', 1],
+	['scripts/ci-workflow.unit.test.ts', 1],
+	['scripts/inspect-managed-vm-package-cut.unit.test.ts', 4],
 ]);
 const fixtureAuditSelfTestPath = 'scripts/audit-openclaw-removal.unit.test.ts';
 
@@ -153,6 +163,25 @@ async function collectMisleadingPositiveFixtureResidue(
 	return violations.filter((violation): violation is string => violation !== undefined);
 }
 
+async function collectClassifiedRemovalTestCountDrift(
+	repositoryRoot: string,
+): Promise<readonly string[]> {
+	const violations = await Promise.all(
+		[...classifiedRemovalTestFiles.entries()].map(
+			async ([relativePath, expectedCount]): Promise<string | undefined> => {
+				const absolutePath = path.join(repositoryRoot, relativePath);
+				if (!(await pathExists(absolutePath))) return undefined;
+				const sourceText = await readFile(absolutePath, 'utf8');
+				const actualCount = sourceText.match(/openclaw/giu)?.length ?? 0;
+				return actualCount === expectedCount
+					? undefined
+					: `${relativePath} classified OpenClaw removal evidence count changed from ${String(expectedCount)} to ${String(actualCount)}`;
+			},
+		),
+	);
+	return violations.filter((violation): violation is string => violation !== undefined);
+}
+
 export async function auditOpenClawRemoval(repositoryRoot: string): Promise<readonly string[]> {
 	const forbiddenPathViolations = (
 		await Promise.all(
@@ -214,6 +243,10 @@ export async function auditOpenClawRemoval(repositoryRoot: string): Promise<read
 			(filePath) =>
 				path.relative(repositoryRoot, filePath).replaceAll('\\', '/') !== fixtureAuditSelfTestPath,
 		);
+	const semanticFixtureSourceFiles = [...new Set([...packageSourceFiles, ...allTestFiles])].filter(
+		(filePath) =>
+			path.relative(repositoryRoot, filePath).replaceAll('\\', '/') !== fixtureAuditSelfTestPath,
+	);
 
 	return [
 		...forbiddenPathViolations,
@@ -222,6 +255,24 @@ export async function auditOpenClawRemoval(repositoryRoot: string): Promise<read
 		...(await collectTextResidue(repositoryRoot, currentDocumentationFiles)),
 		...(await collectTextResidue(repositoryRoot, operationalAbsolutePaths)),
 		...(await collectTextResidue(repositoryRoot, activeTestFiles)),
-		...(await collectMisleadingPositiveFixtureResidue(repositoryRoot, allTestFiles)),
+		...(await collectMisleadingPositiveFixtureResidue(repositoryRoot, semanticFixtureSourceFiles)),
+		...(await collectClassifiedRemovalTestCountDrift(repositoryRoot)),
 	].toSorted();
+}
+
+async function main(): Promise<void> {
+	const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+	const violations = await auditOpenClawRemoval(repositoryRoot);
+	if (violations.length === 0) {
+		process.stdout.write('OpenClaw removal audit: passed\n');
+		return;
+	}
+	for (const violation of violations) {
+		process.stderr.write(`${violation}\n`);
+	}
+	process.exitCode = 1;
+}
+
+if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
+	await main();
 }

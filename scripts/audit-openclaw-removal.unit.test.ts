@@ -105,6 +105,50 @@ describe('OpenClaw removal audit', () => {
 		}
 	});
 
+	it('finds misleading vocabulary in a compiled non-test helper', async () => {
+		const repositoryRoot = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-helper-audit-'));
+		try {
+			const helperPath = path.join(
+				repositoryRoot,
+				'packages',
+				'example',
+				'src',
+				'integration-tests',
+				'e2e-harness.ts',
+			);
+			await mkdir(path.dirname(helperPath), { recursive: true });
+			await writeFile(helperPath, "const namespace = 'claw-tests-worker';\n", 'utf8');
+
+			await expect(auditOpenClawRemoval(repositoryRoot)).resolves.toEqual([
+				'packages/example/src/integration-tests/e2e-harness.ts contains misleading framework fixture residue',
+			]);
+		} finally {
+			await rm(repositoryRoot, { force: true, recursive: true });
+		}
+	});
+
+	it('finds new OpenClaw residue added to a classified removal test', async () => {
+		const repositoryRoot = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-classified-audit-'));
+		try {
+			const testPath = path.join(
+				repositoryRoot,
+				'packages',
+				'agent-vm',
+				'src',
+				'cli',
+				'agent-vm-command-parser.unit.test.ts',
+			);
+			await mkdir(path.dirname(testPath), { recursive: true });
+			await writeFile(testPath, "const positiveProfile = 'openclaw';\n", 'utf8');
+
+			await expect(auditOpenClawRemoval(repositoryRoot)).resolves.toEqual([
+				'packages/agent-vm/src/cli/agent-vm-command-parser.unit.test.ts classified OpenClaw removal evidence count changed from 4 to 1',
+			]);
+		} finally {
+			await rm(repositoryRoot, { force: true, recursive: true });
+		}
+	});
+
 	it('finds removed SSH secret-mode residue in production source', async () => {
 		const repositoryRoot = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-ssh-mode-audit-'));
 		try {

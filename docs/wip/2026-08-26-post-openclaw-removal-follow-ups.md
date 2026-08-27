@@ -396,13 +396,30 @@ Worker fixtures now use Worker image/config paths and neutral secrets; Gondolin
 synthetic-host tests use managed-VM vocabulary; managed Gateway boot proof
 asserts the exact two allowed environment input files rather than fabricated
 Hermes filenames; and generic project namespaces no longer retain `claw` names.
-The audit now also rejects fabricated Hermes gateway-token vocabulary.
+The audit now also rejects fabricated Hermes gateway-token vocabulary. Its
+documented direct invocation is a real executable check: the script now owns a
+CLI entrypoint, prints `OpenClaw removal audit: passed` only after completing
+the repository scan, and exits nonzero with every violation when the scan
+fails. Before this correction, importing the exported audit function in tests
+worked, but invoking the TypeScript file directly performed no scan.
 
-Fresh proof after that correction: unit 383 files and 4,365/4,365; integration
-822/822 by the 821-pass aggregate plus the isolated 14/14 rerun of the sole
-`EMFILE`-affected unchanged file; host E2E 30 files and 234/234; removal audit
-exit 0; full quality 16/16. Package/runtime production inputs remain unchanged
-from the exact `3fcf807a` inspection.
+Fresh proof after that correction: the latest full unit baseline is 383 files
+and 4,367/4,367; the removal-audit unit file passes 9/9 and the affected Hermes
+harness integration passes 1/1. The full integration aggregate passed 58 files
+and 821 tests before its sole unchanged production-service file timed out; two
+fresh isolated attempts of that 14-test file passed 13 tests and failed one
+before product assertions because the host exhausted file watchers with
+`EMFILE`. This is an external host-resource failure, not cutover evidence and
+not authority to change that production-service test or implementation.
+
+The affected production-shaped lanes pass: host E2E passes 30 files and
+234/234 with required Docker and host-process permissions; Worker real-VM E2E
+passes 3 files and 5/5 with zero skips using the test-only model credential;
+the direct removal audit performs the scan and exits 0; and full quality passes
+16/16. Because `e2e-harness.ts` is compiled into the packed `agent-vm`
+artifact, the prior exact package receipt at `3fcf807a` is superseded for this
+helper-vocabulary correction. A fresh exact-HEAD 17-package inspection is the
+remaining mechanical package gate before PR creation.
 
 Confirmed:
 
