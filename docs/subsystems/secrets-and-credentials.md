@@ -254,6 +254,21 @@ secrets, or approval HMAC keys into Tool VM helper artifacts or model-visible
 portal tool inputs. The legacy HTTP+SSE upstream transport must receive auth
 headers on both the initial SSE stream request and subsequent POST requests.
 
+### Credentialed configured CLI files
+
+Credentialed Managed runtimes use a third, controller-owned delivery path.
+`tool-portal.config.jsonc` binds an authenticated agent to named 1Password file
+references and maps those sources to bounded guest-relative paths. The
+controller resolves them only when creating the agent/runtime VM, writes them
+below `/run/agent-vm/credentials` in a finalizable memory mount, applies
+read-only mode-0600 constraints, and finalizes the mount before boot.
+
+Only controller-authored discovery environment values enter the VM. Credential
+references and bytes do not enter Gateway-safe effective config, durable
+runtime records, Tool VM artifacts, or model-visible results. Mutable CLI
+config/state/cache remains on disposable COW rootfs. See
+[Credentialed Managed Runtimes](../architecture/credentialed-runtimes.md).
+
 ---
 
 ## Host-Only Secrets

@@ -6,6 +6,7 @@ System architecture covering all packages, both gateway types, the controller,
 and the Gondolin VM layer. For mode-specific details:
 [Agent Worker Gateway](agent-worker-gateway.md) |
 [Hermes configuration](../reference/configuration/system-json.md) |
+[Credentialed Managed Runtimes](credentialed-runtimes.md) |
 [Storage Model](storage-model.md).
 
 ---
@@ -110,6 +111,21 @@ provider/runtime backend instead of a second policy
 authority.
 
 → Deep dive: [subsystems/mcp-portal.md](../subsystems/mcp-portal.md)
+
+### Credentialed Managed Runtimes
+
+A Tool Portal `controller_execution` configured CLI may target a reusable
+credentialed Managed VM. The controller keys it by zone, authenticated agent,
+and authored runtime id; each call is authorized independently, while a
+compatible healthy VM may retain CLI state across calls for up to 15 idle
+minutes. Credentials are finalized into read-only memory before boot, and CLI
+config/state/cache stays on disposable COW rootfs.
+
+This is separate from leased Tool VMs: credentialed calls execute direct array
+argv through the controller, while `tool_vm_runner` and framework Sandbox APIs
+continue to use direct strict-pinned SSH to the current Tool VM.
+
+→ Deep dive: [credentialed-runtimes.md](credentialed-runtimes.md)
 
 ### Secrets Flow
 
@@ -289,11 +305,12 @@ The controller is the host-side process that owns VM lifecycles, serves the HTTP
   1. Resolve secrets         createSecretResolver() -> composite resolver
   2. Create TCP pool         createTcpPool(config.tcpPool)
   3. Create lease manager    createLeaseManager({ tcpPool, createManagedVm })
-  4. Start idle reaper       createIdleReaper({ ttlForLease }) on 60s interval
-  5. Create zone registry    one runtime per selected configured zone
-  6. Start selected zones    Hermes Gateways at boot; Worker zones on task submit
-  7. Wire HTTP routes        createControllerService() -> Hono app
-  8. Bind HTTP server        startControllerHttpServer({ port: config.host.controllerPort })
+	4. Create credential manager and recover recorded child runtimes
+	5. Start idle reapers      Tool VM policy + fixed credential-runtime TTL
+	6. Create zone registry    one runtime per selected configured zone
+	7. Start selected zones    Hermes Gateways at boot; Worker zones on task submit
+	8. Wire HTTP routes        createControllerService() -> Hono app
+	9. Bind HTTP server        startControllerHttpServer({ port: config.host.controllerPort })
 ```
 
 For worker-type zones, the gateway is not started at boot. Instead, a per-task
@@ -338,6 +355,12 @@ keeps capacity bounded.
 with `lastUsedAt` older than its resolved TTL is automatically released. The
 policy uses the single `leaseIdleTtl.defaultMs` value, bounded request overrides,
 and the default 100 minute fallback.
+
+**Credentialed Runtime Manager** (`credentialed-runtime/`): Creates or reuses
+one compatible Managed VM per zone/agent/runtime id, enforces one active
+command without queueing, materializes read-only credential memory only at
+creation, retires after 15 idle minutes, and performs exact crash recovery and
+operator retirement.
 
 **Active Task Registry** (`active-task-registry.ts`): Tracks in-flight worker tasks by zone and task ID. Used by controller-owned worker control operations to verify a task is still active before allowing branch pushes.
 
@@ -695,6 +718,7 @@ directory.
   |                      state, zone-files, and runtime leaves
   |-- images            Build config paths for gateway and tool VM images
   |-- zones[]           Zone definitions: gateway type, resources, secrets, audience-scoped egress hosts
+  |                      and managed Tool Portal agent credential bindings
   |-- toolVmProfiles    Named Tool VM profiles (memory, cpus, image profile)
   |-- tcpPool           Port range and pool size for tool VM TCP slots
   |-- leaseIdleTtl      Optional lease idle TTL policy
@@ -746,6 +770,10 @@ The system operates across three trust boundaries:
   |  |  Cannot: access host filesystem outside VFS mounts             |  |
   |  |                                                                |  |
   |  |  +----------------------------------------------------------+  |  |
+  |  |  |  ZONE 3b: CREDENTIALED MANAGED VM  (untrusted)          |  |  |
+  |  |  |  Per-agent reusable CLI runtime; no Tool VM lease/SSH.   |  |  |
+  |  |  |  Read-only credential memory + disposable COW rootfs.    |  |  |
+  |  |  +----------------------------------------------------------+  |  |
   |  |  |  ZONE 3: TOOL VM  (untrusted)                            |  |  |
   |  |  |                                                           |  |  |
   |  |  |  Ephemeral, per-lease. Runs LLM-generated code.           |  |  |
@@ -765,6 +793,7 @@ The system operates across three trust boundaries:
 |----------|-------|
 | [agent-worker-gateway.md](agent-worker-gateway.md) | Agent Worker Gateway: 6-phase state machine, event sourcing, executors, MCP tools |
 | [reference/configuration/system-json.md](../reference/configuration/system-json.md) | Hermes managed Gateway configuration, profiles, secrets, ingress, and Tool VM policy |
+| [credentialed-runtimes.md](credentialed-runtimes.md) | Per-agent configured CLI runtime ownership, admission, credentials, reuse, and retirement |
 | [reference/configuration/README.md](../reference/configuration/README.md) | Progressive configuration reference |
 | [getting-started/setup.md](../getting-started/setup.md) | Prerequisites, installation, first-run instructions |
 | [subsystems/controller.md](../subsystems/controller.md) | Controller internals: lease lifecycle, TCP pool, idle reaper |

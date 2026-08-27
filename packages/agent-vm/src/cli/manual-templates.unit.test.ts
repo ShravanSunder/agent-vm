@@ -224,6 +224,10 @@ describe('manual templates', () => {
 		expect(portal).toContain('Static validation and Gateway preflight fail closed');
 		expect(portal).toContain('Hermes presents managed approvals natively');
 		expect(portal).toContain('controller_host or a reusable credentialed ephemeral_managed_vm');
+		expect(portal).toContain('it does not mean one VM per RPC');
+		expect(portal).toContain(
+			'cancellation or zone shutdown before active admission produces no guest process',
+		);
 		expect(portal).toContain('tool_vm_runner remains direct Gateway-to-leased-Tool-VM strict SSH');
 		expect(portal).toContain('Prefer http-mediation for MCP provider API keys');
 		expect(portal).toContain(

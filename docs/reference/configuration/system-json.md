@@ -706,6 +706,10 @@ The command uses existing zone `adminAccess`. Without `--force`, active work is
 left running and the result is `active`; `--force` cancels it before exact
 cleanup. Other results are `retired`, `absent`, or `owner-unsafe`.
 
+For lifecycle ownership, final admission, credential-memory, COW, recovery,
+and Tool VM separation, see
+[Credentialed Managed Runtimes](../../architecture/credentialed-runtimes.md).
+
 For an MCP-backed managed namespace, the namespace id matches the provider
 namespace in `mcp.config.jsonc` and explicitly selects `mcp_provider`:
 

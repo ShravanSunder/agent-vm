@@ -17,6 +17,7 @@ import {
 	type GatewayDisposableControlSessionClient,
 } from '../controller/control-session/index.js';
 import { createControllerClient } from '../controller/http/controller-client.js';
+import type { ObservedControllerLeaseCreateRequest } from '../controller/leases/observed-lease-create-request.js';
 import {
 	startControlTransportReliabilityProxy,
 	type ControlTransportReliabilityProxy,
@@ -53,7 +54,6 @@ const runHermesManagedEnvironmentE2e =
 const describeHermesManagedEnvironmentE2e = runHermesManagedEnvironmentE2e
 	? describe
 	: describe.skip;
-const runHermesControlReattachmentStress = process.env.AGENT_VM_HERMES_REATTACHMENT_STRESS === '1';
 const agentIds = ['main', 'beta'] as const;
 const discordSecretEnvironmentNames = {
 	beta: 'DISCORD_BOT_TOKEN_BETA_E2E',
@@ -95,6 +95,7 @@ interface ManagedGatewayStartObservation {
 interface ManagedHermesEpoch {
 	readonly controlTransportProxy?: ControlTransportReliabilityProxy;
 	readonly harness: E2eHarnessRuntime;
+	readonly leaseCreateRequests: readonly ObservedControllerLeaseCreateRequest[];
 	readonly start: ManagedGatewayStartObservation;
 	readonly toolVmCreateRequests: readonly ManagedVmCreateRequest[];
 }
@@ -390,55 +391,74 @@ async function startManagedHermesEpoch(options: {
 	readonly project: HermesE2eProject;
 }): Promise<ManagedHermesEpoch> {
 	let controlTransportProxy: ControlTransportReliabilityProxy | undefined;
-	let managedGatewayStart: ManagedGatewayStartObservation | undefined;
+	let resolveManagedGatewayStart: ((start: ManagedGatewayStartObservation) => void) | undefined;
+	let rejectManagedGatewayStart: ((error: unknown) => void) | undefined;
+	const managedGatewayStartPromise = new Promise<ManagedGatewayStartObservation>(
+		(resolve, reject) => {
+			resolveManagedGatewayStart = resolve;
+			rejectManagedGatewayStart = reject;
+		},
+	);
+	void managedGatewayStartPromise.catch(() => undefined);
+	const leaseCreateRequests: ObservedControllerLeaseCreateRequest[] = [];
 	const toolVmCreateRequests: ManagedVmCreateRequest[] = [];
 	let harness: Awaited<ReturnType<typeof startE2eControllerRuntime>>;
 	try {
 		harness = await startE2eControllerRuntime({
+			onLeaseCreateRequest: (request) => leaseCreateRequests.push(request),
 			onControllerManagedVmCreateRequest: (request) => {
 				toolVmCreateRequests.push(request);
 			},
 			secrets: resolvedHermesSecrets(),
 			startGatewayZone: async (startOptions) => {
-				let managedVmCreateRequest: ManagedVmCreateRequest | undefined;
-				const result = options.enableControlTransportIsolation
-					? await startE2eGatewayZoneForController(startOptions, {
-							connectGatewayControlSession: async (connectOptions) => {
-								controlTransportProxy = await startControlTransportReliabilityProxy({
-									target: connectOptions.endpoint,
-								});
-								return await connectGatewayControlSession({
-									...connectOptions,
-									endpoint: {
-										...connectOptions.endpoint,
-										...controlTransportProxy.endpoint,
-									},
-								});
-							},
-						})
-					: await startE2eGatewayZone(startOptions, {
-							onManagedVmCreateRequest: (request) => {
-								managedVmCreateRequest = request;
-							},
-						});
-				if (result.executionModel !== 'managed-gateway' || result.controlSession === undefined) {
-					throw new Error('Hermes managed environment E2E requires a managed Gateway image boot.');
+				try {
+					let managedVmCreateRequest: ManagedVmCreateRequest | undefined;
+					const result = options.enableControlTransportIsolation
+						? await startE2eGatewayZoneForController(startOptions, {
+								connectGatewayControlSession: async (connectOptions) => {
+									controlTransportProxy = await startControlTransportReliabilityProxy({
+										target: connectOptions.endpoint,
+									});
+									return await connectGatewayControlSession({
+										...connectOptions,
+										endpoint: {
+											...connectOptions.endpoint,
+											...controlTransportProxy.endpoint,
+										},
+									});
+								},
+							})
+						: await startE2eGatewayZone(startOptions, {
+								onManagedVmCreateRequest: (request) => {
+									managedVmCreateRequest = request;
+								},
+							});
+					if (result.executionModel !== 'managed-gateway' || result.controlSession === undefined) {
+						throw new Error(
+							'Hermes managed environment E2E requires a managed Gateway image boot.',
+						);
+					}
+					if (!options.enableControlTransportIsolation && managedVmCreateRequest === undefined) {
+						throw new Error(
+							'Hermes managed environment E2E did not observe its Gateway VM request.',
+						);
+					}
+					const qemuPid = result.vm.getHostProcessId();
+					if (qemuPid === null) {
+						throw new Error('Managed Hermes Gateway start omitted its QEMU pid.');
+					}
+					resolveManagedGatewayStart?.({
+						controlSession: result.controlSession,
+						expectedCohort: result.expectedCohort,
+						...(managedVmCreateRequest === undefined ? {} : { managedVmCreateRequest }),
+						qemuPid,
+						vm: result.vm,
+					});
+					return result;
+				} catch (error: unknown) {
+					rejectManagedGatewayStart?.(error);
+					throw error;
 				}
-				if (!options.enableControlTransportIsolation && managedVmCreateRequest === undefined) {
-					throw new Error('Hermes managed environment E2E did not observe its Gateway VM request.');
-				}
-				const qemuPid = result.vm.getHostProcessId();
-				if (qemuPid === null) {
-					throw new Error('Managed Hermes Gateway start omitted its QEMU pid.');
-				}
-				managedGatewayStart = {
-					controlSession: result.controlSession,
-					expectedCohort: result.expectedCohort,
-					...(managedVmCreateRequest === undefined ? {} : { managedVmCreateRequest }),
-					qemuPid,
-					vm: result.vm,
-				};
-				return result;
 			},
 			startOptions: {
 				systemConfig: options.project.systemConfig,
@@ -449,17 +469,21 @@ async function startManagedHermesEpoch(options: {
 		await controlTransportProxy?.close().catch(() => undefined);
 		throw error;
 	}
-	if (managedGatewayStart === undefined) {
+	let managedGatewayStart: ManagedGatewayStartObservation;
+	try {
+		managedGatewayStart = await managedGatewayStartPromise;
+	} catch (error: unknown) {
 		try {
 			await harness.close({ preserveTempRoot: true });
 		} finally {
 			await controlTransportProxy?.close();
 		}
-		throw new Error('Hermes managed environment E2E did not observe the managed Gateway start.');
+		throw error;
 	}
 	return {
 		...(controlTransportProxy === undefined ? {} : { controlTransportProxy }),
 		harness,
+		leaseCreateRequests,
 		start: managedGatewayStart,
 		toolVmCreateRequests,
 	};
@@ -974,6 +998,11 @@ describeHermesManagedEnvironmentE2e(
 				}),
 			).toContain(filesystemIsolationMarker);
 			expect(secondEpoch.toolVmCreateRequests).toHaveLength(2);
+			expect(secondEpoch.leaseCreateRequests.map((request) => request.agentId)).toEqual([
+				'main',
+				'beta',
+			]);
+			const toolVmCreateRequestCountBeforeInterruption = secondEpoch.toolVmCreateRequests.length;
 
 			const frameworkPort =
 				secondEpoch.start.expectedCohort.ingressIntent.frameworkRootRoute.guestPort;
@@ -1030,10 +1059,6 @@ describeHermesManagedEnvironmentE2e(
 			expect(secondEpoch.start.expectedCohort.toolPortalIdentity.runtimeEpoch).not.toBe(
 				firstEpoch.start.expectedCohort.toolPortalIdentity.runtimeEpoch,
 			);
-			if (!runHermesControlReattachmentStress) {
-				return;
-			}
-
 			const isolation = activeControlTransportProxy.isolate();
 			const postBudgetAttempt = await activeControlTransportProxy.waitForRejectedConnection({
 				minimumObservedAtMs: isolation.startedAtMs + GATEWAY_CONTROL_RECONNECT_DEADLINE_MS + 1,
@@ -1070,7 +1095,14 @@ describeHermesManagedEnvironmentE2e(
 					prompt: 'RUN_TOOL_VM_RECOVERY_PROBE',
 				}),
 			).toContain(toolVmRecoveryMarker);
-			expect(secondEpoch.toolVmCreateRequests).toHaveLength(2);
+			expect(secondEpoch.toolVmCreateRequests).toHaveLength(
+				toolVmCreateRequestCountBeforeInterruption,
+			);
+			expect(secondEpoch.leaseCreateRequests.map((request) => request.agentId)).toEqual([
+				'main',
+				'beta',
+				'main',
+			]);
 			expect(secondEpoch.start.vm.getHostProcessId()).toBe(secondEpoch.start.qemuPid);
 			expect(
 				await readManagedGatewaySiblingProcessIdentity({

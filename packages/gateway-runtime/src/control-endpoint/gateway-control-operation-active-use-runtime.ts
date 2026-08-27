@@ -42,13 +42,13 @@ import type {
 	GatewayControlPublishedBindingRuntime,
 	GatewayControlPublishedBindingState,
 } from './gateway-control-published-binding-runtime.js';
+import {
+	createGatewayControlReplacementSessionUseEndRuntime,
+	type GatewayControlOperationActiveUseReleaseReason,
+} from './gateway-control-replacement-session-use-end-runtime.js';
 
 const UuidSchema = z.string().uuid();
-export type GatewayControlOperationActiveUseReleaseReason =
-	| 'cancelled'
-	| 'completed'
-	| 'failed'
-	| 'timed_out';
+export type { GatewayControlOperationActiveUseReleaseReason } from './gateway-control-replacement-session-use-end-runtime.js';
 
 export interface GatewayControlOperationActiveUseScheduler {
 	readonly schedule: (
@@ -200,6 +200,32 @@ function rejectedLeaseUseRequiresBindingRecovery(
 		case 'runtime_not_ready':
 			return false;
 	}
+	const exhaustiveReason: never = reason;
+	return exhaustiveReason;
+}
+
+function rejectedLeaseUseProvesTerminalAbsence(
+	reason: GatewayControlLeaseRejectionReason,
+): boolean {
+	switch (reason) {
+		case 'lease_absent':
+		case 'lease_authority_absent':
+		case 'lease_force_released':
+		case 'lease_retired':
+		case 'lease_use_tombstoned':
+			return true;
+		case 'caller_context_absent':
+		case 'caller_context_session_mismatch':
+		case 'caller_context_stale':
+		case 'lease_generation_stale':
+		case 'lease_reacquire_required':
+		case 'lease_releasing':
+		case 'ownership_denied':
+		case 'runtime_not_ready':
+			return false;
+	}
+	const exhaustiveReason: never = reason;
+	return exhaustiveReason;
 }
 
 function bindingGenerationsMatch(
@@ -358,8 +384,8 @@ export function createGatewayControlOperationActiveUseRuntime(
 		readonly leaseId: string;
 		reason: GatewayControlOperationActiveUseReleaseReason;
 		readonly useId: string;
-	}): Promise<void> {
-		if (props.controlService.getCurrentAcceptedSession() !== options.acceptedSession) return;
+	}): Promise<boolean> {
+		if (props.controlService.getCurrentAcceptedSession() !== options.acceptedSession) return false;
 		try {
 			const response = await sendAuthorityCommand({
 				admissionPrincipal: options.callerContext.admissionPrincipal,
@@ -377,7 +403,16 @@ export function createGatewayControlOperationActiveUseRuntime(
 			});
 			if (
 				response.acceptedSession !== options.acceptedSession ||
-				response.response.operation !== 'lease_use_end' ||
+				response.response.operation !== 'lease_use_end'
+			) {
+				return false;
+			}
+			if (response.response.payload.result === 'rejected') {
+				return rejectedLeaseUseProvesTerminalAbsence(
+					response.response.payload.leaseRejectionReason,
+				);
+			}
+			if (
 				response.response.payload.result !== 'ok' ||
 				!activeUseMatches({
 					expectedLeaseId: options.leaseId,
@@ -386,10 +421,19 @@ export function createGatewayControlOperationActiveUseRuntime(
 					leaseUse: response.response.payload.leaseUse,
 				})
 			) {
-				return;
+				return false;
 			}
-		} catch {}
+			return true;
+		} catch {
+			return false;
+		}
 	}
+
+	const replacementSessionUseEndRuntime = createGatewayControlReplacementSessionUseEndRuntime({
+		callerContextRegistrationClient: props.callerContextRegistrationClient,
+		controlService: props.controlService,
+		endUse: bestEffortEndUse,
+	});
 
 	function endActiveUse(
 		state: OperationGroupState,
@@ -398,13 +442,25 @@ export function createGatewayControlOperationActiveUseRuntime(
 		if (state.activeUseEndPromise !== undefined) return state.activeUseEndPromise;
 		state.heartbeatHandle?.cancel();
 		state.heartbeatHandle = undefined;
-		state.activeUseEndPromise = bestEffortEndUse({
-			acceptedSession: state.acceptedSession,
-			callerContext: state.callerContext,
+		const retainedUse = {
 			leaseId: state.operationContext.leaseId,
 			reason,
+			stablePrincipal: state.operationContext.stablePrincipal,
 			useId: state.leaseUse.useId,
-		});
+		};
+		replacementSessionUseEndRuntime.queue(retainedUse);
+		state.activeUseEndPromise = (async (): Promise<void> => {
+			const ended = await bestEffortEndUse({
+				acceptedSession: state.acceptedSession,
+				callerContext: state.callerContext,
+				leaseId: state.operationContext.leaseId,
+				reason,
+				useId: state.leaseUse.useId,
+			});
+			if (ended) {
+				replacementSessionUseEndRuntime.confirmEnded(retainedUse);
+			}
+		})();
 		return state.activeUseEndPromise;
 	}
 
@@ -503,6 +559,14 @@ export function createGatewayControlOperationActiveUseRuntime(
 		const stablePrincipal = deriveGatewayControlStablePrincipal({
 			principal: request.trustedContext.principal,
 		});
+		if (
+			!(await replacementSessionUseEndRuntime.settle({
+				stablePrincipal,
+				trustedContext: request.trustedContext,
+			}))
+		) {
+			return unavailableBinding(request.trustedContext);
+		}
 		let readyBinding = props.publishedBindingRuntime.lookupReadyConnection(request);
 		if (readyBinding.kind !== 'ready') {
 			try {
@@ -528,6 +592,7 @@ export function createGatewayControlOperationActiveUseRuntime(
 		}
 
 		let callerContext: GatewayControlRegisteredCallerContext | undefined;
+		let activeUseMayHaveCommitted = false;
 		let useId: string | undefined;
 		try {
 			callerContext = await props.callerContextRegistrationClient.register({
@@ -542,6 +607,7 @@ export function createGatewayControlOperationActiveUseRuntime(
 			}
 			useId = UuidSchema.parse(props.createUseId());
 			const correlation = correlationForControl(request.trustedContext);
+			activeUseMayHaveCommitted = true;
 			const startResponse = await sendAuthorityCommand({
 				admissionPrincipal: callerContext.admissionPrincipal,
 				idempotencyKey: `lease-use-start:${readyBinding.generation.leaseId}:${useId}`,
@@ -556,6 +622,12 @@ export function createGatewayControlOperationActiveUseRuntime(
 					},
 				},
 			});
+			if (
+				startResponse.response.operation === 'lease_use_start' &&
+				startResponse.response.payload.result === 'rejected'
+			) {
+				activeUseMayHaveCommitted = false;
+			}
 			if (
 				!controllerAuthorityRecoveryAttempted &&
 				currentSession(acceptedSession) &&
@@ -648,14 +720,24 @@ export function createGatewayControlOperationActiveUseRuntime(
 				strictSshClient: readyBinding.connection,
 			};
 		} catch {
-			if (callerContext !== undefined && useId !== undefined && currentSession(acceptedSession)) {
-				await bestEffortEndUse({
-					acceptedSession,
-					callerContext,
-					leaseId: readyBinding.generation.leaseId,
-					reason: 'failed',
-					useId,
-				});
+			if (callerContext !== undefined && useId !== undefined && activeUseMayHaveCommitted) {
+				const ended = currentSession(acceptedSession)
+					? await bestEffortEndUse({
+							acceptedSession,
+							callerContext,
+							leaseId: readyBinding.generation.leaseId,
+							reason: 'failed',
+							useId,
+						})
+					: false;
+				if (!ended) {
+					replacementSessionUseEndRuntime.queue({
+						leaseId: readyBinding.generation.leaseId,
+						reason: 'failed',
+						stablePrincipal,
+						useId,
+					});
+				}
 			}
 			return unavailableBinding(request.trustedContext);
 		}
@@ -676,6 +758,7 @@ export function createGatewayControlOperationActiveUseRuntime(
 		closed = true;
 		sessionObservation.unsubscribe();
 		pendingBindingRequestsByPrincipal.clear();
+		replacementSessionUseEndRuntime.close();
 		retirementPromise = (async (): Promise<void> => {
 			await Promise.all(
 				[...operationGroups].map(async (state) => await retireGroup(state, 'cancelled')),

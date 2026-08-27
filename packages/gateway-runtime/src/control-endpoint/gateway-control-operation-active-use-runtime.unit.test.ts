@@ -225,7 +225,10 @@ function createControlServiceFixture(): ControlServiceFixture {
 }
 
 interface CommandFixtureOptions {
+	readonly failFirstLeaseUseEnd?: boolean;
+	readonly failLeaseUseEnd?: boolean;
 	readonly rejectFirstLeaseUseStartWith?: GatewayControlLeaseRejectionReason;
+	readonly rejectLeaseUseEndWith?: GatewayControlLeaseRejectionReason;
 	readonly responseLeaseId?: string;
 	readonly responseSession?: GatewayControlAcceptedSession;
 }
@@ -235,8 +238,12 @@ interface CommandFixture {
 	readonly requests: readonly GatewayRuntimeControlCommandRequest[];
 }
 
-function createCommandFixture(options: CommandFixtureOptions = {}): CommandFixture {
+function createCommandFixture(
+	options: CommandFixtureOptions = {},
+	resolveCurrentSession: () => GatewayControlAcceptedSession | undefined = () => sessionA,
+): CommandFixture {
 	const requests: GatewayRuntimeControlCommandRequest[] = [];
+	let leaseUseEndCount = 0;
 	let leaseUseStartCount = 0;
 	const client = {
 		sendCommand: vi.fn(
@@ -246,9 +253,10 @@ function createCommandFixture(options: CommandFixtureOptions = {}): CommandFixtu
 				requests.push(request);
 				const operation = request.message.operation;
 				const messageId = `message-${String(requests.length)}`;
+				const responseSession = options.responseSession ?? resolveCurrentSession() ?? sessionA;
 				if (operation === 'tool_vm_binding_request') {
 					return {
-						acceptedSession: options.responseSession ?? sessionA,
+						acceptedSession: responseSession,
 						messageId,
 						response: {
 							kind: 'command_result',
@@ -267,7 +275,7 @@ function createCommandFixture(options: CommandFixtureOptions = {}): CommandFixtu
 				}
 				if (operation === 'lease_reacquire') {
 					return {
-						acceptedSession: options.responseSession ?? sessionA,
+						acceptedSession: responseSession,
 						messageId,
 						response: {
 							kind: 'command_result',
@@ -309,7 +317,7 @@ function createCommandFixture(options: CommandFixtureOptions = {}): CommandFixtu
 					leaseUseStartCount += 1;
 					if (leaseUseStartCount === 1 && options.rejectFirstLeaseUseStartWith !== undefined) {
 						return {
-							acceptedSession: options.responseSession ?? sessionA,
+							acceptedSession: responseSession,
 							messageId,
 							response: {
 								kind: 'command_result',
@@ -323,6 +331,45 @@ function createCommandFixture(options: CommandFixtureOptions = {}): CommandFixtu
 						};
 					}
 				}
+				if (operation === 'lease_use_end') leaseUseEndCount += 1;
+				if (
+					operation === 'lease_use_end' &&
+					(options.failLeaseUseEnd === true ||
+						(options.failFirstLeaseUseEnd === true && leaseUseEndCount === 1))
+				) {
+					return {
+						acceptedSession: responseSession,
+						messageId,
+						response: {
+							kind: 'command_result',
+							operation,
+							payload: {
+								error: {
+									errorClass: 'gateway_control_handler_failed',
+									retryable: true,
+									safeMessage: 'Lease-use end failed.',
+								},
+								responseToMessageId: messageId,
+								result: 'failed',
+							},
+						},
+					};
+				}
+				if (operation === 'lease_use_end' && options.rejectLeaseUseEndWith !== undefined) {
+					return {
+						acceptedSession: responseSession,
+						messageId,
+						response: {
+							kind: 'command_result',
+							operation,
+							payload: {
+								leaseRejectionReason: options.rejectLeaseUseEndWith,
+								responseToMessageId: messageId,
+								result: 'rejected',
+							},
+						},
+					};
+				}
 				const leaseUse = {
 					heartbeatAfterMs: operation === 'lease_use_end' ? undefined : 1_000,
 					leaseId: options.responseLeaseId ?? request.message.payload.leaseId,
@@ -330,7 +377,7 @@ function createCommandFixture(options: CommandFixtureOptions = {}): CommandFixtu
 					useId: request.message.payload.useId,
 				} satisfies GatewayControlLeaseUseSnapshot;
 				return {
-					acceptedSession: options.responseSession ?? sessionA,
+					acceptedSession: responseSession,
 					messageId,
 					response: {
 						kind: 'command_result',
@@ -349,6 +396,7 @@ interface RuntimeFixtureOptions extends CommandFixtureOptions {
 	readonly callerRegistration?: () => Promise<GatewayControlRegisteredCallerContext>;
 	readonly degradedBindingBecomesReadyAfterReacquire?: boolean;
 	readonly readyBindingBecomesReplacementAfterRequest?: boolean;
+	readonly readyBindingChangesAfterLeaseUseStart?: boolean;
 	readonly ready?: boolean;
 	readonly useIds?: readonly string[];
 }
@@ -365,7 +413,7 @@ interface RuntimeFixture {
 
 function createRuntimeFixture(options: RuntimeFixtureOptions = {}): RuntimeFixture {
 	const control = createControlServiceFixture();
-	const command = createCommandFixture(options);
+	const command = createCommandFixture(options, control.service.getCurrentAcceptedSession);
 	const scheduler = createSchedulerFixture();
 	const ssh = createStrictSshFixture();
 	const processRegistries: ProcessRegistryFixture[] = [];
@@ -432,6 +480,11 @@ function createRuntimeFixture(options: RuntimeFixtureOptions = {}): RuntimeFixtu
 		publishedBindingRuntime: {
 			lookupReadyConnection: () => {
 				bindingLookupCount += 1;
+				if (options.readyBindingChangesAfterLeaseUseStart === true) {
+					return command.requests.some((request) => request.message.operation === 'lease_use_start')
+						? replacementReadyResult
+						: readyResult;
+				}
 				if (options.readyBindingBecomesReplacementAfterRequest === true) {
 					return command.requests.some(
 						(request) => request.message.operation === 'tool_vm_binding_request',
@@ -793,6 +846,213 @@ describe('Gateway control operation active-use runtime', () => {
 			'lease_use_end',
 		);
 	});
+
+	it('ends the retired-session use before the first replacement-session active use', async () => {
+		// Arrange
+		const fixture = createRuntimeFixture();
+		const predecessor = requireBound(
+			await fixture.runtime.acquisitionPort.acquire({ trustedContext: trustedContextA }),
+		);
+
+		// Act
+		fixture.control.setSession(undefined);
+		await vi.waitFor(() => expect(fixture.processRegistries[0]?.retire).toHaveBeenCalledOnce());
+		fixture.control.setSession(sessionB);
+		const successor = requireBound(
+			await fixture.runtime.acquisitionPort.acquire({ trustedContext: trustedContextA }),
+		);
+
+		// Assert
+		expect(predecessor.operationAuthority.authorize(predecessor.operationContext)).toEqual({
+			kind: 'stale-operation-authority',
+		});
+		expect(successor.operationContext.leaseId).toBe(generationA.leaseId);
+		expect(fixture.command.requests.map((request) => request.message.operation)).toEqual([
+			'lease_use_start',
+			'lease_use_end',
+			'lease_use_start',
+		]);
+	});
+
+	it('retains the predecessor synchronously when session retirement overlaps acquisition', async () => {
+		// Arrange
+		const fixture = createRuntimeFixture();
+		const predecessor = requireBound(
+			await fixture.runtime.acquisitionPort.acquire({ trustedContext: trustedContextA }),
+		);
+
+		// Act
+		fixture.control.setSession(undefined);
+		fixture.control.setSession(sessionB);
+		const successor = requireBound(
+			await fixture.runtime.acquisitionPort.acquire({ trustedContext: trustedContextA }),
+		);
+
+		// Assert
+		expect(predecessor.operationAuthority.authorize(predecessor.operationContext)).toEqual({
+			kind: 'stale-operation-authority',
+		});
+		expect(successor.operationContext.leaseId).toBe(generationA.leaseId);
+		expect(fixture.command.requests.map((request) => request.message.operation)).toEqual([
+			'lease_use_start',
+			'lease_use_end',
+			'lease_use_start',
+		]);
+	});
+
+	it('retries a failed current-session use end before the first replacement-session active use', async () => {
+		// Arrange
+		const fixture = createRuntimeFixture({ failFirstLeaseUseEnd: true });
+		const predecessor = requireBound(
+			await fixture.runtime.acquisitionPort.acquire({ trustedContext: trustedContextA }),
+		);
+
+		// Act
+		fixture.ssh.emitTransportFailure({ kind: 'transport-close' });
+		await predecessor.retireGroup('failed');
+		fixture.control.setSession(sessionB);
+		const successor = requireBound(
+			await fixture.runtime.acquisitionPort.acquire({ trustedContext: trustedContextA }),
+		);
+
+		// Assert
+		expect(predecessor.operationAuthority.authorize(predecessor.operationContext)).toEqual({
+			kind: 'stale-operation-authority',
+		});
+		expect(successor.operationContext.leaseId).toBe(generationA.leaseId);
+		expect(fixture.command.requests.map((request) => request.message.operation)).toEqual([
+			'lease_use_start',
+			'lease_use_end',
+			'lease_use_end',
+			'lease_use_start',
+		]);
+	});
+
+	it('retains a potentially committed acquisition use when immediate cleanup fails', async () => {
+		// Arrange
+		const fixture = createRuntimeFixture({
+			failFirstLeaseUseEnd: true,
+			readyBindingChangesAfterLeaseUseStart: true,
+		});
+
+		// Act
+		const failedAcquisition = await fixture.runtime.acquisitionPort.acquire({
+			trustedContext: trustedContextA,
+		});
+		fixture.control.setSession(sessionB);
+		const successor = requireBound(
+			await fixture.runtime.acquisitionPort.acquire({ trustedContext: trustedContextA }),
+		);
+
+		// Assert
+		expect(failedAcquisition).toMatchObject({ kind: 'not-bound', reason: 'unavailable' });
+		expect(successor.operationContext.leaseId).toBe(generationB.leaseId);
+		expect(fixture.command.requests.map((request) => request.message.operation)).toEqual([
+			'lease_use_start',
+			'lease_use_end',
+			'lease_use_end',
+			'lease_use_start',
+		]);
+		expect(fixture.command.requests[2]?.message).toMatchObject({
+			operation: 'lease_use_end',
+			payload: {
+				leaseId: generationA.leaseId,
+				useId: '66666666-6666-4666-8666-666666666666',
+			},
+		});
+	});
+
+	it('keeps replacement-session acquisition unavailable when orphan cleanup fails', async () => {
+		// Arrange
+		const fixture = createRuntimeFixture({ failLeaseUseEnd: true });
+		const predecessor = requireBound(
+			await fixture.runtime.acquisitionPort.acquire({ trustedContext: trustedContextA }),
+		);
+
+		// Act
+		fixture.control.setSession(undefined);
+		await vi.waitFor(() => expect(fixture.processRegistries[0]?.retire).toHaveBeenCalledOnce());
+		fixture.control.setSession(sessionB);
+		const result = await fixture.runtime.acquisitionPort.acquire({
+			trustedContext: trustedContextA,
+		});
+
+		// Assert
+		expect(result).toMatchObject({ kind: 'not-bound', reason: 'unavailable' });
+		expect(predecessor.operationAuthority.authorize(predecessor.operationContext)).toEqual({
+			kind: 'stale-operation-authority',
+		});
+		expect(fixture.command.requests.map((request) => request.message.operation)).toEqual([
+			'lease_use_start',
+			'lease_use_end',
+		]);
+	});
+
+	it('continues replacement-session acquisition when the retired lease is already absent', async () => {
+		// Arrange
+		const fixture = createRuntimeFixture({ rejectLeaseUseEndWith: 'lease_absent' });
+		const predecessor = requireBound(
+			await fixture.runtime.acquisitionPort.acquire({ trustedContext: trustedContextA }),
+		);
+
+		// Act
+		fixture.control.setSession(undefined);
+		await vi.waitFor(() => expect(fixture.processRegistries[0]?.retire).toHaveBeenCalledOnce());
+		fixture.control.setSession(sessionB);
+		const successor = requireBound(
+			await fixture.runtime.acquisitionPort.acquire({ trustedContext: trustedContextA }),
+		);
+
+		// Assert
+		expect(predecessor.operationAuthority.authorize(predecessor.operationContext)).toEqual({
+			kind: 'stale-operation-authority',
+		});
+		expect(successor.kind).toBe('bound');
+		expect(fixture.command.requests.map((request) => request.message.operation)).toEqual([
+			'lease_use_start',
+			'lease_use_end',
+			'lease_use_start',
+		]);
+	});
+
+	it.each([
+		['caller_context_absent', false],
+		['caller_context_session_mismatch', false],
+		['caller_context_stale', false],
+		['lease_absent', true],
+		['lease_authority_absent', true],
+		['lease_force_released', true],
+		['lease_generation_stale', false],
+		['lease_reacquire_required', false],
+		['lease_releasing', false],
+		['lease_retired', true],
+		['lease_use_tombstoned', true],
+		['ownership_denied', false],
+		['runtime_not_ready', false],
+	] satisfies readonly (readonly [GatewayControlLeaseRejectionReason, boolean])[])(
+		'classifies replacement-session lease-use cleanup rejection %s as terminally absent=%s',
+		async (rejectionReason, terminallyAbsent) => {
+			// Arrange
+			const fixture = createRuntimeFixture({ rejectLeaseUseEndWith: rejectionReason });
+			requireBound(
+				await fixture.runtime.acquisitionPort.acquire({ trustedContext: trustedContextA }),
+			);
+
+			// Act
+			fixture.control.setSession(undefined);
+			await vi.waitFor(() => expect(fixture.processRegistries[0]?.retire).toHaveBeenCalledOnce());
+			fixture.control.setSession(sessionB);
+			const result = await fixture.runtime.acquisitionPort.acquire({
+				trustedContext: trustedContextA,
+			});
+
+			// Assert
+			expect(result.kind === 'bound').toBe(terminallyAbsent);
+			expect(
+				fixture.command.requests.filter((request) => request.message.operation === 'lease_use_end'),
+			).toHaveLength(1);
+		},
+	);
 
 	it('makes active-use end, group retirement, and runtime retirement idempotent', async () => {
 		// Arrange
