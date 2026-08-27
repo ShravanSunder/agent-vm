@@ -350,6 +350,26 @@ Hermes runtime behavior was changed to obtain the green result.
 
 ## Closing state
 
+### Final protocol-client and LLM-lane remediation
+
+The final aligned review found two callerless OpenClaw protocol clients still
+compiled into `@agent-vm/agent-vm` and a registered LLM lane that still invoked
+`openclaw agent`. The remediation:
+
+- deletes the obsolete HTTP and WebSocket clients plus their OpenClaw-specific
+  tests;
+- ports the LLM lane to an OS-temp Hermes scaffold and pinned Hermes one-shot
+  command for the managed `main` profile;
+- uses the test-only OpenAI credential through normal HTTP mediation;
+- asserts command exit 0, a real model answer, and healthy Hermes readiness
+  after the response rather than manufacturing a Tool VM lease;
+- makes the removal audit reject both the protocol-client directory and
+  OpenClaw residue in the registered LLM lane.
+
+Focused audit/gate tests pass 8/8. Typecheck and taxonomy pass. The real LLM
+lane passes 1 file and 2/2 tests with zero skips and exit 0. Full quality and
+exact package inspection are the remaining pre-review gates.
+
 Confirmed:
 
 - OpenClaw runs nowhere in the retained product.

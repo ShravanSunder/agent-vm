@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
@@ -8,88 +7,22 @@ import { describe, expect, it } from 'vitest';
 
 import { runBuildCommand } from '../cli/build-command.js';
 import { createManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
-import { loadSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
+import type { LoadedSystemConfig } from '../config/system-config.js';
 import { startControllerRuntime } from '../controller/controller-runtime.js';
+import { currentE2eArchitecture } from './e2e-harness.js';
 import { waitForProtocolRetryInterval } from './e2e-protocol-wait.js';
+import {
+	hermesE2eProfileApiServerKey,
+	hermesE2eProfileApiServerKeyEnvironmentName,
+	scaffoldHermesE2eProject,
+} from './hermes-e2e-harness.js';
 import {
 	createLiveRoundtripDeploymentConfig,
 	resolveLiveRoundtripCacheDir,
 } from './live-agent-model-roundtrip-deployment.js';
 import { shouldRunLiveModelRoundtripE2e } from './live-agent-model-roundtrip-gates.js';
 
-function isObjectRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === 'object' && value !== null;
-}
-
-function canReadSecretRef(secretRef: string | undefined, serviceAccountToken: string): boolean {
-	if (typeof secretRef !== 'string' || secretRef.length === 0) {
-		return false;
-	}
-
-	try {
-		execFileSync('op', ['read', secretRef], {
-			env: { ...process.env, OP_SERVICE_ACCOUNT_TOKEN: serviceAccountToken },
-			stdio: 'ignore',
-		});
-		return true;
-	} catch {
-		return false;
-	}
-}
-
-function canReadConfiguredZoneSecretRefs(options: {
-	readonly serviceAccountToken: string;
-	readonly vaultPrefix: string;
-}): boolean {
-	let rawSystemConfig: unknown;
-	try {
-		rawSystemConfig = JSON.parse(fs.readFileSync('config/system.json', 'utf8')) as unknown;
-	} catch {
-		return false;
-	}
-	if (!isObjectRecord(rawSystemConfig)) {
-		return false;
-	}
-	const rawZones = rawSystemConfig.zones;
-	if (!Array.isArray(rawZones)) {
-		return false;
-	}
-	const firstZone = rawZones[0];
-	if (!isObjectRecord(firstZone) || !isObjectRecord(firstZone.secrets)) {
-		return false;
-	}
-	const secrets = firstZone.secrets;
-
-	const readRef = (secretName: string): string | undefined => {
-		const secretValue = secrets[secretName];
-		if (!isObjectRecord(secretValue)) {
-			return undefined;
-		}
-		return typeof secretValue.ref === 'string' ? secretValue.ref : undefined;
-	};
-	const requiredRefs = [
-		readRef('DISCORD_BOT_TOKEN'),
-		readRef('PERPLEXITY_API_KEY'),
-		readRef('OPENCLAW_GATEWAY_TOKEN'),
-	];
-	if (
-		requiredRefs.some(
-			(secretRef) => typeof secretRef !== 'string' || !secretRef.startsWith(options.vaultPrefix),
-		)
-	) {
-		return false;
-	}
-
-	return (
-		canReadSecretRef(requiredRefs[0], options.serviceAccountToken) &&
-		canReadSecretRef(requiredRefs[1], options.serviceAccountToken) &&
-		canReadSecretRef(requiredRefs[2], options.serviceAccountToken)
-	);
-}
-
-const testOpServiceAccountToken = process.env.AGENT_VM_TEST_OP_SERVICE_ACCOUNT_TOKEN;
 const runLiveModelRoundtrip = shouldRunLiveModelRoundtripE2e({
-	canReadConfiguredZoneSecretRefs,
 	env: process.env,
 });
 
@@ -112,9 +45,9 @@ const liveRoundtripFixtureSystemConfig = {
 	},
 	imageProfiles: {
 		gateways: {
-			openclaw: {
+			hermes: {
 				type: 'hermes',
-				buildConfig: './vm-images/gateways/openclaw/build-config.json',
+				buildConfig: './vm-images/gateways/hermes/build-config.json',
 			},
 		},
 		toolVms: {
@@ -131,9 +64,9 @@ const liveRoundtripFixtureSystemConfig = {
 				type: 'hermes',
 				profileSecretProjectionsByAgent: { main: {} },
 				profilesByAgent: { main: 'main' },
-				config: './config/shravan/openclaw.json',
+				config: './config/shravan/hermes.yaml',
 				cpus: 2,
-				imageProfile: 'openclaw',
+				imageProfile: 'hermes',
 				memory: '2G',
 				port: 18_791,
 				stateDir: '/storage-root-test/shravan/state',
@@ -210,6 +143,39 @@ async function waitForControllerHealth(controllerPort: number): Promise<void> {
 	);
 }
 
+async function waitForHermesZoneHealth(options: {
+	readonly controllerPort: number;
+	readonly zoneId: string;
+}): Promise<void> {
+	const timeoutMs = 60_000;
+	const retryIntervalMs = 250;
+	const startedAtMs = performance.now();
+	let lastStatus = 'not attempted';
+	while (performance.now() - startedAtMs <= timeoutMs) {
+		try {
+			const response = await fetch(
+				`http://127.0.0.1:${String(options.controllerPort)}/zones/${encodeURIComponent(options.zoneId)}/health`,
+				{ signal: AbortSignal.timeout(2_000) },
+			);
+			if (response.ok) {
+				return;
+			}
+			lastStatus = `HTTP ${String(response.status)}: ${await response.text()}`;
+		} catch (error) {
+			const networkErrorCode = readNodeNetworkErrorCode(error);
+			if (!['ECONNREFUSED', 'ECONNRESET', 'EHOSTUNREACH'].includes(networkErrorCode ?? '')) {
+				throw error;
+			}
+			lastStatus = error instanceof Error ? error.message : String(error);
+		}
+		// oxlint-disable-next-line no-await-in-loop -- zone readiness has no event source outside the controller protocol.
+		await waitForProtocolRetryInterval(retryIntervalMs);
+	}
+	throw new Error(
+		`Hermes zone '${options.zoneId}' did not become healthy within ${String(timeoutMs)}ms. Last status: ${lastStatus}`,
+	);
+}
+
 function readNodeNetworkErrorCode(error: unknown): string | null {
 	if (!(error instanceof TypeError) || error.message !== 'fetch failed') {
 		return null;
@@ -250,16 +216,55 @@ describe('live integration: agent model roundtrip deployment config', () => {
 
 describeLiveModelRoundtrip('live integration: agent model roundtrip', () => {
 	it('boots the controller and performs a real gateway exec roundtrip', async () => {
-		if (typeof testOpServiceAccountToken !== 'string') {
-			throw new Error('AGENT_VM_TEST_OP_SERVICE_ACCOUNT_TOKEN is required for llm e2e.');
-		}
-		const previousOpToken = process.env.OP_SERVICE_ACCOUNT_TOKEN;
-		process.env.OP_SERVICE_ACCOUNT_TOKEN = testOpServiceAccountToken;
-		const deploymentRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-vm-live-roundtrip-'));
+		const project = await scaffoldHermesE2eProject({
+			agents: ['main'],
+			architecture: currentE2eArchitecture(),
+			prefix: 'agent-vm-live-roundtrip-',
+			zoneId: 'live-model-roundtrip',
+		});
+		const deploymentRoot = project.tempRoot;
 		let runtime: Awaited<ReturnType<typeof startControllerRuntime>> | undefined;
 
 		try {
-			const systemConfig = await loadSystemConfig('config/system.json');
+			const systemConfig = project.systemConfig;
+			const configuredZone = systemConfig.zones[0];
+			if (configuredZone === undefined || configuredZone.gateway.type !== 'hermes') {
+				throw new Error('Expected the live model scaffold to contain a Hermes zone.');
+			}
+			systemConfig.zones[0] = {
+				...configuredZone,
+				egressHosts: configuredZone.egressHosts.some(
+					(egressHost) => egressHost.host === 'api.openai.com',
+				)
+					? configuredZone.egressHosts
+					: [...configuredZone.egressHosts, { audience: 'gateway', host: 'api.openai.com' }],
+				gateway: {
+					...configuredZone.gateway,
+					profileSecretProjectionsByAgent: {
+						...configuredZone.gateway.profileSecretProjectionsByAgent,
+						main: {
+							API_SERVER_KEY: hermesE2eProfileApiServerKeyEnvironmentName('main'),
+							OPENAI_API_KEY: 'TEST_OPENAI_API_KEY',
+						},
+					},
+				},
+				secrets: {
+					...configuredZone.secrets,
+					[hermesE2eProfileApiServerKeyEnvironmentName('main')]: {
+						audience: 'gateway',
+						injection: 'env',
+						source: 'config',
+						value: hermesE2eProfileApiServerKey('main'),
+					},
+					TEST_OPENAI_API_KEY: {
+						audience: 'gateway',
+						envVar: 'AGENT_VM_TEST_OPENAI_API_KEY',
+						hosts: ['api.openai.com'],
+						injection: 'http-mediation',
+						source: 'environment',
+					},
+				},
+			};
 			const controllerPort = await findAvailablePort();
 			const gatewayPort = await findAvailablePort();
 			const toolSshPort = await findAvailablePort();
@@ -273,6 +278,9 @@ describeLiveModelRoundtrip('live integration: agent model roundtrip', () => {
 			const zone = liveSystemConfig.zones[0];
 			if (!zone) {
 				throw new Error('Expected at least one zone in system config');
+			}
+			if (zone.gateway.type !== 'hermes' || zone.gateway.profilesByAgent.main !== 'main') {
+				throw new Error('Live model roundtrip requires the managed Hermes main profile.');
 			}
 			await runBuildCommand(
 				{
@@ -291,12 +299,17 @@ describeLiveModelRoundtrip('live integration: agent model roundtrip', () => {
 				createManagedVmRuntimeComposition(),
 			);
 			await waitForControllerHealth(runtime.controllerPort);
+			await waitForHermesZoneHealth({
+				controllerPort: runtime.controllerPort,
+				zoneId: zone.id,
+			});
 
 			const commandResponse = await fetch(
 				`http://127.0.0.1:${runtime.controllerPort}/zones/${zone.id}/execute-command`,
 				{
 					body: JSON.stringify({
-						command: 'openclaw agent -m "what is 2+2? answer one word" --agent main --local',
+						command:
+							'HERMES_HOME=/home/hermes/.hermes/profiles/main hermes -z "what is 2+2? answer one word" --model gpt-4.1-mini --provider openai-api',
 					}),
 					headers: { 'content-type': 'application/json' },
 					method: 'POST',
@@ -316,13 +329,16 @@ describeLiveModelRoundtrip('live integration: agent model roundtrip', () => {
 				typeof (commandBody as { stderr?: unknown }).stderr === 'string'
 					? (commandBody as { stderr: string }).stderr
 					: '';
+			const exitCode =
+				typeof (commandBody as { exitCode?: unknown }).exitCode === 'number'
+					? (commandBody as { exitCode: number }).exitCode
+					: undefined;
 			const combinedOutput = `${stdout}\n${stderr}`.toLowerCase();
 
+			expect(exitCode, `Hermes one-shot failed: ${JSON.stringify({ stderr, stdout })}`).toBe(0);
 			expect(combinedOutput).not.toContain('traceback');
 			expect(combinedOutput).not.toContain('error:');
-			expect(['2', 'two', 'four'].some((candidate) => combinedOutput.includes(candidate))).toBe(
-				true,
-			);
+			expect(['4', 'four'].some((candidate) => combinedOutput.includes(candidate))).toBe(true);
 
 			const controllerStatusResponse = await fetch(
 				`http://127.0.0.1:${runtime.controllerPort}/controller-status`,
@@ -338,22 +354,25 @@ describeLiveModelRoundtrip('live integration: agent model roundtrip', () => {
 			}
 			const zones = (
 				controllerStatusBody as {
-					readonly zones: readonly { readonly activeLeaseCount?: unknown }[];
+					readonly zones: readonly {
+						readonly gatewayType?: unknown;
+						readonly id?: unknown;
+						readonly readiness?: unknown;
+						readonly running?: unknown;
+					}[];
 				}
 			).zones;
 			expect(
 				zones.some(
 					(statusZone) =>
-						typeof statusZone.activeLeaseCount === 'number' && statusZone.activeLeaseCount > 0,
+						statusZone.id === zone.id &&
+						statusZone.gatewayType === 'hermes' &&
+						statusZone.readiness === 'running' &&
+						statusZone.running === true,
 				),
 			).toBe(true);
 		} finally {
 			await runtime?.close();
-			if (previousOpToken === undefined) {
-				delete process.env.OP_SERVICE_ACCOUNT_TOKEN;
-			} else {
-				process.env.OP_SERVICE_ACCOUNT_TOKEN = previousOpToken;
-			}
 			fs.rmSync(deploymentRoot, { force: true, recursive: true });
 		}
 	}, 300_000);

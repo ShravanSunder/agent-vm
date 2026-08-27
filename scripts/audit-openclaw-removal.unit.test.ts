@@ -29,6 +29,40 @@ describe('OpenClaw removal audit', () => {
 		}
 	});
 
+	it('finds removed Gateway protocol clients and OpenClaw LLM lane residue', async () => {
+		const repositoryRoot = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-runtime-audit-'));
+		try {
+			const clientPath = path.join(
+				repositoryRoot,
+				'packages',
+				'agent-vm',
+				'src',
+				'gateway-api-client',
+				'gateway-websocket-client.ts',
+			);
+			await mkdir(path.dirname(clientPath), { recursive: true });
+			await writeFile(clientPath, "export const method = 'chat.send';\n", 'utf8');
+
+			const llmTestPath = path.join(
+				repositoryRoot,
+				'packages',
+				'agent-vm',
+				'src',
+				'integration-tests',
+				'live-agent-model-roundtrip.llm.e2e.test.ts',
+			);
+			await mkdir(path.dirname(llmTestPath), { recursive: true });
+			await writeFile(llmTestPath, "const command = 'openclaw agent';\n", 'utf8');
+
+			await expect(auditOpenClawRemoval(repositoryRoot)).resolves.toEqual([
+				'packages/agent-vm/src/gateway-api-client remains active',
+				'packages/agent-vm/src/integration-tests/live-agent-model-roundtrip.llm.e2e.test.ts contains active OpenClaw residue',
+			]);
+		} finally {
+			await rm(repositoryRoot, { force: true, recursive: true });
+		}
+	});
+
 	it('finds removed SSH secret-mode residue in production source', async () => {
 		const repositoryRoot = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-ssh-mode-audit-'));
 		try {
