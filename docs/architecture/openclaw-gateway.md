@@ -362,6 +362,13 @@ listener. Standalone Tool Portal is the mode that may explicitly configure
 HTTP/MCP/stdio entrypoints; it has no managed controller, binding, SSH, or
 Sandbox API authority in version 1.
 
+A `controller_execution` configured CLI with an
+`ephemeral_managed_vm` target does not converge on that Tool VM. It sends one
+independently authorized controller RPC to the per-agent credentialed runtime
+manager, which executes direct array argv in its own reusable Managed VM.
+`tool_vm_runner` and the Sandbox API remain on the leased Tool VM strict-SSH
+path. See [Credentialed Managed Runtimes](credentialed-runtimes.md).
+
 Managed `calls.requiresApproval` enters the controller-owned approval authority,
 which binds the trusted principal and exact call before dispatch. Any managed
 profile that effectively admits an approval-required tool requires zone
