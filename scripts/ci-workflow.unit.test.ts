@@ -33,6 +33,13 @@ describe('CI workflow topology', () => {
 		]) {
 			expect(workflow).toContain(command);
 		}
+		for (const command of [
+			'mise exec -- pnpm run test:e2e:vm --shard=${{ matrix.shard }}',
+			'mise exec -- pnpm run test:e2e:hermes',
+			'mise exec -- pnpm run test:e2e:worker',
+		]) {
+			expect(workflow).toContain(command);
+		}
 		expect(hermesPythonTestScript).toContain('python/agent-vm-agent-portal-sdk/pyproject.toml');
 		expect(hermesPythonTestScript).toContain('python/agent-vm-hermes-adapter/pyproject.toml');
 		expect(hermesPythonTestScript).toContain(
@@ -79,6 +86,7 @@ describe('CI workflow topology', () => {
 		expect(workflow).toContain('      - name: Restore prepared Worker image cache');
 		expect(workflow).not.toContain('\n          - name: Restore prepared Worker image cache\n');
 		expect(workflow).toContain('          - name: Set up Agent VM workspace');
+		expect(workflow).toContain('          - name: Set up uv for VM proof');
 		expect(workflow).toContain(
 			'          - name: Set up Python workspace\n' +
 				"            if: matrix.lane == 'host'\n" +

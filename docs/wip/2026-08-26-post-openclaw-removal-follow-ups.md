@@ -454,6 +454,14 @@ both corrections: Python host SDK 276/276, focused audit/workflow unit tests
 tests, audit enforcement, and CI setup, not packed runtime source; the exact
 17-package inspection above remains consumer-current.
 
+The second CI run proved Hermes image preparation itself and all three host/VM
+mediation jobs, then exposed the same missing toolchain in the downstream VM
+matrix: generic shard 5 could not spawn `uv`, and the Hermes lane's fail-closed
+prerequisite check could not observe the pinned Zig toolchain. Every VM-matrix
+job now installs pinned `uv`, and generic, Hermes, and Worker VM commands run
+through `mise exec --` so `mise.toml` supplies Zig `0.16.0`. This changes CI
+tool availability only; it does not change Hermes, Worker, or VM runtime logic.
+
 Confirmed:
 
 - OpenClaw runs nowhere in the retained product.

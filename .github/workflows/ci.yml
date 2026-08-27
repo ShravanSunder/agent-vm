@@ -193,6 +193,13 @@ jobs:
           - name: Set up Agent VM workspace
             uses: ./.github/actions/setup-agent-vm
 
+          - name: Set up uv for VM proof
+            uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v9.0.0
+            with:
+              version: '0.11.31'
+              enable-cache: true
+              cache-dependency-glob: uv.lock
+
       - name: Restore prepared Worker image cache
         id: worker-image
         uses: ./.github/actions/restore-e2e-image-cache
@@ -214,20 +221,20 @@ jobs:
 
       - name: Run VM shard
         if: matrix.shard != ''
-        run: pnpm run test:e2e:vm --shard=${{ matrix.shard }}
+        run: mise exec -- pnpm run test:e2e:vm --shard=${{ matrix.shard }}
 
       - parallel:
           - name: Run Hermes E2E tests
             if: matrix.lane == 'hermes'
             env:
               AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE: '1'
-            run: pnpm run test:e2e:hermes
+            run: mise exec -- pnpm run test:e2e:hermes
 
           - name: Run Worker E2E tests
             if: matrix.lane == 'worker'
             env:
               AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE: '1'
-            run: pnpm run test:e2e:worker
+            run: mise exec -- pnpm run test:e2e:worker
 
   check:
     name: check
