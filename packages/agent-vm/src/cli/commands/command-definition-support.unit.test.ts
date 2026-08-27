@@ -67,9 +67,9 @@ describe('requireZone', () => {
 					},
 					imageProfiles: {
 						gateways: {
-							openclaw: {
+							hermes: {
 								type: 'hermes',
-								buildConfig: './vm-images/gateways/openclaw/build-config.json',
+								buildConfig: './vm-images/gateways/hermes/build-config.json',
 							},
 							worker: {
 								type: 'worker',
@@ -101,10 +101,10 @@ describe('requireZone', () => {
 								type: 'hermes',
 								profileSecretProjectionsByAgent: { main: {} },
 								profilesByAgent: { main: 'main' },
-								imageProfile: 'openclaw',
+								imageProfile: 'hermes',
 								cpus: 2,
 								memory: '2G',
-								config: './config/shravan/openclaw.json',
+								config: './config/shravan/hermes.json',
 								port: 18791,
 								stateDir: './state/shravan',
 								zoneFilesDir: './zone-files/shravan',
@@ -112,9 +112,9 @@ describe('requireZone', () => {
 							},
 							id: 'shravan',
 							secrets: {
-								OPENCLAW_GATEWAY_TOKEN: {
+								HERMES_GATEWAY_TOKEN: {
 									source: 'environment',
-									envVar: 'OPENCLAW_GATEWAY_TOKEN',
+									envVar: 'HERMES_GATEWAY_TOKEN',
 									injection: 'env',
 									audience: 'gateway',
 								},

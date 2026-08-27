@@ -143,7 +143,7 @@ const forbiddenProjectionRoots = [
 	'/work',
 	'/workspace',
 	'/zone',
-	'/home/openclaw/.openclaw/state',
+	'/home/hermes/.hermes/state',
 ];
 for (const forbiddenRoot of forbiddenProjectionRoots) {
 	assert.equal(

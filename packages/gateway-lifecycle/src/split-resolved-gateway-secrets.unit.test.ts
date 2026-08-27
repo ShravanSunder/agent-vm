@@ -189,7 +189,7 @@ describe('splitResolvedGatewaySecrets', () => {
 					memory: '2G',
 					cpus: 2,
 					port: 18791,
-					config: './openclaw.json',
+					config: './hermes.json',
 					stateDir: './state',
 					zoneFilesDir: './zone-files',
 				},
@@ -234,7 +234,7 @@ describe('mergeRuntimeGatewaySecrets', () => {
 		const result = mergeRuntimeGatewaySecrets(
 			{
 				environmentSecrets: {
-					OPENCLAW_GATEWAY_TOKEN: 'gateway-token',
+					HERMES_GATEWAY_TOKEN: 'gateway-token',
 				},
 				mediatedSecrets: {
 					PERPLEXITY_API_KEY: {
@@ -259,7 +259,7 @@ describe('mergeRuntimeGatewaySecrets', () => {
 		expect(result).toEqual({
 			environmentSecrets: {
 				AGENT_VM_MCP_STDIO_TOKEN: 'stdio-token',
-				OPENCLAW_GATEWAY_TOKEN: 'gateway-token',
+				HERMES_GATEWAY_TOKEN: 'gateway-token',
 			},
 			mediatedSecrets: {
 				AGENT_VM_MCP_TAVILY_API_KEY: {
@@ -279,20 +279,20 @@ describe('mergeRuntimeGatewaySecrets', () => {
 			mergeRuntimeGatewaySecrets(
 				{
 					environmentSecrets: {
-						OPENCLAW_GATEWAY_TOKEN: 'gateway-token',
+						HERMES_GATEWAY_TOKEN: 'gateway-token',
 					},
 					mediatedSecrets: {},
 				},
 				{
 					runtimeMediatedSecrets: {
-						OPENCLAW_GATEWAY_TOKEN: {
+						HERMES_GATEWAY_TOKEN: {
 							hosts: ['api.example.com'],
 							value: 'runtime-token',
 						},
 					},
 				},
 			),
-		).toThrow(/OPENCLAW_GATEWAY_TOKEN.*authored environment secret/u);
+		).toThrow(/HERMES_GATEWAY_TOKEN.*authored environment secret/u);
 	});
 
 	it('rejects runtime secrets declared for both runtime injection paths', () => {

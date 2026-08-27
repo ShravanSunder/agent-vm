@@ -105,7 +105,7 @@ const bootContract = createManagedGatewayBootContract({
 	framework: 'hermes',
 	ingress: { guestPort: 18_789, kind: 'framework-http' },
 	logIdentity: {
-		guestPath: '/var/log/agent-vm/openclaw-service.log',
+		guestPath: '/var/log/agent-vm/hermes-service.log',
 		serviceName: 'agent-vm-hermes-test',
 	},
 	readiness: { guestPort: 18_789, kind: 'framework-http', path: '/readyz' },
@@ -115,7 +115,7 @@ const bootContract = createManagedGatewayBootContract({
 const image = {
 	built: false,
 	fingerprint: 'gateway-recovery-test-image',
-	imageReference: 'openclaw-gateway:test',
+	imageReference: 'hermes-gateway:test',
 };
 
 const processTarget = {

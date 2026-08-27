@@ -68,7 +68,7 @@ describe('Gateway VM lifecycle authority', () => {
 			destroyGatewayOwnedLeases: async () => {},
 			generationId: 'generation-1',
 			ownershipCoordinator: coordinator,
-			zoneId: 'openclaw',
+			zoneId: 'hermes',
 		});
 
 		const abandonment = authority.abandonUnattachedGatewaySeedAfter(cleanup);
@@ -77,7 +77,7 @@ describe('Gateway VM lifecycle authority', () => {
 			coordinator.beginGatewayEpoch({
 				bootId: 'boot-2',
 				generationId: 'generation-2',
-				zoneId: 'openclaw',
+				zoneId: 'hermes',
 			}),
 		).toThrowError(
 			expect.objectContaining<Partial<GatewayOwnershipCoordinatorError>>({
@@ -92,7 +92,7 @@ describe('Gateway VM lifecycle authority', () => {
 			coordinator.beginGatewayEpoch({
 				bootId: 'boot-2',
 				generationId: 'generation-2',
-				zoneId: 'openclaw',
+				zoneId: 'hermes',
 			}).seed,
 		).toMatchObject({ bootId: 'boot-2', generationId: 'generation-2' });
 	});
@@ -107,7 +107,7 @@ describe('Gateway VM lifecycle authority', () => {
 			destroyGatewayOwnedLeases: async () => {},
 			generationId: 'generation-1',
 			ownershipCoordinator: coordinator,
-			zoneId: 'openclaw',
+			zoneId: 'hermes',
 		});
 
 		await expect(authority.abandonUnattachedGatewaySeedAfter(firstCleanup)).rejects.toThrow(
@@ -117,7 +117,7 @@ describe('Gateway VM lifecycle authority', () => {
 			coordinator.beginGatewayEpoch({
 				bootId: 'boot-2',
 				generationId: 'generation-2',
-				zoneId: 'openclaw',
+				zoneId: 'hermes',
 			}),
 		).toThrowError(
 			expect.objectContaining<Partial<GatewayOwnershipCoordinatorError>>({
@@ -125,7 +125,7 @@ describe('Gateway VM lifecycle authority', () => {
 			}),
 		);
 		expect(() => authority.attachGatewayVm('gateway-vm-after-partial-cleanup')).toThrow(
-			"Gateway VM lifecycle for zone 'openclaw' has begun seed abandonment.",
+			"Gateway VM lifecycle for zone 'hermes' has begun seed abandonment.",
 		);
 
 		const successfulCleanup = vi.fn(async () => {});
@@ -137,7 +137,7 @@ describe('Gateway VM lifecycle authority', () => {
 			coordinator.beginGatewayEpoch({
 				bootId: 'boot-2',
 				generationId: 'generation-2',
-				zoneId: 'openclaw',
+				zoneId: 'hermes',
 			}).seed,
 		).toMatchObject({ bootId: 'boot-2' });
 	});
@@ -151,7 +151,7 @@ describe('Gateway VM lifecycle authority', () => {
 			destroyGatewayOwnedLeases: async () => {},
 			generationId: 'generation-1',
 			ownershipCoordinator: coordinator,
-			zoneId: 'openclaw',
+			zoneId: 'hermes',
 		});
 
 		const firstAbandonment = authority.abandonUnattachedGatewaySeedAfter(cleanup);
@@ -174,12 +174,12 @@ describe('Gateway VM lifecycle authority', () => {
 			destroyGatewayOwnedLeases: async () => {},
 			generationId: 'generation-1',
 			ownershipCoordinator: coordinator,
-			zoneId: 'openclaw',
+			zoneId: 'hermes',
 		});
 		authority.attachGatewayVm('gateway-vm-1');
 
 		await expect(authority.abandonUnattachedGatewaySeedAfter(cleanup)).rejects.toThrow(
-			"Gateway VM lifecycle for zone 'openclaw' is already attached.",
+			"Gateway VM lifecycle for zone 'hermes' is already attached.",
 		);
 		expect(cleanup).not.toHaveBeenCalled();
 	});
@@ -191,7 +191,7 @@ describe('Gateway VM lifecycle authority', () => {
 			destroyGatewayOwnedLeases: async () => {},
 			generationId: 'generation-1',
 			ownershipCoordinator: coordinator,
-			zoneId: 'openclaw',
+			zoneId: 'hermes',
 		});
 
 		expect(authority.gatewayIdentity).toBeUndefined();
@@ -200,7 +200,7 @@ describe('Gateway VM lifecycle authority', () => {
 			controllerEpoch: 'controller-epoch-1',
 			gatewayEpochId: 'gateway-epoch-1',
 			generationId: 'generation-1',
-			zoneId: 'openclaw',
+			zoneId: 'hermes',
 		});
 		const identity = authority.attachGatewayVm('gateway-vm-1');
 		expect(identity).toEqual({ ...authority.gatewaySeed, gatewayVmId: 'gateway-vm-1' });
@@ -219,7 +219,7 @@ describe('Gateway VM lifecycle authority', () => {
 			destroyGatewayOwnedLeases: async () => {},
 			generationId: 'generation-1',
 			ownershipCoordinator: coordinator,
-			zoneId: 'openclaw',
+			zoneId: 'hermes',
 		});
 		const pendingCreate = createDeferredPromise<ManagedVm>();
 		const close = vi.fn(async () => {});
@@ -271,7 +271,7 @@ describe('Gateway VM lifecycle authority', () => {
 			},
 			generationId: 'generation-1',
 			ownershipCoordinator: coordinator,
-			zoneId: 'openclaw',
+			zoneId: 'hermes',
 		});
 		const gatewayIdentity = authority.attachGatewayVm('gateway-vm-1');
 		childMembershipRef.current = admitCurrentToolVm({
@@ -299,7 +299,7 @@ describe('Gateway VM lifecycle authority', () => {
 			destroyGatewayOwnedLeases: async () => {},
 			generationId: 'generation-1',
 			ownershipCoordinator: coordinator,
-			zoneId: 'openclaw',
+			zoneId: 'hermes',
 		});
 		const gatewayIdentity = authority.attachGatewayVm('gateway-vm-1');
 		const destruction = authority.destroyLive(async () => await gatewayTermination.promise);
@@ -323,7 +323,7 @@ describe('Gateway VM lifecycle authority', () => {
 			destroyGatewayOwnedLeases: async () => {},
 			generationId: 'generation-1',
 			ownershipCoordinator: coordinator,
-			zoneId: 'openclaw',
+			zoneId: 'hermes',
 		});
 		const gatewayIdentity = authority.attachGatewayVm('gateway-vm-1');
 
@@ -355,7 +355,7 @@ describe('Gateway VM lifecycle authority', () => {
 			destroyGatewayOwnedLeases: async () => {},
 			generationId: 'generation-1',
 			ownershipCoordinator: coordinator,
-			zoneId: 'openclaw',
+			zoneId: 'hermes',
 		});
 		authority.attachGatewayVm('gateway-vm-1');
 

@@ -43,6 +43,34 @@ const operationalFiles = [
 	'vitest.config.ts',
 ] as const;
 
+// These tests intentionally exercise rejection, absence, predecessor guidance,
+// or removal enforcement. Every other active test must use Hermes or
+// framework-neutral vocabulary.
+const classifiedRemovalTestFiles = new Set([
+	'packages/agent-vm/src/build/managed-image-release.unit.test.ts',
+	'packages/agent-vm/src/cli/agent-vm-command-parser.unit.test.ts',
+	'packages/agent-vm/src/cli/init-command.integration.test.ts',
+	'packages/agent-vm/src/cli/manual-templates.unit.test.ts',
+	'packages/agent-vm/src/cli/publish-workflow.unit.test.ts',
+	'packages/agent-vm/src/cli/ssh-commands.unit.test.ts',
+	'packages/agent-vm/src/controller/controller-runtime.unit.test.ts',
+	'packages/agent-vm/src/controller/reliability/testing/reliability-test-fault-contracts.unit.test.ts',
+	'packages/agent-vm/src/controller/zone-runtimes/managed-gateway-zone-runtime.unit.test.ts',
+	'packages/agent-vm/src/gateway/gateway-runtime-record.unit.test.ts',
+	'packages/agent-vm/src/integration-tests/hermes-e2e-harness.integration.test.ts',
+	'packages/agent-vm/src/integration-tests/production-config.integration.test.ts',
+	'packages/gateway-lifecycle/src/managed-gateway-boot-contract.unit.test.ts',
+	'packages/gateway-runtime/src/managed-tool-portal-real-backends.integration.test.ts',
+	'packages/gondolin-vm-adapter/src/managed-gateway-rootfs-init.unit.test.ts',
+	'packages/tool-portal/src/mcp-provider-backend/tool-portal-mcp-provider-backend-port.unit.test.ts',
+	'packages/tool-portal/src/standalone-entrypoint/standalone-tool-portal-module-boundary.unit.test.ts',
+	'scripts/audit-managed-vm-boundaries.unit.test.ts',
+	'scripts/audit-openclaw-removal.unit.test.ts',
+	'scripts/audit-test-taxonomy.unit.test.ts',
+	'scripts/ci-workflow.unit.test.ts',
+	'scripts/inspect-managed-vm-package-cut.unit.test.ts',
+]);
+
 const removedSshSecretModePattern = /--all-secrets|requestAllSecrets|secretEnvEnabled/u;
 
 async function pathExists(filePath: string): Promise<boolean> {
@@ -142,6 +170,21 @@ export async function auditOpenClawRemoval(repositoryRoot: string): Promise<read
 	const operationalAbsolutePaths = operationalFiles.map((relativePath) =>
 		path.join(repositoryRoot, relativePath),
 	);
+	const operationalAbsolutePathSet = new Set(operationalAbsolutePaths);
+	const activeTestFiles = [
+		...new Set([
+			...(await listFilesRecursively(path.join(repositoryRoot, 'packages'))),
+			...(await listFilesRecursively(path.join(repositoryRoot, 'scripts'))),
+		]),
+	]
+		.filter((filePath) => /\.(?:test|spec)\.ts$/u.test(filePath))
+		.filter((filePath) => !operationalAbsolutePathSet.has(filePath))
+		.filter(
+			(filePath) =>
+				!classifiedRemovalTestFiles.has(
+					path.relative(repositoryRoot, filePath).replaceAll('\\', '/'),
+				),
+		);
 
 	return [
 		...forbiddenPathViolations,
@@ -149,5 +192,6 @@ export async function auditOpenClawRemoval(repositoryRoot: string): Promise<read
 		...(await collectRemovedSshSecretModeResidue(repositoryRoot, packageSourceFiles)),
 		...(await collectTextResidue(repositoryRoot, currentDocumentationFiles)),
 		...(await collectTextResidue(repositoryRoot, operationalAbsolutePaths)),
+		...(await collectTextResidue(repositoryRoot, activeTestFiles)),
 	].toSorted();
 }

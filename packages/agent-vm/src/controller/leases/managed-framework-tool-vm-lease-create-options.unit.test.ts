@@ -84,8 +84,8 @@ async function createSystemConfigFixture(
 		},
 		imageProfiles: {
 			gateways: {
-				openclaw: {
-					buildConfig: './vm-images/gateways/openclaw/build-config.json',
+				hermes: {
+					buildConfig: './vm-images/gateways/hermes/build-config.json',
 					type: 'hermes',
 				},
 			},
@@ -111,7 +111,7 @@ async function createSystemConfigFixture(
 				defaultToolVmProfile: 'standard',
 				egressHosts: [],
 				gateway: {
-					config: path.join(testRoot, 'config', 'zone-a', 'openclaw.json'),
+					config: path.join(testRoot, 'config', 'zone-a', 'hermes.json'),
 					cpus: 2,
 					imageProfile: 'hermes',
 					memory: '2G',
@@ -125,9 +125,9 @@ async function createSystemConfigFixture(
 				},
 				id: 'zone-a',
 				secrets: {
-					OPENCLAW_GATEWAY_TOKEN: {
+					HERMES_GATEWAY_TOKEN: {
 						audience: 'gateway',
-						envVar: 'OPENCLAW_GATEWAY_TOKEN',
+						envVar: 'HERMES_GATEWAY_TOKEN',
 						injection: 'env',
 						source: 'environment',
 					},
@@ -269,7 +269,7 @@ describe('createManagedFrameworkToolVmLeaseCreateOptionsResolver', () => {
 		const systemConfig = await createSystemConfigFixture();
 		const zone = systemConfig.zones[0];
 		if (zone === undefined) {
-			throw new Error('Expected OpenClaw fixture zone');
+			throw new Error('Expected Hermes fixture zone');
 		}
 		await mkdir(path.join(testRoot, 'zone-a', 'zone-files', 'agents', 'second'), {
 			recursive: true,
@@ -370,7 +370,7 @@ describe('createManagedFrameworkToolVmLeaseCreateOptionsResolver', () => {
 		const systemConfig = await createSystemConfigFixture();
 		const zone = systemConfig.zones[0];
 		if (zone === undefined) {
-			throw new Error('Expected OpenClaw fixture zone');
+			throw new Error('Expected Hermes fixture zone');
 		}
 		await mkdir(path.join(testRoot, 'zone-a', 'zone-files', 'agents', 'second'), {
 			recursive: true,
@@ -420,7 +420,7 @@ describe('createManagedFrameworkToolVmLeaseCreateOptionsResolver', () => {
 		const systemConfig = await createSystemConfigFixture();
 		const zoneWithoutProfilePolicy = systemConfig.zones[0];
 		if (zoneWithoutProfilePolicy === undefined) {
-			throw new Error('Expected OpenClaw fixture zone');
+			throw new Error('Expected Hermes fixture zone');
 		}
 		delete zoneWithoutProfilePolicy.agentToolVmProfiles;
 		delete zoneWithoutProfilePolicy.defaultToolVmProfile;
@@ -437,7 +437,7 @@ describe('createManagedFrameworkToolVmLeaseCreateOptionsResolver', () => {
 		const systemConfig = await createSystemConfigFixture();
 		const zone = systemConfig.zones[0];
 		if (zone === undefined) {
-			throw new Error('Expected OpenClaw fixture zone');
+			throw new Error('Expected Hermes fixture zone');
 		}
 		const resolveLeaseCreateOptions = createManagedFrameworkToolVmLeaseCreateOptionsResolver({
 			systemConfig,

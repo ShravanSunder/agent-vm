@@ -46,8 +46,8 @@ describe('managed agent root destruction boundary', () => {
 			host: { controllerPort: 18800, projectNamespace: 'managed-agent-destroy' },
 			imageProfiles: {
 				gateways: {
-					openclaw: {
-						buildConfig: './vm-images/gateways/openclaw/build-config.json',
+					hermes: {
+						buildConfig: './vm-images/gateways/hermes/build-config.json',
 						type: 'hermes',
 					},
 				},
@@ -64,9 +64,9 @@ describe('managed agent root destruction boundary', () => {
 					defaultToolVmProfile: 'standard',
 					egressHosts: [],
 					gateway: {
-						config: './config/openclaw.json',
+						config: './config/hermes.json',
 						cpus: 1,
-						imageProfile: 'openclaw',
+						imageProfile: 'hermes',
 						memory: '1G',
 						port: 18791,
 						stateDir,

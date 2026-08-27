@@ -63,7 +63,7 @@ function allowApproval(calls: readonly { readonly id: string }[]): {
 }
 
 describe('portal core event stream', () => {
-	it('creates trusted agent scopes with adapter source and OpenClaw session fields', async () => {
+	it('creates trusted agent scopes with adapter source and Hermes session fields', async () => {
 		const core = createPortalCore({
 			accessPolicy: {
 				defaultPolicy: 'allow-all',

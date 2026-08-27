@@ -210,7 +210,7 @@ function createZoneObservabilityInput(options?: {
 		enabled: true,
 		...(options?.diagnosticsFlags === undefined
 			? {}
-			: { openclaw: { diagnosticsFlags: options.diagnosticsFlags } }),
+			: { hermes: { diagnosticsFlags: options.diagnosticsFlags } }),
 		services: {
 			framework: {},
 			toolPortal: {},
@@ -1033,15 +1033,15 @@ describe('loadSystemConfig', () => {
 				storageRootDir: '../storage',
 				imageProfiles: {
 					gateways: {
-						openclaw: {
+						hermes: {
 							type: 'hermes',
-							buildConfig: '../vm-images/gateways/openclaw/build-config.json',
-							dockerfile: '../vm-images/gateways/openclaw/Dockerfile',
+							buildConfig: '../vm-images/gateways/hermes/build-config.json',
+							dockerfile: '../vm-images/gateways/hermes/Dockerfile',
 						},
 						worker: {
 							type: 'worker',
-							buildConfig: '../vm-images/gateways/openclaw/build-config.json',
-							dockerfile: '../vm-images/gateways/openclaw/Dockerfile',
+							buildConfig: '../vm-images/gateways/hermes/build-config.json',
+							dockerfile: '../vm-images/gateways/hermes/Dockerfile',
 						},
 					},
 					toolVms: {
@@ -1061,7 +1061,7 @@ describe('loadSystemConfig', () => {
 							memory: '2G',
 							cpus: 2,
 							port: 18791,
-							config: './shravan/openclaw.json',
+							config: './shravan/hermes.json',
 						},
 						secrets: {
 							ANTHROPIC_API_KEY: {
@@ -1106,21 +1106,21 @@ describe('loadSystemConfig', () => {
 			cacheDir: path.join(canonicalWorkingDirectoryPath, 'storage', 'cache'),
 			imageProfiles: {
 				gateways: {
-					openclaw: {
+					hermes: {
 						type: 'hermes',
 						buildConfig: path.join(
 							workingDirectoryPath,
-							'vm-images/gateways/openclaw/build-config.json',
+							'vm-images/gateways/hermes/build-config.json',
 						),
-						dockerfile: path.join(workingDirectoryPath, 'vm-images/gateways/openclaw/Dockerfile'),
+						dockerfile: path.join(workingDirectoryPath, 'vm-images/gateways/hermes/Dockerfile'),
 					},
 					worker: {
 						type: 'worker',
 						buildConfig: path.join(
 							workingDirectoryPath,
-							'vm-images/gateways/openclaw/build-config.json',
+							'vm-images/gateways/hermes/build-config.json',
 						),
-						dockerfile: path.join(workingDirectoryPath, 'vm-images/gateways/openclaw/Dockerfile'),
+						dockerfile: path.join(workingDirectoryPath, 'vm-images/gateways/hermes/Dockerfile'),
 					},
 				},
 				toolVms: {
@@ -1138,7 +1138,7 @@ describe('loadSystemConfig', () => {
 				{
 					id: 'shravan',
 					gateway: {
-						config: path.join(workingDirectoryPath, 'config', 'shravan', 'openclaw.json'),
+						config: path.join(workingDirectoryPath, 'config', 'shravan', 'hermes.json'),
 						type: 'worker',
 						imageProfile: 'worker',
 					},
@@ -1561,11 +1561,11 @@ describe('loadSystemConfig', () => {
 				type: 'hermes',
 				profileSecretProjectionsByAgent: { main: {} },
 				profilesByAgent: { main: 'main' },
-				imageProfile: 'openclaw',
+				imageProfile: 'hermes',
 				memory: '2G',
 				cpus: 2,
 				port: 18791,
-				config: './shravan/openclaw.json',
+				config: './shravan/hermes.json',
 				workspaceDir: '../workspaces/shravan',
 			},
 		};
@@ -1690,15 +1690,15 @@ describe('loadSystemConfig', () => {
 				storageRootDir: '../storage',
 				imageProfiles: {
 					gateways: {
-						openclaw: {
+						hermes: {
 							type: 'hermes',
-							buildConfig: '../vm-images/gateways/openclaw/build-config.json',
-							dockerfile: '../vm-images/gateways/openclaw/Dockerfile',
+							buildConfig: '../vm-images/gateways/hermes/build-config.json',
+							dockerfile: '../vm-images/gateways/hermes/Dockerfile',
 						},
 						worker: {
 							type: 'worker',
-							buildConfig: '../vm-images/gateways/openclaw/build-config.json',
-							dockerfile: '../vm-images/gateways/openclaw/Dockerfile',
+							buildConfig: '../vm-images/gateways/hermes/build-config.json',
+							dockerfile: '../vm-images/gateways/hermes/Dockerfile',
 						},
 					},
 					toolVms: {
@@ -1751,13 +1751,13 @@ describe('loadSystemConfig', () => {
 				storageRootDir: '../storage',
 				imageProfiles: {
 					gateways: {
-						openclaw: {
+						hermes: {
 							type: 'hermes',
-							buildConfig: '../vm-images/gateways/openclaw/build-config.json',
+							buildConfig: '../vm-images/gateways/hermes/build-config.json',
 						},
 						worker: {
 							type: 'worker',
-							buildConfig: '../vm-images/gateways/openclaw/build-config.json',
+							buildConfig: '../vm-images/gateways/hermes/build-config.json',
 						},
 					},
 					toolVms: {
@@ -1774,11 +1774,11 @@ describe('loadSystemConfig', () => {
 							type: 'hermes',
 							profileSecretProjectionsByAgent: { main: {} },
 							profilesByAgent: { main: 'main' },
-							imageProfile: 'openclaw',
+							imageProfile: 'hermes',
 							memory: '2G',
 							cpus: 2,
 							port: 18791,
-							config: './shravan/openclaw.json',
+							config: './shravan/hermes.json',
 						},
 						secrets: {
 							DISCORD_BOT_TOKEN: {
@@ -1832,13 +1832,13 @@ describe('loadSystemConfig', () => {
 				storageRootDir: '../storage',
 				imageProfiles: {
 					gateways: {
-						openclaw: {
+						hermes: {
 							type: 'hermes',
-							buildConfig: '../vm-images/gateways/openclaw/build-config.json',
+							buildConfig: '../vm-images/gateways/hermes/build-config.json',
 						},
 						worker: {
 							type: 'worker',
-							buildConfig: '../vm-images/gateways/openclaw/build-config.json',
+							buildConfig: '../vm-images/gateways/hermes/build-config.json',
 						},
 					},
 					toolVms: {
@@ -1855,16 +1855,16 @@ describe('loadSystemConfig', () => {
 							type: 'hermes',
 							profileSecretProjectionsByAgent: { main: {} },
 							profilesByAgent: { main: 'main' },
-							imageProfile: 'openclaw',
+							imageProfile: 'hermes',
 							memory: '2G',
 							cpus: 2,
 							port: 18791,
-							config: './shravan/openclaw.json',
+							config: './shravan/hermes.json',
 						},
 						secrets: {
-							OPENCLAW_GATEWAY_TOKEN: {
+							HERMES_GATEWAY_TOKEN: {
 								source: 'environment',
-								envVar: 'OPENCLAW_GATEWAY_TOKEN',
+								envVar: 'HERMES_GATEWAY_TOKEN',
 								injection: 'env',
 								audience: 'gateway',
 							},
@@ -2723,13 +2723,13 @@ describe('loadSystemConfig', () => {
 				storageRootDir: '../storage',
 				imageProfiles: {
 					gateways: {
-						openclaw: {
+						hermes: {
 							type: 'hermes',
-							buildConfig: '../vm-images/gateways/openclaw/build-config.json',
+							buildConfig: '../vm-images/gateways/hermes/build-config.json',
 						},
 						worker: {
 							type: 'worker',
-							buildConfig: '../vm-images/gateways/openclaw/build-config.json',
+							buildConfig: '../vm-images/gateways/hermes/build-config.json',
 						},
 					},
 					toolVms: {
@@ -2746,16 +2746,16 @@ describe('loadSystemConfig', () => {
 							type: 'hermes',
 							profileSecretProjectionsByAgent: { main: {} },
 							profilesByAgent: { main: 'main' },
-							imageProfile: 'openclaw',
+							imageProfile: 'hermes',
 							memory: '2G',
 							cpus: 2,
 							port: 18791,
-							config: './shravan/openclaw.json',
+							config: './shravan/hermes.json',
 						},
 						secrets: {
-							OPENCLAW_GATEWAY_TOKEN: {
+							HERMES_GATEWAY_TOKEN: {
 								source: 'environment',
-								envVar: 'OPENCLAW_GATEWAY_TOKEN',
+								envVar: 'HERMES_GATEWAY_TOKEN',
 								injection: 'env',
 								audience: 'gateway',
 							},
@@ -3408,7 +3408,7 @@ describe('loadSystemConfig', () => {
 	test('rejects path-unsafe agent identifiers in per-agent maps', async () => {
 		const config = createValidSystemConfigInput();
 		if (config.zones[0].gateway.type !== 'hermes') {
-			throw new Error('Expected OpenClaw fixture zone');
+			throw new Error('Expected Hermes fixture zone');
 		}
 		config.zones[0].gateway.profilesByAgent = { '../shravan': 'researcher' };
 		const configPath = await writeSystemConfigForTest(
@@ -3527,16 +3527,16 @@ describe('loadSystemConfig', () => {
 					type: 'hermes',
 					profileSecretProjectionsByAgent: { main: {} },
 					profilesByAgent: { main: 'main' },
-					imageProfile: 'missing-openclaw',
+					imageProfile: 'missing-hermes',
 					memory: '2G',
 					cpus: 2,
 					port: 18791,
-					config: './shravan/openclaw.json',
+					config: './shravan/hermes.json',
 				},
 				secrets: {
-					OPENCLAW_GATEWAY_TOKEN: {
+					HERMES_GATEWAY_TOKEN: {
 						source: 'environment',
-						envVar: 'OPENCLAW_GATEWAY_TOKEN',
+						envVar: 'HERMES_GATEWAY_TOKEN',
 						injection: 'env',
 						audience: 'gateway',
 					},
@@ -3620,7 +3620,7 @@ describe('loadSystemConfig', () => {
 			gateways: {
 				'': {
 					type: 'hermes',
-					buildConfig: '../vm-images/gateways/openclaw/build-config.json',
+					buildConfig: '../vm-images/gateways/hermes/build-config.json',
 				},
 			},
 			toolVms: {

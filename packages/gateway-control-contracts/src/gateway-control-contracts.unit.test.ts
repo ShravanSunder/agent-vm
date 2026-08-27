@@ -491,7 +491,7 @@ describe('gateway control contract', () => {
 			GatewayControlCallerContextRegisterPayloadSchema.safeParse({
 				adapterEvidence: {
 					...validPayload.adapterEvidence,
-					agentWorkspaceDir: '/home/openclaw/workspace',
+					agentWorkspaceDir: '/home/hermes/workspace',
 				},
 			}).success,
 		).toBe(false);
@@ -499,7 +499,7 @@ describe('gateway control contract', () => {
 			GatewayControlCallerContextRegisterPayloadSchema.safeParse({
 				adapterEvidence: {
 					...validPayload.adapterEvidence,
-					workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
+					workMountDir: '/home/hermes/.hermes/state/sandboxes/main/work',
 				},
 			}).success,
 		).toBe(false);
@@ -516,12 +516,12 @@ describe('gateway control contract', () => {
 				adapterEvidence: {
 					agentAuthority,
 					agentId: 'main',
-					agentWorkspaceDir: '/home/openclaw/workspace',
+					agentWorkspaceDir: '/home/hermes/workspace',
 					proof: {
 						algorithm: 'hmac-sha256',
 						digest: 'digestdigestdigestdigestdigestdigestdigestdigest',
 					},
-					workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
+					workMountDir: '/home/hermes/.hermes/state/sandboxes/main/work',
 					zoneId: 'zone-a',
 				},
 			}).success,
@@ -544,13 +544,13 @@ describe('gateway control contract', () => {
 				GatewayControlCallerContextRegisterPayloadSchema.safeParse({
 					adapterEvidence: {
 						agentAuthority,
-						agentWorkspaceDir: '/home/openclaw/workspace',
+						agentWorkspaceDir: '/home/hermes/workspace',
 						principal: invalidPrincipal,
 						proof: {
 							algorithm: 'hmac-sha256',
 							digest: 'digestdigestdigestdigestdigestdigestdigestdigest',
 						},
-						workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
+						workMountDir: '/home/hermes/.hermes/state/sandboxes/main/work',
 						zoneId: 'zone-a',
 					},
 				}).success,
@@ -559,10 +559,10 @@ describe('gateway control contract', () => {
 		expect(
 			GatewayControlLeaseCreateIntentPayloadSchema.safeParse({
 				agentId: 'main',
-				agentWorkspaceDir: '/home/openclaw/workspace',
+				agentWorkspaceDir: '/home/hermes/workspace',
 				profileId: 'standard',
 				sessionKey: 'agent:main:test-session',
-				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
+				workMountDir: '/home/hermes/.hermes/state/sandboxes/main/work',
 				zoneId: 'zone-a',
 			}).success,
 		).toBe(false);

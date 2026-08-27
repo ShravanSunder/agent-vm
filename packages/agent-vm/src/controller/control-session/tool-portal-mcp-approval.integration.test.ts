@@ -154,7 +154,7 @@ const trustedInvocationContext = {
 		toolCallId: 'approval-exactly-once-tool-call',
 	},
 	principal: managedPrincipal,
-	requester: { authenticatedSubjectId: 'openclaw:agent-a' },
+	requester: { authenticatedSubjectId: 'hermes:agent-a' },
 } satisfies GatewayRuntimeClientTrustedInvocationContext;
 
 const managedPluginAttachment = {

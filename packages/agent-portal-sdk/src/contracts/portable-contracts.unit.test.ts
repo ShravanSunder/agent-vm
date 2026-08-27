@@ -244,7 +244,7 @@ describe('canonical Agent Portal contracts', () => {
 
 	it('accepts only discriminated managed framework identities and exact four-field projections', () => {
 		// Arrange
-		const openClawProjection = {
+		const defaultProfileProjection = {
 			agentId: 'agent-a',
 			frameworkIdentity: { kind: 'hermes', profileName: 'agent-a' },
 			profileAssignmentRevision: 'profile-assignment-a',
@@ -254,15 +254,17 @@ describe('canonical Agent Portal contracts', () => {
 			],
 			toolPortalProfileId: 'profile-a',
 		} as const;
-		const hermesProjection = {
-			...openClawProjection,
+		const namedProfileProjection = {
+			...defaultProfileProjection,
 			frameworkIdentity: { kind: 'hermes', profileName: 'agent-a-profile' },
 		} as const;
 
 		// Act / Assert
-		expect(ManagedAgentProjectionSchema.parse(openClawProjection)).toEqual(openClawProjection);
-		const parsedHermesProjection = ManagedAgentProjectionSchema.parse(hermesProjection);
-		expect(parsedHermesProjection).toEqual(hermesProjection);
+		expect(ManagedAgentProjectionSchema.parse(defaultProfileProjection)).toEqual(
+			defaultProfileProjection,
+		);
+		const parsedHermesProjection = ManagedAgentProjectionSchema.parse(namedProfileProjection);
+		expect(parsedHermesProjection).toEqual(namedProfileProjection);
 		expect(Object.isFrozen(parsedHermesProjection)).toBe(true);
 		expect(Object.isFrozen(parsedHermesProjection.frameworkIdentity)).toBe(true);
 		expect(
@@ -282,7 +284,7 @@ describe('canonical Agent Portal contracts', () => {
 		]) {
 			expect(
 				ManagedAgentProjectionSchema.safeParse({
-					...openClawProjection,
+					...namedProfileProjection,
 					...retiredAuthority,
 				}).success,
 			).toBe(false);

@@ -251,8 +251,8 @@ async function createSystemConfigFixture(
 		},
 		imageProfiles: {
 			gateways: {
-				openclaw: {
-					buildConfig: './vm-images/gateways/openclaw/build-config.json',
+				hermes: {
+					buildConfig: './vm-images/gateways/hermes/build-config.json',
 					type: 'hermes',
 				},
 			},
@@ -288,9 +288,9 @@ async function createSystemConfigFixture(
 				],
 				egressHosts: [],
 				gateway: {
-					config: path.join(testRoot, 'config', 'zone-a', 'openclaw.json'),
+					config: path.join(testRoot, 'config', 'zone-a', 'hermes.json'),
 					cpus: 2,
-					imageProfile: 'openclaw',
+					imageProfile: 'hermes',
 					memory: '2G',
 					port: 18_791,
 					stateDir: path.join(testRoot, 'zone-a', 'state'),
@@ -302,9 +302,9 @@ async function createSystemConfigFixture(
 				},
 				id: 'zone-a',
 				secrets: {
-					OPENCLAW_GATEWAY_TOKEN: {
+					HERMES_GATEWAY_TOKEN: {
 						audience: 'gateway',
-						envVar: 'OPENCLAW_GATEWAY_TOKEN',
+						envVar: 'HERMES_GATEWAY_TOKEN',
 						injection: 'env',
 						source: 'environment',
 					},
@@ -377,7 +377,7 @@ async function writeEffectiveToolPortalSnapshot(
 	const hermesGateway = zone.gateway;
 	const effectivePlan = await writeMcpPortalEffectiveConfig({
 		approvalAccessConfigured: options.approvalAccessConfigured ?? false,
-		allowedRawEnvSecretNames: ['OPENCLAW_GATEWAY_TOKEN'],
+		allowedRawEnvSecretNames: ['HERMES_GATEWAY_TOKEN'],
 		authoredConfigDir: zone.toolPortal.configDir,
 		declaredAgentIds: (zone.agents ?? []).map((agent) => agent.id),
 		effectiveHostConfigDir: path.join(

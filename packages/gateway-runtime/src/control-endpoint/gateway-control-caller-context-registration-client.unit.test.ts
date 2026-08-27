@@ -54,7 +54,7 @@ const trustedContext = {
 		profileAssignmentRevision: 'profile-assignment-a',
 		toolPortalProfileId: 'code-builder',
 	},
-	requester: { authenticatedSubjectId: 'openclaw:agent-a' },
+	requester: { authenticatedSubjectId: 'hermes:agent-a' },
 } as const satisfies GatewayRuntimeTrustedInvocationContext;
 
 const registrationRequest = {

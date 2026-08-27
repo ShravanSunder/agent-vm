@@ -130,7 +130,7 @@ describe('smoke: gateway startup secret resolution', () => {
 							injection: 'env',
 							audience: 'gateway',
 						},
-						OPENCLAW_GATEWAY_TOKEN: {
+						HERMES_GATEWAY_TOKEN: {
 							source: '1password',
 							ref: 'op://agent-vm/secret-smoke-gateway/password',
 							injection: 'env',
@@ -198,7 +198,7 @@ describe('smoke: gateway startup secret resolution', () => {
 				allowedHosts: [],
 				environment: {
 					ENV_ONLY_TOKEN: resolvedSecrets.ENV_ONLY_TOKEN ?? '',
-					OPENCLAW_GATEWAY_TOKEN: resolvedSecrets.OPENCLAW_GATEWAY_TOKEN ?? '',
+					HERMES_GATEWAY_TOKEN: resolvedSecrets.HERMES_GATEWAY_TOKEN ?? '',
 				},
 				mediatedSecrets: {
 					PERPLEXITY_API_KEY: {
@@ -282,7 +282,7 @@ describe('smoke: gateway startup secret resolution', () => {
 		expect(innerResolve).not.toHaveBeenCalled();
 		expect(innerResolveAll).toHaveBeenCalledTimes(1);
 		expect(innerResolveAll).toHaveBeenCalledWith({
-			OPENCLAW_GATEWAY_TOKEN: {
+			HERMES_GATEWAY_TOKEN: {
 				source: '1password',
 				ref: 'op://agent-vm/secret-smoke-gateway/password',
 			},
@@ -294,7 +294,7 @@ describe('smoke: gateway startup secret resolution', () => {
 		expect(capturedCreateRequest).toBeDefined();
 		expect(capturedCreateRequest?.environment).toMatchObject({
 			ENV_ONLY_TOKEN: 'env-only-token',
-			OPENCLAW_GATEWAY_TOKEN: 'resolved:OPENCLAW_GATEWAY_TOKEN',
+			HERMES_GATEWAY_TOKEN: 'resolved:HERMES_GATEWAY_TOKEN',
 		});
 		expect(capturedCreateRequest?.environment).not.toHaveProperty('PERPLEXITY_API_KEY');
 		expect(capturedCreateRequest?.mediatedSecrets).toEqual([

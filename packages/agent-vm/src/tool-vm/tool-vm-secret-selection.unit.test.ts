@@ -38,7 +38,7 @@ function gatewaySecret(): ZoneSecretConfig {
 function rawGatewayEnvSecret(): ZoneSecretConfig {
 	return {
 		source: 'environment',
-		envVar: 'OPENCLAW_GATEWAY_TOKEN',
+		envVar: 'HERMES_GATEWAY_TOKEN',
 		injection: 'env',
 		audience: 'gateway',
 	};
@@ -52,11 +52,11 @@ function createZoneWithSecrets(secrets: Record<string, ZoneSecretConfig>): ZoneC
 			type: 'hermes',
 			profileSecretProjectionsByAgent: { main: {} },
 			profilesByAgent: { main: 'main' },
-			imageProfile: 'openclaw',
+			imageProfile: 'hermes',
 			memory: '2G',
 			cpus: 2,
 			port: 18791,
-			config: './config/sunfam/openclaw.json',
+			config: './config/sunfam/hermes.json',
 			stateDir: './state/sunfam',
 			zoneFilesDir: './zone-files/sunfam',
 			zoneRuntimeDir: './runtime/sunfam',
@@ -73,7 +73,7 @@ describe('Tool VM secret selection', () => {
 		const selected = selectToolVmMediatedSecretNamesForAgent({
 			agentId: 'sun',
 			zone: createZoneWithSecrets({
-				OPENCLAW_GATEWAY_TOKEN: rawGatewayEnvSecret(),
+				HERMES_GATEWAY_TOKEN: rawGatewayEnvSecret(),
 				SHARED_TOKEN: toolSecret({ agentAccess: 'all', envVar: 'SHARED_TOKEN' }),
 				SUN_TOKEN: toolSecret({ agentAccess: ['sun'], envVar: 'SUN_TOKEN' }),
 				MAK_TOKEN: toolSecret({ agentAccess: ['mak'], envVar: 'MAK_TOKEN' }),

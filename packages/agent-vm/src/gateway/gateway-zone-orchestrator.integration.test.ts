@@ -1489,7 +1489,7 @@ describe('startGatewayZone', () => {
 		const secretResolver = createGatewaySecretResolver({
 			PERPLEXITY_API_KEY: 'resolved-key',
 			DISCORD_BOT_TOKEN: 'resolved-key',
-			OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+			HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
 		});
 		const buildImage = vi.fn(async () => ({
 			built: true,
@@ -1625,7 +1625,7 @@ describe('startGatewayZone', () => {
 		);
 		expect(createdVmOptions.allowedHosts).not.toContain('controller.vm.host');
 		expect(createdVmOptions.environment).not.toHaveProperty('DISCORD_BOT_TOKEN');
-		expect(createdVmOptions.environment).not.toHaveProperty('OPENCLAW_GATEWAY_TOKEN');
+		expect(createdVmOptions.environment).not.toHaveProperty('HERMES_GATEWAY_TOKEN');
 		expect(createdVmOptions.environment).not.toHaveProperty('PERPLEXITY_API_KEY');
 		expect(protectedFrameworkEnvironment).toContain("export DISCORD_BOT_TOKEN='resolved-key'");
 		expect(protectedFrameworkEnvironment).toContain(
@@ -1754,7 +1754,7 @@ describe('startGatewayZone', () => {
 					createVmOwnership: ownership.createVmOwnership,
 					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
-						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
+						HERMES_GATEWAY_TOKEN: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
 					}),
 					systemConfig: await createSystemConfig(),
@@ -1825,7 +1825,7 @@ describe('startGatewayZone', () => {
 					createVmOwnership: ownership.createVmOwnership,
 					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
-						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
+						HERMES_GATEWAY_TOKEN: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
 					}),
 					systemConfig: await createSystemConfig(),
@@ -1930,7 +1930,7 @@ describe('startGatewayZone', () => {
 					createVmOwnership: ownership.createVmOwnership,
 					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
-						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
+						HERMES_GATEWAY_TOKEN: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
 					}),
 					systemConfig: await createSystemConfig(),
@@ -1984,7 +1984,7 @@ describe('startGatewayZone', () => {
 					createVmOwnership: ownership.createVmOwnership,
 					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
-						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
+						HERMES_GATEWAY_TOKEN: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
 					}),
 					systemConfig: await createSystemConfig(),
@@ -2076,7 +2076,7 @@ describe('startGatewayZone', () => {
 					.createVmOwnership,
 				secretResolver: createGatewaySecretResolver({
 					DISCORD_BOT_TOKEN: 'discord-token',
-					OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
+					HERMES_GATEWAY_TOKEN: 'gateway-token-123',
 					PERPLEXITY_API_KEY: 'pplx-key',
 				}),
 				systemConfig: await createSystemConfig(),
@@ -2269,7 +2269,7 @@ describe('startGatewayZone', () => {
 		const systemConfig = await createSystemConfig();
 		const zone = systemConfig.zones[0];
 		if (!zone || zone.gateway.type !== 'hermes') {
-			throw new Error('expected OpenClaw test zone');
+			throw new Error('expected Hermes test zone');
 		}
 		const systemConfigWithIngressTimeouts: LoadedSystemConfig = {
 			...systemConfig,
@@ -2295,7 +2295,7 @@ describe('startGatewayZone', () => {
 				secretResolver: createGatewaySecretResolver({
 					PERPLEXITY_API_KEY: 'resolved-key',
 					DISCORD_BOT_TOKEN: 'resolved-key',
-					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+					HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
 				}),
 				systemConfig: systemConfigWithIngressTimeouts,
 				zoneId: 'shravan',
@@ -2340,7 +2340,7 @@ describe('startGatewayZone', () => {
 		const systemConfig = await createSystemConfig();
 		const zone = systemConfig.zones[0];
 		if (!zone || zone.gateway.type !== 'hermes') {
-			throw new Error('expected OpenClaw test zone');
+			throw new Error('expected Hermes test zone');
 		}
 		const systemConfigWithHeaderTimeout: LoadedSystemConfig = {
 			...systemConfig,
@@ -2365,7 +2365,7 @@ describe('startGatewayZone', () => {
 				secretResolver: createGatewaySecretResolver({
 					PERPLEXITY_API_KEY: 'resolved-key',
 					DISCORD_BOT_TOKEN: 'resolved-key',
-					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+					HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
 				}),
 				systemConfig: systemConfigWithHeaderTimeout,
 				zoneId: 'shravan',
@@ -2409,7 +2409,7 @@ describe('startGatewayZone', () => {
 		const systemConfig = await createSystemConfig();
 		const zone = systemConfig.zones[0];
 		if (!zone || zone.gateway.type !== 'hermes') {
-			throw new Error('expected OpenClaw test zone');
+			throw new Error('expected Hermes test zone');
 		}
 		const systemConfigWithResponseTimeout: LoadedSystemConfig = {
 			...systemConfig,
@@ -2434,7 +2434,7 @@ describe('startGatewayZone', () => {
 				secretResolver: createGatewaySecretResolver({
 					PERPLEXITY_API_KEY: 'resolved-key',
 					DISCORD_BOT_TOKEN: 'resolved-key',
-					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+					HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
 				}),
 				systemConfig: systemConfigWithResponseTimeout,
 				zoneId: 'shravan',
@@ -2509,7 +2509,7 @@ describe('startGatewayZone', () => {
 				},
 				secretResolver: createGatewaySecretResolver({
 					DISCORD_BOT_TOKEN: 'resolved-discord-token',
-					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+					HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
 					PERPLEXITY_API_KEY: 'resolved-perplexity-key',
 				}),
 				systemConfig,
@@ -2709,7 +2709,7 @@ describe('startGatewayZone', () => {
 				secretResolver: createGatewaySecretResolver({
 					PERPLEXITY_API_KEY: 'pplx-key',
 					DISCORD_BOT_TOKEN: 'discord-token',
-					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+					HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
 				}),
 				systemConfig,
 				zoneId: 'shravan',
@@ -2743,7 +2743,7 @@ describe('startGatewayZone', () => {
 		const systemConfig = await createSystemConfig();
 		const baseZone = systemConfig.zones[0];
 		if (baseZone === undefined || baseZone.gateway.type !== 'hermes') {
-			throw new Error('Expected OpenClaw test zone.');
+			throw new Error('Expected Hermes test zone.');
 		}
 		const configDir = requireToolPortalConfigDir(baseZone);
 		await writeMinimalMcpPortalConfigs(configDir, undefined, { portalAgentId: 'shravan' });
@@ -2771,7 +2771,7 @@ describe('startGatewayZone', () => {
 					'observability-test-plugin': { enabled: true },
 				},
 				secretResolver: createGatewaySecretResolver({
-					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+					HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
 				}),
 				systemConfig,
 				zoneId: 'shravan',
@@ -2839,7 +2839,7 @@ describe('startGatewayZone', () => {
 		const systemConfig = await createSystemConfig();
 		const baseZone = systemConfig.zones[0];
 		if (baseZone === undefined || baseZone.gateway.type !== 'hermes') {
-			throw new Error('Expected OpenClaw test zone.');
+			throw new Error('Expected Hermes test zone.');
 		}
 		const configDir = requireToolPortalConfigDir(baseZone);
 		const resolvedSecretValue = 'resolved-admission-secret-value';
@@ -2884,7 +2884,7 @@ describe('startGatewayZone', () => {
 		await startGatewayZone(
 			{
 				secretResolver: createGatewaySecretResolver({
-					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+					HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
 					[secretRef]: resolvedSecretValue,
 				}),
 				systemConfig,
@@ -2944,7 +2944,7 @@ describe('startGatewayZone', () => {
 		const systemConfig = await createHermesSystemConfig();
 		const zone = systemConfig.zones[0];
 		if (zone === undefined || zone.gateway.type !== 'hermes') {
-			throw new Error('Expected OpenClaw test zone.');
+			throw new Error('Expected Hermes test zone.');
 		}
 		const agentIds = ['main', 'second'] as const;
 		const zoneFilesDir = zone.gateway.zoneFilesDir;
@@ -2982,7 +2982,7 @@ describe('startGatewayZone', () => {
 			{
 				secretResolver: createGatewaySecretResolver({
 					DISCORD_BOT_TOKEN: 'discord-token',
-					OPENCLAW_GATEWAY_TOKEN: 'gateway-token',
+					HERMES_GATEWAY_TOKEN: 'gateway-token',
 					PERPLEXITY_API_KEY: 'perplexity-key',
 				}),
 				systemConfig,
@@ -3019,7 +3019,7 @@ describe('startGatewayZone', () => {
 		const systemConfig = await createSystemConfig();
 		const baseZone = systemConfig.zones[0];
 		if (baseZone === undefined || baseZone.gateway.type !== 'hermes') {
-			throw new Error('Expected OpenClaw test zone.');
+			throw new Error('Expected Hermes test zone.');
 		}
 		const configDir = requireToolPortalConfigDir(baseZone);
 		await writeFile(
@@ -3067,7 +3067,7 @@ describe('startGatewayZone', () => {
 					},
 					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'resolved-discord-token',
-						OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+						HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
 						PERPLEXITY_API_KEY: 'resolved-perplexity-key',
 					}),
 					systemConfig,
@@ -3120,7 +3120,7 @@ describe('startGatewayZone', () => {
 		const systemConfig = await createSystemConfig();
 		const baseZone = systemConfig.zones[0];
 		if (baseZone === undefined || baseZone.gateway.type !== 'hermes') {
-			throw new Error('Expected OpenClaw test zone.');
+			throw new Error('Expected Hermes test zone.');
 		}
 		const configDir = requireToolPortalConfigDir(baseZone);
 		await writeMinimalMcpPortalConfigs(configDir, undefined, { portalAgentId: 'shravan' });
@@ -3140,7 +3140,7 @@ describe('startGatewayZone', () => {
 				},
 				secretResolver: createGatewaySecretResolver({
 					DISCORD_BOT_TOKEN: 'resolved-discord-token',
-					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+					HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
 					PERPLEXITY_API_KEY: 'resolved-perplexity-key',
 				}),
 				systemConfig,
@@ -3172,7 +3172,7 @@ describe('startGatewayZone', () => {
 		const systemConfig = await createSystemConfig();
 		const baseZone = systemConfig.zones[0];
 		if (baseZone === undefined || baseZone.gateway.type !== 'hermes') {
-			throw new Error('Expected OpenClaw test zone.');
+			throw new Error('Expected Hermes test zone.');
 		}
 		const overlappingRef = 'op://agent-vm/shravan-perplexity/credential';
 		const configDir = requireToolPortalConfigDir(baseZone);
@@ -3290,7 +3290,7 @@ describe('startGatewayZone', () => {
 		const systemConfig = await createSystemConfig();
 		const baseZone = systemConfig.zones[0];
 		if (baseZone === undefined || baseZone.gateway.type !== 'hermes') {
-			throw new Error('Expected OpenClaw test zone.');
+			throw new Error('Expected Hermes test zone.');
 		}
 		const configDir = requireToolPortalConfigDir(baseZone);
 		await writeMinimalMcpPortalConfigs(configDir, {
@@ -3320,7 +3320,7 @@ describe('startGatewayZone', () => {
 		await startGatewayZone(
 			{
 				secretResolver: createGatewaySecretResolver({
-					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+					HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
 				}),
 				systemConfig,
 				zoneId: 'shravan',
@@ -3352,7 +3352,7 @@ describe('startGatewayZone', () => {
 		const systemConfig = await createSystemConfig();
 		const baseZone = systemConfig.zones[0];
 		if (baseZone === undefined || baseZone.gateway.type !== 'hermes') {
-			throw new Error('Expected OpenClaw test zone.');
+			throw new Error('Expected Hermes test zone.');
 		}
 		const configDir = requireToolPortalConfigDir(baseZone);
 		await writeMinimalMcpPortalConfigs(configDir, {
@@ -3382,7 +3382,7 @@ describe('startGatewayZone', () => {
 		await startGatewayZone(
 			{
 				secretResolver: createGatewaySecretResolver({
-					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+					HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
 				}),
 				systemConfig,
 				zoneId: 'shravan',
@@ -3421,7 +3421,7 @@ describe('startGatewayZone', () => {
 		const systemConfig = await createSystemConfig();
 		const baseZone = systemConfig.zones[0];
 		if (baseZone === undefined || baseZone.gateway.type !== 'hermes') {
-			throw new Error('Expected OpenClaw test zone.');
+			throw new Error('Expected Hermes test zone.');
 		}
 		const managedVm: ManagedVm = {
 			id: 'vm-websocket-policy',
@@ -3440,7 +3440,7 @@ describe('startGatewayZone', () => {
 		await startGatewayZone(
 			{
 				secretResolver: createGatewaySecretResolver({
-					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+					HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
 				}),
 				systemConfig,
 				zoneId: 'shravan',
@@ -3506,7 +3506,7 @@ describe('startGatewayZone', () => {
 		const systemConfig = await createSystemConfig();
 		const baseZone = systemConfig.zones[0];
 		if (baseZone === undefined || baseZone.gateway.type !== 'hermes') {
-			throw new Error('Expected OpenClaw test zone.');
+			throw new Error('Expected Hermes test zone.');
 		}
 		const managedVm: ManagedVm = {
 			id: 'vm-tool-websocket-policy',
@@ -3525,7 +3525,7 @@ describe('startGatewayZone', () => {
 		await startGatewayZone(
 			{
 				secretResolver: createGatewaySecretResolver({
-					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+					HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
 				}),
 				systemConfig,
 				zoneId: 'shravan',
@@ -3575,7 +3575,7 @@ describe('startGatewayZone', () => {
 		const systemConfig = await createSystemConfig();
 		const baseZone = systemConfig.zones[0];
 		if (baseZone === undefined || baseZone.gateway.type !== 'hermes') {
-			throw new Error('Expected OpenClaw test zone.');
+			throw new Error('Expected Hermes test zone.');
 		}
 		const managedVm: ManagedVm = {
 			id: 'vm-no-websocket-policy',
@@ -3594,7 +3594,7 @@ describe('startGatewayZone', () => {
 		await startGatewayZone(
 			{
 				secretResolver: createGatewaySecretResolver({
-					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+					HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
 				}),
 				systemConfig,
 				zoneId: 'shravan',
@@ -3638,7 +3638,7 @@ describe('startGatewayZone', () => {
 		const systemConfig = await createSystemConfig();
 		const baseZone = systemConfig.zones[0];
 		if (baseZone === undefined || baseZone.gateway.type !== 'hermes') {
-			throw new Error('Expected OpenClaw test zone.');
+			throw new Error('Expected Hermes test zone.');
 		}
 		const configDir = requireToolPortalConfigDir(baseZone);
 		await writeMinimalMcpPortalConfigs(configDir, {
@@ -3755,7 +3755,7 @@ describe('startGatewayZone', () => {
 		const systemConfig = await createSystemConfig();
 		const baseZone = systemConfig.zones[0];
 		if (baseZone === undefined || baseZone.gateway.type !== 'hermes') {
-			throw new Error('Expected OpenClaw test zone.');
+			throw new Error('Expected Hermes test zone.');
 		}
 		const configDir = requireToolPortalConfigDir(baseZone);
 		await writeMinimalMcpPortalConfigs(configDir, {
@@ -3783,7 +3783,7 @@ describe('startGatewayZone', () => {
 		await startGatewayZone(
 			{
 				secretResolver: createGatewaySecretResolver({
-					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+					HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
 				}),
 				systemConfig,
 				zoneId: 'shravan',
@@ -3834,7 +3834,7 @@ describe('startGatewayZone', () => {
 				secretResolver: createGatewaySecretResolver({
 					PERPLEXITY_API_KEY: 'resolved-key',
 					DISCORD_BOT_TOKEN: 'resolved-key',
-					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+					HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
 				}),
 				systemConfig: await createSystemConfig(),
 				zoneId: 'shravan',
@@ -3969,7 +3969,7 @@ describe('startGatewayZone', () => {
 		const secretResolver = createGatewaySecretResolver({
 			PERPLEXITY_API_KEY: 'pplx-key',
 			DISCORD_BOT_TOKEN: 'discord-token',
-			OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+			HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
 		});
 		const createManagedVm = vi.fn(
 			async (_request: ManagedVmCreateRequest): Promise<ManagedVm> => managedVm,
@@ -4056,7 +4056,7 @@ describe('startGatewayZone', () => {
 				secretResolver: createGatewaySecretResolver({
 					PERPLEXITY_API_KEY: 'key',
 					DISCORD_BOT_TOKEN: 'token',
-					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+					HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
 				}),
 				systemConfig: await createSystemConfig(),
 				zoneId: 'shravan',
@@ -4116,7 +4116,7 @@ describe('startGatewayZone', () => {
 			startGatewayZone(
 				{
 					secretResolver: createGatewaySecretResolver({
-						OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+						HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
 					}),
 					systemConfig: await createWorkerSystemConfig(),
 					zoneId: 'shravan',
@@ -4170,7 +4170,7 @@ describe('startGatewayZone', () => {
 			startGatewayZone(
 				{
 					secretResolver: createGatewaySecretResolver({
-						OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+						HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
 					}),
 					systemConfig: await createWorkerSystemConfig(),
 					zoneId: 'shravan',
@@ -4215,7 +4215,7 @@ describe('startGatewayZone', () => {
 			startGatewayZone(
 				{
 					secretResolver: createGatewaySecretResolver({
-						OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+						HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
 					}),
 					systemConfig: await createWorkerSystemConfig(),
 					zoneId: 'shravan',
@@ -4260,7 +4260,7 @@ describe('startGatewayZone', () => {
 			startGatewayZone(
 				{
 					secretResolver: createGatewaySecretResolver({
-						OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+						HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
 					}),
 					systemConfig: await createWorkerSystemConfig(),
 					zoneId: 'shravan',
@@ -4298,7 +4298,7 @@ describe('startGatewayZone', () => {
 		const result = await startGatewayZone(
 			{
 				secretResolver: createGatewaySecretResolver({
-					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+					HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
 				}),
 				systemConfig: await createWorkerSystemConfig(),
 				zoneId: 'shravan',
@@ -4365,7 +4365,7 @@ describe('startGatewayZone', () => {
 			startGatewayZone(
 				{
 					secretResolver: createGatewaySecretResolver({
-						OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+						HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
 					}),
 					systemConfig,
 					zoneId: 'shravan',
@@ -4435,7 +4435,7 @@ describe('startGatewayZone', () => {
 		await startGatewayZone(
 			{
 				secretResolver: createGatewaySecretResolver({
-					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+					HERMES_GATEWAY_TOKEN: 'resolved-gateway-token',
 				}),
 				systemConfig: await createWorkerSystemConfig(),
 				zoneId: 'shravan',
@@ -4471,7 +4471,7 @@ describe('startGatewayZone', () => {
 			exec.mockImplementation(() => createManagedExecProcessStub({ stdout: '000' }));
 			const healthAbortController = new AbortController();
 			const exactDeadlineReason = new Error(
-				"OpenClaw successor process 'process-2' exceeded its 45000ms phase deadline.",
+				"Hermes successor process 'process-2' exceeded its 45000ms phase deadline.",
 			);
 			const healthWait = waitForGatewayServiceHealth({
 				healthCheck: { path: '/health', port: 18_789, type: 'http' },
@@ -4523,7 +4523,7 @@ describe('startGatewayZone', () => {
 				},
 				secretResolver: createGatewaySecretResolver({
 					DISCORD_BOT_TOKEN: 'discord-token',
-					OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
+					HERMES_GATEWAY_TOKEN: 'gateway-token-123',
 					PERPLEXITY_API_KEY: 'pplx-key',
 				}),
 				systemConfig: await createSystemConfig(),
@@ -4594,7 +4594,7 @@ describe('startGatewayZone', () => {
 				createVmOwnership: ownership.createVmOwnership,
 				secretResolver: createGatewaySecretResolver({
 					DISCORD_BOT_TOKEN: 'discord-token',
-					OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
+					HERMES_GATEWAY_TOKEN: 'gateway-token-123',
 					PERPLEXITY_API_KEY: 'pplx-key',
 				}),
 				systemConfig,
@@ -4682,7 +4682,7 @@ describe('startGatewayZone', () => {
 				},
 				secretResolver: createGatewaySecretResolver({
 					DISCORD_BOT_TOKEN: 'discord-token',
-					OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
+					HERMES_GATEWAY_TOKEN: 'gateway-token-123',
 					PERPLEXITY_API_KEY: 'pplx-key',
 				}),
 				systemConfig: await createSystemConfig(),
@@ -4731,7 +4731,7 @@ describe('startGatewayZone', () => {
 					createVmOwnership: ownership.createVmOwnership,
 					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
-						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
+						HERMES_GATEWAY_TOKEN: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
 					}),
 					systemConfig: await createSystemConfig(),
@@ -4778,7 +4778,7 @@ describe('startGatewayZone', () => {
 					createVmOwnership: ownership.createVmOwnership,
 					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
-						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
+						HERMES_GATEWAY_TOKEN: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
 					}),
 					systemConfig: await createSystemConfig(),
@@ -4823,7 +4823,7 @@ describe('startGatewayZone', () => {
 				{
 					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
-						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
+						HERMES_GATEWAY_TOKEN: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
 					}),
 					systemConfig: await createSystemConfig(),
@@ -4870,7 +4870,7 @@ describe('startGatewayZone', () => {
 				{
 					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
-						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
+						HERMES_GATEWAY_TOKEN: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
 					}),
 					systemConfig: await createSystemConfig(),
@@ -4930,7 +4930,7 @@ describe('startGatewayZone', () => {
 				{
 					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
-						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
+						HERMES_GATEWAY_TOKEN: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
 					}),
 					systemConfig: await createSystemConfig(),
@@ -4987,7 +4987,7 @@ describe('startGatewayZone', () => {
 					createVmOwnership: ownership.createVmOwnership,
 					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
-						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
+						HERMES_GATEWAY_TOKEN: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
 					}),
 					systemConfig: await createSystemConfig(),
@@ -5038,7 +5038,7 @@ describe('startGatewayZone', () => {
 					createVmOwnership: ownership.createVmOwnership,
 					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
-						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
+						HERMES_GATEWAY_TOKEN: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
 					}),
 					systemConfig: await createSystemConfig(),
@@ -5090,7 +5090,7 @@ describe('startGatewayZone', () => {
 					createVmOwnership: ownership.createVmOwnership,
 					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
-						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
+						HERMES_GATEWAY_TOKEN: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
 					}),
 					systemConfig: await createSystemConfig(),
@@ -5138,7 +5138,7 @@ describe('startGatewayZone', () => {
 					createVmOwnership: ownership.createVmOwnership,
 					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
-						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
+						HERMES_GATEWAY_TOKEN: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
 					}),
 					systemConfig: await createSystemConfig(),
@@ -5175,7 +5175,7 @@ describe('startGatewayZone', () => {
 					createVmOwnership: ownership.createVmOwnership,
 					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
-						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
+						HERMES_GATEWAY_TOKEN: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
 					}),
 					systemConfig: await createSystemConfig(),
@@ -5211,7 +5211,7 @@ describe('startGatewayZone', () => {
 					createVmOwnership: ownership.createVmOwnership,
 					secretResolver: createGatewaySecretResolver({
 						DISCORD_BOT_TOKEN: 'discord-token',
-						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
+						HERMES_GATEWAY_TOKEN: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
 					}),
 					systemConfig: await createSystemConfig(),
@@ -5254,7 +5254,7 @@ describe('startGatewayZone', () => {
 			{
 				secretResolver: createGatewaySecretResolver({
 					DISCORD_BOT_TOKEN: 'discord-token',
-					OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
+					HERMES_GATEWAY_TOKEN: 'gateway-token-123',
 					PERPLEXITY_API_KEY: 'pplx-key',
 				}),
 				systemConfig: await createSystemConfig(),
@@ -5427,7 +5427,7 @@ describe('startGatewayZone', () => {
 		const systemConfig = await createSystemConfig();
 		const configuredZone = systemConfig.zones[0];
 		if (configuredZone === undefined || configuredZone.gateway.type !== 'hermes') {
-			throw new Error('Expected OpenClaw test zone.');
+			throw new Error('Expected Hermes test zone.');
 		}
 		const toolPortalConfigDir = requireToolPortalConfigDir(configuredZone);
 		await writeMinimalMcpPortalConfigs(toolPortalConfigDir);
@@ -5501,7 +5501,7 @@ describe('startGatewayZone', () => {
 					loggedMessages.push(telemetry?.operation ?? 'unknown-operation'),
 				secretResolver: createGatewaySecretResolver({
 					DISCORD_BOT_TOKEN: 'discord-token',
-					OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
+					HERMES_GATEWAY_TOKEN: 'gateway-token-123',
 					PERPLEXITY_API_KEY: 'pplx-key',
 				}),
 				systemConfig: systemConfigWithToolPortal,
@@ -6105,7 +6105,7 @@ describe('startGatewayZone', () => {
 		const systemConfig = await createSystemConfig();
 		const zone = systemConfig.zones[0];
 		if (zone === undefined || zone.gateway.type !== 'hermes') {
-			throw new Error('Expected OpenClaw gateway test zone.');
+			throw new Error('Expected Hermes gateway test zone.');
 		}
 		const multiAgentZone = {
 			...zone,
@@ -6135,7 +6135,7 @@ describe('startGatewayZone', () => {
 		const systemConfig = await createSystemConfig();
 		const zone = systemConfig.zones[0];
 		if (zone === undefined || zone.gateway.type !== 'hermes') {
-			throw new Error('Expected OpenClaw gateway test zone.');
+			throw new Error('Expected Hermes gateway test zone.');
 		}
 		const multiAgentZone = {
 			...zone,
@@ -6277,14 +6277,14 @@ describe('startGatewayZone', () => {
 			requireManagedGatewayBootInputFile(
 				managedVmCreateRequest,
 				managedGatewayBootInputPaths.environmentRoot,
-				'openclaw-gateway-token.environment.sh',
+				'hermes-gateway-token.environment.sh',
 			),
 		).toThrow();
 		expect(() =>
 			requireManagedGatewayBootInputFile(
 				managedVmCreateRequest,
 				managedGatewayBootInputPaths.environmentRoot,
-				'openclaw-all-secrets.environment.sh',
+				'hermes-all-secrets.environment.sh',
 			),
 		).toThrow();
 		expect(managedVmCreateRequest?.environment).not.toHaveProperty('DISCORD_BOT_TOKEN_MAIN');

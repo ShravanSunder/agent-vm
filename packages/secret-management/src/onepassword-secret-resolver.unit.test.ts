@@ -428,14 +428,14 @@ describe('createSecretResolver', () => {
 					source: '1password',
 					ref: 'op://agent-vm/agent-discord-app/bot-token',
 				},
-				OPENCLAW_GATEWAY_TOKEN: {
+				HERMES_GATEWAY_TOKEN: {
 					source: '1password',
 					ref: 'op://agent-vm/agent-gateway/token',
 				},
 			}),
 		).resolves.toEqual({
 			DISCORD_BOT_TOKEN: 'batch:op://agent-vm/agent-discord-app/bot-token',
-			OPENCLAW_GATEWAY_TOKEN: 'batch:op://agent-vm/agent-gateway/token',
+			HERMES_GATEWAY_TOKEN: 'batch:op://agent-vm/agent-gateway/token',
 		});
 		expect(batchCalls).toEqual([
 			['op://agent-vm/agent-discord-app/bot-token', 'op://agent-vm/agent-gateway/token'],
@@ -664,13 +664,13 @@ describe('createSecretResolver', () => {
 		).resolves.toBe('resolved-from-op');
 		await expect(
 			secretResolver.resolveAll({
-				OPENCLAW_GATEWAY_TOKEN: {
+				HERMES_GATEWAY_TOKEN: {
 					source: '1password',
 					ref: 'op://agent-vm/agent-gateway/token',
 				},
 			}),
 		).resolves.toEqual({
-			OPENCLAW_GATEWAY_TOKEN: 'resolved-from-op-inject',
+			HERMES_GATEWAY_TOKEN: 'resolved-from-op-inject',
 		});
 		expectOpReadCall({
 			call: execCalls[0],
@@ -701,7 +701,7 @@ describe('createSecretResolver', () => {
 
 		await expectRejects(
 			secretResolver.resolveAll({
-				OPENCLAW_GATEWAY_TOKEN: {
+				HERMES_GATEWAY_TOKEN: {
 					source: '1password',
 					ref: 'op://agent-vm/agent-gateway/token',
 				},

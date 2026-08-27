@@ -18,21 +18,21 @@ const testManagedGatewayBootContract = createManagedGatewayBootContract({
 	framework: 'hermes',
 	ingress: { guestPort: 18_789, kind: 'framework-http' },
 	logIdentity: {
-		guestPath: '/var/log/agent-vm/openclaw-service.log',
+		guestPath: '/var/log/agent-vm/hermes-service.log',
 		serviceName: 'agent-vm-hermes-test',
 	},
 	readiness: { guestPort: 18_789, kind: 'framework-http', path: '/readyz' },
 	role: 'framework-service',
 });
 
-const testOpenClawZone = {
+const testHermesZone = {
 	agentToolVmProfiles: {},
 	defaultToolVmProfile: 'standard',
 	egressHosts: [],
 	gateway: {
-		config: '/config/openclaw.json',
+		config: '/config/hermes.json',
 		cpus: 2,
-		imageProfile: 'openclaw',
+		imageProfile: 'hermes',
 		memory: '2G',
 		port: 18_791,
 		stateDir: '/storage/zone-test/state',
@@ -44,9 +44,9 @@ const testOpenClawZone = {
 	},
 	id: 'zone-test',
 	secrets: {
-		OPENCLAW_GATEWAY_TOKEN: {
+		HERMES_GATEWAY_TOKEN: {
 			audience: 'gateway',
-			envVar: 'OPENCLAW_GATEWAY_TOKEN',
+			envVar: 'HERMES_GATEWAY_TOKEN',
 			injection: 'env',
 			source: 'environment',
 		},
@@ -270,7 +270,7 @@ function createGatewayRuntimeHandle(): Extract<
 		image: {
 			built: false,
 			fingerprint: 'gateway-image-fingerprint',
-			imageReference: '/images/openclaw-gateway',
+			imageReference: '/images/hermes-gateway',
 		},
 		ingress: { host: '127.0.0.1', port: 18791 },
 		vm: {
@@ -283,7 +283,7 @@ function createGatewayRuntimeHandle(): Extract<
 			getHostProcessId: () => 42,
 			id: 'gateway-vm-1',
 		},
-		zone: testOpenClawZone,
+		zone: testHermesZone,
 	};
 }
 

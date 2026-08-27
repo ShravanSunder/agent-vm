@@ -23,7 +23,7 @@ describe('Gateway runtime Tool Portal production control endpoint contract', () 
 
 	it.each([
 		['ephemeral port', { host: '127.0.0.1', port: 0 }],
-		['OpenClaw guest port', { host: '127.0.0.1', port: 18_789 }],
+		['Hermes guest port', { host: '127.0.0.1', port: 18_789 }],
 		['Tool VM pool port', { host: '127.0.0.1', port: 19_001 }],
 		['wildcard host', { host: '0.0.0.0', port: 18_790 }],
 		['IPv6 loopback host', { host: '::1', port: 18_790 }],

@@ -223,7 +223,7 @@ const systemConfig = {
 	},
 	imageProfiles: {
 		gateways: {
-			openclaw: { type: 'hermes', buildConfig: '/tmp/gateway-build.json' },
+			hermes: { type: 'hermes', buildConfig: '/tmp/gateway-build.json' },
 			worker: { type: 'worker', buildConfig: '/tmp/gateway-build.json' },
 		},
 		toolVms: {
@@ -245,9 +245,9 @@ const systemConfig = {
 				repoPushPolicies: [],
 			},
 			secrets: {
-				OPENCLAW_GATEWAY_TOKEN: {
+				HERMES_GATEWAY_TOKEN: {
 					source: 'environment',
-					envVar: 'OPENCLAW_GATEWAY_TOKEN',
+					envVar: 'HERMES_GATEWAY_TOKEN',
 					injection: 'env',
 					audience: 'gateway',
 				},

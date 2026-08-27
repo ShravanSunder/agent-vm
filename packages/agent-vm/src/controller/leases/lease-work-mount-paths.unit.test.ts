@@ -35,9 +35,9 @@ describe('validateControllerSelectedToolVmDirectory', () => {
 			defaultToolVmProfile: 'standard',
 			egressHosts: [],
 			gateway: {
-				config: path.join(temporaryDirectory, 'openclaw.json'),
+				config: path.join(temporaryDirectory, 'hermes.json'),
 				cpus: 2,
-				imageProfile: 'openclaw',
+				imageProfile: 'hermes',
 				memory: '2G',
 				port: 18_791,
 				stateDir: stateDirectory,
@@ -49,9 +49,9 @@ describe('validateControllerSelectedToolVmDirectory', () => {
 			},
 			id: 'test-zone',
 			secrets: {
-				OPENCLAW_GATEWAY_TOKEN: {
+				HERMES_GATEWAY_TOKEN: {
 					audience: 'gateway',
-					envVar: 'OPENCLAW_GATEWAY_TOKEN',
+					envVar: 'HERMES_GATEWAY_TOKEN',
 					injection: 'env',
 					source: 'environment',
 				},

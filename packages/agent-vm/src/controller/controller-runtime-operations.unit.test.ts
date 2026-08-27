@@ -32,9 +32,9 @@ const systemConfig = {
 	},
 	imageProfiles: {
 		gateways: {
-			openclaw: {
+			hermes: {
 				type: 'hermes',
-				buildConfig: './vm-images/gateways/openclaw/build-config.json',
+				buildConfig: './vm-images/gateways/hermes/build-config.json',
 			},
 			worker: { type: 'worker', buildConfig: './vm-images/gateways/worker/build-config.json' },
 		},
@@ -50,19 +50,19 @@ const systemConfig = {
 				type: 'hermes',
 				profileSecretProjectionsByAgent: { main: {} },
 				profilesByAgent: { main: 'main' },
-				imageProfile: 'openclaw',
+				imageProfile: 'hermes',
 				memory: '2G',
 				cpus: 2,
 				port: 18791,
-				config: './config/shravan/openclaw.json',
+				config: './config/shravan/hermes.json',
 				stateDir: path.join(controllerRuntimeOperationsTestRoot, 'shravan', 'state'),
 				zoneFilesDir: path.join(controllerRuntimeOperationsTestRoot, 'shravan', 'zone-files'),
 				zoneRuntimeDir: path.join(controllerRuntimeOperationsTestRoot, 'shravan', 'runtime'),
 			},
 			secrets: {
-				OPENCLAW_GATEWAY_TOKEN: {
+				HERMES_GATEWAY_TOKEN: {
 					source: 'environment',
-					envVar: 'OPENCLAW_GATEWAY_TOKEN',
+					envVar: 'HERMES_GATEWAY_TOKEN',
 					injection: 'env',
 					audience: 'gateway',
 				},
@@ -78,19 +78,19 @@ const systemConfig = {
 				type: 'hermes',
 				profileSecretProjectionsByAgent: { main: {} },
 				profilesByAgent: { main: 'main' },
-				imageProfile: 'openclaw',
+				imageProfile: 'hermes',
 				memory: '2G',
 				cpus: 2,
 				port: 18792,
-				config: './config/alevtina/openclaw.json',
+				config: './config/alevtina/hermes.json',
 				stateDir: path.join(controllerRuntimeOperationsTestRoot, 'alevtina', 'state'),
 				zoneFilesDir: path.join(controllerRuntimeOperationsTestRoot, 'alevtina', 'zone-files'),
 				zoneRuntimeDir: path.join(controllerRuntimeOperationsTestRoot, 'alevtina', 'runtime'),
 			},
 			secrets: {
-				OPENCLAW_GATEWAY_TOKEN: {
+				HERMES_GATEWAY_TOKEN: {
 					source: 'environment',
-					envVar: 'OPENCLAW_GATEWAY_TOKEN',
+					envVar: 'HERMES_GATEWAY_TOKEN',
 					injection: 'env',
 					audience: 'gateway',
 				},
@@ -199,7 +199,7 @@ describe('controller runtime operations test fixture paths', () => {
 });
 
 describe('createControllerRuntimeOperations', () => {
-	it('dispatches OpenClaw operations to the requested zone runtime', async () => {
+	it('dispatches Hermes operations to the requested zone runtime', async () => {
 		const shravanRuntime = {
 			destroy: vi.fn(async (purged: boolean) => ({ ok: true as const, purged, zoneId: 'shravan' })),
 			enableSsh: vi.fn(async () => ({

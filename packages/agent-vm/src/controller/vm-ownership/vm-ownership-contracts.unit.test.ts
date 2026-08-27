@@ -14,7 +14,7 @@ describe('controller-owned VM membership contracts', () => {
 			controllerEpoch: 'controller-1',
 			gatewayEpochId: 'gateway-epoch-1',
 			generationId: 'generation-1',
-			zoneId: 'openclaw',
+			zoneId: 'hermes',
 		});
 		const identity = gatewayEpochIdentitySchema.parse({ ...seed, gatewayVmId: 'gateway-vm-1' });
 
@@ -33,7 +33,7 @@ describe('controller-owned VM membership contracts', () => {
 				gatewayEpochId: 'gateway-epoch-1',
 				generationId: 'generation-1',
 				dependencyPrivatePath: '/private/dependency/state',
-				zoneId: 'openclaw',
+				zoneId: 'hermes',
 			}).success,
 		).toBe(false);
 	});

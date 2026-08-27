@@ -56,7 +56,7 @@ const trustedContextA = Object.freeze({
 	correlation: { runId: 'run-a', toolCallId: 'tool-call-a' },
 	principal: {
 		agentId: 'agent-a',
-		frameworkIdentity: { kind: 'hermes', profileName: 'openclaw-agent-a' },
+		frameworkIdentity: { kind: 'hermes', profileName: 'hermes-agent-a' },
 		profileAssignmentRevision: 'assignment-a-1',
 		toolPortalProfileId: 'builder',
 	},

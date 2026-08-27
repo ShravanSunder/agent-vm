@@ -19,9 +19,9 @@ const baseConfig = {
 	},
 	imageProfiles: {
 		gateways: {
-			openclaw: {
+			hermes: {
 				type: 'hermes',
-				buildConfig: './vm-images/gateways/openclaw/build-config.json',
+				buildConfig: './vm-images/gateways/hermes/build-config.json',
 			},
 			worker: { type: 'worker', buildConfig: './vm-images/gateways/worker/build-config.json' },
 		},
@@ -36,11 +36,11 @@ const baseConfig = {
 				type: 'hermes',
 				profileSecretProjectionsByAgent: { main: {} },
 				profilesByAgent: { main: 'main' },
-				imageProfile: 'openclaw',
+				imageProfile: 'hermes',
 				memory: '2G',
 				cpus: 2,
 				port: 18791,
-				config: './config/shravan/openclaw.json',
+				config: './config/shravan/hermes.json',
 				stateDir: './state/shravan',
 				zoneFilesDir: './zone-files/shravan',
 				zoneRuntimeDir: './shravan/runtime',

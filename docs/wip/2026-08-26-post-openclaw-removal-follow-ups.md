@@ -373,6 +373,24 @@ lane passes 1 file and 2/2 tests with zero skips and exit 0. Full quality passes
 at synchronized `0.0.143`, and the built `agent-vm` artifact contains no
 Gateway API or WebSocket client output. Only fresh independent review remains.
 
+### Positive test-fixture classification
+
+The next exact-head review confirmed the runtime/package remediation and found
+positive Hermes fixtures that still used mechanically inherited OpenClaw names.
+The correction classifies the remaining test references:
+
+- explicit rejection, absence, predecessor-shutdown, and removal-enforcement
+  tests retain OpenClaw literals in a narrow audit allowlist;
+- all other positive fixtures use Hermes or framework-neutral variable, path,
+  image, config, secret, identity, and description vocabulary;
+- the removal audit scans every non-allowlisted package/script test and has a
+  permanent fixture proving positive OpenClaw vocabulary fails.
+
+Proof: unit 383 files and 4,364/4,364; integration 59 files and 822/822; affected
+real VM 1/1 with zero skips; full quality 16/16; removal audit exit 0. This
+remediation changes test/audit sources only, so the exact packed-package receipt
+at `3fcf807a240d74268a505613dc5946dfa5cc1711` remains current.
+
 Confirmed:
 
 - OpenClaw runs nowhere in the retained product.

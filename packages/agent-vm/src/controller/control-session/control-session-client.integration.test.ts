@@ -2190,7 +2190,7 @@ describe('control session client', () => {
 			verifierPublicKeyPem: material.verifierPublicKeyPem,
 		});
 		const httpServer = createServer((req, res) => {
-			const url = new URL(req.url ?? '/', 'http://openclaw.local');
+			const url = new URL(req.url ?? '/', 'http://hermes.local');
 			if (url.pathname === GATEWAY_CONTROL_READY_PATH) {
 				service.handleReadyRequest(req, res);
 				return;
@@ -2199,7 +2199,7 @@ describe('control session client', () => {
 			res.end('not found\n');
 		});
 		httpServer.on('upgrade', (req, socket, head) => {
-			const url = new URL(req.url ?? '/', 'http://openclaw.local');
+			const url = new URL(req.url ?? '/', 'http://hermes.local');
 			if (url.pathname === GATEWAY_CONTROL_SOCKET_PATH) {
 				service.handleUpgrade(req, socket, head);
 				return;
@@ -2881,7 +2881,7 @@ describe('control session client', () => {
 			});
 		let service = createService();
 		const httpServer = createServer((req, res) => {
-			const url = new URL(req.url ?? '/', 'http://openclaw.local');
+			const url = new URL(req.url ?? '/', 'http://hermes.local');
 			if (url.pathname === GATEWAY_CONTROL_READY_PATH) {
 				service.handleReadyRequest(req, res);
 				return;
@@ -2890,7 +2890,7 @@ describe('control session client', () => {
 			res.end('not found\n');
 		});
 		httpServer.on('upgrade', (req, socket, head) => {
-			const url = new URL(req.url ?? '/', 'http://openclaw.local');
+			const url = new URL(req.url ?? '/', 'http://hermes.local');
 			if (url.pathname === GATEWAY_CONTROL_SOCKET_PATH) {
 				service.handleUpgrade(req, socket, head);
 				return;

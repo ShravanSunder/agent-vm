@@ -916,7 +916,7 @@ describe('createControllerApp', () => {
 				getZoneLogs: vi.fn(async () => {
 					throw new ControllerZoneOperationUnsupportedError(
 						'worker-zone',
-						'OpenClaw operations',
+						'Hermes operations',
 						'worker',
 					);
 				}),
@@ -929,9 +929,9 @@ describe('createControllerApp', () => {
 
 		expect(response.status).toBe(405);
 		await expect(response.json()).resolves.toEqual({
-			error: "Zone 'worker-zone' with gateway type 'worker' does not support OpenClaw operations.",
+			error: "Zone 'worker-zone' with gateway type 'worker' does not support Hermes operations.",
 			gatewayType: 'worker',
-			operationName: 'OpenClaw operations',
+			operationName: 'Hermes operations',
 			zoneId: 'worker-zone',
 		});
 	});

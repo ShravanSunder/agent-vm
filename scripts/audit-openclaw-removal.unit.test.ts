@@ -63,6 +63,27 @@ describe('OpenClaw removal audit', () => {
 		}
 	});
 
+	it('finds positive OpenClaw vocabulary in an unclassified active test', async () => {
+		const repositoryRoot = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-test-audit-'));
+		try {
+			const testPath = path.join(
+				repositoryRoot,
+				'packages',
+				'example',
+				'src',
+				'positive.unit.test.ts',
+			);
+			await mkdir(path.dirname(testPath), { recursive: true });
+			await writeFile(testPath, "const profileName = 'openclaw';\n", 'utf8');
+
+			await expect(auditOpenClawRemoval(repositoryRoot)).resolves.toEqual([
+				'packages/example/src/positive.unit.test.ts contains active OpenClaw residue',
+			]);
+		} finally {
+			await rm(repositoryRoot, { force: true, recursive: true });
+		}
+	});
+
 	it('finds removed SSH secret-mode residue in production source', async () => {
 		const repositoryRoot = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-ssh-mode-audit-'));
 		try {

@@ -639,8 +639,8 @@ function createResolvingSecretResolver(): SecretResolver {
 }
 
 describe('zone runtime contracts', () => {
-	it('keeps both managed Gateway types and Worker behind one discriminated interface', () => {
-		const openClawRuntime = {
+	it('keeps managed Hermes and Worker behind one discriminated interface', () => {
+		const hermesRuntime = {
 			coldStart: async () => ({ leaseReleaseFailureCount: 0 }),
 			destroy: async (purged: boolean) => ({ ok: true, purged, zoneId: 'shravan' }),
 			enableSsh: async () => ({
@@ -679,12 +679,6 @@ describe('zone runtime contracts', () => {
 			upgrade: async () => ({ ok: true, zoneId: 'shravan' }),
 			zoneId: 'shravan',
 		} satisfies ManagedGatewayZoneRuntime;
-		const hermesRuntime = {
-			...openClawRuntime,
-			gatewayType: 'hermes',
-			zoneId: 'hermes-zone',
-		} satisfies ManagedGatewayZoneRuntime;
-
 		const workerRuntime = {
 			closeTaskForZone: async () => ({ status: 'closed' }),
 			destroy: async (purged: boolean) => ({ ok: true, purged, zoneId: 'worker-zone' }),
@@ -718,13 +712,9 @@ describe('zone runtime contracts', () => {
 			zoneId: 'worker-zone',
 		} satisfies WorkerZoneRuntime;
 
-		const runtimes: readonly ControllerZoneRuntime[] = [
-			hermesRuntime,
-			openClawRuntime,
-			workerRuntime,
-		];
+		const runtimes: readonly ControllerZoneRuntime[] = [hermesRuntime, workerRuntime];
 
-		expect(runtimes.map((runtime) => runtime.gatewayType)).toEqual(['hermes', 'hermes', 'worker']);
+		expect(runtimes.map((runtime) => runtime.gatewayType)).toEqual(['hermes', 'worker']);
 	});
 });
 
