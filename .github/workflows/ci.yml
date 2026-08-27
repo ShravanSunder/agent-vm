@@ -200,6 +200,12 @@ jobs:
               enable-cache: true
               cache-dependency-glob: uv.lock
 
+          - name: Set up pinned VM toolchain
+            uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+            with:
+              install: true
+              cache: true
+
       - name: Restore prepared Worker image cache
         id: worker-image
         uses: ./.github/actions/restore-e2e-image-cache

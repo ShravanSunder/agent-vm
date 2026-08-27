@@ -461,6 +461,10 @@ prerequisite check could not observe the pinned Zig toolchain. Every VM-matrix
 job now installs pinned `uv`, and generic, Hermes, and Worker VM commands run
 through `mise exec --` so `mise.toml` supplies Zig `0.16.0`. This changes CI
 tool availability only; it does not change Hermes, Worker, or VM runtime logic.
+The first downstream rerun confirmed that hosted runners do not preinstall
+`mise`; the VM matrix therefore installs the official mise action pinned to an
+immutable v4 commit and runs its normal install step before executing the
+already-pinned commands.
 
 Confirmed:
 

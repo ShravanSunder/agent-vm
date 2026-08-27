@@ -87,6 +87,8 @@ describe('CI workflow topology', () => {
 		expect(workflow).not.toContain('\n          - name: Restore prepared Worker image cache\n');
 		expect(workflow).toContain('          - name: Set up Agent VM workspace');
 		expect(workflow).toContain('          - name: Set up uv for VM proof');
+		expect(workflow).toContain('          - name: Set up pinned VM toolchain');
+		expect(workflow).toContain('uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c');
 		expect(workflow).toContain(
 			'          - name: Set up Python workspace\n' +
 				"            if: matrix.lane == 'host'\n" +
