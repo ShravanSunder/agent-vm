@@ -475,6 +475,15 @@ multi-family consumers verify those same two exact manifests in order. The VM
 matrix also disables the unused per-job `uv` dependency cache because its empty
 post-action save marked otherwise-passing generic and Worker jobs failed.
 
+Fresh local proof for the strict cache correction: the complete E2E harness
+host file passes 33/33, including isolated source-backed Tool VM manifest
+production followed by strict combined Hermes Gateway/Tool VM consumption;
+focused workflow/removal-audit unit tests pass 12/12; the direct removal audit
+exits 0; and full quality passes 16/16. Because the harness is compiled into
+`@agent-vm/agent-vm`, exact package inspection was refreshed at
+`18fa9a9947902ee7a8e14ad037949e98440d42e3` and passes for all 17 retained npm
+packages at synchronized `0.0.143`.
+
 Confirmed:
 
 - OpenClaw runs nowhere in the retained product.
