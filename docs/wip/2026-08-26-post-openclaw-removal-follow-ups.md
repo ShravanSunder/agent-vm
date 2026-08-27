@@ -466,6 +466,15 @@ The first downstream rerun confirmed that hosted runners do not preinstall
 immutable v4 commit and runs its normal install step before executing the
 already-pinned commands.
 
+The next run reached the VM tests and exposed the remaining cache-contract
+mismatch. Source-backed images are intentionally manifest-eligible only when
+prepared as one isolated image family. The Hermes cache port had prepared
+Gateway and Tool VM together, so strict consumers could not use either entry.
+Hermes preparation now records Gateway and Tool VM separately, and strict
+multi-family consumers verify those same two exact manifests in order. The VM
+matrix also disables the unused per-job `uv` dependency cache because its empty
+post-action save marked otherwise-passing generic and Worker jobs failed.
+
 Confirmed:
 
 - OpenClaw runs nowhere in the retained product.

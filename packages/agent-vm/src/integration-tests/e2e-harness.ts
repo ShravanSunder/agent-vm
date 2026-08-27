@@ -539,7 +539,7 @@ async function collectE2eImageTargets(
 			),
 			e2eManifestEligible:
 				profile.source === undefined ||
-				(family === 'gateway' && selectedFamilies.size === 1 && selectedFamilies.has('gateway')),
+				(selectedFamilies.size === 1 && selectedFamilies.has(family)),
 			family,
 			...(managedGatewayBoot === undefined ? {} : { managedGatewayBoot }),
 			name: profileName,
@@ -846,6 +846,16 @@ export async function prepareGatewayE2eProjectImages(
 	options: PrepareGatewayE2eProjectImagesOptions,
 ): Promise<void> {
 	const imageFamilies = options.imageFamilies ?? ['gateway', 'toolVm'];
+	if (process.env.AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE === '1' && imageFamilies.length > 1) {
+		for (const imageFamily of imageFamilies) {
+			await prepareGatewayE2eProjectImages({
+				imageFamilies: [imageFamily],
+				project: options.project,
+				...(options.runBuild === undefined ? {} : { runBuild: options.runBuild }),
+			});
+		}
+		return;
+	}
 	if (
 		imageFamilies.includes('toolVm') &&
 		process.env.AGENT_VM_E2E_USE_LOCAL_TOOL_VM_PACKAGES === '1'

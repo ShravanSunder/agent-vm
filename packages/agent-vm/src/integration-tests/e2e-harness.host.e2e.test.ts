@@ -1251,6 +1251,143 @@ describe('prepareGatewayE2eProjectImages', () => {
 		).resolves.toMatchObject({ built: false });
 	});
 
+	it('reuses a Tool VM-only manifest for equivalent managed-source images', async () => {
+		const previousSmokeCacheRoot = process.env.AGENT_VM_E2E_CACHE_DIR;
+		const previousRequirePreparedImageCache = process.env.AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE;
+		const temporaryRoot = await createTemporaryRoot('agent-vm-e2e-harness-');
+		const smokeCacheRoot = path.join(temporaryRoot, 'shared-smoke-cache');
+		const firstProject = await scaffoldHermesE2eProject({
+			agents: ['main'],
+			architecture: 'aarch64',
+			prefix: 'hermes-tool-vm-manifest-e2e-',
+			zoneId: 'hermes-e2e',
+		});
+		const secondProject = await scaffoldHermesE2eProject({
+			agents: ['main'],
+			architecture: 'aarch64',
+			prefix: 'hermes-tool-vm-manifest-e2e-',
+			zoneId: 'hermes-e2e',
+		});
+		temporaryRoots.push(firstProject.tempRoot, secondProject.tempRoot);
+		for (const project of [firstProject, secondProject]) {
+			Object.assign(project.systemConfig, { cacheDir: path.join(smokeCacheRoot, 'tool-vm') });
+			const gatewayProfile = project.systemConfig.imageProfiles.gateways.hermes;
+			const toolVmProfile = project.systemConfig.imageProfiles.toolVms.default;
+			if (gatewayProfile === undefined || toolVmProfile === undefined) {
+				throw new Error('Expected Hermes Gateway and default Tool VM image profiles.');
+			}
+			toolVmProfile.source = { base: 'tool-vm', kind: 'managedBase' };
+		}
+		process.env.AGENT_VM_E2E_CACHE_DIR = smokeCacheRoot;
+		delete process.env.AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE;
+		const buildConfigs: LoadedSystemConfig[] = [];
+		try {
+			await prepareGatewayE2eProjectImages({
+				imageFamilies: ['toolVm'],
+				project: firstProject,
+				runBuild: async ({ systemConfig }) => {
+					buildConfigs.push(systemConfig);
+					const toolVmProfile = systemConfig.imageProfiles.toolVms.default;
+					if (toolVmProfile === undefined) {
+						throw new Error('Expected default Tool VM image profile.');
+					}
+					const fingerprint = await computeFingerprintFromConfigPath(toolVmProfile.buildConfig);
+					const cacheDir = path.join(systemConfig.cacheDir, 'tool-vm-images', 'default');
+					const imagePath = path.join(cacheDir, fingerprint);
+					await fs.mkdir(imagePath, { recursive: true });
+					await Promise.all(
+						managedVmImageAssetFileNames.map(
+							async (fileName) =>
+								await fs.writeFile(
+									path.join(imagePath, fileName),
+									fileName + String.fromCharCode(10),
+									'utf8',
+								),
+						),
+					);
+					await writePreparedManagedVmImage({
+						buildConfigPath: toolVmProfile.buildConfig,
+						cacheDir,
+						fingerprint,
+						imagePath,
+					});
+				},
+			});
+			await prepareGatewayE2eProjectImages({
+				imageFamilies: ['gateway'],
+				project: firstProject,
+				runBuild: async ({ systemConfig }) => {
+					buildConfigs.push(systemConfig);
+					const gatewayProfile = systemConfig.imageProfiles.gateways.hermes;
+					if (gatewayProfile === undefined) {
+						throw new Error('Expected Hermes Gateway image profile.');
+					}
+					const fingerprint = await computeFingerprintFromConfigPath(gatewayProfile.buildConfig);
+					const cacheDir = path.join(systemConfig.cacheDir, 'gateway-images', 'hermes');
+					const imagePath = path.join(cacheDir, fingerprint);
+					await fs.mkdir(imagePath, { recursive: true });
+					await Promise.all(
+						managedVmImageAssetFileNames.map(
+							async (fileName) =>
+								await fs.writeFile(
+									path.join(imagePath, fileName),
+									fileName + String.fromCharCode(10),
+									'utf8',
+								),
+						),
+					);
+					await writePreparedManagedVmImage({
+						buildConfigPath: gatewayProfile.buildConfig,
+						cacheDir,
+						fingerprint,
+						imagePath,
+						managedGatewayBoot: {
+							frameworkBootEntry: 'hermes-framework-service',
+							kind: 'managed-gateway-exact-two-role',
+						},
+					});
+				},
+			});
+			process.env.AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE = '1';
+			await prepareGatewayE2eProjectImages({
+				project: secondProject,
+				runBuild: async ({ systemConfig }) => {
+					buildConfigs.push(systemConfig);
+				},
+			});
+		} finally {
+			if (previousSmokeCacheRoot === undefined) {
+				delete process.env.AGENT_VM_E2E_CACHE_DIR;
+			} else {
+				process.env.AGENT_VM_E2E_CACHE_DIR = previousSmokeCacheRoot;
+			}
+			if (previousRequirePreparedImageCache === undefined) {
+				delete process.env.AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE;
+			} else {
+				process.env.AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE = previousRequirePreparedImageCache;
+			}
+		}
+
+		expect(buildConfigs).toEqual([firstProject.systemConfig, firstProject.systemConfig]);
+		const secondGatewayProfile = secondProject.systemConfig.imageProfiles.gateways.hermes;
+		const secondToolVmProfile = secondProject.systemConfig.imageProfiles.toolVms.default;
+		if (secondGatewayProfile === undefined || secondToolVmProfile === undefined) {
+			throw new Error('Expected Hermes Gateway and default Tool VM image profiles.');
+		}
+		await expect(
+			readPreparedManagedVmImage({
+				buildConfigPath: secondGatewayProfile.buildConfig,
+				cacheDir: path.join(secondProject.systemConfig.cacheDir, 'gateway-images', 'hermes'),
+			}),
+		).resolves.toMatchObject({ built: false });
+		await expect(
+			readPreparedManagedVmImage({
+				buildConfigPath: secondToolVmProfile.buildConfig,
+				cacheDir: path.join(secondProject.systemConfig.cacheDir, 'tool-vm-images', 'default'),
+			}),
+		).resolves.toMatchObject({ built: false });
+	});
+
 	it('does not reuse a prepared Worker image when the expected managed Gateway boot projection changes', async () => {
 		const temporaryRoot = await createTemporaryRoot('agent-vm-e2e-harness-');
 		const smokeCacheRoot = path.join(temporaryRoot, 'shared-smoke-cache');

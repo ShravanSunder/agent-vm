@@ -39,7 +39,11 @@ async function main(): Promise<void> {
 			systemConfig: hermesProject.systemConfig,
 		});
 		await prepareGatewayE2eProjectImages({
-			imageFamilies: ['gateway', 'toolVm'],
+			imageFamilies: ['gateway'],
+			project: hermesProject,
+		});
+		await prepareGatewayE2eProjectImages({
+			imageFamilies: ['toolVm'],
 			project: hermesProject,
 		});
 		await prepareGatewayE2eProjectImages({

@@ -87,6 +87,13 @@ describe('CI workflow topology', () => {
 		expect(workflow).not.toContain('\n          - name: Restore prepared Worker image cache\n');
 		expect(workflow).toContain('          - name: Set up Agent VM workspace');
 		expect(workflow).toContain('          - name: Set up uv for VM proof');
+		expect(workflow).toContain(
+			'          - name: Set up uv for VM proof\n' +
+				'            uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v9.0.0\n' +
+				'            with:\n' +
+				"              version: '0.11.31'\n" +
+				'              enable-cache: false',
+		);
 		expect(workflow).toContain('          - name: Set up pinned VM toolchain');
 		expect(workflow).toContain('uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c');
 		expect(workflow).toContain(
@@ -171,7 +178,8 @@ describe('CI workflow topology', () => {
 		expect(workflow).toContain('permissions:\n  contents: read');
 		expect(workflow).toContain('persist-credentials: false');
 		expect(preparationScript).toContain('useLocalHermesGatewayImagePackages');
-		expect(preparationScript.match(/imageFamilies: \['gateway', 'toolVm'\]/gu)).toHaveLength(1);
+		expect(preparationScript.match(/imageFamilies: \['gateway'\]/gu)).toHaveLength(2);
+		expect(preparationScript.match(/imageFamilies: \['toolVm'\]/gu)).toHaveLength(1);
 		expect(preparationScript).toMatch(
 			/prepareGatewayE2eProjectImages\(\{\s+imageFamilies: \['gateway'\],\s+project: workerProject,/u,
 		);
