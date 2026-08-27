@@ -418,8 +418,20 @@ passes 3 files and 5/5 with zero skips using the test-only model credential;
 the direct removal audit performs the scan and exits 0; and full quality passes
 16/16. Because `e2e-harness.ts` is compiled into the packed `agent-vm`
 artifact, the prior exact package receipt at `3fcf807a` is superseded for this
-helper-vocabulary correction. A fresh exact-HEAD 17-package inspection is the
-remaining mechanical package gate before PR creation.
+helper-vocabulary correction. The fresh exact-HEAD package inspection passes at
+`d45eedf61fc2225f0bdd3296585362d72676a853` for all 17 retained npm packages at
+synchronized `0.0.143`, including the rebuilt `agent-vm` harness output.
+
+A read-only Operator then verified the same exact clean HEAD, executed the real
+removal audit with exit 0, confirmed the Worker harness uses
+`agent-vm-tests-worker`, and found no removed package name or fabricated token
+vocabulary in active manifests. Its built-output scan found one intentional
+classified match: the generated operations manual tells an operator using the
+still-installed pre-cutover release to stop its predecessor Gateway, prove
+leases/runtime/ingress are clear, and only then install the incompatible
+Hermes-only release. This is the R10 predecessor-shutdown safety contract, not
+an executable OpenClaw path in the retained release; the new release cannot
+parse, start, migrate, or delete that predecessor state.
 
 Confirmed:
 
