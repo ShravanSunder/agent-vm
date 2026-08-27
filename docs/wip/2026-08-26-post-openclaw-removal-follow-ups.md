@@ -185,7 +185,7 @@ review of the final committed merge and proof record.
 | Worker E2E | documented private test-key mapping plus `mise exec -- pnpm test:e2e:worker` at `1fa07bb1` | 3 files, 5/5 tests passed with zero skips; the bare command's 2-pass/3-skip result is not used as proof |
 | Hermes Python adapter | `pnpm python:test:hermes` on the integrated merge tree | 178/178 passed, including the upstream reattachment recovery implementation |
 | Retained Hermes files | Exact aggregate command on the integrated merge tree with required host permissions | 5 files, 9/9 real Hermes tests passed with zero skips in 346.27 seconds, including first-call recovery after reattachment |
-| Package inspection | Pending final committed HEAD | Quality confirms 17 npm and 2 Python packages synchronized at `0.0.143`; exact packed-package inspection runs after the merge/WIP commits |
+| Package inspection | `pnpm inspect:managed-vm-package-cut --expected-head f2ddb8577f79e5b8ac2cc7b07ac15b76793ee9a2` | Passed for exactly 17 retained npm packages at synchronized `0.0.143`; packed members, declarations, and sibling dependency versions were inspected |
 | Proof-transfer ledger | Same-or-stronger retained paths are transferred; reattachment is now green upstream recovery evidence; non-equivalent idle/reacquisition/automatic-recovery scenarios remain assigned to their runtime owner | Resolved for this cutover: no pending row authorizes an additional Hermes behavior change |
 | OpenClaw residue audit | `pnpm exec tsx scripts/audit-openclaw-removal.ts` on the integrated merge tree | Passed with exit 0 after the master integration and test-fixture port |
 | Full quality gate | `UV_CACHE_DIR=/tmp/agent-vm-remove-openclaw-uv-cache pnpm check` on the integrated merge tree | 16/16 passed in 46.81 seconds: build, Optique CLI boundary, package/Zod guards, taxonomy, portal and VM boundaries, generated contracts, lint, format, type-aware lint, and typecheck |
@@ -242,8 +242,8 @@ inventory and never presented as runtime proof.
   `16 passed, 0 failed`, exit 0.
 - Dedicated removal command:
   `pnpm exec tsx scripts/audit-openclaw-removal.ts`; exit 0.
-- Exact final-head package inspection and independent review remain after the
-  merge and WIP commits.
+- Exact package inspection passed at the WIP commit
+  `f2ddb8577f79e5b8ac2cc7b07ac15b76793ee9a2`; only independent review remains.
 
 ### Fresh integrated final-bundle progress at `1fa07bb1`
 
@@ -258,8 +258,8 @@ inventory and never presented as runtime proof.
 - Hermes green: the exact aggregate lane now passes 5 files and 9/9 tests on the
   integrated `0ba4d0e2` merge tree, superseding the pre-recovery receipt.
 - Package cut: the historical exact inspection covered 17 retained npm packages
-  at `0.0.142`; the integrated train is synchronized at `0.0.143` and awaits the
-  final committed-head packed inspection below.
+  at `0.0.142`; the integrated train's exact inspection passed for the same 17
+  retained packages at synchronized `0.0.143`.
 - Built CLI: fresh Hermes scaffold succeeded, static validation returned
   `ok: true`, the real registry-backed Docker/Gondolin build succeeded with
   Hermes `0.20.0`, and `--type openclaw` was rejected by the Optique parser.
