@@ -96,8 +96,9 @@ builds, tests, or publishes OpenClaw.
   `pre_llm_call` injection, typed process-local state, and fail-closed authority.
 - Controller ownership of durable lifecycle, leases, credentials, approvals,
   recovery, and termination.
-- Existing Hermes recovery behavior, including known baseline defects; this
-  cutover proves non-regression but does not repair or redesign recovery.
+- Hermes recovery behavior supplied by the integrated master baseline. This
+  cutover does not independently repair or redesign recovery; separately owned
+  recovery already merged to master is retained and proven with Hermes.
 - Existing secret, workspace, storage, ingress, and trust boundaries.
 
 ### Non-goals
@@ -105,8 +106,10 @@ builds, tests, or publishes OpenClaw.
 - Upgrading Hermes or adopting unreleased Hermes behavior.
 - Redesigning Hermes, Worker, Gateway Runtime, Tool Portal, Tool VM, controller,
   managed VM, Gondolin, storage, or recovery semantics.
-- Repairing the known post-control-reattachment Tool VM binding-publication
-  race or changing Hermes cache, retry, reconnect, or reacquisition behavior.
+- Independently repairing or redesigning Hermes cache, retry, reconnect,
+  reacquisition, or binding-publication behavior. The separately owned
+  post-control-reattachment recovery already merged to master is accepted as
+  retained baseline behavior rather than reimplemented here.
 - Making OpenClaw-specific idle-retirement, automatic-recovery, or repeated
   replacement timing into new Hermes lifecycle requirements merely because the
   removed OpenClaw E2E project exercised them.
@@ -139,9 +142,9 @@ Evidence must establish:
 - a real managed Hermes path exercises Tool Portal, Tool VM execution,
   filesystem behavior, profile isolation, observability, and the existing
   recovery paths that are green on the pre-cutover baseline;
-- any known red recovery stress case has matching base-versus-cutover behavior
-  and remains separately visible rather than being deleted, weakened, or
-  presented as a cutover regression;
+- the integrated master baseline's post-control-reattachment recovery remains
+  green through the first affected Tool VM operation without command replay or
+  stale-generation reuse;
 - removed OpenClaw E2E behavior that is not equivalent to current Hermes
   lifecycle semantics is explicitly classified and transferred to a separate
   runtime owner rather than silently weakened, relabeled, or repaired here;

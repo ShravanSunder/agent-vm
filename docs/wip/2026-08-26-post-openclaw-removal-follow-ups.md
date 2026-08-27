@@ -170,8 +170,10 @@ The next reviews accepted the four implementation remediations and found no
 runtime or missing-test defect. Their exact-head verdicts became stale when the
 requested master pull integrated the separately reviewed Hermes recovery and
 the `0.0.143` release train. The final model below uses consumer-relevance
-freshness and records fresh affected-path proof. One gate remains: independent
-review of the final committed merge and proof record.
+freshness and records fresh affected-path proof. The owner-confirmed authority
+correction is captured in Requirements, Specification, Program Design, the
+proof-transfer ledger, and immutable plan revision 4. One gate remains:
+independent review of the final committed authority and proof record.
 
 ## OpenClaw cutover proof status
 
@@ -196,8 +198,8 @@ Final cutover proof is present only when every row above has evidence from the
 most recent identity that changed its observed consumer path, and the final diff
 proves no later relevant source, test, fixture, configuration, image, build, or
 runtime change invalidated that evidence. Every proof-transfer row must have its
-allowed terminal disposition (`transferred`, `OpenClaw-only delete`,
-`baseline-red differential`, or `deferred runtime-owner qualification`), and no
+allowed terminal disposition (`transferred`, `OpenClaw-only delete`, or
+`deferred runtime-owner qualification`), and no
 live lane may succeed by skipping its gate. Inventory-only skips are recorded as
 inventory and never presented as runtime proof.
 
@@ -243,7 +245,8 @@ inventory and never presented as runtime proof.
 - Dedicated removal command:
   `pnpm exec tsx scripts/audit-openclaw-removal.ts`; exit 0.
 - Exact package inspection passed at the WIP commit
-  `f2ddb8577f79e5b8ac2cc7b07ac15b76793ee9a2`; only independent review remains.
+  `f2ddb8577f79e5b8ac2cc7b07ac15b76793ee9a2`. Governing authority now accepts
+  the integrated recovery baseline; only independent review remains.
 
 ### Fresh integrated final-bundle progress at `1fa07bb1`
 
@@ -322,8 +325,8 @@ being inferred from the weaker restart case.
 ### Reattachment recovery receipt
 
 The upstream recovery is now part of the ordinary
-`hermes-managed-base-environment.hermes.e2e.test.ts` path. The old opt-in
-`AGENT_VM_HERMES_REATTACHMENT_STRESS` separation is gone.
+`hermes-managed-base-environment.hermes.e2e.test.ts` path. The former opt-in
+stress separation is gone.
 
 - The first post-reattachment Tool VM operation succeeds.
 - The test observes a fresh `main` lease request while proving that no new Tool
