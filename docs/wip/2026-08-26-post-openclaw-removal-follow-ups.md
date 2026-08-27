@@ -367,8 +367,11 @@ compiled into `@agent-vm/agent-vm` and a registered LLM lane that still invoked
   OpenClaw residue in the registered LLM lane.
 
 Focused audit/gate tests pass 8/8. Typecheck and taxonomy pass. The real LLM
-lane passes 1 file and 2/2 tests with zero skips and exit 0. Full quality and
-exact package inspection are the remaining pre-review gates.
+lane passes 1 file and 2/2 tests with zero skips and exit 0. Full quality passes
+16/16. Exact package inspection at
+`3fcf807a240d74268a505613dc5946dfa5cc1711` passes for all 17 retained packages
+at synchronized `0.0.143`, and the built `agent-vm` artifact contains no
+Gateway API or WebSocket client output. Only fresh independent review remains.
 
 Confirmed:
 
