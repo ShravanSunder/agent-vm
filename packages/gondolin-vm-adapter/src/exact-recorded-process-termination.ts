@@ -209,18 +209,24 @@ async function observeRecordedProcess(options: {
 	if (options.mode === 'after-signal' && currentIdentity.processState.includes('E')) {
 		return 'exact';
 	}
-	if (
-		options.mode === 'after-signal' &&
+	const matchesDarwinPostSignalFallback =
 		(currentIdentity.processState.startsWith('U') ||
 			currentIdentity.processState.startsWith('R')) &&
-		(isMatchingDarwinFallbackCommand({
+		isMatchingDarwinFallbackCommand({
 			currentCommand: currentIdentity.command,
 			recordedCommand: options.identity.command,
-		}) ||
-			isMatchingLinuxTaskFallbackCommand({
-				currentCommand: currentIdentity.command,
-				recordedCommand: options.identity.command,
-			}))
+		});
+	const matchesLinuxPostSignalFallback =
+		(currentIdentity.processState.startsWith('D') ||
+			currentIdentity.processState.startsWith('U') ||
+			currentIdentity.processState.startsWith('R')) &&
+		isMatchingLinuxTaskFallbackCommand({
+			currentCommand: currentIdentity.command,
+			recordedCommand: options.identity.command,
+		});
+	if (
+		options.mode === 'after-signal' &&
+		(matchesDarwinPostSignalFallback || matchesLinuxPostSignalFallback)
 	) {
 		return 'exact';
 	}
