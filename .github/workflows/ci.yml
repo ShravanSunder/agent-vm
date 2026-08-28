@@ -215,6 +215,18 @@ jobs:
       - name: Set up system packages
         uses: ./.github/actions/setup-system-packages
 
+      - name: Require native VM acceleration
+        run: |
+          set -euo pipefail
+          case "$(uname -m)" in
+            x86_64|aarch64) ;;
+            *) echo "Unsupported CI VM architecture: $(uname -m)" >&2; exit 1 ;;
+          esac
+          test -c /dev/kvm
+          sudo chmod 0666 /dev/kvm
+          test -r /dev/kvm
+          test -w /dev/kvm
+
       - name: Require prepared image caches
         env:
           HERMES_CACHE_HIT: ${{ steps.hermes-image.outputs.cache-hit }}
