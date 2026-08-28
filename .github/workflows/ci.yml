@@ -216,6 +216,7 @@ jobs:
         uses: ./.github/actions/setup-system-packages
 
       - name: Require native VM acceleration
+        if: matrix.lane == 'hermes'
         run: |
           set -euo pipefail
           case "$(uname -m)" in

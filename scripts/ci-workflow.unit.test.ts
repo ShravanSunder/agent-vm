@@ -129,6 +129,7 @@ describe('CI workflow topology', () => {
 		);
 		expect(vmPreparationBlock).not.toContain('\n          - name: Set up system packages\n');
 		expect(vmPreparationBlock).toContain('\n      - name: Require native VM acceleration');
+		expect(vmPreparationBlock).toContain("        if: matrix.lane == 'hermes'");
 		expect(vmPreparationBlock).toContain('test -c /dev/kvm');
 		expect(vmPreparationBlock).toContain('sudo chmod 0666 /dev/kvm');
 		expect(vmPreparationBlock).toContain('test -r /dev/kvm');
