@@ -29,7 +29,7 @@ export interface GondolinProcessTerminationDependencies {
 	readonly sleep: (delayMs: number) => Promise<void>;
 }
 
-type RecordedProcessObservation = 'absent' | 'exact';
+type RecordedProcessObservation = 'absent' | 'exact' | 'linux-uninterruptible-fallback';
 type RecordedProcessObservationMode = 'after-signal' | 'before-signal';
 
 function processErrorCode(error: unknown): unknown {
@@ -217,13 +217,22 @@ async function observeRecordedProcess(options: {
 			recordedCommand: options.identity.command,
 		});
 	const matchesLinuxPostSignalFallback =
-		(currentIdentity.processState.startsWith('D') ||
-			currentIdentity.processState.startsWith('U') ||
+		(currentIdentity.processState.startsWith('U') ||
 			currentIdentity.processState.startsWith('R')) &&
 		isMatchingLinuxTaskFallbackCommand({
 			currentCommand: currentIdentity.command,
 			recordedCommand: options.identity.command,
 		});
+	if (
+		options.mode === 'after-signal' &&
+		currentIdentity.processState.startsWith('D') &&
+		isMatchingLinuxTaskFallbackCommand({
+			currentCommand: currentIdentity.command,
+			recordedCommand: options.identity.command,
+		})
+	) {
+		return 'linux-uninterruptible-fallback';
+	}
 	if (
 		options.mode === 'after-signal' &&
 		(matchesDarwinPostSignalFallback || matchesLinuxPostSignalFallback)
@@ -243,12 +252,12 @@ async function observeRecordedProcess(options: {
 	return 'exact';
 }
 
-async function waitForRecordedProcessAbsence(options: {
+async function waitForRecordedProcessAbsenceOrDeadline(options: {
 	readonly afterSignal: NodeJS.Signals;
 	readonly contextLabel: string;
 	readonly dependencies: GondolinProcessTerminationDependencies;
 	readonly identity: ManagedVmHostProcessIdentity;
-}): Promise<boolean> {
+}): Promise<RecordedProcessObservation> {
 	const deadline = options.dependencies.now() + terminationStageTimeoutMs;
 	while (options.dependencies.now() < deadline) {
 		// oxlint-disable-next-line no-await-in-loop -- exact identity observations must remain ordered
@@ -260,20 +269,18 @@ async function waitForRecordedProcessAbsence(options: {
 			mode: 'after-signal',
 		});
 		if (observation === 'absent') {
-			return true;
+			return 'absent';
 		}
 		// oxlint-disable-next-line no-await-in-loop -- bounded process identity polling is sequential
 		await options.dependencies.sleep(processIdentityPollIntervalMs);
 	}
-	return (
-		(await observeRecordedProcess({
-			action: `continued containment after ${options.afterSignal} for`,
-			contextLabel: options.contextLabel,
-			dependencies: options.dependencies,
-			identity: options.identity,
-			mode: 'after-signal',
-		})) === 'absent'
-	);
+	return await observeRecordedProcess({
+		action: `continued containment after ${options.afterSignal} for`,
+		contextLabel: options.contextLabel,
+		dependencies: options.dependencies,
+		identity: options.identity,
+		mode: 'after-signal',
+	});
 }
 
 function signalRecordedProcess(options: {
@@ -312,15 +319,19 @@ export async function terminateExactRecordedManagedVmHostProcess(options: {
 		hostProcessId: options.identity.hostProcessId,
 		signal: 'SIGTERM',
 	});
-	if (
-		await waitForRecordedProcessAbsence({
-			afterSignal: 'SIGTERM',
-			contextLabel: options.contextLabel,
-			dependencies: options.dependencies,
-			identity: options.identity,
-		})
-	) {
+	const afterTermObservation = await waitForRecordedProcessAbsenceOrDeadline({
+		afterSignal: 'SIGTERM',
+		contextLabel: options.contextLabel,
+		dependencies: options.dependencies,
+		identity: options.identity,
+	});
+	if (afterTermObservation === 'absent') {
 		return { hostProcessId: options.identity.hostProcessId, kind: 'terminated' };
+	}
+	if (afterTermObservation === 'linux-uninterruptible-fallback') {
+		throw new Error(
+			`${options.contextLabel} unable to prove exact identity after SIGTERM for pid ${String(options.identity.hostProcessId)} because only the matching Linux task-name fallback remained in uninterruptible sleep.`,
+		);
 	}
 
 	const beforeKillObservation = await observeRecordedProcess({
@@ -333,18 +344,23 @@ export async function terminateExactRecordedManagedVmHostProcess(options: {
 	if (beforeKillObservation === 'absent') {
 		return { hostProcessId: options.identity.hostProcessId, kind: 'terminated' };
 	}
+	if (beforeKillObservation === 'linux-uninterruptible-fallback') {
+		throw new Error(
+			`${options.contextLabel} unable to prove exact identity before SIGKILL for pid ${String(options.identity.hostProcessId)} because only the matching Linux task-name fallback remained in uninterruptible sleep.`,
+		);
+	}
 	signalRecordedProcess({
 		dependencies: options.dependencies,
 		hostProcessId: options.identity.hostProcessId,
 		signal: 'SIGKILL',
 	});
 	if (
-		await waitForRecordedProcessAbsence({
+		(await waitForRecordedProcessAbsenceOrDeadline({
 			afterSignal: 'SIGKILL',
 			contextLabel: options.contextLabel,
 			dependencies: options.dependencies,
 			identity: options.identity,
-		})
+		})) === 'absent'
 	) {
 		return { hostProcessId: options.identity.hostProcessId, kind: 'terminated' };
 	}
