@@ -259,6 +259,7 @@ async function waitForRecordedProcessAbsenceOrDeadline(options: {
 	readonly identity: ManagedVmHostProcessIdentity;
 }): Promise<RecordedProcessObservation> {
 	const deadline = options.dependencies.now() + terminationStageTimeoutMs;
+	let observedLinuxUninterruptibleFallback = false;
 	while (options.dependencies.now() < deadline) {
 		// oxlint-disable-next-line no-await-in-loop -- exact identity observations must remain ordered
 		const observation = await observeRecordedProcess({
@@ -271,16 +272,23 @@ async function waitForRecordedProcessAbsenceOrDeadline(options: {
 		if (observation === 'absent') {
 			return 'absent';
 		}
+		if (observation === 'linux-uninterruptible-fallback') {
+			observedLinuxUninterruptibleFallback = true;
+		}
 		// oxlint-disable-next-line no-await-in-loop -- bounded process identity polling is sequential
 		await options.dependencies.sleep(processIdentityPollIntervalMs);
 	}
-	return await observeRecordedProcess({
+	const finalObservation = await observeRecordedProcess({
 		action: `continued containment after ${options.afterSignal} for`,
 		contextLabel: options.contextLabel,
 		dependencies: options.dependencies,
 		identity: options.identity,
 		mode: 'after-signal',
 	});
+	if (finalObservation === 'absent') {
+		return 'absent';
+	}
+	return observedLinuxUninterruptibleFallback ? 'linux-uninterruptible-fallback' : finalObservation;
 }
 
 function signalRecordedProcess(options: {
