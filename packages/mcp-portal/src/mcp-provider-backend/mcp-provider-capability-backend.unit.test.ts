@@ -124,7 +124,7 @@ describe('MCP provider capability backend', () => {
 		expect(JSON.stringify(result)).not.toContain('outputSchema');
 	});
 
-	it('preserves direct OpenClaw scope identity while allowing Tool Portal service scope identity', () => {
+	it('preserves direct Hermes scope identity while allowing Tool Portal service scope identity', () => {
 		// Arrange
 		const core = createPortalCore({
 			accessPolicy: {
@@ -162,7 +162,7 @@ describe('MCP provider capability backend', () => {
 		// Assert
 		expect(createAgentScope).toHaveBeenNthCalledWith(
 			1,
-			expect.objectContaining({ source: 'openclaw-trusted' }),
+			expect.objectContaining({ source: 'managed-gateway-trusted' }),
 		);
 		expect(createAgentScope).toHaveBeenNthCalledWith(
 			2,

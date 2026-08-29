@@ -119,7 +119,7 @@ const agentAuthorityKeys: Readonly<Record<string, string>> = {
 };
 const invocationPrincipal = {
 	agentId: 'main',
-	frameworkIdentity: { agentId: 'main', kind: 'openclaw' },
+	frameworkIdentity: { kind: 'hermes', profileName: 'main' },
 	profileAssignmentRevision: 'assignment-main',
 	toolPortalProfileId: 'standard',
 } as const;

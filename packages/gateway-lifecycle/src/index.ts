@@ -125,7 +125,6 @@ export type {
 	ManagedGatewayBootContract,
 	ManagedGatewayLogIdentity,
 	ManagedHermesServiceBootMetadata,
-	ManagedOpenClawServiceBootMetadata,
 	ManagedToolPortalReadinessMetadata,
 	ManagedToolPortalServiceBootMetadata,
 } from './managed-gateway-boot-contract.js';
@@ -141,8 +140,6 @@ export {
 	normalizeToolVmActiveUseCorrelation,
 } from './tool-vm-active-use.js';
 export {
-	OPENCLAW_STATE_SANDBOXES_VM_ROOT,
-	OPENCLAW_STATE_VM_ROOT,
 	TOOL_VM_SCRATCH_GUEST_ROOT,
 	translateRuntimePath,
 } from './runtime-paths/runtime-path-mapping.js';

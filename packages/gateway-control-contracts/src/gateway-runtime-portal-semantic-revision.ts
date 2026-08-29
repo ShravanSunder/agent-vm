@@ -520,9 +520,7 @@ export function deriveGatewayRuntimeInputRevision(props: {
 }
 
 function frameworkIdentityKey(identity: GatewayRuntimeFrameworkIdentity): string {
-	return identity.kind === 'openclaw'
-		? `openclaw:${identity.agentId}`
-		: `hermes:${identity.profileName}`;
+	return `hermes:${identity.profileName}`;
 }
 
 function assertSortedUniqueToolPortalNamespaces(
@@ -592,12 +590,6 @@ function assertExactManagedAgentProjectionInputs(props: {
 			throw new Error(
 				`Managed Agent Projection Tool Portal namespaces must exactly match the effective protected_uds namespace intersection for profile '${projection.toolPortalProfileId}'.`,
 			);
-		}
-		if (
-			projection.frameworkIdentity.kind === 'openclaw' &&
-			projection.frameworkIdentity.agentId !== projection.agentId
-		) {
-			throw new Error(`OpenClaw projection identity must match agent '${projection.agentId}'.`);
 		}
 		const configuredAgent = props.configuredAgents[projection.agentId];
 		if (configuredAgent?.profile !== projection.toolPortalProfileId) {

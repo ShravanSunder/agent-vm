@@ -8,17 +8,17 @@ directory is the deeper map.
 | If you want to... | Read |
 | --- | --- |
 | Run a local Worker gateway | [getting-started/setup.md](getting-started/setup.md) |
+| Configure a Hermes managed Gateway | [reference/configuration/system-json.md](reference/configuration/system-json.md) |
 | Understand the Worker gateway | [architecture/agent-worker-gateway.md](architecture/agent-worker-gateway.md) |
 | Understand state/cache/backup boundaries | [architecture/storage-model.md](architecture/storage-model.md) |
 | Understand reusable credentialed CLI runtimes | [architecture/credentialed-runtimes.md](architecture/credentialed-runtimes.md) |
 | Understand VM provider and package boundaries | [architecture/overview.md#package-dependency-graph](architecture/overview.md#package-dependency-graph) |
 | Review the accepted Gateway runtime and Tool Portal contract | [specs/2026-07-12-agent-vm-gateway-runtime/agent-vm-gateway-runtime.md](specs/2026-07-12-agent-vm-gateway-runtime/agent-vm-gateway-runtime.md) and its [glossary](specs/2026-07-12-agent-vm-gateway-runtime/glossary.md) |
-| Review concrete OpenClaw/Worker storage paths | [architecture/storage-matrix.md](architecture/storage-matrix.md) |
+| Review concrete Hermes/Worker storage paths | [architecture/storage-matrix.md](architecture/storage-matrix.md) |
 | Understand Gondolin rootfs/VFS performance knobs | [reference/gondolin/vfs-rootfs-performance.md](reference/gondolin/vfs-rootfs-performance.md) |
 | Look up config fields | [reference/configuration/README.md](reference/configuration/README.md) |
 | Set up repo or external resources | [reference/configuration/resource-contracts.md](reference/configuration/resource-contracts.md) |
 | Know whether to run validate or doctor | [reference/validate-and-doctor.md](reference/validate-and-doctor.md) |
-| Use OpenClaw Gateway | [getting-started/openclaw-guide.md](getting-started/openclaw-guide.md) |
 
 ## Doc Tree
 
@@ -27,7 +27,6 @@ docs/
   getting-started/
     setup.md
     worker-guide.md
-    openclaw-guide.md
 
   architecture/
     overview.md
@@ -35,7 +34,6 @@ docs/
     storage-model.md
     storage-matrix.md
     agent-worker-gateway.md
-    openclaw-gateway.md
 
   subsystems/
     controller.md

@@ -40,8 +40,6 @@ const runtimePortalImportPrefixes = [
 	'@agent-vm/gateway-control-contracts',
 	'@agent-vm/worker-control-contracts',
 	'@agent-vm/agent-vm',
-	'@agent-vm/openclaw-agent-vm-plugin',
-	'@agent-vm/openclaw-gateway',
 	'@agent-vm/worker-gateway',
 	'@agent-vm/gateway-lifecycle',
 	'@agent-vm/gondolin-vm-adapter',
@@ -86,8 +84,8 @@ const toolPortalSemanticRouterHelperNames = [
 const managedControlSourcePrefixes = [
 	'packages/agent-vm/src/controller/',
 	'packages/agent-vm-worker/src/',
-	'packages/openclaw-agent-vm-plugin/src/',
-	'packages/openclaw-gateway/src/',
+	'packages/gateway-runtime/src/',
+	'packages/hermes-gateway/src/',
 	'packages/worker-gateway/src/',
 ] as const;
 
@@ -155,51 +153,6 @@ const managedControlDocumentationResiduePatterns = [
 	},
 ] as const;
 
-const managedOpenClawProcessSupervisorOwnedFiles = new Set([
-	'packages/agent-vm/src/controller/process-supervisor/openclaw-process-supervisor-contracts.ts',
-	'packages/agent-vm/src/controller/process-supervisor/openclaw-process-supervisor.integration.test.ts',
-	'packages/agent-vm/src/controller/process-supervisor/openclaw-process-supervisor.ts',
-	'packages/agent-vm/src/controller/process-supervisor/openclaw-process-supervisor.unit.test.ts',
-]);
-
-const managedOpenClawProcessReliabilityOwnedFiles = new Set([
-	'packages/agent-vm/src/controller/reliability/testing/openclaw-process-reliability-fault-handler.ts',
-	'packages/agent-vm/src/controller/reliability/testing/openclaw-process-reliability-fault-handler.unit.test.ts',
-	'packages/agent-vm/src/controller/reliability/testing/openclaw-process-reliability-fault-target-registry.ts',
-	'packages/agent-vm/src/controller/reliability/testing/openclaw-process-reliability-fault-target-registry.unit.test.ts',
-]);
-
-const managedOpenClawProcessRecoveryOwnedFiles = new Set([
-	'packages/agent-vm/src/controller/zone-runtimes/openclaw-process-recovery.ts',
-	'packages/agent-vm/src/controller/zone-runtimes/openclaw-process-recovery.unit.test.ts',
-]);
-
-const managedOpenClawProcessEpochOwnerFiles = new Set([
-	'packages/agent-vm/src/gateway/openclaw-gateway-process-epoch-owner.ts',
-	'packages/agent-vm/src/gateway/openclaw-gateway-process-epoch-owner.unit.test.ts',
-]);
-
-const managedOpenClawLocalProcessConsumerPatterns = [
-	{
-		message: 'managed OpenClaw must not retain controller-owned process supervisor consumers',
-		patterns: ['OpenClawProcessSupervisor', 'resolveOpenClawProcessSupervisorStateMount'],
-	},
-	{
-		message: 'managed OpenClaw must not retain same-VM process-epoch owner consumers',
-		patterns: ['OpenClawGatewayProcessEpochOwner', 'OpenClawProcessEpochLossBarrier'],
-	},
-	{
-		message:
-			'managed OpenClaw must not retain process-scoped recovery or local-successor consumers',
-		patterns: ['createOpenClawProcessRecoveryCoordinator', 'OpenClawProcessRecovery'],
-	},
-	{
-		message:
-			'managed OpenClaw reliability faults must target the Gateway VM, not an OpenClaw process',
-		patterns: ['OpenClawProcessReliabilityFault'],
-	},
-] as const;
-
 function normalizedFilePath(filePath: string): string {
 	return filePath.split(path.sep).join('/');
 }
@@ -226,7 +179,6 @@ function sourceFileNameWithoutTestSuffix(filePath: string): string {
 		.replace(/\.integration\.test$/u, '')
 		.replace(/\.host\.e2e\.test$/u, '')
 		.replace(/\.vm\.e2e\.test$/u, '')
-		.replace(/\.openclaw\.e2e\.test$/u, '')
 		.replace(/\.hermes\.e2e\.test$/u, '')
 		.replace(/\.worker\.e2e\.test$/u, '')
 		.replace(/\.secrets\.e2e\.test$/u, '')
@@ -240,7 +192,6 @@ function isTestSourceFile(filePath: string): boolean {
 		filePath.endsWith('.integration.test.ts') ||
 		filePath.endsWith('.host.e2e.test.ts') ||
 		filePath.endsWith('.vm.e2e.test.ts') ||
-		filePath.endsWith('.openclaw.e2e.test.ts') ||
 		filePath.endsWith('.hermes.e2e.test.ts') ||
 		filePath.endsWith('.worker.e2e.test.ts') ||
 		filePath.endsWith('.secrets.e2e.test.ts') ||
@@ -298,15 +249,6 @@ function collectDependencyViolations(file: PortalArchitectureSourceFile): readon
 		return [];
 	}
 	const imports = importedModuleSpecifiers(file.sourceText);
-	if (filePath.startsWith('packages/openclaw-agent-vm-plugin/src/')) {
-		const violations: string[] = [];
-		if (imports.some((specifier) => importStartsWithAny(specifier, ['@agent-vm/mcp-portal']))) {
-			violations.push(
-				`${filePath}: OpenClaw plugin must consume MCP providers through Tool Portal, not import MCP Portal directly`,
-			);
-		}
-		return violations;
-	}
 	const packageName = portalPackageName(filePath);
 	if (packageName === null) {
 		return [];
@@ -779,43 +721,6 @@ function collectPortalPackageOutputViolations(
 	];
 }
 
-function collectOpenClawPluginToolSurfaceViolations(
-	file: PortalArchitectureSourceFile,
-): readonly string[] {
-	const filePath = normalizedFilePath(file.filePath);
-	if (filePath === 'packages/openclaw-agent-vm-plugin/openclaw.plugin.json') {
-		let parsedManifest: unknown;
-		try {
-			parsedManifest = JSON.parse(file.sourceText);
-		} catch {
-			return [];
-		}
-		if (
-			isRecord(parsedManifest) &&
-			isRecord(parsedManifest.contracts) &&
-			Array.isArray(parsedManifest.contracts.tools) &&
-			parsedManifest.contracts.tools.includes('zone_git_push')
-		) {
-			return [
-				`${filePath}: managed OpenClaw must not expose zone_git_push as a direct plugin tool`,
-			];
-		}
-		return [];
-	}
-	if (filePath === 'packages/openclaw-agent-vm-plugin/src/openclaw-plugin-registration.ts') {
-		const directZoneGitRegistration =
-			file.sourceText.includes('registerZoneGitTool') ||
-			(/registerTool\s*\(/u.test(file.sourceText) &&
-				file.sourceText.includes("name: 'zone_git_push'"));
-		if (directZoneGitRegistration) {
-			return [
-				`${filePath}: managed OpenClaw must not register zone_git_push as a direct model-visible tool`,
-			];
-		}
-	}
-	return [];
-}
-
 function collectManagedControlResidueViolations(
 	file: PortalArchitectureSourceFile,
 ): readonly string[] {
@@ -830,18 +735,11 @@ function collectManagedControlResidueViolations(
 		filePath.endsWith('.md') &&
 		managedControlDocumentationPrefixes.some((prefix) => filePath.startsWith(prefix));
 	const isManualTemplate = filePath === 'packages/agent-vm/src/cli/manual-templates.ts';
-	const isShippedOpenClawPluginMetadata =
-		filePath === 'packages/openclaw-agent-vm-plugin/openclaw.plugin.json';
-	if (
-		!isManagedSource &&
-		!isShippableDocs &&
-		!isManualTemplate &&
-		!isShippedOpenClawPluginMetadata
-	) {
+	if (!isManagedSource && !isShippableDocs && !isManualTemplate) {
 		return [];
 	}
 	const residuePatterns =
-		isShippableDocs || isManualTemplate || isShippedOpenClawPluginMetadata
+		isShippableDocs || isManualTemplate
 			? managedControlDocumentationResiduePatterns
 			: managedControlResiduePatterns;
 	const violations: string[] = [];
@@ -957,44 +855,6 @@ function collectManagedFrameworkChildTopologyViolations(
 	return [];
 }
 
-function collectManagedOpenClawLocalProcessTopologyViolations(
-	file: PortalArchitectureSourceFile,
-): readonly string[] {
-	const filePath = normalizedFilePath(file.filePath);
-	if (managedOpenClawProcessSupervisorOwnedFiles.has(filePath)) {
-		return [
-			`${filePath}: managed OpenClaw must not retain controller-owned process supervisor source or proof`,
-		];
-	}
-	if (managedOpenClawProcessReliabilityOwnedFiles.has(filePath)) {
-		return [
-			`${filePath}: managed OpenClaw reliability faults must target the Gateway VM, not an OpenClaw process`,
-		];
-	}
-	if (managedOpenClawProcessRecoveryOwnedFiles.has(filePath)) {
-		return [
-			`${filePath}: managed OpenClaw must not retain process-scoped recovery or local-successor source or proof`,
-		];
-	}
-	if (managedOpenClawProcessEpochOwnerFiles.has(filePath)) {
-		return [
-			`${filePath}: managed OpenClaw must not retain same-VM process-epoch owner source or proof`,
-		];
-	}
-	if (
-		isTestSourceFile(filePath) ||
-		!filePath.startsWith('packages/agent-vm/src/') ||
-		!filePath.endsWith('.ts')
-	) {
-		return [];
-	}
-	return managedOpenClawLocalProcessConsumerPatterns
-		.filter((consumerPattern) =>
-			consumerPattern.patterns.some((pattern) => file.sourceText.includes(pattern)),
-		)
-		.map((consumerPattern) => `${filePath}: ${consumerPattern.message}`);
-}
-
 export function collectPortalArchitectureViolations(
 	props: CollectPortalArchitectureViolationsProps,
 ): readonly string[] {
@@ -1011,11 +871,9 @@ export function collectPortalArchitectureViolations(
 		...props.files.flatMap(collectHarnessViolations),
 		...collectExportEntryViolations(props.files),
 		...props.files.flatMap(collectPortalPackageOutputViolations),
-		...props.files.flatMap(collectOpenClawPluginToolSurfaceViolations),
 		...props.files.flatMap(collectManagedControlResidueViolations),
 		...props.files.flatMap(collectGatewayLifecyclePublicRawControlViolations),
 		...props.files.flatMap(collectManagedFrameworkChildTopologyViolations),
-		...props.files.flatMap(collectManagedOpenClawLocalProcessTopologyViolations),
 	];
 	return sortedStrings(violations);
 }
@@ -1036,7 +894,6 @@ async function collectFilesUnderDirectory(directoryPath: string): Promise<readon
 				(entry.name.endsWith('.ts') ||
 					entry.name.endsWith('.md') ||
 					entry.name === 'package.json' ||
-					entry.name === 'openclaw.plugin.json' ||
 					entry.name === 'tsdown.config.ts')
 			) {
 				return [entryPath];

@@ -32,8 +32,8 @@ describe('collectManagedAgentRootStorageChecks', () => {
 		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'doctor-agent-roots-'));
 		temporaryRoots.push(temporaryDirectoryPath);
 		const firstZone = systemConfig.zones[0];
-		if (firstZone === undefined || firstZone.gateway.type !== 'openclaw') {
-			throw new Error('Test fixture must include an OpenClaw zone.');
+		if (firstZone === undefined || firstZone.gateway.type !== 'hermes') {
+			throw new Error('Test fixture must include an Hermes zone.');
 		}
 
 		const checks = await collectManagedAgentRootStorageChecks({
@@ -59,8 +59,8 @@ describe('collectManagedAgentRootStorageChecks', () => {
 		temporaryRoots.push(temporaryDirectoryPath);
 		const zoneFilesDir = path.join(temporaryDirectoryPath, 'zone-files');
 		const firstZone = systemConfig.zones[0];
-		if (firstZone === undefined || firstZone.gateway.type !== 'openclaw') {
-			throw new Error('Test fixture must include an OpenClaw zone.');
+		if (firstZone === undefined || firstZone.gateway.type !== 'hermes') {
+			throw new Error('Test fixture must include an Hermes zone.');
 		}
 		await mkdir(path.join(zoneFilesDir, 'agents'), { recursive: true });
 		await writeFile(path.join(zoneFilesDir, 'agents', 'shravan'), 'not a directory');
@@ -92,7 +92,7 @@ const systemConfig = {
 	controllerRuntimeDir: './runtime',
 	host: {
 		controllerPort: 18800,
-		projectNamespace: 'claw-tests-a1b2c3d4',
+		projectNamespace: 'agent-vm-tests-a1b2c3d4',
 		secretsProvider: {
 			type: '1password',
 			tokenSource: {
@@ -103,9 +103,9 @@ const systemConfig = {
 	},
 	imageProfiles: {
 		gateways: {
-			openclaw: {
-				type: 'openclaw',
-				buildConfig: './vm-images/gateways/openclaw/build-config.json',
+			hermes: {
+				type: 'hermes',
+				buildConfig: './vm-images/gateways/hermes/build-config.json',
 			},
 			worker: {
 				type: 'worker',
@@ -124,27 +124,33 @@ const systemConfig = {
 			id: 'shravan',
 			agents: [{ id: 'shravan' }],
 			gateway: {
-				type: 'openclaw',
-				controlAuth: {
-					mode: 'token',
-					secret: 'OPENCLAW_GATEWAY_TOKEN',
-				},
-				imageProfile: 'openclaw',
+				type: 'hermes',
+				imageProfile: 'hermes',
 				memory: '2G',
 				cpus: 2,
 				port: 18791,
-				config: './config/shravan/openclaw.json',
+				config: './config/shravan/hermes.yaml',
+				profileSecretProjectionsByAgent: {
+					shravan: {
+						API_SERVER_KEY: 'API_SERVER_KEY_SHRAVAN',
+						DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_SHRAVAN',
+					},
+				},
+				profilesByAgent: { shravan: 'shravan' },
 				stateDir: './state/shravan',
 				zoneFilesDir: './zone-files/shravan',
 				zoneRuntimeDir: './runtime/shravan',
-				authProfilesByAgent: {
-					shravan: { source: 'environment', envVar: 'SHRAVAN_AUTH_PROFILES' },
-				},
 			},
 			secrets: {
-				OPENCLAW_GATEWAY_TOKEN: {
+				API_SERVER_KEY_SHRAVAN: {
 					source: 'environment',
-					envVar: 'OPENCLAW_GATEWAY_TOKEN',
+					envVar: 'API_SERVER_KEY_SHRAVAN',
+					injection: 'env',
+					audience: 'gateway',
+				},
+				DISCORD_BOT_TOKEN_SHRAVAN: {
+					source: 'environment',
+					envVar: 'DISCORD_BOT_TOKEN_SHRAVAN',
 					injection: 'env',
 					audience: 'gateway',
 				},
@@ -176,27 +182,16 @@ const allBinaries = new Set([
 	'cpio',
 	'lz4',
 	'op',
-	'openclaw',
+	'hermes',
 	'security',
 ]);
 
 function createManagedImageReleaseFixture(): ManagedImageRelease {
 	return {
 		baseImages: {
-			'openclaw-gateway': {
-				packageOverrides: {
-					npm: ['@openai/codex@0.139.0'],
-					openclaw: ['openclaw@2026.6.8', '@openclaw/codex@2026.6.8'],
-					pnpm: { undici: '8.5.0' },
-				},
-				repository: 'ghcr.io/shravansunder/agent-vm-managed-openclaw-gateway-base',
-				tag: '2026.05.27.1',
-			},
 			'worker-gateway': {
 				packageOverrides: {
 					npm: ['@openai/codex@0.139.0'],
-					openclaw: [],
-					pnpm: {},
 				},
 				repository: 'ghcr.io/shravansunder/agent-vm-managed-worker-gateway-base',
 				tag: '2026.05.27.1',
@@ -204,8 +199,6 @@ function createManagedImageReleaseFixture(): ManagedImageRelease {
 			'tool-vm': {
 				packageOverrides: {
 					npm: [],
-					openclaw: [],
-					pnpm: {},
 				},
 				repository: 'ghcr.io/shravansunder/agent-vm-managed-tool-vm-base',
 				tag: '2026.05.27.1',
@@ -354,8 +347,8 @@ function createManagedObservabilitySystemConfig(): SystemConfig {
 describe('runControllerDoctor', () => {
 	it('reports deterministic failed legacy-controller-record checks for every affected zone', async () => {
 		const firstZone = systemConfig.zones[0];
-		if (!firstZone || firstZone.gateway.type !== 'openclaw') {
-			throw new Error('Expected an OpenClaw test zone.');
+		if (!firstZone || firstZone.gateway.type !== 'hermes') {
+			throw new Error('Expected an Hermes test zone.');
 		}
 		const secondStateDirectory = '/state/sun';
 		const firstStateDirectory = path.resolve(firstZone.gateway.stateDir);
@@ -468,12 +461,6 @@ describe('runControllerDoctor', () => {
 			ok: true,
 			hint: 'standard',
 		});
-		expect(
-			result.checks.find((check) => check.name === 'zone-agent-auth-profile-shravan-shravan'),
-		).toMatchObject({
-			ok: true,
-			hint: 'configured',
-		});
 		expect(result.checks.find((check) => check.name === 'age')).toBeUndefined();
 		expect(result.checks.find((check) => check.name === '1password-cli')).toBeUndefined();
 		expect(result.checks.find((check) => check.name === 'observability-enabled')).toMatchObject({
@@ -487,7 +474,7 @@ describe('runControllerDoctor', () => {
 		const baseConfig = createExternalObservabilitySystemConfig();
 		const baseZone = baseConfig.zones[0];
 		if (!baseZone) {
-			throw new Error('Expected base doctor config to include an OpenClaw zone.');
+			throw new Error('Expected base doctor config to include an Hermes zone.');
 		}
 		const scopedSecretConfig = {
 			...baseConfig,
@@ -612,9 +599,9 @@ describe('runControllerDoctor', () => {
 			imageProfiles: {
 				...systemConfig.imageProfiles,
 				gateways: {
-					openclaw: {
-						...systemConfig.imageProfiles.gateways.openclaw,
-						dockerfile: './vm-images/gateways/openclaw/Dockerfile',
+					hermes: {
+						...systemConfig.imageProfiles.gateways.hermes,
+						dockerfile: './vm-images/gateways/hermes/Dockerfile',
 					},
 					worker: systemConfig.imageProfiles.gateways.worker,
 				},
@@ -671,11 +658,11 @@ describe('runControllerDoctor', () => {
 			imageProfiles: {
 				...systemConfig.imageProfiles,
 				gateways: {
-					openclaw: {
-						...systemConfig.imageProfiles.gateways.openclaw,
+					hermes: {
+						...systemConfig.imageProfiles.gateways.hermes,
 						source: {
 							kind: 'managedBase',
-							base: 'openclaw-gateway',
+							base: 'worker-gateway',
 						},
 					},
 					worker: systemConfig.imageProfiles.gateways.worker,
@@ -700,10 +687,10 @@ describe('runControllerDoctor', () => {
 			ok: false,
 		});
 		expect(
-			result.checks.find((check) => check.name === 'gateway-image-profile-openclaw'),
+			result.checks.find((check) => check.name === 'gateway-image-profile-hermes'),
 		).toMatchObject({
 			ok: true,
-			hint: 'type=openclaw source=managedBase base=openclaw-gateway',
+			hint: 'type=hermes source=managedBase base=worker-gateway',
 		});
 	});
 
@@ -718,9 +705,7 @@ describe('runControllerDoctor', () => {
 				'{',
 				'  "schemaVersion": 1,',
 				'  "packageOverrides": {',
-				'    "openclaw": ["@openclaw/discord@2026.6.8"],',
-				'    "npm": ["left-pad@1.3.0"],',
-				'    "pnpm": { "undici": "8.6.0" }',
+				'    "npm": ["@hermes/discord@2026.6.8", "left-pad@1.3.0"]',
 				'  }',
 				'}',
 				'',
@@ -732,11 +717,11 @@ describe('runControllerDoctor', () => {
 			imageProfiles: {
 				...systemConfig.imageProfiles,
 				gateways: {
-					openclaw: {
-						...systemConfig.imageProfiles.gateways.openclaw,
+					hermes: {
+						...systemConfig.imageProfiles.gateways.hermes,
 						source: {
 							kind: 'managedBase',
-							base: 'openclaw-gateway',
+							base: 'worker-gateway',
 							overlay: overlayPath,
 						},
 					},
@@ -752,20 +737,16 @@ describe('runControllerDoctor', () => {
 
 		expect(checks).toHaveLength(1);
 		expect(checks[0]).toMatchObject({
-			name: 'gateway-package-overrides-openclaw',
+			name: 'gateway-package-overrides-hermes',
 			ok: true,
 		});
 		expect(checks[0]?.hint).toContain(
-			'openclaw@2026.6.8[managed-images.json/packageOverrides.openclaw]',
-		);
-		expect(checks[0]?.hint).toContain(
-			'@openclaw/discord@2026.6.8[overlay.jsonc/packageOverrides.openclaw]',
+			'@hermes/discord@2026.6.8[overlay.jsonc/packageOverrides.npm]',
 		);
 		expect(checks[0]?.hint).toContain(
 			'@openai/codex@0.139.0[managed-images.json/packageOverrides.npm]',
 		);
 		expect(checks[0]?.hint).toContain('left-pad@1.3.0[overlay.jsonc/packageOverrides.npm]');
-		expect(checks[0]?.hint).toContain('undici@8.6.0[overlay.jsonc/packageOverrides.pnpm]');
 		expect(checks[0]?.hint).toContain(`overlay ${overlayPath}`);
 	});
 
@@ -779,7 +760,9 @@ describe('runControllerDoctor', () => {
 			[
 				'{',
 				'  "schemaVersion": 1,',
-				'  "openClawPackageOverrides": ["@openclaw/discord@2026.6.8"]',
+				'  "packageOverrides": {',
+				'    "pnpm": { "undici": "8.6.0" }',
+				'  }',
 				'}',
 				'',
 			].join('\n'),
@@ -790,11 +773,11 @@ describe('runControllerDoctor', () => {
 			imageProfiles: {
 				...systemConfig.imageProfiles,
 				gateways: {
-					openclaw: {
-						...systemConfig.imageProfiles.gateways.openclaw,
+					hermes: {
+						...systemConfig.imageProfiles.gateways.hermes,
 						source: {
 							kind: 'managedBase',
-							base: 'openclaw-gateway',
+							base: 'worker-gateway',
 							overlay: overlayPath,
 						},
 					},
@@ -809,11 +792,11 @@ describe('runControllerDoctor', () => {
 		});
 
 		expect(checks).toContainEqual({
-			name: 'gateway-package-overrides-openclaw',
+			name: 'gateway-package-overrides-hermes',
 			ok: false,
 			hint: expect.stringContaining(overlayPath),
 		});
-		expect(checks[0]?.hint).toContain('move openClawPackageOverrides to packageOverrides.openclaw');
+		expect(checks[0]?.hint).toContain('Unrecognized key: "pnpm"');
 	});
 
 	it('flags legacy Dockerfile image profiles for migration', async () => {
@@ -822,9 +805,9 @@ describe('runControllerDoctor', () => {
 			imageProfiles: {
 				...systemConfig.imageProfiles,
 				gateways: {
-					openclaw: {
-						...systemConfig.imageProfiles.gateways.openclaw,
-						dockerfile: './vm-images/gateways/openclaw/Dockerfile',
+					hermes: {
+						...systemConfig.imageProfiles.gateways.hermes,
+						dockerfile: './vm-images/gateways/hermes/Dockerfile',
 					},
 					worker: systemConfig.imageProfiles.gateways.worker,
 				},
@@ -847,7 +830,7 @@ describe('runControllerDoctor', () => {
 		expect(result.ok).toBe(false);
 		expect(
 			result.checks.find(
-				(check) => check.name === 'legacy-dockerfile-image-profile-gateway-openclaw',
+				(check) => check.name === 'legacy-dockerfile-image-profile-gateway-hermes',
 			),
 		).toMatchObject({
 			ok: false,
@@ -924,24 +907,6 @@ describe('runControllerDoctor', () => {
 		expect(qemuCheck?.hint).toBe('Install QEMU (for example: brew install qemu).');
 	});
 
-	it('flags missing OpenClaw CLI for OpenClaw gateway configs', async () => {
-		const result = await runControllerDoctor({
-			availableBinaries: new Set([...allBinaries].filter((binary) => binary !== 'openclaw')),
-			diskFreeBytes: 50 * 1024 * 1024 * 1024,
-			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
-			occupiedPorts: new Set<number>(),
-			nodeVersion: 'v25.9.0',
-			totalMemoryBytes: 16 * 1024 * 1024 * 1024,
-			systemConfig,
-		});
-
-		expect(result.ok).toBe(false);
-		expect(result.checks.find((check) => check.name === 'openclaw-cli')).toMatchObject({
-			ok: false,
-			hint: 'Install OpenClaw in this catalog for local schema validation: pnpm add -D openclaw@2026.7.1-2.',
-		});
-	});
-
 	it('flags occupied ports and insufficient resources', async () => {
 		const result = await runControllerDoctor({
 			availableBinaries: allBinaries,
@@ -990,8 +955,8 @@ describe('runControllerDoctor', () => {
 
 		for (const overlappingConfig of overlappingConfigs) {
 			const firstZone = systemConfig.zones[0];
-			if (firstZone === undefined || firstZone.gateway.type !== 'openclaw') {
-				throw new Error('Test fixture must include an OpenClaw zone.');
+			if (firstZone === undefined || firstZone.gateway.type !== 'hermes') {
+				throw new Error('Test fixture must include an Hermes zone.');
 			}
 			// oxlint-disable-next-line no-await-in-loop -- each table case is asserted independently in declaration order.
 			const result = await runControllerDoctor({
@@ -1031,8 +996,8 @@ describe('runControllerDoctor', () => {
 
 	it('reports every controllerRuntimeDir overlap in one doctor run', async () => {
 		const firstZone = systemConfig.zones[0];
-		if (firstZone === undefined || firstZone.gateway.type !== 'openclaw') {
-			throw new Error('Test fixture must include an OpenClaw zone.');
+		if (firstZone === undefined || firstZone.gateway.type !== 'hermes') {
+			throw new Error('Test fixture must include an Hermes zone.');
 		}
 		const result = await runControllerDoctor({
 			availableBinaries: allBinaries,
@@ -1167,9 +1132,9 @@ describe('collectVmHostSystemDoctorCheck', () => {
 			imageProfiles: {
 				...systemConfig.imageProfiles,
 				gateways: {
-					openclaw: {
-						...systemConfig.imageProfiles.gateways.openclaw,
-						buildConfig: '/etc/agent-vm/vm-images/gateways/openclaw/build-config.json',
+					hermes: {
+						...systemConfig.imageProfiles.gateways.hermes,
+						buildConfig: '/etc/agent-vm/vm-images/gateways/hermes/build-config.json',
 					},
 					worker: {
 						...systemConfig.imageProfiles.gateways.worker,

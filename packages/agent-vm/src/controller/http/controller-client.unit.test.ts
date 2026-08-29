@@ -45,11 +45,6 @@ describe('createControllerClient', () => {
 		});
 		await controllerClient.enableZoneSsh('shravan', {
 			adminToken: 'admin-token',
-			secretEnv: 'gateway-token',
-		});
-		await controllerClient.enableZoneSsh('shravan', {
-			adminToken: 'admin-token',
-			secretEnv: 'all-secrets',
 		});
 		await controllerClient.destroyZone('shravan', true);
 		await controllerClient.upgradeZone('shravan');
@@ -72,12 +67,7 @@ describe('createControllerClient', () => {
 				url: 'http://127.0.0.1:18800/zones/shravan/credentialed-runtimes/google%20workspace/retire',
 			},
 			{
-				body: JSON.stringify({ adminToken: 'admin-token', secretEnv: 'gateway-token' }),
-				method: 'POST',
-				url: 'http://127.0.0.1:18800/zones/shravan/enable-ssh',
-			},
-			{
-				body: JSON.stringify({ adminToken: 'admin-token', secretEnv: 'all-secrets' }),
+				body: JSON.stringify({ adminToken: 'admin-token' }),
 				method: 'POST',
 				url: 'http://127.0.0.1:18800/zones/shravan/enable-ssh',
 			},

@@ -565,8 +565,7 @@ export async function startGatewayRuntimeProductionService(
 		)({
 			config: props.config.observability,
 			identity: {
-				frameworkKind:
-					props.config.attachment.clientKind === 'openclaw-managed-plugin' ? 'openclaw' : 'hermes',
+				frameworkKind: 'hermes',
 				gatewayEpoch: props.config.attachment.gatewayEpoch,
 				zoneId: props.config.controlEndpoint.identity.zoneId,
 			},

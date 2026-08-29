@@ -77,14 +77,7 @@ export const controllerCommandParser = command(
 			'ssh',
 			object({
 				command: constant('controller.ssh'),
-				options: object({
-					allSecrets: createPresenceFlag(
-						'--all-secrets',
-						'Load every raw gateway environment secret in the SSH shell',
-					),
-					config: createConfigOption(),
-					zone: createZoneOption(),
-				}),
+				options: controllerZoneOptionsParser,
 			}),
 			{ description: cliDescription('Open an SSH session into the gateway VM') },
 		),

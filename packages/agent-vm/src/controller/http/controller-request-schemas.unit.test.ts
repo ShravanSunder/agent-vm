@@ -2,12 +2,20 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
 import {
+	controllerEnableSshRequestSchema,
 	controllerPullDefaultResponseSchema,
 	controllerRetireCredentialedRuntimeRequestSchema,
 } from './controller-request-schemas.js';
 import * as controllerRequestSchemas from './controller-request-schemas.js';
 
 describe('controller request schemas', () => {
+	it('accepts only the optional zone admin token for SSH', () => {
+		expect(controllerEnableSshRequestSchema.parse({})).toEqual({});
+		expect(controllerEnableSshRequestSchema.parse({ adminToken: 'zone-admin-token' })).toEqual({
+			adminToken: 'zone-admin-token',
+		});
+	});
+
 	it('does not export the retired VM-facing lease create request schema', () => {
 		expect(controllerRequestSchemas).not.toHaveProperty('controllerLeaseCreateRequestSchema');
 	});
@@ -63,4 +71,11 @@ describe('controller request schemas', () => {
 			],
 		});
 	});
+
+	it.each(['default', 'gateway-token', 'all-secrets'])(
+		'rejects removed SSH secret environment mode %s',
+		(secretEnv) => {
+			expect(controllerEnableSshRequestSchema.safeParse({ secretEnv }).success).toBe(false);
+		},
+	);
 });

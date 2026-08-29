@@ -82,7 +82,7 @@ describe('createPortalPolicyApprovalEvaluator', () => {
 		});
 	});
 
-	it('can surface missing approval tokens as approval-required for OpenClaw native callers', () => {
+	it('can surface missing approval tokens as approval-required for Hermes native callers', () => {
 		const evaluateApproval = createPortalPolicyApprovalEvaluator({
 			missingApprovalTokenDecision: { kind: 'approval_required', level: 'standard' },
 			resolveRecord: () => ({ hmacKey, profile }),

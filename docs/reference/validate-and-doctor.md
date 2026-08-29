@@ -20,19 +20,17 @@ It checks:
   TCP passthrough config and declare native `websocketUpgrades` plus matching
   `egressHosts` instead.
 - Gateway and tool VM image recipe files exist.
-- OpenClaw Tool VM profile mappings reference existing `toolVmProfiles`.
-- Schema load rejects OpenClaw Tool VM-reaching mediated secrets unless they
+- Hermes Tool VM profile mappings reference existing `toolVmProfiles`.
+- Schema load rejects Hermes Tool VM-reaching mediated secrets unless they
   declare `agentAccess: "all"` or a non-empty list of declared zone agents, and
   the zone declares at least one agent.
-- OpenClaw Tool VM deployment requirements are enforced for OpenClaw zones:
-  `agents.*.sandbox.backend: "gondolin"`, `mode: "all"`, `scope: "agent"`,
-  `workspaceAccess: "rw"`, and a non-root agent workspace.
-- Per-agent auth profiles, sandbox seeds, and loaded Tool VM mediated secret
-  access entries are visible as named inventory checks.
+- Hermes declared agents, unique profile assignments, profile-secret
+  projections, Tool Portal assignments, and Tool VM policy stay aligned.
+- Profile environment targets and loaded Tool VM mediated secret access entries
+  are visible as named inventory checks.
 - Worker gateway configs load successfully.
 - Worker prompt file references exist and stay under `prompts/`.
-- OpenClaw gateway configs pass `openclaw config validate --json` for
-  OpenClaw zones.
+- Hermes configuration passes the managed Hermes configuration loader.
 - MCP Portal config shape, profile references, provider materialization, stdio
   network declarations, mediated hosts, and raw-env exceptions are coherent.
 - Container runtime paths like `/etc/agent-vm/...` map back to checkout files
@@ -76,14 +74,12 @@ It checks:
 - Configured 1Password token source, if the config uses one.
 - 1Password CLI service-account fallback readiness for 1Password-backed
   configs, using `op whoami` under an isolated service-account environment.
-- OpenClaw CLI availability for OpenClaw zones.
-- OpenClaw gateway configs pass the catalog's own OpenClaw CLI validation.
-- OpenClaw Tool Portal native tool wiring through the `gondolin` plugin and
-  plugin approval routing for OpenClaw zones.
-- OpenClaw Tool VM profile mappings, per-agent auth profile entries, sandbox
-  seed entries, and loaded Tool VM mediated secret access entries are visible as
-  named inventory checks.
-- OpenClaw Tool VM deployment requirements use the same finding IDs as
+- Hermes managed image inputs and configuration availability for Hermes zones.
+- Hermes Tool Portal adapter material, native approval presenter capability,
+  Tool VM profile mappings, profile assignments, profile-secret projections,
+  and loaded Tool VM mediated secret access entries are visible as named
+  inventory checks.
+- Hermes Tool VM deployment requirements use the same finding IDs as
   `validate`, so a config that would fail startup is visible before boot.
 - Worker configs using the paths as the current host sees them.
 - `vm-host-system/` files when present in a checked-out container runtime
@@ -110,19 +106,28 @@ because it must use ambient `op read` authentication to fetch the service-accoun
 token before service-account auth exists. Use `tokenSource.type: "env"` or
 `"keychain"` for unattended controller startup and recovery.
 
-For OpenClaw-backed local configs, keep OpenClaw loosely coupled by installing
-it in the catalog rather than inside `@agent-vm/agent-vm`:
+## Hard Cutover From A Pre-Hermes-Only Release
 
-```bash
-pnpm add -D openclaw@2026.7.1-2
-```
+The cutover has no compatibility parser or state migration. Perform predecessor
+termination with the old release while its configuration and runtime records
+are still valid:
 
-When you run `pnpm doctor`, pnpm places `node_modules/.bin` on `PATH`, so
-doctor validates `config/gateways/*/openclaw.json` with that catalog-pinned
-OpenClaw version. The generated OpenClaw config intentionally contains
-VM-internal plugin paths such as `/home/openclaw/.openclaw/extensions`; host
-validation ignores that host-only plugin path existence failure while still
-failing schema, model, channel, and other config issues.
+1. Keep the pre-cutover binaries and configuration installed.
+2. Stop the controller-managed legacy Gateway through the old release's normal
+   protected shutdown path. If that controller is unavailable, use that same
+   old release's scoped offline-cleanup command.
+3. Verify its Gateway and Tool VM runtime records are cleared, exact managed
+   processes are absent, leases are released, and the ingress port is no longer
+   owned.
+4. Only after that proof, replace the package train and generated contracts as
+   one unit.
+5. Author a new valid Hermes or Worker configuration, then run `validate` and
+   `doctor` before startup.
+
+The Hermes-only release rejects legacy configuration and does not interpret,
+migrate, rewrite, or delete operator-owned legacy framework data. Rollback means
+restoring the complete older binaries/contracts/configuration set, not mixing
+old and new controller or Gateway components.
 
 ## Container Runtime Example
 
@@ -148,6 +153,7 @@ exist on the current machine.
 
 ```bash
 agent-vm init coding-agent --type worker --preset macos-local
+# or: agent-vm init coding-agent --type hermes --preset macos-local
 agent-vm validate --config config/system.jsonc
 agent-vm doctor --config config/system.jsonc
 ```

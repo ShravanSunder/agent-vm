@@ -183,17 +183,14 @@ describe('splitResolvedGatewaySecrets', () => {
 			{
 				id: 'sunfam',
 				gateway: {
-					type: 'openclaw',
-					controlAuth: {
-						mode: 'token',
-						secret: 'OPENCLAW_GATEWAY_TOKEN',
-					},
+					type: 'hermes',
+					profileSecretProjectionsByAgent: { main: {} },
+					profilesByAgent: { main: 'main' },
 					memory: '2G',
 					cpus: 2,
 					port: 18791,
-					config: './openclaw.json',
+					config: './hermes.json',
 					stateDir: './state',
-					ssh: { secretEnv: 'explicit' },
 					zoneFilesDir: './zone-files',
 				},
 				secrets: {
@@ -237,7 +234,7 @@ describe('mergeRuntimeGatewaySecrets', () => {
 		const result = mergeRuntimeGatewaySecrets(
 			{
 				environmentSecrets: {
-					OPENCLAW_GATEWAY_TOKEN: 'gateway-token',
+					TEST_GATEWAY_SECRET: 'gateway-token',
 				},
 				mediatedSecrets: {
 					PERPLEXITY_API_KEY: {
@@ -262,7 +259,7 @@ describe('mergeRuntimeGatewaySecrets', () => {
 		expect(result).toEqual({
 			environmentSecrets: {
 				AGENT_VM_MCP_STDIO_TOKEN: 'stdio-token',
-				OPENCLAW_GATEWAY_TOKEN: 'gateway-token',
+				TEST_GATEWAY_SECRET: 'gateway-token',
 			},
 			mediatedSecrets: {
 				AGENT_VM_MCP_TAVILY_API_KEY: {
@@ -282,20 +279,20 @@ describe('mergeRuntimeGatewaySecrets', () => {
 			mergeRuntimeGatewaySecrets(
 				{
 					environmentSecrets: {
-						OPENCLAW_GATEWAY_TOKEN: 'gateway-token',
+						TEST_GATEWAY_SECRET: 'gateway-token',
 					},
 					mediatedSecrets: {},
 				},
 				{
 					runtimeMediatedSecrets: {
-						OPENCLAW_GATEWAY_TOKEN: {
+						TEST_GATEWAY_SECRET: {
 							hosts: ['api.example.com'],
 							value: 'runtime-token',
 						},
 					},
 				},
 			),
-		).toThrow(/OPENCLAW_GATEWAY_TOKEN.*authored environment secret/u);
+		).toThrow(/TEST_GATEWAY_SECRET.*authored environment secret/u);
 	});
 
 	it('rejects runtime secrets declared for both runtime injection paths', () => {

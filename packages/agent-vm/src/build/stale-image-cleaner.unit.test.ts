@@ -130,7 +130,7 @@ describe('findStaleImageDirectories', () => {
 describe('findPrunableImageDirectories', () => {
 	it('keeps current plus the two newest stale generations per image profile', async () => {
 		const cacheDirectory = await createTemporaryDirectory();
-		const profileDirectory = path.join(cacheDirectory, 'gateway-images', 'openclaw');
+		const profileDirectory = path.join(cacheDirectory, 'gateway-images', 'hermes');
 		const currentDirectory = path.join(profileDirectory, 'current');
 		const newestStaleDirectory = path.join(profileDirectory, 'stale-newest');
 		const secondNewestStaleDirectory = path.join(profileDirectory, 'stale-second');
@@ -162,7 +162,7 @@ describe('findPrunableImageDirectories', () => {
 		const prunableEntries = await findPrunableImageDirectories({
 			cacheDir: cacheDirectory,
 			currentFingerprints: {
-				gateways: { openclaw: 'current' },
+				gateways: { hermes: 'current' },
 				toolVms: {},
 			},
 			retainStaleGenerationsPerProfile: 2,
@@ -173,7 +173,7 @@ describe('findPrunableImageDirectories', () => {
 
 	it('keeps the only stale generation for a profile', async () => {
 		const cacheDirectory = await createTemporaryDirectory();
-		const profileDirectory = path.join(cacheDirectory, 'gateway-images', 'openclaw');
+		const profileDirectory = path.join(cacheDirectory, 'gateway-images', 'hermes');
 
 		await fs.mkdir(path.join(profileDirectory, 'current'), { recursive: true });
 		await fs.mkdir(path.join(profileDirectory, 'only-stale'), { recursive: true });
@@ -181,7 +181,7 @@ describe('findPrunableImageDirectories', () => {
 		const prunableEntries = await findPrunableImageDirectories({
 			cacheDir: cacheDirectory,
 			currentFingerprints: {
-				gateways: { openclaw: 'current' },
+				gateways: { hermes: 'current' },
 				toolVms: {},
 			},
 			retainStaleGenerationsPerProfile: 2,
@@ -194,7 +194,7 @@ describe('findPrunableImageDirectories', () => {
 		const cacheDirectory = await createTemporaryDirectory();
 
 		for (const [familyDirectory, profileName] of [
-			['gateway-images', 'openclaw'],
+			['gateway-images', 'hermes'],
 			['gateway-images', 'worker'],
 			['tool-vm-images', 'default'],
 			['tool-vm-images', 'shravan'],
@@ -231,7 +231,7 @@ describe('findPrunableImageDirectories', () => {
 		const prunableEntries = await findPrunableImageDirectories({
 			cacheDir: cacheDirectory,
 			currentFingerprints: {
-				gateways: { openclaw: 'current', worker: 'current' },
+				gateways: { hermes: 'current', worker: 'current' },
 				toolVms: { default: 'current', shravan: 'current' },
 			},
 			retainStaleGenerationsPerProfile: 2,
@@ -242,7 +242,7 @@ describe('findPrunableImageDirectories', () => {
 				.map((entry) => `${entry.family}/${entry.profileName}/${entry.fingerprint}`)
 				.toSorted(),
 		).toEqual([
-			'gateway/openclaw/delete-one',
+			'gateway/hermes/delete-one',
 			'gateway/worker/delete-one',
 			'toolVm/default/delete-one',
 			'toolVm/shravan/delete-one',

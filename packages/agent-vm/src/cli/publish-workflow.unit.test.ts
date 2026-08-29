@@ -157,7 +157,7 @@ describe('publish workflow', () => {
 		expect(workflow).toContain('docker/setup-qemu-action@v4');
 		expect(workflow).toContain('docker/setup-buildx-action@v4');
 		expect(workflow).toContain('Retag managed base images in GHCR');
-		expect(workflow).toContain('agent-vm-managed-openclaw-gateway-base');
+		expect(workflow).not.toContain('agent-vm-managed-openclaw-gateway-base');
 		expect(workflow).toContain('agent-vm-managed-worker-gateway-base');
 		expect(workflow).toContain('agent-vm-managed-tool-vm-base');
 		expect(workflow).toContain('docker buildx build');

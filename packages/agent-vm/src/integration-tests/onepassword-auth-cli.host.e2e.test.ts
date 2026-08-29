@@ -54,9 +54,9 @@ describe('smoke: agent-vm 1Password auth CLI', () => {
 			[
 				agentVmCliPath,
 				'init',
-				'claw-beta',
+				'hermes-beta',
 				'--type',
-				'openclaw',
+				'hermes',
 				'--secrets',
 				'1password',
 				'--arch',
@@ -112,9 +112,9 @@ exit 1
 			[
 				agentVmCliPath,
 				'init',
-				'claw-beta',
+				'hermes-beta',
 				'--type',
-				'openclaw',
+				'hermes',
 				'--secrets',
 				'1password',
 				'--arch',

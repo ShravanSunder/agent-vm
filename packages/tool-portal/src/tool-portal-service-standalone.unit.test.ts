@@ -403,7 +403,7 @@ describe('standalone-v1 ToolPortalService seam', () => {
 			...standaloneOptions,
 			origin: {
 				...standaloneOptions.origin,
-				frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
+				frameworkIdentity: { kind: 'hermes', profileName: 'agent-a' },
 			},
 		};
 

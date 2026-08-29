@@ -111,7 +111,7 @@ async function createRuntimeConfig(): Promise<ManagedObservabilityRuntimeConfig>
 			{
 				framework: {
 					...createGatewayTelemetryProducerSafetyContract(),
-					serviceName: gatewayFrameworkTelemetryServiceNames.openclaw,
+					serviceName: gatewayFrameworkTelemetryServiceNames.hermes,
 					traces: true,
 					metrics: true,
 					logs: true,

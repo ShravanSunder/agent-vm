@@ -18,7 +18,6 @@ import {
 	type ManagedGatewayImageBootProjection,
 } from '../build/gondolin-managed-vm-build-tooling.js';
 import {
-	generateManagedDockerfile,
 	loadManagedImageOverlay,
 	resolveManagedImageRelease,
 	type ManagedImageOverlay,
@@ -101,13 +100,6 @@ export async function startE2eGatewayZoneForController(
 	});
 }
 
-interface OpenClawE2eZone extends Omit<LoadedSystemConfig['zones'][number], 'gateway'> {
-	readonly gateway: Extract<
-		LoadedSystemConfig['zones'][number]['gateway'],
-		{ readonly type: 'openclaw' }
-	>;
-}
-
 interface WorkerE2eZone extends Omit<LoadedSystemConfig['zones'][number], 'gateway'> {
 	readonly gateway: Extract<
 		LoadedSystemConfig['zones'][number]['gateway'],
@@ -167,21 +159,13 @@ interface E2ePreparedImageManifest {
 	readonly schemaVersion: 2;
 }
 
-const defaultOpenClawMcpPortalExtensionsPath = '/home/openclaw/.openclaw/extensions/mcp-portal';
 const dockerContextLocalPackageTimestamp = new Date('2000-01-01T00:00:00.000Z');
 const e2ePreparedImageManifestFileName = 'prepared-e2e-images.json';
 const e2ePreparedImageManifestSchemaVersion = 2;
 const execFileAsync = promisify(execFile);
-const openClawMcpPortalPluginName = 'mcp-portal';
 const e2eTempRootPrefixes = [
 	'agent-vm-gateway-e2e-project-',
 	'agent-vm-e2e-harness-',
-	'openclaw-control-link-e2e-',
-	'openclaw-control-session-e2e-',
-	'openclaw-mcp-portal-e2e-',
-	'openclaw-process-recovery-e2e-',
-	'openclaw-subagent-lease-e2e-',
-	'openclaw-workspace-git-e2e-',
 	'hermes-framework-observability-e2e-',
 	'hermes-framework-otel-',
 	'hermes-managed-base-environment-e2e-',
@@ -222,14 +206,6 @@ export interface E2eHarnessImageCleanupOptions extends E2eHarnessCloseOptions {
 	readonly env?: Partial<Record<'AGENT_VM_E2E_CLEAN_IMAGES', string>>;
 }
 
-export interface OpenClawE2eProject {
-	readonly controllerPort: number;
-	readonly gatewayPort: number;
-	readonly systemConfig: LoadedSystemConfig;
-	readonly tempRoot: string;
-	readonly zone: OpenClawE2eZone;
-}
-
 export interface WorkerE2eProject {
 	readonly controllerPort: number;
 	readonly gatewayPort: number;
@@ -238,21 +214,9 @@ export interface WorkerE2eProject {
 	readonly zone: WorkerE2eZone;
 }
 
-export type GatewayE2eKind = 'openclaw' | 'worker';
-
-export type GatewayE2eProject = OpenClawE2eProject | WorkerE2eProject;
-
 export interface GatewayE2eImageProject {
 	readonly systemConfig: LoadedSystemConfig;
 	readonly tempRoot: string;
-}
-
-export interface ScaffoldGatewayE2eProjectOptions {
-	readonly agents?: readonly string[];
-	readonly architecture: ImageArchitecture;
-	readonly kind: GatewayE2eKind;
-	readonly prefix: string;
-	readonly zoneId: string;
 }
 
 export interface ManagedVmE2ePrerequisiteOptions {
@@ -537,12 +501,11 @@ function managedGatewayBootProjectionForE2eTarget(
 		| LoadedSystemConfig['imageProfiles']['gateways'][string]
 		| LoadedSystemConfig['imageProfiles']['toolVms'][string],
 ): ManagedGatewayImageBootProjection | undefined {
-	if (family !== 'gateway' || (profile.type !== 'openclaw' && profile.type !== 'hermes')) {
+	if (family !== 'gateway' || profile.type !== 'hermes') {
 		return undefined;
 	}
 	return {
-		frameworkBootEntry:
-			profile.type === 'hermes' ? 'hermes-framework-service' : 'openclaw-framework-service',
+		frameworkBootEntry: 'hermes-framework-service',
 		kind: 'managed-gateway-exact-two-role',
 	};
 }
@@ -576,7 +539,7 @@ async function collectE2eImageTargets(
 			),
 			e2eManifestEligible:
 				profile.source === undefined ||
-				(family === 'gateway' && selectedFamilies.size === 1 && selectedFamilies.has('gateway')),
+				(selectedFamilies.size === 1 && selectedFamilies.has(family)),
 			family,
 			...(managedGatewayBoot === undefined ? {} : { managedGatewayBoot }),
 			name: profileName,
@@ -633,8 +596,7 @@ function parseE2ePreparedImageManifest(value: unknown): E2ePreparedImageManifest
 			managedGatewayBoot === undefined ||
 			(isObjectRecord(managedGatewayBoot) &&
 				managedGatewayBoot.kind === 'managed-gateway-exact-two-role' &&
-				(managedGatewayBoot.frameworkBootEntry === 'openclaw-framework-service' ||
-					managedGatewayBoot.frameworkBootEntry === 'hermes-framework-service') &&
+				managedGatewayBoot.frameworkBootEntry === 'hermes-framework-service' &&
 				Object.keys(managedGatewayBoot).length === 2);
 		return (
 			(entry.family === 'gateway' || entry.family === 'toolVm') &&
@@ -884,6 +846,16 @@ export async function prepareGatewayE2eProjectImages(
 	options: PrepareGatewayE2eProjectImagesOptions,
 ): Promise<void> {
 	const imageFamilies = options.imageFamilies ?? ['gateway', 'toolVm'];
+	if (process.env.AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE === '1' && imageFamilies.length > 1) {
+		for (const imageFamily of imageFamilies) {
+			await prepareGatewayE2eProjectImages({
+				imageFamilies: [imageFamily],
+				project: options.project,
+				...(options.runBuild === undefined ? {} : { runBuild: options.runBuild }),
+			});
+		}
+		return;
+	}
 	if (
 		imageFamilies.includes('toolVm') &&
 		process.env.AGENT_VM_E2E_USE_LOCAL_TOOL_VM_PACKAGES === '1'
@@ -987,14 +959,6 @@ function applySmokeEnvironment(secrets: E2eHarnessSecretMap): () => void {
 			}
 		}
 	};
-}
-
-export function getOpenClawE2eZone(systemConfig: LoadedSystemConfig): OpenClawE2eProject['zone'] {
-	const zone = systemConfig.zones[0];
-	if (!zone || zone.gateway.type !== 'openclaw') {
-		throw new Error('Expected smoke system config to contain an OpenClaw zone.');
-	}
-	return { ...zone, gateway: zone.gateway };
 }
 
 function getWorkerE2eZone(systemConfig: LoadedSystemConfig): WorkerE2eProject['zone'] {
@@ -1623,7 +1587,7 @@ export async function useLocalToolVmMcpPortalPackageTarballs(options: {
 					[
 						`FROM ${baseImage.repository}:${baseImage.tag}`,
 						'',
-						'# Generated by the OpenClaw smoke harness from the local MCP Portal package.',
+						'# Generated by the Agent VM smoke harness from the local MCP Portal package.',
 						...localPackageTarballs.map(
 							(tarball) => `COPY ${tarball.archiveName} /tmp/${tarball.archiveName}`,
 						),
@@ -1678,24 +1642,6 @@ export async function useLocalToolVmMcpPortalPackage(options: {
 			localMcpPortalTarballPath,
 		]);
 	}
-}
-
-async function writeManagedOpenClawE2eDockerfileBase(options: {
-	readonly dockerContextDirectory: string;
-	readonly openClawAgentVmPackageInstallMode?: 'managed-packages' | 'local-overlay' | undefined;
-	readonly profileName: string;
-}): Promise<string> {
-	const managedImageRelease = await resolveManagedImageRelease();
-	const result = await generateManagedDockerfile({
-		base: 'openclaw-gateway',
-		imageTargetFamily: 'gateway',
-		imageTargetName: options.profileName,
-		managedImageRelease,
-		openClawAgentVmPackageInstallMode: options.openClawAgentVmPackageInstallMode,
-		outputDirectory: options.dockerContextDirectory,
-		requiredOpenClawPackageNames: ['@openclaw/discord'],
-	});
-	return result.dockerfilePath;
 }
 
 function isJsonRecord(value: unknown): value is Record<string, unknown> {
@@ -1781,452 +1727,6 @@ function throwIfE2eHarnessCleanupFailed(errors: readonly unknown[]): void {
 	throw new AggregateError(errors, 'Smoke harness cleanup failed.');
 }
 
-function withoutStringValue(value: unknown, removedValue: string): unknown {
-	if (!Array.isArray(value)) {
-		return value;
-	}
-	return value.filter((entry) => entry !== removedValue);
-}
-
-export async function disableOpenClawMcpPortalPlugin(configPath: string): Promise<void> {
-	const config = mutableJsonRecord(await loadJsonConfigFile(configPath));
-	if (!config) {
-		throw new Error(`OpenClaw config at ${configPath} must be an object.`);
-	}
-	const plugins = mutableJsonRecord(config.plugins);
-	const pluginLoad = mutableJsonRecord(plugins?.load);
-	if (pluginLoad) {
-		pluginLoad.paths = withoutStringValue(pluginLoad.paths, defaultOpenClawMcpPortalExtensionsPath);
-	}
-	if (plugins) {
-		plugins.allow = withoutStringValue(plugins.allow, openClawMcpPortalPluginName);
-	}
-	const pluginEntries = mutableJsonRecord(plugins?.entries);
-	if (pluginEntries) {
-		delete pluginEntries[openClawMcpPortalPluginName];
-	}
-	await fs.writeFile(configPath, `${JSON.stringify(config, null, '\t')}\n`, 'utf8');
-}
-
-export async function useLocalOpenClawGatewayImagePackages(options: {
-	readonly enableToolVmWriteReadE2eRoute?: boolean | undefined;
-	readonly profileName: string;
-	readonly projectRoot: string;
-	readonly repoRoot: string;
-	readonly systemConfig: LoadedSystemConfig;
-}): Promise<void> {
-	const gatewayProfile = options.systemConfig.imageProfiles.gateways[options.profileName];
-	if (!gatewayProfile) {
-		throw new Error(`Gateway image profile '${options.profileName}' is not configured.`);
-	}
-	const dockerContextDirectory = path.join(
-		options.projectRoot,
-		'vm-images',
-		'gateways',
-		`${options.profileName}-local-packages`,
-	);
-	const localAgentPortalSdkTarballPath = await packLocalAgentVmPackageTarball({
-		packageName: 'agent-portal-sdk',
-		repoRoot: options.repoRoot,
-	});
-	const localConfigContractsTarballPath = await packLocalAgentVmPackageTarball({
-		packageName: 'config-contracts',
-		repoRoot: options.repoRoot,
-	});
-	const localSecretManagementTarballPath = await packLocalAgentVmPackageTarball({
-		packageName: 'secret-management',
-		repoRoot: options.repoRoot,
-	});
-	const localGondolinVmAdapterTarballPath = await packLocalAgentVmPackageTarball({
-		packageName: 'gondolin-vm-adapter',
-		repoRoot: options.repoRoot,
-	});
-	const localGatewayLifecycleTarballPath = await packLocalAgentVmPackageTarball({
-		packageName: 'gateway-lifecycle',
-		repoRoot: options.repoRoot,
-	});
-	const localGatewayRuntimeTarballPath = await packLocalAgentVmPackageTarball({
-		packageName: 'gateway-runtime',
-		repoRoot: options.repoRoot,
-	});
-	const localManagedVmTarballPath = await packLocalAgentVmPackageTarball({
-		packageName: 'managed-vm',
-		repoRoot: options.repoRoot,
-	});
-	const localControlProtocolContractsTarballPath = await packLocalAgentVmPackageTarball({
-		packageName: 'control-protocol-contracts',
-		repoRoot: options.repoRoot,
-	});
-	const localControllerExecutionContractsTarballPath = await packLocalAgentVmPackageTarball({
-		packageName: 'controller-execution-contracts',
-		repoRoot: options.repoRoot,
-	});
-	const localGatewayControlContractsTarballPath = await packLocalAgentVmPackageTarball({
-		packageName: 'gateway-control-contracts',
-		repoRoot: options.repoRoot,
-	});
-	const localMcpPortalTarballPath = await packLocalAgentVmPackageTarball({
-		packageName: 'mcp-portal',
-		repoRoot: options.repoRoot,
-	});
-	const localToolPortalTarballPath = await packLocalAgentVmPackageTarball({
-		packageName: 'tool-portal',
-		repoRoot: options.repoRoot,
-	});
-	const localOpenClawAgentVmPluginTarballPath = await packLocalAgentVmPackageTarball({
-		packageName: 'openclaw-agent-vm-plugin',
-		repoRoot: options.repoRoot,
-	});
-	try {
-		const localPackageTarballs = [
-			createLocalDockerPackageTarball({
-				packageName: 'agent-portal-sdk',
-				sourcePath: localAgentPortalSdkTarballPath,
-			}),
-			createLocalDockerPackageTarball({
-				packageName: 'config-contracts',
-				sourcePath: localConfigContractsTarballPath,
-			}),
-			createLocalDockerPackageTarball({
-				packageName: 'secret-management',
-				sourcePath: localSecretManagementTarballPath,
-			}),
-			createLocalDockerPackageTarball({
-				packageName: 'gondolin-vm-adapter',
-				sourcePath: localGondolinVmAdapterTarballPath,
-			}),
-			createLocalDockerPackageTarball({
-				packageName: 'gateway-lifecycle',
-				sourcePath: localGatewayLifecycleTarballPath,
-			}),
-			createLocalDockerPackageTarball({
-				packageName: 'gateway-runtime',
-				sourcePath: localGatewayRuntimeTarballPath,
-			}),
-			createLocalDockerPackageTarball({
-				packageName: 'managed-vm',
-				sourcePath: localManagedVmTarballPath,
-			}),
-			createLocalDockerPackageTarball({
-				packageName: 'control-protocol-contracts',
-				sourcePath: localControlProtocolContractsTarballPath,
-			}),
-			createLocalDockerPackageTarball({
-				packageName: 'controller-execution-contracts',
-				sourcePath: localControllerExecutionContractsTarballPath,
-			}),
-			createLocalDockerPackageTarball({
-				packageName: 'gateway-control-contracts',
-				sourcePath: localGatewayControlContractsTarballPath,
-			}),
-			createLocalDockerPackageTarball({
-				packageName: 'mcp-portal',
-				sourcePath: localMcpPortalTarballPath,
-			}),
-			createLocalDockerPackageTarball({
-				packageName: 'tool-portal',
-				sourcePath: localToolPortalTarballPath,
-			}),
-			createLocalDockerPackageTarball({
-				packageName: 'openclaw-agent-vm-plugin',
-				sourcePath: localOpenClawAgentVmPluginTarballPath,
-			}),
-		] satisfies readonly LocalDockerPackageTarball[];
-
-		const dockerfilePath = await writeManagedOpenClawE2eDockerfileBase({
-			dockerContextDirectory,
-			profileName: options.profileName,
-			openClawAgentVmPackageInstallMode: 'local-overlay',
-		});
-		await copyLocalPackageTarballsToDockerContext({
-			dockerContextDirectory,
-			tarballs: localPackageTarballs,
-		});
-		await useLocalToolVmMcpPortalPackageTarballs({
-			localAgentPortalSdkTarballPath,
-			localConfigContractsTarballPath,
-			localMcpPortalTarballPath,
-			localSecretManagementTarballPath,
-			projectRoot: options.projectRoot,
-			systemConfig: options.systemConfig,
-		});
-
-		await fs.appendFile(
-			dockerfilePath,
-			[
-				'',
-				'# Local package overlay generated by the OpenClaw smoke harness.',
-				...localPackageTarballs.map(
-					(tarball) => `COPY ${tarball.archiveName} /tmp/${tarball.archiveName}`,
-				),
-				...renderLocalDockerPackageInstallLines(localPackageTarballs),
-				'RUN package_root="/opt/agent-vm/local-packages/node_modules" && \\',
-				'    global_package_root="$(pnpm root -g)" && \\',
-				'    gateway_runtime_bin="$package_root/@agent-vm/gateway-runtime/dist/bin/gateway-runtime.js" && \\',
-				'    test -f "$gateway_runtime_bin" && chmod 755 "$gateway_runtime_bin" && \\',
-				'    ln -sfn "$gateway_runtime_bin" /usr/local/bin/agent-vm-gateway-runtime && \\',
-				'    mkdir -p "$global_package_root" /home/openclaw/.openclaw/extensions && \\',
-				'    ln -sfn "$package_root/@agent-vm" "$global_package_root/@agent-vm" && \\',
-				'    ln -sfn "$package_root/@agent-vm/openclaw-agent-vm-plugin/dist" /home/openclaw/.openclaw/extensions/gondolin',
-				...(options.enableToolVmWriteReadE2eRoute === true
-					? [
-							'RUN package_root="/opt/agent-vm/local-packages/node_modules" && \\',
-							'    e2e_extension="/opt/agent-vm/e2e-openclaw-gondolin-extension" && \\',
-							'    mkdir -p "$e2e_extension" && \\',
-							'    cp "$package_root/@agent-vm/openclaw-agent-vm-plugin/dist/openclaw.plugin.json" "$e2e_extension/openclaw.plugin.json" && \\',
-							'    printf "%s\\n" "export { default } from \\"$package_root/@agent-vm/openclaw-agent-vm-plugin/dist/e2e.js\\";" > "$e2e_extension/index.js" && \\',
-							'    ln -sfn "$e2e_extension" /home/openclaw/.openclaw/extensions/gondolin',
-						]
-					: []),
-				'',
-			].join('\n'),
-			'utf8',
-		);
-
-		gatewayProfile.dockerfile = dockerfilePath;
-		delete gatewayProfile.source;
-	} finally {
-		await removeE2eLocalPackageTarballs([
-			localAgentPortalSdkTarballPath,
-			localConfigContractsTarballPath,
-			localSecretManagementTarballPath,
-			localGondolinVmAdapterTarballPath,
-			localGatewayLifecycleTarballPath,
-			localGatewayRuntimeTarballPath,
-			localManagedVmTarballPath,
-			localControlProtocolContractsTarballPath,
-			localControllerExecutionContractsTarballPath,
-			localGatewayControlContractsTarballPath,
-			localMcpPortalTarballPath,
-			localToolPortalTarballPath,
-			localOpenClawAgentVmPluginTarballPath,
-		]);
-	}
-}
-
-export async function useLocalOpenClawPluginGatewayImage(options: {
-	readonly enableToolVmWriteReadE2eRoute?: boolean | undefined;
-	readonly profileName: string;
-	readonly projectRoot: string;
-	readonly repoRoot: string;
-	readonly systemConfig: LoadedSystemConfig;
-}): Promise<void> {
-	const gatewayProfile = options.systemConfig.imageProfiles.gateways[options.profileName];
-	if (!gatewayProfile) {
-		throw new Error(`Gateway image profile '${options.profileName}' is not configured.`);
-	}
-	const dockerContextDirectory = path.join(
-		options.projectRoot,
-		'vm-images',
-		'gateways',
-		`${options.profileName}-local-plugin`,
-	);
-	const localAgentPortalSdkTarballPath = await packLocalAgentVmPackageTarball({
-		packageName: 'agent-portal-sdk',
-		repoRoot: options.repoRoot,
-	});
-	const localConfigContractsTarballPath = await packLocalAgentVmPackageTarball({
-		packageName: 'config-contracts',
-		repoRoot: options.repoRoot,
-	});
-	const localSecretManagementTarballPath = await packLocalAgentVmPackageTarball({
-		packageName: 'secret-management',
-		repoRoot: options.repoRoot,
-	});
-	const localGondolinVmAdapterTarballPath = await packLocalAgentVmPackageTarball({
-		packageName: 'gondolin-vm-adapter',
-		repoRoot: options.repoRoot,
-	});
-	const localGatewayLifecycleTarballPath = await packLocalAgentVmPackageTarball({
-		packageName: 'gateway-lifecycle',
-		repoRoot: options.repoRoot,
-	});
-	const localGatewayRuntimeTarballPath = await packLocalAgentVmPackageTarball({
-		packageName: 'gateway-runtime',
-		repoRoot: options.repoRoot,
-	});
-	const localManagedVmTarballPath = await packLocalAgentVmPackageTarball({
-		packageName: 'managed-vm',
-		repoRoot: options.repoRoot,
-	});
-	const localControlProtocolContractsTarballPath = await packLocalAgentVmPackageTarball({
-		packageName: 'control-protocol-contracts',
-		repoRoot: options.repoRoot,
-	});
-	const localControllerExecutionContractsTarballPath = await packLocalAgentVmPackageTarball({
-		packageName: 'controller-execution-contracts',
-		repoRoot: options.repoRoot,
-	});
-	const localGatewayControlContractsTarballPath = await packLocalAgentVmPackageTarball({
-		packageName: 'gateway-control-contracts',
-		repoRoot: options.repoRoot,
-	});
-	const localMcpPortalTarballPath = await packLocalAgentVmPackageTarball({
-		packageName: 'mcp-portal',
-		repoRoot: options.repoRoot,
-	});
-	const localToolPortalTarballPath = await packLocalAgentVmPackageTarball({
-		packageName: 'tool-portal',
-		repoRoot: options.repoRoot,
-	});
-	const localOpenClawAgentVmPluginTarballPath = await packLocalAgentVmPackageTarball({
-		packageName: 'openclaw-agent-vm-plugin',
-		repoRoot: options.repoRoot,
-	});
-	try {
-		const localPackageTarballs = [
-			createLocalDockerPackageTarball({
-				packageName: 'agent-portal-sdk',
-				sourcePath: localAgentPortalSdkTarballPath,
-			}),
-			createLocalDockerPackageTarball({
-				packageName: 'config-contracts',
-				sourcePath: localConfigContractsTarballPath,
-			}),
-			createLocalDockerPackageTarball({
-				packageName: 'secret-management',
-				sourcePath: localSecretManagementTarballPath,
-			}),
-			createLocalDockerPackageTarball({
-				packageName: 'gondolin-vm-adapter',
-				sourcePath: localGondolinVmAdapterTarballPath,
-			}),
-			createLocalDockerPackageTarball({
-				packageName: 'gateway-lifecycle',
-				sourcePath: localGatewayLifecycleTarballPath,
-			}),
-			createLocalDockerPackageTarball({
-				packageName: 'gateway-runtime',
-				sourcePath: localGatewayRuntimeTarballPath,
-			}),
-			createLocalDockerPackageTarball({
-				packageName: 'managed-vm',
-				sourcePath: localManagedVmTarballPath,
-			}),
-			createLocalDockerPackageTarball({
-				packageName: 'control-protocol-contracts',
-				sourcePath: localControlProtocolContractsTarballPath,
-			}),
-			createLocalDockerPackageTarball({
-				packageName: 'controller-execution-contracts',
-				sourcePath: localControllerExecutionContractsTarballPath,
-			}),
-			createLocalDockerPackageTarball({
-				packageName: 'gateway-control-contracts',
-				sourcePath: localGatewayControlContractsTarballPath,
-			}),
-			createLocalDockerPackageTarball({
-				packageName: 'mcp-portal',
-				sourcePath: localMcpPortalTarballPath,
-			}),
-			createLocalDockerPackageTarball({
-				packageName: 'tool-portal',
-				sourcePath: localToolPortalTarballPath,
-			}),
-			createLocalDockerPackageTarball({
-				packageName: 'openclaw-agent-vm-plugin',
-				sourcePath: localOpenClawAgentVmPluginTarballPath,
-			}),
-		] satisfies readonly LocalDockerPackageTarball[];
-
-		const dockerfilePath = await writeManagedOpenClawE2eDockerfileBase({
-			dockerContextDirectory,
-			profileName: options.profileName,
-			openClawAgentVmPackageInstallMode: 'local-overlay',
-		});
-		await copyLocalPackageTarballsToDockerContext({
-			dockerContextDirectory,
-			tarballs: localPackageTarballs,
-		});
-
-		await fs.appendFile(
-			dockerfilePath,
-			[
-				'',
-				'# Local plugin overlay generated by the OpenClaw smoke harness.',
-				...localPackageTarballs.map(
-					(tarball) => `COPY ${tarball.archiveName} /tmp/${tarball.archiveName}`,
-				),
-				...renderLocalDockerPackageInstallLines(localPackageTarballs),
-				'RUN package_root="/opt/agent-vm/local-packages/node_modules" && \\',
-				'    global_package_root="$(pnpm root -g)" && \\',
-				'    gateway_runtime_bin="$package_root/@agent-vm/gateway-runtime/dist/bin/gateway-runtime.js" && \\',
-				'    test -f "$gateway_runtime_bin" && chmod 755 "$gateway_runtime_bin" && \\',
-				'    ln -sfn "$gateway_runtime_bin" /usr/local/bin/agent-vm-gateway-runtime && \\',
-				'    mkdir -p "$global_package_root" /home/openclaw/.openclaw/extensions && \\',
-				'    ln -sfn "$package_root/@agent-vm" "$global_package_root/@agent-vm" && \\',
-				'    ln -sfn "$package_root/@agent-vm/openclaw-agent-vm-plugin/dist" /home/openclaw/.openclaw/extensions/gondolin',
-				...(options.enableToolVmWriteReadE2eRoute === true
-					? [
-							'RUN package_root="/opt/agent-vm/local-packages/node_modules" && \\',
-							'    e2e_extension="/opt/agent-vm/e2e-openclaw-gondolin-extension" && \\',
-							'    mkdir -p "$e2e_extension" && \\',
-							'    cp "$package_root/@agent-vm/openclaw-agent-vm-plugin/dist/openclaw.plugin.json" "$e2e_extension/openclaw.plugin.json" && \\',
-							'    printf "%s\\n" "export { default } from \\"$package_root/@agent-vm/openclaw-agent-vm-plugin/dist/e2e.js\\";" > "$e2e_extension/index.js" && \\',
-							'    ln -sfn "$e2e_extension" /home/openclaw/.openclaw/extensions/gondolin',
-						]
-					: []),
-				'',
-			].join('\n'),
-			'utf8',
-		);
-
-		gatewayProfile.dockerfile = dockerfilePath;
-		delete gatewayProfile.source;
-	} finally {
-		await removeE2eLocalPackageTarballs([
-			localAgentPortalSdkTarballPath,
-			localConfigContractsTarballPath,
-			localSecretManagementTarballPath,
-			localGondolinVmAdapterTarballPath,
-			localGatewayLifecycleTarballPath,
-			localGatewayRuntimeTarballPath,
-			localManagedVmTarballPath,
-			localControlProtocolContractsTarballPath,
-			localControllerExecutionContractsTarballPath,
-			localGatewayControlContractsTarballPath,
-			localMcpPortalTarballPath,
-			localToolPortalTarballPath,
-			localOpenClawAgentVmPluginTarballPath,
-		]);
-	}
-}
-
-export async function scaffoldOpenClawE2eProject(options: {
-	readonly agents?: readonly string[];
-	readonly architecture: ImageArchitecture;
-	readonly prefix: string;
-	readonly zoneId: string;
-}): Promise<OpenClawE2eProject> {
-	const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), options.prefix));
-	const controllerPort = await findAvailablePort();
-	const gatewayPort = await findAvailablePort();
-	await scaffoldAgentVmProject({
-		architecture: options.architecture,
-		gatewayType: 'openclaw',
-		secretsProvider: 'environment',
-		targetDir: tempRoot,
-		zoneId: options.zoneId,
-		...(options.agents ? { agents: options.agents } : {}),
-	});
-	const loadedSystemConfig = await loadSystemConfig(path.join(tempRoot, 'config', 'system.json'));
-	const systemConfig: LoadedSystemConfig = {
-		...loadedSystemConfig,
-		cacheDir: path.join(resolveE2eCacheRoot(), 'openclaw'),
-	};
-	systemConfig.host.controllerPort = controllerPort;
-	systemConfig.host.projectNamespace = 'claw-tests-workspace-git';
-	const zone = getOpenClawE2eZone(systemConfig);
-	zone.gateway.port = gatewayPort;
-	return {
-		controllerPort,
-		gatewayPort,
-		systemConfig,
-		tempRoot,
-		zone,
-	};
-}
-
 export async function prepareLocalWorkerPackageForGatewayImage(repoRoot: string): Promise<string> {
 	return await packLocalPackageTarball({
 		packageDirectory: path.join(repoRoot, 'packages', 'agent-vm-worker'),
@@ -2284,7 +1784,7 @@ export async function scaffoldWorkerE2eProject(options: {
 		cacheDir: path.join(resolveE2eCacheRoot(), 'worker'),
 	};
 	systemConfig.host.controllerPort = controllerPort;
-	systemConfig.host.projectNamespace = 'claw-tests-worker';
+	systemConfig.host.projectNamespace = 'agent-vm-tests-worker';
 	systemConfig.host.secretsProvider = {
 		type: '1password',
 		tokenSource: { type: 'env', envVar: 'AGENT_VM_TEST_OPENAI_API_KEY' },
@@ -2298,85 +1798,6 @@ export async function scaffoldWorkerE2eProject(options: {
 		tempRoot,
 		zone,
 	};
-}
-
-export async function scaffoldGatewayE2eProject(
-	options: ScaffoldGatewayE2eProjectOptions,
-): Promise<GatewayE2eProject> {
-	if (options.kind === 'openclaw') {
-		return await scaffoldOpenClawE2eProject({
-			architecture: options.architecture,
-			prefix: options.prefix,
-			zoneId: options.zoneId,
-			...(options.agents ? { agents: options.agents } : {}),
-		});
-	}
-	return await scaffoldWorkerE2eProject({
-		architecture: options.architecture,
-		prefix: options.prefix,
-		zoneId: options.zoneId,
-	});
-}
-
-export async function writeOpenClawMcpPortalE2eConfigs(options: {
-	readonly agentId: string;
-	readonly configDir: string;
-	readonly namespace: string;
-	readonly upstreamUrl: string;
-}): Promise<void> {
-	await fs.writeFile(
-		path.join(options.configDir, 'mcp.config.jsonc'),
-		`${JSON.stringify(
-			{
-				$schema: '../../schemas/mcp.schema.json',
-				providers: {
-					upstreamMock: {
-						discovery: { summary: 'Mock upstream MCP server for e2e tests' },
-						kind: 'mcp',
-						namespace: options.namespace,
-						transport: {
-							kind: 'streamable-http',
-							url: options.upstreamUrl,
-						},
-					},
-				},
-				schemaVersion: 1,
-			},
-			null,
-			'\t',
-		)}\n`,
-		'utf8',
-	);
-	await fs.writeFile(
-		path.join(options.configDir, 'tool-portal.config.jsonc'),
-		`${JSON.stringify(
-			{
-				$schema: '../../schemas/tool-portal.schema.json',
-				agents: {
-					[options.agentId]: { profile: 'smoke' },
-				},
-				mode: 'managed',
-				profiles: {
-					smoke: {
-						namespaces: {
-							[options.namespace]: {
-								backend: { kind: 'mcp_provider' },
-								calls: {
-									requiresApproval: { allow: [] },
-									withoutApproval: { allow: ['read_thing'] },
-								},
-								tools: { allow: ['read_thing', 'write_thing'] },
-							},
-						},
-					},
-				},
-				schemaVersion: 1,
-			},
-			null,
-			'\t',
-		)}\n`,
-		'utf8',
-	);
 }
 
 export async function startE2eControllerRuntime(

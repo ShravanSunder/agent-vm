@@ -139,10 +139,10 @@ describe('buildRuntimeInstructions', () => {
 	it('rejects non-worker runtime instruction callers after type bypass', () => {
 		expect(() =>
 			buildRuntimeInstructions({
-				gatewayType: 'openclaw',
+				gatewayType: 'hermes',
 				resolvedResources: [],
 				runtimeAuthHints: [],
-				taskId: 'task-openclaw',
+				taskId: 'task-hermes',
 				workDir: '/work',
 			} as never),
 		).toThrow('Runtime instructions are only supported for worker gateway zones.');

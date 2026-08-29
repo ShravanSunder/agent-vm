@@ -32,14 +32,6 @@ function createConfig(): SystemConfigInput {
 					type: 'hermes',
 					buildConfig: '/tmp/hermes/build-config.json',
 				},
-				openclaw: {
-					type: 'openclaw',
-					buildConfig: '/tmp/openclaw/build-config.json',
-					source: {
-						kind: 'managedBase',
-						base: 'openclaw-gateway',
-					},
-				},
 			},
 			toolVms: {
 				default: {
@@ -53,25 +45,34 @@ function createConfig(): SystemConfigInput {
 				id: 'sunfam',
 				agents: [{ id: 'main' }],
 				gateway: {
-					type: 'openclaw',
-					controlAuth: {
-						mode: 'token',
-						secret: 'OPENCLAW_GATEWAY_TOKEN',
+					type: 'hermes',
+					profileSecretProjectionsByAgent: {
+						main: {
+							API_SERVER_KEY: 'API_SERVER_KEY_MAIN',
+							DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_MAIN',
+						},
 					},
-					imageProfile: 'openclaw',
+					profilesByAgent: { main: 'main' },
+					imageProfile: 'hermes',
 					memory: '2G',
 					cpus: 2,
 					port: 18791,
-					config: '/tmp/openclaw.json',
+					config: '/tmp/hermes.yaml',
 				},
 				observability: {
 					enabled: true,
 					services: { framework: {}, toolPortal: {} },
 				},
 				secrets: {
-					OPENCLAW_GATEWAY_TOKEN: {
+					API_SERVER_KEY_MAIN: {
 						source: 'environment',
-						envVar: 'OPENCLAW_GATEWAY_TOKEN',
+						envVar: 'API_SERVER_KEY_MAIN',
+						injection: 'env',
+						audience: 'gateway',
+					},
+					DISCORD_BOT_TOKEN_MAIN: {
+						source: 'environment',
+						envVar: 'DISCORD_BOT_TOKEN_MAIN',
 						injection: 'env',
 						audience: 'gateway',
 					},
@@ -103,61 +104,6 @@ function createConfigWithoutZoneObservability(): SystemConfigInput {
 }
 
 describe('createObservabilityRuntimeConfig', () => {
-	test('fixes common producer service identities for an OpenClaw zone', () => {
-		const loadedConfig = createLoadedSystemConfig(createConfig(), {
-			systemConfigPath: '/tmp/config/system.json',
-		});
-
-		const runtimeConfig = createObservabilityRuntimeConfig(loadedConfig);
-
-		if (!runtimeConfig.enabled) {
-			throw new Error('Expected observability runtime config to be enabled.');
-		}
-		expect(runtimeConfig.zones).toEqual([
-			{
-				framework: {
-					admissionLimits: {
-						maxExportBatchRecords: 64,
-						maxQueuedRecordsPerSignal: 256,
-						maxRecordBytes: 65_536,
-					},
-					flushIntervalMs: 10_000,
-					logs: true,
-					metrics: true,
-					sampleRate: 1,
-					serviceName: 'agent-vm-openclaw',
-					sourcePolicy: { admitBaggage: false, captureContent: false },
-					traces: true,
-				},
-				toolPortal: {
-					admissionLimits: {
-						maxExportBatchRecords: 64,
-						maxQueuedRecordsPerSignal: 256,
-						maxRecordBytes: 65_536,
-					},
-					flushIntervalMs: 10_000,
-					logs: true,
-					metrics: true,
-					sampleRate: 1,
-					serviceName: 'agent-vm-tool-portal',
-					sourcePolicy: { admitBaggage: false, captureContent: false },
-					traces: true,
-				},
-				zoneId: 'sunfam',
-			},
-		]);
-		const [zoneRuntimeConfig] = runtimeConfig.zones;
-		if (!zoneRuntimeConfig) {
-			throw new Error('Expected one observability zone runtime config.');
-		}
-		expect(zoneRuntimeConfig.framework.admissionLimits).not.toBe(
-			zoneRuntimeConfig.toolPortal.admissionLimits,
-		);
-		expect(zoneRuntimeConfig.framework.sourcePolicy).not.toBe(
-			zoneRuntimeConfig.toolPortal.sourcePolicy,
-		);
-	});
-
 	test('fixes the Hermes framework identity independently from Tool Portal', () => {
 		const configInput = createConfig();
 		const firstZone = configInput.zones[0];
@@ -179,7 +125,7 @@ describe('createObservabilityRuntimeConfig', () => {
 				},
 			},
 		};
-		delete firstZone.secrets.OPENCLAW_GATEWAY_TOKEN;
+		delete firstZone.secrets.DISCORD_BOT_TOKEN_MAIN;
 		firstZone.secrets.DISCORD_BOT_TOKEN = {
 			source: 'environment',
 			envVar: 'DISCORD_BOT_TOKEN',
@@ -218,40 +164,6 @@ describe('createObservabilityRuntimeConfig', () => {
 		});
 
 		expect(createObservabilityRuntimeConfig(loadedConfig)).toEqual({ enabled: false });
-	});
-
-	test('normalizes host observability paths without raw-tcp OpenClaw zone telemetry', () => {
-		const loadedConfig = createLoadedSystemConfig(createConfigWithoutZoneObservability(), {
-			systemConfigPath: '/tmp/config/system.json',
-		});
-
-		expect(createObservabilityRuntimeConfig(loadedConfig)).toEqual({
-			enabled: true,
-			stackMode: 'managed',
-			projectName: 'agent-vm-observability-observability-test',
-			runtimeDir:
-				'/var/agent-vm-observability-storage/controller-runtime/observability/observability-test',
-			dataDir: '/tmp/agent-vm-observability',
-			bindAddress: '127.0.0.1',
-			ports: {
-				collectorGrpc: 4317,
-				collectorHttp: 4318,
-				collectorHealth: 13_133,
-				metrics: 8428,
-				logs: 9428,
-				traces: 10_428,
-			},
-			retention: {
-				metrics: { period: '30d', minFreeDiskSpaceBytes: '5GiB' },
-				logs: { period: '14d', maxDiskSpaceUsageBytes: '50GiB' },
-				traces: { period: '7d', maxDiskSpaceUsageBytes: '20GiB' },
-			},
-			prepareOnBuild: true,
-			waitOnBuild: true,
-			controllerStartPolicy: 'degraded',
-			startupCheckTimeoutMs: 30_000,
-			zones: [],
-		});
 	});
 
 	test('normalizes external observability without managed stack storage', () => {

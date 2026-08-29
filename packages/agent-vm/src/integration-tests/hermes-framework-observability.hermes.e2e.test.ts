@@ -27,7 +27,7 @@ import {
 	hermesE2eProfileApiServerKeyEnvironmentName,
 	scaffoldHermesE2eProject,
 	shouldRunHermesE2e,
-	useLocalHermesGatewayImagePackages,
+	materializeLocalHermesGatewayImagePackages,
 	type HermesE2eProject,
 } from './hermes-e2e-harness.js';
 import {
@@ -463,7 +463,7 @@ async function runSignalNegativeGatewayBoot(options: {
 				'utf8',
 			),
 		]);
-		await useLocalHermesGatewayImagePackages({
+		await materializeLocalHermesGatewayImagePackages({
 			architecture,
 			profileName: project.zone.gateway.imageProfile,
 			projectRoot: project.tempRoot,
@@ -675,7 +675,7 @@ describeHermesFrameworkObservabilityE2e(
 					'utf8',
 				),
 			]);
-			await useLocalHermesGatewayImagePackages({
+			await materializeLocalHermesGatewayImagePackages({
 				architecture,
 				profileName: project.zone.gateway.imageProfile,
 				projectRoot: project.tempRoot,

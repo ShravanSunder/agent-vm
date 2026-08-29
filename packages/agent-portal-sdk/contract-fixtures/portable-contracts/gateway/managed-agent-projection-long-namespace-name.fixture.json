@@ -5,8 +5,8 @@
 	"input": {
 		"agentId": "agent-a",
 		"frameworkIdentity": {
-			"agentId": "agent-a",
-			"kind": "openclaw"
+			"kind": "hermes",
+			"profileName": "agent-a"
 		},
 		"profileAssignmentRevision": "profile-assignment-a",
 		"toolPortalNamespaces": [
@@ -21,8 +21,8 @@
 		"normalized": {
 			"agentId": "agent-a",
 			"frameworkIdentity": {
-				"agentId": "agent-a",
-				"kind": "openclaw"
+				"kind": "hermes",
+				"profileName": "agent-a"
 			},
 			"profileAssignmentRevision": "profile-assignment-a",
 			"toolPortalNamespaces": [
@@ -32,7 +32,7 @@
 			],
 			"toolPortalProfileId": "engineering"
 		},
-		"canonicalJson": "{\"agentId\":\"agent-a\",\"frameworkIdentity\":{\"agentId\":\"agent-a\",\"kind\":\"openclaw\"},\"profileAssignmentRevision\":\"profile-assignment-a\",\"toolPortalNamespaces\":[{\"namespace\":\"nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn\"}],\"toolPortalProfileId\":\"engineering\"}",
+		"canonicalJson": "{\"agentId\":\"agent-a\",\"frameworkIdentity\":{\"kind\":\"hermes\",\"profileName\":\"agent-a\"},\"profileAssignmentRevision\":\"profile-assignment-a\",\"toolPortalNamespaces\":[{\"namespace\":\"nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn\"}],\"toolPortalProfileId\":\"engineering\"}",
 		"refinementIdentities": [
 			"gateway.managed-agent-projection.namespaces",
 			"portal.namespace-discovery.summary-code-points"

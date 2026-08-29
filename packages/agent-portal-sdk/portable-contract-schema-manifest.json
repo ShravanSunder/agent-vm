@@ -3522,7 +3522,7 @@
 					},
 					"clientKind": {
 						"type": "string",
-						"enum": ["openclaw-managed-plugin", "hermes-managed-plugin"]
+						"const": "hermes-managed-plugin"
 					},
 					"configuredAgentIds": {
 						"minItems": 1,
@@ -3592,40 +3592,20 @@
 					},
 					"frameworkIdentity": {
 						"readOnly": true,
-						"oneOf": [
-							{
-								"type": "object",
-								"properties": {
-									"agentId": {
-										"type": "string",
-										"minLength": 1,
-										"maxLength": 256
-									},
-									"kind": {
-										"type": "string",
-										"const": "openclaw"
-									}
-								},
-								"required": ["agentId", "kind"],
-								"additionalProperties": false
+						"type": "object",
+						"properties": {
+							"kind": {
+								"type": "string",
+								"const": "hermes"
 							},
-							{
-								"type": "object",
-								"properties": {
-									"kind": {
-										"type": "string",
-										"const": "hermes"
-									},
-									"profileName": {
-										"type": "string",
-										"minLength": 1,
-										"maxLength": 256
-									}
-								},
-								"required": ["kind", "profileName"],
-								"additionalProperties": false
+							"profileName": {
+								"type": "string",
+								"minLength": 1,
+								"maxLength": 256
 							}
-						]
+						},
+						"required": ["kind", "profileName"],
+						"additionalProperties": false
 					},
 					"profileAssignmentRevision": {
 						"type": "string",
@@ -3713,40 +3693,20 @@
 							},
 							"frameworkIdentity": {
 								"readOnly": true,
-								"oneOf": [
-									{
-										"type": "object",
-										"properties": {
-											"agentId": {
-												"type": "string",
-												"minLength": 1,
-												"maxLength": 256
-											},
-											"kind": {
-												"type": "string",
-												"const": "openclaw"
-											}
-										},
-										"required": ["agentId", "kind"],
-										"additionalProperties": false
+								"type": "object",
+								"properties": {
+									"kind": {
+										"type": "string",
+										"const": "hermes"
 									},
-									{
-										"type": "object",
-										"properties": {
-											"kind": {
-												"type": "string",
-												"const": "hermes"
-											},
-											"profileName": {
-												"type": "string",
-												"minLength": 1,
-												"maxLength": 256
-											}
-										},
-										"required": ["kind", "profileName"],
-										"additionalProperties": false
+									"profileName": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 256
 									}
-								]
+								},
+								"required": ["kind", "profileName"],
+								"additionalProperties": false
 							},
 							"profileAssignmentRevision": {
 								"type": "string",

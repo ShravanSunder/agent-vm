@@ -13,7 +13,6 @@ import {
 import { formatZodError } from './format-zod-error.js';
 
 interface RunSshCommandOptions {
-	readonly allSecrets: boolean;
 	readonly dependencies: CliDependencies;
 	readonly io: CliIo;
 	readonly systemConfig: SystemConfig;
@@ -26,7 +25,6 @@ export const zoneSshAccessResponseSchema = z
 		host: z.string().min(1).optional(),
 		identityFile: z.string().min(1).optional(),
 		port: z.number().int().positive().optional(),
-		secretEnvEnabled: z.boolean().optional(),
 		user: z.string().min(1).optional(),
 	})
 	.passthrough();
@@ -69,7 +67,6 @@ export async function runSshCommand(options: RunSshCommandOptions): Promise<void
 	const controllerClient = options.dependencies.createControllerClient({
 		baseUrl: resolveControllerBaseUrl(options.systemConfig),
 	});
-	const requestAllSecrets = options.allSecrets;
 	const zone = requireZone(options.systemConfig, options.zoneId);
 	const lifecycle = loadGatewayLifecycle(zone.gateway.type);
 	if (lifecycle.executionModel !== 'managed-gateway') {
@@ -77,17 +74,14 @@ export async function runSshCommand(options: RunSshCommandOptions): Promise<void
 			`controller ssh is not implemented for gateway type '${zone.gateway.type}'; use the Worker task APIs.`,
 		);
 	}
-	const interactiveSshSession = lifecycle.interactiveSsh.buildSession({ requestAllSecrets });
+	const interactiveSshSession = lifecycle.interactiveSsh.buildSession();
 	const adminToken = await resolveZoneAdminToken({
 		dependencies: options.dependencies,
 		systemConfig: options.systemConfig,
 		zone,
 	});
 	const parsedSshResponse = zoneSshAccessResponseSchema.safeParse(
-		await controllerClient.enableZoneSsh(zone.id, {
-			...(adminToken ? { adminToken } : {}),
-			secretEnv: interactiveSshSession.secretEnvironment,
-		}),
+		await controllerClient.enableZoneSsh(zone.id, adminToken ? { adminToken } : {}),
 	);
 	if (!parsedSshResponse.success) {
 		throw new Error(
@@ -100,15 +94,6 @@ export async function runSshCommand(options: RunSshCommandOptions): Promise<void
 	if (!sshResponse.host || !sshResponse.port) {
 		throw new Error('Controller returned incomplete SSH access details.');
 	}
-	if (
-		interactiveSshSession.requireSecretEnvironmentEnabled &&
-		sshResponse.secretEnvEnabled !== true
-	) {
-		throw new Error(
-			'Controller did not enable OPENCLAW_GATEWAY_TOKEN for this SSH session. Check the zone gateway.ssh.secretEnv policy and configured OPENCLAW_GATEWAY_TOKEN secret.',
-		);
-	}
-
 	const sshArguments = [
 		'-t',
 		'-o',

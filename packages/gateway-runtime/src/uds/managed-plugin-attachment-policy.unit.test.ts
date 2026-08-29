@@ -37,7 +37,7 @@ const SERVER_AUTHORITY = {
 
 const CURRENT_ATTACHMENT_CONFIG = {
 	attachmentGeneration: 7,
-	clientKind: 'openclaw-managed-plugin',
+	clientKind: 'hermes-managed-plugin',
 	configuredAgentIds: ['main', 'research'],
 	frameworkEpoch: 'framework-epoch-current',
 	gatewayEpoch: 'gateway-epoch-current',
@@ -226,14 +226,6 @@ describe('managed-plugin attachment policy', () => {
 	});
 
 	it.each([
-		{
-			code: 'wrong-client-kind' as const,
-			createEvent: (): ManagedPluginHandshakeEvent =>
-				createCurrentHandshakeEvent(SERVER_CONNECTION_ONE, {
-					clientKind: 'hermes-managed-plugin',
-				}),
-			mismatchName: 'client kind',
-		},
 		{
 			code: 'wrong-configured-agent-set' as const,
 			createEvent: (): ManagedPluginHandshakeEvent =>

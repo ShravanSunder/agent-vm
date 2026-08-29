@@ -12,7 +12,6 @@ import {
 	type GatewayControlLeaseUseStartPayload,
 	type GatewayControlHealthEventPayload,
 	type GatewayControlProviderRuntimeHealth,
-	type GatewayControlRuntimeStatusPayload,
 	type GatewayControlControllerHostProbeResult,
 	type GatewayControlToolPortalControllerExecutionPayload,
 	type GatewayControlToolPortalControllerExecutionResult,
@@ -48,7 +47,6 @@ import type {
 	ControllerApprovalDecisionResult,
 	ControllerApprovalOperatorIdentity,
 } from '../approval/controller-approval-ledger.js';
-import type { OpenClawRuntimeStatusReport } from '../openclaw-runtime-status.js';
 import type { ConfiguredCliAuthorizedOperation } from '../runner/configured-cli-authorization.js';
 import { ConfiguredControllerExecutionError } from '../runner/configured-controller-execution-error.js';
 import type { GatewayEpochIdentity } from '../vm-ownership/vm-ownership-contracts.js';
@@ -231,7 +229,6 @@ export interface GatewayControlDomainHandlerOptions {
 	readonly now?: () => number;
 	readonly recordGatewayRuntimeReadiness?: (snapshot: GatewayRuntimeReadinessSnapshot) => void;
 	readonly recordHealthEvent?: (event: AgentVmHealthEvent) => void;
-	readonly recordRuntimeStatus?: (report: OpenClawRuntimeStatusReport) => void;
 	readonly session: GatewayControlAcceptedSessionRef;
 }
 
@@ -673,13 +670,6 @@ function healthEventFromPayload(options: {
 				operation: options.payload.operation,
 				peerId: requireString(options.payload.safeDetails?.peerId, 'peerId'),
 			};
-		case 'gateway-plugin-health':
-			return {
-				...base,
-				gatewayService: 'openclaw',
-				kind: 'gateway-plugin-health',
-				state: options.payload.result === 'ok' ? 'ready' : 'failed',
-			};
 		case 'tool-vm-ssh': {
 			const toolVmHealthEventBase = {
 				...base,
@@ -752,30 +742,6 @@ function healthEventFromHeartbeat(options: {
 		peerId: options.envelope.peerId,
 		result: 'ok',
 		zoneId: options.envelope.zoneId,
-	};
-}
-
-function runtimeStatusFromPayload(options: {
-	readonly envelope: ControlEnvelope;
-	readonly payload: GatewayControlRuntimeStatusPayload;
-	readonly zoneId: string;
-}): OpenClawRuntimeStatusReport {
-	if (options.payload.statusKind !== 'gondolin') {
-		throw new Error(`unsupported gateway runtime status kind '${options.payload.statusKind}'`);
-	}
-	return {
-		bootId: options.envelope.bootId,
-		connectionId: options.envelope.connectionId,
-		controllerEpoch: options.envelope.controllerEpoch,
-		findings: options.payload.findings.map((finding) => ({
-			hint: finding.safeMessage ?? finding.id,
-			id: finding.id,
-			ok: finding.ok,
-		})),
-		peerId: options.envelope.peerId,
-		pluginId: 'gondolin',
-		sessionId: options.envelope.sessionId,
-		zoneId: options.zoneId,
 	};
 }
 
@@ -1653,19 +1619,6 @@ export function createGatewayControlDomainHandler(
 						}
 						options.recordHealthEvent(
 							healthEventFromPayload({
-								payload: message.payload,
-								zoneId: options.session.zoneId,
-							}),
-						);
-						return undefined;
-					}
-					case 'runtime_status': {
-						if (options.recordRuntimeStatus === undefined) {
-							throw new Error('gateway control runtime_status recorder is not configured');
-						}
-						options.recordRuntimeStatus(
-							runtimeStatusFromPayload({
-								envelope,
 								payload: message.payload,
 								zoneId: options.session.zoneId,
 							}),

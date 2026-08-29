@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 
 import {
@@ -61,6 +62,53 @@ describeLiveVmIntegration('Gateway runtime sandbox stock VM proof', () => {
 			if (directShellProcess.kind !== 'started') {
 				throw new Error('Managed private-UDS direct shell process did not start.');
 			}
+			const interactiveShellProcess = await client.sandbox.process.start(
+				{
+					command: 'IFS= read -r line; printf "stream-echo:%s" "$line"',
+					environment: environment.environment,
+					maxRuntimeMs: 5_000,
+					retainOutputBytes: 4_096,
+				},
+				trustedOptions,
+			);
+			if (interactiveShellProcess.kind !== 'started') {
+				throw new Error('Managed private-UDS interactive shell process did not start.');
+			}
+			const standardInput = interactiveShellProcess.streams.find(
+				(stream) => stream.channel === 'stdin',
+			);
+			const standardOutput = interactiveShellProcess.streams.find(
+				(stream) => stream.channel === 'stdout',
+			);
+			if (standardInput === undefined || standardOutput === undefined) {
+				throw new Error('Managed private-UDS interactive shell omitted standard streams.');
+			}
+			const inputBytes = Buffer.from('stock-stream-roundtrip\n');
+			const streamWrite = await client.sandbox.stream.write(
+				{
+					content: {
+						byteLength: inputBytes.byteLength,
+						contentBase64: inputBytes.toString('base64'),
+						encoding: 'base64',
+					},
+					contentDigest: `sha256:${createHash('sha256').update(inputBytes).digest('hex')}`,
+					sequence: 0,
+					stream: standardInput,
+				},
+				trustedOptions,
+			);
+			const streamClose = await client.sandbox.stream.close(
+				{ stream: standardInput },
+				trustedOptions,
+			);
+			const interactiveShellOutcome = await client.sandbox.process.wait(
+				{ process: interactiveShellProcess.process, timeoutMs: 5_000 },
+				trustedOptions,
+			);
+			const streamRead = await client.sandbox.stream.read(
+				{ maxBytes: 4_096, stream: standardOutput },
+				trustedOptions,
+			);
 			const directShellOutcome = await client.sandbox.process.wait(
 				{ process: directShellProcess.process, timeoutMs: 5_000 },
 				trustedOptions,
@@ -91,6 +139,20 @@ describeLiveVmIntegration('Gateway runtime sandbox stock VM proof', () => {
 			expect(await harness.readToolVmFile('/work/direct-shell-proof.txt')).toBe(
 				'stock-vm-direct-shell',
 			);
+			expect(streamWrite).toMatchObject({
+				bytesWritten: inputBytes.byteLength,
+				kind: 'written',
+				sequence: 0,
+			});
+			expect(streamClose).toMatchObject({ kind: 'closed', stream: standardInput });
+			expect(interactiveShellOutcome).toMatchObject({
+				kind: 'terminal',
+				outcome: { completion: 'succeeded', kind: 'completed' },
+			});
+			expect(Buffer.from(streamRead.chunk.contentBase64, 'base64').toString('utf8')).toBe(
+				'stream-echo:stock-stream-roundtrip',
+			);
+			expect(streamRead.eof).toBe(true);
 			const workspaceRootfsEvidence = await harness.proveWorkspaceRootfsSeparation();
 			expect(workspaceRootfsEvidence.hostWorkspaceRoot).toMatch(/\/agents\/gateway-agent$/u);
 			expect(workspaceRootfsEvidence.hostToGuestWorkspace).toEqual({

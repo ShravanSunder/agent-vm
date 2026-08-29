@@ -38,7 +38,7 @@ const replacementSession = Object.freeze({
 const trustedContextA = Object.freeze({
 	principal: {
 		agentId: 'agent-a',
-		frameworkIdentity: { agentId: 'openclaw-agent-a', kind: 'openclaw' },
+		frameworkIdentity: { kind: 'hermes', profileName: 'hermes-agent-a' },
 		profileAssignmentRevision: 'assignment-a-1',
 		toolPortalProfileId: 'builder',
 	},

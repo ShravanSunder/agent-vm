@@ -6,11 +6,11 @@ const AUTH_GUEST_PATH_PREFIXES = [
 	'/home/agent/.claude',
 	'/home/agent/.codex',
 	'/home/agent/.gemini',
-	'/home/openclaw/.aws',
-	'/home/openclaw/.claude',
-	'/home/openclaw/.codex',
-	'/home/openclaw/.gemini',
-	'/home/openclaw/.openclaw',
+	'/home/hermes/.aws',
+	'/home/hermes/.claude',
+	'/home/hermes/.codex',
+	'/home/hermes/.gemini',
+	'/home/hermes/.hermes',
 ] as const;
 
 export interface WritableMountPolicy {

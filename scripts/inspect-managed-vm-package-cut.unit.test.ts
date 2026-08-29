@@ -24,9 +24,7 @@ const requiredPackageNames = [
 	'@agent-vm/gateway-lifecycle',
 	'@agent-vm/gondolin-vm-adapter',
 	'@agent-vm/hermes-gateway',
-	'@agent-vm/openclaw-gateway',
 	'@agent-vm/worker-gateway',
-	'@agent-vm/openclaw-agent-vm-plugin',
 	'@agent-vm/agent-vm',
 ] as const;
 
@@ -55,20 +53,12 @@ function completeWorkspace(): readonly WorkspacePackage[] {
 		workspacePackage('@agent-vm/hermes-gateway', {
 			'@agent-vm/gateway-lifecycle': 'workspace:*',
 		}),
-		workspacePackage('@agent-vm/openclaw-gateway', {
-			'@agent-vm/gateway-lifecycle': 'workspace:*',
-		}),
 		workspacePackage('@agent-vm/worker-gateway', {
-			'@agent-vm/gateway-lifecycle': 'workspace:*',
-		}),
-		workspacePackage('@agent-vm/openclaw-agent-vm-plugin', {
 			'@agent-vm/gateway-lifecycle': 'workspace:*',
 		}),
 		workspacePackage('@agent-vm/agent-vm', {
 			'@agent-vm/gondolin-vm-adapter': 'workspace:*',
 			'@agent-vm/hermes-gateway': 'workspace:*',
-			'@agent-vm/openclaw-agent-vm-plugin': 'workspace:*',
-			'@agent-vm/openclaw-gateway': 'workspace:*',
 			'@agent-vm/worker-gateway': 'workspace:*',
 		}),
 	];
@@ -204,6 +194,18 @@ describe('managed VM exact-HEAD package inspector', () => {
 		// Act / Assert
 		expect(() => inspectPackedPackage(input, new Map([[packageManifest.name, '1.2.3']]))).toThrow(
 			'contains removed name @agent-vm/gateway-interface',
+		);
+	});
+
+	it('rejects removed OpenClaw package names in packed artifacts', () => {
+		const packageManifest = manifest('@agent-vm/managed-vm');
+		const input = packedPackage(packageManifest, {
+			declaration:
+				"export type RemovedGateway = import('@agent-vm/openclaw-gateway').OpenClawLifecycle;",
+		});
+
+		expect(() => inspectPackedPackage(input, new Map([[packageManifest.name, '1.2.3']]))).toThrow(
+			'contains removed name @agent-vm/openclaw-gateway',
 		);
 	});
 

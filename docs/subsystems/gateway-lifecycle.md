@@ -2,387 +2,169 @@
 
 [Overview](../README.md) > [Architecture](../architecture/overview.md) > Gateway Lifecycle
 
-The gateway lifecycle abstraction decouples "what a gateway workload needs"
-from "how the controller boots it." Each gateway type (OpenClaw, Worker)
-implements a single `GatewayLifecycle` interface. The lifecycle returns
-backend-neutral workload requirements and process intent. The controller adds
-image, resource, authority, and recovery decisions before passing a neutral
-`ManagedVmCreateRequest` to the injected `ManagedVmFactory`.
+The `gateway-lifecycle` package separates workload-specific requirements from
+controller and VM-provider orchestration. Agent VM supports exactly two Gateway
+types:
 
-```
-                        GatewayLifecycle
-                        (interface)
-                              |
-          +-------------------+-------------------+
-          |                                       |
-   openclawLifecycle                      workerLifecycle
-   (openclaw-gateway)                     (worker-gateway)
-          |                                       |
-          +-------------------+-------------------+
-                              |
-                   gateway-lifecycle-loader.ts
-                   lifecycleByType dispatch map
-                              |
-                        Controller
-```
+- `hermes`: a long-running managed interactive-agent Gateway;
+- `worker`: an on-demand direct-process task Gateway.
 
-Package ownership follows the same split:
+The lifecycle contract produces neutral data. It does not create VMs, resolve
+native Gondolin handles, own controller state, or implement Tool VM leases.
 
-- `@agent-vm/gateway-lifecycle` owns gateway-kind configuration projections,
-  workload/lifecycle intent, process specs, and shared Node policy (with room
-  for equivalent future Python policy).
-- `@agent-vm/managed-vm` owns backend-neutral VM, mount, process, SSH, ingress,
-  image, and owned-directory contracts.
-- `@agent-vm/gondolin-vm-adapter` implements those neutral contracts for the
-  shipping backend. Gateway lifecycle implementations never import it.
+## Contract shape
 
-The application composition root selects Gondolin once and injects narrow
-neutral capabilities. Controller authority -- PID/process identity admission,
-lease ownership, recovery, and destructive termination fencing -- does not move
-into either lifecycle packages or the adapter.
-
----
-
-## GatewayLifecycle interface
-
-Defined in `packages/gateway-lifecycle/src/gateway-lifecycle.ts`.
-
-```
+```text
 GatewayLifecycle
-  |-- buildVmRequirements(options)-> GatewayVmRequirements pure data
-  |-- buildProcessSpec(zone, rs)  -> GatewayProcessSpec  pure data
-  |-- preflightHostState?(zone,sr)-> Promise<void>       secret preflight
-  |-- prepareHostState?(zone, sr) -> Promise<void>       side effects
-  |-- authConfig?                 -> GatewayAuthConfig    static
+  buildVmRequirements(options)
+    -> environment
+    -> host-directory mount intents
+    -> mediated secrets
+    -> tcpHosts
+    -> allowedHosts
+    -> rootfs mode and optional runtime size
+    -> session label
+
+  prepareHostState?(zone, secretResolver)
+
+  executionModel = managed-gateway
+    buildFrameworkServiceBootMetadata(zone)
+    buildFrameworkServiceBootInputs(options)
+    interactiveSsh
+
+  executionModel = direct-process
+    buildProcessSpec(options)
 ```
 
-### buildVmRequirements
+`gatewayTypeValues` is the exhaustive `['hermes', 'worker']` vocabulary.
+`gateway-lifecycle-loader.ts` statically maps those values to
+`hermesLifecycle` and `workerLifecycle`; there is no dynamic framework
+registry or fallback.
 
-Accepts `BuildGatewayVmRequirementsOptions` and returns
-`GatewayVmRequirements`. Pure
-data assembly -- no side effects.  The options carry:
+## Shared VM requirements
 
-| Field              | Type                          | Purpose                                  |
-|--------------------|-------------------------------|------------------------------------------|
-| `controllerPort`   | `number`                      | Host port the controller listens on      |
-| `gatewayCacheDir`  | `string`                      | Per-zone runtime cache directory         |
-| `projectNamespace` | `string`                      | Namespace prefix for session labels      |
-| `resolvedSecrets`  | `Record<string, string>`      | Pre-resolved secret values               |
-| `tcpPool`          | `{ basePort, size }`          | Port range for tool VM SSH tunnels       |
-| `zone`             | `GatewayZoneConfig`           | Full zone configuration                  |
+`buildVmRequirements()` receives the controller-authorized zone, resolved
+secrets, derived runtime/cache roots, TCP-pool shape, and project namespace. A
+lifecycle may project these inputs into:
 
-### buildProcessSpec
+- VM environment and private environment material;
+- host-directory or filtered workspace mounts;
+- HTTP-mediated secrets and audience-filtered egress hosts;
+- synthetic TCP hosts;
+- WebSocket upgrade rules;
+- copy-on-write rootfs sizing;
+- a stable Gateway session label.
 
-Takes the zone config and resolved secrets, returns a `GatewayProcessSpec`.
-Pure data -- describes bootstrap, startup, health checking, and logging.
+The controller remains responsible for validating paths, creating owned host
+directory capabilities, building/selecting images, creating the VM, recording
+exact process identity, publishing ingress, recovery, and cleanup.
 
-### prepareHostState (optional)
+## Hermes implementation
 
-Async hook that runs before the VM boots.  Performs host-side side effects
-such as writing config files or resolving secrets to disk.  Only OpenClaw
-implements this; Worker does not.
+`@agent-vm/hermes-gateway` implements the managed-Gateway branch.
 
-### preflightHostState (optional)
+### Host state
 
-Async hook that resolves host-state secret dependencies without writing host
-state. Protected OpenClaw restarts use this before closing a live gateway so a
-1Password or environment-secret failure does not strand the zone without a VM.
+Before boot, Hermes preflights and materializes its protected home:
 
-### authConfig (optional)
-
-Static property describing how interactive auth works for the gateway type.
-Contains `listProvidersCommand` (shell command that lists auth providers,
-one per line on stdout) and `buildLoginCommand(provider, options)` (shell
-command the CLI runs via SSH with TTY).  The options object carries
-provider-login target details such as agent id, profile id, and device-code.
-Only OpenClaw defines this; Worker has no interactive auth.
-
----
-
-## GatewayVmRequirements
-
-Defined in `packages/gateway-lifecycle/src/gateway-vm-spec.ts`. This is guest
-workload intent, not a provider create request. Image selection, CPU/memory,
-owned host-directory authority, and VM construction remain controller and
-composition responsibilities.
-
-| Field              | Type                            | Purpose                                         |
-|--------------------|---------------------------------|-------------------------------------------------|
-| `environment`      | `Record<string, string>`        | Environment variables injected into the guest    |
-| `mounts`           | `Record<string, ManagedVmMount>` | Backend-neutral host-to-guest filesystem mounts |
-| `mediatedSecrets`  | `Record<string, MediatedSecretSpec>` | Gateway secret-placement intent for later provider-request translation |
-| `tcpHosts`         | `Record<string, string>`        | Guest hostname:port -> host address:port mapping |
-| `allowedHosts`     | `readonly string[]`             | Hostnames the VM is permitted to reach           |
-| `rootfsMode`       | `'readonly' | 'memory' | 'cow'` | Root filesystem strategy (both impls use `cow`)  |
-| `sessionLabel`     | `string`                        | Backend-neutral diagnostic session label         |
-
-Controller `system.json` zones declare audience-scoped `egressHosts`; gateway
-lifecycle code passes only `gateway` and `both` entries into these workload
-requirements. The selected provider translates the resulting neutral request
-to Gondolin policy only at the adapter boundary.
-
-Secrets are split by `splitResolvedGatewaySecrets` based on each zone secret's
-`audience` and `injection` fields. Gateway VMs receive only `gateway` and
-`both` secrets: `'env'` secrets land in `environment`, and
-`'http-mediation'` secrets land in `mediatedSecrets`.
-
----
-
-## GatewayProcessSpec
-
-Defined in `packages/gateway-lifecycle/src/gateway-process-spec.ts`.
-
-| Field              | Type                  | Purpose                                      |
-|--------------------|-----------------------|----------------------------------------------|
-| `bootstrapCommand` | `string`              | Runs once after VM boot, before start        |
-| `startCommand`     | `string`              | Launches the gateway process (backgrounded)  |
-| `healthCheck`      | `GatewayHealthCheck`  | HTTP or command-based health check           |
-| `serviceHealthCheck` | `GatewayHealthCheck` | Optional liveness check for controller health monitors |
-| `guestListenPort`  | `number`              | Port the gateway listens on inside the guest |
-| `logPath`          | `string`              | Guest-side path to the process log file      |
-
-`GatewayHealthCheck` is a discriminated union:
-
-```
-{ type: 'http',    port: number, path: string }
-{ type: 'command', command: string }
+```text
+stateDir/
+  config.yaml
+  profiles/
+    <profileName>/
+      config.yaml
+      framework-owned durable state
 ```
 
-Both current implementations use HTTP health checks.
+Profile directories are controller-selected from `profilesByAgent`. Profile
+`.env` paths are shadowed as temporary filesystems in the VM so secret
+projections do not become durable state. The lifecycle refuses unsafe
+symlinks, path-type mismatches, or unexpected profiles rather than broadening
+authority.
 
----
+### VM projection
 
-## OpenClaw implementation
+Hermes mounts:
 
-Defined in `packages/openclaw-gateway/src/openclaw-lifecycle.ts`.
+- the deployment-authored config directory read-only at `/etc/hermes`;
+- `zoneRuntimeDir/logs` read/write at `/agent-vm/logs`;
+- `gatewayCacheDir` read/write at `/home/hermes/.cache`;
+- `stateDir` through a shadow mount at `/home/hermes/.hermes`.
 
-### prepareHostState
+It derives HTTP egress from zone audience policy, projects runtime-mediated
+secrets without placing raw values in the image, maps Tool VM SSH slots through
+synthetic TCP hosts, and uses a copy-on-write rootfs.
 
-Two host-side writes before VM boot:
+### Managed service boot
 
-1. **Effective config** -- reads the base OpenClaw JSON config, configures
-   `gateway.auth.token` as an env SecretRef for the secret named by
-   `gateway.controlAuth.secret`, and writes the result atomically to
-   `<stateDir>/effective-openclaw.json` with mode 0600. The plaintext gateway
-   token is not written to this file.
+Hermes produces exact managed-framework metadata:
 
-2. **Auth profiles** -- if `gateway.authProfilesByAgent` is configured on the
-   zone, resolves each agent's secret and writes `auth-profiles.json` to
-   `<stateDir>/agents/<agentId>/agent/` with mode 0600. Legacy
-   `authProfilesRef` is still accepted as a shared single-agent fallback and
-   writes only `<stateDir>/agents/main/agent/auth-profiles.json`.
-
-### preflightHostState
-
-Resolves configured auth-profile secrets without writing the corresponding
-`auth-profiles.json` files. This mirrors the secret-resolution part of
-`prepareHostState` for protected restart preflight.
-
-### buildVmRequirements
-
-```
-environment:
-  HOME                  = /home/openclaw
-  OPENCLAW_HOME         = /home/openclaw
-  OPENCLAW_CONFIG_PATH  = /home/openclaw/.openclaw/state/effective-openclaw.json
-  OPENCLAW_STATE_DIR    = /home/openclaw/.openclaw/state
-  OPENCLAW_PLUGIN_STAGE_DIR = /opt/openclaw/plugin-runtime-deps
-  TMPDIR                = /work/tmp
-  TMP                   = /work/tmp
-  TEMP                  = /work/tmp
-  npm_config_cache      = /work/cache/npm
-  pnpm_config_store_dir = /work/cache/pnpm/store
-  PIP_CACHE_DIR         = /work/cache/pip
-  UV_CACHE_DIR          = /work/cache/uv
-  NODE_EXTRA_CA_CERTS   = /run/gondolin/ca-certificates.crt
-  + allowed env-injected secrets, including gateway.controlAuth.secret
-
-mounts:
-  /home/openclaw/.openclaw/config    -> configDirectory  (realfs)
-  /home/openclaw/.openclaw/cache     -> gatewayCacheDir  (realfs)
-  /home/openclaw/.openclaw/state     -> stateDir         (realfs)
-  /agent-vm/logs                     -> zoneRuntimeDir/logs (realfs)
-  /zone           -> zoneFilesDir (realfs)
-
-tcpHosts:
-  tool-N.vm.host:22                  -> 127.0.0.1:<basePort+N>  (per tcpPool)
-
-rootfsMode: cow
+```text
+framework    = hermes
+bootEntry    = hermes-gateway
+clientKind   = hermes-managed-plugin
 ```
 
-The effective config references the configured `gateway.controlAuth.secret`
-through OpenClaw's env SecretRef shape. The gateway VM receives that token as
-an env-injected secret so the daemon can resolve the SecretRef at startup
-without storing the plaintext token in persistent state.
+The Gateway VM contains exactly the common Gateway Runtime service and the
+Hermes framework service. Framework configuration and environment enter through
+the managed boot contract; they are not reconstructed from a second framework
+selector at runtime.
 
-OpenClaw raw env secrets are intentionally narrow. The configured
-`gateway.controlAuth.secret` is allowed by default; additional gateway env
-secrets must be listed in `gateway.rawEnvSecrets`. Provider API tokens should
-use Gondolin `http-mediation` unless the integration cannot be mediated at the
-HTTP boundary. Controller-owned workspace Git credentials never enter the
-Gateway VM environment.
-
-Bundled OpenClaw plugin runtime dependencies are staged under
-`OPENCLAW_PLUGIN_STAGE_DIR`. Target state is image/rootfs-local staging at
-`/opt/openclaw/plugin-runtime-deps`, populated during image build. Do not put
-this under `OPENCLAW_STATE_DIR`: staged plugin `node_modules` trees are
-rebuildable and must not be included in encrypted zone backups.
-
-### Managed framework service
-
-- **environment input**:
-  `/run/agent-vm/managed-gateway/framework.environment.sh`
-- **configuration input**:
-  `/run/agent-vm/managed-gateway/framework-service.json`
-- **start**: the image-owned managed Gateway launcher sources the framework
-  environment input and runs `openclaw gateway --port 18789`
-- **readiness**: HTTP on port 18789, path `/readyz`
-- **service health**: HTTP on port 18789, path `/health`
-- **log path**: `/var/log/agent-vm/openclaw-service.log`
-
-The generated managed OpenClaw image provides
-`/etc/profile.d/openclaw-env.sh` with only the non-secret structural
-environment needed by controller-initiated OpenClaw auth commands. Framework
-secrets remain confined to the protected managed framework environment input.
-
-### authConfig
-
-- **listProvidersCommand**: `openclaw models auth list --format plain`
-- **buildLoginCommand**: `openclaw models auth login --provider '<provider>'`
-
----
+Hermes declares `nativeApprovalPresenter: true`. Its protected interactive SSH
+session opens the Hermes shell environment without enabling the removed
+all-secrets mode.
 
 ## Worker implementation
 
-Defined in `packages/worker-gateway/src/worker-lifecycle.ts`.
+`@agent-vm/worker-gateway` implements the direct-process branch. A Worker zone
+does not start a long-running VM at controller boot. The controller creates one
+task VM when `POST /zones/:zoneId/worker-tasks` is admitted.
 
-### prepareHostState
+Worker lifecycle data includes:
 
-Not implemented.  Worker has no host-side preparation.
+- RealFS task state and Git-directory mounts;
+- rootfs/COW `/work/repos` for hot source/build activity;
+- the private Worker control-session ingress;
+- `WORKER_CONFIG_PATH` and task runtime environment;
+- optional local Worker tarball installation during bootstrap;
+- `agent-vm-worker serve` as the direct process;
+- the Worker HTTP health check.
 
-### buildVmRequirements
+Worker has no managed-framework profile material, Tool VM lease policy, or
+interactive admin shell.
 
-```
-environment:
-  HOME                  = /home/coder
-  NODE_EXTRA_CA_CERTS   = /run/gondolin/ca-certificates.crt
-  AGENT_VM_ZONE_ID      = <zone.id>
-  STATE_DIR             = /state
-  WORKER_CONFIG_PATH    = /state/effective-worker.json
-  WORK_DIR              = /work
-  REPOS_DIR             = /work/repos
-  TMPDIR                = /work/tmp
-  TMP                   = /work/tmp
-  TEMP                  = /work/tmp
-  npm_config_cache      = /work/cache/npm
-  pnpm_config_store_dir = /work/cache/pnpm/store
-  PIP_CACHE_DIR         = /work/cache/pip
-  UV_CACHE_DIR          = /work/cache/uv
-  + env-injected secrets
+## Comparison
 
-mounts:
-  /state                -> task stateDir       (realfs)
-  /gitdirs              -> zoneRuntimeDir task root (realfs)
+| Concern | Hermes | Worker |
+| --- | --- | --- |
+| Execution model | Long-running managed Gateway | Per-task direct process |
+| Startup | Controller starts selected zone | Task submission starts VM |
+| Framework boot | Exact Hermes managed boot contract | None |
+| Host preparation | Protected profile directories | Task runner writes effective config |
+| Tool VMs | Controller-authorized per-agent leases | Not used |
+| Workspace | Selected durable agent workspace reaches Tool VM | VM-local rootfs/COW repos |
+| Interactive SSH | Protected Hermes shell | Unsupported |
+| Rootfs | Copy-on-write | Copy-on-write |
 
-rootfs/COW paths:
-  /work/repos            -> repo files, package installs, builds, tests
-  /work/tmp              -> TMPDIR/TMP/TEMP target
-  /work/cache            -> disposable package-manager cache
+## Secret placement
 
-rootfsMode: cow
-```
+Both lifecycles consume the shared secret-placement contract:
 
-Worker does not use tcpPool slots. Controller/Worker control traffic uses the
-private Worker control session over Gondolin ingress.
+- `injection: "env"` places an explicitly allowed Gateway-audience secret in
+  the runtime environment;
+- `injection: "http-mediation"` gives the VM only a placeholder and allows the
+  host proxy to substitute the real value for declared hosts.
 
-### buildProcessSpec
+Hermes profile-secret projections are a separate, profile-scoped contract. See
+[Secrets and Credentials](secrets-and-credentials.md).
 
-- **bootstrap**: creates `/work/tmp` and `/work/cache/*`, then runs
-  `npm install -g @openai/codex /state/agent-vm-worker.tgz` (conditional on
-  tarball existing in /state)
-- **start**: `cd /work && nohup agent-vm-worker serve --port 18789 --config /state/effective-worker.json --state-dir /state`
-- **healthCheck**: HTTP on port 18789, path `/health`
-- **guestListenPort**: 18789
-- **logPath**: `/tmp/agent-vm-worker.log`
+## Source map
 
-### authConfig
-
-Not implemented.  Worker has no interactive auth.
-
----
-
-## Comparison table
-
-| Aspect                | OpenClaw                                        | Worker                                          |
-|-----------------------|-------------------------------------------------|-------------------------------------------------|
-| **prepareHostState**  | Writes effective config + auth profiles          | None                                            |
-| **authConfig**        | list providers / login command                   | None                                            |
-| **HOME**              | `/home/openclaw`                                 | `/home/coder`                                   |
-| **mounts**            | config, cache, state, logs, zone files          | state + task gitdirs; `/work/repos` is rootfs/COW |
-| **tcpHosts**          | Tool VM SSH + explicit TCP resources             | explicit TCP resources only                    |
-| **bootstrap**         | Shell env file in `/etc/profile.d/`              | `npm install -g` codex + worker tarball         |
-| **startCommand**      | `openclaw gateway --port 18789`                  | `agent-vm-worker serve --port 18789`            |
-| **healthCheck path**  | `/readyz`                                        | `/health`                                       |
-| **serviceHealthCheck path** | `/health`                                 | `/health`                                       |
-| **guestListenPort**   | 18789                                            | 18789                                           |
-| **logPath**           | `/agent-vm/logs/gateway-boot-latest.log`         | `/tmp/agent-vm-worker.log`                      |
-| **rootfsMode**        | `cow`                                            | `cow`                                            |
-| **secret handling**   | Allows only explicit raw env secrets             | Passes gateway env secrets through             |
-
----
-
-## Lifecycle loader
-
-Defined in `packages/agent-vm/src/gateway/gateway-lifecycle-loader.ts`.
-
-The loader is a static dispatch map with compile-time exhaustiveness
-checking:
-
-```typescript
-const lifecycleByType = {
-  worker:   workerLifecycle,
-  openclaw: openclawLifecycle,
-} satisfies Record<string, GatewayLifecycle>;
-```
-
-`satisfies Record<string, GatewayLifecycle>` ensures every value conforms
-to the interface without widening the key type.  The controller calls
-`loadGatewayLifecycle(zone.gateway.type)` and gets back the correct
-implementation.  Adding a new gateway type requires adding an entry here
-and the TypeScript compiler will enforce the contract.
-
----
-
-## Session labels
-
-Defined in `packages/gateway-lifecycle/src/gateway-runtime-contract.ts`.
-
-Two naming conventions for backend-neutral diagnostic session labels:
-
-```
-Gateway:  <projectNamespace>:<zoneId>:gateway
-Tool:     <projectNamespace>:<zoneId>:tool:<tcpSlot>
-```
-
-Built by `buildGatewaySessionLabel` and `buildToolSessionLabel`.  The
-three-segment gateway label uniquely identifies a gateway VM within a
-project.  The four-segment tool label extends this with the TCP slot
-index for tool VMs attached to that gateway.
-
-The valid gateway types are defined as `gatewayTypeValues = ['openclaw', 'worker']`
-with `GatewayType` derived as the union of those literal strings.
-
----
-
-## Source files
-
-| File | Package |
-|------|---------|
-| `packages/gateway-lifecycle/src/gateway-lifecycle.ts` | gateway-lifecycle |
-| `packages/gateway-lifecycle/src/gateway-runtime-contract.ts` | gateway-lifecycle |
-| `packages/gateway-lifecycle/src/gateway-vm-spec.ts` | gateway-lifecycle |
-| `packages/gateway-lifecycle/src/gateway-process-spec.ts` | gateway-lifecycle |
-| `packages/gateway-lifecycle/src/split-resolved-gateway-secrets.ts` | gateway-lifecycle |
-| `packages/openclaw-gateway/src/openclaw-lifecycle.ts` | openclaw-gateway |
-| `packages/worker-gateway/src/worker-lifecycle.ts` | worker-gateway |
-| `packages/agent-vm/src/gateway/gateway-lifecycle-loader.ts` | agent-vm |
+| Source | Owner |
+| --- | --- |
+| `packages/gateway-lifecycle/src/gateway-lifecycle.ts` | Shared lifecycle and zone contracts |
+| `packages/gateway-lifecycle/src/gateway-runtime-contract.ts` | Supported Gateway vocabulary |
+| `packages/agent-vm/src/gateway/gateway-lifecycle-loader.ts` | Static lifecycle composition |
+| `packages/hermes-gateway/src/hermes-lifecycle.ts` | Hermes managed lifecycle |
+| `packages/hermes-gateway/src/hermes-profile-directory-materialization.ts` | Protected Hermes host state |
+| `packages/worker-gateway/src/worker-lifecycle.ts` | Worker direct-process lifecycle |

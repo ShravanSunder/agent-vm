@@ -38,7 +38,7 @@ function gatewaySecret(): ZoneSecretConfig {
 function rawGatewayEnvSecret(): ZoneSecretConfig {
 	return {
 		source: 'environment',
-		envVar: 'OPENCLAW_GATEWAY_TOKEN',
+		envVar: 'TEST_GATEWAY_SECRET',
 		injection: 'env',
 		audience: 'gateway',
 	};
@@ -49,16 +49,14 @@ function createZoneWithSecrets(secrets: Record<string, ZoneSecretConfig>): ZoneC
 		id: 'sunfam',
 		agents: [{ id: 'sun' }, { id: 'mak' }],
 		gateway: {
-			type: 'openclaw',
-			controlAuth: {
-				mode: 'token',
-				secret: 'OPENCLAW_GATEWAY_TOKEN',
-			},
-			imageProfile: 'openclaw',
+			type: 'hermes',
+			profileSecretProjectionsByAgent: { main: {} },
+			profilesByAgent: { main: 'main' },
+			imageProfile: 'hermes',
 			memory: '2G',
 			cpus: 2,
 			port: 18791,
-			config: './config/sunfam/openclaw.json',
+			config: './config/sunfam/hermes.json',
 			stateDir: './state/sunfam',
 			zoneFilesDir: './zone-files/sunfam',
 			zoneRuntimeDir: './runtime/sunfam',
@@ -75,7 +73,7 @@ describe('Tool VM secret selection', () => {
 		const selected = selectToolVmMediatedSecretNamesForAgent({
 			agentId: 'sun',
 			zone: createZoneWithSecrets({
-				OPENCLAW_GATEWAY_TOKEN: rawGatewayEnvSecret(),
+				TEST_GATEWAY_SECRET: rawGatewayEnvSecret(),
 				SHARED_TOKEN: toolSecret({ agentAccess: 'all', envVar: 'SHARED_TOKEN' }),
 				SUN_TOKEN: toolSecret({ agentAccess: ['sun'], envVar: 'SUN_TOKEN' }),
 				MAK_TOKEN: toolSecret({ agentAccess: ['mak'], envVar: 'MAK_TOKEN' }),

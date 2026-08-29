@@ -35,14 +35,16 @@ describe('e2e proof lane plan', () => {
 			'e2e-host-docker',
 			'e2e-host',
 			'e2e-vm',
-			'e2e-vm-managed-gateway',
+			'e2e-hermes',
 			'e2e-vm-mediation',
+			'e2e-worker',
 		]);
 		expect(lanes[0]?.env).toEqual({ AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1' });
 		expect(lanes[1]?.env).toEqual({ AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1' });
 		expect(lanes[2]?.env).toEqual({ AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1' });
 		expect(lanes[3]?.env).toEqual({ AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1' });
 		expect(lanes[4]?.env).toEqual({ AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1' });
+		expect(lanes[5]?.env).toEqual({ AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1' });
 	});
 });
 
@@ -69,8 +71,9 @@ describe('e2e proof lane runner', () => {
 			'start:e2e-host-docker',
 			'start:e2e-host',
 			'start:e2e-vm',
-			'start:e2e-vm-managed-gateway',
+			'start:e2e-hermes',
 			'start:e2e-vm-mediation',
+			'start:e2e-worker',
 		]);
 	});
 
@@ -108,8 +111,9 @@ describe('e2e proof lane runner', () => {
 			'start:e2e-host-docker',
 			'start:e2e-host',
 			'start:e2e-vm',
-			'start:e2e-vm-managed-gateway',
+			'start:e2e-hermes',
 			'start:e2e-vm-mediation',
+			'start:e2e-worker',
 		]);
 	});
 
@@ -135,8 +139,9 @@ describe('e2e proof lane runner', () => {
 			'start:e2e-host-docker',
 			'start:e2e-host',
 			'start:e2e-vm',
-			'start:e2e-vm-managed-gateway',
+			'start:e2e-hermes',
 			'start:e2e-vm-mediation',
+			'start:e2e-worker',
 		]);
 	});
 
@@ -174,8 +179,9 @@ describe('e2e proof lane runner', () => {
 			'finish:e2e-host-docker',
 			'start:e2e-host',
 			'start:e2e-vm',
-			'start:e2e-vm-managed-gateway',
+			'start:e2e-hermes',
 			'start:e2e-vm-mediation',
+			'start:e2e-worker',
 		]);
 	});
 });

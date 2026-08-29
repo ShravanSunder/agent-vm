@@ -14,22 +14,22 @@ inputs:
 outputs:
   cache-hit:
     description: Whether the exact prepared family cache exists.
-    value: ${{ steps.openclaw.outputs.cache-hit || steps.worker.outputs.cache-hit }}
+    value: ${{ steps.hermes.outputs.cache-hit || steps.worker.outputs.cache-hit }}
   primary-key:
     description: Exact family cache key for a later save.
-    value: ${{ steps.openclaw.outputs.cache-primary-key || steps.worker.outputs.cache-primary-key }}
+    value: ${{ steps.hermes.outputs.cache-primary-key || steps.worker.outputs.cache-primary-key }}
 runs:
   using: composite
   steps:
-    - name: Restore prepared OpenClaw image cache
-      id: openclaw
-      if: inputs.family == 'openclaw'
+    - name: Restore prepared Hermes image cache
+      id: hermes
+      if: inputs.family == 'hermes'
       uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
         path: |
-          /tmp/agent-vm-e2e-cache/openclaw
+          /tmp/agent-vm-e2e-cache/hermes
           /tmp/agent-vm-e2e-cache/local-package-tarballs
-        key: agent-vm-e2e-images-v2-openclaw-${{ runner.os }}-${{ inputs.input-hash }}
+        key: agent-vm-e2e-images-v1-hermes-${{ runner.os }}-${{ inputs.input-hash }}
         lookup-only: ${{ inputs.lookup-only }}
 
     - name: Restore prepared Worker image cache

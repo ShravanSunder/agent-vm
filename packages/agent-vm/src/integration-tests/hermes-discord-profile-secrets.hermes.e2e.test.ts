@@ -20,7 +20,7 @@ import {
 	hermesE2eProfileApiServerKey,
 	hermesE2eProfileApiServerKeyEnvironmentName,
 	scaffoldHermesE2eProject,
-	useLocalHermesGatewayImagePackages,
+	materializeLocalHermesGatewayImagePackages,
 	type HermesE2eProject,
 } from './hermes-e2e-harness.js';
 
@@ -604,7 +604,7 @@ describeHermesDiscordProfileSecretsE2e(
 					await writeFile(durableSiblingPath, `durable-${agentId}\n`, 'utf8');
 				}),
 			);
-			await useLocalHermesGatewayImagePackages({
+			await materializeLocalHermesGatewayImagePackages({
 				architecture,
 				profileName: project.zone.gateway.imageProfile,
 				projectRoot: project.tempRoot,

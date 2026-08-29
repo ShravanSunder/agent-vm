@@ -15,17 +15,24 @@ import {
 	mcpPortalConfigSchemaPaths,
 } from '@agent-vm/config-contracts';
 import type { EgressHostConfig, VmAudience } from '@agent-vm/gateway-lifecycle';
-import { z } from 'zod';
 
 import {
 	resolveManagedVmBackendPackageSpec,
 	resolveManagedVmMinimumZigVersion,
 } from '../build/managed-vm-build-tooling.js';
-import { loadJsonConfigFile } from '../config/json-config-file.js';
 import { resolveConfigPath } from '../config/path-resolver.js';
 import { projectNamespaceSchema } from '../config/system-config-identifier-schemas.js';
 import { createSystemConfigSchemaArtifact } from '../config/system-config.js';
 import { buildDefaultProjectNamespace } from '../runtime/project-namespace.js';
+import { resolveCliVersion } from './cli-version.js';
+import {
+	createHermesProfileAssignments,
+	createHermesProfileSecretProjections,
+	createHermesScaffoldImageRecipe,
+	createHermesScaffoldSecrets,
+	renderHermesManagedConfiguration,
+	resolveHermesScaffoldAgentIds,
+} from './hermes-scaffold-recipe.js';
 import {
 	type GatewayType,
 	type HostSystemType,
@@ -68,10 +75,6 @@ export interface ScaffoldAgentVmProjectResult {
 }
 
 interface ScaffoldAgentVmProjectDependencies {
-	readonly copyBundledOpenClawPlugin?: (
-		targetDir: string,
-		profileName: string,
-	) => Promise<'created' | 'skipped'>;
 	readonly getHomeDir?: () => string;
 	readonly resolveManagedVmMinimumZigVersion?: typeof resolveManagedVmMinimumZigVersion;
 }
@@ -90,6 +93,7 @@ interface ScaffoldPathProfile {
 	readonly createLocalRuntimeDirectories: boolean;
 	readonly gatewayConfig: (zoneId: string, gatewayType: GatewayType) => string;
 	readonly gatewayConfigDir: (zoneId: string) => string;
+	readonly gatewayDockerfile: (gatewayType: GatewayType) => string;
 	readonly gatewayBackupDir: (zoneId: string) => string;
 	readonly gatewayBuildConfig: (gatewayType: GatewayType) => string;
 	readonly gatewayOverlay: (gatewayType: GatewayType) => string;
@@ -159,25 +163,11 @@ interface DefaultManagedImageOverlay {
 }
 
 const defaultGatewayIngressPort = 18791;
-const defaultOpenClawExtensionsRootPath = '/home/openclaw/.openclaw/extensions';
-const defaultOpenClawExtensionsPath = '/home/openclaw/.openclaw/extensions/gondolin';
-const defaultOpenClawManagedPackageExtensionsPath = '/pnpm/global/5/node_modules/@openclaw';
-const defaultAgentVmManagedPackageExtensionsPath = '/pnpm/global/5/node_modules/@agent-vm';
-const scaffoldedGatewayPortSystemConfigSchema = z
-	.object({
-		zones: z.array(
-			z.object({
-				id: z.string().min(1),
-				gateway: z.object({
-					port: z.number().int().positive(),
-				}),
-			}),
-		),
-	})
-	.passthrough();
 
-function resolveGatewayConfigFileName(gatewayType: GatewayType): 'worker.jsonc' | 'openclaw.json' {
-	return gatewayType === 'worker' ? 'worker.jsonc' : 'openclaw.json';
+function resolveGatewayConfigFileName(
+	gatewayType: GatewayType,
+): 'worker.jsonc' | 'hermes-managed/config.yaml' {
+	return gatewayType === 'worker' ? 'worker.jsonc' : 'hermes-managed/config.yaml';
 }
 
 const localPathProfile: ScaffoldPathProfile = {
@@ -186,6 +176,7 @@ const localPathProfile: ScaffoldPathProfile = {
 	gatewayConfig: (zoneId, gatewayType) =>
 		`./gateways/${zoneId}/${resolveGatewayConfigFileName(gatewayType)}`,
 	gatewayConfigDir: (zoneId) => `./gateways/${zoneId}`,
+	gatewayDockerfile: (gatewayType) => `../vm-images/gateways/${gatewayType}/Dockerfile`,
 	gatewayBackupDir: (zoneId) => `../backups/${zoneId}`,
 	gatewayBuildConfig: (gatewayType) => `../vm-images/gateways/${gatewayType}/build-config.jsonc`,
 	gatewayOverlay: (gatewayType) => `../vm-images/gateways/${gatewayType}/overlay.jsonc`,
@@ -199,6 +190,7 @@ const podPathProfile: ScaffoldPathProfile = {
 	gatewayConfig: (zoneId, gatewayType) =>
 		`/etc/agent-vm/gateways/${zoneId}/${resolveGatewayConfigFileName(gatewayType)}`,
 	gatewayConfigDir: (zoneId) => `/etc/agent-vm/gateways/${zoneId}`,
+	gatewayDockerfile: (gatewayType) => `/etc/agent-vm/vm-images/gateways/${gatewayType}/Dockerfile`,
 	gatewayBackupDir: () => '/var/agent-vm/backups',
 	gatewayBuildConfig: (gatewayType) =>
 		`/etc/agent-vm/vm-images/gateways/${gatewayType}/build-config.jsonc`,
@@ -219,6 +211,7 @@ const userDirPathProfile: ScaffoldPathProfile = {
 	gatewayConfig: (zoneId, gatewayType) =>
 		`./gateways/${zoneId}/${resolveGatewayConfigFileName(gatewayType)}`,
 	gatewayConfigDir: (zoneId) => `./gateways/${zoneId}`,
+	gatewayDockerfile: (gatewayType) => `../vm-images/gateways/${gatewayType}/Dockerfile`,
 	gatewayBackupDir: (zoneId) => `~/.agent-vm-backups/${zoneId}`,
 	gatewayBuildConfig: (gatewayType) => `../vm-images/gateways/${gatewayType}/build-config.jsonc`,
 	gatewayOverlay: (gatewayType) => `../vm-images/gateways/${gatewayType}/overlay.jsonc`,
@@ -280,7 +273,7 @@ function defaultToolVmImageProfiles(
 		};
 	}
 > {
-	if (gatewayType !== 'openclaw') {
+	if (gatewayType === 'worker') {
 		return {};
 	}
 	return {
@@ -296,10 +289,13 @@ function defaultToolVmImageProfiles(
 	};
 }
 
-function defaultGatewayManagedBase(
-	gatewayType: GatewayType,
-): 'openclaw-gateway' | 'worker-gateway' {
-	return gatewayType === 'openclaw' ? 'openclaw-gateway' : 'worker-gateway';
+function defaultGatewayManagedBase(gatewayType: GatewayType): 'worker-gateway' {
+	if (gatewayType !== 'worker') {
+		throw new Error(
+			'Hermes gateways use a deployment-owned Dockerfile rather than a managed base.',
+		);
+	}
+	return 'worker-gateway';
 }
 
 function defaultManagedImageOverlay(): DefaultManagedImageOverlay {
@@ -320,7 +316,7 @@ function defaultToolVmProfiles(gatewayType: GatewayType): Record<
 		readonly runtimeRootfsSize?: string;
 	}
 > {
-	if (gatewayType !== 'openclaw') {
+	if (gatewayType === 'worker') {
 		return {};
 	}
 	return {
@@ -364,15 +360,22 @@ const defaultSystemConfig = (
 	storageRootDir: pathProfile.storageRootDir,
 	imageProfiles: {
 		gateways: {
-			[gatewayType]: {
-				type: gatewayType,
-				buildConfig: pathProfile.gatewayBuildConfig(gatewayType),
-				source: {
-					kind: 'managedBase',
-					base: defaultGatewayManagedBase(gatewayType),
-					overlay: pathProfile.gatewayOverlay(gatewayType),
-				},
-			},
+			[gatewayType]:
+				gatewayType === 'worker'
+					? {
+							type: gatewayType,
+							buildConfig: pathProfile.gatewayBuildConfig(gatewayType),
+							source: {
+								kind: 'managedBase',
+								base: defaultGatewayManagedBase(gatewayType),
+								overlay: pathProfile.gatewayOverlay(gatewayType),
+							},
+						}
+					: {
+							type: gatewayType,
+							buildConfig: pathProfile.gatewayBuildConfig(gatewayType),
+							dockerfile: pathProfile.gatewayDockerfile(gatewayType),
+						},
 		},
 		toolVms: defaultToolVmImageProfiles(gatewayType, pathProfile),
 	},
@@ -387,30 +390,26 @@ const defaultSystemConfig = (
 				port: defaultGatewayIngressPort,
 				config: pathProfile.gatewayConfig(zoneId, gatewayType),
 				imageProfile: gatewayType,
-				runtimeRootfsSize: gatewayType === 'openclaw' ? '12G' : '8G',
-				ssh: { secretEnv: 'explicit' },
-				...(gatewayType === 'openclaw'
+				runtimeRootfsSize: gatewayType === 'hermes' ? '12G' : '8G',
+				...(gatewayType === 'hermes'
 					? {
-							controlAuth: {
-								mode: 'token',
-								secret: 'OPENCLAW_GATEWAY_TOKEN',
-							},
-							authProfilesByAgent: {},
+							profileSecretProjectionsByAgent: createHermesProfileSecretProjections(agentIds),
+							profilesByAgent: createHermesProfileAssignments(agentIds),
 						}
 					: {}),
 				backupDir: pathProfile.gatewayBackupDir(zoneId),
 			},
-			secrets: defaultSecretsForGatewayType(zoneId, gatewayType, secretsProvider),
+			secrets: defaultSecretsForGatewayType(zoneId, gatewayType, secretsProvider, agentIds),
 			...(gatewayType === 'worker'
 				? { runtimeAuthHints: defaultRuntimeAuthHintsForGatewayType(gatewayType) }
 				: {}),
 			egressHosts: defaultEgressHostsForGatewayType(gatewayType),
-			...(gatewayType === 'openclaw'
+			...(gatewayType === 'hermes'
 				? { defaultToolVmProfile: 'standard', agentToolVmProfiles: {} }
 				: {}),
-			...(gatewayType === 'openclaw'
+			...(gatewayType === 'hermes'
 				? {
-						agents: resolveOpenClawScaffoldAgentIds(agentIds).map((agentId) => ({
+						agents: resolveHermesScaffoldAgentIds(agentIds).map((agentId) => ({
 							id: agentId,
 						})),
 						toolPortal: {
@@ -501,6 +500,7 @@ function defaultSecretsForGatewayType(
 	zoneId: string,
 	gatewayType: GatewayType,
 	secretsProvider: SecretsProvider,
+	agentIds: readonly string[] | undefined,
 ): Record<string, SecretReference> {
 	if (gatewayType === 'worker') {
 		return {
@@ -527,27 +527,7 @@ function defaultSecretsForGatewayType(
 		};
 	}
 
-	return {
-		PERPLEXITY_API_KEY: secretFromShape(
-			{
-				envVar: 'PERPLEXITY_API_KEY',
-				opRef: `op://agent-vm/${zoneId}-perplexity/credential`,
-				injection: 'http-mediation',
-				audience: 'gateway',
-				hosts: ['api.perplexity.ai'],
-			},
-			secretsProvider,
-		),
-		OPENCLAW_GATEWAY_TOKEN: secretFromShape(
-			{
-				envVar: 'OPENCLAW_GATEWAY_TOKEN',
-				opRef: `op://agent-vm/${zoneId}-gateway-auth/password`,
-				injection: 'env',
-				audience: 'gateway',
-			},
-			secretsProvider,
-		),
-	};
+	return createHermesScaffoldSecrets({ agentIds, secretsProvider, zoneId });
 }
 
 function defaultRuntimeAuthHintsForGatewayType(
@@ -605,13 +585,23 @@ function defaultEgressHostsForGatewayType(gatewayType: GatewayType): readonly Eg
 	].map((host) => ({ host, audience: 'gateway' }));
 }
 
-function envVarsForGatewayType(gatewayType: GatewayType, zoneId: string): readonly string[] {
+function envVarsForGatewayType(
+	gatewayType: GatewayType,
+	zoneId: string,
+	agentIds: readonly string[] | undefined,
+): readonly string[] {
 	void zoneId;
 	switch (gatewayType) {
 		case 'worker':
 			return ['GITHUB_TOKEN', 'OPENAI_API_KEY'];
-		case 'openclaw':
-			return ['GITHUB_TOKEN', 'PERPLEXITY_API_KEY', 'OPENCLAW_GATEWAY_TOKEN'];
+		case 'hermes':
+			return [
+				'API_SERVER_KEY',
+				...resolveHermesScaffoldAgentIds(agentIds).flatMap((agentId) => {
+					const suffix = agentId.toUpperCase().replaceAll(/[^A-Z0-9]/gu, '_');
+					return [`HERMES_API_SERVER_KEY_${suffix}`, `DISCORD_BOT_TOKEN_${suffix}`];
+				}),
+			];
 		default: {
 			const exhaustive: never = gatewayType;
 			throw new Error(`Unhandled gateway type: ${String(exhaustive)}`);
@@ -623,6 +613,7 @@ function defaultEnvTemplate(
 	gatewayType: GatewayType,
 	secretsProvider: SecretsProvider,
 	zoneId: string,
+	agentIds: readonly string[] | undefined,
 ): string {
 	switch (secretsProvider) {
 		case '1password':
@@ -636,7 +627,7 @@ function defaultEnvTemplate(
 				'# agent-vm environment configuration (environment-backed secrets)',
 				'# Populate these variables in your runtime (container env, CI, shell, etc.).',
 				'',
-				...envVarsForGatewayType(gatewayType, zoneId).map((name) => `# ${name}=`),
+				...envVarsForGatewayType(gatewayType, zoneId, agentIds).map((name) => `# ${name}=`),
 			];
 			return `${lines.join('\n')}\n`;
 		}
@@ -685,57 +676,6 @@ const defaultToolBuildConfig = (architecture: ImageArchitecture): object => ({
 	},
 });
 
-function formatAgentIdentityName(agentId: string): string {
-	return agentId.charAt(0).toUpperCase() + agentId.slice(1);
-}
-
-const defaultOpenClawScaffoldAgentId = 'default';
-
-function resolveOpenClawScaffoldAgentIds(
-	agentIds: readonly string[] | undefined,
-): readonly string[] {
-	return agentIds && agentIds.length > 0 ? agentIds : [defaultOpenClawScaffoldAgentId];
-}
-
-function defaultOpenClawPortalToolDenyList(
-	_agentId: string,
-	_agentIds: readonly string[],
-): readonly string[] {
-	return [];
-}
-
-function defaultOpenClawAgentsConfig(agentIds: readonly string[] | undefined): object {
-	const resolvedAgentIds = resolveOpenClawScaffoldAgentIds(agentIds);
-	return {
-		defaults: {
-			model: { primary: 'openai/gpt-5.5' },
-			models: {
-				'openai/gpt-5.5': {
-					agentRuntime: { id: 'pi' },
-				},
-			},
-			sandbox: {
-				backend: 'gondolin',
-				mode: 'all',
-				scope: 'agent',
-				workspaceAccess: 'rw',
-			},
-			workspace: '/zone/agents/default',
-		},
-		list: resolvedAgentIds.map((agentId) => ({
-			id: agentId,
-			workspace: `/zone/agents/${agentId}`,
-			identity: { name: formatAgentIdentityName(agentId) },
-			tools: { deny: defaultOpenClawPortalToolDenyList(agentId, resolvedAgentIds) },
-		})),
-	};
-}
-
-function defaultOpenClawMcpPortalServers(agentIds: readonly string[] | undefined): object {
-	void agentIds;
-	return {};
-}
-
 function defaultMcpProviderConfig(): object {
 	return {
 		$schema: mcpPortalConfigSchemaPaths.mcpFromGatewayConfig,
@@ -746,7 +686,7 @@ function defaultMcpProviderConfig(): object {
 
 function defaultToolPortalAgentAssignments(agentIds: readonly string[] | undefined): object {
 	return Object.fromEntries(
-		resolveOpenClawScaffoldAgentIds(agentIds).map((agentId) => [agentId, { profile: 'default' }]),
+		resolveHermesScaffoldAgentIds(agentIds).map((agentId) => [agentId, { profile: 'default' }]),
 	);
 }
 
@@ -762,112 +702,6 @@ function defaultToolPortalConfig(agentIds: readonly string[] | undefined): objec
 			},
 		},
 	};
-}
-
-const defaultOpenClawConfig = (
-	zoneId: string,
-	gatewayIngressPort: number,
-	agentIds?: readonly string[],
-): object => ({
-	gateway: {
-		auth: { mode: 'token' },
-		bind: 'loopback',
-		controlUi: {
-			allowedOrigins: [
-				`http://127.0.0.1:${gatewayIngressPort}`,
-				`http://localhost:${gatewayIngressPort}`,
-			],
-		},
-		http: {
-			endpoints: {
-				chatCompletions: {
-					enabled: true,
-				},
-			},
-		},
-		mode: 'local',
-		port: 18789,
-	},
-	agents: defaultOpenClawAgentsConfig(agentIds),
-	approvals: {
-		plugin: {
-			enabled: true,
-			mode: 'session',
-		},
-	},
-	mcp: {
-		servers: defaultOpenClawMcpPortalServers(agentIds),
-	},
-	tools: {
-		allow: ['*'],
-		elevated: { enabled: false },
-		sandbox: {
-			tools: {
-				alsoAllow: ['web_search', 'web_fetch', 'message', 'group:plugins'],
-			},
-		},
-		web: {
-			fetch: {
-				ssrfPolicy: {
-					allowRfc2544BenchmarkRange: true,
-					allowIpv6UniqueLocalRange: true,
-				},
-			},
-		},
-	},
-	commands: { ownerAllowFrom: [] },
-	session: { dmScope: 'per-channel-peer' },
-	plugins: {
-		load: {
-			paths: [
-				defaultOpenClawExtensionsRootPath,
-				defaultOpenClawExtensionsPath,
-				defaultOpenClawManagedPackageExtensionsPath,
-				defaultAgentVmManagedPackageExtensionsPath,
-			],
-		},
-		allow: ['gondolin', 'memory-core'],
-		slots: { memory: 'memory-core' },
-		entries: {
-			gondolin: {
-				enabled: true,
-				config: {
-					zoneId,
-				},
-			},
-			'memory-core': {
-				enabled: true,
-			},
-		},
-	},
-	channels: {},
-});
-
-async function resolveOpenClawControlUiIngressPort(
-	systemConfigPath: string,
-	zoneId: string,
-): Promise<number> {
-	try {
-		const parsedSystemConfig = await loadJsonConfigFile(systemConfigPath);
-		const parseResult = scaffoldedGatewayPortSystemConfigSchema.safeParse(parsedSystemConfig);
-		if (!parseResult.success) {
-			throw new Error(
-				`Cannot scaffold OpenClaw config for zone '${zoneId}': system config does not define zone gateway ports.`,
-			);
-		}
-		const zone = parseResult.data.zones.find((candidateZone) => candidateZone.id === zoneId);
-		if (!zone) {
-			throw new Error(
-				`Cannot scaffold OpenClaw config for zone '${zoneId}': system config does not define zone '${zoneId}'.`,
-			);
-		}
-		return zone.gateway.port;
-	} catch (error) {
-		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') {
-			return defaultGatewayIngressPort;
-		}
-		throw error;
-	}
 }
 
 function formatJsoncConfig(comment: string, value: unknown): string {
@@ -1038,6 +872,13 @@ async function scaffoldAgentVmProjectInternal(
 	const skipped: string[] = [];
 	const gatewayType = options.gatewayType;
 	const architecture = options.architecture;
+	const hermesImageRecipe =
+		gatewayType === 'hermes'
+			? createHermesScaffoldImageRecipe({
+					agentVmVersion: await resolveCliVersion(),
+					architecture,
+				})
+			: undefined;
 	const overwrite = options.overwrite ?? false;
 	const projectNamespace = projectNamespaceSchema.parse(
 		options.projectNamespace ?? (await buildDefaultProjectNamespace(options.targetDir)),
@@ -1091,7 +932,7 @@ async function scaffoldAgentVmProjectInternal(
 		const envFilePath = path.join(options.targetDir, '.env.local');
 		const envFileStatus = await writeFileIfMissing(
 			envFilePath,
-			defaultEnvTemplate(gatewayType, options.secretsProvider, options.zoneId),
+			defaultEnvTemplate(gatewayType, options.secretsProvider, options.zoneId, options.agents),
 			overwrite,
 		);
 		(envFileStatus === 'created' ? created : skipped).push('.env.local');
@@ -1107,16 +948,8 @@ async function scaffoldAgentVmProjectInternal(
 	);
 	const configStatus = await writeFileIfMissing(
 		configPath,
-		gatewayType === 'openclaw'
-			? `${JSON.stringify(
-					defaultOpenClawConfig(
-						options.zoneId,
-						await resolveOpenClawControlUiIngressPort(systemConfigPath, options.zoneId),
-						options.agents,
-					),
-					null,
-					'\t',
-				)}\n`
+		gatewayType === 'hermes'
+			? renderHermesManagedConfiguration()
 			: formatJsoncConfig(
 					'Human-authored Agent Worker gateway config. Comments are allowed here; /state/effective-worker.json stays strict JSON.',
 					defaultWorkerGatewayConfig(),
@@ -1126,7 +959,7 @@ async function scaffoldAgentVmProjectInternal(
 	(configStatus === 'created' ? created : skipped).push(
 		`config/gateways/${options.zoneId}/${configFileName}`,
 	);
-	if (gatewayType === 'openclaw') {
+	if (gatewayType === 'hermes') {
 		const mcpConfigPath = path.join(
 			options.targetDir,
 			'config',
@@ -1190,24 +1023,42 @@ async function scaffoldAgentVmProjectInternal(
 		}
 	}
 
-	const gatewayOverlayPath = path.join(
-		options.targetDir,
-		'vm-images',
-		'gateways',
-		gatewayType,
-		'overlay.jsonc',
-	);
-	const gatewayOverlayStatus = await writeFileIfMissing(
-		gatewayOverlayPath,
-		formatJsoncConfig(
-			'Human-authored managed gateway image overlay. Comments are allowed here.',
-			defaultManagedImageOverlay(),
-		),
-		overwrite,
-	);
-	(gatewayOverlayStatus === 'created' ? created : skipped).push(
-		`vm-images/gateways/${gatewayType}/overlay.jsonc`,
-	);
+	if (gatewayType === 'worker') {
+		const gatewayOverlayPath = path.join(
+			options.targetDir,
+			'vm-images',
+			'gateways',
+			gatewayType,
+			'overlay.jsonc',
+		);
+		const gatewayOverlayStatus = await writeFileIfMissing(
+			gatewayOverlayPath,
+			formatJsoncConfig(
+				'Human-authored managed gateway image overlay. Comments are allowed here.',
+				defaultManagedImageOverlay(),
+			),
+			overwrite,
+		);
+		(gatewayOverlayStatus === 'created' ? created : skipped).push(
+			`vm-images/gateways/${gatewayType}/overlay.jsonc`,
+		);
+	} else {
+		const gatewayDockerfilePath = path.join(
+			options.targetDir,
+			'vm-images',
+			'gateways',
+			gatewayType,
+			'Dockerfile',
+		);
+		const gatewayDockerfileStatus = await writeFileIfMissing(
+			gatewayDockerfilePath,
+			hermesImageRecipe?.dockerfile ?? '',
+			overwrite,
+		);
+		(gatewayDockerfileStatus === 'created' ? created : skipped).push(
+			`vm-images/gateways/${gatewayType}/Dockerfile`,
+		);
+	}
 
 	const gatewayBuildConfigPath = path.join(
 		options.targetDir,
@@ -1220,14 +1071,14 @@ async function scaffoldAgentVmProjectInternal(
 		gatewayBuildConfigPath,
 		formatJsoncConfig(
 			'Human-authored Gondolin image build config. Comments are allowed here.',
-			defaultGatewayBuildConfig(architecture),
+			hermesImageRecipe?.buildConfig ?? defaultGatewayBuildConfig(architecture),
 		),
 		overwrite,
 	);
 	(gatewayBuildConfigStatus === 'created' ? created : skipped).push(
 		`vm-images/gateways/${gatewayType}/build-config.jsonc`,
 	);
-	if (gatewayType === 'openclaw') {
+	if (gatewayType === 'hermes') {
 		const toolBuildConfigPath = path.join(
 			options.targetDir,
 			'vm-images',
@@ -1314,7 +1165,7 @@ async function scaffoldAgentVmProjectInternal(
 			path.join(storageRootDir, 'controller-runtime'),
 			path.join(zoneRootDir, 'state'),
 			path.join(zoneRootDir, 'runtime'),
-			...(gatewayType === 'openclaw' ? [path.join(zoneRootDir, 'zone-files')] : []),
+			...(gatewayType === 'hermes' ? [path.join(zoneRootDir, 'zone-files')] : []),
 			resolveConfigPath(pathProfile.gatewayBackupDir(options.zoneId), configDir, homeDir),
 		];
 		await Promise.all(

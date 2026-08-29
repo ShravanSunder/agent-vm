@@ -38,7 +38,6 @@ export function createMutableControllerRuntimeReadiness(
 
 export interface EnableSshForZoneOptions {
 	readonly adminToken?: string;
-	readonly secretEnv: 'default' | 'gateway-token' | 'all-secrets';
 }
 
 export interface ExecInZoneOptions {

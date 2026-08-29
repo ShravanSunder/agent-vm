@@ -21,10 +21,10 @@ const expectedCohort = {
 	},
 	frameworkIdentity: {
 		attachmentGeneration: 1,
-		clientKind: 'openclaw-managed-plugin',
+		clientKind: 'hermes-managed-plugin',
 		configuredAgentIds: ['agent-a'],
 		frameworkEpoch: 'framework-1',
-		frameworkKind: 'openclaw',
+		frameworkKind: 'hermes',
 		projectionCohortDigest:
 			'projection-cohort:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 	},
@@ -60,11 +60,7 @@ const expectedCohort = {
 	},
 } satisfies GatewayExpectedAdmissionCohort;
 
-type ConfigurationOnlySerializationInput = Extract<
-	SerializeManagedGatewayBootInputsProps,
-	{ readonly frameworkInputKind: 'configuration-only' }
-> & {
-	readonly openClawControlAuthSecretName: string;
+type TestSerializationInput = SerializeManagedGatewayBootInputsProps & {
 	readonly toolPortalServiceConfig: {
 		readonly controlEndpoint: {
 			readonly listen: {
@@ -79,20 +75,17 @@ type ConfigurationOnlySerializationInput = Extract<
 
 function createSerializationInput(
 	secretCanary = 'not-a-real-secret-canary',
-): ConfigurationOnlySerializationInput {
+): TestSerializationInput {
 	return {
 		cohort: expectedCohort,
-		frameworkConfig: { gateway: { mode: 'local', port: 18_789 } },
+		frameworkConfig: { apiServer: { host: '127.0.0.1', port: 8642 } },
 		frameworkEnvironment: {
+			API_SERVER_KEY: secretCanary,
 			DISCORD_BOT_TOKEN: 'unrelated-framework-secret',
-			OPENCLAW_CONFIG_PATH: '/run/agent-vm/managed-gateway/framework-service.json',
-			OPENCLAW_GATEWAY_TOKEN: secretCanary,
 		},
-		frameworkInputKind: 'configuration-only' as const,
-		openClawControlAuthSecretName: 'OPENCLAW_GATEWAY_TOKEN',
 		mcpConfig: { providers: {}, schemaVersion: 1 },
 		toolPortalEnvironment: {
-			HOME: '/home/openclaw',
+			HOME: '/home/hermes',
 			PATH: '/pnpm:/usr/local/bin:/usr/bin:/bin',
 		},
 		toolPortalServiceConfig: {
@@ -127,27 +120,17 @@ describe('serializeManagedGatewayBootInputs', () => {
 		expect(decodeFiles(inputs.environmentFiles)).toEqual({
 			'framework.environment.sh': {
 				contents:
-					"export DISCORD_BOT_TOKEN='unrelated-framework-secret'\nexport OPENCLAW_CONFIG_PATH='/run/agent-vm/managed-gateway/framework-service.json'\nexport OPENCLAW_GATEWAY_TOKEN='not-a-real-secret-canary'\n",
-				mode: 0o600,
-			},
-			'openclaw-all-secrets.environment.sh': {
-				contents:
-					"export DISCORD_BOT_TOKEN='unrelated-framework-secret'\nexport OPENCLAW_CONFIG_PATH='/run/agent-vm/managed-gateway/framework-service.json'\nexport OPENCLAW_GATEWAY_TOKEN='not-a-real-secret-canary'\n",
-				mode: 0o600,
-			},
-			'openclaw-gateway-token.environment.sh': {
-				contents: "export OPENCLAW_GATEWAY_TOKEN='not-a-real-secret-canary'\n",
+					"export API_SERVER_KEY='not-a-real-secret-canary'\nexport DISCORD_BOT_TOKEN='unrelated-framework-secret'\n",
 				mode: 0o600,
 			},
 			'tool-portal.environment.sh': {
-				contents:
-					"export HOME='/home/openclaw'\nexport PATH='/pnpm:/usr/local/bin:/usr/bin:/bin'\n",
+				contents: "export HOME='/home/hermes'\nexport PATH='/pnpm:/usr/local/bin:/usr/bin:/bin'\n",
 				mode: 0o600,
 			},
 		});
 		expect(decodeFiles(inputs.structuredInputFiles)).toEqual({
 			'framework-service.json': {
-				contents: '{\n\t"gateway": {\n\t\t"mode": "local",\n\t\t"port": 18789\n\t}\n}\n',
+				contents: '{\n\t"apiServer": {\n\t\t"host": "127.0.0.1",\n\t\t"port": 8642\n\t}\n}\n',
 				mode: 0o600,
 			},
 			'mcp.config.json': {
@@ -162,20 +145,6 @@ describe('serializeManagedGatewayBootInputs', () => {
 		});
 		expect(inputs).not.toHaveProperty('directoryPath');
 		expect(inputs).not.toHaveProperty('receiptId');
-	});
-
-	it('keeps Hermes managed scope out of structured configuration inputs', () => {
-		const { openClawControlAuthSecretName: _, ...baseInput } = createSerializationInput();
-		const inputs = serializeManagedGatewayBootInputs({
-			...baseInput,
-			frameworkInputKind: 'hermes-managed-scope',
-		});
-
-		expect(decodeFiles(inputs.structuredInputFiles)).not.toHaveProperty('config.yaml');
-		expect(decodeFiles(inputs.environmentFiles)).not.toHaveProperty('config.yaml');
-		expect(decodeFiles(inputs.environmentFiles)).not.toHaveProperty(
-			'openclaw-gateway-token.environment.sh',
-		);
 	});
 
 	it('rejects unsafe environment and noncanonical JSON before returning either inventory', () => {

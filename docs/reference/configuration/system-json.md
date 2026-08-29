@@ -75,7 +75,7 @@ leaseIdleTtl
 | `projectNamespace` | yes | Lowercase namespace used for deployment identity, generated storage isolation, runtime labels, and cache separation. |
 | `secretsProvider` | when using `source: "1password"` | How the host resolves 1Password-backed secrets. |
 | `githubToken` | no | Host-only token for clone and push. Never enters the VM. |
-| `observability` | no | Host-owned Victoria/OpenTelemetry stack used by opted-in OpenClaw zones. |
+| `observability` | no | Host-owned Victoria/OpenTelemetry stack used by opted-in Hermes zones. |
 
 `githubToken` uses the same secret source shape as zone secrets:
 `{ "source": "environment", "envVar": "..." }`,
@@ -123,7 +123,7 @@ When enabled, `stack.mode` decides stack ownership:
   telemetry scrubbing with
   `stack.scrubbing.responsibility: "external-collector"`.
 
-Per-zone managed OpenClaw and Hermes observability uses Gondolin HTTP mediation.
+Per-zone managed Hermes observability uses Gondolin HTTP mediation.
 The old collector path depended on raw Gondolin `tcpHosts` and must not be
 restored. Enabled zones send framework and common Tool Portal OTLP to a synthetic
 collector host that the controller rewrites to the configured loopback collector
@@ -181,7 +181,7 @@ Example:
 | `controllerStartPolicy` | `degraded` | `degraded` starts the controller when readiness is unavailable; `require-ready` fails after the bounded readiness budget; `off` skips startup checks. No policy starts Docker. |
 | `startupCheckTimeoutMs` | `30000` | Total bounded readiness budget for one startup pass. The collector check uses the health endpoint first and falls back to OTLP HTTP receiver reachability; Victoria services use health endpoints. |
 | `ports.collectorGrpc` | `4317` | Host OTLP gRPC collector port. All observability ports must be unique values from 1 through 65535. |
-| `ports.collectorHttp` | `4318` | Host OTLP HTTP collector port used by OpenClaw diagnostics. |
+| `ports.collectorHttp` | `4318` | Host OTLP HTTP collector port used by managed Gateway diagnostics. |
 | `ports.collectorHealth` | `13133` | Host collector health-check port. |
 | `ports.metrics` | `8428` | Host VictoriaMetrics port. |
 | `ports.logs` | `9428` | Host VictoriaLogs port. |
@@ -345,7 +345,7 @@ The controller derives this exact tree:
 │   └── observability/<projectNamespace>/
 └── <zoneId>/
     ├── state/                          stateDir
-    ├── zone-files/                     zoneFilesDir for OpenClaw and Hermes
+    ├── zone-files/                     zoneFilesDir for Hermes
     └── runtime/                        zoneRuntimeDir
         ├── logs/
         ├── gitdirs/agents/<agentId>/
@@ -408,7 +408,7 @@ controller ownership lock, health evidence, and generated observability files.
 `zoneRuntimeDir` is `<storageRootDir>/<zoneId>/runtime` and stores active
 non-backup runtime artifacts owned by one zone.
 
-Current uses include OpenClaw gateway logs and worker Git metadata:
+Current uses include Hermes Gateway logs and Worker Git metadata:
 
 ```text
 <zoneRuntimeDir>/logs/
@@ -418,18 +418,18 @@ Current uses include OpenClaw gateway logs and worker Git metadata:
 
 Normal `backup create` copies neither runtime root. Worker runtime artifacts are
 task-lifetime data: the agent must
-commit and call `git-push` before task teardown if work must survive. OpenClaw
+commit and call `git-push` before task teardown if work must survive. Hermes
 gateway logs are runtime evidence for post-mortems and performance debugging;
 they persist across gateway VM restarts but are intentionally excluded from
 normal zone backups.
 
 ## Derived zoneFilesDir
 
-`zoneFilesDir` is the derived `<storageRootDir>/<zoneId>/zone-files` managed
-Gateway shared-files and per-agent workspace directory. OpenClaw RealFS-mounts
-the complete directory at `/zone`; for both OpenClaw and Hermes, the controller
-selects each agent workspace from `zoneFilesDir/agents/<agentId>` for its Tool
-VM. The complete directory is included in both OpenClaw and Hermes zone backups.
+`zoneFilesDir` is the derived `<storageRootDir>/<zoneId>/zone-files` Hermes
+per-agent workspace directory. The Gateway VM does not receive a broad mount.
+The controller selects each agent workspace from
+`zoneFilesDir/agents/<agentId>` for its Tool VM. The complete directory is
+included in Hermes zone backups.
 
 Worker gateways do not use `zoneFilesDir`. Their repo files live in VM-local
 `/work/repos/<repoId>`, and their Git metadata lives under `zoneRuntimeDir`.
@@ -441,9 +441,8 @@ the controller derives one durable workspace from
 selected Tool VM.
 
 Managed lease requests do not carry `workMountDir`, `hostWorkMountDir`, or
-other host-path authority. OpenClaw's native `workspaceDir` is validated as
-agent identity evidence at the plugin boundary; trusted system configuration
-selects the actual workspace and optional Git capabilities.
+other host-path authority. Trusted system configuration selects the actual
+workspace and optional Git capabilities.
 For the canonical name/location/storage vocabulary, see
 [Lease Path Vocabulary](../../architecture/storage-model.md#lease-path-vocabulary).
 
@@ -451,32 +450,11 @@ For the canonical name/location/storage vocabulary, see
 Tool VM durable agent workspace: /workspace
 Tool VM rootfs/COW workdir: /work
 Tool VM optional workspace Git database: /gitdirs/workspace.git
-OpenClaw gateway zone files: /zone
+Hermes Gateway broad zone-files mount: none
 ```
 
 For the storage boundary model, see
 [storage-model.md](../../architecture/storage-model.md).
-
-## OpenClaw Channel Defaults
-
-`agent-vm init --type openclaw` scaffolds framework primitives: Gondolin,
-memory-core, VM lifecycle, Tool VM lease plumbing, and runtime auth wiring. It
-does not enable Discord or any other channel-specific surface by default.
-
-Channel config is deployment-owned. Enable channels in
-`config/gateways/<zone>/openclaw.json`, then declare the matching secrets,
-`egressHosts`, and any required `websocketUpgrades` entries in
-`config/system.jsonc`.
-Managed OpenClaw image profiles install known extracted channel packages, such
-as `@openclaw/discord`, from the OpenClaw channel config.
-
-New OpenClaw scaffolds set `approvals.plugin.enabled=true` with
-`approvals.plugin.mode="session"` for OpenClaw-owned plugin approval prompts.
-Managed Tool Portal `calls.requiresApproval` uses the controller-owned approval
-authority: calls produce or resume a controller challenge and dispatch only
-under the resulting reservation or grant. This authority is separate from
-standalone MCP Portal HMAC tokens and from OpenClaw exec approval forwarding.
-Channel-native approver user IDs remain deployment-owned.
 
 ## gateway.ingress
 
@@ -488,16 +466,11 @@ behavior for the gateway VM. Omit it for Gondolin defaults.
 | `upstreamHeaderTimeoutMs` | no | Timeout while waiting for response headers from the guest gateway process. |
 | `upstreamResponseTimeoutMs` | no | Timeout between upstream response body chunks from the guest gateway process. |
 
-agent-vm exposes the OpenClaw gateway through one host-facing Gondolin ingress
-listener at `zones[].gateway.port`. The current OpenClaw gateway route maps `/`
-to the OpenClaw guest gateway port, so the Control UI, `/healthz`, `/readyz`,
-OpenAI-compatible HTTP endpoints, SSE streaming, and WebSocket traffic share the
-same route.
-
-OpenClaw startup waits on `/health` service liveness. Explicit zone health
-probes use `/readyz`. The controller's periodic gateway-service monitor also
-uses `/health` as service liveness so channel or provider readiness degradation
-can be reported without automatically treating the gateway VM process as dead.
+agent-vm exposes one host-facing Gondolin ingress listener at
+`zones[].gateway.port`. For a managed Hermes Gateway, the controller first
+publishes only the private Tool Portal control route and admits any framework
+root route atomically with the current Gateway cohort. Containment or
+replacement removes those routes before successor admission.
 
 agent-vm keeps Gondolin response buffering disabled for gateway ingress so
 streaming responses can pass through incrementally. Long-running non-streaming
@@ -512,8 +485,7 @@ ingress.
 
 ## Managed Gateway Tool Portal Defaults
 
-Managed OpenClaw gateway images install `@agent-vm/openclaw-agent-vm-plugin`,
-which registers the `gondolin` plugin. The `gondolin` plugin owns the managed
+Managed Hermes uses its Python Gateway Runtime adapter to expose the managed
 Tool Portal native tools:
 
 - `tool_portal_list`
@@ -521,12 +493,13 @@ Tool Portal native tools:
 - `tool_portal_describe`
 - `tool_portal_call`
 
-New OpenClaw scaffolds allow and enable `gondolin` and do not enable a separate
-`mcp-portal` plugin. Managed Tool Portal supports both `calls.withoutApproval`
-and controller-authorized `calls.requiresApproval` selectors.
+Hermes scaffolds use the managed adapter and do not enable a separate
+model-visible MCP Portal plugin. Managed Tool Portal supports both
+`calls.withoutApproval` and controller-authorized `calls.requiresApproval`
+selectors.
 
 The selected managed image starts one common Tool Portal service process beside
-one OpenClaw or Hermes framework process. The framework integration is a thin
+one Hermes framework process. The framework integration is a thin
 client: it authenticates native agent/profile identity and uses the service's
 private UDS. ToolPortalService, hosted by the common sibling, owns capability
 policy, controller bindings, per-agent SSH, active use, and the SSH Sandbox API.
@@ -547,10 +520,9 @@ key may differ from its public `namespace`. A `controller_execution` or
 Portal namespace policy. MCP-backed Tool Portal policy rejects a duplicate
 `discovery` field rather than overriding or merging the provider value.
 
-Managed OpenClaw does not generate OpenClaw MCP server entries for MCP Portal.
-The `gondolin` plugin registers the four Tool Portal native tools directly and
-calls the Tool Portal service over the private UDS. Hermes uses the same service
-and UDS contract through its managed adapter.
+Managed Hermes does not generate framework-native MCP server entries for MCP
+Portal. Its adapter registers the four Tool Portal operations and calls the
+Tool Portal service over the private UDS.
 Operator-authored upstream MCP servers live in `mcp.config.jsonc`; agent-vm
 loads the sibling `tool-portal.config.jsonc` as managed policy authority and
 materializes effective Gateway config that turns configured 1Password secrets
@@ -620,14 +592,14 @@ Portal discovery, not namespace prompt text.
 Any managed namespace that effectively admits at least one tool through
 `calls.requiresApproval` requires `zones[].approvalAccess`. Static validation
 and gateway preflight fail closed when that authority is absent. No
-`approvalAccess` default is inferred from OpenClaw plugin approvals,
-`adminAccess`, or standalone MCP Portal auth.
+`approvalAccess` default is inferred from `adminAccess`, standalone MCP Portal
+auth, or any other authority.
 
 Every `approvalAccess.approvers[]` entry is exactly
 `{ kind: "managed_gateway", approverId }`. Secrets, credentials, bearer
 authorities, and other variants are rejected. Only Hermes declares the native
-presenter capability in this release; OpenClaw and Worker zones reject managed
-approval authority rather than falling back to another approval surface. The
+presenter capability in this release; Worker zones reject managed approval
+authority rather than falling back to another approval surface. The
 controller exposes no external approval HTTP routes. Hermes's separately
 authenticated in-VM agent-message API uses `API_SERVER_KEY` and is not an
 approval authority.
@@ -770,7 +742,7 @@ managed reader.
 
 This namespace policy governs the Capability API (`list`, `search`, `describe`,
 and `call`). It does not turn the managed SSH Sandbox API into a catalog of RPC
-capabilities. OpenClaw SandboxBackend and Hermes BaseEnvironment operations use
+capabilities. Hermes BaseEnvironment operations use
 the separate `GatewayRuntimeClient.sandbox` API for authenticated environment,
 shell, filesystem, process, stream, and terminal access. ToolPortalService owns
 both APIs and may use the same current agent binding and SSH connection after
@@ -885,50 +857,11 @@ Example provider-secret presentation:
 }
 ```
 
-Local OpenClaw e2e coverage uses a fake Streamable HTTP MCP provider and the
-controller e2e harness `tcpHostsOverride` path to make that host-side provider
-reachable from inside the OpenClaw gateway VM. The e2e proof does not require
-DeepWiki, Tavily, 1Password, or real upstream MCP credentials; credentialed
-upstream providers belong in an explicit deployment e2e outside the default
-local suite.
-
-During the Socket.IO control-plane hard cutover,
-`agent-vm init --type openclaw --openclaw-agents sun,shravan` scaffolds managed
-OpenClaw agents with `/zone/agents/<id>` workspaces. Managed OpenClaw zones may
-declare multiple trusted agents in `zones[].agents` when OpenClaw `agents.list`,
-Tool Portal assignments, MCP-backed capability bindings, per-agent auth/profile
-files, and Tool VM profile policy stay aligned. The scaffold deliberately does
-not create channel bindings or Discord guild allowlists because those are
-deployment-owned IDs.
-
-OpenClaw `web_fetch` in Gondolin deployments needs fake-IP SSRF policy for
-mediated DNS and proxy-style environments:
-
-```json
-{
-  "tools": {
-    "web": {
-      "fetch": {
-        "ssrfPolicy": {
-          "allowRfc2544BenchmarkRange": true,
-          "allowIpv6UniqueLocalRange": true
-        }
-      }
-    }
-  }
-}
-```
-
-This is separate from `zones[].egressHosts`. The SSRF policy lets OpenClaw
-connect to Gondolin's synthetic addresses; `egressHosts` still decides which
-real destinations Gondolin may fetch.
-
-Agent-vm's Gondolin adapter uses RFC2544 synthetic IPv4 answers and
-`::ffff:198.18.0.1` for synthetic AAAA when `tcpHosts` are enabled. That value
-is accepted by OpenClaw when `allowRfc2544BenchmarkRange` is true. Do not use
-`browser.ssrfPolicy.allowedHostnames` as the first fix for Discord media; that
-exact-host bypass skips private-IP checks for the named host and is broader
-than the adapter-level synthetic DNS fix.
+Local managed Tool Portal integration uses deterministic upstream providers;
+credentialed upstream providers belong in an explicit deployment E2E. Hermes
+zones may declare multiple trusted agents when `zones[].agents`,
+`profilesByAgent`, Tool Portal assignments, capability bindings, profile-secret
+projections, and Tool VM profile policy stay aligned.
 
 ## WebSocket egress
 
@@ -960,20 +893,7 @@ Gondolin's HTTP upgrade bridge. The legacy raw WebSocket TCP passthrough config 
 removed; stale configs should delete it and declare explicit WebSocket upgrade
 policy plus matching `egressHosts`.
 
-Gondolin `allowedInternalHosts` is also not the first fix for this symptom. It
-relaxes Gondolin HTTP hook internal-IP blocking for matching hostnames, while
-the observed Discord media failure happens earlier in OpenClaw's own SSRF guard
-as it validates synthetic DNS answers.
-
-The scaffold also includes `tools.sandbox.tools.alsoAllow` for `web_search`,
-`web_fetch`, `message`, and `group:plugins`. That does not configure a search
-provider by itself; it prevents sandbox tool policy from hiding web tools after
-the deployment adds a provider, keeps OpenClaw's `message_tool_only` group reply
-mode usable by exposing the explicit channel reply tool, and exposes optional
-plugin-owned tools such as Tool Portal's `tool_portal_*` tools to sandboxed
-agents.
-
-OpenClaw Tool VMs mount the selected filtered durable agent workspace at
+Hermes Tool VMs mount the selected filtered durable agent workspace at
 `/workspace`; `/work` is rootfs/COW hot execution space and the default cwd.
 Worker task VMs keep repo edits under `/work/repos/<repoId>`; Worker `/work`
 remains per-task rootfs/COW.
@@ -1009,45 +929,24 @@ The deployment overlay is intentionally small; use it for extra apt packages,
 copy steps, post-base commands, and explicit per-image package overrides.
 `agent-vm build` regenerates Dockerfiles under
 `cacheDir/generated-dockerfiles/...`; do not edit generated Dockerfiles by hand.
-OpenClaw gateway deployments should omit `packageOverrides` when the managed
-default package set is acceptable. Use `packageOverrides.openclaw` only for
-deliberate non-default runtime package pins, such as a temporary rollback or
-forward test of a specific `@openclaw/*` package. Use
-`packageOverrides.npm` for direct non-OpenClaw npm packages such as
-`@openai/codex` on the OpenClaw and worker gateway images, and
+Managed Worker and Tool VM deployments should omit `packageOverrides` when the
+managed default package set is acceptable. Use `packageOverrides.npm` for
+direct npm packages such as `@openai/codex`, and
 `packageOverrides.pnpm` for exact transitive override
 floors such as `undici`. Overlay package pins override managed default package
-entries by package name during Dockerfile generation. If the overlay pins
-`openclaw@X` and an `@openclaw/*@Y` package with a different version, build
-output warns before Docker and Gondolin work begin.
+entries by package name during Dockerfile generation.
 
 Managed package defaults are recorded under each base image in the installed
 package's `managed-images.json`, then exposed in the generated Dockerfile plan
 with source labels such as
 `overrides undici@8.5.0[managed-images.json/packageOverrides.pnpm]`.
-Remove those managed defaults only after fresh package evidence shows OpenClaw
-and required `@openclaw/*` packages no longer resolve the vulnerable dependency.
-
-Example non-default OpenClaw runtime package pin:
-
-```jsonc
-{
-	"schemaVersion": 1,
-	"packageOverrides": {
-		"openclaw": [
-			"@openclaw/discord@2026.7.1"
-		],
-    "pnpm": {
-      "undici": "8.5.0"
-    }
-  }
-}
-```
+Remove managed defaults only after fresh package evidence proves the retained
+runtime no longer resolves the affected dependency.
 
 Legacy `dockerfile` profiles are reported by `agent-vm doctor`; migrate them
 with `agent-vm migrate images`.
 
-OpenClaw tool VMs use `imageProfiles.toolVms`. Worker-only configs normally
+Hermes Tool VMs use `imageProfiles.toolVms`. Worker-only configs normally
 omit tool VM image profiles.
 
 ## zones
@@ -1109,45 +1008,38 @@ base branches to prepare; they do not define protected branch policy. If a
 worker task repo has no matching `repoPushPolicies[].repoUrl`, controller-owned
 push for that repo fails closed before Git I/O.
 
-Worker zones do not declare Tool VM profile fields. OpenClaw zones must declare
+Worker zones do not declare Tool VM profile fields. Hermes zones must declare
 `defaultToolVmProfile` and `agentToolVmProfiles`, even when the agent mapping is
 empty. This makes the Tool VM image policy visible in generated configs instead
 of hiding it behind defaults.
 
-Managed OpenClaw and Hermes zones receive a derived `zoneFilesDir` because they
-own durable per-agent workspaces. OpenClaw also mounts that path at `/zone`;
-Hermes does not expose a broad zone root to its Gateway:
+Hermes zones receive a derived `zoneFilesDir` because they own durable per-agent
+workspaces. Hermes does not expose a broad zone root to its Gateway:
 
 ```json
 {
   "id": "shravan",
   "gateway": {
-    "type": "openclaw",
+    "type": "hermes",
     "memory": "4G",
     "cpus": 4,
     "port": 18791,
-    "config": "./gateways/shravan/openclaw.json",
-    "imageProfile": "openclaw",
+    "config": "./gateways/shravan/config.yaml",
+    "imageProfile": "hermes",
     "runtimeRootfsSize": "12G",
     "backupDir": "../backups/shravan",
     "backupIdentity": {
       "source": "environment",
       "envVar": "AGE_BACKUP_IDENTITY"
     },
-    "authLogin": {
-      "defaultAgent": "main",
-      "providers": {
-        "openai": {
-          "profileIds": [
-            "openai-codex:work@example.com",
-            "openai-codex:personal@example.com",
-            "openai-codex:admin@example.com"
-          ]
-        }
-      }
+    "profilesByAgent": {
+      "shravan": "shravan"
     },
-    "authProfilesByAgent": {
-      "shravan": { "source": "environment", "envVar": "SHRAVAN_AUTH_PROFILES" }
+    "profileSecretProjectionsByAgent": {
+      "shravan": {
+        "API_SERVER_KEY": "HERMES_PROFILE_API_KEY",
+        "DISCORD_BOT_TOKEN": "HERMES_DISCORD_BOT_TOKEN"
+      }
     }
   },
   "agents": [{ "id": "shravan" }],
@@ -1156,14 +1048,11 @@ Hermes does not expose a broad zone root to its Gateway:
 }
 ```
 
-New OpenClaw scaffolds set `agents.defaults.workspace` to
-`/zone/agents/default`. This keeps authored agent workspace files
-under `zoneFilesDir` while leaving `/zone` itself available for shared
-zone-level notes and reference material. During the Socket.IO control-plane hard
-cutover, same-zone multi-agent OpenClaw remains supported through declared-agent
-parity and controller-vetted caller context. Use separate zones only when
-gateway lifecycle, channel, secret, or zone-files isolation matters more than
-sharing the gateway VM.
+Each declared Hermes agent has one durable workspace under
+`zoneFilesDir/agents/<agentId>`. Same-zone multi-agent Hermes remains isolated
+through exact declared-agent/profile/projection parity and controller-vetted
+caller context. Use separate zones when Gateway lifecycle, secret, or
+zone-files isolation matters more than sharing the Gateway VM.
 
 `agentToolVmProfiles` values must reference entries in top-level `toolVmProfiles`.
 Unmapped agents use the zone fallback `defaultToolVmProfile`.
@@ -1179,11 +1068,10 @@ backup.
 
 ## zones[].observability
 
-`zones[].observability` opts a managed OpenClaw or Hermes zone into common
+`zones[].observability` opts a managed Hermes zone into common
 framework and Tool Portal OpenTelemetry export through the host collector.
-Worker zones reject enabled zone observability. OpenClaw diagnostics use
-mediated OTLP HTTP instead of raw collector `tcpHosts`; Hermes producer wiring
-uses the same controller-configured collector boundary.
+Worker zones reject enabled zone observability. Hermes producers use mediated
+OTLP HTTP through the controller-configured collector boundary.
 
 Accepted shape:
 
@@ -1192,7 +1080,7 @@ Accepted shape:
   "zones": [
     {
       "id": "shravan",
-      "gateway": { "type": "openclaw" },
+      "gateway": { "type": "hermes" },
       "observability": {
         "enabled": true,
         "services": {
@@ -1210,9 +1098,6 @@ Accepted shape:
             "sampleRate": 1,
             "flushIntervalMs": 10000
           }
-        },
-        "openclaw": {
-          "diagnosticsFlags": ["scheduler.debug"]
         }
       }
     }
@@ -1223,7 +1108,7 @@ Accepted shape:
 | Field | Default | Meaning |
 | --- | --- | --- |
 | `enabled` | required | `true` enables the selected managed framework and common Tool Portal producers. Requires `host.observability.enabled=true`. |
-| `services.framework.logs` | `true` | Enables selected OpenClaw or Hermes framework log export. |
+| `services.framework.logs` | `true` | Enables Hermes framework log export. |
 | `services.framework.metrics` | `true` | Enables selected framework metric export. |
 | `services.framework.traces` | `true` | Enables selected framework trace export. |
 | `services.framework.sampleRate` | `1` | Selected framework trace sample rate from 0 to 1. |
@@ -1233,12 +1118,9 @@ Accepted shape:
 | `services.toolPortal.traces` | `true` | Enables common Tool Portal trace export. |
 | `services.toolPortal.sampleRate` | `1` | Tool Portal trace sample rate from 0 to 1. |
 | `services.toolPortal.flushIntervalMs` | `10000` | Tool Portal exporter flush interval. |
-| `openclaw.diagnosticsFlags` | `[]` | Narrow OpenClaw debug categories to enable. Broad or content-capturing flags are rejected. |
-
-`openclaw` is an optional framework-specific extension and is rejected for a
-Hermes zone. Producer service names are controller-fixed and cannot be authored:
-OpenClaw uses `agent-vm-openclaw`, Hermes uses `agent-vm-hermes`, and the common
-Tool Portal uses `agent-vm-tool-portal`. Framework and Tool Portal identities
+Producer service names are controller-fixed and cannot be authored: Hermes uses
+`agent-vm-hermes`, and the common Tool Portal uses `agent-vm-tool-portal`.
+Framework and Tool Portal identities
 cannot be swapped.
 
 Every producer receives its own fixed source policy
@@ -1246,65 +1128,8 @@ Every producer receives its own fixed source policy
 admission limits: export batches contain at most 64 records, each signal queues
 at most 256 records, and each record is at most 65,536 bytes. The batch bound
 must not exceed the queue bound. These safety fields are lifecycle contracts,
-not authorable zone fields. OpenClaw effective diagnostics therefore keep
-content capture disabled. Collector scrubbing remains required defense in depth.
-
-The old raw collector `tcpHosts` implementation is intentionally not available
-for managed OpenClaw zones in this cutover. Do not inject
-`OPENCLAW_DIAGNOSTICS` through `gateway.rawEnvSecrets` to recreate it. Authored
-OpenClaw `logging.redactSensitive` must stay enabled; disabling forms such as
-`false`, `off`, `disabled`, and `0` are rejected.
-
-`gateway.authProfilesByAgent` writes OpenClaw auth profiles to
-`<stateDir>/agents/<agentId>/agent/auth-profiles.json` before the gateway VM
-boots. Configure per-agent entries only when agents intentionally keep separate
-OpenClaw auth stores. For the shared OpenClaw provider auth model, configure
-`gateway.authLogin.defaultAgent` and refresh the configured provider profiles
-for that agent; doctor validates that shared auth owner instead of requiring
-duplicate auth material for every OpenClaw agent. `gateway.authProfilesRef` and
-`gateway.authProfilesByAgent` support `environment`, `1password`, and `config`
-sources. Inline `config` values here are plaintext OpenClaw auth profiles and
-should be limited to local or test deployments.
-
-`gateway.authLogin` is separate from auth material. It stores only the operator
-profile ids used by `agent-vm auth openclaw login <provider>`:
-
-- `defaultAgent` is the OpenClaw agent whose isolated auth store receives
-  configured profile logins when the CLI does not pass `--agent`.
-- `providers.<provider>.profileIds` is the ordered list of profile ids that
-  `--all-configured-profiles` should refresh for that provider.
-
-For the common refresh path, run:
-
-```bash
-agent-vm auth openclaw login openai \
-  --zone shravan \
-  --all-configured-profiles \
-  --device-code
-```
-
-The helper opens one OpenClaw login per configured profile id and then verifies
-the ids are listed by OpenClaw for the target agent. For one-off profile
-creation or testing, pass `--agent <agentId>` and one or more
-`--profile-id <profileId>` values. Use `--dry-run` to print the resolved plan
-without opening SSH.
-
-`gateway.controlAuth` is required for OpenClaw gateways and names the
-gateway env secret OpenClaw uses to authenticate controller API calls. The
-referenced secret must exist in `zone.secrets` with `injection: "env"` and
-`audience: "gateway"`. New scaffolds use:
-
-```json
-"controlAuth": { "mode": "token", "secret": "OPENCLAW_GATEWAY_TOKEN" }
-```
-
-`gateway.rawEnvSecrets` is the explicit escape hatch for other OpenClaw secrets
-that must reach the gateway VM as raw environment variables. Other provider or
-service tokens should use `http-mediation` unless the integration cannot work
-with HTTP mediation, such as a non-HTTP or websocket credential flow. The
-managed workspace Git push path is controller-owned over HTTPS through the
-`workspace_git_push` Tool Portal host action; do not add a workspace Git push
-token to the gateway VM.
+not authorable zone fields. Collector scrubbing remains required defense in
+depth.
 
 For managed Hermes profiles, `gateway.profileSecretProjectionsByAgent` maps
 each declared agent id to explicit profile environment targets and existing
@@ -1388,8 +1213,8 @@ not rebuilt for this value; Gondolin grows the writable root disk and runs
 The important path model is:
 
 ```text
-OpenClaw gateway durable zone files:
-  guest /zone  ->  host derived zoneFilesDir
+Hermes durable agent workspaces:
+  host derived zoneFilesDir/agents/<agentId>
 
 Tool VM selected work mount:
   guest /workspace -> filtered host zoneFilesDir/agents/<agentId>
@@ -1409,9 +1234,9 @@ clear host dependency error instead of guessing ownership.
 
 ## toolVmProfiles
 
-`toolVmProfiles` names the Tool VM runtime profiles available to OpenClaw
-zones. The name is intentionally explicit: these are profiles for disposable
-Tool VMs, not gateway profiles and not OpenClaw user profiles.
+`toolVmProfiles` names the Tool VM runtime profiles available to Hermes zones.
+The name is intentionally explicit: these are profiles for disposable Tool VMs,
+not Gateway or Hermes framework profiles.
 
 ```json
 {
@@ -1497,7 +1322,7 @@ only for local or intentionally checked-in test credentials.
 
 The same secret source union is also used by host/controller fields such as
 `host.githubToken`, `zones[].adminAccess.secret`,
-`zones[].gateway.authProfilesRef`, and `zones[].gateway.authProfilesByAgent`.
+`zones[].gateway.backupIdentity`.
 Inline `config` on those fields is still
 plaintext in the authored config and may include host write credentials or
 controller admin credentials, so treat it as a local/test convenience rather
@@ -1517,9 +1342,9 @@ when `injection` is `http-mediation`; in that case the controller reads the
 environment variable and Gondolin mediates the value.
 
 For `http-mediation` secrets with `audience: "tool-vm"` or `"both"`,
-`agentAccess` is required, and the OpenClaw zone must declare at least one
+`agentAccess` is required, and the Hermes zone must declare at least one
 `zones[].agents[].id` so the access rule has an agent set to evaluate. Use
-`"all"` to make the mediated placeholder available to every declared OpenClaw
+`"all"` to make the mediated placeholder available to every declared Hermes
 agent in the zone, or a non-empty array such as `["sun"]` to scope placeholder
 delivery to specific declared agents. The controller selects the allowed secret
 names for the requesting `agentId` before resolving secret refs, so an
@@ -1540,10 +1365,10 @@ Example Tool VM-mediated secret scoped to one agent:
 }
 ```
 
-OpenClaw zones allow raw gateway env secrets only when the secret is referenced
-by `gateway.controlAuth.secret` or is listed in `gateway.rawEnvSecrets`. This
-keeps provider API tokens on the mediated path by default and makes every
-raw-env exception visible in deployment config.
+Hermes raw profile environment values are limited to the explicit
+`profileSecretProjectionsByAgent` contract. This keeps provider API tokens on
+the mediated path by default and makes every raw-env exception visible in
+deployment config.
 
 Secret names must be valid environment variable identifiers. This keeps
 gateway env-file rendering and runtime placeholder names safe and predictable.
@@ -1554,7 +1379,7 @@ Worker zones may declare `runtimeAuthHints` to describe mediated service tokens
 to the worker agent. These hints generate worker runtime instructions only; they
 do not mount config files and do not expose real secret values. They name the
 service, mediated host list, tool names, and placeholder env var so the worker
-agent can use normal tooling without guessing which token exists. OpenClaw zones
+agent can use normal tooling without guessing which token exists. Hermes zones
 must not declare `runtimeAuthHints`; Tool VM auth is controlled by Tool
 VM-audience mediated secrets and `egressHosts`.
 
@@ -1597,7 +1422,7 @@ layer.
 ## tcpPool
 
 The TCP pool reserves host ports for VM networking. Agent Worker Gateway uses the
-controller mapping. OpenClaw Gateway also uses it for tool VM SSH slots.
+controller mapping. Hermes Gateway uses it for Tool VM SSH slots.
 
 ```json
 {
@@ -1614,8 +1439,8 @@ zones without exhausting Tool VM SSH slots immediately.
 ## leaseIdleTtl
 
 `leaseIdleTtl` is optional. When omitted, every lease uses the default 100 minute
-idle timeout. Managed OpenClaw Tool VM leases use one TTL policy for all agents;
-OpenClaw scope keys are not part of the agent-vm lease model and cannot change
+idle timeout. Managed Hermes Tool VM leases use one TTL policy for all agents;
+framework scope keys are not part of the Agent VM lease model and cannot change
 TTL selection.
 Clients may request `idleTtlMs` on a lease request, bounded by `minRequestedMs`
 and `maxRequestedMs`:
@@ -1640,34 +1465,30 @@ The schema rejects:
 - Legacy `allowedHosts`; use `egressHosts` with explicit `audience`.
 - Zone secrets without explicit `audience`.
 - Env-injected zone secrets with non-gateway audience or declared `hosts`.
-- OpenClaw env-injected zone secrets not listed in `gateway.rawEnvSecrets`,
-  except the configured `gateway.controlAuth.secret`.
+- Hermes profile-secret projections that reference missing sources, reserved
+  sources, or forbidden targets.
 - Tool VM-reaching mediated secrets without `agentAccess: "all"` or a non-empty
   agent id array.
-- Tool VM-reaching mediated secrets in OpenClaw zones with no declared
+- Tool VM-reaching mediated secrets in Hermes zones with no declared
   `zones[].agents`.
 - Tool VM-reaching mediated secrets whose `agentAccess` array references an
   unknown `zones[].agents[].id`.
-- Worker zones declaring `agentAccess`, because worker zones do not boot
-  OpenClaw Tool VMs.
+- Worker zones declaring `agentAccess`, because Worker zones do not boot Tool
+  VMs.
 - Mediated secret hosts not declared in `egressHosts` for the same audience.
 - WebSocket upgrade hosts not declared in `egressHosts` for the same audience.
-- OpenClaw zones without `gateway.controlAuth` or without the referenced
-  gateway-only env secret.
 - Zones referencing missing gateway image profiles.
 - Zone gateway type mismatches against the selected image profile.
-- OpenClaw zones declaring `runtimeAuthHints`.
-- OpenClaw zone observability without `host.observability.enabled=true`.
+- Hermes zones declaring `runtimeAuthHints`.
+- Hermes zone observability without `host.observability.enabled=true`.
 - Worker zone observability.
-- OpenClaw observability with broad/content-capturing diagnostics flags or raw
-  `OPENCLAW_DIAGNOSTICS`.
 - Worker `runtimeAuthHints` referencing missing secrets, non-mediated secrets,
   Tool VM-only secrets, or hosts not listed on the referenced secret.
-- OpenClaw zones without `defaultToolVmProfile`.
-- OpenClaw zones without explicit `agentToolVmProfiles`.
+- Hermes zones without `defaultToolVmProfile`.
+- Hermes zones without explicit `agentToolVmProfiles`.
 - Worker zones declaring Tool VM profile fields.
 - `agentToolVmProfiles` values referencing missing `toolVmProfiles`.
 - Tool VM profiles referencing missing Tool VM image profiles.
-- OpenClaw MCP Portal configs that fail materialization semantics, including
+- Managed MCP Portal configs that fail materialization semantics, including
   missing stdio `networkAccess`, missing provider `secretPolicies`, invalid
   mediated hosts, and generated secret environment-name collisions.

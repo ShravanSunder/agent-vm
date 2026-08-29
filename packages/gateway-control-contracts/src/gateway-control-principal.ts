@@ -14,14 +14,10 @@ function lengthPrefixedUtf8(value: string): string {
 function canonicalStablePrincipalMaterial(
 	principal: GatewayRuntimeTrustedInvocationPrincipal,
 ): string {
-	const frameworkIdentityValue =
-		principal.frameworkIdentity.kind === 'openclaw'
-			? principal.frameworkIdentity.agentId
-			: principal.frameworkIdentity.profileName;
 	return [
 		principal.agentId,
 		principal.frameworkIdentity.kind,
-		frameworkIdentityValue,
+		principal.frameworkIdentity.profileName,
 		principal.toolPortalProfileId,
 		principal.profileAssignmentRevision,
 	]

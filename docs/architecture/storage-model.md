@@ -8,7 +8,7 @@ collapse these storage classes to fix a boot or restore symptom; moving data
 between them changes backup semantics and often changes performance by crossing
 the Gondolin VFS boundary.
 
-For the concrete OpenClaw and Worker gateway path matrix, see
+For the concrete Hermes and Worker Gateway path matrix, see
 [Storage Matrix](storage-matrix.md).
 
 ## Config-Level Path Map
@@ -38,8 +38,8 @@ stateDir              per-zone derived      yes               yes       gateway 
 controllerStateDir    global derived        yes               no        host-only controller approval,
                                                                            lifecycle, and cleanup authority
 
-zoneFilesDir          managed Gateway       yes               yes       long-lived shared/agent files;
-                      per-zone                                         OpenClaw mounts /zone
+zoneFilesDir          Hermes Gateway        yes               yes       durable per-agent workspaces;
+                      per-zone                                         not broadly mounted in Gateway VM
 
 backupDir             per-zone output       artifact          no        encrypted backup archives
 ```
@@ -59,7 +59,7 @@ zoneRuntimeDir/worker-tasks/<task>/                 per-task               postS
 
 zoneRuntimeDir/logs/                                per-zone               destroy-zone --purge
                                                                            (orchestrator creates,
-                                                                           openclaw appends across
+                                                                           Hermes appends across
                                                                            every gateway restart)
 
 controllerRuntimeDir/vm-ownership/                  controller lifetime    released by the
@@ -99,17 +99,10 @@ name / path                         layer / location                  storage / 
 ────────────────────────────────    ───────────────────────────────   ─────────────────────────────
 
 zoneFilesDir                        controller-derived host path       durable RealFS, backed up
-                                    OpenClaw and Hermes zones          OpenClaw gateway mounts /zone;
-                                                                       Tool VMs receive one agent child
-
-/zone                               OpenClaw gateway VM                RealFS -> zoneFilesDir
-	                                durable zone files                 shared, backed up
+                                    Hermes zones                      Tool VMs receive one agent child
 
 zoneFilesDir/agents/<agentId>       controller-selected host source    one durable agent workspace
 	                                stable agent identity              projected, never caller authority
-
-workspaceDir                        OpenClaw SDK boundary only          Gateway path used to authenticate
-	                                plugin input                       the configured agent identity
 
 /workspace                          managed Tool VM guest path         filtered RealFS projection of
 	                                durable agent-owned files          zoneFilesDir/agents/<agentId>
@@ -132,11 +125,11 @@ effectiveGuestCwd                   plugin/controller response         Tool VM g
 /gitdirs/<repoId>.git               Worker VM / host runtime           RealFS zoneRuntimeDir
                                     git metadata                       not normal zone backup
 
-/agent-vm/logs                      OpenClaw gateway VM                RealFS ->
+/agent-vm/logs                      Hermes Gateway VM                 RealFS ->
                                                                        zoneRuntimeDir/logs
                                     gateway/runtime logs               not normal zone backup
 
-/cache                              OpenClaw gateway VM                RealFS -> cacheDir
+/home/hermes/.cache                 Hermes Gateway VM                 RealFS -> cacheDir
                                     rebuildable cache                  not backed up
 
 /state                              gateway / worker VM                RealFS -> stateDir or runtime state
@@ -148,7 +141,7 @@ effectiveGuestCwd                   plugin/controller response         Tool VM g
 ```text
 source/config
   Owner: catalog repo
-  Example: config/system.jsonc, config/gateways/<zone>/openclaw.json,
+  Example: config/system.jsonc, config/gateways/<zone>/hermes config,
            vm-images/**/build-config.jsonc, vm-images/**/overlay.jsonc
   Backup: git, not agent-vm backups
   Rule: human-authored desired state
@@ -162,7 +155,7 @@ rootfs / image
 Gateway durable state
   Owner: gateway runtime
   Host: <storageRootDir>/<zoneId>/state (`stateDir`)
-  VM: /home/openclaw/.openclaw/state or /state
+  VM: /home/hermes/.hermes or /state
   Backup: yes
   Rule: preserve existing Gateway-visible identity, auth, effective config,
         sandbox, and framework state paths exactly
@@ -256,16 +249,9 @@ zone runtime artifacts
 zone files
 	Owner: long-lived gateway/user workflow
 	Host: <storageRootDir>/<zoneId>/zone-files (`zoneFilesDir`)
-	VM: /zone in the OpenClaw Gateway; selected agent content at /workspace in Tool VMs
-  Backup: yes for OpenClaw-style long-lived zone backups
+	VM: selected agent content at /workspace in Tool VMs; no broad Gateway mount
+  Backup: yes for long-lived Hermes zone backups
   Rule: RealFS-mounted durable household/user files, not hot package-manager work
-
-OpenClaw gateway /work
-  Owner: gateway runtime
-  Host: none for the target hot path
-  VM: /work/tmp, /work/cache
-  Backup: no
-  Rule: rootfs/COW temp and cache only; do not mount zoneFilesDir at /work
 
 worker repo files
   Owner: per-task VM execution
@@ -290,20 +276,18 @@ backup output
   Rule: encrypted archives only
 ```
 
-## OpenClaw Gateway Paths
+## Hermes Gateway Paths
 
 ```text
 catalog repo
-  config/gateways/<zone>/openclaw.json
-  vm-images/gateways/openclaw/build-config.jsonc
-  vm-images/gateways/openclaw/overlay.jsonc
+  config/gateways/<zone>/hermes config
+  deployment-owned Hermes image inputs
 
 host stateDir
   ~/.agent-vm/<projectNamespace>/<zone>/state/
-    effective-openclaw.json
-    agents/main/agent/auth-profiles.json
-    agents/<agentId>/agent/auth-profiles.json
-    sandboxes/<agentId>/work/
+    config.yaml
+    profiles/<profileName>/config.yaml
+    profiles/<profileName>/...
 
 host controllerStateDir
 	~/.agent-vm/<projectNamespace>/controller-state/
@@ -319,8 +303,6 @@ host cacheDir
       prepared-image.json
     tool-vm-images/<imageProfile>/
       prepared-image.json
-    gateways/<zone>/
-      plugin-runtime-deps/
 
 host controllerRuntimeDir
   ~/.agent-vm/<projectNamespace>/controller-runtime/
@@ -344,23 +326,14 @@ host backupDir
   ~/.agent-vm-backups/<zone>/
 ```
 
-Target state: OpenClaw bundled plugin runtime dependencies are hot boot-time
-import paths. The normal path should be image/rootfs-local, produced during
-image build, so startup does not install or import Discord-sized dependency
-trees through a Gondolin VFS mount.
-
-`cacheDir/gateways/<zone>/plugin-runtime-deps` is still useful as a repair or
-download cache. It must not be the primary runtime import path for stable
-bundled plugin dependencies, and it must not be moved into `stateDir`.
-
-`stateDir` is for effective config, auth profiles, sandboxes, and other durable
-Gateway-visible state. Controller lifecycle and approval authority belongs only
-under `controllerStateDir/zones/<zone>/`.
-Putting dependency trees in state makes encrypted backups large, slow, and hard
-to reason about.
+`stateDir` is the protected Hermes home. The lifecycle materializes root and
+per-profile configuration there, preserves framework-owned durable state, and
+projects profile `.env` paths as temporary filesystems so raw profile secrets
+do not become durable state. Controller lifecycle and approval authority belongs
+only under `controllerStateDir/zones/<zone>/`.
 
 Gateway logs are runtime evidence, not backup state and not rebuildable cache.
-OpenClaw gateway logs belong under `zoneRuntimeDir/logs` and are
+Hermes and Gateway Runtime logs belong under `zoneRuntimeDir/logs` and are
 mounted into the gateway VM at `/agent-vm/logs`.
 
 Every configured long-lived agent has one canonical durable workspace at
@@ -397,7 +370,7 @@ rootfs/COW
   roughly 20-30 ms, compared with roughly 1.5 s through RealFS.
 
 RealFS
-  Use for host-visible state, OpenClaw zone files, cache, outputs, and Git
+  Use for host-visible state, Hermes zone files, cache, outputs, and Git
   metadata.
   Pay this cost at source-control and persistence boundaries, not for every
   source edit, package-manager file, search, or test artifact.
@@ -424,7 +397,7 @@ writes and paid the RealFS cost only for Git object/index operations.
 `rootfs.mode = "readonly"` did not boot the default local benchmark VM within
 30 seconds or 120 seconds during this investigation. That failure has not been
 root-caused yet. Treat readonly rootfs as a separate hardening target, not the
-default for OpenClaw or worker performance work.
+default for Hermes or Worker performance work.
 
 For the full rootfs/VFS knob matrix, reproducible benchmark command, and
 environment-portable interpretation guide, see

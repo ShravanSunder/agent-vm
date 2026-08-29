@@ -26,6 +26,28 @@ import {
 import { runControllerCommandOperation } from './commands/controller-command-operation.js';
 import { parseAgentIds } from './commands/init-definition.js';
 
+const hermesMainProfileSecretProjections = {
+	main: {
+		API_SERVER_KEY: 'API_SERVER_KEY',
+		DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN',
+	},
+} as const;
+
+const hermesMainSecrets = {
+	API_SERVER_KEY: {
+		source: 'environment',
+		envVar: 'API_SERVER_KEY',
+		injection: 'env',
+		audience: 'gateway',
+	},
+	DISCORD_BOT_TOKEN: {
+		source: 'environment',
+		envVar: 'DISCORD_BOT_TOKEN',
+		injection: 'env',
+		audience: 'gateway',
+	},
+} as const;
+
 function createCliBuildSystemConfig(): LoadedSystemConfig {
 	return {
 		schemaVersion: 2,
@@ -36,7 +58,7 @@ function createCliBuildSystemConfig(): LoadedSystemConfig {
 		systemConfigPath: './config/system.json',
 		host: {
 			controllerPort: 18800,
-			projectNamespace: 'claw-tests-a1b2c3d4',
+			projectNamespace: 'agent-vm-tests-a1b2c3d4',
 			secretsProvider: {
 				type: '1password',
 				tokenSource: { type: 'env' },
@@ -44,10 +66,10 @@ function createCliBuildSystemConfig(): LoadedSystemConfig {
 		},
 		imageProfiles: {
 			gateways: {
-				openclaw: {
-					type: 'openclaw',
-					buildConfig: './vm-images/gateways/openclaw/build-config.json',
-					dockerfile: './vm-images/gateways/openclaw/Dockerfile',
+				hermes: {
+					type: 'hermes',
+					buildConfig: './vm-images/gateways/hermes/build-config.json',
+					dockerfile: './vm-images/gateways/hermes/Dockerfile',
 				},
 				worker: {
 					type: 'worker',
@@ -78,131 +100,22 @@ function createCliBuildSystemConfig(): LoadedSystemConfig {
 			{
 				egressHosts: ['api.anthropic.com'].map((host) => ({ host, audience: 'gateway' as const })),
 				gateway: {
-					type: 'openclaw',
-					controlAuth: {
-						mode: 'token',
-						secret: 'OPENCLAW_GATEWAY_TOKEN',
-					},
-					imageProfile: 'openclaw',
-					cpus: 2,
-					memory: '2G',
-					config: './config/shravan/openclaw.json',
-					port: 18791,
-					stateDir: './state/shravan',
-					zoneRuntimeDir: './runtime/shravan',
-					zoneFilesDir: './zone-files/shravan',
-					authLogin: {
-						defaultAgent: 'main',
-						providers: {
-							openai: {
-								profileIds: ['openai-codex:test@example.com'],
-							},
-						},
-					},
-				},
-				id: 'shravan',
-				secrets: {
-					OPENCLAW_GATEWAY_TOKEN: {
-						source: 'environment',
-						envVar: 'OPENCLAW_GATEWAY_TOKEN',
-						injection: 'env',
-						audience: 'gateway',
-					},
-				},
-				defaultToolVmProfile: 'standard',
-				agentToolVmProfiles: {},
-			},
-		],
-	};
-}
-
-function createCliBuildSystemConfigWithAgents(): LoadedSystemConfig {
-	const systemConfig = createCliBuildSystemConfig();
-	const zone = systemConfig.zones[0];
-	if (!zone) {
-		throw new Error('Expected CLI test config to include a zone.');
-	}
-	return {
-		...systemConfig,
-		zones: [
-			{
-				...zone,
-				agents: [{ id: 'shravan' }, { id: 'ember' }],
-			},
-		],
-	};
-}
-
-function createCliBuildWorkerSystemConfig(): LoadedSystemConfig {
-	const systemConfig = createCliBuildSystemConfig();
-	const zone = systemConfig.zones[0];
-	if (!zone) {
-		throw new Error('Expected CLI test config to include a zone.');
-	}
-	return {
-		...systemConfig,
-		zones: [
-			{
-				...zone,
-				gateway: {
-					type: 'worker',
-					imageProfile: 'worker',
-					cpus: 2,
-					memory: '2G',
-					config: './config/shravan/worker.json',
-					port: 18791,
-					stateDir: './state/shravan',
-					zoneRuntimeDir: './runtime/shravan',
-				},
-			},
-		],
-	};
-}
-
-function createCliBuildHermesSystemConfig(): LoadedSystemConfig {
-	const systemConfig = createCliBuildSystemConfig();
-	const zone = systemConfig.zones[0];
-	if (!zone) {
-		throw new Error('Expected CLI test config to include a zone.');
-	}
-	return {
-		...systemConfig,
-		zones: [
-			{
-				...zone,
-				gateway: {
 					type: 'hermes',
 					imageProfile: 'hermes',
 					cpus: 2,
 					memory: '2G',
 					config: './config/shravan/hermes.yaml',
 					port: 18791,
+					profileSecretProjectionsByAgent: hermesMainProfileSecretProjections,
+					profilesByAgent: { main: 'main' },
 					stateDir: './state/shravan',
-					zoneFilesDir: './zone-files/shravan',
 					zoneRuntimeDir: './runtime/shravan',
-					profilesByAgent: { shravan: 'main' },
-					profileSecretProjectionsByAgent: {
-						shravan: {
-							API_SERVER_KEY: 'API_SERVER_KEY_SHRAVAN',
-							DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN',
-						},
-					},
+					zoneFilesDir: './zone-files/shravan',
 				},
-				secrets: {
-					...zone.secrets,
-					API_SERVER_KEY_SHRAVAN: {
-						audience: 'gateway',
-						envVar: 'API_SERVER_KEY_SHRAVAN',
-						injection: 'env',
-						source: 'environment',
-					},
-					DISCORD_BOT_TOKEN: {
-						audience: 'gateway',
-						envVar: 'DISCORD_BOT_TOKEN',
-						injection: 'env',
-						source: 'environment',
-					},
-				},
+				id: 'shravan',
+				secrets: hermesMainSecrets,
+				defaultToolVmProfile: 'standard',
+				agentToolVmProfiles: {},
 			},
 		],
 	};
@@ -238,23 +151,6 @@ function createStartedControllerRuntime(
 	};
 }
 
-function createCliBuildSystemConfigWithoutConfiguredAgents(): LoadedSystemConfig {
-	const systemConfig = createCliBuildSystemConfig();
-	const zone = systemConfig.zones[0];
-	if (!zone) {
-		throw new Error('Expected CLI test config to include a zone.');
-	}
-	return {
-		...systemConfig,
-		zones: [
-			{
-				...zone,
-				agents: [],
-			},
-		],
-	};
-}
-
 function createControllerClientStub(
 	enableZoneSsh: ControllerClient['enableZoneSsh'],
 ): ControllerClient {
@@ -283,14 +179,12 @@ async function parseAndDispatchAgentVmCommandForTest(
 }
 
 describe('parseAndDispatchAgentVmCommandForTest', () => {
-	it('parses OpenClaw init agent ids with validation and dedupe', () => {
+	it('parses Hermes init agent ids with validation and dedupe', () => {
 		expect(parseAgentIds(' sun,shravan, sun ,alevtina ')).toEqual(['sun', 'shravan', 'alevtina']);
 		expect(() => parseAgentIds(' , , ')).toThrow(
-			'--openclaw-agents must include at least one non-empty agent id.',
+			'--agents must include at least one non-empty agent id.',
 		);
-		expect(() => parseAgentIds('sun,Hello World')).toThrow(
-			"Invalid --openclaw-agents value 'Hello World'",
-		);
+		expect(() => parseAgentIds('sun,Hello World')).toThrow("Invalid --agents value 'Hello World'");
 	});
 
 	it('ignores a missing .env.local file', () => {
@@ -339,7 +233,7 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 		}));
 
 		await parseAndDispatchAgentVmCommandForTest(
-			['init', 'test-zone', '--type', 'openclaw', '--secrets', '1password', '--arch', 'aarch64'],
+			['init', 'test-zone', '--type', 'hermes', '--secrets', '1password', '--arch', 'aarch64'],
 			{
 				stderr: { write: () => true },
 				stdout: {
@@ -358,7 +252,7 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 
 		expect(scaffoldAgentVmProject).toHaveBeenCalledWith(
 			expect.objectContaining({
-				gatewayType: 'openclaw',
+				gatewayType: 'hermes',
 				architecture: 'aarch64',
 				hostSystemType: 'bare-metal',
 				paths: 'local',
@@ -384,7 +278,7 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 				'init',
 				'test-zone',
 				'--type',
-				'openclaw',
+				'hermes',
 				'--secrets',
 				'1password',
 				'--arch',
@@ -429,7 +323,7 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 				'init',
 				'test-zone',
 				'--type',
-				'openclaw',
+				'hermes',
 				'--secrets',
 				'1password',
 				'--arch',
@@ -449,7 +343,7 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 				'init',
 				'test-zone',
 				'--type',
-				'openclaw',
+				'hermes',
 				'--secrets',
 				'1password',
 				'--arch',
@@ -484,12 +378,12 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 				'init',
 				'test-zone',
 				'--type',
-				'openclaw',
+				'hermes',
 				'--secrets',
 				'1password',
 				'--arch',
 				'aarch64',
-				'--openclaw-agents',
+				'--agents',
 				'sun',
 			],
 			{
@@ -510,7 +404,7 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 		);
 	});
 
-	it('passes multi-agent managed OpenClaw init requests to the scaffolder', async () => {
+	it('passes multi-agent managed Hermes init requests to the scaffolder', async () => {
 		const scaffoldAgentVmProject = vi.fn(async () => ({
 			created: ['config/system.jsonc'],
 			keychainStored: false,
@@ -522,12 +416,12 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 				'init',
 				'test-zone',
 				'--type',
-				'openclaw',
+				'hermes',
 				'--secrets',
 				'1password',
 				'--arch',
 				'aarch64',
-				'--openclaw-agents',
+				'--agents',
 				'sun,shravan,alevtina',
 			],
 			{
@@ -1081,9 +975,9 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 					systemConfigPath: './config/system.json',
 					imageProfiles: expect.objectContaining({
 						gateways: expect.objectContaining({
-							openclaw: expect.objectContaining({
-								type: 'openclaw',
-								dockerfile: './vm-images/gateways/openclaw/Dockerfile',
+							hermes: expect.objectContaining({
+								type: 'hermes',
+								dockerfile: './vm-images/gateways/hermes/Dockerfile',
 							}),
 						}),
 					}),
@@ -1104,7 +998,7 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 		});
 		const stderrChunks: string[] = [];
 		const runBuildCommand = vi.fn(async (_options, dependencies) => {
-			await dependencies.runTask('Gondolin: gateway/openclaw', async () => {});
+			await dependencies.runTask('Gondolin: gateway/hermes', async () => {});
 		});
 
 		try {
@@ -1327,63 +1221,6 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 		);
 	});
 
-	it('routes auth openclaw to an interactive SSH-backed OpenClaw login', async () => {
-		const runInteractiveProcess = vi.fn(async () => {});
-		const runCommand = vi.fn(async () => ({
-			exitCode: 0,
-			stderr: '',
-			stdout: 'openai-codex:test@example.com\n',
-		}));
-
-		await parseAndDispatchAgentVmCommandForTest(
-			[
-				'auth',
-				'openclaw',
-				'login',
-				'openai',
-				'--zone',
-				'shravan',
-				'--agent',
-				'main',
-				'--profile-id',
-				'openai-codex:test@example.com',
-			],
-			{
-				stderr: { write: () => true },
-				stdout: { write: () => true },
-			},
-			{
-				...defaultCliDependencies,
-				createControllerClient: () =>
-					createControllerClientStub(async () => ({
-						host: '127.0.0.1',
-						identityFile: '/tmp/test-key',
-						port: 19000,
-						secretEnvEnabled: true,
-						user: 'root',
-					})),
-				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
-				runCommand,
-				runInteractiveProcess,
-			},
-		);
-
-		expect(runInteractiveProcess).toHaveBeenCalledWith('ssh', [
-			'-t',
-			'-o',
-			'StrictHostKeyChecking=no',
-			'-o',
-			'UserKnownHostsFile=/dev/null',
-			'-i',
-			'/tmp/test-key',
-			'-p',
-			'19000',
-			'root@127.0.0.1',
-			expect.stringContaining('source /etc/profile.d/openclaw-env.sh'),
-		]);
-		expect(runCommand).toHaveBeenCalledWith('ssh', expect.any(Array));
-	});
-
 	it('routes auth 1password to configured Keychain storage', async () => {
 		const runCommand = vi.fn(async () => ({
 			exitCode: 0,
@@ -1443,255 +1280,6 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 		expect(outputs.join('')).not.toContain('service-account-token');
 	});
 
-	it('passes auth openclaw device-code to the login command', async () => {
-		const runInteractiveProcess = vi.fn(async () => {});
-		const runCommand = vi.fn(async () => ({
-			exitCode: 0,
-			stderr: '',
-			stdout: 'openai-codex:test@example.com\n',
-		}));
-
-		await parseAndDispatchAgentVmCommandForTest(
-			[
-				'auth',
-				'openclaw',
-				'login',
-				'openai',
-				'--zone',
-				'shravan',
-				'--all-configured-profiles',
-				'--device-code',
-			],
-			{
-				stderr: { write: () => true },
-				stdout: { write: () => true },
-			},
-			{
-				...defaultCliDependencies,
-				createControllerClient: () =>
-					createControllerClientStub(async () => ({
-						host: '127.0.0.1',
-						identityFile: '/tmp/test-key',
-						port: 19000,
-						secretEnvEnabled: true,
-						user: 'root',
-					})),
-				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
-				runCommand,
-				runInteractiveProcess,
-			},
-		);
-
-		expect(runInteractiveProcess).toHaveBeenCalledWith(
-			'ssh',
-			expect.arrayContaining([
-				expect.stringContaining('openclaw models auth --agent'),
-				expect.stringContaining('login --provider'),
-				expect.stringContaining('--device-code'),
-			]),
-		);
-	});
-
-	it('routes auth openclaw login --dry-run without opening SSH', async () => {
-		const stdoutChunks: string[] = [];
-		const runInteractiveProcess = vi.fn(async () => {});
-		const runCommand = vi.fn(async () => ({
-			exitCode: 0,
-			stderr: '',
-			stdout: 'openai-codex:test@example.com\n',
-		}));
-
-		await parseAndDispatchAgentVmCommandForTest(
-			[
-				'auth',
-				'openclaw',
-				'login',
-				'openai',
-				'--zone',
-				'shravan',
-				'--all-configured-profiles',
-				'--dry-run',
-			],
-			{
-				stderr: { write: () => true },
-				stdout: {
-					write: (chunk: string) => {
-						stdoutChunks.push(chunk);
-						return true;
-					},
-				},
-			},
-			{
-				...defaultCliDependencies,
-				createControllerClient: vi.fn(),
-				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
-				runCommand,
-				runInteractiveProcess,
-			},
-		);
-
-		expect(runInteractiveProcess).not.toHaveBeenCalled();
-		expect(runCommand).not.toHaveBeenCalled();
-		expect(stdoutChunks.join('')).toContain("OpenClaw auth login plan for zone 'shravan'");
-		expect(stdoutChunks.join('')).toContain('openai-codex:test@example.com');
-	});
-
-	it('routes auth openclaw --agent to the OpenClaw provider login for that agent', async () => {
-		const runInteractiveProcess: NonNullable<CliDependencies['runInteractiveProcess']> = vi.fn(
-			async (_command: string, _arguments_: readonly string[]): Promise<void> => {},
-		);
-		const runCommand = vi.fn(async () => ({
-			exitCode: 0,
-			stderr: '',
-			stdout: 'openai-codex:test@example.com\n',
-		}));
-
-		await parseAndDispatchAgentVmCommandForTest(
-			[
-				'auth',
-				'openclaw',
-				'login',
-				'openai',
-				'--zone',
-				'shravan',
-				'--agent',
-				'shravan',
-				'--profile-id',
-				'openai-codex:test@example.com',
-			],
-			{
-				stderr: { write: () => true },
-				stdout: { write: () => true },
-			},
-			{
-				...defaultCliDependencies,
-				createControllerClient: () =>
-					createControllerClientStub(async () => ({
-						host: '127.0.0.1',
-						identityFile: '/tmp/test-key',
-						port: 19000,
-						secretEnvEnabled: true,
-						user: 'root',
-					})),
-				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfigWithAgents()),
-				runCommand,
-				runInteractiveProcess,
-			},
-		);
-
-		expect(runInteractiveProcess).toHaveBeenCalledTimes(1);
-		const sshArguments = vi.mocked(runInteractiveProcess).mock.calls[0]?.[1];
-		if (!sshArguments) {
-			throw new Error('Expected OpenClaw login to invoke ssh.');
-		}
-		const remoteCommand = sshArguments.at(-1);
-		expect(remoteCommand).toEqual(expect.stringContaining('openclaw models auth'));
-		expect(remoteCommand).toEqual(expect.stringContaining('--agent'));
-		expect(remoteCommand).toEqual(expect.stringContaining('shravan'));
-		expect(remoteCommand).toEqual(expect.stringContaining('login --provider'));
-		expect(remoteCommand).toEqual(expect.stringContaining('openai'));
-		expect(remoteCommand).toEqual(expect.stringContaining('--profile-id'));
-		expect(remoteCommand).not.toEqual(expect.stringContaining('CODEX_HOME='));
-		expect(remoteCommand).not.toEqual(expect.stringContaining('codex login'));
-	});
-
-	it('routes auth openclaw login --all-configured-profiles to configured profile login', async () => {
-		const runInteractiveProcess: NonNullable<CliDependencies['runInteractiveProcess']> = vi.fn(
-			async (_command: string, _arguments_: readonly string[]): Promise<void> => {},
-		);
-		const runCommand = vi.fn(async () => ({
-			exitCode: 0,
-			stderr: '',
-			stdout: 'openai-codex:test@example.com\n',
-		}));
-
-		await parseAndDispatchAgentVmCommandForTest(
-			['auth', 'openclaw', 'login', 'openai', '--zone', 'shravan', '--all-configured-profiles'],
-			{
-				stderr: { write: () => true },
-				stdout: { write: () => true },
-			},
-			{
-				...defaultCliDependencies,
-				createControllerClient: () =>
-					createControllerClientStub(async () => ({
-						host: '127.0.0.1',
-						identityFile: '/tmp/test-key',
-						port: 19000,
-						secretEnvEnabled: true,
-						user: 'root',
-					})),
-				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfigWithAgents()),
-				runCommand,
-				runInteractiveProcess,
-			},
-		);
-
-		expect(runInteractiveProcess).toHaveBeenCalledTimes(1);
-		const firstSshArguments = vi.mocked(runInteractiveProcess).mock.calls[0]?.[1];
-		if (!firstSshArguments) {
-			throw new Error('Expected one ssh invocation.');
-		}
-		expect(firstSshArguments.at(-1)).toEqual(expect.stringContaining('openclaw models auth'));
-		expect(firstSshArguments.at(-1)).toEqual(expect.stringContaining('--agent'));
-		expect(firstSshArguments.at(-1)).toEqual(expect.stringContaining('main'));
-		expect(firstSshArguments.at(-1)).toEqual(expect.stringContaining('login --provider'));
-		expect(firstSshArguments.at(-1)).toEqual(
-			expect.stringContaining('openai-codex:test@example.com'),
-		);
-	});
-
-	it('auth openclaw without --zone shows available zones', async () => {
-		const stderrChunks: string[] = [];
-		await expect(
-			parseAndDispatchAgentVmCommandForTest(
-				['auth', 'openclaw', 'login', 'codex', '--profile-id', 'openai-codex:test@example.com'],
-				{
-					stderr: {
-						write: (s: string) => {
-							stderrChunks.push(s);
-							return true;
-						},
-					},
-					stdout: { write: () => true },
-				},
-				{
-					...defaultCliDependencies,
-					loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
-				},
-			),
-		).rejects.toThrow(/--zone is required/u);
-	});
-
-	it.each([
-		{ gatewayType: 'hermes', loadSystemConfig: createCliBuildHermesSystemConfig },
-		{ gatewayType: 'worker', loadSystemConfig: createCliBuildWorkerSystemConfig },
-	] as const)(
-		'rejects OpenClaw auth login for $gatewayType zones before opening SSH',
-		async ({ loadSystemConfig }) => {
-			const runInteractiveProcess: NonNullable<CliDependencies['runInteractiveProcess']> = vi.fn(
-				async (_command: string, _arguments_: readonly string[]): Promise<void> => {},
-			);
-
-			await expect(
-				parseAndDispatchAgentVmCommandForTest(
-					['auth', 'openclaw', 'login', 'openai', '--zone', 'shravan'],
-					{
-						stderr: { write: () => true },
-						stdout: { write: () => true },
-					},
-					{
-						...defaultCliDependencies,
-						loadSystemConfig: vi.fn(async () => loadSystemConfig()),
-						runInteractiveProcess,
-					},
-				),
-			).rejects.toThrow("Zone 'shravan' does not support OpenClaw auth login.");
-
-			expect(runInteractiveProcess).not.toHaveBeenCalled();
-		},
-	);
-
 	it('rejects an invalid gateway type value', async () => {
 		await expect(
 			parseAndDispatchAgentVmCommandForTest(
@@ -1702,20 +1290,37 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 				},
 				defaultCliDependencies,
 			),
-		).rejects.toThrow(/openclaw|worker/u);
+		).rejects.toThrow(/hermes|worker/u);
 	});
 
-	it('rejects Hermes init until a Hermes scaffold contract exists', async () => {
-		await expect(
-			parseAndDispatchAgentVmCommandForTest(
-				['init', 'test-zone', '--type', 'hermes', '--secrets', '1password'],
-				{
-					stderr: { write: () => true },
-					stdout: { write: () => true },
-				},
-				defaultCliDependencies,
-			),
-		).rejects.toThrow(/expected one of.*openclaw.*worker/u);
+	it('passes Hermes gateway type through to init scaffolding', async () => {
+		const scaffoldAgentVmProject = vi.fn(async () => ({
+			created: ['config/system.jsonc'],
+			keychainStored: false,
+			skipped: [],
+		}));
+
+		await parseAndDispatchAgentVmCommandForTest(
+			['init', 'test-zone', '--type', 'hermes', '--secrets', 'environment', '--arch', 'aarch64'],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				...defaultCliDependencies,
+				getCurrentWorkingDirectory: () => '/tmp/agent-vm-hermes-init',
+				scaffoldAgentVmProject,
+			},
+		);
+
+		expect(scaffoldAgentVmProject).toHaveBeenCalledWith(
+			expect.objectContaining({
+				architecture: 'aarch64',
+				gatewayType: 'hermes',
+				targetDir: '/tmp/agent-vm-hermes-init',
+				zoneId: 'test-zone',
+			}),
+		);
 	});
 
 	it('reports regular runtime errors to stderr in the main error handler', () => {
@@ -1765,11 +1370,11 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 	it('routes doctor and status subcommands to their handlers', async () => {
 		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-cli-'));
 		const systemConfigPath = path.join(temporaryDirectoryPath, 'system.json');
-		const openClawBuildConfigPath = path.join(
+		const hermesBuildConfigPath = path.join(
 			temporaryDirectoryPath,
 			'vm-images',
 			'gateways',
-			'openclaw',
+			'hermes',
 			'build-config.json',
 		);
 		const workerBuildConfigPath = path.join(
@@ -1788,7 +1393,7 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 		);
 		const outputs: string[] = [];
 		await Promise.all(
-			[openClawBuildConfigPath, workerBuildConfigPath, toolVmBuildConfigPath].map(
+			[hermesBuildConfigPath, workerBuildConfigPath, toolVmBuildConfigPath].map(
 				async (buildConfigPath) => {
 					await fs.mkdir(path.dirname(buildConfigPath), { recursive: true });
 					await fs.writeFile(
@@ -1880,7 +1485,7 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 					systemConfigPath,
 					host: {
 						controllerPort: 18800,
-						projectNamespace: 'claw-tests-a1b2c3d4',
+						projectNamespace: 'agent-vm-tests-a1b2c3d4',
 						secretsProvider: {
 							type: '1password',
 							tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
@@ -1888,9 +1493,9 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 					},
 					imageProfiles: {
 						gateways: {
-							openclaw: {
-								type: 'openclaw',
-								buildConfig: openClawBuildConfigPath,
+							hermes: {
+								type: 'hermes',
+								buildConfig: hermesBuildConfigPath,
 							},
 							worker: {
 								type: 'worker',
@@ -1997,7 +1602,7 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 					systemConfigPath: './config/system.json',
 					host: {
 						controllerPort: 18800,
-						projectNamespace: 'claw-tests-a1b2c3d4',
+						projectNamespace: 'agent-vm-tests-a1b2c3d4',
 						secretsProvider: {
 							type: '1password',
 							tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
@@ -2005,9 +1610,9 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 					},
 					imageProfiles: {
 						gateways: {
-							openclaw: {
-								type: 'openclaw',
-								buildConfig: openClawBuildConfigPath,
+							hermes: {
+								type: 'hermes',
+								buildConfig: hermesBuildConfigPath,
 							},
 							worker: {
 								type: 'worker',
@@ -2122,7 +1727,7 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 					systemConfigPath: './config/system.json',
 					host: {
 						controllerPort: 18800,
-						projectNamespace: 'claw-tests-a1b2c3d4',
+						projectNamespace: 'agent-vm-tests-a1b2c3d4',
 						secretsProvider: {
 							type: '1password',
 							tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
@@ -2130,9 +1735,9 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 					},
 					imageProfiles: {
 						gateways: {
-							openclaw: {
-								type: 'openclaw',
-								buildConfig: './vm-images/gateways/openclaw/build-config.json',
+							hermes: {
+								type: 'hermes',
+								buildConfig: './vm-images/gateways/hermes/build-config.json',
 							},
 							worker: {
 								type: 'worker',
@@ -2164,29 +1769,20 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 								audience: 'gateway' as const,
 							})),
 							gateway: {
-								type: 'openclaw',
-								controlAuth: {
-									mode: 'token',
-									secret: 'OPENCLAW_GATEWAY_TOKEN',
-								},
-								imageProfile: 'openclaw',
+								type: 'hermes',
+								profileSecretProjectionsByAgent: hermesMainProfileSecretProjections,
+								profilesByAgent: { main: 'main' },
+								imageProfile: 'hermes',
 								cpus: 2,
 								memory: '2G',
-								config: './config/shravan/openclaw.json',
+								config: './config/shravan/hermes.yaml',
 								port: 18791,
 								stateDir: './state/shravan',
 								zoneFilesDir: './zone-files/shravan',
 								zoneRuntimeDir: './runtime/shravan',
 							},
 							id: 'shravan',
-							secrets: {
-								OPENCLAW_GATEWAY_TOKEN: {
-									source: 'environment',
-									envVar: 'OPENCLAW_GATEWAY_TOKEN',
-									injection: 'env',
-									audience: 'gateway',
-								},
-							},
+							secrets: hermesMainSecrets,
 							defaultToolVmProfile: 'standard',
 							agentToolVmProfiles: {},
 						},
@@ -2380,7 +1976,7 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 				toolVmProfiles: ['standard'],
 				zones: [
 					{
-						gatewayType: 'openclaw',
+						gatewayType: 'hermes',
 						id: 'shravan',
 						ingressPort: 18791,
 						agentToolVmProfiles: {},
@@ -2454,7 +2050,7 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 				systemConfigPath: './config/system.json',
 				host: {
 					controllerPort: 18800,
-					projectNamespace: 'claw-tests-a1b2c3d4',
+					projectNamespace: 'agent-vm-tests-a1b2c3d4',
 					secretsProvider: {
 						type: '1password',
 						tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
@@ -2462,9 +2058,9 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 				},
 				imageProfiles: {
 					gateways: {
-						openclaw: {
-							type: 'openclaw',
-							buildConfig: './vm-images/gateways/openclaw/build-config.json',
+						hermes: {
+							type: 'hermes',
+							buildConfig: './vm-images/gateways/hermes/build-config.json',
 						},
 						worker: {
 							type: 'worker',
@@ -2496,29 +2092,20 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 							audience: 'gateway' as const,
 						})),
 						gateway: {
-							type: 'openclaw',
-							controlAuth: {
-								mode: 'token',
-								secret: 'OPENCLAW_GATEWAY_TOKEN',
-							},
-							imageProfile: 'openclaw',
+							type: 'hermes',
+							profileSecretProjectionsByAgent: hermesMainProfileSecretProjections,
+							profilesByAgent: { main: 'main' },
+							imageProfile: 'hermes',
 							cpus: 2,
 							memory: '2G',
-							config: './config/shravan/openclaw.json',
+							config: './config/shravan/hermes.yaml',
 							port: 18791,
 							stateDir: './state/shravan',
 							zoneFilesDir: './zone-files/shravan',
 							zoneRuntimeDir: './runtime/shravan',
 						},
 						id: 'shravan',
-						secrets: {
-							OPENCLAW_GATEWAY_TOKEN: {
-								source: 'environment',
-								envVar: 'OPENCLAW_GATEWAY_TOKEN',
-								injection: 'env',
-								audience: 'gateway',
-							},
-						},
+						secrets: hermesMainSecrets,
 						defaultToolVmProfile: 'standard',
 						agentToolVmProfiles: {},
 					},
@@ -2532,8 +2119,10 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 			startControllerRuntime: vi.fn(async () => createStartedControllerRuntime()),
 			startGatewayZone: vi.fn(async () => undefined as never),
 		};
-		const previousGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
-		process.env.OPENCLAW_GATEWAY_TOKEN = 'gateway-token';
+		const previousApiServerKey = process.env.API_SERVER_KEY;
+		const previousDiscordBotToken = process.env.DISCORD_BOT_TOKEN;
+		process.env.API_SERVER_KEY = 'gateway-token';
+		process.env.DISCORD_BOT_TOKEN = 'discord-token';
 
 		try {
 			for (const command of [
@@ -2577,10 +2166,15 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 				);
 			}
 		} finally {
-			if (previousGatewayToken === undefined) {
-				delete process.env.OPENCLAW_GATEWAY_TOKEN;
+			if (previousApiServerKey === undefined) {
+				delete process.env.API_SERVER_KEY;
 			} else {
-				process.env.OPENCLAW_GATEWAY_TOKEN = previousGatewayToken;
+				process.env.API_SERVER_KEY = previousApiServerKey;
+			}
+			if (previousDiscordBotToken === undefined) {
+				delete process.env.DISCORD_BOT_TOKEN;
+			} else {
+				process.env.DISCORD_BOT_TOKEN = previousDiscordBotToken;
 			}
 		}
 
@@ -2598,10 +2192,10 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 			{ agentId: 'sun', force: true },
 		);
 		expect(outputs.join('\n')).toContain('"zoneId": "shravan"');
-		expect(outputs.join('\n')).toContain('"resolvedSecretCount": 1');
+		expect(outputs.join('\n')).toContain('"resolvedSecretCount": 2');
 	});
 
-	it('routes controller ssh through the gateway-token-loaded ssh command handler', async () => {
+	it('routes controller ssh through the Hermes interactive shell handler', async () => {
 		const runInteractiveProcess: NonNullable<CliDependencies['runInteractiveProcess']> = vi.fn(
 			async () => {},
 		);
@@ -2618,7 +2212,6 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 					createControllerClientStub(async () => ({
 						host: '127.0.0.1',
 						port: 2222,
-						secretEnvEnabled: true,
 						user: 'root',
 					})),
 				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
@@ -2626,51 +2219,7 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 			},
 		);
 
-		expect(runInteractiveProcess).toHaveBeenCalledWith(
-			'ssh',
-			expect.arrayContaining([
-				expect.stringContaining(
-					'/run/agent-vm/managed-gateway-environment/openclaw-gateway-token.environment.sh',
-				),
-			]),
-		);
-		const firstSshCall = vi.mocked(runInteractiveProcess).mock.calls[0];
-		if (!firstSshCall) {
-			throw new Error('Expected SSH process to run.');
-		}
-		const sshArguments = firstSshCall[1];
-		const remoteCommand = sshArguments.at(-1);
-		expect(remoteCommand).not.toEqual(
-			expect.stringContaining('openclaw-all-secrets.environment.sh'),
-		);
-	});
-
-	it('routes controller ssh --all-secrets through the raw gateway secret env file', async () => {
-		const runInteractiveProcess: NonNullable<CliDependencies['runInteractiveProcess']> = vi.fn(
-			async () => {},
-		);
-		const enableZoneSsh = vi.fn(async () => ({
-			host: '127.0.0.1',
-			port: 2222,
-			secretEnvEnabled: true,
-			user: 'root',
-		}));
-
-		await parseAndDispatchAgentVmCommandForTest(
-			['controller', 'ssh', '--zone', 'shravan', '--all-secrets'],
-			{
-				stderr: { write: () => true },
-				stdout: { write: () => true },
-			},
-			{
-				...defaultCliDependencies,
-				createControllerClient: () => createControllerClientStub(enableZoneSsh),
-				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
-				runInteractiveProcess,
-			},
-		);
-
-		expect(enableZoneSsh).toHaveBeenCalledWith('shravan', { secretEnv: 'all-secrets' });
+		expect(runInteractiveProcess).toHaveBeenCalledWith('ssh', expect.any(Array));
 		const firstSshCall = vi.mocked(runInteractiveProcess).mock.calls[0];
 		if (!firstSshCall) {
 			throw new Error('Expected SSH process to run.');
@@ -2678,235 +2227,8 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 		const sshArguments = firstSshCall[1];
 		const remoteCommand = sshArguments.at(-1);
 		expect(remoteCommand).toEqual(
-			expect.stringContaining(
-				'/run/agent-vm/managed-gateway-environment/openclaw-all-secrets.environment.sh',
-			),
+			expect.stringContaining('source /etc/profile.d/hermes-env.sh && exec bash -l'),
 		);
-		expect(remoteCommand).not.toEqual(
-			expect.stringContaining('openclaw-gateway-token.environment.sh'),
-		);
-	});
-
-	it('routes auth codex-harness to native per-agent Codex CLI auth', async () => {
-		const runInteractiveProcess: NonNullable<CliDependencies['runInteractiveProcess']> = vi.fn(
-			async (_command: string, _arguments_: readonly string[]): Promise<void> => {},
-		);
-		const enableZoneSsh = vi.fn(async () => ({
-			host: '127.0.0.1',
-			port: 2222,
-			user: 'root',
-		}));
-
-		await parseAndDispatchAgentVmCommandForTest(
-			['auth', 'codex-harness', '--zone', 'shravan', '--agent', 'shravan'],
-			{
-				stderr: { write: () => true },
-				stdout: { write: () => true },
-			},
-			{
-				...defaultCliDependencies,
-				createControllerClient: () => createControllerClientStub(enableZoneSsh),
-				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfigWithAgents()),
-				runInteractiveProcess,
-			},
-		);
-
-		expect(enableZoneSsh).toHaveBeenCalledWith('shravan', { secretEnv: 'default' });
-		const sshArguments = vi.mocked(runInteractiveProcess).mock.calls[0]?.[1];
-		if (!sshArguments) {
-			throw new Error('Expected Codex login to invoke ssh.');
-		}
-		expect(sshArguments).toEqual(
-			expect.arrayContaining(['-t', 'root@127.0.0.1', expect.stringContaining('agent_id=')]),
-		);
-		const remoteCommand = sshArguments?.at(-1);
-		expect(remoteCommand).toEqual(expect.stringContaining('shravan'));
-		expect(remoteCommand).toEqual(expect.stringContaining('source /etc/profile.d/openclaw-env.sh'));
-		expect(remoteCommand).not.toEqual(
-			expect.stringContaining('/run/agent-vm/managed-gateway/framework.environment.sh'),
-		);
-		expect(remoteCommand).not.toEqual(
-			expect.stringContaining('openclaw-all-secrets.environment.sh'),
-		);
-		expect(remoteCommand).not.toEqual(expect.stringContaining('/pnpm/global/5'));
-		expect(remoteCommand).toEqual(expect.stringContaining('pnpm root -g'));
-		expect(remoteCommand).toEqual(expect.stringContaining('CODEX_HOME="$codex_home"'));
-		expect(remoteCommand).toEqual(expect.stringContaining('login --device-auth'));
-		expect(remoteCommand).toEqual(expect.stringContaining('auth.json: present'));
-		expect(remoteCommand).toEqual(expect.stringContaining('openai-codex profiles:'));
-		expect(remoteCommand).toEqual(expect.stringContaining('auth-profiles.json'));
-		expect(remoteCommand).toEqual(expect.stringContaining('Install @openai/codex'));
-		expect(remoteCommand).toEqual(
-			expect.stringContaining('Could not read OpenClaw auth profile count'),
-		);
-		expect(remoteCommand).toEqual(expect.stringContaining('share a Codex refresh token'));
-		expect(remoteCommand).toEqual(
-			expect.stringContaining('shared-refresh-token diagnostic failed'),
-		);
-		expect(remoteCommand).not.toEqual(expect.stringContaining('openclaw models auth login'));
-	});
-
-	it('rejects unsafe auth codex-harness agent ids before opening ssh', async () => {
-		const runInteractiveProcess: NonNullable<CliDependencies['runInteractiveProcess']> = vi.fn(
-			async (_command: string, _arguments_: readonly string[]): Promise<void> => {},
-		);
-
-		await expect(
-			parseAndDispatchAgentVmCommandForTest(
-				['auth', 'codex-harness', '--zone', 'shravan', '--agent', '../main'],
-				{
-					stderr: { write: () => true },
-					stdout: { write: () => true },
-				},
-				{
-					...defaultCliDependencies,
-					createControllerClient: () =>
-						createControllerClientStub(async () => ({
-							host: '127.0.0.1',
-							port: 2222,
-							secretEnvEnabled: true,
-							user: 'root',
-						})),
-					loadSystemConfig: vi.fn(async () => createCliBuildSystemConfigWithAgents()),
-					runInteractiveProcess,
-				},
-			),
-		).rejects.toThrow('agent id must start with a lowercase letter or number');
-
-		expect(runInteractiveProcess).not.toHaveBeenCalled();
-	});
-
-	it('rejects auth codex-harness on non-OpenClaw zones before opening ssh', async () => {
-		const runInteractiveProcess: NonNullable<CliDependencies['runInteractiveProcess']> = vi.fn(
-			async (_command: string, _arguments_: readonly string[]): Promise<void> => {},
-		);
-
-		await expect(
-			parseAndDispatchAgentVmCommandForTest(
-				['auth', 'codex-harness', '--zone', 'shravan', '--agent', 'shravan'],
-				{
-					stderr: { write: () => true },
-					stdout: { write: () => true },
-				},
-				{
-					...defaultCliDependencies,
-					createControllerClient: vi.fn(),
-					loadSystemConfig: vi.fn(async () => createCliBuildWorkerSystemConfig()),
-					runInteractiveProcess,
-				},
-			),
-		).rejects.toThrow("auth codex-harness requires an OpenClaw zone, got 'worker'");
-
-		expect(runInteractiveProcess).not.toHaveBeenCalled();
-	});
-
-	it('rejects auth codex-harness when both target modes are provided', async () => {
-		const runInteractiveProcess: NonNullable<CliDependencies['runInteractiveProcess']> = vi.fn(
-			async (_command: string, _arguments_: readonly string[]): Promise<void> => {},
-		);
-
-		await expect(
-			parseAndDispatchAgentVmCommandForTest(
-				['auth', 'codex-harness', '--zone', 'shravan', '--agent', 'shravan', '--all-agents'],
-				{
-					stderr: { write: () => true },
-					stdout: { write: () => true },
-				},
-				{
-					...defaultCliDependencies,
-					createControllerClient: vi.fn(),
-					loadSystemConfig: vi.fn(async () => createCliBuildSystemConfigWithAgents()),
-					runInteractiveProcess,
-				},
-			),
-		).rejects.toThrow('Use either --agent or --all-agents, not both.');
-
-		expect(runInteractiveProcess).not.toHaveBeenCalled();
-	});
-
-	it('rejects auth codex-harness when no target mode is provided', async () => {
-		const runInteractiveProcess: NonNullable<CliDependencies['runInteractiveProcess']> = vi.fn(
-			async (_command: string, _arguments_: readonly string[]): Promise<void> => {},
-		);
-
-		await expect(
-			parseAndDispatchAgentVmCommandForTest(
-				['auth', 'codex-harness', '--zone', 'shravan'],
-				{
-					stderr: { write: () => true },
-					stdout: { write: () => true },
-				},
-				{
-					...defaultCliDependencies,
-					createControllerClient: vi.fn(),
-					loadSystemConfig: vi.fn(async () => createCliBuildSystemConfigWithAgents()),
-					runInteractiveProcess,
-				},
-			),
-		).rejects.toThrow('auth codex-harness requires --agent <agentId> or --all-agents.');
-
-		expect(runInteractiveProcess).not.toHaveBeenCalled();
-	});
-
-	it('rejects auth codex-harness --all-agents when the zone has no configured agents', async () => {
-		const runInteractiveProcess: NonNullable<CliDependencies['runInteractiveProcess']> = vi.fn(
-			async (_command: string, _arguments_: readonly string[]): Promise<void> => {},
-		);
-
-		await expect(
-			parseAndDispatchAgentVmCommandForTest(
-				['auth', 'codex-harness', '--zone', 'shravan', '--all-agents'],
-				{
-					stderr: { write: () => true },
-					stdout: { write: () => true },
-				},
-				{
-					...defaultCliDependencies,
-					createControllerClient: vi.fn(),
-					loadSystemConfig: vi.fn(async () => createCliBuildSystemConfigWithoutConfiguredAgents()),
-					runInteractiveProcess,
-				},
-			),
-		).rejects.toThrow(
-			"Zone 'shravan' has no configured agents; use --agent <agentId> for a one-off login.",
-		);
-
-		expect(runInteractiveProcess).not.toHaveBeenCalled();
-	});
-
-	it('routes auth codex-harness --all-agents one native login per configured agent', async () => {
-		const runInteractiveProcess: NonNullable<CliDependencies['runInteractiveProcess']> = vi.fn(
-			async (_command: string, _arguments_: readonly string[]): Promise<void> => {},
-		);
-
-		await parseAndDispatchAgentVmCommandForTest(
-			['auth', 'codex-harness', '--zone', 'shravan', '--all-agents'],
-			{
-				stderr: { write: () => true },
-				stdout: { write: () => true },
-			},
-			{
-				...defaultCliDependencies,
-				createControllerClient: () =>
-					createControllerClientStub(async () => ({
-						host: '127.0.0.1',
-						port: 2222,
-						secretEnvEnabled: true,
-						user: 'root',
-					})),
-				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfigWithAgents()),
-				runInteractiveProcess,
-			},
-		);
-
-		expect(runInteractiveProcess).toHaveBeenCalledTimes(2);
-		const firstSshArguments = vi.mocked(runInteractiveProcess).mock.calls[0]?.[1];
-		const secondSshArguments = vi.mocked(runInteractiveProcess).mock.calls[1]?.[1];
-		if (!firstSshArguments || !secondSshArguments) {
-			throw new Error('Expected one ssh invocation per agent.');
-		}
-		expect(firstSshArguments.at(-1)).toEqual(expect.stringContaining('shravan'));
-		expect(secondSshArguments.at(-1)).toEqual(expect.stringContaining('ember'));
 	});
 
 	it('routes controller stop through the controller client', async () => {
@@ -2990,7 +2312,7 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 			force: false,
 			systemConfig: expect.objectContaining({
 				host: expect.objectContaining({
-					projectNamespace: 'claw-tests-a1b2c3d4',
+					projectNamespace: 'agent-vm-tests-a1b2c3d4',
 				}),
 			}),
 			zoneId: 'shravan',
@@ -3026,7 +2348,7 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 			force: true,
 			systemConfig: expect.objectContaining({
 				host: expect.objectContaining({
-					projectNamespace: 'claw-tests-a1b2c3d4',
+					projectNamespace: 'agent-vm-tests-a1b2c3d4',
 				}),
 			}),
 			zoneId: 'shravan',
@@ -3249,7 +2571,7 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 					systemConfigPath: './config/system.json',
 					host: {
 						controllerPort: 18800,
-						projectNamespace: 'claw-tests-a1b2c3d4',
+						projectNamespace: 'agent-vm-tests-a1b2c3d4',
 						secretsProvider: {
 							type: '1password',
 							tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
@@ -3257,7 +2579,7 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 					},
 					imageProfiles: {
 						gateways: {
-							openclaw: { type: 'openclaw', buildConfig: '' },
+							hermes: { type: 'hermes', buildConfig: '' },
 						},
 						toolVms: {
 							default: { type: 'toolVm', buildConfig: '' },
@@ -3278,29 +2600,20 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 								audience: 'gateway' as const,
 							})),
 							gateway: {
-								type: 'openclaw',
-								controlAuth: {
-									mode: 'token',
-									secret: 'OPENCLAW_GATEWAY_TOKEN',
-								},
-								imageProfile: 'openclaw',
+								type: 'hermes',
+								profileSecretProjectionsByAgent: hermesMainProfileSecretProjections,
+								profilesByAgent: { main: 'main' },
+								imageProfile: 'hermes',
 								cpus: 2,
 								memory: '2G',
-								config: './config/shravan/openclaw.json',
+								config: './config/shravan/hermes.yaml',
 								port: 18791,
 								stateDir: './state/shravan',
 								zoneFilesDir: './zone-files/shravan',
 								zoneRuntimeDir: './runtime/shravan',
 							},
 							id: 'shravan',
-							secrets: {
-								OPENCLAW_GATEWAY_TOKEN: {
-									source: 'environment',
-									envVar: 'OPENCLAW_GATEWAY_TOKEN',
-									injection: 'env',
-									audience: 'gateway',
-								},
-							},
+							secrets: hermesMainSecrets,
 							defaultToolVmProfile: 'standard',
 							agentToolVmProfiles: {},
 						},
@@ -3421,7 +2734,7 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 					systemConfigPath: './config/system.json',
 					host: {
 						controllerPort: 18800,
-						projectNamespace: 'claw-tests-a1b2c3d4',
+						projectNamespace: 'agent-vm-tests-a1b2c3d4',
 						secretsProvider: {
 							type: '1password',
 							tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
@@ -3429,7 +2742,7 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 					},
 					imageProfiles: {
 						gateways: {
-							openclaw: { type: 'openclaw', buildConfig: '' },
+							hermes: { type: 'hermes', buildConfig: '' },
 						},
 						toolVms: {
 							default: { type: 'toolVm', buildConfig: '' },
@@ -3450,15 +2763,13 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 								audience: 'gateway' as const,
 							})),
 							gateway: {
-								type: 'openclaw',
-								controlAuth: {
-									mode: 'token',
-									secret: 'OPENCLAW_GATEWAY_TOKEN',
-								},
-								imageProfile: 'openclaw',
+								type: 'hermes',
+								profileSecretProjectionsByAgent: hermesMainProfileSecretProjections,
+								profilesByAgent: { main: 'main' },
+								imageProfile: 'hermes',
 								cpus: 2,
 								memory: '2G',
-								config: './config/shravan/openclaw.json',
+								config: './config/shravan/hermes.yaml',
 								port: 18791,
 								stateDir: './state/shravan',
 								zoneFilesDir: './zone-files/shravan',
@@ -3469,14 +2780,7 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 								},
 							},
 							id: 'shravan',
-							secrets: {
-								OPENCLAW_GATEWAY_TOKEN: {
-									source: 'environment',
-									envVar: 'OPENCLAW_GATEWAY_TOKEN',
-									injection: 'env',
-									audience: 'gateway',
-								},
-							},
+							secrets: hermesMainSecrets,
 							defaultToolVmProfile: 'standard',
 							agentToolVmProfiles: {},
 						},

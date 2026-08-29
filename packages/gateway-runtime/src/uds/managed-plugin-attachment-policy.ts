@@ -4,10 +4,7 @@ export const GATEWAY_RUNTIME_PROTOCOL_VERSION = 1;
 export const GATEWAY_RUNTIME_SCHEMA_VERSION = 1;
 export const MAXIMUM_OBSERVED_MANAGED_PLUGIN_CONNECTION_IDS = 256;
 
-export const ManagedPluginClientKindSchema = z.enum([
-	'openclaw-managed-plugin',
-	'hermes-managed-plugin',
-]);
+export const ManagedPluginClientKindSchema = z.literal('hermes-managed-plugin');
 
 export type ManagedPluginClientKind = z.infer<typeof ManagedPluginClientKindSchema>;
 

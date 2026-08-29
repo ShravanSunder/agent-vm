@@ -69,10 +69,7 @@ import type {
 } from './zone-runtime-types.js';
 
 type ManagedGatewayZoneConfig = ControllerZoneConfig & {
-	readonly gateway: Extract<
-		ControllerZoneConfig['gateway'],
-		{ readonly type: 'hermes' | 'openclaw' }
-	>;
+	readonly gateway: Extract<ControllerZoneConfig['gateway'], { readonly type: 'hermes' }>;
 };
 
 export interface CreateManagedGatewayZoneRuntimeOptions {

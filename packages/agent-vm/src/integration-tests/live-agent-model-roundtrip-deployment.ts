@@ -25,6 +25,11 @@ export function resolveLiveRoundtripCacheDir(
 export function createLiveRoundtripDeploymentConfig(
 	options: CreateLiveRoundtripDeploymentConfigOptions,
 ): LoadedSystemConfig {
+	const {
+		githubToken: _unusedGithubToken,
+		secretsProvider: _unusedSecretsProvider,
+		...modelRoundtripHost
+	} = options.systemConfig.host;
 	return {
 		...options.systemConfig,
 		cacheDir: resolveLiveRoundtripCacheDir(),
@@ -33,7 +38,7 @@ export function createLiveRoundtripDeploymentConfig(
 		storageRootDir: options.deploymentRoot,
 		systemConfigPath: path.join(options.deploymentRoot, 'config', 'system.json'),
 		host: {
-			...options.systemConfig.host,
+			...modelRoundtripHost,
 			controllerPort: options.controllerPort,
 		},
 		tcpPool: {
@@ -44,7 +49,7 @@ export function createLiveRoundtripDeploymentConfig(
 			const zoneRootDir = path.join(options.deploymentRoot, configuredZone.id);
 			const gatewayStateDir = path.join(zoneRootDir, 'state');
 			const zoneRuntimeDir = path.join(zoneRootDir, 'runtime');
-			if (configuredZone.gateway.type === 'openclaw') {
+			if (configuredZone.gateway.type === 'hermes') {
 				return {
 					...configuredZone,
 					gateway: {

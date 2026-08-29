@@ -64,8 +64,8 @@ import {
 	currentE2eArchitecture,
 	prepareGatewayE2eProjectImages,
 	removeE2eTempRoot,
-	scaffoldOpenClawE2eProject,
 } from './e2e-harness.js';
+import { scaffoldHermesE2eProject } from './hermes-e2e-harness.js';
 
 const zoneId = 'gateway-runtime-sandbox';
 const gatewayEnvironmentGeneration = 'gateway:zone-sandbox:epoch-1';
@@ -91,16 +91,16 @@ const stockProofTrustedInvocationContext = {
 	},
 	principal: {
 		agentId: 'gateway-agent',
-		frameworkIdentity: { agentId: 'gateway-agent', kind: 'openclaw' },
+		frameworkIdentity: { kind: 'hermes', profileName: 'gateway-agent' },
 		profileAssignmentRevision: gatewayProfileAssignmentRevision,
 		toolPortalProfileId: 'sandbox-user',
 	},
-	requester: { authenticatedSubjectId: 'openclaw:gateway-agent' },
+	requester: { authenticatedSubjectId: 'hermes:gateway-agent' },
 } satisfies GatewayRuntimeClientTrustedInvocationContext;
 
 const stockProofManagedPluginAttachment = {
 	attachmentGeneration: 1,
-	clientKind: 'openclaw-managed-plugin',
+	clientKind: 'hermes-managed-plugin',
 	configuredAgentIds: [stockProofTrustedInvocationContext.principal.agentId],
 	frameworkEpoch: 'stock-sandbox-framework-epoch-1',
 	gatewayEpoch: 'stock-sandbox-gateway-epoch-1',
@@ -515,7 +515,7 @@ function createStrictSshClient(options: {
 }
 
 export async function createStockGatewayRuntimeSandboxVmHarness(): Promise<StockGatewayRuntimeSandboxVmHarness> {
-	const project = await scaffoldOpenClawE2eProject({
+	const project = await scaffoldHermesE2eProject({
 		agents: ['gateway-agent'],
 		architecture: currentE2eArchitecture(),
 		prefix: 'gateway-runtime-sandbox-vm-e2e-',
@@ -542,9 +542,9 @@ export async function createStockGatewayRuntimeSandboxVmHarness(): Promise<Stock
 		throw error;
 	}
 	const systemZone = project.systemConfig.zones[0];
-	if (systemZone === undefined || systemZone.gateway.type !== 'openclaw') {
+	if (systemZone === undefined || systemZone.gateway.type !== 'hermes') {
 		await removeE2eTempRoot(project.tempRoot);
-		throw new Error('Stock sandbox proof requires one OpenClaw zone.');
+		throw new Error('Stock sandbox proof requires one Hermes zone.');
 	}
 	const toolVmProfile = project.systemConfig.toolVmProfiles.standard;
 	if (toolVmProfile === undefined) {
@@ -1241,7 +1241,7 @@ export async function createStockGatewayRuntimeSandboxVmHarness(): Promise<Stock
 			agentProjections: {
 				'gateway-agent': {
 					agentId: 'gateway-agent',
-					frameworkIdentity: { agentId: 'gateway-agent', kind: 'openclaw' },
+					frameworkIdentity: { kind: 'hermes', profileName: 'gateway-agent' },
 					profileAssignmentRevision: gatewayProfileAssignmentRevision,
 					toolPortalNamespaces: [{ namespace: 'sandbox' }],
 					toolPortalProfileId: 'sandbox-user',
@@ -1270,8 +1270,8 @@ export async function createStockGatewayRuntimeSandboxVmHarness(): Promise<Stock
 					leaf === undefined ||
 					leaf.retired ||
 					request.trustedContext.principal.agentId !== 'gateway-agent' ||
-					request.trustedContext.principal.frameworkIdentity.kind !== 'openclaw' ||
-					request.trustedContext.principal.frameworkIdentity.agentId !== 'gateway-agent' ||
+					request.trustedContext.principal.frameworkIdentity.kind !== 'hermes' ||
+					request.trustedContext.principal.frameworkIdentity.profileName !== 'gateway-agent' ||
 					request.trustedContext.principal.profileAssignmentRevision !==
 						gatewayProfileAssignmentRevision ||
 					request.trustedContext.principal.toolPortalProfileId !== 'sandbox-user'

@@ -24,7 +24,7 @@ function beginAttachedGateway(): {
 	const seedHandle = coordinator.beginGatewayEpoch({
 		bootId: 'boot-1',
 		generationId: 'generation-1',
-		zoneId: 'openclaw',
+		zoneId: 'hermes',
 	});
 	const gateway = seedHandle.attachGatewayVm('gateway-vm-1');
 	return { coordinator, gateway, seedHandle };
@@ -44,14 +44,14 @@ describe('controller-owned Gateway membership coordinator', () => {
 		const firstSeed = coordinator.beginGatewayEpoch({
 			bootId: 'boot-1',
 			generationId: 'generation-1',
-			zoneId: 'openclaw',
+			zoneId: 'hermes',
 		});
 
 		expect(() =>
 			coordinator.beginGatewayEpoch({
 				bootId: 'boot-2',
 				generationId: 'generation-2',
-				zoneId: 'openclaw',
+				zoneId: 'hermes',
 			}),
 		).toThrowError(
 			expect.objectContaining<Partial<GatewayOwnershipCoordinatorError>>({
@@ -64,7 +64,7 @@ describe('controller-owned Gateway membership coordinator', () => {
 		const successor = coordinator.beginGatewayEpoch({
 			bootId: 'boot-2',
 			generationId: 'generation-2',
-			zoneId: 'openclaw',
+			zoneId: 'hermes',
 		});
 		expect(successor.seed).toMatchObject({
 			bootId: 'boot-2',
@@ -77,7 +77,7 @@ describe('controller-owned Gateway membership coordinator', () => {
 		const seedHandle = coordinator.beginGatewayEpoch({
 			bootId: 'boot-1',
 			generationId: 'generation-1',
-			zoneId: 'openclaw',
+			zoneId: 'hermes',
 		});
 
 		expect(() =>
@@ -116,7 +116,7 @@ describe('controller-owned Gateway membership coordinator', () => {
 		const seedHandle = coordinator.beginGatewayEpoch({
 			bootId: 'boot-1',
 			generationId: 'generation-1',
-			zoneId: 'openclaw',
+			zoneId: 'hermes',
 		});
 		coordinator.abandonUnattachedGatewaySeed(seedHandle.seed);
 
@@ -132,7 +132,7 @@ describe('controller-owned Gateway membership coordinator', () => {
 		const handle = coordinator.beginGatewayEpoch({
 			bootId: 'boot-1',
 			generationId: 'generation-1',
-			zoneId: 'openclaw',
+			zoneId: 'hermes',
 		});
 
 		expect(handle.seed).toEqual({
@@ -140,7 +140,7 @@ describe('controller-owned Gateway membership coordinator', () => {
 			controllerEpoch: 'controller-epoch-1',
 			gatewayEpochId: 'gateway-epoch-1',
 			generationId: 'generation-1',
-			zoneId: 'openclaw',
+			zoneId: 'hermes',
 		});
 		const gateway = handle.attachGatewayVm('gateway-vm-1');
 		expect(gateway).toEqual({ ...handle.seed, gatewayVmId: 'gateway-vm-1' });
@@ -153,7 +153,7 @@ describe('controller-owned Gateway membership coordinator', () => {
 		const handle = coordinator.beginGatewayEpoch({
 			bootId: 'boot-1',
 			generationId: 'generation-1',
-			zoneId: 'openclaw',
+			zoneId: 'hermes',
 		});
 		const unattachedGateway = {
 			...handle.seed,

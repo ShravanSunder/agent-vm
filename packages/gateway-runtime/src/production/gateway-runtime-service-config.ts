@@ -108,7 +108,7 @@ export const GatewayRuntimeServiceConfigSchema = z
 		attachment: z
 			.object({
 				attachmentGeneration: PositiveSafeIntegerSchema,
-				clientKind: z.enum(['openclaw-managed-plugin', 'hermes-managed-plugin']),
+				clientKind: z.literal('hermes-managed-plugin'),
 				configuredAgentIds: z.array(z.string().min(1).max(256)).min(1).max(128),
 				frameworkEpoch: z.string().min(1).max(256),
 				gatewayEpoch: z.string().min(1).max(256),
@@ -172,8 +172,7 @@ export const GatewayRuntimeServiceConfigSchema = z
 			});
 		}
 
-		const expectedFrameworkKind =
-			config.attachment.clientKind === 'openclaw-managed-plugin' ? 'openclaw' : 'hermes';
+		const expectedFrameworkKind = 'hermes';
 		const snapshotAgentIds = Object.keys(config.semanticSnapshot.agentProjections).toSorted();
 		const toolPortalAgentIds = Object.keys(config.toolPortalConfig.agents).toSorted();
 		const expectedAgentIds = [...new Set(configuredAgentIds)].toSorted();

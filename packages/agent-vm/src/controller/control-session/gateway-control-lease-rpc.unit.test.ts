@@ -43,7 +43,7 @@ import {
 
 const callerPrincipal = {
 	agentId: 'main',
-	frameworkIdentity: { agentId: 'main', kind: 'openclaw' },
+	frameworkIdentity: { kind: 'hermes', profileName: 'main' },
 	profileAssignmentRevision: 'assignment-main',
 	toolPortalProfileId: 'standard',
 } as const;
@@ -73,13 +73,13 @@ const otherCallerContext = {
 	principal: {
 		...callerPrincipal,
 		agentId: 'other',
-		frameworkIdentity: { agentId: 'other', kind: 'openclaw' },
+		frameworkIdentity: { kind: 'hermes', profileName: 'other' },
 	},
 	stablePrincipal: deriveGatewayControlStablePrincipal({
 		principal: {
 			...callerPrincipal,
 			agentId: 'other',
-			frameworkIdentity: { agentId: 'other', kind: 'openclaw' },
+			frameworkIdentity: { kind: 'hermes', profileName: 'other' },
 		},
 	}),
 } satisfies GatewayControlTrustedCallerContext;
@@ -1273,7 +1273,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 		},
 		{
 			changedPrincipal: {
-				frameworkIdentity: { kind: 'hermes' as const, profileName: 'main' },
+				frameworkIdentity: { kind: 'hermes' as const, profileName: 'other' },
 			},
 			field: 'frameworkIdentity',
 		},

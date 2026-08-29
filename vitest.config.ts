@@ -111,9 +111,6 @@ export default defineConfig({
 			'@agent-vm/gateway-runtime': repoPath('packages/gateway-runtime/src/index.ts'),
 			'@agent-vm/hermes-gateway': repoPath('packages/hermes-gateway/src/index.ts'),
 			'@agent-vm/managed-vm': repoPath('packages/managed-vm/src/index.ts'),
-			'@agent-vm/openclaw-agent-vm-plugin': repoPath(
-				'packages/openclaw-agent-vm-plugin/src/index.ts',
-			),
 			'@agent-vm/secret-management': repoPath('packages/secret-management/src/index.ts'),
 			'@agent-vm/mcp-portal/testing/fake-upstream-mcp-server': repoPath(
 				'packages/mcp-portal/src/testing/fake-upstream-mcp-server.ts',
@@ -137,7 +134,6 @@ export default defineConfig({
 				'packages/mcp-portal/src/portal-auth/hmac-token.ts',
 			),
 			'@agent-vm/mcp-portal': repoPath('packages/mcp-portal/src/index.ts'),
-			'@agent-vm/openclaw-gateway': repoPath('packages/openclaw-gateway/src/index.ts'),
 			'@agent-vm/worker-control-contracts': repoPath(
 				'packages/worker-control-contracts/src/index.ts',
 			),
@@ -253,21 +249,8 @@ export default defineConfig({
 					include: ['packages/**/*.vm.e2e.test.ts'],
 					exclude: [
 						'**/node_modules/**',
-						'**/managed-gateway-image-boot.vm.e2e.test.ts',
 						'**/live-gondolin-http-mediation.vm.e2e.test.ts',
 						'**/live-http-mediation.vm.e2e.test.ts',
-					],
-					testTimeout: 900_000,
-					hookTimeout: 300_000,
-					maxWorkers: 1,
-				},
-			},
-			{
-				extends: true,
-				test: {
-					name: 'e2e-vm-managed-gateway',
-					include: [
-						'packages/agent-vm/src/integration-tests/managed-gateway-image-boot.vm.e2e.test.ts',
 					],
 					testTimeout: 900_000,
 					hookTimeout: 300_000,
@@ -282,16 +265,6 @@ export default defineConfig({
 						'packages/**/live-gondolin-http-mediation.vm.e2e.test.ts',
 						'packages/**/live-http-mediation.vm.e2e.test.ts',
 					],
-					testTimeout: 900_000,
-					hookTimeout: 300_000,
-					maxWorkers: 1,
-				},
-			},
-			{
-				extends: true,
-				test: {
-					name: 'e2e-openclaw',
-					include: ['packages/**/*.openclaw.e2e.test.ts'],
 					testTimeout: 900_000,
 					hookTimeout: 300_000,
 					maxWorkers: 1,

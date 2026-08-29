@@ -23,7 +23,7 @@ function createSystemConfig(
 		controllerRuntimeDir: './controller-runtime',
 		host: {
 			controllerPort: 18800,
-			projectNamespace: 'claw-tests-a1b2c3d4',
+			projectNamespace: 'agent-vm-tests-a1b2c3d4',
 			secretsProvider: {
 				type: '1password',
 				tokenSource,
@@ -127,7 +127,7 @@ describe('runOnePasswordAuthCommand', () => {
 				io: createIo().io,
 				systemConfig: {
 					...createSystemConfig(),
-					host: { controllerPort: 18800, projectNamespace: 'claw-tests-a1b2c3d4' },
+					host: { controllerPort: 18800, projectNamespace: 'agent-vm-tests-a1b2c3d4' },
 				},
 				tokenReference: 'op://agent-vm/service-account/credential',
 			}),

@@ -16,7 +16,7 @@ const systemConfig = {
 	controllerRuntimeDir: './runtime',
 	host: {
 		controllerPort: 18800,
-		projectNamespace: 'claw-tests-a1b2c3d4',
+		projectNamespace: 'agent-vm-tests-a1b2c3d4',
 		secretsProvider: {
 			type: '1password',
 			tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
@@ -24,9 +24,9 @@ const systemConfig = {
 	},
 	imageProfiles: {
 		gateways: {
-			openclaw: {
-				type: 'openclaw',
-				buildConfig: './vm-images/gateways/openclaw/build-config.json',
+			hermes: {
+				type: 'hermes',
+				buildConfig: './vm-images/gateways/hermes/build-config.json',
 			},
 			worker: {
 				type: 'worker',
@@ -44,16 +44,14 @@ const systemConfig = {
 		{
 			id: 'shravan',
 			gateway: {
-				type: 'openclaw',
-				controlAuth: {
-					mode: 'token',
-					secret: 'OPENCLAW_GATEWAY_TOKEN',
-				},
-				imageProfile: 'openclaw',
+				type: 'hermes',
+				imageProfile: 'hermes',
 				memory: '2G',
 				cpus: 2,
 				port: 18791,
-				config: './config/shravan/openclaw.json',
+				config: './config/shravan/hermes.json',
+				profileSecretProjectionsByAgent: { main: {} },
+				profilesByAgent: { main: 'main' },
 				stateDir: './state/shravan',
 				zoneFilesDir: './zone-files/shravan',
 				zoneRuntimeDir: './runtime/shravan',
@@ -148,7 +146,7 @@ describe('resolveZoneSecrets', () => {
 				{
 					...shravanZone,
 					secrets: {
-						OPENCLAW_GATEWAY_TOKEN: {
+						TEST_GATEWAY_TOKEN: {
 							source: '1password' as const,
 							ref: 'op://agent-vm/shravan-gateway-auth/password',
 							injection: 'env' as const,
@@ -160,7 +158,7 @@ describe('resolveZoneSecrets', () => {
 					...shravanZone,
 					id: 'copse',
 					secrets: {
-						OPENCLAW_GATEWAY_TOKEN: {
+						TEST_GATEWAY_TOKEN: {
 							source: '1password' as const,
 							ref: 'op://agent-vm/copse-gateway-auth/password',
 							injection: 'env' as const,
@@ -179,11 +177,11 @@ describe('resolveZoneSecrets', () => {
 				zoneId: 'copse',
 			}),
 		).resolves.toEqual({
-			OPENCLAW_GATEWAY_TOKEN: 'resolved:op://agent-vm/copse-gateway-auth/password',
+			TEST_GATEWAY_TOKEN: 'resolved:op://agent-vm/copse-gateway-auth/password',
 		});
 		expect(resolve).not.toHaveBeenCalled();
 		expect(resolveAll).toHaveBeenCalledWith({
-			OPENCLAW_GATEWAY_TOKEN: {
+			TEST_GATEWAY_TOKEN: {
 				source: '1password',
 				ref: 'op://agent-vm/copse-gateway-auth/password',
 			},
@@ -409,7 +407,7 @@ describe('resolveZoneSecrets', () => {
 					gateway: baseZone.gateway,
 					id: baseZone.id,
 					secrets: {
-						OPENCLAW_GATEWAY_TOKEN: {
+						TEST_GATEWAY_TOKEN: {
 							source: '1password' as const,
 							injection: 'env' as const,
 							audience: 'gateway' as const,
@@ -430,7 +428,7 @@ describe('resolveZoneSecrets', () => {
 				zoneId: 'shravan',
 			}),
 		).rejects.toThrow(
-			"Zone 'shravan' secret 'OPENCLAW_GATEWAY_TOKEN' is missing 'ref'. Add an explicit 1Password reference for this secret.",
+			"Zone 'shravan' secret 'TEST_GATEWAY_TOKEN' is missing 'ref'. Add an explicit 1Password reference for this secret.",
 		);
 		await expect(
 			resolveZoneSecrets({

@@ -81,7 +81,7 @@ describe('smoke: agent-vm manual CLI', () => {
 		expect(operationsManual).toContain('stale_to_reacquired');
 		const observabilityManual = await readText(targetDir, 'docs/manual/observability.md');
 		expect(observabilityManual).toContain(
-			'Per-zone observability supports managed OpenClaw and Hermes gateways through Gondolin HTTP mediation.',
+			'Per-zone observability supports managed Hermes gateways through Gondolin HTTP mediation.',
 		);
 		expect(observabilityManual).toContain('zones[].observability.services');
 		expect(observabilityManual).toContain('agent-vm-tool-portal');

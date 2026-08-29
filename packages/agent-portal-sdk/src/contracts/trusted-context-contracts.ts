@@ -24,26 +24,14 @@ export function compareUnicodeCodePointStrings(left: string, right: string): num
 	return leftCodePoints.length - rightCodePoints.length;
 }
 
-export const GatewayRuntimeFrameworkKindSchema = z.enum(['openclaw', 'hermes']);
-export const GatewayRuntimeManagedPluginClientKindSchema = z.enum([
-	'openclaw-managed-plugin',
-	'hermes-managed-plugin',
-]);
+export const GatewayRuntimeFrameworkKindSchema = z.literal('hermes');
+export const GatewayRuntimeManagedPluginClientKindSchema = z.literal('hermes-managed-plugin');
 export const GatewayRuntimeFrameworkIdentitySchema = z
-	.discriminatedUnion('kind', [
-		z
-			.object({
-				agentId: BoundedOpaqueIdentifierSchema,
-				kind: z.literal('openclaw'),
-			})
-			.strict(),
-		z
-			.object({
-				kind: z.literal('hermes'),
-				profileName: BoundedOpaqueIdentifierSchema,
-			})
-			.strict(),
-	])
+	.object({
+		kind: z.literal('hermes'),
+		profileName: BoundedOpaqueIdentifierSchema,
+	})
+	.strict()
 	.readonly();
 export const GatewayRuntimeProjectionCohortDigestSchema = z
 	.string()

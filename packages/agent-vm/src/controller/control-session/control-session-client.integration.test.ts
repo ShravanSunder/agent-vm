@@ -11,6 +11,7 @@ import {
 } from '@agent-vm/control-protocol-contracts';
 import {
 	GATEWAY_RUNTIME_APPROVAL_AUDIENCE,
+	createGatewayRuntimeReadinessSnapshot,
 	GatewayControlRpcMessageSchema,
 	GatewayControlRpcCommandResultMessageSchema,
 	deriveGatewayControlStablePrincipal,
@@ -193,7 +194,7 @@ const latestWinsEventEnvelope = {
 	idempotencyKey: undefined,
 	kind: 'event',
 	messageId: '77777777-7777-4777-8777-777777777777',
-	operation: 'runtime_status',
+	operation: 'gateway_runtime_readiness',
 	sequence: 3,
 } satisfies ControlEnvelope;
 
@@ -649,7 +650,7 @@ describe('control session client', () => {
 				},
 				principal: {
 					agentId: 'agent-approval-wire',
-					frameworkIdentity: { agentId: 'agent-approval-wire', kind: 'openclaw' },
+					frameworkIdentity: { kind: 'hermes', profileName: 'agent-approval-wire' },
 					profileAssignmentRevision: 'profile-assignment-approval-wire',
 					toolPortalProfileId: 'profile-approval-wire',
 				},
@@ -1016,11 +1017,11 @@ describe('control session client', () => {
 		const heldAuthority = deferredProtocolWork();
 		const heldControlPings = [deferredProtocolWork(), deferredProtocolWork()] as const;
 		const heldInboundHeartbeat = deferredProtocolWork();
-		const heldRuntimeStatus = deferredProtocolWork();
+		const heldRuntimeReadiness = deferredProtocolWork();
 		const inboundHeartbeatStarted = deferredProtocolWork();
-		const runtimeStatusStarted = deferredProtocolWork();
+		const runtimeReadinessStarted = deferredProtocolWork();
 		let inboundHeartbeatSequence: number | undefined;
-		let runtimeStatusSequence: number | undefined;
+		let runtimeReadinessSequence: number | undefined;
 		let authorityStarts = 0;
 		let resolveAuthorityCapacity!: () => void;
 		const authorityCapacity = new Promise<void>((resolve) => {
@@ -1145,10 +1146,10 @@ describe('control session client', () => {
 					await heldInboundHeartbeat.promise;
 					return undefined;
 				}
-				if (message.kind === 'event' && message.operation === 'runtime_status') {
-					runtimeStatusSequence = envelope.sequence;
-					runtimeStatusStarted.resolve();
-					await heldRuntimeStatus.promise;
+				if (message.kind === 'event' && message.operation === 'gateway_runtime_readiness') {
+					runtimeReadinessSequence = envelope.sequence;
+					runtimeReadinessStarted.resolve();
+					await heldRuntimeReadiness.promise;
 					return undefined;
 				}
 				if (message.kind === 'command' && message.operation === 'lease_get') {
@@ -1252,7 +1253,7 @@ describe('control session client', () => {
 				}),
 			})
 			.catch((error: unknown) => error);
-		const zoneARuntimeStatus = serviceA
+		const zoneARuntimeReadiness = serviceA
 			.emitApplicationMessage({
 				buildEnvelope: ({ acceptedSession, sequence }) => ({
 					bootId: acceptedSession.bootId,
@@ -1263,22 +1264,74 @@ describe('control session client', () => {
 					domain: 'gateway_control',
 					kind: 'event',
 					messageId: '11000000-0000-4000-8000-000000000002',
-					operation: 'runtime_status',
+					operation: 'gateway_runtime_readiness',
 					peerId: acceptedSession.peerId,
 					protocolVersion: CONTROL_PROTOCOL_VERSION,
 					sequence,
 					sessionId: acceptedSession.sessionId,
 					zoneId: acceptedSession.zoneId,
 				}),
-				domainMessage: { kind: 'event', operation: 'runtime_status' },
+				domainMessage: { kind: 'event', operation: 'gateway_runtime_readiness' },
 				payload: GatewayControlRpcMessageSchema.parse({
 					kind: 'event',
-					operation: 'runtime_status',
-					payload: {
-						findings: [{ id: 'zone-a-pressure', ok: true }],
-						observedAtMs: 11,
-						statusKind: 'openclaw-runtime',
-					},
+					operation: 'gateway_runtime_readiness',
+					payload: createGatewayRuntimeReadinessSnapshot({
+						controlEndpoint: {
+							identity: {
+								bootId: materialA.processEpoch,
+								controllerEpoch: materialA.controllerEpoch,
+								generationId: materialA.generationId,
+								peerId: materialA.peerId,
+								processEpoch: materialA.processEpoch,
+								zoneId: materialA.zoneId,
+							},
+							listener: {
+								host: '127.0.0.1',
+								port: 18_790,
+								readyPath: '/__agent-vm/ready',
+								socketPath: '/__agent-vm/gateway-control',
+							},
+						},
+						kind: 'tool-portal-role-readiness',
+						providerRevision: 'provider-revision-a',
+						requiredBackends: {
+							readyBackendKinds: [],
+							revision: 'binding-revision-a',
+							status: 'ready',
+						},
+						semanticRevision: 'semantic-revision-a',
+						serviceIdentity: {
+							processEpoch: materialA.processEpoch,
+							role: 'tool-portal',
+							serviceId: 'tool-portal-zone-a',
+						},
+						snapshotVersion: 1,
+						uds: {
+							attachment: {
+								expected: {
+									attachmentGeneration: 1,
+									clientKind: 'hermes-managed-plugin',
+									configuredAgentIds: ['main'],
+									frameworkEpoch: materialA.generationId,
+									gatewayEpoch: materialA.generationId,
+									protocolVersion: 1,
+									projectionCohortDigest: `projection-cohort:${'a'.repeat(64)}`,
+									runtimeEpoch: materialA.processEpoch,
+									schemaVersion: 1,
+								},
+								observationSequence: 1,
+								snapshotVersion: 1,
+								status: 'awaiting-attachment',
+							},
+							publication: {
+								identity: 'managed-plugin-private-uds',
+								protocolVersion: 1,
+								schemaVersion: 1,
+								socketPath: '/run/agent-vm/gateway-runtime/managed-plugin.sock',
+								status: 'published',
+							},
+						},
+					}),
 				}),
 			})
 			.catch((error: unknown) => error);
@@ -1286,8 +1339,8 @@ describe('control session client', () => {
 		try {
 			await withProtocolDeadline(authorityCapacity, 'zone A authority capacity');
 			await withProtocolDeadline(inboundHeartbeatStarted.promise, 'zone A inbound heartbeat');
-			await withProtocolDeadline(runtimeStatusStarted.promise, 'zone A runtime status');
-			expect([inboundHeartbeatSequence, runtimeStatusSequence]).toEqual([4, 5]);
+			await withProtocolDeadline(runtimeReadinessStarted.promise, 'zone A runtime readiness');
+			expect([inboundHeartbeatSequence, runtimeReadinessSequence]).toEqual([4, 5]);
 			const sessionA = clientA.getDiagnostics().lastHelloResponse;
 			const initialDiagnosticsB = clientB.getDiagnostics();
 			const sessionB = initialDiagnosticsB.lastHelloResponse;
@@ -1409,7 +1462,7 @@ describe('control session client', () => {
 					{
 						kind: 'command',
 						operation: 'recovery_command',
-						payload: { action: 'refresh_runtime_status' },
+						payload: { action: 'restart_control_service' },
 					},
 					{ commandResultTimeoutMs: 2_000 },
 				),
@@ -1426,7 +1479,7 @@ describe('control session client', () => {
 
 			heldAuthority.resolve();
 			heldInboundHeartbeat.resolve();
-			heldRuntimeStatus.resolve();
+			heldRuntimeReadiness.resolve();
 			for (const heldControlPing of heldControlPings) {
 				heldControlPing.resolve();
 			}
@@ -1435,14 +1488,14 @@ describe('control session client', () => {
 					...authorityPromises,
 					...controlPingPromises,
 					zoneAHeartbeat,
-					zoneARuntimeStatus,
+					zoneARuntimeReadiness,
 				]),
 				'zone A pressure settlement',
 			);
 		} finally {
 			heldAuthority.resolve();
 			heldInboundHeartbeat.resolve();
-			heldRuntimeStatus.resolve();
+			heldRuntimeReadiness.resolve();
 			for (const heldControlPing of heldControlPings) {
 				heldControlPing.resolve();
 			}
@@ -2137,7 +2190,7 @@ describe('control session client', () => {
 			verifierPublicKeyPem: material.verifierPublicKeyPem,
 		});
 		const httpServer = createServer((req, res) => {
-			const url = new URL(req.url ?? '/', 'http://openclaw.local');
+			const url = new URL(req.url ?? '/', 'http://hermes.local');
 			if (url.pathname === GATEWAY_CONTROL_READY_PATH) {
 				service.handleReadyRequest(req, res);
 				return;
@@ -2146,7 +2199,7 @@ describe('control session client', () => {
 			res.end('not found\n');
 		});
 		httpServer.on('upgrade', (req, socket, head) => {
-			const url = new URL(req.url ?? '/', 'http://openclaw.local');
+			const url = new URL(req.url ?? '/', 'http://hermes.local');
 			if (url.pathname === GATEWAY_CONTROL_SOCKET_PATH) {
 				service.handleUpgrade(req, socket, head);
 				return;
@@ -2828,7 +2881,7 @@ describe('control session client', () => {
 			});
 		let service = createService();
 		const httpServer = createServer((req, res) => {
-			const url = new URL(req.url ?? '/', 'http://openclaw.local');
+			const url = new URL(req.url ?? '/', 'http://hermes.local');
 			if (url.pathname === GATEWAY_CONTROL_READY_PATH) {
 				service.handleReadyRequest(req, res);
 				return;
@@ -2837,7 +2890,7 @@ describe('control session client', () => {
 			res.end('not found\n');
 		});
 		httpServer.on('upgrade', (req, socket, head) => {
-			const url = new URL(req.url ?? '/', 'http://openclaw.local');
+			const url = new URL(req.url ?? '/', 'http://hermes.local');
 			if (url.pathname === GATEWAY_CONTROL_SOCKET_PATH) {
 				service.handleUpgrade(req, socket, head);
 				return;
@@ -4429,7 +4482,7 @@ describe('control session client', () => {
 			},
 			policyByOperation: {
 				lease_create: 'single_use_critical',
-				runtime_status: 'latest_wins',
+				gateway_runtime_readiness: 'latest_wins',
 			},
 			commandAckTimeoutMs: 5_000,
 			connectTimeoutMs: 5_000,
@@ -4446,7 +4499,7 @@ describe('control session client', () => {
 							messageId: `10000000-0000-4000-8000-${String(snapshotIndex + 1).padStart(12, '0')}`,
 							sequence: snapshotIndex + 1,
 						},
-						{ kind: 'event', operation: 'runtime_status' },
+						{ kind: 'event', operation: 'gateway_runtime_readiness' },
 						{ snapshotIndex },
 					),
 				),

@@ -7,10 +7,7 @@ const BoundedIdentitySchema = z.string().min(1).max(256);
 const PositiveSafeIntegerSchema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const NonNegativeSafeIntegerSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 
-export const GatewayRuntimeManagedPluginClientKindSchema = z.enum([
-	'openclaw-managed-plugin',
-	'hermes-managed-plugin',
-]);
+export const GatewayRuntimeManagedPluginClientKindSchema = z.literal('hermes-managed-plugin');
 
 export const GatewayRuntimeExpectedAttachmentIdentitySchema = z
 	.object({

@@ -125,12 +125,12 @@ function createMaterializationProps(): MaterializeGatewayRuntimePortalAdmissionP
 		agentProjections: [
 			{
 				agentId: 'agent-a',
-				frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
+				frameworkIdentity: { kind: 'hermes', profileName: 'agent-a' },
 				toolPortalProfileId: 'code-builder',
 			},
 			{
 				agentId: 'agent-b',
-				frameworkIdentity: { agentId: 'agent-b', kind: 'openclaw' },
+				frameworkIdentity: { kind: 'hermes', profileName: 'agent-b' },
 				toolPortalProfileId: 'code-reviewer',
 			},
 		],
@@ -283,14 +283,14 @@ describe('Gateway runtime portal admission materialization', () => {
 				agentProjections: {
 					'agent-a': {
 						agentId: 'agent-a',
-						frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
+						frameworkIdentity: { kind: 'hermes', profileName: 'agent-a' },
 						profileAssignmentRevision: agentProjection.profileAssignmentRevision,
 						toolPortalNamespaces: [{ namespace: 'filesystem' }, { namespace: 'github' }],
 						toolPortalProfileId: 'code-builder',
 					},
 					'agent-b': {
 						agentId: 'agent-b',
-						frameworkIdentity: { agentId: 'agent-b', kind: 'openclaw' },
+						frameworkIdentity: { kind: 'hermes', profileName: 'agent-b' },
 						profileAssignmentRevision: requireAgentProjection(semanticSnapshot, 'agent-b')
 							.profileAssignmentRevision,
 						toolPortalNamespaces: [{ namespace: 'filesystem' }, { namespace: 'github' }],
@@ -473,7 +473,7 @@ describe('Gateway runtime portal admission materialization', () => {
 				...projections,
 				{
 					agentId: 'agent-c',
-					frameworkIdentity: { agentId: 'agent-c', kind: 'openclaw' as const },
+					frameworkIdentity: { kind: 'hermes' as const, profileName: 'agent-c' },
 					toolPortalProfileId: 'code-builder',
 				},
 			],

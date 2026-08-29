@@ -1,18 +1,22 @@
 /* oxlint-disable eslint/no-await-in-loop -- live readiness uses bounded sequential protocol probes */
+import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { promisify } from 'node:util';
 
 import { wrapWithHermesShellEnvironment } from '@agent-vm/hermes-gateway';
 import type { ManagedVmCreateRequest } from '@agent-vm/managed-vm';
 import { afterAll, describe, expect, it } from 'vitest';
 
+import { zoneSshAccessResponseSchema } from '../cli/ssh-commands.js';
 import {
 	connectGatewayControlSession,
 	GATEWAY_CONTROL_RECONNECT_DEADLINE_MS,
 	GATEWAY_CONTROL_RECONNECT_MAX_ATTEMPTS,
 	type GatewayDisposableControlSessionClient,
 } from '../controller/control-session/index.js';
+import { createControllerClient } from '../controller/http/controller-client.js';
 import type { ObservedControllerLeaseCreateRequest } from '../controller/leases/observed-lease-create-request.js';
 import {
 	startControlTransportReliabilityProxy,
@@ -40,7 +44,7 @@ import {
 	hermesE2eRootApiServerKey,
 	renderHermesManagedE2eConfiguration,
 	scaffoldHermesE2eProject,
-	useLocalHermesGatewayImagePackages,
+	materializeLocalHermesGatewayImagePackages,
 	type HermesE2eProject,
 } from './hermes-e2e-harness.js';
 
@@ -76,6 +80,9 @@ const providerCredentialEnvironmentName = 'PROVIDER_API_KEY';
 const fakeModelPort = 18_080;
 const frameworkGapMarker = 'HERMES_FRAMEWORK_AVAILABLE_DURING_CONTROL_GAP';
 const toolVmRecoveryMarker = 'HERMES_TOOL_VM_RECOVERY_OK';
+const filesystemMarker = 'HERMES_STOCK_FILESYSTEM_WRITE_READ_OK';
+const filesystemIsolationMarker = 'HERMES_FILESYSTEM_PROFILE_ISOLATION_OK';
+const execFileAsync = promisify(execFile);
 
 interface ManagedGatewayStartObservation {
 	readonly controlSession: GatewayDisposableControlSessionClient;
@@ -781,7 +788,124 @@ describeHermesManagedEnvironmentE2e(
 			}
 		});
 
-		it('discovers managed policy and applies marker updates across restart', async () => {
+		it('writes and reads stock files through profile-isolated Tool VMs', async () => {
+			const repoRoot = path.resolve(process.cwd());
+			const filesystemProject = await scaffoldHermesE2eProject({
+				agents: agentIds,
+				architecture,
+				prefix: 'hermes-managed-filesystem-e2e-',
+				zoneId: 'hermes-managed-filesystem-e2e',
+			});
+			let filesystemHarness: E2eHarnessRuntime | undefined;
+			try {
+				configureHermesSecrets(filesystemProject);
+				const filesystemSystemZone = filesystemProject.systemConfig.zones[0];
+				if (
+					filesystemSystemZone === undefined ||
+					filesystemSystemZone.id !== filesystemProject.zone.id
+				) {
+					throw new Error('Hermes filesystem E2E loaded zone does not match its projection.');
+				}
+				filesystemSystemZone.adminAccess = {
+					mode: 'secret',
+					secret: { source: 'config', value: 'hermes-protected-ssh-e2e-token' },
+				};
+				await materializeNativeProfileLeaves(filesystemProject);
+				await writeFile(
+					filesystemProject.zone.gateway.config,
+					renderCommonConfiguration(commonAcceptanceMarkers.first),
+					'utf8',
+				);
+				await materializeLocalHermesGatewayImagePackages({
+					architecture,
+					profileName: filesystemProject.zone.gateway.imageProfile,
+					projectRoot: filesystemProject.tempRoot,
+					repoRoot,
+					systemConfig: filesystemProject.systemConfig,
+				});
+				await prepareGatewayE2eProjectImages({ project: filesystemProject });
+
+				const filesystemEpoch = await startManagedHermesEpoch({
+					project: filesystemProject,
+				});
+				filesystemHarness = filesystemEpoch.harness;
+				await waitForRootApiHealth({
+					gatewayPort: filesystemProject.gatewayPort,
+					vm: filesystemEpoch.start.vm,
+				});
+				await startHermesDeterministicToolCallModelServer({
+					filesystemIsolationMarker,
+					filesystemMarker,
+					frameworkMarker: frameworkGapMarker,
+					port: fakeModelPort,
+					toolVmMarker: toolVmRecoveryMarker,
+					vm: filesystemEpoch.start.vm,
+				});
+				expect(
+					await callHermesProfile({
+						apiServerKey: hermesE2eProfileApiServerKey('main'),
+						gatewayPort: filesystemProject.gatewayPort,
+						profileName: 'main',
+						prompt: 'RUN_FILESYSTEM_WRITE_READ_PROBE',
+					}),
+				).toContain(filesystemMarker);
+				expect(
+					await callHermesProfile({
+						apiServerKey: hermesE2eProfileApiServerKey('beta'),
+						gatewayPort: filesystemProject.gatewayPort,
+						profileName: 'beta',
+						prompt: 'VERIFY_FILESYSTEM_PROFILE_ISOLATION',
+					}),
+				).toContain(filesystemIsolationMarker);
+				expect(filesystemEpoch.toolVmCreateRequests).toHaveLength(2);
+
+				const controllerClient = createControllerClient({
+					baseUrl: filesystemHarness.controllerUrl,
+				});
+				await expect(
+					controllerClient.enableZoneSsh(filesystemProject.zone.id, {
+						adminToken: 'wrong-hermes-protected-ssh-e2e-token',
+					}),
+				).rejects.toThrow(/HTTP 403/u);
+				const sshAccess = zoneSshAccessResponseSchema.parse(
+					await controllerClient.enableZoneSsh(filesystemProject.zone.id, {
+						adminToken: 'hermes-protected-ssh-e2e-token',
+					}),
+				);
+				if (
+					sshAccess.host === undefined ||
+					sshAccess.identityFile === undefined ||
+					sshAccess.port === undefined
+				) {
+					throw new Error('Controller returned incomplete protected Hermes SSH access.');
+				}
+				const sshResult = await execFileAsync(
+					'ssh',
+					[
+						'-o',
+						'StrictHostKeyChecking=no',
+						'-o',
+						'UserKnownHostsFile=/dev/null',
+						'-i',
+						sshAccess.identityFile,
+						'-p',
+						String(sshAccess.port),
+						`${sshAccess.user ?? 'root'}@${sshAccess.host}`,
+						wrapWithHermesShellEnvironment('printf "%s|%s" "$HERMES_HOME" "$HERMES_TUI_DIR"'),
+					],
+					{ timeout: 30_000 },
+				);
+				expect(sshResult.stdout).toBe('/home/hermes/.hermes|/opt/hermes/ui-tui');
+			} finally {
+				try {
+					await filesystemHarness?.close();
+				} finally {
+					await removeE2eTempRoot(filesystemProject.tempRoot);
+				}
+			}
+		}, 900_000);
+
+		it('discovers managed policy and proves a clean stable restart', async () => {
 			const repoRoot = path.resolve(process.cwd());
 			project = await scaffoldHermesE2eProject({
 				agents: agentIds,
@@ -797,7 +921,7 @@ describeHermesManagedEnvironmentE2e(
 				renderCommonConfiguration(commonAcceptanceMarkers.first),
 				'utf8',
 			);
-			await useLocalHermesGatewayImagePackages({
+			await materializeLocalHermesGatewayImagePackages({
 				architecture,
 				profileName: project.zone.gateway.imageProfile,
 				projectRoot: project.tempRoot,
@@ -849,12 +973,30 @@ describeHermesManagedEnvironmentE2e(
 				start: secondEpoch.start,
 			});
 			await startHermesDeterministicToolCallModelServer({
+				filesystemIsolationMarker,
+				filesystemMarker,
 				frameworkMarker: frameworkGapMarker,
 				port: fakeModelPort,
 				toolVmMarker: toolVmRecoveryMarker,
 				vm: secondEpoch.start.vm,
 			});
 			await expectHermesApiKeyIsolation(project.gatewayPort);
+			expect(
+				await callHermesProfile({
+					apiServerKey: hermesE2eProfileApiServerKey('main'),
+					gatewayPort: project.gatewayPort,
+					profileName: 'main',
+					prompt: 'RUN_FILESYSTEM_WRITE_READ_PROBE',
+				}),
+			).toContain(filesystemMarker);
+			expect(
+				await callHermesProfile({
+					apiServerKey: hermesE2eProfileApiServerKey('beta'),
+					gatewayPort: project.gatewayPort,
+					profileName: 'beta',
+					prompt: 'VERIFY_FILESYSTEM_PROFILE_ISOLATION',
+				}),
+			).toContain(filesystemIsolationMarker);
 			expect(secondEpoch.toolVmCreateRequests).toHaveLength(2);
 			expect(secondEpoch.leaseCreateRequests.map((request) => request.agentId)).toEqual([
 				'main',
@@ -887,7 +1029,36 @@ describeHermesManagedEnvironmentE2e(
 					`Expected an accepted Hermes control session before interruption: ${JSON.stringify(initialControlDiagnostics)}`,
 				);
 			}
-
+			expect(secondEpoch.start.vm.getHostProcessId()).toBe(secondEpoch.start.qemuPid);
+			expect(
+				await readManagedGatewaySiblingProcessIdentity({
+					gatewayVm: secondEpoch.start.vm,
+					guestPort: frameworkPort,
+					role: 'framework',
+				}),
+			).toEqual(frameworkIdentityBefore);
+			expect(
+				await readManagedGatewaySiblingProcessIdentity({
+					gatewayVm: secondEpoch.start.vm,
+					guestPort: toolPortalPort,
+					role: 'tool-portal',
+				}),
+			).toEqual(toolPortalIdentityBefore);
+			expect(await readNativeProfileLeaves(project)).toEqual(expectedNativeLeaves);
+			expect(secondEpoch.start.vm.id).not.toBe(firstEpoch.start.vm.id);
+			expect(secondEpoch.start.qemuPid).not.toBe(firstEpoch.start.qemuPid);
+			expect(secondEpoch.start.expectedCohort.fence.gatewayEpoch).not.toBe(
+				firstEpoch.start.expectedCohort.fence.gatewayEpoch,
+			);
+			expect(secondEpoch.start.expectedCohort.frameworkIdentity.frameworkEpoch).not.toBe(
+				firstEpoch.start.expectedCohort.frameworkIdentity.frameworkEpoch,
+			);
+			expect(secondEpoch.start.expectedCohort.toolPortalIdentity.processEpoch).not.toBe(
+				firstEpoch.start.expectedCohort.toolPortalIdentity.processEpoch,
+			);
+			expect(secondEpoch.start.expectedCohort.toolPortalIdentity.runtimeEpoch).not.toBe(
+				firstEpoch.start.expectedCohort.toolPortalIdentity.runtimeEpoch,
+			);
 			const isolation = activeControlTransportProxy.isolate();
 			const postBudgetAttempt = await activeControlTransportProxy.waitForRejectedConnection({
 				minimumObservedAtMs: isolation.startedAtMs + GATEWAY_CONTROL_RECONNECT_DEADLINE_MS + 1,
@@ -947,21 +1118,6 @@ describeHermesManagedEnvironmentE2e(
 					role: 'tool-portal',
 				}),
 			).toEqual(toolPortalIdentityBefore);
-			expect(await readNativeProfileLeaves(project)).toEqual(expectedNativeLeaves);
-			expect(secondEpoch.start.vm.id).not.toBe(firstEpoch.start.vm.id);
-			expect(secondEpoch.start.qemuPid).not.toBe(firstEpoch.start.qemuPid);
-			expect(secondEpoch.start.expectedCohort.fence.gatewayEpoch).not.toBe(
-				firstEpoch.start.expectedCohort.fence.gatewayEpoch,
-			);
-			expect(secondEpoch.start.expectedCohort.frameworkIdentity.frameworkEpoch).not.toBe(
-				firstEpoch.start.expectedCohort.frameworkIdentity.frameworkEpoch,
-			);
-			expect(secondEpoch.start.expectedCohort.toolPortalIdentity.processEpoch).not.toBe(
-				firstEpoch.start.expectedCohort.toolPortalIdentity.processEpoch,
-			);
-			expect(secondEpoch.start.expectedCohort.toolPortalIdentity.runtimeEpoch).not.toBe(
-				firstEpoch.start.expectedCohort.toolPortalIdentity.runtimeEpoch,
-			);
 		}, 900_000);
 	},
 );

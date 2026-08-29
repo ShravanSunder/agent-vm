@@ -302,7 +302,6 @@ const requiredPortalExportSmokeSpecifiers = [
 ] as const satisfies readonly (keyof typeof requiredPortalExportSmokeCalls)[];
 
 const deferredPortalPackageExports = [
-	'@agent-vm/openclaw-tool-portal-plugin',
 	'@agent-vm/tool-portal/cli',
 	'@agent-vm/tool-portal/http-api',
 	'@agent-vm/tool-portal/mcp-proxy',

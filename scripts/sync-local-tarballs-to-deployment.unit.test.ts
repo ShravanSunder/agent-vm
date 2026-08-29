@@ -7,14 +7,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
 	AGENT_VM_PACKAGE_NAMES,
 	HERMES_GATEWAY_TARBALL_PACKAGE_NAMES,
-	OPENCLAW_GATEWAY_TARBALL_PACKAGE_NAMES,
 	TOOL_VM_TARBALL_PACKAGE_NAMES,
 	createBetaTarballSyncPlan,
 	listStaleLocalOverlayFileNames,
-	migrateLegacyOpenClawPackageOverrides,
 	parseCliOptions,
 	renderBetaPnpmWorkspace,
-	renderOpenClawGatewayOverlay,
 	renderToolVmOverlay,
 	refreshBetaDeploymentTarballArtifacts,
 	resolveBetaPnpmInstallArgs,
@@ -53,9 +50,6 @@ describe('beta tarball sync planning', () => {
 		});
 
 		expect(plan.packages.map((packageEntry) => packageEntry.name)).toEqual(AGENT_VM_PACKAGE_NAMES);
-		expect(plan.gatewayPackages.map((packageEntry) => packageEntry.name)).toEqual(
-			OPENCLAW_GATEWAY_TARBALL_PACKAGE_NAMES,
-		);
 		expect(plan.hermesGatewayPackages.map((packageEntry) => packageEntry.name)).toEqual(
 			HERMES_GATEWAY_TARBALL_PACKAGE_NAMES,
 		);
@@ -99,12 +93,6 @@ describe('beta tarball sync planning', () => {
 		expect(plan.hermesGatewayPackages.map((packageEntry) => packageEntry.name)).toContain(
 			'@agent-vm/gateway-runtime',
 		);
-		expect(plan.hermesGatewayPackages.map((packageEntry) => packageEntry.name)).not.toContain(
-			'@agent-vm/openclaw-agent-vm-plugin',
-		);
-		expect(plan.gatewayPackages.map((packageEntry) => packageEntry.name)).toContain(
-			'@agent-vm/gateway-runtime',
-		);
 		expect(plan.toolVmPackages.map((packageEntry) => packageEntry.name)).not.toContain(
 			'@agent-vm/gateway-runtime',
 		);
@@ -118,7 +106,7 @@ describe('beta tarball sync planning', () => {
 		});
 
 		const workspaceYaml = renderBetaPnpmWorkspace({
-			onlyBuiltDependencies: ['@google/genai', 'openclaw', 'ssh2'],
+			onlyBuiltDependencies: ['@google/genai', 'ssh2'],
 			plan,
 		});
 
@@ -126,9 +114,8 @@ describe('beta tarball sync planning', () => {
 		expect(workspaceYaml).not.toContain('patchedDependencies:');
 		expect(workspaceYaml).not.toContain('@earendil-works/gondolin');
 		expect(workspaceYaml).toContain('  - "@google/genai"');
-		expect(workspaceYaml).toContain('  - "openclaw"');
 		expect(workspaceYaml).toContain(
-			"  '@agent-vm/openclaw-agent-vm-plugin': file:../agent-vm/tmp/beta-tarballs-abc123ef/agent-vm-openclaw-agent-vm-plugin-0.0.82.tgz",
+			"  '@agent-vm/hermes-gateway': file:../agent-vm/tmp/beta-tarballs-abc123ef/agent-vm-hermes-gateway-0.0.82.tgz",
 		);
 		expect(workspaceYaml).not.toContain('pnpm:');
 	});
@@ -158,15 +145,15 @@ describe('beta tarball sync planning', () => {
 
 		const manifest = updateBetaPackageManifest({
 			manifest: {
-				name: 'shravan-claw-beta',
+				name: 'beta-deployment',
 				dependencies: { '@agent-vm/agent-vm': '0.0.81' },
-				pnpm: { onlyBuiltDependencies: ['openclaw'] },
+				pnpm: { onlyBuiltDependencies: ['ssh2'] },
 			},
 			plan,
 		});
 
 		expect(manifest).toEqual({
-			name: 'shravan-claw-beta',
+			name: 'beta-deployment',
 			dependencies: {
 				'@agent-vm/agent-vm':
 					'file:../agent-vm/tmp/beta-tarballs-abc123ef/agent-vm-agent-vm-0.0.82.tgz',
@@ -178,7 +165,7 @@ describe('beta tarball sync planning', () => {
 		const options = parseCliOptions([
 			'--',
 			'--deployment',
-			'../shravan-claw-beta',
+			'../beta-deployment',
 			'--hash',
 			'adb797d4',
 			'--skip-build',
@@ -190,7 +177,7 @@ describe('beta tarball sync planning', () => {
 			skipInstall: true,
 			skipBuild: true,
 		});
-		expect(options.deploymentDirectory).toContain('shravan-claw-beta');
+		expect(options.deploymentDirectory).toContain('beta-deployment');
 	});
 
 	it('uses pnpm config syntax for disabling prepack rebuilds', () => {
@@ -229,17 +216,15 @@ describe('beta tarball sync planning', () => {
 			listStaleLocalOverlayFileNames({
 				existingFileNames: [
 					'agent-vm-agent-portal-sdk-0.0.82-abc123ef.tgz',
-					'agent-vm-openclaw-agent-vm-plugin-0.0.82-oldhash.tgz',
-					'agent-vm-openclaw-mcp-portal-plugin-0.0.82-oldhash.tgz',
-					'agent-vm-local-packages-openclaw-gateway-oldhash.json',
+					'agent-vm-mcp-portal-0.0.82-oldhash.tgz',
+					'agent-vm-local-packages-tool-vm-oldhash.json',
 					'README.md',
 				],
-				packageEntries: plan.gatewayPackages,
+				packageEntries: plan.toolVmPackages,
 			}),
 		).toEqual([
-			'agent-vm-openclaw-agent-vm-plugin-0.0.82-oldhash.tgz',
-			'agent-vm-openclaw-mcp-portal-plugin-0.0.82-oldhash.tgz',
-			'agent-vm-local-packages-openclaw-gateway-oldhash.json',
+			'agent-vm-mcp-portal-0.0.82-oldhash.tgz',
+			'agent-vm-local-packages-tool-vm-oldhash.json',
 		]);
 	});
 });
@@ -247,18 +232,12 @@ describe('beta tarball sync planning', () => {
 describe('beta tarball deployment artifact refresh', () => {
 	it('updates host manifests and VM overlays before install is required', async () => {
 		const workspaceDirectory = await createTemporaryDirectory('agent-vm-beta-sync-');
-		const deploymentDirectory = path.join(workspaceDirectory, 'shravan-claw-beta');
+		const deploymentDirectory = path.join(workspaceDirectory, 'beta-deployment');
 		const tarballDirectory = path.join(
 			workspaceDirectory,
 			'agent-vm',
 			'tmp',
 			'beta-tarballs-newhash01',
-		);
-		const openClawOverlayDirectory = path.join(
-			deploymentDirectory,
-			'vm-images',
-			'gateways',
-			'openclaw',
 		);
 		const toolVmOverlayDirectory = path.join(
 			deploymentDirectory,
@@ -297,23 +276,10 @@ describe('beta tarball deployment artifact refresh', () => {
 				'@agent-vm/agent-vm':
 					'file:../agent-vm/tmp/beta-tarballs-oldhash/agent-vm-agent-vm-0.0.110.tgz',
 			},
-			name: 'shravan-claw-beta',
+			name: 'beta-deployment',
 			pnpm: {
-				onlyBuiltDependencies: ['openclaw'],
+				onlyBuiltDependencies: ['ssh2'],
 			},
-		});
-		await writeJsonFixture(path.join(openClawOverlayDirectory, 'overlay.jsonc'), {
-			copy: [
-				{
-					from: 'local-agent-vm/agent-vm-openclaw-agent-vm-plugin-0.0.110-oldhash00.tgz',
-					to: '/tmp/agent-vm-openclaw-agent-vm-plugin-0.0.110-oldhash00.tgz',
-				},
-			],
-			extraAptPackages: ['ffmpeg'],
-			runAfterBase: [
-				'echo keep',
-				'rm -f /tmp/agent-vm-openclaw-agent-vm-plugin-0.0.110-oldhash00.tgz',
-			],
 		});
 		await writeJsonFixture(path.join(toolVmOverlayDirectory, 'overlay.jsonc'), {
 			copy: [
@@ -324,17 +290,8 @@ describe('beta tarball deployment artifact refresh', () => {
 			],
 			runAfterBase: ['rm -f /tmp/agent-vm-mcp-portal-0.0.110-oldhash00.tgz'],
 		});
-		await mkdir(path.join(openClawOverlayDirectory, 'local-agent-vm'), { recursive: true });
 		await mkdir(path.join(toolVmOverlayDirectory, 'local-agent-vm'), { recursive: true });
 		await mkdir(path.join(hermesImageDirectory, 'local-agent-vm'), { recursive: true });
-		await writeFile(
-			path.join(
-				openClawOverlayDirectory,
-				'local-agent-vm',
-				'agent-vm-openclaw-agent-vm-plugin-0.0.110-oldhash00.tgz',
-			),
-			'stale gateway package',
-		);
 		await writeFile(
 			path.join(
 				toolVmOverlayDirectory,
@@ -386,11 +343,6 @@ describe('beta tarball deployment artifact refresh', () => {
 					},
 				},
 			},
-			managedOpenClawGatewayPackageOverrides: {
-				npm: [],
-				openclaw: [],
-				pnpm: {},
-			},
 			plan,
 			tarballDirectory,
 		});
@@ -398,10 +350,6 @@ describe('beta tarball deployment artifact refresh', () => {
 		const packageJson = await readFile(path.join(deploymentDirectory, 'package.json'), 'utf8');
 		const workspaceYaml = await readFile(
 			path.join(deploymentDirectory, 'pnpm-workspace.yaml'),
-			'utf8',
-		);
-		const openClawOverlayJson = await readFile(
-			path.join(openClawOverlayDirectory, 'overlay.jsonc'),
 			'utf8',
 		);
 		const toolVmOverlayJson = await readFile(
@@ -422,31 +370,17 @@ describe('beta tarball deployment artifact refresh', () => {
 			readonly pnpm: { readonly overrides: Readonly<Record<string, string>> };
 		};
 		const hermesLocalFileNames = await readdir(path.join(hermesImageDirectory, 'local-agent-vm'));
-		const openClawLocalFileNames = await readdir(
-			path.join(openClawOverlayDirectory, 'local-agent-vm'),
-		);
 		const toolVmLocalFileNames = await readdir(path.join(toolVmOverlayDirectory, 'local-agent-vm'));
 		expect(packageJson).toContain(
 			'../agent-vm/tmp/beta-tarballs-newhash01/agent-vm-agent-vm-0.0.110.tgz',
 		);
 		expect(packageJson).not.toContain('oldhash');
 		expect(workspaceYaml).toContain(
-			"'@agent-vm/openclaw-agent-vm-plugin': file:../agent-vm/tmp/beta-tarballs-newhash01/agent-vm-openclaw-agent-vm-plugin-0.0.110.tgz",
+			"'@agent-vm/hermes-gateway': file:../agent-vm/tmp/beta-tarballs-newhash01/agent-vm-hermes-gateway-0.0.110.tgz",
 		);
 		expect(workspaceYaml).not.toContain('patchedDependencies:');
-		expect(openClawOverlayJson).not.toContain('.patch');
-		expect(openClawOverlayJson).toContain(
-			'local-agent-vm/agent-vm-openclaw-agent-vm-plugin-0.0.110-newhash01.tgz',
-		);
-		expect(openClawOverlayJson).not.toContain('oldhash00');
 		expect(toolVmOverlayJson).toContain('local-agent-vm/agent-vm-mcp-portal-0.0.110-newhash01.tgz');
 		expect(toolVmOverlayJson).not.toContain('oldhash00');
-		expect(openClawLocalFileNames).toContain(
-			'agent-vm-openclaw-agent-vm-plugin-0.0.110-newhash01.tgz',
-		);
-		expect(openClawLocalFileNames).not.toContain(
-			'agent-vm-openclaw-agent-vm-plugin-0.0.110-oldhash00.tgz',
-		);
 		expect(toolVmLocalFileNames).toContain('agent-vm-mcp-portal-0.0.110-newhash01.tgz');
 		expect(toolVmLocalFileNames).not.toContain('agent-vm-mcp-portal-0.0.110-oldhash00.tgz');
 		expect(hermesDockerfile).toContain('/usr/local/bin/agent-vm-hermes-gateway');
@@ -470,231 +404,7 @@ describe('beta tarball deployment artifact refresh', () => {
 	});
 });
 
-describe('openclaw gateway overlay rendering', () => {
-	const managedPackageOverrides = {
-		npm: ['@openai/codex@0.139.0'],
-		openclaw: ['openclaw@2026.6.8', '@openclaw/codex@2026.6.8'],
-		pnpm: { undici: '8.5.0' },
-	};
-
-	it('rejects legacy OpenClaw package overrides on managed image overlays', () => {
-		expect(() =>
-			migrateLegacyOpenClawPackageOverrides({
-				extraAptPackages: ['ffmpeg'],
-				extraOpenClawPackages: [],
-				runAfterBase: ['echo ok'],
-			}),
-		).toThrow(/move extraOpenClawPackages to packageOverrides\.openclaw/u);
-		expect(() =>
-			migrateLegacyOpenClawPackageOverrides({
-				extraAptPackages: ['ffmpeg'],
-				openClawPackageOverrides: ['openclaw@2026.6.8'],
-				runAfterBase: ['echo ok'],
-			}),
-		).toThrow(/move openClawPackageOverrides to packageOverrides\.openclaw/u);
-		expect(() =>
-			migrateLegacyOpenClawPackageOverrides({
-				extraAptPackages: ['ffmpeg'],
-				pnpmOverrides: { undici: '8.5.0' },
-				runAfterBase: ['echo ok'],
-			}),
-		).toThrow(/move pnpmOverrides to packageOverrides\.pnpm/u);
-	});
-
-	it('preserves clean managed image overlays without package overrides', () => {
-		const overlay = migrateLegacyOpenClawPackageOverrides({
-			extraAptPackages: ['ffmpeg'],
-			runAfterBase: ['echo ok'],
-		});
-
-		expect(overlay).toEqual({
-			extraAptPackages: ['ffmpeg'],
-			runAfterBase: ['echo ok'],
-		});
-		expect(overlay.extraOpenClawPackages).toBeUndefined();
-	});
-
-	it('installs local gateway packages through a pnpm project with transitive overrides', () => {
-		const plan = createBetaTarballSyncPlan({
-			cacheKey: 'abc123ef',
-			tarballDirectoryReference: '../agent-vm/tmp/beta-tarballs-abc123ef',
-			version: '0.0.82',
-		});
-
-		const overlay = renderOpenClawGatewayOverlay({
-			existingOverlay: {
-				extraAptPackages: ['ffmpeg'],
-				packageOverrides: {
-					npm: [],
-					openclaw: ['openclaw@2026.5.20'],
-					pnpm: {},
-				},
-			},
-			plan,
-		});
-		const overlayJson = JSON.stringify(overlay, null, 2);
-
-		expect(
-			overlay.copy
-				.map((copyEntry) => copyEntry.from)
-				.filter((copyPath) => copyPath.endsWith('.tgz')),
-		).toEqual(
-			OPENCLAW_GATEWAY_TARBALL_PACKAGE_NAMES.map(
-				(packageName) =>
-					`local-agent-vm/${packageName.replace('@agent-vm/', 'agent-vm-')}-0.0.82-abc123ef.tgz`,
-			),
-		);
-		expect(overlay.runAfterBase).toEqual([
-			'mkdir -p /opt/agent-vm/local-packages',
-			expect.stringContaining(
-				'"@agent-vm/gateway-lifecycle": "file:/tmp/agent-vm-gateway-lifecycle-0.0.82-abc123ef.tgz"',
-			),
-			'cd /opt/agent-vm/local-packages && pnpm install --prod --ignore-scripts',
-			expect.stringContaining(
-				'ln -sfn /opt/agent-vm/local-packages/node_modules/@agent-vm/openclaw-agent-vm-plugin',
-			),
-			'test -f /opt/agent-vm/local-packages/node_modules/@agent-vm/gateway-runtime/dist/bin/gateway-runtime.js && chmod 755 /opt/agent-vm/local-packages/node_modules/@agent-vm/gateway-runtime/dist/bin/gateway-runtime.js && ln -sfn /opt/agent-vm/local-packages/node_modules/@agent-vm/gateway-runtime/dist/bin/gateway-runtime.js /usr/local/bin/agent-vm-gateway-runtime',
-			expect.any(String),
-		]);
-		expect(overlay.runAfterBase.at(-1)).toContain(
-			'/tmp/agent-vm-config-contracts-0.0.82-abc123ef.tgz',
-		);
-		expect(overlay.runAfterBase.at(-1)).toContain(
-			'/tmp/agent-vm-agent-portal-sdk-0.0.82-abc123ef.tgz',
-		);
-		expect(overlayJson).toContain('@agent-vm/agent-portal-sdk');
-		expect(overlayJson).toContain('file:/tmp/agent-vm-agent-portal-sdk-0.0.82-abc123ef.tgz');
-		expect(overlayJson).not.toContain('@earendil-works/gondolin@0.12.0');
-		expect(overlayJson).not.toContain('.patch');
-		expect(overlayJson).not.toContain('npm install --prefix');
-		expect(overlayJson).not.toContain('pnpm add -g');
-		expect(overlayJson).not.toContain('rm -rf');
-		expect(overlayJson).not.toContain('cp -R');
-		expect(overlay.packageOverrides?.openclaw).toEqual(['openclaw@2026.5.20']);
-		expect(overlay.extraOpenClawPackages).toBeUndefined();
-	});
-
-	it('preserves the current package override field without writing legacy names', () => {
-		const plan = createBetaTarballSyncPlan({
-			cacheKey: 'abc123ef',
-			tarballDirectoryReference: '../agent-vm/tmp/beta-tarballs-abc123ef',
-			version: '0.0.82',
-		});
-
-		const overlay = renderOpenClawGatewayOverlay({
-			existingOverlay: {
-				extraAptPackages: ['ffmpeg'],
-				packageOverrides: {
-					npm: [],
-					openclaw: ['openclaw@2026.5.21'],
-					pnpm: {},
-				},
-			},
-			plan,
-		});
-
-		expect(overlay.packageOverrides?.openclaw).toEqual(['openclaw@2026.5.21']);
-		expect(overlay.extraOpenClawPackages).toBeUndefined();
-	});
-
-	it('removes redundant core managed-default package overrides', () => {
-		const plan = createBetaTarballSyncPlan({
-			cacheKey: 'abc123ef',
-			tarballDirectoryReference: '../agent-vm/tmp/beta-tarballs-abc123ef',
-			version: '0.0.82',
-		});
-
-		const overlay = renderOpenClawGatewayOverlay({
-			existingOverlay: {
-				extraAptPackages: ['ffmpeg'],
-				packageOverrides: {
-					npm: ['@openai/codex@0.139.0'],
-					openclaw: ['openclaw@2026.6.8', '@openclaw/codex@2026.6.8'],
-					pnpm: { undici: '8.5.0' },
-				},
-			},
-			managedPackageOverrides,
-			plan,
-		});
-
-		expect(overlay.packageOverrides).toBeUndefined();
-	});
-
-	it('preserves Discord pins because Discord is a conditional package, not an unconditional managed default', () => {
-		const plan = createBetaTarballSyncPlan({
-			cacheKey: 'abc123ef',
-			tarballDirectoryReference: '../agent-vm/tmp/beta-tarballs-abc123ef',
-			version: '0.0.82',
-		});
-
-		const overlay = renderOpenClawGatewayOverlay({
-			existingOverlay: {
-				extraAptPackages: ['ffmpeg'],
-				packageOverrides: {
-					npm: [],
-					openclaw: ['openclaw@2026.6.8', '@openclaw/codex@2026.6.8', '@openclaw/discord@2026.6.8'],
-					pnpm: { undici: '8.5.0' },
-				},
-			},
-			managedPackageOverrides,
-			plan,
-		});
-
-		expect(overlay.packageOverrides?.pnpm).toEqual({});
-		expect(overlay.packageOverrides?.openclaw).toEqual(['@openclaw/discord@2026.6.8']);
-	});
-
-	it('preserves non-default OpenClaw package pins while removing stale pnpm overrides', () => {
-		const plan = createBetaTarballSyncPlan({
-			cacheKey: 'abc123ef',
-			tarballDirectoryReference: '../agent-vm/tmp/beta-tarballs-abc123ef',
-			version: '0.0.82',
-		});
-
-		const overlay = renderOpenClawGatewayOverlay({
-			existingOverlay: {
-				extraAptPackages: ['ffmpeg'],
-				packageOverrides: {
-					npm: [],
-					openclaw: ['openclaw@2026.5.20', '@openclaw/discord@2026.6.8'],
-					pnpm: { undici: '8.5.0' },
-				},
-			},
-			managedPackageOverrides,
-			plan,
-		});
-
-		expect(overlay.packageOverrides?.pnpm).toEqual({});
-		expect(overlay.packageOverrides?.openclaw).toEqual([
-			'openclaw@2026.5.20',
-			'@openclaw/discord@2026.6.8',
-		]);
-	});
-
-	it('preserves partial OpenClaw package pins even when the pinned version matches the managed default', () => {
-		const plan = createBetaTarballSyncPlan({
-			cacheKey: 'abc123ef',
-			tarballDirectoryReference: '../agent-vm/tmp/beta-tarballs-abc123ef',
-			version: '0.0.82',
-		});
-
-		const overlay = renderOpenClawGatewayOverlay({
-			existingOverlay: {
-				extraAptPackages: ['ffmpeg'],
-				packageOverrides: {
-					npm: [],
-					openclaw: ['@openclaw/discord@2026.6.8'],
-					pnpm: { undici: '8.5.0' },
-				},
-			},
-			managedPackageOverrides,
-			plan,
-		});
-
-		expect(overlay.packageOverrides?.pnpm).toEqual({});
-		expect(overlay.packageOverrides?.openclaw).toEqual(['@openclaw/discord@2026.6.8']);
-	});
-
+describe('Tool VM overlay rendering', () => {
 	it('installs local Tool VM packages and keeps the mcp-portal executable on PATH', () => {
 		const plan = createBetaTarballSyncPlan({
 			cacheKey: 'abc123ef',

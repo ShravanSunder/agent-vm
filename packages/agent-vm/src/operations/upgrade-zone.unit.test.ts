@@ -11,7 +11,7 @@ const systemConfig = {
 	controllerRuntimeDir: './controller-runtime',
 	host: {
 		controllerPort: 18800,
-		projectNamespace: 'claw-tests-a1b2c3d4',
+		projectNamespace: 'agent-vm-tests-a1b2c3d4',
 		secretsProvider: {
 			type: '1password',
 			tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
@@ -19,9 +19,9 @@ const systemConfig = {
 	},
 	imageProfiles: {
 		gateways: {
-			openclaw: {
-				type: 'openclaw',
-				buildConfig: './vm-images/gateways/openclaw/build-config.json',
+			hermes: {
+				type: 'hermes',
+				buildConfig: './vm-images/gateways/hermes/build-config.json',
 			},
 			worker: {
 				type: 'worker',
@@ -39,24 +39,22 @@ const systemConfig = {
 		{
 			id: 'shravan',
 			gateway: {
-				type: 'openclaw',
-				controlAuth: {
-					mode: 'token',
-					secret: 'OPENCLAW_GATEWAY_TOKEN',
-				},
-				imageProfile: 'openclaw',
+				type: 'hermes',
+				profileSecretProjectionsByAgent: { main: {} },
+				profilesByAgent: { main: 'main' },
+				imageProfile: 'hermes',
 				memory: '2G',
 				cpus: 2,
 				port: 18791,
-				config: './config/shravan/openclaw.json',
+				config: './config/shravan/hermes.json',
 				stateDir: './state/shravan',
 				zoneFilesDir: './zone-files/shravan',
 				zoneRuntimeDir: './runtime/shravan',
 			},
 			secrets: {
-				OPENCLAW_GATEWAY_TOKEN: {
+				TEST_GATEWAY_SECRET: {
 					source: 'environment',
-					envVar: 'OPENCLAW_GATEWAY_TOKEN',
+					envVar: 'TEST_GATEWAY_SECRET',
 					injection: 'env',
 					audience: 'gateway',
 				},

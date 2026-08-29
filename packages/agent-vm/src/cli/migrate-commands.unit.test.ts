@@ -28,7 +28,7 @@ describe('runMigrateImagesCommand', () => {
 		const targetDirectory = await createTestDirectory();
 		const configPath = path.join(targetDirectory, 'config', 'system.jsonc');
 		await mkdir(path.dirname(configPath), { recursive: true });
-		await mkdir(path.join(targetDirectory, 'vm-images', 'gateways', 'openclaw'), {
+		await mkdir(path.join(targetDirectory, 'vm-images', 'gateways', 'worker'), {
 			recursive: true,
 		});
 		await mkdir(path.join(targetDirectory, 'vm-images', 'tool-vms', 'default'), {
@@ -39,10 +39,10 @@ describe('runMigrateImagesCommand', () => {
 			JSON.stringify({
 				imageProfiles: {
 					gateways: {
-						openclaw: {
-							type: 'openclaw',
-							buildConfig: '../vm-images/gateways/openclaw/build-config.jsonc',
-							dockerfile: '../vm-images/gateways/openclaw/Dockerfile',
+						worker: {
+							type: 'worker',
+							buildConfig: '../vm-images/gateways/worker/build-config.jsonc',
+							dockerfile: '../vm-images/gateways/worker/Dockerfile',
 						},
 					},
 					toolVms: {
@@ -60,17 +60,17 @@ describe('runMigrateImagesCommand', () => {
 		const result = await runMigrateImagesCommand({ systemConfigPath: configPath });
 
 		const migratedConfig = await loadJsonConfigFile(configPath);
-		expect(result.migratedProfiles).toEqual(['gateway/openclaw', 'toolVm/default']);
+		expect(result.migratedProfiles).toEqual(['gateway/worker', 'toolVm/default']);
 		expect(migratedConfig).toMatchObject({
 			imageProfiles: {
 				gateways: {
-					openclaw: {
-						type: 'openclaw',
-						buildConfig: '../vm-images/gateways/openclaw/build-config.jsonc',
+					worker: {
+						type: 'worker',
+						buildConfig: '../vm-images/gateways/worker/build-config.jsonc',
 						source: {
 							kind: 'managedBase',
-							base: 'openclaw-gateway',
-							overlay: '../vm-images/gateways/openclaw/overlay.jsonc',
+							base: 'worker-gateway',
+							overlay: '../vm-images/gateways/worker/overlay.jsonc',
 						},
 					},
 				},
@@ -90,7 +90,7 @@ describe('runMigrateImagesCommand', () => {
 		expect(JSON.stringify(migratedConfig)).not.toContain('dockerfile');
 		await expect(
 			readFile(
-				path.join(targetDirectory, 'vm-images', 'gateways', 'openclaw', 'overlay.jsonc'),
+				path.join(targetDirectory, 'vm-images', 'gateways', 'worker', 'overlay.jsonc'),
 				'utf8',
 			),
 		).resolves.toContain('"schemaVersion": 1');
@@ -106,7 +106,7 @@ describe('runMigrateImagesCommand', () => {
 		const targetDirectory = await createTestDirectory();
 		const configPath = path.join(targetDirectory, 'config', 'system.jsonc');
 		await mkdir(path.dirname(configPath), { recursive: true });
-		await mkdir(path.join(targetDirectory, 'vm-images', 'gateways', 'openclaw'), {
+		await mkdir(path.join(targetDirectory, 'vm-images', 'gateways', 'worker'), {
 			recursive: true,
 		});
 		await writeFile(
@@ -116,11 +116,11 @@ describe('runMigrateImagesCommand', () => {
 				'  // deployment-owned comment',
 				'  "imageProfiles": {',
 				'    "gateways": {',
-				'      "openclaw": {',
-				'        "type": "openclaw",',
+				'      "worker": {',
+				'        "type": "worker",',
 				'        // keep this near the gateway image',
-				'        "buildConfig": "../vm-images/gateways/openclaw/build-config.jsonc",',
-				'        "dockerfile": "../vm-images/gateways/openclaw/Dockerfile"',
+				'        "buildConfig": "../vm-images/gateways/worker/build-config.jsonc",',
+				'        "dockerfile": "../vm-images/gateways/worker/Dockerfile"',
 				'      }',
 				'    },',
 				'    "toolVms": {}',
@@ -135,18 +135,18 @@ describe('runMigrateImagesCommand', () => {
 
 		const migratedConfigText = await readFile(configPath, 'utf8');
 		const migratedConfig = await loadJsonConfigFile(configPath);
-		expect(result.migratedProfiles).toEqual(['gateway/openclaw']);
+		expect(result.migratedProfiles).toEqual(['gateway/worker']);
 		expect(migratedConfigText).toContain('// deployment-owned comment');
 		expect(migratedConfigText).toContain('// keep this near the gateway image');
 		expect(migratedConfigText).not.toContain('"dockerfile"');
 		expect(migratedConfig).toMatchObject({
 			imageProfiles: {
 				gateways: {
-					openclaw: {
+					worker: {
 						source: {
 							kind: 'managedBase',
-							base: 'openclaw-gateway',
-							overlay: '../vm-images/gateways/openclaw/overlay.jsonc',
+							base: 'worker-gateway',
+							overlay: '../vm-images/gateways/worker/overlay.jsonc',
 						},
 					},
 				},

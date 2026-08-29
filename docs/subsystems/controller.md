@@ -35,7 +35,7 @@ Deep dive into the controller runtime: startup lifecycle, HTTP API surface, leas
     |
     |-- 5. Create zone runtime registry
     |      Builds one runtime per selected zone
-    |      OpenClaw and Worker zones dispatch by gateway type
+    |      Hermes and Worker zones dispatch by Gateway type
     |
     |-- 6. Create lease manager
     |      createLeaseManager({ tcpPool, createManagedVm, now })
@@ -52,7 +52,7 @@ Deep dive into the controller runtime: startup lifecycle, HTTP API surface, leas
     |      Image build, Gateway epoch admission, VM boot, runtime record, health check
     |
     |-- 9. Wire operations + task runner
-    |      OpenClaw zones: zone runtime operations + stopController
+    |      Hermes zones:  managed zone operations + stopController
     |      Worker zones:   worker task runtime + push/pull/close + stopController
     |
     |-- 10. Build Hono app
@@ -117,15 +117,15 @@ Registered conditionally -- only when `operations` or `workerTaskRunner` is prov
 
 | Method | Path | Description | Availability |
 |--------|------|-------------|-------------|
-| `GET` | `/controller-status` | System config and zone health | OpenClaw |
-| `GET` | `/zones/:zoneId/health` | Live gateway health probe using the zone's `GatewayHealthCheck` | OpenClaw |
-| `GET` | `/zones/:zoneId/service-health` | Live gateway service liveness probe using the zone's `serviceHealthCheck` when configured | OpenClaw |
-| `GET` | `/zones/:zoneId/logs` | Gateway VM process logs | OpenClaw |
-| `POST` | `/zones/:zoneId/credentials/refresh` | Re-resolve secrets, restart gateway | OpenClaw |
-| `POST` | `/zones/:zoneId/destroy` | Stop gateway, release zone leases, purge state | OpenClaw |
-| `POST` | `/zones/:zoneId/upgrade` | Rebuild image and restart gateway | OpenClaw |
+| `GET` | `/controller-status` | System config and zone health | Managed Gateway |
+| `GET` | `/zones/:zoneId/health` | Live Gateway health probe | Hermes |
+| `GET` | `/zones/:zoneId/service-health` | Live Gateway service liveness probe | Hermes |
+| `GET` | `/zones/:zoneId/logs` | Gateway VM process logs | Hermes |
+| `POST` | `/zones/:zoneId/credentials/refresh` | Re-resolve secrets, restart Gateway | Hermes |
+| `POST` | `/zones/:zoneId/destroy` | Stop Gateway, release zone leases, purge state | Hermes |
+| `POST` | `/zones/:zoneId/upgrade` | Rebuild image and restart Gateway | Hermes |
 | `POST` | `/zones/:zoneId/enable-ssh` | Enable SSH into gateway VM | Managed gateways |
-| `POST` | `/zones/:zoneId/execute-command` | Run a shell command inside gateway VM; requires zone admin token when adminAccess is configured | OpenClaw |
+| `POST` | `/zones/:zoneId/execute-command` | Run a shell command inside Gateway VM; requires zone admin token when adminAccess is configured | Hermes |
 | `POST` | `/zones/:zoneId/credentialed-runtimes/:runtimeId/retire` | Retire one agent-owned reusable credentialed Managed runtime; body is `{ agentId, force, adminToken? }` | Managed gateways |
 | `POST` | `/zones/:zoneId/worker-tasks` | Submit a worker task (`requestTaskId`, prompt, repos, context) | Worker |
 | `GET` | `/zones/:zoneId/tasks/:taskId` | Read worker task state snapshot | Worker |
@@ -152,9 +152,8 @@ unreviewed remote-command runner. Command execution inside a gateway VM is a
 separate `/zones/:zoneId/execute-command` controller operation and is protected
 by zone admin authorization when `adminAccess` is configured.
 
-The interactive shell is framework-ready for managed Gateway zones. OpenClaw
-loads its writable framework paths and explicitly authorized SSH secret
-environment. Hermes loads only non-secret framework paths and the Gondolin CA
+The interactive shell is framework-ready for Hermes zones. It loads only
+non-secret framework paths and the Gondolin CA
 bundle variables needed by Python and Node CLI operations such as
 `hermes auth add`; it does not load the one-time framework service environment.
 
@@ -224,12 +223,12 @@ aggressive. Health probes use short timeouts and no retry. Git push/pull and
 lease-create operations use longer timeouts because normal work can legitimately
 take longer. Unsafe mutations are not retried without an idempotency proof.
 
-For managed Gateway zones (OpenClaw and Hermes), the controller can
+For Hermes managed Gateway zones, the controller can
 automatically recover from current-source-corroborated host-side gateway-service
 and control-session degradation, or policy-enabled generic channel-provider
 degradation. Dead control while the Gateway service remains live may first use
 the existing bounded control-session recovery path; it does not restart the
-OpenClaw or Hermes framework process. A failed framework health probe does not
+Hermes framework process. A failed framework health probe does not
 replace the Gateway while the current framework attachment and control session
 remain healthy.
 Exact current-cohort `attachment-lost` readiness evidence is terminal for that
@@ -271,9 +270,15 @@ the zone runtime.
 
 ## Gateway Zone Orchestrator
 
-`startGatewayZone()` in `gateway-zone-orchestrator.ts` is the boot sequence for any gateway VM. The controller calls it once at startup for OpenClaw zones, and once per task for Worker zones. The full 15-step sequence is documented in the [gateway zone orchestrator architecture](../architecture/overview.md#gateway-zone-orchestrator). Key points for controller integration:
+`startGatewayZone()` in `gateway-zone-orchestrator.ts` is the boot sequence for
+any Gateway VM. The controller calls it once at startup for Hermes zones, and
+once per task for Worker zones. The sequence is documented in the [Gateway zone
+orchestrator architecture](../architecture/overview.md#gateway-zone-orchestrator).
 
-- Before a fresh OpenClaw tree is published, controller recovery adopts nothing: it validates v2 Tool and Gateway records, destroys verified old Tool runners before their Gateway parent, and refuses a successor when identity or endpoint absence is unproven.
+- Before a fresh Hermes tree is published, controller recovery adopts nothing:
+  it validates Tool and Gateway records, destroys verified old Tool runners
+  before their Gateway parent, and refuses a successor when identity or
+  endpoint absence is unproven.
 - Gateway startup allocates an epoch seed before stock VM construction, attaches the returned VM id, starts the VM, captures pid/process identity, and persists `<controllerStateDir>/zones/<zoneId>/gateway-runtime.json` before publishing the runtime. The ingress port is added when available.
 - The controller holds the returned live VM handle for the zone lifetime. Normal teardown fences admission, destroys Tool children, terminates the exact recorded Gateway process, observes runner absence, calls stock `VM.close()`, verifies endpoint absence, and only then deletes the runtime record.
 - Gateway-to-Tool command and file bytes stay on direct SSH. Socket.IO carries bounded control; health events and telemetry are not lifecycle authority.
@@ -292,7 +297,7 @@ not by VM-facing public HTTP lease routes.
   gateway_control_rpc lease_create { callerContext: { callerContextId }, correlation?, idleTtlHintMs? }
     |
     v
-  resolveOpenClawToolVmLeaseCreateOptions()
+  resolveManagedFrameworkToolVmLeaseCreateOptions()
     |-- 1. Resolve the controller-vetted caller context
     |      to its configured zone and agent
     |-- 2. Select agentToolVmProfiles[agentId]
@@ -429,7 +434,7 @@ failed, or wrong-type zones.
 | Operation | What It Does |
 |-----------|-------------|
 | `getStatus` | Calls `buildControllerStatus(systemConfig)` -- returns system configuration summary |
-| `getZoneLogs` | Reads the OpenClaw gateway boot log and latest runtime log from `/agent-vm/logs` inside the gateway VM |
+| `getZoneLogs` | Reads the Hermes Gateway boot and runtime logs from `/agent-vm/logs` inside the Gateway VM |
 | `refreshZoneCredentials` | Builds a fresh resolver, preflights all gateway startup secret dependencies, then restarts the gateway zone with the preflighted resolver |
 | `destroyZone` | Releases all zone leases (sequential), stops the gateway VM, optionally purges state |
 | `upgradeZone` | Rebuilds the gateway image (no-op currently), then restarts the gateway zone |
@@ -437,7 +442,8 @@ failed, or wrong-type zones.
 | `execInZone` | Runs an arbitrary command inside the gateway VM via `vm.exec()` after zone admin authorization when configured |
 | `stopController` | Clears reaper timer, releases all leases, stops gateway, closes HTTP server |
 
-The `stopController` operation is available in both OpenClaw and Agent Worker Gateways. All other operations are OpenClaw-only.
+The `stopController` operation is available to both Gateway modes. Managed zone
+operations apply to Hermes; Worker task operations remain separate.
 
 ---
 
@@ -543,7 +549,7 @@ All paths relative to `packages/agent-vm/src/controller/`.
 |------|----------------|
 | `controller-runtime.ts` | Top-level startup, shutdown, subsystem wiring |
 | `controller-runtime-types.ts` | `ControllerRuntime`, `ControllerRuntimeDependencies`, `StartControllerRuntimeOptions` |
-| `controller-runtime-operations.ts` | OpenClaw zone operations (destroy, upgrade, logs, credentials, exec, SSH) |
+| `controller-runtime-operations.ts` | Hermes managed-zone operations (destroy, upgrade, logs, credentials, exec, SSH) |
 | `controller-runtime-support.ts` | Secret resolver factory, GitHub token resolution, zone lookup |
 | `http/controller-http-routes.ts` | Hono app: lease routes + health, `createControllerService` |
 | `http/controller-zone-operation-routes.ts` | Hono route registration for zone operations + worker tasks |

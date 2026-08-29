@@ -1,21 +1,23 @@
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 
 import { renderHermesManagedImageRecipe } from '@agent-vm/hermes-gateway';
 
 import type { ImageArchitecture } from '../cli/init-command-schemas.js';
-import type { LoadedSystemConfig } from '../config/system-config.js';
+import { scaffoldAgentVmProject } from '../cli/init-command.js';
+import { loadSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
 import {
 	buildLocalPythonWheel,
 	canRunManagedVmE2e,
 	copyLocalPackageTarballsToDockerContext,
 	createLocalDockerPackageTarball,
+	findAvailablePort,
 	localDockerPackageDependencyName,
 	packLocalAgentVmPackageTarball,
 	removeE2eLocalPackageTarballs,
 	requireLocalPackageTarballPath,
 	resolveE2eCacheRoot,
-	scaffoldOpenClawE2eProject,
 	useLocalToolVmMcpPortalPackageTarballs,
 	type LocalDockerPackageTarball,
 	type ManagedVmE2ePrerequisiteOptions,
@@ -108,14 +110,13 @@ function renderHermesLocalPackageManifest(tarballs: readonly LocalDockerPackageT
 			`file:./${tarball.archiveName}`,
 		]),
 	);
-	const gatewayRuntimeSpecifier = packageSpecifiers['@agent-vm/gateway-runtime'];
-	if (gatewayRuntimeSpecifier === undefined) {
+	if (packageSpecifiers['@agent-vm/gateway-runtime'] === undefined) {
 		throw new Error('Hermes local image package set requires @agent-vm/gateway-runtime.');
 	}
 	return `${JSON.stringify(
 		{
 			type: 'module',
-			dependencies: { '@agent-vm/gateway-runtime': gatewayRuntimeSpecifier },
+			dependencies: packageSpecifiers,
 			pnpm: { overrides: packageSpecifiers },
 		},
 		null,
@@ -160,7 +161,7 @@ export function renderHermesManagedE2eConfiguration(
 	].join('\n');
 }
 
-export async function useLocalHermesGatewayImagePackages(options: {
+export async function materializeLocalHermesGatewayImagePackages(options: {
 	readonly architecture: ImageArchitecture;
 	readonly profileName: string;
 	readonly projectRoot: string;
@@ -290,25 +291,25 @@ export async function scaffoldHermesE2eProject(options: {
 	if (options.agents.length === 0 || new Set(options.agents).size !== options.agents.length) {
 		throw new Error('Hermes E2E projects require a non-empty unique agent cohort.');
 	}
-	const openClawProject = await scaffoldOpenClawE2eProject({
+	const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), options.prefix));
+	const controllerPort = await findAvailablePort();
+	const gatewayPort = await findAvailablePort();
+	await scaffoldAgentVmProject({
 		agents: options.agents,
 		architecture: options.architecture,
-		prefix: options.prefix,
+		gatewayType: 'hermes',
+		secretsProvider: 'environment',
+		targetDir: tempRoot,
 		zoneId: options.zoneId,
 	});
-	const openClawZone = openClawProject.systemConfig.zones[0];
-	if (openClawZone === undefined || openClawZone.gateway.type !== 'openclaw') {
-		throw new Error('Hermes E2E scaffold requires the internal OpenClaw base fixture.');
+	const systemConfig = await loadSystemConfig(path.join(tempRoot, 'config', 'system.jsonc'));
+	const scaffoldedZone = systemConfig.zones[0];
+	if (scaffoldedZone === undefined || scaffoldedZone.gateway.type !== 'hermes') {
+		throw new Error('Hermes E2E scaffold requires a Hermes zone.');
 	}
-	const configDirectory = path.dirname(openClawZone.gateway.config);
-	const hermesManagedConfigurationDirectory = path.join(configDirectory, 'hermes-managed');
-	const hermesConfigurationPath = path.join(hermesManagedConfigurationDirectory, 'config.yaml');
-	const hermesImageDirectory = path.join(
-		openClawProject.tempRoot,
-		'vm-images',
-		'gateways',
-		'hermes',
-	);
+	const hermesConfigurationPath = scaffoldedZone.gateway.config;
+	const hermesManagedConfigurationDirectory = path.dirname(hermesConfigurationPath);
+	const hermesImageDirectory = path.join(tempRoot, 'vm-images', 'gateways', 'hermes');
 	await Promise.all([
 		fs.mkdir(hermesManagedConfigurationDirectory, { recursive: true }),
 		fs.mkdir(hermesImageDirectory, { recursive: true }),
@@ -318,24 +319,25 @@ export async function scaffoldHermesE2eProject(options: {
 		'plugins:\n  enabled:\n    - agent-vm-tool-portal\n  disabled: []\n',
 		'utf8',
 	);
-	openClawProject.systemConfig.imageProfiles.gateways = {
+	systemConfig.imageProfiles.gateways = {
 		hermes: {
 			buildConfig: path.join(hermesImageDirectory, 'build-config.jsonc'),
 			type: 'hermes',
 		},
 	};
-	Object.assign(openClawProject.systemConfig, {
+	Object.assign(systemConfig, {
 		cacheDir: path.join(resolveE2eCacheRoot(), 'hermes'),
 	});
-	openClawProject.systemConfig.host.projectNamespace = 'agent-vm-tests-hermes';
-	openClawProject.systemConfig.zones[0] = {
-		...openClawZone,
+	systemConfig.host.controllerPort = controllerPort;
+	systemConfig.host.projectNamespace = 'agent-vm-tests-hermes';
+	systemConfig.zones[0] = {
+		...scaffoldedZone,
 		agents: options.agents.map((agentId) => ({ id: agentId })),
 		gateway: {
 			config: hermesConfigurationPath,
-			cpus: openClawZone.gateway.cpus,
+			cpus: scaffoldedZone.gateway.cpus,
 			imageProfile: 'hermes',
-			memory: openClawZone.gateway.memory,
+			memory: scaffoldedZone.gateway.memory,
 			profileSecretProjectionsByAgent: Object.fromEntries(
 				options.agents.map((agentId) => [
 					agentId,
@@ -345,13 +347,13 @@ export async function scaffoldHermesE2eProject(options: {
 					},
 				]),
 			),
-			port: openClawZone.gateway.port,
+			port: gatewayPort,
 			profilesByAgent: Object.fromEntries(options.agents.map((agentId) => [agentId, agentId])),
-			runtimeRootfsSize: openClawZone.gateway.runtimeRootfsSize,
-			stateDir: openClawZone.gateway.stateDir,
+			runtimeRootfsSize: scaffoldedZone.gateway.runtimeRootfsSize,
+			stateDir: scaffoldedZone.gateway.stateDir,
 			type: 'hermes',
-			zoneFilesDir: openClawZone.gateway.zoneFilesDir,
-			zoneRuntimeDir: openClawZone.gateway.zoneRuntimeDir,
+			zoneFilesDir: scaffoldedZone.gateway.zoneFilesDir,
+			zoneRuntimeDir: scaffoldedZone.gateway.zoneRuntimeDir,
 		},
 		secrets: {
 			API_SERVER_KEY: {
@@ -376,12 +378,12 @@ export async function scaffoldHermesE2eProject(options: {
 			),
 		},
 	};
-	const zone = getHermesE2eZone(openClawProject.systemConfig);
+	const zone = getHermesE2eZone(systemConfig);
 	return {
-		controllerPort: openClawProject.controllerPort,
-		gatewayPort: openClawProject.gatewayPort,
-		systemConfig: openClawProject.systemConfig,
-		tempRoot: openClawProject.tempRoot,
+		controllerPort,
+		gatewayPort,
+		systemConfig,
+		tempRoot,
 		zone,
 	};
 }

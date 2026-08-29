@@ -1192,7 +1192,7 @@ describe('MCP Portal effective config materialization', () => {
 		).rejects.toThrow(/namespace "controller_execution" tools must explicitly allow/u);
 	});
 
-	it('rejects unknown registered controller execution tools for managed OpenClaw', async () => {
+	it('rejects unknown registered controller execution tools for managed Hermes', async () => {
 		await expect(
 			planMcpPortalEffectiveConfigFromConfig(
 				createPlanPropsForTest({

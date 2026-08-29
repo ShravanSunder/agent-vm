@@ -5,8 +5,8 @@
 	"input": {
 		"agentId": "agent-a",
 		"frameworkIdentity": {
-			"agentId": "agent-a",
-			"kind": "openclaw"
+			"kind": "hermes",
+			"profileName": "agent-a"
 		},
 		"profileAssignmentRevision": "profile-assignment-a",
 		"toolPortalNamespaces": [{ "namespace": "github" }, { "namespace": "filesystem" }],

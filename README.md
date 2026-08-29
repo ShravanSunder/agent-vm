@@ -2,18 +2,16 @@
 
 Sandboxed VM infrastructure for autonomous coding agents. See [agent-vm deepwiki](https://deepwiki.com/ShravanSunder/agent-vm)
 
-The primary path is the Worker gateway: a caller submits a coding task, the
-controller boots a fresh Gondolin micro-VM, `agent-vm-worker` plans, edits,
-validates, reviews, and asks the host-side controller to push a branch and open
-a PR. The agent can execute code inside the VM, but secrets and git push
-credentials stay on the host.
+Agent VM has two intentional Gateway products. Hermes is the long-running
+managed interactive-agent Gateway. Worker is the on-demand task Gateway: a
+caller submits a coding task, the controller boots a fresh Gondolin micro-VM,
+and `agent-vm-worker` plans, edits, validates, reviews, and asks the host-side
+controller to push a branch and open a PR. Agents can execute code inside VMs,
+but secrets and git push credentials stay on the host.
 
 If you want the underlying micro-VM runtime details, see the upstream Gondolin
 docs on [sandbox setup and secret mediation](https://github.com/earendil-works/gondolin/blob/main/README.md#quick-example)
 and [custom image / VFS features](https://github.com/earendil-works/gondolin/blob/main/README.md#feature-highlights).
-
-OpenClaw support still exists, but it is the secondary interactive mode. Start
-with the Worker gateway unless you are specifically building an OpenClaw setup.
 
 ## Mental Model
 
@@ -86,6 +84,9 @@ pnpm install
 pnpm build
 AGENT_VM="node packages/agent-vm/dist/cli/agent-vm-entrypoint.js"
 
+# Long-running managed interactive agents:
+$AGENT_VM init coding-agent --type hermes --preset macos-local
+# Or on-demand coding tasks:
 $AGENT_VM init coding-agent --type worker --preset macos-local
 $AGENT_VM validate --config config/system.json
 $AGENT_VM doctor --config config/system.json
@@ -115,10 +116,10 @@ $AGENT_VM validate --config config/system.json
 | --- | --- |
 | Understand the docs layout | [docs/README.md](docs/README.md) |
 | Understand system architecture | [docs/architecture/overview.md](docs/architecture/overview.md) |
+| Configure a Hermes managed Gateway | [docs/reference/configuration/system-json.md](docs/reference/configuration/system-json.md) |
 | Understand credentialed CLI runtimes | [docs/architecture/credentialed-runtimes.md](docs/architecture/credentialed-runtimes.md) |
 | Configure the Worker gateway | [docs/getting-started/worker-guide.md](docs/getting-started/worker-guide.md) |
 | Look up config fields | [docs/reference/configuration/README.md](docs/reference/configuration/README.md) |
-| Use OpenClaw Gateway | [docs/getting-started/openclaw-guide.md](docs/getting-started/openclaw-guide.md) |
 
 ## Development
 

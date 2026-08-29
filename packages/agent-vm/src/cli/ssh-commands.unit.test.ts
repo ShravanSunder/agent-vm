@@ -13,7 +13,7 @@ const systemConfig = {
 	controllerRuntimeDir: './controller-runtime',
 	host: {
 		controllerPort: 18800,
-		projectNamespace: 'claw-tests-a1b2c3d4',
+		projectNamespace: 'agent-vm-tests-a1b2c3d4',
 		secretsProvider: {
 			type: '1password',
 			tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
@@ -24,10 +24,6 @@ const systemConfig = {
 			hermes: {
 				type: 'hermes',
 				buildConfig: './vm-images/gateways/hermes/build-config.json',
-			},
-			openclaw: {
-				type: 'openclaw',
-				buildConfig: './vm-images/gateways/openclaw/build-config.json',
 			},
 			worker: { type: 'worker', buildConfig: './vm-images/gateways/worker/build-config.json' },
 		},
@@ -50,29 +46,20 @@ const systemConfig = {
 		{
 			egressHosts: ['api.anthropic.com'].map((host) => ({ host, audience: 'gateway' as const })),
 			gateway: {
-				type: 'openclaw',
-				controlAuth: {
-					mode: 'token',
-					secret: 'OPENCLAW_GATEWAY_TOKEN',
-				},
-				imageProfile: 'openclaw',
+				type: 'hermes',
+				imageProfile: 'hermes',
 				cpus: 2,
 				memory: '2G',
-				config: './config/shravan/openclaw.json',
+				config: './config/shravan/hermes.yaml',
 				port: 18791,
+				profileSecretProjectionsByAgent: { beta: {} },
+				profilesByAgent: { beta: 'beta' },
 				stateDir: './state/shravan',
 				zoneFilesDir: './zone-files/shravan',
 				zoneRuntimeDir: './runtime/shravan',
 			},
 			id: 'shravan',
-			secrets: {
-				OPENCLAW_GATEWAY_TOKEN: {
-					source: 'environment',
-					envVar: 'OPENCLAW_GATEWAY_TOKEN',
-					injection: 'env',
-					audience: 'gateway',
-				},
-			},
+			secrets: {},
 			defaultToolVmProfile: 'standard',
 			agentToolVmProfiles: {},
 		},
@@ -141,22 +128,6 @@ const workerSystemConfig = {
 	],
 } satisfies SystemConfig;
 
-const systemConfigWithAdminAccess = {
-	...systemConfig,
-	zones: [
-		{
-			...baseZone,
-			adminAccess: {
-				mode: 'secret',
-				secret: {
-					source: '1password',
-					ref: 'op://agent-vm/shravan-ssh-access/token',
-				},
-			},
-		},
-	],
-} satisfies SystemConfig;
-
 function createControllerClientStub(
 	enableZoneSsh: ControllerClient['enableZoneSsh'],
 ): ControllerClient {
@@ -172,201 +143,11 @@ function createControllerClientStub(
 }
 
 describe('runSshCommand', () => {
-	it('spawns a gateway-token-loaded interactive ssh session by default', async () => {
-		const enableZoneSsh = vi.fn(async () => ({
-			host: '127.0.0.1',
-			identityFile: '/tmp/key',
-			port: 2222,
-			secretEnvEnabled: true,
-			user: 'root',
-		}));
-		const runInteractiveProcess = vi.fn(
-			async (_command: string, _arguments: readonly string[]): Promise<void> => {},
-		);
-
-		await runSshCommand({
-			dependencies: {
-				...defaultCliDependencies,
-				createControllerClient: () => createControllerClientStub(enableZoneSsh),
-				runInteractiveProcess,
-			},
-			io: {
-				stderr: { write: () => true },
-				stdout: { write: () => true },
-			},
-			allSecrets: false,
-			systemConfig,
-			zoneId: 'shravan',
-		});
-
-		expect(enableZoneSsh).toHaveBeenCalledWith('shravan', {
-			secretEnv: 'gateway-token',
-		});
-		expect(runInteractiveProcess).toHaveBeenCalledWith('ssh', [
-			'-t',
-			'-o',
-			'StrictHostKeyChecking=no',
-			'-o',
-			'UserKnownHostsFile=/dev/null',
-			'-i',
-			'/tmp/key',
-			'-p',
-			'2222',
-			'root@127.0.0.1',
-			expect.stringContaining(
-				'/run/agent-vm/managed-gateway-environment/openclaw-gateway-token.environment.sh',
-			),
-		]);
-		const sshArguments = vi.mocked(runInteractiveProcess).mock.calls[0]?.[1];
-		const shellCommand = sshArguments?.at(-1);
-		expect(shellCommand).not.toEqual(
-			expect.stringContaining('openclaw-all-secrets.environment.sh'),
-		);
-	});
-
-	it('spawns an all-secrets interactive ssh session when explicitly requested', async () => {
-		const enableZoneSsh = vi.fn(async () => ({
-			host: '127.0.0.1',
-			identityFile: '/tmp/key',
-			port: 2222,
-			secretEnvEnabled: true,
-			user: 'root',
-		}));
-		const runInteractiveProcess = vi.fn(
-			async (_command: string, _arguments: readonly string[]): Promise<void> => {},
-		);
-
-		await runSshCommand({
-			dependencies: {
-				...defaultCliDependencies,
-				createControllerClient: () => createControllerClientStub(enableZoneSsh),
-				runInteractiveProcess,
-			},
-			io: {
-				stderr: { write: () => true },
-				stdout: { write: () => true },
-			},
-			allSecrets: true,
-			systemConfig,
-			zoneId: 'shravan',
-		});
-
-		expect(enableZoneSsh).toHaveBeenCalledWith('shravan', {
-			secretEnv: 'all-secrets',
-		});
-		const sshArguments = vi.mocked(runInteractiveProcess).mock.calls[0]?.[1];
-		const shellCommand = sshArguments?.at(-1);
-		expect(shellCommand).toEqual(
-			expect.stringContaining(
-				'/run/agent-vm/managed-gateway-environment/openclaw-all-secrets.environment.sh',
-			),
-		);
-		expect(shellCommand).not.toEqual(
-			expect.stringContaining('openclaw-gateway-token.environment.sh'),
-		);
-		if (typeof shellCommand !== 'string') {
-			throw new Error('Expected OpenClaw all-secrets shell command.');
-		}
-		expect(shellCommand.indexOf('openclaw-all-secrets.environment.sh')).toBeLessThan(
-			shellCommand.indexOf('/etc/profile.d/openclaw-env.sh'),
-		);
-	});
-
-	it('fails closed when the controller cannot enable the ssh gateway token', async () => {
-		const enableZoneSsh = vi.fn(async () => ({
-			host: '127.0.0.1',
-			identityFile: '/tmp/key',
-			port: 2222,
-			secretEnvEnabled: false,
-			user: 'root',
-		}));
-		const runInteractiveProcess = vi.fn(
-			async (_command: string, _arguments: readonly string[]): Promise<void> => {},
-		);
-
-		await expect(
-			runSshCommand({
-				dependencies: {
-					...defaultCliDependencies,
-					createControllerClient: () => createControllerClientStub(enableZoneSsh),
-					runInteractiveProcess,
-				},
-				io: {
-					stderr: { write: () => true },
-					stdout: { write: () => true },
-				},
-				allSecrets: false,
-				systemConfig,
-				zoneId: 'shravan',
-			}),
-		).rejects.toThrow(
-			'Controller did not enable OPENCLAW_GATEWAY_TOKEN for this SSH session. Check the zone gateway.ssh.secretEnv policy and configured OPENCLAW_GATEWAY_TOKEN secret.',
-		);
-		expect(enableZoneSsh).toHaveBeenCalledWith('shravan', {
-			secretEnv: 'gateway-token',
-		});
-		expect(runInteractiveProcess).not.toHaveBeenCalled();
-	});
-
-	it('resolves zone admin access and requests a gateway-token-backed ssh session', async () => {
-		const enableZoneSsh = vi.fn(async () => ({
-			host: '127.0.0.1',
-			identityFile: '/tmp/key',
-			port: 2222,
-			secretEnvEnabled: true,
-			user: 'root',
-		}));
-		const runInteractiveProcess = vi.fn(
-			async (_command: string, _arguments: readonly string[]): Promise<void> => {},
-		);
-		const createSecretResolver = vi.fn(async () => ({
-			resolve: vi.fn(async () => 'resolved-admin-token'),
-			resolveAll: vi.fn(async () => ({})),
-		}));
-
-		await runSshCommand({
-			dependencies: {
-				...defaultCliDependencies,
-				createControllerClient: () => createControllerClientStub(enableZoneSsh),
-				createSecretResolver,
-				resolveServiceAccountToken: vi.fn(async () => 'op-service-account-token'),
-				runInteractiveProcess,
-			},
-			io: {
-				stderr: { write: () => true },
-				stdout: { write: () => true },
-			},
-			allSecrets: false,
-			systemConfig: systemConfigWithAdminAccess,
-			zoneId: 'shravan',
-		});
-
-		expect(enableZoneSsh).toHaveBeenCalledWith('shravan', {
-			adminToken: 'resolved-admin-token',
-			secretEnv: 'gateway-token',
-		});
-		const sshInvocation = vi.mocked(runInteractiveProcess).mock.calls.at(0);
-		if (!sshInvocation) {
-			throw new Error('Expected SSH invocation.');
-		}
-		expect(sshInvocation[1]).toContain('-t');
-		const shellCommand = sshInvocation[1].at(-1);
-		if (typeof shellCommand !== 'string') {
-			throw new Error('Expected SSH shell command to be present.');
-		}
-		expect(shellCommand).toContain(
-			'/run/agent-vm/managed-gateway-environment/openclaw-gateway-token.environment.sh',
-		);
-		expect(shellCommand).not.toContain('openclaw-all-secrets.environment.sh');
-		expect(shellCommand).not.toContain('resolved-admin-token');
-	});
-
 	it('opens a Hermes-ready login shell without OpenClaw secret setup', async () => {
 		const enableZoneSsh = vi.fn(async () => ({
 			host: '127.0.0.1',
 			identityFile: '/tmp/hermes-key',
 			port: 2223,
-			secretEnvEnabled: false,
 			user: 'root',
 		}));
 		const runInteractiveProcess = vi.fn(
@@ -380,39 +161,16 @@ describe('runSshCommand', () => {
 				runInteractiveProcess,
 			},
 			io: { stderr: { write: () => true }, stdout: { write: () => true } },
-			allSecrets: false,
 			systemConfig: hermesSystemConfig,
 			zoneId: 'hermes-zone',
 		});
 
-		expect(enableZoneSsh).toHaveBeenCalledWith('hermes-zone', { secretEnv: 'default' });
+		expect(enableZoneSsh).toHaveBeenCalledWith('hermes-zone', {});
 		const remoteCommand = vi.mocked(runInteractiveProcess).mock.calls[0]?.[1].at(-1);
 		expect(remoteCommand).toEqual(expect.stringContaining('source /etc/profile.d/hermes-env.sh'));
 		expect(remoteCommand).not.toEqual(expect.stringContaining('openclaw'));
 		expect(remoteCommand).not.toEqual(expect.stringContaining('OPENCLAW_GATEWAY_TOKEN'));
 		expect(remoteCommand).not.toEqual(expect.stringContaining('framework.environment.sh'));
-	});
-
-	it('rejects all-secrets SSH for Hermes before enabling SSH', async () => {
-		const enableZoneSsh = vi.fn(async () => ({
-			host: '127.0.0.1',
-			port: 2223,
-			user: 'root',
-		}));
-
-		await expect(
-			runSshCommand({
-				dependencies: {
-					...defaultCliDependencies,
-					createControllerClient: () => createControllerClientStub(enableZoneSsh),
-				},
-				io: { stderr: { write: () => true }, stdout: { write: () => true } },
-				allSecrets: true,
-				systemConfig: hermesSystemConfig,
-				zoneId: 'hermes-zone',
-			}),
-		).rejects.toThrow('--all-secrets is supported only for OpenClaw zones');
-		expect(enableZoneSsh).not.toHaveBeenCalled();
 	});
 
 	it('rejects controller SSH for Worker before contacting the controller', async () => {
@@ -433,7 +191,6 @@ describe('runSshCommand', () => {
 					runInteractiveProcess,
 				},
 				io: { stderr: { write: () => true }, stdout: { write: () => true } },
-				allSecrets: false,
 				systemConfig: workerSystemConfig,
 				zoneId: 'worker-zone',
 			}),
@@ -458,7 +215,6 @@ describe('runSshCommand', () => {
 					stderr: { write: () => true },
 					stdout: { write: () => true },
 				},
-				allSecrets: false,
 				systemConfig,
 				zoneId: 'shravan',
 			}),
@@ -478,7 +234,6 @@ describe('runSshCommand', () => {
 						createControllerClientStub(async () => ({
 							host: '127.0.0.1',
 							port: 2222,
-							secretEnvEnabled: true,
 							user: 'root',
 						})),
 					runInteractiveProcess,
@@ -487,7 +242,6 @@ describe('runSshCommand', () => {
 					stderr: { write: () => true },
 					stdout: { write: () => true },
 				},
-				allSecrets: false,
 				systemConfig,
 				zoneId: 'shravan',
 			}),

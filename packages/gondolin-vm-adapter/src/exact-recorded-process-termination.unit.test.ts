@@ -279,12 +279,130 @@ describe('Gondolin exact recorded process termination', () => {
 		expect(dependencies.sendSignal).toHaveBeenCalledWith(48_282, 'SIGTERM');
 	});
 
+	it('keeps polling the exact Linux task-name fallback in uninterruptible sleep after SIGTERM', async () => {
+		const linuxQemuIdentity = {
+			...recordedIdentity,
+			command: 'qemu-system-x86_64 -name tool-vm',
+		} satisfies ManagedVmHostProcessIdentity;
+		let observationCount = 0;
+		const dependencies = createDependencies(
+			vi.fn(async () => {
+				observationCount += 1;
+				if (observationCount === 1) {
+					return observedIdentity({ command: linuxQemuIdentity.command, processState: 'S' });
+				}
+				if (observationCount === 2) {
+					return observedIdentity({ command: '[qemu-system-x86]', processState: 'D' });
+				}
+				return null;
+			}),
+		);
+
+		await expect(
+			terminateExactRecordedManagedVmHostProcess({
+				contextLabel: 'lease predecessor',
+				dependencies,
+				identity: linuxQemuIdentity,
+			}),
+		).resolves.toEqual({ hostProcessId: 48_282, kind: 'terminated' });
+		expect(dependencies.sendSignal).toHaveBeenCalledOnce();
+		expect(dependencies.sendSignal).toHaveBeenCalledWith(48_282, 'SIGTERM');
+	});
+
+	it('never authorizes SIGKILL from a persistent Linux task-name fallback', async () => {
+		const linuxQemuIdentity = {
+			...recordedIdentity,
+			command: 'qemu-system-x86_64 -name tool-vm',
+		} satisfies ManagedVmHostProcessIdentity;
+		let signalSent = false;
+		const dependencies = createDependencies(
+			vi.fn(async () =>
+				signalSent
+					? observedIdentity({ command: '[qemu-system-x86]', processState: 'D' })
+					: observedIdentity({ command: linuxQemuIdentity.command, processState: 'S' }),
+			),
+		);
+		vi.mocked(dependencies.sendSignal).mockImplementation(() => {
+			signalSent = true;
+		});
+
+		await expect(
+			terminateExactRecordedManagedVmHostProcess({
+				contextLabel: 'lease predecessor',
+				dependencies,
+				identity: linuxQemuIdentity,
+			}),
+		).rejects.toThrow(/unable to prove exact identity after SIGTERM/iu);
+		expect(dependencies.sendSignal).toHaveBeenCalledOnce();
+		expect(dependencies.sendSignal).toHaveBeenCalledWith(48_282, 'SIGTERM');
+	});
+
+	it.each(['R', 'U'])(
+		'never restores SIGKILL authority when a Linux task-name fallback changes from D to %s',
+		async (laterProcessState) => {
+			const linuxQemuIdentity = {
+				...recordedIdentity,
+				command: 'qemu-system-x86_64 -name tool-vm',
+			} satisfies ManagedVmHostProcessIdentity;
+			let observationCount = 0;
+			const dependencies = createDependencies(
+				vi.fn(async () => {
+					observationCount += 1;
+					if (observationCount === 1) {
+						return observedIdentity({
+							command: linuxQemuIdentity.command,
+							processState: 'S',
+						});
+					}
+					return observedIdentity({
+						command: '[qemu-system-x86]',
+						processState: observationCount === 2 ? 'D' : laterProcessState,
+					});
+				}),
+			);
+
+			await expect(
+				terminateExactRecordedManagedVmHostProcess({
+					contextLabel: 'lease predecessor',
+					dependencies,
+					identity: linuxQemuIdentity,
+				}),
+			).rejects.toThrow(/unable to prove exact identity after SIGTERM/iu);
+			expect(dependencies.sendSignal).toHaveBeenCalledOnce();
+			expect(dependencies.sendSignal).toHaveBeenCalledWith(48_282, 'SIGTERM');
+		},
+	);
+
 	it('fails closed on an unrelated Linux task-name fallback after SIGTERM', async () => {
 		let signalSent = false;
 		const dependencies = createDependencies(
 			vi.fn(async () =>
 				signalSent
 					? observedIdentity({ command: '[unrelated-task]', processState: 'R' })
+					: observedIdentity({ processState: 'S' }),
+			),
+		);
+		vi.mocked(dependencies.sendSignal).mockImplementation(() => {
+			signalSent = true;
+		});
+
+		await expect(
+			terminateExactRecordedManagedVmHostProcess({
+				contextLabel: 'lease predecessor',
+				dependencies,
+				identity: recordedIdentity,
+			}),
+		).rejects.toThrow(/same process start identity.*command changed/iu);
+		expect(dependencies.sendSignal).toHaveBeenCalledOnce();
+		expect(dependencies.sendSignal).toHaveBeenCalledWith(48_282, 'SIGTERM');
+	});
+
+	it('fails closed on an unrelated Linux task-name fallback in uninterruptible sleep', async () => {
+		let signalSent = false;
+		const dependencies = createDependencies(
+			vi.fn(async () =>
+				signalSent
+					? observedIdentity({ command: '[unrelated-task]', processState: 'D' })
 					: observedIdentity({ processState: 'S' }),
 			),
 		);
@@ -354,6 +472,26 @@ describe('Gondolin exact recorded process termination', () => {
 				identity: recordedIdentity,
 			}),
 		).rejects.toThrow(/same process start identity.*state "U".*command changed/iu);
+		expect(dependencies.sendSignal).not.toHaveBeenCalled();
+	});
+
+	it('refuses an initially observed Linux task-name fallback in uninterruptible sleep', async () => {
+		const dependencies = createDependencies(
+			vi.fn(async () =>
+				observedIdentity({
+					command: '[qemu-system-aar]',
+					processState: 'D',
+				}),
+			),
+		);
+
+		await expect(
+			terminateExactRecordedManagedVmHostProcess({
+				contextLabel: 'lease predecessor',
+				dependencies,
+				identity: recordedIdentity,
+			}),
+		).rejects.toThrow(/same process start identity.*state "D".*command changed/iu);
 		expect(dependencies.sendSignal).not.toHaveBeenCalled();
 	});
 

@@ -19,7 +19,7 @@ const commandContractFixtures = [
 			'init',
 			'project-zone',
 			'--type',
-			'openclaw',
+			'hermes',
 			'--preset',
 			'container-arm64',
 			'--secrets',
@@ -31,7 +31,7 @@ const commandContractFixtures = [
 			'--namespace',
 			'my-project',
 			'--overwrite',
-			'--openclaw-agents',
+			'--agents',
 			' sun,main,sun ',
 			'--onepassword-keychain-account-name',
 			'team',
@@ -40,7 +40,7 @@ const commandContractFixtures = [
 			command: 'init',
 			options: {
 				zoneId: 'project-zone',
-				type: 'openclaw',
+				type: 'hermes',
 				preset: {
 					architecture: 'aarch64',
 					hostSystemType: 'container',
@@ -176,62 +176,6 @@ const commandContractFixtures = [
 		},
 	},
 	{
-		argv: [
-			'auth',
-			'codex-harness',
-			'--agent',
-			'main',
-			'--all-agents',
-			'-c',
-			'config/auth.json',
-			'-z',
-			'prod',
-		],
-		expected: {
-			command: 'auth.codex-harness',
-			options: {
-				agent: 'main',
-				allAgents: true,
-				config: 'config/auth.json',
-				zone: 'prod',
-			},
-		},
-	},
-	{
-		argv: [
-			'auth',
-			'openclaw',
-			'login',
-			'openai',
-			'--agent',
-			'main',
-			'--all-configured-profiles',
-			'-c',
-			'config/auth.json',
-			'--device-code',
-			'--dry-run',
-			'--profile-id',
-			'openai-codex:one',
-			'--profile-id',
-			'openai-codex:two',
-			'-z',
-			'prod',
-		],
-		expected: {
-			command: 'auth.openclaw.login',
-			options: {
-				agent: 'main',
-				allConfiguredProfiles: true,
-				config: 'config/auth.json',
-				deviceCode: true,
-				dryRun: true,
-				profileIds: ['openai-codex:one', 'openai-codex:two'],
-				provider: 'openai',
-				zone: 'prod',
-			},
-		},
-	},
-	{
 		argv: ['controller', 'start', '-c', 'config/controller.json', '-z', 'prod'],
 		expected: {
 			command: 'controller.start',
@@ -275,10 +219,10 @@ const commandContractFixtures = [
 		},
 	},
 	{
-		argv: ['controller', 'ssh', '--all-secrets', '-c', 'config/controller.json', '-z', 'prod'],
+		argv: ['controller', 'ssh', '-c', 'config/controller.json', '-z', 'prod'],
 		expected: {
 			command: 'controller.ssh',
-			options: { allSecrets: true, config: 'config/controller.json', zone: 'prod' },
+			options: { config: 'config/controller.json', zone: 'prod' },
 		},
 	},
 	{
@@ -338,12 +282,12 @@ describe('agent-vm Optique command parser', () => {
 		}
 	});
 
-	it('keeps the init gateway type narrower than the runtime gateway domain', () => {
+	it('rejects the removed OpenClaw init gateway type', () => {
 		const result = parseSync(agentVmRootParser, [
 			'init',
 			'zone',
 			'--type',
-			'hermes',
+			'openclaw',
 			'--secrets',
 			'environment',
 			'--arch',
@@ -357,6 +301,7 @@ describe('agent-vm Optique command parser', () => {
 			['auth', 'openclaw', 'login', 'openai', '--agent', 'Hello World', '--zone', 'zone'],
 			['config', 'reset-instructions', '--phase', 'cache'],
 			['init', 'zone', '--type', 'worker', '--namespace', 'Project_Name'],
+			['controller', 'ssh', '--all-secrets', '--zone', 'zone'],
 			['controller', 'ssh', '--print', '--zone', 'zone'],
 			['controller', 'ssh', '--zone', 'zone', '--', 'openclaw', 'auth', 'login'],
 		] as const;

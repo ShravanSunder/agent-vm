@@ -21,7 +21,6 @@ import type { AgentVmHealthEvent } from '@agent-vm/gateway-lifecycle';
 import { describe, expect, it, vi } from 'vitest';
 
 import { TEST_SSH_SERVER_HOST_KEY } from '../../testing/managed-vm-test-helpers.js';
-import type { OpenClawRuntimeStatusReport } from '../openclaw-runtime-status.js';
 import { ConfiguredControllerExecutionError } from '../runner/configured-controller-execution-error.js';
 import { WorkspaceGitConflictError } from '../workspace-git/workspace-git-operations.js';
 import {
@@ -58,7 +57,7 @@ const gateway = {
 };
 const invocationPrincipal = {
 	agentId: 'main',
-	frameworkIdentity: { agentId: 'main', kind: 'openclaw' },
+	frameworkIdentity: { kind: 'hermes', profileName: 'main' },
 	profileAssignmentRevision: 'assignment-main',
 	toolPortalProfileId: 'standard',
 } as const;
@@ -1316,10 +1315,10 @@ describe('gateway control domain handler', () => {
 					operation: 'lease_create',
 					payload: {
 						agentId: 'main',
-						agentWorkspaceDir: '/home/openclaw/workspace',
+						agentWorkspaceDir: '/untrusted/workspace',
 						profileId: 'standard',
 						sessionKey: 'agent:main:test-session',
-						workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
+						workMountDir: '/untrusted/work-mount',
 						zoneId: 'zone-a',
 					},
 				},
@@ -1569,47 +1568,6 @@ describe('gateway control domain handler', () => {
 		});
 	});
 
-	it('records runtime status from the accepted control session', async () => {
-		const recordRuntimeStatus = vi.fn<(report: OpenClawRuntimeStatusReport) => void>();
-		const dispatcher = createGatewayControlTestDispatcher();
-		dispatcher.register(
-			'gateway_control',
-			createTestGatewayControlDomainHandler({
-				callerContexts: createCallerContexts(),
-				recordRuntimeStatus,
-				session: acceptedSession,
-			}),
-		);
-
-		const response = await dispatcher.dispatch({
-			envelope: createEnvelope('runtime_status', {
-				deliveryPolicy: 'latest_wins',
-				kind: 'event',
-			}),
-			payload: {
-				kind: 'event',
-				operation: 'runtime_status',
-				payload: {
-					findings: [{ id: 'runtime-config', ok: true }],
-					observedAtMs: 2_000,
-					statusKind: 'gondolin',
-				},
-			},
-		});
-
-		expect(response).toBeUndefined();
-		expect(recordRuntimeStatus).toHaveBeenCalledWith({
-			bootId: acceptedSession.bootId,
-			connectionId: acceptedSession.connectionId,
-			controllerEpoch: acceptedSession.controllerEpoch,
-			findings: [{ hint: 'runtime-config', id: 'runtime-config', ok: true }],
-			peerId: acceptedSession.peerId,
-			pluginId: 'gondolin',
-			sessionId: acceptedSession.sessionId,
-			zoneId: acceptedSession.zoneId,
-		});
-	});
-
 	it('records schema-validated Gateway runtime readiness from the accepted control session', async () => {
 		const readiness = GatewayControlRpcMessageSchema.parse({
 			kind: 'event',
@@ -1649,7 +1607,7 @@ describe('gateway control domain handler', () => {
 					attachment: {
 						expected: {
 							attachmentGeneration: 1,
-							clientKind: 'openclaw-managed-plugin',
+							clientKind: 'hermes-managed-plugin',
 							configuredAgentIds: ['main'],
 							frameworkEpoch: 'framework-epoch-1',
 							gatewayEpoch: 'gateway-epoch-1',
@@ -2571,7 +2529,7 @@ describe('gateway control domain handler', () => {
 				kind: 'command',
 				operation: 'recovery_command',
 				payload: {
-					action: 'refresh_runtime_status',
+					action: 'restart_control_service',
 				},
 			},
 		});

@@ -12,7 +12,7 @@ import {
 } from './control-lease-reliability-evidence.js';
 
 const temporaryDirectories: string[] = [];
-const operationId = 'openclaw-process-recovery';
+const operationId = 'control-session-recovery';
 
 async function createEvidenceFilePath(): Promise<string> {
 	const directory = await mkdtemp(path.join(tmpdir(), 'agent-vm-reliability-evidence-'));
@@ -26,7 +26,7 @@ function evidenceEnvironment(evidenceFilePath: string): NodeJS.ProcessEnv {
 		AGENT_VM_RELIABILITY_EVIDENCE_FILE: evidenceFilePath,
 		AGENT_VM_RELIABILITY_HEAD_SHA: 'a'.repeat(40),
 		AGENT_VM_RELIABILITY_OPERATION_ID: operationId,
-		AGENT_VM_RELIABILITY_RUN_ID: 'run-process-recovery-1',
+		AGENT_VM_RELIABILITY_RUN_ID: 'run-control-session-recovery-1',
 	};
 }
 
@@ -34,7 +34,7 @@ function evidencePayload(): ControlLeaseReliabilityEvidencePayload {
 	return {
 		artifacts: [
 			{
-				operationId: 'process-recovery-transition',
+				operationId: 'control-session-recovery-transition',
 				sha256: hashControlLeaseReliabilityArtifact('observed-transition'),
 			},
 		],
@@ -49,7 +49,7 @@ function evidencePayload(): ControlLeaseReliabilityEvidencePayload {
 		processIdentities: [
 			{
 				bootId: 'process-epoch-1',
-				kind: 'openclaw-process',
+				kind: 'gateway',
 				processId: 123,
 				startIdentity: 'proc-start-456',
 			},
@@ -95,7 +95,7 @@ describe('writeControlLeaseReliabilityEvidence', () => {
 			dirtyHash: 'b'.repeat(64),
 			headSha: 'a'.repeat(40),
 			operationId,
-			runId: 'run-process-recovery-1',
+			runId: 'run-control-session-recovery-1',
 			schemaVersion: 1,
 		});
 	});

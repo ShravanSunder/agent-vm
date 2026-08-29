@@ -99,7 +99,7 @@ const semanticSnapshot = {
 	agentProjections: {
 		'agent-a': {
 			agentId: 'agent-a',
-			frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
+			frameworkIdentity: { kind: 'hermes', profileName: 'agent-a' },
 			profileAssignmentRevision: 'profile-assignment:agent-a:1',
 			toolPortalNamespaces: [{ namespace: 'github' }, { namespace: 'private_github' }],
 			toolPortalProfileId: 'code-builder',
@@ -130,7 +130,7 @@ const trustedContext = {
 	},
 	principal: {
 		agentId: 'agent-a',
-		frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
+		frameworkIdentity: { kind: 'hermes', profileName: 'agent-a' },
 		profileAssignmentRevision: 'profile-assignment:agent-a:1',
 		toolPortalProfileId: 'code-builder',
 	},
@@ -500,7 +500,7 @@ describe('Gateway runtime managed Tool Portal production composition', () => {
 				},
 				createPrivateUdsProjection,
 				managedPluginAttachment: {
-					clientKind: 'openclaw-managed-plugin',
+					clientKind: 'hermes-managed-plugin',
 					configuredAgentIds: ['agent-a'],
 					projectionCohortDigest: semanticSnapshot.projectionCohortDigest,
 				},
@@ -673,7 +673,7 @@ describe('Gateway runtime managed Tool Portal production composition', () => {
 				},
 				createPrivateUdsProjection,
 				managedPluginAttachment: {
-					clientKind: 'openclaw-managed-plugin',
+					clientKind: 'hermes-managed-plugin',
 					configuredAgentIds: ['agent-a'],
 					projectionCohortDigest: semanticSnapshot.projectionCohortDigest,
 				},

@@ -94,7 +94,7 @@ function createWorkerSystemConfig(
 	);
 }
 
-function createOpenClawSystemConfig(
+function createHermesSystemConfig(
 	toolVmBuildConfigPath: string,
 	systemConfigPath: string,
 	options: { readonly includeToolPortal?: boolean } = {},
@@ -108,16 +108,16 @@ function createOpenClawSystemConfig(
 			},
 			imageProfiles: {
 				gateways: {
-					openclaw: {
-						type: 'openclaw',
+					hermes: {
+						type: 'hermes',
 						buildConfig: path.join(
 							path.dirname(systemConfigPath),
 							'vm-images',
 							'gateways',
-							'openclaw',
+							'hermes',
 							'build-config.json',
 						),
-						dockerfile: './vm-images/gateways/openclaw/Dockerfile',
+						dockerfile: './vm-images/gateways/hermes/Dockerfile',
 					},
 				},
 				toolVms: {
@@ -142,20 +142,18 @@ function createOpenClawSystemConfig(
 				{
 					egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),
 					gateway: {
-						type: 'openclaw',
-						controlAuth: {
-							mode: 'token',
-							secret: 'OPENCLAW_GATEWAY_TOKEN',
+						type: 'hermes',
+						profileSecretProjectionsByAgent: {
+							sun: {
+								API_SERVER_KEY: 'API_SERVER_KEY_SUN',
+								DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_SUN',
+							},
 						},
-						imageProfile: 'openclaw',
+						profilesByAgent: { sun: 'sun' },
+						imageProfile: 'hermes',
 						cpus: 2,
 						memory: '2G',
-						config: path.join(
-							path.dirname(systemConfigPath),
-							'gateways',
-							'shravan',
-							'openclaw.json',
-						),
+						config: path.join(path.dirname(systemConfigPath), 'gateways', 'shravan', 'hermes.yaml'),
 						port: 18791,
 					},
 					id: 'shravan',
@@ -168,9 +166,15 @@ function createOpenClawSystemConfig(
 							}
 						: {}),
 					secrets: {
-						OPENCLAW_GATEWAY_TOKEN: {
+						API_SERVER_KEY_SUN: {
 							source: 'environment',
-							envVar: 'OPENCLAW_GATEWAY_TOKEN',
+							envVar: 'API_SERVER_KEY_SUN',
+							injection: 'env',
+							audience: 'gateway',
+						},
+						DISCORD_BOT_TOKEN_SUN: {
+							source: 'environment',
+							envVar: 'DISCORD_BOT_TOKEN_SUN',
 							injection: 'env',
 							audience: 'gateway',
 						},
@@ -184,59 +188,10 @@ function createOpenClawSystemConfig(
 	);
 }
 
-function createHealthyOpenClawConfig(): object {
-	return {
-		agents: {
-			defaults: {
-				sandbox: {
-					backend: 'gondolin',
-					mode: 'all',
-					scope: 'agent',
-					workspaceAccess: 'rw',
-				},
-				workspace: '/zone/agents/default',
-			},
-			list: [{ id: 'sun' }],
-		},
-		channels: {},
-		approvals: {
-			plugin: {
-				enabled: true,
-				mode: 'session',
-			},
-		},
-		plugins: {
-			allow: ['gondolin', 'memory-core'],
-			entries: {
-				gondolin: {
-					enabled: true,
-					config: {},
-				},
-				'memory-core': { enabled: true },
-			},
-			load: {
-				paths: [
-					'/home/openclaw/.openclaw/extensions/gondolin',
-					'/pnpm/global/5/node_modules/@openclaw',
-				],
-			},
-			slots: { memory: 'memory-core' },
-		},
-		tools: {
-			sandbox: {
-				tools: {
-					alsoAllow: ['group:plugins'],
-				},
-			},
-		},
-	};
-}
-
-function createManagedBaseOpenClawSystemConfig(
+function createManagedBaseWorkerSystemConfig(
 	gatewayBuildConfigPath: string,
 	toolVmBuildConfigPath: string,
 	systemConfigPath: string,
-	options: { readonly includeToolPortal?: boolean } = {},
 ): LoadedSystemConfig {
 	return createLoadedSystemConfig(
 		{
@@ -247,18 +202,18 @@ function createManagedBaseOpenClawSystemConfig(
 			},
 			imageProfiles: {
 				gateways: {
-					openclaw: {
-						type: 'openclaw',
+					worker: {
+						type: 'worker',
 						buildConfig: gatewayBuildConfigPath,
 						source: {
 							kind: 'managedBase',
-							base: 'openclaw-gateway',
+							base: 'worker-gateway',
 							overlay: path.join(
 								path.dirname(systemConfigPath),
 								'..',
 								'vm-images',
 								'gateways',
-								'openclaw',
+								'worker',
 								'overlay.jsonc',
 							),
 						},
@@ -296,67 +251,21 @@ function createManagedBaseOpenClawSystemConfig(
 			},
 			zones: [
 				{
-					egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),
+					egressHosts: [{ host: 'api.openai.com', audience: 'gateway' }],
 					gateway: {
-						type: 'openclaw',
-						controlAuth: {
-							mode: 'token',
-							secret: 'OPENCLAW_GATEWAY_TOKEN',
-						},
-						imageProfile: 'openclaw',
+						type: 'worker',
+						imageProfile: 'worker',
 						cpus: 2,
 						memory: '2G',
-						config: path.join(
-							path.dirname(systemConfigPath),
-							'gateways',
-							'shravan',
-							'openclaw.json',
-						),
+						config: path.join(path.dirname(systemConfigPath), 'worker.json'),
 						port: 18791,
 					},
-					id: 'shravan',
-					agents: [{ id: 'sun' }],
-					...(options.includeToolPortal === true
-						? {
-								toolPortal: createControllerOperationToolPortalConfig(
-									path.join(path.dirname(systemConfigPath), 'gateways', 'shravan'),
-								),
-							}
-						: {}),
-					secrets: {
-						OPENCLAW_GATEWAY_TOKEN: {
-							source: 'environment',
-							envVar: 'OPENCLAW_GATEWAY_TOKEN',
-							injection: 'env',
-							audience: 'gateway',
-						},
-					},
-					defaultToolVmProfile: 'standard',
-					agentToolVmProfiles: {},
+					id: 'worker',
+					secrets: {},
 				},
 			],
 		},
 		{ systemConfigPath },
-	);
-}
-
-async function writeManagedToolPortalConfigFiles(configDirectoryPath: string): Promise<void> {
-	const portalConfigDirectoryPath = path.join(configDirectoryPath, 'gateways', 'shravan');
-	await fs.mkdir(portalConfigDirectoryPath, { recursive: true });
-	await fs.writeFile(
-		path.join(portalConfigDirectoryPath, 'mcp.config.jsonc'),
-		JSON.stringify({ providers: {}, schemaVersion: 1 }),
-		'utf8',
-	);
-	await fs.writeFile(
-		path.join(portalConfigDirectoryPath, 'tool-portal.config.jsonc'),
-		JSON.stringify({
-			agents: { sun: { profile: 'default' } },
-			mode: 'managed',
-			profiles: { default: { namespaces: {} } },
-			schemaVersion: 1,
-		}),
-		'utf8',
 	);
 }
 
@@ -429,7 +338,7 @@ describe('runControllerOperationCommand', () => {
 			'default',
 			'build-config.json',
 		);
-		const systemConfig = createOpenClawSystemConfig(toolVmBuildConfigPath, systemConfigPath);
+		const systemConfig = createHermesSystemConfig(toolVmBuildConfigPath, systemConfigPath);
 		const outputs: string[] = [];
 		const calledOperations: string[] = [];
 		const controllerClient = {
@@ -483,144 +392,6 @@ describe('runControllerOperationCommand', () => {
 		expect(outputs.join('\n')).toContain('"path": "/readyz"');
 		expect(outputs.join('\n')).toContain('"healthy": true');
 		expect(outputs.join('\n')).toContain('"path": "/health"');
-	});
-
-	it('refreshes OpenClaw credentials without resolving Tool VM-only secrets', async () => {
-		const previousGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
-		process.env.OPENCLAW_GATEWAY_TOKEN = 'test-gateway-token';
-		const temporaryDirectoryPath = await fs.mkdtemp(
-			path.join(os.tmpdir(), 'agent-vm-credentials-'),
-		);
-		const systemConfigPath = path.join(temporaryDirectoryPath, 'config', 'system.json');
-		const toolVmBuildConfigPath = path.join(
-			temporaryDirectoryPath,
-			'vm-images',
-			'tool-vms',
-			'default',
-			'build-config.json',
-		);
-		const outputs: string[] = [];
-		const systemConfig = createOpenClawSystemConfig(toolVmBuildConfigPath, systemConfigPath);
-		const zone = systemConfig.zones[0];
-		if (!zone) {
-			throw new Error('Expected OpenClaw test system config to include a zone.');
-		}
-		zone.secrets.LINEAR_API_KEY = {
-			source: '1password',
-			ref: 'op://agent-vm/shravan-linear/credential',
-			injection: 'http-mediation',
-			audience: 'tool-vm',
-			hosts: ['api.linear.app'],
-			agentAccess: 'all',
-		};
-		zone.egressHosts = [...zone.egressHosts, { host: 'api.linear.app', audience: 'tool-vm' }];
-
-		try {
-			await runControllerOperationCommand({
-				...fastDoctorEnvironmentOptions(),
-				dependencies: {
-					...defaultCliDependencies,
-					createControllerClient: () => createControllerClientStub(),
-					runControllerDoctor: () => ({ ok: true, checks: [] }),
-				},
-				io: {
-					stderr: { write: () => true },
-					stdout: {
-						write: (chunk: string | Uint8Array) => {
-							outputs.push(String(chunk));
-							return true;
-						},
-					},
-				},
-				credentialsAction: 'refresh',
-				subcommand: 'credentials',
-				systemConfig,
-				zoneId: 'shravan',
-			});
-		} finally {
-			if (previousGatewayToken === undefined) {
-				delete process.env.OPENCLAW_GATEWAY_TOKEN;
-			} else {
-				process.env.OPENCLAW_GATEWAY_TOKEN = previousGatewayToken;
-			}
-			await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
-		}
-
-		expect(JSON.parse(outputs.join(''))).toEqual({});
-	});
-
-	it('checks OpenClaw credential resolution without refreshing the controller runtime', async () => {
-		const previousGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
-		process.env.OPENCLAW_GATEWAY_TOKEN = 'test-gateway-token';
-		const temporaryDirectoryPath = await fs.mkdtemp(
-			path.join(os.tmpdir(), 'agent-vm-credentials-check-'),
-		);
-		const systemConfigPath = path.join(temporaryDirectoryPath, 'config', 'system.json');
-		const toolVmBuildConfigPath = path.join(
-			temporaryDirectoryPath,
-			'vm-images',
-			'tool-vms',
-			'default',
-			'build-config.json',
-		);
-		const outputs: string[] = [];
-		const systemConfig = createOpenClawSystemConfig(toolVmBuildConfigPath, systemConfigPath);
-		const zone = systemConfig.zones[0];
-		if (!zone) {
-			throw new Error('Expected OpenClaw test system config to include a zone.');
-		}
-		zone.secrets.LINEAR_API_KEY = {
-			source: '1password',
-			ref: 'op://agent-vm/shravan-linear/credential',
-			injection: 'http-mediation',
-			audience: 'tool-vm',
-			hosts: ['api.linear.app'],
-			agentAccess: 'all',
-		};
-		zone.egressHosts = [...zone.egressHosts, { host: 'api.linear.app', audience: 'tool-vm' }];
-		const refreshZoneCredentials = vi.fn(async () => ({}));
-
-		try {
-			await runControllerOperationCommand({
-				...fastDoctorEnvironmentOptions(),
-				dependencies: {
-					...defaultCliDependencies,
-					createControllerClient: () => ({
-						...createControllerClientStub(),
-						refreshZoneCredentials,
-					}),
-					runControllerDoctor: () => ({ ok: true, checks: [] }),
-				},
-				io: {
-					stderr: { write: () => true },
-					stdout: {
-						write: (chunk: string | Uint8Array) => {
-							outputs.push(String(chunk));
-							return true;
-						},
-					},
-				},
-				credentialsAction: 'check',
-				subcommand: 'credentials',
-				systemConfig,
-				zoneId: 'shravan',
-			});
-		} finally {
-			if (previousGatewayToken === undefined) {
-				delete process.env.OPENCLAW_GATEWAY_TOKEN;
-			} else {
-				process.env.OPENCLAW_GATEWAY_TOKEN = previousGatewayToken;
-			}
-			await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
-		}
-
-		expect(JSON.parse(outputs.join(''))).toEqual({
-			audience: 'gateway',
-			ok: true,
-			resolvedSecretCount: 1,
-			zoneId: 'shravan',
-		});
-		expect(refreshZoneCredentials).not.toHaveBeenCalled();
 	});
 
 	it('accepts authored worker config drafts without generated runtime instructions in doctor output', async () => {
@@ -1246,7 +1017,7 @@ describe('runControllerOperationCommand', () => {
 
 		try {
 			const outputs: string[] = [];
-			const systemConfig = createOpenClawSystemConfig(toolVmBuildConfigPath, systemConfigPath);
+			const systemConfig = createHermesSystemConfig(toolVmBuildConfigPath, systemConfigPath);
 			const onePasswordSystemConfig = {
 				...systemConfig,
 				host: {
@@ -1318,113 +1089,6 @@ describe('runControllerOperationCommand', () => {
 		} finally {
 			await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
 		}
-	});
-
-	it('validates OpenClaw gateway configs with the catalog OpenClaw CLI in doctor output', async () => {
-		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-doctor-'));
-		const binDirectoryPath = path.join(temporaryDirectoryPath, 'node_modules', '.bin');
-		const configDirectoryPath = path.join(temporaryDirectoryPath, 'config');
-		const openClawConfigPath = path.join(
-			configDirectoryPath,
-			'gateways',
-			'shravan',
-			'openclaw.json',
-		);
-		const commandLogPath = path.join(temporaryDirectoryPath, 'openclaw-command.json');
-		await fs.mkdir(binDirectoryPath, { recursive: true });
-		await fs.mkdir(path.dirname(openClawConfigPath), { recursive: true });
-		await fs.writeFile(openClawConfigPath, JSON.stringify(createHealthyOpenClawConfig()), 'utf8');
-		await writeManagedToolPortalConfigFiles(configDirectoryPath);
-		await fs.writeFile(
-			path.join(binDirectoryPath, 'openclaw'),
-			`#!/bin/sh
-printf '{"cwd":"%s","config":"%s","args":"%s"}\\n' "$PWD" "$OPENCLAW_CONFIG_PATH" "$*" > "${commandLogPath}"
-printf '{"ok":true}\\n'
-`,
-			{ encoding: 'utf8', mode: 0o755 },
-		);
-		process.env.PATH = `${binDirectoryPath}:${originalPath ?? ''}`;
-		const outputs: string[] = [];
-		const systemConfig = createOpenClawSystemConfig(
-			path.join(temporaryDirectoryPath, 'vm-images', 'tool-vms', 'default', 'build-config.json'),
-			path.join(configDirectoryPath, 'system.json'),
-			{ includeToolPortal: true },
-		);
-		await writeImageBuildConfigsForDoctor(systemConfig);
-
-		await runControllerOperationCommand({
-			...fastDoctorEnvironmentOptions(['openclaw']),
-			dependencies: {
-				...defaultCliDependencies,
-				createControllerClient: () => ({
-					destroyZone: async () => ({}),
-					enableZoneSsh: async () => ({}),
-					getControllerStatus: async () => ({}),
-					getZoneLogs: async () => ({}),
-					peekLease: async () => ({
-						agentId: 'main',
-						createdAt: 1,
-						idleTtlMs: 6_000_000,
-						lastUsedAt: 1,
-						leaseId: 'lease-123',
-						profileId: 'standard',
-						ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
-						tcpSlot: 0,
-						transport: 'ssh-sandbox' as const,
-						workdir: '/workspace',
-
-						zoneId: 'shravan',
-					}),
-					listLeases: async () => [],
-					refreshZoneCredentials: async () => ({}),
-					releaseLease: async () => {},
-					stopController: async () => ({}),
-					upgradeZone: async () => ({}),
-				}),
-				resolveManagedVmMinimumZigVersion: async () => '0.15.2',
-				runControllerDoctor: () => ({ ok: true, checks: [] }),
-			},
-			io: {
-				stderr: { write: () => true },
-				stdout: {
-					write: (chunk: string | Uint8Array) => {
-						outputs.push(String(chunk));
-						return true;
-					},
-				},
-			},
-			json: true,
-			subcommand: 'doctor',
-			systemConfig,
-		});
-
-		const result = JSON.parse(outputs.join('')) as {
-			readonly ok: boolean;
-			readonly checks: readonly {
-				readonly hint?: string;
-				readonly name: string;
-				readonly ok: boolean;
-			}[];
-		};
-		const commandLog = JSON.parse(await fs.readFile(commandLogPath, 'utf8')) as {
-			readonly args: string;
-			readonly config: string;
-			readonly cwd: string;
-		};
-		const realTemporaryDirectoryPath = await fs.realpath(temporaryDirectoryPath);
-
-		expect(result.ok).toBe(true);
-		expect(result.checks.find((check) => check.name === 'openclaw-config-shravan')).toMatchObject({
-			ok: true,
-			hint: openClawConfigPath,
-		});
-		expect(commandLog).toEqual({
-			args: 'config validate --json',
-			config: openClawConfigPath,
-			cwd: realTemporaryDirectoryPath,
-		});
-
-		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});
 
 	it('reports worker prompt reference failures in doctor output', async () => {
@@ -1580,7 +1244,7 @@ printf '{"ok":true}\\n'
 			},
 			json: true,
 			subcommand: 'doctor',
-			systemConfig: createOpenClawSystemConfig(toolVmBuildConfigPath, systemConfigPath),
+			systemConfig: createHermesSystemConfig(toolVmBuildConfigPath, systemConfigPath),
 		});
 
 		const result = JSON.parse(outputs.join('')) as {
@@ -1613,7 +1277,7 @@ printf '{"ok":true}\\n'
 			temporaryDirectoryPath,
 			'vm-images',
 			'gateways',
-			'openclaw',
+			'worker',
 			'build-config.json',
 		);
 		const toolVmBuildConfigPath = path.join(
@@ -1623,22 +1287,35 @@ printf '{"ok":true}\\n'
 			'default',
 			'build-config.json',
 		);
-		const openClawConfigPath = path.join(
-			temporaryDirectoryPath,
-			'config',
-			'gateways',
-			'shravan',
-			'openclaw.json',
-		);
+		const workerConfigPath = path.join(temporaryDirectoryPath, 'config', 'worker.json');
 		await fs.mkdir(path.dirname(systemConfigPath), { recursive: true });
 		await fs.mkdir(path.dirname(gatewayBuildConfigPath), { recursive: true });
 		await fs.mkdir(path.dirname(toolVmBuildConfigPath), { recursive: true });
-		await fs.mkdir(path.dirname(openClawConfigPath), { recursive: true });
-		await fs.writeFile(openClawConfigPath, JSON.stringify(createHealthyOpenClawConfig()), 'utf8');
-		await writeManagedToolPortalConfigFiles(path.dirname(systemConfigPath));
+		await fs.mkdir(path.dirname(workerConfigPath), { recursive: true });
+		await fs.writeFile(
+			workerConfigPath,
+			JSON.stringify({
+				commonAgentInstructions: null,
+				phases: {
+					plan: {
+						cycle: { kind: 'review', cycleCount: 1 },
+						agentInstructions: null,
+						reviewerInstructions: null,
+					},
+					work: {
+						cycle: { kind: 'review', cycleCount: 1 },
+						agentInstructions: null,
+						reviewerInstructions: null,
+					},
+					wrapup: { instructions: null },
+				},
+				mcpServers: [],
+			}),
+			'utf8',
+		);
 		await fs.writeFile(
 			gatewayBuildConfigPath,
-			JSON.stringify({ oci: { image: 'agent-vm-openclaw:latest', pullPolicy: 'never' } }),
+			JSON.stringify({ oci: { image: 'agent-vm-worker:latest', pullPolicy: 'never' } }),
 			'utf8',
 		);
 		await fs.writeFile(
@@ -1676,11 +1353,10 @@ printf '{"ok":true}\\n'
 			},
 			json: true,
 			subcommand: 'doctor',
-			systemConfig: createManagedBaseOpenClawSystemConfig(
+			systemConfig: createManagedBaseWorkerSystemConfig(
 				gatewayBuildConfigPath,
 				toolVmBuildConfigPath,
 				systemConfigPath,
-				{ includeToolPortal: true },
 			),
 		});
 
@@ -1696,12 +1372,10 @@ printf '{"ok":true}\\n'
 		expect(result.checks.filter((check) => !check.ok)).toEqual([]);
 		expect(result.ok).toBe(true);
 		expect(
-			result.checks.find((check) => check.name === 'gateway-image-profile-openclaw-dockerfile'),
+			result.checks.find((check) => check.name === 'gateway-image-profile-worker-dockerfile'),
 		).toMatchObject({
 			ok: true,
-			hint: expect.stringContaining(
-				path.join('vm-images', 'gateways', 'openclaw', 'overlay.jsonc'),
-			),
+			hint: expect.stringContaining(path.join('vm-images', 'gateways', 'worker', 'overlay.jsonc')),
 		});
 		expect(
 			result.checks.find((check) => check.name === 'tool-vm-image-profile-default-dockerfile'),
@@ -1720,7 +1394,7 @@ printf '{"ok":true}\\n'
 			temporaryDirectoryPath,
 			'vm-images',
 			'gateways',
-			'openclaw',
+			'worker',
 			'missing-build-config.json',
 		);
 		const toolVmBuildConfigPath = path.join(
@@ -1757,7 +1431,7 @@ printf '{"ok":true}\\n'
 			},
 			json: true,
 			subcommand: 'doctor',
-			systemConfig: createManagedBaseOpenClawSystemConfig(
+			systemConfig: createManagedBaseWorkerSystemConfig(
 				missingGatewayBuildConfigPath,
 				toolVmBuildConfigPath,
 				systemConfigPath,
@@ -1775,7 +1449,7 @@ printf '{"ok":true}\\n'
 
 		expect(result.ok).toBe(false);
 		expect(
-			result.checks.find((check) => check.name === 'gateway-image-profile-openclaw-build-config'),
+			result.checks.find((check) => check.name === 'gateway-image-profile-worker-build-config'),
 		).toMatchObject({
 			ok: false,
 			hint: expect.stringContaining(missingGatewayBuildConfigPath),

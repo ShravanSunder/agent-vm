@@ -89,7 +89,6 @@ export const GatewayControlRpcOperationSchema = z.enum([
 	'lease_use_heartbeat',
 	'lease_use_end',
 	'health_event',
-	'runtime_status',
 	'tool_vm_binding_publish',
 	'tool_vm_binding_request',
 	'tool_portal_controller_execution',
@@ -463,32 +462,9 @@ export const GatewayControlHealthEventPayloadSchema = z.union([
 			})
 			.catchall(z.string()),
 	}).strict(),
-	GatewayControlHealthEventBaseSchema.extend({
-		eventKind: z.literal('gateway-plugin-health'),
-	}).strict(),
 	GatewayControlToolVmSshHealthEventBaseSchema,
 	GatewayControlToolVmSshLifecycleHealthEventSchema,
 ]);
-
-export const GatewayControlRuntimeFindingSchema = z
-	.object({
-		id: z.string().min(1),
-		ok: z.boolean(),
-		safeMessage: z.string().min(1).optional(),
-		severity: z.enum(['info', 'warning', 'error']).optional(),
-	})
-	.strict();
-
-export const GatewayControlRuntimeStatusPayloadSchema = z
-	.object({
-		findings: z.array(GatewayControlRuntimeFindingSchema),
-		observedAtMs: z.number().int().positive(),
-		providerRuntimeHealth: z
-			.enum(['healthy', 'transitioning', 'unhealthy_recoverable', 'unhealthy_unrecoverable'])
-			.optional(),
-		statusKind: z.string().min(1),
-	})
-	.strict();
 
 export const GatewayControlGitObjectIdSchema = z
 	.string()
@@ -680,7 +656,6 @@ export const GatewayControlOperationCancelPayloadSchema = z.discriminatedUnion('
 ]);
 
 export const GatewayControlRecoveryCommandPayloadSchema = z.discriminatedUnion('action', [
-	z.object({ action: z.literal('refresh_runtime_status') }).strict(),
 	z.object({ action: z.literal('restart_control_service') }).strict(),
 	z
 		.object({
@@ -1317,17 +1292,11 @@ export const GatewayControlRpcEventMessageSchema = z.discriminatedUnion('operati
 		operation: z.literal('health_event'),
 		payload: GatewayControlHealthEventPayloadSchema,
 	}).strict(),
-	GatewayControlRpcDomainCorrelationSchema.extend({
-		kind: z.literal('event'),
-		operation: z.literal('runtime_status'),
-		payload: GatewayControlRuntimeStatusPayloadSchema,
-	}).strict(),
 ]);
 
 export const GatewayControlEventOnlyOperationSchema = z.enum([
 	'gateway_runtime_readiness',
 	'health_event',
-	'runtime_status',
 ]);
 
 export const GatewayControlRpcCommandResultOperationSchema =
@@ -1360,7 +1329,6 @@ export const gatewayControlDeliveryPolicyByOperation = {
 	lease_use_start: 'critical_idempotent',
 	operation_cancel: 'acked_idempotent',
 	recovery_command: 'critical_idempotent',
-	runtime_status: 'latest_wins',
 	tool_vm_binding_publish: 'critical_idempotent',
 	tool_vm_binding_request: 'critical_idempotent',
 	tool_portal_controller_execution: 'single_use_critical',
@@ -1417,7 +1385,6 @@ export const gatewayControlCommandExecutionTimeoutMsByOperation = {
 	lease_use_start: 10_000,
 	operation_cancel: 5_000,
 	recovery_command: 10_000,
-	runtime_status: 5_000,
 	tool_vm_binding_publish: 10_000,
 	tool_vm_binding_request: 180_000,
 	tool_portal_controller_execution: 120_000,
@@ -1535,9 +1502,6 @@ export type GatewayControlProviderRuntimeHealth = z.infer<
 export type GatewayControlHeartbeatPayload = z.infer<typeof GatewayControlHeartbeatPayloadSchema>;
 export type GatewayControlHealthEventPayload = z.infer<
 	typeof GatewayControlHealthEventPayloadSchema
->;
-export type GatewayControlRuntimeStatusPayload = z.infer<
-	typeof GatewayControlRuntimeStatusPayloadSchema
 >;
 export type GatewayControlControllerHostProbeResult = z.infer<
 	typeof GatewayControlControllerHostProbeResultSchema

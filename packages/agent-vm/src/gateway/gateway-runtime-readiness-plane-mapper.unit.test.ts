@@ -49,7 +49,7 @@ function createSnapshotInput(
 				...connectionIdentity,
 				expected: {
 					attachmentGeneration: 1,
-					clientKind: 'openclaw-managed-plugin',
+					clientKind: 'hermes-managed-plugin',
 					configuredAgentIds: ['agent-a'],
 					frameworkEpoch: 'framework-1',
 					gatewayEpoch: 'gateway-1',
@@ -111,8 +111,8 @@ describe('Gateway runtime readiness plane mapper', () => {
 		});
 		expect(observations.frameworkIdentity).toMatchObject({
 			identity: {
-				clientKind: 'openclaw-managed-plugin',
-				frameworkKind: 'openclaw',
+				clientKind: 'hermes-managed-plugin',
+				frameworkKind: 'hermes',
 				projectionCohortDigest:
 					'projection-cohort:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 			},

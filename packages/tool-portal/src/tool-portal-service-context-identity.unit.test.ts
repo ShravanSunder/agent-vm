@@ -177,7 +177,7 @@ describe('ToolPortalCapabilityCore context identity', () => {
 				...agentATrustedContext,
 				principal: {
 					...agentATrustedContext.principal,
-					frameworkIdentity: { agentId: 'agent-b', kind: 'openclaw' },
+					frameworkIdentity: { kind: 'hermes', profileName: 'agent-b' },
 				},
 			},
 			{

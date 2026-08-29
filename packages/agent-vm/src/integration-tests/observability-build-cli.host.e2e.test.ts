@@ -163,11 +163,11 @@ async function createSmokeDeployment(
 	const cacheDir = path.join(temporaryDirectory, 'cache');
 	const runtimeDir = path.join(temporaryDirectory, 'controller-runtime');
 	const dataDir = path.join(temporaryDirectory, 'observability-data');
-	const gatewayConfigPath = path.join(configDirectory, 'gateways', 'sunfam', 'openclaw.json');
+	const gatewayConfigPath = path.join(configDirectory, 'gateways', 'sunfam', 'config.yaml');
 	const gatewayBuildConfigPath = path.join(
 		vmImagesDirectory,
 		'gateways',
-		'openclaw',
+		'hermes',
 		'build-config.json',
 	);
 	const toolBuildConfigPath = path.join(vmImagesDirectory, 'tool-build-config.json');
@@ -184,16 +184,12 @@ async function createSmokeDeployment(
 			label: 'gondolin-root',
 		},
 	};
-	await writeJson(gatewayConfigPath, {
-		diagnostics: {
-			otel: {
-				authorizationHeader: canaryAuthorizationHeader,
-				prompt: canaryPromptText,
-				toolPayload: canaryToolPayload,
-				url: canaryCredentialedUrl,
-			},
-		},
-	});
+	await fs.mkdir(path.dirname(gatewayConfigPath), { recursive: true });
+	await fs.writeFile(
+		gatewayConfigPath,
+		`# ${canaryAuthorizationHeader}\n# ${canaryPromptText}\n# ${canaryToolPayload}\n# ${canaryCredentialedUrl}\nplugins:\n  enabled:\n    - agent-vm-tool-portal\n  disabled: []\n`,
+		'utf8',
+	);
 	await writeJson(gatewayBuildConfigPath, buildConfig);
 	await writeJson(toolBuildConfigPath, buildConfig);
 	await writeJson(configPath, {
@@ -237,8 +233,8 @@ async function createSmokeDeployment(
 		},
 		imageProfiles: {
 			gateways: {
-				openclaw: {
-					type: 'openclaw',
+				hermes: {
+					type: 'hermes',
 					buildConfig: gatewayBuildConfigPath,
 				},
 			},
@@ -254,21 +250,36 @@ async function createSmokeDeployment(
 				id: 'sunfam',
 				agents: [{ id: 'sunfam' }],
 				gateway: {
-					type: 'openclaw',
-					imageProfile: 'openclaw',
+					type: 'hermes',
+					imageProfile: 'hermes',
 					memory: '1G',
 					cpus: 1,
 					port: 18_791,
 					config: gatewayConfigPath,
-					controlAuth: {
-						mode: 'token',
-						secret: 'OPENCLAW_GATEWAY_TOKEN',
+					profilesByAgent: { sunfam: 'sunfam' },
+					profileSecretProjectionsByAgent: {
+						sunfam: {
+							API_SERVER_KEY: 'API_SERVER_KEY_SUNFAM',
+							DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN',
+						},
 					},
 				},
 				secrets: {
-					OPENCLAW_GATEWAY_TOKEN: {
+					API_SERVER_KEY: {
+						source: 'config',
+						value: canarySecretValue,
+						injection: 'env',
+						audience: 'gateway',
+					},
+					API_SERVER_KEY_SUNFAM: {
 						source: 'environment',
-						envVar: canarySecretValue,
+						envVar: 'API_SERVER_KEY_SUNFAM',
+						injection: 'env',
+						audience: 'gateway',
+					},
+					DISCORD_BOT_TOKEN: {
+						source: 'environment',
+						envVar: 'DISCORD_BOT_TOKEN',
 						injection: 'env',
 						audience: 'gateway',
 					},
@@ -280,7 +291,6 @@ async function createSmokeDeployment(
 					? {
 							observability: {
 								enabled: true,
-								openclaw: { diagnosticsFlags: ['gateway.lifecycle'] },
 								services: {
 									framework: { traces: true, metrics: true, logs: true },
 									toolPortal: { traces: true, metrics: true, logs: true },
@@ -302,9 +312,9 @@ async function createSmokeDeployment(
 	await Promise.all([
 		seedBuiltImageCache({
 			buildConfigPath: gatewayBuildConfigPath,
-			cacheDirectory: path.join(cacheDir, 'gateway-images', 'openclaw'),
+			cacheDirectory: path.join(cacheDir, 'gateway-images', 'hermes'),
 			managedGatewayBoot: {
-				frameworkBootEntry: 'openclaw-framework-service',
+				frameworkBootEntry: 'hermes-framework-service',
 				kind: 'managed-gateway-exact-two-role',
 			},
 		}),
@@ -369,7 +379,7 @@ describe('smoke: agent-vm build observability CLI', () => {
 
 			const output = await runBuiltAgentVmBuild(deployment);
 
-			expect(output).toContain('no OpenClaw zone opted in');
+			expect(output).toContain('no Hermes zone opted in');
 			const dockerCalls = await readOptionalText(deployment.dockerCallLogPath);
 			expect(dockerCalls).not.toContain('compose --project-name agent-vm-observability-cli-smoke');
 			expect(dockerCalls).not.toContain('up -d --wait');
@@ -399,7 +409,7 @@ describe('smoke: agent-vm build observability CLI', () => {
 		}
 	});
 
-	it('prepares host observability when an OpenClaw zone opts in', async () => {
+	it('prepares host observability when a Hermes zone opts in', async () => {
 		const healthServers = await createHealthServers(4);
 		const [collectorHealth, metrics, logs, traces] = healthServers;
 		if (!collectorHealth || !metrics || !logs || !traces) {

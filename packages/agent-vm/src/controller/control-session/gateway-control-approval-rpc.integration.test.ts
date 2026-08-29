@@ -93,7 +93,7 @@ const approvalIntent = {
 		correlation: { runId: 'run-a', sessionId: 'session-a', toolCallId: 'tool-call-a' },
 		principal: {
 			agentId: 'agent-a',
-			frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
+			frameworkIdentity: { kind: 'hermes', profileName: 'agent-a' },
 			profileAssignmentRevision: 'assignment-1',
 			toolPortalProfileId: 'profile-a',
 		},
@@ -431,7 +431,7 @@ describe('gateway-control approval RPC integration', () => {
 		const attackerPrincipal = {
 			...approvalIntent.trustedContext.principal,
 			agentId: 'agent-attacker',
-			frameworkIdentity: { agentId: 'agent-attacker', kind: 'openclaw' as const },
+			frameworkIdentity: { kind: 'hermes' as const, profileName: 'agent-attacker' },
 		};
 		const callerContextId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 		const callerContexts = createStaticCallerContextRegistry([
@@ -612,7 +612,7 @@ describe('gateway-control approval RPC integration', () => {
 		const attackerPrincipal = {
 			...controllerExecutionIntent.trustedContext.principal,
 			agentId: 'agent-attacker',
-			frameworkIdentity: { agentId: 'agent-attacker', kind: 'openclaw' as const },
+			frameworkIdentity: { kind: 'hermes' as const, profileName: 'agent-attacker' },
 		};
 		const callerContexts = createStaticCallerContextRegistry([
 			createCallerContext(firstCallerContextId),

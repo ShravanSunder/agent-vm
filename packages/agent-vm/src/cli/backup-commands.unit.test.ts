@@ -10,7 +10,7 @@ function createBackupSystemConfig(): LoadedSystemConfig {
 			storageRootDir: './storage',
 			host: {
 				controllerPort: 18800,
-				projectNamespace: 'claw-tests-a1b2c3d4',
+				projectNamespace: 'agent-vm-tests-a1b2c3d4',
 				secretsProvider: {
 					type: '1password',
 					tokenSource: { type: 'env' },
@@ -18,9 +18,9 @@ function createBackupSystemConfig(): LoadedSystemConfig {
 			},
 			imageProfiles: {
 				gateways: {
-					openclaw: {
-						type: 'openclaw',
-						buildConfig: './vm-images/gateways/openclaw/build-config.json',
+					hermes: {
+						type: 'hermes',
+						buildConfig: './vm-images/gateways/hermes/build-config.json',
 					},
 					worker: {
 						type: 'worker',
@@ -52,23 +52,32 @@ function createBackupSystemConfig(): LoadedSystemConfig {
 						audience: 'gateway' as const,
 					})),
 					gateway: {
-						type: 'openclaw',
-						controlAuth: {
-							mode: 'token',
-							secret: 'OPENCLAW_GATEWAY_TOKEN',
+						type: 'hermes',
+						profileSecretProjectionsByAgent: {
+							main: {
+								API_SERVER_KEY: 'API_SERVER_KEY_MAIN',
+								DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_MAIN',
+							},
 						},
-						imageProfile: 'openclaw',
+						profilesByAgent: { main: 'main' },
+						imageProfile: 'hermes',
 						cpus: 2,
 						memory: '2G',
-						config: './config/shravan/openclaw.json',
+						config: './config/shravan/hermes.yaml',
 						port: 18791,
 					},
 					id: 'shravan',
 					agents: [{ id: 'main' }],
 					secrets: {
-						OPENCLAW_GATEWAY_TOKEN: {
+						API_SERVER_KEY_MAIN: {
 							source: 'environment',
-							envVar: 'OPENCLAW_GATEWAY_TOKEN',
+							envVar: 'API_SERVER_KEY_MAIN',
+							injection: 'env',
+							audience: 'gateway',
+						},
+						DISCORD_BOT_TOKEN_MAIN: {
+							source: 'environment',
+							envVar: 'DISCORD_BOT_TOKEN_MAIN',
 							injection: 'env',
 							audience: 'gateway',
 						},

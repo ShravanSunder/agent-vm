@@ -289,7 +289,7 @@ const leaseAgentIdPattern = /^[a-z0-9][a-z0-9_-]{0,63}$/iu;
 function assertValidLeaseAgentId(agentId: string): void {
 	if (!leaseAgentIdPattern.test(agentId)) {
 		throw new Error(
-			`Invalid Tool VM lease agentId '${agentId}': expected an OpenClaw agent id matching /^[a-z0-9][a-z0-9_-]{0,63}$/i.`,
+			`Invalid Tool VM lease agentId '${agentId}': expected a managed agent id matching /^[a-z0-9][a-z0-9_-]{0,63}$/i.`,
 		);
 	}
 }
@@ -563,7 +563,7 @@ export function createLeaseManager(options: {
 	): void {
 		if (lostProcessEpochsByGateway.get(gatewayAuthorityKey(gateway))?.has(processEpoch) === true) {
 			throw new LeaseActiveUseConflictError(
-				`OpenClaw process epoch '${processEpoch}' was lost and cannot start new Tool VM work.`,
+				`Managed Gateway process epoch '${processEpoch}' was lost and cannot start new Tool VM work.`,
 			);
 		}
 	}

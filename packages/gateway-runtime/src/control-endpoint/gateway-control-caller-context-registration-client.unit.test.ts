@@ -50,11 +50,11 @@ const trustedContext = {
 	correlation: { runId: 'run-a', sessionId: 'framework-session-a', toolCallId: 'tool-call-a' },
 	principal: {
 		agentId: 'agent-a',
-		frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
+		frameworkIdentity: { kind: 'hermes', profileName: 'agent-a' },
 		profileAssignmentRevision: 'profile-assignment-a',
 		toolPortalProfileId: 'code-builder',
 	},
-	requester: { authenticatedSubjectId: 'openclaw:agent-a' },
+	requester: { authenticatedSubjectId: 'hermes:agent-a' },
 } as const satisfies GatewayRuntimeTrustedInvocationContext;
 
 const registrationRequest = {

@@ -282,12 +282,7 @@ export function createGatewayControlAdmissionPressureE2eActuator(options: {
 
 function pressurePayload(): GatewayControlRpcMessage {
 	return {
-		kind: 'event',
-		operation: 'runtime_status',
-		payload: {
-			findings: [],
-			observedAtMs: 0,
-			statusKind: 'gateway-runtime-e2e-pressure',
-		},
+		kind: 'heartbeat',
+		payload: { observedAtMs: 1 },
 	};
 }

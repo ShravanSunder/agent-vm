@@ -109,14 +109,14 @@ describe('createRunTask', () => {
 			stdout: { write: () => true },
 		});
 
-		await runTask('Docker: gateway/openclaw', async (context) => {
+		await runTask('Docker: gateway/hermes', async (context) => {
 			observedContext.push(context);
 			context?.setStatus('docker build');
 			context?.setOutput('last build lines');
 			context?.streamPreview?.write('docker output\n');
 		});
 
-		expect(tasukuTaskMock).toHaveBeenCalledWith('Docker: gateway/openclaw', expect.any(Function), {
+		expect(tasukuTaskMock).toHaveBeenCalledWith('Docker: gateway/hermes', expect.any(Function), {
 			previewLines: 1,
 		});
 		expect(startTime).toHaveBeenCalledOnce();
@@ -175,7 +175,7 @@ describe('createRunTask', () => {
 
 		await runTaskGroup(
 			[
-				{ title: 'Docker: gateway/openclaw', fn: async (context) => context?.setStatus('one') },
+				{ title: 'Docker: gateway/hermes', fn: async (context) => context?.setStatus('one') },
 				{ title: 'Docker: toolVm/default', fn: async (context) => context?.setStatus('two') },
 			],
 			{ concurrency: 2 },
@@ -183,7 +183,7 @@ describe('createRunTask', () => {
 
 		expect(tasukuTaskWithGroup().group).toHaveBeenCalledOnce();
 		expect(registeredTasks.map((task) => task.title)).toEqual([
-			'Docker: gateway/openclaw',
+			'Docker: gateway/hermes',
 			'Docker: toolVm/default',
 		]);
 		expect(startTime).toHaveBeenCalledTimes(2);

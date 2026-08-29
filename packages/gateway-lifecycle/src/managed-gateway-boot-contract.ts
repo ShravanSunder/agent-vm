@@ -1,6 +1,6 @@
-export type ManagedFrameworkKind = 'openclaw' | 'hermes';
+export type ManagedFrameworkKind = 'hermes';
 
-export type ManagedFrameworkBootEntry = 'openclaw-gateway' | 'hermes-gateway';
+export type ManagedFrameworkBootEntry = 'hermes-gateway';
 
 export interface ManagedGatewayLogIdentity {
 	readonly guestPath: string;
@@ -42,19 +42,12 @@ interface ManagedFrameworkServiceBootMetadataBase {
 	readonly role: 'framework-service';
 }
 
-export interface ManagedOpenClawServiceBootMetadata extends ManagedFrameworkServiceBootMetadataBase {
-	readonly bootEntry: 'openclaw-gateway';
-	readonly framework: 'openclaw';
-}
-
 export interface ManagedHermesServiceBootMetadata extends ManagedFrameworkServiceBootMetadataBase {
 	readonly bootEntry: 'hermes-gateway';
 	readonly framework: 'hermes';
 }
 
-export type ManagedFrameworkServiceBootMetadata =
-	| ManagedOpenClawServiceBootMetadata
-	| ManagedHermesServiceBootMetadata;
+export type ManagedFrameworkServiceBootMetadata = ManagedHermesServiceBootMetadata;
 
 /**
  * Exact image-owned startup contract for a managed Gateway VM.
@@ -236,10 +229,7 @@ function parseFrameworkService(value: unknown): ManagedFrameworkServiceBootMetad
 		'readiness',
 		'role',
 	]);
-	const framework = value.framework;
-	if (framework !== 'openclaw' && framework !== 'hermes') {
-		throw new Error(`${label}.framework must be "openclaw" or "hermes".`);
-	}
+	const framework = parseLiteral(value.framework, 'hermes', `${label}.framework`);
 	const ingress = parseFrameworkIngress(value.ingress, `${label}.ingress`);
 	const readiness = parseFrameworkReadiness(value.readiness, `${label}.readiness`);
 	if (ingress.guestPort !== readiness.guestPort) {
@@ -259,13 +249,6 @@ function parseFrameworkService(value: unknown): ManagedFrameworkServiceBootMetad
 		readiness,
 		role: parseLiteral(value.role, 'framework-service', `${label}.role`),
 	};
-	if (framework === 'openclaw') {
-		return Object.freeze({
-			...commonFields,
-			bootEntry: parseLiteral(value.bootEntry, 'openclaw-gateway', `${label}.bootEntry`),
-			framework,
-		});
-	}
 	return Object.freeze({
 		...commonFields,
 		bootEntry: parseLiteral(value.bootEntry, 'hermes-gateway', `${label}.bootEntry`),

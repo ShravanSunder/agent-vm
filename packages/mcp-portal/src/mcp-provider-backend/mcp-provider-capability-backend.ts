@@ -195,7 +195,8 @@ export async function createManagedMcpProviderBackendFactoryFromConfig(
 		close: async () => await core.close(),
 		createBackend: (projection, backendOptions = {}): McpProviderCapabilityBackend => {
 			const parsedProjection = ToolPortalMcpProjectionSchema.parse(projection);
-			const portalAgentScopeSource = backendOptions.portalAgentScopeSource ?? 'openclaw-trusted';
+			const portalAgentScopeSource =
+				backendOptions.portalAgentScopeSource ?? 'managed-gateway-trusted';
 			if (backendOptions.sessionKey !== undefined) {
 				const agentScopes =
 					agentScopesBySessionKey.get(backendOptions.sessionKey) ??
@@ -245,7 +246,7 @@ export function createMcpProviderCapabilityBackend(
 		agentId: projection.agentId,
 		agentScopeId: `mcp-provider:${projection.agentId}`,
 		...(props.sessionKey === undefined ? {} : { sessionKey: props.sessionKey }),
-		source: props.portalAgentScopeSource ?? 'openclaw-trusted',
+		source: props.portalAgentScopeSource ?? 'managed-gateway-trusted',
 	});
 	const owningGeneration = props.sessionKey ?? `mcp-provider:${projection.agentId}`;
 

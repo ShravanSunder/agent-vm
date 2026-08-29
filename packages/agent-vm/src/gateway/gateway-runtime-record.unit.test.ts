@@ -202,11 +202,11 @@ function buildSampleRecord(
 		ingressPort: 18_791,
 		processIdentity,
 		processTarget,
-		projectNamespace: 'claw-tests-a1b2c3d4',
+		projectNamespace: 'agent-vm-tests-a1b2c3d4',
 		qemuPid: 4242,
 		runtimeKind: 'managed-gateway',
 		schemaVersion: 4,
-		sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
+		sessionLabel: 'agent-vm-tests-a1b2c3d4:shravan:gateway',
 		vmId: gatewayIdentity.gatewayVmId,
 		zoneId: 'shravan',
 		...overrides,
@@ -288,7 +288,7 @@ describe('managed Gateway runtime record', () => {
 		}
 	});
 
-	it('rejects stale Tool Portal runtime/process and framework attachment identities', () => {
+	it('rejects stale Tool Portal runtime, process, and framework epochs', () => {
 		const mismatchedCohorts: readonly GatewayExpectedAdmissionCohort[] = [
 			{
 				...expectedCohort,
@@ -301,13 +301,6 @@ describe('managed Gateway runtime record', () => {
 			{
 				...expectedCohort,
 				udsIdentity: { ...expectedCohort.udsIdentity, frameworkEpoch: 'stale-framework' },
-			},
-			{
-				...expectedCohort,
-				frameworkIdentity: {
-					...expectedCohort.frameworkIdentity,
-					clientKind: 'openclaw-managed-plugin',
-				},
 			},
 		];
 
@@ -354,20 +347,7 @@ describe('managed Gateway runtime record', () => {
 		}
 	});
 
-	it('rejects stale boot framework identity and framework ingress port', () => {
-		expect(() =>
-			managedGatewayRuntimeRecordSchema.parse({
-				...buildSampleRecord(),
-				bootContract: {
-					...bootContract,
-					frameworkService: {
-						...bootContract.frameworkService,
-						bootEntry: 'openclaw-gateway',
-						framework: 'openclaw',
-					},
-				},
-			}),
-		).toThrow(ZodError);
+	it('rejects a mismatched framework ingress port', () => {
 		expect(() =>
 			managedGatewayRuntimeRecordSchema.parse({
 				...buildSampleRecord(),
@@ -529,7 +509,7 @@ describe('managed Gateway runtime record', () => {
 			image,
 			managedVm: createManagedVmStub({ hostPid: 28_282, id: gatewayIdentity.gatewayVmId }),
 			processTarget: liveProcessTarget,
-			projectNamespace: 'claw-tests-a1b2c3d4',
+			projectNamespace: 'agent-vm-tests-a1b2c3d4',
 			readProcessIdentity: async () => liveProcessIdentity,
 			systemConfigPath: '/deployments/claw/config/system.jsonc',
 			zoneId: gatewayIdentity.zoneId,
@@ -568,7 +548,7 @@ describe('managed Gateway runtime record', () => {
 			image,
 			managedVm: createManagedVmStub({ hostPid: 28_282, id: gatewayIdentity.gatewayVmId }),
 			processTarget: liveProcessTarget,
-			projectNamespace: 'claw-tests-a1b2c3d4',
+			projectNamespace: 'agent-vm-tests-a1b2c3d4',
 			readProcessIdentity: async () => processIdentity,
 			systemConfigPath: '/deployments/claw/config/system.jsonc',
 			zoneId: gatewayIdentity.zoneId,
@@ -592,7 +572,7 @@ describe('managed Gateway runtime record', () => {
 				processIdentity,
 				vmId: gatewayIdentity.gatewayVmId,
 			},
-			projectNamespace: 'claw-tests-a1b2c3d4',
+			projectNamespace: 'agent-vm-tests-a1b2c3d4',
 			systemConfigPath: '/deployments/claw/config/system.jsonc',
 			zoneId: gatewayIdentity.zoneId,
 		} as const;

@@ -13,40 +13,37 @@ describe('auditReliabilityFaultBoundaries', () => {
 					'`;',
 				].join('\n'),
 				filePath:
-					'packages/agent-vm/src/integration-tests/gateway-subtree-replacement.openclaw.e2e.test.ts',
+					'packages/agent-vm/src/integration-tests/hermes-managed-base-environment.hermes.e2e.test.ts',
 			},
 			{
 				content:
 					"const staleTrigger = 'ssh-command-reset';\nconst command = 'kill -9 \\\"$target_pid\\\"';",
-				filePath:
-					'packages/agent-vm/src/integration-tests/lease-leaf-replacement.openclaw.e2e.test.ts',
+				filePath: 'packages/agent-vm/src/integration-tests/gateway-runtime-sandbox.vm.e2e.test.ts',
 			},
 		]);
 
 		expect(findings).toEqual([
 			{
-				filePath:
-					'packages/agent-vm/src/integration-tests/gateway-subtree-replacement.openclaw.e2e.test.ts',
-				line: 2,
-				reason: 'raw process kill fault',
-			},
-			{
-				filePath:
-					'packages/agent-vm/src/integration-tests/gateway-subtree-replacement.openclaw.e2e.test.ts',
-				line: 3,
-				reason: 'raw process stop fault',
-			},
-			{
-				filePath:
-					'packages/agent-vm/src/integration-tests/lease-leaf-replacement.openclaw.e2e.test.ts',
+				filePath: 'packages/agent-vm/src/integration-tests/gateway-runtime-sandbox.vm.e2e.test.ts',
 				line: 1,
 				reason: 'raw SSH reset fault',
 			},
 			{
-				filePath:
-					'packages/agent-vm/src/integration-tests/lease-leaf-replacement.openclaw.e2e.test.ts',
+				filePath: 'packages/agent-vm/src/integration-tests/gateway-runtime-sandbox.vm.e2e.test.ts',
 				line: 2,
 				reason: 'raw process kill fault',
+			},
+			{
+				filePath:
+					'packages/agent-vm/src/integration-tests/hermes-managed-base-environment.hermes.e2e.test.ts',
+				line: 2,
+				reason: 'raw process kill fault',
+			},
+			{
+				filePath:
+					'packages/agent-vm/src/integration-tests/hermes-managed-base-environment.hermes.e2e.test.ts',
+				line: 3,
+				reason: 'raw process stop fault',
 			},
 		]);
 	});
@@ -55,7 +52,7 @@ describe('auditReliabilityFaultBoundaries', () => {
 		const findings = auditReliabilityFaultBoundaries([
 			{
 				content: 'socket.disconnect(true);\nprocess.kill(pid, 0);',
-				filePath: 'packages/openclaw-agent-vm-plugin/src/gateway-control-service.ts',
+				filePath: 'packages/hermes-gateway/src/hermes-lifecycle.ts',
 			},
 			{
 				content: 'kill -KILL "$owned_pid";',
@@ -80,7 +77,7 @@ describe('auditReliabilityFaultBoundaries', () => {
 			{
 				content: "process.kill(targetPid, 'SIGKILL');",
 				filePath:
-					'packages/agent-vm/src/integration-tests/gateway-subtree-replacement.openclaw.e2e.test.ts',
+					'packages/agent-vm/src/integration-tests/hermes-managed-base-environment.hermes.e2e.test.ts',
 			},
 		]);
 

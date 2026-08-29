@@ -120,7 +120,7 @@ export interface GatewayRuntimeToolPortalTelemetryRuntime {
 export interface CreateGatewayRuntimeToolPortalTelemetryRuntimeProps {
 	readonly config: GatewayRuntimeToolPortalObservabilityConfig;
 	readonly identity: {
-		readonly frameworkKind: 'hermes' | 'openclaw';
+		readonly frameworkKind: 'hermes';
 		readonly gatewayEpoch: string;
 		readonly zoneId: string;
 	};

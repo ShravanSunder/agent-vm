@@ -30,7 +30,7 @@ import {
 const PROTOCOL_WAIT_MILLISECONDS = 5_000;
 const CURRENT_ATTACHMENT = {
 	attachmentGeneration: 7,
-	clientKind: 'openclaw-managed-plugin',
+	clientKind: 'hermes-managed-plugin',
 	configuredAgentIds: ['main', 'research'],
 	frameworkEpoch: 'framework-epoch-current',
 	gatewayEpoch: 'gateway-epoch-current',

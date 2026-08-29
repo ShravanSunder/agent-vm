@@ -35,7 +35,7 @@ const agentPortalSdkSourceRoot = path.dirname(clientSourceRoot);
 
 const CURRENT_ATTACHMENT_METADATA = Object.freeze({
 	attachmentGeneration: 7,
-	clientKind: 'openclaw-managed-plugin' as const,
+	clientKind: 'hermes-managed-plugin' as const,
 	configuredAgentIds: Object.freeze(['agent-a', 'agent-b']),
 	frameworkEpoch: 'framework-epoch-1',
 	gatewayEpoch: 'gateway-epoch-1',
@@ -55,7 +55,7 @@ const CURRENT_TRUSTED_INVOCATION_CONTEXT = Object.freeze({
 	}),
 	principal: Object.freeze({
 		agentId: 'agent-a',
-		frameworkIdentity: Object.freeze({ agentId: 'agent-a', kind: 'openclaw' }),
+		frameworkIdentity: Object.freeze({ kind: 'hermes', profileName: 'agent-a' }),
 		profileAssignmentRevision: 'profile-assignment:agent-a:1',
 		toolPortalProfileId: 'profile-a',
 	}),

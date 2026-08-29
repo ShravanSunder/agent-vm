@@ -14,7 +14,7 @@ const authorization = {
 	agentId: 'agent-a',
 	capability: { name: 'get_issue', namespace: 'github' },
 	executionFingerprint: 'execution-fingerprint-a',
-	frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
+	frameworkIdentity: { kind: 'hermes', profileName: 'agent-a' },
 	operationId: 'operation-a',
 	owningGeneration: 'generation-a',
 	profileAssignmentRevision: 'profile-assignment:agent-a:7',
@@ -217,8 +217,8 @@ describe('Gateway runtime artifact read authority resolver', () => {
 			...authorization,
 			agentId: 'agent-a\u0000profile-prefix',
 			frameworkIdentity: {
-				agentId: 'agent-a\u0000profile-prefix',
-				kind: 'openclaw' as const,
+				kind: 'hermes' as const,
+				profileName: 'agent-a\u0000profile-prefix',
 			},
 			toolPortalProfileId: 'code-builder',
 		};

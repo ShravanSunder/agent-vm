@@ -15,13 +15,13 @@ const baseConfig = {
 	controllerRuntimeDir: './controller-runtime',
 	host: {
 		controllerPort: 18800,
-		projectNamespace: 'claw-tests-a1b2c3d4',
+		projectNamespace: 'agent-vm-tests-a1b2c3d4',
 	},
 	imageProfiles: {
 		gateways: {
-			openclaw: {
-				type: 'openclaw',
-				buildConfig: './vm-images/gateways/openclaw/build-config.json',
+			hermes: {
+				type: 'hermes',
+				buildConfig: './vm-images/gateways/hermes/build-config.json',
 			},
 			worker: { type: 'worker', buildConfig: './vm-images/gateways/worker/build-config.json' },
 		},
@@ -33,16 +33,14 @@ const baseConfig = {
 		{
 			id: 'shravan',
 			gateway: {
-				type: 'openclaw',
-				controlAuth: {
-					mode: 'token',
-					secret: 'OPENCLAW_GATEWAY_TOKEN',
-				},
-				imageProfile: 'openclaw',
+				type: 'hermes',
+				profileSecretProjectionsByAgent: { main: {} },
+				profilesByAgent: { main: 'main' },
+				imageProfile: 'hermes',
 				memory: '2G',
 				cpus: 2,
 				port: 18791,
-				config: './config/shravan/openclaw.json',
+				config: './config/shravan/hermes.json',
 				stateDir: './state/shravan',
 				zoneFilesDir: './zone-files/shravan',
 				zoneRuntimeDir: './shravan/runtime',

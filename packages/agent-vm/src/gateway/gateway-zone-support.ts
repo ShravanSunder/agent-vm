@@ -43,7 +43,6 @@ import type {
 	ControllerDiagnosticTelemetry,
 } from '../controller/controller-diagnostic-logging.js';
 import type { HealthEventStore } from '../controller/health/health-event-store.js';
-import type { OpenClawRuntimeStatusStore } from '../controller/openclaw-runtime-status.js';
 import type { GatewayVmLifecycleAuthority } from '../controller/vm-ownership/gateway-vm-lifecycle-authority.js';
 import type { GatewayEpochIdentity } from '../controller/vm-ownership/vm-ownership-contracts.js';
 import type { ManagedVmProcessTarget } from '../shared/controller-managed-vm-termination.js';
@@ -109,7 +108,6 @@ export interface StartGatewayZoneOptions {
 	readonly gatewayControlProcessAdmissionCoordinator?: GatewayControlProcessAdmissionCoordinator;
 	readonly gitReadAllowlistRepos?: readonly string[];
 	readonly healthEventStore?: HealthEventStore;
-	readonly openClawRuntimeStatusStore?: OpenClawRuntimeStatusStore;
 	readonly observabilityStartupCheck?: 'default' | 'skip';
 	readonly onPendingVmCreation?: (containment: PendingGatewayVmCreationContainment) => void;
 	readonly onControlSessionAttemptOutcome?: (outcome: GatewayControlSessionAttemptOutcome) => void;
@@ -286,10 +284,7 @@ function mapSystemZoneObservabilityToLifecycleObservability(
 		return undefined;
 	}
 
-	const frameworkServiceName =
-		zone.gateway.type === 'openclaw'
-			? gatewayFrameworkTelemetryServiceNames.openclaw
-			: gatewayFrameworkTelemetryServiceNames.hermes;
+	const frameworkServiceName = gatewayFrameworkTelemetryServiceNames.hermes;
 	return {
 		mode: 'collector',
 		collector: {
@@ -305,9 +300,6 @@ function mapSystemZoneObservabilityToLifecycleObservability(
 			...createGatewayTelemetryProducerSafetyContract(),
 			serviceName: frameworkServiceName,
 		},
-		...(zone.observability.openclaw === undefined
-			? {}
-			: { openclaw: { diagnosticsFlags: zone.observability.openclaw.diagnosticsFlags } }),
 		toolPortal: {
 			...zone.observability.services.toolPortal,
 			...createGatewayTelemetryProducerSafetyContract(),
@@ -336,7 +328,6 @@ export function mapSystemGatewayZoneToLifecycleZone(
 		...(zone.gateway.runtimeRootfsSize
 			? { runtimeRootfsSize: zone.gateway.runtimeRootfsSize }
 			: {}),
-		ssh: zone.gateway.ssh ?? { secretEnv: 'explicit' },
 		stateDir: zone.gateway.stateDir,
 	};
 
@@ -345,20 +336,6 @@ export function mapSystemGatewayZoneToLifecycleZone(
 		...(zone.agents === undefined ? {} : { agents: zone.agents }),
 		gateway: (() => {
 			switch (zone.gateway.type) {
-				case 'openclaw':
-					return {
-						...baseGateway,
-						type: 'openclaw',
-						controlAuth: zone.gateway.controlAuth,
-						zoneFilesDir: zone.gateway.zoneFilesDir,
-						...(zone.gateway.authProfilesRef
-							? { authProfilesRef: zone.gateway.authProfilesRef }
-							: {}),
-						...(zone.gateway.authProfilesByAgent
-							? { authProfilesByAgent: zone.gateway.authProfilesByAgent }
-							: {}),
-						...(zone.gateway.rawEnvSecrets ? { rawEnvSecrets: zone.gateway.rawEnvSecrets } : {}),
-					};
 				case 'hermes':
 					return {
 						...baseGateway,

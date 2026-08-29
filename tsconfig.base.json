@@ -91,7 +91,6 @@
 				"./packages/gateway-runtime/src/uds/gateway-runtime-protocol.ts"
 			],
 			"@agent-vm/managed-vm": ["./packages/managed-vm/src/index.ts"],
-			"@agent-vm/openclaw-agent-vm-plugin": ["./packages/openclaw-agent-vm-plugin/src/index.ts"],
 			"@agent-vm/mcp-portal": ["./packages/mcp-portal/src/index.ts"],
 			"@agent-vm/mcp-portal/core": ["./packages/mcp-portal/src/core/index.ts"],
 			"@agent-vm/mcp-portal/mcp-proxy": ["./packages/mcp-portal/src/mcp-proxy/index.ts"],
@@ -112,7 +111,6 @@
 			"@agent-vm/mcp-portal/testing/fake-upstream-mcp-server": [
 				"./packages/mcp-portal/src/testing/fake-upstream-mcp-server.ts"
 			],
-			"@agent-vm/openclaw-gateway": ["./packages/openclaw-gateway/src/index.ts"],
 			"@agent-vm/secret-management": ["./packages/secret-management/src/index.ts"],
 			"@agent-vm/tool-portal": ["./packages/tool-portal/src/index.ts"],
 			"@agent-vm/tool-portal/cli-allowances": [

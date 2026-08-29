@@ -16,7 +16,8 @@ import {
 } from '../shared/controller-managed-vm-termination.js';
 import { readProcessIdentity, sleep } from '../shared/managed-vm-process.js';
 import { createToolVm } from '../tool-vm/tool-vm-lifecycle.js';
-import { prepareGatewayE2eProjectImages, scaffoldOpenClawE2eProject } from './e2e-harness.js';
+import { prepareGatewayE2eProjectImages } from './e2e-harness.js';
+import { scaffoldHermesE2eProject } from './hermes-e2e-harness.js';
 import { shouldRunLiveVmE2e } from './live-vm-e2e-gates.js';
 
 const execFileAsync = promisify(execFile);
@@ -69,8 +70,8 @@ async function createMediatedEnvSystemConfig(options: {
 			},
 			imageProfiles: {
 				gateways: {
-					openclaw: {
-						type: 'openclaw',
+					hermes: {
+						type: 'hermes',
 						buildConfig: '/test-fixtures/gateway-build-config.jsonc',
 					},
 				},
@@ -98,20 +99,41 @@ async function createMediatedEnvSystemConfig(options: {
 					defaultToolVmProfile: 'standard',
 					egressHosts: [{ host: 'api.github.com', audience: 'tool-vm' }],
 					gateway: {
-						type: 'openclaw',
-						controlAuth: {
-							mode: 'token',
-							secret: 'OPENCLAW_GATEWAY_TOKEN',
-						},
-						config: './config/shravan/openclaw.json',
+						type: 'hermes',
+						config: './config/shravan/config.yaml',
 						cpus: 1,
-						imageProfile: 'openclaw',
+						imageProfile: 'hermes',
 						memory: '512M',
 						port: 18791,
+						profilesByAgent: { shravan: 'shravan' },
+						profileSecretProjectionsByAgent: {
+							shravan: {
+								API_SERVER_KEY: 'API_SERVER_KEY_SHRAVAN',
+								DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN',
+							},
+						},
 					},
 					id: 'shravan',
 					agents: [{ id: 'shravan' }],
 					secrets: {
+						API_SERVER_KEY: {
+							source: 'config',
+							value: 'test-root-api-server-key',
+							injection: 'env',
+							audience: 'gateway',
+						},
+						API_SERVER_KEY_SHRAVAN: {
+							source: 'environment',
+							envVar: 'API_SERVER_KEY_SHRAVAN',
+							injection: 'env',
+							audience: 'gateway',
+						},
+						DISCORD_BOT_TOKEN: {
+							source: 'environment',
+							envVar: 'DISCORD_BOT_TOKEN',
+							injection: 'env',
+							audience: 'gateway',
+						},
 						GITHUB_TOKEN: {
 							source: 'config',
 							value: rawGithubToken,
@@ -119,12 +141,6 @@ async function createMediatedEnvSystemConfig(options: {
 							audience: 'tool-vm',
 							hosts: ['api.github.com'],
 							agentAccess: ['shravan'],
-						},
-						OPENCLAW_GATEWAY_TOKEN: {
-							source: 'config',
-							value: 'gateway-token-not-for-tool-vm',
-							injection: 'env',
-							audience: 'gateway',
 						},
 					},
 				},
@@ -171,7 +187,7 @@ describeLiveVmIntegration('live: Tool VM mediated placeholder environment', () =
 	});
 
 	it('makes scoped http-mediated placeholders visible only to the allowed Tool VM agent', async () => {
-		const project = await scaffoldOpenClawE2eProject({
+		const project = await scaffoldHermesE2eProject({
 			agents: ['shravan'],
 			architecture: process.arch === 'arm64' ? 'aarch64' : 'x86_64',
 			prefix: 'agent-vm-live-mediated-env-',
@@ -203,8 +219,8 @@ describeLiveVmIntegration('live: Tool VM mediated placeholder environment', () =
 			toolVmBuildConfigPath: preparedToolVmImageProfile.buildConfig,
 		});
 		const zone = systemConfig.zones[0];
-		if (zone?.gateway.type !== 'openclaw') {
-			throw new Error('Expected OpenClaw test zone.');
+		if (zone?.gateway.type !== 'hermes') {
+			throw new Error('Expected Hermes test zone.');
 		}
 		const profile = systemConfig.toolVmProfiles.standard;
 		if (!profile) {

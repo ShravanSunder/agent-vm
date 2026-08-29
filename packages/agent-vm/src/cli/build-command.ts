@@ -68,7 +68,6 @@ import type {
 	TaskOutput,
 } from '../shared/run-task.js';
 import { formatZodError } from './format-zod-error.js';
-import { syncBundledOpenClawPluginBundle } from './openclaw-plugin-bundle.js';
 
 export interface BuildCommandDependencies {
 	readonly buildDockerImage?: (options: {
@@ -105,7 +104,6 @@ export interface BuildCommandDependencies {
 	/** Override the task runner for testing or custom CLI progress. */
 	readonly runTask?: RunTaskFn;
 	readonly runTaskGroup?: RunTaskGroupFn;
-	readonly resolveProjectRootFromDockerfile?: (dockerfilePath: string) => Promise<string>;
 	readonly generateManagedDockerfile?: (options: {
 		readonly base: ManagedImageSource['base'];
 		readonly imageTargetFamily: 'gateway' | 'toolVm';
@@ -113,13 +111,8 @@ export interface BuildCommandDependencies {
 		readonly outputDirectory: string;
 		readonly overlayPath?: string | undefined;
 		readonly managedImageRelease: ManagedImageRelease;
-		readonly requiredOpenClawPackageNames?: readonly string[];
 	}) => Promise<GenerateManagedDockerfileResult>;
 	readonly resolveManagedImageRelease?: () => Promise<ManagedImageRelease>;
-	readonly syncBundledOpenClawPlugin?: (
-		targetDir: string,
-		profileName: string,
-	) => Promise<'created' | 'skipped'>;
 	readonly prepareObservabilityStack?: (
 		options: PrepareObservabilityStackOptions,
 	) => Promise<PrepareObservabilityStackResult>;
@@ -139,31 +132,6 @@ const GONDOLIN_BUILD_CONCURRENCY = 2;
 const BUILD_DETAIL_MAX_LENGTH = 512;
 const GONDOLIN_BUILD_SANDBOX_HELPERS_FROM_SOURCE_ENV = 'GONDOLIN_BUILD_SANDBOX_HELPERS_FROM_SOURCE';
 const TASK_OUTPUT_BUFFER_MAX_LENGTH = 4_096;
-const openClawManagedPackageConfigSchema = z
-	.object({
-		channels: z
-			.object({
-				discord: z.object({ enabled: z.boolean().optional() }).passthrough().optional(),
-			})
-			.passthrough()
-			.optional(),
-	})
-	.passthrough();
-
-interface OpenClawManagedPackageRule {
-	readonly isEnabled: (config: z.infer<typeof openClawManagedPackageConfigSchema>) => boolean;
-	readonly packageName: string;
-}
-
-const openClawManagedPackageRules = [
-	{
-		packageName: '@openclaw/discord',
-		isEnabled: (config) => config.channels?.discord?.enabled === true,
-	},
-] as const satisfies readonly OpenClawManagedPackageRule[];
-
-const diagnosticsOtelOpenClawPackageName = '@openclaw/diagnostics-otel';
-
 interface ImageTarget {
 	readonly buildConfigPath: string;
 	readonly cacheDirectory: string;
@@ -174,7 +142,7 @@ interface ImageTarget {
 	readonly source: ManagedImageSource | undefined;
 }
 
-type ManagedGatewayBootGatewayType = 'hermes' | 'openclaw' | 'worker';
+type ManagedGatewayBootGatewayType = 'hermes' | 'worker';
 
 interface BuiltImageCacheEntry {
 	readonly imageTarget: ImageTarget;
@@ -238,11 +206,6 @@ export function managedGatewayBootProjectionForGatewayType(
 		case 'hermes':
 			return {
 				frameworkBootEntry: 'hermes-framework-service',
-				kind: 'managed-gateway-exact-two-role',
-			};
-		case 'openclaw':
-			return {
-				frameworkBootEntry: 'openclaw-framework-service',
 				kind: 'managed-gateway-exact-two-role',
 			};
 		case 'worker':
@@ -578,63 +541,6 @@ const defaultRunTask: RunTaskFn = async (title, fn): Promise<void> => {
 	process.stderr.write(`  ${title} done\n`);
 };
 
-async function resolveProjectRootFromDockerfile(dockerfilePath: string): Promise<string> {
-	let searchDirectory = path.dirname(path.resolve(dockerfilePath));
-
-	for (;;) {
-		try {
-			// oxlint-disable-next-line no-await-in-loop -- upward root discovery is intentionally sequential
-			await fs.access(path.join(searchDirectory, 'config', 'system.json'));
-			return searchDirectory;
-		} catch {
-			try {
-				// oxlint-disable-next-line no-await-in-loop -- upward root discovery is intentionally sequential
-				await fs.access(path.join(searchDirectory, 'config', 'system.jsonc'));
-				return searchDirectory;
-			} catch {
-				const parentDirectory = path.dirname(searchDirectory);
-				if (parentDirectory === searchDirectory) {
-					// Fallback for older test scaffolds and legacy layouts that still follow the
-					// standard vm-images/gateways/openclaw/Dockerfile shape but do not materialize config/system.json.
-					return path.resolve(dockerfilePath, '..', '..', '..');
-				}
-				searchDirectory = parentDirectory;
-			}
-		}
-	}
-}
-
-async function resolveRequiredOpenClawPackagesForTarget(
-	systemConfig: LoadedSystemConfig,
-	imageTarget: ImageTarget,
-): Promise<readonly string[]> {
-	if (
-		imageTarget.family !== 'gateway' ||
-		imageTarget.gatewayType !== 'openclaw' ||
-		imageTarget.source?.base !== 'openclaw-gateway'
-	) {
-		return [];
-	}
-	const requiredPackageNames = new Set<string>();
-	for (const zone of systemConfig.zones) {
-		if (zone.gateway.type !== 'openclaw' || zone.gateway.imageProfile !== imageTarget.name) {
-			continue;
-		}
-		if (zone.observability?.enabled === true) {
-			requiredPackageNames.add(diagnosticsOtelOpenClawPackageName);
-		}
-		// oxlint-disable-next-line no-await-in-loop -- zone config reads are tiny and error messages stay profile-local
-		const rawOpenClawConfig = await loadJsonConfigFile(zone.gateway.config);
-		const openClawConfig = openClawManagedPackageConfigSchema.parse(rawOpenClawConfig);
-		for (const packageRule of openClawManagedPackageRules) {
-			if (packageRule.isEnabled(openClawConfig)) {
-				requiredPackageNames.add(packageRule.packageName);
-			}
-		}
-	}
-	return [...requiredPackageNames].toSorted();
-}
-
 function shortenBuildDetail(detail: string): string {
 	if (detail.length <= BUILD_DETAIL_MAX_LENGTH) {
 		return detail;
@@ -648,7 +554,7 @@ function packageNameFromSpec(packageSpec: string): string {
 	const versionSeparatorIndex = packageSpec.lastIndexOf('@');
 	const unversionedSpec =
 		versionSeparatorIndex > 0 ? packageSpec.slice(0, versionSeparatorIndex) : packageSpec;
-	return unversionedSpec.replace(/^@openclaw\//, '').replace(/^@agent-vm\//, '');
+	return unversionedSpec.replace(/^@agent-vm\//, '');
 }
 
 function packageVersionFromSpec(packageSpec: string): string | undefined {
@@ -679,12 +585,6 @@ function formatManagedPackagePlanEntry(packageEntry: ManagedDockerfilePackagePla
 	return `${packageNameFromSpec(packageEntry.spec)}@${packageVersionFromSpec(packageEntry.spec) ?? 'unversioned'}[${packageEntry.source}]`;
 }
 
-function formatManagedDependencyOverridePlanEntry(
-	packageEntry: ManagedDockerfilePlan['openClawDependencyOverrides'][number],
-): string {
-	return `${packageEntry.name}@${packageEntry.version}[${packageEntry.source}]`;
-}
-
 function formatDockerBaseDetail(options: {
 	readonly dockerfilePath: string;
 	readonly imageTarget: ImageTarget;
@@ -695,36 +595,21 @@ function formatDockerBaseDetail(options: {
 	if (!plan) {
 		return shortenBuildDetail(`dockerfile ${path.basename(options.dockerfilePath)}`);
 	}
-	if (plan.openClawDependencyOverrides.length > 0) {
-		details.push(
-			`overrides ${plan.openClawDependencyOverrides
-				.map((packageEntry) => formatManagedDependencyOverridePlanEntry(packageEntry))
-				.join(',')}`,
-		);
-	}
 	details.push(`base ${plan.base}:${plan.baseImage.tag}`);
 	if (options.imageTarget.source?.overlay) {
 		details.push(`overlay ${path.basename(options.imageTarget.source.overlay)}`);
 	}
-	const agentVmPackages = [plan.openClawAgentVmPluginPackage, plan.mcpPortalPackage].filter(
+	const agentVmPackages = [plan.mcpPortalPackage].filter(
 		(packageEntry): packageEntry is ManagedDockerfilePackagePlanEntry => packageEntry !== undefined,
 	);
 	const agentVmPackageStatus = formatAgentVmPackageStatus(agentVmPackages);
 	if (agentVmPackageStatus) {
 		details.push(agentVmPackageStatus);
 	}
-	if (plan.openClawPackages.length > 0) {
-		details.push(
-			`packages ${plan.openClawPackages.map((packageEntry) => formatManagedPackagePlanEntry(packageEntry)).join(',')}`,
-		);
-	}
 	if (plan.directNpmPackages.length > 0) {
 		details.push(
 			`npm ${plan.directNpmPackages.map((packageEntry) => formatManagedPackagePlanEntry(packageEntry)).join(',')}`,
 		);
-	}
-	if (plan.warnings.length > 0) {
-		details.push(`warnings ${plan.warnings.length}`);
 	}
 	return shortenBuildDetail(details.join(' | '));
 }
@@ -864,14 +749,10 @@ export async function runBuildCommand(
 	const resolveZigVersion = dependencies.resolveZigVersion ?? resolveHostZigVersion;
 	const runTaskStep = dependencies.runTask ?? defaultRunTask;
 	const runTaskGroup = dependencies.runTaskGroup ?? createRunTaskGroupFallback(runTaskStep);
-	const resolveProjectRoot =
-		dependencies.resolveProjectRootFromDockerfile ?? resolveProjectRootFromDockerfile;
 	const generateManagedDockerfile =
 		dependencies.generateManagedDockerfile ?? generateManagedDockerfileDefault;
 	const resolveManagedImageRelease =
 		dependencies.resolveManagedImageRelease ?? resolveManagedImageReleaseDefault;
-	const syncBundledOpenClawPlugin =
-		dependencies.syncBundledOpenClawPlugin ?? syncBundledOpenClawPluginBundle;
 	const prepareObservabilityStack =
 		dependencies.prepareObservabilityStack ?? prepareObservabilityStackDefault;
 	const scanGatewayStateAuthorityEvidence =
@@ -940,11 +821,6 @@ export async function runBuildCommand(
 			if (!managedImageRelease) {
 				throw new Error('Missing managed image release for managed image build.');
 			}
-			// oxlint-disable-next-line no-await-in-loop -- package detection is profile-local and low-volume
-			const requiredOpenClawPackageNames = await resolveRequiredOpenClawPackagesForTarget(
-				options.systemConfig,
-				imageTarget,
-			);
 			// oxlint-disable-next-line no-await-in-loop -- each generated Docker context belongs to one image target
 			const managedDockerfile = await generateManagedDockerfile({
 				base: imageTarget.source.base,
@@ -958,27 +834,12 @@ export async function runBuildCommand(
 				),
 				...(imageTarget.source.overlay ? { overlayPath: imageTarget.source.overlay } : {}),
 				managedImageRelease,
-				requiredOpenClawPackageNames,
 			});
 			dockerfilePath = managedDockerfile.dockerfilePath;
 			managedDockerfilePlan = managedDockerfile.plan;
 		}
 		if (!dockerfilePath) {
 			throw new Error(`Missing Dockerfile path for image profile '${imageTarget.name}'.`);
-		}
-		if (
-			imageTarget.family === 'gateway' &&
-			imageTarget.gatewayType === 'openclaw' &&
-			!imageTarget.source
-		) {
-			// Resolve the scaffold root via config/system.json instead of assuming a fixed
-			// vm-images/gateways/openclaw/Dockerfile depth.
-			// oxlint-disable-next-line no-await-in-loop -- root discovery belongs to the matching build target
-			const projectRootDirectory = await resolveProjectRoot(dockerfilePath);
-			// oxlint-disable-next-line no-await-in-loop -- bundle sync must complete before the matching docker build starts
-			await runTaskStep('OpenClaw plugin bundle', async () => {
-				await syncBundledOpenClawPlugin(projectRootDirectory, imageTarget.name);
-			});
 		}
 		dockerBuildPlans.push({
 			dockerfilePath,
@@ -1255,7 +1116,7 @@ export async function runBuildCommand(
 		await runTaskStep('Observability stack', async (taskContext) => {
 			taskContext?.setStatus('observability stack skipped');
 			taskContext?.setOutput({
-				message: 'Host observability preparation skipped because no OpenClaw zone opted in.',
+				message: 'Host observability preparation skipped because no Hermes zone opted in.',
 			});
 		});
 		return;

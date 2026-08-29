@@ -28,7 +28,7 @@ const nodeSqliteExperimentalWarningLinePattern =
 const cliPackageInventory = [
 	{
 		executableName: 'agent-vm',
-		helpDescription: 'Gondolin-based VM controller for Worker and OpenClaw agents',
+		helpDescription: 'Gondolin-based VM controller for Hermes and Worker agents',
 		packageDirectory: 'packages/agent-vm',
 	},
 	{
@@ -374,10 +374,6 @@ describe('Optique cutover built CLI contract', () => {
 	});
 
 	it.each([
-		{
-			arguments_: ['auth', 'openclaw', 'login', '--help'],
-			description: 'Print the resolved login plan without opening SSH or changing auth.',
-		},
 		{
 			arguments_: ['controller', 'credentials', 'check', '--help'],
 			description: 'Check zone credential resolution without refreshing the gateway',

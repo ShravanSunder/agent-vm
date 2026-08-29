@@ -26,7 +26,7 @@ const MAIN_AGENT_GATEWAY_ONE = {
 
 const PROFILE_ASSIGNMENT_REVISION_A = {
 	agentId: MAIN_AGENT_GATEWAY_ONE.agentId,
-	frameworkIdentity: { agentId: MAIN_AGENT_GATEWAY_ONE.agentId, kind: 'openclaw' },
+	frameworkIdentity: { kind: 'hermes' as const, profileName: MAIN_AGENT_GATEWAY_ONE.agentId },
 	profileAssignmentRevision: 'assignment-main-v1',
 	toolPortalProfileId: 'standard',
 } satisfies StableToolVmLeasePrincipal;

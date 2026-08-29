@@ -22,7 +22,6 @@ import {
 import { PullDefaultValidationError } from '../git-pull-default-operations.js';
 import { HealthEventStore } from '../health/health-event-store.js';
 import type { Lease, LeaseSnapshot } from '../leases/lease-manager.js';
-import { OpenClawRuntimeStatusStore } from '../openclaw-runtime-status.js';
 import type { PreparedWorkerTask, WorkerTaskResult } from '../worker-task-runner.js';
 import {
 	ControllerZoneNotFoundError,
@@ -443,7 +442,6 @@ describe('createControllerApp', () => {
 					executeWorkerTask: vi.fn(async () => createWorkerTaskResultStub('worker-task-1')),
 					upgradeZone: vi.fn(async () => ({})),
 				},
-				openClawRuntimeStatusStore: new OpenClawRuntimeStatusStore(),
 			});
 
 			const response = await app.request(routePath, {
@@ -460,37 +458,13 @@ describe('createControllerApp', () => {
 		},
 	);
 
-	it('deletes the old VM-facing OpenClaw runtime-status mutation route', async () => {
-		const app = createControllerAppForTest({
-			toolVmProfiles: {},
-			openClawRuntimeStatusStore: new OpenClawRuntimeStatusStore(),
-			leaseManager: {
-				createLease: vi.fn(async () => createLeaseStub('lease-123', 0)),
-				renewLease: vi.fn(),
-				peekLease: vi.fn(),
-				listLeases: vi.fn(() => []),
-				releaseLease: vi.fn(async () => {}),
-			},
-		});
-
-		const response = await app.request('/zones/shravan/openclaw-runtime-status', {
-			body: '{',
-			headers: {
-				'content-type': 'application/json',
-			},
-			method: 'POST',
-		});
-
-		expect(response.status).toBe(404);
-	});
-
 	it('exposes status, logs, credentials refresh, destroy, and upgrade routes', async () => {
 		const destroyZone = vi.fn(async () => ({ ok: true, purged: true, zoneId: 'shravan' }));
 		const getStatus = vi.fn(async () => ({
 			toolVmProfiles: ['standard'],
 			zones: [
 				{
-					gatewayType: 'openclaw',
+					gatewayType: 'hermes',
 					id: 'shravan',
 					ingressPort: 18791,
 					running: true,
@@ -499,7 +473,7 @@ describe('createControllerApp', () => {
 			],
 		}));
 		const getZoneStatus = vi.fn(async () => ({
-			gatewayType: 'openclaw',
+			gatewayType: 'hermes',
 			id: 'shravan',
 			ingressPort: 18791,
 			running: true,
@@ -942,7 +916,7 @@ describe('createControllerApp', () => {
 				getZoneLogs: vi.fn(async () => {
 					throw new ControllerZoneOperationUnsupportedError(
 						'worker-zone',
-						'OpenClaw operations',
+						'Hermes operations',
 						'worker',
 					);
 				}),
@@ -955,9 +929,9 @@ describe('createControllerApp', () => {
 
 		expect(response.status).toBe(405);
 		await expect(response.json()).resolves.toEqual({
-			error: "Zone 'worker-zone' with gateway type 'worker' does not support OpenClaw operations.",
+			error: "Zone 'worker-zone' with gateway type 'worker' does not support Hermes operations.",
 			gatewayType: 'worker',
-			operationName: 'OpenClaw operations',
+			operationName: 'Hermes operations',
 			zoneId: 'worker-zone',
 		});
 	});

@@ -22,7 +22,7 @@ describe('buildDockerImage', () => {
 
 		await buildDockerImage(
 			{
-				dockerfilePath: '/project/vm-images/gateways/openclaw/Dockerfile',
+				dockerfilePath: '/project/vm-images/gateways/hermes/Dockerfile',
 				imageTag: 'agent-vm-gateway:latest',
 			},
 			dependencies,
@@ -35,10 +35,10 @@ describe('buildDockerImage', () => {
 					'build',
 					'--progress=plain',
 					'-f',
-					'/project/vm-images/gateways/openclaw/Dockerfile',
+					'/project/vm-images/gateways/hermes/Dockerfile',
 					'-t',
 					'agent-vm-gateway:latest',
-					'/project/vm-images/gateways/openclaw',
+					'/project/vm-images/gateways/hermes',
 				],
 				options: {},
 			},
@@ -56,7 +56,7 @@ describe('buildDockerImage', () => {
 
 		await buildDockerImage(
 			{
-				dockerfilePath: '/project/vm-images/gateways/openclaw/Dockerfile',
+				dockerfilePath: '/project/vm-images/gateways/hermes/Dockerfile',
 				imageTag: 'agent-vm-gateway:latest',
 				streamPreview,
 			},
@@ -70,7 +70,7 @@ describe('buildDockerImage', () => {
 		await expect(
 			buildDockerImage(
 				{
-					dockerfilePath: '/project/vm-images/gateways/openclaw/Dockerfile',
+					dockerfilePath: '/project/vm-images/gateways/hermes/Dockerfile',
 					imageTag: 'agent-vm-gateway:latest',
 				},
 				{

@@ -29,7 +29,7 @@ import {
 
 export { agentIdSchema, projectNamespaceSchema, zoneIdSchema };
 
-const gatewayTypeValues = ['openclaw', 'hermes', 'worker'] as const;
+const gatewayTypeValues = ['hermes', 'worker'] as const;
 
 function escapeRegExpLiteral(value: string): string {
 	return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
@@ -210,27 +210,6 @@ const tokenSourceSchema = z.discriminatedUnion('type', [
 		.strict(),
 ]);
 
-const authProfilesSecretSchema = z.discriminatedUnion('source', [
-	z
-		.object({
-			source: z.literal('1password'),
-			ref: z.string().min(1),
-		})
-		.strict(),
-	z
-		.object({
-			source: z.literal('environment'),
-			envVar: z.string().min(1),
-		})
-		.strict(),
-	z
-		.object({
-			source: z.literal('config'),
-			value: z.string().min(1),
-		})
-		.strict(),
-]);
-
 const hostSecretReferenceSchema = z.discriminatedUnion('source', [
 	z
 		.object({
@@ -277,14 +256,6 @@ const zoneApprovalAccessSchema = z
 	.object({
 		approvers: z.array(zoneApprovalAuthoritySchema).length(1),
 		audience: z.literal(GATEWAY_RUNTIME_APPROVAL_AUDIENCE),
-	})
-	.strict();
-
-const gatewaySshSecretEnvSchema = z.enum(['never', 'explicit']);
-
-const gatewaySshSchema = z
-	.object({
-		secretEnv: gatewaySshSecretEnvSchema.default('explicit'),
 	})
 	.strict();
 
@@ -337,28 +308,6 @@ function normalizeWorkspaceGitRepositoryIdentity(repoUrl: string): string | unde
 	return `github.com/${match[1].toLowerCase()}/${match[2].toLowerCase()}`;
 }
 
-const openClawGatewayControlAuthSchema = z.discriminatedUnion('mode', [
-	z
-		.object({
-			mode: z.literal('token'),
-			secret: secretNameSchema,
-		})
-		.strict(),
-]);
-
-const openClawAuthLoginProviderSchema = z
-	.object({
-		profileIds: z.array(z.string().min(1)).min(1),
-	})
-	.strict();
-
-const openClawAuthLoginSchema = z
-	.object({
-		defaultAgent: agentIdSchema.optional(),
-		providers: z.record(z.string().min(1), openClawAuthLoginProviderSchema),
-	})
-	.strict();
-
 const zoneGatewayBaseSchema = z.object({
 	imageProfile: z.string().min(1),
 	memory: z.string().min(1),
@@ -375,19 +324,7 @@ const zoneGatewayBaseSchema = z.object({
 	runtimeRootfsSize: z.string().min(1).optional(),
 	backupDir: z.string().min(1).optional(),
 	backupIdentity: hostSecretReferenceSchema.optional(),
-	ssh: gatewaySshSchema.optional(),
 });
-
-const openClawZoneGatewaySchema = zoneGatewayBaseSchema
-	.extend({
-		type: z.literal('openclaw'),
-		controlAuth: openClawGatewayControlAuthSchema,
-		authProfilesRef: authProfilesSecretSchema.optional(),
-		authProfilesByAgent: z.record(agentIdSchema, authProfilesSecretSchema).optional(),
-		authLogin: openClawAuthLoginSchema.optional(),
-		rawEnvSecrets: z.array(secretNameSchema).optional(),
-	})
-	.strict();
 
 const hermesProfileNamePattern = /^[a-z0-9][a-z0-9_-]{0,63}$/u;
 
@@ -469,7 +406,6 @@ const workerZoneGatewaySchema = zoneGatewayBaseSchema
 	.strict();
 
 const zoneGatewaySchema = z.discriminatedUnion('type', [
-	openClawZoneGatewaySchema,
 	hermesZoneGatewaySchema,
 	workerZoneGatewaySchema,
 ]);
@@ -631,7 +567,7 @@ const imageConfigSchema = z
 		source: z
 			.object({
 				kind: z.literal('managedBase'),
-				base: z.enum(['openclaw-gateway', 'worker-gateway', 'tool-vm']),
+				base: z.enum(['worker-gateway', 'tool-vm']),
 				overlay: z.string().min(1).optional(),
 			})
 			.strict()
@@ -642,25 +578,6 @@ const imageConfigSchema = z
 const gatewayImageProfileSchema = imageConfigSchema.extend({
 	type: z.enum(gatewayTypeValues),
 });
-
-type GatewayImageProfileSchemaInput = z.infer<typeof gatewayImageProfileSchema>;
-
-function isManagedOpenClawObservabilityProfile(
-	profileName: string,
-	profile: GatewayImageProfileSchemaInput | undefined,
-): boolean {
-	if (!profile || profile.type !== 'openclaw') {
-		return false;
-	}
-	if (profile.source?.base === 'openclaw-gateway') {
-		return true;
-	}
-	return (
-		profile.source === undefined &&
-		profileName === 'openclaw' &&
-		/(?:^|\/)vm-images\/gateways\/openclaw\/build-config\.jsonc?$/u.test(profile.buildConfig)
-	);
-}
 
 const toolVmImageProfileSchema = imageConfigSchema.extend({
 	type: z.literal('toolVm'),
@@ -847,12 +764,6 @@ const zoneTelemetryProducerSchema = z
 	})
 	.strict();
 
-const zoneOpenClawObservabilityExtensionSchema = z
-	.object({
-		diagnosticsFlags: z.array(z.string().min(1)).default([]),
-	})
-	.strict();
-
 const zoneObservabilitySchema = z.discriminatedUnion('enabled', [
 	z
 		.object({
@@ -862,7 +773,6 @@ const zoneObservabilitySchema = z.discriminatedUnion('enabled', [
 	z
 		.object({
 			enabled: z.literal(true),
-			openclaw: zoneOpenClawObservabilityExtensionSchema.optional(),
 			services: z
 				.object({
 					framework: zoneTelemetryProducerSchema,
@@ -944,12 +854,7 @@ const systemConfigSchema = z
 			(zone) =>
 				Object.values(zone.secrets).some((secret) => secret.source === '1password') ||
 				zone.gateway.backupIdentity?.source === '1password' ||
-				(zone.adminAccess?.mode === 'secret' && zone.adminAccess.secret.source === '1password') ||
-				(zone.gateway.type === 'openclaw' &&
-					(zone.gateway.authProfilesRef?.source === '1password' ||
-						Object.values(zone.gateway.authProfilesByAgent ?? {}).some(
-							(secret) => secret.source === '1password',
-						))),
+				(zone.adminAccess?.mode === 'secret' && zone.adminAccess.secret.source === '1password'),
 		);
 		const hasOnePasswordGithubToken = config.host.githubToken?.source === '1password';
 		if ((hasOnePasswordSecrets || hasOnePasswordGithubToken) && !config.host.secretsProvider) {
@@ -981,8 +886,7 @@ const systemConfigSchema = z
 				});
 				continue;
 			}
-			const expectedManagedBase =
-				profile.type === 'openclaw' ? 'openclaw-gateway' : 'worker-gateway';
+			const expectedManagedBase = 'worker-gateway';
 			if (profile.source.base !== expectedManagedBase) {
 				context.addIssue({
 					code: z.ZodIssueCode.custom,
@@ -1032,117 +936,10 @@ const systemConfigSchema = z
 			if (zone.observability?.enabled === true && zone.gateway.type === 'worker') {
 				context.addIssue({
 					code: z.ZodIssueCode.custom,
-					message: `Zone '${zone.id}' observability is supported only for managed OpenClaw or Hermes gateways.`,
+					message: `Zone '${zone.id}' observability is supported only for managed Hermes gateways.`,
 					path: ['zones', zoneIndex, 'observability'],
 				});
 			}
-			if (
-				zone.observability?.enabled === true &&
-				zone.gateway.type !== 'openclaw' &&
-				zone.observability.openclaw !== undefined
-			) {
-				context.addIssue({
-					code: z.ZodIssueCode.custom,
-					message: `Zone '${zone.id}' OpenClaw observability extensions require an OpenClaw gateway.`,
-					path: ['zones', zoneIndex, 'observability', 'openclaw'],
-				});
-			}
-			if (zone.observability?.enabled === true && zone.gateway.type === 'openclaw') {
-				const gatewayImageProfile = config.imageProfiles.gateways[zone.gateway.imageProfile];
-				if (
-					!isManagedOpenClawObservabilityProfile(zone.gateway.imageProfile, gatewayImageProfile)
-				) {
-					context.addIssue({
-						code: z.ZodIssueCode.custom,
-						message: `Zone '${zone.id}' observability requires OpenClaw gateway image profile '${zone.gateway.imageProfile}' to use managed base 'openclaw-gateway' so @openclaw/diagnostics-otel is installed.`,
-						path: ['zones', zoneIndex, 'gateway', 'imageProfile'],
-					});
-				}
-			}
-			if (zone.observability?.enabled === true) {
-				const forbiddenDiagnosticsFlagPattern =
-					/[*=]|^(?:1|all|everything)$|(?:body|content|payload|prompt|secret|token|authorization|cookie|transcript|query|header|url)/iu;
-				for (const [flagIndex, diagnosticsFlag] of (
-					zone.observability.openclaw?.diagnosticsFlags ?? []
-				).entries()) {
-					if (forbiddenDiagnosticsFlagPattern.test(diagnosticsFlag)) {
-						context.addIssue({
-							code: z.ZodIssueCode.custom,
-							message: `Zone '${zone.id}' observability diagnostics flag '${diagnosticsFlag}' is too broad or can capture sensitive content.`,
-							path: [
-								'zones',
-								zoneIndex,
-								'observability',
-								'openclaw',
-								'diagnosticsFlags',
-								flagIndex,
-							],
-						});
-					}
-				}
-				if (
-					zone.gateway.type === 'openclaw' &&
-					zone.gateway.rawEnvSecrets?.includes('OPENCLAW_DIAGNOSTICS') === true
-				) {
-					context.addIssue({
-						code: z.ZodIssueCode.custom,
-						message: `Zone '${zone.id}' observability owns diagnostics configuration; do not list OPENCLAW_DIAGNOSTICS in gateway.rawEnvSecrets.`,
-						path: ['zones', zoneIndex, 'gateway', 'rawEnvSecrets'],
-					});
-				}
-			}
-			const openClawControlAuthSecretName =
-				zone.gateway.type === 'openclaw' ? zone.gateway.controlAuth.secret : undefined;
-			const openClawGatewayToken = openClawControlAuthSecretName
-				? zone.secrets[openClawControlAuthSecretName]
-				: undefined;
-			const allowedOpenClawRawEnvSecrets =
-				zone.gateway.type === 'openclaw'
-					? new Set([zone.gateway.controlAuth.secret, ...(zone.gateway.rawEnvSecrets ?? [])])
-					: new Set<string>();
-			if (zone.gateway.type === 'openclaw' && !openClawGatewayToken) {
-				context.addIssue({
-					code: z.ZodIssueCode.custom,
-					message: `OpenClaw zone '${zone.id}' must declare control auth secret '${zone.gateway.controlAuth.secret}' as a gateway env secret.`,
-					path: ['zones', zoneIndex, 'secrets', zone.gateway.controlAuth.secret],
-				});
-			}
-			if (zone.gateway.type === 'openclaw') {
-				if (openClawGatewayToken) {
-					if (openClawGatewayToken.injection !== 'env') {
-						context.addIssue({
-							code: z.ZodIssueCode.custom,
-							message: `Zone '${zone.id}' OpenClaw control auth secret '${zone.gateway.controlAuth.secret}' must use injection 'env'.`,
-							path: ['zones', zoneIndex, 'secrets', zone.gateway.controlAuth.secret, 'injection'],
-						});
-					}
-					if (openClawGatewayToken.audience !== 'gateway') {
-						context.addIssue({
-							code: z.ZodIssueCode.custom,
-							message: `Zone '${zone.id}' OpenClaw control auth secret '${zone.gateway.controlAuth.secret}' must target audience 'gateway'.`,
-							path: ['zones', zoneIndex, 'secrets', zone.gateway.controlAuth.secret, 'audience'],
-						});
-					}
-					if ('hosts' in openClawGatewayToken) {
-						context.addIssue({
-							code: z.ZodIssueCode.custom,
-							message: `Zone '${zone.id}' OpenClaw control auth secret '${zone.gateway.controlAuth.secret}' must not declare hosts.`,
-							path: ['zones', zoneIndex, 'secrets', zone.gateway.controlAuth.secret, 'hosts'],
-						});
-					}
-				}
-				for (const [secretName, secret] of Object.entries(zone.secrets)) {
-					if (secret.injection !== 'env' || allowedOpenClawRawEnvSecrets.has(secretName)) {
-						continue;
-					}
-					context.addIssue({
-						code: z.ZodIssueCode.custom,
-						message: `OpenClaw zone '${zone.id}' env secret '${secretName}' must be listed in gateway.rawEnvSecrets or use injection 'http-mediation'.`,
-						path: ['zones', zoneIndex, 'secrets', secretName, 'injection'],
-					});
-				}
-			}
-
 			for (const [secretName, secret] of Object.entries(zone.secrets)) {
 				if (secret.injection !== 'http-mediation') {
 					continue;
@@ -1210,8 +1007,7 @@ const systemConfigSchema = z
 
 			// Keep zone gateway type readable at the use site while image profiles
 			// remain the source of boot-image details. This cross-check prevents
-			// a worker lifecycle from accidentally booting an OpenClaw image, or
-			// vice versa.
+			// a worker lifecycle from accidentally booting a Hermes image, or vice versa.
 			const gatewayImageProfile = config.imageProfiles.gateways[zone.gateway.imageProfile];
 			if (!gatewayImageProfile) {
 				context.addIssue({
@@ -1598,7 +1394,7 @@ type ManagedHostObservabilityConfig = Extract<
 type ParsedSystemZone = ParsedSystemConfig['zones'][number];
 type ParsedZoneGateway = ParsedSystemZone['gateway'];
 type ResolvedZoneGateway = ParsedZoneGateway extends infer TGateway
-	? TGateway extends { readonly type: 'openclaw' | 'hermes' }
+	? TGateway extends { readonly type: 'hermes' }
 		? TGateway & {
 				readonly stateDir: string;
 				readonly zoneFilesDir: string;
@@ -1793,7 +1589,6 @@ function deriveResolvedStorage(
 		const stateDir = path.join(zoneRootDir, 'state');
 		const zoneRuntimeDir = path.join(zoneRootDir, 'runtime');
 		switch (zone.gateway.type) {
-			case 'openclaw':
 			case 'hermes':
 				return {
 					...zone,
@@ -1855,12 +1650,6 @@ function resolveRelativePaths(
 		gateway: z.infer<typeof zoneGatewaySchema>,
 	): z.infer<typeof zoneGatewaySchema> => {
 		switch (gateway.type) {
-			case 'openclaw':
-				return {
-					...gateway,
-					config: resolvePath(gateway.config),
-					...(gateway.backupDir ? { backupDir: resolvePath(gateway.backupDir) } : {}),
-				};
 			case 'hermes':
 				return {
 					...gateway,

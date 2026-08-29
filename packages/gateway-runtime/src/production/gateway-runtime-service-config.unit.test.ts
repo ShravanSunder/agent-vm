@@ -149,7 +149,7 @@ describe('Gateway runtime immutable service config', () => {
 		{
 			label: 'altered service identity',
 			mutate: (observability: Record<string, unknown>): void => {
-				observability.serviceName = 'agent-vm-openclaw';
+				observability.serviceName = 'agent-vm-hermes';
 			},
 		},
 		{
@@ -290,17 +290,6 @@ describe('Gateway runtime immutable service config', () => {
 			label: 'duplicate configured agent',
 			mutate: (config: GatewayRuntimeServiceConfig): void => {
 				config.attachment.configuredAgentIds = ['agent-a', 'agent-a'];
-			},
-		},
-		{
-			label: 'framework mismatch',
-			mutate: (config: GatewayRuntimeServiceConfig): void => {
-				const projection = config.semanticSnapshot.agentProjections['agent-a'];
-				if (projection === undefined) throw new Error('Missing agent-a test projection.');
-				config.semanticSnapshot.agentProjections['agent-a'] = {
-					...projection,
-					frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
-				};
 			},
 		},
 		{

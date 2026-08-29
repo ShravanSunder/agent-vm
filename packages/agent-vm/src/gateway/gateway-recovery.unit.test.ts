@@ -59,10 +59,10 @@ const expectedCohort: ManagedGatewayRuntimeRecord['expectedCohort'] = {
 	},
 	frameworkIdentity: {
 		attachmentGeneration: 1,
-		clientKind: 'openclaw-managed-plugin',
+		clientKind: 'hermes-managed-plugin',
 		configuredAgentIds: ['agent-a'],
 		frameworkEpoch: 'framework-epoch-a',
-		frameworkKind: 'openclaw',
+		frameworkKind: 'hermes',
 		projectionCohortDigest:
 			'projection-cohort:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 	},
@@ -99,14 +99,14 @@ const expectedCohort: ManagedGatewayRuntimeRecord['expectedCohort'] = {
 };
 
 const bootContract = createManagedGatewayBootContract({
-	bootEntry: 'openclaw-gateway',
+	bootEntry: 'hermes-gateway',
 	configurationInputPath: '/run/agent-vm/managed-gateway/framework-service.json',
 	environmentInputPath: '/run/agent-vm/managed-gateway/framework.environment.sh',
-	framework: 'openclaw',
+	framework: 'hermes',
 	ingress: { guestPort: 18_789, kind: 'framework-http' },
 	logIdentity: {
-		guestPath: '/var/log/agent-vm/openclaw-service.log',
-		serviceName: 'agent-vm-openclaw-test',
+		guestPath: '/var/log/agent-vm/hermes-service.log',
+		serviceName: 'agent-vm-hermes-test',
 	},
 	readiness: { guestPort: 18_789, kind: 'framework-http', path: '/readyz' },
 	role: 'framework-service',
@@ -115,7 +115,7 @@ const bootContract = createManagedGatewayBootContract({
 const image = {
 	built: false,
 	fingerprint: 'gateway-recovery-test-image',
-	imageReference: 'openclaw-gateway:test',
+	imageReference: 'hermes-gateway:test',
 };
 
 const processTarget = {
@@ -144,11 +144,11 @@ function createGatewayRuntimeRecord(
 		ingressPort: 18_791,
 		processIdentity: matchingProcessIdentity,
 		processTarget,
-		projectNamespace: 'claw-tests-a1b2c3d4',
+		projectNamespace: 'agent-vm-tests-a1b2c3d4',
 		qemuPid: 48_282,
 		runtimeKind: 'managed-gateway',
 		schemaVersion: 4,
-		sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
+		sessionLabel: 'agent-vm-tests-a1b2c3d4:shravan:gateway',
 		vmId: 'gateway-vm-123',
 		zoneId: 'shravan',
 		...overrides,
@@ -171,7 +171,7 @@ function createGatewayRecoveryOptions(
 	return {
 		expectedConfigPath: '/deployments/shravan-claw/config/system.jsonc',
 		expectedControllerPort: 18_800,
-		projectNamespace: 'claw-tests-a1b2c3d4',
+		projectNamespace: 'agent-vm-tests-a1b2c3d4',
 		runtimeRecordTarget: gatewayRuntimeRecordTarget,
 		zoneId: 'shravan',
 		...overrides,

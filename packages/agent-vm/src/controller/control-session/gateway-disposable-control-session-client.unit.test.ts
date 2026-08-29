@@ -2865,7 +2865,7 @@ describe('Gateway disposable control session client', () => {
 				{
 					kind: 'command',
 					operation: 'recovery_command',
-					payload: { action: 'refresh_runtime_status' },
+					payload: { action: 'restart_control_service' },
 				},
 			),
 		).rejects.toThrow('gateway control pending result identity collision');

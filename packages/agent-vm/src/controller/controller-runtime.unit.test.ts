@@ -49,7 +49,6 @@ import {
 	resolveControllerWorkerTaskRuntimeRecordTarget,
 } from './durable-state/controller-state-record-paths.js';
 import type { HealthEventSink, HealthEventStore } from './health/health-event-store.js';
-import type { OpenClawRuntimeStatusStore } from './openclaw-runtime-status.js';
 import { ControllerOwnershipLockError } from './vm-ownership/controller-ownership-lock.js';
 import { GatewayDestructionTimeoutError } from './vm-ownership/gateway-destruction-budget.js';
 import { createGatewayOwnershipCoordinator } from './vm-ownership/gateway-ownership-coordinator.js';
@@ -63,7 +62,7 @@ import type {
 } from './worker-task-runner.js';
 
 let previousOnePasswordServiceAccountToken: string | undefined;
-let previousOpenClawGatewayToken: string | undefined;
+let previousGatewayTestToken: string | undefined;
 let previousObservabilityMarker: string | undefined;
 let previousObservabilityQueryStart: string | undefined;
 const controllerRuntimeTestRoot = path.join(
@@ -190,24 +189,24 @@ function requireGatewayIdentity(
 }
 
 const controllerRuntimeTestManagedGatewayBootContract = createManagedGatewayBootContract({
-	bootEntry: 'openclaw-gateway',
+	bootEntry: 'hermes-gateway',
 	configurationInputPath: '/run/agent-vm/managed-gateway/framework-service.json',
 	environmentInputPath: '/run/agent-vm/managed-gateway/framework.environment.sh',
-	framework: 'openclaw',
+	framework: 'hermes',
 	ingress: { guestPort: 18_789, kind: 'framework-http' },
 	logIdentity: {
-		guestPath: '/var/log/agent-vm/openclaw-service.log',
-		serviceName: 'agent-vm-openclaw-test',
+		guestPath: '/var/log/agent-vm/hermes-service.log',
+		serviceName: 'agent-vm-hermes-test',
 	},
 	readiness: { guestPort: 18_789, kind: 'framework-http', path: '/readyz' },
 	role: 'framework-service',
 });
 
-function createManagedOpenClawGatewayResultContract(
+function createManagedHermesGatewayResultContract(
 	gatewayIdentity: GatewayEpochIdentity,
 	zone: ManagedGatewayZoneStartResult['zone'],
 ): Pick<ManagedGatewayZoneStartResult, 'bootContract' | 'executionModel' | 'expectedCohort'> {
-	const frameworkEpoch = `${gatewayIdentity.generationId}-openclaw-framework`;
+	const frameworkEpoch = `${gatewayIdentity.generationId}-hermes-framework`;
 	const runtimeEpoch = `${gatewayIdentity.generationId}-tool-portal-runtime`;
 	const toolPortalProcessEpoch = `${gatewayIdentity.generationId}-tool-portal-process`;
 	const expectedCohort = {
@@ -225,10 +224,10 @@ function createManagedOpenClawGatewayResultContract(
 		},
 		frameworkIdentity: {
 			attachmentGeneration: 1,
-			clientKind: 'openclaw-managed-plugin',
+			clientKind: 'hermes-managed-plugin',
 			configuredAgentIds: (zone.agents ?? []).map((agent) => agent.id),
 			frameworkEpoch,
-			frameworkKind: 'openclaw',
+			frameworkKind: 'hermes',
 			projectionCohortDigest:
 				'projection-cohort:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 		},
@@ -405,54 +404,23 @@ function recordControllerHealthEvent(
 	store.record(event);
 }
 
-function recordOpenClawRuntimeStatus(
-	store: OpenClawRuntimeStatusStore | undefined,
-	report: Parameters<OpenClawRuntimeStatusStore['record']>[0],
-): void {
-	if (store === undefined) {
-		throw new Error('Expected OpenClaw runtime status store to be captured.');
-	}
-	store.record(report);
-}
-
-async function writeDefaultOpenClawConfigFixture(): Promise<void> {
+async function writeDefaultHermesConfigFixture(): Promise<void> {
 	const zone = systemConfig.zones[0];
-	if (zone === undefined || zone.gateway.type !== 'openclaw') {
-		throw new Error('Expected OpenClaw test zone.');
+	if (zone === undefined || zone.gateway.type !== 'hermes') {
+		throw new Error('Expected Hermes test zone.');
 	}
 	await mkdir(path.dirname(zone.gateway.config), { recursive: true });
-	await writeFile(
-		zone.gateway.config,
-		JSON.stringify({
-			agents: {
-				defaults: {
-					sandbox: {
-						backend: 'gondolin',
-						mode: 'all',
-						scope: 'agent',
-						workspaceAccess: 'rw',
-					},
-					workspace: '/zone/agents/default',
-				},
-				list: [],
-			},
-			gateway: {
-				auth: { mode: 'token' },
-				bind: 'loopback',
-			},
-		}),
-		'utf8',
-	);
+	await writeFile(zone.gateway.config, 'profiles: {}\n', 'utf8');
 }
 
 beforeEach(async () => {
 	previousOnePasswordServiceAccountToken = process.env.OP_SERVICE_ACCOUNT_TOKEN;
-	previousOpenClawGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
+	previousGatewayTestToken = process.env.TEST_GATEWAY_TOKEN;
 	previousObservabilityMarker = process.env.AGENT_VM_OBSERVABILITY_MARKER;
 	previousObservabilityQueryStart = process.env.AGENT_VM_OBSERVABILITY_QUERY_START;
 	process.env.OP_SERVICE_ACCOUNT_TOKEN = 'test-op-service-account-token';
-	process.env.OPENCLAW_GATEWAY_TOKEN = 'test-openclaw-gateway-token';
-	await writeDefaultOpenClawConfigFixture();
+	process.env.TEST_GATEWAY_TOKEN = 'test-gateway-token';
+	await writeDefaultHermesConfigFixture();
 });
 
 afterEach(async () => {
@@ -461,10 +429,10 @@ afterEach(async () => {
 	} else {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = previousOnePasswordServiceAccountToken;
 	}
-	if (previousOpenClawGatewayToken === undefined) {
-		delete process.env.OPENCLAW_GATEWAY_TOKEN;
+	if (previousGatewayTestToken === undefined) {
+		delete process.env.TEST_GATEWAY_TOKEN;
 	} else {
-		process.env.OPENCLAW_GATEWAY_TOKEN = previousOpenClawGatewayToken;
+		process.env.TEST_GATEWAY_TOKEN = previousGatewayTestToken;
 	}
 	if (previousObservabilityMarker === undefined) {
 		delete process.env.AGENT_VM_OBSERVABILITY_MARKER;
@@ -519,7 +487,7 @@ const systemConfig = {
 	systemConfigPath: path.join(controllerRuntimeTestRoot, 'config', 'system.json'),
 	host: {
 		controllerPort: 18_800,
-		projectNamespace: 'claw-tests-a1b2c3d4',
+		projectNamespace: 'agent-vm-tests-a1b2c3d4',
 		secretsProvider: {
 			type: '1password',
 			tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
@@ -537,9 +505,9 @@ const systemConfig = {
 	},
 	imageProfiles: {
 		gateways: {
-			openclaw: {
-				type: 'openclaw',
-				buildConfig: './vm-images/gateways/openclaw/build-config.json',
+			hermes: {
+				type: 'hermes',
+				buildConfig: './vm-images/gateways/hermes/build-config.json',
 			},
 			worker: {
 				type: 'worker',
@@ -557,24 +525,22 @@ const systemConfig = {
 		{
 			id: 'shravan',
 			gateway: {
-				type: 'openclaw',
-				controlAuth: {
-					mode: 'token',
-					secret: 'OPENCLAW_GATEWAY_TOKEN',
-				},
-				imageProfile: 'openclaw',
+				type: 'hermes',
+				imageProfile: 'hermes',
 				memory: '2G',
 				cpus: 2,
 				port: 18791,
-				config: path.join(controllerRuntimeTestRoot, 'config', 'shravan', 'openclaw.json'),
+				config: path.join(controllerRuntimeTestRoot, 'config', 'shravan', 'hermes.yaml'),
+				profileSecretProjectionsByAgent: { main: {} },
+				profilesByAgent: { main: 'main' },
 				stateDir: path.join(controllerRuntimeTestRoot, 'state', 'shravan'),
 				zoneFilesDir: path.join(controllerRuntimeTestRoot, 'zone-files', 'shravan'),
 				zoneRuntimeDir: path.join(controllerRuntimeTestRoot, 'shravan', 'runtime'),
 			},
 			secrets: {
-				OPENCLAW_GATEWAY_TOKEN: {
+				TEST_GATEWAY_TOKEN: {
 					source: 'environment',
-					envVar: 'OPENCLAW_GATEWAY_TOKEN',
+					envVar: 'TEST_GATEWAY_TOKEN',
 					injection: 'env',
 					audience: 'gateway',
 				},
@@ -656,7 +622,6 @@ function createObservabilitySystemConfig(
 					flushIntervalMs: 10_000,
 				},
 			},
-			openclaw: { diagnosticsFlags: [] },
 		},
 	} satisfies LoadedSystemConfig['zones'][number];
 	const hostObservability =
@@ -731,7 +696,7 @@ describe('controller runtime test fixture paths', () => {
 			systemConfig.controllerRuntimeDir,
 			...systemConfig.zones.flatMap((zone) => [
 				zone.gateway.stateDir,
-				...(zone.gateway.type === 'openclaw' ? [zone.gateway.zoneFilesDir] : []),
+				...(zone.gateway.type === 'hermes' ? [zone.gateway.zoneFilesDir] : []),
 			]),
 		];
 
@@ -968,15 +933,15 @@ describe('startControllerRuntime', () => {
 
 	it('creates controller-owned Gateway authority before secret resolution even when startup fails', async () => {
 		const sourceZone = systemConfig.zones[0];
-		if (!sourceZone || sourceZone.gateway.type !== 'openclaw') {
-			throw new Error('Expected OpenClaw test zone.');
+		if (!sourceZone || sourceZone.gateway.type !== 'hermes') {
+			throw new Error('Expected Hermes test zone.');
 		}
 		const secondaryZone = {
 			...sourceZone,
 			id: 'secondary',
 			gateway: {
 				...sourceZone.gateway,
-				config: path.join(controllerRuntimeTestRoot, 'config', 'secondary', 'openclaw.json'),
+				config: path.join(controllerRuntimeTestRoot, 'config', 'secondary', 'hermes.yaml'),
 				stateDir: path.join(controllerRuntimeTestRoot, 'state', 'secondary'),
 				zoneFilesDir: path.join(controllerRuntimeTestRoot, 'zone-files', 'secondary'),
 			},
@@ -1074,7 +1039,7 @@ describe('startControllerRuntime', () => {
 
 	it('builds a fresh resolver for controller credentials refresh and replacement gateway start', async () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
-		process.env.OPENCLAW_GATEWAY_TOKEN = 'gateway-token';
+		process.env.TEST_GATEWAY_TOKEN = 'gateway-token';
 		const zone = systemConfig.zones[0];
 		if (!zone) {
 			throw new Error('Expected test zone.');
@@ -1082,7 +1047,7 @@ describe('startControllerRuntime', () => {
 		const onePasswordGatewayZone = {
 			...zone,
 			secrets: {
-				OPENCLAW_GATEWAY_TOKEN: {
+				TEST_GATEWAY_TOKEN: {
 					audience: 'gateway',
 					injection: 'env',
 					ref: 'op://agent-vm/shravan-gateway-auth/password',
@@ -1119,7 +1084,7 @@ describe('startControllerRuntime', () => {
 		});
 		const startGatewayZone = vi.fn(async (startOptions) => {
 			await startOptions.secretResolver.resolveAll({
-				OPENCLAW_GATEWAY_TOKEN: {
+				TEST_GATEWAY_TOKEN: {
 					ref: 'op://agent-vm/shravan-gateway-auth/password',
 					source: '1password',
 				},
@@ -1135,7 +1100,7 @@ describe('startControllerRuntime', () => {
 					host: '127.0.0.1',
 					port: 18791,
 				},
-				...createManagedOpenClawGatewayResultContract(
+				...createManagedHermesGatewayResultContract(
 					createGatewayIdentityForStub(gatewayVmId),
 					onePasswordGatewayZone,
 				),
@@ -1248,7 +1213,7 @@ describe('startControllerRuntime', () => {
 
 	it('starts the gateway, creates the controller app, and opens the controller port', async () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
-		process.env.OPENCLAW_GATEWAY_TOKEN = 'gateway-token';
+		process.env.TEST_GATEWAY_TOKEN = 'gateway-token';
 		const taskTitles: string[] = [];
 		const zone = systemConfig.zones[0];
 		if (!zone) {
@@ -1285,11 +1250,9 @@ describe('startControllerRuntime', () => {
 		});
 		const closeGatewayVm = vi.fn(async () => {});
 		let capturedHealthEventStore: HealthEventStore | undefined;
-		let capturedOpenClawRuntimeStatusStore: OpenClawRuntimeStatusStore | undefined;
 		let capturedGatewayIdentity: GatewayEpochIdentity | undefined;
 		const startGatewayZone = vi.fn(async (startOptions) => {
 			capturedHealthEventStore = startOptions.healthEventStore;
-			capturedOpenClawRuntimeStatusStore = startOptions.openClawRuntimeStatusStore;
 			const startOrdinal = startGatewayZone.mock.calls.length;
 			const managedGatewayVm = createManagedVmStub(`gateway-vm-${startOrdinal}`, 48_282);
 			const vmOwnership = await createAttachedGatewayVmLifecycleAuthority({
@@ -1310,7 +1273,7 @@ describe('startControllerRuntime', () => {
 					host: '127.0.0.1',
 					port: 18791,
 				},
-				...createManagedOpenClawGatewayResultContract(
+				...createManagedHermesGatewayResultContract(
 					requireGatewayIdentity(vmOwnership),
 					absoluteLeaseZone,
 				),
@@ -1515,29 +1478,13 @@ describe('startControllerRuntime', () => {
 			running: true,
 			vmId: 'gateway-vm-1',
 		});
-		recordOpenClawRuntimeStatus(capturedOpenClawRuntimeStatusStore, {
-			bootId: 'gateway-boot-a',
-			connectionId: '11111111-1111-4111-8111-111111111111',
-			controllerEpoch: 'controller-epoch-a',
-			pluginId: 'gondolin',
-			peerId: 'gateway-zone-a',
-			sessionId: '33333333-3333-4333-8333-333333333333',
-			zoneId: 'shravan',
-			findings: [
-				{
-					id: 'openclaw-tool-vm-agents-defaults-sandbox-backend-shravan-defaults',
-					ok: true,
-					hint: 'agents.defaults.sandbox.backend=gondolin',
-				},
-			],
-		});
 		const gatewayControlLeaseRpc = startGatewayZone.mock.calls[0]?.[0].gatewayControlLeaseRpc;
 		if (gatewayControlLeaseRpc === undefined) {
 			throw new Error('Expected gateway control lease RPC to be passed to gateway startup.');
 		}
 		const controllerLeasePrincipal = {
 			agentId: 'main',
-			frameworkIdentity: { agentId: 'main', kind: 'openclaw' },
+			frameworkIdentity: { kind: 'hermes', profileName: 'main' },
 			profileAssignmentRevision: 'assignment-main',
 			toolPortalProfileId: 'standard',
 		} as const;
@@ -1767,7 +1714,7 @@ describe('startControllerRuntime', () => {
 
 	it('does not block controller startup on default degraded host observability readiness', async () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
-		process.env.OPENCLAW_GATEWAY_TOKEN = 'gateway-token';
+		process.env.TEST_GATEWAY_TOKEN = 'gateway-token';
 		const startupEvents: string[] = [];
 		const observabilitySystemConfig = createObservabilitySystemConfig('degraded');
 		const observabilityZone = observabilitySystemConfig.zones[0];
@@ -1787,7 +1734,7 @@ describe('startControllerRuntime', () => {
 					host: '127.0.0.1',
 					port: 18791,
 				},
-				...createManagedOpenClawGatewayResultContract(
+				...createManagedHermesGatewayResultContract(
 					createGatewayIdentityForStub('gateway-vm-1'),
 					observabilityZone,
 				),
@@ -1854,7 +1801,7 @@ describe('startControllerRuntime', () => {
 
 	it('checks external host observability readiness without managed stack fields', async () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
-		process.env.OPENCLAW_GATEWAY_TOKEN = 'gateway-token';
+		process.env.TEST_GATEWAY_TOKEN = 'gateway-token';
 		const observabilitySystemConfig = createObservabilitySystemConfig('degraded', 'external');
 		const observabilityZone = observabilitySystemConfig.zones[0];
 		if (!observabilityZone) {
@@ -1870,7 +1817,7 @@ describe('startControllerRuntime', () => {
 				host: '127.0.0.1',
 				port: 18791,
 			},
-			...createManagedOpenClawGatewayResultContract(
+			...createManagedHermesGatewayResultContract(
 				createGatewayIdentityForStub('gateway-vm-1'),
 				observabilityZone,
 			),
@@ -1970,7 +1917,7 @@ describe('startControllerRuntime', () => {
 
 	it('starts controller telemetry and flushes gateway health events for observability-enabled runtimes', async () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
-		process.env.OPENCLAW_GATEWAY_TOKEN = 'gateway-token';
+		process.env.TEST_GATEWAY_TOKEN = 'gateway-token';
 		process.env.AGENT_VM_OBSERVABILITY_MARKER = 'controller-runtime-proof-marker';
 		process.env.AGENT_VM_OBSERVABILITY_QUERY_START = '2026-06-14T14:55:00.000Z';
 		const baseObservabilitySystemConfig = createObservabilitySystemConfig('degraded');
@@ -2046,7 +1993,7 @@ describe('startControllerRuntime', () => {
 					host: '127.0.0.1',
 					port: 18791,
 				},
-				...createManagedOpenClawGatewayResultContract(
+				...createManagedHermesGatewayResultContract(
 					createGatewayIdentityForStub('gateway-vm-telemetry'),
 					observabilityZone,
 				),
@@ -2231,7 +2178,7 @@ describe('startControllerRuntime', () => {
 					enabled: true,
 					stackMode: 'managed',
 				}),
-				projectNamespace: 'claw-tests-a1b2c3d4',
+				projectNamespace: 'agent-vm-tests-a1b2c3d4',
 				proof: {
 					marker: 'controller-runtime-proof-marker',
 					startedAt: '2026-06-14T14:55:00.000Z',
@@ -2276,7 +2223,7 @@ describe('startControllerRuntime', () => {
 
 	it('closes the controller server when required host observability readiness fails', async () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
-		process.env.OPENCLAW_GATEWAY_TOKEN = 'gateway-token';
+		process.env.TEST_GATEWAY_TOKEN = 'gateway-token';
 		const closeHttpServer = vi.fn(async () => {});
 		const releaseControllerOwnershipLock = vi.fn(async () => {});
 		const startGatewayZone = vi.fn(async () => {
@@ -2325,7 +2272,7 @@ describe('startControllerRuntime', () => {
 
 	it('keeps May 30-shaped channel-provider outage separate from later secret recovery blockers', async () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
-		process.env.OPENCLAW_GATEWAY_TOKEN = 'gateway-token';
+		process.env.TEST_GATEWAY_TOKEN = 'gateway-token';
 		const zone = systemConfig.zones[0];
 		if (!zone) {
 			throw new Error('Expected test zone.');
@@ -2348,7 +2295,7 @@ describe('startControllerRuntime', () => {
 					host: '127.0.0.1',
 					port: 18791,
 				},
-				...createManagedOpenClawGatewayResultContract(
+				...createManagedHermesGatewayResultContract(
 					createGatewayIdentityForStub('gateway-vm-1'),
 					zone,
 				),
@@ -2550,7 +2497,7 @@ describe('startControllerRuntime', () => {
 
 	it('persists posted controller health events to the configured runtime directory', async () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
-		process.env.OPENCLAW_GATEWAY_TOKEN = 'gateway-token';
+		process.env.TEST_GATEWAY_TOKEN = 'gateway-token';
 		const tempRoot = await mkdtemp(path.join(tmpdir(), 'agent-vm-controller-health-'));
 		const controllerRuntimeDir = path.join(tempRoot, 'controller-runtime');
 		const runtimeSystemConfig = {
@@ -2579,7 +2526,7 @@ describe('startControllerRuntime', () => {
 			return {
 				image: { built: true, fingerprint: 'gateway-image', imageReference: '/tmp/gateway-image' },
 				ingress: { host: '127.0.0.1', port: 18791 },
-				...createManagedOpenClawGatewayResultContract(
+				...createManagedHermesGatewayResultContract(
 					createGatewayIdentityForStub('gateway-vm-1'),
 					zone,
 				),
@@ -2696,7 +2643,7 @@ describe('startControllerRuntime', () => {
 
 	it('replaces the whole managed Gateway VM when framework readiness failures corroborate stale control evidence', async () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
-		process.env.OPENCLAW_GATEWAY_TOKEN = 'gateway-token';
+		process.env.TEST_GATEWAY_TOKEN = 'gateway-token';
 		const runtimeSystemConfig = {
 			...systemConfig,
 			controller: {
@@ -2748,7 +2695,7 @@ describe('startControllerRuntime', () => {
 					host: '127.0.0.1',
 					port: 18791,
 				},
-				...createManagedOpenClawGatewayResultContract(
+				...createManagedHermesGatewayResultContract(
 					createGatewayIdentityForStub(gatewayVmId),
 					zone,
 				),
@@ -2896,7 +2843,7 @@ describe('startControllerRuntime', () => {
 
 	it('keeps a healthy Gateway running until exact current attachment loss requests recovery', async () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
-		process.env.OPENCLAW_GATEWAY_TOKEN = 'gateway-token';
+		process.env.TEST_GATEWAY_TOKEN = 'gateway-token';
 		const runtimeSystemConfig = {
 			...systemConfig,
 			controller: {
@@ -2937,7 +2884,7 @@ describe('startControllerRuntime', () => {
 					host: '127.0.0.1',
 					port: 18791,
 				},
-				...createManagedOpenClawGatewayResultContract(
+				...createManagedHermesGatewayResultContract(
 					createGatewayIdentityForStub('gateway-vm-healthy-cohort'),
 					zone,
 				),
@@ -3079,7 +3026,7 @@ describe('startControllerRuntime', () => {
 
 	it('cold-starts recovery when the gateway runtime is already missing its host process', async () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
-		process.env.OPENCLAW_GATEWAY_TOKEN = 'gateway-token';
+		process.env.TEST_GATEWAY_TOKEN = 'gateway-token';
 		const runtimeSystemConfig = {
 			...systemConfig,
 			controller: {
@@ -3127,7 +3074,7 @@ describe('startControllerRuntime', () => {
 					host: '127.0.0.1',
 					port: 18791,
 				},
-				...createManagedOpenClawGatewayResultContract(
+				...createManagedHermesGatewayResultContract(
 					createGatewayIdentityForStub(gatewayVmId),
 					zone,
 				),
@@ -3256,7 +3203,7 @@ describe('startControllerRuntime', () => {
 
 	it('refreshes the resolver and cold-starts recovery when the failed runtime is secret-blocked', async () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
-		process.env.OPENCLAW_GATEWAY_TOKEN = 'gateway-token';
+		process.env.TEST_GATEWAY_TOKEN = 'gateway-token';
 		const runtimeSystemConfig = {
 			...systemConfig,
 			controller: {
@@ -3307,7 +3254,7 @@ describe('startControllerRuntime', () => {
 					host: '127.0.0.1',
 					port: 18791,
 				},
-				...createManagedOpenClawGatewayResultContract(
+				...createManagedHermesGatewayResultContract(
 					createGatewayIdentityForStub('gateway-vm-secret-refresh'),
 					zone,
 				),
@@ -3425,7 +3372,7 @@ describe('startControllerRuntime', () => {
 
 	it('records failed whole-VM recovery when the successor reuses the predecessor VM identity', async () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
-		process.env.OPENCLAW_GATEWAY_TOKEN = 'gateway-token';
+		process.env.TEST_GATEWAY_TOKEN = 'gateway-token';
 		const runtimeSystemConfig = {
 			...systemConfig,
 			controller: {
@@ -3474,7 +3421,7 @@ describe('startControllerRuntime', () => {
 					host: '127.0.0.1',
 					port: 18791,
 				},
-				...createManagedOpenClawGatewayResultContract(
+				...createManagedHermesGatewayResultContract(
 					createGatewayIdentityForStub('gateway-vm-same'),
 					zone,
 				),
@@ -4123,7 +4070,7 @@ describe('startControllerRuntime', () => {
 					host: '127.0.0.1',
 					port: 18791,
 				},
-				...createManagedOpenClawGatewayResultContract(
+				...createManagedHermesGatewayResultContract(
 					createGatewayIdentityForStub('gateway-vm-cleanup-test'),
 					zone,
 				),
@@ -4280,7 +4227,7 @@ describe('startControllerRuntime', () => {
 						host: '127.0.0.1',
 						port: 18791,
 					},
-					...createManagedOpenClawGatewayResultContract(
+					...createManagedHermesGatewayResultContract(
 						createGatewayIdentityForStub('gateway-vm-owner-unsafe'),
 						zone,
 					),
@@ -4401,7 +4348,7 @@ describe('startControllerRuntime', () => {
 						host: '127.0.0.1',
 						port: 18791,
 					},
-					...createManagedOpenClawGatewayResultContract(
+					...createManagedHermesGatewayResultContract(
 						createGatewayIdentityForStub('gateway-vm-cleanup-failure'),
 						zone,
 					),
@@ -4518,7 +4465,7 @@ describe('startControllerRuntime', () => {
 						host: '127.0.0.1',
 						port: 18791,
 					},
-					...createManagedOpenClawGatewayResultContract(
+					...createManagedHermesGatewayResultContract(
 						createGatewayIdentityForStub('gateway-vm-clean'),
 						zone,
 					),
@@ -4568,7 +4515,7 @@ describe('startControllerRuntime', () => {
 
 	it('still closes the HTTP server when gateway restart fails before runtime.close', async () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
-		process.env.OPENCLAW_GATEWAY_TOKEN = 'gateway-token';
+		process.env.TEST_GATEWAY_TOKEN = 'gateway-token';
 		const zone = systemConfig.zones[0];
 		if (!zone) {
 			throw new Error('Expected test zone.');
@@ -4587,7 +4534,7 @@ describe('startControllerRuntime', () => {
 					host: '127.0.0.1',
 					port: 18791,
 				},
-				...createManagedOpenClawGatewayResultContract(
+				...createManagedHermesGatewayResultContract(
 					createGatewayIdentityForStub('gateway-vm-close-after-failed-restart'),
 					zone,
 				),
@@ -4693,7 +4640,7 @@ describe('startControllerRuntime', () => {
 
 	it('flushes queued durable health events before close resolves', async () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
-		process.env.OPENCLAW_GATEWAY_TOKEN = 'gateway-token';
+		process.env.TEST_GATEWAY_TOKEN = 'gateway-token';
 		const zone = systemConfig.zones[0];
 		if (!zone) {
 			throw new Error('Expected test zone.');
@@ -4764,7 +4711,7 @@ describe('startControllerRuntime', () => {
 							host: '127.0.0.1',
 							port: 18791,
 						},
-						...createManagedOpenClawGatewayResultContract(
+						...createManagedHermesGatewayResultContract(
 							createGatewayIdentityForStub('gateway-vm-close-flush'),
 							zone,
 						),

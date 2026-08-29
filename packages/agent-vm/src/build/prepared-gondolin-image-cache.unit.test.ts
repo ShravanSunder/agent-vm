@@ -89,7 +89,7 @@ describe('prepared Gondolin image cache', () => {
 		const buildConfigPath = path.join(cacheDir, '..', 'build-config.jsonc');
 		const imagePath = path.join(cacheDir, 'managed-gateway-fingerprint');
 		const managedGatewayBoot = {
-			frameworkBootEntry: 'openclaw-framework-service',
+			frameworkBootEntry: 'hermes-framework-service',
 			kind: 'managed-gateway-exact-two-role',
 		} as const;
 		await writeFakeImageAssets(imagePath);

@@ -181,23 +181,23 @@ the default `/tmp` tmpfs, but that is usually a heavier solution than setting
 ## Path Policy
 
 ```text
-/opt/openclaw/plugin-runtime-deps
-  Backing: image/rootfs
-  Purpose: stable OpenClaw bundled plugin deps used during normal boot
+Hermes framework and adapter dependencies
+  Backing: managed image/rootfs
+  Purpose: stable boot-time dependencies from the immutable Hermes recipe
 
-/home/openclaw/.openclaw/state
-  Backing: RealFS stateDir
-  Purpose: effective config, auth profiles, runtime metadata, logs
+/home/hermes/.hermes
+  Backing: ShadowProvider over RealFS stateDir; profile .env paths are tmpfs
+  Purpose: protected root/profile config and framework-owned durable state
   Backup: yes
 
-/home/openclaw/.openclaw/cache
+/home/hermes/.cache
   Backing: RealFS cacheDir
   Purpose: repair/download cache
   Backup: no
 
-/zone
-  Backing: RealFS derived zoneFilesDir for
-           long-lived OpenClaw household files
+zoneFilesDir/agents/<agentId>
+  Backing: host RealFS; not broadly mounted in the Hermes Gateway VM
+  Purpose: controller-selected durable agent workspace for Tool VM projection
   Backup: yes
 
 /work/repos/<repo>
@@ -210,15 +210,15 @@ the default `/tmp` tmpfs, but that is usually a heavier solution than setting
            only
   Backup: no normal backup
 
-OpenClaw Tool VM /workspace
+Hermes Tool VM /workspace
   Backing: filtered RealFS selected from zoneFilesDir/agents/<agentId>
   Purpose: durable agent-owned files
 
-OpenClaw Tool VM /work
+Hermes Tool VM /work
   Backing: rootfs/COW
   Purpose: disposable repos, builds, packages, and hot execution data
 
-OpenClaw Tool VM /gitdirs/workspace.git
+Hermes Tool VM /gitdirs/workspace.git
   Backing: optional selected RealFS runtime Git database
   Purpose: Git metadata for the durable agent workspace
 

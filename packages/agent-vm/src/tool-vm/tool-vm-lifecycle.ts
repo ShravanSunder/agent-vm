@@ -110,7 +110,6 @@ function managedAgentWorkspacePolicy(
 		},
 	} satisfies ManagedVmFilteredWorkspacePolicy;
 	switch (zone.gateway.type) {
-		case 'openclaw':
 		case 'hermes':
 			return selectedAgentSourceRootPolicy;
 		case 'worker':

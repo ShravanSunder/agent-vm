@@ -25,7 +25,7 @@ const GATEWAY_ONE = {
 
 const PRINCIPAL_MAIN = {
 	agentId: 'main',
-	frameworkIdentity: { agentId: 'main', kind: 'openclaw' },
+	frameworkIdentity: { kind: 'hermes', profileName: 'main' },
 	profileAssignmentRevision: 'assignment-main',
 	toolPortalProfileId: 'standard',
 } satisfies StableToolVmLeasePrincipal;
@@ -33,7 +33,7 @@ const PRINCIPAL_MAIN = {
 const PRINCIPAL_SIBLING = {
 	...PRINCIPAL_MAIN,
 	agentId: 'sibling',
-	frameworkIdentity: { agentId: 'sibling', kind: 'openclaw' },
+	frameworkIdentity: { kind: 'hermes', profileName: 'sibling' },
 	profileAssignmentRevision: 'assignment-sibling',
 } satisfies StableToolVmLeasePrincipal;
 

@@ -50,16 +50,16 @@ import { shouldRunLiveVmE2e } from './live-vm-e2e-gates.js';
 const describeLiveVmE2e = shouldRunLiveVmE2e() ? describe : describe.skip;
 const zoneId = 'ownership-restart';
 const testManagedGatewayBootContract = createManagedGatewayBootContract({
-	bootEntry: 'openclaw-gateway',
+	bootEntry: 'hermes-gateway',
 	configurationInputPath: '/run/agent-vm/managed-gateway/framework-service.json',
 	environmentInputPath: '/run/agent-vm/managed-gateway/framework.environment.sh',
-	framework: 'openclaw',
-	ingress: { guestPort: 18_789, kind: 'framework-http' },
+	framework: 'hermes',
+	ingress: { guestPort: 8642, kind: 'framework-http' },
 	logIdentity: {
-		guestPath: '/var/log/agent-vm/openclaw-service.log',
-		serviceName: 'agent-vm-openclaw-test',
+		guestPath: '/var/log/agent-vm/hermes-service.log',
+		serviceName: 'agent-vm-hermes-test',
 	},
-	readiness: { guestPort: 18_789, kind: 'framework-http', path: '/readyz' },
+	readiness: { guestPort: 8642, kind: 'framework-http', path: '/health' },
 	role: 'framework-service',
 });
 
@@ -133,10 +133,9 @@ function createTestSystemConfig(options: { readonly rootDirectory: string }): Lo
 			},
 			imageProfiles: {
 				gateways: {
-					openclaw: {
-						buildConfig: './vm-images/gateways/openclaw/build-config.jsonc',
-						source: { base: 'openclaw-gateway', kind: 'managedBase' },
-						type: 'openclaw',
+					hermes: {
+						buildConfig: './vm-images/gateways/hermes/build-config.jsonc',
+						type: 'hermes',
 					},
 				},
 				toolVms: {
@@ -159,22 +158,56 @@ function createTestSystemConfig(options: { readonly rootDirectory: string }): Lo
 					defaultToolVmProfile: 'default',
 					egressHosts: [{ audience: 'gateway', host: 'api.openai.com' }],
 					gateway: {
-						config: path.join(options.rootDirectory, 'config', 'openclaw.json'),
-						controlAuth: {
-							mode: 'token',
-							secret: 'OPENCLAW_GATEWAY_TOKEN',
-						},
+						config: path.join(options.rootDirectory, 'config', 'config.yaml'),
 						cpus: 1,
-						imageProfile: 'openclaw',
+						imageProfile: 'hermes',
 						memory: '512M',
 						port: 28_891,
-						type: 'openclaw',
+						type: 'hermes',
+						profileSecretProjectionsByAgent: {
+							'current-agent': {
+								API_SERVER_KEY: 'API_SERVER_KEY_CURRENT',
+								DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_CURRENT',
+							},
+							'second-agent': {
+								API_SERVER_KEY: 'API_SERVER_KEY_SECOND',
+								DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_SECOND',
+							},
+						},
+						profilesByAgent: {
+							'current-agent': 'current-agent',
+							'second-agent': 'second-agent',
+						},
 					},
 					id: zoneId,
 					secrets: {
-						OPENCLAW_GATEWAY_TOKEN: {
+						API_SERVER_KEY: {
 							audience: 'gateway',
-							envVar: 'OPENCLAW_GATEWAY_TOKEN',
+							injection: 'env',
+							source: 'config',
+							value: 'test-root-api-server-key',
+						},
+						API_SERVER_KEY_CURRENT: {
+							audience: 'gateway',
+							envVar: 'API_SERVER_KEY_CURRENT',
+							injection: 'env',
+							source: 'environment',
+						},
+						API_SERVER_KEY_SECOND: {
+							audience: 'gateway',
+							envVar: 'API_SERVER_KEY_SECOND',
+							injection: 'env',
+							source: 'environment',
+						},
+						DISCORD_BOT_TOKEN_CURRENT: {
+							audience: 'gateway',
+							envVar: 'DISCORD_BOT_TOKEN_CURRENT',
+							injection: 'env',
+							source: 'environment',
+						},
+						DISCORD_BOT_TOKEN_SECOND: {
+							audience: 'gateway',
+							envVar: 'DISCORD_BOT_TOKEN_SECOND',
 							injection: 'env',
 							source: 'environment',
 						},
@@ -261,7 +294,7 @@ function createManagedGatewayExpectedCohort(options: {
 	readonly gatewayIdentity: GatewayEpochIdentity;
 }): ManagedGatewayRuntimeRecord['expectedCohort'] {
 	const identitySuffix = `${options.gatewayIdentity.zoneId}:${options.gatewayIdentity.generationId}`;
-	const frameworkEpoch = `openclaw-framework:${options.gatewayIdentity.bootId}`;
+	const frameworkEpoch = `hermes-framework:${options.gatewayIdentity.bootId}`;
 	const processEpoch = `tool-portal-process:${options.gatewayIdentity.bootId}`;
 	const runtimeEpoch = `tool-portal-runtime:${options.gatewayIdentity.generationId}`;
 	return {
@@ -279,10 +312,10 @@ function createManagedGatewayExpectedCohort(options: {
 		},
 		frameworkIdentity: {
 			attachmentGeneration: 1,
-			clientKind: 'openclaw-managed-plugin',
+			clientKind: 'hermes-managed-plugin',
 			configuredAgentIds: options.configuredAgentIds,
 			frameworkEpoch,
-			frameworkKind: 'openclaw',
+			frameworkKind: 'hermes',
 			projectionCohortDigest:
 				'projection-cohort:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 		},
@@ -295,7 +328,7 @@ function createManagedGatewayExpectedCohort(options: {
 				stripPrefix: false,
 			},
 			frameworkRootRoute: {
-				guestPort: 18_789,
+				guestPort: 8642,
 				kind: 'framework-root',
 				prefix: '/',
 				stripPrefix: true,
@@ -420,8 +453,8 @@ describeLiveVmE2e('live e2e: controller restart runtime-record ownership', () =>
 		const deployment = await createTestDeployment();
 		temporaryDeploymentRoots.push(deployment.rootDirectory);
 		const zone = deployment.systemConfig.zones[0];
-		if (zone === undefined || zone.gateway.type !== 'openclaw') {
-			throw new Error('Expected one OpenClaw restart test zone.');
+		if (zone === undefined || zone.gateway.type !== 'hermes') {
+			throw new Error('Expected one Hermes restart test zone.');
 		}
 		const gatewayVm = await createStartedRealVm('gateway-before-controller-restart');
 		const firstToolVm = await createStartedRealVm('first-tool-before-controller-restart');

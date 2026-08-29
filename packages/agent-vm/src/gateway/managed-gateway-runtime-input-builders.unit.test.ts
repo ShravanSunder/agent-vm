@@ -38,12 +38,12 @@ const effectiveToolPortalConfig = effectiveManagedToolPortalConfigSchema.parse({
 const agentProjectionInputs = [
 	{
 		agentId: 'agent-b',
-		frameworkIdentity: { agentId: 'agent-b', kind: 'openclaw' as const },
+		frameworkIdentity: { kind: 'hermes' as const, profileName: 'agent-b' },
 		toolPortalProfileId: 'profile-b',
 	},
 	{
 		agentId: 'agent-a',
-		frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' as const },
+		frameworkIdentity: { kind: 'hermes' as const, profileName: 'agent-a' },
 		toolPortalProfileId: 'profile-a',
 	},
 ] as const;
@@ -102,14 +102,14 @@ const gatewayIdentity = {
 } satisfies GatewayEpochIdentity;
 
 const bootContract = createManagedGatewayBootContract({
-	bootEntry: 'openclaw-gateway',
+	bootEntry: 'hermes-gateway',
 	configurationInputPath: '/run/agent-vm/managed-gateway/framework-service.json',
 	environmentInputPath: '/run/agent-vm/managed-gateway/framework.environment.sh',
-	framework: 'openclaw',
+	framework: 'hermes',
 	ingress: { guestPort: 18_789, kind: 'framework-http' },
 	logIdentity: {
-		guestPath: '/var/log/agent-vm/openclaw-service.log',
-		serviceName: 'agent-vm-openclaw',
+		guestPath: '/var/log/agent-vm/hermes-service.log',
+		serviceName: 'agent-vm-hermes',
 	},
 	readiness: { guestPort: 18_789, kind: 'framework-http', path: '/readyz' },
 	role: 'framework-service',
@@ -186,7 +186,7 @@ describe('Managed Gateway runtime input builders', () => {
 		expect(adapterMaterial).toEqual({
 			attachment: {
 				attachmentGeneration: 1,
-				clientKind: 'openclaw-managed-plugin',
+				clientKind: 'hermes-managed-plugin',
 				configuredAgentIds: ['agent-a', 'agent-b'],
 				frameworkEpoch: 'framework-1',
 				gatewayEpoch: 'gateway-generation-1',
@@ -348,7 +348,7 @@ describe('Managed Gateway runtime input builders', () => {
 		expect(adapterMaterial.agentProjections).toEqual(hermesSemanticSnapshot.agentProjections);
 	});
 
-	it('fails closed when adapter sets, projection revisions, digests, kinds, or client kind disagree', () => {
+	it('fails closed when adapter sets, projection revisions, or digests disagree', () => {
 		// Arrange
 		const cohort = buildManagedGatewayExpectedAdmissionCohort({
 			bootContract,
@@ -391,26 +391,6 @@ describe('Managed Gateway runtime input builders', () => {
 					'projection-cohort:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
 			},
 		} satisfies GatewayExpectedAdmissionCohort;
-		const mismatchedClientKind = {
-			...cohort,
-			frameworkIdentity: {
-				...cohort.frameworkIdentity,
-				clientKind: 'hermes-managed-plugin',
-			},
-		} satisfies GatewayExpectedAdmissionCohort;
-		const mismatchedFrameworkProjection = createHermesPortalAdmission();
-		const mismatchedFrameworkCohort = buildManagedGatewayExpectedAdmissionCohort({
-			bootContract,
-			controlSessionMaterial,
-			gatewayIdentity,
-			generatedIdentity: {
-				attachmentGeneration: 1,
-				frameworkEpoch: 'framework-1',
-				runtimeEpoch: 'runtime-1',
-			},
-			portalAdmission: mismatchedFrameworkProjection,
-		});
-
 		// Act / Assert
 		expect(() =>
 			buildManagedGatewayFrameworkAdapterMaterial({
@@ -430,18 +410,6 @@ describe('Managed Gateway runtime input builders', () => {
 				portalAdmission,
 			}),
 		).toThrow('projection cohort digest does not match');
-		expect(() =>
-			buildManagedGatewayFrameworkAdapterMaterial({
-				cohort: mismatchedFrameworkCohort,
-				portalAdmission: mismatchedFrameworkProjection,
-			}),
-		).toThrow("Managed Gateway adapter framework projection does not match for agent 'agent-a'.");
-		expect(() =>
-			buildManagedGatewayFrameworkAdapterMaterial({
-				cohort: mismatchedClientKind,
-				portalAdmission,
-			}),
-		).toThrow('Managed Gateway adapter framework and client kind do not match.');
 	});
 
 	it('builds one exact multi-agent cohort from controller-owned identities', () => {
@@ -470,7 +438,7 @@ describe('Managed Gateway runtime input builders', () => {
 				zoneId: 'zone-a',
 			},
 			frameworkIdentity: {
-				clientKind: 'openclaw-managed-plugin',
+				clientKind: 'hermes-managed-plugin',
 				configuredAgentIds: ['agent-a', 'agent-b'],
 				frameworkEpoch: 'framework-1',
 				projectionCohortDigest: semanticSnapshot.projectionCohortDigest,
@@ -529,7 +497,7 @@ describe('Managed Gateway runtime input builders', () => {
 		// Assert
 		expect(attachment).toEqual({
 			attachmentGeneration: 1,
-			clientKind: 'openclaw-managed-plugin',
+			clientKind: 'hermes-managed-plugin',
 			configuredAgentIds: ['agent-a', 'agent-b'],
 			frameworkEpoch: 'framework-1',
 			gatewayEpoch: 'gateway-generation-1',
@@ -608,7 +576,7 @@ describe('Managed Gateway runtime input builders', () => {
 					logs: false,
 					metrics: false,
 					sampleRate: 0.25,
-					serviceName: 'agent-vm-openclaw',
+					serviceName: 'agent-vm-hermes',
 					sourcePolicy: { admitBaggage: false, captureContent: false },
 					traces: true,
 				},

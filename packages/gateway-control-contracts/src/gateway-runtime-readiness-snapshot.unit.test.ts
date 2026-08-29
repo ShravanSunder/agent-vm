@@ -147,7 +147,7 @@ describe('Gateway runtime readiness snapshot contract', () => {
 			processEpoch: 'process-epoch-1',
 			role: 'framework-service',
 			schemaVersion: 1,
-			serviceId: 'openclaw-zone-a',
+			serviceId: 'hermes-zone-a',
 		});
 
 		// Assert

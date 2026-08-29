@@ -1068,7 +1068,6 @@ def test_gateway_runtime_client_rejects_calls_before_handshake() -> None:
             "wrong-projection-cohort",
         ),
         ("attachmentGeneration", 6, "stale-attachment-generation"),
-        ("clientKind", "openclaw-managed-plugin", "wrong-client-kind"),
         ("configuredAgentIds", ["main", "unknown"], "wrong-configured-agent-set"),
     ],
 )
@@ -1127,10 +1126,11 @@ def test_gateway_runtime_client_rejects_public_authority_injection(
     ("field_name", "invalid_value"),
     [
         ("attachmentGeneration", 9_007_199_254_740_992),
+        ("clientKind", "unsupported-managed-plugin"),
         ("configuredAgentIds", [f"agent-{index}" for index in range(129)]),
         ("frameworkEpoch", "e" * 257),
     ],
-    ids=["unsafe-generation", "too-many-agent-ids", "epoch-too-long"],
+    ids=["unsafe-generation", "unsupported-client-kind", "too-many-agent-ids", "epoch-too-long"],
 )
 def test_gateway_runtime_client_enforces_generated_attachment_bounds(
     field_name: str,

@@ -192,7 +192,7 @@ const baseAuthorization = {
 	agentId: 'agent-a',
 	capability: { name: 'read_thing', namespace: 'upstream-mock' },
 	executionFingerprint: 'execution-fingerprint-a',
-	frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
+	frameworkIdentity: { kind: 'hermes', profileName: 'agent-a' },
 	operationId: 'operation-a',
 	owningGeneration: 'generation-a',
 	profileAssignmentRevision: 'profile-revision-a',

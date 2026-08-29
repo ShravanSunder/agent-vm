@@ -57,7 +57,7 @@ const systemConfig = {
 	},
 	imageProfiles: {
 		gateways: {
-			openclaw: { type: 'openclaw', buildConfig: './gateway.json' },
+			hermes: { type: 'hermes', buildConfig: './gateway.json' },
 			worker: { type: 'worker', buildConfig: './worker.json' },
 		},
 		toolVms: {
@@ -67,25 +67,24 @@ const systemConfig = {
 	zones: [
 		{
 			id: 'shravan',
+			agents: [{ id: 'main' }],
 			gateway: {
-				type: 'openclaw',
-				controlAuth: {
-					mode: 'token',
-					secret: 'OPENCLAW_GATEWAY_TOKEN',
-				},
-				imageProfile: 'openclaw',
+				type: 'hermes',
+				imageProfile: 'hermes',
 				memory: '2G',
 				cpus: 2,
 				port: 18791,
-				config: './shravan/openclaw.json',
+				config: './shravan/hermes.yaml',
+				profileSecretProjectionsByAgent: { main: {} },
+				profilesByAgent: { main: 'main' },
 				stateDir: path.join(zoneRuntimeRegistryTestRoot, 'state', 'shravan'),
 				zoneFilesDir: path.join(zoneRuntimeRegistryTestRoot, 'zone-files', 'shravan'),
 				zoneRuntimeDir: path.join(zoneRuntimeRegistryTestRoot, 'shravan', 'runtime'),
 			},
 			secrets: {
-				OPENCLAW_GATEWAY_TOKEN: {
+				TEST_GATEWAY_TOKEN: {
 					source: 'environment',
-					envVar: 'OPENCLAW_GATEWAY_TOKEN',
+					envVar: 'TEST_GATEWAY_TOKEN',
 					injection: 'env',
 					audience: 'gateway',
 				},
@@ -96,25 +95,24 @@ const systemConfig = {
 		},
 		{
 			id: 'alevtina',
+			agents: [{ id: 'main' }],
 			gateway: {
-				type: 'openclaw',
-				controlAuth: {
-					mode: 'token',
-					secret: 'OPENCLAW_GATEWAY_TOKEN',
-				},
-				imageProfile: 'openclaw',
+				type: 'hermes',
+				imageProfile: 'hermes',
 				memory: '2G',
 				cpus: 2,
 				port: 18792,
-				config: './alevtina/openclaw.json',
+				config: './alevtina/hermes.yaml',
+				profileSecretProjectionsByAgent: { main: {} },
+				profilesByAgent: { main: 'main' },
 				stateDir: path.join(zoneRuntimeRegistryTestRoot, 'state', 'alevtina'),
 				zoneFilesDir: path.join(zoneRuntimeRegistryTestRoot, 'zone-files', 'alevtina'),
 				zoneRuntimeDir: path.join(zoneRuntimeRegistryTestRoot, 'alevtina', 'runtime'),
 			},
 			secrets: {
-				OPENCLAW_GATEWAY_TOKEN: {
+				TEST_GATEWAY_TOKEN: {
 					source: 'environment',
-					envVar: 'OPENCLAW_GATEWAY_TOKEN',
+					envVar: 'TEST_GATEWAY_TOKEN',
 					injection: 'env',
 					audience: 'gateway',
 				},
@@ -155,14 +153,14 @@ const loadedSystemConfig = {
 } satisfies LoadedSystemConfig;
 
 const testManagedGatewayBootContract = createManagedGatewayBootContract({
-	bootEntry: 'openclaw-gateway',
+	bootEntry: 'hermes-gateway',
 	configurationInputPath: '/run/agent-vm/managed-gateway/framework-service.json',
 	environmentInputPath: '/run/agent-vm/managed-gateway/framework.environment.sh',
-	framework: 'openclaw',
+	framework: 'hermes',
 	ingress: { guestPort: 18_789, kind: 'framework-http' },
 	logIdentity: {
-		guestPath: '/var/log/agent-vm/openclaw-service.log',
-		serviceName: 'agent-vm-openclaw-test',
+		guestPath: '/var/log/agent-vm/hermes-service.log',
+		serviceName: 'agent-vm-hermes-test',
 	},
 	readiness: { guestPort: 18_789, kind: 'framework-http', path: '/readyz' },
 	role: 'framework-service',
@@ -184,10 +182,10 @@ function createTestExpectedAdmissionCohort(vmId: string): GatewayExpectedAdmissi
 		},
 		frameworkIdentity: {
 			attachmentGeneration: 1,
-			clientKind: 'openclaw-managed-plugin',
+			clientKind: 'hermes-managed-plugin',
 			configuredAgentIds: ['main'],
 			frameworkEpoch: `framework-epoch-${vmId}`,
-			frameworkKind: 'openclaw',
+			frameworkKind: 'hermes',
 			projectionCohortDigest:
 				'projection-cohort:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 		},
@@ -330,7 +328,7 @@ function createManagedGatewayZoneRuntime(
 		preflightGatewayZoneStart: async (startOptions) => {
 			const secretResolver = startOptions.secretResolver ?? options.secretResolver;
 			const gatewaySecretRefs = {
-				OPENCLAW_GATEWAY_TOKEN: { ref: 'OPENCLAW_GATEWAY_TOKEN', source: 'environment' },
+				TEST_GATEWAY_TOKEN: { ref: 'TEST_GATEWAY_TOKEN', source: 'environment' },
 			} as const;
 			const resolvedGatewaySecrets = await secretResolver.resolveAll(gatewaySecretRefs);
 			return {
@@ -447,9 +445,9 @@ function isPathInsideDirectory(candidatePath: string, directoryPath: string): bo
 	return relativePath === '' || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath));
 }
 
-const openClawZone = systemConfig.zones.find((zone) => zone.id === 'shravan');
-if (!openClawZone || openClawZone.gateway.type !== 'openclaw') {
-	throw new Error('Expected shravan OpenClaw test zone.');
+const managedGatewayZone = systemConfig.zones.find((zone) => zone.id === 'shravan');
+if (!managedGatewayZone || managedGatewayZone.gateway.type !== 'hermes') {
+	throw new Error('Expected shravan Hermes test zone.');
 }
 
 const workerZone = systemConfig.zones.find((zone) => zone.id === 'worker-zone');
@@ -457,10 +455,10 @@ if (!workerZone || workerZone.gateway.type !== 'worker') {
 	throw new Error('Expected worker test zone.');
 }
 
-function isOpenClawGatewayZone(zone: GatewayZone | undefined): zone is GatewayZone & {
-	readonly gateway: Extract<GatewayZone['gateway'], { readonly type: 'openclaw' }>;
+function isManagedGatewayZone(zone: GatewayZone | undefined): zone is GatewayZone & {
+	readonly gateway: Extract<GatewayZone['gateway'], { readonly type: 'hermes' }>;
 } {
-	return zone?.gateway.type === 'openclaw';
+	return zone?.gateway.type === 'hermes';
 }
 
 function isWorkerGatewayZone(zone: GatewayZone | undefined): zone is GatewayZone & {
@@ -479,12 +477,12 @@ function getWorkerZone(): GatewayZone & {
 	return zone;
 }
 
-function getOpenClawZone(): GatewayZone & {
-	readonly gateway: Extract<GatewayZone['gateway'], { readonly type: 'openclaw' }>;
+function getManagedGatewayZone(): GatewayZone & {
+	readonly gateway: Extract<GatewayZone['gateway'], { readonly type: 'hermes' }>;
 } {
 	const zone = systemConfig.zones.find((candidateZone) => candidateZone.id === 'shravan');
-	if (!isOpenClawGatewayZone(zone)) {
-		throw new Error('Expected shravan OpenClaw test zone.');
+	if (!isManagedGatewayZone(zone)) {
+		throw new Error('Expected shravan Hermes test zone.');
 	}
 	return zone;
 }
@@ -493,7 +491,7 @@ function getHermesZone(): GatewayZone & {
 	readonly gateway: Extract<GatewayZone['gateway'], { readonly type: 'hermes' }>;
 } {
 	return {
-		...getOpenClawZone(),
+		...getManagedGatewayZone(),
 		agents: [{ id: 'main' }],
 		gateway: {
 			config: './hermes/config.yaml',
@@ -533,7 +531,7 @@ describe('zone runtime registry test fixture paths', () => {
 			...systemConfig.zones.flatMap((zone) => [
 				zone.gateway.stateDir,
 				zone.gateway.zoneRuntimeDir,
-				...(zone.gateway.type === 'openclaw' ? [zone.gateway.zoneFilesDir] : []),
+				...(zone.gateway.type === 'hermes' ? [zone.gateway.zoneFilesDir] : []),
 			]),
 		];
 
@@ -641,8 +639,8 @@ function createResolvingSecretResolver(): SecretResolver {
 }
 
 describe('zone runtime contracts', () => {
-	it('keeps both managed Gateway types and Worker behind one discriminated interface', () => {
-		const openClawRuntime = {
+	it('keeps managed Hermes and Worker behind one discriminated interface', () => {
+		const hermesRuntime = {
 			coldStart: async () => ({ leaseReleaseFailureCount: 0 }),
 			destroy: async (purged: boolean) => ({ ok: true, purged, zoneId: 'shravan' }),
 			enableSsh: async () => ({
@@ -656,7 +654,7 @@ describe('zone runtime contracts', () => {
 			}),
 			exec: async () => ({ exitCode: 0, stderr: '', stdout: 'ok' }),
 			ensureCurrentControlSessionDialing: () => ({ status: 'not-current' }),
-			gatewayType: 'openclaw',
+			gatewayType: 'hermes',
 			getDiagnosis: () => ({
 				channelProviderPlane: 'unknown',
 				controllerLiveness: 'ok',
@@ -681,12 +679,6 @@ describe('zone runtime contracts', () => {
 			upgrade: async () => ({ ok: true, zoneId: 'shravan' }),
 			zoneId: 'shravan',
 		} satisfies ManagedGatewayZoneRuntime;
-		const hermesRuntime = {
-			...openClawRuntime,
-			gatewayType: 'hermes',
-			zoneId: 'hermes-zone',
-		} satisfies ManagedGatewayZoneRuntime;
-
 		const workerRuntime = {
 			closeTaskForZone: async () => ({ status: 'closed' }),
 			destroy: async (purged: boolean) => ({ ok: true, purged, zoneId: 'worker-zone' }),
@@ -720,22 +712,14 @@ describe('zone runtime contracts', () => {
 			zoneId: 'worker-zone',
 		} satisfies WorkerZoneRuntime;
 
-		const runtimes: readonly ControllerZoneRuntime[] = [
-			hermesRuntime,
-			openClawRuntime,
-			workerRuntime,
-		];
+		const runtimes: readonly ControllerZoneRuntime[] = [hermesRuntime, workerRuntime];
 
-		expect(runtimes.map((runtime) => runtime.gatewayType)).toEqual([
-			'hermes',
-			'openclaw',
-			'worker',
-		]);
+		expect(runtimes.map((runtime) => runtime.gatewayType)).toEqual(['hermes', 'worker']);
 	});
 });
 
 describe('createManagedGatewayZoneRuntime', () => {
-	it('starts, snapshots, reads logs, and stops one OpenClaw gateway zone', async () => {
+	it('starts, snapshots, reads logs, and stops one Hermes gateway zone', async () => {
 		const destroyGateway = vi.fn(async () => ({ kind: 'destroyed-clean' }) as const);
 		const exec = vi.fn((command: string) =>
 			createManagedExecProcessStub({
@@ -774,7 +758,7 @@ describe('createManagedGatewayZoneRuntime', () => {
 						configureIngressRoutes: vi.fn(),
 						start: async () => {},
 					},
-					zone: openClawZone,
+					zone: managedGatewayZone,
 				};
 			},
 			runControllerCredentialsRefresh: async (_options, dependencies) => {
@@ -798,7 +782,7 @@ describe('createManagedGatewayZoneRuntime', () => {
 			},
 			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 
 		await runtime.start();
@@ -817,8 +801,8 @@ describe('createManagedGatewayZoneRuntime', () => {
 		});
 		expect(exec).toHaveBeenCalledWith(
 			[
-				"echo '===== framework service log (/var/log/agent-vm/openclaw-service.log) ====='",
-				"tail -n 400 '/var/log/agent-vm/openclaw-service.log' 2>/dev/null || true",
+				"echo '===== framework service log (/var/log/agent-vm/hermes-service.log) ====='",
+				"tail -n 400 '/var/log/agent-vm/hermes-service.log' 2>/dev/null || true",
 				'echo',
 				"echo '===== Tool Portal service log (/var/log/agent-vm/tool-portal-service.log) ====='",
 				"tail -n 400 '/var/log/agent-vm/tool-portal-service.log' 2>/dev/null || true",
@@ -846,7 +830,7 @@ describe('createManagedGatewayZoneRuntime', () => {
 			},
 			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 
 		await expect(runtime.start()).rejects.toThrow("Failed to start zone 'shravan'");
@@ -896,12 +880,12 @@ describe('createManagedGatewayZoneRuntime', () => {
 						configureIngressRoutes: vi.fn(),
 						start: async () => {},
 					},
-					zone: openClawZone,
+					zone: managedGatewayZone,
 				};
 			},
 			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 
 		await runtime.start();
@@ -961,12 +945,12 @@ describe('createManagedGatewayZoneRuntime', () => {
 						configureIngressRoutes: vi.fn(),
 						start: async () => {},
 					},
-					zone: openClawZone,
+					zone: managedGatewayZone,
 				};
 			},
 			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 
 		await runtime.start();
@@ -1025,7 +1009,7 @@ describe('createManagedGatewayZoneRuntime', () => {
 				getHostProcessId: () => 48_282,
 				id: gatewayVmId,
 			},
-			zone: openClawZone,
+			zone: managedGatewayZone,
 		});
 		const runtime = createManagedGatewayZoneRuntime({
 			clearTimeoutImpl,
@@ -1050,7 +1034,7 @@ describe('createManagedGatewayZoneRuntime', () => {
 				return { unref: vi.fn() } as unknown as NodeJS.Timeout;
 			},
 			systemConfig: loadedSystemConfig,
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 
 		await runtime.start();
@@ -1087,7 +1071,7 @@ describe('createManagedGatewayZoneRuntime', () => {
 		expect(runtime.getSnapshot()).toEqual({ lifecycleState: 'stopped' });
 	});
 
-	it('serializes shutdown behind an in-flight OpenClaw gateway restart', async () => {
+	it('serializes shutdown behind an in-flight Hermes gateway restart', async () => {
 		type RestartGatewayZone = NonNullable<
 			Parameters<typeof createManagedGatewayZoneRuntime>[0]['restartGatewayZone']
 		>;
@@ -1115,7 +1099,7 @@ describe('createManagedGatewayZoneRuntime', () => {
 					getHostProcessId: () => gatewayHostPid,
 					id: gatewayVmId,
 				},
-				zone: openClawZone,
+				zone: managedGatewayZone,
 			} satisfies Awaited<ReturnType<RestartGatewayZone>>;
 			if (gatewayStartCount === 2) {
 				return await new Promise<Awaited<ReturnType<RestartGatewayZone>>>((resolve) => {
@@ -1130,7 +1114,7 @@ describe('createManagedGatewayZoneRuntime', () => {
 			restartGatewayZone: optionsRestartGatewayZone,
 			secretResolver: createResolvingSecretResolver(),
 			systemConfig: loadedSystemConfig,
-			zone: getOpenClawZone(),
+			zone: getManagedGatewayZone(),
 		});
 
 		await runtime.start();
@@ -1162,7 +1146,7 @@ describe('createManagedGatewayZoneRuntime', () => {
 				getHostProcessId: () => 48_284,
 				id: 'gateway-vm-2',
 			},
-			zone: openClawZone,
+			zone: managedGatewayZone,
 		});
 
 		await restartPromise;
@@ -1171,8 +1155,8 @@ describe('createManagedGatewayZoneRuntime', () => {
 		expect(runtime.getSnapshot()).toEqual({ lifecycleState: 'stopped' });
 	});
 
-	it('refreshes only gateway audience secrets for OpenClaw zones', async () => {
-		const baseZone = getOpenClawZone();
+	it('refreshes only gateway audience secrets for Hermes zones', async () => {
+		const baseZone = getManagedGatewayZone();
 		const zone = {
 			...baseZone,
 			secrets: {
@@ -1188,7 +1172,7 @@ describe('createManagedGatewayZoneRuntime', () => {
 			},
 			egressHosts: [...baseZone.egressHosts, { host: 'api.linear.app', audience: 'tool-vm' }],
 		} satisfies GatewayZone & {
-			readonly gateway: Extract<GatewayZone['gateway'], { readonly type: 'openclaw' }>;
+			readonly gateway: Extract<GatewayZone['gateway'], { readonly type: 'hermes' }>;
 		};
 		const config = {
 			...loadedSystemConfig,
@@ -1230,9 +1214,9 @@ describe('createManagedGatewayZoneRuntime', () => {
 
 		expect(resolvedSecretRefBatches).toEqual([
 			{
-				OPENCLAW_GATEWAY_TOKEN: {
+				TEST_GATEWAY_TOKEN: {
 					source: 'environment',
-					ref: 'OPENCLAW_GATEWAY_TOKEN',
+					ref: 'TEST_GATEWAY_TOKEN',
 				},
 			},
 		]);
@@ -1660,7 +1644,11 @@ describe('createZoneRuntimeRegistry', () => {
 						: alevtinaRuntime,
 			systemConfig: {
 				...loadedSystemConfig,
-				zones: [getOpenClawZone(), getHermesZone(), { ...getOpenClawZone(), id: 'alevtina' }],
+				zones: [
+					getManagedGatewayZone(),
+					getHermesZone(),
+					{ ...getManagedGatewayZone(), id: 'alevtina' },
+				],
 			},
 			writeLog,
 			zoneIds: ['shravan', 'hermes-zone', 'alevtina'],
@@ -1704,7 +1692,7 @@ describe('createZoneRuntimeRegistry', () => {
 			"Zone 'worker-zone' with gateway type 'worker' does not support managed Gateway operations.",
 		);
 		expect(() => registry.getWorkerRuntime('shravan')).toThrow(
-			"Zone 'shravan' with gateway type 'openclaw' does not support worker operations.",
+			"Zone 'shravan' with gateway type 'hermes' does not support worker operations.",
 		);
 		await expect(registry.destroyZone('missing-zone', false)).rejects.toThrow(
 			"Unknown zone 'missing-zone'.",
@@ -1727,7 +1715,7 @@ function createActiveWorkerTask(taskId: string): ActiveWorkerTask {
 function createFakeManagedGatewayRuntime(
 	zoneId: string,
 	overrides: Partial<ManagedGatewayZoneRuntime> = {},
-	gatewayType: ManagedGatewayZoneRuntime['gatewayType'] = 'openclaw',
+	gatewayType: ManagedGatewayZoneRuntime['gatewayType'] = 'hermes',
 ): ManagedGatewayZoneRuntime {
 	let lifecycleState: 'running' | 'failed' | 'stopped' = 'stopped';
 	return {
@@ -1776,12 +1764,12 @@ function createFakeManagedGatewayRuntime(
 							bootContract: testManagedGatewayBootContract,
 							destroyGateway: async () => ({ kind: 'destroyed-clean' }),
 							executionModel: 'managed-gateway',
-							expectedCohort: createTestExpectedAdmissionCohort('fake-openclaw-runtime'),
-							gatewayIdentity: createTestGatewayIdentity('fake-openclaw-runtime'),
+							expectedCohort: createTestExpectedAdmissionCohort('fake-hermes-runtime'),
+							gatewayIdentity: createTestGatewayIdentity('fake-hermes-runtime'),
 							image: {
 								built: false,
-								fingerprint: 'fake-openclaw-image',
-								imageReference: '/tmp/fake-openclaw-image',
+								fingerprint: 'fake-hermes-image',
+								imageReference: '/tmp/fake-hermes-image',
 							},
 							vm: {
 								enableSsh: async () => ({
@@ -1795,9 +1783,9 @@ function createFakeManagedGatewayRuntime(
 								}),
 								exec: () => createManagedExecProcessStub({ stdout: 'ok' }),
 								getHostProcessId: () => 12345,
-								id: 'fake-openclaw-runtime',
+								id: 'fake-hermes-runtime',
 							},
-							zone: getOpenClawZone(),
+							zone: getManagedGatewayZone(),
 						},
 						kind: 'running',
 					};

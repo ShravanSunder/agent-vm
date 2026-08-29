@@ -17,40 +17,41 @@ import {
 import type { GatewayZoneRuntimeHandle } from './zone-runtime-types.js';
 
 const testManagedGatewayBootContract = createManagedGatewayBootContract({
-	bootEntry: 'openclaw-gateway',
+	bootEntry: 'hermes-gateway',
 	configurationInputPath: '/run/agent-vm/managed-gateway/framework-service.json',
 	environmentInputPath: '/run/agent-vm/managed-gateway/framework.environment.sh',
-	framework: 'openclaw',
+	framework: 'hermes',
 	ingress: { guestPort: 18_789, kind: 'framework-http' },
 	logIdentity: {
-		guestPath: '/var/log/agent-vm/openclaw-service.log',
-		serviceName: 'agent-vm-openclaw-test',
+		guestPath: '/var/log/agent-vm/hermes-service.log',
+		serviceName: 'agent-vm-hermes-test',
 	},
 	readiness: { guestPort: 18_789, kind: 'framework-http', path: '/readyz' },
 	role: 'framework-service',
 });
 
-const testOpenClawZone = {
+const testHermesZone = {
 	agentToolVmProfiles: {},
 	defaultToolVmProfile: 'standard',
 	egressHosts: [],
 	gateway: {
-		config: '/config/openclaw.json',
-		controlAuth: { mode: 'token', secret: 'OPENCLAW_GATEWAY_TOKEN' },
+		config: '/config/hermes.json',
 		cpus: 2,
-		imageProfile: 'openclaw',
+		imageProfile: 'hermes',
 		memory: '2G',
 		port: 18_791,
 		stateDir: '/state/zone-test',
-		type: 'openclaw',
+		type: 'hermes',
+		profileSecretProjectionsByAgent: { main: {} },
+		profilesByAgent: { main: 'main' },
 		zoneFilesDir: '/zone-files/zone-test',
 		zoneRuntimeDir: '/runtime/zone-test',
 	},
 	id: 'zone-test',
 	secrets: {
-		OPENCLAW_GATEWAY_TOKEN: {
+		TEST_GATEWAY_SECRET: {
 			audience: 'gateway',
-			envVar: 'OPENCLAW_GATEWAY_TOKEN',
+			envVar: 'TEST_GATEWAY_SECRET',
 			injection: 'env',
 			source: 'environment',
 		},
@@ -229,7 +230,7 @@ describe('deriveGatewayDiagnosisSnapshot', () => {
 });
 
 describe('classifyGatewayStartError', () => {
-	it('classifies secret resolution failures without requiring OpenClaw-specific knowledge', () => {
+	it('classifies secret resolution failures without requiring Hermes-specific knowledge', () => {
 		const error = new Error('Failed to resolve zone secrets for zone sunfam: op failed');
 
 		expect(classifyGatewayStartError(error).code).toBe('secret-resolution-failed');
@@ -267,7 +268,7 @@ function createGatewayRuntimeHandle(): GatewayZoneRuntimeHandle {
 		image: {
 			built: false,
 			fingerprint: 'gateway-image-fingerprint',
-			imageReference: '/images/openclaw-gateway',
+			imageReference: '/images/hermes-gateway',
 		},
 		ingress: { host: '127.0.0.1', port: 18791 },
 		vm: {
@@ -280,7 +281,7 @@ function createGatewayRuntimeHandle(): GatewayZoneRuntimeHandle {
 			getHostProcessId: (): number => 42,
 			id: 'gateway-vm-1',
 		},
-		zone: testOpenClawZone,
+		zone: testHermesZone,
 	};
 }
 
@@ -300,10 +301,10 @@ function createExpectedAdmissionCohort(): GatewayExpectedAdmissionCohort {
 		},
 		frameworkIdentity: {
 			attachmentGeneration: 1,
-			clientKind: 'openclaw-managed-plugin',
+			clientKind: 'hermes-managed-plugin',
 			configuredAgentIds: ['main'],
 			frameworkEpoch: 'framework-epoch-test',
-			frameworkKind: 'openclaw',
+			frameworkKind: 'hermes',
 			projectionCohortDigest:
 				'projection-cohort:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 		},

@@ -55,7 +55,7 @@ export const initImageArchitectureSchema = imageArchitectureSchema.optional();
 export const initPathModeSchema = scaffoldPathModeSchema.optional();
 export const initProjectNamespaceSchema = projectNamespaceSchema.optional();
 export const initOnePasswordAccountNameSchema = z.string().min(1).optional();
-export const openClawAgentsSchema = z
+export const initAgentIdsSchema = z
 	.string()
 	.transform((value) =>
 		value
@@ -67,7 +67,7 @@ export const openClawAgentsSchema = z
 		if (agentIds.length === 0) {
 			context.addIssue({
 				code: 'custom',
-				message: '--openclaw-agents must include at least one non-empty agent id.',
+				message: '--agents must include at least one non-empty agent id.',
 			});
 			return;
 		}
@@ -76,7 +76,7 @@ export const openClawAgentsSchema = z
 			if (!result.success) {
 				context.addIssue({
 					code: 'custom',
-					message: `Invalid --openclaw-agents value '${agentId}': ${result.error.issues[0]?.message ?? 'invalid agent id'}`,
+					message: `Invalid --agents value '${agentId}': ${result.error.issues[0]?.message ?? 'invalid agent id'}`,
 				});
 			}
 		}
@@ -85,7 +85,7 @@ export const openClawAgentsSchema = z
 	.optional();
 
 export function parseAgentIds(agentIds: string): readonly string[] {
-	return openClawAgentsSchema.unwrap().parse(agentIds);
+	return initAgentIdsSchema.unwrap().parse(agentIds);
 }
 
 export const initCommandParser = command(
@@ -108,8 +108,8 @@ export const initCommandParser = command(
 			type: projectZodScalarPresence({
 				parser: option(
 					'--type',
-					zod(scaffoldGatewayTypeSchema, { metavar: 'TYPE', placeholder: 'openclaw' as const }),
-					{ description: cliDescription('Gateway type: openclaw or worker') },
+					zod(scaffoldGatewayTypeSchema, { metavar: 'TYPE', placeholder: 'hermes' as const }),
+					{ description: cliDescription('Gateway type: hermes or worker') },
 				),
 				schema: scaffoldGatewayTypeSchema,
 			}),
@@ -173,11 +173,11 @@ export const initCommandParser = command(
 			),
 			agents: projectZodScalarPresence({
 				parser: option(
-					'--openclaw-agents',
-					zod(openClawAgentsSchema, { metavar: 'AGENTS', placeholder: undefined }),
-					{ description: cliDescription('Comma-separated OpenClaw agent ids') },
+					'--agents',
+					zod(initAgentIdsSchema, { metavar: 'AGENTS', placeholder: undefined }),
+					{ description: cliDescription('Comma-separated managed agent ids') },
 				),
-				schema: openClawAgentsSchema,
+				schema: initAgentIdsSchema,
 			}),
 			onePasswordKeychainAccountName: projectZodScalarPresence({
 				parser: option(

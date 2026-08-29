@@ -44,7 +44,7 @@ const trustedContext = {
 	},
 	principal: {
 		agentId: 'agent-a',
-		frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
+		frameworkIdentity: { kind: 'hermes', profileName: 'agent-a' },
 		profileAssignmentRevision: 'profile-assignment:agent-a:7',
 		toolPortalProfileId: 'code-builder',
 	},

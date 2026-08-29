@@ -14,8 +14,6 @@
 			"@agent-vm/gondolin-vm-adapter": ["../gondolin-vm-adapter/dist/index.d.ts"],
 			"@agent-vm/managed-vm": ["../managed-vm/dist/index.d.ts"],
 			"@agent-vm/mcp-portal": ["../mcp-portal/dist/index.d.ts"],
-			"@agent-vm/openclaw-agent-vm-plugin": ["../openclaw-agent-vm-plugin/dist/index.d.ts"],
-			"@agent-vm/openclaw-gateway": ["../openclaw-gateway/dist/index.d.ts"],
 			"@agent-vm/secret-management": ["../secret-management/dist/index.d.ts"],
 			"@agent-vm/tool-portal/cli-allowances": ["../tool-portal/dist/cli-allowances/index.d.ts"],
 			"@agent-vm/tool-portal/dispatch-authority": ["../tool-portal/dist/dispatch-authority.d.ts"],

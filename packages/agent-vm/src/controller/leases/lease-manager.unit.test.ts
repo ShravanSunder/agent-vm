@@ -308,7 +308,7 @@ function createHarness(
 function leasePrincipal(agentId: string): StableToolVmLeasePrincipal {
 	return {
 		agentId,
-		frameworkIdentity: { agentId, kind: 'openclaw' },
+		frameworkIdentity: { kind: 'hermes', profileName: agentId },
 		profileAssignmentRevision: `assignment-${agentId}`,
 		toolPortalProfileId: 'standard',
 	};

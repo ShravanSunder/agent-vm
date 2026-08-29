@@ -124,7 +124,7 @@ const semanticSnapshot = {
 	agentProjections: {
 		'agent-a': {
 			agentId: 'agent-a',
-			frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
+			frameworkIdentity: { kind: 'hermes', profileName: 'agent-a' },
 			profileAssignmentRevision: 'profile-assignment:agent-a:7',
 			toolPortalNamespaces: [
 				{ namespace: 'controller_execution' },
@@ -135,7 +135,7 @@ const semanticSnapshot = {
 		},
 		'agent-b': {
 			agentId: 'agent-b',
-			frameworkIdentity: { agentId: 'agent-b', kind: 'openclaw' },
+			frameworkIdentity: { kind: 'hermes', profileName: 'agent-b' },
 			profileAssignmentRevision: 'profile-assignment:agent-b:4',
 			toolPortalNamespaces: [
 				{ namespace: 'controller_execution' },
@@ -167,7 +167,7 @@ const agentATrustedContext = {
 	correlation: { runId: 'run-a', sessionId: 'session-a', toolCallId: 'tool-call-a' },
 	principal: {
 		agentId: 'agent-a',
-		frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
+		frameworkIdentity: { kind: 'hermes', profileName: 'agent-a' },
 		profileAssignmentRevision: 'profile-assignment:agent-a:7',
 		toolPortalProfileId: 'code-builder',
 	},
@@ -178,7 +178,7 @@ const agentBTrustedContext = {
 	correlation: { runId: 'run-b', sessionId: 'session-b', toolCallId: 'tool-call-b' },
 	principal: {
 		agentId: 'agent-b',
-		frameworkIdentity: { agentId: 'agent-b', kind: 'openclaw' },
+		frameworkIdentity: { kind: 'hermes', profileName: 'agent-b' },
 		profileAssignmentRevision: 'profile-assignment:agent-b:4',
 		toolPortalProfileId: 'code-builder',
 	},
@@ -330,7 +330,7 @@ function createGatewayRuntimeClientProjectionFixture(
 	const client = new GatewayRuntimeClient({
 		attachment: {
 			attachmentGeneration: 1,
-			clientKind: 'openclaw-managed-plugin',
+			clientKind: 'hermes-managed-plugin',
 			configuredAgentIds: ['agent-a', 'agent-b'],
 			frameworkEpoch: 'framework-epoch-7',
 			gatewayEpoch: 'gateway-epoch-7',
@@ -480,7 +480,7 @@ function composeRecordingProjections(
 		},
 		createToolPortalCapabilityCore: createCapabilityCoreForComposition,
 		managedPluginAttachment: {
-			clientKind: 'openclaw-managed-plugin',
+			clientKind: 'hermes-managed-plugin',
 			configuredAgentIds,
 			projectionCohortDigest,
 		},
@@ -838,7 +838,7 @@ describe('Gateway runtime Tool Portal projections', () => {
 		['surfaceClass', 'protected_uds'],
 		['authority', ['sandbox', 'controller']],
 		['principal', 'principal-injected'],
-		['clientKind', 'openclaw-managed-plugin'],
+		['clientKind', 'hermes-managed-plugin'],
 	] as const)(
 		'rejects public authority field %s before backend admission',
 		async (fieldName, fieldValue) => {

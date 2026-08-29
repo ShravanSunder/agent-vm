@@ -63,7 +63,7 @@ function allowApproval(calls: readonly { readonly id: string }[]): {
 }
 
 describe('portal core event stream', () => {
-	it('creates trusted agent scopes with adapter source and OpenClaw session fields', async () => {
+	it('creates trusted agent scopes with adapter source and Hermes session fields', async () => {
 		const core = createPortalCore({
 			accessPolicy: {
 				defaultPolicy: 'allow-all',
@@ -85,7 +85,7 @@ describe('portal core event stream', () => {
 			agentScopeId: 'agent-scope-a',
 			sessionId: 'session-id-a',
 			sessionKey: 'session-key-a',
-			source: 'openclaw-trusted',
+			source: 'managed-gateway-trusted',
 		});
 
 		expect(scope).toMatchObject({
@@ -93,7 +93,7 @@ describe('portal core event stream', () => {
 			agentScopeId: 'agent-scope-a',
 			sessionId: 'session-id-a',
 			sessionKey: 'session-key-a',
-			source: 'openclaw-trusted',
+			source: 'managed-gateway-trusted',
 		});
 
 		await core.close();
@@ -772,7 +772,7 @@ describe('portal core event stream', () => {
 		const scope = core.createAgentScope({
 			agentId: 'agent-a',
 			agentScopeId: 'agent-scope-a',
-			source: 'openclaw-trusted',
+			source: 'managed-gateway-trusted',
 		});
 
 		const result = await core.collectPortalCoreResult(
@@ -837,7 +837,7 @@ describe('portal core event stream', () => {
 		const scope = core.createAgentScope({
 			agentId: 'agent-a',
 			agentScopeId: 'agent-scope-a',
-			source: 'openclaw-trusted',
+			source: 'managed-gateway-trusted',
 		});
 
 		await expect(

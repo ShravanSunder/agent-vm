@@ -324,16 +324,9 @@ export const hermesLifecycle = {
 	capabilities: { nativeApprovalPresenter: true },
 	executionModel: 'managed-gateway',
 	interactiveSsh: {
-		buildSession: ({ requestAllSecrets }: { readonly requestAllSecrets: boolean }) => {
-			if (requestAllSecrets) {
-				throw new Error('--all-secrets is supported only for OpenClaw zones.');
-			}
-			return {
-				remoteShellCommand: wrapWithHermesShellEnvironment('exec bash -l'),
-				requireSecretEnvironmentEnabled: false,
-				secretEnvironment: 'default',
-			};
-		},
+		buildSession: () => ({
+			remoteShellCommand: wrapWithHermesShellEnvironment('exec bash -l'),
+		}),
 	},
 	buildFrameworkServiceBootInputs: buildHermesFrameworkServiceBootInputs,
 	buildFrameworkServiceBootMetadata: buildHermesFrameworkServiceBootMetadata,

@@ -244,9 +244,9 @@ describe('canonical Agent Portal contracts', () => {
 
 	it('accepts only discriminated managed framework identities and exact four-field projections', () => {
 		// Arrange
-		const openClawProjection = {
+		const defaultProfileProjection = {
 			agentId: 'agent-a',
-			frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
+			frameworkIdentity: { kind: 'hermes', profileName: 'agent-a' },
 			profileAssignmentRevision: 'profile-assignment-a',
 			toolPortalNamespaces: [
 				{ namespace: 'filesystem', summary: 'Workspace files.' },
@@ -254,15 +254,17 @@ describe('canonical Agent Portal contracts', () => {
 			],
 			toolPortalProfileId: 'profile-a',
 		} as const;
-		const hermesProjection = {
-			...openClawProjection,
+		const namedProfileProjection = {
+			...defaultProfileProjection,
 			frameworkIdentity: { kind: 'hermes', profileName: 'agent-a-profile' },
 		} as const;
 
 		// Act / Assert
-		expect(ManagedAgentProjectionSchema.parse(openClawProjection)).toEqual(openClawProjection);
-		const parsedHermesProjection = ManagedAgentProjectionSchema.parse(hermesProjection);
-		expect(parsedHermesProjection).toEqual(hermesProjection);
+		expect(ManagedAgentProjectionSchema.parse(defaultProfileProjection)).toEqual(
+			defaultProfileProjection,
+		);
+		const parsedHermesProjection = ManagedAgentProjectionSchema.parse(namedProfileProjection);
+		expect(parsedHermesProjection).toEqual(namedProfileProjection);
 		expect(Object.isFrozen(parsedHermesProjection)).toBe(true);
 		expect(Object.isFrozen(parsedHermesProjection.frameworkIdentity)).toBe(true);
 		expect(
@@ -274,7 +276,7 @@ describe('canonical Agent Portal contracts', () => {
 		).toBe(false);
 		for (const retiredAuthority of [
 			{ environmentScope: 'gateway:zone-a' },
-			{ frameworkKind: 'openclaw' },
+			{ frameworkKind: 'hermes' },
 			{ profileId: 'profile-a' },
 			{ selfRoot: '/zone/agents/agent-a/self' },
 			{ workRoot: '/zone/agents/agent-a/work' },
@@ -282,7 +284,7 @@ describe('canonical Agent Portal contracts', () => {
 		]) {
 			expect(
 				ManagedAgentProjectionSchema.safeParse({
-					...openClawProjection,
+					...namedProfileProjection,
 					...retiredAuthority,
 				}).success,
 			).toBe(false);
@@ -294,7 +296,7 @@ describe('canonical Agent Portal contracts', () => {
 		const longNamespaceName = 'n'.repeat(257);
 		const projection = {
 			agentId: 'agent-a',
-			frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
+			frameworkIdentity: { kind: 'hermes', profileName: 'agent-a' },
 			profileAssignmentRevision: 'profile-assignment-a',
 			toolPortalNamespaces: [{ namespace: longNamespaceName }],
 			toolPortalProfileId: 'profile-a',
@@ -308,7 +310,7 @@ describe('canonical Agent Portal contracts', () => {
 		const supplementaryCharacter = '\u{1F680}';
 		const projection = {
 			agentId: 'agent-a',
-			frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' as const },
+			frameworkIdentity: { kind: 'hermes' as const, profileName: 'agent-a' },
 			profileAssignmentRevision: 'profile-assignment-a',
 			toolPortalNamespaces: [{ namespace: 'unicode', summary: supplementaryCharacter.repeat(500) }],
 			toolPortalProfileId: 'profile-a',
@@ -331,7 +333,7 @@ describe('canonical Agent Portal contracts', () => {
 		const supplementaryNamespace = '\u{10000}';
 		const projection = {
 			agentId: 'agent-a',
-			frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' as const },
+			frameworkIdentity: { kind: 'hermes' as const, profileName: 'agent-a' },
 			profileAssignmentRevision: 'profile-assignment-a',
 			toolPortalNamespaces: [
 				{ namespace: privateUseNamespace },
@@ -359,7 +361,7 @@ describe('canonical Agent Portal contracts', () => {
 		// Arrange
 		const canonicalPrincipal = {
 			agentId: 'agent-a',
-			frameworkIdentity: { agentId: 'agent-a', kind: 'openclaw' },
+			frameworkIdentity: { kind: 'hermes', profileName: 'agent-a' },
 			profileAssignmentRevision: 'profile-assignment-a',
 			toolPortalProfileId: 'profile-a',
 		} as const;
@@ -370,7 +372,7 @@ describe('canonical Agent Portal contracts', () => {
 		).toEqual({ principal: canonicalPrincipal });
 		for (const retiredAuthority of [
 			{ environmentScope: 'gateway:zone-a' },
-			{ frameworkKind: 'openclaw' },
+			{ frameworkKind: 'hermes' },
 			{ profileId: 'profile-a' },
 			{ selfRoot: '/zone/agents/agent-a/self' },
 			{ workRoot: '/zone/agents/agent-a/work' },

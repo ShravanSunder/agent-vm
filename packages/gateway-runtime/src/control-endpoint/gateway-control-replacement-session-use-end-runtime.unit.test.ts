@@ -31,7 +31,7 @@ const sessionB = Object.freeze({
 const trustedContextA = Object.freeze({
 	principal: {
 		agentId: 'agent-a',
-		frameworkIdentity: { agentId: 'framework-agent-a', kind: 'openclaw' },
+		frameworkIdentity: { kind: 'hermes', profileName: 'profile-a' },
 		profileAssignmentRevision: 'revision-a',
 		toolPortalProfileId: 'profile-a',
 	},
@@ -39,7 +39,7 @@ const trustedContextA = Object.freeze({
 const trustedContextB = Object.freeze({
 	principal: {
 		agentId: 'agent-b',
-		frameworkIdentity: { agentId: 'framework-agent-b', kind: 'openclaw' },
+		frameworkIdentity: { kind: 'hermes', profileName: 'profile-b' },
 		profileAssignmentRevision: 'revision-b',
 		toolPortalProfileId: 'profile-b',
 	},
