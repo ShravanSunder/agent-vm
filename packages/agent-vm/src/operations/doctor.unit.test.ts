@@ -799,7 +799,7 @@ describe('runControllerDoctor', () => {
 		expect(checks[0]?.hint).toContain('Unrecognized key: "pnpm"');
 	});
 
-	it('flags legacy Dockerfile image profiles for migration', async () => {
+	it('flags legacy managed-base Dockerfile profiles without rejecting package-owned Hermes recipes', async () => {
 		const dockerBackedConfig = {
 			...systemConfig,
 			imageProfiles: {
@@ -809,7 +809,10 @@ describe('runControllerDoctor', () => {
 						...systemConfig.imageProfiles.gateways.hermes,
 						dockerfile: './vm-images/gateways/hermes/Dockerfile',
 					},
-					worker: systemConfig.imageProfiles.gateways.worker,
+					worker: {
+						...systemConfig.imageProfiles.gateways.worker,
+						dockerfile: './vm-images/gateways/worker/Dockerfile',
+					},
 				},
 			},
 		} satisfies SystemConfig;
@@ -830,12 +833,17 @@ describe('runControllerDoctor', () => {
 		expect(result.ok).toBe(false);
 		expect(
 			result.checks.find(
-				(check) => check.name === 'legacy-dockerfile-image-profile-gateway-hermes',
+				(check) => check.name === 'legacy-dockerfile-image-profile-gateway-worker',
 			),
 		).toMatchObject({
 			ok: false,
 			hint: 'Run agent-vm migrate images to switch this profile to a managed base overlay.',
 		});
+		expect(
+			result.checks.find(
+				(check) => check.name === 'legacy-dockerfile-image-profile-gateway-hermes',
+			),
+		).toBeUndefined();
 	});
 
 	it('flags missing or too-old Zig versions', async () => {

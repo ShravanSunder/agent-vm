@@ -360,7 +360,7 @@ function buildLegacyDockerfileImageProfileChecks(
 	systemConfig: SystemConfig,
 ): readonly DoctorCheck[] {
 	const gatewayChecks = Object.entries(systemConfig.imageProfiles.gateways)
-		.filter(([, profile]) => profile.dockerfile !== undefined)
+		.filter(([, profile]) => profile.type !== 'hermes' && profile.dockerfile !== undefined)
 		.map(
 			([profileName]) =>
 				({
