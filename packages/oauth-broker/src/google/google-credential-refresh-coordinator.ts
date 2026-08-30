@@ -196,7 +196,22 @@ export function createGoogleCredentialRefreshCoordinator(props: {
 		}
 
 		if (!sameScopeSet(refreshResult.grantedScopes, grant.grantedScopes)) {
-			return { kind: 'scope-insufficient' };
+			const updateResult = props.catalog.replaceGrantEnvelope({
+				credentialId: grant.credentialId,
+				envelope: grant.envelope,
+				expectedRecordRevision: grant.recordRevision,
+				failureClass: 'scope-insufficient',
+				lastRefreshAttemptAtMs: currentTimeMs,
+				lastRefreshSucceededAtMs: grant.lastRefreshSucceededAtMs,
+				lifecycleKind: 'reauthorization-required',
+				materialRevision: grant.materialRevision,
+				nextRefreshEligibleAtMs: null,
+				providerCredentialVersion: grant.providerCredentialVersion,
+				reauthorizationReason: 'scope-insufficient',
+			});
+			return updateResult.kind === 'stale'
+				? { kind: 'stale-write' }
+				: { kind: 'reauthorization-required' };
 		}
 		const refreshedPayload = {
 			accessToken: refreshResult.accessToken,
@@ -234,7 +249,13 @@ export function createGoogleCredentialRefreshCoordinator(props: {
 		resolveAccessToken: async (resolutionProps) => {
 			const credentialId = resolutionProps.grant.credentialId;
 			const existing = inFlightByCredentialId.get(credentialId);
-			if (existing !== undefined) return await existing;
+			if (existing !== undefined) {
+				const sharedResult = await existing;
+				return sharedResult.kind === 'ready' &&
+					!containsRequiredScopes(sharedResult.grant.grantedScopes, resolutionProps.requiredScopes)
+					? { kind: 'scope-insufficient' }
+					: sharedResult;
+			}
 			const leader = resolveLeader(resolutionProps);
 			inFlightByCredentialId.set(credentialId, leader);
 			try {

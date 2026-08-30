@@ -281,6 +281,8 @@ export function createGoogleOAuthBrokerService(props: {
 			providerGrantSchema: googleProviderAuthorizationSchema,
 		});
 	const activeTransactionIds = new Map<string, OAuthTransactionId>();
+	const publicCeremonyIdsByActiveKey = new Map<string, OAuthTransactionId>();
+	const currentTransactionIdsByPublicCeremonyId = new Map<OAuthTransactionId, OAuthTransactionId>();
 	const completedAuthorizationResults = new Map<
 		OAuthTransactionId,
 		{
@@ -303,7 +305,22 @@ export function createGoogleOAuthBrokerService(props: {
 		admissionOpen = false;
 		providerAbortController.abort(new Error('OAuth broker is shutting down.'));
 		activeTransactionIds.clear();
+		publicCeremonyIdsByActiveKey.clear();
+		currentTransactionIdsByPublicCeremonyId.clear();
 		completedAuthorizationResults.clear();
+	};
+	const clearActiveCeremony = (
+		agentId: string,
+		accountProfileId: OAuthAccountProfileId,
+	): OAuthTransactionId | undefined => {
+		const key = activeTransactionKey(agentId, accountProfileId);
+		const publicCeremonyId = publicCeremonyIdsByActiveKey.get(key);
+		activeTransactionIds.delete(key);
+		publicCeremonyIdsByActiveKey.delete(key);
+		if (publicCeremonyId !== undefined) {
+			currentTransactionIdsByPublicCeremonyId.delete(publicCeremonyId);
+		}
+		return publicCeremonyId;
 	};
 	const reapCompletedAuthorizationResults = (): void => {
 		for (const [transactionId, completed] of completedAuthorizationResults) {
@@ -526,10 +543,12 @@ export function createGoogleOAuthBrokerService(props: {
 			selections: transaction.confirmedSelections,
 			transaction: boundRetryTransaction,
 		});
-		activeTransactionIds.set(
-			activeTransactionKey(transaction.agentId, transaction.accountProfileId),
-			retry.transactionId,
-		);
+		const ceremonyKey = activeTransactionKey(transaction.agentId, transaction.accountProfileId);
+		const publicCeremonyId =
+			publicCeremonyIdsByActiveKey.get(ceremonyKey) ?? transaction.transactionId;
+		activeTransactionIds.set(ceremonyKey, retry.transactionId);
+		publicCeremonyIdsByActiveKey.set(ceremonyKey, publicCeremonyId);
+		currentTransactionIdsByPublicCeremonyId.set(publicCeremonyId, retry.transactionId);
 		return {
 			completed: transaction.completedApplications.map(
 				(applicationId) =>
@@ -556,10 +575,13 @@ export function createGoogleOAuthBrokerService(props: {
 			kind: 'authorization-list',
 			profiles: Object.entries(agent.accountProfiles).map(([accountProfileId, profile]) => {
 				const profileGrants = grants.filter((grant) => grant.accountProfileId === accountProfileId);
+				const profileMetadata = props.catalog.getAccountProfileMetadata({
+					accountProfileId: oauthAccountProfileIdSchema.parse(accountProfileId),
+					agentId,
+					zoneId: props.zoneId,
+				});
 				return {
-					...(profileGrants[0]?.accountLabel === undefined
-						? {}
-						: { accountLabel: profileGrants[0].accountLabel }),
+					...(profileMetadata === undefined ? {} : { accountLabel: profileMetadata.accountLabel }),
 					accountProfileId,
 					applications: profileGrants.map((grant) => ({
 						applicationId: grant.applicationId,
@@ -588,7 +610,7 @@ export function createGoogleOAuthBrokerService(props: {
 										},
 					})),
 					kind:
-						profileGrants.length === 0
+						profileMetadata === undefined
 							? 'unbound'
 							: profileGrants.length === Object.keys(profile.applications).length
 								? 'enrolled'
@@ -776,23 +798,27 @@ export function createGoogleOAuthBrokerService(props: {
 		const key = activeTransactionKey(beginProps.agentId, beginProps.accountProfileId);
 		transactionStore.reapExpired();
 		reapCompletedAuthorizationResults();
-		const existingTransactionId = activeTransactionIds.get(key);
-		const existingCeremonyOwner =
+		let existingTransactionId = activeTransactionIds.get(key);
+		let existingPublicCeremonyId = publicCeremonyIdsByActiveKey.get(key);
+		let existingCeremonyOwner =
 			existingTransactionId === undefined
 				? undefined
 				: transactionStore.getCeremonyOwner(existingTransactionId);
-		const existingTransaction =
+		let existingTransaction =
 			existingTransactionId === undefined
 				? undefined
 				: transactionStore.getTransaction(existingTransactionId);
-		if (
-			existingTransactionId !== undefined &&
-			existingCeremonyOwner !== undefined &&
-			existingTransaction?.kind !== 'selecting-permissions'
-		) {
+		if (existingTransactionId !== undefined && existingCeremonyOwner === undefined) {
+			clearActiveCeremony(beginProps.agentId, beginProps.accountProfileId);
+			existingTransactionId = undefined;
+			existingPublicCeremonyId = undefined;
+			existingCeremonyOwner = undefined;
+			existingTransaction = undefined;
+		}
+		if (existingTransactionId !== undefined && existingCeremonyOwner !== undefined) {
 			return oauthAuthorizationActionResultSchema.parse({
 				kind: 'authorization-pending',
-				transactionId: existingTransactionId,
+				transactionId: existingPublicCeremonyId ?? existingTransactionId,
 			});
 		}
 		const transaction =
@@ -807,6 +833,9 @@ export function createGoogleOAuthBrokerService(props: {
 				suggestedSelections,
 			});
 		activeTransactionIds.set(key, transaction.transactionId);
+		const publicCeremonyId = existingPublicCeremonyId ?? transaction.transactionId;
+		publicCeremonyIdsByActiveKey.set(key, publicCeremonyId);
+		currentTransactionIdsByPublicCeremonyId.set(publicCeremonyId, transaction.transactionId);
 		return oauthAuthorizationActionResultSchema.parse({
 			authorizationUrl: new URL(
 				`/oauth/transactions/${transaction.transactionId}`,
@@ -814,7 +843,7 @@ export function createGoogleOAuthBrokerService(props: {
 			).toString(),
 			expiresAt: new Date(transaction.expiresAtMs).toISOString(),
 			kind: 'authorization-begun',
-			transactionId: transaction.transactionId,
+			transactionId: publicCeremonyId,
 		});
 	};
 
@@ -828,9 +857,7 @@ export function createGoogleOAuthBrokerService(props: {
 				tailnetLogin: cancelProps.tailnetLogin,
 			});
 			if (cancelled === undefined) return false;
-			activeTransactionIds.delete(
-				activeTransactionKey(cancelled.agentId, cancelled.accountProfileId),
-			);
+			clearActiveCeremony(cancelled.agentId, cancelled.accountProfileId);
 			return true;
 		},
 		cancelBrowserTransaction: (cancelProps) => {
@@ -851,9 +878,7 @@ export function createGoogleOAuthBrokerService(props: {
 				transactionId: transaction.transactionId,
 			});
 			if (cancelled) {
-				activeTransactionIds.delete(
-					activeTransactionKey(transaction.agentId, transaction.accountProfileId),
-				);
+				clearActiveCeremony(transaction.agentId, transaction.accountProfileId);
 			}
 			return cancelled;
 		},
@@ -876,133 +901,167 @@ export function createGoogleOAuthBrokerService(props: {
 					throw new Error(`OAuth completion was rejected: ${completion.reason}.`);
 				}
 				const session = completion.session;
-				const existingGrant = props.catalog.getGrantForAccountApplication({
-					accountProfileId: session.accountProfileId,
-					agentId: session.agentId,
-					applicationId: session.applicationId,
-					zoneId: props.zoneId,
-				});
-				const existingScopeSet = new Set(existingGrant?.grantedScopes ?? []);
-				const replacementScopeSet = new Set(session.providerGrant.grantedScopes);
-				const enrollmentModeIsValid =
-					(session.authorizationMode === 'enroll-missing' && existingGrant === undefined) ||
-					(session.authorizationMode === 'reauthorize-existing' &&
-						existingGrant !== undefined &&
-						[...existingScopeSet].every((scope) => replacementScopeSet.has(scope)));
-				if (!enrollmentModeIsValid) {
-					transactionStore.finishCompletion(session.completionSessionId);
-					activeTransactionIds.delete(
+				const publicCeremonyId =
+					publicCeremonyIdsByActiveKey.get(
 						activeTransactionKey(session.agentId, session.accountProfileId),
+					) ?? session.transactionId;
+				let durableGrantCommitted = false;
+				let completedAuthorizationResult:
+					| Extract<OAuthAuthorizationActionResult, { readonly kind: 'authorization-completed' }>
+					| undefined;
+				try {
+					const existingGrant = props.catalog.getGrantForAccountApplication({
+						accountProfileId: session.accountProfileId,
+						agentId: session.agentId,
+						applicationId: session.applicationId,
+						zoneId: props.zoneId,
+					});
+					const existingScopeSet = new Set(existingGrant?.grantedScopes ?? []);
+					const replacementScopeSet = new Set(session.providerGrant.grantedScopes);
+					const enrollmentModeIsValid =
+						(session.authorizationMode === 'enroll-missing' && existingGrant === undefined) ||
+						(session.authorizationMode === 'reauthorize-existing' &&
+							existingGrant !== undefined &&
+							[...existingScopeSet].every((scope) => replacementScopeSet.has(scope)));
+					if (!enrollmentModeIsValid) {
+						transactionStore.finishCompletion(session.completionSessionId);
+						clearActiveCeremony(session.agentId, session.accountProfileId);
+						return { kind: 'authorization-denied' };
+					}
+					const credentialId =
+						existingGrant?.credentialId ?? oauthCredentialIdSchema.parse(randomUUID());
+					const envelope = envelopeCodec.encrypt({
+						binding: oauthEnvelopeBindingSchema.parse({
+							accountProfileId: session.accountProfileId,
+							applicationId: session.applicationId,
+							credentialId,
+							providerId: oauthProviderIdSchema.parse('google'),
+							providerSubject: session.providerGrant.accountSubject,
+						}),
+						keyEncryptionKey: props.keyEncryptionKey,
+						keyEncryptionKeyVersion: props.keyEncryptionKeyVersion,
+						payload: {
+							accessToken: session.providerGrant.accessToken,
+							accessTokenExpiresAtMs: session.providerGrant.accessTokenExpiresAtMs,
+							refreshToken: session.providerGrant.refreshToken,
+						},
+					});
+					const enrolledApplicationIds = new Set(
+						props.catalog
+							.listGrantsForAgent({ agentId: session.agentId, zoneId: props.zoneId })
+							.filter((grant) => grant.accountProfileId === session.accountProfileId)
+							.map((grant) => grant.applicationId),
 					);
-					return { kind: 'authorization-denied' };
-				}
-				const credentialId =
-					existingGrant?.credentialId ?? oauthCredentialIdSchema.parse(randomUUID());
-				const envelope = envelopeCodec.encrypt({
-					binding: oauthEnvelopeBindingSchema.parse({
+					enrolledApplicationIds.add(session.applicationId);
+					const assignedApplicationIds = Object.keys(
+						requireAccountProfile(session.agentId, session.accountProfileId).applications,
+					).map((applicationId) => oauthApplicationIdSchema.parse(applicationId));
+					const parsedCompletedAuthorizationResult = oauthAuthorizationActionResultSchema.parse({
+						accountLabel: session.providerGrant.accountEmail,
 						accountProfileId: session.accountProfileId,
 						applicationId: session.applicationId,
+						grantedScopes: session.providerGrant.grantedScopes,
+						kind: 'authorization-completed',
+					});
+					if (parsedCompletedAuthorizationResult.kind !== 'authorization-completed') {
+						throw new Error('OAuth completed authorization result validation changed its kind.');
+					}
+					completedAuthorizationResult = parsedCompletedAuthorizationResult;
+					const committed = props.catalog.commitEnrollmentGrant({
+						accountLabel: session.providerGrant.accountEmail,
+						accountProfileId: session.accountProfileId,
+						accountProfileStatus: assignedApplicationIds.every((applicationId) =>
+							enrolledApplicationIds.has(applicationId),
+						)
+							? 'enrolled'
+							: 'partially-enrolled',
+						agentId: session.agentId,
+						applicationId: session.applicationId,
 						credentialId,
+						envelope,
+						grantedScopes: session.providerGrant.grantedScopes,
+						materialRevision: materialRevision(),
+						providerCredentialVersion: (existingGrant?.providerCredentialVersion ?? 0) + 1,
 						providerId: oauthProviderIdSchema.parse('google'),
 						providerSubject: session.providerGrant.accountSubject,
-					}),
-					keyEncryptionKey: props.keyEncryptionKey,
-					keyEncryptionKeyVersion: props.keyEncryptionKeyVersion,
-					payload: {
-						accessToken: session.providerGrant.accessToken,
-						accessTokenExpiresAtMs: session.providerGrant.accessTokenExpiresAtMs,
-						refreshToken: session.providerGrant.refreshToken,
-					},
-				});
-				const enrolledApplicationIds = new Set(
-					props.catalog
-						.listGrantsForAgent({ agentId: session.agentId, zoneId: props.zoneId })
-						.filter((grant) => grant.accountProfileId === session.accountProfileId)
-						.map((grant) => grant.applicationId),
-				);
-				enrolledApplicationIds.add(session.applicationId);
-				const assignedApplicationIds = Object.keys(
-					requireAccountProfile(session.agentId, session.accountProfileId).applications,
-				).map((applicationId) => oauthApplicationIdSchema.parse(applicationId));
-				const committed = props.catalog.commitEnrollmentGrant({
-					accountLabel: session.providerGrant.accountEmail,
-					accountProfileId: session.accountProfileId,
-					accountProfileStatus: assignedApplicationIds.every((applicationId) =>
-						enrolledApplicationIds.has(applicationId),
-					)
-						? 'enrolled'
-						: 'partially-enrolled',
-					agentId: session.agentId,
-					applicationId: session.applicationId,
-					credentialId,
-					envelope,
-					grantedScopes: session.providerGrant.grantedScopes,
-					materialRevision: materialRevision(),
-					providerCredentialVersion: (existingGrant?.providerCredentialVersion ?? 0) + 1,
-					providerId: oauthProviderIdSchema.parse('google'),
-					providerSubject: session.providerGrant.accountSubject,
-					zoneId: props.zoneId,
-				});
-				transactionStore.finishCompletion(session.completionSessionId);
-				if (committed.kind === 'subject-mismatch') return { kind: 'subject-mismatch' };
-				const completedAuthorizationResult = oauthAuthorizationActionResultSchema.parse({
-					accountLabel: session.providerGrant.accountEmail,
-					accountProfileId: session.accountProfileId,
-					applicationId: session.applicationId,
-					grantedScopes: session.providerGrant.grantedScopes,
-					kind: 'authorization-completed',
-				});
-				if (completedAuthorizationResult.kind !== 'authorization-completed') {
-					throw new Error('OAuth completed authorization result validation changed its kind.');
-				}
-				completedAuthorizationResults.set(session.transactionId, {
-					agentId: session.agentId,
-					expiresAtMs: now() + 10 * 60_000,
-					result: completedAuthorizationResult,
-				});
-				await props.onCredentialMaterialChanged?.({
-					agentId: session.agentId,
-					zoneId: props.zoneId,
-				});
-				activeTransactionIds.delete(
-					activeTransactionKey(session.agentId, session.accountProfileId),
-				);
-				const nextApplication = session.remainingApplications[0];
-				if (nextApplication === undefined) {
-					return { accountLabel: session.providerGrant.accountEmail, kind: 'completed' };
-				}
-				const nextTransaction = transactionStore.createTransaction({
-					accountProfileId: session.accountProfileId,
-					agentId: session.agentId,
-					applicationIds: session.remainingApplications,
-					authorizationMode: session.authorizationMode,
-					suggestedSelections: session.confirmedSelections,
-				});
-				const boundNextTransaction = transactionStore.bindTailnetIdentity({
-					tailnetLogin: session.tailnetLogin,
-					transactionId: nextTransaction.transactionId,
-				});
-				activeTransactionIds.set(
-					activeTransactionKey(session.agentId, session.accountProfileId),
-					nextTransaction.transactionId,
-				);
-				const redirect = startApplication({
-					applicationId: googleOAuthApplicationIdSchema.parse(nextApplication),
-					completedApplications: [...session.completedApplications, session.applicationId],
-					remainingApplications: session.remainingApplications
-						.slice(1)
-						.map((applicationId) => googleOAuthApplicationIdSchema.parse(applicationId)),
-					selections: session.confirmedSelections,
-					transaction: boundNextTransaction,
-				});
-				return {
-					...redirect,
-					applications: applicationProgress({
-						authorizingApplication: oauthApplicationIdSchema.parse(nextApplication),
+						zoneId: props.zoneId,
+					});
+					transactionStore.finishCompletion(session.completionSessionId);
+					if (committed.kind === 'subject-mismatch') {
+						clearActiveCeremony(session.agentId, session.accountProfileId);
+						return { kind: 'subject-mismatch' };
+					}
+					durableGrantCommitted = true;
+					const nextApplication = session.remainingApplications[0];
+					if (nextApplication === undefined) {
+						completedAuthorizationResults.set(publicCeremonyId, {
+							agentId: session.agentId,
+							expiresAtMs: now() + 10 * 60_000,
+							result: completedAuthorizationResult,
+						});
+						clearActiveCeremony(session.agentId, session.accountProfileId);
+						await props
+							.onCredentialMaterialChanged?.({
+								agentId: session.agentId,
+								zoneId: props.zoneId,
+							})
+							.catch(() => undefined);
+						return { accountLabel: session.providerGrant.accountEmail, kind: 'completed' };
+					}
+					const nextTransaction = transactionStore.createTransaction({
+						accountProfileId: session.accountProfileId,
+						agentId: session.agentId,
+						applicationIds: session.remainingApplications,
+						authorizationMode: session.authorizationMode,
+						suggestedSelections: session.confirmedSelections,
+					});
+					const boundNextTransaction = transactionStore.bindTailnetIdentity({
+						tailnetLogin: session.tailnetLogin,
+						transactionId: nextTransaction.transactionId,
+					});
+					activeTransactionIds.set(
+						activeTransactionKey(session.agentId, session.accountProfileId),
+						nextTransaction.transactionId,
+					);
+					currentTransactionIdsByPublicCeremonyId.set(
+						publicCeremonyId,
+						nextTransaction.transactionId,
+					);
+					const redirect = startApplication({
+						applicationId: googleOAuthApplicationIdSchema.parse(nextApplication),
 						completedApplications: [...session.completedApplications, session.applicationId],
-						remainingApplications: session.remainingApplications.slice(1),
-					}),
-				};
+						remainingApplications: session.remainingApplications
+							.slice(1)
+							.map((applicationId) => googleOAuthApplicationIdSchema.parse(applicationId)),
+						selections: session.confirmedSelections,
+						transaction: boundNextTransaction,
+					});
+					await props
+						.onCredentialMaterialChanged?.({
+							agentId: session.agentId,
+							zoneId: props.zoneId,
+						})
+						.catch(() => undefined);
+					return {
+						...redirect,
+						applications: applicationProgress({
+							authorizingApplication: oauthApplicationIdSchema.parse(nextApplication),
+							completedApplications: [...session.completedApplications, session.applicationId],
+							remainingApplications: session.remainingApplications.slice(1),
+						}),
+					};
+				} catch (error) {
+					transactionStore.finishCompletion(session.completionSessionId);
+					if (durableGrantCommitted && completedAuthorizationResult !== undefined) {
+						completedAuthorizationResults.set(publicCeremonyId, {
+							agentId: session.agentId,
+							expiresAtMs: now() + 10 * 60_000,
+							result: completedAuthorizationResult,
+						});
+					}
+					clearActiveCeremony(session.agentId, session.accountProfileId);
+					throw error;
+				}
 			}),
 		executeAuthorizationAction: async ({ agentId, request: unparsedRequest }) =>
 			await trackOperation(async () => {
@@ -1023,7 +1082,10 @@ export function createGoogleOAuthBrokerService(props: {
 						});
 					}
 					case 'oauth_authorization.status': {
-						const ceremonyOwner = transactionStore.getCeremonyOwner(request.transactionId);
+						const currentTransactionId =
+							currentTransactionIdsByPublicCeremonyId.get(request.transactionId) ??
+							request.transactionId;
+						const ceremonyOwner = transactionStore.getCeremonyOwner(currentTransactionId);
 						if (ceremonyOwner !== undefined) {
 							return ceremonyOwner.agentId === agentId
 								? { kind: 'authorization-pending', transactionId: request.transactionId }
@@ -1036,12 +1098,13 @@ export function createGoogleOAuthBrokerService(props: {
 							: { failure: { kind: 'consumed' }, kind: 'authorization-failed' };
 					}
 					case 'oauth_authorization.cancel': {
-						const ceremonyOwner = transactionStore.getCeremonyOwner(request.transactionId);
+						const currentTransactionId =
+							currentTransactionIdsByPublicCeremonyId.get(request.transactionId) ??
+							request.transactionId;
+						const ceremonyOwner = transactionStore.getCeremonyOwner(currentTransactionId);
 						if (ceremonyOwner !== undefined && ceremonyOwner.agentId === agentId) {
-							transactionStore.cancelTransaction({ agentId, transactionId: request.transactionId });
-							activeTransactionIds.delete(
-								activeTransactionKey(agentId, ceremonyOwner.accountProfileId),
-							);
+							transactionStore.cancelTransaction({ agentId, transactionId: currentTransactionId });
+							clearActiveCeremony(agentId, ceremonyOwner.accountProfileId);
 						}
 						return { kind: 'authorization-cancelled' };
 					}
@@ -1068,31 +1131,46 @@ export function createGoogleOAuthBrokerService(props: {
 							zoneId: props.zoneId,
 						});
 						if (grant === undefined) return { kind: 'authorization-revoked' };
-						const payload = envelopeCodec.decrypt({
-							binding: oauthEnvelopeBindingSchema.parse({
-								accountProfileId: grant.accountProfileId,
-								applicationId: grant.applicationId,
-								credentialId: grant.credentialId,
-								providerId: grant.providerId,
-								providerSubject: grant.providerSubject,
-							}),
-							envelope: grant.envelope,
-							keyEncryptionKey: props.keyEncryptionKey,
-						});
-						const revoked = await props.googleAdapter.revokeAuthorization({
-							refreshToken: payload.refreshToken,
-							signal: providerAbortController.signal,
-						});
-						if (revoked.kind === 'failed') {
-							return {
-								failure: {
-									kind:
-										revoked.failure.kind === 'provider-unavailable'
-											? 'unavailable'
-											: 'authorization-denied',
-								},
-								kind: 'authorization-failed',
-							};
+						let refreshToken: string | undefined;
+						try {
+							const payload = envelopeCodec.decrypt({
+								binding: oauthEnvelopeBindingSchema.parse({
+									accountProfileId: grant.accountProfileId,
+									applicationId: grant.applicationId,
+									credentialId: grant.credentialId,
+									providerId: grant.providerId,
+									providerSubject: grant.providerSubject,
+								}),
+								envelope: grant.envelope,
+								keyEncryptionKey: props.keyEncryptionKey,
+							});
+							refreshToken = payload.refreshToken;
+						} catch {
+							// An approval-gated revoke may clear an unusable local grant even when its
+							// corrupted envelope can no longer supply a provider token.
+						}
+						if (refreshToken !== undefined) {
+							const revoked = await props.googleAdapter.revokeAuthorization({
+								refreshToken,
+								signal: providerAbortController.signal,
+							});
+							if (revoked.kind === 'failed') {
+								const alreadyInvalid =
+									revoked.failure.kind === 'invalid-grant' ||
+									(revoked.failure.kind === 'provider-rejected' &&
+										['invalid_grant', 'invalid_token'].includes(revoked.failure.providerError));
+								if (!alreadyInvalid) {
+									return {
+										failure: {
+											kind:
+												revoked.failure.kind === 'provider-unavailable'
+													? 'unavailable'
+													: 'authorization-denied',
+										},
+										kind: 'authorization-failed',
+									};
+								}
+							}
 						}
 						props.catalog.deleteGrantForAccountApplication({
 							accountProfileId: request.accountProfileId,
@@ -1100,7 +1178,9 @@ export function createGoogleOAuthBrokerService(props: {
 							applicationId: oauthApplicationIdSchema.parse(applicationId),
 							zoneId: props.zoneId,
 						});
-						await props.onCredentialMaterialChanged?.({ agentId, zoneId: props.zoneId });
+						await props
+							.onCredentialMaterialChanged?.({ agentId, zoneId: props.zoneId })
+							.catch(() => undefined);
 						return { kind: 'authorization-revoked' };
 					}
 				}
@@ -1260,6 +1340,14 @@ export function createGoogleOAuthBrokerService(props: {
 						.filter((grant) => grant.accountProfileId === current.accountProfileId)
 						.map((grant) => grant.providerSubject),
 				);
+				const profileMetadata = props.catalog.getAccountProfileMetadata({
+					accountProfileId: current.accountProfileId,
+					agentId: current.agentId,
+					zoneId: props.zoneId,
+				});
+				if (profileMetadata !== undefined) {
+					existingSubjects.add(profileMetadata.providerSubject);
+				}
 				if (
 					existingSubjects.size > 0 &&
 					!existingSubjects.has(exchange.authorization.accountSubject)

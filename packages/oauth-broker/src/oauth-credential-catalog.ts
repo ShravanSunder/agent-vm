@@ -12,7 +12,7 @@ import {
 	oauthScopeSchema,
 } from '@agent-vm/oauth-broker-contracts';
 import BetterSqlite3 from 'better-sqlite3';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { drizzle, type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { z } from 'zod';
@@ -57,6 +57,20 @@ export const oauthStoredGrantSchema = z
 	})
 	.strict();
 export type OAuthStoredGrant = z.infer<typeof oauthStoredGrantSchema>;
+
+export const oauthStoredAccountProfileMetadataSchema = z
+	.object({
+		accountLabel: z.string().min(1).max(320),
+		accountProfileId: oauthAccountProfileIdSchema,
+		agentId: z.string().min(1).max(128),
+		providerSubject: oauthProviderSubjectSchema,
+		status: z.enum(['partially-enrolled', 'enrolled']),
+		zoneId: z.string().min(1).max(128),
+	})
+	.strict();
+export type OAuthStoredAccountProfileMetadata = z.infer<
+	typeof oauthStoredAccountProfileMetadataSchema
+>;
 
 export const oauthEnrollmentGrantInputSchema = z
 	.object({
@@ -117,6 +131,11 @@ export interface OAuthCredentialCatalog {
 		readonly zoneId: string;
 	}): 'deleted' | 'missing';
 	getGrant(credentialId: z.infer<typeof oauthCredentialIdSchema>): OAuthStoredGrant | undefined;
+	getAccountProfileMetadata(props: {
+		readonly accountProfileId: z.infer<typeof oauthAccountProfileIdSchema>;
+		readonly agentId: string;
+		readonly zoneId: string;
+	}): OAuthStoredAccountProfileMetadata | undefined;
 	getGrantForAccountApplication(props: {
 		readonly accountProfileId: z.infer<typeof oauthAccountProfileIdSchema>;
 		readonly agentId: string;
@@ -398,11 +417,59 @@ export async function openOAuthCredentialCatalog(props: {
 						candidate.applicationId === oauthApplicationIdSchema.parse(deleteProps.applicationId),
 				);
 				if (grant === undefined) return 'missing';
-				database
-					.delete(oauthGrantsTable)
-					.where(eq(oauthGrantsTable.credentialId, grant.credentialId))
-					.run();
+				database.transaction((transaction) => {
+					transaction
+						.delete(oauthGrantsTable)
+						.where(eq(oauthGrantsTable.credentialId, grant.credentialId))
+						.run();
+					transaction
+						.update(oauthAccountProfilesTable)
+						.set({
+							recordRevision: sql`${oauthAccountProfilesTable.recordRevision} + 1`,
+							status: 'partially-enrolled',
+							updatedAtMs: now(),
+						})
+						.where(eq(oauthAccountProfilesTable.profileRecordId, grant.profileRecordId))
+						.run();
+				});
 				return 'deleted';
+			},
+			getAccountProfileMetadata: (queryProps) => {
+				const profile = database
+					.select()
+					.from(oauthAccountProfilesTable)
+					.where(
+						and(
+							eq(
+								oauthAccountProfilesTable.zoneId,
+								z.string().min(1).max(128).parse(queryProps.zoneId),
+							),
+							eq(
+								oauthAccountProfilesTable.agentId,
+								z.string().min(1).max(128).parse(queryProps.agentId),
+							),
+							eq(
+								oauthAccountProfilesTable.accountProfileId,
+								oauthAccountProfileIdSchema.parse(queryProps.accountProfileId),
+							),
+						),
+					)
+					.limit(1)
+					.get();
+				if (
+					profile === undefined ||
+					profile.accountLabel === null ||
+					profile.providerSubject === null
+				)
+					return undefined;
+				return oauthStoredAccountProfileMetadataSchema.parse({
+					accountLabel: profile.accountLabel,
+					accountProfileId: profile.accountProfileId,
+					agentId: profile.agentId,
+					providerSubject: profile.providerSubject,
+					status: profile.status,
+					zoneId: profile.zoneId,
+				});
 			},
 			getGrant,
 			getGrantForAccountApplication: (queryProps) =>

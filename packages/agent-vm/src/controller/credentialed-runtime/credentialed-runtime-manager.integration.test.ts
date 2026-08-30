@@ -866,6 +866,33 @@ describe('credentialed runtime manager', () => {
 		).toEqual({ kind: 'retired' });
 	});
 
+	it('defers OAuth material invalidation until an active command completes', async () => {
+		const fixture = createFixture(() => 1_000);
+		const active = await acquire(fixture);
+		if (active.kind !== 'acquired') throw new Error('Expected active acquisition.');
+
+		await expect(
+			fixture.manager.invalidateMaterial({
+				agentId: 'sun',
+				reason: 'OAuth credential material changed',
+				zoneId: 'zone-a',
+			}),
+		).resolves.toEqual({ kind: 'retire-after-active' });
+		expect(fixture.states[0]?.closed).toBe(false);
+		await expect(
+			active.command.exec({ argv: ['gmail', 'search'], reason: 'still active' }),
+		).resolves.toMatchObject({ exitCode: 0 });
+
+		await active.command.complete({ kind: 'completed' });
+		expect(fixture.states[0]?.closed).toBe(true);
+		const replacement = await acquire(fixture);
+		expect(replacement.kind).toBe('acquired');
+		expect(fixture.createManagedVm).toHaveBeenCalledTimes(2);
+		if (replacement.kind === 'acquired') {
+			await replacement.command.complete({ kind: 'completed' });
+		}
+	});
+
 	it('force retirement cancels active ownership and waits for command disposition', async () => {
 		const fixture = createFixture(() => 1_000);
 		const active = await acquire(fixture);

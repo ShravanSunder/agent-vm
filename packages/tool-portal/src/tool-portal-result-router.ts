@@ -347,6 +347,7 @@ export async function mergeToolPortalList<TCallOptions, TReadOptions>(props: {
 					),
 			),
 		].toSorted();
+		const nextCursor = okItems.length === 1 ? okItems[0]?.value.nextCursor : undefined;
 		return {
 			...(diagnostics.length > 0 ? { diagnostics } : {}),
 			id: requestItem.id,
@@ -357,6 +358,7 @@ export async function mergeToolPortalList<TCallOptions, TReadOptions>(props: {
 					representedNamespaces: new Set(namespaces),
 				}),
 				namespaces,
+				...(nextCursor === undefined ? {} : { nextCursor }),
 				tools: filterToolsToRequestedNamespaces(
 					okItems.flatMap((item) => item.value.tools),
 					namespaceSelection,

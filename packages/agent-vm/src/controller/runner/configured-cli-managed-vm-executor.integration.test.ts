@@ -216,6 +216,7 @@ function managerWithAcquire(
 	return {
 		acquireCommand,
 		closeZone: vi.fn(async () => {}),
+		invalidateMaterial: vi.fn(async () => ({ kind: 'absent' as const })),
 		openZone: vi.fn(),
 		reapExpired: vi.fn(async () => {}),
 		recoverZone: vi.fn(async () => {}),

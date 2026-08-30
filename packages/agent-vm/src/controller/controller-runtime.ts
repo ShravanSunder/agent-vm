@@ -1458,9 +1458,9 @@ async function startControllerRuntimeWithOwnershipLock(
 				}),
 		);
 		preparedOAuthRuntime?.setCredentialInvalidationHandler(async ({ agentId, zoneId }) => {
-			const retirement = await credentialedRuntimeManager.retire({
+			const retirement = await credentialedRuntimeManager.invalidateMaterial({
 				agentId,
-				force: true,
+				reason: 'OAuth credential material changed',
 				zoneId,
 			});
 			if (retirement.kind === 'owner-unsafe') {

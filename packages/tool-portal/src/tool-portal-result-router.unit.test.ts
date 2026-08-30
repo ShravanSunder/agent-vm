@@ -58,7 +58,7 @@ describe('Tool Portal compact description routing', () => {
 						items: request.requests.map(({ id }) => ({
 							id,
 							status: 'ok' as const,
-							value: { namespaces: ['fixture'], tools: [capabilitySummary] },
+							value: { namespaces: ['fixture'], nextCursor: '8', tools: [capabilitySummary] },
 						})),
 						ok: true,
 					}),
@@ -111,6 +111,10 @@ describe('Tool Portal compact description routing', () => {
 
 		// Assert
 		expect(observedSearchQueries).toEqual([searchableSuffix]);
+		expect(listResult.items[0]).toMatchObject({
+			status: 'ok',
+			value: { nextCursor: '8' },
+		});
 		for (const compactTool of [listedTool, searchedTool]) {
 			expect(compactTool?.descriptionTruncated).toBe(true);
 			expect(Array.from(compactTool?.description ?? '')).toHaveLength(240);

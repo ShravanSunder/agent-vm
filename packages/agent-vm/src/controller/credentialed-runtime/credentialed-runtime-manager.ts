@@ -77,6 +77,12 @@ export type RetireCredentialedRuntimeResult =
 	| { readonly kind: 'active'; readonly retryable: true }
 	| { readonly kind: 'owner-unsafe'; readonly retryable: false };
 
+export type InvalidateCredentialedRuntimeMaterialResult =
+	| { readonly kind: 'retired' }
+	| { readonly kind: 'retire-after-active' }
+	| { readonly kind: 'absent' }
+	| { readonly kind: 'owner-unsafe' };
+
 interface ActiveCommand {
 	readonly abortController: AbortController;
 	readonly finished: Promise<void>;
@@ -143,6 +149,11 @@ export interface CredentialedRuntimeManager {
 		),
 	): Promise<AcquireCredentialedRuntimeCommandResult>;
 	closeZone(zoneId: string): Promise<void>;
+	invalidateMaterial(request: {
+		readonly agentId: string;
+		readonly reason: string;
+		readonly zoneId: string;
+	}): Promise<InvalidateCredentialedRuntimeMaterialResult>;
 	openZone(zoneId: string): void;
 	reapExpired(): Promise<void>;
 	recoverZone(zoneId: string): Promise<void>;
@@ -754,6 +765,21 @@ export function createCredentialedRuntimeManager(props: {
 		},
 		openZone: (zoneId): void => {
 			closedZoneIds.delete(zoneId);
+		},
+		invalidateMaterial: async (request): Promise<InvalidateCredentialedRuntimeMaterialResult> => {
+			const key = runtimeKey(request);
+			return await locks.runExclusive(key, async () => {
+				if (ownerUnsafeKeys.has(key)) return { kind: 'owner-unsafe' };
+				const live = liveByKey.get(key);
+				if (live === undefined) return { kind: 'absent' };
+				if (live.activeCommand !== undefined) {
+					live.retireAfterActiveReason = request.reason;
+					return { kind: 'retire-after-active' };
+				}
+				return (await retireLiveUnderLock(key, live, request.reason))
+					? { kind: 'retired' }
+					: { kind: 'owner-unsafe' };
+			});
 		},
 		reapExpired: async (): Promise<void> => {
 			const cutoff = now() - CredentialedRuntimeIdleTtlMs;

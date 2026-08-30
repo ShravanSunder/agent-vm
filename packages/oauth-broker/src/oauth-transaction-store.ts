@@ -376,7 +376,12 @@ export function createOAuthTransactionStore<TProviderGrant>(props: {
 			if (current.redirectUri !== oauthRedirectUriSchema.parse(callbackProps.redirectUri)) {
 				return { kind: 'rejected', reason: 'invalid-redirect' };
 			}
-			if (current.oauthState !== oauthOpaqueBrowserSecretSchema.parse(callbackProps.oauthState)) {
+			if (
+				!opaqueSecretsEqual(
+					current.oauthState,
+					oauthOpaqueBrowserSecretSchema.parse(callbackProps.oauthState),
+				)
+			) {
 				return { kind: 'rejected', reason: 'invalid-state' };
 			}
 			const consuming = { ...current, kind: 'consuming-callback' as const };

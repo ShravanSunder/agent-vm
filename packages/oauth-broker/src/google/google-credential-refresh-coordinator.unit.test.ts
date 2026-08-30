@@ -32,6 +32,7 @@ const accountProfileId = oauthAccountProfileIdSchema.parse('personal-google');
 const applicationId = oauthApplicationIdSchema.parse('gmail-app');
 const providerId = oauthProviderIdSchema.parse('google');
 const gmailReadScope = oauthScopeSchema.parse('gmail.readonly');
+const gmailWriteScope = oauthScopeSchema.parse('gmail.modify');
 const envelopeCodec = createOAuthEnvelopeCodec({
 	payloadSchema: googleStoredCredentialPayloadSchema,
 });
@@ -133,6 +134,7 @@ function createCatalog(initialGrant: OAuthStoredGrant): {
 				throw new Error('Unexpected enrollment commit in refresh test.');
 			},
 			deleteGrantForAccountApplication: () => 'missing',
+			getAccountProfileMetadata: () => undefined,
 			getGrant: () => currentGrant,
 			getGrantForAccountApplication: () => currentGrant,
 			getStorageDiagnostics: () => ({
@@ -271,6 +273,43 @@ describe('Google credential refresh coordinator', () => {
 		).toMatchObject({ refreshToken: 'rotated-refresh-token' });
 	});
 
+	it('rechecks each single-flight follower scope requirement', async () => {
+		const grant = createGrant({ accessTokenExpiresAtMs: 1_000 });
+		const { catalog } = createCatalog(grant);
+		const { adapter, refreshAuthorization } = createAdapter({
+			accessToken: 'new-read-access-token',
+			accessTokenExpiresAtMs: 1_000_000,
+			grantedScopes: [gmailReadScope],
+			kind: 'refreshed',
+		});
+		const coordinator = createGoogleCredentialRefreshCoordinator({
+			catalog,
+			googleAdapter: adapter,
+			now: () => 10_000,
+		});
+
+		const [readResult, writeResult] = await Promise.all([
+			coordinator.resolveAccessToken({
+				clientCredentials,
+				grant,
+				keyEncryptionKey,
+				keyEncryptionKeyVersion: 1,
+				requiredScopes: [gmailReadScope],
+			}),
+			coordinator.resolveAccessToken({
+				clientCredentials,
+				grant,
+				keyEncryptionKey,
+				keyEncryptionKeyVersion: 1,
+				requiredScopes: [gmailWriteScope],
+			}),
+		]);
+
+		expect(readResult).toMatchObject({ kind: 'ready' });
+		expect(writeResult).toEqual({ kind: 'scope-insufficient' });
+		expect(refreshAuthorization).toHaveBeenCalledOnce();
+	});
+
 	it('rejects an in-flight refresh after reauthorization advances the grant revision', async () => {
 		const grant = createGrant({ accessTokenExpiresAtMs: 1_000 });
 		const { advanceRecordRevision, catalog } = createCatalog(grant);
@@ -364,6 +403,40 @@ describe('Google credential refresh coordinator', () => {
 				failureClass: 'invalid-grant',
 				lifecycleKind: 'reauthorization-required',
 				reauthorizationReason: 'invalid-grant',
+			}),
+		);
+	});
+
+	it('persists a refresh scope mismatch as reauthorization-required', async () => {
+		const grant = createGrant({ accessTokenExpiresAtMs: 1_000 });
+		const { catalog, replaceGrantEnvelope } = createCatalog(grant);
+		const { adapter, refreshAuthorization } = createAdapter({
+			accessToken: 'scope-reduced-access-token',
+			accessTokenExpiresAtMs: 1_000_000,
+			grantedScopes: [],
+			kind: 'refreshed',
+		});
+		const coordinator = createGoogleCredentialRefreshCoordinator({
+			catalog,
+			googleAdapter: adapter,
+			now: () => 10_000,
+		});
+
+		await expect(
+			coordinator.resolveAccessToken({
+				clientCredentials,
+				grant,
+				keyEncryptionKey,
+				keyEncryptionKeyVersion: 1,
+				requiredScopes: [gmailReadScope],
+			}),
+		).resolves.toEqual({ kind: 'reauthorization-required' });
+		expect(refreshAuthorization).toHaveBeenCalledOnce();
+		expect(replaceGrantEnvelope).toHaveBeenCalledWith(
+			expect.objectContaining({
+				failureClass: 'scope-insufficient',
+				lifecycleKind: 'reauthorization-required',
+				reauthorizationReason: 'scope-insufficient',
 			}),
 		);
 	});

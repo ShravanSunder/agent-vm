@@ -163,9 +163,7 @@ function createAdapter(
 		refreshAuthorization: async () => {
 			throw new Error('Unexpected refresh during enrollment.');
 		},
-		revokeAuthorization: async () => {
-			throw new Error('Unexpected revocation during enrollment.');
-		},
+		revokeAuthorization: async () => ({ kind: 'revoked' }),
 		tokenLifecycle: oauthTokenLifecycleSchema.parse({
 			kind: 'refreshable',
 			refreshMode: 'stable-refresh-token',
@@ -176,6 +174,7 @@ function createAdapter(
 async function createService(
 	props: {
 		readonly adapter?: GoogleOAuthAdapter;
+		readonly catalogDecorator?: (catalog: OAuthCredentialCatalog) => OAuthCredentialCatalog;
 		readonly oauthConfig?: OAuthConfig;
 		readonly now?: () => number;
 	} = {},
@@ -186,7 +185,7 @@ async function createService(
 	});
 	const credentials = clientCredentials();
 	return createGoogleOAuthBrokerService({
-		catalog,
+		catalog: props.catalogDecorator?.(catalog) ?? catalog,
 		clientCredentialsByApplication: {
 			'gmail-app': credentials,
 			'workspace-app': credentials,
@@ -199,6 +198,47 @@ async function createService(
 		now: props.now ?? (() => 1_000),
 		zoneId: 'apollofam',
 	});
+}
+
+async function enrollGmailRead(service: GoogleOAuthBrokerService): Promise<void> {
+	const begun = await service.executeAuthorizationAction({
+		agentId: 'hermes',
+		request: {
+			actionId: 'oauth_authorization.begin',
+			accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
+		},
+	});
+	if (begun.kind !== 'authorization-begun') throw new Error('Expected begun authorization.');
+	const page = service.getPermissionPage({
+		tailnetLogin: 'human@example.test',
+		transactionId: begun.transactionId,
+	});
+	const redirect = service.submitPermissions({
+		browserBindingSecret: page.browserBindingSecret,
+		csrfToken: page.csrfToken,
+		selections: oauthPermissionSelectionsSchema.parse({ 'gmail-app': { gmail: 'read' } }),
+		tailnetLogin: 'human@example.test',
+		transactionId: begun.transactionId,
+	});
+	if (redirect.kind !== 'redirect') throw new Error('Expected Google redirect.');
+	const oauthState = new URL(redirect.authorizationUrl).searchParams.get('state');
+	if (oauthState === null) throw new Error('Google redirect omitted OAuth state.');
+	const callback = await service.handleGoogleCallback({
+		authorizationCode: 'helper-enrollment-code',
+		browserBindingSecret: redirect.browserBindingSecret,
+		oauthState,
+		redirectUri,
+		tailnetLogin: 'human@example.test',
+		transactionId: redirect.transactionId,
+	});
+	if (callback.kind !== 'confirmation') throw new Error('Expected account confirmation.');
+	const completed = await service.confirmAccount({
+		browserBindingSecret: callback.confirmation.browserBindingSecret,
+		completionSessionId: callback.confirmation.completionSessionId,
+		csrfToken: callback.confirmation.csrfToken,
+		tailnetLogin: 'human@example.test',
+	});
+	if (completed.kind !== 'completed') throw new Error('Expected completed authorization.');
 }
 
 describe('Google OAuth broker service', () => {
@@ -400,6 +440,74 @@ describe('Google OAuth broker service', () => {
 			}),
 		).rejects.toThrow('consumed-or-missing');
 		expect(catalog?.listGrantsForAgent({ agentId: 'hermes', zoneId: 'apollofam' })).toEqual([]);
+	});
+
+	it('releases completion authority immediately when catalog commit fails', async () => {
+		const service = await createService({
+			catalogDecorator: (baseCatalog) => ({
+				...baseCatalog,
+				commitEnrollmentGrant: () => {
+					throw new Error('forced enrollment commit failure');
+				},
+			}),
+		});
+		const begun = await service.executeAuthorizationAction({
+			agentId: 'hermes',
+			request: {
+				actionId: 'oauth_authorization.begin',
+				accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
+			},
+		});
+		if (begun.kind !== 'authorization-begun') throw new Error('Expected begun authorization.');
+		const page = service.getPermissionPage({
+			tailnetLogin: 'human@example.test',
+			transactionId: begun.transactionId,
+		});
+		const redirect = service.submitPermissions({
+			browserBindingSecret: page.browserBindingSecret,
+			csrfToken: page.csrfToken,
+			selections: oauthPermissionSelectionsSchema.parse({ 'gmail-app': { gmail: 'read' } }),
+			tailnetLogin: 'human@example.test',
+			transactionId: begun.transactionId,
+		});
+		if (redirect.kind !== 'redirect') throw new Error('Expected Google redirect.');
+		const oauthState = new URL(redirect.authorizationUrl).searchParams.get('state');
+		if (oauthState === null) throw new Error('Google redirect omitted OAuth state.');
+		const callback = await service.handleGoogleCallback({
+			authorizationCode: 'commit-failure-code',
+			browserBindingSecret: redirect.browserBindingSecret,
+			oauthState,
+			redirectUri,
+			tailnetLogin: 'human@example.test',
+			transactionId: begun.transactionId,
+		});
+		if (callback.kind !== 'confirmation') throw new Error('Expected account confirmation.');
+
+		await expect(
+			service.confirmAccount({
+				browserBindingSecret: callback.confirmation.browserBindingSecret,
+				completionSessionId: callback.confirmation.completionSessionId,
+				csrfToken: callback.confirmation.csrfToken,
+				tailnetLogin: 'human@example.test',
+			}),
+		).rejects.toThrow('forced enrollment commit failure');
+		await expect(
+			service.confirmAccount({
+				browserBindingSecret: callback.confirmation.browserBindingSecret,
+				completionSessionId: callback.confirmation.completionSessionId,
+				csrfToken: callback.confirmation.csrfToken,
+				tailnetLogin: 'human@example.test',
+			}),
+		).rejects.toThrow('consumed-or-missing');
+		expect(
+			await service.executeAuthorizationAction({
+				agentId: 'hermes',
+				request: {
+					actionId: 'oauth_authorization.begin',
+					accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
+				},
+			}),
+		).toMatchObject({ kind: 'authorization-begun' });
 	});
 
 	it('runs a tailnet-bound enrollment and commits one encrypted grant', async () => {
@@ -604,6 +712,31 @@ describe('Google OAuth broker service', () => {
 				tailnetLogin: 'human@example.test',
 			}),
 		).toEqual({ accountLabel: 'human@example.test', kind: 'completed' });
+		expect(
+			await service.executeAuthorizationAction({
+				agentId: 'hermes',
+				request: {
+					actionId: 'oauth_authorization.revoke',
+					accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
+					applicationId: oauthApplicationIdSchema.parse('gmail-app'),
+				},
+			}),
+		).toEqual({ kind: 'authorization-revoked' });
+		expect(
+			await service.executeAuthorizationAction({
+				agentId: 'hermes',
+				request: { actionId: 'oauth_authorization.list' },
+			}),
+		).toMatchObject({
+			profiles: [
+				{
+					accountLabel: 'human@example.test',
+					accountProfileId: 'personal-google',
+					applications: [],
+					kind: 'partially-enrolled',
+				},
+			],
+		});
 	});
 
 	it('rejects reauthorization that would downgrade an existing grant before revocation', async () => {
@@ -758,6 +891,15 @@ describe('Google OAuth broker service', () => {
 		});
 		expect(secondRedirect.kind).toBe('redirect');
 		if (secondRedirect.kind !== 'redirect') throw new Error('Expected second Google redirect.');
+		expect(
+			await service.executeAuthorizationAction({
+				agentId: 'hermes',
+				request: {
+					actionId: 'oauth_authorization.status',
+					transactionId: begun.transactionId,
+				},
+			}),
+		).toEqual({ kind: 'authorization-pending', transactionId: begun.transactionId });
 		expect(secondRedirect.applications).toEqual([
 			{ applicationId: 'gmail-app', label: 'Gmail', status: 'completed' },
 			{ applicationId: 'workspace-app', label: 'Workspace', status: 'authorizing' },
@@ -781,7 +923,84 @@ describe('Google OAuth broker service', () => {
 				tailnetLogin: 'human@example.test',
 			}),
 		).resolves.toEqual({ accountLabel: 'human@example.test', kind: 'completed' });
+		expect(
+			await service.executeAuthorizationAction({
+				agentId: 'hermes',
+				request: {
+					actionId: 'oauth_authorization.status',
+					transactionId: begun.transactionId,
+				},
+			}),
+		).toMatchObject({ kind: 'authorization-completed' });
 		expect(catalog?.listGrantsForAgent({ agentId: 'hermes', zoneId: 'apollofam' })).toHaveLength(2);
+	});
+
+	it('cancels a later application through the public ceremony identity returned by begin', async () => {
+		const service = await createService({ oauthConfig: config({ includeWorkspace: true }) });
+		const begun = await service.executeAuthorizationAction({
+			agentId: 'hermes',
+			request: {
+				actionId: 'oauth_authorization.begin',
+				accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
+			},
+		});
+		if (begun.kind !== 'authorization-begun') throw new Error('Expected begun authorization.');
+		const page = service.getPermissionPage({
+			tailnetLogin: 'human@example.test',
+			transactionId: begun.transactionId,
+		});
+		const firstRedirect = service.submitPermissions({
+			browserBindingSecret: page.browserBindingSecret,
+			csrfToken: page.csrfToken,
+			selections: oauthPermissionSelectionsSchema.parse({
+				'gmail-app': { gmail: 'read' },
+				'workspace-app': { calendar: 'read' },
+			}),
+			tailnetLogin: 'human@example.test',
+			transactionId: begun.transactionId,
+		});
+		if (firstRedirect.kind !== 'redirect') throw new Error('Expected first redirect.');
+		const firstState = new URL(firstRedirect.authorizationUrl).searchParams.get('state');
+		if (firstState === null) throw new Error('First redirect omitted OAuth state.');
+		const firstCallback = await service.handleGoogleCallback({
+			authorizationCode: 'gmail-cancel-chain-code',
+			browserBindingSecret: firstRedirect.browserBindingSecret,
+			oauthState: firstState,
+			redirectUri,
+			tailnetLogin: 'human@example.test',
+			transactionId: firstRedirect.transactionId,
+		});
+		if (firstCallback.kind !== 'confirmation') throw new Error('Expected first confirmation.');
+		const secondRedirect = await service.confirmAccount({
+			browserBindingSecret: firstCallback.confirmation.browserBindingSecret,
+			completionSessionId: firstCallback.confirmation.completionSessionId,
+			csrfToken: firstCallback.confirmation.csrfToken,
+			tailnetLogin: 'human@example.test',
+		});
+		if (secondRedirect.kind !== 'redirect') throw new Error('Expected second redirect.');
+		const secondState = new URL(secondRedirect.authorizationUrl).searchParams.get('state');
+		if (secondState === null) throw new Error('Second redirect omitted OAuth state.');
+
+		expect(
+			await service.executeAuthorizationAction({
+				agentId: 'hermes',
+				request: {
+					actionId: 'oauth_authorization.cancel',
+					transactionId: begun.transactionId,
+				},
+			}),
+		).toEqual({ kind: 'authorization-cancelled' });
+		expect(
+			await service.handleGoogleCallback({
+				authorizationCode: 'workspace-after-cancel-code',
+				browserBindingSecret: secondRedirect.browserBindingSecret,
+				oauthState: secondState,
+				redirectUri,
+				tailnetLogin: 'human@example.test',
+				transactionId: secondRedirect.transactionId,
+			}),
+		).toEqual({ kind: 'failed', reason: 'browser-binding-mismatch' });
+		expect(catalog?.listGrantsForAgent({ agentId: 'hermes', zoneId: 'apollofam' })).toHaveLength(1);
 	});
 
 	it('preserves completed grants and creates a bound retry after a later application fails', async () => {
@@ -913,6 +1132,91 @@ describe('Google OAuth broker service', () => {
 		if (second.kind !== 'authorization-begun')
 			throw new Error('Expected replacement authorization.');
 		expect(second.transactionId).not.toBe(first.transactionId);
+	});
+
+	it('deletes an already-invalid provider grant during approval-gated revocation', async () => {
+		const baseAdapter = createAdapter();
+		const service = await createService({
+			adapter: {
+				...baseAdapter,
+				revokeAuthorization: async () => ({
+					failure: { kind: 'provider-rejected', providerError: 'invalid_token' },
+					kind: 'failed',
+				}),
+			},
+		});
+		await enrollGmailRead(service);
+
+		await expect(
+			service.executeAuthorizationAction({
+				agentId: 'hermes',
+				request: {
+					actionId: 'oauth_authorization.revoke',
+					accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
+					applicationId: oauthApplicationIdSchema.parse('gmail-app'),
+				},
+			}),
+		).resolves.toEqual({ kind: 'authorization-revoked' });
+		expect(catalog?.listGrantsForAgent({ agentId: 'hermes', zoneId: 'apollofam' })).toEqual([]);
+	});
+
+	it('retains a grant when provider revocation is transiently unavailable', async () => {
+		const baseAdapter = createAdapter();
+		const service = await createService({
+			adapter: {
+				...baseAdapter,
+				revokeAuthorization: async () => ({
+					failure: { kind: 'provider-unavailable', retryable: true },
+					kind: 'failed',
+				}),
+			},
+		});
+		await enrollGmailRead(service);
+
+		await expect(
+			service.executeAuthorizationAction({
+				agentId: 'hermes',
+				request: {
+					actionId: 'oauth_authorization.revoke',
+					accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
+					applicationId: oauthApplicationIdSchema.parse('gmail-app'),
+				},
+			}),
+		).resolves.toEqual({ failure: { kind: 'unavailable' }, kind: 'authorization-failed' });
+		expect(catalog?.listGrantsForAgent({ agentId: 'hermes', zoneId: 'apollofam' })).toHaveLength(1);
+	});
+
+	it('deletes a locally corrupt grant when provider revocation material is unrecoverable', async () => {
+		const service = await createService({
+			catalogDecorator: (baseCatalog) => ({
+				...baseCatalog,
+				getGrantForAccountApplication: (query) => {
+					const grant = baseCatalog.getGrantForAccountApplication(query);
+					return grant === undefined
+						? undefined
+						: {
+								...grant,
+								envelope: {
+									...grant.envelope,
+									payloadCiphertext: `${grant.envelope.payloadCiphertext.startsWith('A') ? 'B' : 'A'}${grant.envelope.payloadCiphertext.slice(1)}`,
+								},
+							};
+				},
+			}),
+		});
+		await enrollGmailRead(service);
+
+		await expect(
+			service.executeAuthorizationAction({
+				agentId: 'hermes',
+				request: {
+					actionId: 'oauth_authorization.revoke',
+					accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
+					applicationId: oauthApplicationIdSchema.parse('gmail-app'),
+				},
+			}),
+		).resolves.toEqual({ kind: 'authorization-revoked' });
+		expect(catalog?.listGrantsForAgent({ agentId: 'hermes', zoneId: 'apollofam' })).toEqual([]);
 	});
 
 	it('rejects provider-granted scope expansion before completion state exists', async () => {

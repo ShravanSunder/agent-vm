@@ -107,6 +107,38 @@ async function readCatalogFiles(databasePath: string): Promise<Buffer> {
 }
 
 describe('OAuth credential catalog', () => {
+	it('retains bound account-profile metadata when its last application grant is deleted', async () => {
+		const stateDirectory = await mkdtemp(path.join(tmpdir(), 'agent-vm-oauth-catalog-delete-'));
+		openCatalog = await openOAuthCredentialCatalog({
+			databasePath: path.join(stateDirectory, 'oauth', 'credentials.sqlite'),
+			now: () => 1_000,
+		});
+		openCatalog.commitEnrollmentGrant(
+			createEnrollmentInput({ accessToken: 'access-token-delete-marker' }),
+		);
+
+		expect(
+			openCatalog.deleteGrantForAccountApplication({
+				accountProfileId,
+				agentId: 'hermes',
+				applicationId,
+				zoneId: 'apollofam',
+			}),
+		).toBe('deleted');
+		expect(openCatalog.listGrantsForAgent({ agentId: 'hermes', zoneId: 'apollofam' })).toEqual([]);
+		expect(
+			openCatalog.getAccountProfileMetadata({
+				accountProfileId,
+				agentId: 'hermes',
+				zoneId: 'apollofam',
+			}),
+		).toMatchObject({
+			accountLabel: 'Personal Google',
+			providerSubject: 'google-subject-1',
+			status: 'partially-enrolled',
+		});
+	});
+
 	it('migrates, commits, encrypts, refreshes atomically, and reopens', async () => {
 		const stateDirectory = await mkdtemp(path.join(tmpdir(), 'agent-vm-oauth-catalog-'));
 		const databasePath = path.join(stateDirectory, 'oauth', 'credentials.sqlite');
