@@ -27,6 +27,7 @@ interface OAuthTransactionCommon {
 	readonly accountProfileId: OAuthAccountProfileId;
 	readonly agentId: string;
 	readonly applicationIds: readonly OAuthApplicationId[];
+	readonly authorizationMode: OAuthAuthorizationMode;
 	readonly browserBindingSecret: string;
 	readonly createdAtMs: number;
 	readonly csrfSecret: string;
@@ -34,6 +35,8 @@ interface OAuthTransactionCommon {
 	readonly suggestedSelections?: OAuthPermissionSelections | undefined;
 	readonly transactionId: OAuthTransactionId;
 }
+
+export type OAuthAuthorizationMode = 'enroll-missing' | 'reauthorize-existing';
 
 export type OAuthCeremonyTransaction =
 	| (OAuthTransactionCommon & {
@@ -71,6 +74,7 @@ interface OAuthCompletionSessionCommon {
 	readonly accountProfileId: OAuthAccountProfileId;
 	readonly agentId: string;
 	readonly applicationId: OAuthApplicationId;
+	readonly authorizationMode: OAuthAuthorizationMode;
 	readonly browserBindingSecret: string;
 	readonly completedApplications: readonly OAuthApplicationId[];
 	readonly confirmedSelections: OAuthPermissionSelections;
@@ -80,6 +84,13 @@ interface OAuthCompletionSessionCommon {
 	readonly expiresAtMs: number;
 	readonly remainingApplications: readonly OAuthApplicationId[];
 	readonly tailnetLogin: string;
+	readonly transactionId: OAuthTransactionId;
+}
+
+export interface OAuthCeremonyOwner {
+	readonly accountProfileId: OAuthAccountProfileId;
+	readonly agentId: string;
+	readonly transactionId: OAuthTransactionId;
 }
 
 export type OAuthCompletionSession<TProviderGrant> =
@@ -130,6 +141,16 @@ export type OAuthCompletionCommitResult<TProviderGrant> =
 				| 'wrong-state';
 	  };
 
+export type OAuthCallbackCompletionResult<TProviderGrant> =
+	| {
+			readonly kind: 'created';
+			readonly session: Extract<
+				OAuthCompletionSession<TProviderGrant>,
+				{ readonly kind: 'awaiting-account-confirmation' }
+			>;
+	  }
+	| { readonly kind: 'capacity-exhausted' };
+
 export interface OAuthTransactionStore<TProviderGrant> {
 	bindTailnetIdentity(props: {
 		readonly tailnetLogin: string;
@@ -160,20 +181,25 @@ export interface OAuthTransactionStore<TProviderGrant> {
 		readonly agentId: string;
 		readonly transactionId: OAuthTransactionId;
 	}): boolean;
+	cancelCompletion(props: {
+		readonly browserBindingSecret: string;
+		readonly completionSessionId: OAuthCompletionSessionId;
+		readonly csrfToken: string;
+		readonly tailnetLogin: string;
+	}): OAuthCeremonyOwner | undefined;
 	completeCallback(props: {
 		readonly providerGrant: TProviderGrant;
 		readonly transactionId: OAuthTransactionId;
-	}): Extract<
-		OAuthCompletionSession<TProviderGrant>,
-		{ readonly kind: 'awaiting-account-confirmation' }
-	>;
+	}): OAuthCallbackCompletionResult<TProviderGrant>;
 	createTransaction(props: {
 		readonly accountProfileId: OAuthAccountProfileId;
 		readonly agentId: string;
 		readonly applicationIds: readonly OAuthApplicationId[];
+		readonly authorizationMode: OAuthAuthorizationMode;
 		readonly suggestedSelections?: OAuthPermissionSelections | undefined;
 	}): Extract<OAuthCeremonyTransaction, { readonly kind: 'selecting-permissions' }>;
 	finishCompletion(completionSessionId: OAuthCompletionSessionId): boolean;
+	getCeremonyOwner(transactionId: OAuthTransactionId): OAuthCeremonyOwner | undefined;
 	getTransaction(transactionId: OAuthTransactionId): OAuthCeremonyTransaction | undefined;
 	invalidateAll(): void;
 	reapExpired(): { readonly completionSessionCount: number; readonly transactionCount: number };
@@ -237,11 +263,16 @@ export function createOAuthTransactionStore<TProviderGrant>(props: {
 		OAuthCompletionSessionId,
 		OAuthCompletionSession<TProviderGrant>
 	>();
+	const completionSessionIdsByTransactionId = new Map<
+		OAuthTransactionId,
+		OAuthCompletionSessionId
+	>();
 
 	const discardCompletionSession = (completionSessionId: OAuthCompletionSessionId): boolean => {
 		const session = completionSessions.get(completionSessionId);
 		if (session === undefined) return false;
 		completionSessions.delete(completionSessionId);
+		completionSessionIdsByTransactionId.delete(session.transactionId);
 		props.onDiscardProviderGrant?.(session.providerGrant);
 		return true;
 	};
@@ -391,9 +422,46 @@ export function createOAuthTransactionStore<TProviderGrant>(props: {
 		cancelTransaction: ({ agentId, transactionId }) => {
 			const parsedTransactionId = oauthTransactionIdSchema.parse(transactionId);
 			const current = transactions.get(parsedTransactionId);
-			if (current === undefined || current.agentId !== oauthAgentIdSchema.parse(agentId))
-				return false;
-			return transactions.delete(parsedTransactionId);
+			const parsedAgentId = oauthAgentIdSchema.parse(agentId);
+			if (current !== undefined) {
+				return current.agentId === parsedAgentId && transactions.delete(parsedTransactionId);
+			}
+			const completionSessionId = completionSessionIdsByTransactionId.get(parsedTransactionId);
+			if (completionSessionId === undefined) return false;
+			const completion = completionSessions.get(completionSessionId);
+			return completion?.agentId === parsedAgentId && discardCompletionSession(completionSessionId);
+		},
+		cancelCompletion: (completionProps) => {
+			const completionSessionId = oauthCompletionSessionIdSchema.parse(
+				completionProps.completionSessionId,
+			);
+			const current = completionSessions.get(completionSessionId);
+			if (current === undefined) return undefined;
+			if (current.expiresAtMs <= now()) {
+				discardCompletionSession(completionSessionId);
+				return undefined;
+			}
+			if (
+				current.kind !== 'awaiting-account-confirmation' ||
+				current.tailnetLogin !== tailnetLoginSchema.parse(completionProps.tailnetLogin) ||
+				!opaqueSecretsEqual(
+					current.browserBindingSecret,
+					oauthOpaqueBrowserSecretSchema.parse(completionProps.browserBindingSecret),
+				) ||
+				!opaqueSecretsEqual(
+					current.csrfSecret,
+					oauthOpaqueBrowserSecretSchema.parse(completionProps.csrfToken),
+				)
+			) {
+				return undefined;
+			}
+			const owner = {
+				accountProfileId: current.accountProfileId,
+				agentId: current.agentId,
+				transactionId: current.transactionId,
+			};
+			discardCompletionSession(completionSessionId);
+			return owner;
 		},
 		completeCallback: ({ providerGrant, transactionId }) => {
 			const parsedTransactionId = oauthTransactionIdSchema.parse(transactionId);
@@ -401,16 +469,17 @@ export function createOAuthTransactionStore<TProviderGrant>(props: {
 			if (current?.kind !== 'consuming-callback') {
 				throw new Error('OAuth callback transaction is not consuming.');
 			}
-			transactions.delete(parsedTransactionId);
 			if (completionSessions.size >= maxCompletionSessions) {
-				throw new Error('OAuth completion-session capacity is exhausted.');
+				return { kind: 'capacity-exhausted' };
 			}
+			transactions.delete(parsedTransactionId);
 			const completionSessionId = oauthCompletionSessionIdSchema.parse(createOpaqueIdentifier());
 			const createdAtMs = now();
 			const completionSession = {
 				accountProfileId: current.accountProfileId,
 				agentId: current.agentId,
 				applicationId: current.applicationId,
+				authorizationMode: current.authorizationMode,
 				browserBindingSecret: createOpaqueIdentifier(),
 				completedApplications: current.completedApplications,
 				confirmedSelections: current.confirmedSelections,
@@ -422,9 +491,11 @@ export function createOAuthTransactionStore<TProviderGrant>(props: {
 				providerGrant: props.providerGrantSchema.parse(providerGrant),
 				remainingApplications: current.remainingApplications,
 				tailnetLogin: current.tailnetLogin,
+				transactionId: current.transactionId,
 			};
 			completionSessions.set(completionSessionId, completionSession);
-			return completionSession;
+			completionSessionIdsByTransactionId.set(current.transactionId, completionSessionId);
+			return { kind: 'created', session: completionSession };
 		},
 		createTransaction: (createProps) => {
 			reapExpired();
@@ -437,6 +508,7 @@ export function createOAuthTransactionStore<TProviderGrant>(props: {
 				accountProfileId: oauthAccountProfileIdSchema.parse(createProps.accountProfileId),
 				agentId: oauthAgentIdSchema.parse(createProps.agentId),
 				applicationIds: validateUniqueApplications(createProps.applicationIds, 'applicationIds'),
+				authorizationMode: createProps.authorizationMode,
 				browserBindingSecret: createOpaqueIdentifier(),
 				createdAtMs,
 				csrfSecret: createOpaqueIdentifier(),
@@ -455,6 +527,27 @@ export function createOAuthTransactionStore<TProviderGrant>(props: {
 			return transaction;
 		},
 		finishCompletion: discardCompletionSession,
+		getCeremonyOwner: (transactionId) => {
+			const parsedTransactionId = oauthTransactionIdSchema.parse(transactionId);
+			const transaction = transactions.get(parsedTransactionId);
+			if (transaction !== undefined) {
+				return {
+					accountProfileId: transaction.accountProfileId,
+					agentId: transaction.agentId,
+					transactionId: transaction.transactionId,
+				};
+			}
+			const completionSessionId = completionSessionIdsByTransactionId.get(parsedTransactionId);
+			const completion =
+				completionSessionId === undefined ? undefined : completionSessions.get(completionSessionId);
+			return completion === undefined
+				? undefined
+				: {
+						accountProfileId: completion.accountProfileId,
+						agentId: completion.agentId,
+						transactionId: completion.transactionId,
+					};
+		},
 		getTransaction: (transactionId) =>
 			transactions.get(oauthTransactionIdSchema.parse(transactionId)),
 		invalidateAll: () => {

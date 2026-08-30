@@ -11,7 +11,7 @@ export const oauthAccountProfilesTable = sqliteTable(
 		providerId: text('provider_id').notNull(),
 		providerSubject: text('provider_subject'),
 		recordRevision: integer('record_revision').notNull(),
-		status: text('status', { enum: ['unbound', 'partially-enrolled', 'enrolled'] }).notNull(),
+		status: text('status', { enum: ['partially-enrolled', 'enrolled'] }).notNull(),
 		updatedAtMs: integer('updated_at_ms').notNull(),
 		zoneId: text('zone_id').notNull(),
 	},

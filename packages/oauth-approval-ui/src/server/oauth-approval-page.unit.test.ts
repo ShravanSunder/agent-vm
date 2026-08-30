@@ -111,6 +111,27 @@ describe('server-rendered OAuth approval page', () => {
 		expect(progressHtml).not.toContain('name="csrfToken"');
 	});
 
+	it('renders account confirmation and cancellation as native form actions', () => {
+		const html = renderOAuthApprovalPage({
+			...assets,
+			cancelAction: '/oauth/completions/completion-id/cancel',
+			csrfToken: 'c'.repeat(43),
+			formAction: '/oauth/completions/completion-id/confirm',
+			model: oauthApprovalPageModelSchema.parse({
+				accountLabel: 'human@example.test',
+				applicationLabel: 'Gmail',
+				grantedPermissionLabels: ['Gmail messages'],
+				kind: 'account-confirmation',
+			}),
+		});
+
+		expect(html).toContain('/oauth/completions/completion-id/confirm');
+		expect(html).toContain('/oauth/completions/completion-id/cancel');
+		expect(html).toContain('Confirm this account');
+		expect(html).toContain('Cancel');
+		expect(html).toContain('method="post"');
+	});
+
 	it.each([
 		{ accountLabel: 'Personal Google', kind: 'completed' },
 		{ kind: 'expired', message: 'Start again from Hermes.' },

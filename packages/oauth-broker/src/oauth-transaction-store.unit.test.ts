@@ -9,7 +9,9 @@ import { z } from 'zod';
 
 import {
 	createOAuthTransactionStore,
+	type OAuthCallbackCompletionResult,
 	type OAuthCeremonyTransaction,
+	type OAuthCompletionSession,
 	type OAuthTransactionStore,
 } from './oauth-transaction-store.js';
 
@@ -23,7 +25,20 @@ const providerGrantSchema = z
 
 type ProviderGrant = z.infer<typeof providerGrantSchema>;
 
-function createAuthorizingTransaction(now: () => number): {
+function requireCreatedCompletion(
+	result: OAuthCallbackCompletionResult<ProviderGrant>,
+): Extract<
+	OAuthCompletionSession<ProviderGrant>,
+	{ readonly kind: 'awaiting-account-confirmation' }
+> {
+	if (result.kind !== 'created') throw new Error('Expected an OAuth completion session.');
+	return result.session;
+}
+
+function createAuthorizingTransaction(
+	now: () => number,
+	existingStore?: OAuthTransactionStore<ProviderGrant>,
+): {
 	readonly authorizing: Extract<
 		OAuthCeremonyTransaction,
 		{ readonly kind: 'authorizing-application' }
@@ -34,11 +49,12 @@ function createAuthorizingTransaction(now: () => number): {
 		{ readonly kind: 'selecting-permissions' }
 	>;
 } {
-	const store = createOAuthTransactionStore({ now, providerGrantSchema });
+	const store = existingStore ?? createOAuthTransactionStore({ now, providerGrantSchema });
 	const transaction = store.createTransaction({
 		accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
 		agentId: 'hermes',
 		applicationIds: [oauthApplicationIdSchema.parse('gmail-app')],
+		authorizationMode: 'enroll-missing',
 		suggestedSelections: oauthPermissionSelectionsSchema.parse({
 			'gmail-app': { gmail: 'read' },
 		}),
@@ -109,14 +125,16 @@ describe('OAuth transaction store', () => {
 				transactionId: transaction.transactionId,
 			}),
 		).toMatchObject({ kind: 'accepted' });
-		const completion = store.completeCallback({
-			providerGrant: {
-				accessToken: 'sensitive-access',
-				providerSubject: 'google-subject-1',
-				refreshToken: 'sensitive-refresh',
-			},
-			transactionId: transaction.transactionId,
-		});
+		const completion = requireCreatedCompletion(
+			store.completeCallback({
+				providerGrant: {
+					accessToken: 'sensitive-access',
+					providerSubject: 'google-subject-1',
+					refreshToken: 'sensitive-refresh',
+				},
+				transactionId: transaction.transactionId,
+			}),
+		);
 		expect(completion.completionSessionId).not.toBe(transaction.transactionId);
 		expect(store.getTransaction(transaction.transactionId)).toBeUndefined();
 		expect(
@@ -137,6 +155,81 @@ describe('OAuth transaction store', () => {
 		).toEqual({ kind: 'rejected', reason: 'wrong-state' });
 	});
 
+	it('keeps the original ceremony identity cancellable after completion-session rotation', () => {
+		const { authorizing, store, transaction } = createAuthorizingTransaction(() => 1_000);
+		store.beginCallbackConsumption({
+			oauthState: authorizing.oauthState,
+			redirectUri: authorizing.redirectUri,
+			tailnetLogin: authorizing.tailnetLogin,
+			transactionId: transaction.transactionId,
+		});
+		const completion = requireCreatedCompletion(
+			store.completeCallback({
+				providerGrant: {
+					accessToken: 'sensitive-access',
+					providerSubject: 'google-subject-1',
+					refreshToken: 'sensitive-refresh',
+				},
+				transactionId: transaction.transactionId,
+			}),
+		);
+
+		expect(store.getCeremonyOwner(transaction.transactionId)).toMatchObject({
+			agentId: 'hermes',
+			transactionId: transaction.transactionId,
+		});
+		expect(
+			store.cancelTransaction({ agentId: 'hermes', transactionId: transaction.transactionId }),
+		).toBe(true);
+		expect(store.getCeremonyOwner(transaction.transactionId)).toBeUndefined();
+		expect(
+			store.beginCompletionCommit({
+				browserBindingSecret: completion.browserBindingSecret,
+				completionSessionId: completion.completionSessionId,
+				csrfToken: completion.csrfSecret,
+				tailnetLogin: completion.tailnetLogin,
+			}),
+		).toEqual({ kind: 'rejected', reason: 'consumed-or-missing' });
+	});
+
+	it('cancels an account-confirmation session only with its bound browser authority', () => {
+		const { authorizing, store, transaction } = createAuthorizingTransaction(() => 1_000);
+		store.beginCallbackConsumption({
+			oauthState: authorizing.oauthState,
+			redirectUri: authorizing.redirectUri,
+			tailnetLogin: authorizing.tailnetLogin,
+			transactionId: transaction.transactionId,
+		});
+		const completion = requireCreatedCompletion(
+			store.completeCallback({
+				providerGrant: {
+					accessToken: 'sensitive-access',
+					providerSubject: 'google-subject-1',
+					refreshToken: 'sensitive-refresh',
+				},
+				transactionId: transaction.transactionId,
+			}),
+		);
+
+		expect(
+			store.cancelCompletion({
+				browserBindingSecret: completion.browserBindingSecret,
+				completionSessionId: completion.completionSessionId,
+				csrfToken: 'x'.repeat(43),
+				tailnetLogin: completion.tailnetLogin,
+			}),
+		).toBeUndefined();
+		expect(
+			store.cancelCompletion({
+				browserBindingSecret: completion.browserBindingSecret,
+				completionSessionId: completion.completionSessionId,
+				csrfToken: completion.csrfSecret,
+				tailnetLogin: completion.tailnetLogin,
+			}),
+		).toMatchObject({ transactionId: transaction.transactionId });
+		expect(store.getCeremonyOwner(transaction.transactionId)).toBeUndefined();
+	});
+
 	it('invalidates restart-local authority and discards sensitive completion grants', () => {
 		const discard = vi.fn();
 		const { authorizing, transaction } = createAuthorizingTransaction(() => 1_000);
@@ -149,6 +242,7 @@ describe('OAuth transaction store', () => {
 			accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
 			agentId: 'hermes',
 			applicationIds: [oauthApplicationIdSchema.parse('gmail-app')],
+			authorizationMode: 'enroll-missing',
 		});
 		const boundReplacementTransaction = store.bindTailnetIdentity({
 			tailnetLogin: 'human@example.test',
@@ -183,6 +277,65 @@ describe('OAuth transaction store', () => {
 		store.invalidateAll();
 		expect(discard).toHaveBeenCalledOnce();
 		expect(store.getTransaction(transaction.transactionId)).toBeUndefined();
+	});
+
+	it('preserves the consuming transaction when completion-session capacity is exhausted', () => {
+		const store = createOAuthTransactionStore({
+			maxCompletionSessions: 1,
+			now: () => 1_000,
+			providerGrantSchema,
+		});
+		const first = createAuthorizingTransaction(() => 1_000, store);
+		store.beginCallbackConsumption({
+			oauthState: first.authorizing.oauthState,
+			redirectUri: first.authorizing.redirectUri,
+			tailnetLogin: first.authorizing.tailnetLogin,
+			transactionId: first.transaction.transactionId,
+		});
+		const firstCompletion = requireCreatedCompletion(
+			store.completeCallback({
+				providerGrant: {
+					accessToken: 'first-sensitive-access',
+					providerSubject: 'google-subject-1',
+					refreshToken: 'first-sensitive-refresh',
+				},
+				transactionId: first.transaction.transactionId,
+			}),
+		);
+		const second = createAuthorizingTransaction(() => 1_000, store);
+		store.beginCallbackConsumption({
+			oauthState: second.authorizing.oauthState,
+			redirectUri: second.authorizing.redirectUri,
+			tailnetLogin: second.authorizing.tailnetLogin,
+			transactionId: second.transaction.transactionId,
+		});
+
+		expect(
+			store.completeCallback({
+				providerGrant: {
+					accessToken: 'second-sensitive-access',
+					providerSubject: 'google-subject-1',
+					refreshToken: 'second-sensitive-refresh',
+				},
+				transactionId: second.transaction.transactionId,
+			}),
+		).toEqual({ kind: 'capacity-exhausted' });
+		expect(store.getTransaction(second.transaction.transactionId)).toMatchObject({
+			kind: 'consuming-callback',
+		});
+		expect(store.finishCompletion(firstCompletion.completionSessionId)).toBe(true);
+		expect(
+			requireCreatedCompletion(
+				store.completeCallback({
+					providerGrant: {
+						accessToken: 'second-sensitive-access',
+						providerSubject: 'google-subject-1',
+						refreshToken: 'second-sensitive-refresh',
+					},
+					transactionId: second.transaction.transactionId,
+				}),
+			),
+		).toMatchObject({ transactionId: second.transaction.transactionId });
 	});
 
 	it('expires pending and completion state using the injected clock', () => {

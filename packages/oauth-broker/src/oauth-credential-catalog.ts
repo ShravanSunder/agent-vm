@@ -34,6 +34,7 @@ export const oauthStoredGrantSchema = z
 	.object({
 		accountLabel: z.string().min(1).max(320),
 		accountProfileId: oauthAccountProfileIdSchema,
+		accountProfileStatus: z.enum(['partially-enrolled', 'enrolled']),
 		agentId: z.string().min(1).max(128),
 		applicationId: oauthApplicationIdSchema,
 		credentialId: oauthCredentialIdSchema,
@@ -61,6 +62,7 @@ export const oauthEnrollmentGrantInputSchema = z
 	.object({
 		accountLabel: z.string().min(1).max(320),
 		accountProfileId: oauthAccountProfileIdSchema,
+		accountProfileStatus: z.enum(['partially-enrolled', 'enrolled']),
 		agentId: z.string().min(1).max(128),
 		applicationId: oauthApplicationIdSchema,
 		credentialId: oauthCredentialIdSchema,
@@ -153,16 +155,13 @@ function grantFromRows(props: {
 	readonly grant: typeof oauthGrantsTable.$inferSelect;
 	readonly profile: typeof oauthAccountProfilesTable.$inferSelect;
 }): OAuthStoredGrant {
-	if (
-		props.profile.accountLabel === null ||
-		props.profile.providerSubject === null ||
-		props.profile.status === 'unbound'
-	) {
+	if (props.profile.accountLabel === null || props.profile.providerSubject === null) {
 		throw new Error('OAuth grant references an unbound account profile.');
 	}
 	return oauthStoredGrantSchema.parse({
 		accountLabel: props.profile.accountLabel,
 		accountProfileId: props.profile.accountProfileId,
+		accountProfileStatus: props.profile.status,
 		agentId: props.profile.agentId,
 		applicationId: props.grant.applicationId,
 		credentialId: props.grant.credentialId,
@@ -322,7 +321,7 @@ export async function openOAuthCredentialCatalog(props: {
 							providerId: parsedInput.providerId,
 							providerSubject: parsedInput.providerSubject,
 							recordRevision: (existingProfile?.recordRevision ?? 0) + 1,
-							status: 'partially-enrolled',
+							status: parsedInput.accountProfileStatus,
 							updatedAtMs: timestampMs,
 							zoneId: parsedInput.zoneId,
 						})
@@ -331,7 +330,7 @@ export async function openOAuthCredentialCatalog(props: {
 								accountLabel: parsedInput.accountLabel,
 								providerSubject: parsedInput.providerSubject,
 								recordRevision: (existingProfile?.recordRevision ?? 0) + 1,
-								status: 'partially-enrolled',
+								status: parsedInput.accountProfileStatus,
 								updatedAtMs: timestampMs,
 							},
 							target: oauthAccountProfilesTable.profileRecordId,

@@ -182,6 +182,7 @@ function PermissionSelectionPage(props: {
 }
 
 function AccountConfirmationPage(props: {
+	readonly cancelAction?: string | undefined;
 	readonly csrfToken: string;
 	readonly formAction: string;
 	readonly model: Extract<OAuthApprovalPageModel, { readonly kind: 'account-confirmation' }>;
@@ -203,9 +204,21 @@ function AccountConfirmationPage(props: {
 			</section>
 			<form action={props.formAction} method="post">
 				<input name="csrfToken" type="hidden" value={props.csrfToken} />
-				<button class="primary-button" type="submit">
-					Confirm this account
-				</button>
+				<div class="form-actions">
+					<button class="primary-button" type="submit">
+						Confirm this account
+					</button>
+					{props.cancelAction === undefined ? null : (
+						<button
+							class="secondary-button"
+							formAction={props.cancelAction}
+							formMethod="post"
+							type="submit"
+						>
+							Cancel
+						</button>
+					)}
+				</div>
 			</form>
 		</>
 	);
@@ -325,6 +338,7 @@ export function renderOAuthApprovalPage(unparsedProps: OAuthApprovalRenderProps)
 			}
 			return (
 				<AccountConfirmationPage
+					cancelAction={renderProps.cancelAction}
 					csrfToken={renderProps.csrfToken}
 					formAction={renderProps.formAction}
 					model={model}

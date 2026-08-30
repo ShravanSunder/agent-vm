@@ -60,6 +60,7 @@ function createGrant(props: {
 	return oauthStoredGrantSchema.parse({
 		accountLabel: 'Personal Google',
 		accountProfileId,
+		accountProfileStatus: 'enrolled',
 		agentId: 'hermes',
 		applicationId,
 		credentialId,

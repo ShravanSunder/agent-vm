@@ -92,9 +92,11 @@ function cookieHeader(response: Response): string {
 
 function createBrokerHarness(): {
 	readonly brokerService: GoogleOAuthBrokerService;
+	readonly cancelBrowserCompletion: ReturnType<typeof vi.fn>;
 	readonly cancelBrowserTransaction: ReturnType<typeof vi.fn>;
 	readonly submitPermissions: ReturnType<typeof vi.fn>;
 } {
+	const cancelBrowserCompletion = vi.fn(() => true);
 	const cancelBrowserTransaction = vi.fn(() => true);
 	const submitPermissions = vi.fn(
 		(): GoogleOAuthPermissionSubmissionResult => ({
@@ -106,6 +108,7 @@ function createBrokerHarness(): {
 	);
 	return {
 		brokerService: {
+			cancelBrowserCompletion,
 			cancelBrowserTransaction,
 			close: async () => undefined,
 			confirmAccount: async () => ({ accountLabel: 'Personal Google', kind: 'completed' }),
@@ -150,6 +153,7 @@ function createBrokerHarness(): {
 			stopAdmission: () => undefined,
 			submitPermissions,
 		},
+		cancelBrowserCompletion,
 		cancelBrowserTransaction,
 		submitPermissions,
 	};
@@ -346,6 +350,42 @@ describe('OAuth HTTPS application', () => {
 		expect(body).toContain('Connecting Google applications');
 		expect(body).toContain('Workspace');
 		expect(body).toContain('https://accounts.google.test/authorize-next');
+	});
+
+	it('cancels account confirmation through the bound native form route', async () => {
+		const harness = createBrokerHarness();
+		const completionId = 'completion_session_1234567890abcdef';
+		const app = createOAuthHttpsApp({
+			assets: approvalAssets(),
+			brokerService: harness.brokerService,
+			publicBaseUrl,
+			tailnetIdentityResolver: {
+				resolvePeerIdentity: async () => ({ loginName: 'authorized-human@example.test' }),
+			},
+		});
+
+		const response = await app.request(
+			`${publicBaseUrl}/oauth/completions/${completionId}/cancel`,
+			{
+				body: new URLSearchParams({ csrfToken }),
+				headers: {
+					'content-type': 'application/x-www-form-urlencoded',
+					cookie: `agent_vm_oauth_completion=${completionId}; agent_vm_oauth_completion_binding=${browserBindingSecret}`,
+					origin: publicBaseUrl,
+				},
+				method: 'POST',
+			},
+			requestEnvironment(),
+		);
+
+		expect(response.status).toBe(200);
+		expect(await response.text()).toContain('Authorization was cancelled.');
+		expect(harness.cancelBrowserCompletion).toHaveBeenCalledWith({
+			browserBindingSecret,
+			completionSessionId: completionId,
+			csrfToken,
+			tailnetLogin: 'authorized-human@example.test',
+		});
 	});
 
 	it('renders a partial completion with a native retry link', async () => {

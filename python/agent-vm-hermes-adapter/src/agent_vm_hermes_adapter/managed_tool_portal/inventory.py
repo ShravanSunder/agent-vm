@@ -294,8 +294,8 @@ class InventoryCoordinator:
         *,
         attempt_number: int,
         attempt_deadline: float,
-    ) -> tuple[tuple[str, tuple[InventoryPortalToolSummary, ...]], ...]:
-        observations: list[tuple[str, tuple[InventoryPortalToolSummary, ...]]] = []
+    ) -> tuple[tuple[str, tuple[InventoryPortalToolSummary, ...], bool], ...]:
+        observations: list[tuple[str, tuple[InventoryPortalToolSummary, ...], bool]] = []
         batches = tuple(
             projection.namespaces[offset : offset + PORTAL_BATCH_MAX_ITEMS]
             for offset in range(0, len(projection.namespaces), PORTAL_BATCH_MAX_ITEMS)
@@ -351,7 +351,11 @@ class InventoryCoordinator:
                 elif result_item.value.namespaces not in ((), (requested_namespace,)):
                     raise _AttemptFailure(InventoryFailureClass.MALFORMED_RESPONSE)
                 observations.append(
-                    (requested_namespace, result_item.value.tools),
+                    (
+                        requested_namespace,
+                        result_item.value.tools,
+                        result_item.value.has_more_tools,
+                    ),
                 )
         return tuple(observations)
 
@@ -412,13 +416,17 @@ class InventoryCoordinator:
         self,
         population: PopulationStarted[InventoryCacheKey, InventoryReadyValue],
         projection: InventoryProjection,
-        observations: tuple[tuple[str, tuple[InventoryPortalToolSummary, ...]], ...],
+        observations: tuple[tuple[str, tuple[InventoryPortalToolSummary, ...], bool], ...],
     ) -> CacheSnapshot[InventoryCacheKey, InventoryReadyValue]:
-        tools_by_name = {namespace: tools for namespace, tools in observations}
+        tools_by_name = {namespace: tools for namespace, tools, _has_more in observations}
+        has_more_tools_by_name = {
+            namespace: has_more_tools for namespace, _tools, has_more_tools in observations
+        }
         inventory = NamespaceInventory(
             inventory_id=_inventory_id(projection),
             namespaces=tuple(
                 NamespaceAvailability(
+                    has_more_tools=has_more_tools_by_name.get(namespace_discovery.namespace, False),
                     namespace=namespace_discovery.namespace,
                     summary=namespace_discovery.summary,
                     status="available"

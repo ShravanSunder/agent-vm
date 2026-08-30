@@ -290,6 +290,7 @@ describe('OAuth config contract', () => {
 		'https://auth.claw.askluna.xyz',
 		'https://auth.claw.askluna.xyz:18899',
 		'https://auth.claw.askluna.xyz:18900/path',
+		'https://oauth.example.test:18900',
 		'http://auth.claw.askluna.xyz',
 	])('rejects non-origin OAuth public URL %s', (publicBaseUrl) => {
 		const input = validOAuthConfigInput() as Record<string, unknown>;

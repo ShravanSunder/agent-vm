@@ -109,6 +109,7 @@ class InventoryPortalDiagnostic(_FrozenModel):
 class InventoryPortalListValue(_FrozenModel):
     """Validated namespace and bounded tool summary returned by Portal list."""
 
+    has_more_tools: bool = False
     namespaces: tuple[str, ...]
     tools: tuple[InventoryPortalToolSummary, ...]
 
@@ -378,6 +379,7 @@ def _project_validated_portal_list_result(model: BaseModel) -> InventoryPortalLi
                 id=item.id,
                 status="ok",
                 value=InventoryPortalListValue(
+                    has_more_tools=item.value.next_cursor is not None,
                     namespaces=tuple(item.value.namespaces),
                     tools=tuple(
                         InventoryPortalToolSummary(

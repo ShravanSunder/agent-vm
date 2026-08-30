@@ -384,6 +384,7 @@ export function createOAuthHttpsApp(props: {
 			return context.html(
 				renderPage({
 					assets: props.assets,
+					cancelAction: `/oauth/completions/${result.confirmation.completionSessionId}/cancel`,
 					csrfToken: result.confirmation.csrfToken,
 					formAction: `/oauth/completions/${result.confirmation.completionSessionId}/confirm`,
 					model: confirmationPageModel(result.confirmation),
@@ -394,6 +395,43 @@ export function createOAuthHttpsApp(props: {
 				renderPage({
 					assets: props.assets,
 					model: { kind: 'failed', message: 'Google authorization could not be verified.' },
+				}),
+				403,
+			);
+		}
+	});
+
+	app.post('/oauth/completions/:completionId/cancel', async (context) => {
+		try {
+			requireSameOrigin(context.req.header('origin'));
+			const completionId = context.req.param('completionId');
+			if (getCookie(context, completionIdCookieName) !== completionId) {
+				throw new Error('OAuth completion cookie does not match the route.');
+			}
+			const browserBindingSecret = getCookie(context, completionBindingCookieName);
+			if (browserBindingSecret === undefined) {
+				throw new Error('OAuth completion binding is missing.');
+			}
+			const form = await context.req.formData();
+			const cancelled = props.brokerService.cancelBrowserCompletion({
+				browserBindingSecret,
+				completionSessionId: completionId,
+				csrfToken: requireFormString(form, 'csrfToken'),
+				tailnetLogin: await resolveTailnetLogin(context),
+			});
+			if (!cancelled) throw new Error('OAuth completion cancellation was rejected.');
+			clearCeremonyCookies(context);
+			return context.html(
+				renderPage({
+					assets: props.assets,
+					model: { kind: 'cancelled', message: 'Authorization was cancelled.' },
+				}),
+			);
+		} catch {
+			return context.html(
+				renderPage({
+					assets: props.assets,
+					model: { kind: 'failed', message: 'Authorization cancellation was rejected.' },
 				}),
 				403,
 			);
@@ -430,6 +468,9 @@ export function createOAuthHttpsApp(props: {
 				);
 			}
 			if (result.kind === 'subject-mismatch') throw new Error('Google subject mismatch.');
+			if (result.kind === 'authorization-denied') {
+				throw new Error('OAuth grant replacement was not authorized.');
+			}
 			return context.html(
 				renderPage({
 					assets: props.assets,

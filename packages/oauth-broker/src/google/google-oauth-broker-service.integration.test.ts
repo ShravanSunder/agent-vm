@@ -308,6 +308,98 @@ describe('Google OAuth broker service', () => {
 				},
 			}),
 		).toEqual({ failure: { kind: 'consumed' }, kind: 'authorization-failed' });
+
+		const restarted = await service.executeAuthorizationAction({
+			agentId: 'hermes',
+			request: {
+				actionId: 'oauth_authorization.begin',
+				accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
+			},
+		});
+		if (restarted.kind !== 'authorization-begun') throw new Error('Expected restarted flow.');
+		const restartedPage = service.getPermissionPage({
+			tailnetLogin: 'human@example.test',
+			transactionId: restarted.transactionId,
+		});
+		const restartedRedirect = service.submitPermissions({
+			browserBindingSecret: restartedPage.browserBindingSecret,
+			csrfToken: restartedPage.csrfToken,
+			selections: oauthPermissionSelectionsSchema.parse({ 'gmail-app': { gmail: 'read' } }),
+			tailnetLogin: 'human@example.test',
+			transactionId: restarted.transactionId,
+		});
+		if (restartedRedirect.kind !== 'redirect') throw new Error('Expected restarted redirect.');
+		expect(
+			service.cancelBrowserTransaction({
+				browserBindingSecret: restartedPage.browserBindingSecret,
+				csrfToken: restartedPage.csrfToken,
+				tailnetLogin: 'human@example.test',
+				transactionId: restarted.transactionId,
+			}),
+		).toBe(true);
+	});
+
+	it('keeps callback completion owned by the original ceremony and honours agent cancellation', async () => {
+		const service = await createService();
+		const begun = await service.executeAuthorizationAction({
+			agentId: 'hermes',
+			request: {
+				actionId: 'oauth_authorization.begin',
+				accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
+			},
+		});
+		if (begun.kind !== 'authorization-begun') throw new Error('Expected begun authorization.');
+		const page = service.getPermissionPage({
+			tailnetLogin: 'human@example.test',
+			transactionId: begun.transactionId,
+		});
+		const redirect = service.submitPermissions({
+			browserBindingSecret: page.browserBindingSecret,
+			csrfToken: page.csrfToken,
+			selections: oauthPermissionSelectionsSchema.parse({ 'gmail-app': { gmail: 'read' } }),
+			tailnetLogin: 'human@example.test',
+			transactionId: begun.transactionId,
+		});
+		if (redirect.kind !== 'redirect') throw new Error('Expected Google redirect.');
+		const oauthState = new URL(redirect.authorizationUrl).searchParams.get('state');
+		if (oauthState === null) throw new Error('Google redirect omitted OAuth state.');
+		const callback = await service.handleGoogleCallback({
+			authorizationCode: 'completion-cancel-code',
+			browserBindingSecret: redirect.browserBindingSecret,
+			oauthState,
+			redirectUri,
+			tailnetLogin: 'human@example.test',
+			transactionId: begun.transactionId,
+		});
+		if (callback.kind !== 'confirmation') throw new Error('Expected account confirmation.');
+
+		expect(
+			await service.executeAuthorizationAction({
+				agentId: 'hermes',
+				request: {
+					actionId: 'oauth_authorization.begin',
+					accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
+				},
+			}),
+		).toEqual({ kind: 'authorization-pending', transactionId: begun.transactionId });
+		expect(
+			await service.executeAuthorizationAction({
+				agentId: 'hermes',
+				request: {
+					actionId: 'oauth_authorization.cancel',
+					transactionId: begun.transactionId,
+				},
+			}),
+		).toEqual({ kind: 'authorization-cancelled' });
+		await expect(
+			service.confirmAccount({
+				browserBindingSecret: callback.confirmation.browserBindingSecret,
+				completionSessionId: callback.confirmation.completionSessionId,
+				csrfToken: callback.confirmation.csrfToken,
+				tailnetLogin: 'human@example.test',
+			}),
+		).rejects.toThrow('consumed-or-missing');
+		expect(catalog?.listGrantsForAgent({ agentId: 'hermes', zoneId: 'apollofam' })).toEqual([]);
 	});
 
 	it('runs a tailnet-bound enrollment and commits one encrypted grant', async () => {
@@ -374,6 +466,20 @@ describe('Google OAuth broker service', () => {
 			tailnetLogin: 'human@example.test',
 		});
 		expect(completed).toEqual({ accountLabel: 'human@example.test', kind: 'completed' });
+		expect(
+			await service.executeAuthorizationAction({
+				agentId: 'hermes',
+				request: {
+					actionId: 'oauth_authorization.status',
+					transactionId: begun.transactionId,
+				},
+			}),
+		).toMatchObject({
+			accountLabel: 'human@example.test',
+			accountProfileId: 'personal-google',
+			applicationId: 'gmail-app',
+			kind: 'authorization-completed',
+		});
 
 		const listed = await service.executeAuthorizationAction({
 			agentId: 'hermes',
@@ -437,6 +543,175 @@ describe('Google OAuth broker service', () => {
 		expect(new TextDecoder().decode(runtimeCredential.accessToken)).toBe(
 			'provider-access-token-marker',
 		);
+		expect(
+			await service.executeAuthorizationAction({
+				agentId: 'hermes',
+				request: {
+					actionId: 'oauth_authorization.begin',
+					accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
+				},
+			}),
+		).toEqual({ failure: { kind: 'authorization-denied' }, kind: 'authorization-failed' });
+		const reauthorization = await service.executeAuthorizationAction({
+			agentId: 'hermes',
+			request: {
+				actionId: 'oauth_authorization.reauthorize',
+				accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
+				applicationId: oauthApplicationIdSchema.parse('gmail-app'),
+			},
+		});
+		if (reauthorization.kind !== 'authorization-begun') {
+			throw new Error('Expected approved reauthorization to begin.');
+		}
+		const reauthorizationPage = service.getPermissionPage({
+			tailnetLogin: 'human@example.test',
+			transactionId: reauthorization.transactionId,
+		});
+		const reauthorizationRedirect = service.submitPermissions({
+			browserBindingSecret: reauthorizationPage.browserBindingSecret,
+			csrfToken: reauthorizationPage.csrfToken,
+			selections: oauthPermissionSelectionsSchema.parse({
+				'gmail-app': { gmail: 'read' },
+			}),
+			tailnetLogin: 'human@example.test',
+			transactionId: reauthorization.transactionId,
+		});
+		if (reauthorizationRedirect.kind !== 'redirect') {
+			throw new Error('Expected approved reauthorization redirect.');
+		}
+		const reauthorizationState = new URL(reauthorizationRedirect.authorizationUrl).searchParams.get(
+			'state',
+		);
+		if (reauthorizationState === null) {
+			throw new Error('Reauthorization redirect omitted OAuth state.');
+		}
+		const reauthorizationCallback = await service.handleGoogleCallback({
+			authorizationCode: 'reauthorization-code',
+			browserBindingSecret: reauthorizationRedirect.browserBindingSecret,
+			oauthState: reauthorizationState,
+			redirectUri,
+			tailnetLogin: 'human@example.test',
+			transactionId: reauthorization.transactionId,
+		});
+		if (reauthorizationCallback.kind !== 'confirmation') {
+			throw new Error('Expected reauthorization account confirmation.');
+		}
+		expect(
+			await service.confirmAccount({
+				browserBindingSecret: reauthorizationCallback.confirmation.browserBindingSecret,
+				completionSessionId: reauthorizationCallback.confirmation.completionSessionId,
+				csrfToken: reauthorizationCallback.confirmation.csrfToken,
+				tailnetLogin: 'human@example.test',
+			}),
+		).toEqual({ accountLabel: 'human@example.test', kind: 'completed' });
+	});
+
+	it('rejects reauthorization that would downgrade an existing grant before revocation', async () => {
+		const service = await createService();
+		const initial = await service.executeAuthorizationAction({
+			agentId: 'hermes',
+			request: {
+				actionId: 'oauth_authorization.begin',
+				accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
+			},
+		});
+		if (initial.kind !== 'authorization-begun') throw new Error('Expected initial enrollment.');
+		const initialPage = service.getPermissionPage({
+			tailnetLogin: 'human@example.test',
+			transactionId: initial.transactionId,
+		});
+		const initialRedirect = service.submitPermissions({
+			browserBindingSecret: initialPage.browserBindingSecret,
+			csrfToken: initialPage.csrfToken,
+			selections: oauthPermissionSelectionsSchema.parse({ 'gmail-app': { gmail: 'write' } }),
+			tailnetLogin: 'human@example.test',
+			transactionId: initial.transactionId,
+		});
+		if (initialRedirect.kind !== 'redirect') throw new Error('Expected initial redirect.');
+		const initialState = new URL(initialRedirect.authorizationUrl).searchParams.get('state');
+		if (initialState === null) throw new Error('Initial redirect omitted OAuth state.');
+		const initialCallback = await service.handleGoogleCallback({
+			authorizationCode: 'initial-write-code',
+			browserBindingSecret: initialRedirect.browserBindingSecret,
+			oauthState: initialState,
+			redirectUri,
+			tailnetLogin: 'human@example.test',
+			transactionId: initial.transactionId,
+		});
+		if (initialCallback.kind !== 'confirmation') throw new Error('Expected initial confirmation.');
+		expect(initialCallback.confirmation.grantedPermissionLabels).toContain('Gmail messages');
+		await service.confirmAccount({
+			browserBindingSecret: initialCallback.confirmation.browserBindingSecret,
+			completionSessionId: initialCallback.confirmation.completionSessionId,
+			csrfToken: initialCallback.confirmation.csrfToken,
+			tailnetLogin: 'human@example.test',
+		});
+		expect(
+			await service.resolveRuntimeCredential({
+				accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
+				agentId: 'hermes',
+				applicationId: oauthApplicationIdSchema.parse('gmail-app'),
+				minimumPermission: 'read',
+				serviceId: 'gmail',
+			}),
+		).toMatchObject({ kind: 'ready' });
+
+		const reauthorization = await service.executeAuthorizationAction({
+			agentId: 'hermes',
+			request: {
+				actionId: 'oauth_authorization.reauthorize',
+				accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
+				applicationId: oauthApplicationIdSchema.parse('gmail-app'),
+			},
+		});
+		if (reauthorization.kind !== 'authorization-begun') {
+			throw new Error('Expected reauthorization.');
+		}
+		const reauthorizationPage = service.getPermissionPage({
+			tailnetLogin: 'human@example.test',
+			transactionId: reauthorization.transactionId,
+		});
+		const reauthorizationRedirect = service.submitPermissions({
+			browserBindingSecret: reauthorizationPage.browserBindingSecret,
+			csrfToken: reauthorizationPage.csrfToken,
+			selections: oauthPermissionSelectionsSchema.parse({ 'gmail-app': { gmail: 'read' } }),
+			tailnetLogin: 'human@example.test',
+			transactionId: reauthorization.transactionId,
+		});
+		if (reauthorizationRedirect.kind !== 'redirect') {
+			throw new Error('Expected reauthorization redirect.');
+		}
+		const reauthorizationState = new URL(reauthorizationRedirect.authorizationUrl).searchParams.get(
+			'state',
+		);
+		if (reauthorizationState === null) throw new Error('Reauthorization omitted OAuth state.');
+		const reauthorizationCallback = await service.handleGoogleCallback({
+			authorizationCode: 'downgrade-code',
+			browserBindingSecret: reauthorizationRedirect.browserBindingSecret,
+			oauthState: reauthorizationState,
+			redirectUri,
+			tailnetLogin: 'human@example.test',
+			transactionId: reauthorization.transactionId,
+		});
+		if (reauthorizationCallback.kind !== 'confirmation') {
+			throw new Error('Expected downgrade confirmation.');
+		}
+		expect(
+			await service.confirmAccount({
+				browserBindingSecret: reauthorizationCallback.confirmation.browserBindingSecret,
+				completionSessionId: reauthorizationCallback.confirmation.completionSessionId,
+				csrfToken: reauthorizationCallback.confirmation.csrfToken,
+				tailnetLogin: 'human@example.test',
+			}),
+		).toEqual({ kind: 'authorization-denied' });
+		expect(
+			catalog?.getGrantForAccountApplication({
+				accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
+				agentId: 'hermes',
+				applicationId: oauthApplicationIdSchema.parse('gmail-app'),
+				zoneId: 'apollofam',
+			})?.grantedScopes,
+		).toContain(oauthScopeSchema.parse('gmail.modify'));
 	});
 
 	it('continues one browser ceremony across two configured applications', async () => {

@@ -56,7 +56,7 @@ def _candidate_orientation(
                     lines.append(f"  {_orientation_child_text(tool.name)}")
                     if tool.description is not None:
                         lines.append(f"    {_orientation_child_text(tool.description)}")
-                if displayed_tool_count < len(item.tools):
+                if displayed_tool_count < len(item.tools) or item.has_more_tools:
                     lines.append("  Additional tools are available through list/search.")
     if omitted_count > 0:
         lines.append(

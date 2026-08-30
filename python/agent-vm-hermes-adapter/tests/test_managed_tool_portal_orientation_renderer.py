@@ -217,6 +217,28 @@ class ManagedToolPortalOrientationRendererTests(unittest.TestCase):
             rendered.orientation,
         )
 
+    def test_reports_additional_tools_when_the_inventory_probe_has_a_next_page(self) -> None:
+        rendered = _require_rendered(
+            render_orientation(
+                NamespaceInventory(
+                    inventory_id="inventory-a",
+                    namespaces=(
+                        NamespaceAvailability(
+                            has_more_tools=True,
+                            namespace="oauth_authorization",
+                            status="available",
+                            tools=(NamespaceToolSummary(name="list"),),
+                        ),
+                    ),
+                )
+            )
+        )
+
+        self.assertIn(
+            "Additional tools are available through list/search.",
+            rendered.orientation,
+        )
+
     def test_escapes_control_characters_that_could_forge_orientation_structure(self) -> None:
         rendered = _require_rendered(
             render_orientation(

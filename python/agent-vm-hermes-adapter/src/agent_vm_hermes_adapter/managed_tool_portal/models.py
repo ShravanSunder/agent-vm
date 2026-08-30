@@ -57,6 +57,7 @@ class NamespaceDiscovery(_FrozenModel):
 class NamespaceAvailability(_FrozenModel):
     """One admitted namespace and its fail-closed live availability status."""
 
+    has_more_tools: bool = False
     namespace: str = Field(min_length=1)
     summary: str | None = Field(default=None, min_length=1, max_length=500)
     status: AvailabilityStatus

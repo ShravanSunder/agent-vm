@@ -40,6 +40,7 @@ export const oauthBrowserPublicBaseUrlSchema = z.url().refine((value) => {
 	const url = new URL(value);
 	return (
 		url.protocol === 'https:' &&
+		url.hostname === 'auth.claw.askluna.xyz' &&
 		url.username.length === 0 &&
 		url.password.length === 0 &&
 		url.port === '18900' &&
@@ -47,7 +48,7 @@ export const oauthBrowserPublicBaseUrlSchema = z.url().refine((value) => {
 		url.search.length === 0 &&
 		url.hash.length === 0
 	);
-}, 'OAuth publicBaseUrl must be one HTTPS origin on port 18900 without credentials, path, query, or fragment.');
+}, 'OAuth publicBaseUrl must be the auth.claw.askluna.xyz HTTPS origin on port 18900 without credentials, path, query, or fragment.');
 
 export const oauthPermissionScopeMappingSchema = z
 	.object({

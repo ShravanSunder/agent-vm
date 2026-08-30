@@ -74,6 +74,7 @@ const controllerRuntimeTestRoot = path.join(
 function createPreparedOAuthRuntimeStub(events: string[]): PreparedControllerOAuthRuntime {
 	return {
 		brokerService: {
+			cancelBrowserCompletion: () => false,
 			cancelBrowserTransaction: () => false,
 			close: async () => {
 				events.push('oauth-admission-stopped');

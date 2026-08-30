@@ -75,6 +75,7 @@ function createEnrollmentInput(props: {
 	return {
 		accountLabel: 'Personal Google',
 		accountProfileId,
+		accountProfileStatus: 'enrolled',
 		agentId: 'hermes',
 		applicationId,
 		credentialId: selectedCredentialId,
@@ -115,6 +116,7 @@ describe('OAuth credential catalog', () => {
 		const committed = openCatalog.commitEnrollmentGrant(initialInput);
 		expect(committed).toMatchObject({ kind: 'committed' });
 		if (committed.kind !== 'committed') throw new Error('Expected committed OAuth grant.');
+		expect(committed.grant.accountProfileStatus).toBe('enrolled');
 		expect(committed.grant.recordRevision).toBe(1);
 		expect(
 			openCatalog.getGrantForAccountApplication({

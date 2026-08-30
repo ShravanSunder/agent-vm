@@ -417,6 +417,32 @@ describe('credentialed runtime manager', () => {
 		).resolves.toEqual({ kind: 'busy', retryable: true });
 		expect(materializeWhileBusy).not.toHaveBeenCalled();
 		await first.command.complete({ kind: 'completed' });
+
+		const reusedAccessTokenBytes = new TextEncoder().encode('oauth-reused-access-token-marker');
+		const reused = await fixture.manager.acquireCommand({
+			finalAuthorization: async () => true,
+			materializeResolution: async () => ({
+				dynamicHttpMediation: {
+					allowedHosts: ['gmail.googleapis.com'],
+					credentialId: 'credential-a',
+					environmentName: 'GOG_ACCESS_TOKEN',
+					kind: 'dynamic_http_mediation' as const,
+					materialRevision: 'sha256:material-a',
+					placeholderValue: 'GONDOLIN_SECRET_TEST_PLACEHOLDER',
+					secretValue: reusedAccessTokenBytes,
+				},
+				resolution: oauthResolution('sha256:oauth-runtime-a'),
+			}),
+			operationId: 'oauth-operation-reused',
+			ownerIdentity,
+			runtimeIdentity: { agentId: 'sun', zoneId: 'zone-a' },
+		});
+		if (reused.kind !== 'acquired') throw new Error('Expected reused OAuth acquisition.');
+		expect(fixture.createManagedVm).toHaveBeenCalledOnce();
+		expect([...reusedAccessTokenBytes]).toEqual(
+			Array.from({ length: reusedAccessTokenBytes.byteLength }, () => 0),
+		);
+		await reused.command.complete({ kind: 'completed' });
 	});
 
 	it('retires the prior agent runtime before admitting changed OAuth material', async () => {
