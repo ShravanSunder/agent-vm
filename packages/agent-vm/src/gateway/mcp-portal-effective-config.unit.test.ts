@@ -301,6 +301,30 @@ describe('MCP Portal effective config materialization', () => {
 		).rejects.toThrow('require the existing Managed VM image preparation capability');
 	});
 
+	it('does not prepare an ephemeral image for a policy-unreachable operation', async () => {
+		const toolPortalConfig = parseToolPortalConfigForTest(
+			createEphemeralConfiguredCliToolPortalConfigInput(),
+		);
+		if (toolPortalConfig.mode !== 'managed') throw new Error('Expected managed config.');
+		const namespacePolicy = toolPortalConfig.profiles.default?.namespaces.controller;
+		if (namespacePolicy?.backend.kind !== 'controller_execution') {
+			throw new Error('Expected controller execution namespace.');
+		}
+		namespacePolicy.tools.allow = [];
+		namespacePolicy.calls.withoutApproval.allow = [];
+
+		const result = await resolveMcpPortalEffectiveConfigFromConfig({
+			...createPlanPropsForTest({
+				mcpConfig: { providers: {}, schemaVersion: 1 },
+				toolPortalConfig,
+			}),
+			authoredConfigDir: path.join(tmpdir(), 'agent-vm-authored-tool-portal'),
+		});
+		expect(
+			result.effectiveToolPortalConfig.profiles.default?.namespaces.controller,
+		).toBeUndefined();
+	});
+
 	it('changes binding freshness when prepared bytes change behind one recipe path', async () => {
 		let fingerprint = 'fingerprint-prepared-a';
 		const props = {

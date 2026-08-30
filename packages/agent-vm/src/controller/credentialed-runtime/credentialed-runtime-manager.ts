@@ -157,6 +157,14 @@ export function createCredentialedRuntimeManager(props: {
 	const recordWriter =
 		props.recordWriter ??
 		createCredentialedRuntimeRecordWriter({ controllerStateDir: props.controllerStateDir });
+	const registerRuntimeKeyForZone = (zoneId: string, key: string): void => {
+		let zoneKeys = runtimeKeysByZoneId.get(zoneId);
+		if (zoneKeys === undefined) {
+			zoneKeys = new Set<string>();
+			runtimeKeysByZoneId.set(zoneId, zoneKeys);
+		}
+		zoneKeys.add(key);
+	};
 
 	const retireLiveUnderLock = async (
 		key: string,
@@ -288,12 +296,7 @@ export function createCredentialedRuntimeManager(props: {
 			return { kind: 'busy', retryable: true };
 		}
 		reservedAcquisitionKeys.add(key);
-		let zoneKeys = runtimeKeysByZoneId.get(request.resolution.zoneId);
-		if (zoneKeys === undefined) {
-			zoneKeys = new Set<string>();
-			runtimeKeysByZoneId.set(request.resolution.zoneId, zoneKeys);
-		}
-		zoneKeys.add(key);
+		registerRuntimeKeyForZone(request.resolution.zoneId, key);
 		try {
 			return await locks.runExclusive(key, async () => {
 				if (admissionInvalidated()) {
@@ -710,7 +713,9 @@ export function createCredentialedRuntimeManager(props: {
 				now,
 				recordsDirectoryPath: recordWriter.recordsDirectoryPath(zoneId),
 			})) {
-				ownerUnsafeKeys.add(runtimeKey(unsafeIdentity));
+				const key = runtimeKey(unsafeIdentity);
+				ownerUnsafeKeys.add(key);
+				registerRuntimeKeyForZone(zoneId, key);
 			}
 		},
 		retire,

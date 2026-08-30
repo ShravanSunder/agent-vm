@@ -1,3 +1,5 @@
+import { isIP } from 'node:net';
+
 import { z } from 'zod';
 
 import { jsonObjectSchema } from './json-value.js';
@@ -201,6 +203,31 @@ export const configuredCliCredentialLogicalNameSchema = z
 	.string()
 	.regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u);
 
+function isCanonicalExactNetworkHost(value: string): boolean {
+	if (value !== value.toLowerCase()) return false;
+	if (isIP(value) !== 0) return true;
+	if (value.length > 253 || value.endsWith('.')) return false;
+	return value
+		.split('.')
+		.every(
+			(label) =>
+				label.length > 0 && label.length <= 63 && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/u.test(label),
+		);
+}
+
+export const configuredCliExactNetworkHostSchema = z
+	.string()
+	.min(1)
+	.refine(isCanonicalExactNetworkHost, {
+		message: 'Configured CLI hosts must be canonical exact DNS names or IP addresses.',
+	});
+
+const configuredCliExactNetworkHostsSchema = z
+	.array(configuredCliExactNetworkHostSchema)
+	.refine((hosts) => new Set(hosts).size === hosts.length, {
+		message: 'Configured CLI hosts must be unique.',
+	});
+
 export const configuredCliCredentialRelativePathSchema = z
 	.string()
 	.min(1)
@@ -257,7 +284,7 @@ const configuredCliCredentialFilesSchema = z
 
 const configuredCliMediatedCredentialSourceSchema = z
 	.object({
-		hosts: z.array(z.string().min(1)).min(1),
+		hosts: configuredCliExactNetworkHostsSchema.min(1),
 		secret: secretValueSchema,
 	})
 	.strict();
@@ -319,14 +346,14 @@ function validateFileCredentialProjection(
 			context.addIssue({
 				code: z.ZodIssueCode.custom,
 				message: 'Configured CLI credential file sources must be unique.',
-				path: ['credentialFiles', mappingIndex, 'source'],
+				path: ['credentialProjection', 'credentialFiles', mappingIndex, 'source'],
 			});
 		}
 		if (seenPaths.has(mapping.path)) {
 			context.addIssue({
 				code: z.ZodIssueCode.custom,
 				message: 'Configured CLI credential file paths must be unique.',
-				path: ['credentialFiles', mappingIndex, 'path'],
+				path: ['credentialProjection', 'credentialFiles', mappingIndex, 'path'],
 			});
 		}
 		seenSources.add(mapping.source);
@@ -337,7 +364,7 @@ function validateFileCredentialProjection(
 			context.addIssue({
 				code: z.ZodIssueCode.custom,
 				message: 'Configured CLI credential environment references an unknown file source.',
-				path: ['credentialEnvironment', environmentName, 'source'],
+				path: ['credentialProjection', 'credentialEnvironment', environmentName, 'source'],
 			});
 		}
 	}
@@ -373,7 +400,11 @@ function validateCredentialedManagedVmTarget(
 		context.addIssue({
 			code: z.ZodIssueCode.custom,
 			message: 'Configured CLI credential and inherited environment names must not overlap.',
-			path: ['credentialProjection', 'environment', environmentName],
+			path: [
+				'credentialProjection',
+				projection.kind === 'file_binding' ? 'credentialEnvironment' : 'environment',
+				environmentName,
+			],
 		});
 	}
 }
@@ -464,7 +495,7 @@ export const configuredCliExecutionTargetSchema = z.discriminatedUnion('kind', [
 		.strict(),
 	z
 		.object({
-			allowedHosts: z.array(z.string().min(1)).default([]),
+			allowedHosts: configuredCliExactNetworkHostsSchema.default([]),
 			credentialProjection: configuredCliCredentialProjectionSchema,
 			environment: configuredCliEnvironmentPolicySchema,
 			guestCwd: absoluteControlFreePathSchema,
@@ -485,7 +516,7 @@ export const configuredCliEffectiveExecutionTargetSchema = z.discriminatedUnion(
 		.strict(),
 	z
 		.object({
-			allowedHosts: z.array(z.string().min(1)).default([]),
+			allowedHosts: configuredCliExactNetworkHostsSchema.default([]),
 			credentialProjection: configuredCliCredentialProjectionSchema,
 			environment: configuredCliEnvironmentPolicySchema,
 			guestCwd: absoluteControlFreePathSchema,

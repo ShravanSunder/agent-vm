@@ -216,6 +216,32 @@ export const toolPortalNamespacePolicySchema = z.union([
 
 export type ToolPortalNamespacePolicy = z.infer<typeof toolPortalNamespacePolicySchema>;
 
+export function toolPortalSelectorAllowsOperation(
+	selector: ToolPortalToolSelector,
+	operationName: string,
+): boolean {
+	return (
+		!selector.deny.includes(operationName) &&
+		(selector.allow === '*' || selector.allow.includes(operationName))
+	);
+}
+
+export interface ToolPortalOperationReachabilityPolicy {
+	readonly calls: ToolPortalCallPolicy;
+	readonly tools: ToolPortalToolSelector;
+}
+
+export function toolPortalNamespaceAllowsOperation(
+	namespacePolicy: ToolPortalOperationReachabilityPolicy,
+	operationName: string,
+): boolean {
+	return (
+		toolPortalSelectorAllowsOperation(namespacePolicy.tools, operationName) &&
+		(toolPortalSelectorAllowsOperation(namespacePolicy.calls.requiresApproval, operationName) ||
+			toolPortalSelectorAllowsOperation(namespacePolicy.calls.withoutApproval, operationName))
+	);
+}
+
 export const toolPortalProfileDefinitionSchema = z
 	.object({
 		namespaces: z.record(z.string().min(1), toolPortalNamespacePolicySchema).default({}),
@@ -704,6 +730,7 @@ export const toolPortalConfigSchema = z
 					for (const [operationName, operation] of Object.entries(
 						namespacePolicy.backend.operations,
 					)) {
+						if (!toolPortalNamespaceAllowsOperation(namespacePolicy, operationName)) continue;
 						if (
 							operation.kind !== 'configured_cli' ||
 							operation.executionTarget.kind !== 'ephemeral_managed_vm'
@@ -736,6 +763,7 @@ export const toolPortalConfigSchema = z
 									'operations',
 									operationName,
 									'executionTarget',
+									'credentialProjection',
 									'credentialFiles',
 									mappingIndex,
 									'source',

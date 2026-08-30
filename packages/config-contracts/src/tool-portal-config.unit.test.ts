@@ -356,6 +356,26 @@ describe('tool portal config contract', () => {
 			toolPortalConfigSchema.safeParse({
 				...config,
 				agents: { sun: { profile: 'google-enabled' } },
+				profiles: {
+					'google-enabled': {
+						namespaces: {
+							google: {
+								...config.profiles['google-enabled'].namespaces.google,
+								calls: {
+									requiresApproval: { allow: [], deny: [] },
+									withoutApproval: { allow: [], deny: [] },
+								},
+								tools: { allow: [], deny: [] },
+							},
+						},
+					},
+				},
+			}).success,
+		).toBe(true);
+		expect(
+			toolPortalConfigSchema.safeParse({
+				...config,
+				agents: { sun: { profile: 'google-enabled' } },
 			}).success,
 		).toBe(false);
 		expect(

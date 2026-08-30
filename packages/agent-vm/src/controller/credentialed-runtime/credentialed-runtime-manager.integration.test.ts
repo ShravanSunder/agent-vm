@@ -998,8 +998,10 @@ describe('credentialed runtime manager', () => {
 				reason: 'startup process identity was unavailable',
 			}),
 		]);
+		await expect(fixture.manager.closeZone(zoneId)).rejects.toThrow('owner-unsafe');
 		expect(await acquire(fixture, resolution({ agentId: 'sun', zoneId }))).toMatchObject({
-			kind: 'owner-unsafe',
+			kind: 'not-dispatched',
+			reason: 'credentialed runtime zone is stopping',
 		});
 		expect(fixture.createManagedVm).not.toHaveBeenCalled();
 

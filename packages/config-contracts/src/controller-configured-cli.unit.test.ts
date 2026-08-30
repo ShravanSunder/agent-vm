@@ -81,6 +81,57 @@ describe('credentialed configured CLI target contract', () => {
 		expect(configuredCliExecutionTargetSchema.safeParse(validMediatedTarget()).success).toBe(true);
 	});
 
+	it.each([
+		['scheme', 'https://places.googleapis.com'],
+		['path', 'places.googleapis.com/v1'],
+		['port', 'places.googleapis.com:443'],
+		['wildcard', '*.googleapis.com'],
+		['uppercase alias', 'Places.GoogleApis.com'],
+		['trailing dot alias', 'places.googleapis.com.'],
+		['empty label', 'places..googleapis.com'],
+	])('rejects non-canonical mediated host %s', (_caseName, host) => {
+		const target = validMediatedTarget() as Record<string, unknown>;
+		const projection = target.credentialProjection as Record<string, unknown>;
+		const environment = projection.environment as Record<string, unknown>;
+		const mediated = environment.GOOGLE_PLACES_API_KEY as Record<string, unknown>;
+		expect(
+			configuredCliExecutionTargetSchema.safeParse({
+				...target,
+				allowedHosts: [host],
+				credentialProjection: {
+					...projection,
+					environment: {
+						...environment,
+						GOOGLE_PLACES_API_KEY: { ...mediated, hosts: [host] },
+					},
+				},
+			}).success,
+		).toBe(false);
+	});
+
+	it.each(['127.0.0.1', '::1', 'localhost', 'credentialed-mediation.vm.host'])(
+		'accepts canonical exact mediated host %s',
+		(host) => {
+			const target = validMediatedTarget() as Record<string, unknown>;
+			const projection = target.credentialProjection as Record<string, unknown>;
+			const environment = projection.environment as Record<string, unknown>;
+			const mediated = environment.GOOGLE_PLACES_API_KEY as Record<string, unknown>;
+			expect(
+				configuredCliExecutionTargetSchema.safeParse({
+					...target,
+					allowedHosts: [host],
+					credentialProjection: {
+						...projection,
+						environment: {
+							...environment,
+							GOOGLE_PLACES_API_KEY: { ...mediated, hosts: [host] },
+						},
+					},
+				}).success,
+			).toBe(true);
+		},
+	);
+
 	it('rejects empty mediated hosts and mixed projection fields', () => {
 		const target = validMediatedTarget() as Record<string, unknown>;
 		const projection = target.credentialProjection as Record<string, unknown>;
@@ -152,6 +203,42 @@ describe('credentialed configured CLI target contract', () => {
 				}).success,
 			).toBe(false);
 		}
+	});
+
+	it('reports projection-relative diagnostic paths for file binding refinements', () => {
+		const target = validCredentialedTarget() as Record<string, unknown>;
+		const projection = target.credentialProjection as Record<string, unknown>;
+		const result = configuredCliExecutionTargetSchema.safeParse({
+			...target,
+			credentialProjection: {
+				...projection,
+				credentialEnvironment: {
+					GOOGLE_APPLICATION_CREDENTIALS: {
+						kind: 'credential_file',
+						source: 'missing',
+					},
+				},
+				credentialFiles: [
+					{ path: 'same.json', source: 'service-account' },
+					{ path: 'same.json', source: 'service-account' },
+				],
+			},
+			environment: { kind: 'inherit_allowlist', names: ['GOOGLE_APPLICATION_CREDENTIALS'] },
+		});
+		if (result.success) throw new Error('Expected invalid credential projection.');
+		expect(result.error.issues.map((issue) => issue.path)).toEqual(
+			expect.arrayContaining([
+				['credentialProjection', 'credentialFiles', 1, 'source'],
+				['credentialProjection', 'credentialFiles', 1, 'path'],
+				[
+					'credentialProjection',
+					'credentialEnvironment',
+					'GOOGLE_APPLICATION_CREDENTIALS',
+					'source',
+				],
+				['credentialProjection', 'credentialEnvironment', 'GOOGLE_APPLICATION_CREDENTIALS'],
+			]),
+		);
 	});
 
 	it('rejects unknown credential-file environment sources and ordinary environment collisions', () => {

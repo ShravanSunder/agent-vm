@@ -12,6 +12,7 @@ import {
 } from '@agent-vm/config-contracts';
 import {
 	decodeConfiguredCliPreparedImageIdentity,
+	toolPortalNamespaceAllowsOperation,
 	type EffectiveControllerExecutionOperation,
 } from '@agent-vm/config-contracts';
 import { deriveGatewayRuntimePortalBindingRevision } from '@agent-vm/gateway-control-contracts';
@@ -108,30 +109,6 @@ function operationEntryKey(props: {
 	return [props.agentId, props.profileId, props.namespaceId, props.operationName].join('\0');
 }
 
-type PreparedNamespacePolicy =
-	PreparedManagedToolPortalConfig['profiles'][string]['namespaces'][string];
-
-function selectorAllowsOperation(
-	selector: PreparedNamespacePolicy['tools'],
-	operationName: string,
-): boolean {
-	return (
-		!selector.deny.includes(operationName) &&
-		(selector.allow === '*' || selector.allow.includes(operationName))
-	);
-}
-
-function namespaceAllowsOperation(
-	namespacePolicy: PreparedNamespacePolicy,
-	operationName: string,
-): boolean {
-	return (
-		selectorAllowsOperation(namespacePolicy.tools, operationName) &&
-		(selectorAllowsOperation(namespacePolicy.calls.requiresApproval, operationName) ||
-			selectorAllowsOperation(namespacePolicy.calls.withoutApproval, operationName))
-	);
-}
-
 function canonicalCredentialProjection(
 	projection: ConfiguredCliCredentialProjection,
 ): ConfiguredCliCredentialProjection {
@@ -202,7 +179,7 @@ function credentialedRegistryRevisionMaterial(
 		for (const [namespaceId, namespacePolicy] of Object.entries(profile.namespaces)) {
 			if (namespacePolicy.backend.kind !== 'controller_execution') continue;
 			for (const [operationName, operation] of Object.entries(namespacePolicy.backend.operations)) {
-				if (!namespaceAllowsOperation(namespacePolicy, operationName)) continue;
+				if (!toolPortalNamespaceAllowsOperation(namespacePolicy, operationName)) continue;
 				if (
 					operation.kind !== 'configured_cli' ||
 					operation.executionTarget.kind !== 'ephemeral_managed_vm'
@@ -235,7 +212,7 @@ function hasCredentialedRuntime(config: PreparedManagedToolPortalConfig): boolea
 				namespacePolicy.backend.kind === 'controller_execution' &&
 				Object.entries(namespacePolicy.backend.operations).some(
 					([operationName, operation]) =>
-						namespaceAllowsOperation(namespacePolicy, operationName) &&
+						toolPortalNamespaceAllowsOperation(namespacePolicy, operationName) &&
 						operation.kind === 'configured_cli' &&
 						operation.executionTarget.kind === 'ephemeral_managed_vm',
 				),
@@ -263,7 +240,7 @@ export function compileCredentialedRuntimeConfig(props: {
 		for (const namespacePolicy of Object.values(profile.namespaces)) {
 			if (namespacePolicy.backend.kind !== 'controller_execution') continue;
 			for (const [operationName, operation] of Object.entries(namespacePolicy.backend.operations)) {
-				if (!namespaceAllowsOperation(namespacePolicy, operationName)) continue;
+				if (!toolPortalNamespaceAllowsOperation(namespacePolicy, operationName)) continue;
 				if (
 					operation.kind !== 'configured_cli' ||
 					operation.executionTarget.kind !== 'ephemeral_managed_vm'
@@ -293,7 +270,7 @@ export function compileCredentialedRuntimeConfig(props: {
 				for (const [operationName, operation] of Object.entries(
 					namespacePolicy.backend.operations,
 				)) {
-					if (!namespaceAllowsOperation(namespacePolicy, operationName)) continue;
+					if (!toolPortalNamespaceAllowsOperation(namespacePolicy, operationName)) continue;
 					if (
 						operation.kind !== 'configured_cli' ||
 						operation.executionTarget.kind !== 'ephemeral_managed_vm'
