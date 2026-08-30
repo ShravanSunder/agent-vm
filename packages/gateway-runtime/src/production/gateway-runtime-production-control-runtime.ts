@@ -6,7 +6,11 @@ import {
 	SANDBOX_MAXIMUM_OPERATION_MILLISECONDS,
 } from '@agent-vm/agent-portal-sdk';
 import type { GatewayRuntimeManagedToolPortalConfig } from '@agent-vm/config-contracts';
-import type { ToolPortalApprovalPort, ToolPortalBackendPort } from '@agent-vm/tool-portal';
+import type {
+	ToolPortalApprovalPort,
+	ToolPortalBackendPort,
+	ToolPortalOAuthAvailabilityPort,
+} from '@agent-vm/tool-portal';
 import { v7 as uuidv7 } from 'uuid';
 
 import {
@@ -53,6 +57,7 @@ import {
 } from '../gateway-runtime-approval-decision-operations.js';
 import { createGatewayRuntimeApprovalPort } from '../gateway-runtime-approval-port.js';
 import type { GatewayRuntimeManagedToolPortalBackendPortFactories } from '../managed-tool-portal-composition.js';
+import { createGatewayControlOAuthAvailabilityPort } from '../oauth-availability-gateway-control-port.js';
 import { createGatewayRuntimeSandboxProcessRegistry } from '../sandbox/sandbox-process-registry.js';
 import {
 	createStrictToolVmSshClient,
@@ -144,6 +149,7 @@ export interface GatewayRuntimeProductionControlRuntimeDependencies {
 	readonly createOperationActiveUseRuntime: (
 		props: CreateGatewayControlOperationActiveUseRuntimeProps,
 	) => GatewayControlOperationActiveUseRuntime;
+	readonly createOAuthAvailabilityPort: typeof createGatewayControlOAuthAvailabilityPort;
 	readonly createProcessRuntime: typeof createStrictToolVmSshProcessRuntime;
 	readonly createProcessRegistry: typeof createGatewayRuntimeSandboxProcessRegistry;
 	readonly createPublishedBindingRuntime: (
@@ -166,6 +172,7 @@ export interface GatewayRuntimeProductionControlRuntime {
 	readonly approvalDecisionOperations: GatewayRuntimeApprovalDecisionOperations;
 	readonly applicationMessageHandler: GatewayControlApplicationMessageHandler;
 	readonly controllerExecutionBackendPortFactory: GatewayRuntimeManagedToolPortalBackendPortFactories['controllerExecution'];
+	readonly oauthAvailabilityPort: ToolPortalOAuthAvailabilityPort;
 	readonly retire: () => Promise<void>;
 	readonly sandboxDispatch: (request: GatewayRuntimeSandboxDispatchRequest) => Promise<unknown>;
 	readonly toolVmRunnerBackendPortFactory: GatewayRuntimeManagedToolPortalBackendPortFactories['toolVmRunner'];
@@ -181,6 +188,7 @@ const defaultDependencies = Object.freeze({
 	createControlCommandClient: createGatewayRuntimeControlCommandClient,
 	createControllerExecutionBackendPort: createGatewayControlControllerExecutionBackendPort,
 	createOperationActiveUseRuntime: createGatewayControlOperationActiveUseRuntime,
+	createOAuthAvailabilityPort: createGatewayControlOAuthAvailabilityPort,
 	createProcessRuntime: createStrictToolVmSshProcessRuntime,
 	createProcessRegistry: createGatewayRuntimeSandboxProcessRegistry,
 	createPublishedBindingRuntime: createGatewayControlPublishedBindingRuntime,
@@ -229,6 +237,10 @@ export async function createGatewayRuntimeProductionControlRuntime(
 		controlService,
 	});
 	const approvalDecisionOperations = dependencies.createApprovalDecisionOperations({
+		callerContextRegistrationClient,
+		controlCommandClient,
+	});
+	const oauthAvailabilityPort = dependencies.createOAuthAvailabilityPort({
 		callerContextRegistrationClient,
 		controlCommandClient,
 	});
@@ -361,6 +373,7 @@ export async function createGatewayRuntimeProductionControlRuntime(
 		approvalDecisionOperations,
 		applicationMessageHandler,
 		controllerExecutionBackendPortFactory: () => controllerExecutionBackendPort,
+		oauthAvailabilityPort,
 		retire,
 		sandboxDispatch: sandboxDispatcher.dispatch,
 		toolVmRunnerBackendPortFactory,

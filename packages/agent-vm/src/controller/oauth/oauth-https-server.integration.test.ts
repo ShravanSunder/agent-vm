@@ -14,12 +14,53 @@ import {
 	createOAuthHttpsApp,
 	type OAuthApprovalAssets,
 	type OAuthHttpsBindings,
+	startOAuthHttpsServer,
+	startOAuthTlsListener,
 } from './oauth-https-server.js';
 
 const transactionId = oauthTransactionIdSchema.parse('transaction_identifier_1234567890abcdef');
 const browserBindingSecret = 'browser_binding_secret_1234567890abcdefghi';
 const csrfToken = 'csrf_token_1234567890abcdefghijklmnop';
 const publicBaseUrl = 'https://auth.claw.askluna.xyz:18900';
+const certificatePath = fileURLToPath(
+	new URL('./test-fixtures/oauth-listener-test.crt', import.meta.url),
+);
+const privateKeyPath = fileURLToPath(
+	new URL('./test-fixtures/oauth-listener-test.key', import.meta.url),
+);
+
+async function reserveAvailablePort(): Promise<number> {
+	const reservation = createServer();
+	await new Promise<void>((resolve) => reservation.listen(0, '127.0.0.1', resolve));
+	const address = reservation.address();
+	if (address === null || typeof address === 'string') {
+		throw new Error('Port reservation did not expose a TCP port.');
+	}
+	await new Promise<void>((resolve, reject) =>
+		reservation.close((error) => (error === undefined ? resolve() : reject(error))),
+	);
+	return address.port;
+}
+
+async function requestLocalHttpsStatus(port: number): Promise<number | undefined> {
+	return await new Promise<number | undefined>((resolve, reject) => {
+		const request = requestHttps(
+			{
+				hostname: '127.0.0.1',
+				method: 'GET',
+				path: '/',
+				port,
+				rejectUnauthorized: false,
+			},
+			(response) => {
+				response.resume();
+				response.once('end', () => resolve(response.statusCode));
+			},
+		);
+		request.once('error', reject);
+		request.end();
+	});
+}
 
 function requestEnvironment(remoteAddress = '100.100.100.10'): OAuthHttpsBindings {
 	return {
@@ -66,7 +107,7 @@ function createBrokerHarness(): {
 	return {
 		brokerService: {
 			cancelBrowserTransaction,
-			close: () => undefined,
+			close: async () => undefined,
 			confirmAccount: async () => ({ accountLabel: 'Personal Google', kind: 'completed' }),
 			executeAuthorizationAction: async (): Promise<OAuthAuthorizationActionResult> => ({
 				kind: 'authorization-list',
@@ -99,6 +140,14 @@ function createBrokerHarness(): {
 				reason: 'authorization-missing',
 			}),
 			resolveToolAvailability: () => ({ kind: 'authorization-status-unavailable' }),
+			reapExpiredTransactions: () => ({ completionSessionCount: 0, transactionCount: 0 }),
+			retryApplication: () => ({
+				authorizationUrl: 'https://accounts.google.test/retry',
+				browserBindingSecret,
+				kind: 'redirect',
+				transactionId,
+			}),
+			stopAdmission: () => undefined,
 			submitPermissions,
 		},
 		cancelBrowserTransaction,
@@ -242,4 +291,248 @@ describe('OAuth HTTPS application', () => {
 			transactionId,
 		});
 	});
+
+	it('renders application progress before the next Google application', async () => {
+		// Arrange
+		const harness = createBrokerHarness();
+		const completionId = 'completion_session_1234567890abcdef';
+		const app = createOAuthHttpsApp({
+			assets: approvalAssets(),
+			brokerService: {
+				...harness.brokerService,
+				confirmAccount: async () => ({
+					applications: [
+						{
+							applicationId: oauthApplicationIdSchema.parse('gmail-app'),
+							label: 'Gmail',
+							status: 'completed',
+						},
+						{
+							applicationId: oauthApplicationIdSchema.parse('workspace-app'),
+							label: 'Workspace',
+							status: 'authorizing',
+						},
+					],
+					authorizationUrl: 'https://accounts.google.test/authorize-next',
+					browserBindingSecret,
+					kind: 'redirect',
+					transactionId,
+				}),
+			},
+			publicBaseUrl,
+			tailnetIdentityResolver: {
+				resolvePeerIdentity: async () => ({ loginName: 'authorized-human@example.test' }),
+			},
+		});
+
+		// Act
+		const response = await app.request(
+			`${publicBaseUrl}/oauth/completions/${completionId}/confirm`,
+			{
+				body: new URLSearchParams({ csrfToken }),
+				headers: {
+					'content-type': 'application/x-www-form-urlencoded',
+					cookie: `agent_vm_oauth_completion=${completionId}; agent_vm_oauth_completion_binding=${browserBindingSecret}`,
+					origin: publicBaseUrl,
+				},
+				method: 'POST',
+			},
+			requestEnvironment(),
+		);
+
+		// Assert
+		expect(response.status).toBe(200);
+		const body = await response.text();
+		expect(body).toContain('Connecting Google applications');
+		expect(body).toContain('Workspace');
+		expect(body).toContain('https://accounts.google.test/authorize-next');
+	});
+
+	it('renders a partial completion with a native retry link', async () => {
+		// Arrange
+		const harness = createBrokerHarness();
+		const app = createOAuthHttpsApp({
+			assets: approvalAssets(),
+			brokerService: {
+				...harness.brokerService,
+				handleGoogleCallback: async () => ({
+					completed: ['Gmail'],
+					kind: 'partial-completion',
+					retry: {
+						authorizationUrl: 'https://accounts.google.test/retry-workspace',
+						browserBindingSecret,
+						kind: 'redirect',
+						transactionId,
+					},
+					retryCsrfToken: csrfToken,
+					retryable: ['Workspace'],
+				}),
+				retryApplication: () => ({
+					authorizationUrl: 'https://accounts.google.test/retry-workspace',
+					browserBindingSecret,
+					kind: 'redirect',
+					transactionId,
+				}),
+			},
+			publicBaseUrl,
+			tailnetIdentityResolver: {
+				resolvePeerIdentity: async () => ({ loginName: 'authorized-human@example.test' }),
+			},
+		});
+
+		// Act
+		const response = await app.request(
+			`${publicBaseUrl}/oauth/google/callback?code=test-code&state=test-state`,
+			{
+				headers: {
+					cookie: `agent_vm_oauth_transaction=${transactionId}; agent_vm_oauth_transaction_binding=${browserBindingSecret}`,
+				},
+			},
+			requestEnvironment(),
+		);
+
+		// Assert
+		expect(response.status).toBe(200);
+		const body = await response.text();
+		expect(body).toContain('Some applications need attention');
+		expect(body).toContain('Retry Google authorization');
+		expect(body).toContain(`/oauth/completions/${transactionId}/retry`);
+
+		const retryResponse = await app.request(
+			`${publicBaseUrl}/oauth/completions/${transactionId}/retry`,
+			{
+				body: new URLSearchParams({ csrfToken }),
+				headers: {
+					'content-type': 'application/x-www-form-urlencoded',
+					cookie: `agent_vm_oauth_transaction=${transactionId}; agent_vm_oauth_transaction_binding=${browserBindingSecret}`,
+					origin: publicBaseUrl,
+				},
+				method: 'POST',
+			},
+			requestEnvironment(),
+		);
+		expect(retryResponse.status).toBe(302);
+		expect(retryResponse.headers.get('location')).toBe(
+			'https://accounts.google.test/retry-workspace',
+		);
+	});
+
+	it('renders an expired callback explicitly', async () => {
+		const harness = createBrokerHarness();
+		const app = createOAuthHttpsApp({
+			assets: approvalAssets(),
+			brokerService: {
+				...harness.brokerService,
+				handleGoogleCallback: async () => ({ kind: 'failed', reason: 'expired' }),
+			},
+			publicBaseUrl,
+			tailnetIdentityResolver: {
+				resolvePeerIdentity: async () => ({ loginName: 'authorized-human@example.test' }),
+			},
+		});
+
+		const response = await app.request(
+			`${publicBaseUrl}/oauth/google/callback?code=test-code&state=test-state`,
+			{
+				headers: {
+					cookie: `agent_vm_oauth_transaction=${transactionId}; agent_vm_oauth_transaction_binding=${browserBindingSecret}`,
+				},
+			},
+			requestEnvironment(),
+		);
+
+		expect(response.status).toBe(410);
+		expect(await response.text()).toContain('Authorization expired');
+	});
 });
+
+describe('OAuth HTTPS listener', () => {
+	function createTestApp(): ReturnType<typeof createOAuthHttpsApp> {
+		return createOAuthHttpsApp({
+			assets: approvalAssets(),
+			brokerService: createBrokerHarness().brokerService,
+			publicBaseUrl,
+			tailnetIdentityResolver: {
+				resolvePeerIdentity: async () => ({ loginName: 'authorized-human@example.test' }),
+			},
+		});
+	}
+
+	it('serves real TLS and closes the listener cleanly', async () => {
+		// Arrange
+		const [certificate, privateKey, port] = await Promise.all([
+			readFile(certificatePath, 'utf8'),
+			readFile(privateKeyPath, 'utf8'),
+			reserveAvailablePort(),
+		]);
+
+		// Act
+		const server = await startOAuthTlsListener({
+			app: createTestApp(),
+			bindAddress: '127.0.0.1',
+			certificate,
+			port,
+			privateKey,
+		});
+
+		// Assert
+		try {
+			await expect(requestLocalHttpsStatus(port)).resolves.toBe(404);
+		} finally {
+			await server.close();
+		}
+	});
+
+	it('rejects only after an occupied TLS port emits its bind failure', async () => {
+		// Arrange
+		const [certificate, privateKey] = await Promise.all([
+			readFile(certificatePath, 'utf8'),
+			readFile(privateKeyPath, 'utf8'),
+		]);
+		const reservation = createServer();
+		await new Promise<void>((resolve) => reservation.listen(0, '127.0.0.1', resolve));
+		const address = reservation.address();
+		if (address === null || typeof address === 'string') {
+			throw new Error('Port reservation did not expose a TCP port.');
+		}
+
+		// Act / Assert
+		try {
+			await expect(
+				startOAuthTlsListener({
+					app: createTestApp(),
+					bindAddress: '127.0.0.1',
+					certificate,
+					port: address.port,
+					privateKey,
+				}),
+			).rejects.toMatchObject({ code: 'EADDRINUSE' });
+		} finally {
+			await new Promise<void>((resolve, reject) =>
+				reservation.close((error) => (error === undefined ? resolve() : reject(error))),
+			);
+		}
+	});
+
+	it.each([
+		['not-yet-valid', 0],
+		['expired', Date.UTC(2040, 0, 1)],
+	])('rejects a %s certificate before opening a socket', async (_caseName, nowMs) => {
+		// Arrange / Act / Assert
+		await expect(
+			startOAuthHttpsServer({
+				app: createTestApp(),
+				bindAddress: '100.100.100.10',
+				certificatePath,
+				now: () => nowMs,
+				port: 18_900,
+				privateKeyPath,
+				publicHostname: 'auth.claw.askluna.xyz',
+			}),
+		).rejects.toThrow('OAuth TLS certificate is not valid at the current time.');
+	});
+});
+import { readFile } from 'node:fs/promises';
+import { request as requestHttps } from 'node:https';
+import { createServer } from 'node:net';
+import { fileURLToPath } from 'node:url';

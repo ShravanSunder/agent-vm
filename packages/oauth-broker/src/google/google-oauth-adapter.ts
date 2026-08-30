@@ -12,7 +12,7 @@ const googleUserInfoEndpoint = 'https://openidconnect.googleapis.com/v1/userinfo
 const googleRevocationEndpoint = 'https://oauth2.googleapis.com/revoke';
 
 export const googleIdentityScopes = [
-	oauthScopeSchema.parse('email'),
+	oauthScopeSchema.parse('https://www.googleapis.com/auth/userinfo.email'),
 	oauthScopeSchema.parse('openid'),
 ] as const;
 
@@ -29,7 +29,7 @@ export const googleWebClientCredentialsSchema = z
 				redirect_uris: z.array(z.url()).min(1),
 				token_uri: z.literal(googleTokenEndpoint),
 			})
-			.strict(),
+			.passthrough(),
 	})
 	.strict();
 export type GoogleWebClientCredentials = z.infer<typeof googleWebClientCredentialsSchema>;
@@ -43,7 +43,7 @@ const googleTokenSuccessResponseSchema = z
 		scope: z.string().min(1).optional(),
 		token_type: z.literal('Bearer'),
 	})
-	.strict();
+	.passthrough();
 
 const googleOAuthErrorResponseSchema = z
 	.object({
@@ -52,7 +52,7 @@ const googleOAuthErrorResponseSchema = z
 		error_subtype: z.string().optional(),
 		error_uri: z.url().optional(),
 	})
-	.strict();
+	.passthrough();
 
 const googleUserInfoResponseSchema = z
 	.object({
@@ -66,7 +66,7 @@ const googleUserInfoResponseSchema = z
 		picture: z.url().optional(),
 		sub: z.string().min(1).max(1_024),
 	})
-	.strict();
+	.passthrough();
 
 export const googleProviderAuthorizationSchema = z
 	.object({
@@ -132,13 +132,18 @@ export interface GoogleOAuthAdapter {
 		readonly clientCredentials: GoogleWebClientCredentials;
 		readonly pkceVerifier: string;
 		readonly redirectUri: string;
+		readonly signal?: AbortSignal | undefined;
 	}): Promise<GoogleAuthorizationCodeExchangeResult>;
 	refreshAuthorization(props: {
 		readonly clientCredentials: GoogleWebClientCredentials;
 		readonly currentGrantedScopes: readonly OAuthScope[];
 		readonly refreshToken: string;
+		readonly signal?: AbortSignal | undefined;
 	}): Promise<GoogleRefreshResult>;
-	revokeAuthorization(props: { readonly refreshToken: string }): Promise<GoogleRevokeResult>;
+	revokeAuthorization(props: {
+		readonly refreshToken: string;
+		readonly signal?: AbortSignal | undefined;
+	}): Promise<GoogleRevokeResult>;
 }
 
 function parseScopeField(scopeField: string): readonly OAuthScope[] {
@@ -203,10 +208,21 @@ export function createGoogleOAuthAdapter(
 	props: {
 		readonly fetchImpl?: typeof fetch;
 		readonly now?: () => number;
+		readonly requestTimeoutMs?: number | undefined;
 	} = {},
 ): GoogleOAuthAdapter {
 	const fetchImpl = props.fetchImpl ?? fetch;
 	const now = props.now ?? Date.now;
+	const requestTimeoutMs = props.requestTimeoutMs ?? 15_000;
+	if (!Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs < 1) {
+		throw new Error('Google OAuth request timeout must be a positive safe integer.');
+	}
+	const requestSignal = (callerSignal: AbortSignal | undefined): AbortSignal => {
+		const timeoutSignal = AbortSignal.timeout(requestTimeoutMs);
+		return callerSignal === undefined
+			? timeoutSignal
+			: AbortSignal.any([callerSignal, timeoutSignal]);
+	};
 	return {
 		buildAuthorizationUrl: (authorizationProps) => {
 			const credentials = googleWebClientCredentialsSchema.parse(
@@ -219,7 +235,6 @@ export function createGoogleOAuthAdapter(
 				client_id: credentials.web.client_id,
 				code_challenge: z.string().min(43).max(128).parse(authorizationProps.pkceChallenge),
 				code_challenge_method: 'S256',
-				include_granted_scopes: 'true',
 				prompt: 'consent',
 				redirect_uri: redirectUri,
 				response_type: 'code',
@@ -244,6 +259,7 @@ export function createGoogleOAuthAdapter(
 					}),
 					headers: { 'content-type': 'application/x-www-form-urlencoded' },
 					method: 'POST',
+					signal: requestSignal(exchangeProps.signal),
 				});
 			} catch {
 				return {
@@ -279,6 +295,7 @@ export function createGoogleOAuthAdapter(
 			try {
 				userInfoResponse = await fetchImpl(googleUserInfoEndpoint, {
 					headers: { authorization: `Bearer ${parsedToken.data.access_token}` },
+					signal: requestSignal(exchangeProps.signal),
 				});
 			} catch {
 				return {
@@ -332,6 +349,7 @@ export function createGoogleOAuthAdapter(
 					}),
 					headers: { 'content-type': 'application/x-www-form-urlencoded' },
 					method: 'POST',
+					signal: requestSignal(refreshProps.signal),
 				});
 			} catch {
 				return {
@@ -369,13 +387,14 @@ export function createGoogleOAuthAdapter(
 					: { replacementRefreshToken: token.data.refresh_token }),
 			});
 		},
-		revokeAuthorization: async ({ refreshToken }) => {
+		revokeAuthorization: async ({ refreshToken, signal }) => {
 			let response: Response;
 			try {
 				response = await fetchImpl(googleRevocationEndpoint, {
 					body: new URLSearchParams({ token: z.string().min(1).parse(refreshToken) }),
 					headers: { 'content-type': 'application/x-www-form-urlencoded' },
 					method: 'POST',
+					signal: requestSignal(signal),
 				});
 			} catch {
 				return {

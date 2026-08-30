@@ -14,6 +14,9 @@ const serveHarness = vi.hoisted(() => {
 		serve: vi.fn((options: CapturedServeOptions) => {
 			capturedOptions.push(options);
 			return {
+				listening: true,
+				off: () => undefined,
+				once: () => undefined,
 				close: (callback: (error?: Error) => void): void => {
 					callback();
 				},

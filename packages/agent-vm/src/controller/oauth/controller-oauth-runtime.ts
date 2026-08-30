@@ -119,7 +119,7 @@ export interface PreparedControllerOAuthRuntime {
 	readonly brokerService: GoogleOAuthBrokerService;
 	readonly port: 18_900;
 	readonly zoneId: string;
-	close(): void;
+	close(): Promise<void>;
 	setCredentialInvalidationHandler(
 		handler: (props: { readonly agentId: string; readonly zoneId: string }) => Promise<void>,
 	): void;
@@ -137,6 +137,8 @@ export interface ControllerOAuthSystemConfig {
 }
 
 export async function prepareControllerOAuthRuntime(props: {
+	readonly createBrokerService?: typeof createGoogleOAuthBrokerService;
+	readonly createHttpsApp?: typeof createOAuthHttpsApp;
 	readonly secretResolver: SecretResolver;
 	readonly selectedZoneIds: readonly string[];
 	readonly systemConfig: ControllerOAuthSystemConfig;
@@ -154,6 +156,8 @@ export async function prepareControllerOAuthRuntime(props: {
 			oauthCatalogRelativePath,
 		),
 	});
+	let brokerServiceForCleanup: GoogleOAuthBrokerService | undefined;
+	let keyEncryptionKeyForCleanup: OAuthKeyEncryptionKey | undefined;
 	try {
 		const transport = props.tailscaleLocalApiTransport ?? createTailscaleUnixSocketTransport();
 		const [encodedKeyEncryptionKey, clientCredentialsByApplication, assets, bindAddress] =
@@ -167,31 +171,41 @@ export async function prepareControllerOAuthRuntime(props: {
 			readonly agentId: string;
 			readonly zoneId: string;
 		}) => Promise<void> = async () => undefined;
-		const brokerService = createGoogleOAuthBrokerService({
+		const keyEncryptionKey = decodeKeyEncryptionKey(encodedKeyEncryptionKey);
+		keyEncryptionKeyForCleanup = keyEncryptionKey;
+		const brokerService = (props.createBrokerService ?? createGoogleOAuthBrokerService)({
 			catalog,
 			clientCredentialsByApplication,
 			config,
 			googleAdapter: createGoogleOAuthAdapter(),
-			keyEncryptionKey: decodeKeyEncryptionKey(encodedKeyEncryptionKey),
+			keyEncryptionKey,
 			keyEncryptionKeyVersion: 1,
 			onCredentialMaterialChanged: async (event) => await credentialInvalidationHandler(event),
 			zoneId,
 		});
-		const app = createOAuthHttpsApp({
+		brokerServiceForCleanup = brokerService;
+		const app = (props.createHttpsApp ?? createOAuthHttpsApp)({
 			assets,
 			brokerService,
 			publicBaseUrl: config.browser.publicBaseUrl,
 			tailnetIdentityResolver: createTailscaleLocalApiIdentityResolver({ transport }),
 		});
-		let closed = false;
+		let closePromise: Promise<void> | undefined;
 		let admissionStopped = false;
 		return {
 			brokerService,
-			close: (): void => {
-				if (closed) return;
-				closed = true;
-				if (!admissionStopped) brokerService.close();
-				catalog.close();
+			close: async (): Promise<void> => {
+				closePromise ??= (async (): Promise<void> => {
+					try {
+						await brokerService.close();
+					} finally {
+						keyEncryptionKey.fill(0);
+						brokerServiceForCleanup = undefined;
+						keyEncryptionKeyForCleanup = undefined;
+						catalog.close();
+					}
+				})();
+				await closePromise;
 			},
 			port: config.browser.listener.port,
 			setCredentialInvalidationHandler: (handler): void => {
@@ -209,12 +223,31 @@ export async function prepareControllerOAuthRuntime(props: {
 			stopAdmission: (): void => {
 				if (admissionStopped) return;
 				admissionStopped = true;
-				brokerService.close();
+				brokerService.stopAdmission();
 			},
 			zoneId,
 		};
 	} catch (error) {
-		catalog.close();
+		const cleanupErrors: unknown[] = [];
+		try {
+			await brokerServiceForCleanup?.close();
+		} catch (cleanupError) {
+			cleanupErrors.push(cleanupError);
+		} finally {
+			keyEncryptionKeyForCleanup?.fill(0);
+			try {
+				catalog.close();
+			} catch (cleanupError) {
+				cleanupErrors.push(cleanupError);
+			}
+		}
+		if (cleanupErrors.length > 0) {
+			throw new AggregateError(
+				[error, ...cleanupErrors],
+				'OAuth runtime preparation failed and resource cleanup was incomplete.',
+				{ cause: error },
+			);
+		}
 		throw error;
 	}
 }

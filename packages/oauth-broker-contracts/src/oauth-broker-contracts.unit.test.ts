@@ -5,6 +5,8 @@ import {
 	oauthAuthorizationActionResultSchema,
 	oauthCredentialLifecycleStateSchema,
 	oauthPermissionSelectionsSchema,
+	oauthToolAvailabilityBatchRequestSchema,
+	oauthToolAvailabilityBatchResultSchema,
 	oauthToolAvailabilitySchema,
 	oauthToolRequirementSchema,
 	oauthTokenLifecycleSchema,
@@ -88,6 +90,34 @@ describe('OAuth broker portable contracts', () => {
 		expect(
 			oauthToolAvailabilitySchema.parse({ kind: 'authorization-status-unavailable' }),
 		).toMatchObject({ kind: 'authorization-status-unavailable' });
+		expect(
+			oauthToolAvailabilitySchema.safeParse({ accountProfiles: [], kind: 'ready' }).success,
+		).toBe(false);
+	});
+
+	it('bounds and deduplicates provider-neutral availability batches', () => {
+		const requirement = {
+			applicationId: 'gmail-app',
+			kind: 'oauth-account-profile' as const,
+			minimumPermission: 'read' as const,
+			serviceId: 'gmail',
+		};
+		expect(
+			oauthToolAvailabilityBatchRequestSchema.parse({ requirements: [requirement] }),
+		).toMatchObject({ requirements: [requirement] });
+		expect(
+			oauthToolAvailabilityBatchRequestSchema.safeParse({
+				requirements: [requirement, requirement],
+			}).success,
+		).toBe(false);
+		expect(
+			oauthToolAvailabilityBatchResultSchema.safeParse({
+				items: [
+					{ availability: { kind: 'authorization-required' }, requirement },
+					{ availability: { kind: 'ready', accountProfiles: [] }, requirement },
+				],
+			}).success,
+		).toBe(false);
 	});
 
 	it('rejects malformed nested application and service identifiers', () => {

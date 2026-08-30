@@ -176,6 +176,10 @@ describe('OAuth credential catalog', () => {
 			reauthorizationReason: null,
 		});
 		expect(refreshed).toMatchObject({ kind: 'updated', grant: { recordRevision: 2 } });
+		const reauthorized = openCatalog.commitEnrollmentGrant(
+			createEnrollmentInput({ accessToken: 'reauthorized-access-token-marker' }),
+		);
+		expect(reauthorized).toMatchObject({ kind: 'committed', grant: { recordRevision: 3 } });
 		expect(
 			openCatalog.replaceGrantEnvelope({
 				credentialId,
@@ -190,7 +194,7 @@ describe('OAuth credential catalog', () => {
 				providerCredentialVersion: 1,
 				reauthorizationReason: null,
 			}),
-		).toEqual({ currentRecordRevision: 2, kind: 'stale' });
+		).toEqual({ currentRecordRevision: 3, kind: 'stale' });
 
 		openCatalog.close();
 		openCatalog = undefined;
@@ -199,8 +203,8 @@ describe('OAuth credential catalog', () => {
 		openCatalog = await openOAuthCredentialCatalog({ databasePath, now: () => nowMs });
 		const reopened = openCatalog.getGrant(credentialId);
 		expect(reopened).toMatchObject({
-			materialRevision: refreshedMaterialRevision,
-			recordRevision: 2,
+			materialRevision: initialMaterialRevision,
+			recordRevision: 3,
 		});
 		if (reopened === undefined) throw new Error('Expected reopened OAuth grant.');
 		expect(
@@ -215,7 +219,7 @@ describe('OAuth credential catalog', () => {
 				envelope: reopened.envelope,
 				keyEncryptionKey,
 			}),
-		).toMatchObject({ accessToken: 'access-token-marker-v2' });
+		).toMatchObject({ accessToken: 'reauthorized-access-token-marker' });
 		expect(openCatalog.getStorageDiagnostics()).toEqual({
 			busyTimeoutMs: 5_000,
 			foreignKeysEnabled: true,

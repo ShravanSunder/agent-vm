@@ -18,6 +18,12 @@ const renderPropsSchema = z
 	.object({
 		assetBasePath: z.string().startsWith('/').max(512),
 		cancelAction: z.string().startsWith('/').max(1_024).optional(),
+		continueUrl: z
+			.url()
+			.refine((value) => new URL(value).protocol === 'https:', {
+				message: 'OAuth continuation URLs must use HTTPS.',
+			})
+			.optional(),
 		csrfToken: z.string().min(32).max(512).optional(),
 		formAction: z.string().startsWith('/').max(1_024).optional(),
 		javascriptAssetName: z.string().regex(/^oauth\.[a-f0-9]{16}\.js$/u),
@@ -28,6 +34,7 @@ const renderPropsSchema = z
 export interface OAuthApprovalRenderProps {
 	readonly assetBasePath: string;
 	readonly cancelAction?: string | undefined;
+	readonly continueUrl?: string | undefined;
 	readonly csrfToken?: string | undefined;
 	readonly formAction?: string | undefined;
 	readonly javascriptAssetName: string;
@@ -205,6 +212,9 @@ function AccountConfirmationPage(props: {
 }
 
 function StatusPage(props: {
+	readonly continueUrl?: string | undefined;
+	readonly csrfToken?: string | undefined;
+	readonly formAction?: string | undefined;
 	readonly model: Exclude<
 		OAuthApprovalPageModel,
 		{ kind: 'permission-selection' | 'account-confirmation' }
@@ -226,6 +236,9 @@ function StatusPage(props: {
 						</li>
 					))}
 				</ol>
+				<a class="primary-button" href={props.continueUrl}>
+					Continue to Google
+				</a>
 			</>
 		);
 	}
@@ -244,6 +257,12 @@ function StatusPage(props: {
 						))}
 					</ul>
 				</section>
+				<form action={props.formAction} method="post">
+					<input name="csrfToken" type="hidden" value={props.csrfToken} />
+					<button class="primary-button" type="submit">
+						Retry Google authorization
+					</button>
+				</form>
 				<section class="confirmation-panel">
 					<h2>Retryable</h2>
 					<ul>
@@ -280,6 +299,7 @@ export function renderOAuthApprovalPage(unparsedProps: OAuthApprovalRenderProps)
 		...(unparsedProps.cancelAction === undefined
 			? {}
 			: { cancelAction: unparsedProps.cancelAction }),
+		...(unparsedProps.continueUrl === undefined ? {} : { continueUrl: unparsedProps.continueUrl }),
 		...(unparsedProps.csrfToken === undefined ? {} : { csrfToken: unparsedProps.csrfToken }),
 		...(unparsedProps.formAction === undefined ? {} : { formAction: unparsedProps.formAction }),
 		javascriptAssetName: unparsedProps.javascriptAssetName,
@@ -311,7 +331,23 @@ export function renderOAuthApprovalPage(unparsedProps: OAuthApprovalRenderProps)
 				/>
 			);
 		}
-		return <StatusPage model={model} />;
+		if (model.kind === 'application-progress' && renderProps.continueUrl === undefined) {
+			throw new Error('application-progress requires a continuation URL.');
+		}
+		if (
+			model.kind === 'partial-completion' &&
+			(renderProps.csrfToken === undefined || renderProps.formAction === undefined)
+		) {
+			throw new Error('partial-completion requires a CSRF token and retry action.');
+		}
+		return (
+			<StatusPage
+				continueUrl={renderProps.continueUrl}
+				csrfToken={renderProps.csrfToken}
+				formAction={renderProps.formAction}
+				model={model}
+			/>
+		);
 	})();
 	const assetBasePath = renderProps.assetBasePath.replace(/\/$/u, '');
 	return (

@@ -202,20 +202,38 @@ export function capabilityDiscoveryMetadata(props: {
 		};
 	}
 	const hasInvocationApprovalRules = operation.calls.requiresApproval.length > 0;
+	const oauthRequirement = ((): CapabilityDiscoveryMetadata['oauthRequirement'] | undefined => {
+		if (operation.authorization?.kind !== 'oauth_account_profile') return undefined;
+		const firstRequirement = operation.authorization.rules[0]?.requirement;
+		if (
+			firstRequirement?.kind === 'oauth' &&
+			operation.authorization.rules.every(
+				(rule) =>
+					rule.requirement.kind === 'oauth' &&
+					rule.requirement.applicationId === firstRequirement.applicationId &&
+					rule.requirement.serviceId === firstRequirement.serviceId &&
+					rule.requirement.minimumPermission === firstRequirement.minimumPermission,
+			)
+		) {
+			return {
+				applicationId: firstRequirement.applicationId,
+				kind: 'oauth-account-profile',
+				minimumPermission: firstRequirement.minimumPermission,
+				serviceId: firstRequirement.serviceId,
+			};
+		}
+		return {
+			accountProfileArgument: 'accountProfile',
+			describeBeforeCall: true,
+			kind: 'invocation-dependent-oauth-account-profile',
+		};
+	})();
 	return {
 		callDisposition:
 			requiresApproval || !hasInvocationApprovalRules
 				? { kind: requiresApproval ? 'requires-approval' : 'without-approval' }
 				: { describeBeforeCall: true, kind: 'invocation-dependent' },
-		...(operation.authorization?.kind === 'oauth_account_profile'
-			? {
-					oauthRequirement: {
-						accountProfileArgument: 'accountProfile' as const,
-						describeBeforeCall: true as const,
-						kind: 'invocation-dependent-oauth-account-profile' as const,
-					},
-				}
-			: {}),
+		...(oauthRequirement === undefined ? {} : { oauthRequirement }),
 	};
 }
 

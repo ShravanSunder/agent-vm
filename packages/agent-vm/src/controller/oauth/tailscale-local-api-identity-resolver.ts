@@ -140,11 +140,9 @@ export async function resolveLocalTailscaleAddress(
 	const status = tailscaleStatusResponseSchema.parse(
 		await transport.getJson('/localapi/v0/status'),
 	);
-	const numericAddresses = status.Self.TailscaleIPs.filter((address) => isIP(address) !== 0);
-	const ipv4Address = numericAddresses.find((address) => isIP(address) === 4);
-	const selectedAddress = ipv4Address ?? numericAddresses[0];
+	const selectedAddress = status.Self.TailscaleIPs.find((address) => isIP(address) === 4);
 	if (selectedAddress === undefined) {
-		throw new Error('Tailscale LocalAPI status did not include a numeric local address.');
+		throw new Error('Tailscale LocalAPI status did not include a local IPv4 address.');
 	}
 	return selectedAddress;
 }

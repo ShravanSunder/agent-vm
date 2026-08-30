@@ -165,6 +165,10 @@ export function createConfiguredCliManagedVmExecutor(
 			oauthRequirement !== undefined
 				? await props.runtimeManager.acquireCommand({
 						...commonAcquisition,
+						materializationFailureReason: (error): string =>
+							error instanceof ConfiguredControllerExecutionError
+								? error.message
+								: 'credentialed runtime materialization failed',
 						materializeResolution: async () => {
 							if (!('accountProfile' in request.input)) {
 								throw new ConfiguredControllerExecutionError(

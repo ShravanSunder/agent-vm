@@ -30,6 +30,7 @@ import type {
 import { authorizeGatewayControlControllerExecution } from '../controller/control-session/gateway-control-controller-execution-authorization.js';
 import { createCredentialedRuntimeManager } from '../controller/credentialed-runtime/credentialed-runtime-manager.js';
 import { createControllerCredentialedRuntimeRegistryPublisher } from '../controller/credentialed-runtime/credentialed-runtime-registry.js';
+import type { CredentialedRuntimeResolution } from '../controller/credentialed-runtime/credentialed-runtime-registry.js';
 import { createConfiguredCliManagedVmExecutor } from '../controller/runner/configured-cli-managed-vm-executor.js';
 import { writeGatewayRuntimePortalAdmissionFile } from '../gateway/gateway-runtime-portal-admission-file.js';
 import { materializeGatewayRuntimePortalAdmission } from '../gateway/gateway-runtime-portal-admission-material.js';
@@ -89,6 +90,8 @@ const configuredCliProofScript = [
 	'  --host-isolation) test ! -e "$3"; printf host-isolated ;;',
 	'  --http-mediated) printf "env:%s\\n" "$PROOF_HTTP_TOKEN"; curl -sS -H "Authorization: Bearer $PROOF_HTTP_TOKEN" "$3" ;;',
 	'  --http-untrusted) curl -sS -H "Authorization: Bearer $PROOF_HTTP_TOKEN" "$3" ;;',
+	'  --oauth-mediated) printf "env:%s\\n" "$GOG_ACCESS_TOKEN"; curl -sS -H "Authorization: Bearer $GOG_ACCESS_TOKEN" "$3" ;;',
+	'  --oauth-untrusted) curl -sS -H "Authorization: Bearer $GOG_ACCESS_TOKEN" "$3" ;;',
 	'  --hold) printf started; sleep 30 ;;',
 	'  *) printf "runner-output:%s" "$1"; [ "$#" -lt 2 ] || printf "runner-output:%s" "$2" ;;',
 	'esac',
@@ -528,10 +531,7 @@ describeLiveConfiguredRunner('configured CLI reusable credentialed Managed VM', 
 											: 'not-substituted',
 									);
 								}
-								if (url.hostname === '127.0.0.1') {
-									return new Response('direct-target-denied', { status: 403 });
-								}
-								if (url.hostname !== mediatedCredentialHost) return;
+								if (url.hostname !== mediatedCredentialHost) return undefined;
 								url.hostname = '127.0.0.1';
 								url.port = String(mediationServer.port);
 								return new Request(url, {
@@ -1000,6 +1000,81 @@ describeLiveConfiguredRunner('configured CLI reusable credentialed Managed VM', 
 			} finally {
 				await mediatedAcquisition.command.complete({ kind: 'completed' });
 			}
+
+			const oauthOperation = structuredClone(mediatedResolution.operation);
+			if (oauthOperation.executionTarget.kind !== 'ephemeral_managed_vm') {
+				throw new Error('OAuth VM proof requires a Managed VM operation.');
+			}
+			oauthOperation.executionTarget.allowedHosts = [
+				mediatedCredentialHost,
+				'127.0.0.1',
+				untrustedCredentialHost,
+			];
+			oauthOperation.executionTarget.credentialProjection = {
+				environment: { GOG_ACCESS_TOKEN: { kind: 'oauth_access_token' } },
+				kind: 'http_mediation',
+			};
+			const oauthResolution = {
+				...mediatedResolution,
+				agentId: 'oauth-agent',
+				agentRuntimeRevision: 'sha256:oauth-real-vm-proof',
+				operation: oauthOperation,
+				operationName: 'oauth_mediated_runner_proof',
+				profileId: 'oauth',
+				projection: {
+					environmentName: 'GOG_ACCESS_TOKEN',
+					kind: 'oauth_http_mediation',
+				},
+			} satisfies CredentialedRuntimeResolution;
+			const oauthAccessTokenBytes = new TextEncoder().encode(mediatedCredentialValue);
+			const oauthAcquisition = await runtimeManager.acquireCommand({
+				finalAuthorization: async () => true,
+				materializeResolution: async () => ({
+					dynamicHttpMediation: {
+						allowedHosts: [mediatedCredentialHost, '127.0.0.1'],
+						credentialId: 'oauth-credential-real-vm-proof',
+						environmentName: 'GOG_ACCESS_TOKEN',
+						kind: 'dynamic_http_mediation',
+						materialRevision: 'sha256:oauth-real-vm-material',
+						placeholderValue: `GONDOLIN_SECRET_${'a'.repeat(48)}`,
+						secretValue: oauthAccessTokenBytes,
+					},
+					resolution: oauthResolution,
+				}),
+				operationId: 'oauth-real-vm-operation',
+				ownerIdentity: {
+					controllerEpoch: 'controller-epoch-configured-runner',
+					gatewayEpoch: 'gateway-epoch-configured-runner',
+					parentGatewayVmId: imageFixture.vm.id,
+					runtimeEpoch: 'runtime-epoch-configured-runner',
+					stablePrincipal: 'oauth-agent-stable-principal',
+				},
+				runtimeIdentity: { agentId: 'oauth-agent', zoneId: acceptedSession.zoneId },
+			});
+			if (oauthAcquisition.kind !== 'acquired') {
+				throw new Error('OAuth agent did not acquire its credentialed runtime.');
+			}
+			try {
+				const allowedResult = await oauthAcquisition.command.exec({
+					argv: ['mediated', '--oauth-mediated', `http://${mediatedCredentialHost}/proof`],
+					reason: 'prove OAuth access-token mediation',
+					timeoutMs: 60_000,
+				});
+				expect(allowedResult.stdout).toMatch(/^env:GONDOLIN_SECRET_[0-9a-f]{48}\nsubstituted$/u);
+				const untrustedResult = await oauthAcquisition.command.exec({
+					argv: ['mediated', '--oauth-untrusted', `http://${untrustedCredentialHost}/proof`],
+					reason: 'prove OAuth access-token host isolation',
+					timeoutMs: 60_000,
+				});
+				expect(untrustedResult.stdout).toBe('not-substituted');
+			} finally {
+				await oauthAcquisition.command.complete({ kind: 'completed' });
+			}
+			expect(oauthAccessTokenBytes.every((byte) => byte === 0)).toBe(true);
+			const oauthControllerStateText = await readDirectoryTreeText(
+				path.join(imageFixture.project.tempRoot, 'controller-state'),
+			);
+			expect(oauthControllerStateText).not.toContain(mediatedCredentialValue);
 		} catch (error: unknown) {
 			const recordsDirectory = path.join(
 				imageFixture.project.tempRoot,

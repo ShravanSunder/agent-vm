@@ -23,6 +23,12 @@ _OPERATION_LINES = (
 _WORKFLOW_LINE = "Workflow: list or search, describe the exact capability schema, then call it."
 
 
+def _orientation_child_text(value: str) -> str:
+    if any(ord(character) < 32 or character in "\u007f\u2028\u2029" for character in value):
+        return encode_canonical_json(value)
+    return value
+
+
 def _candidate_orientation(
     inventory: NamespaceInventory,
     *,
@@ -47,9 +53,9 @@ def _candidate_orientation(
             if displayed_tool_count > 0:
                 lines.append("Tools:")
                 for tool in item.tools[:displayed_tool_count]:
-                    lines.append(f"  {tool.name}")
+                    lines.append(f"  {_orientation_child_text(tool.name)}")
                     if tool.description is not None:
-                        lines.append(f"    {tool.description}")
+                        lines.append(f"    {_orientation_child_text(tool.description)}")
                 if displayed_tool_count < len(item.tools):
                     lines.append("  Additional tools are available through list/search.")
     if omitted_count > 0:

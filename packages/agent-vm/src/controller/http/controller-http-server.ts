@@ -1,6 +1,8 @@
 import { serve } from '@hono/node-server';
 import type { Hono } from 'hono';
 
+import { closeNodeServer, waitForNodeServerListening } from './node-server-lifecycle.js';
+
 export async function startControllerHttpServer(options: {
 	readonly app: Hono;
 	readonly port: number;
@@ -13,18 +15,11 @@ export async function startControllerHttpServer(options: {
 		overrideGlobalObjects: false,
 		port: options.port,
 	});
+	await waitForNodeServerListening(server);
 
 	return {
 		async close(): Promise<void> {
-			await new Promise<void>((resolve, reject) => {
-				server.close((error?: Error) => {
-					if (error) {
-						reject(error);
-						return;
-					}
-					resolve();
-				});
-			});
+			await closeNodeServer(server);
 		},
 	};
 }

@@ -41,7 +41,11 @@ import {
 	normalizeToolVmActiveUseCorrelation,
 	type AgentVmHealthEvent,
 } from '@agent-vm/gateway-lifecycle';
-import type { OAuthAuthorizationActionResult } from '@agent-vm/oauth-broker-contracts';
+import type {
+	OAuthAuthorizationActionResult,
+	OAuthToolAvailabilityBatchRequest,
+	OAuthToolAvailabilityBatchResult,
+} from '@agent-vm/oauth-broker-contracts';
 
 import type {
 	ControllerApprovalArmDispatchResult,
@@ -230,6 +234,14 @@ export interface GatewayControlControllerExecutionOperations {
 	}): Promise<GatewayControlControllerHostProbeResult>;
 }
 
+export interface GatewayControlOAuthAvailabilityOperations {
+	resolve(options: {
+		readonly callerContext: GatewayControlTrustedCallerContext;
+		readonly request: OAuthToolAvailabilityBatchRequest;
+		readonly session: GatewayControlAcceptedSessionRef;
+	}): Promise<OAuthToolAvailabilityBatchResult>;
+}
+
 export interface GatewayControlDomainHandlerOptions {
 	readonly approvalLedger?: GatewayControlApprovalLedgerOperations;
 	readonly callerContexts: GatewayControlCallerContextRegistry;
@@ -239,6 +251,7 @@ export interface GatewayControlDomainHandlerOptions {
 	readonly leaseRpc?: GatewayControlLeaseRpcOperations;
 	readonly managedApprovalAuthority?: { readonly approverId: string };
 	readonly now?: () => number;
+	readonly oauthAvailability?: GatewayControlOAuthAvailabilityOperations;
 	readonly recordGatewayRuntimeReadiness?: (snapshot: GatewayRuntimeReadinessSnapshot) => void;
 	readonly recordHealthEvent?: (event: AgentVmHealthEvent) => void;
 	readonly session: GatewayControlAcceptedSessionRef;
@@ -369,6 +382,7 @@ export type GatewayControlInboundPrincipalResolution =
 			readonly operation:
 				| 'tool_portal_approval_decide'
 				| 'tool_portal_controller_execution'
+				| 'tool_portal_oauth_availability'
 				| 'tool_vm_binding_request';
 			readonly reason:
 				| 'caller_context_absent'
@@ -427,6 +441,9 @@ export function resolveGatewayControlInboundStablePrincipal(options: {
 				options.message.payload,
 			).callerContextId;
 			break;
+		case 'tool_portal_oauth_availability':
+			callerContextId = options.message.payload.callerContext.callerContextId;
+			break;
 		case 'tool_portal_approval_decide':
 			callerContextId = options.message.payload.callerContext.callerContextId;
 			break;
@@ -465,7 +482,9 @@ export function resolveGatewayControlInboundStablePrincipal(options: {
 					? 'tool_vm_binding_request'
 					: options.message.operation === 'tool_portal_approval_decide'
 						? 'tool_portal_approval_decide'
-						: 'tool_portal_controller_execution',
+						: options.message.operation === 'tool_portal_oauth_availability'
+							? 'tool_portal_oauth_availability'
+							: 'tool_portal_controller_execution',
 			reason: 'caller_context_absent',
 			status: 'principal_rejected',
 		};
@@ -492,6 +511,7 @@ export function resolveGatewayControlInboundStablePrincipal(options: {
 		case 'tool_vm_binding_request':
 		case 'tool_portal_approval_decide':
 		case 'tool_portal_controller_execution':
+		case 'tool_portal_oauth_availability':
 			return {
 				operation,
 				reason:
@@ -774,6 +794,7 @@ function commandResultPayload(options: {
 	readonly lease?: GatewayControlLeaseSnapshot;
 	readonly leaseRejectionReason?: GatewayControlLeaseRejectionReason;
 	readonly leaseUse?: GatewayControlLeaseUseSnapshot;
+	readonly oauthAvailabilityBatch?: OAuthToolAvailabilityBatchResult;
 	readonly responseToMessageId: string;
 	readonly result: CommandResultKind;
 }): GatewayControlCommandResultPayload {
@@ -810,6 +831,9 @@ function commandResultPayload(options: {
 			? {}
 			: { leaseRejectionReason: options.leaseRejectionReason }),
 		...(options.leaseUse === undefined ? {} : { leaseUse: options.leaseUse }),
+		...(options.oauthAvailabilityBatch === undefined
+			? {}
+			: { oauthAvailabilityBatch: options.oauthAvailabilityBatch }),
 		responseToMessageId: options.responseToMessageId,
 		result: options.result,
 	});
@@ -2020,6 +2044,45 @@ export function createGatewayControlDomainHandler(
 						});
 					}
 					throw new Error('lease_use_end must execute through semantic preparation');
+				}
+				case 'tool_portal_oauth_availability': {
+					const callerContextResolution = options.callerContexts.resolveForSession({
+						callerContextId: message.payload.callerContext.callerContextId,
+						session: callerContextSession,
+					});
+					if (
+						callerContextResolution.status !== 'ok' ||
+						callerContextResolution.callerContext.purpose !== 'tool_portal_oauth_availability' ||
+						options.oauthAvailability === undefined
+					) {
+						return GatewayControlRpcCommandResultMessageSchema.parse({
+							kind: 'command_result',
+							operation: message.operation,
+							payload: commandResultPayload({
+								error: {
+									errorClass: 'oauth_availability_not_authorized',
+									retryable: false,
+									safeMessage: 'OAuth authorization status is unavailable.',
+								},
+								responseToMessageId: envelope.messageId,
+								result: 'rejected',
+							}),
+						});
+					}
+					const oauthAvailabilityBatch = await options.oauthAvailability.resolve({
+						callerContext: callerContextResolution.callerContext,
+						request: message.payload.request,
+						session: callerContextSession,
+					});
+					return GatewayControlRpcCommandResultMessageSchema.parse({
+						kind: 'command_result',
+						operation: message.operation,
+						payload: commandResultPayload({
+							oauthAvailabilityBatch,
+							responseToMessageId: envelope.messageId,
+							result: 'ok',
+						}),
+					});
 				}
 				case 'tool_portal_controller_execution':
 					if (

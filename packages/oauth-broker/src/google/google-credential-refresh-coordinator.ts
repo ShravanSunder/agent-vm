@@ -50,6 +50,7 @@ export interface GoogleCredentialRefreshCoordinator {
 		readonly keyEncryptionKey: OAuthKeyEncryptionKey;
 		readonly keyEncryptionKeyVersion: number;
 		readonly requiredScopes: readonly OAuthScope[];
+		readonly signal?: AbortSignal | undefined;
 	}): Promise<GoogleCredentialResolution>;
 }
 
@@ -112,6 +113,7 @@ export function createGoogleCredentialRefreshCoordinator(props: {
 		readonly keyEncryptionKey: OAuthKeyEncryptionKey;
 		readonly keyEncryptionKeyVersion: number;
 		readonly requiredScopes: readonly OAuthScope[];
+		readonly signal?: AbortSignal | undefined;
 	}): Promise<GoogleCredentialResolution> => {
 		const grant = resolutionProps.grant;
 		if (grant.providerId !== 'google')
@@ -147,7 +149,14 @@ export function createGoogleCredentialRefreshCoordinator(props: {
 			clientCredentials: googleWebClientCredentialsSchema.parse(resolutionProps.clientCredentials),
 			currentGrantedScopes: grant.grantedScopes,
 			refreshToken: payload.refreshToken,
+			signal: resolutionProps.signal,
 		});
+		if (resolutionProps.signal?.aborted === true) {
+			const abortReason: unknown = resolutionProps.signal.reason;
+			throw abortReason instanceof Error
+				? abortReason
+				: new Error('Google OAuth credential refresh was cancelled.');
+		}
 		if (refreshResult.kind === 'failed') {
 			if (refreshResult.failure.kind === 'invalid-grant') {
 				const updateResult = props.catalog.replaceGrantEnvelope({

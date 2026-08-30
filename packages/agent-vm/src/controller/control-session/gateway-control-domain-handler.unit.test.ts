@@ -18,6 +18,7 @@ import {
 	gatewayControlDeliveryPolicyByOperation,
 } from '@agent-vm/gateway-control-contracts';
 import type { AgentVmHealthEvent } from '@agent-vm/gateway-lifecycle';
+import { oauthApplicationIdSchema, oauthServiceIdSchema } from '@agent-vm/oauth-broker-contracts';
 import { describe, expect, it, vi } from 'vitest';
 
 import { TEST_SSH_SERVER_HOST_KEY } from '../../testing/managed-vm-test-helpers.js';
@@ -467,7 +468,12 @@ function createAuthorizedControllerExecutions(
 }
 
 function createRegisteredCallerContexts(
-	options: { readonly purpose?: 'tool_portal_controller_execution' | 'tool_vm_lease' } = {},
+	options: {
+		readonly purpose?:
+			| 'tool_portal_controller_execution'
+			| 'tool_portal_oauth_availability'
+			| 'tool_vm_lease';
+	} = {},
 ): ReturnType<typeof createGatewayControlCallerContextRegistry> {
 	const callerContexts = createCallerContexts({
 		createCallerContextId: () => '44444444-4444-4444-8444-444444444444',
@@ -500,6 +506,60 @@ function createCallerContexts(
 }
 
 describe('gateway control domain handler', () => {
+	it('resolves OAuth availability only for an exact authenticated caller context', async () => {
+		// Arrange
+		const callerContexts = createRegisteredCallerContexts({
+			purpose: 'tool_portal_oauth_availability',
+		});
+		const requirement = {
+			applicationId: oauthApplicationIdSchema.parse('gmail-app'),
+			kind: 'oauth-account-profile' as const,
+			minimumPermission: 'read' as const,
+			serviceId: oauthServiceIdSchema.parse('gmail'),
+		};
+		const resolve = vi.fn(async () => ({
+			items: [{ availability: { kind: 'authorization-required' as const }, requirement }],
+		}));
+		const dispatcher = createGatewayControlTestDispatcher();
+		dispatcher.register(
+			'gateway_control',
+			createTestGatewayControlDomainHandler({
+				callerContexts,
+				oauthAvailability: { resolve },
+				session: acceptedSession,
+			}),
+		);
+
+		// Act
+		const response = await dispatcher.dispatch({
+			envelope: createEnvelope('tool_portal_oauth_availability'),
+			payload: GatewayControlRpcMessageSchema.parse({
+				kind: 'command',
+				operation: 'tool_portal_oauth_availability',
+				payload: {
+					callerContext: callerContextPayload.callerContext,
+					request: { requirements: [requirement] },
+				},
+			}),
+		});
+
+		// Assert
+		expect(resolve).toHaveBeenCalledWith({
+			callerContext: expect.objectContaining({ agentId: 'main' }),
+			request: { requirements: [requirement] },
+			session: acceptedSession,
+		});
+		expect(response).toMatchObject({
+			operation: 'tool_portal_oauth_availability',
+			payload: {
+				oauthAvailabilityBatch: {
+					items: [{ availability: { kind: 'authorization-required' }, requirement }],
+				},
+				result: 'ok',
+			},
+		});
+	});
+
 	it('issues callerContextId through the dispatcher without exposing raw evidence in the result', async () => {
 		const callerContexts = createCallerContexts({
 			createCallerContextId: () => '44444444-4444-4444-8444-444444444444',

@@ -34,6 +34,8 @@ import {
 	oauthAuthorizationReauthorizeRequestSchema,
 	oauthAuthorizationRevokeRequestSchema,
 	oauthAuthorizationStatusRequestSchema,
+	oauthToolAvailabilityBatchRequestSchema,
+	oauthToolAvailabilityBatchResultSchema,
 } from '@agent-vm/oauth-broker-contracts';
 import { z } from 'zod/v4';
 
@@ -101,6 +103,7 @@ export const GatewayControlRpcOperationSchema = z.enum([
 	'tool_vm_binding_publish',
 	'tool_vm_binding_request',
 	'tool_portal_controller_execution',
+	'tool_portal_oauth_availability',
 	'tool_portal_approval_decide',
 	'tool_portal_admission_reserve',
 	'tool_portal_dispatch_arm',
@@ -180,6 +183,7 @@ export interface GatewayControlCallerContextProofPayloadInput {
 	readonly principal: GatewayRuntimeTrustedInvocationPrincipal;
 	readonly purpose?:
 		| 'tool_portal_approval_decision'
+		| 'tool_portal_oauth_availability'
 		| 'tool_vm_lease'
 		| 'tool_portal_controller_execution'
 		| undefined;
@@ -222,6 +226,7 @@ export const GatewayControlCallerContextRegisterPayloadSchema = z
 						'tool_vm_lease',
 						'tool_portal_controller_execution',
 						'tool_portal_approval_decision',
+						'tool_portal_oauth_availability',
 					])
 					.optional(),
 				zoneId: z.string().min(1),
@@ -244,6 +249,13 @@ export const GatewayControlToolVmBindingRequestPayloadSchema = z
 		callerContext: GatewayControlCallerContextRefSchema,
 		correlation: GatewayControlToolCallCorrelationSchema.optional(),
 		idleTtlHintMs: z.number().int().positive().optional(),
+	})
+	.strict();
+
+export const GatewayControlToolPortalOAuthAvailabilityPayloadSchema = z
+	.object({
+		callerContext: GatewayControlCallerContextRefSchema,
+		request: oauthToolAvailabilityBatchRequestSchema,
 	})
 	.strict();
 
@@ -881,6 +893,7 @@ const GatewayControlRpcForbiddenResponseFieldsSchema = {
 	callerContext: z.never().optional(),
 	bindingRequest: z.never().optional(),
 	controllerExecution: z.never().optional(),
+	oauthAvailabilityBatch: z.never().optional(),
 	error: z.never().optional(),
 	lease: z.never().optional(),
 	leaseRejectionReason: z.never().optional(),
@@ -1041,6 +1054,22 @@ export const GatewayControlRpcControllerExecutionResponsePayloadSchema = z.discr
 	],
 );
 
+export const GatewayControlRpcOAuthAvailabilityResponsePayloadSchema = z.discriminatedUnion(
+	'result',
+	[
+		GatewayControlRpcResponseCorrelationSchema.extend({
+			...GatewayControlRpcForbiddenResponseFieldsSchema,
+			oauthAvailabilityBatch: oauthToolAvailabilityBatchResultSchema,
+			result: z.literal('ok'),
+		}).strict(),
+		GatewayControlRpcResponseCorrelationSchema.extend({
+			...GatewayControlRpcForbiddenResponseFieldsSchema,
+			error: GatewayControlRpcErrorSchema,
+			result: GatewayControlRpcErrorResponseResultSchema,
+		}).strict(),
+	],
+);
+
 export const GatewayControlRpcOperationCancelResponsePayloadSchema = z.discriminatedUnion(
 	'result',
 	[
@@ -1113,6 +1142,7 @@ export const GatewayControlRpcResponsePayloadSchema = z.union([
 	GatewayControlRpcLeaseResponsePayloadSchema,
 	GatewayControlRpcLeaseUseResponsePayloadSchema,
 	GatewayControlRpcControllerExecutionResponsePayloadSchema,
+	GatewayControlRpcOAuthAvailabilityResponsePayloadSchema,
 	GatewayControlRpcOperationCancelResponsePayloadSchema,
 	GatewayControlRpcApprovalAdmissionResponsePayloadSchema,
 	GatewayControlRpcApprovalDecisionResponsePayloadSchema,
@@ -1159,6 +1189,13 @@ const GatewayControlRpcControllerExecutionCommandResultMessageSchema =
 		kind: z.literal('command_result'),
 		operation: z.literal('tool_portal_controller_execution'),
 		payload: GatewayControlRpcControllerExecutionResponsePayloadSchema,
+	}).strict();
+
+const GatewayControlRpcOAuthAvailabilityCommandResultMessageSchema =
+	GatewayControlRpcDomainCorrelationSchema.extend({
+		kind: z.literal('command_result'),
+		operation: z.literal('tool_portal_oauth_availability'),
+		payload: GatewayControlRpcOAuthAvailabilityResponsePayloadSchema,
 	}).strict();
 
 const GatewayControlRpcOperationCancelCommandResultMessageSchema =
@@ -1225,6 +1262,7 @@ export const GatewayControlRpcCommandResultMessageSchema = z.discriminatedUnion(
 	GatewayControlRpcPublicLeaseCommandResultMessageSchema,
 	GatewayControlRpcLeaseUseCommandResultMessageSchema,
 	GatewayControlRpcControllerExecutionCommandResultMessageSchema,
+	GatewayControlRpcOAuthAvailabilityCommandResultMessageSchema,
 	GatewayControlRpcOperationCancelCommandResultMessageSchema,
 	GatewayControlRpcRecoveryCommandResultMessageSchema,
 	GatewayControlRpcApprovalAdmissionCommandResultMessageSchema,
@@ -1307,6 +1345,11 @@ export const GatewayControlRpcCommandMessageSchema = z.discriminatedUnion('opera
 	}).strict(),
 	GatewayControlRpcDomainCorrelationSchema.extend({
 		kind: z.literal('command'),
+		operation: z.literal('tool_portal_oauth_availability'),
+		payload: GatewayControlToolPortalOAuthAvailabilityPayloadSchema,
+	}).strict(),
+	GatewayControlRpcDomainCorrelationSchema.extend({
+		kind: z.literal('command'),
 		operation: z.literal('tool_portal_approval_decide'),
 		payload: GatewayControlToolPortalApprovalDecisionPayloadSchema,
 	}).strict(),
@@ -1383,6 +1426,7 @@ export const gatewayControlDeliveryPolicyByOperation = {
 	tool_vm_binding_publish: 'critical_idempotent',
 	tool_vm_binding_request: 'critical_idempotent',
 	tool_portal_controller_execution: 'single_use_critical',
+	tool_portal_oauth_availability: 'acked_idempotent',
 	tool_portal_approval_decide: 'single_use_critical',
 	tool_portal_admission_reserve: 'single_use_critical',
 	tool_portal_dispatch_arm: 'single_use_critical',
@@ -1439,6 +1483,7 @@ export const gatewayControlCommandExecutionTimeoutMsByOperation = {
 	tool_vm_binding_publish: 10_000,
 	tool_vm_binding_request: 180_000,
 	tool_portal_controller_execution: 120_000,
+	tool_portal_oauth_availability: 5_000,
 	tool_portal_approval_decide: 10_000,
 	tool_portal_admission_reserve: 10_000,
 	tool_portal_dispatch_arm: 10_000,

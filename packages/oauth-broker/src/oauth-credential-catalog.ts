@@ -299,6 +299,18 @@ export async function openOAuthCredentialCatalog(props: {
 					}
 					const timestampMs = now();
 					const profileRecordId = existingProfile?.profileRecordId ?? randomUUID();
+					const existingGrant = transaction
+						.select({ recordRevision: oauthGrantsTable.recordRevision })
+						.from(oauthGrantsTable)
+						.where(
+							and(
+								eq(oauthGrantsTable.profileRecordId, profileRecordId),
+								eq(oauthGrantsTable.applicationId, parsedInput.applicationId),
+							),
+						)
+						.limit(1)
+						.get();
+					const nextGrantRecordRevision = (existingGrant?.recordRevision ?? 0) + 1;
 					transaction
 						.insert(oauthAccountProfilesTable)
 						.values({
@@ -349,7 +361,7 @@ export async function openOAuthCredentialCatalog(props: {
 							profileRecordId,
 							providerCredentialVersion: parsedInput.providerCredentialVersion,
 							reauthorizationReason: null,
-							recordRevision: 1,
+							recordRevision: nextGrantRecordRevision,
 							updatedAtMs: timestampMs,
 						})
 						.onConflictDoUpdate({
@@ -368,7 +380,7 @@ export async function openOAuthCredentialCatalog(props: {
 								payloadNonce: envelope.payloadNonce,
 								providerCredentialVersion: parsedInput.providerCredentialVersion,
 								reauthorizationReason: null,
-								recordRevision: 1,
+								recordRevision: nextGrantRecordRevision,
 								updatedAtMs: timestampMs,
 							},
 							target: [oauthGrantsTable.profileRecordId, oauthGrantsTable.applicationId],

@@ -44,6 +44,7 @@
 		"@agent-vm/controller-execution-contracts": "workspace:*",
 		"@agent-vm/gateway-control-contracts": "workspace:*",
 		"@agent-vm/mcp-portal": "workspace:*",
+		"@agent-vm/oauth-broker-contracts": "workspace:*",
 		"@agent-vm/tool-portal": "workspace:*",
 		"@logtape/logtape": "2.3.0",
 		"@logtape/otel": "2.3.0",

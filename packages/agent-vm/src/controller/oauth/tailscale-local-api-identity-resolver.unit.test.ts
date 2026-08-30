@@ -51,4 +51,12 @@ describe('Tailscale LocalAPI identity resolver', () => {
 		);
 		expect(getJson).toHaveBeenCalledWith('/localapi/v0/status');
 	});
+
+	it('fails closed when LocalAPI status contains only IPv6 addresses', async () => {
+		const getJson = vi.fn(async () => ({
+			Self: { TailscaleIPs: ['fd7a:115c:a1e0::1234'] },
+		}));
+
+		await expect(resolveLocalTailscaleAddress({ transport: { getJson } })).rejects.toThrow('IPv4');
+	});
 });

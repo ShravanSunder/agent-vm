@@ -80,6 +80,37 @@ describe('server-rendered OAuth approval page', () => {
 		expect(html).toContain('tabindex="-1"');
 	});
 
+	it('renders progress and partial retry as native HTTPS navigation', () => {
+		const progressHtml = renderOAuthApprovalPage({
+			...assets,
+			continueUrl: 'https://accounts.google.test/authorize-next',
+			model: oauthApprovalPageModelSchema.parse({
+				applications: [
+					{ applicationId: 'gmail-app', label: 'Gmail', status: 'completed' },
+					{ applicationId: 'workspace-app', label: 'Workspace', status: 'authorizing' },
+				],
+				kind: 'application-progress',
+			}),
+		});
+		const partialHtml = renderOAuthApprovalPage({
+			...assets,
+			csrfToken: 'c'.repeat(43),
+			formAction: '/oauth/completions/retry-id/retry',
+			model: oauthApprovalPageModelSchema.parse({
+				completed: ['Gmail'],
+				kind: 'partial-completion',
+				retryable: ['Workspace'],
+			}),
+		});
+
+		expect(progressHtml).toContain('Continue to Google');
+		expect(progressHtml).toContain('https://accounts.google.test/authorize-next');
+		expect(partialHtml).toContain('Retry Google authorization');
+		expect(partialHtml).toContain('/oauth/completions/retry-id/retry');
+		expect(partialHtml).toContain('method="post"');
+		expect(progressHtml).not.toContain('name="csrfToken"');
+	});
+
 	it.each([
 		{ accountLabel: 'Personal Google', kind: 'completed' },
 		{ kind: 'expired', message: 'Start again from Hermes.' },

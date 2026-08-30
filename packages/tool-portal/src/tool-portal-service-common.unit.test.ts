@@ -3,9 +3,9 @@ import { describe, expect, it } from 'vitest';
 
 import { capabilityDiscoveryMetadata } from './tool-portal-service-common.js';
 
-function oauthConfiguredCliPolicy(): ReturnType<
-	typeof toolPortalConfigSchema.parse
->['profiles'][string]['namespaces'][string] {
+function oauthConfiguredCliPolicy(
+	mode: 'mixed' | 'static' = 'mixed',
+): ReturnType<typeof toolPortalConfigSchema.parse>['profiles'][string]['namespaces'][string] {
 	const config = toolPortalConfigSchema.parse({
 		agents: { hermes: { profile: 'default' } },
 		mode: 'managed',
@@ -29,23 +29,31 @@ function oauthConfiguredCliPolicy(): ReturnType<
 													serviceId: 'gmail',
 												},
 											},
-											{
-												match: { flags: [], path: ['gmail', 'send'] },
-												requirement: {
-													applicationId: 'gmail-app',
-													kind: 'oauth',
-													minimumPermission: 'write',
-													serviceId: 'gmail',
-												},
-											},
+											...(mode === 'mixed'
+												? [
+														{
+															match: { flags: [], path: ['gmail', 'send'] },
+															requirement: {
+																applicationId: 'gmail-app',
+																kind: 'oauth',
+																minimumPermission: 'write',
+																serviceId: 'gmail',
+															},
+														},
+													]
+												: []),
 										],
 									},
 									calls: {
 										deny: [],
-										requiresApproval: [{ flags: [], path: ['gmail', 'send'] }],
+										requiresApproval:
+											mode === 'mixed' ? [{ flags: [], path: ['gmail', 'send'] }] : [],
 										withoutApproval: 'remaining_admitted',
 									},
-									commands: [{ path: ['gmail', 'search'] }, { path: ['gmail', 'send'] }],
+									commands: [
+										{ path: ['gmail', 'search'] },
+										...(mode === 'mixed' ? [{ path: ['gmail', 'send'] }] : []),
+									],
 									deniedPatterns: [],
 									executablePath: '/usr/bin/gog',
 									executionTarget: {
@@ -119,5 +127,19 @@ describe('capabilityDiscoveryMetadata', () => {
 
 		// Assert
 		expect(metadata).toBeUndefined();
+	});
+
+	it('publishes one static OAuth requirement when every command uses the same grant', () => {
+		const metadata = capabilityDiscoveryMetadata({
+			policy: oauthConfiguredCliPolicy('static'),
+			toolName: 'gog_cli',
+		});
+
+		expect(metadata?.oauthRequirement).toEqual({
+			applicationId: 'gmail-app',
+			kind: 'oauth-account-profile',
+			minimumPermission: 'read',
+			serviceId: 'gmail',
+		});
 	});
 });

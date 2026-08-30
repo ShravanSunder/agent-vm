@@ -38,7 +38,10 @@ import { createUnstartedToolVm, type ToolVmRootBinding } from '../tool-vm/tool-v
 import { ActiveTaskRegistry } from './active-task-registry.js';
 import { createControllerApprovalLedger } from './approval/controller-approval-ledger.js';
 import { authorizeGatewayControlControllerExecution } from './control-session/gateway-control-controller-execution-authorization.js';
-import type { GatewayControlControllerExecutionOperations } from './control-session/gateway-control-domain-handler.js';
+import type {
+	GatewayControlControllerExecutionOperations,
+	GatewayControlOAuthAvailabilityOperations,
+} from './control-session/gateway-control-domain-handler.js';
 import {
 	createGatewayControlLeaseRpcOperations,
 	createGatewayControlProcessAdmissionCoordinator,
@@ -212,6 +215,17 @@ function formatUnknownError(error: unknown): string {
 		return error.message;
 	}
 	return typeof error === 'string' ? error : JSON.stringify(error);
+}
+
+async function collectControllerCleanupError(
+	cleanupErrors: Error[],
+	cleanup: () => Promise<void>,
+): Promise<void> {
+	try {
+		await cleanup();
+	} catch (error) {
+		cleanupErrors.push(error instanceof Error ? error : new Error(formatUnknownError(error)));
+	}
 }
 
 function oauthAuthorizationRequestFromControlPayload(
@@ -582,16 +596,7 @@ async function startControllerRuntimeWithOwnershipLock(
 	const selectedZoneIds = [
 		...new Set(options.zoneIds ?? options.systemConfig.zones.map((zone) => zone.id)),
 	];
-	const preparedOAuthRuntime: PreparedControllerOAuthRuntime | undefined = await runTaskWithResult(
-		runTaskStep,
-		'Preparing OAuth broker',
-		async () =>
-			await (dependencies.prepareControllerOAuthRuntime ?? prepareControllerOAuthRuntimeDefault)({
-				secretResolver,
-				selectedZoneIds,
-				systemConfig: options.systemConfig,
-			}),
-	);
+	let preparedOAuthRuntime: PreparedControllerOAuthRuntime | undefined;
 	const approvalLedgersByZoneId = new Map(
 		options.systemConfig.zones.filter(isManagedGatewayZone).map(
 			(zone) =>
@@ -849,16 +854,6 @@ async function startControllerRuntimeWithOwnershipLock(
 		readProcessIdentity: dependencies.readProcessIdentity ?? readManagedVmProcessIdentity,
 		secretResolver,
 	});
-	preparedOAuthRuntime?.setCredentialInvalidationHandler(async ({ agentId, zoneId }) => {
-		const retirement = await credentialedRuntimeManager.retire({
-			agentId,
-			force: true,
-			zoneId,
-		});
-		if (retirement.kind === 'owner-unsafe') {
-			throw new Error('OAuth credential invalidation could not prove runtime containment.');
-		}
-	});
 	const executeConfiguredCliInManagedVm = createConfiguredCliManagedVmExecutor({
 		resolveOAuthRuntimeCredential: async (request) => {
 			if (preparedOAuthRuntime === undefined || preparedOAuthRuntime.zoneId !== request.zoneId) {
@@ -968,6 +963,20 @@ async function startControllerRuntimeWithOwnershipLock(
 		},
 		runControllerHostProbe: async () => await runControllerHostProbe(),
 	};
+	const gatewayControlOAuthAvailability = {
+		resolve: async ({ callerContext, request, session }) => ({
+			items: request.requirements.map((requirement) => ({
+				availability:
+					preparedOAuthRuntime === undefined || preparedOAuthRuntime.zoneId !== session.zoneId
+						? { kind: 'authorization-status-unavailable' as const }
+						: preparedOAuthRuntime.brokerService.resolveToolAvailability({
+								agentId: callerContext.agentId,
+								requirement,
+							}),
+				requirement,
+			})),
+		}),
+	} satisfies GatewayControlOAuthAvailabilityOperations;
 	const idleReaper = createIdleReaper({
 		getLeases: () =>
 			leaseManager.listLeases().map((lease) => ({
@@ -990,6 +999,7 @@ async function startControllerRuntimeWithOwnershipLock(
 		await leaseManager.reapDeadIdleLeases();
 		await idleReaper.reapExpiredLeases();
 		await credentialedRuntimeManager.reapExpired();
+		preparedOAuthRuntime?.brokerService.reapExpiredTransactions();
 	};
 	const reaperTimer = (dependencies.setIntervalImpl ?? setInterval)(
 		() =>
@@ -1149,6 +1159,7 @@ async function startControllerRuntimeWithOwnershipLock(
 								gatewayControlApprovalLedger: approvalLedger,
 								gatewayControlBindingPublicationSource: gatewayControlLeaseRpc,
 								gatewayControlLeaseRpc,
+								gatewayControlOAuthAvailability,
 								gatewayControlProcessAdmissionCoordinator,
 								healthEventStore,
 								runtimeEnvironment: createGatewayRuntimeEnvironmentForZone({
@@ -1271,7 +1282,7 @@ async function startControllerRuntimeWithOwnershipLock(
 			try {
 				await registry.stopAllZones();
 			} finally {
-				preparedOAuthRuntime?.close();
+				await preparedOAuthRuntime?.close();
 			}
 		},
 	});
@@ -1436,6 +1447,26 @@ async function startControllerRuntimeWithOwnershipLock(
 		systemConfig: options.systemConfig,
 	});
 	try {
+		preparedOAuthRuntime = await runTaskWithResult(
+			runTaskStep,
+			'Preparing OAuth broker',
+			async () =>
+				await (dependencies.prepareControllerOAuthRuntime ?? prepareControllerOAuthRuntimeDefault)({
+					secretResolver,
+					selectedZoneIds,
+					systemConfig: options.systemConfig,
+				}),
+		);
+		preparedOAuthRuntime?.setCredentialInvalidationHandler(async ({ agentId, zoneId }) => {
+			const retirement = await credentialedRuntimeManager.retire({
+				agentId,
+				force: true,
+				zoneId,
+			});
+			if (retirement.kind === 'owner-unsafe') {
+				throw new Error('OAuth credential invalidation could not prove runtime containment.');
+			}
+		});
 		await runTaskStep(
 			`Controller API on :${options.systemConfig.host.controllerPort}`,
 			async () => {
@@ -1445,9 +1476,10 @@ async function startControllerRuntimeWithOwnershipLock(
 				});
 			},
 		);
-		if (preparedOAuthRuntime !== undefined) {
-			await runTaskStep(`OAuth HTTPS on :${preparedOAuthRuntime.port}`, async () => {
-				oauthServerRef.current = await preparedOAuthRuntime.startHttpsListener();
+		const oauthRuntimeToStart = preparedOAuthRuntime;
+		if (oauthRuntimeToStart !== undefined) {
+			await runTaskStep(`OAuth HTTPS on :${oauthRuntimeToStart.port}`, async () => {
+				oauthServerRef.current = await oauthRuntimeToStart.startHttpsListener();
 			});
 		}
 	} catch (error) {
@@ -1457,7 +1489,7 @@ async function startControllerRuntimeWithOwnershipLock(
 			try {
 				await serverRef.current?.close();
 			} finally {
-				preparedOAuthRuntime?.close();
+				await preparedOAuthRuntime?.close();
 			}
 		}
 		throw error;
@@ -1524,7 +1556,7 @@ async function startControllerRuntimeWithOwnershipLock(
 			await closeOAuthAdmissionAndListener();
 			await serverRef.current?.close();
 		} finally {
-			preparedOAuthRuntime?.close();
+			await preparedOAuthRuntime?.close();
 			await healthEventStore.flushHealthEventSinks();
 			await flushControllerTelemetry(controllerTelemetry);
 			await shutdownControllerTelemetry(controllerTelemetry);
@@ -1629,15 +1661,29 @@ async function startControllerRuntimeWithOwnershipLock(
 				} catch (error) {
 					serverCloseError = error instanceof Error ? error : new Error(formatUnknownError(error));
 				}
-				preparedOAuthRuntime?.close();
-				await healthEventStore.flushDurableWrites();
-				await healthEventStore.flushHealthEventSinks();
-				await flushControllerTelemetry(controllerTelemetry);
-				await shutdownControllerTelemetry(controllerTelemetry);
 			}
-			const closeErrors = [oauthCloseError, stopError, serverCloseError].filter(
-				(error): error is Error => error !== undefined,
-			);
+			const finalCleanupErrors: Error[] = [];
+			await collectControllerCleanupError(finalCleanupErrors, async () => {
+				await preparedOAuthRuntime?.close();
+			});
+			await collectControllerCleanupError(finalCleanupErrors, async () => {
+				await healthEventStore.flushDurableWrites();
+			});
+			await collectControllerCleanupError(finalCleanupErrors, async () => {
+				await healthEventStore.flushHealthEventSinks();
+			});
+			await collectControllerCleanupError(finalCleanupErrors, async () => {
+				await flushControllerTelemetry(controllerTelemetry);
+			});
+			await collectControllerCleanupError(finalCleanupErrors, async () => {
+				await shutdownControllerTelemetry(controllerTelemetry);
+			});
+			const closeErrors = [
+				oauthCloseError,
+				stopError,
+				serverCloseError,
+				...finalCleanupErrors,
+			].filter((error): error is Error => error !== undefined);
 			if (closeErrors.length === 1) {
 				throw closeErrors[0];
 			}

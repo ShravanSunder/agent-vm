@@ -286,6 +286,51 @@ describe('configured CLI credentialed Managed VM executor', () => {
 		);
 	});
 
+	it('surfaces a safe OAuth reauthorization reason from deferred materialization', async () => {
+		const acquireCommand = vi.fn(
+			async (request: Parameters<CredentialedRuntimeManager['acquireCommand']>[0]) => {
+				if (!('materializeResolution' in request)) {
+					throw new Error('Expected deferred OAuth materialization.');
+				}
+				try {
+					await request.materializeResolution();
+					throw new Error('OAuth materialization unexpectedly succeeded.');
+				} catch (error) {
+					return {
+						kind: 'not-dispatched' as const,
+						reason:
+							request.materializationFailureReason?.(error) ??
+							'credentialed runtime materialization failed',
+					};
+				}
+			},
+		);
+		const execute = executorWithManager(managerWithAcquire(acquireCommand), async () => ({
+			kind: 'unavailable',
+			reason: 'reauthorization-required',
+		}));
+		const currentAuthorization = oauthAuthorization();
+
+		await expect(
+			execute({
+				authorization: currentAuthorization,
+				input: {
+					accountProfile: oauthAccountProfileIdSchema.parse('personal-google'),
+					argv: ['gmail', 'search'],
+					reason: 'read messages',
+				},
+				operation: currentAuthorization.operation,
+				operationName: 'gog_cli',
+				reloadAuthorization: vi.fn(async () => currentAuthorization),
+				stablePrincipal: 'a'.repeat(64),
+				zoneId: 'zone-a',
+			}),
+		).rejects.toMatchObject({
+			code: 'not_dispatched',
+			message: 'OAuth authorization is unavailable: reauthorization-required.',
+		});
+	});
+
 	it('acquires one current slot, executes, and returns the runtime to idle', async () => {
 		const command = commandHandle();
 		const acquireCommand = vi.fn(async () => ({ command, kind: 'acquired' as const }));

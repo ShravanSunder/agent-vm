@@ -23,6 +23,8 @@ import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 
+import { closeNodeServer, waitForNodeServerListening } from '../http/node-server-lifecycle.js';
+
 const transactionIdCookieName = 'agent_vm_oauth_transaction';
 const transactionBindingCookieName = 'agent_vm_oauth_transaction_binding';
 const completionIdCookieName = 'agent_vm_oauth_completion';
@@ -126,6 +128,7 @@ function confirmationPageModel(page: GoogleOAuthConfirmationPageData): OAuthAppr
 function renderPage(props: {
 	readonly assets: OAuthApprovalAssets;
 	readonly cancelAction?: string | undefined;
+	readonly continueUrl?: string | undefined;
 	readonly csrfToken?: string | undefined;
 	readonly formAction?: string | undefined;
 	readonly model: Parameters<typeof renderOAuthApprovalPage>[0]['model'];
@@ -133,6 +136,7 @@ function renderPage(props: {
 	return renderOAuthApprovalPage({
 		assetBasePath: '/oauth/assets',
 		cancelAction: props.cancelAction,
+		continueUrl: props.continueUrl,
 		csrfToken: props.csrfToken,
 		formAction: props.formAction,
 		javascriptAssetName: props.assets.manifest.javascript,
@@ -142,11 +146,9 @@ function renderPage(props: {
 }
 
 function isTailscaleAddress(address: string): boolean {
-	if (isIP(address) === 4) {
-		const octets = address.split('.').map(Number);
-		return octets[0] === 100 && (octets[1] ?? -1) >= 64 && (octets[1] ?? 256) <= 127;
-	}
-	return isIP(address) === 6 && address.toLowerCase().startsWith('fd7a:115c:a1e0:');
+	if (isIP(address) !== 4) return false;
+	const octets = address.split('.').map(Number);
+	return octets[0] === 100 && (octets[1] ?? -1) >= 64 && (octets[1] ?? 256) <= 127;
 }
 
 export function createOAuthHttpsApp(props: {
@@ -300,6 +302,34 @@ export function createOAuthHttpsApp(props: {
 		}
 	});
 
+	app.post('/oauth/completions/:retryId/retry', async (context) => {
+		try {
+			requireSameOrigin(context.req.header('origin'));
+			const transactionId = oauthTransactionIdSchema.parse(context.req.param('retryId'));
+			if (getCookie(context, transactionIdCookieName) !== transactionId) {
+				throw new Error('OAuth retry cookie does not match the route.');
+			}
+			const browserBindingSecret = getCookie(context, transactionBindingCookieName);
+			if (browserBindingSecret === undefined) throw new Error('OAuth retry binding is missing.');
+			const form = await context.req.formData();
+			const retry = props.brokerService.retryApplication({
+				browserBindingSecret,
+				csrfToken: requireFormString(form, 'csrfToken'),
+				tailnetLogin: await resolveTailnetLogin(context),
+				transactionId,
+			});
+			return context.redirect(retry.authorizationUrl);
+		} catch {
+			return context.html(
+				renderPage({
+					assets: props.assets,
+					model: { kind: 'failed', message: 'Google authorization retry was rejected.' },
+				}),
+				403,
+			);
+		}
+	});
+
 	app.get('/oauth/google/callback', async (context) => {
 		try {
 			const transactionId = oauthTransactionIdSchema.parse(
@@ -315,9 +345,36 @@ export function createOAuthHttpsApp(props: {
 				tailnetLogin: await resolveTailnetLogin(context),
 				transactionId,
 			});
-			if (result.kind === 'failed') throw new Error('Google callback failed.');
+			if (result.kind === 'failed') {
+				const expired = result.reason === 'expired';
+				return context.html(
+					renderPage({
+						assets: props.assets,
+						model: expired
+							? { kind: 'expired', message: 'This authorization link expired. Start again.' }
+							: { kind: 'failed', message: 'Google authorization could not be verified.' },
+					}),
+					expired ? 410 : 403,
+				);
+			}
 			deleteCookie(context, transactionIdCookieName, { path: oauthCookiePath, secure: true });
 			deleteCookie(context, transactionBindingCookieName, { path: oauthCookiePath, secure: true });
+			if (result.kind === 'partial-completion') {
+				setOpaqueCookie(context, transactionIdCookieName, result.retry.transactionId);
+				setOpaqueCookie(context, transactionBindingCookieName, result.retry.browserBindingSecret);
+				return context.html(
+					renderPage({
+						assets: props.assets,
+						csrfToken: result.retryCsrfToken,
+						formAction: `/oauth/completions/${result.retry.transactionId}/retry`,
+						model: {
+							completed: result.completed,
+							kind: 'partial-completion',
+							retryable: result.retryable,
+						},
+					}),
+				);
+			}
 			setOpaqueCookie(context, completionIdCookieName, result.confirmation.completionSessionId);
 			setOpaqueCookie(
 				context,
@@ -364,7 +421,13 @@ export function createOAuthHttpsApp(props: {
 			if (result.kind === 'redirect') {
 				setOpaqueCookie(context, transactionIdCookieName, result.transactionId);
 				setOpaqueCookie(context, transactionBindingCookieName, result.browserBindingSecret);
-				return context.redirect(result.authorizationUrl);
+				return context.html(
+					renderPage({
+						assets: props.assets,
+						continueUrl: result.authorizationUrl,
+						model: { applications: result.applications, kind: 'application-progress' },
+					}),
+				);
 			}
 			if (result.kind === 'subject-mismatch') throw new Error('Google subject mismatch.');
 			return context.html(
@@ -394,6 +457,7 @@ export async function startOAuthHttpsServer(props: {
 	readonly port: number;
 	readonly privateKeyPath: string;
 	readonly publicHostname: string;
+	readonly now?: (() => number) | undefined;
 }): Promise<{ close(): Promise<void> }> {
 	if (!isTailscaleAddress(props.bindAddress)) {
 		throw new Error('OAuth HTTPS listener must bind an exact Tailscale address.');
@@ -406,22 +470,38 @@ export async function startOAuthHttpsServer(props: {
 	if (x509.checkHost(props.publicHostname) === undefined) {
 		throw new Error('OAuth TLS certificate does not cover the configured public hostname.');
 	}
+	const currentTimeMs = (props.now ?? Date.now)();
+	if (currentTimeMs < Date.parse(x509.validFrom) || currentTimeMs > Date.parse(x509.validTo)) {
+		throw new Error('OAuth TLS certificate is not valid at the current time.');
+	}
 	createSecureContext({ cert: certificate, key: privateKey });
+	return await startOAuthTlsListener({
+		app: props.app,
+		bindAddress: props.bindAddress,
+		certificate,
+		port: props.port,
+		privateKey,
+	});
+}
+
+/** Low-level listener lifecycle seam. Callers must validate bind and TLS policy first. */
+export async function startOAuthTlsListener(props: {
+	readonly app: Hono<{ Bindings: OAuthHttpsBindings }>;
+	readonly bindAddress: string;
+	readonly certificate: string;
+	readonly port: number;
+	readonly privateKey: string;
+}): Promise<{ close(): Promise<void> }> {
 	const server = serve({
 		createServer,
 		fetch: props.app.fetch,
 		hostname: props.bindAddress,
 		overrideGlobalObjects: false,
 		port: props.port,
-		serverOptions: { cert: certificate, key: privateKey },
+		serverOptions: { cert: props.certificate, key: props.privateKey },
 	});
+	await waitForNodeServerListening(server);
 	return {
-		close: async (): Promise<void> =>
-			await new Promise<void>((resolve, reject) => {
-				server.close((error?: Error) => {
-					if (error !== undefined) reject(error);
-					else resolve();
-				});
-			}),
+		close: async (): Promise<void> => await closeNodeServer(server),
 	};
 }

@@ -2,6 +2,7 @@ import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+import { createGoogleOAuthBrokerService } from '@agent-vm/oauth-broker/google';
 import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -156,6 +157,72 @@ function secretResolver(): SecretResolver {
 }
 
 describe('controller OAuth runtime composition', () => {
+	it('drains the broker and clears the KEK when preparation fails after broker creation', async () => {
+		// Arrange
+		const configDirectory = path.join(testRoot, 'config', 'gateways', 'apollofam');
+		await mkdir(configDirectory, { recursive: true });
+		await Promise.all([
+			writeFile(path.join(configDirectory, 'oauth.config.jsonc'), JSON.stringify(oauthConfig())),
+			writeFile(
+				path.join(configDirectory, 'tool-portal.config.jsonc'),
+				JSON.stringify(toolPortalConfig()),
+			),
+		]);
+		const localApiGetJson = vi.fn(async (requestPath: string) => {
+			if (requestPath === '/localapi/v0/status') {
+				return { Self: { TailscaleIPs: ['100.100.100.10'] } };
+			}
+			throw new Error(`Unexpected LocalAPI request: ${requestPath}`);
+		});
+		const preparationFailure = new Error('approval application composition failed');
+		const closeBroker = vi.fn();
+		let capturedKeyEncryptionKey: Uint8Array | undefined;
+
+		// Act / Assert
+		await expect(
+			prepareControllerOAuthRuntime({
+				createBrokerService: (brokerProps) => {
+					capturedKeyEncryptionKey = brokerProps.keyEncryptionKey;
+					const brokerService = createGoogleOAuthBrokerService(brokerProps);
+					return {
+						...brokerService,
+						close: async () => {
+							closeBroker();
+							await brokerService.close();
+						},
+					};
+				},
+				createHttpsApp: () => {
+					throw preparationFailure;
+				},
+				loadApprovalAssets: async () => ({
+					files: {},
+					manifest: { css: 'oauth.css', javascript: 'oauth.js' },
+				}),
+				secretResolver: secretResolver(),
+				selectedZoneIds: ['apollofam'],
+				systemConfig: systemConfig(configDirectory),
+				tailscaleLocalApiTransport: { getJson: localApiGetJson },
+			}),
+		).rejects.toBe(preparationFailure);
+		expect(closeBroker).toHaveBeenCalledOnce();
+		expect(capturedKeyEncryptionKey).toBeDefined();
+		expect(capturedKeyEncryptionKey?.every((byte) => byte === 0)).toBe(true);
+
+		const retry = await prepareControllerOAuthRuntime({
+			loadApprovalAssets: async () => ({
+				files: {},
+				manifest: { css: 'oauth.css', javascript: 'oauth.js' },
+			}),
+			secretResolver: secretResolver(),
+			selectedZoneIds: ['apollofam'],
+			systemConfig: systemConfig(configDirectory),
+			tailscaleLocalApiTransport: { getJson: localApiGetJson },
+		});
+		if (retry === undefined) throw new Error('Expected OAuth runtime retry to succeed.');
+		await retry.close();
+	});
+
 	it('loads the zone config pair, resolves 1Password material, and opens the durable catalog', async () => {
 		const configDirectory = path.join(testRoot, 'config', 'gateways', 'apollofam');
 		await mkdir(configDirectory, { recursive: true });
@@ -172,8 +239,13 @@ describe('controller OAuth runtime composition', () => {
 			}
 			throw new Error(`Unexpected LocalAPI request: ${requestPath}`);
 		});
+		let capturedKeyEncryptionKey: Uint8Array | undefined;
 
 		const prepared = await prepareControllerOAuthRuntime({
+			createBrokerService: (brokerProps) => {
+				capturedKeyEncryptionKey = brokerProps.keyEncryptionKey;
+				return createGoogleOAuthBrokerService(brokerProps);
+			},
 			loadApprovalAssets: async () => ({
 				files: {
 					'oauth.1111111111111111.css': new Uint8Array(),
@@ -210,8 +282,10 @@ describe('controller OAuth runtime composition', () => {
 				),
 			),
 		).resolves.toBeUndefined();
-		prepared.close();
-		prepared.close();
+		await prepared.close();
+		await prepared.close();
+		expect(capturedKeyEncryptionKey).toBeDefined();
+		expect(capturedKeyEncryptionKey?.every((byte) => byte === 0)).toBe(true);
 	});
 
 	it('remains disabled when the selected Hermes zone has no OAuth config', async () => {

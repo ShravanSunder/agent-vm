@@ -94,6 +94,7 @@ function createGrant(props: {
 }
 
 function createCatalog(initialGrant: OAuthStoredGrant): {
+	readonly advanceRecordRevision: () => void;
 	readonly catalog: OAuthCredentialCatalog;
 	readonly replaceGrantEnvelope: ReturnType<typeof vi.fn>;
 } {
@@ -119,6 +120,12 @@ function createCatalog(initialGrant: OAuthStoredGrant): {
 		return { grant: currentGrant, kind: 'updated' as const };
 	});
 	return {
+		advanceRecordRevision: (): void => {
+			currentGrant = oauthStoredGrantSchema.parse({
+				...currentGrant,
+				recordRevision: currentGrant.recordRevision + 1,
+			});
+		},
 		catalog: {
 			close: () => undefined,
 			commitEnrollmentGrant: () => {
@@ -167,6 +174,55 @@ function createAdapter(refreshResult: GoogleRefreshResult): {
 }
 
 describe('Google credential refresh coordinator', () => {
+	it('does not persist degraded lifecycle state when controller shutdown aborts refresh', async () => {
+		// Arrange
+		const grant = createGrant({ accessTokenExpiresAtMs: 1_000 });
+		const { catalog, replaceGrantEnvelope } = createCatalog(grant);
+		const refreshStarted = Promise.withResolvers<void>();
+		const { adapter } = createAdapter({
+			failure: { kind: 'provider-unavailable', retryable: true },
+			kind: 'failed',
+		});
+		const refreshAuthorization = vi.fn(
+			async ({ signal }: Parameters<GoogleOAuthAdapter['refreshAuthorization']>[0]) =>
+				await new Promise<GoogleRefreshResult>((resolve) => {
+					refreshStarted.resolve();
+					signal?.addEventListener(
+						'abort',
+						() =>
+							resolve({
+								failure: { kind: 'provider-unavailable', retryable: true },
+								kind: 'failed',
+							}),
+						{ once: true },
+					);
+				}),
+		);
+		const coordinator = createGoogleCredentialRefreshCoordinator({
+			catalog,
+			googleAdapter: { ...adapter, refreshAuthorization },
+			now: () => 10_000,
+		});
+		const controllerShutdown = new AbortController();
+		const shutdownReason = new Error('controller OAuth shutdown');
+
+		// Act
+		const resolution = coordinator.resolveAccessToken({
+			clientCredentials,
+			grant,
+			keyEncryptionKey,
+			keyEncryptionKeyVersion: 1,
+			requiredScopes: [gmailReadScope],
+			signal: controllerShutdown.signal,
+		});
+		await refreshStarted.promise;
+		controllerShutdown.abort(shutdownReason);
+
+		// Assert
+		await expect(resolution).rejects.toBe(shutdownReason);
+		expect(replaceGrantEnvelope).not.toHaveBeenCalled();
+	});
+
 	it('single-flights concurrent refresh and atomically persists a replacement token', async () => {
 		const grant = createGrant({ accessTokenExpiresAtMs: 1_000 });
 		const { catalog, replaceGrantEnvelope } = createCatalog(grant);
@@ -212,6 +268,51 @@ describe('Google credential refresh coordinator', () => {
 				keyEncryptionKey,
 			}),
 		).toMatchObject({ refreshToken: 'rotated-refresh-token' });
+	});
+
+	it('rejects an in-flight refresh after reauthorization advances the grant revision', async () => {
+		const grant = createGrant({ accessTokenExpiresAtMs: 1_000 });
+		const { advanceRecordRevision, catalog } = createCatalog(grant);
+		let resolveRefreshStarted: (() => void) | undefined;
+		const refreshStarted = new Promise<void>((resolve) => {
+			resolveRefreshStarted = resolve;
+		});
+		let resolveRefresh: ((result: GoogleRefreshResult) => void) | undefined;
+		const refreshResult = new Promise<GoogleRefreshResult>((resolve) => {
+			resolveRefresh = resolve;
+		});
+		const { adapter } = createAdapter({
+			accessToken: 'unused',
+			accessTokenExpiresAtMs: 1_000_000,
+			grantedScopes: [gmailReadScope],
+			kind: 'refreshed',
+		});
+		const refreshAuthorization = vi.fn(async (): Promise<GoogleRefreshResult> => {
+			resolveRefreshStarted?.();
+			return await refreshResult;
+		});
+		const coordinator = createGoogleCredentialRefreshCoordinator({
+			catalog,
+			googleAdapter: { ...adapter, refreshAuthorization },
+			now: () => 10_000,
+		});
+		const resolution = coordinator.resolveAccessToken({
+			clientCredentials,
+			grant,
+			keyEncryptionKey,
+			keyEncryptionKeyVersion: 1,
+			requiredScopes: [gmailReadScope],
+		});
+		await refreshStarted;
+		advanceRecordRevision();
+		resolveRefresh?.({
+			accessToken: 'superseded-refresh-access-token',
+			accessTokenExpiresAtMs: 1_000_000,
+			grantedScopes: [gmailReadScope],
+			kind: 'refreshed',
+		});
+
+		await expect(resolution).resolves.toEqual({ kind: 'stale-write' });
 	});
 
 	it('reuses a sufficiently valid access token without provider or catalog effects', async () => {

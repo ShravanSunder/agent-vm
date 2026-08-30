@@ -17,6 +17,7 @@ const rawClientCredentials = JSON.stringify({
 		project_id: 'agent-vm-test',
 		redirect_uris: [redirectUri],
 		token_uri: 'https://oauth2.googleapis.com/token',
+		universe_domain: 'googleapis.com',
 	},
 });
 
@@ -69,10 +70,11 @@ describe('Google OAuth adapter', () => {
 			state: 's'.repeat(43),
 		});
 		expect(url.searchParams.get('scope')?.split(' ').toSorted()).toEqual([
-			'email',
 			'gmail.readonly',
+			'https://www.googleapis.com/auth/userinfo.email',
 			'openid',
 		]);
+		expect(url.searchParams.has('include_granted_scopes')).toBe(false);
 		expect(url.toString()).not.toContain('google-client-secret');
 	});
 
@@ -85,14 +87,16 @@ describe('Google OAuth adapter', () => {
 				return jsonResponse({
 					access_token: 'access-token',
 					expires_in: 3_600,
+					refresh_token_expires_in: 604_800,
 					refresh_token: 'refresh-token',
-					scope: 'openid email gmail.readonly',
+					scope: 'openid https://www.googleapis.com/auth/userinfo.email gmail.readonly',
 					token_type: 'Bearer',
 				});
 			}
 			return jsonResponse({
 				email: 'human@example.test',
 				email_verified: true,
+				provider_specific_claim: 'ignored',
 				sub: 'google-subject-1',
 			});
 		});
@@ -133,6 +137,7 @@ describe('Google OAuth adapter', () => {
 			jsonResponse({
 				access_token: 'new-access-token',
 				expires_in: 1_800,
+				refresh_token_expires_in: 604_800,
 				refresh_token: 'replacement-refresh-token',
 				token_type: 'Bearer',
 			}),

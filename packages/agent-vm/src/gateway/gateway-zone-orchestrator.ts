@@ -2397,6 +2397,9 @@ async function startGatewayZoneImplementation(
 				...(options.gatewayControlLeaseRpc === undefined
 					? {}
 					: { leaseRpc: options.gatewayControlLeaseRpc }),
+				...(options.gatewayControlOAuthAvailability === undefined
+					? {}
+					: { oauthAvailability: options.gatewayControlOAuthAvailability }),
 				recordGatewayRuntimeReadiness: (snapshot: GatewayRuntimeReadinessSnapshot): void => {
 					runtimeReadinessEvidence = { kind: 'current', snapshot };
 					if (

@@ -129,6 +129,7 @@ describe('gateway control contract', () => {
 			'tool_portal_approval_decide',
 			'tool_portal_controller_execution',
 			'tool_portal_dispatch_arm',
+			'tool_portal_oauth_availability',
 			'tool_vm_binding_publish',
 			'tool_vm_binding_request',
 		]);

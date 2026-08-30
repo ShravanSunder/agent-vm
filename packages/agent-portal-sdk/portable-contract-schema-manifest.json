@@ -1913,6 +1913,7 @@
 																		"properties": {
 																			"accountProfiles": {
 																				"readOnly": true,
+																				"minItems": 1,
 																				"type": "array",
 																				"items": {
 																					"type": "object",
@@ -2737,6 +2738,7 @@
 																		"properties": {
 																			"accountProfiles": {
 																				"readOnly": true,
+																				"minItems": 1,
 																				"type": "array",
 																				"items": {
 																					"type": "object",
@@ -3470,6 +3472,7 @@
 																		"properties": {
 																			"accountProfiles": {
 																				"readOnly": true,
+																				"minItems": 1,
 																				"type": "array",
 																				"items": {
 																					"type": "object",

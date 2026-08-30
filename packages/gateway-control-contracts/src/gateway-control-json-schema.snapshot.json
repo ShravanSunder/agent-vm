@@ -725,7 +725,8 @@
 												"enum": [
 													"tool_vm_lease",
 													"tool_portal_controller_execution",
-													"tool_portal_approval_decision"
+													"tool_portal_approval_decision",
+													"tool_portal_oauth_availability"
 												]
 											},
 											"zoneId": {
@@ -3589,6 +3590,105 @@
 							},
 							"operation": {
 								"type": "string",
+								"const": "tool_portal_oauth_availability"
+							},
+							"payload": {
+								"type": "object",
+								"properties": {
+									"callerContext": {
+										"type": "object",
+										"properties": {
+											"callerContextId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											}
+										},
+										"required": ["callerContextId"],
+										"additionalProperties": false
+									},
+									"request": {
+										"type": "object",
+										"properties": {
+											"requirements": {
+												"readOnly": true,
+												"minItems": 1,
+												"maxItems": 256,
+												"type": "array",
+												"items": {
+													"type": "object",
+													"properties": {
+														"applicationId": {
+															"type": "string",
+															"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+														},
+														"kind": {
+															"type": "string",
+															"const": "oauth-account-profile"
+														},
+														"minimumPermission": {
+															"type": "string",
+															"enum": ["read", "write"]
+														},
+														"serviceId": {
+															"type": "string",
+															"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+														}
+													},
+													"required": ["applicationId", "kind", "minimumPermission", "serviceId"],
+													"additionalProperties": false
+												}
+											}
+										},
+										"required": ["requirements"],
+										"additionalProperties": false
+									}
+								},
+								"required": ["callerContext", "request"],
+								"additionalProperties": false
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "command"
+							},
+							"operation": {
+								"type": "string",
 								"const": "tool_portal_approval_decide"
 							},
 							"payload": {
@@ -5223,6 +5323,9 @@
 											"controllerExecution": {
 												"not": {}
 											},
+											"oauthAvailabilityBatch": {
+												"not": {}
+											},
 											"error": {
 												"not": {}
 											},
@@ -5273,6 +5376,9 @@
 												"not": {}
 											},
 											"controllerExecution": {
+												"not": {}
+											},
+											"oauthAvailabilityBatch": {
 												"not": {}
 											},
 											"error": {
@@ -5411,6 +5517,9 @@
 											"controllerExecution": {
 												"not": {}
 											},
+											"oauthAvailabilityBatch": {
+												"not": {}
+											},
 											"error": {
 												"not": {}
 											},
@@ -5461,6 +5570,9 @@
 												"not": {}
 											},
 											"controllerExecution": {
+												"not": {}
+											},
+											"oauthAvailabilityBatch": {
 												"not": {}
 											},
 											"error": {
@@ -5584,6 +5696,9 @@
 												"not": {}
 											},
 											"controllerExecution": {
+												"not": {}
+											},
+											"oauthAvailabilityBatch": {
 												"not": {}
 											},
 											"error": {
@@ -5734,6 +5849,9 @@
 											"controllerExecution": {
 												"not": {}
 											},
+											"oauthAvailabilityBatch": {
+												"not": {}
+											},
 											"error": {
 												"type": "object",
 												"properties": {
@@ -5814,6 +5932,9 @@
 												"not": {}
 											},
 											"controllerExecution": {
+												"not": {}
+											},
+											"oauthAvailabilityBatch": {
 												"not": {}
 											},
 											"error": {
@@ -5953,6 +6074,9 @@
 											"controllerExecution": {
 												"not": {}
 											},
+											"oauthAvailabilityBatch": {
+												"not": {}
+											},
 											"error": {
 												"not": {}
 											},
@@ -6082,6 +6206,9 @@
 											"controllerExecution": {
 												"not": {}
 											},
+											"oauthAvailabilityBatch": {
+												"not": {}
+											},
 											"error": {
 												"type": "object",
 												"properties": {
@@ -6162,6 +6289,9 @@
 												"not": {}
 											},
 											"controllerExecution": {
+												"not": {}
+											},
+											"oauthAvailabilityBatch": {
 												"not": {}
 											},
 											"error": {
@@ -6301,6 +6431,9 @@
 											"controllerExecution": {
 												"not": {}
 											},
+											"oauthAvailabilityBatch": {
+												"not": {}
+											},
 											"error": {
 												"not": {}
 											},
@@ -6378,6 +6511,9 @@
 												"not": {}
 											},
 											"controllerExecution": {
+												"not": {}
+											},
+											"oauthAvailabilityBatch": {
 												"not": {}
 											},
 											"error": {
@@ -6460,6 +6596,9 @@
 												"not": {}
 											},
 											"controllerExecution": {
+												"not": {}
+											},
+											"oauthAvailabilityBatch": {
 												"not": {}
 											},
 											"error": {
@@ -7114,6 +7253,9 @@
 													}
 												]
 											},
+											"oauthAvailabilityBatch": {
+												"not": {}
+											},
 											"error": {
 												"not": {}
 											},
@@ -7164,6 +7306,314 @@
 												"not": {}
 											},
 											"controllerExecution": {
+												"not": {}
+											},
+											"oauthAvailabilityBatch": {
+												"not": {}
+											},
+											"error": {
+												"type": "object",
+												"properties": {
+													"errorClass": {
+														"type": "string",
+														"minLength": 1
+													},
+													"retryable": {
+														"type": "boolean"
+													},
+													"safeMessage": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": ["errorClass"],
+												"additionalProperties": false
+											},
+											"lease": {
+												"not": {}
+											},
+											"leaseRejectionReason": {
+												"not": {}
+											},
+											"leaseUse": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"enum": [
+													"failed",
+													"timeout",
+													"rejected",
+													"cancelled",
+													"stale_generation",
+													"approval_required",
+													"approval_stale"
+												]
+											}
+										},
+										"required": ["responseToMessageId", "error", "result"],
+										"additionalProperties": false
+									}
+								]
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "command_result"
+							},
+							"operation": {
+								"type": "string",
+								"const": "tool_portal_oauth_availability"
+							},
+							"payload": {
+								"oneOf": [
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"approvalAdmission": {
+												"not": {}
+											},
+											"approvalDecision": {
+												"not": {}
+											},
+											"approvalDispatch": {
+												"not": {}
+											},
+											"approvalRequired": {
+												"not": {}
+											},
+											"callerContext": {
+												"not": {}
+											},
+											"bindingRequest": {
+												"not": {}
+											},
+											"controllerExecution": {
+												"not": {}
+											},
+											"oauthAvailabilityBatch": {
+												"type": "object",
+												"properties": {
+													"items": {
+														"readOnly": true,
+														"maxItems": 256,
+														"type": "array",
+														"items": {
+															"type": "object",
+															"properties": {
+																"availability": {
+																	"oneOf": [
+																		{
+																			"type": "object",
+																			"properties": {
+																				"accountProfiles": {
+																					"readOnly": true,
+																					"minItems": 1,
+																					"type": "array",
+																					"items": {
+																						"type": "object",
+																						"properties": {
+																							"accountLabel": {
+																								"type": "string",
+																								"minLength": 1,
+																								"maxLength": 320
+																							},
+																							"accountProfileId": {
+																								"type": "string",
+																								"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+																							}
+																						},
+																						"required": ["accountLabel", "accountProfileId"],
+																						"additionalProperties": false
+																					}
+																				},
+																				"kind": {
+																					"type": "string",
+																					"const": "ready"
+																				}
+																			},
+																			"required": ["accountProfiles", "kind"],
+																			"additionalProperties": false
+																		},
+																		{
+																			"type": "object",
+																			"properties": {
+																				"kind": {
+																					"type": "string",
+																					"const": "authorization-required"
+																				}
+																			},
+																			"required": ["kind"],
+																			"additionalProperties": false
+																		},
+																		{
+																			"type": "object",
+																			"properties": {
+																				"kind": {
+																					"type": "string",
+																					"const": "reauthorization-required"
+																				}
+																			},
+																			"required": ["kind"],
+																			"additionalProperties": false
+																		},
+																		{
+																			"type": "object",
+																			"properties": {
+																				"kind": {
+																					"type": "string",
+																					"const": "scope-insufficient"
+																				}
+																			},
+																			"required": ["kind"],
+																			"additionalProperties": false
+																		},
+																		{
+																			"type": "object",
+																			"properties": {
+																				"kind": {
+																					"type": "string",
+																					"const": "authorization-status-unavailable"
+																				}
+																			},
+																			"required": ["kind"],
+																			"additionalProperties": false
+																		}
+																	]
+																},
+																"requirement": {
+																	"type": "object",
+																	"properties": {
+																		"applicationId": {
+																			"type": "string",
+																			"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+																		},
+																		"kind": {
+																			"type": "string",
+																			"const": "oauth-account-profile"
+																		},
+																		"minimumPermission": {
+																			"type": "string",
+																			"enum": ["read", "write"]
+																		},
+																		"serviceId": {
+																			"type": "string",
+																			"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+																		}
+																	},
+																	"required": [
+																		"applicationId",
+																		"kind",
+																		"minimumPermission",
+																		"serviceId"
+																	],
+																	"additionalProperties": false
+																}
+															},
+															"required": ["availability", "requirement"],
+															"additionalProperties": false
+														}
+													}
+												},
+												"required": ["items"],
+												"additionalProperties": false
+											},
+											"error": {
+												"not": {}
+											},
+											"lease": {
+												"not": {}
+											},
+											"leaseRejectionReason": {
+												"not": {}
+											},
+											"leaseUse": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"const": "ok"
+											}
+										},
+										"required": ["responseToMessageId", "oauthAvailabilityBatch", "result"],
+										"additionalProperties": false
+									},
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"approvalAdmission": {
+												"not": {}
+											},
+											"approvalDecision": {
+												"not": {}
+											},
+											"approvalDispatch": {
+												"not": {}
+											},
+											"approvalRequired": {
+												"not": {}
+											},
+											"callerContext": {
+												"not": {}
+											},
+											"bindingRequest": {
+												"not": {}
+											},
+											"controllerExecution": {
+												"not": {}
+											},
+											"oauthAvailabilityBatch": {
 												"not": {}
 											},
 											"error": {
@@ -7291,6 +7741,9 @@
 											"controllerExecution": {
 												"not": {}
 											},
+											"oauthAvailabilityBatch": {
+												"not": {}
+											},
 											"error": {
 												"not": {}
 											},
@@ -7343,6 +7796,9 @@
 												"not": {}
 											},
 											"controllerExecution": {
+												"not": {}
+											},
+											"oauthAvailabilityBatch": {
 												"not": {}
 											},
 											"error": {
@@ -7468,6 +7924,9 @@
 											"controllerExecution": {
 												"not": {}
 											},
+											"oauthAvailabilityBatch": {
+												"not": {}
+											},
 											"error": {
 												"not": {}
 											},
@@ -7518,6 +7977,9 @@
 												"not": {}
 											},
 											"controllerExecution": {
+												"not": {}
+											},
+											"oauthAvailabilityBatch": {
 												"not": {}
 											},
 											"error": {
@@ -8177,6 +8639,9 @@
 											"controllerExecution": {
 												"not": {}
 											},
+											"oauthAvailabilityBatch": {
+												"not": {}
+											},
 											"error": {
 												"not": {}
 											},
@@ -8227,6 +8692,9 @@
 												"not": {}
 											},
 											"controllerExecution": {
+												"not": {}
+											},
+											"oauthAvailabilityBatch": {
 												"not": {}
 											},
 											"error": {
@@ -8390,6 +8858,9 @@
 											"controllerExecution": {
 												"not": {}
 											},
+											"oauthAvailabilityBatch": {
+												"not": {}
+											},
 											"error": {
 												"not": {}
 											},
@@ -8440,6 +8911,9 @@
 												"not": {}
 											},
 											"controllerExecution": {
+												"not": {}
+											},
+											"oauthAvailabilityBatch": {
 												"not": {}
 											},
 											"error": {
@@ -8790,6 +9264,9 @@
 											"controllerExecution": {
 												"not": {}
 											},
+											"oauthAvailabilityBatch": {
+												"not": {}
+											},
 											"error": {
 												"not": {}
 											},
@@ -8840,6 +9317,9 @@
 												"not": {}
 											},
 											"controllerExecution": {
+												"not": {}
+											},
+											"oauthAvailabilityBatch": {
 												"not": {}
 											},
 											"error": {
@@ -8981,6 +9461,9 @@
 											"controllerExecution": {
 												"not": {}
 											},
+											"oauthAvailabilityBatch": {
+												"not": {}
+											},
 											"error": {
 												"not": {}
 											},
@@ -9031,6 +9514,9 @@
 												"not": {}
 											},
 											"controllerExecution": {
+												"not": {}
+											},
+											"oauthAvailabilityBatch": {
 												"not": {}
 											},
 											"error": {
@@ -9156,6 +9642,9 @@
 											"controllerExecution": {
 												"not": {}
 											},
+											"oauthAvailabilityBatch": {
+												"not": {}
+											},
 											"error": {
 												"not": {}
 											},
@@ -9206,6 +9695,9 @@
 												"not": {}
 											},
 											"controllerExecution": {
+												"not": {}
+											},
+											"oauthAvailabilityBatch": {
 												"not": {}
 											},
 											"error": {
@@ -9317,6 +9809,7 @@
 			"tool_vm_binding_publish",
 			"tool_vm_binding_request",
 			"tool_portal_controller_execution",
+			"tool_portal_oauth_availability",
 			"tool_portal_approval_decide",
 			"tool_portal_admission_reserve",
 			"tool_portal_dispatch_arm",

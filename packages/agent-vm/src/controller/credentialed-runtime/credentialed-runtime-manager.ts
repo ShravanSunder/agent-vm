@@ -136,6 +136,7 @@ export interface CredentialedRuntimeManager {
 		} & (
 			| { readonly resolution: CredentialedRuntimeResolution }
 			| {
+					readonly materializationFailureReason?: ((error: unknown) => string) | undefined;
 					readonly materializeResolution: () => Promise<CredentialedRuntimeMaterialization>;
 					readonly runtimeIdentity: { readonly agentId: string; readonly zoneId: string };
 			  }
@@ -310,6 +311,8 @@ export function createCredentialedRuntimeManager(props: {
 	const acquireCommand: CredentialedRuntimeManager['acquireCommand'] = async (request) => {
 		const requestedRuntimeIdentity =
 			'resolution' in request ? request.resolution : request.runtimeIdentity;
+		const materializationFailureReason =
+			'materializeResolution' in request ? request.materializationFailureReason : undefined;
 		const key = runtimeKey(requestedRuntimeIdentity);
 		const admissionInvalidated = (): boolean =>
 			request.admissionSignal?.aborted === true ||
@@ -336,10 +339,16 @@ export function createCredentialedRuntimeManager(props: {
 						'resolution' in request
 							? { resolution: request.resolution }
 							: await request.materializeResolution();
-				} catch {
+				} catch (error) {
+					let reason = 'credentialed runtime materialization failed';
+					try {
+						reason = materializationFailureReason?.(error) ?? reason;
+					} catch {
+						// A failure classifier cannot weaken the generic safe fallback.
+					}
 					return {
 						kind: 'not-dispatched',
-						reason: 'credentialed runtime materialization failed',
+						reason,
 					};
 				}
 				const { resolution } = materialization;

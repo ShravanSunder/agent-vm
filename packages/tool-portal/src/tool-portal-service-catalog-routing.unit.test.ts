@@ -4,7 +4,13 @@ import {
 	PortalListRequestSchema,
 	PortalSearchRequestSchema,
 } from '@agent-vm/agent-portal-sdk';
-import { describe, expect, it } from 'vitest';
+import { gatewayRuntimeManagedToolPortalConfigSchema } from '@agent-vm/config-contracts';
+import type { GatewayRuntimePortalSemanticSnapshot } from '@agent-vm/gateway-control-contracts';
+import {
+	oauthAccountProfileToolRequirementSchema,
+	oauthToolAvailabilityBatchResultSchema,
+} from '@agent-vm/oauth-broker-contracts';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
 	createRecordingApprovalPort,
@@ -17,6 +23,139 @@ import {
 import { createManagedToolPortalCapabilityCore } from './tool-portal-service.js';
 
 describe('ToolPortalCapabilityCore catalog routing', () => {
+	it.each([
+		['ready', false],
+		['authorization-status-unavailable', true],
+	] as const)(
+		'attaches %s OAuth availability to a visible static requirement',
+		async (expectedAvailabilityKind, failStatusLookup) => {
+			// Arrange
+			const config = gatewayRuntimeManagedToolPortalConfigSchema.parse({
+				agents: { 'agent-a': { profile: 'code-builder' } },
+				mode: 'managed',
+				profiles: {
+					'code-builder': {
+						namespaces: {
+							gog: {
+								backend: {
+									kind: 'controller_execution',
+									operations: {
+										gog_cli: {
+											authorization: {
+												kind: 'oauth_account_profile',
+												rules: [
+													{
+														match: { flags: [], path: ['gmail', 'search'] },
+														requirement: {
+															applicationId: 'gmail-app',
+															kind: 'oauth',
+															minimumPermission: 'read',
+															serviceId: 'gmail',
+														},
+													},
+												],
+											},
+											calls: {
+												deny: [],
+												requiresApproval: [],
+												withoutApproval: 'remaining_admitted',
+											},
+											commands: [{ flagRules: [], path: ['gmail', 'search'] }],
+											deniedPatterns: [],
+											kind: 'configured_cli',
+											safeHelp: 'Search Gmail.',
+											stdin: { kind: 'none' },
+											targetKind: 'ephemeral_managed_vm',
+											timeout: { kind: 'quick' },
+										},
+									},
+								},
+								calls: {
+									requiresApproval: { allow: [] },
+									withoutApproval: { allow: ['gog_cli'] },
+								},
+								discovery: { summary: 'Use Gog with assigned Google accounts.' },
+								tools: { allow: ['gog_cli'] },
+							},
+						},
+					},
+				},
+				schemaVersion: 1,
+			});
+			const oauthSemanticSnapshot = {
+				...semanticSnapshot,
+				agentProjections: {
+					'agent-a': {
+						...semanticSnapshot.agentProjections['agent-a'],
+						toolPortalNamespaces: [{ namespace: 'gog', summary: 'Use Gog.' }],
+					},
+				},
+				surfaceEligibilityByProfile: { 'code-builder': { gog: ['protected_uds'] } },
+			} satisfies GatewayRuntimePortalSemanticSnapshot;
+			const controllerExecution = createRecordingBackendPort('controller_execution', 'gog', {
+				toolName: 'gog_cli',
+			});
+			const requirement = oauthAccountProfileToolRequirementSchema.parse({
+				applicationId: 'gmail-app',
+				kind: 'oauth-account-profile',
+				minimumPermission: 'read',
+				serviceId: 'gmail',
+			});
+			const resolve = vi.fn(async () => {
+				if (failStatusLookup) throw new Error('controller unavailable');
+				return oauthToolAvailabilityBatchResultSchema.parse({
+					items: [
+						{
+							availability: {
+								accountProfiles: [
+									{
+										accountLabel: 'Personal Google',
+										accountProfileId: 'personal-google',
+									},
+								],
+								kind: 'ready' as const,
+							},
+							requirement,
+						},
+					],
+				});
+			});
+			const core = createManagedToolPortalCapabilityCore({
+				approvalPort: createRecordingApprovalPort().port,
+				backendPorts: {
+					controllerExecution: controllerExecution.port,
+					mcpProvider: createRecordingBackendPort('mcp_provider', 'unused').port,
+					toolVmRunner: createRecordingBackendPort('tool_vm_runner', 'unused').port,
+				},
+				config,
+				oauthAvailabilityPort: { resolve },
+				semanticSnapshot: oauthSemanticSnapshot,
+			});
+
+			// Act
+			const result = await core.search(
+				PortalSearchRequestSchema.parse({
+					requests: [{ id: 'search-gog', namespaces: ['gog'], query: 'gmail' }],
+				}),
+				udsOptions(),
+			);
+
+			// Assert
+			const item = result.items[0];
+			if (item?.status !== 'ok') throw new Error('Expected successful OAuth search result.');
+			expect(item.value.tools[0]).toMatchObject({
+				oauthAvailability: { kind: expectedAvailabilityKind },
+				oauthRequirement: {
+					applicationId: 'gmail-app',
+					kind: 'oauth-account-profile',
+					minimumPermission: 'read',
+					serviceId: 'gmail',
+				},
+			});
+			expect(resolve).toHaveBeenCalledTimes(1);
+		},
+	);
+
 	it('rejects authored managed policy that has not passed through effective discovery compilation', () => {
 		// Arrange
 		const { discovery: _discovery, ...authoredGithubPolicy } =

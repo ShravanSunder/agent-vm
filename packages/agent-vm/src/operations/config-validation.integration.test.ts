@@ -389,6 +389,95 @@ async function writeManagedToolPortalConfigWithAgents(
 	);
 }
 
+function createOAuthApplicationConfig(serviceId: string): Record<string, unknown> {
+	return {
+		clientCredentials: {
+			ref: `op://agent-vm-testing/${serviceId}-oauth-client/client-json`,
+			source: '1password',
+		},
+		clientKind: 'web',
+		description: `${serviceId} OAuth application.`,
+		label: serviceId,
+		services: {
+			[serviceId]: {
+				label: serviceId,
+				read: [`scope.${serviceId}.read`],
+			},
+		},
+	};
+}
+
+async function writeManagedOAuthConfigFiles(rootPath: string): Promise<void> {
+	const configDirectoryPath = path.join(rootPath, 'config', 'tool-portal', 'shravan');
+	await writeJson(path.join(configDirectoryPath, 'tool-portal.config.jsonc'), {
+		agents: { shravan: { profile: 'default' } },
+		mode: 'managed',
+		profiles: {
+			default: {
+				namespaces: {
+					oauth_authorization: {
+						backend: {
+							kind: 'controller_execution',
+							operations: Object.fromEntries(
+								['begin', 'cancel', 'list', 'reauthorize', 'revoke', 'status'].map(
+									(operationName) => [operationName, { kind: 'registered_action' }],
+								),
+							),
+						},
+						calls: {
+							requiresApproval: { allow: ['reauthorize', 'revoke'] },
+							withoutApproval: { allow: ['begin', 'cancel', 'list', 'status'] },
+						},
+						tools: { allow: ['begin', 'cancel', 'list', 'reauthorize', 'revoke', 'status'] },
+					},
+				},
+			},
+		},
+		schemaVersion: 1,
+	});
+	await writeJson(path.join(configDirectoryPath, 'oauth.config.jsonc'), {
+		agents: {
+			shravan: {
+				accountProfiles: {
+					'personal-google': {
+						applications: {
+							'gmail-app': { maximumPermissions: { gmail: 'read' } },
+						},
+						authorizedTailnetLogins: ['human@example.test'],
+						provider: 'google',
+					},
+				},
+			},
+		},
+		browser: {
+			listener: {
+				certificatePath: path.join(rootPath, 'oauth.crt'),
+				kind: 'tailscale_https',
+				port: 18_900,
+				privateKeyPath: path.join(rootPath, 'oauth.key'),
+			},
+			publicBaseUrl: 'https://auth.claw.askluna.xyz:18900',
+		},
+		providers: {
+			google: {
+				applications: {
+					'gmail-app': createOAuthApplicationConfig('gmail'),
+					'workspace-app': createOAuthApplicationConfig('calendar'),
+					'youtube-app': createOAuthApplicationConfig('youtube'),
+				},
+				kind: 'google',
+			},
+		},
+		schemaVersion: 1,
+		storage: {
+			keyEncryptionKey: {
+				ref: 'op://agent-vm-testing/oauth-kek/password',
+				source: '1password',
+			},
+		},
+	});
+}
+
 async function createHermesSystemConfigWithManagedToolPortal(): Promise<
 	Awaited<ReturnType<typeof loadSystemConfig>>
 > {
@@ -523,6 +612,62 @@ function createTestSecretResolver(): SecretResolver {
 }
 
 describe('runConfigValidation', () => {
+	it('rejects an OAuth listener port that collides with an observability port', async () => {
+		// Arrange
+		const temporaryDirectoryPath = await mkdtemp(
+			path.join(os.tmpdir(), 'agent-vm-validate-oauth-observability-port-'),
+		);
+		try {
+			const systemConfigPath = await writeHermesProjectFixture(temporaryDirectoryPath);
+			await addManagedToolPortalReferencesToHermesFixture(temporaryDirectoryPath);
+			await writeManagedToolPortalConfigFiles(temporaryDirectoryPath, 'default');
+			await writeManagedOAuthConfigFiles(temporaryDirectoryPath);
+			await updateJsonFile(systemConfigPath, (systemConfig) => {
+				const host = systemConfig.host;
+				if (typeof host !== 'object' || host === null || Array.isArray(host)) {
+					throw new Error('Expected host object.');
+				}
+				(host as Record<string, unknown>).observability = {
+					dataDir: '../observability',
+					enabled: true,
+					mode: 'collector',
+					ports: {
+						collectorGrpc: 4317,
+						collectorHealth: 13_133,
+						collectorHttp: 4318,
+						logs: 9428,
+						metrics: 18_900,
+						traces: 10_428,
+					},
+					projectName: 'agent-vm-test',
+					retention: {
+						logs: { maxDiskSpaceUsageBytes: '1GiB', period: '1d' },
+						metrics: { period: '1d' },
+						traces: { maxDiskSpaceUsageBytes: '1GiB', period: '1d' },
+					},
+					runner: 'docker-compose',
+					stack: {
+						mode: 'managed',
+						scrubbing: { responsibility: 'agent-vm-managed-collector' },
+					},
+				};
+			});
+			const systemConfig = await loadSystemConfig(systemConfigPath);
+
+			// Act
+			const result = await runConfigValidation({ systemConfig });
+
+			// Assert
+			expect(result.checks).toContainEqual({
+				hint: expect.stringContaining('OAuth listener port 18900 collides'),
+				name: 'oauth-config-shravan',
+				ok: false,
+			});
+		} finally {
+			await rm(temporaryDirectoryPath, { force: true, recursive: true });
+		}
+	});
+
 	it('skips live MCP discovery unless --mcp-live is requested', async () => {
 		const systemConfig = await createHermesSystemConfigWithManagedToolPortal();
 		const runLiveMcpPortalValidationMock = vi.fn(async () => [

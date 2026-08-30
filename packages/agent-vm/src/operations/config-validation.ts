@@ -309,9 +309,14 @@ async function collectToolPortalConfigChecks(
 			toolPortalConfig: loadedToolPortalConfig,
 		});
 		const oauthPort = oauthConfig.browser.listener.port;
+		const observabilityPorts =
+			systemConfig.host.observability?.enabled === true
+				? Object.values(systemConfig.host.observability.ports)
+				: [];
 		const collidingPort = [
 			systemConfig.host.controllerPort,
 			...systemConfig.zones.map((configuredZone) => configuredZone.gateway.port),
+			...observabilityPorts,
 		].includes(oauthPort);
 		const collidesWithTcpPool =
 			oauthPort >= systemConfig.tcpPool.basePort &&

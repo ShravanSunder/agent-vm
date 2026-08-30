@@ -75,7 +75,9 @@ function createPreparedOAuthRuntimeStub(events: string[]): PreparedControllerOAu
 	return {
 		brokerService: {
 			cancelBrowserTransaction: () => false,
-			close: () => events.push('oauth-admission-stopped'),
+			close: async () => {
+				events.push('oauth-admission-stopped');
+			},
 			confirmAccount: async () => ({ accountLabel: 'test', kind: 'completed' }),
 			executeAuthorizationAction: async () => ({ kind: 'authorization-list', profiles: [] }),
 			getPermissionPage: () => {
@@ -87,9 +89,16 @@ function createPreparedOAuthRuntimeStub(events: string[]): PreparedControllerOAu
 				reason: 'authorization-missing',
 			}),
 			resolveToolAvailability: () => ({ kind: 'authorization-status-unavailable' }),
+			reapExpiredTransactions: () => ({ completionSessionCount: 0, transactionCount: 0 }),
+			retryApplication: () => {
+				throw new Error('unused OAuth retry fixture');
+			},
+			stopAdmission: () => events.push('oauth-admission-stopped'),
 			submitPermissions: () => ({ kind: 'already-satisfied' }),
 		},
-		close: () => events.push('oauth-runtime-closed'),
+		close: async () => {
+			events.push('oauth-runtime-closed');
+		},
 		port: 18_900,
 		setCredentialInvalidationHandler: () => events.push('oauth-invalidation-handler-set'),
 		startHttpsListener: async () => {
@@ -1019,6 +1028,8 @@ describe('startControllerRuntime', () => {
 		// Arrange
 		const startupEvents: string[] = [];
 		const oauthListenerFailure = new Error('OAuth listener port is already occupied.');
+		const oauthRuntimeCloseStarted = Promise.withResolvers<void>();
+		const releaseOAuthRuntimeClose = Promise.withResolvers<void>();
 		const closeControllerListener = vi.fn(async () => {
 			startupEvents.push('controller-listener-closed');
 		});
@@ -1026,9 +1037,15 @@ describe('startControllerRuntime', () => {
 			startupEvents.push('ownership-lock-released');
 		});
 		const preparedOAuthRuntime = createPreparedOAuthRuntimeStub(startupEvents);
+		const closeOAuthRuntime = vi.fn(async () => {
+			startupEvents.push('oauth-runtime-close-started');
+			oauthRuntimeCloseStarted.resolve();
+			await releaseOAuthRuntimeClose.promise;
+			startupEvents.push('oauth-runtime-closed');
+		});
 
 		// Act
-		const startupError = await startControllerRuntime(
+		const startupResultPromise = startControllerRuntime(
 			{ systemConfig, zoneIds: ['shravan'] },
 			{
 				acquireControllerOwnershipLock: vi.fn(async () => ({
@@ -1044,6 +1061,7 @@ describe('startControllerRuntime', () => {
 				})),
 				prepareControllerOAuthRuntime: async () => ({
 					...preparedOAuthRuntime,
+					close: closeOAuthRuntime,
 					startHttpsListener: async () => {
 						startupEvents.push('oauth-listener-start-failed');
 						throw oauthListenerFailure;
@@ -1053,8 +1071,13 @@ describe('startControllerRuntime', () => {
 				startHttpServer: vi.fn(async () => ({ close: closeControllerListener })),
 			},
 		).catch((error: unknown) => error);
+		await oauthRuntimeCloseStarted.promise;
 
 		// Assert
+		expect(releaseControllerOwnershipLock).not.toHaveBeenCalled();
+		expect(closeOAuthRuntime).toHaveBeenCalledOnce();
+		releaseOAuthRuntimeClose.resolve();
+		const startupError = await startupResultPromise;
 		expect(startupError).toBe(oauthListenerFailure);
 		expect(startupEvents).toContain('oauth-admission-stopped');
 		expect(closeControllerListener).toHaveBeenCalledOnce();
@@ -1066,6 +1089,48 @@ describe('startControllerRuntime', () => {
 		expect(startupEvents.indexOf('controller-listener-closed')).toBeLessThan(
 			startupEvents.indexOf('oauth-runtime-closed'),
 		);
+	});
+
+	it('reports every controller and OAuth close failure without skipping ownership release', async () => {
+		// Arrange
+		const oauthRuntimeCloseFailure = new Error('OAuth runtime close failed.');
+		const controllerListenerCloseFailure = new Error('Controller listener close failed.');
+		const releaseControllerOwnershipLock = vi.fn(async () => {});
+		const preparedOAuthRuntime = createPreparedOAuthRuntimeStub([]);
+		const runtime = await startControllerRuntime(
+			{ systemConfig, zoneIds: [] },
+			{
+				acquireControllerOwnershipLock: vi.fn(async () => ({
+					release: releaseControllerOwnershipLock,
+				})),
+				createSecretResolver: vi.fn(async () => ({
+					resolve: async () => '',
+					resolveAll: async () => ({}),
+				})),
+				prepareControllerOAuthRuntime: async () => ({
+					...preparedOAuthRuntime,
+					close: async () => {
+						throw oauthRuntimeCloseFailure;
+					},
+				}),
+				reconcileRecordedVmTree: async () => undefined,
+				startHttpServer: vi.fn(async () => ({
+					close: async () => {
+						throw controllerListenerCloseFailure;
+					},
+				})),
+			},
+		);
+
+		// Act
+		const closeError = await runtime.close().catch((error: unknown) => error);
+
+		// Assert
+		expect(closeError).toBeInstanceOf(AggregateError);
+		expect(closeError).toMatchObject({
+			errors: expect.arrayContaining([oauthRuntimeCloseFailure, controllerListenerCloseFailure]),
+		});
+		expect(releaseControllerOwnershipLock).toHaveBeenCalledOnce();
 	});
 
 	it('retains the deployment ownership lock when controller-owned startup is owner-unsafe', async () => {
