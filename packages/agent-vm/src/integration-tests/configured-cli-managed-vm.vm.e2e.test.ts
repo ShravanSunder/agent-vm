@@ -265,64 +265,64 @@ describeLiveConfiguredRunner('configured CLI reusable credentialed Managed VM', 
 										tools: { allow: ['isolated_runner_proof'] },
 									},
 								},
-								mediated: {
-									namespaces: {
-										controller_execution: {
-											backend: {
-												kind: 'controller_execution',
-												operations: {
-													mediated_runner_proof: {
-														calls: {
-															deny: [],
-															requiresApproval: [],
-															withoutApproval: 'remaining_admitted',
-														},
-														commands: [{ path: ['mediated'] }],
-														deniedPatterns: [],
-														executablePath: '/bin/sh',
-														executionTarget: {
-															allowedHosts: [
-																mediatedCredentialHost,
-																untrustedCredentialHost,
-																'127.0.0.1',
-															],
-															credentialProjection: {
-																environment: {
-																	PROOF_HTTP_TOKEN: {
-																		hosts: [mediatedCredentialHost, '127.0.0.1'],
-																		secret: {
-																			name: 'AGENT_VM_CREDENTIALED_RUNTIME_E2E_TOKEN',
-																			source: 'environment',
-																		},
+							},
+							mediated: {
+								namespaces: {
+									controller_execution: {
+										backend: {
+											kind: 'controller_execution',
+											operations: {
+												mediated_runner_proof: {
+													calls: {
+														deny: [],
+														requiresApproval: [],
+														withoutApproval: 'remaining_admitted',
+													},
+													commands: [{ path: ['mediated'] }],
+													deniedPatterns: [],
+													executablePath: '/bin/sh',
+													executionTarget: {
+														allowedHosts: [
+															mediatedCredentialHost,
+															untrustedCredentialHost,
+															'127.0.0.1',
+														],
+														credentialProjection: {
+															environment: {
+																PROOF_HTTP_TOKEN: {
+																	hosts: [mediatedCredentialHost, '127.0.0.1'],
+																	secret: {
+																		name: 'AGENT_VM_CREDENTIALED_RUNTIME_E2E_TOKEN',
+																		source: 'environment',
 																	},
 																},
-																kind: 'http_mediation',
 															},
-															environment: { kind: 'empty' },
-															guestCwd: '/tmp',
-															imageReference: './configured-cli-image.json',
-															kind: 'ephemeral_managed_vm',
+															kind: 'http_mediation',
 														},
-														kind: 'configured_cli',
-														mandatoryArgvPrefix: ['-c', configuredCliProofScript, 'proof-command'],
-														output: {
-															modelVisibleStderr: 'none',
-															overflow: 'fail',
-															stderrMaxBytes: 4096,
-															stdoutMaxBytes: 4096,
-														},
-														safeHelp: 'Prove credentialed HTTP mediation.',
-														stdin: { kind: 'none' },
-														timeout: { kind: 'open' },
+														environment: { kind: 'empty' },
+														guestCwd: '/tmp',
+														imageReference: './configured-cli-image.json',
+														kind: 'ephemeral_managed_vm',
 													},
+													kind: 'configured_cli',
+													mandatoryArgvPrefix: ['-c', configuredCliProofScript, 'proof-command'],
+													output: {
+														modelVisibleStderr: 'none',
+														overflow: 'fail',
+														stderrMaxBytes: 4096,
+														stdoutMaxBytes: 4096,
+													},
+													safeHelp: 'Prove credentialed HTTP mediation.',
+													stdin: { kind: 'none' },
+													timeout: { kind: 'open' },
 												},
 											},
-											calls: {
-												requiresApproval: { allow: [] },
-												withoutApproval: { allow: ['mediated_runner_proof'] },
-											},
-											tools: { allow: ['mediated_runner_proof'] },
 										},
+										calls: {
+											requiresApproval: { allow: [] },
+											withoutApproval: { allow: ['mediated_runner_proof'] },
+										},
+										tools: { allow: ['mediated_runner_proof'] },
 									},
 								},
 							},
@@ -374,10 +374,16 @@ describeLiveConfiguredRunner('configured CLI reusable credentialed Managed VM', 
 						frameworkIdentity: { kind: 'hermes', profileName: 'secondary' },
 						toolPortalProfileId: trustedPrincipal.toolPortalProfileId,
 					},
+					{
+						agentId: 'mediated',
+						frameworkIdentity: { kind: 'hermes', profileName: 'mediated' },
+						toolPortalProfileId: 'mediated',
+					},
 				],
 				effectivePlan,
 				surfaceEligibilityByProfile: {
 					default: { controller_execution: ['protected_uds'] },
+					mediated: { controller_execution: ['protected_uds'] },
 				},
 			});
 			await writeGatewayRuntimePortalAdmissionFile({
