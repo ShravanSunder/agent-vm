@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import {
+	configuredCliAuthorizationSchema,
 	configuredCliAllowedCommandSchema,
 	configuredCliInvocationCallPolicySchema,
 	configuredCliCredentialLogicalNameSchema,
@@ -444,6 +445,7 @@ export type PreparedManagedToolPortalConfig = z.infer<typeof preparedManagedTool
 
 export const gatewayRuntimeConfiguredCliOperationSchema = z
 	.object({
+		authorization: configuredCliAuthorizationSchema.optional(),
 		calls: configuredCliInvocationCallPolicySchema,
 		commands: z.array(configuredCliAllowedCommandSchema).min(1),
 		deniedPatterns: z.array(configuredCliPatternRuleSchema),
@@ -565,6 +567,7 @@ function projectedConfiguredCliOperation(
 ): GatewayRuntimeControllerExecutionOperation {
 	if (operation.kind === 'registered_action') return operation;
 	return {
+		...(operation.authorization === undefined ? {} : { authorization: operation.authorization }),
 		calls: operation.calls,
 		commands: operation.commands,
 		deniedPatterns: operation.deniedPatterns,

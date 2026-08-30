@@ -1,7 +1,7 @@
 {
-	"name": "@agent-vm/config-contracts",
-	"version": "0.0.147",
-	"description": "Shared agent-vm JSONC config schemas and TypeScript contracts.",
+	"name": "@agent-vm/oauth-approval-ui",
+	"version": "0.0.145",
+	"description": "Server-rendered OAuth approval pages and bounded browser islands.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {
 		"url": "https://github.com/ShravanSunder/agent-vm/issues"
@@ -11,7 +11,7 @@
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/ShravanSunder/agent-vm.git",
-		"directory": "packages/config-contracts"
+		"directory": "packages/oauth-approval-ui"
 	},
 	"files": [
 		"dist"
@@ -29,17 +29,21 @@
 		"access": "public"
 	},
 	"scripts": {
-		"build": "tsdown",
+		"build": "tsdown && tailwindcss -i src/styles/oauth.css -o dist/assets/oauth.css --minify && tsx scripts/fingerprint-assets.ts",
 		"prepack": "pnpm -C ../.. build",
 		"typecheck": "tsc -p tsconfig.json --noEmit",
-		"test": "vitest run --root ../../ --config vitest.config.ts --project unit packages/config-contracts/src"
+		"test": "vitest run --root ../../ --config vitest.config.ts --project unit packages/oauth-approval-ui/src"
 	},
 	"dependencies": {
 		"@agent-vm/oauth-broker-contracts": "workspace:*",
-		"jsonc-parser": "^3.3.1",
+		"hono": "4.12.24",
 		"zod": "^4.4.3"
 	},
 	"devDependencies": {
+		"@tailwindcss/cli": "^4.3.3",
+		"esbuild": "^0.27.7",
+		"tailwindcss": "^4.3.3",
+		"tsx": "^4.21.0",
 		"vitest": "^4.1.5"
 	}
 }

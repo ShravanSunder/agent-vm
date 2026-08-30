@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { configuredCliExecutionTargetSchema } from './controller-configured-cli.js';
+import {
+	configuredCliExecutionTargetSchema,
+	controllerConfiguredCliInputSchema,
+	controllerConfiguredCliOperationSchema,
+	oauthConfiguredCliInputSchema,
+	quickConfiguredCliInputSchema,
+} from './controller-configured-cli.js';
 
 function validCredentialedTarget(): unknown {
 	return {
@@ -45,6 +51,45 @@ function validMediatedTarget(): unknown {
 		guestCwd: '/work',
 		imageReference: '../../vm-images/controller-runners/google-tools/build-config.json',
 		kind: 'ephemeral_managed_vm',
+	};
+}
+
+function validOAuthConfiguredCliOperation(): unknown {
+	return {
+		authorization: {
+			kind: 'oauth_account_profile',
+			rules: [
+				{
+					match: { flags: [], path: ['gmail', 'search'] },
+					requirement: {
+						applicationId: 'gmail-app',
+						kind: 'oauth',
+						minimumPermission: 'read',
+						serviceId: 'gmail',
+					},
+				},
+				{
+					match: { flags: [], path: ['help'] },
+					requirement: { kind: 'no_oauth' },
+				},
+			],
+		},
+		calls: { deny: [], requiresApproval: [], withoutApproval: 'remaining_admitted' },
+		commands: [{ path: ['gmail', 'search'] }, { path: ['help'] }],
+		deniedPatterns: [],
+		executablePath: '/usr/bin/gog',
+		executionTarget: validMediatedTarget(),
+		kind: 'configured_cli',
+		mandatoryArgvPrefix: [],
+		output: {
+			modelVisibleStderr: 'none',
+			overflow: 'truncate',
+			stderrMaxBytes: 1_024,
+			stdoutMaxBytes: 1_024,
+		},
+		safeHelp: 'Run one admitted Gog command.',
+		stdin: { kind: 'none' },
+		timeout: { kind: 'quick' },
 	};
 }
 
@@ -283,6 +328,74 @@ describe('credentialed configured CLI target contract', () => {
 			configuredCliExecutionTargetSchema.safeParse({
 				...target,
 				credentialProjection: { ...projection, credentialEnvironment, credentialFiles },
+			}).success,
+		).toBe(false);
+	});
+});
+
+describe('OAuth-configured CLI contract', () => {
+	it('classifies every admitted command path with one typed authorization rule', () => {
+		const result = controllerConfiguredCliOperationSchema.safeParse(
+			validOAuthConfiguredCliOperation(),
+		);
+		if (!result.success) {
+			throw new Error(`Expected valid OAuth-configured CLI operation: ${result.error.message}`);
+		}
+		expect(result.data.authorization?.kind).toBe('oauth_account_profile');
+	});
+
+	it('rejects missing, duplicate, unadmitted, and flag-sensitive authorization rules', () => {
+		const operation = validOAuthConfiguredCliOperation() as Record<string, unknown>;
+		const authorization = operation.authorization as Record<string, unknown>;
+		const rules = authorization.rules as readonly Record<string, unknown>[];
+		const firstRule = rules[0];
+		if (firstRule === undefined) throw new Error('Missing OAuth authorization rule.');
+
+		for (const invalidRules of [
+			[rules[0]],
+			[...rules, firstRule],
+			[
+				...rules,
+				{
+					match: { flags: [], path: ['drive', 'list'] },
+					requirement: {
+						applicationId: 'workspace-app',
+						kind: 'oauth',
+						minimumPermission: 'read',
+						serviceId: 'drive',
+					},
+				},
+			],
+			[
+				{
+					...firstRule,
+					match: { flags: [{ kind: 'present', names: ['--json'] }], path: ['gmail', 'search'] },
+				},
+				rules[1],
+			],
+		]) {
+			expect(
+				controllerConfiguredCliOperationSchema.safeParse({
+					...operation,
+					authorization: { ...authorization, rules: invalidRules },
+				}).success,
+			).toBe(false);
+		}
+	});
+
+	it('requires accountProfile only on the OAuth-configured RPC input variant', () => {
+		const oauthInput = {
+			accountProfile: 'personal-google',
+			argv: ['gmail', 'search'],
+			reason: 'Read recent messages.',
+		};
+		expect(oauthConfiguredCliInputSchema.safeParse(oauthInput).success).toBe(true);
+		expect(quickConfiguredCliInputSchema.safeParse(oauthInput).success).toBe(false);
+		expect(controllerConfiguredCliInputSchema.safeParse(oauthInput).success).toBe(true);
+		expect(
+			oauthConfiguredCliInputSchema.safeParse({
+				argv: ['gmail', 'search'],
+				reason: 'Read recent messages.',
 			}).success,
 		).toBe(false);
 	});

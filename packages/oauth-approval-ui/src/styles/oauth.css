@@ -1,0 +1,112 @@
+@import 'tailwindcss';
+@source "../server";
+@source "../browser";
+
+@layer base {
+	:root {
+		color-scheme: light;
+		font-family:
+			ui-sans-serif,
+			system-ui,
+			-apple-system,
+			BlinkMacSystemFont,
+			'Segoe UI',
+			sans-serif;
+		background: #f7f7f5;
+		color: #171715;
+	}
+	body {
+		@apply min-h-screen antialiased;
+	}
+	button,
+	input {
+		font: inherit;
+	}
+	:focus-visible {
+		@apply outline-2 outline-offset-2 outline-sky-700;
+	}
+}
+
+@layer components {
+	.page-shell {
+		@apply mx-auto flex min-h-screen w-full max-w-3xl flex-col gap-8 px-5 py-10 sm:px-8 sm:py-16;
+	}
+	.page-header {
+		@apply space-y-3;
+	}
+	.page-header h1 {
+		@apply text-3xl font-semibold tracking-tight sm:text-4xl;
+	}
+	.page-header p:not(.eyebrow) {
+		@apply max-w-2xl text-base leading-7 text-stone-600;
+	}
+	.eyebrow {
+		@apply text-sm font-semibold uppercase tracking-widest text-sky-800;
+	}
+	.application-section,
+	.confirmation-panel {
+		@apply mb-6 rounded-2xl border border-stone-200 bg-white p-5 shadow-sm sm:p-7;
+	}
+	.application-heading {
+		@apply mb-6 space-y-2;
+	}
+	.application-heading h2,
+	.confirmation-panel h2 {
+		@apply text-xl font-semibold;
+	}
+	.application-heading p {
+		@apply text-sm leading-6 text-stone-600;
+	}
+	.permission-fieldset {
+		@apply mb-6 border-0 p-0 last:mb-0;
+	}
+	.permission-fieldset legend {
+		@apply mb-2 font-medium;
+	}
+	.suggestion-note {
+		@apply mb-3 text-sm text-sky-800;
+	}
+	.permission-options {
+		@apply grid grid-cols-3 gap-2;
+	}
+	.permission-option {
+		@apply cursor-pointer;
+	}
+	.permission-option input {
+		@apply sr-only;
+	}
+	.permission-option span {
+		@apply flex min-h-11 items-center justify-center rounded-lg border border-stone-300 px-3 py-2 text-sm font-medium capitalize peer-checked:border-sky-700 peer-checked:bg-sky-50 peer-checked:text-sky-900;
+	}
+	.error-summary {
+		@apply rounded-xl border border-red-300 bg-red-50 p-5 text-red-950;
+	}
+	.error-summary h2 {
+		@apply mb-2 font-semibold;
+	}
+	.error-summary ul,
+	.confirmation-panel ul {
+		@apply list-disc space-y-1 pl-5;
+	}
+	.form-actions {
+		@apply flex flex-wrap gap-3;
+	}
+	.primary-button {
+		@apply rounded-lg bg-sky-800 px-5 py-3 font-semibold text-white hover:bg-sky-900;
+	}
+	.secondary-button {
+		@apply rounded-lg border border-stone-300 bg-white px-5 py-3 font-semibold hover:bg-stone-50;
+	}
+	.permission-summary {
+		@apply mb-4 min-h-6 text-sm text-stone-600;
+	}
+	.progress-list {
+		@apply divide-y divide-stone-200 rounded-2xl border border-stone-200 bg-white px-5;
+	}
+	.progress-list li {
+		@apply flex items-center justify-between gap-4 py-4;
+	}
+	.progress-list strong {
+		@apply text-sm capitalize text-sky-800;
+	}
+}

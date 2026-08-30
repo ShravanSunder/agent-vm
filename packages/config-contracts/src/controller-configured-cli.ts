@@ -1,5 +1,11 @@
 import { isIP } from 'node:net';
 
+import {
+	oauthAccountProfileIdSchema,
+	oauthApplicationIdSchema,
+	oauthMinimumPermissionSchema,
+	oauthServiceIdSchema,
+} from '@agent-vm/oauth-broker-contracts';
 import { z } from 'zod';
 
 import { jsonObjectSchema } from './json-value.js';
@@ -536,12 +542,93 @@ export const configuredCliOutputPolicySchema = z
 	})
 	.strict();
 
+export const configuredCliOAuthRequirementSchema = z.discriminatedUnion('kind', [
+	z.object({ kind: z.literal('no_oauth') }).strict(),
+	z
+		.object({
+			applicationId: oauthApplicationIdSchema,
+			kind: z.literal('oauth'),
+			minimumPermission: oauthMinimumPermissionSchema,
+			serviceId: oauthServiceIdSchema,
+		})
+		.strict(),
+]);
+
+export const configuredCliOAuthAuthorizationRuleSchema = z
+	.object({
+		match: configuredCliInvocationMatcherSchema.safeExtend({ flags: z.tuple([]) }).strict(),
+		requirement: configuredCliOAuthRequirementSchema,
+	})
+	.strict();
+
+export const configuredCliAuthorizationSchema = z.discriminatedUnion('kind', [
+	z.object({ kind: z.literal('none') }).strict(),
+	z
+		.object({
+			kind: z.literal('oauth_account_profile'),
+			rules: z.array(configuredCliOAuthAuthorizationRuleSchema).min(1).readonly(),
+		})
+		.strict(),
+]);
+
+interface ConfiguredCliOperationAuthorizationValidation {
+	readonly authorization?: z.infer<typeof configuredCliAuthorizationSchema> | undefined;
+	readonly commands: readonly z.infer<typeof configuredCliAllowedCommandSchema>[];
+	readonly executionTarget: { readonly kind: 'controller_host' | 'ephemeral_managed_vm' };
+}
+
+function validateConfiguredCliOperationAuthorization(
+	operation: ConfiguredCliOperationAuthorizationValidation,
+	context: z.RefinementCtx,
+): void {
+	if (operation.authorization === undefined || operation.authorization.kind === 'none') return;
+	if (operation.executionTarget.kind !== 'ephemeral_managed_vm') {
+		context.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: 'OAuth-configured CLI operations must execute in an ephemeral Managed VM.',
+			path: ['executionTarget', 'kind'],
+		});
+	}
+	const admittedPaths = new Set(
+		operation.commands.map((command) => configuredCliPathIdentity(command.path)),
+	);
+	const ruleCountsByPath = new Map<string, number>();
+	for (const [ruleIndex, rule] of operation.authorization.rules.entries()) {
+		const rulePathIdentity = configuredCliPathIdentity(rule.match.path);
+		ruleCountsByPath.set(rulePathIdentity, (ruleCountsByPath.get(rulePathIdentity) ?? 0) + 1);
+		if (admittedPaths.has(rulePathIdentity)) continue;
+		context.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: 'OAuth authorization rules must reference one admitted command path.',
+			path: ['authorization', 'rules', ruleIndex, 'match', 'path'],
+		});
+	}
+	for (const [commandIndex, command] of operation.commands.entries()) {
+		const ruleCount = ruleCountsByPath.get(configuredCliPathIdentity(command.path)) ?? 0;
+		if (ruleCount === 1) continue;
+		context.addIssue({
+			code: z.ZodIssueCode.custom,
+			message:
+				ruleCount === 0
+					? 'Every admitted OAuth-configured command path must have one authorization rule.'
+					: 'Every admitted OAuth-configured command path must have exactly one authorization rule.',
+			path: ['authorization', 'rules'],
+		});
+		context.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: 'This admitted command path does not have exactly one authorization rule.',
+			path: ['commands', commandIndex, 'path'],
+		});
+	}
+}
+
 export const controllerRegisteredOperationSchema = z
 	.object({ kind: z.literal('registered_action') })
 	.strict();
 
 export const controllerConfiguredCliOperationSchema = configuredCliPolicySchema
 	.safeExtend({
+		authorization: configuredCliAuthorizationSchema.optional(),
 		executablePath: absoluteControlFreePathSchema,
 		executionTarget: configuredCliExecutionTargetSchema,
 		kind: z.literal('configured_cli'),
@@ -549,7 +636,8 @@ export const controllerConfiguredCliOperationSchema = configuredCliPolicySchema
 		output: configuredCliOutputPolicySchema,
 		safeHelp: z.string().min(1).max(4_000),
 	})
-	.strict();
+	.strict()
+	.superRefine(validateConfiguredCliOperationAuthorization);
 
 export const controllerExecutionOperationSchema = z.discriminatedUnion('kind', [
 	controllerRegisteredOperationSchema,
@@ -558,6 +646,7 @@ export const controllerExecutionOperationSchema = z.discriminatedUnion('kind', [
 
 export const effectiveControllerConfiguredCliOperationSchema = configuredCliPolicySchema
 	.safeExtend({
+		authorization: configuredCliAuthorizationSchema.optional(),
 		executablePath: absoluteControlFreePathSchema,
 		executionTarget: configuredCliEffectiveExecutionTargetSchema,
 		kind: z.literal('configured_cli'),
@@ -565,7 +654,8 @@ export const effectiveControllerConfiguredCliOperationSchema = configuredCliPoli
 		output: configuredCliOutputPolicySchema,
 		safeHelp: z.string().min(1).max(4_000),
 	})
-	.strict();
+	.strict()
+	.superRefine(validateConfiguredCliOperationAuthorization);
 
 export const effectiveControllerExecutionOperationSchema = z.discriminatedUnion('kind', [
 	controllerRegisteredOperationSchema,
@@ -591,9 +681,39 @@ export const configuredCliInputSchema = z.union([
 	openConfiguredCliInputSchema,
 ]);
 
+export const quickOAuthConfiguredCliInputSchema = z
+	.object({
+		...configuredCliCommonInputShape,
+		accountProfile: oauthAccountProfileIdSchema,
+	})
+	.strict();
+
+export const openOAuthConfiguredCliInputSchema = z
+	.object({
+		...configuredCliCommonInputShape,
+		accountProfile: oauthAccountProfileIdSchema,
+		timeoutMs: z.number().int().positive().max(28_800_000).optional(),
+	})
+	.strict();
+
+export const oauthConfiguredCliInputSchema = z.union([
+	quickOAuthConfiguredCliInputSchema,
+	openOAuthConfiguredCliInputSchema,
+]);
+
+export const controllerConfiguredCliInputSchema = z.union([
+	configuredCliInputSchema,
+	oauthConfiguredCliInputSchema,
+]);
+
 export type ConfiguredCliAllowedCommand = z.infer<typeof configuredCliAllowedCommandSchema>;
 export type ConfiguredCliFlagRule = z.infer<typeof configuredCliFlagRuleSchema>;
 export type ConfiguredCliInput = z.infer<typeof configuredCliInputSchema>;
+export type ControllerConfiguredCliInput = z.infer<typeof controllerConfiguredCliInputSchema>;
+export type ConfiguredCliAuthorization = z.infer<typeof configuredCliAuthorizationSchema>;
+export type ConfiguredCliOAuthAuthorizationRule = z.infer<
+	typeof configuredCliOAuthAuthorizationRuleSchema
+>;
 export type ConfiguredCliCredentialEnvironmentValue = z.infer<
 	typeof configuredCliCredentialEnvironmentValueSchema
 >;
