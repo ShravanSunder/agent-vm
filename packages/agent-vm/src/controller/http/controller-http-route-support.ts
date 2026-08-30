@@ -68,7 +68,6 @@ export interface ControllerRouteOperations {
 	readonly refreshZoneCredentials: (zoneId: string) => Promise<unknown>;
 	readonly retireCredentialedRuntime?: (
 		zoneId: string,
-		runtimeId: string,
 		options: {
 			readonly adminToken?: string;
 			readonly agentId: string;

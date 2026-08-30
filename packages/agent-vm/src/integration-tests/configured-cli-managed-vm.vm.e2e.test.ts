@@ -1,4 +1,5 @@
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import http, { type Server } from 'node:http';
 import path from 'node:path';
 
 import { decodeConfiguredCliPreparedImageIdentity } from '@agent-vm/config-contracts';
@@ -39,6 +40,9 @@ import { shouldRunLiveVmE2e } from './live-vm-e2e-gates.js';
 import { startManagedGatewayImageBootFixture } from './managed-gateway-image-boot-test-fixture.js';
 
 const describeLiveConfiguredRunner = shouldRunLiveVmE2e() ? describe : describe.skip;
+const mediatedCredentialHost = 'credentialed-mediation.vm.host';
+const untrustedCredentialHost = 'credentialed-untrusted.vm.host';
+const mediatedCredentialValue = 'credentialed-runtime-http-secret';
 
 const acceptedSession = {
 	bootId: 'configured-cli-vm-boot',
@@ -83,10 +87,43 @@ const configuredCliProofScript = [
 	'  --read-state) if [ -f /tmp/credential-runtime-marker ]; then cat /tmp/credential-runtime-marker; else printf absent; fi ;;',
 	'  --credential-proof) test "$PROOF_CREDENTIAL_ROOT" = /run/agent-vm/credentials; test -s "$PROOF_CREDENTIAL_FILE"; mode=$(stat -c %a "$PROOF_CREDENTIAL_FILE"); test "$mode" = 600; if printf forbidden > "$PROOF_CREDENTIAL_FILE" 2>/dev/null; then exit 91; fi; credential=$(cat "$PROOF_CREDENTIAL_FILE"); if grep -R -F -l -- "$credential" /tmp /root /home 2>/dev/null | grep -q .; then exit 92; fi; printf credential-read-only ;;',
 	'  --host-isolation) test ! -e "$3"; printf host-isolated ;;',
+	'  --http-mediated) printf "env:%s\\n" "$PROOF_HTTP_TOKEN"; curl -sS -H "Authorization: Bearer $PROOF_HTTP_TOKEN" "$3" ;;',
+	'  --http-untrusted) curl -sS -H "Authorization: Bearer $PROOF_HTTP_TOKEN" "$3" ;;',
 	'  --hold) printf started; sleep 30 ;;',
 	'  *) printf "runner-output:%s" "$1"; [ "$#" -lt 2 ] || printf "runner-output:%s" "$2" ;;',
 	'esac',
 ].join(' ');
+
+async function startCredentialedMediationServer(): Promise<{
+	readonly port: number;
+	readonly server: Server;
+}> {
+	const server = http.createServer((request, response) => {
+		response.end(
+			request.headers.authorization === `Bearer ${mediatedCredentialValue}`
+				? 'substituted'
+				: 'not-substituted',
+		);
+	});
+	await new Promise<void>((resolve, reject) => {
+		server.once('error', reject);
+		server.listen(0, '127.0.0.1', () => {
+			server.off('error', reject);
+			resolve();
+		});
+	});
+	const address = server.address();
+	if (address === null || typeof address === 'string') {
+		throw new Error('Credentialed mediation server did not expose a TCP port.');
+	}
+	return { port: address.port, server };
+}
+
+async function closeCredentialedMediationServer(server: Server): Promise<void> {
+	await new Promise<void>((resolve, reject) => {
+		server.close((error) => (error === undefined ? resolve() : reject(error)));
+	});
+}
 
 async function readDirectoryTreeText(directoryPath: string): Promise<string> {
 	const relativePaths = await readdir(directoryPath, { recursive: true }).catch(() => []);
@@ -118,6 +155,7 @@ describeLiveConfiguredRunner('configured CLI reusable credentialed Managed VM', 
 		const imageFixture = await startManagedGatewayImageBootFixture({
 			sessionLabel: 'configured-cli-runner-image-fixture',
 		});
+		const mediationServer = await startCredentialedMediationServer();
 		let closeCredentialedRuntime: (() => Promise<void>) | undefined;
 		try {
 			const configDir = path.join(imageFixture.project.tempRoot, 'configured-cli-policy');
@@ -158,6 +196,7 @@ describeLiveConfiguredRunner('configured CLI reusable credentialed Managed VM', 
 								},
 								profile: 'default',
 							},
+							mediated: { profile: 'mediated' },
 						},
 						mode: 'managed',
 						profiles: {
@@ -188,20 +227,22 @@ describeLiveConfiguredRunner('configured CLI reusable credentialed Managed VM', 
 													executablePath: '/bin/sh',
 													executionTarget: {
 														allowedHosts: [],
-														credentialBinding: 'proof',
-														credentialEnvironment: {
-															PROOF_CREDENTIAL_FILE: {
-																kind: 'credential_file',
-																source: 'input',
+														credentialProjection: {
+															credentialBinding: 'proof',
+															credentialEnvironment: {
+																PROOF_CREDENTIAL_FILE: {
+																	kind: 'credential_file',
+																	source: 'input',
+																},
+																PROOF_CREDENTIAL_ROOT: { kind: 'credential_root' },
 															},
-															PROOF_CREDENTIAL_ROOT: { kind: 'credential_root' },
+															credentialFiles: [{ path: 'input.txt', source: 'input' }],
+															kind: 'file_binding',
 														},
-														credentialFiles: [{ path: 'input.txt', source: 'input' }],
 														environment: { kind: 'empty' },
 														guestCwd: '/tmp',
 														imageReference: './configured-cli-image.json',
 														kind: 'ephemeral_managed_vm',
-														runtimeId: 'proof-runtime',
 													},
 													kind: 'configured_cli',
 													mandatoryArgvPrefix: ['-c', configuredCliProofScript, 'proof-command'],
@@ -224,6 +265,66 @@ describeLiveConfiguredRunner('configured CLI reusable credentialed Managed VM', 
 										tools: { allow: ['isolated_runner_proof'] },
 									},
 								},
+								mediated: {
+									namespaces: {
+										controller_execution: {
+											backend: {
+												kind: 'controller_execution',
+												operations: {
+													mediated_runner_proof: {
+														calls: {
+															deny: [],
+															requiresApproval: [],
+															withoutApproval: 'remaining_admitted',
+														},
+														commands: [{ path: ['mediated'] }],
+														deniedPatterns: [],
+														executablePath: '/bin/sh',
+														executionTarget: {
+															allowedHosts: [
+																mediatedCredentialHost,
+																untrustedCredentialHost,
+																'127.0.0.1',
+															],
+															credentialProjection: {
+																environment: {
+																	PROOF_HTTP_TOKEN: {
+																		hosts: [mediatedCredentialHost, '127.0.0.1'],
+																		secret: {
+																			name: 'AGENT_VM_CREDENTIALED_RUNTIME_E2E_TOKEN',
+																			source: 'environment',
+																		},
+																	},
+																},
+																kind: 'http_mediation',
+															},
+															environment: { kind: 'empty' },
+															guestCwd: '/tmp',
+															imageReference: './configured-cli-image.json',
+															kind: 'ephemeral_managed_vm',
+														},
+														kind: 'configured_cli',
+														mandatoryArgvPrefix: ['-c', configuredCliProofScript, 'proof-command'],
+														output: {
+															modelVisibleStderr: 'none',
+															overflow: 'fail',
+															stderrMaxBytes: 4096,
+															stdoutMaxBytes: 4096,
+														},
+														safeHelp: 'Prove credentialed HTTP mediation.',
+														stdin: { kind: 'none' },
+														timeout: { kind: 'open' },
+													},
+												},
+											},
+											calls: {
+												requiresApproval: { allow: [] },
+												withoutApproval: { allow: ['mediated_runner_proof'] },
+											},
+											tools: { allow: ['mediated_runner_proof'] },
+										},
+									},
+								},
 							},
 						},
 						schemaVersion: 1,
@@ -243,7 +344,7 @@ describeLiveConfiguredRunner('configured CLI reusable credentialed Managed VM', 
 			const effectivePlan = await writeMcpPortalEffectiveConfig({
 				approvalAccessConfigured: true,
 				authoredConfigDir: configDir,
-				declaredAgentIds: [trustedPrincipal.agentId, 'secondary'],
+				declaredAgentIds: [trustedPrincipal.agentId, 'secondary', 'mediated'],
 				effectiveHostConfigDir,
 				managedVmImages: {
 					prepareImage: async () => ({
@@ -351,7 +452,7 @@ describeLiveConfiguredRunner('configured CLI reusable credentialed Managed VM', 
 				toolVmProfiles: {},
 				zones: [
 					{
-						agents: [{ id: trustedPrincipal.agentId }, { id: 'secondary' }],
+						agents: [{ id: trustedPrincipal.agentId }, { id: 'secondary' }, { id: 'mediated' }],
 						approvalAccess: {
 							approvers: [{ approverId: 'hermes-native', kind: 'managed_gateway' }],
 							audience: 'agent-vm-controller-approval',
@@ -397,6 +498,9 @@ describeLiveConfiguredRunner('configured CLI reusable credentialed Managed VM', 
 				resolve: async (secretRef) => await baseCredentialSecretResolver.resolve(secretRef),
 				resolveAll: async (secretRefs) => {
 					credentialResolveAllCount += 1;
+					if ('PROOF_HTTP_TOKEN' in secretRefs) {
+						return { PROOF_HTTP_TOKEN: mediatedCredentialValue };
+					}
 					const resolved = await baseCredentialSecretResolver.resolveAll(secretRefs);
 					lastResolvedCredential = resolved.input ?? '';
 					return resolved;
@@ -406,7 +510,37 @@ describeLiveConfiguredRunner('configured CLI reusable credentialed Managed VM', 
 			const managedVmFactory = {
 				createManagedVm: async (request: ManagedVmCreateRequest) => {
 					createdRunnerVmCount += 1;
-					return await managedVm.managedVmFactory.createManagedVm(request);
+					return await managedVm.managedVmFactory.createManagedVm({
+						...request,
+						mediation: {
+							onRequest: async (httpRequest) => {
+								const url = new URL(httpRequest.url);
+								if (url.hostname === untrustedCredentialHost) {
+									return new Response(
+										httpRequest.headers.get('authorization') === `Bearer ${mediatedCredentialValue}`
+											? 'unexpected-substitution'
+											: 'not-substituted',
+									);
+								}
+								if (url.hostname === '127.0.0.1') {
+									return new Response('direct-target-denied', { status: 403 });
+								}
+								if (url.hostname !== mediatedCredentialHost) return;
+								url.hostname = '127.0.0.1';
+								url.port = String(mediationServer.port);
+								return new Request(url, {
+									headers: httpRequest.headers,
+									method: httpRequest.method,
+								});
+							},
+						},
+						tcpHosts: [
+							{
+								guestHost: `127.0.0.1:${String(mediationServer.port)}`,
+								target: `127.0.0.1:${String(mediationServer.port)}`,
+							},
+						],
+					});
 				},
 			};
 			const runtimeManager = createCredentialedRuntimeManager({
@@ -803,10 +937,6 @@ describeLiveConfiguredRunner('configured CLI reusable credentialed Managed VM', 
 			const retirement = runtimeManager.retire({
 				agentId: trustedPrincipal.agentId,
 				force: true,
-				runtimeId:
-					operation.executionTarget.kind === 'ephemeral_managed_vm'
-						? operation.executionTarget.runtimeId
-						: '',
 				zoneId: acceptedSession.zoneId,
 			});
 			await expect(holdPromise).rejects.toBeDefined();
@@ -825,6 +955,45 @@ describeLiveConfiguredRunner('configured CLI reusable credentialed Managed VM', 
 			).toMatchObject({ exitCode: 0, stdout: 'absent' });
 			expect(createdRunnerVmCount).toBe(3);
 			expect(credentialResolveAllCount).toBe(3);
+
+			const mediatedResolution = effectivePlan.credentialedRuntimeRegistrySnapshot.resolve({
+				agentId: 'mediated',
+				cohortRevision: effectivePlan.credentialedRuntimeRegistrySnapshot.cohortRevision,
+				namespaceId: 'controller_execution',
+				operationName: 'mediated_runner_proof',
+				profileId: 'mediated',
+			});
+			const mediatedAcquisition = await runtimeManager.acquireCommand({
+				finalAuthorization: async () => true,
+				operationId: 'mediated-agent-operation',
+				ownerIdentity: {
+					controllerEpoch: 'controller-epoch-configured-runner',
+					gatewayEpoch: 'gateway-epoch-configured-runner',
+					parentGatewayVmId: imageFixture.vm.id,
+					runtimeEpoch: 'runtime-epoch-configured-runner',
+					stablePrincipal: 'mediated-agent-stable-principal',
+				},
+				resolution: mediatedResolution,
+			});
+			if (mediatedAcquisition.kind !== 'acquired') {
+				throw new Error('Mediated agent did not acquire its credentialed runtime.');
+			}
+			try {
+				const allowedResult = await mediatedAcquisition.command.exec({
+					argv: ['mediated', '--http-mediated', `http://${mediatedCredentialHost}/proof`],
+					reason: 'prove credentialed HTTP substitution',
+					timeoutMs: 60_000,
+				});
+				expect(allowedResult.stdout).toMatch(/^env:GONDOLIN_SECRET_[0-9a-f]{48}\nsubstituted$/u);
+				const untrustedResult = await mediatedAcquisition.command.exec({
+					argv: ['mediated', '--http-untrusted', `http://${untrustedCredentialHost}/proof`],
+					reason: 'prove credentialed HTTP host isolation',
+					timeoutMs: 60_000,
+				});
+				expect(untrustedResult.stdout).toBe('not-substituted');
+			} finally {
+				await mediatedAcquisition.command.complete({ kind: 'completed' });
+			}
 		} catch (error: unknown) {
 			const recordsDirectory = path.join(
 				imageFixture.project.tempRoot,
@@ -846,6 +1015,7 @@ describeLiveConfiguredRunner('configured CLI reusable credentialed Managed VM', 
 			);
 		} finally {
 			await closeCredentialedRuntime?.();
+			await closeCredentialedMediationServer(mediationServer.server);
 			await imageFixture.close();
 		}
 	}, 300_000);

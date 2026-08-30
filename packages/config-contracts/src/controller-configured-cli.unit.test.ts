@@ -5,25 +5,46 @@ import { configuredCliExecutionTargetSchema } from './controller-configured-cli.
 function validCredentialedTarget(): unknown {
 	return {
 		allowedHosts: ['oauth2.googleapis.com'],
-		credentialBinding: 'google',
-		credentialEnvironment: {
-			GOG_DATA_DIR: { kind: 'credential_root' },
-			GOOGLE_APPLICATION_CREDENTIALS: {
-				kind: 'credential_file',
-				source: 'service-account',
+		credentialProjection: {
+			kind: 'file_binding',
+			credentialBinding: 'google',
+			credentialEnvironment: {
+				GOG_DATA_DIR: { kind: 'credential_root' },
+				GOOGLE_APPLICATION_CREDENTIALS: {
+					kind: 'credential_file',
+					source: 'service-account',
+				},
 			},
+			credentialFiles: [
+				{
+					path: 'sa-c3VuQGV4YW1wbGUuY29t.json',
+					source: 'service-account',
+				},
+			],
 		},
-		credentialFiles: [
-			{
-				path: 'sa-c3VuQGV4YW1wbGUuY29t.json',
-				source: 'service-account',
-			},
-		],
 		environment: { kind: 'empty' },
 		guestCwd: '/work',
 		imageReference: '../../vm-images/controller-runners/gog/build-config.json',
 		kind: 'ephemeral_managed_vm',
-		runtimeId: 'google-workspace',
+	};
+}
+
+function validMediatedTarget(): unknown {
+	return {
+		allowedHosts: ['places.googleapis.com'],
+		credentialProjection: {
+			environment: {
+				GOOGLE_PLACES_API_KEY: {
+					hosts: ['places.googleapis.com'],
+					secret: { source: '1password', ref: 'op://agent-vm/google-places/credential' },
+				},
+			},
+			kind: 'http_mediation',
+		},
+		environment: { kind: 'empty' },
+		guestCwd: '/work',
+		imageReference: '../../vm-images/controller-runners/google-tools/build-config.json',
+		kind: 'ephemeral_managed_vm',
 	};
 }
 
@@ -36,15 +57,59 @@ describe('credentialed configured CLI target contract', () => {
 
 	it('hard-cuts the legacy uncredentialed one-shot target', () => {
 		const target = validCredentialedTarget() as Record<string, unknown>;
-		for (const fieldName of [
-			'credentialBinding',
-			'credentialEnvironment',
-			'credentialFiles',
-			'runtimeId',
-		] as const) {
+		for (const fieldName of ['credentialProjection'] as const) {
 			const { [fieldName]: _removed, ...withoutField } = target;
 			expect(configuredCliExecutionTargetSchema.safeParse(withoutField).success).toBe(false);
 		}
+	});
+
+	it('rejects authored runtime identity and loose legacy credential fields', () => {
+		const target = validCredentialedTarget() as Record<string, unknown>;
+		for (const legacyFields of [
+			{ runtimeId: 'google-workspace' },
+			{ credentialBinding: 'google' },
+			{ credentialFiles: [] },
+			{ credentialEnvironment: {} },
+		]) {
+			expect(
+				configuredCliExecutionTargetSchema.safeParse({ ...target, ...legacyFields }).success,
+			).toBe(false);
+		}
+	});
+
+	it('accepts a strict HTTP-mediated credential projection', () => {
+		expect(configuredCliExecutionTargetSchema.safeParse(validMediatedTarget()).success).toBe(true);
+	});
+
+	it('rejects empty mediated hosts and mixed projection fields', () => {
+		const target = validMediatedTarget() as Record<string, unknown>;
+		const projection = target.credentialProjection as Record<string, unknown>;
+		const environment = projection.environment as Record<string, unknown>;
+		const mediated = environment.GOOGLE_PLACES_API_KEY as Record<string, unknown>;
+		expect(
+			configuredCliExecutionTargetSchema.safeParse({
+				...target,
+				credentialProjection: {
+					...projection,
+					environment: {
+						...environment,
+						GOOGLE_PLACES_API_KEY: { ...mediated, hosts: [] },
+					},
+				},
+			}).success,
+		).toBe(false);
+		expect(
+			configuredCliExecutionTargetSchema.safeParse({
+				...target,
+				allowedHosts: ['routes.googleapis.com'],
+			}).success,
+		).toBe(false);
+		expect(
+			configuredCliExecutionTargetSchema.safeParse({
+				...target,
+				credentialProjection: { ...projection, credentialBinding: 'google' },
+			}).success,
+		).toBe(false);
 	});
 
 	it.each([
@@ -55,16 +120,21 @@ describe('credentialed configured CLI target contract', () => {
 		['control character', 'keys/google\n.json'],
 	])('rejects unsafe credential file %s', (_caseName, path) => {
 		const target = validCredentialedTarget() as Record<string, unknown>;
+		const projection = target.credentialProjection as Record<string, unknown>;
 		expect(
 			configuredCliExecutionTargetSchema.safeParse({
 				...target,
-				credentialFiles: [{ path, source: 'service-account' }],
+				credentialProjection: {
+					...projection,
+					credentialFiles: [{ path, source: 'service-account' }],
+				},
 			}).success,
 		).toBe(false);
 	});
 
 	it('rejects duplicate sources and destinations', () => {
 		const target = validCredentialedTarget() as Record<string, unknown>;
+		const projection = target.credentialProjection as Record<string, unknown>;
 		for (const duplicate of [
 			[
 				{ path: 'first.json', source: 'service-account' },
@@ -78,7 +148,7 @@ describe('credentialed configured CLI target contract', () => {
 			expect(
 				configuredCliExecutionTargetSchema.safeParse({
 					...target,
-					credentialFiles: duplicate,
+					credentialProjection: { ...projection, credentialFiles: duplicate },
 				}).success,
 			).toBe(false);
 		}
@@ -86,13 +156,17 @@ describe('credentialed configured CLI target contract', () => {
 
 	it('rejects unknown credential-file environment sources and ordinary environment collisions', () => {
 		const target = validCredentialedTarget() as Record<string, unknown>;
+		const projection = target.credentialProjection as Record<string, unknown>;
 		expect(
 			configuredCliExecutionTargetSchema.safeParse({
 				...target,
-				credentialEnvironment: {
-					GOOGLE_APPLICATION_CREDENTIALS: {
-						kind: 'credential_file',
-						source: 'missing',
+				credentialProjection: {
+					...projection,
+					credentialEnvironment: {
+						GOOGLE_APPLICATION_CREDENTIALS: {
+							kind: 'credential_file',
+							source: 'missing',
+						},
 					},
 				},
 			}).success,
@@ -107,6 +181,7 @@ describe('credentialed configured CLI target contract', () => {
 
 	it('rejects excess file and environment counts', () => {
 		const target = validCredentialedTarget() as Record<string, unknown>;
+		const projection = target.credentialProjection as Record<string, unknown>;
 		const credentialFiles = Array.from({ length: 17 }, (_, index) => ({
 			path: `file-${String(index)}.json`,
 			source: `source-${String(index)}`,
@@ -120,8 +195,7 @@ describe('credentialed configured CLI target contract', () => {
 		expect(
 			configuredCliExecutionTargetSchema.safeParse({
 				...target,
-				credentialEnvironment,
-				credentialFiles,
+				credentialProjection: { ...projection, credentialEnvironment, credentialFiles },
 			}).success,
 		).toBe(false);
 	});

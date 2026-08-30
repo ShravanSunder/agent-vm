@@ -43,7 +43,6 @@ interface RunControllerOperationCommandOptions {
 	readonly credentialRuntimeRetirement?: {
 		readonly agentId: string;
 		readonly force: boolean;
-		readonly runtimeId: string;
 	};
 	readonly io: CliIo;
 	readonly json?: boolean;
@@ -666,7 +665,7 @@ export async function runControllerOperationCommand(
 			}
 			writeJson(
 				options.io,
-				await controllerClient.retireCredentialedRuntime(zone.id, retirement.runtimeId, {
+				await controllerClient.retireCredentialedRuntime(zone.id, {
 					...(adminToken === undefined ? {} : { adminToken }),
 					agentId: retirement.agentId,
 					force: retirement.force,

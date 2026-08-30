@@ -3,7 +3,7 @@
 [Overview](overview.md) > Credentialed Managed Runtimes
 
 Credentialed Managed runtimes execute configured CLI capabilities that need
-controller-resolved credential files without giving the CLI controller-host
+controller-projected credentials without giving the CLI controller-host
 authority. They are controller-created, agent-owned Managed VMs that may serve
 multiple independently authorized RPC calls while compatible and healthy.
 
@@ -21,7 +21,7 @@ Tool Portal RPC call
   └── cancellation/timeout boundary
 
 Credentialed runtime
-  ├── key: zone + authenticated agent + runtimeId
+  ├── key: zone + authenticated agent
   ├── one active command
   ├── compatible calls reuse the live VM
   └── retirement after 15 idle minutes or explicit containment event
@@ -29,7 +29,9 @@ Credentialed runtime
 Managed VM
   ├── immutable prepared image containing the CLI
   ├── disposable writable COW rootfs for CLI config/state/cache
-  └── finalized read-only memory mount for credential files
+  └── exactly one credential projection
+      ├── file_binding: finalized read-only memory mount
+      └── http_mediation: opaque environment placeholder, no credential mount
 ```
 
 An RPC call does not own the VM lifetime. Completing one call returns a safe
@@ -51,7 +53,7 @@ binding, credential reference, image, mount, environment value, or VM identity.
 The runtime key is:
 
 ```text
-zoneId + authenticated agentId + authored runtimeId
+zoneId + authenticated agentId
 ```
 
 Compatibility additionally binds the prepared image and every VM-shaping
@@ -60,9 +62,11 @@ environment, ordinary environment, allowed hosts, and owner epochs. Per-call
 argv, reason, timeout, output limits, and approval disposition remain call
 authority rather than runtime identity.
 
-Two agents never share a credentialed runtime, even when they use the same
-Tool Portal profile and `runtimeId`. A compatibility change retires the idle
-predecessor before creating a successor.
+Two agents never share a credentialed runtime, even when they use the same Tool
+Portal profile. All compatible credentialed operations for one agent share that
+agent's single runtime slot. Configuration rejects conflicting VM-shaping
+definitions rather than creating another runtime. A compatibility change retires
+the idle predecessor before creating a successor.
 
 ## Admission And Concurrency
 
@@ -97,19 +101,25 @@ guest process.
 
 ## Credential And Filesystem Boundary
 
-Agent configuration declares a named `credentialBinding` containing bounded
-1Password file references. The configured CLI target maps binding sources to
-bounded guest-relative `credentialFiles` and maps controller-owned environment
-names to either the credential root or one credential file.
+Each configured CLI target declares one strict credential projection. A
+`file_binding` projection selects an agent `credentialBinding`, maps its bounded
+1Password file references to guest-relative credential files, and maps
+controller-owned environment names to the credential root or one credential file.
+An `http_mediation` projection instead maps environment names to strict secret
+sources and host allowlists; the VM receives opaque placeholders while raw values
+remain in host-side Gondolin mediation.
 
-At runtime the controller:
+For `file_binding`, the controller resolves the binding only while creating a
+runtime, writes the files below `/run/agent-vm/credentials` in a finalizable
+memory mount, applies regular-file/read-only/mode-0600 constraints, finalizes
+the mount before VM start, and passes only controller-derived discovery paths
+to the CLI.
 
-1. resolves the binding only when creating a runtime;
-2. writes the files below `/run/agent-vm/credentials` in a finalizable memory
-   mount;
-3. applies regular-file, read-only, mode-0600 constraints;
-4. finalizes the mount before VM start; and
-5. passes only controller-derived discovery environment values to the CLI.
+For `http_mediation`, the controller resolves the secret while creating the
+runtime and gives Gondolin the raw value plus its exact allowed hosts. The VM
+has no credential mount and receives only a random opaque environment
+placeholder. Gondolin substitutes the raw value only for matching outbound
+requests.
 
 Credential references and bytes never enter Gateway-safe effective config,
 runtime records, model-visible results, or Tool VM artifacts. Mutable CLI
@@ -137,7 +147,7 @@ Operators can force immediate replacement of a value behind an unchanged
 
 ```text
 agent-vm controller credential-runtime retire \
-  --zone <zone> --agent <agentId> --runtime <runtimeId> [--force]
+  --zone <zone> --agent <agentId> [--force]
 ```
 
 Without `--force`, an active runtime returns retryable `active`. With

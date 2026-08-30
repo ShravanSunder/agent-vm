@@ -146,11 +146,6 @@ export const controllerCommandParser = command(
 							'--force',
 							'Cancel an active command before exact runtime retirement',
 						),
-						runtime: createRequiredStringOption({
-							description: 'Authored credentialed runtime id',
-							metavar: 'RUNTIME_ID',
-							name: '--runtime',
-						}),
 						zone: createZoneOption(),
 					}),
 				}),

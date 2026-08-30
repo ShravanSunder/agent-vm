@@ -62,7 +62,6 @@ interface ControllerRuntimeOperations {
 	}>;
 	readonly retireCredentialedRuntime: (
 		targetZoneId: string,
-		runtimeId: string,
 		options: {
 			readonly adminToken?: string;
 			readonly agentId: string;
@@ -102,7 +101,6 @@ export function createControllerRuntimeOperations(options: {
 	readonly retireCredentialedRuntime?: (request: {
 		readonly agentId: string;
 		readonly force: boolean;
-		readonly runtimeId: string;
 		readonly zoneId: string;
 	}) => Promise<unknown>;
 	readonly systemConfig: SystemConfig;
@@ -167,7 +165,7 @@ export function createControllerRuntimeOperations(options: {
 		},
 		refreshZoneCredentials: async (targetZoneId) =>
 			await options.getManagedGatewayRuntime(targetZoneId).refreshCredentials(),
-		retireCredentialedRuntime: async (targetZoneId, runtimeId, retireOptions) => {
+		retireCredentialedRuntime: async (targetZoneId, retireOptions) => {
 			const zone = findZone(targetZoneId);
 			await verifyZoneAdminAccess({
 				providedToken: retireOptions.adminToken,
@@ -180,7 +178,6 @@ export function createControllerRuntimeOperations(options: {
 			return await options.retireCredentialedRuntime({
 				agentId: retireOptions.agentId,
 				force: retireOptions.force,
-				runtimeId,
 				zoneId: targetZoneId,
 			});
 		},

@@ -94,21 +94,23 @@ function createEphemeralConfiguredCliToolPortalConfigInput(): unknown {
 									executablePath: '/usr/bin/printf',
 									executionTarget: {
 										allowedHosts: [],
-										credentialBinding: 'google',
-										credentialEnvironment: {
-											GOG_DATA_DIR: { kind: 'credential_root' },
-										},
-										credentialFiles: [
-											{
-												path: 'sa-c2hyYXZhbkBleGFtcGxlLmNvbQ.json',
-												source: 'service-account',
+										credentialProjection: {
+											credentialBinding: 'google',
+											credentialEnvironment: {
+												GOG_DATA_DIR: { kind: 'credential_root' },
 											},
-										],
+											credentialFiles: [
+												{
+													path: 'sa-c2hyYXZhbkBleGFtcGxlLmNvbQ.json',
+													source: 'service-account',
+												},
+											],
+											kind: 'file_binding',
+										},
 										environment: { kind: 'empty' },
 										guestCwd: '/run',
 										imageReference: '../../vm-images/controller-runners/default/build-config.json',
 										kind: 'ephemeral_managed_vm',
-										runtimeId: 'google-workspace',
 									},
 									kind: 'configured_cli',
 									mandatoryArgvPrefix: [],

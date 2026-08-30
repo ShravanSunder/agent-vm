@@ -383,7 +383,6 @@ export async function runControllerCommandOperation(
 			credentialRuntimeRetirement: {
 				agentId: commandValue.options.agent,
 				force: commandValue.options.force,
-				runtimeId: commandValue.options.runtime,
 			},
 			dependencies,
 			io,

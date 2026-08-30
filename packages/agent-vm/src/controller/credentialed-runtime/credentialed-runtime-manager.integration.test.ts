@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -95,9 +95,12 @@ function operation(): ConfiguredOperation {
 		executablePath: '/usr/local/bin/gog',
 		executionTarget: {
 			allowedHosts: ['www.googleapis.com'],
-			credentialBinding: 'google',
-			credentialEnvironment: { GOG_DATA_DIR: { kind: 'credential_root' } },
-			credentialFiles: [{ path: 'sa-c3VuQGV4YW1wbGUuY29t.json', source: 'service-account' }],
+			credentialProjection: {
+				credentialBinding: 'google',
+				credentialEnvironment: { GOG_DATA_DIR: { kind: 'credential_root' } },
+				credentialFiles: [{ path: 'sa-c3VuQGV4YW1wbGUuY29t.json', source: 'service-account' }],
+				kind: 'file_binding',
+			},
 			environment: { kind: 'empty' },
 			guestCwd: '/work',
 			imageReference: encodeConfiguredCliPreparedImageIdentity({
@@ -106,7 +109,6 @@ function operation(): ConfiguredOperation {
 				schemaVersion: 1,
 			}),
 			kind: 'ephemeral_managed_vm',
-			runtimeId: 'google-workspace',
 		},
 		kind: 'configured_cli',
 		mandatoryArgvPrefix: [],
@@ -125,32 +127,65 @@ function operation(): ConfiguredOperation {
 function resolution(
 	options: {
 		readonly agentId?: string;
-		readonly groupRevision?: string;
+		readonly agentRuntimeRevision?: string;
 		readonly operationName?: string;
 		readonly zoneId?: string;
 	} = {},
 ): CredentialedRuntimeResolution {
 	const agentId = options.agentId ?? 'sun';
 	return {
+		agentRuntimeRevision: options.agentRuntimeRevision ?? `sha256:group-${agentId}`,
 		agentId,
 		cohortRevision: 'binding:current',
-		credentialBinding: {
-			files: {
-				'service-account': {
-					ref: `op://agent-vm-testing/google/${agentId}`,
-					source: '1password',
+		projection: {
+			credentialBinding: {
+				files: {
+					'service-account': {
+						ref: `op://agent-vm-testing/google/${agentId}`,
+						source: '1password',
+					},
 				},
 			},
+			credentialEnvironment: { GOG_DATA_DIR: { kind: 'credential_root' } },
+			fileMappings: [{ path: 'sa-c3VuQGV4YW1wbGUuY29t.json', source: 'service-account' }],
+			kind: 'file_binding',
 		},
-		credentialEnvironment: { GOG_DATA_DIR: { kind: 'credential_root' } },
-		fileMappings: [{ path: 'sa-c3VuQGV4YW1wbGUuY29t.json', source: 'service-account' }],
-		groupRevision: options.groupRevision ?? `sha256:group-${agentId}`,
 		namespaceId: 'google',
 		operation: operation(),
 		operationName: options.operationName ?? 'calendar_list',
 		profileId: 'google-enabled',
-		runtimeId: 'google-workspace',
 		zoneId: options.zoneId ?? 'zone-a',
+	};
+}
+
+function mediatedResolution(): CredentialedRuntimeResolution {
+	const fileResolution = resolution();
+	const configuredOperation = structuredClone(fileResolution.operation);
+	if (configuredOperation.executionTarget.kind !== 'ephemeral_managed_vm') {
+		throw new Error('Expected Managed VM target.');
+	}
+	configuredOperation.executionTarget.credentialProjection = {
+		environment: {
+			GOOGLE_PLACES_API_KEY: {
+				hosts: ['places.googleapis.com'],
+				secret: { name: 'GOOGLE_PLACES_API_KEY', source: 'environment' },
+			},
+		},
+		kind: 'http_mediation',
+	};
+	return {
+		...fileResolution,
+		agentRuntimeRevision: 'sha256:mediated-agent-runtime',
+		operation: configuredOperation,
+		projection: {
+			environment: {
+				GOOGLE_PLACES_API_KEY: {
+					hosts: ['places.googleapis.com'],
+					secret: { ref: 'GOOGLE_PLACES_API_KEY', source: 'environment' },
+				},
+			},
+			kind: 'http_mediation',
+		},
 	};
 }
 
@@ -159,6 +194,7 @@ function createFixture(
 	options: {
 		readonly afterRecordWrite?: (kind: CredentialedRuntimeRecord['kind']) => Promise<void>;
 		readonly beforeManagedVmCreate?: () => Promise<void>;
+		readonly beforeResolveAll?: () => Promise<void>;
 		readonly failingRecordKinds?: readonly CredentialedRuntimeRecord['kind'][];
 	} = {},
 ): ManagerFixture {
@@ -235,7 +271,15 @@ function createFixture(
 			return { hostProcessId: 20_000, kind: 'terminated' as const };
 		},
 	);
-	const resolveAll = vi.fn(async () => ({ 'service-account': '{"type":"service_account"}' }));
+	const resolveAll = vi.fn(async (refs: Readonly<Record<string, unknown>>) => {
+		await options.beforeResolveAll?.();
+		return Object.fromEntries(
+			Object.keys(refs).map((name) => [
+				name,
+				name === 'service-account' ? '{"type":"service_account"}' : `secret:${name}`,
+			]),
+		);
+	});
 	const readProcessIdentity = vi.fn<
 		(hostProcessId: number) => Promise<{ readonly command: string; readonly lstart: string } | null>
 	>(async (hostProcessId) => ({
@@ -337,7 +381,49 @@ describe('credentialed runtime manager', () => {
 		expect(fixture.createManagedVm).toHaveBeenCalledOnce();
 	});
 
-	it('separates agents even when profile and runtime id match', async () => {
+	it('returns busy during credential resolution without a second resolution or VM effect', async () => {
+		let releaseResolution: (() => void) | undefined;
+		const resolutionGate = new Promise<void>((resolve) => {
+			releaseResolution = resolve;
+		});
+		const fixture = createFixture(() => 1_000, {
+			beforeResolveAll: async () => await resolutionGate,
+		});
+		const provisioning = acquire(fixture, mediatedResolution());
+		await vi.waitFor(() => expect(fixture.resolveAll).toHaveBeenCalledOnce());
+		await expect(acquire(fixture)).resolves.toEqual({ kind: 'busy', retryable: true });
+		expect(fixture.resolveAll).toHaveBeenCalledOnce();
+		expect(fixture.createManagedVm).not.toHaveBeenCalled();
+		releaseResolution?.();
+		const acquired = await provisioning;
+		if (acquired.kind !== 'acquired') throw new Error('Expected acquisition after resolution.');
+		await acquired.command.complete({ kind: 'completed' });
+	});
+
+	it('projects HTTP-mediated credentials as placeholders without a credential mount', async () => {
+		const fixture = createFixture(() => 1_000);
+		const acquired = await acquire(fixture, mediatedResolution());
+		if (acquired.kind !== 'acquired') throw new Error('Expected mediated acquisition.');
+		const request = fixture.createManagedVm.mock.calls[0]?.[0] as
+			| ManagedVmCreateRequest
+			| undefined;
+		expect(request?.mounts).toEqual({});
+		expect(request?.environment.GOOGLE_PLACES_API_KEY).toMatch(/^GONDOLIN_SECRET_[0-9a-f]{48}$/u);
+		expect(request?.mediatedSecrets).toEqual([
+			expect.objectContaining({
+				allowedHosts: ['places.googleapis.com'],
+				environmentVariable: 'GOOGLE_PLACES_API_KEY',
+				value: 'secret:GOOGLE_PLACES_API_KEY',
+			}),
+		]);
+		expect(request?.mediatedSecrets[0]?.guestPlaceholder).toBe(
+			request?.environment.GOOGLE_PLACES_API_KEY,
+		);
+		expect(fixture.states[0]?.finalized).toBe(false);
+		await acquired.command.complete({ kind: 'completed' });
+	});
+
+	it('separates agents even when they share one profile', async () => {
 		const fixture = createFixture(() => 1_000);
 		const [sun, moon] = await Promise.all([
 			acquire(fixture, resolution({ agentId: 'sun' })),
@@ -373,7 +459,7 @@ describe('credentialed runtime manager', () => {
 		const first = await acquire(fixture);
 		if (first.kind !== 'acquired') throw new Error('Expected first acquisition.');
 		await first.command.complete({ kind: 'completed' });
-		const second = await acquire(fixture, resolution({ groupRevision: 'sha256:changed' }));
+		const second = await acquire(fixture, resolution({ agentRuntimeRevision: 'sha256:changed' }));
 		expect(second.kind).toBe('acquired');
 		expect(fixture.states[0]?.closed).toBe(true);
 		expect(fixture.createManagedVm).toHaveBeenCalledTimes(2);
@@ -572,7 +658,6 @@ describe('credentialed runtime manager', () => {
 			fixture.manager.retire({
 				agentId: 'sun',
 				force: false,
-				runtimeId: 'google-workspace',
 				zoneId: 'zone-a',
 			}),
 		).resolves.toEqual({ kind: 'retired' });
@@ -591,7 +676,6 @@ describe('credentialed runtime manager', () => {
 			fixture.manager.retire({
 				agentId: 'sun',
 				force: false,
-				runtimeId: 'google-workspace',
 				zoneId: 'zone-a',
 			}),
 		).resolves.toEqual({ kind: 'owner-unsafe', retryable: false });
@@ -628,7 +712,6 @@ describe('credentialed runtime manager', () => {
 			await fixture.manager.retire({
 				agentId: 'sun',
 				force: false,
-				runtimeId: 'google-workspace',
 				zoneId: 'zone-a',
 			}),
 		).toEqual({ kind: 'active', retryable: true });
@@ -637,7 +720,6 @@ describe('credentialed runtime manager', () => {
 			await fixture.manager.retire({
 				agentId: 'sun',
 				force: false,
-				runtimeId: 'google-workspace',
 				zoneId: 'zone-a',
 			}),
 		).toEqual({ kind: 'retired' });
@@ -650,7 +732,6 @@ describe('credentialed runtime manager', () => {
 		const retirement = fixture.manager.retire({
 			agentId: 'sun',
 			force: true,
-			runtimeId: 'google-workspace',
 			zoneId: 'zone-a',
 		});
 		await Promise.resolve();
@@ -713,8 +794,6 @@ describe('credentialed runtime manager', () => {
 				'zone-a',
 				'--agent',
 				'sun',
-				'--runtime',
-				'google-workspace',
 				...(force ? ['--force'] : []),
 			]);
 			if (!parsed.success) throw new Error(formatMessage(parsed.error));
@@ -738,13 +817,13 @@ describe('credentialed runtime manager', () => {
 
 		try {
 			await expect(
-				controllerClient.retireCredentialedRuntime?.('zone-a', 'google-workspace', {
+				controllerClient.retireCredentialedRuntime?.('zone-a', {
 					agentId: 'sun',
 					force: false,
 				}),
 			).rejects.toThrow('HTTP 401');
 			await expect(
-				controllerClient.retireCredentialedRuntime?.('zone-a', 'google-workspace', {
+				controllerClient.retireCredentialedRuntime?.('zone-a', {
 					adminToken: 'wrong-token',
 					agentId: 'sun',
 					force: false,
@@ -798,12 +877,11 @@ describe('credentialed runtime manager', () => {
 				controllerEpoch: 'controller-old',
 				gatewayEpoch: 'gateway-old',
 				generation: 1,
-				groupRevision: 'sha256:old',
+				agentRuntimeRevision: 'sha256:old',
 				parentGatewayVmId: 'gateway-vm-old',
 				recordId: `record-${kind}`,
-				recordVersion: 1 as const,
+				recordVersion: 2 as const,
 				runtimeEpoch: 'runtime-old',
-				runtimeId: 'google-workspace',
 				stablePrincipal: 'a'.repeat(64),
 				updatedAtMs: 4_000,
 				zoneId,
@@ -844,6 +922,47 @@ describe('credentialed runtime manager', () => {
 		},
 	);
 
+	it('contains exact-base version 1 records without restoring runtime-id authority', async () => {
+		const zoneId = 'zone-legacy-v1';
+		const fixture = createFixture(() => 5_000);
+		const recordsDirectoryPath = path.join(testRoot, 'zones', zoneId, 'credentialed-runtimes');
+		await mkdir(recordsDirectoryPath, { recursive: true });
+		await writeFile(
+			path.join(recordsDirectoryPath, 'legacy-v1.json'),
+			JSON.stringify({
+				agentId: 'sun',
+				controllerEpoch: 'controller-old',
+				gatewayEpoch: 'gateway-old',
+				generation: 1,
+				groupRevision: 'sha256:legacy-group',
+				identity: {
+					command: 'qemu legacy credentialed recovery',
+					hostProcessId: 42_001,
+					processStartIdentity: 'legacy-recovery-start',
+					vmId: 'legacy-recovery-vm',
+				},
+				kind: 'identity-published',
+				parentGatewayVmId: 'gateway-vm-old',
+				recordId: 'legacy-v1',
+				recordVersion: 1,
+				runtimeEpoch: 'runtime-old',
+				runtimeId: 'legacy-runtime-id',
+				stablePrincipal: 'a'.repeat(64),
+				updatedAtMs: 4_000,
+				vmId: 'legacy-recovery-vm',
+				zoneId,
+			}),
+			'utf8',
+		);
+
+		await fixture.manager.recoverZone(zoneId);
+		expect(fixture.exactTerminate).toHaveBeenCalledOnce();
+		expect(fixture.createManagedVm).not.toHaveBeenCalled();
+		expect(
+			await createCredentialedRuntimeRecordStore({ recordsDirectoryPath }).listRecords(),
+		).toEqual([]);
+	});
+
 	it('fences a vm-created crash record without an exact process identity', async () => {
 		const zoneId = 'zone-owner-unsafe';
 		const fixture = createFixture(() => 5_000);
@@ -856,13 +975,12 @@ describe('credentialed runtime manager', () => {
 				controllerEpoch: 'controller-old',
 				gatewayEpoch: 'gateway-old',
 				generation: 1,
-				groupRevision: 'sha256:group-sun',
+				agentRuntimeRevision: 'sha256:group-sun',
 				kind: 'vm-created',
 				parentGatewayVmId: 'gateway-vm-old',
 				recordId: 'record-owner-unsafe',
-				recordVersion: 1,
+				recordVersion: 2,
 				runtimeEpoch: 'runtime-old',
-				runtimeId: 'google-workspace',
 				stablePrincipal: 'a'.repeat(64),
 				updatedAtMs: 4_000,
 				vmId: 'unknown-live-vm',
@@ -873,9 +991,23 @@ describe('credentialed runtime manager', () => {
 
 		await fixture.manager.recoverZone(zoneId);
 		expect(fixture.exactTerminate).not.toHaveBeenCalled();
+		expect(await store.listRecords()).toEqual([
+			expect.objectContaining({
+				containment: 'unproven',
+				kind: 'owner-unsafe',
+				reason: 'startup process identity was unavailable',
+			}),
+		]);
 		expect(await acquire(fixture, resolution({ agentId: 'sun', zoneId }))).toMatchObject({
 			kind: 'owner-unsafe',
 		});
 		expect(fixture.createManagedVm).not.toHaveBeenCalled();
+
+		const restartedFixture = createFixture(() => 6_000);
+		await restartedFixture.manager.recoverZone(zoneId);
+		expect(restartedFixture.exactTerminate).not.toHaveBeenCalled();
+		expect(await acquire(restartedFixture, resolution({ agentId: 'sun', zoneId }))).toMatchObject({
+			kind: 'owner-unsafe',
+		});
 	});
 });

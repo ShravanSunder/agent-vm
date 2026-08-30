@@ -711,16 +711,18 @@ export const toolPortalConfigSchema = z
 							continue;
 						}
 						const target = operation.executionTarget;
-						const binding = agentConfig.credentialBindings?.[target.credentialBinding];
+						const projection = target.credentialProjection;
+						if (projection.kind !== 'file_binding') continue;
+						const binding = agentConfig.credentialBindings?.[projection.credentialBinding];
 						if (binding === undefined) {
 							context.addIssue({
 								code: z.ZodIssueCode.custom,
-								message: `Tool Portal agent "${agentId}" is missing credential binding "${target.credentialBinding}" required by configured operation "${operationName}".`,
-								path: ['agents', agentId, 'credentialBindings', target.credentialBinding],
+								message: `Tool Portal agent "${agentId}" is missing credential binding "${projection.credentialBinding}" required by configured operation "${operationName}".`,
+								path: ['agents', agentId, 'credentialBindings', projection.credentialBinding],
 							});
 							continue;
 						}
-						for (const [mappingIndex, mapping] of target.credentialFiles.entries()) {
+						for (const [mappingIndex, mapping] of projection.credentialFiles.entries()) {
 							if (binding.files[mapping.source] !== undefined) continue;
 							context.addIssue({
 								code: z.ZodIssueCode.custom,

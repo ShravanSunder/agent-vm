@@ -99,7 +99,7 @@ export function createConfiguredCliManagedVmExecutor(
 						current.evaluation,
 					) &&
 					current.credentialedRuntime?.cohortRevision === resolution.cohortRevision &&
-					current.credentialedRuntime.groupRevision === resolution.groupRevision
+					current.credentialedRuntime.agentRuntimeRevision === resolution.agentRuntimeRevision
 				);
 			},
 			operationId: request.authorization.evaluation.operationId,

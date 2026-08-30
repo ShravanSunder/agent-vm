@@ -21,6 +21,21 @@ const recordBaseShape = {
 	controllerEpoch: z.string().min(1),
 	gatewayEpoch: z.string().min(1),
 	generation: z.number().int().nonnegative(),
+	agentRuntimeRevision: z.string().min(1),
+	parentGatewayVmId: z.string().min(1),
+	recordId: z.string().min(1),
+	recordVersion: z.literal(2),
+	runtimeEpoch: z.string().min(1),
+	stablePrincipal: z.string().min(1),
+	updatedAtMs: z.number().int().nonnegative(),
+	zoneId: z.string().min(1),
+} as const;
+
+const legacyRecordBaseShape = {
+	agentId: z.string().min(1),
+	controllerEpoch: z.string().min(1),
+	gatewayEpoch: z.string().min(1),
+	generation: z.number().int().nonnegative(),
 	groupRevision: z.string().min(1),
 	parentGatewayVmId: z.string().min(1),
 	recordId: z.string().min(1),
@@ -100,19 +115,92 @@ export const credentialedRuntimeRecordSchema = z.discriminatedUnion('kind', [
 		.strict(),
 ]);
 
+const legacyCredentialedRuntimeRecordSchema = z.discriminatedUnion('kind', [
+	z.object({ ...legacyRecordBaseShape, kind: z.literal('reserved') }).strict(),
+	z.object({ ...legacyRecordBaseShape, kind: z.literal('creation-started') }).strict(),
+	z
+		.object({
+			...legacyRecordBaseShape,
+			kind: z.literal('vm-created'),
+			vmId: z.string().min(1),
+		})
+		.strict(),
+	z
+		.object({
+			...legacyRecordBaseShape,
+			identity: processIdentitySchema,
+			kind: z.literal('identity-published'),
+			vmId: z.string().min(1),
+		})
+		.strict(),
+	z
+		.object({
+			...legacyRecordBaseShape,
+			activeOperationId: z.string().min(1),
+			identity: processIdentitySchema,
+			kind: z.literal('current-active'),
+			startedAtMs: z.number().int().nonnegative(),
+			vmId: z.string().min(1),
+		})
+		.strict(),
+	z
+		.object({
+			...legacyRecordBaseShape,
+			identity: processIdentitySchema,
+			idleExpiresAtMs: z.number().int().nonnegative(),
+			kind: z.literal('current-idle'),
+			lastUsedAtMs: z.number().int().nonnegative(),
+			vmId: z.string().min(1),
+		})
+		.strict(),
+	z
+		.object({
+			...legacyRecordBaseShape,
+			identity: processIdentitySchema.nullable(),
+			kind: z.literal('retiring'),
+			reason: z.string().min(1),
+			vmId: z.string().min(1).nullable(),
+		})
+		.strict(),
+	z
+		.object({
+			...legacyRecordBaseShape,
+			containment: z.literal('proven'),
+			identity: processIdentitySchema.nullable(),
+			kind: z.literal('contained-terminal'),
+			vmId: z.string().min(1).nullable(),
+		})
+		.strict(),
+	z
+		.object({
+			...legacyRecordBaseShape,
+			containment: z.literal('unproven'),
+			identity: processIdentitySchema.nullable(),
+			kind: z.literal('owner-unsafe'),
+			reason: z.string().min(1),
+			vmId: z.string().min(1).nullable(),
+		})
+		.strict(),
+]);
+
+const credentialedRuntimeRecoveryRecordSchema = z.union([
+	credentialedRuntimeRecordSchema,
+	legacyCredentialedRuntimeRecordSchema,
+]);
+
 export type CredentialedRuntimeRecord = z.infer<typeof credentialedRuntimeRecordSchema>;
+type CredentialedRuntimeRecoveryRecord = z.infer<typeof credentialedRuntimeRecoveryRecordSchema>;
 export type CredentialedRuntimeProcessIdentity = z.infer<typeof processIdentitySchema>;
 export type CredentialedRuntimeRecordStaticFields = Pick<
 	CredentialedRuntimeRecord,
 	| 'agentId'
 	| 'controllerEpoch'
 	| 'gatewayEpoch'
-	| 'groupRevision'
+	| 'agentRuntimeRevision'
 	| 'parentGatewayVmId'
 	| 'recordId'
 	| 'recordVersion'
 	| 'runtimeEpoch'
-	| 'runtimeId'
 	| 'stablePrincipal'
 	| 'zoneId'
 >;
@@ -128,9 +216,17 @@ export function createCredentialedRuntimeRecordStore(options: {
 
 export type CredentialedRuntimeRecordStore = CrashDurableRecordStore<CredentialedRuntimeRecord>;
 
+function createCredentialedRuntimeRecoveryRecordStore(options: {
+	readonly recordsDirectoryPath: string;
+}): CrashDurableRecordStore<CredentialedRuntimeRecoveryRecord> {
+	return createCrashDurableRecordStore({
+		recordSchema: credentialedRuntimeRecoveryRecordSchema,
+		recordsDirectoryPath: options.recordsDirectoryPath,
+	});
+}
+
 export interface CredentialedRuntimeOwnerUnsafeIdentity {
 	readonly agentId: string;
-	readonly runtimeId: string;
 	readonly zoneId: string;
 }
 
@@ -140,7 +236,7 @@ export async function containCredentialedRuntimeRecords(options: {
 	readonly recordsDirectoryPath: string;
 }): Promise<readonly CredentialedRuntimeOwnerUnsafeIdentity[]> {
 	const now = options.now ?? Date.now;
-	const store = createCredentialedRuntimeRecordStore({
+	const store = createCredentialedRuntimeRecoveryRecordStore({
 		recordsDirectoryPath: options.recordsDirectoryPath,
 	});
 	const ownerUnsafe: CredentialedRuntimeOwnerUnsafeIdentity[] = [];
@@ -155,12 +251,32 @@ export async function containCredentialedRuntimeRecords(options: {
 			continue;
 		}
 		const identity = 'identity' in record ? record.identity : null;
-		if (record.kind === 'owner-unsafe' || identity === null) {
+		if (record.kind === 'owner-unsafe') {
 			ownerUnsafe.push({
 				agentId: record.agentId,
-				runtimeId: record.runtimeId,
 				zoneId: record.zoneId,
 			});
+			continue;
+		}
+		if (identity === null) {
+			ownerUnsafe.push({
+				agentId: record.agentId,
+				zoneId: record.zoneId,
+			});
+			// oxlint-disable-next-line no-await-in-loop -- durable fencing must precede later records
+			await store.mutateRecord(record.recordId, () => ({
+				nextRecord: {
+					...record,
+					containment: 'unproven' as const,
+					generation: record.generation + 1,
+					identity: null,
+					kind: 'owner-unsafe' as const,
+					reason: 'startup process identity was unavailable',
+					updatedAtMs: now(),
+					vmId: 'vmId' in record ? record.vmId : null,
+				},
+				result: undefined,
+			}));
 			continue;
 		}
 		try {
@@ -181,7 +297,6 @@ export async function containCredentialedRuntimeRecords(options: {
 		} catch {
 			ownerUnsafe.push({
 				agentId: record.agentId,
-				runtimeId: record.runtimeId,
 				zoneId: record.zoneId,
 			});
 			// oxlint-disable-next-line no-await-in-loop -- durable fencing must precede later records
