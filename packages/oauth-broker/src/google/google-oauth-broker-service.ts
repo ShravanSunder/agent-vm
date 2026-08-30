@@ -122,6 +122,7 @@ export type GoogleOAuthConfirmationResult =
 			readonly applications: readonly GoogleOAuthApplicationProgress[];
 			readonly authorizationUrl: string;
 			readonly browserBindingSecret: string;
+			readonly csrfToken: string;
 			readonly kind: 'redirect';
 			readonly transactionId: OAuthTransactionId;
 	  }
@@ -1049,6 +1050,7 @@ export function createGoogleOAuthBrokerService(props: {
 							completedApplications: [...session.completedApplications, session.applicationId],
 							remainingApplications: session.remainingApplications.slice(1),
 						}),
+						csrfToken: boundNextTransaction.csrfSecret,
 					};
 				} catch (error) {
 					transactionStore.finishCompletion(session.completionSessionId);
@@ -1408,9 +1410,7 @@ export function createGoogleOAuthBrokerService(props: {
 					agentId: transaction.agentId,
 					transactionId: transaction.transactionId,
 				});
-				activeTransactionIds.delete(
-					activeTransactionKey(transaction.agentId, transaction.accountProfileId),
-				);
+				clearActiveCeremony(transaction.agentId, transaction.accountProfileId);
 				return { kind: 'already-satisfied' };
 			}
 			return startApplication({

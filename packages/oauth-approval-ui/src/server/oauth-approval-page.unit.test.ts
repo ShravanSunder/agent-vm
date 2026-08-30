@@ -42,6 +42,7 @@ describe('server-rendered OAuth approval page', () => {
 		expect(html).toContain('<legend>Gmail messages</legend>');
 		expect(html).toContain('Hermes suggested read. You decide.');
 		expect(html).toContain('type="radio"');
+		expect(html).toContain('class="peer"');
 		expect(html).toContain('name="csrfToken"');
 		expect(html).toContain('method="post"');
 		expect(html).not.toContain('accessToken');
@@ -83,7 +84,9 @@ describe('server-rendered OAuth approval page', () => {
 	it('renders progress and partial retry as native HTTPS navigation', () => {
 		const progressHtml = renderOAuthApprovalPage({
 			...assets,
+			cancelAction: '/oauth/transactions/progress-id/cancel',
 			continueUrl: 'https://accounts.google.test/authorize-next',
+			csrfToken: 'c'.repeat(43),
 			model: oauthApprovalPageModelSchema.parse({
 				applications: [
 					{ applicationId: 'gmail-app', label: 'Gmail', status: 'completed' },
@@ -94,6 +97,7 @@ describe('server-rendered OAuth approval page', () => {
 		});
 		const partialHtml = renderOAuthApprovalPage({
 			...assets,
+			cancelAction: '/oauth/transactions/retry-id/cancel',
 			csrfToken: 'c'.repeat(43),
 			formAction: '/oauth/completions/retry-id/retry',
 			model: oauthApprovalPageModelSchema.parse({
@@ -105,10 +109,12 @@ describe('server-rendered OAuth approval page', () => {
 
 		expect(progressHtml).toContain('Continue to Google');
 		expect(progressHtml).toContain('https://accounts.google.test/authorize-next');
+		expect(progressHtml).toContain('/oauth/transactions/progress-id/cancel');
 		expect(partialHtml).toContain('Retry Google authorization');
 		expect(partialHtml).toContain('/oauth/completions/retry-id/retry');
+		expect(partialHtml).toContain('/oauth/transactions/retry-id/cancel');
 		expect(partialHtml).toContain('method="post"');
-		expect(progressHtml).not.toContain('name="csrfToken"');
+		expect(progressHtml).toContain('name="csrfToken"');
 	});
 
 	it('renders account confirmation and cancellation as native form actions', () => {

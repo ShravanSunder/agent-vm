@@ -111,6 +111,7 @@ function PermissionChoice(props: {
 							return (
 								<label class="permission-option" for={inputId} key={choice}>
 									<input
+										class="peer"
 										checked={service.selectedChoice === choice}
 										id={inputId}
 										name={`permission.${props.application.applicationId}.${service.serviceId}`}
@@ -225,6 +226,7 @@ function AccountConfirmationPage(props: {
 }
 
 function StatusPage(props: {
+	readonly cancelAction?: string | undefined;
 	readonly continueUrl?: string | undefined;
 	readonly csrfToken?: string | undefined;
 	readonly formAction?: string | undefined;
@@ -252,6 +254,14 @@ function StatusPage(props: {
 				<a class="primary-button" href={props.continueUrl}>
 					Continue to Google
 				</a>
+				{props.cancelAction === undefined || props.csrfToken === undefined ? null : (
+					<form action={props.cancelAction} method="post">
+						<input name="csrfToken" type="hidden" value={props.csrfToken} />
+						<button class="secondary-button" type="submit">
+							Cancel remaining applications
+						</button>
+					</form>
+				)}
 			</>
 		);
 	}
@@ -275,6 +285,16 @@ function StatusPage(props: {
 					<button class="primary-button" type="submit">
 						Retry Google authorization
 					</button>
+					{props.cancelAction === undefined ? null : (
+						<button
+							class="secondary-button"
+							formAction={props.cancelAction}
+							formMethod="post"
+							type="submit"
+						>
+							Cancel remaining applications
+						</button>
+					)}
 				</form>
 				<section class="confirmation-panel">
 					<h2>Retryable</h2>
@@ -356,6 +376,7 @@ export function renderOAuthApprovalPage(unparsedProps: OAuthApprovalRenderProps)
 		}
 		return (
 			<StatusPage
+				cancelAction={renderProps.cancelAction}
 				continueUrl={renderProps.continueUrl}
 				csrfToken={renderProps.csrfToken}
 				formAction={renderProps.formAction}

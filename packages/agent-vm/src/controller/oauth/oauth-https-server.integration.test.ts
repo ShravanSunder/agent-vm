@@ -319,6 +319,7 @@ describe('OAuth HTTPS application', () => {
 					],
 					authorizationUrl: 'https://accounts.google.test/authorize-next',
 					browserBindingSecret,
+					csrfToken,
 					kind: 'redirect',
 					transactionId,
 				}),
@@ -350,6 +351,22 @@ describe('OAuth HTTPS application', () => {
 		expect(body).toContain('Connecting Google applications');
 		expect(body).toContain('Workspace');
 		expect(body).toContain('https://accounts.google.test/authorize-next');
+		expect(body).toContain(`/oauth/transactions/${transactionId}/cancel`);
+		const cancelResponse = await app.request(
+			`${publicBaseUrl}/oauth/transactions/${transactionId}/cancel`,
+			{
+				body: new URLSearchParams({ csrfToken }),
+				headers: {
+					'content-type': 'application/x-www-form-urlencoded',
+					cookie: `agent_vm_oauth_transaction=${transactionId}; agent_vm_oauth_transaction_binding=${browserBindingSecret}`,
+					origin: publicBaseUrl,
+				},
+				method: 'POST',
+			},
+			requestEnvironment(),
+		);
+		expect(cancelResponse.status).toBe(200);
+		expect(harness.cancelBrowserTransaction).toHaveBeenCalled();
 	});
 
 	it('cancels account confirmation through the bound native form route', async () => {
@@ -437,6 +454,21 @@ describe('OAuth HTTPS application', () => {
 		expect(body).toContain('Some applications need attention');
 		expect(body).toContain('Retry Google authorization');
 		expect(body).toContain(`/oauth/completions/${transactionId}/retry`);
+		expect(body).toContain(`/oauth/transactions/${transactionId}/cancel`);
+		const cancelResponse = await app.request(
+			`${publicBaseUrl}/oauth/transactions/${transactionId}/cancel`,
+			{
+				body: new URLSearchParams({ csrfToken }),
+				headers: {
+					'content-type': 'application/x-www-form-urlencoded',
+					cookie: `agent_vm_oauth_transaction=${transactionId}; agent_vm_oauth_transaction_binding=${browserBindingSecret}`,
+					origin: publicBaseUrl,
+				},
+				method: 'POST',
+			},
+			requestEnvironment(),
+		);
+		expect(cancelResponse.status).toBe(200);
 
 		const retryResponse = await app.request(
 			`${publicBaseUrl}/oauth/completions/${transactionId}/retry`,

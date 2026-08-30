@@ -145,6 +145,7 @@ function createCatalog(initialGrant: OAuthStoredGrant): {
 			}),
 			listGrantsForAgent: () => [currentGrant],
 			replaceGrantEnvelope,
+			verifyOrInitializeKeyEncryptionKey: () => undefined,
 		},
 		replaceGrantEnvelope,
 	};
@@ -437,6 +438,47 @@ describe('Google credential refresh coordinator', () => {
 				failureClass: 'scope-insufficient',
 				lifecycleKind: 'reauthorization-required',
 				reauthorizationReason: 'scope-insufficient',
+			}),
+		);
+	});
+
+	it('persists an authenticated-envelope failure as credential-corrupt', async () => {
+		const originalGrant = createGrant({ accessTokenExpiresAtMs: 1_000_000 });
+		const grant = oauthStoredGrantSchema.parse({
+			...originalGrant,
+			envelope: {
+				...originalGrant.envelope,
+				payloadCiphertext: `${originalGrant.envelope.payloadCiphertext.startsWith('A') ? 'B' : 'A'}${originalGrant.envelope.payloadCiphertext.slice(1)}`,
+			},
+		});
+		const { catalog, replaceGrantEnvelope } = createCatalog(grant);
+		const { adapter, refreshAuthorization } = createAdapter({
+			accessToken: 'must-not-refresh',
+			accessTokenExpiresAtMs: 1_000_000,
+			grantedScopes: [gmailReadScope],
+			kind: 'refreshed',
+		});
+		const coordinator = createGoogleCredentialRefreshCoordinator({
+			catalog,
+			googleAdapter: adapter,
+			now: () => 10_000,
+		});
+
+		await expect(
+			coordinator.resolveAccessToken({
+				clientCredentials,
+				grant,
+				keyEncryptionKey,
+				keyEncryptionKeyVersion: 1,
+				requiredScopes: [gmailReadScope],
+			}),
+		).resolves.toEqual({ kind: 'reauthorization-required' });
+		expect(refreshAuthorization).not.toHaveBeenCalled();
+		expect(replaceGrantEnvelope).toHaveBeenCalledWith(
+			expect.objectContaining({
+				failureClass: 'credential-corrupt',
+				lifecycleKind: 'reauthorization-required',
+				reauthorizationReason: 'credential-corrupt',
 			}),
 		);
 	});

@@ -1134,6 +1134,52 @@ describe('Google OAuth broker service', () => {
 		expect(second.transactionId).not.toBe(first.transactionId);
 	});
 
+	it('clears the public ceremony identity when the human selects no applications', async () => {
+		const service = await createService();
+		const first = await service.executeAuthorizationAction({
+			agentId: 'hermes',
+			request: {
+				actionId: 'oauth_authorization.begin',
+				accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
+			},
+		});
+		if (first.kind !== 'authorization-begun') throw new Error('Expected first authorization.');
+		const page = service.getPermissionPage({
+			tailnetLogin: 'human@example.test',
+			transactionId: first.transactionId,
+		});
+		expect(
+			service.submitPermissions({
+				browserBindingSecret: page.browserBindingSecret,
+				csrfToken: page.csrfToken,
+				selections: oauthPermissionSelectionsSchema.parse({
+					'gmail-app': { gmail: 'none' },
+				}),
+				tailnetLogin: 'human@example.test',
+				transactionId: first.transactionId,
+			}),
+		).toEqual({ kind: 'already-satisfied' });
+
+		const second = await service.executeAuthorizationAction({
+			agentId: 'hermes',
+			request: {
+				actionId: 'oauth_authorization.begin',
+				accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
+			},
+		});
+		if (second.kind !== 'authorization-begun') throw new Error('Expected second authorization.');
+		expect(second.transactionId).not.toBe(first.transactionId);
+		expect(
+			await service.executeAuthorizationAction({
+				agentId: 'hermes',
+				request: {
+					actionId: 'oauth_authorization.status',
+					transactionId: first.transactionId,
+				},
+			}),
+		).toEqual({ failure: { kind: 'consumed' }, kind: 'authorization-failed' });
+	});
+
 	it('deletes an already-invalid provider grant during approval-gated revocation', async () => {
 		const baseAdapter = createAdapter();
 		const service = await createService({

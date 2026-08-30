@@ -136,11 +136,31 @@ export function createGoogleCredentialRefreshCoordinator(props: {
 		) {
 			return { kind: 'degraded', nextRefreshEligibleAtMs: grant.nextRefreshEligibleAtMs };
 		}
-		const payload = envelopeCodec.decrypt({
-			binding: envelopeBinding(grant),
-			envelope: grant.envelope,
-			keyEncryptionKey: resolutionProps.keyEncryptionKey,
-		});
+		let payload: z.infer<typeof googleStoredCredentialPayloadSchema>;
+		try {
+			payload = envelopeCodec.decrypt({
+				binding: envelopeBinding(grant),
+				envelope: grant.envelope,
+				keyEncryptionKey: resolutionProps.keyEncryptionKey,
+			});
+		} catch {
+			const updateResult = props.catalog.replaceGrantEnvelope({
+				credentialId: grant.credentialId,
+				envelope: grant.envelope,
+				expectedRecordRevision: grant.recordRevision,
+				failureClass: 'credential-corrupt',
+				lastRefreshAttemptAtMs: now(),
+				lastRefreshSucceededAtMs: grant.lastRefreshSucceededAtMs,
+				lifecycleKind: 'reauthorization-required',
+				materialRevision: grant.materialRevision,
+				nextRefreshEligibleAtMs: null,
+				providerCredentialVersion: grant.providerCredentialVersion,
+				reauthorizationReason: 'credential-corrupt',
+			});
+			return updateResult.kind === 'stale'
+				? { kind: 'stale-write' }
+				: { kind: 'reauthorization-required' };
+		}
 		if (payload.accessTokenExpiresAtMs > currentTimeMs + accessTokenRefreshSkewMs) {
 			return { accessToken: payload.accessToken, grant, kind: 'ready' };
 		}

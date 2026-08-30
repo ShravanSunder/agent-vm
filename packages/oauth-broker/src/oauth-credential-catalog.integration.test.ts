@@ -144,6 +144,11 @@ describe('OAuth credential catalog', () => {
 		const databasePath = path.join(stateDirectory, 'oauth', 'credentials.sqlite');
 		let nowMs = 1_000;
 		openCatalog = await openOAuthCredentialCatalog({ databasePath, now: () => nowMs });
+		expect(() => openCatalog?.verifyOrInitializeKeyEncryptionKey(keyEncryptionKey)).not.toThrow();
+		expect(() =>
+			openCatalog?.verifyOrInitializeKeyEncryptionKey(new Uint8Array(32).fill(7)),
+		).toThrow('does not match the catalog verifier');
+		expect(() => openCatalog?.verifyOrInitializeKeyEncryptionKey(keyEncryptionKey)).not.toThrow();
 		const initialInput = createEnrollmentInput({ accessToken: 'access-token-marker-v1' });
 		const committed = openCatalog.commitEnrollmentGrant(initialInput);
 		expect(committed).toMatchObject({ kind: 'committed' });

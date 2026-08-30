@@ -184,21 +184,28 @@ export function capabilityDiscoveryMetadata(props: {
 		props.policy.calls.requiresApproval,
 		props.toolName,
 	);
-	if (withoutApproval === requiresApproval) return undefined;
+	if (!withoutApproval && !requiresApproval) return undefined;
+	const discoveryRequiresApproval = !withoutApproval && requiresApproval;
 	if (props.policy.backend.kind !== 'controller_execution') {
 		return {
-			callDisposition: { kind: requiresApproval ? 'requires-approval' : 'without-approval' },
+			callDisposition: {
+				kind: discoveryRequiresApproval ? 'requires-approval' : 'without-approval',
+			},
 		};
 	}
 	const operation = props.policy.backend.operations[props.toolName];
 	if (operation === undefined) {
 		return {
-			callDisposition: { kind: requiresApproval ? 'requires-approval' : 'without-approval' },
+			callDisposition: {
+				kind: discoveryRequiresApproval ? 'requires-approval' : 'without-approval',
+			},
 		};
 	}
 	if (operation.kind !== 'configured_cli') {
 		return {
-			callDisposition: { kind: requiresApproval ? 'requires-approval' : 'without-approval' },
+			callDisposition: {
+				kind: discoveryRequiresApproval ? 'requires-approval' : 'without-approval',
+			},
 		};
 	}
 	const hasInvocationApprovalRules = operation.calls.requiresApproval.length > 0;
@@ -230,8 +237,8 @@ export function capabilityDiscoveryMetadata(props: {
 	})();
 	return {
 		callDisposition:
-			requiresApproval || !hasInvocationApprovalRules
-				? { kind: requiresApproval ? 'requires-approval' : 'without-approval' }
+			discoveryRequiresApproval || !hasInvocationApprovalRules
+				? { kind: discoveryRequiresApproval ? 'requires-approval' : 'without-approval' }
 				: { describeBeforeCall: true, kind: 'invocation-dependent' },
 		...(oauthRequirement === undefined ? {} : { oauthRequirement }),
 	};

@@ -78,6 +78,13 @@
 	.permission-option span {
 		@apply flex min-h-11 items-center justify-center rounded-lg border border-stone-300 px-3 py-2 text-sm font-medium capitalize peer-checked:border-sky-700 peer-checked:bg-sky-50 peer-checked:text-sky-900;
 	}
+	.permission-option input:focus-visible + span {
+		@apply outline-2 outline-offset-2 outline-sky-700;
+	}
+	.permission-option input:checked + span::after {
+		@apply ml-2 font-bold;
+		content: '✓';
+	}
 	.error-summary {
 		@apply rounded-xl border border-red-300 bg-red-50 p-5 text-red-950;
 	}

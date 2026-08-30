@@ -173,6 +173,7 @@ export async function prepareControllerOAuthRuntime(props: {
 		}) => Promise<void> = async () => undefined;
 		const keyEncryptionKey = decodeKeyEncryptionKey(encodedKeyEncryptionKey);
 		keyEncryptionKeyForCleanup = keyEncryptionKey;
+		catalog.verifyOrInitializeKeyEncryptionKey(keyEncryptionKey);
 		const brokerService = (props.createBrokerService ?? createGoogleOAuthBrokerService)({
 			catalog,
 			clientCredentialsByApplication,

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { chmod, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -21,6 +21,7 @@ import {
 	oauthAccountProfilesTable,
 	oauthCatalogSchema,
 	oauthGrantsTable,
+	oauthSchemaMetadataTable,
 } from './catalog-schema.js';
 import {
 	encryptedOAuthEnvelopeSchema,
@@ -153,6 +154,7 @@ export interface OAuthCredentialCatalog {
 		readonly zoneId: string;
 	}): readonly OAuthStoredGrant[];
 	replaceGrantEnvelope(props: OAuthReplaceGrantEnvelopeInput): OAuthReplaceGrantEnvelopeResult;
+	verifyOrInitializeKeyEncryptionKey(keyEncryptionKey: Uint8Array): void;
 }
 
 type OAuthCatalogDatabase = BetterSQLite3Database<typeof oauthCatalogSchema>;
@@ -540,6 +542,37 @@ export async function openOAuthCredentialCatalog(props: {
 				const grant = getGrant(replacement.credentialId);
 				if (grant === undefined) throw new Error('Updated OAuth grant could not be reloaded.');
 				return { grant, kind: 'updated' };
+			},
+			verifyOrInitializeKeyEncryptionKey: (keyEncryptionKey): void => {
+				if (keyEncryptionKey.byteLength !== 32) {
+					throw new Error('OAuth key-encryption key must contain exactly 32 bytes.');
+				}
+				const metadataKey = 'kek-verifier-v1';
+				const fingerprint = createHash('sha256')
+					.update('agent-vm/oauth/kek-verifier/v1\0')
+					.update(keyEncryptionKey)
+					.digest('base64url');
+				const existing = database
+					.select()
+					.from(oauthSchemaMetadataTable)
+					.where(eq(oauthSchemaMetadataTable.key, metadataKey))
+					.limit(1)
+					.get();
+				if (existing === undefined) {
+					database
+						.insert(oauthSchemaMetadataTable)
+						.values({ key: metadataKey, value: fingerprint })
+						.run();
+					return;
+				}
+				const existingBytes = Buffer.from(existing.value);
+				const fingerprintBytes = Buffer.from(fingerprint);
+				if (
+					existingBytes.byteLength !== fingerprintBytes.byteLength ||
+					!timingSafeEqual(existingBytes, fingerprintBytes)
+				) {
+					throw new Error('OAuth key-encryption key does not match the catalog verifier.');
+				}
 			},
 		};
 	} catch (error: unknown) {

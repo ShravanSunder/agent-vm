@@ -365,6 +365,7 @@ export function createOAuthHttpsApp(props: {
 				return context.html(
 					renderPage({
 						assets: props.assets,
+						cancelAction: `/oauth/transactions/${result.retry.transactionId}/cancel`,
 						csrfToken: result.retryCsrfToken,
 						formAction: `/oauth/completions/${result.retry.transactionId}/retry`,
 						model: {
@@ -462,7 +463,9 @@ export function createOAuthHttpsApp(props: {
 				return context.html(
 					renderPage({
 						assets: props.assets,
+						cancelAction: `/oauth/transactions/${result.transactionId}/cancel`,
 						continueUrl: result.authorizationUrl,
+						csrfToken: result.csrfToken,
 						model: { applications: result.applications, kind: 'application-progress' },
 					}),
 				);

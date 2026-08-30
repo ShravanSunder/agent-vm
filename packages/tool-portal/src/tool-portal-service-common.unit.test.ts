@@ -142,4 +142,13 @@ describe('capabilityDiscoveryMetadata', () => {
 			serviceId: 'gmail',
 		});
 	});
+
+	it('uses call-time without-approval precedence when authored selectors overlap', () => {
+		const policy = structuredClone(oauthConfiguredCliPolicy('static'));
+		policy.calls.requiresApproval = { allow: ['gog_cli'], deny: [] };
+
+		expect(capabilityDiscoveryMetadata({ policy, toolName: 'gog_cli' })).toMatchObject({
+			callDisposition: { kind: 'without-approval' },
+		});
+	});
 });
