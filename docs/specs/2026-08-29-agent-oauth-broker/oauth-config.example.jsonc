@@ -1,7 +1,7 @@
 {
 	"schemaVersion": 1,
 	"browser": {
-		"publicBaseUrl": "https://auth.claw.askluna.xyz",
+		"publicBaseUrl": "https://auth.claw.askluna.xyz:18900",
 		"listener": {
 			"kind": "tailscale_https",
 			"port": 18900,

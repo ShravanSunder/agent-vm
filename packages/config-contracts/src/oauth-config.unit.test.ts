@@ -29,7 +29,7 @@ function validOAuthConfigInput(): unknown {
 				port: 18_900,
 				privateKeyPath: '/var/lib/agent-vm/oauth/tls.key',
 			},
-			publicBaseUrl: 'https://auth.claw.askluna.xyz',
+			publicBaseUrl: 'https://auth.claw.askluna.xyz:18900',
 		},
 		providers: {
 			google: {
@@ -218,7 +218,7 @@ describe('OAuth config contract', () => {
 			'youtube-app',
 		]);
 		expect(googleOAuthCallbackUrl(config)).toBe(
-			'https://auth.claw.askluna.xyz/oauth/google/callback',
+			'https://auth.claw.askluna.xyz:18900/oauth/google/callback',
 		);
 	});
 
@@ -287,7 +287,9 @@ describe('OAuth config contract', () => {
 
 	it.each([
 		'https://auth.claw.askluna.xyz/path',
-		'https://auth.claw.askluna.xyz:18900',
+		'https://auth.claw.askluna.xyz',
+		'https://auth.claw.askluna.xyz:18899',
+		'https://auth.claw.askluna.xyz:18900/path',
 		'http://auth.claw.askluna.xyz',
 	])('rejects non-origin OAuth public URL %s', (publicBaseUrl) => {
 		const input = validOAuthConfigInput() as Record<string, unknown>;

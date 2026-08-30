@@ -511,6 +511,17 @@ sibling authored config files in `config/gateways/<zone>/`:
 - `tool-portal.config.jsonc` describes agent profile assignments, complete
   cross-backend namespace policies, explicit backend bindings, and call/tool
   selectors.
+- `oauth.config.jsonc` is optional. When present, it configures the controller-owned
+  Google OAuth broker, three Web applications, account-profile slots, authorized
+  tailnet logins, the fixed direct HTTPS listener on `18900`, and a 1Password KEK.
+
+OAuth configuration is valid only for a managed Hermes zone with a matching Tool
+Portal agent/profile policy. The `oauth_authorization` namespace uses registered
+controller actions named `list`, `begin`, `status`, `cancel`, `reauthorize`, and
+`revoke`; reauthorization and revocation must remain approval-required. Gog uses an
+`oauth_account_profile` authorization rule and the fixed
+`GOG_ACCESS_TOKEN: { kind: "oauth_access_token" }` mediation source. Account profile
+is RPC input and never becomes Gog argv.
 
 Namespace discovery uses one optional bounded field: `discovery.summary`.
 MCP-backed namespaces author it only at

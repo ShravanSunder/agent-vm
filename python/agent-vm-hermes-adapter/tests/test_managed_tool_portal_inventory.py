@@ -270,6 +270,12 @@ class ManagedToolPortalInventoryTests(unittest.IsolatedAsyncioTestCase):
                         "namespaces": ["alpha"],
                         "tools": [
                             {
+                                "callDisposition": {
+                                    "describeBeforeCall": True,
+                                    "kind": "invocation-dependent",
+                                },
+                                "description": "Run one configured OAuth command.",
+                                "descriptionTruncated": False,
                                 "input": {
                                     "optional": [],
                                     "propertyCount": 0,
@@ -278,6 +284,11 @@ class ManagedToolPortalInventoryTests(unittest.IsolatedAsyncioTestCase):
                                 },
                                 "name": "probe",
                                 "namespace": "alpha",
+                                "oauthRequirement": {
+                                    "accountProfileArgument": "accountProfile",
+                                    "describeBeforeCall": True,
+                                    "kind": "invocation-dependent-oauth-account-profile",
+                                },
                                 "safety": {
                                     "destructiveHint": False,
                                     "readOnlyHint": True,

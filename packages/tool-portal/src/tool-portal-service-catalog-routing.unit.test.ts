@@ -265,6 +265,62 @@ describe('ToolPortalCapabilityCore catalog routing', () => {
 		).not.toHaveProperty('namespaceDiscovery');
 	});
 
+	it('projects authored call disposition onto visible search summaries', async () => {
+		// Arrange
+		const withoutApprovalFixture = createServiceFixture();
+		const requiresApprovalFixture = createServiceFixture({
+			controllerExecution: createRecordingBackendPort(
+				'controller_execution',
+				'controller_execution',
+				{ toolName: 'controller_host_probe' },
+			),
+		});
+
+		// Act
+		const [withoutApprovalResult, requiresApprovalResult] = await Promise.all([
+			withoutApprovalFixture.capabilityCore.search(
+				{
+					requests: [
+						{
+							id: 'without-approval',
+							limit: 20,
+							namespaces: ['github'],
+							query: 'issue',
+							schemaDetail: 'summary',
+						},
+					],
+				},
+				udsOptions(),
+			),
+			requiresApprovalFixture.capabilityCore.search(
+				{
+					requests: [
+						{
+							id: 'requires-approval',
+							limit: 20,
+							namespaces: ['controller_execution'],
+							query: 'probe',
+							schemaDetail: 'summary',
+						},
+					],
+				},
+				udsOptions(),
+			),
+		]);
+		const withoutApprovalTool =
+			withoutApprovalResult.items[0]?.status === 'ok'
+				? withoutApprovalResult.items[0].value.tools[0]
+				: undefined;
+		const requiresApprovalTool =
+			requiresApprovalResult.items[0]?.status === 'ok'
+				? requiresApprovalResult.items[0].value.tools[0]
+				: undefined;
+
+		// Assert
+		expect(withoutApprovalTool?.callDisposition).toEqual({ kind: 'without-approval' });
+		expect(requiresApprovalTool?.callDisposition).toEqual({ kind: 'requires-approval' });
+	});
+
 	it('projects represented discovery for successful search and describe items without fabricating metadata on partial errors', async () => {
 		// Arrange
 		const controllerExecution = createRecordingBackendPort(

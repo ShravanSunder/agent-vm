@@ -47,7 +47,7 @@ const clientCredentials = googleWebClientCredentialsSchema.parse({
 		auth_uri: 'https://accounts.google.com/o/oauth2/v2/auth',
 		client_id: 'client-id',
 		client_secret: 'client-secret',
-		redirect_uris: ['https://auth.claw.askluna.xyz/oauth/google/callback'],
+		redirect_uris: ['https://auth.claw.askluna.xyz:18900/oauth/google/callback'],
 		token_uri: 'https://oauth2.googleapis.com/token',
 	},
 });

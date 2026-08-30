@@ -34,7 +34,7 @@ sequenceDiagram
 The deployment MUST author one strict OAuth configuration for the Hermes zone.
 It MUST define:
 
-- the public base URL `https://auth.claw.askluna.xyz`;
+- the public base URL `https://auth.claw.askluna.xyz:18900`;
 - the HTTPS listener port `18900` and Tailscale-interface binding policy;
 - the deployment KEK secret reference and controller-only catalog path;
 - provider definitions;
@@ -55,7 +55,7 @@ youtube-app    kind: web
 Each application MUST use the exact callback URI:
 
 ```text
-https://auth.claw.askluna.xyz/oauth/google/callback
+https://auth.claw.askluna.xyz:18900/oauth/google/callback
 ```
 
 The callback host MUST be an owned Google-verifiable domain. Cloudflare DNS MUST

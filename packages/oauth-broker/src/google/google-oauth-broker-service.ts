@@ -6,6 +6,7 @@ import {
 	type OAuthConfig,
 } from '@agent-vm/config-contracts';
 import {
+	oauthAccountProfileIdSchema,
 	oauthAuthorizationActionRequestSchema,
 	oauthAuthorizationActionResultSchema,
 	oauthApplicationIdSchema,
@@ -26,6 +27,8 @@ import {
 	type OAuthPermissionSelections,
 	type OAuthScope,
 	type OAuthServiceId,
+	type OAuthToolAvailability,
+	type OAuthToolRequirement,
 	type OAuthTransactionId,
 } from '@agent-vm/oauth-broker-contracts';
 import { z } from 'zod';
@@ -160,6 +163,10 @@ export interface GoogleOAuthBrokerService {
 		readonly minimumPermission: OAuthMinimumPermission;
 		readonly serviceId: string;
 	}): Promise<GoogleOAuthRuntimeCredentialResolution>;
+	resolveToolAvailability(props: {
+		readonly agentId: string;
+		readonly requirement: Extract<OAuthToolRequirement, { readonly kind: 'oauth-account-profile' }>;
+	}): OAuthToolAvailability;
 	handleGoogleCallback(props: {
 		readonly authorizationCode: string;
 		readonly browserBindingSecret: string;
@@ -429,6 +436,89 @@ export function createGoogleOAuthBrokerService(props: {
 				};
 			}),
 		});
+	};
+
+	const resolveToolAvailability = (availabilityProps: {
+		readonly agentId: string;
+		readonly requirement: Extract<OAuthToolRequirement, { readonly kind: 'oauth-account-profile' }>;
+	}): OAuthToolAvailability => {
+		const agent = requireAgent(availabilityProps.agentId);
+		const applicationId = googleOAuthApplicationIdSchema.safeParse(
+			availabilityProps.requirement.applicationId,
+		);
+		if (!applicationId.success) return { kind: 'scope-insufficient' };
+		const service =
+			props.config.providers.google.applications[applicationId.data].services[
+				availabilityProps.requirement.serviceId
+			];
+		if (service === undefined) return { kind: 'scope-insufficient' };
+		const requiredScopes =
+			availabilityProps.requirement.minimumPermission === 'write'
+				? (service.write ?? [])
+				: service.read;
+		if (requiredScopes.length === 0) return { kind: 'scope-insufficient' };
+		const readyAccountProfiles: {
+			readonly accountLabel: string;
+			readonly accountProfileId: OAuthAccountProfileId;
+		}[] = [];
+		let eligibleProfileMissingGrant = false;
+		let reauthorizationRequired = false;
+		let scopeInsufficient = false;
+		let authorizationStatusUnavailable = false;
+		for (const [accountProfileId, accountProfile] of Object.entries(agent.accountProfiles)) {
+			const maximumPermission =
+				accountProfile.applications[applicationId.data]?.maximumPermissions[
+					availabilityProps.requirement.serviceId
+				];
+			if (
+				maximumPermission === undefined ||
+				permissionRank(maximumPermission) <
+					permissionRank(availabilityProps.requirement.minimumPermission)
+			) {
+				continue;
+			}
+			const parsedAccountProfileId = oauthAccountProfileIdSchema.parse(accountProfileId);
+			const grant = props.catalog.getGrantForAccountApplication({
+				accountProfileId: parsedAccountProfileId,
+				agentId: availabilityProps.agentId,
+				applicationId: oauthApplicationIdSchema.parse(applicationId.data),
+				zoneId: props.zoneId,
+			});
+			if (grant === undefined) {
+				eligibleProfileMissingGrant = true;
+				continue;
+			}
+			if (grant.lifecycleKind === 'reauthorization-required') {
+				reauthorizationRequired = true;
+				continue;
+			}
+			if (grant.lifecycleKind === 'degraded') {
+				authorizationStatusUnavailable = true;
+				continue;
+			}
+			if (!requiredScopes.every((scope) => grant.grantedScopes.includes(scope))) {
+				scopeInsufficient = true;
+				continue;
+			}
+			readyAccountProfiles.push({
+				accountLabel: accountProfileId,
+				accountProfileId: parsedAccountProfileId,
+			});
+		}
+		if (readyAccountProfiles.length > 0) {
+			return {
+				accountProfiles: readyAccountProfiles.toSorted((left, right) =>
+					left.accountProfileId.localeCompare(right.accountProfileId),
+				),
+				kind: 'ready',
+			};
+		}
+		if (reauthorizationRequired) return { kind: 'reauthorization-required' };
+		if (authorizationStatusUnavailable) return { kind: 'authorization-status-unavailable' };
+		if (scopeInsufficient) return { kind: 'scope-insufficient' };
+		return eligibleProfileMissingGrant
+			? { kind: 'authorization-required' }
+			: { kind: 'scope-insufficient' };
 	};
 
 	const resolveRuntimeCredential = async (runtimeProps: {
@@ -789,6 +879,7 @@ export function createGoogleOAuthBrokerService(props: {
 			};
 		},
 		resolveRuntimeCredential,
+		resolveToolAvailability,
 		handleGoogleCallback: async (callbackProps) => {
 			const current = transactionStore.getTransaction(callbackProps.transactionId);
 			if (

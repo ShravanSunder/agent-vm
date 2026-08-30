@@ -7,6 +7,7 @@ import {
 	oauthAccountProfileIdSchema,
 	oauthApplicationIdSchema,
 	oauthPermissionSelectionsSchema,
+	oauthServiceIdSchema,
 	oauthScopeSchema,
 	oauthTokenLifecycleSchema,
 } from '@agent-vm/oauth-broker-contracts';
@@ -27,7 +28,7 @@ import {
 	type GoogleOAuthBrokerService,
 } from './google-oauth-broker-service.js';
 
-const redirectUri = 'https://auth.claw.askluna.xyz/oauth/google/callback';
+const redirectUri = 'https://auth.claw.askluna.xyz:18900/oauth/google/callback';
 const keyEncryptionKey = new Uint8Array(32).fill(81);
 const gmailReadScope = oauthScopeSchema.parse('gmail.readonly');
 const openIdScope = oauthScopeSchema.parse('openid');
@@ -71,7 +72,7 @@ function config(): OAuthConfig {
 				port: 18_900,
 				privateKeyPath: '/tmp/oauth-test.key',
 			},
-			publicBaseUrl: 'https://auth.claw.askluna.xyz',
+			publicBaseUrl: 'https://auth.claw.askluna.xyz:18900',
 		},
 		providers: {
 			google: {
@@ -236,6 +237,17 @@ describe('Google OAuth broker service', () => {
 
 	it('runs a tailnet-bound enrollment and commits one encrypted grant', async () => {
 		const service = await createService();
+		expect(
+			service.resolveToolAvailability({
+				agentId: 'hermes',
+				requirement: {
+					applicationId: oauthApplicationIdSchema.parse('gmail-app'),
+					kind: 'oauth-account-profile',
+					minimumPermission: 'read',
+					serviceId: oauthServiceIdSchema.parse('gmail'),
+				},
+			}),
+		).toEqual({ kind: 'authorization-required' });
 		const begun = await service.executeAuthorizationAction({
 			agentId: 'hermes',
 			request: {
@@ -307,6 +319,31 @@ describe('Google OAuth broker service', () => {
 		});
 		expect(JSON.stringify(listed)).not.toContain('provider-access-token-marker');
 		expect(JSON.stringify(listed)).not.toContain('provider-refresh-token-marker');
+		expect(
+			service.resolveToolAvailability({
+				agentId: 'hermes',
+				requirement: {
+					applicationId: oauthApplicationIdSchema.parse('gmail-app'),
+					kind: 'oauth-account-profile',
+					minimumPermission: 'read',
+					serviceId: oauthServiceIdSchema.parse('gmail'),
+				},
+			}),
+		).toEqual({
+			accountProfiles: [{ accountLabel: 'personal-google', accountProfileId: 'personal-google' }],
+			kind: 'ready',
+		});
+		expect(
+			service.resolveToolAvailability({
+				agentId: 'hermes',
+				requirement: {
+					applicationId: oauthApplicationIdSchema.parse('gmail-app'),
+					kind: 'oauth-account-profile',
+					minimumPermission: 'write',
+					serviceId: oauthServiceIdSchema.parse('gmail'),
+				},
+			}),
+		).toEqual({ kind: 'scope-insufficient' });
 
 		const runtimeCredential = await service.resolveRuntimeCredential({
 			accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),

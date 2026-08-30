@@ -98,6 +98,7 @@ describe('manual templates', () => {
 		expect(layout).toContain('config/gateways/<zone>/hermes-managed/config.yaml');
 		expect(layout).toContain('config/gateways/<zone>/mcp.config.jsonc');
 		expect(layout).toContain('config/gateways/<zone>/tool-portal.config.jsonc');
+		expect(layout).toContain('config/gateways/<zone>/oauth.config.jsonc');
 		expect(layout).toContain('Hermes gateway VMs mount zoneFilesDir at /zone');
 		expect(layout).toContain(
 			"Managed Hermes Tool VMs expose only the selected agent's filtered durable workspace at /workspace",

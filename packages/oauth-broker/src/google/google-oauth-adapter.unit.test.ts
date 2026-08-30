@@ -7,7 +7,7 @@ import {
 	type GoogleWebClientCredentials,
 } from './google-oauth-adapter.js';
 
-const redirectUri = 'https://auth.claw.askluna.xyz/oauth/google/callback';
+const redirectUri = 'https://auth.claw.askluna.xyz:18900/oauth/google/callback';
 const rawClientCredentials = JSON.stringify({
 	web: {
 		auth_provider_x509_cert_url: 'https://www.googleapis.com/oauth2/v1/certs',

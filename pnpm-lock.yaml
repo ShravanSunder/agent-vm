@@ -44,6 +44,9 @@ importers:
 
   packages/agent-portal-sdk:
     dependencies:
+      '@agent-vm/oauth-broker-contracts':
+        specifier: workspace:*
+        version: link:../oauth-broker-contracts
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.29.0(zod@4.4.3)

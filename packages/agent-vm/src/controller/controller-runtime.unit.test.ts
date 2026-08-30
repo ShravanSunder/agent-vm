@@ -86,6 +86,7 @@ function createPreparedOAuthRuntimeStub(events: string[]): PreparedControllerOAu
 				kind: 'unavailable',
 				reason: 'authorization-missing',
 			}),
+			resolveToolAvailability: () => ({ kind: 'authorization-status-unavailable' }),
 			submitPermissions: () => ({ kind: 'already-satisfied' }),
 		},
 		close: () => events.push('oauth-runtime-closed'),
@@ -1012,6 +1013,59 @@ describe('startControllerRuntime', () => {
 
 		expect(startupEvents).toEqual(['ownership-coordinator-created', 'secret-resolution']);
 		expect(releaseControllerOwnershipLock).toHaveBeenCalledOnce();
+	});
+
+	it('rolls back the controller listener and OAuth runtime when the OAuth listener cannot start', async () => {
+		// Arrange
+		const startupEvents: string[] = [];
+		const oauthListenerFailure = new Error('OAuth listener port is already occupied.');
+		const closeControllerListener = vi.fn(async () => {
+			startupEvents.push('controller-listener-closed');
+		});
+		const releaseControllerOwnershipLock = vi.fn(async () => {
+			startupEvents.push('ownership-lock-released');
+		});
+		const preparedOAuthRuntime = createPreparedOAuthRuntimeStub(startupEvents);
+
+		// Act
+		const startupError = await startControllerRuntime(
+			{ systemConfig, zoneIds: ['shravan'] },
+			{
+				acquireControllerOwnershipLock: vi.fn(async () => ({
+					release: releaseControllerOwnershipLock,
+				})),
+				configureManagedVmHostNetworkDefaults: () => ({
+					autoSelectFamily: false,
+					dnsResultOrder: 'ipv4first',
+				}),
+				createSecretResolver: vi.fn(async () => ({
+					resolve: async () => '',
+					resolveAll: async () => ({}),
+				})),
+				prepareControllerOAuthRuntime: async () => ({
+					...preparedOAuthRuntime,
+					startHttpsListener: async () => {
+						startupEvents.push('oauth-listener-start-failed');
+						throw oauthListenerFailure;
+					},
+				}),
+				reconcileRecordedVmTree: async () => undefined,
+				startHttpServer: vi.fn(async () => ({ close: closeControllerListener })),
+			},
+		).catch((error: unknown) => error);
+
+		// Assert
+		expect(startupError).toBe(oauthListenerFailure);
+		expect(startupEvents).toContain('oauth-admission-stopped');
+		expect(closeControllerListener).toHaveBeenCalledOnce();
+		expect(startupEvents).toContain('oauth-runtime-closed');
+		expect(releaseControllerOwnershipLock).toHaveBeenCalledOnce();
+		expect(startupEvents.indexOf('oauth-listener-start-failed')).toBeLessThan(
+			startupEvents.indexOf('controller-listener-closed'),
+		);
+		expect(startupEvents.indexOf('controller-listener-closed')).toBeLessThan(
+			startupEvents.indexOf('oauth-runtime-closed'),
+		);
 	});
 
 	it('retains the deployment ownership lock when controller-owned startup is owner-unsafe', async () => {

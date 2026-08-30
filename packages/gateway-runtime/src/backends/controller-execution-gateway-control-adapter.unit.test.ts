@@ -302,6 +302,27 @@ describe('Gateway Control controller-execution adapter', () => {
 			'revoke',
 			'status',
 		]);
+		const described = await fixture.backend.describe(
+			{
+				requests: [
+					{
+						id: 'oauth-list-description',
+						includeJsonSchema: true,
+						includeRelated: true,
+						includeTypescriptHelper: false,
+						includeZod: false,
+						refs: ['oauth_authorization.list'],
+					},
+				],
+			},
+			callOptions(),
+		);
+		const describedItem = described.items[0];
+		if (describedItem?.status !== 'ok') throw new Error('Expected OAuth describe result.');
+		expect(describedItem.value.tools[0]).toMatchObject({
+			description: 'List Google account profiles and their safe authorization status.',
+			title: 'List Google authorizations',
+		});
 		const result = await fixture.backend.call(
 			{
 				calls: [

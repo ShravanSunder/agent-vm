@@ -19,7 +19,7 @@ import {
 const transactionId = oauthTransactionIdSchema.parse('transaction_identifier_1234567890abcdef');
 const browserBindingSecret = 'browser_binding_secret_1234567890abcdefghi';
 const csrfToken = 'csrf_token_1234567890abcdefghijklmnop';
-const publicBaseUrl = 'https://auth.claw.askluna.xyz';
+const publicBaseUrl = 'https://auth.claw.askluna.xyz:18900';
 
 function requestEnvironment(remoteAddress = '100.100.100.10'): OAuthHttpsBindings {
 	return {
@@ -98,6 +98,7 @@ function createBrokerHarness(): {
 				kind: 'unavailable',
 				reason: 'authorization-missing',
 			}),
+			resolveToolAvailability: () => ({ kind: 'authorization-status-unavailable' }),
 			submitPermissions,
 		},
 		cancelBrowserTransaction,

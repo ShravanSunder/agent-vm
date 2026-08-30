@@ -57,7 +57,7 @@ function oauthConfig(): unknown {
 				port: 18_900,
 				privateKeyPath: path.join(testRoot, 'tls.key'),
 			},
-			publicBaseUrl: 'https://auth.claw.askluna.xyz',
+			publicBaseUrl: 'https://auth.claw.askluna.xyz:18900',
 		},
 		providers: {
 			google: {
@@ -126,7 +126,7 @@ function systemConfig(configDirectory: string): ControllerOAuthSystemConfig {
 }
 
 function secretResolver(): SecretResolver {
-	const callbackUrl = 'https://auth.claw.askluna.xyz/oauth/google/callback';
+	const callbackUrl = 'https://auth.claw.askluna.xyz:18900/oauth/google/callback';
 	const clientJson = JSON.stringify({
 		web: {
 			auth_uri: 'https://accounts.google.com/o/oauth2/v2/auth',

@@ -42,12 +42,12 @@ export const oauthBrowserPublicBaseUrlSchema = z.url().refine((value) => {
 		url.protocol === 'https:' &&
 		url.username.length === 0 &&
 		url.password.length === 0 &&
-		url.port.length === 0 &&
+		url.port === '18900' &&
 		url.pathname === '/' &&
 		url.search.length === 0 &&
 		url.hash.length === 0
 	);
-}, 'OAuth publicBaseUrl must be one HTTPS origin without credentials, port, path, query, or fragment.');
+}, 'OAuth publicBaseUrl must be one HTTPS origin on port 18900 without credentials, path, query, or fragment.');
 
 export const oauthPermissionScopeMappingSchema = z
 	.object({

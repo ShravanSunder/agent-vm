@@ -68,6 +68,7 @@ const workspaceGitPushSummary = {
 
 const workspaceGitPushDescriptor = {
 	annotations: { authority: 'controller_execution' },
+	description: workspaceGitPushSummary.description,
 	inputSchema: {
 		additionalProperties: false,
 		properties: {
@@ -83,6 +84,7 @@ const workspaceGitPushDescriptor = {
 	namespace: controllerExecutionNamespace,
 	outputSchema: { type: 'object' },
 	related: [],
+	title: workspaceGitPushSummary.title,
 	toolRef: `${controllerExecutionNamespace}.${workspaceGitPushName}`,
 } as const satisfies CapabilityDescriptor;
 
@@ -98,11 +100,13 @@ const controllerHostProbeSummary = {
 
 const controllerHostProbeDescriptor = {
 	annotations: { authority: 'controller_execution' },
+	description: controllerHostProbeSummary.description,
 	inputSchema: { additionalProperties: false, properties: {}, type: 'object' },
 	name: controllerHostProbeName,
 	namespace: controllerExecutionNamespace,
 	outputSchema: { type: 'object' },
 	related: [],
+	title: controllerHostProbeSummary.title,
 	toolRef: `${controllerExecutionNamespace}.${controllerHostProbeName}`,
 } as const satisfies CapabilityDescriptor;
 
@@ -118,6 +122,7 @@ function defineOAuthAuthorizationRegistration(props: {
 	return {
 		descriptor: {
 			annotations: { authority: 'controller_execution', operationKind: 'oauth_authorization' },
+			description: props.description,
 			inputSchema: JsonObjectSchema.parse(z.toJSONSchema(props.argumentsSchema)),
 			name: props.capabilityName,
 			namespace: oauthAuthorizationNamespace,
@@ -125,6 +130,7 @@ function defineOAuthAuthorizationRegistration(props: {
 				z.toJSONSchema(OAuthAuthorizationControllerActionResultSchema),
 			),
 			related: [],
+			title: props.title,
 			toolRef,
 		},
 		parseArguments: (argumentsValue) => {
@@ -268,11 +274,13 @@ function configuredRegistration(props: {
 	return {
 		descriptor: {
 			annotations: { authority: 'controller_execution', operationKind: 'configured_cli' },
+			description: props.operation.safeHelp,
 			inputSchema: JsonObjectSchema.parse(z.toJSONSchema(inputSchema)),
 			name: props.name,
 			namespace: props.namespace,
 			outputSchema: { type: 'object' },
 			related: [],
+			title: props.name,
 			toolRef,
 		},
 		parseArguments: (argumentsValue: JsonObject) => {

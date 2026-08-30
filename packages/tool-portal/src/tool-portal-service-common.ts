@@ -1,4 +1,8 @@
-import type { PortalCallRequest, PortalCallResult } from '@agent-vm/agent-portal-sdk';
+import type {
+	CapabilityDiscoveryMetadata,
+	PortalCallRequest,
+	PortalCallResult,
+} from '@agent-vm/agent-portal-sdk';
 import type {
 	EffectiveManagedToolPortalConfig,
 	GatewayRuntimeManagedToolPortalConfig,
@@ -166,6 +170,53 @@ function selectorIncludesTool(selector: ToolPortalToolSelector, toolName: string
 		!selector.deny.includes(toolName) &&
 		(selector.allow === '*' || selector.allow.includes(toolName))
 	);
+}
+
+export function capabilityDiscoveryMetadata(props: {
+	readonly policy:
+		| GatewayRuntimeManagedToolPortalConfig['profiles'][string]['namespaces'][string]
+		| ToolPortalConfig['profiles'][string]['namespaces'][string];
+	readonly toolName: string;
+}): CapabilityDiscoveryMetadata | undefined {
+	if (!selectorIncludesTool(props.policy.tools, props.toolName)) return undefined;
+	const withoutApproval = selectorIncludesTool(props.policy.calls.withoutApproval, props.toolName);
+	const requiresApproval = selectorIncludesTool(
+		props.policy.calls.requiresApproval,
+		props.toolName,
+	);
+	if (withoutApproval === requiresApproval) return undefined;
+	if (props.policy.backend.kind !== 'controller_execution') {
+		return {
+			callDisposition: { kind: requiresApproval ? 'requires-approval' : 'without-approval' },
+		};
+	}
+	const operation = props.policy.backend.operations[props.toolName];
+	if (operation === undefined) {
+		return {
+			callDisposition: { kind: requiresApproval ? 'requires-approval' : 'without-approval' },
+		};
+	}
+	if (operation.kind !== 'configured_cli') {
+		return {
+			callDisposition: { kind: requiresApproval ? 'requires-approval' : 'without-approval' },
+		};
+	}
+	const hasInvocationApprovalRules = operation.calls.requiresApproval.length > 0;
+	return {
+		callDisposition:
+			requiresApproval || !hasInvocationApprovalRules
+				? { kind: requiresApproval ? 'requires-approval' : 'without-approval' }
+				: { describeBeforeCall: true, kind: 'invocation-dependent' },
+		...(operation.authorization?.kind === 'oauth_account_profile'
+			? {
+					oauthRequirement: {
+						accountProfileArgument: 'accountProfile' as const,
+						describeBeforeCall: true as const,
+						kind: 'invocation-dependent-oauth-account-profile' as const,
+					},
+				}
+			: {}),
+	};
 }
 
 export function callPolicyDecision(props: {

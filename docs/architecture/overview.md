@@ -128,6 +128,18 @@ continue to use direct strict-pinned SSH to the current Tool VM.
 
 → Deep dive: [credentialed-runtimes.md](credentialed-runtimes.md)
 
+### Controller-Owned OAuth Broker
+
+An optional `oauth.config.jsonc` beside a managed Hermes zone's Tool Portal config
+enables human Google authorization without exposing refresh tokens to Hermes or a VM.
+The controller owns direct tailnet HTTPS on port `18900`, resolves the browser socket
+peer through tailscaled LocalAPI, and stores envelope-encrypted grants in controller
+state. Gog receives only a short-lived access-token placeholder through the
+authenticated agent's singleton credentialed Managed runtime. OAuth consent never
+changes Tool Portal visibility or per-call approval policy.
+
+→ Design: [Agent-guided OAuth broker](../specs/2026-08-29-agent-oauth-broker/program-design.md)
+
 ### Secrets Flow
 
 Secrets are resolved on the host and split into two channels:

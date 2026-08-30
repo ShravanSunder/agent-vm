@@ -54,7 +54,7 @@ function createAuthorizingTransaction(now: () => number): {
 			'gmail-app': { gmail: 'read' },
 		}),
 		confirmedScopes: [oauthScopeSchema.parse('gmail.readonly')],
-		redirectUri: 'https://auth.claw.askluna.xyz/oauth/google/callback',
+		redirectUri: 'https://auth.claw.askluna.xyz:18900/oauth/google/callback',
 		remainingApplications: [],
 		transactionId: boundTransaction.transactionId,
 	});

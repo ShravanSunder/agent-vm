@@ -27,7 +27,7 @@ describe('OAuth authorization controller-execution boundary', () => {
 		expect(
 			OAuthAuthorizationControllerActionResultSchema.safeParse({
 				kind: 'authorization-begun',
-				authorizationUrl: 'https://auth.claw.askluna.xyz/oauth/transactions/test',
+				authorizationUrl: 'https://auth.claw.askluna.xyz:18900/oauth/transactions/test',
 				expiresAt: '2026-08-30T12:00:00.000Z',
 				refreshToken: 'forbidden',
 				transactionId: 'a'.repeat(32),
