@@ -20,7 +20,7 @@ import type { AgentVmCommand } from '../agent-vm-command-parser.js';
 import { managedGatewayBootProjectionForGatewayType } from '../build-command.js';
 import { resolveCliVersion } from '../cli-version.js';
 import { runControllerOperationCommand } from '../controller-operation-commands.js';
-import { createRunTask } from '../run-task.js';
+import { createRunTask, createSilentRunTask } from '../run-task.js';
 import { runSshCommand } from '../ssh-commands.js';
 import { loadSystemConfigFromCliOption } from './command-operation-support.js';
 
@@ -341,7 +341,7 @@ export async function runControllerCommandOperation(
 		)();
 		let runtimeStarted = false;
 		try {
-			const runTask = await createRunTask(io);
+			const runTask = createSilentRunTask();
 			const runtime = await dependencies.startControllerRuntime(
 				{
 					...(prebuiltImage === undefined

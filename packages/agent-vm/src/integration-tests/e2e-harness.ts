@@ -1592,6 +1592,7 @@ export async function useLocalToolVmMcpPortalPackageTarballs(options: {
 	readonly localAgentPortalSdkTarballPath: string;
 	readonly localConfigContractsTarballPath: string;
 	readonly localMcpPortalTarballPath: string;
+	readonly localOAuthBrokerContractsTarballPath: string;
 	readonly localSecretManagementTarballPath: string;
 	readonly profileNames?: readonly string[] | undefined;
 	readonly projectRoot: string;
@@ -1604,6 +1605,10 @@ export async function useLocalToolVmMcpPortalPackageTarballs(options: {
 		createLocalDockerPackageTarball({
 			packageName: 'agent-portal-sdk',
 			sourcePath: options.localAgentPortalSdkTarballPath,
+		}),
+		createLocalDockerPackageTarball({
+			packageName: 'oauth-broker-contracts',
+			sourcePath: options.localOAuthBrokerContractsTarballPath,
 		}),
 		createLocalDockerPackageTarball({
 			packageName: 'config-contracts',
@@ -1690,6 +1695,10 @@ export async function useLocalToolVmMcpPortalPackage(options: {
 		packageName: 'config-contracts',
 		repoRoot: options.repoRoot,
 	});
+	const localOAuthBrokerContractsTarballPath = await packLocalAgentVmPackageTarball({
+		packageName: 'oauth-broker-contracts',
+		repoRoot: options.repoRoot,
+	});
 	const localSecretManagementTarballPath = await packLocalAgentVmPackageTarball({
 		packageName: 'secret-management',
 		repoRoot: options.repoRoot,
@@ -1703,6 +1712,7 @@ export async function useLocalToolVmMcpPortalPackage(options: {
 			localAgentPortalSdkTarballPath,
 			localConfigContractsTarballPath,
 			localMcpPortalTarballPath,
+			localOAuthBrokerContractsTarballPath,
 			localSecretManagementTarballPath,
 			...(options.profileNames === undefined ? {} : { profileNames: options.profileNames }),
 			projectRoot: options.projectRoot,
@@ -1712,6 +1722,7 @@ export async function useLocalToolVmMcpPortalPackage(options: {
 		await removeE2eLocalPackageTarballs([
 			localAgentPortalSdkTarballPath,
 			localConfigContractsTarballPath,
+			localOAuthBrokerContractsTarballPath,
 			localSecretManagementTarballPath,
 			localMcpPortalTarballPath,
 		]);

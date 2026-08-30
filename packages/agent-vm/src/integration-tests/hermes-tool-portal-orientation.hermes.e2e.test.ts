@@ -625,6 +625,22 @@ function requireLatestUserContent(observation: ProviderObservation): string {
 	return latestUserMessage.content;
 }
 
+function requireNamespaceOrientationBlock(content: string, namespace: string): string {
+	const namespaceMarker = `Namespace: ${JSON.stringify(namespace)}`;
+	const blockStart = content.indexOf(namespaceMarker);
+	if (blockStart < 0) {
+		throw new Error(`Hermes orientation omitted namespace ${JSON.stringify(namespace)}.`);
+	}
+	const remainingContent = content.slice(blockStart);
+	const boundaryOffsets = [
+		remainingContent.indexOf('\nNamespace: ', 1),
+		remainingContent.indexOf('\nWorkflow:', 1),
+	].filter((offset) => offset >= 0);
+	const blockEnd =
+		boundaryOffsets.length === 0 ? remainingContent.length : Math.min(...boundaryOffsets);
+	return remainingContent.slice(0, blockEnd);
+}
+
 function systemContents(observation: ProviderObservation): readonly string[] {
 	return observation.messages.filter(({ role }) => role === 'system').map(({ content }) => content);
 }
@@ -797,20 +813,36 @@ describeHermesToolPortalOrientationE2e('e2e: Hermes Tool Portal session orientat
 		const orientedUserContent = requireLatestUserContent(orientedObservation);
 		for (const operationName of operationNames)
 			expect(orientedUserContent).toContain(operationName);
-		if (!orientedUserContent.includes(`"${fakeUpstreamNamespace}": available`)) {
+		const availableNamespaceBlock = requireNamespaceOrientationBlock(
+			orientedUserContent,
+			fakeUpstreamNamespace,
+		);
+		if (
+			!availableNamespaceBlock.includes('Tools:') ||
+			!availableNamespaceBlock.includes('  read_thing') ||
+			!availableNamespaceBlock.includes('  write_thing')
+		) {
 			if (gatewayVm === undefined)
 				throw new Error('Hermes orientation E2E did not capture its VM.');
 			throw new Error(
-				`Available namespace was not classified as available. Inventory diagnostics:\n${await readInventoryAttemptDiagnostics(gatewayVm)}`,
+				`Available namespace did not expose its discovered tools. Namespace block:\n${availableNamespaceBlock}\nInventory diagnostics:\n${await readInventoryAttemptDiagnostics(gatewayVm)}`,
 			);
 		}
-		expect(orientedUserContent).toContain(`"${unavailableNamespace}": unavailable`);
-		expect(orientedUserContent).toContain(`"${controllerExecutionNamespace}": available`);
-		expect(orientedUserContent).toContain(`summary: ${JSON.stringify(availableNamespaceSummary)}`);
-		expect(orientedUserContent).toContain(
-			`summary: ${JSON.stringify(unavailableNamespaceSummary)}`,
+		const unavailableNamespaceBlock = requireNamespaceOrientationBlock(
+			orientedUserContent,
+			unavailableNamespace,
 		);
-		expect(orientedUserContent).toContain(`summary: ${JSON.stringify(controllerExecutionSummary)}`);
+		expect(unavailableNamespaceBlock).not.toContain('Tools:');
+		const controllerExecutionNamespaceBlock = requireNamespaceOrientationBlock(
+			orientedUserContent,
+			controllerExecutionNamespace,
+		);
+		expect(controllerExecutionNamespaceBlock).toContain('  controller_host_probe');
+		expect(orientedUserContent).toContain(`Summary: ${JSON.stringify(availableNamespaceSummary)}`);
+		expect(orientedUserContent).toContain(
+			`Summary: ${JSON.stringify(unavailableNamespaceSummary)}`,
+		);
+		expect(orientedUserContent).toContain(`Summary: ${JSON.stringify(controllerExecutionSummary)}`);
 
 		if (gatewayVm === undefined) throw new Error('Hermes orientation E2E did not capture its VM.');
 
