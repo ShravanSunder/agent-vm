@@ -55,6 +55,14 @@ credentialed Managed runtime paths. It adds no helper, public ingress, or second
   public status and controller-action contracts
   no SQLite, crypto, provider secret, or host dependency
 
+@agent-vm/agent-portal-sdk
+  owns the existing portable Tool Portal capability-summary and
+  list/search/describe wire schemas
+  extends those schemas with generic truncation and call-disposition fields
+  composes the OAuth-specific requirement and availability unions from
+  oauth-broker-contracts
+  regenerates the checked portable manifest and Python contract fixtures
+
 @agent-vm/oauth-broker                         NEW
   host-only provider-neutral engine
   opaque transaction/completion stores
@@ -95,6 +103,7 @@ Allowed dependency edges:
 ```text
 oauth-broker → config-contracts + oauth-broker-contracts
 config-contracts → oauth-broker-contracts
+agent-portal-sdk → oauth-broker-contracts
 controller-execution-contracts → oauth-broker-contracts
 oauth-approval-ui → oauth-broker-contracts + Hono JSX
 agent-vm → composed packages
@@ -109,17 +118,22 @@ oauth-broker/google ↛ Tool Portal or Gateway Runtime
 oauth-broker-contracts ↛ SQLite, Drizzle, crypto, secrets, or providers
 oauth-approval-ui ↛ broker engine, SQLite, secrets, provider adapters, Tool Portal policy
 Tool Portal ↛ SQLite, 1Password, provider tokens, or crypto
+agent-portal-sdk ↛ broker engine, controller implementation, SQLite, 1Password,
+  provider tokens, or policy decisions
 Shravan Claw ↛ SQLite; Managed Gog runtime ↛ refresh token or KEK
 ```
 
 Three new packages are justified. `oauth-broker-contracts` keeps portable Tool
 Portal/controller action schemas free of the broker's native SQLite and host crypto
-dependencies. `oauth-broker` owns the host engine. Google remains a separate
-provider module exported as `@agent-vm/oauth-broker/google`; it does not receive an
-independent package. `oauth-approval-ui` isolates browser build dependencies and
-packaged assets behind sanitized view models. A later provider may use another
-broker subpath; provider extraction still requires an independent consumer,
-dependency set, release cadence, or enforceable ownership need.
+dependencies. The existing `agent-portal-sdk` remains the sole owner of portable
+Tool Portal list/search/describe result envelopes and composes only the OAuth-specific
+nested unions from that contract-only package; Tool Portal does not create a second
+result schema. `oauth-broker` owns the host engine. Google remains a separate provider
+module exported as `@agent-vm/oauth-broker/google`; it does not receive an independent
+package. `oauth-approval-ui` isolates browser build dependencies and packaged assets
+behind sanitized view models. A later provider may use another broker subpath;
+provider extraction still requires an independent consumer, dependency set, release
+cadence, or enforceable ownership need.
 
 ## Authored configuration model
 
@@ -457,6 +471,15 @@ namespace once and nests that namespace's bounded tool names and descriptions
 beneath it. MCP provider, controller-execution, and Tool VM runner bindings remain
 internal dispatch details and never enter the injected orientation.
 
+The existing `agent-portal-sdk` strict capability-summary and portal-result schemas
+remain the only portable wire authority for list, search, and describe. They gain the
+generic compact-description truncation and call-disposition fields and compose the
+OAuth requirement/availability discriminated unions from
+`oauth-broker-contracts`. Tool Portal computes values but cannot widen the wire shape;
+Gateway Runtime transports the same validated result; generated TypeScript manifests
+and Python fixtures keep Hermes parsing on that exact contract. Full authored text
+continues to feed search before compact result truncation.
+
 ## Refresh coordination and credential lifecycle
 
 The controller refresh coordinator owns one keyed single-flight entry per
@@ -624,7 +647,7 @@ the corresponding account/application enrollment succeeds.
 | U-OAUTH-013 | Credential mediation adapter and runtime manager | placeholder-only process environment, host-side token substitution, material-revision replacement, no secret residue |
 | U-OAUTH-015 | Controller composition | bind rollback, readiness, stop-controller, crash/partial-write, stale-runtime and shutdown ordering |
 | U-OAUTH-016 | OAuth approval UI package and controller routes | no-JS SSR/forms, CSP/assets, accessibility, bounded islands, actual-size browser proof |
-| U-OAUTH-017 | Existing Hermes orientation plus Tool Portal enrichment | name/description-only injection, full-text search, approval/OAuth availability on demand, hidden-tool exclusion, full describe |
+| U-OAUTH-017 | Agent Portal SDK wire contracts, Tool Portal enrichment, generated Python contracts, and existing Hermes orientation | name/description-only injection, portable-contract freshness, full-text search, approval/OAuth availability on demand, hidden-tool exclusion, full describe |
 
 Live Google proof is isolated and opt-in because it consumes external account and
 provider state. Default tests use a protocol-faithful provider fixture and real
