@@ -71,7 +71,9 @@ function containsRequiredScopes(
 	return requiredScopes.every((scope) => granted.has(scope));
 }
 
-function envelopeBinding(grant: OAuthStoredGrant) {
+function envelopeBinding(
+	grant: OAuthStoredGrant,
+): ReturnType<typeof oauthEnvelopeBindingSchema.parse> {
 	return oauthEnvelopeBindingSchema.parse({
 		accountProfileId: grant.accountProfileId,
 		applicationId: grant.applicationId,

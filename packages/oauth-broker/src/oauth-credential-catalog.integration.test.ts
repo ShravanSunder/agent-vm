@@ -116,6 +116,17 @@ describe('OAuth credential catalog', () => {
 		expect(committed).toMatchObject({ kind: 'committed' });
 		if (committed.kind !== 'committed') throw new Error('Expected committed OAuth grant.');
 		expect(committed.grant.recordRevision).toBe(1);
+		expect(
+			openCatalog.getGrantForAccountApplication({
+				accountProfileId,
+				agentId: 'hermes',
+				applicationId,
+				zoneId: 'apollofam',
+			}),
+		).toMatchObject({ credentialId });
+		expect(openCatalog.listGrantsForAgent({ agentId: 'hermes', zoneId: 'apollofam' })).toHaveLength(
+			1,
+		);
 
 		const codec = createOAuthEnvelopeCodec({ payloadSchema: providerPayloadSchema });
 		expect(

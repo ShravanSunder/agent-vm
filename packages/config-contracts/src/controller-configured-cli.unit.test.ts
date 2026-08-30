@@ -54,6 +54,22 @@ function validMediatedTarget(): unknown {
 	};
 }
 
+function validOAuthMediatedTarget(): unknown {
+	return {
+		allowedHosts: ['gmail.googleapis.com'],
+		credentialProjection: {
+			environment: {
+				GOG_ACCESS_TOKEN: { kind: 'oauth_access_token' },
+			},
+			kind: 'http_mediation',
+		},
+		environment: { kind: 'empty' },
+		guestCwd: '/work',
+		imageReference: '../../vm-images/controller-runners/gog/build-config.json',
+		kind: 'ephemeral_managed_vm',
+	};
+}
+
 function validOAuthConfiguredCliOperation(): unknown {
 	return {
 		authorization: {
@@ -78,7 +94,7 @@ function validOAuthConfiguredCliOperation(): unknown {
 		commands: [{ path: ['gmail', 'search'] }, { path: ['help'] }],
 		deniedPatterns: [],
 		executablePath: '/usr/bin/gog',
-		executionTarget: validMediatedTarget(),
+		executionTarget: validOAuthMediatedTarget(),
 		kind: 'configured_cli',
 		mandatoryArgvPrefix: [],
 		output: {

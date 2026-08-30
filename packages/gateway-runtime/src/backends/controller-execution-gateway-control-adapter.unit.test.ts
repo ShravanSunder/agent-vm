@@ -29,6 +29,30 @@ const toolPortalConfig = {
 	profiles: {
 		'profile-a': {
 			namespaces: {
+				oauth_authorization: {
+					discovery: {
+						summary: 'Set up and inspect account authorization.',
+					},
+					backend: {
+						kind: 'controller_execution',
+						operations: {
+							begin: { kind: 'registered_action' },
+							cancel: { kind: 'registered_action' },
+							list: { kind: 'registered_action' },
+							reauthorize: { kind: 'registered_action' },
+							revoke: { kind: 'registered_action' },
+							status: { kind: 'registered_action' },
+						},
+					},
+					calls: {
+						requiresApproval: { allow: ['reauthorize', 'revoke'], deny: [] },
+						withoutApproval: {
+							allow: ['begin', 'cancel', 'list', 'status'],
+							deny: [],
+						},
+					},
+					tools: { allow: '*', deny: [] },
+				},
 				custom_controller: {
 					discovery: { summary: namespaceSummaryPayloadCanary },
 					backend: {
@@ -241,6 +265,80 @@ function createFixture(
 }
 
 describe('Gateway Control controller-execution adapter', () => {
+	it('publishes short OAuth tool names and carries the internal action id over Gateway Control', async () => {
+		const fixture = createFixture({
+			sendCommand: async () => ({
+				acceptedSession,
+				messageId: responseMessageId,
+				response: {
+					kind: 'command_result',
+					operation: 'tool_portal_controller_execution',
+					payload: {
+						controllerExecution: {
+							action: {
+								actionId: 'oauth_authorization.list',
+								result: { kind: 'authorization-list', profiles: [] },
+							},
+							kind: 'registered_action',
+						},
+						responseToMessageId: responseMessageId,
+						result: 'ok',
+					},
+				},
+			}),
+		});
+
+		const listed = await fixture.backend.list(
+			{ requests: [{ id: 'oauth-tools', limit: 100, namespaces: ['oauth_authorization'] }] },
+			callOptions(),
+		);
+		const listedItem = listed.items[0];
+		if (listedItem?.status !== 'ok') throw new Error('Expected OAuth list result.');
+		expect(listedItem.value.tools.map((item) => item.name)).toEqual([
+			'begin',
+			'cancel',
+			'list',
+			'reauthorize',
+			'revoke',
+			'status',
+		]);
+		const result = await fixture.backend.call(
+			{
+				calls: [
+					{ arguments: {}, id: 'oauth-list', name: 'list', namespace: 'oauth_authorization' },
+				],
+			},
+			callOptions(),
+		);
+
+		expect(fixture.sendCommand).toHaveBeenCalledWith(
+			expect.objectContaining({
+				message: expect.objectContaining({
+					payload: expect.objectContaining({
+						action: expect.objectContaining({
+							actionId: 'oauth_authorization.list',
+							correlation: expect.objectContaining({
+								capability: { name: 'list', namespace: 'oauth_authorization' },
+							}),
+						}),
+					}),
+				}),
+			}),
+		);
+		expect(result).toMatchObject({
+			items: [
+				{
+					status: 'ok',
+					value: {
+						action: { actionId: 'oauth_authorization.list' },
+						kind: 'registered_action',
+					},
+				},
+			],
+			ok: true,
+		});
+	});
+
 	it('registers the caller and routes workspace_git_push through the existing narrow command', async () => {
 		const fixture = createFixture();
 

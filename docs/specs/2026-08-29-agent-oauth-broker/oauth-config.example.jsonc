@@ -21,16 +21,20 @@
 			"applications": {
 				"workspace-app": {
 					"clientKind": "web",
+					"label": "Google Workspace",
+					"description": "Calendar, Drive, and Workspace document applications.",
 					"clientCredentials": {
 						"source": "1password",
 						"ref": "<operator-authored 1Password reference>",
 					},
 					"services": {
 						"calendar": {
+							"label": "Google Calendar",
 							"read": ["<calendar read scopes>"],
 							"write": ["<calendar write scopes>"],
 						},
 						"drive": {
+							"label": "Google Drive",
 							"read": ["<ordinary Drive read scopes>"],
 							"write": ["<explicit elevated Drive scopes>"],
 						},
@@ -38,12 +42,15 @@
 				},
 				"gmail-app": {
 					"clientKind": "web",
+					"label": "Gmail",
+					"description": "Gmail message and mailbox access.",
 					"clientCredentials": {
 						"source": "1password",
 						"ref": "<operator-authored 1Password reference>",
 					},
 					"services": {
 						"gmail": {
+							"label": "Gmail messages",
 							"read": ["<Gmail read scopes>"],
 							"write": ["<Gmail mutation scopes>"],
 						},
@@ -51,12 +58,15 @@
 				},
 				"youtube-app": {
 					"clientKind": "web",
+					"label": "YouTube",
+					"description": "YouTube account and channel access.",
 					"clientCredentials": {
 						"source": "1password",
 						"ref": "<operator-authored 1Password reference>",
 					},
 					"services": {
 						"youtube": {
+							"label": "YouTube channel",
 							"read": ["<YouTube read scopes>"],
 							"write": ["<bounded YouTube mutation scopes>"],
 						},

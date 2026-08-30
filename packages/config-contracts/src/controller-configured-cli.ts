@@ -295,10 +295,17 @@ const configuredCliMediatedCredentialSourceSchema = z
 	})
 	.strict();
 
+const configuredCliOAuthAccessTokenSourceSchema = z
+	.object({ kind: z.literal('oauth_access_token') })
+	.strict();
+
 const configuredCliMediatedCredentialEnvironmentSchema = z
 	.record(
 		z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/u),
-		configuredCliMediatedCredentialSourceSchema,
+		z.union([
+			configuredCliMediatedCredentialSourceSchema,
+			configuredCliOAuthAccessTokenSourceSchema,
+		]),
 	)
 	.refine((environment) => Object.keys(environment).length > 0, {
 		message: 'Configured CLI mediated credential environment must not be empty.',
@@ -386,6 +393,7 @@ function validateCredentialedManagedVmTarget(
 	} else {
 		const allowedHosts = new Set(target.allowedHosts);
 		for (const [environmentName, source] of Object.entries(projection.environment)) {
+			if ('kind' in source) continue;
 			for (const [hostIndex, host] of source.hosts.entries()) {
 				if (allowedHosts.has(host)) continue;
 				context.addIssue({
@@ -574,19 +582,59 @@ export const configuredCliAuthorizationSchema = z.discriminatedUnion('kind', [
 interface ConfiguredCliOperationAuthorizationValidation {
 	readonly authorization?: z.infer<typeof configuredCliAuthorizationSchema> | undefined;
 	readonly commands: readonly z.infer<typeof configuredCliAllowedCommandSchema>[];
-	readonly executionTarget: { readonly kind: 'controller_host' | 'ephemeral_managed_vm' };
+	readonly executionTarget:
+		| { readonly kind: 'controller_host' }
+		| {
+				readonly credentialProjection: z.infer<typeof configuredCliCredentialProjectionSchema>;
+				readonly kind: 'ephemeral_managed_vm';
+		  };
 }
 
 function validateConfiguredCliOperationAuthorization(
 	operation: ConfiguredCliOperationAuthorizationValidation,
 	context: z.RefinementCtx,
 ): void {
-	if (operation.authorization === undefined || operation.authorization.kind === 'none') return;
+	const hasOAuthAccessTokenSource =
+		operation.executionTarget.kind === 'ephemeral_managed_vm' &&
+		operation.executionTarget.credentialProjection.kind === 'http_mediation' &&
+		Object.values(operation.executionTarget.credentialProjection.environment).some(
+			(source) => 'kind' in source && source.kind === 'oauth_access_token',
+		);
+	if (operation.authorization === undefined || operation.authorization.kind === 'none') {
+		if (hasOAuthAccessTokenSource) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: 'OAuth access-token mediation requires OAuth account-profile authorization rules.',
+				path: ['authorization'],
+			});
+		}
+		return;
+	}
 	if (operation.executionTarget.kind !== 'ephemeral_managed_vm') {
 		context.addIssue({
 			code: z.ZodIssueCode.custom,
 			message: 'OAuth-configured CLI operations must execute in an ephemeral Managed VM.',
 			path: ['executionTarget', 'kind'],
+		});
+	}
+	const oauthProjectionIsValid = (() => {
+		if (operation.executionTarget.kind !== 'ephemeral_managed_vm') return false;
+		const projection = operation.executionTarget.credentialProjection;
+		if (projection.kind !== 'http_mediation') return false;
+		const source = projection.environment.GOG_ACCESS_TOKEN;
+		return (
+			Object.keys(projection.environment).length === 1 &&
+			source !== undefined &&
+			'kind' in source &&
+			source.kind === 'oauth_access_token'
+		);
+	})();
+	if (operation.executionTarget.kind === 'ephemeral_managed_vm' && !oauthProjectionIsValid) {
+		context.addIssue({
+			code: z.ZodIssueCode.custom,
+			message:
+				'OAuth-configured CLI operations require only the code-owned GOG_ACCESS_TOKEN OAuth mediation source.',
+			path: ['executionTarget', 'credentialProjection'],
 		});
 	}
 	const admittedPaths = new Set(
@@ -755,18 +803,19 @@ export type ResolvedConfiguredCliTimeout =
 	  };
 
 export function resolveConfiguredCliTimeout(props: {
-	readonly input: ConfiguredCliInput;
+	readonly input: ControllerConfiguredCliInput;
 	readonly kind: ConfiguredCliTimeoutPolicy['kind'];
 }): ResolvedConfiguredCliTimeout {
 	if (props.kind === 'quick') {
-		quickConfiguredCliInputSchema.parse(props.input);
+		controllerConfiguredCliInputSchema.parse(props.input);
 		return { kind: 'quick', requestedTimeoutMs: null, resolvedTimeoutMs: 5_000 };
 	}
-	const input = openConfiguredCliInputSchema.parse(props.input);
+	const input = controllerConfiguredCliInputSchema.parse(props.input);
+	const requestedTimeoutMs = 'timeoutMs' in input ? (input.timeoutMs ?? null) : null;
 	return {
 		kind: 'open',
-		requestedTimeoutMs: input.timeoutMs ?? null,
-		resolvedTimeoutMs: input.timeoutMs ?? 120_000,
+		requestedTimeoutMs,
+		resolvedTimeoutMs: requestedTimeoutMs ?? 120_000,
 	};
 }
 

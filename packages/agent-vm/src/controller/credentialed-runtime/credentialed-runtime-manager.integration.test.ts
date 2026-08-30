@@ -189,6 +189,28 @@ function mediatedResolution(): CredentialedRuntimeResolution {
 	};
 }
 
+function oauthResolution(agentRuntimeRevision: string): CredentialedRuntimeResolution {
+	const fileResolution = resolution({ agentRuntimeRevision });
+	const configuredOperation = structuredClone(fileResolution.operation);
+	if (configuredOperation.executionTarget.kind !== 'ephemeral_managed_vm') {
+		throw new Error('Expected Managed VM target.');
+	}
+	configuredOperation.executionTarget.allowedHosts = ['gmail.googleapis.com'];
+	configuredOperation.executionTarget.credentialProjection = {
+		environment: { GOG_ACCESS_TOKEN: { kind: 'oauth_access_token' } },
+		kind: 'http_mediation',
+	};
+	return {
+		...fileResolution,
+		agentRuntimeRevision,
+		operation: configuredOperation,
+		projection: {
+			environmentName: 'GOG_ACCESS_TOKEN',
+			kind: 'oauth_http_mediation',
+		},
+	};
+}
+
 function createFixture(
 	now: () => number,
 	options: {
@@ -342,6 +364,99 @@ async function acquire(
 }
 
 describe('credentialed runtime manager', () => {
+	it('reserves the agent slot before dynamic OAuth materialization and clears the supplied bytes', async () => {
+		const fixture = createFixture(() => 1_000);
+		const accessTokenBytes = new TextEncoder().encode('oauth-access-token-marker');
+		const materializeResolution = vi.fn(async () => ({
+			dynamicHttpMediation: {
+				allowedHosts: ['gmail.googleapis.com'],
+				credentialId: 'credential-a',
+				environmentName: 'GOG_ACCESS_TOKEN',
+				kind: 'dynamic_http_mediation' as const,
+				materialRevision: 'sha256:material-a',
+				placeholderValue: 'GONDOLIN_SECRET_TEST_PLACEHOLDER',
+				secretValue: accessTokenBytes,
+			},
+			resolution: oauthResolution('sha256:oauth-runtime-a'),
+		}));
+
+		const first = await fixture.manager.acquireCommand({
+			finalAuthorization: async () => true,
+			materializeResolution,
+			operationId: 'oauth-operation-a',
+			ownerIdentity,
+			runtimeIdentity: { agentId: 'sun', zoneId: 'zone-a' },
+		});
+		if (first.kind !== 'acquired') throw new Error('Expected OAuth acquisition.');
+		expect(materializeResolution).toHaveBeenCalledOnce();
+		expect(fixture.states[0]?.requests[0]).toMatchObject({
+			environment: { GOG_ACCESS_TOKEN: 'GONDOLIN_SECRET_TEST_PLACEHOLDER' },
+			mediatedSecrets: [
+				{
+					allowedHosts: ['gmail.googleapis.com'],
+					environmentVariable: 'GOG_ACCESS_TOKEN',
+					guestPlaceholder: 'GONDOLIN_SECRET_TEST_PLACEHOLDER',
+				},
+			],
+		});
+		expect([...accessTokenBytes]).toEqual(
+			Array.from({ length: accessTokenBytes.byteLength }, () => 0),
+		);
+
+		const materializeWhileBusy = vi.fn(async () => ({
+			resolution: oauthResolution('sha256:oauth-runtime-b'),
+		}));
+		await expect(
+			fixture.manager.acquireCommand({
+				finalAuthorization: async () => true,
+				materializeResolution: materializeWhileBusy,
+				operationId: 'oauth-operation-b',
+				ownerIdentity,
+				runtimeIdentity: { agentId: 'sun', zoneId: 'zone-a' },
+			}),
+		).resolves.toEqual({ kind: 'busy', retryable: true });
+		expect(materializeWhileBusy).not.toHaveBeenCalled();
+		await first.command.complete({ kind: 'completed' });
+	});
+
+	it('retires the prior agent runtime before admitting changed OAuth material', async () => {
+		const fixture = createFixture(() => 1_000);
+		const acquireOAuthMaterial = async (
+			revision: string,
+		): Promise<Awaited<ReturnType<CredentialedRuntimeManager['acquireCommand']>>> => {
+			const secretValue = new TextEncoder().encode(`access-token-${revision}`);
+			return await fixture.manager.acquireCommand({
+				finalAuthorization: async () => true,
+				materializeResolution: async () => ({
+					dynamicHttpMediation: {
+						allowedHosts: ['gmail.googleapis.com'],
+						credentialId: 'credential-a',
+						environmentName: 'GOG_ACCESS_TOKEN',
+						kind: 'dynamic_http_mediation',
+						materialRevision: revision,
+						placeholderValue: `placeholder-${revision}`,
+						secretValue,
+					},
+					resolution: oauthResolution(`sha256:oauth-runtime-${revision}`),
+				}),
+				operationId: `operation-${revision}`,
+				ownerIdentity,
+				runtimeIdentity: { agentId: 'sun', zoneId: 'zone-a' },
+			});
+		};
+
+		const first = await acquireOAuthMaterial('material-a');
+		if (first.kind !== 'acquired') throw new Error('Expected first OAuth acquisition.');
+		await first.command.complete({ kind: 'completed' });
+		const second = await acquireOAuthMaterial('material-b');
+		if (second.kind !== 'acquired') throw new Error('Expected replacement OAuth acquisition.');
+
+		expect(fixture.createManagedVm).toHaveBeenCalledTimes(2);
+		expect(fixture.states[0]?.closed).toBe(true);
+		expect(fixture.states[1]?.started).toBe(true);
+		await second.command.complete({ kind: 'completed' });
+	});
+
 	it('reuses one runtime across independently acquired compatible operations', async () => {
 		let nowMs = 1_000;
 		const fixture = createFixture(() => nowMs);

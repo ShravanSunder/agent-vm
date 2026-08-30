@@ -1,9 +1,13 @@
+import { readFile } from 'node:fs/promises';
+
 import { renderToString } from 'hono/jsx/dom/server';
 import type { JSX } from 'hono/jsx/jsx-runtime';
 import { z } from 'zod';
 
 import {
+	oauthApprovalAssetManifestSchema,
 	oauthApprovalPageModelSchema,
+	type OAuthApprovalAssetManifest,
 	type OAuthApprovalPageModel,
 	type OAuthApplicationChoiceModel,
 } from '../contracts.js';
@@ -29,6 +33,30 @@ export interface OAuthApprovalRenderProps {
 	readonly javascriptAssetName: string;
 	readonly model: OAuthApprovalPageModel;
 	readonly stylesheetAssetName: string;
+}
+
+export interface OAuthApprovalAssetBundle {
+	readonly files: Readonly<Record<string, Uint8Array>>;
+	readonly manifest: OAuthApprovalAssetManifest;
+}
+
+export async function loadOAuthApprovalAssetBundle(): Promise<OAuthApprovalAssetBundle> {
+	const assetsDirectoryUrl = new URL('./assets/', import.meta.url);
+	const parsedManifest: unknown = JSON.parse(
+		await readFile(new URL('manifest.json', assetsDirectoryUrl), 'utf8'),
+	);
+	const manifest = oauthApprovalAssetManifestSchema.parse(parsedManifest);
+	const [css, javascript] = await Promise.all([
+		readFile(new URL(manifest.css, assetsDirectoryUrl)),
+		readFile(new URL(manifest.javascript, assetsDirectoryUrl)),
+	]);
+	return {
+		files: {
+			[manifest.css]: new Uint8Array(css),
+			[manifest.javascript]: new Uint8Array(javascript),
+		},
+		manifest,
+	};
 }
 
 function pageTitle(model: OAuthApprovalPageModel): string {
@@ -65,7 +93,7 @@ function PermissionChoice(props: {
 				<p>{props.application.description}</p>
 			</div>
 			{props.application.services.map((service) => (
-				<fieldset class="permission-fieldset">
+				<fieldset class="permission-fieldset" key={service.serviceId}>
 					<legend>{service.label}</legend>
 					{service.suggestedChoice === undefined ? null : (
 						<p class="suggestion-note">Hermes suggested {service.suggestedChoice}. You decide.</p>
@@ -74,7 +102,7 @@ function PermissionChoice(props: {
 						{service.allowedChoices.map((choice) => {
 							const inputId = `${props.application.applicationId}-${service.serviceId}-${choice}`;
 							return (
-								<label class="permission-option" for={inputId}>
+								<label class="permission-option" for={inputId} key={choice}>
 									<input
 										checked={service.selectedChoice === choice}
 										id={inputId}
@@ -114,15 +142,15 @@ function PermissionSelectionPage(props: {
 				<div class="error-summary" role="alert" tabindex={-1}>
 					<h2>Review these problems</h2>
 					<ul>
-						{props.model.errors.map((error) => (
-							<li>{error}</li>
+						{props.model.errors.map((error, errorIndex) => (
+							<li key={`${String(errorIndex)}:${error}`}>{error}</li>
 						))}
 					</ul>
 				</div>
 			)}
 			<form action={props.formAction} data-permission-selector method="post">
 				{props.model.applications.map((application) => (
-					<PermissionChoice application={application} />
+					<PermissionChoice application={application} key={application.applicationId} />
 				))}
 				<input name="csrfToken" type="hidden" value={props.csrfToken} />
 				<div aria-live="polite" class="permission-summary" data-permission-summary />
@@ -161,8 +189,8 @@ function AccountConfirmationPage(props: {
 			<section class="confirmation-panel">
 				<h2>Granted access</h2>
 				<ul>
-					{props.model.grantedPermissionLabels.map((label) => (
-						<li>{label}</li>
+					{props.model.grantedPermissionLabels.map((label, labelIndex) => (
+						<li key={`${String(labelIndex)}:${label}`}>{label}</li>
 					))}
 				</ul>
 			</section>
@@ -192,7 +220,7 @@ function StatusPage(props: {
 				</header>
 				<ol class="progress-list">
 					{model.applications.map((application) => (
-						<li>
+						<li key={application.applicationId}>
 							<span>{application.label}</span>
 							<strong>{application.status}</strong>
 						</li>
@@ -211,16 +239,16 @@ function StatusPage(props: {
 				<section class="confirmation-panel">
 					<h2>Connected</h2>
 					<ul>
-						{model.completed.map((label) => (
-							<li>{label}</li>
+						{model.completed.map((label, labelIndex) => (
+							<li key={`${String(labelIndex)}:${label}`}>{label}</li>
 						))}
 					</ul>
 				</section>
 				<section class="confirmation-panel">
 					<h2>Retryable</h2>
 					<ul>
-						{model.retryable.map((label) => (
-							<li>{label}</li>
+						{model.retryable.map((label, labelIndex) => (
+							<li key={`${String(labelIndex)}:${label}`}>{label}</li>
 						))}
 					</ul>
 				</section>

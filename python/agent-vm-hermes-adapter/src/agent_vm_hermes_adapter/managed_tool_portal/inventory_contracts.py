@@ -55,7 +55,7 @@ class InventoryListItemRequest(_FrozenModel):
 
     id: str = Field(min_length=1)
     namespaces: tuple[str, ...] = Field(min_length=1, max_length=1)
-    limit: t.Literal[1] = 1
+    limit: t.Literal[8] = 8
 
     @model_validator(mode="after")
     def validate_single_namespace(self) -> t.Self:
@@ -84,6 +84,7 @@ class InventoryListRequest(_FrozenModel):
 class InventoryPortalToolSummary(_FrozenModel):
     """The only live-result fields needed by the existence probe."""
 
+    description: str | None = None
     namespace: str = Field(min_length=1)
     name: str = Field(min_length=1)
 
@@ -291,6 +292,7 @@ def _project_validated_portal_list_result(model: BaseModel) -> InventoryPortalLi
                     namespaces=tuple(item.value.namespaces),
                     tools=tuple(
                         InventoryPortalToolSummary(
+                            description=tool.description,
                             namespace=tool.namespace,
                             name=tool.name,
                         )

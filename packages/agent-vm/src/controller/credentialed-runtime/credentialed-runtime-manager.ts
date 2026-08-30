@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 
-import type { ConfiguredCliInput } from '@agent-vm/config-contracts';
+import type { ControllerConfiguredCliInput } from '@agent-vm/config-contracts';
 import type {
 	ManagedVm,
 	ManagedVmExactProcessTerminationCapability,
@@ -38,6 +38,21 @@ export interface CredentialedRuntimeOwnerIdentity {
 	readonly stablePrincipal: string;
 }
 
+export interface CredentialedRuntimeDynamicHttpMediation {
+	readonly allowedHosts: readonly string[];
+	readonly credentialId: string;
+	readonly environmentName: string;
+	readonly kind: 'dynamic_http_mediation';
+	readonly materialRevision: string;
+	readonly placeholderValue: string;
+	readonly secretValue: Uint8Array;
+}
+
+export interface CredentialedRuntimeMaterialization {
+	readonly dynamicHttpMediation?: CredentialedRuntimeDynamicHttpMediation | undefined;
+	readonly resolution: CredentialedRuntimeResolution;
+}
+
 export type AcquireCredentialedRuntimeCommandResult =
 	| { readonly command: CredentialedRuntimeCommandHandle; readonly kind: 'acquired' }
 	| { readonly kind: 'busy'; readonly retryable: true }
@@ -51,7 +66,7 @@ export type CredentialedRuntimeCommandOutcome =
 export interface CredentialedRuntimeCommandHandle {
 	complete(outcome: CredentialedRuntimeCommandOutcome): Promise<void>;
 	exec(
-		input: ConfiguredCliInput,
+		input: ControllerConfiguredCliInput,
 		options?: { readonly signal?: AbortSignal },
 	): Promise<CredentialedManagedVmCommandResult>;
 }
@@ -112,13 +127,20 @@ function processIdentitiesEqual(
 }
 
 export interface CredentialedRuntimeManager {
-	acquireCommand(request: {
-		readonly admissionSignal?: AbortSignal;
-		readonly finalAuthorization: () => Promise<boolean>;
-		readonly operationId: string;
-		readonly ownerIdentity: CredentialedRuntimeOwnerIdentity;
-		readonly resolution: CredentialedRuntimeResolution;
-	}): Promise<AcquireCredentialedRuntimeCommandResult>;
+	acquireCommand(
+		request: {
+			readonly admissionSignal?: AbortSignal;
+			readonly finalAuthorization: () => Promise<boolean>;
+			readonly operationId: string;
+			readonly ownerIdentity: CredentialedRuntimeOwnerIdentity;
+		} & (
+			| { readonly resolution: CredentialedRuntimeResolution }
+			| {
+					readonly materializeResolution: () => Promise<CredentialedRuntimeMaterialization>;
+					readonly runtimeIdentity: { readonly agentId: string; readonly zoneId: string };
+			  }
+		),
+	): Promise<AcquireCredentialedRuntimeCommandResult>;
 	closeZone(zoneId: string): Promise<void>;
 	openZone(zoneId: string): void;
 	reapExpired(): Promise<void>;
@@ -286,9 +308,12 @@ export function createCredentialedRuntimeManager(props: {
 	};
 
 	const acquireCommand: CredentialedRuntimeManager['acquireCommand'] = async (request) => {
-		const key = runtimeKey(request.resolution);
+		const requestedRuntimeIdentity =
+			'resolution' in request ? request.resolution : request.runtimeIdentity;
+		const key = runtimeKey(requestedRuntimeIdentity);
 		const admissionInvalidated = (): boolean =>
-			request.admissionSignal?.aborted === true || closedZoneIds.has(request.resolution.zoneId);
+			request.admissionSignal?.aborted === true ||
+			closedZoneIds.has(requestedRuntimeIdentity.zoneId);
 		if (admissionInvalidated()) {
 			return { kind: 'not-dispatched', reason: 'credentialed runtime zone is stopping' };
 		}
@@ -296,7 +321,7 @@ export function createCredentialedRuntimeManager(props: {
 			return { kind: 'busy', retryable: true };
 		}
 		reservedAcquisitionKeys.add(key);
-		registerRuntimeKeyForZone(request.resolution.zoneId, key);
+		registerRuntimeKeyForZone(requestedRuntimeIdentity.zoneId, key);
 		try {
 			return await locks.runExclusive(key, async () => {
 				if (admissionInvalidated()) {
@@ -305,10 +330,32 @@ export function createCredentialedRuntimeManager(props: {
 				if (ownerUnsafeKeys.has(key)) {
 					return { kind: 'owner-unsafe', reason: 'credentialed runtime ownership is unsafe' };
 				}
+				let materialization: CredentialedRuntimeMaterialization;
+				try {
+					materialization =
+						'resolution' in request
+							? { resolution: request.resolution }
+							: await request.materializeResolution();
+				} catch {
+					return {
+						kind: 'not-dispatched',
+						reason: 'credentialed runtime materialization failed',
+					};
+				}
+				const { resolution } = materialization;
+				if (
+					resolution.agentId !== requestedRuntimeIdentity.agentId ||
+					resolution.zoneId !== requestedRuntimeIdentity.zoneId
+				) {
+					return {
+						kind: 'not-dispatched',
+						reason: 'credentialed runtime materialization changed its owner',
+					};
+				}
 				let live = liveByKey.get(key);
 				if (live?.activeCommand !== undefined) {
 					if (
-						live.resolution.agentRuntimeRevision !== request.resolution.agentRuntimeRevision ||
+						live.resolution.agentRuntimeRevision !== resolution.agentRuntimeRevision ||
 						!ownerIdentitiesEqual(live.ownerIdentity, request.ownerIdentity)
 					) {
 						live.retireAfterActiveReason = 'runtime compatibility changed while active';
@@ -343,7 +390,7 @@ export function createCredentialedRuntimeManager(props: {
 				}
 				if (
 					live !== undefined &&
-					(live.resolution.agentRuntimeRevision !== request.resolution.agentRuntimeRevision ||
+					(live.resolution.agentRuntimeRevision !== resolution.agentRuntimeRevision ||
 						!ownerIdentitiesEqual(live.ownerIdentity, request.ownerIdentity) ||
 						now() - live.lastUsedAtMs >= CredentialedRuntimeIdleTtlMs)
 				) {
@@ -363,7 +410,7 @@ export function createCredentialedRuntimeManager(props: {
 					const context = {
 						ownerIdentity: request.ownerIdentity,
 						recordId,
-						resolution: request.resolution,
+						resolution,
 					};
 					await recordWriter.write(context, ({ common, generation }) => ({
 						...common,
@@ -380,16 +427,24 @@ export function createCredentialedRuntimeManager(props: {
 					let vm: ManagedVm;
 					let commandEnvironment: Readonly<Record<string, string>>;
 					try {
-						const created = await createUnstartedCredentialedManagedVm({
-							managedVmFactory: props.managedVmFactory,
-							resolution: request.resolution,
-							secretResolver: props.secretResolver,
-							sessionLabel: `credentialed-runtime-${randomUUID()}`,
-						});
+						let created: Awaited<ReturnType<typeof createUnstartedCredentialedManagedVm>>;
+						try {
+							created = await createUnstartedCredentialedManagedVm({
+								...(materialization.dynamicHttpMediation === undefined
+									? {}
+									: { dynamicHttpMediation: materialization.dynamicHttpMediation }),
+								managedVmFactory: props.managedVmFactory,
+								resolution,
+								secretResolver: props.secretResolver,
+								sessionLabel: `credentialed-runtime-${randomUUID()}`,
+							});
+						} finally {
+							materialization.dynamicHttpMediation?.secretValue.fill(0);
+						}
 						vm = created.vm;
 						commandEnvironment = created.commandEnvironment;
 					} catch {
-						await recordWriter.delete(request.resolution.zoneId, recordId);
+						await recordWriter.delete(resolution.zoneId, recordId);
 						return { kind: 'not-dispatched', reason: 'credentialed runtime creation failed' };
 					}
 					try {
@@ -409,7 +464,7 @@ export function createCredentialedRuntimeManager(props: {
 					}
 					try {
 						await finalizeCredentialedManagedVm({
-							resolution: request.resolution,
+							resolution,
 							secretResolver: props.secretResolver,
 							vm,
 						});
@@ -450,7 +505,7 @@ export function createCredentialedRuntimeManager(props: {
 						lastUsedAtMs: now(),
 						ownerIdentity: request.ownerIdentity,
 						recordId,
-						resolution: request.resolution,
+						resolution,
 						vm,
 					};
 					try {
@@ -556,7 +611,7 @@ export function createCredentialedRuntimeManager(props: {
 				}
 
 				let completed = false;
-				const commandResolution = request.resolution;
+				const commandResolution = resolution;
 				return {
 					command: {
 						complete: async (outcome): Promise<void> => {

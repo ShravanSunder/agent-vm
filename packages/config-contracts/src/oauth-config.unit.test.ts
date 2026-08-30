@@ -40,8 +40,14 @@ function validOAuthConfigInput(): unknown {
 							source: '1password',
 						},
 						clientKind: 'web',
+						description: 'Gmail account access.',
+						label: 'Gmail',
 						services: {
-							gmail: { read: ['gmail.readonly'], write: ['gmail.modify'] },
+							gmail: {
+								label: 'Gmail messages',
+								read: ['gmail.readonly'],
+								write: ['gmail.modify'],
+							},
 						},
 					},
 					'workspace-app': {
@@ -50,9 +56,19 @@ function validOAuthConfigInput(): unknown {
 							source: '1password',
 						},
 						clientKind: 'web',
+						description: 'Google Workspace application access.',
+						label: 'Google Workspace',
 						services: {
-							calendar: { read: ['calendar.readonly'], write: ['calendar'] },
-							drive: { read: ['drive.readonly'], write: ['drive'] },
+							calendar: {
+								label: 'Google Calendar',
+								read: ['calendar.readonly'],
+								write: ['calendar'],
+							},
+							drive: {
+								label: 'Google Drive',
+								read: ['drive.readonly'],
+								write: ['drive'],
+							},
 						},
 					},
 					'youtube-app': {
@@ -61,7 +77,11 @@ function validOAuthConfigInput(): unknown {
 							source: '1password',
 						},
 						clientKind: 'web',
-						services: { youtube: { read: ['youtube.readonly'] } },
+						description: 'YouTube account and channel access.',
+						label: 'YouTube',
+						services: {
+							youtube: { label: 'YouTube channel', read: ['youtube.readonly'] },
+						},
 					},
 				},
 				kind: 'google',
@@ -84,6 +104,25 @@ function validOAuthToolPortalConfigInput(): unknown {
 		profiles: {
 			'google-enabled': {
 				namespaces: {
+					oauth_authorization: {
+						backend: {
+							kind: 'controller_execution',
+							operations: {
+								begin: { kind: 'registered_action' },
+								cancel: { kind: 'registered_action' },
+								list: { kind: 'registered_action' },
+								reauthorize: { kind: 'registered_action' },
+								revoke: { kind: 'registered_action' },
+								status: { kind: 'registered_action' },
+							},
+						},
+						calls: {
+							requiresApproval: { allow: ['reauthorize', 'revoke'] },
+							withoutApproval: { allow: ['begin', 'cancel', 'list', 'status'] },
+						},
+						discovery: { summary: 'Set up and inspect account authorization.' },
+						tools: { allow: ['begin', 'cancel', 'list', 'reauthorize', 'revoke', 'status'] },
+					},
 					gog: {
 						backend: {
 							kind: 'controller_execution',
@@ -129,15 +168,11 @@ function validOAuthToolPortalConfigInput(): unknown {
 									deniedPatterns: [],
 									executablePath: '/usr/bin/gog',
 									executionTarget: {
-										allowedHosts: ['www.googleapis.com'],
+										allowedHosts: ['gmail.googleapis.com'],
 										credentialProjection: {
 											environment: {
 												GOG_ACCESS_TOKEN: {
-													hosts: ['www.googleapis.com'],
-													secret: {
-														ref: 'op://agent-vm-testing/placeholder/value',
-														source: '1password',
-													},
+													kind: 'oauth_access_token',
 												},
 											},
 											kind: 'http_mediation',

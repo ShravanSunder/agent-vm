@@ -108,13 +108,29 @@ export type OAuthReplaceGrantEnvelopeResult =
 export interface OAuthCredentialCatalog {
 	close(): void;
 	commitEnrollmentGrant(input: OAuthEnrollmentGrantInput): OAuthCommitEnrollmentResult;
+	deleteGrantForAccountApplication(props: {
+		readonly accountProfileId: z.infer<typeof oauthAccountProfileIdSchema>;
+		readonly agentId: string;
+		readonly applicationId: z.infer<typeof oauthApplicationIdSchema>;
+		readonly zoneId: string;
+	}): 'deleted' | 'missing';
 	getGrant(credentialId: z.infer<typeof oauthCredentialIdSchema>): OAuthStoredGrant | undefined;
+	getGrantForAccountApplication(props: {
+		readonly accountProfileId: z.infer<typeof oauthAccountProfileIdSchema>;
+		readonly agentId: string;
+		readonly applicationId: z.infer<typeof oauthApplicationIdSchema>;
+		readonly zoneId: string;
+	}): OAuthStoredGrant | undefined;
 	getStorageDiagnostics(): {
 		readonly busyTimeoutMs: number;
 		readonly foreignKeysEnabled: boolean;
 		readonly journalMode: string;
 		readonly synchronousMode: number;
 	};
+	listGrantsForAgent(props: {
+		readonly agentId: string;
+		readonly zoneId: string;
+	}): readonly OAuthStoredGrant[];
 	replaceGrantEnvelope(props: OAuthReplaceGrantEnvelopeInput): OAuthReplaceGrantEnvelopeResult;
 }
 
@@ -185,6 +201,27 @@ function queryGrant(
 		.all();
 	const row = rows[0];
 	return row === undefined ? undefined : grantFromRows(row);
+}
+
+function queryGrantsForAgent(
+	database: OAuthCatalogDatabase,
+	props: { readonly agentId: string; readonly zoneId: string },
+): readonly OAuthStoredGrant[] {
+	return database
+		.select({ grant: oauthGrantsTable, profile: oauthAccountProfilesTable })
+		.from(oauthGrantsTable)
+		.innerJoin(
+			oauthAccountProfilesTable,
+			eq(oauthGrantsTable.profileRecordId, oauthAccountProfilesTable.profileRecordId),
+		)
+		.where(
+			and(
+				eq(oauthAccountProfilesTable.agentId, z.string().min(1).max(128).parse(props.agentId)),
+				eq(oauthAccountProfilesTable.zoneId, z.string().min(1).max(128).parse(props.zoneId)),
+			),
+		)
+		.all()
+		.map((row) => grantFromRows(row));
 }
 
 async function hardenCatalogPaths(databasePath: string): Promise<void> {
@@ -342,7 +379,28 @@ export async function openOAuthCredentialCatalog(props: {
 					return { grant, kind: 'committed' as const };
 				});
 			},
+			deleteGrantForAccountApplication: (deleteProps) => {
+				const grant = queryGrantsForAgent(database, deleteProps).find(
+					(candidate) =>
+						candidate.accountProfileId ===
+							oauthAccountProfileIdSchema.parse(deleteProps.accountProfileId) &&
+						candidate.applicationId === oauthApplicationIdSchema.parse(deleteProps.applicationId),
+				);
+				if (grant === undefined) return 'missing';
+				database
+					.delete(oauthGrantsTable)
+					.where(eq(oauthGrantsTable.credentialId, grant.credentialId))
+					.run();
+				return 'deleted';
+			},
 			getGrant,
+			getGrantForAccountApplication: (queryProps) =>
+				queryGrantsForAgent(database, queryProps).find(
+					(grant) =>
+						grant.accountProfileId ===
+							oauthAccountProfileIdSchema.parse(queryProps.accountProfileId) &&
+						grant.applicationId === oauthApplicationIdSchema.parse(queryProps.applicationId),
+				),
 			getStorageDiagnostics: () => ({
 				busyTimeoutMs: z
 					.number()
@@ -356,6 +414,7 @@ export async function openOAuthCredentialCatalog(props: {
 					.int()
 					.parse(sqlite.pragma('synchronous', { simple: true })),
 			}),
+			listGrantsForAgent: (queryProps) => queryGrantsForAgent(database, queryProps),
 			replaceGrantEnvelope: (unparsedReplacement): OAuthReplaceGrantEnvelopeResult => {
 				const replacement = oauthReplaceGrantEnvelopeInputSchema.parse(unparsedReplacement);
 				const current = getGrant(replacement.credentialId);

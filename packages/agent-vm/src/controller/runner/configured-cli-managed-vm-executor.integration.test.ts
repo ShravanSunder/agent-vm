@@ -2,6 +2,12 @@ import {
 	encodeConfiguredCliPreparedImageIdentity,
 	type EffectiveControllerExecutionOperation,
 } from '@agent-vm/config-contracts';
+import {
+	oauthAccountProfileIdSchema,
+	oauthApplicationIdSchema,
+	oauthMaterialRevisionSchema,
+	oauthServiceIdSchema,
+} from '@agent-vm/oauth-broker-contracts';
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
@@ -54,6 +60,34 @@ function operation(): ConfiguredOperation {
 	};
 }
 
+function oauthOperation(): ConfiguredOperation {
+	const configuredOperation = structuredClone(operation());
+	configuredOperation.authorization = {
+		kind: 'oauth_account_profile',
+		rules: [
+			{
+				match: { flags: [], path: ['gmail', 'search'] },
+				requirement: {
+					applicationId: oauthApplicationIdSchema.parse('gmail-app'),
+					kind: 'oauth',
+					minimumPermission: 'read',
+					serviceId: oauthServiceIdSchema.parse('gmail'),
+				},
+			},
+		],
+	};
+	configuredOperation.commands = [{ flagRules: [], path: ['gmail', 'search'] }];
+	if (configuredOperation.executionTarget.kind !== 'ephemeral_managed_vm') {
+		throw new Error('Expected Managed VM target.');
+	}
+	configuredOperation.executionTarget.allowedHosts = ['gmail.googleapis.com'];
+	configuredOperation.executionTarget.credentialProjection = {
+		environment: { GOG_ACCESS_TOKEN: { kind: 'oauth_access_token' } },
+		kind: 'http_mediation',
+	};
+	return configuredOperation;
+}
+
 function runtimeResolution(configuredOperation = operation()): CredentialedRuntimeResolution {
 	return {
 		agentRuntimeRevision: 'sha256:group-current',
@@ -77,6 +111,30 @@ function runtimeResolution(configuredOperation = operation()): CredentialedRunti
 		operationName: 'calendar_list',
 		profileId: 'google-enabled',
 		zoneId: 'zone-a',
+	};
+}
+
+function oauthAuthorization(): ConfiguredCliAuthorizedOperation {
+	const configuredOperation = oauthOperation();
+	const resolution = runtimeResolution(configuredOperation);
+	return {
+		credentialedRuntime: {
+			...resolution,
+			projection: {
+				environmentName: 'GOG_ACCESS_TOKEN',
+				kind: 'oauth_http_mediation',
+			},
+		},
+		evaluation: {
+			authorityKind: 'without_approval',
+			bindingRevision: 'binding:current',
+			disposition: 'without_approval',
+			fingerprint: `sha256:${'a'.repeat(64)}`,
+			operationId: '11111111-1111-4111-8111-111111111111',
+			operationName: 'gog_cli',
+			targetKind: 'ephemeral_managed_vm',
+		},
+		operation: configuredOperation,
 	};
 }
 
@@ -141,8 +199,12 @@ const gatewayIdentity = {
 
 function executorWithManager(
 	runtimeManager: CredentialedRuntimeManager,
+	resolveOAuthRuntimeCredential?: NonNullable<
+		Parameters<typeof createConfiguredCliManagedVmExecutor>[0]['resolveOAuthRuntimeCredential']
+	>,
 ): ReturnType<typeof createConfiguredCliManagedVmExecutor> {
 	return createConfiguredCliManagedVmExecutor({
+		...(resolveOAuthRuntimeCredential === undefined ? {} : { resolveOAuthRuntimeCredential }),
 		resolveGatewayIdentity: vi.fn(async () => gatewayIdentity),
 		runtimeManager,
 	});
@@ -162,6 +224,68 @@ function managerWithAcquire(
 }
 
 describe('configured CLI credentialed Managed VM executor', () => {
+	it('materializes the selected OAuth account only through the reserved runtime callback', async () => {
+		const command = commandHandle();
+		const acquireCommand = vi.fn(
+			async (request: Parameters<CredentialedRuntimeManager['acquireCommand']>[0]) => {
+				if (!('materializeResolution' in request)) {
+					throw new Error('Expected deferred OAuth materialization.');
+				}
+				const materialization = await request.materializeResolution();
+				expect(materialization).toMatchObject({
+					dynamicHttpMediation: {
+						allowedHosts: ['gmail.googleapis.com'],
+						environmentName: 'GOG_ACCESS_TOKEN',
+						kind: 'dynamic_http_mediation',
+					},
+				});
+				return { command, kind: 'acquired' as const };
+			},
+		);
+		const resolveOAuthRuntimeCredential = vi.fn(async () => ({
+			accessToken: new TextEncoder().encode('oauth-access-token-marker'),
+			allowedHosts: ['gmail.googleapis.com'],
+			credentialId: 'credential-a',
+			kind: 'ready' as const,
+			materialRevision: oauthMaterialRevisionSchema.parse(
+				`sha256:${Buffer.alloc(32, 7).toString('base64url')}`,
+			),
+		}));
+		const execute = executorWithManager(
+			managerWithAcquire(acquireCommand),
+			resolveOAuthRuntimeCredential,
+		);
+		const currentAuthorization = oauthAuthorization();
+
+		await expect(
+			execute({
+				authorization: currentAuthorization,
+				input: {
+					accountProfile: oauthAccountProfileIdSchema.parse('personal-google'),
+					argv: ['gmail', 'search'],
+					reason: 'read messages',
+				},
+				operation: currentAuthorization.operation,
+				operationName: 'gog_cli',
+				reloadAuthorization: vi.fn(async () => currentAuthorization),
+				stablePrincipal: 'a'.repeat(64),
+				zoneId: 'zone-a',
+			}),
+		).resolves.toMatchObject({ exitCode: 0 });
+		expect(resolveOAuthRuntimeCredential).toHaveBeenCalledWith({
+			accountProfileId: 'personal-google',
+			agentId: 'sun',
+			applicationId: 'gmail-app',
+			minimumPermission: 'read',
+			serviceId: 'gmail',
+			zoneId: 'zone-a',
+		});
+		expect(command.exec).toHaveBeenCalledWith(
+			expect.objectContaining({ argv: ['gmail', 'search'] }),
+			{},
+		);
+	});
+
 	it('acquires one current slot, executes, and returns the runtime to idle', async () => {
 		const command = commandHandle();
 		const acquireCommand = vi.fn(async () => ({ command, kind: 'acquired' as const }));

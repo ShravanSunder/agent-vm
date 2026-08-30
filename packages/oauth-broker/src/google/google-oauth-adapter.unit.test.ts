@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
 	createGoogleOAuthAdapter,
 	parseGoogleWebClientCredentials,
+	type GoogleWebClientCredentials,
 } from './google-oauth-adapter.js';
 
 const redirectUri = 'https://auth.claw.askluna.xyz/oauth/google/callback';
@@ -19,7 +20,7 @@ const rawClientCredentials = JSON.stringify({
 	},
 });
 
-function clientCredentials() {
+function clientCredentials(): GoogleWebClientCredentials {
 	return parseGoogleWebClientCredentials({
 		expectedRedirectUri: redirectUri,
 		rawClientCredentials,
@@ -31,6 +32,10 @@ function jsonResponse(body: unknown, status = 200): Response {
 		headers: { 'content-type': 'application/json' },
 		status,
 	});
+}
+
+function requestUrl(input: string | URL | Request): string {
+	return input instanceof Request ? input.url : input.toString();
 }
 
 function requireUrlSearchParams(body: RequestInit['body']): URLSearchParams {
@@ -74,7 +79,7 @@ describe('Google OAuth adapter', () => {
 	it('exchanges one code with PKCE and discovers the stable Google subject', async () => {
 		const fetchCalls: Array<{ readonly init: RequestInit | undefined; readonly url: string }> = [];
 		const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-			const url = String(input);
+			const url = requestUrl(input);
 			fetchCalls.push({ init, url });
 			if (url === 'https://oauth2.googleapis.com/token') {
 				return jsonResponse({
@@ -163,7 +168,7 @@ describe('Google OAuth adapter', () => {
 		const fetchCalls: Array<{ readonly init: RequestInit | undefined; readonly url: string }> = [];
 		const adapter = createGoogleOAuthAdapter({
 			fetchImpl: async (input, init) => {
-				fetchCalls.push({ init, url: String(input) });
+				fetchCalls.push({ init, url: requestUrl(input) });
 				return new Response(null, { status: 200 });
 			},
 		});

@@ -102,6 +102,15 @@ importers:
       '@agent-vm/mcp-portal':
         specifier: workspace:*
         version: link:../mcp-portal
+      '@agent-vm/oauth-approval-ui':
+        specifier: workspace:*
+        version: link:../oauth-approval-ui
+      '@agent-vm/oauth-broker':
+        specifier: workspace:*
+        version: link:../oauth-broker
+      '@agent-vm/oauth-broker-contracts':
+        specifier: workspace:*
+        version: link:../oauth-broker-contracts
       '@agent-vm/secret-management':
         specifier: workspace:*
         version: link:../secret-management
@@ -311,6 +320,9 @@ importers:
       '@agent-vm/control-protocol-contracts':
         specifier: workspace:*
         version: link:../control-protocol-contracts
+      '@agent-vm/oauth-broker-contracts':
+        specifier: workspace:*
+        version: link:../oauth-broker-contracts
       zod:
         specifier: ^4.4.3
         version: 4.4.3

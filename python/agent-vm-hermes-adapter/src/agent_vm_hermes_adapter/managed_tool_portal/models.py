@@ -60,6 +60,14 @@ class NamespaceAvailability(_FrozenModel):
     namespace: str = Field(min_length=1)
     summary: str | None = Field(default=None, min_length=1, max_length=500)
     status: AvailabilityStatus
+    tools: tuple["NamespaceToolSummary", ...] = Field(default=(), max_length=8)
+
+
+class NamespaceToolSummary(_FrozenModel):
+    """One bounded child tool rendered beneath its owning namespace."""
+
+    description: str | None = Field(default=None, max_length=120)
+    name: str = Field(min_length=1)
 
 
 class NamespaceInventory(_FrozenModel):

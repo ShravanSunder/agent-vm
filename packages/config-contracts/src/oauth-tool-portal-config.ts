@@ -29,6 +29,25 @@ function permissionSatisfies(
 	);
 }
 
+function selectorIncludesTool(
+	selector: { readonly allow: '*' | readonly string[]; readonly deny: readonly string[] },
+	toolName: string,
+): boolean {
+	return (
+		!selector.deny.includes(toolName) &&
+		(selector.allow === '*' || selector.allow.includes(toolName))
+	);
+}
+
+const oauthAuthorizationToolNames = [
+	'begin',
+	'cancel',
+	'list',
+	'reauthorize',
+	'revoke',
+	'status',
+] as const;
+
 export const oauthToolPortalConfigPairSchema = z
 	.object({
 		oauthConfig: oauthConfigSchema,
@@ -57,6 +76,65 @@ export const oauthToolPortalConfigPairSchema = z
 		for (const [agentId, toolPortalAgent] of Object.entries(toolPortalConfig.agents)) {
 			const profile = toolPortalConfig.profiles[toolPortalAgent.profile];
 			if (profile === undefined) continue;
+			if (oauthConfig.agents[agentId] !== undefined) {
+				const authorizationNamespace = profile.namespaces.oauth_authorization;
+				for (const toolName of oauthAuthorizationToolNames) {
+					const operation =
+						authorizationNamespace?.backend.kind === 'controller_execution'
+							? authorizationNamespace.backend.operations[toolName]
+							: undefined;
+					if (
+						operation?.kind !== 'registered_action' ||
+						!selectorIncludesTool(
+							authorizationNamespace?.tools ?? { allow: [], deny: [] },
+							toolName,
+						)
+					) {
+						context.addIssue({
+							code: z.ZodIssueCode.custom,
+							message: `OAuth agent "${agentId}" must expose oauth_authorization.${toolName} as a registered controller action.`,
+							path: [
+								'toolPortalConfig',
+								'profiles',
+								toolPortalAgent.profile,
+								'namespaces',
+								'oauth_authorization',
+							],
+						});
+						continue;
+					}
+					if (authorizationNamespace === undefined) continue;
+					const requiresApproval = selectorIncludesTool(
+						authorizationNamespace.calls.requiresApproval,
+						toolName,
+					);
+					const withoutApproval = selectorIncludesTool(
+						authorizationNamespace.calls.withoutApproval,
+						toolName,
+					);
+					if (
+						toolName === 'reauthorize' || toolName === 'revoke'
+							? !requiresApproval || withoutApproval
+							: requiresApproval === withoutApproval
+					) {
+						context.addIssue({
+							code: z.ZodIssueCode.custom,
+							message:
+								toolName === 'reauthorize' || toolName === 'revoke'
+									? `oauth_authorization.${toolName} must require Tool Portal approval.`
+									: `oauth_authorization.${toolName} must have exactly one call disposition.`,
+							path: [
+								'toolPortalConfig',
+								'profiles',
+								toolPortalAgent.profile,
+								'namespaces',
+								'oauth_authorization',
+								'calls',
+							],
+						});
+					}
+				}
+			}
 			for (const [namespaceId, namespacePolicy] of Object.entries(profile.namespaces)) {
 				if (namespacePolicy.backend.kind !== 'controller_execution') continue;
 				for (const [operationName, operation] of Object.entries(

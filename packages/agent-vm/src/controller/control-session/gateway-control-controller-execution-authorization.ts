@@ -32,8 +32,11 @@ import type {
 } from './gateway-control-caller-context.js';
 
 const controllerExecutionNamespace = 'controller_execution';
-const [controllerHostProbeToolName, workspaceGitPushToolName] =
-	gatewayControlRegisteredControllerExecutionActionIds;
+const oauthAuthorizationNamespace = 'oauth_authorization';
+const controllerHostProbeToolName =
+	'controller_host_probe' satisfies (typeof gatewayControlRegisteredControllerExecutionActionIds)[number];
+const workspaceGitPushToolName =
+	'workspace_git_push' satisfies (typeof gatewayControlRegisteredControllerExecutionActionIds)[number];
 const controllerHostProbeEnvGate = 'AGENT_VM_E2E_CONTROLLER_HOST_PROBE';
 
 export interface GatewayControlControllerExecutionAuthorizationRequest {
@@ -77,8 +80,42 @@ function rejectAuthorization(
 
 function isSupportedControllerExecutionName(
 	value: string | undefined,
-): value is typeof workspaceGitPushToolName | typeof controllerHostProbeToolName {
-	return value === workspaceGitPushToolName || value === controllerHostProbeToolName;
+): value is (typeof gatewayControlRegisteredControllerExecutionActionIds)[number] {
+	switch (value) {
+		case controllerHostProbeToolName:
+		case 'oauth_authorization.begin':
+		case 'oauth_authorization.cancel':
+		case 'oauth_authorization.list':
+		case 'oauth_authorization.reauthorize':
+		case 'oauth_authorization.revoke':
+		case 'oauth_authorization.status':
+		case workspaceGitPushToolName:
+			return true;
+		case undefined:
+		default:
+			return false;
+	}
+}
+
+function registeredActionMatchesCapability(props: {
+	readonly actionId: string;
+	readonly capabilityName: string;
+	readonly capabilityNamespace: string;
+}): boolean {
+	if (!isSupportedControllerExecutionName(props.actionId)) return false;
+	if (
+		props.actionId === controllerHostProbeToolName ||
+		props.actionId === workspaceGitPushToolName
+	) {
+		return (
+			props.capabilityNamespace === controllerExecutionNamespace &&
+			props.capabilityName === props.actionId
+		);
+	}
+	return (
+		props.capabilityNamespace === oauthAuthorizationNamespace &&
+		props.actionId === `${oauthAuthorizationNamespace}.${props.capabilityName}`
+	);
 }
 
 export async function authorizeGatewayControlControllerExecution(
@@ -91,9 +128,11 @@ export async function authorizeGatewayControlControllerExecution(
 	if (
 		capability === undefined ||
 		(request.payload.kind === 'registered_action' &&
-			(capability.namespace !== controllerExecutionNamespace ||
-				!isSupportedControllerExecutionName(capability.name) ||
-				capability.name !== request.payload.action.actionId)) ||
+			!registeredActionMatchesCapability({
+				actionId: request.payload.action.actionId,
+				capabilityName: capability.name,
+				capabilityNamespace: capability.namespace,
+			})) ||
 		(request.payload.kind === 'configured_cli' && capability.name !== request.payload.operationName)
 	) {
 		return rejectAuthorization(

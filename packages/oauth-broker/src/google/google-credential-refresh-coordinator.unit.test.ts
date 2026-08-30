@@ -124,13 +124,16 @@ function createCatalog(initialGrant: OAuthStoredGrant): {
 			commitEnrollmentGrant: () => {
 				throw new Error('Unexpected enrollment commit in refresh test.');
 			},
+			deleteGrantForAccountApplication: () => 'missing',
 			getGrant: () => currentGrant,
+			getGrantForAccountApplication: () => currentGrant,
 			getStorageDiagnostics: () => ({
 				busyTimeoutMs: 5_000,
 				foreignKeysEnabled: true,
 				journalMode: 'wal',
 				synchronousMode: 2,
 			}),
+			listGrantsForAgent: () => [currentGrant],
 			replaceGrantEnvelope,
 		},
 		replaceGrantEnvelope,

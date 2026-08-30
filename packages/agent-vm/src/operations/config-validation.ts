@@ -2,7 +2,13 @@ import { access } from 'node:fs/promises';
 import path from 'node:path';
 
 import { loadWorkerConfigDraft } from '@agent-vm/agent-vm-worker';
-import { loadMcpConfig, loadToolPortalConfig } from '@agent-vm/config-contracts';
+import {
+	loadMcpConfig,
+	loadOAuthConfig,
+	loadToolPortalConfig,
+	validateOAuthToolPortalConfigPair,
+	type ToolPortalConfig,
+} from '@agent-vm/config-contracts';
 import { loadHermesManagedConfiguration } from '@agent-vm/hermes-gateway';
 import type { SecretResolver } from '@agent-vm/secret-management';
 
@@ -32,6 +38,10 @@ export interface RunConfigValidationOptions {
 
 function getErrorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
+}
+
+function isMissingFileError(error: unknown): boolean {
+	return typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT';
 }
 
 function isBlockingValidationCheck(check: ConfigValidationCheck): boolean {
@@ -219,7 +229,9 @@ async function collectToolPortalConfigChecks(
 	const configDir = resolveProjectCheckoutPath(systemConfig, zone.toolPortal.configDir);
 	const mcpConfigPath = path.join(configDir, 'mcp.config.jsonc');
 	const toolPortalConfigPath = path.join(configDir, 'tool-portal.config.jsonc');
+	const oauthConfigPath = path.join(configDir, 'oauth.config.jsonc');
 	const checks: ConfigValidationCheck[] = [];
+	let loadedToolPortalConfig: ToolPortalConfig | undefined;
 	try {
 		await loadMcpConfig(mcpConfigPath);
 		checks.push({ name: `mcp-config-${zone.id}`, ok: true, hint: mcpConfigPath });
@@ -233,6 +245,7 @@ async function collectToolPortalConfigChecks(
 
 	try {
 		const toolPortalConfig = await loadToolPortalConfig(toolPortalConfigPath);
+		loadedToolPortalConfig = toolPortalConfig;
 		checks.push({ name: `tool-portal-config-${zone.id}`, ok: true, hint: toolPortalConfigPath });
 		const requiresApprovalAccess = managedToolPortalRequiresApprovalAccess(toolPortalConfig);
 		const approvalAccessConfigured = zone.approvalAccess !== undefined;
@@ -284,6 +297,37 @@ async function collectToolPortalConfigChecks(
 			ok: false,
 			hint: `Missing or invalid ${toolPortalConfigPath}: ${getErrorMessage(error)}`,
 		});
+	}
+	try {
+		await access(oauthConfigPath);
+		const oauthConfig = await loadOAuthConfig(oauthConfigPath);
+		if (loadedToolPortalConfig === undefined) {
+			throw new Error('OAuth config requires a valid sibling Tool Portal config.');
+		}
+		validateOAuthToolPortalConfigPair({
+			oauthConfig,
+			toolPortalConfig: loadedToolPortalConfig,
+		});
+		const oauthPort = oauthConfig.browser.listener.port;
+		const collidingPort = [
+			systemConfig.host.controllerPort,
+			...systemConfig.zones.map((configuredZone) => configuredZone.gateway.port),
+		].includes(oauthPort);
+		const collidesWithTcpPool =
+			oauthPort >= systemConfig.tcpPool.basePort &&
+			oauthPort < systemConfig.tcpPool.basePort + systemConfig.tcpPool.size;
+		if (collidingPort || collidesWithTcpPool) {
+			throw new Error(`OAuth listener port ${String(oauthPort)} collides with another host port.`);
+		}
+		checks.push({ name: `oauth-config-${zone.id}`, ok: true, hint: oauthConfigPath });
+	} catch (error) {
+		if (!isMissingFileError(error)) {
+			checks.push({
+				name: `oauth-config-${zone.id}`,
+				ok: false,
+				hint: `Invalid ${oauthConfigPath}: ${getErrorMessage(error)}`,
+			});
+		}
 	}
 	try {
 		await planMcpPortalEffectiveConfig({

@@ -11,7 +11,7 @@ import { z } from 'zod';
 
 import { loadJsonConfigFile } from './json-config-file.js';
 
-const googleOAuthApplicationIds = ['workspace-app', 'gmail-app', 'youtube-app'] as const;
+export const googleOAuthApplicationIds = ['workspace-app', 'gmail-app', 'youtube-app'] as const;
 
 export const googleOAuthApplicationIdSchema = z.enum(googleOAuthApplicationIds);
 export type GoogleOAuthApplicationId = z.infer<typeof googleOAuthApplicationIdSchema>;
@@ -51,6 +51,7 @@ export const oauthBrowserPublicBaseUrlSchema = z.url().refine((value) => {
 
 export const oauthPermissionScopeMappingSchema = z
 	.object({
+		label: z.string().min(1).max(160),
 		read: z.array(oauthScopeSchema).min(1).readonly(),
 		write: z.array(oauthScopeSchema).min(1).readonly().optional(),
 	})
@@ -73,6 +74,8 @@ export const googleOAuthApplicationConfigSchema = z
 	.object({
 		clientCredentials: onePasswordOAuthSecretSchema,
 		clientKind: z.literal('web'),
+		description: z.string().min(1).max(500),
+		label: z.string().min(1).max(160),
 		services: z
 			.record(oauthServiceIdSchema, oauthPermissionScopeMappingSchema)
 			.refine((services) => Object.keys(services).length > 0, {
@@ -90,6 +93,13 @@ const googleOAuthApplicationsSchema = z
 	})
 	.strict();
 
+function isSafeTailnetLoginCharacter(character: string): boolean {
+	const codePoint = character.codePointAt(0);
+	return (
+		codePoint !== undefined && codePoint >= 0x20 && codePoint !== 0x7f && !/^\s$/u.test(character)
+	);
+}
+
 export const oauthAccountProfileApplicationMaximumSchema = z
 	.object({
 		maximumPermissions: z.record(
@@ -105,7 +115,7 @@ export const oauthAccountProfileApplicationMaximumSchema = z
 export const oauthAccountProfileConfigSchema = z
 	.object({
 		applications: z
-			.record(googleOAuthApplicationIdSchema, oauthAccountProfileApplicationMaximumSchema)
+			.partialRecord(googleOAuthApplicationIdSchema, oauthAccountProfileApplicationMaximumSchema)
 			.refine((applications) => Object.keys(applications).length > 0, {
 				message: 'OAuth account profiles must configure at least one application.',
 			}),
@@ -115,7 +125,7 @@ export const oauthAccountProfileConfigSchema = z
 					.string()
 					.min(1)
 					.max(320)
-					.refine((login) => !/[\u0000-\u001f\u007f\s]/u.test(login), {
+					.refine((login) => Array.from(login).every(isSafeTailnetLoginCharacter), {
 						message: 'Authorized tailnet logins must not contain whitespace or control bytes.',
 					}),
 			)

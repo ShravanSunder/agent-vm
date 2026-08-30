@@ -31,12 +31,20 @@ from agent_vm_hermes_adapter.managed_tool_portal.models import (
     InventoryReadyValue,
     NamespaceAvailability,
     NamespaceInventory,
+    NamespaceToolSummary,
 )
 from agent_vm_hermes_adapter.managed_tool_portal.renderer import render_orientation
 
 INVENTORY_DEADLINE_SECONDS = 60.0
 INVENTORY_ATTEMPT_SLICE_ENDS: tuple[float, float, float] = (20.0, 40.0, 60.0)
 INVENTORY_MAX_ATTEMPTS = 3
+ORIENTATION_TOOL_DESCRIPTION_CODE_POINTS = 120
+
+
+def _bounded_tool_description(description: str | None) -> str | None:
+    if description is None or len(description) <= ORIENTATION_TOOL_DESCRIPTION_CODE_POINTS:
+        return description
+    return description[: ORIENTATION_TOOL_DESCRIPTION_CODE_POINTS - 1] + "…"
 
 
 class _FrozenModel(BaseModel):
@@ -286,8 +294,8 @@ class InventoryCoordinator:
         *,
         attempt_number: int,
         attempt_deadline: float,
-    ) -> tuple[tuple[str, bool], ...]:
-        observations: list[tuple[str, bool]] = []
+    ) -> tuple[tuple[str, tuple[InventoryPortalToolSummary, ...]], ...]:
+        observations: list[tuple[str, tuple[InventoryPortalToolSummary, ...]]] = []
         batches = tuple(
             projection.namespaces[offset : offset + PORTAL_BATCH_MAX_ITEMS]
             for offset in range(0, len(projection.namespaces), PORTAL_BATCH_MAX_ITEMS)
@@ -331,17 +339,19 @@ class InventoryCoordinator:
                     raise _AttemptFailure(InventoryFailureClass.MALFORMED_RESPONSE)
                 if result_item.value is None:
                     raise _AttemptFailure(InventoryFailureClass.MALFORMED_RESPONSE)
-                if len(result_item.value.tools) > 1:
+                if len(result_item.value.tools) > 8:
                     raise _AttemptFailure(InventoryFailureClass.MALFORMED_RESPONSE)
                 if result_item.value.tools:
                     if result_item.value.namespaces != (requested_namespace,):
                         raise _AttemptFailure(InventoryFailureClass.MALFORMED_RESPONSE)
-                    if result_item.value.tools[0].namespace != requested_namespace:
+                    if any(
+                        tool.namespace != requested_namespace for tool in result_item.value.tools
+                    ):
                         raise _AttemptFailure(InventoryFailureClass.MALFORMED_RESPONSE)
                 elif result_item.value.namespaces not in ((), (requested_namespace,)):
                     raise _AttemptFailure(InventoryFailureClass.MALFORMED_RESPONSE)
                 observations.append(
-                    (requested_namespace, bool(result_item.value.tools)),
+                    (requested_namespace, result_item.value.tools),
                 )
         return tuple(observations)
 
@@ -402,9 +412,9 @@ class InventoryCoordinator:
         self,
         population: PopulationStarted[InventoryCacheKey, InventoryReadyValue],
         projection: InventoryProjection,
-        observations: tuple[tuple[str, bool], ...],
+        observations: tuple[tuple[str, tuple[InventoryPortalToolSummary, ...]], ...],
     ) -> CacheSnapshot[InventoryCacheKey, InventoryReadyValue]:
-        availability_by_name = {namespace: has_tool for namespace, has_tool in observations}
+        tools_by_name = {namespace: tools for namespace, tools in observations}
         inventory = NamespaceInventory(
             inventory_id=_inventory_id(projection),
             namespaces=tuple(
@@ -412,8 +422,15 @@ class InventoryCoordinator:
                     namespace=namespace_discovery.namespace,
                     summary=namespace_discovery.summary,
                     status="available"
-                    if availability_by_name.get(namespace_discovery.namespace, False)
+                    if tools_by_name.get(namespace_discovery.namespace, ())
                     else "unavailable",
+                    tools=tuple(
+                        NamespaceToolSummary(
+                            description=_bounded_tool_description(tool.description),
+                            name=tool.name,
+                        )
+                        for tool in tools_by_name.get(namespace_discovery.namespace, ())
+                    ),
                 )
                 for namespace_discovery in projection.namespaces
             ),

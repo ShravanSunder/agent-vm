@@ -184,42 +184,51 @@ export const oauthAuthorizationActionIdSchema = z.enum([
 ]);
 export type OAuthAuthorizationActionId = z.infer<typeof oauthAuthorizationActionIdSchema>;
 
+export const oauthAuthorizationListRequestSchema = z
+	.object({ actionId: z.literal('oauth_authorization.list') })
+	.strict();
+export const oauthAuthorizationBeginRequestSchema = z
+	.object({
+		actionId: z.literal('oauth_authorization.begin'),
+		accountProfileId: oauthAccountProfileIdSchema,
+		suggestedSelections: oauthPermissionSelectionsSchema.optional(),
+	})
+	.strict();
+export const oauthAuthorizationStatusRequestSchema = z
+	.object({
+		actionId: z.literal('oauth_authorization.status'),
+		transactionId: oauthTransactionIdSchema,
+	})
+	.strict();
+export const oauthAuthorizationCancelRequestSchema = z
+	.object({
+		actionId: z.literal('oauth_authorization.cancel'),
+		transactionId: oauthTransactionIdSchema,
+	})
+	.strict();
+export const oauthAuthorizationReauthorizeRequestSchema = z
+	.object({
+		actionId: z.literal('oauth_authorization.reauthorize'),
+		accountProfileId: oauthAccountProfileIdSchema,
+		applicationId: oauthApplicationIdSchema,
+		suggestedSelections: oauthPermissionSelectionsSchema.optional(),
+	})
+	.strict();
+export const oauthAuthorizationRevokeRequestSchema = z
+	.object({
+		actionId: z.literal('oauth_authorization.revoke'),
+		accountProfileId: oauthAccountProfileIdSchema,
+		applicationId: oauthApplicationIdSchema,
+	})
+	.strict();
+
 export const oauthAuthorizationActionRequestSchema = z.discriminatedUnion('actionId', [
-	z.object({ actionId: z.literal('oauth_authorization.list') }).strict(),
-	z
-		.object({
-			actionId: z.literal('oauth_authorization.begin'),
-			accountProfileId: oauthAccountProfileIdSchema,
-			suggestedSelections: oauthPermissionSelectionsSchema.optional(),
-		})
-		.strict(),
-	z
-		.object({
-			actionId: z.literal('oauth_authorization.status'),
-			transactionId: oauthTransactionIdSchema,
-		})
-		.strict(),
-	z
-		.object({
-			actionId: z.literal('oauth_authorization.cancel'),
-			transactionId: oauthTransactionIdSchema,
-		})
-		.strict(),
-	z
-		.object({
-			actionId: z.literal('oauth_authorization.reauthorize'),
-			accountProfileId: oauthAccountProfileIdSchema,
-			applicationId: oauthApplicationIdSchema,
-			suggestedSelections: oauthPermissionSelectionsSchema.optional(),
-		})
-		.strict(),
-	z
-		.object({
-			actionId: z.literal('oauth_authorization.revoke'),
-			accountProfileId: oauthAccountProfileIdSchema,
-			applicationId: oauthApplicationIdSchema,
-		})
-		.strict(),
+	oauthAuthorizationListRequestSchema,
+	oauthAuthorizationBeginRequestSchema,
+	oauthAuthorizationStatusRequestSchema,
+	oauthAuthorizationCancelRequestSchema,
+	oauthAuthorizationReauthorizeRequestSchema,
+	oauthAuthorizationRevokeRequestSchema,
 ]);
 export type OAuthAuthorizationActionRequest = z.infer<typeof oauthAuthorizationActionRequestSchema>;
 

@@ -3,6 +3,10 @@ import { mkdir, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { AgentVmHealthEvent } from '@agent-vm/gateway-lifecycle';
+import {
+	oauthAuthorizationActionRequestSchema,
+	type OAuthAuthorizationActionRequest,
+} from '@agent-vm/oauth-broker-contracts';
 import { createSecretResolver as createOnePasswordSecretResolver } from '@agent-vm/secret-management';
 
 import { resolveCliVersion } from '../cli/cli-version.js';
@@ -96,6 +100,10 @@ import { createIdleReaper } from './leases/idle-reaper.js';
 import { createLeaseManager } from './leases/lease-manager.js';
 import { createManagedFrameworkToolVmLeaseCreateOptionsResolver } from './leases/managed-framework-tool-vm-lease-create-options.js';
 import { createTcpPool } from './leases/tcp-pool.js';
+import {
+	prepareControllerOAuthRuntime as prepareControllerOAuthRuntimeDefault,
+	type PreparedControllerOAuthRuntime,
+} from './oauth/controller-oauth-runtime.js';
 import { RequestHeartbeatRegistry } from './request-heartbeat-registry.js';
 import {
 	requireCurrentConfiguredCliAuthorization,
@@ -204,6 +212,46 @@ function formatUnknownError(error: unknown): string {
 		return error.message;
 	}
 	return typeof error === 'string' ? error : JSON.stringify(error);
+}
+
+function oauthAuthorizationRequestFromControlPayload(
+	payload: Parameters<
+		NonNullable<GatewayControlControllerExecutionOperations['executeOAuthAuthorization']>
+	>[0]['payload'],
+): OAuthAuthorizationActionRequest {
+	switch (payload.actionId) {
+		case 'oauth_authorization.list':
+			return oauthAuthorizationActionRequestSchema.parse({ actionId: payload.actionId });
+		case 'oauth_authorization.begin':
+			return oauthAuthorizationActionRequestSchema.parse({
+				accountProfileId: payload.accountProfileId,
+				actionId: payload.actionId,
+				...(payload.suggestedSelections === undefined
+					? {}
+					: { suggestedSelections: payload.suggestedSelections }),
+			});
+		case 'oauth_authorization.status':
+		case 'oauth_authorization.cancel':
+			return oauthAuthorizationActionRequestSchema.parse({
+				actionId: payload.actionId,
+				transactionId: payload.transactionId,
+			});
+		case 'oauth_authorization.reauthorize':
+			return oauthAuthorizationActionRequestSchema.parse({
+				accountProfileId: payload.accountProfileId,
+				actionId: payload.actionId,
+				applicationId: payload.applicationId,
+				...(payload.suggestedSelections === undefined
+					? {}
+					: { suggestedSelections: payload.suggestedSelections }),
+			});
+		case 'oauth_authorization.revoke':
+			return oauthAuthorizationActionRequestSchema.parse({
+				accountProfileId: payload.accountProfileId,
+				actionId: payload.actionId,
+				applicationId: payload.applicationId,
+			});
+	}
 }
 
 function readNonEmptyEnv(name: string): string | undefined {
@@ -531,6 +579,19 @@ async function startControllerRuntimeWithOwnershipLock(
 					dependencies.createSecretResolver ?? createOnePasswordSecretResolver,
 				),
 		);
+	const selectedZoneIds = [
+		...new Set(options.zoneIds ?? options.systemConfig.zones.map((zone) => zone.id)),
+	];
+	const preparedOAuthRuntime: PreparedControllerOAuthRuntime | undefined = await runTaskWithResult(
+		runTaskStep,
+		'Preparing OAuth broker',
+		async () =>
+			await (dependencies.prepareControllerOAuthRuntime ?? prepareControllerOAuthRuntimeDefault)({
+				secretResolver,
+				selectedZoneIds,
+				systemConfig: options.systemConfig,
+			}),
+	);
 	const approvalLedgersByZoneId = new Map(
 		options.systemConfig.zones.filter(isManagedGatewayZone).map(
 			(zone) =>
@@ -788,7 +849,23 @@ async function startControllerRuntimeWithOwnershipLock(
 		readProcessIdentity: dependencies.readProcessIdentity ?? readManagedVmProcessIdentity,
 		secretResolver,
 	});
+	preparedOAuthRuntime?.setCredentialInvalidationHandler(async ({ agentId, zoneId }) => {
+		const retirement = await credentialedRuntimeManager.retire({
+			agentId,
+			force: true,
+			zoneId,
+		});
+		if (retirement.kind === 'owner-unsafe') {
+			throw new Error('OAuth credential invalidation could not prove runtime containment.');
+		}
+	});
 	const executeConfiguredCliInManagedVm = createConfiguredCliManagedVmExecutor({
+		resolveOAuthRuntimeCredential: async (request) => {
+			if (preparedOAuthRuntime === undefined || preparedOAuthRuntime.zoneId !== request.zoneId) {
+				return { kind: 'unavailable', reason: 'authorization-missing' };
+			}
+			return await preparedOAuthRuntime.brokerService.resolveRuntimeCredential(request);
+		},
 		resolveGatewayIdentity: async (zoneId) => {
 			const lifecycleState = registry.getManagedGatewayRuntime(zoneId).getLifecycleState();
 			if (lifecycleState.kind !== 'running' && lifecycleState.kind !== 'running-degraded') {
@@ -862,6 +939,18 @@ async function startControllerRuntimeWithOwnershipLock(
 						stablePrincipal: callerContext.stablePrincipal,
 						zoneId: session.zoneId,
 					});
+		},
+		executeOAuthAuthorization: async ({ callerContext, payload, session }) => {
+			if (preparedOAuthRuntime === undefined || preparedOAuthRuntime.zoneId !== session.zoneId) {
+				throw new ConfiguredControllerExecutionError(
+					'not_dispatched',
+					'OAuth authorization is not configured for this zone.',
+				);
+			}
+			return await preparedOAuthRuntime.brokerService.executeAuthorizationAction({
+				agentId: callerContext.agentId,
+				request: oauthAuthorizationRequestFromControlPayload(payload),
+			});
 		},
 		pushWorkspaceGit: async ({ callerContext, payload, session }) => {
 			const result = await pushWorkspaceGitFromController(callerContext.agentId, session.zoneId, {
@@ -1159,7 +1248,13 @@ async function startControllerRuntimeWithOwnershipLock(
 	});
 
 	const serverRef: { current?: { close(): Promise<void> } } = {};
+	const oauthServerRef: { current?: { close(): Promise<void> } } = {};
 	const runtimeReadiness = createMutableControllerRuntimeReadiness('recovering');
+	const closeOAuthAdmissionAndListener = async (): Promise<void> => {
+		preparedOAuthRuntime?.stopAdmission();
+		await oauthServerRef.current?.close();
+		delete oauthServerRef.current;
+	};
 	const stopController = createStopControllerOperation({
 		clearReaperTimer,
 		closeControllerServer: async () => {
@@ -1171,7 +1266,14 @@ async function startControllerRuntimeWithOwnershipLock(
 				});
 			}, 100);
 		},
-		stopAllZones: async () => await registry.stopAllZones(),
+		stopAllZones: async () => {
+			await closeOAuthAdmissionAndListener();
+			try {
+				await registry.stopAllZones();
+			} finally {
+				preparedOAuthRuntime?.close();
+			}
+		},
 	});
 	const operations = {
 		...createControllerRuntimeOperations({
@@ -1333,12 +1435,33 @@ async function startControllerRuntimeWithOwnershipLock(
 		runtimeReadiness: () => runtimeReadiness.get(),
 		systemConfig: options.systemConfig,
 	});
-	await runTaskStep(`Controller API on :${options.systemConfig.host.controllerPort}`, async () => {
-		serverRef.current = await (dependencies.startHttpServer ?? startControllerHttpServer)({
-			app: controllerApp,
-			port: options.systemConfig.host.controllerPort,
-		});
-	});
+	try {
+		await runTaskStep(
+			`Controller API on :${options.systemConfig.host.controllerPort}`,
+			async () => {
+				serverRef.current = await (dependencies.startHttpServer ?? startControllerHttpServer)({
+					app: controllerApp,
+					port: options.systemConfig.host.controllerPort,
+				});
+			},
+		);
+		if (preparedOAuthRuntime !== undefined) {
+			await runTaskStep(`OAuth HTTPS on :${preparedOAuthRuntime.port}`, async () => {
+				oauthServerRef.current = await preparedOAuthRuntime.startHttpsListener();
+			});
+		}
+	} catch (error) {
+		try {
+			await closeOAuthAdmissionAndListener();
+		} finally {
+			try {
+				await serverRef.current?.close();
+			} finally {
+				preparedOAuthRuntime?.close();
+			}
+		}
+		throw error;
+	}
 	const observabilityStartupCheck = selectConfiguredObservabilityStartupCheck({
 		systemConfig: options.systemConfig,
 		...(options.zoneIds ? { zoneIds: options.zoneIds } : {}),
@@ -1398,8 +1521,10 @@ async function startControllerRuntimeWithOwnershipLock(
 			observedAtMs: now(),
 		});
 		try {
+			await closeOAuthAdmissionAndListener();
 			await serverRef.current?.close();
 		} finally {
+			preparedOAuthRuntime?.close();
 			await healthEventStore.flushHealthEventSinks();
 			await flushControllerTelemetry(controllerTelemetry);
 			await shutdownControllerTelemetry(controllerTelemetry);
@@ -1486,8 +1611,14 @@ async function startControllerRuntimeWithOwnershipLock(
 			clearReaperTimer();
 			await gatewayServiceHealthMonitorRef.current?.stop();
 			requestHeartbeatRegistry.stopAll();
+			let oauthCloseError: Error | undefined;
 			let stopError: Error | undefined;
 			let serverCloseError: Error | undefined;
+			try {
+				await closeOAuthAdmissionAndListener();
+			} catch (error) {
+				oauthCloseError = error instanceof Error ? error : new Error(formatUnknownError(error));
+			}
 			try {
 				await registry.stopAllZones();
 			} catch (error) {
@@ -1498,12 +1629,13 @@ async function startControllerRuntimeWithOwnershipLock(
 				} catch (error) {
 					serverCloseError = error instanceof Error ? error : new Error(formatUnknownError(error));
 				}
+				preparedOAuthRuntime?.close();
 				await healthEventStore.flushDurableWrites();
 				await healthEventStore.flushHealthEventSinks();
 				await flushControllerTelemetry(controllerTelemetry);
 				await shutdownControllerTelemetry(controllerTelemetry);
 			}
-			const closeErrors = [stopError, serverCloseError].filter(
+			const closeErrors = [oauthCloseError, stopError, serverCloseError].filter(
 				(error): error is Error => error !== undefined,
 			);
 			if (closeErrors.length === 1) {

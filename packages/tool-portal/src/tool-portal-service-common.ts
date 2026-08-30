@@ -9,7 +9,9 @@ import type {
 } from '@agent-vm/config-contracts';
 import {
 	openConfiguredCliInputSchema,
+	openOAuthConfiguredCliInputSchema,
 	quickConfiguredCliInputSchema,
+	quickOAuthConfiguredCliInputSchema,
 } from '@agent-vm/config-contracts';
 export { deterministicOperationId, directDispatchFingerprint } from './dispatch-authority.js';
 
@@ -202,9 +204,13 @@ export function callPolicyDecision(props: {
 		const operation = policy.backend.operations[props.call.name];
 		if (operation?.kind === 'configured_cli') {
 			const inputSchema =
-				operation.timeout.kind === 'quick'
-					? quickConfiguredCliInputSchema
-					: openConfiguredCliInputSchema;
+				operation.authorization?.kind === 'oauth_account_profile'
+					? operation.timeout.kind === 'quick'
+						? quickOAuthConfiguredCliInputSchema
+						: openOAuthConfiguredCliInputSchema
+					: operation.timeout.kind === 'quick'
+						? quickConfiguredCliInputSchema
+						: openConfiguredCliInputSchema;
 			const parsedInput = inputSchema.safeParse(props.call.arguments);
 			if (!parsedInput.success) return { kind: 'denied' };
 			const evaluation = evaluateCliAllowanceInvocation({

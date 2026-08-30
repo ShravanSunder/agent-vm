@@ -9,7 +9,7 @@ import {
 	GatewayStablePrincipalDigestSchema,
 } from '@agent-vm/agent-portal-sdk/contracts';
 import {
-	configuredCliInputSchema,
+	controllerConfiguredCliInputSchema,
 	resolveConfiguredCliTimeout,
 	type ConfiguredCliInput,
 } from '@agent-vm/config-contracts';
@@ -26,6 +26,15 @@ import {
 	type ControlEnvelope,
 	type ControlMessageKind,
 } from '@agent-vm/control-protocol-contracts';
+import {
+	oauthAuthorizationActionResultSchema,
+	oauthAuthorizationBeginRequestSchema,
+	oauthAuthorizationCancelRequestSchema,
+	oauthAuthorizationListRequestSchema,
+	oauthAuthorizationReauthorizeRequestSchema,
+	oauthAuthorizationRevokeRequestSchema,
+	oauthAuthorizationStatusRequestSchema,
+} from '@agent-vm/oauth-broker-contracts';
 import { z } from 'zod/v4';
 
 import { deriveGatewayControlStablePrincipal } from './gateway-control-principal.js';
@@ -481,6 +490,12 @@ export const GatewayControlControllerHostProbeArgumentsSchema = z.object({}).str
 
 export const gatewayControlRegisteredControllerExecutionActionIds = [
 	'controller_host_probe',
+	'oauth_authorization.begin',
+	'oauth_authorization.cancel',
+	'oauth_authorization.list',
+	'oauth_authorization.reauthorize',
+	'oauth_authorization.revoke',
+	'oauth_authorization.status',
 	'workspace_git_push',
 ] as const;
 
@@ -502,6 +517,26 @@ export const GatewayControlControllerHostProbePayloadSchema = z
 		correlation: GatewayControlToolCallCorrelationSchema,
 	})
 	.strict();
+
+const gatewayControlOAuthAuthorizationCommonShape = {
+	approvalReservation: GatewayRuntimeControllerExecutionDispatchReservationSchema.optional(),
+	callerContext: GatewayControlCallerContextRefSchema,
+	correlation: GatewayControlToolCallCorrelationSchema,
+} as const;
+
+export const GatewayControlOAuthAuthorizationActionPayloadSchema = z.discriminatedUnion(
+	'actionId',
+	[
+		oauthAuthorizationListRequestSchema.safeExtend(gatewayControlOAuthAuthorizationCommonShape),
+		oauthAuthorizationBeginRequestSchema.safeExtend(gatewayControlOAuthAuthorizationCommonShape),
+		oauthAuthorizationStatusRequestSchema.safeExtend(gatewayControlOAuthAuthorizationCommonShape),
+		oauthAuthorizationCancelRequestSchema.safeExtend(gatewayControlOAuthAuthorizationCommonShape),
+		oauthAuthorizationReauthorizeRequestSchema.safeExtend(
+			gatewayControlOAuthAuthorizationCommonShape,
+		),
+		oauthAuthorizationRevokeRequestSchema.safeExtend(gatewayControlOAuthAuthorizationCommonShape),
+	],
+);
 
 export const GatewayControlConfiguredCliDirectAuthoritySchema = z
 	.object({
@@ -530,7 +565,7 @@ export const GatewayControlConfiguredCliControllerExecutionPayloadSchema = z
 		callerContext: GatewayControlCallerContextRefSchema,
 		capability: z.object({ name: z.string().min(1), namespace: z.string().min(1) }).strict(),
 		correlation: GatewayControlToolCallCorrelationSchema,
-		input: configuredCliInputSchema,
+		input: controllerConfiguredCliInputSchema,
 		invocation: z
 			.object({
 				callId: z.string().min(1),
@@ -548,6 +583,7 @@ export const GatewayControlRegisteredActionControllerExecutionPayloadSchema = z
 		action: z.discriminatedUnion('actionId', [
 			GatewayControlWorkspaceGitPushControllerExecutionPayloadSchema,
 			GatewayControlControllerHostProbePayloadSchema,
+			...GatewayControlOAuthAuthorizationActionPayloadSchema.options,
 		]),
 		kind: z.literal('registered_action'),
 	})
@@ -598,6 +634,20 @@ export const GatewayControlControllerHostProbeActionResultSchema = z
 	})
 	.strict();
 
+export const GatewayControlOAuthAuthorizationActionResultSchema = z
+	.object({
+		actionId: z.enum([
+			'oauth_authorization.begin',
+			'oauth_authorization.cancel',
+			'oauth_authorization.list',
+			'oauth_authorization.reauthorize',
+			'oauth_authorization.revoke',
+			'oauth_authorization.status',
+		]),
+		result: oauthAuthorizationActionResultSchema,
+	})
+	.strict();
+
 export const GatewayControlConfiguredCliControllerExecutionResultSchema = z
 	.object({
 		kind: z.literal('configured_cli'),
@@ -619,6 +669,7 @@ export const GatewayControlRegisteredActionControllerExecutionResultSchema = z
 		action: z.discriminatedUnion('actionId', [
 			GatewayControlWorkspaceGitPushControllerExecutionResultSchema,
 			GatewayControlControllerHostProbeActionResultSchema,
+			GatewayControlOAuthAuthorizationActionResultSchema,
 		]),
 		kind: z.literal('registered_action'),
 	})

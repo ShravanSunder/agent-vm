@@ -225,6 +225,22 @@ function controllerHostProbeControlPayload(): Extract<
 	};
 }
 
+function oauthAuthorizationListControlPayload(): Extract<
+	GatewayControlToolPortalControllerExecutionPayload,
+	{ kind: 'registered_action' }
+> {
+	return {
+		action: {
+			actionId: 'oauth_authorization.list',
+			...callerContextPayload,
+			correlation: {
+				capability: { name: 'list', namespace: 'oauth_authorization' },
+			},
+		},
+		kind: 'registered_action',
+	};
+}
+
 type LeaseCreatePreparation = Extract<
 	GatewayControlLeaseSemanticMutationPreparationOptions,
 	{ readonly operation: 'lease_create' }
@@ -2048,6 +2064,62 @@ describe('gateway control domain handler', () => {
 			},
 		});
 		expect(callerContexts.resolve('44444444-4444-4444-8444-444444444444')).toBeUndefined();
+	});
+
+	it('routes the short oauth_authorization.list capability to the authenticated agent action', async () => {
+		const pushWorkspaceGit = vi.fn(async () => ({
+			branch: 'main',
+			localHead: '0123456789abcdef0123456789abcdef01234567',
+			pushedCommits: [],
+			remoteHead: '0123456789abcdef0123456789abcdef01234567',
+		}));
+		const executeOAuthAuthorization = vi.fn(async () => ({
+			kind: 'authorization-list' as const,
+			profiles: [],
+		}));
+		const callerContexts = createRegisteredCallerContexts({
+			purpose: 'tool_portal_controller_execution',
+		});
+		const dispatcher = createGatewayControlTestDispatcher();
+		dispatcher.register(
+			'gateway_control',
+			createTestGatewayControlDomainHandler({
+				callerContexts,
+				controllerExecutions: createAuthorizedControllerExecutions(pushWorkspaceGit, {
+					executeOAuthAuthorization,
+				}),
+				session: acceptedSession,
+			}),
+		);
+
+		const response = await dispatcher.dispatch({
+			envelope: createEnvelope('tool_portal_controller_execution', {
+				deliveryPolicy: 'single_use_critical',
+			}),
+			payload: {
+				kind: 'command',
+				operation: 'tool_portal_controller_execution',
+				payload: oauthAuthorizationListControlPayload(),
+			},
+		});
+
+		expect(executeOAuthAuthorization).toHaveBeenCalledWith({
+			callerContext: expect.objectContaining({ agentId: 'main' }),
+			payload: oauthAuthorizationListControlPayload().action,
+			session: acceptedSession,
+		});
+		expect(response).toMatchObject({
+			payload: {
+				controllerExecution: {
+					action: {
+						actionId: 'oauth_authorization.list',
+						result: { kind: 'authorization-list', profiles: [] },
+					},
+					kind: 'registered_action',
+				},
+				result: 'ok',
+			},
+		});
 	});
 
 	it('routes configured CLI through the generic controller execution operation', async () => {

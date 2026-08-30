@@ -3,6 +3,7 @@ import unittest
 from agent_vm_hermes_adapter.managed_tool_portal.models import (
     NamespaceAvailability,
     NamespaceInventory,
+    NamespaceToolSummary,
     OrientationRenderFailure,
     RenderedOrientation,
 )
@@ -51,8 +52,8 @@ class ManagedToolPortalOrientationRendererTests(unittest.TestCase):
         self.assertEqual(first_render, second_render)
         self.assertEqual(first_render.orientation[-1], ".")
         self.assertNotIn("\n", first_render.orientation[-1:])
-        self.assertIn('"a\\ncontrol": available', first_render.orientation)
-        self.assertIn('"éclair": available', first_render.orientation)
+        self.assertIn('Namespace: "a\\ncontrol"', first_render.orientation)
+        self.assertIn('Namespace: "éclair"', first_render.orientation)
         self.assertLessEqual(first_render.utf8_byte_count, 2_000)
         self.assertEqual(first_render.omitted_count, 0)
 
@@ -79,15 +80,15 @@ class ManagedToolPortalOrientationRendererTests(unittest.TestCase):
         )
 
         self.assertIn(
-            '- "filesystem": available\n  summary: "Read and write project files."',
+            'Namespace: "filesystem"\nSummary: "Read and write project files."',
             rendered.orientation,
         )
         self.assertIn(
-            '- "github": unavailable\n  summary: "Repository pull requests."',
+            'Namespace: "github"\nSummary: "Repository pull requests."',
             rendered.orientation,
         )
-        self.assertIn('- "linear": available', rendered.orientation)
-        self.assertNotIn('summary: "None"', rendered.orientation)
+        self.assertIn('Namespace: "linear"', rendered.orientation)
+        self.assertNotIn('Summary: "None"', rendered.orientation)
 
     def test_summary_uses_canonical_single_line_json_encoding(self) -> None:
         summary = 'line one\nline two\r"quotes"\\slash\u0001😀'
@@ -107,11 +108,11 @@ class ManagedToolPortalOrientationRendererTests(unittest.TestCase):
         )
 
         summary_line = next(
-            line for line in rendered.orientation.splitlines() if line.startswith("  summary: ")
+            line for line in rendered.orientation.splitlines() if line.startswith("Summary: ")
         )
         self.assertEqual(
             summary_line,
-            '  summary: "line one\\nline two\\r\\"quotes\\"\\\\slash\\u0001😀"',
+            'Summary: "line one\\nline two\\r\\"quotes\\"\\\\slash\\u0001😀"',
         )
         self.assertNotIn("\nline two", summary_line)
         self.assertNotIn("\r", summary_line)
@@ -140,10 +141,10 @@ class ManagedToolPortalOrientationRendererTests(unittest.TestCase):
             rendered.orientation,
         )
         self.assertLess(
-            rendered.orientation.index('"namespace-00": available'),
-            rendered.orientation.index('"namespace-01": available'),
+            rendered.orientation.index('Namespace: "namespace-00"'),
+            rendered.orientation.index('Namespace: "namespace-01"'),
         )
-        self.assertNotIn('"namespace-20": available', rendered.orientation)
+        self.assertNotIn('Namespace: "namespace-20"', rendered.orientation)
 
     def test_renderer_selects_greatest_complete_prefix_that_fits_byte_budget(self) -> None:
         inventory = _inventory(*[f"name-{index}-" + "x" * 120 for index in range(20)])
@@ -177,9 +178,42 @@ class ManagedToolPortalOrientationRendererTests(unittest.TestCase):
 
         self.assertGreater(rendered.displayed_count, 0)
         self.assertLess(rendered.displayed_count, len(inventory.namespaces))
-        self.assertEqual(rendered.orientation.count("  summary: "), rendered.displayed_count)
+        self.assertEqual(rendered.orientation.count("Summary: "), rendered.displayed_count)
         self.assertNotIn(
-            f'"namespace-{rendered.displayed_count:02d}": available',
+            f'Namespace: "namespace-{rendered.displayed_count:02d}"',
+            rendered.orientation,
+        )
+
+    def test_renders_tools_as_bounded_children_without_repeating_the_namespace(self) -> None:
+        rendered = _require_rendered(
+            render_orientation(
+                NamespaceInventory(
+                    inventory_id="inventory-a",
+                    namespaces=(
+                        NamespaceAvailability(
+                            namespace="oauth_authorization",
+                            status="available",
+                            summary="Set up and inspect account authorization.",
+                            tools=(
+                                NamespaceToolSummary(
+                                    name="list",
+                                    description="List account-profile authorization status.",
+                                ),
+                                NamespaceToolSummary(
+                                    name="begin",
+                                    description="Start a human authorization ceremony.",
+                                ),
+                            ),
+                        ),
+                    ),
+                )
+            )
+        )
+
+        self.assertEqual(rendered.orientation.count('Namespace: "oauth_authorization"'), 1)
+        self.assertIn(
+            "Tools:\n  list\n    List account-profile authorization status.\n"
+            "  begin\n    Start a human authorization ceremony.",
             rendered.orientation,
         )
 

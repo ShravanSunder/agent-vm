@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 
 import {
 	oauthAccountProfileIdSchema,
@@ -26,20 +26,24 @@ const oauthRedirectUriSchema = z.url().refine((value) => value.startsWith('https
 interface OAuthTransactionCommon {
 	readonly accountProfileId: OAuthAccountProfileId;
 	readonly agentId: string;
+	readonly applicationIds: readonly OAuthApplicationId[];
 	readonly browserBindingSecret: string;
 	readonly createdAtMs: number;
 	readonly csrfSecret: string;
 	readonly expiresAtMs: number;
 	readonly suggestedSelections?: OAuthPermissionSelections | undefined;
-	readonly tailnetLogin: string;
 	readonly transactionId: OAuthTransactionId;
 }
 
 export type OAuthCeremonyTransaction =
-	| (OAuthTransactionCommon & { readonly kind: 'selecting-permissions' })
+	| (OAuthTransactionCommon & {
+			readonly kind: 'selecting-permissions';
+			readonly tailnetLogin?: string | undefined;
+	  })
 	| (OAuthTransactionCommon & {
 			readonly applicationId: OAuthApplicationId;
 			readonly completedApplications: readonly OAuthApplicationId[];
+			readonly confirmedSelections: OAuthPermissionSelections;
 			readonly confirmedScopes: readonly OAuthScope[];
 			readonly kind: 'authorizing-application';
 			readonly oauthState: string;
@@ -47,10 +51,12 @@ export type OAuthCeremonyTransaction =
 			readonly pkceVerifier: string;
 			readonly redirectUri: string;
 			readonly remainingApplications: readonly OAuthApplicationId[];
+			readonly tailnetLogin: string;
 	  })
 	| (OAuthTransactionCommon & {
 			readonly applicationId: OAuthApplicationId;
 			readonly completedApplications: readonly OAuthApplicationId[];
+			readonly confirmedSelections: OAuthPermissionSelections;
 			readonly confirmedScopes: readonly OAuthScope[];
 			readonly kind: 'consuming-callback';
 			readonly oauthState: string;
@@ -58,6 +64,7 @@ export type OAuthCeremonyTransaction =
 			readonly pkceVerifier: string;
 			readonly redirectUri: string;
 			readonly remainingApplications: readonly OAuthApplicationId[];
+			readonly tailnetLogin: string;
 	  });
 
 interface OAuthCompletionSessionCommon {
@@ -66,6 +73,7 @@ interface OAuthCompletionSessionCommon {
 	readonly applicationId: OAuthApplicationId;
 	readonly browserBindingSecret: string;
 	readonly completedApplications: readonly OAuthApplicationId[];
+	readonly confirmedSelections: OAuthPermissionSelections;
 	readonly completionSessionId: OAuthCompletionSessionId;
 	readonly createdAtMs: number;
 	readonly csrfSecret: string;
@@ -113,13 +121,24 @@ export type OAuthCompletionCommitResult<TProviderGrant> =
 	  }
 	| {
 			readonly kind: 'rejected';
-			readonly reason: 'consumed-or-missing' | 'expired' | 'identity-mismatch' | 'wrong-state';
+			readonly reason:
+				| 'browser-binding-mismatch'
+				| 'consumed-or-missing'
+				| 'csrf-mismatch'
+				| 'expired'
+				| 'identity-mismatch'
+				| 'wrong-state';
 	  };
 
 export interface OAuthTransactionStore<TProviderGrant> {
+	bindTailnetIdentity(props: {
+		readonly tailnetLogin: string;
+		readonly transactionId: OAuthTransactionId;
+	}): Extract<OAuthCeremonyTransaction, { readonly kind: 'selecting-permissions' }>;
 	beginApplicationAuthorization(props: {
 		readonly applicationId: OAuthApplicationId;
 		readonly completedApplications: readonly OAuthApplicationId[];
+		readonly confirmedSelections: OAuthPermissionSelections;
 		readonly confirmedScopes: readonly OAuthScope[];
 		readonly redirectUri: string;
 		readonly remainingApplications: readonly OAuthApplicationId[];
@@ -132,7 +151,9 @@ export interface OAuthTransactionStore<TProviderGrant> {
 		readonly transactionId: OAuthTransactionId;
 	}): OAuthCallbackConsumptionResult;
 	beginCompletionCommit(props: {
+		readonly browserBindingSecret: string;
 		readonly completionSessionId: OAuthCompletionSessionId;
+		readonly csrfToken: string;
 		readonly tailnetLogin: string;
 	}): OAuthCompletionCommitResult<TProviderGrant>;
 	cancelTransaction(props: {
@@ -149,8 +170,8 @@ export interface OAuthTransactionStore<TProviderGrant> {
 	createTransaction(props: {
 		readonly accountProfileId: OAuthAccountProfileId;
 		readonly agentId: string;
+		readonly applicationIds: readonly OAuthApplicationId[];
 		readonly suggestedSelections?: OAuthPermissionSelections | undefined;
-		readonly tailnetLogin: string;
 	}): Extract<OAuthCeremonyTransaction, { readonly kind: 'selecting-permissions' }>;
 	finishCompletion(completionSessionId: OAuthCompletionSessionId): boolean;
 	getTransaction(transactionId: OAuthTransactionId): OAuthCeremonyTransaction | undefined;
@@ -168,6 +189,12 @@ function createPkcePair(): { readonly challenge: string; readonly verifier: stri
 		challenge: createHash('sha256').update(verifier).digest('base64url'),
 		verifier,
 	};
+}
+
+function opaqueSecretsEqual(left: string, right: string): boolean {
+	const leftBytes = Buffer.from(left);
+	const rightBytes = Buffer.from(right);
+	return leftBytes.byteLength === rightBytes.byteLength && timingSafeEqual(leftBytes, rightBytes);
 }
 
 function validateUniqueApplications(
@@ -240,6 +267,24 @@ export function createOAuthTransactionStore<TProviderGrant>(props: {
 	};
 
 	return {
+		bindTailnetIdentity: ({ tailnetLogin, transactionId }) => {
+			const parsedTransactionId = oauthTransactionIdSchema.parse(transactionId);
+			const current = transactions.get(parsedTransactionId);
+			if (current?.kind !== 'selecting-permissions') {
+				throw new Error('OAuth transaction is not available for browser identity binding.');
+			}
+			if (current.expiresAtMs <= now()) {
+				transactions.delete(parsedTransactionId);
+				throw new Error('OAuth transaction expired.');
+			}
+			const parsedTailnetLogin = tailnetLoginSchema.parse(tailnetLogin);
+			if (current.tailnetLogin !== undefined && current.tailnetLogin !== parsedTailnetLogin) {
+				throw new Error('OAuth transaction is already bound to another tailnet identity.');
+			}
+			const bound = { ...current, tailnetLogin: parsedTailnetLogin };
+			transactions.set(parsedTransactionId, bound);
+			return bound;
+		},
 		beginApplicationAuthorization: (applicationProps) => {
 			const transactionId = oauthTransactionIdSchema.parse(applicationProps.transactionId);
 			const current = transactions.get(transactionId);
@@ -250,6 +295,10 @@ export function createOAuthTransactionStore<TProviderGrant>(props: {
 				transactions.delete(transactionId);
 				throw new Error('OAuth transaction expired.');
 			}
+			if (current.tailnetLogin === undefined) {
+				throw new Error('OAuth transaction has no bound tailnet identity.');
+			}
+			const tailnetLogin = current.tailnetLogin;
 			const pkce = createPkcePair();
 			const next = {
 				...current,
@@ -257,6 +306,9 @@ export function createOAuthTransactionStore<TProviderGrant>(props: {
 				completedApplications: validateUniqueApplications(
 					applicationProps.completedApplications,
 					'completedApplications',
+				),
+				confirmedSelections: oauthPermissionSelectionsSchema.parse(
+					applicationProps.confirmedSelections,
 				),
 				confirmedScopes: z
 					.array(oauthScopeSchema)
@@ -271,6 +323,7 @@ export function createOAuthTransactionStore<TProviderGrant>(props: {
 					applicationProps.remainingApplications,
 					'remainingApplications',
 				),
+				tailnetLogin,
 			};
 			transactions.set(transactionId, next);
 			return next;
@@ -315,6 +368,22 @@ export function createOAuthTransactionStore<TProviderGrant>(props: {
 			if (current.tailnetLogin !== tailnetLoginSchema.parse(completionProps.tailnetLogin)) {
 				return { kind: 'rejected', reason: 'identity-mismatch' };
 			}
+			if (
+				!opaqueSecretsEqual(
+					current.browserBindingSecret,
+					oauthOpaqueBrowserSecretSchema.parse(completionProps.browserBindingSecret),
+				)
+			) {
+				return { kind: 'rejected', reason: 'browser-binding-mismatch' };
+			}
+			if (
+				!opaqueSecretsEqual(
+					current.csrfSecret,
+					oauthOpaqueBrowserSecretSchema.parse(completionProps.csrfToken),
+				)
+			) {
+				return { kind: 'rejected', reason: 'csrf-mismatch' };
+			}
 			const committing = { ...current, kind: 'committing' as const };
 			completionSessions.set(completionSessionId, committing);
 			return { kind: 'accepted', session: committing };
@@ -344,6 +413,7 @@ export function createOAuthTransactionStore<TProviderGrant>(props: {
 				applicationId: current.applicationId,
 				browserBindingSecret: createOpaqueIdentifier(),
 				completedApplications: current.completedApplications,
+				confirmedSelections: current.confirmedSelections,
 				completionSessionId,
 				createdAtMs,
 				csrfSecret: createOpaqueIdentifier(),
@@ -366,6 +436,7 @@ export function createOAuthTransactionStore<TProviderGrant>(props: {
 			const transaction = {
 				accountProfileId: oauthAccountProfileIdSchema.parse(createProps.accountProfileId),
 				agentId: oauthAgentIdSchema.parse(createProps.agentId),
+				applicationIds: validateUniqueApplications(createProps.applicationIds, 'applicationIds'),
 				browserBindingSecret: createOpaqueIdentifier(),
 				createdAtMs,
 				csrfSecret: createOpaqueIdentifier(),
@@ -378,7 +449,6 @@ export function createOAuthTransactionStore<TProviderGrant>(props: {
 								createProps.suggestedSelections,
 							),
 						}),
-				tailnetLogin: tailnetLoginSchema.parse(createProps.tailnetLogin),
 				transactionId,
 			};
 			transactions.set(transactionId, transaction);
@@ -389,7 +459,7 @@ export function createOAuthTransactionStore<TProviderGrant>(props: {
 			transactions.get(oauthTransactionIdSchema.parse(transactionId)),
 		invalidateAll: () => {
 			transactions.clear();
-			for (const completionSessionId of [...completionSessions.keys()]) {
+			for (const completionSessionId of completionSessions.keys()) {
 				discardCompletionSession(completionSessionId);
 			}
 		},

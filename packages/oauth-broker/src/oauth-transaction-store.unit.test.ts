@@ -7,7 +7,11 @@ import {
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
-import { createOAuthTransactionStore } from './oauth-transaction-store.js';
+import {
+	createOAuthTransactionStore,
+	type OAuthCeremonyTransaction,
+	type OAuthTransactionStore,
+} from './oauth-transaction-store.js';
 
 const providerGrantSchema = z
 	.object({
@@ -17,25 +21,44 @@ const providerGrantSchema = z
 	})
 	.strict();
 
-function createAuthorizingTransaction(now: () => number) {
+type ProviderGrant = z.infer<typeof providerGrantSchema>;
+
+function createAuthorizingTransaction(now: () => number): {
+	readonly authorizing: Extract<
+		OAuthCeremonyTransaction,
+		{ readonly kind: 'authorizing-application' }
+	>;
+	readonly store: OAuthTransactionStore<ProviderGrant>;
+	readonly transaction: Extract<
+		OAuthCeremonyTransaction,
+		{ readonly kind: 'selecting-permissions' }
+	>;
+} {
 	const store = createOAuthTransactionStore({ now, providerGrantSchema });
 	const transaction = store.createTransaction({
 		accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
 		agentId: 'hermes',
+		applicationIds: [oauthApplicationIdSchema.parse('gmail-app')],
 		suggestedSelections: oauthPermissionSelectionsSchema.parse({
 			'gmail-app': { gmail: 'read' },
 		}),
+	});
+	const boundTransaction = store.bindTailnetIdentity({
 		tailnetLogin: 'human@example.test',
+		transactionId: transaction.transactionId,
 	});
 	const authorizing = store.beginApplicationAuthorization({
 		applicationId: oauthApplicationIdSchema.parse('gmail-app'),
 		completedApplications: [],
+		confirmedSelections: oauthPermissionSelectionsSchema.parse({
+			'gmail-app': { gmail: 'read' },
+		}),
 		confirmedScopes: [oauthScopeSchema.parse('gmail.readonly')],
 		redirectUri: 'https://auth.claw.askluna.xyz/oauth/google/callback',
 		remainingApplications: [],
-		transactionId: transaction.transactionId,
+		transactionId: boundTransaction.transactionId,
 	});
-	return { authorizing, store, transaction };
+	return { authorizing, store, transaction: boundTransaction };
 }
 
 describe('OAuth transaction store', () => {
@@ -98,13 +121,17 @@ describe('OAuth transaction store', () => {
 		expect(store.getTransaction(transaction.transactionId)).toBeUndefined();
 		expect(
 			store.beginCompletionCommit({
+				browserBindingSecret: completion.browserBindingSecret,
 				completionSessionId: completion.completionSessionId,
+				csrfToken: completion.csrfSecret,
 				tailnetLogin: completion.tailnetLogin,
 			}),
 		).toMatchObject({ kind: 'accepted', session: { kind: 'committing' } });
 		expect(
 			store.beginCompletionCommit({
+				browserBindingSecret: completion.browserBindingSecret,
 				completionSessionId: completion.completionSessionId,
+				csrfToken: completion.csrfSecret,
 				tailnetLogin: completion.tailnetLogin,
 			}),
 		).toEqual({ kind: 'rejected', reason: 'wrong-state' });
@@ -121,15 +148,22 @@ describe('OAuth transaction store', () => {
 		const replacementTransaction = store.createTransaction({
 			accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
 			agentId: 'hermes',
+			applicationIds: [oauthApplicationIdSchema.parse('gmail-app')],
+		});
+		const boundReplacementTransaction = store.bindTailnetIdentity({
 			tailnetLogin: 'human@example.test',
+			transactionId: replacementTransaction.transactionId,
 		});
 		const replacementAuthorizing = store.beginApplicationAuthorization({
 			applicationId: oauthApplicationIdSchema.parse('gmail-app'),
 			completedApplications: [],
+			confirmedSelections: oauthPermissionSelectionsSchema.parse({
+				'gmail-app': { gmail: 'read' },
+			}),
 			confirmedScopes: [oauthScopeSchema.parse('gmail.readonly')],
 			redirectUri: authorizing.redirectUri,
 			remainingApplications: [],
-			transactionId: replacementTransaction.transactionId,
+			transactionId: boundReplacementTransaction.transactionId,
 		});
 		store.beginCallbackConsumption({
 			oauthState: replacementAuthorizing.oauthState,

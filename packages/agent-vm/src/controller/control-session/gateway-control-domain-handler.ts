@@ -41,6 +41,7 @@ import {
 	normalizeToolVmActiveUseCorrelation,
 	type AgentVmHealthEvent,
 } from '@agent-vm/gateway-lifecycle';
+import type { OAuthAuthorizationActionResult } from '@agent-vm/oauth-broker-contracts';
 
 import type {
 	ControllerApprovalArmDispatchResult,
@@ -194,6 +195,17 @@ export interface GatewayControlControllerExecutionOperations {
 			{ readonly kind: 'configured_cli' }
 		>['result']
 	>;
+	executeOAuthAuthorization?(options: {
+		readonly callerContext: GatewayControlTrustedCallerContext;
+		readonly payload: Extract<
+			Extract<
+				GatewayControlToolPortalControllerExecutionPayload,
+				{ readonly kind: 'registered_action' }
+			>['action'],
+			{ readonly actionId: `oauth_authorization.${string}` }
+		>;
+		readonly session: GatewayControlAcceptedSessionRef;
+	}): Promise<OAuthAuthorizationActionResult>;
 	pushWorkspaceGit(options: {
 		readonly callerContext: GatewayControlTrustedCallerContext;
 		readonly payload: Extract<
@@ -1085,6 +1097,30 @@ async function executeToolPortalControllerExecution(options: {
 				return commandResultPayload({
 					controllerExecution: {
 						action: { actionId: 'controller_host_probe', result },
+						kind: 'registered_action',
+					},
+					responseToMessageId: options.responseToMessageId,
+					result: 'ok',
+				});
+			}
+			case 'oauth_authorization.begin':
+			case 'oauth_authorization.cancel':
+			case 'oauth_authorization.list':
+			case 'oauth_authorization.reauthorize':
+			case 'oauth_authorization.revoke':
+			case 'oauth_authorization.status': {
+				const actionId = options.payload.action.actionId;
+				if (options.actions.executeOAuthAuthorization === undefined) {
+					throw new Error('OAuth authorization controller execution is not configured.');
+				}
+				const result = await options.actions.executeOAuthAuthorization({
+					callerContext,
+					payload: options.payload.action,
+					session: options.session,
+				});
+				return commandResultPayload({
+					controllerExecution: {
+						action: { actionId, result },
 						kind: 'registered_action',
 					},
 					responseToMessageId: options.responseToMessageId,

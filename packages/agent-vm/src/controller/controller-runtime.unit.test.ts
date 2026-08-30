@@ -49,6 +49,7 @@ import {
 	resolveControllerWorkerTaskRuntimeRecordTarget,
 } from './durable-state/controller-state-record-paths.js';
 import type { HealthEventSink, HealthEventStore } from './health/health-event-store.js';
+import type { PreparedControllerOAuthRuntime } from './oauth/controller-oauth-runtime.js';
 import { ControllerOwnershipLockError } from './vm-ownership/controller-ownership-lock.js';
 import { GatewayDestructionTimeoutError } from './vm-ownership/gateway-destruction-budget.js';
 import { createGatewayOwnershipCoordinator } from './vm-ownership/gateway-ownership-coordinator.js';
@@ -69,6 +70,39 @@ const controllerRuntimeTestRoot = path.join(
 	tmpdir(),
 	`agent-vm-controller-runtime-test-${process.pid}`,
 );
+
+function createPreparedOAuthRuntimeStub(events: string[]): PreparedControllerOAuthRuntime {
+	return {
+		brokerService: {
+			cancelBrowserTransaction: () => false,
+			close: () => events.push('oauth-admission-stopped'),
+			confirmAccount: async () => ({ accountLabel: 'test', kind: 'completed' }),
+			executeAuthorizationAction: async () => ({ kind: 'authorization-list', profiles: [] }),
+			getPermissionPage: () => {
+				throw new Error('unused OAuth browser fixture');
+			},
+			handleGoogleCallback: async () => ({ kind: 'failed', reason: 'unused' }),
+			resolveRuntimeCredential: async () => ({
+				kind: 'unavailable',
+				reason: 'authorization-missing',
+			}),
+			submitPermissions: () => ({ kind: 'already-satisfied' }),
+		},
+		close: () => events.push('oauth-runtime-closed'),
+		port: 18_900,
+		setCredentialInvalidationHandler: () => events.push('oauth-invalidation-handler-set'),
+		startHttpsListener: async () => {
+			events.push('oauth-listener-started');
+			return {
+				close: async () => {
+					events.push('oauth-listener-closed');
+				},
+			};
+		},
+		stopAdmission: () => events.push('oauth-admission-stopped'),
+		zoneId: 'shravan',
+	};
+}
 
 async function executePreparedGatewayLeaseMutation(options: {
 	readonly gateway: GatewayEpochIdentity;
@@ -1390,6 +1424,7 @@ describe('startControllerRuntime', () => {
 				},
 				now: () => statusNowMs,
 				preflightGatewayZoneStart,
+				prepareControllerOAuthRuntime: async () => createPreparedOAuthRuntimeStub(startupEvents),
 				startGatewayZone,
 				startHttpServer,
 				setIntervalImpl: setIntervalMock,
@@ -1425,9 +1460,13 @@ describe('startControllerRuntime', () => {
 		);
 		expect(taskTitles).toEqual([
 			'Resolving 1Password secrets',
+			'Preparing OAuth broker',
 			'Controller API on :18800',
+			'OAuth HTTPS on :18900',
 			'Starting selected gateway zones',
 		]);
+		expect(startupEvents).toContain('oauth-invalidation-handler-set');
+		expect(startupEvents).toContain('oauth-listener-started');
 		expect(startHttpServer).toHaveBeenCalledWith(
 			expect.objectContaining({
 				port: 18800,
@@ -1706,6 +1745,11 @@ describe('startControllerRuntime', () => {
 			}),
 		]);
 		await runtime.close();
+		expect(startupEvents).toContain('oauth-listener-closed');
+		expect(startupEvents).toContain('oauth-runtime-closed');
+		expect(startupEvents.indexOf('oauth-listener-closed')).toBeLessThan(
+			startupEvents.indexOf('oauth-runtime-closed'),
+		);
 		expect(releaseControllerOwnershipLock).toHaveBeenCalledOnce();
 		expect(startupEvents.at(-1)).toBe('ownership-lock-released');
 		await rm(absoluteLeaseRoot, { force: true, recursive: true });
