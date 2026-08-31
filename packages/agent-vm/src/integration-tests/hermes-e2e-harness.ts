@@ -13,6 +13,7 @@ import {
 	copyLocalPackageTarballsToDockerContext,
 	createLocalDockerPackageTarball,
 	findAvailablePort,
+	reserveE2eTcpPoolPortRange,
 	localDockerPackageDependencyName,
 	packLocalAgentVmPackageTarball,
 	removeE2eLocalPackageTarballs,
@@ -294,6 +295,8 @@ export async function scaffoldHermesE2eProject(options: {
 	const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), options.prefix));
 	const controllerPort = await findAvailablePort();
 	const gatewayPort = await findAvailablePort();
+	const tcpPoolSize = Math.max(4, options.agents.length);
+	const tcpPoolBasePort = await reserveE2eTcpPoolPortRange(tcpPoolSize, tempRoot);
 	await scaffoldAgentVmProject({
 		agents: options.agents,
 		architecture: options.architecture,
@@ -330,6 +333,7 @@ export async function scaffoldHermesE2eProject(options: {
 	});
 	systemConfig.host.controllerPort = controllerPort;
 	systemConfig.host.projectNamespace = 'agent-vm-tests-hermes';
+	systemConfig.tcpPool = { basePort: tcpPoolBasePort, size: tcpPoolSize };
 	systemConfig.zones[0] = {
 		...scaffoldedZone,
 		agents: options.agents.map((agentId) => ({ id: agentId })),

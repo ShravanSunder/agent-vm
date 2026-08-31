@@ -2,6 +2,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 
 import {
 	fakeUpstreamNamespace,
@@ -81,11 +82,31 @@ interface ProviderObservation {
 	readonly tools: readonly unknown[];
 }
 
+interface AuxiliaryProviderObservation {
+	readonly messages: readonly ProviderMessage[];
+	readonly responseFormat: Record<string, unknown>;
+}
+
 interface RecordingProvider {
+	readonly auxiliaryObservations: () => readonly AuxiliaryProviderObservation[];
 	readonly close: () => Promise<void>;
 	readonly observations: () => readonly ProviderObservation[];
 	readonly port: number;
 }
+
+const titleGenerationResponseFormat = {
+	json_schema: {
+		name: 'session_title',
+		schema: {
+			additionalProperties: false,
+			properties: { title: { type: 'string' } },
+			required: ['title'],
+			type: 'object',
+		},
+		strict: true,
+	},
+	type: 'json_schema',
+} as const;
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -99,12 +120,8 @@ async function readRequestBody(request: IncomingMessage): Promise<string> {
 	return Buffer.concat(chunks).toString('utf8');
 }
 
-function parseProviderObservation(requestBody: string): ProviderObservation {
-	const parsed: unknown = JSON.parse(requestBody);
-	if (!isObjectRecord(parsed) || !Array.isArray(parsed.messages) || !Array.isArray(parsed.tools)) {
-		throw new Error('Hermes recording provider expected OpenAI messages and tools arrays.');
-	}
-	const messages = parsed.messages.flatMap((message): readonly ProviderMessage[] => {
+function parseProviderMessages(messages: readonly unknown[]): readonly ProviderMessage[] {
+	return messages.flatMap((message): readonly ProviderMessage[] => {
 		if (
 			!isObjectRecord(message) ||
 			typeof message.role !== 'string' ||
@@ -114,7 +131,19 @@ function parseProviderObservation(requestBody: string): ProviderObservation {
 		}
 		return [{ content: message.content, role: message.role }];
 	});
+}
+
+function parseProviderObservation(requestBody: string): ProviderObservation {
+	const parsed: unknown = JSON.parse(requestBody);
+	if (!isObjectRecord(parsed) || !Array.isArray(parsed.messages) || !Array.isArray(parsed.tools)) {
+		throw new Error('Hermes recording provider expected OpenAI messages and tools arrays.');
+	}
+	const messages = parseProviderMessages(parsed.messages);
 	return { messages, tools: parsed.tools };
+}
+
+function isTitleGenerationResponseFormat(value: unknown): value is Record<string, unknown> {
+	return isObjectRecord(value) && isDeepStrictEqual(value, titleGenerationResponseFormat);
 }
 
 function writeServerSentCompletion(
@@ -146,6 +175,26 @@ function writeServerSentCompletion(
 	response.writeHead(200, { 'content-type': 'text/event-stream' });
 	for (const chunk of chunks) response.write(`data: ${JSON.stringify(chunk)}\n\n`);
 	response.end('data: [DONE]\n\n');
+}
+
+function writeJsonCompletion(response: ServerResponse, content: string): void {
+	response.writeHead(200, { 'content-type': 'application/json' });
+	response.end(
+		JSON.stringify({
+			choices: [
+				{
+					finish_reason: 'stop',
+					index: 0,
+					message: { content, role: 'assistant' },
+				},
+			],
+			created: 1,
+			id: 'hermes-orientation-e2e-auxiliary-response',
+			model: modelName,
+			object: 'chat.completion',
+			usage: { completion_tokens: 1, prompt_tokens: 1, total_tokens: 2 },
+		}),
+	);
 }
 
 function writeServerSentToolCall(
@@ -193,6 +242,7 @@ function messagesAfterLatestUser(observation: ProviderObservation): readonly Pro
 
 async function startRecordingProvider(): Promise<RecordingProvider> {
 	const observations: ProviderObservation[] = [];
+	const auxiliaryObservations: AuxiliaryProviderObservation[] = [];
 	// oxlint-disable-next-line typescript/no-misused-promises -- request body consumption is async
 	const server = createServer(async (request, response) => {
 		const url = new URL(request.url ?? '/', 'http://127.0.0.1');
@@ -200,7 +250,22 @@ async function startRecordingProvider(): Promise<RecordingProvider> {
 			response.writeHead(404).end();
 			return;
 		}
-		const observation = parseProviderObservation(await readRequestBody(request));
+		const requestBody = await readRequestBody(request);
+		const parsedRequest: unknown = JSON.parse(requestBody);
+		if (
+			isObjectRecord(parsedRequest) &&
+			Array.isArray(parsedRequest.messages) &&
+			!Object.hasOwn(parsedRequest, 'tools') &&
+			isTitleGenerationResponseFormat(parsedRequest.response_format)
+		) {
+			auxiliaryObservations.push({
+				messages: parseProviderMessages(parsedRequest.messages),
+				responseFormat: parsedRequest.response_format,
+			});
+			writeJsonCompletion(response, JSON.stringify({ title: 'Orientation E2E' }));
+			return;
+		}
+		const observation = parseProviderObservation(requestBody);
 		observations.push(observation);
 		const latestUserContent = observation.messages.findLast(({ role }) => role === 'user')?.content;
 		const latestToolResult = messagesAfterLatestUser(observation).find(
@@ -384,6 +449,7 @@ async function startRecordingProvider(): Promise<RecordingProvider> {
 		throw new Error('Hermes orientation recording provider did not bind a loopback port.');
 	}
 	return {
+		auxiliaryObservations: () => auxiliaryObservations,
 		close: async () =>
 			await new Promise<void>((resolve, reject) =>
 				server.close((error) => (error ? reject(error) : resolve())),
@@ -799,6 +865,13 @@ describeHermesToolPortalOrientationE2e('e2e: Hermes Tool Portal session orientat
 			for (const content of systemContents(observation))
 				expect(content).not.toContain(orientationMarker);
 			expect(JSON.stringify(observation.tools)).not.toContain(orientationMarker);
+		}
+		const auxiliaryObservations = provider.auxiliaryObservations();
+		expect(auxiliaryObservations).toHaveLength(1);
+		for (const observation of auxiliaryObservations) {
+			expect(isTitleGenerationResponseFormat(observation.responseFormat)).toBe(true);
+			for (const message of observation.messages)
+				expect(message.content).not.toContain(orientationMarker);
 		}
 	}, 900_000);
 });

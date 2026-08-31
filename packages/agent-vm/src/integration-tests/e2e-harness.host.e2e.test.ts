@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -43,6 +43,7 @@ import {
 	removeE2eLocalPackageTarballs,
 	removeE2eDockerImagesForSystemConfig,
 	removeE2eTempRoot,
+	reserveE2eTcpPoolPortRange,
 	resolveLocalPackagePackArgs,
 	scaffoldWorkerE2eProject,
 	seedGatewayImageCacheIfAvailable,
@@ -136,6 +137,80 @@ afterEach(async () => {
 			await fs.rm(temporaryRoot, { force: true, recursive: true });
 		}),
 	);
+});
+
+describe('reserveE2eTcpPoolPortRange', () => {
+	it('retains disjoint dedicated slots across E2E processes', async () => {
+		const childTempRoot = await createTemporaryRoot('agent-vm-gateway-e2e-project-');
+		const parentTempRoot = await createTemporaryRoot('agent-vm-gateway-e2e-project-');
+		const maximumRangeTempRoot = await createTemporaryRoot('agent-vm-gateway-e2e-project-');
+		const childSource = `
+			import { removeE2eTempRoot, reserveE2eTcpPoolPortRange } from './packages/agent-vm/src/integration-tests/e2e-harness.ts';
+			const ownerTempRoot = ${JSON.stringify(childTempRoot)};
+			const basePort = await reserveE2eTcpPoolPortRange(4, ownerTempRoot);
+			process.stdout.write(String(basePort) + '\\n');
+			process.stdin.resume();
+			await new Promise((resolve) => process.stdin.once('end', resolve));
+			await removeE2eTempRoot(ownerTempRoot);
+		`;
+		const child = spawn(
+			process.execPath,
+			['--import', 'tsx', '--input-type=module', '--eval', childSource],
+			{
+				cwd: process.cwd(),
+				stdio: ['pipe', 'pipe', 'pipe'],
+			},
+		);
+		const childBasePortPromise = new Promise<number>((resolve, reject) => {
+			let stdout = '';
+			child.once('error', reject);
+			child.once('exit', (exitCode) => {
+				reject(new Error(`E2E TCP pool child exited before reporting a port: ${String(exitCode)}`));
+			});
+			child.stdout.on('data', (chunk: Buffer) => {
+				stdout += chunk.toString('utf8');
+				const newlineIndex = stdout.indexOf('\n');
+				if (newlineIndex < 0) return;
+				const firstLine = stdout.slice(0, newlineIndex).trim();
+				if (firstLine !== undefined && /^\d+$/u.test(firstLine)) resolve(Number(firstLine));
+			});
+		});
+		const childExitPromise = new Promise<void>((resolve, reject) => {
+			child.once('error', reject);
+			child.once('exit', (exitCode, signal) => {
+				if (exitCode === 0) {
+					resolve();
+					return;
+				}
+				reject(
+					new Error(
+						`E2E TCP pool child exited unsuccessfully: code=${String(exitCode)} signal=${String(signal)}`,
+					),
+				);
+			});
+		});
+		let childBasePort: number;
+		try {
+			childBasePort = await childBasePortPromise;
+			const parentBasePort = await reserveE2eTcpPoolPortRange(4, parentTempRoot);
+			const maximumRangeBasePort = await reserveE2eTcpPoolPortRange(256, maximumRangeTempRoot);
+
+			expect(childBasePort).toBeGreaterThanOrEqual(30_001);
+			expect(parentBasePort).not.toBe(childBasePort);
+			expect(maximumRangeBasePort + 255).toBeLessThanOrEqual(45_000);
+		} finally {
+			child.stdin.end();
+			await childExitPromise;
+			await Promise.all([
+				removeE2eTempRoot(parentTempRoot),
+				removeE2eTempRoot(maximumRangeTempRoot),
+			]);
+		}
+		const reusedTempRoot = await createTemporaryRoot('agent-vm-gateway-e2e-project-');
+		const reusedBasePort = await reserveE2eTcpPoolPortRange(4, reusedTempRoot);
+		expect(reusedBasePort).toBe(childBasePort);
+		await removeE2eTempRoot(reusedTempRoot);
+	});
 });
 
 describe('scaffoldGatewayE2eProject', () => {
