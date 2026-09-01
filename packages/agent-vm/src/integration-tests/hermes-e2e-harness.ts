@@ -13,10 +13,11 @@ import {
 	copyLocalPackageTarballsToDockerContext,
 	createLocalDockerPackageTarball,
 	findAvailablePort,
-	reserveE2eTcpPoolPortRange,
 	localDockerPackageDependencyName,
 	packLocalAgentVmPackageTarball,
 	removeE2eLocalPackageTarballs,
+	removeE2eTempRoot,
+	reserveE2eTcpPoolPortRange,
 	requireLocalPackageTarballPath,
 	resolveE2eCacheRoot,
 	useLocalToolVmMcpPortalPackageTarballs,
@@ -297,97 +298,102 @@ export async function scaffoldHermesE2eProject(options: {
 	const gatewayPort = await findAvailablePort();
 	const tcpPoolSize = Math.max(4, options.agents.length);
 	const tcpPoolBasePort = await reserveE2eTcpPoolPortRange(tcpPoolSize, tempRoot);
-	await scaffoldAgentVmProject({
-		agents: options.agents,
-		architecture: options.architecture,
-		gatewayType: 'hermes',
-		secretsProvider: 'environment',
-		targetDir: tempRoot,
-		zoneId: options.zoneId,
-	});
-	const systemConfig = await loadSystemConfig(path.join(tempRoot, 'config', 'system.jsonc'));
-	const scaffoldedZone = systemConfig.zones[0];
-	if (scaffoldedZone === undefined || scaffoldedZone.gateway.type !== 'hermes') {
-		throw new Error('Hermes E2E scaffold requires a Hermes zone.');
-	}
-	const hermesConfigurationPath = scaffoldedZone.gateway.config;
-	const hermesManagedConfigurationDirectory = path.dirname(hermesConfigurationPath);
-	const hermesImageDirectory = path.join(tempRoot, 'vm-images', 'gateways', 'hermes');
-	await Promise.all([
-		fs.mkdir(hermesManagedConfigurationDirectory, { recursive: true }),
-		fs.mkdir(hermesImageDirectory, { recursive: true }),
-	]);
-	await fs.writeFile(
-		hermesConfigurationPath,
-		'plugins:\n  enabled:\n    - agent-vm-tool-portal\n  disabled: []\n',
-		'utf8',
-	);
-	systemConfig.imageProfiles.gateways = {
-		hermes: {
-			buildConfig: path.join(hermesImageDirectory, 'build-config.jsonc'),
-			type: 'hermes',
-		},
-	};
-	Object.assign(systemConfig, {
-		cacheDir: path.join(resolveE2eCacheRoot(), 'hermes'),
-	});
-	systemConfig.host.controllerPort = controllerPort;
-	systemConfig.host.projectNamespace = 'agent-vm-tests-hermes';
-	systemConfig.tcpPool = { basePort: tcpPoolBasePort, size: tcpPoolSize };
-	systemConfig.zones[0] = {
-		...scaffoldedZone,
-		agents: options.agents.map((agentId) => ({ id: agentId })),
-		gateway: {
-			config: hermesConfigurationPath,
-			cpus: scaffoldedZone.gateway.cpus,
-			imageProfile: 'hermes',
-			memory: scaffoldedZone.gateway.memory,
-			profileSecretProjectionsByAgent: Object.fromEntries(
-				options.agents.map((agentId) => [
-					agentId,
-					{
-						API_SERVER_KEY: hermesE2eProfileApiServerKeyEnvironmentName(agentId),
-						DISCORD_BOT_TOKEN: `DISCORD_BOT_TOKEN_${agentId.toUpperCase()}`,
-					},
-				]),
-			),
-			port: gatewayPort,
-			profilesByAgent: Object.fromEntries(options.agents.map((agentId) => [agentId, agentId])),
-			runtimeRootfsSize: scaffoldedZone.gateway.runtimeRootfsSize,
-			stateDir: scaffoldedZone.gateway.stateDir,
-			type: 'hermes',
-			zoneFilesDir: scaffoldedZone.gateway.zoneFilesDir,
-			zoneRuntimeDir: scaffoldedZone.gateway.zoneRuntimeDir,
-		},
-		secrets: {
-			API_SERVER_KEY: {
-				audience: 'gateway',
-				injection: 'env',
-				source: 'config',
-				value: hermesE2eRootApiServerKey,
+	try {
+		await scaffoldAgentVmProject({
+			agents: options.agents,
+			architecture: options.architecture,
+			gatewayType: 'hermes',
+			secretsProvider: 'environment',
+			targetDir: tempRoot,
+			zoneId: options.zoneId,
+		});
+		const systemConfig = await loadSystemConfig(path.join(tempRoot, 'config', 'system.jsonc'));
+		const scaffoldedZone = systemConfig.zones[0];
+		if (scaffoldedZone === undefined || scaffoldedZone.gateway.type !== 'hermes') {
+			throw new Error('Hermes E2E scaffold requires a Hermes zone.');
+		}
+		const hermesConfigurationPath = scaffoldedZone.gateway.config;
+		const hermesManagedConfigurationDirectory = path.dirname(hermesConfigurationPath);
+		const hermesImageDirectory = path.join(tempRoot, 'vm-images', 'gateways', 'hermes');
+		await Promise.all([
+			fs.mkdir(hermesManagedConfigurationDirectory, { recursive: true }),
+			fs.mkdir(hermesImageDirectory, { recursive: true }),
+		]);
+		await fs.writeFile(
+			hermesConfigurationPath,
+			'plugins:\n  enabled:\n    - agent-vm-tool-portal\n  disabled: []\n',
+			'utf8',
+		);
+		systemConfig.imageProfiles.gateways = {
+			hermes: {
+				buildConfig: path.join(hermesImageDirectory, 'build-config.jsonc'),
+				type: 'hermes',
 			},
-			...Object.fromEntries(
-				options.agents.map((agentId) => {
-					const environmentName = hermesE2eProfileApiServerKeyEnvironmentName(agentId);
-					return [
-						environmentName,
+		};
+		Object.assign(systemConfig, {
+			cacheDir: path.join(resolveE2eCacheRoot(), 'hermes'),
+		});
+		systemConfig.host.controllerPort = controllerPort;
+		systemConfig.host.projectNamespace = 'agent-vm-tests-hermes';
+		systemConfig.tcpPool = { basePort: tcpPoolBasePort, size: tcpPoolSize };
+		systemConfig.zones[0] = {
+			...scaffoldedZone,
+			agents: options.agents.map((agentId) => ({ id: agentId })),
+			gateway: {
+				config: hermesConfigurationPath,
+				cpus: scaffoldedZone.gateway.cpus,
+				imageProfile: 'hermes',
+				memory: scaffoldedZone.gateway.memory,
+				profileSecretProjectionsByAgent: Object.fromEntries(
+					options.agents.map((agentId) => [
+						agentId,
 						{
-							audience: 'gateway' as const,
-							envVar: environmentName,
-							injection: 'env' as const,
-							source: 'environment' as const,
+							API_SERVER_KEY: hermesE2eProfileApiServerKeyEnvironmentName(agentId),
+							DISCORD_BOT_TOKEN: `DISCORD_BOT_TOKEN_${agentId.toUpperCase()}`,
 						},
-					];
-				}),
-			),
-		},
-	};
-	const zone = getHermesE2eZone(systemConfig);
-	return {
-		controllerPort,
-		gatewayPort,
-		systemConfig,
-		tempRoot,
-		zone,
-	};
+					]),
+				),
+				port: gatewayPort,
+				profilesByAgent: Object.fromEntries(options.agents.map((agentId) => [agentId, agentId])),
+				runtimeRootfsSize: scaffoldedZone.gateway.runtimeRootfsSize,
+				stateDir: scaffoldedZone.gateway.stateDir,
+				type: 'hermes',
+				zoneFilesDir: scaffoldedZone.gateway.zoneFilesDir,
+				zoneRuntimeDir: scaffoldedZone.gateway.zoneRuntimeDir,
+			},
+			secrets: {
+				API_SERVER_KEY: {
+					audience: 'gateway',
+					injection: 'env',
+					source: 'config',
+					value: hermesE2eRootApiServerKey,
+				},
+				...Object.fromEntries(
+					options.agents.map((agentId) => {
+						const environmentName = hermesE2eProfileApiServerKeyEnvironmentName(agentId);
+						return [
+							environmentName,
+							{
+								audience: 'gateway' as const,
+								envVar: environmentName,
+								injection: 'env' as const,
+								source: 'environment' as const,
+							},
+						];
+					}),
+				),
+			},
+		};
+		const zone = getHermesE2eZone(systemConfig);
+		return {
+			controllerPort,
+			gatewayPort,
+			systemConfig,
+			tempRoot,
+			zone,
+		};
+	} catch (error: unknown) {
+		await removeE2eTempRoot(tempRoot);
+		throw error;
+	}
 }
