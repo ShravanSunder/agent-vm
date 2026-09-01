@@ -7,6 +7,7 @@ import {
 import { z } from 'zod';
 
 const googleAuthorizationEndpoint = 'https://accounts.google.com/o/oauth2/v2/auth';
+const googleDownloadedAuthorizationEndpoint = 'https://accounts.google.com/o/oauth2/auth';
 const googleTokenEndpoint = 'https://oauth2.googleapis.com/token';
 const googleUserInfoEndpoint = 'https://openidconnect.googleapis.com/v1/userinfo';
 const googleRevocationEndpoint = 'https://oauth2.googleapis.com/revoke';
@@ -21,7 +22,7 @@ export const googleWebClientCredentialsSchema = z
 		web: z
 			.object({
 				auth_provider_x509_cert_url: z.url().optional(),
-				auth_uri: z.literal(googleAuthorizationEndpoint),
+				auth_uri: z.enum([googleAuthorizationEndpoint, googleDownloadedAuthorizationEndpoint]),
 				client_id: z.string().min(1).max(1_024),
 				client_secret: z.string().min(1).max(4_096),
 				javascript_origins: z.array(z.url()).optional(),

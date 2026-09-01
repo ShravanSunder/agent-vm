@@ -11,7 +11,7 @@ const redirectUri = 'https://auth.claw.askluna.xyz:18900/oauth/google/callback';
 const rawClientCredentials = JSON.stringify({
 	web: {
 		auth_provider_x509_cert_url: 'https://www.googleapis.com/oauth2/v1/certs',
-		auth_uri: 'https://accounts.google.com/o/oauth2/v2/auth',
+		auth_uri: 'https://accounts.google.com/o/oauth2/auth',
 		client_id: 'google-client-id',
 		client_secret: 'google-client-secret',
 		project_id: 'agent-vm-test',
