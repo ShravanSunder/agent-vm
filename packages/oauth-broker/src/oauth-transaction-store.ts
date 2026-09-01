@@ -434,7 +434,11 @@ export function createOAuthTransactionStore<TProviderGrant>(props: {
 			const completionSessionId = completionSessionIdsByTransactionId.get(parsedTransactionId);
 			if (completionSessionId === undefined) return false;
 			const completion = completionSessions.get(completionSessionId);
-			return completion?.agentId === parsedAgentId && discardCompletionSession(completionSessionId);
+			return (
+				completion?.kind === 'awaiting-account-confirmation' &&
+				completion.agentId === parsedAgentId &&
+				discardCompletionSession(completionSessionId)
+			);
 		},
 		cancelCompletion: (completionProps) => {
 			const completionSessionId = oauthCompletionSessionIdSchema.parse(

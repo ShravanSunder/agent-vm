@@ -192,6 +192,49 @@ describe('OAuth transaction store', () => {
 		).toEqual({ kind: 'rejected', reason: 'consumed-or-missing' });
 	});
 
+	it('refuses agent cancellation after the completion commit has started', () => {
+		// Arrange
+		const { authorizing, store, transaction } = createAuthorizingTransaction(() => 1_000);
+		store.beginCallbackConsumption({
+			oauthState: authorizing.oauthState,
+			redirectUri: authorizing.redirectUri,
+			tailnetLogin: authorizing.tailnetLogin,
+			transactionId: transaction.transactionId,
+		});
+		const completion = requireCreatedCompletion(
+			store.completeCallback({
+				providerGrant: {
+					accessToken: 'sensitive-access',
+					providerSubject: 'google-subject-1',
+					refreshToken: 'sensitive-refresh',
+				},
+				transactionId: transaction.transactionId,
+			}),
+		);
+		expect(
+			store.beginCompletionCommit({
+				browserBindingSecret: completion.browserBindingSecret,
+				completionSessionId: completion.completionSessionId,
+				csrfToken: completion.csrfSecret,
+				tailnetLogin: completion.tailnetLogin,
+			}),
+		).toMatchObject({ kind: 'accepted', session: { kind: 'committing' } });
+
+		// Act
+		const cancelled = store.cancelTransaction({
+			agentId: 'hermes',
+			transactionId: transaction.transactionId,
+		});
+
+		// Assert
+		expect(cancelled).toBe(false);
+		expect(store.getCeremonyOwner(transaction.transactionId)).toMatchObject({
+			agentId: 'hermes',
+			transactionId: transaction.transactionId,
+		});
+		expect(store.finishCompletion(completion.completionSessionId)).toBe(true);
+	});
+
 	it('cancels an account-confirmation session only with its bound browser authority', () => {
 		const { authorizing, store, transaction } = createAuthorizingTransaction(() => 1_000);
 		store.beginCallbackConsumption({

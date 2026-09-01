@@ -284,15 +284,14 @@ export function createGoogleOAuthBrokerService(props: {
 	const activeTransactionIds = new Map<string, OAuthTransactionId>();
 	const publicCeremonyIdsByActiveKey = new Map<string, OAuthTransactionId>();
 	const currentTransactionIdsByPublicCeremonyId = new Map<OAuthTransactionId, OAuthTransactionId>();
-	const completedAuthorizationResults = new Map<
+	const terminalAuthorizationResults = new Map<
 		OAuthTransactionId,
 		{
 			readonly agentId: string;
 			readonly expiresAtMs: number;
-			readonly result: Extract<
-				OAuthAuthorizationActionResult,
-				{ readonly kind: 'authorization-completed' }
-			>;
+			readonly result:
+				| Extract<OAuthAuthorizationActionResult, { readonly kind: 'authorization-completed' }>
+				| Extract<OAuthAuthorizationActionResult, { readonly kind: 'authorization-failed' }>;
 		}
 	>();
 	const inFlightOperations = new Set<Promise<unknown>>();
@@ -308,7 +307,7 @@ export function createGoogleOAuthBrokerService(props: {
 		activeTransactionIds.clear();
 		publicCeremonyIdsByActiveKey.clear();
 		currentTransactionIdsByPublicCeremonyId.clear();
-		completedAuthorizationResults.clear();
+		terminalAuthorizationResults.clear();
 	};
 	const clearActiveCeremony = (
 		agentId: string,
@@ -324,8 +323,8 @@ export function createGoogleOAuthBrokerService(props: {
 		return publicCeremonyId;
 	};
 	const reapCompletedAuthorizationResults = (): void => {
-		for (const [transactionId, completed] of completedAuthorizationResults) {
-			if (completed.expiresAtMs <= now()) completedAuthorizationResults.delete(transactionId);
+		for (const [transactionId, completed] of terminalAuthorizationResults) {
+			if (completed.expiresAtMs <= now()) terminalAuthorizationResults.delete(transactionId);
 		}
 	};
 	const trackOperation = async <TResult>(operation: () => Promise<TResult>): Promise<TResult> => {
@@ -910,6 +909,7 @@ export function createGoogleOAuthBrokerService(props: {
 				let completedAuthorizationResult:
 					| Extract<OAuthAuthorizationActionResult, { readonly kind: 'authorization-completed' }>
 					| undefined;
+				let successorTransactionId: OAuthTransactionId | undefined;
 				try {
 					const existingGrant = props.catalog.getGrantForAccountApplication({
 						accountProfileId: session.accountProfileId,
@@ -995,7 +995,7 @@ export function createGoogleOAuthBrokerService(props: {
 					durableGrantCommitted = true;
 					const nextApplication = session.remainingApplications[0];
 					if (nextApplication === undefined) {
-						completedAuthorizationResults.set(publicCeremonyId, {
+						terminalAuthorizationResults.set(publicCeremonyId, {
 							agentId: session.agentId,
 							expiresAtMs: now() + 10 * 60_000,
 							result: completedAuthorizationResult,
@@ -1016,6 +1016,7 @@ export function createGoogleOAuthBrokerService(props: {
 						authorizationMode: session.authorizationMode,
 						suggestedSelections: session.confirmedSelections,
 					});
+					successorTransactionId = nextTransaction.transactionId;
 					const boundNextTransaction = transactionStore.bindTailnetIdentity({
 						tailnetLogin: session.tailnetLogin,
 						transactionId: nextTransaction.transactionId,
@@ -1054,11 +1055,26 @@ export function createGoogleOAuthBrokerService(props: {
 					};
 				} catch (error) {
 					transactionStore.finishCompletion(session.completionSessionId);
-					if (durableGrantCommitted && completedAuthorizationResult !== undefined) {
-						completedAuthorizationResults.set(publicCeremonyId, {
+					if (successorTransactionId !== undefined) {
+						transactionStore.cancelTransaction({
+							agentId: session.agentId,
+							transactionId: successorTransactionId,
+						});
+					}
+					if (durableGrantCommitted) {
+						const failedAuthorizationResult = oauthAuthorizationActionResultSchema.parse({
+							failure: { kind: 'unavailable' },
+							kind: 'authorization-failed',
+						});
+						if (failedAuthorizationResult.kind !== 'authorization-failed') {
+							throw new Error('OAuth failed authorization result validation changed its kind.', {
+								cause: error,
+							});
+						}
+						terminalAuthorizationResults.set(publicCeremonyId, {
 							agentId: session.agentId,
 							expiresAtMs: now() + 10 * 60_000,
-							result: completedAuthorizationResult,
+							result: failedAuthorizationResult,
 						});
 					}
 					clearActiveCeremony(session.agentId, session.accountProfileId);
@@ -1094,7 +1110,7 @@ export function createGoogleOAuthBrokerService(props: {
 								: { failure: { kind: 'consumed' }, kind: 'authorization-failed' };
 						}
 						reapCompletedAuthorizationResults();
-						const completed = completedAuthorizationResults.get(request.transactionId);
+						const completed = terminalAuthorizationResults.get(request.transactionId);
 						return completed?.agentId === agentId
 							? completed.result
 							: { failure: { kind: 'consumed' }, kind: 'authorization-failed' };
@@ -1105,7 +1121,16 @@ export function createGoogleOAuthBrokerService(props: {
 							request.transactionId;
 						const ceremonyOwner = transactionStore.getCeremonyOwner(currentTransactionId);
 						if (ceremonyOwner !== undefined && ceremonyOwner.agentId === agentId) {
-							transactionStore.cancelTransaction({ agentId, transactionId: currentTransactionId });
+							const cancelled = transactionStore.cancelTransaction({
+								agentId,
+								transactionId: currentTransactionId,
+							});
+							if (!cancelled) {
+								return {
+									kind: 'authorization-pending',
+									transactionId: request.transactionId,
+								};
+							}
 							clearActiveCeremony(agentId, ceremonyOwner.accountProfileId);
 						}
 						return { kind: 'authorization-cancelled' };
