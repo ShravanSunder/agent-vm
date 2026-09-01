@@ -1,4 +1,6 @@
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
@@ -18,14 +20,29 @@ afterEach(async () => {
 
 describe('Hermes E2E project scaffold', () => {
 	it('releases its TCP pool reservation when scaffold validation fails', async () => {
-		await expect(
-			scaffoldHermesE2eProject({
-				agents: ['main'],
-				architecture: 'aarch64',
-				prefix: 'agent-vm-hermes-e2e-harness-',
-				zoneId: 'invalid zone id',
-			}),
-		).rejects.toThrow();
+		const failedScaffoldPrefix = `agent-vm-hermes-e2e-harness-${randomUUID()}-`;
+		let leakedProjectRoots: readonly string[] = [];
+		try {
+			await expect(
+				scaffoldHermesE2eProject({
+					agents: ['main'],
+					architecture: 'aarch64',
+					prefix: failedScaffoldPrefix,
+					zoneId: 'invalid zone id',
+				}),
+			).rejects.toThrow();
+
+			leakedProjectRoots = (await fs.readdir(os.tmpdir()))
+				.filter((entry) => entry.startsWith(failedScaffoldPrefix))
+				.map((entry) => path.join(os.tmpdir(), entry));
+			expect(leakedProjectRoots).toEqual([]);
+		} finally {
+			await Promise.all(
+				leakedProjectRoots.map(
+					async (projectRoot) => await fs.rm(projectRoot, { force: true, recursive: true }),
+				),
+			);
+		}
 
 		const project = await scaffoldHermesE2eProject({
 			agents: ['main'],
@@ -69,5 +86,12 @@ describe('Hermes E2E project scaffold', () => {
 		await expect(
 			fs.access(path.join(project.tempRoot, 'config', 'gateways', 'hermes-smoke', 'openclaw.json')),
 		).rejects.toMatchObject({ code: 'ENOENT' });
+
+		try {
+			await removeE2eTempRoot(project.tempRoot);
+			await expect(fs.access(project.tempRoot)).rejects.toMatchObject({ code: 'ENOENT' });
+		} finally {
+			await fs.rm(project.tempRoot, { force: true, recursive: true });
+		}
 	});
 });

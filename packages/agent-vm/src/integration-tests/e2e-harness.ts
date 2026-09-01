@@ -171,6 +171,7 @@ const execFileAsync = promisify(execFile);
 const e2eTempRootPrefixes = [
 	'agent-vm-gateway-e2e-project-',
 	'agent-vm-e2e-harness-',
+	'agent-vm-hermes-e2e-harness-',
 	'hermes-framework-observability-e2e-',
 	'hermes-framework-otel-',
 	'hermes-managed-base-environment-e2e-',
