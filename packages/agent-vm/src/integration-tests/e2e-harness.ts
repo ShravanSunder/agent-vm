@@ -288,14 +288,14 @@ function isOwnedE2eTempRoot(tempRoot: string): boolean {
 }
 
 export async function removeE2eTempRoot(tempRoot: string): Promise<void> {
-	if (!isOwnedE2eTempRoot(tempRoot)) {
-		return;
-	}
 	const resolvedTempRoot = path.resolve(tempRoot);
 	const sentinel = heldE2eTcpPoolSentinels.get(resolvedTempRoot);
 	if (sentinel !== undefined) {
 		heldE2eTcpPoolSentinels.delete(resolvedTempRoot);
 		await closeE2ePort(sentinel);
+	}
+	if (!isOwnedE2eTempRoot(resolvedTempRoot)) {
+		return;
 	}
 	await fs.rm(tempRoot, { force: true, recursive: true });
 }

@@ -134,12 +134,28 @@ async function createTemporaryRoot(prefix: string): Promise<string> {
 afterEach(async () => {
 	await Promise.all(
 		temporaryRoots.splice(0).map(async (temporaryRoot) => {
-			await fs.rm(temporaryRoot, { force: true, recursive: true });
+			await removeE2eTempRoot(temporaryRoot);
 		}),
 	);
 });
 
 describe('reserveE2eTcpPoolPortRange', () => {
+	it('releases an unlisted owner sentinel without deleting its directory', async () => {
+		const unlistedTempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'unlisted-hermes-e2e-'));
+		const reusableTempRoot = await createTemporaryRoot('agent-vm-gateway-e2e-project-');
+		try {
+			const initialBasePort = await reserveE2eTcpPoolPortRange(4, unlistedTempRoot);
+			await removeE2eTempRoot(unlistedTempRoot);
+			await expect(fs.access(unlistedTempRoot)).resolves.toBeUndefined();
+
+			const reusedBasePort = await reserveE2eTcpPoolPortRange(4, reusableTempRoot);
+			expect(reusedBasePort).toBe(initialBasePort);
+		} finally {
+			await removeE2eTempRoot(reusableTempRoot);
+			await fs.rm(unlistedTempRoot, { force: true, recursive: true });
+		}
+	});
+
 	it('retains disjoint dedicated slots across E2E processes', async () => {
 		const childTempRoot = await createTemporaryRoot('agent-vm-gateway-e2e-project-');
 		const parentTempRoot = await createTemporaryRoot('agent-vm-gateway-e2e-project-');
