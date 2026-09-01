@@ -12,7 +12,7 @@ const runHermesApprovalPresenterE2e = await shouldRunHermesE2e({ architecture })
 const describeHermesApprovalPresenterE2e = runHermesApprovalPresenterE2e ? describe : describe.skip;
 
 const hermesRuntimeImage =
-	'docker.io/nousresearch/hermes-agent@sha256:16788311e2fa3035456bdc1bafb8ec2b1777db64ebf020af9bb7eb73c3712c9e';
+	'docker.io/nousresearch/hermes-agent@sha256:e0df6adebddf29b91112aefc999d4aaf6846c9eb544faca5672a16a13590ff79';
 
 const pinnedPresenterProof = String.raw`
 set -euo pipefail
