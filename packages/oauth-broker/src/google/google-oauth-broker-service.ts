@@ -186,6 +186,7 @@ export interface GoogleOAuthBrokerService {
 		readonly tailnetLogin: string;
 	}): boolean;
 	close(): Promise<void>;
+	drain(): Promise<void>;
 	executeAuthorizationAction(props: {
 		readonly agentId: string;
 		readonly request: OAuthAuthorizationActionRequest;
@@ -320,6 +321,7 @@ export function createGoogleOAuthBrokerService(props: {
 	const inFlightOperations = new Set<Promise<unknown>>();
 	const providerAbortController = new AbortController();
 	let admissionOpen = true;
+	let drainPromise: Promise<void> | undefined;
 	const requireAdmission = (): void => {
 		if (!admissionOpen) throw new Error('OAuth broker admission is closed.');
 	};
@@ -331,6 +333,15 @@ export function createGoogleOAuthBrokerService(props: {
 		publicCeremonyIdsByActiveKey.clear();
 		currentTransactionIdsByPublicCeremonyId.clear();
 		terminalAuthorizationResults.clear();
+		transactionStore.invalidateAll();
+	};
+	const drain = async (): Promise<void> => {
+		stopAdmission();
+		drainPromise ??= (async (): Promise<void> => {
+			await Promise.allSettled(inFlightOperations);
+			transactionStore.invalidateAll();
+		})();
+		await drainPromise;
 	};
 	const clearActiveCeremony = (
 		agentId: string,
@@ -993,10 +1004,9 @@ export function createGoogleOAuthBrokerService(props: {
 			return cancelled;
 		},
 		close: async (): Promise<void> => {
-			stopAdmission();
-			await Promise.allSettled(inFlightOperations);
-			transactionStore.invalidateAll();
+			await drain();
 		},
+		drain,
 		confirmAccount: async (confirmProps) =>
 			await trackOperation(async () => {
 				const completion = transactionStore.beginCompletionCommit({

@@ -462,6 +462,12 @@ describe('Google OAuth broker service', () => {
 		});
 		await exchangeStarted;
 
+		service.stopAdmission();
+		expect(service.reapExpiredTransactions()).toEqual({
+			completionSessionCount: 0,
+			transactionCount: 0,
+		});
+		await expect(service.drain()).resolves.toBeUndefined();
 		await expect(service.close()).resolves.toBeUndefined();
 		await expect(callback).resolves.toEqual({ kind: 'failed', reason: 'provider-unavailable' });
 		await expect(

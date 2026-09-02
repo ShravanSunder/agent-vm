@@ -131,6 +131,7 @@ export interface PreparedControllerOAuthRuntime {
 	readonly port: 18_900;
 	readonly zoneId: string;
 	close(): Promise<void>;
+	drain(): Promise<void>;
 	setCredentialInvalidationHandler(
 		handler: (props: { readonly agentId: string; readonly zoneId: string }) => Promise<void>,
 	): void;
@@ -219,6 +220,7 @@ export async function prepareControllerOAuthRuntime(props: {
 				})();
 				await closePromise;
 			},
+			drain: async (): Promise<void> => await brokerService.drain(),
 			port: config.browser.listener.port,
 			setCredentialInvalidationHandler: (handler): void => {
 				credentialInvalidationHandler = handler;

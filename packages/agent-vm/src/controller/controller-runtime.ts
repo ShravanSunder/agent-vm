@@ -1267,8 +1267,9 @@ async function startControllerRuntimeWithOwnershipLock(
 	const serverRef: { current?: { close(): Promise<void> } } = {};
 	const oauthServerRef: { current?: { close(): Promise<void> } } = {};
 	const runtimeReadiness = createMutableControllerRuntimeReadiness('recovering');
-	const closeOAuthAdmissionAndListener = async (): Promise<void> => {
+	const drainOAuthAdmissionAndCloseListener = async (): Promise<void> => {
 		preparedOAuthRuntime?.stopAdmission();
+		await preparedOAuthRuntime?.drain();
 		await oauthServerRef.current?.close();
 		delete oauthServerRef.current;
 	};
@@ -1284,7 +1285,7 @@ async function startControllerRuntimeWithOwnershipLock(
 			}, 100);
 		},
 		stopAllZones: async () => {
-			await closeOAuthAdmissionAndListener();
+			await drainOAuthAdmissionAndCloseListener();
 			try {
 				await registry.stopAllZones();
 			} finally {
@@ -1490,7 +1491,7 @@ async function startControllerRuntimeWithOwnershipLock(
 		}
 	} catch (error) {
 		try {
-			await closeOAuthAdmissionAndListener();
+			await drainOAuthAdmissionAndCloseListener();
 		} finally {
 			try {
 				await serverRef.current?.close();
@@ -1559,7 +1560,7 @@ async function startControllerRuntimeWithOwnershipLock(
 			observedAtMs: now(),
 		});
 		try {
-			await closeOAuthAdmissionAndListener();
+			await drainOAuthAdmissionAndCloseListener();
 			await serverRef.current?.close();
 		} finally {
 			await preparedOAuthRuntime?.close();
@@ -1653,7 +1654,7 @@ async function startControllerRuntimeWithOwnershipLock(
 			let stopError: Error | undefined;
 			let serverCloseError: Error | undefined;
 			try {
-				await closeOAuthAdmissionAndListener();
+				await drainOAuthAdmissionAndCloseListener();
 			} catch (error) {
 				oauthCloseError = error instanceof Error ? error : new Error(formatUnknownError(error));
 			}

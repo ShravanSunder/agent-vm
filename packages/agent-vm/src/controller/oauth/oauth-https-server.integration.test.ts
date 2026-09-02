@@ -113,6 +113,7 @@ function createBrokerHarness(): {
 			cancelBrowserCompletion,
 			cancelBrowserTransaction,
 			close: async () => undefined,
+			drain: async () => undefined,
 			confirmAccount: async () => ({ accountLabel: 'Personal Google', kind: 'completed' }),
 			executeAuthorizationAction: async (): Promise<OAuthAuthorizationActionResult> => ({
 				kind: 'authorization-list',

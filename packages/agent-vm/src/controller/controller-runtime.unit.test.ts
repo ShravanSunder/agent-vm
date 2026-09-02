@@ -79,6 +79,9 @@ function createPreparedOAuthRuntimeStub(events: string[]): PreparedControllerOAu
 			close: async () => {
 				events.push('oauth-admission-stopped');
 			},
+			drain: async () => {
+				events.push('oauth-broker-drained');
+			},
 			confirmAccount: async () => ({ accountLabel: 'test', kind: 'completed' }),
 			executeAuthorizationAction: async () => ({ kind: 'authorization-list', profiles: [] }),
 			getPermissionPage: () => {
@@ -103,6 +106,9 @@ function createPreparedOAuthRuntimeStub(events: string[]): PreparedControllerOAu
 		},
 		close: async () => {
 			events.push('oauth-runtime-closed');
+		},
+		drain: async () => {
+			events.push('oauth-runtime-drained');
 		},
 		port: 18_900,
 		setCredentialInvalidationHandler: () => events.push('oauth-invalidation-handler-set'),
@@ -1373,6 +1379,8 @@ describe('startControllerRuntime', () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
 		process.env.TEST_GATEWAY_TOKEN = 'gateway-token';
 		const taskTitles: string[] = [];
+		const oauthDrainStarted = Promise.withResolvers<void>();
+		const releaseOAuthDrain = Promise.withResolvers<void>();
 		const zone = systemConfig.zones[0];
 		if (!zone) {
 			throw new Error('Expected test zone.');
@@ -1406,7 +1414,9 @@ describe('startControllerRuntime', () => {
 		await mkdir(path.join(absoluteLeaseZone.gateway.zoneRuntimeDir, 'gitdirs', 'agents', 'main'), {
 			recursive: true,
 		});
-		const closeGatewayVm = vi.fn(async () => {});
+		const closeGatewayVm = vi.fn(async () => {
+			startupEvents.push('gateway-closed');
+		});
 		let capturedHealthEventStore: HealthEventStore | undefined;
 		let capturedGatewayIdentity: GatewayEpochIdentity | undefined;
 		const startGatewayZone = vi.fn(async (startOptions) => {
@@ -1548,7 +1558,14 @@ describe('startControllerRuntime', () => {
 				},
 				now: () => statusNowMs,
 				preflightGatewayZoneStart,
-				prepareControllerOAuthRuntime: async () => createPreparedOAuthRuntimeStub(startupEvents),
+				prepareControllerOAuthRuntime: async () => ({
+					...createPreparedOAuthRuntimeStub(startupEvents),
+					drain: async () => {
+						oauthDrainStarted.resolve();
+						await releaseOAuthDrain.promise;
+						startupEvents.push('oauth-runtime-drained');
+					},
+				}),
 				startGatewayZone,
 				startHttpServer,
 				setIntervalImpl: setIntervalMock,
@@ -1868,10 +1885,24 @@ describe('startControllerRuntime', () => {
 				zoneId: 'shravan',
 			}),
 		]);
-		await runtime.close();
+		const gatewayCloseCountBeforeShutdown = closeGatewayVm.mock.calls.length;
+		const controllerClose = runtime.close();
+		await oauthDrainStarted.promise;
+		expect(startupEvents).not.toContain('oauth-listener-closed');
+		expect(closeGatewayVm).toHaveBeenCalledTimes(gatewayCloseCountBeforeShutdown);
+		releaseOAuthDrain.resolve();
+		await controllerClose;
+		expect(startupEvents).toContain('oauth-runtime-drained');
 		expect(startupEvents).toContain('oauth-listener-closed');
+		expect(startupEvents).toContain('gateway-closed');
 		expect(startupEvents).toContain('oauth-runtime-closed');
+		expect(startupEvents.indexOf('oauth-runtime-drained')).toBeLessThan(
+			startupEvents.indexOf('oauth-listener-closed'),
+		);
 		expect(startupEvents.indexOf('oauth-listener-closed')).toBeLessThan(
+			startupEvents.lastIndexOf('gateway-closed'),
+		);
+		expect(startupEvents.lastIndexOf('gateway-closed')).toBeLessThan(
 			startupEvents.indexOf('oauth-runtime-closed'),
 		);
 		expect(releaseControllerOwnershipLock).toHaveBeenCalledOnce();
