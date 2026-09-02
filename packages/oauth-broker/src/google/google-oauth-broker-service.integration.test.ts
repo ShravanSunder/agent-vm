@@ -51,7 +51,12 @@ function applicationConfig(name: string): Record<string, unknown> {
 	};
 }
 
-function config(options: { readonly includeWorkspace?: boolean } = {}): OAuthConfig {
+function config(
+	options: {
+		readonly gmailReadScope?: string;
+		readonly includeWorkspace?: boolean;
+	} = {},
+): OAuthConfig {
 	return oauthConfigSchema.parse({
 		agents: {
 			hermes: {
@@ -86,7 +91,7 @@ function config(options: { readonly includeWorkspace?: boolean } = {}): OAuthCon
 						services: {
 							gmail: {
 								label: 'Gmail messages',
-								read: ['gmail.readonly'],
+								read: [options.gmailReadScope ?? 'gmail.readonly'],
 								write: ['gmail.modify'],
 							},
 						},
@@ -175,6 +180,7 @@ function createAdapter(
 async function createService(
 	props: {
 		readonly adapter?: GoogleOAuthAdapter;
+		readonly catalog?: OAuthCredentialCatalog;
 		readonly catalogDecorator?: (catalog: OAuthCredentialCatalog) => OAuthCredentialCatalog;
 		readonly oauthConfig?: OAuthConfig;
 		readonly now?: () => number;
@@ -184,9 +190,11 @@ async function createService(
 	} = {},
 ): Promise<GoogleOAuthBrokerService> {
 	const stateRoot = await mkdtemp(path.join(tmpdir(), 'agent-vm-oauth-broker-service-'));
-	catalog = await openOAuthCredentialCatalog({
-		databasePath: path.join(stateRoot, 'zones', 'apollofam', 'oauth', 'credentials.sqlite'),
-	});
+	catalog =
+		props.catalog ??
+		(await openOAuthCredentialCatalog({
+			databasePath: path.join(stateRoot, 'zones', 'apollofam', 'oauth', 'credentials.sqlite'),
+		}));
 	const credentials = clientCredentials();
 	return createGoogleOAuthBrokerService({
 		catalog: props.catalogDecorator?.(catalog) ?? catalog,
@@ -207,7 +215,10 @@ async function createService(
 	});
 }
 
-async function enrollGmailRead(service: GoogleOAuthBrokerService): Promise<void> {
+async function enrollGmail(
+	service: GoogleOAuthBrokerService,
+	permission: 'read' | 'write' = 'read',
+): Promise<void> {
 	const begun = await service.executeAuthorizationAction({
 		agentId: 'hermes',
 		request: {
@@ -223,7 +234,7 @@ async function enrollGmailRead(service: GoogleOAuthBrokerService): Promise<void>
 	const redirect = service.submitPermissions({
 		browserBindingSecret: page.browserBindingSecret,
 		csrfToken: page.csrfToken,
-		selections: oauthPermissionSelectionsSchema.parse({ 'gmail-app': { gmail: 'read' } }),
+		selections: oauthPermissionSelectionsSchema.parse({ 'gmail-app': { gmail: permission } }),
 		tailnetLogin: 'human@example.test',
 		transactionId: begun.transactionId,
 	});
@@ -249,9 +260,59 @@ async function enrollGmailRead(service: GoogleOAuthBrokerService): Promise<void>
 }
 
 describe('Google OAuth broker service', () => {
+	it('requires configured read and write scopes at every write-capability gate', async () => {
+		const enrollmentService = await createService();
+		await enrollGmail(enrollmentService, 'write');
+		const currentCatalog = catalog;
+		if (currentCatalog === undefined) throw new Error('Expected OAuth credential catalog.');
+		const grant = currentCatalog.getGrantForAccountApplication({
+			accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
+			agentId: 'hermes',
+			applicationId: oauthApplicationIdSchema.parse('gmail-app'),
+			zoneId: 'apollofam',
+		});
+		if (grant === undefined) throw new Error('Expected enrolled write grant.');
+		const changedPolicyService = await createService({
+			catalog: currentCatalog,
+			oauthConfig: config({ gmailReadScope: 'gmail.metadata' }),
+		});
+
+		expect(
+			changedPolicyService.resolveToolAvailability({
+				agentId: 'hermes',
+				requirement: {
+					applicationId: oauthApplicationIdSchema.parse('gmail-app'),
+					kind: 'oauth-account-profile',
+					minimumPermission: 'write',
+					serviceId: oauthServiceIdSchema.parse('gmail'),
+				},
+			}),
+		).toEqual({ kind: 'scope-insufficient' });
+		await expect(
+			changedPolicyService.resolveRuntimeCredential({
+				accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
+				agentId: 'hermes',
+				applicationId: oauthApplicationIdSchema.parse('gmail-app'),
+				minimumPermission: 'write',
+				serviceId: oauthServiceIdSchema.parse('gmail'),
+			}),
+		).resolves.toEqual({ kind: 'unavailable', reason: 'scope-insufficient' });
+		expect(
+			changedPolicyService.validateRuntimeCredentialSnapshot({
+				accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
+				agentId: 'hermes',
+				applicationId: oauthApplicationIdSchema.parse('gmail-app'),
+				credentialId: grant.credentialId,
+				materialRevision: grant.materialRevision,
+				minimumPermission: 'write',
+				serviceId: oauthServiceIdSchema.parse('gmail'),
+			}),
+		).toEqual({ kind: 'stale', reason: 'scope-insufficient' });
+	});
+
 	it('validates the exact current runtime credential snapshot without decrypting it', async () => {
 		const service = await createService();
-		await enrollGmailRead(service);
+		await enrollGmail(service);
 		const runtimeCredential = await service.resolveRuntimeCredential({
 			accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
 			agentId: 'hermes',
@@ -1526,7 +1587,7 @@ describe('Google OAuth broker service', () => {
 				}),
 			},
 		});
-		await enrollGmailRead(service);
+		await enrollGmail(service);
 
 		await expect(
 			service.executeAuthorizationAction({
@@ -1554,7 +1615,7 @@ describe('Google OAuth broker service', () => {
 				},
 			},
 		});
-		await enrollGmailRead(service);
+		await enrollGmail(service);
 		const initialGrant = catalog?.getGrantForAccountApplication({
 			accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
 			agentId: 'hermes',
@@ -1650,7 +1711,7 @@ describe('Google OAuth broker service', () => {
 				}),
 			},
 		});
-		await enrollGmailRead(service);
+		await enrollGmail(service);
 
 		await expect(
 			service.executeAuthorizationAction({
@@ -1685,7 +1746,7 @@ describe('Google OAuth broker service', () => {
 				},
 			}),
 		});
-		await enrollGmailRead(service);
+		await enrollGmail(service);
 
 		await expect(
 			service.executeAuthorizationAction({
@@ -1783,7 +1844,7 @@ describe('Google OAuth broker service', () => {
 				if (rejectInvalidation) throw new Error('owner-unsafe containment');
 			},
 		});
-		await enrollGmailRead(service);
+		await enrollGmail(service);
 		rejectInvalidation = true;
 
 		await expect(

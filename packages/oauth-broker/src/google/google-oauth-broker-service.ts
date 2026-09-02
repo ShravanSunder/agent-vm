@@ -274,6 +274,27 @@ function permissionRank(permission: OAuthPermissionChoice): number {
 	}
 }
 
+function requiredScopesForServicePermission(props: {
+	readonly minimumPermission: OAuthMinimumPermission;
+	readonly readScopes: readonly OAuthScope[];
+	readonly writeScopes?: readonly OAuthScope[] | undefined;
+}): readonly OAuthScope[] {
+	if (
+		props.minimumPermission === 'write' &&
+		(props.writeScopes === undefined || props.writeScopes.length === 0)
+	) {
+		return [];
+	}
+	const requiredScopes =
+		props.minimumPermission === 'read'
+			? props.readScopes
+			: [...props.readScopes, ...(props.writeScopes ?? [])];
+	return z
+		.array(oauthScopeSchema)
+		.readonly()
+		.parse([...new Set(requiredScopes)].toSorted());
+}
+
 function activeTransactionKey(agentId: string, accountProfileId: OAuthAccountProfileId): string {
 	return `${agentId}\0${accountProfileId}`;
 }
@@ -474,7 +495,11 @@ export function createGoogleOAuthBrokerService(props: {
 			const service = application.services[oauthServiceIdSchema.parse(serviceId)];
 			if (service === undefined)
 				throw new Error(`Unknown service "${serviceId}" for ${applicationId}.`);
-			return permission === 'read' ? service.read : [...service.read, ...(service.write ?? [])];
+			return requiredScopesForServicePermission({
+				minimumPermission: permission,
+				readScopes: service.read,
+				writeScopes: service.write,
+			});
 		});
 		return z
 			.array(oauthScopeSchema)
@@ -701,10 +726,11 @@ export function createGoogleOAuthBrokerService(props: {
 				availabilityProps.requirement.serviceId
 			];
 		if (service === undefined) return { kind: 'scope-insufficient' };
-		const requiredScopes =
-			availabilityProps.requirement.minimumPermission === 'write'
-				? (service.write ?? [])
-				: service.read;
+		const requiredScopes = requiredScopesForServicePermission({
+			minimumPermission: availabilityProps.requirement.minimumPermission,
+			readScopes: service.read,
+			writeScopes: service.write,
+		});
 		if (requiredScopes.length === 0) return { kind: 'scope-insufficient' };
 		const readyAccountProfiles: {
 			readonly accountLabel: string;
@@ -789,8 +815,11 @@ export function createGoogleOAuthBrokerService(props: {
 		}
 		const service = props.config.providers.google.applications[applicationId].services[serviceId];
 		if (service === undefined) return { kind: 'unavailable', reason: 'scope-insufficient' };
-		const requiredScopes =
-			runtimeProps.minimumPermission === 'write' ? (service.write ?? []) : service.read;
+		const requiredScopes = requiredScopesForServicePermission({
+			minimumPermission: runtimeProps.minimumPermission,
+			readScopes: service.read,
+			writeScopes: service.write,
+		});
 		if (requiredScopes.length === 0) {
 			return { kind: 'unavailable', reason: 'scope-insufficient' };
 		}
@@ -856,8 +885,11 @@ export function createGoogleOAuthBrokerService(props: {
 		}
 		const service = props.config.providers.google.applications[applicationId].services[serviceId];
 		if (service === undefined) return { kind: 'stale', reason: 'account-policy-changed' };
-		const requiredScopes =
-			runtimeProps.minimumPermission === 'write' ? (service.write ?? []) : service.read;
+		const requiredScopes = requiredScopesForServicePermission({
+			minimumPermission: runtimeProps.minimumPermission,
+			readScopes: service.read,
+			writeScopes: service.write,
+		});
 		if (requiredScopes.length === 0) return { kind: 'stale', reason: 'scope-insufficient' };
 		const grant = props.catalog.getGrantForAccountApplication({
 			accountProfileId: runtimeProps.accountProfileId,
