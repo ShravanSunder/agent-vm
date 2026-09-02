@@ -210,11 +210,32 @@ export const oauthApplicationGrantStatusSchema = z
 	.strict();
 export type OAuthApplicationGrantStatus = z.infer<typeof oauthApplicationGrantStatusSchema>;
 
+export const oauthAuthorizationServiceOptionSchema = z
+	.object({
+		maximumPermission: oauthMinimumPermissionSchema,
+		serviceId: oauthServiceIdSchema,
+		serviceLabel: z.string().min(1).max(320),
+	})
+	.strict();
+export type OAuthAuthorizationServiceOption = z.infer<typeof oauthAuthorizationServiceOptionSchema>;
+
+export const oauthAuthorizationApplicationOptionSchema = z
+	.object({
+		applicationId: oauthApplicationIdSchema,
+		applicationLabel: z.string().min(1).max(320),
+		services: z.array(oauthAuthorizationServiceOptionSchema).min(1).readonly(),
+	})
+	.strict();
+export type OAuthAuthorizationApplicationOption = z.infer<
+	typeof oauthAuthorizationApplicationOptionSchema
+>;
+
 export const oauthAccountProfileStatusSchema = z
 	.object({
 		accountLabel: z.string().min(1).max(320).optional(),
 		accountProfileId: oauthAccountProfileIdSchema,
 		applications: z.array(oauthApplicationGrantStatusSchema).readonly(),
+		authorizationOptions: z.array(oauthAuthorizationApplicationOptionSchema).min(1).readonly(),
 		kind: z.enum(['unbound', 'partially-enrolled', 'enrolled']),
 	})
 	.strict();

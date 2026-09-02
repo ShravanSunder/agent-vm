@@ -120,8 +120,10 @@ namespace discovery. Its typed operations are:
 
 ```text
 oauth_authorization.list
-  returns account-profile slots, application status, granted scopes,
-  lifecycle state, and safe account labels for the authenticated agent
+  returns account-profile slots; configured application and service IDs, labels,
+  and maximum permissions needed to form typed suggestions; application grant
+  status, granted scopes, lifecycle state, and safe account labels for the
+  authenticated agent
 
 oauth_authorization.begin
   begins one assigned account-profile ceremony and returns a short-lived URL;

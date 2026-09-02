@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+	oauthAccountProfileStatusSchema,
 	oauthAuthorizationActionRequestSchema,
 	oauthAuthorizationActionResultSchema,
 	oauthCredentialLifecycleStateSchema,
@@ -13,6 +14,29 @@ import {
 } from './index.js';
 
 describe('OAuth broker portable contracts', () => {
+	it('exposes configured IDs and maximum permissions without provider secrets', () => {
+		expect(
+			oauthAccountProfileStatusSchema.parse({
+				accountProfileId: 'personal-google',
+				applications: [],
+				authorizationOptions: [
+					{
+						applicationId: 'gmail-app',
+						applicationLabel: 'Gmail',
+						services: [
+							{
+								maximumPermission: 'write',
+								serviceId: 'gmail',
+								serviceLabel: 'Gmail messages',
+							},
+						],
+					},
+				],
+				kind: 'unbound',
+			}),
+		).toMatchObject({ authorizationOptions: [{ applicationId: 'gmail-app' }] });
+	});
+
 	it('parses typed permission suggestions without accepting raw scopes', () => {
 		expect(
 			oauthAuthorizationActionRequestSchema.parse({

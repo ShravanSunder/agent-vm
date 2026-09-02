@@ -160,7 +160,8 @@ const oauthAuthorizationRegistrations = Object.freeze([
 	defineOAuthAuthorizationRegistration({
 		argumentsSchema: OAuthAuthorizationListArgumentsSchema,
 		capabilityName: 'list',
-		description: 'List Google account profiles and their safe authorization status.',
+		description:
+			'List Google account profiles, configured application and service IDs, maximum permissions, and safe authorization status. Build begin suggestedSelections as applicationId → serviceId → none|read|write.',
 		input: { optional: [], propertyCount: 0, required: [], type: 'object' },
 		readOnly: true,
 		title: 'List Google authorizations',

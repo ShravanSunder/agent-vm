@@ -320,7 +320,8 @@ describe('Gateway Control controller-execution adapter', () => {
 		const describedItem = described.items[0];
 		if (describedItem?.status !== 'ok') throw new Error('Expected OAuth describe result.');
 		expect(describedItem.value.tools[0]).toMatchObject({
-			description: 'List Google account profiles and their safe authorization status.',
+			description:
+				'List Google account profiles, configured application and service IDs, maximum permissions, and safe authorization status. Build begin suggestedSelections as applicationId → serviceId → none|read|write.',
 			title: 'List Google authorizations',
 		});
 		const result = await fixture.backend.call(

@@ -6949,6 +6949,60 @@
 																												"additionalProperties": false
 																											}
 																										},
+																										"authorizationOptions": {
+																											"readOnly": true,
+																											"minItems": 1,
+																											"type": "array",
+																											"items": {
+																												"type": "object",
+																												"properties": {
+																													"applicationId": {
+																														"type": "string",
+																														"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+																													},
+																													"applicationLabel": {
+																														"type": "string",
+																														"minLength": 1,
+																														"maxLength": 320
+																													},
+																													"services": {
+																														"readOnly": true,
+																														"minItems": 1,
+																														"type": "array",
+																														"items": {
+																															"type": "object",
+																															"properties": {
+																																"maximumPermission": {
+																																	"type": "string",
+																																	"enum": ["read", "write"]
+																																},
+																																"serviceId": {
+																																	"type": "string",
+																																	"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+																																},
+																																"serviceLabel": {
+																																	"type": "string",
+																																	"minLength": 1,
+																																	"maxLength": 320
+																																}
+																															},
+																															"required": [
+																																"maximumPermission",
+																																"serviceId",
+																																"serviceLabel"
+																															],
+																															"additionalProperties": false
+																														}
+																													}
+																												},
+																												"required": [
+																													"applicationId",
+																													"applicationLabel",
+																													"services"
+																												],
+																												"additionalProperties": false
+																											}
+																										},
 																										"kind": {
 																											"type": "string",
 																											"enum": [
@@ -6961,6 +7015,7 @@
 																									"required": [
 																										"accountProfileId",
 																										"applications",
+																										"authorizationOptions",
 																										"kind"
 																									],
 																									"additionalProperties": false

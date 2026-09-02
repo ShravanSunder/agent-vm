@@ -243,6 +243,68 @@ async function enrollGmailRead(service: GoogleOAuthBrokerService): Promise<void>
 }
 
 describe('Google OAuth broker service', () => {
+	it('lists configured application and service IDs so agents can form bounded suggestions', async () => {
+		// Arrange
+		const service = await createService({ oauthConfig: config({ includeWorkspace: true }) });
+
+		// Act
+		const listed = await service.executeAuthorizationAction({
+			agentId: 'hermes',
+			request: { actionId: 'oauth_authorization.list' },
+		});
+
+		// Assert
+		expect(listed).toMatchObject({
+			kind: 'authorization-list',
+			profiles: [
+				{
+					accountProfileId: 'personal-google',
+					applications: [],
+					authorizationOptions: [
+						{
+							applicationId: 'gmail-app',
+							applicationLabel: 'Gmail',
+							services: [
+								{
+									maximumPermission: 'write',
+									serviceId: 'gmail',
+									serviceLabel: 'Gmail messages',
+								},
+							],
+						},
+						{
+							applicationId: 'workspace-app',
+							applicationLabel: 'Workspace',
+							services: [
+								{
+									maximumPermission: 'read',
+									serviceId: 'calendar',
+									serviceLabel: 'Calendar',
+								},
+							],
+						},
+					],
+					kind: 'unbound',
+				},
+			],
+		});
+		expect(
+			await service.executeAuthorizationAction({
+				agentId: 'hermes',
+				request: {
+					actionId: 'oauth_authorization.begin',
+					accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
+					suggestedSelections: oauthPermissionSelectionsSchema.parse({
+						gmail: { readonly: 'read' },
+					}),
+				},
+			}),
+		).toEqual({
+			failure: { kind: 'authorization-denied' },
+			kind: 'authorization-failed',
+		});
+	});
+
 	it('stops admission, aborts provider work, and drains before close completes', async () => {
 		let resolveExchangeStarted: (() => void) | undefined;
 		const exchangeStarted = new Promise<void>((resolve) => {

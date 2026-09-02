@@ -609,6 +609,32 @@ export function createGoogleOAuthBrokerService(props: {
 															: 'credential-corrupt',
 										},
 					})),
+					authorizationOptions: Object.entries(profile.applications).map(
+						([applicationId, applicationMaximum]) => {
+							const parsedApplicationId = googleOAuthApplicationIdSchema.parse(applicationId);
+							const application = props.config.providers.google.applications[parsedApplicationId];
+							return {
+								applicationId: parsedApplicationId,
+								applicationLabel: application.label,
+								services: Object.entries(applicationMaximum.maximumPermissions).map(
+									([serviceId, maximumPermission]) => {
+										const parsedServiceId = oauthServiceIdSchema.parse(serviceId);
+										const service = application.services[parsedServiceId];
+										if (service === undefined) {
+											throw new Error(
+												`OAuth service "${serviceId}" is not configured for application "${applicationId}".`,
+											);
+										}
+										return {
+											maximumPermission,
+											serviceId: parsedServiceId,
+											serviceLabel: service.label,
+										};
+									},
+								),
+							};
+						},
+					),
 					kind:
 						profileMetadata === undefined
 							? 'unbound'
@@ -770,14 +796,22 @@ export function createGoogleOAuthBrokerService(props: {
 		readonly suggestedSelections?: OAuthPermissionSelections | undefined;
 	}): OAuthAuthorizationActionResult => {
 		requireAccountProfile(beginProps.agentId, beginProps.accountProfileId);
-		const suggestedSelections =
-			beginProps.suggestedSelections === undefined
-				? undefined
-				: validateSelections({
-						accountProfileId: beginProps.accountProfileId,
-						agentId: beginProps.agentId,
-						selections: beginProps.suggestedSelections,
-					});
+		let suggestedSelections: OAuthPermissionSelections | undefined;
+		try {
+			suggestedSelections =
+				beginProps.suggestedSelections === undefined
+					? undefined
+					: validateSelections({
+							accountProfileId: beginProps.accountProfileId,
+							agentId: beginProps.agentId,
+							selections: beginProps.suggestedSelections,
+						});
+		} catch {
+			return oauthAuthorizationActionResultSchema.parse({
+				failure: { kind: 'authorization-denied' },
+				kind: 'authorization-failed',
+			});
+		}
 		const applicationIds = beginProps.applicationIds.filter((applicationId) => {
 			const existingGrant = props.catalog.getGrantForAccountApplication({
 				accountProfileId: beginProps.accountProfileId,
