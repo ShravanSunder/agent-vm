@@ -659,6 +659,7 @@ export function createCredentialedRuntimeManager(props: {
 		closeZone: async (zoneId): Promise<void> => {
 			closedZoneIds.add(zoneId);
 			const keys = [...(runtimeKeysByZoneId.get(zoneId) ?? [])];
+			let containmentOwnerUnsafe = false;
 			for (const key of keys) {
 				// oxlint-disable-next-line no-await-in-loop -- the zone fence drains each known key deterministically
 				const active = await locks.runExclusive(key, async () => {
@@ -681,8 +682,11 @@ export function createCredentialedRuntimeManager(props: {
 						: await retireLiveUnderLock(key, current, 'zone closed');
 				});
 				if (!contained) {
-					throw new Error(`Credentialed runtime zone '${zoneId}' containment is owner-unsafe.`);
+					containmentOwnerUnsafe = true;
 				}
+			}
+			if (containmentOwnerUnsafe) {
+				throw new Error(`Credentialed runtime zone '${zoneId}' containment is owner-unsafe.`);
 			}
 		},
 		openZone: (zoneId): void => {

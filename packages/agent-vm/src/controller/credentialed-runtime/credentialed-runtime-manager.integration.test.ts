@@ -1012,4 +1012,39 @@ describe('credentialed runtime manager', () => {
 			kind: 'owner-unsafe',
 		});
 	});
+
+	it('contains every live runtime before reporting a recovered owner-unsafe fence', async () => {
+		const zoneId = 'zone-partially-owner-unsafe';
+		const fixture = createFixture(() => 5_000);
+		const store = createCredentialedRuntimeRecordStore({
+			recordsDirectoryPath: path.join(testRoot, 'zones', zoneId, 'credentialed-runtimes'),
+		});
+		await store.mutateRecord('record-owner-unsafe', () => ({
+			nextRecord: {
+				agentId: 'sun',
+				controllerEpoch: 'controller-old',
+				gatewayEpoch: 'gateway-old',
+				generation: 1,
+				agentRuntimeRevision: 'sha256:group-sun',
+				kind: 'vm-created',
+				parentGatewayVmId: 'gateway-vm-old',
+				recordId: 'record-owner-unsafe',
+				recordVersion: 2,
+				runtimeEpoch: 'runtime-old',
+				stablePrincipal: 'a'.repeat(64),
+				updatedAtMs: 4_000,
+				vmId: 'unknown-live-vm',
+				zoneId,
+			},
+			result: undefined,
+		}));
+
+		await fixture.manager.recoverZone(zoneId);
+		const live = await acquire(fixture, resolution({ agentId: 'moon', zoneId }));
+		if (live.kind !== 'acquired') throw new Error('Expected live runtime.');
+		await live.command.complete({ kind: 'completed' });
+
+		await expect(fixture.manager.closeZone(zoneId)).rejects.toThrow('owner-unsafe');
+		expect(fixture.states).toEqual([expect.objectContaining({ closed: true })]);
+	});
 });
