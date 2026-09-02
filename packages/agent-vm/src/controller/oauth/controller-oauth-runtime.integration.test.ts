@@ -176,7 +176,12 @@ describe('controller OAuth runtime composition', () => {
 				JSON.stringify(toolPortalConfig()),
 			),
 		]);
-		const resolver = secretResolver();
+		const resolver: SecretResolver = {
+			resolve: async () => {
+				throw new Error('secret resolution must not start for a colliding port');
+			},
+			resolveAll: async () => ({}),
+		};
 
 		await expect(
 			prepareControllerOAuthRuntime({
@@ -188,7 +193,6 @@ describe('controller OAuth runtime composition', () => {
 				},
 			}),
 		).rejects.toThrow(/OAuth listener port 18900 collides/u);
-		expect(resolver.resolve).not.toHaveBeenCalled();
 	});
 
 	it('rejects distinct references that resolve to one Google client ID', async () => {
