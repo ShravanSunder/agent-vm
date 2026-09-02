@@ -249,6 +249,101 @@ async function enrollGmailRead(service: GoogleOAuthBrokerService): Promise<void>
 }
 
 describe('Google OAuth broker service', () => {
+	it('validates the exact current runtime credential snapshot without decrypting it', async () => {
+		const service = await createService();
+		await enrollGmailRead(service);
+		const runtimeCredential = await service.resolveRuntimeCredential({
+			accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
+			agentId: 'hermes',
+			applicationId: oauthApplicationIdSchema.parse('gmail-app'),
+			minimumPermission: 'read',
+			serviceId: oauthServiceIdSchema.parse('gmail'),
+		});
+		if (runtimeCredential.kind !== 'ready') throw new Error('Expected runtime credential.');
+		const snapshot = {
+			accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
+			agentId: 'hermes',
+			applicationId: oauthApplicationIdSchema.parse('gmail-app'),
+			credentialId: runtimeCredential.credentialId,
+			materialRevision: runtimeCredential.materialRevision,
+			minimumPermission: 'read',
+			serviceId: oauthServiceIdSchema.parse('gmail'),
+		} as const;
+
+		expect(service.validateRuntimeCredentialSnapshot(snapshot)).toEqual({ kind: 'current' });
+		const currentCatalog = catalog;
+		if (currentCatalog === undefined) throw new Error('Expected OAuth credential catalog.');
+		const grant = currentCatalog.getGrant(runtimeCredential.credentialId);
+		if (grant === undefined) throw new Error('Expected stored OAuth grant.');
+		const reauthorization = await service.executeAuthorizationAction({
+			agentId: 'hermes',
+			request: {
+				actionId: 'oauth_authorization.reauthorize',
+				accountProfileId: snapshot.accountProfileId,
+				applicationId: snapshot.applicationId,
+			},
+		});
+		if (reauthorization.kind !== 'authorization-begun') {
+			throw new Error('Expected reauthorization to begin.');
+		}
+		const page = service.getPermissionPage({
+			tailnetLogin: 'human@example.test',
+			transactionId: reauthorization.transactionId,
+		});
+		const redirect = service.submitPermissions({
+			browserBindingSecret: page.browserBindingSecret,
+			csrfToken: page.csrfToken,
+			selections: oauthPermissionSelectionsSchema.parse({ 'gmail-app': { gmail: 'read' } }),
+			tailnetLogin: 'human@example.test',
+			transactionId: page.transactionId,
+		});
+		if (redirect.kind !== 'redirect') throw new Error('Expected reauthorization redirect.');
+		const oauthState = new URL(redirect.authorizationUrl).searchParams.get('state');
+		if (oauthState === null) throw new Error('Expected reauthorization OAuth state.');
+		const callback = await service.handleGoogleCallback({
+			authorizationCode: 'replacement-code',
+			browserBindingSecret: redirect.browserBindingSecret,
+			oauthState,
+			redirectUri,
+			tailnetLogin: 'human@example.test',
+			transactionId: redirect.transactionId,
+		});
+		if (callback.kind !== 'confirmation') throw new Error('Expected reauthorization confirmation.');
+		await service.confirmAccount({
+			browserBindingSecret: callback.confirmation.browserBindingSecret,
+			completionSessionId: callback.confirmation.completionSessionId,
+			csrfToken: callback.confirmation.csrfToken,
+			tailnetLogin: 'human@example.test',
+		});
+		expect(service.validateRuntimeCredentialSnapshot(snapshot)).toEqual({
+			kind: 'stale',
+			reason: 'credential-changed',
+		});
+		const replacementGrant = currentCatalog.getGrant(grant.credentialId);
+		if (replacementGrant === undefined) throw new Error('Expected replacement OAuth grant.');
+		const replacementSnapshot = {
+			...snapshot,
+			materialRevision: replacementGrant.materialRevision,
+		};
+		expect(service.validateRuntimeCredentialSnapshot(replacementSnapshot)).toEqual({
+			kind: 'current',
+		});
+		expect(
+			currentCatalog.deleteGrantForAccountApplication({
+				accountProfileId: replacementGrant.accountProfileId,
+				agentId: replacementGrant.agentId,
+				applicationId: replacementGrant.applicationId,
+				expectedCredentialId: replacementGrant.credentialId,
+				expectedRecordRevision: replacementGrant.recordRevision,
+				zoneId: replacementGrant.zoneId,
+			}),
+		).toEqual({ kind: 'deleted' });
+		expect(service.validateRuntimeCredentialSnapshot(replacementSnapshot)).toEqual({
+			kind: 'stale',
+			reason: 'credential-unavailable',
+		});
+	});
+
 	it('lists configured application and service IDs so agents can form bounded suggestions', async () => {
 		// Arrange
 		const service = await createService({ oauthConfig: config({ includeWorkspace: true }) });

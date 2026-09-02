@@ -89,6 +89,10 @@ function createPreparedOAuthRuntimeStub(events: string[]): PreparedControllerOAu
 				kind: 'unavailable',
 				reason: 'authorization-missing',
 			}),
+			validateRuntimeCredentialSnapshot: () => ({
+				kind: 'stale',
+				reason: 'credential-unavailable',
+			}),
 			resolveToolAvailability: () => ({ kind: 'authorization-status-unavailable' }),
 			reapExpiredTransactions: () => ({ completionSessionCount: 0, transactionCount: 0 }),
 			retryApplication: () => {

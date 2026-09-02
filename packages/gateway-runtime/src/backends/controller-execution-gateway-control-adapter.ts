@@ -272,6 +272,7 @@ function configuredRegistration(props: {
 }): ControllerExecutionRegistration {
 	const inputSchema = configuredInputSchema(props.operation);
 	const toolRef = `${props.namespace}.${props.name}`;
+	const requiresAccountProfile = props.operation.authorization?.kind === 'oauth_account_profile';
 	return {
 		descriptor: {
 			annotations: { authority: 'controller_execution', operationKind: 'configured_cli' },
@@ -306,8 +307,11 @@ function configuredRegistration(props: {
 			description: props.operation.safeHelp,
 			input: {
 				optional: props.operation.timeout.kind === 'open' ? ['stdin', 'timeoutMs'] : ['stdin'],
-				propertyCount: props.operation.timeout.kind === 'open' ? 4 : 3,
-				required: ['argv', 'reason'],
+				propertyCount:
+					(props.operation.timeout.kind === 'open' ? 4 : 3) + (requiresAccountProfile ? 1 : 0),
+				required: requiresAccountProfile
+					? ['accountProfile', 'argv', 'reason']
+					: ['argv', 'reason'],
 				type: 'object',
 			},
 			name: props.name,

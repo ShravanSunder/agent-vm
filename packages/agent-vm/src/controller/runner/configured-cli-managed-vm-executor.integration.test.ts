@@ -5,6 +5,7 @@ import {
 import {
 	oauthAccountProfileIdSchema,
 	oauthApplicationIdSchema,
+	oauthCredentialIdSchema,
 	oauthMaterialRevisionSchema,
 	oauthServiceIdSchema,
 } from '@agent-vm/oauth-broker-contracts';
@@ -22,6 +23,8 @@ type ConfiguredOperation = Extract<
 	EffectiveControllerExecutionOperation,
 	{ readonly kind: 'configured_cli' }
 >;
+
+const oauthCredentialId = oauthCredentialIdSchema.parse('11111111-1111-4111-8111-111111111111');
 
 function operation(): ConfiguredOperation {
 	return {
@@ -202,9 +205,17 @@ function executorWithManager(
 	resolveOAuthRuntimeCredential?: NonNullable<
 		Parameters<typeof createConfiguredCliManagedVmExecutor>[0]['resolveOAuthRuntimeCredential']
 	>,
+	validateOAuthRuntimeCredentialSnapshot?: NonNullable<
+		Parameters<
+			typeof createConfiguredCliManagedVmExecutor
+		>[0]['validateOAuthRuntimeCredentialSnapshot']
+	>,
 ): ReturnType<typeof createConfiguredCliManagedVmExecutor> {
 	return createConfiguredCliManagedVmExecutor({
 		...(resolveOAuthRuntimeCredential === undefined ? {} : { resolveOAuthRuntimeCredential }),
+		...(validateOAuthRuntimeCredentialSnapshot === undefined
+			? {}
+			: { validateOAuthRuntimeCredentialSnapshot }),
 		resolveGatewayIdentity: vi.fn(async () => gatewayIdentity),
 		runtimeManager,
 	});
@@ -246,7 +257,7 @@ describe('configured CLI credentialed Managed VM executor', () => {
 		const resolveOAuthRuntimeCredential = vi.fn(async () => ({
 			accessToken: new TextEncoder().encode('oauth-access-token-marker'),
 			allowedHosts: ['gmail.googleapis.com'],
-			credentialId: 'credential-a',
+			credentialId: oauthCredentialId,
 			kind: 'ready' as const,
 			materialRevision: oauthMaterialRevisionSchema.parse(
 				`sha256:${Buffer.alloc(32, 7).toString('base64url')}`,
@@ -330,6 +341,67 @@ describe('configured CLI credentialed Managed VM executor', () => {
 			code: 'not_dispatched',
 			message: 'OAuth authorization is unavailable: reauthorization-required.',
 		});
+	});
+
+	it('rejects OAuth dispatch when the materialized credential snapshot is no longer current', async () => {
+		const command = commandHandle();
+		const materialRevision = oauthMaterialRevisionSchema.parse(
+			`sha256:${Buffer.alloc(32, 7).toString('base64url')}`,
+		);
+		const acquireCommand = vi.fn(
+			async (request: Parameters<CredentialedRuntimeManager['acquireCommand']>[0]) => {
+				if (!('materializeResolution' in request)) {
+					throw new Error('Expected deferred OAuth materialization.');
+				}
+				await request.materializeResolution();
+				return (await request.finalAuthorization()) && request.finalMaterialAuthorization?.()
+					? { command, kind: 'acquired' as const }
+					: { kind: 'not-dispatched' as const, reason: 'stale OAuth material' };
+			},
+		);
+		const resolveOAuthRuntimeCredential = vi.fn(async () => ({
+			accessToken: new TextEncoder().encode('oauth-access-token-marker'),
+			allowedHosts: ['gmail.googleapis.com'],
+			credentialId: oauthCredentialId,
+			kind: 'ready' as const,
+			materialRevision,
+		}));
+		const validateOAuthRuntimeCredentialSnapshot = vi.fn(
+			() => ({ kind: 'stale', reason: 'credential-changed' }) as const,
+		);
+		const execute = executorWithManager(
+			managerWithAcquire(acquireCommand),
+			resolveOAuthRuntimeCredential,
+			validateOAuthRuntimeCredentialSnapshot,
+		);
+		const currentAuthorization = oauthAuthorization();
+
+		await expect(
+			execute({
+				authorization: currentAuthorization,
+				input: {
+					accountProfile: oauthAccountProfileIdSchema.parse('personal-google'),
+					argv: ['gmail', 'search'],
+					reason: 'read messages',
+				},
+				operation: currentAuthorization.operation,
+				operationName: 'gog_cli',
+				reloadAuthorization: vi.fn(async () => currentAuthorization),
+				stablePrincipal: 'a'.repeat(64),
+				zoneId: 'zone-a',
+			}),
+		).rejects.toMatchObject({ code: 'not_dispatched' });
+		expect(validateOAuthRuntimeCredentialSnapshot).toHaveBeenCalledWith({
+			accountProfileId: 'personal-google',
+			agentId: 'sun',
+			applicationId: 'gmail-app',
+			credentialId: oauthCredentialId,
+			materialRevision,
+			minimumPermission: 'read',
+			serviceId: 'gmail',
+			zoneId: 'zone-a',
+		});
+		expect(command.exec).not.toHaveBeenCalled();
 	});
 
 	it('acquires one current slot, executes, and returns the runtime to idle', async () => {

@@ -855,6 +855,12 @@ async function startControllerRuntimeWithOwnershipLock(
 		secretResolver,
 	});
 	const executeConfiguredCliInManagedVm = createConfiguredCliManagedVmExecutor({
+		validateOAuthRuntimeCredentialSnapshot: (request) => {
+			if (preparedOAuthRuntime === undefined || preparedOAuthRuntime.zoneId !== request.zoneId) {
+				return { kind: 'stale', reason: 'credential-unavailable' };
+			}
+			return preparedOAuthRuntime.brokerService.validateRuntimeCredentialSnapshot(request);
+		},
 		resolveOAuthRuntimeCredential: async (request) => {
 			if (preparedOAuthRuntime === undefined || preparedOAuthRuntime.zoneId !== request.zoneId) {
 				return { kind: 'unavailable', reason: 'authorization-missing' };

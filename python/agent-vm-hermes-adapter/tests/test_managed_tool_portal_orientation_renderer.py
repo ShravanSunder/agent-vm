@@ -239,6 +239,47 @@ class ManagedToolPortalOrientationRendererTests(unittest.TestCase):
             rendered.orientation,
         )
 
+    def test_reports_additional_tools_when_no_child_entry_fits(self) -> None:
+        inventory = NamespaceInventory(
+            inventory_id="inventory-a",
+            namespaces=(
+                NamespaceAvailability(
+                    namespace="oauth_authorization",
+                    status="available",
+                    tools=(
+                        NamespaceToolSummary(
+                            name="a-tool-name-that-does-not-fit",
+                            description="A description that cannot fit in the remaining budget.",
+                        ),
+                    ),
+                ),
+            ),
+        )
+        notice_only = _require_rendered(
+            render_orientation(
+                NamespaceInventory(
+                    inventory_id="inventory-a",
+                    namespaces=(
+                        NamespaceAvailability(
+                            has_more_tools=True,
+                            namespace="oauth_authorization",
+                            status="available",
+                        ),
+                    ),
+                )
+            )
+        )
+        budget = notice_only.utf8_byte_count
+
+        rendered = _require_rendered(render_orientation(inventory, max_utf8_bytes=budget))
+
+        self.assertNotIn("a-tool-name-that-does-not-fit", rendered.orientation)
+        self.assertIn(
+            "Additional tools are available through list/search.",
+            rendered.orientation,
+        )
+        self.assertLessEqual(rendered.utf8_byte_count, budget)
+
     def test_escapes_control_characters_that_could_forge_orientation_structure(self) -> None:
         rendered = _require_rendered(
             render_orientation(

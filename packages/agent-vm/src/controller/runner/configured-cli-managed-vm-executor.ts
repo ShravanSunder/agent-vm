@@ -11,7 +11,10 @@ import type {
 	OAuthApplicationId,
 	OAuthServiceId,
 } from '@agent-vm/oauth-broker-contracts';
-import type { GoogleOAuthRuntimeCredentialResolution } from '@agent-vm/oauth-broker/google';
+import type {
+	GoogleOAuthRuntimeCredentialResolution,
+	GoogleOAuthRuntimeCredentialSnapshotValidation,
+} from '@agent-vm/oauth-broker/google';
 import { evaluateCliAllowanceInvocation } from '@agent-vm/tool-portal/cli-allowances';
 
 import type {
@@ -37,6 +40,22 @@ export interface ConfiguredCliManagedVmGatewayIdentity {
 }
 
 export interface CreateConfiguredCliManagedVmExecutorProps {
+	readonly validateOAuthRuntimeCredentialSnapshot?: (request: {
+		readonly accountProfileId: OAuthAccountProfileId;
+		readonly agentId: string;
+		readonly applicationId: OAuthApplicationId;
+		readonly credentialId: Extract<
+			GoogleOAuthRuntimeCredentialResolution,
+			{ kind: 'ready' }
+		>['credentialId'];
+		readonly materialRevision: Extract<
+			GoogleOAuthRuntimeCredentialResolution,
+			{ kind: 'ready' }
+		>['materialRevision'];
+		readonly minimumPermission: 'read' | 'write';
+		readonly serviceId: OAuthServiceId;
+		readonly zoneId: string;
+	}) => GoogleOAuthRuntimeCredentialSnapshotValidation;
 	readonly resolveOAuthRuntimeCredential?: (request: {
 		readonly accountProfileId: OAuthAccountProfileId;
 		readonly agentId: string;
@@ -138,19 +157,49 @@ export function createConfiguredCliManagedVmExecutor(
 		}
 		const gatewayIdentity = await props.resolveGatewayIdentity(request.zoneId);
 		const admissionSignalIsActive = (): boolean => request.signal?.aborted !== true;
+		const oauthRequirement =
+			oauthRule?.requirement.kind === 'oauth' ? oauthRule.requirement : undefined;
+		let materializedOAuthCredential:
+			| Pick<
+					Extract<GoogleOAuthRuntimeCredentialResolution, { kind: 'ready' }>,
+					'credentialId' | 'materialRevision'
+			  >
+			| undefined;
 		const commonAcquisition = {
 			...(request.signal === undefined ? {} : { admissionSignal: request.signal }),
 			finalAuthorization: async (): Promise<boolean> => {
 				if (!admissionSignalIsActive()) return false;
 				const current = await request.reloadAuthorization();
-				return (
+				const policyIsCurrent =
 					admissionSignalIsActive() &&
 					configuredCliAuthorizedEvaluationsEqual(
 						request.authorization.evaluation,
 						current.evaluation,
 					) &&
 					current.credentialedRuntime?.cohortRevision === resolution.cohortRevision &&
-					current.credentialedRuntime.agentRuntimeRevision === resolution.agentRuntimeRevision
+					current.credentialedRuntime.agentRuntimeRevision === resolution.agentRuntimeRevision;
+				return policyIsCurrent;
+			},
+			finalMaterialAuthorization: (): boolean => {
+				if (oauthRequirement === undefined) return true;
+				if (
+					!('accountProfile' in request.input) ||
+					materializedOAuthCredential === undefined ||
+					props.validateOAuthRuntimeCredentialSnapshot === undefined
+				) {
+					return false;
+				}
+				return (
+					props.validateOAuthRuntimeCredentialSnapshot({
+						accountProfileId: request.input.accountProfile,
+						agentId: resolution.agentId,
+						applicationId: oauthRequirement.applicationId,
+						credentialId: materializedOAuthCredential.credentialId,
+						materialRevision: materializedOAuthCredential.materialRevision,
+						minimumPermission: oauthRequirement.minimumPermission,
+						serviceId: oauthRequirement.serviceId,
+						zoneId: resolution.zoneId,
+					}).kind === 'current'
 				);
 			},
 			operationId: request.authorization.evaluation.operationId,
@@ -159,8 +208,6 @@ export function createConfiguredCliManagedVmExecutor(
 				stablePrincipal: request.stablePrincipal,
 			}),
 		};
-		const oauthRequirement =
-			oauthRule?.requirement.kind === 'oauth' ? oauthRule.requirement : undefined;
 		const acquired =
 			oauthRequirement !== undefined
 				? await props.runtimeManager.acquireCommand({
@@ -196,6 +243,10 @@ export function createConfiguredCliManagedVmExecutor(
 									`OAuth authorization is unavailable: ${credential.reason}.`,
 								);
 							}
+							materializedOAuthCredential = {
+								credentialId: credential.credentialId,
+								materialRevision: credential.materialRevision,
+							};
 							return {
 								dynamicHttpMediation: {
 									allowedHosts: credential.allowedHosts,

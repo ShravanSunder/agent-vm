@@ -21,6 +21,7 @@ import {
 	type OAuthApplicationId,
 	type OAuthAuthorizationActionRequest,
 	type OAuthAuthorizationActionResult,
+	type OAuthCredentialId,
 	type OAuthMaterialRevision,
 	type OAuthMinimumPermission,
 	type OAuthPermissionChoice,
@@ -146,7 +147,7 @@ export type GoogleOAuthRuntimeCredentialResolution =
 	| {
 			readonly accessToken: Uint8Array;
 			readonly allowedHosts: readonly string[];
-			readonly credentialId: string;
+			readonly credentialId: OAuthCredentialId;
 			readonly kind: 'ready';
 			readonly materialRevision: OAuthMaterialRevision;
 	  }
@@ -158,6 +159,17 @@ export type GoogleOAuthRuntimeCredentialResolution =
 				| 'reauthorization-required'
 				| 'scope-insufficient'
 				| 'stale-write';
+	  };
+
+export type GoogleOAuthRuntimeCredentialSnapshotValidation =
+	| { readonly kind: 'current' }
+	| {
+			readonly kind: 'stale';
+			readonly reason:
+				| 'account-policy-changed'
+				| 'credential-changed'
+				| 'credential-unavailable'
+				| 'scope-insufficient';
 	  };
 
 export interface GoogleOAuthBrokerService {
@@ -189,6 +201,15 @@ export interface GoogleOAuthBrokerService {
 		readonly minimumPermission: OAuthMinimumPermission;
 		readonly serviceId: string;
 	}): Promise<GoogleOAuthRuntimeCredentialResolution>;
+	validateRuntimeCredentialSnapshot(props: {
+		readonly accountProfileId: OAuthAccountProfileId;
+		readonly agentId: string;
+		readonly applicationId: OAuthApplicationId;
+		readonly credentialId: OAuthCredentialId;
+		readonly materialRevision: OAuthMaterialRevision;
+		readonly minimumPermission: OAuthMinimumPermission;
+		readonly serviceId: OAuthServiceId;
+	}): GoogleOAuthRuntimeCredentialSnapshotValidation;
 	resolveToolAvailability(props: {
 		readonly agentId: string;
 		readonly requirement: Extract<OAuthToolRequirement, { readonly kind: 'oauth-account-profile' }>;
@@ -792,6 +813,57 @@ export function createGoogleOAuthBrokerService(props: {
 		};
 	};
 
+	const validateRuntimeCredentialSnapshot = (runtimeProps: {
+		readonly accountProfileId: OAuthAccountProfileId;
+		readonly agentId: string;
+		readonly applicationId: OAuthApplicationId;
+		readonly credentialId: OAuthCredentialId;
+		readonly materialRevision: OAuthMaterialRevision;
+		readonly minimumPermission: OAuthMinimumPermission;
+		readonly serviceId: OAuthServiceId;
+	}): GoogleOAuthRuntimeCredentialSnapshotValidation => {
+		if (!admissionOpen) return { kind: 'stale', reason: 'credential-unavailable' };
+		const applicationId = googleOAuthApplicationIdSchema.parse(runtimeProps.applicationId);
+		const serviceId = oauthServiceIdSchema.parse(runtimeProps.serviceId);
+		let profile: ReturnType<typeof requireAccountProfile>;
+		try {
+			profile = requireAccountProfile(runtimeProps.agentId, runtimeProps.accountProfileId);
+		} catch {
+			return { kind: 'stale', reason: 'account-policy-changed' };
+		}
+		const maximumPermission = profile.applications[applicationId]?.maximumPermissions[serviceId];
+		if (
+			maximumPermission === undefined ||
+			permissionRank(maximumPermission) < permissionRank(runtimeProps.minimumPermission)
+		) {
+			return { kind: 'stale', reason: 'account-policy-changed' };
+		}
+		const service = props.config.providers.google.applications[applicationId].services[serviceId];
+		if (service === undefined) return { kind: 'stale', reason: 'account-policy-changed' };
+		const requiredScopes =
+			runtimeProps.minimumPermission === 'write' ? (service.write ?? []) : service.read;
+		if (requiredScopes.length === 0) return { kind: 'stale', reason: 'scope-insufficient' };
+		const grant = props.catalog.getGrantForAccountApplication({
+			accountProfileId: runtimeProps.accountProfileId,
+			agentId: runtimeProps.agentId,
+			applicationId: oauthApplicationIdSchema.parse(applicationId),
+			zoneId: props.zoneId,
+		});
+		if (grant === undefined || grant.lifecycleKind !== 'active') {
+			return { kind: 'stale', reason: 'credential-unavailable' };
+		}
+		if (
+			grant.credentialId !== runtimeProps.credentialId ||
+			grant.materialRevision !== runtimeProps.materialRevision
+		) {
+			return { kind: 'stale', reason: 'credential-changed' };
+		}
+		if (!requiredScopes.every((scope) => grant.grantedScopes.includes(scope))) {
+			return { kind: 'stale', reason: 'scope-insufficient' };
+		}
+		return { kind: 'current' };
+	};
+
 	const beginAuthorization = (beginProps: {
 		readonly accountProfileId: OAuthAccountProfileId;
 		readonly agentId: string;
@@ -1333,6 +1405,7 @@ export function createGoogleOAuthBrokerService(props: {
 		},
 		resolveRuntimeCredential: async (runtimeProps) =>
 			await trackOperation(async () => await resolveRuntimeCredential(runtimeProps)),
+		validateRuntimeCredentialSnapshot,
 		resolveToolAvailability: (availabilityProps) => {
 			requireAdmission();
 			return resolveToolAvailability(availabilityProps);

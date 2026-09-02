@@ -824,18 +824,27 @@ describe('credentialed runtime manager', () => {
 		await expect(acquire(fixture)).resolves.toMatchObject({ kind: 'owner-unsafe' });
 	});
 
-	it('retires a newly created runtime when final authorization changes before the slot', async () => {
-		const fixture = createFixture(() => 1_000);
-		const result = await fixture.manager.acquireCommand({
-			finalAuthorization: async () => false,
-			operationId: 'stale-operation',
-			ownerIdentity,
-			resolution: resolution(),
-		});
-		expect(result.kind).toBe('not-dispatched');
-		expect(fixture.states[0]?.closed).toBe(true);
-		expect(fixture.createManagedVm).toHaveBeenCalledOnce();
-	});
+	it.each(['new', 'reused'] as const)(
+		'retires a %s runtime when final material authorization changes before the slot',
+		async (runtimeState) => {
+			const fixture = createFixture(() => 1_000);
+			if (runtimeState === 'reused') {
+				const initial = await acquire(fixture);
+				if (initial.kind !== 'acquired') throw new Error('Expected initial acquisition.');
+				await initial.command.complete({ kind: 'completed' });
+			}
+			const result = await fixture.manager.acquireCommand({
+				finalAuthorization: async () => true,
+				finalMaterialAuthorization: () => false,
+				operationId: 'stale-operation',
+				ownerIdentity,
+				resolution: resolution(),
+			});
+			expect(result.kind).toBe('not-dispatched');
+			expect(fixture.states[0]?.closed).toBe(true);
+			expect(fixture.createManagedVm).toHaveBeenCalledOnce();
+		},
+	);
 
 	it('contains a started runtime when process identity inspection fails', async () => {
 		const fixture = createFixture(() => 1_000);

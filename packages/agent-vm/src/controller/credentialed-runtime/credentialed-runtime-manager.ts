@@ -136,6 +136,7 @@ export interface CredentialedRuntimeManager {
 		request: {
 			readonly admissionSignal?: AbortSignal;
 			readonly finalAuthorization: () => Promise<boolean>;
+			readonly finalMaterialAuthorization?: (() => boolean) | undefined;
 			readonly operationId: string;
 			readonly ownerIdentity: CredentialedRuntimeOwnerIdentity;
 		} & (
@@ -550,6 +551,13 @@ export function createCredentialedRuntimeManager(props: {
 								finalAuthorized = false;
 							}
 						}
+						if (finalAuthorized && request.finalMaterialAuthorization !== undefined) {
+							try {
+								finalAuthorized = request.finalMaterialAuthorization() && !admissionInvalidated();
+							} catch {
+								finalAuthorized = false;
+							}
+						}
 						live = createdLive;
 						liveByKey.set(key, live);
 						if (!finalAuthorized) {
@@ -567,8 +575,18 @@ export function createCredentialedRuntimeManager(props: {
 								finalAuthorized = false;
 							}
 						}
+						if (finalAuthorized && request.finalMaterialAuthorization !== undefined) {
+							try {
+								finalAuthorized = request.finalMaterialAuthorization() && !admissionInvalidated();
+							} catch {
+								finalAuthorized = false;
+							}
+						}
 						if (!finalAuthorized) {
-							return { kind: 'not-dispatched', reason: 'credentialed runtime authority changed' };
+							const contained = await retireLiveUnderLock(key, live, 'final authorization changed');
+							return contained
+								? { kind: 'not-dispatched', reason: 'credentialed runtime authority changed' }
+								: { kind: 'owner-unsafe', reason: 'stale runtime containment failed' };
 						}
 					}
 
