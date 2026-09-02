@@ -465,6 +465,12 @@ are defined in
 [tool-portal-discovery-design.md](tool-portal-discovery-design.md). OAuth consent
 and Tool Portal approval remain different state machines.
 
+Every OAuth registered action carries the same exact-call authority envelope as a
+configured CLI call. The controller reconstructs the trusted namespace, name,
+arguments, call ID, surface, principal, semantic revisions, operation ID, and
+fingerprint before it arms an approval reservation. A reservation for another
+action, account profile, application, or argument set fails before dispatch.
+
 The Hermes orientation renderer consumes the already-resolved visible namespace
 and tool inventory as a backend-neutral presentation projection. It renders each
 namespace once and nests that namespace's bounded tool names and descriptions
@@ -584,6 +590,8 @@ stop OAuth begin
 | --- | --- |
 | Duplicate callback | Transaction store atomically admits one consumer; loser receives a non-secret consumed result and never contacts Google. |
 | Controller restart during login | In-memory transaction disappears; callback fails and Hermes begins again. |
+| Corrupt credential during revoke | Catalog marks the grant `reauthorization-required / credential-corrupt`; no local deletion or provider-revoked success is reported without a provider token and confirmed revocation. |
+| Credential material changes while runtime containment is owner-unsafe | Invalidation failure propagates; enrollment or revocation cannot report terminal success while the prior runtime remains uncontained. |
 | Controller crash after Google exchange but before commit | No grant is reported complete; SQLite transaction rollback leaves no usable partial row. |
 | KEK unavailable or wrong | Catalog remains unopened for credential use; controller OAuth readiness is false and no destructive rewrite occurs. |
 | Envelope authentication failure | Exact record becomes unusable; other records remain available; operator sees non-secret corruption evidence. |
@@ -632,7 +640,9 @@ records is accepted.
 
 The three existing Google Desktop client records are not silently reused as Web
 clients. Deployment creates and validates three Web clients before enabling the
-OAuth applications. Existing manual authorization material remains untouched until
+OAuth applications. Configuration requires three distinct 1Password references,
+and controller startup requires the resolved Web records to contain three distinct
+Google client IDs. Existing manual authorization material remains untouched until
 the corresponding account/application enrollment succeeds.
 
 ## Proof architecture and traceability

@@ -313,6 +313,22 @@ describe('OAuth config contract', () => {
 			}).success,
 		).toBe(false);
 	});
+
+	it('requires a distinct 1Password client reference for every Google application', () => {
+		const input = validOAuthConfigInput() as Record<string, unknown>;
+		const providers = structuredClone(input.providers) as Record<string, Record<string, unknown>>;
+		const google = providers.google;
+		if (google === undefined) throw new Error('Missing Google OAuth provider fixture.');
+		const applications = google.applications as Record<string, Record<string, unknown>>;
+		const gmailApplication = applications['gmail-app'];
+		const workspaceApplication = applications['workspace-app'];
+		if (gmailApplication === undefined || workspaceApplication === undefined) {
+			throw new Error('Missing Google OAuth application fixture.');
+		}
+		workspaceApplication.clientCredentials = gmailApplication.clientCredentials;
+
+		expect(oauthConfigSchema.safeParse({ ...input, providers }).success).toBe(false);
+	});
 });
 
 describe('OAuth and Tool Portal cross-reference contract', () => {

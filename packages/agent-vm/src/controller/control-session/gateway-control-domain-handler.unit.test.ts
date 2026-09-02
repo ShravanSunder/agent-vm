@@ -234,8 +234,19 @@ function oauthAuthorizationListControlPayload(): Extract<
 		action: {
 			actionId: 'oauth_authorization.list',
 			...callerContextPayload,
+			authority: {
+				bindingRevision: 'binding:current',
+				fingerprint: `sha256:${'d'.repeat(64)}`,
+				kind: 'without_approval',
+				operationId: '88888888-8888-4888-8888-888888888888',
+			},
 			correlation: {
 				capability: { name: 'list', namespace: 'oauth_authorization' },
+			},
+			invocation: {
+				callId: 'oauth-list-call-a',
+				surfaceClass: 'protected_uds',
+				trustedContext: { principal: invocationPrincipal },
 			},
 		},
 		kind: 'registered_action',

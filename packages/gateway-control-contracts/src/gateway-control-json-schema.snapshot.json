@@ -2032,91 +2032,135 @@
 																"type": "string",
 																"const": "oauth_authorization.list"
 															},
-															"approvalReservation": {
-																"type": "object",
-																"properties": {
-																	"approvalId": {
-																		"type": "string",
-																		"format": "uuid",
-																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-																	},
-																	"authorityContext": {
+															"authority": {
+																"oneOf": [
+																	{
 																		"type": "object",
 																		"properties": {
-																			"controllerEpoch": {
+																			"bindingRevision": {
 																				"type": "string",
 																				"minLength": 1
 																			},
-																			"frameworkEpoch": {
+																			"fingerprint": {
 																				"type": "string",
-																				"minLength": 1
+																				"pattern": "^sha256:[a-f0-9]{64}$"
 																			},
-																			"gatewayEpoch": {
+																			"kind": {
 																				"type": "string",
-																				"minLength": 1
+																				"const": "without_approval"
 																			},
-																			"runtimeEpoch": {
+																			"operationId": {
 																				"type": "string",
-																				"minLength": 1
-																			},
-																			"zoneId": {
-																				"type": "string",
-																				"minLength": 1
+																				"format": "uuid",
+																				"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
 																			}
 																		},
 																		"required": [
-																			"controllerEpoch",
-																			"frameworkEpoch",
-																			"gatewayEpoch",
-																			"runtimeEpoch",
-																			"zoneId"
+																			"bindingRevision",
+																			"fingerprint",
+																			"kind",
+																			"operationId"
 																		],
 																		"additionalProperties": false
 																	},
-																	"expiresAt": {
-																		"type": "string",
-																		"format": "date-time",
-																		"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
-																	},
-																	"fingerprint": {
-																		"type": "string",
-																		"pattern": "^sha256:[a-f0-9]{64}$"
-																	},
-																	"operationId": {
-																		"type": "string",
-																		"format": "uuid",
-																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-																	},
-																	"stablePrincipal": {
-																		"type": "string",
-																		"pattern": "^[a-f0-9]{64}$"
-																	},
-																	"backendKind": {
-																		"type": "string",
-																		"const": "controller_execution"
-																	},
-																	"bindingRevision": {
-																		"type": "string",
-																		"minLength": 1
-																	},
-																	"reservationId": {
-																		"type": "string",
-																		"format": "uuid",
-																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																	{
+																		"type": "object",
+																		"properties": {
+																			"kind": {
+																				"type": "string",
+																				"const": "controller_approval_reservation"
+																			},
+																			"reservation": {
+																				"type": "object",
+																				"properties": {
+																					"approvalId": {
+																						"type": "string",
+																						"format": "uuid",
+																						"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																					},
+																					"authorityContext": {
+																						"type": "object",
+																						"properties": {
+																							"controllerEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"frameworkEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"gatewayEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"runtimeEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"zoneId": {
+																								"type": "string",
+																								"minLength": 1
+																							}
+																						},
+																						"required": [
+																							"controllerEpoch",
+																							"frameworkEpoch",
+																							"gatewayEpoch",
+																							"runtimeEpoch",
+																							"zoneId"
+																						],
+																						"additionalProperties": false
+																					},
+																					"expiresAt": {
+																						"type": "string",
+																						"format": "date-time",
+																						"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+																					},
+																					"fingerprint": {
+																						"type": "string",
+																						"pattern": "^sha256:[a-f0-9]{64}$"
+																					},
+																					"operationId": {
+																						"type": "string",
+																						"format": "uuid",
+																						"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																					},
+																					"stablePrincipal": {
+																						"type": "string",
+																						"pattern": "^[a-f0-9]{64}$"
+																					},
+																					"backendKind": {
+																						"type": "string",
+																						"const": "controller_execution"
+																					},
+																					"bindingRevision": {
+																						"type": "string",
+																						"minLength": 1
+																					},
+																					"reservationId": {
+																						"type": "string",
+																						"format": "uuid",
+																						"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																					}
+																				},
+																				"required": [
+																					"approvalId",
+																					"authorityContext",
+																					"expiresAt",
+																					"fingerprint",
+																					"operationId",
+																					"stablePrincipal",
+																					"backendKind",
+																					"bindingRevision",
+																					"reservationId"
+																				],
+																				"additionalProperties": false
+																			}
+																		},
+																		"required": ["kind", "reservation"],
+																		"additionalProperties": false
 																	}
-																},
-																"required": [
-																	"approvalId",
-																	"authorityContext",
-																	"expiresAt",
-																	"fingerprint",
-																	"operationId",
-																	"stablePrincipal",
-																	"backendKind",
-																	"bindingRevision",
-																	"reservationId"
-																],
-																"additionalProperties": false
+																]
 															},
 															"callerContext": {
 																"type": "object",
@@ -2179,9 +2223,119 @@
 																	}
 																},
 																"additionalProperties": false
+															},
+															"invocation": {
+																"type": "object",
+																"properties": {
+																	"callId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"surfaceClass": {
+																		"type": "string",
+																		"enum": ["mcp", "protected_uds"]
+																	},
+																	"trustedContext": {
+																		"type": "object",
+																		"properties": {
+																			"correlation": {
+																				"type": "object",
+																				"properties": {
+																					"runId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"sessionId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"sessionKey": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"toolCallId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					}
+																				},
+																				"additionalProperties": false
+																			},
+																			"principal": {
+																				"type": "object",
+																				"properties": {
+																					"agentId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"frameworkIdentity": {
+																						"readOnly": true,
+																						"type": "object",
+																						"properties": {
+																							"kind": {
+																								"type": "string",
+																								"const": "hermes"
+																							},
+																							"profileName": {
+																								"type": "string",
+																								"minLength": 1,
+																								"maxLength": 256
+																							}
+																						},
+																						"required": ["kind", "profileName"],
+																						"additionalProperties": false
+																					},
+																					"profileAssignmentRevision": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"toolPortalProfileId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					}
+																				},
+																				"required": [
+																					"agentId",
+																					"frameworkIdentity",
+																					"profileAssignmentRevision",
+																					"toolPortalProfileId"
+																				],
+																				"additionalProperties": false
+																			},
+																			"requester": {
+																				"type": "object",
+																				"properties": {
+																					"authenticatedSubjectId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					}
+																				},
+																				"required": ["authenticatedSubjectId"],
+																				"additionalProperties": false
+																			}
+																		},
+																		"required": ["principal"],
+																		"additionalProperties": false
+																	}
+																},
+																"required": ["callId", "surfaceClass", "trustedContext"],
+																"additionalProperties": false
 															}
 														},
-														"required": ["actionId", "callerContext", "correlation"],
+														"required": [
+															"actionId",
+															"authority",
+															"callerContext",
+															"correlation",
+															"invocation"
+														],
 														"additionalProperties": false
 													},
 													{
@@ -2214,91 +2368,135 @@
 																	}
 																}
 															},
-															"approvalReservation": {
-																"type": "object",
-																"properties": {
-																	"approvalId": {
-																		"type": "string",
-																		"format": "uuid",
-																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-																	},
-																	"authorityContext": {
+															"authority": {
+																"oneOf": [
+																	{
 																		"type": "object",
 																		"properties": {
-																			"controllerEpoch": {
+																			"bindingRevision": {
 																				"type": "string",
 																				"minLength": 1
 																			},
-																			"frameworkEpoch": {
+																			"fingerprint": {
 																				"type": "string",
-																				"minLength": 1
+																				"pattern": "^sha256:[a-f0-9]{64}$"
 																			},
-																			"gatewayEpoch": {
+																			"kind": {
 																				"type": "string",
-																				"minLength": 1
+																				"const": "without_approval"
 																			},
-																			"runtimeEpoch": {
+																			"operationId": {
 																				"type": "string",
-																				"minLength": 1
-																			},
-																			"zoneId": {
-																				"type": "string",
-																				"minLength": 1
+																				"format": "uuid",
+																				"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
 																			}
 																		},
 																		"required": [
-																			"controllerEpoch",
-																			"frameworkEpoch",
-																			"gatewayEpoch",
-																			"runtimeEpoch",
-																			"zoneId"
+																			"bindingRevision",
+																			"fingerprint",
+																			"kind",
+																			"operationId"
 																		],
 																		"additionalProperties": false
 																	},
-																	"expiresAt": {
-																		"type": "string",
-																		"format": "date-time",
-																		"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
-																	},
-																	"fingerprint": {
-																		"type": "string",
-																		"pattern": "^sha256:[a-f0-9]{64}$"
-																	},
-																	"operationId": {
-																		"type": "string",
-																		"format": "uuid",
-																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-																	},
-																	"stablePrincipal": {
-																		"type": "string",
-																		"pattern": "^[a-f0-9]{64}$"
-																	},
-																	"backendKind": {
-																		"type": "string",
-																		"const": "controller_execution"
-																	},
-																	"bindingRevision": {
-																		"type": "string",
-																		"minLength": 1
-																	},
-																	"reservationId": {
-																		"type": "string",
-																		"format": "uuid",
-																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																	{
+																		"type": "object",
+																		"properties": {
+																			"kind": {
+																				"type": "string",
+																				"const": "controller_approval_reservation"
+																			},
+																			"reservation": {
+																				"type": "object",
+																				"properties": {
+																					"approvalId": {
+																						"type": "string",
+																						"format": "uuid",
+																						"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																					},
+																					"authorityContext": {
+																						"type": "object",
+																						"properties": {
+																							"controllerEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"frameworkEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"gatewayEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"runtimeEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"zoneId": {
+																								"type": "string",
+																								"minLength": 1
+																							}
+																						},
+																						"required": [
+																							"controllerEpoch",
+																							"frameworkEpoch",
+																							"gatewayEpoch",
+																							"runtimeEpoch",
+																							"zoneId"
+																						],
+																						"additionalProperties": false
+																					},
+																					"expiresAt": {
+																						"type": "string",
+																						"format": "date-time",
+																						"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+																					},
+																					"fingerprint": {
+																						"type": "string",
+																						"pattern": "^sha256:[a-f0-9]{64}$"
+																					},
+																					"operationId": {
+																						"type": "string",
+																						"format": "uuid",
+																						"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																					},
+																					"stablePrincipal": {
+																						"type": "string",
+																						"pattern": "^[a-f0-9]{64}$"
+																					},
+																					"backendKind": {
+																						"type": "string",
+																						"const": "controller_execution"
+																					},
+																					"bindingRevision": {
+																						"type": "string",
+																						"minLength": 1
+																					},
+																					"reservationId": {
+																						"type": "string",
+																						"format": "uuid",
+																						"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																					}
+																				},
+																				"required": [
+																					"approvalId",
+																					"authorityContext",
+																					"expiresAt",
+																					"fingerprint",
+																					"operationId",
+																					"stablePrincipal",
+																					"backendKind",
+																					"bindingRevision",
+																					"reservationId"
+																				],
+																				"additionalProperties": false
+																			}
+																		},
+																		"required": ["kind", "reservation"],
+																		"additionalProperties": false
 																	}
-																},
-																"required": [
-																	"approvalId",
-																	"authorityContext",
-																	"expiresAt",
-																	"fingerprint",
-																	"operationId",
-																	"stablePrincipal",
-																	"backendKind",
-																	"bindingRevision",
-																	"reservationId"
-																],
-																"additionalProperties": false
+																]
 															},
 															"callerContext": {
 																"type": "object",
@@ -2361,13 +2559,119 @@
 																	}
 																},
 																"additionalProperties": false
+															},
+															"invocation": {
+																"type": "object",
+																"properties": {
+																	"callId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"surfaceClass": {
+																		"type": "string",
+																		"enum": ["mcp", "protected_uds"]
+																	},
+																	"trustedContext": {
+																		"type": "object",
+																		"properties": {
+																			"correlation": {
+																				"type": "object",
+																				"properties": {
+																					"runId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"sessionId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"sessionKey": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"toolCallId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					}
+																				},
+																				"additionalProperties": false
+																			},
+																			"principal": {
+																				"type": "object",
+																				"properties": {
+																					"agentId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"frameworkIdentity": {
+																						"readOnly": true,
+																						"type": "object",
+																						"properties": {
+																							"kind": {
+																								"type": "string",
+																								"const": "hermes"
+																							},
+																							"profileName": {
+																								"type": "string",
+																								"minLength": 1,
+																								"maxLength": 256
+																							}
+																						},
+																						"required": ["kind", "profileName"],
+																						"additionalProperties": false
+																					},
+																					"profileAssignmentRevision": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"toolPortalProfileId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					}
+																				},
+																				"required": [
+																					"agentId",
+																					"frameworkIdentity",
+																					"profileAssignmentRevision",
+																					"toolPortalProfileId"
+																				],
+																				"additionalProperties": false
+																			},
+																			"requester": {
+																				"type": "object",
+																				"properties": {
+																					"authenticatedSubjectId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					}
+																				},
+																				"required": ["authenticatedSubjectId"],
+																				"additionalProperties": false
+																			}
+																		},
+																		"required": ["principal"],
+																		"additionalProperties": false
+																	}
+																},
+																"required": ["callId", "surfaceClass", "trustedContext"],
+																"additionalProperties": false
 															}
 														},
 														"required": [
 															"actionId",
 															"accountProfileId",
+															"authority",
 															"callerContext",
-															"correlation"
+															"correlation",
+															"invocation"
 														],
 														"additionalProperties": false
 													},
@@ -2382,91 +2686,135 @@
 																"type": "string",
 																"pattern": "^[A-Za-z0-9_-]{32,256}$"
 															},
-															"approvalReservation": {
-																"type": "object",
-																"properties": {
-																	"approvalId": {
-																		"type": "string",
-																		"format": "uuid",
-																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-																	},
-																	"authorityContext": {
+															"authority": {
+																"oneOf": [
+																	{
 																		"type": "object",
 																		"properties": {
-																			"controllerEpoch": {
+																			"bindingRevision": {
 																				"type": "string",
 																				"minLength": 1
 																			},
-																			"frameworkEpoch": {
+																			"fingerprint": {
 																				"type": "string",
-																				"minLength": 1
+																				"pattern": "^sha256:[a-f0-9]{64}$"
 																			},
-																			"gatewayEpoch": {
+																			"kind": {
 																				"type": "string",
-																				"minLength": 1
+																				"const": "without_approval"
 																			},
-																			"runtimeEpoch": {
+																			"operationId": {
 																				"type": "string",
-																				"minLength": 1
-																			},
-																			"zoneId": {
-																				"type": "string",
-																				"minLength": 1
+																				"format": "uuid",
+																				"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
 																			}
 																		},
 																		"required": [
-																			"controllerEpoch",
-																			"frameworkEpoch",
-																			"gatewayEpoch",
-																			"runtimeEpoch",
-																			"zoneId"
+																			"bindingRevision",
+																			"fingerprint",
+																			"kind",
+																			"operationId"
 																		],
 																		"additionalProperties": false
 																	},
-																	"expiresAt": {
-																		"type": "string",
-																		"format": "date-time",
-																		"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
-																	},
-																	"fingerprint": {
-																		"type": "string",
-																		"pattern": "^sha256:[a-f0-9]{64}$"
-																	},
-																	"operationId": {
-																		"type": "string",
-																		"format": "uuid",
-																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-																	},
-																	"stablePrincipal": {
-																		"type": "string",
-																		"pattern": "^[a-f0-9]{64}$"
-																	},
-																	"backendKind": {
-																		"type": "string",
-																		"const": "controller_execution"
-																	},
-																	"bindingRevision": {
-																		"type": "string",
-																		"minLength": 1
-																	},
-																	"reservationId": {
-																		"type": "string",
-																		"format": "uuid",
-																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																	{
+																		"type": "object",
+																		"properties": {
+																			"kind": {
+																				"type": "string",
+																				"const": "controller_approval_reservation"
+																			},
+																			"reservation": {
+																				"type": "object",
+																				"properties": {
+																					"approvalId": {
+																						"type": "string",
+																						"format": "uuid",
+																						"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																					},
+																					"authorityContext": {
+																						"type": "object",
+																						"properties": {
+																							"controllerEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"frameworkEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"gatewayEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"runtimeEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"zoneId": {
+																								"type": "string",
+																								"minLength": 1
+																							}
+																						},
+																						"required": [
+																							"controllerEpoch",
+																							"frameworkEpoch",
+																							"gatewayEpoch",
+																							"runtimeEpoch",
+																							"zoneId"
+																						],
+																						"additionalProperties": false
+																					},
+																					"expiresAt": {
+																						"type": "string",
+																						"format": "date-time",
+																						"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+																					},
+																					"fingerprint": {
+																						"type": "string",
+																						"pattern": "^sha256:[a-f0-9]{64}$"
+																					},
+																					"operationId": {
+																						"type": "string",
+																						"format": "uuid",
+																						"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																					},
+																					"stablePrincipal": {
+																						"type": "string",
+																						"pattern": "^[a-f0-9]{64}$"
+																					},
+																					"backendKind": {
+																						"type": "string",
+																						"const": "controller_execution"
+																					},
+																					"bindingRevision": {
+																						"type": "string",
+																						"minLength": 1
+																					},
+																					"reservationId": {
+																						"type": "string",
+																						"format": "uuid",
+																						"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																					}
+																				},
+																				"required": [
+																					"approvalId",
+																					"authorityContext",
+																					"expiresAt",
+																					"fingerprint",
+																					"operationId",
+																					"stablePrincipal",
+																					"backendKind",
+																					"bindingRevision",
+																					"reservationId"
+																				],
+																				"additionalProperties": false
+																			}
+																		},
+																		"required": ["kind", "reservation"],
+																		"additionalProperties": false
 																	}
-																},
-																"required": [
-																	"approvalId",
-																	"authorityContext",
-																	"expiresAt",
-																	"fingerprint",
-																	"operationId",
-																	"stablePrincipal",
-																	"backendKind",
-																	"bindingRevision",
-																	"reservationId"
-																],
-																"additionalProperties": false
+																]
 															},
 															"callerContext": {
 																"type": "object",
@@ -2529,13 +2877,119 @@
 																	}
 																},
 																"additionalProperties": false
+															},
+															"invocation": {
+																"type": "object",
+																"properties": {
+																	"callId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"surfaceClass": {
+																		"type": "string",
+																		"enum": ["mcp", "protected_uds"]
+																	},
+																	"trustedContext": {
+																		"type": "object",
+																		"properties": {
+																			"correlation": {
+																				"type": "object",
+																				"properties": {
+																					"runId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"sessionId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"sessionKey": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"toolCallId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					}
+																				},
+																				"additionalProperties": false
+																			},
+																			"principal": {
+																				"type": "object",
+																				"properties": {
+																					"agentId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"frameworkIdentity": {
+																						"readOnly": true,
+																						"type": "object",
+																						"properties": {
+																							"kind": {
+																								"type": "string",
+																								"const": "hermes"
+																							},
+																							"profileName": {
+																								"type": "string",
+																								"minLength": 1,
+																								"maxLength": 256
+																							}
+																						},
+																						"required": ["kind", "profileName"],
+																						"additionalProperties": false
+																					},
+																					"profileAssignmentRevision": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"toolPortalProfileId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					}
+																				},
+																				"required": [
+																					"agentId",
+																					"frameworkIdentity",
+																					"profileAssignmentRevision",
+																					"toolPortalProfileId"
+																				],
+																				"additionalProperties": false
+																			},
+																			"requester": {
+																				"type": "object",
+																				"properties": {
+																					"authenticatedSubjectId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					}
+																				},
+																				"required": ["authenticatedSubjectId"],
+																				"additionalProperties": false
+																			}
+																		},
+																		"required": ["principal"],
+																		"additionalProperties": false
+																	}
+																},
+																"required": ["callId", "surfaceClass", "trustedContext"],
+																"additionalProperties": false
 															}
 														},
 														"required": [
 															"actionId",
 															"transactionId",
+															"authority",
 															"callerContext",
-															"correlation"
+															"correlation",
+															"invocation"
 														],
 														"additionalProperties": false
 													},
@@ -2550,91 +3004,135 @@
 																"type": "string",
 																"pattern": "^[A-Za-z0-9_-]{32,256}$"
 															},
-															"approvalReservation": {
-																"type": "object",
-																"properties": {
-																	"approvalId": {
-																		"type": "string",
-																		"format": "uuid",
-																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-																	},
-																	"authorityContext": {
+															"authority": {
+																"oneOf": [
+																	{
 																		"type": "object",
 																		"properties": {
-																			"controllerEpoch": {
+																			"bindingRevision": {
 																				"type": "string",
 																				"minLength": 1
 																			},
-																			"frameworkEpoch": {
+																			"fingerprint": {
 																				"type": "string",
-																				"minLength": 1
+																				"pattern": "^sha256:[a-f0-9]{64}$"
 																			},
-																			"gatewayEpoch": {
+																			"kind": {
 																				"type": "string",
-																				"minLength": 1
+																				"const": "without_approval"
 																			},
-																			"runtimeEpoch": {
+																			"operationId": {
 																				"type": "string",
-																				"minLength": 1
-																			},
-																			"zoneId": {
-																				"type": "string",
-																				"minLength": 1
+																				"format": "uuid",
+																				"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
 																			}
 																		},
 																		"required": [
-																			"controllerEpoch",
-																			"frameworkEpoch",
-																			"gatewayEpoch",
-																			"runtimeEpoch",
-																			"zoneId"
+																			"bindingRevision",
+																			"fingerprint",
+																			"kind",
+																			"operationId"
 																		],
 																		"additionalProperties": false
 																	},
-																	"expiresAt": {
-																		"type": "string",
-																		"format": "date-time",
-																		"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
-																	},
-																	"fingerprint": {
-																		"type": "string",
-																		"pattern": "^sha256:[a-f0-9]{64}$"
-																	},
-																	"operationId": {
-																		"type": "string",
-																		"format": "uuid",
-																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-																	},
-																	"stablePrincipal": {
-																		"type": "string",
-																		"pattern": "^[a-f0-9]{64}$"
-																	},
-																	"backendKind": {
-																		"type": "string",
-																		"const": "controller_execution"
-																	},
-																	"bindingRevision": {
-																		"type": "string",
-																		"minLength": 1
-																	},
-																	"reservationId": {
-																		"type": "string",
-																		"format": "uuid",
-																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																	{
+																		"type": "object",
+																		"properties": {
+																			"kind": {
+																				"type": "string",
+																				"const": "controller_approval_reservation"
+																			},
+																			"reservation": {
+																				"type": "object",
+																				"properties": {
+																					"approvalId": {
+																						"type": "string",
+																						"format": "uuid",
+																						"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																					},
+																					"authorityContext": {
+																						"type": "object",
+																						"properties": {
+																							"controllerEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"frameworkEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"gatewayEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"runtimeEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"zoneId": {
+																								"type": "string",
+																								"minLength": 1
+																							}
+																						},
+																						"required": [
+																							"controllerEpoch",
+																							"frameworkEpoch",
+																							"gatewayEpoch",
+																							"runtimeEpoch",
+																							"zoneId"
+																						],
+																						"additionalProperties": false
+																					},
+																					"expiresAt": {
+																						"type": "string",
+																						"format": "date-time",
+																						"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+																					},
+																					"fingerprint": {
+																						"type": "string",
+																						"pattern": "^sha256:[a-f0-9]{64}$"
+																					},
+																					"operationId": {
+																						"type": "string",
+																						"format": "uuid",
+																						"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																					},
+																					"stablePrincipal": {
+																						"type": "string",
+																						"pattern": "^[a-f0-9]{64}$"
+																					},
+																					"backendKind": {
+																						"type": "string",
+																						"const": "controller_execution"
+																					},
+																					"bindingRevision": {
+																						"type": "string",
+																						"minLength": 1
+																					},
+																					"reservationId": {
+																						"type": "string",
+																						"format": "uuid",
+																						"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																					}
+																				},
+																				"required": [
+																					"approvalId",
+																					"authorityContext",
+																					"expiresAt",
+																					"fingerprint",
+																					"operationId",
+																					"stablePrincipal",
+																					"backendKind",
+																					"bindingRevision",
+																					"reservationId"
+																				],
+																				"additionalProperties": false
+																			}
+																		},
+																		"required": ["kind", "reservation"],
+																		"additionalProperties": false
 																	}
-																},
-																"required": [
-																	"approvalId",
-																	"authorityContext",
-																	"expiresAt",
-																	"fingerprint",
-																	"operationId",
-																	"stablePrincipal",
-																	"backendKind",
-																	"bindingRevision",
-																	"reservationId"
-																],
-																"additionalProperties": false
+																]
 															},
 															"callerContext": {
 																"type": "object",
@@ -2697,13 +3195,119 @@
 																	}
 																},
 																"additionalProperties": false
+															},
+															"invocation": {
+																"type": "object",
+																"properties": {
+																	"callId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"surfaceClass": {
+																		"type": "string",
+																		"enum": ["mcp", "protected_uds"]
+																	},
+																	"trustedContext": {
+																		"type": "object",
+																		"properties": {
+																			"correlation": {
+																				"type": "object",
+																				"properties": {
+																					"runId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"sessionId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"sessionKey": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"toolCallId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					}
+																				},
+																				"additionalProperties": false
+																			},
+																			"principal": {
+																				"type": "object",
+																				"properties": {
+																					"agentId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"frameworkIdentity": {
+																						"readOnly": true,
+																						"type": "object",
+																						"properties": {
+																							"kind": {
+																								"type": "string",
+																								"const": "hermes"
+																							},
+																							"profileName": {
+																								"type": "string",
+																								"minLength": 1,
+																								"maxLength": 256
+																							}
+																						},
+																						"required": ["kind", "profileName"],
+																						"additionalProperties": false
+																					},
+																					"profileAssignmentRevision": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"toolPortalProfileId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					}
+																				},
+																				"required": [
+																					"agentId",
+																					"frameworkIdentity",
+																					"profileAssignmentRevision",
+																					"toolPortalProfileId"
+																				],
+																				"additionalProperties": false
+																			},
+																			"requester": {
+																				"type": "object",
+																				"properties": {
+																					"authenticatedSubjectId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					}
+																				},
+																				"required": ["authenticatedSubjectId"],
+																				"additionalProperties": false
+																			}
+																		},
+																		"required": ["principal"],
+																		"additionalProperties": false
+																	}
+																},
+																"required": ["callId", "surfaceClass", "trustedContext"],
+																"additionalProperties": false
 															}
 														},
 														"required": [
 															"actionId",
 															"transactionId",
+															"authority",
 															"callerContext",
-															"correlation"
+															"correlation",
+															"invocation"
 														],
 														"additionalProperties": false
 													},
@@ -2741,91 +3345,135 @@
 																	}
 																}
 															},
-															"approvalReservation": {
-																"type": "object",
-																"properties": {
-																	"approvalId": {
-																		"type": "string",
-																		"format": "uuid",
-																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-																	},
-																	"authorityContext": {
+															"authority": {
+																"oneOf": [
+																	{
 																		"type": "object",
 																		"properties": {
-																			"controllerEpoch": {
+																			"bindingRevision": {
 																				"type": "string",
 																				"minLength": 1
 																			},
-																			"frameworkEpoch": {
+																			"fingerprint": {
 																				"type": "string",
-																				"minLength": 1
+																				"pattern": "^sha256:[a-f0-9]{64}$"
 																			},
-																			"gatewayEpoch": {
+																			"kind": {
 																				"type": "string",
-																				"minLength": 1
+																				"const": "without_approval"
 																			},
-																			"runtimeEpoch": {
+																			"operationId": {
 																				"type": "string",
-																				"minLength": 1
-																			},
-																			"zoneId": {
-																				"type": "string",
-																				"minLength": 1
+																				"format": "uuid",
+																				"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
 																			}
 																		},
 																		"required": [
-																			"controllerEpoch",
-																			"frameworkEpoch",
-																			"gatewayEpoch",
-																			"runtimeEpoch",
-																			"zoneId"
+																			"bindingRevision",
+																			"fingerprint",
+																			"kind",
+																			"operationId"
 																		],
 																		"additionalProperties": false
 																	},
-																	"expiresAt": {
-																		"type": "string",
-																		"format": "date-time",
-																		"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
-																	},
-																	"fingerprint": {
-																		"type": "string",
-																		"pattern": "^sha256:[a-f0-9]{64}$"
-																	},
-																	"operationId": {
-																		"type": "string",
-																		"format": "uuid",
-																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-																	},
-																	"stablePrincipal": {
-																		"type": "string",
-																		"pattern": "^[a-f0-9]{64}$"
-																	},
-																	"backendKind": {
-																		"type": "string",
-																		"const": "controller_execution"
-																	},
-																	"bindingRevision": {
-																		"type": "string",
-																		"minLength": 1
-																	},
-																	"reservationId": {
-																		"type": "string",
-																		"format": "uuid",
-																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																	{
+																		"type": "object",
+																		"properties": {
+																			"kind": {
+																				"type": "string",
+																				"const": "controller_approval_reservation"
+																			},
+																			"reservation": {
+																				"type": "object",
+																				"properties": {
+																					"approvalId": {
+																						"type": "string",
+																						"format": "uuid",
+																						"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																					},
+																					"authorityContext": {
+																						"type": "object",
+																						"properties": {
+																							"controllerEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"frameworkEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"gatewayEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"runtimeEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"zoneId": {
+																								"type": "string",
+																								"minLength": 1
+																							}
+																						},
+																						"required": [
+																							"controllerEpoch",
+																							"frameworkEpoch",
+																							"gatewayEpoch",
+																							"runtimeEpoch",
+																							"zoneId"
+																						],
+																						"additionalProperties": false
+																					},
+																					"expiresAt": {
+																						"type": "string",
+																						"format": "date-time",
+																						"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+																					},
+																					"fingerprint": {
+																						"type": "string",
+																						"pattern": "^sha256:[a-f0-9]{64}$"
+																					},
+																					"operationId": {
+																						"type": "string",
+																						"format": "uuid",
+																						"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																					},
+																					"stablePrincipal": {
+																						"type": "string",
+																						"pattern": "^[a-f0-9]{64}$"
+																					},
+																					"backendKind": {
+																						"type": "string",
+																						"const": "controller_execution"
+																					},
+																					"bindingRevision": {
+																						"type": "string",
+																						"minLength": 1
+																					},
+																					"reservationId": {
+																						"type": "string",
+																						"format": "uuid",
+																						"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																					}
+																				},
+																				"required": [
+																					"approvalId",
+																					"authorityContext",
+																					"expiresAt",
+																					"fingerprint",
+																					"operationId",
+																					"stablePrincipal",
+																					"backendKind",
+																					"bindingRevision",
+																					"reservationId"
+																				],
+																				"additionalProperties": false
+																			}
+																		},
+																		"required": ["kind", "reservation"],
+																		"additionalProperties": false
 																	}
-																},
-																"required": [
-																	"approvalId",
-																	"authorityContext",
-																	"expiresAt",
-																	"fingerprint",
-																	"operationId",
-																	"stablePrincipal",
-																	"backendKind",
-																	"bindingRevision",
-																	"reservationId"
-																],
-																"additionalProperties": false
+																]
 															},
 															"callerContext": {
 																"type": "object",
@@ -2888,14 +3536,120 @@
 																	}
 																},
 																"additionalProperties": false
+															},
+															"invocation": {
+																"type": "object",
+																"properties": {
+																	"callId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"surfaceClass": {
+																		"type": "string",
+																		"enum": ["mcp", "protected_uds"]
+																	},
+																	"trustedContext": {
+																		"type": "object",
+																		"properties": {
+																			"correlation": {
+																				"type": "object",
+																				"properties": {
+																					"runId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"sessionId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"sessionKey": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"toolCallId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					}
+																				},
+																				"additionalProperties": false
+																			},
+																			"principal": {
+																				"type": "object",
+																				"properties": {
+																					"agentId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"frameworkIdentity": {
+																						"readOnly": true,
+																						"type": "object",
+																						"properties": {
+																							"kind": {
+																								"type": "string",
+																								"const": "hermes"
+																							},
+																							"profileName": {
+																								"type": "string",
+																								"minLength": 1,
+																								"maxLength": 256
+																							}
+																						},
+																						"required": ["kind", "profileName"],
+																						"additionalProperties": false
+																					},
+																					"profileAssignmentRevision": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"toolPortalProfileId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					}
+																				},
+																				"required": [
+																					"agentId",
+																					"frameworkIdentity",
+																					"profileAssignmentRevision",
+																					"toolPortalProfileId"
+																				],
+																				"additionalProperties": false
+																			},
+																			"requester": {
+																				"type": "object",
+																				"properties": {
+																					"authenticatedSubjectId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					}
+																				},
+																				"required": ["authenticatedSubjectId"],
+																				"additionalProperties": false
+																			}
+																		},
+																		"required": ["principal"],
+																		"additionalProperties": false
+																	}
+																},
+																"required": ["callId", "surfaceClass", "trustedContext"],
+																"additionalProperties": false
 															}
 														},
 														"required": [
 															"actionId",
 															"accountProfileId",
 															"applicationId",
+															"authority",
 															"callerContext",
-															"correlation"
+															"correlation",
+															"invocation"
 														],
 														"additionalProperties": false
 													},
@@ -2914,91 +3668,135 @@
 																"type": "string",
 																"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
 															},
-															"approvalReservation": {
-																"type": "object",
-																"properties": {
-																	"approvalId": {
-																		"type": "string",
-																		"format": "uuid",
-																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-																	},
-																	"authorityContext": {
+															"authority": {
+																"oneOf": [
+																	{
 																		"type": "object",
 																		"properties": {
-																			"controllerEpoch": {
+																			"bindingRevision": {
 																				"type": "string",
 																				"minLength": 1
 																			},
-																			"frameworkEpoch": {
+																			"fingerprint": {
 																				"type": "string",
-																				"minLength": 1
+																				"pattern": "^sha256:[a-f0-9]{64}$"
 																			},
-																			"gatewayEpoch": {
+																			"kind": {
 																				"type": "string",
-																				"minLength": 1
+																				"const": "without_approval"
 																			},
-																			"runtimeEpoch": {
+																			"operationId": {
 																				"type": "string",
-																				"minLength": 1
-																			},
-																			"zoneId": {
-																				"type": "string",
-																				"minLength": 1
+																				"format": "uuid",
+																				"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
 																			}
 																		},
 																		"required": [
-																			"controllerEpoch",
-																			"frameworkEpoch",
-																			"gatewayEpoch",
-																			"runtimeEpoch",
-																			"zoneId"
+																			"bindingRevision",
+																			"fingerprint",
+																			"kind",
+																			"operationId"
 																		],
 																		"additionalProperties": false
 																	},
-																	"expiresAt": {
-																		"type": "string",
-																		"format": "date-time",
-																		"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
-																	},
-																	"fingerprint": {
-																		"type": "string",
-																		"pattern": "^sha256:[a-f0-9]{64}$"
-																	},
-																	"operationId": {
-																		"type": "string",
-																		"format": "uuid",
-																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-																	},
-																	"stablePrincipal": {
-																		"type": "string",
-																		"pattern": "^[a-f0-9]{64}$"
-																	},
-																	"backendKind": {
-																		"type": "string",
-																		"const": "controller_execution"
-																	},
-																	"bindingRevision": {
-																		"type": "string",
-																		"minLength": 1
-																	},
-																	"reservationId": {
-																		"type": "string",
-																		"format": "uuid",
-																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																	{
+																		"type": "object",
+																		"properties": {
+																			"kind": {
+																				"type": "string",
+																				"const": "controller_approval_reservation"
+																			},
+																			"reservation": {
+																				"type": "object",
+																				"properties": {
+																					"approvalId": {
+																						"type": "string",
+																						"format": "uuid",
+																						"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																					},
+																					"authorityContext": {
+																						"type": "object",
+																						"properties": {
+																							"controllerEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"frameworkEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"gatewayEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"runtimeEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"zoneId": {
+																								"type": "string",
+																								"minLength": 1
+																							}
+																						},
+																						"required": [
+																							"controllerEpoch",
+																							"frameworkEpoch",
+																							"gatewayEpoch",
+																							"runtimeEpoch",
+																							"zoneId"
+																						],
+																						"additionalProperties": false
+																					},
+																					"expiresAt": {
+																						"type": "string",
+																						"format": "date-time",
+																						"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+																					},
+																					"fingerprint": {
+																						"type": "string",
+																						"pattern": "^sha256:[a-f0-9]{64}$"
+																					},
+																					"operationId": {
+																						"type": "string",
+																						"format": "uuid",
+																						"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																					},
+																					"stablePrincipal": {
+																						"type": "string",
+																						"pattern": "^[a-f0-9]{64}$"
+																					},
+																					"backendKind": {
+																						"type": "string",
+																						"const": "controller_execution"
+																					},
+																					"bindingRevision": {
+																						"type": "string",
+																						"minLength": 1
+																					},
+																					"reservationId": {
+																						"type": "string",
+																						"format": "uuid",
+																						"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																					}
+																				},
+																				"required": [
+																					"approvalId",
+																					"authorityContext",
+																					"expiresAt",
+																					"fingerprint",
+																					"operationId",
+																					"stablePrincipal",
+																					"backendKind",
+																					"bindingRevision",
+																					"reservationId"
+																				],
+																				"additionalProperties": false
+																			}
+																		},
+																		"required": ["kind", "reservation"],
+																		"additionalProperties": false
 																	}
-																},
-																"required": [
-																	"approvalId",
-																	"authorityContext",
-																	"expiresAt",
-																	"fingerprint",
-																	"operationId",
-																	"stablePrincipal",
-																	"backendKind",
-																	"bindingRevision",
-																	"reservationId"
-																],
-																"additionalProperties": false
+																]
 															},
 															"callerContext": {
 																"type": "object",
@@ -3061,14 +3859,120 @@
 																	}
 																},
 																"additionalProperties": false
+															},
+															"invocation": {
+																"type": "object",
+																"properties": {
+																	"callId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"surfaceClass": {
+																		"type": "string",
+																		"enum": ["mcp", "protected_uds"]
+																	},
+																	"trustedContext": {
+																		"type": "object",
+																		"properties": {
+																			"correlation": {
+																				"type": "object",
+																				"properties": {
+																					"runId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"sessionId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"sessionKey": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"toolCallId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					}
+																				},
+																				"additionalProperties": false
+																			},
+																			"principal": {
+																				"type": "object",
+																				"properties": {
+																					"agentId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"frameworkIdentity": {
+																						"readOnly": true,
+																						"type": "object",
+																						"properties": {
+																							"kind": {
+																								"type": "string",
+																								"const": "hermes"
+																							},
+																							"profileName": {
+																								"type": "string",
+																								"minLength": 1,
+																								"maxLength": 256
+																							}
+																						},
+																						"required": ["kind", "profileName"],
+																						"additionalProperties": false
+																					},
+																					"profileAssignmentRevision": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"toolPortalProfileId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					}
+																				},
+																				"required": [
+																					"agentId",
+																					"frameworkIdentity",
+																					"profileAssignmentRevision",
+																					"toolPortalProfileId"
+																				],
+																				"additionalProperties": false
+																			},
+																			"requester": {
+																				"type": "object",
+																				"properties": {
+																					"authenticatedSubjectId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					}
+																				},
+																				"required": ["authenticatedSubjectId"],
+																				"additionalProperties": false
+																			}
+																		},
+																		"required": ["principal"],
+																		"additionalProperties": false
+																	}
+																},
+																"required": ["callId", "surfaceClass", "trustedContext"],
+																"additionalProperties": false
 															}
 														},
 														"required": [
 															"actionId",
 															"accountProfileId",
 															"applicationId",
+															"authority",
 															"callerContext",
-															"correlation"
+															"correlation",
+															"invocation"
 														],
 														"additionalProperties": false
 													}

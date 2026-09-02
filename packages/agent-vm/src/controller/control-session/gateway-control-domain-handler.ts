@@ -878,11 +878,25 @@ function controllerExecutionCallerContextRef(
 function controllerExecutionApprovalReservation(
 	payload: GatewayControlToolPortalControllerExecutionPayload,
 ): GatewayRuntimeApprovalDispatchReservation | undefined {
-	return payload.kind === 'configured_cli'
-		? payload.authority.kind === 'controller_approval_reservation'
+	if (payload.kind === 'configured_cli') {
+		return payload.authority.kind === 'controller_approval_reservation'
 			? payload.authority.reservation
-			: undefined
-		: payload.action.approvalReservation;
+			: undefined;
+	}
+	switch (payload.action.actionId) {
+		case 'oauth_authorization.begin':
+		case 'oauth_authorization.cancel':
+		case 'oauth_authorization.list':
+		case 'oauth_authorization.reauthorize':
+		case 'oauth_authorization.revoke':
+		case 'oauth_authorization.status':
+			return payload.action.authority.kind === 'controller_approval_reservation'
+				? payload.action.authority.reservation
+				: undefined;
+		case 'controller_host_probe':
+		case 'workspace_git_push':
+			return payload.action.approvalReservation;
+	}
 }
 
 async function executeToolPortalControllerExecution(options: {

@@ -782,9 +782,43 @@ describe('gateway control contract', () => {
 			kind: 'configured_cli',
 			operationName: 'inspect_host',
 		};
+		const oauthInvocation = {
+			callId: 'oauth-revoke-call',
+			surfaceClass: 'protected_uds',
+			trustedContext: configuredPayload.invocation.trustedContext,
+		};
+		const approvedOAuthPayload = {
+			action: {
+				actionId: 'oauth_authorization.revoke',
+				accountProfileId: 'personal-google',
+				applicationId: 'gmail-app',
+				authority: { kind: 'controller_approval_reservation', reservation: approvalReservation },
+				callerContext: validHostProbeAction.callerContext,
+				correlation: {
+					capability: { name: 'revoke', namespace: 'oauth_authorization' },
+					toolCallId: 'oauth-revoke-call',
+				},
+				invocation: oauthInvocation,
+			},
+			kind: 'registered_action',
+		};
 		expect(
 			GatewayControlToolPortalControllerExecutionPayloadSchema.parse(configuredPayload),
 		).toEqual(configuredPayload);
+		expect(
+			GatewayControlToolPortalControllerExecutionPayloadSchema.parse(approvedOAuthPayload),
+		).toEqual(approvedOAuthPayload);
+		expect(
+			GatewayControlToolPortalControllerExecutionPayloadSchema.safeParse({
+				...approvedOAuthPayload,
+				action: {
+					...approvedOAuthPayload.action,
+					authority: undefined,
+					approvalReservation,
+					invocation: undefined,
+				},
+			}).success,
+		).toBe(false);
 		expect(
 			GatewayControlToolPortalControllerExecutionPayloadSchema.parse({
 				...configuredPayload,

@@ -248,7 +248,26 @@ export function createOAuthHttpsApp(props: {
 				tailnetLogin,
 				transactionId,
 			});
-			if (result.kind === 'redirect') return context.redirect(result.authorizationUrl);
+			if (result.kind === 'redirect') {
+				return context.html(
+					renderPage({
+						assets: props.assets,
+						cancelAction: `/oauth/transactions/${result.transactionId}/cancel`,
+						continueUrl: result.authorizationUrl,
+						csrfToken: page.csrfToken,
+						model: {
+							applications: [
+								{
+									applicationId: result.applicationId,
+									label: result.applicationLabel,
+									status: 'authorizing',
+								},
+							],
+							kind: 'application-progress',
+						},
+					}),
+				);
+			}
 			clearCeremonyCookies(context);
 			return context.html(
 				renderPage({
@@ -318,7 +337,24 @@ export function createOAuthHttpsApp(props: {
 				tailnetLogin: await resolveTailnetLogin(context),
 				transactionId,
 			});
-			return context.redirect(retry.authorizationUrl);
+			return context.html(
+				renderPage({
+					assets: props.assets,
+					cancelAction: `/oauth/transactions/${retry.transactionId}/cancel`,
+					continueUrl: retry.authorizationUrl,
+					csrfToken: requireFormString(form, 'csrfToken'),
+					model: {
+						applications: [
+							{
+								applicationId: retry.applicationId,
+								label: retry.applicationLabel,
+								status: 'authorizing',
+							},
+						],
+						kind: 'application-progress',
+					},
+				}),
+			);
 		} catch {
 			return context.html(
 				renderPage({

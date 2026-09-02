@@ -108,6 +108,17 @@ async function resolveGoogleClientCredentials(props: {
 		resolveApplication(googleOAuthApplicationIds[1]),
 		resolveApplication(googleOAuthApplicationIds[2]),
 	]);
+	if (
+		new Set([
+			workspaceCredentials.web.client_id,
+			gmailCredentials.web.client_id,
+			youtubeCredentials.web.client_id,
+		]).size !== googleOAuthApplicationIds.length
+	) {
+		throw new Error(
+			'OAuth applications must resolve to three distinct Google Web OAuth client IDs.',
+		);
+	}
 	return {
 		'gmail-app': gmailCredentials,
 		'workspace-app': workspaceCredentials,

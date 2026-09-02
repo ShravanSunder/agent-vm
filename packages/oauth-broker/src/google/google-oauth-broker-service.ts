@@ -106,6 +106,8 @@ export interface GoogleOAuthApplicationProgress {
 }
 
 export interface GoogleOAuthRedirectResult {
+	readonly applicationId: OAuthApplicationId;
+	readonly applicationLabel: string;
 	readonly authorizationUrl: string;
 	readonly browserBindingSecret: string;
 	readonly kind: 'redirect';
@@ -467,6 +469,8 @@ export function createGoogleOAuthBrokerService(props: {
 			transactionId: startProps.transaction.transactionId,
 		});
 		return {
+			applicationId: oauthApplicationIdSchema.parse(startProps.applicationId),
+			applicationLabel: props.config.providers.google.applications[startProps.applicationId].label,
 			authorizationUrl: props.googleAdapter.buildAuthorizationUrl({
 				clientCredentials: props.clientCredentialsByApplication[startProps.applicationId],
 				pkceChallenge: authorizing.pkceChallenge,
@@ -1035,12 +1039,10 @@ export function createGoogleOAuthBrokerService(props: {
 							result: completedAuthorizationResult,
 						});
 						clearActiveCeremony(session.agentId, session.accountProfileId);
-						await props
-							.onCredentialMaterialChanged?.({
-								agentId: session.agentId,
-								zoneId: props.zoneId,
-							})
-							.catch(() => undefined);
+						await props.onCredentialMaterialChanged?.({
+							agentId: session.agentId,
+							zoneId: props.zoneId,
+						});
 						return { accountLabel: session.providerGrant.accountEmail, kind: 'completed' };
 					}
 					const nextTransaction = transactionStore.createTransaction({
@@ -1072,12 +1074,10 @@ export function createGoogleOAuthBrokerService(props: {
 						selections: session.confirmedSelections,
 						transaction: boundNextTransaction,
 					});
-					await props
-						.onCredentialMaterialChanged?.({
-							agentId: session.agentId,
-							zoneId: props.zoneId,
-						})
-						.catch(() => undefined);
+					await props.onCredentialMaterialChanged?.({
+						agentId: session.agentId,
+						zoneId: props.zoneId,
+					});
 					return {
 						...redirect,
 						applications: applicationProgress({
@@ -1207,8 +1207,23 @@ export function createGoogleOAuthBrokerService(props: {
 							});
 							refreshToken = payload.refreshToken;
 						} catch {
-							// An approval-gated revoke may clear an unusable local grant even when its
-							// corrupted envelope can no longer supply a provider token.
+							props.catalog.replaceGrantEnvelope({
+								credentialId: grant.credentialId,
+								envelope: grant.envelope,
+								expectedRecordRevision: grant.recordRevision,
+								failureClass: 'credential-corrupt',
+								lastRefreshAttemptAtMs: now(),
+								lastRefreshSucceededAtMs: grant.lastRefreshSucceededAtMs,
+								lifecycleKind: 'reauthorization-required',
+								materialRevision: grant.materialRevision,
+								nextRefreshEligibleAtMs: null,
+								providerCredentialVersion: grant.providerCredentialVersion,
+								reauthorizationReason: 'credential-corrupt',
+							});
+							return {
+								failure: { kind: 'unavailable' },
+								kind: 'authorization-failed',
+							};
 						}
 						if (refreshToken !== undefined) {
 							const revoked = await props.googleAdapter.revokeAuthorization({
@@ -1239,9 +1254,7 @@ export function createGoogleOAuthBrokerService(props: {
 							applicationId: oauthApplicationIdSchema.parse(applicationId),
 							zoneId: props.zoneId,
 						});
-						await props
-							.onCredentialMaterialChanged?.({ agentId, zoneId: props.zoneId })
-							.catch(() => undefined);
+						await props.onCredentialMaterialChanged?.({ agentId, zoneId: props.zoneId });
 						return { kind: 'authorization-revoked' };
 					}
 				}
@@ -1342,6 +1355,8 @@ export function createGoogleOAuthBrokerService(props: {
 			}
 			const applicationId = googleOAuthApplicationIdSchema.parse(transaction.applicationId);
 			return {
+				applicationId: oauthApplicationIdSchema.parse(applicationId),
+				applicationLabel: props.config.providers.google.applications[applicationId].label,
 				authorizationUrl: props.googleAdapter.buildAuthorizationUrl({
 					clientCredentials: props.clientCredentialsByApplication[applicationId],
 					pkceChallenge: transaction.pkceChallenge,

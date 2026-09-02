@@ -530,26 +530,6 @@ export const GatewayControlControllerHostProbePayloadSchema = z
 	})
 	.strict();
 
-const gatewayControlOAuthAuthorizationCommonShape = {
-	approvalReservation: GatewayRuntimeControllerExecutionDispatchReservationSchema.optional(),
-	callerContext: GatewayControlCallerContextRefSchema,
-	correlation: GatewayControlToolCallCorrelationSchema,
-} as const;
-
-export const GatewayControlOAuthAuthorizationActionPayloadSchema = z.discriminatedUnion(
-	'actionId',
-	[
-		oauthAuthorizationListRequestSchema.safeExtend(gatewayControlOAuthAuthorizationCommonShape),
-		oauthAuthorizationBeginRequestSchema.safeExtend(gatewayControlOAuthAuthorizationCommonShape),
-		oauthAuthorizationStatusRequestSchema.safeExtend(gatewayControlOAuthAuthorizationCommonShape),
-		oauthAuthorizationCancelRequestSchema.safeExtend(gatewayControlOAuthAuthorizationCommonShape),
-		oauthAuthorizationReauthorizeRequestSchema.safeExtend(
-			gatewayControlOAuthAuthorizationCommonShape,
-		),
-		oauthAuthorizationRevokeRequestSchema.safeExtend(gatewayControlOAuthAuthorizationCommonShape),
-	],
-);
-
 export const GatewayControlConfiguredCliDirectAuthoritySchema = z
 	.object({
 		bindingRevision: z.string().min(1),
@@ -571,6 +551,35 @@ export const GatewayControlConfiguredCliDispatchAuthoritySchema = z.discriminate
 	GatewayControlConfiguredCliApprovalAuthoritySchema,
 ]);
 
+const GatewayControlControllerExecutionInvocationSchema = z
+	.object({
+		callId: z.string().min(1),
+		surfaceClass: GatewayRuntimePortalSurfaceClassSchema,
+		trustedContext: GatewayRuntimeTrustedInvocationContextSchema,
+	})
+	.strict();
+
+const gatewayControlOAuthAuthorizationCommonShape = {
+	authority: GatewayControlConfiguredCliDispatchAuthoritySchema,
+	callerContext: GatewayControlCallerContextRefSchema,
+	correlation: GatewayControlToolCallCorrelationSchema,
+	invocation: GatewayControlControllerExecutionInvocationSchema,
+} as const;
+
+export const GatewayControlOAuthAuthorizationActionPayloadSchema = z.discriminatedUnion(
+	'actionId',
+	[
+		oauthAuthorizationListRequestSchema.safeExtend(gatewayControlOAuthAuthorizationCommonShape),
+		oauthAuthorizationBeginRequestSchema.safeExtend(gatewayControlOAuthAuthorizationCommonShape),
+		oauthAuthorizationStatusRequestSchema.safeExtend(gatewayControlOAuthAuthorizationCommonShape),
+		oauthAuthorizationCancelRequestSchema.safeExtend(gatewayControlOAuthAuthorizationCommonShape),
+		oauthAuthorizationReauthorizeRequestSchema.safeExtend(
+			gatewayControlOAuthAuthorizationCommonShape,
+		),
+		oauthAuthorizationRevokeRequestSchema.safeExtend(gatewayControlOAuthAuthorizationCommonShape),
+	],
+);
+
 export const GatewayControlConfiguredCliControllerExecutionPayloadSchema = z
 	.object({
 		authority: GatewayControlConfiguredCliDispatchAuthoritySchema,
@@ -578,13 +587,7 @@ export const GatewayControlConfiguredCliControllerExecutionPayloadSchema = z
 		capability: z.object({ name: z.string().min(1), namespace: z.string().min(1) }).strict(),
 		correlation: GatewayControlToolCallCorrelationSchema,
 		input: controllerConfiguredCliInputSchema,
-		invocation: z
-			.object({
-				callId: z.string().min(1),
-				surfaceClass: GatewayRuntimePortalSurfaceClassSchema,
-				trustedContext: GatewayRuntimeTrustedInvocationContextSchema,
-			})
-			.strict(),
+		invocation: GatewayControlControllerExecutionInvocationSchema,
 		kind: z.literal('configured_cli'),
 		operationName: z.string().min(1),
 	})

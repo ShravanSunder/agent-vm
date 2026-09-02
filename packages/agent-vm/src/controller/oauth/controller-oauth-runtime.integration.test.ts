@@ -126,22 +126,29 @@ function systemConfig(configDirectory: string): ControllerOAuthSystemConfig {
 	};
 }
 
-function secretResolver(): SecretResolver {
+function secretResolver(options: { readonly duplicateClientIds?: boolean } = {}): SecretResolver {
 	const callbackUrl = 'https://auth.claw.askluna.xyz:18900/oauth/google/callback';
-	const clientJson = JSON.stringify({
-		web: {
-			auth_uri: 'https://accounts.google.com/o/oauth2/v2/auth',
-			client_id: 'client-id',
-			client_secret: 'client-secret',
-			redirect_uris: [callbackUrl],
-			token_uri: 'https://oauth2.googleapis.com/token',
-		},
+	const resolve = vi.fn(async (reference: SecretRef) => {
+		if (reference.source === '1password' && reference.ref.includes('oauth-kek')) {
+			return Buffer.alloc(32, 41).toString('base64url');
+		}
+		const applicationIdentity = options.duplicateClientIds
+			? 'shared'
+			: reference.source === '1password' && reference.ref.includes('gmail')
+				? 'gmail'
+				: reference.source === '1password' && reference.ref.includes('workspace')
+					? 'workspace'
+					: 'youtube';
+		return JSON.stringify({
+			web: {
+				auth_uri: 'https://accounts.google.com/o/oauth2/v2/auth',
+				client_id: `${applicationIdentity}-client-id`,
+				client_secret: `${applicationIdentity}-client-secret`,
+				redirect_uris: [callbackUrl],
+				token_uri: 'https://oauth2.googleapis.com/token',
+			},
+		});
 	});
-	const resolve = vi.fn(async (reference: SecretRef) =>
-		reference.source === '1password' && reference.ref.includes('oauth-kek')
-			? Buffer.alloc(32, 41).toString('base64url')
-			: clientJson,
-	);
 	return {
 		resolve,
 		resolveAll: async (references) =>
@@ -157,6 +164,45 @@ function secretResolver(): SecretResolver {
 }
 
 describe('controller OAuth runtime composition', () => {
+	it('rejects distinct references that resolve to one Google client ID', async () => {
+		// Arrange
+		const configDirectory = path.join(testRoot, 'config', 'gateways', 'apollofam');
+		await mkdir(configDirectory, { recursive: true });
+		await Promise.all([
+			writeFile(path.join(configDirectory, 'oauth.config.jsonc'), JSON.stringify(oauthConfig())),
+			writeFile(
+				path.join(configDirectory, 'tool-portal.config.jsonc'),
+				JSON.stringify(toolPortalConfig()),
+			),
+		]);
+		const localApiGetJson = vi.fn(async (requestPath: string) => {
+			if (requestPath === '/localapi/v0/status') {
+				return { Self: { TailscaleIPs: ['100.100.100.10'] } };
+			}
+			throw new Error(`Unexpected LocalAPI request: ${requestPath}`);
+		});
+
+		// Act / Assert
+		await expect(
+			prepareControllerOAuthRuntime({
+				loadApprovalAssets: async () => ({
+					files: {
+						'oauth.1111111111111111.css': new Uint8Array(),
+						'oauth.2222222222222222.js': new Uint8Array(),
+					},
+					manifest: {
+						css: 'oauth.1111111111111111.css',
+						javascript: 'oauth.2222222222222222.js',
+					},
+				}),
+				secretResolver: secretResolver({ duplicateClientIds: true }),
+				selectedZoneIds: ['apollofam'],
+				systemConfig: systemConfig(configDirectory),
+				tailscaleLocalApiTransport: { getJson: localApiGetJson },
+			}),
+		).rejects.toThrow(/distinct Google Web OAuth client IDs/u);
+	});
+
 	it('drains the broker and clears the KEK when preparation fails after broker creation', async () => {
 		// Arrange
 		const configDirectory = path.join(testRoot, 'config', 'gateways', 'apollofam');

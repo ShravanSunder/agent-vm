@@ -12,7 +12,7 @@ import {
 	oauthTokenLifecycleSchema,
 	type OAuthTransactionId,
 } from '@agent-vm/oauth-broker-contracts';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
 	openOAuthCredentialCatalog,
@@ -178,6 +178,9 @@ async function createService(
 		readonly catalogDecorator?: (catalog: OAuthCredentialCatalog) => OAuthCredentialCatalog;
 		readonly oauthConfig?: OAuthConfig;
 		readonly now?: () => number;
+		readonly onCredentialMaterialChanged?:
+			| ((props: { readonly agentId: string; readonly zoneId: string }) => Promise<void>)
+			| undefined;
 	} = {},
 ): Promise<GoogleOAuthBrokerService> {
 	const stateRoot = await mkdtemp(path.join(tmpdir(), 'agent-vm-oauth-broker-service-'));
@@ -197,6 +200,9 @@ async function createService(
 		keyEncryptionKey,
 		keyEncryptionKeyVersion: 1,
 		now: props.now ?? (() => 1_000),
+		...(props.onCredentialMaterialChanged === undefined
+			? {}
+			: { onCredentialMaterialChanged: props.onCredentialMaterialChanged }),
 		zoneId: 'apollofam',
 	});
 }
@@ -1460,8 +1466,10 @@ describe('Google OAuth broker service', () => {
 		expect(catalog?.listGrantsForAgent({ agentId: 'hermes', zoneId: 'apollofam' })).toHaveLength(1);
 	});
 
-	it('deletes a locally corrupt grant when provider revocation material is unrecoverable', async () => {
+	it('retains and marks a corrupt grant when provider revocation cannot be proven', async () => {
+		const revokeAuthorization = vi.fn(async () => ({ kind: 'revoked' as const }));
 		const service = await createService({
+			adapter: { ...createAdapter(), revokeAuthorization },
 			catalogDecorator: (baseCatalog) => ({
 				...baseCatalog,
 				getGrantForAccountApplication: (query) => {
@@ -1489,8 +1497,93 @@ describe('Google OAuth broker service', () => {
 					applicationId: oauthApplicationIdSchema.parse('gmail-app'),
 				},
 			}),
-		).resolves.toEqual({ kind: 'authorization-revoked' });
-		expect(catalog?.listGrantsForAgent({ agentId: 'hermes', zoneId: 'apollofam' })).toEqual([]);
+		).resolves.toEqual({ failure: { kind: 'unavailable' }, kind: 'authorization-failed' });
+		expect(revokeAuthorization).not.toHaveBeenCalled();
+		expect(catalog?.listGrantsForAgent({ agentId: 'hermes', zoneId: 'apollofam' })).toEqual([
+			expect.objectContaining({
+				lifecycleKind: 'reauthorization-required',
+				reauthorizationReason: 'credential-corrupt',
+			}),
+		]);
+	});
+
+	it('does not report enrollment completion when runtime containment is owner-unsafe', async () => {
+		const service = await createService({
+			onCredentialMaterialChanged: async () => {
+				throw new Error('owner-unsafe containment');
+			},
+		});
+		const begun = await service.executeAuthorizationAction({
+			agentId: 'hermes',
+			request: {
+				actionId: 'oauth_authorization.begin',
+				accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
+			},
+		});
+		if (begun.kind !== 'authorization-begun') throw new Error('Expected begun authorization.');
+		const page = service.getPermissionPage({
+			tailnetLogin: 'human@example.test',
+			transactionId: begun.transactionId,
+		});
+		const redirect = service.submitPermissions({
+			browserBindingSecret: page.browserBindingSecret,
+			csrfToken: page.csrfToken,
+			selections: oauthPermissionSelectionsSchema.parse({ 'gmail-app': { gmail: 'read' } }),
+			tailnetLogin: 'human@example.test',
+			transactionId: begun.transactionId,
+		});
+		if (redirect.kind !== 'redirect') throw new Error('Expected Google redirect.');
+		const oauthState = new URL(redirect.authorizationUrl).searchParams.get('state');
+		if (oauthState === null) throw new Error('Google redirect omitted OAuth state.');
+		const callback = await service.handleGoogleCallback({
+			authorizationCode: 'owner-unsafe-enrollment-code',
+			browserBindingSecret: redirect.browserBindingSecret,
+			oauthState,
+			redirectUri,
+			tailnetLogin: 'human@example.test',
+			transactionId: redirect.transactionId,
+		});
+		if (callback.kind !== 'confirmation') throw new Error('Expected account confirmation.');
+
+		await expect(
+			service.confirmAccount({
+				browserBindingSecret: callback.confirmation.browserBindingSecret,
+				completionSessionId: callback.confirmation.completionSessionId,
+				csrfToken: callback.confirmation.csrfToken,
+				tailnetLogin: 'human@example.test',
+			}),
+		).rejects.toThrow(/owner-unsafe containment/u);
+		await expect(
+			service.executeAuthorizationAction({
+				agentId: 'hermes',
+				request: {
+					actionId: 'oauth_authorization.status',
+					transactionId: begun.transactionId,
+				},
+			}),
+		).resolves.toEqual({ failure: { kind: 'unavailable' }, kind: 'authorization-failed' });
+	});
+
+	it('does not report revocation when runtime containment is owner-unsafe', async () => {
+		let rejectInvalidation = false;
+		const service = await createService({
+			onCredentialMaterialChanged: async () => {
+				if (rejectInvalidation) throw new Error('owner-unsafe containment');
+			},
+		});
+		await enrollGmailRead(service);
+		rejectInvalidation = true;
+
+		await expect(
+			service.executeAuthorizationAction({
+				agentId: 'hermes',
+				request: {
+					actionId: 'oauth_authorization.revoke',
+					accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
+					applicationId: oauthApplicationIdSchema.parse('gmail-app'),
+				},
+			}),
+		).rejects.toThrow(/owner-unsafe containment/u);
 	});
 
 	it('rejects provider-granted scope expansion before completion state exists', async () => {

@@ -164,7 +164,8 @@ POST /oauth/transactions/:transactionId/permissions
   verify cookie + CSRF + Origin + tailnet identity
   parse choices and validate slot maxima
   derive selected application queue and Google scopes
-  redirect to the first selected Google Web application
+  render a same-origin application-progress interstitial
+  human follows a normal HTTPS link to the first selected Google Web application
 
 GET  /oauth/google/callback
   verify state + PKCE + current application + same Tailscale login
@@ -174,7 +175,8 @@ GET  /oauth/google/callback
 
 POST /oauth/completions/:completionId/confirm
   commit current app grant
-  redirect to next selected application or render completion summary
+  render a same-origin application-progress interstitial for the next selected
+  application or render completion summary
 
 POST /oauth/transactions/:transactionId/cancel
   invalidate pending ceremony; preserve already committed application grants

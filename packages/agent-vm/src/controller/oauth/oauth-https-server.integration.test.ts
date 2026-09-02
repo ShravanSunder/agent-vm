@@ -100,6 +100,8 @@ function createBrokerHarness(): {
 	const cancelBrowserTransaction = vi.fn(() => true);
 	const submitPermissions = vi.fn(
 		(): GoogleOAuthPermissionSubmissionResult => ({
+			applicationId: oauthApplicationIdSchema.parse('gmail-app'),
+			applicationLabel: 'Gmail',
 			authorizationUrl: 'https://accounts.google.test/authorize',
 			browserBindingSecret,
 			kind: 'redirect',
@@ -145,6 +147,8 @@ function createBrokerHarness(): {
 			resolveToolAvailability: () => ({ kind: 'authorization-status-unavailable' }),
 			reapExpiredTransactions: () => ({ completionSessionCount: 0, transactionCount: 0 }),
 			retryApplication: () => ({
+				applicationId: oauthApplicationIdSchema.parse('gmail-app'),
+				applicationLabel: 'Gmail',
 				authorizationUrl: 'https://accounts.google.test/retry',
 				browserBindingSecret,
 				kind: 'redirect',
@@ -266,10 +270,12 @@ describe('OAuth HTTPS application', () => {
 			},
 			requestEnvironment(),
 		);
-		expect(permissionResponse.status).toBe(302);
-		expect(permissionResponse.headers.get('location')).toBe(
-			'https://accounts.google.test/authorize',
-		);
+		expect(permissionResponse.status).toBe(200);
+		expect(permissionResponse.headers.get('location')).toBeNull();
+		const permissionBody = await permissionResponse.text();
+		expect(permissionBody).toContain('Connecting Google applications');
+		expect(permissionBody).toContain('https://accounts.google.test/authorize');
+		expect(permissionBody).toContain(`/oauth/transactions/${transactionId}/cancel`);
 		expect(harness.submitPermissions).toHaveBeenCalledWith(
 			expect.objectContaining({
 				selections: { 'gmail-app': { gmail: 'read' } },
@@ -416,6 +422,8 @@ describe('OAuth HTTPS application', () => {
 					completed: ['Gmail'],
 					kind: 'partial-completion',
 					retry: {
+						applicationId: oauthApplicationIdSchema.parse('workspace-app'),
+						applicationLabel: 'Workspace',
 						authorizationUrl: 'https://accounts.google.test/retry-workspace',
 						browserBindingSecret,
 						kind: 'redirect',
@@ -425,6 +433,8 @@ describe('OAuth HTTPS application', () => {
 					retryable: ['Workspace'],
 				}),
 				retryApplication: () => ({
+					applicationId: oauthApplicationIdSchema.parse('workspace-app'),
+					applicationLabel: 'Workspace',
 					authorizationUrl: 'https://accounts.google.test/retry-workspace',
 					browserBindingSecret,
 					kind: 'redirect',
@@ -483,10 +493,13 @@ describe('OAuth HTTPS application', () => {
 			},
 			requestEnvironment(),
 		);
-		expect(retryResponse.status).toBe(302);
-		expect(retryResponse.headers.get('location')).toBe(
-			'https://accounts.google.test/retry-workspace',
-		);
+		expect(retryResponse.status).toBe(200);
+		expect(retryResponse.headers.get('location')).toBeNull();
+		const retryBody = await retryResponse.text();
+		expect(retryBody).toContain('Connecting Google applications');
+		expect(retryBody).toContain('Workspace');
+		expect(retryBody).toContain('https://accounts.google.test/retry-workspace');
+		expect(retryBody).toContain(`/oauth/transactions/${transactionId}/cancel`);
 	});
 
 	it('renders an expired callback explicitly', async () => {

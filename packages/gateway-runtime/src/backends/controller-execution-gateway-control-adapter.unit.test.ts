@@ -339,9 +339,11 @@ describe('Gateway Control controller-execution adapter', () => {
 					payload: expect.objectContaining({
 						action: expect.objectContaining({
 							actionId: 'oauth_authorization.list',
+							authority: expect.objectContaining({ kind: 'without_approval' }),
 							correlation: expect.objectContaining({
 								capability: { name: 'list', namespace: 'oauth_authorization' },
 							}),
+							invocation: expect.objectContaining({ callId: 'oauth-list' }),
 						}),
 					}),
 				}),

@@ -451,28 +451,30 @@ function controllerActionPayload(props: {
 		callerContext: { callerContextId: props.callerContextId },
 		correlation: commandCorrelation(props.request),
 	};
+	const authority =
+		dispatchAuthority.kind === 'without-approval'
+			? {
+					bindingRevision: dispatchAuthority.bindingRevision,
+					fingerprint: dispatchAuthority.fingerprint,
+					kind: 'without_approval' as const,
+					operationId: dispatchAuthority.operationId,
+				}
+			: {
+					kind: 'controller_approval_reservation' as const,
+					reservation: dispatchAuthority.reservation,
+				};
+	const invocation = {
+		callId: props.request.correlation.callId,
+		surfaceClass: props.request.authority.invocation.surfaceClass,
+		trustedContext: props.request.authority.invocation.trustedContext,
+	};
 	if (props.operation.kind === 'configured_cli') {
 		return GatewayControlToolPortalControllerExecutionPayloadSchema.parse({
 			...common,
-			authority:
-				dispatchAuthority.kind === 'without-approval'
-					? {
-							bindingRevision: dispatchAuthority.bindingRevision,
-							fingerprint: dispatchAuthority.fingerprint,
-							kind: 'without_approval',
-							operationId: dispatchAuthority.operationId,
-						}
-					: {
-							kind: 'controller_approval_reservation',
-							reservation: dispatchAuthority.reservation,
-						},
+			authority,
 			capability: props.request.action.capability,
 			input: props.request.action.arguments,
-			invocation: {
-				callId: props.request.correlation.callId,
-				surfaceClass: props.request.authority.invocation.surfaceClass,
-				trustedContext: props.request.authority.invocation.trustedContext,
-			},
+			invocation,
 			kind: 'configured_cli',
 			operationName: props.request.action.capability.name,
 		});
@@ -487,9 +489,8 @@ function controllerActionPayload(props: {
 			action: {
 				...actionRequest,
 				...common,
-				...(dispatchAuthority.kind === 'controller-approval-reservation'
-					? { approvalReservation: dispatchAuthority.reservation }
-					: {}),
+				authority,
+				invocation,
 			},
 			kind: 'registered_action',
 		});

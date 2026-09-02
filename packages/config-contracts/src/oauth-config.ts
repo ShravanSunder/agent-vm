@@ -188,6 +188,20 @@ export const oauthConfigSchema = z
 	.strict()
 	.superRefine((config, context) => {
 		const applications = config.providers.google.applications;
+		const clientReferenceOwners = new Map<string, GoogleOAuthApplicationId>();
+		for (const applicationId of googleOAuthApplicationIds) {
+			const reference = applications[applicationId].clientCredentials.ref;
+			const existingOwner = clientReferenceOwners.get(reference);
+			if (existingOwner === undefined) {
+				clientReferenceOwners.set(reference, applicationId);
+				continue;
+			}
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: `Google OAuth applications "${existingOwner}" and "${applicationId}" must use distinct client credential references.`,
+				path: ['providers', 'google', 'applications', applicationId, 'clientCredentials', 'ref'],
+			});
+		}
 		for (const [agentId, agent] of Object.entries(config.agents)) {
 			for (const [accountProfileId, accountProfile] of Object.entries(agent.accountProfiles)) {
 				for (const applicationId of googleOAuthApplicationIds) {
