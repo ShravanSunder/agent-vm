@@ -118,7 +118,7 @@ function securityHeaders(context: { header(name: string, value: string): void })
 			"frame-ancestors 'none'",
 		].join('; '),
 	);
-	context.header('Referrer-Policy', 'no-referrer');
+	context.header('Referrer-Policy', 'same-origin');
 	context.header('X-Content-Type-Options', 'nosniff');
 	context.header('Cache-Control', 'no-store');
 }

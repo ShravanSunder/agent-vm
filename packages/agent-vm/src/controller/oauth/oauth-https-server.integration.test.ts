@@ -188,6 +188,7 @@ describe('OAuth HTTPS application', () => {
 		expect(response.status).toBe(200);
 		expect(resolvedPeers).toEqual([{ remoteAddress: '100.100.100.10', remotePort: 48_123 }]);
 		expect(response.headers.get('content-security-policy')).toContain("default-src 'none'");
+		expect(response.headers.get('referrer-policy')).toBe('same-origin');
 		expect(response.headers.getSetCookie()).toEqual([
 			expect.stringContaining('agent_vm_oauth_transaction='),
 			expect.stringContaining('agent_vm_oauth_transaction_binding='),

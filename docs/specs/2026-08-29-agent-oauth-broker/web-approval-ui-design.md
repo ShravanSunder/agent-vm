@@ -301,10 +301,14 @@ Content-Security-Policy:
   form-action 'self';
   frame-ancestors 'none'
 
-Referrer-Policy: no-referrer
+Referrer-Policy: same-origin
 X-Content-Type-Options: nosniff
 Cache-Control: no-store
 ```
+
+`same-origin` preserves Chromium's exact `Origin` on the native same-origin form
+POSTs required above while withholding referrer data from cross-origin navigation
+to Google. The server continues to reject missing, opaque, or mismatched origins.
 
 Hashed static assets may use immutable caching, but HTML, redirects, forms, and
 status responses remain `no-store`. Hono JSX escaping is used for all dynamic text;
