@@ -1031,7 +1031,7 @@ export function createGoogleOAuthBrokerService(props: {
 			) {
 				return false;
 			}
-			const cancelled = transactionStore.cancelTransaction({
+			const cancelled = transactionStore.cancelPendingTransaction({
 				agentId: transaction.agentId,
 				transactionId: transaction.transactionId,
 			});
@@ -1274,7 +1274,7 @@ export function createGoogleOAuthBrokerService(props: {
 							request.transactionId;
 						const ceremonyOwner = transactionStore.getCeremonyOwner(currentTransactionId);
 						if (ceremonyOwner !== undefined && ceremonyOwner.agentId === agentId) {
-							const cancelled = transactionStore.cancelTransaction({
+							const cancelled = transactionStore.cancelPendingTransaction({
 								agentId,
 								transactionId: currentTransactionId,
 							});

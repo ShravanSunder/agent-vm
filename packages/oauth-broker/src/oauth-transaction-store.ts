@@ -181,6 +181,10 @@ export interface OAuthTransactionStore<TProviderGrant> {
 		readonly agentId: string;
 		readonly transactionId: OAuthTransactionId;
 	}): boolean;
+	cancelPendingTransaction(props: {
+		readonly agentId: string;
+		readonly transactionId: OAuthTransactionId;
+	}): boolean;
 	cancelCompletion(props: {
 		readonly browserBindingSecret: string;
 		readonly completionSessionId: OAuthCompletionSessionId;
@@ -275,6 +279,27 @@ export function createOAuthTransactionStore<TProviderGrant>(props: {
 		completionSessionIdsByTransactionId.delete(session.transactionId);
 		props.onDiscardProviderGrant?.(session.providerGrant);
 		return true;
+	};
+
+	const cancelOwnedCeremony = (
+		cancelProps: { readonly agentId: string; readonly transactionId: OAuthTransactionId },
+		mode: 'including-callback-consumption' | 'pending-only',
+	): boolean => {
+		const parsedTransactionId = oauthTransactionIdSchema.parse(cancelProps.transactionId);
+		const current = transactions.get(parsedTransactionId);
+		const parsedAgentId = oauthAgentIdSchema.parse(cancelProps.agentId);
+		if (current !== undefined) {
+			if (mode === 'pending-only' && current.kind === 'consuming-callback') return false;
+			return current.agentId === parsedAgentId && transactions.delete(parsedTransactionId);
+		}
+		const completionSessionId = completionSessionIdsByTransactionId.get(parsedTransactionId);
+		if (completionSessionId === undefined) return false;
+		const completion = completionSessions.get(completionSessionId);
+		return (
+			completion?.kind === 'awaiting-account-confirmation' &&
+			completion.agentId === parsedAgentId &&
+			discardCompletionSession(completionSessionId)
+		);
 	};
 
 	const reapExpired = (): {
@@ -424,27 +449,9 @@ export function createOAuthTransactionStore<TProviderGrant>(props: {
 			completionSessions.set(completionSessionId, committing);
 			return { kind: 'accepted', session: committing };
 		},
-		cancelTransaction: ({ agentId, transactionId }) => {
-			const parsedTransactionId = oauthTransactionIdSchema.parse(transactionId);
-			const current = transactions.get(parsedTransactionId);
-			const parsedAgentId = oauthAgentIdSchema.parse(agentId);
-			if (current !== undefined) {
-				return (
-					(current.kind === 'selecting-permissions' ||
-						current.kind === 'authorizing-application') &&
-					current.agentId === parsedAgentId &&
-					transactions.delete(parsedTransactionId)
-				);
-			}
-			const completionSessionId = completionSessionIdsByTransactionId.get(parsedTransactionId);
-			if (completionSessionId === undefined) return false;
-			const completion = completionSessions.get(completionSessionId);
-			return (
-				completion?.kind === 'awaiting-account-confirmation' &&
-				completion.agentId === parsedAgentId &&
-				discardCompletionSession(completionSessionId)
-			);
-		},
+		cancelPendingTransaction: (cancelProps) => cancelOwnedCeremony(cancelProps, 'pending-only'),
+		cancelTransaction: (cancelProps) =>
+			cancelOwnedCeremony(cancelProps, 'including-callback-consumption'),
 		cancelCompletion: (completionProps) => {
 			const completionSessionId = oauthCompletionSessionIdSchema.parse(
 				completionProps.completionSessionId,

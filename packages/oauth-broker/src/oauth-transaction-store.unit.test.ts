@@ -179,7 +179,10 @@ describe('OAuth transaction store', () => {
 			transactionId: transaction.transactionId,
 		});
 		expect(
-			store.cancelTransaction({ agentId: 'hermes', transactionId: transaction.transactionId }),
+			store.cancelPendingTransaction({
+				agentId: 'hermes',
+				transactionId: transaction.transactionId,
+			}),
 		).toBe(true);
 		expect(store.getCeremonyOwner(transaction.transactionId)).toBeUndefined();
 		expect(
@@ -221,7 +224,7 @@ describe('OAuth transaction store', () => {
 		).toMatchObject({ kind: 'accepted', session: { kind: 'committing' } });
 
 		// Act
-		const cancelled = store.cancelTransaction({
+		const cancelled = store.cancelPendingTransaction({
 			agentId: 'hermes',
 			transactionId: transaction.transactionId,
 		});
@@ -247,11 +250,18 @@ describe('OAuth transaction store', () => {
 		).toMatchObject({ kind: 'accepted', transaction: { kind: 'consuming-callback' } });
 
 		expect(
-			store.cancelTransaction({ agentId: 'hermes', transactionId: transaction.transactionId }),
+			store.cancelPendingTransaction({
+				agentId: 'hermes',
+				transactionId: transaction.transactionId,
+			}),
 		).toBe(false);
 		expect(store.getTransaction(transaction.transactionId)).toMatchObject({
 			kind: 'consuming-callback',
 		});
+		expect(
+			store.cancelTransaction({ agentId: 'hermes', transactionId: transaction.transactionId }),
+		).toBe(true);
+		expect(store.getTransaction(transaction.transactionId)).toBeUndefined();
 	});
 
 	it('cancels an account-confirmation session only with its bound browser authority', () => {
