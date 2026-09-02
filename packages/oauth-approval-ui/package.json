@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/oauth-approval-ui",
-	"version": "0.0.145",
+	"version": "0.0.147",
 	"description": "Server-rendered OAuth approval pages and bounded browser islands.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {
