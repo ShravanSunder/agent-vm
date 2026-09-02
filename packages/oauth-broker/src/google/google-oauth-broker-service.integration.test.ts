@@ -1508,9 +1508,12 @@ describe('Google OAuth broker service', () => {
 	});
 
 	it('does not report enrollment completion when runtime containment is owner-unsafe', async () => {
+		const invalidationStarted = Promise.withResolvers<void>();
+		const invalidationCompletion = Promise.withResolvers<void>();
 		const service = await createService({
 			onCredentialMaterialChanged: async () => {
-				throw new Error('owner-unsafe containment');
+				invalidationStarted.resolve();
+				await invalidationCompletion.promise;
 			},
 		});
 		const begun = await service.executeAuthorizationAction({
@@ -1545,14 +1548,24 @@ describe('Google OAuth broker service', () => {
 		});
 		if (callback.kind !== 'confirmation') throw new Error('Expected account confirmation.');
 
-		await expect(
-			service.confirmAccount({
-				browserBindingSecret: callback.confirmation.browserBindingSecret,
-				completionSessionId: callback.confirmation.completionSessionId,
-				csrfToken: callback.confirmation.csrfToken,
-				tailnetLogin: 'human@example.test',
-			}),
-		).rejects.toThrow(/owner-unsafe containment/u);
+		const accountConfirmation = service.confirmAccount({
+			browserBindingSecret: callback.confirmation.browserBindingSecret,
+			completionSessionId: callback.confirmation.completionSessionId,
+			csrfToken: callback.confirmation.csrfToken,
+			tailnetLogin: 'human@example.test',
+		});
+		await invalidationStarted.promise;
+		const statusWhileInvalidationIsPending = await service.executeAuthorizationAction({
+			agentId: 'hermes',
+			request: {
+				actionId: 'oauth_authorization.status',
+				transactionId: begun.transactionId,
+			},
+		});
+		expect(statusWhileInvalidationIsPending).not.toMatchObject({ kind: 'authorization-completed' });
+
+		invalidationCompletion.reject(new Error('owner-unsafe containment'));
+		await expect(accountConfirmation).rejects.toThrow(/owner-unsafe containment/u);
 		await expect(
 			service.executeAuthorizationAction({
 				agentId: 'hermes',

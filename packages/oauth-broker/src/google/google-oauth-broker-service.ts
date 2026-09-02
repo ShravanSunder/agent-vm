@@ -1033,16 +1033,16 @@ export function createGoogleOAuthBrokerService(props: {
 					durableGrantCommitted = true;
 					const nextApplication = session.remainingApplications[0];
 					if (nextApplication === undefined) {
+						await props.onCredentialMaterialChanged?.({
+							agentId: session.agentId,
+							zoneId: props.zoneId,
+						});
 						terminalAuthorizationResults.set(publicCeremonyId, {
 							agentId: session.agentId,
 							expiresAtMs: now() + 10 * 60_000,
 							result: completedAuthorizationResult,
 						});
 						clearActiveCeremony(session.agentId, session.accountProfileId);
-						await props.onCredentialMaterialChanged?.({
-							agentId: session.agentId,
-							zoneId: props.zoneId,
-						});
 						return { accountLabel: session.providerGrant.accountEmail, kind: 'completed' };
 					}
 					const nextTransaction = transactionStore.createTransaction({
