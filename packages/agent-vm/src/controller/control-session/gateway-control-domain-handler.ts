@@ -1048,6 +1048,30 @@ async function executeToolPortalControllerExecution(options: {
 					result: 'failed',
 				});
 			}
+			if (
+				options.payload.kind === 'registered_action' &&
+				'authority' in options.payload.action &&
+				options.payload.action.authority.kind === 'controller_approval_reservation'
+			) {
+				const finalAuthorization = await options.actions.authorizeControllerExecution({
+					callerContext,
+					createdAtMs: options.createdAtMs,
+					expiresAtMs: options.expiresAtMs,
+					payload: options.payload,
+					session: options.session,
+				});
+				if (!finalAuthorization.authorized) {
+					return commandResultPayload({
+						error: {
+							errorClass: finalAuthorization.errorClass,
+							retryable: false,
+							safeMessage: finalAuthorization.safeMessage,
+						},
+						responseToMessageId: options.responseToMessageId,
+						result: 'rejected',
+					});
+				}
+			}
 		}
 		if (options.payload.kind === 'configured_cli') {
 			if (authorization.configuredCli === undefined) {

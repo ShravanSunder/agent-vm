@@ -13,12 +13,17 @@ import {
 	type GatewayControlLeaseSnapshot,
 	type GatewayControlLeaseUseSnapshot,
 	type GatewayControlToolPortalControllerExecutionPayload,
+	type GatewayRuntimeControllerExecutionDispatchReservation,
 	type GatewayRuntimeReadinessSnapshot,
 	GatewayControlRpcMessageSchema,
 	gatewayControlDeliveryPolicyByOperation,
 } from '@agent-vm/gateway-control-contracts';
 import type { AgentVmHealthEvent } from '@agent-vm/gateway-lifecycle';
-import { oauthApplicationIdSchema, oauthServiceIdSchema } from '@agent-vm/oauth-broker-contracts';
+import {
+	oauthAccountProfileIdSchema,
+	oauthApplicationIdSchema,
+	oauthServiceIdSchema,
+} from '@agent-vm/oauth-broker-contracts';
 import { describe, expect, it, vi } from 'vitest';
 
 import { TEST_SSH_SERVER_HOST_KEY } from '../../testing/managed-vm-test-helpers.js';
@@ -31,6 +36,7 @@ import {
 import { createGatewayControlCallerContextRegistry } from './gateway-control-caller-context.js';
 import {
 	createGatewayControlDomainHandler,
+	type GatewayControlApprovalLedgerOperations,
 	type GatewayControlControllerExecutionOperations,
 	type GatewayControlDomainHandlerOptions,
 	type GatewayControlLeaseRpcOperations,
@@ -245,6 +251,51 @@ function oauthAuthorizationListControlPayload(): Extract<
 			},
 			invocation: {
 				callId: 'oauth-list-call-a',
+				surfaceClass: 'protected_uds',
+				trustedContext: { principal: invocationPrincipal },
+			},
+		},
+		kind: 'registered_action',
+	};
+}
+
+const oauthApprovalReservation = {
+	approvalId: '77777777-7777-4777-8777-777777777777',
+	authorityContext: {
+		controllerEpoch: acceptedSession.controllerEpoch,
+		frameworkEpoch: acceptedSession.bootId,
+		gatewayEpoch: gateway.gatewayEpochId,
+		runtimeEpoch: gateway.generationId,
+		zoneId: acceptedSession.zoneId,
+	},
+	backendKind: 'controller_execution',
+	bindingRevision: 'binding:current',
+	expiresAt: '2026-09-02T16:00:00.000Z',
+	fingerprint: `sha256:${'e'.repeat(64)}`,
+	operationId: '88888888-8888-4888-8888-888888888888',
+	reservationId: '99999999-9999-4999-8999-999999999999',
+	stablePrincipal,
+} as const satisfies GatewayRuntimeControllerExecutionDispatchReservation;
+
+function oauthAuthorizationReauthorizeControlPayload(): Extract<
+	GatewayControlToolPortalControllerExecutionPayload,
+	{ kind: 'registered_action' }
+> {
+	return {
+		action: {
+			actionId: 'oauth_authorization.reauthorize',
+			accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
+			applicationId: oauthApplicationIdSchema.parse('gmail-app'),
+			authority: {
+				kind: 'controller_approval_reservation',
+				reservation: oauthApprovalReservation,
+			},
+			...callerContextPayload,
+			correlation: {
+				capability: { name: 'reauthorize', namespace: 'oauth_authorization' },
+			},
+			invocation: {
+				callId: 'oauth-reauthorize-call-a',
 				surfaceClass: 'protected_uds',
 				trustedContext: { principal: invocationPrincipal },
 			},
@@ -2191,6 +2242,93 @@ describe('gateway control domain handler', () => {
 				result: 'ok',
 			},
 		});
+	});
+
+	it('revalidates approved OAuth policy after durable dispatch arming', async () => {
+		let policyIsCurrent = true;
+		let markArmStarted: (() => void) | undefined;
+		let releaseArm: (() => void) | undefined;
+		const armStarted = new Promise<void>((resolve) => {
+			markArmStarted = resolve;
+		});
+		const armGate = new Promise<void>((resolve) => {
+			releaseArm = resolve;
+		});
+		const executeOAuthAuthorization = vi.fn(async () => ({
+			kind: 'authorization-list' as const,
+			profiles: [],
+		}));
+		const authorizeControllerExecution = vi.fn(async () =>
+			policyIsCurrent
+				? ({ authorized: true } as const)
+				: ({
+						authorized: false,
+						errorClass: 'controller_execution_policy_denied',
+						safeMessage: 'controller execution policy denied the requested capability',
+					} as const),
+		);
+		const approvalLedger: GatewayControlApprovalLedgerOperations = {
+			armDispatch: vi.fn(async () => {
+				markArmStarted?.();
+				await armGate;
+				return {
+					grant: {
+						...oauthApprovalReservation,
+						grantId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+					},
+					kind: 'dispatch-armed',
+				} as const;
+			}),
+			decide: vi.fn(async () => ({ kind: 'rejected', reason: 'not-found' }) as const),
+			requestApproval: vi.fn(
+				async () =>
+					({
+						kind: 'ambiguous',
+						operationId: oauthApprovalReservation.operationId,
+						reason: 'dispatch-armed',
+					}) as const,
+			),
+		};
+		const callerContexts = createRegisteredCallerContexts({
+			purpose: 'tool_portal_controller_execution',
+		});
+		const dispatcher = createGatewayControlTestDispatcher();
+		dispatcher.register(
+			'gateway_control',
+			createTestGatewayControlDomainHandler({
+				approvalLedger,
+				callerContexts,
+				controllerExecutions: createAuthorizedControllerExecutions(vi.fn(), {
+					authorizeControllerExecution,
+					executeOAuthAuthorization,
+				}),
+				session: acceptedSession,
+			}),
+		);
+		const dispatch = dispatcher.dispatch({
+			envelope: createEnvelope('tool_portal_controller_execution', {
+				deliveryPolicy: 'single_use_critical',
+			}),
+			payload: {
+				kind: 'command',
+				operation: 'tool_portal_controller_execution',
+				payload: oauthAuthorizationReauthorizeControlPayload(),
+			},
+		});
+
+		await armStarted;
+		policyIsCurrent = false;
+		releaseArm?.();
+		const response = await dispatch;
+
+		expect(response).toMatchObject({
+			payload: {
+				error: { errorClass: 'controller_execution_policy_denied' },
+				result: 'rejected',
+			},
+		});
+		expect(authorizeControllerExecution).toHaveBeenCalledTimes(2);
+		expect(executeOAuthAuthorization).not.toHaveBeenCalled();
 	});
 
 	it('routes configured CLI through the generic controller execution operation', async () => {
