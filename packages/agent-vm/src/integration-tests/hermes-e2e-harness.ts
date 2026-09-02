@@ -77,6 +77,7 @@ const hermesGatewayLocalPackageNames = [
 ] as const;
 
 export const hermesE2eRootApiServerKey = 'hermes-e2e-root-api-server-key';
+const hermesE2eGatewayCpuCount = 1;
 
 export function hermesE2eProfileApiServerKey(agentId: string): string {
 	return `hermes-e2e-${agentId}-profile-api-server-key`;
@@ -341,7 +342,7 @@ export async function scaffoldHermesE2eProject(options: {
 			agents: options.agents.map((agentId) => ({ id: agentId })),
 			gateway: {
 				config: hermesConfigurationPath,
-				cpus: scaffoldedZone.gateway.cpus,
+				cpus: hermesE2eGatewayCpuCount,
 				imageProfile: 'hermes',
 				memory: scaffoldedZone.gateway.memory,
 				profileSecretProjectionsByAgent: Object.fromEntries(
