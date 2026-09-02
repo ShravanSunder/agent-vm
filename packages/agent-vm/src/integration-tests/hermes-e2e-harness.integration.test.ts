@@ -49,6 +49,7 @@ describe('Hermes E2E project scaffold', () => {
 		expect(project.zone.gateway.type).toBe('hermes');
 		expect(project.zone.gateway.profilesByAgent).toEqual({ main: 'main', beta: 'beta' });
 		expect(project.systemConfig.host.controllerPort).toBe(project.controllerPort);
+		expect(project.zone.gateway.cpus).toBe(1);
 		expect(project.zone.gateway.port).toBe(project.gatewayPort);
 		expect(project.zone.gateway.config).toBe(
 			path.join(
