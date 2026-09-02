@@ -260,6 +260,65 @@ async function enrollGmail(
 }
 
 describe('Google OAuth broker service', () => {
+	it('keeps an in-flight callback authoritative when agent cancellation races the exchange', async () => {
+		const exchangeStarted = Promise.withResolvers<void>();
+		const releaseExchange = Promise.withResolvers<void>();
+		const baseAdapter = createAdapter();
+		const service = await createService({
+			adapter: {
+				...baseAdapter,
+				exchangeAuthorizationCode: async (exchangeProps) => {
+					exchangeStarted.resolve();
+					await releaseExchange.promise;
+					return await baseAdapter.exchangeAuthorizationCode(exchangeProps);
+				},
+			},
+		});
+		const begun = await service.executeAuthorizationAction({
+			agentId: 'hermes',
+			request: {
+				actionId: 'oauth_authorization.begin',
+				accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
+			},
+		});
+		if (begun.kind !== 'authorization-begun') throw new Error('Expected begun authorization.');
+		const page = service.getPermissionPage({
+			tailnetLogin: 'human@example.test',
+			transactionId: begun.transactionId,
+		});
+		const redirect = service.submitPermissions({
+			browserBindingSecret: page.browserBindingSecret,
+			csrfToken: page.csrfToken,
+			selections: oauthPermissionSelectionsSchema.parse({ 'gmail-app': { gmail: 'read' } }),
+			tailnetLogin: 'human@example.test',
+			transactionId: begun.transactionId,
+		});
+		if (redirect.kind !== 'redirect') throw new Error('Expected Google redirect.');
+		const oauthState = new URL(redirect.authorizationUrl).searchParams.get('state');
+		if (oauthState === null) throw new Error('Google redirect omitted OAuth state.');
+		const callback = service.handleGoogleCallback({
+			authorizationCode: 'callback-cancel-race-code',
+			browserBindingSecret: redirect.browserBindingSecret,
+			oauthState,
+			redirectUri,
+			tailnetLogin: 'human@example.test',
+			transactionId: redirect.transactionId,
+		});
+		await exchangeStarted.promise;
+
+		expect(
+			await service.executeAuthorizationAction({
+				agentId: 'hermes',
+				request: {
+					actionId: 'oauth_authorization.cancel',
+					transactionId: begun.transactionId,
+				},
+			}),
+		).toEqual({ kind: 'authorization-pending', transactionId: begun.transactionId });
+		releaseExchange.resolve();
+		await expect(callback).resolves.toMatchObject({ kind: 'confirmation' });
+	});
+
 	it('requires configured read and write scopes at every write-capability gate', async () => {
 		const enrollmentService = await createService();
 		await enrollGmail(enrollmentService, 'write');

@@ -429,7 +429,12 @@ export function createOAuthTransactionStore<TProviderGrant>(props: {
 			const current = transactions.get(parsedTransactionId);
 			const parsedAgentId = oauthAgentIdSchema.parse(agentId);
 			if (current !== undefined) {
-				return current.agentId === parsedAgentId && transactions.delete(parsedTransactionId);
+				return (
+					(current.kind === 'selecting-permissions' ||
+						current.kind === 'authorizing-application') &&
+					current.agentId === parsedAgentId &&
+					transactions.delete(parsedTransactionId)
+				);
 			}
 			const completionSessionId = completionSessionIdsByTransactionId.get(parsedTransactionId);
 			if (completionSessionId === undefined) return false;

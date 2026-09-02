@@ -235,6 +235,25 @@ describe('OAuth transaction store', () => {
 		expect(store.finishCompletion(completion.completionSessionId)).toBe(true);
 	});
 
+	it('refuses agent cancellation after callback consumption has started', () => {
+		const { authorizing, store, transaction } = createAuthorizingTransaction(() => 1_000);
+		expect(
+			store.beginCallbackConsumption({
+				oauthState: authorizing.oauthState,
+				redirectUri: authorizing.redirectUri,
+				tailnetLogin: authorizing.tailnetLogin,
+				transactionId: transaction.transactionId,
+			}),
+		).toMatchObject({ kind: 'accepted', transaction: { kind: 'consuming-callback' } });
+
+		expect(
+			store.cancelTransaction({ agentId: 'hermes', transactionId: transaction.transactionId }),
+		).toBe(false);
+		expect(store.getTransaction(transaction.transactionId)).toMatchObject({
+			kind: 'consuming-callback',
+		});
+	});
+
 	it('cancels an account-confirmation session only with its bound browser authority', () => {
 		const { authorizing, store, transaction } = createAuthorizingTransaction(() => 1_000);
 		store.beginCallbackConsumption({
