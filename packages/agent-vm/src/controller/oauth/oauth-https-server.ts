@@ -61,14 +61,20 @@ export interface OAuthHttpsBindings {
 	};
 }
 
-function setOpaqueCookie(
-	context: Parameters<typeof setCookie>[0],
-	name: string,
-	value: string,
-): void {
-	setCookie(context, name, value, {
+function setOpaqueCookie(props: {
+	readonly context: Parameters<typeof setCookie>[0];
+	readonly expiresAtMs: number;
+	readonly name: string;
+	readonly nowMs: number;
+	readonly value: string;
+}): void {
+	const remainingLifetimeSeconds = Math.max(
+		0,
+		Math.min(oauthCookieMaxAgeSeconds, Math.floor((props.expiresAtMs - props.nowMs) / 1_000)),
+	);
+	setCookie(props.context, props.name, props.value, {
 		httpOnly: true,
-		maxAge: oauthCookieMaxAgeSeconds,
+		maxAge: remainingLifetimeSeconds,
 		path: oauthCookiePath,
 		sameSite: 'Lax',
 		secure: true,
@@ -212,11 +218,13 @@ function isTailscaleAddress(address: string): boolean {
 export function createOAuthHttpsApp(props: {
 	readonly assets: OAuthApprovalAssets;
 	readonly brokerService: GoogleOAuthBrokerService;
+	readonly now?: () => number;
 	readonly publicBaseUrl: string;
 	readonly tailnetIdentityResolver: TailnetIdentityResolver;
 }): Hono<{ Bindings: OAuthHttpsBindings }> {
 	const app = new Hono<{ Bindings: OAuthHttpsBindings }>();
 	const expectedOrigin = new URL(props.publicBaseUrl).origin;
+	const now = props.now ?? Date.now;
 
 	app.use('*', async (context, next) => {
 		securityHeaders(context);
@@ -256,8 +264,20 @@ export function createOAuthHttpsApp(props: {
 			const transactionId = oauthTransactionIdSchema.parse(context.req.param('transactionId'));
 			const tailnetLogin = await resolveTailnetLogin(context);
 			const page = props.brokerService.getPermissionPage({ tailnetLogin, transactionId });
-			setOpaqueCookie(context, transactionIdCookieName, page.transactionId);
-			setOpaqueCookie(context, transactionBindingCookieName, page.browserBindingSecret);
+			setOpaqueCookie({
+				context,
+				expiresAtMs: page.expiresAtMs,
+				name: transactionIdCookieName,
+				nowMs: now(),
+				value: page.transactionId,
+			});
+			setOpaqueCookie({
+				context,
+				expiresAtMs: page.expiresAtMs,
+				name: transactionBindingCookieName,
+				nowMs: now(),
+				value: page.browserBindingSecret,
+			});
 			return context.html(
 				renderPage({
 					assets: props.assets,
@@ -465,8 +485,20 @@ export function createOAuthHttpsApp(props: {
 			deleteCookie(context, transactionIdCookieName, { path: oauthCookiePath, secure: true });
 			deleteCookie(context, transactionBindingCookieName, { path: oauthCookiePath, secure: true });
 			if (result.kind === 'partial-completion') {
-				setOpaqueCookie(context, transactionIdCookieName, result.retry.transactionId);
-				setOpaqueCookie(context, transactionBindingCookieName, result.retry.browserBindingSecret);
+				setOpaqueCookie({
+					context,
+					expiresAtMs: result.retry.expiresAtMs,
+					name: transactionIdCookieName,
+					nowMs: now(),
+					value: result.retry.transactionId,
+				});
+				setOpaqueCookie({
+					context,
+					expiresAtMs: result.retry.expiresAtMs,
+					name: transactionBindingCookieName,
+					nowMs: now(),
+					value: result.retry.browserBindingSecret,
+				});
 				return context.html(
 					renderPage({
 						assets: props.assets,
@@ -481,12 +513,20 @@ export function createOAuthHttpsApp(props: {
 					}),
 				);
 			}
-			setOpaqueCookie(context, completionIdCookieName, result.confirmation.completionSessionId);
-			setOpaqueCookie(
+			setOpaqueCookie({
 				context,
-				completionBindingCookieName,
-				result.confirmation.browserBindingSecret,
-			);
+				expiresAtMs: result.confirmation.expiresAtMs,
+				name: completionIdCookieName,
+				nowMs: now(),
+				value: result.confirmation.completionSessionId,
+			});
+			setOpaqueCookie({
+				context,
+				expiresAtMs: result.confirmation.expiresAtMs,
+				name: completionBindingCookieName,
+				nowMs: now(),
+				value: result.confirmation.browserBindingSecret,
+			});
 			return context.html(
 				renderPage({
 					assets: props.assets,
@@ -563,8 +603,20 @@ export function createOAuthHttpsApp(props: {
 			});
 			clearCeremonyCookies(context);
 			if (result.kind === 'redirect') {
-				setOpaqueCookie(context, transactionIdCookieName, result.transactionId);
-				setOpaqueCookie(context, transactionBindingCookieName, result.browserBindingSecret);
+				setOpaqueCookie({
+					context,
+					expiresAtMs: result.expiresAtMs,
+					name: transactionIdCookieName,
+					nowMs: now(),
+					value: result.transactionId,
+				});
+				setOpaqueCookie({
+					context,
+					expiresAtMs: result.expiresAtMs,
+					name: transactionBindingCookieName,
+					nowMs: now(),
+					value: result.browserBindingSecret,
+				});
 				return context.html(
 					renderPage({
 						assets: props.assets,

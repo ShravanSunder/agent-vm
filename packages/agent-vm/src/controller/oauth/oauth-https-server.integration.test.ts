@@ -104,6 +104,7 @@ function createBrokerHarness(): {
 			applicationLabel: 'Gmail',
 			authorizationUrl: 'https://accounts.google.test/authorize',
 			browserBindingSecret,
+			expiresAtMs: 15_000,
 			kind: 'redirect',
 			transactionId,
 		}),
@@ -138,6 +139,7 @@ function createBrokerHarness(): {
 				],
 				browserBindingSecret,
 				csrfToken,
+				expiresAtMs: 15_000,
 				transactionId,
 			}),
 			handleGoogleCallback: async () => ({ kind: 'failed', reason: 'unused-in-test' }),
@@ -156,6 +158,7 @@ function createBrokerHarness(): {
 				applicationLabel: 'Gmail',
 				authorizationUrl: 'https://accounts.google.test/retry',
 				browserBindingSecret,
+				expiresAtMs: 15_000,
 				kind: 'redirect',
 				transactionId,
 			}),
@@ -175,6 +178,7 @@ describe('OAuth HTTPS application', () => {
 		const app = createOAuthHttpsApp({
 			assets: approvalAssets(),
 			brokerService: harness.brokerService,
+			now: () => 10_500,
 			publicBaseUrl,
 			tailnetIdentityResolver: {
 				resolvePeerIdentity: async (peer) => {
@@ -195,8 +199,8 @@ describe('OAuth HTTPS application', () => {
 		expect(response.headers.get('content-security-policy')).toContain("default-src 'none'");
 		expect(response.headers.get('referrer-policy')).toBe('same-origin');
 		expect(response.headers.getSetCookie()).toEqual([
-			expect.stringContaining('agent_vm_oauth_transaction='),
-			expect.stringContaining('agent_vm_oauth_transaction_binding='),
+			expect.stringMatching(/agent_vm_oauth_transaction=.*Max-Age=4/u),
+			expect.stringMatching(/agent_vm_oauth_transaction_binding=.*Max-Age=4/u),
 		]);
 		const body = await response.text();
 		expect(body).toContain('Choose access for Personal Google');
@@ -406,6 +410,7 @@ describe('OAuth HTTPS application', () => {
 					authorizationUrl: 'https://accounts.google.test/authorize-next',
 					browserBindingSecret,
 					csrfToken,
+					expiresAtMs: 15_000,
 					kind: 'redirect',
 					transactionId,
 				}),
@@ -491,6 +496,52 @@ describe('OAuth HTTPS application', () => {
 		});
 	});
 
+	it('bounds completion cookies by the remaining server-side session lifetime', async () => {
+		const harness = createBrokerHarness();
+		const completionSessionId = 'completion_session_1234567890abcdef';
+		const app = createOAuthHttpsApp({
+			assets: approvalAssets(),
+			brokerService: {
+				...harness.brokerService,
+				handleGoogleCallback: async () => ({
+					confirmation: {
+						accountLabel: 'Personal Google',
+						applicationLabel: 'Gmail',
+						browserBindingSecret,
+						completionSessionId,
+						csrfToken,
+						expiresAtMs: 310_000,
+						grantedPermissionLabels: ['Gmail read'],
+					},
+					kind: 'confirmation',
+				}),
+			},
+			now: () => 10_000,
+			publicBaseUrl,
+			tailnetIdentityResolver: {
+				resolvePeerIdentity: async () => ({ loginName: 'authorized-human@example.test' }),
+			},
+		});
+
+		const response = await app.request(
+			`${publicBaseUrl}/oauth/google/callback?code=test-code&state=test-state`,
+			{
+				headers: {
+					cookie: `agent_vm_oauth_transaction=${transactionId}; agent_vm_oauth_transaction_binding=${browserBindingSecret}`,
+				},
+			},
+			requestEnvironment(),
+		);
+
+		expect(response.status).toBe(200);
+		expect(response.headers.getSetCookie()).toEqual([
+			expect.stringMatching(/agent_vm_oauth_transaction=;/u),
+			expect.stringMatching(/agent_vm_oauth_transaction_binding=;/u),
+			expect.stringMatching(/agent_vm_oauth_completion=.*Max-Age=300/u),
+			expect.stringMatching(/agent_vm_oauth_completion_binding=.*Max-Age=300/u),
+		]);
+	});
+
 	it('renders a partial completion with a native retry link', async () => {
 		// Arrange
 		const harness = createBrokerHarness();
@@ -506,6 +557,7 @@ describe('OAuth HTTPS application', () => {
 						applicationLabel: 'Workspace',
 						authorizationUrl: 'https://accounts.google.test/retry-workspace',
 						browserBindingSecret,
+						expiresAtMs: 15_000,
 						kind: 'redirect',
 						transactionId,
 					},
@@ -517,6 +569,7 @@ describe('OAuth HTTPS application', () => {
 					applicationLabel: 'Workspace',
 					authorizationUrl: 'https://accounts.google.test/retry-workspace',
 					browserBindingSecret,
+					expiresAtMs: 15_000,
 					kind: 'redirect',
 					transactionId,
 				}),

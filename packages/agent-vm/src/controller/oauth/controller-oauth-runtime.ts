@@ -26,6 +26,7 @@ import {
 import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 
 import { createOAuthHttpsApp, startOAuthHttpsServer } from './oauth-https-server.js';
+import { assertOAuthListenerPortAvailable } from './oauth-listener-port-validation.js';
 import {
 	createTailscaleLocalApiIdentityResolver,
 	createTailscaleUnixSocketTransport,
@@ -141,8 +142,16 @@ export interface PreparedControllerOAuthRuntime {
 
 export interface ControllerOAuthSystemConfig {
 	readonly controllerStateDir: string;
+	readonly host: {
+		readonly controllerPort: number;
+		readonly observability?:
+			| { readonly enabled: false }
+			| { readonly enabled: true; readonly ports: Readonly<Record<string, number>> }
+			| undefined;
+	};
+	readonly tcpPool: { readonly basePort: number; readonly size: number };
 	readonly zones: readonly {
-		readonly gateway: { readonly type: 'hermes' | 'worker' };
+		readonly gateway: { readonly port: number; readonly type: 'hermes' | 'worker' };
 		readonly id: string;
 		readonly toolPortal?: { readonly configDir: string } | undefined;
 	}[];
@@ -160,6 +169,10 @@ export async function prepareControllerOAuthRuntime(props: {
 	const selectedConfiguration = await loadSelectedOAuthConfiguration(props);
 	if (selectedConfiguration === undefined) return undefined;
 	const { config, zoneId } = selectedConfiguration;
+	assertOAuthListenerPortAvailable({
+		oauthPort: config.browser.listener.port,
+		systemConfig: props.systemConfig,
+	});
 	const catalog: OAuthCredentialCatalog = await openOAuthCredentialCatalog({
 		databasePath: path.join(
 			props.systemConfig.controllerStateDir,

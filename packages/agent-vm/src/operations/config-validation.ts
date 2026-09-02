@@ -14,6 +14,7 @@ import type { SecretResolver } from '@agent-vm/secret-management';
 
 import { validateManagedImageOverlay } from '../build/managed-image-dockerfile.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
+import { assertOAuthListenerPortAvailable } from '../controller/oauth/oauth-listener-port-validation.js';
 import {
 	managedToolPortalRequiresApprovalAccess,
 	planMcpPortalEffectiveConfig,
@@ -308,22 +309,10 @@ async function collectToolPortalConfigChecks(
 			oauthConfig,
 			toolPortalConfig: loadedToolPortalConfig,
 		});
-		const oauthPort = oauthConfig.browser.listener.port;
-		const observabilityPorts =
-			systemConfig.host.observability?.enabled === true
-				? Object.values(systemConfig.host.observability.ports)
-				: [];
-		const collidingPort = [
-			systemConfig.host.controllerPort,
-			...systemConfig.zones.map((configuredZone) => configuredZone.gateway.port),
-			...observabilityPorts,
-		].includes(oauthPort);
-		const collidesWithTcpPool =
-			oauthPort >= systemConfig.tcpPool.basePort &&
-			oauthPort < systemConfig.tcpPool.basePort + systemConfig.tcpPool.size;
-		if (collidingPort || collidesWithTcpPool) {
-			throw new Error(`OAuth listener port ${String(oauthPort)} collides with another host port.`);
-		}
+		assertOAuthListenerPortAvailable({
+			oauthPort: oauthConfig.browser.listener.port,
+			systemConfig,
+		});
 		checks.push({ name: `oauth-config-${zone.id}`, ok: true, hint: oauthConfigPath });
 	} catch (error) {
 		if (!isMissingFileError(error)) {

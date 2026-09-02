@@ -116,9 +116,11 @@ function toolPortalConfig(): unknown {
 function systemConfig(configDirectory: string): ControllerOAuthSystemConfig {
 	return {
 		controllerStateDir: path.join(testRoot, 'controller-state'),
+		host: { controllerPort: 18_800 },
+		tcpPool: { basePort: 19_000, size: 5 },
 		zones: [
 			{
-				gateway: { type: 'hermes' },
+				gateway: { port: 18_792, type: 'hermes' },
 				id: 'apollofam',
 				toolPortal: { configDir: configDirectory },
 			},
@@ -164,6 +166,31 @@ function secretResolver(options: { readonly duplicateClientIds?: boolean } = {})
 }
 
 describe('controller OAuth runtime composition', () => {
+	it('rejects an OAuth listener port inside the Managed runtime TCP pool before secrets resolve', async () => {
+		const configDirectory = path.join(testRoot, 'config', 'gateways', 'apollofam');
+		await mkdir(configDirectory, { recursive: true });
+		await Promise.all([
+			writeFile(path.join(configDirectory, 'oauth.config.jsonc'), JSON.stringify(oauthConfig())),
+			writeFile(
+				path.join(configDirectory, 'tool-portal.config.jsonc'),
+				JSON.stringify(toolPortalConfig()),
+			),
+		]);
+		const resolver = secretResolver();
+
+		await expect(
+			prepareControllerOAuthRuntime({
+				secretResolver: resolver,
+				selectedZoneIds: ['apollofam'],
+				systemConfig: {
+					...systemConfig(configDirectory),
+					tcpPool: { basePort: 18_900, size: 1 },
+				},
+			}),
+		).rejects.toThrow(/OAuth listener port 18900 collides/u);
+		expect(resolver.resolve).not.toHaveBeenCalled();
+	});
+
 	it('rejects distinct references that resolve to one Google client ID', async () => {
 		// Arrange
 		const configDirectory = path.join(testRoot, 'config', 'gateways', 'apollofam');

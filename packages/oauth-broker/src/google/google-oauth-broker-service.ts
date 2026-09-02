@@ -88,6 +88,7 @@ export interface GoogleOAuthPermissionPageData {
 	}[];
 	readonly browserBindingSecret: string;
 	readonly csrfToken: string;
+	readonly expiresAtMs: number;
 	readonly transactionId: OAuthTransactionId;
 }
 
@@ -97,6 +98,7 @@ export interface GoogleOAuthConfirmationPageData {
 	readonly browserBindingSecret: string;
 	readonly completionSessionId: string;
 	readonly csrfToken: string;
+	readonly expiresAtMs: number;
 	readonly grantedPermissionLabels: readonly string[];
 }
 
@@ -111,6 +113,7 @@ export interface GoogleOAuthRedirectResult {
 	readonly applicationLabel: string;
 	readonly authorizationUrl: string;
 	readonly browserBindingSecret: string;
+	readonly expiresAtMs: number;
 	readonly kind: 'redirect';
 	readonly transactionId: OAuthTransactionId;
 }
@@ -126,6 +129,7 @@ export type GoogleOAuthConfirmationResult =
 			readonly authorizationUrl: string;
 			readonly browserBindingSecret: string;
 			readonly csrfToken: string;
+			readonly expiresAtMs: number;
 			readonly kind: 'redirect';
 			readonly transactionId: OAuthTransactionId;
 	  }
@@ -511,6 +515,7 @@ export function createGoogleOAuthBrokerService(props: {
 				state: authorizing.oauthState,
 			}),
 			browserBindingSecret: authorizing.browserBindingSecret,
+			expiresAtMs: authorizing.expiresAtMs,
 			kind: 'redirect' as const,
 			transactionId: authorizing.transactionId,
 		};
@@ -1410,6 +1415,7 @@ export function createGoogleOAuthBrokerService(props: {
 					}),
 				browserBindingSecret: boundTransaction.browserBindingSecret,
 				csrfToken: boundTransaction.csrfSecret,
+				expiresAtMs: boundTransaction.expiresAtMs,
 				transactionId: boundTransaction.transactionId,
 			};
 		},
@@ -1456,6 +1462,7 @@ export function createGoogleOAuthBrokerService(props: {
 					state: transaction.oauthState,
 				}),
 				browserBindingSecret: transaction.browserBindingSecret,
+				expiresAtMs: transaction.expiresAtMs,
 				kind: 'redirect',
 				transactionId: transaction.transactionId,
 			};
@@ -1541,6 +1548,7 @@ export function createGoogleOAuthBrokerService(props: {
 						browserBindingSecret: completion.browserBindingSecret,
 						completionSessionId: completion.completionSessionId,
 						csrfToken: completion.csrfSecret,
+						expiresAtMs: completion.expiresAtMs,
 						grantedPermissionLabels: Object.values(application.services)
 							.filter((service) => service.read.some((scope) => actualScopes.has(scope)))
 							.map((service) => service.label),
