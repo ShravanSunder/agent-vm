@@ -27,7 +27,7 @@ describe('CI workflow topology', () => {
 			'pnpm test:e2e:inventory',
 			'pnpm run test:e2e:${{ matrix.lane }}',
 			'pnpm run test:e2e:vm --shard=${{ matrix.shard }}',
-			'pnpm run test:e2e:hermes',
+			'pnpm run test:e2e:hermes --shard=${{ matrix.hermesShard }}',
 			'pnpm run test:e2e:worker',
 			"AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE: '1'",
 		]) {
@@ -35,7 +35,7 @@ describe('CI workflow topology', () => {
 		}
 		for (const command of [
 			'mise exec -- pnpm run test:e2e:vm --shard=${{ matrix.shard }}',
-			'mise exec -- pnpm run test:e2e:hermes',
+			'mise exec -- pnpm run test:e2e:hermes --shard=${{ matrix.hermesShard }}',
 			'mise exec -- pnpm run test:e2e:worker',
 		]) {
 			expect(workflow).toContain(command);
@@ -51,7 +51,7 @@ describe('CI workflow topology', () => {
 		expect(hermesPythonTestScript).not.toMatch(
 			/metadata\.version\("agent-vm-(?:agent-portal-sdk|hermes-adapter)"\) == "\d+\.\d+\.\d+"/u,
 		);
-		expect(workflow.match(/lane: hermes/gu)).toHaveLength(1);
+		expect(workflow.match(/lane: hermes-shard-/gu)).toHaveLength(5);
 		expect(workflow.match(/lane: worker/gu)).toHaveLength(1);
 		expect(workflow).not.toContain('test:e2e:vm-managed-gateway');
 		expect(workflow).not.toContain('managed-gateway-startup');
@@ -59,6 +59,9 @@ describe('CI workflow topology', () => {
 		expect(workflow).not.toContain('managed-gateway-lifecycle');
 		for (const shard of ['1/6', '2/6', '3/6', '4/6', '5/6', '6/6']) {
 			expect(workflow).toContain(`shard: ${shard}`);
+		}
+		for (const hermesShard of ['1/5', '2/5', '3/5', '4/5', '5/5']) {
+			expect(workflow).toContain(`hermesShard: ${hermesShard}`);
 		}
 		expect(workflow).not.toContain('pnpm run test:e2e:vm -- --shard=');
 		for (const hostLane of ['host-docker', 'host', 'vm-mediation']) {
@@ -129,7 +132,7 @@ describe('CI workflow topology', () => {
 		);
 		expect(vmPreparationBlock).not.toContain('\n          - name: Set up system packages\n');
 		expect(vmPreparationBlock).toContain('\n      - name: Require native VM acceleration');
-		expect(vmPreparationBlock).toContain("        if: matrix.lane == 'hermes'");
+		expect(vmPreparationBlock).toContain("        if: matrix.hermesShard != ''");
 		expect(vmPreparationBlock).toContain('test -c /dev/kvm');
 		expect(vmPreparationBlock).toContain('sudo chmod 0666 /dev/kvm');
 		expect(vmPreparationBlock).toContain('test -r /dev/kvm');

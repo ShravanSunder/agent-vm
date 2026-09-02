@@ -169,8 +169,21 @@ jobs:
             shard: 5/6
           - lane: e2e-vm-shard-6
             shard: 6/6
-          - lane: hermes
+          - lane: hermes-shard-1
             shard: ''
+            hermesShard: 1/5
+          - lane: hermes-shard-2
+            shard: ''
+            hermesShard: 2/5
+          - lane: hermes-shard-3
+            shard: ''
+            hermesShard: 3/5
+          - lane: hermes-shard-4
+            shard: ''
+            hermesShard: 4/5
+          - lane: hermes-shard-5
+            shard: ''
+            hermesShard: 5/5
           - lane: worker
             shard: ''
     steps:
@@ -216,7 +229,7 @@ jobs:
         uses: ./.github/actions/setup-system-packages
 
       - name: Require native VM acceleration
-        if: matrix.lane == 'hermes'
+        if: matrix.hermesShard != ''
         run: |
           set -euo pipefail
           case "$(uname -m)" in
@@ -243,10 +256,10 @@ jobs:
 
       - parallel:
           - name: Run Hermes E2E tests
-            if: matrix.lane == 'hermes'
+            if: matrix.hermesShard != ''
             env:
               AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE: '1'
-            run: mise exec -- pnpm run test:e2e:hermes
+            run: mise exec -- pnpm run test:e2e:hermes --shard=${{ matrix.hermesShard }}
 
           - name: Run Worker E2E tests
             if: matrix.lane == 'worker'
