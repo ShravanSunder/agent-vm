@@ -122,6 +122,15 @@ export type OAuthReplaceGrantEnvelopeResult =
 	| { readonly kind: 'missing' }
 	| { readonly currentRecordRevision: number; readonly kind: 'stale' };
 
+export type OAuthDeleteGrantResult =
+	| { readonly kind: 'deleted' }
+	| { readonly kind: 'missing' }
+	| {
+			readonly currentCredentialId: z.infer<typeof oauthCredentialIdSchema>;
+			readonly currentRecordRevision: number;
+			readonly kind: 'stale';
+	  };
+
 export interface OAuthCredentialCatalog {
 	close(): void;
 	commitEnrollmentGrant(input: OAuthEnrollmentGrantInput): OAuthCommitEnrollmentResult;
@@ -129,8 +138,10 @@ export interface OAuthCredentialCatalog {
 		readonly accountProfileId: z.infer<typeof oauthAccountProfileIdSchema>;
 		readonly agentId: string;
 		readonly applicationId: z.infer<typeof oauthApplicationIdSchema>;
+		readonly expectedCredentialId: z.infer<typeof oauthCredentialIdSchema>;
+		readonly expectedRecordRevision: number;
 		readonly zoneId: string;
-	}): 'deleted' | 'missing';
+	}): OAuthDeleteGrantResult;
 	getGrant(credentialId: z.infer<typeof oauthCredentialIdSchema>): OAuthStoredGrant | undefined;
 	getAccountProfileMetadata(props: {
 		readonly accountProfileId: z.infer<typeof oauthAccountProfileIdSchema>;
@@ -412,17 +423,40 @@ export async function openOAuthCredentialCatalog(props: {
 				});
 			},
 			deleteGrantForAccountApplication: (deleteProps) => {
-				const grant = queryGrantsForAgent(database, deleteProps).find(
-					(candidate) =>
-						candidate.accountProfileId ===
-							oauthAccountProfileIdSchema.parse(deleteProps.accountProfileId) &&
-						candidate.applicationId === oauthApplicationIdSchema.parse(deleteProps.applicationId),
+				const expectedCredentialId = oauthCredentialIdSchema.parse(
+					deleteProps.expectedCredentialId,
 				);
-				if (grant === undefined) return 'missing';
-				database.transaction((transaction) => {
+				const expectedRecordRevision = z
+					.number()
+					.int()
+					.positive()
+					.parse(deleteProps.expectedRecordRevision);
+				return database.transaction((transaction): OAuthDeleteGrantResult => {
+					const grant = queryGrantsForAgent(transaction, deleteProps).find(
+						(candidate) =>
+							candidate.accountProfileId ===
+								oauthAccountProfileIdSchema.parse(deleteProps.accountProfileId) &&
+							candidate.applicationId === oauthApplicationIdSchema.parse(deleteProps.applicationId),
+					);
+					if (grant === undefined) return { kind: 'missing' };
+					if (
+						grant.credentialId !== expectedCredentialId ||
+						grant.recordRevision !== expectedRecordRevision
+					) {
+						return {
+							currentCredentialId: grant.credentialId,
+							currentRecordRevision: grant.recordRevision,
+							kind: 'stale',
+						};
+					}
 					transaction
 						.delete(oauthGrantsTable)
-						.where(eq(oauthGrantsTable.credentialId, grant.credentialId))
+						.where(
+							and(
+								eq(oauthGrantsTable.credentialId, expectedCredentialId),
+								eq(oauthGrantsTable.recordRevision, expectedRecordRevision),
+							),
+						)
 						.run();
 					transaction
 						.update(oauthAccountProfilesTable)
@@ -433,8 +467,8 @@ export async function openOAuthCredentialCatalog(props: {
 						})
 						.where(eq(oauthAccountProfilesTable.profileRecordId, grant.profileRecordId))
 						.run();
+					return { kind: 'deleted' };
 				});
-				return 'deleted';
 			},
 			getAccountProfileMetadata: (queryProps) => {
 				const profile = database

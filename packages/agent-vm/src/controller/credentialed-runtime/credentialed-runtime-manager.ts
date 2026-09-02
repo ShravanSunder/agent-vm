@@ -79,7 +79,6 @@ export type RetireCredentialedRuntimeResult =
 
 export type InvalidateCredentialedRuntimeMaterialResult =
 	| { readonly kind: 'retired' }
-	| { readonly kind: 'retire-after-active' }
 	| { readonly kind: 'absent' }
 	| { readonly kind: 'owner-unsafe' };
 
@@ -633,43 +632,45 @@ export function createCredentialedRuntimeManager(props: {
 							complete: async (outcome): Promise<void> => {
 								if (completed) return;
 								completed = true;
-								await locks.runExclusive(key, async () => {
-									const current = liveByKey.get(key);
-									if (
-										current === undefined ||
-										current.activeCommand?.operationId !== request.operationId
-									) {
-										activeCommand.resolveFinished();
-										return;
-									}
-									delete current.activeCommand;
+								try {
+									await locks.runExclusive(key, async () => {
+										const current = liveByKey.get(key);
+										if (
+											current === undefined ||
+											current.activeCommand?.operationId !== request.operationId
+										) {
+											return;
+										}
+										delete current.activeCommand;
+										const retirementReason =
+											outcome.kind === 'retire' ? outcome.reason : current.retireAfterActiveReason;
+										if (retirementReason !== undefined) {
+											await retireLiveUnderLock(key, current, retirementReason);
+											return;
+										}
+										current.lastUsedAtMs = now();
+										try {
+											await recordWriter.write(context, ({ common, generation }) => ({
+												...common,
+												generation,
+												identity: current.identity,
+												idleExpiresAtMs: current.lastUsedAtMs + CredentialedRuntimeIdleTtlMs,
+												kind: 'current-idle',
+												lastUsedAtMs: current.lastUsedAtMs,
+												updatedAtMs: now(),
+												vmId: current.vm.id,
+											}));
+										} catch {
+											await retireLiveUnderLock(
+												key,
+												current,
+												'credentialed runtime idle publication failed',
+											);
+										}
+									});
+								} finally {
 									activeCommand.resolveFinished();
-									const retirementReason =
-										outcome.kind === 'retire' ? outcome.reason : current.retireAfterActiveReason;
-									if (retirementReason !== undefined) {
-										await retireLiveUnderLock(key, current, retirementReason);
-										return;
-									}
-									current.lastUsedAtMs = now();
-									try {
-										await recordWriter.write(context, ({ common, generation }) => ({
-											...common,
-											generation,
-											identity: current.identity,
-											idleExpiresAtMs: current.lastUsedAtMs + CredentialedRuntimeIdleTtlMs,
-											kind: 'current-idle',
-											lastUsedAtMs: current.lastUsedAtMs,
-											updatedAtMs: now(),
-											vmId: current.vm.id,
-										}));
-									} catch {
-										await retireLiveUnderLock(
-											key,
-											current,
-											'credentialed runtime idle publication failed',
-										);
-									}
-								});
+								}
 							},
 							exec: async (input, options = {}) =>
 								await executeCredentialedManagedVmCommand({
@@ -768,14 +769,29 @@ export function createCredentialedRuntimeManager(props: {
 		},
 		invalidateMaterial: async (request): Promise<InvalidateCredentialedRuntimeMaterialResult> => {
 			const key = runtimeKey(request);
+			let active: ActiveCommand | undefined;
+			const first = await locks.runExclusive(key, async () => {
+				if (ownerUnsafeKeys.has(key)) return { kind: 'owner-unsafe' as const };
+				const live = liveByKey.get(key);
+				if (live === undefined) return { kind: 'absent' as const };
+				if (live.activeCommand !== undefined) {
+					active = live.activeCommand;
+					live.retireAfterActiveReason = request.reason;
+					return { kind: 'wait-active' as const };
+				}
+				return (await retireLiveUnderLock(key, live, request.reason))
+					? { kind: 'retired' as const }
+					: { kind: 'owner-unsafe' as const };
+			});
+			if (first.kind !== 'wait-active') return first;
+			if (active === undefined) {
+				throw new Error('Credentialed runtime invalidation lost its active command identity.');
+			}
+			await active.finished;
 			return await locks.runExclusive(key, async () => {
 				if (ownerUnsafeKeys.has(key)) return { kind: 'owner-unsafe' };
 				const live = liveByKey.get(key);
-				if (live === undefined) return { kind: 'absent' };
-				if (live.activeCommand !== undefined) {
-					live.retireAfterActiveReason = request.reason;
-					return { kind: 'retire-after-active' };
-				}
+				if (live === undefined) return { kind: 'retired' };
 				return (await retireLiveUnderLock(key, live, request.reason))
 					? { kind: 'retired' }
 					: { kind: 'owner-unsafe' };

@@ -1,4 +1,4 @@
-import { X509Certificate } from 'node:crypto';
+import { timingSafeEqual, X509Certificate } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:https';
 import { isIP } from 'node:net';
@@ -9,10 +9,14 @@ import {
 	renderOAuthApprovalPage,
 	type OAuthApprovalAssetManifest,
 	type OAuthApprovalPageModel,
+	type OAuthPermissionFieldError,
 } from '@agent-vm/oauth-approval-ui';
 import {
+	oauthPermissionChoiceSchema,
 	oauthPermissionSelectionsSchema,
 	oauthTransactionIdSchema,
+	type OAuthPermissionChoice,
+	type OAuthPermissionSelections,
 } from '@agent-vm/oauth-broker-contracts';
 import type {
 	GoogleOAuthBrokerService,
@@ -88,6 +92,17 @@ function requireFormString(form: FormData, fieldName: string): string {
 	return value;
 }
 
+function requireMatchingOpaqueSecret(actual: string, expected: string, label: string): void {
+	const actualBytes = Buffer.from(actual);
+	const expectedBytes = Buffer.from(expected);
+	if (
+		actualBytes.byteLength !== expectedBytes.byteLength ||
+		!timingSafeEqual(actualBytes, expectedBytes)
+	) {
+		throw new Error(`${label} does not match.`);
+	}
+}
+
 function securityHeaders(context: { header(name: string, value: string): void }): void {
 	context.header(
 		'Content-Security-Policy',
@@ -114,6 +129,49 @@ function permissionPageModel(page: GoogleOAuthPermissionPageData): OAuthApproval
 		applications: page.applications,
 		kind: 'permission-selection' as const,
 	});
+}
+
+type PermissionSelectionPageModel = Extract<
+	OAuthApprovalPageModel,
+	{ readonly kind: 'permission-selection' }
+>;
+
+type PermissionFormResult =
+	| { readonly kind: 'invalid'; readonly model: PermissionSelectionPageModel }
+	| { readonly kind: 'valid'; readonly selections: OAuthPermissionSelections };
+
+function parsePermissionForm(
+	page: GoogleOAuthPermissionPageData,
+	form: FormData,
+): PermissionFormResult {
+	const fieldErrors: OAuthPermissionFieldError[] = [];
+	const selections: Record<string, Record<string, OAuthPermissionChoice>> = {};
+	const model = permissionPageModel(page);
+	if (model.kind !== 'permission-selection') {
+		throw new Error('OAuth permission page model changed its kind.');
+	}
+	const applications = model.applications.map((application) => ({
+		...application,
+		services: application.services.map((service) => {
+			const rawChoice = form.get(`permission.${application.applicationId}.${service.serviceId}`);
+			const parsedChoice = oauthPermissionChoiceSchema.safeParse(rawChoice);
+			if (!parsedChoice.success || !service.allowedChoices.includes(parsedChoice.data)) {
+				fieldErrors.push({
+					applicationId: application.applicationId,
+					message: `Select an allowed permission for ${service.label}.`,
+					serviceId: service.serviceId,
+				});
+				return service;
+			}
+			const applicationSelections = selections[application.applicationId] ?? {};
+			applicationSelections[service.serviceId] = parsedChoice.data;
+			selections[application.applicationId] = applicationSelections;
+			return { ...service, selectedChoice: parsedChoice.data };
+		}),
+	}));
+	return fieldErrors.length > 0
+		? { kind: 'invalid', model: { ...model, applications, errors: fieldErrors } }
+		: { kind: 'valid', selections: oauthPermissionSelectionsSchema.parse(selections) };
 }
 
 function confirmationPageModel(page: GoogleOAuthConfirmationPageData): OAuthApprovalPageModel {
@@ -232,19 +290,30 @@ export function createOAuthHttpsApp(props: {
 			const tailnetLogin = await resolveTailnetLogin(context);
 			const page = props.brokerService.getPermissionPage({ tailnetLogin, transactionId });
 			const form = await context.req.formData();
-			const selections: Record<string, Record<string, unknown>> = {};
-			for (const application of page.applications) {
-				selections[application.applicationId] = Object.fromEntries(
-					application.services.map((service) => [
-						service.serviceId,
-						form.get(`permission.${application.applicationId}.${service.serviceId}`),
-					]),
+			requireMatchingOpaqueSecret(
+				browserBindingSecret,
+				page.browserBindingSecret,
+				'OAuth browser binding',
+			);
+			const submittedCsrfToken = requireFormString(form, 'csrfToken');
+			requireMatchingOpaqueSecret(submittedCsrfToken, page.csrfToken, 'OAuth CSRF token');
+			const permissionForm = parsePermissionForm(page, form);
+			if (permissionForm.kind === 'invalid') {
+				return context.html(
+					renderPage({
+						assets: props.assets,
+						cancelAction: `/oauth/transactions/${page.transactionId}/cancel`,
+						csrfToken: page.csrfToken,
+						formAction: `/oauth/transactions/${page.transactionId}/permissions`,
+						model: permissionForm.model,
+					}),
+					400,
 				);
 			}
 			const result = props.brokerService.submitPermissions({
 				browserBindingSecret,
-				csrfToken: requireFormString(form, 'csrfToken'),
-				selections: oauthPermissionSelectionsSchema.parse(selections),
+				csrfToken: submittedCsrfToken,
+				selections: permissionForm.selections,
 				tailnetLogin,
 				transactionId,
 			});

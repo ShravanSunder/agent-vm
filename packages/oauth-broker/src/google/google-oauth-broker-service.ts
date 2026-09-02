@@ -1248,12 +1248,20 @@ export function createGoogleOAuthBrokerService(props: {
 								}
 							}
 						}
-						props.catalog.deleteGrantForAccountApplication({
+						const deletion = props.catalog.deleteGrantForAccountApplication({
 							accountProfileId: request.accountProfileId,
 							agentId,
 							applicationId: oauthApplicationIdSchema.parse(applicationId),
+							expectedCredentialId: grant.credentialId,
+							expectedRecordRevision: grant.recordRevision,
 							zoneId: props.zoneId,
 						});
+						if (deletion.kind !== 'deleted') {
+							return {
+								failure: { kind: 'unavailable' },
+								kind: 'authorization-failed',
+							};
+						}
 						await props.onCredentialMaterialChanged?.({ agentId, zoneId: props.zoneId });
 						return { kind: 'authorization-revoked' };
 					}

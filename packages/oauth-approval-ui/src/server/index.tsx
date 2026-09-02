@@ -10,6 +10,7 @@ import {
 	type OAuthApprovalAssetManifest,
 	type OAuthApprovalPageModel,
 	type OAuthApplicationChoiceModel,
+	type OAuthPermissionFieldError,
 } from '../contracts.js';
 
 export * from '../contracts.js';
@@ -89,6 +90,7 @@ function pageTitle(model: OAuthApprovalPageModel): string {
 
 function PermissionChoice(props: {
 	readonly application: OAuthApplicationChoiceModel;
+	readonly errors: readonly OAuthPermissionFieldError[];
 }): JSX.Element {
 	return (
 		<section
@@ -99,33 +101,50 @@ function PermissionChoice(props: {
 				<h2 id={`application-${props.application.applicationId}`}>{props.application.label}</h2>
 				<p>{props.application.description}</p>
 			</div>
-			{props.application.services.map((service) => (
-				<fieldset class="permission-fieldset" key={service.serviceId}>
-					<legend>{service.label}</legend>
-					{service.suggestedChoice === undefined ? null : (
-						<p class="suggestion-note">Hermes suggested {service.suggestedChoice}. You decide.</p>
-					)}
-					<div class="permission-options">
-						{service.allowedChoices.map((choice) => {
-							const inputId = `${props.application.applicationId}-${service.serviceId}-${choice}`;
-							return (
-								<label class="permission-option" for={inputId} key={choice}>
-									<input
-										class="peer"
-										checked={service.selectedChoice === choice}
-										id={inputId}
-										name={`permission.${props.application.applicationId}.${service.serviceId}`}
-										required
-										type="radio"
-										value={choice}
-									/>
-									<span>{choice}</span>
-								</label>
-							);
-						})}
-					</div>
-				</fieldset>
-			))}
+			{props.application.services.map((service) => {
+				const fieldError = props.errors.find(
+					(error) =>
+						error.applicationId === props.application.applicationId &&
+						error.serviceId === service.serviceId,
+				);
+				const fieldErrorId = `permission-error-${props.application.applicationId}-${service.serviceId}`;
+				return (
+					<fieldset
+						aria-describedby={fieldError === undefined ? undefined : fieldErrorId}
+						class="permission-fieldset"
+						key={service.serviceId}
+					>
+						<legend>{service.label}</legend>
+						{service.suggestedChoice === undefined ? null : (
+							<p class="suggestion-note">Hermes suggested {service.suggestedChoice}. You decide.</p>
+						)}
+						<div class="permission-options">
+							{service.allowedChoices.map((choice) => {
+								const inputId = `${props.application.applicationId}-${service.serviceId}-${choice}`;
+								return (
+									<label class="permission-option" for={inputId} key={choice}>
+										<input
+											class="peer"
+											checked={service.selectedChoice === choice}
+											id={inputId}
+											name={`permission.${props.application.applicationId}.${service.serviceId}`}
+											required
+											type="radio"
+											value={choice}
+										/>
+										<span>{choice}</span>
+									</label>
+								);
+							})}
+						</div>
+						{fieldError === undefined ? null : (
+							<p class="field-error" id={fieldErrorId}>
+								{fieldError.message}
+							</p>
+						)}
+					</fieldset>
+				);
+			})}
 		</section>
 	);
 }
@@ -147,18 +166,32 @@ function PermissionSelectionPage(props: {
 				</p>
 			</header>
 			{props.model.errors === undefined || props.model.errors.length === 0 ? null : (
-				<div class="error-summary" role="alert" tabindex={-1}>
+				<div
+					autofocus
+					class="error-summary"
+					id="permission-error-summary"
+					role="alert"
+					tabindex={-1}
+				>
 					<h2>Review these problems</h2>
 					<ul>
-						{props.model.errors.map((error, errorIndex) => (
-							<li key={`${String(errorIndex)}:${error}`}>{error}</li>
+						{props.model.errors.map((error) => (
+							<li key={`${error.applicationId}:${error.serviceId}`}>
+								<a href={`#permission-error-${error.applicationId}-${error.serviceId}`}>
+									{error.message}
+								</a>
+							</li>
 						))}
 					</ul>
 				</div>
 			)}
 			<form action={props.formAction} data-permission-selector method="post">
 				{props.model.applications.map((application) => (
-					<PermissionChoice application={application} key={application.applicationId} />
+					<PermissionChoice
+						application={application}
+						errors={props.model.errors ?? []}
+						key={application.applicationId}
+					/>
 				))}
 				<input name="csrfToken" type="hidden" value={props.csrfToken} />
 				<div aria-live="polite" class="permission-summary" data-permission-summary />

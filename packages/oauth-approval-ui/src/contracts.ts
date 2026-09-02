@@ -41,12 +41,21 @@ export const oauthApplicationProgressModelSchema = z
 	})
 	.strict();
 
+export const oauthPermissionFieldErrorSchema = z
+	.object({
+		applicationId: oauthApplicationIdSchema,
+		message: z.string().min(1).max(500),
+		serviceId: oauthServiceIdSchema,
+	})
+	.strict();
+export type OAuthPermissionFieldError = z.infer<typeof oauthPermissionFieldErrorSchema>;
+
 export const oauthApprovalPageModelSchema = z.discriminatedUnion('kind', [
 	z
 		.object({
 			accountProfileLabel: z.string().min(1).max(160),
 			applications: z.array(oauthApplicationChoiceModelSchema).min(1).readonly(),
-			errors: z.array(z.string().min(1).max(500)).readonly().optional(),
+			errors: z.array(oauthPermissionFieldErrorSchema).readonly().optional(),
 			kind: z.literal('permission-selection'),
 		})
 		.strict(),

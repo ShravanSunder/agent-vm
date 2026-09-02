@@ -113,18 +113,21 @@ describe('OAuth credential catalog', () => {
 			databasePath: path.join(stateDirectory, 'oauth', 'credentials.sqlite'),
 			now: () => 1_000,
 		});
-		openCatalog.commitEnrollmentGrant(
+		const committed = openCatalog.commitEnrollmentGrant(
 			createEnrollmentInput({ accessToken: 'access-token-delete-marker' }),
 		);
+		if (committed.kind !== 'committed') throw new Error('Expected committed grant.');
 
 		expect(
 			openCatalog.deleteGrantForAccountApplication({
 				accountProfileId,
 				agentId: 'hermes',
 				applicationId,
+				expectedCredentialId: committed.grant.credentialId,
+				expectedRecordRevision: committed.grant.recordRevision,
 				zoneId: 'apollofam',
 			}),
-		).toBe('deleted');
+		).toEqual({ kind: 'deleted' });
 		expect(openCatalog.listGrantsForAgent({ agentId: 'hermes', zoneId: 'apollofam' })).toEqual([]);
 		expect(
 			openCatalog.getAccountProfileMetadata({
@@ -137,6 +140,47 @@ describe('OAuth credential catalog', () => {
 			providerSubject: 'google-subject-1',
 			status: 'partially-enrolled',
 		});
+	});
+
+	it('preserves a replacement grant when deletion targets a stale record revision', async () => {
+		const stateDirectory = await mkdtemp(
+			path.join(tmpdir(), 'agent-vm-oauth-catalog-stale-delete-'),
+		);
+		openCatalog = await openOAuthCredentialCatalog({
+			databasePath: path.join(stateDirectory, 'oauth', 'credentials.sqlite'),
+			now: () => 1_000,
+		});
+		const initial = openCatalog.commitEnrollmentGrant(
+			createEnrollmentInput({ accessToken: 'initial-access-token-marker' }),
+		);
+		if (initial.kind !== 'committed') throw new Error('Expected initial grant.');
+		const replacement = openCatalog.commitEnrollmentGrant(
+			createEnrollmentInput({ accessToken: 'replacement-access-token-marker' }),
+		);
+		if (replacement.kind !== 'committed') throw new Error('Expected replacement grant.');
+
+		expect(
+			openCatalog.deleteGrantForAccountApplication({
+				accountProfileId,
+				agentId: 'hermes',
+				applicationId,
+				expectedCredentialId: initial.grant.credentialId,
+				expectedRecordRevision: initial.grant.recordRevision,
+				zoneId: 'apollofam',
+			}),
+		).toEqual({
+			currentCredentialId: replacement.grant.credentialId,
+			currentRecordRevision: replacement.grant.recordRevision,
+			kind: 'stale',
+		});
+		expect(
+			openCatalog.getGrantForAccountApplication({
+				accountProfileId,
+				agentId: 'hermes',
+				applicationId,
+				zoneId: 'apollofam',
+			}),
+		).toEqual(replacement.grant);
 	});
 
 	it('migrates, commits, encrypts, refreshes atomically, and reopens', async () => {

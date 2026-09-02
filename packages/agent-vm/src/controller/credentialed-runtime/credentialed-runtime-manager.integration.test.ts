@@ -871,19 +871,27 @@ describe('credentialed runtime manager', () => {
 		const active = await acquire(fixture);
 		if (active.kind !== 'acquired') throw new Error('Expected active acquisition.');
 
-		await expect(
-			fixture.manager.invalidateMaterial({
+		let invalidationSettled = false;
+		const invalidation = fixture.manager
+			.invalidateMaterial({
 				agentId: 'sun',
 				reason: 'OAuth credential material changed',
 				zoneId: 'zone-a',
-			}),
-		).resolves.toEqual({ kind: 'retire-after-active' });
+			})
+			.finally(() => {
+				invalidationSettled = true;
+			});
+		await new Promise<void>((resolve) => {
+			setImmediate(resolve);
+		});
+		expect(invalidationSettled).toBe(false);
 		expect(fixture.states[0]?.closed).toBe(false);
 		await expect(
 			active.command.exec({ argv: ['gmail', 'search'], reason: 'still active' }),
 		).resolves.toMatchObject({ exitCode: 0 });
 
 		await active.command.complete({ kind: 'completed' });
+		await expect(invalidation).resolves.toEqual({ kind: 'retired' });
 		expect(fixture.states[0]?.closed).toBe(true);
 		const replacement = await acquire(fixture);
 		expect(replacement.kind).toBe('acquired');
@@ -891,6 +899,24 @@ describe('credentialed runtime manager', () => {
 		if (replacement.kind === 'acquired') {
 			await replacement.command.complete({ kind: 'completed' });
 		}
+	});
+
+	it('reports owner-unsafe when deferred OAuth material invalidation cannot contain the runtime', async () => {
+		const fixture = createFixture(() => 1_000);
+		const active = await acquire(fixture);
+		if (active.kind !== 'acquired') throw new Error('Expected active acquisition.');
+		fixture.exactTerminate.mockRejectedValueOnce(new Error('forced exact termination failure'));
+
+		const invalidation = fixture.manager.invalidateMaterial({
+			agentId: 'sun',
+			reason: 'OAuth credential material changed',
+			zoneId: 'zone-a',
+		});
+		await active.command.complete({ kind: 'completed' });
+
+		await expect(invalidation).resolves.toEqual({ kind: 'owner-unsafe' });
+		await expect(acquire(fixture)).resolves.toMatchObject({ kind: 'owner-unsafe' });
+		expect(fixture.createManagedVm).toHaveBeenCalledOnce();
 	});
 
 	it('force retirement cancels active ownership and waits for command disposition', async () => {

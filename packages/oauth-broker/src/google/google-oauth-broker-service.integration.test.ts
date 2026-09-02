@@ -1440,6 +1440,104 @@ describe('Google OAuth broker service', () => {
 		expect(catalog?.listGrantsForAgent({ agentId: 'hermes', zoneId: 'apollofam' })).toEqual([]);
 	});
 
+	it('preserves a concurrently reauthorized grant when an older revocation completes', async () => {
+		const revocationStarted = Promise.withResolvers<void>();
+		const revocationCompletion = Promise.withResolvers<void>();
+		const service = await createService({
+			adapter: {
+				...createAdapter(),
+				revokeAuthorization: async () => {
+					revocationStarted.resolve();
+					await revocationCompletion.promise;
+					return { kind: 'revoked' };
+				},
+			},
+		});
+		await enrollGmailRead(service);
+		const initialGrant = catalog?.getGrantForAccountApplication({
+			accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
+			agentId: 'hermes',
+			applicationId: oauthApplicationIdSchema.parse('gmail-app'),
+			zoneId: 'apollofam',
+		});
+		if (initialGrant === undefined) throw new Error('Expected initial grant.');
+
+		const revocation = service.executeAuthorizationAction({
+			agentId: 'hermes',
+			request: {
+				actionId: 'oauth_authorization.revoke',
+				accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
+				applicationId: oauthApplicationIdSchema.parse('gmail-app'),
+			},
+		});
+		await revocationStarted.promise;
+
+		const reauthorization = await service.executeAuthorizationAction({
+			agentId: 'hermes',
+			request: {
+				actionId: 'oauth_authorization.reauthorize',
+				accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
+				applicationId: oauthApplicationIdSchema.parse('gmail-app'),
+			},
+		});
+		if (reauthorization.kind !== 'authorization-begun') {
+			throw new Error('Expected concurrent reauthorization.');
+		}
+		const page = service.getPermissionPage({
+			tailnetLogin: 'human@example.test',
+			transactionId: reauthorization.transactionId,
+		});
+		const redirect = service.submitPermissions({
+			browserBindingSecret: page.browserBindingSecret,
+			csrfToken: page.csrfToken,
+			selections: oauthPermissionSelectionsSchema.parse({ 'gmail-app': { gmail: 'read' } }),
+			tailnetLogin: 'human@example.test',
+			transactionId: reauthorization.transactionId,
+		});
+		if (redirect.kind !== 'redirect') throw new Error('Expected reauthorization redirect.');
+		const oauthState = new URL(redirect.authorizationUrl).searchParams.get('state');
+		if (oauthState === null) throw new Error('Reauthorization omitted OAuth state.');
+		const callback = await service.handleGoogleCallback({
+			authorizationCode: 'concurrent-reauthorization-code',
+			browserBindingSecret: redirect.browserBindingSecret,
+			oauthState,
+			redirectUri,
+			tailnetLogin: 'human@example.test',
+			transactionId: redirect.transactionId,
+		});
+		if (callback.kind !== 'confirmation') throw new Error('Expected reauthorization confirmation.');
+		await expect(
+			service.confirmAccount({
+				browserBindingSecret: callback.confirmation.browserBindingSecret,
+				completionSessionId: callback.confirmation.completionSessionId,
+				csrfToken: callback.confirmation.csrfToken,
+				tailnetLogin: 'human@example.test',
+			}),
+		).resolves.toEqual({ accountLabel: 'human@example.test', kind: 'completed' });
+		const replacementGrant = catalog?.getGrantForAccountApplication({
+			accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
+			agentId: 'hermes',
+			applicationId: oauthApplicationIdSchema.parse('gmail-app'),
+			zoneId: 'apollofam',
+		});
+		if (replacementGrant === undefined) throw new Error('Expected replacement grant.');
+		expect(replacementGrant.recordRevision).toBeGreaterThan(initialGrant.recordRevision);
+
+		revocationCompletion.resolve();
+		await expect(revocation).resolves.toEqual({
+			failure: { kind: 'unavailable' },
+			kind: 'authorization-failed',
+		});
+		expect(
+			catalog?.getGrantForAccountApplication({
+				accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
+				agentId: 'hermes',
+				applicationId: oauthApplicationIdSchema.parse('gmail-app'),
+				zoneId: 'apollofam',
+			}),
+		).toEqual(replacementGrant);
+	});
+
 	it('retains a grant when provider revocation is transiently unavailable', async () => {
 		const baseAdapter = createAdapter();
 		const service = await createService({

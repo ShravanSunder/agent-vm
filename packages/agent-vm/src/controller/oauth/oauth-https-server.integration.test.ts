@@ -236,6 +236,80 @@ describe('OAuth HTTPS application', () => {
 		expect(harness.submitPermissions).not.toHaveBeenCalled();
 	});
 
+	it('re-renders invalid native-form permissions with associated editable errors', async () => {
+		const harness = createBrokerHarness();
+		const app = createOAuthHttpsApp({
+			assets: approvalAssets(),
+			brokerService: harness.brokerService,
+			publicBaseUrl,
+			tailnetIdentityResolver: {
+				resolvePeerIdentity: async () => ({ loginName: 'authorized-human@example.test' }),
+			},
+		});
+		const initial = await app.request(
+			`${publicBaseUrl}/oauth/transactions/${transactionId}`,
+			undefined,
+			requestEnvironment(),
+		);
+		const headers = {
+			'content-type': 'application/x-www-form-urlencoded',
+			cookie: cookieHeader(initial),
+			origin: publicBaseUrl,
+		};
+
+		const missingPermission = await app.request(
+			`${publicBaseUrl}/oauth/transactions/${transactionId}/permissions`,
+			{
+				body: new URLSearchParams({ csrfToken }),
+				headers,
+				method: 'POST',
+			},
+			requestEnvironment(),
+		);
+		expect(missingPermission.status).toBe(400);
+		const missingPermissionBody = await missingPermission.text();
+		expect(missingPermissionBody).toContain('Review these problems');
+		expect(missingPermissionBody).toContain('Select an allowed permission for Gmail messages.');
+		expect(missingPermissionBody).toContain('autofocus');
+		expect(missingPermissionBody).toContain('aria-describedby="permission-error-gmail-app-gmail"');
+		expect(missingPermissionBody).toContain(
+			`action="/oauth/transactions/${transactionId}/permissions"`,
+		);
+
+		const invalidPermission = await app.request(
+			`${publicBaseUrl}/oauth/transactions/${transactionId}/permissions`,
+			{
+				body: new URLSearchParams({
+					csrfToken,
+					'permission.gmail-app.gmail': 'owner',
+				}),
+				headers,
+				method: 'POST',
+			},
+			requestEnvironment(),
+		);
+		expect(invalidPermission.status).toBe(400);
+		expect(await invalidPermission.text()).toContain(
+			'Select an allowed permission for Gmail messages.',
+		);
+		expect(harness.submitPermissions).not.toHaveBeenCalled();
+
+		const correctedPermission = await app.request(
+			`${publicBaseUrl}/oauth/transactions/${transactionId}/permissions`,
+			{
+				body: new URLSearchParams({
+					csrfToken,
+					'permission.gmail-app.gmail': 'read',
+				}),
+				headers,
+				method: 'POST',
+			},
+			requestEnvironment(),
+		);
+		expect(correctedPermission.status).toBe(200);
+		expect(harness.submitPermissions).toHaveBeenCalledOnce();
+	});
+
 	it('submits native-form permissions and supports bound cancellation', async () => {
 		const harness = createBrokerHarness();
 		const app = createOAuthHttpsApp({

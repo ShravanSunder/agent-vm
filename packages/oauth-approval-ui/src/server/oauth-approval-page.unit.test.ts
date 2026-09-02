@@ -71,7 +71,13 @@ describe('server-rendered OAuth approval page', () => {
 						],
 					},
 				],
-				errors: ['Select at least one service.'],
+				errors: [
+					{
+						applicationId: 'gmail-app',
+						message: 'Select at least one service.',
+						serviceId: 'gmail',
+					},
+				],
 				kind: 'permission-selection',
 			}),
 		});
@@ -79,6 +85,8 @@ describe('server-rendered OAuth approval page', () => {
 		expect(html).not.toContain('<script>alert(1)</script>');
 		expect(html).toContain('role="alert"');
 		expect(html).toContain('tabindex="-1"');
+		expect(html).toContain('autofocus');
+		expect(html).toContain('aria-describedby="permission-error-gmail-app-gmail"');
 	});
 
 	it('renders progress and partial retry as native HTTPS navigation', () => {
