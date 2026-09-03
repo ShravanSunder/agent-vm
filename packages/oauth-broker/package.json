@@ -1,0 +1,54 @@
+{
+	"name": "@agent-vm/oauth-broker",
+	"version": "0.0.147",
+	"description": "Controller-host OAuth broker, encrypted catalog, and provider adapters.",
+	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
+	"bugs": {
+		"url": "https://github.com/ShravanSunder/agent-vm/issues"
+	},
+	"license": "MIT",
+	"author": "Shravan Sunder <ShravanSunder@users.noreply.github.com>",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ShravanSunder/agent-vm.git",
+		"directory": "packages/oauth-broker"
+	},
+	"files": [
+		"dist",
+		"drizzle"
+	],
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		},
+		"./google": {
+			"types": "./dist/google/index.d.ts",
+			"import": "./dist/google/index.js"
+		}
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"scripts": {
+		"build": "tsdown",
+		"prepack": "pnpm -C ../.. build",
+		"typecheck": "tsc -p tsconfig.json --noEmit",
+		"test": "vitest run --root ../../ --config vitest.config.ts --project unit packages/oauth-broker/src"
+	},
+	"dependencies": {
+		"@agent-vm/config-contracts": "workspace:*",
+		"@agent-vm/oauth-broker-contracts": "workspace:*",
+		"@noble/ciphers": "^2.4.0",
+		"better-sqlite3": "^13.0.3",
+		"drizzle-orm": "^0.45.2",
+		"zod": "^4.4.3"
+	},
+	"devDependencies": {
+		"@types/better-sqlite3": "^9.6.0",
+		"vitest": "^4.1.5"
+	}
+}

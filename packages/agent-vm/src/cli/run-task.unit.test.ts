@@ -2,7 +2,7 @@ import { Writable } from 'node:stream';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createPlainRunTask, createRunTask } from './run-task.js';
+import { createPlainRunTask, createRunTask, createSilentRunTask } from './run-task.js';
 
 const tasukuTaskMock = vi.hoisted(() => vi.fn());
 const originalStdoutIsTty = process.stdout.isTTY;
@@ -42,6 +42,23 @@ afterEach(() => {
 });
 
 describe('createRunTask', () => {
+	it('runs process-root tasks without emitting human progress output', async () => {
+		const observedOutputs: string[] = [];
+		const runTask = createSilentRunTask();
+
+		await runTask('Preparing controller', async (context) => {
+			if (context === undefined) {
+				throw new Error('Silent task runner must provide a task context.');
+			}
+			expect(context.interactive).toBe(false);
+			context.setOutput('secret resolver ready');
+			context.setStatus('starting');
+			observedOutputs.push('executed');
+		});
+
+		expect(observedOutputs).toEqual(['executed']);
+	});
+
 	it('creates a plain progress task runner without terminal UI dependencies', async () => {
 		const stderrChunks: string[] = [];
 		const runTask = createPlainRunTask({

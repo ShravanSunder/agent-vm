@@ -115,10 +115,11 @@ authority.
 ### Credentialed Managed Runtimes
 
 A Tool Portal `controller_execution` configured CLI may target a reusable
-credentialed Managed VM. The controller keys it by zone, authenticated agent,
-and authored runtime id; each call is authorized independently, while a
+credentialed Managed VM. The controller owns exactly one current runtime per
+zone and authenticated agent; each call is authorized independently, while a
 compatible healthy VM may retain CLI state across calls for up to 15 idle
-minutes. Credentials are finalized into read-only memory before boot, and CLI
+minutes. File credentials are finalized into read-only memory before boot, HTTP
+credentials remain host-side behind opaque placeholders, and CLI
 config/state/cache stays on disposable COW rootfs.
 
 This is separate from leased Tool VMs: credentialed calls execute direct array
@@ -126,6 +127,18 @@ argv through the controller, while `tool_vm_runner` and framework Sandbox APIs
 continue to use direct strict-pinned SSH to the current Tool VM.
 
 → Deep dive: [credentialed-runtimes.md](credentialed-runtimes.md)
+
+### Controller-Owned OAuth Broker
+
+An optional `oauth.config.jsonc` beside a managed Hermes zone's Tool Portal config
+enables human Google authorization without exposing refresh tokens to Hermes or a VM.
+The controller owns direct tailnet HTTPS on port `18900`, resolves the browser socket
+peer through tailscaled LocalAPI, and stores envelope-encrypted grants in controller
+state. Gog receives only a short-lived access-token placeholder through the
+authenticated agent's singleton credentialed Managed runtime. OAuth consent never
+changes Tool Portal visibility or per-call approval policy.
+
+→ Design: [Agent-guided OAuth broker](../specs/2026-08-29-agent-oauth-broker/program-design.md)
 
 ### Secrets Flow
 
@@ -357,10 +370,10 @@ policy uses the single `leaseIdleTtl.defaultMs` value, bounded request overrides
 and the default 100 minute fallback.
 
 **Credentialed Runtime Manager** (`credentialed-runtime/`): Creates or reuses
-one compatible Managed VM per zone/agent/runtime id, enforces one active
-command without queueing, materializes read-only credential memory only at
-creation, retires after 15 idle minutes, and performs exact crash recovery and
-operator retirement.
+one compatible Managed VM per zone and authenticated agent, enforces one active
+command without queueing, projects credentials only during creation, retires
+after 15 idle minutes, and performs exact crash recovery and operator
+retirement.
 
 **Active Task Registry** (`active-task-registry.ts`): Tracks in-flight worker tasks by zone and task ID. Used by controller-owned worker control operations to verify a task is still active before allowing branch pushes.
 

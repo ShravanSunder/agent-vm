@@ -1,6 +1,15 @@
+import { isIP } from 'node:net';
+
+import {
+	oauthAccountProfileIdSchema,
+	oauthApplicationIdSchema,
+	oauthMinimumPermissionSchema,
+	oauthServiceIdSchema,
+} from '@agent-vm/oauth-broker-contracts';
 import { z } from 'zod';
 
 import { jsonObjectSchema } from './json-value.js';
+import { secretValueSchema } from './secret-value.js';
 
 export const configuredCliArgvTokenSchema = z
 	.string()
@@ -200,6 +209,31 @@ export const configuredCliCredentialLogicalNameSchema = z
 	.string()
 	.regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u);
 
+function isCanonicalExactNetworkHost(value: string): boolean {
+	if (value !== value.toLowerCase()) return false;
+	if (isIP(value) !== 0) return true;
+	if (value.length > 253 || value.endsWith('.')) return false;
+	return value
+		.split('.')
+		.every(
+			(label) =>
+				label.length > 0 && label.length <= 63 && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/u.test(label),
+		);
+}
+
+export const configuredCliExactNetworkHostSchema = z
+	.string()
+	.min(1)
+	.refine(isCanonicalExactNetworkHost, {
+		message: 'Configured CLI hosts must be canonical exact DNS names or IP addresses.',
+	});
+
+const configuredCliExactNetworkHostsSchema = z
+	.array(configuredCliExactNetworkHostSchema)
+	.refine((hosts) => new Set(hosts).size === hosts.length, {
+		message: 'Configured CLI hosts must be unique.',
+	});
+
 export const configuredCliCredentialRelativePathSchema = z
 	.string()
 	.min(1)
@@ -254,56 +288,138 @@ const configuredCliCredentialFilesSchema = z
 	.min(1)
 	.max(16);
 
+const configuredCliMediatedCredentialSourceSchema = z
+	.object({
+		hosts: configuredCliExactNetworkHostsSchema.min(1),
+		secret: secretValueSchema,
+	})
+	.strict();
+
+const configuredCliOAuthAccessTokenSourceSchema = z
+	.object({ kind: z.literal('oauth_access_token') })
+	.strict();
+
+const configuredCliMediatedCredentialEnvironmentSchema = z
+	.record(
+		z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/u),
+		z.union([
+			configuredCliMediatedCredentialSourceSchema,
+			configuredCliOAuthAccessTokenSourceSchema,
+		]),
+	)
+	.refine((environment) => Object.keys(environment).length > 0, {
+		message: 'Configured CLI mediated credential environment must not be empty.',
+	})
+	.refine((environment) => Object.keys(environment).length <= 16, {
+		message: 'Configured CLI mediated credential environment must contain at most 16 entries.',
+	});
+
+const configuredCliFileCredentialProjectionSchema = z
+	.object({
+		credentialBinding: configuredCliCredentialLogicalNameSchema,
+		credentialEnvironment: configuredCliCredentialEnvironmentSchema,
+		credentialFiles: configuredCliCredentialFilesSchema,
+		kind: z.literal('file_binding'),
+	})
+	.strict();
+
+const configuredCliHttpMediationCredentialProjectionSchema = z
+	.object({
+		environment: configuredCliMediatedCredentialEnvironmentSchema,
+		kind: z.literal('http_mediation'),
+	})
+	.strict();
+
+export const configuredCliCredentialProjectionSchema = z.discriminatedUnion('kind', [
+	configuredCliFileCredentialProjectionSchema,
+	configuredCliHttpMediationCredentialProjectionSchema,
+]);
+
 interface CredentialedManagedVmTargetForValidation {
+	readonly allowedHosts: readonly string[];
+	readonly credentialProjection: z.infer<typeof configuredCliCredentialProjectionSchema>;
+	readonly environment: z.infer<typeof configuredCliEnvironmentPolicySchema>;
+}
+
+interface FileCredentialProjectionForValidation {
 	readonly credentialEnvironment: Readonly<
 		Record<string, z.infer<typeof configuredCliCredentialEnvironmentValueSchema>>
 	>;
 	readonly credentialFiles: readonly z.infer<typeof configuredCliCredentialFileMappingSchema>[];
-	readonly environment: z.infer<typeof configuredCliEnvironmentPolicySchema>;
 }
 
-function validateCredentialedManagedVmTarget(
-	target: CredentialedManagedVmTargetForValidation,
+function validateFileCredentialProjection(
+	projection: FileCredentialProjectionForValidation,
 	context: z.RefinementCtx,
 ): void {
 	const seenSources = new Set<string>();
 	const seenPaths = new Set<string>();
-	for (const [mappingIndex, mapping] of target.credentialFiles.entries()) {
+	for (const [mappingIndex, mapping] of projection.credentialFiles.entries()) {
 		if (seenSources.has(mapping.source)) {
 			context.addIssue({
 				code: z.ZodIssueCode.custom,
 				message: 'Configured CLI credential file sources must be unique.',
-				path: ['credentialFiles', mappingIndex, 'source'],
+				path: ['credentialProjection', 'credentialFiles', mappingIndex, 'source'],
 			});
 		}
 		if (seenPaths.has(mapping.path)) {
 			context.addIssue({
 				code: z.ZodIssueCode.custom,
 				message: 'Configured CLI credential file paths must be unique.',
-				path: ['credentialFiles', mappingIndex, 'path'],
+				path: ['credentialProjection', 'credentialFiles', mappingIndex, 'path'],
 			});
 		}
 		seenSources.add(mapping.source);
 		seenPaths.add(mapping.path);
 	}
-	for (const [environmentName, value] of Object.entries(target.credentialEnvironment)) {
+	for (const [environmentName, value] of Object.entries(projection.credentialEnvironment)) {
 		if (value.kind === 'credential_file' && !seenSources.has(value.source)) {
 			context.addIssue({
 				code: z.ZodIssueCode.custom,
 				message: 'Configured CLI credential environment references an unknown file source.',
-				path: ['credentialEnvironment', environmentName, 'source'],
+				path: ['credentialProjection', 'credentialEnvironment', environmentName, 'source'],
 			});
 		}
-		if (
-			target.environment.kind === 'inherit_allowlist' &&
-			target.environment.names.includes(environmentName)
-		) {
-			context.addIssue({
-				code: z.ZodIssueCode.custom,
-				message: 'Configured CLI credential and inherited environment names must not overlap.',
-				path: ['credentialEnvironment', environmentName],
-			});
+	}
+}
+
+function validateCredentialedManagedVmTarget(
+	target: CredentialedManagedVmTargetForValidation,
+	context: z.RefinementCtx,
+): void {
+	const projection = target.credentialProjection;
+	if (projection.kind === 'file_binding') {
+		validateFileCredentialProjection(projection, context);
+	} else {
+		const allowedHosts = new Set(target.allowedHosts);
+		for (const [environmentName, source] of Object.entries(projection.environment)) {
+			if ('kind' in source) continue;
+			for (const [hostIndex, host] of source.hosts.entries()) {
+				if (allowedHosts.has(host)) continue;
+				context.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: 'Mediated credential hosts must also be allowed by the Managed VM target.',
+					path: ['credentialProjection', 'environment', environmentName, 'hosts', hostIndex],
+				});
+			}
 		}
+	}
+	if (target.environment.kind !== 'inherit_allowlist') return;
+	const credentialEnvironmentNames =
+		projection.kind === 'file_binding'
+			? Object.keys(projection.credentialEnvironment)
+			: Object.keys(projection.environment);
+	for (const environmentName of credentialEnvironmentNames) {
+		if (!target.environment.names.includes(environmentName)) continue;
+		context.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: 'Configured CLI credential and inherited environment names must not overlap.',
+			path: [
+				'credentialProjection',
+				projection.kind === 'file_binding' ? 'credentialEnvironment' : 'environment',
+				environmentName,
+			],
+		});
 	}
 }
 
@@ -393,15 +509,12 @@ export const configuredCliExecutionTargetSchema = z.discriminatedUnion('kind', [
 		.strict(),
 	z
 		.object({
-			allowedHosts: z.array(z.string().min(1)).default([]),
-			credentialBinding: configuredCliCredentialLogicalNameSchema,
-			credentialEnvironment: configuredCliCredentialEnvironmentSchema,
-			credentialFiles: configuredCliCredentialFilesSchema,
+			allowedHosts: configuredCliExactNetworkHostsSchema.default([]),
+			credentialProjection: configuredCliCredentialProjectionSchema,
 			environment: configuredCliEnvironmentPolicySchema,
 			guestCwd: absoluteControlFreePathSchema,
 			imageReference: configuredCliImageRecipePathSchema,
 			kind: z.literal('ephemeral_managed_vm'),
-			runtimeId: configuredCliCredentialLogicalNameSchema,
 		})
 		.strict()
 		.superRefine(validateCredentialedManagedVmTarget),
@@ -417,15 +530,12 @@ export const configuredCliEffectiveExecutionTargetSchema = z.discriminatedUnion(
 		.strict(),
 	z
 		.object({
-			allowedHosts: z.array(z.string().min(1)).default([]),
-			credentialBinding: configuredCliCredentialLogicalNameSchema,
-			credentialEnvironment: configuredCliCredentialEnvironmentSchema,
-			credentialFiles: configuredCliCredentialFilesSchema,
+			allowedHosts: configuredCliExactNetworkHostsSchema.default([]),
+			credentialProjection: configuredCliCredentialProjectionSchema,
 			environment: configuredCliEnvironmentPolicySchema,
 			guestCwd: absoluteControlFreePathSchema,
 			imageReference: configuredCliPreparedImageIdentitySchema,
 			kind: z.literal('ephemeral_managed_vm'),
-			runtimeId: configuredCliCredentialLogicalNameSchema,
 		})
 		.strict()
 		.superRefine(validateCredentialedManagedVmTarget),
@@ -440,12 +550,133 @@ export const configuredCliOutputPolicySchema = z
 	})
 	.strict();
 
+export const configuredCliOAuthRequirementSchema = z.discriminatedUnion('kind', [
+	z.object({ kind: z.literal('no_oauth') }).strict(),
+	z
+		.object({
+			applicationId: oauthApplicationIdSchema,
+			kind: z.literal('oauth'),
+			minimumPermission: oauthMinimumPermissionSchema,
+			serviceId: oauthServiceIdSchema,
+		})
+		.strict(),
+]);
+
+export const configuredCliOAuthAuthorizationRuleSchema = z
+	.object({
+		match: configuredCliInvocationMatcherSchema.safeExtend({ flags: z.tuple([]) }).strict(),
+		requirement: configuredCliOAuthRequirementSchema,
+	})
+	.strict();
+
+export const configuredCliAuthorizationSchema = z.discriminatedUnion('kind', [
+	z.object({ kind: z.literal('none') }).strict(),
+	z
+		.object({
+			kind: z.literal('oauth_account_profile'),
+			rules: z.array(configuredCliOAuthAuthorizationRuleSchema).min(1).readonly(),
+		})
+		.strict(),
+]);
+
+interface ConfiguredCliOperationAuthorizationValidation {
+	readonly authorization?: z.infer<typeof configuredCliAuthorizationSchema> | undefined;
+	readonly commands: readonly z.infer<typeof configuredCliAllowedCommandSchema>[];
+	readonly executionTarget:
+		| { readonly kind: 'controller_host' }
+		| {
+				readonly credentialProjection: z.infer<typeof configuredCliCredentialProjectionSchema>;
+				readonly kind: 'ephemeral_managed_vm';
+		  };
+}
+
+function validateConfiguredCliOperationAuthorization(
+	operation: ConfiguredCliOperationAuthorizationValidation,
+	context: z.RefinementCtx,
+): void {
+	const hasOAuthAccessTokenSource =
+		operation.executionTarget.kind === 'ephemeral_managed_vm' &&
+		operation.executionTarget.credentialProjection.kind === 'http_mediation' &&
+		Object.values(operation.executionTarget.credentialProjection.environment).some(
+			(source) => 'kind' in source && source.kind === 'oauth_access_token',
+		);
+	if (operation.authorization === undefined || operation.authorization.kind === 'none') {
+		if (hasOAuthAccessTokenSource) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: 'OAuth access-token mediation requires OAuth account-profile authorization rules.',
+				path: ['authorization'],
+			});
+		}
+		return;
+	}
+	if (operation.executionTarget.kind !== 'ephemeral_managed_vm') {
+		context.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: 'OAuth-configured CLI operations must execute in an ephemeral Managed VM.',
+			path: ['executionTarget', 'kind'],
+		});
+	}
+	const oauthProjectionIsValid = (() => {
+		if (operation.executionTarget.kind !== 'ephemeral_managed_vm') return false;
+		const projection = operation.executionTarget.credentialProjection;
+		if (projection.kind !== 'http_mediation') return false;
+		const source = projection.environment.GOG_ACCESS_TOKEN;
+		return (
+			Object.keys(projection.environment).length === 1 &&
+			source !== undefined &&
+			'kind' in source &&
+			source.kind === 'oauth_access_token'
+		);
+	})();
+	if (operation.executionTarget.kind === 'ephemeral_managed_vm' && !oauthProjectionIsValid) {
+		context.addIssue({
+			code: z.ZodIssueCode.custom,
+			message:
+				'OAuth-configured CLI operations require only the code-owned GOG_ACCESS_TOKEN OAuth mediation source.',
+			path: ['executionTarget', 'credentialProjection'],
+		});
+	}
+	const admittedPaths = new Set(
+		operation.commands.map((command) => configuredCliPathIdentity(command.path)),
+	);
+	const ruleCountsByPath = new Map<string, number>();
+	for (const [ruleIndex, rule] of operation.authorization.rules.entries()) {
+		const rulePathIdentity = configuredCliPathIdentity(rule.match.path);
+		ruleCountsByPath.set(rulePathIdentity, (ruleCountsByPath.get(rulePathIdentity) ?? 0) + 1);
+		if (admittedPaths.has(rulePathIdentity)) continue;
+		context.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: 'OAuth authorization rules must reference one admitted command path.',
+			path: ['authorization', 'rules', ruleIndex, 'match', 'path'],
+		});
+	}
+	for (const [commandIndex, command] of operation.commands.entries()) {
+		const ruleCount = ruleCountsByPath.get(configuredCliPathIdentity(command.path)) ?? 0;
+		if (ruleCount === 1) continue;
+		context.addIssue({
+			code: z.ZodIssueCode.custom,
+			message:
+				ruleCount === 0
+					? 'Every admitted OAuth-configured command path must have one authorization rule.'
+					: 'Every admitted OAuth-configured command path must have exactly one authorization rule.',
+			path: ['authorization', 'rules'],
+		});
+		context.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: 'This admitted command path does not have exactly one authorization rule.',
+			path: ['commands', commandIndex, 'path'],
+		});
+	}
+}
+
 export const controllerRegisteredOperationSchema = z
 	.object({ kind: z.literal('registered_action') })
 	.strict();
 
 export const controllerConfiguredCliOperationSchema = configuredCliPolicySchema
 	.safeExtend({
+		authorization: configuredCliAuthorizationSchema.optional(),
 		executablePath: absoluteControlFreePathSchema,
 		executionTarget: configuredCliExecutionTargetSchema,
 		kind: z.literal('configured_cli'),
@@ -453,7 +684,8 @@ export const controllerConfiguredCliOperationSchema = configuredCliPolicySchema
 		output: configuredCliOutputPolicySchema,
 		safeHelp: z.string().min(1).max(4_000),
 	})
-	.strict();
+	.strict()
+	.superRefine(validateConfiguredCliOperationAuthorization);
 
 export const controllerExecutionOperationSchema = z.discriminatedUnion('kind', [
 	controllerRegisteredOperationSchema,
@@ -462,6 +694,7 @@ export const controllerExecutionOperationSchema = z.discriminatedUnion('kind', [
 
 export const effectiveControllerConfiguredCliOperationSchema = configuredCliPolicySchema
 	.safeExtend({
+		authorization: configuredCliAuthorizationSchema.optional(),
 		executablePath: absoluteControlFreePathSchema,
 		executionTarget: configuredCliEffectiveExecutionTargetSchema,
 		kind: z.literal('configured_cli'),
@@ -469,7 +702,8 @@ export const effectiveControllerConfiguredCliOperationSchema = configuredCliPoli
 		output: configuredCliOutputPolicySchema,
 		safeHelp: z.string().min(1).max(4_000),
 	})
-	.strict();
+	.strict()
+	.superRefine(validateConfiguredCliOperationAuthorization);
 
 export const effectiveControllerExecutionOperationSchema = z.discriminatedUnion('kind', [
 	controllerRegisteredOperationSchema,
@@ -495,11 +729,44 @@ export const configuredCliInputSchema = z.union([
 	openConfiguredCliInputSchema,
 ]);
 
+export const quickOAuthConfiguredCliInputSchema = z
+	.object({
+		...configuredCliCommonInputShape,
+		accountProfile: oauthAccountProfileIdSchema,
+	})
+	.strict();
+
+export const openOAuthConfiguredCliInputSchema = z
+	.object({
+		...configuredCliCommonInputShape,
+		accountProfile: oauthAccountProfileIdSchema,
+		timeoutMs: z.number().int().positive().max(28_800_000).optional(),
+	})
+	.strict();
+
+export const oauthConfiguredCliInputSchema = z.union([
+	quickOAuthConfiguredCliInputSchema,
+	openOAuthConfiguredCliInputSchema,
+]);
+
+export const controllerConfiguredCliInputSchema = z.union([
+	configuredCliInputSchema,
+	oauthConfiguredCliInputSchema,
+]);
+
 export type ConfiguredCliAllowedCommand = z.infer<typeof configuredCliAllowedCommandSchema>;
 export type ConfiguredCliFlagRule = z.infer<typeof configuredCliFlagRuleSchema>;
 export type ConfiguredCliInput = z.infer<typeof configuredCliInputSchema>;
+export type ControllerConfiguredCliInput = z.infer<typeof controllerConfiguredCliInputSchema>;
+export type ConfiguredCliAuthorization = z.infer<typeof configuredCliAuthorizationSchema>;
+export type ConfiguredCliOAuthAuthorizationRule = z.infer<
+	typeof configuredCliOAuthAuthorizationRuleSchema
+>;
 export type ConfiguredCliCredentialEnvironmentValue = z.infer<
 	typeof configuredCliCredentialEnvironmentValueSchema
+>;
+export type ConfiguredCliCredentialProjection = z.infer<
+	typeof configuredCliCredentialProjectionSchema
 >;
 export type ConfiguredCliCredentialFileMapping = z.infer<
 	typeof configuredCliCredentialFileMappingSchema
@@ -536,18 +803,19 @@ export type ResolvedConfiguredCliTimeout =
 	  };
 
 export function resolveConfiguredCliTimeout(props: {
-	readonly input: ConfiguredCliInput;
+	readonly input: ControllerConfiguredCliInput;
 	readonly kind: ConfiguredCliTimeoutPolicy['kind'];
 }): ResolvedConfiguredCliTimeout {
 	if (props.kind === 'quick') {
-		quickConfiguredCliInputSchema.parse(props.input);
+		controllerConfiguredCliInputSchema.parse(props.input);
 		return { kind: 'quick', requestedTimeoutMs: null, resolvedTimeoutMs: 5_000 };
 	}
-	const input = openConfiguredCliInputSchema.parse(props.input);
+	const input = controllerConfiguredCliInputSchema.parse(props.input);
+	const requestedTimeoutMs = 'timeoutMs' in input ? (input.timeoutMs ?? null) : null;
 	return {
 		kind: 'open',
-		requestedTimeoutMs: input.timeoutMs ?? null,
-		resolvedTimeoutMs: input.timeoutMs ?? 120_000,
+		requestedTimeoutMs,
+		resolvedTimeoutMs: requestedTimeoutMs ?? 120_000,
 	};
 }
 

@@ -1290,21 +1290,23 @@ describe('createControllerApp', () => {
 			},
 		});
 
-		const response = await app.request(
-			'/zones/shravan/credentialed-runtimes/google-workspace/retire',
-			{
-				body: JSON.stringify({ adminToken: 'admin-token', agentId: 'sun', force: true }),
-				headers: { 'content-type': 'application/json' },
-				method: 'POST',
-			},
-		);
+		const response = await app.request('/zones/shravan/credentialed-runtime/retire', {
+			body: JSON.stringify({ adminToken: 'admin-token', agentId: 'sun', force: true }),
+			headers: { 'content-type': 'application/json' },
+			method: 'POST',
+		});
 		expect(response.status).toBe(200);
 		expect(await response.json()).toEqual({ kind: 'retired' });
-		expect(retireCredentialedRuntime).toHaveBeenCalledWith('shravan', 'google-workspace', {
+		expect(retireCredentialedRuntime).toHaveBeenCalledWith('shravan', {
 			adminToken: 'admin-token',
 			agentId: 'sun',
 			force: true,
 		});
+		const removedRoute = await app.request(
+			'/zones/shravan/credentialed-runtimes/google-workspace/retire',
+			{ method: 'POST' },
+		);
+		expect(removedRoute.status).toBe(404);
 	});
 
 	it('returns 400 for malformed JSON bodies on controller operation routes', async () => {

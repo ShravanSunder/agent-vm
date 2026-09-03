@@ -55,7 +55,7 @@ class InventoryListItemRequest(_FrozenModel):
 
     id: str = Field(min_length=1)
     namespaces: tuple[str, ...] = Field(min_length=1, max_length=1)
-    limit: t.Literal[1] = 1
+    limit: t.Literal[8] = 8
 
     @model_validator(mode="after")
     def validate_single_namespace(self) -> t.Self:
@@ -84,6 +84,7 @@ class InventoryListRequest(_FrozenModel):
 class InventoryPortalToolSummary(_FrozenModel):
     """The only live-result fields needed by the existence probe."""
 
+    description: str | None = None
     namespace: str = Field(min_length=1)
     name: str = Field(min_length=1)
 
@@ -108,6 +109,7 @@ class InventoryPortalDiagnostic(_FrozenModel):
 class InventoryPortalListValue(_FrozenModel):
     """Validated namespace and bounded tool summary returned by Portal list."""
 
+    has_more_tools: bool = False
     namespaces: tuple[str, ...]
     tools: tuple[InventoryPortalToolSummary, ...]
 
@@ -155,8 +157,89 @@ class _ValidatedToolSchemaHint(_ValidatedPortableModel):
     next: t.Literal["call_ready", "describe_before_call"]
 
 
+class _ValidatedWithoutApprovalDisposition(_ValidatedPortableModel):
+    kind: t.Literal["without-approval"]
+
+
+class _ValidatedRequiresApprovalDisposition(_ValidatedPortableModel):
+    kind: t.Literal["requires-approval"]
+
+
+class _ValidatedInvocationDependentDisposition(_ValidatedPortableModel):
+    describe_before_call: t.Literal[True] = Field(alias="describeBeforeCall")
+    kind: t.Literal["invocation-dependent"]
+
+
+_ValidatedToolCallDisposition = t.Annotated[
+    _ValidatedWithoutApprovalDisposition
+    | _ValidatedRequiresApprovalDisposition
+    | _ValidatedInvocationDependentDisposition,
+    Field(discriminator="kind"),
+]
+
+
+class _ValidatedStaticOAuthRequirement(_ValidatedPortableModel):
+    application_id: str = Field(alias="applicationId", min_length=1)
+    kind: t.Literal["oauth-account-profile"]
+    minimum_permission: t.Literal["read", "write"] = Field(alias="minimumPermission")
+    service_id: str = Field(alias="serviceId", min_length=1)
+
+
+class _ValidatedInvocationOAuthRequirement(_ValidatedPortableModel):
+    account_profile_argument: t.Literal["accountProfile"] = Field(alias="accountProfileArgument")
+    describe_before_call: t.Literal[True] = Field(alias="describeBeforeCall")
+    kind: t.Literal["invocation-dependent-oauth-account-profile"]
+
+
+_ValidatedOAuthRequirement = t.Annotated[
+    _ValidatedStaticOAuthRequirement | _ValidatedInvocationOAuthRequirement,
+    Field(discriminator="kind"),
+]
+
+
+class _ValidatedEligibleAccountProfile(_ValidatedPortableModel):
+    account_label: str = Field(alias="accountLabel", min_length=1, max_length=320)
+    account_profile_id: str = Field(alias="accountProfileId", min_length=1)
+
+
+class _ValidatedReadyOAuthAvailability(_ValidatedPortableModel):
+    account_profiles: list[_ValidatedEligibleAccountProfile] = Field(alias="accountProfiles")
+    kind: t.Literal["ready"]
+
+
+class _ValidatedAuthorizationRequiredAvailability(_ValidatedPortableModel):
+    kind: t.Literal["authorization-required"]
+
+
+class _ValidatedReauthorizationRequiredAvailability(_ValidatedPortableModel):
+    kind: t.Literal["reauthorization-required"]
+
+
+class _ValidatedScopeInsufficientAvailability(_ValidatedPortableModel):
+    kind: t.Literal["scope-insufficient"]
+
+
+class _ValidatedAuthorizationStatusUnavailableAvailability(_ValidatedPortableModel):
+    kind: t.Literal["authorization-status-unavailable"]
+
+
+_ValidatedOAuthAvailability = t.Annotated[
+    _ValidatedReadyOAuthAvailability
+    | _ValidatedAuthorizationRequiredAvailability
+    | _ValidatedReauthorizationRequiredAvailability
+    | _ValidatedScopeInsufficientAvailability
+    | _ValidatedAuthorizationStatusUnavailableAvailability,
+    Field(discriminator="kind"),
+]
+
+
 class _ValidatedCapabilitySummary(_ValidatedPortableModel):
+    call_disposition: _ValidatedToolCallDisposition | None = Field(
+        default=None,
+        alias="callDisposition",
+    )
     description: str | None = None
+    description_truncated: bool | None = Field(default=None, alias="descriptionTruncated")
     input: _ValidatedToolSchemaSummary
     namespace: str = Field(min_length=1)
     output: _ValidatedToolSchemaSummary | None = None
@@ -164,6 +247,14 @@ class _ValidatedCapabilitySummary(_ValidatedPortableModel):
     schema_hint: _ValidatedToolSchemaHint | None = Field(default=None, alias="schemaHint")
     title: str | None = Field(default=None, min_length=1)
     name: str = Field(min_length=1)
+    oauth_availability: _ValidatedOAuthAvailability | None = Field(
+        default=None,
+        alias="oauthAvailability",
+    )
+    oauth_requirement: _ValidatedOAuthRequirement | None = Field(
+        default=None,
+        alias="oauthRequirement",
+    )
     tool_ref: str = Field(alias="toolRef", min_length=1)
 
 
@@ -288,9 +379,11 @@ def _project_validated_portal_list_result(model: BaseModel) -> InventoryPortalLi
                 id=item.id,
                 status="ok",
                 value=InventoryPortalListValue(
+                    has_more_tools=item.value.next_cursor is not None,
                     namespaces=tuple(item.value.namespaces),
                     tools=tuple(
                         InventoryPortalToolSummary(
+                            description=tool.description,
                             namespace=tool.namespace,
                             name=tool.name,
                         )

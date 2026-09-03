@@ -106,7 +106,7 @@ class GatewayRuntimeInventoryPortTests(unittest.IsolatedAsyncioTestCase):
                 (
                     {
                         "requestId": "inventory-1-0",
-                        "requests": [{"id": "probe-0", "namespaces": ["filesystem"], "limit": 1}],
+                        "requests": [{"id": "probe-0", "namespaces": ["filesystem"], "limit": 8}],
                     },
                     {
                         "principal": {

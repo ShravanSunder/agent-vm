@@ -2143,8 +2143,6 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 					'shravan',
 					'--agent',
 					'sun',
-					'--runtime',
-					'google-workspace',
 					'--force',
 				],
 			] as const) {
@@ -2186,13 +2184,27 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 		expect(controllerClient.destroyZone).toHaveBeenCalledWith('shravan', true);
 		expect(controllerClient.upgradeZone).toHaveBeenCalledWith('shravan');
 		expect(controllerClient.refreshZoneCredentials).toHaveBeenCalledWith('shravan');
-		expect(controllerClient.retireCredentialedRuntime).toHaveBeenCalledWith(
-			'shravan',
-			'google-workspace',
-			{ agentId: 'sun', force: true },
-		);
+		expect(controllerClient.retireCredentialedRuntime).toHaveBeenCalledWith('shravan', {
+			agentId: 'sun',
+			force: true,
+		});
 		expect(outputs.join('\n')).toContain('"zoneId": "shravan"');
 		expect(outputs.join('\n')).toContain('"resolvedSecretCount": 2');
+	});
+
+	it('rejects the removed credentialed runtime selector', () => {
+		const parsed = parseSync(agentVmRootParser, [
+			'controller',
+			'credential-runtime',
+			'retire',
+			'--zone',
+			'shravan',
+			'--agent',
+			'sun',
+			'--runtime',
+			'legacy-runtime',
+		]);
+		expect(parsed.success).toBe(false);
 	});
 
 	it('routes controller ssh through the Hermes interactive shell handler', async () => {

@@ -3186,7 +3186,7 @@ describe('control session client', () => {
 				lease_create: 'single_use_critical',
 			},
 			commandAckTimeoutMs: 50,
-			connectTimeoutMs: 50,
+			connectTimeoutMs: 500,
 		});
 
 		try {

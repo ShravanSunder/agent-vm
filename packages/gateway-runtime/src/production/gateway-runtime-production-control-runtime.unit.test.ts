@@ -253,6 +253,11 @@ function observableDependencies(): {
 			}),
 		),
 		createOperationActiveUseRuntime: vi.fn(() => activeUseRuntime),
+		createOAuthAvailabilityPort: vi.fn(() => ({
+			resolve: async (): Promise<never> => {
+				throw new Error('unused OAuth availability');
+			},
+		})),
 		createProcessRegistry: processRegistryFactory,
 		createProcessRuntime: vi.fn(() => processRegistry()),
 		createPublishedBindingRuntime: vi.fn(() => publishedBindingRuntime),

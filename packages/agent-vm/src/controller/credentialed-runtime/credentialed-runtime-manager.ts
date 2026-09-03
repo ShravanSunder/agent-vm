@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 
-import type { ConfiguredCliInput } from '@agent-vm/config-contracts';
+import type { ControllerConfiguredCliInput } from '@agent-vm/config-contracts';
 import type {
 	ManagedVm,
 	ManagedVmExactProcessTerminationCapability,
@@ -38,6 +38,21 @@ export interface CredentialedRuntimeOwnerIdentity {
 	readonly stablePrincipal: string;
 }
 
+export interface CredentialedRuntimeDynamicHttpMediation {
+	readonly allowedHosts: readonly string[];
+	readonly credentialId: string;
+	readonly environmentName: string;
+	readonly kind: 'dynamic_http_mediation';
+	readonly materialRevision: string;
+	readonly placeholderValue: string;
+	readonly secretValue: Uint8Array;
+}
+
+export interface CredentialedRuntimeMaterialization {
+	readonly dynamicHttpMediation?: CredentialedRuntimeDynamicHttpMediation | undefined;
+	readonly resolution: CredentialedRuntimeResolution;
+}
+
 export type AcquireCredentialedRuntimeCommandResult =
 	| { readonly command: CredentialedRuntimeCommandHandle; readonly kind: 'acquired' }
 	| { readonly kind: 'busy'; readonly retryable: true }
@@ -51,7 +66,7 @@ export type CredentialedRuntimeCommandOutcome =
 export interface CredentialedRuntimeCommandHandle {
 	complete(outcome: CredentialedRuntimeCommandOutcome): Promise<void>;
 	exec(
-		input: ConfiguredCliInput,
+		input: ControllerConfiguredCliInput,
 		options?: { readonly signal?: AbortSignal },
 	): Promise<CredentialedManagedVmCommandResult>;
 }
@@ -61,6 +76,11 @@ export type RetireCredentialedRuntimeResult =
 	| { readonly kind: 'absent' }
 	| { readonly kind: 'active'; readonly retryable: true }
 	| { readonly kind: 'owner-unsafe'; readonly retryable: false };
+
+export type InvalidateCredentialedRuntimeMaterialResult =
+	| { readonly kind: 'retired' }
+	| { readonly kind: 'absent' }
+	| { readonly kind: 'owner-unsafe' };
 
 interface ActiveCommand {
 	readonly abortController: AbortController;
@@ -72,6 +92,7 @@ interface ActiveCommand {
 
 interface LiveCredentialedRuntime {
 	activeCommand?: ActiveCommand;
+	readonly commandEnvironment: Readonly<Record<string, string>>;
 	readonly createdAtMs: number;
 	readonly identity: CredentialedRuntimeProcessIdentity;
 	lastUsedAtMs: number;
@@ -82,12 +103,8 @@ interface LiveCredentialedRuntime {
 	readonly vm: ManagedVm;
 }
 
-function runtimeKey(props: {
-	readonly agentId: string;
-	readonly runtimeId: string;
-	readonly zoneId: string;
-}): string {
-	return [props.zoneId, props.agentId, props.runtimeId].join('\0');
+function runtimeKey(props: { readonly agentId: string; readonly zoneId: string }): string {
+	return [props.zoneId, props.agentId].join('\0');
 }
 
 function runtimeRecordId(key: string): string {
@@ -115,21 +132,34 @@ function processIdentitiesEqual(
 }
 
 export interface CredentialedRuntimeManager {
-	acquireCommand(request: {
-		readonly admissionSignal?: AbortSignal;
-		readonly finalAuthorization: () => Promise<boolean>;
-		readonly operationId: string;
-		readonly ownerIdentity: CredentialedRuntimeOwnerIdentity;
-		readonly resolution: CredentialedRuntimeResolution;
-	}): Promise<AcquireCredentialedRuntimeCommandResult>;
+	acquireCommand(
+		request: {
+			readonly admissionSignal?: AbortSignal;
+			readonly finalAuthorization: () => Promise<boolean>;
+			readonly finalMaterialAuthorization?: (() => boolean) | undefined;
+			readonly operationId: string;
+			readonly ownerIdentity: CredentialedRuntimeOwnerIdentity;
+		} & (
+			| { readonly resolution: CredentialedRuntimeResolution }
+			| {
+					readonly materializationFailureReason?: ((error: unknown) => string) | undefined;
+					readonly materializeResolution: () => Promise<CredentialedRuntimeMaterialization>;
+					readonly runtimeIdentity: { readonly agentId: string; readonly zoneId: string };
+			  }
+		),
+	): Promise<AcquireCredentialedRuntimeCommandResult>;
 	closeZone(zoneId: string): Promise<void>;
+	invalidateMaterial(request: {
+		readonly agentId: string;
+		readonly reason: string;
+		readonly zoneId: string;
+	}): Promise<InvalidateCredentialedRuntimeMaterialResult>;
 	openZone(zoneId: string): void;
 	reapExpired(): Promise<void>;
 	recoverZone(zoneId: string): Promise<void>;
 	retire(request: {
 		readonly agentId: string;
 		readonly force: boolean;
-		readonly runtimeId: string;
 		readonly zoneId: string;
 	}): Promise<RetireCredentialedRuntimeResult>;
 }
@@ -153,6 +183,7 @@ export function createCredentialedRuntimeManager(props: {
 			});
 		});
 	const locks = createKeyedAsyncLock();
+	const reservedAcquisitionKeys = new Set<string>();
 	const liveByKey = new Map<string, LiveCredentialedRuntime>();
 	const ownerUnsafeKeys = new Set<string>();
 	const closedZoneIds = new Set<string>();
@@ -160,6 +191,14 @@ export function createCredentialedRuntimeManager(props: {
 	const recordWriter =
 		props.recordWriter ??
 		createCredentialedRuntimeRecordWriter({ controllerStateDir: props.controllerStateDir });
+	const registerRuntimeKeyForZone = (zoneId: string, key: string): void => {
+		let zoneKeys = runtimeKeysByZoneId.get(zoneId);
+		if (zoneKeys === undefined) {
+			zoneKeys = new Set<string>();
+			runtimeKeysByZoneId.set(zoneId, zoneKeys);
+		}
+		zoneKeys.add(key);
+	};
 
 	const retireLiveUnderLock = async (
 		key: string,
@@ -281,329 +320,397 @@ export function createCredentialedRuntimeManager(props: {
 	};
 
 	const acquireCommand: CredentialedRuntimeManager['acquireCommand'] = async (request) => {
-		const key = runtimeKey(request.resolution);
+		const requestedRuntimeIdentity =
+			'resolution' in request ? request.resolution : request.runtimeIdentity;
+		const materializationFailureReason =
+			'materializeResolution' in request ? request.materializationFailureReason : undefined;
+		const key = runtimeKey(requestedRuntimeIdentity);
 		const admissionInvalidated = (): boolean =>
-			request.admissionSignal?.aborted === true || closedZoneIds.has(request.resolution.zoneId);
+			request.admissionSignal?.aborted === true ||
+			closedZoneIds.has(requestedRuntimeIdentity.zoneId);
 		if (admissionInvalidated()) {
 			return { kind: 'not-dispatched', reason: 'credentialed runtime zone is stopping' };
 		}
-		let zoneKeys = runtimeKeysByZoneId.get(request.resolution.zoneId);
-		if (zoneKeys === undefined) {
-			zoneKeys = new Set<string>();
-			runtimeKeysByZoneId.set(request.resolution.zoneId, zoneKeys);
+		if (reservedAcquisitionKeys.has(key) || liveByKey.get(key)?.activeCommand !== undefined) {
+			return { kind: 'busy', retryable: true };
 		}
-		zoneKeys.add(key);
-		return await locks.runExclusive(key, async () => {
-			if (admissionInvalidated()) {
-				return { kind: 'not-dispatched', reason: 'credentialed runtime zone is stopping' };
-			}
-			if (ownerUnsafeKeys.has(key)) {
-				return { kind: 'owner-unsafe', reason: 'credentialed runtime ownership is unsafe' };
-			}
-			let live = liveByKey.get(key);
-			if (live?.activeCommand !== undefined) {
-				if (
-					live.resolution.groupRevision !== request.resolution.groupRevision ||
-					!ownerIdentitiesEqual(live.ownerIdentity, request.ownerIdentity)
-				) {
-					live.retireAfterActiveReason = 'runtime compatibility changed while active';
+		reservedAcquisitionKeys.add(key);
+		registerRuntimeKeyForZone(requestedRuntimeIdentity.zoneId, key);
+		try {
+			return await locks.runExclusive(key, async () => {
+				if (admissionInvalidated()) {
+					return { kind: 'not-dispatched', reason: 'credentialed runtime zone is stopping' };
+				}
+				if (ownerUnsafeKeys.has(key)) {
+					return { kind: 'owner-unsafe', reason: 'credentialed runtime ownership is unsafe' };
+				}
+				let materialization: CredentialedRuntimeMaterialization;
+				try {
+					materialization =
+						'resolution' in request
+							? { resolution: request.resolution }
+							: await request.materializeResolution();
+				} catch (error) {
+					let reason = 'credentialed runtime materialization failed';
+					try {
+						reason = materializationFailureReason?.(error) ?? reason;
+					} catch {
+						// A failure classifier cannot weaken the generic safe fallback.
+					}
 					return {
 						kind: 'not-dispatched',
-						reason: 'active credentialed runtime is no longer compatible',
+						reason,
 					};
 				}
-				return { kind: 'busy', retryable: true };
-			}
-			if (live !== undefined) {
-				let currentProcessIdentity: ProcessIdentity | null = null;
 				try {
-					currentProcessIdentity = await props.readProcessIdentity(live.identity.hostProcessId);
-				} catch {
-					currentProcessIdentity = null;
-				}
-				if (
-					currentProcessIdentity === null ||
-					!processIdentitiesEqual(currentProcessIdentity, live.identity)
-				) {
-					const contained = await retireLiveUnderLock(
-						key,
-						live,
-						'credentialed runtime process identity is no longer current',
-					);
-					if (!contained) {
-						return { kind: 'owner-unsafe', reason: 'credentialed runtime health is unsafe' };
+					const { resolution } = materialization;
+					if (
+						resolution.agentId !== requestedRuntimeIdentity.agentId ||
+						resolution.zoneId !== requestedRuntimeIdentity.zoneId
+					) {
+						return {
+							kind: 'not-dispatched',
+							reason: 'credentialed runtime materialization changed its owner',
+						};
 					}
-					live = undefined;
-				}
-			}
-			if (
-				live !== undefined &&
-				(live.resolution.groupRevision !== request.resolution.groupRevision ||
-					!ownerIdentitiesEqual(live.ownerIdentity, request.ownerIdentity) ||
-					now() - live.lastUsedAtMs >= CredentialedRuntimeIdleTtlMs)
-			) {
-				const contained = await retireLiveUnderLock(
-					key,
-					live,
-					'runtime incompatible or idle-expired',
-				);
-				if (!contained) {
-					return { kind: 'owner-unsafe', reason: 'credentialed runtime retirement failed' };
-				}
-				live = undefined;
-			}
-
-			if (live === undefined) {
-				const recordId = runtimeRecordId(key);
-				const context = {
-					ownerIdentity: request.ownerIdentity,
-					recordId,
-					resolution: request.resolution,
-				};
-				await recordWriter.write(context, ({ common, generation }) => ({
-					...common,
-					generation,
-					kind: 'reserved',
-					updatedAtMs: now(),
-				}));
-				await recordWriter.write(context, ({ common, generation }) => ({
-					...common,
-					generation,
-					kind: 'creation-started',
-					updatedAtMs: now(),
-				}));
-				let vm: ManagedVm;
-				try {
-					vm = await createUnstartedCredentialedManagedVm({
-						managedVmFactory: props.managedVmFactory,
-						resolution: request.resolution,
-						sessionLabel: `credentialed-runtime-${randomUUID()}`,
-					});
-				} catch {
-					await recordWriter.delete(request.resolution.zoneId, recordId);
-					return { kind: 'not-dispatched', reason: 'credentialed runtime creation failed' };
-				}
-				try {
-					await recordWriter.write(context, ({ common, generation }) => ({
-						...common,
-						generation,
-						kind: 'vm-created',
-						updatedAtMs: now(),
-						vmId: vm.id,
-					}));
-				} catch {
-					const contained = await containUnstartedCreation({ context, vm });
-					if (!contained) ownerUnsafeKeys.add(key);
-					return contained
-						? { kind: 'not-dispatched', reason: 'credentialed runtime record failed' }
-						: { kind: 'owner-unsafe', reason: 'credentialed runtime record is unsafe' };
-				}
-				try {
-					await finalizeCredentialedManagedVm({
-						resolution: request.resolution,
-						secretResolver: props.secretResolver,
-						vm,
-					});
-					await vm.start();
-				} catch {
-					const contained = await containUnstartedCreation({ context, vm });
-					if (!contained) ownerUnsafeKeys.add(key);
-					return contained
-						? { kind: 'not-dispatched', reason: 'credentialed runtime setup failed' }
-						: { kind: 'owner-unsafe', reason: 'credentialed runtime setup containment failed' };
-				}
-				const hostProcessId = vm.getHostProcessId();
-				let processIdentity: ProcessIdentity | null = null;
-				if (hostProcessId !== null) {
-					try {
-						processIdentity = await props.readProcessIdentity(hostProcessId);
-					} catch {
-						processIdentity = null;
+					let live = liveByKey.get(key);
+					if (live?.activeCommand !== undefined) {
+						if (
+							live.resolution.agentRuntimeRevision !== resolution.agentRuntimeRevision ||
+							!ownerIdentitiesEqual(live.ownerIdentity, request.ownerIdentity)
+						) {
+							live.retireAfterActiveReason = 'runtime compatibility changed while active';
+							return {
+								kind: 'not-dispatched',
+								reason: 'active credentialed runtime is no longer compatible',
+							};
+						}
+						return { kind: 'busy', retryable: true };
 					}
-				}
-				if (hostProcessId === null || processIdentity === null) {
-					const contained = await containUnstartedCreation({ context, vm });
-					if (!contained) ownerUnsafeKeys.add(key);
-					return contained
-						? { kind: 'not-dispatched', reason: 'credentialed runtime identity unavailable' }
-						: { kind: 'owner-unsafe', reason: 'credentialed runtime identity is unsafe' };
-				}
-				const identity = {
-					command: processIdentity.command,
-					hostProcessId,
-					processStartIdentity: processIdentity.lstart,
-					vmId: vm.id,
-				};
-				const createdLive: LiveCredentialedRuntime = {
-					createdAtMs: now(),
-					identity,
-					lastUsedAtMs: now(),
-					ownerIdentity: request.ownerIdentity,
-					recordId,
-					resolution: request.resolution,
-					vm,
-				};
-				try {
-					await recordWriter.write(context, ({ common, generation }) => ({
-						...common,
-						generation,
-						identity,
-						kind: 'identity-published',
-						updatedAtMs: now(),
-						vmId: vm.id,
-					}));
-				} catch {
-					const contained = await retireLiveUnderLock(
-						key,
-						createdLive,
-						'credentialed runtime identity publication failed',
-					);
-					return contained
-						? { kind: 'not-dispatched', reason: 'credentialed runtime record failed' }
-						: { kind: 'owner-unsafe', reason: 'credentialed runtime record is unsafe' };
-				}
-				let finalAuthorized = false;
-				if (!admissionInvalidated()) {
-					try {
-						finalAuthorized = (await request.finalAuthorization()) && !admissionInvalidated();
-					} catch {
-						finalAuthorized = false;
-					}
-				}
-				live = createdLive;
-				liveByKey.set(key, live);
-				if (!finalAuthorized) {
-					const contained = await retireLiveUnderLock(key, live, 'final authorization changed');
-					return contained
-						? { kind: 'not-dispatched', reason: 'credentialed runtime authority changed' }
-						: { kind: 'owner-unsafe', reason: 'stale runtime containment failed' };
-				}
-			} else {
-				let finalAuthorized = false;
-				if (!admissionInvalidated()) {
-					try {
-						finalAuthorized = (await request.finalAuthorization()) && !admissionInvalidated();
-					} catch {
-						finalAuthorized = false;
-					}
-				}
-				if (!finalAuthorized) {
-					return { kind: 'not-dispatched', reason: 'credentialed runtime authority changed' };
-				}
-			}
-
-			let resolveFinished: (() => void) | undefined;
-			const finished = new Promise<void>((resolve) => {
-				resolveFinished = resolve;
-			});
-			const activeCommand: ActiveCommand = {
-				abortController: new AbortController(),
-				finished,
-				operationId: request.operationId,
-				resolveFinished: () => resolveFinished?.(),
-				startedAtMs: now(),
-			};
-			const context = {
-				ownerIdentity: live.ownerIdentity,
-				recordId: live.recordId,
-				resolution: live.resolution,
-			};
-			live.activeCommand = activeCommand;
-			try {
-				await recordWriter.write(context, ({ common, generation }) => ({
-					...common,
-					activeOperationId: request.operationId,
-					generation,
-					identity: live.identity,
-					kind: 'current-active',
-					startedAtMs: activeCommand.startedAtMs,
-					updatedAtMs: now(),
-					vmId: live.vm.id,
-				}));
-			} catch {
-				delete live.activeCommand;
-				activeCommand.resolveFinished();
-				const contained = await retireLiveUnderLock(
-					key,
-					live,
-					'credentialed runtime active publication failed',
-				);
-				return contained
-					? { kind: 'not-dispatched', reason: 'credentialed runtime record failed' }
-					: { kind: 'owner-unsafe', reason: 'credentialed runtime record is unsafe' };
-			}
-			if (admissionInvalidated()) {
-				delete live.activeCommand;
-				activeCommand.resolveFinished();
-				const contained = await retireLiveUnderLock(
-					key,
-					live,
-					'credentialed runtime admission invalidated during active publication',
-				);
-				return contained
-					? { kind: 'not-dispatched', reason: 'credentialed runtime authority changed' }
-					: { kind: 'owner-unsafe', reason: 'stale runtime containment failed' };
-			}
-
-			let completed = false;
-			const commandResolution = request.resolution;
-			return {
-				command: {
-					complete: async (outcome): Promise<void> => {
-						if (completed) return;
-						completed = true;
-						await locks.runExclusive(key, async () => {
-							const current = liveByKey.get(key);
-							if (
-								current === undefined ||
-								current.activeCommand?.operationId !== request.operationId
-							) {
-								activeCommand.resolveFinished();
-								return;
+					if (live !== undefined) {
+						let currentProcessIdentity: ProcessIdentity | null = null;
+						try {
+							currentProcessIdentity = await props.readProcessIdentity(live.identity.hostProcessId);
+						} catch {
+							currentProcessIdentity = null;
+						}
+						if (
+							currentProcessIdentity === null ||
+							!processIdentitiesEqual(currentProcessIdentity, live.identity)
+						) {
+							const contained = await retireLiveUnderLock(
+								key,
+								live,
+								'credentialed runtime process identity is no longer current',
+							);
+							if (!contained) {
+								return { kind: 'owner-unsafe', reason: 'credentialed runtime health is unsafe' };
 							}
-							delete current.activeCommand;
-							activeCommand.resolveFinished();
-							const retirementReason =
-								outcome.kind === 'retire' ? outcome.reason : current.retireAfterActiveReason;
-							if (retirementReason !== undefined) {
-								await retireLiveUnderLock(key, current, retirementReason);
-								return;
-							}
-							current.lastUsedAtMs = now();
+							live = undefined;
+						}
+					}
+					if (
+						live !== undefined &&
+						(live.resolution.agentRuntimeRevision !== resolution.agentRuntimeRevision ||
+							!ownerIdentitiesEqual(live.ownerIdentity, request.ownerIdentity) ||
+							now() - live.lastUsedAtMs >= CredentialedRuntimeIdleTtlMs)
+					) {
+						const contained = await retireLiveUnderLock(
+							key,
+							live,
+							'runtime incompatible or idle-expired',
+						);
+						if (!contained) {
+							return { kind: 'owner-unsafe', reason: 'credentialed runtime retirement failed' };
+						}
+						live = undefined;
+					}
+
+					if (live === undefined) {
+						const recordId = runtimeRecordId(key);
+						const context = {
+							ownerIdentity: request.ownerIdentity,
+							recordId,
+							resolution,
+						};
+						await recordWriter.write(context, ({ common, generation }) => ({
+							...common,
+							generation,
+							kind: 'reserved',
+							updatedAtMs: now(),
+						}));
+						await recordWriter.write(context, ({ common, generation }) => ({
+							...common,
+							generation,
+							kind: 'creation-started',
+							updatedAtMs: now(),
+						}));
+						let vm: ManagedVm;
+						let commandEnvironment: Readonly<Record<string, string>>;
+						try {
+							const created = await createUnstartedCredentialedManagedVm({
+								...(materialization.dynamicHttpMediation === undefined
+									? {}
+									: { dynamicHttpMediation: materialization.dynamicHttpMediation }),
+								managedVmFactory: props.managedVmFactory,
+								resolution,
+								secretResolver: props.secretResolver,
+								sessionLabel: `credentialed-runtime-${randomUUID()}`,
+							});
+							vm = created.vm;
+							commandEnvironment = created.commandEnvironment;
+						} catch {
+							await recordWriter.delete(resolution.zoneId, recordId);
+							return { kind: 'not-dispatched', reason: 'credentialed runtime creation failed' };
+						}
+						try {
+							await recordWriter.write(context, ({ common, generation }) => ({
+								...common,
+								generation,
+								kind: 'vm-created',
+								updatedAtMs: now(),
+								vmId: vm.id,
+							}));
+						} catch {
+							const contained = await containUnstartedCreation({ context, vm });
+							if (!contained) ownerUnsafeKeys.add(key);
+							return contained
+								? { kind: 'not-dispatched', reason: 'credentialed runtime record failed' }
+								: { kind: 'owner-unsafe', reason: 'credentialed runtime record is unsafe' };
+						}
+						try {
+							await finalizeCredentialedManagedVm({
+								resolution,
+								secretResolver: props.secretResolver,
+								vm,
+							});
+							await vm.start();
+						} catch {
+							const contained = await containUnstartedCreation({ context, vm });
+							if (!contained) ownerUnsafeKeys.add(key);
+							return contained
+								? { kind: 'not-dispatched', reason: 'credentialed runtime setup failed' }
+								: { kind: 'owner-unsafe', reason: 'credentialed runtime setup containment failed' };
+						}
+						const hostProcessId = vm.getHostProcessId();
+						let processIdentity: ProcessIdentity | null = null;
+						if (hostProcessId !== null) {
 							try {
-								await recordWriter.write(context, ({ common, generation }) => ({
-									...common,
-									generation,
-									identity: current.identity,
-									idleExpiresAtMs: current.lastUsedAtMs + CredentialedRuntimeIdleTtlMs,
-									kind: 'current-idle',
-									lastUsedAtMs: current.lastUsedAtMs,
-									updatedAtMs: now(),
-									vmId: current.vm.id,
-								}));
+								processIdentity = await props.readProcessIdentity(hostProcessId);
 							} catch {
-								await retireLiveUnderLock(
-									key,
-									current,
-									'credentialed runtime idle publication failed',
-								);
+								processIdentity = null;
 							}
-						});
-					},
-					exec: async (input, options = {}) =>
-						await executeCredentialedManagedVmCommand({
-							input,
-							resolution: commandResolution,
-							signal:
-								options.signal === undefined
-									? activeCommand.abortController.signal
-									: AbortSignal.any([activeCommand.abortController.signal, options.signal]),
-							vm: live.vm,
-						}),
-				},
-				kind: 'acquired',
-			};
-		});
+						}
+						if (hostProcessId === null || processIdentity === null) {
+							const contained = await containUnstartedCreation({ context, vm });
+							if (!contained) ownerUnsafeKeys.add(key);
+							return contained
+								? { kind: 'not-dispatched', reason: 'credentialed runtime identity unavailable' }
+								: { kind: 'owner-unsafe', reason: 'credentialed runtime identity is unsafe' };
+						}
+						const identity = {
+							command: processIdentity.command,
+							hostProcessId,
+							processStartIdentity: processIdentity.lstart,
+							vmId: vm.id,
+						};
+						const createdLive: LiveCredentialedRuntime = {
+							commandEnvironment,
+							createdAtMs: now(),
+							identity,
+							lastUsedAtMs: now(),
+							ownerIdentity: request.ownerIdentity,
+							recordId,
+							resolution,
+							vm,
+						};
+						try {
+							await recordWriter.write(context, ({ common, generation }) => ({
+								...common,
+								generation,
+								identity,
+								kind: 'identity-published',
+								updatedAtMs: now(),
+								vmId: vm.id,
+							}));
+						} catch {
+							const contained = await retireLiveUnderLock(
+								key,
+								createdLive,
+								'credentialed runtime identity publication failed',
+							);
+							return contained
+								? { kind: 'not-dispatched', reason: 'credentialed runtime record failed' }
+								: { kind: 'owner-unsafe', reason: 'credentialed runtime record is unsafe' };
+						}
+						let finalAuthorized = false;
+						if (!admissionInvalidated()) {
+							try {
+								finalAuthorized = (await request.finalAuthorization()) && !admissionInvalidated();
+							} catch {
+								finalAuthorized = false;
+							}
+						}
+						if (finalAuthorized && request.finalMaterialAuthorization !== undefined) {
+							try {
+								finalAuthorized = request.finalMaterialAuthorization() && !admissionInvalidated();
+							} catch {
+								finalAuthorized = false;
+							}
+						}
+						live = createdLive;
+						liveByKey.set(key, live);
+						if (!finalAuthorized) {
+							const contained = await retireLiveUnderLock(key, live, 'final authorization changed');
+							return contained
+								? { kind: 'not-dispatched', reason: 'credentialed runtime authority changed' }
+								: { kind: 'owner-unsafe', reason: 'stale runtime containment failed' };
+						}
+					} else {
+						let finalAuthorized = false;
+						if (!admissionInvalidated()) {
+							try {
+								finalAuthorized = (await request.finalAuthorization()) && !admissionInvalidated();
+							} catch {
+								finalAuthorized = false;
+							}
+						}
+						if (finalAuthorized && request.finalMaterialAuthorization !== undefined) {
+							try {
+								finalAuthorized = request.finalMaterialAuthorization() && !admissionInvalidated();
+							} catch {
+								finalAuthorized = false;
+							}
+						}
+						if (!finalAuthorized) {
+							const contained = await retireLiveUnderLock(key, live, 'final authorization changed');
+							return contained
+								? { kind: 'not-dispatched', reason: 'credentialed runtime authority changed' }
+								: { kind: 'owner-unsafe', reason: 'stale runtime containment failed' };
+						}
+					}
+
+					let resolveFinished: (() => void) | undefined;
+					const finished = new Promise<void>((resolve) => {
+						resolveFinished = resolve;
+					});
+					const activeCommand: ActiveCommand = {
+						abortController: new AbortController(),
+						finished,
+						operationId: request.operationId,
+						resolveFinished: () => resolveFinished?.(),
+						startedAtMs: now(),
+					};
+					const context = {
+						ownerIdentity: live.ownerIdentity,
+						recordId: live.recordId,
+						resolution: live.resolution,
+					};
+					live.activeCommand = activeCommand;
+					try {
+						await recordWriter.write(context, ({ common, generation }) => ({
+							...common,
+							activeOperationId: request.operationId,
+							generation,
+							identity: live.identity,
+							kind: 'current-active',
+							startedAtMs: activeCommand.startedAtMs,
+							updatedAtMs: now(),
+							vmId: live.vm.id,
+						}));
+					} catch {
+						delete live.activeCommand;
+						activeCommand.resolveFinished();
+						const contained = await retireLiveUnderLock(
+							key,
+							live,
+							'credentialed runtime active publication failed',
+						);
+						return contained
+							? { kind: 'not-dispatched', reason: 'credentialed runtime record failed' }
+							: { kind: 'owner-unsafe', reason: 'credentialed runtime record is unsafe' };
+					}
+					if (admissionInvalidated()) {
+						delete live.activeCommand;
+						activeCommand.resolveFinished();
+						const contained = await retireLiveUnderLock(
+							key,
+							live,
+							'credentialed runtime admission invalidated during active publication',
+						);
+						return contained
+							? { kind: 'not-dispatched', reason: 'credentialed runtime authority changed' }
+							: { kind: 'owner-unsafe', reason: 'stale runtime containment failed' };
+					}
+
+					let completed = false;
+					const commandResolution = resolution;
+					return {
+						command: {
+							complete: async (outcome): Promise<void> => {
+								if (completed) return;
+								completed = true;
+								try {
+									await locks.runExclusive(key, async () => {
+										const current = liveByKey.get(key);
+										if (
+											current === undefined ||
+											current.activeCommand?.operationId !== request.operationId
+										) {
+											return;
+										}
+										delete current.activeCommand;
+										const retirementReason =
+											outcome.kind === 'retire' ? outcome.reason : current.retireAfterActiveReason;
+										if (retirementReason !== undefined) {
+											await retireLiveUnderLock(key, current, retirementReason);
+											return;
+										}
+										current.lastUsedAtMs = now();
+										try {
+											await recordWriter.write(context, ({ common, generation }) => ({
+												...common,
+												generation,
+												identity: current.identity,
+												idleExpiresAtMs: current.lastUsedAtMs + CredentialedRuntimeIdleTtlMs,
+												kind: 'current-idle',
+												lastUsedAtMs: current.lastUsedAtMs,
+												updatedAtMs: now(),
+												vmId: current.vm.id,
+											}));
+										} catch {
+											await retireLiveUnderLock(
+												key,
+												current,
+												'credentialed runtime idle publication failed',
+											);
+										}
+									});
+								} finally {
+									activeCommand.resolveFinished();
+								}
+							},
+							exec: async (input, options = {}) =>
+								await executeCredentialedManagedVmCommand({
+									commandEnvironment: live.commandEnvironment,
+									input,
+									resolution: commandResolution,
+									signal:
+										options.signal === undefined
+											? activeCommand.abortController.signal
+											: AbortSignal.any([activeCommand.abortController.signal, options.signal]),
+									vm: live.vm,
+								}),
+						},
+						kind: 'acquired',
+					};
+				} finally {
+					materialization.dynamicHttpMediation?.secretValue.fill(0);
+				}
+			});
+		} finally {
+			reservedAcquisitionKeys.delete(key);
+		}
 	};
 
 	const retire: CredentialedRuntimeManager['retire'] = async (request) => {
@@ -645,6 +752,7 @@ export function createCredentialedRuntimeManager(props: {
 		closeZone: async (zoneId): Promise<void> => {
 			closedZoneIds.add(zoneId);
 			const keys = [...(runtimeKeysByZoneId.get(zoneId) ?? [])];
+			let containmentOwnerUnsafe = false;
 			for (const key of keys) {
 				// oxlint-disable-next-line no-await-in-loop -- the zone fence drains each known key deterministically
 				const active = await locks.runExclusive(key, async () => {
@@ -667,12 +775,45 @@ export function createCredentialedRuntimeManager(props: {
 						: await retireLiveUnderLock(key, current, 'zone closed');
 				});
 				if (!contained) {
-					throw new Error(`Credentialed runtime zone '${zoneId}' containment is owner-unsafe.`);
+					containmentOwnerUnsafe = true;
 				}
+			}
+			if (containmentOwnerUnsafe) {
+				throw new Error(`Credentialed runtime zone '${zoneId}' containment is owner-unsafe.`);
 			}
 		},
 		openZone: (zoneId): void => {
 			closedZoneIds.delete(zoneId);
+		},
+		invalidateMaterial: async (request): Promise<InvalidateCredentialedRuntimeMaterialResult> => {
+			const key = runtimeKey(request);
+			let active: ActiveCommand | undefined;
+			const first = await locks.runExclusive(key, async () => {
+				if (ownerUnsafeKeys.has(key)) return { kind: 'owner-unsafe' as const };
+				const live = liveByKey.get(key);
+				if (live === undefined) return { kind: 'absent' as const };
+				if (live.activeCommand !== undefined) {
+					active = live.activeCommand;
+					live.retireAfterActiveReason = request.reason;
+					return { kind: 'wait-active' as const };
+				}
+				return (await retireLiveUnderLock(key, live, request.reason))
+					? { kind: 'retired' as const }
+					: { kind: 'owner-unsafe' as const };
+			});
+			if (first.kind !== 'wait-active') return first;
+			if (active === undefined) {
+				throw new Error('Credentialed runtime invalidation lost its active command identity.');
+			}
+			await active.finished;
+			return await locks.runExclusive(key, async () => {
+				if (ownerUnsafeKeys.has(key)) return { kind: 'owner-unsafe' };
+				const live = liveByKey.get(key);
+				if (live === undefined) return { kind: 'retired' };
+				return (await retireLiveUnderLock(key, live, request.reason))
+					? { kind: 'retired' }
+					: { kind: 'owner-unsafe' };
+			});
 		},
 		reapExpired: async (): Promise<void> => {
 			const cutoff = now() - CredentialedRuntimeIdleTtlMs;
@@ -699,7 +840,9 @@ export function createCredentialedRuntimeManager(props: {
 				now,
 				recordsDirectoryPath: recordWriter.recordsDirectoryPath(zoneId),
 			})) {
-				ownerUnsafeKeys.add(runtimeKey(unsafeIdentity));
+				const key = runtimeKey(unsafeIdentity);
+				ownerUnsafeKeys.add(key);
+				registerRuntimeKeyForZone(zoneId, key);
 			}
 		},
 		retire,

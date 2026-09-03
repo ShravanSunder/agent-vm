@@ -66,6 +66,12 @@ Deep dive into the controller runtime: startup lifecycle, HTTP API surface, leas
   Returns ControllerRuntime { controllerPort, gateway?, close() }
 ```
 
+When one selected Hermes zone has `oauth.config.jsonc`, startup also opens and
+migrates that zone's controller-only OAuth catalog, resolves its 1Password KEK and
+Google Web clients, verifies tailscaled LocalAPI, binds the controller API, and then
+binds direct tailnet HTTPS on `18900` before admitting the Gateway. Failure closes
+both listeners and the catalog before the ownership lock is released.
+
 ### Shutdown Sequence
 
 `close()` reverses startup in order:
@@ -83,6 +89,10 @@ Deep dive into the controller runtime: startup lifecycle, HTTP API surface, leas
 ```
 
 The `stopController` operation (exposed via `POST /stop-controller`) follows the same sequence but triggers the HTTP server close on a 100ms delay so the response can flush before the socket drops.
+
+OAuth-enabled shutdown first invalidates pending browser ceremonies and closes the
+tailnet HTTPS listener. Credentialed runtimes and zones are then contained before
+the SQLite catalog closes. Both shutdown entry points own that order.
 
 Offline cleanup is the broken-controller path. `agent-vm controller cleanup --config <system-config> --zone <zone>` first acquires the same deployment-wide ownership lock held for the controller's full lifetime, then refuses to run while the configured controller health endpoint is reachable. `--force` skips only that advisory health probe; it never bypasses the ownership lock or exact-evidence validation. The lock is mutual exclusion, not destruction evidence.
 
@@ -126,7 +136,7 @@ Registered conditionally -- only when `operations` or `workerTaskRunner` is prov
 | `POST` | `/zones/:zoneId/upgrade` | Rebuild image and restart Gateway | Hermes |
 | `POST` | `/zones/:zoneId/enable-ssh` | Enable SSH into gateway VM | Managed gateways |
 | `POST` | `/zones/:zoneId/execute-command` | Run a shell command inside Gateway VM; requires zone admin token when adminAccess is configured | Hermes |
-| `POST` | `/zones/:zoneId/credentialed-runtimes/:runtimeId/retire` | Retire one agent-owned reusable credentialed Managed runtime; body is `{ agentId, force, adminToken? }` | Managed gateways |
+| `POST` | `/zones/:zoneId/credentialed-runtime/retire` | Retire the authenticated agent's singleton reusable credentialed Managed runtime; body is `{ agentId, force, adminToken? }` | Managed gateways |
 | `POST` | `/zones/:zoneId/worker-tasks` | Submit a worker task (`requestTaskId`, prompt, repos, context) | Worker |
 | `GET` | `/zones/:zoneId/tasks/:taskId` | Read worker task state snapshot | Worker |
 | `POST` | `/zones/:zoneId/tasks/:taskId/close` | Request task cancellation | Worker |
@@ -134,14 +144,14 @@ Registered conditionally -- only when `operations` or `workerTaskRunner` is prov
 
 Request bodies are validated with Zod schemas (`controller-request-schemas.ts`). Invalid payloads return 400 with structured `error` and `issues` fields.
 
-Credentialed configured CLI runtimes are controller-local leases keyed by zone,
-authenticated agent, and authored runtime id. They are not exposed through the
-Tool VM lease API. Each admits one active command, returns retryable busy rather
-than queueing, and retires after 15 idle minutes. Their non-secret crash records
-live under `controllerStateDir/zones/<zoneId>/credentialed-runtimes/`; startup
-and offline cleanup contain them before the parent Gateway record. The retire
-route uses existing zone `adminAccess` and returns `retired`, `absent`, `active`,
-or `owner-unsafe` without exposing VM or credential identity.
+Credentialed configured CLI runtimes are controller-local singletons keyed by
+zone and authenticated agent. They are not exposed through the Tool VM lease
+API. Each admits one active command, returns retryable busy rather than
+queueing, and retires after 15 idle minutes. Their non-secret crash records live
+under `controllerStateDir/zones/<zoneId>/credentialed-runtimes/`; startup and
+offline cleanup contain them before the parent Gateway record. The retire route
+uses existing zone `adminAccess` and returns `retired`, `absent`, `active`, or
+`owner-unsafe` without exposing VM or credential identity.
 
 See [Credentialed Managed Runtimes](../architecture/credentialed-runtimes.md)
 for the full ownership, admission, credential-memory, COW, and retirement model.

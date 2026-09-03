@@ -1,3 +1,7 @@
+import {
+	oauthToolAvailabilitySchema,
+	oauthToolRequirementSchema,
+} from '@agent-vm/oauth-broker-contracts';
 import { z } from 'zod';
 
 import {
@@ -60,10 +64,35 @@ export const ToolSchemaHintSchema = z
 
 export type ToolSchemaHint = z.infer<typeof ToolSchemaHintSchema>;
 
+export const ToolCallDispositionSchema = z.discriminatedUnion('kind', [
+	z.object({ kind: z.literal('without-approval') }).strict(),
+	z.object({ kind: z.literal('requires-approval') }).strict(),
+	z
+		.object({
+			describeBeforeCall: z.literal(true),
+			kind: z.literal('invocation-dependent'),
+		})
+		.strict(),
+]);
+
+export type ToolCallDisposition = z.infer<typeof ToolCallDispositionSchema>;
+
+export const CapabilityDiscoveryMetadataSchema = z
+	.object({
+		callDisposition: ToolCallDispositionSchema,
+		oauthAvailability: oauthToolAvailabilitySchema.optional(),
+		oauthRequirement: oauthToolRequirementSchema.optional(),
+	})
+	.strict();
+
+export type CapabilityDiscoveryMetadata = z.infer<typeof CapabilityDiscoveryMetadataSchema>;
+
 export const CapabilitySummarySchema = z
 	.object({
 		advisory: ToolVmCallHintsAdvisorySchema.optional(),
+		callDisposition: ToolCallDispositionSchema.optional(),
 		description: z.string().optional(),
+		descriptionTruncated: z.boolean().optional(),
 		input: ToolSchemaSummarySchema,
 		namespace: NamespaceNameSchema,
 		output: ToolSchemaSummarySchema.optional(),
@@ -72,11 +101,30 @@ export const CapabilitySummarySchema = z
 		title: z.string().min(1).optional(),
 		name: CapabilityNameSchema,
 		toolVmCliMetadata: ToolVmCliDiscoveryMetadataSchema.optional(),
+		oauthAvailability: oauthToolAvailabilitySchema.optional(),
+		oauthRequirement: oauthToolRequirementSchema.optional(),
 		toolRef: z.string().min(1),
 	})
 	.strict();
 
 export type CapabilitySummary = z.infer<typeof CapabilitySummarySchema>;
+
+export const CompactCapabilityDescriptionCodePointLimit = 240;
+
+export function compactCapabilitySummaryDescription(summary: CapabilitySummary): CapabilitySummary {
+	if (
+		summary.description === undefined ||
+		Array.from(summary.description).length <= CompactCapabilityDescriptionCodePointLimit
+	) {
+		return { ...summary, descriptionTruncated: false };
+	}
+	const codePoints = Array.from(summary.description);
+	return {
+		...summary,
+		description: `${codePoints.slice(0, CompactCapabilityDescriptionCodePointLimit - 1).join('')}…`,
+		descriptionTruncated: true,
+	};
+}
 
 export const ResultExpectationSchema = z
 	.object({
@@ -119,14 +167,18 @@ export const CapabilityDescriptorSchema = z
 	.object({
 		advisory: ToolVmCallHintsAdvisorySchema.optional(),
 		annotations: JsonSchemaDocumentSchema.default({}),
+		callDisposition: ToolCallDispositionSchema.optional(),
 		description: z.string().optional(),
 		inputSchema: JsonSchemaDocumentSchema.optional(),
 		namespace: NamespaceNameSchema,
 		outputSchema: JsonSchemaDocumentSchema.optional(),
 		related: z.array(JsonValueSchema).default([]),
 		schemaHint: ToolSchemaHintSchema.optional(),
+		title: z.string().min(1).optional(),
 		name: CapabilityNameSchema,
 		toolVmCliMetadata: ToolVmCliDiscoveryMetadataSchema.optional(),
+		oauthAvailability: oauthToolAvailabilitySchema.optional(),
+		oauthRequirement: oauthToolRequirementSchema.optional(),
 		toolRef: z.string().min(1),
 		typescriptHelper: z.string().optional(),
 		zod: JsonSchemaDocumentSchema.optional(),

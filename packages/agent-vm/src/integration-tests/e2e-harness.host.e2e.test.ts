@@ -690,6 +690,9 @@ describe('startE2eControllerRuntime', () => {
 			'COPY agent-vm-agent-portal-sdk-0.0.0-smoke.tgz /tmp/agent-vm-agent-portal-sdk-0.0.0-smoke.tgz',
 		);
 		expect(toolVmDockerfile).toContain(
+			'COPY agent-vm-oauth-broker-contracts-0.0.0-smoke.tgz /tmp/agent-vm-oauth-broker-contracts-0.0.0-smoke.tgz',
+		);
+		expect(toolVmDockerfile).toContain(
 			'COPY agent-vm-config-contracts-0.0.0-smoke.tgz /tmp/agent-vm-config-contracts-0.0.0-smoke.tgz',
 		);
 		expect(toolVmDockerfile).toContain(
@@ -701,6 +704,8 @@ describe('startE2eControllerRuntime', () => {
 		expect(toolVmDockerfile).toContain('pnpm install --prod --ignore-scripts');
 		expect(toolVmDockerfile).toContain('@agent-vm/config-contracts');
 		expect(toolVmDockerfile).toContain('file:/tmp/agent-vm-config-contracts-0.0.0-smoke.tgz');
+		expect(toolVmDockerfile).toContain('@agent-vm/oauth-broker-contracts');
+		expect(toolVmDockerfile).toContain('file:/tmp/agent-vm-oauth-broker-contracts-0.0.0-smoke.tgz');
 		expect(toolVmDockerfile).toContain('@agent-vm/mcp-portal');
 		expect(toolVmDockerfile).toContain('file:/tmp/agent-vm-mcp-portal-0.0.0-smoke.tgz');
 		expect(toolVmDockerfile).not.toContain('pnpm add -g');
@@ -969,11 +974,11 @@ describe('prepareGatewayE2eProjectImages', () => {
 			});
 			expect(
 				derivedOverlay.copy.filter((copyEntry) =>
-					/^local-agent-vm\/agent-vm-(?:agent-portal-sdk|config-contracts|secret-management|mcp-portal)-/u.test(
+					/^local-agent-vm\/agent-vm-(?:agent-portal-sdk|oauth-broker-contracts|config-contracts|secret-management|mcp-portal)-/u.test(
 						copyEntry.from,
 					),
 				),
-			).toHaveLength(4);
+			).toHaveLength(5);
 			expect(
 				derivedOverlay.runAfterBase.filter((command) =>
 					command.includes('/opt/agent-vm/local-packages/package.json'),
@@ -1921,7 +1926,10 @@ async function createFakeSimplePackage(
 }
 
 async function createFakeAgentPortalSdkPackage(repoRoot: string): Promise<void> {
-	await createFakeSimplePackage(repoRoot, 'agent-portal-sdk');
+	await createFakeSimplePackage(repoRoot, 'oauth-broker-contracts');
+	await createFakeSimplePackage(repoRoot, 'agent-portal-sdk', {
+		'@agent-vm/oauth-broker-contracts': '0.0.0-smoke',
+	});
 }
 
 async function createFakePortalDist(repoRoot: string): Promise<void> {

@@ -1892,6 +1892,47 @@
 																	"$ref": "#/$defs/__schema0"
 																}
 															},
+															"callDisposition": {
+																"oneOf": [
+																	{
+																		"type": "object",
+																		"properties": {
+																			"kind": {
+																				"type": "string",
+																				"const": "without-approval"
+																			}
+																		},
+																		"required": ["kind"],
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"kind": {
+																				"type": "string",
+																				"const": "requires-approval"
+																			}
+																		},
+																		"required": ["kind"],
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"describeBeforeCall": {
+																				"type": "boolean",
+																				"const": true
+																			},
+																			"kind": {
+																				"type": "string",
+																				"const": "invocation-dependent"
+																			}
+																		},
+																		"required": ["describeBeforeCall", "kind"],
+																		"additionalProperties": false
+																	}
+																]
+															},
 															"description": {
 																"type": "string"
 															},
@@ -1939,6 +1980,10 @@
 																"required": ["message", "next"],
 																"additionalProperties": false
 															},
+															"title": {
+																"type": "string",
+																"minLength": 1
+															},
 															"name": {
 																"type": "string",
 																"minLength": 1
@@ -1972,6 +2017,141 @@
 																	}
 																},
 																"additionalProperties": false
+															},
+															"oauthAvailability": {
+																"oneOf": [
+																	{
+																		"type": "object",
+																		"properties": {
+																			"accountProfiles": {
+																				"readOnly": true,
+																				"minItems": 1,
+																				"type": "array",
+																				"items": {
+																					"type": "object",
+																					"properties": {
+																						"accountLabel": {
+																							"type": "string",
+																							"minLength": 1,
+																							"maxLength": 320
+																						},
+																						"accountProfileId": {
+																							"type": "string",
+																							"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+																						}
+																					},
+																					"required": ["accountLabel", "accountProfileId"],
+																					"additionalProperties": false
+																				}
+																			},
+																			"kind": {
+																				"type": "string",
+																				"const": "ready"
+																			}
+																		},
+																		"required": ["accountProfiles", "kind"],
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"kind": {
+																				"type": "string",
+																				"const": "authorization-required"
+																			}
+																		},
+																		"required": ["kind"],
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"kind": {
+																				"type": "string",
+																				"const": "reauthorization-required"
+																			}
+																		},
+																		"required": ["kind"],
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"kind": {
+																				"type": "string",
+																				"const": "scope-insufficient"
+																			}
+																		},
+																		"required": ["kind"],
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"kind": {
+																				"type": "string",
+																				"const": "authorization-status-unavailable"
+																			}
+																		},
+																		"required": ["kind"],
+																		"additionalProperties": false
+																	}
+																]
+															},
+															"oauthRequirement": {
+																"oneOf": [
+																	{
+																		"type": "object",
+																		"properties": {
+																			"applicationId": {
+																				"type": "string",
+																				"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+																			},
+																			"kind": {
+																				"type": "string",
+																				"const": "oauth-account-profile"
+																			},
+																			"minimumPermission": {
+																				"type": "string",
+																				"enum": ["read", "write"]
+																			},
+																			"serviceId": {
+																				"type": "string",
+																				"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+																			}
+																		},
+																		"required": [
+																			"applicationId",
+																			"kind",
+																			"minimumPermission",
+																			"serviceId"
+																		],
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"accountProfileArgument": {
+																				"type": "string",
+																				"const": "accountProfile"
+																			},
+																			"describeBeforeCall": {
+																				"type": "boolean",
+																				"const": true
+																			},
+																			"kind": {
+																				"type": "string",
+																				"const": "invocation-dependent-oauth-account-profile"
+																			}
+																		},
+																		"required": [
+																			"accountProfileArgument",
+																			"describeBeforeCall",
+																			"kind"
+																		],
+																		"additionalProperties": false
+																	}
+																]
 															},
 															"toolRef": {
 																"type": "string",
@@ -2557,8 +2737,52 @@
 																],
 																"additionalProperties": false
 															},
+															"callDisposition": {
+																"oneOf": [
+																	{
+																		"type": "object",
+																		"properties": {
+																			"kind": {
+																				"type": "string",
+																				"const": "without-approval"
+																			}
+																		},
+																		"required": ["kind"],
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"kind": {
+																				"type": "string",
+																				"const": "requires-approval"
+																			}
+																		},
+																		"required": ["kind"],
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"describeBeforeCall": {
+																				"type": "boolean",
+																				"const": true
+																			},
+																			"kind": {
+																				"type": "string",
+																				"const": "invocation-dependent"
+																			}
+																		},
+																		"required": ["describeBeforeCall", "kind"],
+																		"additionalProperties": false
+																	}
+																]
+															},
 															"description": {
 																"type": "string"
+															},
+															"descriptionTruncated": {
+																"type": "boolean"
 															},
 															"input": {
 																"type": "object",
@@ -2684,6 +2908,141 @@
 																	}
 																},
 																"additionalProperties": false
+															},
+															"oauthAvailability": {
+																"oneOf": [
+																	{
+																		"type": "object",
+																		"properties": {
+																			"accountProfiles": {
+																				"readOnly": true,
+																				"minItems": 1,
+																				"type": "array",
+																				"items": {
+																					"type": "object",
+																					"properties": {
+																						"accountLabel": {
+																							"type": "string",
+																							"minLength": 1,
+																							"maxLength": 320
+																						},
+																						"accountProfileId": {
+																							"type": "string",
+																							"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+																						}
+																					},
+																					"required": ["accountLabel", "accountProfileId"],
+																					"additionalProperties": false
+																				}
+																			},
+																			"kind": {
+																				"type": "string",
+																				"const": "ready"
+																			}
+																		},
+																		"required": ["accountProfiles", "kind"],
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"kind": {
+																				"type": "string",
+																				"const": "authorization-required"
+																			}
+																		},
+																		"required": ["kind"],
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"kind": {
+																				"type": "string",
+																				"const": "reauthorization-required"
+																			}
+																		},
+																		"required": ["kind"],
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"kind": {
+																				"type": "string",
+																				"const": "scope-insufficient"
+																			}
+																		},
+																		"required": ["kind"],
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"kind": {
+																				"type": "string",
+																				"const": "authorization-status-unavailable"
+																			}
+																		},
+																		"required": ["kind"],
+																		"additionalProperties": false
+																	}
+																]
+															},
+															"oauthRequirement": {
+																"oneOf": [
+																	{
+																		"type": "object",
+																		"properties": {
+																			"applicationId": {
+																				"type": "string",
+																				"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+																			},
+																			"kind": {
+																				"type": "string",
+																				"const": "oauth-account-profile"
+																			},
+																			"minimumPermission": {
+																				"type": "string",
+																				"enum": ["read", "write"]
+																			},
+																			"serviceId": {
+																				"type": "string",
+																				"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+																			}
+																		},
+																		"required": [
+																			"applicationId",
+																			"kind",
+																			"minimumPermission",
+																			"serviceId"
+																		],
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"accountProfileArgument": {
+																				"type": "string",
+																				"const": "accountProfile"
+																			},
+																			"describeBeforeCall": {
+																				"type": "boolean",
+																				"const": true
+																			},
+																			"kind": {
+																				"type": "string",
+																				"const": "invocation-dependent-oauth-account-profile"
+																			}
+																		},
+																		"required": [
+																			"accountProfileArgument",
+																			"describeBeforeCall",
+																			"kind"
+																		],
+																		"additionalProperties": false
+																	}
+																]
 															},
 															"toolRef": {
 																"type": "string",
@@ -3178,8 +3537,52 @@
 																],
 																"additionalProperties": false
 															},
+															"callDisposition": {
+																"oneOf": [
+																	{
+																		"type": "object",
+																		"properties": {
+																			"kind": {
+																				"type": "string",
+																				"const": "without-approval"
+																			}
+																		},
+																		"required": ["kind"],
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"kind": {
+																				"type": "string",
+																				"const": "requires-approval"
+																			}
+																		},
+																		"required": ["kind"],
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"describeBeforeCall": {
+																				"type": "boolean",
+																				"const": true
+																			},
+																			"kind": {
+																				"type": "string",
+																				"const": "invocation-dependent"
+																			}
+																		},
+																		"required": ["describeBeforeCall", "kind"],
+																		"additionalProperties": false
+																	}
+																]
+															},
 															"description": {
 																"type": "string"
+															},
+															"descriptionTruncated": {
+																"type": "boolean"
 															},
 															"input": {
 																"type": "object",
@@ -3305,6 +3708,141 @@
 																	}
 																},
 																"additionalProperties": false
+															},
+															"oauthAvailability": {
+																"oneOf": [
+																	{
+																		"type": "object",
+																		"properties": {
+																			"accountProfiles": {
+																				"readOnly": true,
+																				"minItems": 1,
+																				"type": "array",
+																				"items": {
+																					"type": "object",
+																					"properties": {
+																						"accountLabel": {
+																							"type": "string",
+																							"minLength": 1,
+																							"maxLength": 320
+																						},
+																						"accountProfileId": {
+																							"type": "string",
+																							"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+																						}
+																					},
+																					"required": ["accountLabel", "accountProfileId"],
+																					"additionalProperties": false
+																				}
+																			},
+																			"kind": {
+																				"type": "string",
+																				"const": "ready"
+																			}
+																		},
+																		"required": ["accountProfiles", "kind"],
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"kind": {
+																				"type": "string",
+																				"const": "authorization-required"
+																			}
+																		},
+																		"required": ["kind"],
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"kind": {
+																				"type": "string",
+																				"const": "reauthorization-required"
+																			}
+																		},
+																		"required": ["kind"],
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"kind": {
+																				"type": "string",
+																				"const": "scope-insufficient"
+																			}
+																		},
+																		"required": ["kind"],
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"kind": {
+																				"type": "string",
+																				"const": "authorization-status-unavailable"
+																			}
+																		},
+																		"required": ["kind"],
+																		"additionalProperties": false
+																	}
+																]
+															},
+															"oauthRequirement": {
+																"oneOf": [
+																	{
+																		"type": "object",
+																		"properties": {
+																			"applicationId": {
+																				"type": "string",
+																				"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+																			},
+																			"kind": {
+																				"type": "string",
+																				"const": "oauth-account-profile"
+																			},
+																			"minimumPermission": {
+																				"type": "string",
+																				"enum": ["read", "write"]
+																			},
+																			"serviceId": {
+																				"type": "string",
+																				"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+																			}
+																		},
+																		"required": [
+																			"applicationId",
+																			"kind",
+																			"minimumPermission",
+																			"serviceId"
+																		],
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"accountProfileArgument": {
+																				"type": "string",
+																				"const": "accountProfile"
+																			},
+																			"describeBeforeCall": {
+																				"type": "boolean",
+																				"const": true
+																			},
+																			"kind": {
+																				"type": "string",
+																				"const": "invocation-dependent-oauth-account-profile"
+																			}
+																		},
+																		"required": [
+																			"accountProfileArgument",
+																			"describeBeforeCall",
+																			"kind"
+																		],
+																		"additionalProperties": false
+																	}
+																]
 															},
 															"toolRef": {
 																"type": "string",

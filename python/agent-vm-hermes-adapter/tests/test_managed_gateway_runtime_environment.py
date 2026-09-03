@@ -12,10 +12,12 @@ from unittest.mock import patch
 from agent_vm_agent_portal_sdk.gateway_runtime_client import GatewayRuntimeClient
 from pydantic import BaseModel, ConfigDict
 
-from agent_vm_hermes_adapter import (
+from agent_vm_hermes_adapter.managed_gateway_runtime_environment import (
     HermesGatewayRuntimeEnvironment,
     HermesGatewayRuntimeEnvironmentFactory,
     HermesGatewayRuntimeOutcomeError,
+)
+from agent_vm_hermes_adapter.managed_profile_adapter import (
     HermesManagedAdapter,
     HermesManagedAdapterConfig,
 )

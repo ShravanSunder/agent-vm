@@ -26,11 +26,15 @@ function isCanonicalUtf8(value: string, encoded: Uint8Array): boolean {
 export function resolveCredentialEnvironment(
 	resolution: CredentialedRuntimeResolution,
 ): Readonly<Record<string, string>> {
+	if (resolution.projection.kind !== 'file_binding') {
+		throw credentialMaterializationError();
+	}
+	const projection = resolution.projection;
 	const relativePathBySource = new Map(
-		resolution.fileMappings.map((mapping) => [mapping.source, mapping.path] as const),
+		projection.fileMappings.map((mapping) => [mapping.source, mapping.path] as const),
 	);
 	const environment: Record<string, string> = {};
-	for (const [environmentName, value] of Object.entries(resolution.credentialEnvironment)) {
+	for (const [environmentName, value] of Object.entries(projection.credentialEnvironment)) {
 		if (value.kind === 'credential_root') {
 			environment[environmentName] = CredentialedRuntimeCredentialRoot;
 			continue;
@@ -47,12 +51,16 @@ export async function materializeCredentialFiles(props: {
 	readonly secretResolver: SecretResolver;
 	readonly vm: ManagedVm;
 }): Promise<CredentialFileMaterializationResult> {
+	if (props.resolution.projection.kind !== 'file_binding') {
+		throw credentialMaterializationError();
+	}
+	const projection = props.resolution.projection;
 	if (props.vm.finalizeMemoryMount === undefined) {
 		throw new Error('Credentialed runtime requires finalizable memory mount support.');
 	}
 	const refs: Record<string, SecretRef> = {};
-	for (const mapping of props.resolution.fileMappings) {
-		const ref = props.resolution.credentialBinding.files[mapping.source];
+	for (const mapping of projection.fileMappings) {
+		const ref = projection.credentialBinding.files[mapping.source];
 		if (ref === undefined) throw credentialMaterializationError();
 		refs[mapping.source] = ref;
 	}
@@ -72,7 +80,7 @@ export async function materializeCredentialFiles(props: {
 
 	let totalBytes = 0;
 	const files: ManagedVmFinalizableMemoryFile[] = [];
-	for (const mapping of props.resolution.fileMappings) {
+	for (const mapping of projection.fileMappings) {
 		const value = resolved[mapping.source];
 		if (value === undefined) throw credentialMaterializationError();
 		const contents = new TextEncoder().encode(value);

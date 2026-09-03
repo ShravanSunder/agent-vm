@@ -1,4 +1,5 @@
 import ast
+import importlib
 import pathlib
 import tomllib
 import unittest
@@ -44,6 +45,21 @@ def _assignment_name(target: ast.expr) -> str:
 
 
 class PackageBoundaryTests(unittest.TestCase):
+    def test_only_package_root_keeps_an_empty_init_marker(self) -> None:
+        self.assertEqual((SOURCE_ROOT / "__init__.py").read_text(encoding="utf-8"), "")
+        self.assertFalse((SOURCE_ROOT / "managed_tool_portal" / "__init__.py").exists())
+
+    def test_concrete_modules_import_without_package_facades(self) -> None:
+        package_module = importlib.import_module("agent_vm_hermes_adapter")
+        profile_module = importlib.import_module("agent_vm_hermes_adapter.managed_profile_adapter")
+        inventory_module = importlib.import_module(
+            "agent_vm_hermes_adapter.managed_tool_portal.inventory"
+        )
+
+        self.assertFalse(hasattr(package_module, "HermesManagedAdapter"))
+        self.assertTrue(hasattr(profile_module, "HermesManagedAdapter"))
+        self.assertTrue(hasattr(inventory_module, "InventoryCoordinator"))
+
     def test_boundary_file_inventory_is_explicit_and_file_only(self) -> None:
         self.assertTrue(MANAGED_TOOL_PORTAL_SOURCE_FILES[0].is_file())
         self.assertGreater(len(MANAGED_TOOL_PORTAL_PACKAGE_FILES), 0)

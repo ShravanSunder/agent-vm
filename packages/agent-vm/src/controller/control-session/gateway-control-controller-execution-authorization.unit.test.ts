@@ -12,6 +12,10 @@ import {
 	type GatewayRuntimeControllerExecutionDispatchReservation,
 } from '@agent-vm/gateway-control-contracts';
 import {
+	oauthAccountProfileIdSchema,
+	oauthApplicationIdSchema,
+} from '@agent-vm/oauth-broker-contracts';
+import {
 	deterministicOperationId,
 	directDispatchFingerprint,
 } from '@agent-vm/tool-portal/dispatch-authority';
@@ -101,6 +105,7 @@ async function writeToolPortalAuthoredConfig(
 		readonly configuredInvocationApproval?: boolean;
 		readonly controllerExecutionTools?: readonly string[];
 		readonly controllerExecutionPolicy?: boolean;
+		readonly oauthAuthorizationPolicy?: boolean;
 		readonly profileId?: string;
 		readonly requiresApproval?: boolean;
 	} = {},
@@ -111,76 +116,100 @@ async function writeToolPortalAuthoredConfig(
 	const controllerExecutionPolicy = props.controllerExecutionPolicy ?? true;
 	const profileId = props.profileId ?? 'default';
 	const requiresApproval = props.requiresApproval ?? false;
-	const namespaces = controllerExecutionPolicy
-		? {
-				controller_execution: {
-					backend: {
-						kind: 'controller_execution',
-						operations: {
-							...(props.configuredOperation === true
-								? {
-										inspect_host: {
-											calls: {
-												deny:
-													props.configuredInvocationDeny === true
-														? [
-																{
-																	flags: [{ names: ['--denied'] }],
-																	path: ['inspect'],
-																},
-															]
-														: [],
-												requiresApproval:
-													props.configuredInvocationApproval === true
-														? [
-																{
-																	flags: [{ names: ['--protected'] }],
-																	path: ['inspect'],
-																},
-															]
-														: [],
-												withoutApproval: 'remaining_admitted',
+	const namespaces = {
+		...(controllerExecutionPolicy
+			? {
+					controller_execution: {
+						backend: {
+							kind: 'controller_execution',
+							operations: {
+								...(props.configuredOperation === true
+									? {
+											inspect_host: {
+												calls: {
+													deny:
+														props.configuredInvocationDeny === true
+															? [
+																	{
+																		flags: [{ names: ['--denied'] }],
+																		path: ['inspect'],
+																	},
+																]
+															: [],
+													requiresApproval:
+														props.configuredInvocationApproval === true
+															? [
+																	{
+																		flags: [{ names: ['--protected'] }],
+																		path: ['inspect'],
+																	},
+																]
+															: [],
+													withoutApproval: 'remaining_admitted',
+												},
+												commands: [{ path: ['inspect'] }],
+												deniedPatterns: [],
+												executablePath: props.configuredExecutablePath ?? '/usr/bin/printf',
+												executionTarget: {
+													cwd: '/tmp',
+													environment: { kind: 'empty' },
+													kind: 'controller_host',
+												},
+												kind: 'configured_cli',
+												mandatoryArgvPrefix: [],
+												output: {
+													modelVisibleStderr: 'none',
+													overflow: 'truncate',
+													stderrMaxBytes: 1024,
+													stdoutMaxBytes: 1024,
+												},
+												safeHelp: 'Inspect host state.',
+												stdin: { kind: 'none' },
+												timeout: { kind: 'quick' },
 											},
-											commands: [{ path: ['inspect'] }],
-											deniedPatterns: [],
-											executablePath: props.configuredExecutablePath ?? '/usr/bin/printf',
-											executionTarget: {
-												cwd: '/tmp',
-												environment: { kind: 'empty' },
-												kind: 'controller_host',
-											},
-											kind: 'configured_cli',
-											mandatoryArgvPrefix: [],
-											output: {
-												modelVisibleStderr: 'none',
-												overflow: 'truncate',
-												stderrMaxBytes: 1024,
-												stdoutMaxBytes: 1024,
-											},
-											safeHelp: 'Inspect host state.',
-											stdin: { kind: 'none' },
-											timeout: { kind: 'quick' },
-										},
-									}
-								: {}),
-							controller_host_probe: { kind: 'registered_action' },
-							workspace_git_push: { kind: 'registered_action' },
-							push_branch: { kind: 'registered_action' },
-							protected_uds: { kind: 'registered_action' },
+										}
+									: {}),
+								controller_host_probe: { kind: 'registered_action' },
+								workspace_git_push: { kind: 'registered_action' },
+								push_branch: { kind: 'registered_action' },
+								protected_uds: { kind: 'registered_action' },
+							},
 						},
+						calls: {
+							requiresApproval: {
+								allow: requiresApproval ? controllerExecutionTools : [],
+							},
+							withoutApproval: {
+								allow: requiresApproval ? [] : controllerExecutionTools,
+							},
+						},
+						tools: { allow: controllerExecutionTools },
 					},
-					calls: {
-						requiresApproval: {
-							allow: requiresApproval ? controllerExecutionTools : [],
+				}
+			: {}),
+		...(props.oauthAuthorizationPolicy === true
+			? {
+					oauth_authorization: {
+						backend: {
+							kind: 'controller_execution',
+							operations: {
+								begin: { kind: 'registered_action' },
+								cancel: { kind: 'registered_action' },
+								list: { kind: 'registered_action' },
+								reauthorize: { kind: 'registered_action' },
+								revoke: { kind: 'registered_action' },
+								status: { kind: 'registered_action' },
+							},
 						},
-						withoutApproval: {
-							allow: requiresApproval ? [] : controllerExecutionTools,
+						calls: {
+							requiresApproval: { allow: ['reauthorize', 'revoke'] },
+							withoutApproval: { allow: ['begin', 'cancel', 'list', 'status'] },
 						},
+						tools: { allow: ['begin', 'cancel', 'list', 'reauthorize', 'revoke', 'status'] },
 					},
-					tools: { allow: controllerExecutionTools },
-				},
-			}
-		: {};
+				}
+			: {}),
+	};
 	await mkdir(configDir, { recursive: true });
 	await writeFile(
 		path.join(configDir, 'mcp.config.jsonc'),
@@ -506,6 +535,89 @@ async function configuredCliApprovalReservation(
 	};
 }
 
+const oauthInvocationPrincipal = trustedPrincipal;
+
+async function oauthApprovalReservation(props: {
+	readonly arguments: Readonly<Record<string, string>>;
+	readonly callId: string;
+	readonly capabilityName: 'reauthorize' | 'revoke';
+	readonly systemConfig: LoadedSystemConfig;
+}): Promise<GatewayRuntimeControllerExecutionDispatchReservation> {
+	const admission = await loadGatewayRuntimePortalAdmissionFile(
+		path.join(
+			props.systemConfig.cacheDir,
+			'gateways',
+			acceptedSession.zoneId,
+			'tool-portal-effective',
+		),
+	);
+	const operationId = deterministicOperationId({
+		callId: props.callId,
+		semanticRevision: admission.semanticSnapshot.activeRevision,
+		stablePrincipal: trustedCallerContext.stablePrincipal,
+		surfaceClass: 'protected_uds',
+	});
+	const intent = {
+		backendKind: 'controller_execution' as const,
+		call: {
+			arguments: props.arguments,
+			id: props.callId,
+			name: props.capabilityName,
+			namespace: 'oauth_authorization',
+		},
+		operationId,
+		semanticRevisions: {
+			activeRevision: admission.semanticSnapshot.activeRevision,
+			bindingRevision: admission.semanticSnapshot.bindingRevision,
+			catalogRevision: admission.semanticSnapshot.catalogRevision,
+			profilePolicyRevision: admission.semanticSnapshot.profilePolicyRevision,
+			providerRevision: admission.semanticSnapshot.providerRevision,
+			schemaRevision: admission.semanticSnapshot.schemaRevision,
+		},
+		surfaceClass: 'protected_uds' as const,
+		trustedContext: { principal: oauthInvocationPrincipal },
+	};
+	const fingerprint = deriveGatewayRuntimeApprovalFingerprint({
+		authorityContext: approvalReservation.authorityContext,
+		intent,
+	});
+	return {
+		...approvalReservation,
+		approvalId: deriveGatewayRuntimeApprovalId(fingerprint),
+		bindingRevision: admission.semanticSnapshot.bindingRevision,
+		fingerprint,
+		operationId,
+		stablePrincipal: trustedCallerContext.stablePrincipal,
+	};
+}
+
+function createOAuthApprovedPayload(props: {
+	readonly accountProfileId: string;
+	readonly applicationId: string;
+	readonly callId: string;
+	readonly capabilityName: 'reauthorize' | 'revoke';
+	readonly reservation: GatewayRuntimeControllerExecutionDispatchReservation;
+}): Extract<GatewayControlToolPortalControllerExecutionPayload, { kind: 'registered_action' }> {
+	return {
+		action: {
+			actionId: `oauth_authorization.${props.capabilityName}`,
+			accountProfileId: oauthAccountProfileIdSchema.parse(props.accountProfileId),
+			applicationId: oauthApplicationIdSchema.parse(props.applicationId),
+			authority: { kind: 'controller_approval_reservation', reservation: props.reservation },
+			callerContext: { callerContextId: trustedCallerContext.callerContextId },
+			correlation: {
+				capability: { name: props.capabilityName, namespace: 'oauth_authorization' },
+			},
+			invocation: {
+				callId: props.callId,
+				surfaceClass: 'protected_uds',
+				trustedContext: { principal: oauthInvocationPrincipal },
+			},
+		},
+		kind: 'registered_action',
+	};
+}
+
 function createWorkspaceGitPushPayload(
 	overrides: {
 		readonly approvalReservation?: GatewayRuntimeControllerExecutionDispatchReservation;
@@ -576,6 +688,71 @@ function createControllerHostProbePayload(
 }
 
 describe('authorizeGatewayControlControllerExecution', () => {
+	it('binds OAuth approval reservations to the exact action and arguments', async () => {
+		// Arrange
+		const configDir = await writeToolPortalAuthoredConfig({
+			controllerExecutionPolicy: false,
+			oauthAuthorizationPolicy: true,
+		});
+		const systemConfig = await createSystemConfigFixture({ configDir });
+		await writeEffectiveToolPortalSnapshot(systemConfig, { approvalAccessConfigured: true });
+		const callId = 'oauth-reauthorize-call-a';
+		const approvedArguments = {
+			accountProfileId: 'personal-google',
+			applicationId: 'gmail-app',
+		};
+		const reservation = await oauthApprovalReservation({
+			arguments: approvedArguments,
+			callId,
+			capabilityName: 'reauthorize',
+			systemConfig,
+		});
+
+		// Act / Assert
+		await expect(
+			authorizeGatewayControlControllerExecution({
+				callerContext: trustedCallerContext,
+				payload: createOAuthApprovedPayload({
+					...approvedArguments,
+					callId,
+					capabilityName: 'reauthorize',
+					reservation,
+				}),
+				session: acceptedSession,
+				systemConfig,
+			}),
+		).resolves.toEqual({ authorized: true });
+		for (const substitutedPayload of [
+			createOAuthApprovedPayload({
+				accountProfileId: 'work-google',
+				applicationId: 'youtube-app',
+				callId,
+				capabilityName: 'reauthorize',
+				reservation,
+			}),
+			createOAuthApprovedPayload({
+				accountProfileId: 'work-google',
+				applicationId: 'youtube-app',
+				callId,
+				capabilityName: 'revoke',
+				reservation,
+			}),
+		]) {
+			await expect(
+				authorizeGatewayControlControllerExecution({
+					callerContext: trustedCallerContext,
+					payload: substitutedPayload,
+					session: acceptedSession,
+					systemConfig,
+				}),
+			).resolves.toEqual({
+				authorized: false,
+				errorClass: 'controller_execution_authority_mismatch',
+				safeMessage: 'controller execution authority does not match the requested capability',
+			});
+		}
+	});
+
 	it('authorizes workspace_git_push from the controller-derived Tool Portal projection', async () => {
 		const systemConfig = await createSystemConfigFixture();
 		await writeEffectiveToolPortalSnapshot(systemConfig);

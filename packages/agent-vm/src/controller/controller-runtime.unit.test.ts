@@ -49,6 +49,7 @@ import {
 	resolveControllerWorkerTaskRuntimeRecordTarget,
 } from './durable-state/controller-state-record-paths.js';
 import type { HealthEventSink, HealthEventStore } from './health/health-event-store.js';
+import type { PreparedControllerOAuthRuntime } from './oauth/controller-oauth-runtime.js';
 import { ControllerOwnershipLockError } from './vm-ownership/controller-ownership-lock.js';
 import { GatewayDestructionTimeoutError } from './vm-ownership/gateway-destruction-budget.js';
 import { createGatewayOwnershipCoordinator } from './vm-ownership/gateway-ownership-coordinator.js';
@@ -69,6 +70,60 @@ const controllerRuntimeTestRoot = path.join(
 	tmpdir(),
 	`agent-vm-controller-runtime-test-${process.pid}`,
 );
+
+function createPreparedOAuthRuntimeStub(events: string[]): PreparedControllerOAuthRuntime {
+	return {
+		brokerService: {
+			cancelBrowserCompletion: () => false,
+			cancelBrowserTransaction: () => false,
+			close: async () => {
+				events.push('oauth-admission-stopped');
+			},
+			drain: async () => {
+				events.push('oauth-broker-drained');
+			},
+			confirmAccount: async () => ({ accountLabel: 'test', kind: 'completed' }),
+			executeAuthorizationAction: async () => ({ kind: 'authorization-list', profiles: [] }),
+			getPermissionPage: () => {
+				throw new Error('unused OAuth browser fixture');
+			},
+			handleGoogleCallback: async () => ({ kind: 'failed', reason: 'unused' }),
+			resolveRuntimeCredential: async () => ({
+				kind: 'unavailable',
+				reason: 'authorization-missing',
+			}),
+			validateRuntimeCredentialSnapshot: () => ({
+				kind: 'stale',
+				reason: 'credential-unavailable',
+			}),
+			resolveToolAvailability: () => ({ kind: 'authorization-status-unavailable' }),
+			reapExpiredTransactions: () => ({ completionSessionCount: 0, transactionCount: 0 }),
+			retryApplication: () => {
+				throw new Error('unused OAuth retry fixture');
+			},
+			stopAdmission: () => events.push('oauth-admission-stopped'),
+			submitPermissions: () => ({ kind: 'already-satisfied' }),
+		},
+		close: async () => {
+			events.push('oauth-runtime-closed');
+		},
+		drain: async () => {
+			events.push('oauth-runtime-drained');
+		},
+		port: 18_900,
+		setCredentialInvalidationHandler: () => events.push('oauth-invalidation-handler-set'),
+		startHttpsListener: async () => {
+			events.push('oauth-listener-started');
+			return {
+				close: async () => {
+					events.push('oauth-listener-closed');
+				},
+			};
+		},
+		stopAdmission: () => events.push('oauth-admission-stopped'),
+		zoneId: 'shravan',
+	};
+}
 
 async function executePreparedGatewayLeaseMutation(options: {
 	readonly gateway: GatewayEpochIdentity;
@@ -980,6 +1035,115 @@ describe('startControllerRuntime', () => {
 		expect(releaseControllerOwnershipLock).toHaveBeenCalledOnce();
 	});
 
+	it('rolls back the controller listener and OAuth runtime when the OAuth listener cannot start', async () => {
+		// Arrange
+		const startupEvents: string[] = [];
+		const oauthListenerFailure = new Error('OAuth listener port is already occupied.');
+		const oauthRuntimeCloseStarted = Promise.withResolvers<void>();
+		const releaseOAuthRuntimeClose = Promise.withResolvers<void>();
+		const closeControllerListener = vi.fn(async () => {
+			startupEvents.push('controller-listener-closed');
+		});
+		const releaseControllerOwnershipLock = vi.fn(async () => {
+			startupEvents.push('ownership-lock-released');
+		});
+		const preparedOAuthRuntime = createPreparedOAuthRuntimeStub(startupEvents);
+		const closeOAuthRuntime = vi.fn(async () => {
+			startupEvents.push('oauth-runtime-close-started');
+			oauthRuntimeCloseStarted.resolve();
+			await releaseOAuthRuntimeClose.promise;
+			startupEvents.push('oauth-runtime-closed');
+		});
+
+		// Act
+		const startupResultPromise = startControllerRuntime(
+			{ systemConfig, zoneIds: ['shravan'] },
+			{
+				acquireControllerOwnershipLock: vi.fn(async () => ({
+					release: releaseControllerOwnershipLock,
+				})),
+				configureManagedVmHostNetworkDefaults: () => ({
+					autoSelectFamily: false,
+					dnsResultOrder: 'ipv4first',
+				}),
+				createSecretResolver: vi.fn(async () => ({
+					resolve: async () => '',
+					resolveAll: async () => ({}),
+				})),
+				prepareControllerOAuthRuntime: async () => ({
+					...preparedOAuthRuntime,
+					close: closeOAuthRuntime,
+					startHttpsListener: async () => {
+						startupEvents.push('oauth-listener-start-failed');
+						throw oauthListenerFailure;
+					},
+				}),
+				reconcileRecordedVmTree: async () => undefined,
+				startHttpServer: vi.fn(async () => ({ close: closeControllerListener })),
+			},
+		).catch((error: unknown) => error);
+		await oauthRuntimeCloseStarted.promise;
+
+		// Assert
+		expect(releaseControllerOwnershipLock).not.toHaveBeenCalled();
+		expect(closeOAuthRuntime).toHaveBeenCalledOnce();
+		releaseOAuthRuntimeClose.resolve();
+		const startupError = await startupResultPromise;
+		expect(startupError).toBe(oauthListenerFailure);
+		expect(startupEvents).toContain('oauth-admission-stopped');
+		expect(closeControllerListener).toHaveBeenCalledOnce();
+		expect(startupEvents).toContain('oauth-runtime-closed');
+		expect(releaseControllerOwnershipLock).toHaveBeenCalledOnce();
+		expect(startupEvents.indexOf('oauth-listener-start-failed')).toBeLessThan(
+			startupEvents.indexOf('controller-listener-closed'),
+		);
+		expect(startupEvents.indexOf('controller-listener-closed')).toBeLessThan(
+			startupEvents.indexOf('oauth-runtime-closed'),
+		);
+	});
+
+	it('reports every controller and OAuth close failure without skipping ownership release', async () => {
+		// Arrange
+		const oauthRuntimeCloseFailure = new Error('OAuth runtime close failed.');
+		const controllerListenerCloseFailure = new Error('Controller listener close failed.');
+		const releaseControllerOwnershipLock = vi.fn(async () => {});
+		const preparedOAuthRuntime = createPreparedOAuthRuntimeStub([]);
+		const runtime = await startControllerRuntime(
+			{ systemConfig, zoneIds: [] },
+			{
+				acquireControllerOwnershipLock: vi.fn(async () => ({
+					release: releaseControllerOwnershipLock,
+				})),
+				createSecretResolver: vi.fn(async () => ({
+					resolve: async () => '',
+					resolveAll: async () => ({}),
+				})),
+				prepareControllerOAuthRuntime: async () => ({
+					...preparedOAuthRuntime,
+					close: async () => {
+						throw oauthRuntimeCloseFailure;
+					},
+				}),
+				reconcileRecordedVmTree: async () => undefined,
+				startHttpServer: vi.fn(async () => ({
+					close: async () => {
+						throw controllerListenerCloseFailure;
+					},
+				})),
+			},
+		);
+
+		// Act
+		const closeError = await runtime.close().catch((error: unknown) => error);
+
+		// Assert
+		expect(closeError).toBeInstanceOf(AggregateError);
+		expect(closeError).toMatchObject({
+			errors: expect.arrayContaining([oauthRuntimeCloseFailure, controllerListenerCloseFailure]),
+		});
+		expect(releaseControllerOwnershipLock).toHaveBeenCalledOnce();
+	});
+
 	it('retains the deployment ownership lock when controller-owned startup is owner-unsafe', async () => {
 		// Arrange
 		const lockConflict = new ControllerOwnershipLockError('controller-already-active');
@@ -1215,6 +1379,8 @@ describe('startControllerRuntime', () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
 		process.env.TEST_GATEWAY_TOKEN = 'gateway-token';
 		const taskTitles: string[] = [];
+		const oauthDrainStarted = Promise.withResolvers<void>();
+		const releaseOAuthDrain = Promise.withResolvers<void>();
 		const zone = systemConfig.zones[0];
 		if (!zone) {
 			throw new Error('Expected test zone.');
@@ -1248,7 +1414,9 @@ describe('startControllerRuntime', () => {
 		await mkdir(path.join(absoluteLeaseZone.gateway.zoneRuntimeDir, 'gitdirs', 'agents', 'main'), {
 			recursive: true,
 		});
-		const closeGatewayVm = vi.fn(async () => {});
+		const closeGatewayVm = vi.fn(async () => {
+			startupEvents.push('gateway-closed');
+		});
 		let capturedHealthEventStore: HealthEventStore | undefined;
 		let capturedGatewayIdentity: GatewayEpochIdentity | undefined;
 		const startGatewayZone = vi.fn(async (startOptions) => {
@@ -1390,6 +1558,14 @@ describe('startControllerRuntime', () => {
 				},
 				now: () => statusNowMs,
 				preflightGatewayZoneStart,
+				prepareControllerOAuthRuntime: async () => ({
+					...createPreparedOAuthRuntimeStub(startupEvents),
+					drain: async () => {
+						oauthDrainStarted.resolve();
+						await releaseOAuthDrain.promise;
+						startupEvents.push('oauth-runtime-drained');
+					},
+				}),
 				startGatewayZone,
 				startHttpServer,
 				setIntervalImpl: setIntervalMock,
@@ -1425,9 +1601,13 @@ describe('startControllerRuntime', () => {
 		);
 		expect(taskTitles).toEqual([
 			'Resolving 1Password secrets',
+			'Preparing OAuth broker',
 			'Controller API on :18800',
+			'OAuth HTTPS on :18900',
 			'Starting selected gateway zones',
 		]);
+		expect(startupEvents).toContain('oauth-invalidation-handler-set');
+		expect(startupEvents).toContain('oauth-listener-started');
 		expect(startHttpServer).toHaveBeenCalledWith(
 			expect.objectContaining({
 				port: 18800,
@@ -1705,7 +1885,26 @@ describe('startControllerRuntime', () => {
 				zoneId: 'shravan',
 			}),
 		]);
-		await runtime.close();
+		const gatewayCloseCountBeforeShutdown = closeGatewayVm.mock.calls.length;
+		const controllerClose = runtime.close();
+		await oauthDrainStarted.promise;
+		expect(startupEvents).not.toContain('oauth-listener-closed');
+		expect(closeGatewayVm).toHaveBeenCalledTimes(gatewayCloseCountBeforeShutdown);
+		releaseOAuthDrain.resolve();
+		await controllerClose;
+		expect(startupEvents).toContain('oauth-runtime-drained');
+		expect(startupEvents).toContain('oauth-listener-closed');
+		expect(startupEvents).toContain('gateway-closed');
+		expect(startupEvents).toContain('oauth-runtime-closed');
+		expect(startupEvents.indexOf('oauth-runtime-drained')).toBeLessThan(
+			startupEvents.indexOf('oauth-listener-closed'),
+		);
+		expect(startupEvents.indexOf('oauth-listener-closed')).toBeLessThan(
+			startupEvents.lastIndexOf('gateway-closed'),
+		);
+		expect(startupEvents.lastIndexOf('gateway-closed')).toBeLessThan(
+			startupEvents.indexOf('oauth-runtime-closed'),
+		);
 		expect(releaseControllerOwnershipLock).toHaveBeenCalledOnce();
 		expect(startupEvents.at(-1)).toBe('ownership-lock-released');
 		await rm(absoluteLeaseRoot, { force: true, recursive: true });

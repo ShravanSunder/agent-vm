@@ -8,6 +8,7 @@ export default defineConfig({
 		'src/controller-dispatch-boundary/index.ts',
 		'src/controller-execution-data-boundary/index.ts',
 		'src/controller-execution-request-boundary/index.ts',
+		'src/oauth-authorization-boundary/index.ts',
 		'src/tool-vm-runner-boundary/index.ts',
 		'src/testing/index.ts',
 	],
