@@ -98,6 +98,70 @@ describe('ToolPortalCapabilityCore approval dispatch', () => {
 		).toHaveLength(1);
 	});
 
+	it('rejects a hint approval reservation from the predecessor binding before Tool VM acquisition', async () => {
+		// Arrange
+		const predecessorApproval = createRecordingApprovalPort({
+			reserveResult: createApprovalChallenge,
+		});
+		const predecessorFixture = createServiceFixture({ approval: predecessorApproval });
+		const predecessorResult = await predecessorFixture.capabilityCore.call(
+			{
+				calls: [
+					{
+						arguments: { argv: ['crawl', 'delete'], reason: 'hold predecessor hint challenge' },
+						id: 'hint-approval',
+						name: 'cli',
+						namespace: 'sandbox',
+					},
+				],
+			},
+			udsOptions(),
+		);
+		const predecessorIntent = predecessorApproval.reserveInvocations[0];
+		if (predecessorIntent === undefined) throw new Error('Expected predecessor hint intent.');
+		const successorSnapshot = {
+			...predecessorFixture.capabilityCore.semanticSnapshot,
+			activeRevision: 'semantic:hint-policy-successor',
+			bindingRevision: 'binding:hint-policy-successor',
+			desiredRevision: 'semantic:hint-policy-successor',
+		};
+		const successorApproval = createRecordingApprovalPort({
+			reserveResult: () => ({
+				kind: 'dispatch-reserved',
+				reservation: createApprovalReservation(predecessorIntent),
+			}),
+		});
+		const successorFixture = createServiceFixture({
+			approval: successorApproval,
+			semanticSnapshot: successorSnapshot,
+		});
+
+		// Act
+		const successorResult = await successorFixture.capabilityCore.call(
+			{
+				calls: [
+					{
+						arguments: { argv: ['crawl', 'delete'], reason: 'reject stale hint authority' },
+						id: 'hint-approval',
+						name: 'cli',
+						namespace: 'sandbox',
+					},
+				],
+			},
+			udsOptions(),
+		);
+
+		// Assert
+		expect(predecessorResult.items[0]).toMatchObject({ status: 'approval_required' });
+		expect(successorResult.items[0]).toMatchObject({
+			error: { code: 'execution_failed' },
+			outcome: { kind: 'ambiguous', retryClass: 'forbidden' },
+			status: 'error',
+		});
+		expect(successorApproval.armInvocations).toHaveLength(0);
+		expect(totalBackendInvocations(successorFixture)).toBe(0);
+	});
+
 	it('keeps mixed direct, approval-required, and granted calls independently bound and ordered', async () => {
 		// Arrange
 		const events: string[] = [];

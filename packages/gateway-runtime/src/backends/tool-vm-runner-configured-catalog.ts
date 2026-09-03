@@ -495,6 +495,12 @@ export function compileGatewayRuntimeToolVmRunnerConfiguredCatalog(
 		for (const [namespace, namespacePolicy] of Object.entries(profile.namespaces)) {
 			if (namespacePolicy.backend.kind !== 'tool_vm_runner') continue;
 			for (const [name, definition] of Object.entries(namespacePolicy.backend.operations)) {
+				if (
+					namespacePolicy.tools.deny.includes(name) ||
+					(namespacePolicy.tools.allow !== '*' && !namespacePolicy.tools.allow.includes(name))
+				) {
+					continue;
+				}
 				entries.push(compileConfiguredOperation({ definition, name, namespace }));
 			}
 		}

@@ -1,4 +1,10 @@
-import { CapabilityDescriptorSchema, CapabilitySummarySchema } from '@agent-vm/agent-portal-sdk';
+import {
+	CapabilityDescriptorSchema,
+	CapabilitySummarySchema,
+	PortalDescribeRequestSchema,
+	PortalListRequestSchema,
+	PortalSearchRequestSchema,
+} from '@agent-vm/agent-portal-sdk';
 import {
 	createGatewayRuntimeManagedToolPortalConfig,
 	effectiveManagedToolPortalConfigSchema,
@@ -6,6 +12,11 @@ import {
 } from '@agent-vm/config-contracts';
 import { describe, expect, it } from 'vitest';
 
+import {
+	describeToolVmRunnerCatalog,
+	listToolVmRunnerCatalog,
+	searchToolVmRunnerCatalog,
+} from './tool-vm-runner-catalog-projection.js';
 import { compileGatewayRuntimeToolVmRunnerConfiguredCatalog } from './tool-vm-runner-configured-catalog.js';
 
 function parsedToolPortalConfig(): GatewayRuntimeManagedToolPortalConfig {
@@ -131,6 +142,59 @@ function parsedToolPortalConfig(): GatewayRuntimeManagedToolPortalConfig {
 }
 
 describe('configured Tool VM runner catalog compiler', () => {
+	it('excludes profile-hidden operations from every public discovery projection', () => {
+		// Arrange
+		const config = parsedToolPortalConfig();
+		const sandboxNamespace = config.profiles['code-builder']?.namespaces.sandbox;
+		if (sandboxNamespace?.backend.kind !== 'tool_vm_runner') {
+			throw new Error('Expected the code-builder Tool VM namespace.');
+		}
+		const firecrawlDefinition = sandboxNamespace.backend.operations.firecrawl;
+		if (firecrawlDefinition?.kind !== 'command.cli') {
+			throw new Error('Expected the Firecrawl CLI fixture.');
+		}
+		sandboxNamespace.backend.operations.hidden_firecrawl = structuredClone(firecrawlDefinition);
+		sandboxNamespace.tools.deny.push('hidden_firecrawl');
+		const catalog =
+			compileGatewayRuntimeToolVmRunnerConfiguredCatalog(config)['code-builder'] ?? [];
+
+		// Act
+		const listed = listToolVmRunnerCatalog(
+			PortalListRequestSchema.parse({
+				requests: [
+					{
+						id: 'list',
+						tools: [{ name: 'hidden_firecrawl', namespace: 'sandbox' }],
+					},
+				],
+			}),
+			catalog,
+		);
+		const searched = searchToolVmRunnerCatalog(
+			PortalSearchRequestSchema.parse({
+				requests: [{ id: 'search', query: 'hidden_firecrawl' }],
+			}),
+			catalog,
+		);
+		const described = describeToolVmRunnerCatalog(
+			PortalDescribeRequestSchema.parse({
+				requests: [
+					{
+						id: 'describe',
+						tools: [{ name: 'hidden_firecrawl', namespace: 'sandbox' }],
+					},
+				],
+			}),
+			catalog,
+		);
+
+		// Assert
+		expect(catalog.map((entry) => entry.summary.toolRef)).not.toContain('sandbox.hidden_firecrawl');
+		expect(listed.items[0]).toMatchObject({ status: 'ok', value: { tools: [] } });
+		expect(searched.items[0]).toMatchObject({ status: 'ok', value: { tools: [] } });
+		expect(described.items[0]).toMatchObject({ status: 'ok', value: { tools: [] } });
+	});
+
 	it('derives profile-indexed runtime bindings while allowing one public ref to differ by profile', () => {
 		const catalog = compileGatewayRuntimeToolVmRunnerConfiguredCatalog(parsedToolPortalConfig());
 
