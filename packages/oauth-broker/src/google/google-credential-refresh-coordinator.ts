@@ -13,7 +13,10 @@ import {
 	oauthEnvelopeBindingSchema,
 	type OAuthKeyEncryptionKey,
 } from '../envelope-codec.js';
-import { type OAuthCredentialCatalog, type OAuthStoredGrant } from '../oauth-credential-catalog.js';
+import {
+	type OAuthCredentialCatalog,
+	type OAuthStoredGrant,
+} from '../oauth-credential-catalog-contracts.js';
 import {
 	googleWebClientCredentialsSchema,
 	type GoogleOAuthAdapter,

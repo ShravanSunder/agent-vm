@@ -13,8 +13,6 @@ import {
 	type OAuthPermissionFieldError,
 } from '../contracts.js';
 
-export * from '../contracts.js';
-
 const renderPropsSchema = z
 	.object({
 		assetBasePath: z.string().startsWith('/').max(512),

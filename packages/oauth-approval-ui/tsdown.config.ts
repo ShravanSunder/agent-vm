@@ -3,7 +3,7 @@ import { defineConfig } from 'tsdown';
 export default defineConfig({
 	clean: true,
 	dts: true,
-	entry: ['src/server/index.tsx'],
+	entry: ['src/server/index.ts'],
 	format: 'esm',
 	outExtensions: () => ({
 		dts: '.d.ts',

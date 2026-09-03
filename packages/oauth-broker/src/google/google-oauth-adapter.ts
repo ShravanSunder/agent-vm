@@ -12,6 +12,8 @@ const googleTokenEndpoint = 'https://oauth2.googleapis.com/token';
 const googleUserInfoEndpoint = 'https://openidconnect.googleapis.com/v1/userinfo';
 const googleRevocationEndpoint = 'https://oauth2.googleapis.com/revoke';
 
+export const googleOAuthProviderKind = 'google' as const;
+
 export const googleIdentityScopes = [
 	oauthScopeSchema.parse('https://www.googleapis.com/auth/userinfo.email'),
 	oauthScopeSchema.parse('openid'),

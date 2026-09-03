@@ -6,252 +6,51 @@ import {
 	type OAuthConfig,
 } from '@agent-vm/config-contracts';
 import {
-	oauthAccountProfileIdSchema,
 	oauthAuthorizationActionRequestSchema,
 	oauthAuthorizationActionResultSchema,
 	oauthApplicationIdSchema,
 	oauthCompletionSessionIdSchema,
 	oauthCredentialIdSchema,
 	oauthMaterialRevisionSchema,
-	oauthPermissionSelectionsSchema,
-	oauthScopeSchema,
-	oauthServiceIdSchema,
 	oauthProviderIdSchema,
 	type OAuthAccountProfileId,
 	type OAuthApplicationId,
-	type OAuthAuthorizationActionRequest,
 	type OAuthAuthorizationActionResult,
-	type OAuthCredentialId,
 	type OAuthMaterialRevision,
-	type OAuthMinimumPermission,
-	type OAuthPermissionChoice,
 	type OAuthPermissionSelections,
-	type OAuthScope,
-	type OAuthServiceId,
-	type OAuthToolAvailability,
-	type OAuthToolRequirement,
 	type OAuthTransactionId,
 } from '@agent-vm/oauth-broker-contracts';
-import { z } from 'zod';
 
 import {
 	createOAuthEnvelopeCodec,
 	oauthEnvelopeBindingSchema,
 	type OAuthKeyEncryptionKey,
 } from '../envelope-codec.js';
-import { type OAuthCredentialCatalog } from '../oauth-credential-catalog.js';
+import { type OAuthCredentialCatalog } from '../oauth-credential-catalog-contracts.js';
 import {
 	createOAuthTransactionStore,
 	type OAuthCeremonyTransaction,
 	type OAuthTransactionStore,
 } from '../oauth-transaction-store.js';
+import { createGoogleAuthorizationViewModels } from './google-authorization-view-models.js';
 import {
 	createGoogleCredentialRefreshCoordinator,
 	googleStoredCredentialPayloadSchema,
 } from './google-credential-refresh-coordinator.js';
 import {
-	googleIdentityScopes,
 	googleProviderAuthorizationSchema,
 	type GoogleOAuthAdapter,
 	type GoogleProviderAuthorization,
 	type GoogleWebClientCredentials,
 } from './google-oauth-adapter.js';
-
-const googleRuntimeAllowedHostsByApplication = {
-	'gmail-app': ['gmail.googleapis.com'],
-	'workspace-app': [
-		'calendar.googleapis.com',
-		'docs.googleapis.com',
-		'drive.googleapis.com',
-		'forms.googleapis.com',
-		'people.googleapis.com',
-		'sheets.googleapis.com',
-		'slides.googleapis.com',
-		'www.googleapis.com',
-	],
-	'youtube-app': ['youtube.googleapis.com', 'www.googleapis.com'],
-} as const satisfies Readonly<Record<GoogleOAuthApplicationId, readonly string[]>>;
-
-export interface GoogleOAuthPermissionPageData {
-	readonly accountProfileLabel: string;
-	readonly applications: readonly {
-		readonly applicationId: GoogleOAuthApplicationId;
-		readonly description: string;
-		readonly label: string;
-		readonly services: readonly {
-			readonly allowedChoices: readonly OAuthPermissionChoice[];
-			readonly label: string;
-			readonly selectedChoice: OAuthPermissionChoice;
-			readonly serviceId: string;
-			readonly suggestedChoice?: OAuthPermissionChoice | undefined;
-		}[];
-	}[];
-	readonly browserBindingSecret: string;
-	readonly csrfToken: string;
-	readonly expiresAtMs: number;
-	readonly transactionId: OAuthTransactionId;
-}
-
-export interface GoogleOAuthConfirmationPageData {
-	readonly accountLabel: string;
-	readonly applicationLabel: string;
-	readonly browserBindingSecret: string;
-	readonly completionSessionId: string;
-	readonly csrfToken: string;
-	readonly expiresAtMs: number;
-	readonly grantedPermissionLabels: readonly string[];
-}
-
-export interface GoogleOAuthApplicationProgress {
-	readonly applicationId: OAuthApplicationId;
-	readonly label: string;
-	readonly status: 'pending' | 'authorizing' | 'completed' | 'failed';
-}
-
-export interface GoogleOAuthRedirectResult {
-	readonly applicationId: OAuthApplicationId;
-	readonly applicationLabel: string;
-	readonly authorizationUrl: string;
-	readonly browserBindingSecret: string;
-	readonly expiresAtMs: number;
-	readonly kind: 'redirect';
-	readonly transactionId: OAuthTransactionId;
-}
-
-export type GoogleOAuthPermissionSubmissionResult =
-	| { readonly kind: 'already-satisfied' }
-	| GoogleOAuthRedirectResult;
-
-export type GoogleOAuthConfirmationResult =
-	| { readonly accountLabel: string; readonly kind: 'completed' }
-	| {
-			readonly applications: readonly GoogleOAuthApplicationProgress[];
-			readonly authorizationUrl: string;
-			readonly browserBindingSecret: string;
-			readonly csrfToken: string;
-			readonly expiresAtMs: number;
-			readonly kind: 'redirect';
-			readonly transactionId: OAuthTransactionId;
-	  }
-	| { readonly kind: 'authorization-denied' }
-	| { readonly kind: 'subject-mismatch' };
-
-export type GoogleOAuthCallbackResult =
-	| { readonly confirmation: GoogleOAuthConfirmationPageData; readonly kind: 'confirmation' }
-	| {
-			readonly completed: readonly string[];
-			readonly kind: 'partial-completion';
-			readonly retry: GoogleOAuthRedirectResult;
-			readonly retryCsrfToken: string;
-			readonly retryable: readonly string[];
-	  }
-	| { readonly kind: 'failed'; readonly reason: string };
-
-export type GoogleOAuthRuntimeCredentialResolution =
-	| {
-			readonly accessToken: Uint8Array;
-			readonly allowedHosts: readonly string[];
-			readonly credentialId: OAuthCredentialId;
-			readonly kind: 'ready';
-			readonly materialRevision: OAuthMaterialRevision;
-	  }
-	| {
-			readonly kind: 'unavailable';
-			readonly reason:
-				| 'authorization-missing'
-				| 'degraded'
-				| 'reauthorization-required'
-				| 'scope-insufficient'
-				| 'stale-write';
-	  };
-
-export type GoogleOAuthRuntimeCredentialSnapshotValidation =
-	| { readonly kind: 'current' }
-	| {
-			readonly kind: 'stale';
-			readonly reason:
-				| 'account-policy-changed'
-				| 'credential-changed'
-				| 'credential-unavailable'
-				| 'scope-insufficient';
-	  };
-
-export interface GoogleOAuthBrokerService {
-	cancelBrowserTransaction(props: {
-		readonly browserBindingSecret: string;
-		readonly csrfToken: string;
-		readonly tailnetLogin: string;
-		readonly transactionId: OAuthTransactionId;
-	}): boolean;
-	cancelBrowserCompletion(props: {
-		readonly browserBindingSecret: string;
-		readonly completionSessionId: string;
-		readonly csrfToken: string;
-		readonly tailnetLogin: string;
-	}): boolean;
-	close(): Promise<void>;
-	drain(): Promise<void>;
-	executeAuthorizationAction(props: {
-		readonly agentId: string;
-		readonly request: OAuthAuthorizationActionRequest;
-	}): Promise<OAuthAuthorizationActionResult>;
-	getPermissionPage(props: {
-		readonly tailnetLogin: string;
-		readonly transactionId: OAuthTransactionId;
-	}): GoogleOAuthPermissionPageData;
-	resolveRuntimeCredential(props: {
-		readonly accountProfileId: OAuthAccountProfileId;
-		readonly agentId: string;
-		readonly applicationId: OAuthApplicationId;
-		readonly minimumPermission: OAuthMinimumPermission;
-		readonly serviceId: string;
-	}): Promise<GoogleOAuthRuntimeCredentialResolution>;
-	validateRuntimeCredentialSnapshot(props: {
-		readonly accountProfileId: OAuthAccountProfileId;
-		readonly agentId: string;
-		readonly applicationId: OAuthApplicationId;
-		readonly credentialId: OAuthCredentialId;
-		readonly materialRevision: OAuthMaterialRevision;
-		readonly minimumPermission: OAuthMinimumPermission;
-		readonly serviceId: OAuthServiceId;
-	}): GoogleOAuthRuntimeCredentialSnapshotValidation;
-	resolveToolAvailability(props: {
-		readonly agentId: string;
-		readonly requirement: Extract<OAuthToolRequirement, { readonly kind: 'oauth-account-profile' }>;
-	}): OAuthToolAvailability;
-	reapExpiredTransactions(): {
-		readonly completionSessionCount: number;
-		readonly transactionCount: number;
-	};
-	retryApplication(props: {
-		readonly browserBindingSecret: string;
-		readonly csrfToken: string;
-		readonly tailnetLogin: string;
-		readonly transactionId: OAuthTransactionId;
-	}): GoogleOAuthRedirectResult;
-	stopAdmission(): void;
-	handleGoogleCallback(props: {
-		readonly authorizationCode: string;
-		readonly browserBindingSecret: string;
-		readonly oauthState: string;
-		readonly redirectUri: string;
-		readonly tailnetLogin: string;
-		readonly transactionId: OAuthTransactionId;
-	}): Promise<GoogleOAuthCallbackResult>;
-	submitPermissions(props: {
-		readonly browserBindingSecret: string;
-		readonly csrfToken: string;
-		readonly selections: OAuthPermissionSelections;
-		readonly tailnetLogin: string;
-		readonly transactionId: OAuthTransactionId;
-	}): GoogleOAuthPermissionSubmissionResult;
-	confirmAccount(props: {
-		readonly browserBindingSecret: string;
-		readonly completionSessionId: string;
-		readonly csrfToken: string;
-		readonly tailnetLogin: string;
-	}): Promise<GoogleOAuthConfirmationResult>;
-}
+import {
+	type GoogleOAuthBrokerService,
+	type GoogleOAuthCallbackResult,
+	type GoogleOAuthPermissionSubmissionResult,
+} from './google-oauth-broker-contracts.js';
+import { createGoogleOAuthPermissionPolicy } from './google-oauth-permission-policy.js';
+import { createGoogleProviderAuthorizationCallback } from './google-provider-authorization-callback.js';
+import { createGoogleRuntimeCredentialPolicy } from './google-runtime-credential-policy.js';
 
 function secretsEqual(left: string, right: string): boolean {
 	const leftBytes = Buffer.from(left);
@@ -263,47 +62,8 @@ function materialRevision(): OAuthMaterialRevision {
 	return oauthMaterialRevisionSchema.parse(`sha256:${randomBytes(32).toString('base64url')}`);
 }
 
-function permissionRank(permission: OAuthPermissionChoice): number {
-	switch (permission) {
-		case 'none':
-			return 0;
-		case 'read':
-			return 1;
-		case 'write':
-			return 2;
-	}
-}
-
-function requiredScopesForServicePermission(props: {
-	readonly minimumPermission: OAuthMinimumPermission;
-	readonly readScopes: readonly OAuthScope[];
-	readonly writeScopes?: readonly OAuthScope[] | undefined;
-}): readonly OAuthScope[] {
-	if (
-		props.minimumPermission === 'write' &&
-		(props.writeScopes === undefined || props.writeScopes.length === 0)
-	) {
-		return [];
-	}
-	const requiredScopes =
-		props.minimumPermission === 'read'
-			? props.readScopes
-			: [...props.readScopes, ...(props.writeScopes ?? [])];
-	return z
-		.array(oauthScopeSchema)
-		.readonly()
-		.parse([...new Set(requiredScopes)].toSorted());
-}
-
 function activeTransactionKey(agentId: string, accountProfileId: OAuthAccountProfileId): string {
 	return `${agentId}\0${accountProfileId}`;
-}
-
-function applicationSelections(
-	selections: OAuthPermissionSelections,
-	applicationId: string,
-): Readonly<Record<OAuthServiceId, OAuthPermissionChoice>> | undefined {
-	return selections[oauthApplicationIdSchema.parse(applicationId)];
 }
 
 export function createGoogleOAuthBrokerService(props: {
@@ -381,6 +141,15 @@ export function createGoogleOAuthBrokerService(props: {
 		}
 		return publicCeremonyId;
 	};
+	const clearActiveCeremonyIfCurrent = (propsForClear: {
+		readonly accountProfileId: OAuthAccountProfileId;
+		readonly agentId: string;
+		readonly expectedTransactionId: OAuthTransactionId;
+	}): OAuthTransactionId | undefined => {
+		const key = activeTransactionKey(propsForClear.agentId, propsForClear.accountProfileId);
+		if (activeTransactionIds.get(key) !== propsForClear.expectedTransactionId) return undefined;
+		return clearActiveCeremony(propsForClear.agentId, propsForClear.accountProfileId);
+	};
 	const reapCompletedAuthorizationResults = (): void => {
 		for (const [transactionId, completed] of terminalAuthorizationResults) {
 			if (completed.expiresAtMs <= now()) terminalAuthorizationResults.delete(transactionId);
@@ -423,89 +192,10 @@ export function createGoogleOAuthBrokerService(props: {
 		}
 		return profile;
 	};
-
-	const validateSelections = (propsForSelections: {
-		readonly accountProfileId: OAuthAccountProfileId;
-		readonly agentId: string;
-		readonly selections: OAuthPermissionSelections;
-	}): OAuthPermissionSelections => {
-		const profile = requireAccountProfile(
-			propsForSelections.agentId,
-			propsForSelections.accountProfileId,
-		);
-		const selections = oauthPermissionSelectionsSchema.parse(propsForSelections.selections);
-		for (const [applicationId, serviceSelections] of Object.entries(selections)) {
-			const parsedApplicationId = googleOAuthApplicationIdSchema.safeParse(applicationId);
-			if (!parsedApplicationId.success)
-				throw new Error(`Unknown Google OAuth application "${applicationId}".`);
-			const maximums = profile.applications[parsedApplicationId.data]?.maximumPermissions;
-			if (maximums === undefined) {
-				throw new Error(
-					`OAuth application "${applicationId}" is not assigned to this account profile.`,
-				);
-			}
-			for (const [serviceId, selection] of Object.entries(serviceSelections)) {
-				const maximum = maximums[oauthServiceIdSchema.parse(serviceId)];
-				if (maximum === undefined || permissionRank(selection) > permissionRank(maximum)) {
-					throw new Error(
-						`OAuth selection exceeds the authored maximum for ${applicationId}/${serviceId}.`,
-					);
-				}
-			}
-		}
-		return selections;
-	};
-
-	const completeSelections = (propsForSelections: {
-		readonly accountProfileId: OAuthAccountProfileId;
-		readonly agentId: string;
-		readonly selections: OAuthPermissionSelections;
-	}): OAuthPermissionSelections => {
-		const profile = requireAccountProfile(
-			propsForSelections.agentId,
-			propsForSelections.accountProfileId,
-		);
-		const validated = validateSelections(propsForSelections);
-		return oauthPermissionSelectionsSchema.parse(
-			Object.fromEntries(
-				Object.entries(profile.applications).map(([applicationId, applicationMaximum]) => [
-					applicationId,
-					Object.fromEntries(
-						Object.keys(applicationMaximum.maximumPermissions).map((serviceId) => [
-							serviceId,
-							applicationSelections(validated, applicationId)?.[
-								oauthServiceIdSchema.parse(serviceId)
-							] ?? 'none',
-						]),
-					),
-				]),
-			),
-		);
-	};
-
-	const scopesForApplication = (
-		applicationId: GoogleOAuthApplicationId,
-		selections: OAuthPermissionSelections,
-	): readonly OAuthScope[] => {
-		const application = props.config.providers.google.applications[applicationId];
-		const parsedApplicationId = oauthApplicationIdSchema.parse(applicationId);
-		const serviceSelections = selections[parsedApplicationId] ?? {};
-		const scopes = Object.entries(serviceSelections).flatMap(([serviceId, permission]) => {
-			if (permission === 'none') return [];
-			const service = application.services[oauthServiceIdSchema.parse(serviceId)];
-			if (service === undefined)
-				throw new Error(`Unknown service "${serviceId}" for ${applicationId}.`);
-			return requiredScopesForServicePermission({
-				minimumPermission: permission,
-				readScopes: service.read,
-				writeScopes: service.write,
-			});
-		});
-		return z
-			.array(oauthScopeSchema)
-			.readonly()
-			.parse([...new Set(scopes)].toSorted());
-	};
+	const permissionPolicy = createGoogleOAuthPermissionPolicy({
+		config: props.config,
+		requireAccountProfile,
+	});
 
 	const startApplication = (startProps: {
 		readonly applicationId: GoogleOAuthApplicationId;
@@ -517,7 +207,10 @@ export function createGoogleOAuthBrokerService(props: {
 		>;
 		readonly remainingApplications: readonly GoogleOAuthApplicationId[];
 	}): Extract<GoogleOAuthPermissionSubmissionResult, { readonly kind: 'redirect' }> => {
-		const confirmedScopes = scopesForApplication(startProps.applicationId, startProps.selections);
+		const confirmedScopes = permissionPolicy.scopesForApplication(
+			startProps.applicationId,
+			startProps.selections,
+		);
 		const authorizing = transactionStore.beginApplicationAuthorization({
 			applicationId: oauthApplicationIdSchema.parse(startProps.applicationId),
 			completedApplications: startProps.completedApplications,
@@ -545,37 +238,6 @@ export function createGoogleOAuthBrokerService(props: {
 			transactionId: authorizing.transactionId,
 		};
 	};
-
-	const applicationProgress = (progressProps: {
-		readonly authorizingApplication: OAuthApplicationId;
-		readonly completedApplications: readonly OAuthApplicationId[];
-		readonly remainingApplications: readonly OAuthApplicationId[];
-	}): readonly GoogleOAuthApplicationProgress[] => [
-		...progressProps.completedApplications.map((applicationId) => ({
-			applicationId,
-			label:
-				props.config.providers.google.applications[
-					googleOAuthApplicationIdSchema.parse(applicationId)
-				].label,
-			status: 'completed' as const,
-		})),
-		{
-			applicationId: progressProps.authorizingApplication,
-			label:
-				props.config.providers.google.applications[
-					googleOAuthApplicationIdSchema.parse(progressProps.authorizingApplication)
-				].label,
-			status: 'authorizing' as const,
-		},
-		...progressProps.remainingApplications.map((applicationId) => ({
-			applicationId,
-			label:
-				props.config.providers.google.applications[
-					googleOAuthApplicationIdSchema.parse(applicationId)
-				].label,
-			status: 'pending' as const,
-		})),
-	];
 
 	const prepareCallbackRetry = (retryProps: {
 		readonly transaction: Extract<
@@ -633,284 +295,41 @@ export function createGoogleOAuthBrokerService(props: {
 			),
 		};
 	};
+	const providerAuthorizationCallback = createGoogleProviderAuthorizationCallback({
+		catalog: props.catalog,
+		clientCredentialsByApplication: props.clientCredentialsByApplication,
+		config: props.config,
+		googleAdapter: props.googleAdapter,
+		isAdmissionOpen: () => admissionOpen,
+		now,
+		prepareCallbackRetry,
+		providerSignal: providerAbortController.signal,
+		transactionStore,
+		zoneId: props.zoneId,
+	});
 
-	const listAuthorizations = (agentId: string): OAuthAuthorizationActionResult => {
-		const agent = requireAgent(agentId);
-		const grants = props.catalog.listGrantsForAgent({ agentId, zoneId: props.zoneId });
-		return oauthAuthorizationActionResultSchema.parse({
-			kind: 'authorization-list',
-			profiles: Object.entries(agent.accountProfiles).map(([accountProfileId, profile]) => {
-				const profileGrants = grants.filter((grant) => grant.accountProfileId === accountProfileId);
-				const profileMetadata = props.catalog.getAccountProfileMetadata({
-					accountProfileId: oauthAccountProfileIdSchema.parse(accountProfileId),
-					agentId,
-					zoneId: props.zoneId,
-				});
-				return {
-					...(profileMetadata === undefined ? {} : { accountLabel: profileMetadata.accountLabel }),
-					accountProfileId,
-					applications: profileGrants.map((grant) => ({
-						applicationId: grant.applicationId,
-						grantedScopes: grant.grantedScopes,
-						lifecycle:
-							grant.lifecycleKind === 'active'
-								? { kind: 'active' }
-								: grant.lifecycleKind === 'degraded'
-									? {
-											failureClass: grant.failureClass ?? 'provider-unavailable',
-											kind: 'degraded',
-											nextRefreshEligibleAt: new Date(
-												grant.nextRefreshEligibleAtMs ?? now(),
-											).toISOString(),
-										}
-									: {
-											kind: 'reauthorization-required',
-											reason:
-												grant.reauthorizationReason === 'invalid-grant'
-													? 'invalid-grant'
-													: grant.reauthorizationReason === 'revoked'
-														? 'revoked'
-														: grant.reauthorizationReason === 'scope-insufficient'
-															? 'scope-insufficient'
-															: 'credential-corrupt',
-										},
-					})),
-					authorizationOptions: Object.entries(profile.applications).map(
-						([applicationId, applicationMaximum]) => {
-							const parsedApplicationId = googleOAuthApplicationIdSchema.parse(applicationId);
-							const application = props.config.providers.google.applications[parsedApplicationId];
-							return {
-								applicationId: parsedApplicationId,
-								applicationLabel: application.label,
-								services: Object.entries(applicationMaximum.maximumPermissions).map(
-									([serviceId, maximumPermission]) => {
-										const parsedServiceId = oauthServiceIdSchema.parse(serviceId);
-										const service = application.services[parsedServiceId];
-										if (service === undefined) {
-											throw new Error(
-												`OAuth service "${serviceId}" is not configured for application "${applicationId}".`,
-											);
-										}
-										return {
-											maximumPermission,
-											serviceId: parsedServiceId,
-											serviceLabel: service.label,
-										};
-									},
-								),
-							};
-						},
-					),
-					kind:
-						profileMetadata === undefined
-							? 'unbound'
-							: profileGrants.length === Object.keys(profile.applications).length
-								? 'enrolled'
-								: 'partially-enrolled',
-				};
-			}),
-		});
-	};
-
-	const resolveToolAvailability = (availabilityProps: {
-		readonly agentId: string;
-		readonly requirement: Extract<OAuthToolRequirement, { readonly kind: 'oauth-account-profile' }>;
-	}): OAuthToolAvailability => {
-		const agent = requireAgent(availabilityProps.agentId);
-		const applicationId = googleOAuthApplicationIdSchema.safeParse(
-			availabilityProps.requirement.applicationId,
-		);
-		if (!applicationId.success) return { kind: 'scope-insufficient' };
-		const service =
-			props.config.providers.google.applications[applicationId.data].services[
-				availabilityProps.requirement.serviceId
-			];
-		if (service === undefined) return { kind: 'scope-insufficient' };
-		const requiredScopes = requiredScopesForServicePermission({
-			minimumPermission: availabilityProps.requirement.minimumPermission,
-			readScopes: service.read,
-			writeScopes: service.write,
-		});
-		if (requiredScopes.length === 0) return { kind: 'scope-insufficient' };
-		const readyAccountProfiles: {
-			readonly accountLabel: string;
-			readonly accountProfileId: OAuthAccountProfileId;
-		}[] = [];
-		let eligibleProfileMissingGrant = false;
-		let reauthorizationRequired = false;
-		let scopeInsufficient = false;
-		let authorizationStatusUnavailable = false;
-		for (const [accountProfileId, accountProfile] of Object.entries(agent.accountProfiles)) {
-			const maximumPermission =
-				accountProfile.applications[applicationId.data]?.maximumPermissions[
-					availabilityProps.requirement.serviceId
-				];
-			if (
-				maximumPermission === undefined ||
-				permissionRank(maximumPermission) <
-					permissionRank(availabilityProps.requirement.minimumPermission)
-			) {
-				continue;
-			}
-			const parsedAccountProfileId = oauthAccountProfileIdSchema.parse(accountProfileId);
-			const grant = props.catalog.getGrantForAccountApplication({
-				accountProfileId: parsedAccountProfileId,
-				agentId: availabilityProps.agentId,
-				applicationId: oauthApplicationIdSchema.parse(applicationId.data),
-				zoneId: props.zoneId,
-			});
-			if (grant === undefined) {
-				eligibleProfileMissingGrant = true;
-				continue;
-			}
-			if (grant.lifecycleKind === 'reauthorization-required') {
-				reauthorizationRequired = true;
-				continue;
-			}
-			if (grant.lifecycleKind === 'degraded') {
-				authorizationStatusUnavailable = true;
-				continue;
-			}
-			if (!requiredScopes.every((scope) => grant.grantedScopes.includes(scope))) {
-				scopeInsufficient = true;
-				continue;
-			}
-			readyAccountProfiles.push({
-				accountLabel: grant.accountLabel,
-				accountProfileId: parsedAccountProfileId,
-			});
-		}
-		if (readyAccountProfiles.length > 0) {
-			return {
-				accountProfiles: readyAccountProfiles.toSorted((left, right) =>
-					left.accountProfileId.localeCompare(right.accountProfileId),
-				),
-				kind: 'ready',
-			};
-		}
-		if (reauthorizationRequired) return { kind: 'reauthorization-required' };
-		if (authorizationStatusUnavailable) return { kind: 'authorization-status-unavailable' };
-		if (scopeInsufficient) return { kind: 'scope-insufficient' };
-		return eligibleProfileMissingGrant
-			? { kind: 'authorization-required' }
-			: { kind: 'scope-insufficient' };
-	};
-
-	const resolveRuntimeCredential = async (runtimeProps: {
-		readonly accountProfileId: OAuthAccountProfileId;
-		readonly agentId: string;
-		readonly applicationId: OAuthApplicationId;
-		readonly minimumPermission: OAuthMinimumPermission;
-		readonly serviceId: string;
-	}): Promise<GoogleOAuthRuntimeCredentialResolution> => {
-		const applicationId = googleOAuthApplicationIdSchema.parse(runtimeProps.applicationId);
-		const serviceId = oauthServiceIdSchema.parse(runtimeProps.serviceId);
-		const profile = requireAccountProfile(runtimeProps.agentId, runtimeProps.accountProfileId);
-		const maximumPermission = profile.applications[applicationId]?.maximumPermissions[serviceId];
-		if (
-			maximumPermission === undefined ||
-			permissionRank(maximumPermission) < permissionRank(runtimeProps.minimumPermission)
-		) {
-			return { kind: 'unavailable', reason: 'scope-insufficient' };
-		}
-		const service = props.config.providers.google.applications[applicationId].services[serviceId];
-		if (service === undefined) return { kind: 'unavailable', reason: 'scope-insufficient' };
-		const requiredScopes = requiredScopesForServicePermission({
-			minimumPermission: runtimeProps.minimumPermission,
-			readScopes: service.read,
-			writeScopes: service.write,
-		});
-		if (requiredScopes.length === 0) {
-			return { kind: 'unavailable', reason: 'scope-insufficient' };
-		}
-		const grant = props.catalog.getGrantForAccountApplication({
-			accountProfileId: runtimeProps.accountProfileId,
-			agentId: runtimeProps.agentId,
-			applicationId: oauthApplicationIdSchema.parse(applicationId),
-			zoneId: props.zoneId,
-		});
-		if (grant === undefined) return { kind: 'unavailable', reason: 'authorization-missing' };
-		const credential = await refreshCoordinator.resolveAccessToken({
-			clientCredentials: props.clientCredentialsByApplication[applicationId],
-			grant,
-			keyEncryptionKey: props.keyEncryptionKey,
-			keyEncryptionKeyVersion: props.keyEncryptionKeyVersion,
-			requiredScopes,
-			signal: providerAbortController.signal,
-		});
-		if (credential.kind !== 'ready') {
-			return {
-				kind: 'unavailable',
-				reason:
-					credential.kind === 'degraded'
-						? 'degraded'
-						: credential.kind === 'reauthorization-required'
-							? 'reauthorization-required'
-							: credential.kind,
-			};
-		}
-		return {
-			accessToken: new TextEncoder().encode(credential.accessToken),
-			allowedHosts: googleRuntimeAllowedHostsByApplication[applicationId],
-			credentialId: credential.grant.credentialId,
-			kind: 'ready',
-			materialRevision: credential.grant.materialRevision,
-		};
-	};
-
-	const validateRuntimeCredentialSnapshot = (runtimeProps: {
-		readonly accountProfileId: OAuthAccountProfileId;
-		readonly agentId: string;
-		readonly applicationId: OAuthApplicationId;
-		readonly credentialId: OAuthCredentialId;
-		readonly materialRevision: OAuthMaterialRevision;
-		readonly minimumPermission: OAuthMinimumPermission;
-		readonly serviceId: OAuthServiceId;
-	}): GoogleOAuthRuntimeCredentialSnapshotValidation => {
-		if (!admissionOpen) return { kind: 'stale', reason: 'credential-unavailable' };
-		const applicationId = googleOAuthApplicationIdSchema.parse(runtimeProps.applicationId);
-		const serviceId = oauthServiceIdSchema.parse(runtimeProps.serviceId);
-		let profile: ReturnType<typeof requireAccountProfile>;
-		try {
-			profile = requireAccountProfile(runtimeProps.agentId, runtimeProps.accountProfileId);
-		} catch {
-			return { kind: 'stale', reason: 'account-policy-changed' };
-		}
-		const maximumPermission = profile.applications[applicationId]?.maximumPermissions[serviceId];
-		if (
-			maximumPermission === undefined ||
-			permissionRank(maximumPermission) < permissionRank(runtimeProps.minimumPermission)
-		) {
-			return { kind: 'stale', reason: 'account-policy-changed' };
-		}
-		const service = props.config.providers.google.applications[applicationId].services[serviceId];
-		if (service === undefined) return { kind: 'stale', reason: 'account-policy-changed' };
-		const requiredScopes = requiredScopesForServicePermission({
-			minimumPermission: runtimeProps.minimumPermission,
-			readScopes: service.read,
-			writeScopes: service.write,
-		});
-		if (requiredScopes.length === 0) return { kind: 'stale', reason: 'scope-insufficient' };
-		const grant = props.catalog.getGrantForAccountApplication({
-			accountProfileId: runtimeProps.accountProfileId,
-			agentId: runtimeProps.agentId,
-			applicationId: oauthApplicationIdSchema.parse(applicationId),
-			zoneId: props.zoneId,
-		});
-		if (grant === undefined || grant.lifecycleKind !== 'active') {
-			return { kind: 'stale', reason: 'credential-unavailable' };
-		}
-		if (
-			grant.credentialId !== runtimeProps.credentialId ||
-			grant.materialRevision !== runtimeProps.materialRevision
-		) {
-			return { kind: 'stale', reason: 'credential-changed' };
-		}
-		if (!requiredScopes.every((scope) => grant.grantedScopes.includes(scope))) {
-			return { kind: 'stale', reason: 'scope-insufficient' };
-		}
-		return { kind: 'current' };
-	};
+	const runtimeCredentialPolicy = createGoogleRuntimeCredentialPolicy({
+		catalog: props.catalog,
+		clientCredentialsByApplication: props.clientCredentialsByApplication,
+		config: props.config,
+		isAdmissionOpen: () => admissionOpen,
+		keyEncryptionKey: props.keyEncryptionKey,
+		keyEncryptionKeyVersion: props.keyEncryptionKeyVersion,
+		providerSignal: providerAbortController.signal,
+		refreshCoordinator,
+		requireAccountProfile,
+		requireAgent,
+		zoneId: props.zoneId,
+	});
+	const authorizationViewModels = createGoogleAuthorizationViewModels({
+		catalog: props.catalog,
+		config: props.config,
+		now,
+		requireAccountProfile,
+		requireAgent,
+		transactionStore,
+		zoneId: props.zoneId,
+	});
 
 	const beginAuthorization = (beginProps: {
 		readonly accountProfileId: OAuthAccountProfileId;
@@ -925,7 +344,7 @@ export function createGoogleOAuthBrokerService(props: {
 			suggestedSelections =
 				beginProps.suggestedSelections === undefined
 					? undefined
-					: validateSelections({
+					: permissionPolicy.validateSelections({
 							accountProfileId: beginProps.accountProfileId,
 							agentId: beginProps.agentId,
 							selections: beginProps.suggestedSelections,
@@ -1152,6 +571,11 @@ export function createGoogleOAuthBrokerService(props: {
 					durableGrantCommitted = true;
 					const nextApplication = session.remainingApplications[0];
 					if (nextApplication === undefined) {
+						clearActiveCeremonyIfCurrent({
+							accountProfileId: session.accountProfileId,
+							agentId: session.agentId,
+							expectedTransactionId: session.transactionId,
+						});
 						await props.onCredentialMaterialChanged?.({
 							agentId: session.agentId,
 							zoneId: props.zoneId,
@@ -1161,7 +585,6 @@ export function createGoogleOAuthBrokerService(props: {
 							expiresAtMs: now() + 10 * 60_000,
 							result: completedAuthorizationResult,
 						});
-						clearActiveCeremony(session.agentId, session.accountProfileId);
 						return { accountLabel: session.providerGrant.accountEmail, kind: 'completed' };
 					}
 					const nextTransaction = transactionStore.createTransaction({
@@ -1197,9 +620,17 @@ export function createGoogleOAuthBrokerService(props: {
 						agentId: session.agentId,
 						zoneId: props.zoneId,
 					});
+					const ceremonyKey = activeTransactionKey(session.agentId, session.accountProfileId);
+					const successorOwner = transactionStore.getCeremonyOwner(nextTransaction.transactionId);
+					if (
+						activeTransactionIds.get(ceremonyKey) !== nextTransaction.transactionId ||
+						successorOwner === undefined
+					) {
+						return { kind: 'authorization-denied' };
+					}
 					return {
 						...redirect,
-						applications: applicationProgress({
+						applications: authorizationViewModels.applicationProgress({
 							authorizingApplication: oauthApplicationIdSchema.parse(nextApplication),
 							completedApplications: [...session.completedApplications, session.applicationId],
 							remainingApplications: session.remainingApplications.slice(1),
@@ -1230,7 +661,11 @@ export function createGoogleOAuthBrokerService(props: {
 							result: failedAuthorizationResult,
 						});
 					}
-					clearActiveCeremony(session.agentId, session.accountProfileId);
+					clearActiveCeremonyIfCurrent({
+						accountProfileId: session.accountProfileId,
+						agentId: session.agentId,
+						expectedTransactionId: successorTransactionId ?? session.transactionId,
+					});
 					throw error;
 				}
 			}),
@@ -1239,7 +674,7 @@ export function createGoogleOAuthBrokerService(props: {
 				const request = oauthAuthorizationActionRequestSchema.parse(unparsedRequest);
 				switch (request.actionId) {
 					case 'oauth_authorization.list':
-						return listAuthorizations(agentId);
+						return authorizationViewModels.listAuthorizations(agentId);
 					case 'oauth_authorization.begin': {
 						const profile = requireAccountProfile(agentId, request.accountProfileId);
 						return beginAuthorization({
@@ -1388,75 +823,17 @@ export function createGoogleOAuthBrokerService(props: {
 			}),
 		getPermissionPage: ({ tailnetLogin, transactionId }) => {
 			requireAdmission();
-			const transaction = transactionStore.getTransaction(transactionId);
-			if (transaction?.kind !== 'selecting-permissions') {
-				throw new Error('OAuth transaction is not available for permission selection.');
-			}
-			const profile = requireAccountProfile(transaction.agentId, transaction.accountProfileId);
-			if (!profile.authorizedTailnetLogins.includes(tailnetLogin)) {
-				throw new Error('Tailnet identity cannot authorize this OAuth account profile.');
-			}
-			const boundTransaction = transactionStore.bindTailnetIdentity({
-				tailnetLogin,
-				transactionId,
-			});
-			return {
-				accountProfileLabel: transaction.accountProfileId,
-				applications: Object.entries(profile.applications)
-					.filter(([applicationId]) =>
-						transaction.applicationIds.includes(oauthApplicationIdSchema.parse(applicationId)),
-					)
-					.map(([applicationId, maximum]) => {
-						const parsedApplicationId = googleOAuthApplicationIdSchema.parse(applicationId);
-						const application = props.config.providers.google.applications[parsedApplicationId];
-						return {
-							applicationId: parsedApplicationId,
-							description: application.description,
-							label: application.label,
-							services: Object.entries(maximum.maximumPermissions).map(
-								([serviceId, maximumPermission]) => ({
-									allowedChoices:
-										maximumPermission === 'write'
-											? (['none', 'read', 'write'] as const)
-											: (['none', 'read'] as const),
-									label:
-										application.services[oauthServiceIdSchema.parse(serviceId)]?.label ?? serviceId,
-									selectedChoice:
-										applicationSelections(
-											boundTransaction.suggestedSelections ??
-												oauthPermissionSelectionsSchema.parse({}),
-											parsedApplicationId,
-										)?.[oauthServiceIdSchema.parse(serviceId)] ?? 'none',
-									serviceId,
-									...(applicationSelections(
-										boundTransaction.suggestedSelections ??
-											oauthPermissionSelectionsSchema.parse({}),
-										parsedApplicationId,
-									)?.[oauthServiceIdSchema.parse(serviceId)] === undefined
-										? {}
-										: {
-												suggestedChoice: applicationSelections(
-													boundTransaction.suggestedSelections ??
-														oauthPermissionSelectionsSchema.parse({}),
-													parsedApplicationId,
-												)?.[oauthServiceIdSchema.parse(serviceId)],
-											}),
-								}),
-							),
-						};
-					}),
-				browserBindingSecret: boundTransaction.browserBindingSecret,
-				csrfToken: boundTransaction.csrfSecret,
-				expiresAtMs: boundTransaction.expiresAtMs,
-				transactionId: boundTransaction.transactionId,
-			};
+			return authorizationViewModels.getPermissionPage({ tailnetLogin, transactionId });
 		},
 		resolveRuntimeCredential: async (runtimeProps) =>
-			await trackOperation(async () => await resolveRuntimeCredential(runtimeProps)),
-		validateRuntimeCredentialSnapshot,
+			await trackOperation(
+				async () => await runtimeCredentialPolicy.resolveRuntimeCredential(runtimeProps),
+			),
+		validateRuntimeCredentialSnapshot: (runtimeProps) =>
+			runtimeCredentialPolicy.validateRuntimeCredentialSnapshot(runtimeProps),
 		resolveToolAvailability: (availabilityProps) => {
 			requireAdmission();
-			return resolveToolAvailability(availabilityProps);
+			return runtimeCredentialPolicy.resolveToolAvailability(availabilityProps);
 		},
 		reapExpiredTransactions: () => {
 			reapCompletedAuthorizationResults();
@@ -1464,130 +841,13 @@ export function createGoogleOAuthBrokerService(props: {
 		},
 		retryApplication: (retryProps) => {
 			requireAdmission();
-			const transaction = transactionStore.getTransaction(retryProps.transactionId);
-			if (transaction?.kind !== 'authorizing-application') {
-				throw new Error('OAuth retry transaction is not authorizing an application.');
-			}
-			if (transaction.expiresAtMs <= now()) {
-				transactionStore.cancelTransaction({
-					agentId: transaction.agentId,
-					transactionId: transaction.transactionId,
-				});
-				throw new Error('OAuth retry transaction expired.');
-			}
-			if (
-				transaction.tailnetLogin !== retryProps.tailnetLogin ||
-				!secretsEqual(transaction.browserBindingSecret, retryProps.browserBindingSecret) ||
-				!secretsEqual(transaction.csrfSecret, retryProps.csrfToken)
-			) {
-				throw new Error('OAuth retry authority is invalid.');
-			}
-			const applicationId = googleOAuthApplicationIdSchema.parse(transaction.applicationId);
-			return {
-				applicationId: oauthApplicationIdSchema.parse(applicationId),
-				applicationLabel: props.config.providers.google.applications[applicationId].label,
-				authorizationUrl: props.googleAdapter.buildAuthorizationUrl({
-					clientCredentials: props.clientCredentialsByApplication[applicationId],
-					pkceChallenge: transaction.pkceChallenge,
-					redirectUri: transaction.redirectUri,
-					requestedScopes: transaction.confirmedScopes,
-					state: transaction.oauthState,
-				}),
-				browserBindingSecret: transaction.browserBindingSecret,
-				expiresAtMs: transaction.expiresAtMs,
-				kind: 'redirect',
-				transactionId: transaction.transactionId,
-			};
+			return providerAuthorizationCallback.retryApplication(retryProps);
 		},
 		stopAdmission,
 		handleGoogleCallback: async (callbackProps) =>
-			await trackOperation(async () => {
-				const current = transactionStore.getTransaction(callbackProps.transactionId);
-				if (
-					current?.kind !== 'authorizing-application' ||
-					!secretsEqual(current.browserBindingSecret, callbackProps.browserBindingSecret)
-				) {
-					return { kind: 'failed', reason: 'browser-binding-mismatch' };
-				}
-				const consumption = transactionStore.beginCallbackConsumption(callbackProps);
-				if (consumption.kind !== 'accepted') return { kind: 'failed', reason: consumption.reason };
-				const applicationId = googleOAuthApplicationIdSchema.parse(
-					consumption.transaction.applicationId,
-				);
-				const exchange = await props.googleAdapter.exchangeAuthorizationCode({
-					authorizationCode: callbackProps.authorizationCode,
-					clientCredentials: props.clientCredentialsByApplication[applicationId],
-					pkceVerifier: consumption.transaction.pkceVerifier,
-					redirectUri: consumption.transaction.redirectUri,
-					signal: providerAbortController.signal,
-				});
-				if (exchange.kind === 'failed') {
-					if (!admissionOpen) return { kind: 'failed', reason: exchange.failure.kind };
-					return prepareCallbackRetry({ transaction: consumption.transaction });
-				}
-				const actualScopes = new Set(exchange.authorization.grantedScopes);
-				const allowedScopes = new Set([
-					...consumption.transaction.confirmedScopes,
-					...googleIdentityScopes,
-				]);
-				if (exchange.authorization.grantedScopes.some((scope) => !allowedScopes.has(scope))) {
-					transactionStore.cancelTransaction({
-						agentId: current.agentId,
-						transactionId: current.transactionId,
-					});
-					return { kind: 'failed', reason: 'scope-insufficient' };
-				}
-				if (consumption.transaction.confirmedScopes.some((scope) => !actualScopes.has(scope))) {
-					return prepareCallbackRetry({ transaction: consumption.transaction });
-				}
-				const existingSubjects = new Set(
-					props.catalog
-						.listGrantsForAgent({ agentId: current.agentId, zoneId: props.zoneId })
-						.filter((grant) => grant.accountProfileId === current.accountProfileId)
-						.map((grant) => grant.providerSubject),
-				);
-				const profileMetadata = props.catalog.getAccountProfileMetadata({
-					accountProfileId: current.accountProfileId,
-					agentId: current.agentId,
-					zoneId: props.zoneId,
-				});
-				if (profileMetadata !== undefined) {
-					existingSubjects.add(profileMetadata.providerSubject);
-				}
-				if (
-					existingSubjects.size > 0 &&
-					!existingSubjects.has(exchange.authorization.accountSubject)
-				) {
-					transactionStore.cancelTransaction({
-						agentId: current.agentId,
-						transactionId: current.transactionId,
-					});
-					return { kind: 'failed', reason: 'subject-mismatch' };
-				}
-				const completionResult = transactionStore.completeCallback({
-					providerGrant: exchange.authorization,
-					transactionId: current.transactionId,
-				});
-				if (completionResult.kind === 'capacity-exhausted') {
-					return prepareCallbackRetry({ transaction: consumption.transaction });
-				}
-				const completion = completionResult.session;
-				const application = props.config.providers.google.applications[applicationId];
-				return {
-					confirmation: {
-						accountLabel: exchange.authorization.accountEmail,
-						applicationLabel: application.label,
-						browserBindingSecret: completion.browserBindingSecret,
-						completionSessionId: completion.completionSessionId,
-						csrfToken: completion.csrfSecret,
-						expiresAtMs: completion.expiresAtMs,
-						grantedPermissionLabels: Object.values(application.services)
-							.filter((service) => service.read.some((scope) => actualScopes.has(scope)))
-							.map((service) => service.label),
-					},
-					kind: 'confirmation',
-				};
-			}),
+			await trackOperation(
+				async () => await providerAuthorizationCallback.handleGoogleCallback(callbackProps),
+			),
 		submitPermissions: (submissionProps) => {
 			requireAdmission();
 			const transaction = transactionStore.getTransaction(submissionProps.transactionId);
@@ -1601,14 +861,17 @@ export function createGoogleOAuthBrokerService(props: {
 			) {
 				throw new Error('OAuth permission submission authority is invalid.');
 			}
-			const selections = completeSelections({
+			const selections = permissionPolicy.completeSelections({
 				accountProfileId: transaction.accountProfileId,
 				agentId: transaction.agentId,
 				selections: submissionProps.selections,
 			});
 			const queue = transaction.applicationIds
 				.map((applicationId) => googleOAuthApplicationIdSchema.parse(applicationId))
-				.filter((applicationId) => scopesForApplication(applicationId, selections).length > 0);
+				.filter(
+					(applicationId) =>
+						permissionPolicy.scopesForApplication(applicationId, selections).length > 0,
+				);
 			const firstApplication = queue[0];
 			if (firstApplication === undefined) {
 				transactionStore.cancelTransaction({

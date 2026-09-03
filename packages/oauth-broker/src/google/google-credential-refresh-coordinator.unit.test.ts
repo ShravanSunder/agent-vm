@@ -15,7 +15,7 @@ import {
 	type OAuthCredentialCatalog,
 	type OAuthReplaceGrantEnvelopeInput,
 	type OAuthStoredGrant,
-} from '../oauth-credential-catalog.js';
+} from '../oauth-credential-catalog-contracts.js';
 import {
 	createGoogleCredentialRefreshCoordinator,
 	googleStoredCredentialPayloadSchema,

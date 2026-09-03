@@ -15,10 +15,10 @@ import { z } from 'zod';
 
 import { createOAuthEnvelopeCodec, oauthEnvelopeBindingSchema } from './envelope-codec.js';
 import {
-	openOAuthCredentialCatalog,
 	type OAuthCredentialCatalog,
 	type OAuthEnrollmentGrantInput,
-} from './oauth-credential-catalog.js';
+} from './oauth-credential-catalog-contracts.js';
+import { openOAuthCredentialCatalog } from './oauth-credential-catalog.js';
 
 const providerPayloadSchema = z
 	.object({
