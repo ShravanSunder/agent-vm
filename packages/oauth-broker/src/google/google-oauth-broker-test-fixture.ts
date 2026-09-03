@@ -8,6 +8,7 @@ import {
 	oauthPermissionSelectionsSchema,
 	oauthScopeSchema,
 	oauthTokenLifecycleSchema,
+	type OAuthScope,
 } from '@agent-vm/oauth-broker-contracts';
 import { afterEach } from 'vitest';
 
@@ -129,7 +130,7 @@ export function createAdapter(
 		readonly extraGrantedScope?: string | undefined;
 	} = {},
 ): GoogleOAuthAdapter {
-	let requestedScopes: readonly ReturnType<typeof oauthScopeSchema.parse>[] = [];
+	let requestedScopes: readonly OAuthScope[] = [];
 	return {
 		buildAuthorizationUrl: (authorization) => {
 			requestedScopes = authorization.requestedScopes;

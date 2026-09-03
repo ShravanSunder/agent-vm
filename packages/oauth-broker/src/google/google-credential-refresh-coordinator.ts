@@ -11,6 +11,7 @@ import { z } from 'zod';
 import {
 	createOAuthEnvelopeCodec,
 	oauthEnvelopeBindingSchema,
+	type OAuthEnvelopeBinding,
 	type OAuthKeyEncryptionKey,
 } from '../envelope-codec.js';
 import {
@@ -75,9 +76,7 @@ function containsRequiredScopes(
 	return requiredScopes.every((scope) => granted.has(scope));
 }
 
-function envelopeBinding(
-	grant: OAuthStoredGrant,
-): ReturnType<typeof oauthEnvelopeBindingSchema.parse> {
+function envelopeBinding(grant: OAuthStoredGrant): OAuthEnvelopeBinding {
 	return oauthEnvelopeBindingSchema.parse({
 		accountProfileId: grant.accountProfileId,
 		applicationId: grant.applicationId,

@@ -3,6 +3,7 @@ import {
 	oauthApplicationIdSchema,
 	oauthPermissionSelectionsSchema,
 	oauthServiceIdSchema,
+	type OAuthPermissionSelections,
 	type OAuthTransactionId,
 } from '@agent-vm/oauth-broker-contracts';
 import { describe, expect, it } from 'vitest';
@@ -21,7 +22,7 @@ import {
 } from './google-oauth-broker-test-fixture.js';
 
 async function prepareAccountConfirmation(props: {
-	readonly selections: ReturnType<typeof oauthPermissionSelectionsSchema.parse>;
+	readonly selections: OAuthPermissionSelections;
 	readonly service: GoogleOAuthBrokerService;
 }): Promise<{
 	readonly confirmation: GoogleOAuthConfirmationPageData;
