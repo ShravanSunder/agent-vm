@@ -6,13 +6,12 @@ import {
 	oauthPermissionSelectionsSchema,
 	oauthServiceIdSchema,
 	type OAuthAccountProfileId,
+	type OAuthApplicationId,
 	type OAuthAuthorizationActionResult,
-	type OAuthTransactionId,
 } from '@agent-vm/oauth-broker-contracts';
 
 import { type OAuthCredentialCatalog } from '../oauth-credential-catalog-contracts.js';
-import { type OAuthTransactionStore } from '../oauth-transaction-store.js';
-import { type GoogleProviderAuthorization } from './google-oauth-adapter.js';
+import { type OAuthCeremonyTransaction } from '../oauth-transaction-store.js';
 import {
 	type GoogleOAuthApplicationProgress,
 	type GoogleOAuthPermissionPageData,
@@ -24,13 +23,15 @@ type GoogleOAuthAccountProfile = GoogleOAuthAgent['accountProfiles'][OAuthAccoun
 
 export interface GoogleAuthorizationViewModels {
 	applicationProgress(props: {
-		readonly authorizingApplication: ReturnType<typeof oauthApplicationIdSchema.parse>;
-		readonly completedApplications: readonly ReturnType<typeof oauthApplicationIdSchema.parse>[];
-		readonly remainingApplications: readonly ReturnType<typeof oauthApplicationIdSchema.parse>[];
+		readonly authorizingApplication: OAuthApplicationId;
+		readonly completedApplications: readonly OAuthApplicationId[];
+		readonly remainingApplications: readonly OAuthApplicationId[];
 	}): readonly GoogleOAuthApplicationProgress[];
 	getPermissionPage(props: {
-		readonly tailnetLogin: string;
-		readonly transactionId: OAuthTransactionId;
+		readonly transaction: Extract<
+			OAuthCeremonyTransaction,
+			{ readonly kind: 'selecting-permissions' }
+		>;
 	}): GoogleOAuthPermissionPageData;
 	listAuthorizations(agentId: string): OAuthAuthorizationActionResult;
 }
@@ -44,7 +45,6 @@ export function createGoogleAuthorizationViewModels(props: {
 		accountProfileId: OAuthAccountProfileId,
 	) => GoogleOAuthAccountProfile;
 	readonly requireAgent: (agentId: string) => GoogleOAuthAgent;
-	readonly transactionStore: OAuthTransactionStore<GoogleProviderAuthorization>;
 	readonly zoneId: string;
 }): GoogleAuthorizationViewModels {
 	return {
@@ -80,22 +80,11 @@ export function createGoogleAuthorizationViewModels(props: {
 					}) satisfies GoogleOAuthApplicationProgress,
 			),
 		],
-		getPermissionPage: ({ tailnetLogin, transactionId }): GoogleOAuthPermissionPageData => {
-			const transaction = props.transactionStore.getTransaction(transactionId);
-			if (transaction?.kind !== 'selecting-permissions') {
-				throw new Error('OAuth transaction is not available for permission selection.');
-			}
+		getPermissionPage: ({ transaction }): GoogleOAuthPermissionPageData => {
 			const profile = props.requireAccountProfile(
 				transaction.agentId,
 				transaction.accountProfileId,
 			);
-			if (!profile.authorizedTailnetLogins.includes(tailnetLogin)) {
-				throw new Error('Tailnet identity cannot authorize this OAuth account profile.');
-			}
-			const boundTransaction = props.transactionStore.bindTailnetIdentity({
-				tailnetLogin,
-				transactionId,
-			});
 			return {
 				accountProfileLabel: transaction.accountProfileId,
 				applications: Object.entries(profile.applications)
@@ -113,8 +102,7 @@ export function createGoogleAuthorizationViewModels(props: {
 								([serviceId, maximumPermission]) => {
 									const parsedServiceId = oauthServiceIdSchema.parse(serviceId);
 									const suggestedChoice = googleApplicationSelections(
-										boundTransaction.suggestedSelections ??
-											oauthPermissionSelectionsSchema.parse({}),
+										transaction.suggestedSelections ?? oauthPermissionSelectionsSchema.parse({}),
 										parsedApplicationId,
 									)?.[parsedServiceId];
 									const serviceView: GoogleOAuthPermissionPageData['applications'][number]['services'][number] =
@@ -135,10 +123,10 @@ export function createGoogleAuthorizationViewModels(props: {
 							),
 						};
 					}),
-				browserBindingSecret: boundTransaction.browserBindingSecret,
-				csrfToken: boundTransaction.csrfSecret,
-				expiresAtMs: boundTransaction.expiresAtMs,
-				transactionId: boundTransaction.transactionId,
+				browserBindingSecret: transaction.browserBindingSecret,
+				csrfToken: transaction.csrfSecret,
+				expiresAtMs: transaction.expiresAtMs,
+				transactionId: transaction.transactionId,
 			};
 		},
 		listAuthorizations: (agentId): OAuthAuthorizationActionResult => {

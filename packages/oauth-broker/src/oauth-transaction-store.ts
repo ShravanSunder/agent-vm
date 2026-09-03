@@ -1,5 +1,3 @@
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-
 import {
 	oauthAccountProfileIdSchema,
 	oauthApplicationIdSchema,
@@ -15,6 +13,12 @@ import {
 	type OAuthTransactionId,
 } from '@agent-vm/oauth-broker-contracts';
 import { z } from 'zod';
+
+import {
+	createOAuthOpaqueIdentifier,
+	createOAuthPkcePair,
+	oauthBrowserSecretsEqual,
+} from './oauth-browser-security.js';
 
 const oauthOpaqueBrowserSecretSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/u);
 const oauthAgentIdSchema = z.string().min(1).max(128);
@@ -209,24 +213,6 @@ export interface OAuthTransactionStore<TProviderGrant> {
 	reapExpired(): { readonly completionSessionCount: number; readonly transactionCount: number };
 }
 
-function createOpaqueIdentifier(): string {
-	return randomBytes(32).toString('base64url');
-}
-
-function createPkcePair(): { readonly challenge: string; readonly verifier: string } {
-	const verifier = createOpaqueIdentifier();
-	return {
-		challenge: createHash('sha256').update(verifier).digest('base64url'),
-		verifier,
-	};
-}
-
-function opaqueSecretsEqual(left: string, right: string): boolean {
-	const leftBytes = Buffer.from(left);
-	const rightBytes = Buffer.from(right);
-	return leftBytes.byteLength === rightBytes.byteLength && timingSafeEqual(leftBytes, rightBytes);
-}
-
 function validateUniqueApplications(
 	applications: readonly OAuthApplicationId[],
 	fieldName: string,
@@ -355,7 +341,7 @@ export function createOAuthTransactionStore<TProviderGrant>(props: {
 				throw new Error('OAuth transaction has no bound tailnet identity.');
 			}
 			const tailnetLogin = current.tailnetLogin;
-			const pkce = createPkcePair();
+			const pkce = createOAuthPkcePair();
 			const next = {
 				...current,
 				applicationId: oauthApplicationIdSchema.parse(applicationProps.applicationId),
@@ -371,7 +357,7 @@ export function createOAuthTransactionStore<TProviderGrant>(props: {
 					.readonly()
 					.parse(applicationProps.confirmedScopes),
 				kind: 'authorizing-application' as const,
-				oauthState: createOpaqueIdentifier(),
+				oauthState: createOAuthOpaqueIdentifier(),
 				pkceChallenge: pkce.challenge,
 				pkceVerifier: pkce.verifier,
 				redirectUri: oauthRedirectUriSchema.parse(applicationProps.redirectUri),
@@ -402,7 +388,7 @@ export function createOAuthTransactionStore<TProviderGrant>(props: {
 				return { kind: 'rejected', reason: 'invalid-redirect' };
 			}
 			if (
-				!opaqueSecretsEqual(
+				!oauthBrowserSecretsEqual(
 					current.oauthState,
 					oauthOpaqueBrowserSecretSchema.parse(callbackProps.oauthState),
 				)
@@ -430,7 +416,7 @@ export function createOAuthTransactionStore<TProviderGrant>(props: {
 				return { kind: 'rejected', reason: 'identity-mismatch' };
 			}
 			if (
-				!opaqueSecretsEqual(
+				!oauthBrowserSecretsEqual(
 					current.browserBindingSecret,
 					oauthOpaqueBrowserSecretSchema.parse(completionProps.browserBindingSecret),
 				)
@@ -438,7 +424,7 @@ export function createOAuthTransactionStore<TProviderGrant>(props: {
 				return { kind: 'rejected', reason: 'browser-binding-mismatch' };
 			}
 			if (
-				!opaqueSecretsEqual(
+				!oauthBrowserSecretsEqual(
 					current.csrfSecret,
 					oauthOpaqueBrowserSecretSchema.parse(completionProps.csrfToken),
 				)
@@ -465,11 +451,11 @@ export function createOAuthTransactionStore<TProviderGrant>(props: {
 			if (
 				current.kind !== 'awaiting-account-confirmation' ||
 				current.tailnetLogin !== tailnetLoginSchema.parse(completionProps.tailnetLogin) ||
-				!opaqueSecretsEqual(
+				!oauthBrowserSecretsEqual(
 					current.browserBindingSecret,
 					oauthOpaqueBrowserSecretSchema.parse(completionProps.browserBindingSecret),
 				) ||
-				!opaqueSecretsEqual(
+				!oauthBrowserSecretsEqual(
 					current.csrfSecret,
 					oauthOpaqueBrowserSecretSchema.parse(completionProps.csrfToken),
 				)
@@ -494,19 +480,21 @@ export function createOAuthTransactionStore<TProviderGrant>(props: {
 				return { kind: 'capacity-exhausted' };
 			}
 			transactions.delete(parsedTransactionId);
-			const completionSessionId = oauthCompletionSessionIdSchema.parse(createOpaqueIdentifier());
+			const completionSessionId = oauthCompletionSessionIdSchema.parse(
+				createOAuthOpaqueIdentifier(),
+			);
 			const createdAtMs = now();
 			const completionSession = {
 				accountProfileId: current.accountProfileId,
 				agentId: current.agentId,
 				applicationId: current.applicationId,
 				authorizationMode: current.authorizationMode,
-				browserBindingSecret: createOpaqueIdentifier(),
+				browserBindingSecret: createOAuthOpaqueIdentifier(),
 				completedApplications: current.completedApplications,
 				confirmedSelections: current.confirmedSelections,
 				completionSessionId,
 				createdAtMs,
-				csrfSecret: createOpaqueIdentifier(),
+				csrfSecret: createOAuthOpaqueIdentifier(),
 				expiresAtMs: createdAtMs + completionSessionTtlMs,
 				kind: 'awaiting-account-confirmation' as const,
 				providerGrant: props.providerGrantSchema.parse(providerGrant),
@@ -523,16 +511,16 @@ export function createOAuthTransactionStore<TProviderGrant>(props: {
 			if (transactions.size >= maxTransactions) {
 				throw new Error('OAuth transaction capacity is exhausted.');
 			}
-			const transactionId = oauthTransactionIdSchema.parse(createOpaqueIdentifier());
+			const transactionId = oauthTransactionIdSchema.parse(createOAuthOpaqueIdentifier());
 			const createdAtMs = now();
 			const transaction = {
 				accountProfileId: oauthAccountProfileIdSchema.parse(createProps.accountProfileId),
 				agentId: oauthAgentIdSchema.parse(createProps.agentId),
 				applicationIds: validateUniqueApplications(createProps.applicationIds, 'applicationIds'),
 				authorizationMode: createProps.authorizationMode,
-				browserBindingSecret: createOpaqueIdentifier(),
+				browserBindingSecret: createOAuthOpaqueIdentifier(),
 				createdAtMs,
-				csrfSecret: createOpaqueIdentifier(),
+				csrfSecret: createOAuthOpaqueIdentifier(),
 				expiresAtMs: createdAtMs + transactionTtlMs,
 				kind: 'selecting-permissions' as const,
 				...(createProps.suggestedSelections === undefined

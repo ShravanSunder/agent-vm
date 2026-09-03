@@ -1,5 +1,3 @@
-import { timingSafeEqual } from 'node:crypto';
-
 import {
 	googleOAuthApplicationIdSchema,
 	type GoogleOAuthApplicationId,
@@ -10,6 +8,7 @@ import {
 	type OAuthTransactionId,
 } from '@agent-vm/oauth-broker-contracts';
 
+import { oauthBrowserSecretsEqual } from '../oauth-browser-security.js';
 import { type OAuthCredentialCatalog } from '../oauth-credential-catalog-contracts.js';
 import {
 	type OAuthCeremonyTransaction,
@@ -25,12 +24,6 @@ import {
 	type GoogleOAuthCallbackResult,
 	type GoogleOAuthRedirectResult,
 } from './google-oauth-broker-contracts.js';
-
-function secretsEqual(left: string, right: string): boolean {
-	const leftBytes = Buffer.from(left);
-	const rightBytes = Buffer.from(right);
-	return leftBytes.byteLength === rightBytes.byteLength && timingSafeEqual(leftBytes, rightBytes);
-}
 
 export interface GoogleProviderAuthorizationCallback {
 	handleGoogleCallback(props: {
@@ -73,7 +66,7 @@ export function createGoogleProviderAuthorizationCallback(props: {
 			const current = props.transactionStore.getTransaction(callbackProps.transactionId);
 			if (
 				current?.kind !== 'authorizing-application' ||
-				!secretsEqual(current.browserBindingSecret, callbackProps.browserBindingSecret)
+				!oauthBrowserSecretsEqual(current.browserBindingSecret, callbackProps.browserBindingSecret)
 			) {
 				return { kind: 'failed', reason: 'browser-binding-mismatch' };
 			}
@@ -174,8 +167,11 @@ export function createGoogleProviderAuthorizationCallback(props: {
 			}
 			if (
 				transaction.tailnetLogin !== retryProps.tailnetLogin ||
-				!secretsEqual(transaction.browserBindingSecret, retryProps.browserBindingSecret) ||
-				!secretsEqual(transaction.csrfSecret, retryProps.csrfToken)
+				!oauthBrowserSecretsEqual(
+					transaction.browserBindingSecret,
+					retryProps.browserBindingSecret,
+				) ||
+				!oauthBrowserSecretsEqual(transaction.csrfSecret, retryProps.csrfToken)
 			) {
 				throw new Error('OAuth retry authority is invalid.');
 			}

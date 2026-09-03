@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 
 import {
 	googleOAuthApplicationIdSchema,
@@ -26,6 +26,7 @@ import {
 	oauthEnvelopeBindingSchema,
 	type OAuthKeyEncryptionKey,
 } from '../envelope-codec.js';
+import { oauthBrowserSecretsEqual } from '../oauth-browser-security.js';
 import { type OAuthCredentialCatalog } from '../oauth-credential-catalog-contracts.js';
 import {
 	createOAuthTransactionStore,
@@ -51,12 +52,6 @@ import {
 import { createGoogleOAuthPermissionPolicy } from './google-oauth-permission-policy.js';
 import { createGoogleProviderAuthorizationCallback } from './google-provider-authorization-callback.js';
 import { createGoogleRuntimeCredentialPolicy } from './google-runtime-credential-policy.js';
-
-function secretsEqual(left: string, right: string): boolean {
-	const leftBytes = Buffer.from(left);
-	const rightBytes = Buffer.from(right);
-	return leftBytes.byteLength === rightBytes.byteLength && timingSafeEqual(leftBytes, rightBytes);
-}
 
 function materialRevision(): OAuthMaterialRevision {
 	return oauthMaterialRevisionSchema.parse(`sha256:${randomBytes(32).toString('base64url')}`);
@@ -327,7 +322,6 @@ export function createGoogleOAuthBrokerService(props: {
 		now,
 		requireAccountProfile,
 		requireAgent,
-		transactionStore,
 		zoneId: props.zoneId,
 	});
 
@@ -445,8 +439,11 @@ export function createGoogleOAuthBrokerService(props: {
 				(transaction.kind !== 'selecting-permissions' &&
 					transaction.kind !== 'authorizing-application') ||
 				transaction.tailnetLogin !== cancelProps.tailnetLogin ||
-				!secretsEqual(transaction.browserBindingSecret, cancelProps.browserBindingSecret) ||
-				!secretsEqual(transaction.csrfSecret, cancelProps.csrfToken)
+				!oauthBrowserSecretsEqual(
+					transaction.browserBindingSecret,
+					cancelProps.browserBindingSecret,
+				) ||
+				!oauthBrowserSecretsEqual(transaction.csrfSecret, cancelProps.csrfToken)
 			) {
 				return false;
 			}
@@ -823,7 +820,17 @@ export function createGoogleOAuthBrokerService(props: {
 			}),
 		getPermissionPage: ({ tailnetLogin, transactionId }) => {
 			requireAdmission();
-			return authorizationViewModels.getPermissionPage({ tailnetLogin, transactionId });
+			const transaction = transactionStore.getTransaction(transactionId);
+			if (transaction?.kind !== 'selecting-permissions') {
+				throw new Error('OAuth transaction is not available for permission selection.');
+			}
+			const profile = requireAccountProfile(transaction.agentId, transaction.accountProfileId);
+			if (!profile.authorizedTailnetLogins.includes(tailnetLogin)) {
+				throw new Error('Tailnet identity cannot authorize this OAuth account profile.');
+			}
+			return authorizationViewModels.getPermissionPage({
+				transaction: transactionStore.bindTailnetIdentity({ tailnetLogin, transactionId }),
+			});
 		},
 		resolveRuntimeCredential: async (runtimeProps) =>
 			await trackOperation(
@@ -856,8 +863,11 @@ export function createGoogleOAuthBrokerService(props: {
 			}
 			if (
 				transaction.tailnetLogin !== submissionProps.tailnetLogin ||
-				!secretsEqual(transaction.browserBindingSecret, submissionProps.browserBindingSecret) ||
-				!secretsEqual(transaction.csrfSecret, submissionProps.csrfToken)
+				!oauthBrowserSecretsEqual(
+					transaction.browserBindingSecret,
+					submissionProps.browserBindingSecret,
+				) ||
+				!oauthBrowserSecretsEqual(transaction.csrfSecret, submissionProps.csrfToken)
 			) {
 				throw new Error('OAuth permission submission authority is invalid.');
 			}
