@@ -603,7 +603,7 @@ describe('createControllerRuntimeOperations', () => {
 		});
 		expect(exec).toHaveBeenCalledTimes(1);
 		await expect(
-			operations.retireCredentialedRuntime('shravan', 'google-workspace', {
+			operations.retireCredentialedRuntime('shravan', {
 				agentId: 'sun',
 				force: false,
 			}),
@@ -612,7 +612,7 @@ describe('createControllerRuntimeOperations', () => {
 			httpStatus: 401,
 		} satisfies Partial<ControllerZoneAdminAuthError>);
 		await expect(
-			operations.retireCredentialedRuntime('shravan', 'google-workspace', {
+			operations.retireCredentialedRuntime('shravan', {
 				adminToken: 'wrong-admin-token',
 				agentId: 'sun',
 				force: false,
@@ -622,7 +622,7 @@ describe('createControllerRuntimeOperations', () => {
 			httpStatus: 403,
 		} satisfies Partial<ControllerZoneAdminAuthError>);
 		await expect(
-			operations.retireCredentialedRuntime('shravan', 'google-workspace', {
+			operations.retireCredentialedRuntime('shravan', {
 				adminToken: 'expected-admin-token',
 				agentId: 'sun',
 				force: true,
@@ -631,7 +631,6 @@ describe('createControllerRuntimeOperations', () => {
 		expect(retireCredentialedRuntime).toHaveBeenCalledWith({
 			agentId: 'sun',
 			force: true,
-			runtimeId: 'google-workspace',
 			zoneId: 'shravan',
 		});
 	});

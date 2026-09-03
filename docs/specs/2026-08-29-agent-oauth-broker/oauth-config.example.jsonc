@@ -1,0 +1,92 @@
+{
+	"schemaVersion": 1,
+	"browser": {
+		"publicBaseUrl": "https://auth.claw.askluna.xyz",
+		"listener": {
+			"kind": "tailscale_https",
+			"port": 18900,
+			"certificatePath": "<controller-owned path>",
+			"privateKeyPath": "<controller-owned path>",
+		},
+	},
+	"storage": {
+		"keyEncryptionKey": {
+			"source": "1password",
+			"ref": "<operator-authored 1Password reference>",
+		},
+	},
+	"providers": {
+		"google": {
+			"kind": "google",
+			"applications": {
+				"workspace-app": {
+					"clientKind": "web",
+					"clientCredentials": {
+						"source": "1password",
+						"ref": "<operator-authored 1Password reference>",
+					},
+					"services": {
+						"calendar": {
+							"read": ["<calendar read scopes>"],
+							"write": ["<calendar write scopes>"],
+						},
+						"drive": {
+							"read": ["<ordinary Drive read scopes>"],
+							"write": ["<explicit elevated Drive scopes>"],
+						},
+					},
+				},
+				"gmail-app": {
+					"clientKind": "web",
+					"clientCredentials": {
+						"source": "1password",
+						"ref": "<operator-authored 1Password reference>",
+					},
+					"services": {
+						"gmail": {
+							"read": ["<Gmail read scopes>"],
+							"write": ["<Gmail mutation scopes>"],
+						},
+					},
+				},
+				"youtube-app": {
+					"clientKind": "web",
+					"clientCredentials": {
+						"source": "1password",
+						"ref": "<operator-authored 1Password reference>",
+					},
+					"services": {
+						"youtube": {
+							"read": ["<YouTube read scopes>"],
+							"write": ["<bounded YouTube mutation scopes>"],
+						},
+					},
+				},
+			},
+		},
+	},
+	"agents": {
+		"<agent-id>": {
+			"accountProfiles": {
+				"personal-google": {
+					"provider": "google",
+					"authorizedTailnetLogins": ["<authorized human login>"],
+					"applications": {
+						"workspace-app": {
+							"maximumPermissions": {
+								"calendar": "write",
+								"drive": "read",
+							},
+						},
+						"gmail-app": {
+							"maximumPermissions": { "gmail": "write" },
+						},
+						"youtube-app": {
+							"maximumPermissions": { "youtube": "write" },
+						},
+					},
+				},
+			},
+		},
+	},
+}

@@ -94,21 +94,23 @@ function createEphemeralConfiguredCliToolPortalConfigInput(): unknown {
 									executablePath: '/usr/bin/printf',
 									executionTarget: {
 										allowedHosts: [],
-										credentialBinding: 'google',
-										credentialEnvironment: {
-											GOG_DATA_DIR: { kind: 'credential_root' },
-										},
-										credentialFiles: [
-											{
-												path: 'sa-c2hyYXZhbkBleGFtcGxlLmNvbQ.json',
-												source: 'service-account',
+										credentialProjection: {
+											credentialBinding: 'google',
+											credentialEnvironment: {
+												GOG_DATA_DIR: { kind: 'credential_root' },
 											},
-										],
+											credentialFiles: [
+												{
+													path: 'sa-c2hyYXZhbkBleGFtcGxlLmNvbQ.json',
+													source: 'service-account',
+												},
+											],
+											kind: 'file_binding',
+										},
 										environment: { kind: 'empty' },
 										guestCwd: '/run',
 										imageReference: '../../vm-images/controller-runners/default/build-config.json',
 										kind: 'ephemeral_managed_vm',
-										runtimeId: 'google-workspace',
 									},
 									kind: 'configured_cli',
 									mandatoryArgvPrefix: [],
@@ -297,6 +299,30 @@ describe('MCP Portal effective config materialization', () => {
 				authoredConfigDir: path.join(tmpdir(), 'agent-vm-authored-tool-portal'),
 			}),
 		).rejects.toThrow('require the existing Managed VM image preparation capability');
+	});
+
+	it('does not prepare an ephemeral image for a policy-unreachable operation', async () => {
+		const toolPortalConfig = parseToolPortalConfigForTest(
+			createEphemeralConfiguredCliToolPortalConfigInput(),
+		);
+		if (toolPortalConfig.mode !== 'managed') throw new Error('Expected managed config.');
+		const namespacePolicy = toolPortalConfig.profiles.default?.namespaces.controller;
+		if (namespacePolicy?.backend.kind !== 'controller_execution') {
+			throw new Error('Expected controller execution namespace.');
+		}
+		namespacePolicy.tools.allow = [];
+		namespacePolicy.calls.withoutApproval.allow = [];
+
+		const result = await resolveMcpPortalEffectiveConfigFromConfig({
+			...createPlanPropsForTest({
+				mcpConfig: { providers: {}, schemaVersion: 1 },
+				toolPortalConfig,
+			}),
+			authoredConfigDir: path.join(tmpdir(), 'agent-vm-authored-tool-portal'),
+		});
+		expect(
+			result.effectiveToolPortalConfig.profiles.default?.namespaces.controller,
+		).toBeUndefined();
 	});
 
 	it('changes binding freshness when prepared bytes change behind one recipe path', async () => {

@@ -11,6 +11,7 @@ import {
 	managedToolPortalConfigSchema,
 	mcpPortalConfigSchema,
 	preparedManagedToolPortalConfigSchema,
+	toolPortalNamespaceAllowsOperation,
 	type FormattedSecretValue,
 	type EffectiveManagedToolPortalConfig,
 	type McpConfig,
@@ -117,6 +118,19 @@ async function prepareConfiguredCliManagedVmImages(props: {
 	const effectiveConfig = structuredClone(props.toolPortalConfig);
 	if (effectiveConfig.mode !== 'managed') {
 		throw new Error('tool-portal: effective Managed VM image preparation requires managed mode.');
+	}
+	for (const profile of Object.values(effectiveConfig.profiles)) {
+		for (const [namespaceId, namespacePolicy] of Object.entries(profile.namespaces)) {
+			if (namespacePolicy.backend.kind !== 'controller_execution') continue;
+			namespacePolicy.backend.operations = Object.fromEntries(
+				Object.entries(namespacePolicy.backend.operations).filter(([operationName]) =>
+					toolPortalNamespaceAllowsOperation(namespacePolicy, operationName),
+				),
+			);
+			if (Object.keys(namespacePolicy.backend.operations).length === 0) {
+				delete profile.namespaces[namespaceId];
+			}
+		}
 	}
 	const ephemeralTargets = Object.values(effectiveConfig.profiles).flatMap((profile) =>
 		Object.values(profile.namespaces).flatMap((namespacePolicy) =>

@@ -634,13 +634,18 @@ operation-level `calls.requiresApproval` array is non-empty. Hermes is the sole
 native presenter for those matched invocations in this release.
 
 The credentialed `ephemeral_managed_vm` target is a controller-created reusable
-Managed runtime, not a leased Tool VM and not one VM per call. It requires
-`runtimeId`, `credentialBinding`, 1-16 unique `credentialFiles` mappings, and
-1-16 controller-authored `credentialEnvironment` entries. Environment entries
-resolve only to `{ kind: "credential_root" }` or
-`{ kind: "credential_file", source }`; callers cannot select their names or
-values. Credential paths are read-only and memory-backed while ordinary CLI
-config, state, and cache remain in live COW rootfs.
+Managed runtime, not a leased Tool VM and not one VM per call. There is exactly one
+current runtime per zone and authenticated agent; configuration and callers do not
+name runtime groups. Every reachable operation for one agent must compile to one
+compatible VM-shaping definition.
+
+Each target declares exactly one `credentialProjection`. `file_binding` requires
+`credentialBinding`, 1-16 unique `credentialFiles` mappings, and 1-16
+controller-authored `credentialEnvironment` entries. `http_mediation` instead
+maps environment names to strict secret sources and exact non-empty host lists.
+File paths are read-only and memory-backed. Mediated values remain host-side and
+the VM receives placeholders. Ordinary CLI config, state, and cache remain in live
+COW rootfs.
 
 One agent/runtime executes one command at a time. A concurrent call is
 retryably rejected rather than queued. Compatible independently authorized
@@ -674,16 +679,18 @@ For Gog service accounts, map the 1Password value to Gog's expected
   },
   "executionTarget": {
     "kind": "ephemeral_managed_vm",
-    "runtimeId": "google-workspace",
-    "credentialBinding": "google",
-    "credentialFiles": [
-      {
-        "source": "service-account",
-        "path": "sa-<encoded-account>.json"
+    "credentialProjection": {
+      "kind": "file_binding",
+      "credentialBinding": "google",
+      "credentialFiles": [
+        {
+          "source": "service-account",
+          "path": "sa-<encoded-account>.json"
+        }
+      ],
+      "credentialEnvironment": {
+        "GOG_DATA_DIR": { "kind": "credential_root" }
       }
-    ],
-    "credentialEnvironment": {
-      "GOG_DATA_DIR": { "kind": "credential_root" }
     },
     "imageReference": "./gog-image.jsonc",
     "guestCwd": "/work",
@@ -699,7 +706,7 @@ retirement. For immediate replacement:
 
 ```text
 agent-vm controller credential-runtime retire \
-  --zone <zone> --agent <agentId> --runtime <runtimeId> [--force]
+  --zone <zone> --agent <agentId> [--force]
 ```
 
 The command uses existing zone `adminAccess`. Without `--force`, active work is

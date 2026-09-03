@@ -10,25 +10,28 @@ import type { CredentialedRuntimeResolution } from './credentialed-runtime-regis
 
 function resolution(): CredentialedRuntimeResolution {
 	return {
+		agentRuntimeRevision: 'sha256:agent-runtime',
 		agentId: 'sun',
 		cohortRevision: 'binding:current',
-		credentialBinding: {
-			files: {
-				'service-account': {
-					ref: 'op://agent-vm-testing/google/sun',
-					source: '1password',
+		projection: {
+			credentialBinding: {
+				files: {
+					'service-account': {
+						ref: 'op://agent-vm-testing/google/sun',
+						source: '1password',
+					},
 				},
 			},
-		},
-		credentialEnvironment: {
-			GOG_DATA_DIR: { kind: 'credential_root' },
-			GOOGLE_APPLICATION_CREDENTIALS: {
-				kind: 'credential_file',
-				source: 'service-account',
+			credentialEnvironment: {
+				GOG_DATA_DIR: { kind: 'credential_root' },
+				GOOGLE_APPLICATION_CREDENTIALS: {
+					kind: 'credential_file',
+					source: 'service-account',
+				},
 			},
+			fileMappings: [{ path: 'sa-c3VuQGV4YW1wbGUuY29t.json', source: 'service-account' }],
+			kind: 'file_binding',
 		},
-		fileMappings: [{ path: 'sa-c3VuQGV4YW1wbGUuY29t.json', source: 'service-account' }],
-		groupRevision: 'sha256:group',
 		namespaceId: 'google',
 		operation: {
 			calls: { deny: [], requiresApproval: [], withoutApproval: 'remaining_admitted' },
@@ -37,15 +40,17 @@ function resolution(): CredentialedRuntimeResolution {
 			executablePath: '/usr/local/bin/gog',
 			executionTarget: {
 				allowedHosts: [],
-				credentialBinding: 'google',
-				credentialEnvironment: { GOG_DATA_DIR: { kind: 'credential_root' } },
-				credentialFiles: [{ path: 'sa-c3VuQGV4YW1wbGUuY29t.json', source: 'service-account' }],
+				credentialProjection: {
+					credentialBinding: 'google',
+					credentialEnvironment: { GOG_DATA_DIR: { kind: 'credential_root' } },
+					credentialFiles: [{ path: 'sa-c3VuQGV4YW1wbGUuY29t.json', source: 'service-account' }],
+					kind: 'file_binding',
+				},
 				environment: { kind: 'empty' },
 				guestCwd: '/work',
 				imageReference:
 					'agent-vm-prepared-image:v1:eyJmaW5nZXJwcmludCI6InNoYTI1NjppbWFnZSIsImltYWdlUmVmZXJlbmNlIjoiL2ltYWdlcy9nb2ciLCJzY2hlbWFWZXJzaW9uIjoxfQ',
 				kind: 'ephemeral_managed_vm',
-				runtimeId: 'google-workspace',
 			},
 			kind: 'configured_cli',
 			mandatoryArgvPrefix: [],
@@ -61,7 +66,6 @@ function resolution(): CredentialedRuntimeResolution {
 		},
 		operationName: 'calendar_list',
 		profileId: 'google-enabled',
-		runtimeId: 'google-workspace',
 		zoneId: 'zone-a',
 	};
 }

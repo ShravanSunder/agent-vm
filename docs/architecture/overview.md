@@ -115,10 +115,11 @@ authority.
 ### Credentialed Managed Runtimes
 
 A Tool Portal `controller_execution` configured CLI may target a reusable
-credentialed Managed VM. The controller keys it by zone, authenticated agent,
-and authored runtime id; each call is authorized independently, while a
+credentialed Managed VM. The controller owns exactly one current runtime per
+zone and authenticated agent; each call is authorized independently, while a
 compatible healthy VM may retain CLI state across calls for up to 15 idle
-minutes. Credentials are finalized into read-only memory before boot, and CLI
+minutes. File credentials are finalized into read-only memory before boot, HTTP
+credentials remain host-side behind opaque placeholders, and CLI
 config/state/cache stays on disposable COW rootfs.
 
 This is separate from leased Tool VMs: credentialed calls execute direct array
@@ -357,10 +358,10 @@ policy uses the single `leaseIdleTtl.defaultMs` value, bounded request overrides
 and the default 100 minute fallback.
 
 **Credentialed Runtime Manager** (`credentialed-runtime/`): Creates or reuses
-one compatible Managed VM per zone/agent/runtime id, enforces one active
-command without queueing, materializes read-only credential memory only at
-creation, retires after 15 idle minutes, and performs exact crash recovery and
-operator retirement.
+one compatible Managed VM per zone and authenticated agent, enforces one active
+command without queueing, projects credentials only during creation, retires
+after 15 idle minutes, and performs exact crash recovery and operator
+retirement.
 
 **Active Task Registry** (`active-task-registry.ts`): Tracks in-flight worker tasks by zone and task ID. Used by controller-owned worker control operations to verify a task is still active before allowing branch pushes.
 

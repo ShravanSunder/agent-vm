@@ -1,6 +1,9 @@
+import { isIP } from 'node:net';
+
 import { z } from 'zod';
 
 import { jsonObjectSchema } from './json-value.js';
+import { secretValueSchema } from './secret-value.js';
 
 export const configuredCliArgvTokenSchema = z
 	.string()
@@ -200,6 +203,31 @@ export const configuredCliCredentialLogicalNameSchema = z
 	.string()
 	.regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u);
 
+function isCanonicalExactNetworkHost(value: string): boolean {
+	if (value !== value.toLowerCase()) return false;
+	if (isIP(value) !== 0) return true;
+	if (value.length > 253 || value.endsWith('.')) return false;
+	return value
+		.split('.')
+		.every(
+			(label) =>
+				label.length > 0 && label.length <= 63 && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/u.test(label),
+		);
+}
+
+export const configuredCliExactNetworkHostSchema = z
+	.string()
+	.min(1)
+	.refine(isCanonicalExactNetworkHost, {
+		message: 'Configured CLI hosts must be canonical exact DNS names or IP addresses.',
+	});
+
+const configuredCliExactNetworkHostsSchema = z
+	.array(configuredCliExactNetworkHostSchema)
+	.refine((hosts) => new Set(hosts).size === hosts.length, {
+		message: 'Configured CLI hosts must be unique.',
+	});
+
 export const configuredCliCredentialRelativePathSchema = z
 	.string()
 	.min(1)
@@ -254,56 +282,130 @@ const configuredCliCredentialFilesSchema = z
 	.min(1)
 	.max(16);
 
+const configuredCliMediatedCredentialSourceSchema = z
+	.object({
+		hosts: configuredCliExactNetworkHostsSchema.min(1),
+		secret: secretValueSchema,
+	})
+	.strict();
+
+const configuredCliMediatedCredentialEnvironmentSchema = z
+	.record(
+		z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/u),
+		configuredCliMediatedCredentialSourceSchema,
+	)
+	.refine((environment) => Object.keys(environment).length > 0, {
+		message: 'Configured CLI mediated credential environment must not be empty.',
+	})
+	.refine((environment) => Object.keys(environment).length <= 16, {
+		message: 'Configured CLI mediated credential environment must contain at most 16 entries.',
+	});
+
+const configuredCliFileCredentialProjectionSchema = z
+	.object({
+		credentialBinding: configuredCliCredentialLogicalNameSchema,
+		credentialEnvironment: configuredCliCredentialEnvironmentSchema,
+		credentialFiles: configuredCliCredentialFilesSchema,
+		kind: z.literal('file_binding'),
+	})
+	.strict();
+
+const configuredCliHttpMediationCredentialProjectionSchema = z
+	.object({
+		environment: configuredCliMediatedCredentialEnvironmentSchema,
+		kind: z.literal('http_mediation'),
+	})
+	.strict();
+
+export const configuredCliCredentialProjectionSchema = z.discriminatedUnion('kind', [
+	configuredCliFileCredentialProjectionSchema,
+	configuredCliHttpMediationCredentialProjectionSchema,
+]);
+
 interface CredentialedManagedVmTargetForValidation {
+	readonly allowedHosts: readonly string[];
+	readonly credentialProjection: z.infer<typeof configuredCliCredentialProjectionSchema>;
+	readonly environment: z.infer<typeof configuredCliEnvironmentPolicySchema>;
+}
+
+interface FileCredentialProjectionForValidation {
 	readonly credentialEnvironment: Readonly<
 		Record<string, z.infer<typeof configuredCliCredentialEnvironmentValueSchema>>
 	>;
 	readonly credentialFiles: readonly z.infer<typeof configuredCliCredentialFileMappingSchema>[];
-	readonly environment: z.infer<typeof configuredCliEnvironmentPolicySchema>;
 }
 
-function validateCredentialedManagedVmTarget(
-	target: CredentialedManagedVmTargetForValidation,
+function validateFileCredentialProjection(
+	projection: FileCredentialProjectionForValidation,
 	context: z.RefinementCtx,
 ): void {
 	const seenSources = new Set<string>();
 	const seenPaths = new Set<string>();
-	for (const [mappingIndex, mapping] of target.credentialFiles.entries()) {
+	for (const [mappingIndex, mapping] of projection.credentialFiles.entries()) {
 		if (seenSources.has(mapping.source)) {
 			context.addIssue({
 				code: z.ZodIssueCode.custom,
 				message: 'Configured CLI credential file sources must be unique.',
-				path: ['credentialFiles', mappingIndex, 'source'],
+				path: ['credentialProjection', 'credentialFiles', mappingIndex, 'source'],
 			});
 		}
 		if (seenPaths.has(mapping.path)) {
 			context.addIssue({
 				code: z.ZodIssueCode.custom,
 				message: 'Configured CLI credential file paths must be unique.',
-				path: ['credentialFiles', mappingIndex, 'path'],
+				path: ['credentialProjection', 'credentialFiles', mappingIndex, 'path'],
 			});
 		}
 		seenSources.add(mapping.source);
 		seenPaths.add(mapping.path);
 	}
-	for (const [environmentName, value] of Object.entries(target.credentialEnvironment)) {
+	for (const [environmentName, value] of Object.entries(projection.credentialEnvironment)) {
 		if (value.kind === 'credential_file' && !seenSources.has(value.source)) {
 			context.addIssue({
 				code: z.ZodIssueCode.custom,
 				message: 'Configured CLI credential environment references an unknown file source.',
-				path: ['credentialEnvironment', environmentName, 'source'],
+				path: ['credentialProjection', 'credentialEnvironment', environmentName, 'source'],
 			});
 		}
-		if (
-			target.environment.kind === 'inherit_allowlist' &&
-			target.environment.names.includes(environmentName)
-		) {
-			context.addIssue({
-				code: z.ZodIssueCode.custom,
-				message: 'Configured CLI credential and inherited environment names must not overlap.',
-				path: ['credentialEnvironment', environmentName],
-			});
+	}
+}
+
+function validateCredentialedManagedVmTarget(
+	target: CredentialedManagedVmTargetForValidation,
+	context: z.RefinementCtx,
+): void {
+	const projection = target.credentialProjection;
+	if (projection.kind === 'file_binding') {
+		validateFileCredentialProjection(projection, context);
+	} else {
+		const allowedHosts = new Set(target.allowedHosts);
+		for (const [environmentName, source] of Object.entries(projection.environment)) {
+			for (const [hostIndex, host] of source.hosts.entries()) {
+				if (allowedHosts.has(host)) continue;
+				context.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: 'Mediated credential hosts must also be allowed by the Managed VM target.',
+					path: ['credentialProjection', 'environment', environmentName, 'hosts', hostIndex],
+				});
+			}
 		}
+	}
+	if (target.environment.kind !== 'inherit_allowlist') return;
+	const credentialEnvironmentNames =
+		projection.kind === 'file_binding'
+			? Object.keys(projection.credentialEnvironment)
+			: Object.keys(projection.environment);
+	for (const environmentName of credentialEnvironmentNames) {
+		if (!target.environment.names.includes(environmentName)) continue;
+		context.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: 'Configured CLI credential and inherited environment names must not overlap.',
+			path: [
+				'credentialProjection',
+				projection.kind === 'file_binding' ? 'credentialEnvironment' : 'environment',
+				environmentName,
+			],
+		});
 	}
 }
 
@@ -393,15 +495,12 @@ export const configuredCliExecutionTargetSchema = z.discriminatedUnion('kind', [
 		.strict(),
 	z
 		.object({
-			allowedHosts: z.array(z.string().min(1)).default([]),
-			credentialBinding: configuredCliCredentialLogicalNameSchema,
-			credentialEnvironment: configuredCliCredentialEnvironmentSchema,
-			credentialFiles: configuredCliCredentialFilesSchema,
+			allowedHosts: configuredCliExactNetworkHostsSchema.default([]),
+			credentialProjection: configuredCliCredentialProjectionSchema,
 			environment: configuredCliEnvironmentPolicySchema,
 			guestCwd: absoluteControlFreePathSchema,
 			imageReference: configuredCliImageRecipePathSchema,
 			kind: z.literal('ephemeral_managed_vm'),
-			runtimeId: configuredCliCredentialLogicalNameSchema,
 		})
 		.strict()
 		.superRefine(validateCredentialedManagedVmTarget),
@@ -417,15 +516,12 @@ export const configuredCliEffectiveExecutionTargetSchema = z.discriminatedUnion(
 		.strict(),
 	z
 		.object({
-			allowedHosts: z.array(z.string().min(1)).default([]),
-			credentialBinding: configuredCliCredentialLogicalNameSchema,
-			credentialEnvironment: configuredCliCredentialEnvironmentSchema,
-			credentialFiles: configuredCliCredentialFilesSchema,
+			allowedHosts: configuredCliExactNetworkHostsSchema.default([]),
+			credentialProjection: configuredCliCredentialProjectionSchema,
 			environment: configuredCliEnvironmentPolicySchema,
 			guestCwd: absoluteControlFreePathSchema,
 			imageReference: configuredCliPreparedImageIdentitySchema,
 			kind: z.literal('ephemeral_managed_vm'),
-			runtimeId: configuredCliCredentialLogicalNameSchema,
 		})
 		.strict()
 		.superRefine(validateCredentialedManagedVmTarget),
@@ -500,6 +596,9 @@ export type ConfiguredCliFlagRule = z.infer<typeof configuredCliFlagRuleSchema>;
 export type ConfiguredCliInput = z.infer<typeof configuredCliInputSchema>;
 export type ConfiguredCliCredentialEnvironmentValue = z.infer<
 	typeof configuredCliCredentialEnvironmentValueSchema
+>;
+export type ConfiguredCliCredentialProjection = z.infer<
+	typeof configuredCliCredentialProjectionSchema
 >;
 export type ConfiguredCliCredentialFileMapping = z.infer<
 	typeof configuredCliCredentialFileMappingSchema

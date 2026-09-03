@@ -25,9 +25,12 @@ function operation(): ConfiguredOperation {
 		executablePath: '/usr/local/bin/gog',
 		executionTarget: {
 			allowedHosts: ['www.googleapis.com'],
-			credentialBinding: 'google',
-			credentialEnvironment: { GOG_DATA_DIR: { kind: 'credential_root' } },
-			credentialFiles: [{ path: 'sa-c3VuQGV4YW1wbGUuY29t.json', source: 'service-account' }],
+			credentialProjection: {
+				credentialBinding: 'google',
+				credentialEnvironment: { GOG_DATA_DIR: { kind: 'credential_root' } },
+				credentialFiles: [{ path: 'sa-c3VuQGV4YW1wbGUuY29t.json', source: 'service-account' }],
+				kind: 'file_binding',
+			},
 			environment: { kind: 'empty' },
 			guestCwd: '/work',
 			imageReference: encodeConfiguredCliPreparedImageIdentity({
@@ -36,7 +39,6 @@ function operation(): ConfiguredOperation {
 				schemaVersion: 1,
 			}),
 			kind: 'ephemeral_managed_vm',
-			runtimeId: 'google-workspace',
 		},
 		kind: 'configured_cli',
 		mandatoryArgvPrefix: [],
@@ -54,24 +56,26 @@ function operation(): ConfiguredOperation {
 
 function runtimeResolution(configuredOperation = operation()): CredentialedRuntimeResolution {
 	return {
+		agentRuntimeRevision: 'sha256:group-current',
 		agentId: 'sun',
 		cohortRevision: 'binding:current',
-		credentialBinding: {
-			files: {
-				'service-account': {
-					ref: 'op://agent-vm-testing/google/sun',
-					source: '1password',
+		projection: {
+			credentialBinding: {
+				files: {
+					'service-account': {
+						ref: 'op://agent-vm-testing/google/sun',
+						source: '1password',
+					},
 				},
 			},
+			credentialEnvironment: { GOG_DATA_DIR: { kind: 'credential_root' } },
+			fileMappings: [{ path: 'sa-c3VuQGV4YW1wbGUuY29t.json', source: 'service-account' }],
+			kind: 'file_binding',
 		},
-		credentialEnvironment: { GOG_DATA_DIR: { kind: 'credential_root' } },
-		fileMappings: [{ path: 'sa-c3VuQGV4YW1wbGUuY29t.json', source: 'service-account' }],
-		groupRevision: 'sha256:group-current',
 		namespaceId: 'google',
 		operation: configuredOperation,
 		operationName: 'calendar_list',
 		profileId: 'google-enabled',
-		runtimeId: 'google-workspace',
 		zoneId: 'zone-a',
 	};
 }
@@ -79,7 +83,7 @@ function runtimeResolution(configuredOperation = operation()): CredentialedRunti
 function authorization(
 	options: {
 		readonly bindingRevision?: string;
-		readonly groupRevision?: string;
+		readonly agentRuntimeRevision?: string;
 		readonly includeRuntime?: boolean;
 	} = {},
 ): ConfiguredCliAuthorizedOperation {
@@ -90,7 +94,7 @@ function authorization(
 			: {
 					credentialedRuntime: {
 						...resolution,
-						groupRevision: options.groupRevision ?? resolution.groupRevision,
+						agentRuntimeRevision: options.agentRuntimeRevision ?? resolution.agentRuntimeRevision,
 					},
 				}),
 		evaluation: {
@@ -206,7 +210,7 @@ describe('configured CLI credentialed Managed VM executor', () => {
 	it('passes a final callback that rejects changed cohort or group authority', async () => {
 		const currentAuthorization = authorization();
 		const reloadAuthorization = vi.fn(async () =>
-			authorization({ groupRevision: 'sha256:changed' }),
+			authorization({ agentRuntimeRevision: 'sha256:changed' }),
 		);
 		const acquireCommand = vi.fn(
 			async (request: Parameters<CredentialedRuntimeManager['acquireCommand']>[0]) =>

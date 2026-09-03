@@ -10,7 +10,6 @@ export interface ControllerClient {
 	refreshZoneCredentials(zoneId: string): Promise<unknown>;
 	retireCredentialedRuntime?(
 		zoneId: string,
-		runtimeId: string,
 		options: {
 			readonly adminToken?: string;
 			readonly agentId: string;
@@ -121,9 +120,9 @@ export function createControllerClient(options: {
 			});
 			return await readJsonResponse(response, `Refresh credentials for zone '${zoneId}'`);
 		},
-		retireCredentialedRuntime: async (zoneId, runtimeId, retireOptions): Promise<unknown> => {
+		retireCredentialedRuntime: async (zoneId, retireOptions): Promise<unknown> => {
 			const response = await fetchImpl(
-				`${baseUrl}/zones/${encodeURIComponent(zoneId)}/credentialed-runtimes/${encodeURIComponent(runtimeId)}/retire`,
+				`${baseUrl}/zones/${encodeURIComponent(zoneId)}/credentialed-runtime/retire`,
 				{
 					body: JSON.stringify(retireOptions),
 					headers: { 'content-type': 'application/json' },
@@ -132,7 +131,7 @@ export function createControllerClient(options: {
 			);
 			return await readJsonResponse(
 				response,
-				`Retire credentialed runtime '${runtimeId}' for zone '${zoneId}'`,
+				`Retire credentialed runtime for zone '${zoneId}' and agent '${retireOptions.agentId}'`,
 			);
 		},
 		stopController: async (): Promise<unknown> => {

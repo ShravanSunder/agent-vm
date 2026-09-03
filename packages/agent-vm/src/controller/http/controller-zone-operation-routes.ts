@@ -697,7 +697,7 @@ export function registerControllerZoneOperationRoutes(
 
 	if (operations.retireCredentialedRuntime) {
 		const retireCredentialedRuntime = operations.retireCredentialedRuntime;
-		app.post('/zones/:zoneId/credentialed-runtimes/:runtimeId/retire', async (context) => {
+		app.post('/zones/:zoneId/credentialed-runtime/retire', async (context) => {
 			const notReadyResponse = rejectIfRuntimeNotReady(context);
 			if (notReadyResponse) return notReadyResponse;
 			const parsedPayload = await parseJsonBodyWithSchema(
@@ -708,17 +708,13 @@ export function registerControllerZoneOperationRoutes(
 			if (!parsedPayload.ok) return parsedPayload.response;
 			try {
 				return context.json(
-					await retireCredentialedRuntime(
-						context.req.param('zoneId'),
-						context.req.param('runtimeId'),
-						{
-							...(parsedPayload.data.adminToken === undefined
-								? {}
-								: { adminToken: parsedPayload.data.adminToken }),
-							agentId: parsedPayload.data.agentId,
-							force: parsedPayload.data.force,
-						},
-					),
+					await retireCredentialedRuntime(context.req.param('zoneId'), {
+						...(parsedPayload.data.adminToken === undefined
+							? {}
+							: { adminToken: parsedPayload.data.adminToken }),
+						agentId: parsedPayload.data.agentId,
+						force: parsedPayload.data.force,
+					}),
 				);
 			} catch (error) {
 				return context.json(zoneRuntimeErrorBody(error), zoneRuntimeErrorStatus(error));
