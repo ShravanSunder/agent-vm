@@ -1099,5 +1099,5 @@ describeLiveConfiguredRunner('configured CLI reusable credentialed Managed VM', 
 			await closeCredentialedMediationServer(mediationServer.server);
 			await imageFixture.close();
 		}
-	}, 300_000);
+	});
 });
