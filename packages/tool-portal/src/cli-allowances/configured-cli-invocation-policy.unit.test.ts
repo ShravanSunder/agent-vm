@@ -1,9 +1,11 @@
+import { toolVmCliAdvisoryHintsSchema } from '@agent-vm/config-contracts';
 import { describe, expect, it } from 'vitest';
 
 import {
 	CliAllowanceInputSchema,
 	CliAllowanceSchema,
 	evaluateCliAllowanceInvocation,
+	evaluateToolVmCliAdvisoryHints,
 	type CliAllowance,
 	type CliAllowanceBaseline,
 } from './index.js';
@@ -292,6 +294,28 @@ describe('configured CLI invocation disposition', () => {
 		expect(
 			evaluate({ allowance, argv: ['project', 'edit', 'item', '--title', 'x'] }),
 		).toMatchObject({ disposition: 'requires_approval' });
+	});
+});
+
+describe('Tool VM CLI advisory hints', () => {
+	it('uses hint precedence without turning unmatched argv into an allowlist', () => {
+		const hints = toolVmCliAdvisoryHintsSchema.parse({
+			hintDeny: [{ flags: [{ names: ['--force'] }], path: ['account', 'delete'] }],
+			hintRequiresApproval: [
+				{ flags: [{ names: ['--force'] }], path: ['account', 'delete'] },
+				{ path: ['crawl', 'delete'] },
+			],
+		});
+
+		expect(evaluateToolVmCliAdvisoryHints({ argv: ['account', 'delete', '--force'], hints })).toBe(
+			'hint-deny',
+		);
+		expect(evaluateToolVmCliAdvisoryHints({ argv: ['crawl', 'delete', 'job-1'], hints })).toBe(
+			'hint-requires-approval',
+		);
+		expect(evaluateToolVmCliAdvisoryHints({ argv: ['unknown', '--anything'], hints })).toBe(
+			'without-approval',
+		);
 	});
 });
 

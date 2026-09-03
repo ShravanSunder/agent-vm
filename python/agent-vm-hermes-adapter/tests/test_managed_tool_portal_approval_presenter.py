@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from agent_vm_hermes_adapter.managed_tool_portal.hermes_approval_presenter import (
     HermesGatewayApprovalPresenter,
     HermesGatewayApprovalRouteStore,
+    _presentation_question,
 )
 
 
@@ -148,3 +149,17 @@ def test_presenter_is_unavailable_without_the_originating_session_route() -> Non
         "kind": "unavailable",
         "reason": "presenter-missing",
     }
+
+
+def test_advisory_presentation_explains_tool_portal_only_scope() -> None:
+    request = _presentation_request().model_dump(by_alias=True, exclude_none=True, mode="json")
+    request["context"] = {
+        "bypassableWithinToolVm": True,
+        "kind": "tool_vm_advisory_hint",
+        "scope": "tool_portal_call_only",
+    }
+
+    question = _presentation_question(request)
+
+    assert question.startswith("Tool VM advisory hint: approve this Tool Portal call once?")
+    assert "does not restrict terminal or Python execution inside the same Tool VM" in question

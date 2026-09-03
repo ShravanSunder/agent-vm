@@ -135,6 +135,59 @@ function createConfiguredCliToolPortalConfig(): EffectiveManagedToolPortalConfig
 	});
 }
 
+function createToolVmCliToolPortalConfig(): EffectiveManagedToolPortalConfig {
+	return effectiveManagedToolPortalConfigSchema.parse({
+		agents: { builder: { profile: 'builder-profile' } },
+		mode: 'managed',
+		profiles: {
+			'builder-profile': {
+				namespaces: {
+					sandbox: {
+						backend: {
+							kind: 'tool_vm_runner',
+							operations: {
+								cli: {
+									advisoryHints: {
+										hintDeny: [
+											{
+												flags: [
+													{ names: ['--force', '-f'] },
+													{ names: ['--format'], values: ['json', 'text'] },
+												],
+												path: ['account', 'delete'],
+											},
+										],
+										hintRequiresApproval: [{ path: ['crawl', 'delete'] }],
+									},
+									executable: '/usr/local/bin/tool',
+									kind: 'command.cli',
+									output: {
+										modelVisibleStderr: 'none',
+										overflow: 'truncate',
+										stderrMaxBytes: 1_024,
+										stdoutMaxBytes: 1_024,
+									},
+									safeHelp: 'Run the Tool VM CLI.',
+									timeout: { kind: 'open' },
+									workingDirectory: '.',
+								},
+							},
+							profile: 'sandbox_ssh',
+						},
+						calls: {
+							requiresApproval: { allow: [], deny: [] },
+							withoutApproval: { allow: ['cli'], deny: [] },
+						},
+						discovery: {},
+						tools: { allow: ['cli'], deny: [] },
+					},
+				},
+			},
+		},
+		schemaVersion: 1,
+	});
+}
+
 function deriveFixtureSnapshot(props: {
 	readonly mcpConfig: McpConfig;
 	readonly toolPortalConfig: EffectiveManagedToolPortalConfig;
@@ -561,6 +614,79 @@ describe('Gateway Runtime portal semantic revision', () => {
 			}
 			const changed = deriveFixtureSnapshot({ mcpConfig, toolPortalConfig: changedConfig });
 
+			expect(changed.bindingRevision).not.toBe(baseline.bindingRevision);
+			expect(changed.activeRevision).not.toBe(baseline.activeRevision);
+		},
+	);
+
+	it('canonicalizes equivalent Tool VM advisory hint authoring order', () => {
+		const mcpConfig = createMcpConfig();
+		const toolPortalConfig = createToolVmCliToolPortalConfig();
+		const baseline = deriveFixtureSnapshot({ mcpConfig, toolPortalConfig });
+		const reorderedConfig = structuredClone(toolPortalConfig);
+		const namespace = reorderedConfig.profiles['builder-profile']?.namespaces.sandbox;
+		const operation =
+			namespace?.backend.kind === 'tool_vm_runner' ? namespace.backend.operations.cli : undefined;
+		if (operation?.kind !== 'command.cli') throw new Error('Missing Tool VM CLI fixture.');
+		const matcher = operation.advisoryHints?.hintDeny[0];
+		const hintRequiresApproval = operation.advisoryHints?.hintRequiresApproval;
+		if (matcher === undefined || hintRequiresApproval === undefined) {
+			throw new Error('Missing advisory matcher fixture.');
+		}
+		operation.advisoryHints = {
+			hintDeny: [
+				{
+					...matcher,
+					flags: matcher.flags.toReversed().map((predicate) => ({
+						...predicate,
+						names: predicate.names.toReversed(),
+						...(predicate.values === undefined ? {} : { values: predicate.values.toReversed() }),
+					})),
+				},
+			],
+			hintRequiresApproval,
+		};
+
+		const reordered = deriveFixtureSnapshot({ mcpConfig, toolPortalConfig: reorderedConfig });
+		expect(reordered.bindingRevision).toBe(baseline.bindingRevision);
+		expect(reordered.activeRevision).toBe(baseline.activeRevision);
+	});
+
+	it.each(['path', 'name', 'value', 'bucket'] as const)(
+		'changes Tool VM advisory freshness after a material %s mutation',
+		(mutation) => {
+			const mcpConfig = createMcpConfig();
+			const toolPortalConfig = createToolVmCliToolPortalConfig();
+			const baseline = deriveFixtureSnapshot({ mcpConfig, toolPortalConfig });
+			const changedConfig = structuredClone(toolPortalConfig);
+			const namespace = changedConfig.profiles['builder-profile']?.namespaces.sandbox;
+			const operation =
+				namespace?.backend.kind === 'tool_vm_runner' ? namespace.backend.operations.cli : undefined;
+			if (operation?.kind !== 'command.cli' || operation.advisoryHints === undefined) {
+				throw new Error('Missing Tool VM CLI advisory fixture.');
+			}
+			const matcher = operation.advisoryHints.hintDeny[0];
+			const predicate = matcher?.flags[1];
+			if (matcher === undefined || predicate?.values === undefined) {
+				throw new Error('Missing Tool VM advisory mutation fixture.');
+			}
+			switch (mutation) {
+				case 'path':
+					matcher.path = ['account', 'remove'];
+					break;
+				case 'name':
+					predicate.names = ['--output'];
+					break;
+				case 'value':
+					predicate.values = ['yaml'];
+					break;
+				case 'bucket':
+					operation.advisoryHints.hintRequiresApproval.push(matcher);
+					operation.advisoryHints.hintDeny = [];
+					break;
+			}
+
+			const changed = deriveFixtureSnapshot({ mcpConfig, toolPortalConfig: changedConfig });
 			expect(changed.bindingRevision).not.toBe(baseline.bindingRevision);
 			expect(changed.activeRevision).not.toBe(baseline.activeRevision);
 		},

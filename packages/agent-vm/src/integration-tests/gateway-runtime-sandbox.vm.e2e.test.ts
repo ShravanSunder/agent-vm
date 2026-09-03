@@ -10,11 +10,21 @@ import { describe, expect, it } from 'vitest';
 
 import {
 	createStockGatewayRuntimeSandboxVmHarness,
+	stockProofCapabilityName,
+	stockToolVmCliApprovedArgv,
+	stockToolVmCliCapabilityName,
+	stockToolVmCliDeniedArgv,
+	stockToolVmCliStdin,
 	type StockGatewayRuntimeSandboxVmHarness,
 } from './gateway-runtime-sandbox-vm-test-fixture.js';
 import { shouldRunLiveVmE2e } from './live-vm-e2e-gates.js';
 
 const describeLiveVmIntegration = shouldRunLiveVmE2e() ? describe : describe.skip;
+const posixSingleQuoteEscape = String.raw`'"'"'`;
+
+function shellCommandForExactArgv(argv: readonly string[]): string {
+	return argv.map((token) => `'${token.replaceAll("'", posixSingleQuoteEscape)}'`).join(' ');
+}
 
 async function callConfiguredProofCapability(
 	harness: StockGatewayRuntimeSandboxVmHarness,
@@ -48,12 +58,75 @@ describeLiveVmIntegration('Gateway runtime sandbox stock VM proof', () => {
 			const result = await callConfiguredProofCapability(harness);
 			const client = harness.gatewayRuntimeClient();
 			const trustedOptions = { trustedContext: harness.trustedInvocationContext() };
+			const policyEvidenceBeforeHintDenial = harness.toolVmCliPolicyEvidence();
+			const deniedCliResult = await client.portal.call(
+				{
+					calls: [
+						{
+							arguments: {
+								argv: [...stockToolVmCliDeniedArgv],
+								reason: 'Prove the Tool Portal hint denies before Tool VM acquisition.',
+							},
+							id: 'stock-tool-vm-cli-hint-denied',
+							name: stockToolVmCliCapabilityName,
+							namespace: 'sandbox',
+						},
+					],
+					requestId: 'stock-tool-vm-cli-hint-denial-proof',
+				},
+				trustedOptions,
+			);
+			const policyEvidenceAfterHintDenial = harness.toolVmCliPolicyEvidence();
+			await expect(harness.readToolVmFile('/work/hint-denied-direct-proof.txt')).rejects.toThrow();
+			const cliResult = await client.portal.call(
+				{
+					calls: [
+						{
+							arguments: {
+								argv: [...stockToolVmCliApprovedArgv],
+								reason: 'Prove exact caller argv and stdin in the current stock Tool VM.',
+								stdin: stockToolVmCliStdin,
+								timeoutMs: 45_000,
+							},
+							id: 'stock-tool-vm-cli-call',
+							name: stockToolVmCliCapabilityName,
+							namespace: 'sandbox',
+						},
+					],
+					requestId: 'stock-tool-vm-cli-proof',
+				},
+				trustedOptions,
+			);
+			const policyEvidenceAfterHintApproval = harness.toolVmCliPolicyEvidence();
+			const mixedTruncationResult = await client.portal.call(
+				{
+					calls: [
+						{
+							arguments: {
+								argv: ['-c', "head -c 4097 /dev/zero | tr '\\000' x"],
+								reason: 'Prove bounded stdout preserves mixed Tool Portal results.',
+								timeoutMs: 45_000,
+							},
+							id: 'stock-tool-vm-cli-truncated',
+							name: stockToolVmCliCapabilityName,
+							namespace: 'sandbox',
+						},
+						{
+							arguments: {},
+							id: 'stock-tool-vm-cli-truncation-sibling',
+							name: stockProofCapabilityName,
+							namespace: 'sandbox',
+						},
+					],
+					requestId: 'stock-tool-vm-cli-mixed-truncation-proof',
+				},
+				trustedOptions,
+			);
 			const environment = await client.sandbox.environment.open({}, trustedOptions);
 			const directShellProcess = await client.sandbox.process.start(
 				{
-					command: 'printf "%s" "$DIRECT_SHELL_MARKER" > /work/direct-shell-proof.txt',
+					command: shellCommandForExactArgv(['/bin/sh', ...stockToolVmCliDeniedArgv]),
 					environment: environment.environment,
-					environmentVariables: [{ name: 'DIRECT_SHELL_MARKER', value: 'stock-vm-direct-shell' }],
 					maxRuntimeMs: 5_000,
 					retainOutputBytes: 4_096,
 				},
@@ -64,7 +137,7 @@ describeLiveVmIntegration('Gateway runtime sandbox stock VM proof', () => {
 			}
 			const interactiveShellProcess = await client.sandbox.process.start(
 				{
-					command: 'IFS= read -r line; printf "stream-echo:%s" "$line"',
+					command: shellCommandForExactArgv(['/bin/sh', ...stockToolVmCliApprovedArgv]),
 					environment: environment.environment,
 					maxRuntimeMs: 5_000,
 					retainOutputBytes: 4_096,
@@ -83,7 +156,7 @@ describeLiveVmIntegration('Gateway runtime sandbox stock VM proof', () => {
 			if (standardInput === undefined || standardOutput === undefined) {
 				throw new Error('Managed private-UDS interactive shell omitted standard streams.');
 			}
-			const inputBytes = Buffer.from('stock-stream-roundtrip\n');
+			const inputBytes = Buffer.from(stockToolVmCliStdin);
 			const streamWrite = await client.sandbox.stream.write(
 				{
 					content: {
@@ -128,6 +201,50 @@ describeLiveVmIntegration('Gateway runtime sandbox stock VM proof', () => {
 			);
 
 			expect(firstItem.outcome).toMatchObject({ kind: 'completed' });
+			expect(deniedCliResult.items[0]).toMatchObject({
+				error: {
+					code: 'tool_vm_advisory_hint_denied',
+					safeDiagnostic: { code: 'tool_vm_advisory_hint_denied' },
+				},
+				outcome: { kind: 'not-dispatched' },
+				status: 'error',
+			});
+			expect(policyEvidenceAfterHintDenial.toolVmAcquisitionCount).toBe(
+				policyEvidenceBeforeHintDenial.toolVmAcquisitionCount,
+			);
+			expect(cliResult.items[0]).toMatchObject({
+				status: 'ok',
+				value: {
+					exitCode: 0,
+					stderrTruncated: false,
+					stdout: 'argv-zero|;|$TOKEN|stdin-value',
+					stdoutTruncated: false,
+				},
+			});
+			expect(policyEvidenceAfterHintApproval).toMatchObject({
+				approvalContexts: [
+					{
+						bypassableWithinToolVm: true,
+						kind: 'tool_vm_advisory_hint',
+						scope: 'tool_portal_call_only',
+					},
+				],
+				armedApprovalCount: 1,
+				toolVmAcquisitionCount: policyEvidenceAfterHintDenial.toolVmAcquisitionCount + 1,
+			});
+			expect(mixedTruncationResult.items[0]).toMatchObject({
+				status: 'ok',
+				value: {
+					exitCode: 0,
+					stderrTruncated: false,
+					stdout: 'x'.repeat(4_096),
+					stdoutTruncated: true,
+				},
+			});
+			expect(mixedTruncationResult.items[1]).toMatchObject({
+				outcome: { completion: 'succeeded', kind: 'completed' },
+				status: 'ok',
+			});
 			expect(Buffer.from(artifactRead.contentBase64, 'base64').toString('utf8')).toBe(
 				'stock-vm-output',
 			);
@@ -136,8 +253,8 @@ describeLiveVmIntegration('Gateway runtime sandbox stock VM proof', () => {
 				kind: 'terminal',
 				outcome: { completion: 'succeeded', kind: 'completed' },
 			});
-			expect(await harness.readToolVmFile('/work/direct-shell-proof.txt')).toBe(
-				'stock-vm-direct-shell',
+			expect(await harness.readToolVmFile('/work/hint-denied-direct-proof.txt')).toBe(
+				'hint-denied-direct',
 			);
 			expect(streamWrite).toMatchObject({
 				bytesWritten: inputBytes.byteLength,
@@ -150,7 +267,7 @@ describeLiveVmIntegration('Gateway runtime sandbox stock VM proof', () => {
 				outcome: { completion: 'succeeded', kind: 'completed' },
 			});
 			expect(Buffer.from(streamRead.chunk.contentBase64, 'base64').toString('utf8')).toBe(
-				'stream-echo:stock-stream-roundtrip',
+				'argv-zero|;|$TOKEN|stdin-value',
 			);
 			expect(streamRead.eof).toBe(true);
 			const workspaceRootfsEvidence = await harness.proveWorkspaceRootfsSeparation();

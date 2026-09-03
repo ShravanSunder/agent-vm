@@ -1,3 +1,4 @@
+import type { ToolVmCliAdvisoryHints } from '@agent-vm/config-contracts';
 import { z } from 'zod/v4';
 
 import type {
@@ -38,6 +39,32 @@ export interface EvaluateCliAllowanceInvocationProps {
 	readonly input: CliAllowanceInput;
 }
 
+export type ToolVmCliAdvisoryDisposition =
+	| 'hint-deny'
+	| 'hint-requires-approval'
+	| 'without-approval';
+
+export function evaluateToolVmCliAdvisoryHints(props: {
+	readonly argv: readonly string[];
+	readonly hints: ToolVmCliAdvisoryHints | undefined;
+}): ToolVmCliAdvisoryDisposition {
+	if (
+		props.hints?.hintDeny.some((matcher) =>
+			configuredCliInvocationMatcherApplies({ argv: props.argv, matcher }),
+		) === true
+	) {
+		return 'hint-deny';
+	}
+	if (
+		props.hints?.hintRequiresApproval.some((matcher) =>
+			configuredCliInvocationMatcherApplies({ argv: props.argv, matcher }),
+		) === true
+	) {
+		return 'hint-requires-approval';
+	}
+	return 'without-approval';
+}
+
 interface CliFlagOccurrence {
 	readonly inlineValue?: string;
 	readonly name: string;
@@ -71,10 +98,10 @@ export function evaluateCliAllowanceInvocation(
 	if (stdinValidation !== undefined) return stdinValidation;
 
 	const matchedDenyRule = props.allowance.calls.deny.some((matcher) =>
-		invocationMatcherApplies({ command, flagOccurrences, matcher }),
+		configuredCliInvocationMatcherApplies({ argv: props.input.argv, matcher }),
 	);
 	const matchedRequiresApprovalRule = props.allowance.calls.requiresApproval.some((matcher) =>
-		invocationMatcherApplies({ command, flagOccurrences, matcher }),
+		configuredCliInvocationMatcherApplies({ argv: props.input.argv, matcher }),
 	);
 	const disposition = strongestDisposition({
 		baseline: props.baseline,
@@ -159,15 +186,13 @@ function validateFlagRules(props: {
 	return undefined;
 }
 
-function invocationMatcherApplies(props: {
-	readonly command: CliAllowedCommand;
-	readonly flagOccurrences: readonly CliFlagOccurrence[];
+export function configuredCliInvocationMatcherApplies(props: {
+	readonly argv: readonly string[];
 	readonly matcher: CliInvocationMatcher;
 }): boolean {
-	return (
-		tokenArraysEqual(props.command.path, props.matcher.path) &&
-		props.matcher.flags.every((predicate) => flagPredicateApplies(predicate, props.flagOccurrences))
-	);
+	if (!isTokenPrefix(props.matcher.path, props.argv)) return false;
+	const flagOccurrences = deriveFlagOccurrences(props.argv.slice(props.matcher.path.length));
+	return props.matcher.flags.every((predicate) => flagPredicateApplies(predicate, flagOccurrences));
 }
 
 function flagPredicateApplies(
@@ -194,8 +219,8 @@ function strongestDisposition(props: {
 	return 'without_approval';
 }
 
-function tokenArraysEqual(left: readonly string[], right: readonly string[]): boolean {
-	return left.length === right.length && left.every((token, index) => token === right[index]);
+function isTokenPrefix(prefix: readonly string[], value: readonly string[]): boolean {
+	return prefix.length <= value.length && prefix.every((token, index) => token === value[index]);
 }
 
 function parseFlagToken(token: string): {

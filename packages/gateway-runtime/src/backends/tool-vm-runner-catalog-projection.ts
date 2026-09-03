@@ -116,7 +116,9 @@ function descriptorForRequest(
 	requestItem: PortalDescribeRequest['requests'][number],
 ): CapabilityDescriptor {
 	return {
+		...(descriptor.advisory === undefined ? {} : { advisory: descriptor.advisory }),
 		annotations: descriptor.annotations,
+		...(descriptor.description === undefined ? {} : { description: descriptor.description }),
 		...(requestItem.includeJsonSchema && descriptor.inputSchema !== undefined
 			? { inputSchema: descriptor.inputSchema }
 			: {}),
@@ -127,6 +129,9 @@ function descriptorForRequest(
 			: {}),
 		related: requestItem.includeRelated ? descriptor.related : [],
 		...(descriptor.schemaHint === undefined ? {} : { schemaHint: descriptor.schemaHint }),
+		...(descriptor.toolVmCliMetadata === undefined
+			? {}
+			: { toolVmCliMetadata: descriptor.toolVmCliMetadata }),
 		toolRef: descriptor.toolRef,
 		...(requestItem.includeTypescriptHelper && descriptor.typescriptHelper !== undefined
 			? { typescriptHelper: descriptor.typescriptHelper }

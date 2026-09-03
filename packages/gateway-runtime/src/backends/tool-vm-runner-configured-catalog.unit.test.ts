@@ -1,3 +1,4 @@
+import { CapabilityDescriptorSchema, CapabilitySummarySchema } from '@agent-vm/agent-portal-sdk';
 import {
 	createGatewayRuntimeManagedToolPortalConfig,
 	effectiveManagedToolPortalConfigSchema,
@@ -23,6 +24,29 @@ function parsedToolPortalConfig(): GatewayRuntimeManagedToolPortalConfig {
 							backend: {
 								kind: 'tool_vm_runner',
 								operations: {
+									firecrawl: {
+										advisoryHints: {
+											hintDeny: [{ path: ['account', 'delete'] }],
+											hintRequiresApproval: [{ path: ['crawl', 'delete'] }],
+										},
+										executable: '/usr/local/bin/firecrawl',
+										kind: 'command.cli',
+										metadata: {
+											categories: ['research'],
+											displayName: 'Firecrawl CLI',
+											source: 'firecrawl',
+											version: '1.x',
+										},
+										output: {
+											modelVisibleStderr: 'fixed_safe_summary',
+											overflow: 'truncate',
+											stderrMaxBytes: 65_536,
+											stdoutMaxBytes: 65_536,
+										},
+										safeHelp: 'Run Firecrawl with caller-selected arguments.',
+										timeout: { kind: 'open' },
+										workingDirectory: '.',
+									},
 									process_cancel: {
 										description: 'Cancel one bounded build process.',
 										kind: 'process.cancel',
@@ -111,6 +135,7 @@ describe('configured Tool VM runner catalog compiler', () => {
 		const catalog = compileGatewayRuntimeToolVmRunnerConfiguredCatalog(parsedToolPortalConfig());
 
 		expect(catalog['code-builder']?.map((entry) => entry.summary.toolRef)).toEqual([
+			'sandbox.firecrawl',
 			'sandbox.process_cancel',
 			'sandbox.process_logs',
 			'sandbox.process_start',
@@ -139,6 +164,52 @@ describe('configured Tool VM runner catalog compiler', () => {
 		const entriesByName = Object.fromEntries(
 			(catalog['code-builder'] ?? []).map((entry) => [entry.summary.name, entry]),
 		);
+		expect(entriesByName.firecrawl).toMatchObject({
+			descriptor: {
+				advisory: {
+					bypassableWithinToolVm: true,
+					hasHintDeny: true,
+					hasHintRequiresApproval: true,
+					kind: 'tool_vm_call_hints',
+					scope: 'tool_portal_call_only',
+				},
+				inputSchema: {
+					additionalProperties: false,
+					required: ['argv', 'reason'],
+					type: 'object',
+				},
+				toolVmCliMetadata: {
+					categories: ['research'],
+					displayName: 'Firecrawl CLI',
+					source: 'firecrawl',
+					version: '1.x',
+				},
+			},
+			operation: {
+				executable: '/usr/local/bin/firecrawl',
+				kind: 'cli-exec',
+				workingDirectory: '.',
+			},
+			summary: {
+				advisory: {
+					bypassableWithinToolVm: true,
+					hasHintDeny: true,
+					hasHintRequiresApproval: true,
+					kind: 'tool_vm_call_hints',
+					scope: 'tool_portal_call_only',
+				},
+				description: 'Run Firecrawl with caller-selected arguments.',
+				title: 'Firecrawl CLI',
+				toolVmCliMetadata: {
+					categories: ['research'],
+					displayName: 'Firecrawl CLI',
+					source: 'firecrawl',
+					version: '1.x',
+				},
+			},
+		});
+		CapabilityDescriptorSchema.parse(entriesByName.firecrawl?.descriptor);
+		CapabilitySummarySchema.parse(entriesByName.firecrawl?.summary);
 
 		expect(entriesByName.run_checks).toMatchObject({
 			descriptor: {

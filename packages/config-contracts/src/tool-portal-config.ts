@@ -15,6 +15,7 @@ import {
 import { loadJsonConfigFile } from './json-config-file.js';
 import { namespaceDiscoverySchema } from './mcp-config.js';
 import { secretValueSchema } from './secret-value.js';
+import { toolVmConfiguredCliOperationSchema } from './tool-vm-configured-cli.js';
 
 export const toolPortalToolSelectorSchema = z
 	.object({
@@ -77,6 +78,7 @@ const sandboxWorkingDirectorySchema = z
 	);
 
 export const toolPortalSandboxSshOperationDefinitionSchema = z.discriminatedUnion('kind', [
+	toolVmConfiguredCliOperationSchema,
 	z
 		.object({
 			description: sandboxOperationDescriptionSchema,
@@ -754,6 +756,27 @@ export const toolPortalConfigSchema = z
 					continue;
 				}
 				const operationNames = new Set(Object.keys(namespacePolicy.backend.operations));
+				if (namespacePolicy.backend.kind === 'tool_vm_runner') {
+					for (const [operationName, operation] of Object.entries(
+						namespacePolicy.backend.operations,
+					)) {
+						if (operation.kind !== 'command.cli') continue;
+						if (
+							!toolSelectorIncludesOperation(
+								namespacePolicy.calls.withoutApproval,
+								operationName,
+							) ||
+							toolSelectorIncludesOperation(namespacePolicy.calls.requiresApproval, operationName)
+						) {
+							context.addIssue({
+								code: z.ZodIssueCode.custom,
+								message:
+									'Tool VM command.cli operations must use calls.withoutApproval as their namespace baseline; use advisoryHints.hintRequiresApproval for route-local guidance.',
+								path: ['profiles', profileId, 'namespaces', namespaceId, 'calls'],
+							});
+						}
+					}
+				}
 				for (const [selectorPath, selector] of [
 					[['tools'], namespacePolicy.tools],
 					[['calls', 'requiresApproval'], namespacePolicy.calls.requiresApproval],
@@ -993,5 +1016,15 @@ function toolSelectorsOverlap(
 			rightAllow.includes(toolName) &&
 			!left.deny.includes(toolName) &&
 			!right.deny.includes(toolName),
+	);
+}
+
+function toolSelectorIncludesOperation(
+	selector: ToolPortalToolSelector,
+	operationName: string,
+): boolean {
+	return (
+		!selector.deny.includes(operationName) &&
+		(selector.allow === '*' || selector.allow.includes(operationName))
 	);
 }

@@ -5,6 +5,7 @@ import {
 	type EffectiveNamespaceDiscovery,
 } from '@agent-vm/agent-portal-sdk';
 import type {
+	ConfiguredCliInvocationMatcher,
 	EffectiveManagedToolPortalConfig,
 	FormattedSecretValue,
 	GatewayRuntimeManagedToolPortalConfig,
@@ -80,23 +81,7 @@ interface NormalizedCatalogInputs {
 					string,
 					{
 						readonly discovery: { readonly summary?: string };
-						readonly operations?: Readonly<
-							Record<
-								string,
-								{
-									readonly description: string;
-									readonly kind:
-										| 'command.fixed'
-										| 'filesystem.read'
-										| 'filesystem.write'
-										| 'process.cancel'
-										| 'process.logs'
-										| 'process.start'
-										| 'process.status'
-										| 'process.wait';
-								}
-							>
-						>;
+						readonly operations?: Readonly<Record<string, object>>;
 						readonly tools: NormalizedToolSelector;
 					}
 				>
@@ -143,6 +128,19 @@ type NormalizedBindingProfiles = Readonly<
 						readonly operations: Readonly<
 							Record<
 								string,
+								| {
+										readonly advisoryHints?: {
+											readonly hintDeny: readonly object[];
+											readonly hintRequiresApproval: readonly object[];
+										};
+										readonly executable: string;
+										readonly kind: 'command.cli';
+										readonly metadata?: object;
+										readonly output: object;
+										readonly safeHelp: string;
+										readonly timeout: object;
+										readonly workingDirectory: string;
+								  }
 								| {
 										readonly executable: string;
 										readonly kind: 'command.fixed';
@@ -334,7 +332,20 @@ function normalizedCatalogInputs(props: {
 											Object.entries(namespacePolicy.backend.operations).map(
 												([operationName, operation]) => [
 													operationName,
-													{ description: operation.description, kind: operation.kind },
+													operation.kind === 'command.cli'
+														? {
+																advisory: {
+																	hasHintDeny: (operation.advisoryHints?.hintDeny.length ?? 0) > 0,
+																	hasHintRequiresApproval:
+																		(operation.advisoryHints?.hintRequiresApproval.length ?? 0) > 0,
+																},
+																kind: operation.kind,
+																...(operation.metadata === undefined
+																	? {}
+																	: { metadata: operation.metadata }),
+																safeHelp: operation.safeHelp,
+															}
+														: { description: operation.description, kind: operation.kind },
 												],
 											),
 										),
@@ -393,25 +404,49 @@ function normalizedBindingInputs(
 										recordEntries(namespacePolicy.backend.operations).map(
 											([operationName, operation]) => [
 												operationName,
-												operation.kind === 'command.fixed'
+												operation.kind === 'command.cli'
 													? {
+															...(operation.advisoryHints === undefined
+																? {}
+																: {
+																		advisoryHints: {
+																			hintDeny: normalizedInvocationMatchers(
+																				operation.advisoryHints.hintDeny,
+																			),
+																			hintRequiresApproval: normalizedInvocationMatchers(
+																				operation.advisoryHints.hintRequiresApproval,
+																			),
+																		},
+																	}),
 															executable: operation.executable,
 															kind: operation.kind,
-															mandatoryArgvPrefix: operation.mandatoryArgvPrefix,
+															...(operation.metadata === undefined
+																? {}
+																: { metadata: operation.metadata }),
+															output: operation.output,
+															safeHelp: operation.safeHelp,
+															timeout: operation.timeout,
 															workingDirectory: operation.workingDirectory,
 														}
-													: operation.kind === 'process.start'
+													: operation.kind === 'command.fixed'
 														? {
 																executable: operation.executable,
 																kind: operation.kind,
 																mandatoryArgvPrefix: operation.mandatoryArgvPrefix,
-																maxRuntimeMs: operation.maxRuntimeMs,
-																retainOutputBytes: operation.retainOutputBytes,
 																workingDirectory: operation.workingDirectory,
 															}
-														: operation.kind === 'process.wait'
-															? { kind: operation.kind, timeoutMs: operation.timeoutMs }
-															: { kind: operation.kind },
+														: operation.kind === 'process.start'
+															? {
+																	executable: operation.executable,
+																	kind: operation.kind,
+																	mandatoryArgvPrefix: operation.mandatoryArgvPrefix,
+																	maxRuntimeMs: operation.maxRuntimeMs,
+																	retainOutputBytes: operation.retainOutputBytes,
+																	workingDirectory: operation.workingDirectory,
+																}
+															: operation.kind === 'process.wait'
+																? { kind: operation.kind, timeoutMs: operation.timeoutMs }
+																: { kind: operation.kind },
 											],
 										),
 									),
@@ -458,10 +493,7 @@ function normalizedControllerExecutionOperation(
 }
 
 function normalizedInvocationMatchers(
-	matchers: Extract<
-		BindingControllerExecutionOperation,
-		{ kind: 'configured_cli' }
-	>['calls']['deny'],
+	matchers: readonly ConfiguredCliInvocationMatcher[],
 ): readonly object[] {
 	return matchers
 		.map((matcher) => ({

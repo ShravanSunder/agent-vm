@@ -680,6 +680,103 @@ describe('tool portal config contract', () => {
 		}
 	});
 
+	it('accepts only the target-specific unrestricted Tool VM CLI discriminant', () => {
+		const namespacePolicy = validManagedToolPortalConfig.profiles['code-builder'].namespaces.github;
+		const cliOperation = {
+			advisoryHints: {
+				hintDeny: [{ path: ['account', 'delete'] }],
+				hintRequiresApproval: [{ flags: [{ names: ['--force'] }], path: ['crawl'] }],
+			},
+			executable: '/usr/local/bin/firecrawl',
+			kind: 'command.cli',
+			metadata: {
+				categories: ['research', 'web'],
+				displayName: 'Firecrawl CLI',
+				source: 'firecrawl',
+				version: '1.x',
+			},
+			output: {
+				modelVisibleStderr: 'fixed_safe_summary',
+				overflow: 'truncate',
+				stderrMaxBytes: 65_536,
+				stdoutMaxBytes: 65_536,
+			},
+			safeHelp: 'Run the installed Firecrawl CLI with caller-selected arguments.',
+			timeout: { kind: 'open' },
+			workingDirectory: '.',
+		} as const;
+		const configWithOperation = (
+			operation: object,
+			calls: object = {
+				requiresApproval: { allow: [], deny: [] },
+				withoutApproval: { allow: ['firecrawl'], deny: [] },
+			},
+		): object => ({
+			...validManagedToolPortalConfig,
+			profiles: {
+				'code-builder': {
+					namespaces: {
+						sandbox: {
+							...namespacePolicy,
+							backend: {
+								kind: 'tool_vm_runner',
+								operations: { firecrawl: operation },
+								profile: 'sandbox_ssh',
+							},
+							calls,
+							tools: { allow: ['firecrawl'], deny: [] },
+						},
+					},
+				},
+			},
+		});
+
+		const parsed = toolPortalConfigSchema.safeParse(configWithOperation(cliOperation));
+		expect(parsed.success).toBe(true);
+		if (!parsed.success || parsed.data.mode !== 'managed') return;
+		const effective = createEffectiveManagedToolPortalConfig(
+			preparedManagedToolPortalConfigSchema.parse(parsed.data),
+		);
+		const gateway = createGatewayRuntimeManagedToolPortalConfig(effective);
+		expect(gateway.profiles['code-builder']?.namespaces.sandbox?.backend).toMatchObject({
+			kind: 'tool_vm_runner',
+			operations: { firecrawl: cliOperation },
+		});
+
+		for (const forbiddenCliAuthority of [
+			{ calls: { withoutApproval: 'remaining_admitted' } },
+			{ commands: [{ path: ['crawl'] }] },
+			{ deniedPatterns: [] },
+			{ mandatoryArgvPrefix: ['crawl'] },
+			{ stdin: { kind: 'none' } },
+			{ executionTarget: { kind: 'controller_host' } },
+		] as const) {
+			expect(
+				toolPortalConfigSchema.safeParse(
+					configWithOperation({ ...cliOperation, ...forbiddenCliAuthority }),
+				).success,
+			).toBe(false);
+		}
+
+		expect(
+			toolPortalConfigSchema.safeParse(
+				configWithOperation({
+					...cliOperation,
+					kind: 'command.fixed',
+					mandatoryArgvPrefix: [],
+				}),
+			).success,
+		).toBe(false);
+		expect(
+			toolPortalConfigSchema.safeParse(
+				configWithOperation(cliOperation, {
+					requiresApproval: { allow: ['firecrawl'], deny: [] },
+					withoutApproval: { allow: [], deny: [] },
+				}),
+			).success,
+		).toBe(false);
+	});
+
 	it('authors all five bounded process operations while keeping argv cwd and runtime policy fixed', () => {
 		const namespacePolicy = validManagedToolPortalConfig.profiles['code-builder'].namespaces.github;
 		const processOperations = {

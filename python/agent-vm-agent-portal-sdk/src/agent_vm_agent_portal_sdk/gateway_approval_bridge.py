@@ -123,6 +123,48 @@ def _decision_rejection_code(reason: object) -> str:
     return "not_authorized"
 
 
+def _approval_presentation_request_value(
+    *,
+    challenge: JsonObject,
+    item_id: str,
+    original_call: JsonObject,
+) -> JsonObject:
+    value: JsonObject = {
+        "allowedDecisions": ["approve", "deny"],
+        "challengeId": challenge["challengeId"],
+        "display": {"argumentsPreview": sanitize_gateway_approval_arguments(original_call["arguments"])},
+        "expiresAt": challenge["expiresAt"],
+        "itemId": item_id,
+        "name": original_call["name"],
+        "namespace": original_call["namespace"],
+    }
+    if "context" in challenge:
+        value["context"] = challenge["context"]
+    return value
+
+
+async def _present_approval_decision(
+    *,
+    item: JsonObject,
+    present_approval: PresentApproval,
+    presentation_request: BaseModel,
+) -> str | JsonObject:
+    try:
+        presentation_outcome = await present_approval(presentation_request)
+    except Exception:
+        return _project_non_dispatch_result(item, code="provider_unavailable")
+    outcome = _model_mapping(presentation_outcome)
+    outcome_kind = outcome["kind"]
+    if outcome_kind == "cancelled":
+        return _project_non_dispatch_result(
+            item,
+            code="timeout" if outcome.get("reason") == "challenge-expired" else "cancelled",
+        )
+    if outcome_kind == "unavailable":
+        return _project_non_dispatch_result(item, code="provider_unavailable")
+    return "approve" if outcome_kind == "approved" else "deny"
+
+
 async def execute_portal_call_with_approval(
     request: Mapping[str, object],
     *,
@@ -150,40 +192,25 @@ async def execute_portal_call_with_approval(
         item_id = t.cast("str", item["id"])
         original_call = call_by_id[item_id]
         challenge = t.cast("JsonObject", item["approvalChallenge"])
-        presentation_request_value: JsonObject = {
-            "allowedDecisions": ["approve", "deny"],
-            "challengeId": challenge["challengeId"],
-            "display": {"argumentsPreview": sanitize_gateway_approval_arguments(original_call["arguments"])},
-            "expiresAt": challenge["expiresAt"],
-            "itemId": item_id,
-            "name": original_call["name"],
-            "namespace": original_call["namespace"],
-        }
+        presentation_request_value = _approval_presentation_request_value(
+            challenge=challenge,
+            item_id=item_id,
+            original_call=original_call,
+        )
         presentation_request = PORTABLE_CONTRACT_ADAPTERS["gateway.approval.presentation-request"].validate_python(
             presentation_request_value,
         )
         if not isinstance(presentation_request, BaseModel):
             raise TypeError("Approval presentation request did not produce a typed model.")
-        try:
-            presentation_outcome = await present_approval(presentation_request)
-        except Exception:
-            final_items.append(_project_non_dispatch_result(item, code="provider_unavailable"))
+        presentation_result = await _present_approval_decision(
+            item=item,
+            present_approval=present_approval,
+            presentation_request=presentation_request,
+        )
+        if isinstance(presentation_result, dict):
+            final_items.append(presentation_result)
             continue
-        outcome = _model_mapping(presentation_outcome)
-        outcome_kind = outcome["kind"]
-        if outcome_kind == "cancelled":
-            final_items.append(
-                _project_non_dispatch_result(
-                    item,
-                    code="timeout" if outcome.get("reason") == "challenge-expired" else "cancelled",
-                ),
-            )
-            continue
-        if outcome_kind == "unavailable":
-            final_items.append(_project_non_dispatch_result(item, code="provider_unavailable"))
-            continue
-
-        decision_name = "approve" if outcome_kind == "approved" else "deny"
+        decision_name = presentation_result
         decision_request: JsonObject = {"challengeId": challenge["challengeId"], "decision": decision_name}
         try:
             decision_result = _model_mapping(await decide_approval(decision_request))

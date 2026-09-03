@@ -3,6 +3,7 @@ import { z } from 'zod';
 export const SafeDiagnosticCodeSchema = z.enum([
 	'provider_unavailable',
 	'capability_denied',
+	'tool_vm_advisory_hint_denied',
 	'approval_required',
 	'validation_failed',
 	'execution_failed',

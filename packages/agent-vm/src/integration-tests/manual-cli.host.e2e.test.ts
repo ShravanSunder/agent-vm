@@ -91,6 +91,14 @@ describe('smoke: agent-vm manual CLI', () => {
 		expect(observabilityManual).not.toContain(
 			'observability is disabled during the Socket.IO control-plane hard cutover',
 		);
+		const toolPortalManual = await readText(targetDir, 'docs/manual/mcp-portal.md');
+		expect(toolPortalManual).toContain(
+			'tool_vm_runner command.cli is a separate strict configuration variant',
+		);
+		expect(toolPortalManual).toContain(
+			'The caller supplies unrestricted tokenized argv and optional stdin',
+		);
+		expect(toolPortalManual).toContain('they affect only tool_portal_call');
 		expect(await readText(targetDir, 'docs/manual/layout.md')).toContain('config/system.jsonc');
 		expect(await readText(targetDir, 'AGENTS.md')).toContain('shravan');
 		expect(await readText(targetDir, 'AGENTS.md')).toContain('config/system.jsonc');

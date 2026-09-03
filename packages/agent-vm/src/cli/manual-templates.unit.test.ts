@@ -229,6 +229,14 @@ describe('manual templates', () => {
 			'cancellation or zone shutdown before active admission produces no guest process',
 		);
 		expect(portal).toContain('tool_vm_runner remains direct Gateway-to-leased-Tool-VM strict SSH');
+		expect(portal).toContain(
+			'tool_vm_runner command.cli is a separate strict configuration variant',
+		);
+		expect(portal).toContain('The caller supplies unrestricted tokenized argv and optional stdin');
+		expect(portal).toContain('they affect only tool_portal_call');
+		expect(portal).toContain(
+			'hintDeny, then hintRequiresApproval, then unmatched direct execution',
+		);
 		expect(portal).toContain('Prefer http-mediation for MCP provider API keys');
 		expect(portal).toContain(
 			'Live validate follows only active Tool Portal namespaces whose backend.kind is mcp_provider',

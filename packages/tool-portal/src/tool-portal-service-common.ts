@@ -1,4 +1,8 @@
-import type { PortalCallRequest, PortalCallResult } from '@agent-vm/agent-portal-sdk';
+import type {
+	PortalCallRequest,
+	PortalCallResult,
+	ToolVmAdvisoryHintContext,
+} from '@agent-vm/agent-portal-sdk';
 import type {
 	EffectiveManagedToolPortalConfig,
 	GatewayRuntimeManagedToolPortalConfig,
@@ -9,11 +13,16 @@ import type {
 } from '@agent-vm/config-contracts';
 import {
 	openConfiguredCliInputSchema,
+	openToolVmCliInputSchema,
 	quickConfiguredCliInputSchema,
+	quickToolVmCliInputSchema,
 } from '@agent-vm/config-contracts';
 export { deterministicOperationId, directDispatchFingerprint } from './dispatch-authority.js';
 
-import { evaluateCliAllowanceInvocation } from './cli-allowances/cli-allowance-validator.js';
+import {
+	evaluateCliAllowanceInvocation,
+	evaluateToolVmCliAdvisoryHints,
+} from './cli-allowances/cli-allowance-validator.js';
 
 export type PortalCallItem = PortalCallResult['items'][number];
 
@@ -25,11 +34,13 @@ export interface ToolPortalRuntimeNamespacePolicy {
 
 export type ToolPortalCallPolicyDecision =
 	| {
+			readonly approvalContext?: ToolVmAdvisoryHintContext;
 			readonly backendKind: ToolPortalBackendKind;
 			readonly kind: 'requires-approval' | 'without-approval';
 			readonly policy: ToolPortalRuntimeNamespacePolicy;
 	  }
-	| { readonly kind: 'denied' };
+	| { readonly kind: 'denied' }
+	| { readonly kind: 'tool-vm-advisory-denied' };
 
 export function deepFreeze<TValue>(value: TValue): TValue {
 	if (typeof value !== 'object' || value === null || Object.isFrozen(value)) return value;
@@ -61,13 +72,18 @@ export function canonicalJson(value: unknown): string {
 
 export function approvalRequiredItem(props: {
 	readonly challengeId: string;
+	readonly context?: ToolVmAdvisoryHintContext;
 	readonly expiresAt: string;
 	readonly id: string;
 	readonly operationId: string;
 	readonly owningGeneration: string;
 }): PortalCallItem {
 	return {
-		approvalChallenge: { challengeId: props.challengeId, expiresAt: props.expiresAt },
+		approvalChallenge: {
+			challengeId: props.challengeId,
+			...(props.context === undefined ? {} : { context: props.context }),
+			expiresAt: props.expiresAt,
+		},
 		error: {
 			code: 'approval_required',
 			message: 'Capability execution requires operator approval.',
@@ -82,6 +98,31 @@ export function approvalRequiredItem(props: {
 		outcome: { certainty: 'proven', kind: 'not-dispatched', retryClass: 'safe-before-dispatch' },
 		owningGeneration: props.owningGeneration,
 		status: 'approval_required',
+	};
+}
+
+export function toolVmAdvisoryHintDeniedItem(props: {
+	readonly id: string;
+	readonly operationId: string;
+	readonly owningGeneration: string;
+}): PortalCallItem {
+	const safeMessage =
+		'Deployment guidance declined this Tool Portal call; this is not Tool VM containment.';
+	return {
+		error: {
+			code: 'tool_vm_advisory_hint_denied',
+			message: safeMessage,
+			safeDiagnostic: {
+				code: 'tool_vm_advisory_hint_denied',
+				level: 'warn',
+				safeMessage,
+			},
+		},
+		id: props.id,
+		operationId: props.operationId,
+		outcome: { certainty: 'proven', kind: 'not-dispatched', retryClass: 'safe-before-dispatch' },
+		owningGeneration: props.owningGeneration,
+		status: 'error',
 	};
 }
 
@@ -217,6 +258,37 @@ export function callPolicyDecision(props: {
 				backendKind: policy.backend.kind,
 				kind:
 					evaluation.disposition === 'requires_approval' ? 'requires-approval' : 'without-approval',
+				policy,
+			};
+		}
+	}
+	if (policy.backend.kind === 'tool_vm_runner') {
+		const operation = policy.backend.operations[props.call.name];
+		if (operation?.kind === 'command.cli') {
+			const inputSchema =
+				operation.timeout.kind === 'quick' ? quickToolVmCliInputSchema : openToolVmCliInputSchema;
+			const parsedInput = inputSchema.safeParse(props.call.arguments);
+			if (!parsedInput.success || baseline !== 'without_approval') return { kind: 'denied' };
+			const disposition = evaluateToolVmCliAdvisoryHints({
+				argv: parsedInput.data.argv,
+				hints: operation.advisoryHints,
+			});
+			if (disposition === 'hint-deny') return { kind: 'tool-vm-advisory-denied' };
+			return {
+				...(disposition === 'hint-requires-approval'
+					? {
+							approvalContext: {
+								bypassableWithinToolVm: true,
+								kind: 'tool_vm_advisory_hint' as const,
+								scope: 'tool_portal_call_only' as const,
+							},
+						}
+					: {}),
+				backendKind: policy.backend.kind,
+				kind:
+					disposition === 'hint-requires-approval'
+						? ('requires-approval' as const)
+						: ('without-approval' as const),
 				policy,
 			};
 		}

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { ToolVmAdvisoryHintContextSchema } from '../../approval-surface/models/tool-vm-advisory-hint-context-schema.js';
 import { ArtifactReferenceSchema } from '../../artifact-surface/models/artifact-reference-schema.js';
 import {
 	CapabilityDescriptorSchema,
@@ -113,6 +114,7 @@ const TerminalErrorOutcomeSchema = z.union([
 export const PortalApprovalChallengeSchema = z
 	.object({
 		challengeId: z.string().uuid(),
+		context: ToolVmAdvisoryHintContextSchema.optional(),
 		expiresAt: z.string().datetime(),
 	})
 	.strict();

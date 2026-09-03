@@ -32,6 +32,72 @@ import {
 const MISMATCHED_OPERATION_ID = '40000000-0000-4000-8000-000000000004';
 
 describe('ToolPortalCapabilityCore approval dispatch', () => {
+	it('keeps Tool VM CLI hints advisory while preserving direct unmatched dispatch', async () => {
+		const approval = createRecordingApprovalPort({ reserveResult: createApprovalChallenge });
+		const fixture = createServiceFixture({ approval });
+
+		const result = await fixture.capabilityCore.call(
+			{
+				calls: [
+					{
+						arguments: { argv: ['account', 'delete'], reason: 'deny hint proof' },
+						id: 'hint-denied',
+						name: 'cli',
+						namespace: 'sandbox',
+					},
+					{
+						arguments: { argv: ['crawl', 'delete'], reason: 'approval hint proof' },
+						id: 'hint-approval',
+						name: 'cli',
+						namespace: 'sandbox',
+					},
+					{
+						arguments: { argv: ['anything', '--unknown'], reason: 'direct proof' },
+						id: 'unmatched-direct',
+						name: 'cli',
+						namespace: 'sandbox',
+					},
+				],
+			},
+			udsOptions(),
+		);
+
+		expect(result.items).toMatchObject([
+			{
+				error: {
+					code: 'tool_vm_advisory_hint_denied',
+					safeDiagnostic: { code: 'tool_vm_advisory_hint_denied' },
+				},
+				id: 'hint-denied',
+				outcome: { kind: 'not-dispatched' },
+				status: 'error',
+			},
+			{
+				approvalChallenge: {
+					context: {
+						bypassableWithinToolVm: true,
+						kind: 'tool_vm_advisory_hint',
+						scope: 'tool_portal_call_only',
+					},
+				},
+				id: 'hint-approval',
+				status: 'approval_required',
+			},
+			{ id: 'unmatched-direct', status: 'ok' },
+		]);
+		expect(approval.reserveInvocations).toHaveLength(1);
+		expect(approval.reserveInvocations[0]).toMatchObject({
+			context: {
+				bypassableWithinToolVm: true,
+				kind: 'tool_vm_advisory_hint',
+				scope: 'tool_portal_call_only',
+			},
+		});
+		expect(
+			fixture.toolVmRunner.invocations.filter((invocation) => invocation.operation === 'call'),
+		).toHaveLength(1);
+	});
+
 	it('keeps mixed direct, approval-required, and granted calls independently bound and ordered', async () => {
 		// Arrange
 		const events: string[] = [];

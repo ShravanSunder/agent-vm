@@ -30,7 +30,15 @@ INITIAL_RESULT: JsonObject = {
             "value": {"content": "ready"},
         },
         {
-            "approvalChallenge": {"challengeId": "11111111-1111-4111-8111-111111111111", "expiresAt": "2026-08-20T21:00:00.000Z"},
+            "approvalChallenge": {
+                "challengeId": "11111111-1111-4111-8111-111111111111",
+                "context": {
+                    "bypassableWithinToolVm": True,
+                    "kind": "tool_vm_advisory_hint",
+                    "scope": "tool_portal_call_only",
+                },
+                "expiresAt": "2026-08-20T21:00:00.000Z",
+            },
             "error": {"code": "approval_required", "message": "Approval is required."},
             "id": "protected",
             "operationId": "operation-protected",
@@ -94,6 +102,11 @@ def test_bridge_preserves_free_item_and_retries_only_the_exact_approved_item() -
     assert result_mapping == {"items": [initial_items[0], retry_items[0]], "ok": True}
     assert t.cast("list[JsonObject]", calls[1]["calls"]) == [t.cast("list[JsonObject]", REQUEST["calls"])[1]]
     assert t.cast("JsonObject", presentations[0]["display"])["argumentsPreview"] == '{"path":"state.json","token":"[REDACTED]"}'
+    assert presentations[0]["context"] == {
+        "bypassableWithinToolVm": True,
+        "kind": "tool_vm_advisory_hint",
+        "scope": "tool_portal_call_only",
+    }
     assert decisions == [{"challengeId": "11111111-1111-4111-8111-111111111111", "decision": "approve"}]
 
 

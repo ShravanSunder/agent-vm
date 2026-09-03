@@ -2582,6 +2582,25 @@
 												"required": ["arguments", "id", "name", "namespace"],
 												"additionalProperties": false
 											},
+											"context": {
+												"type": "object",
+												"properties": {
+													"bypassableWithinToolVm": {
+														"type": "boolean",
+														"const": true
+													},
+													"kind": {
+														"type": "string",
+														"const": "tool_vm_advisory_hint"
+													},
+													"scope": {
+														"type": "string",
+														"const": "tool_portal_call_only"
+													}
+												},
+												"required": ["bypassableWithinToolVm", "kind", "scope"],
+												"additionalProperties": false
+											},
 											"operationId": {
 												"type": "string",
 												"format": "uuid",
@@ -6187,6 +6206,25 @@
 																					}
 																				},
 																				"required": ["arguments", "id", "name", "namespace"],
+																				"additionalProperties": false
+																			},
+																			"context": {
+																				"type": "object",
+																				"properties": {
+																					"bypassableWithinToolVm": {
+																						"type": "boolean",
+																						"const": true
+																					},
+																					"kind": {
+																						"type": "string",
+																						"const": "tool_vm_advisory_hint"
+																					},
+																					"scope": {
+																						"type": "string",
+																						"const": "tool_portal_call_only"
+																					}
+																				},
+																				"required": ["bypassableWithinToolVm", "kind", "scope"],
 																				"additionalProperties": false
 																			},
 																			"operationId": {

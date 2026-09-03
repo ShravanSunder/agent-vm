@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto';
 
-import { GatewayApprovalDecisionRequestSchema } from '@agent-vm/agent-portal-sdk';
+import {
+	GatewayApprovalDecisionRequestSchema,
+	ToolVmAdvisoryHintContextSchema,
+} from '@agent-vm/agent-portal-sdk';
 import { GatewayStablePrincipalDigestSchema } from '@agent-vm/agent-portal-sdk/contracts';
 import {
 	jsonObjectSchema,
@@ -79,6 +82,7 @@ export const GatewayRuntimeApprovalChallengeIntentSchema = z
 	.object({
 		backendKind: toolPortalBackendKindSchema,
 		call: GatewayRuntimeApprovalCallSchema,
+		context: ToolVmAdvisoryHintContextSchema.optional(),
 		operationId: z.string().uuid(),
 		semanticRevisions: GatewayRuntimeApprovalSemanticRevisionCohortSchema,
 		surfaceClass: GatewayRuntimePortalSurfaceClassSchema,

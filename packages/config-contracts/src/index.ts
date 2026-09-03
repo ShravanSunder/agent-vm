@@ -8,3 +8,4 @@ export * from './namespace-discovery-compiler.js';
 export * from './schema-artifacts.js';
 export * from './secret-value.js';
 export * from './tool-portal-config.js';
+export * from './tool-vm-configured-cli.js';

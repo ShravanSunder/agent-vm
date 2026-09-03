@@ -87,6 +87,23 @@ const mixedBackendConfig = {
 					backend: {
 						kind: 'tool_vm_runner',
 						operations: {
+							cli: {
+								advisoryHints: {
+									hintDeny: [{ flags: [], path: ['account', 'delete'] }],
+									hintRequiresApproval: [{ flags: [], path: ['crawl', 'delete'] }],
+								},
+								executable: '/usr/local/bin/tool',
+								kind: 'command.cli',
+								output: {
+									modelVisibleStderr: 'none',
+									overflow: 'truncate',
+									stderrMaxBytes: 1_024,
+									stdoutMaxBytes: 1_024,
+								},
+								safeHelp: 'Run the configured Tool VM CLI.',
+								timeout: { kind: 'open' },
+								workingDirectory: '.',
+							},
 							exec: {
 								description: 'Execute an inert test command.',
 								executable: '/usr/bin/true',
@@ -105,8 +122,8 @@ const mixedBackendConfig = {
 						profile: 'sandbox_ssh',
 					},
 					calls: {
-						requiresApproval: { allow: '*', deny: ['exec', 'exec_denied'] },
-						withoutApproval: { allow: ['exec'], deny: [] },
+						requiresApproval: { allow: '*', deny: ['cli', 'exec', 'exec_denied'] },
+						withoutApproval: { allow: ['cli', 'exec'], deny: [] },
 					},
 					tools: { allow: '*', deny: ['exec_denied'] },
 				},

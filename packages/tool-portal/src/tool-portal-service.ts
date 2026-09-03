@@ -15,6 +15,7 @@ import {
 	PortalSearchRequestSchema,
 	type PortalSearchRequest,
 	type PortalSearchResult,
+	type ToolVmAdvisoryHintContext,
 } from '@agent-vm/agent-portal-sdk';
 import {
 	gatewayRuntimeManagedToolPortalConfigSchema,
@@ -73,6 +74,7 @@ import {
 	deterministicOperationId,
 	directDispatchFingerprint,
 	notDispatchedItem,
+	toolVmAdvisoryHintDeniedItem,
 	type PortalCallItem,
 } from './tool-portal-service-common.js';
 
@@ -322,6 +324,7 @@ function managedBackendEntriesForInvocation(props: {
 }
 
 function approvalChallengeIntent(props: {
+	readonly approvalContext?: ToolVmAdvisoryHintContext;
 	readonly backendKind: ToolPortalBackendKind;
 	readonly call: PortalCallRequest['calls'][number];
 	readonly operationId: string;
@@ -331,6 +334,7 @@ function approvalChallengeIntent(props: {
 	return {
 		backendKind: props.backendKind,
 		call: props.call,
+		...(props.approvalContext === undefined ? {} : { context: props.approvalContext }),
 		operationId: props.operationId,
 		semanticRevisions: {
 			activeRevision: props.semanticSnapshot.activeRevision,
@@ -430,6 +434,9 @@ function controllerAdmissionItem(props: {
 		case 'approval-required':
 			return approvalRequiredItem({
 				challengeId: props.admission.challenge.approvalId,
+				...(props.admission.challenge.intent.context === undefined
+					? {}
+					: { context: props.admission.challenge.intent.context }),
 				expiresAt: props.admission.challenge.expiresAt,
 				id: props.callId,
 				operationId: props.operationId,
@@ -558,6 +565,13 @@ export function createManagedToolPortalCapabilityCore(
 				owningGeneration: semanticSnapshot.activeRevision,
 			});
 		}
+		if (policyDecision.kind === 'tool-vm-advisory-denied') {
+			return toolVmAdvisoryHintDeniedItem({
+				id: propsForCall.call.id,
+				operationId,
+				owningGeneration: semanticSnapshot.activeRevision,
+			});
+		}
 		if (policyDecision.kind === 'without-approval') {
 			return await dispatchCall({
 				authority: directDispatchAuthority({
@@ -578,6 +592,9 @@ export function createManagedToolPortalCapabilityCore(
 			});
 		}
 		const approvalIntent = approvalChallengeIntent({
+			...(policyDecision.approvalContext === undefined
+				? {}
+				: { approvalContext: policyDecision.approvalContext }),
 			backendKind: policyDecision.backendKind,
 			call: propsForCall.call,
 			operationId,

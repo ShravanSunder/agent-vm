@@ -8,6 +8,7 @@ import type {
 	SandboxProcessStatusResult,
 	SandboxStreamHandle,
 	SandboxTerminalOutcome,
+	ToolVmAdvisoryHintContext,
 } from '@agent-vm/agent-portal-sdk';
 import {
 	GatewayRuntimeClient,
@@ -16,6 +17,12 @@ import {
 } from '@agent-vm/agent-portal-sdk/gateway-runtime-client';
 import type { ToolPortalBackendKind, ToolPortalConfig } from '@agent-vm/config-contracts';
 import {
+	GatewayRuntimeApprovalAdmissionResultSchema,
+	GatewayRuntimeApprovalArmDispatchResultSchema,
+	GatewayRuntimeApprovalDispatchGrantSchema,
+	GatewayRuntimeApprovalDispatchReservationSchema,
+	deriveGatewayRuntimeApprovalFingerprint,
+	deriveGatewayRuntimeApprovalId,
 	deriveGatewayControlStablePrincipal,
 	type GatewayRuntimePortalSemanticSnapshot,
 	type GatewayRuntimeToolPortalDispatchAuthorityForBackendKind,
@@ -72,7 +79,20 @@ const gatewayEnvironmentGeneration = 'gateway:zone-sandbox:epoch-1';
 const gatewayProfileAssignmentRevision = 'sandbox-profile-assignment-1';
 const stockProjectionCohortDigest =
 	'projection-cohort:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
-const stockProofCapabilityName = 'write_configured_proof';
+export const stockProofCapabilityName = 'write_configured_proof';
+export const stockToolVmCliCapabilityName = 'run_caller_program';
+export const stockToolVmCliApprovedArgv = [
+	'-c',
+	'IFS= read -r line; printf "%s|%s|%s|%s" "$0" "$1" "$2" "$line"',
+	'argv-zero',
+	';',
+	'$TOKEN',
+] as const;
+export const stockToolVmCliDeniedArgv = [
+	'-c',
+	'printf "%s" hint-denied-direct > /work/hint-denied-direct-proof.txt',
+] as const;
+export const stockToolVmCliStdin = 'stdin-value\n';
 const stockDisposableRootfsProofFileName = 'replacement-rootfs-proof.txt';
 const stockDisposableRootfsProofGuestPath = `/work/${stockDisposableRootfsProofFileName}`;
 const stockHostToGuestWorkspaceFileName = 'host-to-guest-workspace-coherence.txt';
@@ -110,6 +130,14 @@ const stockProofManagedPluginAttachment = {
 	schemaVersion: 1,
 } satisfies GatewayRuntimeAttachmentMetadata;
 
+const stockApprovalAuthorityContext = {
+	controllerEpoch: 'stock-sandbox-controller-epoch-1',
+	frameworkEpoch: stockProofManagedPluginAttachment.frameworkEpoch,
+	gatewayEpoch: stockProofManagedPluginAttachment.gatewayEpoch,
+	runtimeEpoch: stockProofManagedPluginAttachment.runtimeEpoch,
+	zoneId,
+} as const;
+
 const stockProofCapabilityCatalog = {
 	'sandbox-user': [
 		{
@@ -135,6 +163,53 @@ const stockProofCapabilityCatalog = {
 				output: { optional: [], propertyCount: 2, required: [], type: 'object' },
 				safety: { readOnlyHint: false },
 				toolRef: `sandbox.${stockProofCapabilityName}`,
+			},
+		},
+		{
+			descriptor: {
+				annotations: {},
+				inputSchema: {
+					additionalProperties: false,
+					properties: {
+						argv: { items: { minLength: 1, type: 'string' }, type: 'array' },
+						reason: { minLength: 1, type: 'string' },
+						stdin: { type: 'string' },
+						timeoutMs: { maximum: 28_800_000, minimum: 1, type: 'integer' },
+					},
+					required: ['argv', 'reason'],
+					type: 'object',
+				},
+				name: stockToolVmCliCapabilityName,
+				namespace: 'sandbox',
+				outputSchema: { additionalProperties: false, type: 'object' },
+				related: [],
+				toolRef: `sandbox.${stockToolVmCliCapabilityName}`,
+			},
+			operation: {
+				executable: '/bin/sh',
+				kind: 'cli-exec',
+				output: {
+					modelVisibleStderr: 'fixed_safe_summary',
+					overflow: 'truncate',
+					stderrMaxBytes: 4_096,
+					stdoutMaxBytes: 4_096,
+				},
+				timeout: { kind: 'open' },
+				workingDirectory: '.',
+			},
+			summary: {
+				description: 'Run caller-selected shell argv in the current stock Tool VM.',
+				input: {
+					optional: ['stdin', 'timeoutMs'],
+					propertyCount: 4,
+					required: ['argv', 'reason'],
+					type: 'object',
+				},
+				name: stockToolVmCliCapabilityName,
+				namespace: 'sandbox',
+				output: { optional: ['stderrSummary'], propertyCount: 5, required: [], type: 'object' },
+				safety: { destructiveHint: true, readOnlyHint: false },
+				toolRef: `sandbox.${stockToolVmCliCapabilityName}`,
 			},
 		},
 	],
@@ -188,8 +263,15 @@ export interface StockGatewayRuntimeSandboxVmHarness {
 	readReplacementWorkspaceProof(): Promise<string>;
 	replaceToolVmLeaf(): Promise<StockSandboxReplacement>;
 	transportEvidence(): TransportEvidence;
+	toolVmCliPolicyEvidence(): StockToolVmCliPolicyEvidence;
 	trustedInvocationContext(): GatewayRuntimeClientTrustedInvocationContext;
 	writeDisposableRootfsProof(): Promise<void>;
+}
+
+export interface StockToolVmCliPolicyEvidence {
+	readonly approvalContexts: readonly ToolVmAdvisoryHintContext[];
+	readonly armedApprovalCount: number;
+	readonly toolVmAcquisitionCount: number;
 }
 
 export interface StockWorkspaceRootfsEvidence {
@@ -496,10 +578,10 @@ function createStrictSshClient(options: {
 			maxDirectoryEntries: 256,
 			maxFileBytes: 1_048_576,
 			maxPathDepth: 16,
-			maxStderrBytes: 65_536,
+			maxStderrBytes: 1_048_576,
 			maxStdoutBytes: 1_048_576,
 			maxSymlinkDepth: 8,
-			maxWriteBytes: 1_048_576,
+			maxWriteBytes: 65_536,
 		},
 		runtime: {
 			clock: { now: () => performance.now() },
@@ -568,6 +650,9 @@ export async function createStockGatewayRuntimeSandboxVmHarness(): Promise<Stock
 	let generation = 0;
 	let strictSshPayloadByteCount = 0;
 	let strictHostKeyVerified = false;
+	let toolVmAcquisitionCount = 0;
+	let armedApprovalCount = 0;
+	const approvalContexts: ToolVmAdvisoryHintContext[] = [];
 	let activeLeaf: ActiveToolVmLeaf | undefined;
 	let disposed = false;
 	let managedToolPortalComposition:
@@ -1222,14 +1307,37 @@ export async function createStockGatewayRuntimeSandboxVmHarness(): Promise<Stock
 										],
 										workingDirectory: '.',
 									},
+									[stockToolVmCliCapabilityName]: {
+										advisoryHints: {
+											hintDeny: [{ flags: [], path: [...stockToolVmCliDeniedArgv] }],
+											hintRequiresApproval: [{ flags: [], path: [...stockToolVmCliApprovedArgv] }],
+										},
+										executable: '/bin/sh',
+										kind: 'command.cli',
+										output: {
+											modelVisibleStderr: 'fixed_safe_summary',
+											overflow: 'truncate',
+											stderrMaxBytes: 4_096,
+											stdoutMaxBytes: 4_096,
+										},
+										safeHelp: 'Run caller-selected shell argv in the current stock Tool VM.',
+										timeout: { kind: 'open' },
+										workingDirectory: '.',
+									},
 								},
 								profile: 'sandbox_ssh',
 							},
 							calls: {
 								requiresApproval: { allow: [], deny: [] },
-								withoutApproval: { allow: [stockProofCapabilityName], deny: [] },
+								withoutApproval: {
+									allow: [stockProofCapabilityName, stockToolVmCliCapabilityName],
+									deny: [],
+								},
 							},
-							tools: { allow: [stockProofCapabilityName], deny: [] },
+							tools: {
+								allow: [stockProofCapabilityName, stockToolVmCliCapabilityName],
+								deny: [],
+							},
 						},
 					},
 				},
@@ -1257,14 +1365,50 @@ export async function createStockGatewayRuntimeSandboxVmHarness(): Promise<Stock
 			schemaVersion: 1,
 			surfaceEligibilityByProfile: { 'sandbox-user': { sandbox: ['protected_uds'] } },
 		} satisfies GatewayRuntimePortalSemanticSnapshot;
+		const stablePrincipal = deriveGatewayControlStablePrincipal({
+			principal: stockProofTrustedInvocationContext.principal,
+		});
 		const approvalPort = {
-			armDispatch: (): Promise<never> =>
-				Promise.reject(new Error('Stock sandbox proof capability does not require approval.')),
-			reserveDispatch: (): Promise<never> =>
-				Promise.reject(new Error('Stock sandbox proof capability does not require approval.')),
+			armDispatch: async ({ reservation }) => {
+				armedApprovalCount += 1;
+				return GatewayRuntimeApprovalArmDispatchResultSchema.parse({
+					grant: GatewayRuntimeApprovalDispatchGrantSchema.parse({
+						approvalId: reservation.approvalId,
+						authorityContext: reservation.authorityContext,
+						backendKind: reservation.backendKind,
+						expiresAt: reservation.expiresAt,
+						fingerprint: reservation.fingerprint,
+						grantId: '30000000-0000-4000-8000-000000000301',
+						operationId: reservation.operationId,
+						stablePrincipal: reservation.stablePrincipal,
+					}),
+					kind: 'dispatch-armed',
+				});
+			},
+			reserveDispatch: async ({ intent }) => {
+				if (intent.context !== undefined) approvalContexts.push(intent.context);
+				const fingerprint = deriveGatewayRuntimeApprovalFingerprint({
+					authorityContext: stockApprovalAuthorityContext,
+					intent,
+				});
+				return GatewayRuntimeApprovalAdmissionResultSchema.parse({
+					kind: 'dispatch-reserved',
+					reservation: GatewayRuntimeApprovalDispatchReservationSchema.parse({
+						approvalId: deriveGatewayRuntimeApprovalId(fingerprint),
+						authorityContext: stockApprovalAuthorityContext,
+						backendKind: intent.backendKind,
+						expiresAt: '2099-01-01T00:00:00.000Z',
+						fingerprint,
+						operationId: intent.operationId,
+						reservationId: '20000000-0000-4000-8000-000000000201',
+						stablePrincipal,
+					}),
+				});
+			},
 		} satisfies ToolPortalApprovalPort;
 		const acquisitionPort = {
 			acquire: async (request) => {
+				toolVmAcquisitionCount += 1;
 				const leaf = activeLeaf;
 				if (
 					leaf === undefined ||
@@ -1566,6 +1710,11 @@ export async function createStockGatewayRuntimeSandboxVmHarness(): Promise<Stock
 		transportEvidence: () => ({
 			strictHostKeyVerified,
 			strictSshPayloadByteCount,
+		}),
+		toolVmCliPolicyEvidence: () => ({
+			approvalContexts: [...approvalContexts],
+			armedApprovalCount,
+			toolVmAcquisitionCount,
 		}),
 		trustedInvocationContext: () => stockProofTrustedInvocationContext,
 		writeDisposableRootfsProof: async () => {

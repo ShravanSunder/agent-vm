@@ -2,10 +2,16 @@ import {
 	SANDBOX_MAXIMUM_IDENTIFIER_CHARACTERS,
 	type CapabilityDescriptor,
 	type CapabilitySummary,
+	type ToolVmCallHintsAdvisory,
+	type ToolVmCliDiscoveryMetadata,
 } from '@agent-vm/agent-portal-sdk';
-import type {
-	GatewayRuntimeManagedToolPortalConfig,
-	ToolPortalSandboxSshOperationDefinition,
+import {
+	MAXIMUM_TOOL_VM_CLI_ARGV_ITEMS,
+	MAXIMUM_TOOL_VM_CLI_ARGV_TOKEN_CHARACTERS,
+	MAXIMUM_TOOL_VM_CLI_MODEL_VISIBLE_STDOUT_BYTES,
+	MAXIMUM_TOOL_VM_CLI_STDIN_BYTES,
+	type GatewayRuntimeManagedToolPortalConfig,
+	type ToolPortalSandboxSshOperationDefinition,
 } from '@agent-vm/config-contracts';
 
 import {
@@ -91,6 +97,59 @@ const CommandOutputSchema: ToolVmRunnerJsonSchema = {
 	type: 'object',
 };
 
+const ConfiguredCliOutputSchema: ToolVmRunnerJsonSchema = {
+	additionalProperties: false,
+	properties: {
+		exitCode: { type: 'integer' },
+		stderrSummary: { type: 'string' },
+		stderrTruncated: { type: 'boolean' },
+		stdout: { maxLength: MAXIMUM_TOOL_VM_CLI_MODEL_VISIBLE_STDOUT_BYTES, type: 'string' },
+		stdoutTruncated: { type: 'boolean' },
+	},
+	required: ['exitCode', 'stderrTruncated', 'stdout', 'stdoutTruncated'],
+	type: 'object',
+};
+
+function toolVmCliInputJsonSchema(timeoutKind: 'open' | 'quick'): ToolVmRunnerJsonSchema {
+	return {
+		additionalProperties: false,
+		properties: {
+			argv: {
+				items: {
+					maxLength: MAXIMUM_TOOL_VM_CLI_ARGV_TOKEN_CHARACTERS,
+					minLength: 1,
+					pattern: '^[^\\u0000]+$',
+					type: 'string',
+				},
+				maxItems: MAXIMUM_TOOL_VM_CLI_ARGV_ITEMS,
+				type: 'array',
+			},
+			reason: { maxLength: 2_000, minLength: 1, type: 'string' },
+			stdin: { maxLength: MAXIMUM_TOOL_VM_CLI_STDIN_BYTES, type: 'string' },
+			...(timeoutKind === 'open'
+				? { timeoutMs: { maximum: 28_800_000, minimum: 1, type: 'integer' } }
+				: {}),
+		},
+		required: ['argv', 'reason'],
+		type: 'object',
+	};
+}
+
+function toolVmCallHintsAdvisory(
+	definition: Extract<ToolPortalSandboxSshOperationDefinition, { kind: 'command.cli' }>,
+): ToolVmCallHintsAdvisory | undefined {
+	const hasHintDeny = (definition.advisoryHints?.hintDeny.length ?? 0) > 0;
+	const hasHintRequiresApproval = (definition.advisoryHints?.hintRequiresApproval.length ?? 0) > 0;
+	if (!hasHintDeny && !hasHintRequiresApproval) return undefined;
+	return {
+		bypassableWithinToolVm: true,
+		hasHintDeny,
+		hasHintRequiresApproval,
+		kind: 'tool_vm_call_hints',
+		scope: 'tool_portal_call_only',
+	};
+}
+
 const ReadFileOutputSchema: ToolVmRunnerJsonSchema = {
 	additionalProperties: false,
 	properties: {
@@ -143,37 +202,54 @@ const ProcessStateOutputSchema: ToolVmRunnerJsonSchema = {
 };
 
 function capabilityDescriptor(props: {
+	readonly advisory?: ToolVmCallHintsAdvisory;
+	readonly annotations?: CapabilityDescriptor['annotations'];
+	readonly description?: string;
 	readonly inputSchema: CapabilityDescriptor['inputSchema'];
 	readonly name: string;
 	readonly namespace: string;
 	readonly outputSchema: CapabilityDescriptor['outputSchema'];
+	readonly toolVmCliMetadata?: ToolVmCliDiscoveryMetadata;
 }): CapabilityDescriptor {
 	return {
-		annotations: {},
+		...(props.advisory === undefined ? {} : { advisory: props.advisory }),
+		annotations: props.annotations ?? {},
+		...(props.description === undefined ? {} : { description: props.description }),
 		inputSchema: props.inputSchema,
 		name: props.name,
 		namespace: props.namespace,
 		outputSchema: props.outputSchema,
 		related: [],
+		...(props.toolVmCliMetadata === undefined
+			? {}
+			: { toolVmCliMetadata: props.toolVmCliMetadata }),
 		toolRef: `${props.namespace}.${props.name}`,
 	};
 }
 
 function capabilitySummary(props: {
+	readonly advisory?: ToolVmCallHintsAdvisory;
 	readonly description: string;
 	readonly input: CapabilitySummary['input'];
 	readonly name: string;
 	readonly namespace: string;
 	readonly output: NonNullable<CapabilitySummary['output']>;
 	readonly safety: CapabilitySummary['safety'];
+	readonly title?: string;
+	readonly toolVmCliMetadata?: ToolVmCliDiscoveryMetadata;
 }): CapabilitySummary {
 	return {
+		...(props.advisory === undefined ? {} : { advisory: props.advisory }),
 		description: props.description,
 		input: props.input,
 		name: props.name,
 		namespace: props.namespace,
 		output: props.output,
 		safety: props.safety,
+		...(props.title === undefined ? {} : { title: props.title }),
+		...(props.toolVmCliMetadata === undefined
+			? {}
+			: { toolVmCliMetadata: props.toolVmCliMetadata }),
 		toolRef: `${props.namespace}.${props.name}`,
 	};
 }
@@ -188,6 +264,56 @@ function compileConfiguredOperation(props: {
 		namespace: props.namespace,
 	};
 	switch (props.definition.kind) {
+		case 'command.cli': {
+			const advisory = toolVmCallHintsAdvisory(props.definition);
+			return {
+				descriptor: capabilityDescriptor({
+					...common,
+					...(advisory === undefined ? {} : { advisory }),
+					annotations: {},
+					description: props.definition.safeHelp,
+					inputSchema: toolVmCliInputJsonSchema(props.definition.timeout.kind),
+					outputSchema: ConfiguredCliOutputSchema,
+					...(props.definition.metadata === undefined
+						? {}
+						: { toolVmCliMetadata: props.definition.metadata }),
+				}),
+				operation: {
+					...(props.definition.advisoryHints === undefined
+						? {}
+						: { advisoryHints: props.definition.advisoryHints }),
+					executable: props.definition.executable,
+					kind: 'cli-exec',
+					output: props.definition.output,
+					timeout: props.definition.timeout,
+					workingDirectory: props.definition.workingDirectory,
+				},
+				summary: capabilitySummary({
+					...common,
+					...(advisory === undefined ? {} : { advisory }),
+					description: props.definition.safeHelp,
+					input: {
+						optional: ['stdin', ...(props.definition.timeout.kind === 'open' ? ['timeoutMs'] : [])],
+						propertyCount: props.definition.timeout.kind === 'open' ? 4 : 3,
+						required: ['argv', 'reason'],
+						type: 'object',
+					},
+					output: {
+						optional: ['stderrSummary'],
+						propertyCount: 5,
+						required: ['exitCode', 'stderrTruncated', 'stdout', 'stdoutTruncated'],
+						type: 'object',
+					},
+					safety: { destructiveHint: true, readOnlyHint: false },
+					...(props.definition.metadata?.displayName === undefined
+						? {}
+						: { title: props.definition.metadata.displayName }),
+					...(props.definition.metadata === undefined
+						? {}
+						: { toolVmCliMetadata: props.definition.metadata }),
+				}),
+			};
+		}
 		case 'command.fixed':
 			return {
 				descriptor: capabilityDescriptor({

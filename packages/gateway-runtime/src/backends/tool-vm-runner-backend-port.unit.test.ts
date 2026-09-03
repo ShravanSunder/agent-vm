@@ -24,7 +24,10 @@ import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import { createGatewayRuntimeSandboxOperationAuthority } from '../sandbox/sandbox-operation-authority.js';
 import type { GatewayRuntimeSandboxProcessRegistry } from '../sandbox/sandbox-process-registry.js';
-import type { StrictToolVmSshClient } from '../sandbox/strict-tool-vm-ssh-client.js';
+import {
+	StrictToolVmSshExecutionError,
+	type StrictToolVmSshClient,
+} from '../sandbox/strict-tool-vm-ssh-client.js';
 import {
 	MAXIMUM_TOOL_VM_RUNNER_TEXT_WRITE_BYTES,
 	createGatewayRuntimeToolVmRunnerBackendPort,
@@ -240,6 +243,7 @@ function unusedProcessRegistry(): GatewayRuntimeSandboxProcessRegistry {
 }
 
 function createBackendFixture(options?: {
+	readonly abortSignalOnConnect?: AbortController;
 	readonly capabilityCatalog?: GatewayRuntimeToolVmRunnerCapabilityCatalog;
 	readonly rejectStrictHostKey?: boolean;
 	readonly rejectWriteAfterDispatch?: boolean;
@@ -254,17 +258,26 @@ function createBackendFixture(options?: {
 	const strictSshClient: StrictToolVmSshClient = {
 		close: (): void => undefined,
 		connect: async (): Promise<void> => {
+			options?.abortSignalOnConnect?.abort();
 			if (options?.rejectStrictHostKey === true) {
 				throw new Error('Strict SSH transport rejected the pinned host key.');
 			}
 		},
 		execute: async (request) => {
+			if (request.signal?.aborted === true) {
+				throw new StrictToolVmSshExecutionError(
+					'not-dispatched',
+					'Strict SSH operation was cancelled before dispatch.',
+				);
+			}
 			sshExecutions.push(request);
 			return {
 				exitCode: 0,
 				kind: 'exited',
 				stderr: Uint8Array.from([101, 114, 114]),
+				stderrTruncated: false,
 				stdout: Uint8Array.from([111, 107]),
+				stdoutTruncated: false,
 			};
 		},
 		guestListDirectory: async () => [],
@@ -672,6 +685,124 @@ describe('Gateway runtime Tool VM runner backend port', () => {
 		]);
 		expect(fixture.retiredGroupReasons).toEqual(['completed']);
 		expect(fixture.endedActiveUseReasons).toEqual([]);
+	});
+
+	it('dispatches caller-controlled Tool VM CLI argv and stdin without a shell or target fallback', async () => {
+		const configuredCatalog = compileGatewayRuntimeToolVmRunnerConfiguredCatalog(
+			gatewayRuntimeManagedToolPortalConfigSchema.parse({
+				agents: { 'agent-a': { profile: 'code-builder' } },
+				mode: 'managed',
+				profiles: {
+					'code-builder': {
+						namespaces: {
+							sandbox: {
+								backend: {
+									kind: 'tool_vm_runner',
+									operations: {
+										firecrawl: {
+											executable: '/usr/local/bin/firecrawl',
+											kind: 'command.cli',
+											output: {
+												modelVisibleStderr: 'fixed_safe_summary',
+												overflow: 'truncate',
+												stderrMaxBytes: 1_024,
+												stdoutMaxBytes: 2_048,
+											},
+											safeHelp: 'Run Firecrawl with unrestricted arguments.',
+											timeout: { kind: 'open' },
+											workingDirectory: 'repo',
+										},
+									},
+									profile: 'sandbox_ssh',
+								},
+								calls: {
+									requiresApproval: { allow: [], deny: [] },
+									withoutApproval: { allow: ['firecrawl'], deny: [] },
+								},
+								discovery: {},
+								tools: { allow: ['firecrawl'], deny: [] },
+							},
+						},
+					},
+				},
+				schemaVersion: 1,
+			}),
+		);
+		const fixture = createBackendFixture({ capabilityCatalog: configuredCatalog });
+
+		const result = await callCapability({
+			arguments: {
+				argv: ['crawl', 'https://example.invalid', ';', '$TOKEN', 'line one\nline two'],
+				reason: 'Exercise caller-selected Tool VM CLI arguments.',
+				stdin: '{"arbitrary":true}',
+				timeoutMs: 45_000,
+			},
+			fixture,
+			id: 'call-firecrawl',
+			name: 'firecrawl',
+			operationId: '40000000-0000-4000-8000-000000000101',
+		});
+
+		expect(result.items[0]).toMatchObject({
+			status: 'ok',
+			value: {
+				exitCode: 0,
+				stderrSummary: 'err',
+				stderrTruncated: false,
+				stdout: 'ok',
+				stdoutTruncated: false,
+			},
+		});
+		expect(fixture.sshExecutions).toEqual([
+			{
+				argv: [
+					'/usr/local/bin/firecrawl',
+					'crawl',
+					'https://example.invalid',
+					';',
+					'$TOKEN',
+					'line one\nline two',
+				],
+				cwd: 'repo',
+				limits: {
+					deadlineMs: 45_000,
+					hardTransportBytesPerStream: 1_048_576,
+					stderrPolicy: { captureBytes: 1_024, overflow: 'truncate' },
+					stdoutPolicy: { captureBytes: 2_048, overflow: 'truncate' },
+				},
+				stdin: new TextEncoder().encode('{"arbitrary":true}'),
+			},
+		]);
+		expect(fixture.artifactWrites).toHaveLength(0);
+	});
+
+	it('reports cancellation during SSH connection as proven not dispatched', async () => {
+		const cancellation = new AbortController();
+		const fixture = createBackendFixture({ abortSignalOnConnect: cancellation });
+
+		const result = await fixture.port.call(
+			{
+				calls: [
+					{
+						arguments: {},
+						id: 'cancel-during-connect',
+						name: 'run_checks',
+						namespace: 'sandbox',
+					},
+				],
+			},
+			{
+				...directCallOptions('40000000-0000-4000-8000-000000000102'),
+				signal: cancellation.signal,
+			},
+		);
+
+		expect(result.items[0]).toMatchObject({
+			error: { code: 'execution_failed' },
+			outcome: { certainty: 'proven', kind: 'not-dispatched' },
+			status: 'error',
+		});
+		expect(fixture.sshExecutions).toHaveLength(0);
 	});
 
 	it('reports a rejected SSH file write as ambiguous after dispatch', async () => {

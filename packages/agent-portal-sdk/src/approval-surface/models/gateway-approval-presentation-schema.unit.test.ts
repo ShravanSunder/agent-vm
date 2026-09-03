@@ -23,6 +23,31 @@ describe('Gateway approval presentation contracts', () => {
 		expect(GatewayApprovalPresentationRequestSchema.parse(request)).toEqual(request);
 	});
 
+	it('accepts only the closed Tool VM advisory presentation context', () => {
+		const request = {
+			allowedDecisions: ['approve', 'deny'],
+			challengeId: '998c404a-5c35-49ea-8479-1d856b122b7b',
+			context: {
+				bypassableWithinToolVm: true,
+				kind: 'tool_vm_advisory_hint',
+				scope: 'tool_portal_call_only',
+			},
+			display: { argumentsPreview: '{"argv":["publish"]}' },
+			expiresAt: '2026-08-20T21:00:00.000Z',
+			itemId: 'call-a',
+			name: 'cli',
+			namespace: 'sandbox',
+		} as const;
+
+		expect(GatewayApprovalPresentationRequestSchema.parse(request)).toEqual(request);
+		expect(
+			GatewayApprovalPresentationRequestSchema.safeParse({
+				...request,
+				context: { ...request.context, bypassableWithinToolVm: false },
+			}).success,
+		).toBe(false);
+	});
+
 	it('rejects a presentation preview whose UTF-8 encoding exceeds the byte bound', () => {
 		const request = {
 			allowedDecisions: ['approve', 'deny'],

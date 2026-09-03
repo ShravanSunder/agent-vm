@@ -109,19 +109,44 @@ export interface StrictToolVmSshProcessChannelClient {
 	) => Promise<StrictToolVmSshProcessChannel>;
 }
 
+export interface StrictToolVmSshExecutionLimits {
+	readonly deadlineMs: number;
+	readonly hardTransportBytesPerStream: number;
+	readonly stderrPolicy: StrictToolVmSshExecutionOutputPolicy;
+	readonly stdoutPolicy: StrictToolVmSshExecutionOutputPolicy;
+}
+
+export interface StrictToolVmSshExecutionOutputPolicy {
+	readonly captureBytes: number;
+	readonly overflow: 'fail' | 'truncate';
+}
+
+export class StrictToolVmSshExecutionError extends Error {
+	constructor(
+		public readonly disposition: 'ambiguous' | 'completed-failed' | 'not-dispatched',
+		message: string,
+	) {
+		super(message);
+		this.name = 'StrictToolVmSshExecutionError';
+	}
+}
+
 export interface StrictToolVmSshClient {
 	readonly close: (options?: { readonly notifyTransportFailure: true }) => void;
 	readonly connect: () => Promise<void>;
 	readonly execute: (request: {
 		readonly argv: readonly string[];
 		readonly cwd: string;
+		readonly limits?: StrictToolVmSshExecutionLimits;
 		readonly signal?: AbortSignal;
 		readonly stdin?: Uint8Array;
 	}) => Promise<{
 		readonly exitCode: number;
 		readonly kind: 'exited';
 		readonly stderr: Uint8Array;
+		readonly stderrTruncated: boolean;
 		readonly stdout: Uint8Array;
+		readonly stdoutTruncated: boolean;
 	}>;
 	readonly guestListDirectory: (request: {
 		readonly path: string;
@@ -366,16 +391,24 @@ function beginDeadline(options: {
 	return options.runtime.scheduler.schedule(options.onExpire, options.delayMilliseconds);
 }
 
-function appendBoundedOutput(options: {
+function appendConfiguredOutput(options: {
 	readonly chunks: Buffer[];
 	readonly chunk: Buffer;
 	readonly currentBytes: number;
-	readonly maximumBytes: number;
-}): number {
+	readonly hardMaximumBytes: number;
+	readonly policy: StrictToolVmSshExecutionOutputPolicy;
+}): { readonly nextBytes: number; readonly overflow: 'configured-fail' | 'hard' | undefined } {
 	const nextBytes = options.currentBytes + options.chunk.byteLength;
-	if (nextBytes > options.maximumBytes) throw new Error('Strict SSH output limit exceeded.');
-	options.chunks.push(options.chunk);
-	return nextBytes;
+	if (nextBytes > options.hardMaximumBytes) {
+		return { nextBytes, overflow: 'hard' };
+	}
+	const remainingBytes = Math.max(0, options.policy.captureBytes - options.currentBytes);
+	if (remainingBytes > 0) options.chunks.push(options.chunk.subarray(0, remainingBytes));
+	if (nextBytes <= options.policy.captureBytes) return { nextBytes, overflow: undefined };
+	return {
+		nextBytes,
+		overflow: options.policy.overflow === 'fail' ? 'configured-fail' : undefined,
+	};
 }
 
 function promisifySftp<TValue>(
@@ -536,10 +569,40 @@ export function createStrictToolVmSshClient(
 	const executeCommand = async (request: {
 		readonly command: string;
 		readonly execOptions: ExecOptions;
+		readonly limits?: StrictToolVmSshExecutionLimits;
 		readonly signal?: AbortSignal;
 		readonly stdin?: Uint8Array;
 	}): ReturnType<StrictToolVmSshClient['execute']> => {
 		const client = requireConnectedTransport();
+		const deadlineMs = request.limits?.deadlineMs ?? options.deadlineMilliseconds.operation;
+		const stderrPolicy = request.limits?.stderrPolicy ?? {
+			captureBytes: options.limits.maxStderrBytes,
+			overflow: 'fail' as const,
+		};
+		const stdoutPolicy = request.limits?.stdoutPolicy ?? {
+			captureBytes: options.limits.maxStdoutBytes,
+			overflow: 'fail' as const,
+		};
+		if (!Number.isSafeInteger(deadlineMs) || deadlineMs <= 0 || deadlineMs > 28_800_000) {
+			throw new Error('Strict SSH execution deadline is outside the supported range.');
+		}
+		if (
+			request.limits !== undefined &&
+			(request.limits.hardTransportBytesPerStream !== options.limits.maxStderrBytes ||
+				request.limits.hardTransportBytesPerStream !== options.limits.maxStdoutBytes)
+		) {
+			throw new Error('Strict SSH execution hard transport ceiling does not match the client.');
+		}
+		if (
+			!Number.isSafeInteger(stderrPolicy.captureBytes) ||
+			stderrPolicy.captureBytes <= 0 ||
+			!Number.isSafeInteger(stdoutPolicy.captureBytes) ||
+			stdoutPolicy.captureBytes <= 0 ||
+			stderrPolicy.captureBytes > options.limits.maxStderrBytes ||
+			stdoutPolicy.captureBytes > options.limits.maxStdoutBytes
+		) {
+			throw new Error('Strict SSH configured output capture exceeds the transport ceiling.');
+		}
 		if (request.stdin !== undefined && request.stdin.byteLength > options.limits.maxWriteBytes) {
 			throw new Error('Strict SSH write byte limit exceeded.');
 		}
@@ -548,7 +611,10 @@ export function createStrictToolVmSshClient(
 			let exitCode: number | null | undefined;
 			let settled = false;
 			let stderrBytes = 0;
+			let stderrTruncated = false;
 			let stdoutBytes = 0;
+			let stdoutTruncated = false;
+			let pendingOutputFailure: 'configured-fail' | 'hard' | undefined;
 			const stderrChunks: Buffer[] = [];
 			const stdoutChunks: Buffer[] = [];
 			const finishRejected = (error: Error, closeChannel: boolean): void => {
@@ -562,13 +628,19 @@ export function createStrictToolVmSshClient(
 			const onAbort = (): void =>
 				finishRejected(new Error('Strict SSH operation was cancelled.'), true);
 			const deadline = beginDeadline({
-				delayMilliseconds: options.deadlineMilliseconds.operation,
+				delayMilliseconds: deadlineMs,
 				onExpire: (): void =>
 					finishRejected(new Error('Strict SSH operation deadline expired.'), true),
 				runtime: options.runtime,
 			});
 			if (request.signal?.aborted === true) {
-				onAbort();
+				finishRejected(
+					new StrictToolVmSshExecutionError(
+						'not-dispatched',
+						'Strict SSH operation was cancelled before dispatch.',
+					),
+					false,
+				);
 				return;
 			}
 			request.signal?.addEventListener('abort', onAbort, { once: true });
@@ -583,27 +655,43 @@ export function createStrictToolVmSshClient(
 				}
 				channel = openedChannel;
 				openedChannel.on('data', (chunk: Buffer): void => {
-					try {
-						stdoutBytes = appendBoundedOutput({
-							chunk,
-							chunks: stdoutChunks,
-							currentBytes: stdoutBytes,
-							maximumBytes: options.limits.maxStdoutBytes,
-						});
-					} catch {
-						finishRejected(new Error('Strict SSH stdout output limit exceeded.'), true);
+					if (pendingOutputFailure !== undefined) return;
+					const appended = appendConfiguredOutput({
+						chunk,
+						chunks: stdoutChunks,
+						currentBytes: stdoutBytes,
+						hardMaximumBytes: options.limits.maxStdoutBytes,
+						policy: stdoutPolicy,
+					});
+					stdoutBytes = appended.nextBytes;
+					stdoutTruncated ||= stdoutBytes > stdoutPolicy.captureBytes;
+					if (appended.overflow !== undefined) {
+						if (request.limits === undefined) {
+							finishRejected(new Error('Strict SSH stdout output limit exceeded.'), true);
+							return;
+						}
+						pendingOutputFailure = appended.overflow;
+						openedChannel.close();
 					}
 				});
 				openedChannel.stderr.on('data', (chunk: Buffer): void => {
-					try {
-						stderrBytes = appendBoundedOutput({
-							chunk,
-							chunks: stderrChunks,
-							currentBytes: stderrBytes,
-							maximumBytes: options.limits.maxStderrBytes,
-						});
-					} catch {
-						finishRejected(new Error('Strict SSH stderr output limit exceeded.'), true);
+					if (pendingOutputFailure !== undefined) return;
+					const appended = appendConfiguredOutput({
+						chunk,
+						chunks: stderrChunks,
+						currentBytes: stderrBytes,
+						hardMaximumBytes: options.limits.maxStderrBytes,
+						policy: stderrPolicy,
+					});
+					stderrBytes = appended.nextBytes;
+					stderrTruncated ||= stderrBytes > stderrPolicy.captureBytes;
+					if (appended.overflow !== undefined) {
+						if (request.limits === undefined) {
+							finishRejected(new Error('Strict SSH stderr output limit exceeded.'), true);
+							return;
+						}
+						pendingOutputFailure = appended.overflow;
+						openedChannel.close();
 					}
 				});
 				openedChannel.once('error', (): void => {
@@ -614,6 +702,18 @@ export function createStrictToolVmSshClient(
 				});
 				openedChannel.once('close', (): void => {
 					if (settled) return;
+					if (pendingOutputFailure !== undefined) {
+						finishRejected(
+							new StrictToolVmSshExecutionError(
+								typeof exitCode === 'number' ? 'completed-failed' : 'ambiguous',
+								pendingOutputFailure === 'hard'
+									? 'Strict SSH hard transport output limit exceeded.'
+									: 'Configured CLI output exceeded its configured bound.',
+							),
+							false,
+						);
+						return;
+					}
 					if (typeof exitCode !== 'number') {
 						finishRejected(new Error('Strict SSH command closed without an exit result.'), false);
 						return;
@@ -625,7 +725,9 @@ export function createStrictToolVmSshClient(
 						exitCode,
 						kind: 'exited',
 						stderr: Buffer.concat(stderrChunks),
+						stderrTruncated,
 						stdout: Buffer.concat(stdoutChunks),
+						stdoutTruncated,
 					});
 				});
 				const writeInput = async (): Promise<void> => {
@@ -659,6 +761,7 @@ export function createStrictToolVmSshClient(
 		return await executeCommand({
 			command: `cd -- ${quotePosixShellToken(pathResolution.guestPath)} && exec -- ${encodePosixShellArgv(request.argv)}`,
 			execOptions: {},
+			...(request.limits === undefined ? {} : { limits: request.limits }),
 			...(request.signal === undefined ? {} : { signal: request.signal }),
 			...(request.stdin === undefined ? {} : { stdin: request.stdin }),
 		});

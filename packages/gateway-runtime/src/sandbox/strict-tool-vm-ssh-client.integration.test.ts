@@ -612,7 +612,9 @@ describe('strict Tool VM SSH client', () => {
 			exitCode: 7,
 			kind: 'exited',
 			stderr: Buffer.from('stderr'),
+			stderrTruncated: false,
 			stdout: Buffer.from('stdout'),
+			stdoutTruncated: false,
 		});
 	});
 
@@ -661,6 +663,112 @@ describe('strict Tool VM SSH client', () => {
 		},
 	);
 
+	it('applies per-execution deadline and truncation below immutable transport limits', async () => {
+		const fixture = createStrictSshFixture();
+		fixture.sshTransport.onExec = (_command, callback) => {
+			callback(undefined, fixture.sshTransport.channel as unknown as ClientChannel);
+		};
+		await connectFixture(fixture);
+
+		const execution = fixture.client.execute({
+			argv: ['/bin/true'],
+			cwd: '',
+			limits: {
+				deadlineMs: 45_000,
+				hardTransportBytesPerStream: strictLimits.maxStdoutBytes,
+				stderrPolicy: { captureBytes: 4, overflow: 'truncate' },
+				stdoutPolicy: { captureBytes: 4, overflow: 'truncate' },
+			},
+		});
+		expect(fixture.deadlineScheduler.pendingDeadlineDelays).toEqual([45_000]);
+		fixture.sshTransport.channel.emit('data', Buffer.from('stdout'));
+		fixture.sshTransport.channel.stderr.emit('data', Buffer.from('stderr'));
+		fixture.sshTransport.channel.emit('exit', 0);
+		fixture.sshTransport.channel.emit('close');
+
+		await expect(execution).resolves.toEqual({
+			exitCode: 0,
+			kind: 'exited',
+			stderr: Buffer.from('stde'),
+			stderrTruncated: true,
+			stdout: Buffer.from('stdo'),
+			stdoutTruncated: true,
+		});
+	});
+
+	it('rejects configured execution deadlines above the eight-hour hard limit', async () => {
+		const fixture = createStrictSshFixture();
+		await connectFixture(fixture);
+
+		const execution = fixture.client.execute({
+			argv: ['/bin/true'],
+			cwd: '',
+			limits: {
+				deadlineMs: 28_800_001,
+				hardTransportBytesPerStream: strictLimits.maxStdoutBytes,
+				stderrPolicy: { captureBytes: 4, overflow: 'truncate' },
+				stdoutPolicy: { captureBytes: 4, overflow: 'truncate' },
+			},
+		});
+
+		await expect(execution).rejects.toThrow(/deadline is outside the supported range/i);
+		expect(fixture.sshTransport.execCommands).toHaveLength(0);
+	});
+
+	it('reports configured fail-on-overflow only after a terminal exit is observed', async () => {
+		const fixture = createStrictSshFixture();
+		fixture.sshTransport.onExec = (_command, callback) => {
+			callback(undefined, fixture.sshTransport.channel as unknown as ClientChannel);
+		};
+		await connectFixture(fixture);
+
+		const execution = fixture.client.execute({
+			argv: ['/bin/true'],
+			cwd: '',
+			limits: {
+				deadlineMs: 30_000,
+				hardTransportBytesPerStream: strictLimits.maxStdoutBytes,
+				stderrPolicy: { captureBytes: 4, overflow: 'fail' },
+				stdoutPolicy: { captureBytes: 4, overflow: 'fail' },
+			},
+		});
+		fixture.sshTransport.channel.emit('data', Buffer.from('overflow'));
+		expect(fixture.sshTransport.channel.closeCallCount).toBe(1);
+		fixture.sshTransport.channel.emit('exit', 1);
+		fixture.sshTransport.channel.emit('close');
+
+		await expect(execution).rejects.toMatchObject({
+			disposition: 'completed-failed',
+			name: 'StrictToolVmSshExecutionError',
+		});
+	});
+
+	it('keeps hard transport overflow ambiguous when no terminal exit is observed', async () => {
+		const fixture = createStrictSshFixture();
+		fixture.sshTransport.onExec = (_command, callback) => {
+			callback(undefined, fixture.sshTransport.channel as unknown as ClientChannel);
+		};
+		await connectFixture(fixture);
+
+		const execution = fixture.client.execute({
+			argv: ['/bin/true'],
+			cwd: '',
+			limits: {
+				deadlineMs: 30_000,
+				hardTransportBytesPerStream: strictLimits.maxStdoutBytes,
+				stderrPolicy: { captureBytes: 4, overflow: 'truncate' },
+				stdoutPolicy: { captureBytes: 4, overflow: 'truncate' },
+			},
+		});
+		fixture.sshTransport.channel.emit('data', Buffer.alloc(strictLimits.maxStdoutBytes + 1));
+		fixture.sshTransport.channel.emit('close');
+
+		await expect(execution).rejects.toMatchObject({
+			disposition: 'ambiguous',
+			name: 'StrictToolVmSshExecutionError',
+		});
+	});
+
 	it('waits for command-input drain before sending EOF', async () => {
 		// Arrange
 		const fixture = createStrictSshFixture();
@@ -707,6 +815,25 @@ describe('strict Tool VM SSH client', () => {
 		// Assert
 		await expect(execution).rejects.toThrow(/cancelled/i);
 		expect(fixture.sshTransport.channel.closeCallCount).toBe(1);
+	});
+
+	it('classifies an already-cancelled command as proven pre-dispatch', async () => {
+		const fixture = createStrictSshFixture();
+		const cancellation = new AbortController();
+		cancellation.abort();
+		await connectFixture(fixture);
+
+		const execution = fixture.client.execute({
+			argv: ['/bin/true'],
+			cwd: '',
+			signal: cancellation.signal,
+		});
+
+		await expect(execution).rejects.toMatchObject({
+			disposition: 'not-dispatched',
+			name: 'StrictToolVmSshExecutionError',
+		});
+		expect(fixture.sshTransport.execCommands).toHaveLength(0);
 	});
 
 	it('closes a command channel that arrives after cancellation without writing input', async () => {

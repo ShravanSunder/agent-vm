@@ -525,6 +525,60 @@ describe('MCP Portal effective config materialization', () => {
 		).resolves.toBeDefined();
 	});
 
+	it('requires approval access for visible Tool VM CLI approval hints', async () => {
+		const toolPortalConfig = {
+			agents: { shravan: { profile: 'default' } },
+			mode: 'managed' as const,
+			profiles: {
+				default: {
+					namespaces: {
+						sandbox: {
+							backend: {
+								kind: 'tool_vm_runner' as const,
+								operations: {
+									cli: {
+										advisoryHints: {
+											hintDeny: [],
+											hintRequiresApproval: [{ flags: [], path: ['publish'] }],
+										},
+										executable: '/usr/local/bin/tool',
+										kind: 'command.cli' as const,
+										output: {
+											modelVisibleStderr: 'none' as const,
+											overflow: 'truncate' as const,
+											stderrMaxBytes: 1_024,
+											stdoutMaxBytes: 1_024,
+										},
+										safeHelp: 'Run the Tool VM CLI.',
+										timeout: { kind: 'quick' as const },
+										workingDirectory: '.',
+									},
+								},
+								profile: 'sandbox_ssh' as const,
+							},
+							calls: {
+								requiresApproval: { allow: [] as string[] },
+								withoutApproval: { allow: ['cli'] },
+							},
+							tools: { allow: ['cli'] },
+						},
+					},
+				},
+			},
+			schemaVersion: 1 as const,
+		};
+
+		await expect(
+			planMcpPortalEffectiveConfigFromConfig(
+				createPlanPropsForTest({
+					approvalAccessConfigured: false,
+					mcpConfig: { providers: {}, schemaVersion: 1 },
+					toolPortalConfig,
+				}),
+			),
+		).rejects.toThrow(/managed calls requiring approval require zones\[\]\.approvalAccess/u);
+	});
+
 	it('does not report loopback HTTP provider URLs as external gateway egress', async () => {
 		const mcpConfig = {
 			providers: {

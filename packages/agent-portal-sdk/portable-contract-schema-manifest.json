@@ -206,6 +206,7 @@
 											"enum": [
 												"provider_unavailable",
 												"capability_denied",
+												"tool_vm_advisory_hint_denied",
 												"approval_required",
 												"validation_failed",
 												"execution_failed",
@@ -321,6 +322,7 @@
 											"enum": [
 												"provider_unavailable",
 												"capability_denied",
+												"tool_vm_advisory_hint_denied",
 												"approval_required",
 												"validation_failed",
 												"execution_failed",
@@ -373,6 +375,7 @@
 											"not_authorized",
 											"approval_required",
 											"capability_denied",
+											"tool_vm_advisory_hint_denied",
 											"validation_failed",
 											"provider_unavailable",
 											"execution_failed",
@@ -396,6 +399,7 @@
 												"enum": [
 													"provider_unavailable",
 													"capability_denied",
+													"tool_vm_advisory_hint_denied",
 													"approval_required",
 													"validation_failed",
 													"execution_failed",
@@ -601,6 +605,25 @@
 										"format": "uuid",
 										"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
 									},
+									"context": {
+										"type": "object",
+										"properties": {
+											"bypassableWithinToolVm": {
+												"type": "boolean",
+												"const": true
+											},
+											"kind": {
+												"type": "string",
+												"const": "tool_vm_advisory_hint"
+											},
+											"scope": {
+												"type": "string",
+												"const": "tool_portal_call_only"
+											}
+										},
+										"required": ["bypassableWithinToolVm", "kind", "scope"],
+										"additionalProperties": false
+									},
 									"expiresAt": {
 										"type": "string",
 										"format": "date-time",
@@ -633,6 +656,7 @@
 												"enum": [
 													"provider_unavailable",
 													"capability_denied",
+													"tool_vm_advisory_hint_denied",
 													"approval_required",
 													"validation_failed",
 													"execution_failed",
@@ -870,6 +894,7 @@
 									"enum": [
 										"provider_unavailable",
 										"capability_denied",
+										"tool_vm_advisory_hint_denied",
 										"approval_required",
 										"validation_failed",
 										"execution_failed",
@@ -959,6 +984,7 @@
 														"enum": [
 															"provider_unavailable",
 															"capability_denied",
+															"tool_vm_advisory_hint_denied",
 															"approval_required",
 															"validation_failed",
 															"execution_failed",
@@ -1081,6 +1107,7 @@
 														"enum": [
 															"provider_unavailable",
 															"capability_denied",
+															"tool_vm_advisory_hint_denied",
 															"approval_required",
 															"validation_failed",
 															"execution_failed",
@@ -1133,6 +1160,7 @@
 														"not_authorized",
 														"approval_required",
 														"capability_denied",
+														"tool_vm_advisory_hint_denied",
 														"validation_failed",
 														"provider_unavailable",
 														"execution_failed",
@@ -1156,6 +1184,7 @@
 															"enum": [
 																"provider_unavailable",
 																"capability_denied",
+																"tool_vm_advisory_hint_denied",
 																"approval_required",
 																"validation_failed",
 																"execution_failed",
@@ -1368,6 +1397,25 @@
 													"format": "uuid",
 													"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
 												},
+												"context": {
+													"type": "object",
+													"properties": {
+														"bypassableWithinToolVm": {
+															"type": "boolean",
+															"const": true
+														},
+														"kind": {
+															"type": "string",
+															"const": "tool_vm_advisory_hint"
+														},
+														"scope": {
+															"type": "string",
+															"const": "tool_portal_call_only"
+														}
+													},
+													"required": ["bypassableWithinToolVm", "kind", "scope"],
+													"additionalProperties": false
+												},
 												"expiresAt": {
 													"type": "string",
 													"format": "date-time",
@@ -1400,6 +1448,7 @@
 															"enum": [
 																"provider_unavailable",
 																"capability_denied",
+																"tool_vm_advisory_hint_denied",
 																"approval_required",
 																"validation_failed",
 																"execution_failed",
@@ -1639,6 +1688,7 @@
 									"enum": [
 										"provider_unavailable",
 										"capability_denied",
+										"tool_vm_advisory_hint_denied",
 										"approval_required",
 										"validation_failed",
 										"execution_failed",
@@ -1728,6 +1778,7 @@
 														"enum": [
 															"provider_unavailable",
 															"capability_denied",
+															"tool_vm_advisory_hint_denied",
 															"approval_required",
 															"validation_failed",
 															"execution_failed",
@@ -1800,6 +1851,37 @@
 													"items": {
 														"type": "object",
 														"properties": {
+															"advisory": {
+																"type": "object",
+																"properties": {
+																	"bypassableWithinToolVm": {
+																		"type": "boolean",
+																		"const": true
+																	},
+																	"hasHintDeny": {
+																		"type": "boolean"
+																	},
+																	"hasHintRequiresApproval": {
+																		"type": "boolean"
+																	},
+																	"kind": {
+																		"type": "string",
+																		"const": "tool_vm_call_hints"
+																	},
+																	"scope": {
+																		"type": "string",
+																		"const": "tool_portal_call_only"
+																	}
+																},
+																"required": [
+																	"bypassableWithinToolVm",
+																	"hasHintDeny",
+																	"hasHintRequiresApproval",
+																	"kind",
+																	"scope"
+																],
+																"additionalProperties": false
+															},
 															"annotations": {
 																"default": {},
 																"type": "object",
@@ -1809,6 +1891,9 @@
 																"additionalProperties": {
 																	"$ref": "#/$defs/__schema0"
 																}
+															},
+															"description": {
+																"type": "string"
 															},
 															"inputSchema": {
 																"type": "object",
@@ -1857,6 +1942,36 @@
 															"name": {
 																"type": "string",
 																"minLength": 1
+															},
+															"toolVmCliMetadata": {
+																"type": "object",
+																"properties": {
+																	"categories": {
+																		"maxItems": 16,
+																		"type": "array",
+																		"items": {
+																			"type": "string",
+																			"minLength": 1,
+																			"maxLength": 64
+																		}
+																	},
+																	"displayName": {
+																		"type": "string",
+																		"minLength": 1,
+																		"maxLength": 200
+																	},
+																	"source": {
+																		"type": "string",
+																		"minLength": 1,
+																		"maxLength": 200
+																	},
+																	"version": {
+																		"type": "string",
+																		"minLength": 1,
+																		"maxLength": 100
+																	}
+																},
+																"additionalProperties": false
 															},
 															"toolRef": {
 																"type": "string",
@@ -1919,6 +2034,7 @@
 														"enum": [
 															"provider_unavailable",
 															"capability_denied",
+															"tool_vm_advisory_hint_denied",
 															"approval_required",
 															"validation_failed",
 															"execution_failed",
@@ -1971,6 +2087,7 @@
 														"not_authorized",
 														"approval_required",
 														"capability_denied",
+														"tool_vm_advisory_hint_denied",
 														"validation_failed",
 														"provider_unavailable",
 														"execution_failed",
@@ -1994,6 +2111,7 @@
 															"enum": [
 																"provider_unavailable",
 																"capability_denied",
+																"tool_vm_advisory_hint_denied",
 																"approval_required",
 																"validation_failed",
 																"execution_failed",
@@ -2234,6 +2352,7 @@
 									"enum": [
 										"provider_unavailable",
 										"capability_denied",
+										"tool_vm_advisory_hint_denied",
 										"approval_required",
 										"validation_failed",
 										"execution_failed",
@@ -2323,6 +2442,7 @@
 														"enum": [
 															"provider_unavailable",
 															"capability_denied",
+															"tool_vm_advisory_hint_denied",
 															"approval_required",
 															"validation_failed",
 															"execution_failed",
@@ -2406,6 +2526,37 @@
 													"items": {
 														"type": "object",
 														"properties": {
+															"advisory": {
+																"type": "object",
+																"properties": {
+																	"bypassableWithinToolVm": {
+																		"type": "boolean",
+																		"const": true
+																	},
+																	"hasHintDeny": {
+																		"type": "boolean"
+																	},
+																	"hasHintRequiresApproval": {
+																		"type": "boolean"
+																	},
+																	"kind": {
+																		"type": "string",
+																		"const": "tool_vm_call_hints"
+																	},
+																	"scope": {
+																		"type": "string",
+																		"const": "tool_portal_call_only"
+																	}
+																},
+																"required": [
+																	"bypassableWithinToolVm",
+																	"hasHintDeny",
+																	"hasHintRequiresApproval",
+																	"kind",
+																	"scope"
+																],
+																"additionalProperties": false
+															},
 															"description": {
 																"type": "string"
 															},
@@ -2504,6 +2655,36 @@
 																"type": "string",
 																"minLength": 1
 															},
+															"toolVmCliMetadata": {
+																"type": "object",
+																"properties": {
+																	"categories": {
+																		"maxItems": 16,
+																		"type": "array",
+																		"items": {
+																			"type": "string",
+																			"minLength": 1,
+																			"maxLength": 64
+																		}
+																	},
+																	"displayName": {
+																		"type": "string",
+																		"minLength": 1,
+																		"maxLength": 200
+																	},
+																	"source": {
+																		"type": "string",
+																		"minLength": 1,
+																		"maxLength": 200
+																	},
+																	"version": {
+																		"type": "string",
+																		"minLength": 1,
+																		"maxLength": 100
+																	}
+																},
+																"additionalProperties": false
+															},
 															"toolRef": {
 																"type": "string",
 																"minLength": 1
@@ -2553,6 +2734,7 @@
 														"enum": [
 															"provider_unavailable",
 															"capability_denied",
+															"tool_vm_advisory_hint_denied",
 															"approval_required",
 															"validation_failed",
 															"execution_failed",
@@ -2605,6 +2787,7 @@
 														"not_authorized",
 														"approval_required",
 														"capability_denied",
+														"tool_vm_advisory_hint_denied",
 														"validation_failed",
 														"provider_unavailable",
 														"execution_failed",
@@ -2628,6 +2811,7 @@
 															"enum": [
 																"provider_unavailable",
 																"capability_denied",
+																"tool_vm_advisory_hint_denied",
 																"approval_required",
 																"validation_failed",
 																"execution_failed",
@@ -2800,6 +2984,7 @@
 									"enum": [
 										"provider_unavailable",
 										"capability_denied",
+										"tool_vm_advisory_hint_denied",
 										"approval_required",
 										"validation_failed",
 										"execution_failed",
@@ -2889,6 +3074,7 @@
 														"enum": [
 															"provider_unavailable",
 															"capability_denied",
+															"tool_vm_advisory_hint_denied",
 															"approval_required",
 															"validation_failed",
 															"execution_failed",
@@ -2961,6 +3147,37 @@
 													"items": {
 														"type": "object",
 														"properties": {
+															"advisory": {
+																"type": "object",
+																"properties": {
+																	"bypassableWithinToolVm": {
+																		"type": "boolean",
+																		"const": true
+																	},
+																	"hasHintDeny": {
+																		"type": "boolean"
+																	},
+																	"hasHintRequiresApproval": {
+																		"type": "boolean"
+																	},
+																	"kind": {
+																		"type": "string",
+																		"const": "tool_vm_call_hints"
+																	},
+																	"scope": {
+																		"type": "string",
+																		"const": "tool_portal_call_only"
+																	}
+																},
+																"required": [
+																	"bypassableWithinToolVm",
+																	"hasHintDeny",
+																	"hasHintRequiresApproval",
+																	"kind",
+																	"scope"
+																],
+																"additionalProperties": false
+															},
 															"description": {
 																"type": "string"
 															},
@@ -3059,6 +3276,36 @@
 																"type": "string",
 																"minLength": 1
 															},
+															"toolVmCliMetadata": {
+																"type": "object",
+																"properties": {
+																	"categories": {
+																		"maxItems": 16,
+																		"type": "array",
+																		"items": {
+																			"type": "string",
+																			"minLength": 1,
+																			"maxLength": 64
+																		}
+																	},
+																	"displayName": {
+																		"type": "string",
+																		"minLength": 1,
+																		"maxLength": 200
+																	},
+																	"source": {
+																		"type": "string",
+																		"minLength": 1,
+																		"maxLength": 200
+																	},
+																	"version": {
+																		"type": "string",
+																		"minLength": 1,
+																		"maxLength": 100
+																	}
+																},
+																"additionalProperties": false
+															},
 															"toolRef": {
 																"type": "string",
 																"minLength": 1
@@ -3138,6 +3385,7 @@
 														"enum": [
 															"provider_unavailable",
 															"capability_denied",
+															"tool_vm_advisory_hint_denied",
 															"approval_required",
 															"validation_failed",
 															"execution_failed",
@@ -3190,6 +3438,7 @@
 														"not_authorized",
 														"approval_required",
 														"capability_denied",
+														"tool_vm_advisory_hint_denied",
 														"validation_failed",
 														"provider_unavailable",
 														"execution_failed",
@@ -3213,6 +3462,7 @@
 															"enum": [
 																"provider_unavailable",
 																"capability_denied",
+																"tool_vm_advisory_hint_denied",
 																"approval_required",
 																"validation_failed",
 																"execution_failed",
@@ -3465,6 +3715,25 @@
 						"type": "string",
 						"format": "uuid",
 						"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+					},
+					"context": {
+						"type": "object",
+						"properties": {
+							"bypassableWithinToolVm": {
+								"type": "boolean",
+								"const": true
+							},
+							"kind": {
+								"type": "string",
+								"const": "tool_vm_advisory_hint"
+							},
+							"scope": {
+								"type": "string",
+								"const": "tool_portal_call_only"
+							}
+						},
+						"required": ["bypassableWithinToolVm", "kind", "scope"],
+						"additionalProperties": false
 					},
 					"display": {
 						"type": "object",

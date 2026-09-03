@@ -13,6 +13,7 @@ import {
 	ApprovalDecisionReferenceSchema,
 	ApprovalRequiredResultSchema,
 	CapabilityDescriptorSchema,
+	CapabilitySummarySchema,
 	PortalAdapterEnvelopeSchema,
 	PortalArtifactReadRequestSchema,
 	PortalArtifactReadResultSchema,
@@ -346,6 +347,34 @@ describe('portal call surface contracts', () => {
 				toolRef: 'github:get_issue',
 			}),
 		).toMatchObject({ namespace: 'github' });
+		expect(
+			CapabilitySummarySchema.parse({
+				advisory: {
+					bypassableWithinToolVm: true,
+					hasHintDeny: true,
+					hasHintRequiresApproval: false,
+					kind: 'tool_vm_call_hints',
+					scope: 'tool_portal_call_only',
+				},
+				description: 'Run one configured Tool VM CLI.',
+				input: {
+					optional: ['stdin'],
+					propertyCount: 3,
+					required: ['argv', 'reason'],
+					type: 'object',
+				},
+				name: 'cli',
+				namespace: 'sandbox',
+				safety: { destructiveHint: true, readOnlyHint: false },
+				toolVmCliMetadata: {
+					categories: ['research'],
+					displayName: 'Research CLI',
+					source: 'operator-image',
+					version: '1.x',
+				},
+				toolRef: 'sandbox.cli',
+			}),
+		).toMatchObject({ advisory: { scope: 'tool_portal_call_only' } });
 		expect(
 			TrustedAgentScopeSchema.parse({
 				agentId: 'agent-a',

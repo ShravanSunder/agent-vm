@@ -28,6 +28,29 @@ export const ToolSafetySummarySchema = z
 
 export type ToolSafetySummary = z.infer<typeof ToolSafetySummarySchema>;
 
+export const ToolVmCallHintsAdvisorySchema = z
+	.object({
+		bypassableWithinToolVm: z.literal(true),
+		hasHintDeny: z.boolean(),
+		hasHintRequiresApproval: z.boolean(),
+		kind: z.literal('tool_vm_call_hints'),
+		scope: z.literal('tool_portal_call_only'),
+	})
+	.strict();
+
+export type ToolVmCallHintsAdvisory = z.infer<typeof ToolVmCallHintsAdvisorySchema>;
+
+export const ToolVmCliDiscoveryMetadataSchema = z
+	.object({
+		categories: z.array(z.string().min(1).max(64)).max(16).optional(),
+		displayName: z.string().min(1).max(200).optional(),
+		source: z.string().min(1).max(200).optional(),
+		version: z.string().min(1).max(100).optional(),
+	})
+	.strict();
+
+export type ToolVmCliDiscoveryMetadata = z.infer<typeof ToolVmCliDiscoveryMetadataSchema>;
+
 export const ToolSchemaHintSchema = z
 	.object({
 		message: z.string().max(500),
@@ -39,6 +62,7 @@ export type ToolSchemaHint = z.infer<typeof ToolSchemaHintSchema>;
 
 export const CapabilitySummarySchema = z
 	.object({
+		advisory: ToolVmCallHintsAdvisorySchema.optional(),
 		description: z.string().optional(),
 		input: ToolSchemaSummarySchema,
 		namespace: NamespaceNameSchema,
@@ -47,6 +71,7 @@ export const CapabilitySummarySchema = z
 		schemaHint: ToolSchemaHintSchema.optional(),
 		title: z.string().min(1).optional(),
 		name: CapabilityNameSchema,
+		toolVmCliMetadata: ToolVmCliDiscoveryMetadataSchema.optional(),
 		toolRef: z.string().min(1),
 	})
 	.strict();
@@ -92,13 +117,16 @@ export type CapabilitySearchMatch = z.infer<typeof CapabilitySearchMatchSchema>;
 
 export const CapabilityDescriptorSchema = z
 	.object({
+		advisory: ToolVmCallHintsAdvisorySchema.optional(),
 		annotations: JsonSchemaDocumentSchema.default({}),
+		description: z.string().optional(),
 		inputSchema: JsonSchemaDocumentSchema.optional(),
 		namespace: NamespaceNameSchema,
 		outputSchema: JsonSchemaDocumentSchema.optional(),
 		related: z.array(JsonValueSchema).default([]),
 		schemaHint: ToolSchemaHintSchema.optional(),
 		name: CapabilityNameSchema,
+		toolVmCliMetadata: ToolVmCliDiscoveryMetadataSchema.optional(),
 		toolRef: z.string().min(1),
 		typescriptHelper: z.string().optional(),
 		zod: JsonSchemaDocumentSchema.optional(),

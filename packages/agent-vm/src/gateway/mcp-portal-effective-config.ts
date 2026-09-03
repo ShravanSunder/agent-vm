@@ -554,6 +554,15 @@ export function managedToolPortalRequiresApprovalAccess(config: ToolPortalConfig
 	return Object.values(config.profiles).some((profile) =>
 		Object.values(profile.namespaces).some((namespacePolicy) => {
 			if (selectorEffectivelyAllowsAnyTool(namespacePolicy.calls.requiresApproval)) return true;
+			if (namespacePolicy.backend.kind === 'tool_vm_runner') {
+				return Object.entries(namespacePolicy.backend.operations).some(
+					([operationName, operation]) =>
+						operation.kind === 'command.cli' &&
+						(operation.advisoryHints?.hintRequiresApproval.length ?? 0) > 0 &&
+						selectorAllowsTool(namespacePolicy.tools, operationName) &&
+						selectorAllowsTool(namespacePolicy.calls.withoutApproval, operationName),
+				);
+			}
 			if (namespacePolicy.backend.kind !== 'controller_execution') return false;
 			return Object.entries(namespacePolicy.backend.operations).some(
 				([operationName, operation]) =>

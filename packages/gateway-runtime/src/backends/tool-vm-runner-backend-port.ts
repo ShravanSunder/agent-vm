@@ -19,6 +19,16 @@ import {
 	type SandboxProcessStatusResult,
 } from '@agent-vm/agent-portal-sdk';
 import {
+	MAXIMUM_TOOL_VM_CLI_TRANSPORT_BYTES_PER_STREAM,
+	openToolVmCliInputSchema,
+	projectConfiguredCliBufferedOutput,
+	quickToolVmCliInputSchema,
+	resolveToolVmCliTimeout,
+	type ToolVmCliAdvisoryHints,
+	type ToolVmCliInput,
+	type ToolVmConfiguredCliOperation,
+} from '@agent-vm/config-contracts';
+import {
 	deriveGatewayControlStablePrincipal,
 	type GatewayRuntimeToolPortalDispatchAuthorityForBackendKind,
 	type GatewayRuntimeTrustedInvocationContext,
@@ -35,7 +45,10 @@ import type {
 	GatewayRuntimeSandboxOperationContext,
 } from '../sandbox/sandbox-operation-authority.js';
 import type { GatewayRuntimeSandboxProcessRegistry } from '../sandbox/sandbox-process-registry.js';
-import type { StrictToolVmSshClient } from '../sandbox/strict-tool-vm-ssh-client.js';
+import {
+	type StrictToolVmSshClient,
+	StrictToolVmSshExecutionError,
+} from '../sandbox/strict-tool-vm-ssh-client.js';
 import { StrictToolVmSshProcessStartError } from '../sandbox/strict-tool-vm-ssh-process-runtime.js';
 import {
 	type GatewayRuntimeToolVmRunnerCallItem,
@@ -54,6 +67,14 @@ export type GatewayRuntimeToolVmRunnerCapabilityOperation =
 			readonly argv: readonly string[];
 			readonly cwd: string;
 			readonly kind: 'exec';
+	  }
+	| {
+			readonly advisoryHints?: ToolVmCliAdvisoryHints;
+			readonly executable: string;
+			readonly kind: 'cli-exec';
+			readonly output: ToolVmConfiguredCliOperation['output'];
+			readonly timeout: ToolVmConfiguredCliOperation['timeout'];
+			readonly workingDirectory: string;
 	  }
 	| { readonly kind: 'list-directory' }
 	| { readonly kind: 'process-cancel' }
@@ -217,6 +238,10 @@ function argumentsAreValid(
 	callArguments: JsonObject,
 ): boolean {
 	switch (operation.kind) {
+		case 'cli-exec':
+			return (
+				operation.timeout.kind === 'quick' ? quickToolVmCliInputSchema : openToolVmCliInputSchema
+			).safeParse(callArguments).success;
 		case 'exec':
 		case 'process-start':
 			return EmptyArgumentsSchema.safeParse(callArguments).success;
@@ -656,6 +681,82 @@ export function createGatewayRuntimeToolVmRunnerBackendPort(
 			}
 
 			switch (operation.kind) {
+				case 'cli-exec': {
+					const inputSchema =
+						operation.timeout.kind === 'quick'
+							? quickToolVmCliInputSchema
+							: openToolVmCliInputSchema;
+					const input: ToolVmCliInput = inputSchema.parse(call.arguments);
+					try {
+						const execution = await binding.strictSshClient.execute({
+							argv: [operation.executable, ...input.argv],
+							cwd: operation.workingDirectory,
+							limits: {
+								deadlineMs: resolveToolVmCliTimeout({ input, kind: operation.timeout.kind }),
+								hardTransportBytesPerStream: MAXIMUM_TOOL_VM_CLI_TRANSPORT_BYTES_PER_STREAM,
+								stderrPolicy: {
+									captureBytes: operation.output.stderrMaxBytes,
+									overflow: operation.output.overflow,
+								},
+								stdoutPolicy: {
+									captureBytes: operation.output.stdoutMaxBytes,
+									overflow: operation.output.overflow,
+								},
+							},
+							...(options.signal === undefined ? {} : { signal: options.signal }),
+							...(input.stdin === undefined
+								? {}
+								: { stdin: new TextEncoder().encode(input.stdin) }),
+						});
+						const value = projectConfiguredCliBufferedOutput({
+							exitCode: execution.exitCode,
+							output: operation.output,
+							stderr: execution.stderr,
+							stderrTruncated: execution.stderrTruncated,
+							stdout: execution.stdout,
+							stdoutTruncated: execution.stdoutTruncated,
+						});
+						retirementReason = 'completed';
+						return toolVmRunnerSuccessfulCallItem({
+							id: call.id,
+							operationId,
+							owningGeneration: binding.environmentGeneration,
+							value: {
+								exitCode: value.exitCode,
+								...(value.stderrSummary === undefined
+									? {}
+									: { stderrSummary: value.stderrSummary }),
+								stderrTruncated: value.stderrTruncated,
+								stdout: value.stdout,
+								stdoutTruncated: value.stdoutTruncated,
+							},
+						});
+					} catch (error: unknown) {
+						if (
+							error instanceof StrictToolVmSshExecutionError &&
+							error.disposition === 'not-dispatched'
+						) {
+							return toolVmRunnerNotDispatchedItem({
+								code: 'execution_failed',
+								id: call.id,
+								operationId,
+								owningGeneration: binding.environmentGeneration,
+								safeMessage: 'Configured Tool VM CLI execution was cancelled before dispatch.',
+							});
+						}
+						return toolVmRunnerExecutionErrorItem({
+							disposition:
+								error instanceof StrictToolVmSshExecutionError &&
+								error.disposition === 'completed-failed'
+									? 'completed-failed'
+									: 'ambiguous',
+							id: call.id,
+							operationId,
+							owningGeneration: binding.environmentGeneration,
+							safeMessage: 'Configured Tool VM CLI execution failed.',
+						});
+					}
+				}
 				case 'exec': {
 					let execution: Awaited<ReturnType<StrictToolVmSshClient['execute']>>;
 					try {
@@ -664,7 +765,19 @@ export function createGatewayRuntimeToolVmRunnerBackendPort(
 							cwd: operation.cwd,
 							...(options.signal === undefined ? {} : { signal: options.signal }),
 						});
-					} catch {
+					} catch (error: unknown) {
+						if (
+							error instanceof StrictToolVmSshExecutionError &&
+							error.disposition === 'not-dispatched'
+						) {
+							return toolVmRunnerNotDispatchedItem({
+								code: 'execution_failed',
+								id: call.id,
+								operationId,
+								owningGeneration: binding.environmentGeneration,
+								safeMessage: 'Sandbox command was cancelled before dispatch.',
+							});
+						}
 						return toolVmRunnerExecutionErrorItem({
 							disposition: 'ambiguous',
 							id: call.id,

@@ -633,6 +633,41 @@ namespace direct baseline still requires `zones[].approvalAccess` when its
 operation-level `calls.requiresApproval` array is non-empty. Hermes is the sole
 native presenter for those matched invocations in this release.
 
+`tool_vm_runner` may separately define a `command.cli` operation for one
+executable already installed in the caller's current leased Tool VM. This is a
+different discriminated-union branch from `controller_execution.configured_cli`:
+configuration owns the absolute `executable`, `safeHelp`, optional bounded
+`metadata`, work-relative `workingDirectory`, timeout class, and output policy;
+the caller owns unrestricted `argv` and optional `stdin`. Agent VM validates
+only protocol and resource bounds, passes `[executable, ...argv]` without shell
+interpolation, and executes through the existing current-generation strict-SSH
+path. It does not define an allowed command grammar or route the call through
+controller execution or a credentialed Managed runtime.
+
+Only this branch may contain `advisoryHints.hintDeny` and
+`advisoryHints.hintRequiresApproval`. They reuse exact path-prefix and
+present-flag matching with fixed precedence:
+
+```text
+hintDeny > hintRequiresApproval > unmatched direct call
+```
+
+These hints affect only `tool_portal_call`. They do not restrict the same
+agent's terminal, Python, or other execution path inside the Tool VM. Discovery,
+denial diagnostics, and approval presentation label that limitation explicitly.
+A visible `hintRequiresApproval` matcher requires `zones[].approvalAccess`, but
+the namespace baseline for `command.cli` remains `calls.withoutApproval`.
+
+The public call accepts empty or caller-selected tokenized `argv`, a non-empty
+`reason`, optional bounded text `stdin`, and `timeoutMs` only for an `open`
+operation. Newline and tab remain literal argv content; NUL-bearing or empty
+individual tokens are rejected as malformed transport values. The result uses
+the common configured-CLI fields: `exitCode`, `stdout`, `stdoutTruncated`,
+optional fixed-safe `stderrSummary`, and `stderrTruncated`.
+`stdoutMaxBytes` is capped at 65,536 bytes so model-visible output remains valid
+Portal JSON; the independent strict-SSH transport ceiling remains 1 MiB per
+stream, and larger captured stderr is reduced to the fixed-safe summary.
+
 The credentialed `ephemeral_managed_vm` target is a controller-created reusable
 Managed runtime, not a leased Tool VM and not one VM per call. It requires
 `runtimeId`, `credentialBinding`, 1-16 unique `credentialFiles` mappings, and

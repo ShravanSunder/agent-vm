@@ -8,6 +8,7 @@ export const PortalErrorCodeSchema = z.enum([
 	'not_authorized',
 	'approval_required',
 	'capability_denied',
+	'tool_vm_advisory_hint_denied',
 	'validation_failed',
 	'provider_unavailable',
 	'execution_failed',

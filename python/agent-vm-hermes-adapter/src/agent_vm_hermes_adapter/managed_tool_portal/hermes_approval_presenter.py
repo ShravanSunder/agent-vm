@@ -160,8 +160,16 @@ class HermesGatewayApprovalRouteStore:
 def _presentation_question(request: dict[str, object]) -> str:
     display = request.get("display")
     arguments_preview = display.get("argumentsPreview", "{}") if isinstance(display, dict) else "{}"
+    context = request.get("context")
+    advisory_prefix = (
+        "Tool VM advisory hint: approve this Tool Portal call once?\n"
+        "This guidance applies only to Tool Portal; it does not restrict "
+        "terminal or Python execution inside the same Tool VM.\n"
+        if isinstance(context, dict) and context.get("kind") == "tool_vm_advisory_hint"
+        else ""
+    )
     return (
-        f"Approve {request['namespace']}.{request['name']} once?\n"
+        advisory_prefix + f"Approve {request['namespace']}.{request['name']} once?\n"
         f"Arguments: {arguments_preview}\n"
         f"Expires: {request['expiresAt']}"
     )

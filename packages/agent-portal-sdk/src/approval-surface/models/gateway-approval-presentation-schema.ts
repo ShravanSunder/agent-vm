@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { ItemIdSchema } from '../../contract-primitives/models/request-id-schema.js';
 import { withPortableSuperRefinement } from '../../portable-contracts/portable-refinement-authoring.js';
+import { ToolVmAdvisoryHintContextSchema } from './tool-vm-advisory-hint-context-schema.js';
 
 const MAXIMUM_APPROVAL_DISPLAY_DEPTH = 6;
 const MAXIMUM_APPROVAL_DISPLAY_ENTRIES = 32;
@@ -34,6 +35,7 @@ export const GatewayApprovalPresentationRequestSchema = withPortableSuperRefinem
 		.object({
 			allowedDecisions: z.tuple([z.literal('approve'), z.literal('deny')]),
 			challengeId: z.string().uuid(),
+			context: ToolVmAdvisoryHintContextSchema.optional(),
 			display: z
 				.object({
 					argumentsPreview: z.string().max(MAXIMUM_APPROVAL_DISPLAY_BYTES),

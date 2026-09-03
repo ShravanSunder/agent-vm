@@ -96,6 +96,68 @@ function decide(
 	});
 }
 
+function createToolVmConfig(): ToolPortalConfig {
+	return toolPortalConfigSchema.parse({
+		agents: { agent: { profile: 'profile' } },
+		mode: 'managed',
+		profiles: {
+			profile: {
+				namespaces: {
+					sandbox: {
+						backend: {
+							kind: 'tool_vm_runner',
+							operations: {
+								firecrawl: {
+									advisoryHints: {
+										hintDeny: [{ path: ['account', 'delete'] }],
+										hintRequiresApproval: [{ flags: [{ names: ['--force'] }], path: ['crawl'] }],
+									},
+									executable: '/usr/local/bin/firecrawl',
+									kind: 'command.cli',
+									output: {
+										modelVisibleStderr: 'none',
+										overflow: 'truncate',
+										stderrMaxBytes: 1_024,
+										stdoutMaxBytes: 1_024,
+									},
+									safeHelp: 'Run Firecrawl with unrestricted arguments.',
+									timeout: { kind: 'open' },
+									workingDirectory: '.',
+								},
+							},
+							profile: 'sandbox_ssh',
+						},
+						calls: {
+							requiresApproval: { allow: [] },
+							withoutApproval: { allow: ['firecrawl'] },
+						},
+						discovery: {},
+						tools: { allow: ['firecrawl'] },
+					},
+				},
+			},
+		},
+		schemaVersion: 1,
+	});
+}
+
+function decideToolVm(argv: readonly string[]): ToolPortalCallPolicyDecision {
+	return callPolicyDecision({
+		call: {
+			arguments: { argv: [...argv], reason: 'Tool VM advisory policy proof' },
+			id: 'call-1',
+			name: 'firecrawl',
+			namespace: 'sandbox',
+		},
+		config: createToolVmConfig(),
+		profileId: 'profile',
+		semanticSnapshot: {
+			surfaceEligibilityByProfile: { profile: { sandbox: ['protected_uds'] } },
+		},
+		surfaceClass: 'protected_uds',
+	});
+}
+
 describe('configured CLI Tool Portal call policy', () => {
 	it.each([
 		{ argv: ['drive', 'ls'], kind: 'without-approval' },
@@ -108,5 +170,24 @@ describe('configured CLI Tool Portal call policy', () => {
 
 	it('denies configured input that violates stdin admission', () => {
 		expect(decide(['drive', 'ls'], { stdin: 'not admitted' })).toEqual({ kind: 'denied' });
+	});
+});
+
+describe('Tool VM CLI advisory call policy', () => {
+	it('keeps arbitrary unmatched argv direct and gives hints route-local precedence', () => {
+		expect(decideToolVm(['unknown', '--any-value'])).toMatchObject({
+			kind: 'without-approval',
+		});
+		expect(decideToolVm(['crawl', 'https://example.invalid', '--force'])).toMatchObject({
+			approvalContext: {
+				bypassableWithinToolVm: true,
+				kind: 'tool_vm_advisory_hint',
+				scope: 'tool_portal_call_only',
+			},
+			kind: 'requires-approval',
+		});
+		expect(decideToolVm(['account', 'delete'])).toEqual({
+			kind: 'tool-vm-advisory-denied',
+		});
 	});
 });
