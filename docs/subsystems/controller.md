@@ -66,6 +66,12 @@ Deep dive into the controller runtime: startup lifecycle, HTTP API surface, leas
   Returns ControllerRuntime { controllerPort, gateway?, close() }
 ```
 
+When one selected Hermes zone has `oauth.config.jsonc`, startup also opens and
+migrates that zone's controller-only OAuth catalog, resolves its 1Password KEK and
+Google Web clients, verifies tailscaled LocalAPI, binds the controller API, and then
+binds direct tailnet HTTPS on `18900` before admitting the Gateway. Failure closes
+both listeners and the catalog before the ownership lock is released.
+
 ### Shutdown Sequence
 
 `close()` reverses startup in order:
@@ -83,6 +89,10 @@ Deep dive into the controller runtime: startup lifecycle, HTTP API surface, leas
 ```
 
 The `stopController` operation (exposed via `POST /stop-controller`) follows the same sequence but triggers the HTTP server close on a 100ms delay so the response can flush before the socket drops.
+
+OAuth-enabled shutdown first invalidates pending browser ceremonies and closes the
+tailnet HTTPS listener. Credentialed runtimes and zones are then contained before
+the SQLite catalog closes. Both shutdown entry points own that order.
 
 Offline cleanup is the broken-controller path. `agent-vm controller cleanup --config <system-config> --zone <zone>` first acquires the same deployment-wide ownership lock held for the controller's full lifetime, then refuses to run while the configured controller health endpoint is reachable. `--force` skips only that advisory health probe; it never bypasses the ownership lock or exact-evidence validation. The lock is mutual exclusion, not destruction evidence.
 

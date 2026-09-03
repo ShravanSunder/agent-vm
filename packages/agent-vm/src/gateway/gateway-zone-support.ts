@@ -33,6 +33,7 @@ import type {
 	GatewayControlAttachmentGapTransition,
 	GatewayControlBindingPublicationSource,
 	GatewayControlLeaseRpcOperations,
+	GatewayControlOAuthAvailabilityOperations,
 	GatewayControlProcessAdmissionCoordinator,
 	GatewayControlReconnectExhaustedTransition,
 	GatewayDisposableControlSessionClient,
@@ -105,6 +106,7 @@ export interface StartGatewayZoneOptions {
 	readonly gatewayControlApprovalLedger?: ControllerApprovalLedger;
 	readonly gatewayControlBindingPublicationSource?: GatewayControlBindingPublicationSource;
 	readonly gatewayControlLeaseRpc?: GatewayControlLeaseRpcOperations;
+	readonly gatewayControlOAuthAvailability?: GatewayControlOAuthAvailabilityOperations;
 	readonly gatewayControlProcessAdmissionCoordinator?: GatewayControlProcessAdmissionCoordinator;
 	readonly gitReadAllowlistRepos?: readonly string[];
 	readonly healthEventStore?: HealthEventStore;

@@ -47,6 +47,10 @@ export type CredentialedRuntimeProjection =
 				>
 			>;
 			readonly kind: 'http_mediation';
+	  }
+	| {
+			readonly environmentName: 'GOG_ACCESS_TOKEN';
+			readonly kind: 'oauth_http_mediation';
 	  };
 
 export interface CredentialedRuntimeResolution {
@@ -133,10 +137,12 @@ function canonicalCredentialProjection(
 				.toSorted(([left], [right]) => left.localeCompare(right))
 				.map(([environmentName, source]) => [
 					environmentName,
-					{
-						hosts: [...new Set(source.hosts)].toSorted(),
-						secret: source.secret,
-					},
+					'kind' in source
+						? { kind: source.kind }
+						: {
+								hosts: [...new Set(source.hosts)].toSorted(),
+								secret: source.secret,
+							},
 				]),
 		),
 		kind: 'http_mediation',
@@ -169,6 +175,18 @@ function secretValueToRef(secret: SecretValue): SecretRef {
 	return secret.source === '1password'
 		? { ref: secret.ref, source: '1password' }
 		: { ref: secret.name, source: 'environment' };
+}
+
+function requireStaticMediatedSource(
+	source: Extract<
+		ConfiguredCliCredentialProjection,
+		{ readonly kind: 'http_mediation' }
+	>['environment'][string],
+): Extract<typeof source, { readonly hosts: readonly string[] }> {
+	if ('kind' in source) {
+		throw new Error('OAuth access-token sources require controller materialization.');
+	}
+	return source;
 }
 
 function credentialedRegistryRevisionMaterial(
@@ -284,17 +302,31 @@ export function compileCredentialedRuntimeConfig(props: {
 					const projection: CredentialedRuntimeProjection = (() => {
 						const configuredProjection = canonicalCredentialProjection(target.credentialProjection);
 						if (configuredProjection.kind === 'http_mediation') {
+							const accessTokenSource = configuredProjection.environment.GOG_ACCESS_TOKEN;
+							if (
+								accessTokenSource !== undefined &&
+								'kind' in accessTokenSource &&
+								accessTokenSource.kind === 'oauth_access_token'
+							) {
+								return Object.freeze({
+									environmentName: 'GOG_ACCESS_TOKEN' as const,
+									kind: 'oauth_http_mediation' as const,
+								});
+							}
 							return Object.freeze({
 								environment: Object.freeze(
 									Object.fromEntries(
 										Object.entries(configuredProjection.environment).map(
-											([environmentName, source]) => [
-												environmentName,
-												Object.freeze({
-													hosts: Object.freeze([...source.hosts]),
-													secret: secretValueToRef(source.secret),
-												}),
-											],
+											([environmentName, source]) => {
+												const staticSource = requireStaticMediatedSource(source);
+												return [
+													environmentName,
+													Object.freeze({
+														hosts: Object.freeze([...staticSource.hosts]),
+														secret: secretValueToRef(staticSource.secret),
+													}),
+												] as const;
+											},
 										),
 									),
 								),

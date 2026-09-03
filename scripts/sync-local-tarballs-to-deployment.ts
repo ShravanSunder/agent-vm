@@ -25,6 +25,9 @@ export const AGENT_VM_PACKAGE_NAMES = [
 	'@agent-vm/hermes-gateway',
 	'@agent-vm/managed-vm',
 	'@agent-vm/mcp-portal',
+	'@agent-vm/oauth-approval-ui',
+	'@agent-vm/oauth-broker',
+	'@agent-vm/oauth-broker-contracts',
 	'@agent-vm/secret-management',
 	'@agent-vm/tool-portal',
 	'@agent-vm/worker-control-contracts',
@@ -36,6 +39,7 @@ export const TOOL_VM_TARBALL_PACKAGE_NAMES = [
 	'@agent-vm/config-contracts',
 	'@agent-vm/secret-management',
 	'@agent-vm/mcp-portal',
+	'@agent-vm/oauth-broker-contracts',
 ] as const;
 
 export const HERMES_GATEWAY_TARBALL_PACKAGE_NAMES = [
@@ -46,6 +50,7 @@ export const HERMES_GATEWAY_TARBALL_PACKAGE_NAMES = [
 	'@agent-vm/gateway-control-contracts',
 	'@agent-vm/secret-management',
 	'@agent-vm/mcp-portal',
+	'@agent-vm/oauth-broker-contracts',
 	'@agent-vm/tool-portal',
 	'@agent-vm/gateway-runtime',
 ] as const;

@@ -13,6 +13,7 @@ import { encodeCanonicalJson } from '../../../agent-portal-sdk/src/portable-cont
 
 const repoRoot = process.cwd();
 const sdkDirectory = path.join(repoRoot, 'packages', 'agent-portal-sdk');
+const oauthBrokerContractsDirectory = path.join(repoRoot, 'packages', 'oauth-broker-contracts');
 const testAuthorization = 'test-only-opaque-tool-portal-authorization';
 const testApprovalToken = 'test-only-opaque-tool-portal-approval';
 
@@ -205,39 +206,53 @@ async function preparePackedCliFixture(): Promise<PackedCliFixture> {
 	const packDirectory = path.join(rootDirectory, 'pack');
 	const consumerDirectory = path.join(rootDirectory, 'consumer');
 	await Promise.all([mkdir(packDirectory), mkdir(consumerDirectory)]);
+	await Promise.all(
+		[sdkDirectory, oauthBrokerContractsDirectory].map(async (packageDirectory): Promise<void> => {
+			await execa(
+				'pnpm',
+				[
+					'--dir',
+					packageDirectory,
+					'pack',
+					'--pack-destination',
+					packDirectory,
+					'--config.ignore-scripts=true',
+				],
+				{ cwd: repoRoot, timeout: 60_000 },
+			);
+		}),
+	);
+	const tarballNames = (await readdir(packDirectory)).filter((name) => name.endsWith('.tgz'));
+	if (tarballNames.length !== 2) {
+		throw new Error(
+			`Expected two packed Tool Portal contract tarballs; found ${String(tarballNames.length)}.`,
+		);
+	}
+	const sdkTarballName = tarballNames.find((name) => name.startsWith('agent-vm-agent-portal-sdk-'));
+	const oauthBrokerContractsTarballName = tarballNames.find((name) =>
+		name.startsWith('agent-vm-oauth-broker-contracts-'),
+	);
+	if (sdkTarballName === undefined || oauthBrokerContractsTarballName === undefined) {
+		throw new Error('Packed Tool Portal contract tarballs did not contain the expected packages.');
+	}
+	const dependencies = {
+		'@agent-vm/agent-portal-sdk': `file:${path.join(packDirectory, sdkTarballName)}`,
+		'@agent-vm/oauth-broker-contracts': `file:${path.join(packDirectory, oauthBrokerContractsTarballName)}`,
+	} as const;
 	await writeFile(
 		path.join(consumerDirectory, 'package.json'),
-		JSON.stringify({ name: 'tool-portal-cli-host-fixture', private: true, type: 'module' }),
+		JSON.stringify({
+			dependencies,
+			name: 'tool-portal-cli-host-fixture',
+			pnpm: { overrides: dependencies },
+			private: true,
+			type: 'module',
+		}),
 		'utf8',
 	);
 	await execa(
 		'pnpm',
-		[
-			'--dir',
-			sdkDirectory,
-			'pack',
-			'--pack-destination',
-			packDirectory,
-			'--config.ignore-scripts=true',
-		],
-		{ cwd: repoRoot, timeout: 60_000 },
-	);
-	const tarballNames = (await readdir(packDirectory)).filter((name) => name.endsWith('.tgz'));
-	if (tarballNames.length !== 1) {
-		throw new Error(
-			`Expected one packed Agent Portal SDK tarball; found ${String(tarballNames.length)}.`,
-		);
-	}
-	await execa(
-		'pnpm',
-		[
-			'--dir',
-			consumerDirectory,
-			'add',
-			'--prefer-offline',
-			'--config.ignore-scripts=true',
-			path.join(packDirectory, tarballNames[0] ?? ''),
-		],
+		['--dir', consumerDirectory, 'install', '--prefer-offline', '--config.ignore-scripts=true'],
 		{ cwd: repoRoot, timeout: 60_000 },
 	);
 	const packageDirectory = path.join(

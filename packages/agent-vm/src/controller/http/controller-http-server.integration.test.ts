@@ -19,6 +19,24 @@ async function findAvailablePort(): Promise<number> {
 }
 
 describe('startControllerHttpServer', () => {
+	it('rejects only after an occupied port emits its bind failure', async () => {
+		const reservation = createServer();
+		await new Promise<void>((resolve) => reservation.listen(0, '127.0.0.1', resolve));
+		const address = reservation.address();
+		if (address === null || typeof address === 'string') {
+			throw new Error('Port reservation did not expose a TCP port.');
+		}
+		try {
+			await expect(
+				startControllerHttpServer({ app: new Hono(), port: address.port }),
+			).rejects.toMatchObject({ code: 'EADDRINUSE' });
+		} finally {
+			await new Promise<void>((resolve, reject) =>
+				reservation.close((error) => (error ? reject(error) : resolve())),
+			);
+		}
+	});
+
 	it("preserves Node's native global web constructors", async () => {
 		const nativeRequest = globalThis.Request;
 		const nativeResponse = globalThis.Response;

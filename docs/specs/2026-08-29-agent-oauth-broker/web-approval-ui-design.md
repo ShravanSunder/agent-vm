@@ -164,7 +164,8 @@ POST /oauth/transactions/:transactionId/permissions
   verify cookie + CSRF + Origin + tailnet identity
   parse choices and validate slot maxima
   derive selected application queue and Google scopes
-  redirect to the first selected Google Web application
+  render a same-origin application-progress interstitial
+  human follows a normal HTTPS link to the first selected Google Web application
 
 GET  /oauth/google/callback
   verify state + PKCE + current application + same Tailscale login
@@ -174,7 +175,8 @@ GET  /oauth/google/callback
 
 POST /oauth/completions/:completionId/confirm
   commit current app grant
-  redirect to next selected application or render completion summary
+  render a same-origin application-progress interstitial for the next selected
+  application or render completion summary
 
 POST /oauth/transactions/:transactionId/cancel
   invalidate pending ceremony; preserve already committed application grants
@@ -299,10 +301,14 @@ Content-Security-Policy:
   form-action 'self';
   frame-ancestors 'none'
 
-Referrer-Policy: no-referrer
+Referrer-Policy: same-origin
 X-Content-Type-Options: nosniff
 Cache-Control: no-store
 ```
+
+`same-origin` preserves Chromium's exact `Origin` on the native same-origin form
+POSTs required above while withholding referrer data from cross-origin navigation
+to Google. The server continues to reject missing, opaque, or mismatched origins.
 
 Hashed static assets may use immutable caching, but HTML, redirects, forms, and
 status responses remain `no-store`. Hono JSX escaping is used for all dynamic text;

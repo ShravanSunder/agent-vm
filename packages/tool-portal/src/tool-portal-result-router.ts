@@ -3,7 +3,9 @@ import { randomUUID } from 'node:crypto';
 import {
 	PortalCallResultSchema,
 	compareUnicodeCodePointStrings,
+	compactCapabilitySummaryDescription,
 	type EffectiveNamespaceDiscovery,
+	type CapabilityDiscoveryMetadata,
 	type PortalCallRequest,
 	type PortalCallResult,
 	type PortalBackendDescribeResult,
@@ -58,8 +60,30 @@ export interface ToolPortalBackendEntry<
 	TReadOptions = TCallOptions,
 > {
 	readonly backend: ToolPortalResultRouterBackendPort<TCallOptions, TReadOptions>;
+	readonly capabilityMetadata?:
+		| ((props: {
+				readonly name: string;
+				readonly namespace: string;
+		  }) => CapabilityDiscoveryMetadata | undefined)
+		| undefined;
 	readonly namespaceDiscovery: readonly EffectiveNamespaceDiscovery[];
 	readonly namespaces: ReadonlySet<string>;
+}
+
+function projectCapabilityMetadata<
+	TCallOptions,
+	TReadOptions,
+	TCapability extends { readonly name: string; readonly namespace: string },
+>(
+	entries: readonly ToolPortalBackendEntry<TCallOptions, TReadOptions>[],
+	capability: TCapability,
+): TCapability & Partial<CapabilityDiscoveryMetadata> {
+	const entry = entries.find((candidate) => candidate.namespaces.has(capability.namespace));
+	const metadata = entry?.capabilityMetadata?.({
+		name: capability.name,
+		namespace: capability.namespace,
+	});
+	return metadata === undefined ? capability : { ...capability, ...metadata };
 }
 
 function capabilityDeniedItem(props: {
@@ -323,6 +347,7 @@ export async function mergeToolPortalList<TCallOptions, TReadOptions>(props: {
 					),
 			),
 		].toSorted();
+		const nextCursor = okItems.length === 1 ? okItems[0]?.value.nextCursor : undefined;
 		return {
 			...(diagnostics.length > 0 ? { diagnostics } : {}),
 			id: requestItem.id,
@@ -333,9 +358,12 @@ export async function mergeToolPortalList<TCallOptions, TReadOptions>(props: {
 					representedNamespaces: new Set(namespaces),
 				}),
 				namespaces,
+				...(nextCursor === undefined ? {} : { nextCursor }),
 				tools: filterToolsToRequestedNamespaces(
 					okItems.flatMap((item) => item.value.tools),
 					namespaceSelection,
+				).map((tool) =>
+					compactCapabilitySummaryDescription(projectCapabilityMetadata(props.entries, tool)),
 				),
 			},
 		};
@@ -412,6 +440,8 @@ export async function mergeToolPortalSearch<TCallOptions, TReadOptions>(props: {
 		const tools = filterToolsToRequestedNamespaces(
 			okItems.flatMap((item) => item.value.tools),
 			namespaceSelection,
+		).map((tool) =>
+			compactCapabilitySummaryDescription(projectCapabilityMetadata(props.entries, tool)),
 		);
 		return {
 			...(diagnostics.length > 0 ? { diagnostics } : {}),
@@ -498,7 +528,7 @@ export async function mergeToolPortalDescribe<TCallOptions, TReadOptions>(props:
 		const tools = filterToolsToRequestedNamespaces(
 			okItems.flatMap((item) => item.value.tools),
 			namespaceSelection,
-		);
+		).map((tool) => projectCapabilityMetadata(props.entries, tool));
 		return {
 			...(diagnostics.length > 0 ? { diagnostics } : {}),
 			id: requestItem.id,

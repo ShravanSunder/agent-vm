@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import {
 	decodeConfiguredCliPreparedImageIdentity,
 	resolveConfiguredCliTimeout,
-	type ConfiguredCliInput,
+	type ControllerConfiguredCliInput,
 } from '@agent-vm/config-contracts';
 import type {
 	ManagedVm,
@@ -20,6 +20,7 @@ import {
 	materializeCredentialFiles,
 	resolveCredentialEnvironment,
 } from './credential-file-materializer.js';
+import type { CredentialedRuntimeDynamicHttpMediation } from './credentialed-runtime-manager.js';
 import type { CredentialedRuntimeResolution } from './credentialed-runtime-registry.js';
 
 const credentialedRuntimeResources = {
@@ -28,6 +29,7 @@ const credentialedRuntimeResources = {
 } as const;
 
 export async function createUnstartedCredentialedManagedVm(props: {
+	readonly dynamicHttpMediation?: CredentialedRuntimeDynamicHttpMediation | undefined;
 	readonly managedVmFactory: ManagedVmFactory;
 	readonly resolution: CredentialedRuntimeResolution;
 	readonly secretResolver: SecretResolver;
@@ -49,9 +51,15 @@ export async function createUnstartedCredentialedManagedVm(props: {
 	let commandEnvironment: Readonly<Record<string, string>>;
 	let mediatedSecrets: readonly ManagedVmMediatedSecretDescriptor[];
 	if (projection.kind === 'file_binding') {
+		if (props.dynamicHttpMediation !== undefined) {
+			throw new Error('File-backed credentialed runtimes reject dynamic HTTP mediation.');
+		}
 		commandEnvironment = resolveCredentialEnvironment(props.resolution);
 		mediatedSecrets = [];
-	} else {
+	} else if (projection.kind === 'http_mediation') {
+		if (props.dynamicHttpMediation !== undefined) {
+			throw new Error('Static credentialed runtimes reject dynamic HTTP mediation.');
+		}
 		const resolved = await props.secretResolver.resolveAll(
 			Object.fromEntries(
 				Object.entries(projection.environment).map(([environmentName, source]) => [
@@ -78,6 +86,49 @@ export async function createUnstartedCredentialedManagedVm(props: {
 			},
 		);
 		commandEnvironment = Object.freeze(environment);
+	} else {
+		const dynamicMediation = props.dynamicHttpMediation;
+		if (
+			dynamicMediation !== undefined &&
+			dynamicMediation.environmentName !== projection.environmentName
+		) {
+			throw new Error('OAuth credentialed runtime mediation material is unavailable.');
+		}
+		if (dynamicMediation === undefined) {
+			commandEnvironment = Object.freeze({});
+			mediatedSecrets = [];
+			return {
+				commandEnvironment,
+				vm: await props.managedVmFactory.createManagedVm({
+					allowedHosts: target.allowedHosts,
+					environment: ordinaryEnvironment,
+					imageReference: preparedImage.imageReference,
+					mediatedSecrets,
+					mounts: {},
+					resources: credentialedRuntimeResources,
+					rootfsMode: 'cow',
+					sessionLabel: props.sessionLabel,
+					tcpHosts: [],
+				}),
+			};
+		}
+		const targetAllowedHosts = new Set(target.allowedHosts);
+		if (dynamicMediation.allowedHosts.some((host) => !targetAllowedHosts.has(host))) {
+			throw new Error(
+				'OAuth mediation material includes a host outside the runtime egress policy.',
+			);
+		}
+		commandEnvironment = Object.freeze({
+			[projection.environmentName]: dynamicMediation.placeholderValue,
+		});
+		mediatedSecrets = [
+			{
+				allowedHosts: dynamicMediation.allowedHosts,
+				environmentVariable: projection.environmentName,
+				guestPlaceholder: dynamicMediation.placeholderValue,
+				value: new TextDecoder('utf-8', { fatal: true }).decode(dynamicMediation.secretValue),
+			},
+		];
 	}
 	const vm = await props.managedVmFactory.createManagedVm({
 		allowedHosts: target.allowedHosts,
@@ -106,7 +157,7 @@ export async function finalizeCredentialedManagedVm(props: {
 	readonly secretResolver: SecretResolver;
 	readonly vm: ManagedVm;
 }): Promise<void> {
-	if (props.resolution.projection.kind === 'http_mediation') return;
+	if (props.resolution.projection.kind !== 'file_binding') return;
 	await materializeCredentialFiles(props);
 }
 
@@ -119,7 +170,7 @@ export interface CredentialedManagedVmCommandResult {
 }
 
 export async function executeCredentialedManagedVmCommand(props: {
-	readonly input: ConfiguredCliInput;
+	readonly input: ControllerConfiguredCliInput;
 	readonly commandEnvironment: Readonly<Record<string, string>>;
 	readonly resolution: CredentialedRuntimeResolution;
 	readonly signal?: AbortSignal;

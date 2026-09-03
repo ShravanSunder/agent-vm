@@ -6,14 +6,12 @@ import unittest
 from agent_vm_agent_portal_sdk.gateway_runtime_client import GatewayRuntimeClient
 from pydantic import ValidationError
 
-from agent_vm_hermes_adapter import (
+from agent_vm_hermes_adapter.managed_gateway_runtime_client_loop import GatewayRuntimeClientLoop
+from agent_vm_hermes_adapter.managed_profile_adapter import (
     CanonicalManagedAgentProjection,
     HermesManagedAdapter,
     HermesManagedAdapterConfig,
     HermesProfileAdmissionError,
-)
-from agent_vm_hermes_adapter.managed_gateway_runtime_client_loop import GatewayRuntimeClientLoop
-from agent_vm_hermes_adapter.managed_profile_adapter import (
     ManagedTrustedContext,
     build_managed_trusted_context,
 )

@@ -270,6 +270,12 @@ class ManagedToolPortalInventoryTests(unittest.IsolatedAsyncioTestCase):
                         "namespaces": ["alpha"],
                         "tools": [
                             {
+                                "callDisposition": {
+                                    "describeBeforeCall": True,
+                                    "kind": "invocation-dependent",
+                                },
+                                "description": "Run one configured OAuth command.",
+                                "descriptionTruncated": False,
                                 "input": {
                                     "optional": [],
                                     "propertyCount": 0,
@@ -278,6 +284,11 @@ class ManagedToolPortalInventoryTests(unittest.IsolatedAsyncioTestCase):
                                 },
                                 "name": "probe",
                                 "namespace": "alpha",
+                                "oauthRequirement": {
+                                    "accountProfileArgument": "accountProfile",
+                                    "describeBeforeCall": True,
+                                    "kind": "invocation-dependent-oauth-account-profile",
+                                },
                                 "safety": {
                                     "destructiveHint": False,
                                     "readOnlyHint": True,
@@ -453,7 +464,7 @@ class ManagedToolPortalInventoryTests(unittest.IsolatedAsyncioTestCase):
         request = gateway.calls[0][1]
         self.assertEqual(
             tuple((item.id, item.namespaces, item.limit) for item in request.requests),
-            (("probe-1-0", ("alpha",), 1), ("probe-1-1", ("beta",), 1)),
+            (("probe-1-0", ("alpha",), 8), ("probe-1-1", ("beta",), 8)),
         )
 
     async def test_requested_namespace_zero_tool_result_is_unavailable_without_retry(self) -> None:

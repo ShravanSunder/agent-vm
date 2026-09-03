@@ -20,7 +20,6 @@ import {
 	type ToolPortalNamespacePolicy,
 	type ToolPortalConfig,
 } from '@agent-vm/config-contracts';
-import { gatewayControlRegisteredControllerExecutionActionIds } from '@agent-vm/gateway-control-contracts';
 import type { ManagedVmImageCapability } from '@agent-vm/managed-vm';
 import type { MediatedSecretSpec, SecretRef, SecretResolver } from '@agent-vm/secret-management';
 
@@ -79,9 +78,11 @@ export type McpPortalEffectiveConfigWriteResult =
 	};
 
 const effectiveConfigManifestFileName = 'tool-portal-effective-manifest.json';
-const managedControllerExecutionTools: ReadonlySet<string> = new Set(
-	gatewayControlRegisteredControllerExecutionActionIds,
-);
+const managedControllerExecutionToolsByNamespace: Readonly<Record<string, ReadonlySet<string>>> =
+	Object.freeze({
+		controller_execution: new Set(['controller_host_probe', 'workspace_git_push']),
+		oauth_authorization: new Set(['begin', 'cancel', 'list', 'reauthorize', 'revoke', 'status']),
+	});
 
 interface EffectiveConfigManifest {
 	readonly mcpConfigFile: string;
@@ -379,8 +380,9 @@ function assertManagedControllerExecutionPolicy(props: {
 	readonly namespacePolicy: ToolPortalNamespacePolicy;
 	readonly profileId: string;
 }): void {
+	const registeredToolsForNamespace = managedControllerExecutionToolsByNamespace[props.namespaceId];
 	if (
-		props.namespaceId !== 'controller_execution' &&
+		registeredToolsForNamespace === undefined &&
 		props.namespacePolicy.backend.kind === 'controller_execution' &&
 		Object.values(props.namespacePolicy.backend.operations).some(
 			(operation) => operation.kind === 'registered_action',
@@ -413,7 +415,10 @@ function assertManagedControllerExecutionPolicy(props: {
 			props.namespacePolicy.backend.kind === 'controller_execution'
 				? props.namespacePolicy.backend.operations[toolName]
 				: undefined;
-		if (operation?.kind === 'registered_action' && !managedControllerExecutionTools.has(toolName)) {
+		if (
+			operation?.kind === 'registered_action' &&
+			(registeredToolsForNamespace === undefined || !registeredToolsForNamespace.has(toolName))
+		) {
 			throw new Error(
 				`tool-portal: managed profile "${props.profileId}" namespace "${props.namespaceId}" references an unknown registered controller execution action.`,
 			);

@@ -25,6 +25,7 @@ import type { createControllerService } from './http/controller-http-routes.js';
 import type { ToolVmProfile } from './leases/lease-manager.js';
 import type { ToolVmProvisioningHandle } from './leases/lease-manager.js';
 import type { ObservedControllerLeaseCreateRequest } from './leases/observed-lease-create-request.js';
+import type { prepareControllerOAuthRuntime } from './oauth/controller-oauth-runtime.js';
 import type { acquireControllerOwnershipLock } from './vm-ownership/controller-ownership-lock.js';
 import type { createGatewayOwnershipCoordinator } from './vm-ownership/gateway-ownership-coordinator.js';
 import type { executeWorkerTask, prepareWorkerTask } from './worker-task-runner.js';
@@ -97,6 +98,7 @@ export interface ControllerRuntimeDependencies {
 	readonly readIdentityPem?: (identityFilePath: string) => Promise<string>;
 	readonly reconcileRecordedVmTree?: typeof reconcileRecordedVmTree;
 	readonly preflightGatewayZoneStart?: typeof preflightGatewayZoneStart;
+	readonly prepareControllerOAuthRuntime?: typeof prepareControllerOAuthRuntime;
 	readonly setIntervalImpl?: (
 		callback: () => void | Promise<void>,
 		delayMs: number,

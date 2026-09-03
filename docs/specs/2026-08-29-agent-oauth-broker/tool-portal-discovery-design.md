@@ -86,7 +86,11 @@ The full search corpus remains untruncated.
 
 ## Portable summary contract
 
-The shared contract package extends capability summaries with strict schemas:
+`@agent-vm/agent-portal-sdk` remains the sole owner of the strict capability-summary
+and list/search/describe wire schemas. It composes the OAuth-specific identifier,
+requirement, and availability unions from `@agent-vm/oauth-broker-contracts`, then
+regenerates the checked portable manifest and Python contract fixtures. Tool Portal
+computes these fields but does not define a parallel result envelope:
 
 ```ts
 type ToolCallDisposition =
@@ -134,6 +138,26 @@ type NamespaceOrientationGroup = {
 
 Non-OAuth tools omit the OAuth requirement and availability. Hidden tools never
 receive a summary.
+
+This dependency remains contract-only:
+
+```text
+oauth-broker-contracts
+  → portable OAuth identifiers and discriminated unions
+
+agent-portal-sdk
+  → generic capability summary and result envelopes
+  → composes OAuth requirement/availability fields
+
+tool-portal and Gateway Runtime
+  → produce and transport the validated SDK result
+
+generated Python contracts and Hermes adapter
+  → consume the same portable schema
+```
+
+The SDK does not import the broker engine, controller implementation, SQLite,
+1Password, provider tokens, or Tool Portal policy.
 
 `toolRef` remains the canonical opaque machine identity on machine summaries. The
 readable orientation renders the namespace once as the group owner, followed by

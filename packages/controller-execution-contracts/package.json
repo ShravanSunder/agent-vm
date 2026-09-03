@@ -36,6 +36,10 @@
 			"types": "./dist/controller-execution-request-boundary/index.d.ts",
 			"import": "./dist/controller-execution-request-boundary/index.js"
 		},
+		"./oauth-authorization-boundary": {
+			"types": "./dist/oauth-authorization-boundary/index.d.ts",
+			"import": "./dist/oauth-authorization-boundary/index.js"
+		},
 		"./tool-vm-runner-boundary": {
 			"types": "./dist/tool-vm-runner-boundary/index.d.ts",
 			"import": "./dist/tool-vm-runner-boundary/index.js"
@@ -57,6 +61,7 @@
 	},
 	"dependencies": {
 		"@agent-vm/agent-portal-sdk": "workspace:*",
+		"@agent-vm/oauth-broker-contracts": "workspace:*",
 		"zod": "^4.4.3"
 	},
 	"devDependencies": {

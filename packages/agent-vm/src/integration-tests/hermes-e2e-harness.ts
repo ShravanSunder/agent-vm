@@ -66,6 +66,7 @@ export async function shouldRunHermesE2e(
 
 const hermesGatewayLocalPackageNames = [
 	'agent-portal-sdk',
+	'oauth-broker-contracts',
 	'config-contracts',
 	'control-protocol-contracts',
 	'controller-execution-contracts',
@@ -270,6 +271,10 @@ export async function materializeLocalHermesGatewayImagePackages(options: {
 					'config-contracts',
 				),
 				localMcpPortalTarballPath: requireLocalPackageTarballPath(packedTarballPaths, 'mcp-portal'),
+				localOAuthBrokerContractsTarballPath: requireLocalPackageTarballPath(
+					packedTarballPaths,
+					'oauth-broker-contracts',
+				),
 				localSecretManagementTarballPath: requireLocalPackageTarballPath(
 					packedTarballPaths,
 					'secret-management',

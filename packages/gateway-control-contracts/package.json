@@ -39,6 +39,7 @@
 		"@agent-vm/agent-portal-sdk": "workspace:*",
 		"@agent-vm/config-contracts": "workspace:*",
 		"@agent-vm/control-protocol-contracts": "workspace:*",
+		"@agent-vm/oauth-broker-contracts": "workspace:*",
 		"zod": "^4.4.3"
 	},
 	"devDependencies": {

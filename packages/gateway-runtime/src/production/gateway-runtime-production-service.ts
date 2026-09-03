@@ -638,6 +638,7 @@ export async function startGatewayRuntimeProductionService(
 				configuredAgentIds: props.config.attachment.configuredAgentIds,
 				projectionCohortDigest: props.config.attachment.projectionCohortDigest,
 			},
+			oauthAvailabilityPort: startedControlRuntime.oauthAvailabilityPort,
 			semanticSnapshot: props.config.semanticSnapshot,
 			toolPortalConfig: props.config.toolPortalConfig,
 		});

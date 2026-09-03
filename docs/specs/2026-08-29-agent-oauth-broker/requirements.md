@@ -49,7 +49,7 @@ authored Tool Portal policy
 
 | ID | Priority | Authorized need and outcome |
 | --- | --- | --- |
-| U-OAUTH-001 | required | An authorized human can complete Google OAuth from a different tailnet-connected device through `https://auth.claw.askluna.xyz`. |
+| U-OAUTH-001 | required | An authorized human can complete Google OAuth from a different tailnet-connected device through `https://auth.claw.askluna.xyz:18900`. |
 | U-OAUTH-002 | required | Hermes starts, lists, and checks authorization only through its authenticated Tool Portal profile; Tool Portal remains the capability and approval plane, not the browser OAuth server. |
 | U-OAUTH-003 | required | Deployment configuration defines OAuth applications, services, read/write/none choices, Google scope mappings, client-secret references, and configured-CLI argv-to-authorization rules. Hermes selects an assigned account-profile slot through the Tool Portal RPC and may provide typed permission suggestions; the authorized browser human accepts or changes them within that slot's configured maxima and owns the final selection. Neither may supply arbitrary clients, scopes, redirects, secret references, storage paths, or runtime identities. |
 | U-OAUTH-004 | required | The first provider is Google through three independently credentialed Web OAuth applications: `workspace-app`, `gmail-app`, and `youtube-app`. One account profile may hold at most one current grant per application. |

@@ -28,6 +28,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 const execFile = promisify(execFileCallback);
 const LOCAL_PACKAGE_NAMES = [
 	'agent-portal-sdk',
+	'oauth-broker-contracts',
 	'config-contracts',
 	'control-protocol-contracts',
 	'controller-execution-contracts',

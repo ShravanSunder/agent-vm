@@ -1,5 +1,11 @@
 import { isIP } from 'node:net';
 
+import {
+	oauthAccountProfileIdSchema,
+	oauthApplicationIdSchema,
+	oauthMinimumPermissionSchema,
+	oauthServiceIdSchema,
+} from '@agent-vm/oauth-broker-contracts';
 import { z } from 'zod';
 
 import { jsonObjectSchema } from './json-value.js';
@@ -289,10 +295,17 @@ const configuredCliMediatedCredentialSourceSchema = z
 	})
 	.strict();
 
+const configuredCliOAuthAccessTokenSourceSchema = z
+	.object({ kind: z.literal('oauth_access_token') })
+	.strict();
+
 const configuredCliMediatedCredentialEnvironmentSchema = z
 	.record(
 		z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/u),
-		configuredCliMediatedCredentialSourceSchema,
+		z.union([
+			configuredCliMediatedCredentialSourceSchema,
+			configuredCliOAuthAccessTokenSourceSchema,
+		]),
 	)
 	.refine((environment) => Object.keys(environment).length > 0, {
 		message: 'Configured CLI mediated credential environment must not be empty.',
@@ -380,6 +393,7 @@ function validateCredentialedManagedVmTarget(
 	} else {
 		const allowedHosts = new Set(target.allowedHosts);
 		for (const [environmentName, source] of Object.entries(projection.environment)) {
+			if ('kind' in source) continue;
 			for (const [hostIndex, host] of source.hosts.entries()) {
 				if (allowedHosts.has(host)) continue;
 				context.addIssue({
@@ -536,12 +550,133 @@ export const configuredCliOutputPolicySchema = z
 	})
 	.strict();
 
+export const configuredCliOAuthRequirementSchema = z.discriminatedUnion('kind', [
+	z.object({ kind: z.literal('no_oauth') }).strict(),
+	z
+		.object({
+			applicationId: oauthApplicationIdSchema,
+			kind: z.literal('oauth'),
+			minimumPermission: oauthMinimumPermissionSchema,
+			serviceId: oauthServiceIdSchema,
+		})
+		.strict(),
+]);
+
+export const configuredCliOAuthAuthorizationRuleSchema = z
+	.object({
+		match: configuredCliInvocationMatcherSchema.safeExtend({ flags: z.tuple([]) }).strict(),
+		requirement: configuredCliOAuthRequirementSchema,
+	})
+	.strict();
+
+export const configuredCliAuthorizationSchema = z.discriminatedUnion('kind', [
+	z.object({ kind: z.literal('none') }).strict(),
+	z
+		.object({
+			kind: z.literal('oauth_account_profile'),
+			rules: z.array(configuredCliOAuthAuthorizationRuleSchema).min(1).readonly(),
+		})
+		.strict(),
+]);
+
+interface ConfiguredCliOperationAuthorizationValidation {
+	readonly authorization?: z.infer<typeof configuredCliAuthorizationSchema> | undefined;
+	readonly commands: readonly z.infer<typeof configuredCliAllowedCommandSchema>[];
+	readonly executionTarget:
+		| { readonly kind: 'controller_host' }
+		| {
+				readonly credentialProjection: z.infer<typeof configuredCliCredentialProjectionSchema>;
+				readonly kind: 'ephemeral_managed_vm';
+		  };
+}
+
+function validateConfiguredCliOperationAuthorization(
+	operation: ConfiguredCliOperationAuthorizationValidation,
+	context: z.RefinementCtx,
+): void {
+	const hasOAuthAccessTokenSource =
+		operation.executionTarget.kind === 'ephemeral_managed_vm' &&
+		operation.executionTarget.credentialProjection.kind === 'http_mediation' &&
+		Object.values(operation.executionTarget.credentialProjection.environment).some(
+			(source) => 'kind' in source && source.kind === 'oauth_access_token',
+		);
+	if (operation.authorization === undefined || operation.authorization.kind === 'none') {
+		if (hasOAuthAccessTokenSource) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: 'OAuth access-token mediation requires OAuth account-profile authorization rules.',
+				path: ['authorization'],
+			});
+		}
+		return;
+	}
+	if (operation.executionTarget.kind !== 'ephemeral_managed_vm') {
+		context.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: 'OAuth-configured CLI operations must execute in an ephemeral Managed VM.',
+			path: ['executionTarget', 'kind'],
+		});
+	}
+	const oauthProjectionIsValid = (() => {
+		if (operation.executionTarget.kind !== 'ephemeral_managed_vm') return false;
+		const projection = operation.executionTarget.credentialProjection;
+		if (projection.kind !== 'http_mediation') return false;
+		const source = projection.environment.GOG_ACCESS_TOKEN;
+		return (
+			Object.keys(projection.environment).length === 1 &&
+			source !== undefined &&
+			'kind' in source &&
+			source.kind === 'oauth_access_token'
+		);
+	})();
+	if (operation.executionTarget.kind === 'ephemeral_managed_vm' && !oauthProjectionIsValid) {
+		context.addIssue({
+			code: z.ZodIssueCode.custom,
+			message:
+				'OAuth-configured CLI operations require only the code-owned GOG_ACCESS_TOKEN OAuth mediation source.',
+			path: ['executionTarget', 'credentialProjection'],
+		});
+	}
+	const admittedPaths = new Set(
+		operation.commands.map((command) => configuredCliPathIdentity(command.path)),
+	);
+	const ruleCountsByPath = new Map<string, number>();
+	for (const [ruleIndex, rule] of operation.authorization.rules.entries()) {
+		const rulePathIdentity = configuredCliPathIdentity(rule.match.path);
+		ruleCountsByPath.set(rulePathIdentity, (ruleCountsByPath.get(rulePathIdentity) ?? 0) + 1);
+		if (admittedPaths.has(rulePathIdentity)) continue;
+		context.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: 'OAuth authorization rules must reference one admitted command path.',
+			path: ['authorization', 'rules', ruleIndex, 'match', 'path'],
+		});
+	}
+	for (const [commandIndex, command] of operation.commands.entries()) {
+		const ruleCount = ruleCountsByPath.get(configuredCliPathIdentity(command.path)) ?? 0;
+		if (ruleCount === 1) continue;
+		context.addIssue({
+			code: z.ZodIssueCode.custom,
+			message:
+				ruleCount === 0
+					? 'Every admitted OAuth-configured command path must have one authorization rule.'
+					: 'Every admitted OAuth-configured command path must have exactly one authorization rule.',
+			path: ['authorization', 'rules'],
+		});
+		context.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: 'This admitted command path does not have exactly one authorization rule.',
+			path: ['commands', commandIndex, 'path'],
+		});
+	}
+}
+
 export const controllerRegisteredOperationSchema = z
 	.object({ kind: z.literal('registered_action') })
 	.strict();
 
 export const controllerConfiguredCliOperationSchema = configuredCliPolicySchema
 	.safeExtend({
+		authorization: configuredCliAuthorizationSchema.optional(),
 		executablePath: absoluteControlFreePathSchema,
 		executionTarget: configuredCliExecutionTargetSchema,
 		kind: z.literal('configured_cli'),
@@ -549,7 +684,8 @@ export const controllerConfiguredCliOperationSchema = configuredCliPolicySchema
 		output: configuredCliOutputPolicySchema,
 		safeHelp: z.string().min(1).max(4_000),
 	})
-	.strict();
+	.strict()
+	.superRefine(validateConfiguredCliOperationAuthorization);
 
 export const controllerExecutionOperationSchema = z.discriminatedUnion('kind', [
 	controllerRegisteredOperationSchema,
@@ -558,6 +694,7 @@ export const controllerExecutionOperationSchema = z.discriminatedUnion('kind', [
 
 export const effectiveControllerConfiguredCliOperationSchema = configuredCliPolicySchema
 	.safeExtend({
+		authorization: configuredCliAuthorizationSchema.optional(),
 		executablePath: absoluteControlFreePathSchema,
 		executionTarget: configuredCliEffectiveExecutionTargetSchema,
 		kind: z.literal('configured_cli'),
@@ -565,7 +702,8 @@ export const effectiveControllerConfiguredCliOperationSchema = configuredCliPoli
 		output: configuredCliOutputPolicySchema,
 		safeHelp: z.string().min(1).max(4_000),
 	})
-	.strict();
+	.strict()
+	.superRefine(validateConfiguredCliOperationAuthorization);
 
 export const effectiveControllerExecutionOperationSchema = z.discriminatedUnion('kind', [
 	controllerRegisteredOperationSchema,
@@ -591,9 +729,39 @@ export const configuredCliInputSchema = z.union([
 	openConfiguredCliInputSchema,
 ]);
 
+export const quickOAuthConfiguredCliInputSchema = z
+	.object({
+		...configuredCliCommonInputShape,
+		accountProfile: oauthAccountProfileIdSchema,
+	})
+	.strict();
+
+export const openOAuthConfiguredCliInputSchema = z
+	.object({
+		...configuredCliCommonInputShape,
+		accountProfile: oauthAccountProfileIdSchema,
+		timeoutMs: z.number().int().positive().max(28_800_000).optional(),
+	})
+	.strict();
+
+export const oauthConfiguredCliInputSchema = z.union([
+	quickOAuthConfiguredCliInputSchema,
+	openOAuthConfiguredCliInputSchema,
+]);
+
+export const controllerConfiguredCliInputSchema = z.union([
+	configuredCliInputSchema,
+	oauthConfiguredCliInputSchema,
+]);
+
 export type ConfiguredCliAllowedCommand = z.infer<typeof configuredCliAllowedCommandSchema>;
 export type ConfiguredCliFlagRule = z.infer<typeof configuredCliFlagRuleSchema>;
 export type ConfiguredCliInput = z.infer<typeof configuredCliInputSchema>;
+export type ControllerConfiguredCliInput = z.infer<typeof controllerConfiguredCliInputSchema>;
+export type ConfiguredCliAuthorization = z.infer<typeof configuredCliAuthorizationSchema>;
+export type ConfiguredCliOAuthAuthorizationRule = z.infer<
+	typeof configuredCliOAuthAuthorizationRuleSchema
+>;
 export type ConfiguredCliCredentialEnvironmentValue = z.infer<
 	typeof configuredCliCredentialEnvironmentValueSchema
 >;
@@ -635,18 +803,19 @@ export type ResolvedConfiguredCliTimeout =
 	  };
 
 export function resolveConfiguredCliTimeout(props: {
-	readonly input: ConfiguredCliInput;
+	readonly input: ControllerConfiguredCliInput;
 	readonly kind: ConfiguredCliTimeoutPolicy['kind'];
 }): ResolvedConfiguredCliTimeout {
 	if (props.kind === 'quick') {
-		quickConfiguredCliInputSchema.parse(props.input);
+		controllerConfiguredCliInputSchema.parse(props.input);
 		return { kind: 'quick', requestedTimeoutMs: null, resolvedTimeoutMs: 5_000 };
 	}
-	const input = openConfiguredCliInputSchema.parse(props.input);
+	const input = controllerConfiguredCliInputSchema.parse(props.input);
+	const requestedTimeoutMs = 'timeoutMs' in input ? (input.timeoutMs ?? null) : null;
 	return {
 		kind: 'open',
-		requestedTimeoutMs: input.timeoutMs ?? null,
-		resolvedTimeoutMs: input.timeoutMs ?? 120_000,
+		requestedTimeoutMs,
+		resolvedTimeoutMs: requestedTimeoutMs ?? 120_000,
 	};
 }
 

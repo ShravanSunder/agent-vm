@@ -57,6 +57,7 @@
 		"@agent-vm/controller-execution-contracts": "workspace:*",
 		"@agent-vm/gateway-control-contracts": "workspace:*",
 		"@agent-vm/mcp-portal": "workspace:*",
+		"@agent-vm/oauth-broker-contracts": "workspace:*",
 		"@modelcontextprotocol/sdk": "^1.29.0",
 		"zod": "^4.4.3"
 	},

@@ -87,6 +87,7 @@ ${options.systemConfigPath} is the controller config. Agent-vm-authored config i
 config/gateways/<zone>/hermes-managed/config.yaml is the deployment-owned managed Hermes policy input. The generated directory contains only config.yaml.
 config/gateways/<zone>/mcp.config.jsonc is the upstream MCP provider catalog for a managed Hermes zone.
 config/gateways/<zone>/tool-portal.config.jsonc is the managed Tool Portal agent/profile and backend policy.
+config/gateways/<zone>/oauth.config.jsonc optionally enables controller-owned Google OAuth for that managed Hermes zone. It uses direct tailnet HTTPS on port 18900, a 1Password-held KEK, encrypted controller-state SQLite, and account-profile-scoped Gog access. OAuth consent never bypasses Tool Portal visibility or approval policy.
 config/gateways/<zone>/worker.jsonc is Agent Worker gateway config when the zone type is worker.
 vm-images/ contains deployment-owned Gondolin build-config.jsonc files and small managed image overlays.
 agent-vm owns the gateway/tool base image recipes and pins the managed GHCR base layer version.
