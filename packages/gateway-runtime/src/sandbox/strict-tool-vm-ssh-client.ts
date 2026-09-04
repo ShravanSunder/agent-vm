@@ -12,6 +12,8 @@ import {
 
 import { createGatewayRuntimeSandboxPathContract } from './sandbox-path-contract.js';
 
+const DEFAULT_MAXIMUM_PER_CALL_EXECUTE_DRAIN_BYTES = 67_108_864;
+
 export interface StrictToolVmSshAccess {
 	readonly host: string;
 	readonly identityPem: string | undefined;
@@ -186,6 +188,10 @@ export interface CreateStrictToolVmSshClientOptions {
 		readonly stdout: number;
 	};
 	readonly limits: StrictToolVmSshLimits;
+	readonly maximumPerCallExecuteDrainBytes?: {
+		readonly stderr: number;
+		readonly stdout: number;
+	};
 	readonly maximumPerCallExecuteOutputBytes?: {
 		readonly stderr: number;
 		readonly stdout: number;
@@ -466,6 +472,40 @@ export function createStrictToolVmSshClient(
 			'maximum per-call execute stdout limit',
 		);
 	}
+	if (options.maximumPerCallExecuteDrainBytes !== undefined) {
+		requirePositiveSafeInteger(
+			options.maximumPerCallExecuteDrainBytes.stderr,
+			'maximum per-call execute stderr drain limit',
+		);
+		requirePositiveSafeInteger(
+			options.maximumPerCallExecuteDrainBytes.stdout,
+			'maximum per-call execute stdout drain limit',
+		);
+	}
+	const maximumPerCallExecuteOutputBytes = {
+		stderr: options.maximumPerCallExecuteOutputBytes?.stderr ?? options.limits.maxStderrBytes,
+		stdout: options.maximumPerCallExecuteOutputBytes?.stdout ?? options.limits.maxStdoutBytes,
+	};
+	const maximumPerCallExecuteDrainBytes = {
+		stderr:
+			options.maximumPerCallExecuteDrainBytes?.stderr ??
+			Math.max(
+				DEFAULT_MAXIMUM_PER_CALL_EXECUTE_DRAIN_BYTES,
+				maximumPerCallExecuteOutputBytes.stderr,
+			),
+		stdout:
+			options.maximumPerCallExecuteDrainBytes?.stdout ??
+			Math.max(
+				DEFAULT_MAXIMUM_PER_CALL_EXECUTE_DRAIN_BYTES,
+				maximumPerCallExecuteOutputBytes.stdout,
+			),
+	};
+	if (
+		maximumPerCallExecuteDrainBytes.stderr < maximumPerCallExecuteOutputBytes.stderr ||
+		maximumPerCallExecuteDrainBytes.stdout < maximumPerCallExecuteOutputBytes.stdout
+	) {
+		throw new Error('Strict SSH execute drain limits must cover the maximum capture limits.');
+	}
 
 	const pathContract = createGatewayRuntimeSandboxPathContract({
 		guestWorkRoot: '/work',
@@ -621,14 +661,14 @@ export function createStrictToolVmSshClient(
 				stderrPolicy,
 				request.output === undefined
 					? options.limits.maxStderrBytes
-					: (options.maximumPerCallExecuteOutputBytes?.stderr ?? options.limits.maxStderrBytes),
+					: maximumPerCallExecuteOutputBytes.stderr,
 			],
 			[
 				'stdout',
 				stdoutPolicy,
 				request.output === undefined
 					? options.limits.maxStdoutBytes
-					: (options.maximumPerCallExecuteOutputBytes?.stdout ?? options.limits.maxStdoutBytes),
+					: maximumPerCallExecuteOutputBytes.stdout,
 			],
 		] as const) {
 			if (
@@ -691,6 +731,8 @@ export function createStrictToolVmSshClient(
 					stdoutTruncated ||= appended.overflow;
 					if (appended.overflow && stdoutPolicy.overflow === 'fail') {
 						finishRejected(new Error('Strict SSH stdout output limit exceeded.'), true);
+					} else if (appended.nextBytes > maximumPerCallExecuteDrainBytes.stdout) {
+						finishRejected(new Error('Strict SSH stdout drain limit exceeded.'), true);
 					}
 				});
 				openedChannel.stderr.on('data', (chunk: Buffer): void => {
@@ -704,6 +746,8 @@ export function createStrictToolVmSshClient(
 					stderrTruncated ||= appended.overflow;
 					if (appended.overflow && stderrPolicy.overflow === 'fail') {
 						finishRejected(new Error('Strict SSH stderr output limit exceeded.'), true);
+					} else if (appended.nextBytes > maximumPerCallExecuteDrainBytes.stderr) {
+						finishRejected(new Error('Strict SSH stderr drain limit exceeded.'), true);
 					}
 				});
 				openedChannel.once('error', (): void => {

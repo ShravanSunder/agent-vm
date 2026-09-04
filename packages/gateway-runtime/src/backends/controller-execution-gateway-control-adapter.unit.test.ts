@@ -148,6 +148,45 @@ describe('Tool VM configured CLI execution target', () => {
 		expect(acquisition.retireGroup).toHaveBeenCalledWith('completed');
 	});
 
+	it('redacts JSON credentials and preserves stdout around invalid UTF-8 bytes', async () => {
+		const execute = vi.fn(async () => ({
+			exitCode: 0,
+			kind: 'exited' as const,
+			stderr: new TextEncoder().encode('{"api_key":"secret-value","ok":false}'),
+			stdout: Uint8Array.from([0x61, 0xff, 0x62]),
+		}));
+		const acquisition = configuredCliToolVmAcquisition(execute);
+		const fixture = createFixture({ toolVmAcquisitionPort: acquisition.port });
+
+		const result = await fixture.backend.call(
+			{
+				calls: [
+					{
+						arguments: { argv: ['crawl'], reason: 'Research.' },
+						id: 'tool-vm-cli-safe-output',
+						name: 'tool_vm_cli',
+						namespace: 'controller_execution',
+					},
+				],
+			},
+			callOptions(),
+		);
+
+		expect(result).toMatchObject({
+			items: [
+				{
+					status: 'ok',
+					value: {
+						stderrSummary: expect.stringContaining('[REDACTED]'),
+						stdout: 'a�b',
+					},
+				},
+			],
+			ok: true,
+		});
+		expect(JSON.stringify(result)).not.toContain('secret-value');
+	});
+
 	it('arms controller approval immediately before Tool VM dispatch and rejects an expired reservation', async () => {
 		const execute = vi.fn(async () => ({
 			exitCode: 0,
@@ -245,6 +284,17 @@ describe('Tool VM configured CLI execution target', () => {
 		);
 
 		expect(result.ok).toBe(false);
+		expect(result).toMatchObject({
+			items: [
+				{
+					outcome: {
+						certainty: 'proven',
+						kind: 'not-dispatched',
+						retryClass: 'safe-before-dispatch',
+					},
+				},
+			],
+		});
 		expect(execute).not.toHaveBeenCalled();
 		expect(acquisition.retireGroup).toHaveBeenCalledWith('failed');
 	});
@@ -353,7 +403,7 @@ const toolPortalConfig = {
 								kind: 'configured_cli',
 								mandatoryArgvPrefix: ['--json'],
 								output: {
-									modelVisibleStderr: 'none',
+									modelVisibleStderr: 'fixed_safe_summary',
 									overflow: 'truncate',
 									stderrMaxBytes: 1024,
 									stdoutMaxBytes: 1024,

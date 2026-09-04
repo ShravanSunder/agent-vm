@@ -398,6 +398,7 @@ describe('Gateway Runtime production control runtime', () => {
 				maxSymlinkDepth: 8,
 				maxWriteBytes: 65_536,
 			},
+			maximumPerCallExecuteDrainBytes: { stderr: 67_108_864, stdout: 67_108_864 },
 			runtime: expect.objectContaining({
 				clock: expect.objectContaining({ now: expect.any(Function) }),
 				scheduler: expect.objectContaining({ schedule: expect.any(Function) }),

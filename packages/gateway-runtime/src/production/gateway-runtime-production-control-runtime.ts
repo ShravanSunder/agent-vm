@@ -254,6 +254,7 @@ export async function createGatewayRuntimeProductionControlRuntime(
 			deadlineMilliseconds: PRODUCTION_STRICT_SSH_DEADLINES,
 			defaultExecuteOutputBytes: { stderr: 1_048_576, stdout: 1_048_576 },
 			limits: PRODUCTION_STRICT_SSH_LIMITS,
+			maximumPerCallExecuteDrainBytes: { stderr: 67_108_864, stdout: 67_108_864 },
 			maximumPerCallExecuteOutputBytes: { stderr: 16_777_216, stdout: 16_777_216 },
 			runtime: {
 				clock: { now: (): number => performance.now() },

@@ -346,6 +346,10 @@ interface StrictSshFixture {
 function createStrictSshFixture(
 	options: {
 		readonly access?: typeof validAccess;
+		readonly maximumPerCallExecuteDrainBytes?: {
+			readonly stderr: number;
+			readonly stdout: number;
+		};
 		readonly maximumPerCallExecuteOutputBytes?: {
 			readonly stderr: number;
 			readonly stdout: number;
@@ -361,6 +365,9 @@ function createStrictSshFixture(
 			access: options.access ?? validAccess,
 			deadlineMilliseconds,
 			limits: strictLimits,
+			...(options.maximumPerCallExecuteDrainBytes === undefined
+				? {}
+				: { maximumPerCallExecuteDrainBytes: options.maximumPerCallExecuteDrainBytes }),
 			...(options.maximumPerCallExecuteOutputBytes === undefined
 				? {}
 				: { maximumPerCallExecuteOutputBytes: options.maximumPerCallExecuteOutputBytes }),
@@ -702,6 +709,36 @@ describe('strict Tool VM SSH client', () => {
 			stdoutTruncated: true,
 		});
 		expect(fixture.sshTransport.channel.closeCallCount).toBe(0);
+	});
+
+	it('closes configured truncate execution after its discarded-output ceiling', async () => {
+		// Arrange
+		const fixture = createStrictSshFixture({
+			maximumPerCallExecuteDrainBytes: { stderr: 12, stdout: 12 },
+		});
+		fixture.sshTransport.onExec = (_command, callback) => {
+			callback(undefined, fixture.sshTransport.channel as unknown as ClientChannel);
+			queueMicrotask(() => {
+				fixture.sshTransport.channel.emit('data', Buffer.from('thirteen-byte!'));
+				fixture.sshTransport.channel.emit('exit', 0);
+				fixture.sshTransport.channel.emit('close');
+			});
+		};
+		await connectFixture(fixture);
+
+		// Act
+		const execution = fixture.client.execute({
+			argv: ['/bin/true'],
+			cwd: '',
+			output: {
+				stderr: { captureBytes: 3, overflow: 'truncate' },
+				stdout: { captureBytes: 4, overflow: 'truncate' },
+			},
+		});
+
+		// Assert
+		await expect(execution).rejects.toThrow(/drain limit/i);
+		expect(fixture.sshTransport.channel.closeCallCount).toBe(1);
 	});
 
 	it('allows opt-in execute capture above the unchanged shared process-channel ceiling', async () => {

@@ -1,6 +1,6 @@
 import {
-	controllerConfiguredCliInputSchema,
 	resolveConfiguredCliTimeout,
+	type controllerConfiguredCliInputSchema,
 	type GatewayRuntimeControllerExecutionOperation,
 } from '@agent-vm/config-contracts';
 import type {
@@ -59,16 +59,7 @@ function ambiguousResult(
 }
 
 function truncateUtf8(value: Uint8Array, maximumBytes: number): string {
-	const bounded = value.subarray(0, maximumBytes);
-	const decoder = new TextDecoder('utf-8', { fatal: true });
-	for (let removedBytes = 0; removedBytes <= 3; removedBytes += 1) {
-		try {
-			return decoder.decode(bounded.subarray(0, bounded.byteLength - removedBytes));
-		} catch {
-			// Only the final UTF-8 scalar can be partial.
-		}
-	}
-	return '';
+	return new TextDecoder().decode(value.subarray(0, maximumBytes));
 }
 
 function safeStderrSummary(stderr: Uint8Array): string {
@@ -79,7 +70,7 @@ function safeStderrSummary(stderr: Uint8Array): string {
 			'[REDACTED]',
 		)
 		.replaceAll(
-			/\b(?:api[-_ ]?key|authorization|cookie|password|private[-_ ]?key|refresh[-_ ]?token|secret|set-cookie|token)\s*[:=]\s*\S+/giu,
+			/(?<![\p{L}\p{N}_])["']?(?:api[-_ ]?key|authorization|cookie|password|private[-_ ]?key|refresh[-_ ]?token|secret|set-cookie|token)["']?\s*[:=]\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\S+)/giu,
 			'[REDACTED]',
 		)
 		.replaceAll(/\b(?:Bearer|Basic)\s+\S+/giu, '[REDACTED]');
@@ -196,6 +187,8 @@ export async function executeConfiguredCliInToolVm(props: {
 			}
 		}
 		if (isAborted(props.signal) || !group.isCurrent()) {
+			// Approval arming is consumed, but SSH dispatch has not begun. A retry must
+			// re-enter Tool Portal for fresh authority; command side effects remain impossible.
 			return notDispatchedResult({
 				binding: props.binding,
 				code: isAborted(props.signal) ? 'cancelled' : 'capability_denied',
