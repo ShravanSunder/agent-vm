@@ -36,11 +36,19 @@ import {
 	gatewayControlCommandExecutionTimeoutMsByOperation,
 	type GatewayControlToolPortalControllerExecutionPayload,
 } from '@agent-vm/gateway-control-contracts';
-import { evaluateCliAllowanceInvocation, type ToolPortalBackendPort } from '@agent-vm/tool-portal';
+import {
+	evaluateCliAllowanceInvocation,
+	type ToolPortalApprovalPort,
+	type ToolPortalBackendPort,
+} from '@agent-vm/tool-portal';
 import { z } from 'zod/v4';
 
 import type { GatewayControlCallerContextRegistrationClient } from '../control-endpoint/gateway-control-caller-context-registration-client.js';
 import type { GatewayRuntimeControlCommandClient } from '../control-endpoint/gateway-control-command-client.js';
+import {
+	executeConfiguredCliInToolVm,
+	type ConfiguredCliToolVmAcquisitionPort,
+} from './configured-cli-tool-vm-executor.js';
 import {
 	createControllerExecutionBackendPort,
 	defineControllerExecutionRegistration,
@@ -238,11 +246,13 @@ const builtInControllerExecutions = Object.freeze([
 ]);
 
 export interface CreateGatewayControlControllerExecutionBackendPortProps {
+	readonly approvalPort?: ToolPortalApprovalPort;
 	readonly callerContextRegistrationClient: GatewayControlCallerContextRegistrationClient;
 	readonly controlCommandClient: GatewayRuntimeControlCommandClient;
 	readonly createCommandId: () => string;
 	readonly now?: () => number;
 	readonly owningGeneration: string;
+	readonly toolVmAcquisitionPort?: ConfiguredCliToolVmAcquisitionPort;
 	readonly toolPortalConfig: GatewayRuntimeManagedToolPortalConfig;
 }
 
@@ -400,10 +410,12 @@ function authorityBinding(
 	const authority = request.authority.dispatchAuthority;
 	return authority.kind === 'without-approval'
 		? { fingerprint: authority.fingerprint, operationId: authority.operationId }
-		: {
-				fingerprint: authority.reservation.fingerprint,
-				operationId: authority.reservation.operationId,
-			};
+		: authority.kind === 'controller-approval-reservation'
+			? {
+					fingerprint: authority.reservation.fingerprint,
+					operationId: authority.reservation.operationId,
+				}
+			: { fingerprint: authority.grant.fingerprint, operationId: authority.grant.operationId };
 }
 
 function commandCorrelation(request: ControllerExecutionDispatchRequest): {
@@ -455,6 +467,9 @@ function controllerActionPayload(props: {
 		callerContext: { callerContextId: props.callerContextId },
 		correlation: commandCorrelation(props.request),
 	};
+	if (dispatchAuthority.kind === 'approval-grant') {
+		throw new Error('Tool VM approval grants must not enter controller RPC payloads.');
+	}
 	const authority =
 		dispatchAuthority.kind === 'without-approval'
 			? {
@@ -539,7 +554,7 @@ function notDispatchedResult(props: {
 	readonly binding: ControllerExecutionAuthorityBinding;
 	readonly code: PortalError['code'];
 	readonly message: string;
-	readonly reason: 'denied' | 'stale-authority';
+	readonly reason: 'denied' | 'runner-setup-failed' | 'stale-authority';
 }): ControllerExecutionResult {
 	return {
 		binding: props.binding,
@@ -635,6 +650,26 @@ function createGatewayControlControllerExecutionRpcPort(
 					reason: 'stale-authority',
 				});
 			}
+			const operation = operationForRequest(props.toolPortalConfig, request);
+			if (operation === undefined) {
+				return notDispatchedResult({
+					binding,
+					code: 'capability_denied',
+					message: 'Controller execution operation is not current.',
+					reason: 'stale-authority',
+				});
+			}
+			if (operation.kind === 'configured_cli' && operation.targetKind === 'tool_vm') {
+				return await executeConfiguredCliInToolVm({
+					acquisitionPort: props.toolVmAcquisitionPort,
+					approvalPort: props.approvalPort,
+					binding,
+					input: controllerConfiguredCliInputSchema.parse(request.action.arguments),
+					operation,
+					request,
+					signal,
+				});
+			}
 			let callerContext: Awaited<
 				ReturnType<GatewayControlCallerContextRegistrationClient['register']>
 			>;
@@ -660,15 +695,6 @@ function createGatewayControlControllerExecutionRpcPort(
 				});
 			}
 			const commandId = props.createCommandId();
-			const operation = operationForRequest(props.toolPortalConfig, request);
-			if (operation === undefined) {
-				return notDispatchedResult({
-					binding,
-					code: 'capability_denied',
-					message: 'Controller execution operation is not current.',
-					reason: 'stale-authority',
-				});
-			}
 			const payload = controllerActionPayload({
 				callerContextId: callerContext.callerContextId,
 				operation,

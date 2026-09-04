@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { encodeConfiguredCliPreparedImageIdentity } from './controller-configured-cli.js';
+import {
+	controllerConfiguredCliOperationSchema,
+	encodeConfiguredCliPreparedImageIdentity,
+	normalizePreparedControllerExecutionOperation,
+} from './controller-configured-cli.js';
 import {
 	createGatewayRuntimeManagedToolPortalConfig,
 	createEffectiveManagedToolPortalConfig,
@@ -1011,5 +1015,73 @@ describe('tool portal config contract', () => {
 		]) {
 			expect(serializedProjection).not.toContain(`"${forbiddenField}"`);
 		}
+	});
+});
+
+describe('Tool VM configured CLI projection', () => {
+	it('transforms suggest-prefixed authored policy into the existing Gateway configured CLI shape', () => {
+		const prepared = preparedManagedToolPortalConfigSchema.parse({
+			agents: { hermes: { profile: 'default' } },
+			mode: 'managed',
+			profiles: {
+				default: {
+					namespaces: {
+						research: {
+							discovery: {},
+							backend: {
+								kind: 'controller_execution',
+								operations: {
+									firecrawl: normalizePreparedControllerExecutionOperation(
+										controllerConfiguredCliOperationSchema.parse({
+											executablePath: '/usr/local/bin/firecrawl',
+											executionTarget: { kind: 'tool_vm', workingDirectory: '.' },
+											kind: 'configured_cli',
+											mandatoryArgvPrefix: [],
+											output: {
+												modelVisibleStderr: 'none',
+												overflow: 'truncate',
+												stderrMaxBytes: 4_096,
+												stdoutMaxBytes: 65_536,
+											},
+											safeHelp: 'Use Firecrawl in the Tool VM.',
+											suggestCalls: {
+												suggestDeny: [],
+												suggestRequiresApproval: [{ flags: [], path: ['crawl'] }],
+												suggestWithoutApproval: 'remaining_admitted',
+											},
+											suggestCommands: [{ flagRules: [], path: ['crawl'] }],
+											suggestDeniedPatterns: [],
+											suggestStdin: { kind: 'none' },
+											suggestTimeout: { kind: 'quick' },
+										}),
+									),
+								},
+							},
+							calls: {
+								requiresApproval: { allow: [], deny: [] },
+								withoutApproval: { allow: ['firecrawl'], deny: [] },
+							},
+							tools: { allow: ['firecrawl'], deny: [] },
+						},
+					},
+				},
+			},
+			schemaVersion: 1,
+		});
+		const gateway = createGatewayRuntimeManagedToolPortalConfig(
+			createEffectiveManagedToolPortalConfig(prepared),
+		);
+		const namespace = gateway.profiles.default?.namespaces.research;
+		if (namespace?.backend.kind !== 'controller_execution') throw new Error('Missing backend.');
+		expect(namespace.backend.operations.firecrawl).toMatchObject({
+			calls: {
+				deny: [],
+				requiresApproval: [{ flags: [], path: ['crawl'] }],
+				withoutApproval: 'remaining_admitted',
+			},
+			executablePath: '/usr/local/bin/firecrawl',
+			targetKind: 'tool_vm',
+			workingDirectory: '.',
+		});
 	});
 });

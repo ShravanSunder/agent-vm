@@ -3,9 +3,9 @@ import type { ControllerExecutionOperation } from '@agent-vm/config-contracts';
 import { ConfiguredControllerExecutionError } from './configured-controller-execution-error.js';
 
 type ConfiguredCliEnvironmentPolicy = Extract<
-	ControllerExecutionOperation,
-	{ readonly kind: 'configured_cli' }
->['executionTarget']['environment'];
+	Extract<ControllerExecutionOperation, { readonly kind: 'configured_cli' }>['executionTarget'],
+	{ readonly environment: unknown }
+>['environment'];
 
 export function resolveConfiguredCliEnvironment(
 	policy: ConfiguredCliEnvironmentPolicy,

@@ -436,6 +436,8 @@ function approvalGrantDispatchAuthority(
 	grant: GatewayRuntimeApprovalDispatchGrant,
 ): GatewayRuntimeToolPortalDispatchAuthority {
 	switch (grant.backendKind) {
+		case 'controller_execution':
+			return { backendKind: 'controller_execution', grant, kind: 'approval-grant' };
 		case 'mcp_provider':
 			return { backendKind: 'mcp_provider', grant, kind: 'approval-grant' };
 		case 'tool_vm_runner':

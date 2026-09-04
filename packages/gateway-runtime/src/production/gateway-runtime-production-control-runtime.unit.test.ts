@@ -337,11 +337,13 @@ describe('Gateway Runtime production control runtime', () => {
 		expect(runtime.acquisitionPort).toBe(observed.acquisitionPort);
 		expect(runtime.applicationMessageHandler).toBe(observed.applicationMessageHandler);
 		expect(observed.dependencies.createControllerExecutionBackendPort).toHaveBeenCalledWith({
+			approvalPort: expect.any(Object),
 			callerContextRegistrationClient: expect.any(Object),
 			controlCommandClient: expect.any(Object),
 			createCommandId: expect.any(Function),
 			owningGeneration: 'runtime-generation-a',
 			toolPortalConfig: expect.any(Object),
+			toolVmAcquisitionPort: expect.any(Object),
 		});
 		expect(
 			runtime.controllerExecutionBackendPortFactory({
@@ -386,6 +388,7 @@ describe('Gateway Runtime production control runtime', () => {
 		expect(observed.strictSshClientFactory).toHaveBeenCalledWith({
 			access,
 			deadlineMilliseconds: { connect: 10_000, operation: 30_000 },
+			defaultExecuteOutputBytes: { stderr: 1_048_576, stdout: 1_048_576 },
 			limits: {
 				maxDirectoryEntries: 4_096,
 				maxFileBytes: 16_777_216,
@@ -399,6 +402,7 @@ describe('Gateway Runtime production control runtime', () => {
 				clock: expect.objectContaining({ now: expect.any(Function) }),
 				scheduler: expect.objectContaining({ schedule: expect.any(Function) }),
 			}),
+			maximumPerCallExecuteOutputBytes: { stderr: 16_777_216, stdout: 16_777_216 },
 		});
 
 		const operationContext = {

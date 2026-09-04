@@ -14,7 +14,10 @@ import {
 	type GatewayRuntimeAttachmentMetadata,
 	type GatewayRuntimeClientTrustedInvocationContext,
 } from '@agent-vm/agent-portal-sdk/gateway-runtime-client';
-import type { ToolPortalBackendKind, ToolPortalConfig } from '@agent-vm/config-contracts';
+import type {
+	GatewayRuntimeManagedToolPortalConfig,
+	ToolPortalBackendKind,
+} from '@agent-vm/config-contracts';
 import {
 	deriveGatewayControlStablePrincipal,
 	type GatewayRuntimePortalSemanticSnapshot,
@@ -22,6 +25,7 @@ import {
 } from '@agent-vm/gateway-control-contracts';
 import {
 	createGatewayRuntimeManagedToolPortalComposition,
+	createGatewayControlControllerExecutionBackendPort,
 	createGatewayRuntimePaths,
 	createGatewayRuntimePrivateUdsDispatcher,
 	createGatewayRuntimeProductionSandboxDispatcher,
@@ -73,6 +77,7 @@ const gatewayProfileAssignmentRevision = 'sandbox-profile-assignment-1';
 const stockProjectionCohortDigest =
 	'projection-cohort:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const stockProofCapabilityName = 'write_configured_proof';
+export const stockConfiguredCliCapabilityName = 'run_configured_cli_proof';
 const stockDisposableRootfsProofFileName = 'replacement-rootfs-proof.txt';
 const stockDisposableRootfsProofGuestPath = `/work/${stockDisposableRootfsProofFileName}`;
 const stockHostToGuestWorkspaceFileName = 'host-to-guest-workspace-coherence.txt';
@@ -1206,6 +1211,46 @@ export async function createStockGatewayRuntimeSandboxVmHarness(): Promise<Stock
 			profiles: {
 				'sandbox-user': {
 					namespaces: {
+						configured_cli: {
+							backend: {
+								kind: 'controller_execution',
+								operations: {
+									[stockConfiguredCliCapabilityName]: {
+										calls: {
+											deny: [],
+											requiresApproval: [],
+											withoutApproval: 'remaining_admitted',
+										},
+										commands: [{ flagRules: [], path: ['portal-argument'] }],
+										deniedPatterns: [],
+										executablePath: '/bin/sh',
+										kind: 'configured_cli',
+										mandatoryArgvPrefix: [
+											'-c',
+											'printf %s "$1" > configured-cli-proof.txt; printf "cli:%s" "$1"',
+											'--',
+										],
+										output: {
+											modelVisibleStderr: 'none',
+											overflow: 'truncate',
+											stderrMaxBytes: 4_096,
+											stdoutMaxBytes: 4_096,
+										},
+										safeHelp: 'Run a configured CLI proof inside the current Tool VM.',
+										stdin: { kind: 'none' },
+										targetKind: 'tool_vm',
+										timeout: { kind: 'quick' },
+										workingDirectory: '.',
+									},
+								},
+							},
+							calls: {
+								requiresApproval: { allow: [], deny: [] },
+								withoutApproval: { allow: [stockConfiguredCliCapabilityName], deny: [] },
+							},
+							discovery: {},
+							tools: { allow: [stockConfiguredCliCapabilityName], deny: [] },
+						},
 						sandbox: {
 							discovery: {},
 							backend: {
@@ -1235,7 +1280,7 @@ export async function createStockGatewayRuntimeSandboxVmHarness(): Promise<Stock
 				},
 			},
 			schemaVersion: 1,
-		} satisfies ToolPortalConfig;
+		} satisfies GatewayRuntimeManagedToolPortalConfig;
 		const semanticSnapshot = {
 			activeRevision: 'sandbox-semantic-1',
 			agentProjections: {
@@ -1243,7 +1288,7 @@ export async function createStockGatewayRuntimeSandboxVmHarness(): Promise<Stock
 					agentId: 'gateway-agent',
 					frameworkIdentity: { kind: 'hermes', profileName: 'gateway-agent' },
 					profileAssignmentRevision: gatewayProfileAssignmentRevision,
-					toolPortalNamespaces: [{ namespace: 'sandbox' }],
+					toolPortalNamespaces: [{ namespace: 'configured_cli' }, { namespace: 'sandbox' }],
 					toolPortalProfileId: 'sandbox-user',
 				},
 			},
@@ -1255,7 +1300,12 @@ export async function createStockGatewayRuntimeSandboxVmHarness(): Promise<Stock
 			providerRevision: 'sandbox-provider-1',
 			schemaRevision: 'sandbox-schema-1',
 			schemaVersion: 1,
-			surfaceEligibilityByProfile: { 'sandbox-user': { sandbox: ['protected_uds'] } },
+			surfaceEligibilityByProfile: {
+				'sandbox-user': {
+					configured_cli: ['protected_uds'],
+					sandbox: ['protected_uds'],
+				},
+			},
 		} satisfies GatewayRuntimePortalSemanticSnapshot;
 		const approvalPort = {
 			armDispatch: (): Promise<never> =>
@@ -1311,7 +1361,37 @@ export async function createStockGatewayRuntimeSandboxVmHarness(): Promise<Stock
 			authenticatedPrivateUdsOperationGroups:
 				GATEWAY_RUNTIME_AUTHENTICATED_PRIVATE_UDS_OPERATION_GROUPS,
 			backendPortFactories: {
-				controllerExecution: () => createUnusedBackendPort('controller_execution'),
+				controllerExecution: () =>
+					createGatewayControlControllerExecutionBackendPort({
+						callerContextRegistrationClient: {
+							close: async () => undefined,
+							register: async () => {
+								throw new Error('Tool VM configured CLI must not register with the controller.');
+							},
+						},
+						controlCommandClient: {
+							sendCommand: async () => {
+								throw new Error('Tool VM configured CLI must not dispatch to the controller.');
+							},
+						},
+						createCommandId: randomUUID,
+						owningGeneration: gatewayEnvironmentGeneration,
+						toolPortalConfig,
+						toolVmAcquisitionPort: {
+							acquire: async (request) => {
+								const group = await acquisitionPort.acquire(request);
+								if (group.kind === 'not-bound') return group;
+								return {
+									isCurrent: () =>
+										group.operationAuthority.authorize(group.operationContext).kind ===
+										'authorized',
+									kind: group.kind,
+									retireGroup: group.retireGroup,
+									strictSshClient: group.strictSshClient,
+								};
+							},
+						},
+					}),
 				mcpProvider: () => createUnusedBackendPort('mcp_provider'),
 				toolVmRunner: (artifactRuntime) =>
 					createGatewayRuntimeToolVmRunnerBackendPort({

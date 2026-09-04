@@ -139,10 +139,15 @@ function authorityBinding(
 				fingerprint: dispatchAuthority.fingerprint,
 				operationId: dispatchAuthority.operationId,
 			}
-		: {
-				fingerprint: dispatchAuthority.reservation.fingerprint,
-				operationId: dispatchAuthority.reservation.operationId,
-			};
+		: dispatchAuthority.kind === 'controller-approval-reservation'
+			? {
+					fingerprint: dispatchAuthority.reservation.fingerprint,
+					operationId: dispatchAuthority.reservation.operationId,
+				}
+			: {
+					fingerprint: dispatchAuthority.grant.fingerprint,
+					operationId: dispatchAuthority.grant.operationId,
+				};
 }
 
 function completedRpcResult(

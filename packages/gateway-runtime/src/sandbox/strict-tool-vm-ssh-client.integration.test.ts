@@ -346,6 +346,10 @@ interface StrictSshFixture {
 function createStrictSshFixture(
 	options: {
 		readonly access?: typeof validAccess;
+		readonly maximumPerCallExecuteOutputBytes?: {
+			readonly stderr: number;
+			readonly stdout: number;
+		};
 		readonly sshTransport?: FakeSshTransport;
 	} = {},
 ): StrictSshFixture {
@@ -357,6 +361,9 @@ function createStrictSshFixture(
 			access: options.access ?? validAccess,
 			deadlineMilliseconds,
 			limits: strictLimits,
+			...(options.maximumPerCallExecuteOutputBytes === undefined
+				? {}
+				: { maximumPerCallExecuteOutputBytes: options.maximumPerCallExecuteOutputBytes }),
 			runtime: {
 				clock: { now: (): number => monotonicMilliseconds },
 				createSshClient: (): Client => sshTransport as unknown as Client,
@@ -660,6 +667,72 @@ describe('strict Tool VM SSH client', () => {
 			expect(fixture.sshTransport.channel.closeCallCount).toBe(1);
 		},
 	);
+
+	it('drains configured truncate overflow while returning only the requested bytes', async () => {
+		// Arrange
+		const fixture = createStrictSshFixture();
+		fixture.sshTransport.onExec = (_command, callback) => {
+			callback(undefined, fixture.sshTransport.channel as unknown as ClientChannel);
+			queueMicrotask(() => {
+				fixture.sshTransport.channel.emit('data', Buffer.from('stdout-beyond-bound'));
+				fixture.sshTransport.channel.stderr.emit('data', Buffer.from('stderr-beyond-bound'));
+				fixture.sshTransport.channel.emit('exit', 0);
+				fixture.sshTransport.channel.emit('close');
+			});
+		};
+		await connectFixture(fixture);
+
+		// Act
+		const execution = await fixture.client.execute({
+			argv: ['/bin/true'],
+			cwd: '',
+			output: {
+				stderr: { captureBytes: 3, overflow: 'truncate' },
+				stdout: { captureBytes: 4, overflow: 'truncate' },
+			},
+		});
+
+		// Assert
+		expect(execution).toEqual({
+			exitCode: 0,
+			kind: 'exited',
+			stderr: Buffer.from('std'),
+			stderrTruncated: true,
+			stdout: Buffer.from('stdo'),
+			stdoutTruncated: true,
+		});
+		expect(fixture.sshTransport.channel.closeCallCount).toBe(0);
+	});
+
+	it('allows opt-in execute capture above the unchanged shared process-channel ceiling', async () => {
+		// Arrange
+		const fixture = createStrictSshFixture({
+			maximumPerCallExecuteOutputBytes: { stderr: 16, stdout: 16 },
+		});
+		fixture.sshTransport.onExec = (_command, callback) => {
+			callback(undefined, fixture.sshTransport.channel as unknown as ClientChannel);
+			queueMicrotask(() => {
+				fixture.sshTransport.channel.emit('data', Buffer.from('twelve-bytes'));
+				fixture.sshTransport.channel.emit('exit', 0);
+				fixture.sshTransport.channel.emit('close');
+			});
+		};
+		await connectFixture(fixture);
+
+		// Act
+		const execution = await fixture.client.execute({
+			argv: ['/bin/true'],
+			cwd: '',
+			output: {
+				stderr: { captureBytes: 12, overflow: 'fail' },
+				stdout: { captureBytes: 12, overflow: 'fail' },
+			},
+		});
+
+		// Assert
+		expect(execution.stdout).toEqual(Buffer.from('twelve-bytes'));
+		expect(strictLimits.maxStdoutBytes).toBe(8);
+	});
 
 	it('waits for command-input drain before sending EOF', async () => {
 		// Arrange

@@ -4,6 +4,7 @@ import {
 	configuredCliExecutionTargetSchema,
 	controllerConfiguredCliInputSchema,
 	controllerConfiguredCliOperationSchema,
+	controllerEnforcedConfiguredCliOperationSchema,
 	oauthConfiguredCliInputSchema,
 	quickConfiguredCliInputSchema,
 } from './controller-configured-cli.js';
@@ -351,7 +352,7 @@ describe('credentialed configured CLI target contract', () => {
 
 describe('OAuth-configured CLI contract', () => {
 	it('classifies every admitted command path with one typed authorization rule', () => {
-		const result = controllerConfiguredCliOperationSchema.safeParse(
+		const result = controllerEnforcedConfiguredCliOperationSchema.safeParse(
 			validOAuthConfiguredCliOperation(),
 		);
 		if (!result.success) {
@@ -391,7 +392,7 @@ describe('OAuth-configured CLI contract', () => {
 			],
 		]) {
 			expect(
-				controllerConfiguredCliOperationSchema.safeParse({
+				controllerEnforcedConfiguredCliOperationSchema.safeParse({
 					...operation,
 					authorization: { ...authorization, rules: invalidRules },
 				}).success,
@@ -412,6 +413,57 @@ describe('OAuth-configured CLI contract', () => {
 			oauthConfiguredCliInputSchema.safeParse({
 				argv: ['gmail', 'search'],
 				reason: 'Read recent messages.',
+			}).success,
+		).toBe(false);
+	});
+});
+
+describe('Tool VM configured CLI contract', () => {
+	const toolVmOperation = {
+		executablePath: '/usr/local/bin/firecrawl',
+		executionTarget: { kind: 'tool_vm', workingDirectory: '.' },
+		kind: 'configured_cli',
+		mandatoryArgvPrefix: [],
+		output: {
+			modelVisibleStderr: 'fixed_safe_summary',
+			overflow: 'truncate',
+			stderrMaxBytes: 4_096,
+			stdoutMaxBytes: 65_536,
+		},
+		safeHelp: 'Use the Firecrawl CLI installed in the current Tool VM.',
+		suggestCalls: {
+			suggestDeny: [{ flags: [], path: ['delete'] }],
+			suggestRequiresApproval: [{ flags: [], path: ['crawl'] }],
+			suggestWithoutApproval: 'remaining_admitted',
+		},
+		suggestCommands: [
+			{ flagRules: [], path: ['crawl'] },
+			{ flagRules: [], path: ['delete'] },
+		],
+		suggestDeniedPatterns: [],
+		suggestStdin: { kind: 'bounded_text', deniedPatterns: [], maxBytes: 65_536 },
+		suggestTimeout: { kind: 'open' },
+	} as const;
+
+	it('accepts the existing configured CLI policy under suggest-prefixed Tool VM names', () => {
+		const parsed = controllerConfiguredCliOperationSchema.parse(toolVmOperation);
+		expect(parsed.executionTarget.kind).toBe('tool_vm');
+		expect('suggestCalls' in parsed).toBe(true);
+	});
+
+	it('rejects enforcement-named policy properties for the Tool VM discriminant', () => {
+		expect(
+			controllerConfiguredCliOperationSchema.safeParse({
+				...toolVmOperation,
+				calls: {
+					deny: [],
+					requiresApproval: [],
+					withoutApproval: 'remaining_admitted',
+				},
+				commands: toolVmOperation.suggestCommands,
+				deniedPatterns: [],
+				stdin: { kind: 'none' },
+				timeout: { kind: 'open' },
 			}).success,
 		).toBe(false);
 	});
