@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-const reservedZoneIds = new Set(['cache', 'controller-state', 'controller-runtime']);
+const reservedZoneIds = new Set(['cache', 'controller-state', 'controller-runtime', 'generated']);
 
 export const agentIdSchema = z
 	.string()

@@ -57,6 +57,19 @@ afterEach(async () => {
 });
 
 describe('prepared Gondolin image selection', () => {
+	it('returns invalid when a previously selected referenced input disappears', async () => {
+		const fixture = await createFixture();
+		const inputPath = path.join(path.dirname(fixture.buildConfigPath), 'input.txt');
+		await fs.writeFile(inputPath, 'input');
+		await fs.writeFile(fixture.buildConfigPath, JSON.stringify({ arch: 'aarch64', distro: 'alpine', postBuild: { copy: [{ src: './input.txt', dest: '/input' }] } }));
+		const fingerprint = await computeFingerprintFromConfigPath(fixture.buildConfigPath);
+		const imagePath = path.join(fixture.sharedImageCacheDir, fingerprint);
+		await writeFakeImageAssets(imagePath);
+		await writePreparedManagedVmImage({ ...fixture, imagePath, fingerprint });
+		await fs.rm(inputPath);
+
+		await expect(readPreparedManagedVmImage(fixture)).resolves.toBeUndefined();
+	});
 	it('rejects a self-consistent Hermes image for a standard consumer', async () => {
 		const fixture = await createFixture();
 		const managedGatewayBoot = { kind: 'managed-gateway-exact-two-role', frameworkBootEntry: 'hermes-framework-service' } as const;

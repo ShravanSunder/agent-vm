@@ -3688,7 +3688,7 @@ describe('loadSystemConfig', () => {
 		},
 	);
 
-	test.each(['cache', 'controller-state', 'controller-runtime'])(
+	test.each(['cache', 'controller-state', 'controller-runtime', 'generated'])(
 		'rejects reserved global storage zone id %s',
 		async (reservedZoneId) => {
 			// Arrange

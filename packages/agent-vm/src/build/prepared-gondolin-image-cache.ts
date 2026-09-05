@@ -126,16 +126,17 @@ export async function readPreparedManagedVmImage(options: {
 	if (!record) return undefined;
 	if (record.managedGatewayBoot?.kind !== options.expectedManagedGatewayBoot?.kind || record.managedGatewayBoot?.frameworkBootEntry !== options.expectedManagedGatewayBoot?.frameworkBootEntry) return undefined;
 
-	const recipeIdentity = await fs.realpath(options.buildConfigPath);
-	if (record.recipeIdentity !== recipeIdentity) return undefined;
-	const expectedFingerprint = await computeFingerprintFromConfigPath(options.buildConfigPath, {
-		...(record.fingerprintInput === undefined
-			? {}
-			: { fingerprintInput: record.fingerprintInput }),
-		...(record.managedGatewayBoot === undefined
-			? {}
-			: { managedGatewayBoot: record.managedGatewayBoot }),
-	});
+	let expectedFingerprint: string;
+	try {
+		const recipeIdentity = await fs.realpath(options.buildConfigPath);
+		if (record.recipeIdentity !== recipeIdentity) return undefined;
+		expectedFingerprint = await computeFingerprintFromConfigPath(options.buildConfigPath, {
+			...(record.fingerprintInput === undefined ? {} : { fingerprintInput: record.fingerprintInput }),
+			...(record.managedGatewayBoot === undefined ? {} : { managedGatewayBoot: record.managedGatewayBoot }),
+		});
+	} catch {
+		return undefined;
+	}
 	if (record.fingerprint !== expectedFingerprint) return undefined;
 
 	const imagePath = path.join(options.sharedImageCacheDir, record.fingerprint);

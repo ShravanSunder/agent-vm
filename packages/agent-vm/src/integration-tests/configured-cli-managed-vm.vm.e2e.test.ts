@@ -415,8 +415,8 @@ describeLiveConfiguredRunner('configured CLI reusable credentialed Managed VM', 
 			});
 
 			const systemConfig = {
-				storageRootDir: imageFixture.project.tempRoot,
-				cacheDir: path.join(imageFixture.project.tempRoot, 'cache'),
+				storageRootDir: imageFixture.project.systemConfig.storageRootDir,
+				cacheDir: imageFixture.project.systemConfig.cacheDir,
 				controllerStateDir: path.join(imageFixture.project.tempRoot, 'controller-state'),
 				controllerRuntimeDir: path.join(imageFixture.project.tempRoot, 'controller-runtime'),
 				controller: {

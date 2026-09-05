@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -16,6 +16,40 @@ afterEach(async () => {
 });
 
 describe('content-complete build fingerprints', () => {
+	it('hashes copied links by link text without traversing cyclic or dangling targets', async () => {
+		const configDir = await mkdtemp(path.join(os.tmpdir(), 'build-links-fingerprint-'));
+		temporaryDirectories.push(configDir);
+		await mkdir(path.join(configDir, 'tree'));
+		await writeFile(path.join(configDir, 'external'), 'first');
+		await symlink('../external', path.join(configDir, 'tree', 'external-link'));
+		await symlink('.', path.join(configDir, 'tree', 'loop'));
+		await symlink('missing', path.join(configDir, 'tree', 'dangling'));
+		const options = {
+			buildConfig: {
+				arch: 'aarch64',
+				distro: 'alpine',
+				postBuild: { copy: [{ src: './tree', dest: '/tree' }] },
+			},
+			configDir,
+		} as const;
+		const fingerprint = async (): Promise<string> =>
+			(
+				await computeEffectiveBuildFingerprint({
+					...options,
+					buildConfig: {
+						...options.buildConfig,
+						postBuild: { copy: [...options.buildConfig.postBuild.copy] },
+					},
+				})
+			).fingerprint;
+		const initial = await fingerprint();
+		await writeFile(path.join(configDir, 'external'), 'second');
+
+		expect(await fingerprint()).toBe(initial);
+		await rm(path.join(configDir, 'tree', 'dangling'));
+		await symlink('different', path.join(configDir, 'tree', 'dangling'));
+		expect(await fingerprint()).not.toBe(initial);
+	});
 	it('distinguishes referenced bytes and mode while ignoring recipe-root placement', async () => {
 		const root = await mkdtemp(path.join(os.tmpdir(), 'build-input-fingerprint-'));
 		temporaryDirectories.push(root);

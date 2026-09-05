@@ -7,14 +7,17 @@ import type { BuildConfig } from '@earendil-works/gondolin';
 async function digestInputPath(
 	inputPath: string,
 	ancestors: ReadonlySet<string> = new Set(),
+	preserveLinks: boolean = false,
 ): Promise<string> {
-	const identity = await realpath(inputPath);
-	if (ancestors.has(identity)) throw new Error(`Cyclic image build input '${inputPath}'.`);
 	const metadata = await lstat(inputPath);
 	const hash = createHash('sha256');
+	if (metadata.isSymbolicLink() && preserveLinks) {
+		return hash.update(JSON.stringify(['symlink', await readlink(inputPath)])).digest('hex');
+	}
+	const identity = await realpath(inputPath);
+	if (ancestors.has(identity)) throw new Error(`Cyclic image build input '${inputPath}'.`);
 	if (metadata.isSymbolicLink()) {
-		const target = await readlink(inputPath);
-		hash.update(JSON.stringify(['symlink', target, await digestInputPath(identity, ancestors)]));
+		return await digestInputPath(identity, ancestors);
 	} else if (metadata.isDirectory()) {
 		hash.update(JSON.stringify(['directory', metadata.mode & 0o7777]));
 		const nextAncestors = new Set([...ancestors, identity]);
@@ -22,7 +25,10 @@ async function digestInputPath(
 		const digests = await entries.reduce<Promise<(readonly [string, string])[]>>(
 			async (pending, entry) => {
 				const collected = await pending;
-				collected.push([entry, await digestInputPath(path.join(inputPath, entry), nextAncestors)]);
+				collected.push([
+					entry,
+					await digestInputPath(path.join(inputPath, entry), nextAncestors, preserveLinks),
+				]);
 				return collected;
 			},
 			Promise.resolve([]),
@@ -63,7 +69,7 @@ export async function fingerprintBuildInputContent(
 		normalized.postBuild.copy = await Promise.all(
 			normalized.postBuild.copy.map(async (entry) => ({
 				...entry,
-				src: await digestPath(entry.src),
+				src: `sha256:${await digestInputPath(path.resolve(configDir, entry.src), new Set(), true)}`,
 			})),
 		);
 	}
