@@ -116,6 +116,7 @@ async function readSelectionRecord(selectionRecordPath: string): Promise<unknown
 
 export async function readPreparedManagedVmImage(options: {
 	readonly buildConfigPath: string;
+	readonly expectedManagedGatewayBoot?: ManagedGatewayImageBootProjection | undefined;
 	readonly selectionRecordPath: string;
 	readonly sharedImageCacheDir: string;
 }): Promise<PreparedManagedVmImage | undefined> {
@@ -123,6 +124,7 @@ export async function readPreparedManagedVmImage(options: {
 		await readSelectionRecord(options.selectionRecordPath),
 	);
 	if (!record) return undefined;
+	if (record.managedGatewayBoot?.kind !== options.expectedManagedGatewayBoot?.kind || record.managedGatewayBoot?.frameworkBootEntry !== options.expectedManagedGatewayBoot?.frameworkBootEntry) return undefined;
 
 	const recipeIdentity = await fs.realpath(options.buildConfigPath);
 	if (record.recipeIdentity !== recipeIdentity) return undefined;

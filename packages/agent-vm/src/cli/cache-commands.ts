@@ -56,7 +56,7 @@ async function resolveImageSelectionStatuses(systemConfig: LoadedSystemConfig): 
 	const sharedImageCacheDir = sharedImageCacheDirForSystemConfig(systemConfig);
 	const resolveFamily = async (
 		family: 'gateway' | 'toolVm',
-		profiles: Readonly<Record<string, { readonly buildConfig: string }>>,
+		profiles: Readonly<Record<string, { readonly buildConfig: string; readonly type: string }>>,
 	): Promise<Readonly<Record<string, ImageSelectionStatus>>> =>
 		Object.fromEntries(
 			await Promise.all(
@@ -68,6 +68,14 @@ async function resolveImageSelectionStatuses(systemConfig: LoadedSystemConfig): 
 					});
 					const preparedImage = await readPreparedManagedVmImage({
 						buildConfigPath: profile.buildConfig,
+						...(profile.type === 'hermes'
+							? {
+									expectedManagedGatewayBoot: {
+										kind: 'managed-gateway-exact-two-role',
+										frameworkBootEntry: 'hermes-framework-service',
+									} as const,
+								}
+							: {}),
 						selectionRecordPath,
 						sharedImageCacheDir,
 					});

@@ -16,6 +16,27 @@ import {
 } from './build-pipeline.js';
 import * as imageArtifactValidation from './image-artifact-validation.js';
 
+vi.mock('./image-directory-publication.js', () => ({
+	assertImagePublicationSupport: async (): Promise<void> => {},
+	publishImageDirectory: async (sourcePath: string, destinationPath: string): Promise<void> => {
+		try {
+			await fsPromises.lstat(destinationPath);
+		} catch (error) {
+			if (
+				typeof error === 'object' &&
+				error !== null &&
+				'code' in error &&
+				error.code === 'ENOENT'
+			) {
+				await fsPromises.rename(sourcePath, destinationPath);
+				return;
+			}
+			throw error;
+		}
+		throw Object.assign(new Error('destination exists'), { code: 'EEXIST' });
+	},
+}));
+
 const temporaryDirectories: string[] = [];
 
 async function writeFakeAssets(outputDirectory: string): Promise<void> {

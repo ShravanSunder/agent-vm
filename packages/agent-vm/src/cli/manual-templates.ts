@@ -136,6 +136,8 @@ Agent VM stores complete immutable VM images once under cacheDir/vm-images/<fing
 
 New images are checksum-verified before publication. Reuse validates manifest and file structure without hashing large images again; it does not detect every later binary corruption. Never repair or replace shared fingerprint directories by hand.
 
+Uncached image publication requires Python 3 on the controller host and native no-replace rename support on macOS or Linux. Missing support fails closed before image construction. Keep declared init scripts, copied files/directories, and custom helper binaries stable during a build; their content participates in shared-image identity.
+
 For managed Worker and Tool VM images, managed package defaults come from managed-images.json and overlay packageOverrides.npm wins by package name inside the selected image profile. Generated Dockerfiles receive the resolved package specs only as disposable output.
 
 For Hermes images, the generated deployment Dockerfile comes from the installed Hermes recipe and embeds the installed agent-vm package version plus the immutable Hermes distribution inputs. Review the generated recipe and build plan before debugging Docker output. Do not copy the recipe into a second version owner.

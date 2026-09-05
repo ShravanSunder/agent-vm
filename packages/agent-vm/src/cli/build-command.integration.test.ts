@@ -928,126 +928,135 @@ describe('runBuildCommand', () => {
 		);
 	});
 
-	it('dedupes identical fingerprints across different build config paths', async () => {
-		const temporaryDirectory = createTemporaryDirectory();
-		const configDirectory = path.join(temporaryDirectory, 'config');
-		const cacheDirectory = path.join(temporaryDirectory, 'cache');
-		const firstBuildConfigPath = path.join(
-			temporaryDirectory,
-			'vm-images',
-			'tool-vms',
-			'first',
-			'build-config.jsonc',
-		);
-		const secondBuildConfigPath = path.join(
-			temporaryDirectory,
-			'vm-images',
-			'tool-vms',
-			'second',
-			'build-config.jsonc',
-		);
-		const gatewayBuildConfigPath = path.join(
-			temporaryDirectory,
-			'vm-images',
-			'gateways',
-			'hermes',
-			'build-config.jsonc',
-		);
-		fs.mkdirSync(path.dirname(firstBuildConfigPath), { recursive: true });
-		fs.mkdirSync(path.dirname(secondBuildConfigPath), { recursive: true });
-		fs.mkdirSync(path.dirname(gatewayBuildConfigPath), { recursive: true });
-		fs.mkdirSync(configDirectory, { recursive: true });
-		const sharedBuildConfig = {
-			arch: 'aarch64',
-			distro: 'alpine',
-			postBuild: {
-				copy: [{ src: './sidecar.txt', dest: '/etc/sidecar.txt' }],
-			},
-			rootfs: {
-				label: 'tool-root',
-				sizeMb: 2048,
-			},
-		};
-		fs.writeFileSync(firstBuildConfigPath, JSON.stringify(sharedBuildConfig), 'utf8');
-		fs.writeFileSync(secondBuildConfigPath, JSON.stringify(sharedBuildConfig), 'utf8');
-		fs.writeFileSync(
-			path.join(path.dirname(firstBuildConfigPath), 'sidecar.txt'),
-			'first\n',
-			'utf8',
-		);
-		fs.writeFileSync(
-			path.join(path.dirname(secondBuildConfigPath), 'sidecar.txt'),
-			'second\n',
-			'utf8',
-		);
-		fs.writeFileSync(
-			gatewayBuildConfigPath,
-			JSON.stringify({
+	it.each([true, false])(
+		'dedupes different recipe roots only when referenced bytes match: %s',
+		async (matchingBytes) => {
+			const temporaryDirectory = createTemporaryDirectory();
+			const configDirectory = path.join(temporaryDirectory, 'config');
+			const cacheDirectory = path.join(temporaryDirectory, 'cache');
+			const firstBuildConfigPath = path.join(
+				temporaryDirectory,
+				'vm-images',
+				'tool-vms',
+				'first',
+				'build-config.jsonc',
+			);
+			const secondBuildConfigPath = path.join(
+				temporaryDirectory,
+				'vm-images',
+				'tool-vms',
+				'second',
+				'build-config.jsonc',
+			);
+			const gatewayBuildConfigPath = path.join(
+				temporaryDirectory,
+				'vm-images',
+				'gateways',
+				'hermes',
+				'build-config.jsonc',
+			);
+			fs.mkdirSync(path.dirname(firstBuildConfigPath), { recursive: true });
+			fs.mkdirSync(path.dirname(secondBuildConfigPath), { recursive: true });
+			fs.mkdirSync(path.dirname(gatewayBuildConfigPath), { recursive: true });
+			fs.mkdirSync(configDirectory, { recursive: true });
+			const sharedBuildConfig = {
 				arch: 'aarch64',
 				distro: 'alpine',
-				rootfs: { label: 'gateway-root', sizeMb: 4096 },
-			}),
-			'utf8',
-		);
-		const baseConfig = createTestSystemConfigInput();
-		const systemConfig = createLoadedSystemConfig(
-			{
-				...baseConfig,
-				storageRootDir: path.join(path.dirname(cacheDirectory), 'deployment'),
-				imageProfiles: {
-					gateways: {
-						hermes: {
-							type: 'hermes',
-							buildConfig: gatewayBuildConfigPath,
+				postBuild: {
+					copy: [{ src: './sidecar.txt', dest: '/etc/sidecar.txt' }],
+				},
+				rootfs: {
+					label: 'tool-root',
+					sizeMb: 2048,
+				},
+			};
+			fs.writeFileSync(firstBuildConfigPath, JSON.stringify(sharedBuildConfig), 'utf8');
+			fs.writeFileSync(secondBuildConfigPath, JSON.stringify(sharedBuildConfig), 'utf8');
+			fs.writeFileSync(
+				path.join(path.dirname(firstBuildConfigPath), 'sidecar.txt'),
+				'first\n',
+				'utf8',
+			);
+			fs.writeFileSync(
+				path.join(path.dirname(secondBuildConfigPath), 'sidecar.txt'),
+				matchingBytes ? 'first\n' : 'second\n',
+				'utf8',
+			);
+			fs.writeFileSync(
+				gatewayBuildConfigPath,
+				JSON.stringify({
+					arch: 'aarch64',
+					distro: 'alpine',
+					rootfs: { label: 'gateway-root', sizeMb: 4096 },
+				}),
+				'utf8',
+			);
+			const baseConfig = createTestSystemConfigInput();
+			const systemConfig = createLoadedSystemConfig(
+				{
+					...baseConfig,
+					storageRootDir: path.join(path.dirname(cacheDirectory), 'deployment'),
+					imageProfiles: {
+						gateways: {
+							hermes: {
+								type: 'hermes',
+								buildConfig: gatewayBuildConfigPath,
+							},
+						},
+						toolVms: {
+							first: { type: 'toolVm', buildConfig: firstBuildConfigPath },
+							second: { type: 'toolVm', buildConfig: secondBuildConfigPath },
 						},
 					},
-					toolVms: {
-						first: { type: 'toolVm', buildConfig: firstBuildConfigPath },
-						second: { type: 'toolVm', buildConfig: secondBuildConfigPath },
+					toolVmProfiles: {
+						standard: { cpus: 1, imageProfile: 'first', memory: '1G' },
+						second: { cpus: 2, imageProfile: 'second', memory: '2G' },
 					},
 				},
-				toolVmProfiles: {
-					standard: { cpus: 1, imageProfile: 'first', memory: '1G' },
-					second: { cpus: 2, imageProfile: 'second', memory: '2G' },
-				},
-			},
-			{ systemConfigPath: path.join(configDirectory, 'system.json') },
-		);
-		const gondolinBuilds: string[] = [];
+				{ systemConfigPath: path.join(configDirectory, 'system.json') },
+			);
+			const gondolinBuilds: string[] = [];
+			const computeInputFingerprint = async (options: {
+				readonly buildConfigPath: string;
+				readonly managedGatewayBoot?: {
+					readonly kind: 'managed-gateway-exact-two-role';
+					readonly frameworkBootEntry: 'hermes-framework-service';
+				};
+			}): Promise<string> =>
+				await computeFingerprintFromConfigPath(
+					options.buildConfigPath,
+					options.managedGatewayBoot === undefined
+						? {}
+						: { managedGatewayBoot: options.managedGatewayBoot },
+				);
 
-		await runBuildCommand(
-			{ systemConfig },
-			{
-				buildManagedVmImage: async (options) => {
-					gondolinBuilds.push(options.cacheDir);
-					const fingerprint =
-						options.buildConfigPath === gatewayBuildConfigPath
-							? '4444444444444444'
-							: '7777777777777777';
-					const imagePath = path.join(options.cacheDir, fingerprint);
-					fs.mkdirSync(imagePath, { recursive: true });
-					for (const fileName of buildImageAssetFileNames) {
-						fs.writeFileSync(
-							path.join(imagePath, fileName),
-							imageArtifactFixtureFileContent(fileName),
-							'utf8',
-						);
-					}
-					return { built: true, fingerprint, imagePath };
+			await runBuildCommand(
+				{ systemConfig },
+				{
+					buildManagedVmImage: async (options) => {
+						gondolinBuilds.push(options.cacheDir);
+						const fingerprint = await computeInputFingerprint(options);
+						const imagePath = path.join(options.cacheDir, fingerprint);
+						fs.mkdirSync(imagePath, { recursive: true });
+						for (const fileName of buildImageAssetFileNames) {
+							fs.writeFileSync(
+								path.join(imagePath, fileName),
+								imageArtifactFixtureFileContent(fileName),
+								'utf8',
+							);
+						}
+						return { built: true, fingerprint, imagePath };
+					},
+					computeManagedVmFingerprint: computeInputFingerprint,
+					runTask: async (_title, fn) => fn(),
 				},
-				computeManagedVmFingerprint: async (options) =>
-					options.buildConfigPath === gatewayBuildConfigPath
-						? '4444444444444444'
-						: '7777777777777777',
-				runTask: async (_title, fn) => fn(),
-			},
-		);
+			);
 
-		expect(gondolinBuilds).toEqual([
-			path.join(cacheDirectory, 'vm-images'),
-			path.join(cacheDirectory, 'vm-images'),
-		]);
-	});
+			expect(gondolinBuilds).toEqual(
+				Array.from({ length: matchingBytes ? 2 : 3 }, () => path.join(cacheDirectory, 'vm-images')),
+			);
+		},
+	);
 
 	it('dedupes mixed gateway and tool VM targets without forcing reset for Docker-backed profiles', async () => {
 		const temporaryDirectory = createTemporaryDirectory();

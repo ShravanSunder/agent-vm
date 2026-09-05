@@ -1505,6 +1505,10 @@ describe('prepareGatewayE2eProjectImages', () => {
 		await expect(
 			readPreparedManagedVmImage({
 				buildConfigPath: secondGatewayProfile.buildConfig,
+				expectedManagedGatewayBoot: {
+					kind: 'managed-gateway-exact-two-role',
+					frameworkBootEntry: 'hermes-framework-service',
+				},
 				selectionRecordPath: e2eSelectionRecordPath(
 					secondProject.systemConfig,
 					'gateway',

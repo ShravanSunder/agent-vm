@@ -77,6 +77,7 @@ async function resolveCachedGatewayImage(
 	}
 	const preparedGatewayImage = await readPreparedManagedVmImage({
 		buildConfigPath: gatewayImageProfile.buildConfig,
+		expectedManagedGatewayBoot: managedGatewayBootProjectionForGatewayType(zone.gateway.type),
 		selectionRecordPath: configuredImageSelectionRecordPath({
 			deploymentGeneratedDir: deploymentGeneratedDirForStorageRoot(systemConfig.storageRootDir),
 			family: 'gateway',

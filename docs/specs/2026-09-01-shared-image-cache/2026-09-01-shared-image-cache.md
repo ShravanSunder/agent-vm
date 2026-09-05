@@ -40,6 +40,8 @@ Agent VM must store each complete VM image artifact set exactly once per `<agent
 
 Incomplete builds must never be observable as complete cache hits. Concurrent builders for the same fingerprint must not corrupt or replace a complete artifact set.
 
+Effective image identity includes the contents and relevant filesystem modes of declared local init scripts, copied files/directories, custom sandbox helpers, and local system expressions. Identical content under different recipe roots is reusable; changing referenced content must produce a different fingerprint. Build inputs must remain stable during preparation; detected changes reject publication. Published upstream helper/package versions and resolved OCI identity remain part of the applicable recipe/runtime inputs.
+
 Before publication, required image assets must be regular non-empty files with a supported manifest and matching SHA-256 checksums. Cache hits and configured startup use structural validation of those files and manifest, without rehashing multi-gigabyte image contents. This avoids image-size-dependent startup reads; corruption introduced after publication that preserves valid file structure is not detected by cache admission.
 
 ### R2 — Deployment-owned image selections
@@ -101,7 +103,7 @@ Concurrent publishers may duplicate build work. The first complete staging direc
 
 - Sharing mutable Gateway framework caches across deployments or zones.
 - Content-addressing mutable framework caches or generated Docker contexts.
-- Changing VM image fingerprint inputs or image contents except where required to make publication complete and race-safe.
+- Changing image contents, except for the existing runtime recipe contract. Completing the identity of declared local build inputs is required for safe cross-deployment reuse.
 - Migrating old rebuildable cache entries.
 - Host-wide shared-image garbage collection or online replacement of a complete fingerprint.
 - Changing backup contents or guest mount paths.

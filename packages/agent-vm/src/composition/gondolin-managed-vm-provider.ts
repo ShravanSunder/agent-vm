@@ -37,6 +37,14 @@ function createAuthoritativeManagedVmImageCapability(
 			if (request.selectionRecordPath !== undefined) {
 				const preparedImage = await readPreparedManagedVmImage({
 					buildConfigPath: request.recipePath,
+					...(request.expectedBootRole === 'hermes-gateway'
+						? {
+								expectedManagedGatewayBoot: {
+									kind: 'managed-gateway-exact-two-role',
+									frameworkBootEntry: 'hermes-framework-service',
+								} as const,
+							}
+						: {}),
 					selectionRecordPath: request.selectionRecordPath,
 					sharedImageCacheDir: request.artifactCacheDirectory,
 				});

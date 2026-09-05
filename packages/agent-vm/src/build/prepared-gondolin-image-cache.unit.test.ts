@@ -57,6 +57,17 @@ afterEach(async () => {
 });
 
 describe('prepared Gondolin image selection', () => {
+	it('rejects a self-consistent Hermes image for a standard consumer', async () => {
+		const fixture = await createFixture();
+		const managedGatewayBoot = { kind: 'managed-gateway-exact-two-role', frameworkBootEntry: 'hermes-framework-service' } as const;
+		const fingerprint = await computeFingerprintFromConfigPath(fixture.buildConfigPath, { managedGatewayBoot });
+		const imagePath = path.join(fixture.sharedImageCacheDir, fingerprint);
+		await writeFakeImageAssets(imagePath);
+		await writePreparedManagedVmImage({ ...fixture, fingerprint, imagePath, managedGatewayBoot });
+
+		await expect(readPreparedManagedVmImage(fixture)).resolves.toBeUndefined();
+		await expect(readPreparedManagedVmImage({ ...fixture, expectedManagedGatewayBoot: managedGatewayBoot })).resolves.toMatchObject({ fingerprint });
+	});
 	it('reads a matching selection and derives its image path from the shared root', async () => {
 		const fixture = await createFixture();
 		const fingerprintInput = { dockerRootfsIdentity: { layers: ['sha256:layer-a'] } };

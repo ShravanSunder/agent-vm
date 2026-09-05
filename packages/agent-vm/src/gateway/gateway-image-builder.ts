@@ -8,6 +8,7 @@ export async function buildGatewayImage(
 	options: {
 		readonly artifactCacheDirectory: string;
 		readonly buildConfigPath: string;
+		readonly expectedBootRole?: 'hermes-gateway' | 'standard';
 		readonly selectionRecordPath: string;
 	},
 	dependencies: GatewayImageBuilderDependencies,
@@ -15,6 +16,9 @@ export async function buildGatewayImage(
 	return await dependencies.managedVmImages.prepareImage({
 		artifactCacheDirectory: options.artifactCacheDirectory,
 		recipePath: options.buildConfigPath,
+		...(options.expectedBootRole === undefined
+			? {}
+			: { expectedBootRole: options.expectedBootRole }),
 		selectionRecordPath: options.selectionRecordPath,
 	});
 }

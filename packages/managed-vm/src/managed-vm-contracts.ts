@@ -371,6 +371,7 @@ export interface ManagedVmFactory {
 
 export interface ManagedVmImageBuildRequest {
 	readonly artifactCacheDirectory: string;
+	readonly expectedBootRole?: 'hermes-gateway' | 'standard';
 	readonly forceRebuild?: boolean;
 	readonly recipePath: string;
 	readonly selectionRecordPath?: string;

@@ -5,7 +5,13 @@ import path from 'node:path';
 import type { BuildConfig, BuildOptions } from '@earendil-works/gondolin';
 import { validateBuildConfig } from '@earendil-works/gondolin';
 
+import { fingerprintBuildInputContent } from './build-input-fingerprint.js';
+import { resolveGondolinPackageSpec } from './gondolin-package.js';
 import { hasBuiltImageAssets, verifyBuiltImageIntegrity } from './image-artifact-validation.js';
+import {
+	assertImagePublicationSupport,
+	publishImageDirectory,
+} from './image-directory-publication.js';
 export { buildImageAssetFileNames, hasBuiltImageAssets } from './image-artifact-validation.js';
 
 import {
@@ -133,7 +139,7 @@ function isMissingPathError(error: unknown): boolean {
 
 async function pathExists(filePath: string): Promise<boolean> {
 	try {
-		await fs.access(filePath);
+		await fs.lstat(filePath);
 		return true;
 	} catch (error) {
 		if (!isMissingPathError(error)) {
@@ -241,7 +247,13 @@ export async function computeEffectiveBuildFingerprint(options: {
 			? {}
 			: { managedGatewayBoot: options.managedGatewayBoot }),
 	});
-	const fingerprint = computeBuildFingerprint(options.buildConfig, options.gondolinVersion, {
+	const normalizedBuildConfig = await fingerprintBuildInputContent(
+		options.buildConfig,
+		options.configDir ?? process.cwd(),
+	);
+	const resolvedBuildVersion = options.gondolinVersion ?? (await resolveGondolinPackageSpec());
+	const fingerprint = computeBuildFingerprint(normalizedBuildConfig, resolvedBuildVersion, {
+		imageCacheContract: 2,
 		agentVmRootfsInitExtra: resolvedRootfsInitExtra.fingerprintInput,
 		...(options.fingerprintInput === undefined
 			? {}
@@ -283,6 +295,7 @@ export async function buildImage(
 		if (finalImagePathExists) {
 			throw new Error(`Incomplete shared image artifact at ${imagePath}.`);
 		}
+		await assertImagePublicationSupport();
 
 		await fs.mkdir(options.cacheDir, { recursive: true });
 		const stagingImagePath = path.join(
@@ -317,9 +330,18 @@ export async function buildImage(
 			if (!(await verifyBuiltImageIntegrity(stagingImagePath))) {
 				throw new Error(`Expected Gondolin assets to be written to ${stagingImagePath}.`);
 			}
+			const currentInputFingerprint = await computeEffectiveBuildFingerprint({
+				...options,
+				...(dependencies.gondolinVersion === undefined
+					? {}
+					: { gondolinVersion: dependencies.gondolinVersion }),
+			});
+			if (currentInputFingerprint.fingerprint !== fingerprint) {
+				throw new Error('Image build inputs changed during preparation; no image was published.');
+			}
 
 			try {
-				await fs.rename(stagingImagePath, imagePath);
+				await publishImageDirectory(stagingImagePath, imagePath);
 			} catch (error) {
 				if (
 					typeof error !== 'object' ||

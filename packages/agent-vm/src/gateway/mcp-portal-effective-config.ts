@@ -811,6 +811,9 @@ async function buildEffectivePlan(
 		approvalAccessConfigured: props.approvalAccessConfigured,
 		authoredConfigDir: props.authoredConfigDir,
 		effectiveHostConfigDir: props.effectiveHostConfigDir,
+		...(props.sharedImageCacheDir === undefined
+			? {}
+			: { sharedImageCacheDir: props.sharedImageCacheDir }),
 		...(props.managedVmImages === undefined ? {} : { managedVmImages: props.managedVmImages }),
 		mcpConfig,
 		secretResolver: props.secretResolver,

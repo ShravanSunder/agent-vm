@@ -798,6 +798,7 @@ async function recordPreparedE2eImages(
 			}
 			const preparedImage: PreparedManagedVmImage | undefined = await readPreparedManagedVmImage({
 				buildConfigPath: target.buildConfigPath,
+				expectedManagedGatewayBoot: target.managedGatewayBoot,
 				selectionRecordPath: target.selectionRecordPath,
 				sharedImageCacheDir: target.cacheDirectory,
 			});

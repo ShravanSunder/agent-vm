@@ -19,6 +19,7 @@ export const invalidImageSelectionKinds = [
 	'mismatched',
 	'escaped',
 	'incomplete',
+	'wrong-boot',
 ] as const;
 
 export async function createInvalidImageSelectionFixture(options: {
@@ -48,7 +49,17 @@ export async function createInvalidImageSelectionFixture(options: {
 		},
 	};
 	const sharedImageCacheDir = sharedImageCacheDirForSystemConfig(systemConfig);
-	const fingerprint = await computeFingerprintFromConfigPath(buildConfigPath);
+	const managedGatewayBoot =
+		(options.family === 'gateway') !== (options.invalidKind === 'wrong-boot')
+			? ({
+					kind: 'managed-gateway-exact-two-role',
+					frameworkBootEntry: 'hermes-framework-service',
+				} as const)
+			: undefined;
+	const fingerprint = await computeFingerprintFromConfigPath(
+		buildConfigPath,
+		managedGatewayBoot === undefined ? {} : { managedGatewayBoot },
+	);
 	const imagePath = path.join(sharedImageCacheDir, fingerprint);
 	const selectionRecordPath = configuredImageSelectionRecordPath({
 		deploymentGeneratedDir: deploymentGeneratedDirForStorageRoot(systemConfig.storageRootDir),
@@ -58,6 +69,7 @@ export async function createInvalidImageSelectionFixture(options: {
 	await writeImageArtifactFixture(imagePath);
 	await writePreparedManagedVmImage({
 		buildConfigPath,
+		...(managedGatewayBoot === undefined ? {} : { managedGatewayBoot }),
 		fingerprint,
 		imagePath,
 		selectionRecordPath,

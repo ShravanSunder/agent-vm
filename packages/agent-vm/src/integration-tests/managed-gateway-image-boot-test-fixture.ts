@@ -221,6 +221,10 @@ export async function createManagedGatewayImageBootFixture(props: {
 		await prepareGatewayE2eProjectImages({ imageFamilies: ['gateway'], project });
 		const preparedImage = await readPreparedManagedVmImage({
 			buildConfigPath: gatewayProfile.buildConfig,
+			expectedManagedGatewayBoot: {
+				kind: 'managed-gateway-exact-two-role',
+				frameworkBootEntry: 'hermes-framework-service',
+			},
 			selectionRecordPath: configuredImageSelectionRecordPath({
 				deploymentGeneratedDir: deploymentGeneratedDirForStorageRoot(
 					project.systemConfig.storageRootDir,

@@ -1218,6 +1218,7 @@ async function buildGatewayImageForZone(
 		{
 			artifactCacheDirectory: sharedImageCacheDirForSystemConfig(options.systemConfig),
 			buildConfigPath: gatewayImageProfile.buildConfig,
+			expectedBootRole: options.zone.gateway.type === 'hermes' ? 'hermes-gateway' : 'standard',
 			selectionRecordPath: configuredImageSelectionRecordPath({
 				deploymentGeneratedDir: deploymentGeneratedDirForStorageRoot(
 					options.systemConfig.storageRootDir,

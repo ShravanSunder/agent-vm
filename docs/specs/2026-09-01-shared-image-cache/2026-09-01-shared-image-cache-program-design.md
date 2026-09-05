@@ -41,6 +41,10 @@ The system-config loader exclusively owns path derivation and isolation checks. 
 
 ### Host image store
 
+The build-input fingerprint module replaces declared host paths in the fingerprint projection with content/tree digests, including file modes and symlink structure. It covers `init` scripts, `postBuild.copy` sources, explicit sandbox helpers, and local system expressions. The image builder rechecks effective identity before publication to refuse inputs changed during the build. Contributor helper source-build overrides require explicit helper binaries rather than an ambient source tree. No authored paths are changed for the actual build.
+
+The image-directory publication module invokes `renamex_np(RENAME_EXCL)` on macOS or `renameat2(RENAME_NOREPLACE)` on Linux through Python 3's standard-library native bridge. Python 3 and a libc exporting the relevant primitive are checked before an uncached build. No compiler, lock service, pointer-directory format, or ordinary-rename fallback is introduced. Existing destinations, including empty directories and dangling links, are never replaced; unsupported systems fail closed.
+
 The Gondolin image builder owns immutable artifact publication at `<sharedImageCacheDir>/<fingerprint>`. A complete artifact directory is a cache hit. Builds occur in a unique sibling staging directory and publish by rename only after every required asset exists. A losing concurrent publisher validates the complete winner, discards its staging directory, and consumes the winner.
 
 The image-artifact validator owns the admission predicate. It requires regular non-empty required assets, a supported version-one manifest, fixed required asset filenames, and well-formed checksum entries. Gondolin's optional `krun-empty-initrd` sidecar may be empty, but must still be a regular file and checksum-verified at publication. The validator rejects asset symlinks and path traversal. Publication additionally streams each asset through SHA-256 and compares the manifest checksum before rename. Cache hits, losing-publisher admission, and selection reads reuse only the structural predicate; they do not rescan large binary contents. Later same-structure binary corruption is outside this fast-path guarantee.
@@ -59,6 +63,8 @@ Only the atomic absent-to-complete transition is supported. An incomplete final 
 The prepared-image selection module owns one schema-versioned record per image family and profile beneath `<deploymentGeneratedDir>/image-selections`. A record contains the canonical recipe identity, effective fingerprint inputs, fingerprint, and managed-Gateway boot projection when applicable. It does not store an authoritative artifact path. The reader derives `<sharedImageCacheDir>/<fingerprint>` from trusted configuration.
 
 Configured Gateway and Tool VM startup reads the deployment selection. The reader requires the current schema, exact canonical recipe identity, valid fingerprint shape, recomputed fingerprint agreement using the recorded effective inputs and boot projection, and a complete derived artifact directory whose canonical identity remains contained by `sharedImageCacheDir`. A missing or invalid selection fails before VM construction and instructs the operator to run `agent-vm build`; startup never owns Docker build or image-selection publication.
+
+Selection admission also receives the consumer's expected boot role. Hermes Gateway consumers require the fixed managed-Gateway projection; Worker and Tool VM consumers require its absence. The record cannot choose its own expected role. The neutral image capability carries only the role name; the composition boundary maps it to the backend projection.
 
 Selection records use this structural contract:
 
