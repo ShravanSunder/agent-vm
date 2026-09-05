@@ -82,4 +82,16 @@ describe('image artifact structural validation', () => {
 		await expect(verifyBuiltImageIntegrity(directory)).resolves.toBe(false);
 		await expect(hasBuiltImageAssets(directory)).resolves.toBe(true);
 	});
+	it('accepts the supported empty optional krun initrd with its checksum', async () => {
+		const directory = await createImageFixture();
+		const manifest: { assets: Record<string, string>; checksums: Record<string, string> } =
+			JSON.parse(await readFile(path.join(directory, 'manifest.json'), 'utf8'));
+		manifest.assets.krunInitrd = 'krun-empty-initrd';
+		manifest.checksums.krunInitrd = createHash('sha256').update('').digest('hex');
+		await writeFile(path.join(directory, 'krun-empty-initrd'), '');
+		await writeFile(path.join(directory, 'manifest.json'), JSON.stringify(manifest));
+
+		await expect(hasBuiltImageAssets(directory)).resolves.toBe(true);
+		await expect(verifyBuiltImageIntegrity(directory)).resolves.toBe(true);
+	});
 });

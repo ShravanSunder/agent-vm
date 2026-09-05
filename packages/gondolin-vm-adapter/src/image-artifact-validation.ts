@@ -12,6 +12,7 @@ export const buildImageAssetFileNames = [
 ] as const;
 
 interface ImageArtifactEntry {
+	readonly allowEmpty: boolean;
 	readonly fileName: string;
 	readonly checksum: string;
 }
@@ -54,7 +55,11 @@ function parseImageArtifactEntries(value: unknown): readonly ImageArtifactEntry[
 			!/^[a-f0-9]{64}$/u.test(checksum)
 		)
 			return undefined;
-		entries.push({ fileName, checksum });
+		entries.push({
+			fileName,
+			checksum,
+			allowEmpty: role === 'krunInitrd' && fileName === 'krun-empty-initrd',
+		});
 	}
 	return entries;
 }
@@ -73,7 +78,10 @@ async function readValidatedArtifactEntries(
 		const fileStats = await Promise.all(
 			entries.map(async (entry) => await lstat(path.join(directoryPath, entry.fileName))),
 		);
-		return fileStats.every((fileStat) => fileStat.isFile() && fileStat.size > 0)
+		return fileStats.every(
+			(fileStat, entryIndex) =>
+				fileStat.isFile() && (fileStat.size > 0 || entries[entryIndex]?.allowEmpty === true),
+		)
 			? entries
 			: undefined;
 	} catch (error) {
